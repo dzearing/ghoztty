@@ -127,6 +127,21 @@ pub fn namesGroup(name: []const u8) bool {
     return std.mem.eql(u8, sp.project, name);
 }
 
+/// Window title `title` moved into group `project` - or, null, out of any -
+/// its own name (`windowName`) kept (T2527, Mac
+/// `PaneSidebarWindowGrouping.title(_:inGroup:)`). Null when `project` cannot
+/// head a group (empty, too long, a `: ` of its own): the title would not
+/// read back into it. Written into `buf` when it is grouped; otherwise a
+/// slice of `title`.
+pub fn titleInGroup(buf: []u8, title: []const u8, project: ?[]const u8) ?[]const u8 {
+    const name = windowName(title);
+    const p = std.mem.trim(u8, project orelse return name, " \t");
+    const titled = groupTitle(buf, p, name);
+    const sp = outline.splitWindowTitle(titled) orelse return null;
+    if (p.len == 0 or !std.mem.eql(u8, sp.project, p)) return null;
+    return titled;
+}
+
 /// How many leading bytes of `s` fit in `room` without cutting a character.
 fn fitUtf8(s: []const u8, room: usize) usize {
     if (s.len <= room) return s.len;
@@ -207,6 +222,22 @@ test "T2525: renaming a grouped window keeps its group, and empty changes nothin
     try testing.expectEqual(Outcome.keep, decideWindow(&buf, "ghoztty: wt-2", "ghoztty: wt-2"));
     // A colon that names no group stays inside the group.
     try testing.expectEqualStrings("ghoztty: see http://x", decideWindow(&buf, "ghoztty: wt-2", "see http://x").set);
+}
+
+test "T2527: a window moved into a group keeps its own name; out of one it is its name alone" {
+    var buf: [64]u8 = undefined;
+    // Mac PaneSidebarStateTests: title(_:inGroup:).
+    try testing.expectEqualStrings("proj: beta", titleInGroup(&buf, "beta", "proj").?);
+    try testing.expectEqualStrings("proj: beta", titleInGroup(&buf, "beta", " proj ").?);
+    try testing.expectEqualStrings("web: wt-2", titleInGroup(&buf, "ghoztty: wt-2", "web").?);
+    try testing.expectEqualStrings("wt-2", titleInGroup(&buf, "ghoztty: wt-2", null).?);
+    try testing.expectEqualStrings("beta", titleInGroup(&buf, "beta", null).?);
+    // A name that cannot head a group changes nothing.
+    try testing.expect(titleInGroup(&buf, "beta", "") == null);
+    try testing.expect(titleInGroup(&buf, "beta", "   ") == null);
+    try testing.expect(titleInGroup(&buf, "beta", "a: b") == null);
+    try testing.expect(titleInGroup(&buf, "beta", "x" ** 41) == null);
+    try testing.expectEqualStrings(("x" ** 40) ++ ": beta", titleInGroup(&buf, "beta", "x" ** 40).?);
 }
 
 test "T2525: an ungrouped window's rename is its whole title, and empty follows the window again" {

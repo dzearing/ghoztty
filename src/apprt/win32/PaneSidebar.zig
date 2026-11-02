@@ -414,6 +414,9 @@ const RenameTarget = union(enum) {
     project: u64,
     /// The Ungrouped header's pencil (T2524): names its windows as a group.
     ungrouped,
+    /// A window row's Create Group... (T2527): names a group for that
+    /// window group, by its tab's identity, in place of its name.
+    group_for: u64,
 };
 
 /// A name being edited in place (T2339, Mac `PaneSidebarRenameField`).
@@ -5471,6 +5474,8 @@ fn endRename(self: *PaneSidebar, commit: bool, why: []const u8) void {
             rename_rules.decideWindow(&gb, title, typed)
         else
             .keep,
+        // Opened empty: nothing typed changes nothing.
+        .group_for => rename_rules.decide(typed, ""),
         else => rename_rules.decide(typed, r.initialText()),
     };
     log.info("pane sidebar rename end why={s} kind={s} outcome={s} text={s}", .{ why, @tagName(r.target), @tagName(outcome), typed });
@@ -5504,9 +5509,32 @@ fn endRename(self: *PaneSidebar, commit: bool, why: []const u8) void {
         },
         // Empty never gets here: nothing typed is `.keep`.
         .ungrouped => if (name) |nm| self.groupUngrouped(&shown, nm),
+        .group_for => |key| if (name) |nm| moveWindowToGroup(app, key, nm, &shown),
     }
     // Any window rename redraws every sidebar (Mac `PaneRoster.changed`).
     refreshScopes(app.windows.items, null);
+}
+
+/// Window group `key` moved into group `project` - null: out of any - as the
+/// user, keeping its own name and its place in the list (T2527, Mac
+/// `moveToGroupFromSidebar`): Create Group..., Move to Group, Remove from
+/// Group. A name that cannot head a group changes nothing. `before` is the
+/// list as it showed, taken ahead of the move (T2405).
+fn moveWindowToGroup(app: *App, key: u64, project: ?[]const u8, before: *const ShownOrder) void {
+    var wb: [name_cap]u8 = undefined;
+    const title = windowTitle(app, key, &wb) orelse return;
+    var gb: [name_cap + 64]u8 = undefined;
+    const titled = rename_rules.titleInGroup(&gb, title, project) orelse
+        return log.info("pane sidebar window group unchanged: not a group name", .{});
+    if (std.mem.eql(u8, titled, title)) return;
+    // Copied: `title` may be the window's own pin, which the pin replaces.
+    var cb: [name_cap + 64]u8 = undefined;
+    const n = fitUtf8(titled, cb.len);
+    @memcpy(cb[0..n], titled[0..n]);
+    log.info("pane sidebar window group move to={s} title={s}", .{ project orelse "", cb[0..n] });
+    const ref = renameWindowGroup(app, key, cb[0..n]) orelse return;
+    const whole = if (ref.window.title_override) |o| o.len > 0 else false;
+    keepWindowPlace(app, ref.window, if (whole) null else ref.tab, before, "a sidebar group move");
 }
 
 /// A renamed group keeps its place in the all-windows list (T2405, after
@@ -5623,7 +5651,7 @@ fn renameTargetLive(self: *const PaneSidebar) bool {
         .pane => |p| for (self.entries.items) |e| {
             if (e.pane == p) return true;
         },
-        .window => |key| for (self.groups.items) |g| {
+        .window, .group_for => |key| for (self.groups.items) |g| {
             if (g.key == key) return true;
         },
         .project => |key| for (self.groups.items) |g| {
@@ -5653,7 +5681,7 @@ fn renamingPane(self: *const PaneSidebar, p: *const PaneView) bool {
 fn renamingHead(self: *const PaneSidebar, hd: pane_sidebar.Head, g: Group) bool {
     const r = if (self.rename) |*x| x else return false;
     return switch (r.target) {
-        .window => |key| hd.kind == .window and g.key == key,
+        .window, .group_for => |key| hd.kind == .window and g.key == key,
         .project => |key| hd.kind == .project and g.project.len > 0 and g.project_key == key,
         .ungrouped => hd.kind == .project and g.project.len == 0,
         .pane => false,
@@ -5705,9 +5733,13 @@ fn paintRenameField(self: *PaneSidebar, hdc: w32.HDC, box: pane_sidebar.Rect, fo
         const sel_w = textWidth(hdc, text);
         fillRect(hdc, .{ .left = box.left - off, .top = box.top, .right = box.left - off + sel_w, .bottom = box.bottom }, rgb(color_math.mix(well, t.accent, 0.45)));
     }
-    // The Ungrouped header's field starts empty and says what it is for
-    // (T2524, Mac's placeholder).
-    if (text.len == 0 and r.target == .ungrouped) {
+    // The Ungrouped header's field, and Create Group...'s (T2527), start
+    // empty and say what they are for (T2524, Mac's placeholder).
+    const names_group = switch (r.target) {
+        .ungrouped, .group_for => true,
+        else => false,
+    };
+    if (text.len == 0 and names_group) {
         drawText(hdc, placeholder_group_name, .{ .left = box.left, .top = box.top, .right = box.right, .bottom = box.bottom }, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
     }
     drawText(hdc, text, .{ .left = box.left - off, .top = box.top, .right = box.left - off + 100000, .bottom = box.bottom }, t.text, w32.DT_VCENTER);
@@ -5894,6 +5926,94 @@ fn openRowMenu(self: *PaneSidebar, hwnd: w32.HWND, i: usize, x: i32, y: i32) voi
         // the pane, and close its window: nothing after.
         .close => w.paneSidebarCloseNow(e.pane),
     }
+}
+
+/// A window row's right-click menu (T2527, Mac `PaneSidebarView.windowMenu`),
+/// in either list: Create Group..., Move to Group with every other group the
+/// all-windows list shows, and - grouped - Remove from Group. A project
+/// header has none, as on Mac. The window is asked about again by its key
+/// after the menu's modal loop, which can rebuild the roster under it.
+fn openWindowMenu(self: *PaneSidebar, hwnd: w32.HWND, k: usize, x: i32, y: i32) void {
+    const l = self.currentLayout();
+    if (k >= l.head_count) return;
+    const hd = l.heads[k];
+    if (hd.kind != .window or hd.index >= self.groups.items.len) return;
+    const g = self.groups.items[hd.index];
+    const app = self.window.app;
+    var tb: [name_cap]u8 = undefined;
+    const title = windowTitle(app, g.key, &tb) orelse return;
+
+    // Every window's group, as the all-windows list shows them.
+    var refs: [pane_sidebar.max_heads]TabRef = undefined;
+    var names_buf: [pane_sidebar.max_heads][name_cap]u8 = undefined;
+    var names: [pane_sidebar.max_heads][]const u8 = undefined;
+    var wkey_bufs: [pane_sidebar.max_heads]window_order.Key = undefined;
+    var wkeys: [pane_sidebar.max_heads][]const u8 = undefined;
+    const nref = gatherAll(app, &refs, &names_buf, &names, &wkey_bufs, &wkeys);
+    var placed: [pane_sidebar.max_heads]outline.Placed = undefined;
+    const np = arrangeAll(names[0..nref], wkeys[0..nref], &placed);
+    var listed: [pane_sidebar.max_heads]?[]const u8 = undefined;
+    for (placed[0..np], 0..) |p, i| listed[i] = p.project;
+    var groups_buf: [row_menu.max_groups][]const u8 = undefined;
+    const groups = row_menu.movingTo(title, listed[0..np], &groups_buf);
+
+    const popup = w32.CreatePopupMenu() orelse return;
+    defer _ = w32.DestroyMenu(popup);
+    appendMenuText(popup, w32.MF_STRING, row_menu.create_group_id, row_menu.create_group_title);
+    if (groups.len > 0) if (w32.CreatePopupMenu()) |sub| {
+        for (groups, 0..) |p, i| {
+            var mb: [name_cap * 2]u8 = undefined;
+            appendMenuText(sub, w32.MF_STRING, row_menu.move_base + i, row_menu.menuText(&mb, p));
+        }
+        // Destroyed with `popup`, as every MF_POPUP child is.
+        appendMenuText(popup, w32.MF_POPUP, @intFromPtr(sub), row_menu.move_to_group_title);
+    };
+    const remove = row_menu.offersRemove(title);
+    if (remove) appendMenuText(popup, w32.MF_STRING, row_menu.remove_from_group_id, row_menu.remove_from_group_title);
+
+    var pt = w32.POINT{ .x = x, .y = y };
+    _ = w32.ClientToScreen(hwnd, &pt);
+    log.info("pane sidebar window menu open title={s} groups={d} remove={}", .{ title, groups.len, remove });
+    const cmd = w32.TrackPopupMenuEx(
+        popup,
+        w32.TPM_LEFTALIGN | w32.TPM_TOPALIGN | w32.TPM_RETURNCMD | w32.TPM_RIGHTBUTTON,
+        pt.x,
+        pt.y,
+        hwnd,
+        null,
+    );
+    const choice = row_menu.windowCmd(@intCast(cmd), groups.len) orelse return;
+    // Still listed? The menu's loop may have closed it.
+    var cb: [name_cap]u8 = undefined;
+    if (windowTitle(app, g.key, &cb) == null) return;
+    log.info("pane sidebar window menu choice={s}", .{@tagName(choice)});
+    switch (choice) {
+        .create_group => self.beginRename(.{ .group_for = g.key }, ""),
+        .move_to_group, .remove_from_group => {
+            // The group's name is copied: the move rebuilds the rosters.
+            var pb: [name_cap]u8 = undefined;
+            const project: ?[]const u8 = switch (choice) {
+                .move_to_group => |i| blk: {
+                    const n = fitUtf8(groups[i], pb.len);
+                    @memcpy(pb[0..n], groups[i][0..n]);
+                    break :blk pb[0..n];
+                },
+                else => null,
+            };
+            var shown: ShownOrder = .{};
+            shown.take(app);
+            moveWindowToGroup(app, g.key, project, &shown);
+            refreshScopes(app.windows.items, null);
+        },
+    }
+}
+
+/// Append a UTF-8 item to `menu`; a `MF_POPUP` item's `id` is its submenu.
+fn appendMenuText(menu: w32.HMENU, flags: u32, id: usize, text: []const u8) void {
+    var wbuf: [name_cap * 2 + 1]u16 = undefined;
+    const n = std.unicode.utf8ToUtf16Le(wbuf[0 .. wbuf.len - 1], text) catch return;
+    wbuf[n] = 0;
+    _ = w32.AppendMenuW(menu, flags, id, @ptrCast(&wbuf));
 }
 
 /// A header click: a project header folds its windows; a window header's
@@ -6360,6 +6480,8 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             const y = yOf(lparam);
             switch (self.hitAt(x, y)) {
                 .item, .item_button, .item_close => |i| self.openRowMenu(hwnd, i, x, y),
+                // A window row's menu (T2527); a project header has none.
+                .head, .head_fold, .head_close, .head_add, .head_rename => |k| self.openWindowMenu(hwnd, k, x, y),
                 else => {},
             }
             return 0;

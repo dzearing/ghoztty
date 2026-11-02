@@ -11,7 +11,8 @@
 //!   Pane. A stashed row: Restore / Swap with Focused Pane / Move to New
 //!   Window / Close Pane. Another window's grid row offers Show Pane in place
 //!   of Stash, and its stashed row no Swap. Close Pane is the hover x's close
-//!   (T2298, Mac 345be6b02), not the confirmed one.
+//!   (T2298, Mac 345be6b02), not the confirmed one. A window row: Create
+//!   Group... / Move to Group / Remove from Group (T2527, below).
 //! - **Hover x** (T2280, T2298; Mac dc2bbab6b / 345be6b02). A hovered row
 //!   offers stash/restore (this window's rows only), then an x - every row,
 //!   another window's too. A hovered window or project header puts an x where
@@ -26,6 +27,7 @@
 
 const std = @import("std");
 const pane_sidebar = @import("pane_sidebar.zig");
+const outline = @import("pane_sidebar_outline.zig");
 
 /// What a click on a row does.
 pub const ClickVerb = enum {
@@ -122,6 +124,81 @@ pub fn build(f: Facts, out: *[max_items]Item) []const Item {
     return out[0..n];
 }
 
+// ---------------------------------------------------------------------------
+// A window row's menu (T2527, Mac 7bee055c9 `PaneSidebarView.windowMenu`)
+//
+// Create Group... turns the row's name into an empty field (placeholder
+// "Group name"); Return makes the window `<group>: <name>`. Move to Group
+// lists every other group, as listed - only when there is one. Remove from
+// Group, for a grouped window, puts it back to its own name. Each pins the
+// title as the user's and moves it as a rename does.
+
+pub const create_group_title = "Create &Group...";
+pub const move_to_group_title = "&Move to Group";
+pub const remove_from_group_title = "&Remove from Group";
+
+/// The command ids. A Move to Group entry is `move_base + ` its index among
+/// the groups `movingTo` listed; non-zero, as the row menu's are.
+pub const create_group_id: u16 = 1;
+pub const remove_from_group_id: u16 = 2;
+pub const move_base: u16 = 16;
+
+/// The most groups Move to Group lists.
+pub const max_groups = 64;
+
+pub const WindowCmd = union(enum) {
+    create_group,
+    /// An index into the groups the menu listed.
+    move_to_group: usize,
+    remove_from_group,
+};
+
+/// The command a chosen id names, given how many groups were listed; null for
+/// a dismissed menu (0) or anything the menu did not offer.
+pub fn windowCmd(id: usize, groups: usize) ?WindowCmd {
+    if (id == create_group_id) return .create_group;
+    if (id == remove_from_group_id) return .remove_from_group;
+    if (id >= move_base and id - move_base < groups) return .{ .move_to_group = id - move_base };
+    return null;
+}
+
+/// The groups window `title` can move to (Mac
+/// `PaneSidebarWindowGrouping.groups(movingTo:in:)`): every group the list
+/// shows but its own, once each, as listed. `listed` is each window's group,
+/// in list order (null for an ungrouped one).
+pub fn movingTo(title: []const u8, listed: []const ?[]const u8, out: [][]const u8) []const []const u8 {
+    const own: ?[]const u8 = if (outline.splitWindowTitle(title)) |s| s.project else null;
+    var n: usize = 0;
+    next: for (listed) |maybe| {
+        const p = maybe orelse continue;
+        if (own) |o| if (std.mem.eql(u8, o, p)) continue;
+        for (out[0..n]) |seen| if (std.mem.eql(u8, seen, p)) continue :next;
+        if (n == out.len) break;
+        out[n] = p;
+        n += 1;
+    }
+    return out[0..n];
+}
+
+/// Whether the menu offers Remove from Group: the window is in one.
+pub fn offersRemove(title: []const u8) bool {
+    return outline.splitWindowTitle(title) != null;
+}
+
+/// A group's name as a menu item's text: a `&` is doubled, so it shows
+/// rather than marking an access key. Cut short in `buf` if it must be.
+pub fn menuText(buf: []u8, name: []const u8) []const u8 {
+    var n: usize = 0;
+    for (name) |c| {
+        const need: usize = if (c == '&') 2 else 1;
+        if (n + need > buf.len) break;
+        buf[n] = c;
+        if (c == '&') buf[n + 1] = '&';
+        n += need;
+    }
+    return buf[0..n];
+}
+
 /// The hover x's tooltip (Mac's `.help`).
 pub const close_tip = "Close pane";
 
@@ -210,6 +287,43 @@ test "pane_sidebar_menu: another window's row shows its pane and never swaps" {
 
 test "pane_sidebar_menu: every id is non-zero, so a dismissed menu is never a command" {
     inline for (std.meta.fields(Id)) |f| try testing.expect(f.value != 0);
+}
+
+test "T2527: Move to Group lists every other group once, as listed; Remove only for a grouped window" {
+    var out: [max_groups][]const u8 = undefined;
+    const listed = [_]?[]const u8{ null, "proj", "proj", null, "web", "proj" };
+    // Mac groupsFromTheSidebar: no group, nothing to move to.
+    try testing.expectEqual(@as(usize, 0), movingTo("beta", &.{ null, null }, &out).len);
+    const lone = movingTo("gamma", &listed, &out);
+    try testing.expectEqual(@as(usize, 2), lone.len);
+    try testing.expectEqualStrings("proj", lone[0]);
+    try testing.expectEqualStrings("web", lone[1]);
+    const grouped = movingTo("proj: one", &listed, &out);
+    try testing.expectEqual(@as(usize, 1), grouped.len);
+    try testing.expectEqualStrings("web", grouped[0]);
+    try testing.expect(!offersRemove("gamma"));
+    try testing.expect(offersRemove("proj: gamma"));
+    // A colon that heads no group is part of the name.
+    try testing.expect(!offersRemove("http://x"));
+}
+
+test "T2527: a window menu id names its command; a dismissed menu or a stray id names none" {
+    try testing.expectEqual(WindowCmd.create_group, windowCmd(create_group_id, 0).?);
+    try testing.expectEqual(WindowCmd.remove_from_group, windowCmd(remove_from_group_id, 0).?);
+    try testing.expectEqual(@as(usize, 1), windowCmd(move_base + 1, 2).?.move_to_group);
+    try testing.expect(windowCmd(0, 2) == null);
+    try testing.expect(windowCmd(move_base + 2, 2) == null);
+    try testing.expect(windowCmd(move_base - 1, 2) == null);
+    try testing.expect(create_group_id != remove_from_group_id and move_base > remove_from_group_id);
+}
+
+test "T2527: a group's & shows in the menu rather than marking a key" {
+    var buf: [16]u8 = undefined;
+    try testing.expectEqualStrings("R&&D", menuText(&buf, "R&D"));
+    try testing.expectEqualStrings("proj", menuText(&buf, "proj"));
+    var small: [3]u8 = undefined;
+    // Never half an escape.
+    try testing.expectEqualStrings("ab", menuText(&small, "ab&c"));
 }
 
 test "T2298: this window's row offers stash before its x, another window's the x alone; header tips say what closes" {

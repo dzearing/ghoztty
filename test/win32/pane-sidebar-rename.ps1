@@ -23,6 +23,12 @@
 #      opens empty, Escape keeps everything, and a new name makes them that
 #      group where they were (first among the groups) - named as a group the
 #      list has, they join it ahead of its windows; its x closes them.
+#   M. A window row's right-click menu (T2527, Mac 7bee055c9 windowMenu), read
+#      from the live popup and driven by keys posted into its loop: Create
+#      Group... / Move to Group > every other group / Remove from Group (only
+#      grouped). Remove puts it at the end of the ungrouped windows; Create
+#      Group... names a group in place (Escape, and a name with its own `: `,
+#      change nothing); Move to Group joins at the edge nearest it.
 #
 # Geometry comes from the sidebar's own log lines: `pane sidebar rows` (this
 # window's list: `items=` with each row's pane id) and `pane sidebar outline`
@@ -228,6 +234,69 @@ function Open-WindowField($top, $sb, [string]$Name, [string]$Text) {
     return ($null -ne (Wait-Log ('pane sidebar rename begin kind=window text=' + [regex]::Escape($Text) + '$') $mark 3000))
 }
 
+# A window row's right-click menu (T2527), read from the live popup. HMENU
+# reads take a menu HANDLE, not a window, so they are not desktop-bound.
+Add-Type @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public class PsrMenuRead {
+    [DllImport("user32.dll")] public static extern int GetMenuItemCount(IntPtr menu);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetMenuStringW(IntPtr menu, uint id, StringBuilder sb, int max, uint flags);
+    [DllImport("user32.dll")] public static extern IntPtr GetSubMenu(IntPtr menu, int pos);
+    // Each item's caption, a submenu's items after a '>' and joined by ','.
+    public static string Items(IntPtr menu) {
+        if (menu == IntPtr.Zero) return "";
+        int n = GetMenuItemCount(menu);
+        var parts = new string[n < 0 ? 0 : n];
+        for (int i = 0; i < parts.Length; i++) {
+            var sb = new StringBuilder(256);
+            GetMenuStringW(menu, (uint)i, sb, 256, 0x400);
+            string s = sb.ToString();
+            IntPtr sub = GetSubMenu(menu, i);
+            if (sub != IntPtr.Zero) {
+                int m = GetMenuItemCount(sub);
+                var subs = new string[m < 0 ? 0 : m];
+                for (int j = 0; j < subs.Length; j++) {
+                    var sj = new StringBuilder(256);
+                    GetMenuStringW(sub, (uint)j, sj, 256, 0x400);
+                    subs[j] = sj.ToString();
+                }
+                s += ">" + String.Join(",", subs);
+            }
+            parts[i] = s;
+        }
+        return String.Join("|", parts);
+    }
+}
+'@
+
+# Right-click window group $Name's row and return the popup's window, or Zero.
+# MN_GETHMENU is SENT: the app's GUI thread pumps it inside the menu's loop.
+function Open-WindowMenu($top, $sb, [string]$Name) {
+    $o = Get-Outline 0
+    $k = Find-WindowHead $o (Get-Order 0) $Name
+    if ($k -lt 0) { return [IntPtr]::Zero }
+    $h = $o.Heads[$k]
+    [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X ($sb.Left + $h.X) -Y ($sb.Top + $h.Y) -Button right -Action click)
+    return (Wait-TestPopupMenu -ProcessId $script:appPid -TimeoutMs 3000)
+}
+function Get-MenuText([IntPtr]$Menu) {
+    $r = Invoke-TestMessage -Window $Menu -Message 0x01E1
+    if ($r -eq [long]::MinValue -or $r -eq 0) { return '' }
+    return [PsrMenuRead]::Items([IntPtr]$r)
+}
+# Keys posted into the menu's modal loop, without touching focus.
+function Send-MenuKeys([IntPtr]$Menu, [string[]]$Keys) {
+    foreach ($key in $Keys) {
+        # A submenu is its own popup window: aim at the newest one up.
+        $w = Get-TestWindow -ProcessId $script:appPid -Class '#32768'
+        if ($w -eq [IntPtr]::Zero) { $w = $Menu }
+        [void](Send-TestControlKey -Control $w -Key $key)
+        Start-Sleep -Milliseconds 150
+    }
+}
+
 . (Join-Path $PSScriptRoot 'lib\Transcript.ps1')
 $transcript = New-TestTranscript -Name 't2339'
 
@@ -246,6 +315,7 @@ try {
     $script:errlog = Join-Path $tmp 'app-stderr.log'
     $app = Start-OnTestDesktop -Exe $Exe -StdErr $script:errlog -Arguments @('--session-persistence=false', '--macos-pane-style=flat')
     Start-Sleep -Seconds 3
+    $script:appPid = $app.Pid
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
     if ($top -eq [IntPtr]::Zero) { "  SETUP FAIL: top window not found"; $script:failures++; return }
     Assert "window is NOT enumerable on the interactive desktop" (-not (Test-TestDesktopLeak -ProcessId $app.Pid))
@@ -578,6 +648,62 @@ try {
     Assert "the x closes its 1 window (log)" ($null -ne (Wait-Log 'pane sidebar close project windows=1$' $mark 3000))
     $ok = Wait-Until { @(Get-Order 0) -notcontains 'gone' -and $null -ne (Get-Outline 0) -and (Find-UngroupedHead (Get-Outline 0)) -lt 0 } 6000
     Assert "gone is closed, and the Ungrouped header went with it" $ok
+
+    "== M1: a grouped window's menu offers Create Group, Move to Group with the other group, and Remove (T2527)"
+    # fresh/* (5 windows), grp/loner, grp/x - nothing ungrouped.
+    $mark = Get-LogCount
+    $menu = Open-WindowMenu $top $sb 'fresh/alpha'
+    Assert "right-clicking fresh/alpha's row opens a menu" ($menu -ne [IntPtr]::Zero)
+    if ($menu -eq [IntPtr]::Zero) { return }
+    $items = Get-MenuText $menu
+    Assert "it reads Create Group... | Move to Group > grp | Remove from Group (got '$items')" ($items -eq 'Create &Group...|&Move to Group>grp|&Remove from Group')
+    Send-MenuKeys $menu @('Down', 'Down', 'Down', 'Enter')
+    Assert "Remove from Group is chosen (log)" ($null -ne (Wait-Log 'pane sidebar window menu choice=remove_from_group$' $mark 3000))
+    Assert "alpha leaves fresh, to the end of the ungrouped windows - the only one, so first" (Wait-Until { $script:ord = @(Get-Order 0); $script:ord[0] -eq 'alpha' -and $script:ord.Count -eq 7 } 5000)
+    Assert "...and fresh keeps its windows in their order ($($script:ord -join '|'))" ((@($script:ord | Where-Object { @('fresh/solo', 'fresh/zzz', 'fresh/two') -contains $_ }) -join '|') -eq 'fresh/solo|fresh/zzz|fresh/two')
+
+    "== M2: an ungrouped window's Create Group... names a group in place; Escape and a name that cannot head a group change nothing"
+    $mark = Get-LogCount
+    $menu = Open-WindowMenu $top $sb 'alpha'
+    $items = Get-MenuText $menu
+    Assert "alpha's menu: Create Group... | Move to Group > fresh, grp - no Remove (got '$items')" ($items -eq 'Create &Group...|&Move to Group>fresh,grp')
+    Send-MenuKeys $menu @('Down', 'Enter')
+    Assert "Create Group... opens an empty field on alpha's row (log)" ($null -ne (Wait-Log 'pane sidebar rename begin kind=group_for text=$' $mark 3000))
+    Type-Field $sb 'nope'
+    $mark = Get-LogCount
+    Key-Field $sb 'Escape'
+    Assert "Escape cancels (log)" ($null -ne (Wait-Log 'pane sidebar rename end why=escape kind=group_for outcome=keep text=nope$' $mark 3000))
+    Start-Sleep -Milliseconds 400
+    Assert "nothing moved: alpha still first" ((Get-Order 0)[0] -eq 'alpha')
+    $mark = Get-LogCount
+    $menu = Open-WindowMenu $top $sb 'alpha'
+    Send-MenuKeys $menu @('Down', 'Enter')
+    Assert "the field opens again (log)" ($null -ne (Wait-Log 'pane sidebar rename begin kind=group_for text=$' $mark 3000))
+    Type-Field $sb 'a: b'
+    $mark = Get-LogCount
+    Key-Field $sb 'Enter'
+    Assert "a name with its own ': ' heads no group, so nothing changes (log)" ($null -ne (Wait-Log 'pane sidebar window group unchanged: not a group name' $mark 3000))
+    Start-Sleep -Milliseconds 400
+    Assert "alpha is still alpha" ((Get-Order 0)[0] -eq 'alpha')
+    $mark = Get-LogCount
+    $menu = Open-WindowMenu $top $sb 'alpha'
+    Send-MenuKeys $menu @('Down', 'Enter')
+    Assert "the field opens a third time (log)" ($null -ne (Wait-Log 'pane sidebar rename begin kind=group_for text=$' $mark 3000))
+    Type-Field $sb 'solo-grp'
+    $mark = Get-LogCount
+    Key-Field $sb 'Enter'
+    Assert "Return names the group (log)" ($null -ne (Wait-Log 'pane sidebar rename end why=return kind=group_for outcome=set text=solo-grp$' $mark 3000))
+    Assert "alpha is solo-grp/alpha, a new group where it was - first (log + order)" (Wait-Until { (Get-Order 0)[0] -eq 'solo-grp/alpha' } 5000)
+
+    "== M3: Move to Group moves it into another group at the edge nearest it, keeping its name"
+    $mark = Get-LogCount
+    $menu = Open-WindowMenu $top $sb 'solo-grp/alpha'
+    $items = Get-MenuText $menu
+    Assert "its menu lists fresh and grp to move to, and Remove (got '$items')" ($items -eq 'Create &Group...|&Move to Group>fresh,grp|&Remove from Group')
+    Send-MenuKeys $menu @('Down', 'Down', 'Right', 'Down', 'Enter')
+    Assert "grp is chosen (log)" ($null -ne (Wait-Log 'pane sidebar window group move to=grp title=grp: alpha$' $mark 3000))
+    $ok = Wait-Until { $script:ord = @(Get-Order 0); ($script:ord[-3..-1] -join '|') -eq 'grp/alpha|grp/loner|grp/x' -and $script:ord -notcontains 'solo-grp/alpha' } 5000
+    Assert "alpha joined grp at its top, the edge nearest where it was ($($script:ord -join '|'))" $ok
 
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids
