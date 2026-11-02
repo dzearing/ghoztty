@@ -427,9 +427,10 @@ pub fn heroSnapRequest(
     };
 }
 
-/// Ask a terminal's renderer for its last frame at its full `w`x`h` for a
-/// fold to carry (T2457), on the hero snapshot's one readback path. False for
-/// a viewer, which keeps the live window and the face over it.
+/// Ask the pane for its last frame at its full `w`x`h` for a fold to carry,
+/// on each kind's hero snapshot path: a terminal's renderer readback (T2457),
+/// a viewer's `CapturePreview` (T2460). False when none is on its way, and
+/// the fold keeps the live window and the face over it.
 pub fn glideSnapRequest(self: *PaneView, w: u32, h: u32) bool {
     switch (self.kind) {
         .terminal => |s| {
@@ -437,7 +438,7 @@ pub fn glideSnapRequest(self: *PaneView, w: u32, h: u32) bool {
             s.heroSnapRequest(w, h);
             return true;
         },
-        .viewer => return false,
+        .viewer => |v| return v.glideSnapRequest(w, h),
     }
 }
 
@@ -475,7 +476,10 @@ pub fn glideFrame(self: *const PaneView) ?struct { pixels: []const u32, w: i32, 
             const px: [*]const u32 = @ptrCast(@alignCast(bits));
             return .{ .pixels = px[0..n], .w = s.snap_dib_w, .h = s.snap_dib_h };
         },
-        .viewer => return null,
+        .viewer => |v| {
+            const px = v.glideFrame() orelse return null;
+            return .{ .pixels = px, .w = v.snap_dib_w, .h = v.snap_dib_h };
+        },
     }
 }
 

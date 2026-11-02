@@ -129,6 +129,31 @@ pub fn carriedFits(fw: i32, fh: i32, aw: i32, ah: i32) bool {
     return @abs(fw - aw) <= carried_slack_px and @abs(fh - ah) <= carried_slack_px;
 }
 
+/// How many distinct colours (alpha ignored, up to 16) a 16 x 16 grid over a
+/// `w` x `h` frame holds - a carried frame's log oracle (T2460): a page or a
+/// terminal holds its text over its ground, a capture that failed into black
+/// holds one.
+pub fn sampleColors(pixels: []const u32, w: i32, h: i32) u32 {
+    if (w <= 0 or h <= 0) return 0;
+    const uw: usize = @intCast(w);
+    const uh: usize = @intCast(h);
+    if (pixels.len < uw * uh) return 0;
+    var seen: [16]u32 = undefined;
+    var n: u32 = 0;
+    for (0..16) |gy| {
+        const y = (gy * 2 + 1) * uh / 32;
+        for (0..16) |gx| {
+            const x = (gx * 2 + 1) * uw / 32;
+            const c = pixels[y * uw + x] & 0xFF_FFFF;
+            if (std.mem.indexOfScalar(u32, seen[0..n], c) != null) continue;
+            seen[n] = c;
+            n += 1;
+            if (n == seen.len) return n;
+        }
+    }
+    return n;
+}
+
 /// The face's constant alpha for `collapse` (0..1).
 pub fn alphaOf(collapse: f64) u8 {
     return @intFromFloat(@round(std.math.clamp(collapse, 0, 1) * 255));
@@ -260,6 +285,24 @@ test "blendContent: the content over the band at alpha, pinned, bottom-up, opaqu
     blendContent(&none, 2, 1, .{ .pixels = &white, .w = 1, .h = 1, .x = 0, .y = 1 }, 255);
     try testing.expectEqual(band, none[0]);
     try testing.expectEqual(band, none[1]);
+}
+
+test "sampleColors: a black frame holds one colour, a page holds more, alpha ignored (T2460)" {
+    var black = [_]u32{0} ** (32 * 32);
+    try testing.expectEqual(@as(u32, 1), sampleColors(&black, 32, 32));
+    // Alpha is meaningless in a carried frame: an opaque black is still black.
+    black[0] = 0xFF00_0000;
+    try testing.expectEqual(@as(u32, 1), sampleColors(&black, 32, 32));
+    // Text over a ground: alternate rows of two colours, and a third column.
+    var page = [_]u32{0x00F0_F0F0} ** (32 * 32);
+    for (0..32) |y| {
+        if (y % 4 == 1) @memset(page[y * 32 ..][0..32], 0x0020_2020);
+        page[y * 32 + 3] = 0x0000_66CC;
+    }
+    try testing.expectEqual(@as(u32, 3), sampleColors(&page, 32, 32));
+    // Nothing to read: no frame, or a slice short of its size.
+    try testing.expectEqual(@as(u32, 0), sampleColors(&page, 0, 32));
+    try testing.expectEqual(@as(u32, 0), sampleColors(page[0..10], 32, 32));
 }
 
 test "blendContent: a frame wider than the window it stands in for still covers it, clipped (T2485)" {

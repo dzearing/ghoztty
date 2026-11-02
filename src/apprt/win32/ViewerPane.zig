@@ -496,6 +496,9 @@ close_from_page: ?*const fn (v: *ViewerPane) void = null,
 /// The last decoded thumbnail, sized to the tile. Owned; `DeleteObject`ed by
 /// `deinit` and by each replacement.
 snap_dib: ?w32.HANDLE = null,
+/// `snap_dib`'s own pixels, bottom-up, valid for as long as it is: the frame a
+/// fold carries (T2460) is read from here, as a terminal's is from its DIB.
+snap_dib_bits: ?[*]const u8 = null,
 snap_dib_w: i32 = 0,
 snap_dib_h: i32 = 0,
 
@@ -5326,7 +5329,42 @@ pub fn heroSnapRequest(
     // otherwise miss the floor entirely (there is no thumbnail, so nothing
     // says "recent") and re-ask on all seven ticks a second, forever.
     self.snap_asked_ms = now;
+    return self.startSnapCapture(now);
+}
 
+/// Ask the browser for the page's last frame at the pane's full `w`x`h` for a
+/// fold to carry (T2460), the way a terminal's renderer is asked (T2457). The
+/// same `CapturePreview` the hero tile uses, without its pacing: a fold asks
+/// once, and the frame it gets is the card for the rest of the glide. A
+/// capture already in flight is taken over rather than raced - its answer is
+/// decoded at the size asked here, since the decode reads `snap_w`/`snap_h`
+/// when it lands. True when a frame is on its way.
+pub fn glideSnapRequest(self: *ViewerPane, w: u32, h: u32) bool {
+    if (w == 0 or h == 0) return false;
+    self.snap_w = @intCast(@min(w, @as(u32, std.math.maxInt(i32))));
+    self.snap_h = @intCast(@min(h, @as(u32, std.math.maxInt(i32))));
+    const now = std.time.milliTimestamp();
+    if (self.snap_in_flight_since_ms) |since| {
+        if (now - since < hero_snap_schedule.stale_capture_timeout_ms) return true;
+    }
+    self.snap_in_flight_since_ms = null;
+    self.snap_asked_ms = now;
+    return self.startSnapCapture(now);
+}
+
+/// The frame the last capture decoded: bottom-up 0x??RRGGBB pixels,
+/// `snap_dib_w` x `snap_dib_h`, or null before one has (T2460).
+pub fn glideFrame(self: *const ViewerPane) ?[]const u32 {
+    const bits = self.snap_dib_bits orelse return null;
+    if (self.snap_dib_w <= 0 or self.snap_dib_h <= 0) return null;
+    const n: usize = @as(usize, @intCast(self.snap_dib_w)) * @as(usize, @intCast(self.snap_dib_h));
+    const px: [*]const u32 = @ptrCast(@alignCast(bits));
+    return px[0..n];
+}
+
+/// Start one `CapturePreview` into a fresh stream, decoded at `snap_w` x
+/// `snap_h` when it answers. True when the runtime took it.
+fn startSnapCapture(self: *ViewerPane, now: i64) bool {
     const c = self.controller orelse return false;
     const p = self.pending orelse return false;
     const web = c.coreWebView() orelse return false;
@@ -5399,6 +5437,7 @@ fn onCapturePreviewCompleted(cap: *SnapCapture, result: com.HRESULT) com.HRESULT
         return com.S_OK;
     if (self.snap_dib) |old| _ = w32.DeleteObject(old);
     self.snap_dib = thumb.dib;
+    self.snap_dib_bits = thumb.bits;
     self.snap_dib_w = thumb.w;
     self.snap_dib_h = thumb.h;
     self.snap_dirty = true;
@@ -5435,6 +5474,7 @@ fn deinitHeroSnap(self: *ViewerPane) void {
     self.releaseSnapStream();
     if (self.snap_dib) |dib| _ = w32.DeleteObject(dib);
     self.snap_dib = null;
+    self.snap_dib_bits = null;
     self.snap_dib_w = 0;
     self.snap_dib_h = 0;
 }

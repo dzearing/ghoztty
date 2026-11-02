@@ -7347,11 +7347,16 @@ fn heroOnSnapReady(self: *Window, leaf_hwnd_int: usize) void {
             if (entry.view.glide_unfold) if (entry.view.glide_snap_want) |want| {
                 if (fr.w != want.w or fr.h != want.h) return;
             };
-            if (entry.view.glide_snap != .ready) log.info("stack {s} carries its frame hwnd={x} size={d}x{d}", .{
+            // `colors` is the acceptance oracle's (viewer-fold-carried.ps1):
+            // a page's frame holds its text over its ground, a capture that
+            // came back black holds one colour.
+            if (entry.view.glide_snap != .ready) log.info("stack {s} carries its frame hwnd={x} size={d}x{d} kind={s} colors={d}", .{
                 if (entry.view.glide_unfold) "unfold" else "fold",
                 leaf_hwnd_int,
                 fr.w,
                 fr.h,
+                if (entry.view.surface() != null) "terminal" else "viewer",
+                strip_face.sampleColors(fr.pixels, fr.w, fr.h),
             });
             entry.view.glide_snap = .ready;
             return;

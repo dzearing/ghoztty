@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-01T21:57:53-08:00",
-    "commit":  "fbf8454bb",
+    "generated":  "2026-11-01T23:38:43-08:00",
+    "commit":  "22f179fcf",
     "uncommitted":  [
-
+                        "test/win32/viewer-fold-carried.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -544,6 +544,7 @@
                   "test/win32/viewer-feedback-images.ps1":  "036999898e778c5fcf05eebb4111ed21e647ca362f351f8c9ce93538d7e206c0",
                   "test/win32/viewer-feedback-utf16.ps1":  "72ed5d9eb1904b5a150bca33040a823eb702d6b69a4f0f9dc75845ad7851465b",
                   "test/win32/viewer-find.ps1":  "1c91b74ae75373354a59c2c35607ba444781de367929bc0fbe758f95d7260c75",
+                  "test/win32/viewer-fold-carried.ps1":  "5def07799d4133cc584b6cb6b966271a43971f91864d0242834acfb05399edb4",
                   "test/win32/viewer-html.ps1":  "ca16fd4e3837cb63a78fa4763c7e78399ac3b97bcab9872a62741e414e147929",
                   "test/win32/viewer-image.ps1":  "438add5f5db9b264f824b63c3efbac0402db703f9b219a6f6e88738ceef42ecf",
                   "test/win32/viewer-narrow-pane.ps1":  "63d2d057cb2522b824efea6fb24aa7e9426d240921c1b51c74d3ec677e529737",

@@ -743,6 +743,21 @@ $GuardTable = @(
             'src\apprt\win32\strip_face.zig'
         )
     },
+    # A VIEWER folding into its strip carries its page's last frame (T2460),
+    # the way a terminal carries its renderer's (T2457): CapturePreview at the
+    # pane's full size, decoded bottom-up, the live WebView hidden under it.
+    [pscustomobject]@{
+        Name   = 'viewer-fold-carried'
+        Script = 'test\win32\viewer-fold-carried.ps1'
+        Stamp  = 'test\win32\viewer-fold-carried.stamp.json'
+        Covers = @(
+            'test\win32\viewer-fold-carried.ps1',
+            'src\apprt\win32\ViewerPane.zig',
+            'src\apprt\win32\PaneView.zig',
+            'src\apprt\win32\gdiplus_decode.zig',
+            'src\apprt\win32\strip_face.zig'
+        )
+    },
     # A collapsed row carried across a tree change (T2083/T2119): a pane on
     # show closed, undone, or split leaves the strips as strips and the caret
     # on a pane on show. `CloseUndo.zig` saves the stack state with the tree.

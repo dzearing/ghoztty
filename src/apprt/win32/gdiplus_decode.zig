@@ -146,11 +146,12 @@ pub const Thumbnail = struct {
     dib: w32.HANDLE,
     w: i32,
     h: i32,
-    /// The DIB section's own pixels, valid for as long as `dib` is, and set
-    /// only by the alpha-preserving path (`decodeBytes`). Nothing that PAINTS
-    /// wants this — a blit goes through a DC — but a decode whose whole point
-    /// is which bytes came out cannot be asserted on from the outside, and the
-    /// unit test reads exactly these.
+    /// The DIB section's own pixels, valid for as long as `dib` is: top-down
+    /// from the alpha-preserving path (`decodeBytes`), bottom-up from
+    /// `decodeScaled`. A blit goes through a DC and never wants them, but a
+    /// decode whose whole point is which bytes came out cannot be asserted on
+    /// from the outside, and a viewer's fold (T2460) carries the scaled ones
+    /// as its frame.
     bits: ?[*]u8 = null,
 };
 
@@ -364,8 +365,12 @@ fn scaleInto(src: w32.HANDLE, src_w: i32, src_h: i32, dst_w: i32, dst_h: i32) ?T
         return null;
     }
 
+    // The pixels are read by hand as well as blitted - a viewer's fold carries
+    // them as its frame (T2460) - so the stretch must have landed in them.
+    _ = w32.GdiFlush();
+    const px: [*]u8 = @ptrCast(bits orelse return null);
     ok = true;
-    return .{ .dib = dst, .w = dst_w, .h = dst_h };
+    return .{ .dib = dst, .w = dst_w, .h = dst_h, .bits = px };
 }
 
 
