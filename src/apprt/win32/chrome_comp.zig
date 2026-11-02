@@ -52,6 +52,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const w32 = @import("win32.zig");
+const comp_tree = @import("../../renderer/comp_tree.zig");
 
 const log = std.log.scoped(.comp_chrome);
 
@@ -171,6 +172,7 @@ const slot_dcomp_device_create_target = 6;
 const slot_dcomp_device_create_visual = 7;
 const slot_dcomp_device_create_surface = 8;
 const slot_dcomp_device_create_surface_from_handle = 10;
+const slot_dcomp_device_create_rectangle_clip = 24;
 const slot_dcomp_device_check_state = 26;
 const slot_dcomp_surface_begin_draw = 3;
 const slot_dcomp_surface_end_draw = 4;
@@ -183,10 +185,19 @@ const slot_dcomp_visual_set_offset_y = 6;
 const slot_dcomp_visual_set_transform_matrix = 8;
 const slot_dcomp_visual_set_interpolation = 11;
 const slot_dcomp_visual_set_border_mode = 12;
+const slot_dcomp_visual_set_clip = 13;
 const slot_dcomp_visual_set_clip_rect = 14;
 const slot_dcomp_visual_set_content = 15;
 const slot_dcomp_visual_add_visual = 16;
 const slot_dcomp_visual_remove_visual = 17;
+// IDCompositionRectangleClip, same overload rule: SetLeft(float) 4, SetTop 6,
+// SetRight 8, SetBottom 10, then the eight corner radii from 12, X before Y,
+// top-left, top-right, bottom-left, bottom-right.
+const slot_dcomp_rect_clip_set_left = 4;
+const slot_dcomp_rect_clip_set_top = 6;
+const slot_dcomp_rect_clip_set_right = 8;
+const slot_dcomp_rect_clip_set_bottom = 10;
+const slot_dcomp_rect_clip_first_radius = 12;
 // ID3D11DeviceContext (ID3D11DeviceChild 3-6, CopyResource 47).
 const slot_d3d11_context_update_subresource = 48;
 
@@ -1229,20 +1240,44 @@ pub const Host = struct {
         return vis;
     }
 
-    /// Put a pane's visual at `(x, y)` in the client area, clipped to
-    /// `w` x `h` of its own pixels (0 x 0 hides it), and commit.
-    /// `above` px over the visual's origin stay unclipped: the banner band a
-    /// spanning pane carries over its grid (T2559), where the banner's own
-    /// visual hangs at a negative offset.
-    pub fn panePlace(self: *Host, vis: Obj, x: i32, y: i32, w: i32, h: i32, above: i32) Error!void {
+    /// Put a pane's visual at `(x, y)` in the client area, clipped to `c`
+    /// (`comp_tree.clip`: its own pixels, the banner band above its origin
+    /// included, cut to the pane's card shape), and commit. A rounded clip
+    /// goes through a rectangle clip object kept in `rounded`, which the
+    /// caller owns and hands to `releaseRef` with the visual; a plain one is
+    /// the visual's own clip rect.
+    pub fn panePlace(self: *Host, vis: Obj, x: i32, y: i32, c: comp_tree.Clip, rounded: *?Obj) Error!void {
         stage = "pane-place";
         try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_x)(vis, @floatFromInt(x)));
         try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_y)(vis, @floatFromInt(y)));
-        const top: f32 = if (h > 0) -@as(f32, @floatFromInt(@max(above, 0))) else 0;
-        const clip: D2D1_RECT_F = .{ .left = 0, .top = top, .right = @floatFromInt(@max(w, 0)), .bottom = @floatFromInt(@max(h, 0)) };
-        try check(slot(*const fn (Obj, *const D2D1_RECT_F) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_clip_rect)(vis, &clip));
+        if (c.rounded()) {
+            stage = "pane-clip";
+            if (rounded.* == null) {
+                var made: ?Obj = null;
+                try check(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_rectangle_clip)(self.dcomp, &made));
+                rounded.* = made orelse return error.ComFailed;
+            }
+            const rc = rounded.*.?;
+            const Set = *const fn (Obj, f32) callconv(.winapi) HRESULT;
+            try check(slot(Set, rc, slot_dcomp_rect_clip_set_left)(rc, c.left));
+            try check(slot(Set, rc, slot_dcomp_rect_clip_set_top)(rc, c.top));
+            try check(slot(Set, rc, slot_dcomp_rect_clip_set_right)(rc, c.right));
+            try check(slot(Set, rc, slot_dcomp_rect_clip_set_bottom)(rc, c.bottom));
+            // TL x/y, TR x/y, BL x/y, BR x/y.
+            const radii = [8]f32{ c.top_radius, c.top_radius, c.top_radius, c.top_radius, c.bottom_radius, c.bottom_radius, c.bottom_radius, c.bottom_radius };
+            for (radii, 0..) |r, i| try check(slot(Set, rc, slot_dcomp_rect_clip_first_radius + 2 * i)(rc, r));
+            try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_clip)(vis, rc));
+        } else {
+            const r: D2D1_RECT_F = .{ .left = c.left, .top = c.top, .right = c.right, .bottom = c.bottom };
+            try check(slot(*const fn (Obj, *const D2D1_RECT_F) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_clip_rect)(vis, &r));
+        }
         stage = "";
         try self.commit();
+    }
+
+    /// Drop a reference `panePlace` handed out (its rounded clip).
+    pub fn releaseRef(obj: Obj) void {
+        release(obj);
     }
 
     /// Take a pane's visual out of the layer and drop the caller's reference.

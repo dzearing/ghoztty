@@ -33,6 +33,14 @@
 #   powershell -NoProfile -File scripts\comp-present-onscreen.ps1
 #   powershell -NoProfile -File scripts\comp-present-onscreen.ps1 -Arms on
 #   powershell -NoProfile -File scripts\comp-present-onscreen.ps1 -Arms tree,off
+#   powershell -NoProfile -File scripts\comp-present-onscreen.ps1 -Arms tree,flat
+#
+# FLAT is TREE in the flat pane style (T2570). TREE runs the default elevated
+# style, where the pane is a rounded card, and since a window region does not
+# clip a visual on the topmost pane target, the visual must carry the card's
+# corners itself. Both read the pane's bottom-left corner pixel off the grab:
+# rounded (the desk round the card) on TREE, square (the pane's background)
+# on FLAT.
 #
 # The tree arm also splits the window and scores BOTH the original pane (now
 # moved and resized) and the new one, so a visual that does not follow its
@@ -293,7 +301,7 @@ $td = New-TestDesktop -Interactive
 $results = @{}
 try {
     foreach ($arm in $Arms) {
-        "== arm '$arm' (GHOZTTY_COMP_PRESENT=$(if ($arm -ne 'off') { '1' } else { 'unset' }) PANE_TREE=$(if ($arm -eq 'tree') { '1' } else { 'unset' }))"
+        "== arm '$arm' (GHOZTTY_COMP_PRESENT=$(if ($arm -ne 'off') { '1' } else { 'unset' }) PANE_TREE=$(if ($arm -in 'tree', 'flat') { '1' } else { 'unset' }))"
         [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
         $dir = Join-Path $OutDir $arm
         New-Item -ItemType Directory -Force $dir | Out-Null
@@ -303,8 +311,9 @@ try {
         # renderer as occluded (T1951) after the first frame.
         $env:GHOZTTY_TEST_NO_OCCLUSION = '1'
         if ($arm -ne 'off') { $env:GHOZTTY_COMP_PRESENT = '1' } else { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
+        $inTree = $arm -in 'tree', 'flat'
         foreach ($k in 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE') {
-            if ($arm -eq 'tree') { Set-Item "env:$k" '1' } else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+            if ($inTree) { Set-Item "env:$k" '1' } else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
         }
         $err = Join-Path $dir 'stderr.txt'
         $appArgs = @(
@@ -315,6 +324,9 @@ try {
         # its dim visible on the grab (T2562) while its text stays ink. Glass
         # panes never dim (T2281), so glass is off.
         if ($arm -eq 'tree') { $appArgs += '--unfocused-split-opacity=0.7', '--unfocused-split-fill=#ffffff', '--macos-pane-glass=false' }
+        # The flat arm (T2570): the tree arm is the default elevated style,
+        # whose rounded card the visual must take; flat, it stays square.
+        if ($arm -eq 'flat') { $appArgs += '--macos-pane-style=flat', '--macos-pane-glass=false' }
         $app = Start-OnTestDesktop -Exe $Exe -Arguments $appArgs -StdErr $err
         $top = $null
         for ($t = 0; $t -lt 100 -and -not $top; $t++) {
@@ -339,7 +351,7 @@ try {
         if ($arm -eq 'on') {
             Assert "$arm.3 the panes present through the composition chain" (Wait-Log $err $onLine 15000)
             Assert "$arm.3b no pane went into the window tree" ((Read-Text $err) -notmatch [regex]::Escape($treeLine))
-        } elseif ($arm -eq 'tree') {
+        } elseif ($inTree) {
             Assert "$arm.3 the pane's surface handle went into the window tree" (Wait-Log $err $treeLine 15000)
             Assert "$arm.3b the presenter made a handle swap chain (tree=true)" ((Read-Text $err) -match 'composition swap chain warp=\w+ tree=true')
         } else {
@@ -348,7 +360,30 @@ try {
         }
 
         Mark-Pane "on$arm"
+        $script:lastRegion = $null
         Score-Grab $arm "$arm" $hw "on$arm" $dir
+        # T2570: the pane's bottom-left corner pixel on the grab. Elevated
+        # (the default, the tree arm), the visual takes the card's rounded
+        # corner and the corner shows the desk round the card, as the pixel
+        # just left of the pane does - before T2570 it was the pane's
+        # background, square. Flat, it is a plain rectangle.
+        if ($inTree -and $script:lastRegion) {
+            $g = $script:lastGrab; $r = $script:lastRegion
+            $px = { param($x, $y) $o = $y * $g.Stride + $x * 4; @([int]$g.B[$o + 2], [int]$g.B[$o + 1], [int]$g.B[$o]) }
+            $dist = { param($a, $b) [Math]::Abs($a[0] - $b[0]) + [Math]::Abs($a[1] - $b[1]) + [Math]::Abs($a[2] - $b[2]) }
+            $corner = & $px ($r[0] + 1) ($r[3] - 2)
+            $bg = & $px ($r[0] + 24) ($r[3] - 24)
+            $desk = & $px ([Math]::Max(0, $r[0] - 3)) ($r[3] - 24)
+            "  corner rgb=$($corner -join ',') pane bg=$($bg -join ',') desk=$($desk -join ',')"
+            if ($arm -eq 'tree') {
+                Assert "$arm.15 the visual took a rounded card shape (log)" ((Read-Text $err) -match 'pane visual shape -?\d+,-?\d+--?\d+,-?\d+ radius=[1-9]')
+                Assert "$arm.16 desk and pane background differ on the grab, so a corner can be told apart (distance $(& $dist $desk $bg))" ((& $dist $desk $bg) -ge 12)
+                Assert "$arm.17 the card's corner is rounded on screen: the corner pixel is the desk, not the pane" `
+                    ((& $dist $corner $desk) -lt (& $dist $corner $bg))
+            } else {
+                Assert "$arm.15 flat, the corner is square on screen: the corner pixel is the pane background" ((& $dist $corner $bg) -le 12)
+            }
+        }
         if ($arm -eq 'tree') {
             # Split + resize: the first pane is moved and shrunk by the layout,
             # the second is a new presenter adopted into the same tree.

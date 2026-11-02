@@ -164,6 +164,7 @@ const chrome_comp = @import("chrome_comp.zig");
 const split_geometry = @import("split_geometry.zig");
 const gutter_bar = @import("gutter_bar.zig");
 const pane_elevation = @import("pane_elevation.zig");
+const comp_tree = @import("../../renderer/comp_tree.zig");
 const pane_stack_grid = @import("pane_stack_grid.zig");
 const pane_stack_layout = @import("pane_stack_layout.zig");
 const pane_stack_strip = @import("pane_stack_strip.zig");
@@ -8932,6 +8933,9 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
                 s.setBannerCardCorner(plan.banner_corner);
                 s.setBannerGlass(banner_glass);
                 s.setBannerNested(elevated);
+                // A region does not clip a tree pane's visual, so the visual
+                // takes the same shape now (T2570), drag or no drag.
+                s.setTreeShape(plan.treeShape(d));
                 if (defer_tree and s.tree_visual != null) {
                     if (resizeTraceOn() and entry.view.card_region_key != key)
                         log.info("resize trace region-deferred hwnd={x}", .{@intFromPtr(h)});
@@ -8988,6 +8992,19 @@ const CardRegionPlan = struct {
     /// Mid-slide, a pane held bigger than its card is cut to the card in
     /// either style (T2187), so it never covers a pane sliding in.
     cut: ?pane_stack_grid.PxRect = null,
+
+    /// The same shape for a pane's tree visual (T2570): `createCardRegion`'s
+    /// cut or rounded rect, `d` being the corner's diameter.
+    fn treeShape(plan: CardRegionPlan, d: i32) comp_tree.Shape {
+        if (plan.key == 0) return .{};
+        if (plan.cut) |c| return .{ .rect = .{ .left = c.left, .top = c.top, .right = c.right, .bottom = c.bottom } };
+        const s = plan.shown;
+        return .{
+            .rect = .{ .left = s.left, .top = s.top, .right = s.right, .bottom = s.bottom },
+            .radius = @as(f32, @floatFromInt(d)) / 2,
+            .square_top = plan.square_top,
+        };
+    }
 };
 
 fn cardRegionPlan(

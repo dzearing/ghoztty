@@ -118,6 +118,63 @@ pub fn placement(x: i32, y: i32, w: i32, h: i32, visible: bool) Placement {
     return .{ .x = x, .y = y, .w = w, .h = h };
 }
 
+/// A rectangle in the pane window's own pixels (its client origin, banner
+/// band included).
+pub const Rect = struct { left: i32, top: i32, right: i32, bottom: i32 };
+
+/// The card shape the window path gives a pane child with `SetWindowRgn`
+/// (T2570): mid-slide, the part a sliding card shows; in the elevated style,
+/// the card's rounded rect. A region does not clip a visual on a topmost
+/// target, so the tree visual carries the same shape as its clip.
+pub const Shape = struct {
+    /// Null: the whole window.
+    rect: ?Rect = null,
+    /// Corner radius in px; 0 is a plain rectangle.
+    radius: f32 = 0,
+    /// A header or banner above carries the card's top curve, so the pane's
+    /// own top corners stay square.
+    square_top: bool = false,
+};
+
+/// A visual's clip, in its own pixels.
+pub const Clip = struct {
+    left: f32 = 0,
+    top: f32 = 0,
+    right: f32 = 0,
+    bottom: f32 = 0,
+    top_radius: f32 = 0,
+    bottom_radius: f32 = 0,
+
+    pub fn rounded(self: Clip) bool {
+        return self.top_radius > 0 or self.bottom_radius > 0;
+    }
+};
+
+/// The clip for a placed visual whose origin sits `above` px below the pane
+/// window's top (the banner band), unclipped over that band, cut to `shape`.
+/// An empty placement or an empty cut clips to nothing.
+pub fn clip(at: Placement, above: i32, shape: Shape) Clip {
+    if (at.w <= 0 or at.h <= 0) return .{};
+    const band = @max(above, 0);
+    var c: Clip = .{
+        .left = 0,
+        .top = -@as(f32, @floatFromInt(band)),
+        .right = @floatFromInt(at.w),
+        .bottom = @floatFromInt(at.h),
+    };
+    const r = shape.rect orelse return c;
+    c.left = @max(c.left, @as(f32, @floatFromInt(r.left)));
+    c.top = @max(c.top, @as(f32, @floatFromInt(r.top - band)));
+    c.right = @min(c.right, @as(f32, @floatFromInt(r.right)));
+    c.bottom = @min(c.bottom, @as(f32, @floatFromInt(r.bottom - band)));
+    if (c.right <= c.left or c.bottom <= c.top) return .{};
+    if (shape.radius > 0) {
+        c.bottom_radius = shape.radius;
+        if (!shape.square_top) c.top_radius = shape.radius;
+    }
+    return c;
+}
+
 test "publish and retract move the generation; retract twice is a no-op" {
     var s: Slot = .{};
     var dummy: u8 = 0;
@@ -173,4 +230,37 @@ test "placement clips to the pane and hides to an empty clip" {
     try std.testing.expectEqual(@as(i32, 10), hidden.x);
     const empty = placement(0, 0, 0, 50, true);
     try std.testing.expectEqual(@as(i32, 0), empty.w);
+}
+
+test "clip with no shape is the whole placement, unclipped over the band" {
+    const c = clip(placement(10, 40, 300, 200, true), 24, .{});
+    try std.testing.expectEqual(Clip{ .left = 0, .top = -24, .right = 300, .bottom = 200 }, c);
+    try std.testing.expect(!c.rounded());
+    // Hidden: nothing, whatever the shape.
+    try std.testing.expectEqual(Clip{}, clip(placement(10, 40, 300, 200, false), 24, .{ .radius = 8 }));
+}
+
+test "a slide cut clips the visual to what the card shows" {
+    // The pane going into its strip keeps its full size; the cut leaves its
+    // left 120 px, and the band moves the cut up into the visual's pixels.
+    const at = placement(0, 30, 300, 200, true);
+    const c = clip(at, 30, .{ .rect = .{ .left = 0, .top = 0, .right = 120, .bottom = 230 } });
+    try std.testing.expectEqual(Clip{ .left = 0, .top = -30, .right = 120, .bottom = 200 }, c);
+    // A cut past the window is held to the placement.
+    const wide = clip(at, 0, .{ .rect = .{ .left = -50, .top = -50, .right = 900, .bottom = 900 } });
+    try std.testing.expectEqual(Clip{ .left = 0, .top = 0, .right = 300, .bottom = 200 }, wide);
+    // A cut to nothing hides it.
+    try std.testing.expectEqual(Clip{}, clip(at, 0, .{ .rect = .{ .left = 40, .top = 0, .right = 40, .bottom = 200 } }));
+}
+
+test "an elevated card rounds its corners, and a square top keeps them square" {
+    const at = placement(0, 0, 300, 200, true);
+    const card: Rect = .{ .left = 0, .top = 0, .right = 300, .bottom = 200 };
+    const round = clip(at, 0, .{ .rect = card, .radius = 8 });
+    try std.testing.expectEqual(@as(f32, 8), round.top_radius);
+    try std.testing.expectEqual(@as(f32, 8), round.bottom_radius);
+    try std.testing.expect(round.rounded());
+    const square = clip(at, 0, .{ .rect = card, .radius = 8, .square_top = true });
+    try std.testing.expectEqual(@as(f32, 0), square.top_radius);
+    try std.testing.expectEqual(@as(f32, 8), square.bottom_radius);
 }

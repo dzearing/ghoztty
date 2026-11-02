@@ -302,6 +302,11 @@ comp_tree_slot: comp_tree.Slot = .{},
 tree_visual: ?*anyopaque = null,
 tree_gen: u64 = 0,
 tree_epoch: u32 = 0,
+/// The card shape `Window.applyCardRegions` gives this pane's window
+/// (T2570), carried onto the visual as its clip; and the rounded clip object
+/// that goes with the visual once a shape has corners.
+tree_shape: comp_tree.Shape = .{},
+tree_clip: ?*anyopaque = null,
 
 /// Sticky pane banner (T35): overlay strip above the terminal content,
 /// plus the raw markdown source (owned) so the editor can prefill it and
@@ -1895,10 +1900,23 @@ pub fn syncTreeVisual(self: *Surface) void {
     // window spans (T2566).
     const band: i32 = @intCast(self.gridBand());
     const at = comp_tree.placement(pts[0].x, pts[0].y + band, pts[1].x - pts[0].x, @max(pts[1].y - pts[0].y - band, 1), shown);
-    h.panePlace(self.tree_visual.?, at.x, at.y, at.w, at.h, band) catch {
+    h.panePlace(self.tree_visual.?, at.x, at.y, comp_tree.clip(at, band, self.tree_shape), &self.tree_clip) catch {
         const f = chrome_comp.Host.lastFailure();
         log.warn("pane visual place failed at {s}: hr=0x{x:0>8}", .{ f.stage, chrome_comp.hex(f.hr) });
     };
+}
+
+/// Window thread: the card shape the window path just gave this pane's
+/// window (T2570). A tree visual takes it as its clip at once; a pane on its
+/// own target keeps it for when it is adopted.
+pub fn setTreeShape(self: *Surface, shape: comp_tree.Shape) void {
+    if (std.meta.eql(self.tree_shape, shape)) return;
+    self.tree_shape = shape;
+    // The on-screen oracle reads this (comp-present-onscreen.ps1 tree arms).
+    if (shape.rect) |r| {
+        log.debug("pane visual shape {d},{d}-{d},{d} radius={d:.1} square_top={}", .{ r.left, r.top, r.right, r.bottom, shape.radius, shape.square_top });
+    } else log.debug("pane visual shape none", .{});
+    if (self.tree_visual != null) self.syncTreeVisual();
 }
 
 /// Window thread: take this pane's visual out of the window's tree. A host
@@ -1906,6 +1924,9 @@ pub fn syncTreeVisual(self: *Surface) void {
 fn dropTreeVisual(self: *Surface) void {
     const vis = self.tree_visual orelse return;
     self.tree_visual = null;
+    // The visual holds its own reference to a clip it was given.
+    if (self.tree_clip) |c| chrome_comp.Host.releaseRef(c);
+    self.tree_clip = null;
     // Its overlay tree goes with it (T2562); the overlays re-sync on the
     // posted message, onto whatever is published next or back to popups.
     if (self.comp_overlay_slot.retractRoot(vis, comp_overlay.RefOps.com)) {
