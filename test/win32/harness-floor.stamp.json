@@ -1,10 +1,9 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-01T14:31:52-08:00",
-    "commit":  "4352e205b",
+    "generated":  "2026-11-01T15:55:41-08:00",
+    "commit":  "a1773cc55",
     "uncommitted":  [
-                        "test/win32/printclient-audit.ps1",
                         "test/win32/window-presenter.ps1"
                     ],
     "files":  {
@@ -109,7 +108,7 @@
                   "test/win32/command-registry.ps1":  "362ddab500b622889f2a9872c99ae9111303fe1ff8d64c8731f7bcbb3df0b517",
                   "test/win32/command-resolve-audit.ps1":  "01120dbe18e6961dbb2a463fdbba0632e52388a374252a20b266a88be81e5125",
                   "test/win32/comp-chrome.ps1":  "3f353c9ee1491baf31d97ca70e92f3ef3a7ac19b8ca93c78fdf37006a294aa5a",
-                  "test/win32/comp-present.ps1":  "5c886d850b8214b715ebd9af5ae1a5660e30525c4b0020b28d8f64888fcfa1d0",
+                  "test/win32/comp-present.ps1":  "824ca90d9c5e1cb1a075ee503df674ce57c31e50debf1a4f51d502ec21ab8928",
                   "test/win32/config-errors.ps1":  "1d64c1391b3f98388d3d4cdee2f6a23c4c30d952f005b977afb40b32625fe8c3",
                   "test/win32/confirm-dialogs.ps1":  "2c9006992673ec1ab476cf6a332bebe026939034ad9bb90ee07b0e5fcbf7afa8",
                   "test/win32/conformance.ps1":  "c2f6486404a9ccfa710968614aa1ae24ea7ccced0d4677ffc1bd42c853aa73da",
@@ -570,7 +569,7 @@
                   "test/win32/window-name-env.ps1":  "b8e63bc0ba6c5d1914962c3ab97fe83bcfac811f185f3873a09ffa8cd6744a44",
                   "test/win32/window-name-restore.ps1":  "6ed6b2d1c48dda4f6038f410ad260a94efc52d458d8b4d5a6ae6b3ad24579bfe",
                   "test/win32/window-placement-isolation.ps1":  "20d8b605382eb89ef87c19898b48f0c3a195236f29a7ff46d82f92a2ff87e560",
-                  "test/win32/window-presenter.ps1":  "8a246257cd3b1a3bce525cec878a7d365c65685f6f7a14c359b94df4149e53fb",
+                  "test/win32/window-presenter.ps1":  "c8fb2988e02af6a4cac0fb7721f7a811f22105bae7e738858ca94df60d9c1d27",
                   "test/win32/window-size-memory.ps1":  "8f450ced42c46d1762c4dd0329b1204b7d21999192cfe6bfbfdfbcd497c97647",
                   "test/win32/window-title.ps1":  "2c1bf41872184f86306547c309c00ea3c994d0be4521c848b8ba9f404a25beb5",
                   "test/win32/zig-repro-t476.ps1":  "18809a84f951773567de7a6ed8dbe628d2ad3a7872b339e292a2bebd0afb1364"

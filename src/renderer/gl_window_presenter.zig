@@ -122,6 +122,10 @@ pub const SlotPair = struct {
         /// True when this is a frame the presenter has not composed before,
         /// so its fence still wants waiting on.
         fresh: bool,
+        /// The slot a fresh take stopped holding. The renderer may write it
+        /// again, but only after the GPU has finished the composes that read
+        /// it, so the presenter fences it once this compose is submitted.
+        released: ?u1 = null,
     };
 
     /// The presenter's side: the newest frame to compose from, or null when
@@ -131,9 +135,10 @@ pub const SlotPair = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         if (self.pending) |p| {
+            const before = self.held;
             self.pending = null;
             self.held = p;
-            return .{ .slot = p, .frame = self.frames[p].?, .fresh = true };
+            return .{ .slot = p, .frame = self.frames[p].?, .fresh = true, .released = before };
         }
         const h = self.held orelse return null;
         return .{ .slot = h, .frame = self.frames[h].?, .fresh = false };
@@ -354,6 +359,19 @@ test "SlotPair: publish hands back the fence of the frame it overwrote" {
     _ = s.take(); // held 1, slot 0 free again
     // Slot 0 still names frame 1's fence; reusing it returns that fence.
     try testing.expectEqual(@as(?usize, 101), s.publish(s.acquire().?, frameN(3)));
+}
+
+test "SlotPair: a fresh take names the slot it stopped holding" {
+    var s: SlotPair = .{};
+    _ = s.publish(s.acquire().?, frameN(1));
+    // Nothing was held before the first frame.
+    try testing.expectEqual(@as(?u1, null), s.take().?.released);
+    _ = s.publish(s.acquire().?, frameN(2));
+    const t = s.take().?;
+    try testing.expectEqual(@as(u1, 1), t.slot);
+    try testing.expectEqual(@as(?u1, 0), t.released);
+    // A re-compose of the held frame releases nothing.
+    try testing.expectEqual(@as(?u1, null), s.take().?.released);
 }
 
 test "SlotPair: reset forgets every frame" {

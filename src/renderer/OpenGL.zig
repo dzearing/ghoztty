@@ -55,6 +55,7 @@ const wgl = if (apprt.runtime == apprt.win32) struct {
         hwnd: std.os.windows.HWND,
         rect: *RECT,
     ) callconv(.c) i32;
+    extern "kernel32" fn WaitForSingleObject(h: std.os.windows.HANDLE, ms: u32) callconv(.c) u32;
 } else struct {};
 
 /// We require at least OpenGL 4.3. Defined in `gl_report` rather than here so
@@ -133,6 +134,23 @@ comp: ?*gl_comp_present.Presenter = null,
 /// leaves it set with `comp` null: the pane stays on WGL until its context is
 /// rebuilt.
 comp_tried: bool = false,
+
+/// The window presenter path (T2610 step 3c, T2615): when the surface has a
+/// `present_link`, `present` blits the target into one of the link's two
+/// slot textures through this FBO, and `drawFrameEnd` fences and publishes
+/// it instead of swapping. Renderer thread only.
+pres_fbo: ?gl.Framebuffer = null,
+/// Each slot texture's storage, grown in `Target.grow_bucket` steps like the
+/// target's, so a window-edge drag does not reallocate on every step.
+pres_cap: [2][2]u32 = .{ .{ 0, 0 }, .{ 0, 0 } },
+/// The slot `present` drew into, owed a publish by `drawFrameEnd`.
+pres_slot: ?u1 = null,
+pres_w: u32 = 0,
+pres_h: u32 = 0,
+pres_frame_id: u64 = 0,
+/// A frame has been published: the presenter holds it, so a repeat of the
+/// last target (`presentLastTarget`) has nothing to add.
+pres_has_frame: bool = false,
 
 const DeviceState = struct {
     /// The context stopped answering: a driver reset or swap. Every GPU
@@ -479,6 +497,9 @@ pub fn threadExit(self: *const OpenGL) void {
                 p.deinit();
                 self.alloc.destroy(p);
             }
+            // T2615: off the presenter first, then the slot textures and
+            // fences go while this context is current.
+            if (self.rt_surface.present_link) |l| presRetire(self, l);
             // Release the WGL context from the renderer thread.
             _ = gl_loader.active().makeCurrent(null, null);
         },
@@ -653,6 +674,16 @@ pub fn drawFrameEnd(self: *OpenGL) void {
     }
 
     const hdc = gl_loader.active().getCurrentDC();
+    // T2615: on the window presenter path there is no swap. The frame goes
+    // to the presenter, which composes every pane and swaps once; a frame the
+    // layout outran is not dropped either, because the presenter crops or
+    // fills it to the pane's rectangle as it stands at compose time.
+    if (self.rt_surface.present_link) |l| {
+        self.presPublish(l);
+        if (hdc != null) self.checkDevice();
+        perf.frame(self.rt_surface, 0);
+        return;
+    }
     var swap_ns: u64 = 0;
     // T2418 experiment (`resize_paint.presentRetireOn`): the size check, the
     // swap and the GPU's retirement of it, all before the layout may move us.
@@ -1026,7 +1057,7 @@ pub fn initShaders(
 /// `GetClientRect` answers for a window on another thread without a message.
 fn frameOutlivedItsWindow(self: *const OpenGL, hdc: anytype) bool {
     if (comptime apprt.runtime != apprt.win32) return false;
-    const hwnd = wgl.WindowFromDC(hdc) orelse return false;
+    const hwnd = self.paneWindow(hdc) orelse return false;
     var rect: wgl.RECT = undefined;
     if (wgl.GetClientRect(hwnd, &rect) == 0) return false;
     const w = rect.right - rect.left;
@@ -1036,6 +1067,18 @@ fn frameOutlivedItsWindow(self: *const OpenGL, hdc: anytype) bool {
         self.drawn_client,
         resize_paint.packSize(@intCast(w), self.gridHeight(@intCast(h))),
     );
+}
+
+/// The window whose client the grid fills. The window the current DC belongs
+/// to on the per-pane path; on the window presenter path the context is
+/// current on a hidden helper (T2615), so it is the surface's own pane window.
+fn paneWindow(self: *const OpenGL, hdc: anytype) ?std.os.windows.HWND {
+    if (comptime apprt.runtime != apprt.win32) return null;
+    if (self.rt_surface.present_link != null) {
+        const h = self.rt_surface.hwnd orelse return null;
+        return @ptrCast(h);
+    }
+    return wgl.WindowFromDC(hdc);
 }
 
 /// The part of a client area `client_h` px tall that the grid draws into:
@@ -1059,7 +1102,7 @@ pub fn surfaceSize(self: *OpenGL) !struct { width: u32, height: u32 } {
         // Use the thread-local WGL DC to find our HWND, then query
         // the actual window client rect for the current size.
         const hdc = gl_loader.active().getCurrentDC() orelse return error.NoCurrentContext;
-        const hwnd = wgl.WindowFromDC(hdc) orelse return error.NoWindow;
+        const hwnd = self.paneWindow(hdc) orelse return error.NoWindow;
         var rect: wgl.RECT = undefined;
         if (wgl.GetClientRect(hwnd, &rect) != 0) {
             const w: u32 = @intCast(rect.right - rect.left);
@@ -1126,6 +1169,12 @@ pub fn present(self: *OpenGL, target: Target) !void {
     // there's no framework (like GTK's GLArea) that automatically
     // updates glViewport when the window resizes.
     gl.glad.context.Viewport.?(0, 0, @intCast(target.width), @intCast(target.height));
+
+    // On the window presenter path (T2615) the frame goes into a slot
+    // texture the presenter composes from.
+    if (comptime apprt.runtime == apprt.win32) {
+        if (self.rt_surface.present_link) |l| return self.presToSlot(l, target);
+    }
 
     // On the composition path (T2466) the frame goes into the swap chain's
     // shared texture instead of the window's default framebuffer.
@@ -1266,7 +1315,137 @@ fn compFail(self: *OpenGL, err: anyerror) void {
 
 /// Present the last presented target again.
 pub fn presentLastTarget(self: *OpenGL) !void {
+    // The window presenter keeps holding the last frame it took, so a repeat
+    // would be a copy of what it already has (T2615). A planted lab frame
+    // still goes through.
+    if (comptime apprt.runtime == apprt.win32) {
+        if (self.rt_surface.present_link != null and self.pres_has_frame and !self.lab_erase_next) return;
+    }
     if (self.last_target) |target| try self.present(target);
+}
+
+// -------------------------------------------------------------------------
+// The window presenter path (T2610 step 3c, T2615). The presenter half, and
+// the why, are `apprt/win32/WindowPresenter.zig`; the slot rules are
+// `gl_window_presenter.SlotPair`.
+// -------------------------------------------------------------------------
+
+/// How long `presAcquire` waits, per try, for the presenter to take the
+/// frame already published. Two tries, a little over two vblanks at 60 Hz:
+/// the presenter takes a visible pane's frame at its next compose, and a
+/// pane it is not composing (hidden behind a tab, folded in a stack) must
+/// not hold its renderer up for longer than that.
+const pres_wait_ms: u32 = 20;
+
+/// The slot this frame may be drawn into, after the GPU is past every
+/// compose that read it. Null drops the frame: the presenter has not taken
+/// the last one (a pane it is not composing) or is gone (the window is being
+/// destroyed).
+fn presAcquire(self: *OpenGL, l: anytype) ?u1 {
+    _ = self;
+    var tries: u8 = 0;
+    while (true) {
+        if (l.slots.acquire()) |slot| {
+            const rel = l.takeRelease(slot);
+            if (rel != 0) {
+                const sync: gl.c.GLsync = @ptrFromInt(rel);
+                gl.glad.context.WaitSync.?(sync, 0, gl.c.GL_TIMEOUT_IGNORED);
+                gl.glad.context.DeleteSync.?(sync);
+            }
+            return slot;
+        }
+        if (!l.attached() or tries == 2) return null;
+        _ = wgl.WaitForSingleObject(@ptrCast(l.signal), pres_wait_ms);
+        tries += 1;
+    }
+}
+
+fn presToSlot(self: *OpenGL, l: anytype, target: Target) !void {
+    self.last_target = target;
+    const slot = self.presAcquire(l) orelse {
+        // A planted lab frame waits for the next frame that has a slot.
+        log.debug("window presenter has not taken the last frame; this one is dropped", .{});
+        return;
+    };
+    const w: u32 = @intCast(target.width);
+    const h: u32 = @intCast(target.height);
+    const c = &gl.glad.context;
+
+    // The slot texture, created on first use and grown like the target.
+    if (l.tex[slot] == 0) {
+        var name: gl.c.GLuint = 0;
+        c.GenTextures.?(1, &name);
+        l.tex[slot] = name;
+        self.pres_cap[slot] = .{ 0, 0 };
+    }
+    if (self.pres_cap[slot][0] < w or self.pres_cap[slot][1] < h) {
+        const cw: u32 = @intCast(Target.capacityFor(w, true));
+        const ch: u32 = @intCast(Target.capacityFor(h, true));
+        c.BindTexture.?(gl.c.GL_TEXTURE_2D, l.tex[slot]);
+        c.TexParameteri.?(gl.c.GL_TEXTURE_2D, gl.c.GL_TEXTURE_MIN_FILTER, gl.c.GL_NEAREST);
+        c.TexParameteri.?(gl.c.GL_TEXTURE_2D, gl.c.GL_TEXTURE_MAG_FILTER, gl.c.GL_NEAREST);
+        c.TexImage2D.?(gl.c.GL_TEXTURE_2D, 0, gl.c.GL_RGBA8, @intCast(cw), @intCast(ch), 0, gl.c.GL_RGBA, gl.c.GL_UNSIGNED_BYTE, null);
+        c.BindTexture.?(gl.c.GL_TEXTURE_2D, 0);
+        self.pres_cap[slot] = .{ cw, ch };
+    }
+
+    if (self.pres_fbo == null) self.pres_fbo = try gl.Framebuffer.create();
+    const draw = try self.pres_fbo.?.bind(.draw);
+    defer draw.unbind();
+    c.FramebufferTexture2D.?(gl.c.GL_DRAW_FRAMEBUFFER, gl.c.GL_COLOR_ATTACHMENT0, gl.c.GL_TEXTURE_2D, l.tex[slot], 0);
+
+    if (self.lab_erase_next) {
+        // The lab's planted one-frame flash (T2383), into the slot.
+        self.lab_erase_next = false;
+        const m = @import("../apprt/win32/lab_plant.zig").magenta;
+        gl.clearColor(m[0], m[1], m[2], 1.0);
+        gl.clear(gl.c.GL_COLOR_BUFFER_BIT);
+    } else {
+        const read = try target.framebuffer.bind(.read);
+        defer read.unbind();
+        c.BlitFramebuffer.?(0, 0, @intCast(w), @intCast(h), 0, 0, @intCast(w), @intCast(h), gl.c.GL_COLOR_BUFFER_BIT, gl.c.GL_NEAREST);
+    }
+    self.pres_slot = slot;
+    self.pres_w = w;
+    self.pres_h = h;
+}
+
+/// The swap site's replacement: fence the slot `present` drew, flush so the
+/// presenter's context can see the fence, publish, and ask for a compose.
+fn presPublish(self: *OpenGL, l: anytype) void {
+    const slot = self.pres_slot orelse {
+        self.rt_surface.tracePresent(self.drawn_client, false);
+        return;
+    };
+    self.pres_slot = null;
+    const c = &gl.glad.context;
+    const fence = c.FenceSync.?(gl.c.GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    c.Flush.?();
+    self.pres_frame_id += 1;
+    const replaced = l.slots.publish(slot, .{
+        .fence = @intFromPtr(fence),
+        .frame_id = self.pres_frame_id,
+        .width = self.pres_w,
+        .height = self.pres_h,
+    });
+    if (replaced) |old| if (old != 0) c.DeleteSync.?(@ptrFromInt(old));
+    self.pres_has_frame = true;
+    _ = l.notify();
+    self.rt_surface.tracePresent(self.drawn_client, true);
+    if (self.pres_frame_id == 1) log.info("pane renderer published its first frame to the window presenter", .{});
+}
+
+/// Renderer thread, as it exits, with the context current: take the pane off
+/// the presenter, then delete what only this side can.
+fn presRetire(self: *const OpenGL, l: anytype) void {
+    const left = l.unlink();
+    const c = &gl.glad.context;
+    for (left.fences) |f| if (f != 0) c.DeleteSync.?(@ptrFromInt(f));
+    if (self.pres_fbo) |f| f.destroy();
+    for (left.tex) |t| if (t != 0) {
+        var name: gl.c.GLuint = t;
+        c.DeleteTextures.?(1, &name);
+    };
 }
 
 /// Capture the last presented render target, downscaled to (w, h), as

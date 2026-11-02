@@ -33,6 +33,7 @@ const RefCount = @import("pane_refcount.zig").RefCount;
 const RenameDialog = @import("RenameDialog.zig");
 const ViewerPane = @import("ViewerPane.zig");
 const Window = @import("Window.zig");
+const WindowPresenter = @import("WindowPresenter.zig");
 const chrome_comp = @import("chrome_comp.zig");
 const w32 = @import("win32.zig");
 const drag_perf = @import("drag_perf.zig");
@@ -576,6 +577,16 @@ snap_dib_seq: u32 = 0,
 /// The pane window is a layered child with a surface of its own (T2499,
 /// `pane_layer.zig`). GUI thread only.
 own_layer: bool = false,
+
+/// The window presenter path (T2610 step 3c, T2615): this pane's renderer
+/// hands its frames to the window's presenter through this link instead of
+/// swapping. Null on every other path. Made at init, retired by the renderer
+/// thread as it exits (`OpenGL.presRetire`), freed in `deinit`.
+present_link: ?*WindowPresenter.PaneLink = null,
+/// On that path the context is current on this hidden popup, not on the
+/// pane window, which has no pixel format (`WindowPresenter.createHelper`).
+/// `hdc` is this window's DC then.
+gl_helper: ?w32.HWND = null,
 /// GUI-thread-only: when the carousel heartbeat last asked this pane for a
 /// thumbnail (T1423), or null for never. What `hero_snap_schedule` paces the
 /// next request against. `captureContent` deliberately does not stamp it.
@@ -872,23 +883,32 @@ fn initOnce(
     // the WndProc can retrieve it.
     _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
 
+    // T2615: on the window presenter path the context lives on a hidden
+    // helper in the presenter's share group, and the pane window gets no
+    // pixel format at all. Any failure there leaves this pane on its own
+    // present, as before.
+    const shared: ?gl_robust.Created = if (presenter_on) self.initPresenterContext(app, parent) else null;
+    errdefer self.dropPresenterContext();
+
     // Get the device context. With CS_OWNDC, this DC is valid for
     // the lifetime of the window.
-    self.hdc = w32.GetDC(hwnd);
-    if (self.hdc == null) return error.Win32Error;
-    errdefer {
+    if (shared == null) {
+        self.hdc = w32.GetDC(hwnd);
+        if (self.hdc == null) return error.Win32Error;
+    }
+    errdefer if (self.gl_helper == null) {
         _ = w32.ReleaseDC(hwnd, self.hdc.?);
         self.hdc = null;
-    }
+    };
 
     // Set up the pixel format for OpenGL. A parked window already has it: a
     // window takes one pixel format for life (T2597).
-    if (reused == null) try self.setupPixelFormat();
+    if (shared == null and reused == null) try self.setupPixelFormat();
 
     // Create the WGL context — a robust one where the driver offers it, so a
     // graphics driver reset or swap is something the renderer can detect and
     // rebuild from instead of something that takes the process down (T1690).
-    const created = gl_robust.createContext(@ptrCast(self.hdc.?)) orelse
+    const created = shared orelse gl_robust.createContext(@ptrCast(self.hdc.?)) orelse
         return error.Win32Error;
     self.hglrc = @ptrCast(created.hglrc);
     if (self.hglrc == null) return error.Win32Error;
@@ -1274,6 +1294,10 @@ pub fn deinit(self: *Surface) void {
     }
     log.debug("surface deinit: GL context cleaned up", .{});
 
+    // T2615: the renderer has stopped, so the link and the helper go. The
+    // helper owns `hdc` on that path.
+    if (self.present_link != null or self.gl_helper != null) self.dropPresenterContext();
+
     if (self.hdc) |hdc| {
         if (self.hwnd) |hwnd| {
             log.debug("surface deinit: ReleaseDC", .{});
@@ -1397,6 +1421,10 @@ pub fn deinit(self: *Surface) void {
 /// when it may not be parked, and the caller reaps it as before.
 fn parkWindow(self: *Surface, hwnd: w32.HWND) bool {
     const win = self.parent_window;
+    // T2615: a window presenter pane's window has no pixel format, and the
+    // pool's reason to exist (presents onto an allocation the top-level
+    // already holds) is gone on that path.
+    if (win.presenter != null) return false;
     const win_hwnd = win.hwnd orelse return false;
     if (!pane_pool.mayPark(.{
         .enabled = pane_pool.enabled(),
@@ -1434,6 +1462,59 @@ fn takeParkedWindow(win: *Window, sr: w32.RECT) ?w32.HWND {
         return h;
     }
     return null;
+}
+
+/// The window presenter path's context (T2615): a hidden helper with the pane
+/// pixel format, a context on it in the presenter's share group, and the
+/// link the renderer publishes through. Sets `hdc`, `gl_helper` and
+/// `present_link`; null, with all three left unset, when any step fails.
+fn initPresenterContext(self: *Surface, app: *App, parent: *Window) ?gl_robust.Created {
+    const presenter = parent.presenter orelse return null;
+    if (presenter.context == null) return null;
+    const helper = WindowPresenter.createHelper(app.hinstance) orelse {
+        log.warn("window presenter: helper window failed; this pane presents itself", .{});
+        return null;
+    };
+    const hdc = w32.GetDC(helper) orelse {
+        _ = w32.DestroyWindow(helper);
+        return null;
+    };
+    setupGlPixelFormat(hdc) catch {
+        _ = w32.ReleaseDC(helper, hdc);
+        _ = w32.DestroyWindow(helper);
+        log.warn("window presenter: helper pixel format failed; this pane presents itself", .{});
+        return null;
+    };
+    const created = presenter.createSharedContext(hdc) orelse {
+        _ = w32.ReleaseDC(helper, hdc);
+        _ = w32.DestroyWindow(helper);
+        log.warn("window presenter: shared context failed; this pane presents itself", .{});
+        return null;
+    };
+    const link = presenter.link(self.hwnd.?) orelse {
+        _ = gl_loader.active().deleteContext(created.hglrc);
+        _ = w32.ReleaseDC(helper, hdc);
+        _ = w32.DestroyWindow(helper);
+        return null;
+    };
+    self.hdc = hdc;
+    self.gl_helper = helper;
+    self.present_link = link;
+    log.info("terminal pane hands its frames to the window presenter robust={}", .{created.robust});
+    return created;
+}
+
+/// Undo `initPresenterContext`'s window and link (the context is the
+/// caller's, like any other). Safe when it never ran.
+fn dropPresenterContext(self: *Surface) void {
+    if (self.present_link) |l| WindowPresenter.freeLink(self.app.core_app.alloc, l);
+    self.present_link = null;
+    if (self.gl_helper) |helper| {
+        if (self.hdc) |hdc| _ = w32.ReleaseDC(helper, hdc);
+        self.hdc = null;
+        _ = w32.DestroyWindow(helper);
+    }
+    self.gl_helper = null;
 }
 
 /// Set up a pixel format suitable for OpenGL rendering.

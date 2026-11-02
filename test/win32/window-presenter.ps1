@@ -1,12 +1,13 @@
-# Window presenter child acceptance (tracker T2614, T2610 step 3b).
+# Window presenter acceptance (tracker T2614 step 3b, T2615 step 3c; T2610).
 #
 # THE CHANGE: with GHOZTTY_WINDOW_PRESENTER=1 every top-level window gets one
-# GL child, class GhozttyPresenter, that its terminal panes will present
-# through (src/apprt/win32/WindowPresenter.zig; design in
-# docs/design/win32-window-presenter.md). Step 3b builds the child, its thread
-# and context, and keeps it placed; the renderers hand their frames over in
-# step 3c (T2615), so with the knob on a pane shows only its background for
-# now. Off by default.
+# GL child, class GhozttyPresenter, that its terminal panes present through
+# (src/apprt/win32/WindowPresenter.zig; design in
+# docs/design/win32-window-presenter.md). Step 3b built the child, its thread
+# and context, and keeps it placed. Step 3c: each pane's renderer stops
+# swapping, draws into a slot texture in the presenter's share group from a
+# context current on a hidden helper, and publishes it; the presenter blits
+# every pane's newest frame and swaps once. Off by default.
 #
 # THE CONTRACT this asserts:
 #
@@ -25,10 +26,18 @@
 #      that is left.
 #   E. Negative controls: knob off, no presenter child and no presenter line;
 #      knob on with GHOZTTY_COMP_PRESENT=1, no presenter and an "ignored" line.
+#   F. The frames arrive (T2615): every pane hands its frames over, has no
+#      pixel format of its own, and its renderer publishes; the presenter
+#      composes them. End to end: a planted one-frame magenta frame
+#      (GHOZTTY_LAB_PLANT=erase@1, T2383) is drawn by the RENDERER into its
+#      slot, so the only way it can reach the presenter's back buffer is the
+#      handoff. The debug-only GHOZTTY_PRESENTER_PROBE readback of each pane's
+#      center must show ff00ff, and later something else (frames keep coming).
 #
 # NOT asserted here: the pixels on screen. This harness runs on a background
-# desktop that DWM never composes, so what the presenter draws can only be
-# seen on the live desktop (T2610's T2592 criterion, recorded NOT RUN).
+# desktop that DWM never composes, so what reaches the SCREEN can only be
+# seen on the live desktop (T2610's T2592 criterion, recorded NOT RUN). F
+# reads the presenter's own back buffer, which is the last step before it.
 #
 #   powershell -NoProfile -File test\win32\window-presenter.ps1
 
@@ -91,12 +100,12 @@ public static class T2614Win {
 
 $root = Join-Path $env:TEMP "ghoztty-window-presenter-$PID"
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_WINDOW_PRESENTER', 'GHOZTTY_COMP_PRESENT'
+$knobs = 'GHOZTTY_WINDOW_PRESENTER', 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_LAB_PLANT', 'GHOZTTY_PRESENTER_PROBE'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
-function Set-Knobs($presenter, $comp) {
-    $vals = @{ GHOZTTY_WINDOW_PRESENTER = $presenter; GHOZTTY_COMP_PRESENT = $comp }
+function Set-Knobs($presenter, $comp, $plant = $null, $probe = $null) {
+    $vals = @{ GHOZTTY_WINDOW_PRESENTER = $presenter; GHOZTTY_COMP_PRESENT = $comp; GHOZTTY_LAB_PLANT = $plant; GHOZTTY_PRESENTER_PROBE = $probe }
     foreach ($k in $knobs) {
         if ($vals[$k]) { Set-Item "env:$k" $vals[$k] }
         else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
@@ -326,6 +335,48 @@ try {
     Assert "D4 the app is still running" (Test-Alive $a)
     Assert "D5 no OpenGL errors were raised" ((Read-Text $a.Err) -notmatch 'error\(opengl\)')
     Assert "D6 no presenter failure was logged" ((Read-Text $a.Err) -notmatch 'window presenter: ')
+    ((Read-Text $a.Err) -split "`n" | Where-Object { $_ -match 'window presenter: ' } | Select-Object -First 4) |
+        ForEach-Object { "    $_" }
+
+    # ========================================================================
+    "== F: the panes' frames reach the presenter (T2615)"
+    # ========================================================================
+    Set-Knobs '1' $null 'erase@1' '1'
+    $g = Start-Arm 'g'
+    Assert "F0 the arm's window came up ($($g.Target))" ($g.Top -ne [IntPtr]::Zero -and $g.Target)
+    Assert "F1 the pane hands its frames to the window presenter" (Wait-Log $g.Err 'terminal pane hands its frames to the window presenter' 15000)
+    Assert "F2 its renderer published a frame" (Wait-Log $g.Err 'pane renderer published its first frame to the window presenter' 10000)
+    Assert "F3 the presenter composed a pane frame" (Wait-Log $g.Err 'window presenter composed a pane frame' 10000)
+    Assert "F4 the pane window has no pixel format of its own" (Wait-Log $g.Err 'window presenter panes=1 with_pixel_format=0' 10000)
+    & $Exe +split "--target=$($g.Target)" '--direction=down' '--name=presg2' 2>$null | Out-Null
+    Assert "F5 a split's second pane hands its frames over too, neither pane formatted" (Wait-Log $g.Err 'window presenter panes=2 with_pixel_format=0' 10000)
+    # The planted frame fires on each pane's first frame at a new size.
+    [void](Set-TestWindowSize -Window $g.Top -Width 1000 -Height 640)
+    Start-Sleep -Milliseconds 400
+    [void](Set-TestWindowSize -Window $g.Top -Width 1080 -Height 720)
+    Assert "F6 the planted magenta frame fired" (Wait-Log $g.Err 'lab plant fired kind=erase' 10000)
+    $magenta = Wait-Log $g.Err 'window presenter probe panes=\d centers=[0-9a-f,]*ff00ff' 10000
+    Assert "F7 the presenter's back buffer showed the renderer's magenta at a pane's center" $magenta
+    $after = $false
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while (-not $after -and $sw.ElapsedMilliseconds -lt 10000) {
+        $lines = @((Read-Text $g.Err) -split "`n" | Where-Object { $_ -match 'window presenter probe' })
+        $seen = $false
+        foreach ($ln in $lines) {
+            if ($ln -match 'ff00ff') { $seen = $true }
+            elseif ($seen) { $after = $true }
+        }
+        if (-not $after) { Start-Sleep -Milliseconds 200 }
+    }
+    Assert "F8 and later frames replaced it (the handoff keeps flowing)" $after
+    if (-not ($magenta -and $after)) {
+        ((Read-Text $g.Err) -split "`n" | Where-Object { $_ -match 'window presenter probe|lab plant' } | Select-Object -Last 8) |
+            ForEach-Object { "    $_" }
+    }
+    & $Exe +close '--target=presg2' 2>$null | Out-Null
+    Start-Sleep -Milliseconds 800
+    Assert "F9 closing a presenter pane leaves the app running" (Test-Alive $g)
+    Assert "F10 no OpenGL errors and no presenter failure on the frame path" ((Read-Text $g.Err) -notmatch 'error\(opengl\)|window presenter: ')
 
     # ========================================================================
     "== E: negative controls"
@@ -367,4 +418,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'window-presenter' -MinPass 28
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'window-presenter' -MinPass 39

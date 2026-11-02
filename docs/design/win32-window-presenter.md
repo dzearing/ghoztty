@@ -97,6 +97,15 @@ What each piece buys:
   notification strategy of the share context and the new one differ. So the
   presenter context goes through `gl_robust.createContext` with the same
   `robust_attribs`, and that function grows a `share` argument.
+- **The presenter context must be current NOWHERE while a pane context
+  joins its group** (found in step 3c, T2615). `wglCreateContextAttribsARB`
+  refused every share while the presenter thread held its context current,
+  which it does for life. The spike never met this, because its presenter
+  context was current only while it presented. So
+  `WindowPresenter.createSharedContext` asks the presenter thread to let go of
+  its context, makes the pane's, and hands it back (bounded both ways; a
+  timeout leaves that pane on its own present). A lost-device rebuild of a
+  pane context needs the same pause (T2616).
 - **A pane context is current on a hidden helper window, not on the pane
   HWND.** That is the measured `pres-helper` shape: 34.00 MB for two
   renderers, against 38.13 MB with each context current on its pane
