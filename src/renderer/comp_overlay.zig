@@ -667,6 +667,24 @@ test "fitCurve: segments tile the duration, are C0 at every joint and land on th
     }
 }
 
+fn easeInOutCubic(t: f64) f64 {
+    if (t < 0.5) return 4 * t * t * t;
+    const u = -2 * t + 2;
+    return 1 - u * u * u / 2;
+}
+
+test "fitCurve: the hero slide's ease holds a 2000 px slide within half a pixel and lands exactly (T2573)" {
+    var segs: [ease_segments]Cubic = undefined;
+    fitCurve(easeInOutCubic, 0.35, &segs);
+    try std.testing.expectApproxEqAbs(@as(f64, 0), segs[0].at(0), 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 1), segs[ease_segments - 1].at(0.35), 1e-9);
+    for (0..3501) |k| {
+        const t_s = 0.35 * @as(f64, @floatFromInt(k)) / 3500.0;
+        const i = @min(@as(usize, @intFromFloat(t_s / 0.35 * ease_segments)), ease_segments - 1);
+        try std.testing.expect(@abs(segs[i].at(t_s) - easeInOutCubic(t_s / 0.35)) * 2000 < 0.5);
+    }
+}
+
 test "fitFollower: the cubics track the exact follower within half a pixel and land at the snap (T2572)" {
     var segs: [follower_segments]Cubic = undefined;
     const tau = 0.045;

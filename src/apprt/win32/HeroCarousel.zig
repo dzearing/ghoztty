@@ -448,6 +448,38 @@ pub fn paintSlide(win: *Window, hdc_screen: w32.HDC) void {
     _ = w32.BitBlt(hdc_screen, hero.left, hero.top, w, h, mem_dc, 0, 0, w32.SRCCOPY);
 }
 
+/// Leaf `index`'s snapshot as `paintSlide` draws it - HALFTONE-stretched to
+/// `w` x `h` - into `out` as opaque premultiplied BGRA rows, for a slide the
+/// compositor runs (T2573). False without a snapshot or a bitmap.
+pub fn slidePicture(win: *Window, tab: usize, index: usize, w: i32, h: i32, out: []u32) bool {
+    const n = @as(usize, @intCast(w)) * @as(usize, @intCast(h));
+    if (out.len < n) return false;
+    const screen = w32.GetDC(null) orelse return false;
+    defer _ = w32.ReleaseDC(null, screen);
+    const dc = w32.CreateCompatibleDC(screen) orelse return false;
+    defer _ = w32.DeleteDC(dc);
+    var bmi = std.mem.zeroes(w32.BITMAPINFO);
+    bmi.bmiHeader.biSize = @sizeOf(w32.BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = w;
+    bmi.bmiHeader.biHeight = -h; // top-down
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    var bits: ?*anyopaque = null;
+    const bmp = w32.CreateDIBSection(dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse return false;
+    defer _ = w32.DeleteObject(bmp);
+    const px = @as([*]u32, @ptrCast(@alignCast(bits orelse return false)))[0..n];
+    const old = w32.SelectObject(dc, bmp);
+    defer _ = w32.SelectObject(dc, old);
+    if (win.leafAt(tab, index) == null or win.leafAt(tab, index).?.heroSnapshot() == null) return false;
+    _ = w32.SetStretchBltMode(dc, w32.HALFTONE);
+    _ = w32.SetBrushOrgEx(dc, 0, 0, null);
+    paintSlideSnap(win, dc, tab, index, 0, w, h);
+    _ = w32.GdiFlush();
+    // GDI leaves alpha 0; the picture is opaque.
+    for (px, out[0..n]) |p, *o| o.* = p | 0xFF00_0000;
+    return true;
+}
+
 /// One hero-sized snapshot at vertical offset `y` inside the slide's
 /// memory DC. A leaf without a snapshot paints nothing (bg shows).
 fn paintSlideSnap(

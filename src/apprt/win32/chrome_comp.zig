@@ -715,6 +715,15 @@ pub const Host = struct {
     /// A step of a glow layer failed on this host; the glow stays in the
     /// desk until the host is rebuilt.
     glow_failed: bool = false,
+    /// A hero selection slide the compositor runs (T2573): a container at
+    /// the hero rect, clipped to it, over the overlay, holding the outgoing
+    /// and incoming panes' pictures whose offsets glide on DWM's clock. Live
+    /// only with the desk, and only while a slide runs.
+    hero_box: ?Obj = null,
+    hero_pics: [2]?Obj = .{ null, null },
+    hero_surfs: [2]?Obj = .{ null, null },
+    /// Slides declared since the host was built, for the log and the oracle.
+    hero_slides: u32 = 0,
     /// A step of the overlay failed on this host; a window that needs one
     /// keeps its desk on GDI until the host is rebuilt.
     ovl_failed: bool = false,
@@ -1327,6 +1336,76 @@ pub const Host = struct {
         g.* = .{};
     }
 
+    /// A hero selection slide, declared whole (T2573): `pics` are the
+    /// outgoing and incoming panes' `w` x `h` premultiplied pictures, shown
+    /// in `hero` (client pixels) and clipped to it; picture i's top goes
+    /// from `ys[i][0]` to `ys[i][1]` (relative to the hero's top) along
+    /// `curve` (0..1 of the way) over `span_s`, on the compositor's clock -
+    /// so the slide moves on while the window's thread is busy. A slide
+    /// already up is replaced. Commits.
+    pub fn heroSlide(self: *Host, pics: [2][]const u32, w: i32, h: i32, hero: Rect, ys: [2][2]f32, curve: []const Cubic, span_s: f64) Error!void {
+        const desk = self.desk_visual orelse return error.Unavailable;
+        if (w <= 0 or h <= 0) return error.ComFailed;
+        for (pics) |px| if (px.len < @as(usize, @intCast(w)) * @as(usize, @intCast(h))) return error.ComFailed;
+        self.releaseHeroSlide(desk);
+        errdefer self.releaseHeroSlide(desk);
+        stage = "hero-slide";
+        defer stage = "";
+        const box = try self.newVisual();
+        self.hero_box = box;
+        const SetF = *const fn (Obj, f32) callconv(.winapi) HRESULT;
+        // In the desk's own space, which starts at its offset.
+        try check(slot(SetF, box, slot_dcomp_visual_set_offset_x)(box, @floatFromInt(hero.left - self.desk_x)));
+        try check(slot(SetF, box, slot_dcomp_visual_set_offset_y)(box, @floatFromInt(hero.top - self.desk_y)));
+        const r: D2D1_RECT_F = .{ .left = 0, .top = 0, .right = @floatFromInt(w), .bottom = @floatFromInt(h) };
+        try check(slot(*const fn (Obj, *const D2D1_RECT_F) callconv(.winapi) HRESULT, box, slot_dcomp_visual_set_clip_rect)(box, &r));
+        for (pics, 0..) |px, i| {
+            const vis = try self.newVisual();
+            self.hero_pics[i] = vis;
+            var surface: ?Obj = null;
+            try check(slot(*const fn (Obj, u32, u32, u32, u32, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_surface)(self.dcomp, @intCast(w), @intCast(h), DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &surface));
+            const surf = surface orelse return error.ComFailed;
+            self.hero_surfs[i] = surf;
+            try self.drawRect(surf, px, w, .{ .left = 0, .top = 0, .right = w, .bottom = h });
+            try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_content)(vis, surf));
+            const anim = try self.followAnimation(ys[i][0], ys[i][1], curve, span_s);
+            defer release(anim);
+            try check(slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_y - 1)(vis, anim));
+            try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, box, slot_dcomp_visual_add_visual)(box, vis, 1, null));
+        }
+        // Over everything the desk holds, the overlay included.
+        try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, desk, slot_dcomp_visual_add_visual)(desk, box, 1, null));
+        self.hero_slides +|= 1;
+        try self.commit();
+    }
+
+    /// Whether a declared hero slide is up.
+    pub fn heroSlideLive(self: *const Host) bool {
+        return self.hero_box != null;
+    }
+
+    /// Take a declared hero slide off the compositor. Commits.
+    pub fn heroSlideHide(self: *Host) void {
+        const desk = self.desk_visual orelse return;
+        if (self.hero_box == null) return;
+        self.releaseHeroSlide(desk);
+        self.commit() catch {};
+    }
+
+    fn releaseHeroSlide(self: *Host, desk: ?Obj) void {
+        if (self.hero_box) |box| {
+            if (desk) |d| _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, d, slot_dcomp_visual_remove_visual)(d, box);
+            release(box);
+        }
+        self.hero_box = null;
+        for (&self.hero_pics, &self.hero_surfs) |*v, *s| {
+            if (v.*) |o| release(o);
+            if (s.*) |o| release(o);
+            v.* = null;
+            s.* = null;
+        }
+    }
+
     /// One rectangle of a `w`-wide buffer into `surf`. A surface may live in
     /// an atlas, so the rows land at the offset `BeginDraw` hands back.
     fn drawRect(self: *Host, surf: Obj, px: []const u32, w: i32, r: Rect) Error!void {
@@ -1537,6 +1616,7 @@ pub const Host = struct {
         self.releaseCap();
         self.releaseOvl();
         for (&self.glows) |*g| releaseGlow(g);
+        self.releaseHeroSlide(null);
         if (self.root_visual) |r| release(r);
         self.root_visual = null;
         if (self.desk_surface) |s| release(s);

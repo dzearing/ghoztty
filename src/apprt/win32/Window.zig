@@ -1261,6 +1261,12 @@ hero_slide: ?HeroSlide = null,
 /// Carousel re-center animation: a visual strip offset decaying from
 /// `from_offset` to 0 (Mac: 0.3s ease, skipped on first show).
 hero_recenter: ?HeroRecenter = null,
+/// The running `hero_slide` is the compositor's (T2573): its pictures glide
+/// on DWM's clock, and the window's paint leaves the hero rect to them.
+hero_slide_declared: bool = false,
+/// The slide's first tick has yet to run: `GHOZTTY_DEBUG_HERO_STALL_MS`
+/// blocks the thread there (T2573).
+hero_stall_due: bool = false,
 
 pub const HeroSlide = struct {
     from_index: usize,
@@ -6959,9 +6965,102 @@ fn heroStartAnims(self: *Window, old_index: usize, new_index: usize, old_top0: ?
         if (delta != 0) self.hero_recenter = .{ .from_offset = delta, .start = start };
     }
 
+    self.heroSlideUndeclare();
+    self.hero_slide_declared = self.declareHeroSlide(old_index, new_index);
+    self.hero_stall_due = true;
     _ = FrameClock.arm(hwnd, HERO_ANIM_TIMER_ID, HERO_ANIM_TICK_MS);
     self.heroInvalidateAnimRegions(true, self.hero_recenter != null);
     return true;
+}
+
+/// Whether the window's paint draws the running hero slide: one is up and
+/// the compositor is not carrying it (T2573).
+pub fn heroSlidePainted(self: *const Window) bool {
+    return self.hero_slide != null and !self.hero_slide_declared;
+}
+
+var hero_declare_state: ?bool = null;
+
+/// Whether a hero slide may be handed to the compositor whole (T2573): in
+/// the composition pane tree, unless `GHOZTTY_HERO_DECLARE=0` paints it from
+/// the window's thread again - the A/B and the negative control of the
+/// on-screen stall oracle.
+fn heroDeclareOn() bool {
+    if (hero_declare_state) |v| return v;
+    var buf: [8]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const raw = std.process.getEnvVarOwned(fba.allocator(), "GHOZTTY_HERO_DECLARE") catch null;
+    const v = gl_comp_present.treeEnabled() and if (raw) |s| !std.mem.eql(u8, s, "0") else true;
+    hero_declare_state = v;
+    return v;
+}
+
+fn heroEase(t: f64) f64 {
+    return hero_math.easeInOutCubic(@floatCast(t));
+}
+
+/// Hand the selection slide `paintSlide` would draw to the compositor
+/// (T2573; Mac PaneStage hero glide): both pictures go up once, at the
+/// sizes and strip distance `paintSlide` uses, and their offsets run the
+/// same ease over `HERO_SLIDE_MS` on DWM's clock. False when it cannot
+/// (no desk visual, knob off, a step failed): the paint draws it.
+fn declareHeroSlide(self: *Window, from: usize, to: usize) bool {
+    if (!heroDeclareOn()) return false;
+    const host = if (self.chrome_host) |*h| h else return false;
+    if (!host.deskLive()) return false;
+    const hero = HeroCarousel.splitRects(self, self.heroRect()).hero;
+    const w = hero.width();
+    const h = hero.height();
+    if (w <= 0 or h <= 0) return false;
+    const n = @as(usize, @intCast(w)) * @as(usize, @intCast(h));
+    const alloc = self.app.core_app.alloc;
+    const px = alloc.alloc(u32, 2 * n) catch return false;
+    defer alloc.free(px);
+    if (!HeroCarousel.slidePicture(self, self.active_tab, from, w, h, px[0..n])) return false;
+    if (!HeroCarousel.slidePicture(self, self.active_tab, to, w, h, px[n..])) return false;
+    const gap: f32 = @round(40.0 * self.scale);
+    const distance = @as(f32, @floatFromInt(h)) + gap;
+    const dir: f32 = if (to > from) 1 else -1;
+    var segs: [comp_overlay.ease_segments]comp_overlay.Cubic = undefined;
+    const span_s: f64 = HERO_SLIDE_MS / 1000.0;
+    comp_overlay.fitCurve(heroEase, span_s, &segs);
+    host.heroSlide(
+        .{ px[0..n], px[n..] },
+        w,
+        h,
+        .{ .left = hero.left, .top = hero.top, .right = hero.right, .bottom = hero.bottom },
+        .{ .{ 0, -dir * distance }, .{ dir * distance, 0 } },
+        &segs,
+        span_s,
+    ) catch {
+        const f = chrome_comp.Host.lastFailure();
+        log.warn("hero slide declare failed at {s}: hr=0x{x:0>8}; the paint draws it", .{ f.stage, chrome_comp.hex(f.hr) });
+        return false;
+    };
+    // The on-screen oracle reads this (hero-glide-onscreen.ps1).
+    log.debug("hero slide declared from={d} to={d} hero={d},{d} {d}x{d} distance={d:.0} span_ms={d:.0} slides={d}", .{ from, to, hero.left, hero.top, w, h, distance, HERO_SLIDE_MS, host.hero_slides });
+    return true;
+}
+
+/// Take a declared hero slide off the compositor.
+fn heroSlideUndeclare(self: *Window) void {
+    if (!self.hero_slide_declared) return;
+    self.hero_slide_declared = false;
+    if (self.chrome_host) |*h| h.heroSlideHide();
+}
+
+/// `GHOZTTY_DEBUG_HERO_STALL_MS=<n>` (debug builds, T2573): block the
+/// window's thread for n ms at a hero slide's first tick - the on-screen
+/// oracle's stand-in for a busy UI thread (`glideDebugStall`'s shape). A
+/// slide the compositor runs moves on through it; a painted one freezes.
+fn heroDebugStall() void {
+    if (comptime builtin.mode != .Debug) return;
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_DEBUG_HERO_STALL_MS") catch return;
+    defer std.heap.page_allocator.free(raw);
+    const ms = std.fmt.parseInt(u32, std.mem.trim(u8, raw, " \t\r\n"), 10) catch return;
+    if (ms == 0) return;
+    log.info("hero slide debug stall ms={d}", .{ms});
+    std.Thread.sleep(@as(u64, @min(ms, 5000)) * std.time.ns_per_ms);
 }
 
 /// ~16ms animation heartbeat: repaint the animating regions; finish the
@@ -6973,13 +7072,20 @@ fn heroAnimTick(self: *Window) void {
         self.heroCancelAnims();
         return;
     }
-    const had_slide = self.hero_slide != null;
+    if (self.hero_stall_due) {
+        self.hero_stall_due = false;
+        heroDebugStall();
+    }
+    // A declared slide's pictures move on their own; only its landing is
+    // this tick's (T2573).
+    const had_slide = self.heroSlidePainted();
     const had_recenter = self.hero_recenter != null;
     var any = false;
     if (self.hero_slide) |s| {
         if (heroAnimProgress(s.start, HERO_SLIDE_MS) == null) {
             self.hero_slide = null;
             self.heroShowSelected(true);
+            self.heroSlideUndeclare();
         } else any = true;
     }
     if (self.hero_recenter) |rc| {
@@ -7013,7 +7119,9 @@ fn heroCancelAnims(self: *Window) void {
     self.hero_slide = null;
     self.hero_recenter = null;
     if (self.hwnd) |h| FrameClock.disarm(h, HERO_ANIM_TIMER_ID);
+    self.hero_stall_due = false;
     if (had_slide) self.heroShowSelected(false);
+    self.heroSlideUndeclare();
 }
 
 /// Reset every transient pointer interaction: hero animations, hero hover
@@ -11416,7 +11524,7 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     if (saved != 0) _ = w32.IntersectClipRect(desk_dc, area.left, @max(area.top, self.chromeHeight()), area.right, area.bottom);
     if (hero_split) |sp| {
         _ = w32.ExcludeClipRect(desk_dc, sp.divider.left, sp.carousel.top, sp.carousel.right, sp.carousel.bottom);
-        if (self.hero_slide != null) _ = w32.ExcludeClipRect(desk_dc, sp.hero.left, sp.hero.top, sp.hero.right, sp.hero.bottom);
+        if (self.heroSlidePainted()) _ = w32.ExcludeClipRect(desk_dc, sp.hero.left, sp.hero.top, sp.hero.right, sp.hero.bottom);
     }
     // The tucked panes' strips (T2121): laid on the desk, bottom first, so
     // their corners are a card's antialiased curve and each blade's run-side
@@ -11762,7 +11870,7 @@ fn overlayPrepare(self: *Window, hdc: w32.HDC, area: w32.RECT, hero_split: ?hero
     if (hero_split) |sp| {
         keep[n] = .{ .left = sp.divider.left - area.left, .top = sp.carousel.top - area.top, .right = sp.carousel.right - area.left, .bottom = sp.carousel.bottom - area.top };
         n += 1;
-        if (self.hero_slide != null) {
+        if (self.heroSlidePainted()) {
             keep[n] = .{ .left = sp.hero.left - area.left, .top = sp.hero.top - area.top, .right = sp.hero.right - area.left, .bottom = sp.hero.bottom - area.top };
             n += 1;
         }
@@ -11842,7 +11950,7 @@ fn paintOverDesk(self: *Window, hdc: w32.HDC) void {
     self.paintRearrangeHeaders(hdc);
     if (self.tab_count > 0 and self.tab_hero_active[self.active_tab]) {
         HeroCarousel.paint(self, hdc);
-        if (self.hero_slide != null) HeroCarousel.paintSlide(self, hdc);
+        if (self.heroSlidePainted()) HeroCarousel.paintSlide(self, hdc);
     }
 }
 
@@ -15539,7 +15647,7 @@ fn paintChromeRaw(self: *Window, hdc_screen: w32.HDC) void {
         HeroCarousel.paint(self, hdc_screen);
         // While a selection slide runs every hero HWND is hidden and the
         // hero region is owner-painted (outgoing/incoming snapshots).
-        if (self.hero_slide != null) HeroCarousel.paintSlide(self, hdc_screen);
+        if (self.heroSlidePainted()) HeroCarousel.paintSlide(self, hdc_screen);
     }
 }
 
