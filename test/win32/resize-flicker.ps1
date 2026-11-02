@@ -86,6 +86,10 @@
 #      test that needs a race to go its way is the thing this file's header
 #      already refuses to write.
 #
+#      Since T2623 a divider drag holds every grid and waits for nothing
+#      (asserted: waits=0), so E's stale/woken teeth are read off the
+#      whole-window passes, which still wait.
+#
 # Mechanism 4 no longer has "no observable this script can reach": "the pane
 # blocked for a frame" is still a schedule rather than a pixel, but a schedule
 # the app can be asked about. The unit half of the fix -
@@ -218,6 +222,7 @@ function Get-ResizePasses([string]$log) {
                 Timeouts = [int]$Matches[6]
                 Woken    = $(if ($l -match ' woken=(\d+)') { [int]$Matches[1] } else { -1 })
                 Stale    = $(if ($l -match ' stale=(\d+)') { [int]$Matches[1] } else { -1 })
+                Held     = $(if ($l -match ' held=(\d+)') { [int]$Matches[1] } else { 0 })
             }
         }
     }
@@ -426,34 +431,15 @@ try {
         $d = $drags[$drags.Count - 1]
         Write-Host ("  drag summary: ticks=$($d.Ticks) waits=$($d.WaitsTotal) " +
                     "timeouts=$($d.Timeouts) stale=$($d.Stale) woken=$($d.Woken)")
-        # VACUITY: `stale=0` is free on a drag that never waited for anything,
-        # which is the exact state a regression in section D would produce. So
-        # the count only means something once the waits are shown to have
-        # happened at all.
-        Assert ($d.WaitsTotal -gt 0) `
-            ("the drag actually waited for frames ($($d.WaitsTotal) wait(s) over $($d.Ticks) tick(s)) - " +
-             "without this `stale=0` is true of a drag that guarded nothing")
-        # THE DEFECT: a wait ended with the pane's last present still drawn for
-        # the size it had BEFORE the pass. One displayed frame of the previous
-        # size in the new window, which is the blink that was reported.
-        $staleOk = ($d.Stale -eq 0)
-        if ($NegativeControl) { $staleOk = -not $staleOk }
-        Assert $staleOk ("every frame wait came back on a frame drawn at the new size " +
-            "(stale=$($d.Stale) of $($d.WaitsTotal) wait(s))")
-        # THE WIRING (T1035). `stale=0` and `waits>0` both hold for a wait that
-        # is only a 16ms sleep with a size check on the end: the clock ends the
-        # block, the one last look finds the frame the renderer drew meanwhile,
-        # and nothing is stale. That is exactly the build T1031 found -
-        # `signalFrameDrawn` had no caller - and it would pass every assertion
-        # above. `woken` counts the waits a renderer's present actually ended,
-        # so it is zero on that build and only on that build. Measured teeth:
-        # with the SetEvent in `signalFrameDrawn` removed and rebuilt, this
-        # reads woken=0 and fails; restored, it passes.
-        $wokenOk = ($d.Woken -gt 0)
-        if ($NegativeControl) { $wokenOk = -not $wokenOk }
-        Assert $wokenOk ("a presented frame woke the drag's frame waits " +
-            "(woken=$($d.Woken) of $($d.WaitsTotal) wait(s), timeouts=$($d.Timeouts); " +
-            "-1 means the build does not report it)")
+        # T2623: a divider drag HOLDS every terminal's grid (T2459) and waits
+        # for no frame - the frame would show the same text, and the strips a
+        # grown view opens are filled in the same batch. So the drag's own
+        # count must be zero waits, and the frame-wait mechanism's teeth
+        # (stale frames, a present that wakes the wait) move to the
+        # whole-window resizes below, which still wait.
+        $heldOk = ($d.WaitsTotal -eq 0)
+        if ($NegativeControl) { $heldOk = -not $heldOk }
+        Assert $heldOk ("the held divider drag waited for no frame ($($d.WaitsTotal) wait(s) over $($d.Ticks) tick(s))")
     }
 
     # ---- C2. across whole-window resizes --------------------------------
@@ -628,7 +614,10 @@ try {
         # nothing presented has no pixels to protect, and a brand-new tab's
         # pane is in exactly that state when the tab strip appears and
         # relayouts the window (cause=tabbar panes=1 sync=0 fresh=1).
-        if (($p.Sync + $p.Fresh) -lt $p.Panes) {
+        # `Held` panes too (T2623): a pane holding its grid under a drag or a
+        # glide declines the wait by rule - its text does not change and the
+        # strips its view opened are filled.
+        if (($p.Sync + $p.Fresh + $p.Held) -lt $p.Panes) {
             $unguarded += "cause=$($p.Cause) panes=$($p.Panes) sync=$($p.Sync) fresh=$($p.Fresh)"
         }
     }
@@ -636,6 +625,20 @@ try {
     if ($NegativeControl) { $syncOk = -not $syncOk }
     Assert $syncOk ('every whole-window resize waits for a frame in every pane' +
         $(if ($unguarded.Count) { ' -- ' + (($unguarded | Select-Object -First 4) -join '; ') } else { '' }))
+
+    # THE WAIT'S TEETH (T1476, T1035), on the passes that still wait (the
+    # divider drag holds since T2623): every wait came back on a frame at the
+    # new size, and a renderer's present - not the clock - ended them.
+    $waited = @($withPanes | Where-Object { $_.Waits -gt 0 })
+    $staleSum = ($waited | Measure-Object Stale -Sum).Sum
+    $wokenSum = ($waited | Measure-Object Woken -Sum).Sum
+    Assert ($waited.Count -gt 0) "whole-window resizes still waited for frames ($($waited.Count) pass(es))"
+    $staleOk = ($staleSum -eq 0)
+    if ($NegativeControl) { $staleOk = -not $staleOk }
+    Assert $staleOk "every whole-window frame wait came back on a frame drawn at the new size (stale=$staleSum)"
+    $wokenOk = ($wokenSum -gt 0)
+    if ($NegativeControl) { $wokenOk = -not $wokenOk }
+    Assert $wokenOk "a presented frame woke the whole-window frame waits (woken=$wokenSum; -1 means the build does not report it)"
 
     # THE TAB SWITCH ENDS ON A FRAME AT THE NEW SIZE (T2046). The guarantee
     # above says every pane WAITED; it does not say the wait was answered by the

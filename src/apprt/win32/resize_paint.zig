@@ -86,6 +86,13 @@ pub const Present = struct {
 
     /// The renderer thread has presented into this window at least once.
     has_presented_frame: bool,
+
+    /// The terminal's grid is held under a drag (T2459, T2623): the resize
+    /// only moves the renderer's view over the grid it has, the uncovered
+    /// strips are filled with background in the same batch, and the frame the
+    /// wait would buy shows the same text. Waiting is a third of a drag step
+    /// (T2609) for nothing.
+    grid_held: bool = false,
 };
 
 /// A presented client size, packed into one word so it can cross the
@@ -208,7 +215,19 @@ pub fn shouldPresentSynchronously(p: Present) bool {
     // Nothing on screen to go stale: waiting here buys no pixels and costs the
     // startup path a frame per pane.
     if (!p.has_presented_frame) return false;
+    if (p.grid_held) return false;
     return p.in_live_resize or p.in_live_layout;
+}
+
+test "T2623: a held grid never waits for a frame, in a size loop or a live pass" {
+    for ([_][2]bool{ .{ true, false }, .{ false, true }, .{ true, true } }) |live| {
+        try std.testing.expect(!shouldPresentSynchronously(.{
+            .in_live_resize = live[0],
+            .in_live_layout = live[1],
+            .has_presented_frame = true,
+            .grid_held = true,
+        }));
+    }
 }
 
 test "popups always get the flat fill" {

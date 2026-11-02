@@ -19,8 +19,10 @@ const testing = std.testing;
 /// How long the pointer rests mid-drag before the terminals take the size the
 /// layout has them at: long enough that a hand in motion never reaches it
 /// (pointer moves come every few ms), short enough that a pause to read the
-/// pane shows it reflowed.
-pub const quiet_ms: u32 = 150;
+/// pane shows it reflowed. 100 ms (T2623; user 2026-11-01: "~60-100 ms"):
+/// the content settles within 150 ms of the hand stopping, reflow included.
+/// The same clock serves an edge drag (`resize_content.zig`).
+pub const quiet_ms: u32 = 100;
 
 pub const Live = struct {
     /// A divider or grip drag is under way (`Window.stackGesturing`).

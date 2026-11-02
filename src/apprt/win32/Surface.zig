@@ -190,9 +190,9 @@ key_event_produced_text: bool = false,
 /// used to put them on the synchronous-present path and every relayout tick
 /// showed background before it showed text.
 in_live_resize: bool = false,
-/// The size a drag step left this pane at while `GHOZTTY_RESIZE_NO_CONTENT`
-/// kept the content at its old one (T2609, `resize_content.zig`); applied
-/// when the size loop ends.
+/// The size a drag step left this pane at while `GHOZTTY_RESIZE_NO_CONTENT=empty`
+/// skipped its resize (T2609, `resize_content.zig`); applied when the size
+/// loop ends.
 content_pending: ?[2]u32 = null,
 
 /// The renderer thread has presented at least one frame into this window.
@@ -4560,12 +4560,12 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
     // Skip zero-size events (minimized windows).
     if (width == 0 or height == 0) return;
 
-    // T2609 step 1: the A/B arm that keeps the content at its pre-drag size
-    // under an edge drag, or skips the pane's resize altogether (the floor).
-    const content_action = resize_content.action(contentMode(), self.in_live_resize);
-    if (content_action != .apply) {
+    // T2609's floor arm (`GHOZTTY_RESIZE_NO_CONTENT=empty`): the pane's
+    // resize is skipped altogether under an edge drag. The default held arm
+    // (T2623) goes on below: the window's drag hold keeps the grid, and the
+    // frame wait is skipped for a held grid.
+    if (resize_content.action(contentMode(), self.in_live_resize) == .skip) {
         self.content_pending = .{ width, height };
-        if (content_action == .hold and self.own_layer) self.fillUncoveredStrips(width, height);
         return;
     }
 
@@ -4591,7 +4591,7 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
 var content_mode_state: ?resize_content.Mode = null;
 
 /// `GHOZTTY_RESIZE_NO_CONTENT` (T2609, `resize_content.zig`), read once.
-fn contentMode() resize_content.Mode {
+pub fn contentMode() resize_content.Mode {
     if (content_mode_state) |m| return m;
     const raw = std.process.getEnvVarOwned(std.heap.page_allocator, resize_content.env_name) catch null;
     defer if (raw) |r| std.heap.page_allocator.free(r);
@@ -4673,7 +4673,7 @@ pub fn applyResize(self: *Surface, width: u32, client_height: u32) void {
     // rule now and is unit tested; the pass declaring itself live is what
     // covers the gestures with no loop to be inside of.
     const presented = self.has_presented_frame.load(.acquire);
-    if (!presented) self.parent_window.noteFreshPane();
+    if (!presented) self.parent_window.noteFreshPane() else if (self.resize_held) self.parent_window.noteHeldPane();
     // T1476: the size this pane is now waiting to SEE. The renderer reads the
     // whole client rect (`OpenGL.surfaceSize`), not the grid width the
     // scrollbar carved out of it, so this is the raw WM_SIZE width over the
@@ -4683,6 +4683,7 @@ pub fn applyResize(self: *Surface, width: u32, client_height: u32) void {
         .in_live_resize = self.in_live_resize,
         .in_live_layout = self.parent_window.in_live_layout,
         .has_presented_frame = presented,
+        .grid_held = self.resize_held,
     })) {
         self.parent_window.notePresentSync();
         self.awaited_size = resize_paint.packSize(width, height);

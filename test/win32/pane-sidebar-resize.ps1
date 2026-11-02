@@ -226,10 +226,13 @@ try {
     $lines = Get-LogSince $from
     $passes = @($lines | ForEach-Object {
         if ($_ -match 'window resize cause=sidebar panes=(\d+) sync=(\d+) fresh=(\d+)') {
-            [pscustomobject]@{ Panes = [int]$Matches[1]; Sync = [int]$Matches[2]; Fresh = [int]$Matches[3] }
+            # held= (T2623): a pane holding its grid declines the wait by rule.
+            $p = [pscustomobject]@{ Panes = [int]$Matches[1]; Sync = [int]$Matches[2]; Fresh = [int]$Matches[3]; Held = 0 }
+            if ($_ -match ' held=(\d+)') { $p.Held = [int]$Matches[1] }
+            $p
         } })
     $resized = @($passes | Where-Object { $_.Panes -gt 0 })
-    $unguarded = @($resized | Where-Object { $_.Sync + $_.Fresh -lt $_.Panes })
+    $unguarded = @($resized | Where-Object { $_.Sync + $_.Fresh + $_.Held -lt $_.Panes })
     Assert "the drag ran a layout pass per width change ($($passes.Count) passes)" ($passes.Count -ge 4)
     Assert "and they resized panes ($($resized.Count) of $($passes.Count))" ($resized.Count -ge 4)
     Assert "every resized pane waited for its frame (unguarded: $(($unguarded | ForEach-Object { "panes=$($_.Panes) sync=$($_.Sync)" }) -join '; '))" ($resized.Count -gt 0 -and $unguarded.Count -eq 0)

@@ -28,10 +28,18 @@
 #      at least one.
 #      Since T2459 a divider drag HOLDS the grid until it is over, so this
 #      is one resize in practice.
-#   B2. A rest of the hand mid-drag (150 ms, button still down) releases the
+#   B2. A rest of the hand mid-drag (100 ms, button still down) releases the
 #      hold: the program sees a resize DURING the rest, and the drag as a
 #      whole reaches it twice - at the rest and at the release.
 #   C. The same for a window-edge resize storm (40 SetWindowPos steps).
+#   C2. A window-EDGE drag inside its size loop (WM_ENTERSIZEMOVE ...
+#      WM_EXITSIZEMOVE, T2623) holds the grid like a divider drag: 40 steps
+#      over ~480 ms - longer than the core's 350 ms debounce cap, so the old
+#      per-step path (GHOZTTY_RESIZE_NO_CONTENT=0) leaks a resize mid-drag and
+#      fails here - reach the program as nothing, a rest (`drag_hold.quiet_ms`, 100 ms)
+#      reaches it once DURING the rest, and 40 more steps plus the release
+#      once more - two resizes for the whole drag - and the grid it ends on is
+#      the one a single resize to the same width gives.
 #   D. The final size is the TRUE final size: after B's storm the program holds
 #      the same grid it gets when the divider is put at the same spot in ONE
 #      move. Likewise for C against a single resize to the same width.
@@ -65,6 +73,61 @@ $env:GHOZTTY_PIPE_SUFFIX = "-resizedeb$PID"
 Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
 
 $counter = Join-Path $PSScriptRoot 'lib\count-resizes.ps1'
+
+# C2's edge drag in phases (T2623): the size loop's bracket and its steps, each
+# from a thread on the test desktop, so the count can be read mid-drag.
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Threading;
+public static class EdgeLoop {
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr h, uint msg, IntPtr w, IntPtr l, uint flags, uint ms, out IntPtr res);
+    [DllImport("user32.dll", SetLastError = true)] static extern IntPtr OpenDesktop(string name, uint flags, bool inherit, uint access);
+    [DllImport("user32.dll")] static extern bool SetThreadDesktop(IntPtr d);
+    [DllImport("user32.dll")] static extern bool CloseDesktop(IntPtr d);
+    static bool OnDesk(string desk, Func<bool> body) {
+        bool ok = false;
+        var t = new Thread(delegate() {
+            IntPtr d = OpenDesktop(desk, 0, false, 0x01FF);
+            if (d == IntPtr.Zero || !SetThreadDesktop(d)) return;
+            try { ok = body(); } finally { CloseDesktop(d); }
+        });
+        t.Start();
+        t.Join();
+        return ok;
+    }
+    static bool Send(IntPtr h, uint msg) {
+        IntPtr res;
+        return SendMessageTimeout(h, msg, IntPtr.Zero, IntPtr.Zero, 0x0002, 10000, out res) != IntPtr.Zero;
+    }
+    public static bool Enter(string desk, IntPtr h) { return OnDesk(desk, () => Send(h, 0x0231)); }
+    public static bool Exit(string desk, IntPtr h) { return OnDesk(desk, () => Send(h, 0x0232)); }
+    // `steps` right-edge steps of `dw` px, posted to the window's own thread
+    // `stepMs` apart; true once the last one has landed.
+    public static bool Steps(string desk, IntPtr h, int steps, int dw, int stepMs) {
+        return OnDesk(desk, () => {
+            const uint NOZ = 0x0004, NOACT = 0x0010, NOMOVE = 0x0002, ASYNC = 0x4000;
+            RECT r; GetWindowRect(h, out r);
+            int w = r.R - r.L, hh = r.B - r.T;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            for (int i = 1; i <= steps; i++) {
+                SetWindowPos(h, IntPtr.Zero, 0, 0, w + dw * i, hh, NOZ | NOACT | NOMOVE | ASYNC);
+                long due = (long)i * stepMs;
+                while (sw.ElapsedMilliseconds < due) Thread.Sleep(1);
+            }
+            while (sw.ElapsedMilliseconds < 10000) {
+                RECT n; GetWindowRect(h, out n);
+                if (n.R - n.L == w + dw * steps) return true;
+                Thread.Sleep(1);
+            }
+            return false;
+        });
+    }
+}
+'@
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $outDir = Join-Path $env:TEMP "ghoztty-resize-debounce\$stamp"
 New-Item -ItemType Directory -Force $outDir | Out-Null
@@ -233,7 +296,7 @@ try {
 
     # ---- B2. a rest mid-drag (T2459) ---------------------------------------
     # Under a divider drag the terminal holds its grid; a rest of the hand
-    # (`drag_hold.quiet_ms`, 150 ms) lets it take the size it is at, while the
+    # (`drag_hold.quiet_ms`, 100 ms) lets it take the size it is at, while the
     # button is still down, and the moves after it hold again until the
     # release. Read DURING the rest: held to the end, the count would not move.
     $before = (Wait-CounterSettled $file).Count
@@ -301,6 +364,36 @@ try {
     [void](Set-TestWindowPos -Window $top -X 40 -Y 40 -Width $endWidth -Height 900)
     $j = Wait-CounterSettled $file
     Assert ($j.Size -eq $stormSize) "after the window resize the program holds the true final size ($stormSize == $($j.Size))"
+
+    # ---- C2. a window-edge drag inside its size loop (T2623) ---------------
+    [void](Set-TestWindowPos -Window $top -X 40 -Y 40 -Width 1400 -Height 900)
+    $before = (Wait-CounterSettled $file).Count
+    $desk = $td.Name
+    $entered = [EdgeLoop]::Enter($desk, $top)
+    $landed1 = [EdgeLoop]::Steps($desk, $top, 40, -4, 12)
+    # Straight after the steps, before any rest has run out: still held.
+    $moving = (Read-Counter $file).Count - $before
+    # The rest: read DURING it, with the size loop still open.
+    $rest = Wait-CounterSettled $file 900 4000
+    $atRest = $rest.Count - $before
+    $landed2 = [EdgeLoop]::Steps($desk, $top, 40, -4, 12)
+    $exited = [EdgeLoop]::Exit($desk, $top)
+    $e = Wait-CounterSettled $file
+    $total = $e.Count - $before
+    Write-Host "  edge drag in its size loop: $moving resize(s) while moving, $atRest by the end of the rest, $total over the whole drag (landed: $landed1/$landed2)"
+    Assert ($entered -and $exited -and $landed1 -and $landed2) "C2. the size loop opened and closed and every step landed"
+    $ok = ($moving -eq 0)
+    if ($NegativeControl) { $ok = -not $ok }
+    Assert $ok "C2. 40 edge steps (~480 ms, past the core debounce's 350 ms cap) inside the size loop reached the program as nothing while moving ($moving)"
+    Assert ($atRest -eq 1) "C2. a rest with the edge still held reached the program once ($atRest)"
+    Assert ($total -eq 2) "C2. the drag reached the program once at the rest and once at the release ($total)"
+    $edgeSize = $e.Size
+    $edgeWidth = 1400 - 80 * 4
+    [void](Set-TestWindowPos -Window $top -X 40 -Y 40 -Width 1400 -Height 900)
+    [void](Wait-CounterSettled $file)
+    [void](Set-TestWindowPos -Window $top -X 40 -Y 40 -Width $edgeWidth -Height 900)
+    $j = Wait-CounterSettled $file
+    Assert ($j.Size -eq $edgeSize) "C2. after the edge drag the program holds the true final size ($edgeSize == $($j.Size))"
 
     # ---- E. no size overlay by default -------------------------------------
     Assert ($overlaysSeen -eq 0) "no size overlay appeared during the drag or the resize with the default config ($overlaysSeen seen)"

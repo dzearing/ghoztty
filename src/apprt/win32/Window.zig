@@ -23,6 +23,7 @@ const BannerDialog = @import("BannerDialog.zig");
 const BannerOverlay = @import("BannerOverlay.zig").BannerOverlay;
 const resize_paint = @import("resize_paint.zig");
 const resize_prelayout = @import("resize_prelayout.zig");
+const resize_content = @import("resize_content.zig");
 const Surface = @import("Surface.zig");
 const WindowPresenter = @import("WindowPresenter.zig");
 const gl_window_presenter = @import("../../renderer/gl_window_presenter.zig");
@@ -843,6 +844,10 @@ frame_wait_deferred: u32 = 0,
 /// Panes resized by this pass that had never presented a frame, so the
 /// synchronous present was declined by the rule rather than missed (T1393).
 frame_wait_fresh: u32 = 0,
+/// Panes resized by this pass under a held grid (T2623): the wait is declined
+/// by the rule - the text does not change, and the strips the view opened are
+/// filled - so the oracle counts them apart from a pane that was missed.
+frame_wait_held: u32 = 0,
 /// Nesting depth of `beginFrameWaitBatch`/`endFrameWaitBatch`. Layout paths
 /// call each other (a hero relayout runs inside `layoutSplits`), and only the
 /// outermost pass may do the waiting — an inner one that waited would put the
@@ -957,6 +962,10 @@ stack_slide_column: bool = false,
 /// The hand has rested `drag_hold.quiet_ms` mid-drag (T2459): the terminals
 /// took the size the layout has them at, until the next move holds them again.
 drag_hold_quiet: bool = false,
+/// An edge drag has sized the window in the held arm (T2623,
+/// `resize_content.zig`): the terminals hold their grid like a divider
+/// drag's, on the same rest clock, until the size loop ends.
+edge_sizing: bool = false,
 /// The reach of the sidebar edge's gutter bar as last refreshed (T2406): a
 /// glide moves the gutter, so the next refresh repaints where it was too.
 sidebar_edge_shown: ?w32.RECT = null,
@@ -7642,6 +7651,7 @@ fn beginFrameWaitBatch(self: *Window) void {
         self.frame_wait_resizes = 0;
         self.frame_wait_deferred = 0;
         self.frame_wait_fresh = 0;
+        self.frame_wait_held = 0;
         self.frame_wait_stale = 0;
         self.frame_overlay_us = 0;
         self.frame_resize_us = 0;
@@ -7674,7 +7684,7 @@ pub fn noteResize(self: *Window) void {
 /// relayout the user watched with no anti-flicker guarantee.
 fn reportResizePass(self: *Window, cause: []const u8) void {
     log.debug(
-        "window resize cause={s} panes={d} sync={d} fresh={d} waits={d} timeouts={d} stale={d} woken={d}",
+        "window resize cause={s} panes={d} sync={d} fresh={d} waits={d} timeouts={d} stale={d} woken={d} held={d}",
         .{
             cause,
             self.frame_wait_resizes,
@@ -7684,6 +7694,7 @@ fn reportResizePass(self: *Window, cause: []const u8) void {
             self.frame_wait_timeouts,
             self.frame_wait_stale,
             self.frame_wait_woken,
+            self.frame_wait_held,
         },
     );
 }
@@ -7703,6 +7714,12 @@ pub fn notePresentSync(self: *Window) void {
 /// the moment the tab strip appears and relayouts the window.
 pub fn noteFreshPane(self: *Window) void {
     self.frame_wait_fresh +|= 1;
+}
+
+/// Record that a pane resized by this pass holds its grid (T2623), so it
+/// declined the wait by the rule.
+pub fn noteHeldPane(self: *Window) void {
+    self.frame_wait_held +|= 1;
 }
 
 /// Record that a pane's wait ended with its renderer's last present still at
@@ -9973,7 +9990,7 @@ pub fn paneSidebarFollowLag(self: *const Window) ?i32 {
 /// motion's last size is applied once, not once before the pass and again
 /// after it.
 fn syncDragHolds(self: *Window, comptime acquire_only: bool) void {
-    const gesturing = self.stackGesturing();
+    const gesturing = self.holdGesturing();
     const glide_resizing = if (self.stack_slide) |*s| s.resize else false;
     if (!gesturing and !glide_resizing) self.drag_hold_quiet = false;
     const want = drag_hold.wanted(.{ .gesturing = gesturing, .glide_resizing = glide_resizing, .quiet = self.drag_hold_quiet });
@@ -9994,6 +10011,22 @@ fn syncDragHolds(self: *Window, comptime acquire_only: bool) void {
     if (held + released > 0) log.debug("drag hold held={d} released={d}", .{ held, released });
 }
 
+/// A hand reshaping the panes: a divider or grip drag (T2459), or the
+/// window's edge in the held arm (T2623).
+fn holdGesturing(self: *const Window) bool {
+    return self.stackGesturing() or self.edge_sizing;
+}
+
+/// A step of an edge drag that sizes the window (T2623), before its
+/// pre-layout sizes any pane: the terminals hold, and the rest clock starts
+/// over - so the grid takes a size once per rest and once at release.
+fn noteEdgeMotion(self: *Window, wp: *const w32.WINDOWPOS) void {
+    if (!self.in_size_loop or wp.flags & resize_prelayout.swp_nosize != 0) return;
+    if (!resize_content.edgeHolds(Surface.contentMode(), true)) return;
+    self.edge_sizing = true;
+    self.noteDragMotion();
+}
+
 /// A divider or grip drag moved (T2459): the terminals hold again, and the
 /// rest clock starts over.
 fn noteDragMotion(self: *Window) void {
@@ -10005,7 +10038,7 @@ fn noteDragMotion(self: *Window) void {
 /// take the size the layout has them at. After the drag the same clock is the
 /// sweep that makes sure nothing is left held: it runs until nothing is live.
 fn dragQuietTick(self: *Window) void {
-    const gesturing = self.stackGesturing();
+    const gesturing = self.holdGesturing();
     const glide_resizing = if (self.stack_slide) |*s| s.resize else false;
     const glide_moving = if (self.stack_slide) |*s| self.stack_slide_last != null and !s.settled() else false;
     if (gesturing and !drag_hold.quietReleases(gesturing, glide_moving)) return;
@@ -18274,6 +18307,7 @@ pub fn windowWndProc(
             // size, and the panes must be laid out for the size that lands.
             const wp: *const w32.WINDOWPOS = @ptrFromInt(@as(usize, @bitCast(lparam)));
             window.edgeStepBegin(wp);
+            window.noteEdgeMotion(wp);
             const r = w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             window.prelayoutForPos(wp);
             return r;
@@ -18294,6 +18328,12 @@ pub fn windowWndProc(
         w32.WM_EXITSIZEMOVE => {
             window.in_size_loop = false;
             window.edgeDragEnded();
+            // The release (T2623): every grid the edge held takes its size now,
+            // once - nothing if the last rest already gave it.
+            if (window.edge_sizing) {
+                window.edge_sizing = false;
+                window.syncDragHolds(false);
+            }
             if (window.tab_count > 0) {
                 var it = window.tab_trees[window.active_tab].iterator();
                 while (it.next()) |entry| {

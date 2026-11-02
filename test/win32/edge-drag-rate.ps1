@@ -42,8 +42,8 @@
 #
 # -ContentArms (T2609 step 1) measures instead WHERE a step's time goes: the
 # shipped path in three arms of GHOZTTY_RESIZE_NO_CONTENT (src/apprt/win32/
-# resize_content.zig) - `content` (unset: every step resizes the terminals),
-# `held` (the terminals keep their pre-drag size, strips filled) and `empty`
+# resize_content.zig) - `content` (`0`: every step resizes the terminals),
+# `held` (the default since T2623: the grids hold, no frame wait) and `empty`
 # (a pane's resize does nothing; the floor) - and prints each drag's stage
 # breakdown from the `window drag ticks=` line. Only A is asserted, plus D:
 # the content-free arms really skipped the content (no frame waits). It never
@@ -227,6 +227,8 @@ function Measure-Scene([string]$scene, [string]$mode) {
     switch ($mode) {
         'held' { $env:GHOZTTY_RESIZE_NO_CONTENT = '1' }
         'empty' { $env:GHOZTTY_RESIZE_NO_CONTENT = 'empty' }
+        # Held is the default since T2623; the old per-step resize is `0`.
+        'content' { $env:GHOZTTY_RESIZE_NO_CONTENT = '0' }
         default { Remove-Item env:GHOZTTY_RESIZE_NO_CONTENT -ErrorAction SilentlyContinue }
     }
     $res = @{}
@@ -298,7 +300,11 @@ try {
         foreach ($scene in 'row3', 'viewer') {
             foreach ($mode in 'held', 'empty') {
                 $g = $all["$scene/$mode"].grow
-                $ok = $null -ne $g -and $null -ne $g.Cost -and $g.Cost.Waits -eq 0 -and $g.Cost.ResizeUs -eq 0
+                # Held (T2623) still tells the renderer its new view - a few
+                # microseconds, the grid held - and waits for nothing; empty
+                # does not even do that.
+                $ok = $null -ne $g -and $null -ne $g.Cost -and $g.Cost.Waits -eq 0 -and
+                    ($mode -eq 'held' -or $g.Cost.ResizeUs -eq 0)
                 Assert $ok "D. $scene/$mode kept the terminals out of the drag (waits=$($g.Cost.Waits) resize=$($g.Cost.ResizeUs)us)"
             }
         }
