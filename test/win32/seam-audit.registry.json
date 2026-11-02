@@ -268,6 +268,21 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the driver's real GL version, as in every other launch."
         },
+        "GHOZTTY_GL_SIMULATE_PRESENTER_RESET_AFTER": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "T2616. gl-device-lost.ps1 arm E reports the window presenter's context lost after n composes, a loss the presenter sees first; unset = only the driver's real reset status (or a pane's report) can start a presenter rebuild, which arm D and every other presenter run use."
+        },
+        "GHOZTTY_PRESENTER_PROBE": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "T2615. Debug-only readback of each pane's center from the window presenter's back buffer, set by window-presenter.ps1 and gl-device-lost.ps1 arms D/E; it only reads, and unset is what every other run and the user's build use."
+        },
+        "GHOZTTY_WINDOW_PRESENTER": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "T2610. Opts a window into the one-presenter-per-window path; unset = the per-pane present, the shipped default until T2610 step 5, which every other acceptance run uses (window-presenter.ps1 section A and gl-device-lost.ps1 arms A-C run it explicitly)."
+        },
         "GHOZTTY_GL_SIMULATE_REBUILD_FAILURES": {
             "class": "fault",
             "unset": "shipped-elsewhere",

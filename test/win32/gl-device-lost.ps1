@@ -67,6 +67,13 @@ $root = Join-Path $env:TEMP "ghoztty-gl-device-lost-$PID"
 $savedLocalAppData = $env:LOCALAPPDATA
 $savedResetAfter = $env:GHOZTTY_GL_SIMULATE_RESET_AFTER
 $savedRebuildFailures = $env:GHOZTTY_GL_SIMULATE_REBUILD_FAILURES
+# The window presenter arms' knobs (T2616): unset for A-C, set by D-E.
+$presenterKnobs = 'GHOZTTY_WINDOW_PRESENTER', 'GHOZTTY_PRESENTER_PROBE', 'GHOZTTY_GL_SIMULATE_PRESENTER_RESET_AFTER'
+$savedPresenterKnobs = @{}
+foreach ($k in $presenterKnobs) {
+    $savedPresenterKnobs[$k] = [Environment]::GetEnvironmentVariable($k, 'Process')
+    [Environment]::SetEnvironmentVariable($k, $null, 'Process')
+}
 
 [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
 New-Item -ItemType Directory -Force $root | Out-Null
@@ -144,6 +151,61 @@ function Start-Arm($name, $tint) {
     & $Exe +new-window "--target=lost$name" "--color=$tint" | Out-Null
     $win = Wait-Win "lost$name"
     return [pscustomobject]@{ App = $app; Err = $err; Top = $top; Win = $win; Target = "lost$name" }
+}
+
+# Whether hex color $hex (rrggbb) is within 8 per channel of (R, G, B).
+function Test-HexNear($hex, $R, $G, $B) {
+    $v = [Convert]::ToInt32($hex, 16)
+    return ([math]::Abs((($v -shr 16) -band 0xff) - $R) -le 8) -and
+        ([math]::Abs((($v -shr 8) -band 0xff) - $G) -le 8) -and
+        ([math]::Abs(($v -band 0xff) - $B) -le 8)
+}
+
+# The window presenter arms (D, E): the loss is detected where the arm stages
+# it, the presenter rebuilds once per window and moves to generation 2, the
+# pane rebuilds INTO it, and the presenter composes the rebuilt pane's frame.
+function Test-PresenterRebuild($Arm, $Label, $LostLine, $PaneLostLine, $R, $G, $B) {
+    $err = $Arm.Err
+    Assert "${Label}1 the pane hands its frames to the window presenter" `
+        (Wait-Log $err 'terminal pane hands its frames to the window presenter robust=true' 10000)
+    Assert "${Label}2 the presenter heard of the loss" (Wait-Log $err $LostLine 20000)
+    Assert "${Label}3 it rebuilt its own context first, into generation 2" `
+        (Wait-Log $err 'window presenter rebuilt its context after 1 attempt\(s\) generation=2 robust=true' 20000)
+    Assert "${Label}4 the pane's context went with it" (Wait-Log $err $PaneLostLine 20000)
+    Assert "${Label}5 and the pane rejoined the presenter's new group" `
+        (Wait-Log $err 'pane renderer rejoined the window presenter generation=2' 20000)
+
+    & $Exe +send-keys "--target=$($Arm.Target)" 'echo rebuilt-t2616' Enter 2>$null | Out-Null
+    Assert "${Label}6 the presenter composed a frame of the rebuilt pane" `
+        (Wait-Log $err 'window presenter composed a pane frame panes=\d+ blitted=\d+ generation=2' 20000)
+    Start-Sleep -Milliseconds 800
+
+    Assert "${Label}7 the app is still running" ($Arm.App.Process -and -not $Arm.App.Process.HasExited)
+    $shot = Wait-Capture $Arm.Target
+    Assert "${Label}8 the rebuilt pane hands back a frame ($(Get-LastPaneCaptureError))" ($null -ne $shot)
+    if ($shot) {
+        $colors = Get-TestPaneColorCount -Shot $shot
+        Assert "${Label}9 it draws text, not a flat fill ($colors distinct colors, >= 8)" ($colors -ge 8)
+        Close-TestPaneCapture $shot
+    }
+
+    $text = Read-Text $err
+    $after = Get-LogAfter $text 'window presenter rebuilt its context after'
+    # The probe reads the presenter's BACK BUFFER at each pane's center: a
+    # center carrying this pane's tint after the rebuild is a frame the new
+    # pane context drew, blitted by the new presenter context.
+    $centers = @([regex]::Matches($after, 'window presenter probe panes=\d+ centers=([0-9a-f,]+)') |
+        ForEach-Object { $_.Groups[1].Value -split ',' } | Where-Object { $_ })
+    $tinted = @($centers | Where-Object { Test-HexNear $_ $R $G $B })
+    Assert "${Label}10 after the rebuild the presenter's back buffer shows the pane's tint ($($centers.Count) centers probed)" `
+        ($tinted.Count -gt 0)
+    $created = ([regex]::Matches($text, 'window presenter created hwnd=')).Count
+    $rebuilt = ([regex]::Matches($text, 'window presenter rebuilt its context after')).Count
+    Assert "${Label}11 one rebuild per presenter, not one per report ($rebuilt rebuilt, $created presenters)" `
+        ($created -gt 0 -and $rebuilt -eq $created)
+    Assert "${Label}12 no pane fell back to presenting itself" ($text -notmatch 'this pane presents itself')
+    Assert "${Label}13 no OpenGL errors or failed draws after the rebuild" `
+        ($after.Length -gt 0 -and $after -notmatch 'error\(opengl\)' -and $after -notmatch 'error drawing err=')
 }
 
 try {
@@ -235,6 +297,38 @@ try {
     Assert "C3 and with every frame checked, nothing was ever reported lost" `
         ($textC -notmatch 'graphics device lost')
 
+    # ========================================================================
+    # The window presenter path (T2616). A reset is lost for the whole share
+    # group, so the presenter rebuilds its context first and bumps its
+    # generation, and every pane rebuilds into the new group. Two arms: the
+    # loss seen FIRST by a pane (which reports it), and seen first by the
+    # presenter (whose pane only learns of it from the generation bump).
+    # The probe reads each pane's center back out of the presenter's back
+    # buffer, so "the presenter composes the REBUILT pane" is a pixel, not a
+    # log line.
+    # ========================================================================
+    $env:GHOZTTY_WINDOW_PRESENTER = '1'
+    $env:GHOZTTY_PRESENTER_PROBE = '1'
+
+    "== D: presenter on, the loss seen first by a pane"
+    $env:GHOZTTY_GL_SIMULATE_RESET_AFTER = '3'
+    Remove-Item env:GHOZTTY_GL_SIMULATE_REBUILD_FAILURES -ErrorAction SilentlyContinue
+    Remove-Item env:GHOZTTY_GL_SIMULATE_PRESENTER_RESET_AFTER -ErrorAction SilentlyContinue
+    $d = Start-Arm 'd' '#204080'
+    Assert "D0 the arm's window came up" ($d.Top -ne [IntPtr]::Zero -and $null -ne $d.Win)
+    Test-PresenterRebuild -Arm $d -Label 'D' -LostLine 'window presenter: graphics device lost \(reported by a pane renderer\)' `
+        -PaneLostLine 'graphics device lost \(simulated' -R 0x20 -G 0x40 -B 0x80
+
+    "== E: presenter on, the loss seen first by the presenter"
+    Remove-Item env:GHOZTTY_GL_SIMULATE_RESET_AFTER -ErrorAction SilentlyContinue
+    $env:GHOZTTY_GL_SIMULATE_PRESENTER_RESET_AFTER = '5'
+    $e = Start-Arm 'e' '#802040'
+    Assert "E0 the arm's window came up" ($e.Top -ne [IntPtr]::Zero -and $null -ne $e.Win)
+    Test-PresenterRebuild -Arm $e -Label 'E' -LostLine 'window presenter: graphics device lost \(simulated' `
+        -PaneLostLine 'graphics device lost \(the window presenter rebuilt its context\)' -R 0x80 -G 0x20 -B 0x40
+    Assert "E14 no pane reported a loss of its own (only the presenter's was simulated)" `
+        ((Read-Text $e.Err) -notmatch 'reported by a pane renderer')
+
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
 
     # LAST statement of the top-level try (T1039).
@@ -244,6 +338,7 @@ try {
     else { Remove-Item env:GHOZTTY_GL_SIMULATE_RESET_AFTER -ErrorAction SilentlyContinue }
     if ($savedRebuildFailures) { $env:GHOZTTY_GL_SIMULATE_REBUILD_FAILURES = $savedRebuildFailures }
     else { Remove-Item env:GHOZTTY_GL_SIMULATE_REBUILD_FAILURES -ErrorAction SilentlyContinue }
+    foreach ($k in $presenterKnobs) { [Environment]::SetEnvironmentVariable($k, $savedPresenterKnobs[$k], 'Process') }
     $env:LOCALAPPDATA = $savedLocalAppData
     Remove-TestDesktop
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
@@ -258,4 +353,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'gl-device-lost' -MinPass 22
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'gl-device-lost' -MinPass 51

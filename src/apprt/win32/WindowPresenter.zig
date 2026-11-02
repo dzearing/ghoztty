@@ -32,6 +32,10 @@
 //!   publishes it through the pane's `PaneLink`. The compose blits the newest
 //!   frame of every visible pane into its rectangle and swaps once. The knob
 //!   is off by default.
+//! - A lost device (T2616) is lost for the whole share group: the presenter
+//!   rebuilds its context first and bumps `generation`, and each renderer
+//!   rebuilds into the new group when its link reads stale (`rebuild`,
+//!   `PaneLink.rejoin`).
 const WindowPresenter = @This();
 
 const std = @import("std");
@@ -68,8 +72,23 @@ stop: std.atomic.Value(bool) = .init(false),
 
 /// The context, once the thread has made it. Pane renderers join its share
 /// group from step 3c. Null when creation failed: the caller then keeps the
-/// per-pane path.
+/// per-pane path. Written by the presenter thread only; read elsewhere only
+/// while that thread is parked in the share handshake, or once at `create`.
 context: ?gl_robust.Created = null,
+/// Serializes `createSharedContext`: a pane being created on the UI thread
+/// and a renderer rebuilding after a lost device can both ask at once, and
+/// the handshake's events carry one request at a time.
+share_lock: std.Thread.Mutex = .{},
+
+/// The share group's generation (T2616). A lost device is lost for the whole
+/// group, so the presenter rebuilds its own context first and bumps this; a
+/// renderer whose link carries an older one rebuilds against the new context
+/// (`PaneLink.stale`). Starts at 1, so 0 can mean "no report".
+generation: std.atomic.Value(u32) = .init(1),
+/// The generation a pane last reported lost (`PaneLink.reportLost`), or 0.
+/// The presenter rebuilds only for a report on its CURRENT generation, so a
+/// real reset seen by every pane at once costs one rebuild, not one per pane.
+lost_gen: std.atomic.Value(u32) = .init(0),
 
 /// What the thread composes, written by the UI thread's layout pass. Also
 /// guards `links`, and the compose holds it throughout, so once `unlink`
@@ -90,9 +109,9 @@ composes: std.atomic.Value(u64) = .init(0),
 /// What the last debug self-check reported, so it logs on a change only.
 last_check: [5]usize = .{ std.math.maxInt(usize), 0, 0, 0, 0 },
 overflow_logged: bool = false,
-/// Presenter thread only: the first compose that blitted a pane frame has
-/// been logged (the acceptance oracle's line).
-first_frame_logged: bool = false,
+/// Presenter thread only: the generation whose first compose that blitted a
+/// pane frame has been logged (the acceptance oracle's line), or 0.
+frame_logged_gen: u32 = 0,
 /// Debug builds: `probeCenters` is on (`GHOZTTY_PRESENTER_PROBE`), and what it
 /// last logged.
 probe: bool = false,
@@ -265,6 +284,16 @@ fn detachLinks(self: *WindowPresenter) void {
 /// surface after that (`freeLink`).
 pub const PaneLink = struct {
     hwnd: w32.HWND,
+    /// The pane, for `kickRenderer` after a rebuild (T2616). Outlives the
+    /// link: the surface frees the link in its own teardown.
+    surface: *Surface,
+    /// The renderer is running and has published (set at its first publish,
+    /// cleared by `unlink`), so `surface.kickRenderer` is safe to call.
+    armed: std.atomic.Value(bool) = .init(false),
+    /// The presenter generation this link's context and textures belong to.
+    /// Written under the presenter's lock (`rejoin`), so a compose never
+    /// reads a texture name from a group the presenter has left.
+    gen: u32,
     slots: core.SlotPair = .{},
     /// The two slot textures, names in the window's share group. The renderer
     /// creates and sizes them; the presenter only samples the one it took.
@@ -302,6 +331,64 @@ pub const PaneLink = struct {
         return self.presenter != null;
     }
 
+    /// The presenter has rebuilt its context since this link's was made
+    /// (T2616): the renderer's context and slot textures are in a group the
+    /// presenter has left, so it must rebuild too. False once detached.
+    pub fn stale(self: *PaneLink) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const p = self.presenter orelse return false;
+        return p.generation.load(.acquire) != self.gen;
+    }
+
+    /// The renderer saw its device go: the whole group's is gone, so ask the
+    /// presenter to rebuild first.
+    pub fn reportLost(self: *PaneLink) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const p = self.presenter orelse return;
+        _ = p.lost_gen.fetchMax(self.gen, .acq_rel);
+        p.requestCompose();
+    }
+
+    /// Whether a renderer that lost its context at generation `lost_at` may
+    /// rebuild now: the presenter has a newer context to share with, or is
+    /// gone (the window is going; any context will do).
+    pub fn presenterPast(self: *PaneLink, lost_at: u32) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const p = self.presenter orelse return true;
+        return p.generation.load(.acquire) > lost_at;
+    }
+
+    /// A rebuilding renderer's new context, in the presenter's current group,
+    /// and that group's generation. Null when detached or refused.
+    pub fn sharedContext(self: *PaneLink, hdc: w32.HDC) ?Shared {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const p = self.presenter orelse return null;
+        return p.createSharedContext(hdc);
+    }
+
+    /// Renderer thread, after its rebuild: every slot, fence and texture name
+    /// the link carried belongs to the old group, so drop them (never
+    /// delete: the names may already belong to the new group's objects) and
+    /// join generation `gen`. Under the presenter's lock, so a compose sees
+    /// either the old link (and skips it as stale) or the clean new one.
+    pub fn rejoin(self: *PaneLink, gen: u32) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const p = self.presenter;
+        if (p) |pr| pr.mutex.lock();
+        defer if (p) |pr| pr.mutex.unlock();
+        self.rel_mutex.lock();
+        self.release = .{ 0, 0 };
+        self.rel_mutex.unlock();
+        self.slots.reset();
+        self.tex = .{ 0, 0 };
+        self.gen = gen;
+    }
+
     /// Hand the renderer the release fence for `slot`, if the presenter set
     /// one. The renderer owns it from here.
     pub fn takeRelease(self: *PaneLink, slot: u1) usize {
@@ -328,6 +415,8 @@ pub const PaneLink = struct {
                 _ = p.links.swapRemove(i);
                 break;
             };
+            // A rebuild kicks renderers under this lock: none after this.
+            self.armed.store(false, .release);
             p.mutex.unlock();
             p.requestCompose();
         }
@@ -346,14 +435,15 @@ pub const PaneLink = struct {
     }
 };
 
-/// Make the link for terminal pane `hwnd`. UI thread, at surface creation.
-pub fn link(self: *WindowPresenter, hwnd: w32.HWND) ?*PaneLink {
+/// Make the link for terminal pane `hwnd`, whose context was made in
+/// generation `gen` (`createSharedContext`). UI thread, at surface creation.
+pub fn link(self: *WindowPresenter, hwnd: w32.HWND, surface: *Surface, gen: u32) ?*PaneLink {
     const signal = w32.CreateEventW(null, 0, 0, null) orelse return null;
     const l = self.alloc.create(PaneLink) catch {
         _ = w32.CloseHandle(signal);
         return null;
     };
-    l.* = .{ .hwnd = hwnd, .presenter = self, .signal = signal };
+    l.* = .{ .hwnd = hwnd, .surface = surface, .gen = gen, .presenter = self, .signal = signal };
     self.mutex.lock();
     defer self.mutex.unlock();
     self.links.append(self.alloc, l) catch {
@@ -416,20 +506,44 @@ fn destroyHandles(self: *WindowPresenter, alloc: std.mem.Allocator) void {
 /// told (`share_done`). The T2599 spike never hit this because its presenter
 /// context was current only while it presented. Bounded both ways: a thread
 /// busy past the wait is answered with null, and the pane presents itself.
-pub fn createSharedContext(self: *WindowPresenter, hdc: w32.HDC) ?gl_robust.Created {
-    const share = self.context orelse return null;
+///
+/// Any thread: the UI thread at surface creation, and a renderer thread
+/// rebuilding after a lost device (T2616), which is why it is serialized.
+pub fn createSharedContext(self: *WindowPresenter, hdc: w32.HDC) ?Shared {
+    self.share_lock.lock();
+    defer self.share_lock.unlock();
+    // A previous request that timed out may have left either event set; a
+    // stale `share_paused` would answer this one while the context is still
+    // current over there.
+    _ = w32.ResetEvent(self.share_paused);
+    _ = w32.ResetEvent(self.share_done);
     self.share_req.store(true, .release);
     _ = w32.SetEvent(self.wake);
     const paused = w32.WaitForSingleObject(self.share_paused, 2000) == w32.WAIT_OBJECT_0;
-    const created: ?gl_robust.Created = if (paused) gl_robust.createSharedContext(@ptrCast(hdc), share) else null;
-    const err = if (paused and created == null) w32.GetLastError() else 0;
+    // Parked in the handshake, the thread cannot be rebuilding: its context
+    // and generation hold still until `share_done`.
+    var out: ?Shared = null;
+    var err: u32 = 0;
+    var no_context = false;
+    if (paused) {
+        if (self.context) |share| {
+            if (gl_robust.createSharedContext(@ptrCast(hdc), share)) |c| {
+                out = .{ .created = c, .gen = self.generation.load(.acquire) };
+            } else err = w32.GetLastError();
+        } else no_context = true;
+    }
     // Set even on a timeout: a thread that pauses late finds it already set
     // and takes its context straight back.
     _ = w32.SetEvent(self.share_done);
     if (!paused) log.warn("window presenter: its thread did not release its context in time", .{});
-    if (paused and created == null) log.warn("window presenter: wglCreateContextAttribsARB refused to share (error {d})", .{err});
-    return created;
+    if (no_context) log.warn("window presenter: it has no context to share right now (rebuilding)", .{});
+    if (paused and out == null and !no_context) log.warn("window presenter: wglCreateContextAttribsARB refused to share (error {d})", .{err});
+    return out;
 }
+
+/// A context made in the presenter's share group, and the generation of
+/// that group.
+pub const Shared = struct { created: gl_robust.Created, gen: u32 };
 
 /// Ask the thread for a compose.
 pub fn requestCompose(self: *WindowPresenter) void {
@@ -632,6 +746,9 @@ const Gl = struct {
     flush: *const fn () callconv(.winapi) void,
     readPixels: *const fn (i32, i32, i32, i32, GLenum, GLenum, *[4]u8) callconv(.winapi) void,
     swapInterval: ?*const fn (i32) callconv(.winapi) i32,
+    /// `glGetGraphicsResetStatus` (T2616), absent on a context without
+    /// robustness: such a context can only learn of a loss from a pane.
+    resetStatus: ?*const fn () callconv(.winapi) u32,
     // Frame handoff (T2615). GL 3.2 entry points, reached through the
     // context: absent on a GDI 1.1 context, where no pane frame is composed
     // and every pane shows its background.
@@ -657,6 +774,8 @@ const Gl = struct {
             .flush = @ptrCast(api.proc("glFlush") orelse return null),
             .readPixels = @ptrCast(api.proc("glReadPixels") orelse return null),
             .swapInterval = if (api.proc("wglSwapIntervalEXT")) |p| @ptrCast(p) else null,
+            .resetStatus = if (api.proc("glGetGraphicsResetStatus") orelse
+                api.proc("glGetGraphicsResetStatusARB")) |p| @ptrCast(p) else null,
             .frames = frames: {
                 break :frames .{
                     .genFramebuffers = @ptrCast(api.proc("glGenFramebuffers") orelse break :frames null),
@@ -672,6 +791,89 @@ const Gl = struct {
     }
 };
 
+/// The thread's GL state: its context, current on the presenter's DC, that
+/// context's entry points, and its read framebuffer. A rebuild replaces it
+/// whole (T2616).
+const Live = struct { created: gl_robust.Created, gl: Gl, read_fbo: u32 };
+
+/// Make the context on `hdc` and make it current. Null, with nothing left
+/// current or allocated, on any failure.
+fn makeLive(hdc: w32.HDC) ?Live {
+    const api = gl_loader.active();
+    const created = gl_robust.createContext(@ptrCast(hdc)) orelse {
+        log.warn("window presenter: context creation failed", .{});
+        return null;
+    };
+    if (api.makeCurrent(@ptrCast(hdc), created.hglrc) == 0) {
+        log.warn("window presenter: makeCurrent failed", .{});
+        _ = api.deleteContext(created.hglrc);
+        return null;
+    }
+    const gl = Gl.load() orelse {
+        log.warn("window presenter: GL 1.1 entry points missing", .{});
+        _ = api.makeCurrent(null, null);
+        _ = api.deleteContext(created.hglrc);
+        return null;
+    };
+    // One swap per vblank serves every pane of the window: the throttle each
+    // pane's own swap used to give its renderer (design note, frame path 3).
+    if (gl.swapInterval) |si| _ = si(1);
+    // The one read framebuffer every pane's slot texture is attached to in
+    // turn. FBOs are per context; the textures are the group's.
+    var read_fbo: u32 = 0;
+    if (gl.frames) |f| f.genFramebuffers(1, &read_fbo);
+    return .{ .created = created, .gl = gl, .read_fbo = read_fbo };
+}
+
+/// Lost-device state for the presenter's own context (T2616), the
+/// presenter-thread twin of `OpenGL.DeviceState`. Same backoff
+/// (`gl_robust.retryDelayMs`), same debug-only simulation pattern.
+const Device = struct {
+    /// The context is gone and a rebuild is owed.
+    lost: bool = false,
+    attempts: u32 = 0,
+    /// Earliest moment the next attempt may run, or null for now.
+    next_ms: ?i64 = null,
+    /// Composes done on the current context, for the simulation hook.
+    composes: u64 = 0,
+    /// The simulation has fired (once per presenter).
+    simulated: bool = false,
+    rebuilds: u32 = 0,
+
+    fn markLost(self: *Device, why: []const u8) void {
+        if (self.lost) return;
+        self.lost = true;
+        self.attempts = 0;
+        self.next_ms = null;
+        log.warn("window presenter: graphics device lost ({s}); rebuilding the window's context first", .{why});
+    }
+
+    /// How long the thread may sleep: forever unless a rebuild is owed.
+    fn waitMs(self: *const Device) u32 {
+        if (!self.lost) return w32.INFINITE;
+        const next = self.next_ms orelse return 0;
+        const now = std.time.milliTimestamp();
+        if (now >= next) return 0;
+        return @intCast(@min(next - now, 60_000));
+    }
+
+    fn due(self: *const Device) bool {
+        return self.lost and self.waitMs() == 0;
+    }
+};
+
+/// Debug builds: `GHOZTTY_GL_SIMULATE_PRESENTER_RESET_AFTER=<n>` reports the
+/// presenter's context lost after its n-th compose, once - a loss seen
+/// FIRST by the presenter, which the pane hook (`OpenGL.zig`,
+/// `GHOZTTY_GL_SIMULATE_RESET_AFTER`) cannot stage. As there, only the
+/// detection is simulated; the rebuild is the shipping one.
+fn simResetAfter() ?u64 {
+    if (comptime builtin.mode != .Debug) return null;
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_GL_SIMULATE_PRESENTER_RESET_AFTER") catch return null;
+    defer std.heap.page_allocator.free(raw);
+    return std.fmt.parseInt(u64, std.mem.trim(u8, raw, " \t\r\n"), 10) catch null;
+}
+
 fn threadMain(self: *WindowPresenter) void {
     const api = gl_loader.active();
     const hdc = w32.GetDC(self.hwnd) orelse {
@@ -686,50 +888,97 @@ fn threadMain(self: *WindowPresenter) void {
         _ = w32.SetEvent(self.ready);
         return;
     };
-    const created = gl_robust.createContext(@ptrCast(hdc)) orelse {
-        log.warn("window presenter: context creation failed", .{});
+    var live: ?Live = makeLive(hdc) orelse {
         _ = w32.SetEvent(self.ready);
         return;
     };
-    defer _ = api.deleteContext(created.hglrc);
-    if (api.makeCurrent(@ptrCast(hdc), created.hglrc) == 0) {
-        log.warn("window presenter: makeCurrent failed", .{});
-        _ = w32.SetEvent(self.ready);
-        return;
-    }
-    defer _ = api.makeCurrent(null, null);
-    const gl = Gl.load() orelse {
-        log.warn("window presenter: GL 1.1 entry points missing", .{});
-        _ = w32.SetEvent(self.ready);
-        return;
+    defer if (live) |l| {
+        _ = api.makeCurrent(null, null);
+        _ = api.deleteContext(l.created.hglrc);
     };
-    // One swap per vblank serves every pane of the window: the throttle each
-    // pane's own swap used to give its renderer (design note, frame path 3).
-    if (gl.swapInterval) |si| _ = si(1);
-    // The one read framebuffer every pane's slot texture is attached to in
-    // turn. FBOs are per context; the textures are the group's.
-    var read_fbo: u32 = 0;
-    if (gl.frames) |f| f.genFramebuffers(1, &read_fbo);
-    if (gl.frames == null) log.warn("window presenter: no GL 3.2 blit/sync entry points; panes show background only", .{});
+    if (live.?.gl.frames == null) log.warn("window presenter: no GL 3.2 blit/sync entry points; panes show background only", .{});
 
-    self.context = created;
+    self.context = live.?.created;
     _ = w32.SetEvent(self.ready);
 
+    var dev: Device = .{};
+    const sim_after = simResetAfter();
     while (true) {
-        _ = w32.WaitForSingleObject(self.wake, w32.INFINITE);
+        _ = w32.WaitForSingleObject(self.wake, dev.waitMs());
         if (self.stop.load(.acquire)) break;
         if (self.share_req.swap(false, .acq_rel)) {
             // A pane is joining the group (`createSharedContext`).
             _ = api.makeCurrent(null, null);
             _ = w32.SetEvent(self.share_paused);
             _ = w32.WaitForSingleObject(self.share_done, 5000);
-            if (api.makeCurrent(@ptrCast(hdc), created.hglrc) == 0) {
-                log.warn("window presenter: could not take its context back after a share", .{});
-                break;
-            }
+            if (live) |l| if (api.makeCurrent(@ptrCast(hdc), l.created.hglrc) == 0)
+                dev.markLost("could not take its context back after a share");
         }
-        self.compose(gl, hdc, read_fbo);
+        // A pane saw the device go. Only a report on THIS generation: a pane
+        // still on an older one is reporting the loss this rebuilt.
+        const reported = self.lost_gen.swap(0, .acq_rel);
+        if (reported != 0 and reported == self.generation.load(.acquire))
+            dev.markLost("reported by a pane renderer");
+
+        if (dev.due()) self.rebuild(hdc, &live, &dev);
+        const l = live orelse continue;
+        if (dev.lost) continue;
+        self.compose(l.gl, hdc, l.read_fbo);
+
+        // Once per compose, like the renderer's once per frame: is the
+        // device still there?
+        dev.composes +%= 1;
+        if (sim_after) |n| if (!dev.simulated and dev.composes >= n) {
+            dev.simulated = true;
+            dev.markLost("simulated (debug test hook)");
+        };
+        if (!dev.lost) if (l.gl.resetStatus) |get| {
+            const status = gl_robust.ResetStatus.fromGl(get());
+            if (status.lost()) dev.markLost(@tagName(status));
+        };
     }
+}
+
+/// Throw the dead context away and make a new one on the same DC, bump the
+/// generation, and wake every renderer so it rebuilds against it (T2616).
+/// Presenter thread. On failure the next attempt waits on the backoff, and
+/// `context` stays null meanwhile: a pane asking to share is refused and
+/// retries.
+fn rebuild(self: *WindowPresenter, hdc: w32.HDC, live: *?Live, dev: *Device) void {
+    const api = gl_loader.active();
+    _ = api.makeCurrent(null, null);
+    // Its names (the read framebuffer) are dropped with it.
+    if (live.*) |l| _ = api.deleteContext(l.created.hglrc);
+    live.* = null;
+    self.context = null;
+
+    const attempt = dev.attempts;
+    dev.attempts +|= 1;
+    const made = makeLive(hdc) orelse {
+        const delay = gl_robust.retryDelayMs(dev.attempts);
+        dev.next_ms = std.time.milliTimestamp() + delay;
+        if (gl_robust.shouldLogAttempt(attempt)) log.warn(
+            "window presenter: rebuild attempt {d} failed; next try in {d}ms",
+            .{ attempt + 1, delay },
+        );
+        return;
+    };
+    live.* = made;
+    self.context = made.created;
+    dev.lost = false;
+    dev.next_ms = null;
+    dev.composes = 0;
+    dev.rebuilds += 1;
+    const gen = self.generation.fetchAdd(1, .acq_rel) + 1;
+    log.warn("window presenter rebuilt its context after {d} attempt(s) generation={d} robust={} rebuilds={d}", .{
+        attempt + 1, gen, made.created.robust, dev.rebuilds,
+    });
+
+    // Every renderer's context is in the group just left. An idle pane would
+    // not draw, and so not notice, until something else woke it.
+    self.mutex.lock();
+    defer self.mutex.unlock();
+    for (self.links.items) |l| if (l.armed.load(.acquire)) l.surface.kickRenderer();
 }
 
 /// A link a compose took a fresh frame from, and the slot that freed.
@@ -749,6 +998,7 @@ fn compose(self: *WindowPresenter, gl: Gl, hdc: w32.HDC, read_fbo: u32) void {
     var taken: [MAX_PANES]Taken = undefined;
     var taken_len: usize = 0;
     var blitted: usize = 0;
+    const gen = self.generation.load(.acquire);
 
     gl.viewport(0, 0, @intCast(w), @intCast(h));
     // The slot holds the renderer's sRGB-encoded values; copy them as they
@@ -756,7 +1006,10 @@ fn compose(self: *WindowPresenter, gl: Gl, hdc: w32.HDC, read_fbo: u32) void {
     gl.disable(GL_FRAMEBUFFER_SRGB);
     gl.clearColor(bg[0], bg[1], bg[2], bg[3]);
     for (self.panes[0..n], self.pane_hwnds[0..n]) |r, hwnd| {
-        const l = self.findLink(hwnd);
+        // A link from an older generation names textures in a group this
+        // context is not in (T2616): its pane shows background until its
+        // renderer has rebuilt and rejoined.
+        const l = if (self.findLink(hwnd)) |found| (if (found.gen == gen) found else null) else null;
         const t: ?core.SlotPair.Take = if (l != null and gl.frames != null) l.?.slots.take() else null;
         const plan = core.planPane(r, if (t) |tk| .{ .width = tk.frame.width, .height = tk.frame.height } else null, h);
 
@@ -812,9 +1065,9 @@ fn compose(self: *WindowPresenter, gl: Gl, hdc: w32.HDC, read_fbo: u32) void {
 
     const done = self.composes.fetchAdd(1, .monotonic) + 1;
     if (done == 1) log.info("window presenter composed panes={d} client={d}x{d}", .{ n, w, h });
-    if (blitted > 0 and !self.first_frame_logged) {
-        self.first_frame_logged = true;
-        log.info("window presenter composed a pane frame panes={d} blitted={d}", .{ n, blitted });
+    if (blitted > 0 and self.frame_logged_gen != gen) {
+        self.frame_logged_gen = gen;
+        log.info("window presenter composed a pane frame panes={d} blitted={d} generation={d}", .{ n, blitted, gen });
     }
 }
 

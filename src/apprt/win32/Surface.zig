@@ -1475,7 +1475,6 @@ fn takeParkedWindow(win: *Window, sr: w32.RECT) ?w32.HWND {
 /// `present_link`; null, with all three left unset, when any step fails.
 fn initPresenterContext(self: *Surface, app: *App, parent: *Window) ?gl_robust.Created {
     const presenter = parent.presenter orelse return null;
-    if (presenter.context == null) return null;
     const helper = WindowPresenter.createHelper(app.hinstance) orelse {
         log.warn("window presenter: helper window failed; this pane presents itself", .{});
         return null;
@@ -1490,13 +1489,14 @@ fn initPresenterContext(self: *Surface, app: *App, parent: *Window) ?gl_robust.C
         log.warn("window presenter: helper pixel format failed; this pane presents itself", .{});
         return null;
     };
-    const created = presenter.createSharedContext(hdc) orelse {
+    const shared = presenter.createSharedContext(hdc) orelse {
         _ = w32.ReleaseDC(helper, hdc);
         _ = w32.DestroyWindow(helper);
         log.warn("window presenter: shared context failed; this pane presents itself", .{});
         return null;
     };
-    const link = presenter.link(self.hwnd.?) orelse {
+    const created = shared.created;
+    const link = presenter.link(self.hwnd.?, self, shared.gen) orelse {
         _ = gl_loader.active().deleteContext(created.hglrc);
         _ = w32.ReleaseDC(helper, hdc);
         _ = w32.DestroyWindow(helper);
@@ -1507,6 +1507,14 @@ fn initPresenterContext(self: *Surface, app: *App, parent: *Window) ?gl_robust.C
     self.present_link = link;
     log.info("terminal pane hands its frames to the window presenter robust={}", .{created.robust});
     return created;
+}
+
+/// Wake this pane's renderer for a forced frame. Any thread: the window
+/// presenter calls it after rebuilding its context (T2616), so a pane with
+/// nothing new to draw still notices that its context is in the old group.
+pub fn kickRenderer(self: *Surface) void {
+    self.core_surface.renderer_thread.force_frame.store(true, .release);
+    self.core_surface.renderer_thread.wakeup.notify() catch {};
 }
 
 /// Undo `initPresenterContext`'s window and link (the context is the

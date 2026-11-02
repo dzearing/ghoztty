@@ -2371,12 +2371,14 @@ $GuardTable = @(
     # take every window down with it; now the pane rebuilds its context and
     # its GPU resources in place. Nothing but a real rebuild observed through
     # the pane's pixels can say that still works: a compile cannot, and the
-    # unit tests cover only the policy half.
+    # unit tests cover only the policy half. The window presenter rebuilds its
+    # share group's context first (T2616), so its file is covered here too.
     [pscustomobject]@{
         Name   = 'gl-device-lost'
         Script = 'test\win32\gl-device-lost.ps1'
         Stamp  = 'test\win32\gl-device-lost.stamp.json'
         Covers = @(
+            'src\apprt\win32\WindowPresenter.zig',
             'src\renderer\gl_robust.zig',
             'src\renderer\OpenGL.zig',
             'src\renderer\Thread.zig',

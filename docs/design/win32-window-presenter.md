@@ -105,7 +105,7 @@ What each piece buys:
   `WindowPresenter.createSharedContext` asks the presenter thread to let go of
   its context, makes the pane's, and hands it back (bounded both ways; a
   timeout leaves that pane on its own present). A lost-device rebuild of a
-  pane context needs the same pause (T2616).
+  pane context takes the same pause (T2616).
 - **A pane context is current on a hidden helper window, not on the pane
   HWND.** That is the measured `pres-helper` shape: 34.00 MB for two
   renderers, against 38.13 MB with each context current on its pane
@@ -143,19 +143,36 @@ new geometry, the way it waits on `frame_event` per pane today.
 
 ## Interactions
 
-- **Lost device (T1690).** A reset is shared by the whole share group. Any
-  context that sees one tells the presenter. The presenter rebuilds its own
-  context first and bumps a generation number, and each renderer rebuilds
-  against the new share context when it sees the bump.
-  `test\win32\gl-device-lost.ps1` must cover both the presenter and a pane.
+- **Lost device (T1690, built in T2616).** A reset is shared by the whole
+  share group. The presenter owns a generation number (starts at 1). A pane
+  that sees a loss reports the generation it was on; the presenter rebuilds
+  only for a report on its CURRENT generation, so a real reset that every
+  pane sees costs one rebuild per window, not one per pane. The presenter
+  also checks its own reset status after every compose. It rebuilds its
+  context first, bumps the generation, and wakes every running renderer
+  (`Surface.kickRenderer`), because an idle pane would otherwise never draw
+  and never notice. A renderer whose link carries an older generation treats
+  that as a loss of its own, without reporting it. Its rebuild waits until
+  the presenter's generation is past the one it lost at, then goes through
+  `createSharedContext` (the same share handshake as pane creation,
+  serialized now that a renderer thread and the UI thread can both ask), and
+  `PaneLink.rejoin` drops every slot, fence and texture name from the old
+  group under the presenter's lock. Until then the compose skips a stale link
+  and shows that pane's background. `test\win32\gl-device-lost.ps1` sections
+  D (seen first by a pane) and E (seen first by the presenter, through the
+  debug-only `GHOZTTY_GL_SIMULATE_PRESENTER_RESET_AFTER`) cover both, down to
+  the rebuilt pane's tint in the presenter's back buffer.
 - **Composition present (T2466/T2606).** It is mutually exclusive with this.
   With `GHOZTTY_COMP_PRESENT=1` the presenter knob is ignored, and the log
   says so. A later step could make the presenter the single producer of one
   composition swap chain per window, but that is not this task.
-- **Translucency.** The presenter's pixel format carries alpha when the window
-  is translucent. If a window turns translucent after it was created
-  opaque, the presenter is recreated, and so is every pane context sharing
-  its group, through the same generation bump as a device reset.
+- **Translucency.** No rebuild is needed, which T2616 checked rather than
+  built. `setupGlPixelFormat` asks for 8 alpha bits on every terminal pane and
+  on the presenter, whatever the window's opacity, and turning a window
+  translucent (`Window.setTranslucent`) is a DWM blur-behind change that never
+  touched a GL context on the per-pane path either. So a window that turns
+  translucent after it was created opaque keeps its presenter. The generation
+  bump above is the mechanism should a format change ever be needed.
 - **Hero thumbnails (T59a)** read the offscreen target and are unaffected.
 - **Banner band (T2566)** applies to the comp path only. On the presenter
   path a pane's rectangle is its grid band.

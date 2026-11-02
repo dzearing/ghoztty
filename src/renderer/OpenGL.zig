@@ -151,6 +151,10 @@ pres_frame_id: u64 = 0,
 /// A frame has been published: the presenter holds it, so a repeat of the
 /// last target (`presentLastTarget`) has nothing to add.
 pres_has_frame: bool = false,
+/// The presenter generation this context was in when it was lost (T2616):
+/// a rebuild waits until the presenter's is past it, so the new context
+/// joins the presenter's NEW group rather than the dead one.
+pres_lost_gen: u32 = 0,
 
 const DeviceState = struct {
     /// The context stopped answering: a driver reset or swap. Every GPU
@@ -828,12 +832,20 @@ fn checkDevice(self: *OpenGL) void {
     if (self.device.lost) return;
     self.device.frames +%= 1;
 
+    // T2616: the window presenter rebuilt its context after a loss it, or
+    // another pane, saw first. This context is in the group it left, so it
+    // goes too, without reporting: the presenter already knows.
+    if (self.rt_surface.present_link) |l| if (l.stale()) {
+        self.markLost("the window presenter rebuilt its context", false);
+        return;
+    };
+
     if (comptime build_config.is_debug) {
         sim.load();
         if (!self.device.simulated) if (sim.reset_after) |n| {
             if (self.device.frames >= n) {
                 self.device.simulated = true;
-                self.markLost("simulated (debug test hook)");
+                self.markLost("simulated (debug test hook)", true);
                 self.device.sim_failures_left = sim.rebuild_failures;
                 return;
             }
@@ -842,10 +854,13 @@ fn checkDevice(self: *OpenGL) void {
 
     const get = resetStatusFn() orelse return;
     const status = gl_robust.ResetStatus.fromGl(get());
-    if (status.lost()) self.markLost(@tagName(status));
+    if (status.lost()) self.markLost(@tagName(status), true);
 }
 
-fn markLost(self: *OpenGL, why: []const u8) void {
+/// `report`: on the window presenter path, tell the presenter, which owns
+/// the share group and rebuilds first (T2616). False when the loss IS the
+/// presenter's rebuild.
+fn markLost(self: *OpenGL, why: []const u8, report: bool) void {
     self.device.lost = true;
     self.device.attempts = 0;
     self.device.next_attempt_ms = null;
@@ -868,6 +883,18 @@ fn markLost(self: *OpenGL, why: []const u8) void {
     }
     // The rebuilt context gets to choose its path again.
     self.comp_tried = false;
+
+    // The window presenter path (T2616): the FBO, the slot sizes and the
+    // owed publish all name the dead group's objects. The link's own slot
+    // textures and fences are dropped by `rejoin`, once rebuilt.
+    self.pres_fbo = null;
+    self.pres_cap = .{ .{ 0, 0 }, .{ 0, 0 } };
+    self.pres_slot = null;
+    self.pres_has_frame = false;
+    if (self.rt_surface.present_link) |l| {
+        self.pres_lost_gen = l.gen;
+        if (report) l.reportLost();
+    }
 
     log.warn("graphics device lost ({s}); rebuilding this pane's renderer", .{why});
 }
@@ -904,6 +931,16 @@ pub fn rebuildDelayMs(self: *const OpenGL) ?u64 {
 pub fn rebuildContext(self: *OpenGL) !void {
     if (comptime apprt.runtime != apprt.win32) return error.Unsupported;
 
+    // T2616: on the window presenter path the new context joins the
+    // presenter's group, and the presenter rebuilds its own first. Until it
+    // has, a context made now would join the dead group: come back shortly,
+    // without spending an attempt, since nothing has failed.
+    const link = self.rt_surface.present_link;
+    if (link) |l| if (!l.presenterPast(self.pres_lost_gen)) {
+        self.device.next_attempt_ms = std.time.milliTimestamp() + pres_rebuild_poll_ms;
+        return error.WaitingForWindowPresenter;
+    };
+
     const attempt = self.device.attempts;
     self.device.attempts +|= 1;
     errdefer |err| {
@@ -932,8 +969,20 @@ pub fn rebuildContext(self: *OpenGL) !void {
         surface.hglrc = null;
     }
 
-    const created = gl_robust.createContext(@ptrCast(hdc)) orelse
-        return error.GLContextCreateFailed;
+    // On the presenter path, through the presenter's share handshake (its
+    // thread lets go of its context for the moment), into its new group; the
+    // link then drops everything it named in the old one. A detached link
+    // means the window is going: any context will do for the rest of it.
+    const created = created: {
+        if (link) |l| if (l.attached()) {
+            const shared = l.sharedContext(@ptrCast(hdc)) orelse
+                return error.GLContextCreateFailed;
+            l.rejoin(shared.gen);
+            break :created shared.created;
+        };
+        break :created gl_robust.createContext(@ptrCast(hdc)) orelse
+            return error.GLContextCreateFailed;
+    };
     surface.hglrc = @ptrCast(created.hglrc);
 
     if (api.makeCurrent(@ptrCast(hdc), created.hglrc) == 0)
@@ -953,7 +1002,13 @@ pub fn rebuildContext(self: *OpenGL) !void {
         "graphics device rebuilt after {d} attempt(s) robust={} rebuilds={d}",
         .{ attempt + 1, created.robust, self.device.rebuilds },
     );
+    if (link) |l| log.info("pane renderer rejoined the window presenter generation={d}", .{l.gen});
 }
+
+/// How often a lost pane asks whether the window presenter has rebuilt yet
+/// (T2616). The presenter rebuilds as soon as it hears of the loss, so this
+/// is normally one or two polls.
+const pres_rebuild_poll_ms: i64 = 50;
 
 /// Win32 frame-pacing telemetry (T40/T48): when GHOZTTY_PERF is set in
 /// the environment, log frames-per-second, the longest inter-frame gap, and
@@ -1343,6 +1398,10 @@ const pres_wait_ms: u32 = 20;
 /// destroyed).
 fn presAcquire(self: *OpenGL, l: anytype) ?u1 {
     _ = self;
+    // The presenter has left this context's group (T2616) and will not take
+    // from this link until it rejoins: do not wait for it. `checkDevice` at
+    // the end of this frame starts the rebuild.
+    if (l.stale()) return null;
     var tries: u8 = 0;
     while (true) {
         if (l.slots.acquire()) |slot| {
@@ -1430,6 +1489,8 @@ fn presPublish(self: *OpenGL, l: anytype) void {
     });
     if (replaced) |old| if (old != 0) c.DeleteSync.?(@ptrFromInt(old));
     self.pres_has_frame = true;
+    // The renderer is running: from here a presenter rebuild may wake it.
+    l.armed.store(true, .release);
     _ = l.notify();
     self.rt_surface.tracePresent(self.drawn_client, true);
     if (self.pres_frame_id == 1) log.info("pane renderer published its first frame to the window presenter", .{});
