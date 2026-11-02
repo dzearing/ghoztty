@@ -609,3 +609,12 @@ as the digest that showed them.
 - Agent panes show how much room they have left (a context-fullness meter on an agent pane's strip, when the agent reports it)
 - Typing never waits for a resize (keystrokes and output keep full speed during a window-edge or divider drag)
 - "That felt slow" captures the last ten seconds (new angle on the slowness readout: a palette command saves the timing of what just happened into a feedback report)
+
+## 2026-11-02
+
+- A banner's history on hover (hover a pane banner to see its last ten statuses with times)
+- Fold a banner down to a dot (a banner shrinks to a coloured dot on the strip that changes with the status)
+- Dividers that work with a finger or a pen (wider grab areas and long-press menus on touch and pen)
+- Choose a light resize (an outline-only drag setting for slow or remote machines; panes resize once on release)
+- Keeps going through a graphics driver update or a dock change (no blank flash or restart when the GPU changes under the app)
+- Sharp the moment a window crosses monitors (re-render at the new scale before the window lands)
