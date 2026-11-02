@@ -23,7 +23,16 @@
     C. the address-bar-vs-page edge reading: a page shifted against its nav by
        one drag step is one mismatched frame, a lost edge is counted apart;
     D. the counts: travel is read from where the bar starts, and the worst
-       lists name capture indexes.
+       lists name capture indexes;
+    E. the occluded-display gate (T2645): an app log carrying FrameClock's
+       0xC01E0006 (STATUS_GRAPHICS_PRESENT_OCCLUDED) clock failure is found,
+       even while the app holds the log open, and the line it matches is
+       still the one FrameClock.zig writes.
+
+  A live cell whose app logged that line ran on a display that was asleep or
+  locked: its terminal never presented, so it photographs black with a strip
+  wherever it grows. Such a cell is SKIPPED by name, never scored - on
+  2026-11-02 that state read as a ~250-dark-frame regression in every cell.
 
   -Live photographs the REAL app with WGC (lib\FrameCapture.ps1) during a
   POSTED drag - no injected input, the window never activated - for every cell
@@ -211,6 +220,27 @@ try {
             $c.Travel -eq 24 -and $c.Frames -eq 5 -and $c.DarkFrames + $c.BarGoneFrames + $c.BittenFrames -eq 0) ($c | ConvertTo-Json -Compress)
         $s.Clear()
         Assert 'D2 Clear empties every reading, so one scorer can arm a second drag' ($s.Index.Count -eq 0 -and $s.Edges.Count -eq 0)
+
+        # ---- E. the occluded-display gate (T2645) -------------------------------
+        ''
+        'E. a run the compositor called occluded is named, never scored'
+        $tmp = Join-Path ([IO.Path]::GetTempPath()) "dvflick-occl-$PID"
+        $null = New-Item -ItemType Directory -Force -Path $tmp
+        try {
+            $lit = Join-Path $tmp 'lit.log'; $dim = Join-Path $tmp 'dim.log'
+            [IO.File]::WriteAllText($lit, "info: ghoztty build optimize=Debug`nwarning(config): no default shell found, will default to using cmd`n")
+            [IO.File]::WriteAllText($dim, "info: ghoztty build optimize=Debug`nwarning(frame_clock): compositor clock wait failed (c01e0006); falling back to a timer`n")
+            Assert 'E1 a lit run reads not-occluded; a missing log reads not-occluded' (
+                $null -eq (Get-DividerFlickerOccluded -LogPath $lit) -and $null -eq (Get-DividerFlickerOccluded -LogPath (Join-Path $tmp 'none.log')))
+            # The app holds its stderr open while the harness reads it.
+            $hold = [IO.File]::Open($dim, 'Open', 'ReadWrite', 'ReadWrite')
+            try { $got = Get-DividerFlickerOccluded -LogPath $dim } finally { $hold.Dispose() }
+            Assert 'E2 the 0xC01E0006 clock failure is found, in a log the app still holds open' ($got -match 'c01e0006') "got=$got"
+            # The gate matches the app's own words: a reworded log line would
+            # silently score occluded runs again.
+            $fc = [IO.File]::ReadAllText((Join-Path $repo 'src\apprt\win32\FrameClock.zig'))
+            Assert 'E3 FrameClock.zig still logs the line the gate matches' ($fc.Contains('"compositor clock wait failed ({x}); falling back to a timer"'))
+        } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
     } else {
         # ---- L. the real app, photographed --------------------------------------
         # Captures the input desktop: nobody may be at the box.
@@ -235,7 +265,7 @@ try {
         $html = Join-Path $outRoot 'page.html'
         [IO.File]::WriteAllText($html, '<!doctype html><html><body style="background:#e8e0c0;color:#806020;font:20px sans-serif"><h1>viewer</h1><p>T2476 divider-flicker page</p></body></html>')
         "L. live: control=$Control exe=$Exe out=$outRoot"
-        $seen = @{ dark = 0; gone = 0; bite = 0; biteCells = 0 }
+        $seen = @{ dark = 0; gone = 0; bite = 0; biteCells = 0; occluded = 0; lit = 0 }
         # The input desktop's handle, for the POSTED mouse messages only.
         [void](New-TestDesktop -Interactive)
 
@@ -404,6 +434,16 @@ try {
                     $seen.dark += $c.DarkFrames; $seen.gone += $c.BarGoneFrames
                     if (-not $sc.Transposed -and $sc.BannerLines.Length) { $seen.bite += $c.BittenFrames; $seen.biteCells++ }
 
+                    # T2645: a display the compositor called occluded (asleep,
+                    # locked) shows a terminal that never presented - every pixel
+                    # verdict of this cell would be about the box, not the app.
+                    $occl = Get-DividerFlickerOccluded -LogPath $errlog
+                    if ($occl) {
+                        "  SKIP La/Lb/Lc/Ld ${cell}: the display was occluded while the app ran (asleep or locked), so these frames say nothing about a drag -- $occl"
+                        $script:skipped++; $seen.occluded++
+                        continue
+                    }
+                    $seen.lit++
                     Assert "Ld $cell the drag happened: $($c.Frames) frames scored, the bar travelled $($c.Travel) of $amp px" (
                         $c.Frames -ge 20 -and $c.Travel -ge [int]($amp / 2)) ''
                     if ($Control -ne 'banner') {
@@ -423,14 +463,17 @@ try {
 
         # The negative control: its defect must be seen somewhere it can appear.
         ''
-        switch ($Control) {
+        if ($Control -ne 'none' -and $seen.lit -eq 0) {
+            "  SKIP Lx: every cell ran on an occluded display, so the control's defect could not be photographed"
+            $script:skipped++
+        } else { switch ($Control) {
             'gutters' { Assert 'Lx the whole-gutter clear (GHOZTTY_CLEAR_WHOLE_GUTTERS) is seen: BAR-GONE frames' ($seen.gone -gt 0) "bar-gone=$($seen.gone)" }
             'bite' {
                 if ($seen.biteCells -eq 0) { "  SKIP Lx: no vertical cell with a banner ran, so the bite cannot appear"; $script:skipped++ }
                 else { Assert 'Lx the popups placed after the bands (GHOZTTY_OVERLAYS_AFTER_BANDS) are seen: BITTEN frames' ($seen.bite -gt 0) "bitten=$($seen.bite) over $($seen.biteCells) cell(s)" }
             }
             'banner' { Assert 'Lx the SLWA banner resize (T2400_NEUTERED build) is seen: DARK frames' ($seen.dark -gt 0) "dark=$($seen.dark)" }
-        }
+        } }
     }
 
     Complete-TestBody
