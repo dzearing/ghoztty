@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-03T14:01:18-08:00",
-    "commit":  "4e34280b2",
+    "generated":  "2026-11-03T15:12:31-08:00",
+    "commit":  "2680016b5",
     "uncommitted":  [
-                        "test/win32/window-close-memory.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -576,7 +576,7 @@
                   "test/win32/window-name-env.ps1":  "b8e63bc0ba6c5d1914962c3ab97fe83bcfac811f185f3873a09ffa8cd6744a44",
                   "test/win32/window-name-restore.ps1":  "6ed6b2d1c48dda4f6038f410ad260a94efc52d458d8b4d5a6ae6b3ad24579bfe",
                   "test/win32/window-placement-isolation.ps1":  "20d8b605382eb89ef87c19898b48f0c3a195236f29a7ff46d82f92a2ff87e560",
-                  "test/win32/window-presenter.ps1":  "c8fb2988e02af6a4cac0fb7721f7a811f22105bae7e738858ca94df60d9c1d27",
+                  "test/win32/window-presenter.ps1":  "842ee86de114ad051b91df9a976faa2c06e6a8919bb02971a0f9245f41346171",
                   "test/win32/window-size-memory.ps1":  "8f450ced42c46d1762c4dd0329b1204b7d21999192cfe6bfbfdfbcd497c97647",
                   "test/win32/window-title.ps1":  "2c1bf41872184f86306547c309c00ea3c994d0be4521c848b8ba9f404a25beb5",
                   "test/win32/zig-repro-t476.ps1":  "18809a84f951773567de7a6ed8dbe628d2ad3a7872b339e292a2bebd0afb1364"
