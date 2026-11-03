@@ -16672,6 +16672,17 @@ fn prelayoutOff() bool {
     return v;
 }
 
+var prelayout_shrink_state: ?bool = null;
+
+/// `GHOZTTY_RESIZE_PRELAYOUT_SHRINK` lays shrinking changes out ahead too
+/// (T2580). Read once.
+fn prelayoutShrink() bool {
+    if (prelayout_shrink_state) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_PRELAYOUT_SHRINK");
+    prelayout_shrink_state = v;
+    return v;
+}
+
 /// `WM_WINDOWPOSCHANGING` under an edge drag (T2578): lay the panes out and
 /// present them at the client size the frame is about to take, so the frame
 /// change follows the last present inside one compose instead of the content
@@ -16696,6 +16707,7 @@ fn prelayoutForPos(self: *Window, wp: *const w32.WINDOWPOS) void {
         .flags = wp.flags,
         .in_size_loop = self.in_size_loop,
         .iconic = w32.IsIconic(hwnd) != 0,
+        .shrink = prelayoutShrink(),
     }) orelse return;
     resizeTrace("prelayout-begin", hwnd);
     defer resizeTrace("prelayout-end", hwnd);

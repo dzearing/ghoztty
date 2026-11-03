@@ -1,13 +1,13 @@
 {
     "guard":  "edge-drag-rate",
     "script":  "test/win32/edge-drag-rate.ps1",
-    "generated":  "2026-11-01T19:25:48-08:00",
-    "commit":  "4933f4157",
+    "generated":  "2026-11-02T18:50:01-08:00",
+    "commit":  "946c1d67a",
     "uncommitted":  [
-                        "test/win32/edge-drag-rate.ps1"
+                        "src/apprt/win32/resize_prelayout.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/resize_prelayout.zig":  "4a7cb838575b10378a757bfa862acb2c08c57df8763393a018edd68e95016d5f",
+                  "src/apprt/win32/resize_prelayout.zig":  "0662a3f8ba353464c777318f021ca537381caf9577ead7ad84a72dee9245019e",
                   "test/win32/edge-drag-rate.ps1":  "82e1b3ef6b1eebfa13a9e17441e8d7249218821315d8eaef339879ed11831ae1"
               }
 }

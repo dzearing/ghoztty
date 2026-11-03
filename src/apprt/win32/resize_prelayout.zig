@@ -54,6 +54,8 @@ pub const Input = struct {
     in_size_loop: bool,
     /// Minimized now, or about to be: no layout means anything there.
     iconic: bool,
+    /// Lay a shrinking change out ahead too (T2580).
+    shrink: bool = false,
 };
 
 /// The client rect to lay the panes out at before the frame changes, or null
@@ -70,8 +72,10 @@ pub fn pendingClient(in: Input) ?Rect {
     // from 2.5 to 1.5-2.0 bad frames per step and lost all 40 flat frames: a
     // miss is clipped by the old frame and never seen. A shrink did not get
     // better (1.2 -> 1.5): its miss shows the strip the panes left, and the
-    // terminal still trails the page by a step either way.
-    if (dw < 0 or dh < 0) return null;
+    // terminal still trails the page by a step either way. Re-filmed with
+    // `shrink` (T2580): the page is the surface out of step, not the
+    // terminal - see the task for the timing.
+    if (!in.shrink and (dw < 0 or dh < 0)) return null;
     const w = in.client.width() + dw;
     const h = in.client.height() + dh;
     if (w <= 0 or h <= 0) return null;
@@ -136,6 +140,15 @@ test "a shrink, or a grow on one axis with a shrink on the other, is not laid ou
     in.cx = 1412;
     in.cy = 790;
     try testing.expect(pendingClient(in) == null);
+}
+
+test "with shrink set, a right-edge shrink is laid out ahead (T2580 A/B)" {
+    var in = base();
+    in.cx = 1388;
+    in.shrink = true;
+    const r = pendingClient(in).?;
+    try testing.expectEqual(@as(i32, 1372), r.right);
+    try testing.expectEqual(@as(i32, 792), r.bottom);
 }
 
 test "bottom-edge grow, origin left alone with SWP_NOMOVE" {
