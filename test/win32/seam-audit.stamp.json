@@ -1,17 +1,10 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-03T12:00:41-08:00",
-    "commit":  "2094fdbd7",
+    "generated":  "2026-11-03T14:08:03-08:00",
+    "commit":  "4e34280b2",
     "uncommitted":  [
-                        "src/apprt/win32/App.zig",
-                        "src/apprt/win32/commands.zig",
-                        "src/apprt/win32/ipc_shortcut_guide.zig",
-                        "src/apprt/win32/IpcHandlers.zig",
-                        "src/apprt/win32/menu_bar.zig",
-                        "src/apprt/win32/shortcut_catalog.zig",
-                        "src/apprt/win32/shortcut_guide_layout.zig",
-                        "src/apprt/win32/ShortcutGuideWindow.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",

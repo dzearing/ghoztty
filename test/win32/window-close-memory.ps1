@@ -63,7 +63,7 @@
 #
 # Only touches ghoztty processes running from this repo's zig-out*.
 #   powershell -NoProfile -File test\win32\window-close-memory.ps1
-param([string]$ExePath, [ValidateSet('full', 'single', 'split', 'viewer')][string]$Shape = 'full', [int]$Cycles = 10, [int]$Warmup = 2, [string[]]$AppArgs = @(), [switch]$Resize, [switch]$CloseSplitFirst, [switch]$NegativeControl, [switch]$Interactive, [switch]$Report)
+param([string]$ExePath, [ValidateSet('full', 'single', 'split', 'viewer')][string]$Shape = 'full', [int]$Cycles = 10, [int]$Warmup = 2, [string[]]$AppArgs = @(), [switch]$Resize, [switch]$CloseSplitFirst, [switch]$NegativeControl, [switch]$Interactive, [switch]$Report, [switch]$HeapCensus, [string[]]$HeapCensusCommands = @(), [switch]$HeapCensusRegions, [switch]$ReleaseSandbox)
 
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 $ErrorActionPreference = 'Stop'
@@ -73,6 +73,21 @@ if (-not (Test-Path $exe)) { $exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe' }
 if ($ExePath) { $exe = $ExePath }
 
 $env:GHOZTTY_PIPE_SUFFIX = "-winclosemem$PID"
+# -ReleaseSandbox (T2644): measure a RELEASE build (-ExePath), which allocates
+# through the C heap rather than the debug build's DebugAllocator - whose
+# never-reused slots and whole-64KiB-page retention grow with churn on their
+# own. All three isolating knobs, so it never reaches the user's agent/state.
+# cdb is resolved first: the Store debugger lives under the REAL LOCALAPPDATA,
+# which the sandbox below moves.
+$script:cdbPath = $null
+if ($HeapCensus) {
+    . (Join-Path $repo 'scripts\lib\CrashCatch.ps1')
+    $script:cdbPath = Get-CdbPath
+}
+if ($ReleaseSandbox) {
+    . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
+    Set-GhozttyTestIsolation -Tag 'winclosemem' -ReleaseSandbox
+}
 $errlog = Join-Path $env:TEMP "ghoztty-window-close-memory-$PID.log"
 $tmp = Join-Path $env:TEMP "ghoztty-t2473-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
@@ -121,6 +136,29 @@ function Wait-Viewer([int]$ProcessId, [int]$TimeoutSec = 20) {
         Start-Sleep -Milliseconds 250
     } while ((Get-Date) -lt $deadline)
     return $false
+}
+
+# -HeapCensus (T2644): a non-invasive cdb attach at the baseline and the end
+# sample, printing where the app's committed memory lives (`!address -summary`:
+# heap vs. VirtualAlloc vs. stack vs. image) and every NT heap's commit
+# (`!heap -s`), so a private-bytes drift is attributed to a heap rather than
+# guessed at. -HeapCensusCommands appends cdb commands (e.g. `!heap -stat -h 0`).
+function Invoke-HeapCensus([int]$ProcessId, [string]$Label) {
+    $cdb = $script:cdbPath
+    if (-not $cdb) { Write-Host "HEAP CENSUS $Label skipped: no cdb on this box"; return }
+    $out = Join-Path $env:TEMP "ghoztty-heapcensus-$PID-$Label.txt"
+    # Plain srv*<url>: the Store cdb runs in an app container, and a cache
+    # path of our choosing reads back as "not a valid store".
+    $sym = 'srv*https://msdl.microsoft.com/download/symbols'
+    # -HeapCensusRegions: every private committed region, each followed by its
+    # first qwords - the only way to tell an owner by content afterwards.
+    $extra = @($HeapCensusCommands)
+    if ($HeapCensusRegions) { $extra += '!address -f:MEM_PRIVATE,MEM_COMMIT -c:".echo REGION %1 %3; dq %1 L6"' }
+    # A command FILE (-cf), not -c: PS 5.1 mangles embedded quotes on a native argv.
+    $cf = Join-Path $env:TEMP "ghoztty-heapcensus-$PID-$Label.cdb"
+    (@('!address -summary', '!heap -s') + $extra + @('q')) | Set-Content -Path $cf -Encoding ascii
+    & $cdb -pv -p $ProcessId -y $sym -cf $cf 2>&1 | ForEach-Object { "$_" } | Out-File -FilePath $out -Encoding utf8
+    Write-Host "HEAP CENSUS $Label -> $out"
 }
 
 function Invoke-Verb([string[]]$VerbArgs) {
@@ -199,6 +237,7 @@ try {
     $base = Wait-Settled $appPid 'baseline'
     [void]$samples.Add($base)
     $baseTypes = Get-HandleTypes $appPid
+    if ($HeapCensus) { Invoke-HeapCensus $appPid 'baseline' }
 
     # ---- measured cycles ---------------------------------------------------
     $peak = $null
@@ -213,6 +252,7 @@ try {
     $end = Wait-Settled $appPid 'end'
     [void]$samples.Add($end)
     $endTypes = Get-HandleTypes $appPid
+    if ($HeapCensus) { Invoke-HeapCensus $appPid 'end' }
 
     Write-Host ''
     $samples | Format-Table Label, PrivMB, Handles, Gdi, User, Threads, GpuDedMB, GpuShMB, Procs, ProcMB -AutoSize | Out-String -Width 200 | Write-Host
@@ -304,7 +344,7 @@ Assert ($leaked.Count -eq 0) "no test-desktop app ever became foreground on the 
 # A green run stamps the covered files (T783). Only the verdict shape stamps:
 # a bisect run (-Shape, -Resize, -CloseSplitFirst, -AppArgs) or a short one
 # answers a narrower question than the guard asks.
-$verdictShape = ($Shape -eq 'full' -and -not $Resize -and -not $CloseSplitFirst -and $AppArgs.Count -eq 0 -and $Cycles -ge 10)
+$verdictShape = ($Shape -eq 'full' -and -not $Resize -and -not $CloseSplitFirst -and $AppArgs.Count -eq 0 -and $Cycles -ge 10 -and -not $HeapCensus)
 if ($script:fail -eq 0 -and -not $NegativeControl -and $verdictShape) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard window-close-memory -Repo $repo 2>&1 | ForEach-Object { "  $_" }
