@@ -1,14 +1,16 @@
 {
     "guard":  "window-presenter",
     "script":  "test/win32/window-presenter.ps1",
-    "generated":  "2026-11-01T16:43:27-08:00",
-    "commit":  "f887ad859",
+    "generated":  "2026-11-03T12:01:36-08:00",
+    "commit":  "632f047dd",
     "uncommitted":  [
-                        "src/apprt/win32/WindowPresenter.zig"
+                        "src/apprt/win32/WindowPresenter.zig",
+                        "src/renderer/gl_window_presenter.zig",
+                        "test/win32/window-presenter.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/WindowPresenter.zig":  "c72b3ad32a8bc945ad2b138417794d19636be8d08cb3c58308429181f6b88da9",
-                  "src/renderer/gl_window_presenter.zig":  "48cb90eae861db2b3cb75caaace806ecea4c11d6b0d37d6cdf8a4b3cb410a35c",
-                  "test/win32/window-presenter.ps1":  "c8fb2988e02af6a4cac0fb7721f7a811f22105bae7e738858ca94df60d9c1d27"
+                  "src/apprt/win32/WindowPresenter.zig":  "8e0056c2db70066b50f52ed76f96d0e41116b108f0d66a047b43b58f4bac44d4",
+                  "src/renderer/gl_window_presenter.zig":  "018f01a92d2787d8f1363009f1eeba7e891ad997e3a63234a781250ff1f190da",
+                  "test/win32/window-presenter.ps1":  "842ee86de114ad051b91df9a976faa2c06e6a8919bb02971a0f9245f41346171"
               }
 }

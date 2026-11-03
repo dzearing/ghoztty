@@ -33,6 +33,10 @@
 #      slot, so the only way it can reach the presenter's back buffer is the
 #      handoff. The debug-only GHOZTTY_PRESENTER_PROBE readback of each pane's
 #      center must show ff00ff, and later something else (frames keep coming).
+#   G. The resize wait (T2621): a layout pass's frame wait is answered by the
+#      presenter's swap of the pane at its new rectangle (`pres-shown` in the
+#      resize trace), not by the renderer's publish, which no longer reports
+#      on this path. Every woken wait has a presenter report inside it.
 #
 # NOT asserted here: the pixels on screen. This harness runs on a background
 # desktop that DWM never composes, so what reaches the SCREEN can only be
@@ -100,12 +104,14 @@ public static class T2614Win {
 
 $root = Join-Path $env:TEMP "ghoztty-window-presenter-$PID"
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_WINDOW_PRESENTER', 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_LAB_PLANT', 'GHOZTTY_PRESENTER_PROBE'
+$knobs = 'GHOZTTY_WINDOW_PRESENTER', 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_LAB_PLANT', 'GHOZTTY_PRESENTER_PROBE',
+    'GHOZTTY_RESIZE_TRACE', 'GHOZTTY_PRESENT_LAG_MS'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
-function Set-Knobs($presenter, $comp, $plant = $null, $probe = $null) {
-    $vals = @{ GHOZTTY_WINDOW_PRESENTER = $presenter; GHOZTTY_COMP_PRESENT = $comp; GHOZTTY_LAB_PLANT = $plant; GHOZTTY_PRESENTER_PROBE = $probe }
+function Set-Knobs($presenter, $comp, $plant = $null, $probe = $null, $trace = $null, $lag = $null) {
+    $vals = @{ GHOZTTY_WINDOW_PRESENTER = $presenter; GHOZTTY_COMP_PRESENT = $comp; GHOZTTY_LAB_PLANT = $plant; GHOZTTY_PRESENTER_PROBE = $probe
+        GHOZTTY_RESIZE_TRACE = $trace; GHOZTTY_PRESENT_LAG_MS = $lag }
     foreach ($k in $knobs) {
         if ($vals[$k]) { Set-Item "env:$k" $vals[$k] }
         else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
@@ -379,6 +385,55 @@ try {
     Assert "F10 no OpenGL errors and no presenter failure on the frame path" ((Read-Text $g.Err) -notmatch 'error\(opengl\)|window presenter: ')
 
     # ========================================================================
+    "== G: a resize waits for the presenter's compose, not the pane's publish (T2621)"
+    # ========================================================================
+    # On this path a pane's frame reaches the screen only through the
+    # presenter's swap, so that swap is what must end the layout pass's frame
+    # wait. GHOZTTY_PRESENT_LAG_MS=8 holds the presenter's report back the way
+    # a throttled compositor would, so the wait really blocks and is WOKEN
+    # rather than finding the frame already there (T1035). The trace's
+    # `pres-shown` is the presenter's report; the renderer no longer reports
+    # on this path at all, so a woken wait with no `pres-shown` inside it was
+    # answered by something else.
+    Set-Knobs '1' $null $null $null '1' '8'
+    $w = Start-Arm 'w'
+    Assert "G0 the arm's window came up ($($w.Target))" ($w.Top -ne [IntPtr]::Zero -and $w.Target)
+    & $Exe +split "--target=$($w.Target)" '--direction=right' '--name=presw2' 2>$null | Out-Null
+    $mw = Wait-Measure $w.Top 2
+    Assert "G1 the split shows two terminal panes ($($mw.Terms.Count))" ($mw.Terms.Count -eq 2)
+    Close-Measure $mw
+    [void](Wait-Log $w.Err 'resize trace pres-shown' 10000)
+    Start-Sleep -Milliseconds 800
+    $mark = (Read-Text $w.Err).Length
+    foreach ($ww in 1000, 1040, 1080, 1120, 1160, 1200, 1240, 1280) {
+        [void](Set-TestWindowSize -Window $w.Top -Width $ww -Height 720)
+        Start-Sleep -Milliseconds 150
+    }
+    Start-Sleep -Milliseconds 800
+    $tail = (Read-Text $w.Err).Substring($mark)
+    $gPasses = @()
+    $intervals = 0; $answered = 0; $open = $false; $shownIn = 0
+    foreach ($ln in ($tail -split "`n")) {
+        if ($ln -match 'window resize cause=(\w+) panes=(\d+) sync=(\d+) fresh=(\d+) waits=(\d+) timeouts=(\d+) stale=(\d+) woken=(\d+)') {
+            $gPasses += [pscustomobject]@{ Waits = [int]$Matches[5]; Timeouts = [int]$Matches[6]; Stale = [int]$Matches[7]; Woken = [int]$Matches[8] }
+        } elseif ($ln -match 'resize trace wait-begin') { $open = $true; $shownIn = 0 }
+        elseif ($ln -match 'resize trace pres-shown' -and $open) { $shownIn++ }
+        elseif ($ln -match 'resize trace wait-end' -and $open) {
+            $open = $false; $intervals++
+            if ($shownIn -gt 0) { $answered++ }
+        }
+    }
+    $waited = @($gPasses | Where-Object { $_.Waits -gt 0 })
+    $woken = 0; $stale = 0; $timeouts = 0
+    foreach ($p in $waited) { $woken += $p.Woken; $stale += $p.Stale; $timeouts += $p.Timeouts }
+    "    passes that waited=$($waited.Count) wait intervals=$intervals with pres-shown inside=$answered woken=$woken timeouts=$timeouts stale=$stale"
+    Assert "G2 the window resizes ran frame waits ($($waited.Count) passes, $intervals traced)" ($waited.Count -ge 1 -and $intervals -ge 1)
+    Assert "G3 a presented frame woke them ($woken woken)" ($woken -ge 1)
+    Assert "G4 every woken wait held a presenter report inside it ($answered of $intervals intervals, $woken woken)" ($answered -ge $woken)
+    Assert "G5 the presenter reported the panes at their new width" ((Count-Log $w.Err 'resize trace pres-shown hwnd=[0-9a-f]+ w=\d+ h=\d+') -ge 2)
+    Assert "G6 no presenter failure, no OpenGL error" ((Read-Text $w.Err) -notmatch 'error\(opengl\)|window presenter: ')
+
+    # ========================================================================
     "== E: negative controls"
     # ========================================================================
     Set-Knobs $null $null
@@ -418,4 +473,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'window-presenter' -MinPass 39
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'window-presenter' -MinPass 46

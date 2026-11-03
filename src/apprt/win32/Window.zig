@@ -7941,6 +7941,14 @@ fn endFrameWaitBatch(self: *Window) void {
     const n = self.frame_wait_len;
     self.frame_wait_len = 0;
     if (n == 0) return;
+    // T2621: on the window presenter path a pane's frame is shown by the
+    // presenter's compose, and the presenter only learns where the panes went
+    // when it is synced. `layoutSplits` syncs it last of all, after this wait,
+    // which left the wait to be answered by the pane's publish, at the
+    // geometry the presenter still held. Sync first: a pane this pass moved
+    // then reads as not shown until a compose at its new rectangle reports
+    // it. The trailing sync stays, for whatever the pass moves after this.
+    self.syncPresenter();
     if (self.hwnd) |h| resizeTrace("wait-begin", h);
     defer if (self.hwnd) |h| resizeTrace("wait-end", h);
 
@@ -9974,6 +9982,17 @@ pub fn traceRenderStage(comptime what: []const u8, hwnd: ?w32.HWND) void {
     _ = w32.QueryPerformanceCounter(&t);
     const h: usize = if (hwnd) |p| @intFromPtr(p) else 0;
     log.info("resize trace " ++ what ++ " hwnd={x} qpc={d}", .{ h, t });
+}
+
+/// The window presenter's swap put pane `hwnd`'s `width` x `height` frame on
+/// screen (T2621): the event that answers a layout pass waiting for that
+/// pane. `GHOZTTY_RESIZE_TRACE` only.
+pub fn tracePresenterShown(hwnd: ?w32.HWND, width: u32, height: u32) void {
+    if (!resizeTraceOn()) return;
+    var t: i64 = 0;
+    _ = w32.QueryPerformanceCounter(&t);
+    const h: usize = if (hwnd) |p| @intFromPtr(p) else 0;
+    log.info("resize trace pres-shown hwnd={x} w={d} h={d} qpc={d}", .{ h, width, height, t });
 }
 
 pub fn tracePresent(hwnd: ?w32.HWND, drawn: u64, swapped: bool) void {

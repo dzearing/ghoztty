@@ -290,6 +290,27 @@ pub fn presenterZFix(walk: []const ZChild) ZFix {
 }
 
 // -------------------------------------------------------------------------
+// The layout pass's wait (T2621).
+// -------------------------------------------------------------------------
+
+/// Did a layout pass move or resize pane `id` since the presenter last
+/// composed it? `prev_ids`/`prev_rects` are the panes the presenter held
+/// before the pass, `now` is where pane `id` sits after it. A pane the
+/// presenter did not hold before is new, so it has changed too.
+///
+/// The answer decides whether the pane's "shown at size" record is still
+/// true. On the presenter path a pane's frame reaches the screen only through
+/// a compose, so a frame composed into the pane's OLD rectangle must not end
+/// a wait for its new one: the pass's frame wait would walk away while the
+/// screen still shows the old geometry.
+pub fn geometryChanged(prev_ids: []const usize, prev_rects: []const Rect, id: usize, now: Rect) bool {
+    std.debug.assert(prev_ids.len == prev_rects.len);
+    const i = std.mem.indexOfScalar(usize, prev_ids, id) orelse return true;
+    const r = prev_rects[i];
+    return r.left != now.left or r.top != now.top or r.right != now.right or r.bottom != now.bottom;
+}
+
+// -------------------------------------------------------------------------
 // Tests.
 // -------------------------------------------------------------------------
 
@@ -445,6 +466,24 @@ test "presenterZFix: chrome between the presenter and the panes ends up above it
     try testing.expectEqual(ZFix{ .after = 1 }, presenterZFix(&.{ .presenter, .other, .terminal }));
     // The presenter below a pane, with chrome on top: below the chrome.
     try testing.expectEqual(ZFix{ .after = 0 }, presenterZFix(&.{ .other, .terminal, .presenter }));
+}
+
+test "geometryChanged: a pane left where it was has not changed" {
+    const a: Rect = .{ .left = 0, .top = 0, .right = 100, .bottom = 50 };
+    const b: Rect = .{ .left = 104, .top = 0, .right = 200, .bottom = 50 };
+    try testing.expect(!geometryChanged(&.{ 7, 9 }, &.{ a, b }, 9, b));
+    try testing.expect(!geometryChanged(&.{ 7, 9 }, &.{ a, b }, 7, a));
+}
+
+test "geometryChanged: a resize or a move is a change, and so is a new pane" {
+    const a: Rect = .{ .left = 0, .top = 0, .right = 100, .bottom = 50 };
+    const wider: Rect = .{ .left = 0, .top = 0, .right = 120, .bottom = 50 };
+    const moved: Rect = .{ .left = 10, .top = 0, .right = 110, .bottom = 50 };
+    try testing.expect(geometryChanged(&.{7}, &.{a}, 7, wider));
+    try testing.expect(geometryChanged(&.{7}, &.{a}, 7, moved));
+    // Not held before this pass.
+    try testing.expect(geometryChanged(&.{7}, &.{a}, 8, a));
+    try testing.expect(geometryChanged(&.{}, &.{}, 7, a));
 }
 
 test "planPane: an empty pane plans nothing" {

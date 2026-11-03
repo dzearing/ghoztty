@@ -45,6 +45,7 @@ const gl_loader = @import("../../renderer/gl_loader.zig");
 const gl_robust = @import("../../renderer/gl_robust.zig");
 const core = @import("../../renderer/gl_window_presenter.zig");
 const Surface = @import("Surface.zig");
+const Window = @import("Window.zig");
 const App = @import("App.zig");
 
 const log = std.log.scoped(.win32_window_presenter);
@@ -620,6 +621,20 @@ pub fn sync(self: *WindowPresenter) void {
     }
 
     self.mutex.lock();
+    // T2621: a pane this pass moved or resized has nothing shown at its new
+    // rectangle until the next compose reports it, so a frame composed into
+    // the OLD one cannot answer the layout pass's wait. Under the lock that
+    // `compose` holds throughout, so every compose after this sees the new
+    // rectangles and every one before it has already reported.
+    var prev_ids: [MAX_PANES]usize = undefined;
+    for (self.pane_hwnds[0..self.pane_len], 0..) |h, i| prev_ids[i] = @intFromPtr(h);
+    for (rects[0..n], pane_hwnds[0..n]) |r, h| {
+        if (!core.geometryChanged(prev_ids[0..self.pane_len], self.panes[0..self.pane_len], @intFromPtr(h), r)) continue;
+        const l = self.findLink(h) orelse continue;
+        // Zero: no size, so `resize_paint.presentIsStale` reads any awaited
+        // size as still to come.
+        l.surface.presented_size.store(0, .release);
+    }
     @memcpy(self.panes[0..n], rects[0..n]);
     @memcpy(self.pane_hwnds[0..n], pane_hwnds[0..n]);
     self.pane_len = n;
@@ -984,6 +999,9 @@ fn rebuild(self: *WindowPresenter, hdc: w32.HDC, live: *?Live, dev: *Device) voi
 /// A link a compose took a fresh frame from, and the slot that freed.
 const Taken = struct { link: *PaneLink, released: ?u1 };
 
+/// A pane a compose blitted, and the size of the frame it showed (T2621).
+const Shown = struct { surface: *Surface, width: u32, height: u32 };
+
 fn compose(self: *WindowPresenter, gl: Gl, hdc: w32.HDC, read_fbo: u32) void {
     // Held throughout, so an `unlink` waits for this compose to finish with
     // the pane's textures (`PaneLink.unlink`).
@@ -997,6 +1015,8 @@ fn compose(self: *WindowPresenter, gl: Gl, hdc: w32.HDC, read_fbo: u32) void {
 
     var taken: [MAX_PANES]Taken = undefined;
     var taken_len: usize = 0;
+    var shown: [MAX_PANES]Shown = undefined;
+    var shown_len: usize = 0;
     var blitted: usize = 0;
     const gen = self.generation.load(.acquire);
 
@@ -1039,6 +1059,8 @@ fn compose(self: *WindowPresenter, gl: Gl, hdc: w32.HDC, read_fbo: u32) void {
         fx.framebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
         fx.bindFramebuffer(GL_READ_FRAMEBUFFER, 0);
         blitted += 1;
+        shown[shown_len] = .{ .surface = l.?.surface, .width = tk.frame.width, .height = tk.frame.height };
+        shown_len += 1;
     }
     if (comptime builtin.mode == .Debug) {
         if (self.probe) self.probeCenters(gl, n);
@@ -1062,6 +1084,24 @@ fn compose(self: *WindowPresenter, gl: Gl, hdc: w32.HDC, read_fbo: u32) void {
         if (taken_len > 0) gl.flush();
     }
     for (taken[0..taken_len]) |tk| _ = w32.SetEvent(tk.link.signal);
+
+    // T2621: this swap is what put each blitted pane's frame on screen, at
+    // the rectangle this compose read, so it is what answers a layout pass
+    // waiting for that pane at its new size. Re-composed frames count too:
+    // a pane the pass moved without resizing is shown at its new place by a
+    // compose of the frame it already had. Still under the lock, so a pane
+    // cannot unlink (and its surface go) under the report.
+    if (shown_len > 0) {
+        // `GHOZTTY_PRESENT_LAG_MS` (T1035) once per compose, not per pane:
+        // one swap stands in for one throttled present.
+        var lag: u8 = 0;
+        for (shown[0..shown_len]) |s| lag = @max(lag, s.surface.present_lag_ms);
+        if (lag != 0) Surface.presentLagSleep(lag);
+        for (shown[0..shown_len]) |s| {
+            Window.tracePresenterShown(s.surface.hwnd, s.width, s.height);
+            s.surface.markFrameShown(s.width, s.height);
+        }
+    }
 
     const done = self.composes.fetchAdd(1, .monotonic) + 1;
     if (done == 1) log.info("window presenter composed panes={d} client={d}x{d}", .{ n, w, h });

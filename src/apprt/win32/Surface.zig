@@ -4827,6 +4827,10 @@ pub fn applyResize(self: *Surface, width: u32, client_height: u32) void {
             // exists so the two shapes can be measured against each other)
             // falls through to waiting for itself.
             if (!self.parent_window.deferFrameWait(self)) {
+                // T2621: on the presenter path the frame waited for is the
+                // presenter's compose, so the presenter must first know where
+                // this pane now is.
+                if (self.present_link != null) self.parent_window.syncPresenter();
                 var timer = if (self.parent_window.drag_perf_on)
                     std.time.Timer.start() catch null
                 else
@@ -6375,11 +6379,25 @@ pub fn traceStage(self: *Surface, comptime what: []const u8) void {
 /// frame has been presented. Wakes the main thread if it's blocking
 /// in handleResize during live resize.
 pub fn signalFrameDrawn(self: *Surface, width: u32, height: u32) void {
+    // T2621: on the window presenter path this frame was only PUBLISHED. It
+    // reaches the screen when the presenter composes it into the pane's
+    // rectangle and swaps, and the presenter reports it then
+    // (`markFrameShown`). Reporting it here ended the layout pass's wait on a
+    // frame nobody had shown yet, at a geometry the presenter had not seen.
+    if (self.present_link != null) return;
     // `GHOZTTY_PRESENT_LAG_MS` (T1035): stand in for a throttled compositor,
     // so the resize wait has to be WOKEN by this signal rather than finding
     // the frame already there. Zero, and therefore free, outside a harness.
     const lag = self.present_lag_ms;
     if (lag != 0) presentLagSleep(lag);
+    self.markFrameShown(width, height);
+}
+
+/// Record that a frame at `width` x `height` is on screen, and wake a layout
+/// pass waiting for one. The renderer calls it after its own swap
+/// (`signalFrameDrawn`); on the window presenter path the presenter thread
+/// calls it after the swap that composed the pane (T2621).
+pub fn markFrameShown(self: *Surface, width: u32, height: u32) void {
     // Ordered before the event for the same reason `has_presented_frame` is:
     // a thread the event wakes must never read a size older than the frame it
     // was woken for (T1476).
@@ -6405,7 +6423,7 @@ pub fn signalFrameDrawn(self: *Surface, width: u32, height: u32) void {
 /// the renderer did. A layered pane's slightly slower placement moved that
 /// phase and read as a pane that fell behind the drag. A high-resolution
 /// waitable timer keeps the lag the length the knob says. Harness-only path.
-fn presentLagSleep(ms: u8) void {
+pub fn presentLagSleep(ms: u8) void {
     const ns = @as(u64, ms) * std.time.ns_per_ms;
     const timer = w32.CreateWaitableTimerExW(
         null,
