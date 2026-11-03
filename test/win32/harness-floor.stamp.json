@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-03T10:23:53-08:00",
-    "commit":  "72a471b21",
+    "generated":  "2026-11-03T11:36:38-08:00",
+    "commit":  "54b046e49",
     "uncommitted":  [
-                        "test/win32/hero-carousel-ratio.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -130,7 +130,7 @@
                   "test/win32/deny-escape-damage.ps1":  "2fc4374ce0468d7f7274c10218e38a1ec1c5ec2634fdb231bf2b8b290e9a7e29",
                   "test/win32/deny-sh-from-powershell.ps1":  "345a909a59c95edc61dc97247f3d94784431cae1203ca76951f5dbe755e25a8e",
                   "test/win32/desktop-launch-audit.ps1":  "2ae75191d544e69fb28287f0d9b8532a85aa80a1f520927bc4e8a60f999d45b5",
-                  "test/win32/desk-variant.ps1":  "da9faf809bdd7995944d552b6406ee3736229a7821f246530dbdd42a61d7a17d",
+                  "test/win32/desk-variant.ps1":  "7c119c32b230bc259617070c20518cfcd522d2fc1877e310056cbd5c33bc8776",
                   "test/win32/dip-rounding-audit.ps1":  "8a3979da25d92635db2d67c480af57699a7a61c55331b19d8e56a3fab18d5f5b",
                   "test/win32/divergence-inventory.ps1":  "204e43a76176ef9d5536b00eff27c9af89be83bf0ea4032a9c2eb11a59eecc3b",
                   "test/win32/divider-flicker.ps1":  "db1fb261b04a71d3ad15e5252d15fff8dc4d842f4598aed09d08ae7ff3fa30b3",
