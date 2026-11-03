@@ -1,8 +1,8 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-02T17:14:30-08:00",
-    "commit":  "0690f3b98",
+    "generated":  "2026-11-02T18:42:11-08:00",
+    "commit":  "1f39a7f48",
     "uncommitted":  [
 
                     ],
@@ -18,7 +18,7 @@
                   "scripts/commit-pressure-probe.ps1":  "06ffbbf0dec3a89096ccd6820eb2503a4a0a1842c88e7cd82378a5a3a4e8a657",
                   "scripts/comp-chrome-onscreen.ps1":  "feb985408dd8ea6396dd0f234a79de4face1a32215ce763661ff66c081e4e58f",
                   "scripts/comp-desk-onscreen.ps1":  "d0482983087b3a8426b7638f247ebf8e3e7bad4cf8a7e16d4c7e253ea797d290",
-                  "scripts/comp-flat-onscreen.ps1":  "cde964292ed5a46e425ee40faa9b6ad28c3814708c4c140fe4caf85abdf53eae",
+                  "scripts/comp-flat-onscreen.ps1":  "be13d207bd002951b3e909a1de44c46894858b8ca5c36d30f341ea81ef98026f",
                   "scripts/comp-glide-hold-onscreen.ps1":  "8faa5ef217a3650439d19bb10c8966925a5379ff93bf191cb99b6962a616b778",
                   "scripts/comp-overlay-onscreen.ps1":  "1a2566f9318a69009bf2c91c63875bcdb4da4dd03f08c201834ac2699cedcbb3",
                   "scripts/comp-present-glide.ps1":  "a530ebc0d8a0a400bcedb0fd25ee788c60f3abaf0aecc24d6031e15fca67eba4",
