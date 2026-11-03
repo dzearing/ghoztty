@@ -80,13 +80,33 @@ $testLib = Join-Path $PSScriptRoot '..\test\win32\lib'
 . (Join-Path $testLib 'CleanSlate.ps1')
 . (Join-Path $testLib 'Isolation.ps1')
 . (Join-Path $testLib 'TestDesktop.ps1')
+. (Join-Path $testLib 'DividerFlickerScore.ps1')   # Get-DividerFlickerOccluded (T2645)
 Add-Type -AssemblyName System.Drawing
 
 $script:passes = 0
 $script:failures = 0
+$script:skipped = 0
 function Assert($name, $cond) {
     if ($cond) { "  PASS $name"; $script:passes++ }
     else { "  FAIL $name"; $script:failures++ }
+}
+
+# T2653: a film taken while the display was occluded (asleep, locked) shows a
+# terminal that never presented - its flat background with black past it, on
+# every frame - and scored that reads as a P0 regression the app does not
+# have. The app says so in its own log (FrameClock's c01e0006 line), so such
+# a drag is SKIPPED by name and never scored. Returns the SKIP line, or $null.
+function Get-OccludedSkip($drag, $errLog) {
+    $occl = Get-DividerFlickerOccluded -LogPath $errLog
+    if ($null -eq $occl) { return $null }
+    $script:skipped++
+    return "  SKIP ${drag}: the display was occluded while the app ran (asleep or locked), so these frames say nothing about a drag -- $occl"
+}
+function Exit-Verdict {
+    $skips = if ($script:skipped) { ", $script:skipped SKIPPED" } else { '' }
+    if ($script:failures -eq 0) { "ALL PASS ($script:passes$skips)"; exit 0 }
+    "$script:failures FAILURE(S), $script:passes pass$skips"
+    exit 1
 }
 
 if (-not (Test-Path $Exe)) { "SETUP FAIL: $Exe not found - build it first"; exit 2 }
@@ -280,11 +300,11 @@ if ($ScoreOnly) {
         "== drag $drag (scored from $OutDir)"
         $frames = @(Get-ChildItem (Join-Path $OutDir $drag) -Filter 'f*.bmp' | Sort-Object Name)
         if ($frames.Count -lt 5) { Assert "$drag.1 film present" $false; continue }
+        $skip = Get-OccludedSkip $drag (Join-Path $OutDir 'stderr.txt')
+        if ($skip) { $skip; continue }
         Score-Film $drag $frames
     }
-    if ($script:failures -eq 0) { "ALL PASS ($script:passes)"; exit 0 }
-    "$script:failures FAILURE(S), $script:passes pass"
-    exit 1
+    Exit-Verdict
 }
 
 [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
@@ -363,6 +383,8 @@ try {
         Assert "$drag.1 the film finished" ($filmOut -match '^FILM ok')
         $frames = @(Get-ChildItem $dir -Filter 'f*.bmp' | Sort-Object Name)
         if ($frames.Count -lt 5) { Assert "$drag.2 enough frames ($($frames.Count))" $false; continue }
+        $skip = Get-OccludedSkip $drag $err
+        if ($skip) { $skip; continue }
 
         Score-Film $drag $frames
         if (-not $KeepFrames -and $script:lastBad -eq 0) { Get-ChildItem $dir -Filter 'f*.bmp' | ForEach-Object { Remove-Item $_.FullName } }
@@ -381,6 +403,4 @@ try {
 }
 
 "  films kept in $OutDir"
-if ($script:failures -eq 0) { "ALL PASS ($script:passes)"; exit 0 }
-"$script:failures FAILURE(S), $script:passes pass"
-exit 1
+Exit-Verdict
