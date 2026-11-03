@@ -29,12 +29,12 @@
 #   - headers:  rearrange mode - the flat style's headers are GDI, so the flat
 #               desk must leave the compositor for them (the log says it did).
 #
-# The drag frames are matched below the caption band only. On GDI the gutter
-# bar's glow reaches past the grid and paints the terminal background over the
-# bottom of the tab bar, and that smear stays after the release (T2569); the
-# desk visual is clipped below the caption, so the compositor's band is whole.
-# What the visual arm's band must be instead is checked on its own: the band of
-# the GDI split frame, taken before any drag.
+# Every frame is matched whole. Before T2569 the drag frames were matched
+# below the caption band only: on GDI the gutter bar's glow reached past the
+# grid and painted the terminal background over the bottom of the tab bar, and
+# that smear stayed after the release. The bar's blit is clipped below the
+# chrome now, as the desk visual is, so both arms' bands must equal the band
+# of the GDI split frame, taken before any drag.
 #
 # Arms:
 #   - gdi:    knob off. The reference pictures.
@@ -351,19 +351,19 @@ foreach ($name in 'split', 'held', 'released', 'stack', 'headers') {
     if ($NegativeControl -and $name -eq 'held') { $src = 'freeze' }
     $ref = $script:frames["gdi/$name"]
     $g = $script:frames["$src/$name"]
-    # Below the caption for the drag frames (T2569, above).
-    $y0 = 0
-    if ($name -ne 'split' -and $script:contentTop -gt 0) { $y0 = $script:contentTop }
-    $d = Compare-Frame "match.$name $src vs gdi (rows $y0+):" $ref $g $y0
+    $d = Compare-Frame "match.$name $src vs gdi:" $ref $g
     if ($null -eq $d) { continue }
     $allowed = [int]($ref.W * $ref.H * $MaxDiffShare)
     Assert "match.$name the $src $name frame matches GDI's ($d <= $allowed differ by > $Tolerance)" ($d -le $allowed)
 }
-# The visual arm's caption band through the drag: the band before any drag.
+# Each arm's caption band through the drag: the band before any drag. The gdi
+# rows are T2569's own check - the bar's glow over the tab bar was a GDI smear.
 if ($script:contentTop -gt 0) {
-    foreach ($name in 'held', 'released', 'stack') {
-        $d = Compare-Frame "band.$name visual vs gdi split (rows 0-$($script:contentTop)):" $script:frames['gdi/split'] $script:frames["visual/$name"] 0 $script:contentTop
-        if ($null -ne $d) { Assert "band.$name the compositor's caption band is untouched by the drag ($d px)" ($d -le 0) }
+    foreach ($arm in 'gdi', 'visual') {
+        foreach ($name in 'held', 'released', 'stack') {
+            $d = Compare-Frame "band.$arm.$name $arm vs gdi split (rows 0-$($script:contentTop)):" $script:frames['gdi/split'] $script:frames["$arm/$name"] 0 $script:contentTop
+            if ($null -ne $d) { Assert "band.$arm.$name the caption band is untouched by the drag ($d px)" ($d -le 0) }
+        }
     }
 } else { Assert 'band the content top was measured' $false }
 "  grabs kept in $OutDir"

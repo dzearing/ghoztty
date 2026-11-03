@@ -11173,6 +11173,16 @@ fn paintFlatGutterBar(
         .biBitCount = 32,
         .biCompression = w32.BI_RGB,
     } };
+    // The glow reaches ~11 px past the gutter on every side, and the buffer
+    // under it is the terminal background: at the grid's top that reach is
+    // the bottom of the tab bar, and nothing repaints the band after the drag
+    // (T2569). The desk visual is clipped the same way (`flatPass`).
+    const saved = w32.SaveDC(hdc);
+    defer if (saved != 0) {
+        _ = w32.RestoreDC(hdc, saved);
+    };
+    const clip = self.deskRect();
+    _ = w32.IntersectClipRect(hdc, clip.left, @max(clip.top, self.chromeHeight()), clip.right, clip.bottom);
     _ = w32.StretchDIBits(hdc, reach.left, reach.top, @intCast(w), @intCast(h), 0, 0, @intCast(w), @intCast(h), buf.ptr, &bmi, w32.DIB_RGB_COLORS, w32.SRCCOPY);
 }
 
