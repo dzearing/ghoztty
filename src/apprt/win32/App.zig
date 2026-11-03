@@ -8660,6 +8660,13 @@ pub fn performAction(
                 // the background color updates the title bar.
                 for (self.windows.items) |w| w.onConfigChange();
 
+                // `macos-pane-sidebar` (T2588): a reload that CHANGES it
+                // starts the shared sidebar over that way in every window;
+                // one that leaves it alone keeps the user's toggles.
+                if (PaneSidebar.applyStart(self.config.@"macos-pane-sidebar")) {
+                    for (self.windows.items) |w| w.paneSidebarCatchUp();
+                }
+
                 // Keep USER menu dark mode in sync with the (possibly
                 // changed) window-theme/background (T79).
                 DarkMode.apply(

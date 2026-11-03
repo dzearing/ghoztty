@@ -45,6 +45,7 @@ const outline = @import("pane_sidebar_outline.zig");
 const IpcHandlers = @import("IpcHandlers.zig");
 const tips = @import("pane_sidebar_tips.zig");
 const sidebar_prefs = @import("pane_sidebar_prefs.zig");
+const configpkg = @import("../../config.zig");
 const shared_mod = @import("pane_sidebar_shared.zig");
 const row_menu = @import("pane_sidebar_menu.zig");
 const add_rules = @import("pane_sidebar_add.zig");
@@ -148,13 +149,20 @@ fn toolHeadRename(k: usize) usize {
 /// a restart (T1847).
 pub var remembered: sidebar_prefs.Prefs = .{};
 var remembered_loaded = false;
+/// `macos-pane-sidebar` against the user's own flags (T2588): `remembered`
+/// is what every window draws, this is what the file keeps.
+var start_state: sidebar_prefs.StartState = .{};
 
-/// Read the persisted defaults into `remembered`, once per process. Called
-/// by `Window.init` before it seeds a window from them.
-pub fn loadRemembered(alloc: std.mem.Allocator) void {
+/// Read the persisted defaults into `remembered`, once per process, and
+/// start the sidebar as `macos-pane-sidebar` says. Called by `Window.init`
+/// before it seeds a window from them, so a restored window starts as
+/// configured too (Mac `applicationWillFinishLaunching`).
+pub fn loadRemembered(alloc: std.mem.Allocator, start: configpkg.Config.MacPaneSidebar) void {
     if (remembered_loaded) return;
-    remembered_loaded = true;
     if (sidebar_prefs.load(alloc)) |p| remembered = p;
+    start_state = .init(remembered);
+    remembered_loaded = true;
+    _ = applyStart(start);
     // The scope (T2564, Mac 8aefd0c91): all windows unless the user last left
     // it off - every window folded, no search, as turning it on does.
     shared.launchScope(remembered.all_windows);
@@ -168,9 +176,31 @@ pub fn loadRemembered(alloc: std.mem.Allocator) void {
     }
 }
 
-/// Write `remembered` back. Best-effort, like every chrome preference.
+/// Write `remembered` back - with the user's own flags, never a forced
+/// start's (T2588). Best-effort, like every chrome preference.
 pub fn saveRemembered(alloc: std.mem.Allocator) void {
-    sidebar_prefs.save(alloc, remembered);
+    sidebar_prefs.save(alloc, start_state.toSave(remembered));
+}
+
+/// Start the sidebar as `macos-pane-sidebar` says (T2588, Mac
+/// `PaneSidebarSharedState.applyStart`): at launch, and on a config change
+/// only when the value changed, so a reload never undoes the user's toggles.
+/// True when the flags every window draws moved; windows then catch up.
+pub fn applyStart(start: configpkg.Config.MacPaneSidebar) bool {
+    // Before the first window there is nothing to start: `loadRemembered`
+    // applies the config it opens with.
+    if (!remembered_loaded) return false;
+    const s = std.meta.stringToEnum(sidebar_prefs.Start, @tagName(start)) orelse .remember;
+    const moved = start_state.apply(&remembered, s);
+    log.info("pane sidebar start={s} moved={} expanded={} hidden={}", .{ @tagName(s), moved, remembered.expanded, remembered.hidden });
+    return moved;
+}
+
+/// The user set the expanded and hidden flags (a toggle, a hide or show, an
+/// edge drag across the rail): theirs, so the ones that changed are kept.
+pub fn userSetFlags(alloc: std.mem.Allocator, expanded: bool, hidden: bool) void {
+    start_state.userSet(&remembered, expanded, hidden);
+    saveRemembered(alloc);
 }
 
 /// The rest of the sidebar every window shares (T2336, Mac

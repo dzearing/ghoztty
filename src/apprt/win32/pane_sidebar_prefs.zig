@@ -63,6 +63,69 @@ pub fn parse(text: []const u8) ?Prefs {
     };
 }
 
+/// How every window's sidebar starts: `macos-pane-sidebar` (T2588, Mac
+/// 92ab0c9f1), mirrored here so this module stays pure. The sidebar is
+/// shared, so this is every window's start, not one window's.
+pub const Start = enum { remember, expanded, collapsed, hidden };
+
+/// The forced start against the user's own choice (Mac
+/// `PaneSidebarSharedState.applyStart` / `isApplyingStart`). The live flags
+/// (`Prefs`, what every window draws) take a forced start; the file keeps
+/// what the USER last left (`own_*`), so `remember` still has their choice
+/// after a launch that forced another. A toggle afterwards is the user's and
+/// is kept as always.
+pub const StartState = struct {
+    own_expanded: bool = false,
+    own_hidden: bool = false,
+    /// The value last applied; a reload that leaves it alone must not undo
+    /// the user's toggles since.
+    applied: ?Start = null,
+
+    /// From the flags the file had (or the defaults, without one).
+    pub fn init(p: Prefs) StartState {
+        return .{ .own_expanded = p.expanded, .own_hidden = p.hidden };
+    }
+
+    /// Apply `start` to `live`, at launch and on a config change - but only
+    /// when the value CHANGED. `hidden` keeps the expanded/rail choice for
+    /// when the sidebar is shown again. True when `live`'s flags moved.
+    pub fn apply(self: *StartState, live: *Prefs, start: Start) bool {
+        if (self.applied == start) return false;
+        self.applied = start;
+        const before = live.*;
+        switch (start) {
+            .remember => {},
+            .expanded => {
+                live.hidden = false;
+                live.expanded = true;
+            },
+            .collapsed => {
+                live.hidden = false;
+                live.expanded = false;
+            },
+            .hidden => live.hidden = true,
+        }
+        return before.expanded != live.expanded or before.hidden != live.hidden;
+    }
+
+    /// The user set the flags (a toggle, a hide or show): each one that
+    /// changed is theirs and is remembered; `live` takes both.
+    pub fn userSet(self: *StartState, live: *Prefs, expanded: bool, hidden: bool) void {
+        if (expanded != live.expanded) self.own_expanded = expanded;
+        if (hidden != live.hidden) self.own_hidden = hidden;
+        live.expanded = expanded;
+        live.hidden = hidden;
+    }
+
+    /// What the file keeps: the live width and scope, the user's own flags.
+    pub fn toSave(self: StartState, live: Prefs) Prefs {
+        var p = live;
+        p.expanded = self.own_expanded;
+        p.hidden = self.own_hidden;
+        return p;
+    }
+};
+
 pub const FORMAT_BUF_LEN: usize = 32;
 
 /// Format for the file. The width is stored as whole DIP: a sub-pixel width
@@ -166,4 +229,73 @@ test "T2564: the all-windows scope is on by default and when a file predates it"
     // Left off, it stays off.
     try testing.expect(!parse("0 0 240 0").?.all_windows);
     try testing.expect(parse("0 0 240 1").?.all_windows);
+}
+
+// macos-pane-sidebar (T2588): Mac `PaneSidebarSharedStateTests`, one for one.
+
+test "T2588: remember starts as the file left it" {
+    var live: Prefs = .{ .expanded = true, .hidden = true };
+    var st = StartState.init(live);
+    try testing.expect(!st.apply(&live, .remember));
+    try testing.expect(live.expanded and live.hidden);
+}
+
+test "T2588: a forced start wins over the file and is not remembered" {
+    for ([_]struct { start: Start, expanded: bool }{
+        .{ .start = .expanded, .expanded = true },
+        .{ .start = .collapsed, .expanded = false },
+    }) |c| {
+        var live: Prefs = .{ .expanded = !c.expanded, .hidden = true, .width_dip = 300 };
+        var st = StartState.init(live);
+        try testing.expect(st.apply(&live, c.start));
+        try testing.expect(live.expanded == c.expanded and !live.hidden);
+        // `remember` keeps the user's own last choice; the width is live.
+        const saved = st.toSave(live);
+        try testing.expect(saved.expanded == !c.expanded and saved.hidden);
+        try testing.expectEqual(@as(f32, 300), saved.width_dip);
+    }
+}
+
+test "T2588: hidden keeps the remembered mode for when it is shown" {
+    var live: Prefs = .{ .expanded = true };
+    var st = StartState.init(live);
+    try testing.expect(st.apply(&live, .hidden));
+    try testing.expect(live.hidden and live.expanded);
+    try testing.expect(!st.toSave(live).hidden);
+}
+
+test "T2588: toggling after a forced start still works and is remembered" {
+    var live: Prefs = .{};
+    var st = StartState.init(live);
+    _ = st.apply(&live, .collapsed);
+    st.userSet(&live, true, false);
+    st.userSet(&live, true, true);
+    try testing.expect(live.expanded and live.hidden);
+    const saved = st.toSave(live);
+    try testing.expect(saved.expanded and saved.hidden);
+}
+
+test "T2588: a toggle remembers only the flag it changed" {
+    // Forced collapsed over a file that said expanded; the user then hides
+    // it. Hidden is theirs; expanded was the config's, so the file keeps
+    // the expanded choice they made before (Mac writes each key on its own).
+    var live: Prefs = .{ .expanded = true };
+    var st = StartState.init(live);
+    _ = st.apply(&live, .collapsed);
+    st.userSet(&live, false, true);
+    const saved = st.toSave(live);
+    try testing.expect(saved.expanded and saved.hidden);
+}
+
+test "T2588: a reload reapplies only when the value changes" {
+    var live: Prefs = .{};
+    var st = StartState.init(live);
+    _ = st.apply(&live, .collapsed);
+    st.userSet(&live, true, false);
+    try testing.expect(!st.apply(&live, .collapsed));
+    try testing.expect(live.expanded); // the same value again does not undo the toggle
+    try testing.expect(st.apply(&live, .hidden));
+    try testing.expect(live.hidden);
+    try testing.expect(st.apply(&live, .expanded));
+    try testing.expect(live.expanded and !live.hidden);
 }

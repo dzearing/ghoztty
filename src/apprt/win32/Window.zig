@@ -1892,7 +1892,8 @@ fn createPillFont(self: *Window) void {
 /// Initialize the Window by creating the top-level HWND and tab bar font.
 pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     // The new-window sidebar defaults persist across a restart (T1847).
-    PaneSidebar.loadRemembered(app.core_app.alloc);
+    // `macos-pane-sidebar` decides how they start (T2588).
+    PaneSidebar.loadRemembered(app.core_app.alloc, app.config.@"macos-pane-sidebar");
     self.* = .{
         .app = app,
         .is_quick_terminal = options.is_quick_terminal,
@@ -3259,9 +3260,7 @@ pub fn paneSidebarOrderLive(self: *Window, out: [][]const u8) ?[]const []const u
 }
 
 fn paneSidebarLayoutChanged(self: *Window) void {
-    PaneSidebar.remembered.expanded = self.pane_sidebar_expanded;
-    PaneSidebar.remembered.hidden = self.pane_sidebar_hidden;
-    PaneSidebar.saveRemembered(self.app.core_app.alloc);
+    PaneSidebar.userSetFlags(self.app.core_app.alloc, self.pane_sidebar_expanded, self.pane_sidebar_hidden);
     // Watched: a toggle, a hide or show, or an edge drag crossing the rail's
     // threshold (T2359).
     self.layoutSplitsLive();

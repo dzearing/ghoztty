@@ -32,6 +32,14 @@
 #           turning the scope off writes `1 0 240 0` and a relaunch opens in
 #           this window; turning it back on writes `1 0 240 1` and a relaunch
 #           opens in all windows again.
+#   E. The configured START (T2588, Mac 92ab0c9f1 `macos-pane-sidebar`),
+#      persistence OFF:
+#       10. Over an expanded file, `collapsed` opens on the rail and `hidden`
+#           opens hidden, and neither writes the file; shown again, the hidden
+#           start's sidebar is the remembered panel. Over a rail file,
+#           `expanded` opens the panel and leaves the file; `remember` opens
+#           as the file says. (A reload's changed-only rule is the none
+#           lane's `T2588:` tests.)
 #
 # Isolation: LOCALAPPDATA points at a throwaway dir for every launched
 # instance, so the defaults file, the manifest and the agent state dir are all
@@ -156,14 +164,14 @@ function Send-HideChord($top) {
 # Launch with LOCALAPPDATA redirected; returns the top window. Keeps the
 # placement memory (and so the defaults file) - the relaunch half of every
 # step is the subject.
-function Launch([bool]$Persist) {
+function Launch([bool]$Persist, [string[]]$Extra = @()) {
     $saved = $env:LOCALAPPDATA
     $env:LOCALAPPDATA = $fakeLocal
     $flag = if ($Persist) { '--session-persistence=true' } else { '--session-persistence=false' }
     try {
         # persistence: per section - OFF for the defaults file (A), ON for the manifest (B).
-        $a = Start-OnTestDesktop -Exe $Exe -StdErr $errlog -KeepWindowPlacement `
-            -Arguments @($flag, '--macos-pane-style=flat')
+        $a = Start-OnTestDesktop -Exe $Exe -StdErr $script:errlog -KeepWindowPlacement `
+            -Arguments (@($flag, '--macos-pane-style=flat') + $Extra)
     } finally { $env:LOCALAPPDATA = $saved }
     Start-Sleep -Seconds 3
     $script:app = $a
@@ -317,6 +325,38 @@ try {
     $script:errlog = Join-Path $fakeLocal 'app-stderr-scope3.log'
     $top = Launch $false
     Assert "relaunched, it opens in all windows again (log)" ($null -ne (Wait-LogLine 'pane sidebar scope at launch all_windows=true'))
+    Stop-App
+
+    "== 10: macos-pane-sidebar forces the start and is never remembered (T2588, Mac 92ab0c9f1)"
+    Write-NoBom $prefFile "1 0 300 1`n"
+    $script:errlog = Join-Path $fakeLocal 'app-stderr-start1.log'
+    $top = Launch $false @('--macos-pane-sidebar=collapsed')
+    Assert "collapsed: launched over an expanded defaults file" ($top -ne [IntPtr]::Zero)
+    Assert "collapsed: the window opens on the RAIL ($(Describe $top))" (Width-Is $top 76)
+    Assert "collapsed: the start is logged" ($null -ne (Wait-LogLine 'pane sidebar start=collapsed moved=true'))
+    Stop-App
+    Assert "collapsed: the file keeps the user's expanded choice ($(Read-Pref))" ((Read-Pref) -eq '1 0 300 1')
+
+    $script:errlog = Join-Path $fakeLocal 'app-stderr-start2.log'
+    $top = Launch $false @('--macos-pane-sidebar=hidden')
+    $sb = Get-Sidebar $top
+    Assert "hidden: the window opens with no sidebar ($(Describe $top))" ($top -ne [IntPtr]::Zero -and ($null -eq $sb -or -not $sb.Visible))
+    Assert "hidden: the file is untouched ($(Read-Pref))" ((Read-Pref) -eq '1 0 300 1')
+    Assert "hidden: ctrl+shift+s shows it" (Send-HideChord $top)
+    Assert "hidden: shown, it is the remembered 300 DIP panel ($(Describe $top))" (Width-Is $top 300)
+    Assert "hidden: the toggle is the user's and is written ($(Read-Pref))" (Wait-Pref '1 0 300 1')
+    Stop-App
+
+    Write-NoBom $prefFile "0 0 240 1`n"
+    $script:errlog = Join-Path $fakeLocal 'app-stderr-start3.log'
+    $top = Launch $false @('--macos-pane-sidebar=expanded')
+    Assert "expanded: the window opens on the 240 DIP panel over a rail default ($(Describe $top))" (Width-Is $top 240)
+    Stop-App
+    Assert "expanded: the file keeps the rail ($(Read-Pref))" ((Read-Pref) -eq '0 0 240 1')
+
+    $script:errlog = Join-Path $fakeLocal 'app-stderr-start4.log'
+    $top = Launch $false @('--macos-pane-sidebar=remember')
+    Assert "remember: the window opens as the file left it, the rail ($(Describe $top))" (Width-Is $top 76)
     Stop-App
 
     $script:reachedEnd = $true
