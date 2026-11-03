@@ -1,0 +1,378 @@
+diff --git a/src/Surface.zig b/src/Surface.zig
+index a845c811a..3f08e8837 100644
+--- a/src/Surface.zig
++++ b/src/Surface.zig
+@@ -39,6 +39,20 @@ const Duration = configpkg.Config.Duration;
+ const input = @import("input.zig");
+ const App = @import("App.zig");
+ const internal_os = @import("os/main.zig");
++
++const RendererThread = if (apprt.runtime == apprt.win32)
++    internal_os.reusable_thread.Handle
++else
++    std.Thread;
++
++/// Every win32 renderer runs on a thread from here (T2644, see `renderer_thr`).
++var renderer_pool: internal_os.reusable_thread.Pool = .{ .name = "renderer" };
++
++fn spawnRendererThread(t: *rendererpkg.Thread) !RendererThread {
++    if (comptime apprt.runtime == apprt.win32)
++        return renderer_pool.spawn(rendererpkg.Thread.threadMain, .{t});
++    return std.Thread.spawn(.{}, rendererpkg.Thread.threadMain, .{t});
++}
+ const inspectorpkg = @import("inspector/main.zig");
+ const SurfaceMouse = @import("surface_mouse.zig");
+ const ProcessInfo = @import("pty.zig").ProcessInfo;
+@@ -193,8 +207,12 @@ renderer_state: rendererpkg.State,
+ /// The renderer thread manager
+ renderer_thread: rendererpkg.Thread,
+ 
+-/// The actual thread
+-renderer_thr: std.Thread,
++/// The actual thread. On win32 a pooled OS thread that is parked, not
++/// exited, when this surface closes (T2644): the NVIDIA GL driver strands
++/// ~0.2 MB of per-thread state for every exited thread that ever made a
++/// context current, so churning one renderer thread per pane leaked without
++/// bound. Elsewhere it is a plain `std.Thread`.
++renderer_thr: RendererThread,
+ 
+ /// Mouse state.
+ mouse: Mouse,
+@@ -1333,11 +1351,7 @@ pub fn init(
+     try renderer_impl.finalizeSurfaceInit(rt_surface);
+ 
+     // Start our renderer thread
+-    self.renderer_thr = try std.Thread.spawn(
+-        .{},
+-        rendererpkg.Thread.threadMain,
+-        .{&self.renderer_thread},
+-    );
++    self.renderer_thr = try spawnRendererThread(&self.renderer_thread);
+     self.renderer_thr.setName("renderer") catch {};
+ 
+     // Start our IO thread
+diff --git a/src/os/main.zig b/src/os/main.zig
+index 934070550..5e390fc48 100644
+--- a/src/os/main.zig
++++ b/src/os/main.zig
+@@ -47,6 +47,7 @@ pub const uri = @import("uri.zig");
+ 
+ // Functions and types
+ pub const CFReleaseThread = @import("cf_release_thread.zig");
++pub const reusable_thread = @import("reusable_thread.zig");
+ pub const TempDir = @import("TempDir.zig");
+ pub const GetEnvResult = env.GetEnvResult;
+ pub const getEnvMap = env.getEnvMap;
+@@ -94,6 +95,7 @@ test {
+     _ = path;
+     _ = path_env;
+     _ = process_cwd;
++    _ = reusable_thread;
+     _ = self_exe;
+     _ = source_checkout;
+     _ = uri;
+diff --git a/src/renderer/OpenGL.zig b/src/renderer/OpenGL.zig
+index 0b8404bbb..7920953ef 100644
+--- a/src/renderer/OpenGL.zig
++++ b/src/renderer/OpenGL.zig
+@@ -473,6 +473,13 @@ pub fn threadEnter(self: *const OpenGL, surface: *apprt.Surface) !void {
+             // rather than falling through to its `@ptrCast` branch.
+             const loader: gl_loader.GladLoadFn = gl_loader.gladLoad;
+             try prepareContext(loader);
++
++            // The OS thread is pooled (T2644, `os/reusable_thread.zig`): it
++            // may have rendered another pane before this one, so per-thread
++            // state starts over here rather than at thread creation.
++            reset_status_resolved = false;
++            reset_status_fn = null;
++            perf.reset();
+         },
+     }
+ }
+@@ -1039,6 +1046,16 @@ const perf = struct {
+     threadlocal var swap_total_ns: u64 = 0;
+     threadlocal var swap_max_ns: u64 = 0;
+ 
++    /// A pooled renderer thread starts each pane with a fresh window (T2644).
++    fn reset() void {
++        window_start = null;
++        last_frame = null;
++        frames = 0;
++        max_gap_ns = 0;
++        swap_total_ns = 0;
++        swap_max_ns = 0;
++    }
++
+     fn isOn() bool {
+         return enabled orelse on: {
+             const on = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_PERF");
+diff --git a/src/os/reusable_thread.zig b/src/os/reusable_thread.zig
+new file mode 100644
+index 000000000..4e9013a0f
+--- /dev/null
++++ b/src/os/reusable_thread.zig
+@@ -0,0 +1,264 @@
++//! A `std.Thread` stand-in whose OS thread outlives the work it was spawned
++//! for (T2644).
++//!
++//! Why this exists: every pane runs its renderer on a thread of its own, and
++//! closing the pane joined that thread and let it exit. On the NVIDIA OpenGL
++//! driver (`nvoglv64.dll`) a thread that has made a context current keeps
++//! about 0.2 MB of driver state that is NOT released when the thread exits,
++//! even though the context itself was deleted and `wglDeleteContext`
++//! succeeded. Measured with `docs/design/t2644-gl-thread-churn.zig`, 800
++//! window+context+render-thread cycles:
++//!
++//! - render on a fresh thread each cycle (the old shape): 109 -> 244 MB,
++//!   unbounded, whichever thread deletes the context;
++//! - render on ONE long-lived thread that serves every cycle: 95.9 MB flat.
++//!
++//! So the renderer's OS thread is parked on close instead of exiting, and the
++//! next pane's renderer runs on it. The driver's per-thread state is reused
++//! rather than stranded, and the leak is bounded by the most panes ever open
++//! at once instead of by the number ever closed.
++//!
++//! Semantics match the `std.Thread` subset the core surface uses: `spawn`
++//! runs `f(args...)` on a pooled thread, `join` waits for that call to return
++//! (not for the OS thread to exit - it does not), `setName` is a no-op because
++//! a pool names its threads once, when it creates them. Thread-local state the
++//! previous job left behind survives into the next one, so a job that keeps
++//! any must reset it on entry (the OpenGL renderer does, in `threadEnter`).
++const std = @import("std");
++
++const log = std.log.scoped(.reusable_thread);
++
++/// Memory for jobs and workers. Not the app's allocator on purpose: the pool
++/// is process-lifetime and outlives every allocator a leak check runs over.
++const alloc = std.heap.page_allocator;
++
++pub const Pool = struct {
++    /// Applied to every OS thread this pool creates.
++    name: ?[]const u8 = null,
++    /// Parked threads kept beyond this many exit instead. Bounds the idle
++    /// footprint after a burst; the exit costs what the old shape cost.
++    max_idle: u32 = 16,
++    spawn_config: std.Thread.SpawnConfig = .{},
++
++    mutex: std.Thread.Mutex = .{},
++    idle: ?*Worker = null,
++    idle_count: u32 = 0,
++    /// OS threads ever created by this pool (tests read it).
++    created: u32 = 0,
++    quitting: bool = false,
++
++    /// Run `f(args...)` on a parked thread, or a new one when none is idle.
++    pub fn spawn(self: *Pool, comptime f: anytype, args: anytype) std.Thread.SpawnError!Handle {
++        const Args = @TypeOf(args);
++        const Closure = struct {
++            job: Job,
++            args: Args,
++
++            fn run(j: *Job) void {
++                const c: *@This() = @alignCast(@fieldParentPtr("job", j));
++                const R = @typeInfo(@TypeOf(f)).@"fn".return_type.?;
++                switch (@typeInfo(R)) {
++                    .error_union => @call(.auto, f, c.args) catch |err|
++                        log.warn("pooled thread job failed err={}", .{err}),
++                    else => _ = @call(.auto, f, c.args),
++                }
++            }
++
++            fn free(j: *Job) void {
++                const c: *@This() = @alignCast(@fieldParentPtr("job", j));
++                alloc.destroy(c);
++            }
++        };
++
++        const c = alloc.create(Closure) catch return error.OutOfMemory;
++        c.* = .{ .job = .{ .run = Closure.run, .free = Closure.free }, .args = args };
++        errdefer alloc.destroy(c);
++
++        self.mutex.lock();
++        const parked = self.idle;
++        if (parked) |wk| {
++            self.idle = wk.next;
++            self.idle_count -= 1;
++        }
++        self.mutex.unlock();
++
++        if (parked) |wk| {
++            wk.next = null;
++            wk.job = &c.job;
++            wk.wake.set();
++            return .{ .job = &c.job };
++        }
++
++        const wk = alloc.create(Worker) catch return error.OutOfMemory;
++        errdefer alloc.destroy(wk);
++        wk.* = .{ .pool = self, .job = &c.job };
++        wk.wake.set();
++        const t = try std.Thread.spawn(self.spawn_config, Worker.main, .{wk});
++        if (self.name) |n| t.setName(n) catch {};
++        t.detach();
++        self.mutex.lock();
++        self.created += 1;
++        self.mutex.unlock();
++        return .{ .job = &c.job };
++    }
++
++    /// Wake every parked thread and let it exit. For tests: a process-wide
++    /// pool is never shut down, its parked threads end with the process.
++    pub fn shutdown(self: *Pool) void {
++        self.mutex.lock();
++        self.quitting = true;
++        var it = self.idle;
++        self.idle = null;
++        self.idle_count = 0;
++        self.mutex.unlock();
++        while (it) |wk| {
++            it = wk.next;
++            wk.job = null;
++            wk.wake.set();
++        }
++    }
++
++    /// The worker asks to be parked. False means exit (over the cap, or the
++    /// pool is shutting down).
++    fn park(self: *Pool, wk: *Worker) bool {
++        self.mutex.lock();
++        defer self.mutex.unlock();
++        if (self.quitting or self.idle_count >= self.max_idle) return false;
++        wk.next = self.idle;
++        self.idle = wk;
++        self.idle_count += 1;
++        return true;
++    }
++
++    pub fn idleCount(self: *Pool) u32 {
++        self.mutex.lock();
++        defer self.mutex.unlock();
++        return self.idle_count;
++    }
++};
++
++const Job = struct {
++    run: *const fn (*Job) void,
++    free: *const fn (*Job) void,
++    done: std.Thread.ResetEvent = .{},
++};
++
++const Worker = struct {
++    pool: *Pool,
++    job: ?*Job,
++    next: ?*Worker = null,
++    wake: std.Thread.ResetEvent = .{},
++
++    fn main(self: *Worker) void {
++        while (true) {
++            self.wake.wait();
++            self.wake.reset();
++            // Null only from `shutdown`; the pool may be gone, touch nothing.
++            const job = self.job orelse break;
++            self.job = null;
++            job.run(job);
++            // Park BEFORE reporting done, so a joiner that spawns again at
++            // once finds this thread idle instead of creating a new one. A
++            // spawn that lands between the two sets `wake`, which the next
++            // `wait` sees.
++            const parked = self.pool.park(self);
++            job.done.set();
++            if (!parked) break;
++        }
++        alloc.destroy(self);
++    }
++};
++
++pub const Handle = struct {
++    job: *Job,
++
++    /// Wait for the spawned call to return. The OS thread lives on, parked.
++    pub fn join(self: Handle) void {
++        self.job.done.wait();
++        self.job.free(self.job);
++    }
++
++    /// Pooled threads are named by their pool when created.
++    pub fn setName(self: Handle, name: []const u8) std.Thread.SetNameError!void {
++        _ = self;
++        _ = name;
++    }
++};
++
++test "spawn runs the call and join waits for it" {
++    var pool: Pool = .{};
++    defer pool.shutdown();
++    var hits: u32 = 0;
++    const S = struct {
++        fn bump(p: *u32, by: u32) void {
++            std.Thread.sleep(5 * std.time.ns_per_ms);
++            p.* += by;
++        }
++    };
++    const h = try pool.spawn(S.bump, .{ &hits, 7 });
++    h.join();
++    try std.testing.expectEqual(@as(u32, 7), hits);
++}
++
++test "a joined thread is reused by the next spawn (T2644)" {
++    var pool: Pool = .{};
++    defer pool.shutdown();
++    const S = struct {
++        fn record(out: *std.Thread.Id) void {
++            out.* = std.Thread.getCurrentId();
++        }
++    };
++    var ids: [20]std.Thread.Id = undefined;
++    for (&ids) |*id| (try pool.spawn(S.record, .{id})).join();
++    for (ids[1..]) |id| try std.testing.expectEqual(ids[0], id);
++    try std.testing.expectEqual(@as(u32, 1), pool.created);
++    try std.testing.expectEqual(@as(u32, 1), pool.idleCount());
++}
++
++test "concurrent spawns get distinct threads, then all park" {
++    var pool: Pool = .{};
++    defer pool.shutdown();
++    const S = struct {
++        fn wait(gate: *std.Thread.ResetEvent, out: *std.Thread.Id) void {
++            out.* = std.Thread.getCurrentId();
++            gate.wait();
++        }
++    };
++    var gate: std.Thread.ResetEvent = .{};
++    var ids: [4]std.Thread.Id = undefined;
++    var hs: [4]Handle = undefined;
++    for (&hs, &ids) |*h, *id| h.* = try pool.spawn(S.wait, .{ &gate, id });
++    gate.set();
++    for (hs) |h| h.join();
++    for (ids, 0..) |a, i| for (ids[i + 1 ..]) |b| try std.testing.expect(a != b);
++    try std.testing.expectEqual(@as(u32, 4), pool.created);
++    try std.testing.expectEqual(@as(u32, 4), pool.idleCount());
++}
++
++test "threads past max_idle exit rather than park" {
++    var pool: Pool = .{ .max_idle = 2 };
++    defer pool.shutdown();
++    const S = struct {
++        fn wait(gate: *std.Thread.ResetEvent) void {
++            gate.wait();
++        }
++    };
++    var gate: std.Thread.ResetEvent = .{};
++    var hs: [5]Handle = undefined;
++    for (&hs) |*h| h.* = try pool.spawn(S.wait, .{&gate});
++    gate.set();
++    for (hs) |h| h.join();
++    try std.testing.expectEqual(@as(u32, 2), pool.idleCount());
++}
++
++test "an error-returning job is logged, not lost, and the thread parks" {
++    var pool: Pool = .{};
++    defer pool.shutdown();
++    const S = struct {
++        fn fail() error{Nope}!void {
++            return error.Nope;
++        }
++    };
++    (try pool.spawn(S.fail, .{})).join();
++    try std.testing.expectEqual(@as(u32, 1), pool.idleCount());
++}

@@ -4,6 +4,12 @@
 //   mode 0: context made current + cleared + swapped on the UI thread
 //   mode 1: same, but the render happens on a fresh thread each iteration (ghostty's shape)
 //   mode 2: mode 1, plus a texture + buffer + fence created and deleted on the thread
+//   mode 3: mode 1, but the render thread deletes its own context before it exits
+//   mode 4: one long-lived render thread serves every iteration (a thread pool)
+//   mode 5: fresh thread creates, renders and deletes; the UI thread never touches the context
+// Modes 1-4 also make the context current on the UI thread once at init (ghostty's shape).
+// 2026-11-03, 800 iterations: mode 1 109 -> 244 MB (unbounded); mode 4 95.9 MB flat.
+// Modes 3 and 5 grow like mode 1 - only NOT exiting the thread avoids it.
 const std = @import("std");
 const w = std.os.windows;
 
@@ -114,7 +120,57 @@ fn pump() void {
     }
 }
 
-const Job = struct { dc: HDC, ctx: HGLRC, mode: u32 };
+const Job = struct { dc: HDC, ctx: HGLRC, mode: u32, deleted: bool = false };
+
+// mode 3: fresh thread renders, then deletes its own context before it exits.
+fn renderAndDelete(j: *Job) void {
+    render(j);
+    if (wglDeleteContext(j.ctx) == 0) @panic("delete-on-thread");
+    j.deleted = true;
+}
+
+// mode 5: fresh thread creates, renders, deletes - context never touches the UI thread.
+fn createRenderDelete(j: *Job) void {
+    j.ctx = wglCreateContext(j.dc) orelse @panic("ctx-thread");
+    render(j);
+    if (wglDeleteContext(j.ctx) == 0) @panic("delete-on-thread");
+    j.deleted = true;
+}
+
+// mode 4: one long-lived worker serves every iteration.
+const Pool = struct {
+    mutex: std.Thread.Mutex = .{},
+    cond: std.Thread.Condition = .{},
+    job: ?*Job = null,
+    done: bool = false,
+    quit: bool = false,
+    fn run(p: *Pool) void {
+        while (true) {
+            p.mutex.lock();
+            while (p.job == null and !p.quit) p.cond.wait(&p.mutex);
+            if (p.quit) {
+                p.mutex.unlock();
+                return;
+            }
+            const j = p.job.?;
+            p.mutex.unlock();
+            render(j);
+            p.mutex.lock();
+            p.job = null;
+            p.done = true;
+            p.cond.broadcast();
+            p.mutex.unlock();
+        }
+    }
+    fn submit(p: *Pool, j: *Job) void {
+        p.mutex.lock();
+        p.job = j;
+        p.done = false;
+        p.cond.broadcast();
+        while (!p.done) p.cond.wait(&p.mutex);
+        p.mutex.unlock();
+    }
+};
 
 fn render(j: *const Job) void {
     if (wglMakeCurrent(j.dc, j.ctx) == 0) @panic("makeCurrent");
@@ -144,6 +200,17 @@ pub fn main() !void {
     const cls = std.unicode.utf8ToUtf16LeStringLiteral("glchurn");
     _ = RegisterClassExW(&.{ .lpfnWndProc = wndProc, .hInstance = inst, .lpszClassName = cls });
 
+    var pool: Pool = .{};
+    var pool_t: ?std.Thread = null;
+    if (mode == 4) pool_t = try std.Thread.spawn(.{}, Pool.run, .{&pool});
+    defer if (pool_t) |t| {
+        pool.mutex.lock();
+        pool.quit = true;
+        pool.cond.broadcast();
+        pool.mutex.unlock();
+        t.join();
+    };
+
     var i: u32 = 0;
     while (i < n) : (i += 1) {
         const hwnd = CreateWindowExW(0, cls, cls, 0x10000000 | 0x00CF0000, 40, 40, 800, 600, null, null, inst, null) orelse @panic("window");
@@ -151,16 +218,23 @@ pub fn main() !void {
         const pfd: PIXELFORMATDESCRIPTOR = .{};
         const pf = ChoosePixelFormat(dc, &pfd);
         if (SetPixelFormat(dc, pf, &pfd) == 0) @panic("pf");
-        const ctx = wglCreateContext(dc) orelse @panic("ctx");
-        const job: Job = .{ .dc = dc, .ctx = ctx, .mode = mode };
-        if (mode == 0) {
-            render(&job);
-        } else {
-            const t = try std.Thread.spawn(.{}, render, .{&job});
-            t.join();
+        var job: Job = .{ .dc = dc, .ctx = undefined, .mode = if (mode >= 3) 1 else mode };
+        if (mode != 5) {
+            job.ctx = wglCreateContext(dc) orelse @panic("ctx");
+            // ghostty shape: current on the UI thread at init, released before the render thread.
+            if (wglMakeCurrent(dc, job.ctx) == 0) @panic("ui-current");
+            glClear(0x4000);
+            _ = wglMakeCurrent(null, null);
+        }
+        switch (mode) {
+            0 => render(&job),
+            3 => (try std.Thread.spawn(.{}, renderAndDelete, .{&job})).join(),
+            4 => pool.submit(&job),
+            5 => (try std.Thread.spawn(.{}, createRenderDelete, .{&job})).join(),
+            else => (try std.Thread.spawn(.{}, render, .{&job})).join(),
         }
         pump();
-        if (wglDeleteContext(ctx) == 0) @panic("delete");
+        if (!job.deleted and wglDeleteContext(job.ctx) == 0) @panic("delete");
         _ = ReleaseDC(hwnd, dc);
         _ = DestroyWindow(hwnd);
         pump();
