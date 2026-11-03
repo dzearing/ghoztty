@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-03T08:42:30-08:00",
-    "commit":  "fad8ca845",
+    "generated":  "2026-11-03T08:49:36-08:00",
+    "commit":  "99d2206b6",
     "uncommitted":  [
-
+                        "test/win32/go-loop-guard.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -180,7 +180,7 @@
                   "test/win32/gate-negatives.ps1":  "3e861edd09da86c4e7c0bdb0f7a708ea3a215b520dac4b557cc797c616293b5f",
                   "test/win32/ghoztty-cleanup.ps1":  "443de2b0fdefdd38c064d1245b3ccb9ce653ac68a37f664590ade379dd93d7ee",
                   "test/win32/gl-device-lost.ps1":  "9ea50c131a98b6be564e055c6e196ee36d7209884b6c4ab792d83103336ec73e",
-                  "test/win32/go-loop-guard.ps1":  "6c0c91b7f6be1116d7d61d0a0d92032b62e4a4eeb04e443dcfc6515368152d56",
+                  "test/win32/go-loop-guard.ps1":  "9368aefe143a5ea06fc811393dd63f474b3142b1a244903c2b5498ae2fda6889",
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/guard-due.ps1":  "281420e26fbca13e3dfdd2707d8ef2294e277a3c0171aff3e53e5d0f87b939d6",
@@ -377,7 +377,7 @@
                   "test/win32/pane-sidebar-hover-resync.ps1":  "a05c2b4894385ba80ac8343db8817baf84fb27cabef9dd769164ebc54e27e551",
                   "test/win32/pane-sidebar-hue.ps1":  "576ac6eb12dee5b04364fdba582614f28dcf7b6a3967909c2f9518d49eccb88b",
                   "test/win32/pane-sidebar-motion-cost.ps1":  "3876019f1c5b333d7f95409c195a02164269315a1f52074e3aca1cc0b28cb02b",
-                  "test/win32/pane-sidebar-persist.ps1":  "98eaddfa83dedca2925f36327f47bea832d5c96adc766c0b069b8a05275bc411",
+                  "test/win32/pane-sidebar-persist.ps1":  "6ad94a4ee6ad93814b7d8bc63411924141cf842a50e8825f0b5a7e87eb7d9492",
                   "test/win32/pane-sidebar-rename.ps1":  "59ae17ddcee0857665100f6091041c1a789e7bb60c23fd5f11a4c81d1fd55bdf",
                   "test/win32/pane-sidebar-resize.ps1":  "49d9d94a8b58fecb90697d43fee251b046bd91cd4c29a4d88e798bfdaba9d274",
                   "test/win32/pane-sidebar-scroll.ps1":  "3de92ddbc84f348cc0b541d1e842094e0adb541ffee0531c80b1f75c3daeb970",

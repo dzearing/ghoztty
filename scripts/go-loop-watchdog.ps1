@@ -1023,9 +1023,11 @@ function Invoke-Tick {
     # session's ConPTYs, the loop is alive and detached with no UI to type into.
     #
     # The remedy is to satisfy the precondition rather than report it. Launching
-    # the exe with `--command=` is the same window this branch already opens -
+    # the exe with the shim as its `--initial-command=` (T2662: never
+    # `--command=`, see below) is the same window this branch already opens -
     # T104 made the launch path forward a command, and T487 made a launch
-    # against an ALREADY-RUNNING instance forward it too - so this is the one
+    # against an ALREADY-RUNNING instance forward its initial-command as that
+    # window's `--command` - so this is the one
     # call that works either way, and the probe below only decides which line
     # goes in the log.
     $appAlive = Test-AppRunning
@@ -1039,10 +1041,22 @@ function Invoke-Tick {
         # Not Invoke-Ghoztty: that resolves the `.com` CLI twin and waits for it.
         # This wants the GUI exe, detached, exactly as a user double-clicking it
         # would start it.
-        $launchArgs = @("--working-directory=$Repo", "--command=$shim")
+        #
+        # T2662: `--initial-command=`, NEVER `--command=`. At LAUNCH these are
+        # config keys, not `+new-window` flags: `command` is the default for
+        # EVERY surface the app ever creates, and the app launched here is the
+        # user's own terminal. On 2026-11-03, after a reboot, this line made the
+        # loop shim the command of every pane the user opened, and two of those
+        # panes took lane b's lock. `initial-command` runs in the first surface
+        # only (core Surface.init hands it to `app.first`, and App.run opens
+        # that window before session restore - T406), so every later pane gets
+        # the user's own shell. It is the config key, not `-e`, on purpose: `-e`
+        # also forces quit-after-last-window-closed, which would make the
+        # user's terminal exit when the loop window closes.
+        $launchArgs = @("--working-directory=$Repo", "--initial-command=$shim")
         try {
             $p = Start-Process -FilePath $GhozttyExe -ArgumentList $launchArgs -PassThru -ErrorAction Stop
-            Log "  launch-app started $GhozttyExe pid=$($p.Id) --command=$shim"
+            Log "  launch-app started $GhozttyExe pid=$($p.Id) --initial-command=$shim"
         } catch {
             Log "  LAUNCH-APP FAILED: could not start $GhozttyExe ($($_.Exception.Message))"
         }

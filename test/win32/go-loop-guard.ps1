@@ -504,6 +504,27 @@ Assert 'H17 a launch the loop never comes back from is RECOVER INCOMPLETE (exit 
 Assert 'H18 and the watchdog really took the launch-app path getting there' ($r.Out -match 'ACTION launch-app')
 Remove-Item $state -Force -ErrorAction SilentlyContinue
 
+# T2662: and WHAT it launched the app with. At launch `--command=` is a config
+# key - the default command of every surface the app ever opens - and the app
+# launched here is the user's own terminal: after the 2026-11-03 reboot every
+# pane the user opened ran the loop shim and two of them took lane b's lock. The
+# shim belongs in `--initial-command=` (first surface only). A stand-in that
+# records its argv and answers like nothing is listening, so the probe says
+# "gone" and the launch line is the one that carries --working-directory.
+$fakeAppGoneArgv = Join-Path $root 'fake-ghoztty-app-gone-argv.cmd'
+$argvLog = Join-Path $root 'fake-app-argv.txt'
+Remove-Item $argvLog -Force -ErrorAction SilentlyContinue
+@('@echo off', "echo %*>>`"$argvLog`"", 'echo No running Ghoztty instance found. 1>&2', 'exit /b 1') -join "`r`n" |
+    Out-File -FilePath $fakeAppGoneArgv -Encoding ascii
+$r = Recover-Run $fakeAppGoneArgv @('-HeldTimeoutSeconds', '6')
+$launchLine = @(Get-Content -LiteralPath $argvLog -ErrorAction SilentlyContinue | Where-Object { $_ -match '--working-directory' }) | Select-Object -First 1
+Assert 'H19 the app-gone launch hands the shim to --initial-command (first surface only)' `
+    ($r.Out -match 'ACTION launch-app' -and $launchLine -and $launchLine -match '--initial-command=\S*resume')
+# Negative half: `--command=` anywhere on the launch line is the defect itself.
+Assert 'H20 and never as --command, which would make it every pane''s default' `
+    ($launchLine -and $launchLine -notmatch '(^|\s)"?--command=')
+Remove-Item $state, $argvLog -Force -ErrorAction SilentlyContinue
+
 # --- I / J. real re-entry against a live GUI -----------------------------
 ""
 "I. real re-entry (new window)"
