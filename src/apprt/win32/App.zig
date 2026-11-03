@@ -15,6 +15,7 @@ const internal_os = @import("../../os/main.zig");
 
 const AgentIntegration = @import("AgentIntegration.zig");
 const WhatsNewWindow = @import("WhatsNewWindow.zig");
+const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
 const relay_suspend = @import("../../remote/relay_suspend.zig");
 const AgentIntegrationsDialog = @import("AgentIntegrationsDialog.zig");
 const ConfirmDialog = @import("ConfirmDialog.zig");
@@ -1457,7 +1458,7 @@ pub fn relayoutOwnerWindow(hwnd: w32.HWND) void {
 }
 
 /// Open the config file in the default editor.
-fn openConfigFile(self: *App) void {
+pub fn openConfigFile(self: *App) void {
     const config_path = configpkg.preferredDefaultFilePath(
         self.core_app.alloc,
     ) catch |err| {
@@ -2552,6 +2553,7 @@ pub fn terminate(self: *App) void {
     // Same argument for the What's New window (T624): its own top-level
     // window holding notes parsed out of the app allocator.
     WhatsNewWindow.closeAll();
+    ShortcutGuideWindow.closeAll();
 
     // The bell sound device (T1890), if a bell ever played one.
     bell_audio.deinit(self.core_app.alloc);
@@ -8675,6 +8677,9 @@ pub fn performAction(
                 // the background color updates the title bar.
                 for (self.windows.items) |w| w.onConfigChange();
 
+                // The shortcut guide lists the live bindings (T2591).
+                ShortcutGuideWindow.configChanged();
+
                 // `macos-pane-sidebar` (T2588): a reload that CHANGES it
                 // starts the shared sidebar over that way in every window;
                 // one that leaves it alone keeps the user's toggles.
@@ -9222,12 +9227,21 @@ pub fn performAction(
             },
         },
 
-        // The keyboard shortcut guide (main 1b7ebbcc8). The window is T2591;
-        // until it lands the binding falls through rather than claiming it
-        // did something (GTK does the same).
+        // The keyboard shortcut guide (T2591; Mac 1b7ebbcc8). App-scoped, so
+        // it opens from a viewer pane or with no window at all; the window it
+        // came from is where its Run button sends actions.
         .show_keyboard_shortcuts => {
-            log.info("show_keyboard_shortcuts is not implemented yet (T2591)", .{});
-            return false;
+            const owner: ?*Window = switch (target) {
+                .surface => |core_surface| core_surface.rt_surface.parent_window,
+                .app => if (self.core_app.focusedSurface()) |s|
+                    s.rt_surface.parent_window
+                else if (self.windows.items.len > 0)
+                    self.windows.items[0]
+                else
+                    null,
+            };
+            ShortcutGuideWindow.open(self, owner);
+            return true;
         },
 
         // Acknowledge actions that don't need Win32-specific handling.

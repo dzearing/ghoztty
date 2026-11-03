@@ -609,6 +609,7 @@ $expectedTree = @(
     "&Window/Fl&oat on Top"
     '&Help >'
     "&Help/Ghoztty &Help"
+    "&Help/&Keyboard Shortcuts"
     '&Help/---'
     "&Help/Check for &Updates$EL"
     "&Help/Set Up Agent &Integrations$EL"

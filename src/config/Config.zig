@@ -7573,6 +7573,15 @@ pub const Keybinds = struct {
                 .{ .toggle_pane_sidebar = {} },
             );
 
+            // The keyboard shortcut guide (T2591): Mac's Cmd+/ carried the same
+            // way, Cmd -> Ctrl+Shift. Plain Ctrl+/ is NOT taken: it is the
+            // ^_ every readline/emacs user presses for undo.
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .unicode = '/' }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .show_keyboard_shortcuts = {} },
+            );
+
             // F11 toggles full screen, the Windows convention (Edge,
             // Explorer, Windows Terminal), the way Mac adds Cmd+Ctrl+F
             // "common to Mac programs" beside Cmd+Enter (T2011). Since

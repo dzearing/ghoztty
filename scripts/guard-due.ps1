@@ -3600,6 +3600,22 @@ $GuardTable = @(
             'test\win32\whats-new.ps1'
         )
     },
+    # The keyboard shortcut guide (T2591). `shortcut-guide.ps1` is the only
+    # thing that reads the guide's model - live vs default bindings, what a
+    # key-combo search finds, what Run performs - off a real GUI.
+    [pscustomobject]@{
+        Name   = 'shortcut-guide'
+        Script = 'test\win32\shortcut-guide.ps1'
+        Stamp  = 'test\win32\shortcut-guide.stamp.json'
+        Covers = @(
+            'src\apprt\win32\ShortcutGuideWindow.zig',
+            'src\apprt\win32\ipc_shortcut_guide.zig',
+            'src\apprt\win32\shortcut_catalog.zig',
+            'src\apprt\win32\shortcut_guide_layout.zig',
+            'src\config\keybind_list.zig',
+            'test\win32\shortcut-guide.ps1'
+        )
+    },
     # The key-state pill (T446) and its explainer (T576). `key-state-pill.ps1`
     # is the only thing that drives a real key table on a live GUI and reads
     # the pill's anchor, its content deltas, its per-point click-through and

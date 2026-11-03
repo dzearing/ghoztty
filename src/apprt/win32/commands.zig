@@ -170,6 +170,7 @@ pub const Id = enum {
     restart_app,
     restart_app_and_agent,
     install_agent_update,
+    show_keyboard_shortcuts,
 };
 
 /// Where "Ghoztty Help" goes. The docs are the same for every platform, so
@@ -376,6 +377,9 @@ pub const registry = [_]Command{
     .{ .id = .install_update, .name = "Update Ghoztty and Restart", .action = .new_window, .kind = .install_update, .when = .update_pending, .emphasis = true },
     .{ .id = .dismiss_update, .name = "Cancel or Skip Update", .action = .new_window, .kind = .dismiss_update, .when = .update_pending },
     .{ .id = .help, .name = "Ghoztty Help", .action = .new_window, .kind = .help },
+    // T2591: the core's own palette title (`src/input/command.zig`), so this
+    // row replaces the default rather than sitting beside it (`coversDefault`).
+    .{ .id = .show_keyboard_shortcuts, .name = "Show Keyboard Shortcuts", .action = .show_keyboard_shortcuts, .keywords = "keys keybindings keybinds hotkeys cheat sheet help" },
     .{ .id = .about, .name = "About Ghoztty", .action = .new_window, .kind = .about },
     // Mac lists this in the application menu directly under About
     // (MainMenu.xib); Windows has no application menu, so it sits beside

@@ -283,6 +283,8 @@ test {
 
     // Pure win32 What's New window geometry (T624), same no-OS-imports deal.
     _ = @import("win32/whats_new_layout.zig");
+    _ = @import("win32/shortcut_catalog.zig");
+    _ = @import("win32/shortcut_guide_layout.zig");
 
     // Pure win32 banner-markdown parser (T35), same no-OS-imports deal.
     _ = @import("win32/banner_markdown.zig");

@@ -255,6 +255,8 @@ const window_menu = [_]Node{
 
 const help_menu = [_]Node{
     .{ .item = .{ .cmd = .help, .title = u16lit("Ghoztty &Help") } },
+    // T2591: Mac's Help > Keyboard Shortcuts (1b7ebbcc8), beside Help.
+    .{ .item = .{ .cmd = .show_keyboard_shortcuts, .title = u16lit("&Keyboard Shortcuts") } },
     .separator,
     .{ .item = .{ .cmd = .check_for_updates, .title = u16lit("Check for &Updates…") } },
     .{ .item = .{ .cmd = .claude_integration, .title = u16lit("Set Up Agent &Integrations…") } },
