@@ -687,6 +687,9 @@ desk_variant: ?desk_palette.Variant = null,
 /// The pane style the current layout was computed for, so a config reload
 /// that flips it relayouts rather than only recolouring.
 applied_pane_style: pane_elevation.Style = .elevated,
+/// The pane minimum the current layout was computed for (T2587), so a reload
+/// that changes `macos-pane-min-width` / `-height` relayouts.
+applied_pane_minimum: pane_stack_layout.Metrics.Minimum = .{},
 /// The focused-pane glow (T1834): the pane it is moving to, the pane it is
 /// leaving, and when the move started. Compared by address against the
 /// grid's live slots and never dereferenced, so a pane closed mid-fade
@@ -1784,7 +1787,11 @@ pub fn onConfigChange(self: *Window) void {
     // A flip moves every pane, so it is a relayout plus a full repaint of the
     // content area; in the elevated style a reload can also recolour the
     // cards (their fill is the terminal background), which is a repaint.
-    if (self.paneStyle() != self.applied_pane_style) {
+    // So does `macos-pane-min-width` / `-height` (T2587): a new minimum can
+    // stack a row or bring one back out, which is a relayout too.
+    if (self.paneStyle() != self.applied_pane_style or
+        !std.meta.eql(self.paneMinimum(), self.applied_pane_minimum))
+    {
         self.layoutSplits();
         self.invalidateContentArea();
     } else if (self.applied_pane_style == .elevated) {
@@ -8039,6 +8046,7 @@ pub fn layoutSplits(self: *Window) void {
         self.tab_hero_active[self.active_tab] = false;
     }
     self.applied_pane_style = self.paneStyle();
+    self.applied_pane_minimum = self.paneMinimum();
     const rect = self.gridRect();
     // Not in hero mode: stop the thumbnail heartbeat (harmless if it was
     // never started) and repaint the area the carousel used to own.
@@ -9689,7 +9697,7 @@ fn stackGridOfTab(self: *Window, tab: usize, comptime panes: pane_stack_grid.Pan
         built,
         .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom },
         self.scale,
-        pane_stack_grid.metrics(self.stackGapDip()),
+        pane_stack_grid.metrics(self.stackGapDip(), self.paneMinimum()),
         state.provider(),
     ) catch null;
 }
@@ -9814,6 +9822,13 @@ fn stackState(self: *Window) *pane_stack_state.PaneStackState {
 /// constant, so the gap the grid lays out in pixels (`Metrics.scaled`) is
 /// exactly the gutter `flatGutterPx` rounds once - 8 px for 6 DIP at 125% -
 /// wherever it falls.
+/// `macos-pane-min-width` / `-height` (T2587, Mac 92ab0c9f1), read under
+/// Mac's keys: the smallest a pane may be before its row stacks. Read on
+/// every layout pass, so a reload restacks on the next one.
+fn paneMinimum(self: *Window) pane_stack_layout.Metrics.Minimum {
+    return .fromConfig(self.app.config.@"macos-pane-min-width", self.app.config.@"macos-pane-min-height");
+}
+
 fn stackGapDip(self: *Window) f64 {
     const px = self.stackGapPx();
     const scale: f64 = if (self.scale > 0) self.scale else 1;

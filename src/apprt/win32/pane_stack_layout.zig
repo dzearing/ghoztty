@@ -172,9 +172,36 @@ pub const Metrics = struct {
     /// because the gutters are where every resize grip lives.
     pub const flat_gap: f64 = 6;
 
-    pub fn forStyle(pane_gap: ?f64) Metrics {
-        return .{ .gap = pane_gap orelse flat_gap };
+    /// The metrics for a pane style (`pane_gap` null = flat) and the
+    /// configured minimum (Mac 92ab0c9f1 `forStyle(paneGap:minimumPaneSize:)`).
+    /// The window builds its grid's here, from the config, on every layout
+    /// pass, so a reload restacks on the next one (T2587).
+    pub fn forStyle(pane_gap: ?f64, pane_minimum: Minimum) Metrics {
+        return .{
+            .gap = pane_gap orelse flat_gap,
+            .minimum_width = pane_minimum.width,
+            .minimum_height = pane_minimum.height,
+        };
     }
+
+    /// The smallest a pane may be before its row stacks, in DIPs:
+    /// `macos-pane-min-width` / `macos-pane-min-height`, read under Mac's
+    /// key. `default_minimum_*` is only the default.
+    pub const Minimum = struct {
+        width: f64 = default_minimum_width,
+        height: f64 = default_minimum_height,
+
+        /// The config's values, clamped to the range `Config.finalize`
+        /// already holds them to (120-800 x 80-600) - again, the way Mac's
+        /// accessor does, so a config that skipped finalize cannot lay a
+        /// pane out at zero.
+        pub fn fromConfig(width: u32, height: u32) Minimum {
+            return .{
+                .width = @floatFromInt(std.math.clamp(width, 120, 800)),
+                .height = @floatFromInt(std.math.clamp(height, 80, 600)),
+            };
+        }
+    };
 
     /// These metrics in units `s` times smaller than a DIP - physical pixels,
     /// for a window at scale `s` (T2108). Frames are snapped to whole units

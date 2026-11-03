@@ -142,9 +142,10 @@ pub fn appendRows(a: Allocator, out: *std.ArrayListUnmanaged([]const []const Id)
 }
 
 /// The engine's metrics for a style: the elevated style's gap in DIPs, or null
-/// for the flat style's gutter (`Metrics.flat_gap`).
-pub fn metrics(gap_dip: ?f64) layout.Metrics {
-    return layout.Metrics.forStyle(gap_dip);
+/// for the flat style's gutter (`Metrics.flat_gap`), and the configured pane
+/// minimum (`.{}` is the default 225 x 125).
+pub fn metrics(gap_dip: ?f64, minimum: layout.Metrics.Minimum) layout.Metrics {
+    return layout.Metrics.forStyle(gap_dip, minimum);
 }
 
 /// One pane's place, in pixels.
@@ -420,7 +421,7 @@ fn paneFiveEdges(rest: f64, shadowed: bool) !usize {
         var b = try build(testing.allocator, tree, fakeId);
         defer b.deinit(testing.allocator);
         if (shadowed) applyShadow(&b, tree, &shadow);
-        var g = try computeBuilt(testing.allocator, b, .{ .right = 1982, .bottom = 900 }, 1, metrics(null), .{});
+        var g = try computeBuilt(testing.allocator, b, .{ .right = 1982, .bottom = 900 }, 1, metrics(null, .{}), .{});
         defer g.deinit();
         const x = g.placement(5).?.rect.left;
         if (std.mem.indexOfScalar(i32, edges[0..distinct], x) == null) {
@@ -471,13 +472,13 @@ test "pane_stack_grid: a wholly stashed side leaves the visible root" {
 test "pane_stack_grid: everything stashed lays out nothing" {
     var v = [_]FakeView{ .{ .id = 1, .stash_seq = 1 }, .{ .id = 2, .stash_seq = 2 }, .{ .id = 3, .stash_seq = 3 }, .{ .id = 4, .stash_seq = 4 } };
     const n = rowOfFour(&v);
-    var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = 800, .bottom = 600 }, 1, metrics(null), .{});
+    var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = 800, .bottom = 600 }, 1, metrics(null, .{}), .{});
     defer g.deinit();
     try testing.expectEqual(@as(usize, 0), g.result.leaves.count());
 }
 
 test "pane_stack_grid: an empty tree lays out nothing" {
-    var g = try compute(testing.allocator, FakeTree{ .nodes = &.{} }, fakeId, .{ .right = 800, .bottom = 600 }, 1, metrics(null), .{});
+    var g = try compute(testing.allocator, FakeTree{ .nodes = &.{} }, fakeId, .{ .right = 800, .bottom = 600 }, 1, metrics(null, .{}), .{});
     defer g.deinit();
     try testing.expectEqual(@as(usize, 0), g.result.leaves.count());
 }
@@ -491,7 +492,7 @@ test "pane_stack_grid: a roomy row tiles the pixel rect with the engine's gutter
     };
     // 1.5x: 1500 px is 1000 DIP, room for two 225 DIP panes.
     const rect: PxRect = .{ .left = 10, .top = 40, .right = 1510, .bottom = 940 };
-    var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, rect, 1.5, metrics(null), .{});
+    var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, rect, 1.5, metrics(null, .{}), .{});
     defer g.deinit();
     const a = g.placement(1).?;
     const b = g.placement(2).?;
@@ -516,7 +517,7 @@ test "pane_stack_grid: shared DIP edges stay shared in pixels at a fractional sc
     var v = [_]FakeView{ .{ .id = 1 }, .{ .id = 2 }, .{ .id = 3 }, .{ .id = 4 } };
     const n = rowOfFour(&v);
     // 1.25x, 1601 px: 1280.8 DIP - roomy for four 225 DIP panes plus gutters.
-    var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = 1601, .bottom = 700 }, 1.25, metrics(16), .{});
+    var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = 1601, .bottom = 700 }, 1.25, metrics(16, .{}), .{});
     defer g.deinit();
     try testing.expectEqual(@as(usize, 0), g.result.stacks.items.len);
     var prev_right: i32 = 0;
@@ -537,7 +538,7 @@ test "pane_stack_grid: a whole-pixel gap that is not a whole DIP stays whole eve
     // The flat band at 125%: 3 px is 2.4 DIP. Snapped to whole DIPs it came
     // out 2 or 3 DIP, so 2, 3 or 4 px depending on where it fell (T2108).
     for ([_]i32{ 1601, 1700, 1777, 1903 }) |w| {
-        var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = w, .bottom = 700 }, 1.25, metrics(3.0 / 1.25), .{});
+        var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = w, .bottom = 700 }, 1.25, metrics(3.0 / 1.25, .{}), .{});
         defer g.deinit();
         try testing.expectEqual(@as(usize, 0), g.result.stacks.items.len);
         var prev_right: i32 = 0;
@@ -557,7 +558,7 @@ test "pane_stack_grid: four panes narrower than 4 x 225 DIP stack, and a strip i
     const n = rowOfFour(&v);
     // 2x DPI, 1200 px = 600 DIP: two 225 DIP panes on show, two tucked -
     // three would need 3 x 225 plus the gutters and a strip, past 700 DIP.
-    var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = 1200, .bottom = 1200 }, 2, metrics(10), .{});
+    var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = 1200, .bottom = 1200 }, 2, metrics(10, .{}), .{});
     defer g.deinit();
     try testing.expectEqual(@as(usize, 1), g.result.stacks.items.len);
     try testing.expectEqual(layout.Range{ .lo = 0, .hi = 1 }, g.result.stacks.items[0].run);
@@ -606,7 +607,7 @@ test "pane_stack_grid: T2125 every resizer answers in its gutter and nowhere els
     const n = rowOfFour(&v);
     // 1200 px = 600 DIP: two 225 DIP cards on show, two strips.
     for ([_]i32{ 1200, 2800 }) |w| {
-        var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = w, .bottom = 1200 }, 2, metrics(null), .{});
+        var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = w, .bottom = 1200 }, 2, metrics(null, .{}), .{});
         defer g.deinit();
         const gap: i32 = 12; // the 6 DIP flat gutter at 2x
         var resizers: usize = 0;
@@ -662,7 +663,7 @@ test "pane_stack_grid: the focused pane is on show through the provider" {
             return if (id == 4) 0 else null;
         }
     };
-    var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = 760, .bottom = 600 }, 1, metrics(10), .{ .rank = P.rank });
+    var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = 760, .bottom = 600 }, 1, metrics(10, .{}), .{ .rank = P.rank });
     defer g.deinit();
     try testing.expect(!g.placement(4).?.is_tucked);
     try testing.expect(g.placement(1).?.is_tucked);
@@ -675,7 +676,7 @@ test "pane_stack_grid: a vertical split is a column" {
         .{ .leaf = &v[0] },
         .{ .leaf = &v[1] },
     };
-    var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = 800, .bottom = 806 }, 1, metrics(null), .{});
+    var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, .{ .right = 800, .bottom = 806 }, 1, metrics(null, .{}), .{});
     defer g.deinit();
     const a = g.placement(1).?.rect;
     const b = g.placement(2).?.rect;
@@ -683,4 +684,56 @@ test "pane_stack_grid: a vertical split is a column" {
     try testing.expectEqual(@as(i32, 400), a.bottom);
     try testing.expectEqual(@as(i32, 406), b.top);
     try testing.expectEqual(layout.Direction.vertical, g.result.dividers.items[0].direction);
+}
+
+test "pane_stack_grid: a configured minimum decides when a row stacks" {
+    // Mac aConfiguredMinimumDecidesWhenARowStacks (92ab0c9f1, T2587): four
+    // panes in 1000 DIP fit side by side at the default 225 (4 x 225 + three
+    // 6 DIP gutters = 918), and stack at a configured 300 (1218).
+    var v = [_]FakeView{ .{ .id = 1 }, .{ .id = 2 }, .{ .id = 3 }, .{ .id = 4 } };
+    const n = rowOfFour(&v);
+    const rect: PxRect = .{ .right = 1000, .bottom = 600 };
+    {
+        var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, rect, 1, metrics(null, .{}), .{});
+        defer g.deinit();
+        for (1..5) |id| try testing.expect(!g.placement(@intCast(id)).?.is_tucked);
+    }
+    {
+        var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, rect, 1, metrics(null, .fromConfig(300, 125)), .{});
+        defer g.deinit();
+        var tucked: usize = 0;
+        for (1..5) |id| {
+            const p = g.placement(@intCast(id)).?;
+            if (p.is_tucked) tucked += 1 else try testing.expect(p.rect.right - p.rect.left >= 300);
+        }
+        try testing.expect(tucked > 0);
+    }
+    // A lower minimum keeps a row side by side that the default would stack:
+    // 760 DIP holds four panes at 180 (738) but not at 225.
+    const narrow: PxRect = .{ .right = 760, .bottom = 600 };
+    {
+        var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, narrow, 1, metrics(null, .{}), .{});
+        defer g.deinit();
+        try testing.expect(g.placement(1).?.is_tucked or g.placement(4).?.is_tucked);
+    }
+    {
+        var g = try compute(testing.allocator, FakeTree{ .nodes = &n }, fakeId, narrow, 1, metrics(null, .fromConfig(180, 125)), .{});
+        defer g.deinit();
+        for (1..5) |id| try testing.expect(!g.placement(@intCast(id)).?.is_tucked);
+    }
+}
+
+test "pane_stack_grid: the configured minimum is clamped the way the config is" {
+    const lo = layout.Metrics.Minimum.fromConfig(10, 5);
+    try testing.expectEqual(@as(f64, 120), lo.width);
+    try testing.expectEqual(@as(f64, 80), lo.height);
+    const hi = layout.Metrics.Minimum.fromConfig(5000, 5000);
+    try testing.expectEqual(@as(f64, 800), hi.width);
+    try testing.expectEqual(@as(f64, 600), hi.height);
+    const m = metrics(10, .fromConfig(300, 200));
+    try testing.expectEqual(@as(f64, 300), m.minimum_width);
+    try testing.expectEqual(@as(f64, 200), m.minimum_height);
+    try testing.expectEqual(@as(f64, 10), m.gap);
+    // The default is Mac's 225 x 125.
+    try testing.expectEqual(layout.Metrics.default_minimum_width, metrics(null, .{}).minimum_width);
 }

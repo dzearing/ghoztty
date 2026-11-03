@@ -205,7 +205,7 @@ const Fuzz = struct {
             built,
             .{ .right = @intFromFloat(@round(self.width * self.scale)), .bottom = @intFromFloat(@round(self.height * self.scale)) },
             @floatCast(self.scale),
-            grid_mod.metrics(self.gap),
+            grid_mod.metrics(self.gap, .{}),
             self.state.provider(),
         );
         errdefer grid.deinit();
@@ -227,7 +227,7 @@ const Fuzz = struct {
         p.shown = null;
         var built = try grid_mod.buildWith(self.gpa, self.tree, viewId, .visible);
         defer built.deinit(self.gpa);
-        var grid = try grid_mod.computeBuilt(self.gpa, built, .{ .right = 100_000, .bottom = 100_000 }, 1, grid_mod.metrics(self.gap), p);
+        var grid = try grid_mod.computeBuilt(self.gpa, built, .{ .right = 100_000, .bottom = 100_000 }, 1, grid_mod.metrics(self.gap, .{}), p);
         defer grid.deinit();
         return tuckedOf(a, &grid.result);
     }
