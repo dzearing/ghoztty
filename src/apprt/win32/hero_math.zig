@@ -34,7 +34,46 @@ pub const RATIO_MAX: f32 = 0.6;
 pub const RATIO_DEFAULT: f32 = 0.25;
 
 pub fn clampRatio(ratio: f32) f32 {
+    if (std.math.isNan(ratio)) return RATIO_DEFAULT;
     return @min(RATIO_MAX, @max(RATIO_MIN, ratio));
+}
+
+/// The carousel share hero mode turns on with (T2590, Mac 92ab0c9f1
+/// `HeroModeState.activate`): the configured `macos-hero-carousel-ratio`
+/// (clamped), unless the divider has been dragged in this tab, in which case
+/// the dragged share (`current`) stands.
+pub fn activationRatio(current: f32, configured: f64, resized: bool) f32 {
+    if (resized) return clampRatio(current);
+    if (!std.math.isFinite(configured)) return RATIO_DEFAULT;
+    return clampRatio(@floatCast(configured));
+}
+
+/// Whether a ratio recorded in a session manifest marks a dragged divider
+/// (T2590). Since T2590 only a dragged tab records one; a manifest written
+/// before it recorded every tab, untouched ones at exactly the default, so
+/// that value alone is read as "never dragged" rather than pinning every
+/// restored tab against the config key.
+pub fn restoredRatioIsResized(recorded: f32) bool {
+    return recorded != RATIO_DEFAULT;
+}
+
+test "activationRatio seeds from config until the divider is dragged (T2590)" {
+    const t = std.testing;
+    // Not resized: the configured share wins over whatever the tab held.
+    try t.expectApproxEqAbs(@as(f32, 0.4), activationRatio(0.25, 0.4, false), 0.0001);
+    try t.expectApproxEqAbs(@as(f32, 0.25), activationRatio(0.5, 0.25, false), 0.0001);
+    // Configured value is clamped like the core's finalize does.
+    try t.expectApproxEqAbs(RATIO_MAX, activationRatio(0.25, 0.9, false), 0.0001);
+    try t.expectApproxEqAbs(RATIO_MIN, activationRatio(0.25, 0.01, false), 0.0001);
+    try t.expectApproxEqAbs(RATIO_DEFAULT, activationRatio(0.3, std.math.nan(f64), false), 0.0001);
+    // Resized: the dragged share stands, whatever the config says.
+    try t.expectApproxEqAbs(@as(f32, 0.33), activationRatio(0.33, 0.5, true), 0.0001);
+    try t.expectApproxEqAbs(RATIO_MAX, activationRatio(0.8, 0.5, true), 0.0001);
+}
+
+test "restoredRatioIsResized reads a pre-T2590 default as untouched" {
+    try std.testing.expect(!restoredRatioIsResized(RATIO_DEFAULT));
+    try std.testing.expect(restoredRatioIsResized(0.3));
 }
 
 /// The hero/divider/carousel split of the content rect. The divider is a

@@ -406,6 +406,19 @@ $GuardTable = @(
             'src\apprt\win32\hero_math.zig'
         )
     },
+    # `macos-hero-carousel-ratio` (T2590): the only run that proves hero mode
+    # starts at the configured carousel share, keeps a dragged one across
+    # off/on, and that the divider double-click hands the tab back to the key.
+    # Covers the harness and the activation/restore rule it exercises.
+    [pscustomobject]@{
+        Name   = 'hero-carousel-ratio'
+        Script = 'test\win32\hero-carousel-ratio.ps1'
+        Stamp  = 'test\win32\hero-carousel-ratio.stamp.json'
+        Covers = @(
+            'test\win32\hero-carousel-ratio.ps1',
+            'src\apprt\win32\hero_math.zig'
+        )
+    },
     # The rearrange-mode action (T1524): the only thing that proves a bound
     # `toggle_rearrange_mode` puts the window in the mode and raises the tab
     # strip it needs as a drop target, from a terminal AND from a focused

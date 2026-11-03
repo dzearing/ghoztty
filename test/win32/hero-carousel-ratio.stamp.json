@@ -1,0 +1,14 @@
+{
+    "guard":  "hero-carousel-ratio",
+    "script":  "test/win32/hero-carousel-ratio.ps1",
+    "generated":  "2026-11-03T09:38:32-08:00",
+    "commit":  "72a471b21",
+    "uncommitted":  [
+                        "src/apprt/win32/hero_math.zig",
+                        "test/win32/hero-carousel-ratio.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/hero_math.zig":  "a4a73783e51e9f5b676d7b2cfe8eebda198924822c90b639484ea199d109b8d6",
+                  "test/win32/hero-carousel-ratio.ps1":  "1750cc1a200026335785618bc07b08fd18240ce9ed2cca7a6b021852b2be1818"
+              }
+}

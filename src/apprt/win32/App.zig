@@ -27,6 +27,7 @@ const IpcSessionAwait = @import("ipc_session_await.zig");
 const MachineChooser = @import("MachineChooser.zig");
 const SessionRoster = @import("SessionRoster.zig");
 const window_title_owner = @import("window_title_owner.zig");
+const hero_math = @import("hero_math.zig");
 const SessionCpuProbe = @import("SessionCpuProbe.zig");
 const SessionRosterProbe = @import("SessionRosterProbe.zig");
 const DirectoryProbe = @import("DirectoryProbe.zig");
@@ -3712,7 +3713,9 @@ fn captureWindow(
             // list that can move while the re-dial blocks.
             .uuid = try arena.dupe(u8, win.tabUuid(ti)),
             .color = if (color == .none) null else @tagName(color),
-            .hero_ratio = win.tab_hero_ratio[ti],
+            // T2590: only a dragged divider is recorded; an untouched tab
+            // follows `macos-hero-carousel-ratio` again after a restore.
+            .hero_ratio = if (win.tab_hero_resized[ti]) win.tab_hero_ratio[ti] else null,
             .title = if (win.tab_title_pinned[ti])
                 try captureTabTitle(arena, win, ti)
             else
@@ -5547,7 +5550,10 @@ fn restoreTab(
     if (tab.color) |c| {
         if (std.meta.stringToEnum(tab_color.TabColor, c)) |tc| window.tab_colors[tab_index] = tc;
     }
-    if (tab.hero_ratio) |r| window.tab_hero_ratio[tab_index] = r;
+    if (tab.hero_ratio) |r| {
+        window.tab_hero_ratio[tab_index] = hero_math.clampRatio(r);
+        window.tab_hero_resized[tab_index] = hero_math.restoredRatioIsResized(r);
+    }
     if (tab.title) |t| window.setTabTitlePin(tab_index, t);
 }
 

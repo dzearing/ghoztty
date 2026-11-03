@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-03T08:49:36-08:00",
-    "commit":  "99d2206b6",
+    "generated":  "2026-11-03T10:23:53-08:00",
+    "commit":  "72a471b21",
     "uncommitted":  [
-                        "test/win32/go-loop-guard.ps1"
+                        "test/win32/hero-carousel-ratio.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -190,6 +190,7 @@
                   "test/win32/harness-floor.ps1":  "3b83bf58f86f59dbf9fc47524f5401100fd4bdfce9f9a1a550fed0c1947b5e9b",
                   "test/win32/harness-process-leak.ps1":  "05e37207bcb0ccea6c80bb1e48e79737a5afd59a172deeb624d7942975c39d25",
                   "test/win32/harness-scope.ps1":  "23c72eacc44b5ac667b1bf0755a9ca55452cb2ec4b20efc9a5b4a107e9565b7e",
+                  "test/win32/hero-carousel-ratio.ps1":  "1750cc1a200026335785618bc07b08fd18240ce9ed2cca7a6b021852b2be1818",
                   "test/win32/hero-mode.ps1":  "960240b8d7a164bd56b57424cde848217542a11ddda1b0556cba07aac28468aa",
                   "test/win32/hero-nav.ps1":  "77fbfdd2679c7db44743b69d3a1b7e961ef56c057ee39933b4e90d5b754010f4",
                   "test/win32/hero-viewer-tile.ps1":  "8c4c0f82ad898502a7169e2248deb7dda1662b0c5dd3063aa86955d8f33f00fe",
