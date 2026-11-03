@@ -3394,8 +3394,9 @@ keybind: Keybinds = .{},
 @"macos-pane-glass": bool = true,
 
 /// The gradient a window opened by hand (Cmd-N, the New Window menu item or
-/// command palette entry) gets in the `elevated` pane style. macOS only;
-/// ignored in the `flat` style.
+/// command palette entry; Ctrl+Shift+N on Windows) gets in the `elevated`
+/// pane style. On macOS and on Windows, which reads this same key; ignored in
+/// the `flat` style.
 ///
 /// Valid values:
 ///
@@ -3413,7 +3414,8 @@ keybind: Keybinds = .{},
 /// Changing this option at runtime only applies to new windows.
 @"macos-window-gradient": MacWindowGradient = .random,
 
-/// How the pane sidebar starts. macOS only.
+/// How the pane sidebar starts. On macOS and on Windows, which reads this
+/// same key.
 ///
 /// The sidebar is one view shared by every window: expanding, collapsing,
 /// hiding or showing it in one window (the button at its top, or

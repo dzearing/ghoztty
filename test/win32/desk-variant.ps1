@@ -25,6 +25,10 @@
 #      and the SAME desk pixels it had before.
 #   E) FLAT. With `macos-pane-style = flat`, `--color=random` tints the
 #      terminal (`background_tint` present) and records no seed.
+#   F) OCEAN BY HAND (T2589, Mac 92ab0c9f1). With
+#      `macos-window-gradient = ocean` the New Window action opens a window
+#      that paints the shared ocean desk and records no seed, while a
+#      `--color=random` window still gets its own gradient.
 #
 # Desk pixels are read from a PrintWindow of the top-level window (the parent's
 # own paint): the right margin halfway down the pane, and the bottom margin
@@ -411,6 +415,60 @@ try {
     $mF = Wait-Manifest { param($mf) $null -ne (Get-ManifestSeed $mf 'flatrand') }
     Assert ((Get-ManifestSeed $mF 'flatrand') -eq '') 'E: and records no desk variant'
     foreach ($r in $script:GhozttyTestDesktopLaunches) { if ($r.Pid -eq $app3.Pid) { $r.Killed = $true } }
+    Stop-RepoInstances
+
+    # ---- F: macos-window-gradient = ocean (T2589, Mac 92ab0c9f1) ---------------
+    Say '== ocean: macos-window-gradient=ocean keeps a by-hand window on the shared desk'
+    Remove-Item (Manifest-Path) -ErrorAction SilentlyContinue
+    $app4 = Start-App @('--macos-window-gradient=ocean')
+    Start-Sleep -Seconds 2
+    & $exe +new-window --target=oceanrand --color=random | Out-Null
+    $liveO = Wait-Live { param($rows) [bool](Get-LiveWindow $rows 'oceanrand') } 30
+    $oceanTop = [IntPtr]::Zero
+    $startRow = @($liveO | Where-Object { $_.Target -ne 'oceanrand' })[0]
+    if (-not $startRow) {
+        Write-TestAssertedNothing -Reason 'F: the ocean launch has no startup window in +list'
+    }
+    $hStart = [IntPtr]$startRow.Hwnd
+    Place $hStart 0
+    # The agent kept D's sessions, so this launch re-adopts their seeded windows
+    # too: the oracle is the set of seeded ids BEFORE the chord against after.
+    $mPre = Wait-Manifest { param($mf) $null -ne (Get-ManifestSeed $mf 'oceanrand') }
+    $seedsPre = Get-Seeds $mPre
+    $beforeO = @(Get-TestWindows -ProcessId $app4.Pid | ForEach-Object { $_.Hwnd })
+    $paneO = @(Get-TestChildWindows -Window $hStart -Class 'GhozttyTerminal' | Where-Object Visible)[0]
+    Assert (Send-TestKeys -Window $hStart -Target ([IntPtr]$paneO.Hwnd) -Modifiers ctrl, shift -Key F9) 'F: chord delivered'
+    for ($t = 0; $t -lt 40 -and $oceanTop -eq [IntPtr]::Zero; $t++) {
+        Start-Sleep -Milliseconds 250
+        foreach ($w in @(Get-TestWindows -ProcessId $app4.Pid)) {
+            if ($beforeO -notcontains $w.Hwnd) { $oceanTop = [IntPtr]$w.Hwnd }
+        }
+    }
+    Assert ($oceanTop -ne [IntPtr]::Zero) 'F: the New Window action opened a window'
+    if ($oceanTop -ne [IntPtr]::Zero) {
+        Place $oceanTop 4
+        Start-Sleep -Milliseconds 1200
+        $po = Get-DeskProbe $oceanTop
+        Say "      ocean by-hand desk: $(Format-Probe $po)"
+        if ($null -eq $po -or $null -eq $probe['window-1']) {
+            $script:skipped++; Say 'SKIP  ocean by-hand desk probe: empty capture'
+        } else {
+            $d = Get-ProbeDistance $po $probe['window-1']
+            Say "      ocean by-hand vs ocean distance = $d"
+            Assert ($d -le 6) 'F: the by-hand window paints the shared ocean desk'
+        }
+        # Only the --color=random window may carry a seed: --color keeps its
+        # color either way, and the by-hand window must not get one.
+        $winsPre = @($mPre.windows).Count
+        $mO = Wait-Manifest { param($mf) @($mf.windows).Count -gt $winsPre }
+        $sO = Get-Seeds $mO
+        Say "      seeds: $(($sO.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ' ')"
+        Assert (@($mO.windows).Count -gt $winsPre) "F: the manifest records the by-hand window ($winsPre -> $(@($mO.windows).Count) windows)"
+        Assert ($sO['oceanrand'] -and $sO['oceanrand'] -ne '0') 'F: a --color=random window still gets its own gradient under ocean'
+        $newSeeds = @($sO.Keys | Where-Object { -not $seedsPre.ContainsKey($_) })
+        Assert ($newSeeds.Count -eq 0) "F: the by-hand window records no desk variant (new seeded ids: $($newSeeds -join ','))"
+    }
+    foreach ($r in $script:GhozttyTestDesktopLaunches) { if ($r.Pid -eq $app4.Pid) { $r.Killed = $true } }
 
     Complete-TestBody
 } catch {

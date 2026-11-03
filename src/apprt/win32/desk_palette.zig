@@ -442,6 +442,28 @@ pub const Variant = struct {
             } },
         };
     }
+
+    /// The gradient a window opened BY HAND (Ctrl+Shift+N, the New Window
+    /// menu item or palette command) starts with - Mac
+    /// `PaneDeskVariant.forNewWindow(_:style:gradient:)` (92ab0c9f1, T2589).
+    /// `macos-window-gradient = random` (the default) gives it its own random
+    /// gradient, the same as `+new-window --color=random`; `ocean` leaves it
+    /// on the shared ocean desk (null). The flat style has no desk to vary, so
+    /// it is null there whatever the key says. Programmatic (`--color`), moved
+    /// and restored windows never ask: they keep their color or persisted
+    /// seed either way.
+    pub fn forNewWindow(style: Style, gradient: NewWindowGradient) ?Variant {
+        if (style != .elevated) return null;
+        return switch (gradient) {
+            .random => random(),
+            .ocean => null,
+        };
+    }
+
+    /// `macos-pane-style`, mirrored here so this module stays pure.
+    pub const Style = enum { elevated, flat };
+    /// `macos-window-gradient`, mirrored here so this module stays pure.
+    pub const NewWindowGradient = enum { random, ocean };
 };
 
 /// Mac's `SplitMix64`, so a variant's palette is the same every time it is
@@ -884,6 +906,32 @@ test "T1832: forWindow is the ocean without a variant" {
     try testing.expectEqual(o.at(10, 10, 100, 100).pack(), f.at(10, 10, 100, 100).pack());
     const v = Palette.forWindow(.{ .seed = 5 }, false);
     try testing.expect(v.look == .spotlight);
+}
+
+// macos-window-gradient (T2589): Mac `PaneDeskTests`
+// `theOceanGradientLeavesANewWindowOnTheSharedDesk` and its random twin.
+
+test "T2589: a hand-opened elevated window gets its own random gradient by default" {
+    const a = Variant.forNewWindow(.elevated, .random) orelse return error.NoVariant;
+    const b = Variant.forNewWindow(.elevated, .random) orelse return error.NoVariant;
+    try testing.expect(a.seed != 0 and b.seed != 0);
+    // Its OWN gradient: two windows opened one after the other differ.
+    try testing.expect(a.seed != b.seed);
+    try testing.expect(Palette.forWindow(a, false).look == .spotlight);
+}
+
+test "T2589: the ocean gradient leaves a new window on the shared desk" {
+    const v = Variant.forNewWindow(.elevated, .ocean);
+    try testing.expect(v == null);
+    // null IS the shared ocean desk.
+    try testing.expect(Palette.forWindow(v, false).look == .pools);
+    const o = Palette.ocean(false);
+    try testing.expectEqual(o.at(10, 10, 100, 100).pack(), Palette.forWindow(v, false).at(10, 10, 100, 100).pack());
+}
+
+test "T2589: the flat style has no desk to vary, whatever the gradient says" {
+    try testing.expect(Variant.forNewWindow(.flat, .random) == null);
+    try testing.expect(Variant.forNewWindow(.flat, .ocean) == null);
 }
 
 test "T1832: threeStopAlpha matches SwiftUI's even stops" {

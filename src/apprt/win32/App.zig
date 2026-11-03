@@ -7145,13 +7145,22 @@ fn reanchorFrame(frame: restore_frame.Rect) restore_frame.Rect {
 /// Window menu item or palette command (T1832; Mac a516200d2
 /// `PaneDeskVariant.forNewWindow`): in the elevated style it gets its own
 /// random one, the same as `+new-window --color=random`, so side-by-side
-/// windows are easy to tell apart. Programmatic, moved and restored windows
-/// never call this; the flat style has no desk to vary.
+/// windows are easy to tell apart - unless `macos-window-gradient = ocean`
+/// (T2589, Mac 92ab0c9f1), which leaves it on the shared ocean desk. Read at
+/// the moment of opening, so a config change applies to new windows only.
+/// Programmatic, moved and restored windows never call this; the flat style
+/// has no desk to vary.
 pub fn newWindowDeskVariant(self: *const App) ?desk_palette.Variant {
-    return switch (self.config.@"macos-pane-style") {
-        .elevated => desk_palette.Variant.random(),
-        .flat => null,
-    };
+    return desk_palette.Variant.forNewWindow(
+        switch (self.config.@"macos-pane-style") {
+            .elevated => .elevated,
+            .flat => .flat,
+        },
+        switch (self.config.@"macos-window-gradient") {
+            .random => .random,
+            .ocean => .ocean,
+        },
+    );
 }
 
 /// The pane sidebar's header + and a project header's (T2323; Mac
