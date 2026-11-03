@@ -28,6 +28,11 @@ test {
     // Pure win32 unfocused-split dim logic (T74), same no-OS-imports deal.
     _ = @import("win32/dim_math.zig");
 
+    // The Settings window's surgical config writer (T2583): the pure text
+    // editor, and the store whose tests touch only a temp dir.
+    _ = @import("win32/ConfigFileText.zig");
+    _ = @import("win32/ConfigFileStore.zig");
+
     // Planted one-frame defects for the T2373 lab's positive controls
     // (T2383): the spec parser and the fire rule, same no-OS-imports deal.
     _ = @import("win32/lab_plant.zig");

@@ -192,7 +192,9 @@ fn tempName(alloc: Allocator, sub_path: []const u8, nonce: u64) Allocator.Error!
 /// Absent → false; a probe that cannot decide answers false and lets the
 /// write itself surface the real error (the rename does not follow its
 /// destination, so a false negative cannot turn into a write-through).
-fn isReparsePoint(dir: std.fs.Dir, sub_path: []const u8) bool {
+/// Also the probe `ConfigFileStore` runs before `readLink`, which on Windows
+/// reports a plain file as `error.Unexpected` rather than `NotLink`.
+pub fn isReparsePoint(dir: std.fs.Dir, sub_path: []const u8) bool {
     if (builtin.os.tag == .windows) {
         const w = std.os.windows;
         const path_w = w.sliceToPrefixedFileW(dir.fd, sub_path) catch return false;

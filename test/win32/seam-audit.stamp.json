@@ -1,13 +1,12 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-02T19:58:13-08:00",
-    "commit":  "13e89b524",
+    "generated":  "2026-11-03T07:19:30-08:00",
+    "commit":  "f80940fa8",
     "uncommitted":  [
-                        "src/apprt/win32/pane_stack_fuzz.zig",
-                        "src/apprt/win32/pane_stack_grid.zig",
-                        "src/apprt/win32/pane_stack_layout.zig",
-                        "src/apprt/win32/Window.zig"
+                        "src/apprt/win32/ConfigFileStore.zig",
+                        "src/apprt/win32/ConfigFileText.zig",
+                        "src/apprt/win32/managed_file.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -86,6 +85,8 @@
                   "src/apprt/win32/com.zig":  "5bdb6803e4056d79ba1a1390ff939e62c4fca87688ff1516cffb19cf9ecc3f54",
                   "src/apprt/win32/commands.zig":  "2d4fa5a4620b0ee867f35e0260a7cce0599a1f7071d258b4225f26fe3b0c2571",
                   "src/apprt/win32/comp_spike_stats.zig":  "d3e57fabcbf58a7866dee9310b12289095d5805d64b50a991fcd299035c04430",
+                  "src/apprt/win32/ConfigFileStore.zig":  "f951b29a252dc69920bc7195dc5f50473caa82a967b58ae967b0dc9fcfad8286",
+                  "src/apprt/win32/ConfigFileText.zig":  "5f9765c4c2f053e814911fd09ce5f4f5371a5a37939f1b78c749d83f35032544",
                   "src/apprt/win32/ConfirmDialog.zig":  "95510760083ebc76bae01822600f55b72819aedf6afe389adae090dc343fbbf8",
                   "src/apprt/win32/context_menu.zig":  "56fafd8841c7057f318ad26187fe8b4f944912702e29773596d24a217289c619",
                   "src/apprt/win32/CopilotHookSpec.zig":  "225c5b646d5972676c0965826b60f956dda69a265500b5b6e7268d6959de08d1",
@@ -164,7 +165,7 @@
                   "src/apprt/win32/MachineChooser.zig":  "b1a13a71c9d94be81b94888b53582a8a0b5014096e9d39d80359a3ff1aa9a16e",
                   "src/apprt/win32/MachineConnectionPool.zig":  "9169643d8995769ca4c2ca384123d1c0de560f92911078824b172b4df73c1b65",
                   "src/apprt/win32/maintenance_ca.zig":  "98c11eb22a63fc3a3dc8b2e5f18e68873c144e10ecde1e4135e011ad064dac1a",
-                  "src/apprt/win32/managed_file.zig":  "986e641e52cf1d8c2e807cd38dbfd6e62e660868d1063b2d6bee1acdb5ed50ac",
+                  "src/apprt/win32/managed_file.zig":  "eef5c8c248bca5ca93a4a996113d5063c897516ae12f8a9785af0d217b0e1b1f",
                   "src/apprt/win32/managed_marker.zig":  "4f0d8fe0c6bfdd0a7410c3eaa1d810fb1148d943d688bfef4b8eeda1e02d46a5",
                   "src/apprt/win32/menu_activation.zig":  "52008ebc1041b2cfbfb504eb954b92979312509ee4c78d8956fbd45043f0a90d",
                   "src/apprt/win32/menu_bar.zig":  "e802395857b7fe35eb666d0346df33f562cd99e5cc43c0c760732302898db64d",
