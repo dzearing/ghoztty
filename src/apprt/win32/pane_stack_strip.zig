@@ -647,6 +647,23 @@ test "pane_stack_strip: a tucked strip's name centres on the part that shows" {
     try testing.expectEqual(Rect{ .left = 0, .top = 0, .right = 10, .bottom = 400 }, visiblePart(.{ .left = 0, .top = 0, .right = 10, .bottom = 400 }, .horizontal, true, 15));
 }
 
+test "pane_stack_strip: a gliding strip's shown part moves with it, never left at its target (T2565, Mac bfb31b7ac)" {
+    // Mac's strip kept its clip at the target layout while its frame was
+    // offset to where the glide draws it, so a sidebar edge drag cut the
+    // strip short at its far end for a frame. Here the shown part is cut
+    // from the rect as drawn (`Window.tuckedStrips`), so it is the same
+    // cut wherever the glide has the strip.
+    const to: Rect = .{ .left = 300, .top = 0, .right = 336, .bottom = 600 };
+    const drawn: Rect = .{ .left = 284, .top = 0, .right = 320, .bottom = 600 };
+    for ([_]bool{ true, false }) |leads| {
+        const at = visiblePart(to, .horizontal, leads, 12);
+        const shown = visiblePart(drawn, .horizontal, leads, 12);
+        try testing.expectEqual(at.width(), shown.width());
+        try testing.expectEqual(at.left - 16, shown.left);
+        try testing.expectEqual(at.right - 16, shown.right);
+    }
+}
+
 test "pane_stack_strip: a long name is cut in the middle, keeping both ends" {
     const s = std.unicode.utf8ToUtf16LeStringLiteral("C:\\Users\\me\\git\\project");
     var buf: [64]u16 = undefined;

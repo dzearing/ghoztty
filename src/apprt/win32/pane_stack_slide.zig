@@ -50,6 +50,7 @@ const PxRect = grid.PxRect;
 pub const Rect = PxRect;
 const Id = grid.Id;
 const Direction = @import("pane_stack_layout.zig").Direction;
+const sidebar_transition = @import("pane_sidebar_transition.zig");
 
 /// How quickly a glide closes on its target (T2268; Mac `PaneStageView.glideTime`,
 /// a81db68f9): every frame each edge goes `1 - exp(-dt / glide_ms)` of the way
@@ -1828,4 +1829,25 @@ test "leadingLag: the grid's leading edge as drawn, against where the layout put
     try testing.expectEqual(@as(?i32, 0), s.leadingLag());
     const none: Slide = .{};
     try testing.expectEqual(@as(?i32, null), none.leadingLag());
+}
+
+test "leadingLag: an edge drag mid-glide moves the target, never the card's edge (T2565, Mac bfb31b7ac)" {
+    // Mac's card took a drag step's new width a frame before the grid moved
+    // for it, so its edge sat past the gutter for that frame. Here the
+    // retarget and the card's new width land in one pass: the lag is
+    // re-measured against the new target, and the edge stays where the
+    // grid is drawn. Sidebar 78 -> 238 wide, gutter 2.
+    const before = [_]Placed{.{ .id = 1, .rect = r(80, 0, 400, 600), .tucked = false }};
+    const after = [_]Placed{.{ .id = 1, .rect = r(240, 0, 400, 600), .tucked = false }};
+    var s = plan(&before, &after, null, glide_ms, true);
+    _ = s.step(20);
+    const drawn = s.placed(1).?.left;
+    const w1 = sidebar_transition.followWidth(78, 238, s.leadingLag().?);
+    try testing.expectEqual(drawn - 2, w1);
+    // The drag's next step: the panel 20 px wider, the grid laid out past it.
+    const dragged = [_]Placed{.{ .id = 1, .rect = r(260, 0, 380, 600), .tucked = false }};
+    try testing.expect(s.retarget(&dragged));
+    const w2 = sidebar_transition.followWidth(78, 258, s.leadingLag().?);
+    try testing.expectEqual(w1, w2);
+    try testing.expectEqual(s.placed(1).?.left - 2, w2);
 }
