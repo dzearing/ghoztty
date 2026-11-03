@@ -354,8 +354,8 @@ try {
     Assert 'A9 each theme is its config: flat, elevated solid cards, elevated glass' (
         $tc.flat -eq 'macos-pane-style = flat' -and $tc.elevated -match 'elevated' -and $tc.elevated -match 'glass = false' -and
         $tc.glass -match 'elevated' -and $tc.glass -match 'glass = true') ($tc.Values -join ' / ')
-    Assert 'A10 each sidebar is the new-window default the debug build reads (<expanded> <hidden> <width>)' (
-        (Get-FrameLabSidebarPref expanded) -eq '1 0 240' -and (Get-FrameLabSidebarPref rail) -eq '0 0 240' -and (Get-FrameLabSidebarPref hidden) -eq '0 1 240')
+    Assert 'A10 each sidebar is the new-window default the debug build reads (<expanded> <hidden> <width> <all windows>)' (
+        (Get-FrameLabSidebarPref expanded) -eq '1 0 240 0' -and (Get-FrameLabSidebarPref rail) -eq '0 0 240 0' -and (Get-FrameLabSidebarPref hidden) -eq '0 1 240 0')
 
     $gp = Get-FrameLabGridPlan 9
     $made = @('p1'); $splitOk = $true

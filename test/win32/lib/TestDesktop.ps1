@@ -2745,13 +2745,26 @@ it: a script that ends pinned would otherwise open every later script's window
 pinned, and pane-sidebar.ps1's "the rail is up by default" would turn on run
 order.
 
+That file is not deleted but WRITTEN, to the defaults with the scope pinned to
+"this window" (T2564): Mac 8aefd0c91 made All windows the launch default, so
+an absent file now opens every window's sidebar in the all-windows overview
+and every script that clicks the scope toggle to turn it ON would turn it off.
+Same shape as the `--maximize=false` pin below (T2342): the setup the
+scripts were written against stays the setup they get, and the one script
+whose subject IS the default (pane-sidebar-persist.ps1) keeps its own file
+with -KeepWindowPlacement.
+
 Returns $true if the placement file was removed.
 #>
 function Clear-TestWindowPlacement {
     $local = $env:LOCALAPPDATA
     if (-not $local) { return $false }
     $sidebar = Join-Path $local 'ghoztty\pane_sidebar-debug'
-    if (Test-Path $sidebar) { Remove-Item $sidebar -Force -ErrorAction SilentlyContinue }
+    try {
+        [void](New-Item -ItemType Directory -Force -Path (Split-Path -Parent $sidebar))
+        # <expanded> <hidden> <width DIP> <all windows>: the defaults, this window.
+        [IO.File]::WriteAllText($sidebar, "0 0 240 0`n")
+    } catch { Remove-Item $sidebar -Force -ErrorAction SilentlyContinue }
     $path = Join-Path $local 'ghoztty\window_placement-debug'
     if (-not (Test-Path $path)) { return $false }
     Remove-Item $path -Force -ErrorAction SilentlyContinue

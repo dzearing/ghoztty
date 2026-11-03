@@ -175,6 +175,17 @@ pub const Shared = struct {
         return true;
     }
 
+    /// The scope the app launches in (T2564, Mac 8aefd0c91): the persisted
+    /// choice, with nothing else carried over - no search, and every window
+    /// folded, as turning the scope on folds them. Before the first window.
+    pub fn launchScope(self: *Shared, on: bool) void {
+        self.all_windows = on;
+        self.unfolded.clearRetainingCapacity();
+        _ = self.search.clear();
+        self.scroll = .{ null, null };
+        self.changed();
+    }
+
     /// Whether group `key` shows only its header now. A search unfolds
     /// everything: a hit inside a fold would read as no hit.
     pub fn groupFolded(self: *const Shared, all_windows: bool, key: u64, searching: bool) bool {
@@ -299,6 +310,23 @@ test "T2336: the scope opens the window it was turned on from and folds every ot
     try testing.expect(!s.groupFolded(true, 7, true));
     // Turning it on again is no change.
     try testing.expect(!s.setAllWindows(testing.allocator, true, 9));
+}
+
+test "T2564: the app launches in the remembered scope, every window folded and no search" {
+    var s: Shared = .{};
+    defer s.deinit(testing.allocator);
+    const gen = s.gen;
+    s.launchScope(true);
+    try testing.expect(s.all_windows);
+    try testing.expect(s.gen != gen);
+    // No window is the one it was turned on from: all of them fold.
+    try testing.expect(s.groupFolded(true, 7, false) and s.groupFolded(true, 8, false));
+    try testing.expect(s.search.isEmpty());
+    // Toggling off from there behaves as ever; a scope left off launches off.
+    try testing.expect(s.setAllWindows(testing.allocator, false, 7));
+    s.launchScope(false);
+    try testing.expect(!s.all_windows);
+    try testing.expect(!s.setAllWindows(testing.allocator, false, 7));
 }
 
 test "T2336: turning the scope off forgets the search, window folds and scroll; project folds stay" {

@@ -1,10 +1,13 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-02T15:38:55-08:00",
-    "commit":  "78e822dca",
+    "generated":  "2026-11-02T16:50:10-08:00",
+    "commit":  "709448366",
     "uncommitted":  [
-
+                        "test/win32/frame-lab.ps1",
+                        "test/win32/lib/FrameLabDriver.ps1",
+                        "test/win32/lib/TestDesktop.ps1",
+                        "test/win32/pane-sidebar-persist.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -167,7 +170,7 @@
                   "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3",
                   "test/win32/frame-capture.ps1":  "aa0fb1e741810094182f23694c57b55cff8a0b6e39be1e2bb61771fd3e94e65d",
                   "test/win32/frame-clock.ps1":  "59307834c3ab370225134eea48895e46e53f4898bf4d4a2c0662b40dcc859373",
-                  "test/win32/frame-lab.ps1":  "0f7fd958c6a7c705377f856deeffbe253e2ad3a9c091312529d0b33894481f89",
+                  "test/win32/frame-lab.ps1":  "e6e9a018e560efaa36fa7625355b09e41297d3a9b57c5a97977d032aa48603a8",
                   "test/win32/frame-lab-card.ps1":  "8a648e3b942b2fa23f15c39f5de6898da655256d6866ad3a22f9321ef4f8719c",
                   "test/win32/frame-lab-catalogue.ps1":  "d05be14346c2b972cb11adb4b0b4f41dbf72e3413a676699d0ef771fbd0edbb1",
                   "test/win32/frame-lab-input.ps1":  "87850410d5ef28bc397060cbea57e83ee026215e97e0adcaf0e63f002cabcb2b",
@@ -275,7 +278,7 @@
                   "test/win32/lib/FrameCapture.ps1":  "aa2c93fabf2ab32a181df3600b58141d39ebc7d6970280c92b4d7c7d57db1e4b",
                   "test/win32/lib/FrameLabCard.ps1":  "bd2619ed598f86310869e1ba21fc732287a97c41d801df176e7a41307cbc1882",
                   "test/win32/lib/FrameLabCatalogue.ps1":  "0188e232aeb602ddbe39438246f8f58c35e477e472f87f151720d1c832decea2",
-                  "test/win32/lib/FrameLabDriver.ps1":  "701f02bb34652fe0f9e638e6c87a9419be10512180c669f2ffc7512e362f9dcf",
+                  "test/win32/lib/FrameLabDriver.ps1":  "a9c4aaffe148204773c0ca4804af115605688891a564b0e8a5e257b7bef321c8",
                   "test/win32/lib/FrameLabInput.ps1":  "c10386b0534bbf823329a2801b8f86c8a5b0ef66fae405aa69663b7e9c2ab0f4",
                   "test/win32/lib/FrameLabLiveScene.ps1":  "fe24db849ea981a7c206c47f9894b98db0c7ae1c747b2394d757968a6599c92c",
                   "test/win32/lib/FrameLabReport.ps1":  "ef71f0b8dfc91278328690dbdac7c9f507fe467a1906bc681dfd9d57bfe4f8ed",
@@ -314,7 +317,7 @@
                   "test/win32/lib/SkipAudit.ps1":  "ad7596801d9becbd3869a0ad315d01302cf6e80a339644d911d74b31b3f577ba",
                   "test/win32/lib/StderrCaptureAudit.ps1":  "69d0a25615d35acc06bf6c1471016186163ae1881ae70a12461425546ac4b7d8",
                   "test/win32/lib/TestClient.ps1":  "2540c6af1c32c497f17c0e4fe04fc49480072ef7b54d464b12d0bd252897a3c5",
-                  "test/win32/lib/TestDesktop.ps1":  "c3fb6a3fa8b765db4cd77bf2d2cdf04f4f6efb76153f94a1b5426bdd166ce96c",
+                  "test/win32/lib/TestDesktop.ps1":  "032df56875bcbf25e6647b28cbfa7e3e989c31385b151f940966801d699fd385",
                   "test/win32/lib/TestReachAudit.ps1":  "5e0e10352742575af26220c992790da3e9a74ae6d40281f2fecdf7d6a1cf52c0",
                   "test/win32/lib/TestScore.ps1":  "4a094c7b669e3891573f90ac78abdb342f1bf989cb14fce5a6a072addb4df7cd",
                   "test/win32/lib/TestWaitAudit.ps1":  "632b1d2adad0400247dd7d51c7f9ebad0e2c47ca9a7afe5cbdca2cd09318be3d",
@@ -377,7 +380,7 @@
                   "test/win32/pane-sidebar-hover-resync.ps1":  "a05c2b4894385ba80ac8343db8817baf84fb27cabef9dd769164ebc54e27e551",
                   "test/win32/pane-sidebar-hue.ps1":  "576ac6eb12dee5b04364fdba582614f28dcf7b6a3967909c2f9518d49eccb88b",
                   "test/win32/pane-sidebar-motion-cost.ps1":  "3876019f1c5b333d7f95409c195a02164269315a1f52074e3aca1cc0b28cb02b",
-                  "test/win32/pane-sidebar-persist.ps1":  "e110c253189883d03ea1436dff7487d2fcbce2ef9cf915d8f6550585c0802479",
+                  "test/win32/pane-sidebar-persist.ps1":  "98eaddfa83dedca2925f36327f47bea832d5c96adc766c0b069b8a05275bc411",
                   "test/win32/pane-sidebar-rename.ps1":  "59ae17ddcee0857665100f6091041c1a789e7bb60c23fd5f11a4c81d1fd55bdf",
                   "test/win32/pane-sidebar-resize.ps1":  "49d9d94a8b58fecb90697d43fee251b046bd91cd4c29a4d88e798bfdaba9d274",
                   "test/win32/pane-sidebar-scroll.ps1":  "3de92ddbc84f348cc0b541d1e842094e0adb541ffee0531c80b1f75c3daeb970",

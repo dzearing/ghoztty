@@ -1,5 +1,6 @@
 //! Persisted pane-sidebar defaults (T1847): the expanded and hidden flags a NEW
-//! window starts from, and the panel width every window shares.
+//! window starts from, the panel width every window shares, and the
+//! all-windows scope the app launches in (T2564).
 //!
 //! Mac keeps these in UserDefaults (`PaneSidebarExpanded`, falling back to
 //! the older `PaneSidebarPinned`; `PaneSidebarHidden`, `PaneSidebarWidth` in
@@ -11,9 +12,13 @@
 //! copy in the session-layout manifest (`session_layout.Window.pane_sidebar_*`)
 //! for an older build, but a restore never applies it.
 //!
-//! Format: `<expanded 0|1> <hidden 0|1> <width dip>\n`. The first flag was
-//! the pin until T2289 (Mac e77422577); pinned WAS the expanded panel, so a
-//! file written then reads the same way now.
+//! Format: `<expanded 0|1> <hidden 0|1> <width dip> <all windows 0|1>\n`. The
+//! first flag was the pin until T2289 (Mac e77422577); pinned WAS the expanded
+//! panel, so a file written then reads the same way now. The scope arrived in
+//! T2564 (Mac 8aefd0c91, `PaneSidebarShowsAllWindows`, on when unset): a
+//! three-field file from before it reads as on, the way an unset Mac default
+//! does. Only the scope persists - its search and folds never do, so a launch
+//! starts every window folded, as turning the scope on does.
 //!
 //! The parse/format logic is pure so its unit tests run in every app-runtime
 //! lane.
@@ -27,6 +32,8 @@ pub const Prefs = struct {
     expanded: bool = false,
     hidden: bool = false,
     width_dip: f32 = pane_sidebar.default_width_dip,
+    /// The all-windows scope: on until the user leaves it off (T2564).
+    all_windows: bool = true,
 };
 
 fn flag(s: []const u8) ?bool {
@@ -44,12 +51,15 @@ pub fn parse(text: []const u8) ?Prefs {
     const expanded = flag(it.next() orelse return null) orelse return null;
     const hidden = flag(it.next() orelse return null) orelse return null;
     const w = std.fmt.parseInt(i32, it.next() orelse return null, 10) catch return null;
+    // Absent in a file from before T2564: on, Mac's unset default.
+    const all_windows = if (it.next()) |t| flag(t) orelse return null else true;
     if (it.next() != null) return null;
     if (w <= 0) return null;
     return .{
         .expanded = expanded,
         .hidden = hidden,
         .width_dip = pane_sidebar.clampWidth(@floatFromInt(w)),
+        .all_windows = all_windows,
     };
 }
 
@@ -59,10 +69,11 @@ pub const FORMAT_BUF_LEN: usize = 32;
 /// preference is noise, and an integer file cannot half-parse.
 pub fn format(buf: []u8, p: Prefs) []const u8 {
     const w: i32 = @intFromFloat(@round(pane_sidebar.clampWidth(p.width_dip)));
-    return std.fmt.bufPrint(buf, "{d} {d} {d}\n", .{
+    return std.fmt.bufPrint(buf, "{d} {d} {d} {d}\n", .{
         @intFromBool(p.expanded),
         @intFromBool(p.hidden),
         w,
+        @intFromBool(p.all_windows),
     }) catch unreachable;
 }
 
@@ -108,18 +119,20 @@ test "T1847: prefs round-trip through the file format" {
         .{ .expanded = true, .hidden = false, .width_dip = 300 },
         .{ .expanded = false, .hidden = true, .width_dip = pane_sidebar.min_width_dip },
         .{ .expanded = true, .hidden = true, .width_dip = pane_sidebar.max_width_dip },
+        .{ .expanded = true, .width_dip = 300, .all_windows = false },
     }) |p| {
         const got = parse(format(&buf, p)) orelse return error.TestUnexpectedResult;
         try testing.expectEqual(p.expanded, got.expanded);
         try testing.expectEqual(p.hidden, got.hidden);
         try testing.expectEqual(p.width_dip, got.width_dip);
+        try testing.expectEqual(p.all_windows, got.all_windows);
     }
 }
 
 test "T1847: the width is stored whole and clamped to the panel's range" {
     var buf: [FORMAT_BUF_LEN]u8 = undefined;
-    try testing.expectEqualStrings("1 0 251\n", format(&buf, .{ .expanded = true, .width_dip = 250.6 }));
-    try testing.expectEqualStrings("0 0 380\n", format(&buf, .{ .width_dip = 9000 }));
+    try testing.expectEqualStrings("1 0 251 1\n", format(&buf, .{ .expanded = true, .width_dip = 250.6 }));
+    try testing.expectEqualStrings("0 0 380 0\n", format(&buf, .{ .width_dip = 9000, .all_windows = false }));
     try testing.expectEqual(pane_sidebar.max_width_dip, parse("1 1 9000").?.width_dip);
     try testing.expectEqual(pane_sidebar.min_width_dip, parse("1 1 5").?.width_dip);
     // CRLF from a hand edit still reads.
@@ -137,5 +150,20 @@ test "T1847: a malformed file reads as no preference at all" {
         "1 0 0",
         "1 0 -40",
         "1 0 240 extra",
+        "1 0 240 2",
+        "1 0 240 1 0",
     }) |text| try testing.expectEqual(@as(?Prefs, null), parse(text));
+}
+
+test "T2564: the all-windows scope is on by default and when a file predates it" {
+    // A first launch (no file) starts from the defaults: all windows.
+    try testing.expect((Prefs{}).all_windows);
+    // A three-field file from before the scope persisted reads as on, the
+    // way Mac's unset `PaneSidebarShowsAllWindows` does - and keeps its flags.
+    const old = parse("1 0 300\n") orelse return error.TestUnexpectedResult;
+    try testing.expect(old.all_windows and old.expanded and !old.hidden);
+    try testing.expectEqual(@as(f32, 300), old.width_dip);
+    // Left off, it stays off.
+    try testing.expect(!parse("0 0 240 0").?.all_windows);
+    try testing.expect(parse("0 0 240 1").?.all_windows);
 }

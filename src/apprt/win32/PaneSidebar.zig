@@ -155,6 +155,10 @@ pub fn loadRemembered(alloc: std.mem.Allocator) void {
     if (remembered_loaded) return;
     remembered_loaded = true;
     if (sidebar_prefs.load(alloc)) |p| remembered = p;
+    // The scope (T2564, Mac 8aefd0c91): all windows unless the user last left
+    // it off - every window folded, no search, as turning it on does.
+    shared.launchScope(remembered.all_windows);
+    log.info("pane sidebar scope at launch all_windows={}", .{remembered.all_windows});
     // The all-windows list's order (T2337), kept with the shared state.
     if (window_order.load(alloc)) |text| {
         defer alloc.free(text);
@@ -5257,9 +5261,10 @@ fn activate(self: *PaneSidebar, hit: pane_sidebar.Hit, alt: bool) void {
     }
 }
 
-/// The all-windows switch (T1829). Nothing is persisted. Each look starts
-/// from the default folds (T1924): this window open, every other folded.
-/// Project folds survive a round trip, as Mac's do.
+/// The all-windows switch (T1829). The scope itself persists (T2564, Mac
+/// `PaneSidebarShowsAllWindows`); its search and folds do not. Each look
+/// starts from the default folds (T1924): this window open, every other
+/// folded. Project folds survive a round trip, as Mac's do.
 fn toggleScope(self: *PaneSidebar) void {
     // Started before the switch, so the paint the refresh below brings is
     // already the transition's first frame rather than the new list.
@@ -5271,6 +5276,8 @@ fn toggleScope(self: *PaneSidebar) void {
     // the filter with it): the field is gone, so its query and its caret go
     // too - and so do the window folds the user flipped.
     _ = shared.setAllWindows(self.alloc, !self.all_windows, tabKey(self.window, self.window.active_tab));
+    remembered.all_windows = shared.all_windows;
+    saveRemembered(self.alloc);
     self.published();
     self.hover = .none;
     self.syncHoverTint();

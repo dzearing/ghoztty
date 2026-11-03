@@ -26,6 +26,12 @@
 #           (a closed pane's id, then the live pane's) is restored and
 #           re-recorded holding the live pane alone - Mac never persists a
 #           closed pane.
+#   D. The all-windows SCOPE (T2564, Mac 8aefd0c91), persistence OFF:
+#        9. A defaults file from before the scope persisted (three fields)
+#           opens in ALL WINDOWS, its one window folded with no search;
+#           turning the scope off writes `1 0 240 0` and a relaunch opens in
+#           this window; turning it back on writes `1 0 240 1` and a relaunch
+#           opens in all windows again.
 #
 # Isolation: LOCALAPPDATA points at a throwaway dir for every launched
 # instance, so the defaults file, the manifest and the agent state dir are all
@@ -69,6 +75,23 @@ function Wait-Pref([string]$Want, [int]$Ms = 4000) {
         Start-Sleep -Milliseconds 150
     } while ((Get-Date) -lt $deadline)
     return $false
+}
+# The last line of this launch's log matching $Pattern, waiting up to $Ms.
+function Wait-LogLine([string]$Pattern, [int]$Ms = 5000) {
+    $deadline = (Get-Date).AddMilliseconds($Ms)
+    do {
+        $hit = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Where-Object { $_ -match $Pattern }) | Select-Object -Last 1
+        if ($hit) { return $hit }
+        Start-Sleep -Milliseconds 150
+    } while ((Get-Date) -lt $deadline)
+    return $null
+}
+# The panel header's all-windows toggle, client coordinates
+# (pane-sidebar-all-windows.ps1's Get-ScopeCenter).
+function Get-ScopePoint($sb) {
+    $margin = Px 12; $card = Px 52; $tile = Px 28
+    $inset = [int][math]::Truncate(($card - $tile) / 2)
+    return @{ X = $sb.Width - (Px 4) - [int]($tile / 2); Y = $margin + $inset + [int]($tile / 2) }
 }
 function Read-Manifest { if (Test-Path $manifest) { Get-Content $manifest -Raw } else { '' } }
 function Wait-Manifest([string]$Pattern, [int]$Ms = 6000) {
@@ -187,11 +210,11 @@ try {
     Assert "pin click delivered" (Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X $pin.X -Y $pin.Y -Action click)
     Start-Sleep -Milliseconds 600
     Assert "pinned: the 240 DIP panel ($(Describe $top))" (Width-Is $top 240)
-    Assert "the file says pinned, shown, 240 ($(Read-Pref))" (Wait-Pref '1 0 240')
+    Assert "the file says pinned, shown, 240 ($(Read-Pref))" (Wait-Pref '1 0 240 1')
     $sb = Get-Sidebar $top
     [void](Invoke-EdgeDrag $top $sb.Hwnd ($sb.Right - 2) ($sb.Top + (Px 300)) @(30, 60))
     Assert "the drag widened the panel to 300 ($(Describe $top))" (Width-Is $top 300)
-    Assert "the drag's end wrote the width ($(Read-Pref))" (Wait-Pref '1 0 300')
+    Assert "the drag's end wrote the width ($(Read-Pref))" (Wait-Pref '1 0 300 1')
     Stop-App
 
     "== 3: relaunched, a new window opens pinned at the remembered width"
@@ -207,14 +230,14 @@ try {
     Assert "ctrl+shift+s delivered" (Send-HideChord $top)
     $sb = Get-Sidebar $top
     Assert "the sidebar is hidden ($(Describe $top))" ($null -eq $sb -or -not $sb.Visible)
-    Assert "the file says hidden ($(Read-Pref))" (Wait-Pref '1 1 300')
+    Assert "the file says hidden ($(Read-Pref))" (Wait-Pref '1 1 300 1')
     Stop-App
     $top = Launch $false
     $sb = Get-Sidebar $top
     Assert "relaunched, the new window's sidebar is hidden ($(Describe $top))" ($top -ne [IntPtr]::Zero -and ($null -eq $sb -or -not $sb.Visible))
     Assert "ctrl+shift+s shows it again" (Send-HideChord $top)
     Assert "pinned at 300 again ($(Describe $top))" (Width-Is $top 300)
-    Assert "the file says shown ($(Read-Pref))" (Wait-Pref '1 0 300')
+    Assert "the file says shown ($(Read-Pref))" (Wait-Pref '1 0 300 1')
     Stop-App
 
     "== 5: a pinned window records its flags in the session layout"
@@ -268,6 +291,32 @@ try {
     [void](Set-TestWindowSize -Window $top -Width (Px 1120) -Height (Px 700))
     Assert "the re-recorded order keeps the live pane" (Wait-Manifest ('"pane_sidebar_order"\s*:\s*\[\s*"' + $leafId + '"\s*\]'))
     Assert "and drops the pane the window does not hold" ((Read-Manifest) -notmatch $ghost)
+    Stop-App
+
+    "== 9: the all-windows scope is on at launch and remembers being left off (T2564)"
+    Write-NoBom $prefFile "1 0 240`n"
+    $script:errlog = Join-Path $fakeLocal 'app-stderr-scope1.log'
+    $top = Launch $false
+    Assert "launched from a three-field defaults file" ($top -ne [IntPtr]::Zero)
+    Assert "it opens in all windows (log)" ($null -ne (Wait-LogLine 'pane sidebar scope at launch all_windows=true'))
+    $g = Wait-LogLine 'pane sidebar all-windows groups=1 '
+    Assert "...its one window folded, no search ($g)" ($null -ne $g -and $g -match ' search=0 ' -and $g -match ' folded=1 ')
+    $sb = Get-Sidebar $top
+    Assert "scope click delivered" (Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X ($sb.Left + (Get-ScopePoint $sb).X) -Y ($sb.Top + (Get-ScopePoint $sb).Y) -Action click)
+    Assert "the click turned the scope off (log)" ($null -ne (Wait-LogLine 'pane sidebar scope all_windows=false'))
+    Assert "the file says this window ($(Read-Pref))" (Wait-Pref '1 0 240 0')
+    Stop-App
+    $script:errlog = Join-Path $fakeLocal 'app-stderr-scope2.log'
+    $top = Launch $false
+    Assert "relaunched, it opens in this window (log)" ($null -ne (Wait-LogLine 'pane sidebar scope at launch all_windows=false'))
+    $sb = Get-Sidebar $top
+    Assert "scope click delivered" (Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X ($sb.Left + (Get-ScopePoint $sb).X) -Y ($sb.Top + (Get-ScopePoint $sb).Y) -Action click)
+    Assert "the click turned the scope on (log)" ($null -ne (Wait-LogLine 'pane sidebar scope all_windows=true'))
+    Assert "the file says all windows ($(Read-Pref))" (Wait-Pref '1 0 240 1')
+    Stop-App
+    $script:errlog = Join-Path $fakeLocal 'app-stderr-scope3.log'
+    $top = Launch $false
+    Assert "relaunched, it opens in all windows again (log)" ($null -ne (Wait-LogLine 'pane sidebar scope at launch all_windows=true'))
     Stop-App
 
     $script:reachedEnd = $true

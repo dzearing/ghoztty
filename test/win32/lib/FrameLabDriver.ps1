@@ -170,13 +170,15 @@ function Get-FrameLabThemeConfig([string]$Theme) {
 
 <#
 The sidebar's new-window default, as the debug build reads it from
-%LOCALAPPDATA%\ghoztty\pane_sidebar-debug: "<expanded> <hidden> <width DIP>".
+%LOCALAPPDATA%\ghoztty\pane_sidebar-debug: "<expanded> <hidden> <width DIP>
+<all windows>". The scope is pinned to "this window" (T2564 made all windows
+the launch default), so a cell's frames do not change with that default.
 #>
 function Get-FrameLabSidebarPref([string]$Sidebar) {
     switch ($Sidebar) {
-        'expanded' { return '1 0 240' }
-        'rail'     { return '0 0 240' }
-        'hidden'   { return '0 1 240' }
+        'expanded' { return '1 0 240 0' }
+        'rail'     { return '0 0 240 0' }
+        'hidden'   { return '0 1 240 0' }
     }
     throw "Get-FrameLabSidebarPref: unknown sidebar '$Sidebar'"
 }
