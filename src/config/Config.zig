@@ -4060,7 +4060,9 @@ pub fn deinit(self: *Config) void {
 ///   1. Defaults
 ///   2. XDG config dir
 ///   3. "Application Support" directory (macOS only; a development build
-///      uses its own `<bundle id>.debug` folder, see `config_bundle_id`)
+///      uses its own `<bundle id>.debug` folder, see `config_bundle_id`).
+///      A Windows development build loads its own `config-debug.ghostty`
+///      beside the XDG file instead (`file_load.devXdgPath`).
 ///   4. CLI flags
 ///   5. Recursively defined configuration files
 ///
@@ -4343,6 +4345,19 @@ pub fn loadDefaultFiles(self: *Config, alloc: Allocator) !void {
         // For macOS, we only create the template file in the app support
         if (!app_support_loaded and !xdg_loaded) {
             writeConfigTemplate(app_support_path) catch |err| {
+                log.warn("error creating template config file err={}", .{err});
+            };
+        }
+    } else if (comptime file_load.uses_dev_xdg_path) {
+        // A Windows development build layers its own file over the shared
+        // one (as the macOS dev build layers its `.debug` Application
+        // Support folder over XDG), and only ever creates or writes that
+        // file, so it never touches the installed release's config.
+        const dev_path = try file_load.devXdgPath(alloc);
+        defer alloc.free(dev_path);
+        const dev_loaded = self.loadOptionalFile(alloc, dev_path).present();
+        if (!dev_loaded and !xdg_loaded) {
+            writeConfigTemplate(dev_path) catch |err| {
                 log.warn("error creating template config file err={}", .{err});
             };
         }

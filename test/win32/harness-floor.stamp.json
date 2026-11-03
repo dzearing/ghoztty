@@ -1,13 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-02T16:50:10-08:00",
-    "commit":  "709448366",
+    "generated":  "2026-11-02T20:28:41-08:00",
+    "commit":  "668cc4183",
     "uncommitted":  [
-                        "test/win32/frame-lab.ps1",
-                        "test/win32/lib/FrameLabDriver.ps1",
-                        "test/win32/lib/TestDesktop.ps1",
-                        "test/win32/pane-sidebar-persist.ps1"
+                        "test/win32/new-window-cwd.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -346,7 +343,7 @@
                   "test/win32/msg-timer-ids.ps1":  "1902016b971ba544cbaead864229fdde15c761b66333fa3b85f33cb5734989f8",
                   "test/win32/msi-upgrade.ps1":  "26087b57e939d39c1b52f7295ea6339341bd83d53b05d9ffe42f83a41a893513",
                   "test/win32/neuter-audit.ps1":  "b2057597d46fad5597ff832b399d8ee9a585f9131fbfe7244b7cea9bf44bd928",
-                  "test/win32/new-window-cwd.ps1":  "340b6850b96d7a3cf04465db1f042cec4ec30c3b6211236e20acea80eb98bd30",
+                  "test/win32/new-window-cwd.ps1":  "6d46901d6dedcdf6782c64109f0026f7bcdf5e9153afefe1192924b7b1220208",
                   "test/win32/new-window-maximized.ps1":  "659eb0fdfd571d6122bbfb8b4fcd8690e0b4a0752f7ffd8622e5ba3a8d38ea43",
                   "test/win32/notification-click-focus.ps1":  "43777bc3c6728b1874037f9e0917084ab8f8e51aff04bde05d86c991f0612edf",
                   "test/win32/notification-click-real.ps1":  "f656c41eba944964fef9920dd64f078380023105e3d05a066571f97f9c9526ba",

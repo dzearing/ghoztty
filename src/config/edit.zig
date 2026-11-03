@@ -92,6 +92,13 @@ fn configPathCandidates(alloc_arena: Allocator) ![]const []const u8 {
     var paths: std.ArrayList([]const u8) = try .initCapacity(alloc_arena, 4);
     errdefer paths.deinit(alloc_arena);
 
+    // A Windows development build edits only its own file, never the
+    // shared one the installed release reads.
+    if (comptime file_load.uses_dev_xdg_path) {
+        paths.appendAssumeCapacity(try file_load.devXdgPath(alloc_arena));
+        return paths.items;
+    }
+
     if (comptime builtin.os.tag == .macos) {
         paths.appendAssumeCapacity(try file_load.defaultAppSupportPath(alloc_arena));
         paths.appendAssumeCapacity(try file_load.legacyDefaultAppSupportPath(alloc_arena));

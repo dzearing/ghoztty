@@ -50,6 +50,26 @@ pub fn preferredXdgPath(alloc: Allocator) ![]const u8 {
     return xdg_path;
 }
 
+/// The Windows development build's own configuration file, beside the
+/// shared XDG file: `<LOCALAPPDATA>\ghostty\config-debug.ghostty`. It is
+/// the Windows counterpart of the macOS `<bundle_id>.debug` folder (see
+/// `build_config.config_bundle_id`), named the way the other per-build
+/// Windows files are (`pane_sidebar-debug`, the `-debug` pipe). The dev
+/// build loads it after the shared file and writes only to it, so testing
+/// never rewrites the installed release's config. Returned value must be
+/// freed by the caller.
+pub fn devXdgPath(alloc: Allocator) ![]const u8 {
+    return try internal_os.xdg.config(
+        alloc,
+        .{ .subdir = "ghostty/config-debug.ghostty" },
+    );
+}
+
+/// True when this build keeps its own config file apart from the shared
+/// XDG one (a Windows development build). macOS does the same through
+/// its Application Support folder instead.
+pub const uses_dev_xdg_path = builtin.os.tag == .windows and build_config.is_dev_build;
+
 /// Default path for the macOS Application Support configuration file.
 /// Returned value must be freed by the caller.
 pub fn defaultAppSupportPath(alloc: Allocator) ![]const u8 {
@@ -120,8 +140,12 @@ pub fn preferredDefaultFilePath(alloc: Allocator) ![]const u8 {
             return app_support_path;
         },
 
-        // All other platforms use XDG only
-        else => return try preferredXdgPath(alloc),
+        // All other platforms use XDG only. A Windows development build
+        // writes only its own file, never the one the release shares.
+        else => {
+            if (comptime uses_dev_xdg_path) return try devXdgPath(alloc);
+            return try preferredXdgPath(alloc);
+        },
     }
 }
 
@@ -184,4 +208,39 @@ test "a development build keeps its config apart from the release app's" {
     const preferred = try preferredDefaultFilePath(alloc);
     defer alloc.free(preferred);
     try testing.expect(std.mem.indexOf(u8, preferred, build_config.bundle_id ++ ".debug/") != null);
+}
+
+test "a Windows development build writes its own config file, never the shared one" {
+    if (comptime builtin.os.tag != .windows) return error.SkipZigTest;
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    // Tests build in Debug, so this is the dev-build path.
+    try testing.expect(build_config.is_dev_build);
+    try testing.expect(uses_dev_xdg_path);
+
+    const dev = try devXdgPath(alloc);
+    defer alloc.free(dev);
+    const shared = try defaultXdgPath(alloc);
+    defer alloc.free(shared);
+
+    // The dev file sits in the same folder as the shared one.
+    const dev_name = "config-debug.ghostty";
+    const shared_name = "config.ghostty";
+    try testing.expect(std.mem.endsWith(u8, dev, dev_name));
+    try testing.expect(std.mem.endsWith(u8, shared, shared_name));
+    try testing.expectEqualStrings(
+        shared[0 .. shared.len - shared_name.len],
+        dev[0 .. dev.len - dev_name.len],
+    );
+
+    // The preferred (written) path is the dev file whether or not the
+    // shared file exists, so it can never resolve to the release's.
+    const preferred = try preferredDefaultFilePath(alloc);
+    defer alloc.free(preferred);
+    try testing.expectEqualStrings(dev, preferred);
+    try testing.expect(!std.mem.eql(u8, shared, preferred));
+    const legacy = try legacyDefaultXdgPath(alloc);
+    defer alloc.free(legacy);
+    try testing.expect(!std.mem.eql(u8, legacy, preferred));
 }

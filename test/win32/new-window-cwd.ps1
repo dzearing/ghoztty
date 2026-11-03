@@ -373,9 +373,13 @@ AssertEq "A6 the startup pane's SHELL is actually in HOME" (Norm $homeDir) (Norm
 Assert "A7 the startup pane did NOT inherit the agent's directory" `
     ((Norm $shellA) -ne (Norm $launcherDir))
 
-# The template half of the fix rides on this launch.
-$cfgA = Join-Path $tmpA 'ghostty\config.ghostty'
+# The template half of the fix rides on this launch. This is a Debug build,
+# so the template lands in its own config-debug.ghostty and the shared
+# config.ghostty the installed release reads is never created (T2582).
+$cfgA = Join-Path $tmpA 'ghostty\config-debug.ghostty'
 Assert "A8 a config template was created where none existed" (Test-Path $cfgA)
+Assert "A8b the dev build never created the release's shared config.ghostty" `
+    (-not (Test-Path (Join-Path $tmpA 'ghostty\config.ghostty')))
 $sizeA = if (Test-Path $cfgA) { (Get-Item $cfgA).Length } else { 0 }
 Assert "A9 the template is not zero bytes" ($sizeA -gt 0)
 Assert "A10 the template has the documented content" `
@@ -494,14 +498,20 @@ Stop-TestProcs
 "== E: a zero-byte config self-heals into the template"
 # ============================================================================
 $tmpE = New-State 'e' $null
-$cfgE = Join-Path $tmpE 'ghostty\config.ghostty'
+# A Debug build heals (and only ever writes) its own config-debug.ghostty;
+# a zero-byte shared config.ghostty beside it is the release's and is left
+# exactly as it was (T2582).
+$cfgE = Join-Path $tmpE 'ghostty\config-debug.ghostty'
+$sharedE = Join-Path $tmpE 'ghostty\config.ghostty'
 New-Item -ItemType File -Force $cfgE | Out-Null
+New-Item -ItemType File -Force $sharedE | Out-Null
 AssertEq "E1 the config file starts at zero bytes" 0 ((Get-Item $cfgE).Length)
 $appE = Launch $tmpE $true
 Wait-WindowCount $tmpE 'e' 1 60 | Out-Null
 Assert "E2 the zero-byte config was replaced by the template" ((Get-Item $cfgE).Length -gt 0)
 Assert "E3 the template content is the documented one" `
     ((Out-Text $cfgE) -match 'ghostty.org/docs/config')
+AssertEq "E4 the release's zero-byte shared config was not written" 0 ((Get-Item $sharedE).Length)
 Stop-TestProcs
 
 # ============================================================================
