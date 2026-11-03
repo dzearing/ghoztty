@@ -618,3 +618,12 @@ as the digest that showed them.
 - Choose a light resize (an outline-only drag setting for slow or remote machines; panes resize once on release)
 - Keeps going through a graphics driver update or a dock change (no blank flash or restart when the GPU changes under the app)
 - Sharp the moment a window crosses monitors (re-render at the new scale before the window lands)
+
+## 2026-11-03
+
+- Bring a whole group to the front (clicking a sidebar group header raises all its windows together, a per-project switch in place of Spaces)
+- A count of waiting agents on the taskbar (new angle on pane notifications: taskbar button counts panes waiting on a question; click goes to the longest-waiting)
+- A sidebar group's colour carries onto its windows (new angle on per-project identity: the user-chosen group colour tints its windows' tab strip)
+- A resize shows the size it will land on (cols x rows label during divider and edge drags, soft snap at 80/120 columns)
+- One stuck window cannot take the others with it (sidebar and other windows keep working; the stuck one is marked not responding with a restart action)
+- Opens before you finish the keystroke (a start-up budget for the first prompt, with the last launch time in About)
