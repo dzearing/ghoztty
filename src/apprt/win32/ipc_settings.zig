@@ -21,6 +21,12 @@
 //! {"action":"settings","arguments":["--op=shot","--path=C:\\t\\s.png"]}
 //! {"action":"settings","arguments":["--op=theme-mode","--value=true"]}   (Use: light & dark)
 //! {"action":"settings","arguments":["--op=theme-pick","--key=dark","--value=Catppuccin Mocha"]}
+//! {"action":"settings","arguments":["--op=theme-tab","--value=dark"]}       (a tab click)
+//! {"action":"settings","arguments":["--op=theme-filter","--value=mocha"]}  (typing in the filter field)
+//! {"action":"settings","arguments":["--op=theme-all"]}                     (All N themes...)
+//!   a tile's click is --op=click --value=theme_tile:<name> after a shot;
+//!   "theme" adds tab, filter, show_all, kind_total, matched, more, selected
+//!   and tiles (the names in tile order)
 //! {"action":"settings","arguments":["--op=close"]}
 //! Advanced > Config file and the toast (T2676):
 //! {"action":"settings","arguments":["--op=restore","--index=0"]}  (newest backup, confirmed)
@@ -99,6 +105,10 @@ pub const Op = enum {
     current_file,
     @"theme-mode",
     @"theme-pick",
+    // The tile grid (T2682).
+    @"theme-tab",
+    @"theme-filter",
+    @"theme-all",
     // The live sections (T2680).
     check_updates,
     click,
@@ -235,6 +245,14 @@ pub fn handle(app: *App, alloc: Allocator, arguments: ?[]const []const u8) Alloc
             const name = req.value orelse return errorResponse(alloc, "--value=<theme name> is required for --op=theme-pick", .{});
             ok = w.pickTheme(name, slot);
         },
+        // The tile grid: a tab click, typing in the filter, All N themes...
+        .@"theme-tab" => {
+            const tab = std.meta.stringToEnum(SettingsWindow.ThemeTab, req.value orelse "") orelse
+                return errorResponse(alloc, "--value must be light or dark for --op=theme-tab", .{});
+            w.setThemeTab(tab);
+        },
+        .@"theme-filter" => w.setThemeFilter(req.value orelse ""),
+        .@"theme-all" => w.showAllThemes(),
         .escape => {
             // Esc, as the window handles it: field, then search, then close.
             if (w.editingKey() != null) w.cancelEdit() else if (w.search.len > 0) w.setQuery("") else {
@@ -463,6 +481,40 @@ fn writeState(jws: *std.json.Stringify, alloc: Allocator, w_opt: ?*SettingsWindo
             try jws.write(cat.count(true));
             try jws.objectField("dark_count");
             try jws.write(cat.count(false));
+            // The tile grid (T2682), from the same answer the painter reads.
+            const tab = w.themeTab();
+            try jws.objectField("tab");
+            try jws.write(@tagName(tab));
+            try jws.objectField("filter");
+            try jws.write(w.theme_filter.text());
+            try jws.objectField("filter_focused");
+            try jws.write(w.themeFilterFocused());
+            try jws.objectField("show_all");
+            try jws.write(w.theme_show_all);
+            try jws.objectField("selected");
+            try jws.write(SettingsWindow.themeGridCurrent(sel, tab));
+            if (w.themeGrid(alloc)) |grid| {
+                defer grid.deinit(alloc);
+                try jws.objectField("kind_total");
+                try jws.write(grid.kind_total);
+                try jws.objectField("matched");
+                try jws.write(grid.matched);
+                try jws.objectField("more");
+                try jws.write(grid.more);
+                try jws.objectField("tiles");
+                try jws.beginArray();
+                for (grid.shown) |i| try jws.write(cat.themes[i].name);
+                try jws.endArray();
+            } else |_| {}
+            // The tiles and tabs the last paint recorded (a click target).
+            try jws.objectField("painted_tiles");
+            try jws.beginArray();
+            for (w.hits.items) |h| if (h.kind == .theme_tile) try jws.write(h.key);
+            try jws.endArray();
+            try jws.objectField("painted_all");
+            var painted_all = false;
+            for (w.hits.items) |h| painted_all = painted_all or h.kind == .theme_all;
+            try jws.write(painted_all);
             // The user's own themes, with their kind (a clash shows here as
             // the user's copy).
             try jws.objectField("user_themes");

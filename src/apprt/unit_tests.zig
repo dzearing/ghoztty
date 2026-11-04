@@ -51,6 +51,8 @@ test {
     _ = @import("win32/settings_advanced.zig");
     // The light & dark theme catalog behind Appearance > Theme (T2586).
     _ = @import("win32/theme_catalog.zig");
+    // Its tile grid: tab, filter, picked-first, show-all, columns (T2682).
+    _ = @import("win32/settings_theme_grid.zig");
     _ = @import("win32/settings_live.zig");
     _ = @import("win32/settings_controls.zig");
 

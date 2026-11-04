@@ -438,12 +438,69 @@ try {
     Assert ([string]$s.data.theme.mismatch -eq 'light') "K: a hand-edited dark theme in the light slot raises Mac's mismatch warning (mismatch='$($s.data.theme.mismatch)')"
     $s = Invoke-Settings @('--op=theme-pick', '--key=light', '--value=Zz Test Light')
     Assert ([bool]$s.data.ok -and $null -eq $s.data.theme.mismatch) 'K: picking a light theme for light mode clears it'
+
+    # The tile grid (T2682, Mac ThemeSection): tabs list one kind with the
+    # tab's pick first, 11 tiles then "All N", a case-folding filter, and a
+    # tile click writes the tab's slot. theme = light:Zz Test Light,dark:Zz Test Dark.
+    [void](Invoke-Settings @('--op=set', '--key=theme', '--value=light:Zz Test Light,dark:Zz Test Dark'))
+    $s = Invoke-Settings @('--op=theme-tab', '--value=light')
+    $g = $s.data.theme
+    $tiles = @($g.tiles)
+    Assert ([string]$g.tab -eq 'light' -and $tiles.Count -eq 11 -and [bool]$g.more -and [int]$g.kind_total -eq [int]$g.light_count -and [int]$g.matched -eq [int]$g.light_count) "K: the light tab shows 11 tiles then All N ($($tiles.Count) tiles, more=$($g.more), $($g.matched) of $($g.kind_total) light)"
+    Assert ([string]$tiles[0] -eq 'Zz Test Light' -and [string]$g.selected -eq 'Zz Test Light' -and -not ($tiles -contains 'Zz Test Dark')) "K: the light pick's tile is first and selected, and no dark theme is listed (first='$($tiles[0])' selected='$($g.selected)')"
+    $s = Invoke-Settings @('--op=theme-tab', '--value=dark')
+    $g = $s.data.theme
+    $tiles = @($g.tiles)
+    Assert ([string]$g.tab -eq 'dark' -and [string]$tiles[0] -eq 'Zz Test Dark' -and [string]$g.selected -eq 'Zz Test Dark' -and -not ($tiles -contains 'Zz Test Light')) "K: the dark tab lists dark themes with the dark pick first (first='$($tiles[0])' selected='$($g.selected)')"
+    $s = Invoke-Settings @('--op=theme-filter', '--value=MOCHA')
+    $g = $s.data.theme
+    $tiles = @($g.tiles)
+    $off = @($tiles | Where-Object { $_ -notmatch '(?i)mocha' })
+    Assert ([bool]$g.filter_focused -and [string]$g.filter -eq 'MOCHA' -and $tiles.Count -ge 1 -and $off.Count -eq 0 -and ($tiles -contains 'Catppuccin Mocha') -and -not [bool]$g.more) "K: typing MOCHA in the filter narrows the dark tiles to names holding it, any case ($($tiles -join ', '))"
+    $s = Invoke-Settings @('--op=theme-filter', '--value=zzqq-nothing')
+    Assert (@($s.data.theme.tiles).Count -eq 0 -and [int]$s.data.theme.matched -eq 0) 'K: a filter nothing matches leaves no tiles'
+    [void](Invoke-Settings @('--op=theme-filter', '--value='))
+    $s = Invoke-Settings @('--op=theme-all')
+    $g = $s.data.theme
+    Assert ([bool]$g.show_all -and @($g.tiles).Count -eq [int]$g.dark_count -and -not [bool]$g.more) "K: All N dark themes shows every dark tile ($(@($g.tiles).Count) of $($g.dark_count))"
+    $s = Invoke-Settings @('--op=theme-tab', '--value=dark')
+    Assert (-not [bool]$s.data.theme.show_all -and @($s.data.theme.tiles).Count -eq 11) 'K: a tab click collapses the grid again'
+
+    # The painted grid, clicked through the window's own click path.
+    $shotGrid = Join-Path $work 'settings-theme-grid.png'
+    [void](Invoke-Settings @('--op=reveal', '--key=font-family'))
+    $s = Invoke-Settings @('--op=shot', '--page=appearance', "--path=$shotGrid")
+    $painted = @($s.data.theme.painted_tiles)
+    Assert ($painted.Count -ge 2 -and [string]$painted[0] -eq 'Zz Test Dark' -and [bool]$s.data.theme.painted_all) "K: the page paints the tiles, the pick first, and the All N tile ($($painted.Count) painted, first='$($painted[0])', all=$($s.data.theme.painted_all))"
+    $target = [string]$painted[1]
+    $s = Invoke-Settings @('--op=click', "--value=theme_tile:$target")
+    Assert ([bool]$s.data.ok -and (Read-Config) -match "(?m)^theme = light:Zz Test Light,dark:$([regex]::Escape($target))\r?$") "K: clicking a dark tile in light & dark mode writes it into the dark slot only ($target)"
+    [void](Invoke-Settings @('--op=shot', "--path=$shotGrid"))
+    $s = Invoke-Settings @('--op=click', '--value=theme_tab:light')
+    Assert ([bool]$s.data.ok -and [string]$s.data.theme.tab -eq 'light' -and [string]@($s.data.theme.tiles)[0] -eq 'Zz Test Light') "K: clicking the light tab shows the light themes (tab='$($s.data.theme.tab)')"
+    [void](Invoke-Settings @('--op=shot', "--path=$shotGrid"))
+    $s = Invoke-Settings @('--op=click', '--value=theme_all')
+    Assert ([bool]$s.data.ok -and [bool]$s.data.theme.show_all -and @($s.data.theme.tiles).Count -eq [int]$s.data.theme.light_count) 'K: clicking All N light themes shows them all'
+    [void](Invoke-Settings @('--op=set', '--key=theme', '--value=light:Zz Test Light,dark:Zz Test Dark'))
     $shot3 = Join-Path $work 'settings-appearance.png'
     $s = Invoke-Settings @('--op=shot', '--page=appearance', "--path=$shot3")
     Assert ($s.success -and (Test-Path $shot3) -and (Get-Item $shot3).Length -gt 4000) 'K: the Appearance page renders to a PNG'
     $s = Invoke-Settings @('--op=theme-mode', '--value=false')
     $one = @(Get-KeyLines (Read-Config) 'theme')
     Assert ([bool]$s.data.ok -and -not [bool]$s.data.theme.follows -and $one.Count -eq 1 -and $one[0] -match '^theme = Zz Test (Light|Dark)\s*$') "K: back to One theme keeps the slot the system is showing ($($one -join ' | '))"
+    # One theme: the tabs only filter, and a tile replaces the one theme.
+    [void](Invoke-Settings @('--op=theme-tab', '--value=dark'))
+    $s = Invoke-Settings @('--op=shot', "--path=$shotGrid")
+    $pick = [string]@($s.data.theme.painted_tiles)[1]
+    $s = Invoke-Settings @('--op=click', "--value=theme_tile:$pick")
+    $one = @(Get-KeyLines (Read-Config) 'theme')
+    Assert ([bool]$s.data.ok -and $pick.Length -gt 0 -and $one.Count -eq 1 -and $one[0] -match "^theme = $([regex]::Escape($pick))\s*$" -and [string]$s.data.theme.selected -eq $pick) "K: in One theme mode a tile click replaces the one theme ($($one -join ' | '))"
+    [void](Invoke-Settings @('--op=shot', "--path=$shotGrid"))
+    $s = Invoke-Settings @('--op=click', '--value=theme_mode:follow')
+    Assert ([bool]$s.data.ok -and [bool]$s.data.theme.follows -and (Read-Config) -match '(?m)^theme = light:[^,\r\n]+,dark:[^,\r\n]+\r?$') "K: clicking Use's Light & dark segment switches to light & dark ($(@(Get-KeyLines (Read-Config) 'theme') -join ' | '))"
+    [void](Invoke-Settings @('--op=shot', "--path=$shotGrid"))
+    $s = Invoke-Settings @('--op=click', '--value=theme_mode:one')
+    Assert ([bool]$s.data.ok -and -not [bool]$s.data.theme.follows -and @(Get-KeyLines (Read-Config) 'theme').Count -eq 1) "K: clicking Use's One theme segment goes back to one theme"
     $s = Invoke-Settings @('--op=reset', '--key=theme')
     Assert (@(Get-KeyLines (Read-Config) 'theme').Count -eq 0) 'K: Reset takes the theme back out of the file'
 
@@ -602,6 +659,12 @@ try {
     if ($app) { Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue }
     Remove-TestDesktop
     Kill-RepoInstances
+    # GHOZTTY_SETTINGS_SHOTS=<dir> keeps the page photographs for an eye
+    # check against Mac's (T2682's theme grid); they go with $work otherwise.
+    if ($env:GHOZTTY_SETTINGS_SHOTS -and (Test-Path $work)) {
+        New-Item -ItemType Directory -Force -Path $env:GHOZTTY_SETTINGS_SHOTS | Out-Null
+        Copy-Item -Path (Join-Path $work '*.png') -Destination $env:GHOZTTY_SETTINGS_SHOTS -Force -ErrorAction SilentlyContinue
+    }
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 }
 

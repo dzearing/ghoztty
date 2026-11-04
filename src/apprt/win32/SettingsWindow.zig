@@ -71,6 +71,7 @@ const advanced_view = @import("settings_advanced_view.zig");
 const banner_link = @import("banner_link.zig");
 const theme_catalog = @import("theme_catalog.zig");
 const settings_theme = @import("settings_theme.zig");
+const theme_grid = @import("settings_theme_grid.zig");
 const controls = @import("settings_controls.zig");
 const folder_dialog = @import("folder_dialog.zig");
 const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
@@ -155,9 +156,15 @@ pub const Hit = struct {
         toast_show,
         toast_undo,
         toast_dismiss,
-        // Appearance > Theme (T2586).
+        // Appearance > Theme (T2586, the tile grid T2682): "Use"'s two
+        // segments (`index` 0 light & dark, 1 one theme), the light / dark
+        // tabs (`index` 0 / 1), the filter field, a theme's tile (`key` =
+        // its name, `index` = its catalog position) and "All N themes...".
         theme_mode,
-        theme_slot,
+        theme_tab,
+        theme_filter,
+        theme_tile,
+        theme_all,
         // The curated controls (T2681): a slider's track, a stepper's
         // arrows, a color well and its "Use <default>" link, and one flag's
         // checkbox (`index` = the flag's schema position).
@@ -170,7 +177,7 @@ pub const Hit = struct {
     };
 };
 
-const Focus = enum { search, field };
+const Focus = enum { search, field, theme_filter };
 
 app: *App,
 gpa: Allocator,
@@ -194,6 +201,12 @@ file: ConfigFileText,
 /// The themes the `theme` key can name, read on first use (Mac
 /// `ThemeCatalog.shared`); kept for the window's life.
 themes: ?theme_catalog.Catalog = null,
+/// Appearance > Theme's tile grid (T2682, Mac `ThemeSection`'s @State,
+/// which a page change resets): the tab shown (null: the one the system's
+/// appearance picks), the filter field, and the "All N themes..." disclosure.
+theme_tab: ?theme_grid.Tab = null,
+theme_filter: LineEdit = .{},
+theme_show_all: bool = false,
 /// True while a model write runs: the reload it triggers re-enters through
 /// `configChanged`, and the window refreshes once the write returns instead.
 in_write: bool = false,
@@ -810,6 +823,7 @@ pub fn setQuery(self: *SettingsWindow, text: []const u8) void {
 /// Mac: switching page clears the search.
 pub fn setPage(self: *SettingsWindow, page: PageId) void {
     self.commitEdit();
+    if (page != self.page) self.resetThemeGrid();
     self.page = page;
     self.revealed_key = null;
     if (self.search.len > 0) self.search.clear();
@@ -2252,9 +2266,12 @@ fn paintChoiceBox(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, box
     _ = self.text.drawText(hdc, box.x + box.w - aw - fpad, box.y + @divTrunc(box.h - ch, 2), arrow, .{}, .caption, cr(p.secondary), true);
 }
 
-/// Appearance > Theme (Mac `ThemeSection`): "Use" picks one theme or a
-/// light and a dark one; then one popup per slot, each listing only its
-/// kind, and Mac's warnings. Returns the height.
+/// Appearance > Theme (Mac `ThemeSection`, the tile grid T2682): "Use"
+/// (light & dark themes / one theme) as a segmented control, the light /
+/// dark tabs - whose labels ARE the two picked names in light & dark mode -
+/// the tab's caption and filter field, Mac's notices, then a preview tile
+/// per theme of the tab's kind with the picked one first and ringed, and
+/// "All N <kind> themes..." past the first 11. Returns the height.
 fn paintTheme(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, y: i32, draw: bool) i32 {
     const f = self.frame();
     const g = layout.px(dip.gap, self.scale);
@@ -2268,73 +2285,289 @@ fn paintTheme(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, y: i32,
     const sel = self.themeSelection();
     const follows = if (sel) |s| s.follows_system else false;
     const live = self.overridingSource("theme") == null;
-    const Line = struct { label: []const u8, value: []const u8, caption: []const u8, kind: Hit.Kind, index: usize = 0 };
-    var b1: [96]u8 = undefined;
-    var b2: [96]u8 = undefined;
-    const lines = [_]?Line{
-        .{
-            .label = "Use",
-            .value = if (follows) "Light & dark themes" else "One theme",
-            .caption = if (follows) "Switches between a light and a dark theme with the system appearance." else "One theme, whatever the system appearance.",
-            .kind = .theme_mode,
-        },
-        if (follows) .{
-            .label = "Light mode",
-            .value = sel.?.light,
-            .caption = std.fmt.bufPrint(&b1, "Lists only the {d} light themes.", .{cat.count(true)}) catch "",
-            .kind = .theme_slot,
-            .index = 0,
-        } else .{
-            .label = "Theme",
-            .value = if (sel) |s| s.light else "Default",
-            .caption = std.fmt.bufPrint(&b1, "{d} light and {d} dark themes.", .{ cat.count(true), cat.count(false) }) catch "",
-            .kind = .theme_slot,
-            .index = 2,
-        },
-        if (follows) .{
-            .label = "Dark mode",
-            .value = sel.?.dark,
-            .caption = std.fmt.bufPrint(&b2, "Lists only the {d} dark themes.", .{cat.count(false)}) catch "",
-            .kind = .theme_slot,
-            .index = 1,
-        } else null,
-    };
-    var cy = y;
-    var cols = layout.rowColumns(self.scale, f.list, f.scrollbar.w, cy, lh, dip.field_w);
-    for (lines) |maybe| {
-        const line = maybe orelse continue;
-        cy += pad_y;
-        cols = layout.rowColumns(self.scale, f.list, f.scrollbar.w, cy, lh, dip.field_w);
-        if (draw) {
-            _ = self.text.drawText(hdc, cols.left, cy + @divTrunc(band - lh, 2), line.label, .{}, .body, cr(p.text), true);
-            self.paintChoiceBox(hdc, p, cols.control, line.value, live);
-            if (live) self.hit(.{ .rect = cols.control, .kind = line.kind, .index = line.index });
+    const tab = self.themeTab();
+    const kind = @tagName(tab);
+    var cy = y + pad_y;
+    const cols = layout.rowColumns(self.scale, f.list, f.scrollbar.w, cy, lh, dip.field_w);
+    const left = cols.left;
+    const width = cols.right - cols.left;
+
+    // Use: the label and its caption, the segmented control trailing.
+    if (draw) {
+        _ = self.text.drawText(hdc, left, cy + @divTrunc(band - lh, 2), "Use", .{}, .body, cr(p.text), true);
+        const labels = [_][]const u8{ "Light & dark themes", "One theme" };
+        var widths: [2]i32 = undefined;
+        var total: i32 = 0;
+        for (labels, 0..) |l, i| {
+            widths[i] = self.segmentWidth(hdc, l);
+            total += widths[i];
         }
-        cy += band + t;
-        if (draw) self.text.drawEllipsized(hdc, .{ .x = cols.left, .y = cy, .w = cols.right - cols.left, .h = ch }, line.caption, .{}, .caption, cr(p.secondary), false);
-        cy += ch + pad_y;
+        const box: Rect = .{ .x = cols.right - total, .y = cy + @divTrunc(band - fh, 2), .w = total, .h = fh };
+        self.paintSegmented(hdc, p, box, &labels, &.{ "follow", "one" }, &widths, if (follows) 0 else 1, .theme_mode, live);
     }
-    // Mac's notices: a hand-edited slot holding the wrong kind, no themes
-    // found, a later include that sets the key.
+    cy += band + t;
+    if (draw) self.text.drawEllipsized(hdc, .{ .x = left, .y = cy, .w = width, .h = ch }, if (follows) "Switches between a light and a dark theme with the system appearance." else "One theme, whatever the system appearance.", .{}, .caption, cr(p.secondary), false);
+    cy += ch + g;
+
+    // The tabs (Mac caps them at 440pt), two equal segments.
+    if (draw) {
+        var lb: [2][160]u8 = undefined;
+        const names = [2][]const u8{
+            if (follows) sel.?.light else "Light themes",
+            if (follows) sel.?.dark else "Dark themes",
+        };
+        const glyphs = [2][]const u8{ "\u{2600}", "\u{263E}" };
+        var labels: [2][]const u8 = undefined;
+        for (0..2) |i| labels[i] = std.fmt.bufPrint(&lb[i], "{s}  {s}", .{ glyphs[i], clampUtf8(names[i], 150) }) catch names[i];
+        const tw = @min(width, layout.px(440, self.scale));
+        const half = @divTrunc(tw, 2);
+        const widths = [2]i32{ half, tw - half };
+        self.paintSegmented(hdc, p, .{ .x = left, .y = cy, .w = tw, .h = fh }, &labels, &.{ "light", "dark" }, &widths, @intFromEnum(tab), .theme_tab, true);
+    }
+    cy += fh + g;
+
+    // The tab's caption, and the filter field trailing it.
+    {
+        const fw = @min(layout.px(192, self.scale), width);
+        const field: Rect = .{ .x = cols.right - fw, .y = cy + @divTrunc(band - fh, 2), .w = fw, .h = fh };
+        if (draw) {
+            var cb: [96]u8 = undefined;
+            const caption = if (follows)
+                std.fmt.bufPrint(&cb, "Showing {s} themes \u{2014} your pick is used in {s} mode.", .{ kind, kind }) catch ""
+            else
+                "Filter only \u{2014} the theme you pick is used all the time.";
+            self.text.drawEllipsized(hdc, .{ .x = left, .y = cy, .w = @max(0, field.x - g - left), .h = band }, caption, .{}, .caption, cr(p.secondary), false);
+            var pb: [64]u8 = undefined;
+            const placeholder = std.fmt.bufPrint(&pb, "Filter {d} {s} themes", .{ cat.count(tab == .light), kind }) catch "";
+            const focused = self.focus == .theme_filter and w32.GetFocus() == self.hwnd;
+            self.paintField(hdc, p, field, self.theme_filter.text(), placeholder, focused, self.theme_filter.caret, false, false);
+            self.hit(.{ .rect = field, .kind = .theme_filter });
+        }
+        cy += band + g;
+    }
+
+    // Mac's notices: a later include that sets the key, no themes found, a
+    // hand-edited slot holding the wrong kind, a value the parser refused.
     var nb: [400]u8 = undefined;
-    const notice: ?[]const u8 = blk: {
-        if (!live) break :blk "Set in a file that loads after your config - edit it there.";
-        if (cat.themes.len == 0) break :blk "No themes were found in the bundled or your own themes folder.";
-        if (sel) |s| if (theme_catalog.mismatch(cat, s)) |slot| {
-            const bad = s.slotName(slot);
+    var pb: [400]u8 = undefined;
+    const notices = [_]?struct { text: []const u8, color: panel_theme.Rgb }{
+        if (!live) .{ .text = "Set in a file that loads after your config - edit it there.", .color = p.warn } else null,
+        if (cat.themes.len == 0) .{ .text = "No themes were found in the bundled or your own themes folder.", .color = p.warn } else null,
+        blk: {
+            const s = sel orelse break :blk null;
+            if (!s.follows_system) break :blk null;
+            const slot = theme_catalog.mismatch(cat, s) orelse break :blk null;
             const want = @tagName(slot);
             const is = if (slot == .light) "dark" else "light";
-            break :blk std.fmt.bufPrint(&nb, "\u{26A0} {s} is a {s} theme but is set for {s} mode. Pick a {s} theme to fix it.", .{ bad, is, want, want }) catch null;
-        };
-        break :blk null;
+            break :blk .{ .text = std.fmt.bufPrint(&nb, "\u{26A0} {s} is a {s} theme but is set for {s} mode. Pick a {s} theme to fix it.", .{ s.slotName(slot), is, want, want }) catch "", .color = p.warn };
+        },
+        if (self.model.problem("theme")) |prob| .{ .text = std.fmt.bufPrint(&pb, "\u{26A0} {s} \u{2014} not saved.", .{clampUtf8(prob, 300)}) catch prob, .color = p.bad } else null,
     };
-    if (notice) |n| {
-        if (draw) self.text.drawEllipsized(hdc, .{ .x = cols.left, .y = cy, .w = cols.right - cols.left, .h = ch }, n, .{}, .caption, cr(p.warn), false);
-        cy += ch + pad_y;
+    for (notices) |maybe| {
+        const n = maybe orelse continue;
+        if (draw) self.text.drawEllipsized(hdc, .{ .x = left, .y = cy, .w = width, .h = ch }, n.text, .{}, .caption, cr(n.color), false);
+        cy += ch + g;
     }
-    cy += g;
-    if (draw) fillRect(hdc, .{ .x = cols.left, .y = cy - self.hair(), .w = cols.right - cols.left, .h = self.hair() }, cr(p.divider));
+
+    // The tiles (Mac `LazyVGrid(.adaptive(minimum: 118), spacing: 10)`, on
+    // the 4 DIP scale here).
+    const grid = self.themeGrid(self.gpa) catch null;
+    defer if (grid) |gr| gr.deinit(self.gpa);
+    if (grid) |gr| {
+        const spacing = g;
+        const c = theme_grid.columns(width, layout.px(120, self.scale), spacing);
+        const m = self.themeTileMetrics();
+        const cells = gr.shown.len + @intFromBool(gr.more);
+        const nrows = theme_grid.rows(cells, c.n);
+        const picked = theme_grid.current(sel, tab);
+        if (draw) for (0..cells) |i| {
+            const col: i32 = @intCast(i % c.n);
+            const row: i32 = @intCast(i / c.n);
+            const r: Rect = .{ .x = left + col * (c.tile_w + spacing), .y = cy + row * (m.tile_h + spacing), .w = c.tile_w, .h = m.tile_h };
+            if (i < gr.shown.len) {
+                const idx = gr.shown[i];
+                const th = &cat.themes[idx];
+                const selected = if (picked) |pk| std.mem.eql(u8, pk, th.name) else false;
+                self.paintThemeTile(hdc, p, r, m.preview_h, th, selected, live);
+                if (live) self.hit(.{ .rect = r, .kind = .theme_tile, .key = th.name, .index = idx });
+            } else {
+                var ab: [64]u8 = undefined;
+                const label = std.fmt.bufPrint(&ab, "All {d} {s} themes\u{2026}", .{ gr.matched, kind }) catch "All themes\u{2026}";
+                frameRound(hdc, r, layout.px(dip.card_radius, self.scale), cr(p.boundary), self.hair());
+                const lw = self.text.measure(hdc, label, .{}, .caption).cx;
+                _ = self.text.drawText(hdc, r.x + @max(0, @divTrunc(r.w - lw, 2)), r.y + @divTrunc(r.h - ch, 2), label, .{}, .caption, cr(p.accent), true);
+                self.hit(.{ .rect = r, .kind = .theme_all });
+            }
+        };
+        if (nrows > 0) cy += @as(i32, @intCast(nrows)) * (m.tile_h + spacing) - spacing;
+        if (gr.matched == 0 and cat.themes.len > 0) {
+            if (nrows > 0) cy += t;
+            var eb: [200]u8 = undefined;
+            const empty = std.fmt.bufPrint(&eb, "No {s} themes match \u{201C}{s}\u{201D}.", .{ kind, clampUtf8(self.theme_filter.text(), 120) }) catch "";
+            if (draw) self.text.drawEllipsized(hdc, .{ .x = left, .y = cy, .w = width, .h = ch }, empty, .{}, .caption, cr(p.secondary), false);
+            cy += ch;
+        }
+    }
+    cy += pad_y + g;
+    if (draw) fillRect(hdc, .{ .x = left, .y = cy - self.hair(), .w = width, .h = self.hair() }, cr(p.divider));
     return cy - y;
+}
+
+/// A segmented control (Mac `.pickerStyle(.segmented)`): `labels` side by
+/// side across `box` at `widths`, the `on` one filled with the selection;
+/// each segment records a `kind` hit carrying its index and key when `live`.
+fn paintSegmented(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, box: Rect, labels: []const []const u8, keys: []const []const u8, widths: []const i32, on: usize, kind: Hit.Kind, live: bool) void {
+    const radius = layout.px(dip.radius, self.scale);
+    const pad = layout.px(dip.gap, self.scale);
+    const ch = self.text.lineHeight(.caption);
+    roundRect(hdc, box, radius, cr(p.field), cr(p.boundary), self.hair());
+    var x = box.x;
+    for (labels, widths, 0..) |l, w, i| {
+        const r: Rect = .{ .x = x, .y = box.y, .w = w, .h = box.h };
+        const sel = i == on;
+        if (sel) roundRect(hdc, r, radius, cr(p.select), cr(p.boundary), self.hair());
+        const color = if (!live) cr(p.secondary) else if (sel) cr(p.text_on_select) else cr(p.text);
+        const lw = self.text.measure(hdc, l, .{ .bold = sel }, .caption).cx;
+        if (lw <= r.w - 2 * pad) {
+            _ = self.text.drawText(hdc, r.x + @divTrunc(r.w - lw, 2), r.y + @divTrunc(r.h - ch, 2), l, .{ .bold = sel }, .caption, color, true);
+        } else {
+            self.text.drawEllipsized(hdc, .{ .x = r.x + pad, .y = r.y, .w = r.w - 2 * pad, .h = r.h }, l, .{ .bold = sel }, .caption, color, false);
+        }
+        if (live) self.hit(.{ .rect = r, .kind = kind, .key = keys[i], .index = i });
+        x += w;
+    }
+}
+
+/// A segment's natural width: its label (bold, as when selected) plus pad.
+fn segmentWidth(self: *SettingsWindow, hdc: w32.HDC, label: []const u8) i32 {
+    return self.text.measure(hdc, label, .{ .bold = true }, .caption).cx + 2 * layout.px(dip.filter_pad_x, self.scale);
+}
+
+const TileMetrics = struct { preview_h: i32, tile_h: i32 };
+
+/// A theme tile's height: three sample lines over the theme's background
+/// (Mac: 50pt at least, 7pt padding), then the name.
+fn themeTileMetrics(self: *const SettingsWindow) TileMetrics {
+    const g = layout.px(dip.gap, self.scale);
+    const t = layout.px(dip.tight, self.scale);
+    const ch = self.text.lineHeight(.caption);
+    const preview_h = @max(layout.px(48, self.scale), 3 * ch) + 2 * g;
+    return .{ .preview_h = preview_h, .tile_h = preview_h + ch + 2 * t };
+}
+
+/// One theme's tile (Mac `ThemeTile`): `› ls` / `src docs err` / `~/git $`
+/// in the theme's green, blue, magenta, red, yellow and foreground on its
+/// background, the name under it - accent and bold when picked - and the
+/// outline, a 2 DIP accent ring when picked. Mac's prompt is U+276F, which
+/// Cascadia Mono and Consolas do not carry; U+203A is in both.
+fn paintThemeTile(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, r: Rect, preview_h: i32, th: *const theme_catalog.Theme, selected: bool, live: bool) void {
+    const radius = layout.px(dip.card_radius, self.scale);
+    const g = layout.px(dip.gap, self.scale);
+    const t = layout.px(dip.tight, self.scale);
+    const ch = self.text.lineHeight(.caption);
+    const preview: Rect = .{ .x = r.x, .y = r.y, .w = r.w, .h = preview_h };
+    {
+        const saved = w32.SaveDC(hdc);
+        defer _ = w32.RestoreDC(hdc, saved);
+        if (w32.CreateRoundRectRgn(r.x, r.y, r.x + r.w + 1, r.y + r.h + 1, radius * 2, radius * 2)) |rgn| {
+            _ = w32.SelectClipRgn(hdc, rgn);
+            _ = w32.DeleteObject(rgn);
+        }
+        fillRect(hdc, preview, themeCr(th.background));
+        _ = w32.IntersectClipRect(hdc, preview.x, preview.y, preview.x + preview.w - g, preview.y + preview.h);
+        const Run = struct { text: []const u8, color: theme_catalog.Rgb };
+        const fg = th.foreground;
+        const ansi = th.palette;
+        const lines = [3][]const Run{
+            &.{ .{ .text = "\u{203A} ", .color = ansi[2] }, .{ .text = "ls", .color = fg } },
+            &.{ .{ .text = "src ", .color = ansi[4] }, .{ .text = "docs ", .color = ansi[5] }, .{ .text = "err", .color = ansi[1] } },
+            &.{ .{ .text = "~/git ", .color = ansi[3] }, .{ .text = "$", .color = fg } },
+        };
+        for (lines, 0..) |runs, li| {
+            var x = preview.x + g;
+            const ly = preview.y + g + @as(i32, @intCast(li)) * ch;
+            for (runs) |run| x += self.text.drawText(hdc, x, ly, run.text, .{ .code = true }, .caption, themeCr(run.color), true);
+        }
+    }
+    const color = if (!live) cr(p.secondary) else if (selected) cr(p.accent) else cr(p.text);
+    const name_r: Rect = .{ .x = r.x + t, .y = r.y + preview_h + t, .w = r.w - 2 * t, .h = ch };
+    const nw = self.text.measure(hdc, th.name, .{ .bold = selected }, .caption).cx;
+    if (nw <= name_r.w) {
+        _ = self.text.drawText(hdc, name_r.x + @divTrunc(name_r.w - nw, 2), name_r.y, th.name, .{ .bold = selected }, .caption, color, true);
+    } else {
+        self.text.drawEllipsized(hdc, name_r, th.name, .{ .bold = selected }, .caption, color, false);
+    }
+    const ring: i32 = if (selected) @max(2, layout.px(2, self.scale)) else self.hair();
+    frameRound(hdc, r, radius, if (selected) cr(p.accent) else cr(p.boundary), ring);
+}
+
+/// A theme file's color as a COLORREF.
+fn themeCr(c: theme_catalog.Rgb) u32 {
+    return w32.RGB(c.r, c.g, c.b);
+}
+
+pub const ThemeTab = theme_grid.Tab;
+pub const themeGridCurrent = theme_grid.current;
+
+pub fn themeFilterFocused(self: *const SettingsWindow) bool {
+    return self.focus == .theme_filter;
+}
+
+/// The tab the grid shows: the one picked, else the system's appearance
+/// (Mac: `colorScheme`).
+pub fn themeTab(self: *const SettingsWindow) theme_grid.Tab {
+    return self.theme_tab orelse if (system_colors.usesLightTheme()) .light else .dark;
+}
+
+/// The tiles the grid shows right now - the painter and the seam's state
+/// read this one answer. Caller frees with `deinit(alloc)`.
+pub fn themeGrid(self: *SettingsWindow, alloc: Allocator) Allocator.Error!theme_grid.Grid {
+    const tab = self.themeTab();
+    return theme_grid.build(alloc, self.themeCatalog(), tab, self.theme_filter.text(), theme_grid.current(self.themeSelection(), tab), self.theme_show_all);
+}
+
+/// A tab click: show that kind (Mac collapses the grid again).
+pub fn setThemeTab(self: *SettingsWindow, tab: theme_grid.Tab) void {
+    self.theme_tab = tab;
+    self.theme_show_all = false;
+    self.relayoutTheme();
+}
+
+/// Type into the filter field (the seam's typing; a click focuses it).
+pub fn setThemeFilter(self: *SettingsWindow, text: []const u8) void {
+    self.commitEdit();
+    self.theme_filter.set(text);
+    self.focus = .theme_filter;
+    self.relayoutTheme();
+}
+
+/// "All N <kind> themes...".
+pub fn showAllThemes(self: *SettingsWindow) void {
+    self.theme_show_all = true;
+    self.relayoutTheme();
+}
+
+fn resetThemeGrid(self: *SettingsWindow) void {
+    self.theme_tab = null;
+    self.theme_filter.clear();
+    self.theme_show_all = false;
+    if (self.focus == .theme_filter) self.focus = .search;
+}
+
+/// The grid's height moved: lay the page out again and keep the scroll in
+/// range.
+fn relayoutTheme(self: *SettingsWindow) void {
+    self.layoutItems();
+    self.scroll = layout.clampScroll(self.scroll, self.content_h, self.frame().list.h);
+    self.invalidate();
+}
+
+/// A tile click (Mac `pick`): in light & dark mode the tab's slot, else the
+/// one theme.
+fn pickThemeTile(self: *SettingsWindow, index: usize) void {
+    const cat = self.themeCatalog();
+    if (index >= cat.themes.len) return;
+    _ = self.pickTheme(cat.themes[index].name, self.themeTab().slot());
 }
 
 /// The theme catalog, read on first use.
@@ -2377,30 +2610,6 @@ pub fn pickTheme(self: *SettingsWindow, name: []const u8, slot: theme_catalog.Sl
     return self.chooseValue("theme", v);
 }
 
-fn openThemeMode(self: *SettingsWindow, anchor: Rect) void {
-    const follows = if (self.themeSelection()) |s| s.follows_system else false;
-    var pt: w32.POINT = .{ .x = anchor.x, .y = anchor.y + anchor.h };
-    _ = w32.ClientToScreen(self.hwnd, &pt);
-    const pick = settings_theme.modeMenu(self.gpa, self.hwnd, pt, follows) orelse return;
-    _ = self.setThemeFollows(pick);
-}
-
-/// A slot's theme menu: 0 light, 1 dark, 2 the one theme (both kinds).
-fn openThemeMenu(self: *SettingsWindow, which: usize, anchor: Rect) void {
-    const cat = self.themeCatalog();
-    const sel = self.themeSelection();
-    const slot: theme_catalog.Slot = if (which == 1) .dark else .light;
-    const now = if (sel) |s| s.slotName(slot) else "";
-    const kinds: settings_theme.Kinds = switch (which) {
-        0 => .light,
-        1 => .dark,
-        else => .both,
-    };
-    var pt: w32.POINT = .{ .x = anchor.x, .y = anchor.y + anchor.h };
-    _ = w32.ClientToScreen(self.hwnd, &pt);
-    const idx = settings_theme.themeMenu(self.gpa, self.hwnd, pt, cat, kinds, now) orelse return;
-    _ = self.pickTheme(cat.themes[idx].name, slot);
-}
 
 /// Sessions & Agent's Agent and Updates' version (T2680, Mac
 /// `AgentStatusSection` / `VersionSection`): label-and-value lines from the
@@ -2639,7 +2848,7 @@ fn hitAt(self: *const SettingsWindow, x: i32, y: i32) ?Hit {
             .check_updates, .pane_style => true,
             .open_editor, .reveal_file, .open_source, .restore_menu, .show_file => true,
             .toast_body, .toast_show, .toast_undo, .toast_dismiss => true,
-            .theme_mode, .theme_slot => true,
+            .theme_mode, .theme_tab, .theme_filter, .theme_tile, .theme_all => true,
             .slider, .step_up, .step_down, .color_well, .color_reset, .flag => true,
             else => false,
         };
@@ -2694,8 +2903,16 @@ fn onLeftDown(self: *SettingsWindow, x: i32, y: i32) void {
             .toast_show => self.toggleToastChange(),
             .toast_undo => _ = self.undoLast(),
             .toast_dismiss => self.dismissToast(),
-            .theme_mode => self.openThemeMode(h.rect),
-            .theme_slot => self.openThemeMenu(h.index, h.rect),
+            .theme_mode => _ = self.setThemeFollows(h.index == 0),
+            .theme_tab => self.setThemeTab(if (h.index == 1) .dark else .light),
+            .theme_filter => {
+                self.commitEdit();
+                self.focus = .theme_filter;
+                self.theme_filter.end();
+                self.invalidate();
+            },
+            .theme_tile => self.pickThemeTile(h.index),
+            .theme_all => self.showAllThemes(),
             .slider => self.beginSlide(h.key, h.rect, x),
             .step_up => _ = self.stepKey(h.key, 1),
             .step_down => _ = self.stepKey(h.key, -1),
@@ -2798,21 +3015,30 @@ fn onMouseMove(self: *SettingsWindow, x: i32, y: i32) void {
     }
     const h = self.hitAt(x, y);
     const cursor = if (h) |hh| switch (hh.kind) {
-        .field, .add_field => w32.IDC_IBEAM,
+        .field, .add_field, .theme_filter => w32.IDC_IBEAM,
         else => w32.IDC_HAND,
     } else if (self.frame().search.contains(x, y)) w32.IDC_IBEAM else w32.IDC_ARROW;
     _ = w32.SetCursor(w32.LoadCursorW(null, cursor));
 }
 
 fn editor(self: *SettingsWindow) *LineEdit {
-    return if (self.focus == .field and self.edit_key != null) &self.field else &self.search;
+    return switch (self.focus) {
+        .field => if (self.edit_key != null) &self.field else &self.search,
+        .theme_filter => &self.theme_filter,
+        .search => &self.search,
+    };
 }
 
 fn edited(self: *SettingsWindow) void {
-    if (self.focus == .search) {
-        self.scroll = 0;
-        self.refresh();
-    } else self.invalidate();
+    switch (self.focus) {
+        .search => {
+            self.scroll = 0;
+            self.refresh();
+        },
+        // The theme filter narrows the grid as you type (Mac's binding).
+        .theme_filter => self.relayoutTheme(),
+        .field => self.invalidate(),
+    }
 }
 
 fn onKey(self: *SettingsWindow, vk: u16) bool {
@@ -2822,6 +3048,15 @@ fn onKey(self: *SettingsWindow, vk: u16) bool {
         w32.VK_ESCAPE => {
             if (self.edit_key != null) {
                 self.cancelEdit();
+            } else if (self.focus == .theme_filter) {
+                // Esc empties the theme filter, then leaves it.
+                if (self.theme_filter.len > 0) {
+                    self.theme_filter.clear();
+                    self.relayoutTheme();
+                } else {
+                    self.focus = .search;
+                    self.invalidate();
+                }
             } else if (self.search.len > 0) {
                 self.setQuery("");
             } else {
@@ -2833,7 +3068,12 @@ fn onKey(self: *SettingsWindow, vk: u16) bool {
         },
         w32.VK_TAB => {
             // Tab leaves a field the way a click elsewhere does.
-            if (self.edit_key != null) self.commitEdit() else return false;
+            if (self.edit_key != null) {
+                self.commitEdit();
+            } else if (self.focus == .theme_filter) {
+                self.focus = .search;
+                self.invalidate();
+            } else return false;
         },
         w32.VK_LEFT => {
             e.left();
