@@ -73,6 +73,7 @@ const theme_catalog = @import("theme_catalog.zig");
 const settings_theme = @import("settings_theme.zig");
 const theme_grid = @import("settings_theme_grid.zig");
 const controls = @import("settings_controls.zig");
+const preview_view = @import("settings_preview_view.zig");
 const folder_dialog = @import("folder_dialog.zig");
 const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
 const panel_theme = @import("panel_theme.zig");
@@ -277,6 +278,18 @@ hits: std.ArrayListUnmanaged(Hit) = .empty,
 slide_key: ?[]const u8 = null,
 slide_track: Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 },
 slide_preview: ?f64 = null,
+/// Appearance's live preview (T2683): the card as last painted (null when
+/// it was not), whether its cursor blinks and is lit, and what it drew -
+/// the face GDI picked, the caption, the cursor - for `--op=state`.
+preview_rect: ?Rect = null,
+preview_painted_blink: bool = false,
+preview_blinking: bool = false,
+preview_cursor_on: bool = true,
+preview_cursor_rect: ?Rect = null,
+preview_face: [64]u8 = undefined,
+preview_face_len: usize = 0,
+preview_caption: [160]u8 = undefined,
+preview_caption_len: usize = 0,
 
 // ---------------------------------------------------------------------
 // Open / close
@@ -745,6 +758,8 @@ fn planSearch(self: *SettingsWindow, arena: Allocator, r: Reader, plan: *std.Arr
             else
                 pg.title;
             if (sec.custom) |c| {
+                // Mac: the preview is never a search result.
+                if (c == .preview) continue;
                 const words = c.searchText();
                 if (SettingsCatalog.containsIgnoreCase(words, q) or
                     (sec.title != null and SettingsCatalog.containsIgnoreCase(sec.title.?, q)))
@@ -1628,7 +1643,9 @@ fn paint(self: *SettingsWindow, hdc_screen: w32.HDC) void {
     self.paintSidebar(mem, f, p);
     fillRect(mem, f.rule, cr(p.divider));
     self.paintTitle(mem, f, p);
+    self.preview_rect = null;
     self.paintList(mem, f, p);
+    preview_view.afterPaint(self);
     advanced_view.paintToast(self, mem, p, f);
     _ = w32.BitBlt(hdc_screen, 0, 0, w, h, mem, 0, 0, w32.SRCCOPY);
 }
@@ -2195,6 +2212,7 @@ fn paintCustom(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: 
     const f = self.frame();
     switch (item.custom) {
         .config_file => return advanced_view.paintConfigFile(self, hdc, p, y, draw),
+        .preview => return preview_view.paint(self, hdc, p, y, draw),
         .agent_status, .version => return self.paintLive(hdc, p, item.custom, y, draw),
         .all_settings => {
             const bh = layout.px(dip.filter_band_h, self.scale);
@@ -2226,7 +2244,7 @@ fn paintCustom(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: 
         .remote_machines => &.{
             .{ .text = "Your machines and their host settings are in the machine chooser (New Remote Window)." },
         },
-        .config_file, .all_settings => unreachable,
+        .config_file, .all_settings, .preview => unreachable,
     };
     for (lines, 0..) |line, i| {
         if (i > 0) cy += t;
@@ -3247,6 +3265,10 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
         w32.WM_TIMER => {
             if (wparam == toast_timer_id) {
                 self.onToastTimer();
+                return 0;
+            }
+            if (wparam == preview_view.blink_timer_id) {
+                preview_view.tick(self);
                 return 0;
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);

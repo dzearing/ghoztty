@@ -37,7 +37,7 @@
 # file untouched) - that run MUST fail.
 #
 # Only touches ghoztty processes running from this repo's zig-out*.
-param([string]$ExePath, [switch]$NegativeControl, [switch]$Interactive)
+param([string]$ExePath, [switch]$NegativeControl, [switch]$Interactive, [string]$ShotDir)
 
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 $ErrorActionPreference = 'Stop'
@@ -503,6 +503,77 @@ try {
     Assert ([bool]$s.data.ok -and -not [bool]$s.data.theme.follows -and @(Get-KeyLines (Read-Config) 'theme').Count -eq 1) "K: clicking Use's One theme segment goes back to one theme"
     $s = Invoke-Settings @('--op=reset', '--key=theme')
     Assert (@(Get-KeyLines (Read-Config) 'theme').Count -eq 0) 'K: Reset takes the theme back out of the file'
+
+    # =====================================================================
+    # K2: Appearance's live preview (T2683, Mac SettingsPreview) - the card
+    # at the top of the page draws with the effective theme, font, size,
+    # opacity, padding, pane style and cursor, and follows each change.
+    # -ShotDir keeps one PNG per state for inspection by eye.
+    # =====================================================================
+    function Get-Preview([string]$tag) {
+        $p = Join-Path $work "settings-preview-$tag.png"
+        $r = Invoke-Settings @('--op=shot', '--page=appearance', "--path=$p")
+        if ($ShotDir -and (Test-Path $p)) {
+            New-Item -ItemType Directory -Force -Path $ShotDir | Out-Null
+            Copy-Item $p (Join-Path $ShotDir "preview-$tag.png") -Force
+        }
+        return $r
+    }
+    # Earlier sections leave a font-family line and no font-size: start the
+    # preview from a known font.
+    [void](Invoke-Settings @('--op=reset', '--key=font-family'))
+    [void](Invoke-Settings @('--op=set', '--key=font-size', '--value=13'))
+    $s = Get-Preview 'default'
+    $pv = $s.data.preview
+    Assert (@($s.data.customs)[0] -eq 'preview') "K2: the preview is the first section on Appearance (customs=$(@($s.data.customs) -join ','))"
+    Assert ($pv -and [bool]$pv.painted -and [int]$pv.rect.h -gt 100) "K2: the preview card is painted (h=$($pv.rect.h))"
+    Assert ([string]$pv.theme -eq 'Default colors' -and -not [bool]$pv.from_catalog -and [string]$pv.background -eq '#101014') "K2: with no theme it draws the configured colors (theme='$($pv.theme)' bg=$($pv.background))"
+    Assert ([double]$pv.size -eq 13 -and [string]$pv.cursor_style -eq 'bar' -and [bool]$pv.elevated) "K2: it reads font-size, the included file's cursor-style and the elevated pane style (size=$($pv.size) cursor=$($pv.cursor_style) elevated=$($pv.elevated))"
+    Assert ([string]$pv.drawn_caption -eq [string]$pv.caption -and [string]$pv.caption -eq "JetBrains Mono 13pt $([char]0x00B7) Default colors") "K2: the caption names the font, size and theme (drawn='$($pv.drawn_caption)')"
+    Assert ([bool]$pv.blink -and [bool]$pv.blinking) "K2: an unset blink blinks the cursor, like Mac's preview (blinking=$($pv.blinking))"
+    $s = Invoke-Settings @('--op=state', '--query=preview')
+    Assert (-not (@($s.data.customs) -contains 'preview')) 'K2: the preview is never a search result (Mac)'
+    [void](Invoke-Settings @('--op=state', '--query='))
+
+    [void](Invoke-Settings @('--op=theme-pick', '--key=light', '--value=Zz Test Dark'))
+    [void](Invoke-Settings @('--op=set', '--key=font-size', '--value=16'))
+    [void](Invoke-Settings @('--op=add', '--key=font-family', '--value=Consolas'))
+    $s = Get-Preview 'theme-font'
+    $pv = $s.data.preview
+    Assert ([string]$pv.theme -eq 'Zz Test Dark' -and [bool]$pv.from_catalog -and [string]$pv.background -eq '#101010' -and [string]$pv.foreground -eq '#eeeeee') "K2: a picked theme recolors it (theme='$($pv.theme)' bg=$($pv.background) fg=$($pv.foreground))"
+    Assert ([double]$pv.size -eq 16 -and [string]$pv.family -eq 'Consolas' -and [string]$pv.drawn_face -eq 'Consolas') "K2: font-family and font-size reach the drawn text (family='$($pv.family)' face='$($pv.drawn_face)' size=$($pv.size))"
+    Assert ([string]$pv.drawn_caption -eq "Consolas 16pt $([char]0x00B7) Zz Test Dark") "K2: ...and the caption follows (drawn='$($pv.drawn_caption)')"
+    [void](Invoke-Settings @('--op=remove', '--key=font-family', '--index=0'))
+    [void](Invoke-Settings @('--op=add', '--key=font-family', '--value=Zz No Such Font'))
+    $s = Get-Preview 'missing-font'
+    $pv = $s.data.preview
+    Assert ([string]$pv.family -eq 'Zz No Such Font' -and [string]$pv.drawn_face -eq 'Consolas') "K2: a family that is not installed draws the monospaced fallback (face='$($pv.drawn_face)')"
+    [void](Invoke-Settings @('--op=remove', '--key=font-family', '--index=0'))
+
+    [void](Invoke-Settings @('--op=slide', '--key=background-opacity', '--value=0.8'))
+    [void](Invoke-Settings @('--op=set', '--key=window-padding-x', '--value=12'))
+    [void](Invoke-Settings @('--op=set', '--key=cursor-style-blink', '--value=false'))
+    [void](Invoke-Settings @('--op=set', '--key=cursor-color', '--value=#ff3300'))
+    $s = Get-Preview 'opacity-cursor'
+    $pv = $s.data.preview
+    Assert ([double]$pv.opacity -eq 0.8 -and [string]$pv.drawn_caption -match '80% opaque$') "K2: background opacity shows in the card and its caption (opacity=$($pv.opacity) caption='$($pv.drawn_caption)')"
+    Assert ([double]$pv.pad_x -eq 12) "K2: window padding moves the text (pad_x=$($pv.pad_x))"
+    Assert (-not [bool]$pv.blink -and -not [bool]$pv.blinking -and $null -ne $pv.cursor_rect) "K2: blink off holds the cursor lit and stops the timer (blinking=$($pv.blinking))"
+    Assert ([string]$pv.cursor_color -eq '#ff3300') "K2: cursor-color colors the cursor (cursor=$($pv.cursor_color))"
+    Assert ([int]$pv.cursor_rect.h -ge (4 * [int]$pv.cursor_rect.w)) "K2: the bar cursor is drawn as a thin bar ($($pv.cursor_rect.w)x$($pv.cursor_rect.h))"
+    # The included file sets cursor-style, so a value written here does not
+    # take effect - and the preview shows what the terminal would.
+    [void](Invoke-Settings @('--op=set', '--key=cursor-style', '--value=block'))
+    [void](Invoke-Settings @('--op=choose', '--key=macos-pane-style', '--value=flat'))
+    $s = Get-Preview 'flat'
+    $pv = $s.data.preview
+    Assert ([string]$pv.cursor_style -eq 'bar') "K2: a cursor-style a later file overrides stays the overriding one (cursor=$($pv.cursor_style))"
+    Assert (-not [bool]$pv.elevated) 'K2: the flat pane style drops the raised card'
+    foreach ($k in @('font-family', 'cursor-style', 'macos-pane-style', 'cursor-color', 'cursor-style-blink', 'window-padding-x', 'background-opacity', 'font-size', 'theme')) {
+        [void](Invoke-Settings @('--op=reset', "--key=$k"))
+    }
+    $s = Invoke-Settings @('--op=state', '--page=appearance')
+    Assert ([string]$s.data.preview.theme -eq 'Default colors' -and [string]$s.data.preview.cursor_style -eq 'bar') "K2: resetting puts the preview back (theme='$($s.data.preview.theme)')"
 
     # =====================================================================
     # L: the curated controls (T2681) - slider, stepper, megabytes, color,

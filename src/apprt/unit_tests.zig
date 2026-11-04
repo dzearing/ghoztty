@@ -55,6 +55,8 @@ test {
     _ = @import("win32/settings_theme_grid.zig");
     _ = @import("win32/settings_live.zig");
     _ = @import("win32/settings_controls.zig");
+    // Appearance's live preview: what it draws with (T2683).
+    _ = @import("win32/settings_preview.zig");
 
     // Planted one-frame defects for the T2373 lab's positive controls
     // (T2383): the spec parser and the fire rule, same no-OS-imports deal.

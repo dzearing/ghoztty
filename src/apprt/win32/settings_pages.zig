@@ -124,6 +124,9 @@ pub const Row = struct {
 /// Sections with their own UI (Mac `SettingsCustomSection`). Only the ones
 /// a Windows curated page carries are listed.
 pub const Custom = enum {
+    /// Appearance's live preview (Mac `SettingsPreview`, T2683): a small
+    /// terminal in the current theme, font, opacity, padding and cursor.
+    preview,
     /// The theme picker (Mac `ThemeSection`): one theme, or a light and a
     /// dark one that follow the system appearance.
     theme,
@@ -137,6 +140,7 @@ pub const Custom = enum {
     /// Words search should match for the section (Mac `searchText`).
     pub fn searchText(self: Custom) []const u8 {
         return switch (self) {
+            .preview => "preview",
             .theme => "theme colors light dark mode appearance",
             .shortcut_guide => "keyboard shortcuts keybind guide",
             .agent_status => "agent session persistence status pipe",
@@ -177,6 +181,7 @@ pub const appearance: Page = .{
     .glyph = "\u{25D0}",
     .tint = 0x5856D6,
     .sections = &.{
+        .{ .custom = .preview },
         .{ .title = "Theme", .custom = .theme },
         .{ .title = "Font", .rows = &.{
             .{ .key = "font-family", .label = "Font", .control = .font },

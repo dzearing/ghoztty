@@ -73,6 +73,9 @@ const settings_pages = @import("settings_pages.zig");
 const settings_advanced = @import("settings_advanced.zig");
 const SettingsModel = @import("SettingsModel.zig");
 const theme_catalog = @import("theme_catalog.zig");
+const settings_controls = @import("settings_controls.zig");
+const settings_preview = @import("settings_preview.zig");
+const preview_view = @import("settings_preview_view.zig");
 
 const errorResponse = ipc_capture.errorResponse;
 
@@ -428,6 +431,77 @@ fn writeLive(jws: *std.json.Stringify, w: *SettingsWindow) !void {
     try jws.endArray();
 }
 
+/// Appearance's live preview (T2683): what it draws with now, and what the
+/// last paint drew - the face GDI picked, the caption, the card, the cursor.
+fn writePreview(jws: *std.json.Stringify, w: *SettingsWindow) !void {
+    var arena_state = std.heap.ArenaAllocator.init(w.gpa);
+    defer arena_state.deinit();
+    const in = preview_view.inputs(w, arena_state.allocator());
+    var hex_buf: [7]u8 = undefined;
+    var cap_buf: [160]u8 = undefined;
+    try jws.objectField("preview");
+    try jws.beginObject();
+    try jws.objectField("theme");
+    try jws.write(in.theme_name);
+    try jws.objectField("from_catalog");
+    try jws.write(in.from_catalog);
+    try jws.objectField("background");
+    try jws.write(settings_controls.formatHex(&hex_buf, in.background.hex()));
+    try jws.objectField("foreground");
+    try jws.write(settings_controls.formatHex(&hex_buf, in.foreground.hex()));
+    try jws.objectField("cursor_color");
+    try jws.write(settings_controls.formatHex(&hex_buf, in.cursor.hex()));
+    try jws.objectField("family");
+    try jws.write(in.family);
+    try jws.objectField("size");
+    try jws.write(in.size);
+    try jws.objectField("opacity");
+    try jws.write(in.opacity);
+    try jws.objectField("pad_x");
+    try jws.write(in.pad_x);
+    try jws.objectField("pad_y");
+    try jws.write(in.pad_y);
+    try jws.objectField("elevated");
+    try jws.write(in.elevated);
+    try jws.objectField("ligatures");
+    try jws.write(in.ligatures);
+    try jws.objectField("cursor_style");
+    try jws.write(@tagName(in.cursor_style));
+    try jws.objectField("blink");
+    try jws.write(in.blink);
+    try jws.objectField("cursor_opacity");
+    try jws.write(in.cursor_opacity);
+    try jws.objectField("caption");
+    try jws.write(settings_preview.caption(&cap_buf, &in));
+    // The last paint.
+    try jws.objectField("painted");
+    try jws.write(w.preview_rect != null);
+    try jws.objectField("rect");
+    if (w.preview_rect) |r| try writeRect(jws, r) else try jws.write(null);
+    try jws.objectField("cursor_rect");
+    if (w.preview_cursor_rect) |r| try writeRect(jws, r) else try jws.write(null);
+    try jws.objectField("blinking");
+    try jws.write(w.preview_blinking);
+    try jws.objectField("drawn_face");
+    try jws.write(w.preview_face[0..w.preview_face_len]);
+    try jws.objectField("drawn_caption");
+    try jws.write(w.preview_caption[0..w.preview_caption_len]);
+    try jws.endObject();
+}
+
+fn writeRect(jws: *std.json.Stringify, r: anytype) !void {
+    try jws.beginObject();
+    try jws.objectField("x");
+    try jws.write(r.x);
+    try jws.objectField("y");
+    try jws.write(r.y);
+    try jws.objectField("w");
+    try jws.write(r.w);
+    try jws.objectField("h");
+    try jws.write(r.h);
+    try jws.endObject();
+}
+
 fn writeState(jws: *std.json.Stringify, alloc: Allocator, w_opt: ?*SettingsWindow, ok: ?bool, undo: ?SettingsModel.UndoResult) !void {
     try jws.beginObject();
     try jws.objectField("success");
@@ -530,6 +604,7 @@ fn writeState(jws: *std.json.Stringify, alloc: Allocator, w_opt: ?*SettingsWindo
             try jws.endArray();
             try jws.endObject();
         }
+        try writePreview(jws, w);
         // The sidebar: each page and its changed count.
         try jws.objectField("pages");
         try jws.beginArray();

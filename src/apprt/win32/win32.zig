@@ -2179,6 +2179,40 @@ pub extern "user32" fn GetWindowRgn(hwnd: HWND, hrgn: ?*anyopaque) callconv(.win
 /// after.
 pub extern "gdi32" fn FillRgn(hdc: HDC, hrgn: *anyopaque, hbr: *anyopaque) callconv(.winapi) i32;
 pub extern "gdi32" fn SelectClipRgn(hdc: HDC, hrgn: ?*anyopaque) callconv(.winapi) i32;
+/// Combine a region into the DC's clip (`RGN_AND` narrows it), leaving the
+/// clip the caller already holds in force - Settings' live preview rounds
+/// its corners inside the list's scroll clip (T2683).
+/// The font's glyph ids for `lpstr`; with `GGI_MARK_NONEXISTING_GLYPHS` a
+/// character the font lacks reads 0xFFFF - Settings' preview draws such a
+/// run (the prompt's U+276F under Consolas) in a symbol face (T2683).
+pub extern "gdi32" fn GetGlyphIndicesW(hdc: HDC, lpstr: [*]const u16, c: i32, pgi: [*]u16, fl: u32) callconv(.winapi) u32;
+pub const GGI_MARK_NONEXISTING_GLYPHS: u32 = 0x0001;
+/// A selected font's metrics - the preview lines a symbol run up on the
+/// terminal face's baseline by the two ascents (T2683).
+pub const TEXTMETRICW = extern struct {
+    tmHeight: i32,
+    tmAscent: i32,
+    tmDescent: i32,
+    tmInternalLeading: i32,
+    tmExternalLeading: i32,
+    tmAveCharWidth: i32,
+    tmMaxCharWidth: i32,
+    tmWeight: i32,
+    tmOverhang: i32,
+    tmDigitizedAspectX: i32,
+    tmDigitizedAspectY: i32,
+    tmFirstChar: u16,
+    tmLastChar: u16,
+    tmDefaultChar: u16,
+    tmBreakChar: u16,
+    tmItalic: u8,
+    tmUnderlined: u8,
+    tmStruckOut: u8,
+    tmPitchAndFamily: u8,
+    tmCharSet: u8,
+};
+pub extern "gdi32" fn GetTextMetricsW(hdc: HDC, lptm: *TEXTMETRICW) callconv(.winapi) i32;
+pub extern "gdi32" fn ExtSelectClipRgn(hdc: HDC, hrgn: ?*anyopaque, mode: i32) callconv(.winapi) i32;
 /// 1 with the DC's application clip region copied into `hrgn` (device
 /// pixels), 0 when it has none, -1 on error.
 pub extern "gdi32" fn GetClipRgn(hdc: HDC, hrgn: *anyopaque) callconv(.winapi) i32;
