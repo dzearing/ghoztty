@@ -627,3 +627,12 @@ as the digest that showed them.
 - A resize shows the size it will land on (cols x rows label during divider and edge drags, soft snap at 80/120 columns)
 - One stuck window cannot take the others with it (sidebar and other windows keep working; the stuck one is marked not responding with a restart action)
 - Opens before you finish the keystroke (a start-up budget for the first prompt, with the last launch time in About)
+
+## 2026-11-04
+
+- Try a setting before you keep it (font/opacity/theme changes apply with Keep / Undo and a 15-second auto-revert, like a Windows display change)
+- "What setting is this?" on right-click (right-click padding, cursor, tab or divider opens the exact Settings row that controls it)
+- A project can bring its own look (a small per-folder Ghoztty file sets colours and a title prefix while a pane is in that folder)
+- The shortcut guide warns about clashes (marks chords Windows or another running app already takes, offers a free alternative)
+- A bad line in your config never stops the app (everything else loads; a banner names the line with a Fix in Settings button)
+- A settings change repaints once, with no flash (theme or font switch redraws every window in a single frame)
