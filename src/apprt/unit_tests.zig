@@ -36,6 +36,10 @@ test {
     // undo refuses a file that changed since.
     _ = @import("win32/ConfigValidator.zig");
     _ = @import("win32/SettingsModel.zig");
+    // Its read side (T2584a): the schema catalog, the files Ghostty loads in
+    // order, which later file overrides a key, and the All Settings filter.
+    _ = @import("win32/SettingsCatalog.zig");
+    _ = @import("win32/SettingsSources.zig");
 
     // Planted one-frame defects for the T2373 lab's positive controls
     // (T2383): the spec parser and the fire rule, same no-OS-imports deal.

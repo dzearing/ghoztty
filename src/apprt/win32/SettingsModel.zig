@@ -26,6 +26,7 @@ const Allocator = std.mem.Allocator;
 const ConfigFileText = @import("ConfigFileText.zig");
 const ConfigFileStore = @import("ConfigFileStore.zig");
 const ConfigValidator = @import("ConfigValidator.zig");
+const SettingsSources = @import("SettingsSources.zig");
 
 /// Called after every write, so the running app reloads its config.
 pub const Reload = struct {
@@ -82,6 +83,11 @@ problems: std.StringHashMapUnmanaged([]u8) = .empty,
 /// A problem with the file itself (unreadable, not UTF-8, changed since...).
 file_error: ?[]u8 = null,
 last_change: ?LastChange = null,
+/// The files Ghostty loads, when the window has read them (T2584a). A key
+/// (or keybind trigger) that a file loading AFTER the user's also sets is
+/// refused with the row's "Set in X, which loads after your config" note:
+/// the write would be silently overridden. `null` checks nothing.
+sources: ?*const SettingsSources = null,
 
 pub fn init(gpa: Allocator, store: *ConfigFileStore, reload: Reload) SettingsModel {
     return .{ .gpa = gpa, .store = store, .reload = reload };
@@ -109,6 +115,10 @@ pub fn problem(self: *const SettingsModel, key: []const u8) ?[]const u8 {
 /// Set a plain key. False (with the row's problem recorded) if Ghostty
 /// rejects the value; nothing is written then.
 pub fn set(self: *SettingsModel, key: []const u8, val: []const u8) Allocator.Error!bool {
+    if (self.sources) |s| if (s.overriding(key)) |src| {
+        try self.setProblemOwned(key, try SettingsSources.overrideMessage(self.gpa, src, null));
+        return false;
+    };
     if (!try self.validate(key, key, &.{val})) return false;
     const Set = struct {
         key: []const u8,
@@ -157,6 +167,15 @@ pub fn setKeyed(
     problem_key: ?[]const u8,
 ) Allocator.Error!bool {
     const row = problem_key orelse key;
+    if (self.sources) |s| {
+        var arena = std.heap.ArenaAllocator.init(self.gpa);
+        defer arena.deinit();
+        const target = try opts.normalize(arena.allocator(), subkey);
+        if (try s.overridingKeyed(arena.allocator(), key, target, opts)) |src| {
+            try self.setProblemOwned(row, try SettingsSources.overrideMessage(self.gpa, src, subkey));
+            return false;
+        }
+    }
     if (rest) |r| {
         const entry = try std.fmt.allocPrint(self.gpa, "{s}={s}", .{ subkey, r });
         defer self.gpa.free(entry);
@@ -614,6 +633,32 @@ test "SettingsModel: keybinds are keyed by trigger, and an unknown action is ref
     // Removing a keyed entry needs no validation.
     try testing.expect(try f.model.setKeyed("keybind", "ctrl+k", null, opts, null));
     try f.expectContents("");
+}
+
+test "SettingsModel: a key a later include sets is refused, not silently overridden" {
+    const original = "config-file = work.ghostty\nfont-size = 12\n";
+    const f = try Fixture.create(original);
+    defer f.destroy();
+    try f.tmp.dir.writeFile(.{ .sub_path = "work.ghostty", .data = "font-size = 16\nkeybind = cmd+k=clear_screen\n" });
+    var sources = try SettingsSources.load(testing.allocator, f.path, &.{});
+    defer sources.deinit();
+    f.model.sources = &sources;
+
+    try testing.expect(!try f.model.set("font-size", "14"));
+    try testing.expectEqualStrings(
+        "Set in work.ghostty, which loads after your config \u{2014} change it there.",
+        f.model.problem("font-size").?,
+    );
+    // The keybind trigger matches after normalization (`super` = `cmd`).
+    const opts: ConfigFileText.KeyedOptions = .{ .subkeyOf = testTrigger, .normalize = testNormalize };
+    try testing.expect(!try f.model.setKeyed("keybind", "super+k", "new_tab", opts, null));
+    try testing.expect(f.model.problem("keybind") != null);
+    try f.expectContents(original);
+    try testing.expectEqual(@as(usize, 0), f.reloads);
+
+    // A key nothing later sets is still written.
+    try testing.expect(try f.model.set("cursor-style", "bar"));
+    try testing.expect(try f.model.setKeyed("keybind", "ctrl+j", "new_tab", opts, null));
 }
 
 test "SettingsModel: lists, flags and custom bindings round-trip" {

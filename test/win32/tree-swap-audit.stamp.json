@@ -1,10 +1,12 @@
 {
     "guard":  "tree-swap",
     "script":  "test/win32/tree-swap-audit.ps1",
-    "generated":  "2026-11-03T18:54:10-08:00",
-    "commit":  "8f94c83f8",
+    "generated":  "2026-11-03T19:43:27-08:00",
+    "commit":  "2762d4726",
     "uncommitted":  [
-
+                        "src/apprt/win32/SettingsCatalog.zig",
+                        "src/apprt/win32/SettingsModel.zig",
+                        "src/apprt/win32/SettingsSources.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -262,7 +264,9 @@
                   "src/apprt/win32/SessionCpuProbe.zig":  "7df0891891508e68f8d022e8fa0245f3ac4e147a1db8f8f395b8e7e9f13e919f",
                   "src/apprt/win32/SessionRoster.zig":  "b54aa4c8be55fd85f5f5ccadf2ba49384c08aa268d3de0e029a7ad74c817566a",
                   "src/apprt/win32/SessionRosterProbe.zig":  "97d287a7ceaf0131a0583b4a1e3ec77cd5234f010fae99c194c28dc5e8fb10c4",
-                  "src/apprt/win32/SettingsModel.zig":  "5593320160c7f993e5125dde2d2aae129eb52a7f41d0c7d9871c2bdf07aa5003",
+                  "src/apprt/win32/SettingsCatalog.zig":  "865c67a977380590d4fecfc3c801e4bda6453ad73ea8e3e4718a1ba04e4f101c",
+                  "src/apprt/win32/SettingsModel.zig":  "4868046830ab88d786a34149c5ff1a4dc7a055061798e9514c180de01868488e",
+                  "src/apprt/win32/SettingsSources.zig":  "a6a265927d409637180b614f8a8a8ee1e725c45e38c90b537d3fecdfa02a8981",
                   "src/apprt/win32/ShareMachineRow.zig":  "7756349baca7ce384bb3c5e63d8c134127db9839a68c77842409879db80d1466",
                   "src/apprt/win32/shortcut_catalog.zig":  "fc22666e762e7c0d0f4445c20e8f8c1e896bf30c25700b9ccec830ee2f9d5879",
                   "src/apprt/win32/shortcut_guide_layout.zig":  "d9356d3a6621e692e33289a3f9ada33dd70126f61567bf2d29414c5c3cd41bcb",
