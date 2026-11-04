@@ -42,7 +42,23 @@ pub const latch_margin_us: u64 = 250;
 /// milliseconds. Past it the frame is swapped anyway: a release that never
 /// comes (the step was abandoned, the window went away) costs one frame's
 /// timing, never a stuck pane.
-pub const hold_timeout_ms: u32 = 12;
+/// Covers a frame that reached its hold first and then sat through the whole
+/// gather, the latch step and the bar paint.
+pub const hold_timeout_ms: u32 = 16;
+
+/// The longest the UI thread waits, in microseconds, for every armed pane's
+/// renderer to reach its hold before the release. Since T2623 an edge drag
+/// holds the grid, so nothing else in the pass waited for these frames; this
+/// is that wait, kept under one 120 Hz compose so a slow pane costs a step's
+/// sync, never the drag's rate.
+pub const gather_us: u64 = 6000;
+
+/// Whether a pane has nothing left to gather for the burst: no hold armed
+/// (`hold` 0), or its renderer is already waiting in the hold with exactly
+/// the held size drawn (`waiting`, 0 while it is not waiting).
+pub fn gathered(hold: u64, waiting: u64) bool {
+    return hold == 0 or waiting == hold;
+}
 
 /// The longest the UI thread waits after the release for the held swaps to
 /// have gone through, in microseconds.
@@ -122,6 +138,23 @@ test "a target ahead of now is handled the same way" {
     // The latch one t_period before that compose is 2_000_000 - t_period - t_lead.
     const latch: i64 = 2_000_000 - t_period - t_lead;
     try testing.expectEqual(@as(i64, 1 + t_margin), latchWait(latch - 1, c, t_lead, t_span, t_margin));
+}
+
+test "a pane is gathered once its renderer waits at the held size" {
+    const size: u64 = (@as(u64, 800) << 32) | 600;
+    const old: u64 = (@as(u64, 780) << 32) | 600;
+    // Nothing armed: nothing to wait for.
+    try testing.expect(gathered(0, 0));
+    try testing.expect(gathered(0, old));
+    // Armed and the renderer still drawing: not yet.
+    try testing.expect(!gathered(size, 0));
+    // Waiting, but at a stale size: not the frame the burst wants.
+    try testing.expect(!gathered(size, old));
+    try testing.expect(gathered(size, size));
+}
+
+test "a held frame outlasts the gather plus the latch step" {
+    try testing.expect(@as(u64, hold_timeout_ms) * 1000 > gather_us + burst_span_us + latch_margin_us);
 }
 
 test "no clock, or a nonsense one, never adds a wait" {

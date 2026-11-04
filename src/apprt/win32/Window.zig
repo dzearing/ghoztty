@@ -16860,6 +16860,32 @@ fn releaseBurst(self: *Window, hwnd: w32.HWND) void {
     const n = self.burst_len;
     self.burst_len = 0;
     if (n == 0) return;
+    // Gather: under T2623's held grid nothing in the pass waited for a frame,
+    // so each armed pane's renderer may still be drawing its new-size frame.
+    // Wait - bounded - until every one is sitting in its hold, so the release
+    // below has something to release. A pane that does not make it swaps on
+    // its own when its frame lands (the hold is cleared by then).
+    var ready: [MAX_FRAME_WAITS]bool = undefined;
+    {
+        var gather = std.time.Timer.start() catch null;
+        while (true) {
+            var all = true;
+            for (self.burst_panes[0..n], 0..) |s, i| {
+                ready[i] = s.burstGathered();
+                if (!ready[i]) all = false;
+            }
+            if (all) {
+                resizeTrace("burst-gathered", hwnd);
+                break;
+            }
+            const t = if (gather) |*g| g.read() / std.time.ns_per_us else resize_burst.gather_us;
+            if (t >= resize_burst.gather_us) {
+                resizeTrace("burst-gather-timeout", hwnd);
+                break;
+            }
+            std.atomic.spinLoopHint();
+        }
+    }
     var freq: i64 = 0;
     _ = w32.QueryPerformanceFrequency(&freq);
     if (freq > 0) {
@@ -16887,19 +16913,28 @@ fn releaseBurst(self: *Window, hwnd: w32.HWND) void {
         }
     }
     resizeTrace("burst-paint", hwnd);
-    _ = w32.RedrawWindow(hwnd, null, null, w32.RDW_UPDATENOW | w32.RDW_ALLCHILDREN);
+    // The window's own invalid area, then each viewer's bar - by name, not
+    // `RDW_ALLCHILDREN`: that walks into the WebView2 host's cross-process
+    // children and cost ~7 ms a step in the off-desktop viewer drag.
+    _ = w32.RedrawWindow(hwnd, null, null, w32.RDW_UPDATENOW);
+    if (self.tab_count > 0) {
+        var it = self.tab_trees[self.active_tab].iterator();
+        while (it.next()) |entry| {
+            const v = entry.view.viewer() orelse continue;
+            if (v.nav) |nav| _ = w32.UpdateWindow(nav.hwnd);
+        }
+    }
     var seqs: [MAX_FRAME_WAITS]u32 = undefined;
     for (self.burst_panes[0..n], 0..) |s, i| seqs[i] = s.swap_seq.load(.acquire);
     resizeTrace("burst-release", hwnd);
     for (self.burst_panes[0..n]) |s| s.releaseSwapHold();
     // Only a pane that had a held frame waiting moves its count; one whose
-    // frame never came is not waited for past the settle bound.
+    // frame never came is not waited for at all.
     var settle = std.time.Timer.start() catch null;
     while (settle) |*t| {
         var pending = false;
         for (self.burst_panes[0..n], 0..) |s, i| {
-            if (s.swap_seq.load(.acquire) == seqs[i] and
-                s.presented_size.load(.acquire) == s.awaited_size) pending = true;
+            if (ready[i] and s.swap_seq.load(.acquire) == seqs[i]) pending = true;
         }
         if (!pending or t.read() / std.time.ns_per_us >= resize_burst.settle_us) break;
         std.atomic.spinLoopHint();

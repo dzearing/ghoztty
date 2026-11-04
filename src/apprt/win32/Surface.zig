@@ -280,6 +280,11 @@ swap_release: ?w32.HANDLE = null,
 /// the burst's released swaps go through.
 swap_seq: std.atomic.Value(u32) = .init(0),
 
+/// The packed size of the frame the renderer is holding right now (T2666),
+/// 0 while it is not inside `holdSwap`'s wait. The UI thread's burst gathers
+/// on it: a pane is ready to release once this equals `swap_hold_size`.
+swap_waiting_size: std.atomic.Value(u64) = .init(0),
+
 /// `GHOZTTY_PRESENT_LAG_MS`: hold this pane's "frame presented" signal back
 /// this many milliseconds on the renderer thread (T1035), the way a
 /// vsync-throttled compositor holds `SwapBuffers` until the next vblank. On
@@ -4821,6 +4826,13 @@ pub fn applyResize(self: *Surface, width: u32, client_height: u32) void {
     // scrollbar carved out of it, so this is the raw WM_SIZE width over the
     // grid's height: the renderer subtracts the band too (T2566).
     self.awaited_size = 0;
+    // T2666: inside a burst pre-layout this pane's frame at the new size is
+    // drawn now but swapped with every other pane's at the end of
+    // `WM_WINDOWPOSCHANGING`. Armed before the renderer is woken, and on both
+    // branches below: since T2623 an edge drag holds the grid and takes the
+    // asynchronous one, and the renderer still draws the held grid at the new
+    // client size. The presenter path has no swap of its own to hold.
+    if (self.present_link == null) _ = self.parent_window.burstHold(self, resize_paint.packSize(width, height));
     if (resize_paint.shouldPresentSynchronously(.{
         .in_live_resize = self.in_live_resize,
         .in_live_layout = self.parent_window.in_live_layout,
@@ -4829,11 +4841,6 @@ pub fn applyResize(self: *Surface, width: u32, client_height: u32) void {
     })) {
         self.parent_window.notePresentSync();
         self.awaited_size = resize_paint.packSize(width, height);
-        // T2666: inside a burst pre-layout the frame this pass waits for is
-        // drawn now but swapped with every other pane's at the end of
-        // `WM_WINDOWPOSCHANGING`. Armed before the renderer is woken. The
-        // presenter path has no swap of its own to hold.
-        if (self.present_link == null) _ = self.parent_window.burstHold(self, self.awaited_size);
         if (self.frame_event) |event| {
             // Reset the event before waking the renderer, so we
             // wait for a NEW frame, not a previously drawn one.
@@ -6423,8 +6430,21 @@ pub fn holdSwap(self: *Surface, drawn: u64) void {
     if (want == 0 or want != drawn) return;
     const release = self.swap_release orelse return;
     self.traceStage("swap-held");
+    // Published before the wait so the window's gather sees this frame ready.
+    self.swap_waiting_size.store(drawn, .release);
+    defer self.swap_waiting_size.store(0, .release);
     if (w32.WaitForSingleObject(release, resize_burst.hold_timeout_ms) == w32.WAIT_TIMEOUT)
         self.traceStage("swap-hold-timeout");
+}
+
+/// UI thread (T2666): this pane has nothing left to gather for the burst -
+/// no hold armed, or its renderer is already waiting in `holdSwap` with the
+/// held size drawn.
+pub fn burstGathered(self: *Surface) bool {
+    return resize_burst.gathered(
+        self.swap_hold_size.load(.acquire),
+        self.swap_waiting_size.load(.acquire),
+    );
 }
 
 /// Renderer thread: the stack trace's verify line (T2485 D22 `verify`), the
