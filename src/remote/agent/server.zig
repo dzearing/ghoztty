@@ -6684,16 +6684,15 @@ test "FLOW pause halts streaming; resume continues from buffered offset" {
     try testing.expect(waitUntil("the session to resume streaming", P.streaming, .{ h.server, o.channel }));
     h.server.onChildOutput(o.channel, "LIVE"); // streams at offset 6
 
-    // The paused output is NOT lost: it arrives first, at its own offset…
-    const d0 = try h.client.nextData();
-    const dp0 = try protocol.DataPayload.decode(d0.?.payload);
-    try testing.expectEqual(@as(u64, 0), dp0.byte_offset);
-    try testing.expectEqualSlices(u8, "PAUSED", dp0.bytes);
-    // …and live output continues right after it, no gap, no repeat.
-    const d = try h.client.nextData();
-    const dp = try protocol.DataPayload.decode(d.?.payload);
-    try testing.expectEqual(@as(u64, 6), dp.byte_offset);
-    try testing.expectEqualSlices(u8, "LIVE", dp.bytes);
+    // The paused output is NOT lost: it arrives first, from offset 0, and live
+    // output continues right after it - no gap, no repeat. Read by BYTES, not
+    // by frames (T2685): the catch-up and "LIVE" are enqueued back to back, so
+    // the writer hands them over as two frames or, when it is behind (a loaded
+    // floor lane), as one coalesced "PAUSEDLIVE" frame (T1464). Either is the
+    // same stream; drainLiveData asserts the contiguity that is the promise.
+    var got = try drainLiveData(&h.client, alloc, o.channel, 0, "PAUSEDLIVE".len);
+    defer got.deinit(alloc);
+    try testing.expectEqualSlices(u8, "PAUSEDLIVE", got.items);
 }
 
 test "PING is answered with PONG echoing the payload" {
