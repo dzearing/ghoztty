@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-04T00:07:21-08:00",
-    "commit":  "6731dcd8f",
+    "generated":  "2026-11-04T01:22:50-08:00",
+    "commit":  "276993b44",
     "uncommitted":  [
 
                     ],
@@ -1071,7 +1071,8 @@
                   "test/win32/agent-user-env.ps1":  "6bb44600b96dca3b342a128736b63e28e9955c5517c2c87eba6e0c0d8d5b3fd1",
                   "test/win32/app-restart.ps1":  "55cb4a73f57cde520c5c0ca3d041242b11d8b5d534d2a8808d5d62a093a2dd4f",
                   "test/win32/argv-hazard-audit.ps1":  "5e6d8382b90b67ac3acb5ef30dba27c926ea6d90087212da2202b482b5155fdb",
-                  "test/win32/arp-version.ps1":  "35b1b1cad7d318cf499f6d957d96dfbbd70cba7c8ddb4c1ad746f9ef47673c15",
+                  "test/win32/arp-orphan.ps1":  "f014fb0c70494f975cdbdadba99dd7a204abbb89795b5fc5dd7046d2307ca21d",
+                  "test/win32/arp-version.ps1":  "3f483140196d74ac80c620bbde5f25e6bdb07cfa0e7891c50a5bd6e0dea73d51",
                   "test/win32/asserted-nothing.ps1":  "4acb45ce3ac039d212d093e4cf0a77519092bbd9be896995feeeb07547e5c5c6",
                   "test/win32/auto-launch-cwd.ps1":  "89143d743d16d05c3dd1d07e0b53f11ddf9c5b0088aaf3ffb333c37ba5c44471",
                   "test/win32/background-blur.ps1":  "dffab046e7560e606416751d4441733b0b9acd8630dcf61d3da36389b04edc9a",
@@ -1230,7 +1231,7 @@
                   "test/win32/host-settings.ps1":  "a54460f1bbe14f7a92420905621e83ba4d158d4d07cc9b5ca2c633fdc7023d2f",
                   "test/win32/hover-capture.ps1":  "1669eb987b930c30f4e4462a1c0dbfe5a04bbdbf42af530248437c66164bb5fb",
                   "test/win32/install-launch.ps1":  "df8a8917d448d735d327ae87bcfde00f09a665dcbe0737ae56c4c0487d8225ca",
-                  "test/win32/install-maintenance.ps1":  "653602a8082d252f7330bd2fd01e3b2913b89641e1ee83d7261083b1dc7a1473",
+                  "test/win32/install-maintenance.ps1":  "bfd4f065d52cebcac54c03366eecbe1f5749b82aeab9b38d0b6d990b6fbe2839",
                   "test/win32/install-ownership.ps1":  "d6827b12d6ca61c014375f689c60247ff0e9810c84568c9fd397fb0b420bbc08",
                   "test/win32/install-prepare.ps1":  "ea23f3d11ebd6f3e08001d961084ffac716bfde439a96f3511ce7a6db0fe2972",
                   "test/win32/install-restart.ps1":  "6f89730a5d506f7868f089548f72b392ea4d7c4ac02ca1a77b55429bed9562e5",
