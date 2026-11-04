@@ -1,0 +1,26 @@
+---
+id: T2691
+title: "rdp-perf-probe.ps1 \u0027measured (off)\u0027 red: an unfocused spinner presents at 3-3.7 fps against the \u003e= 8 fps the off arm expects, in the 2026-11-04 due sweep and alone; first check it against 8b54f0dcf (before T2666\u0027s inert swap-hold hook) to rule that edit in or out"
+order: null
+deps: []
+status: "todo"
+commits: []
+seat: "win"
+priority: "P1"
+triage-reason: "an unfocused pane rendering at 3 fps would be a user-visible slowdown if real; must be ruled in or out against the T2666 edit"
+tags: ["test", "perf"]
+---
+
+# T2691 - rdp-perf-probe.ps1 'measured (off)' red: an unfocused spinner presents at 3-3.7 fps against the >= 8 fps the off arm expects, in the 2026-11-04 due sweep and alone; first check it against 8b54f0dcf (before T2666's inert swap-hold hook) to rule that edit in or out
+
+## Summary
+
+TODO: describe the defect or gap, the evidence, the fix, and the validation.
+
+## Validation criteria
+
+- [ ] TODO: the observable checks that prove this is done, ticked with evidence of how each was validated.
+
+## Progress log
+
+- 2026-11-04 07:02: owns the red of acceptance guard 'rdp-perf-probe' (guard-ack): validate passes on that guard while this task is open

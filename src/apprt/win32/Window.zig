@@ -23,6 +23,7 @@ const BannerDialog = @import("BannerDialog.zig");
 const BannerOverlay = @import("BannerOverlay.zig").BannerOverlay;
 const resize_paint = @import("resize_paint.zig");
 const resize_prelayout = @import("resize_prelayout.zig");
+const resize_burst = @import("resize_burst.zig");
 const resize_content = @import("resize_content.zig");
 const Surface = @import("Surface.zig");
 const WindowPresenter = @import("WindowPresenter.zig");
@@ -725,6 +726,11 @@ dragging_split: bool = false,
 /// `Surface.handleResize` reads this alongside its own `in_live_resize`, which
 /// is what gives the three of them one path instead of three.
 in_live_layout: bool = false,
+/// T2666 (`GHOZTTY_RESIZE_BURST`): a pre-layout is running, so each pane the
+/// pass waits on also holds its new-size frame for the burst (`burst_panes`).
+burst_active: bool = false,
+burst_panes: [MAX_FRAME_WAITS]*Surface = undefined,
+burst_len: usize = 0,
 /// Inside a modal size loop (`WM_ENTERSIZEMOVE` .. `WM_EXITSIZEMOVE`), for the
 /// window as a whole (T2578); the panes keep their own `in_live_resize`.
 in_size_loop: bool = false,
@@ -16757,7 +16763,9 @@ fn prelayoutForPos(self: *Window, wp: *const w32.WINDOWPOS) void {
         .flags = wp.flags,
         .in_size_loop = self.in_size_loop,
         .iconic = w32.IsIconic(hwnd) != 0,
-        .shrink = prelayoutShrink(),
+        // T2666: the burst is what T2580's shrink lacked - its content landed
+        // a compose EARLY because nothing held it to the frame change.
+        .shrink = prelayoutShrink() or burstOn(),
     }) orelse return;
     resizeTrace("prelayout-begin", hwnd);
     defer resizeTrace("prelayout-end", hwnd);
@@ -16767,12 +16775,136 @@ fn prelayoutForPos(self: *Window, wp: *const w32.WINDOWPOS) void {
     };
     self.pending_client = .{ .left = pc.left, .top = pc.top, .right = pc.right, .bottom = pc.bottom };
     defer self.pending_client = null;
+    const burst = burstOn();
+    self.burst_len = 0;
+    self.burst_active = burst;
+    // Released on every way out, so no pane is ever left holding.
+    defer if (burst) self.releaseBurst(hwnd);
     self.layoutSplitsLive();
+    self.burst_active = false;
     // After the pass: `layoutSplits` clears it, so any other pass between
     // here and the `WM_SIZE` makes that one lay out again (T2603). The grid
     // only: the hero and zoom paths paint the desk on their own terms.
     if (!self.tab_hero_active[self.active_tab] and self.tab_trees[self.active_tab].zoomed == null)
         self.prelayout_laid = pc;
+}
+
+var burst_state: ?bool = null;
+
+/// `GHOZTTY_RESIZE_BURST` (T2666): hold each pane's new-size frame in an edge
+/// drag's pre-layout and release them together at the end of
+/// `WM_WINDOWPOSCHANGING`, clear of DWM's latch. Off until a film shows it
+/// beating the baseline. Read once.
+fn burstOn() bool {
+    if (burst_state) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_BURST");
+    burst_state = v;
+    return v;
+}
+
+/// `Surface.handleResize` inside a burst pre-layout (T2666): hold this pane's
+/// frame at the size the pass is about to wait for. False when the pane
+/// cannot hold (no event, or the list is full); it then swaps as before.
+pub fn burstHold(self: *Window, surface: *Surface, size: u64) bool {
+    if (!self.burst_active) return false;
+    for (self.burst_panes[0..self.burst_len]) |s| if (s == surface) return surface.armSwapHold(size);
+    if (self.burst_len >= MAX_FRAME_WAITS) return false;
+    if (!surface.armSwapHold(size)) return false;
+    self.burst_panes[self.burst_len] = surface;
+    self.burst_len += 1;
+    return true;
+}
+
+/// The compose clock as DWM last reported it (T2666): the target time of the
+/// last completed compose and the period, in QPC ticks. Null where
+/// `DCompositionGetStatistics` is missing (before Windows 11) or answers
+/// nothing - the burst then goes without a latch step.
+fn composeClock() ?resize_burst.Clock {
+    const S = struct {
+        const FrameStats = extern struct { start: u64, target: u64, period: u64 };
+        const GetIdFn = *const fn (u32, *u64) callconv(.winapi) i32;
+        const GetStatsFn = *const fn (u64, *FrameStats, u32, ?*anyopaque, ?*u32) callconv(.winapi) i32;
+        var loaded = false;
+        var get_id: ?GetIdFn = null;
+        var get_stats: ?GetStatsFn = null;
+    };
+    if (!S.loaded) {
+        S.loaded = true;
+        if (w32.LoadLibraryExW(
+            std.unicode.utf8ToUtf16LeStringLiteral("dcomp.dll"),
+            null,
+            w32.LOAD_LIBRARY_SEARCH_SYSTEM32,
+        )) |lib| {
+            if (w32.GetProcAddress(lib, "DCompositionGetFrameId")) |p| S.get_id = @ptrCast(p);
+            if (w32.GetProcAddress(lib, "DCompositionGetStatistics")) |p| S.get_stats = @ptrCast(p);
+        }
+    }
+    const get_id = S.get_id orelse return null;
+    const get_stats = S.get_stats orelse return null;
+    var id: u64 = 0;
+    // COMPOSITION_FRAME_ID_COMPLETED: the last frame DWM finished composing.
+    if (get_id(2, &id) < 0 or id == 0) return null;
+    var st: S.FrameStats = undefined;
+    if (get_stats(id, &st, 0, null, null) < 0 or st.period == 0) return null;
+    return .{ .target = @intCast(st.target), .period = @intCast(st.period) };
+}
+
+/// The end of a burst pre-layout (T2666): every held pane has drawn its
+/// new-size frame. Step past a latch that would split the burst, paint what
+/// the pass left invalid (the viewer's bar among it) so it goes up with the
+/// panes rather than after the compose, then release every held swap and
+/// give them a moment to go through - all right before `SetWindowPos`
+/// changes the frame.
+fn releaseBurst(self: *Window, hwnd: w32.HWND) void {
+    self.burst_active = false;
+    const n = self.burst_len;
+    self.burst_len = 0;
+    if (n == 0) return;
+    var freq: i64 = 0;
+    _ = w32.QueryPerformanceFrequency(&freq);
+    if (freq > 0) {
+        const f: u64 = @intCast(freq);
+        var now: i64 = 0;
+        _ = w32.QueryPerformanceCounter(&now);
+        const wait = resize_burst.latchWait(
+            now,
+            composeClock(),
+            @intCast(resize_burst.ticks(resize_burst.latch_lead_us, f)),
+            @intCast(resize_burst.ticks(resize_burst.burst_span_us, f)),
+            @intCast(resize_burst.ticks(resize_burst.latch_margin_us, f)),
+        );
+        if (wait > 0) {
+            resizeTrace("burst-latch-wait", hwnd);
+            // Spin, not Sleep: the wait is under two milliseconds and the
+            // timer tick is far coarser than that.
+            const until = now + wait;
+            while (true) {
+                var t: i64 = 0;
+                _ = w32.QueryPerformanceCounter(&t);
+                if (t >= until) break;
+                std.atomic.spinLoopHint();
+            }
+        }
+    }
+    resizeTrace("burst-paint", hwnd);
+    _ = w32.RedrawWindow(hwnd, null, null, w32.RDW_UPDATENOW | w32.RDW_ALLCHILDREN);
+    var seqs: [MAX_FRAME_WAITS]u32 = undefined;
+    for (self.burst_panes[0..n], 0..) |s, i| seqs[i] = s.swap_seq.load(.acquire);
+    resizeTrace("burst-release", hwnd);
+    for (self.burst_panes[0..n]) |s| s.releaseSwapHold();
+    // Only a pane that had a held frame waiting moves its count; one whose
+    // frame never came is not waited for past the settle bound.
+    var settle = std.time.Timer.start() catch null;
+    while (settle) |*t| {
+        var pending = false;
+        for (self.burst_panes[0..n], 0..) |s, i| {
+            if (s.swap_seq.load(.acquire) == seqs[i] and
+                s.presented_size.load(.acquire) == s.awaited_size) pending = true;
+        }
+        if (!pending or t.read() / std.time.ns_per_us >= resize_burst.settle_us) break;
+        std.atomic.spinLoopHint();
+    }
+    resizeTrace("burst-settled", hwnd);
 }
 
 /// `WM_SIZE` after a pre-layout at exactly the client rect that landed

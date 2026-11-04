@@ -740,6 +740,9 @@ pub fn drawFrameEnd(self: *OpenGL) void {
             }
             self.resize_verify_pending = false;
         }
+        // T2666: a frame the window is gathering into one burst waits here
+        // for its release (bounded), drawn and ready.
+        self.rt_surface.holdSwap(self.drawn_client);
         const swap_start = perf.now();
         self.traceStage("swap-begin");
         if (self.comp) |p| {

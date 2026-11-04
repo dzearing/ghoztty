@@ -233,6 +233,16 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the shipped frame pacing during a drag."
         },
+        "GHOZTTY_RESIZE_BURST": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "T2666. unset = no swap hold, which is what ships; set only by edge-drag-rate.ps1 -Burst's burst arm, whose prelayout arm runs it unset."
+        },
+        "GHOZTTY_RESIZE_TRACE": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "T2516 diagnostic: QPC stamps on resize messages, logging only. unset ships; edge-drag-rate.ps1 -Burst sets it in BOTH arms so the trace cost is the same on each side, and every other edge-drag-rate run leaves it unset."
+        },
         "GHOZTTY_RESIZE_NOPRELAYOUT": {
             "class": "non-default",
             "unset": "shipped-elsewhere",

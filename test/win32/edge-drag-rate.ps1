@@ -40,6 +40,18 @@
 # -NegativeControl sets the budget to 50 percent, which the shipped pre-layout
 # cannot meet: C must go red.
 #
+# -Burst (T2666) measures GHOZTTY_RESIZE_BURST against the shipped pre-layout,
+# both under GHOZTTY_RESIZE_TRACE: each pane's new-size frame is held before
+# its swap and released with the others at the end of WM_WINDOWPOSCHANGING.
+# What a film decides (whether content and frame share a compose) needs the
+# lit input desktop; what this proves off it is that the hold works and costs
+# nothing a user would feel:
+#   E. burst lays out shrinking steps too (T2580's shrink), frames really were
+#      held (`swap-held`), every burst that held anything was released and
+#      settled, and no pane hit the renderer's hold timeout (every step's
+#      frame is released, not timed out), and a burst step costs no more than
+#      -BurstBudgetPct of the shipped step and holds -MinFps.
+#
 # -ContentArms (T2609 step 1) measures instead WHERE a step's time goes: the
 # shipped path in three arms of GHOZTTY_RESIZE_NO_CONTENT (src/apprt/win32/
 # resize_content.zig) - `content` (`0`: every step resizes the terminals),
@@ -66,6 +78,8 @@ param(
     [int]$MinFps = 30,
     [switch]$NegativeControl,
     [switch]$ContentArms,
+[switch]$Burst,
+[int]$BurstBudgetPct = 150,
     [switch]$ReleaseSandbox,
     [switch]$Interactive
 )
@@ -224,6 +238,10 @@ function Measure-Scene([string]$scene, [string]$mode) {
     $env:GHOZTTY_PERF = '1'
     if ($mode -eq 'noprelayout') { $env:GHOZTTY_RESIZE_NOPRELAYOUT = '1' }
     else { Remove-Item env:GHOZTTY_RESIZE_NOPRELAYOUT -ErrorAction SilentlyContinue }
+    if ($mode -eq 'burst') { $env:GHOZTTY_RESIZE_BURST = '1' }
+    else { Remove-Item env:GHOZTTY_RESIZE_BURST -ErrorAction SilentlyContinue }
+    # Both -Burst arms trace, so the rate compares like with like.
+    if ($Burst) { $env:GHOZTTY_RESIZE_TRACE = '1' }
     switch ($mode) {
         'held' { $env:GHOZTTY_RESIZE_NO_CONTENT = '1' }
         'empty' { $env:GHOZTTY_RESIZE_NO_CONTENT = 'empty' }
@@ -259,7 +277,10 @@ function Measure-Scene([string]$scene, [string]$mode) {
         Kill-RepoInstances
         Remove-Item env:GHOZTTY_RESIZE_NOPRELAYOUT -ErrorAction SilentlyContinue
         Remove-Item env:GHOZTTY_RESIZE_NO_CONTENT -ErrorAction SilentlyContinue
+        Remove-Item env:GHOZTTY_RESIZE_BURST -ErrorAction SilentlyContinue
+        Remove-Item env:GHOZTTY_RESIZE_TRACE -ErrorAction SilentlyContinue
     }
+    $res.log = $log
     return $res
 }
 
@@ -271,7 +292,7 @@ try {
     Rep "  exe:   $exe"
     Rep "  $Steps steps of $StepPx px, posted $StepMs ms apart; budget: grow <= $GrowBudgetPct% of no-prelayout, >= $MinFps fps"
     Rep ''
-    $modes = if ($ContentArms) { @('content', 'held', 'empty') } else { @('prelayout', 'noprelayout') }
+    $modes = if ($ContentArms) { @('content', 'held', 'empty') } elseif ($Burst) { @('burst', 'prelayout') } else { @('prelayout', 'noprelayout') }
     foreach ($scene in 'row3', 'viewer') {
         foreach ($mode in $modes) {
             $r = Measure-Scene $scene $mode
@@ -309,7 +330,31 @@ try {
             }
         }
     }
-    foreach ($scene in @(if (-not $ContentArms) { 'row3', 'viewer' })) {
+    if ($Burst) {
+        foreach ($scene in 'row3', 'viewer') {
+            $b = $all["$scene/burst"]; $p = $all["$scene/prelayout"]
+            if ($null -eq $b.shrink -or $null -eq $b.grow -or $null -eq $p.grow) { Assert $false "E. $scene has burst and shipped samples"; continue }
+            Assert ($b.shrink.Prelayouts -gt 0 -and $p.shrink.Prelayouts -eq 0) `
+                "E. $scene burst lays shrinking steps out too ($($b.shrink.Prelayouts) burst, $($p.shrink.Prelayouts) shipped)"
+            $text = if (Test-Path $b.log) { Get-Content $b.log } else { @() }
+            $held = @($text | Select-String -SimpleMatch 'swap-held').Count
+            $rel = @($text | Select-String -SimpleMatch 'resize trace burst-release').Count
+            $set = @($text | Select-String -SimpleMatch 'resize trace burst-settled').Count
+            Rep ("  {0,-7} burst trace: swap-held={1} burst-release={2} burst-settled={3}" -f $scene, $held, $rel, $set)
+            Assert ($held -gt 0) "E. $scene frames were held for the burst (swap-held=$held)"
+            $tout = @($text | Select-String -SimpleMatch 'swap-hold-timeout').Count
+            Assert ($tout -eq 0) "E. $scene no held frame ran out the renderer's hold timeout ($tout did)"
+            Assert ($rel -gt 0 -and $rel -eq $set) "E. $scene every burst was released and settled ($rel released, $set settled)"
+            $ptext = if (Test-Path $p.log) { Get-Content $p.log } else { @() }
+            Assert (@($ptext | Select-String -SimpleMatch 'swap-held').Count -eq 0) "E. $scene the shipped path holds nothing (negative control for the trace)"
+            foreach ($dir in 'grow', 'shrink') {
+                $limit = [int]([Math]::Max($p.$dir.MeanUs, 1) * $BurstBudgetPct / 100)
+                Assert ($b.$dir.MeanUs -le $limit -and $b.$dir.Fps -ge $MinFps) `
+                    "E. $scene a burst $dir step costs $($b.$dir.MeanUs)us at $($b.$dir.Fps) fps, budget ${limit}us ($BurstBudgetPct% of $($p.$dir.MeanUs)us) and $MinFps fps"
+            }
+        }
+    }
+    foreach ($scene in @(if (-not $ContentArms -and -not $Burst) { 'row3', 'viewer' })) {
         $on = $all["$scene/prelayout"]; $off = $all["$scene/noprelayout"]
         if ($null -eq $on.grow -or $null -eq $off.grow) { Assert $false "B/C. $scene has both grow samples"; continue }
         Assert ($on.grow.Prelayouts -gt 0 -and $off.grow.Prelayouts -eq 0) `
@@ -331,7 +376,7 @@ finally {
     Remove-Item env:GHOZTTY_PERF -ErrorAction SilentlyContinue
 }
 
-if ($script:fail -eq 0 -and $script:skipped -eq 0 -and -not $NegativeControl -and -not $ContentArms -and -not $ReleaseSandbox -and (Test-TestBodyComplete)) {
+if ($script:fail -eq 0 -and $script:skipped -eq 0 -and -not $NegativeControl -and -not $ContentArms -and -not $Burst -and -not $ReleaseSandbox -and (Test-TestBodyComplete)) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard edge-drag-rate -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
