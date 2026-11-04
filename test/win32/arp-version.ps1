@@ -17,7 +17,7 @@
 #      HKCU:\Software\GhozttyT1210Test and a fixture MSI holding only a Property
 #      table. Exit 0 / 1 / 3, and the lines name the key and the package path.
 #   C. LIVE, READ-ONLY: the user's installed Ghoztty, through the same CLI.
-#      Reads the registry and the cached MSI; writes nothing. Red until T2168
+#      Reads the registry and the cached MSI; writes nothing. Red until T2679
 #      ships (acked to it); SKIP on a box with no installed Ghoztty.
 #
 #   -NegativeControl adds one inverted assertion a healthy run MUST fail.
@@ -194,7 +194,7 @@ if ($live.Count -eq 0) {
 } else {
     $r = Invoke-Check @()
     $r.Text -split "`r?`n" | Where-Object { $_ -match '\S' } | ForEach-Object { Write-Host "      $_" }
-    Assert ($r.Code -eq 0) "C1 the installed Ghoztty shows the release number in Apps & Features (exit $($r.Code); red until T2168)"
+    Assert ($r.Code -eq 0) "C1 the installed Ghoztty shows the release number in Apps & Features (exit $($r.Code); red while the rows pre-T2327 upgrades orphaned are still listed - T2679 sweeps them)"
 }
 
 if ($NegativeControl) {

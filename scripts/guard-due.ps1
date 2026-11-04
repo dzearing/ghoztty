@@ -2309,7 +2309,8 @@ $GuardTable = @(
     # check of T1205's version split reads the recipe; this one reads the
     # Uninstall key Windows wrote and the cached MSI it installed from, and its
     # first run found Windows ignoring the property (T2168). Arm C reads the
-    # user's real install, read-only, so it is red until that fix ships.
+    # user's real install, read-only: red while the rows earlier upgrades
+    # orphaned are still listed (T2327 stopped new ones, T2679 sweeps the rest).
     [pscustomobject]@{
         Name   = 'arp-version'
         Script = 'test\win32\arp-version.ps1'
@@ -2318,6 +2319,22 @@ $GuardTable = @(
             'scripts\arp-version-check.ps1',
             'scripts\lib\ArpVersion.ps1',
             'test\win32\arp-version.ps1'
+        )
+    },
+    # One Apps & Features entry after a major upgrade (T2327). wixl sequenced
+    # RemoveExistingProducts after InstallFinalize, so every in-app update left
+    # the replaced release listed; this installs a real published release over
+    # its own predecessor, as published and with the removal moved early, and
+    # counts what Settings > Apps would show.
+    [pscustomobject]@{
+        Name   = 'arp-orphan'
+        Script = 'test\win32\arp-orphan.ps1'
+        Stamp  = 'test\win32\arp-orphan.stamp.json'
+        Covers = @(
+            'dist\windows-installer\build-msi.sh',
+            'scripts\msi-test-identity.ps1',
+            'test\win32\lib\ThrowawayProduct.ps1',
+            'test\win32\arp-orphan.ps1'
         )
     },
     # "Which Ghoztty am I running?" has ONE answer per surface (T1205). Windows

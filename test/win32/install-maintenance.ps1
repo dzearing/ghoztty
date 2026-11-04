@@ -432,7 +432,9 @@ if (-not $py) {
                 "CostFinalize${t}${t}1000",
                 "MaintenancePrompt${t}$cond${t}1020",
                 "PrepareInstallDir${t}Installed OR OLDERVERSIONFOUND${t}1040",
-                "InstallValidate${t}${t}1400"
+                "InstallValidate${t}${t}1400",
+                "RemoveExistingProducts${t}${t}1401",
+                "InstallInitialize${t}${t}1500"
             ) -join "`r`n"
             $goodUp = @(
                 "UpgradeCode${t}VersionMin${t}VersionMax${t}Language${t}Attributes${t}Remove${t}ActionProperty",
@@ -506,6 +508,13 @@ if (-not $py) {
                 ((RunVerifier $exeCa $exeSeq $goodUp) -ne 0)
             Assert 'E20 a DLL that does not export MaintenancePromptCA is rejected' `
                 ((RunVerifier $goodCa $goodSeq $goodUp $goodBin $badDll) -ne 0)
+            # T2327. wixl put RemoveExistingProducts at 6604, past
+            # InstallFinalize, and every update left the replaced release
+            # listed in Apps & Features.
+            Assert 'E21 RemoveExistingProducts sequenced LATE (6604, the shipped wixl shape) is rejected' `
+                ((RunVerifier $goodCa ($goodSeq -replace "RemoveExistingProducts${t}${t}1401", "RemoveExistingProducts${t}${t}6604") $goodUp) -ne 0)
+            Assert 'E22 an MSI with no RemoveExistingProducts at all is rejected' `
+                ((RunVerifier $goodCa (DropRow $goodSeq 'RemoveExistingProducts') $goodUp) -ne 0)
         } finally {
             Remove-Item -LiteralPath $tmpE -Recurse -Force -ErrorAction SilentlyContinue
         }

@@ -784,7 +784,15 @@ template = """<?xml version="1.0" encoding="utf-8"?>
                   Return="asyncNoWait"/>
 
     <InstallExecuteSequence>
-      <RemoveExistingProducts After="InstallValidate"/>
+      <!-- T2327: a NUMBER, not After="InstallValidate". wixl's sequencer
+           emitted that anchor at 6604, after InstallFinalize, and the late
+           removal left every replaced release listed in Apps & Features (the
+           C_ArpEntry component outlives the old product). 1401 is the early
+           placement (WiX's own default, afterInstallValidate) that the T23
+           upgrade-safety design above was written for; the checker below
+           fails the build if it moves. Proven on published bytes by
+           test\win32\arp-orphan.ps1. -->
+      <RemoveExistingProducts Sequence="1401"/>
       <!-- T1367: every immediate action in this band carries an explicit
            Sequence number, and none of them anchors on another CUSTOM action.
 
@@ -1247,6 +1255,21 @@ if not errs:
         n_prep = int(seq["PrepareInstallDir"][2])
         if n_ask >= n_prep:
             errs.append(f"MaintenancePrompt is sequenced at {n_ask}, not before PrepareInstallDir at {n_prep} - that step renames ghoztty-agent.exe aside, so a Cancel would leave the existing install without one")
+    # T2327: RemoveExistingProducts EARLY - after InstallValidate, before
+    # InstallInitialize. wixl turned After="InstallValidate" into 6604, past
+    # InstallFinalize, and every release from 1.43.4 to 1.52.10 shipped that
+    # way: a late removal installs the new product first, the listed Apps &
+    # Features entry (C_ArpEntry) keeps one component GUID, so the old
+    # product's removal finds the component still in use and leaves its
+    # Uninstall\{old ProductCode} key behind - one orphan row per update. The
+    # upgrade-safety design at the top of this file (T23) also assumes early.
+    if "RemoveExistingProducts" not in seq:
+        errs.append("InstallExecuteSequence has no RemoveExistingProducts row - a newer package would install BESIDE the old one")
+    else:
+        n_rep = int(seq["RemoveExistingProducts"][2])
+        n_init = int(seq["InstallInitialize"][2]) if "InstallInitialize" in seq else 1500
+        if not (n_validate < n_rep < n_init):
+            errs.append(f"RemoveExistingProducts is sequenced at {n_rep}, not between InstallValidate ({n_validate}) and InstallInitialize ({n_init}) - a late removal leaves the replaced release listed in Apps & Features (T2327)")
     # The gate. UILevel is the one that keeps the in-app updater's /qb-! install
     # from stopping on a modal dialog nobody is there to answer.
     for action in ("MaintenancePrompt", "SetRepairMode", "SetRepairModeFlags"):

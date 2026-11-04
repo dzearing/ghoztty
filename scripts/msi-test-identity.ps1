@@ -917,7 +917,16 @@ Check ($scBad.Count -eq 0) ("Shortcut.Name: " + ($scBad -join ', '))
 
 $regRows = Get-MsiRows "SELECT ``Registry``,``Key`` FROM ``Registry``" 2
 $regBad = @()
-foreach ($row in $regRows) { if ($row[1] -notlike "*$Identity") { $regBad += ($row[0] + '=' + $row[1]) } }
+# The listed Apps & Features entry (T2168) lives at Uninstall\[ProductCode]:
+# named by a property this script has already rewritten, so it is the
+# throwaway product's key by construction. Any OTHER key still has to end in
+# the identity. Before T2327 this rejected every package from 1.43.4 on, which
+# is why no real-MSI harness had installed one.
+$arpKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\[ProductCode]'
+foreach ($row in $regRows) {
+    if ($row[1] -eq $arpKey) { continue }
+    if ($row[1] -notlike "*$Identity") { $regBad += ($row[0] + '=' + $row[1]) }
+}
 Check ($regBad.Count -eq 0) ("Registry.Key: " + ($regBad -join ', '))
 
 Close-MsiDb
