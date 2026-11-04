@@ -149,6 +149,7 @@ test {
     _ = @import("win32/ipc_agent_integration.zig");
     _ = @import("win32/ipc_whats_new.zig");
     _ = @import("win32/ipc_shortcut_guide.zig");
+    _ = @import("win32/ipc_settings.zig");
     _ = @import("win32/whats_new_notes.zig");
     _ = @import("win32/winrt_comp.zig");
     _ = @import("win32/comp_spike_stats.zig");

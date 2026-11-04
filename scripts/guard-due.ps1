@@ -3616,6 +3616,24 @@ $GuardTable = @(
             'test\win32\shortcut-guide.ps1'
         )
     },
+    # The Settings window shell (T2675). `settings-window.ps1` is the only
+    # harness that opens it, edits a row into the config file, and reads the
+    # read-only override and inline refusal back through the `settings` seam.
+    [pscustomobject]@{
+        Name   = 'settings-window'
+        Script = 'test\win32\settings-window.ps1'
+        Stamp  = 'test\win32\settings-window.stamp.json'
+        Covers = @(
+            'src\apprt\win32\SettingsWindow.zig',
+            'src\apprt\win32\ipc_settings.zig',
+            'src\apprt\win32\settings_window_layout.zig',
+            'src\apprt\win32\settings_line_edit.zig',
+            'src\apprt\win32\SettingsModel.zig',
+            'src\apprt\win32\SettingsSources.zig',
+            'src\apprt\win32\SettingsCatalog.zig',
+            'test\win32\settings-window.ps1'
+        )
+    },
     # The key-state pill (T446) and its explainer (T576). `key-state-pill.ps1`
     # is the only thing that drives a real key table on a live GUI and reads
     # the pill's anchor, its content deltas, its per-point click-through and

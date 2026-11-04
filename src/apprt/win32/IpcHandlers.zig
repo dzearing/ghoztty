@@ -23,6 +23,7 @@ const ipc_hover = @import("ipc_hover.zig");
 const ipc_agent_integration = @import("ipc_agent_integration.zig");
 const ipc_whats_new = @import("ipc_whats_new.zig");
 const ipc_shortcut_guide = @import("ipc_shortcut_guide.zig");
+const ipc_settings = @import("ipc_settings.zig");
 const ipc_handoff = @import("../../os/ipc_handoff.zig");
 const build_config = @import("../../build_config.zig");
 const CoreSurface = @import("../../Surface.zig");
@@ -153,6 +154,12 @@ pub fn dispatch(ctx: Context, request_json: []const u8) Allocator.Error!?[]u8 {
         // bindings are live, customized or matched by a key-combo search is a
         // model, not pixels. Release builds fall through to unknown-action.
         return try ipc_shortcut_guide.handle(ctx.app, ctx.alloc, request.arguments);
+    } else if (ipc_settings.enabled and std.mem.eql(u8, request.action, "settings")) {
+        // T2675: the DEBUG-ONLY seam for the Settings window. What a row
+        // reads (its file line, the effective value, a later include's
+        // override, the parser's refusal) is a model, not pixels. Release
+        // builds fall through to unknown-action.
+        return try ipc_settings.handle(ctx.app, ctx.alloc, request.arguments);
     }
 
     return try errorResponse(ctx.alloc, "unknown action: {s}", .{request.action});

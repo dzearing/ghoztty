@@ -16,6 +16,7 @@ const internal_os = @import("../../os/main.zig");
 const AgentIntegration = @import("AgentIntegration.zig");
 const WhatsNewWindow = @import("WhatsNewWindow.zig");
 const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
+const SettingsWindow = @import("SettingsWindow.zig");
 const relay_suspend = @import("../../remote/relay_suspend.zig");
 const AgentIntegrationsDialog = @import("AgentIntegrationsDialog.zig");
 const ConfirmDialog = @import("ConfirmDialog.zig");
@@ -2554,6 +2555,7 @@ pub fn terminate(self: *App) void {
     // window holding notes parsed out of the app allocator.
     WhatsNewWindow.closeAll();
     ShortcutGuideWindow.closeAll();
+    SettingsWindow.closeAll();
 
     // The bell sound device (T1890), if a bell ever played one.
     bell_audio.deinit(self.core_app.alloc);
@@ -8679,6 +8681,9 @@ pub fn performAction(
 
                 // The shortcut guide lists the live bindings (T2591).
                 ShortcutGuideWindow.configChanged();
+                // Settings re-reads the file, load order and live values
+                // (T2675), so a change made anywhere shows on its rows.
+                SettingsWindow.configChanged();
 
                 // `macos-pane-sidebar` (T2588): a reload that CHANGES it
                 // starts the shared sidebar over that way in every window;
@@ -8754,8 +8759,21 @@ pub fn performAction(
             return true;
         },
 
+        // The Settings window (T2675; Mac 9287de0ff): Ctrl+, / the menu bar's
+        // Settings item / the palette's Open Config. App-scoped, like the
+        // shortcut guide; the window it came from is where it centers. The
+        // raw file stays one click away inside it ("Open Config File...").
         .open_config => {
-            self.openConfigFile();
+            const owner: ?*Window = switch (target) {
+                .surface => |core_surface| core_surface.rt_surface.parent_window,
+                .app => if (self.core_app.focusedSurface()) |s|
+                    s.rt_surface.parent_window
+                else if (self.windows.items.len > 0)
+                    self.windows.items[0]
+                else
+                    null,
+            };
+            SettingsWindow.open(self, owner);
             return true;
         },
 

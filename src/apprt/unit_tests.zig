@@ -40,6 +40,10 @@ test {
     // order, which later file overrides a key, and the All Settings filter.
     _ = @import("win32/SettingsCatalog.zig");
     _ = @import("win32/SettingsSources.zig");
+    // Its window shell (T2675): the frame geometry and the one-line field
+    // editor the search box and value fields share.
+    _ = @import("win32/settings_window_layout.zig");
+    _ = @import("win32/settings_line_edit.zig");
 
     // Planted one-frame defects for the T2373 lab's positive controls
     // (T2383): the spec parser and the fire rule, same no-OS-imports deal.

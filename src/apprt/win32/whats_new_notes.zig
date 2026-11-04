@@ -220,6 +220,46 @@ pub const Renderer = struct {
         return size;
     }
 
+    /// Draw one line into `rect`, cut with an ellipsis where it does not fit
+    /// (T2675: a setting's doc summary, a long path). Text past the 512
+    /// UTF-16 unit buffer is cut first, at a codepoint boundary.
+    pub fn drawEllipsized(
+        self: *Renderer,
+        hdc: w32.HDC,
+        rect: layout.Rect,
+        text: []const u8,
+        style: markdown.Style,
+        class: SizeClass,
+        color: u32,
+        path: bool,
+    ) void {
+        var wbuf: [512]u16 = undefined;
+        var n: usize = 0;
+        var view = std.unicode.Utf8View.init(text) catch return;
+        var it = view.iterator();
+        while (it.nextCodepoint()) |cp| {
+            if (cp >= 0x10000) {
+                if (n + 2 > wbuf.len) break;
+                const v = cp - 0x10000;
+                wbuf[n] = @intCast(0xD800 + (v >> 10));
+                wbuf[n + 1] = @intCast(0xDC00 + (v & 0x3FF));
+                n += 2;
+            } else {
+                if (n + 1 > wbuf.len) break;
+                wbuf[n] = @intCast(cp);
+                n += 1;
+            }
+        }
+        if (n == 0) return;
+        const font = self.fontFor(style, class);
+        const prev = w32.SelectObject(hdc, font);
+        defer _ = w32.SelectObject(hdc, prev);
+        _ = w32.SetTextColor(hdc, color);
+        var rc: w32.RECT = .{ .left = rect.x, .top = rect.y, .right = rect.x + rect.w, .bottom = rect.y + rect.h };
+        const cut: u32 = if (path) w32.DT_PATH_ELLIPSIS else w32.DT_END_ELLIPSIS;
+        _ = w32.DrawTextW(hdc, &wbuf, @intCast(n), &rc, w32.DT_LEFT | w32.DT_SINGLELINE | w32.DT_VCENTER | w32.DT_NOPREFIX | cut);
+    }
+
     /// Draw one run at (x, y); returns its width. Never wraps.
     pub fn drawText(
         self: *Renderer,
