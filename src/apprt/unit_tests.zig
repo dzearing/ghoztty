@@ -49,6 +49,8 @@ test {
     _ = @import("win32/settings_pages.zig");
     // Advanced > Config file and the change toast's words (T2676).
     _ = @import("win32/settings_advanced.zig");
+    // The light & dark theme catalog behind Appearance > Theme (T2586).
+    _ = @import("win32/theme_catalog.zig");
 
     // Planted one-frame defects for the T2373 lab's positive controls
     // (T2383): the spec parser and the fire rule, same no-OS-imports deal.

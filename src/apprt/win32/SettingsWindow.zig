@@ -68,6 +68,8 @@ const settings_pages = @import("settings_pages.zig");
 const settings_advanced = @import("settings_advanced.zig");
 const advanced_view = @import("settings_advanced_view.zig");
 const banner_link = @import("banner_link.zig");
+const theme_catalog = @import("theme_catalog.zig");
+const settings_theme = @import("settings_theme.zig");
 const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
 const panel_theme = @import("panel_theme.zig");
 const system_colors = @import("system_colors.zig");
@@ -147,6 +149,9 @@ pub const Hit = struct {
         toast_show,
         toast_undo,
         toast_dismiss,
+        // Appearance > Theme (T2586).
+        theme_mode,
+        theme_slot,
     };
 };
 
@@ -171,6 +176,9 @@ catalog: SettingsCatalog,
 effective: ?SettingsCatalog = null,
 sources: ?SettingsSources = null,
 file: ConfigFileText,
+/// The themes the `theme` key can name, read on first use (Mac
+/// `ThemeCatalog.shared`); kept for the window's life.
+themes: ?theme_catalog.Catalog = null,
 /// True while a model write runs: the reload it triggers re-enters through
 /// `configChanged`, and the window refreshes once the write returns instead.
 in_write: bool = false,
@@ -197,7 +205,7 @@ toast_ms: u32 = settings_advanced.toast_ms,
 last_shell: ?[]u8 = null,
 
 // What the form shows.
-page: PageId = .panes,
+page: PageId = .appearance,
 filter: Filter = .all,
 search: LineEdit = .{},
 /// Owns `items`, the listed keys and their summaries (rebuilt per refresh).
@@ -374,6 +382,7 @@ fn destroyState(self: *SettingsWindow) void {
     if (self.sources) |*s| s.deinit();
     if (self.effective) |*e| e.deinit();
     self.catalog.deinit();
+    if (self.themes) |*t| t.deinit();
     self.file.deinit();
     gpa.free(self.main_path);
     gpa.free(self.display_path);
@@ -1427,19 +1436,7 @@ fn paintRow(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Ite
                 roundRect(hdc, .{ .x = kx, .y = sr.y + @divTrunc(sh - kn, 2), .w = kn, .h = kn }, @divTrunc(kn, 2), cr(p.field), null, 1);
                 if (live) self.hit(.{ .rect = sr, .kind = .toggle, .key = key });
             } else {
-                const label_now = row.labelFor(r.value(key));
-                // The box, then the label ellipsized short of the arrow.
-                self.paintField(hdc, p, cols.control, "", "", false, 0, false, !live);
-                const arrow = "\u{25BE}";
-                const aw = self.text.measure(hdc, arrow, .{}, .caption).cx;
-                const fpad = layout.px(dip.gap, self.scale);
-                self.text.drawEllipsized(hdc, .{
-                    .x = cols.control.x + fpad,
-                    .y = cols.control.y + @divTrunc(fh - lh, 2),
-                    .w = @max(0, cols.control.w - 3 * fpad - aw),
-                    .h = lh,
-                }, label_now, .{}, .body, if (live) cr(p.text) else cr(p.secondary), true);
-                _ = self.text.drawText(hdc, cols.control.x + cols.control.w - aw - g, cols.control.y + @divTrunc(fh - ch, 2), arrow, .{}, .caption, cr(p.secondary), true);
+                self.paintChoiceBox(hdc, p, cols.control, row.labelFor(r.value(key)), live);
                 if (live) self.hit(.{ .rect = cols.control, .kind = .choice, .key = key });
             }
         } else if (repeatable) {
@@ -1559,6 +1556,7 @@ fn paintCustom(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: 
     const Line = struct { text: []const u8, caption: bool = true, link: ?Hit.Kind = null };
     var buf: [128]u8 = undefined;
     const lines: []const Line = switch (item.custom) {
+        .theme => return self.paintTheme(hdc, p, y, draw),
         .shortcut_guide => &.{
             .{ .text = "Every shortcut, searchable, with what it does.", .caption = false },
             .{ .text = "Open Shortcut Guide\u{2026}", .link = .guide_link },
@@ -1594,6 +1592,174 @@ fn paintCustom(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: 
     cy += pad_y + g;
     if (draw) fillRect(hdc, .{ .x = cols.left, .y = cy - self.hair(), .w = width, .h = self.hair() }, cr(p.divider));
     return cy - y;
+}
+
+/// A value popup's closed box: the field, the label ellipsized short of
+/// the arrow, the arrow.
+fn paintChoiceBox(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, box: Rect, label: []const u8, live: bool) void {
+    const lh = self.text.lineHeight(.body);
+    const ch = self.text.lineHeight(.caption);
+    const fpad = layout.px(dip.gap, self.scale);
+    self.paintField(hdc, p, box, "", "", false, 0, false, !live);
+    const arrow = "\u{25BE}";
+    const aw = self.text.measure(hdc, arrow, .{}, .caption).cx;
+    self.text.drawEllipsized(hdc, .{
+        .x = box.x + fpad,
+        .y = box.y + @divTrunc(box.h - lh, 2),
+        .w = @max(0, box.w - 3 * fpad - aw),
+        .h = lh,
+    }, label, .{}, .body, if (live) cr(p.text) else cr(p.secondary), true);
+    _ = self.text.drawText(hdc, box.x + box.w - aw - fpad, box.y + @divTrunc(box.h - ch, 2), arrow, .{}, .caption, cr(p.secondary), true);
+}
+
+/// Appearance > Theme (Mac `ThemeSection`): "Use" picks one theme or a
+/// light and a dark one; then one popup per slot, each listing only its
+/// kind, and Mac's warnings. Returns the height.
+fn paintTheme(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, y: i32, draw: bool) i32 {
+    const f = self.frame();
+    const g = layout.px(dip.gap, self.scale);
+    const t = layout.px(dip.tight, self.scale);
+    const pad_y = layout.px(dip.row_pad_y, self.scale);
+    const lh = self.text.lineHeight(.body);
+    const ch = self.text.lineHeight(.caption);
+    const fh = layout.px(dip.field_h, self.scale);
+    const band = @max(lh, fh);
+    const cat = self.themeCatalog();
+    const sel = self.themeSelection();
+    const follows = if (sel) |s| s.follows_system else false;
+    const live = self.overridingSource("theme") == null;
+    const Line = struct { label: []const u8, value: []const u8, caption: []const u8, kind: Hit.Kind, index: usize = 0 };
+    var b1: [96]u8 = undefined;
+    var b2: [96]u8 = undefined;
+    const lines = [_]?Line{
+        .{
+            .label = "Use",
+            .value = if (follows) "Light & dark themes" else "One theme",
+            .caption = if (follows) "Switches between a light and a dark theme with the system appearance." else "One theme, whatever the system appearance.",
+            .kind = .theme_mode,
+        },
+        if (follows) .{
+            .label = "Light mode",
+            .value = sel.?.light,
+            .caption = std.fmt.bufPrint(&b1, "Lists only the {d} light themes.", .{cat.count(true)}) catch "",
+            .kind = .theme_slot,
+            .index = 0,
+        } else .{
+            .label = "Theme",
+            .value = if (sel) |s| s.light else "Default",
+            .caption = std.fmt.bufPrint(&b1, "{d} light and {d} dark themes.", .{ cat.count(true), cat.count(false) }) catch "",
+            .kind = .theme_slot,
+            .index = 2,
+        },
+        if (follows) .{
+            .label = "Dark mode",
+            .value = sel.?.dark,
+            .caption = std.fmt.bufPrint(&b2, "Lists only the {d} dark themes.", .{cat.count(false)}) catch "",
+            .kind = .theme_slot,
+            .index = 1,
+        } else null,
+    };
+    var cy = y;
+    var cols = layout.rowColumns(self.scale, f.list, f.scrollbar.w, cy, lh, dip.field_w);
+    for (lines) |maybe| {
+        const line = maybe orelse continue;
+        cy += pad_y;
+        cols = layout.rowColumns(self.scale, f.list, f.scrollbar.w, cy, lh, dip.field_w);
+        if (draw) {
+            _ = self.text.drawText(hdc, cols.left, cy + @divTrunc(band - lh, 2), line.label, .{}, .body, cr(p.text), true);
+            self.paintChoiceBox(hdc, p, cols.control, line.value, live);
+            if (live) self.hit(.{ .rect = cols.control, .kind = line.kind, .index = line.index });
+        }
+        cy += band + t;
+        if (draw) self.text.drawEllipsized(hdc, .{ .x = cols.left, .y = cy, .w = cols.right - cols.left, .h = ch }, line.caption, .{}, .caption, cr(p.secondary), false);
+        cy += ch + pad_y;
+    }
+    // Mac's notices: a hand-edited slot holding the wrong kind, no themes
+    // found, a later include that sets the key.
+    var nb: [400]u8 = undefined;
+    const notice: ?[]const u8 = blk: {
+        if (!live) break :blk "Set in a file that loads after your config - edit it there.";
+        if (cat.themes.len == 0) break :blk "No themes were found in the bundled or your own themes folder.";
+        if (sel) |s| if (theme_catalog.mismatch(cat, s)) |slot| {
+            const bad = s.slotName(slot);
+            const want = @tagName(slot);
+            const is = if (slot == .light) "dark" else "light";
+            break :blk std.fmt.bufPrint(&nb, "\u{26A0} {s} is a {s} theme but is set for {s} mode. Pick a {s} theme to fix it.", .{ bad, is, want, want }) catch null;
+        };
+        break :blk null;
+    };
+    if (notice) |n| {
+        if (draw) self.text.drawEllipsized(hdc, .{ .x = cols.left, .y = cy, .w = cols.right - cols.left, .h = ch }, n, .{}, .caption, cr(p.warn), false);
+        cy += ch + pad_y;
+    }
+    cy += g;
+    if (draw) fillRect(hdc, .{ .x = cols.left, .y = cy - self.hair(), .w = cols.right - cols.left, .h = self.hair() }, cr(p.divider));
+    return cy - y;
+}
+
+/// The theme catalog, read on first use.
+pub fn themeCatalog(self: *SettingsWindow) *const theme_catalog.Catalog {
+    if (self.themes == null) {
+        self.themes = settings_theme.loadCatalog(self.gpa) catch .{ .arena = std.heap.ArenaAllocator.init(self.gpa) };
+    }
+    return &self.themes.?;
+}
+
+/// The `theme` key as a selection (null: no theme set). Borrows the
+/// reader's value, so it is good until the next reload.
+pub fn themeSelection(self: *const SettingsWindow) ?theme_catalog.Selection {
+    const r = self.reader() orelse return null;
+    return theme_catalog.Selection.parse(r.value("theme"));
+}
+
+/// "Use" (Mac `switchMode`): light & dark seeds the other slot from the
+/// current theme's family; one theme keeps the slot the system shows.
+pub fn setThemeFollows(self: *SettingsWindow, follow: bool) bool {
+    if (self.overridingSource("theme") != null) return false;
+    const cat = self.themeCatalog();
+    const res = theme_catalog.switchMode(self.gpa, cat, self.themeSelection(), follow, !system_colors.usesLightTheme()) catch return false;
+    return switch (res) {
+        .set => |v| blk: {
+            defer self.gpa.free(v);
+            break :blk self.chooseValue("theme", v);
+        },
+        .reset => self.chooseValue("theme", ""),
+        .unchanged => true,
+    };
+}
+
+/// A theme picked for `slot` (Mac `pick`). Only a catalog theme is taken.
+pub fn pickTheme(self: *SettingsWindow, name: []const u8, slot: theme_catalog.Slot) bool {
+    if (self.overridingSource("theme") != null) return false;
+    const theme = self.themeCatalog().named(name) orelse return false;
+    const v = theme_catalog.pick(self.gpa, self.themeSelection(), theme.name, slot) catch return false;
+    defer self.gpa.free(v);
+    return self.chooseValue("theme", v);
+}
+
+fn openThemeMode(self: *SettingsWindow, anchor: Rect) void {
+    const follows = if (self.themeSelection()) |s| s.follows_system else false;
+    var pt: w32.POINT = .{ .x = anchor.x, .y = anchor.y + anchor.h };
+    _ = w32.ClientToScreen(self.hwnd, &pt);
+    const pick = settings_theme.modeMenu(self.gpa, self.hwnd, pt, follows) orelse return;
+    _ = self.setThemeFollows(pick);
+}
+
+/// A slot's theme menu: 0 light, 1 dark, 2 the one theme (both kinds).
+fn openThemeMenu(self: *SettingsWindow, which: usize, anchor: Rect) void {
+    const cat = self.themeCatalog();
+    const sel = self.themeSelection();
+    const slot: theme_catalog.Slot = if (which == 1) .dark else .light;
+    const now = if (sel) |s| s.slotName(slot) else "";
+    const kinds: settings_theme.Kinds = switch (which) {
+        0 => .light,
+        1 => .dark,
+        else => .both,
+    };
+    var pt: w32.POINT = .{ .x = anchor.x, .y = anchor.y + anchor.h };
+    _ = w32.ClientToScreen(self.hwnd, &pt);
+    const idx = settings_theme.themeMenu(self.gpa, self.hwnd, pt, cat, kinds, now) orelse return;
+    _ = self.pickTheme(cat.themes[idx].name, slot);
 }
 
 /// The full documentation as Mac's doc popover reads it: paragraphs stay
@@ -1749,6 +1915,7 @@ fn hitAt(self: *const SettingsWindow, x: i32, y: i32) ?Hit {
             .field, .add_field, .reset, .info, .open, .chip_remove, .toggle, .choice, .reveal, .guide_link, .filter => true,
             .open_editor, .reveal_file, .open_source, .restore_menu, .show_file => true,
             .toast_body, .toast_show, .toast_undo, .toast_dismiss => true,
+            .theme_mode, .theme_slot => true,
             else => false,
         };
         if (in_list and !f.list.contains(x, y)) continue;
@@ -1786,6 +1953,8 @@ fn onLeftDown(self: *SettingsWindow, x: i32, y: i32) void {
             .toast_show => self.toggleToastChange(),
             .toast_undo => _ = self.undoLast(),
             .toast_dismiss => self.dismissToast(),
+            .theme_mode => self.openThemeMode(h.rect),
+            .theme_slot => self.openThemeMenu(h.index, h.rect),
             .search_clear => self.setQuery(""),
             .field, .add_field => _ = self.beginEdit(h.key),
             .reset => _ = self.resetKey(h.key),

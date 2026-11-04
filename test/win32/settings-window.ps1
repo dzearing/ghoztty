@@ -11,7 +11,11 @@
 # order and per-page counts, labelled rows with an on/off switch or a value
 # popup, conditions that dim a row, env and the Mac-only keys kept off the
 # pages, the "Not on other pages" filter, the "<Page> >" reveal link, and
-# search listing curated rows before the rest.
+# search listing curated rows before the rest. T2586 adds Appearance (section K):
+# its Font, Cursor and Window rows, and the theme picker over the bundled and
+# the user's own themes - one theme, or light & dark with each slot listing
+# only its kind, the family-seeded switch, the user-wins clash and Mac's
+# mismatch warning.
 #
 # THE ORACLE IS THE MODEL AND THE FILE. What a row reads and whether a write
 # reached the file are decisions, invisible in pixels, so they are read through
@@ -91,6 +95,13 @@ $backupDir = Join-Path $work 'backups'
 New-Item -ItemType Directory -Force -Path $cfgDir | Out-Null
 [System.IO.File]::WriteAllText($cfgFile, "font-size = 13`nconfig-file = later.ghostty`n")
 [System.IO.File]::WriteAllText($laterFile, "cursor-style = bar`n")
+# The user's own themes (T2586): one of each kind, and a DARK '3024 Day' that
+# must replace the bundled light one (a user theme wins a name clash).
+$themeDir = Join-Path $cfgDir 'themes'
+New-Item -ItemType Directory -Force -Path $themeDir | Out-Null
+[System.IO.File]::WriteAllText((Join-Path $themeDir 'Zz Test Light'), "background = #fafafa`nforeground = #222222`n")
+[System.IO.File]::WriteAllText((Join-Path $themeDir 'Zz Test Dark'), "background = #101010`nforeground = #eeeeee`n")
+[System.IO.File]::WriteAllText((Join-Path $themeDir '3024 Day'), "background = #101010`nforeground = #eeeeee`n")
 
 $errlog = Join-Path $env:TEMP 'ghoztty-settings-window-stderr.log'
 $script:launched = @()
@@ -155,7 +166,7 @@ try {
     Assert ($wins.Count -eq 1) "A: a second open_config focuses it rather than stacking another ($($wins.Count))"
     # Ghostty's XDG join writes a '/' before the subdir; the file is the same.
     Assert ((([string]$s.data.file) -replace '/', '\') -ieq $cfgFile) "A: it writes this dev build's own file (file='$($s.data.file)')"
-    Assert ([string]$s.data.page -eq 'panes') "A: it opens on the first page, Panes & Windows (page='$($s.data.page)')"
+    Assert ([string]$s.data.page -eq 'appearance') "A: it opens on the first page, Appearance (page='$($s.data.page)')"
 
     # Ctrl+, is the default chord (the shortcut guide lists the live bindings).
     $g = Invoke-GhozttyIpc -Action 'shortcut-guide' -Arguments @('--op=open', '--query=settings')
@@ -290,7 +301,7 @@ try {
     # =====================================================================
     $s = Invoke-Settings @('--op=state', '--page=panes')
     $ids = @($s.data.pages | ForEach-Object { [string]$_.id }) -join ','
-    Assert ($ids -eq 'panes,terminal,keyboard,session,remote,updates,advanced') "J: the sidebar is Mac's page order less Appearance ($ids)"
+    Assert ($ids -eq 'appearance,panes,terminal,keyboard,session,remote,updates,advanced') "J: the sidebar is Mac's page order ($ids)"
     $ps = Find-Row $s 'macos-pane-style'
     Assert ($ps -and [string]$ps.label -eq 'Style' -and [string]$ps.control -eq 'segmented' -and [string]$ps.shown -eq 'Elevated') "J: Panes & Windows shows the pane Style as a choice reading Elevated (label='$($ps.label)' control='$($ps.control)' shown='$($ps.shown)')"
     $gl = Find-Row $s 'macos-pane-glass'
@@ -342,6 +353,47 @@ try {
     $shot2 = Join-Path $work 'settings-panes.png'
     $s = Invoke-Settings @('--op=shot', '--page=panes', "--path=$shot2")
     Assert ($s.success -and (Test-Path $shot2) -and (Get-Item $shot2).Length -gt 4000) 'J: a curated page renders to a PNG'
+
+    # =====================================================================
+    # K: Appearance (T2586) - Font / Cursor / Window rows and the theme picker.
+    # =====================================================================
+    $s = Invoke-Settings @('--op=state', '--page=appearance')
+    $keys = @($s.data.rows | ForEach-Object { [string]$_.key })
+    Assert ((($keys -contains 'font-family') -and ($keys -contains 'font-size') -and ($keys -contains 'cursor-style') -and ($keys -contains 'background-opacity') -and ($keys -contains 'window-theme'))) "K: Appearance lists the font, cursor and window keys ($($keys -join ','))"
+    Assert (-not ($keys -contains 'background-blur') -and -not ($keys -contains 'macos-titlebar-style')) 'K: ...and not the two Window keys the win32 runtime never reads'
+    $wt = Find-Row $s 'window-theme'
+    Assert ($wt -and [string]$wt.label -eq 'Window appearance' -and [string]$wt.shown -eq 'Match the theme') "K: Window appearance reads Mac's label for auto (shown='$($wt.shown)')"
+    $th = $s.data.theme
+    Assert ($th -and [int]$th.light_count -gt 20 -and [int]$th.dark_count -gt 20) "K: the bundled themes are read and split by kind ($($th.light_count) light, $($th.dark_count) dark)"
+    $ut = @($th.user_themes)
+    $zl = @($ut | Where-Object { $_.name -eq 'Zz Test Light' })[0]
+    $zd = @($ut | Where-Object { $_.name -eq 'Zz Test Dark' })[0]
+    $dy = @($ut | Where-Object { $_.name -eq '3024 Day' })[0]
+    Assert ($zl -and [bool]$zl.light -and $zd -and -not [bool]$zd.light) 'K: the user themes folder is read, each theme sorted by its background'
+    Assert ($dy -and -not [bool]$dy.light) "K: the user's own '3024 Day' replaces the bundled one (a user theme wins a clash)"
+    Assert (-not [bool]$th.follows -and $null -eq $th.light) 'K: with no theme set the section reads One theme, Default'
+
+    $s = Invoke-Settings @('--op=theme-pick', '--key=light', '--value=Catppuccin Latte')
+    Assert ([bool]$s.data.ok -and @(Get-KeyLines (Read-Config) 'theme').Count -eq 1 -and (Read-Config) -match '(?m)^theme = Catppuccin Latte\r?$') 'K: picking a theme in One theme mode writes theme = <name>'
+    $s = Invoke-Settings @('--op=theme-mode', '--value=true')
+    Assert ([bool]$s.data.ok -and (Read-Config) -match '(?m)^theme = light:Catppuccin Latte,dark:Catppuccin Frappe\r?$' -and [bool]$s.data.theme.follows) "K: switching to Light & dark keeps Latte for light and seeds dark with the first dark theme of its family, Frappe - Mac's rule (theme='$($s.data.theme.light)'/'$($s.data.theme.dark)')"
+    $s = Invoke-Settings @('--op=theme-pick', '--key=dark', '--value=Zz Test Dark')
+    Assert ([bool]$s.data.ok -and (Read-Config) -match '(?m)^theme = light:Catppuccin Latte,dark:Zz Test Dark\r?$') 'K: a dark-mode pick fills only the dark slot (and takes a user theme)'
+    $mid = Read-Config
+    $s = Invoke-Settings @('--op=theme-pick', '--key=dark', '--value=No Such Theme')
+    Assert (-not [bool]$s.data.ok -and (Read-Config) -eq $mid) 'K: a name the catalog does not hold is refused and the file is untouched'
+    $s = Invoke-Settings @('--op=set', '--key=theme', '--value=light:Zz Test Dark,dark:Zz Test Dark')
+    Assert ([string]$s.data.theme.mismatch -eq 'light') "K: a hand-edited dark theme in the light slot raises Mac's mismatch warning (mismatch='$($s.data.theme.mismatch)')"
+    $s = Invoke-Settings @('--op=theme-pick', '--key=light', '--value=Zz Test Light')
+    Assert ([bool]$s.data.ok -and $null -eq $s.data.theme.mismatch) 'K: picking a light theme for light mode clears it'
+    $shot3 = Join-Path $work 'settings-appearance.png'
+    $s = Invoke-Settings @('--op=shot', '--page=appearance', "--path=$shot3")
+    Assert ($s.success -and (Test-Path $shot3) -and (Get-Item $shot3).Length -gt 4000) 'K: the Appearance page renders to a PNG'
+    $s = Invoke-Settings @('--op=theme-mode', '--value=false')
+    $one = @(Get-KeyLines (Read-Config) 'theme')
+    Assert ([bool]$s.data.ok -and -not [bool]$s.data.theme.follows -and $one.Count -eq 1 -and $one[0] -match '^theme = Zz Test (Light|Dark)\s*$') "K: back to One theme keeps the slot the system is showing ($($one -join ' | '))"
+    $s = Invoke-Settings @('--op=reset', '--key=theme')
+    Assert (@(Get-KeyLines (Read-Config) 'theme').Count -eq 0) 'K: Reset takes the theme back out of the file'
 
     # =====================================================================
     # I: Esc clears the search, then closes; refusals are typed.

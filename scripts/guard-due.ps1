@@ -3633,8 +3633,8 @@ $GuardTable = @(
             'test\win32\shortcut-guide.ps1'
         )
     },
-    # The Settings window shell (T2675) and its curated pages (T2585).
-    # `settings-window.ps1` is the only
+    # The Settings window shell (T2675), its curated pages (T2585) and the
+    # Appearance theme picker (T2586). `settings-window.ps1` is the only
     # harness that opens it, edits a row into the config file, and reads the
     # read-only override and inline refusal back through the `settings` seam.
     [pscustomobject]@{
@@ -3650,6 +3650,8 @@ $GuardTable = @(
             'src\apprt\win32\SettingsSources.zig',
             'src\apprt\win32\SettingsCatalog.zig',
             'src\apprt\win32\settings_pages.zig',
+            'src\apprt\win32\theme_catalog.zig',
+            'src\apprt\win32\settings_theme.zig',
             'test\win32\settings-window.ps1'
         )
     },

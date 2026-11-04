@@ -25,9 +25,19 @@
 //!   the selection clipboard": Windows has no separate selection clipboard.
 //! - "Shell for scripted windows" names the Windows shell flavors in its hint
 //!   instead of Mac's `-lic`.
+//! - Appearance > Window drops `background-blur` and `macos-titlebar-style`:
+//!   the win32 renderer never blurs the terminal background (Mac's blur is a
+//!   CoreAnimation/glass facility) and the title bar is Ghoztty's own tab
+//!   strip, not an AppKit titlebar with styles to pick.
+//! - Balance padding is a three-way choice (Off / On / Centered), not Mac's
+//!   switch: `window-padding-balance` is an enum with `equal` as its third
+//!   value, which a switch cannot reach (the drift test refuses a toggle on
+//!   a non-bool key).
+//! - The Font row edits `font-family` as its list of names (Mac draws a font
+//!   picker); the key, label and placement are Mac's.
 const std = @import("std");
 
-pub const PageId = enum { panes, terminal, keyboard, session, remote, updates, advanced };
+pub const PageId = enum { appearance, panes, terminal, keyboard, session, remote, updates, advanced };
 
 /// A (value, label) pair for a picker. A "" value means "unset" - choosing
 /// it removes the key from the user's file.
@@ -47,6 +57,8 @@ pub const Control = union(enum) {
     color: struct { none_label: []const u8 },
     text: struct { placeholder: []const u8 },
     list: struct { placeholder: []const u8 },
+    /// A font family (Mac's font picker); edited as the key's value list.
+    font,
     flags,
     shell: struct { scripted: bool },
     folder,
@@ -111,6 +123,9 @@ pub const Row = struct {
 /// Sections with their own UI (Mac `SettingsCustomSection`). Only the ones
 /// a Windows curated page carries are listed.
 pub const Custom = enum {
+    /// The theme picker (Mac `ThemeSection`): one theme, or a light and a
+    /// dark one that follow the system appearance.
+    theme,
     shortcut_guide,
     agent_status,
     remote_machines,
@@ -121,6 +136,7 @@ pub const Custom = enum {
     /// Words search should match for the section (Mac `searchText`).
     pub fn searchText(self: Custom) []const u8 {
         return switch (self) {
+            .theme => "theme colors light dark mode appearance",
             .shortcut_guide => "keyboard shortcuts keybind guide",
             .agent_status => "agent session persistence status pipe",
             .remote_machines => "remote machines relay ssh host",
@@ -152,6 +168,55 @@ const ask_allow_deny = [_]Option{
     .{ .value = "ask", .label = "Ask" },
     .{ .value = "allow", .label = "Allow" },
     .{ .value = "deny", .label = "Deny" },
+};
+
+pub const appearance: Page = .{
+    .id = .appearance,
+    .title = "Appearance",
+    .glyph = "\u{25D0}",
+    .tint = 0x5856D6,
+    .sections = &.{
+        .{ .title = "Theme", .custom = .theme },
+        .{ .title = "Font", .rows = &.{
+            .{ .key = "font-family", .label = "Font", .control = .font },
+            .{ .key = "font-size", .label = "Size", .control = .{ .stepper = .{ .min = 6, .max = 72, .step = 0.5, .unit = "pt" } } },
+            .{ .key = "font-feature", .label = "Font features", .control = .{ .list = .{ .placeholder = "-calt" } }, .hint = "OpenType features, e.g. -calt turns off ligatures, ss01 picks a stylistic set." },
+            .{ .key = "font-thicken", .label = "Thicken strokes", .control = .toggle },
+            .{ .key = "adjust-cell-height", .label = "Line height adjustment", .control = .{ .text = .{ .placeholder = "0 or 10%" } } },
+        } },
+        .{ .title = "Cursor", .rows = &.{
+            .{ .key = "cursor-style", .label = "Style", .control = .{ .segmented = &.{
+                .{ .value = "block", .label = "Block" },
+                .{ .value = "bar", .label = "Bar" },
+                .{ .value = "underline", .label = "Underline" },
+                .{ .value = "block_hollow", .label = "Hollow" },
+            } } },
+            .{ .key = "cursor-style-blink", .label = "Blink", .control = .{ .segmented = &.{
+                .{ .value = "", .label = "App decides" },
+                .{ .value = "true", .label = "On" },
+                .{ .value = "false", .label = "Off" },
+            } } },
+            .{ .key = "cursor-color", .label = "Color", .control = .{ .color = .{ .none_label = "Theme" } } },
+            .{ .key = "cursor-opacity", .label = "Opacity", .control = .{ .slider = .{ .min = 0, .max = 1, .step = 0.05 } } },
+        } },
+        .{ .title = "Window", .rows = &.{
+            .{ .key = "background-opacity", .label = "Background opacity", .control = .{ .slider = .{ .min = 0, .max = 1, .step = 0.01 } } },
+            .{ .key = "window-padding-x", .label = "Horizontal padding", .control = .{ .stepper = .{ .min = 0, .max = 80, .step = 1, .unit = "pt" } } },
+            .{ .key = "window-padding-y", .label = "Vertical padding", .control = .{ .stepper = .{ .min = 0, .max = 80, .step = 1, .unit = "pt" } } },
+            .{ .key = "window-padding-balance", .label = "Balance padding", .control = .{ .segmented = &.{
+                .{ .value = "false", .label = "Off" },
+                .{ .value = "true", .label = "On" },
+                .{ .value = "equal", .label = "Centered" },
+            } } },
+            .{ .key = "window-theme", .label = "Window appearance", .control = .{ .picker = &.{
+                .{ .value = "auto", .label = "Match the theme" },
+                .{ .value = "system", .label = "Follow the system" },
+                .{ .value = "light", .label = "Light" },
+                .{ .value = "dark", .label = "Dark" },
+                .{ .value = "ghostty", .label = "Ghostty" },
+            } } },
+        } },
+    },
 };
 
 pub const panes: Page = .{
@@ -350,8 +415,8 @@ pub const advanced: Page = .{
     },
 };
 
-/// The sidebar, in order (Mac's, less Appearance - T2584's sibling).
-pub const all = [_]*const Page{ &panes, &terminal, &keyboard, &session, &remote, &updates, &advanced };
+/// The sidebar, in order (Mac's).
+pub const all = [_]*const Page{ &appearance, &panes, &terminal, &keyboard, &session, &remote, &updates, &advanced };
 
 pub fn page(id: PageId) *const Page {
     for (all) |p| if (p.id == id) return p;
@@ -465,11 +530,12 @@ test "settings_pages: no key is on two pages, env is on none" {
     // Mac 3a183ffd1: environment belongs in the shell's profile, so `env`
     // stays only under All Settings.
     try testing.expect(!isCurated("env"));
-    try testing.expectEqual(@as(?PageId, null), pageFor("font-family"));
+    try testing.expectEqual(PageId.appearance, pageFor("font-family").?);
+    try testing.expectEqual(PageId.appearance, pageFor("window-theme").?);
 }
 
 test "settings_pages: Mac-only keys stay off the Windows pages" {
-    for ([_][]const u8{ "macos-option-as-alt", "macos-shortcuts", "macos-auto-secure-input", "auto-update-channel" }) |k| {
+    for ([_][]const u8{ "macos-option-as-alt", "macos-shortcuts", "macos-auto-secure-input", "auto-update-channel", "macos-titlebar-style", "background-blur" }) |k| {
         try testing.expect(!isCurated(k));
     }
 }
@@ -499,6 +565,7 @@ test "settings_pages: lookups, labels and conditions" {
     const onoff = try choices(testing.allocator, rowFor("maximize").?, null);
     defer testing.allocator.free(onoff);
     try testing.expectEqual(@as(usize, 2), onoff.len);
-    try testing.expectEqual(@as(usize, 7), all.len);
+    try testing.expectEqual(@as(usize, 8), all.len);
+    try testing.expectEqual(PageId.appearance, all[0].id);
     try testing.expectEqual(PageId.advanced, all[all.len - 1].id);
 }

@@ -19,6 +19,8 @@
 //! {"action":"settings","arguments":["--op=reset","--key=font-size"]}
 //! {"action":"settings","arguments":["--op=doc","--key=font-size"]}
 //! {"action":"settings","arguments":["--op=shot","--path=C:\\t\\s.png"]}
+//! {"action":"settings","arguments":["--op=theme-mode","--value=true"]}   (Use: light & dark)
+//! {"action":"settings","arguments":["--op=theme-pick","--key=dark","--value=Catppuccin Mocha"]}
 //! {"action":"settings","arguments":["--op=close"]}
 //! Advanced > Config file and the toast (T2676):
 //! {"action":"settings","arguments":["--op=restore","--index=0"]}  (newest backup, confirmed)
@@ -47,6 +49,7 @@ const SettingsWindow = @import("SettingsWindow.zig");
 const settings_pages = @import("settings_pages.zig");
 const settings_advanced = @import("settings_advanced.zig");
 const SettingsModel = @import("SettingsModel.zig");
+const theme_catalog = @import("theme_catalog.zig");
 
 const errorResponse = ipc_capture.errorResponse;
 
@@ -77,6 +80,8 @@ pub const Op = enum {
     open_source,
     backups_folder,
     current_file,
+    @"theme-mode",
+    @"theme-pick",
 };
 
 pub const Request = struct {
@@ -192,6 +197,17 @@ pub fn handle(app: *App, alloc: Allocator, arguments: ?[]const []const u8) Alloc
         .reveal => {
             const key = req.key orelse return errorResponse(alloc, "--key is required for --op=reveal", .{});
             ok = w.reveal(key);
+        },
+        // Appearance > Theme: the "Use" popup's pick, and a theme menu's pick.
+        .@"theme-mode" => {
+            const v = req.value orelse return errorResponse(alloc, "--value=true|false is required for --op=theme-mode", .{});
+            ok = w.setThemeFollows(std.mem.eql(u8, v, "true"));
+        },
+        .@"theme-pick" => {
+            const slot = std.meta.stringToEnum(theme_catalog.Slot, req.key orelse "light") orelse
+                return errorResponse(alloc, "--key must be light or dark for --op=theme-pick", .{});
+            const name = req.value orelse return errorResponse(alloc, "--value=<theme name> is required for --op=theme-pick", .{});
+            ok = w.pickTheme(name, slot);
         },
         .escape => {
             // Esc, as the window handles it: field, then search, then close.
@@ -331,6 +347,39 @@ fn writeState(jws: *std.json.Stringify, alloc: Allocator, w_opt: ?*SettingsWindo
         try jws.write(w.curated_hits);
         try jws.objectField("revealed");
         try jws.write(w.revealed_key);
+        // Appearance > Theme, as the section reads it.
+        try jws.objectField("theme");
+        {
+            const cat = w.themeCatalog();
+            const sel = w.themeSelection();
+            try jws.beginObject();
+            try jws.objectField("follows");
+            try jws.write(if (sel) |s| s.follows_system else false);
+            try jws.objectField("light");
+            try jws.write(if (sel) |s| s.light else null);
+            try jws.objectField("dark");
+            try jws.write(if (sel) |s| s.dark else null);
+            try jws.objectField("mismatch");
+            try jws.write(if (sel) |s| (if (theme_catalog.mismatch(cat, s)) |m| @tagName(m) else null) else null);
+            try jws.objectField("light_count");
+            try jws.write(cat.count(true));
+            try jws.objectField("dark_count");
+            try jws.write(cat.count(false));
+            // The user's own themes, with their kind (a clash shows here as
+            // the user's copy).
+            try jws.objectField("user_themes");
+            try jws.beginArray();
+            for (cat.themes) |*t| if (t.is_user) {
+                try jws.beginObject();
+                try jws.objectField("name");
+                try jws.write(t.name);
+                try jws.objectField("light");
+                try jws.write(t.isLight());
+                try jws.endObject();
+            };
+            try jws.endArray();
+            try jws.endObject();
+        }
         // The sidebar: each page and its changed count.
         try jws.objectField("pages");
         try jws.beginArray();
