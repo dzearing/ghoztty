@@ -791,7 +791,8 @@ template = """<?xml version="1.0" encoding="utf-8"?>
            placement (WiX's own default, afterInstallValidate) that the T23
            upgrade-safety design above was written for; the checker below
            fails the build if it moves. Proven on published bytes by
-           test\win32\arp-orphan.ps1. -->
+           test/win32/arp-orphan.ps1 (forward slashes: this template is a
+           Python string, where a backslash-a is a BEL byte and not XML). -->
       <RemoveExistingProducts Sequence="1401"/>
       <!-- T1367: every immediate action in this band carries an explicit
            Sequence number, and none of them anchors on another CUSTOM action.
