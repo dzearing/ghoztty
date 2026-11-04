@@ -148,6 +148,93 @@ pub fn cornerRegionKey(w: i32, h: i32, d: i32) u64 {
         (@as(u64, @intCast(@max(h, 0))) << 16) | @as(u64, @intCast(@min(d, 0xFFFF)));
 }
 
+/// The columns of a pane's banner strip that are on show (T2661), in the
+/// strip's own coordinates (0 = the pane's left edge).
+pub const Span = struct {
+    left: i32,
+    right: i32,
+
+    pub fn isWhole(s: Span, w: i32) bool {
+        return s.left <= 0 and s.right >= w;
+    }
+};
+
+/// What clips a banner strip of width `w` sitting in the band above its pane
+/// (T2661): `view`, the part of the pane its window does not clip (null: all
+/// of it; `top` > 0 means the pane's top runs above the window, and the band
+/// above it with it), and `card`, the columns of the pane its card shows
+/// mid-slide (null: all of them). Null when none of the strip is on show.
+///
+/// A pane unfolding out of its strip is held at its full size, rides the
+/// card's far edge and is cut to the card, and past a window edge is cut by
+/// the window too. Its banner used to HIDE for every such frame (T2227), so a
+/// blade dragged back out came back without it and the banner popped in when
+/// the glide landed. Cut to the same columns, it comes out with the pane.
+pub const ViewPart = struct { left: i32, top: i32, right: i32 };
+pub fn stripSpan(w: i32, view: ?ViewPart, card: ?Span) ?Span {
+    if (w <= 0) return null;
+    var s: Span = .{ .left = 0, .right = w };
+    if (view) |v| {
+        if (v.top > 0) return null;
+        s.left = @max(s.left, v.left);
+        s.right = @min(s.right, v.right);
+    }
+    if (card) |c| {
+        s.left = @max(s.left, c.left);
+        s.right = @min(s.right, c.right);
+    }
+    if (s.right <= s.left) return null;
+    return s;
+}
+
+/// The strip's window-region key (T1851, T2661): the corner key while the
+/// whole strip shows - 0, no region, for a square one - and a key that also
+/// names the span while only part of it does.
+pub fn stripRegionKey(w: i32, h: i32, d: i32, span: Span) u64 {
+    if (span.isWhole(w)) return cornerRegionKey(w, h, d);
+    var hasher = std.hash.Wyhash.init(0x2661);
+    std.hash.autoHash(&hasher, .{ w, h, d, span.left, span.right });
+    return hasher.final() | 1;
+}
+
+test "strip span: a pane wholly in view shows the whole strip" {
+    const s = stripSpan(400, null, null).?;
+    try std.testing.expect(s.isWhole(400));
+    try std.testing.expectEqual(@as(?Span, null), stripSpan(0, null, null));
+}
+
+test "strip span: an unfolding pane's banner is cut to its card, not hidden (T2661)" {
+    // Held at 400 wide, riding the card's far edge: only the card's 120
+    // columns on the right show.
+    const s = stripSpan(400, null, .{ .left = 280, .right = 400 }).?;
+    try std.testing.expectEqual(@as(i32, 280), s.left);
+    try std.testing.expectEqual(@as(i32, 400), s.right);
+    try std.testing.expect(!s.isWhole(400));
+    // Past the window's right edge as well: both cuts apply.
+    const t = stripSpan(400, .{ .left = 0, .top = 0, .right = 350 }, .{ .left = 280, .right = 400 }).?;
+    try std.testing.expectEqual(@as(i32, 280), t.left);
+    try std.testing.expectEqual(@as(i32, 350), t.right);
+}
+
+test "strip span: nothing on show hides the strip" {
+    // The card and the window's view do not meet.
+    try std.testing.expectEqual(@as(?Span, null), stripSpan(400, .{ .left = 0, .top = 0, .right = 100 }, .{ .left = 200, .right = 400 }));
+    // An empty card.
+    try std.testing.expectEqual(@as(?Span, null), stripSpan(400, null, .{ .left = 50, .right = 50 }));
+    // The pane's top runs above the window: the band above it is gone.
+    try std.testing.expectEqual(@as(?Span, null), stripSpan(400, .{ .left = 0, .top = 4, .right = 400 }, null));
+}
+
+test "strip region key: whole strips keep the corner key, cut ones name their span" {
+    const whole: Span = .{ .left = 0, .right = 400 };
+    try std.testing.expectEqual(cornerRegionKey(400, 40, 12), stripRegionKey(400, 40, 12, whole));
+    try std.testing.expectEqual(@as(u64, 0), stripRegionKey(400, 40, 0, whole));
+    const a = stripRegionKey(400, 40, 0, .{ .left = 280, .right = 400 });
+    try std.testing.expect(a != 0);
+    try std.testing.expect(a != stripRegionKey(400, 40, 0, .{ .left = 270, .right = 400 }));
+    try std.testing.expect(a != cornerRegionKey(400, 40, 0));
+}
+
 test "corner region key: size and diameter identify it, a square corner is none" {
     try std.testing.expectEqual(@as(u64, 0), cornerRegionKey(400, 40, 0));
     const a = cornerRegionKey(400, 40, 12);

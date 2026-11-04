@@ -338,6 +338,13 @@ pub fn hideDimOverlay(self: *PaneView) void {
     }
 }
 
+/// A card opening out of its strip whose face draws it (T2458): the live
+/// window is hidden at its new size, cut to the card, while the face carries
+/// the content. Its banner stays on show over the card all the same (T2661).
+pub fn openingCarried(self: *const PaneView) bool {
+    return self.glide_unfold and self.glide_snap != .none;
+}
+
 /// Take every layered popup this pane owns off screen now (T2012), for a
 /// pane that leaves the layout while staying alive. A viewer's only popup is
 /// its dim wash.

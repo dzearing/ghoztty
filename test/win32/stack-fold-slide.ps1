@@ -75,6 +75,12 @@
 #       `stack fold carried` oracle) only ever falls. F1/F3/F8/F10 read the
 #       carried card where the live window used to be sampled.
 #
+#   F19) s2's banner comes out WITH its card (T2661, user report 2026-11-03:
+#       "the banner still doesn't paint while expanding and only shows up when
+#       done"): while s2's live window is off show mid-unfold, its banner is
+#       on show in 2+ samples, cut to 2+ distinct partial widths (the debug
+#       build's `banner cut span` oracle line) - not hidden until the glide
+#       lands - and it never reaches outside the window (F6, region-aware).
 #   F17) opening carried (T2458): unfolding, s2's pane is placed at its new
 #       size while hidden and its card is drawn by its face alone - the live
 #       window is off show on every frame, the card shows no content until the
@@ -190,13 +196,36 @@ function Move-To([IntPtr]$top, [int]$fromX, [int]$toX, [int]$y) {
 
 # T2227: every visible top-level the app shows other than the window itself
 # that reaches outside the window's rect - a pane popup the window does not
-# clip. One line each, for the failure message.
+# clip. One line each, for the failure message. A popup cut by its own window
+# region (T2661: a banner cut to its opening card) is stray only where the
+# region still shows: its overhang is probed along its middle row.
 function Get-StrayPopups([int]$procId, [IntPtr]$top) {
     $w = Get-TestWindowRect -Window $top
     return @(Get-TestWindows -ProcessId $procId -Class '*' | Where-Object {
             $_.Visible -and $_.Hwnd -ne [int64]$top -and $_.Width -gt 0 -and $_.Height -gt 0 -and
-            ($_.Left -lt $w.Left -or $_.Top -lt $w.Top -or $_.Right -gt $w.Right -or $_.Bottom -gt $w.Bottom)
+            ($_.Left -lt $w.Left -or $_.Top -lt $w.Top -or $_.Right -gt $w.Right -or $_.Bottom -gt $w.Bottom) -and
+            (Test-OverhangShows $_ $w)
         } | ForEach-Object { "$($_.Class) $($_.Left)-$($_.Right)" })
+}
+function Test-OverhangShows($p, $w) {
+    # Vertical overhang is not probed: only the columns a slide pushes out.
+    if ($p.Top -lt $w.Top -or $p.Bottom -gt $w.Bottom) { return $true }
+    $pts = New-Object System.Collections.Generic.List[int]
+    $y = [int]($p.Height / 2)
+    for ($x = 0; $x -lt $p.Width; $x += 2) {
+        $sx = $p.Left + $x
+        if ($sx -lt $w.Left -or $sx -ge $w.Right) { $pts.Add($x); $pts.Add($y) }
+    }
+    if ($pts.Count -eq 0) { return $false }
+    $hits = Get-TestWindowRegionHits -Window ([IntPtr]$p.Hwnd) -Points $pts.ToArray()
+    if ($null -eq $hits) { return $true }
+    if (@($hits | Where-Object { $_ }).Count -eq 0) { return $false }
+    # A gliding popup moves and re-cuts every frame: a region read after the
+    # rect it is probed against may belong to the next frame's place (cut
+    # wider, moved left). Only a popup that stood still across the probe is
+    # a finding; a real bleed stands still on the next sample too.
+    $again = Get-TestWindowRect -Window ([IntPtr]$p.Hwnd)
+    return ($null -ne $again -and $again.Left -eq $p.Left -and $again.Right -eq $p.Right)
 }
 
 # How much of a pane window shows across its middle (T2287): its window
@@ -222,11 +251,15 @@ function Get-Samples([IntPtr]$top, [int]$ms) {
         $q = Find-Pane $panes $script:watchPane
         if ($null -ne $q -and $q.Visible) { $w = [pscustomobject]@{ Width = $q.Width; Shown = (Get-ShownWidth $q) } }
         $faces = @(Get-TestWindows -ProcessId $script:appPid -Class 'GhozttyStripFace' | Where-Object Visible)
+        # s2's banner (F19, T2661): on show, and how much of it its region shows.
+        $bn = $null
+        $bw = @(Get-TestWindows -ProcessId $script:appPid -Class 'GhozttyBannerOverlay' | Where-Object { $_.Visible -and $_.Hwnd -eq $script:watchBanner })
+        if ($bw.Count -eq 1) { $bn = [pscustomobject]@{ Left = $bw[0].Left; Width = $bw[0].Width; Shown = (Get-ShownWidth $bw[0]) } }
         # One photograph of the face mid-glide (F13); it may hide under us.
         if ($null -eq $script:faceShot -and $faces.Count -gt 0) {
             try { $script:faceShot = Get-TestWindowPixels -Window ([IntPtr]$faces[0].Hwnd) -Sync -AllowUniform -UniformTimeoutMs 0 } catch { }
         }
-        $out.Add([pscustomobject]@{ Ms = $sw.ElapsedMilliseconds; Panes = $panes; Stray = @(Get-StrayPopups $script:appPid $top); Watch = $w; Faces = $faces.Count })
+        $out.Add([pscustomobject]@{ Ms = $sw.ElapsedMilliseconds; Panes = $panes; Stray = @(Get-StrayPopups $script:appPid $top); Watch = $w; Faces = $faces.Count; Banner = $bn })
         Start-Sleep -Milliseconds 15
     }
     return $out
@@ -285,6 +318,18 @@ function Get-Opening([int]$from, [int]$to) {
     for ($i = $from; $i -lt [math]::Min($to, $lines.Count); $i++) {
         if ($lines[$i] -match 'stack unfold carried content_alpha=(\d+) card=(-?\d+),(\d+) live=(\d) frame=(\d) resizes=(\d+)') {
             $out += [pscustomobject]@{ Alpha = [int]$Matches[1]; Left = [int]$Matches[2]; Width = [int]$Matches[3]; Live = [int]$Matches[4]; Frame = [int]$Matches[5]; Resizes = [int]$Matches[6] }
+        }
+    }
+    return $out
+}
+# The `banner cut span left=L right=R width=W` oracle lines (T2661) from line
+# $from to line $to: a banner shown cut to its pane's card.
+function Get-BannerCuts([int]$from, [int]$to) {
+    $lines = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue)
+    $out = @()
+    for ($i = $from; $i -lt [math]::Min($to, $lines.Count); $i++) {
+        if ($lines[$i] -match 'banner cut span left=(-?\d+) right=(-?\d+) width=(\d+)') {
+            $out += [pscustomobject]@{ Left = [int]$Matches[1]; Right = [int]$Matches[2]; Width = [int]$Matches[3] }
         }
     }
     return $out
@@ -399,6 +444,8 @@ try {
     & $exe +split --direction=right --name=s1 | Out-Null
     Start-Sleep -Milliseconds 800
     & $exe +split --pane=s1 --direction=right --name=s2 | Out-Null
+    # F19 (T2661): s2, the pane that folds and comes back, wears a banner.
+    & $exe +set-banner --target=s2 "**T2661** - this banner comes back with its card" | Out-Null
     $c3 = @(Wait-Shown $top 3)
     if ($c3.Count -ne 3) { Write-TestAssertedNothing -Reason "three columns never came up (got $($c3.Count))" }
     Start-Sleep -Milliseconds 800
@@ -407,6 +454,9 @@ try {
     $hS1 = $c3[1].Hwnd
     $hS2 = $c3[2].Hwnd
     $script:watchPane = [int64]$hS2
+    $bannerWins = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyBannerOverlay' | Where-Object Visible)
+    $script:watchBanner = if ($bannerWins.Count -eq 1) { [int64]$bannerWins[0].Hwnd } else { [int64]0 }
+    Assert ($bannerWins.Count -eq 1) "F19 precondition: s2's banner is on show before the fold ($($bannerWins.Count) banner popups)"
     $pW0 = $c3[0].Width
     $s2Left0 = $c3[2].Left
     Say ("      dpi {0}; columns: {1}" -f $dpi, (Format-Cols $c3))
@@ -647,6 +697,18 @@ try {
             $land = if ($landed.Count -gt 0) { $landed[-1] } else { $null }
             $landSays = if ($land) { "resizes=$($land.Resizes) live=$($land.Live)" } else { 'no landed line' }
             Assert ($null -ne $land -and $land.Resizes -eq 0 -and $land.Live -eq 1) "F17: unfolding, s2 lands a live pane with 0 resizes since the motion started ($landSays)"
+            # F19 (T2661): the banner comes out with the card, cut to it.
+            $hiddenWithBanner = @($back | Where-Object {
+                    $q = Find-Pane $_.Panes $hS2
+                    $null -ne $q -and -not $q.Visible -and $null -ne $_.Banner -and $_.Banner.Shown -gt 0
+                })
+            $cutSpans = @(Get-BannerCuts $logBack $logEnd)
+            $cutWidths = @($cutSpans | ForEach-Object { $_.Right - $_.Left } | Where-Object { $_ -lt 0.8 * $s2Full } | Sort-Object -Unique)
+            Say ("      banner mid-unfold: on show over the carried card in {0} sample(s); cut to: {1} px" -f $hiddenWithBanner.Count, ($cutWidths -join ', '))
+            Assert ($hiddenWithBanner.Count -ge 2) "F19: unfolding, s2's banner is on show in $($hiddenWithBanner.Count) samples while its live window is off show (need 2+): it comes out with the card"
+            Assert ($cutWidths.Count -ge 2) "F19: unfolding, s2's banner is cut to $($cutWidths.Count) partial widths (need 2+): it widens with the card"
+            $bannerHome = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyBannerOverlay' | Where-Object { $_.Visible -and $_.Hwnd -eq $script:watchBanner }).Count
+            Assert ($bannerHome -eq 1) "F19: unfolded, s2's banner is on show at rest ($bannerHome)"
         }
         $barBack = @(Get-GlidingBar $logBack | Where-Object { $_.Shown -gt $_.Laid })
         $barBackAt = @($barBack | ForEach-Object Shown | Sort-Object -Unique)

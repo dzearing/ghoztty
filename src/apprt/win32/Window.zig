@@ -8953,7 +8953,7 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     // A card opening out of its strip (T2458): its pane is hidden at its new
     // size and the face is the whole card, from the strip's band alone until
     // the frame the pane draws at that size lands.
-    const opening = view.glide_unfold and view.glide_snap != .none;
+    const opening = view.openingCarried();
     if (!live and view.glide_snap != .ready and !opening) return false;
     // What of the card is drawn (Mac `paneRect.intersection(clip)`): the pane
     // window cut to its card, inside the client area.

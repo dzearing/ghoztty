@@ -399,6 +399,10 @@ pub const BannerOverlay = struct {
     /// for square ones (T1851), and the region last applied for it.
     card_corner: i32 = 0,
     card_region_key: u64 = 0,
+    /// The columns of the strip on show while its pane is cut - a blade
+    /// gliding out of its strip, a card past the window's edge (T2661) -
+    /// null while all of it is. The window region cuts the strip to them.
+    clip_span: ?banner_layout.Span = null,
     /// The banner sits inside an elevated pane's rounded card, so its own
     /// card's corners are concentric with the pane's (T1900,
     /// `banner_card.nestedRadius`) rather than the shared card radius.
@@ -675,12 +679,25 @@ pub const BannerOverlay = struct {
         // In the pane's own tree the window clips it and hides it with the
         // pane, so a fold, a hidden split or another tab needs nothing here.
         if (self.syncPath()) return self.placeVisual(scale);
-        if (!pane_clip.ownerWhollyInView(self.owner)) {
-            self.hide();
-            return;
-        }
         var rect: w32.RECT = undefined;
         if (w32.GetWindowRect(self.owner, &rect) == 0) return;
+        // A pane partly cut - mid-glide out of (or into) its strip, or past
+        // the window's edge - takes its banner cut to the same columns
+        // (T2661). It used to hide it for the whole glide (T2227), so a blade
+        // dragged back out came back without its banner.
+        const span = self.shownSpan(rect.right - rect.left) orelse {
+            self.hide();
+            return;
+        };
+        self.clip_span = if (span.isWhole(rect.right - rect.left)) null else span;
+        // The acceptance oracle (stack-fold-slide.ps1): a cut banner shown.
+        if (self.clip_span != null or w32.IsWindowVisible_(self.owner) == 0) log.debug("banner cut span left={d} right={d} width={d} at={d} owner_shown={}", .{
+            span.left,
+            span.right,
+            rect.right - rect.left,
+            rect.left,
+            w32.IsWindowVisible_(self.owner) != 0,
+        });
         // The owner spans the pane slot's full width (the layout only ever
         // offsets its TOP by the band), so its rect is the pane width the
         // banner content must size itself to (T123).
@@ -1212,6 +1229,35 @@ pub const BannerOverlay = struct {
         return self.glass_strip orelse self.bg_rgb;
     }
 
+    /// The strip's columns on show, for an owner `w` wide (T2661): cut by the
+    /// window where the pane runs past its edge, and by the pane's card
+    /// mid-slide. Null when none of it is, or the owner is hidden.
+    fn shownSpan(self: *const BannerOverlay, w: i32) ?banner_layout.Span {
+        // A card opening out of its strip keeps its pane window hidden for
+        // the whole glide while the strip face draws it (T2458); the banner
+        // comes out with the card, over it, rather than popping in when the
+        // glide lands (T2661).
+        if (w32.IsWindowVisible_(self.owner) == 0 and !self.openingCarried()) return null;
+        const view: ?banner_layout.ViewPart = switch (pane_clip.ownerClip(self.owner)) {
+            .whole => null,
+            .none => return null,
+            .part => |p| .{ .left = p.left, .top = p.top, .right = p.right },
+        };
+        const cut: ?banner_layout.Span = blk: {
+            const s = self.surface orelse break :blk null;
+            const pv = s.pane_view orelse break :blk null;
+            const shown = pv.card_region_shown orelse break :blk null;
+            break :blk .{ .left = shown.left, .right = shown.right };
+        };
+        return banner_layout.stripSpan(w, view, cut);
+    }
+
+    fn openingCarried(self: *const BannerOverlay) bool {
+        const s = self.surface orelse return false;
+        const pv = s.pane_view orelse return false;
+        return pv.openingCarried();
+    }
+
     fn applyCardCorner(self: *BannerOverlay) void {
         var wr: w32.RECT = undefined;
         if (w32.GetWindowRect(self.hwnd, &wr) == 0) return;
@@ -1227,7 +1273,8 @@ pub const BannerOverlay = struct {
     /// later: the black band beside the banner the user reported.
     fn applyCardCornerSized(self: *BannerOverlay, w: i32, h: i32, redraw: bool) void {
         const d = self.card_corner;
-        const key = banner_layout.cornerRegionKey(w, h, d);
+        const span = self.clip_span orelse banner_layout.Span{ .left = 0, .right = w };
+        const key = banner_layout.stripRegionKey(w, h, d, span);
         if (key == self.card_region_key) return;
         self.card_region_key = key;
         const r: w32.BOOL = if (redraw) 1 else 0;
@@ -1236,8 +1283,19 @@ pub const BannerOverlay = struct {
             return;
         }
         // The rounded rect runs a whole corner past the strip's bottom, so
-        // only its top corners fall inside the window.
-        const rgn = w32.CreateRoundRectRgn(0, 0, w + 1, h + d + 1, d, d) orelse return;
+        // only its top corners fall inside the window. Square, it is the
+        // plain rect.
+        const rgn = (if (d > 0)
+            w32.CreateRoundRectRgn(0, 0, w + 1, h + d + 1, d, d)
+        else
+            w32.CreateRectRgn(0, 0, w, h)) orelse return;
+        // A cut strip keeps only the columns on show (T2661).
+        if (!span.isWhole(w)) {
+            if (w32.CreateRectRgn(span.left, 0, span.right, h)) |cut| {
+                _ = w32.CombineRgn(rgn, rgn, cut, w32.RGN_AND);
+                _ = w32.DeleteObject(cut);
+            }
+        }
         // The system owns the region from here; it is never deleted.
         if (w32.SetWindowRgn(self.hwnd, rgn, r) == 0) _ = w32.DeleteObject(rgn);
     }
