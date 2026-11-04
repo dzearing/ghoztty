@@ -53,6 +53,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const App = @import("App.zig");
+const FrameClock = @import("FrameClock.zig");
 const Window = @import("Window.zig");
 const build_config = @import("../../build_config.zig");
 const configpkg = @import("../../config.zig");
@@ -229,6 +230,15 @@ toast_expanded: bool = false,
 /// The last Undo was refused because the file changed since.
 toast_refused: bool = false,
 toast_ms: u32 = settings_advanced.toast_ms,
+/// The timed-out toast is sliding away (T2684): when its exit started, in
+/// `std.time.milliTimestamp` ms. Null while it rests or is gone.
+toast_leave_start: ?i64 = null,
+/// Debug seam: force the toast's motion on or off instead of asking Windows'
+/// "Animation effects" setting (`--op=toast_motion`).
+toast_motion_override: ?bool = null,
+/// The frames the last exit painted, `{drop, alpha}`, for the acceptance
+/// seam (`toast_motion` in the `settings` state).
+toast_trace: ToastTrace = .{},
 /// Debug builds: `GHOZTTY_SETTINGS_SHELL_DRY` records what an Open / Show
 /// in Explorer would launch here instead of launching it (the seam's).
 last_shell: ?[]u8 = null,
@@ -448,6 +458,7 @@ fn destroyState(self: *SettingsWindow) void {
 fn close(self: *SettingsWindow) void {
     // A field being edited commits on close, as it does on losing focus.
     self.commitEdit();
+    FrameClock.disarm(self.hwnd, toast_anim_timer_id);
     active = null;
     _ = w32.SetWindowLongPtrW(self.hwnd, w32.GWLP_USERDATA, 0);
     _ = w32.DestroyWindow(self.hwnd);
@@ -578,17 +589,99 @@ fn noteChange(self: *SettingsWindow) void {
     self.toast_seq = self.model.change_seq;
     self.toast_expanded = false;
     self.toast_refused = false;
+    // A change landing while the last one slides away shows at once, as on
+    // Mac (it appears outside any animation).
+    self.stopToastLeave();
     if (self.isWindow()) _ = w32.SetTimer(self.hwnd, toast_timer_id, self.toast_ms, null);
 }
 
 /// The toast's timer, on this window's own hwnd (not `App.msg_hwnd`).
 const toast_timer_id: usize = 1;
+/// The leaving toast's frames (T2684), on the app's frame clock. (2 is the
+/// preview's cursor blink, `settings_preview_view.blink_timer_id`.)
+const toast_anim_timer_id: usize = 3;
+comptime {
+    std.debug.assert(toast_anim_timer_id != preview_view.blink_timer_id);
+}
 
 fn onToastTimer(self: *SettingsWindow) void {
     _ = w32.KillTimer(self.hwnd, toast_timer_id);
     // Mac keeps an expanded toast up until it is dismissed.
     if (self.toast_expanded or self.model.last_change == null) return;
-    self.dismissToast();
+    self.startToastLeave();
+}
+
+/// Up to this many frames of the last exit are kept for the seam.
+pub const ToastTrace = struct {
+    pub const max = 64;
+    frames: [max][2]i32 = undefined,
+    len: usize = 0,
+    /// The exit ran to its end (the toast is gone because it finished
+    /// sliding, not because something cut it short).
+    completed: bool = false,
+    /// It went without moving (motion off).
+    instant: bool = false,
+
+    pub fn reset(self: *ToastTrace) void {
+        self.* = .{};
+    }
+
+    pub fn add(self: *ToastTrace, drop: i32, alpha: u8) void {
+        if (self.len == max) return;
+        self.frames[self.len] = .{ drop, alpha };
+        self.len += 1;
+    }
+};
+
+/// Does the toast move? Windows' "Animation effects" (and Remote Desktop)
+/// decide, unless the debug seam has.
+pub fn toastAnimates(self: *const SettingsWindow) bool {
+    return self.toast_motion_override orelse App.clientAreaAnimationsEnabled();
+}
+
+/// The six seconds are up: slide the toast down and fade it (Mac's
+/// `withAnimation { model.dismissLastChange() }`), or take it away at once
+/// when motion is off.
+fn startToastLeave(self: *SettingsWindow) void {
+    self.toast_trace.reset();
+    if (!self.toastAnimates() or !self.isWindow()) {
+        self.toast_trace.instant = true;
+        self.dismissToast();
+        return;
+    }
+    self.toast_leave_start = std.time.milliTimestamp();
+    if (!FrameClock.arm(self.hwnd, toast_anim_timer_id, 16)) {
+        self.toast_leave_start = null;
+        self.toast_trace.instant = true;
+        self.dismissToast();
+        return;
+    }
+    self.invalidate();
+}
+
+fn stopToastLeave(self: *SettingsWindow) void {
+    if (self.toast_leave_start == null) return;
+    self.toast_leave_start = null;
+    if (self.isWindow()) FrameClock.disarm(self.hwnd, toast_anim_timer_id);
+}
+
+/// How far into its exit the toast is, or null when it is not leaving.
+pub fn toastLeaveElapsed(self: *const SettingsWindow) ?u64 {
+    const start = self.toast_leave_start orelse return null;
+    return @intCast(@max(0, std.time.milliTimestamp() - start));
+}
+
+fn onToastAnimTick(self: *SettingsWindow) void {
+    const elapsed = self.toastLeaveElapsed() orelse {
+        FrameClock.disarm(self.hwnd, toast_anim_timer_id);
+        return;
+    };
+    if (elapsed >= settings_advanced.toast_leave_ms) {
+        self.toast_trace.completed = true;
+        self.dismissToast();
+        return;
+    }
+    self.invalidate();
 }
 
 pub fn reader(self: *const SettingsWindow) ?Reader {
@@ -1464,6 +1557,8 @@ pub fn undoLast(self: *SettingsWindow) SettingsModel.UndoResult {
     const result = self.model.undoLastChange() catch .failed;
     self.in_write = false;
     self.toast_refused = result == .changed_since;
+    // Undo takes the toast away (or keeps it, refused) at once, as on Mac.
+    self.stopToastLeave();
     if (result == .changed_since) {
         // Mac's toast keeps its change; it stays up until dismissed.
         self.toast_expanded = false;
@@ -1476,6 +1571,7 @@ pub fn undoLast(self: *SettingsWindow) SettingsModel.UndoResult {
 
 pub fn dismissToast(self: *SettingsWindow) void {
     if (self.isWindow()) _ = w32.KillTimer(self.hwnd, toast_timer_id);
+    self.stopToastLeave();
     self.model.dismissLastChange();
     self.toast_expanded = false;
     self.toast_refused = false;
@@ -3269,6 +3365,10 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             }
             if (wparam == preview_view.blink_timer_id) {
                 preview_view.tick(self);
+                return 0;
+            }
+            if (wparam == toast_anim_timer_id) {
+                self.onToastAnimTick();
                 return 0;
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);

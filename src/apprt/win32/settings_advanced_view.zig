@@ -185,9 +185,7 @@ pub fn paintToast(w: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, f: lay
     const change = w.model.last_change orelse return;
     const view = f.list;
     const m = px(w, dip.margin);
-    const g = px(w, dip.gap);
     const t = px(w, dip.tight);
-    const pad_x = px(w, toast_pad_x);
     const pad_y = px(w, toast_pad_y);
     const lh = w.text.lineHeight(.strong);
     const ch = w.text.lineHeight(.caption);
@@ -198,10 +196,49 @@ pub fn paintToast(w: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, f: lay
     if (w.toast_expanded) h += t + @as(i32, @intCast(change.removed.len + change.added.len)) * ch;
     if (w.toast_refused) h += t + ch;
     const r: Rect = .{ .x = view.x + @divTrunc(view.w - f.scrollbar.w - tw, 2), .y = view.y + view.h - m - h, .w = tw, .h = h };
+    const shadow = px(w, 3);
+
+    const elapsed = w.toastLeaveElapsed() orelse return paintCard(w, hdc, p, r, change, true);
+    // Leaving (T2684): slid `drop` px toward the form's bottom edge and faded
+    // to `alpha`. Mac's `.move(edge: .bottom)` carries it clear of that edge,
+    // so the slide is its height, its shadow and the gap under it.
+    const frame = adv.toastLeave(elapsed, h + shadow + m);
+    w.toast_trace.add(frame.drop, frame.alpha);
+    if (frame.done or frame.alpha == 0) return;
+    // Clip to the form: the slide passes under its bottom edge.
+    const bottom = view.y + view.h;
+    const box: Rect = .{ .x = r.x, .y = r.y + frame.drop, .w = r.w, .h = @min(r.h + shadow, bottom - (r.y + frame.drop)) };
+    if (box.h <= 0) return;
+    // The card, painted over a copy of what is under it, then laid back
+    // down at the frame's opacity. No hits: a leaving toast is not a target,
+    // as a SwiftUI view in its removal transition is not.
+    const mem = w32.CreateCompatibleDC(hdc) orelse return;
+    defer _ = w32.DeleteDC(mem);
+    const bmp = w32.CreateCompatibleBitmap(hdc, box.w, box.h) orelse return;
+    defer _ = w32.DeleteObject(bmp);
+    const old = w32.SelectObject(mem, bmp);
+    defer _ = w32.SelectObject(mem, old);
+    _ = w32.BitBlt(mem, 0, 0, box.w, box.h, hdc, box.x, box.y, w32.SRCCOPY);
+    _ = w32.SetBkMode(mem, w32.TRANSPARENT);
+    _ = w32.SetViewportOrgEx(mem, -box.x, -box.y, null);
+    paintCard(w, mem, p, .{ .x = r.x, .y = r.y + frame.drop, .w = r.w, .h = r.h }, change, false);
+    _ = w32.SetViewportOrgEx(mem, 0, 0, null);
+    _ = w32.AlphaBlend(hdc, box.x, box.y, box.w, box.h, mem, 0, 0, box.w, box.h, .{ .SourceConstantAlpha = frame.alpha, .AlphaFormat = 0 });
+}
+
+/// The toast's card at `r`: shadow, card, the change line and its links, and
+/// the expanded diff / refused note. `hits` is false for a leaving toast.
+fn paintCard(w: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, r: Rect, change: SettingsModel.LastChange, hits: bool) void {
+    const g = px(w, dip.gap);
+    const t = px(w, dip.tight);
+    const pad_x = px(w, toast_pad_x);
+    const pad_y = px(w, toast_pad_y);
+    const lh = w.text.lineHeight(.strong);
+    const ch = w.text.lineHeight(.caption);
     // A soft drop shadow, then the card.
     SettingsWindow.roundRect(hdc, .{ .x = r.x, .y = r.y + px(w, 3), .w = r.w, .h = r.h }, px(w, toast_radius), cr(p.divider), null, 1);
     SettingsWindow.roundRect(hdc, r, px(w, toast_radius), cr(p.card), cr(p.card_border), w.hair());
-    w.hit(.{ .rect = r, .kind = .toast_body });
+    if (hits) w.hit(.{ .rect = r, .kind = .toast_body });
 
     const top = r.y + pad_y;
     var x = r.x + pad_x;
@@ -212,7 +249,7 @@ pub fn paintToast(w: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, f: lay
     const cw = w.text.measure(hdc, close_glyph, .{}, .caption).cx;
     rx -= cw;
     _ = w.text.drawText(hdc, rx, top + @divTrunc(lh - ch, 2), close_glyph, .{}, .caption, cr(p.secondary), true);
-    w.hit(.{ .rect = .{ .x = rx - t, .y = top, .w = cw + 2 * t, .h = lh }, .kind = .toast_dismiss });
+    if (hits) w.hit(.{ .rect = .{ .x = rx - t, .y = top, .w = cw + 2 * t, .h = lh }, .kind = .toast_dismiss });
     const links = [_]struct { label: []const u8, kind: Hit.Kind }{
         .{ .label = "Undo", .kind = .toast_undo },
         .{ .label = if (w.toast_expanded) "Hide Change" else "Show Change", .kind = .toast_show },
@@ -221,7 +258,7 @@ pub fn paintToast(w: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, f: lay
         const lw = w.text.measure(hdc, l.label, .{}, .body).cx;
         rx -= g + lw + g;
         _ = w.text.drawText(hdc, rx, top + @divTrunc(lh - w.text.lineHeight(.body), 2), l.label, .{}, .body, cr(p.accent), true);
-        w.hit(.{ .rect = .{ .x = rx, .y = top, .w = lw, .h = lh }, .kind = l.kind });
+        if (hits) w.hit(.{ .rect = .{ .x = rx, .y = top, .w = lw, .h = lh }, .kind = l.kind });
     }
 
     const tick = "\u{2714}";

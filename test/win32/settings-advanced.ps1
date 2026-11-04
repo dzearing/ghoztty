@@ -229,6 +229,49 @@ try {
     Start-Sleep -Milliseconds 2500
     $s = Invoke-Settings @('--op=state')
     Assert ($null -ne $s.data.toast -and [bool]$s.data.toast.expanded) 'F: an expanded toast stays until dismissed'
+    [void](Invoke-Settings @('--op=dismiss'))
+
+    # =====================================================================
+    # F2 (T2684): a timed-out toast slides down and fades, as Mac's
+    # withAnimation { dismissLastChange() } over .move(edge: .bottom) +
+    # .opacity does; with Windows' animations off it just goes. The oracle
+    # is the frames the window actually painted ([drop px, alpha]).
+    # =====================================================================
+    [void](Invoke-Settings @('--op=toast_motion', '--value=on'))
+    $s = Invoke-Settings @('--op=set', '--key=font-size', '--value=21')
+    Assert ($null -ne $s.data.toast -and -not [bool]$s.data.toast.leaving) 'F2: a write raises the toast at rest (it appears without motion, as on Mac)'
+    $sawLeaving = $false
+    $deadline = (Get-Date).AddMilliseconds(3000)
+    while ((Get-Date) -lt $deadline) {
+        $s = Invoke-Settings @('--op=state')
+        if ($s.data.toast -and [bool]$s.data.toast.leaving) { $sawLeaving = $true }
+        if ($null -eq $s.data.toast) { break }
+        Start-Sleep -Milliseconds 40
+    }
+    $m = $s.data.toast_motion
+    $frames = @($m.frames | ForEach-Object { , @([int]$_[0], [int]$_[1]) })
+    Assert ($null -eq $s.data.toast) 'F2: the timed-out toast is gone at the end'
+    Assert $sawLeaving 'F2: ...and was seen leaving on the way (toast.leaving)'
+    Assert ([bool]$m.completed -and -not [bool]$m.instant) "F2: the exit ran to its end (completed=$($m.completed) instant=$($m.instant))"
+    Assert ($frames.Count -ge 3) "F2: the exit painted several frames ($($frames.Count))"
+    $mono = $true
+    for ($i = 1; $i -lt $frames.Count; $i++) {
+        if ($frames[$i][0] -lt $frames[$i - 1][0] -or $frames[$i][1] -gt $frames[$i - 1][1]) { $mono = $false }
+    }
+    Assert $mono "F2: every frame is lower and fainter than the last ($(($frames | ForEach-Object { "$($_[0])/$($_[1])" }) -join ' '))"
+    $between = @($frames | Where-Object { $_[0] -gt 0 -and $_[1] -gt 0 -and $_[1] -lt 255 })
+    Assert ($between.Count -ge 1) 'F2: some frame is part-way down and part-faded (it moves, not jumps)'
+
+    [void](Invoke-Settings @('--op=toast_motion', '--value=off'))
+    $s = Invoke-Settings @('--op=set', '--key=font-size', '--value=22')
+    Start-Sleep -Milliseconds 1500
+    $s = Invoke-Settings @('--op=state')
+    $m = $s.data.toast_motion
+    Assert ($null -eq $s.data.toast -and -not [bool]$m.animates) 'F2: with animations off the toast still times out'
+    Assert ([bool]$m.instant -and @($m.frames).Count -eq 0) "F2: ...instantly, painting no exit frames (instant=$($m.instant) frames=$(@($m.frames).Count))"
+    $bad = Invoke-Settings @('--op=toast_motion', '--value=sometimes')
+    Assert ($null -ne $bad -and -not $bad.success) 'F2: a toast_motion other than on/off/system is refused'
+    [void](Invoke-Settings @('--op=toast_motion', '--value=system'))
     $s = Invoke-Settings @('--op=toast_ms', '--value=600000')
 
     # =====================================================================

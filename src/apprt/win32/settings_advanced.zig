@@ -11,6 +11,57 @@ const SettingsSources = @import("SettingsSources.zig");
 /// How long the toast stays up untouched (Mac's `Task.sleep(6s)`).
 pub const toast_ms: u32 = 6000;
 
+/// The timed-out toast's exit (T2684). Mac dismisses it with `withAnimation {
+/// model.dismissLastChange() }` over `.transition(.move(edge: .bottom)
+/// .combined(with: .opacity))`, so it slides down off the bottom of the form
+/// while it fades. That is the ONLY animated path on Mac: a write raises the
+/// toast, and the x and Undo take it away, outside any `withAnimation`, so
+/// SwiftUI shows and removes it instantly there - and so does Windows.
+/// SwiftUI's default animation is an ease-in-out of this length.
+pub const toast_leave_ms: u32 = 350;
+
+/// One frame of the leaving toast.
+pub const ToastLeave = struct {
+    /// How far it has slid down, in px (0 = where it rests).
+    drop: i32,
+    /// Its opacity, 255 = fully shown.
+    alpha: u8,
+    /// The exit is over: the toast is gone.
+    done: bool,
+};
+
+/// The leaving toast `elapsed_ms` into its exit, for a slide of `travel` px
+/// (its height plus the gap under it, so `.move(edge: .bottom)` carries it
+/// clear of the form's bottom edge).
+pub fn toastLeave(elapsed_ms: u64, travel: i32) ToastLeave {
+    if (elapsed_ms >= toast_leave_ms) return .{ .drop = travel, .alpha = 0, .done = true };
+    const t = easeInOut(@as(f64, @floatFromInt(elapsed_ms)) / @as(f64, @floatFromInt(toast_leave_ms)));
+    return .{
+        .drop = @intFromFloat(@round(t * @as(f64, @floatFromInt(travel)))),
+        .alpha = @intFromFloat(@round((1 - t) * 255)),
+        .done = false,
+    };
+}
+
+/// SwiftUI's `.easeInOut`: the cubic Bezier (0.42, 0) (0.58, 1), solved for
+/// x by bisection (monotonic, so it always converges).
+fn easeInOut(x: f64) f64 {
+    const c = std.math.clamp(x, 0, 1);
+    var lo: f64 = 0;
+    var hi: f64 = 1;
+    var s: f64 = c;
+    for (0..32) |_| {
+        s = (lo + hi) / 2;
+        if (bezier(s, 0.42, 0.58) < c) lo = s else hi = s;
+    }
+    return bezier(s, 0, 1);
+}
+
+fn bezier(s: f64, p1: f64, p2: f64) f64 {
+    const u = 1 - s;
+    return 3 * u * u * s * p1 + 3 * u * s * s * p2 + s * s * s;
+}
+
 /// The backups row's caption.
 pub fn backupsNote(backed_up_this_session: bool) []const u8 {
     return if (backed_up_this_session)
@@ -144,6 +195,35 @@ test "settings_advanced: Mac's captions" {
     );
     try testing.expectEqualStrings("included", SourceKind.included.tag());
     try testing.expectEqualStrings("also loaded", SourceKind.also_loaded.tag());
+}
+
+test "settings_advanced: the timed-out toast slides down and fades (T2684)" {
+    // At rest at the start, fully shown.
+    const start = toastLeave(0, 100);
+    try testing.expectEqual(@as(i32, 0), start.drop);
+    try testing.expectEqual(@as(u8, 255), start.alpha);
+    try testing.expect(!start.done);
+    // Halfway through an ease-in-out is halfway down and half faded.
+    const mid = toastLeave(toast_leave_ms / 2, 100);
+    try testing.expect(mid.drop >= 49 and mid.drop <= 51);
+    try testing.expect(mid.alpha >= 126 and mid.alpha <= 129);
+    // Eased: slow off the mark, so a quarter in it has gone less than a quarter.
+    try testing.expect(toastLeave(toast_leave_ms / 4, 100).drop < 25);
+    // Every step moves down and fades - never back.
+    var prev = start;
+    var ms: u64 = 0;
+    while (ms <= toast_leave_ms) : (ms += 16) {
+        const f = toastLeave(ms, 100);
+        try testing.expect(f.drop >= prev.drop);
+        try testing.expect(f.alpha <= prev.alpha);
+        prev = f;
+    }
+    // And it lands fully gone, clear of the bottom edge.
+    const end = toastLeave(toast_leave_ms, 100);
+    try testing.expect(end.done);
+    try testing.expectEqual(@as(i32, 100), end.drop);
+    try testing.expectEqual(@as(u8, 0), end.alpha);
+    try testing.expect(toastLeave(toast_leave_ms * 10, 100).done);
 }
 
 test "settings_advanced: paths compare the Windows way" {

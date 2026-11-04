@@ -34,6 +34,10 @@
 //! {"action":"settings","arguments":["--op=show_change"]}          (Show / Hide Change)
 //! {"action":"settings","arguments":["--op=dismiss"]}              (the toast's x)
 //! {"action":"settings","arguments":["--op=toast_ms","--value=600000"]}
+//! {"action":"settings","arguments":["--op=toast_motion","--value=off"]}    (on / off / system - T2684)
+//!   -> "toast" adds "leaving" (sliding away now), and "toast_motion":
+//!      {"animates","leaving","completed","instant","frames":[[drop,alpha],...]}
+//!      describes the last timed-out exit: the frames it painted
 //! The live sections (T2680):
 //! {"action":"settings","arguments":["--op=check_updates"]}   (Updates' Check for Updates...)
 //! {"action":"settings","arguments":["--op=click","--value=pane_style:flat"]}
@@ -101,6 +105,7 @@ pub const Op = enum {
     show_change,
     dismiss,
     toast_ms,
+    toast_motion,
     open_editor,
     reveal_file,
     open_source,
@@ -271,6 +276,17 @@ pub fn handle(app: *App, alloc: Allocator, arguments: ?[]const []const u8) Alloc
             const v = req.value orelse return errorResponse(alloc, "--value=<ms> is required for --op=toast_ms", .{});
             w.toast_ms = std.fmt.parseInt(u32, v, 10) catch return errorResponse(alloc, "--value must be a number of milliseconds", .{});
         },
+        .toast_motion => {
+            const v = req.value orelse "";
+            w.toast_motion_override = if (std.mem.eql(u8, v, "on"))
+                true
+            else if (std.mem.eql(u8, v, "off"))
+                false
+            else if (std.mem.eql(u8, v, "system"))
+                null
+            else
+                return errorResponse(alloc, "--value must be on, off or system for --op=toast_motion", .{});
+        },
         .open_editor => w.openEditor(),
         .reveal_file => w.revealConfigFile(),
         .open_source => w.openSource(req.index orelse 0),
@@ -388,8 +404,32 @@ fn writeAdvanced(jws: *std.json.Stringify, w: *SettingsWindow) !void {
         try jws.write(w.toast_expanded);
         try jws.objectField("refused");
         try jws.write(w.toast_refused);
+        try jws.objectField("leaving");
+        try jws.write(w.toast_leave_start != null);
         try jws.endObject();
     } else try jws.write(null);
+
+    const tr = &w.toast_trace;
+    try jws.objectField("toast_motion");
+    try jws.beginObject();
+    try jws.objectField("animates");
+    try jws.write(w.toastAnimates());
+    try jws.objectField("leaving");
+    try jws.write(w.toast_leave_start != null);
+    try jws.objectField("completed");
+    try jws.write(tr.completed);
+    try jws.objectField("instant");
+    try jws.write(tr.instant);
+    try jws.objectField("frames");
+    try jws.beginArray();
+    for (tr.frames[0..tr.len]) |fr| {
+        try jws.beginArray();
+        try jws.write(fr[0]);
+        try jws.write(fr[1]);
+        try jws.endArray();
+    }
+    try jws.endArray();
+    try jws.endObject();
 }
 
 /// The live sections' snapshot and their painted hits (T2680).
