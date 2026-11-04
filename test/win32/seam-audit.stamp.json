@@ -1,10 +1,13 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-03T15:22:58-08:00",
-    "commit":  "7d7a08798",
+    "generated":  "2026-11-03T17:17:19-08:00",
+    "commit":  "855f03d71",
     "uncommitted":  [
-
+                        "src/os/main.zig",
+                        "src/os/reusable_thread.zig",
+                        "src/renderer/OpenGL.zig",
+                        "src/termio/Exec.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -427,7 +430,7 @@
                   "src/os/log_stamp.zig":  "3473329b92837b3f42ca046a5733636846933794165b2f000ee1c416ab356756",
                   "src/os/mach.zig":  "c7f44fb3ba8e4b568cc098dddd9025e4b8ab1352905067b7d5c26f83705e9840",
                   "src/os/macos.zig":  "b78dfb6371ed0a17a48d37824e5e9d3df95142754f3bb2818702f5f9d53d75b7",
-                  "src/os/main.zig":  "2d4c097aac5557c65d4bd9c15f647f5934cfa5ddf3d9c83995b89e7089d0ce4c",
+                  "src/os/main.zig":  "5b7cd095b7d172bb01e97d7c5b1bf3251fc2249efc28b11d30db67f1dac6709f",
                   "src/os/mouse.zig":  "1985c8f2513d0bbf8ac6a63bce2517050a35ce947c2c24c2b9ca229e064f1b3c",
                   "src/os/open.zig":  "99273e4cb84082de01dc87766a2d5724f0237a313a0f195431106548dedfa3fe",
                   "src/os/passwd.zig":  "1913a8c1626d68cbc322cd509f19655ac0a50554e994e44d1708595f82cb566b",
@@ -437,6 +440,7 @@
                   "src/os/power.zig":  "65f3f339ebd6106223bea6248921e86cada58a37dbbf4c6b8228206ae2d7a7c9",
                   "src/os/process_cwd.zig":  "af02cad98d3e4028e6d97128c3cf20d9d7cdd83d0b6013ee647c4fdac8f6bc98",
                   "src/os/resourcesdir.zig":  "e298e6ab9c15cfa27709505e5f8dcc5567ec18a437ee42dca74240f354f77aab",
+                  "src/os/reusable_thread.zig":  "478bee8277f067496635abde8aecf71f650568667f69cebe7c0442b464f512bd",
                   "src/os/self_exe.zig":  "9472a506cd7c2d044f0f43048b2a89f78b38eded7bca3e1af35690182174487e",
                   "src/os/shell.zig":  "1fa83705f39d9e7b2ab0ec9cbb1f104fb06884a13434532088120e4ece7cfb7b",
                   "src/os/source_checkout.zig":  "63291415bd09a9c53edbbe6fe55533f749abfbf35894df04a1448dd8e64f14e7",
@@ -532,7 +536,7 @@
                   "src/renderer/low_power.zig":  "561c61649c3385011078e4c7646604e1f28b70e3cd6889967b8d997e8788e8cb",
                   "src/renderer/message.zig":  "ea7a01ec29b0fc5ba99beccb00b090a6d910dbcc23575796c2a840d5a32d11e7",
                   "src/renderer/Metal.zig":  "805d79782476bdfd4946d578134becc2483d73dcee7af7a495cdbdd8e428d6f4",
-                  "src/renderer/OpenGL.zig":  "d0ec9d5c8acc21f579ae6c1656d6dd307960079d8cc13d0e9a5850badcbe94ba",
+                  "src/renderer/OpenGL.zig":  "511615bbc37af19243a47edc8fcaa3945c2a150500b11e562676da3e5b4b0b92",
                   "src/renderer/Options.zig":  "884d0510167fbc720bde36b502c75ff9ed4b5fcce47a07c8c3b74cbc490ed6fd",
                   "src/renderer/Overlay.zig":  "7cbdcee4452a18989936b19ad73484a64182d9660bd25dc95997ec18edec109e",
                   "src/renderer/row.zig":  "ce727bca68fd0ed3854ba19447c9e10150cf55916ef6320d9e41ec0e82a2fb1a",
@@ -544,7 +548,7 @@
                   "src/termio/attach_failed_notice.zig":  "4e2bd13143f7b65eb9ed2d5ea66cb028c4c32cd4704fb26af284fbe51e8fe4c2",
                   "src/termio/backend.zig":  "96c7db442eb93e1a2c8156f73b5a91a447a72f66a75cea3d0b030e448a9f0a6d",
                   "src/termio/conpty_sync_hold.zig":  "3674f41c08c9257d82578e47c2761d03dcd72a59613d137bf61484fc1b35a0f1",
-                  "src/termio/Exec.zig":  "2336a594bde392d418d326cc281d25970b5a1b495a5b1caa35f98fd971e1e1cc",
+                  "src/termio/Exec.zig":  "9de95b2d9af6e827d3ddc9b708654359816fd4165ab5557b176c977b4383c6b8",
                   "src/termio/history_guard.zig":  "f06519c1f847bf49afb69a8252e45c15f1aa482d2203c6b7d29bd6f0c30e40d0",
                   "src/termio/mailbox.zig":  "a5748995fd75541b2af396b5f7af0ddc8c009eea03c4a4c08bd55e85574521a4",
                   "src/termio/message.zig":  "1032a3be79b1c61cc689636d41afd64a43f889773a5e2e596c528a38d528bfb6",

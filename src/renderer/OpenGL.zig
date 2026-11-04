@@ -473,6 +473,13 @@ pub fn threadEnter(self: *const OpenGL, surface: *apprt.Surface) !void {
             // rather than falling through to its `@ptrCast` branch.
             const loader: gl_loader.GladLoadFn = gl_loader.gladLoad;
             try prepareContext(loader);
+
+            // The OS thread is pooled (T2644, `os/reusable_thread.zig`): it
+            // may have rendered another pane before this one, so per-thread
+            // state starts over here rather than at thread creation.
+            reset_status_resolved = false;
+            reset_status_fn = null;
+            perf.reset();
         },
     }
 }
@@ -1038,6 +1045,16 @@ const perf = struct {
     threadlocal var max_gap_ns: u64 = 0;
     threadlocal var swap_total_ns: u64 = 0;
     threadlocal var swap_max_ns: u64 = 0;
+
+    /// A pooled renderer thread starts each pane with a fresh window (T2644).
+    fn reset() void {
+        window_start = null;
+        last_frame = null;
+        frames = 0;
+        max_gap_ns = 0;
+        swap_total_ns = 0;
+        swap_max_ns = 0;
+    }
 
     fn isOn() bool {
         return enabled orelse on: {

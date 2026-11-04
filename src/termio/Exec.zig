@@ -30,6 +30,11 @@ const PasswdEntry = internal_os.passwd.Entry;
 const windows = internal_os.windows;
 const ProcessInfo = @import("../pty.zig").ProcessInfo;
 
+/// Every pane's PTY reader runs on a thread from here on Windows (T2644): a
+/// thread that exits while any GL context is alive strands NVIDIA driver
+/// memory, so the reader is parked on close rather than exited.
+var read_thread_pool: internal_os.reusable_thread.Pool = .{ .name = "io-reader" };
+
 const log = std.log.scoped(.io_exec);
 
 /// The termios poll rate in milliseconds.
@@ -159,8 +164,8 @@ pub fn threadEnter(
     } };
 
     // Start our read thread
-    const read_thread = try std.Thread.spawn(
-        .{},
+    const read_thread = try internal_os.reusable_thread.spawnPane(
+        &read_thread_pool,
         if (builtin.os.tag == .windows) ReadThread.threadMainWindows else ReadThread.threadMainPosix,
         .{ pty_fds.read, io, pipe[0], &td.backend.exec.read_activity },
     );
@@ -236,7 +241,6 @@ pub fn threadExit(self: *Exec, td: *termio.Termio.ThreadData) void {
         // cancel left join() below hung forever on the GUI thread. Retry
         // until the thread exits; it re-checks the quit byte before every
         // blocking read, so this converges immediately.
-        const read_thread_handle = exec.read_thread.getHandle();
         while (true) {
             if (windows.kernel32.CancelIoEx(exec.read_thread_fd, null) == 0) {
                 switch (windows.kernel32.GetLastError()) {
@@ -244,10 +248,9 @@ pub fn threadExit(self: *Exec, td: *termio.Termio.ThreadData) void {
                     else => |err| log.warn("error interrupting read thread err={}", .{err}),
                 }
             }
-            if (windows.kernel32.WaitForSingleObject(
-                read_thread_handle,
-                20,
-            ) != windows.WAIT_TIMEOUT) break;
+            // The reader is pooled (T2644), so its OS thread never exits:
+            // wait for the call to return, not for a thread handle.
+            if (exec.read_thread.timedWait(20 * std.time.ns_per_ms)) break;
         }
     }
 
@@ -644,8 +647,8 @@ pub const ThreadData = struct {
     // we aren't compiling with Flatpak support this is zero-sized.
     flatpak_wait_c: FlatpakHostCommand.Completion = .{},
 
-    /// Reader thread state
-    read_thread: std.Thread,
+    /// Reader thread state. Pooled on Windows (T2644, `os/reusable_thread.zig`).
+    read_thread: internal_os.reusable_thread.PaneThread,
     read_thread_pipe: posix.fd_t,
     read_thread_fd: posix.fd_t,
 

@@ -47,6 +47,7 @@ pub const uri = @import("uri.zig");
 
 // Functions and types
 pub const CFReleaseThread = @import("cf_release_thread.zig");
+pub const reusable_thread = @import("reusable_thread.zig");
 pub const TempDir = @import("TempDir.zig");
 pub const GetEnvResult = env.GetEnvResult;
 pub const getEnvMap = env.getEnvMap;
@@ -94,6 +95,7 @@ test {
     _ = path;
     _ = path_env;
     _ = process_cwd;
+    _ = reusable_thread;
     _ = self_exe;
     _ = source_checkout;
     _ = uri;

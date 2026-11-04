@@ -1,15 +1,15 @@
 {
     "guard":  "hidden-window-memory",
     "script":  "test/win32/hidden-window-memory.ps1",
-    "generated":  "2026-11-02T06:24:44-08:00",
-    "commit":  "226154291",
+    "generated":  "2026-11-03T17:23:19-08:00",
+    "commit":  "855f03d71",
     "uncommitted":  [
-                        "test/win32/lib/ProcessMemory.ps1"
+                        "src/renderer/OpenGL.zig"
                     ],
     "files":  {
                   "src/apprt/win32/occlusion.zig":  "c023a0d61a79847d49a8992c757c944374712139da561dff6c85f773df93f3b6",
                   "src/renderer/generic.zig":  "4a86a8a796822cc44905163852f7f67df70f283f72d0ccd0b3bfa97212b8fe23",
-                  "src/renderer/OpenGL.zig":  "d0ec9d5c8acc21f579ae6c1656d6dd307960079d8cc13d0e9a5850badcbe94ba",
+                  "src/renderer/OpenGL.zig":  "511615bbc37af19243a47edc8fcaa3945c2a150500b11e562676da3e5b4b0b92",
                   "test/win32/hidden-window-memory.ps1":  "31e7f5d91bc68265640003f052f623e12ab11a7c7eb87d0f17fa4c136e13330d",
                   "test/win32/lib/ProcessMemory.ps1":  "d742e9813857e5dff6e8c1a9559ebb392c4826bcf61d10c4e768760edc38b5b1"
               }

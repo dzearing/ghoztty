@@ -39,6 +39,11 @@ const Duration = configpkg.Config.Duration;
 const input = @import("input.zig");
 const App = @import("App.zig");
 const internal_os = @import("os/main.zig");
+
+/// On Windows every pane's renderer and IO threads come from these pools
+/// (T2644, see `renderer_thr`); elsewhere they are plain `std.Thread`s.
+var renderer_pool: internal_os.reusable_thread.Pool = .{ .name = "renderer" };
+var io_pool: internal_os.reusable_thread.Pool = .{ .name = "io" };
 const inspectorpkg = @import("inspector/main.zig");
 const SurfaceMouse = @import("surface_mouse.zig");
 const ProcessInfo = @import("pty.zig").ProcessInfo;
@@ -193,8 +198,12 @@ renderer_state: rendererpkg.State,
 /// The renderer thread manager
 renderer_thread: rendererpkg.Thread,
 
-/// The actual thread
-renderer_thr: std.Thread,
+/// The actual thread. On Windows a pooled OS thread that is parked, not
+/// exited, when this surface closes (T2644): with the NVIDIA GL driver loaded
+/// and any GL context alive in the process, EVERY thread that exits strands
+/// driver memory, whether or not it touched GL - and each closed pane used to
+/// exit three (renderer, IO, PTY reader). Elsewhere it is a plain `std.Thread`.
+renderer_thr: internal_os.reusable_thread.PaneThread,
 
 /// Mouse state.
 mouse: Mouse,
@@ -228,7 +237,7 @@ last_binding_trigger: u64 = 0,
 /// The terminal IO handler.
 io: termio.Termio,
 io_thread: termio.Thread,
-io_thr: std.Thread,
+io_thr: internal_os.reusable_thread.PaneThread, // pooled on Windows, see renderer_thr
 
 /// Terminal inspector
 inspector: ?*inspectorpkg.Inspector = null,
@@ -1333,16 +1342,16 @@ pub fn init(
     try renderer_impl.finalizeSurfaceInit(rt_surface);
 
     // Start our renderer thread
-    self.renderer_thr = try std.Thread.spawn(
-        .{},
+    self.renderer_thr = try internal_os.reusable_thread.spawnPane(
+        &renderer_pool,
         rendererpkg.Thread.threadMain,
         .{&self.renderer_thread},
     );
     self.renderer_thr.setName("renderer") catch {};
 
     // Start our IO thread
-    self.io_thr = try std.Thread.spawn(
-        .{},
+    self.io_thr = try internal_os.reusable_thread.spawnPane(
+        &io_pool,
         termio.Thread.threadMain,
         .{ &self.io_thread, &self.io },
     );
