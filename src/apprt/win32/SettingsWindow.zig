@@ -2988,12 +2988,30 @@ pub fn clickHit(self: *SettingsWindow, kind: Hit.Kind, key: []const u8) bool {
     for (self.hits.items) |h| {
         if (h.kind != kind) continue;
         if (key.len > 0 and !std.mem.eql(u8, h.key, key)) continue;
-        self.onLeftDown(h.rect.x + @divTrunc(h.rect.w, 2), h.rect.y + @divTrunc(h.rect.h, 2));
+        // Aim where a pointer could actually reach it: a hit scrolled half
+        // out of the list, or partly under the toast, is clicked on its
+        // visible part (T2683: the preview pushed the theme grid's All
+        // tile half out of view, and its centre missed).
+        const pt = self.reachablePoint(h) orelse continue;
+        self.onLeftDown(pt.x, pt.y);
         // A slider press is a drag; the seam's click is press + release.
         if (self.slide_key != null) self.endSlide();
         return true;
     }
     return false;
+}
+
+/// A point inside `h` where `hitAt` answers `h` itself, sampled on a 5x5
+/// grid from the centre outward; null when every sample lands elsewhere.
+fn reachablePoint(self: *const SettingsWindow, h: Hit) ?w32.POINT {
+    const fracs = [_]i32{ 2, 1, 3, 0, 4 };
+    for (fracs) |fy| for (fracs) |fx| {
+        const x = h.rect.x + @divTrunc(h.rect.w * (2 * fx + 1), 10);
+        const y = h.rect.y + @divTrunc(h.rect.h * (2 * fy + 1), 10);
+        const at = self.hitAt(x, y) orelse continue;
+        if (at.kind == h.kind and std.mem.eql(u8, at.key, h.key) and at.index == h.index) return .{ .x = x, .y = y };
+    };
+    return null;
 }
 
 fn onLeftDown(self: *SettingsWindow, x: i32, y: i32) void {
