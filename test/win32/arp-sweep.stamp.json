@@ -1,0 +1,16 @@
+{
+    "guard":  "arp-sweep",
+    "script":  "test/win32/arp-sweep.ps1",
+    "generated":  "2026-11-04T11:14:00-08:00",
+    "commit":  "1273fe1ce",
+    "uncommitted":  [
+                        "src/apprt/win32/arp_orphan.zig",
+                        "src/apprt/win32/ArpOrphanSweep.zig",
+                        "test/win32/arp-sweep.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/arp_orphan.zig":  "fd1ca05529e1196fda78983b639c3cf5d93ad3b0ad1640ccbffba158764626fc",
+                  "src/apprt/win32/ArpOrphanSweep.zig":  "84bc2b0e4717d2fa8fc18d8cfb68a77440d2089c719b6c4a52941b8f8be89c1f",
+                  "test/win32/arp-sweep.ps1":  "97c08fac944b2ce622e5817dc673c0f22b7ecea06d9485c2628fb24c9985c1eb"
+              }
+}

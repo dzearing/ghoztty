@@ -186,6 +186,18 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the vanish sweep runs, the default for every other agent."
         },
+        "GHOZTTY_ARP_SWEEP": {
+            "class": "enable",
+            "unset": "armed",
+            "unsetArm": "test\\win32\\arp-sweep.ps1::B1 a Debug build without GHOZTTY_ARP_SWEEP=force removes nothing",
+            "note": "T2679. =force reaches the launch-time Apps & Features orphan sweep a Debug build refuses; section B launches with the seam removed and proves nothing is swept, with section A as its positive control."
+        },
+        "GHOZTTY_ARP_SWEEP_NAME": {
+            "class": "isolation",
+            "unset": "armed",
+            "unsetArm": "test\\win32\\arp-sweep.ps1::B2 a forced run with no name removes nothing (never falls back to the release rows)",
+            "note": "T2679. Points the sweep at throwaway rows; unset under force must never fall back to the user's real Ghoztty rows, which B2 proves."
+        },
         "GHOZTTY_CHROME_FANOUT_LEGACY": {
             "class": "non-default",
             "unset": "shipped-elsewhere",

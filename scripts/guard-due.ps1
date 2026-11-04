@@ -2337,6 +2337,20 @@ $GuardTable = @(
             'test\win32\arp-orphan.ps1'
         )
     },
+    # The dead Apps & Features rows pre-T2327 updates left behind are swept by
+    # the app at launch (T2679). This writes throwaway rows into the real HKCU
+    # Uninstall key and proves the app removes exactly the dead one in the
+    # package's shape, nothing else, and nothing while an install is running.
+    [pscustomobject]@{
+        Name   = 'arp-sweep'
+        Script = 'test\win32\arp-sweep.ps1'
+        Stamp  = 'test\win32\arp-sweep.stamp.json'
+        Covers = @(
+            'src\apprt\win32\arp_orphan.zig',
+            'src\apprt\win32\ArpOrphanSweep.zig',
+            'test\win32\arp-sweep.ps1'
+        )
+    },
     # "Which Ghoztty am I running?" has ONE answer per surface (T1205). Windows
     # cannot replace a running image, so the file on disk and the process in
     # front of the user are routinely different builds - and the About box used

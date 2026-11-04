@@ -23,6 +23,7 @@ const ConfirmDialog = @import("ConfirmDialog.zig");
 const DarkMode = @import("DarkMode.zig");
 const bell_audio = @import("bell_audio.zig");
 const PathInstaller = @import("PathInstaller.zig");
+const ArpOrphanSweep = @import("ArpOrphanSweep.zig");
 const IpcRegistry = @import("IpcRegistry.zig");
 const IpcServer = @import("IpcServer.zig");
 const IpcSessionAwait = @import("ipc_session_await.zig");
@@ -1172,6 +1173,11 @@ pub fn init(
     // Keep the `ghoztty` CLI resolvable from any shell (T70). Background
     // thread; only acts when running from the canonical install dir.
     PathInstaller.ensureOnPathAsync();
+
+    // Remove the dead "Ghoztty" rows pre-T2327 in-app updates left in
+    // Settings > Apps (T2679). Background thread; release builds only, and
+    // never while an install is running.
+    ArpOrphanSweep.sweepAsync();
 
     // Tell the shell that `ghoztty://` links belong to this build (T695).
     // Background thread; a debug build registers `ghoztty-debug://` only, so a

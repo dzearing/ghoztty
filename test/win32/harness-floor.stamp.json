@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-04T10:54:17-08:00",
+    "generated":  "2026-11-04T12:09:39-08:00",
     "commit":  "1273fe1ce",
     "uncommitted":  [
-                        "test/win32/settings-window.ps1"
+                        "test/win32/arp-sweep.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -46,6 +46,7 @@
                   "test/win32/app-restart.ps1":  "55cb4a73f57cde520c5c0ca3d041242b11d8b5d534d2a8808d5d62a093a2dd4f",
                   "test/win32/argv-hazard-audit.ps1":  "5e6d8382b90b67ac3acb5ef30dba27c926ea6d90087212da2202b482b5155fdb",
                   "test/win32/arp-orphan.ps1":  "f014fb0c70494f975cdbdadba99dd7a204abbb89795b5fc5dd7046d2307ca21d",
+                  "test/win32/arp-sweep.ps1":  "97c08fac944b2ce622e5817dc673c0f22b7ecea06d9485c2628fb24c9985c1eb",
                   "test/win32/arp-version.ps1":  "3f483140196d74ac80c620bbde5f25e6bdb07cfa0e7891c50a5bd6e0dea73d51",
                   "test/win32/asserted-nothing.ps1":  "4acb45ce3ac039d212d093e4cf0a77519092bbd9be896995feeeb07547e5c5c6",
                   "test/win32/auto-launch-cwd.ps1":  "89143d743d16d05c3dd1d07e0b53f11ddf9c5b0088aaf3ffb333c37ba5c44471",
@@ -470,7 +471,7 @@
                   "test/win32/sessions-running-cmd.ps1":  "779dd6fb5b79ffb2650f6680eac63ace905a30759ff103690905949f283801ee",
                   "test/win32/session-vanished.ps1":  "e0019c099845add5401f0faf816a19db34eb148ba1dc8a4b7d8b390ad86ab0a5",
                   "test/win32/settings-advanced.ps1":  "13a8ab02db9fba3cb11b2035618a217787be76c0db51a2c4b8e5df367543fc6c",
-                  "test/win32/settings-window.ps1":  "e59e81acb07c1de5605781eca5141686cb19f61bc0fe045f0ab17f9e950a8459",
+                  "test/win32/settings-window.ps1":  "4141ad028f41885dcefb96a6aaae4b77dc79f42a01df6225bbbc05e5029117c8",
                   "test/win32/share-machine.ps1":  "3e106cee1e6a234570ae04d0480063304756afdeff62e2b5304fe2c24cb29045",
                   "test/win32/ship-workflow.ps1":  "7bf70cc43ea794bd74bf0805a941d717b21105f67302ea654794cebdd6195ac6",
                   "test/win32/shortcut-guide.ps1":  "7418a4994b37655bf3a1cef7dd47eb000ab50db63a33a090f332214d64bac502",

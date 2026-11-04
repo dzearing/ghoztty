@@ -224,6 +224,10 @@ test {
     // logic over the service statuses, no OS imports, every lane.
     _ = @import("win32/agent_integrations_vm.zig");
 
+    // Which Apps & Features rows are dead Ghoztty rows (T2679): pure
+    // classification, no OS imports, every lane.
+    _ = @import("win32/arp_orphan.zig");
+
     // Claude plugin → app migration (T870): manifest-driven uninstall via
     // Claude's own CLI (injected), banner-state carry-over, stale-script
     // ownership proofs. std.fs tempdir tests, every lane.
