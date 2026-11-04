@@ -3653,6 +3653,23 @@ $GuardTable = @(
             'test\win32\settings-window.ps1'
         )
     },
+    # Settings > Advanced's Config file section and the change toast (T2676).
+    # `settings-advanced.ps1` is the only harness that restores a backup,
+    # undoes through the toast, and proves Undo refuses over an outside edit.
+    [pscustomobject]@{
+        Name   = 'settings-advanced'
+        Script = 'test\win32\settings-advanced.ps1'
+        Stamp  = 'test\win32\settings-advanced.stamp.json'
+        Covers = @(
+            'src\apprt\win32\settings_advanced.zig',
+            'src\apprt\win32\settings_advanced_view.zig',
+            'src\apprt\win32\SettingsWindow.zig',
+            'src\apprt\win32\ipc_settings.zig',
+            'src\apprt\win32\SettingsModel.zig',
+            'src\apprt\win32\ConfigFileStore.zig',
+            'test\win32\settings-advanced.ps1'
+        )
+    },
     # The key-state pill (T446) and its explainer (T576). `key-state-pill.ps1`
     # is the only thing that drives a real key table on a live GUI and reads
     # the pill's anchor, its content deltas, its per-point click-through and

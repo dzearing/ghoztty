@@ -345,6 +345,7 @@ pub const advanced: Page = .{
     .glyph = "\u{22EF}",
     .tint = 0x666666,
     .sections = &.{
+        .{ .title = "Config file", .custom = .config_file },
         .{ .title = "All settings", .footer = "Every option, straight from the config schema.", .custom = .all_settings },
     },
 };

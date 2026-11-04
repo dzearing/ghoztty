@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-04T01:42:52-08:00",
-    "commit":  "276993b44",
+    "generated":  "2026-11-04T02:37:46-08:00",
+    "commit":  "deac952f7",
     "uncommitted":  [
-
+                        "test/win32/settings-advanced.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -468,6 +468,7 @@
                   "test/win32/session-snapshot-reattach.ps1":  "b86fb9af73414ff62034973f8d002e375b68cabeaed1d7de7319f76b2f2afcb8",
                   "test/win32/sessions-running-cmd.ps1":  "779dd6fb5b79ffb2650f6680eac63ace905a30759ff103690905949f283801ee",
                   "test/win32/session-vanished.ps1":  "e0019c099845add5401f0faf816a19db34eb148ba1dc8a4b7d8b390ad86ab0a5",
+                  "test/win32/settings-advanced.ps1":  "13a8ab02db9fba3cb11b2035618a217787be76c0db51a2c4b8e5df367543fc6c",
                   "test/win32/settings-window.ps1":  "c6a4318c65a089e15feff76e88e63f698be2c753f46aa060366d225c02c68679",
                   "test/win32/share-machine.ps1":  "3e106cee1e6a234570ae04d0480063304756afdeff62e2b5304fe2c24cb29045",
                   "test/win32/ship-workflow.ps1":  "7bf70cc43ea794bd74bf0805a941d717b21105f67302ea654794cebdd6195ac6",

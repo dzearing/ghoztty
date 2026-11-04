@@ -20,8 +20,12 @@
 //! key (`SettingsSources.Reader.allSettings`), with the All / Changed / Not
 //! on other pages filter and a "<Page> >" link on each curated key. Search
 //! lists curated rows first, under "<Page> > <Section>", then the keys no
-//! page shows. The rest of Advanced (path, includes, backups, the change
-//! toast) is T2676; Appearance is its own task.
+//! page shows. Advanced opens with Mac's Config file section (T2676,
+//! `settings_advanced_view.zig`): the file with Open in Editor / Show in
+//! Explorer, every other file Ghostty loads with Open, Backups with
+//! Restore..., and the Current file disclosure. Every write raises the
+//! "Saved - Show Change - Undo" toast over the foot of the form. Appearance
+//! is its own task.
 //!
 //! Every row is Mac's `RawSettingRow`: the key, the changed-from-default dot,
 //! the doc summary with the full doc on demand, Reset when the user's file
@@ -61,6 +65,9 @@ const LineEdit = @import("settings_line_edit.zig");
 const layout = @import("settings_window_layout.zig");
 const notes_render = @import("whats_new_notes.zig");
 const settings_pages = @import("settings_pages.zig");
+const settings_advanced = @import("settings_advanced.zig");
+const advanced_view = @import("settings_advanced_view.zig");
+const banner_link = @import("banner_link.zig");
 const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
 const panel_theme = @import("panel_theme.zig");
 const system_colors = @import("system_colors.zig");
@@ -108,13 +115,39 @@ const Item = struct {
 };
 
 /// A clickable region recorded by the last paint.
-const Hit = struct {
+pub const Hit = struct {
     rect: Rect,
     kind: Kind,
     key: []const u8 = "",
     index: usize = 0,
 
-    const Kind = enum { page, filter, config_link, search_clear, field, add_field, reset, info, open, chip_remove, toggle, choice, reveal, guide_link };
+    pub const Kind = enum {
+        page,
+        filter,
+        config_link,
+        search_clear,
+        field,
+        add_field,
+        reset,
+        info,
+        open,
+        chip_remove,
+        toggle,
+        choice,
+        reveal,
+        guide_link,
+        // Advanced > Config file (T2676).
+        open_editor,
+        reveal_file,
+        open_source,
+        restore_menu,
+        show_file,
+        // The change toast (T2676).
+        toast_body,
+        toast_show,
+        toast_undo,
+        toast_dismiss,
+    };
 };
 
 const Focus = enum { search, field };
@@ -141,6 +174,27 @@ file: ConfigFileText,
 /// True while a model write runs: the reload it triggers re-enters through
 /// `configChanged`, and the window refreshes once the write returns instead.
 in_write: bool = false,
+
+// Advanced > Config file (T2676), re-read with the rest on every reload.
+/// Where `main_path` links to, as the section shows it, when it is a link.
+target_display: ?[]u8 = null,
+/// The files Ghostty loads besides the user's (point into `sources`).
+others: []const *const SettingsSources.Source = &.{},
+/// This config's backups, newest first.
+backup_list: [][]u8 = &.{},
+/// The Current file disclosure is open.
+show_file: bool = false,
+
+// The change toast (T2676).
+/// The model's `change_seq` the toast was last started for.
+toast_seq: u64 = 0,
+toast_expanded: bool = false,
+/// The last Undo was refused because the file changed since.
+toast_refused: bool = false,
+toast_ms: u32 = settings_advanced.toast_ms,
+/// Debug builds: `GHOZTTY_SETTINGS_SHELL_DRY` records what an Open / Show
+/// in Explorer would launch here instead of launching it (the seam's).
+last_shell: ?[]u8 = null,
 
 // What the form shows.
 page: PageId = .panes,
@@ -311,6 +365,10 @@ fn freePaths(gpa: Allocator, paths: [][]u8) void {
 
 fn destroyState(self: *SettingsWindow) void {
     const gpa = self.gpa;
+    if (self.target_display) |t| gpa.free(t);
+    gpa.free(self.others);
+    freePaths(gpa, self.backup_list);
+    if (self.last_shell) |l| gpa.free(l);
     self.model.deinit();
     self.store.deinit();
     if (self.sources) |*s| s.deinit();
@@ -403,6 +461,41 @@ fn reloadData(self: *SettingsWindow) void {
         if (self.effective) |*old| old.deinit();
         self.effective = e;
     } else |err| log.warn("settings: describing the live config failed err={}", .{err});
+
+    self.reloadConfigFileSection();
+}
+
+/// The Config file section's own reads: where the file links to, the other
+/// files, and the backups.
+fn reloadConfigFileSection(self: *SettingsWindow) void {
+    const gpa = self.gpa;
+    if (self.target_display) |t| gpa.free(t);
+    self.target_display = null;
+    if (self.store.targetPath(gpa)) |target| {
+        defer gpa.free(target);
+        if (!settings_advanced.samePath(target, self.main_path)) self.target_display = displayPath(gpa, target) catch null;
+    } else |_| {}
+
+    gpa.free(self.others);
+    self.others = &.{};
+    if (self.sources) |*s| {
+        const target = self.store.targetPath(gpa) catch null;
+        defer if (target) |t| gpa.free(t);
+        self.others = settings_advanced.otherSources(gpa, s, self.main_path, target orelse self.main_path) catch &.{};
+    }
+
+    if (self.store.backups(gpa)) |list| {
+        freePaths(gpa, self.backup_list);
+        self.backup_list = list;
+    } else |err| log.warn("settings: listing backups failed err={}", .{err});
+}
+
+pub fn otherSources(self: *const SettingsWindow) []const *const SettingsSources.Source {
+    return self.others;
+}
+
+pub fn backups(self: *const SettingsWindow) []const []const u8 {
+    return @ptrCast(self.backup_list);
 }
 
 /// Run a model write: the reload it triggers is folded into one refresh
@@ -412,8 +505,29 @@ fn write(self: *SettingsWindow, comptime f: anytype, args: anytype) bool {
     const ok = @call(.auto, f, .{&self.model} ++ args) catch false;
     self.in_write = false;
     self.reloadData();
+    self.noteChange();
     self.refresh();
     return ok;
+}
+
+/// A write recorded a new change: raise the toast for it (Mac restarts its
+/// six-second timer per change, collapsed).
+fn noteChange(self: *SettingsWindow) void {
+    if (self.model.last_change == null or self.model.change_seq == self.toast_seq) return;
+    self.toast_seq = self.model.change_seq;
+    self.toast_expanded = false;
+    self.toast_refused = false;
+    if (self.isWindow()) _ = w32.SetTimer(self.hwnd, toast_timer_id, self.toast_ms, null);
+}
+
+/// The toast's timer, on this window's own hwnd (not `App.msg_hwnd`).
+const toast_timer_id: usize = 1;
+
+fn onToastTimer(self: *SettingsWindow) void {
+    _ = w32.KillTimer(self.hwnd, toast_timer_id);
+    // Mac keeps an expanded toast up until it is dismissed.
+    if (self.toast_expanded or self.model.last_change == null) return;
+    self.dismissToast();
 }
 
 pub fn reader(self: *const SettingsWindow) ?Reader {
@@ -491,6 +605,11 @@ fn refresh(self: *SettingsWindow) void {
         if (self.searching()) {
             self.planSearch(arena, r, &plan, &keys) catch {};
         } else if (self.page == .advanced) {
+            // Mac's Advanced: "Config file", then All settings (its title and
+            // filter scroll with the list, under the section above them).
+            plan.append(arena, .{ .y = 0, .h = 0, .kind = .header, .title = "Config file" }) catch {};
+            plan.append(arena, .{ .y = 0, .h = 0, .kind = .custom, .custom = .config_file }) catch {};
+            plan.append(arena, .{ .y = 0, .h = 0, .kind = .custom, .custom = .all_settings }) catch {};
             const listed = r.allSettings(arena, self.filter, "") catch &.{};
             self.matched = listed.len;
             for (listed) |k| self.planRaw(arena, &plan, &keys, k) catch break;
@@ -540,8 +659,10 @@ fn planPage(self: *SettingsWindow, arena: Allocator, r: Reader, pg: *const setti
 fn planSearch(self: *SettingsWindow, arena: Allocator, r: Reader, plan: *std.ArrayList(Item), keys: *std.ArrayList([]const u8)) Allocator.Error!void {
     const q = self.query();
     for (pages) |pg| {
-        if (pg.id == .advanced) continue;
         for (pg.sections) |*sec| {
+            // Advanced's keys are the uncurated block below; only its
+            // Config file section is searched here.
+            if (pg.id == .advanced and sec.custom != .config_file) continue;
             const heading = if (sec.title) |t|
                 try std.fmt.allocPrint(arena, "{s} \u{203A} {s}", .{ pg.title, t })
             else
@@ -813,7 +934,145 @@ pub fn openShortcutGuide(self: *SettingsWindow) void {
 /// The override note's Open link: the file that sets the key.
 pub fn openOverridingFile(self: *SettingsWindow, key: []const u8) void {
     const src = self.overridingSource(key) orelse return;
-    shellOpen(self.gpa, src.path);
+    self.shell(null, src.path);
+}
+
+// ---------------------------------------------------------------------
+// Advanced > Config file and the toast (T2676)
+// ---------------------------------------------------------------------
+
+/// "Open in Editor" and the sidebar's "Open Config File...": the file
+/// Settings writes, in whatever the system opens it with.
+pub fn openEditor(self: *SettingsWindow) void {
+    self.commitEdit();
+    self.shell(null, self.main_path);
+}
+
+/// "Show in Explorer": the folder, with the file selected (Mac's "Show in
+/// Finder"). A file that does not exist yet opens its folder.
+pub fn revealConfigFile(self: *SettingsWindow) void {
+    var buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const args = banner_link.revealArgs(&buf, banner_link.revealTarget(self.main_path, &banner_link.pathExists)) orelse return;
+    self.shell("explorer.exe", args);
+}
+
+/// A loaded file's Open.
+pub fn openSource(self: *SettingsWindow, index: usize) void {
+    if (index >= self.others.len) return;
+    self.shell(null, self.others[index].path);
+}
+
+/// "Show Backups in Explorer".
+pub fn showBackupsFolder(self: *SettingsWindow) void {
+    self.shell(null, self.store.backup_dir);
+}
+
+pub fn toggleCurrentFile(self: *SettingsWindow) void {
+    self.show_file = !self.show_file;
+    self.layoutItems();
+    self.invalidate();
+}
+
+/// Put backup `index` (newest first) back - the confirmed half of
+/// Restore... (the seam calls this directly). It is itself a change, so
+/// the toast offers its Undo.
+pub fn restoreBackupAt(self: *SettingsWindow, index: usize) bool {
+    if (index >= self.backup_list.len) return false;
+    self.commitEdit();
+    const path = self.gpa.dupe(u8, self.backup_list[index]) catch return false;
+    defer self.gpa.free(path);
+    return self.write(SettingsModel.restoreBackup, .{@as([]const u8, path)});
+}
+
+/// Restore...: the backups, newest first, as dates, then "Show Backups in
+/// Explorer"; picking one asks first, as Mac's confirmation dialog does.
+fn openRestoreMenu(self: *SettingsWindow, anchor: Rect) void {
+    self.commitEdit();
+    const menu = w32.CreatePopupMenu() orelse return;
+    defer _ = w32.DestroyMenu(menu);
+    var label_buf: [64]u8 = undefined;
+    if (self.backup_list.len == 0) {
+        _ = w32.AppendMenuW(menu, w32.MF_STRING | w32.MF_GRAYED, 0, std.unicode.utf8ToUtf16LeStringLiteral("No backups yet"));
+    }
+    for (self.backup_list, 0..) |b, i| {
+        const wide = std.unicode.utf8ToUtf16LeAllocZ(self.gpa, settings_advanced.backupLabel(&label_buf, b)) catch return;
+        defer self.gpa.free(wide);
+        _ = w32.AppendMenuW(menu, w32.MF_STRING, i + 1, wide.ptr);
+    }
+    const folder_cmd = self.backup_list.len + 1;
+    if (self.backup_list.len > 0) {
+        _ = w32.AppendMenuW(menu, w32.MF_SEPARATOR, 0, null);
+        _ = w32.AppendMenuW(menu, w32.MF_STRING, folder_cmd, std.unicode.utf8ToUtf16LeStringLiteral("Show Backups in Explorer"));
+    }
+    var pt: w32.POINT = .{ .x = anchor.x, .y = anchor.y + anchor.h };
+    _ = w32.ClientToScreen(self.hwnd, &pt);
+    const cmd = w32.TrackPopupMenuEx(menu, w32.TPM_LEFTALIGN | w32.TPM_TOPALIGN | w32.TPM_RETURNCMD, pt.x, pt.y, self.hwnd, null);
+    if (cmd <= 0) return;
+    const picked: usize = @intCast(cmd);
+    if (picked == folder_cmd) return self.showBackupsFolder();
+    const idx = picked - 1;
+    if (idx >= self.backup_list.len) return;
+    var prompt_buf: [256]u8 = undefined;
+    const prompt = settings_advanced.restorePrompt(&prompt_buf, settings_advanced.backupLabel(&label_buf, self.backup_list[idx]));
+    const wprompt = std.unicode.utf8ToUtf16LeAllocZ(self.gpa, prompt) catch return;
+    defer self.gpa.free(wprompt);
+    const answer = w32.MessageBoxW(self.hwnd, wprompt.ptr, std.unicode.utf8ToUtf16LeStringLiteral(settings_advanced.restore_title), w32.MB_OKCANCEL | w32.MB_ICONWARNING);
+    if (answer == w32.IDOK) _ = self.restoreBackupAt(idx);
+}
+
+/// The toast's Undo. Refused (and the file left alone) when it changed
+/// after Settings wrote it; the toast then says so.
+pub fn undoLast(self: *SettingsWindow) SettingsModel.UndoResult {
+    self.commitEdit();
+    self.in_write = true;
+    const result = self.model.undoLastChange() catch .failed;
+    self.in_write = false;
+    self.toast_refused = result == .changed_since;
+    if (result == .changed_since) {
+        // Mac's toast keeps its change; it stays up until dismissed.
+        self.toast_expanded = false;
+        if (self.isWindow()) _ = w32.KillTimer(self.hwnd, toast_timer_id);
+    }
+    self.reloadData();
+    self.refresh();
+    return result;
+}
+
+pub fn dismissToast(self: *SettingsWindow) void {
+    if (self.isWindow()) _ = w32.KillTimer(self.hwnd, toast_timer_id);
+    self.model.dismissLastChange();
+    self.toast_expanded = false;
+    self.toast_refused = false;
+    self.invalidate();
+}
+
+/// Show Change / Hide Change. An expanded toast stays up (Mac's timer only
+/// dismisses a collapsed one).
+pub fn toggleToastChange(self: *SettingsWindow) void {
+    if (self.model.last_change == null) return;
+    self.toast_expanded = !self.toast_expanded;
+    self.invalidate();
+}
+
+/// Launch `file` with `args` (or open `file` when `program` is null). In a
+/// debug build with `GHOZTTY_SETTINGS_SHELL_DRY` set, record it in
+/// `last_shell` instead - the acceptance script's seam, so it can check what
+/// a button opens without an editor appearing.
+fn shell(self: *SettingsWindow, program: ?[]const u8, target: []const u8) void {
+    if (comptime build_config.is_debug) {
+        if (std.process.hasEnvVarConstant("GHOZTTY_SETTINGS_SHELL_DRY")) {
+            if (self.last_shell) |l| self.gpa.free(l);
+            self.last_shell = std.fmt.allocPrint(self.gpa, "{s} {s}", .{ program orelse "open", target }) catch null;
+            return;
+        }
+    }
+    if (program) |prog| {
+        const wprog = std.unicode.utf8ToUtf16LeAllocZ(self.gpa, prog) catch return;
+        defer self.gpa.free(wprog);
+        const wargs = std.unicode.utf8ToUtf16LeAllocZ(self.gpa, target) catch return;
+        defer self.gpa.free(wargs);
+        _ = w32.ShellExecuteW(null, std.unicode.utf8ToUtf16LeStringLiteral("open"), wprog.ptr, wargs.ptr, null, w32.SW_SHOW);
+    } else shellOpen(self.gpa, target);
 }
 
 pub fn editingKey(self: *const SettingsWindow) ?[]const u8 {
@@ -866,9 +1125,12 @@ fn pal(self: *const SettingsWindow) panel_theme.Panel {
     return system_colors.panelFor(self.app);
 }
 
-/// The All Settings band (title + filter) sits over Advanced's list only.
+/// The All Settings title and filter used to be pinned over Advanced's
+/// list; since T2676 they scroll with it, under the Config file section
+/// (Mac's order), so no page has a pinned band.
 fn showsFilter(self: *const SettingsWindow) bool {
-    return !self.searching() and self.page == .advanced;
+    _ = self;
+    return false;
 }
 
 fn isWindow(self: *const SettingsWindow) bool {
@@ -881,7 +1143,7 @@ fn clientRect(self: *const SettingsWindow) w32.RECT {
     return rc;
 }
 
-fn frame(self: *const SettingsWindow) layout.Frame {
+pub fn frame(self: *const SettingsWindow) layout.Frame {
     const rc = self.clientRect();
     return layout.frameFor(self.scale, rc.right - rc.left, rc.bottom - rc.top, self.showsFilter());
 }
@@ -904,7 +1166,7 @@ fn scrollBy(self: *SettingsWindow, dy: i32) void {
 const cr = notes_render.cr;
 const fillRect = notes_render.fillRect;
 
-fn roundRect(hdc: w32.HDC, r: Rect, radius: i32, fill: u32, border: ?u32, border_w: i32) void {
+pub fn roundRect(hdc: w32.HDC, r: Rect, radius: i32, fill: u32, border: ?u32, border_w: i32) void {
     const brush = w32.CreateSolidBrush(fill) orelse return;
     defer _ = w32.DeleteObject(brush);
     const pen = w32.CreatePen(0, if (border != null) border_w else 1, border orelse fill) orelse return;
@@ -916,11 +1178,11 @@ fn roundRect(hdc: w32.HDC, r: Rect, radius: i32, fill: u32, border: ?u32, border
     _ = w32.RoundRect(hdc, r.x, r.y, r.x + r.w, r.y + r.h, radius * 2, radius * 2);
 }
 
-fn hit(self: *SettingsWindow, h: Hit) void {
+pub fn hit(self: *SettingsWindow, h: Hit) void {
     self.hits.append(self.gpa, h) catch {};
 }
 
-fn hair(self: *const SettingsWindow) i32 {
+pub fn hair(self: *const SettingsWindow) i32 {
     return @max(1, layout.px(1, self.scale));
 }
 
@@ -946,6 +1208,7 @@ fn paint(self: *SettingsWindow, hdc_screen: w32.HDC) void {
     fillRect(mem, f.rule, cr(p.divider));
     self.paintTitle(mem, f, p);
     self.paintList(mem, f, p);
+    advanced_view.paintToast(self, mem, p, f);
     _ = w32.BitBlt(hdc_screen, 0, 0, w, h, mem, 0, 0, w32.SRCCOPY);
 }
 
@@ -1004,10 +1267,11 @@ fn paintTitle(self: *SettingsWindow, hdc: w32.HDC, f: layout.Frame, p: panel_the
     const title = if (self.searching()) "Search" else pageInfo(self.page).title;
     const lh = self.text.lineHeight(.version);
     _ = self.text.drawText(hdc, f.title.x, f.title.y + @divTrunc(f.title.h - lh, 2), title, .{}, .version, cr(p.text), true);
-    if (f.filter.h == 0) return;
+}
 
-    // "All Settings" and its All N / Changed segmented control.
-    const band = f.filter;
+/// "All Settings" and its All N / Changed / Not on other pages segmented
+/// control, in `band`.
+fn paintFilterBand(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, band: Rect) void {
     const sh = self.text.lineHeight(.strong);
     _ = self.text.drawText(hdc, band.x, band.y + @divTrunc(band.h - sh, 2), "All Settings", .{}, .strong, cr(p.text), true);
     const seg_h = layout.px(dip.filter_h, self.scale);
@@ -1272,6 +1536,18 @@ fn rowHeightHint(self: *const SettingsWindow, item: Item) i32 {
 /// A custom section (Mac `SettingsCustomSection`). Returns its height.
 fn paintCustom(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Item, y: i32, draw: bool) i32 {
     const f = self.frame();
+    switch (item.custom) {
+        .config_file => return advanced_view.paintConfigFile(self, hdc, p, y, draw),
+        .all_settings => {
+            const bh = layout.px(dip.filter_band_h, self.scale);
+            if (draw) {
+                const cols = layout.rowColumns(self.scale, f.list, f.scrollbar.w, y, bh, dip.field_w);
+                self.paintFilterBand(hdc, p, .{ .x = cols.left, .y = y, .w = cols.right - cols.left, .h = bh });
+            }
+            return bh;
+        },
+        else => {},
+    }
     const g = layout.px(dip.gap, self.scale);
     const t = layout.px(dip.tight, self.scale);
     const pad_y = layout.px(dip.row_pad_y, self.scale);
@@ -1298,7 +1574,7 @@ fn paintCustom(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: 
         .remote_machines => &.{
             .{ .text = "Your machines and their host settings are in the machine chooser (New Remote Window)." },
         },
-        .config_file, .all_settings => &.{},
+        .config_file, .all_settings => unreachable,
     };
     for (lines, 0..) |line, i| {
         if (i > 0) cy += t;
@@ -1470,7 +1746,9 @@ fn hitAt(self: *const SettingsWindow, x: i32, y: i32) ?Hit {
         const h = self.hits.items[i];
         if (!h.rect.contains(x, y)) continue;
         const in_list = switch (h.kind) {
-            .field, .add_field, .reset, .info, .open, .chip_remove, .toggle, .choice, .reveal, .guide_link => true,
+            .field, .add_field, .reset, .info, .open, .chip_remove, .toggle, .choice, .reveal, .guide_link, .filter => true,
+            .open_editor, .reveal_file, .open_source, .restore_menu, .show_file => true,
+            .toast_body, .toast_show, .toast_undo, .toast_dismiss => true,
             else => false,
         };
         if (in_list and !f.list.contains(x, y)) continue;
@@ -1499,10 +1777,15 @@ fn onLeftDown(self: *SettingsWindow, x: i32, y: i32) void {
             .choice => self.openChoice(h.key, h.rect),
             .reveal => _ = self.reveal(h.key),
             .guide_link => self.openShortcutGuide(),
-            .config_link => {
-                self.commitEdit();
-                self.app.openConfigFile();
-            },
+            .config_link, .open_editor => self.openEditor(),
+            .reveal_file => self.revealConfigFile(),
+            .open_source => self.openSource(h.index),
+            .restore_menu => self.openRestoreMenu(h.rect),
+            .show_file => self.toggleCurrentFile(),
+            .toast_body => {},
+            .toast_show => self.toggleToastChange(),
+            .toast_undo => _ = self.undoLast(),
+            .toast_dismiss => self.dismissToast(),
             .search_clear => self.setQuery(""),
             .field, .add_field => _ = self.beginEdit(h.key),
             .reset => _ = self.resetKey(h.key),
@@ -1756,6 +2039,13 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
         w32.WM_SETTINGCHANGE => {
             system_colors.applyPanelChrome(hwnd, self.pal());
             self.invalidate();
+            return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+        w32.WM_TIMER => {
+            if (wparam == toast_timer_id) {
+                self.onToastTimer();
+                return 0;
+            }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
         w32.WM_CLOSE => {

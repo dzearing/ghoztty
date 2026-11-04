@@ -83,6 +83,9 @@ problems: std.StringHashMapUnmanaged([]u8) = .empty,
 /// A problem with the file itself (unreadable, not UTF-8, changed since...).
 file_error: ?[]u8 = null,
 last_change: ?LastChange = null,
+/// Bumped each time a change is recorded, so the toast can tell a new change
+/// from the one it is already showing (T2676).
+change_seq: u64 = 0,
 /// The files Ghostty loads, when the window has read them (T2584a). A key
 /// (or keybind trigger) that a file loading AFTER the user's also sets is
 /// refused with the row's "Set in X, which loads after your config" note:
@@ -331,6 +334,7 @@ fn record(self: *SettingsModel, change: *ConfigFileStore.Change, msg: []u8) Allo
     }
     const backed: ?[]u8 = if (self.store.backup_path) |b| try self.gpa.dupe(u8, b) else null;
     self.dismissLastChange();
+    self.change_seq +%= 1;
     self.last_change = .{
         .message = msg,
         .removed = diff.removed,

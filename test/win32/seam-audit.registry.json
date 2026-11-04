@@ -454,6 +454,11 @@
             "unset": "unreachable",
             "note": "unset is the box's real %LOCALAPPDATA%\\ghoztty\\config-backups, which the once-per-session backup would add to and prune (T2675); debug builds only."
         },
+        "GHOZTTY_SETTINGS_SHELL_DRY": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset, the Settings window's Open in Editor / Show in Explorer / Open buttons really launch an editor or Explorer, which a test on the background desktop cannot observe and must not leave behind (T2676); set, the window records the launch it would have made. Debug builds only."
+        },
         "GHOZTTY_STARTUP_FAIL": {
             "class": "fault",
             "unset": "shipped-elsewhere",
