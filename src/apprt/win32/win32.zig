@@ -2062,6 +2062,14 @@ pub extern "dwmapi" fn DwmSetWindowAttribute(
 /// just shown is only on screen after the next composition).
 pub extern "dwmapi" fn DwmFlush() callconv(.winapi) i32;
 
+/// DWM's compose clock (T2666). `pTimingInfo` is a byte-packed
+/// `DWM_TIMING_INFO` (`resize_burst.timing_info_size` bytes, `cbSize` set);
+/// `hwnd` must be null on Windows 8.1 and later.
+pub extern "dwmapi" fn DwmGetCompositionTimingInfo(
+    hwnd: ?HWND,
+    pTimingInfo: *anyopaque,
+) callconv(.winapi) i32;
+
 pub extern "dwmapi" fn DwmGetWindowAttribute(
     hwnd: HWND,
     dwAttribute: u32,

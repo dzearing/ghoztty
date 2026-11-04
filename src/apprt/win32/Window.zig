@@ -23,6 +23,7 @@ const BannerDialog = @import("BannerDialog.zig");
 const BannerOverlay = @import("BannerOverlay.zig").BannerOverlay;
 const resize_paint = @import("resize_paint.zig");
 const resize_prelayout = @import("resize_prelayout.zig");
+const resize_burst = @import("resize_burst.zig");
 const resize_content = @import("resize_content.zig");
 const Surface = @import("Surface.zig");
 const WindowPresenter = @import("WindowPresenter.zig");
@@ -736,6 +737,10 @@ pending_client: ?w32.RECT = null,
 /// The client rect the last pre-layout placed the panes at (T2603), until
 /// the `WM_SIZE` it was for, or any other layout pass, takes it.
 prelayout_laid: ?resize_prelayout.Rect = null,
+
+/// A pre-layout armed the burst hold and `burstRelease` has not let it go
+/// yet (T2666). UI thread only.
+burst_armed: bool = false,
 /// The flat-style gutters the last divider paint drew (T2418), in client
 /// pixels. A layout that moves a divider hands its old gutter to a pane, and
 /// `WS_CLIPCHILDREN` keeps every later paint off it, so the old line and bar
@@ -16759,6 +16764,9 @@ fn prelayoutForPos(self: *Window, wp: *const w32.WINDOWPOS) void {
         .iconic = w32.IsIconic(hwnd) != 0,
         .shrink = prelayoutShrink(),
     }) orelse return;
+    // T2666: the swaps this pass causes are held until `burstRelease`, at the
+    // end of this `WM_WINDOWPOSCHANGING`, right before the frame change.
+    if (burstOn()) self.burstArm();
     resizeTrace("prelayout-begin", hwnd);
     defer resizeTrace("prelayout-end", hwnd);
     var pt = if (self.edge_step != null) std.time.Timer.start() catch null else null;
@@ -16773,6 +16781,88 @@ fn prelayoutForPos(self: *Window, wp: *const w32.WINDOWPOS) void {
     // only: the hero and zoom paths paint the desk on their own terms.
     if (!self.tab_hero_active[self.active_tab] and self.tab_trees[self.active_tab].zoomed == null)
         self.prelayout_laid = pc;
+}
+
+var burst_state: ?bool = null;
+
+/// `GHOZTTY_RESIZE_BURST` (T2666, `resize_burst.zig`). Read once.
+fn burstOn() bool {
+    if (burst_state) |v| return v;
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_RESIZE_BURST") catch null;
+    defer if (raw) |r| std.heap.page_allocator.free(r);
+    const v = resize_burst.enabledFromEnv(raw);
+    burst_state = v;
+    return v;
+}
+
+/// Hold every active-tab terminal's next new-size swap (T2666). The release
+/// event is reset BEFORE the flag goes up, so a renderer that sees the flag
+/// always waits on an event that only `burstRelease` sets.
+fn burstArm(self: *Window) void {
+    var it = self.tab_trees[self.active_tab].iterator();
+    while (it.next()) |entry| {
+        if (entry.view.viewer()) |v| v.burstHold();
+        const s = entry.view.surface() orelse continue;
+        const ev = s.burst_release orelse continue;
+        _ = w32.ResetEvent(ev);
+        s.burst_armed.store(true, .release);
+    }
+    self.burst_armed = true;
+}
+
+/// The end of a pre-laid `WM_WINDOWPOSCHANGING` (T2666): if a DWM latch would
+/// fall between the first released swap and the frame change, wait it out,
+/// then let every held swap go. The frame change follows as soon as this
+/// message returns, so the whole burst lands in one latch.
+fn burstRelease(self: *Window) void {
+    if (!self.burst_armed) return;
+    self.burst_armed = false;
+    const wait_us = burstLatchWait();
+    if (self.hwnd) |h| resizeTrace("burst-release", h);
+    if (wait_us > 0) spinMicros(wait_us);
+    if (self.tab_count == 0) return;
+    // Every pane at once: the pages take their bounds and the bars paint,
+    // then the terminals swap (a viewer flush is ~0.1 ms of WebView2 calls;
+    // the swaps run on their own threads the moment the event is set).
+    var it = self.tab_trees[self.active_tab].iterator();
+    while (it.next()) |entry| {
+        if (entry.view.viewer()) |v| v.burstFlush();
+        const s = entry.view.surface() orelse continue;
+        s.burst_armed.store(false, .release);
+        if (s.burst_release) |ev| _ = w32.SetEvent(ev);
+    }
+    if (self.hwnd) |h| resizeTrace("burst-released", h);
+    if (resizeTraceOn()) log.info("resize trace burst wait_us={d}", .{wait_us});
+}
+
+/// Microseconds until the burst can go without a latch inside it, from DWM's
+/// compose clock; 0 when it fits now or the clock cannot be read.
+fn burstLatchWait() u32 {
+    var buf = [_]u8{0} ** resize_burst.timing_info_size;
+    std.mem.writeInt(u32, buf[0..4], resize_burst.timing_info_size, .little);
+    if (w32.DwmGetCompositionTimingInfo(null, &buf) < 0) return 0;
+    const t = resize_burst.parseTiming(&buf);
+    var now: i64 = 0;
+    var freq: i64 = 0;
+    _ = w32.QueryPerformanceCounter(&now);
+    _ = w32.QueryPerformanceFrequency(&freq);
+    return resize_burst.stepPast(.{ .now = now, .vblank = t.vblank, .period = t.period, .freq = freq }, .{});
+}
+
+/// Busy-wait `us` microseconds on the QPC: the waits are about a millisecond,
+/// below what `Sleep` can resolve, and capped at one compose by `stepPast`.
+fn spinMicros(us: u32) void {
+    var freq: i64 = 0;
+    var start: i64 = 0;
+    _ = w32.QueryPerformanceFrequency(&freq);
+    _ = w32.QueryPerformanceCounter(&start);
+    if (freq <= 0) return;
+    const until = start + @divTrunc(@as(i64, us) * freq, std.time.us_per_s);
+    var now = start;
+    while (now < until) {
+        std.atomic.spinLoopHint();
+        _ = w32.QueryPerformanceCounter(&now);
+    }
 }
 
 /// `WM_SIZE` after a pre-layout at exactly the client rect that landed
@@ -19018,6 +19108,8 @@ pub fn windowWndProc(
             window.noteEdgeMotion(wp);
             const r = w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             window.prelayoutForPos(wp);
+            // Last thing before the frame change (T2666).
+            window.burstRelease();
             return r;
         },
         w32.WM_ENTERSIZEMOVE => {

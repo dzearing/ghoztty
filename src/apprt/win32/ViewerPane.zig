@@ -610,6 +610,11 @@ watcher: viewer_watcher.Watcher = .{},
 /// the pane then has no bar, which is a degradation, not a broken pane.
 nav: ?*ViewerNavBar = null,
 
+/// An edge drag's burst is holding the page's bounds (T2666, `burstHold`).
+burst_hold: bool = false,
+/// The bounds `syncBounds` laid out while held, applied by `burstFlush`.
+burst_bounds: ?iface.RECT = null,
+
 /// Which git worktree this pane's content belongs to, and the machinery that
 /// answers that question off the UI thread (T633). Null until the pane has an
 /// allocator to hand it — which is every pane before `start`, and every unit
@@ -5507,6 +5512,25 @@ fn sinceNs(from: ?std.time.Instant) u64 {
     return now.since(s);
 }
 
+/// Hold the page's bounds back from `syncBounds` until `burstFlush` (T2666).
+pub fn burstHold(self: *ViewerPane) void {
+    self.burst_hold = true;
+    self.burst_bounds = null;
+}
+
+/// The end of an edge drag step's burst (T2666): the page takes the bounds the
+/// pass laid out for it, and the bar paints NOW rather than in a `WM_PAINT`
+/// that the size loop runs after the compose that shows the new frame.
+pub fn burstFlush(self: *ViewerPane) void {
+    if (!self.burst_hold) return;
+    self.burst_hold = false;
+    if (self.burst_bounds) |page| {
+        self.burst_bounds = null;
+        if (self.controller) |c| _ = c.setBounds(page);
+    }
+    if (self.nav) |nav| _ = w32.UpdateWindow(nav.hwnd);
+}
+
 pub fn syncBounds(self: *ViewerPane) void {
     const h = self.hwnd orelse return;
     const t0 = std.time.Instant.now() catch null;
@@ -5547,12 +5571,16 @@ pub fn syncBounds(self: *ViewerPane) void {
 
     if (self.controller) |c| {
         const tb = std.time.Instant.now() catch null;
-        _ = c.setBounds(.{
+        const page: iface.RECT = .{
             .left = 0,
             .top = top,
             .right = width,
             .bottom = height,
-        });
+        };
+        // T2666: under an edge drag's burst the page waits for `burstFlush`,
+        // at the end of the window's `WM_WINDOWPOSCHANGING`, beside the
+        // terminals' swaps and the frame change.
+        if (self.burst_hold) self.burst_bounds = page else _ = c.setBounds(page);
         sync_cost.bounds_ns +|= sinceNs(tb);
     }
 

@@ -740,6 +740,9 @@ pub fn drawFrameEnd(self: *OpenGL) void {
             }
             self.resize_verify_pending = false;
         }
+        // T2666: under an edge drag's burst the swap waits for the window to
+        // release every pane together, right before its frame change.
+        self.rt_surface.burstHoldBeforeSwap(self.drawn_client);
         const swap_start = perf.now();
         self.traceStage("swap-begin");
         if (self.comp) |p| {

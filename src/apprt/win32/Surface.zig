@@ -265,6 +265,21 @@ awaited_size: u64 = 0,
 /// synchronize rendering with the DWM compositor.
 frame_event: ?w32.HANDLE = null,
 
+/// The burst hold (T2666, `resize_burst.zig`): while the window lays an edge
+/// drag's step out in `WM_WINDOWPOSCHANGING`, the renderer draws at the new
+/// size but holds the swap until the window releases every pane together,
+/// right before the frame change, so content and frame reach the same DWM
+/// latch. Set and cleared by the UI thread (`Window.burstArm`/`burstRelease`);
+/// the renderer only reads it.
+burst_armed: std.atomic.Value(bool) = .init(false),
+
+/// Manual-reset event the window sets to release a held swap (T2666).
+burst_release: ?w32.HANDLE = null,
+
+/// The size the renderer's last swap was drawn for (T2666). Renderer thread
+/// only.
+burst_last_swapped: u64 = 0,
+
 /// `GHOZTTY_PRESENT_LAG_MS`: hold this pane's "frame presented" signal back
 /// this many milliseconds on the renderer thread (T1035), the way a
 /// vsync-throttled compositor holds `SwapBuffers` until the next vblank. On
@@ -842,6 +857,7 @@ fn initOnce(
     // Create a manual-reset event for synchronizing resize with the
     // renderer thread. Manual-reset so we control exactly when it's reset.
     self.frame_event = w32.CreateEventW(null, 1, 0, null);
+    self.burst_release = w32.CreateEventW(null, 1, 1, null);
     self.present_lag_ms = @min(
         std.process.parseEnvVarInt("GHOZTTY_PRESENT_LAG_MS", u8, 10) catch 0,
         drag_perf.present_lag_max_ms,
@@ -1312,6 +1328,10 @@ pub fn deinit(self: *Surface) void {
     if (self.frame_event) |event| {
         _ = w32.CloseHandle(event);
         self.frame_event = null;
+    }
+    if (self.burst_release) |event| {
+        _ = w32.CloseHandle(event);
+        self.burst_release = null;
     }
     log.debug("surface deinit: frame_event closed", .{});
 
@@ -6392,6 +6412,32 @@ pub fn signalFrameDrawn(self: *Surface, width: u32, height: u32) void {
     if (lag != 0) presentLagSleep(lag);
     self.markFrameShown(width, height);
 }
+
+/// Renderer thread, just before the swap (T2666): under an armed burst, tell
+/// the waiting layout pass this frame is DRAWN at its size - which is all its
+/// wait needs, since the window releases the swap itself - and hold the swap
+/// until the window lets every pane go together. `packed_size` is the client
+/// size the frame was drawn for (`resize_paint.packSize`), 0 when unknown, and
+/// an unknown size is never held. Bounded: a window that never releases costs
+/// one `burst_hold_max_ms`, not a hung renderer.
+pub fn burstHoldBeforeSwap(self: *Surface, packed_size: u64) void {
+    // Only a frame at a NEW size is held: one still at the size the last swap
+    // had was begun before the layout moved the pane, and holding it would
+    // block the renderer from drawing the frame the layout is waiting for.
+    const last = self.burst_last_swapped;
+    self.burst_last_swapped = packed_size;
+    if (packed_size == 0 or packed_size == last) return;
+    if (!self.burst_armed.load(.acquire)) return;
+    const release = self.burst_release orelse return;
+    self.traceStage("burst-held");
+    self.markFrameShown(@intCast(packed_size >> 32), @truncate(packed_size));
+    _ = w32.WaitForSingleObject(release, burst_hold_max_ms);
+    self.traceStage("burst-released");
+}
+
+/// How long a held swap waits for its release (T2666): two 60 Hz composes.
+/// A step's whole pre-layout is ~5 ms, so this is only ever the backstop.
+pub const burst_hold_max_ms: u32 = 33;
 
 /// Record that a frame at `width` x `height` is on screen, and wake a layout
 /// pass waiting for one. The renderer calls it after its own swap
