@@ -1,0 +1,17 @@
+{
+    "guard":  "glass-frame-origin",
+    "script":  "test/win32/glass-frame-origin.ps1",
+    "generated":  "2026-11-04T09:41:58-08:00",
+    "commit":  "855f2872a",
+    "uncommitted":  [
+                        "src/renderer/shaders/glsl/bg_image.f.glsl",
+                        "src/renderer/shaders/glsl/cell_bg.f.glsl",
+                        "test/win32/glass-frame-origin.ps1"
+                    ],
+    "files":  {
+                  "src/renderer/opengl/Target.zig":  "aabe5d038797e713bc674f8c0ec0f02af3363d8ba68781711459707f671ff2dd",
+                  "src/renderer/shaders/glsl/bg_image.f.glsl":  "d6c92e9bbaa8b7aa02a222a8f2626b3052aac4ee88f2b122d58049df60aa5888",
+                  "src/renderer/shaders/glsl/cell_bg.f.glsl":  "0f6505df79cdc29420a68460af494e12dbc3f1d6c1198971e3fa72be0903446c",
+                  "test/win32/glass-frame-origin.ps1":  "0a0dfeed8dff3e6ba20ec9402905ac5490ab37b43d85d9316be106de72e26b56"
+              }
+}

@@ -1,7 +1,13 @@
 #include "common.glsl"
 
-// Position the origin to the upper left
-layout(origin_upper_left) in vec4 gl_FragCoord;
+// This fragment's position from the upper left of the FRAME, not of the
+// framebuffer. `layout(origin_upper_left)` flips against the framebuffer's
+// whole height, and a Win32 target keeps storage taller than its frame
+// (T2577) with the frame drawn in its bottom-left `screen_size` - which put
+// every cell's background (alloc_h - h) px above its text (T2670).
+vec2 frag_pos() {
+    return vec2(gl_FragCoord.x, screen_size.y - gl_FragCoord.y);
+}
 
 // Must declare this output for some versions of OpenGL.
 layout(location = 0) out vec4 out_FragColor;
@@ -12,7 +18,7 @@ layout(binding = 1, std430) readonly buffer bg_cells {
 
 vec4 cell_bg() {
     uvec2 grid_size = unpack2u16(grid_size_packed_2u16);
-    ivec2 grid_pos = ivec2(floor((gl_FragCoord.xy - grid_padding.wx) / cell_size));
+    ivec2 grid_pos = ivec2(floor((frag_pos() - grid_padding.wx) / cell_size));
     bool use_linear_blending = (bools & USE_LINEAR_BLENDING) != 0;
 
     vec4 bg = vec4(0.0);

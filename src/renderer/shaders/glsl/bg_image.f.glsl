@@ -1,8 +1,12 @@
 #include "common.glsl"
 
-// Position the FragCoord origin to the upper left
-// so as to align with our texture's directionality.
-layout(origin_upper_left) in vec4 gl_FragCoord;
+// This fragment's position from the upper left of the FRAME (to align with
+// the texture's directionality), not of the framebuffer: see cell_bg.f.glsl.
+// With `layout(origin_upper_left)` a glass pane's desk slice slid up by
+// (alloc_h - h) px and left a flat band of plain background under it (T2670).
+vec2 frag_pos() {
+    return vec2(gl_FragCoord.x, screen_size.y - gl_FragCoord.y);
+}
 
 layout(binding = 0) uniform sampler2D image;
 
@@ -21,7 +25,7 @@ void main() {
     // dest rect origin, and scaled by the ratio between the dest rect size
     // and the original texture size, which effectively scales the original
     // size of the texture to the dest rect size.
-    vec2 tex_coord = (gl_FragCoord.xy - offset) * scale;
+    vec2 tex_coord = (frag_pos() - offset) * scale;
 
     vec2 tex_size = textureSize(image, 0);
 

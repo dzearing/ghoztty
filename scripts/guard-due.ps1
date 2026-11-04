@@ -3782,6 +3782,21 @@ $GuardTable = @(
             'test\win32\lib\PaintWait.ps1'
         )
     },
+    # T2670: the two fragment shaders that find their pixel from gl_FragCoord
+    # must count from the top of the FRAME, not of the grow-only GL storage
+    # (T2577) - shifted, a glass pane showed a plain band along its bottom and
+    # cell backgrounds sat above their text. Reads the target off-desktop.
+    [pscustomobject]@{
+        Name   = 'glass-frame-origin'
+        Script = 'test\win32\glass-frame-origin.ps1'
+        Stamp  = 'test\win32\glass-frame-origin.stamp.json'
+        Covers = @(
+            'src\renderer\shaders\glsl\bg_image.f.glsl',
+            'src\renderer\shaders\glsl\cell_bg.f.glsl',
+            'src\renderer\opengl\Target.zig',
+            'test\win32\glass-frame-origin.ps1'
+        )
+    },
     # T1951 (rescope, GitHub #13): on a software renderer the panes' presents
     # are capped and a covered window presents nothing. The unit tests own the
     # cap maths and the coverage test; this row owns the claim that the forced
