@@ -44,6 +44,9 @@ test {
     // editor the search box and value fields share.
     _ = @import("win32/settings_window_layout.zig");
     _ = @import("win32/settings_line_edit.zig");
+    // Its curated pages (T2585): the table, and the drift test that fails
+    // when a curated key or option leaves the schema.
+    _ = @import("win32/settings_pages.zig");
 
     // Planted one-frame defects for the T2373 lab's positive controls
     // (T2383): the spec parser and the fire rule, same no-OS-imports deal.

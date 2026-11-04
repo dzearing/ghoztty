@@ -13,10 +13,15 @@
 //! terminal. Layout: a sidebar of pages with a Search field over it and the
 //! file's path along its foot; the page's form on the right.
 //!
-//! Pages: this is the window SHELL. Advanced > All Settings lists every
-//! schema key (`SettingsSources.Reader.allSettings`), with the All / Changed
-//! filter; the curated pages (Appearance, Panes & Windows, ...) are T2585 and
-//! the rest of Advanced (path, includes, backups, the change toast) is T2676.
+//! Pages: the curated pages (`settings_pages.zig`, T2585) - Panes &
+//! Windows, Terminal, Keyboard, Sessions & Agent, Remote Machines, Updates -
+//! list their keys with Mac's labels and controls (an on/off switch, a value
+//! popup, or the value as text); Advanced > All Settings lists every schema
+//! key (`SettingsSources.Reader.allSettings`), with the All / Changed / Not
+//! on other pages filter and a "<Page> >" link on each curated key. Search
+//! lists curated rows first, under "<Page> > <Section>", then the keys no
+//! page shows. The rest of Advanced (path, includes, backups, the change
+//! toast) is T2676; Appearance is its own task.
 //!
 //! Every row is Mac's `RawSettingRow`: the key, the changed-from-default dot,
 //! the doc summary with the full doc on demand, Reset when the user's file
@@ -55,6 +60,8 @@ const SettingsSources = @import("SettingsSources.zig");
 const LineEdit = @import("settings_line_edit.zig");
 const layout = @import("settings_window_layout.zig");
 const notes_render = @import("whats_new_notes.zig");
+const settings_pages = @import("settings_pages.zig");
+const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
 const panel_theme = @import("panel_theme.zig");
 const system_colors = @import("system_colors.zig");
 const w32 = @import("win32.zig");
@@ -76,19 +83,10 @@ var class_registered: bool = false;
 /// The open window, if any. GUI thread only.
 var active: ?*SettingsWindow = null;
 
-pub const PageId = enum { advanced };
+pub const PageId = settings_pages.PageId;
 
-const PageInfo = struct {
-    id: PageId,
-    title: []const u8,
-    /// Drawn on the page's tinted tile (Mac: an SF Symbol on a gradient).
-    glyph: []const u8,
-};
-
-/// The sidebar, in order. T2585 adds the curated pages ahead of Advanced.
-pub const pages = [_]PageInfo{
-    .{ .id = .advanced, .title = "Advanced", .glyph = "\u{22EF}" },
-};
+/// The sidebar, in order.
+pub const pages = settings_pages.all;
 
 pub const Filter = Reader.Filter;
 
@@ -100,8 +98,13 @@ const Item = struct {
     /// Catalog-owned (rows), so it survives every reload.
     key: []const u8 = "",
     summary: []const u8 = "",
+    /// The curated row this line draws (null: a raw All Settings row).
+    row: ?*const settings_pages.Row = null,
+    /// A header's text (view-arena owned).
+    title: []const u8 = "",
+    custom: settings_pages.Custom = .all_settings,
 
-    const Kind = enum { header, row, more, empty };
+    const Kind = enum { header, row, custom, more, empty };
 };
 
 /// A clickable region recorded by the last paint.
@@ -111,7 +114,7 @@ const Hit = struct {
     key: []const u8 = "",
     index: usize = 0,
 
-    const Kind = enum { page, filter, config_link, search_clear, field, add_field, reset, info, open, chip_remove };
+    const Kind = enum { page, filter, config_link, search_clear, field, add_field, reset, info, open, chip_remove, toggle, choice, reveal, guide_link };
 };
 
 const Focus = enum { search, field };
@@ -140,17 +143,25 @@ file: ConfigFileText,
 in_write: bool = false,
 
 // What the form shows.
-page: PageId = .advanced,
+page: PageId = .panes,
 filter: Filter = .all,
 search: LineEdit = .{},
 /// Owns `items`, the listed keys and their summaries (rebuilt per refresh).
 view_arena: std.heap.ArenaAllocator,
 items: []const Item = &.{},
-/// Rows that matched before the search cap.
+/// Uncurated rows that matched before the search cap (= the keys listed
+/// on Advanced).
 matched: usize = 0,
+/// Curated rows a search found (listed above the uncurated block).
+curated_hits: usize = 0,
+/// The un-laid-out lines `refresh` planned (view-arena owned).
+plan: []const Item = &.{},
 listed: []const []const u8 = &.{},
 /// The row whose full documentation is shown.
 doc_key: ?[]const u8 = null,
+/// The row the last "<Page> >" link revealed (drawn highlighted until the
+/// next page change).
+revealed_key: ?[]const u8 = null,
 
 // Editing.
 focus: Focus = .search,
@@ -439,8 +450,24 @@ pub fn overridingSource(self: *const SettingsWindow, key: []const u8) ?*const Se
     return s.overriding(key);
 }
 
-/// How many keys the user's file sets (Mac's Advanced page count: every
-/// file key no curated page shows, which until T2585 is all of them).
+/// The sidebar's count for a page (Mac `changedCount`): the page's keys the
+/// user's file sets, or for Advanced every file key no curated page shows.
+pub fn changedOn(self: *const SettingsWindow, id: PageId) usize {
+    const r = self.reader() orelse return 0;
+    var n: usize = 0;
+    if (id == .advanced) {
+        for (self.catalog.entries) |*e| {
+            if (!settings_pages.isCurated(e.key) and r.isSetInFile(e.key)) n += 1;
+        }
+        return n;
+    }
+    for (settings_pages.page(id).sections) |sec| for (sec.rows) |row| {
+        if (r.isSetInFile(row.key)) n += 1;
+    };
+    return n;
+}
+
+/// How many keys the user's file sets, on any page.
 pub fn changedInFile(self: *const SettingsWindow) usize {
     const r = self.reader() orelse return 0;
     var n: usize = 0;
@@ -455,17 +482,25 @@ fn refresh(self: *SettingsWindow) void {
     _ = self.view_arena.reset(.retain_capacity);
     const arena = self.view_arena.allocator();
     self.listed = &.{};
+    self.plan = &.{};
     self.matched = 0;
+    self.curated_hits = 0;
+    var plan: std.ArrayList(Item) = .empty;
+    var keys: std.ArrayList([]const u8) = .empty;
     if (self.reader()) |r| {
         if (self.searching()) {
-            const all = r.allSettings(arena, .all, self.query()) catch &.{};
-            self.matched = all.len;
-            self.listed = all[0..@min(all.len, search_cap)];
+            self.planSearch(arena, r, &plan, &keys) catch {};
+        } else if (self.page == .advanced) {
+            const listed = r.allSettings(arena, self.filter, "") catch &.{};
+            self.matched = listed.len;
+            for (listed) |k| self.planRaw(arena, &plan, &keys, k) catch break;
+            if (listed.len == 0) plan.append(arena, .{ .y = 0, .h = 0, .kind = .empty }) catch {};
         } else {
-            self.listed = r.allSettings(arena, self.filter, "") catch &.{};
-            self.matched = self.listed.len;
+            self.planPage(arena, r, settings_pages.page(self.page), &plan, &keys) catch {};
         }
     }
+    self.plan = plan.items;
+    self.listed = keys.items;
     if (self.edit_key) |k| if (!contains(self.listed, k)) {
         self.edit_key = null;
         self.focus = .search;
@@ -473,6 +508,74 @@ fn refresh(self: *SettingsWindow) void {
     self.layoutItems();
     self.scroll = layout.clampScroll(self.scroll, self.content_h, self.frame().list.h);
     self.invalidate();
+}
+
+fn planRaw(self: *SettingsWindow, arena: Allocator, plan: *std.ArrayList(Item), keys: *std.ArrayList([]const u8), key: []const u8) Allocator.Error!void {
+    const doc = if (self.catalog.get(key)) |e| e.doc else null;
+    try plan.append(arena, .{ .y = 0, .h = 0, .kind = .row, .key = key, .summary = try SettingsCatalog.summary(arena, doc) });
+    try keys.append(arena, key);
+}
+
+fn planRow(self: *SettingsWindow, arena: Allocator, plan: *std.ArrayList(Item), keys: *std.ArrayList([]const u8), row: *const settings_pages.Row) Allocator.Error!void {
+    // A key this build's schema lacks is skipped, never drawn half-made (the
+    // drift test fails first on a real build).
+    const key = self.catalogKey(row.key) orelse return;
+    const summary = if (row.hint) |h| h else try SettingsCatalog.summary(arena, if (self.catalog.get(key)) |e| e.doc else null);
+    try plan.append(arena, .{ .y = 0, .h = 0, .kind = .row, .key = key, .summary = summary, .row = row });
+    try keys.append(arena, key);
+}
+
+fn planPage(self: *SettingsWindow, arena: Allocator, r: Reader, pg: *const settings_pages.Page, plan: *std.ArrayList(Item), keys: *std.ArrayList([]const u8)) Allocator.Error!void {
+    _ = r;
+    for (pg.sections) |*sec| {
+        if (sec.title) |t| try plan.append(arena, .{ .y = 0, .h = 0, .kind = .header, .title = t });
+        if (sec.custom) |c| try plan.append(arena, .{ .y = 0, .h = 0, .kind = .custom, .custom = c });
+        for (sec.rows) |*row| try self.planRow(arena, plan, keys, row);
+    }
+}
+
+/// Mac `searchResults`: curated rows first, each under "<Page> > <Section>",
+/// with custom sections matching their own words; then every key no page
+/// shows, capped at `search_cap`.
+fn planSearch(self: *SettingsWindow, arena: Allocator, r: Reader, plan: *std.ArrayList(Item), keys: *std.ArrayList([]const u8)) Allocator.Error!void {
+    const q = self.query();
+    for (pages) |pg| {
+        if (pg.id == .advanced) continue;
+        for (pg.sections) |*sec| {
+            const heading = if (sec.title) |t|
+                try std.fmt.allocPrint(arena, "{s} \u{203A} {s}", .{ pg.title, t })
+            else
+                pg.title;
+            if (sec.custom) |c| {
+                const words = c.searchText();
+                if (SettingsCatalog.containsIgnoreCase(words, q) or
+                    (sec.title != null and SettingsCatalog.containsIgnoreCase(sec.title.?, q)))
+                {
+                    try plan.append(arena, .{ .y = 0, .h = 0, .kind = .header, .title = heading });
+                    try plan.append(arena, .{ .y = 0, .h = 0, .kind = .custom, .custom = c });
+                }
+                continue;
+            }
+            var first = true;
+            for (sec.rows) |*row| {
+                if (self.catalog.get(row.key) == null) continue;
+                if (!settings_pages.rowMatchesText(row, q) and !try r.matches(arena, row.key, q)) continue;
+                if (first) try plan.append(arena, .{ .y = 0, .h = 0, .kind = .header, .title = heading });
+                first = false;
+                try self.planRow(arena, plan, keys, row);
+                self.curated_hits += 1;
+            }
+        }
+    }
+    const uncurated = try r.allSettings(arena, .uncovered, q);
+    self.matched = uncurated.len;
+    if (uncurated.len > 0) {
+        const heading = try std.fmt.allocPrint(arena, "Advanced \u{203A} All settings ({d})", .{uncurated.len});
+        try plan.append(arena, .{ .y = 0, .h = 0, .kind = .header, .title = heading });
+        for (uncurated[0..@min(uncurated.len, search_cap)]) |k| try self.planRaw(arena, plan, keys, k);
+        if (uncurated.len > search_cap) try plan.append(arena, .{ .y = 0, .h = 0, .kind = .more });
+    }
+    if (plan.items.len == 0) try plan.append(arena, .{ .y = 0, .h = 0, .kind = .empty });
 }
 
 fn contains(list: []const []const u8, key: []const u8) bool {
@@ -491,29 +594,17 @@ fn layoutItems(self: *SettingsWindow) void {
         _ = w32.ReleaseDC(self.hwnd, dc);
     };
 
-    if (self.searching()) {
-        if (self.listed.len == 0) {
-            list.append(arena, .{ .y = y, .h = header_h * 2, .kind = .empty }) catch {};
-            y += header_h * 2;
-        } else {
-            list.append(arena, .{ .y = y, .h = header_h, .kind = .header }) catch {};
-            y += header_h;
-        }
-    } else if (self.listed.len == 0) {
-        list.append(arena, .{ .y = y, .h = header_h * 2, .kind = .empty }) catch {};
-        y += header_h * 2;
-    }
-    for (self.listed) |key| {
-        const doc = if (self.catalog.get(key)) |e| e.doc else null;
-        const summary = SettingsCatalog.summary(arena, doc) catch "";
-        var item: Item = .{ .y = y, .h = 0, .kind = .row, .key = key, .summary = summary };
-        item.h = if (hdc) |dc| self.paintRow(dc, self.pal(), item, 0, false) else header_h;
+    for (self.plan) |planned| {
+        var item = planned;
+        item.y = y;
+        item.h = switch (item.kind) {
+            .header, .more => header_h,
+            .empty => header_h * 2,
+            .row => if (hdc) |dc| self.paintRow(dc, self.pal(), item, 0, false) else header_h,
+            .custom => if (hdc) |dc| self.paintCustom(dc, self.pal(), item, 0, false) else header_h,
+        };
         list.append(arena, item) catch break;
         y += item.h;
-    }
-    if (self.searching() and self.matched > self.listed.len) {
-        list.append(arena, .{ .y = y, .h = header_h, .kind = .more }) catch {};
-        y += header_h;
     }
     self.items = list.items;
     self.content_h = y + layout.px(dip.margin, self.scale);
@@ -535,6 +626,7 @@ pub fn setQuery(self: *SettingsWindow, text: []const u8) void {
 pub fn setPage(self: *SettingsWindow, page: PageId) void {
     self.commitEdit();
     self.page = page;
+    self.revealed_key = null;
     if (self.search.len > 0) self.search.clear();
     self.scroll = 0;
     self.refresh();
@@ -645,6 +737,79 @@ pub fn removeValue(self: *SettingsWindow, key: []const u8, index: usize) bool {
     return self.write(SettingsModel.setList, .{ k, @as([]const []const u8, next.items) });
 }
 
+/// A curated switch: flips a bool key between true and false.
+pub fn toggleKey(self: *SettingsWindow, key: []const u8) bool {
+    const k = self.catalogKey(key) orelse return false;
+    if (self.overridingSource(k) != null) return false;
+    const r = self.reader() orelse return false;
+    const on = std.mem.eql(u8, r.value(k), "true");
+    self.commitEdit();
+    return self.write(SettingsModel.set, .{ k, @as([]const u8, if (on) "false" else "true") });
+}
+
+/// A curated popup's pick. "" is "unset": the key leaves the user's file.
+pub fn chooseValue(self: *SettingsWindow, key: []const u8, value: []const u8) bool {
+    const k = self.catalogKey(key) orelse return false;
+    if (self.overridingSource(k) != null) return false;
+    const r = self.reader() orelse return false;
+    self.commitEdit();
+    if (value.len == 0) return if (r.isSetInFile(k)) self.write(SettingsModel.reset, .{k}) else true;
+    if (r.isSetInFile(k) and std.mem.eql(u8, r.value(k), value)) return true;
+    return self.write(SettingsModel.set, .{ k, value });
+}
+
+/// All Settings' "<Page> >" link (Mac `reveal`): clear the search, open the
+/// key's page and scroll the row into view.
+pub fn reveal(self: *SettingsWindow, key: []const u8) bool {
+    const id = settings_pages.pageFor(key) orelse return false;
+    self.setPage(id);
+    for (self.items) |it| if (it.kind == .row and std.mem.eql(u8, it.key, key)) {
+        // Keep the section header above the row in view.
+        self.scroll = layout.clampScroll(it.y - layout.px(dip.header_h, self.scale), self.content_h, self.frame().list.h);
+        self.revealed_key = it.key;
+        self.invalidate();
+        return true;
+    };
+    return true;
+}
+
+/// Whether a curated row's control is live: not dimmed by its condition.
+pub fn rowEnabled(self: *const SettingsWindow, row: *const settings_pages.Row) bool {
+    const cond = row.enabled_when orelse return true;
+    const r = self.reader() orelse return true;
+    return cond.holds(r.value(cond.key));
+}
+
+/// The value popup for a curated row, hung under its control.
+fn openChoice(self: *SettingsWindow, key: []const u8, anchor: Rect) void {
+    const row = settings_pages.rowFor(key) orelse return;
+    const r = self.reader() orelse return;
+    const entry = self.catalog.get(key);
+    const opts = settings_pages.choices(self.gpa, row, if (entry) |e| e.options else null) catch return;
+    defer self.gpa.free(opts);
+    const now = r.value(key);
+    const menu = w32.CreatePopupMenu() orelse return;
+    defer _ = w32.DestroyMenu(menu);
+    for (opts, 0..) |o, i| {
+        const wide = std.unicode.utf8ToUtf16LeAllocZ(self.gpa, o.label) catch return;
+        defer self.gpa.free(wide);
+        const checked = std.mem.eql(u8, o.value, now);
+        _ = w32.AppendMenuW(menu, w32.MF_STRING | (if (checked) w32.MF_CHECKED else 0), i + 1, wide.ptr);
+    }
+    var pt: w32.POINT = .{ .x = anchor.x, .y = anchor.y + anchor.h };
+    _ = w32.ClientToScreen(self.hwnd, &pt);
+    const cmd = w32.TrackPopupMenuEx(menu, w32.TPM_LEFTALIGN | w32.TPM_TOPALIGN | w32.TPM_RETURNCMD, pt.x, pt.y, self.hwnd, null);
+    if (cmd <= 0) return;
+    const idx: usize = @intCast(cmd - 1);
+    if (idx < opts.len) _ = self.chooseValue(key, opts[idx].value);
+}
+
+/// The Keyboard page's "Open Shortcut Guide..." link.
+pub fn openShortcutGuide(self: *SettingsWindow) void {
+    self.commitEdit();
+    ShortcutGuideWindow.open(self.app, null);
+}
+
 /// The override note's Open link: the file that sets the key.
 pub fn openOverridingFile(self: *SettingsWindow, key: []const u8) void {
     const src = self.overridingSource(key) orelse return;
@@ -701,6 +866,11 @@ fn pal(self: *const SettingsWindow) panel_theme.Panel {
     return system_colors.panelFor(self.app);
 }
 
+/// The All Settings band (title + filter) sits over Advanced's list only.
+fn showsFilter(self: *const SettingsWindow) bool {
+    return !self.searching() and self.page == .advanced;
+}
+
 fn isWindow(self: *const SettingsWindow) bool {
     return active == self;
 }
@@ -713,7 +883,7 @@ fn clientRect(self: *const SettingsWindow) w32.RECT {
 
 fn frame(self: *const SettingsWindow) layout.Frame {
     const rc = self.clientRect();
-    return layout.frameFor(self.scale, rc.right - rc.left, rc.bottom - rc.top, !self.searching());
+    return layout.frameFor(self.scale, rc.right - rc.left, rc.bottom - rc.top, self.showsFilter());
 }
 
 fn invalidate(self: *SettingsWindow) void {
@@ -770,7 +940,7 @@ fn paint(self: *SettingsWindow, hdc_screen: w32.HDC) void {
     self.text.palette = p;
     self.hits.clearRetainingCapacity();
     _ = w32.SetBkMode(mem, w32.TRANSPARENT);
-    const f = layout.frameFor(self.scale, w, h, !self.searching());
+    const f = layout.frameFor(self.scale, w, h, self.showsFilter());
     fillRect(mem, .{ .x = 0, .y = 0, .w = w, .h = h }, cr(p.bg));
     self.paintSidebar(mem, f, p);
     fillRect(mem, f.rule, cr(p.divider));
@@ -799,13 +969,13 @@ fn paintSidebar(self: *SettingsWindow, hdc: w32.HDC, f: layout.Frame, p: panel_t
         if (selected) roundRect(hdc, r, radius, cr(p.select), null, 1);
         const icon = layout.px(dip.page_icon, self.scale);
         const tile: Rect = .{ .x = r.x + g, .y = r.y + @divTrunc(r.h - icon, 2), .w = icon, .h = icon };
-        roundRect(hdc, tile, radius, cr(p.accent), null, 1);
+        roundRect(hdc, tile, radius, tintColor(page.tint), null, 1);
         const gw = self.text.measure(hdc, page.glyph, .{ .bold = true }, .caption).cx;
         const ch = self.text.lineHeight(.caption);
         _ = self.text.drawText(hdc, tile.x + @divTrunc(tile.w - gw, 2), tile.y + @divTrunc(tile.h - ch, 2), page.glyph, .{ .bold = true }, .caption, cr(p.on_accent), true);
         const lh = self.text.lineHeight(.body);
         _ = self.text.drawText(hdc, tile.x + tile.w + g, r.y + @divTrunc(r.h - lh, 2), page.title, .{}, .body, if (selected) cr(p.text_on_select) else cr(p.text), true);
-        const count = self.changedInFile();
+        const count = self.changedOn(page.id);
         if (count > 0) {
             var nb: [16]u8 = undefined;
             const ns = std.fmt.bufPrint(&nb, "{d}", .{count}) catch "";
@@ -845,12 +1015,12 @@ fn paintTitle(self: *SettingsWindow, hdc: w32.HDC, f: layout.Frame, p: panel_the
     const radius = layout.px(dip.radius, self.scale);
     var all_buf: [32]u8 = undefined;
     const all_label = std.fmt.bufPrint(&all_buf, "All {d}", .{self.catalog.entries.len}) catch "All";
-    const labels = [_][]const u8{ all_label, "Changed" };
-    const values = [_]Filter{ .all, .changed };
-    var widths: [2]i32 = undefined;
+    const labels = [_][]const u8{ all_label, "Changed", "Not on other pages" };
+    const values = filter_values;
+    var widths: [labels.len]i32 = undefined;
     var total: i32 = 0;
     for (labels, 0..) |l, i| {
-        widths[i] = self.text.measure(hdc, l, .{}, .caption).cx + 2 * pad;
+        widths[i] = self.text.measure(hdc, l, .{ .bold = true }, .caption).cx + 2 * pad;
         total += widths[i];
     }
     var x = band.x + band.w - total;
@@ -867,10 +1037,17 @@ fn paintTitle(self: *SettingsWindow, hdc: w32.HDC, f: layout.Frame, p: panel_the
     }
 }
 
-fn pageInfo(id: PageId) PageInfo {
-    for (pages) |pg| if (pg.id == id) return pg;
-    return pages[0];
+fn pageInfo(id: PageId) *const settings_pages.Page {
+    return settings_pages.page(id);
 }
+
+/// A page tile's 0xRRGGBB tint as a COLORREF.
+fn tintColor(rgb: u32) u32 {
+    return w32.RGB(@truncate(rgb >> 16), @truncate(rgb >> 8), @truncate(rgb));
+}
+
+/// The All Settings filter, in its segmented control's order.
+const filter_values = [_]Filter{ .all, .changed, .uncovered };
 
 fn paintList(self: *SettingsWindow, hdc: w32.HDC, f: layout.Frame, p: panel_theme.Panel) void {
     const view = f.list;
@@ -884,11 +1061,10 @@ fn paintList(self: *SettingsWindow, hdc: w32.HDC, f: layout.Frame, p: panel_them
         switch (it.kind) {
             .row => _ = self.paintRow(hdc, p, it, y, true),
             .header => {
-                var buf: [96]u8 = undefined;
-                const label = std.fmt.bufPrint(&buf, "Advanced \u{203A} All settings ({d})", .{self.matched}) catch "";
                 const lh = self.text.lineHeight(.strong);
-                _ = self.text.drawText(hdc, view.x + m, y + it.h - layout.px(dip.gap, self.scale) - lh, label, .{}, .strong, cr(p.text), true);
+                self.text.drawEllipsized(hdc, .{ .x = view.x + m, .y = y + it.h - layout.px(dip.gap, self.scale) - lh, .w = view.w - 2 * m, .h = lh }, it.title, .{}, .strong, cr(p.text), true);
             },
+            .custom => _ = self.paintCustom(hdc, p, it, y, true),
             .more => {
                 var buf: [96]u8 = undefined;
                 const label = std.fmt.bufPrint(&buf, "{d} more \u{2014} keep typing to narrow.", .{self.matched - self.listed.len}) catch "";
@@ -931,13 +1107,21 @@ fn paintRow(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Ite
     const width = cols.right - cols.left;
     const hovered = self.hover_key != null and std.mem.eql(u8, self.hover_key.?, key);
     const editing = self.edit_key != null and std.mem.eql(u8, self.edit_key.?, key);
+    const enabled = if (item.row) |row| self.rowEnabled(row) else true;
 
     var cy = y + pad_y;
     if (draw) {
-        // Line 1: the key, the changed dot, the doc button, Reset.
+        if (self.revealed_key != null and std.mem.eql(u8, self.revealed_key.?, key)) {
+            fillRect(hdc, .{ .x = cols.left - t, .y = y, .w = width + 2 * t, .h = self.rowHeightHint(item) }, cr(p.select));
+        }
+        // Line 1: the label (a curated row) or the key, the changed dot,
+        // the doc button, Reset.
         const ky = cy + @divTrunc(band - lh, 2);
         var x = cols.left;
-        x += self.text.drawText(hdc, x, ky, key, .{ .code = true }, .body, cr(p.text), true) + g;
+        x += if (item.row) |row|
+            self.text.drawText(hdc, x, ky, row.label, .{}, .body, if (enabled) cr(p.text) else cr(p.secondary), true) + g
+        else
+            self.text.drawText(hdc, x, ky, key, .{ .code = true }, .body, cr(p.text), true) + g;
         if (r.isModified(key)) {
             const d = layout.px(dip.dot, self.scale);
             roundRect(hdc, .{ .x = x, .y = cy + @divTrunc(band - d, 2), .w = d, .h = d }, @divTrunc(d, 2), cr(p.accent), null, 1);
@@ -951,15 +1135,57 @@ fn paintRow(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Ite
             _ = self.iconButton(hdc, x, cy, band, icon, "\u{21BA}", cr(p.accent), .reset, key);
         }
 
+        // A curated key on a raw row links to its page (Mac's "<Page> >").
+        if (item.row == null) if (settings_pages.pageFor(key)) |id| {
+            var lb: [64]u8 = undefined;
+            const link = std.fmt.bufPrint(&lb, "{s} \u{203A}", .{pageInfo(id).title}) catch "";
+            const lw = self.text.measure(hdc, link, .{}, .caption).cx;
+            const lx = cols.control.x - g - lw;
+            if (lx > x) {
+                _ = self.text.drawText(hdc, lx, cy + @divTrunc(band - ch, 2), link, .{}, .caption, cr(p.accent), true);
+                self.hit(.{ .rect = .{ .x = lx, .y = cy, .w = lw, .h = band }, .kind = .reveal, .key = key });
+            }
+        };
+
         // The control.
-        if (repeatable) {
+        const choice_row: ?*const settings_pages.Row = if (item.row) |row| (if (row.control.isChoice() and !repeatable) row else null) else null;
+        if (choice_row) |row| {
+            const live = enabled and override == null;
+            if (row.control == .toggle) {
+                const on = std.mem.eql(u8, r.value(key), "true");
+                const sh = @divTrunc(fh * 3, 4);
+                const sw = sh * 2 - @divTrunc(sh, 3);
+                const sr: Rect = .{ .x = cols.control.x + cols.control.w - sw, .y = cols.control.y + @divTrunc(fh - sh, 2), .w = sw, .h = sh };
+                const track = if (!live) cr(p.divider) else if (on) cr(p.accent) else cr(p.boundary);
+                roundRect(hdc, sr, @divTrunc(sh, 2), track, null, 1);
+                const kn = sh - 2 * self.hair() - 2;
+                const kx = if (on) sr.x + sr.w - kn - self.hair() - 1 else sr.x + self.hair() + 1;
+                roundRect(hdc, .{ .x = kx, .y = sr.y + @divTrunc(sh - kn, 2), .w = kn, .h = kn }, @divTrunc(kn, 2), cr(p.field), null, 1);
+                if (live) self.hit(.{ .rect = sr, .kind = .toggle, .key = key });
+            } else {
+                const label_now = row.labelFor(r.value(key));
+                // The box, then the label ellipsized short of the arrow.
+                self.paintField(hdc, p, cols.control, "", "", false, 0, false, !live);
+                const arrow = "\u{25BE}";
+                const aw = self.text.measure(hdc, arrow, .{}, .caption).cx;
+                const fpad = layout.px(dip.gap, self.scale);
+                self.text.drawEllipsized(hdc, .{
+                    .x = cols.control.x + fpad,
+                    .y = cols.control.y + @divTrunc(fh - lh, 2),
+                    .w = @max(0, cols.control.w - 3 * fpad - aw),
+                    .h = lh,
+                }, label_now, .{}, .body, if (live) cr(p.text) else cr(p.secondary), true);
+                _ = self.text.drawText(hdc, cols.control.x + cols.control.w - aw - g, cols.control.y + @divTrunc(fh - ch, 2), arrow, .{}, .caption, cr(p.secondary), true);
+                if (live) self.hit(.{ .rect = cols.control, .kind = .choice, .key = key });
+            }
+        } else if (repeatable) {
             self.paintValueList(hdc, p, key, cols.control, editing);
         } else {
             const value = r.value(key);
             const placeholder = if (entry) |e| (if (e.value().len == 0) "unset" else e.value()) else "unset";
             const text = if (editing) self.field.text() else value;
-            self.paintField(hdc, p, cols.control, text, placeholder, editing and w32.GetFocus() == self.hwnd, if (editing) self.field.caret else text.len, true, override != null);
-            if (override == null) self.hit(.{ .rect = cols.control, .kind = .field, .key = key });
+            self.paintField(hdc, p, cols.control, text, placeholder, editing and w32.GetFocus() == self.hwnd, if (editing) self.field.caret else text.len, true, override != null or !enabled);
+            if (override == null and enabled) self.hit(.{ .rect = cols.control, .kind = .field, .key = key });
         }
     }
     cy += band;
@@ -968,6 +1194,13 @@ fn paintRow(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Ite
     if (item.summary.len > 0) {
         cy += t;
         if (draw) self.text.drawEllipsized(hdc, .{ .x = cols.left, .y = cy, .w = width, .h = ch }, item.summary, .{}, .caption, cr(p.secondary), false);
+        cy += ch;
+    }
+
+    // A dimmed curated row says why (Mac's `enabledWhen` reason).
+    if (!enabled) {
+        cy += t;
+        if (draw) self.text.drawEllipsized(hdc, .{ .x = cols.left, .y = cy, .w = width, .h = ch }, item.row.?.enabled_when.?.reason, .{ .italic = true }, .caption, cr(p.secondary), false);
         cy += ch;
     }
 
@@ -1026,6 +1259,63 @@ fn paintRow(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Ite
     }
 
     cy += pad_y;
+    if (draw) fillRect(hdc, .{ .x = cols.left, .y = cy - self.hair(), .w = width, .h = self.hair() }, cr(p.divider));
+    return cy - y;
+}
+
+/// The row's laid-out height, for the reveal highlight (0 before layout).
+fn rowHeightHint(self: *const SettingsWindow, item: Item) i32 {
+    for (self.items) |it| if (it.kind == .row and std.mem.eql(u8, it.key, item.key)) return it.h;
+    return 0;
+}
+
+/// A custom section (Mac `SettingsCustomSection`). Returns its height.
+fn paintCustom(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Item, y: i32, draw: bool) i32 {
+    const f = self.frame();
+    const g = layout.px(dip.gap, self.scale);
+    const t = layout.px(dip.tight, self.scale);
+    const pad_y = layout.px(dip.row_pad_y, self.scale);
+    const lh = self.text.lineHeight(.body);
+    const ch = self.text.lineHeight(.caption);
+    const cols = layout.rowColumns(self.scale, f.list, f.scrollbar.w, y + pad_y, lh, dip.field_w);
+    const width = cols.right - cols.left;
+    var cy = y + pad_y;
+    const Line = struct { text: []const u8, caption: bool = true, link: ?Hit.Kind = null };
+    var buf: [128]u8 = undefined;
+    const lines: []const Line = switch (item.custom) {
+        .shortcut_guide => &.{
+            .{ .text = "Every shortcut, searchable, with what it does.", .caption = false },
+            .{ .text = "Open Shortcut Guide\u{2026}", .link = .guide_link },
+            .{ .text = "To change a shortcut, edit keybind under Advanced \u{203A} All Settings." },
+        },
+        .version => &.{
+            .{ .text = std.fmt.bufPrint(&buf, "Ghoztty {s}", .{build_config.version_string}) catch "Ghoztty", .caption = false },
+            .{ .text = "Updates arrive as published Windows releases; the setting above says whether to check for them." },
+        },
+        .agent_status => &.{
+            .{ .text = "The agent keeps your shells running while the app is closed." },
+        },
+        .remote_machines => &.{
+            .{ .text = "Your machines and their host settings are in the machine chooser (New Remote Window)." },
+        },
+        .config_file, .all_settings => &.{},
+    };
+    for (lines, 0..) |line, i| {
+        if (i > 0) cy += t;
+        const style: notes_render.SizeClass = if (line.caption) .caption else .body;
+        const h = if (line.caption) ch else lh;
+        if (draw) {
+            const color = if (line.link != null) cr(p.accent) else if (line.caption) cr(p.secondary) else cr(p.text);
+            if (line.link) |kind| {
+                const w = self.text.drawText(hdc, cols.left, cy, line.text, .{}, style, color, true);
+                self.hit(.{ .rect = .{ .x = cols.left, .y = cy, .w = w, .h = h }, .kind = kind });
+            } else {
+                self.text.drawEllipsized(hdc, .{ .x = cols.left, .y = cy, .w = width, .h = h }, line.text, .{}, style, color, false);
+            }
+        }
+        cy += h;
+    }
+    cy += pad_y + g;
     if (draw) fillRect(hdc, .{ .x = cols.left, .y = cy - self.hair(), .w = width, .h = self.hair() }, cr(p.divider));
     return cy - y;
 }
@@ -1180,7 +1470,7 @@ fn hitAt(self: *const SettingsWindow, x: i32, y: i32) ?Hit {
         const h = self.hits.items[i];
         if (!h.rect.contains(x, y)) continue;
         const in_list = switch (h.kind) {
-            .field, .add_field, .reset, .info, .open, .chip_remove => true,
+            .field, .add_field, .reset, .info, .open, .chip_remove, .toggle, .choice, .reveal, .guide_link => true,
             else => false,
         };
         if (in_list and !f.list.contains(x, y)) continue;
@@ -1204,7 +1494,11 @@ fn onLeftDown(self: *SettingsWindow, x: i32, y: i32) void {
     if (self.hitAt(x, y)) |h| {
         switch (h.kind) {
             .page => self.setPage(pages[h.index].id),
-            .filter => self.setFilter(if (h.index == 0) .all else .changed),
+            .filter => self.setFilter(filter_values[@min(h.index, filter_values.len - 1)]),
+            .toggle => _ = self.toggleKey(h.key),
+            .choice => self.openChoice(h.key, h.rect),
+            .reveal => _ = self.reveal(h.key),
+            .guide_link => self.openShortcutGuide(),
             .config_link => {
                 self.commitEdit();
                 self.app.openConfigFile();

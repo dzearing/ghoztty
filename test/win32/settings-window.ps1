@@ -7,7 +7,11 @@
 # live, an invalid value shows inline with the file untouched, Reset removes
 # the line, a repeatable key takes and drops values, and a key that a LATER
 # include sets is read-only with Mac's "Set in X, which loads after your
-# config." note.
+# config." note. T2585 adds the curated pages (section J): Mac's sidebar
+# order and per-page counts, labelled rows with an on/off switch or a value
+# popup, conditions that dim a row, env and the Mac-only keys kept off the
+# pages, the "Not on other pages" filter, the "<Page> >" reveal link, and
+# search listing curated rows before the rest.
 #
 # THE ORACLE IS THE MODEL AND THE FILE. What a row reads and whether a write
 # reached the file are decisions, invisible in pixels, so they are read through
@@ -151,7 +155,7 @@ try {
     Assert ($wins.Count -eq 1) "A: a second open_config focuses it rather than stacking another ($($wins.Count))"
     # Ghostty's XDG join writes a '/' before the subdir; the file is the same.
     Assert ((([string]$s.data.file) -replace '/', '\') -ieq $cfgFile) "A: it writes this dev build's own file (file='$($s.data.file)')"
-    Assert ([string]$s.data.page -eq 'advanced') "A: it opens on Advanced (page='$($s.data.page)')"
+    Assert ([string]$s.data.page -eq 'panes') "A: it opens on the first page, Panes & Windows (page='$($s.data.page)')"
 
     # Ctrl+, is the default chord (the shortcut guide lists the live bindings).
     $g = Invoke-GhozttyIpc -Action 'shortcut-guide' -Arguments @('--op=open', '--query=settings')
@@ -163,7 +167,7 @@ try {
     # =====================================================================
     # B: All Settings lists every schema key; Changed and Search narrow it.
     # =====================================================================
-    $s = Invoke-Settings @('--op=state', '--filter=all')
+    $s = Invoke-Settings @('--op=state', '--page=advanced', '--filter=all')
     $total = [int]$s.data.total
     $rows = @($s.data.rows)
     Assert ($total -gt 100) "B: the schema has every key ($total)"
@@ -280,6 +284,64 @@ try {
             Assert ($colors.Count -ge 8) "H: ...with real content in it ($($colors.Count) distinct sampled colours, $($bmp.Width)x$($bmp.Height))"
         } finally { $bmp.Dispose() }
     }
+
+    # =====================================================================
+    # J: the curated pages (T2585).
+    # =====================================================================
+    $s = Invoke-Settings @('--op=state', '--page=panes')
+    $ids = @($s.data.pages | ForEach-Object { [string]$_.id }) -join ','
+    Assert ($ids -eq 'panes,terminal,keyboard,session,remote,updates,advanced') "J: the sidebar is Mac's page order less Appearance ($ids)"
+    $ps = Find-Row $s 'macos-pane-style'
+    Assert ($ps -and [string]$ps.label -eq 'Style' -and [string]$ps.control -eq 'segmented' -and [string]$ps.shown -eq 'Elevated') "J: Panes & Windows shows the pane Style as a choice reading Elevated (label='$($ps.label)' control='$($ps.control)' shown='$($ps.shown)')"
+    $gl = Find-Row $s 'macos-pane-glass'
+    $dv = Find-Row $s 'split-divider-color'
+    Assert ($gl -and [bool]$gl.enabled -and $dv -and -not [bool]$dv.enabled) 'J: under Elevated, Glass panes is live and Divider color (flat only) is dimmed'
+    $before = Read-Config
+    $s = Invoke-Settings @('--op=choose', '--key=macos-pane-style', '--value=flat')
+    Assert ([bool]$s.data.ok -and @(Get-KeyLines (Read-Config) 'macos-pane-style').Count -eq 1 -and (Read-Config) -match 'macos-pane-style = flat') 'J: picking Flat writes one macos-pane-style = flat line'
+    $gl = Find-Row $s 'macos-pane-glass'
+    $dv = Find-Row $s 'split-divider-color'
+    Assert ($gl -and -not [bool]$gl.enabled -and $dv -and [bool]$dv.enabled) 'J: ...which dims Glass panes and makes Divider color live'
+    $s = Invoke-Settings @('--op=toggle', '--key=maximize')
+    $mx = Find-Row $s 'maximize'
+    Assert ([bool]$s.data.ok -and $mx -and [string]$mx.shown -eq 'On' -and (Read-Config) -match '(?m)^maximize = true') "J: the Open windows filling the screen switch turns on and writes maximize = true (shown='$($mx.shown)')"
+    $pc = @($s.data.pages | Where-Object { $_.id -eq 'panes' })[0]
+    Assert ($pc -and [int]$pc.count -eq 2) "J: the sidebar counts the page's two changed keys ($($pc.count))"
+    $s = Invoke-Settings @('--op=toggle', '--key=maximize')
+    Assert ((Read-Config) -match '(?m)^maximize = false') 'J: the switch turns back off (maximize = false)'
+    $s = Invoke-Settings @('--op=reset', '--key=maximize')
+    $s = Invoke-Settings @('--op=choose', '--key=macos-pane-style', '--value=')
+    Assert (@(Get-KeyLines (Read-Config) 'macos-pane-style').Count -eq 0) 'J: picking the unset choice takes the key back out of the file'
+    $mid = Read-Config
+    $s = Invoke-Settings @('--op=choose', '--key=scrollbar', '--value=sometimes')
+    Assert (-not [bool]$s.data.ok -and (Read-Config) -eq $mid) 'J: a value the parser refuses is not written from a popup either'
+
+    $s = Invoke-Settings @('--op=state', '--page=terminal')
+    $keys = @($s.data.rows | ForEach-Object { [string]$_.key })
+    Assert (($keys -contains 'scrollback-limit') -and ($keys -contains 'command-shell') -and ($keys -contains 'copy-on-select')) "J: Terminal lists shell, scrollback and copy & paste keys ($($keys.Count) rows)"
+    Assert (-not ($keys -contains 'env')) 'J: env is not on the Terminal page (Mac 3a183ffd1)'
+    $s = Invoke-Settings @('--op=state', '--page=updates')
+    $keys = @($s.data.rows | ForEach-Object { [string]$_.key })
+    Assert (($keys -contains 'auto-update') -and -not ($keys -contains 'auto-update-channel')) "J: Updates carries auto-update and no tip channel ($($keys -join ','))"
+    $s = Invoke-Settings @('--op=state', '--page=keyboard')
+    $keys = @($s.data.rows | ForEach-Object { [string]$_.key })
+    Assert (-not ($keys -contains 'macos-option-as-alt')) 'J: the Mac-only Option-key setting is not on Keyboard'
+
+    $s = Invoke-Settings @('--op=state', '--page=advanced', '--filter=uncovered')
+    $unc = @($s.data.rows)
+    $curatedLeak = @($unc | Where-Object { $null -ne $_.curated_page })
+    Assert ($unc.Count -gt 0 -and $unc.Count -lt $total -and $curatedLeak.Count -eq 0) "J: Not on other pages lists only uncurated keys ($($unc.Count) of $total; leaks: $(@($curatedLeak | ForEach-Object { $_.key }) -join ','))"
+    Assert ($null -ne (Find-Row $s 'env')) 'J: ...env among them'
+    $s = Invoke-Settings @('--op=reveal', '--key=scrollbar', '--filter=all')
+    Assert ([bool]$s.data.ok -and [string]$s.data.page -eq 'terminal' -and [string]$s.data.revealed -eq 'scrollbar') "J: the Terminal link on scrollback opens Terminal at that row (page='$($s.data.page)' revealed='$($s.data.revealed)')"
+
+    $s = Invoke-Settings @('--op=state', '--query=scroll')
+    $first = @($s.data.rows)[0]
+    Assert ([int]$s.data.curated_hits -ge 2 -and $first -and -not [string]::IsNullOrEmpty([string]$first.label)) "J: search lists curated rows first ($($s.data.curated_hits) curated; first='$($first.key)')"
+    [void](Invoke-Settings @('--op=state', '--query='))
+    $shot2 = Join-Path $work 'settings-panes.png'
+    $s = Invoke-Settings @('--op=shot', '--page=panes', "--path=$shot2")
+    Assert ($s.success -and (Test-Path $shot2) -and (Get-Item $shot2).Length -gt 4000) 'J: a curated page renders to a PNG'
 
     # =====================================================================
     # I: Esc clears the search, then closes; refusals are typed.

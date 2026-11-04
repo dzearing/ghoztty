@@ -25,6 +25,7 @@ const Allocator = std.mem.Allocator;
 const ConfigFileText = @import("ConfigFileText.zig");
 const ConfigFileStore = @import("ConfigFileStore.zig");
 const SettingsCatalog = @import("SettingsCatalog.zig");
+const settings_pages = @import("settings_pages.zig");
 const file_load = @import("../../config/file_load.zig");
 
 pub const Source = struct {
@@ -323,7 +324,9 @@ pub const Reader = struct {
         return false;
     }
 
-    pub const Filter = enum { all, changed };
+    /// Mac's All / Changed / Not on other pages (T2585: the curated pages'
+    /// keys are `settings_pages.isCurated`).
+    pub const Filter = enum { all, changed, uncovered };
 
     /// The keys All Settings lists, in schema order. Caller owns the slice.
     pub fn allSettings(self: Reader, alloc: Allocator, filter: Filter, query: []const u8) Allocator.Error![]const []const u8 {
@@ -332,6 +335,7 @@ pub const Reader = struct {
         const q = std.mem.trim(u8, query, " \t");
         for (self.catalog.entries) |*e| {
             if (filter == .changed and !self.isModified(e.key)) continue;
+            if (filter == .uncovered and settings_pages.isCurated(e.key)) continue;
             if (q.len > 0 and !try self.matches(alloc, e.key, q)) continue;
             try out.append(alloc, e.key);
         }
@@ -563,6 +567,17 @@ test "SettingsSources: All Settings filters by changed and by search" {
     defer testing.allocator.free(changed);
     try testing.expectEqual(@as(usize, 1), changed.len);
     try testing.expectEqualStrings("font-size", changed[0]);
+
+    // Not on other pages: every key a curated page does not edit (T2585).
+    const uncovered = try r.allSettings(testing.allocator, .uncovered, "");
+    defer testing.allocator.free(uncovered);
+    try testing.expect(uncovered.len < all.len);
+    for (uncovered) |k| try testing.expect(!settings_pages.isCurated(k));
+    var found_env = false;
+    for (uncovered) |k| if (std.mem.eql(u8, k, "env")) {
+        found_env = true;
+    };
+    try testing.expect(found_env);
 
     // Matches the key...
     const by_key = try r.allSettings(testing.allocator, .all, "  CURSOR-STYLE ");

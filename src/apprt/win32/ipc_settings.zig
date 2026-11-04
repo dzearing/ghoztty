@@ -34,12 +34,13 @@ const build_config = @import("../../build_config.zig");
 const App = @import("App.zig");
 const ipc_capture = @import("ipc_capture.zig");
 const SettingsWindow = @import("SettingsWindow.zig");
+const settings_pages = @import("settings_pages.zig");
 
 const errorResponse = ipc_capture.errorResponse;
 
 pub const enabled = build_config.is_debug;
 
-pub const Op = enum { action, open, close, state, set, add, remove, reset, doc, escape, shot };
+pub const Op = enum { action, open, close, state, set, add, remove, reset, doc, escape, shot, toggle, choose, reveal };
 
 pub const Request = struct {
     op: Op,
@@ -83,9 +84,9 @@ pub fn parse(arguments: ?[]const []const u8) ParseError!Request {
 
 pub fn handle(app: *App, alloc: Allocator, arguments: ?[]const []const u8) Allocator.Error![]u8 {
     const req = parse(arguments) catch |err| return switch (err) {
-        error.MissingOp => errorResponse(alloc, "--op=action|open|close|state|set|add|remove|reset|doc|escape|shot is required", .{}),
-        error.BadOp => errorResponse(alloc, "--op must be action, open, close, state, set, add, remove, reset, doc, escape or shot", .{}),
-        error.BadFilter => errorResponse(alloc, "--filter must be all or changed", .{}),
+        error.MissingOp => errorResponse(alloc, "--op=action|open|close|state|set|add|remove|reset|doc|escape|shot|toggle|choose|reveal is required", .{}),
+        error.BadOp => errorResponse(alloc, "--op must be action, open, close, state, set, add, remove, reset, doc, escape, shot, toggle, choose or reveal", .{}),
+        error.BadFilter => errorResponse(alloc, "--filter must be all, changed or uncovered", .{}),
         error.BadPage => errorResponse(alloc, "--page must name a Settings page", .{}),
         error.BadNumber => errorResponse(alloc, "--index must be a non-negative integer", .{}),
     };
@@ -132,6 +133,21 @@ pub fn handle(app: *App, alloc: Allocator, arguments: ?[]const []const u8) Alloc
         .doc => {
             const key = req.key orelse return errorResponse(alloc, "--key is required for --op=doc", .{});
             w.toggleDoc(key);
+        },
+        // A curated switch / popup pick / "<Page> >" link - the same
+        // functions the clicks call (the popup's menu is the only part not
+        // driven, since TrackPopupMenu is modal).
+        .toggle => {
+            const key = req.key orelse return errorResponse(alloc, "--key is required for --op=toggle", .{});
+            ok = w.toggleKey(key);
+        },
+        .choose => {
+            const key = req.key orelse return errorResponse(alloc, "--key is required for --op=choose", .{});
+            ok = w.chooseValue(key, req.value orelse "");
+        },
+        .reveal => {
+            const key = req.key orelse return errorResponse(alloc, "--key is required for --op=reveal", .{});
+            ok = w.reveal(key);
         },
         .escape => {
             // Esc, as the window handles it: field, then search, then close.
@@ -184,6 +200,24 @@ fn writeState(jws: *std.json.Stringify, alloc: Allocator, w_opt: ?*SettingsWindo
         try jws.write(w.matchedCount());
         try jws.objectField("changed_in_file");
         try jws.write(w.changedInFile());
+        try jws.objectField("curated_hits");
+        try jws.write(w.curated_hits);
+        try jws.objectField("revealed");
+        try jws.write(w.revealed_key);
+        // The sidebar: each page and its changed count.
+        try jws.objectField("pages");
+        try jws.beginArray();
+        for (SettingsWindow.pages) |pg| {
+            try jws.beginObject();
+            try jws.objectField("id");
+            try jws.write(@tagName(pg.id));
+            try jws.objectField("title");
+            try jws.write(pg.title);
+            try jws.objectField("count");
+            try jws.write(w.changedOn(pg.id));
+            try jws.endObject();
+        }
+        try jws.endArray();
         try jws.objectField("file");
         try jws.write(w.main_path);
         try jws.objectField("editing");
@@ -217,6 +251,21 @@ fn writeState(jws: *std.json.Stringify, alloc: Allocator, w_opt: ?*SettingsWindo
             try jws.write(if (src) |s| s.path else null);
             try jws.objectField("problem");
             try jws.write(w.model.problem(key));
+            // Curated: the page that owns the key (the reveal link), and on
+            // a curated page the row's label, control, shown value, and
+            // whether its condition leaves it live.
+            try jws.objectField("curated_page");
+            try jws.write(if (settings_pages.pageFor(key)) |id| @tagName(id) else null);
+            if (!w.searching() and w.page == .advanced) {} else if (settings_pages.rowFor(key)) |row| {
+                try jws.objectField("label");
+                try jws.write(row.label);
+                try jws.objectField("control");
+                try jws.write(@tagName(row.control));
+                try jws.objectField("shown");
+                try jws.write(row.labelFor(r.value(key)));
+                try jws.objectField("enabled");
+                try jws.write(w.rowEnabled(row));
+            }
             if (repeatable) {
                 const file_vals = try w.file.values(alloc, key);
                 defer alloc.free(file_vals);
@@ -242,5 +291,8 @@ test "ipc_settings: parse" {
     try testing.expectError(error.MissingOp, parse(&.{"--key=x"}));
     try testing.expectError(error.BadOp, parse(&.{"--op=nope"}));
     try testing.expectError(error.BadFilter, parse(&.{ "--op=state", "--filter=some" }));
+    try testing.expectEqual(SettingsWindow.Filter.uncovered, (try parse(&.{ "--op=state", "--filter=uncovered" })).filter.?);
+    try testing.expectEqual(Op.choose, (try parse(&.{ "--op=choose", "--key=scrollbar", "--value=never" })).op);
+    try testing.expectEqual(SettingsWindow.PageId.terminal, (try parse(&.{ "--op=state", "--page=terminal" })).page.?);
     try testing.expectError(error.BadNumber, parse(&.{ "--op=remove", "--index=-1" }));
 }
