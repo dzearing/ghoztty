@@ -32,6 +32,10 @@ test {
     // editor, and the store whose tests touch only a temp dir.
     _ = @import("win32/ConfigFileText.zig");
     _ = @import("win32/ConfigFileStore.zig");
+    // Its write path (T2664): Ghostty's parser checks every new line, and
+    // undo refuses a file that changed since.
+    _ = @import("win32/ConfigValidator.zig");
+    _ = @import("win32/SettingsModel.zig");
 
     // Planted one-frame defects for the T2373 lab's positive controls
     // (T2383): the spec parser and the fire rule, same no-OS-imports deal.
