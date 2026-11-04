@@ -301,6 +301,24 @@ pub fn liveAgentPid(self: *LocalAgent) ?i64 {
     return info.pid;
 }
 
+/// What Settings > Sessions & Agent shows (T2680), read WITHOUT dialing or
+/// spawning: the live pid (as `liveAgentPid`) and the pipe its info file
+/// names, copied into `pipe_out`. Null when no live agent holds the file.
+pub fn liveStatus(self: *LocalAgent, pipe_out: []u8) ?struct { pid: i64, pipe: []const u8 } {
+    const info = self.readInfoFile() orelse return null;
+    if (info.pid <= 0 or !processAlive(info.pid)) return null;
+    const n = @min(info.pipe_len, pipe_out.len);
+    @memcpy(pipe_out[0..n], info.pipe_buf[0..n]);
+    return .{ .pid = info.pid, .pipe = pipe_out[0..n] };
+}
+
+/// The bundled agent build if something has ALREADY probed it, else null.
+/// `bundledVersion` runs `ghoztty-agent --version` on its first call; a
+/// reader that must not start an agent process (Settings) uses this.
+pub fn bundledVersionIfProbed(self: *const LocalAgent) ?[]const u8 {
+    return if (self.bundled_version_probed) self.bundled_version else null;
+}
+
 /// Whether `pid` names a currently-running process. Access-denied counts as
 /// ALIVE (the Mac's `errno == EPERM` arm): a process we cannot open is still a
 /// process, and reporting it dead would invent an agent restart.

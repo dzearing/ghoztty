@@ -66,6 +66,7 @@ const layout = @import("settings_window_layout.zig");
 const notes_render = @import("whats_new_notes.zig");
 const settings_pages = @import("settings_pages.zig");
 const settings_advanced = @import("settings_advanced.zig");
+const settings_live = @import("settings_live.zig");
 const advanced_view = @import("settings_advanced_view.zig");
 const banner_link = @import("banner_link.zig");
 const theme_catalog = @import("theme_catalog.zig");
@@ -138,6 +139,9 @@ pub const Hit = struct {
         choice,
         reveal,
         guide_link,
+        // The live sections (T2680).
+        check_updates,
+        pane_style,
         // Advanced > Config file (T2676).
         open_editor,
         reveal_file,
@@ -203,6 +207,12 @@ toast_ms: u32 = settings_advanced.toast_ms,
 /// Debug builds: `GHOZTTY_SETTINGS_SHELL_DRY` records what an Open / Show
 /// in Explorer would launch here instead of launching it (the seam's).
 last_shell: ?[]u8 = null,
+
+// The live sections (T2680), re-read on every refresh - never by dialing or
+// spawning the agent.
+live_agent: settings_live.Agent = .{},
+live_pipe_buf: [256]u8 = undefined,
+live_build_buf: [96]u8 = undefined,
 
 // What the form shows.
 page: PageId = .appearance,
@@ -600,8 +610,37 @@ pub fn changedInFile(self: *const SettingsWindow) usize {
     return n;
 }
 
+/// Take the agent snapshot Sessions & Agent paints (Mac
+/// `AgentStatusModel.refresh`): the info file's live pid, then the build the
+/// shared connection already reported. Never dials, never spawns.
+fn snapLive(self: *SettingsWindow) void {
+    const la = &self.app.local_agent;
+    var a: settings_live.Agent = .{ .bundled_build = la.bundledVersionIfProbed() };
+    if (la.liveStatus(&self.live_pipe_buf)) |st| {
+        a.running = true;
+        a.pid = st.pid;
+        a.pipe = st.pipe;
+        if (la.runningVersion()) |v| {
+            const n = @min(v.len, self.live_build_buf.len);
+            @memcpy(self.live_build_buf[0..n], v[0..n]);
+            a.running_build = self.live_build_buf[0..n];
+        }
+    }
+    self.live_agent = a;
+}
+
+/// The Updates section's Check for Updates... (Mac `checkForUpdates`): the
+/// same manual check the command palette runs; its answer is the app's own
+/// update notification.
+pub fn checkForUpdates(self: *SettingsWindow) void {
+    self.commitEdit();
+    self.app.startUpdateCheck(.manual);
+    self.refresh();
+}
+
 /// Re-filter and re-lay-out the form.
 fn refresh(self: *SettingsWindow) void {
+    self.snapLive();
     _ = self.view_arena.reset(.retain_capacity);
     const arena = self.view_arena.allocator();
     self.listed = &.{};
@@ -1375,8 +1414,14 @@ fn paintRow(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Ite
     const lh = self.text.lineHeight(.body);
     const ch = self.text.lineHeight(.caption);
     const fh = layout.px(dip.field_h, self.scale);
-    const band = @max(lh, fh);
-    const cols = layout.rowColumns(self.scale, f.list, f.scrollbar.w, y + pad_y, lh, if (repeatable) dip.list_w else dip.field_w);
+    const cards: ?[]const settings_pages.Option = if (item.row) |row| (if (row.control == .cards) row.control.cards else null) else null;
+    const card_band = layout.px(dip.card_h, self.scale) + layout.px(dip.tight, self.scale) + ch;
+    // Line 1 (label, dot, buttons) keeps the plain row height; `band` is the
+    // control's, taller for the Pane style cards.
+    const line_band = @max(lh, fh);
+    const band = if (cards != null) card_band else line_band;
+    const control_w: i32 = if (cards) |c| @intCast(c.len * dip.card_w + (c.len -| 1) * dip.card_gap) else if (repeatable) dip.list_w else dip.field_w;
+    const cols = layout.rowColumns(self.scale, f.list, f.scrollbar.w, y + pad_y, lh, control_w);
     const width = cols.right - cols.left;
     const hovered = self.hover_key != null and std.mem.eql(u8, self.hover_key.?, key);
     const editing = self.edit_key != null and std.mem.eql(u8, self.edit_key.?, key);
@@ -1389,7 +1434,7 @@ fn paintRow(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Ite
         }
         // Line 1: the label (a curated row) or the key, the changed dot,
         // the doc button, Reset.
-        const ky = cy + @divTrunc(band - lh, 2);
+        const ky = cy + @divTrunc(line_band - lh, 2);
         var x = cols.left;
         x += if (item.row) |row|
             self.text.drawText(hdc, x, ky, row.label, .{}, .body, if (enabled) cr(p.text) else cr(p.secondary), true) + g
@@ -1397,15 +1442,15 @@ fn paintRow(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Ite
             self.text.drawText(hdc, x, ky, key, .{ .code = true }, .body, cr(p.text), true) + g;
         if (r.isModified(key)) {
             const d = layout.px(dip.dot, self.scale);
-            roundRect(hdc, .{ .x = x, .y = cy + @divTrunc(band - d, 2), .w = d, .h = d }, @divTrunc(d, 2), cr(p.accent), null, 1);
+            roundRect(hdc, .{ .x = x, .y = cy + @divTrunc(line_band - d, 2), .w = d, .h = d }, @divTrunc(d, 2), cr(p.accent), null, 1);
             x += d + g;
         }
         const icon = layout.px(dip.icon_hit, self.scale);
         const shown = self.doc_key != null and std.mem.eql(u8, self.doc_key.?, key);
-        x += self.iconButton(hdc, x, cy, band, icon, "\u{24D8}", if (shown) cr(p.accent) else cr(p.secondary), .info, key);
+        x += self.iconButton(hdc, x, cy, line_band, icon, "\u{24D8}", if (shown) cr(p.accent) else cr(p.secondary), .info, key);
         // Mac shows Reset on hover; it is also shown while the row is edited.
         if (r.isSetInFile(key) and (hovered or editing)) {
-            _ = self.iconButton(hdc, x, cy, band, icon, "\u{21BA}", cr(p.accent), .reset, key);
+            _ = self.iconButton(hdc, x, cy, line_band, icon, "\u{21BA}", cr(p.accent), .reset, key);
         }
 
         // A curated key on a raw row links to its page (Mac's "<Page> >").
@@ -1415,8 +1460,8 @@ fn paintRow(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Ite
             const lw = self.text.measure(hdc, link, .{}, .caption).cx;
             const lx = cols.control.x - g - lw;
             if (lx > x) {
-                _ = self.text.drawText(hdc, lx, cy + @divTrunc(band - ch, 2), link, .{}, .caption, cr(p.accent), true);
-                self.hit(.{ .rect = .{ .x = lx, .y = cy, .w = lw, .h = band }, .kind = .reveal, .key = key });
+                _ = self.text.drawText(hdc, lx, cy + @divTrunc(line_band - ch, 2), link, .{}, .caption, cr(p.accent), true);
+                self.hit(.{ .rect = .{ .x = lx, .y = cy, .w = lw, .h = line_band }, .kind = .reveal, .key = key });
             }
         };
 
@@ -1424,7 +1469,9 @@ fn paintRow(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Ite
         const choice_row: ?*const settings_pages.Row = if (item.row) |row| (if (row.control.isChoice() and !repeatable) row else null) else null;
         if (choice_row) |row| {
             const live = enabled and override == null;
-            if (row.control == .toggle) {
+            if (cards) |opts| {
+                self.paintCards(hdc, p, opts, r.value(key), cols.control.x, cols.control.y, live);
+            } else if (row.control == .toggle) {
                 const on = std.mem.eql(u8, r.value(key), "true");
                 const sh = @divTrunc(fh * 3, 4);
                 const sw = sh * 2 - @divTrunc(sh, 3);
@@ -1451,10 +1498,11 @@ fn paintRow(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Ite
     }
     cy += band;
 
-    // The doc summary.
-    if (item.summary.len > 0) {
+    // The doc summary (Pane style says what its two cards mean, as Mac).
+    const summary = if (cards != null) settings_live.pane_style_caption else item.summary;
+    if (summary.len > 0) {
         cy += t;
-        if (draw) self.text.drawEllipsized(hdc, .{ .x = cols.left, .y = cy, .w = width, .h = ch }, item.summary, .{}, .caption, cr(p.secondary), false);
+        if (draw) self.text.drawEllipsized(hdc, .{ .x = cols.left, .y = cy, .w = width, .h = ch }, summary, .{}, .caption, cr(p.secondary), false);
         cy += ch;
     }
 
@@ -1524,6 +1572,86 @@ fn paintRow(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Ite
     return cy - y;
 }
 
+/// Pane style's preview cards (Mac `PaneStyleSection`): a thumbnail per
+/// option - raised cards on the window gradient, or edge-to-edge panes split
+/// by a hairline - with its label under it; the chosen one is ringed and its
+/// label set in the accent. A click writes the option (`.pane_style` hit).
+fn paintCards(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, opts: []const settings_pages.Option, chosen: []const u8, x0: i32, y0: i32, live: bool) void {
+    const cw = layout.px(dip.card_w, self.scale);
+    const chh = layout.px(dip.card_h, self.scale);
+    const gap = layout.px(dip.card_gap, self.scale);
+    const radius = layout.px(dip.card_radius, self.scale);
+    const t = layout.px(dip.tight, self.scale);
+    const ch = self.text.lineHeight(.caption);
+    var x = x0;
+    for (opts) |o| {
+        const selected = std.mem.eql(u8, chosen, o.value);
+        const card: Rect = .{ .x = x, .y = y0, .w = cw, .h = chh };
+        self.paintCardThumb(hdc, card, radius, std.mem.eql(u8, o.value, "elevated"));
+        const ring: i32 = if (selected) @max(2, layout.px(2, self.scale)) else self.hair();
+        frameRound(hdc, card, radius, if (selected) cr(p.accent) else cr(p.boundary), ring);
+        const lw = self.text.measure(hdc, o.label, .{ .bold = selected }, .caption).cx;
+        const color = if (!live) cr(p.secondary) else if (selected) cr(p.accent) else cr(p.text);
+        _ = self.text.drawText(hdc, x + @divTrunc(cw - lw, 2), y0 + chh + t, o.label, .{ .bold = selected }, .caption, color, true);
+        if (live) self.hit(.{ .rect = .{ .x = x, .y = y0, .w = cw, .h = chh + t + ch }, .kind = .pane_style, .key = o.value });
+        x += cw + gap;
+    }
+}
+
+/// One card's picture, clipped to its rounded outline.
+fn paintCardThumb(self: *SettingsWindow, hdc: w32.HDC, r: Rect, radius: i32, elevated: bool) void {
+    const saved = w32.SaveDC(hdc);
+    defer _ = w32.RestoreDC(hdc, saved);
+    if (w32.CreateRoundRectRgn(r.x, r.y, r.x + r.w + 1, r.y + r.h + 1, radius * 2, radius * 2)) |rgn| {
+        _ = w32.SelectClipRgn(hdc, rgn);
+        _ = w32.DeleteObject(rgn);
+    }
+    if (elevated) {
+        // Mac's window gradient, top-left (0.36,0.55,0.84) to bottom-right
+        // (0.25,0.71,0.69), as diagonal bands.
+        const a = [3]f32{ 92, 140, 214 };
+        const b = [3]f32{ 64, 181, 176 };
+        const span = r.w + r.h;
+        var i: i32 = 0;
+        const step: i32 = @max(1, self.hair());
+        while (i < r.w) : (i += step) {
+            const f: f32 = @as(f32, @floatFromInt(i + @divTrunc(r.h, 2))) / @as(f32, @floatFromInt(span));
+            fillRect(hdc, .{ .x = r.x + i, .y = r.y, .w = step, .h = r.h }, thumbRgb(lerp(a[0], b[0], f), lerp(a[1], b[1], f), lerp(a[2], b[2], f)));
+        }
+        // Two raised panes (Mac: 6pt padding and spacing, radius 5 - here on
+        // the 4 DIP scale).
+        const pad = layout.px(dip.gap, self.scale);
+        const pw = @divTrunc(r.w - 3 * pad, 2);
+        const pr = layout.px(dip.radius, self.scale);
+        roundRect(hdc, .{ .x = r.x + pad, .y = r.y + pad, .w = pw, .h = r.h - 2 * pad }, pr, thumbRgb(38, 41, 47), null, 1);
+        roundRect(hdc, .{ .x = r.x + 2 * pad + pw, .y = r.y + pad, .w = pw, .h = r.h - 2 * pad }, pr, thumbRgb(48, 52, 58), null, 1);
+    } else {
+        // Edge-to-edge panes and the divider between them.
+        fillRect(hdc, r, thumbRgb(41, 43, 51));
+        fillRect(hdc, .{ .x = r.x + @divTrunc(r.w, 2), .y = r.y, .w = self.hair(), .h = r.h }, thumbRgb(89, 89, 89));
+    }
+}
+
+fn lerp(a: f32, b: f32, f: f32) u8 {
+    return @intFromFloat(@round(std.math.clamp(a + (b - a) * f, 0, 255)));
+}
+
+fn thumbRgb(r: u8, g: u8, b: u8) u32 {
+    return @as(u32, r) | (@as(u32, g) << 8) | (@as(u32, b) << 16);
+}
+
+/// A rounded outline with no fill.
+fn frameRound(hdc: w32.HDC, r: Rect, radius: i32, color: u32, width: i32) void {
+    const pen = w32.CreatePen(0, width, color) orelse return;
+    defer _ = w32.DeleteObject(pen);
+    const old_pen = w32.SelectObject(hdc, pen);
+    defer _ = w32.SelectObject(hdc, old_pen);
+    const old_brush = w32.SelectObject(hdc, w32.GetStockObject(w32.NULL_BRUSH));
+    defer _ = w32.SelectObject(hdc, old_brush);
+    const inset = @divTrunc(width, 2);
+    _ = w32.RoundRect(hdc, r.x + inset, r.y + inset, r.x + r.w - inset + 1, r.y + r.h - inset + 1, radius * 2, radius * 2);
+}
+
 /// The row's laid-out height, for the reveal highlight (0 before layout).
 fn rowHeightHint(self: *const SettingsWindow, item: Item) i32 {
     for (self.items) |it| if (it.kind == .row and std.mem.eql(u8, it.key, item.key)) return it.h;
@@ -1535,6 +1663,7 @@ fn paintCustom(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: 
     const f = self.frame();
     switch (item.custom) {
         .config_file => return advanced_view.paintConfigFile(self, hdc, p, y, draw),
+        .agent_status, .version => return self.paintLive(hdc, p, item.custom, y, draw),
         .all_settings => {
             const bh = layout.px(dip.filter_band_h, self.scale);
             if (draw) {
@@ -1554,7 +1683,6 @@ fn paintCustom(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: 
     const width = cols.right - cols.left;
     var cy = y + pad_y;
     const Line = struct { text: []const u8, caption: bool = true, link: ?Hit.Kind = null };
-    var buf: [128]u8 = undefined;
     const lines: []const Line = switch (item.custom) {
         .theme => return self.paintTheme(hdc, p, y, draw),
         .shortcut_guide => &.{
@@ -1562,13 +1690,7 @@ fn paintCustom(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: 
             .{ .text = "Open Shortcut Guide\u{2026}", .link = .guide_link },
             .{ .text = "To change a shortcut, edit keybind under Advanced \u{203A} All Settings." },
         },
-        .version => &.{
-            .{ .text = std.fmt.bufPrint(&buf, "Ghoztty {s}", .{build_config.version_string}) catch "Ghoztty", .caption = false },
-            .{ .text = "Updates arrive as published Windows releases; the setting above says whether to check for them." },
-        },
-        .agent_status => &.{
-            .{ .text = "The agent keeps your shells running while the app is closed." },
-        },
+        .version, .agent_status => unreachable,
         .remote_machines => &.{
             .{ .text = "Your machines and their host settings are in the machine chooser (New Remote Window)." },
         },
@@ -1762,6 +1884,89 @@ fn openThemeMenu(self: *SettingsWindow, which: usize, anchor: Rect) void {
     _ = self.pickTheme(cat.themes[idx].name, slot);
 }
 
+/// Sessions & Agent's Agent and Updates' version (T2680, Mac
+/// `AgentStatusSection` / `VersionSection`): label-and-value lines from the
+/// snapshot `refresh` took, so painting never touches the agent.
+fn paintLive(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, which: settings_pages.Custom, y: i32, draw: bool) i32 {
+    const f = self.frame();
+    const g = layout.px(dip.gap, self.scale);
+    const t = layout.px(dip.tight, self.scale);
+    const pad_y = layout.px(dip.row_pad_y, self.scale);
+    const lh = self.text.lineHeight(.body);
+    const ch = self.text.lineHeight(.caption);
+    const cols = layout.rowColumns(self.scale, f.list, f.scrollbar.w, y + pad_y, lh, dip.field_w);
+    const width = cols.right - cols.left;
+    // label (body, leading) | value (trailing); a line with no label is a
+    // caption across the row.
+    const Line = struct { label: ?[]const u8 = null, value: []const u8, mono: bool = false, dot: ?bool = null, link: ?Hit.Kind = null };
+    var lines: [6]Line = undefined;
+    var n: usize = 0;
+    var b1: [128]u8 = undefined;
+    var b2: [160]u8 = undefined;
+    var b3: [160]u8 = undefined;
+    switch (which) {
+        .agent_status => {
+            const a = self.live_agent;
+            lines[n] = .{ .label = "Status", .value = settings_live.statusLine(&b1, a), .dot = a.running };
+            n += 1;
+            if (settings_live.runningBuildLine(&b2, a)) |rb| {
+                lines[n] = .{ .label = "Running build", .value = rb, .mono = true };
+                n += 1;
+            }
+            if (a.bundled_build) |bb| {
+                lines[n] = .{ .label = "This app\u{2019}s agent", .value = bb, .mono = true };
+                n += 1;
+            }
+            if (a.pipe.len > 0) {
+                lines[n] = .{ .label = "Pipe", .value = a.pipe, .mono = true };
+                n += 1;
+            }
+            lines[n] = .{ .value = "The agent keeps your shells alive when the app quits or restarts." };
+            n += 1;
+        },
+        .version => {
+            const full = build_config.version_string;
+            const plus = std.mem.indexOfScalar(u8, full, '+');
+            const ver = std.mem.trimRight(u8, if (plus) |i| full[0..i] else full, "-");
+            const build = if (plus) |i| full[i + 1 ..] else "";
+            const last: ?i64 = if (self.app.update_last_check_ms != 0) self.app.update_last_check_ms else null;
+            lines[n] = .{ .label = std.fmt.bufPrint(&b1, "Ghoztty {s}", .{ver}) catch "Ghoztty", .value = "Check for Updates\u{2026}", .link = .check_updates };
+            n += 1;
+            lines[n] = .{ .value = settings_live.versionCaption(&b3, build, last, std.time.milliTimestamp()) };
+            n += 1;
+        },
+        else => unreachable,
+    }
+    var cy = y + pad_y;
+    for (lines[0..n], 0..) |line, i| {
+        if (i > 0) cy += t;
+        const h = if (line.label != null) lh else ch;
+        if (draw) {
+            if (line.label) |label| {
+                const lw = self.text.drawText(hdc, cols.left, cy, label, .{}, .body, cr(p.text), true);
+                const style: @import("banner_markdown.zig").Style = .{ .code = line.mono };
+                const vw = self.text.measure(hdc, line.value, style, .body).cx;
+                const room = @max(0, width - lw - 3 * g);
+                const shown_w = @min(vw, room);
+                const vx = cols.right - shown_w;
+                if (line.dot) |on| {
+                    const d = layout.px(dip.dot, self.scale);
+                    roundRect(hdc, .{ .x = vx - d - g, .y = cy + @divTrunc(lh - d, 2), .w = d, .h = d }, @divTrunc(d, 2), if (on) cr(p.good) else cr(p.secondary), null, 1);
+                }
+                const color = if (line.link != null) cr(p.accent) else cr(p.text);
+                self.text.drawEllipsized(hdc, .{ .x = vx, .y = cy, .w = shown_w, .h = lh }, line.value, style, .body, color, true);
+                if (line.link) |kind| self.hit(.{ .rect = .{ .x = vx, .y = cy, .w = shown_w, .h = lh }, .kind = kind });
+            } else {
+                self.text.drawEllipsized(hdc, .{ .x = cols.left, .y = cy, .w = width, .h = ch }, line.value, .{}, .caption, cr(p.secondary), false);
+            }
+        }
+        cy += h;
+    }
+    cy += pad_y + g;
+    if (draw) fillRect(hdc, .{ .x = cols.left, .y = cy - self.hair(), .w = width, .h = self.hair() }, cr(p.divider));
+    return cy - y;
+}
+
 /// The full documentation as Mac's doc popover reads it: paragraphs stay
 /// paragraphs, a bullet starts its own line, and an indented example keeps
 /// its own block - the doc comments are hard-wrapped, so lines inside a
@@ -1913,6 +2118,7 @@ fn hitAt(self: *const SettingsWindow, x: i32, y: i32) ?Hit {
         if (!h.rect.contains(x, y)) continue;
         const in_list = switch (h.kind) {
             .field, .add_field, .reset, .info, .open, .chip_remove, .toggle, .choice, .reveal, .guide_link, .filter => true,
+            .check_updates, .pane_style => true,
             .open_editor, .reveal_file, .open_source, .restore_menu, .show_file => true,
             .toast_body, .toast_show, .toast_undo, .toast_dismiss => true,
             .theme_mode, .theme_slot => true,
@@ -1934,6 +2140,18 @@ fn rowAt(self: *const SettingsWindow, x: i32, y: i32) ?[]const u8 {
     return null;
 }
 
+/// Click the painted hit of `kind` (and `key`, when given) at its centre,
+/// through the same path a mouse click takes. False when none is painted.
+pub fn clickHit(self: *SettingsWindow, kind: Hit.Kind, key: []const u8) bool {
+    for (self.hits.items) |h| {
+        if (h.kind != kind) continue;
+        if (key.len > 0 and !std.mem.eql(u8, h.key, key)) continue;
+        self.onLeftDown(h.rect.x + @divTrunc(h.rect.w, 2), h.rect.y + @divTrunc(h.rect.h, 2));
+        return true;
+    }
+    return false;
+}
+
 fn onLeftDown(self: *SettingsWindow, x: i32, y: i32) void {
     const f = self.frame();
     if (self.hitAt(x, y)) |h| {
@@ -1944,6 +2162,8 @@ fn onLeftDown(self: *SettingsWindow, x: i32, y: i32) void {
             .choice => self.openChoice(h.key, h.rect),
             .reveal => _ = self.reveal(h.key),
             .guide_link => self.openShortcutGuide(),
+            .check_updates => self.checkForUpdates(),
+            .pane_style => _ = self.chooseValue("macos-pane-style", h.key),
             .config_link, .open_editor => self.openEditor(),
             .reveal_file => self.revealConfigFile(),
             .open_source => self.openSource(h.index),

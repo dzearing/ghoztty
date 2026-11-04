@@ -51,6 +51,7 @@ $env:GHOZTTY_PIPE_SUFFIX = "-settings$PID"
 . (Join-Path $PSScriptRoot 'lib\PaneCapture.ps1')   # Invoke-GhozttyIpc
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
+. (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
 
 [void](Assert-GhozttyIsolatedBuild -Exe $exe)
 
@@ -107,6 +108,8 @@ $errlog = Join-Path $env:TEMP 'ghoztty-settings-window-stderr.log'
 $script:launched = @()
 $app = $null
 
+[void](Set-GhozttyTestAgentLineage -Tag 'settings' -Quiet)
+$agentDir = Get-GhozttyAgentStateDir -Root $env:LOCALAPPDATA -Exe $exe
 Kill-RepoInstances
 Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
@@ -118,6 +121,9 @@ try {
     Remove-Item $errlog -ErrorAction SilentlyContinue
     $env:XDG_CONFIG_HOME = $cfgHome
     $env:GHOZTTY_SETTINGS_BACKUP_DIR = $backupDir
+    # T2680's Check for Updates... runs a real manual check; keep it off the
+    # network (nothing listens on the discard port).
+    $env:GHOZTTY_UPDATE_URL = 'http://127.0.0.1:9/releases'
     try {
         $sp = @{
             Exe       = $exe
@@ -303,13 +309,17 @@ try {
     $ids = @($s.data.pages | ForEach-Object { [string]$_.id }) -join ','
     Assert ($ids -eq 'appearance,panes,terminal,keyboard,session,remote,updates,advanced') "J: the sidebar is Mac's page order ($ids)"
     $ps = Find-Row $s 'macos-pane-style'
-    Assert ($ps -and [string]$ps.label -eq 'Style' -and [string]$ps.control -eq 'segmented' -and [string]$ps.shown -eq 'Elevated') "J: Panes & Windows shows the pane Style as a choice reading Elevated (label='$($ps.label)' control='$($ps.control)' shown='$($ps.shown)')"
+    Assert ($ps -and [string]$ps.label -eq 'Pane style' -and [string]$ps.control -eq 'cards' -and [string]$ps.shown -eq 'Elevated') "J: Panes & Windows shows Pane style as preview cards reading Elevated (label='$($ps.label)' control='$($ps.control)' shown='$($ps.shown)')"
+    $shotP = Join-Path $work 'panes.png'
+    $s = Invoke-Settings @('--op=shot', "--path=$shotP")
+    $cards = @($s.data.hits | Where-Object { $_.kind -eq 'pane_style' } | ForEach-Object { [string]$_.key }) -join ','
+    Assert ($cards -eq 'elevated,flat') "T2680 J: the page paints Mac's two Pane style cards, Elevated then Flat ($cards)"
     $gl = Find-Row $s 'macos-pane-glass'
     $dv = Find-Row $s 'split-divider-color'
     Assert ($gl -and [bool]$gl.enabled -and $dv -and -not [bool]$dv.enabled) 'J: under Elevated, Glass panes is live and Divider color (flat only) is dimmed'
     $before = Read-Config
-    $s = Invoke-Settings @('--op=choose', '--key=macos-pane-style', '--value=flat')
-    Assert ([bool]$s.data.ok -and @(Get-KeyLines (Read-Config) 'macos-pane-style').Count -eq 1 -and (Read-Config) -match 'macos-pane-style = flat') 'J: picking Flat writes one macos-pane-style = flat line'
+    $s = Invoke-Settings @('--op=click', '--value=pane_style:flat')
+    Assert ([bool]$s.data.ok -and @(Get-KeyLines (Read-Config) 'macos-pane-style').Count -eq 1 -and (Read-Config) -match 'macos-pane-style = flat') 'T2680 J: clicking the Flat card writes one macos-pane-style = flat line'
     $gl = Find-Row $s 'macos-pane-glass'
     $dv = Find-Row $s 'split-divider-color'
     Assert ($gl -and -not [bool]$gl.enabled -and $dv -and [bool]$dv.enabled) 'J: ...which dims Glass panes and makes Divider color live'
@@ -331,6 +341,48 @@ try {
     $keys = @($s.data.rows | ForEach-Object { [string]$_.key })
     Assert (($keys -contains 'scrollback-limit') -and ($keys -contains 'command-shell') -and ($keys -contains 'copy-on-select')) "J: Terminal lists shell, scrollback and copy & paste keys ($($keys.Count) rows)"
     Assert (-not ($keys -contains 'env')) 'J: env is not on the Terminal page (Mac 3a183ffd1)'
+    # T2680: Updates' version and Check for Updates...
+    $shotU = Join-Path $work 'updates.png'
+    $s = Invoke-Settings @('--op=shot', '--page=updates', "--path=$shotU")
+    $cu = @($s.data.hits | Where-Object { $_.kind -eq 'check_updates' })
+    Assert ($cu.Count -eq 1) "T2680 J: Updates paints one Check for Updates... (hits=$($cu.Count))"
+    $t0 = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $s = Invoke-Settings @('--op=click', '--value=check_updates')
+    $last = [int64]$s.data.live.last_check_ms
+    Assert ([bool]$s.data.ok -and $last -ge ($t0 - 50)) "T2680 J: clicking Check for Updates... starts the manual check (last_check_ms=$last, t0=$t0)"
+    Assert (-not [string]::IsNullOrEmpty([string]$s.data.live.version)) "T2680 J: Updates names the running version ($($s.data.live.version))"
+
+    # T2680: Sessions & Agent reads the agent WITHOUT starting one. The app
+    # runs with persistence off under its own lineage, so any agent process
+    # appearing would be the page's doing.
+    function Get-AgentPids { @(Get-CimInstance Win32_Process -Filter "Name = 'ghoztty-agent.exe'" -ErrorAction SilentlyContinue | ForEach-Object { [int]$_.ProcessId }) }
+    New-Item -ItemType Directory -Force -Path $agentDir | Out-Null
+    $portFile = Join-Path $agentDir 'port.json'
+    $pidsBefore = Get-AgentPids
+    $s = Invoke-Settings @('--op=state', '--page=session')
+    Assert (-not [bool]$s.data.live.agent.running) "T2680 J: with no agent, Sessions & Agent says it is not running (running=$($s.data.live.agent.running))"
+    # A live process holding the info file is reported, with its pid and pipe.
+    $holder = Start-Process -FilePath "$env:WINDIR\System32\ping.exe" -ArgumentList '-n','60','127.0.0.1' -WindowStyle Hidden -PassThru
+    try {
+        $fakePipe = "\\.\pipe\ghoztty-agent-settings-test-$PID"
+        [System.IO.File]::WriteAllText($portFile, (@{ port = 0; pid = $holder.Id; pipe = $fakePipe } | ConvertTo-Json -Compress))
+        $s = Invoke-Settings @('--op=state', '--page=session')
+        $ag = $s.data.live.agent
+        Assert ([bool]$ag.running -and [int]$ag.pid -eq $holder.Id -and [string]$ag.pipe -eq $fakePipe) "T2680 J: a live agent is reported running with its pid and pipe (running=$($ag.running) pid=$($ag.pid) want=$($holder.Id) pipe=$($ag.pipe))"
+        $shotS = Join-Path $work 'session.png'
+        $s = Invoke-Settings @('--op=shot', "--path=$shotS")
+        Assert ($s.success -and (Test-Path $shotS)) 'T2680 J: the Sessions & Agent page paints with the agent lines'
+    } finally {
+        try { Stop-Process -Id $holder.Id -Force -ErrorAction Stop } catch {}
+    }
+    Start-Sleep -Milliseconds 300
+    $s = Invoke-Settings @('--op=state', '--page=session')
+    Assert (-not [bool]$s.data.live.agent.running) "T2680 J: once that pid is gone, a leftover port.json does not read as running (running=$($s.data.live.agent.running))"
+    Remove-Item $portFile -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 1500
+    $newAgents = @(Get-AgentPids | Where-Object { $pidsBefore -notcontains $_ })
+    Assert ($newAgents.Count -eq 0) "T2680 J: opening Sessions & Agent started no ghoztty-agent process (new: $($newAgents -join ','))"
+
     $s = Invoke-Settings @('--op=state', '--page=updates')
     $keys = @($s.data.rows | ForEach-Object { [string]$_.key })
     Assert (($keys -contains 'auto-update') -and -not ($keys -contains 'auto-update-channel')) "J: Updates carries auto-update and no tip channel ($($keys -join ','))"

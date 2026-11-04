@@ -600,6 +600,9 @@ palette_history_loaded: bool = false,
 /// release, and opens its GitHub page when there is nothing installable.
 /// Null until an update notification has been shown.
 update_latest_ver: ?[]u8 = null,
+/// When the last update check started (ms since epoch; 0 = none this run).
+/// Settings > Updates' "Last checked ..." (T2680, Mac `lastUpdateCheckDate`).
+update_last_check_ms: i64 = 0,
 
 /// When `update_latest_ver` was last offered, in ms since the epoch — the
 /// clock behind `update_check.offer_expiry_ms` (T1563). Atomic because the
@@ -10203,6 +10206,7 @@ pub fn startUpdateCheck(self: *App, trigger: UpdateTrigger) void {
     else
         null;
 
+    self.update_last_check_ms = std.time.milliTimestamp();
     _ = std.Thread.spawn(.{}, updateCheckThread, .{ self, trigger, already_offered }) catch |err| {
         log.warn("failed to start update check thread: {}", .{err});
         if (already_offered) |o| self.core_app.alloc.free(o);

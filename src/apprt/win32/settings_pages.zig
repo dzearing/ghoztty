@@ -19,8 +19,6 @@
 //!   which is what Mac's page shows first.
 //! - Updates drops `auto-update-channel`: the Windows updater follows the
 //!   published `win-v*` releases and has no tip channel to pick.
-//! - The Pane style section is a plain choice row here (Mac draws two
-//!   preview cards); the key, values and placement are Mac's.
 //! - Copy & paste labels `copy-on-select = true` "On" rather than Mac's "To
 //!   the selection clipboard": Windows has no separate selection clipboard.
 //! - "Shell for scripted windows" names the Windows shell flavors in its hint
@@ -50,6 +48,9 @@ pub const Control = union(enum) {
     picker: []const Option,
     /// Mac's segmented control; drawn as the same popup on Windows.
     segmented: []const Option,
+    /// Mac's Pane style preview cards (T2680): one clickable thumbnail per
+    /// option, the chosen one ringed in the accent.
+    cards: []const Option,
     slider: struct { min: f64, max: f64, step: f64, percent: bool = true, inverted: bool = false },
     stepper: struct { min: f64, max: f64, step: f64, unit: []const u8 },
     /// A size in bytes, shown as megabytes.
@@ -66,7 +67,7 @@ pub const Control = union(enum) {
     /// The curated picker options, or null for any other control.
     pub fn options(self: Control) ?[]const Option {
         return switch (self) {
-            .picker, .segmented => |o| o,
+            .picker, .segmented, .cards => |o| o,
             else => null,
         };
     }
@@ -75,7 +76,7 @@ pub const Control = union(enum) {
     /// the value as text, the All Settings way).
     pub fn isChoice(self: Control) bool {
         return switch (self) {
-            .toggle, .picker, .segmented => true,
+            .toggle, .picker, .segmented, .cards => true,
             else => false,
         };
     }
@@ -226,7 +227,7 @@ pub const panes: Page = .{
     .tint = 0x30B0C7,
     .sections = &.{
         .{ .title = "Pane style", .rows = &.{
-            .{ .key = "macos-pane-style", .label = "Style", .control = .{ .segmented = &.{
+            .{ .key = "macos-pane-style", .label = "Pane style", .control = .{ .cards = &.{
                 .{ .value = "elevated", .label = "Elevated" },
                 .{ .value = "flat", .label = "Flat" },
             } } },

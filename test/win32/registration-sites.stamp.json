@@ -1,16 +1,16 @@
 {
     "guard":  "registration-sites",
     "script":  "test/win32/registration-sites.ps1",
-    "generated":  "2026-11-01T11:48:51-08:00",
-    "commit":  "8b9eb8177",
+    "generated":  "2026-11-04T04:43:04-08:00",
+    "commit":  "2a75a52ef",
     "uncommitted":  [
-
+                        "src/apprt/win32/LocalAgent.zig"
                     ],
     "files":  {
                   "docs/design/windows-registration-sites.md":  "9d386820fbd2d1b0e1df69e636dabc8f42647a029fbd6f06ca9f15b0ebc98ea4",
                   "src/apprt/win32/AgentIntegration.zig":  "28b584f63d4d880e58ae38c1f043df1ff27fcfe36555e95b57dbf70df7523299",
                   "src/apprt/win32/install_location.zig":  "724fa228ee06cc60787c0710347a1002cf4d2bfcfe83e584259f36897eaf5717",
-                  "src/apprt/win32/LocalAgent.zig":  "297f4e7a5c465487750ddbe76da8e551a6f5d72dbab6acd1be1e04cc7c3b44bc",
+                  "src/apprt/win32/LocalAgent.zig":  "9c116178296552aa605d6a323db75d4cdea89b76aafcbaeb85e22fdf3c38ed37",
                   "src/apprt/win32/PathInstaller.zig":  "77ee61d5ba639eb627756e917077c3de09b6f77c1fd2440fb707b1a7a9e5d2e5",
                   "src/apprt/win32/source_checkout.zig":  "f7a91595696674da68899cbdf06a056d2f9f365b13a3d7d4cab69797ec49b4da",
                   "src/apprt/win32/url_scheme.zig":  "0f98f577b470ea849aac5b5a026b302c302ab727feea131676b8b959922ec964",

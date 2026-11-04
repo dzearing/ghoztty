@@ -28,6 +28,14 @@
 //! {"action":"settings","arguments":["--op=show_change"]}          (Show / Hide Change)
 //! {"action":"settings","arguments":["--op=dismiss"]}              (the toast's x)
 //! {"action":"settings","arguments":["--op=toast_ms","--value=600000"]}
+//! The live sections (T2680):
+//! {"action":"settings","arguments":["--op=check_updates"]}   (Updates' Check for Updates...)
+//! {"action":"settings","arguments":["--op=click","--value=pane_style:flat"]}
+//!   (clicks the PAINTED hit of that kind and key at its centre - run --op=shot
+//!   first so the page has painted; ok=false when no such hit is on screen)
+//!   -> adds "live":{"agent":{"running","pid","running_build","bundled_build","pipe"},
+//!        "version","last_check_ms"} and "hits":[{"kind","key"}] (painted
+//!        check_updates / pane_style hits)
 //! {"action":"settings","arguments":["--op=open_editor"]}  / reveal_file / open_source --index / backups_folder / current_file
 //!   -> adds "advanced":{"path","target","sources":[{"path","name","kind"}],"backups":[{"path","label"}],
 //!        "backed_up","file_error","show_file","last_shell"} and
@@ -82,6 +90,9 @@ pub const Op = enum {
     current_file,
     @"theme-mode",
     @"theme-pick",
+    // The live sections (T2680).
+    check_updates,
+    click,
 };
 
 pub const Request = struct {
@@ -229,6 +240,14 @@ pub fn handle(app: *App, alloc: Allocator, arguments: ?[]const []const u8) Alloc
         .open_source => w.openSource(req.index orelse 0),
         .backups_folder => w.showBackupsFolder(),
         .current_file => w.toggleCurrentFile(),
+        .check_updates => w.checkForUpdates(),
+        .click => {
+            const v = req.value orelse return errorResponse(alloc, "--value=<kind>:<key> is required for --op=click", .{});
+            const colon = std.mem.indexOfScalar(u8, v, ':');
+            const kind = std.meta.stringToEnum(SettingsWindow.Hit.Kind, if (colon) |c| v[0..c] else v) orelse
+                return errorResponse(alloc, "--value must start with a hit kind", .{});
+            ok = w.clickHit(kind, if (colon) |c| v[c + 1 ..] else "");
+        },
         .shot => {
             const path = req.path orelse return errorResponse(alloc, "--path=<file.png> is required for --op=shot", .{});
             w.snapshot(alloc, path) catch |err| return errorResponse(alloc, "shot failed ({s})", .{@errorName(err)});
@@ -310,6 +329,45 @@ fn writeAdvanced(jws: *std.json.Stringify, w: *SettingsWindow) !void {
         try jws.write(w.toast_refused);
         try jws.endObject();
     } else try jws.write(null);
+}
+
+/// The live sections' snapshot and their painted hits (T2680).
+fn writeLive(jws: *std.json.Stringify, w: *SettingsWindow) !void {
+    const a = w.live_agent;
+    try jws.objectField("live");
+    try jws.beginObject();
+    try jws.objectField("agent");
+    try jws.beginObject();
+    try jws.objectField("running");
+    try jws.write(a.running);
+    try jws.objectField("pid");
+    try jws.write(a.pid);
+    try jws.objectField("running_build");
+    try jws.write(a.running_build);
+    try jws.objectField("bundled_build");
+    try jws.write(a.bundled_build);
+    try jws.objectField("pipe");
+    try jws.write(a.pipe);
+    try jws.endObject();
+    try jws.objectField("version");
+    try jws.write(build_config.version_string);
+    try jws.objectField("last_check_ms");
+    try jws.write(w.app.update_last_check_ms);
+    try jws.endObject();
+    try jws.objectField("hits");
+    try jws.beginArray();
+    for (w.hits.items) |h| switch (h.kind) {
+        .check_updates, .pane_style => {
+            try jws.beginObject();
+            try jws.objectField("kind");
+            try jws.write(@tagName(h.kind));
+            try jws.objectField("key");
+            try jws.write(h.key);
+            try jws.endObject();
+        },
+        else => {},
+    };
+    try jws.endArray();
 }
 
 fn writeState(jws: *std.json.Stringify, alloc: Allocator, w_opt: ?*SettingsWindow, ok: ?bool, undo: ?SettingsModel.UndoResult) !void {
@@ -406,6 +464,7 @@ fn writeState(jws: *std.json.Stringify, alloc: Allocator, w_opt: ?*SettingsWindo
         for (w.items) |it| if (it.kind == .custom) try jws.write(@tagName(it.custom));
         try jws.endArray();
         try writeAdvanced(jws, w);
+        try writeLive(jws, w);
         try jws.objectField("rows");
         try jws.beginArray();
         if (w.reader()) |r| for (w.listedKeys()) |key| {

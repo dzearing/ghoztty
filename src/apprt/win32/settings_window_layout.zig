@@ -44,6 +44,12 @@ pub const dip = struct {
     /// The value list of a repeatable key, Mac's `.frame(maxWidth: 360)`.
     pub const list_w = 360;
     pub const add_w = 120;
+    /// Pane style's preview cards (Mac `PaneStyleSection`: 108x66, radius 8;
+    /// the height rounds to the 4 DIP scale).
+    pub const card_w = 108;
+    pub const card_h = 68;
+    pub const card_gap = 16;
+    pub const card_radius = 8;
     pub const chip_h = 20;
     pub const chip_pad_x = 8;
     pub const row_pad_y = 8;
