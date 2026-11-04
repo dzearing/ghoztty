@@ -36,6 +36,15 @@
 //!   -> adds "live":{"agent":{"running","pid","running_build","bundled_build","pipe"},
 //!        "version","last_check_ms"} and "hits":[{"kind","key"}] (painted
 //!        check_updates / pane_style hits)
+//! The curated controls (T2681) - each through the function its gesture calls:
+//! {"action":"settings","arguments":["--op=slide","--key=unfocused-split-opacity","--value=0.6"]}  (a slider's release)
+//! {"action":"settings","arguments":["--op=step","--key=macos-pane-min-width","--value=up"]}        (a stepper arrow)
+//! {"action":"settings","arguments":["--op=flag","--key=shell-integration-features","--value=sudo:true"]}
+//! {"action":"settings","arguments":["--op=color","--key=cursor-color","--value=#ff8800"]}         (the color dialog's pick)
+//! {"action":"settings","arguments":["--op=shell","--key=command","--value=cmd.exe /K"]}           (a shell pick / Other...)
+//!   a stepper / megabytes row's --op=set types into its field (the number /
+//!   the MB); a curated row reports "display" (what its control shows) and a
+//!   flags row "flags":[{"name","on"}]
 //! {"action":"settings","arguments":["--op=open_editor"]}  / reveal_file / open_source --index / backups_folder / current_file
 //!   -> adds "advanced":{"path","target","sources":[{"path","name","kind"}],"backups":[{"path","label"}],
 //!        "backed_up","file_error","show_file","last_shell"} and
@@ -93,6 +102,12 @@ pub const Op = enum {
     // The live sections (T2680).
     check_updates,
     click,
+    // The curated controls (T2681).
+    slide,
+    step,
+    flag,
+    color,
+    shell,
 };
 
 pub const Request = struct {
@@ -241,6 +256,31 @@ pub fn handle(app: *App, alloc: Allocator, arguments: ?[]const []const u8) Alloc
         .backups_folder => w.showBackupsFolder(),
         .current_file => w.toggleCurrentFile(),
         .check_updates => w.checkForUpdates(),
+        .slide => {
+            const key = req.key orelse return errorResponse(alloc, "--key is required for --op=slide", .{});
+            const v = std.fmt.parseFloat(f64, req.value orelse "") catch return errorResponse(alloc, "--value=<number> is required for --op=slide", .{});
+            ok = w.slideTo(key, v);
+        },
+        .step => {
+            const key = req.key orelse return errorResponse(alloc, "--key is required for --op=step", .{});
+            const v = req.value orelse "up";
+            ok = w.stepKey(key, if (std.mem.eql(u8, v, "down")) -1 else 1);
+        },
+        .flag => {
+            const key = req.key orelse return errorResponse(alloc, "--key is required for --op=flag", .{});
+            const v = req.value orelse return errorResponse(alloc, "--value=<flag>:true|false is required for --op=flag", .{});
+            const colon = std.mem.indexOfScalar(u8, v, ':') orelse return errorResponse(alloc, "--value must be <flag>:true|false", .{});
+            ok = w.setFlag(key, v[0..colon], std.mem.eql(u8, v[colon + 1 ..], "true"));
+        },
+        .color => {
+            const key = req.key orelse return errorResponse(alloc, "--key is required for --op=color", .{});
+            const rgb = @import("settings_controls.zig").parseHex(req.value orelse "") orelse return errorResponse(alloc, "--value=#rrggbb is required for --op=color", .{});
+            ok = w.applyColor(key, rgb);
+        },
+        .shell => {
+            const key = req.key orelse return errorResponse(alloc, "--key is required for --op=shell", .{});
+            ok = w.chooseShell(key, req.value orelse "");
+        },
         .click => {
             const v = req.value orelse return errorResponse(alloc, "--value=<kind>:<key> is required for --op=click", .{});
             const colon = std.mem.indexOfScalar(u8, v, ':');
@@ -357,7 +397,7 @@ fn writeLive(jws: *std.json.Stringify, w: *SettingsWindow) !void {
     try jws.objectField("hits");
     try jws.beginArray();
     for (w.hits.items) |h| switch (h.kind) {
-        .check_updates, .pane_style => {
+        .check_updates, .pane_style, .slider, .step_up, .step_down, .color_well, .color_reset, .flag, .choice => {
             try jws.beginObject();
             try jws.objectField("kind");
             try jws.write(@tagName(h.kind));
@@ -506,6 +546,23 @@ fn writeState(jws: *std.json.Stringify, alloc: Allocator, w_opt: ?*SettingsWindo
                 try jws.write(row.labelFor(r.value(key)));
                 try jws.objectField("enabled");
                 try jws.write(w.rowEnabled(row));
+                var dbuf: [std.fs.max_path_bytes]u8 = undefined;
+                try jws.objectField("display");
+                try jws.write(w.controlDisplay(&dbuf, row));
+                if (row.control == .flags) {
+                    const ctl = @import("settings_controls.zig");
+                    try jws.objectField("flags");
+                    try jws.beginArray();
+                    for ((if (entry) |e| e.options else null) orelse &.{}) |o| {
+                        try jws.beginObject();
+                        try jws.objectField("name");
+                        try jws.write(o);
+                        try jws.objectField("on");
+                        try jws.write(ctl.flagState(r.value(key), o) orelse false);
+                        try jws.endObject();
+                    }
+                    try jws.endArray();
+                }
             }
             if (repeatable) {
                 const file_vals = try w.file.values(alloc, key);

@@ -448,6 +448,134 @@ try {
     Assert (@(Get-KeyLines (Read-Config) 'theme').Count -eq 0) 'K: Reset takes the theme back out of the file'
 
     # =====================================================================
+    # L: the curated controls (T2681) - slider, stepper, megabytes, color,
+    # flags, shell and folder each read and write the value text the parser
+    # accepts. Every op is the function the control's gesture calls.
+    # =====================================================================
+    # Slider: Dim unfocused panes shows 1 - opacity as a percentage.
+    $s = Invoke-Settings @('--op=state', '--page=panes')
+    $dm = Find-Row $s 'unfocused-split-opacity'
+    Assert ($dm -and [string]$dm.control -eq 'slider' -and [string]$dm.display -eq '30%') "L: Dim unfocused panes is a slider reading 30% for the default 0.7 opacity (control='$($dm.control)' display='$($dm.display)')"
+    $s = Invoke-Settings @('--op=slide', '--key=unfocused-split-opacity', '--value=0.62')
+    $dm = Find-Row $s 'unfocused-split-opacity'
+    Assert ([bool]$s.data.ok -and (Read-Config) -match '(?m)^unfocused-split-opacity = 0\.6\r?$' -and [string]$dm.display -eq '40%') "L: releasing the slider at 0.62 snaps to the 0.05 step and writes 0.6, read as 40% (display='$($dm.display)')"
+    # Only rows on screen paint (and so record hits): scroll each control
+    # into view before photographing or clicking it.
+    $shotL = Join-Path $work 'controls-panes.png'
+    [void](Invoke-Settings @('--op=reveal', '--key=unfocused-split-opacity'))
+    $s = Invoke-Settings @('--op=shot', "--path=$shotL")
+    $sl = @($s.data.hits | Where-Object { $_.kind -eq 'slider' -and $_.key -eq 'unfocused-split-opacity' })
+    Assert ($sl.Count -eq 1) "L: the page paints the slider's track ($($sl.Count))"
+    [void](Invoke-Settings @('--op=reveal', '--key=macos-hero-carousel-ratio'))
+    [void](Invoke-Settings @('--op=shot', "--path=$shotL"))
+    $s = Invoke-Settings @('--op=click', '--value=slider:macos-hero-carousel-ratio')
+    $cr = @(Get-KeyLines (Read-Config) 'macos-hero-carousel-ratio')
+    Assert ([bool]$s.data.ok -and $cr.Count -eq 1 -and $cr[0] -match '= 0\.(3|35|4)\s*$') "L: clicking the middle of Carousel width's track writes the middle of its 0.1-0.6 range ($($cr -join ' | '))"
+    [void](Invoke-Settings @('--op=reset', '--key=macos-hero-carousel-ratio'))
+    [void](Invoke-Settings @('--op=reset', '--key=unfocused-split-opacity'))
+
+    # Stepper: the arrows step by 5 inside 120..800; typing is range-checked.
+    $s = Invoke-Settings @('--op=state', '--page=panes')
+    $mw = Find-Row $s 'macos-pane-min-width'
+    $base = [double]$mw.display
+    Assert ($mw -and [string]$mw.control -eq 'stepper' -and $base -ge 120) "L: Stack panes narrower than is a stepper ($($mw.display))"
+    $s = Invoke-Settings @('--op=step', '--key=macos-pane-min-width', '--value=up')
+    $want = [string]([int]($base + 5))
+    Assert ([bool]$s.data.ok -and (Read-Config) -match "(?m)^macos-pane-min-width = $want\r?$") "L: the up arrow writes one step more ($want)"
+    $mid = Read-Config
+    $s = Invoke-Settings @('--op=set', '--key=macos-pane-min-width', '--value=90')
+    $mw = Find-Row $s 'macos-pane-min-width'
+    Assert (-not [bool]$s.data.ok -and [string]$mw.problem -eq 'Enter a number from 120 to 800' -and (Read-Config) -eq $mid) "L: typing 90 is refused with Mac's range problem and writes nothing ('$($mw.problem)')"
+    $s = Invoke-Settings @('--op=set', '--key=macos-pane-min-width', '--value=300')
+    Assert ([bool]$s.data.ok -and (Read-Config) -match '(?m)^macos-pane-min-width = 300\r?$' -and $null -eq (Find-Row $s 'macos-pane-min-width').problem) 'L: typing 300 writes it and clears the problem'
+    [void](Invoke-Settings @('--op=reset', '--key=macos-pane-min-width'))
+
+    # Megabytes: scrollback-limit reads and writes in MB.
+    $s = Invoke-Settings @('--op=state', '--page=terminal')
+    $sb = Find-Row $s 'scrollback-limit'
+    Assert ($sb -and [string]$sb.control -eq 'megabytes' -and [string]$sb.display -eq '10') "L: Scrollback size reads the default 10000000 bytes as 10 MB (display='$($sb.display)')"
+    $s = Invoke-Settings @('--op=set', '--key=scrollback-limit', '--value=25')
+    $sb = Find-Row $s 'scrollback-limit'
+    Assert ([bool]$s.data.ok -and (Read-Config) -match '(?m)^scrollback-limit = 25000000\r?$' -and [string]$sb.display -eq '25') "L: typing 25 MB writes 25000000 bytes and reads back as 25 (display='$($sb.display)')"
+    $mid = Read-Config
+    $s = Invoke-Settings @('--op=set', '--key=scrollback-limit', '--value=5000')
+    $sb = Find-Row $s 'scrollback-limit'
+    Assert (-not [bool]$s.data.ok -and [string]$sb.problem -eq 'Enter a size in megabytes, 0 to 4096' -and (Read-Config) -eq $mid) "L: 5000 MB is refused with Mac's problem ('$($sb.problem)')"
+    [void](Invoke-Settings @('--op=reset', '--key=scrollback-limit'))
+
+    # Shell: the default label, a missing program refused, a real one written.
+    $s = Invoke-Settings @('--op=state', '--page=terminal')
+    $sh = Find-Row $s 'command'
+    Assert ($sh -and [string]$sh.control -eq 'shell' -and [string]$sh.display -eq 'Default shell (cmd.exe)') "L: Shell reads its Windows default (display='$($sh.display)')"
+    $mid = Read-Config
+    $s = Invoke-Settings @('--op=shell', '--key=command', '--value=zzznotashell -l')
+    $sh = Find-Row $s 'command'
+    Assert (-not [bool]$s.data.ok -and [string]$sh.problem -eq "zzznotashell isn't on your PATH." -and (Read-Config) -eq $mid) "L: a program that is not on PATH is refused with Mac's problem ('$($sh.problem)')"
+    $s = Invoke-Settings @('--op=shell', '--key=command', '--value=cmd.exe /K')
+    $sh = Find-Row $s 'command'
+    Assert ([bool]$s.data.ok -and (Read-Config) -match '(?m)^command = cmd\.exe /K\r?$' -and [string]$sh.display -eq 'cmd.exe /K' -and $null -eq $sh.problem) "L: cmd.exe /K is found on PATH and written (display='$($sh.display)')"
+    $cs = Find-Row $s 'command-shell'
+    Assert ($cs -and [string]$cs.display -eq 'The --shell flag, else cmd.exe') "L: Shell for scripted windows names its fallback (display='$($cs.display)')"
+    [void](Invoke-Settings @('--op=reset', '--key=command'))
+
+    # Folder: Home / Where Ghoztty was launched / a folder shown with ~.
+    $s = Invoke-Settings @('--op=state', '--page=terminal')
+    $wd = Find-Row $s 'working-directory'
+    Assert ($wd -and [string]$wd.control -eq 'folder' -and [string]$wd.display -eq 'Home folder') "L: Start new windows in reads Home folder when unset (display='$($wd.display)')"
+    $s = Invoke-Settings @('--op=choose', '--key=working-directory', '--value=inherit')
+    $wd = Find-Row $s 'working-directory'
+    Assert ([bool]$s.data.ok -and (Read-Config) -match '(?m)^working-directory = inherit\r?$' -and [string]$wd.display -eq 'Where Ghoztty was launched') "L: Where Ghoztty was launched writes inherit (display='$($wd.display)')"
+    $folder = Join-Path $env:USERPROFILE 'Documents'
+    $s = Invoke-Settings @('--op=choose', '--key=working-directory', "--value=$folder")
+    $wd = Find-Row $s 'working-directory'
+    Assert ([bool]$s.data.ok -and [string]$wd.display -eq '~\Documents') "L: a chosen folder under the profile reads as ~\Documents (display='$($wd.display)')"
+    $s = Invoke-Settings @('--op=choose', '--key=working-directory', '--value=')
+    Assert (@(Get-KeyLines (Read-Config) 'working-directory').Count -eq 0) 'L: Home folder takes the key back out of the file'
+
+    # Flags: shell integration features as checkboxes, every flag written.
+    $s = Invoke-Settings @('--op=state', '--page=terminal')
+    $fl = Find-Row $s 'shell-integration-features'
+    $names = @($fl.flags | ForEach-Object { [string]$_.name })
+    $sudo0 = @($fl.flags | Where-Object { $_.name -eq 'sudo' })[0]
+    Assert ($fl -and [string]$fl.control -eq 'flags' -and ($names -contains 'cursor') -and ($names -contains 'sudo') -and $sudo0 -and -not [bool]$sudo0.on) "L: Features lists the schema's flags with sudo off by default ($($names -join ','))"
+    $s = Invoke-Settings @('--op=flag', '--key=shell-integration-features', '--value=sudo:true')
+    $line = @(Get-KeyLines (Read-Config) 'shell-integration-features')
+    $fl = Find-Row $s 'shell-integration-features'
+    $sudo1 = @($fl.flags | Where-Object { $_.name -eq 'sudo' })[0]
+    $explicit = ($line.Count -eq 1) -and ($names | Where-Object { $line[0] -notmatch "(^|[ ,=])(no-)?$([regex]::Escape($_))(,|\s*$)" }).Count -eq 0
+    Assert ([bool]$s.data.ok -and $line.Count -eq 1 -and $line[0] -match '[ ,=]sudo(,|\s*$)' -and $line[0] -notmatch 'no-sudo' -and $sudo1 -and [bool]$sudo1.on) "L: ticking sudo turns it on ($($line -join ' | '))"
+    Assert ($explicit) "L: ...and writes every flag explicitly, as Mac's ($($line -join ' | '))"
+    [void](Invoke-Settings @('--op=reset', '--key=shell-integration-features'))
+
+    # Color: unset reads the default's name; a pick writes #rrggbb; Use <x>
+    # takes it out again.
+    $s = Invoke-Settings @('--op=state', '--page=appearance')
+    $cc = Find-Row $s 'cursor-color'
+    Assert ($cc -and [string]$cc.control -eq 'color' -and [string]$cc.display -eq 'Theme') "L: Cursor color reads Theme when unset (display='$($cc.display)')"
+    $s = Invoke-Settings @('--op=color', '--key=cursor-color', '--value=#FF8800')
+    $cc = Find-Row $s 'cursor-color'
+    Assert ([bool]$s.data.ok -and (Read-Config) -match '(?m)^cursor-color = #ff8800\r?$' -and [string]$cc.display -eq '#ff8800') "L: the color dialog's pick writes #ff8800 (display='$($cc.display)')"
+    $shotC = Join-Path $work 'controls-appearance.png'
+    [void](Invoke-Settings @('--op=reveal', '--key=cursor-color'))
+    $s = Invoke-Settings @('--op=shot', "--path=$shotC")
+    $useLink = @($s.data.hits | Where-Object { $_.kind -eq 'color_reset' -and $_.key -eq 'cursor-color' })
+    $well = @($s.data.hits | Where-Object { $_.kind -eq 'color_well' -and $_.key -eq 'cursor-color' })
+    Assert ($useLink.Count -eq 1 -and $well.Count -eq 1) "L: a set color paints its well and the Use Theme link (well=$($well.Count) link=$($useLink.Count))"
+    $s = Invoke-Settings @('--op=click', '--value=color_reset:cursor-color')
+    Assert ([bool]$s.data.ok -and @(Get-KeyLines (Read-Config) 'cursor-color').Count -eq 0) 'L: clicking Use Theme takes cursor-color back out of the file'
+    [void](Invoke-Settings @('--op=reveal', '--key=shell-integration-features'))
+    $s = Invoke-Settings @('--op=shot', "--path=$shotL")
+    $fh = @($s.data.hits | Where-Object { $_.kind -eq 'flag' -and $_.key -eq 'shell-integration-features' })
+    Assert ($fh.Count -eq $names.Count) "L: Features paints one checkbox per flag ($($fh.Count) of $($names.Count))"
+    $popups = 0
+    foreach ($k in @('command', 'working-directory')) {
+        [void](Invoke-Settings @('--op=reveal', "--key=$k"))
+        $s = Invoke-Settings @('--op=shot', "--path=$shotL")
+        $popups += @($s.data.hits | Where-Object { $_.kind -eq 'choice' -and $_.key -eq $k }).Count
+    }
+    Assert ($popups -eq 2) "L: Shell and Start new windows in paint as popups ($popups of 2)"
+
+    # =====================================================================
     # I: Esc clears the search, then closes; refusals are typed.
     # =====================================================================
     $s = Invoke-Settings @('--op=state', '--query=cursor')

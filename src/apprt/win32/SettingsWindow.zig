@@ -71,6 +71,8 @@ const advanced_view = @import("settings_advanced_view.zig");
 const banner_link = @import("banner_link.zig");
 const theme_catalog = @import("theme_catalog.zig");
 const settings_theme = @import("settings_theme.zig");
+const controls = @import("settings_controls.zig");
+const folder_dialog = @import("folder_dialog.zig");
 const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
 const panel_theme = @import("panel_theme.zig");
 const system_colors = @import("system_colors.zig");
@@ -156,6 +158,15 @@ pub const Hit = struct {
         // Appearance > Theme (T2586).
         theme_mode,
         theme_slot,
+        // The curated controls (T2681): a slider's track, a stepper's
+        // arrows, a color well and its "Use <default>" link, and one flag's
+        // checkbox (`index` = the flag's schema position).
+        slider,
+        step_up,
+        step_down,
+        color_well,
+        color_reset,
+        flag,
     };
 };
 
@@ -248,6 +259,11 @@ content_h: i32 = 0,
 thumb_drag_dy: i32 = -1,
 tracking_leave: bool = false,
 hits: std.ArrayListUnmanaged(Hit) = .empty,
+/// A slider being dragged (T2681): its key, its track, and the value it
+/// previews; Mac's slider writes once, on release.
+slide_key: ?[]const u8 = null,
+slide_track: Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 },
+slide_preview: ?f64 = null,
 
 // ---------------------------------------------------------------------
 // Open / close
@@ -826,7 +842,18 @@ pub fn beginEdit(self: *SettingsWindow, key: []const u8) bool {
     if (self.overridingSource(k) != null) return false;
     const r = self.reader() orelse return false;
     const repeatable = if (self.catalog.get(k)) |e| e.repeatable else false;
-    if (repeatable) self.field.clear() else self.field.set(r.value(k));
+    if (repeatable) self.field.clear() else if (settings_pages.rowFor(k)) |row| switch (row.control) {
+        // A stepper edits its number, the megabytes row its MB (Mac's
+        // `NumberControl` / `MegabytesControl` fields).
+        .stepper, .megabytes => {
+            var buf: [64]u8 = undefined;
+            self.field.set(self.controlDisplay(&buf, row));
+        },
+        // Shell's Other...: the command as it stands, or empty for the
+        // default (Mac seeds its sheet with the value).
+        .shell => self.field.set(if (r.isSetInFile(k)) r.value(k) else ""),
+        else => self.field.set(r.value(k)),
+    } else self.field.set(r.value(k));
     self.edit_key = k;
     self.focus = .field;
     self.invalidate();
@@ -872,12 +899,67 @@ pub fn commitEdit(self: *SettingsWindow) void {
         self.invalidate();
         return;
     }
+    if (settings_pages.rowFor(key)) |row| if (self.commitControl(row, typed)) {
+        self.invalidate();
+        return;
+    };
     if (std.mem.trim(u8, typed, " \t").len == 0) {
         if (r.isSetInFile(key)) _ = self.write(SettingsModel.reset, .{key});
     } else if (!std.mem.eql(u8, typed, r.value(key))) {
         _ = self.write(SettingsModel.set, .{ key, @as([]const u8, typed) });
     }
     self.invalidate();
+}
+
+/// A curated control's field commit (T2681): the stepper's range check, the
+/// MB conversion, the shell's existence check. False for a row whose field
+/// writes its text as typed. A refused value shows Mac's inline problem
+/// and writes nothing (a refused shell keeps its field open, as Mac's sheet
+/// stays up).
+fn commitControl(self: *SettingsWindow, row: *const settings_pages.Row, typed: []const u8) bool {
+    const key = row.key;
+    const r = self.reader() orelse return true;
+    const empty = std.mem.trim(u8, typed, " \t").len == 0;
+    var buf: [128]u8 = undefined;
+    var shown_buf: [64]u8 = undefined;
+    switch (row.control) {
+        .stepper => |s| {
+            if (std.mem.eql(u8, typed, self.controlDisplay(&shown_buf, row))) return true;
+            if (empty) {
+                if (r.isSetInFile(key)) _ = self.write(SettingsModel.reset, .{key});
+                return true;
+            }
+            const v = controls.parseInRange(typed, s.min, s.max) orelse return self.refuse(key, controls.rangeProblem(&buf, s.min, s.max));
+            _ = self.chooseValue(key, controls.formatNumber(&buf, v));
+            return true;
+        },
+        .megabytes => |m| {
+            if (std.mem.eql(u8, typed, self.controlDisplay(&shown_buf, row))) return true;
+            if (empty) {
+                if (r.isSetInFile(key)) _ = self.write(SettingsModel.reset, .{key});
+                return true;
+            }
+            const bytes = controls.megabytesToBytes(typed, m.max) orelse return self.refuse(key, controls.megabytesProblem(&buf, m.max));
+            const text = std.fmt.bufPrint(&buf, "{d}", .{bytes}) catch return true;
+            _ = self.chooseValue(key, text);
+            return true;
+        },
+        .shell => {
+            if (!self.chooseShell(key, typed)) {
+                self.edit_key = key;
+                self.focus = .field;
+            }
+            return true;
+        },
+        else => return false,
+    }
+}
+
+/// Record `msg` as `key`'s problem; the field closes and shows the value
+/// again (Mac's `NumberControl.commit` drops the typed text first).
+fn refuse(self: *SettingsWindow, key: []const u8, msg: []const u8) bool {
+    self.model.setProblem(key, msg) catch {};
+    return true;
 }
 
 /// Esc in a field: drop what was typed.
@@ -927,6 +1009,166 @@ pub fn chooseValue(self: *SettingsWindow, key: []const u8, value: []const u8) bo
     return self.write(SettingsModel.set, .{ k, value });
 }
 
+// ---------------------------------------------------------------------
+// The curated controls (T2681) - Mac `SettingsRowView.swift`'s Slider,
+// Number, Megabytes, Color, Flags, Shell and Folder controls. Each turns a
+// gesture into the value text the parser accepts and writes it through
+// `chooseValue`, so the model validates it like every other write.
+// ---------------------------------------------------------------------
+
+/// A curated row of `key` whose control is `tag`, if that is what it is.
+fn controlRow(key: []const u8, comptime tag: std.meta.Tag(settings_pages.Control)) ?*const settings_pages.Row {
+    const row = settings_pages.rowFor(key) orelse return null;
+    return if (row.control == tag) row else null;
+}
+
+/// A slider's release: `value` snapped to the row's step and range.
+pub fn slideTo(self: *SettingsWindow, key: []const u8, value: f64) bool {
+    const row = controlRow(key, .slider) orelse return false;
+    const s = row.control.slider;
+    var buf: [32]u8 = undefined;
+    return self.chooseValue(key, controls.formatValue(&buf, controls.snap(value, s.min, s.max, s.step)));
+}
+
+/// What a slider shows now: the value being dragged, else the key's.
+pub fn sliderValue(self: *const SettingsWindow, row: *const settings_pages.Row) f64 {
+    if (self.slide_key) |k| if (std.mem.eql(u8, k, row.key)) if (self.slide_preview) |v| return v;
+    const r = self.reader() orelse return row.control.slider.min;
+    return controls.parseOr(r.value(row.key), row.control.slider.min);
+}
+
+/// One click of a stepper's arrow (`dir` +1 up, -1 down).
+pub fn stepKey(self: *SettingsWindow, key: []const u8, dir: i32) bool {
+    const row = controlRow(key, .stepper) orelse return false;
+    const s = row.control.stepper;
+    const r = self.reader() orelse return false;
+    const now = controls.parseOr(r.value(key), s.min);
+    var buf: [64]u8 = undefined;
+    return self.chooseValue(key, controls.formatNumber(&buf, controls.stepBy(now, dir, s.min, s.max, s.step)));
+}
+
+/// A flag's checkbox: every schema flag is written explicitly, as Mac's.
+pub fn setFlag(self: *SettingsWindow, key: []const u8, flag: []const u8, on: bool) bool {
+    _ = controlRow(key, .flags) orelse return false;
+    const options = (self.catalog.get(key) orelse return false).options orelse return false;
+    const r = self.reader() orelse return false;
+    var known = false;
+    for (options) |o| if (std.mem.eql(u8, o, flag)) {
+        known = true;
+    };
+    if (!known) return false;
+    const next = controls.composeFlags(self.gpa, options, r.value(key), flag, on) catch return false;
+    defer self.gpa.free(next);
+    return self.chooseValue(key, next);
+}
+
+/// The color well's pick, as `#rrggbb`.
+pub fn applyColor(self: *SettingsWindow, key: []const u8, rgb: u32) bool {
+    _ = controlRow(key, .color) orelse return false;
+    var buf: [7]u8 = undefined;
+    return self.chooseValue(key, controls.formatHex(&buf, rgb));
+}
+
+/// The color well: the system color dialog, starting on the key's color.
+fn pickColor(self: *SettingsWindow, key: []const u8) void {
+    const r = self.reader() orelse return;
+    const start = controls.parseHex(r.value(key)) orelse 0x808080;
+    const Static = struct {
+        var custom: [16]u32 = [_]u32{0xFFFFFF} ** 16;
+    };
+    var cc: w32.CHOOSECOLORW = .{
+        .hwndOwner = self.hwnd,
+        .rgbResult = controls.toColorref(start),
+        .lpCustColors = &Static.custom,
+        .Flags = w32.CC_RGBINIT | w32.CC_FULLOPEN | w32.CC_ANYCOLOR,
+    };
+    if (w32.ChooseColorW(&cc) == 0) return;
+    _ = self.applyColor(key, controls.fromColorref(cc.rgbResult));
+}
+
+/// A shell row's write (a menu pick, or Other...'s typed command): refused
+/// with Mac's inline problem when its program does not exist.
+pub fn chooseShell(self: *SettingsWindow, key: []const u8, command: []const u8) bool {
+    _ = controlRow(key, .shell) orelse return false;
+    const trimmed = std.mem.trim(u8, command, " \t");
+    if (trimmed.len == 0) return self.chooseValue(key, "");
+    var buf: [std.fs.max_path_bytes + 64]u8 = undefined;
+    if (shellProblem(self.gpa, &buf, trimmed)) |problem| {
+        self.model.setProblem(key, problem) catch {};
+        self.invalidate();
+        return false;
+    }
+    return self.chooseValue(key, trimmed);
+}
+
+fn shellProblem(gpa: Allocator, buf: []u8, command: []const u8) ?[]const u8 {
+    const path = std.process.getEnvVarOwned(gpa, "PATH") catch gpa.dupe(u8, "") catch return null;
+    defer gpa.free(path);
+    const pathext = std.process.getEnvVarOwned(gpa, "PATHEXT") catch gpa.dupe(u8, ".COM;.EXE;.BAT;.CMD") catch return null;
+    defer gpa.free(pathext);
+    const Fs = struct {
+        fn exists(_: void, p: []const u8) bool {
+            const st = std.fs.cwd().statFile(p) catch return false;
+            return st.kind == .file;
+        }
+    };
+    return controls.shellProblem(buf, command, path, pathext, {}, Fs.exists);
+}
+
+/// The common Windows shells that are installed (Mac filters its list by
+/// `isExecutableFile`).
+fn installedShells(self: *SettingsWindow, out: *[controls.common_shells.len]controls.CommonShell) []const controls.CommonShell {
+    var n: usize = 0;
+    var buf: [std.fs.max_path_bytes + 64]u8 = undefined;
+    for (controls.common_shells) |s| if (shellProblem(self.gpa, &buf, s.program) == null) {
+        out[n] = s;
+        n += 1;
+    };
+    return out[0..n];
+}
+
+/// "Choose Folder..." in the folder row: the system folder picker.
+fn pickFolder(self: *SettingsWindow, key: []const u8) void {
+    const r = self.reader() orelse return;
+    const now = r.value(key);
+    const start: ?[]const u8 = if (std.mem.eql(u8, now, "home") or std.mem.eql(u8, now, "inherit")) null else now;
+    const chosen = folder_dialog.pick(self.gpa, self.hwnd, start) orelse return;
+    defer self.gpa.free(chosen);
+    _ = self.chooseValue(key, chosen);
+}
+
+/// The profile folder, for the folder row's `~` (caller frees).
+fn homeDir(self: *const SettingsWindow) ?[]u8 {
+    return std.process.getEnvVarOwned(self.gpa, "USERPROFILE") catch null;
+}
+
+/// What a curated control shows for its key, as text (the slider's
+/// readout, the stepper's number, the MB, the color or its default label,
+/// the shell or folder popup's label) - painted, and reported by the seam.
+pub fn controlDisplay(self: *const SettingsWindow, buf: []u8, row: *const settings_pages.Row) []const u8 {
+    const r = self.reader() orelse return "";
+    const value = r.value(row.key);
+    return switch (row.control) {
+        .slider => |s| controls.sliderLabel(buf, self.sliderValue(row), s.percent, s.inverted),
+        .stepper => |s| controls.formatNumber(buf, controls.parseOr(value, s.min)),
+        .megabytes => controls.bytesAsMegabytes(buf, value),
+        .color => |c| if (controls.parseHex(value) != null) value else if (value.len > 0) value else c.none_label,
+        .shell => |s| if (!r.isSetInFile(row.key) or value.len == 0) controls.shellDefaultLabel(s.scripted) else value,
+        .folder => blk: {
+            const home = self.homeDir();
+            defer if (home) |h| self.gpa.free(h);
+            const shown = controls.folderLabel(buf, if (r.isSetInFile(row.key)) value else "", home orelse "");
+            // folderLabel may return `value` itself; copy into buf so the
+            // result outlives nothing borrowed.
+            if (shown.ptr == buf.ptr) break :blk shown;
+            const n = @min(shown.len, buf.len);
+            std.mem.copyForwards(u8, buf[0..n], shown[0..n]);
+            break :blk buf[0..n];
+        },
+        else => row.labelFor(value),
+    };
+}
+
 /// All Settings' "<Page> >" link (Mac `reveal`): clear the search, open the
 /// key's page and scroll the row into view.
 pub fn reveal(self: *SettingsWindow, key: []const u8) bool {
@@ -952,6 +1194,11 @@ pub fn rowEnabled(self: *const SettingsWindow, row: *const settings_pages.Row) b
 /// The value popup for a curated row, hung under its control.
 fn openChoice(self: *SettingsWindow, key: []const u8, anchor: Rect) void {
     const row = settings_pages.rowFor(key) orelse return;
+    switch (row.control) {
+        .shell => |sh| return self.openShellMenu(key, sh.scripted, anchor),
+        .folder => return self.openFolderMenu(key, anchor),
+        else => {},
+    }
     const r = self.reader() orelse return;
     const entry = self.catalog.get(key);
     const opts = settings_pages.choices(self.gpa, row, if (entry) |e| e.options else null) catch return;
@@ -971,6 +1218,118 @@ fn openChoice(self: *SettingsWindow, key: []const u8, anchor: Rect) void {
     if (cmd <= 0) return;
     const idx: usize = @intCast(cmd - 1);
     if (idx < opts.len) _ = self.chooseValue(key, opts[idx].value);
+}
+
+/// A popup of `labels` under `anchor` (`checked` marks one, `null` labels
+/// are separators); returns the picked index.
+fn popupPick(self: *SettingsWindow, anchor: Rect, labels: []const ?[]const u8, checked: ?usize) ?usize {
+    const menu = w32.CreatePopupMenu() orelse return null;
+    defer _ = w32.DestroyMenu(menu);
+    for (labels, 0..) |maybe, i| {
+        const label = maybe orelse {
+            _ = w32.AppendMenuW(menu, w32.MF_SEPARATOR, 0, null);
+            continue;
+        };
+        const wide = std.unicode.utf8ToUtf16LeAllocZ(self.gpa, label) catch return null;
+        defer self.gpa.free(wide);
+        const on = checked != null and checked.? == i;
+        _ = w32.AppendMenuW(menu, w32.MF_STRING | (if (on) w32.MF_CHECKED else 0), i + 1, wide.ptr);
+    }
+    var pt: w32.POINT = .{ .x = anchor.x, .y = anchor.y + anchor.h };
+    _ = w32.ClientToScreen(self.hwnd, &pt);
+    const cmd = w32.TrackPopupMenuEx(menu, w32.TPM_LEFTALIGN | w32.TPM_TOPALIGN | w32.TPM_RETURNCMD, pt.x, pt.y, self.hwnd, null);
+    if (cmd <= 0) return null;
+    return @intCast(cmd - 1);
+}
+
+/// Mac `ShellControl`: the default, the installed common shells, the
+/// current command when it is none of them, then Other... (which edits the
+/// command in place; Mac asks in a sheet).
+fn openShellMenu(self: *SettingsWindow, key: []const u8, scripted: bool, anchor: Rect) void {
+    const r = self.reader() orelse return;
+    const set = r.isSetInFile(key);
+    const value = r.value(key);
+    var found_buf: [controls.common_shells.len]controls.CommonShell = undefined;
+    const found = self.installedShells(&found_buf);
+    var labels: [controls.common_shells.len + 5]?[]const u8 = undefined;
+    var values: [controls.common_shells.len + 5][]const u8 = undefined;
+    var n: usize = 0;
+    var checked: ?usize = null;
+    labels[n] = controls.shellDefaultLabel(scripted);
+    values[n] = "";
+    if (!set) checked = n;
+    n += 1;
+    labels[n] = null;
+    n += 1;
+    var current_listed = false;
+    for (found) |sh| {
+        labels[n] = sh.label;
+        values[n] = sh.program;
+        if (set and std.ascii.eqlIgnoreCase(value, sh.program)) {
+            checked = n;
+            current_listed = true;
+        }
+        n += 1;
+    }
+    if (set and !current_listed and value.len > 0) {
+        labels[n] = value;
+        values[n] = value;
+        checked = n;
+        n += 1;
+    }
+    labels[n] = null;
+    n += 1;
+    const other = n;
+    labels[n] = controls.other_shell_label;
+    n += 1;
+    const idx = self.popupPick(anchor, labels[0..n], checked) orelse return;
+    if (idx == other) {
+        _ = self.beginEdit(key);
+        return;
+    }
+    if (labels[idx] == null) return;
+    // Copy: a write reloads the reader `value` points into.
+    var copy: [512]u8 = undefined;
+    const v = values[idx];
+    const n2 = @min(v.len, copy.len);
+    @memcpy(copy[0..n2], v[0..n2]);
+    _ = self.chooseShell(key, copy[0..n2]);
+}
+
+/// Mac `FolderControl`: Home folder (unset), Where Ghoztty was launched
+/// (`inherit`), the chosen folder when there is one, then Choose Folder...
+fn openFolderMenu(self: *SettingsWindow, key: []const u8, anchor: Rect) void {
+    const r = self.reader() orelse return;
+    const value = if (r.isSetInFile(key)) r.value(key) else "";
+    const custom = value.len > 0 and !std.mem.eql(u8, value, "home") and !std.mem.eql(u8, value, "inherit");
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const home = self.homeDir();
+    defer if (home) |h| self.gpa.free(h);
+    var labels: [5]?[]const u8 = undefined;
+    var n: usize = 0;
+    labels[n] = controls.folder_home_label;
+    n += 1;
+    labels[n] = controls.folder_inherit_label;
+    n += 1;
+    var checked: usize = if (std.mem.eql(u8, value, "inherit")) 1 else 0;
+    if (custom) {
+        labels[n] = controls.folderLabel(&buf, value, home orelse "");
+        checked = n;
+        n += 1;
+    }
+    labels[n] = null;
+    n += 1;
+    const choose = n;
+    labels[n] = controls.folder_choose_label;
+    n += 1;
+    const idx = self.popupPick(anchor, labels[0..n], checked) orelse return;
+    if (idx == 0) {
+        _ = self.chooseValue(key, "");
+    } else if (idx == 1) {
+        _ = self.chooseValue(key, "inherit");
+    } else if (idx == choose) {
+        self.pickFolder(key);
+    }
 }
 
 /// The Keyboard page's "Open Shortcut Guide..." link.
@@ -1419,8 +1778,12 @@ fn paintRow(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Ite
     // Line 1 (label, dot, buttons) keeps the plain row height; `band` is the
     // control's, taller for the Pane style cards.
     const line_band = @max(lh, fh);
-    const band = if (cards != null) card_band else line_band;
-    const control_w: i32 = if (cards) |c| @intCast(c.len * dip.card_w + (c.len -| 1) * dip.card_gap) else if (repeatable) dip.list_w else dip.field_w;
+    // Flags are a two-column grid of checkboxes under line 1 (Mac's
+    // `FlagsControl` LazyVGrid).
+    const flag_lines: i32 = if (item.row) |row| (if (row.control == .flags) @intCast((self.flagOptions(key).len + 1) / 2) else 0) else 0;
+    const flag_band = if (flag_lines > 0) flag_lines * lh + (flag_lines - 1) * t else 0;
+    const band = if (cards != null) card_band else if (flag_lines > 0) @max(line_band, flag_band) else line_band;
+    const control_w: i32 = if (cards) |c| @intCast(c.len * dip.card_w + (c.len -| 1) * dip.card_gap) else if (repeatable or flag_lines > 0) dip.list_w else dip.field_w;
     const cols = layout.rowColumns(self.scale, f.list, f.scrollbar.w, y + pad_y, lh, control_w);
     const width = cols.right - cols.left;
     const hovered = self.hover_key != null and std.mem.eql(u8, self.hover_key.?, key);
@@ -1467,7 +1830,11 @@ fn paintRow(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Ite
 
         // The control.
         const choice_row: ?*const settings_pages.Row = if (item.row) |row| (if (row.control.isChoice() and !repeatable) row else null) else null;
-        if (choice_row) |row| {
+        const drawn_row: ?*const settings_pages.Row = if (item.row) |row| (if (drawnControl(row.control) and !repeatable) row else null) else null;
+        if (drawn_row) |row| {
+            const box: Rect = if (row.control == .flags) .{ .x = cols.control.x, .y = cy, .w = cols.control.w, .h = flag_band } else cols.control;
+            self.paintControl(hdc, p, row, box, enabled and override == null, editing);
+        } else if (choice_row) |row| {
             const live = enabled and override == null;
             if (cards) |opts| {
                 self.paintCards(hdc, p, opts, r.value(key), cols.control.x, cols.control.y, live);
@@ -1570,6 +1937,157 @@ fn paintRow(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: Ite
     cy += pad_y;
     if (draw) fillRect(hdc, .{ .x = cols.left, .y = cy - self.hair(), .w = width, .h = self.hair() }, cr(p.divider));
     return cy - y;
+}
+
+/// The curated controls `paintControl` draws (T2681); the rest are a
+/// switch, a popup, cards or a text field.
+fn drawnControl(c: settings_pages.Control) bool {
+    return switch (c) {
+        .slider, .stepper, .megabytes, .color, .flags, .shell, .folder => true,
+        else => false,
+    };
+}
+
+/// A flags key's names, in schema order (empty when the schema has none).
+fn flagOptions(self: *const SettingsWindow, key: []const u8) []const []const u8 {
+    const e = self.catalog.get(key) orelse return &.{};
+    return e.options orelse &.{};
+}
+
+/// One curated control in `box` (Mac `SettingControl`'s cases). `live` is
+/// false for a dimmed or overridden row: drawn, but no hits.
+fn paintControl(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, row: *const settings_pages.Row, box: Rect, live: bool, editing: bool) void {
+    const key = row.key;
+    const r = self.reader() orelse return;
+    const g = layout.px(dip.gap, self.scale);
+    const t = layout.px(dip.tight, self.scale);
+    const lh = self.text.lineHeight(.body);
+    const ch = self.text.lineHeight(.caption);
+    const radius = layout.px(dip.radius, self.scale);
+    const text_y = box.y + @divTrunc(box.h - lh, 2);
+    const muted = cr(p.secondary);
+    var dbuf: [std.fs.max_path_bytes]u8 = undefined;
+    const focused = editing and w32.GetFocus() == self.hwnd;
+    switch (row.control) {
+        .slider => |sl| {
+            // Track, filled to the knob in the accent, and the readout at
+            // the right (Mac: a 160pt slider and a 42pt monospaced label).
+            const label = self.controlDisplay(&dbuf, row);
+            const lw = layout.px(42, self.scale);
+            const tw = self.text.measure(hdc, label, .{}, .body).cx;
+            _ = self.text.drawText(hdc, box.x + box.w - tw, text_y, label, .{}, .body, muted, true);
+            const track: Rect = .{ .x = box.x, .y = box.y, .w = @max(0, box.w - lw - g), .h = box.h };
+            const knob = layout.px(14, self.scale);
+            const th = @max(2, layout.px(4, self.scale));
+            const ux = track.x + @divTrunc(knob, 2);
+            const uw = @max(1, track.w - knob);
+            const mid = box.y + @divTrunc(box.h, 2);
+            const frac = controls.fraction(self.sliderValue(row), sl.min, sl.max);
+            const kx = ux + @as(i32, @intFromFloat(@round(frac * @as(f64, @floatFromInt(uw)))));
+            roundRect(hdc, .{ .x = ux, .y = mid - @divTrunc(th, 2), .w = uw, .h = th }, @divTrunc(th, 2), cr(p.boundary), null, 1);
+            if (kx > ux) roundRect(hdc, .{ .x = ux, .y = mid - @divTrunc(th, 2), .w = kx - ux, .h = th }, @divTrunc(th, 2), if (live) cr(p.accent) else cr(p.divider), null, 1);
+            roundRect(hdc, .{ .x = kx - @divTrunc(knob, 2), .y = mid - @divTrunc(knob, 2), .w = knob, .h = knob }, @divTrunc(knob, 2), cr(p.field), cr(p.boundary), self.hair());
+            if (live) self.hit(.{ .rect = track, .kind = .slider, .key = key });
+        },
+        .stepper, .megabytes => {
+            // [ number ][^v] unit - the number right of the row, Mac's
+            // 64pt field + Stepper + unit (megabytes: 72pt, no arrows).
+            const unit = switch (row.control) {
+                .stepper => |st| st.unit,
+                else => controls.megabytes_unit,
+            };
+            const uw = self.text.measure(hdc, unit, .{}, .body).cx;
+            var x = box.x + box.w - uw;
+            _ = self.text.drawText(hdc, x, text_y, unit, .{}, .body, muted, true);
+            x -= g;
+            if (row.control == .stepper) {
+                const aw = layout.px(16, self.scale);
+                x -= aw;
+                const arrows: Rect = .{ .x = x, .y = box.y, .w = aw, .h = box.h };
+                roundRect(hdc, arrows, radius, if (live) cr(p.field) else cr(p.bg), cr(p.boundary), self.hair());
+                const half = @divTrunc(box.h, 2);
+                fillRect(hdc, .{ .x = x, .y = box.y + half, .w = aw, .h = self.hair() }, cr(p.boundary));
+                const up = "\u{25B4}";
+                const down = "\u{25BE}";
+                const gw = self.text.measure(hdc, up, .{}, .caption).cx;
+                _ = self.text.drawText(hdc, x + @divTrunc(aw - gw, 2), box.y + @divTrunc(half - ch, 2), up, .{}, .caption, if (live) cr(p.text) else muted, true);
+                _ = self.text.drawText(hdc, x + @divTrunc(aw - gw, 2), box.y + half + @divTrunc(box.h - half - ch, 2), down, .{}, .caption, if (live) cr(p.text) else muted, true);
+                if (live) {
+                    self.hit(.{ .rect = .{ .x = x, .y = box.y, .w = aw, .h = half }, .kind = .step_up, .key = key });
+                    self.hit(.{ .rect = .{ .x = x, .y = box.y + half, .w = aw, .h = box.h - half }, .kind = .step_down, .key = key });
+                }
+                x -= t;
+            }
+            const fw = layout.px(if (row.control == .stepper) 64 else 72, self.scale);
+            const field: Rect = .{ .x = x - fw, .y = box.y, .w = fw, .h = box.h };
+            const shown = if (editing) self.field.text() else self.controlDisplay(&dbuf, row);
+            self.paintField(hdc, p, field, shown, "", focused, if (editing) self.field.caret else shown.len, false, !live);
+            if (live) self.hit(.{ .rect = field, .kind = .field, .key = key });
+        },
+        .color => |c| {
+            // A color well at the right; left of it the default's name
+            // when unset, or "Use <default>" when the file sets a color
+            // (Mac `ColorControl`).
+            const value = r.value(key);
+            const rgb = controls.parseHex(value);
+            const ww = layout.px(44, self.scale);
+            const well: Rect = .{ .x = box.x + box.w - ww, .y = box.y, .w = ww, .h = box.h };
+            roundRect(hdc, well, radius, cr(p.field), cr(p.boundary), self.hair());
+            const inset = @max(3, layout.px(3, self.scale));
+            const swatch: Rect = .{ .x = well.x + inset, .y = well.y + inset, .w = well.w - 2 * inset, .h = well.h - 2 * inset };
+            if (rgb) |v| {
+                roundRect(hdc, swatch, @max(1, radius - inset), w32.RGB(@intCast((v >> 16) & 0xFF), @intCast((v >> 8) & 0xFF), @intCast(v & 0xFF)), cr(p.boundary), self.hair());
+            } else {
+                // No color of its own: an empty well with Mac's gray.
+                roundRect(hdc, swatch, @max(1, radius - inset), w32.RGB(128, 128, 128), cr(p.boundary), self.hair());
+            }
+            if (live) self.hit(.{ .rect = well, .kind = .color_well, .key = key });
+            if (rgb == null) {
+                const label = self.controlDisplay(&dbuf, row);
+                const lw = self.text.measure(hdc, label, .{}, .body).cx;
+                _ = self.text.drawText(hdc, well.x - g - lw, text_y, label, .{}, .body, muted, true);
+            } else if (r.isSetInFile(key)) {
+                var lb: [96]u8 = undefined;
+                const link = std.fmt.bufPrint(&lb, "Use {s}", .{c.none_label}) catch "Use default";
+                const lw = self.text.measure(hdc, link, .{}, .body).cx;
+                const lx = well.x - g - lw;
+                _ = self.text.drawText(hdc, lx, text_y, link, .{}, .body, if (live) cr(p.accent) else muted, true);
+                if (live) self.hit(.{ .rect = .{ .x = lx, .y = box.y, .w = lw, .h = box.h }, .kind = .color_reset, .key = key });
+            }
+        },
+        .flags => {
+            const options = self.flagOptions(key);
+            const value = r.value(key);
+            const colw = @divTrunc(box.w, 2);
+            const bs = layout.px(14, self.scale);
+            for (options, 0..) |o, i| {
+                const cx = box.x + @as(i32, @intCast(i % 2)) * colw;
+                const cyy = box.y + @as(i32, @intCast(i / 2)) * (lh + t);
+                const on = controls.flagState(value, o) orelse false;
+                const cb: Rect = .{ .x = cx, .y = cyy + @divTrunc(lh - bs, 2), .w = bs, .h = bs };
+                const fill = if (on) (if (live) cr(p.accent) else cr(p.divider)) else cr(p.field);
+                roundRect(hdc, cb, layout.px(3, self.scale), fill, if (on) fill else cr(p.boundary), self.hair());
+                if (on) {
+                    const tick = "\u{2713}";
+                    const tw = self.text.measure(hdc, tick, .{ .bold = true }, .caption).cx;
+                    _ = self.text.drawText(hdc, cb.x + @divTrunc(bs - tw, 2), cb.y + @divTrunc(bs - ch, 2), tick, .{ .bold = true }, .caption, w32.RGB(255, 255, 255), true);
+                }
+                _ = self.text.drawText(hdc, cb.x + bs + t + t, cyy, o, .{}, .body, if (live) cr(p.text) else muted, true);
+                if (live) self.hit(.{ .rect = .{ .x = cx, .y = cyy, .w = colw, .h = lh }, .kind = .flag, .key = key, .index = i });
+            }
+        },
+        .shell, .folder => {
+            if (editing and row.control == .shell) {
+                // Other...: the command typed in place.
+                self.paintField(hdc, p, box, self.field.text(), "pwsh.exe -NoLogo", focused, self.field.caret, true, false);
+                self.hit(.{ .rect = box, .kind = .field, .key = key });
+            } else {
+                self.paintChoiceBox(hdc, p, box, self.controlDisplay(&dbuf, row), live);
+                if (live) self.hit(.{ .rect = box, .kind = .choice, .key = key });
+            }
+        },
+        else => {},
+    }
 }
 
 /// Pane style's preview cards (Mac `PaneStyleSection`): a thumbnail per
@@ -2122,6 +2640,7 @@ fn hitAt(self: *const SettingsWindow, x: i32, y: i32) ?Hit {
             .open_editor, .reveal_file, .open_source, .restore_menu, .show_file => true,
             .toast_body, .toast_show, .toast_undo, .toast_dismiss => true,
             .theme_mode, .theme_slot => true,
+            .slider, .step_up, .step_down, .color_well, .color_reset, .flag => true,
             else => false,
         };
         if (in_list and !f.list.contains(x, y)) continue;
@@ -2147,6 +2666,8 @@ pub fn clickHit(self: *SettingsWindow, kind: Hit.Kind, key: []const u8) bool {
         if (h.kind != kind) continue;
         if (key.len > 0 and !std.mem.eql(u8, h.key, key)) continue;
         self.onLeftDown(h.rect.x + @divTrunc(h.rect.w, 2), h.rect.y + @divTrunc(h.rect.h, 2));
+        // A slider press is a drag; the seam's click is press + release.
+        if (self.slide_key != null) self.endSlide();
         return true;
     }
     return false;
@@ -2175,6 +2696,19 @@ fn onLeftDown(self: *SettingsWindow, x: i32, y: i32) void {
             .toast_dismiss => self.dismissToast(),
             .theme_mode => self.openThemeMode(h.rect),
             .theme_slot => self.openThemeMenu(h.index, h.rect),
+            .slider => self.beginSlide(h.key, h.rect, x),
+            .step_up => _ = self.stepKey(h.key, 1),
+            .step_down => _ = self.stepKey(h.key, -1),
+            .color_well => self.pickColor(h.key),
+            .color_reset => _ = self.resetKey(h.key),
+            .flag => {
+                const opts = self.flagOptions(h.key);
+                if (h.index < opts.len) {
+                    const r = self.reader() orelse return;
+                    const on = controls.flagState(r.value(h.key), opts[h.index]) orelse false;
+                    _ = self.setFlag(h.key, opts[h.index], !on);
+                }
+            },
             .search_clear => self.setQuery(""),
             .field, .add_field => _ = self.beginEdit(h.key),
             .reset => _ = self.resetKey(h.key),
@@ -2205,7 +2739,42 @@ fn onLeftDown(self: *SettingsWindow, x: i32, y: i32) void {
     self.commitEdit();
 }
 
+/// A press on a slider's track: the knob jumps there and follows the
+/// mouse; the value is written once, on release (Mac's `onEditingChanged`).
+fn beginSlide(self: *SettingsWindow, key: []const u8, track: Rect, x: i32) void {
+    self.commitEdit();
+    self.slide_key = key;
+    self.slide_track = track;
+    self.slideMove(x);
+    _ = w32.SetCapture(self.hwnd);
+}
+
+fn slideMove(self: *SettingsWindow, x: i32) void {
+    const key = self.slide_key orelse return;
+    const row = controlRow(key, .slider) orelse return;
+    const sl = row.control.slider;
+    const knob = layout.px(14, self.scale);
+    const ux = self.slide_track.x + @divTrunc(knob, 2);
+    const uw = @max(1, self.slide_track.w - knob);
+    const frac = @as(f64, @floatFromInt(x - ux)) / @as(f64, @floatFromInt(uw));
+    self.slide_preview = controls.valueAt(frac, sl.min, sl.max, sl.step);
+    self.invalidate();
+}
+
+fn endSlide(self: *SettingsWindow) void {
+    const key = self.slide_key orelse return;
+    const v = self.slide_preview;
+    self.slide_key = null;
+    self.slide_preview = null;
+    if (w32.GetCapture() == self.hwnd) _ = w32.ReleaseCapture();
+    if (v) |value| _ = self.slideTo(key, value) else self.invalidate();
+}
+
 fn onMouseMove(self: *SettingsWindow, x: i32, y: i32) void {
+    if (self.slide_key != null) {
+        self.slideMove(x);
+        return;
+    }
     if (self.thumb_drag_dy >= 0) {
         const f = self.frame();
         const t = layout.thumb(self.scale, f.scrollbar, self.content_h, self.scroll) orelse return;
@@ -2394,6 +2963,11 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             return 0;
         },
         w32.WM_LBUTTONUP => {
+            if (self.slide_key != null) {
+                self.slideMove(loWordSigned(lparam));
+                self.endSlide();
+                return 0;
+            }
             if (self.thumb_drag_dy >= 0) {
                 self.thumb_drag_dy = -1;
                 _ = w32.ReleaseCapture();

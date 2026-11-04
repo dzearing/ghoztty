@@ -351,7 +351,7 @@ fn afterWrite(self: *SettingsModel) void {
     self.reload.call();
 }
 
-fn setProblem(self: *SettingsModel, key: []const u8, msg: []const u8) Allocator.Error!void {
+pub fn setProblem(self: *SettingsModel, key: []const u8, msg: []const u8) Allocator.Error!void {
     try self.setProblemOwned(key, try self.gpa.dupe(u8, msg));
 }
 
@@ -370,7 +370,7 @@ fn setProblemOwned(self: *SettingsModel, key: []const u8, msg: []u8) Allocator.E
     gop.value_ptr.* = msg;
 }
 
-fn clearProblem(self: *SettingsModel, key: []const u8) void {
+pub fn clearProblem(self: *SettingsModel, key: []const u8) void {
     if (self.problems.fetchRemove(key)) |kv| {
         self.gpa.free(kv.key);
         self.gpa.free(kv.value);
