@@ -7,6 +7,10 @@
 //   mode 3: mode 1, but the render thread deletes its own context before it exits
 //   mode 4: one long-lived render thread serves every iteration (a thread pool)
 //   mode 5: fresh thread creates, renders and deletes; the UI thread never touches the context
+//   mode 6: mode 4 (long-lived render thread), plus ONE fresh thread per iteration that never touches GL
+//   mode 8: CONTROL - no window, no GL, nvoglv64 never loaded: just the three fresh threads per iteration
+//   mode 9: ONE GL cycle (loads nvoglv64, context deleted), then only the three GL-free fresh threads per iteration
+//   mode 7: mode 4, plus THREE GL-free fresh threads per iteration (the app's renderer + IO + process-watcher count)
 // A third argument is a FLAGS bitmask (T2644 step 2, growing the repro toward the pane):
 //   1 = robust context exactly as gl_robust.createContext (plain probe -> wglCreateContextAttribsARB, probe deleted)
 //   2 = the GL window is a CHILD of one long-lived top-level (panes are children)
@@ -15,6 +19,8 @@
 //  16 = GL_DEBUG_OUTPUT + glDebugMessageCallback, on the UI thread at init and on the render thread (OpenGL.prepareContext)
 //  64 = a FRESH top-level per iteration with the GL window as its child; both destroyed (the app's window shape)
 //  32 = a linked program + VAO drawn (glDrawArraysInstanced) every frame
+// 128 = the app's pixel format: + PFD_SUPPORT_COMPOSITION, depth 24, stencil 8 (Surface.setupGlPixelFormat)
+// 256 = the GL window is an opaque LAYERED window (WS_EX_LAYERED + LWA_ALPHA 255, Window.composeOpaqueLayer)
 // Modes 1-4 also make the context current on the UI thread once at init (ghostty's shape).
 // 2026-11-03, 800 iterations: mode 1 109 -> 244 MB (unbounded); mode 4 95.9 MB flat.
 // Modes 3 and 5 grow like mode 1 - only NOT exiting the thread avoids it.
@@ -90,6 +96,9 @@ extern "user32" fn CreateWindowExW(u32, [*:0]const u16, [*:0]const u16, u32, i32
 extern "user32" fn DestroyWindow(HWND) callconv(.winapi) i32;
 extern "user32" fn DefWindowProcW(HWND, u32, usize, isize) callconv(.winapi) isize;
 extern "user32" fn GetDC(?HWND) callconv(.winapi) ?HDC;
+extern "user32" fn GetWindowLongW(HWND, i32) callconv(.winapi) i32;
+extern "user32" fn SetWindowLongW(HWND, i32, i32) callconv(.winapi) i32;
+extern "user32" fn SetLayeredWindowAttributes(HWND, u32, u8, u32) callconv(.winapi) i32;
 extern "user32" fn ReleaseDC(?HWND, HDC) callconv(.winapi) i32;
 extern "user32" fn PeekMessageW(*MSG, ?HWND, u32, u32, u32) callconv(.winapi) i32;
 extern "user32" fn TranslateMessage(*const MSG) callconv(.winapi) i32;
@@ -290,6 +299,8 @@ const Pool = struct {
     }
 };
 
+fn idle() void {}
+
 fn render(j: *const Job) void {
     if (wglMakeCurrent(j.dc, j.ctx) == 0) @panic("makeCurrent");
     if (j.flags & 8 != 0) _ = getProc(*const fn (i32) callconv(.winapi) i32, "wglSwapIntervalEXT")(1);
@@ -325,7 +336,7 @@ pub fn main() !void {
 
     var pool: Pool = .{};
     var pool_t: ?std.Thread = null;
-    if (mode == 4) pool_t = try std.Thread.spawn(.{}, Pool.run, .{&pool});
+    if (mode == 4 or mode == 6 or mode == 7) pool_t = try std.Thread.spawn(.{}, Pool.run, .{&pool});
     defer if (pool_t) |t| {
         pool.mutex.lock();
         pool.quit = true;
@@ -337,12 +348,37 @@ pub fn main() !void {
     const top: ?HWND = if (flags & 2 != 0) CreateWindowExW(0, cls, cls, 0x10000000 | 0x00CF0000 | 0x02000000, 40, 40, 900, 700, null, null, inst, null) orelse @panic("top") else null;
     var i: u32 = 0;
     while (i < n) : (i += 1) {
+        if (mode == 9 and i > 0) {
+            // Mode 9: iteration 0 ran a full GL cycle (driver now loaded, no
+            // context left anywhere); from here on, only GL-free thread churn.
+            var k: u32 = 0;
+            while (k < 3) : (k += 1) (try std.Thread.spawn(.{}, idle, .{})).join();
+            if ((i + 1) % 10 == 0) std.debug.print("iter {d}: private {d:.1} MB\n", .{ i + 1, privMb() });
+            continue;
+        }
+        if (mode == 8) {
+            var k: u32 = 0;
+            while (k < 3) : (k += 1) (try std.Thread.spawn(.{}, idle, .{})).join();
+            if (i == 4 or (i + 1) % 10 == 0) std.debug.print("iter {d}: private {d:.1} MB\n", .{ i + 1, privMb() });
+            continue;
+        }
         const iter_top: ?HWND = if (flags & 64 != 0) CreateWindowExW(0, cls, cls, 0x10000000 | 0x00CF0000 | 0x02000000, 40, 40, 900, 700, null, null, inst, null) orelse @panic("itop") else null;
         const parent = iter_top orelse top;
         const style: u32 = if (parent != null) 0x40000000 | 0x10000000 | 0x04000000 | 0x02000000 else 0x10000000 | 0x00CF0000;
         const hwnd = CreateWindowExW(0, cls, cls, style, 0, 0, 800, 600, parent, null, inst, null) orelse @panic("window");
+        if (flags & 256 != 0) {
+            // Window.composeOpaqueLayer: the pane is an opaque LAYERED child.
+            _ = SetWindowLongW(hwnd, -20, GetWindowLongW(hwnd, -20) | 0x00080000);
+            if (SetLayeredWindowAttributes(hwnd, 0, 255, 2) == 0) @panic("layered");
+        }
         const dc = GetDC(hwnd) orelse @panic("dc");
-        const pfd: PIXELFORMATDESCRIPTOR = .{};
+        var pfd: PIXELFORMATDESCRIPTOR = .{};
+        if (flags & 128 != 0) {
+            // Surface.setupGlPixelFormat: + PFD_SUPPORT_COMPOSITION, depth 24, stencil 8.
+            pfd.dwFlags |= 0x8000;
+            pfd.cDepthBits = 24;
+            pfd.cStencilBits = 8;
+        }
         const pf = ChoosePixelFormat(dc, &pfd);
         if (SetPixelFormat(dc, pf, &pfd) == 0) @panic("pf");
         var job: Job = .{ .dc = dc, .ctx = undefined, .mode = if (mode >= 3) 1 else mode, .flags = flags };
@@ -358,6 +394,15 @@ pub fn main() !void {
             0 => render(&job),
             3 => (try std.Thread.spawn(.{}, renderAndDelete, .{&job})).join(),
             4 => pool.submit(&job),
+            6 => {
+                pool.submit(&job);
+                (try std.Thread.spawn(.{}, idle, .{})).join();
+            },
+            7 => {
+                pool.submit(&job);
+                var k: u32 = 0;
+                while (k < 3) : (k += 1) (try std.Thread.spawn(.{}, idle, .{})).join();
+            },
             5 => (try std.Thread.spawn(.{}, createRenderDelete, .{&job})).join(),
             else => (try std.Thread.spawn(.{}, render, .{&job})).join(),
         }
