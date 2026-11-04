@@ -44,7 +44,10 @@
     La no DARK frame (near-black pixels over the pressed frame's count + 300);
     Lb no BAR-GONE frame (the accent bar absent from the mid line);
     Lc no BITTEN frame, vertical cells (a banner row not accent where the
-       mid row is, beyond the pressed frame's own count);
+       mid row is, beyond the pressed frame's own count) whose shape is a
+       banner over the bar; a TORN bar (banner rows a step behind, T2648)
+       and a GHOST of the old bar (T2651) are counted apart and REPORTED
+       until those tasks close (T2647; B5-B7 prove the split);
     Ld the drag happened: the bar travelled at least half the planned
        amplitude, and at least 20 frames were scored;
     and the nav-vs-page edge mismatch is REPORTED, not failed, until T2360
@@ -175,8 +178,42 @@ try {
         $s = New-SynthScorer
         $f = New-SynthFrame 5; Set-SynthRect $f 98 8 6 12 $Banner; [void]$s.Score($f)
         $c = Get-DividerFlickerCounts -Scorer $s
-        Assert 'B3 a banner painted over the bar on its rows is one BITTEN frame (6 px x 2 rows) with the bar still present' (
-            $c.BittenFrames -eq 1 -and $c.BittenWorst[0] -eq '#5=12' -and $c.BarGoneFrames -eq 0) ($c | ConvertTo-Json -Compress)
+        Assert 'B3 a banner painted over the bar on its rows is one BITTEN frame (6 px x 2 rows) with the bar still present, and neither torn nor a ghost' (
+            $c.BittenFrames -eq 1 -and $c.BittenWorst[0] -eq '#5=12' -and $c.BarGoneFrames -eq 0 -and $c.TornFrames -eq 0 -and $c.GhostFrames -eq 0) ($c | ConvertTo-Json -Compress)
+        # T2647: the two shapes that satisfy the bite reading without a banner
+        # over the bar. TORN (T2648): below the banner the bar has stepped to
+        # x104, on the banner rows it is still whole at x98.
+        $s = New-SynthScorer
+        $f = New-SynthFrame 8
+        Set-SynthRect $f 98 0 6 8 $PaneL; Set-SynthRect $f 98 20 6 ($H - 20) $PaneL
+        Set-SynthRect $f 104 0 6 8 $Accent; Set-SynthRect $f 104 20 6 ($H - 20) $Accent
+        [void]$s.Score($f)
+        $c = Get-DividerFlickerCounts -Scorer $s
+        Assert 'B5 the bar a step behind on the banner rows (whole at x98, x104 below) is one TORN frame and not a bite or a ghost' (
+            $c.TornFrames -eq 1 -and $c.TornWorst[0] -eq '#8=12' -and $c.BittenFrames -eq 0 -and $c.GhostFrames -eq 0 -and $c.BarGoneFrames -eq 0) ($c | ConvertTo-Json -Compress)
+        # GHOST (T2651): the bar is at x104 everywhere, the left banner has
+        # grown over x98-103, and below it the grown terminal still shows a
+        # 2 px sliver of the old bar at x98-99.
+        $s = New-SynthScorer
+        $f = New-SynthFrame 9
+        Set-SynthRect $f 100 0 4 $H $PaneL; Set-SynthRect $f 98 8 6 12 $Banner
+        Set-SynthRect $f 104 0 6 $H $Accent
+        [void]$s.Score($f)
+        $c = Get-DividerFlickerCounts -Scorer $s
+        Assert 'B6 a 2 px sliver of the old bar beside the moved bar, below a right banner row, is one GHOST frame and not a bite or torn' (
+            $c.GhostFrames -eq 1 -and $c.GhostWorst[0] -eq '#9=4' -and $c.BittenFrames -eq 0 -and $c.TornFrames -eq 0) ($c | ConvertTo-Json -Compress)
+        # Discrimination edges: a banner row that keeps only a 3 px stub of the
+        # bar at the old x is a bite (the strip covers most of it), and a torn
+        # shape on ONE banner row of two is a bite too.
+        $s = New-SynthScorer
+        $f = New-SynthFrame 10; Set-SynthRect $f 98 8 6 12 $Banner; Set-SynthRect $f 98 8 3 12 $Accent; [void]$s.Score($f)
+        $f = New-SynthFrame 11
+        Set-SynthRect $f 98 0 6 8 $PaneL; Set-SynthRect $f 98 13 6 ($H - 13) $PaneL
+        Set-SynthRect $f 104 0 6 8 $Accent; Set-SynthRect $f 104 13 6 ($H - 13) $Accent
+        [void]$s.Score($f)
+        $c = Get-DividerFlickerCounts -Scorer $s
+        Assert 'B7 a 3 px stub of the bar, and a tear on only one banner row, are both BITES' (
+            $c.BittenFrames -eq 2 -and $c.TornFrames -eq 0 -and $c.GhostFrames -eq 0) ($c | ConvertTo-Json -Compress)
         # A horizontal divider: transpose the world by reading the mid line as
         # a column. The bar is rows 98-103 across the full width.
         $t = New-SynthScorer -Transposed
@@ -217,7 +254,7 @@ try {
         }
         $c = Get-DividerFlickerCounts -Scorer $s
         Assert 'D1 a bar stepping 6 px on each of five frames travelled 24 px, and nothing else was counted' (
-            $c.Travel -eq 24 -and $c.Frames -eq 5 -and $c.DarkFrames + $c.BarGoneFrames + $c.BittenFrames -eq 0) ($c | ConvertTo-Json -Compress)
+            $c.Travel -eq 24 -and $c.Frames -eq 5 -and $c.DarkFrames + $c.BarGoneFrames + $c.BittenFrames + $c.TornFrames + $c.GhostFrames -eq 0) ($c | ConvertTo-Json -Compress)
         $s.Clear()
         Assert 'D2 Clear empties every reading, so one scorer can arm a second drag' ($s.Index.Count -eq 0 -and $s.Edges.Count -eq 0)
 
@@ -429,8 +466,14 @@ try {
                     [void](Send-TestMouse -Window $top -Target $top -X $px -Y $py -Action up -HoldMs 0)
                     $c = Get-DividerFlickerCounts -Scorer $sc
                     $edge = $(if ($null -eq $c.EdgeMismatch) { 'n/a' } else { "$($c.EdgeMismatch) mismatched >2px, $($c.EdgeLost) lost; first: $($c.EdgeWorst -join ' ')" })
-                    "  captured=$($res.Stats.Captured) scored=$($c.Frames) travel=$($c.Travel)px dark=$($c.DarkFrames) (max $($c.DarkMax), threshold $($sc.DarkThreshold)) bar-gone=$($c.BarGoneFrames) bitten=$($c.BittenFrames) png=$($res.Stats.PngWritten)"
+                    "  captured=$($res.Stats.Captured) scored=$($c.Frames) travel=$($c.Travel)px dark=$($c.DarkFrames) (max $($c.DarkMax), threshold $($sc.DarkThreshold)) bar-gone=$($c.BarGoneFrames) bitten=$($c.BittenFrames) torn=$($c.TornFrames) ghost=$($c.GhostFrames) png=$($res.Stats.PngWritten)"
                     "  nav vs page (reported until T2360): $edge"
+                    if (-not $sc.Transposed) {
+                        # T2647: shapes the bite reading also sees, reported apart
+                        # (not failed) while T2648 / T2651 own them.
+                        "  torn bar (reported until T2648): $($c.TornFrames); first: $($c.TornWorst -join ' ')"
+                        "  ghost bar (reported until T2651): $($c.GhostFrames); first: $($c.GhostWorst -join ' ')"
+                    }
                     $seen.dark += $c.DarkFrames; $seen.gone += $c.BarGoneFrames
                     if (-not $sc.Transposed -and $sc.BannerLines.Length) { $seen.bite += $c.BittenFrames; $seen.biteCells++ }
 
