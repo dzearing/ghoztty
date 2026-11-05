@@ -1,11 +1,10 @@
 {
     "guard":  "settings-advanced",
     "script":  "test/win32/settings-advanced.ps1",
-    "generated":  "2026-11-04T15:40:39-08:00",
-    "commit":  "0977cfe15",
+    "generated":  "2026-11-04T17:54:03-08:00",
+    "commit":  "e2dda7ca8",
     "uncommitted":  [
-                        "src/apprt/win32/ipc_settings.zig",
-                        "src/apprt/win32/SettingsWindow.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/ConfigFileStore.zig":  "f951b29a252dc69920bc7195dc5f50473caa82a967b58ae967b0dc9fcfad8286",
@@ -13,7 +12,7 @@
                   "src/apprt/win32/settings_advanced.zig":  "b9c33bb96edbe6241fca09f87f0ef68553b96df2461e83dcc515120759eb6f10",
                   "src/apprt/win32/settings_advanced_view.zig":  "38a381894b754efbc47e1b367c0170c96c847062774ac65f3efb225e9a3fdc43",
                   "src/apprt/win32/SettingsModel.zig":  "8939047fd548ea95897bea7ef170685479d294fa534589a6dd70b240677a382c",
-                  "src/apprt/win32/SettingsWindow.zig":  "5a8b1b69b92e55a7eb48086b7ac341dab13ba355d9ef8823a3452a2808c033e5",
+                  "src/apprt/win32/SettingsWindow.zig":  "f6d01fb675a3b8b523a79f6f1a89deed592f99e64215b247dc1c491c8400df58",
                   "test/win32/settings-advanced.ps1":  "163e889110586bcab9f17f189fc06e6e0c16bb733e35a734c65f157a4e81ab1f"
               }
 }

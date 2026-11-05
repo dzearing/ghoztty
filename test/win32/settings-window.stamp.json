@@ -1,13 +1,13 @@
 {
     "guard":  "settings-window",
     "script":  "test/win32/settings-window.ps1",
-    "generated":  "2026-11-04T15:21:37-08:00",
-    "commit":  "06557b3bc",
+    "generated":  "2026-11-04T17:54:11-08:00",
+    "commit":  "e2dda7ca8",
     "uncommitted":  [
 
                     ],
     "files":  {
-                  "src/apprt/win32/ipc_settings.zig":  "9cc2aefe96a09fc2c7574751495b3128cf15be7b6157b062882f099be38286ea",
+                  "src/apprt/win32/ipc_settings.zig":  "013c79f2f3b7f1cef51ffdbbd4cfc07e9a4a869a1180cb5e8501676db805f65f",
                   "src/apprt/win32/settings_line_edit.zig":  "283ca0c97e744cb9b297b546dd955756bc969ce76536d8c16655224bb20a87e5",
                   "src/apprt/win32/settings_pages.zig":  "4074d2bcbdf6cc9b030e3c8c068c487d3318104e60d49cbee9d7fe03841d90ed",
                   "src/apprt/win32/settings_theme.zig":  "fc5cd3da976f71e02fe9ce9a798aa6b9397314b1c1eb96cfb733d5d9ae3c2d8b",
@@ -15,7 +15,7 @@
                   "src/apprt/win32/SettingsCatalog.zig":  "865c67a977380590d4fecfc3c801e4bda6453ad73ea8e3e4718a1ba04e4f101c",
                   "src/apprt/win32/SettingsModel.zig":  "8939047fd548ea95897bea7ef170685479d294fa534589a6dd70b240677a382c",
                   "src/apprt/win32/SettingsSources.zig":  "c96d72c0bbed26ca4de3120a37c6b306b61e72d529f8c0a8ed4fffb4d140237e",
-                  "src/apprt/win32/SettingsWindow.zig":  "3852dd05409b8f9d2636775955e8f130870f210fdab88e469cf5932710168dc9",
+                  "src/apprt/win32/SettingsWindow.zig":  "f6d01fb675a3b8b523a79f6f1a89deed592f99e64215b247dc1c491c8400df58",
                   "src/apprt/win32/theme_catalog.zig":  "6283fe51eafad698d058879ab2a4013f9dbfd7549e0681aa3f3dd2da6b6e93eb",
                   "test/win32/settings-window.ps1":  "088057e81a434558cfcbef59ae6fc4efa1b8021085587d9497a07d3fdb796d23"
               }
