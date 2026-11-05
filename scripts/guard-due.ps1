@@ -3019,6 +3019,19 @@ $GuardTable = @(
             'test\win32\deny-sh-from-powershell.ps1'
         )
     },
+    # T2393: the gate that refuses a git autostash (which parks work on the
+    # stash every worktree shares), and the guard's `sync` it points at.
+    [pscustomobject]@{
+        Name   = 'deny-git-autostash'
+        Script = 'test\win32\deny-git-autostash.ps1'
+        Stamp  = 'test\win32\deny-git-autostash.stamp.json'
+        Covers = @(
+            'scripts\hooks\deny-git-autostash.ps1',
+            'scripts\git-commit-guard.ps1',
+            '.claude\settings.json',
+            'test\win32\deny-git-autostash.ps1'
+        )
+    },
     # T1263: the gate in front of Edit/Write that refuses a tool call whose
     # arguments decoded a single backslash into a control byte - the writer of
     # every file control-char-scan has ever found damaged.

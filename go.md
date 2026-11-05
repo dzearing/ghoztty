@@ -1333,7 +1333,17 @@ the fix is the message.
    sandbox rather than taking the caller's word); if you hit that refusal,
    rebuild rather than reach for the `GHOZTTY_TEST_ALLOW_RELEASE=1` opt-in,
    which exists for the handful of scripts whose subject IS the release build.
-4. Sync discipline: `git pull` before starting, and **push immediately after
+4. Sync discipline: pull before starting **with
+   `powershell -NoProfile -File scripts\git-commit-guard.ps1 sync`, never
+   `git pull --autostash`** (T2393). The stash is shared by every worktree of
+   this repo, and an autostash whose pop conflicts (a guard stamp the pull also
+   rewrote) is left on it for a later turn to pop as its own; four such
+   entries had piled up by 2026-11-05. `sync` fast-forwards past dirty files
+   the pull does not touch (your claimed task file included), parks dirty
+   guard stamps across a rebase, and refuses untouched when a real edit is in
+   the way. The repo's PreToolUse hook (`scripts\hooks\deny-git-autostash.ps1`)
+   refuses the flag, and the claim's `STASH LITTER` line names leftovers -
+   never pop one. And **push immediately after
    EVERY commit** — mid-task small commits included, never only at the task
    boundary (user directive, 2026-08-07: "we should also PUSH them to
    remote, not just horde them locally"). An unpushed commit is invisible to

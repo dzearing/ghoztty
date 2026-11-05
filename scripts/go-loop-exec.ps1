@@ -662,6 +662,18 @@ switch ($Action) {
             foreach ($line in ($pushOut -split "`r?`n")) { if ($line.Trim()) { "  $line" } }
         }
 
+        # T2393: autostash entries on refs/stash. That stack is shared by every
+        # worktree of this repo, so an entry a conflicting autostash pull left
+        # behind sits there unlabelled until some turn pops it as its own.
+        # Reported, never fatal: dropping one is the user's call, and the hook
+        # in front of the shell tools (scripts\hooks\deny-git-autostash.ps1)
+        # is what stops new ones.
+        $stashRows = @(& git -C $Repo stash list '--format=%gd|%ci|%gs' 2>$null | Where-Object { $_ -match '\|(?:[^|]*: )?autostash$' })
+        if ($stashRows.Count -gt 0) {
+            $oldest = ($stashRows[-1] -split '\|', 3)
+            "  STASH LITTER: $($stashRows.Count) autostash entr$(if ($stashRows.Count -eq 1) { 'y' } else { 'ies' }) on the shared stash (oldest $($oldest[0]) from $($oldest[1])) - not this turn's work; never pop one as your own, inspect with git stash show -p (T2393)"
+        }
+
         # T1219: what did the build machine say about the commit this branch is
         # sitting on? Every push this loop makes starts a build and, until this
         # line, nothing in the turn ever read the answer - fork-ci's

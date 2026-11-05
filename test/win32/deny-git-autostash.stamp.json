@@ -1,0 +1,18 @@
+{
+    "guard":  "deny-git-autostash",
+    "script":  "test/win32/deny-git-autostash.ps1",
+    "generated":  "2026-11-05T11:20:09-08:00",
+    "commit":  "b5e2da9de",
+    "uncommitted":  [
+                        ".claude/settings.json",
+                        "scripts/git-commit-guard.ps1",
+                        "scripts/hooks/deny-git-autostash.ps1",
+                        "test/win32/deny-git-autostash.ps1"
+                    ],
+    "files":  {
+                  ".claude/settings.json":  "0ffacb36cfb794dd6c5e5eb713d717ede4ec36c33dbbbe0eabc41dffb90db124",
+                  "scripts/git-commit-guard.ps1":  "4f504cf2ab19df9027dcf0663ed83a64906949cb838314e3bcc03d6870e5099a",
+                  "scripts/hooks/deny-git-autostash.ps1":  "e3e6f854f147f2194cbd6909cf3b41fe233133fad5b37bf21c27ee414afd5a1b",
+                  "test/win32/deny-git-autostash.ps1":  "625dfd8e4a308dc01902adb6c31b80b0a60a47a1b2e230a9385eaaecd40846e0"
+              }
+}

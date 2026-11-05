@@ -59,7 +59,18 @@
 # parity-tasks.ps1's validate FAILS on it, so a finished task cannot be
 # narrated over a commit that never left this machine.
 #
-# Actions: install | status | hold | release | commit | verify | push | unpushed
+# SYNC IS THE PULL, TOO (T2393). go.md says pull before starting, and a bare
+# `git pull --rebase` refuses the moment a harness has left a guard stamp
+# dirty - so turns reached for `--autostash`, which parks EVERYTHING dirty on
+# refs/stash. That stack is shared by every worktree of this repo (lane A and
+# lane B alike), and when the pop conflicts - a stamp the pull also moved -
+# git leaves the entry there "for safety", where the next turn can pop it as
+# its own. 66 hand-typed autostash pulls in lane A's reflog and four orphaned
+# entries on 2026-11-05. `sync` is the pull with the same stamp park the push
+# path uses (T2027), and nothing else dirty is ever moved; the repo's
+# PreToolUse hook (scripts\hooks\deny-git-autostash.ps1) refuses the flag.
+#
+# Actions: install | status | hold | release | commit | verify | push | unpushed | sync
 # Exit codes: 0 ok, 2 usage/error, 3 lock held by another session,
 #             4 not the owner (release), 5 the commit contains foreign paths,
 #             6 git refused the commit, 7 HEAD is ahead of its upstream.
@@ -70,7 +81,7 @@
 #       -MessageFile temp\msg.txt
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('install', 'status', 'hold', 'release', 'commit', 'verify', 'push', 'unpushed')]
+    [ValidateSet('install', 'status', 'hold', 'release', 'commit', 'verify', 'push', 'unpushed', 'sync')]
     [string]$Action = 'status',
 
     [string]$Repo,
@@ -426,7 +437,7 @@ function Install-StampMergeDriver {
 # rule the merge driver applies. Anything else dirty is NOT touched: the
 # no-autostash rule above stands for every file a person or the other window
 # might be editing, and the pull refuses exactly as it did before.
-function Get-StampPark {
+function Get-StampPark([switch]$AnyDirty) {
     # Not Git-Run: its Trim() eats the leading blank of the first `XY path`
     # line (" M ..."), and the column-3 path slice below then loses a letter.
     $prev = $ErrorActionPreference
@@ -450,7 +461,7 @@ function Get-StampPark {
         }
         # Untracked non-stamp files never block a rebase; a tracked edit does,
         # and it is not ours to move.
-        if ($xy -ne '??') { return @() }
+        if ($xy -ne '??' -and -not $AnyDirty) { return @() }
     }
     return $park
 }
@@ -506,7 +517,37 @@ function Invoke-PushWithRebase {
     } else {
         $lines += 'push rejected (the branch moved under us) - pulling with rebase, per go.md step 4'
     }
+    $pr = Invoke-ParkedPull $(if ($merges -gt 0) { 'merge' } else { 'rebase' })
+    foreach ($l in @($pr.Lines)) { $lines += $l }
+    if (-not $pr.Ok) {
+        if ($merges -gt 0) {
+            return @{ Ok = $false; Rebased = $false; Merged = $true; Lines = $lines
+                Out = ("push was rejected and the merge pull did not complete (git merge --abort undoes it):`n" + $pr.Out) }
+        }
+        return @{ Ok = $false; Rebased = $true; Merged = $false; Lines = $lines
+            Out = ("push was rejected and the rebase did not run:`n" + $pr.Out) }
+    }
+    $res2 = Git-Run $pushArgs
+    return @{ Ok = ($res2.Code -eq 0); Out = $res2.Out; Rebased = ($merges -eq 0); Merged = ($merges -gt 0); Lines = $lines }
+}
+
+# The pull itself, shared by the rejected-push path above and by `sync`
+# (T2393): dirty guard stamps are parked in memory and put back under the
+# keep-the-newer rule; any other dirty tracked file makes git refuse, and is
+# left exactly where it was. Never an autostash - see the header.
+# Mode 'ff' (sync with nothing unpushed) is the gentlest: a fast-forward leaves
+# every dirty file that the incoming commits do not touch exactly as it is, and
+# refuses without touching anything when one of them does - so the turn's own
+# claimed task file, or the other window's edit, never blocks it.
+function Invoke-ParkedPull([string]$mode) {
+    $lines = @()
     $park = @(Get-StampPark)
+    if ($mode -eq 'ff') {
+        # Only stamps the incoming range rewrites need parking; the rest can
+        # stay put, and Get-StampPark's refusal on other dirty files is not a
+        # refusal for a fast-forward.
+        $park = @(Get-StampPark -AnyDirty)
+    }
     if ($park.Count -gt 0) {
         $lines += "parking $($park.Count) dirty guard stamp(s) across the rebase (T2027)"
         foreach ($p in $park) {
@@ -514,7 +555,9 @@ function Invoke-PushWithRebase {
             else { Git-Run @('checkout', 'HEAD', '--', $p.Path) | Out-Null }
         }
     }
-    if ($merges -gt 0) {
+    if ($mode -eq 'ff') {
+        $pull = Git-Run @('-c', 'merge.autoStash=false', 'pull', '--ff-only')
+    } elseif ($mode -eq 'merge') {
         $pull = Git-Run @('-c', 'merge.autoStash=false', 'pull', '--no-rebase', '--no-ff', '--no-edit')
     } else {
         $pull = Git-Run @('-c', 'rebase.autoStash=false', 'pull', '--rebase')
@@ -536,16 +579,23 @@ function Invoke-PushWithRebase {
             foreach ($l in @(Restore-StampPark $park)) { $lines += $l }
         }
     }
-    if ($pull.Code -ne 0) {
-        if ($merges -gt 0) {
-            return @{ Ok = $false; Rebased = $false; Merged = $true; Lines = $lines
-                Out = ("push was rejected and the merge pull did not complete (git merge --abort undoes it):`n" + $pull.Out) }
+    return @{ Ok = ($pull.Code -eq 0); Out = $pull.Out; Lines = $lines }
+}
+
+# Autostash entries sitting on the shared stash stack (T2393). git names them
+# `autostash` when a pull/rebase/merge with autostash could not put them back.
+function Get-AutostashLitter {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $rows = @(& git -C $Repo stash list '--format=%gd|%ci|%gs' 2>$null) } finally { $ErrorActionPreference = $prev }
+    $out = @()
+    foreach ($r in $rows) {
+        $f = ([string]$r) -split '\|', 3
+        if ($f.Count -eq 3 -and $f[2] -match '(^|: )autostash$') {
+            $out += [pscustomobject]@{ Ref = $f[0]; When = $f[1]; Subject = $f[2] }
         }
-        return @{ Ok = $false; Rebased = $true; Merged = $false; Lines = $lines
-            Out = ("push was rejected and the rebase did not run:`n" + $pull.Out) }
     }
-    $res2 = Git-Run $pushArgs
-    return @{ Ok = ($res2.Code -eq 0); Out = $res2.Out; Rebased = ($merges -eq 0); Merged = ($merges -gt 0); Lines = $lines }
+    return $out
 }
 
 function Test-PathCovered([string]$file, [string[]]$requested) {
@@ -886,6 +936,39 @@ switch ($Action) {
         if (-not $res.Ok) { "ERROR push failed:"; $res.Out; exit 6 }
         $how = if ($res.Merged) { ' (after a merge pull, which kept the merge commit intact)' } elseif ($res.Rebased) { ' (after a rebase onto the moved branch)' } else { '' }
         "PUSHED $($st.Count) commit(s) to $($st.Upstream)$how"
+        exit 0
+    }
+
+    # ------------------------------------------------------------------- sync
+    # The pull go.md asks for before a turn starts, without --autostash
+    # (T2393). Exit 0 synced (or nothing to sync from), 6 git refused.
+    'sync' {
+        $st = Get-PushState
+        if ($st.Kind -eq 'no-repo') { Fail "ERROR not a git repo: $Repo" 2 }
+        if ($st.Kind -eq 'detached') { "sync skipped (detached HEAD - mid-rebase or a checked-out sha)"; exit 0 }
+        if ($st.Kind -eq 'no-upstream') { "sync skipped ($($st.Branch) has no upstream - nothing to pull from)"; exit 0 }
+        $before = (Git-Run @('rev-parse', '--short', 'HEAD')).Out
+        $merges = Get-UnpushedMergeCount
+        $mode = if ($st.Count -eq 0) { 'ff' } elseif ($merges -gt 0) { 'merge' } else { 'rebase' }
+        $pr = Invoke-ParkedPull $mode
+        $pr.Lines
+        if (-not $pr.Ok) {
+            "ERROR sync failed - the pull did not complete:"
+            $pr.Out
+            if ($pr.Out -match 'unstaged changes|uncommitted changes|Please commit or stash|would be overwritten') {
+                "  a tracked file other than a guard stamp is dirty. Commit it, or set it aside yourself -"
+                "  never with --autostash: refs/stash is shared with every lane's worktree (T2393)."
+            }
+            exit 6
+        }
+        $after = (Git-Run @('rev-parse', '--short', 'HEAD')).Out
+        $how = switch ($mode) { 'ff' { 'fast-forward' } 'merge' { 'merge pull' } default { 'rebase pull' } }
+        if ($before -eq $after) { "SYNCED $($st.Branch) - already up to date with $($st.Upstream) ($after)" }
+        else { "SYNCED $($st.Branch) $before -> $after from $($st.Upstream) ($how)" }
+        $litter = @(Get-AutostashLitter)
+        if ($litter.Count -gt 0) {
+            "  note: $($litter.Count) autostash entr$(if ($litter.Count -eq 1) { 'y' } else { 'ies' }) on the shared stash, oldest $($litter[-1].Ref) from $($litter[-1].When) - not this turn's; never pop one as your own (T2393)"
+        }
         exit 0
     }
 

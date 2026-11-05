@@ -132,6 +132,9 @@ $Registry = @(
     # exercises is a refusal that quietly stops refusing.
     [pscustomobject]@{ Label = 'STOPPED'; Kind = 'gate'; Demo = $Loop; Marker = 'STOPPED by request' }
     [pscustomobject]@{ Label = 'STOP REQUESTED'; Kind = 'status' }
+    # T2393: reported, never fatal - the deny-git-autostash hook stops new
+    # entries and dropping old ones is the user's call.
+    [pscustomobject]@{ Label = 'STASH LITTER'; Kind = 'status' }
     [pscustomobject]@{ Label = 'RESUMED'; Kind = 'status' }
     # T1478. `resume` restarts the parked loop and is judged on the loop coming
     # back, so its failure is a gate: exit 5 with the remedy, rather than the

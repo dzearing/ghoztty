@@ -1,9 +1,11 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-05T07:39:49-08:00",
-    "commit":  "11327aa0f",
+    "generated":  "2026-11-05T11:36:51-08:00",
+    "commit":  "b5e2da9de",
     "uncommitted":  [
+                        "scripts/git-commit-guard.ps1",
+                        "scripts/go-loop-exec.ps1",
                         "scripts/guard-due.ps1"
                     ],
     "files":  {
@@ -40,14 +42,14 @@
                   "scripts/fork-identity.ps1":  "3a6d62da446fa39923b07b6c4c36852016acb8db2d0cd4b4fd4e992c36bb4866",
                   "scripts/ghoztty-agent-watcher.ps1":  "51f93a125f8c81543a365acc9a990175f3b1b599184c19e2a87748b417559db4",
                   "scripts/ghoztty-cleanup.ps1":  "0535db22311b9640e47102124f856a2690dd446d9b87461ba2749f9418d29ffc",
-                  "scripts/git-commit-guard.ps1":  "81ad41ccfdc35ab7d9c084e2e100b6784f9feb8bd8441fdbedd0e60af6891495",
+                  "scripts/git-commit-guard.ps1":  "4f504cf2ab19df9027dcf0663ed83a64906949cb838314e3bcc03d6870e5099a",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
-                  "scripts/go-loop-exec.ps1":  "477da022a14cb53e9502ace9dcdfb3006ea550e773dca9f2422c1a3499775416",
+                  "scripts/go-loop-exec.ps1":  "b79e10e9b8d293f1317cc4d98ecb6b7902f7cc3640ebd5a59a23dc20222022a8",
                   "scripts/go-loop-health.ps1":  "01ebcc1f5a53a58ecb399203c371fc75115360b4fcf41c03e70799180567363d",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8bc76326d576230a4aaf9b046c9f12cb7c3d59d25d3ed65672c628ddd64b5ac0",
                   "scripts/go-loop-watchdog.ps1":  "2876d6c6ff8bf82d920de53190f37004b8d99f60915419ee3674f95aa9bf90b5",
-                  "scripts/guard-due.ps1":  "af5052b5472e13a4035245c5842c6bdfff3e5f971cf85599560362e76c04f222",
+                  "scripts/guard-due.ps1":  "26e61ae0bef83f0e6987fed3df02066ba1ca9790e09bb47202c72cc62e6f1d3b",
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
                   "scripts/hero-glide-onscreen.ps1":  "12f1d4134f8be7889793935bb38a032e28ca4daf8b361b57eded48ec2efb2e0c",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
