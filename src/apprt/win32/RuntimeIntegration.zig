@@ -40,6 +40,7 @@ const claude_plugin_manifest = @import("claude_plugin_manifest.zig");
 const BannerScriptInstaller = @import("BannerScriptInstaller.zig");
 const SkillComponent = @import("SkillComponent.zig");
 const HookComponent = @import("HookComponent.zig");
+const ClaudeKeybinding = @import("ClaudeKeybinding.zig");
 
 const log = std.log.scoped(.win32_agent_integration);
 
@@ -52,9 +53,10 @@ pub const InstallState = marker_mod.InstallState;
 pub const banner_component_name = "banner-script";
 pub const skills_component_name = "skills";
 pub const hooks_component_name = "hooks";
+pub const keybinding_component_name = "keybinding";
 
-/// Banner + skills + hooks is the whole roster.
-const max_components = 3;
+/// Banner + skills + keybinding (Claude only) + hooks is the whole roster.
+const max_components = 4;
 
 /// The shared banner scripts plus what their refcounted uninstall needs to
 /// scan every agent's hooks state (Mac's `bannerUninstall` closure).
@@ -71,15 +73,18 @@ pub const RefcountedBanner = struct {
 pub const Component = union(enum) {
     banner: RefcountedBanner,
     skills: SkillComponent,
+    /// Claude only (T2694): Ctrl+V attaches a clipboard image.
+    keybinding: ClaudeKeybinding,
     hooks: HookComponent,
 
     /// Superset of every component's install/uninstall errors.
-    pub const Error = HookComponent.Error || Allocator.Error;
+    pub const Error = HookComponent.Error || ClaudeKeybinding.Error || Allocator.Error;
 
     pub fn name(self: Component) []const u8 {
         return switch (self) {
             .banner => banner_component_name,
             .skills => skills_component_name,
+            .keybinding => keybinding_component_name,
             .hooks => hooks_component_name,
         };
     }
@@ -88,6 +93,7 @@ pub const Component = union(enum) {
         return switch (self) {
             .banner => |b| b.installer.state(alloc),
             .skills => |s| s.state(alloc),
+            .keybinding => |k| k.state(alloc),
             .hooks => |h| h.state(alloc),
         };
     }
@@ -96,6 +102,7 @@ pub const Component = union(enum) {
         return switch (self) {
             .banner => |b| b.installer.install(alloc),
             .skills => |s| s.install(alloc),
+            .keybinding => |k| k.install(alloc),
             .hooks => |h| h.install(alloc),
         };
     }
@@ -112,6 +119,7 @@ pub const Component = union(enum) {
                 try b.installer.uninstall(alloc);
             },
             .skills => |s| try s.uninstall(alloc),
+            .keybinding => |k| try k.uninstall(alloc),
             .hooks => |h| try h.uninstall(alloc),
         }
     }
@@ -138,12 +146,23 @@ pub fn components(self: *const RuntimeIntegration) []const Component {
 }
 
 /// Aggregate install state: any component missing → not_installed; any
-/// merely stale → outdated; else installed.
+/// merely stale → outdated; else installed. The keybinding (T2694) arrived
+/// after integrations were already in the field, so its absence alone reads
+/// as `outdated` ("Update available"), never as "Not set up": an existing
+/// integration must not look uninstalled, which would also re-arm the
+/// first-run offer (`AgentIntegration.decideOffer`). A fresh home still
+/// reads not_installed through the other components.
 pub fn state(self: *const RuntimeIntegration, alloc: Allocator) InstallState {
     var saw_outdated = false;
     for (self.components()) |c| {
         switch (c.state(alloc)) {
-            .not_installed => return .not_installed,
+            .not_installed => {
+                if (c == .keybinding) {
+                    saw_outdated = true;
+                    continue;
+                }
+                return .not_installed;
+            },
             .outdated => saw_outdated = true,
             .installed => {},
         }
@@ -308,6 +327,12 @@ pub fn make(
         self.component_buf[self.component_len] = .{ .skills = skills };
         self.component_len += 1;
     }
+    // Same plugin gate as the skills and hooks: a box the old plugin still
+    // owns gets Ghoztty's Claude pieces together, at migration.
+    if (agent == .claude and !try isPluginManaged(alloc, agent, home)) {
+        self.component_buf[self.component_len] = .{ .keybinding = .{ .home = home } };
+        self.component_len += 1;
+    }
     // MUST remain last: the banner refcount relies on hooks being ordered
     // after the banner so reverse-order processing removes them first.
     if (try hooksComponentFor(alloc, agent, home, home_path)) |hooks| {
@@ -352,6 +377,42 @@ test "make: fixed component order banner, skills, hooks — hooks last" {
     try testing.expectEqualStrings(banner_component_name, comps[0].name());
     try testing.expectEqualStrings(skills_component_name, comps[1].name());
     try testing.expectEqualStrings(hooks_component_name, comps[2].name());
+}
+
+test "claude also carries the Ctrl+V keybinding, still before the hooks (T2694)" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const integ = try make(alloc, .claude, tmp.dir, test_home_path, all_probe);
+    const comps = integ.components();
+    try testing.expectEqual(@as(usize, 4), comps.len);
+    try testing.expectEqualStrings(keybinding_component_name, comps[2].name());
+    try testing.expectEqualStrings(hooks_component_name, comps[3].name());
+}
+
+test "an integration from before the keybinding reads Update available, and Update adds it (T2694)" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const integ = try make(alloc, .claude, tmp.dir, test_home_path, all_probe);
+    try testing.expectEqual(InstallState.not_installed, integ.state(alloc));
+    try integ.install(alloc);
+    try testing.expectEqual(InstallState.installed, integ.state(alloc));
+
+    // The field shape: everything but the keybinding, as an older build left it.
+    try tmp.dir.deleteFile(ClaudeKeybinding.keybindings_sub_path);
+    try tmp.dir.deleteFile(ClaudeKeybinding.owned_sub_path);
+    try testing.expectEqual(InstallState.outdated, integ.state(alloc));
+
+    try integ.install(alloc);
+    try testing.expectEqual(InstallState.installed, integ.state(alloc));
+    _ = try tmp.dir.statFile(ClaudeKeybinding.keybindings_sub_path);
+
+    try integ.uninstall(alloc);
+    try testing.expectEqual(InstallState.not_installed, integ.state(alloc));
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(ClaudeKeybinding.owned_sub_path));
 }
 
 test "install on an unavailable runtime is a typed refusal, nothing written" {

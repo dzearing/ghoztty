@@ -215,6 +215,7 @@ test {
     _ = @import("win32/ClaudeHookSpec.zig");
     _ = @import("win32/CopilotHookSpec.zig");
     _ = @import("win32/HookComponent.zig");
+    _ = @import("win32/ClaudeKeybinding.zig");
 
     // Runtime registry + aggregate install flow (T869): the binary probe,
     // the external-plugin manifest gate, the rollback/refcount integration

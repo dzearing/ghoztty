@@ -48,6 +48,10 @@
 #      the scripts, removing both clears them; the user's settings.json
 #      keeps its own hooks with Ghoztty's merged fragment gone.
 #   G: uninstall exactness - user-added files in skills/ survive.
+#   K: (T2694) the Chat ctrl+v -> chat:imagePaste keybinding: A proves the
+#      install adds it beside the user's own bindings, F that uninstall takes
+#      only it away, and K that a ctrl+v the USER bound is never overwritten
+#      or removed.
 #   H: migration ownership - the arm claude-integration.ps1 does NOT cover:
 #      a USER-owned ~\.claude\scripts\ghoztty-banner.sh (bytes differing
 #      from every registered plugin copy) SURVIVES the accepted migration,
@@ -104,6 +108,7 @@ function Kill-RepoInstances {
 function Get-CanaryManifest {
     $roots = @(
         (Join-Path $env:USERPROFILE '.claude\settings.json'),
+        (Join-Path $env:USERPROFILE '.claude\keybindings.json'),
         (Join-Path $env:USERPROFILE '.claude\skills'),
         (Join-Path $env:USERPROFILE '.claude\plugins\installed_plugins.json'),
         (Join-Path $env:USERPROFILE '.claude\scripts'),
@@ -221,7 +226,22 @@ $claudeSkillPf = Join-Path $sbHome '.claude\skills\process-feedback\SKILL.md'
 $settings = Join-Path $sbHome '.claude\settings.json'
 $copilotSkill = Join-Path $sbHome '.copilot\skills\ghoztty\SKILL.md'
 $copilotHook = Join-Path $sbHome '.copilot\hooks\ghoztty.json'
-$claudeManaged = @($banner, $activity, $claudeSkill, $claudeSkillPf, $settings)
+# T2694: Chat ctrl+v -> chat:imagePaste, merged into the user's keybindings file.
+$keybindings = Join-Path $sbHome '.claude\keybindings.json'
+$claudeManaged = @($banner, $activity, $claudeSkill, $claudeSkillPf, $settings, $keybindings)
+
+# The action Chat's ctrl+v is bound to in a keybindings file ('' = unbound or
+# absent). ConvertFrom-Json hands PS5.1 an array as one object: unroll it.
+function Get-ChatCtrlV([string]$path) {
+    if (-not (Test-Path $path)) { return '' }
+    $j = Get-Content $path -Raw | ConvertFrom-Json
+    $blocks = @($j.bindings | ForEach-Object { $_ } | Where-Object { $_.context -eq 'Chat' })
+    foreach ($b in $blocks) {
+        $v = $b.bindings.'ctrl+v'
+        if ($null -ne $v) { return "$v" }
+    }
+    return ''
+}
 
 function Launch-Gui([string]$setupMode) {
     $env:XDG_CONFIG_HOME = $cfgHome
@@ -281,8 +301,14 @@ try {
     New-Item -ItemType Directory -Force (Join-Path $sbHome '.claude') | Out-Null
     $userSettings = '{"model":"user-picked-model","hooks":{"SessionStart":[{"matcher":"","hooks":[{"type":"command","command":"echo user-own-hook"}]}]}}'
     Set-Content -Path $settings -Value $userSettings -Encoding ascii -NoNewline
+    # And a USER keybindings file with a binding of their own (T2694).
+    $userKeys = '{"bindings":[{"context":"Global","bindings":{"ctrl+t":"app:toggleTodos"}}]}'
+    Set-Content -Path $keybindings -Value $userKeys -Encoding ascii -NoNewline
+    Assert ((Get-ChatCtrlV $keybindings) -eq '') 'A: before install Chat ctrl+v is unbound (oracle control)'
 
     Assert ((Get-AgentOutcome 'install' 'claude') -eq 'installed') 'A: fresh claude install reports installed'
+    Assert ((Get-ChatCtrlV $keybindings) -eq 'chat:imagePaste') 'A: install binds Chat ctrl+v to image paste (T2694)'
+    Assert ((Get-Content $keybindings -Raw) -like '*app:toggleTodos*') 'A: the user own keybinding survives the merge'
     Assert (Test-Marked $banner '# ghoztty-managed') 'A: banner script lands marked'
     Assert (Test-Marked $activity '# ghoztty-managed') 'A: activity-state script lands marked'
     Assert (Test-Marked $claudeSkill '<!-- ghoztty-managed -->') 'A: ghoztty skill lands marked'
@@ -421,6 +447,8 @@ try {
     $afterUn = Get-Content $settings -Raw
     Assert ($afterUn -like '*user-own-hook*') 'F: the user own hooks survive the fragment removal'
     Assert (-not ($afterUn -like '*.config/ghoztty/hooks*')) 'F: the Ghoztty fragment is gone from settings.json'
+    Assert ((Get-ChatCtrlV $keybindings) -eq '') 'F: uninstall removes the ctrl+v binding Ghoztty added'
+    Assert ((Get-Content $keybindings -Raw) -like '*app:toggleTodos*') 'F: the user own keybinding survives the uninstall'
 
     # -------------------------------------------- G: uninstall exactness
     Assert ((Get-AgentOutcome 'install' 'claude') -eq 'installed') 'G: reinstall claude for the exactness walk'
@@ -431,6 +459,16 @@ try {
     Assert (-not (Test-Path $claudeSkill)) 'G: the managed skill file is gone'
     Assert ((Get-Content (Join-Path $sbHome '.claude\skills\my-own-skill\SKILL.md') -Raw) -eq '# mine') 'G: a user-added skill in skills/ survives'
     Assert ((Get-Content (Join-Path $sbHome '.claude\skills\notes.md') -Raw) -eq 'user notes') 'G: a loose user file in skills/ survives'
+
+    # ------------------------- K: a ctrl+v the user bound is theirs (T2694)
+    # Bound to something else by the user: install must neither overwrite it
+    # nor, on uninstall, remove it.
+    $ownKeys = '{"bindings":[{"context":"Chat","bindings":{"ctrl+v":"chat:submit"}}]}'
+    Set-Content -Path $keybindings -Value $ownKeys -Encoding ascii -NoNewline
+    Assert ((Get-AgentOutcome 'install' 'claude') -eq 'installed') 'K: claude install over a user ctrl+v binding succeeds'
+    Assert ((Get-ChatCtrlV $keybindings) -eq 'chat:submit') 'K: the user ctrl+v binding is not overwritten'
+    Assert ((Get-AgentOutcome 'uninstall' 'claude') -eq 'uninstalled') 'K: uninstall reports uninstalled'
+    Assert ((Get-Content $keybindings -Raw) -eq $ownKeys) 'K: the user ctrl+v binding survives uninstall byte-identical'
 
     Stop-Process -Id $gpid -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 500
