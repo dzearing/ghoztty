@@ -1,0 +1,11 @@
+{
+  "version": "1.53.1",
+  "sections": [
+    {
+      "title": "Pane sidebar",
+      "items": [
+        { "title": "Smooth scrolling with lots of windows open", "text": "Scrolling the all-windows list in the pane sidebar no longer stutters when you have many windows open." }
+      ]
+    }
+  ]
+}
