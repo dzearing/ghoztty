@@ -1,10 +1,10 @@
 {
     "guard":  "window-active-audit",
     "script":  "test/win32/window-active-audit.ps1",
-    "generated":  "2026-11-05T05:42:02-08:00",
-    "commit":  "b7bdc928a",
+    "generated":  "2026-11-05T06:04:09-08:00",
+    "commit":  "bd894bfb0",
     "uncommitted":  [
-                        "src/apprt/win32/sheet_workers.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -78,7 +78,7 @@
                   "src/apprt/win32/claude_setup.zig":  "7800892ae8d8afadd52d0574aaa86fb7e0d945b2824030c79661e3e5761fb47f",
                   "src/apprt/win32/ClaudeHookSpec.zig":  "6b1fd51e16dd79b3a3a30a296ba539cc2b9e9575b7043441ed302ff5e99ff86e",
                   "src/apprt/win32/clipboard_image.zig":  "b90cac60d5eb7ce990cca439a2cf1dacd502895580fff337d6995b6736482e7d",
-                  "src/apprt/win32/clipboard_open.zig":  "0e2f4849dd0ec7dc0f51a96ac7aa2660c70262ebecceb93689f4d2e59626a9c6",
+                  "src/apprt/win32/clipboard_open.zig":  "2c4245d76adba7068a5a1c6a498d32bbfe811d48b29446ef25091842d5d90b4d",
                   "src/apprt/win32/close_undo.zig":  "8316a81b0aeb43382d0f196c37933a101b1503bbe022c9a25b3e62937e221910",
                   "src/apprt/win32/CloseUndo.zig":  "9d110908f306761accacd46446575115081f6bed97712510b5b567d56fd08b2d",
                   "src/apprt/win32/color_math.zig":  "c876c6551fd55dc02606b05d65665ef55e8d2bd4197d28a4c86ba32eaedb8b7f",
@@ -286,12 +286,12 @@
                   "src/apprt/win32/SettingsCatalog.zig":  "865c67a977380590d4fecfc3c801e4bda6453ad73ea8e3e4718a1ba04e4f101c",
                   "src/apprt/win32/SettingsModel.zig":  "8939047fd548ea95897bea7ef170685479d294fa534589a6dd70b240677a382c",
                   "src/apprt/win32/SettingsSources.zig":  "c96d72c0bbed26ca4de3120a37c6b306b61e72d529f8c0a8ed4fffb4d140237e",
-                  "src/apprt/win32/SettingsWindow.zig":  "f6d01fb675a3b8b523a79f6f1a89deed592f99e64215b247dc1c491c8400df58",
+                  "src/apprt/win32/SettingsWindow.zig":  "47ca557b43cfcd2fb24a30b5c601a2509bbb36794d54f8bff03ebfd10b04cf7e",
                   "src/apprt/win32/ShareMachineRow.zig":  "7756349baca7ce384bb3c5e63d8c134127db9839a68c77842409879db80d1466",
-                  "src/apprt/win32/sheet_workers.zig":  "7f8a695f9e279e7cfead488e40b03675e5be16f2e72a0a78aabfdf88e297a22d",
+                  "src/apprt/win32/sheet_workers.zig":  "dff38d7e38777497a2dd2a127494a78b969ff8577f75f3d11bf0ffe4f84102b7",
                   "src/apprt/win32/shortcut_catalog.zig":  "fc22666e762e7c0d0f4445c20e8f8c1e896bf30c25700b9ccec830ee2f9d5879",
                   "src/apprt/win32/shortcut_guide_layout.zig":  "d9356d3a6621e692e33289a3f9ada33dd70126f61567bf2d29414c5c3cd41bcb",
-                  "src/apprt/win32/ShortcutGuideWindow.zig":  "b6b195dbb0f8bcd1a1e458f64b991c2d1cea70fefa96e1b848285de4384b929b",
+                  "src/apprt/win32/ShortcutGuideWindow.zig":  "fa34210c8821c5a57f0c9fd6068951b7aae86d805948f8ed2d5374b48a5ad3da",
                   "src/apprt/win32/sidebar_symbol.zig":  "f153264518aacc2fdcebe28a85f23c94a5be576cb2784ee094f3a519b1836986",
                   "src/apprt/win32/sidebar_symbol_dc.zig":  "447c24a1d03d14aa36f129d54be56fa3766d97a50935ba022f67f1910671a89a",
                   "src/apprt/win32/skill_rewrite.zig":  "6bc6af76e8f138fcf0e0e3ae603574ce52b13116a52bce2886d11ed623730882",
@@ -364,7 +364,7 @@
                   "src/apprt/win32/ViewerFeedbackWeb.zig":  "8848202d5b02faf5ecbb68a9dba13ca53731b3e96d58612046d9b0a49175eed6",
                   "src/apprt/win32/ViewerFindBar.zig":  "265556167eea1ac38bab8d1b05101bc8c3621a7cb100b7147b95b826b28dc03c",
                   "src/apprt/win32/ViewerNavBar.zig":  "eb7f4d6c7f314b9ca478471e9d154c3b9fe85dc8e43ff2e0e1726be8cf3226d0",
-                  "src/apprt/win32/ViewerPane.zig":  "7a8db3d57acd418c12b1a3196f6427b76b4a733f41efc69a83a0d435ddc3e3a0",
+                  "src/apprt/win32/ViewerPane.zig":  "b16ee32accd9d4707fb5bd569eb8d26838185ee7c98aef4d1e49b5a66d68fadb",
                   "src/apprt/win32/ViewerTOCPanel.zig":  "f5b758f5f74b28bcee1f83c55967eab34f9ce1f0462e389476c23ac1107127cb",
                   "src/apprt/win32/ViewerWorktreeProbe.zig":  "f64bcab388e4c9ab0ff7475358e042bba21647f9b3c559477b6f405b73bd36b2",
                   "src/apprt/win32/webview2.zig":  "dd1be48ff6cf7fe4032d6f4dabe76a1198e50de7e8b6695b59e545a365814efc",
