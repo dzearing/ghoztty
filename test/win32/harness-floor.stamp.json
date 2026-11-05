@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-05T09:23:40-08:00",
-    "commit":  "c647253f8",
+    "generated":  "2026-11-05T09:59:31-08:00",
+    "commit":  "4d841d246",
     "uncommitted":  [
-                        "test/win32/frame-clock.ps1"
+                        "test/win32/viewer-narrow-pane.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -168,7 +168,7 @@
                   "test/win32/foreground-audit.ps1":  "02902ecd3e0a698d1d0e00a5856111d5ae90c38183bcde8e5a8b6ec82a30285b",
                   "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3",
                   "test/win32/frame-capture.ps1":  "aa0fb1e741810094182f23694c57b55cff8a0b6e39be1e2bb61771fd3e94e65d",
-                  "test/win32/frame-clock.ps1":  "9608acb744c867a16998673678432761e94d90c5b52b370382d3619ce34a9f21",
+                  "test/win32/frame-clock.ps1":  "59307834c3ab370225134eea48895e46e53f4898bf4d4a2c0662b40dcc859373",
                   "test/win32/frame-lab.ps1":  "e6e9a018e560efaa36fa7625355b09e41297d3a9b57c5a97977d032aa48603a8",
                   "test/win32/frame-lab-card.ps1":  "8a648e3b942b2fa23f15c39f5de6898da655256d6866ad3a22f9321ef4f8719c",
                   "test/win32/frame-lab-catalogue.ps1":  "d05be14346c2b972cb11adb4b0b4f41dbf72e3413a676699d0ef771fbd0edbb1",
@@ -562,7 +562,7 @@
                   "test/win32/viewer-fold-carried.ps1":  "5def07799d4133cc584b6cb6b966271a43971f91864d0242834acfb05399edb4",
                   "test/win32/viewer-html.ps1":  "ca16fd4e3837cb63a78fa4763c7e78399ac3b97bcab9872a62741e414e147929",
                   "test/win32/viewer-image.ps1":  "438add5f5db9b264f824b63c3efbac0402db703f9b219a6f6e88738ceef42ecf",
-                  "test/win32/viewer-narrow-pane.ps1":  "63d2d057cb2522b824efea6fb24aa7e9426d240921c1b51c74d3ec677e529737",
+                  "test/win32/viewer-narrow-pane.ps1":  "9e8eb0ea842828287b5ebb868adbcecf64080cc5a592dc670d7b21d02e5636f2",
                   "test/win32/viewer-nav-pin.ps1":  "aa1bb25207c4638148dab8b6b8f6f9a7de78ae7ab7065d50751a17825ec64261",
                   "test/win32/viewer-panes.ps1":  "f483995862ca20b10fff8f76f8c5ff34661f5edbea82716fd12ad7c3aa5d8d95",
                   "test/win32/viewer-popup.ps1":  "026091bd991f9e035761626527cdc873d5af02d5376f941b003448bb6faa7f6d",

@@ -163,6 +163,22 @@ function Describe-Outside($m) {
 
 $viewFile = Join-Path $repo 'README.md'
 [void](Stop-RepoGhoztty -Exe $exe -AppOnly -SettleMs 500)
+
+# T2380: a private LOCALAPPDATA, so no persisted chrome preference reaches the
+# run. Every number below is measured against a DESIGN default, and the debug
+# build keeps its preferences under the user's real LOCALAPPDATA: a
+# `viewer_sidepanel_width-debug` of 360 left by some earlier drag made section
+# A read a 450px card where the default is 300px, with nothing in the run
+# having resized it. The pane sidebar is pinned hidden for the same reason and
+# one more: its `remember` default restores whatever rail the last debug run
+# left, and since T2336 put the sidebar in every window a rail ate ~100 DIP of
+# section E's narrowest window - "the pane is the window" stopped being true,
+# and the 90 DIP band's bar came out too narrow to hold even the "..." (which
+# the layout drops by design below one padded slot).
+$savedLocalAppData = $env:LOCALAPPDATA
+$vnpLocal = Join-Path $env:TEMP "ghoztty-vnp-local-$PID"
+New-Item -ItemType Directory -Force $vnpLocal | Out-Null
+$env:LOCALAPPDATA = $vnpLocal
 Start-TestForegroundWatch
 $launched = @()
 $td = New-TestDesktop -Interactive:$Interactive
@@ -170,7 +186,7 @@ $td = New-TestDesktop -Interactive:$Interactive
 try {
     $errlog = Join-Path $env:TEMP 'ghoztty-viewer-narrow-stderr.log'
     Remove-Item $errlog -ErrorAction SilentlyContinue
-    $app = Start-OnTestDesktop -Exe $exe -StdErr $errlog -Arguments @('--session-persistence=false')
+    $app = Start-OnTestDesktop -Exe $exe -StdErr $errlog -Arguments @('--session-persistence=false', '--macos-pane-sidebar=hidden')
     Start-Sleep -Seconds 3
     if ($app.Process -and $app.Process.HasExited) { Write-Host 'SETUP FAIL: GUI died at launch'; exit 1 }
     $appPid = $app.Pid
@@ -823,6 +839,8 @@ try {
 } finally {
     Remove-TestDesktop
     [void](Stop-RepoGhoztty -Exe $exe -AppOnly -SettleMs 300)
+    $env:LOCALAPPDATA = $savedLocalAppData
+    Remove-Item -Recurse -Force $vnpLocal -ErrorAction SilentlyContinue
 }
 
 $fgSeen = @(Stop-TestForegroundWatch)
