@@ -1,8 +1,8 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-05T05:58:09-08:00",
-    "commit":  "bd894bfb0",
+    "generated":  "2026-11-05T06:10:43-08:00",
+    "commit":  "868fd3da3",
     "uncommitted":  [
 
                     ],
@@ -288,7 +288,7 @@
                   "src/apprt/win32/SettingsSources.zig":  "c96d72c0bbed26ca4de3120a37c6b306b61e72d529f8c0a8ed4fffb4d140237e",
                   "src/apprt/win32/SettingsWindow.zig":  "47ca557b43cfcd2fb24a30b5c601a2509bbb36794d54f8bff03ebfd10b04cf7e",
                   "src/apprt/win32/ShareMachineRow.zig":  "7756349baca7ce384bb3c5e63d8c134127db9839a68c77842409879db80d1466",
-                  "src/apprt/win32/sheet_workers.zig":  "dff38d7e38777497a2dd2a127494a78b969ff8577f75f3d11bf0ffe4f84102b7",
+                  "src/apprt/win32/sheet_workers.zig":  "7f8a695f9e279e7cfead488e40b03675e5be16f2e72a0a78aabfdf88e297a22d",
                   "src/apprt/win32/shortcut_catalog.zig":  "fc22666e762e7c0d0f4445c20e8f8c1e896bf30c25700b9ccec830ee2f9d5879",
                   "src/apprt/win32/shortcut_guide_layout.zig":  "d9356d3a6621e692e33289a3f9ada33dd70126f61567bf2d29414c5c3cd41bcb",
                   "src/apprt/win32/ShortcutGuideWindow.zig":  "fa34210c8821c5a57f0c9fd6068951b7aae86d805948f8ed2d5374b48a5ad3da",
