@@ -1,8 +1,8 @@
 {
     "guard":  "neuter-audit",
     "script":  "test/win32/neuter-audit.ps1",
-    "generated":  "2026-11-05T03:32:00-08:00",
-    "commit":  "e3a289b73",
+    "generated":  "2026-11-05T04:16:13-08:00",
+    "commit":  "24484c533",
     "uncommitted":  [
 
                     ],
@@ -81,7 +81,7 @@
                   "src/apprt/win32/clipboard_open.zig":  "0e2f4849dd0ec7dc0f51a96ac7aa2660c70262ebecceb93689f4d2e59626a9c6",
                   "src/apprt/win32/close_undo.zig":  "8316a81b0aeb43382d0f196c37933a101b1503bbe022c9a25b3e62937e221910",
                   "src/apprt/win32/CloseUndo.zig":  "9d110908f306761accacd46446575115081f6bed97712510b5b567d56fd08b2d",
-                  "src/apprt/win32/color_math.zig":  "3fc2bcda92f62ec504f381dc75c3dd570888e4da5c2945cdfe5d613cb8f48353",
+                  "src/apprt/win32/color_math.zig":  "c876c6551fd55dc02606b05d65665ef55e8d2bd4197d28a4c86ba32eaedb8b7f",
                   "src/apprt/win32/com.zig":  "5bdb6803e4056d79ba1a1390ff939e62c4fca87688ff1516cffb19cf9ecc3f54",
                   "src/apprt/win32/commands.zig":  "982cc6405ee3cd7bf21a4a0b9aafc642ac695ba24c780ff494ede18a7ce6785d",
                   "src/apprt/win32/comp_spike_stats.zig":  "d3e57fabcbf58a7866dee9310b12289095d5805d64b50a991fcd299035c04430",
