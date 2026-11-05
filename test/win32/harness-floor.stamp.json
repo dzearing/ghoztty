@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-05T11:42:27-08:00",
-    "commit":  "b5e2da9de",
+    "generated":  "2026-11-05T13:38:41-08:00",
+    "commit":  "cb56ecd83",
     "uncommitted":  [
-                        "test/win32/deny-git-autostash.ps1",
-                        "test/win32/gate-negatives.ps1"
+                        "test/win32/update-progress.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -181,7 +180,7 @@
                   "test/win32/frame-score.ps1":  "d98795f50fd5c8a171332eef326942ed62398f6f8e62601c1102716d240b89d9",
                   "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",
                   "test/win32/fullscreen-guard.ps1":  "a6c1a301a11d7493a2e7b5411fbcb25daea08302c0a822e91d98fd6db0a67450",
-                  "test/win32/gate-negatives.ps1":  "46ea30d6ae040dbbdabd87da6697f4b28ffaec5ab2f38bf2d6b17af469380e7a",
+                  "test/win32/gate-negatives.ps1":  "d6cd3ba0fa8b199515606cec015b1930a9bd3a52af888b7ff3856df310005163",
                   "test/win32/ghoztty-cleanup.ps1":  "443de2b0fdefdd38c064d1245b3ccb9ce653ac68a37f664590ade379dd93d7ee",
                   "test/win32/glass-frame-origin.ps1":  "0a0dfeed8dff3e6ba20ec9402905ac5490ab37b43d85d9316be106de72e26b56",
                   "test/win32/gl-device-lost.ps1":  "9ea50c131a98b6be564e055c6e196ee36d7209884b6c4ab792d83103336ec73e",
@@ -399,7 +398,7 @@
                   "test/win32/pane-stack-unfold.ps1":  "8c71ab3902fe416103acd2c6ed655340e87efe2eac944e899daa384dfd04ccbd",
                   "test/win32/parity-decisions.ps1":  "05039eff3fcb43d262e34894717a2fc200e98d6e165e29a9eb17618ba54bd397",
                   "test/win32/parity-sweep.ps1":  "2251497104f8df5a8b1146441bd2b5e3ebb38a495c7d7fe16a9f64a05c801044",
-                  "test/win32/parity-tasks-lanes.ps1":  "576b87de1a7a6f1982cc28067614390510ebc9de6304a154587680ec6025b6a6",
+                  "test/win32/parity-tasks-lanes.ps1":  "0ea40fdd89dbf37e287727eb97d5153afa3e9f656e120df2b18302f31c49fff1",
                   "test/win32/parity-tasks-seat.ps1":  "dd4441cec3ecfc22057885e86ff911859c056091ccf93a042664c45ddac204fc",
                   "test/win32/parity-tasks-split-deps.ps1":  "4cae00c40c97f85c7a4b6871ff32a8276cb752fe7c6c8a5120844dd614e71a78",
                   "test/win32/path-selfheal.ps1":  "3c6615c60f662198ec6e2a7666299ae57c3eb0d7a3eeda78f71dc9f874ffaa52",
@@ -538,7 +537,7 @@
                   "test/win32/update-consent.ps1":  "ffb7dcd7d1d3df0010fa627dc98e1dd3d6da014703124651dd9f160612bbd687",
                   "test/win32/update-failure-visible.ps1":  "c8e5dbcf196daf7908d01c6660052aee5479c7946d53a557381dc24ac5bc06d3",
                   "test/win32/update-graceful.ps1":  "d36ca938cd4e11724893428c3482c0389db25fabb2bc862cbe6cce131d83c31b",
-                  "test/win32/update-progress.ps1":  "7dd2371ca5de45bf6d765616871b240036a713a3e0adfc367fdef8a49e087198",
+                  "test/win32/update-progress.ps1":  "835d9ea1e1b0cb2cbff6a368985fb1faebbda84db9fffcc1d9ee9d9f8b6a77fa",
                   "test/win32/update-real-msi.ps1":  "2ac990a09b958bc7ddd077532590478c34ab0a30363bbe8720d3648fd03a66b2",
                   "test/win32/upgrade-no-fork.ps1":  "b7591fc94633df3249eb7236a80228977874f47784548097544b5395b964e61e",
                   "test/win32/upgrade-resume-readiness.ps1":  "bd269e2436e29adb7d451c03c05450c2f5ca345f59dc66f230e06238c39ca70a",

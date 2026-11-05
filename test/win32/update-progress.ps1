@@ -375,8 +375,14 @@ Assert ((Get-AppLog) -match 'update download failed: error\.Truncated') `
     'it failed as Truncated - the length check, not the package check, caught it'
 Assert ((Get-AppLog) -notmatch 'update download: staged') `
     'nothing was staged, so no half-package can reach msiexec'
-Assert ((Get-AppLog) -match 'update progress: The download failed') `
+# WAIT for it (T2399): the panel says it on its own next tick, after the GUI
+# thread has raised the "could not be downloaded" answer dialog, so it lands
+# a few lines after the worker's "cut short". A one-shot read raced that and
+# went red twice on 2026-10-28 while the app log said it correctly.
+Assert (Wait-Log 'update progress: The download failed' 10000) `
     'the panel said the download FAILED rather than "Download complete."'
+Assert ((Get-AppLog) -notmatch 'update progress: Download complete') `
+    'the panel never said "Download complete." over the cut-off transfer'
 
 Stop-AssetServer
 Stop-DebugGhoztty
@@ -428,6 +434,16 @@ function Invoke-PanelCancel {
 }
 function Get-Count([string]$Pattern) { ([regex]::Matches((Get-AppLog), $Pattern)).Count }
 
+# Wait until $Pattern occurs MORE than $Before times (T2399). Wait-Log would
+# match the first panel's line still sitting in the log and return at once.
+function Wait-CountAbove([string]$Pattern, [int]$Before, [int]$TimeoutMs = 5000) {
+    for ($t = 0; $t -lt $TimeoutMs; $t += 100) {
+        if ((Get-Count $Pattern) -gt $Before) { return $true }
+        Start-Sleep -Milliseconds 100
+    }
+    return $false
+}
+
 Assert (Start-App $feed6 @('--auto-update=check')) 'app up for the cancel scenario'
 Assert (Wait-Log 'showing update balloon for win-v9\.9\.9') 'the app offered the release (cancel scenario)'
 Assert (Invoke-ConsentedDownload) 'consented to the download the user will cancel'
@@ -467,11 +483,14 @@ Assert (@(Get-TestWindows -ProcessId $script:appPid -Class 'GhozttyUpdateProgres
 # The offer survived: the balloon starts the download again. A download still
 # marked in flight would answer "still downloading" and raise no dialog.
 $panelLinesBefore = Get-Count 'update progress: '
+$zeroLinesBefore = Get-Count 'update progress: 0 bytes downloaded'
 Assert (Invoke-ConsentedDownload) 'the balloon offered the update AGAIN and the dialog was OKed'
 Assert (Wait-PanelWindow) 'a second download started, with its own panel'
-Assert (Wait-Log 'update progress: 0 bytes downloaded' 5000) `
+# The panel's first line comes on its first tick, after the window exists;
+# counts, not matches, because the first panel's lines are still in the log.
+Assert (Wait-CountAbove 'update progress: ' $panelLinesBefore 5000) 'the second panel is reporting'
+Assert ((Get-Count 'update progress: 0 bytes downloaded') -gt $zeroLinesBefore) `
     'the second download is waiting on a server that has not answered'
-Assert ((Get-Count 'update progress: ') -gt $panelLinesBefore) 'the second panel is reporting'
 
 $sw2 = [Diagnostics.Stopwatch]::StartNew()
 Assert (Invoke-PanelCancel) 'Cancel clicked while the connection was still being opened'
