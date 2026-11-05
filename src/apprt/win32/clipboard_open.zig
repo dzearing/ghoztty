@@ -133,6 +133,9 @@ pub fn open(owner: ?w32.HWND) bool {
 pub const Holder = struct {
     kind: Kind,
     pid: u32 = 0,
+    /// `GetLastError` from the probe's own open, when it made one and it
+    /// failed (0 otherwise) - the only fact a windowless holder leaves behind.
+    last_error: u32 = 0,
     image_buf: [max_image]u8 = undefined,
     image_len: usize = 0,
 
@@ -144,9 +147,23 @@ pub const Holder = struct {
         this_process,
         /// Another process holds it. Nothing this process does can free it.
         other_process,
-        /// The open fails but no window is named. An open with no window
-        /// excludes nobody (T992), so this should not happen; it is kept apart
-        /// from `other_process` so that a caller does not excuse it.
+        /// The open is REFUSED (`ERROR_ACCESS_DENIED`) and no window is named
+        /// as holding it (T2346). This is the shape of the 2026-10-27 wedge: about
+        /// 22 hours of `OpenClipboard` -> 5 for every process on the box with
+        /// `GetOpenClipboardWindow` and `GetClipboardOwner` both NULL, so the
+        /// T2231 probe read it as `unknown` and the lanes stayed red.
+        ///
+        /// It is a box condition and not this process, because the two ways we
+        /// could hold the clipboard both leave a different trace (measured on
+        /// this box, 2026-11-05): a hold that names a window makes
+        /// `GetOpenClipboardWindow` return that window (-> `this_process`), and
+        /// a hold with no window excludes nobody (T992), so it cannot refuse
+        /// anyone. Destroying the holding window releases the hold, and so
+        /// does tearing down a test desktop under a live holder; what produced
+        /// the real wedge is still unknown, which is why the skip prints it.
+        held_unnamed,
+        /// The open fails for some other reason with no window named. Kept
+        /// apart from the box conditions so a caller does not excuse it.
         unknown,
     };
 
@@ -163,7 +180,28 @@ pub const Holder = struct {
     pub fn isOtherProcess(self: *const Holder) bool {
         return self.kind == .other_process;
     }
+
+    /// True when the clipboard is held by something outside this process:
+    /// a named other process, or a windowless refusal (T2346). These are the
+    /// only answers that let a clipboard-oracle test SKIP instead of fail;
+    /// `this_process` and `unknown` are still failures.
+    pub fn isBoxCondition(self: *const Holder) bool {
+        return switch (self.kind) {
+            .other_process, .held_unnamed => true,
+            .free, .this_process, .unknown => false,
+        };
+    }
 };
+
+/// The verdict when no window is named as holding the clipboard, from the
+/// probe's own open. Pure, so the classification is tested without having to
+/// reproduce a wedge nobody has managed to build on purpose.
+pub fn classifyWindowless(open_ok: bool, last_error: u32) Holder.Kind {
+    if (open_ok) return .free;
+    return if (last_error == error_access_denied) .held_unnamed else .unknown;
+}
+
+const error_access_denied: u32 = 5;
 
 /// Probe the clipboard and say who holds it. Opens and closes it once when no
 /// window is named as holding it, so it is a test and diagnostic helper, not a
@@ -178,7 +216,8 @@ pub fn holder() Holder {
             _ = w32.CloseClipboard();
             return .{ .kind = .free };
         }
-        return .{ .kind = .unknown };
+        const err = w32.GetLastError();
+        return .{ .kind = classifyWindowless(false, err), .last_error = err };
     };
     var pid: u32 = 0;
     _ = w32.GetWindowThreadProcessId(hwnd, &pid);
@@ -270,19 +309,21 @@ test "open then close leaves the clipboard takeable again" {
     //
     // Except when another process is sitting on the clipboard (T2231): then
     // the first open fails for a reason this helper cannot change, and saying
-    // so by name is the useful answer. Our OWN process holding it, or a holder
-    // nobody can name, still fails.
+    // so by name is the useful answer. The same goes for a refused open with no
+    // window named at all, the shape of the real 10-27 wedge (T2346). Our OWN
+    // process holding it, or any other unexplained failure, still fails.
     if (!open(null)) {
         const h = holder();
-        if (h.isOtherProcess()) {
+        if (h.isBoxCondition()) {
             log.warn(
-                "SKIPPED clipboard round trip: another process holds the clipboard open " ++
-                    "(pid={d} image='{s}') - a box condition, not this helper (T2231)",
-                .{ h.pid, h.image() },
+                "SKIPPED clipboard round trip: clipboard held by another process " ++
+                    "(holder={s} pid={d} image='{s}' last_error={d}) - a box condition, " ++
+                    "not this helper (T2231/T2346)",
+                .{ @tagName(h.kind), h.pid, h.image(), h.last_error },
             );
             return error.SkipZigTest;
         }
-        log.err("clipboard round trip: first open failed, holder={s}", .{@tagName(h.kind)});
+        log.err("clipboard round trip: first open failed, holder={s} last_error={d}", .{ @tagName(h.kind), h.last_error });
         return error.TestUnexpectedResult;
     }
     _ = w32.CloseClipboard();
@@ -319,6 +360,24 @@ test "holder: a free clipboard reads as free, and a held one names this process"
     // is the one answer this arm cannot assert against.
     const after = holder();
     if (after.kind != .other_process) try std.testing.expectEqual(Holder.Kind.free, after.kind);
+}
+
+test "classifyWindowless: only a refused open with no window is a box condition (T2346)" {
+    try std.testing.expectEqual(Holder.Kind.free, classifyWindowless(true, 0));
+    try std.testing.expectEqual(Holder.Kind.held_unnamed, classifyWindowless(false, 5));
+    // Any other failure stays unexcused.
+    try std.testing.expectEqual(Holder.Kind.unknown, classifyWindowless(false, 0));
+    try std.testing.expectEqual(Holder.Kind.unknown, classifyWindowless(false, 1418));
+
+    const unnamed: Holder = .{ .kind = .held_unnamed, .last_error = 5 };
+    try std.testing.expect(unnamed.isBoxCondition());
+    try std.testing.expect(!unnamed.isOtherProcess());
+    const other: Holder = .{ .kind = .other_process, .pid = 42 };
+    try std.testing.expect(other.isBoxCondition());
+    inline for (.{ Holder.Kind.free, Holder.Kind.this_process, Holder.Kind.unknown }) |k| {
+        const h: Holder = .{ .kind = k };
+        try std.testing.expect(!h.isBoxCondition());
+    }
 }
 
 test "imageName keeps only the file name, and refuses rather than truncates" {

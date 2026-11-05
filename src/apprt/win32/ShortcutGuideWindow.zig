@@ -33,6 +33,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const App = @import("App.zig");
+const clipboard_open = @import("clipboard_open.zig");
 const Window = @import("Window.zig");
 const build_config = @import("../../build_config.zig");
 const configpkg = @import("../../config.zig");
@@ -1055,7 +1056,8 @@ fn onChar(self: *ShortcutGuideWindow, ch: u16) void {
 }
 
 fn pasteClipboard(self: *ShortcutGuideWindow) void {
-    if (w32.OpenClipboard(self.hwnd) == 0) return;
+    // Through the retrying helper, like every clipboard open (T2346 C2).
+    if (!clipboard_open.open(self.hwnd)) return;
     defer _ = w32.CloseClipboard();
     const hmem = w32.GetClipboardData(w32.CF_UNICODETEXT) orelse return;
     const ptr = w32.GlobalLock(hmem) orelse return;

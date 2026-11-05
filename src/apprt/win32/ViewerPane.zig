@@ -9845,15 +9845,15 @@ test "host floor: a real controller on a real window, on this box" {
                 // skip this oracle only - the button count above was still
                 // asserted. Any other empty result is still a failure.
                 const h = clipboard_open.holder();
-                if (h.isOtherProcess()) {
+                if (h.isBoxCondition()) {
                     log.warn(
-                        "SKIPPED copy[{s}] clipboard oracle: another process holds the " ++
-                            "clipboard open (pid={d} image='{s}') (T2231)",
-                        .{ case.tag, h.pid, h.image() },
+                        "SKIPPED copy[{s}] clipboard oracle: clipboard held by another process " ++
+                            "(holder={s} pid={d} image='{s}' last_error={d}) (T2231/T2346)",
+                        .{ case.tag, @tagName(h.kind), h.pid, h.image(), h.last_error },
                     );
                     continue;
                 }
-                log.err("copy[{s}]: nothing landed and the clipboard holder is {s}", .{ case.tag, @tagName(h.kind) });
+                log.err("copy[{s}]: nothing landed and the clipboard holder is {s} (last_error={d})", .{ case.tag, @tagName(h.kind), h.last_error });
             }
             try testing.expect(copied != null);
             try testing.expectEqualStrings(case.needle, copied.?);

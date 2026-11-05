@@ -1,20 +1,16 @@
 {
     "guard":  "shortcut-guide",
     "script":  "test/win32/shortcut-guide.ps1",
-    "generated":  "2026-11-03T11:29:30-08:00",
-    "commit":  "2094fdbd7",
+    "generated":  "2026-11-05T05:34:34-08:00",
+    "commit":  "9c99da5ae",
     "uncommitted":  [
-                        "src/apprt/win32/ipc_shortcut_guide.zig",
-                        "src/apprt/win32/shortcut_catalog.zig",
-                        "src/apprt/win32/shortcut_guide_layout.zig",
-                        "src/apprt/win32/ShortcutGuideWindow.zig",
-                        "test/win32/shortcut-guide.ps1"
+                        "src/apprt/win32/ShortcutGuideWindow.zig"
                     ],
     "files":  {
                   "src/apprt/win32/ipc_shortcut_guide.zig":  "ffbe20a34b9868b26615353dfab84d2b65d011faf27094c957711cdd4d756705",
                   "src/apprt/win32/shortcut_catalog.zig":  "fc22666e762e7c0d0f4445c20e8f8c1e896bf30c25700b9ccec830ee2f9d5879",
                   "src/apprt/win32/shortcut_guide_layout.zig":  "d9356d3a6621e692e33289a3f9ada33dd70126f61567bf2d29414c5c3cd41bcb",
-                  "src/apprt/win32/ShortcutGuideWindow.zig":  "b6b195dbb0f8bcd1a1e458f64b991c2d1cea70fefa96e1b848285de4384b929b",
+                  "src/apprt/win32/ShortcutGuideWindow.zig":  "fa34210c8821c5a57f0c9fd6068951b7aae86d805948f8ed2d5374b48a5ad3da",
                   "src/config/keybind_list.zig":  "1cdf8ee5129fa0242d84f16ad10773f152076a7591f30767cd80620e5a515977",
                   "test/win32/shortcut-guide.ps1":  "7418a4994b37655bf3a1cef7dd47eb000ab50db63a33a090f332214d64bac502"
               }
