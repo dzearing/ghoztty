@@ -10,6 +10,35 @@ struct HoverTrackingViewTests {
     final class Probe: HoverTrackingView {
         var pointer: NSPoint? = NSPoint(x: 10, y: 10)
         override var pointerLocation: NSPoint? { pointer }
+        var isFront = true
+        var frontQueries = 0
+        override var isFrontmostAtPointer: Bool { frontQueries += 1; return isFront }
+    }
+
+    /// The window-order query is a WindowServer round trip, and every row
+    /// re-syncs on each frame of a scroll: only the row under the pointer
+    /// may ask it.
+    @Test func onlyTheRowUnderThePointerAsksWhichWindowIsInFront() {
+        let row = Probe(frame: NSRect(x: 0, y: 0, width: 100, height: 20))
+        row.pointer = NSPoint(x: 10, y: 40)
+        for _ in 0..<50 { row.syncHover() }
+        #expect(row.frontQueries == 0)
+
+        row.pointer = NSPoint(x: 10, y: 10)
+        row.syncHover()
+        #expect(row.frontQueries == 1)
+    }
+
+    @Test func aRowBehindAnotherWindowDoesNotLightUp() {
+        let row = Probe(frame: NSRect(x: 0, y: 0, width: 100, height: 20))
+        var reports: [Bool] = []
+        row.onHoverChanged = { reports.append($0) }
+        row.isFront = false
+        row.syncHover()
+        #expect(reports.isEmpty)
+        row.isFront = true
+        row.syncHover()
+        #expect(reports == [true])
     }
 
     private func event(_ type: NSEvent.EventType) -> NSEvent {

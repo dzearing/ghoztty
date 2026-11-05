@@ -548,8 +548,13 @@ shows the same view of it (see *Shared across windows*). Read before touching
 - **A row covered by another window is not hovered.** Clicking a row brings
   its window forward over this one with no exit event, so hover counts only
   when this window is the app's frontmost under the pointer
-  (`HoverTrackingView.pointerLocation`), and re-syncs when the window gains
-  or loses key; before, rows stayed lit and showed so when it came back.
+  (`HoverTrackingView.isFrontmostAtPointer`), and re-syncs when the window
+  gains or loses key; before, rows stayed lit and showed so when it came back.
+  That check is `NSApp.orderedWindows`, a WindowServer round trip, and every
+  row re-syncs on each frame of a scroll: it is asked only for the row the
+  pointer is inside, and never in the key window. Asked by every row, it was
+  ~60% of the main thread scrolling all windows with 25 open
+  (`HoverTrackingViewTests`).
 - **The order is shared and persisted** (`PaneSidebarSharedState.windowOrder`,
   UserDefaults `PaneSidebarWindowOrder`): one list of keys, `project:<name>`
   and `window:<windowID>`, read by `PaneSidebarWindowGrouping.sections(_:order:)`

@@ -412,22 +412,37 @@ class HoverTrackingView: NSView {
     }
 
     /// The pointer in this view's coordinates, or nil when it can't be over
-    /// it (no window, the app inactive — the tracking area's own scope — or
-    /// another of the app's windows in front of this one there).
+    /// it (no window, or the app inactive — the tracking area's own scope).
     var pointerLocation: NSPoint? {
         guard let window, NSApp.isActive else { return nil }
+        return convert(window.mouseLocationOutsideOfEventStream, from: nil)
+    }
+
+    /// Whether no other of the app's windows is in front of this one at the
+    /// pointer. A window brought forward over this one sends no exit.
+    ///
+    /// `NSApp.orderedWindows` is a WindowServer round trip that builds every
+    /// window, and every row's `updateTrackingAreas` lands here on each frame
+    /// of a sidebar scroll — with 25 windows that query was most of the main
+    /// thread. So it is asked only for a view the pointer is inside (see
+    /// `syncHover`), and never for the key window, which is already the
+    /// app's frontmost.
+    var isFrontmostAtPointer: Bool {
+        guard let window else { return false }
+        if window.isKeyWindow { return true }
         let screenPoint = NSEvent.mouseLocation
         let front = NSApp.orderedWindows.first {
             $0.isVisible && $0.level == window.level && $0.frame.contains(screenPoint)
         }
-        guard front == nil || front === window else { return nil }
-        return convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        return front == nil || front === window
     }
 
     func syncHover() {
         guard !Self.isHeld else { return }
-        guard let point = pointerLocation else { return setHovered(false) }
-        setHovered(!isHiddenOrHasHiddenAncestor && bounds.contains(point))
+        guard let point = pointerLocation, !isHiddenOrHasHiddenAncestor, bounds.contains(point) else {
+            return setHovered(false)
+        }
+        setHovered(isFrontmostAtPointer)
     }
 
     private func setHovered(_ hovered: Bool) {
