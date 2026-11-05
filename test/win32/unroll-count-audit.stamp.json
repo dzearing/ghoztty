@@ -1,12 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-05T11:36:51-08:00",
-    "commit":  "b5e2da9de",
+    "generated":  "2026-11-05T13:07:43-08:00",
+    "commit":  "ee981dc0f",
     "uncommitted":  [
-                        "scripts/git-commit-guard.ps1",
-                        "scripts/go-loop-exec.ps1",
-                        "scripts/guard-due.ps1"
+
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -48,7 +46,7 @@
                   "scripts/go-loop-health.ps1":  "01ebcc1f5a53a58ecb399203c371fc75115360b4fcf41c03e70799180567363d",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8bc76326d576230a4aaf9b046c9f12cb7c3d59d25d3ed65672c628ddd64b5ac0",
-                  "scripts/go-loop-watchdog.ps1":  "2876d6c6ff8bf82d920de53190f37004b8d99f60915419ee3674f95aa9bf90b5",
+                  "scripts/go-loop-watchdog.ps1":  "29e2f0e3fb8998ee60f8fda1b5b56a96848338bf85a40ed6c87fa77394c0a419",
                   "scripts/guard-due.ps1":  "26e61ae0bef83f0e6987fed3df02066ba1ca9790e09bb47202c72cc62e6f1d3b",
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
                   "scripts/hero-glide-onscreen.ps1":  "12f1d4134f8be7889793935bb38a032e28ca4daf8b361b57eded48ec2efb2e0c",
@@ -77,7 +75,7 @@
                   "scripts/lib/LaneSolo.ps1":  "10feea32628e97345f5aaa156128261e5b597cea97d462590d75b6420d3401d4",
                   "scripts/lib/LaneVerdict.ps1":  "0bf9b8d3e6e15b3c0e6f2a3a87d7bd0ac6a6e3fe363ac55d0323cdc767718b0d",
                   "scripts/lib/LoopLane.ps1":  "5a323edad01338d2719fcb162c838a68f80b66a01616d9abf8d44daf9e1b51a8",
-                  "scripts/lib/LoopLedger.ps1":  "d473aada7d6a60479f88f6bb979da5c4098021bc4bb0610e5e16cd0a8506dd62",
+                  "scripts/lib/LoopLedger.ps1":  "925856ccac93bf14d6d9edfcf34bbc99ab044de1b496d30c2e31c437df83819a",
                   "scripts/lib/MachineLock.ps1":  "f9e8529b949b37f2f85c50dd87f551556454e85a7425de4899594fd07c828cd7",
                   "scripts/lib/NativeArgv.ps1":  "49faad6cbe0907079281ac45a3e96f140fd6162f4c1729e82b145105137933b5",
                   "scripts/lib/ProcessFamily.ps1":  "63beb65412f8da3f6cbc32d025be1adde445e46327e5ec2c5361bc0a6972cfac",
@@ -92,7 +90,7 @@
                   "scripts/msi-test-identity.ps1":  "f4114e015c29fa884abebff8fb7e057aab52582cf89584351f7b9b0c08ecce63",
                   "scripts/parity-decisions.ps1":  "2475b9be8aa438a4f5b0cbe1f977253e14a669de074547c869246b83b44d5030",
                   "scripts/parity-sweep.ps1":  "2558a090ed2db1add4c101c99b74c469c6c4904ed1646f1dd4138c5bc0ca5046",
-                  "scripts/parity-tasks.ps1":  "4e75bbd851a6cf0cae222ccac99d37c81216a94eb6b4ab18f7dd034674586e34",
+                  "scripts/parity-tasks.ps1":  "816e3a247af98e131f11199f8360500e3c92e21772fb692db548657243aa7411",
                   "scripts/pr-health.ps1":  "a37d7a44dda98ec8650d3c0f65015f255956c3c2e5c1f1535a767aaa7a65184a",
                   "scripts/pr-review.ps1":  "8c817f2422323eb57ba9a7bb52a9fc72fd2a731fa4388f2f3d8116985003078c",
                   "scripts/publish-windows-tag.ps1":  "8f55c46c6de05261d252468afd35246dfa18b97aea63f079a6f7d235f6b7e055",
