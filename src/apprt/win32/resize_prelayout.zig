@@ -95,7 +95,33 @@ pub fn sizePassNeeded(laid: ?Rect, landed: Rect) bool {
         l.left != landed.left or l.top != landed.top;
 }
 
+/// Whether the `WM_SIZE` that skipped its pass (`sizePassNeeded` false) still
+/// has the desk to paint (T2711). The pre-layout painted the desk at `laid`
+/// through the frame it ran under, whose client was `under`, so only the part
+/// of `laid` outside `under` was clipped away. A shrink loses nothing: every
+/// pixel of the smaller rect went out with the pre-layout, and painting it
+/// again after the frame change was 2-2.5 ms of a burst shrink step.
+pub fn deskPaintNeeded(laid: Rect, under: ?Rect) bool {
+    const u = under orelse return true;
+    return laid.left < u.left or laid.top < u.top or
+        laid.right > u.right or laid.bottom > u.bottom;
+}
+
 const testing = std.testing;
+
+test "deskPaintNeeded: only a rect the old frame clipped is painted again" {
+    const under: Rect = .{ .left = 0, .top = 0, .right = 1300, .bottom = 800 };
+    // A shrink on either axis or both: all of it was painted.
+    try testing.expect(!deskPaintNeeded(.{ .left = 0, .top = 0, .right = 1290, .bottom = 800 }, under));
+    try testing.expect(!deskPaintNeeded(.{ .left = 0, .top = 0, .right = 1300, .bottom = 790 }, under));
+    try testing.expect(!deskPaintNeeded(.{ .left = 0, .top = 0, .right = 1290, .bottom = 790 }, under));
+    try testing.expect(!deskPaintNeeded(under, under));
+    // A grow on any axis left a strip outside the old frame.
+    try testing.expect(deskPaintNeeded(.{ .left = 0, .top = 0, .right = 1310, .bottom = 800 }, under));
+    try testing.expect(deskPaintNeeded(.{ .left = 0, .top = 0, .right = 1290, .bottom = 810 }, under));
+    // Not known: paint, as before.
+    try testing.expect(deskPaintNeeded(under, null));
+}
 
 test "sizePassNeeded: only the rect the pre-layout laid out skips the pass" {
     const r: Rect = .{ .left = 0, .top = 0, .right = 1396, .bottom = 792 };

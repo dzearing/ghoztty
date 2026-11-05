@@ -751,6 +751,9 @@ pending_client: ?w32.RECT = null,
 /// The client rect the last pre-layout placed the panes at (T2603), until
 /// the `WM_SIZE` it was for, or any other layout pass, takes it.
 prelayout_laid: ?resize_prelayout.Rect = null,
+/// The client rect of the frame that pre-layout painted under (T2711): what
+/// of `prelayout_laid` the old frame did not clip.
+prelayout_under: ?resize_prelayout.Rect = null,
 /// The flat-style gutters the last divider paint drew (T2418), in client
 /// pixels. A layout that moves a divider hands its old gutter to a pane, and
 /// `WS_CLIPCHILDREN` keeps every later paint off it, so the old line and bar
@@ -17002,8 +17005,10 @@ fn prelayoutForPos(self: *Window, wp: *const w32.WINDOWPOS) void {
     // After the pass: `layoutSplits` clears it, so any other pass between
     // here and the `WM_SIZE` makes that one lay out again (T2603). The grid
     // only: the hero and zoom paths paint the desk on their own terms.
-    if (!self.tab_hero_active[self.active_tab] and self.tab_trees[self.active_tab].zoomed == null)
+    if (!self.tab_hero_active[self.active_tab] and self.tab_trees[self.active_tab].zoomed == null) {
         self.prelayout_laid = pc;
+        self.prelayout_under = .{ .left = cr.left, .top = cr.top, .right = cr.right, .bottom = cr.bottom };
+    }
 }
 
 var burst_state: ?bool = null;
@@ -17130,6 +17135,14 @@ fn releaseBurst(self: *Window, hwnd: w32.HWND) void {
         }
     }
     resizeTrace("burst-paint", hwnd);
+    if (resizeTraceOn()) {
+        // What the paint below is for (T2711).
+        var ur: w32.RECT = undefined;
+        if (w32.GetUpdateRect(hwnd, &ur, 0) != 0)
+            log.info("resize trace burst-invalid l={d} t={d} r={d} b={d}", .{ ur.left, ur.top, ur.right, ur.bottom })
+        else
+            log.info("resize trace burst-invalid none", .{});
+    }
     // The window's own invalid area, then each viewer's bar - by name, not
     // `RDW_ALLCHILDREN`: that walks into the WebView2 host's cross-process
     // children and cost ~7 ms a step in the off-desktop viewer drag.
@@ -17190,11 +17203,21 @@ fn releaseBurst(self: *Window, hwnd: w32.HWND) void {
 /// second pass used to cost 2.5-3 ms of a ~16 ms growing step.
 fn finishPrelaidSize(self: *Window, hwnd: w32.HWND) bool {
     const laid = self.prelayout_laid orelse return false;
+    const under = self.prelayout_under;
     self.prelayout_laid = null;
+    self.prelayout_under = null;
     if (prelaidFullPass()) return false;
     var cr: w32.RECT = undefined;
     if (w32.GetClientRect(hwnd, &cr) == 0) return false;
     if (resize_prelayout.sizePassNeeded(laid, .{ .left = cr.left, .top = cr.top, .right = cr.right, .bottom = cr.bottom })) return false;
+    // A shrink (T2711): the pre-layout's paint covered the whole new client,
+    // so the desk is current; only the validation is left, for T2448's
+    // reason. `GHOZTTY_RESIZE_PRELAID_FULL` keeps the old paint as the A/B.
+    if (!resize_prelayout.deskPaintNeeded(laid, under)) {
+        resizeTrace("prelaid-skip", hwnd);
+        if (self.movedBandsRect()) |done| _ = w32.ValidateRect(hwnd, &done);
+        return true;
+    }
     resizeTrace("prelaid-paint", hwnd);
     var paint_timer = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
     if (w32.GetDC(hwnd)) |dc| {
