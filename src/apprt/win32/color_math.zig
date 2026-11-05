@@ -363,11 +363,21 @@ fn srgbLinearize(c: f64) f64 {
     return if (c <= 0.04045) c / 12.92 else std.math.pow(f64, (c + 0.055) / 1.055, 2.4);
 }
 
+/// `srgbLinearize` of every channel byte, worked out at compile time (T2715).
+/// The glass title bar measures contrast at thousands of desk pixels on every
+/// caption paint, and three `pow` calls per pixel were ~1.1 ms of a Debug
+/// window-edge step; a lookup gives the same values. Not always the same
+/// bits: the test lanes' backend rounds a runtime `pow` a few ulps off the
+/// compile-time one, which no 4.5:1 floor can tell apart.
+const srgb_linear: [256]f64 = blk: {
+    @setEvalBranchQuota(1_000_000);
+    var t: [256]f64 = undefined;
+    for (&t, 0..) |*v, i| v.* = srgbLinearize(@as(f64, @floatFromInt(i)) / 255.0);
+    break :blk t;
+};
+
 pub fn wcagLuminance(rgb: Rgb) f64 {
-    const r = srgbLinearize(@as(f64, @floatFromInt(rgb.r)) / 255.0);
-    const g = srgbLinearize(@as(f64, @floatFromInt(rgb.g)) / 255.0);
-    const b = srgbLinearize(@as(f64, @floatFromInt(rgb.b)) / 255.0);
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    return 0.2126 * srgb_linear[rgb.r] + 0.7152 * srgb_linear[rgb.g] + 0.0722 * srgb_linear[rgb.b];
 }
 
 pub fn wcagContrastRatio(lum1: f64, lum2: f64) f64 {
@@ -659,6 +669,24 @@ test "isLight: Rec.601 threshold" {
     try testing.expect(isLight(.{ .r = 0xFF, .g = 0xFF, .b = 0xFF }));
     try testing.expect(!isLight(.{ .r = 0x00, .g = 0x00, .b = 0xFF })); // pure blue is dark
     try testing.expect(isLight(.{ .r = 0x00, .g = 0xFF, .b = 0x00 })); // pure green is light
+}
+
+test "wcagLuminance: the compile-time table is the runtime formula to rounding (T2715)" {
+    // A runtime-only input, so the formula below cannot fold at compile time.
+    var bytes: [256]u8 = undefined;
+    for (&bytes, 0..) |*b, i| b.* = @intCast(i);
+    for (bytes) |b| {
+        var c: f64 = @floatFromInt(b);
+        std.mem.doNotOptimizeAway(&c);
+        // Exact in a standalone build; the lanes' backend rounds `pow` a
+        // few ulps differently, which is noise far under any contrast floor.
+        try testing.expectApproxEqRel(srgbLinearize(c / 255.0), srgb_linear[b], 1e-12);
+    }
+    // And the weighted sum is the one it always was.
+    var rgb: Rgb = .{ .r = 0x1D, .g = 0x80, .b = 0xF0 };
+    std.mem.doNotOptimizeAway(&rgb);
+    const want = 0.2126 * srgbLinearize(29.0 / 255.0) + 0.7152 * srgbLinearize(128.0 / 255.0) + 0.0722 * srgbLinearize(240.0 / 255.0);
+    try testing.expectApproxEqRel(want, wcagLuminance(rgb), 1e-14);
 }
 
 test "contrastForeground: black on light, white on dark" {
