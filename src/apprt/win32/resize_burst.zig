@@ -38,13 +38,26 @@ pub const burst_span_us: u64 = 1500;
 /// waiting for it does not land on its edge.
 pub const latch_margin_us: u64 = 250;
 
+/// The longest the rest of a pre-layout pass can run after a pane's frame
+/// reaches its hold, in microseconds: the hold starts when the renderer lands
+/// the frame DURING the pane batch, so everything the pass does after that -
+/// the vacated-strip desk paint, the popups - is held time too (T2713). The
+/// worst measured is a step whose desk paint outgrew the drag's canvas and
+/// rebuilt it: ~2.6 ms of gradient plus ~5.8 ms of full compose, ~11.6 ms from
+/// the paint's start to the bands (Debug, viewer scene, 2026-11-04).
+pub const pass_tail_us: u64 = 14000;
+
 /// The longest a renderer holds a drawn frame waiting for the release, in
 /// milliseconds. Past it the frame is swapped anyway: a release that never
 /// comes (the step was abandoned, the window went away) costs one frame's
-/// timing, never a stuck pane.
-/// Covers a frame that reached its hold first and then sat through the whole
-/// gather, the latch step and the bar paint.
-pub const hold_timeout_ms: u32 = 16;
+/// timing, never a stuck pane - the renderer drops the hold it timed out on
+/// (unless the UI thread re-armed another meanwhile), so the next frame drawn
+/// at that size does not wait again.
+/// Covers a frame that reached its hold first and then sat through the rest
+/// of the pass, the whole gather, the latch step and the bar paint. It was 16
+/// until T2713, which left out the pass: a step that rebuilt the desk ran it
+/// out about one Debug run in two, and the frame went up ahead of the window.
+pub const hold_timeout_ms: u32 = 32;
 
 /// The longest the UI thread waits, in microseconds, for every armed pane's
 /// renderer to reach its hold before the release. Since T2623 an edge drag
@@ -155,6 +168,14 @@ test "a pane is gathered once its renderer waits at the held size" {
 
 test "a held frame outlasts the gather plus the latch step" {
     try testing.expect(@as(u64, hold_timeout_ms) * 1000 > gather_us + burst_span_us + latch_margin_us);
+}
+
+test "T2713: a held frame outlasts the rest of the pass too, a desk rebuild included" {
+    // The hold starts inside the pane batch; the pass tail runs before the
+    // gather even begins.
+    try testing.expect(@as(u64, hold_timeout_ms) * 1000 > pass_tail_us + gather_us + burst_span_us + latch_margin_us);
+    // The step that went red: an ~11.6 ms desk rebuild is inside the tail.
+    try testing.expect(pass_tail_us >= 11_600);
 }
 
 test "no clock, or a nonsense one, never adds a wait" {

@@ -6449,8 +6449,12 @@ pub fn holdSwap(self: *Surface, drawn: u64) void {
     // Published before the wait so the window's gather sees this frame ready.
     self.swap_waiting_size.store(drawn, .release);
     defer self.swap_waiting_size.store(0, .release);
-    if (w32.WaitForSingleObject(release, resize_burst.hold_timeout_ms) == w32.WAIT_TIMEOUT)
+    if (w32.WaitForSingleObject(release, resize_burst.hold_timeout_ms) == w32.WAIT_TIMEOUT) {
         self.traceStage("swap-hold-timeout");
+        // One frame's timing, not every frame's (T2713): drop the hold this
+        // frame waited on, unless the UI thread has armed a new one meanwhile.
+        _ = self.swap_hold_size.cmpxchgStrong(drawn, 0, .acq_rel, .acquire);
+    }
 }
 
 /// UI thread (T2666): this pane has nothing left to gather for the burst -
