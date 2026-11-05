@@ -47,6 +47,20 @@ pub const Column = struct {
     /// grid step, and it lands when the grid's glide does. Off when there is
     /// no grid glide to follow; then it eases alone, on its own clock.
     following: bool = false,
+    /// The frame it goes to (`new_w` x `h`), drawn once and kept for the
+    /// glide (T2403): re-rendering the whole panel every frame cost 8-11 ms
+    /// against an 8.3 ms period at 120 Hz. Drawn again only when the width
+    /// it goes to changes or what it shows does (`dropFrames`).
+    new: ?Dib32 = null,
+    new_w: i32 = 0,
+    /// The window's backdrop where neither frame reaches, and the frame put
+    /// together over it - both `buf_w` wide, the widest the column is drawn
+    /// in this glide - kept the same way. Per frame the glide only composes.
+    under: ?Dib32 = null,
+    out: ?Dib32 = null,
+    buf_w: i32 = 0,
+    /// How many times the new frame was drawn, logged as the glide lands.
+    drawn: u32 = 0,
 
     pub fn progress(self: *const Column, now_ms: u64) f64 {
         return tr.progress(now_ms -| self.start_ms, self.ms);
@@ -60,9 +74,21 @@ pub const Column = struct {
         return now_ms -| self.start_ms >= self.ms;
     }
 
+    /// Forget the kept frames, so the next frame draws them afresh: what the
+    /// column shows, or what it shows over, changed mid-glide.
+    pub fn dropFrames(self: *Column) void {
+        inline for (.{ "new", "under", "out" }) |f| {
+            if (@field(self, f)) |d| d.destroy();
+            @field(self, f) = null;
+        }
+        self.new_w = 0;
+        self.buf_w = 0;
+    }
+
     pub fn deinit(self: *Column) void {
         if (self.old) |d| d.destroy();
         self.old = null;
+        self.dropFrames();
     }
 };
 

@@ -932,7 +932,14 @@ pub fn place(self: *PaneSidebar, target: w32.RECT, mode: pane_sidebar.Mode, scal
 /// Repaint the column: what it paints over changed (the window's desk,
 /// T1850) though nothing on the list did.
 pub fn repaint(self: *PaneSidebar) void {
+    self.columnStale();
     _ = w32.InvalidateRect(self.hwnd, null, 0);
+}
+
+/// What a running glide shows, or shows over, changed: its kept frames are
+/// drawn afresh on the next frame (T2403).
+fn columnStale(self: *PaneSidebar) void {
+    if (self.column) |*c| c.dropFrames();
 }
 
 /// The window just painted desk generation `gen`. A new one (a resize - the
@@ -1048,6 +1055,7 @@ fn rosterChanged(self: *PaneSidebar) void {
     // The item being renamed went away (its pane or window closed): there
     // is nothing left to name.
     if (self.rename != null and !self.renameTargetLive()) self.endRename(false, "gone");
+    self.columnStale();
     self.revealSelected();
     // The rows moved under the pointer: the hovered index may name another
     // pane now.
@@ -3517,6 +3525,13 @@ fn startColumn(self: *PaneSidebar, c: xf.Column, to_w: i32) void {
         next.ms = ms;
     } else |_| {}
     self.column = next;
+    // What it keeps for its frames is drawn now, before its clock is anchored
+    // at the first frame (T2401), so that frame composes like every other
+    // rather than paying for the panel's whole paint (T2403).
+    if (w32.GetDC(null)) |screen| {
+        defer _ = w32.ReleaseDC(null, screen);
+        _ = self.keepColumnFrames(&self.column.?, screen, next.from_w, next.h);
+    }
     // HWND_TOP is null: without SWP_NOZORDER, the top of the children.
     _ = w32.SetWindowPos(self.hwnd, null, 0, 0, 0, 0, w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_NOACTIVATE);
     log.info("pane sidebar column glide {s} from={d} to={d} ms={d} follows_grid={}", .{ @tagName(self.mode), next.from_w, to_w, next.ms, next.following });
@@ -3557,7 +3572,7 @@ fn landColumn(self: *PaneSidebar) void {
     const c = self.column orelse return;
     self.dropColumn();
     const f = c.frames;
-    log.info("pane sidebar column glide done width={d} frames={d} steps={d} gap_max_us={d} paint_max_us={d} followed={}", .{ c.to_w, f.count, f.steps, f.gap_max_us, f.cost_max_us, c.following });
+    log.info("pane sidebar column glide done width={d} frames={d} steps={d} gap_max_us={d} paint_max_us={d} drawn={d} followed={}", .{ c.to_w, f.count, f.steps, f.gap_max_us, f.cost_max_us, c.drawn, c.following });
     var cur: w32.RECT = undefined;
     if (w32.GetClientRect(self.hwnd, &cur) != 0 and cur.right - cur.left != c.to_w) {
         _ = w32.SetWindowPos(self.hwnd, null, 0, 0, c.to_w, cur.bottom - cur.top, w32.SWP_NOMOVE | w32.SWP_NOZORDER | w32.SWP_NOACTIVATE);
@@ -3595,7 +3610,7 @@ fn onColumnTick(self: *PaneSidebar) void {
     if (c.done(now)) {
         self.dropColumn();
         const f = c.frames;
-        log.info("pane sidebar column glide done width={d} frames={d} steps={d} gap_max_us={d} paint_max_us={d}", .{ c.to_w, f.count, f.steps, f.gap_max_us, f.cost_max_us });
+        log.info("pane sidebar column glide done width={d} frames={d} steps={d} gap_max_us={d} paint_max_us={d} drawn={d}", .{ c.to_w, f.count, f.steps, f.gap_max_us, f.cost_max_us, c.drawn });
         self.window.syncPaneSidebar();
         _ = w32.InvalidateRect(self.hwnd, null, 0);
         _ = w32.UpdateWindow(self.hwnd);
@@ -3616,9 +3631,49 @@ fn onColumnTick(self: *PaneSidebar) void {
     _ = w32.UpdateWindow(self.hwnd);
 }
 
+/// Draw what glide `c` keeps for its frames (T2403), unless it already
+/// holds them: the frame it goes to, the backdrop and the buffer they are
+/// composed in, for a column drawn `w` wide. False when one cannot be made.
+fn keepColumnFrames(self: *PaneSidebar, c: *xf.Column, hdc: w32.HDC, w: i32, h: i32) bool {
+    // The frame it goes to and the backdrop are drawn once for the glide and
+    // only composed per frame (T2403): drawn afresh every frame they cost
+    // more than a 120 Hz period. A frame wider than the width it now goes to
+    // (an edge drag pulling back mid-glide) is kept and cut at the column's
+    // edge, the way Mac's host clips its panel; only one too narrow to reach
+    // the edge is drawn again. The column is repainted plain as it lands.
+    if (c.new == null or c.to_w > c.new_w) {
+        if (c.new) |d| d.destroy();
+        c.new = null;
+        const d = Dib32.create(hdc, c.to_w, h) orelse return false;
+        c.new = d;
+        c.new_w = c.to_w;
+        c.drawn += 1;
+        self.paintFrame(d.dc, c.to_w, h);
+        _ = w32.GdiFlush();
+    }
+    const buf_w = @max(@max(c.from_w, c.new_w), w);
+    if (c.under == null or c.out == null or c.buf_w != buf_w) {
+        inline for (.{ "under", "out" }) |f| {
+            if (@field(c, f)) |d| d.destroy();
+            @field(c, f) = null;
+        }
+        c.buf_w = 0;
+        c.under = Dib32.create(hdc, buf_w, h) orelse return false;
+        c.out = Dib32.create(hdc, buf_w, h) orelse return false;
+        c.buf_w = buf_w;
+        // What the window draws where neither card reaches: the desk in the
+        // elevated style, else the terminal background.
+        const t = self.theme();
+        if (self.window.deskBackdrop()) |d| copyDesk(c.under.?.pixels, buf_w, h, d, t.bg) else {
+            @memset(c.under.?.pixels, (@as(u32, t.bg.r) << 16) | (@as(u32, t.bg.g) << 8) | t.bg.b);
+        }
+    }
+    return true;
+}
+
 /// One frame of the glide into `hdc` (`w` x `h`, the column as wide as it is
-/// drawn now): the frame it left fading out and the new mode's - painted
-/// live, at the width it goes to - fading in, both cut at the column's edge
+/// drawn now): the frame it left fading out and the new mode's - drawn once
+/// at the width it goes to (`keepColumnFrames`) - fading in, both cut at the column's edge
 /// (`transition.composeColumn`). False when there is nothing to compose and
 /// the plain frame is painted instead.
 fn paintColumn(self: *PaneSidebar, hdc: w32.HDC, w: i32, h: i32) bool {
@@ -3629,21 +3684,13 @@ fn paintColumn(self: *PaneSidebar, hdc: w32.HDC, w: i32, h: i32) bool {
     defer c.frames.note(t0, transition.nowUs() -| t0);
     // Followed, by how far the card is between its two widths (T2406).
     const p = if (c.following) transition.followProgress(c.from_w, c.to_w, w) else c.progress(t0 / std.time.us_per_ms);
-    const new = Dib32.create(hdc, c.to_w, h) orelse return false;
-    defer new.destroy();
-    const under = Dib32.create(hdc, w, h) orelse return false;
-    defer under.destroy();
-    const out = Dib32.create(hdc, w, h) orelse return false;
-    defer out.destroy();
-    self.paintFrame(new.dc, c.to_w, h);
+    if (!self.keepColumnFrames(c, hdc, w, h)) return false;
+    const buf_w = c.buf_w;
+    const out = c.out.?;
+    // Last frame's edge bar was drawn into it by GDI: finished before the
+    // pixels are written here.
     _ = w32.GdiFlush();
-    // What the window draws where neither card reaches: the desk in the
-    // elevated style, else the terminal background.
-    const t = self.theme();
-    if (self.window.deskBackdrop()) |d| copyDesk(under.pixels, w, h, d, t.bg) else {
-        @memset(under.pixels, (@as(u32, t.bg.r) << 16) | (@as(u32, t.bg.g) << 8) | t.bg.b);
-    }
-    transition.composeColumn(out.pixels, w, h, old.pixels, c.from_w, new.pixels, c.to_w, under.pixels, p);
+    transition.composeColumnStrided(out.pixels, buf_w, w, h, old.pixels, c.from_w, c.new.?.pixels, c.new_w, c.under.?.pixels, p);
     // The edge's bar on the card's DRAWN edge (T2406, Mac 7e2d0a9da
     // `gripInWindow`): laid out at the width the column goes to, shifted to
     // the one it is drawn at. Painted into the new frame it was cut off
