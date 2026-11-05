@@ -9271,10 +9271,20 @@ pub fn performAction(
             return true;
         },
 
-        // Acknowledge actions that don't need Win32-specific handling.
-        // The core handles the logic; we just confirm receipt.
-        .cell_size,
-        // Platform-specific actions that don't apply on Windows:
+        // A new font size moves the rows under a banner (T2707, Mac
+        // `.onChange(of: cellSize)`): the band above the terminal is a whole
+        // number of rows, so a pane with one re-lays out its window.
+        .cell_size => switch (target) {
+            .app => return true,
+            .surface => |core_surface| {
+                const rt = core_surface.rt_surface;
+                if (rt.banner_overlay != null and rt.core_surface_ready) rt.parent_window.layoutSplits();
+                return true;
+            },
+        },
+
+        // Platform-specific actions that don't apply on Windows; we just
+        // confirm receipt:
         .secure_input, // macOS EnableSecureEventInput
         .show_gtk_inspector, // GTK-only
         .show_on_screen_keyboard, // GTK/mobile

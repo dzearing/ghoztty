@@ -177,6 +177,12 @@ const T833_NEUTERED = false;
 /// the resize, released on landing, each direction - and all 154 others pass.)
 const T2252_NEUTERED = false;
 
+/// Negative control for `pane-banner.ps1`'s T2707 section. Flipping it
+/// reserves the strip's raw height again, not whole grid rows, so the last
+/// row moves with each banner height and the section's "ends where it does
+/// with no banner" assertions go red.
+const T2707_NEUTERED = false;
+
 /// Negative control for `pane-banner.ps1`'s T1344 assertions. Flipping it
 /// restores the pre-T1344 direct paint: every stage of a frame — the band
 /// fill, the card backdrop blit, each text run, the collapse fade, the
@@ -354,8 +360,10 @@ pub const BannerOverlay = struct {
     /// `updatePosition` glues the strip into the vacated band, so the
     /// terminal grid starts below the banner instead of under it. 0 until
     /// a layout pass ran (then the strip falls back to overlapping the
-    /// owner top so it is never lost).
+    /// owner top so it is never lost). A whole number of grid rows (T2707).
     inset: i32 = 0,
+    /// The (natural, band) pair `logStrip` last reported (T2707).
+    strip_logged: [2]i32 = .{ -1, -1 },
 
     /// Width of the pane slot the banner spans, fed TOP-DOWN by the window
     /// layout (T123). Table columns are sized from it, so the banner
@@ -704,10 +712,12 @@ pub const BannerOverlay = struct {
         const strip = self.insetHeight(scale, rect.right - rect.left);
         // `inset` > 0: the layout moved the owner down by that much; the
         // strip fills the vacated band exactly (bottom-clipped when the
-        // clamp engaged in a degenerate short pane). `inset` == 0: no
-        // layout pass ran yet — fall back to overlapping the owner top so
-        // the strip is never lost.
-        const settled = if (self.inset > 0) @min(self.inset, strip) else strip;
+        // clamp engaged in a degenerate short pane), the whole-row rounding
+        // under the card included (T2707). `inset` == 0: no layout pass ran
+        // yet — fall back to overlapping the owner top so the strip is
+        // never lost.
+        const settled = self.settledHeight(strip);
+        self.logStrip(strip, settled);
         // While the card animates (T149) the popup has to cover BOTH the
         // band the layout reserved and the card's height right now.
         // Collapsing, the terminal has ALREADY snapped up under the settled
@@ -827,7 +837,8 @@ pub const BannerOverlay = struct {
         if (w32.GetClientRect(self.owner, &rect) == 0) return;
         const slot = rect.bottom - rect.top;
         const strip = self.insetHeight(scale, rect.right - rect.left);
-        const settled = if (self.inset > 0) @min(self.inset, strip) else strip;
+        const settled = self.settledHeight(strip);
+        self.logStrip(strip, settled);
         // A running collapse overhangs the grid, as the popup does.
         const height = if (self.collapse_anim == null) settled else @max(
             settled,
@@ -1086,7 +1097,7 @@ pub const BannerOverlay = struct {
         if (self.on_visual) return;
         const strip = self.insetHeight(scale, pane_w);
         const w = @max(pane_w, 1);
-        const h = @max(if (self.inset > 0) @min(self.inset, strip) else strip, 1);
+        const h = @max(self.settledHeight(strip), 1);
         const now = chrome_reposition.currentSize(self.hwnd);
         if (!chrome_reposition.decide(now, .{ .w = w, .h = h }).resized) return;
         self.dropPrepared();
@@ -1166,6 +1177,42 @@ pub const BannerOverlay = struct {
             self.invalidate();
         }
         return self.stripHeight();
+    }
+
+    /// The band the layout reserves above the terminal in a `slot_w` x
+    /// `slot_h` pane slot (T2707): the strip's height rounded up to whole grid
+    /// rows (`banner_layout.reserveInset`), so text on the pane's last row
+    /// holds still as the banner comes, goes, collapses or expands. The one
+    /// rule `Surface.bannerLayoutInset` reserves and `beginGlide` predicts.
+    pub fn reservedInset(self: *BannerOverlay, scale: f32, slot_w: i32, slot_h: i32) i32 {
+        return banner_layout.reserveInset(self.insetHeight(scale, slot_w), slot_h, self.cellHeight());
+    }
+
+    /// The height the strip window takes in a band the layout reserved
+    /// (T2707): the whole band - the rows rounding added are pane background
+    /// under the card - bottom-clipped in a degenerate short pane. `inset` 0
+    /// (no layout pass yet) is the strip's own height.
+    fn settledHeight(self: *BannerOverlay, strip: i32) i32 {
+        if (self.inset <= 0) return strip;
+        return @min(self.inset, banner_layout.rowAligned(strip, self.cellHeight()));
+    }
+
+    /// pane-banner.ps1's oracle (T2707): the strip's own height (card plus
+    /// margins) beside the band it fills, which is that rounded up to whole
+    /// grid rows - so a harness measuring the CARD never reads the band's
+    /// rounding as content. Logged on change only.
+    fn logStrip(self: *BannerOverlay, strip: i32, band: i32) void {
+        if (self.strip_logged[0] == strip and self.strip_logged[1] == band) return;
+        self.strip_logged = .{ strip, band };
+        log.debug("banner strip hwnd={d} natural={d} band={d}", .{ @intFromPtr(self.hwnd), strip, band });
+    }
+
+    /// The pane's grid row height in px, or 0 before the terminal has one.
+    fn cellHeight(self: *const BannerOverlay) i32 {
+        if (T2707_NEUTERED) return 0;
+        const s = self.surface orelse return 0;
+        if (!s.core_surface_ready) return 0;
+        return @intCast(s.core_surface.size.cell.height);
     }
 
     pub fn hide(self: *BannerOverlay) void {
@@ -2437,11 +2484,13 @@ pub const BannerOverlay = struct {
             @intFromBool(self.last_frame_buffered),
         });
 
-        // The band the CARD occupies. The whole client when settled; while
-        // the card animates OPEN it is shorter than the window, which is
-        // already sized to the taller settled band (T149).
+        // The band the CARD occupies. While the card animates OPEN it is
+        // shorter than the window, which is already sized to the taller
+        // settled band (T149); settled, the window is the band rounded up to
+        // whole grid rows (T2707), and the card keeps its own height above
+        // the rest of that last row.
         var band = client;
-        if (self.collapse_anim != null) {
+        {
             const h = banner_layout.bandHeight(
                 self.paintedCardHeight(),
                 self.px(MARGIN),
@@ -2959,7 +3008,7 @@ pub const BannerOverlay = struct {
         // uses (`Surface.bannerLayoutInset`), so the predicted height is the
         // height the grid actually gets.
         const slot_h = @max(old_inset, 0) + h;
-        const new_inset = banner_layout.clampInset(self.insetHeight(self.scale, screen.right - screen.left), slot_h);
+        const new_inset = self.reservedInset(self.scale, screen.right - screen.left, slot_h);
         const new_h = banner_glide.resizedHeight(h, @max(old_inset, 0), new_inset);
         const shift = s.core_surface.predictResizeShift(new_h);
         const delta = banner_glide.travel(@max(old_inset, 0), new_inset, shift);
@@ -3506,6 +3555,7 @@ test "T283: the banner's negative controls are clear and non-empty" {
     try std.testing.expect(!T2252_NEUTERED);
     try std.testing.expect(!T2400_NEUTERED);
     try std.testing.expect(!T2559_NEUTERED);
+    try std.testing.expect(!T2707_NEUTERED);
     try std.testing.expect(!BannerFreeze.T2261_NEUTERED);
 
     const CellWrap = BannerOverlay.CellWrap;

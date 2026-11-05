@@ -183,6 +183,30 @@ function Get-Overlay([int]$procId, [IntPtr]$top, [int]$i = 0) {
     return $null
 }
 
+# The CARD's strip height (card + margins) for overlay $Overlay (T2707). The
+# window is the band, rounded up to whole grid rows so the pane's last row
+# holds still, and the rows that adds are pane background under the card - so
+# anything measuring the card's content reads the app's own oracle
+# (`banner strip hwnd= natural= band=`), never the window height. Falls back to
+# the window height when the log has no line for it (a release build), which
+# is the pre-T2707 meaning and passes or fails exactly as before.
+function Get-StripNatural($Overlay) {
+    $want = [int64]$Overlay.Hwnd
+    for ($t = 0; $t -lt 10; $t++) {
+        $hit = $null
+        foreach ($l in @(Get-Content $errlog -ErrorAction SilentlyContinue)) {
+            if ($l -match 'banner strip hwnd=(\d+) natural=(\d+) band=(\d+)' -and [int64]$Matches[1] -eq $want) {
+                $hit = [pscustomobject]@{ Natural = [int]$Matches[2]; Band = [int]$Matches[3] }
+            }
+        }
+        # The line for the band on screen: a stale one would describe a
+        # previous banner.
+        if ($hit -and $hit.Band -eq $Overlay.Height) { return $hit.Natural }
+        Start-Sleep -Milliseconds 100
+    }
+    return $Overlay.Height
+}
+
 # The T377 chevron-column probe's geometry, derived from the overlay window
 # itself: where the chevron's box starts, the clear gap it reserves, and the
 # first content row's band. One definition, because the pre-frame and the
@@ -392,20 +416,26 @@ try {
     Assert ($null -ne $ov) 'overlay visible and glued above the pane (bottom meets grid top)'
     $paneRect = Get-Pane $top 0
     $oneLineH = 0
+    $oneLineBand = 0
     if ($ov) {
-        $oneLineH = $ov.Height
+        # The CARD's strip (card + margins), and the band it fills: the band is
+        # the strip rounded up to whole grid rows (T2707), so it is the window
+        # height, and the strip comes from the app's own oracle.
+        $oneLineH = Get-StripNatural $ov
+        $oneLineBand = $ov.Height
         Assert ($ov.Width -eq $paneRect.Width) 'overlay spans the pane width'
         # Band = card (2x padding + one line) + 2x the card's outer margin
         # (T131), so the sane bound is looser than the pre-card strip's.
         Assert ($oneLineH -gt 0 -and $oneLineH -lt 120) "one-line band height sane ($oneLineH px)"
+        Assert ($oneLineBand -ge $oneLineH) "T2707: the window fills the band, never less than the card's strip ($oneLineBand >= $oneLineH)"
     }
 
     # --- 2b. T101: the strip band is RESERVED — grid starts below the banner ---
-    # The pane HWND top moved down by exactly the strip height (vs the
-    # pre-banner snapshot) and the pane bottom is unchanged: the terminal
-    # genuinely shrank into the band below the strip instead of being covered.
+    # The pane HWND top moved down by exactly the band (vs the pre-banner
+    # snapshot) and the pane bottom is unchanged: the terminal genuinely
+    # shrank into the band below the strip instead of being covered.
     if ($ov) {
-        Assert (($paneRect.Top - $panePre.Top) -eq $oneLineH) "pane top moved down by the strip height ($($panePre.Top) -> $($paneRect.Top), strip $oneLineH)"
+        Assert (($paneRect.Top - $panePre.Top) -eq $oneLineBand) "pane top moved down by the band height ($($panePre.Top) -> $($paneRect.Top), band $oneLineBand)"
         Assert ($paneRect.Bottom -eq $panePre.Bottom) 'pane bottom unchanged (terminal shrank, not shifted)'
     } else { $script:fail += 2 }
 
@@ -494,7 +524,7 @@ try {
                 # (the corner is rounded, not square).
                 $bs = (Get-TestWindowDpi -Window ([IntPtr]$ov.Hwnd)) / 96.0
                 $bm = Get-TestChromeDip -Dip 12.0 -Scale $bs
-                $cy = $ov.Height - $bm - 1
+                $cy = $oneLineH - $bm - 1
                 $sumAt = { param($x, $y) $q = (Get-ShotPx $shot $x $y) -split ','; if ($q.Count -ne 3) { -1 } else { [int]$q[0] + [int]$q[1] + [int]$q[2] } }
                 $inSum = & $sumAt ($bm + 3) ($cy - 3)
                 $tipSum = & $sumAt $bm $cy
@@ -515,7 +545,7 @@ try {
     Assert ($b -ceq "line1`nline2`nline3") 'multi-line: +list carries real newlines'
     $ov3 = Get-Overlay $appPid $top
     $threeLineH = 0
-    if ($ov3) { $threeLineH = $ov3.Height }
+    if ($ov3) { $threeLineH = Get-StripNatural $ov3 }
     Assert ($threeLineH -gt $oneLineH + 10) "3-line strip taller than 1-line ($oneLineH -> $threeLineH px)"
 
     # 12 source lines must clamp to 10 display lines: between 9 and 10 lines'
@@ -524,7 +554,8 @@ try {
     Start-Sleep -Milliseconds 800
     $ovCap = Get-Overlay $appPid $top
     $capH = 0
-    if ($ovCap) { $capH = $ovCap.Height }
+    $capBand = 0
+    if ($ovCap) { $capH = Get-StripNatural $ovCap; $capBand = $ovCap.Height }
     $twoLines = $threeLineH - $oneLineH
     Assert ($capH -gt ($oneLineH + 4 * $twoLines) -and $capH -le ($oneLineH + 4.5 * $twoLines + 8)) "12-line source capped at 10 display lines ($capH px)"
 
@@ -538,7 +569,7 @@ try {
     Assert ((@(Get-TestWindows -ProcessId $appPid -Class 'GhozttyBannerOverlay')).Count -eq 0) '--clear: no overlay windows remain on the glass'
     # T101: the vacated strip band went back to the terminal.
     $paneCleared = Get-Pane $top 0
-    Assert (($paneWithCap.Top - $paneCleared.Top) -eq $capH) "--clear: grid grew back by the strip height ($capH px)"
+    Assert (($paneWithCap.Top - $paneCleared.Top) -eq $capBand) "--clear: grid grew back by the band height ($capBand px)"
 
     # --- 6. empty text equals clear; clearing when clear succeeds -------------
     & $exe +set-banner --target=bw "again" | Out-Null
@@ -554,7 +585,7 @@ try {
     $null = Wait-Banner 'bw' 0 '# Big title'
     $ovHead = Get-Overlay $appPid $top
     $headH = 0
-    if ($ovHead) { $headH = $ovHead.Height }
+    if ($ovHead) { $headH = Get-StripNatural $ovHead }
     Assert ($headH -gt ($oneLineH + 4)) "h1 heading strip taller than plain line ($oneLineH -> $headH px)"
 
     # --- 6c. T91: --- thematic break renders as a thin rule row ----------------
@@ -564,7 +595,7 @@ try {
     $null = Wait-Banner 'bw' 0 "top`n---`nbottom"
     $ovR = Get-Overlay $appPid $top
     $hrH = 0
-    if ($ovR) { $hrH = $ovR.Height }
+    if ($ovR) { $hrH = Get-StripNatural $ovR }
     $twoLineH = $oneLineH + [int]($twoLines / 2)
     Assert ($hrH -gt $twoLineH -and $hrH -lt $threeLineH) "hr row is thinner than a text row ($twoLineH < $hrH < $threeLineH)"
 
@@ -1042,6 +1073,82 @@ try {
 
     & $exe +set-banner --target=bw --clear | Out-Null
     $null = Wait-Banner 'bw' 0 'NONE'
+
+    # --- 6f4. T2707: the pane's LAST row holds still as the banner toggles ----
+    #
+    # Mac db09fe480 (`theLastRowRestsWhereItWas`). The grid fills from the top,
+    # so a band above the terminal that took PART of a row moved the last row:
+    # a prompt or an agent's input box resting on the pane's bottom line sat a
+    # few px lower or higher with every banner height. The band is now a whole
+    # number of rows, so the last row ends at the same screen y with no
+    # banner, expanded, collapsed and expanded again - to the pixel.
+    #
+    # Read from the app's own debug oracle (`pane grid last row hwnd= bottom=`,
+    # the last row's bottom in the pane window's client px, logged on every
+    # grid resize) plus the pane window's screen top: the terminal's pixels
+    # are the OpenGL surface, which a capture on this desktop cannot read.
+    function Get-LastRowY([IntPtr]$paneHwnd, [int]$paneTop) {
+        $want = [int64]$paneHwnd
+        $hit = $null
+        foreach ($l in @(Get-Content $errlog -ErrorAction SilentlyContinue)) {
+            if ($l -match 'pane grid last row hwnd=(\d+) bottom=(\d+)' -and [int64]$Matches[1] -eq $want) {
+                $hit = [int]$Matches[2]
+            }
+        }
+        if ($null -eq $hit) { return $null }
+        return $paneTop + $hit
+    }
+    Start-Sleep -Milliseconds 500
+    $p0 = Get-Pane $top 0
+    $plainY = if ($p0) { Get-LastRowY ([IntPtr]$p0.Hwnd) $p0.Top } else { $null }
+    if ($null -eq $plainY) {
+        Note-Skip 'T2707: no `"pane grid last row`" oracle in the log (release build?)'
+    } else {
+        Write-Host "INFO  T2707 plain: last row ends at y=$plainY"
+        $t2707 = @(
+            "## Collapse me\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |",
+            "## A longer one\n| **Goal** | one |\n|---|---|\n| **Status** | two |\n| **Prompt** | three |\n| **Last** | four |",
+            "just a line\nand a second"
+        )
+        $n = 0
+        foreach ($text in $t2707) {
+            $n++
+            # argv-audit: $text is one of the three literal markdown banners in $t2707 above (no quotes, no spaces at the ends).
+            & $exe +set-banner --target=bw $text | Out-Null
+            Start-Sleep -Milliseconds 800
+            $ovT = Get-Overlay $appPid $top
+            $pE = Get-Pane $top 0
+            if (-not $ovT -or -not $pE) { Assert $false "T2707 banner $n : overlay or pane missing"; continue }
+            $expY = Get-LastRowY ([IntPtr]$pE.Hwnd) $pE.Top
+            $band = $pE.Top - $p0.Top
+            # Collapse: click the card's first line (clear of the chevron column).
+            Send-TestMouse -Window $top -Target ([IntPtr]$ovT.Hwnd) `
+                -X ($ovT.Left + [int]($ovT.Width / 2)) -Y ($ovT.Top + [int]($oneLineH / 2)) | Out-Null
+            Start-Sleep -Milliseconds 800
+            $pC = Get-Pane $top 0
+            $colY = if ($pC) { Get-LastRowY ([IntPtr]$pC.Hwnd) $pC.Top } else { $null }
+            $bandC = if ($pC) { $pC.Top - $p0.Top } else { $null }
+            $ovC = Get-Overlay $appPid $top
+            if ($ovC) {
+                Send-TestMouse -Window $top -Target ([IntPtr]$ovC.Hwnd) `
+                    -X ($ovC.Left + [int]($ovC.Width / 2)) -Y ($ovC.Top + [int]($oneLineH / 2)) | Out-Null
+            }
+            Start-Sleep -Milliseconds 800
+            $pA = Get-Pane $top 0
+            $againY = if ($pA) { Get-LastRowY ([IntPtr]$pA.Hwnd) $pA.Top } else { $null }
+            Write-Host "INFO  T2707 banner $n : band expanded=$band collapsed=$bandC; last row expanded=$expY collapsed=$colY again=$againY (plain $plainY)"
+            Assert ($bandC -lt $band) "T2707 banner $n : the click really collapsed it (band $band -> $bandC)"
+            Assert ($expY -eq $plainY) "T2707 banner $n expanded: the last row ends where it does with no banner ($expY vs $plainY)"
+            Assert ($colY -eq $plainY) "T2707 banner $n collapsed: the last row ends where it does with no banner ($colY vs $plainY)"
+            Assert ($againY -eq $plainY) "T2707 banner $n expanded again: the last row ends where it does with no banner ($againY vs $plainY)"
+        }
+        & $exe +set-banner --target=bw --clear | Out-Null
+        $null = Wait-Banner 'bw' 0 'NONE'
+        Start-Sleep -Milliseconds 500
+        $pX = Get-Pane $top 0
+        $clearY = if ($pX) { Get-LastRowY ([IntPtr]$pX.Hwnd) $pX.Top } else { $null }
+        Assert ($clearY -eq $plainY) "T2707 cleared: the last row is back where it was ($clearY vs $plainY)"
+    }
 
     # --- 6g. T123: table columns size to the PANE, not a fixed 360pt cap -------
     # The banner used to size every table column at min(natural, 360px), so a

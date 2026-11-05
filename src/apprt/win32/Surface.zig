@@ -2183,7 +2183,8 @@ pub fn bannerLayoutInset(self: *Surface, slot_w: i32, slot_h: i32) i32 {
         self.setGridBand(0);
         return 0;
     };
-    const inset = banner_layout.clampInset(overlay.insetHeight(self.scale, slot_w), slot_h);
+    // On whole grid rows (T2707), so the pane's last row holds still.
+    const inset = overlay.reservedInset(self.scale, slot_w, slot_h);
     overlay.inset = inset;
     self.setGridBand(banner_layout.gridBand(inset, self.spans_banner_band));
     return inset;
@@ -4806,6 +4807,21 @@ pub fn applyResize(self: *Surface, width: u32, client_height: u32) void {
         self.core_surface.flushResize();
     }
     if (size_timer) |*t| self.parent_window.addResizeUs(t.read() / std.time.ns_per_us);
+    // banner-row-align.ps1's oracle (T2707): where the grid's last row ends,
+    // in this window's client px. The harness adds the window's screen top, so
+    // a banner that moved the last row reads as a different number.
+    {
+        const sz = self.core_surface.size;
+        const rows = sz.grid().rows;
+        log.debug("pane grid last row hwnd={d} bottom={d} band={d} pad_top={d} rows={d} cell_h={d}", .{
+            if (self.hwnd) |h| @intFromPtr(h) else 0,
+            band + sz.padding.top + @as(u32, rows) * sz.cell.height,
+            band,
+            sz.padding.top,
+            rows,
+            sz.cell.height,
+        });
+    }
 
     // During a resize the user is watching, block until the renderer has
     // presented one frame at the new size. This prevents the DWM from

@@ -71,6 +71,35 @@ pub fn clampInset(strip_h: i32, slot_h: i32) i32 {
     return @min(strip_h, @divTrunc(slot_h * 3, 4));
 }
 
+/// The band reserved above a pane's terminal for a strip `strip_h` px tall
+/// whose grid rows are `cell_h` px (T2707, Mac `rowAligned` db09fe480): the
+/// terminal starts on a WHOLE row under the card, never part of one. The grid
+/// fills from the top, so a band that took part of a row moved the last row,
+/// and text resting on the pane's bottom line (a prompt, an agent's input box)
+/// sat a few px lower or higher with every banner height. A band that is a
+/// whole number of rows leaves the last row exactly where it is with no banner.
+///
+/// Rounded UP, so the card is never cut; the extra (under one row) is pane
+/// background below the card. Clamped as `clampInset` does, rounded DOWN to a
+/// whole row inside that cap when one fits. `cell_h` <= 0 (no grid measured
+/// yet) leaves the plain clamp.
+pub fn reserveInset(strip_h: i32, slot_h: i32, cell_h: i32) i32 {
+    const plain = clampInset(strip_h, slot_h);
+    if (plain <= 0 or cell_h <= 0) return plain;
+    const aligned = rowAligned(strip_h, cell_h);
+    const cap = @divTrunc(slot_h * 3, 4);
+    if (aligned <= cap) return aligned;
+    const fit = @divTrunc(cap, cell_h) * cell_h;
+    return if (fit > 0) fit else plain;
+}
+
+/// `h` rounded up to a whole number of `cell_h` rows (T2707). `cell_h` <= 0
+/// or `h` <= 0 leaves `h`.
+pub fn rowAligned(h: i32, cell_h: i32) i32 {
+    if (h <= 0 or cell_h <= 0) return h;
+    return @divTrunc(h + cell_h - 1, cell_h) * cell_h;
+}
+
 /// How far the layout moves a pane's window down for a banner band `inset`
 /// px tall (T2566). The whole band, except when the window spans its slot
 /// and carves the band off its own top - the composition path, where the
@@ -936,6 +965,48 @@ test "clampInset: degenerate inputs" {
     try std.testing.expectEqual(@as(i32, 0), clampInset(-5, 400));
     try std.testing.expectEqual(@as(i32, 0), clampInset(31, 0));
     try std.testing.expectEqual(@as(i32, 0), clampInset(31, -10));
+}
+
+test "reserveInset: the band is a whole number of rows (T2707)" {
+    // 17px rows: a 58px strip takes 4 rows (68), never 3.4 of them.
+    try std.testing.expectEqual(@as(i32, 68), reserveInset(58, 800, 17));
+    // Already whole: unchanged.
+    try std.testing.expectEqual(@as(i32, 68), reserveInset(68, 800, 17));
+    // One px over a row boundary takes the next whole row.
+    try std.testing.expectEqual(@as(i32, 85), reserveInset(69, 800, 17));
+    // Never shorter than the strip: the card is not cut.
+    var h: i32 = 1;
+    while (h < 300) : (h += 1) {
+        const r = reserveInset(h, 2000, 19);
+        try std.testing.expect(r >= h and r - h < 19);
+        try std.testing.expectEqual(@as(i32, 0), @mod(r, 19));
+    }
+}
+
+test "reserveInset: the last row rests where it does with no banner (T2707)" {
+    // The grid fills from the top under the band; its last row's bottom is
+    // band + rows * cell. Whatever the strip height, that bottom must equal the
+    // no-banner one minus whole rows covered - i.e. the same pixel.
+    const slot: i32 = 613;
+    const cell: i32 = 17;
+    const plain_bottom = @divTrunc(slot, cell) * cell;
+    var strip: i32 = 1;
+    while (strip < 200) : (strip += 1) {
+        const band = reserveInset(strip, slot, cell);
+        const bottom = band + @divTrunc(slot - band, cell) * cell;
+        try std.testing.expectEqual(plain_bottom, bottom);
+    }
+}
+
+test "reserveInset: short pane keeps the cap, on a whole row when one fits" {
+    // Cap 75 (3/4 of 100): 4 rows of 17 = 68 fit.
+    try std.testing.expectEqual(@as(i32, 68), reserveInset(251, 100, 17));
+    // Cap 15 with 17px rows: no whole row fits, so the plain clamp stands.
+    try std.testing.expectEqual(@as(i32, 15), reserveInset(251, 20, 17));
+    // No grid measured yet: the plain clamp.
+    try std.testing.expectEqual(@as(i32, 58), reserveInset(58, 800, 0));
+    try std.testing.expectEqual(@as(i32, 0), reserveInset(0, 800, 17));
+    try std.testing.expectEqual(@as(i32, 0), reserveInset(58, 0, 17));
 }
 
 // T149: the collapse/expand animation's card height.
