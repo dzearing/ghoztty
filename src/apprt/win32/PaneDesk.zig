@@ -440,14 +440,21 @@ const Memo = struct {
         const glows_same = m.glows_len == style.glows.len and for (style.glows, m.glows[0..m.glows_len]) |a, b| {
             if (!std.meta.eql(a, b)) break false;
         } else true;
+        // A glow's level moves only the glow, which lies outside its card,
+        // and the card's rim, a pixel or two inside its edge (T2370): thin
+        // bands round the four edges and a square at each corner - not the
+        // whole card. The fade steps this every frame, and redoing the two
+        // cards whole cost ~4.4 ms of a 16 ms frame.
         if (!glows_same) {
+            // Re-laying a band re-lays everything in it, so it need reach
+            // only as far as the glow itself does.
+            const glow_reach = pane_elevation.glowReachPx(style.scale) + 1;
+            const rim_in = pane_elevation.rimInnerPx(style.scale) + 1;
             for (style.glows) |g| if (g.card < cards.len) {
-                const c = cards[g.card];
-                out.addAround(c.left, c.top, c.right, c.bottom, reach);
+                out.addGlowBands(cards[g.card], rim_in, ri + rim_in, glow_reach);
             };
             for (m.glows[0..m.glows_len]) |g| if (g.card < old.len) {
-                const c = old[g.card];
-                out.addAround(c.left, c.top, c.right, c.bottom, reach);
+                out.addGlowBands(old[g.card], rim_in, ri + rim_in, glow_reach);
             };
         }
         if (!std.meta.eql(m.bar, bar)) {
@@ -541,6 +548,34 @@ const Memo = struct {
                 return;
             }
             self.addEdges(.{ a.left, a.top, a.right, a.bottom }, .{ b.left, b.top, b.right, b.bottom }, a.shadow != b.shadow, inner, reach);
+        }
+
+        /// What a change of card `c`'s glow level changed (T2370): its glow,
+        /// up to `reach` outside its edges, and its rim - within `side` inside
+        /// a straight edge, and within `corner` (the radius and the rim) of
+        /// both edges round a corner's arc. Four thin bands and four corner
+        /// squares; on a card too small for them they overlap into the whole
+        /// card, which is still right.
+        fn addGlowBands(self: *Rects, c: pane_elevation.Card, side: i32, corner: i32, reach: i32) void {
+            if (c.right <= c.left or c.bottom <= c.top) return;
+            const l = c.left - reach;
+            const t = c.top - reach;
+            const rt = c.right + reach;
+            const bt = c.bottom + reach;
+            // Laid so no two overlap - each is composed whole, and the
+            // fade composes them every frame: the top and bottom bands full
+            // width, the sides between them, and each corner's square only
+            // where those leave it.
+            const it = c.top + side;
+            const ib = c.bottom - side;
+            self.add(l, t, rt, it);
+            self.add(l, ib, rt, bt);
+            self.add(l, it, c.left + side, ib);
+            self.add(c.right - side, it, rt, ib);
+            self.add(c.left + side, it, c.left + corner, c.top + corner);
+            self.add(c.right - corner, it, c.right - side, c.top + corner);
+            self.add(c.left + side, c.bottom - corner, c.left + corner, ib);
+            self.add(c.right - corner, c.bottom - corner, c.right - side, ib);
         }
 
         /// What strip `a` becoming `b` changed. A card gliding into its strip
@@ -965,6 +1000,19 @@ pub fn blitUnder(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, re
     var timer = std.time.Timer.start() catch null;
     for (rects) |r| {
         const c = clipTo(r, comp.w, comp.h) orelse continue;
+        // After a paint that put up only what changed, only that has changed
+        // under the panes either (T2370): a glow's fade moves thin bands
+        // round two cards, not the desk under every pane.
+        if (self.last_blit) |shown| {
+            for (shown.slice()) |s| {
+                const l = @max(c.left, s.left);
+                const t = @max(c.top, s.top);
+                const rt = @min(c.right, s.right);
+                const b = @min(c.bottom, s.bottom);
+                if (rt > l and b > t) _ = w32.BitBlt(hdc, origin_x + l, origin_y + t, rt - l, b - t, comp.dc, l, t, w32.SRCCOPY);
+            }
+            continue;
+        }
         _ = w32.BitBlt(hdc, origin_x + c.left, origin_y + c.top, c.right - c.left, c.bottom - c.top, comp.dc, c.left, c.top, w32.SRCCOPY);
     }
     if (timer) |*t| self.blit_ns +|= t.read();
@@ -1716,7 +1764,7 @@ test "T2454: composing only the rectangle that changed paints exactly what a who
         .{ .name = "card slid whole", .slide = 17, .bands = true },
         .{ .name = "small card grows", .small = 6 },
         .{ .name = "page and shadow restyled", .recolor = true },
-        .{ .name = "focus fading over", .glow_moves = true },
+        .{ .name = "focus fading over", .glow_moves = true, .bands = true },
         .{ .name = "a strip gliding", .strip_moves = true },
         .{ .name = "a card gliding into its strip", .glides = true, .bands = true },
         .{ .name = "card off the left edge", .dx = -340 },
@@ -1778,6 +1826,9 @@ test "T2454: composing only the rectangle that changed paints exactly what a who
                 // Edge bands alone: a quarter of the window at most, where
                 // the two whole cards they edge would be most of it.
                 if (cs.bands) try testing.expect(r.area() * 4 < @as(i64, w) * h);
+                // A glow's fade is thinner still (T2370): the glow and the
+                // rim, not the shadow's reach or the corner patch's depth.
+                if (cs.glow_moves) try testing.expect(r.area() * 6 < @as(i64, w) * h);
                 // Through a prepared patch, as the window composes: the same
                 // pixels as the whole compose that built its own.
                 var prep = pane_elevation.prepare(style1);

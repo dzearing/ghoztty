@@ -1,10 +1,11 @@
 {
     "guard":  "test-reach",
     "script":  "test/win32/test-reach-audit.ps1",
-    "generated":  "2026-11-05T08:36:59-08:00",
-    "commit":  "78b8216c1",
+    "generated":  "2026-11-05T09:07:21-08:00",
+    "commit":  "40cedaea1",
     "uncommitted":  [
-
+                        "src/apprt/win32/pane_elevation.zig",
+                        "src/apprt/win32/PaneDesk.zig"
                     ],
     "files":  {
                   "src/apprt/win32.zig":  "b70bda388915bb8a734d888f0c0aafa80e84aa370145cd15735beb03a8f2104e",
@@ -78,7 +79,6 @@
                   "src/apprt/win32/claude_plugin_migration.zig":  "09ae22a00d446fce29cf1b98c2bb30b97a90395bdb2f0869af8172ca9ee6e28d",
                   "src/apprt/win32/claude_setup.zig":  "7800892ae8d8afadd52d0574aaa86fb7e0d945b2824030c79661e3e5761fb47f",
                   "src/apprt/win32/ClaudeHookSpec.zig":  "6b1fd51e16dd79b3a3a30a296ba539cc2b9e9575b7043441ed302ff5e99ff86e",
-                  "src/apprt/win32/ClaudeKeybinding.zig":  "e3c946bd30e58bb6af2b587edcb63b3c9154c099b76c62ddd23d0e4a00a91015",
                   "src/apprt/win32/clipboard_image.zig":  "b90cac60d5eb7ce990cca439a2cf1dacd502895580fff337d6995b6736482e7d",
                   "src/apprt/win32/clipboard_open.zig":  "2c4245d76adba7068a5a1c6a498d32bbfe811d48b29446ef25091842d5d90b4d",
                   "src/apprt/win32/close_undo.zig":  "8316a81b0aeb43382d0f196c37933a101b1503bbe022c9a25b3e62937e221910",
@@ -191,7 +191,7 @@
                   "src/apprt/win32/pane_clip_math.zig":  "5edf5126af539d7593f26ba7946774538268c4a9df21b4305db5c5e5dee26453",
                   "src/apprt/win32/pane_drag_ghost.zig":  "76b8876884de6afdb26c2d0b2866d22480f70fe793ca02dac18ff4f3aeef63fc",
                   "src/apprt/win32/pane_drop.zig":  "e2f039adc38a63d8091531c2ad1f693df83f7191872b33019f77332c7a7a1c20",
-                  "src/apprt/win32/pane_elevation.zig":  "d9815f039395884ebeb993fb4f30434c0b99a6f19eb656113afe20c17e23f113",
+                  "src/apprt/win32/pane_elevation.zig":  "c317f282bf91b1f23de7917ffe561663f49117979c08400cd05eae2a426ba936",
                   "src/apprt/win32/pane_gap.zig":  "2863e80b271647f817383b8fd320d58612a17fcbce5d4b46fa7fe117e812c3e0",
                   "src/apprt/win32/pane_grab_handle.zig":  "c88d26a4c72cb14f51081890cb915598da1115058c14df06bd0707c8989e1f95",
                   "src/apprt/win32/pane_hue.zig":  "a9728a736592c2792ef3ccb3e6016b3101113454f68fc527f80568ed0a849e64",
@@ -225,7 +225,7 @@
                   "src/apprt/win32/pane_stack_state.zig":  "c15d1ccdc76fbfe92e93fb3602b93ddb062b4320a7748105d9896d2ef4404454",
                   "src/apprt/win32/pane_stack_strip.zig":  "da36ff7d695db742541d867c67bb20975e4a8b2590e68f3ed327a692cd5210d6",
                   "src/apprt/win32/pane_stash.zig":  "9630f313b9811db3497998a01772b4dce32497326ba99fdef7a2c883f48530cb",
-                  "src/apprt/win32/PaneDesk.zig":  "091454cf387d9ccad522c19609d73e74913491d87e285440485a388ee766a0ea",
+                  "src/apprt/win32/PaneDesk.zig":  "36079b57c7cffef8c9d89534eb2845ea02e5e7441d97b5926bad8e879ccb7dfd",
                   "src/apprt/win32/PaneDragGhost.zig":  "75cb6d32f4313912ab7ddcd73a624140ca91ae60ca583fccd5f5f1d69658fea2",
                   "src/apprt/win32/PaneGrabHandle.zig":  "959df18a9af052cb606f2e4b5d9e5aa196a1e5a83c53e238103bcb407907ab4e",
                   "src/apprt/win32/panel_theme.zig":  "caf0cd7e30f705d17e3590985e3fa51a7a3a32f90b619fd38e51b932a6c7a134",
@@ -265,7 +265,7 @@
                   "src/apprt/win32/RestoreAllRelay.zig":  "1c586753edacf6d67d171e6f49c8bd429241c3f5573a53d9533ecadafa39efd8",
                   "src/apprt/win32/runtime_agent.zig":  "e46e400be21297cd8c35bcdfde32e7f132d8b914ad1fe8be193b2d1424ceec25",
                   "src/apprt/win32/runtime_probe.zig":  "e9a8927087558063833d30e15d1cbd1b0f3648ead5f24a8616415e3b3efb6254",
-                  "src/apprt/win32/RuntimeIntegration.zig":  "a09010c06fee25dd7af7bc875ae9490b1c1d23e61c633e5ef93bd4c6bed0253d",
+                  "src/apprt/win32/RuntimeIntegration.zig":  "4ea491239e8e400dadd99f2d4c8341812b323a0fabee280dd377f8376b3546f3",
                   "src/apprt/win32/sample_gate.zig":  "5984ec3f9f607c5437c4c49cd5e26defda53e10205fa17e19f40d10d81fb1080",
                   "src/apprt/win32/screen_capture.zig":  "607dc7af49664c1d481275c89183a0a2a88ff1d5b84070afab7339bcf6b05d62",
                   "src/apprt/win32/Scrollbar.zig":  "efd960a129ead4dbdc6d7e4671694c4a308596732b7d34f578f18026a58a9824",

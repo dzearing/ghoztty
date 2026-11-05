@@ -314,6 +314,13 @@ pub fn edgeInnerPx(scale: f32) i32 {
     return radiusPx(scale) + dy + 3;
 }
 
+/// How far inside a card's edge its rim can sit (T2370): the antialiased
+/// band `paintCards` lays it in. Round a corner it follows the arc, so it is
+/// this far inside the arc, which is within `radiusPx` of both edges.
+pub fn rimInnerPx(scale: f32) i32 {
+    return @as(i32, @intFromFloat(@ceil(RIM_DIP * scale))) + 1;
+}
+
 /// How far past the card a shadow layer can still be seen.
 pub fn shadowReachPx(scale: f32) i32 {
     const s = shadows(false, scale)[1];
@@ -1314,6 +1321,11 @@ pub const Prepared = struct {
     is_light: bool,
     glass: bool,
     patch: ?ShadowPatch,
+    /// The default sheet's table over `sheet_fill` (T2370), on glass: every
+    /// pane's sheet is that one since T2281, and a partial compose paints a
+    /// card into a dozen bands a frame, each of which would build it again.
+    sheet_lut: ?GlassLut = null,
+    sheet_fill: color_math.Rgb = .{ .r = 0, .g = 0, .b = 0 },
 
     /// Whether this was prepared for `style`.
     pub fn fits(self: *const Prepared, style: CardStyle) bool {
@@ -1337,7 +1349,20 @@ pub fn prepare(style: CardStyle) Prepared {
     const glass_layer = [1]Shadow{glassShadow(style.is_light, style.scale)};
     const layers: []const Shadow = if (style.glass) &glass_layer else &solid_layers;
     p.patch = ShadowPatch.init(p.arena.allocator(), @floatFromInt(radiusPx(style.scale)), radiusPx(style.scale), shadowReachPx(style.scale), layers, style.glass) catch null;
+    if (style.glass) {
+        p.sheet_lut = GlassLut.initSheet(style.fill, .{});
+        p.sheet_fill = style.fill;
+    }
     return p;
+}
+
+/// The glass table for a card's `sheet` over `fill`: `pre`'s when it was built
+/// for exactly that, else built now.
+fn sheetLut(pre: ?*const Prepared, fill: color_math.Rgb, sheet: Sheet) GlassLut {
+    if (pre) |p| if (p.sheet_lut) |l| {
+        if (std.meta.eql(p.sheet_fill, fill) and std.meta.eql(sheet, Sheet{})) return l;
+    };
+    return GlassLut.initSheet(fill, sheet);
 }
 
 /// `paintCards` with what `prepare` built for `style`, or without it (null,
@@ -1367,16 +1392,19 @@ pub fn paintCardsWith(buf: []u32, w: usize, h: usize, cards: []const Card, style
     for (cards, 0..) |c, ci| {
         const f = Frame.of(c, radius);
         const focus = focusOf(style, ci);
-        // This card's own sheet (T2086); the default one is the common case.
-        const lut: ?GlassLut = if (style.glass) GlassLut.initSheet(style.fill, c.sheet) else null;
         const y0: i32 = @max(c.top, 0);
         const y1: i32 = @min(c.bottom, hi);
         const x0: i32 = @max(c.left, 0);
         const x1: i32 = @min(c.right, wi);
         // A card wholly off the buffer, or one with no width - a transient
         // layout mid-split - has nothing to fill, and the interior clamp
-        // below needs x0 <= x1 (T1912).
+        // below needs x0 <= x1 (T1912). Asked before the tables below are
+        // built (T2370): a partial compose paints every card into each of a
+        // dozen thin bands, most of which miss most cards, and the tables
+        // are the cost of such a call.
         if (x1 <= x0 or y1 <= y0) continue;
+        // This card's own sheet (T2086); the default one is the common case.
+        const lut: ?GlassLut = if (style.glass) sheetLut(pre, style.fill, c.sheet) else null;
         // A glass head band's material, over the sheet (T1884).
         const head_cover = headCover(c.sheet.t);
         const head_lut: ?GlassLut = if (style.glass and c.head_glass and c.head != null)
