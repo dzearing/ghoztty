@@ -353,14 +353,68 @@ fn threeStopAlphaLanes(t: RowV, mid: f32) RowV {
 
 fn packLanes(c: RgbV) @Vector(row_lanes, u32) {
     const U = @Vector(row_lanes, u32);
-    const r: U = @intFromFloat(chanLanes(c.r));
-    const g: U = @intFromFloat(chanLanes(c.g));
-    const b: U = @intFromFloat(chanLanes(c.b));
+    const r: U = @bitCast(chanLanes(c.r));
+    const g: U = @bitCast(chanLanes(c.g));
+    const b: U = @bitCast(chanLanes(c.b));
     return (r << @splat(16)) | (g << @splat(8)) | b;
 }
 
-fn chanLanes(v: RowV) RowV {
-    return @max(@as(RowV, @splat(0)), @min(@round(v), @as(RowV, @splat(255))));
+const RowI = @Vector(row_lanes, i32);
+
+/// `clamp(@round(v), 0, 255)` per lane, in operations the shipped x86-64
+/// baseline has (T2695). The release builds target plain x86-64 - SSE2, no
+/// SSE4.1 - where a vector `@round` and a float-to-unsigned convert are
+/// emulated lane by lane, and that alone was ~60% of `atRow` there: a viewer's
+/// glass sheet, laid under its whole client on every resize step, cost ~3 ms
+/// of a step in a release build. Clamping first is the same answer, because
+/// `@round` is monotone and fixes 0 and 255; on [0, 255] truncation is a
+/// signed convert, the fraction it leaves is exact, and rounding half away
+/// from zero is "up when that fraction is at least a half" - the same bits as
+/// `@round` (T2695's tests, and an exhaustive sweep of every f32 in range).
+fn chanLanes(v: RowV) RowI {
+    const c = @max(@as(RowV, @splat(0)), @min(v, @as(RowV, @splat(255))));
+    const t: RowI = @intFromFloat(c);
+    const frac = c - @as(RowV, @floatFromInt(t));
+    return t + @select(i32, frac >= @as(RowV, @splat(0.5)), @as(RowI, @splat(1)), @as(RowI, @splat(0)));
+}
+
+/// What `chanLanes` replaced, one value at a time: the reference its tests
+/// hold it to.
+fn chanScalar(v: f32) i32 {
+    return @intFromFloat(@max(0, @min(@round(v), 255)));
+}
+
+test "T2695: chanLanes is clamp(@round) at every halfway point and its neighbours" {
+    var k: i32 = -3;
+    while (k <= 258) : (k += 1) {
+        const mid: f32 = @as(f32, @floatFromInt(k)) + 0.5;
+        const bits: i32 = @bitCast(mid);
+        var d: i32 = -6;
+        while (d <= 6) : (d += 1) {
+            var vals: RowV = undefined;
+            inline for (0..row_lanes) |i| vals[i] = @bitCast(bits + d * @as(i32, row_lanes) + @as(i32, i));
+            const got = chanLanes(vals);
+            inline for (0..row_lanes) |i| try std.testing.expectEqual(chanScalar(vals[i]), got[i]);
+        }
+    }
+    // Both ends, the values just under a half that `x + 0.5` would round up,
+    // and what is outside the range altogether.
+    const odd = [_]f32{ 0, -0.0, 0.49999997, 0.5, 254.49998, 254.5, 255, 255.49998, 255.5, 1e9, -1e9, std.math.floatMin(f32), -0.5, -0.49999997 };
+    for (odd) |x| {
+        const got = chanLanes(@splat(x));
+        try std.testing.expectEqual(chanScalar(x), got[0]);
+    }
+}
+
+test "T2695: chanLanes is clamp(@round) over a random sweep" {
+    var prng = std.Random.DefaultPrng.init(0x2695);
+    const r = prng.random();
+    for (0..20000) |_| {
+        var vals: RowV = undefined;
+        inline for (0..row_lanes) |i| vals[i] = r.float(f32) * 280 - 12;
+        const got = chanLanes(vals);
+        inline for (0..row_lanes) |i| try std.testing.expectEqual(chanScalar(vals[i]), got[i]);
+    }
 }
 
 /// Where (x, y) projects onto the gradient line from (sx, sy) to (ex, ey),

@@ -173,11 +173,12 @@ select_on_up: bool = false,
 /// pane's monitor changes.
 scale: f32 = 0,
 font: ?*anyopaque = null, // HFONT (CreateFontW's own return shape)
-/// The glass band's pixels (T2521), kept across paints and only ever grown.
-/// A divider or window-edge drag repaints the bar at a new width on every
-/// step, so the band is blitted from memory rather than from a DIB section
-/// made and destroyed per paint.
-glass_px: std.ArrayListUnmanaged(u32) = .empty,
+/// The glass band's pixels (T2521), kept across paints. A divider or
+/// window-edge drag repaints the bar at a new width on every step, so the
+/// band is blitted from memory rather than from a DIB section made and
+/// destroyed per paint - and since T2695 a repaint with nothing under the bar
+/// moved (hover, press, an address change) reuses them without rendering.
+glass: pane_elevation.GlassHeadCache = .{},
 edit_brush: ?w32.HBRUSH = null,
 
 /// Whether the address field is a live window on screen (T2538). Only while it
@@ -343,7 +344,7 @@ pub fn destroy(self: *ViewerNavBar) void {
     if (self.font) |f| _ = w32.DeleteObject(@ptrCast(f));
     if (self.edit_brush) |b| _ = w32.DeleteObject(@ptrCast(b));
     self.freeCache();
-    self.glass_px.deinit(self.alloc);
+    self.glass.deinit(self.alloc);
     self.alloc.destroy(self);
 }
 
@@ -1323,10 +1324,8 @@ fn overField(self: *ViewerNavBar, x: i32, y: i32) bool {
 fn paintGlass(self: *ViewerNavBar, hdc: w32.HDC, width: i32, height: i32) bool {
     const g = self.pane.glass orelse return false;
     if (width <= 0 or height <= 0) return true;
-    const n: usize = @intCast(width * height);
-    self.glass_px.ensureTotalCapacity(self.alloc, n) catch return false;
-    const px = self.glass_px.allocatedSlice()[0..n];
-    pane_elevation.glassHeadRegion(px, @intCast(width), @intCast(height), g.rect[0], g.rect[1], g.full_w, g.full_h, g.palette, self.pane.bg, self.bar_rgb, g.sheet);
+    // Rendered only when the size, the slice or a colour moved (T2695).
+    const px = self.glass.render(self.alloc, @intCast(width), @intCast(height), g, self.pane.bg, self.bar_rgb) orelse return false;
     const bmi = w32.BITMAPINFO{ .bmiHeader = .{
         .biWidth = width,
         .biHeight = -height,

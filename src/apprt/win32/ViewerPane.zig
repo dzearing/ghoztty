@@ -7053,12 +7053,28 @@ pub fn paint(self: *ViewerPane, hdc: w32.HDC, width: i32, height: i32) void {
 fn paintGlass(self: *const ViewerPane, hdc: w32.HDC, width: i32, height: i32) bool {
     const g = self.glass orelse return false;
     if (width <= 0 or height <= 0) return true;
+    const t0 = std.time.Instant.now() catch null;
+    defer {
+        glass_cost.paints +|= 1;
+        glass_cost.pixels +|= @intCast(width * height);
+        glass_cost.ns +|= sinceNs(t0);
+    }
     const dib = Dib32.create(hdc, width, height) orelse return false;
     defer dib.destroy();
     pane_elevation.glassSheetRegion(dib.pixels, @intCast(width), @intCast(height), g.rect[0], g.rect[1], g.full_w, g.full_h, g.palette, self.bg, g.sheet);
     _ = w32.BitBlt(hdc, 0, 0, width, height, dib.dc, 0, 0, w32.SRCCOPY);
     return true;
 }
+
+/// What the hosts' glass sheets cost (T2695), summed until the window reads
+/// it into `GHOZTTY_RESIZE_TRACE`'s `burst-nav` line: on glass a viewer
+/// host lays the sheet under its whole client on every paint.
+pub const GlassCost = struct {
+    paints: u32 = 0,
+    pixels: u64 = 0,
+    ns: u64 = 0,
+};
+pub var glass_cost: GlassCost = .{};
 
 /// Lay the sheet UNDER the web view too (T1885). A transparent WebView2
 /// shows the host window's own pixels beneath it, and `WS_CLIPCHILDREN`

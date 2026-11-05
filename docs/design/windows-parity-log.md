@@ -38108,3 +38108,9 @@ moved to T1814.
 
 - The T2683 turn left a fix to the `--op=click` seam uncommitted: `clickHit` pressed each hit at its rect's centre, and the new Appearance preview pushed the theme grid's All tile half out of view, so the centre missed and settings-window K went red. `reachablePoint` now samples inside the rect for a point `hitAt` maps back to the same hit. No app defect: a real pointer only ever presses the visible half.
   - Validation: settings-window ALL PASS (164), settings-advanced ALL PASS (51), floor lib/none/win32/agent PASS on the build merged with lane A's T2684.
+
+## 2026-11-04 - T2695: the glass desk is 2.5x cheaper on the shipped CPU, and the bar keeps its glass (lane b)
+
+- The task's premise was wrong. The viewer's address bar paints in the layout pass (~0.5 ms Debug) and nothing at burst time. T2666's "bar paint 3.4 ms" was the window's own RedrawWindow, most of it the viewer host's whole-pane glass sheet (3.77 ms Debug, 419k px). That is filed as T2702 and made a dep of T2666.
+- Landed: `desk_palette.chanLanes` rounds with SSE2-only operations, bit-identical to `@round` (an exhaustive f32 sweep found 0 mismatches). A vector `@round` is emulated on the x86-64 baseline the release builds target, and it was ~60% of `atRow`. Head band 494 -> 201 us ReleaseFast baseline; viewer sheet 1.46 ms a burst step in the release sandbox. Added `pane_elevation.GlassHeadCache`, so a bar repaint with nothing under it moved renders no glass. Added burst-nav/burst-sheet trace lines.
+  - Validation: unit tests (cache, chanLanes x2), floor lib/none/win32/agent PASS, due sweep 36 green + 9 pre-existing filed reds guard-acked (T2380, T2438, T2688, T2501, T2431, T2611, T2692, T2665, T2690), edge-drag-rate -Burst Debug + release sandbox measured (step-cost rows still red, row3 included).

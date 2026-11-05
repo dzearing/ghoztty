@@ -537,6 +537,55 @@ pub fn glassHeadRegion(
     for (out[0 .. w * h]) |*p| p.* = lut.mix(p.*);
 }
 
+/// A head band's `glassHeadRegion` pixels, kept with what they were rendered
+/// from (T2695). A viewer's nav bar repaints for hover, press, focus and
+/// address changes with nothing under it moved, and each of those used to
+/// render the whole band's glass again; at an unchanged size, slice and
+/// colour the kept pixels ARE the answer. Any change to an input renders
+/// afresh, so the pixels are always exactly `glassHeadRegion`'s.
+pub const GlassHeadCache = struct {
+    px: std.ArrayListUnmanaged(u32) = .empty,
+    key: ?Key = null,
+
+    pub const Key = struct {
+        w: usize,
+        h: usize,
+        backdrop: GlassBackdrop,
+        fill: color_math.Rgb,
+        head: color_math.Rgb,
+    };
+
+    pub fn deinit(self: *GlassHeadCache, alloc: std.mem.Allocator) void {
+        self.px.deinit(alloc);
+        self.* = .{};
+    }
+
+    /// The band at (`backdrop.rect` top-left), `w` x `h`, rendering only when
+    /// an input differs from the last render. Null when no buffer could be
+    /// made; the slice lives until the next call.
+    pub fn render(
+        self: *GlassHeadCache,
+        alloc: std.mem.Allocator,
+        w: usize,
+        h: usize,
+        backdrop: GlassBackdrop,
+        fill: color_math.Rgb,
+        head: color_math.Rgb,
+    ) ?[]const u32 {
+        const n = w * h;
+        const key: Key = .{ .w = w, .h = h, .backdrop = backdrop, .fill = fill, .head = head };
+        if (self.key) |k| {
+            if (std.meta.eql(k, key)) return self.px.items[0..n];
+        }
+        self.key = null;
+        self.px.resize(alloc, n) catch return null;
+        const g = backdrop;
+        glassHeadRegion(self.px.items, w, h, g.rect[0], g.rect[1], g.full_w, g.full_h, g.palette, fill, head, g.sheet);
+        self.key = key;
+        return self.px.items;
+    }
+};
+
 /// `glassMix` at `t` for one tint, and the coverage a sheet leaves, as byte
 /// tables (T1856): the sheet covers every pixel of a glass card's interior,
 /// and a table lookup per channel is the same answer as the mix.
@@ -1755,6 +1804,51 @@ test "T1916: glassHeadRegion is the head material over the sheet at those pixels
     glassHeadRegion(&far, 1, 1, 700, 500, 800, 600, pal, fill, head, .{});
     try testing.expect(far[0] != out[0]);
     try testing.expect(out[0] != packRgb(44, 46, 52));
+}
+
+test "T2695: GlassHeadCache is glassHeadRegion, and renders only when an input changed" {
+    const alloc = testing.allocator;
+    var cache: GlassHeadCache = .{};
+    defer cache.deinit(alloc);
+    const base: GlassBackdrop = .{ .rect = .{ 100, 40, 160, 50 }, .full_w = 800, .full_h = 600, .palette = desk_palette.Palette.ocean(false) };
+    const fill: color_math.Rgb = .{ .r = 30, .g = 30, .b = 30 };
+    const head: color_math.Rgb = .{ .r = 44, .g = 46, .b = 52 };
+
+    const Case = struct { w: usize, h: usize, b: GlassBackdrop, fill: color_math.Rgb, head: color_math.Rgb };
+    var moved = base;
+    moved.rect[0] = 101;
+    var wider = base;
+    wider.full_w = 810;
+    var lit = base;
+    lit.palette = desk_palette.Palette.ocean(true);
+    var thin = base;
+    thin.sheet = .{ .t = 0.2 };
+    // Each case changes one input from the one before it.
+    const cases = [_]Case{
+        .{ .w = 60, .h = 10, .b = base, .fill = fill, .head = head },
+        .{ .w = 61, .h = 10, .b = base, .fill = fill, .head = head },
+        .{ .w = 61, .h = 9, .b = base, .fill = fill, .head = head },
+        .{ .w = 61, .h = 9, .b = moved, .fill = fill, .head = head },
+        .{ .w = 61, .h = 9, .b = wider, .fill = fill, .head = head },
+        .{ .w = 61, .h = 9, .b = lit, .fill = fill, .head = head },
+        .{ .w = 61, .h = 9, .b = thin, .fill = fill, .head = head },
+        .{ .w = 61, .h = 9, .b = thin, .fill = .{ .r = 31, .g = 30, .b = 30 }, .head = head },
+        .{ .w = 61, .h = 9, .b = thin, .fill = fill, .head = .{ .r = 44, .g = 46, .b = 53 } },
+    };
+    var want: [61 * 10]u32 = undefined;
+    for (cases) |c| {
+        const got = cache.render(alloc, c.w, c.h, c.b, c.fill, c.head).?;
+        const g = c.b;
+        glassHeadRegion(want[0 .. c.w * c.h], c.w, c.h, g.rect[0], g.rect[1], g.full_w, g.full_h, g.palette, c.fill, c.head, g.sheet);
+        try testing.expectEqualSlices(u32, want[0 .. c.w * c.h], got);
+
+        // The same inputs again are the kept pixels, not a second render:
+        // a mark left in the buffer survives the call.
+        cache.px.items[0] ^= 0xFF;
+        const again = cache.render(alloc, c.w, c.h, c.b, c.fill, c.head).?;
+        try testing.expectEqual(want[0] ^ 0xFF, again[0]);
+        cache.px.items[0] ^= 0xFF;
+    }
 }
 
 test "T1833: glassMix keeps 40% of the tint over the desk, in linear light" {

@@ -16916,13 +16916,34 @@ fn releaseBurst(self: *Window, hwnd: w32.HWND) void {
     // The window's own invalid area, then each viewer's bar - by name, not
     // `RDW_ALLCHILDREN`: that walks into the WebView2 host's cross-process
     // children and cost ~7 ms a step in the off-desktop viewer drag.
+    const sheet_before = ViewerPane.glass_cost;
     _ = w32.RedrawWindow(hwnd, null, null, w32.RDW_UPDATENOW);
+    resizeTrace("burst-window-painted", hwnd);
+    if (resizeTraceOn()) {
+        const sheet_after = ViewerPane.glass_cost;
+        log.info("resize trace burst-sheet paints={d} px={d} us={d}", .{
+            sheet_after.paints -| sheet_before.paints,
+            sheet_after.pixels -| sheet_before.pixels,
+            (sheet_after.ns -| sheet_before.ns) / 1000,
+        });
+    }
+    // The bars' share of this paint, split (T2695): the pass's own
+    // `resize trace viewer` line was logged before this paint ran.
+    const nav_before = ViewerNavBar.place_cost;
     if (self.tab_count > 0) {
         var it = self.tab_trees[self.active_tab].iterator();
         while (it.next()) |entry| {
             const v = entry.view.viewer() orelse continue;
             if (v.nav) |nav| _ = w32.UpdateWindow(nav.hwnd);
         }
+    }
+    if (resizeTraceOn()) {
+        const nav_after = ViewerNavBar.place_cost;
+        log.info("resize trace burst-nav paints={d} glass_us={d} rest_us={d}", .{
+            nav_after.paints -| nav_before.paints,
+            (nav_after.glass_ns -| nav_before.glass_ns) / 1000,
+            (nav_after.buttons_ns -| nav_before.buttons_ns) / 1000,
+        });
     }
     var seqs: [MAX_FRAME_WAITS]u32 = undefined;
     for (self.burst_panes[0..n], 0..) |s, i| seqs[i] = s.swap_seq.load(.acquire);
