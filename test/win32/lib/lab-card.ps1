@@ -4,7 +4,8 @@
 # and redraws it the moment that size changes - so during a drag the pane
 # always holds the card for its CURRENT grid, and any frame that shows a card
 # of the wrong size is the app's doing, not the fixture's. -Busy also redraws
-# every tick with changing text, so the renderer has work while it resizes.
+# every tick with changing text, so the renderer has work while it resizes;
+# -Ink draws that text in the ring colour (T2388), so it is visible.
 #
 # -Out (optional): after every redraw at a new size, the file holds one line
 #
@@ -19,6 +20,7 @@ param(
     [Parameter(Mandatory = $true)][ValidateRange(1, 9)][int]$Index,
     [int]$Scale = 2,
     [switch]$Busy,
+    [switch]$Ink,
     [ValidateRange(1, 1000)][int]$Hz = 120,
     [string]$Out
 )
@@ -46,7 +48,7 @@ while ($true) {
     $key = "$w $h"
     $resized = $key -ne $last
     if (($resized -or $Busy) -and $w -ge 3 -and $h -ge 3) {
-        Write-Raw (Format-FrameLabCard -Cols $w -Rows $h -Index $Index -Scale $Scale -Busy:$Busy -Tick $tick)
+        Write-Raw (Format-FrameLabCard -Cols $w -Rows $h -Index $Index -Scale $Scale -Busy:$Busy -Tick $tick -Ink:$Ink)
         $redraws++
         $tick++
         if ($resized) {

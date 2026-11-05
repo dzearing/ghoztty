@@ -32,6 +32,12 @@
 # 14,000 pixels of honest text read as garbage. It stays a cell clear of the
 # ring on both sides all the same.
 #
+# -Ink draws that text in the RING colour instead: real, visible antialiased
+# text. Since T2388 the scorer accepts linear-light (and gamma 2.2) blends, and
+# frame-lab-card.ps1 section D proves it on an ink card photographed in the
+# real app - clean under the curves, B6 under the straight line alone. The lab
+# keeps the Bg-on-Bg default; -Ink exists to prove the scorer reads real text.
+#
 # THE CONTRACT WITH THE SCORER is New-FrameLabCardRegion: given where the pane
 # is in the frame, its grid and its cell size, it returns the FsRegion the
 # card's pixels must match. The layout rule (Get-FrameLabCardCell) is the same
@@ -151,7 +157,8 @@ function Format-FrameLabCard {
         [Parameter(Mandatory = $true)][ValidateRange(1, 9)][int]$Index,
         [int]$Scale = 2,
         [switch]$Busy,
-        [int]$Tick = 0
+        [int]$Tick = 0,
+        [switch]$Ink
     )
     $e = $script:FrameLabEsc
     $c = Get-FrameLabCardColors -Index $Index
@@ -160,7 +167,8 @@ function Format-FrameLabCard {
     $sgr = @{ R = (ConvertTo-FrameLabSgrBg $c.Ring); G = (ConvertTo-FrameLabSgrBg $c.Glyph); B = (ConvertTo-FrameLabSgrBg $c.Bg) }
     $busyRows = @{}
     if ($Busy -and $Cols -ge 6) { foreach ($r in (Get-FrameLabBusyRows -Rows $Rows -GlyphScale $scale)) { $busyRows[$r] = $true } }
-    $fgText = "$e[38;2;$(($c.Bg -shr 16) -band 255);$(($c.Bg -shr 8) -band 255);$($c.Bg -band 255)m"
+    $inkRgb = $(if ($Ink) { $c.Ring } else { $c.Bg })
+    $fgText = "$e[38;2;$(($inkRgb -shr 16) -band 255);$(($inkRgb -shr 8) -band 255);$($inkRgb -band 255)m"
     $text = 'lab busy 0123456789 abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ '
 
     $sb = New-Object System.Text.StringBuilder

@@ -82,19 +82,16 @@ function Get-ChanDist([int]$a, [int]$b) {
     return $d
 }
 
-# Closest approach (max-channel) of the segment a..b to colour p.
+# Closest approach (max-channel) of colour p to the blend of a and b, over
+# every curve the scorer accepts (sRGB line, linear light, gamma 2.2 - T2388):
+# the smallest tolerance at which FrameScore calls p a blend of a and b.
 function Get-SegmentDist([int]$a, [int]$b, [int]$p) {
-    $best = 999
-    for ($i = 0; $i -le 64; $i++) {
-        $t = $i / 64.0; $d = 0
-        foreach ($sh in 16, 8, 0) {
-            $ca = ($a -shr $sh) -band 255; $cb = ($b -shr $sh) -band 255; $cp = ($p -shr $sh) -band 255
-            $x = [math]::Abs($ca + ($cb - $ca) * $t - $cp)
-            if ($x -gt $d) { $d = $x }
-        }
-        if ($d -lt $best) { $best = $d }
+    $lo = 0; $hi = 255
+    while ($lo -lt $hi) {
+        $mid = [int][math]::Floor(($lo + $hi) / 2)
+        if ([GhozttyFrameScore]::OnBlendAny($p, $a, $b, $mid, [FsScene]::BlendAll)) { $hi = $mid } else { $lo = $mid + 1 }
     }
-    return $best
+    return $lo
 }
 
 # Play a VT string back into a grid of cells: bg colour, char, fg colour. Only
@@ -217,7 +214,7 @@ try {
             }
         }
     }
-    Assert 'A3 no antialiasing blend inside a card (its colours and the theme padding) passes within 48 of magenta' ($blend.Count -eq 0) ($blend -join '; ')
+    Assert 'A3 no antialiasing blend inside a card (its colours and the theme padding), on any curve the scorer accepts, passes within 48 of magenta' ($blend.Count -eq 0) ($blend -join '; ')
     $digits = @($script:FrameLabDigits.Keys | Where-Object {
             $m = $script:FrameLabDigits[$_]
             -not ($m.Count -eq 5 -and @($m | Where-Object { $_.Length -eq 3 }).Count -eq 5 -and
@@ -404,7 +401,7 @@ try {
 
     # Photograph a card and score it against the region its reported grid and
     # the measured cell size predict.
-    function Test-RealCard([string]$target, [string]$out, [int]$index, [string]$label) {
+    function Test-RealCard([string]$target, [string]$out, [int]$index, [string]$label, [string]$InkLabel) {
         $st = (Get-Content $out -Raw).Trim() -split ' '
         $cols = [int]$st[0]; $rows = [int]$st[1]
         $shot = $null
@@ -430,6 +427,16 @@ try {
             $reg = New-FrameLabCardRegion -Card (New-ScoreBox 0 0 $f.W $f.H) -Index $index -Cols $cols -Rows $rows -CellW $cw -CellH $chh -PadLeft $x0 -PadTop $y0 -Extra @($THEME)
             $res = Measure-FrameBleed -Frame $f -Scene (New-CardScene $reg)
             Assert "$label the real card scores clean" ($res.Findings.Count -eq 0) (($res.Findings | Select-Object -First 4) -join '; ')
+            if ($InkLabel) {
+                # T2388: the same real text under the straight sRGB line alone
+                # must read as garbage, or this card never exercised the curves.
+                $line = New-CardScene $reg; $line.Blend = [FsScene]::BlendSrgbLine
+                $lres = Measure-FrameBleed -Frame $f -Scene $line
+                $b6 = @($lres.Findings | Where-Object Cls -eq 'B6')
+                $px = $(if ($b6.Count) { $b6[0].Pixels } else { 0 })
+                Assert "$InkLabel (negative control) under the straight sRGB line alone the same text IS garbage, so the card really shows off-line antialiased pixels" (
+                    $px -gt 100) "B6 px=$px classes=$($lres.Classes())"
+            }
         } finally { Close-TestPaneCapture $shot }
     }
     Test-RealCard $pane1 $out1 1 'D4 card 1:'
@@ -474,10 +481,27 @@ try {
     Test-RealCard $pane1 $out1 1 'D12 card 1 after the plants:'
     Test-RealCard 'labcard2' $out2 2 'D13 card 2 after the plants:'
 
-    Assert 'D14 the GUI survived' (-not $app.Process.HasExited)
+    # T2388: real, visible text. A third card whose busy text is ring-coloured
+    # (-Ink), split in after the plants are spent so their counts above stand.
+    # The window is back to a size where a third pane still has text rows.
+    [void](Set-TestWindowPos -Window ([IntPtr]$top) -X 40 -Y 40 -Width 1400 -Height 900)
+    Start-Sleep -Milliseconds 600
+    $out3 = Join-Path $env:TEMP "ghoztty-labcard-$PID-3.txt"
+    Remove-Item $out3 -ErrorAction SilentlyContinue
+    & $exe +split --target=$pane1 --direction=right --name=labcard3 -e powershell -NoProfile -ExecutionPolicy Bypass -File $cardPs -Index 3 -Busy -Ink -Out $out3 2>&1 | Out-Null
+    $s3 = Wait-Card $out3 ''
+    $textRows = 0
+    if ($s3) { $g3 = $s3 -split ' '; $textRows = @(Get-FrameLabBusyRows -Rows ([int]$g3[1]) -GlyphScale ([int]$g3[2])).Count }
+    Assert 'D14 a third card with ring-coloured (visible) busy text came up in a split, with rows of text in it' ($null -ne $s3 -and $textRows -ge 3) "grid=$s3 text rows=$textRows"
+    if ($s3) {
+        Start-Sleep -Milliseconds 1200
+        Test-RealCard 'labcard3' $out3 3 'D15 card 3 (ink text):' 'D16 card 3:'
+    }
+
+    Assert 'D17 the GUI survived' (-not $app.Process.HasExited)
     $fgSeen = @(Stop-TestForegroundWatch)
     $leaked = @(Get-TestLaunchedPids | Where-Object { $fgSeen -contains $_ })
-    Assert 'D15 the run never took the user''s foreground' ($leaked.Count -eq 0) ($leaked -join ', ')
+    Assert 'D18 the run never took the user''s foreground' ($leaked.Count -eq 0) ($leaked -join ', ')
     }
 
     Complete-TestBody
@@ -489,6 +513,7 @@ finally {
         [void](Stop-RepoGhoztty -Exe $exe -SettleMs 400)
         if ($td) { Remove-TestDesktop $td }
         Remove-Item $out1, $out2, "$out1.tmp", "$out2.tmp" -ErrorAction SilentlyContinue
+        if ($out3) { Remove-Item $out3, "$out3.tmp" -ErrorAction SilentlyContinue }
     }
 }
 

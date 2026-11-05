@@ -49,8 +49,12 @@
 #                         colours - black, uninitialised, torn pixels
 #
 # B6's blend rule is what lets the scorer read anti-aliased glyphs and rounded
-# edges without a mask: a pixel on the RGB segment between two palette colours
-# (within Tol) is a blend, anything off every segment is garbage.
+# edges without a mask: a pixel within Tol of the mix of two palette colours at
+# some coverage is a blend, anything off every mix is garbage. The mix depends
+# on WHO blended it (T2388), so a scene accepts three curves (FsScene.Blend):
+# the straight sRGB segment (GDI+), linear light (the terminal renderer's
+# glyph edges - the straight line alone read real text as 14,039 garbage
+# pixels in T2383) and gamma 2.2 (GDI/DWM).
 #
 # THE MOTION METRICS (same capture, no second run). Input is the tracked edge
 # position per frame with the frame's timestamp, the display refresh period,
@@ -144,6 +148,11 @@ public sealed class FsScene {
     public int[] Flash = new int[0];
     public int Tol = 8;       // colour tolerance, max per-channel difference
     public int PosTol = 1;    // geometry tolerance, px
+    // The curves an anti-aliased edge may blend along (B6, T2388): the straight
+    // sRGB line (GDI+, plain alpha), linear light (the terminal renderer's
+    // glyphs - alpha-blending=linear/linear-corrected) and gamma 2.2 (GDI/DWM).
+    public const int BlendSrgbLine = 1, BlendLinearLight = 2, BlendGamma22 = 4, BlendAll = 7;
+    public int Blend = BlendAll;
 }
 
 public sealed class FsFinding {
@@ -184,22 +193,58 @@ public static class GhozttyFrameScore {
         return false;
     }
 
-    // Is c within tol of some point on the RGB segment a..b? That is what an
-    // anti-aliased edge between two palette colours looks like.
-    public static bool OnBlend(int c, int a, int b, int tol) {
-        double ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
-        double dr = ((b >> 16) & 255) - ar, dg = ((b >> 8) & 255) - ag, db = (b & 255) - ab;
-        double cr = (c >> 16) & 255, cg = (c >> 8) & 255, cb = c & 255;
-        double len2 = dr * dr + dg * dg + db * db;
-        double t = len2 == 0 ? 0 : ((cr - ar) * dr + (cg - ag) * dg + (cb - ab) * db) / len2;
-        if (t < 0) t = 0; if (t > 1) t = 1;
-        return Math.Abs(cr - (ar + t * dr)) <= tol && Math.Abs(cg - (ag + t * dg)) <= tol && Math.Abs(cb - (ab + t * db)) <= tol;
+    // 0..255 channel value -> the light the curve mixes in, 0..1 (T2388).
+    static double Decode(int curve, double v) {
+        double s = v / 255.0;
+        if (curve == FsScene.BlendLinearLight)
+            return s <= 0.04045 ? s / 12.92 : Math.Pow((s + 0.055) / 1.055, 2.4);
+        if (curve == FsScene.BlendGamma22) return Math.Pow(s, 2.2);
+        return s;
     }
 
-    static bool OnAnyBlend(int c, List<int> set, int tol) {
+    // Is c within tol (every channel) of some colour an anti-aliased edge
+    // between a and b can show, when coverage t mixes them along ONE curve?
+    // The mix is enc(lerp(dec(a), dec(b), t)) per channel. Each channel is
+    // monotonic in t, so the t that keep that channel within tol form one
+    // interval; c is a blend exactly when the three intervals (and 0..1)
+    // overlap. Exact, so no sampling step can skip the steep dark end of the
+    // sRGB curve.
+    public static bool OnBlendCurve(int c, int a, int b, int tol, int curve) {
+        double lo = 0, hi = 1;
+        for (int sh = 16; sh >= 0; sh -= 8) {
+            int cv = (c >> sh) & 255;
+            double la = Decode(curve, (a >> sh) & 255), lb = Decode(curve, (b >> sh) & 255);
+            double l0 = Decode(curve, Math.Max(0, cv - tol)), l1 = Decode(curve, Math.Min(255, cv + tol));
+            double d = lb - la;
+            if (Math.Abs(d) < 1e-12) {
+                if (la < l0 - 1e-12 || la > l1 + 1e-12) return false;
+                continue;
+            }
+            double t0 = (l0 - la) / d, t1 = (l1 - la) / d;
+            if (t0 > t1) { double x = t0; t0 = t1; t1 = x; }
+            if (t0 > lo) lo = t0;
+            if (t1 < hi) hi = t1;
+            if (lo > hi + 1e-9) return false;
+        }
+        return true;
+    }
+
+    // The straight sRGB segment a..b (the original B6 rule).
+    public static bool OnBlend(int c, int a, int b, int tol) {
+        return OnBlendCurve(c, a, b, tol, FsScene.BlendSrgbLine);
+    }
+
+    // On a's..b's blend along ANY of the scene's curves.
+    public static bool OnBlendAny(int c, int a, int b, int tol, int curves) {
+        for (int k = 1; k <= FsScene.BlendAll; k <<= 1)
+            if ((curves & k) != 0 && OnBlendCurve(c, a, b, tol, k)) return true;
+        return false;
+    }
+
+    static bool OnAnyBlend(int c, List<int> set, int tol, int curves) {
         for (int i = 0; i < set.Count; i++)
             for (int j = i + 1; j < set.Count; j++)
-                if (OnBlend(c, set[i], set[j], tol)) return true;
+                if (OnBlendAny(c, set[i], set[j], tol, curves)) return true;
         return false;
     }
 
@@ -265,7 +310,7 @@ public static class GhozttyFrameScore {
                     if (!kind.TryGetValue(px, out k)) {
                         if (NearAny(px, pal, s.Tol)) k = 0;
                         else if (NearAny(px, flash, s.Tol)) k = 1;
-                        else if (OnAnyBlend(px, pal, s.Tol)) k = 0;
+                        else if (OnAnyBlend(px, pal, s.Tol, s.Blend)) k = 0;
                         else k = 2;
                         kind[px] = k;
                     }

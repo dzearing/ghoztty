@@ -109,6 +109,34 @@ function New-CleanFrame {
     return $f
 }
 
+# The colour coverage t of a over b shows when blended along one FsScene curve
+# (T2388): decode both to light, mix, encode back, per channel.
+function Get-CurveMix([int]$A, [int]$B, [double]$T, [int]$Curve) {
+    $out = 0
+    foreach ($sh in 16, 8, 0) {
+        $sa = (($A -shr $sh) -band 255) / 255.0; $sb = (($B -shr $sh) -band 255) / 255.0
+        if ($Curve -eq [FsScene]::BlendLinearLight) {
+            $dec = { param($s) if ($s -le 0.04045) { $s / 12.92 } else { [math]::Pow(($s + 0.055) / 1.055, 2.4) } }
+            $l = (& $dec $sb) + ((& $dec $sa) - (& $dec $sb)) * $T
+            $v = $(if ($l -le 0.0031308) { 12.92 * $l } else { 1.055 * [math]::Pow($l, 1 / 2.4) - 0.055 })
+        } elseif ($Curve -eq [FsScene]::BlendGamma22) {
+            $l = [math]::Pow($sb, 2.2) + ([math]::Pow($sa, 2.2) - [math]::Pow($sb, 2.2)) * $T
+            $v = [math]::Pow($l, 1 / 2.2)
+        } else {
+            $v = $sb + ($sa - $sb) * $T
+        }
+        $ch = [int][math]::Round([math]::Min(1.0, [math]::Max(0.0, $v)) * 255.0)
+        $out = $out -bor ($ch -shl $sh)
+    }
+    return $out
+}
+
+function Get-ChanDistFs([int]$a, [int]$b) {
+    $d = 0
+    foreach ($sh in 16, 8, 0) { $x = [math]::Abs((($a -shr $sh) -band 255) - (($b -shr $sh) -band 255)); if ($x -gt $d) { $d = $x } }
+    return $d
+}
+
 function Show($res) { ($res.Findings | ForEach-Object { $_.ToString() }) -join ' | ' }
 
 # Findings of class $Cls, and on which targets.
@@ -272,6 +300,43 @@ try {
     $f = New-CleanFrame; $f.Fill((New-ScoreBox 60 120 64 124), $PANES[0].Bg + 0x010101)
     $res = Measure-FrameBleed -Frame $f -Scene $scene
     Assert 'B6c one colour step off the background is inside Tol and not garbage' ($res.Findings.Count -eq 0) (Show $res)
+
+    # T2388: the blend curves. A glyph edge the renderer blends in LINEAR
+    # light is off the straight sRGB line, and must still read as a blend; a
+    # colour off every curve must still read as garbage.
+    $ring = $PANES[0].Ring; $bg = $PANES[0].Bg
+    $lineMid = Get-CurveMix $ring $bg 0.5 ([FsScene]::BlendSrgbLine)
+    $linMid = Get-CurveMix $ring $bg 0.5 ([FsScene]::BlendLinearLight)
+    $gamMid = Get-CurveMix $ring $bg 0.5 ([FsScene]::BlendGamma22)
+    $lineTol = [FsScene]::new().Tol
+    Assert 'B6d the linear-light and gamma-2.2 half-coverage mixes of ring on bg are OFF the straight sRGB line (so B6e-B6g test the new curves)' `
+        (-not [GhozttyFrameScore]::OnBlend($linMid, $ring, $bg, $lineTol) -and -not [GhozttyFrameScore]::OnBlend($gamMid, $ring, $bg, $lineTol) -and
+         (Get-ChanDistFs $linMid $lineMid) -gt 2 * $lineTol) `
+        ("line=0x{0:X6} linear=0x{1:X6} gamma=0x{2:X6}" -f $lineMid, $linMid, $gamMid)
+    # A text-like strip: every coverage 0..1 on each curve, one pixel each.
+    $f = New-CleanFrame; $n = 0
+    foreach ($cv in [FsScene]::BlendSrgbLine, [FsScene]::BlendLinearLight, [FsScene]::BlendGamma22) {
+        for ($i = 0; $i -le 32; $i++) { $f.Set(30 + $i, 100 + $n, (Get-CurveMix $ring $bg ($i / 32.0) $cv)); $f.Set(30 + $i, 104 + $n, (Get-CurveMix $PANES[0].Glyph $bg ($i / 32.0) $cv)) }
+        $n++
+    }
+    # Full-coverage glyph pixels in the strip widen the glyph's box: B3 is
+    # not the question here (A4 does the same).
+    $curScene = New-Scene; foreach ($r in $curScene.Regions) { $r.GlyphW = 0 }
+    $res = Measure-FrameBleed -Frame $f -Scene $curScene
+    Assert 'B6e every coverage of ring-on-bg and glyph-on-bg along all three curves (sRGB line, linear light, gamma 2.2) is a blend, not garbage' ($res.Findings.Count -eq 0) (Show $res)
+    $old = New-Scene; $old.Blend = [FsScene]::BlendSrgbLine; foreach ($r in $old.Regions) { $r.GlyphW = 0 }
+    $res = Measure-FrameBleed -Frame $f -Scene $old
+    Assert 'B6f (negative control) the same strip under the straight-line rule alone IS garbage - the T2383 false positive' `
+        ((Get-Targets $res 'B6') -eq 'left' -and $res.Classes() -eq 'B6') (Show $res)
+    # A torn pixel: red from the background, green from the ring - no single
+    # coverage gives both, on any curve.
+    $torn = ($bg -band 0xFF00FF) -bor ($ring -band 0x00FF00)
+    $offAll = $true
+    foreach ($cv in 1, 2, 4) { if ([GhozttyFrameScore]::OnBlendCurve($torn, $ring, $bg, $lineTol, $cv)) { $offAll = $false } }
+    $f = New-CleanFrame; $f.Fill((New-ScoreBox 60 120 64 124), $torn)
+    $res = Measure-FrameBleed -Frame $f -Scene $scene
+    Assert 'B6g a channel-torn colour (bg red, ring green) is off every curve and still garbage, 16 px' `
+        ($offAll -and $res.Classes() -eq 'B6' -and $res.Findings[0].Pixels -eq 16) ("torn=0x{0:X6} offAll=$offAll {1}" -f $torn, (Show $res))
 
     # --- C. motion metrics ---------------------------------------------------
     ''
