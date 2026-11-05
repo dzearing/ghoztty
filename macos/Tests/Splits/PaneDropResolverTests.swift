@@ -95,6 +95,140 @@ struct PaneDropResolverTests {
         #expect(PaneDropResolver.paneZone(at: CGPoint(x: 0, y: 0), in: rect) == .edge(.left))
     }
 
+    // MARK: - Dividers
+
+    /// paneOne | paneTwo with a 10pt gutter at x = 495...505.
+    private func twoPanes() -> PaneDropCandidate {
+        let left = CGRect(x: 0, y: 0, width: 495, height: 800)
+        let right = CGRect(x: 505, y: 0, width: 495, height: 800)
+        let divider = PaneDropCandidate.Divider(
+            rect: CGRect(x: 490, y: 0, width: 20, height: 800),
+            line: CGRect(x: 500, y: 0, width: 0, height: 800),
+            landing: CGRect(x: 333, y: 0, width: 333, height: 800),
+            before: [paneOne], after: [paneTwo], direction: .horizontal)
+        return PaneDropCandidate(
+            window: windowA, zOrder: 0, contentRect: left.union(right),
+            paneRects: [(id: paneOne, rect: left), (id: paneTwo, rect: right)],
+            dividers: [divider])
+    }
+
+    @Test func aDividerInsertsInItsGap() {
+        let target = PaneDropResolver.resolve(
+            screenPoint: CGPoint(x: 500, y: 400), candidates: [twoPanes()], dragged: dragged)
+        #expect(target == .insert(
+            window: windowA, before: [paneOne], after: [paneTwo], direction: .horizontal,
+            landing: CGRect(x: 333, y: 0, width: 333, height: 800)))
+    }
+
+    @Test func aDividerReachesOverThePanesBesideIt() {
+        let target = PaneDropResolver.resolve(
+            screenPoint: CGPoint(x: 492, y: 400), candidates: [twoPanes()], dragged: dragged)
+        guard case .insert = target else {
+            Issue.record("beside the gutter: \(String(describing: target))")
+            return
+        }
+    }
+
+    @Test func pastADividersReachIsThePane() {
+        let target = PaneDropResolver.resolve(
+            screenPoint: CGPoint(x: 480, y: 400), candidates: [twoPanes()], dragged: dragged)
+        #expect(target == .split(window: windowA, pane: paneOne, direction: .right))
+    }
+
+    @Test func theWindowEdgeBeatsADividerRunningIntoIt() {
+        let target = PaneDropResolver.resolve(
+            screenPoint: CGPoint(x: 500, y: 10), candidates: [twoPanes()], dragged: dragged)
+        #expect(target == .topLevel(window: windowA, side: .down))
+    }
+
+    @Test func aHorizontalSplitHasADividerWhereItsSidesMeet() throws {
+        let a = MockView(), b = MockView()
+        let tree = try SplitTree<MockView>(view: a).inserting(view: b, at: a, direction: .right)
+        let dividers = PaneDropCandidate.Divider.all(in: tree.root, rects: [
+            a.id: CGRect(x: 0, y: 0, width: 590, height: 600),
+            b.id: CGRect(x: 610, y: 0, width: 590, height: 600),
+        ])
+        let divider = try #require(dividers.first)
+        #expect(dividers.count == 1)
+        #expect(divider.before == [a.id])
+        #expect(divider.after == [b.id])
+        #expect(divider.direction == .horizontal)
+        // The gutter is wider than the reach, so it is all of it.
+        #expect(divider.rect == CGRect(x: 590, y: 0, width: 20, height: 600))
+        // A third of the split, the two sides shrinking alike.
+        #expect(abs(divider.landing.minX - 400) < 0.001)
+        #expect(abs(divider.landing.width - 400) < 0.001)
+    }
+
+    @Test func aVerticalSplitsFirstChildIsAboveItsDivider() throws {
+        let top = MockView(), bottom = MockView()
+        let tree = try SplitTree<MockView>(view: top).inserting(view: bottom, at: top, direction: .down)
+        let divider = try #require(PaneDropCandidate.Divider.all(in: tree.root, rects: [
+            top.id: CGRect(x: 0, y: 305, width: 800, height: 295),
+            bottom.id: CGRect(x: 0, y: 0, width: 800, height: 295),
+        ]).first)
+        #expect(divider.before == [top.id])
+        #expect(divider.rect == CGRect(x: 0, y: 290, width: 800, height: 20))
+        #expect(abs(divider.landing.minY - 200) < 0.001)
+        #expect(abs(divider.landing.height - 200) < 0.001)
+    }
+
+    @Test func panesOverlappingInAStackHaveNoDivider() throws {
+        let a = MockView(), b = MockView()
+        let tree = try SplitTree<MockView>(view: a).inserting(view: b, at: a, direction: .right)
+        #expect(PaneDropCandidate.Divider.all(in: tree.root, rects: [
+            a.id: CGRect(x: 0, y: 0, width: 600, height: 600),
+            b.id: CGRect(x: 300, y: 0, width: 600, height: 600),
+        ]).isEmpty)
+    }
+
+    @Test func aSideWithNothingOnScreenHasNoDivider() throws {
+        let a = MockView(), b = MockView()
+        let tree = try SplitTree<MockView>(view: a).inserting(view: b, at: a, direction: .right)
+        #expect(PaneDropCandidate.Divider.all(in: tree.root, rects: [
+            a.id: CGRect(x: 0, y: 0, width: 600, height: 600),
+        ]).isEmpty)
+    }
+
+    @Test func aPaneInsertedOnADividerTakesItsShareFromBothSides() throws {
+        let a = MockView(), b = MockView(), new = MockView()
+        let tree = try SplitTree<MockView>(view: a).inserting(view: b, at: a, direction: .right)
+        let inserted = try #require(tree.inserting(
+            view: new, between: [a.id], and: [b.id], direction: .horizontal))
+        #expect(inserted.root?.leaves().map(\.id) == [a.id, new.id, b.id])
+        guard case .split(let outer) = inserted.root, case .split(let inner) = outer.right else {
+            Issue.record("not a run of splits")
+            return
+        }
+        #expect(abs(outer.ratio - 1.0 / 3) < 0.0001)
+        #expect(abs(inner.ratio - 0.5) < 0.0001)
+    }
+
+    @Test func aPaneThatWasAllOfOneSideHasNoDividerToReturnTo() throws {
+        let a = MockView(), b = MockView()
+        let tree = try SplitTree<MockView>(view: a).inserting(view: b, at: a, direction: .right)
+        let without = tree.removing(try #require(tree.root?.node(view: a)))
+        #expect(without.inserting(view: a, between: [a.id], and: [b.id], direction: .horizontal) == nil)
+    }
+
+    @Test func aRunOfSplitsIsOneLayoutHoweverItNests() throws {
+        let a = MockView(), b = MockView(), c = MockView()
+        let leaning = try SplitTree<MockView>(view: a)
+            .inserting(view: b, at: a, direction: .right)
+            .inserting(view: c, at: b, direction: .right)
+        let other = try SplitTree<MockView>(view: a)
+            .inserting(view: c, at: a, direction: .right)
+            .inserting(view: b, at: a, direction: .right)
+        #expect(leaning.hasSameLayout(as: other))
+    }
+
+    @Test func anotherOrderOrAxisIsAnotherLayout() throws {
+        let a = MockView(), b = MockView()
+        let tree = try SplitTree<MockView>(view: a).inserting(view: b, at: a, direction: .right)
+        #expect(!tree.hasSameLayout(as: try SplitTree<MockView>(view: a).inserting(view: b, at: a, direction: .left)))
+        #expect(!tree.hasSameLayout(as: try SplitTree<MockView>(view: a).inserting(view: b, at: a, direction: .down)))
+    }
+
     // MARK: - The swap rectangle
 
     @Test func swapRectIsAFractionOfALargePane() {

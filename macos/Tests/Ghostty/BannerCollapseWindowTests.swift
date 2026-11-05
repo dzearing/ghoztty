@@ -113,6 +113,70 @@ struct BannerCollapseWindowTests {
         try? log.joined(separator: "\n").write(toFile: "\(dir)/log.txt", atomically: true, encoding: .utf8)
     }
 
+    /// Text laid out to the bottom rests in the same place whatever the banner
+    /// is doing: with none, expanded and collapsed, to the pixel. The grid
+    /// fills from the top, so a banner that took part of a row left the last
+    /// row that much lower or higher. Measured on the window's own pixels.
+    @Test func theLastRowRestsWhereItWas() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        // The cursor hidden, and no newline after the last line: a blinking
+        // cursor would be the lowest thing on screen every other look.
+        config.command = "/bin/sh -c 'i=1; while [ $i -le 90 ]; do echo line $i; i=$((i+1)); done; printf \"\\033[?25l\"; printf last; cat'"
+        let pane = PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config))
+        let controller = TerminalController.newWindow(ghostty, tree: SplitTree<PaneView>(view: pane))
+        defer { controller.close() }
+        controller.paneSidebarState.isHidden = true
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 900, height: 601))
+        await settle(1.5)
+        let view = try #require(pane.surfaceView)
+        window.makeFirstResponder(view)
+
+        // Pixels from the bottom of the window to the lowest row with text.
+        func lastRow() async throws -> Int {
+            let recorder = WindowFrameRecorder()
+            try await recorder.start(window, scale: 2)
+            await settle(0.4)
+            let image = try #require(await recorder.stop().last?.1)
+            let rep = NSBitmapImageRep(cgImage: image)
+            let scale = CGFloat(image.width) / window.frame.width
+            let left = Int(view.convert(view.bounds, to: nil).minX * scale)
+            func level(_ x: Int, _ y: Int) -> CGFloat {
+                guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { return 0 }
+                return (c.redComponent + c.greenComponent + c.blueComponent) / 3
+            }
+            for y in stride(from: image.height - 1 - Int(4 * scale), to: image.height / 2, by: -1) {
+                let row = (left + 4..<left + 200).map { level($0, y) }
+                if let low = row.min(), let high = row.max(), high - low > 0.3 { return image.height - y }
+            }
+            Issue.record("no text in the bottom half")
+            return 0
+        }
+
+        let plain = try await lastRow()
+        for (n, banner) in [
+            "## Collapse me\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |",
+            "## A longer one\n|  |  |\n|---|---|\n| **Goal** | one |\n| **Status** | two |\n| **Prompt** | three |\n| **Last** | four |",
+            "just a line",
+        ].enumerated() {
+            view.paneBanner = banner
+            await settle(1)
+            let expanded = try await lastRow()
+            withAnimation(Ghostty.SurfacePaneBanner.toggleAnimation) { view.paneBannerCollapsed = true }
+            await settle(1)
+            let collapsed = try await lastRow()
+            withAnimation(Ghostty.SurfacePaneBanner.toggleAnimation) { view.paneBannerCollapsed = false }
+            await settle(1)
+            let again = try await lastRow()
+            #expect(expanded == plain, "banner \(n) expanded: \(expanded) vs \(plain) plain")
+            #expect(collapsed == plain, "banner \(n) collapsed: \(collapsed) vs \(plain) plain")
+            #expect(again == plain, "banner \(n) expanded again: \(again) vs \(plain) plain")
+        }
+    }
+
     /// A shell prompt at the TOP of the screen rides the card's edge: the
     /// grid adds or drops rows at its bottom, so the text moves exactly as
     /// far as the card does, frame by frame, and is never blanked. It used to
@@ -193,12 +257,14 @@ struct BannerCollapseWindowTests {
                 if let y { ys.append(y) }
             }
             log.append("\(phase): " + ys.map { String(format: "%.1f", $0) }.joined(separator: " "))
-            // Moves one way only (up on collapse, down on expand), in steps
-            // no bigger than the card's, and covers the card's whole travel.
+            // Moves one way only (up on collapse, down on expand), a little
+            // at a time rather than all at once, and covers its whole travel:
+            // the rows the card gives or takes.
             let up = phase == "collapse"
+            let travel = abs((ys.last ?? 0) - (ys.first ?? 0))
             for (a, b) in zip(ys, ys.dropFirst()) {
                 #expect(up ? b <= a + 0.5 : b >= a - 0.5, "\(phase): the text went back (\(a) → \(b)): \(log.last!)")
-                #expect(abs(b - a) < 12, "\(phase): the text jumped (\(a) → \(b)): \(log.last!)")
+                #expect(abs(b - a) < travel * 0.6, "\(phase): the text jumped (\(a) → \(b)): \(log.last!)")
             }
             if let first = ys.first, let last = ys.last {
                 #expect(abs(last - first) > 10, "\(phase): the text did not follow the card: \(log.last!)")

@@ -14,6 +14,12 @@ extension NSPasteboard.PasteboardType {
     static let ghosttyPaneId = NSPasteboard.PasteboardType(UTType.ghosttyPaneId.identifier)
 }
 
+/// Where the drop would land, for the views that draw it.
+@MainActor
+final class PaneDropFeedback: ObservableObject {
+    @Published fileprivate(set) var target: PaneDropTarget?
+}
+
 /// The one in-flight pane drag, app-wide.
 ///
 /// A drag crosses windows, so no window can own it. The drag SOURCE feeds it
@@ -21,6 +27,13 @@ extension NSPasteboard.PasteboardType {
 /// every window for free); it resolves them through `PaneDropResolver` and
 /// publishes the result; every window's overlay observes it and draws the
 /// feedback for its own frame.
+///
+/// Every pane and sidebar of every window hangs off this session, so what it
+/// publishes is a redraw of all of them, and the pointer feed is hot: a publish
+/// per move held a drag to a few frames a second. The session itself publishes
+/// only `pane`, twice a drag. A target goes to the small views that draw it,
+/// through `dropFeedback`, and to the one sidebar it is in, through that
+/// window's `PaneSidebarState.dropTarget`.
 ///
 /// Resolution deliberately happens on the MOVE feed rather than in a drop
 /// destination: a destination sees only its own view, which can express
@@ -34,13 +47,36 @@ final class PaneDragSession: ObservableObject {
     @Published private(set) var pane: PaneView?
 
     /// What would happen if the pane were released right now.
-    @Published private(set) var target: PaneDropTarget?
+    private(set) var target: PaneDropTarget? {
+        didSet {
+            if target != oldValue { dropFeedback.target = target }
+        }
+    }
 
-    /// The window whose tab is currently being dwelt on, for the pulse.
-    @Published private(set) var hoveredTab: (window: PaneDropWindowRef, index: Int)?
+    /// `target`, for the overlays on the panes and the window.
+    let dropFeedback = PaneDropFeedback()
+
+    /// The sidebar showing `target`, if it is in one.
+    private weak var targetSidebar: PaneSidebarState?
+
+    /// What the pointer last resolved to, and whether that would leave the
+    /// pane where it is. The answer rebuilds the tree, so it is kept for the
+    /// moves that stay in one zone.
+    private var lastResolved: (target: PaneDropTarget?, inPlace: Bool)?
+
+    /// The window whose tab is currently being dwelt on. Not published: it is
+    /// set on every pointer move, and each publish re-renders every pane and
+    /// sidebar of every window.
+    private(set) var hoveredTab: (window: PaneDropWindowRef, index: Int)?
 
     private weak var source: BaseTerminalController?
     private var candidates: [PaneDropCandidate] = []
+    /// The windows front to back, read once and not per move:
+    /// `NSApp.orderedWindows` asks the window server, and stalls the pointer
+    /// feed for tens of milliseconds every few calls.
+    private var windowOrder: [NSWindow] = []
+    /// How many windows the app had when `windowOrder` was read.
+    private var windowCount = 0
     /// The drag is a strip's: it has the targets of a pane put away in its
     /// row (`PaneDropResolver.resolveBlade`), not a pane's.
     private(set) var isBlade = false
@@ -72,10 +108,12 @@ final class PaneDragSession: ObservableObject {
         self.isBlade = isBlade
         self.isListDrag = isListDrag
         self.target = nil
+        self.lastResolved = nil
         self.hoveredTab = nil
         // As for a sidebar item drag: the rows and tiles it passes don't
         // light up under the pointer.
         HoverTrackingView.isHeld = true
+        readWindowOrder()
         refreshCandidates()
     }
 
@@ -86,12 +124,9 @@ final class PaneDragSession: ObservableObject {
         // tabs), so the geometry is re-read rather than snapshotted at begin.
         refreshCandidates()
 
-        // Published only when it changes: every window's pane sidebar
-        // observes this session, and a same-value set still redraws them all
-        // on every pointer move.
         if isListDrag {
-            let target = listTarget(screenPoint: screenPoint, dragged: pane.id)
-            if target != self.target { self.target = target }
+            target = listTarget(screenPoint: screenPoint, dragged: pane.id)
+            updateTargetSidebar(screenPoint: screenPoint)
             return
         }
 
@@ -100,7 +135,8 @@ final class PaneDragSession: ObservableObject {
             candidates: candidates,
             dragged: pane.id,
             blade: isBlade ? bladeGeometry(of: pane) : nil)
-        if target != self.target { self.target = target }
+        self.target = isInPlace(target, pane: pane) ? nil : target
+        updateTargetSidebar(screenPoint: screenPoint)
 
         if case .tile(let frame) = target {
             TileDropPreview.shared.show(frame)
@@ -143,6 +179,35 @@ final class PaneDragSession: ObservableObject {
             dragged: dragged)
     }
 
+    /// `target` would put the pane back where it is, so it means nothing. Not
+    /// for a strip, whose targets all take it somewhere in its row or out.
+    private func isInPlace(_ target: PaneDropTarget?, pane: PaneView) -> Bool {
+        if let lastResolved, lastResolved.target == target { return lastResolved.inPlace }
+        let inPlace = if !isBlade, let target, let source {
+            PaneMoveCoordinator.wouldLeaveInPlace(target, pane: pane, from: source)
+        } else {
+            false
+        }
+        lastResolved = (target, inPlace)
+        return inPlace
+    }
+
+    /// Hand `target` to the sidebar it is in, and take it from the last one.
+    private func updateTargetSidebar(screenPoint: CGPoint) {
+        let window: PaneDropWindowRef? = switch target {
+        case .stash(let window, _), .sidebarOrder(let window, _): window
+        // Named for a group in the list, which is not the list's own window.
+        case .joinWindow: candidates.first { $0.sidebar?.rect.contains(screenPoint) == true }?.window
+        default: nil
+        }
+        let sidebar = window.flatMap(PaneMoveCoordinator.controller(for:))?.paneSidebarState
+        if sidebar !== targetSidebar {
+            targetSidebar?.dropTarget = nil
+            targetSidebar = sidebar
+        }
+        if sidebar?.dropTarget != target { sidebar?.dropTarget = target }
+    }
+
     private func reset() {
         cancelDwell()
         removeTabCaret()
@@ -154,6 +219,10 @@ final class PaneDragSession: ObservableObject {
         target = nil
         hoveredTab = nil
         candidates = []
+        windowOrder = []
+        lastResolved = nil
+        targetSidebar?.dropTarget = nil
+        targetSidebar = nil
         HoverTrackingView.isHeld = false
     }
 
@@ -260,6 +329,7 @@ final class PaneDragSession: ObservableObject {
         tabGroup.selectedWindow = tabGroup.windows[hit.index]
         // The revealed tab is a different controller with a different
         // layout, so the next move resolves against fresh geometry.
+        readWindowOrder()
         refreshCandidates()
     }
 
@@ -282,7 +352,7 @@ final class PaneDragSession: ObservableObject {
         var items: [(rect: CGRect, panes: Set<UUID>)] = []
         for item in stack.items {
             let rects = item.compactMap { id -> CGRect? in
-                let view: NSView? = tabs[id] ?? panes[id]?.contentView
+                let view: NSView? = tabs[id] ?? panes[id]?.footprintView
                 guard let view, view.window === window else { return nil }
                 return window.convertToScreen(view.convert(view.bounds, to: nil))
             }
@@ -295,9 +365,15 @@ final class PaneDragSession: ObservableObject {
             screens: NSScreen.screens.map(\.visibleFrame))
     }
 
+    private func readWindowOrder() {
+        windowOrder = NSApp.orderedWindows
+        windowCount = NSApp.windows.count
+    }
+
     private func refreshCandidates() {
+        if NSApp.windows.count != windowCount { readWindowOrder() }
         var result: [PaneDropCandidate] = []
-        for (index, window) in NSApp.orderedWindows.enumerated() {
+        for (index, window) in windowOrder.enumerated() {
             guard let controller = window.windowController as? BaseTerminalController else { continue }
             guard let candidate = Self.candidate(for: controller, zOrder: index) else { continue }
             result.append(candidate)
@@ -328,7 +404,7 @@ final class PaneDragSession: ObservableObject {
         // Only panes ON SCREEN are drop targets: a stashed pane is mounted
         // (hidden, in its slot) but nothing can land on it.
         for pane in controller.surfaceTree.visibleLeaves {
-            let view = tabs[pane.id] ?? pane.contentView
+            let view = tabs[pane.id] ?? pane.footprintView
             // A pane that is not mounted (zoomed out, hero mode) has no
             // window and no meaningful frame.
             guard view.window === window else { continue }
@@ -356,6 +432,9 @@ final class PaneDragSession: ObservableObject {
             zOrder: zOrder,
             contentRect: contentRect,
             paneRects: paneRects,
+            dividers: PaneDropCandidate.Divider.all(
+                in: controller.surfaceTree.visibleTree.root,
+                rects: Dictionary(paneRects, uniquingKeysWith: { first, _ in first })),
             tabBarRect: tabBarRect,
             tabButtonRects: tabButtonRects,
             sidebar: controller.paneSidebarHost?.dropGeometry())

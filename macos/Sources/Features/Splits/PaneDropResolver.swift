@@ -59,6 +59,16 @@ enum PaneDropTarget: Equatable {
     /// dragging across the screen.
     case joinWindow(window: PaneDropWindowRef)
 
+    /// Put the pane in the gap of a divider, between the panes `before` and
+    /// `after` it, on the divider's own axis (`direction`). `landing` is where
+    /// it would show, in screen coordinates.
+    case insert(
+        window: PaneDropWindowRef,
+        before: Set<UUID>,
+        after: Set<UUID>,
+        direction: SplitTree<PaneView>.Direction,
+        landing: CGRect)
+
     /// A strip dragged along its own row: move the pane to `side` of the
     /// row's item made of the panes `beside`, within the row. `caret` is
     /// the insertion line to draw, in screen coordinates.
@@ -72,7 +82,8 @@ enum PaneDropTarget: Equatable {
     var window: PaneDropWindowRef? {
         switch self {
         case .split(let w, _, _), .swap(let w, _), .topLevel(let w, _), .newTab(let w, _),
-             .stash(let w, _), .sidebarOrder(let w, _), .joinWindow(let w), .reorder(let w, _, _, _): w
+             .stash(let w, _), .sidebarOrder(let w, _), .joinWindow(let w), .reorder(let w, _, _, _),
+             .insert(let w, _, _, _, _): w
         case .newWindow, .tile: nil
         }
     }
@@ -185,6 +196,9 @@ struct PaneDropCandidate {
     /// Every leaf pane's frame, keyed by `PaneView.id`.
     let paneRects: [(id: UUID, rect: CGRect)]
 
+    /// The dividers between its panes.
+    let dividers: [Divider]
+
     /// The tab bar, when this window is showing one.
     let tabBarRect: CGRect?
 
@@ -194,6 +208,75 @@ struct PaneDropCandidate {
     /// The window's pane sidebar, when it is showing. Nil while hidden — a
     /// hidden sidebar is not a drop target.
     let sidebar: Sidebar?
+
+    /// A divider a pane can be dropped on, in screen coordinates.
+    struct Divider {
+        /// Where the pointer means this divider.
+        let rect: CGRect
+        /// The middle of the gap, along the divider.
+        let line: CGRect
+        /// Where a pane dropped here shows.
+        let landing: CGRect
+        /// The panes either side of it: left then right, or top then bottom.
+        let before: Set<UUID>
+        let after: Set<UUID>
+        let direction: SplitTree<PaneView>.Direction
+
+        /// How far either side of the middle of the gap the pointer means it.
+        /// Gutters are thinner than a pointer is accurate.
+        static let reach: CGFloat = 10
+
+        /// Every divider of `root` whose two sides are on screen and apart, as
+        /// `rects` has them. Panes overlapping in a stack have no gap to drop
+        /// in; a side with nothing on screen has no divider to find.
+        static func all<V>(
+            in root: SplitTree<V>.Node?,
+            rects: [UUID: CGRect]
+        ) -> [Divider] where V.ID == UUID {
+            guard case .split(let split) = root else { return [] }
+            let nested = all(in: split.left, rects: rects) + all(in: split.right, rects: rects)
+            func bounds(_ node: SplitTree<V>.Node) -> (rect: CGRect, panes: Set<UUID>)? {
+                let panes = node.leaves().map(\.id).filter { rects[$0] != nil }
+                guard let first = panes.first, let rect = rects[first] else { return nil }
+                return (panes.dropFirst().reduce(rect) { $0.union(rects[$1] ?? $0) }, Set(panes))
+            }
+            guard let before = bounds(split.left), let after = bounds(split.right) else { return nested }
+            let across = before.rect.union(after.rect)
+
+            let share = CGFloat(SplitTree<V>.insertShare)
+            let divider: Divider
+            switch split.direction {
+            case .horizontal:
+                let start = before.rect.maxX, end = after.rect.minX
+                guard end >= start - 1 else { return nested }
+                let mid = (start + end) / 2
+                let reach = Swift.max(reach, (end - start) / 2)
+                divider = .init(
+                    rect: CGRect(x: mid - reach, y: across.minY, width: 2 * reach, height: across.height),
+                    line: CGRect(x: mid, y: across.minY, width: 0, height: across.height),
+                    landing: CGRect(
+                        x: across.minX + (mid - across.minX) * (1 - share), y: across.minY,
+                        width: across.width * share, height: across.height),
+                    before: before.panes, after: after.panes, direction: .horizontal)
+            case .vertical:
+                // Screen coordinates grow UPWARD, and a vertical split's left
+                // child is its top: the gap runs down from `before`.
+                let start = after.rect.maxY, end = before.rect.minY
+                guard end >= start - 1 else { return nested }
+                let mid = (start + end) / 2
+                let reach = Swift.max(reach, (end - start) / 2)
+                let top = across.maxY - (across.maxY - mid) * (1 - share)
+                divider = .init(
+                    rect: CGRect(x: across.minX, y: mid - reach, width: across.width, height: 2 * reach),
+                    line: CGRect(x: across.minX, y: mid, width: across.width, height: 0),
+                    landing: CGRect(
+                        x: across.minX, y: top - across.height * share,
+                        width: across.width, height: across.height * share),
+                    before: before.panes, after: after.panes, direction: .vertical)
+            }
+            return [divider] + nested
+        }
+    }
 
     /// The pane sidebar's droppable geometry, in screen coordinates.
     struct Sidebar {
@@ -237,6 +320,7 @@ struct PaneDropCandidate {
         zOrder: Int,
         contentRect: CGRect,
         paneRects: [(id: UUID, rect: CGRect)],
+        dividers: [Divider] = [],
         tabBarRect: CGRect? = nil,
         tabButtonRects: [CGRect] = [],
         sidebar: Sidebar? = nil
@@ -245,6 +329,7 @@ struct PaneDropCandidate {
         self.zOrder = zOrder
         self.contentRect = contentRect
         self.paneRects = paneRects
+        self.dividers = dividers
         self.tabBarRect = tabBarRect
         self.tabButtonRects = tabButtonRects
         self.sidebar = sidebar
@@ -329,8 +414,16 @@ enum PaneDropResolver {
             return .topLevel(window: candidate.window, side: side)
         }
 
+        // A divider reaches a little over the panes either side of it, so it
+        // comes before them. Where two meet, the nearer one.
+        if let divider = candidate.dividers
+            .filter({ $0.rect.contains(screenPoint) })
+            .min(by: { distance(screenPoint, $0.line) < distance(screenPoint, $1.line) }) {
+            return .insert(window: candidate.window, before: divider.before, after: divider.after,
+                           direction: divider.direction, landing: divider.landing)
+        }
+
         guard let pane = candidate.paneRects.first(where: { $0.rect.contains(screenPoint) }) else {
-            // Inside the window but between panes — a divider. Nothing.
             return nil
         }
 

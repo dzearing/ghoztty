@@ -107,8 +107,10 @@ struct TerminalSplitTreeView: View {
                 // See: https://github.com/ghostty-org/ghostty/issues/7546
                 .id(node.structuralIdentity)
                 // A top-level insert spans the whole window, so its feedback
-                // cannot belong to any one leaf; nor does a strip's slot.
+                // cannot belong to any one leaf; nor does a divider's gap or
+                // a strip's slot.
                 .overlay { TopLevelDropOverlay(windowRef: windowRef) }
+                .overlay { InsertDropOverlay(windowRef: windowRef) }
                 .overlay { BladeDropOverlay(windowRef: windowRef) }
             }
         }
@@ -456,6 +458,19 @@ private struct StackGrip: View {
     }
 }
 
+/// The source pane fades for the duration of the drag, so the layout it is
+/// leaving reads as provisional. A modifier so that the leaf itself, and all
+/// that is in it, doesn't observe the drag.
+private struct PaneDragFade: ViewModifier {
+    let pane: PaneView
+
+    @ObservedObject private var dragSession = PaneDragSession.shared
+
+    func body(content: Content) -> some View {
+        content.opacity(dragSession.isDragging(pane) ? 0.4 : 1.0)
+    }
+}
+
 /// One leaf of the tree, of either kind.
 ///
 /// Both pane kinds share this wrapper so the rearrange header, the
@@ -467,12 +482,9 @@ private struct PaneLeafView: View {
     let isSplit: Bool
     let rearranging: Bool
 
-    @ObservedObject private var dragSession = PaneDragSession.shared
     @Environment(\.paneContentFreeze) private var freeze
     @Environment(\.paneContentAnchor) private var anchor
     @Environment(\.paneCollapse) private var collapse
-
-    private var isBeingDragged: Bool { dragSession.isDragging(pane) }
 
     var body: some View {
         // Mid-glide, and as a strip, the pane keeps one size (`PaneStage`),
@@ -500,11 +512,10 @@ private struct PaneLeafView: View {
             }
         }
         .clipped()
-        // The source pane fades for the duration of the drag, so the layout
-        // it is leaving reads as provisional.
-        .opacity(isBeingDragged ? 0.4 : 1.0)
+        .background { PaneFootprint(pane: pane) }
+        .modifier(PaneDragFade(pane: pane))
         .overlay {
-            PaneDropFeedbackView(paneID: pane.id, isDraggedPane: isBeingDragged)
+            PaneDropFeedbackView(paneID: pane.id)
                 .allowsHitTesting(false)
         }
         // Its sidebar tile or row is under the pointer: the pane takes its hue.

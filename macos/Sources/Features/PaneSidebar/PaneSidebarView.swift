@@ -888,7 +888,7 @@ struct PaneSidebarView: View {
         guard let pane = dragSession.pane else { return nil }
         let here = PaneDropWindowRef(controller)
         var paneTarget: Int?, stashTarget: Int?
-        switch dragSession.target {
+        switch state.dropTarget {
         case .sidebarOrder(let window, let index) where window == here: paneTarget = index
         case .stash(let window, let index) where window == here: stashTarget = index
         default: break
@@ -903,7 +903,7 @@ struct PaneSidebarView: View {
     }
 
     private func isJoinTarget(_ owner: BaseTerminalController) -> Bool {
-        guard case .joinWindow(let window) = dragSession.target else { return false }
+        guard case .joinWindow(let window) = state.dropTarget else { return false }
         return window == PaneDropWindowRef(owner)
     }
 }
