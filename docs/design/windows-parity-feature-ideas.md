@@ -636,3 +636,11 @@ as the digest that showed them.
 - The shortcut guide warns about clashes (marks chords Windows or another running app already takes, offers a free alternative)
 - A bad line in your config never stops the app (everything else loads; a banner names the line with a Fix in Settings button)
 - A settings change repaints once, with no flash (theme or font switch redraws every window in a single frame)
+
+## 2026-11-05
+
+- Shortcuts reach your program when it wants them (first press of a chord Ghoztty and the pane's program both claim offers to send it to the program; remembered per program)
+- Drag a pane to a window you cannot see (hovering a dragged pane over a sidebar row or taskbar button brings that window forward for the drop)
+- Settings understands plain words (search "bigger text", "see-through", "stop beeping" finds the right setting)
+- A copy that fails says so (clipboard held by another app: retry briefly, then name the holder instead of silently copying nothing)
+- Moving a pane keeps everything it carries (program, scrollback, banner, zoom and session identity survive a cross-window move; the drop card warns if not)
