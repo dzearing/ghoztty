@@ -16921,10 +16921,13 @@ fn releaseBurst(self: *Window, hwnd: w32.HWND) void {
     resizeTrace("burst-window-painted", hwnd);
     if (resizeTraceOn()) {
         const sheet_after = ViewerPane.glass_cost;
-        log.info("resize trace burst-sheet paints={d} px={d} us={d}", .{
+        // `render_us` is the pixels alone (T2702); the rest of `us` is the
+        // buffer and the blit.
+        log.info("resize trace burst-sheet paints={d} px={d} us={d} render_us={d}", .{
             sheet_after.paints -| sheet_before.paints,
             sheet_after.pixels -| sheet_before.pixels,
             (sheet_after.ns -| sheet_before.ns) / 1000,
+            (sheet_after.render_ns -| sheet_before.render_ns) / 1000,
         });
     }
     // The bars' share of this paint, split (T2695): the pass's own

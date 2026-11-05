@@ -104,6 +104,7 @@ const Window = @import("Window.zig");
 const hero_snap_schedule = @import("hero_snap_schedule.zig");
 const viewer_glass = @import("viewer_glass.zig");
 const pane_elevation = @import("pane_elevation.zig");
+const sheet_workers = @import("sheet_workers.zig");
 const Dib32 = @import("dib32.zig");
 
 const log = std.log.scoped(.viewer_pane);
@@ -7061,7 +7062,11 @@ fn paintGlass(self: *const ViewerPane, hdc: w32.HDC, width: i32, height: i32) bo
     }
     const dib = Dib32.create(hdc, width, height) orelse return false;
     defer dib.destroy();
-    pane_elevation.glassSheetRegion(dib.pixels, @intCast(width), @intCast(height), g.rect[0], g.rect[1], g.full_w, g.full_h, g.palette, self.bg, g.sheet);
+    // The whole client, every step of an edge drag: shared among the
+    // sheet workers (T2702), same pixels.
+    const tr = std.time.Instant.now() catch null;
+    sheet_workers.glassSheetRegion(dib.pixels, @intCast(width), @intCast(height), g.rect[0], g.rect[1], g.full_w, g.full_h, g.palette, self.bg, g.sheet);
+    glass_cost.render_ns +|= sinceNs(tr);
     _ = w32.BitBlt(hdc, 0, 0, width, height, dib.dc, 0, 0, w32.SRCCOPY);
     return true;
 }
@@ -7073,6 +7078,9 @@ pub const GlassCost = struct {
     paints: u32 = 0,
     pixels: u64 = 0,
     ns: u64 = 0,
+    /// The part of `ns` spent rendering the sheet's pixels (T2702); the rest
+    /// is the buffer and the blit.
+    render_ns: u64 = 0,
 };
 pub var glass_cost: GlassCost = .{};
 

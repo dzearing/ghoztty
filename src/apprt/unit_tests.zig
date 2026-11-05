@@ -353,6 +353,9 @@ test {
     // Pure win32 elevated-pane geometry, desk gradient and card raster
     // (T1831), same no-OS-imports deal.
     _ = @import("win32/pane_elevation.zig");
+    // The glass sheet rendered across a worker pool (T2702): std threads
+    // only, same pixels as pane_elevation's.
+    _ = @import("win32/sheet_workers.zig");
     // The stacked-panes layout - minimums, runs, strips, grips (T2082), a
     // port of Mac's PaneLayout - same deal.
     _ = @import("win32/pane_stack_layout.zig");
