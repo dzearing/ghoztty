@@ -47,6 +47,11 @@ pub const WM_APP_CHOOSER_DEVICES: u32 = w32.WM_APP + 37;
 /// `MachineChooser.next_chooser_id` starts at 1.
 pub const warm_only: u64 = 0;
 
+/// The `chooser_id` of the Settings window's Remote Machines fetch (T2686):
+/// it confirms the presence of the rows it seeded from the cache. Chooser ids
+/// count up from 1, so none can ever reach this one.
+pub const settings_id: u64 = std.math.maxInt(u64);
+
 /// What the GUI thread is handed. Owns everything it carries.
 pub const Result = struct {
     alloc: Allocator,

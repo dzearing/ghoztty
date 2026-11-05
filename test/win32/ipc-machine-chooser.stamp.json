@@ -1,15 +1,15 @@
 {
     "guard":  "chooser-shape",
     "script":  "test/win32/ipc-machine-chooser.ps1",
-    "generated":  "2026-10-29T04:47:02-07:00",
-    "commit":  "38d9fb6fc",
+    "generated":  "2026-11-04T15:46:40-08:00",
+    "commit":  "0977cfe15",
     "uncommitted":  [
                         "src/apprt/win32/MachineChooser.zig"
                     ],
     "files":  {
                   "src/apprt/win32/chooser_layout.zig":  "a76bcd60ab3371f126e7873989c7b2a1f9060fe4b72d1a12d7ef89490d19639e",
                   "src/apprt/win32/chooser_rows.zig":  "3330e8e24d9f5230132d39061de1c306af1504c892b972d17bc5ed136a984f61",
-                  "src/apprt/win32/MachineChooser.zig":  "b1a13a71c9d94be81b94888b53582a8a0b5014096e9d39d80359a3ff1aa9a16e",
+                  "src/apprt/win32/MachineChooser.zig":  "019a3a0a3704df8e5a0fa31b84852e523f22f7dce9db054d8f1cb01b2e001203",
                   "test/win32/ipc-machine-chooser.ps1":  "2e6dd394fd0f5445f60c36dacfb31a352d2b8ddebd2fbfb4e0212a5036dca97a"
               }
 }

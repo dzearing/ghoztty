@@ -82,7 +82,91 @@ pub const pane_styles = [_]PaneStyle{
 };
 pub const pane_style_caption = "Elevated: raised cards on a gradient. Flat: classic edge-to-edge panes.";
 
+/// Remote Machines (T2686, Mac `RemoteMachinesSection`): the account line,
+/// then one row per enrolled machine with its presence dot and the host
+/// defaults new sessions on it start with. The rows are seeded from the
+/// remembered directory (no network on the GUI thread) and read `checking`
+/// until the background fetch answers.
+pub const Account = enum { signed_in, signed_out, unconfigured };
+
+pub const Presence = enum {
+    checking,
+    online,
+    offline,
+
+    pub fn word(self: Presence) []const u8 {
+        return switch (self) {
+            .checking => "checking\u{2026}",
+            .online => "online",
+            .offline => "offline",
+        };
+    }
+};
+
+pub const Machine = struct {
+    /// The relay device id (the host-defaults key).
+    id: []const u8,
+    name: []const u8,
+    presence: Presence = .checking,
+    working_directory: ?[]const u8 = null,
+    shell: ?[]const u8 = null,
+};
+
+/// The label over the account caption (Mac: "Signed in as <email>" /
+/// "Not signed in"). A bare-token credential has no email: "your account".
+pub fn accountTitle(buf: []u8, account: Account, email: ?[]const u8) []const u8 {
+    return switch (account) {
+        .signed_in => std.fmt.bufPrint(buf, "Signed in as {s}", .{email orelse "your account"}) catch "Signed in",
+        .signed_out, .unconfigured => "Not signed in",
+    };
+}
+
+/// The caption under it. Mac names its shortcut; Windows names its own.
+pub fn accountCaption(account: Account) []const u8 {
+    return switch (account) {
+        .signed_in => "Machines enrolled in your account appear below.",
+        .signed_out => "Sign in from New Remote Window (Ctrl+Shift+N) to reach your other machines.",
+        .unconfigured => "Remote machines aren\u{2019}t set up in this build of Ghoztty.",
+    };
+}
+
+/// A machine's caption: "online · folder: ~/src · shell: zsh", each default
+/// reading "remote default" when the host has none.
+pub fn machineCaption(buf: []u8, m: Machine) []const u8 {
+    return std.fmt.bufPrint(buf, "{s} \u{00B7} folder: {s} \u{00B7} shell: {s}", .{
+        m.presence.word(),
+        m.working_directory orelse "remote default",
+        m.shell orelse "remote default",
+    }) catch m.presence.word();
+}
+
 const testing = std.testing;
+
+test "settings_live: remote machines account lines" {
+    var buf: [128]u8 = undefined;
+    try testing.expectEqualStrings("Signed in as a@b.c", accountTitle(&buf, .signed_in, "a@b.c"));
+    try testing.expectEqualStrings("Signed in as your account", accountTitle(&buf, .signed_in, null));
+    try testing.expectEqualStrings("Not signed in", accountTitle(&buf, .signed_out, "stale@x"));
+    try testing.expectEqualStrings("Not signed in", accountTitle(&buf, .unconfigured, null));
+    try testing.expect(std.mem.indexOf(u8, accountCaption(.signed_out), "Ctrl+Shift+N") != null);
+    try testing.expectEqualStrings("Machines enrolled in your account appear below.", accountCaption(.signed_in));
+}
+
+test "settings_live: machine caption names presence and both defaults" {
+    var buf: [256]u8 = undefined;
+    try testing.expectEqualStrings(
+        "checking\u{2026} \u{00B7} folder: remote default \u{00B7} shell: remote default",
+        machineCaption(&buf, .{ .id = "d", .name = "Box" }),
+    );
+    try testing.expectEqualStrings(
+        "online \u{00B7} folder: ~/src \u{00B7} shell: zsh",
+        machineCaption(&buf, .{ .id = "d", .name = "Box", .presence = .online, .working_directory = "~/src", .shell = "zsh" }),
+    );
+    try testing.expectEqualStrings(
+        "offline \u{00B7} folder: remote default \u{00B7} shell: fish",
+        machineCaption(&buf, .{ .id = "d", .name = "Box", .presence = .offline, .shell = "fish" }),
+    );
+}
 
 test "settings_live: status line never claims a dead agent" {
     var buf: [64]u8 = undefined;

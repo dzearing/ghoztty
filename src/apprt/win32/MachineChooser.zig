@@ -55,6 +55,7 @@ const RelayAccountRow = @import("RelayAccountRow.zig");
 const ShareMachineRow = @import("ShareMachineRow.zig");
 const ConfirmDialog = @import("ConfirmDialog.zig");
 const HostSettingsDialog = @import("HostSettingsDialog.zig");
+const SettingsWindow = @import("SettingsWindow.zig");
 const host_defaults = @import("host_defaults.zig");
 const chooser_rows = @import("chooser_rows.zig");
 const chrome_theme = @import("chrome_theme.zig");
@@ -1174,6 +1175,10 @@ pub fn onDevices(app: *App, res: *DirectoryProbe.Result) void {
         log.info("chooser directory: fetched {d} machine(s) quiet={}", .{ n, res.quiet });
     }
 
+    if (res.chooser_id == DirectoryProbe.settings_id) {
+        SettingsWindow.onDevices(res);
+        return;
+    }
     for (app.windows.items) |win| {
         const chooser = win.machine_chooser orelse continue;
         if (chooser.id != res.chooser_id) continue;

@@ -3669,6 +3669,20 @@ $GuardTable = @(
             'test\win32\settings-window.ps1'
         )
     },
+    # Settings > Remote Machines (T2686). `settings-remote-machines.ps1` is
+    # the only harness that seeds the page from the device cache with the
+    # relay held, lands presence, and saves Host Settings... from the page.
+    [pscustomobject]@{
+        Name   = 'settings-remote-machines'
+        Script = 'test\win32\settings-remote-machines.ps1'
+        Stamp  = 'test\win32\settings-remote-machines.stamp.json'
+        Covers = @(
+            'src\apprt\win32\settings_remote_view.zig',
+            'src\apprt\win32\settings_live.zig',
+            'src\apprt\win32\DirectoryProbe.zig',
+            'test\win32\settings-remote-machines.ps1'
+        )
+    },
     # Settings > Advanced's Config file section and the change toast (T2676).
     # `settings-advanced.ps1` is the only harness that restores a backup,
     # undoes through the toast, and proves Undo refuses over an outside edit.

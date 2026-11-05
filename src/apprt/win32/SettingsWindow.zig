@@ -75,6 +75,8 @@ const settings_theme = @import("settings_theme.zig");
 const theme_grid = @import("settings_theme_grid.zig");
 const controls = @import("settings_controls.zig");
 const preview_view = @import("settings_preview_view.zig");
+const remote_view = @import("settings_remote_view.zig");
+const DirectoryProbe = @import("DirectoryProbe.zig");
 const folder_dialog = @import("folder_dialog.zig");
 const ShortcutGuideWindow = @import("ShortcutGuideWindow.zig");
 const panel_theme = @import("panel_theme.zig");
@@ -176,6 +178,10 @@ pub const Hit = struct {
         color_well,
         color_reset,
         flag,
+        // Remote Machines (T2686): New Remote Window... and a machine's
+        // Host Settings... (`key` = its device id, `index` = its row).
+        new_remote_window,
+        host_settings,
     };
 };
 
@@ -248,6 +254,8 @@ last_shell: ?[]u8 = null,
 live_agent: settings_live.Agent = .{},
 live_pipe_buf: [256]u8 = undefined,
 live_build_buf: [96]u8 = undefined,
+/// Remote Machines (T2686): seeded once per showing of the page.
+remote: remote_view.State = .{},
 
 // What the form shows.
 page: PageId = .appearance,
@@ -310,6 +318,7 @@ preview_caption_len: usize = 0,
 pub fn open(app: *App, window: ?*Window) void {
     if (active) |existing| {
         existing.reloadData();
+        existing.remote.snapped = false;
         existing.refresh();
         _ = w32.ShowWindow(existing.hwnd, if (w32.IsIconic(existing.hwnd) != 0) w32.SW_RESTORE else w32.SW_SHOW);
         _ = w32.SetForegroundWindow(existing.hwnd);
@@ -451,6 +460,7 @@ fn destroyState(self: *SettingsWindow) void {
     freePaths(gpa, self.default_paths);
     self.hits.deinit(gpa);
     self.text.deinit();
+    self.remote.deinit();
     self.view_arena.deinit();
     gpa.destroy(self);
 }
@@ -472,6 +482,13 @@ pub fn closeAll() void {
 
 pub fn current() ?*SettingsWindow {
     return active;
+}
+
+/// Remote Machines' presence fetch landed (`MachineChooser.onDevices`
+/// routes `DirectoryProbe.settings_id` here; the caller destroys `res`).
+pub fn onDevices(res: *DirectoryProbe.Result) void {
+    const self = active orelse return;
+    if (remote_view.adopt(self, res)) self.refresh();
 }
 
 /// The config reloaded (App's `config_change`): re-read what the rows show.
@@ -803,6 +820,14 @@ fn refresh(self: *SettingsWindow) void {
     }
     self.plan = plan.items;
     self.listed = keys.items;
+    // Remote Machines reads its rows once per showing (Mac's `.task`): the
+    // cache now, presence from a background fetch.
+    if (!self.remote.snapped) for (self.plan) |it| {
+        if (it.kind == .custom and it.custom == .remote_machines) {
+            remote_view.snap(self);
+            break;
+        }
+    };
     if (self.edit_key) |k| if (!contains(self.listed, k)) {
         self.edit_key = null;
         self.focus = .search;
@@ -931,7 +956,10 @@ pub fn setQuery(self: *SettingsWindow, text: []const u8) void {
 /// Mac: switching page clears the search.
 pub fn setPage(self: *SettingsWindow, page: PageId) void {
     self.commitEdit();
-    if (page != self.page) self.resetThemeGrid();
+    if (page != self.page) {
+        self.resetThemeGrid();
+        self.remote.snapped = false;
+    }
     self.page = page;
     self.revealed_key = null;
     if (self.search.len > 0) self.search.clear();
@@ -2310,6 +2338,7 @@ fn paintCustom(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: 
         .config_file => return advanced_view.paintConfigFile(self, hdc, p, y, draw),
         .preview => return preview_view.paint(self, hdc, p, y, draw),
         .agent_status, .version => return self.paintLive(hdc, p, item.custom, y, draw),
+        .remote_machines => return remote_view.paint(self, hdc, p, y, draw),
         .all_settings => {
             const bh = layout.px(dip.filter_band_h, self.scale);
             if (draw) {
@@ -2336,10 +2365,7 @@ fn paintCustom(self: *SettingsWindow, hdc: w32.HDC, p: panel_theme.Panel, item: 
             .{ .text = "Open Shortcut Guide\u{2026}", .link = .guide_link },
             .{ .text = "To change a shortcut, edit keybind under Advanced \u{203A} All Settings." },
         },
-        .version, .agent_status => unreachable,
-        .remote_machines => &.{
-            .{ .text = "Your machines and their host settings are in the machine chooser (New Remote Window)." },
-        },
+        .version, .agent_status, .remote_machines => unreachable,
         .config_file, .all_settings, .preview => unreachable,
     };
     for (lines, 0..) |line, i| {
@@ -3064,6 +3090,14 @@ fn onLeftDown(self: *SettingsWindow, x: i32, y: i32) void {
             .info => self.toggleDoc(h.key),
             .open => self.openOverridingFile(h.key),
             .chip_remove => _ = self.removeValue(h.key, h.index),
+            .new_remote_window => {
+                self.commitEdit();
+                remote_view.newRemoteWindow(self);
+            },
+            .host_settings => {
+                self.commitEdit();
+                remote_view.requestHostSettings(self, h.key);
+            },
         }
         return;
     }
@@ -3275,6 +3309,11 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
 
     switch (msg) {
         w32.WM_ERASEBKGND => return 1,
+        remote_view.WM_APP_HOST_SETTINGS => {
+            remote_view.runHostSettings(self);
+            if (active == self) self.refresh();
+            return 0;
+        },
         w32.WM_PAINT => {
             var ps: w32.PAINTSTRUCT = undefined;
             const hdc = w32.BeginPaint(hwnd, &ps) orelse return 0;

@@ -44,8 +44,12 @@
 //!   (clicks the PAINTED hit of that kind and key at its centre - run --op=shot
 //!   first so the page has painted; ok=false when no such hit is on screen)
 //!   -> adds "live":{"agent":{"running","pid","running_build","bundled_build","pipe"},
-//!        "version","last_check_ms"} and "hits":[{"kind","key"}] (painted
-//!        check_updates / pane_style hits)
+//!        "version","last_check_ms","remote":{"snapped","fetching","fetched",
+//!        "account","email","title","caption","machines":[{"id","name",
+//!        "presence","working_directory","shell","caption"}]}} and
+//!        "hits":[{"kind","key"}] (painted check_updates / pane_style /
+//!        new_remote_window / host_settings hits; T2686 adds remote and the
+//!        last two - --value=host_settings:<device id> opens Host Settings...)
 //! The curated controls (T2681) - each through the function its gesture calls:
 //! {"action":"settings","arguments":["--op=slide","--key=unfocused-split-opacity","--value=0.6"]}  (a slider's release)
 //! {"action":"settings","arguments":["--op=step","--key=macos-pane-min-width","--value=up"]}        (a stepper arrow)
@@ -75,6 +79,7 @@ const ipc_capture = @import("ipc_capture.zig");
 const SettingsWindow = @import("SettingsWindow.zig");
 const settings_pages = @import("settings_pages.zig");
 const settings_advanced = @import("settings_advanced.zig");
+const settings_live = @import("settings_live.zig");
 const SettingsModel = @import("SettingsModel.zig");
 const theme_catalog = @import("theme_catalog.zig");
 const settings_controls = @import("settings_controls.zig");
@@ -454,11 +459,51 @@ fn writeLive(jws: *std.json.Stringify, w: *SettingsWindow) !void {
     try jws.write(build_config.version_string);
     try jws.objectField("last_check_ms");
     try jws.write(w.app.update_last_check_ms);
+    // Remote Machines (T2686): the account and every row as painted.
+    const rm = &w.remote;
+    try jws.objectField("remote");
+    try jws.beginObject();
+    try jws.objectField("snapped");
+    try jws.write(rm.snapped);
+    try jws.objectField("fetching");
+    try jws.write(rm.fetching);
+    try jws.objectField("fetched");
+    try jws.write(rm.fetched);
+    try jws.objectField("account");
+    try jws.write(@tagName(rm.account));
+    try jws.objectField("email");
+    try jws.write(rm.email);
+    var tb: [160]u8 = undefined;
+    try jws.objectField("title");
+    try jws.write(settings_live.accountTitle(&tb, rm.account, rm.email));
+    try jws.objectField("caption");
+    try jws.write(settings_live.accountCaption(rm.account));
+    try jws.objectField("machines");
+    try jws.beginArray();
+    for (rm.machines) |m| {
+        var cb: [1100]u8 = undefined;
+        try jws.beginObject();
+        try jws.objectField("id");
+        try jws.write(m.id);
+        try jws.objectField("name");
+        try jws.write(m.name);
+        try jws.objectField("presence");
+        try jws.write(@tagName(m.presence));
+        try jws.objectField("working_directory");
+        try jws.write(m.working_directory);
+        try jws.objectField("shell");
+        try jws.write(m.shell);
+        try jws.objectField("caption");
+        try jws.write(settings_live.machineCaption(&cb, m));
+        try jws.endObject();
+    }
+    try jws.endArray();
+    try jws.endObject();
     try jws.endObject();
     try jws.objectField("hits");
     try jws.beginArray();
     for (w.hits.items) |h| switch (h.kind) {
-        .check_updates, .pane_style, .slider, .step_up, .step_down, .color_well, .color_reset, .flag, .choice => {
+        .check_updates, .pane_style, .slider, .step_up, .step_down, .color_well, .color_reset, .flag, .choice, .new_remote_window, .host_settings => {
             try jws.beginObject();
             try jws.objectField("kind");
             try jws.write(@tagName(h.kind));

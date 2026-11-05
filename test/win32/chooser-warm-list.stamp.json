@@ -1,14 +1,14 @@
 {
     "guard":  "chooser-warm-list",
     "script":  "test/win32/chooser-warm-list.ps1",
-    "generated":  "2026-09-24T20:53:50-07:00",
-    "commit":  "7d3fb803e",
+    "generated":  "2026-11-04T15:40:15-08:00",
+    "commit":  "0977cfe15",
     "uncommitted":  [
-                        "src/apprt/win32/machine_cache.zig"
+                        "src/apprt/win32/DirectoryProbe.zig"
                     ],
     "files":  {
                   "src/apprt/win32/chooser_refresh.zig":  "d3e12f7c3193379910b5f1e0184652edd17615b78f2a27f30939ca9e5905d2da",
-                  "src/apprt/win32/DirectoryProbe.zig":  "436f0848d47eb50920460ad13d2856c6137ed0985a5676cd81be62b9532ee6de",
+                  "src/apprt/win32/DirectoryProbe.zig":  "8a3c2a82c923ef8c08aabbeb3af4abbbf50515d5c1f6f8442bc92e0715936ef1",
                   "src/apprt/win32/machine_cache.zig":  "cab3ce827634113b0d3373c65eee72f716ee08604ff72f4ea2dfc1a7dc5af954",
                   "test/win32/chooser-warm-list.ps1":  "c615a0de86c2debc15e196b56f97cc2021594a6548058fa4f9a48e991fca28f2"
               }
