@@ -186,6 +186,8 @@ const pane_drop = @import("pane_drop.zig");
 const pane_relocate = @import("pane_relocate.zig");
 const drop_highlight = @import("drop_highlight.zig");
 const DropHighlight = @import("DropHighlight.zig");
+const PaneDragGhost = @import("PaneDragGhost.zig");
+const pane_drag_ghost = @import("pane_drag_ghost.zig");
 const fullscreen_exit = @import("fullscreen_exit.zig");
 const FullscreenExit = @import("FullscreenExit.zig").FullscreenExit;
 const split_resize = @import("split_resize.zig");
@@ -436,6 +438,12 @@ rearrange_drag: ?RearrangeDrag = null,
 /// Created on the first drag this window sees and destroyed with the window,
 /// like every other overlay of ours.
 drop_preview: ?*DropHighlight = null,
+/// The card under the pointer during a pane drag (T2703), created on the
+/// first drag that wants one and destroyed with the window.
+drag_ghost: ?*PaneDragGhost = null,
+/// The screen point the live pane drag last moved to (T2703), where the
+/// ghost card is re-drawn when the pane's picture lands.
+drag_pointer: ?pane_drag_ghost.Point = null,
 
 /// Caption button under the pointer, if any (T254). The band's pixels are
 /// client but its mouse messages arrive as NC, so this is driven by
@@ -2380,6 +2388,10 @@ fn releaseOwnedResources(self: *Window) void {
     if (self.drop_preview) |dp| {
         dp.destroy();
         self.drop_preview = null;
+    }
+    if (self.drag_ghost) |g| {
+        g.destroy();
+        self.drag_ghost = null;
     }
     if (self.fullscreen_exit_btn) |b| {
         b.destroy();
@@ -4731,6 +4743,10 @@ pub const RearrangeDrag = struct {
     /// No other window is a candidate and no tab dwell arms.
     list: bool = false,
 
+    /// The ghost card is up and still waiting for the pane's picture
+    /// (T2703): the snapshot that answers it re-draws the card once.
+    ghost_waiting: bool = false,
+
     /// The tab button the pointer is currently resting on, and therefore the
     /// tab the dwell timer will switch to when it fires (T1537). Null when the
     /// pointer is not on a tab button at all.
@@ -5428,6 +5444,11 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
         self.repaintRearrangeHeaders();
         // Every sidebar is a target now, and shows its empty slot (T1844).
         self.setSidebarsDragActive(true);
+        // The card under the pointer, from the first move (T2703).
+        if (pane_drag_ghost.wantsGhost(d.blade, d.list)) self.showDragGhost(d, x, y);
+    } else if (self.drag_ghost) |g| {
+        // Every later move only moves it: the pixels are already on screen.
+        g.moveTo(self.screenPoint(x, y));
     }
     // Every move, not only the first: the capture means no `WM_SETCURSOR`
     // arrives while the button is down, so nothing else would keep the
@@ -5849,6 +5870,7 @@ fn endRearrangeDrag(self: *Window, commit: bool) void {
     // this.
     self.rearrange_drag = null;
     self.hideDropPreview();
+    if (self.drag_ghost) |g| g.hide();
     if (d.active) self.setSidebarsDragActive(false);
     if (self.hwnd) |h| {
         _ = w32.KillTimer(h, TAB_DWELL_TIMER_ID);
@@ -6795,6 +6817,58 @@ fn finishRearrangeDropFocusing(self: *Window, view: *PaneView, focus: *PaneView)
     if (focus.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
 }
 
+/// A client point of this window, on screen.
+fn screenPoint(self: *Window, x: i32, y: i32) pane_drag_ghost.Point {
+    var p = w32.POINT{ .x = x, .y = y };
+    if (self.hwnd) |h| _ = w32.ClientToScreen(h, &p);
+    self.drag_pointer = .{ .x = p.x, .y = p.y };
+    return self.drag_pointer.?;
+}
+
+/// Put the ghost card up for the pane `d` carries, under client point (x, y)
+/// (T2703). The card is drawn from the picture the pane already has, if any,
+/// and a fresh one is asked for at the card's own size; when it lands
+/// (`heroOnSnapReady`) the card is drawn once more with it.
+fn showDragGhost(self: *Window, d: *RearrangeDrag, x: i32, y: i32) void {
+    const owner = self.hwnd orelse return;
+    if (self.drag_ghost == null) {
+        self.drag_ghost = PaneDragGhost.create(self.app.core_app.alloc, owner, self.app.hinstance) catch |err| {
+            log.warn("pane drag ghost create failed err={}", .{err});
+            return;
+        };
+    }
+    const card = self.dragGhostCard(d.view, false) orelse return;
+    self.drag_ghost.?.show(card, self.screenPoint(x, y));
+    // Ask for the picture at the size the card draws it, 1:1.
+    const size = pane_drag_ghost.cardSize(card.pane_w, card.pane_h, card.scale);
+    const lay = pane_drag_ghost.layout(size, card.scale);
+    const want = pane_drag_ghost.contentRequest(card.pane_w, card.pane_h, .{ .w = lay.body.width(), .h = lay.body.height() });
+    if (want.w > 0 and want.h > 0 and d.view.glideSnapRequest(@intCast(want.w), @intCast(want.h))) d.ghost_waiting = true;
+}
+
+/// The card for `view` as it is now. `with_content` false draws the card
+/// without the pane's picture: at the drag's first move the cached one may
+/// be any age (another tab's hero thumbnail, a fold's frame), and a stale
+/// picture is a worse answer than none for the moment it takes the fresh one
+/// to arrive.
+fn dragGhostCard(self: *Window, view: *PaneView, with_content: bool) ?PaneDragGhost.Card {
+    const h = view.hwnd() orelse return null;
+    var r: w32.RECT = undefined;
+    if (w32.GetClientRect(h, &r) == 0) return null;
+    const bg: pane_drag_ghost.Rgb = if (view.surface()) |s| s.effectiveBackground() else self.chromePalette().bar;
+    var card: PaneDragGhost.Card = .{
+        .pane_w = r.right - r.left,
+        .pane_h = r.bottom - r.top,
+        .scale = self.scale,
+        .background = bg,
+        .title = if (view.title()) |t| t else if (view.surface() != null) "Terminal" else "Viewer",
+    };
+    if (with_content) if (view.glideFrame()) |f| {
+        card.content = .{ .pixels = f.pixels, .w = f.w, .h = f.h };
+    };
+    return card;
+}
+
 fn showDropPreview(self: *Window, hl: drop_highlight.Highlight, over_other_window: bool) void {
     const owner = self.hwnd orelse return;
     if (self.drop_preview == null) {
@@ -7502,6 +7576,18 @@ fn heroProbeForeignInput(self: *Window, now: i64) void {
 /// tab's tree before any Surface pointer is dereferenced (the pane may
 /// have closed between post and delivery).
 fn heroOnSnapReady(self: *Window, leaf_hwnd_int: usize) void {
+    // The pane being dragged sent the picture its ghost card asked for
+    // (T2703): the card is drawn again, once, with it.
+    if (self.rearrange_drag) |*d| if (d.ghost_waiting) if (d.view.hwnd()) |h| if (@intFromPtr(h) == leaf_hwnd_int) {
+        d.ghost_waiting = false;
+        _ = d.view.heroSnapPublish();
+        // At the pointer the drag last saw, not the live cursor: a probe that
+        // drives the drag by message moves no real one.
+        if (self.drag_ghost) |g| if (g.shown) if (self.drag_pointer) |at| {
+            if (self.dragGhostCard(d.view, true)) |card| g.show(card, at);
+        };
+        return;
+    };
     if (self.tab_count == 0) return;
     // A fold waiting for its card's picture (T2457): the next frame of the
     // glide draws the card from it and hides the live pane.

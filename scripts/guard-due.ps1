@@ -467,6 +467,20 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # T2703: the card that follows the pointer during a pane drag. Covers the
+    # harness, the pure card geometry and pixels, the window that shows it,
+    # and the drag loop that puts it up, moves it and takes it down.
+    [pscustomobject]@{
+        Name   = 'pane-drag-ghost'
+        Script = 'test\win32\pane-drag-ghost.ps1'
+        Stamp  = 'test\win32\pane-drag-ghost.stamp.json'
+        Covers = @(
+            'test\win32\pane-drag-ghost.ps1',
+            'src\apprt\win32\pane_drag_ghost.zig',
+            'src\apprt\win32\PaneDragGhost.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # T1531: the drag itself - the gesture, the live preview and the tree
     # mutation it commits. Covers the harness, the pure preview geometry, the
     # overlay that draws it, the resolver it asks, the tree mutations it
