@@ -756,6 +756,35 @@ pub fn cropDeskRegionRgba(
     }
 }
 
+/// Whether a pane's glass slice can be cropped out of the desk the window
+/// painted (`cropDeskRegionRgba`) rather than evaluated (T2712): the desk
+/// covers the pane's rect, in desk pixels from the content area's corner.
+///
+/// Not "the desk is the window's size" - under a window-edge drag the desk is
+/// a canvas larger than the window (`PaneDesk.liveResize`, T2577), laid out
+/// for the canvas. That canvas is what is on screen round the cards, so it is
+/// the slice that meets them without a seam; evaluating the gradient for the
+/// window's size instead cost ~0.7 ms per terminal per Debug drag step and
+/// drew a slice laid out for a desk that was not the one showing.
+pub fn deskCoversRegion(src_w: i32, src_h: i32, rect: [4]i32) bool {
+    return src_w > 0 and src_h > 0 and rect[0] >= 0 and rect[1] >= 0 and
+        rect[2] > rect[0] and rect[3] > rect[1] and rect[2] <= src_w and rect[3] <= src_h;
+}
+
+test "T2712: a slice is cropped from a desk that covers it, the drag's larger canvas included" {
+    // The window's own desk, exactly its size.
+    try testing.expect(deskCoversRegion(800, 600, .{ 10, 10, 400, 590 }));
+    try testing.expect(deskCoversRegion(800, 600, .{ 0, 0, 800, 600 }));
+    // A drag's canvas, past the window by an eighth: the pane still lies in it.
+    try testing.expect(deskCoversRegion(900, 675, .{ 410, 10, 800, 590 }));
+    // A desk that does not reach the pane, or a degenerate rect, is evaluated.
+    try testing.expect(!deskCoversRegion(800, 600, .{ 410, 10, 820, 590 }));
+    try testing.expect(!deskCoversRegion(800, 600, .{ 10, 10, 400, 610 }));
+    try testing.expect(!deskCoversRegion(800, 600, .{ -1, 10, 400, 590 }));
+    try testing.expect(!deskCoversRegion(800, 600, .{ 10, 10, 10, 590 }));
+    try testing.expect(!deskCoversRegion(0, 0, .{ 0, 0, 1, 1 }));
+}
+
 /// The pixel a window coordinate falls in, clamped to `0..n-1`.
 fn srcIndex(v: f32, n: usize) usize {
     if (!(v > 0)) return 0;

@@ -2621,6 +2621,10 @@ pub const WM_ACTIVATE: u32 = 0x0006;
 pub const WA_INACTIVE: u16 = 0;
 
 pub extern "kernel32" fn GetCurrentThreadId() callconv(.winapi) u32;
+pub extern "kernel32" fn GetCurrentThread() callconv(.winapi) HANDLE;
+/// CPU cycles the thread has run (T2712): counts only while it is scheduled,
+/// so a wall-clock lap's starvation drops out of it.
+pub extern "kernel32" fn QueryThreadCycleTime(thread: HANDLE, cycles: *u64) callconv(.winapi) i32;
 
 pub extern "user32" fn GetForegroundWindow() callconv(.winapi) ?HWND;
 

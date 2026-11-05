@@ -5813,8 +5813,9 @@ pub fn setPaneBackdrop(self: *Surface, spec: ?GlassBackdrop, desk: ?PaneDesk.Bac
         const bw: usize = @intCast(@max(@divFloor(rw + 3, 4), 1));
         const bh: usize = @intCast(@max(@divFloor(rh + 3, 4), 1));
         const data = alloc.alloc(u8, bw * bh * 4) catch return false;
+        // The desk on screen, a drag's larger canvas included (T2712).
         const rendered: ?PaneDesk.Backdrop = if (desk) |d|
-            (if (d.w == b.full_w and d.h == b.full_h) d else null)
+            (if (desk_palette.deskCoversRegion(d.w, d.h, b.rect)) d else null)
         else
             null;
         if (rendered) |d| desk_palette.cropDeskRegionRgba(

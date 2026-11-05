@@ -10180,6 +10180,64 @@ fn resizeTraceMsg(hwnd: w32.HWND, msg: u32) void {
     log.info("resize trace msg=0x{x} qpc={d} w={d}", .{ msg, t, r.right - r.left });
 }
 
+/// A lap timed twice under `GHOZTTY_RESIZE_TRACE` (T2712): wall clock, and
+/// the UI thread's own CPU time over it. A paint that shares the box with the
+/// renderer threads can read slow on the wall clock only because it was not
+/// scheduled; the gap between the two numbers says how much of a lap that is.
+const CpuLap = struct {
+    qpc: i64 = 0,
+    cycles: u64 = 0,
+
+    /// Thread cycles per microsecond, measured once by a short busy spin:
+    /// the thread runs throughout, so its cycles track the wall clock there.
+    var cycles_per_us: ?f64 = null;
+
+    fn start() CpuLap {
+        if (!resizeTraceOn()) return .{};
+        if (cycles_per_us == null) calibrate();
+        var l: CpuLap = .{};
+        _ = w32.QueryThreadCycleTime(w32.GetCurrentThread(), &l.cycles);
+        _ = w32.QueryPerformanceCounter(&l.qpc);
+        return l;
+    }
+
+    fn calibrate() void {
+        const th = w32.GetCurrentThread();
+        var c0: u64 = 0;
+        var c1: u64 = 0;
+        var q0: i64 = 0;
+        var q1: i64 = 0;
+        _ = w32.QueryThreadCycleTime(th, &c0);
+        _ = w32.QueryPerformanceCounter(&q0);
+        const f = qpcFreqWin();
+        while (true) {
+            _ = w32.QueryPerformanceCounter(&q1);
+            if (@divTrunc((q1 - q0) * 1_000_000, f) >= 3000) break;
+        }
+        _ = w32.QueryThreadCycleTime(th, &c1);
+        const us: f64 = @floatFromInt(@divTrunc((q1 - q0) * 1_000_000, f));
+        cycles_per_us = @as(f64, @floatFromInt(c1 -% c0)) / @max(us, 1);
+    }
+
+    fn report(self: CpuLap, comptime what: []const u8) void {
+        if (self.qpc == 0) return;
+        var c: u64 = 0;
+        var q: i64 = 0;
+        _ = w32.QueryThreadCycleTime(w32.GetCurrentThread(), &c);
+        _ = w32.QueryPerformanceCounter(&q);
+        const wall_us = @divTrunc((q - self.qpc) * 1_000_000, qpcFreqWin());
+        const rate = cycles_per_us orelse 1;
+        const cpu_us: i64 = @intFromFloat(@as(f64, @floatFromInt(c -% self.cycles)) / @max(rate, 1));
+        log.info("resize trace cpu " ++ what ++ " wall_us={d} cpu_us={d}", .{ wall_us, cpu_us });
+    }
+};
+
+fn qpcFreqWin() i64 {
+    var f: i64 = 0;
+    _ = w32.QueryPerformanceFrequency(&f);
+    return @max(f, 1);
+}
+
 fn resizeTrace(comptime what: []const u8, hwnd: w32.HWND) void {
     if (!resizeTraceOn()) return;
     var t: i64 = 0;
@@ -11401,7 +11459,9 @@ fn clearVacatedPaneStrips(self: *Window, hwnd: w32.HWND, old: []const w32.RECT) 
         const gutters = self.painted_gutters;
         const gutters_len = self.painted_gutters_len;
         resizeTrace("vacated-dc", hwnd);
+        const lap = CpuLap.start();
         self.paintAlphaCorrect(dc, paintMovedBands);
+        lap.report("vacated");
         resizeTrace("vacated-painted", hwnd);
         // No band paint follows to clear from the old record (T2577): this
         // paint's is the one the next pass has to clear.
@@ -11818,6 +11878,7 @@ fn setStripHover(self: *Window, view: ?*PaneView) void {
 /// A visible pane's card is its whole slot, header and banner band included:
 /// on Mac those are inside the pane's card too.
 fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
+    if (self.hwnd) |hw| resizeTrace("desk-enter", hw);
     // The whole desk, the sidebar's column included (T1850): the window's
     // blit cannot reach under the sidebar child, but the gradient has to be
     // laid out across the full width for the sidebar's slice of it to join
@@ -12029,11 +12090,16 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         .glass = glass,
         .glows = if (glow_layers) glows[0..0] else glows[0..ng],
     };
+    if (self.hwnd) |hw| resizeTrace("desk-pre", hw);
     self.pane_desk.paint(desk_dc, area.left, area.top, w, h, cards[0..nc], bands[0..nt], style, self.desk_variant, lights[0..nl], self.busyHead(), bar, self.deskOpacity());
+    if (self.hwnd) |hw| resizeTrace("desk-paint", hw);
     if (glow_layers) self.syncGlowLayers(slots[0..n], cards[0..nc], bands[0..nt], style, bar) else self.dropGlowLayers();
+    if (self.hwnd) |hw| resizeTrace("desk-glow", hw);
     // On the compositor the visual already lies under every pane.
     if (hero_split == null and self.deskOpacity() == null and !on_visual) self.paintDeskUnderPanes(slots[0..n], area, name_rects[0..nn]);
+    if (self.hwnd) |hw| resizeTrace("desk-under", hw);
     self.syncGlassBackdrops(slots[0..n], area, glass, color_math.isLight(fill));
+    if (self.hwnd) |hw| resizeTrace("desk-glass", hw);
     if (self.sidebar) |sb| sb.deskPainted(self.pane_desk.desk_gen);
 }
 
@@ -12473,6 +12539,10 @@ fn syncGlassBackdrops(self: *Window, slots: []const PaneSlot, area: w32.RECT, gl
                 @bitCast(@as(i64, fw)),                   @bitCast(@as(i64, fh)),
                 if (self.desk_variant) |v| v.seed else 0, @intFromBool(is_light),
                 @as(u32, @bitCast(sheet.t)),              @as(u32, @bitCast(sheet.fade)),
+                // The desk the slice is cropped from (T2712): a drag's canvas
+                // is laid out for its own size, so the window-sized desk the
+                // drag's end paints is a new slice at the same rect.
+                if (desk) |d| @as(u64, @as(u32, @bitCast(d.w))) << 32 | @as(u32, @bitCast(d.h)) else 0,
             };
             const key = std.hash.Wyhash.hash(0x1833, std.mem.sliceAsBytes(&words)) | 1;
             if (entry.view.glass_backdrop_key == key) continue;
