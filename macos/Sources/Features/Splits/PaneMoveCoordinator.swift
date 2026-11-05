@@ -56,6 +56,11 @@ enum PaneMoveCoordinator {
             insertAtTopLevel(pane: pane, node: sourceNode, from: source,
                              in: destination, side: side)
 
+        case .insert(let window, let before, let after, let direction, _):
+            guard let destination = controller(for: window) else { return }
+            insert(pane: pane, node: sourceNode, from: source, in: destination,
+                   between: before, and: after, direction: direction)
+
         case .newTab(let window, let index):
             guard let destination = controller(for: window) else { return }
             moveToNewTab(pane: pane, node: sourceNode, from: source,
@@ -100,6 +105,39 @@ enum PaneMoveCoordinator {
         }
     }
 
+    /// Whether `target` would leave `pane` where it is: dropped there, nothing
+    /// on screen would change, so the spot doesn't react. Answered by making
+    /// the move on a copy of the tree, so that it can't disagree with the move.
+    ///
+    /// Only a place in the pane's own window can be where it already is. A
+    /// stashed pane is not on the grid, so every place there is a new one.
+    static func wouldLeaveInPlace(
+        _ target: PaneDropTarget,
+        pane: PaneView,
+        from source: BaseTerminalController
+    ) -> Bool {
+        let tree = source.surfaceTree
+        guard target.window == PaneDropWindowRef(source),
+              !tree.isStashed(pane),
+              let node = tree.root?.node(view: pane)
+        else { return false }
+        let without = tree.removing(node)
+
+        let moved: SplitTree<PaneView>?
+        switch target {
+        case .split(_, let destPaneID, let direction):
+            moved = tree.first { $0.id == destPaneID }
+                .flatMap { try? without.inserting(view: pane, at: $0, direction: direction) }
+        case .topLevel(_, let side):
+            moved = without.root == nil ? nil : without.insertingAtTopLevel(view: pane, side: side)
+        case .insert(_, let before, let after, let direction, _):
+            moved = without.inserting(view: pane, between: before, and: after, direction: direction)
+        default:
+            return false
+        }
+        return moved?.visibleTree.hasSameLayout(as: tree.visibleTree) ?? true
+    }
+
     /// The header's pop-out button: the same move as dropping in empty space,
     /// without the drag.
     static func popOut(pane: PaneView, from source: BaseTerminalController) {
@@ -139,7 +177,7 @@ enum PaneMoveCoordinator {
             // A new tab beside SOME OTHER window is a real relocation; a new
             // tab beside your own lone-pane window is the churn case.
             return sourcePaneCount > 1 || !targetIsSourceWindow
-        case .split, .swap, .topLevel, .stash, .sidebarOrder:
+        case .split, .swap, .topLevel, .insert, .stash, .sidebarOrder:
             return true
         case .joinWindow:
             // Joining your own window is not a move.
@@ -319,6 +357,32 @@ enum PaneMoveCoordinator {
             pane: pane,
             source: source, sourceTree: sourceTree,
             destination: destination, destinationTree: wrapped)
+    }
+
+    /// A drop on a divider: the pane goes in its gap, spanning its length.
+    private static func insert(
+        pane: PaneView,
+        node: SplitTree<PaneView>.Node,
+        from source: BaseTerminalController,
+        in destination: BaseTerminalController,
+        between before: Set<UUID>,
+        and after: Set<UUID>,
+        direction: SplitTree<PaneView>.Direction
+    ) {
+        let sourceTree = source.surfaceTree.removing(node)
+        let baseTree = source === destination ? sourceTree : destination.surfaceTree
+        guard let inserted = baseTree.inserting(view: pane, between: before, and: after, direction: direction) else {
+            logger.warning("the divider is not in the tree; ignoring drop")
+            return
+        }
+        if source === destination {
+            commit(in: source, tree: inserted, focus: pane)
+            return
+        }
+        crossWindowCommit(
+            pane: pane,
+            source: source, sourceTree: sourceTree,
+            destination: destination, destinationTree: inserted)
     }
 
     /// Stash `pane` in ANOTHER window's sidebar: it joins that window's tree
@@ -501,6 +565,75 @@ enum PaneMoveCoordinator {
             if PaneDropWindowRef(controller) == ref { return controller }
         }
         return nil
+    }
+}
+
+extension SplitTree {
+    /// How much of a divider's split a pane dropped on it takes.
+    static var insertShare: Double { 1.0 / 3 }
+
+    /// Put `view` in the gap of the divider between the panes `before` and
+    /// `after`, the two sides each giving up their share of its space. Either
+    /// list can name `view` itself, which is not in the tree when it is being
+    /// moved from beside that divider. Nil when there is no such divider, as
+    /// when `view` was all there was on one side of it.
+    func inserting(
+        view: ViewType,
+        between before: Set<ViewType.ID>,
+        and after: Set<ViewType.ID>,
+        direction: Direction
+    ) -> Self? {
+        let hidden = Set(stashed)
+        func panes(_ node: Node) -> Set<ViewType.ID> { Set(node.leaves().map(\.id)).subtracting(hidden) }
+        let before = before.subtracting([view.id]), after = after.subtracting([view.id])
+        func divider(in node: Node?) -> Node? {
+            guard let node, case .split(let split) = node else { return nil }
+            if split.direction == direction, panes(split.left) == before, panes(split.right) == after {
+                return node
+            }
+            return divider(in: split.left) ?? divider(in: split.right)
+        }
+        guard !before.isEmpty, !after.isEmpty,
+              let target = divider(in: root),
+              case .split(let split) = target
+        else { return nil }
+
+        // The new pane takes `share`; what is left stays divided as it was.
+        let share = Self.insertShare
+        let trailing = (1 - split.ratio) * (1 - share)
+        let inner = Node.split(.init(
+            direction: direction, ratio: share / (share + trailing),
+            left: .leaf(view: view), right: split.right))
+        return try? replacing(node: target, with: .split(.init(
+            direction: direction, ratio: split.ratio * (1 - share),
+            left: split.left, right: inner)))
+    }
+
+    /// The same panes in the same places, whatever the sizes and however the
+    /// tree nests them: A beside (B beside C) is laid out as (A beside B)
+    /// beside C.
+    func hasSameLayout(as other: Self) -> Bool {
+        root.map(PaneArrangement.init) == other.root.map(PaneArrangement.init)
+    }
+
+    /// A tree's layout, with a run of splits on one axis read as one row.
+    private enum PaneArrangement: Equatable {
+        case pane(ViewType.ID)
+        case row(Direction, [PaneArrangement])
+
+        init(_ node: Node) {
+            switch node {
+            case .leaf(let view):
+                self = .pane(view.id)
+            case .split(let split):
+                let items = [split.left, split.right].flatMap { child -> [PaneArrangement] in
+                    let arranged = PaneArrangement(child)
+                    if case .row(split.direction, let items) = arranged { return items }
+                    return [arranged]
+                }
+                self = .row(split.direction, items)
+            }
+        }
     }
 }
 

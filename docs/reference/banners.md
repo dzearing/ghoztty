@@ -92,6 +92,12 @@ never sees the terminal resize:**
 - The collapsed state lives on the surface (`paneBannerCollapsed`, ephemeral;
   a cleared banner comes back expanded).
 
+The terminal starts on a whole row under the card (`rowAligned`), never part of
+one, so a row of blank terminal background can show below the card. The grid
+fills from the top: an inset that took part of a row would move the last row,
+and text hugging the bottom would rest a few pixels lower or higher with each
+banner height. Test: `theLastRowRestsWhereItWas`.
+
 Tests: `BannerCollapseWindowTests` (recorded at the display's frame rate;
 frames in `/tmp/banner-collapse` and `/tmp/banner-collapse-prompt[-agent]`;
 the prompt cases run in a plain local pane and in an agent-backed one, whose

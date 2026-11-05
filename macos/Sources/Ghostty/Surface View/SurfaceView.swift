@@ -65,9 +65,9 @@ extension Ghostty {
         // screen rides the card's edge down or up; text laid out to the
         // bottom (a shell at the bottom of its scrollback, an agent's input
         // box) holds still while the card covers or uncovers rows above it.
-        // - `bannerReveal` is where the terminal starts to show (the card's
-        //   edge). It animates with the card (same curve): a mask, never a
-        //   layout change.
+        // - `bannerReveal` is where the terminal starts to show (the first
+        //   whole row under the card, `rowAligned`). It animates with the card
+        //   (same curve): a mask, never a layout change.
         // - `terminalInset` is where the terminal is laid out, i.e. its size.
         // - `bannerGlide` moves the frozen copy and the live terminal along
         //   that path (`BannerGlide`), so the swap lands wherever it happens.
@@ -128,6 +128,16 @@ extension Ghostty {
             surfaceFocus || lastFocusedSurface?.value === surfaceView
         }
 
+        /// Where the terminal starts under a banner this tall: on a whole row,
+        /// rounded down the pane so the card never cuts one. The grid fills
+        /// from the top, so taking part of a row would move its last row, and
+        /// text laid out to the bottom would rest that much lower or higher
+        /// with each banner height.
+        private func rowAligned(_ height: CGFloat) -> CGFloat {
+            let row = surfaceView.cellSize.height
+            return row > 0 ? (height / row).rounded(.up) * row : height
+        }
+
         /// The banner settled on a new height (see `bannerReveal`).
         private func bannerTargetChanged(_ target: CGFloat) {
             let collapsed = surfaceView.paneBannerCollapsed
@@ -135,6 +145,7 @@ extension Ghostty {
             bannerCollapsedSeen = collapsed
             bannerToggleGeneration += 1
             let generation = bannerToggleGeneration
+            let inset = rowAligned(target)
 
             // Never let an ambient animation interpolate the layout inset —
             // an animated inset drags the terminal through per-frame resizes.
@@ -143,8 +154,8 @@ extension Ghostty {
             guard toggled else {
                 withTransaction(instant) {
                     bannerHeight = target
-                    bannerReveal = target
-                    terminalInset = target
+                    bannerReveal = inset
+                    terminalInset = inset
                     bannerFrozen = nil
                 }
                 return
@@ -155,7 +166,7 @@ extension Ghostty {
             let frozen = surfaceView.frozenFrame()
             let shift: CGFloat = {
                 guard let surface = surfaceView.surface, let frozen else { return 0 }
-                let height = (surfaceView.bounds.height + oldInset - target) * frozen.scale
+                let height = (surfaceView.bounds.height + oldInset - inset) * frozen.scale
                 return CGFloat(ghostty_surface_predict_resize_shift(surface, UInt32(max(0, height)))) / frozen.scale
             }()
             #else
@@ -164,16 +175,16 @@ extension Ghostty {
             #endif
             withTransaction(instant) {
                 bannerHeight = target
-                terminalInset = target
+                terminalInset = inset
                 bannerFrozen = frozen.map {
                     FrozenTerminal(surface: $0.surface, scale: $0.scale, top: oldInset,
                                    size: surfaceView.bounds.size)
                 }
                 bannerGlide.base = bannerGlide.progress
-                bannerGlide.delta = target - oldInset + shift
+                bannerGlide.delta = inset - oldInset + shift
             }
             withAnimation(SurfacePaneBanner.toggleAnimation) {
-                bannerReveal = target
+                bannerReveal = inset
                 bannerGlide.progress = bannerGlide.base + 1
             }
             #if canImport(AppKit)
@@ -333,6 +344,10 @@ extension Ghostty {
                                     // animated inset drags the terminal surface
                                     // through per-frame resizes.
                                     bannerTargetChanged(target)
+                                }
+                                // A new font size moves the rows under it.
+                                .onChange(of: surfaceView.cellSize) { _ in
+                                    if bannerHeight > 0 { bannerTargetChanged(bannerHeight) }
                                 }
                             Spacer(minLength: 0)
                         }
