@@ -498,6 +498,24 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # T2704: a pane dropped on a divider goes into its gap with a third of the
+    # split. The resolver's divider row, the tree walk that lists dividers and
+    # finds one again, the gap insert, the seamed preview, and the window that
+    # builds the candidates and commits the drop.
+    [pscustomobject]@{
+        Name   = 'rearrange-divider-drop'
+        Script = 'test\win32\rearrange-divider-drop.ps1'
+        Stamp  = 'test\win32\rearrange-divider-drop.stamp.json'
+        Covers = @(
+            'test\win32\rearrange-divider-drop.ps1',
+            'src\apprt\win32\pane_drop.zig',
+            'src\apprt\win32\pane_gap.zig',
+            'src\apprt\win32\drop_highlight.zig',
+            'src\apprt\win32\DropHighlight.zig',
+            'src\datastruct\split_tree.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # T1537: the drops that leave the layout you are looking at - a pane onto
     # the tab strip, and the dwell that carries a drag into another tab. Same
     # covered set as the drag above, because it is the same gesture reaching

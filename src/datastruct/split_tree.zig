@@ -1037,6 +1037,41 @@ pub fn SplitTree(comptime V: type) type {
             return try self.split(gpa, .root, direction, ratio, insert);
         }
 
+        /// Put `insert` in the gap of the divider at the split `at`, spanning
+        /// the divider's length (a pane dropped on a divider, T2704; Mac
+        /// `SplitTree.inserting(view:between:and:direction:)`).
+        ///
+        /// The inserted tree takes `share` of the split's space and the two
+        /// sides each give up their share of it, so what is left stays divided
+        /// as it was: `L | R` at ratio r becomes `L | (insert | R)`, with L at
+        /// r * (1 - share) of the whole and `insert` at `share`.
+        ///
+        /// Ownership follows `split`, whose handle rule this inherits: every
+        /// handle of `self` still names the same node afterwards. Zoom is
+        /// cleared.
+        pub fn insertInGap(
+            self: *const Self,
+            gpa: Allocator,
+            at: Node.Handle,
+            share: f16,
+            insert: *const Self,
+        ) Allocator.Error!Self {
+            assert(at.idx() < self.nodes.len);
+            assert(self.nodes[at.idx()] == .split);
+            const s = self.nodes[at.idx()].split;
+            const r: f32 = s.ratio;
+            const sh: f32 = share;
+            const trailing = (1 - r) * (1 - sh);
+            const inner: f16 = @floatCast(sh / (sh + trailing));
+            const before: Split.Direction = switch (s.layout) {
+                .horizontal => .left,
+                .vertical => .up,
+            };
+            var out = try self.split(gpa, s.right, before, inner, insert);
+            out.resizeInPlace(at, @floatCast(r * (1 - sh)));
+            return out;
+        }
+
         /// Move a leaf somewhere else in the SAME tree: take the view at `at`
         /// out of where it is and put it beside the view at `target`, on
         /// `direction`'s side of it. Both handles must be leaves and they must
@@ -3242,6 +3277,99 @@ test "SplitTree: a top-level insert wraps where a pane split nests (T1529)" {
     const top_right = top.nodes[top.nodes[0].split.right.idx()];
     try testing.expect(top_right == .leaf);
     try testing.expectEqualStrings("C", top_right.leaf.label);
+}
+
+test "SplitTree: insertInGap puts the view between the divider's sides with a third (T2704)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var buf: [64]u8 = undefined;
+
+    var a: TestTree.View = .{ .label = "A" };
+    var b: TestTree.View = .{ .label = "B" };
+    var c: TestTree.View = .{ .label = "C" };
+
+    var pair = try testPair(alloc, &a, &b);
+    defer pair.deinit();
+    var leaf: TestTree = try .init(alloc, &c);
+    defer leaf.deinit();
+
+    var result = try pair.insertInGap(alloc, .root, 1.0 / 3.0, &leaf);
+    defer result.deinit();
+    try testing.expectEqualStrings("A,C,B", leafOrder(&result, &buf));
+
+    // A keeps 2/3 of its half, and C | B splits the rest so C gets a third
+    // of the whole and B the same 2/3 of its half that A kept.
+    const outer = result.nodes[0].split;
+    try testing.expectEqual(TestTree.Split.Layout.horizontal, outer.layout);
+    try testing.expectApproxEqAbs(@as(f32, 1.0 / 3.0), @as(f32, outer.ratio), 0.002);
+    const inner = result.nodes[outer.right.idx()].split;
+    try testing.expectEqual(TestTree.Split.Layout.horizontal, inner.layout);
+    try testing.expectApproxEqAbs(@as(f32, 0.5), @as(f32, inner.ratio), 0.002);
+    try testing.expect(result.nodes[inner.left.idx()] == .leaf);
+    try testing.expectEqualStrings("C", result.nodes[inner.left.idx()].leaf.label);
+}
+
+test "SplitTree: insertInGap keeps an uneven split's proportions (T2704)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var buf: [64]u8 = undefined;
+
+    var a: TestTree.View = .{ .label = "A" };
+    var b: TestTree.View = .{ .label = "B" };
+    var c: TestTree.View = .{ .label = "C" };
+
+    // A over B at 0.25, a vertical split.
+    var ta: TestTree = try .init(alloc, &a);
+    defer ta.deinit();
+    var tb: TestTree = try .init(alloc, &b);
+    defer tb.deinit();
+    var pair = try ta.split(alloc, .root, .down, 0.25, &tb);
+    defer pair.deinit();
+    var leaf: TestTree = try .init(alloc, &c);
+    defer leaf.deinit();
+
+    var result = try pair.insertInGap(alloc, .root, 1.0 / 3.0, &leaf);
+    defer result.deinit();
+    try testing.expectEqualStrings("A,C,B", leafOrder(&result, &buf));
+
+    const outer = result.nodes[0].split;
+    try testing.expectEqual(TestTree.Split.Layout.vertical, outer.layout);
+    // A: 0.25 * 2/3 = 1/6 of the whole. C: 1/3. B: 0.75 * 2/3 = 1/2.
+    const a_share: f32 = outer.ratio;
+    const inner = result.nodes[outer.right.idx()].split;
+    try testing.expectEqual(TestTree.Split.Layout.vertical, inner.layout);
+    const c_share: f32 = (1 - a_share) * @as(f32, inner.ratio);
+    const b_share: f32 = (1 - a_share) * (1 - @as(f32, inner.ratio));
+    try testing.expectApproxEqAbs(@as(f32, 1.0 / 6.0), a_share, 0.002);
+    try testing.expectApproxEqAbs(@as(f32, 1.0 / 3.0), c_share, 0.002);
+    try testing.expectApproxEqAbs(@as(f32, 0.5), b_share, 0.002);
+}
+
+test "SplitTree: insertInGap leaves every other handle naming its node (T2704)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var a: IdentityView = .{ .label = "A" };
+    var b: IdentityView = .{ .label = "B" };
+    var c: IdentityView = .{ .label = "C" };
+
+    var ta: IdentityTree = try .init(alloc, &a);
+    defer ta.deinit();
+    var tb: IdentityTree = try .init(alloc, &b);
+    defer tb.deinit();
+    var pair = try ta.split(alloc, .root, .right, 0.5, &tb);
+    defer pair.deinit();
+    var leaf: IdentityTree = try .init(alloc, &c);
+    defer leaf.deinit();
+
+    const a_at = identityHandleOf(&pair, "A").?;
+    var result = try pair.insertInGap(alloc, .root, 1.0 / 3.0, &leaf);
+    defer result.deinit();
+    // The same view, not a copy: C is the pane that was dragged.
+    try testing.expect(identityHandleOf(&result, "A").? == a_at);
+    const c_at = identityHandleOf(&result, "C").?;
+    try testing.expect(result.nodes[c_at.idx()].leaf == &c);
+    try testing.expect(result.zoomed == null);
 }
 
 test "SplitTree: insertAtTopLevel handles an empty tree on either side (T1529)" {

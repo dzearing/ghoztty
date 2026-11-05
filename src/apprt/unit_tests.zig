@@ -401,6 +401,7 @@ test {
     // drag point means, across a SET of candidate windows (T1528), same
     // no-OS-imports deal.
     _ = @import("win32/pane_drop.zig");
+    _ = @import("win32/pane_gap.zig"); // T2704: divider drops
 
     // Pure win32 rearrange-mode drop PREVIEW geometry — the rect a resolved
     // drop would put the dragged pane in (T1531), same no-OS-imports deal.

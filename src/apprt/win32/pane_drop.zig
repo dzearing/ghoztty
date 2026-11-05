@@ -113,9 +113,21 @@ pub const Target = union(enum) {
     /// area.
     tile: Rect,
 
+    /// Put the pane in the gap of a divider (T2704, Mac `.insert`), between
+    /// the panes `before` and `after` it on the divider's own axis. `landing`
+    /// is where it would show, in screen coordinates.
+    insert: struct {
+        window: WindowRef,
+        before: []const []const u8,
+        after: []const []const u8,
+        layout: RowDirection,
+        landing: Rect,
+    },
+
     /// The window this target lands in, or null for a brand new one.
     pub fn window(self: Target) ?WindowRef {
         return switch (self) {
+            .insert => |s| s.window,
             .split => |s| s.window,
             .swap => |s| s.window,
             .top_level => |s| s.window,
@@ -188,7 +200,119 @@ pub const Candidate = struct {
     /// below it the drop stashes. Null - no tray geometry - makes the whole
     /// sidebar the tray, as before the list had an order of its own.
     tray_top: ?i32 = null,
+
+    /// The dividers between its panes (T2704), from `dividerFor`.
+    dividers: []const Divider = &.{},
 };
+
+/// How much of a divider's split a pane dropped on it takes (T2704, Mac
+/// `SplitTree.insertShare`). The preview's landing rect and the commit's
+/// ratios are both derived from this one constant.
+pub const insert_share: f32 = 1.0 / 3.0;
+
+/// A divider a pane can be dropped on, in screen coordinates (T2704, Mac
+/// `PaneDropCandidate.Divider`).
+pub const Divider = struct {
+    /// Where the pointer means this divider.
+    rect: Rect,
+    /// The middle of the gap, along the divider: zero-thick on its axis.
+    line: Rect,
+    /// Where a pane dropped here shows.
+    landing: Rect,
+    /// The panes either side of it: left then right, or top then bottom.
+    before: []const []const u8,
+    after: []const []const u8,
+    /// `horizontal` is a left|right split, whose divider runs top to bottom.
+    layout: RowDirection,
+};
+
+/// The divider between two sides of a split, or null when there is no gap
+/// to drop in (Mac `Divider.all`, one split at a time).
+///
+/// `before` and `after` name the panes of each side; only the ones `rects`
+/// has are counted, so a side with nothing on screen has no divider. Panes
+/// overlapping in a stack have no gap either: the sides must not overlap by
+/// more than a pixel. The returned divider borrows `before`/`after`.
+pub fn dividerFor(
+    layout: RowDirection,
+    before: []const []const u8,
+    after: []const []const u8,
+    rects: []const PaneRect,
+    metrics: Metrics,
+) ?Divider {
+    const b = boundsOf(before, rects) orelse return null;
+    const a = boundsOf(after, rects) orelse return null;
+    const across: Rect = .{
+        .left = @min(b.left, a.left),
+        .top = @min(b.top, a.top),
+        .right = @max(b.right, a.right),
+        .bottom = @max(b.bottom, a.bottom),
+    };
+    const reach_min = metrics.divider_reach;
+    switch (layout) {
+        .horizontal => {
+            const start = b.right;
+            const end = a.left;
+            if (end < start - 1) return null;
+            const mid = @divFloor(start + end, 2);
+            const reach = @max(reach_min, @divFloor(end - start, 2));
+            const left = across.left + shrink(mid - across.left);
+            return .{
+                .rect = .{ .left = mid - reach, .top = across.top, .right = mid + reach, .bottom = across.bottom },
+                .line = .{ .left = mid, .top = across.top, .right = mid, .bottom = across.bottom },
+                .landing = .{ .left = left, .top = across.top, .right = left + share(across.width()), .bottom = across.bottom },
+                .before = before,
+                .after = after,
+                .layout = layout,
+            };
+        },
+        .vertical => {
+            // y grows DOWNWARD, so the gap runs from `before`'s bottom to
+            // `after`'s top - the Swift reads it the other way up.
+            const start = b.bottom;
+            const end = a.top;
+            if (end < start - 1) return null;
+            const mid = @divFloor(start + end, 2);
+            const reach = @max(reach_min, @divFloor(end - start, 2));
+            const top = across.top + shrink(mid - across.top);
+            return .{
+                .rect = .{ .left = across.left, .top = mid - reach, .right = across.right, .bottom = mid + reach },
+                .line = .{ .left = across.left, .top = mid, .right = across.right, .bottom = mid },
+                .landing = .{ .left = across.left, .top = top, .right = across.right, .bottom = top + share(across.height()) },
+                .before = before,
+                .after = after,
+                .layout = layout,
+            };
+        },
+    }
+}
+
+/// `v` scaled by `insert_share`.
+fn share(v: i32) i32 {
+    return @intFromFloat(@round(@as(f32, @floatFromInt(v)) * insert_share));
+}
+
+/// `v` scaled by what is left after `insert_share`.
+fn shrink(v: i32) i32 {
+    return @intFromFloat(@round(@as(f32, @floatFromInt(v)) * (1 - insert_share)));
+}
+
+/// The union of the rects `rects` has for `ids`, or null when it has none.
+fn boundsOf(ids: []const []const u8, rects: []const PaneRect) ?Rect {
+    var out: ?Rect = null;
+    for (ids) |id| {
+        const r = for (rects) |p| {
+            if (pane_id.eql(p.id, id)) break p.rect;
+        } else continue;
+        out = if (out) |o| .{
+            .left = @min(o.left, r.left),
+            .top = @min(o.top, r.top),
+            .right = @max(o.right, r.right),
+            .bottom = @max(o.bottom, r.bottom),
+        } else r;
+    }
+    return out;
+}
 
 /// The pixel distances the resolution rules are stated in.
 ///
@@ -218,6 +342,11 @@ pub const Metrics = struct {
     /// How thick a slot's insertion caret is. Mac: 3pt.
     slot_caret: i32 = 3,
 
+    /// How far either side of the middle of a gap the pointer means its
+    /// divider (T2704). Mac: 10pt - gutters are thinner than a pointer is
+    /// accurate.
+    divider_reach: i32 = 10,
+
     /// The swap rectangle is this fraction of each of the pane's dimensions
     /// before the floor and the cap apply.
     pub const swap_fraction: f32 = 0.34;
@@ -240,6 +369,7 @@ pub const Metrics = struct {
             .screen_edge_band = scaled(12, scale),
             .slot_reach = scaled(24, scale),
             .slot_caret = scaled(3, scale),
+            .divider_reach = scaled(10, scale),
         };
     }
 
@@ -313,11 +443,29 @@ pub fn resolve(
         return .{ .top_level = .{ .window = candidate.window, .side = side } };
     }
 
+    // A divider reaches a little over the panes either side of it, so it
+    // comes before them (T2704). Where two meet, the nearer one.
+    var nearest: ?Divider = null;
+    for (candidate.dividers) |dv| {
+        if (!dv.rect.contains(point)) continue;
+        if (nearest) |n| {
+            if (distanceSq(point, lineRect(dv.line)) >= distanceSq(point, lineRect(n.line))) continue;
+        }
+        nearest = dv;
+    }
+    if (nearest) |dv| return .{ .insert = .{
+        .window = candidate.window,
+        .before = dv.before,
+        .after = dv.after,
+        .layout = dv.layout,
+        .landing = dv.landing,
+    } };
+
     const pane = blk: {
         for (candidate.pane_rects) |p| {
             if (p.rect.contains(point)) break :blk p;
         }
-        // Inside the window but between panes — a divider. Nothing.
+        // Inside the window but between panes, on no divider. Nothing.
         break :blk null;
     } orelse return null;
 
@@ -648,6 +796,17 @@ pub fn tileFrame(point: Point, screens: []const Rect, metrics: Metrics) ?Rect {
     return null;
 }
 
+/// A divider's zero-thick line as the one-pixel rect `distanceSq` measures,
+/// since an exclusive edge equal to its inclusive one would hold no pixel.
+fn lineRect(r: Rect) Rect {
+    return .{
+        .left = r.left,
+        .top = r.top,
+        .right = @max(r.right, r.left + 1),
+        .bottom = @max(r.bottom, r.top + 1),
+    };
+}
+
 /// How far a point is from a rect, squared (0 inside it).
 fn distanceSq(p: Point, r: Rect) i64 {
     const dx: i64 = @max(r.left - p.x, 0, p.x - (r.right - 1));
@@ -909,13 +1068,157 @@ test "the dragged pane is matched case-insensitively" {
     try testing.expect(resolve(.{ .x = 250, .y = 400 }, &cands, &lowered, m1) == null);
 }
 
-test "a gap between panes is a divider and resolves to nothing" {
+test "a gap between panes with no divider listed resolves to nothing" {
     const panes = [_]PaneRect{
         .{ .id = dragged_id, .rect = .{ .left = 0, .top = 0, .right = 498, .bottom = 800 } },
         .{ .id = other_id, .rect = .{ .left = 502, .top = 0, .right = 1000, .bottom = 800 } },
     };
     const cands = [_]Candidate{twoPaneCandidate(&panes)};
     try testing.expect(resolve(.{ .x = 500, .y = 400 }, &cands, dragged_id, m1) == null);
+}
+
+// -- dividers (T2704) -------------------------------------------------------
+
+/// A | B with a 4px gutter at x 498..502, and C (the dragged pane) elsewhere.
+const gap_panes = [_]PaneRect{
+    .{ .id = other_id, .rect = .{ .left = 0, .top = 0, .right = 498, .bottom = 800 } },
+    .{ .id = third_id, .rect = .{ .left = 502, .top = 0, .right = 1000, .bottom = 800 } },
+};
+const gap_before = [_][]const u8{other_id};
+const gap_after = [_][]const u8{third_id};
+
+fn gapCandidate(dividers: []const Divider) Candidate {
+    var c = twoPaneCandidate(&gap_panes);
+    c.dividers = dividers;
+    return c;
+}
+
+test "a divider reaches its reach either side of the middle of the gap" {
+    const dv = dividerFor(.horizontal, &gap_before, &gap_after, &gap_panes, m1).?;
+    try testing.expectEqual(@as(i32, 500), dv.line.left);
+    try testing.expectEqual(@as(i32, 490), dv.rect.left);
+    try testing.expectEqual(@as(i32, 510), dv.rect.right);
+    try testing.expectEqual(@as(i32, 0), dv.rect.top);
+    try testing.expectEqual(@as(i32, 800), dv.rect.bottom);
+    const cands = [_]Candidate{gapCandidate(&.{dv})};
+    // Inside the reach, over either pane: an insert in the gap.
+    for ([_]i32{ 491, 500, 509 }) |x| {
+        const t = resolve(.{ .x = x, .y = 400 }, &cands, dragged_id, m1).?;
+        try testing.expect(t == .insert);
+        try testing.expectEqualStrings(other_id, t.insert.before[0]);
+        try testing.expectEqualStrings(third_id, t.insert.after[0]);
+        try testing.expectEqual(RowDirection.horizontal, t.insert.layout);
+        try testing.expectEqual(@as(WindowRef, 1), t.window().?);
+    }
+    // Just past it, the pane under the pointer as before.
+    try testing.expect(resolve(.{ .x = 489, .y = 400 }, &cands, dragged_id, m1).? == .split);
+    try testing.expect(resolve(.{ .x = 511, .y = 400 }, &cands, dragged_id, m1).? == .split);
+}
+
+test "a divider lands a third of its split's space, centred on the gap's share" {
+    const dv = dividerFor(.horizontal, &gap_before, &gap_after, &gap_panes, m1).?;
+    // across = 0..1000; left = 500 * 2/3, width = 1000 / 3.
+    try testing.expectEqual(@as(i32, 333), dv.landing.left);
+    try testing.expectEqual(@as(i32, 333 + 333), dv.landing.right);
+    try testing.expectEqual(@as(i32, 0), dv.landing.top);
+    try testing.expectEqual(@as(i32, 800), dv.landing.bottom);
+}
+
+test "a vertical divider runs across, with y growing downward" {
+    const panes = [_]PaneRect{
+        .{ .id = other_id, .rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 298 } },
+        .{ .id = third_id, .rect = .{ .left = 0, .top = 302, .right = 1000, .bottom = 900 } },
+    };
+    const dv = dividerFor(.vertical, &gap_before, &gap_after, &panes, m1).?;
+    try testing.expectEqual(@as(i32, 300), dv.line.top);
+    try testing.expectEqual(@as(i32, 290), dv.rect.top);
+    try testing.expectEqual(@as(i32, 310), dv.rect.bottom);
+    try testing.expectEqual(@as(i32, 200), dv.landing.top);
+    try testing.expectEqual(@as(i32, 500), dv.landing.bottom);
+    try testing.expectEqual(@as(i32, 1000), dv.landing.right);
+}
+
+test "a wide gutter's divider reaches the whole gutter" {
+    const panes = [_]PaneRect{
+        .{ .id = other_id, .rect = .{ .left = 0, .top = 0, .right = 470, .bottom = 800 } },
+        .{ .id = third_id, .rect = .{ .left = 530, .top = 0, .right = 1000, .bottom = 800 } },
+    };
+    const dv = dividerFor(.horizontal, &gap_before, &gap_after, &panes, m1).?;
+    try testing.expectEqual(@as(i32, 470), dv.rect.left);
+    try testing.expectEqual(@as(i32, 530), dv.rect.right);
+}
+
+test "panes overlapping in a stack have no divider to drop on" {
+    const panes = [_]PaneRect{
+        .{ .id = other_id, .rect = .{ .left = 0, .top = 0, .right = 600, .bottom = 800 } },
+        .{ .id = third_id, .rect = .{ .left = 400, .top = 0, .right = 1000, .bottom = 800 } },
+    };
+    try testing.expect(dividerFor(.horizontal, &gap_before, &gap_after, &panes, m1) == null);
+    // Touching, or a pixel over, is still a gap.
+    const touching = [_]PaneRect{
+        .{ .id = other_id, .rect = .{ .left = 0, .top = 0, .right = 501, .bottom = 800 } },
+        .{ .id = third_id, .rect = .{ .left = 500, .top = 0, .right = 1000, .bottom = 800 } },
+    };
+    try testing.expect(dividerFor(.horizontal, &gap_before, &gap_after, &touching, m1) != null);
+}
+
+test "a side with nothing on screen has no divider" {
+    const panes = [_]PaneRect{gap_panes[0]};
+    try testing.expect(dividerFor(.horizontal, &gap_before, &gap_after, &panes, m1) == null);
+}
+
+test "a side spans every pane of it that is on screen" {
+    // (A over D) | B: the divider runs the height of both A and D.
+    const fourth = "DDDDDDDD-0000-4000-8000-000000000004";
+    const panes = [_]PaneRect{
+        .{ .id = other_id, .rect = .{ .left = 0, .top = 100, .right = 498, .bottom = 400 } },
+        .{ .id = fourth, .rect = .{ .left = 0, .top = 404, .right = 498, .bottom = 800 } },
+        .{ .id = third_id, .rect = .{ .left = 502, .top = 100, .right = 1000, .bottom = 800 } },
+    };
+    const before = [_][]const u8{ other_id, fourth };
+    const dv = dividerFor(.horizontal, &before, &gap_after, &panes, m1).?;
+    try testing.expectEqual(@as(i32, 100), dv.rect.top);
+    try testing.expectEqual(@as(i32, 800), dv.rect.bottom);
+    try testing.expectEqual(@as(usize, 2), dv.before.len);
+}
+
+test "the window's edge band beats a divider" {
+    const dv = dividerFor(.horizontal, &gap_before, &gap_after, &gap_panes, m1).?;
+    const cands = [_]Candidate{gapCandidate(&.{dv})};
+    // The divider runs the full height; its top 28px are the edge band's.
+    const t = resolve(.{ .x = 500, .y = 10 }, &cands, dragged_id, m1).?;
+    try testing.expect(t == .top_level);
+    try testing.expectEqual(Side.up, t.top_level.side);
+}
+
+test "where two dividers meet, the nearer one wins" {
+    // A | (B over C): a vertical gap at x=500 and, right of it, a horizontal
+    // one at y=400. Near the T-junction both reach the pointer.
+    const fourth = "DDDDDDDD-0000-4000-8000-000000000004";
+    const panes = [_]PaneRect{
+        .{ .id = other_id, .rect = .{ .left = 0, .top = 0, .right = 498, .bottom = 800 } },
+        .{ .id = third_id, .rect = .{ .left = 502, .top = 0, .right = 1000, .bottom = 398 } },
+        .{ .id = fourth, .rect = .{ .left = 502, .top = 402, .right = 1000, .bottom = 800 } },
+    };
+    const right_side = [_][]const u8{ third_id, fourth };
+    const top = [_][]const u8{third_id};
+    const bottom = [_][]const u8{fourth};
+    const dvs = [_]Divider{
+        dividerFor(.horizontal, &gap_before, &right_side, &panes, m1).?,
+        dividerFor(.vertical, &top, &bottom, &panes, m1).?,
+    };
+    var c = twoPaneCandidate(&panes);
+    c.dividers = &dvs;
+    const cands = [_]Candidate{c};
+    const near_vertical = resolve(.{ .x = 502, .y = 395 }, &cands, dragged_id, m1).?;
+    try testing.expectEqual(RowDirection.horizontal, near_vertical.insert.layout);
+    const near_horizontal = resolve(.{ .x = 508, .y = 401 }, &cands, dragged_id, m1).?;
+    try testing.expectEqual(RowDirection.vertical, near_horizontal.insert.layout);
+}
+
+test "Metrics.forScale scales the divider's reach" {
+    try testing.expectEqual(@as(i32, 10), Metrics.forScale(1.0).divider_reach);
+    try testing.expectEqual(@as(i32, 15), Metrics.forScale(1.5).divider_reach);
 }
 
 test "the window's edge band inserts at the top level, beating the pane under it" {

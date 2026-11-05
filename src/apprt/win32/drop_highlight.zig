@@ -68,11 +68,18 @@ pub const Kind = enum {
     /// (T2303): an insertion caret across the gap between two list rows, as
     /// `stash`'s is in the tray.
     sidebar_order,
+    /// The dragged pane will land in a divider's gap (T2704): this rect, with
+    /// a seam down each side where the two new dividers will run (Mac
+    /// `PaneDropFeedbackView`'s insert).
+    insert,
 };
 
 pub const Highlight = struct {
     rect: Rect,
     kind: Kind,
+    /// For an `insert`, the axis of the divider it lands in: `horizontal`
+    /// (a left|right split) puts the seams down its left and right edges.
+    seams: ?pane_drop.RowDirection = null,
 };
 
 /// Everything the preview needs to know about the window it is being drawn
@@ -190,6 +197,7 @@ pub fn forTarget(target: ?Target, ctx: Context) ?Highlight {
             };
         },
         .reorder => |s| .{ .rect = s.caret, .kind = .reorder },
+        .insert => |s| .{ .rect = s.landing, .kind = .insert, .seams = s.layout },
         .sidebar_order => |s| .{
             .rect = listCaret(ctx.list_rows, ctx.dragged, s.index, ctx.scale) orelse return null,
             .kind = .sidebar_order,
@@ -398,6 +406,23 @@ test "T1531: a swap preview is the WHOLE pane being traded with" {
     ).?;
     try testing.expectEqual(Kind.swap, h.kind);
     try testing.expectEqual(pane_a, h.rect);
+}
+
+test "T2704: a divider preview is the landing area, seamed on the divider's axis" {
+    const landing: Rect = .{ .left = 333, .top = 0, .right = 666, .bottom = 600 };
+    const h = forTarget(
+        .{ .insert = .{
+            .window = win,
+            .before = &.{panes[0].id},
+            .after = &.{},
+            .layout = .horizontal,
+            .landing = landing,
+        } },
+        baseCtx(),
+    ).?;
+    try testing.expectEqual(Kind.insert, h.kind);
+    try testing.expectEqual(landing, h.rect);
+    try testing.expectEqual(@as(?pane_drop.RowDirection, .horizontal), h.seams);
 }
 
 test "T1531: a top-level preview is half the window's CONTENT, not half a pane" {

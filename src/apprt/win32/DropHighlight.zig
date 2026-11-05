@@ -42,6 +42,9 @@ pub const alpha_caret: u8 = 235;
 /// The frame's thickness, in DIP, around a swap preview.
 pub const frame_dip: i32 = 3;
 
+/// A divider insert's seams (T2704), in DIP: Mac draws them 2pt.
+pub const seam_dip: i32 = 2;
+
 const DropHighlight = @This();
 
 alloc: std.mem.Allocator,
@@ -58,6 +61,7 @@ fill_color: u32 = 0,
 frame: ?w32.HBRUSH = null,
 frame_color: u32 = 0,
 frame_px: i32 = 1,
+seam_px: i32 = 1,
 alpha: u8 = 0,
 
 /// Is the preview currently in the always-on-top band (T1538)? Tracked rather
@@ -131,7 +135,7 @@ pub fn show(
 
     const want_alpha: u8 = switch (hl.kind) {
         .swap => alpha_swap,
-        .split, .top_level, .new_window, .stash_slot => alpha_insert,
+        .split, .top_level, .new_window, .stash_slot, .insert => alpha_insert,
         .new_tab, .stash, .reorder, .sidebar_order => alpha_caret,
     };
     if (want_alpha != self.alpha) {
@@ -181,7 +185,7 @@ pub fn hide(self: *DropHighlight) void {
 }
 
 fn eql(a: drop_highlight.Highlight, b: drop_highlight.Highlight) bool {
-    return a.kind == b.kind and
+    return a.kind == b.kind and a.seams == b.seams and
         a.rect.left == b.rect.left and a.rect.top == b.rect.top and
         a.rect.right == b.rect.right and a.rect.bottom == b.rect.bottom;
 }
@@ -200,10 +204,15 @@ fn setBrushes(self: *DropHighlight, pal: chrome_theme.Palette, scale: f32) void 
         self.frame_color = frame_rgb;
     }
     self.frame_px = framePx(scale);
+    self.seam_px = dipPx(seam_dip, scale);
 }
 
 fn framePx(scale: f32) i32 {
-    const v: f32 = @round(@as(f32, @floatFromInt(frame_dip)) * scale);
+    return dipPx(frame_dip, scale);
+}
+
+fn dipPx(dip: i32, scale: f32) i32 {
+    const v: f32 = @round(@as(f32, @floatFromInt(dip)) * scale);
     return @max(@as(i32, @intFromFloat(v)), 1);
 }
 
@@ -217,6 +226,30 @@ fn paintInto(self: *const DropHighlight, hwnd: w32.HWND, hdc: w32.HDC) void {
     _ = w32.FillRect(hdc, &rect, fill);
 
     const hl = self.shown orelse return;
+    // A divider insert (T2704): a seam down each side of the landing area,
+    // where the two new dividers will run.
+    if (hl.kind == .insert) {
+        const seam = self.frame orelse return;
+        const axis = hl.seams orelse return;
+        var band: w32.RECT = undefined;
+        switch (axis) {
+            .horizontal => {
+                const t = @min(self.seam_px, @divFloor(@max(rect.right - rect.left, 1), 2));
+                band = .{ .left = rect.left, .top = rect.top, .right = rect.left + t, .bottom = rect.bottom };
+                _ = w32.FillRect(hdc, &band, seam);
+                band = .{ .left = rect.right - t, .top = rect.top, .right = rect.right, .bottom = rect.bottom };
+                _ = w32.FillRect(hdc, &band, seam);
+            },
+            .vertical => {
+                const u = @min(self.seam_px, @divFloor(@max(rect.bottom - rect.top, 1), 2));
+                band = .{ .left = rect.left, .top = rect.top, .right = rect.right, .bottom = rect.top + u };
+                _ = w32.FillRect(hdc, &band, seam);
+                band = .{ .left = rect.left, .top = rect.bottom - u, .right = rect.right, .bottom = rect.bottom };
+                _ = w32.FillRect(hdc, &band, seam);
+            },
+        }
+        return;
+    }
     // A swap reads as "these two trade places", and the new window a pop-out
     // creates is not on screen yet — both want the outline that says the rect
     // is a destination rather than a fill over something already there.

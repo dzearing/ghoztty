@@ -183,6 +183,7 @@ const desk_palette = @import("desk_palette.zig");
 const chrome_glass = @import("chrome_glass.zig");
 const rearrange_header = @import("rearrange_header.zig");
 const pane_drop = @import("pane_drop.zig");
+const pane_gap = @import("pane_gap.zig");
 const pane_relocate = @import("pane_relocate.zig");
 const drop_highlight = @import("drop_highlight.zig");
 const DropHighlight = @import("DropHighlight.zig");
@@ -4814,6 +4815,17 @@ pub const RearrangeDrag = struct {
         /// A strip released at a screen's edge (T2120): a window of its own
         /// covering this half of the screen.
         tile: drop_highlight.Rect,
+        /// Released on a divider (T2704): into the gap between the panes
+        /// `before[0..nb]` and `after[0..na]`, on `layout`'s axis. Named by
+        /// its panes rather than a handle, so the commit finds the divider
+        /// again in whatever tree is in front of it by then.
+        insert: struct {
+            before: [MAX_BESIDE]pane_id.Buf,
+            nb: usize,
+            after: [MAX_BESIDE]pane_id.Buf,
+            na: usize,
+            layout: pane_drop.RowDirection,
+        },
     };
 
     /// The most panes one row item (a column) may hold and still be a
@@ -4976,6 +4988,23 @@ fn ownedDrop(
             break :blk .{ .reorder = .{ .beside = beside, .n = sp.beside.len, .side = sp.side } };
         },
         .tile => |frame| .{ .tile = frame },
+        // A divider (T2704). A side bigger than the cap is not a target, the
+        // same failure-that-costs-nothing as a strip's oversized column.
+        .insert => |sp| blk: {
+            if (sp.before.len == 0 or sp.before.len > RearrangeDrag.MAX_BESIDE) break :blk null;
+            if (sp.after.len == 0 or sp.after.len > RearrangeDrag.MAX_BESIDE) break :blk null;
+            var before: [RearrangeDrag.MAX_BESIDE]pane_id.Buf = undefined;
+            var after: [RearrangeDrag.MAX_BESIDE]pane_id.Buf = undefined;
+            for (sp.before, 0..) |id, i| before[i] = copyPaneId(id) orelse break :blk null;
+            for (sp.after, 0..) |id, i| after[i] = copyPaneId(id) orelse break :blk null;
+            break :blk .{ .insert = .{
+                .before = before,
+                .nb = sp.before.len,
+                .after = after,
+                .na = sp.after.len,
+                .layout = sp.layout,
+            } };
+        },
     };
 }
 
@@ -5304,6 +5333,7 @@ fn dropCandidateFor(
     tabs: []pane_drop.Rect,
     stash_rows: []pane_drop.Rect,
     list_rows: []pane_drop.PaneRect,
+    gap: GapBuffers,
 ) ?pane_drop.Candidate {
     if (win.hwnd == null) return null;
     const n = win.collectDropSlots(slots);
@@ -5311,6 +5341,16 @@ fn dropCandidateFor(
     for (slots[0..n], 0..) |slot, i| {
         rects[i] = .{ .id = slot.view.paneId(), .rect = toDropRect(slot.rect, origin) };
     }
+    // The dividers between the panes as drawn (T2704, Mac `Divider.all`).
+    const nd: usize = if (win.tab_count == 0) 0 else pane_gap.dividers(
+        SplitTree(PaneView),
+        &win.tab_trees[win.active_tab],
+        paneViewId,
+        rects[0..n],
+        win.dropMetrics(),
+        gap.ids,
+        gap.dividers,
+    );
     const strip = win.dropStrip(origin, tabs);
     var frame: ?pane_drop.Rect = null;
     if (win.hwnd) |h| {
@@ -5336,7 +5376,23 @@ fn dropCandidateFor(
         .stash_row_rects = if (sidebar) |g| g.rows else &.{},
         .pane_row_rects = if (sidebar) |g| g.list else &.{},
         .tray_top = if (sidebar) |g| g.tray_top else null,
+        .dividers = gap.dividers[0..nd],
     };
+}
+
+/// The scratch one candidate's dividers live in (T2704): a pane id per leaf
+/// for their sides to point into, and the dividers themselves.
+const GapBuffers = struct {
+    ids: [][]const u8,
+    dividers: []pane_drop.Divider,
+};
+
+fn paneViewId(view: *PaneView) []const u8 {
+    return view.paneId();
+}
+
+fn paneViewStashed(view: *PaneView) bool {
+    return pane_stash.isStashed(view);
 }
 
 /// The work area of the monitor under `point`.
@@ -5468,12 +5524,19 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
     var other_tabs: [MAX_DROP_WINDOWS][MAX_DROP_TABS]pane_drop.Rect = undefined;
     var other_stash: [MAX_DROP_WINDOWS][pane_sidebar.max_items]pane_drop.Rect = undefined;
     var other_list: [MAX_DROP_WINDOWS][pane_sidebar.max_items]pane_drop.PaneRect = undefined;
+    var own_gap_ids: [MAX_DRAG_NODES][]const u8 = undefined;
+    var own_dividers: [MAX_DRAG_NODES]pane_drop.Divider = undefined;
+    var other_gap_ids: [MAX_DROP_WINDOWS][MAX_DROP_PANES][]const u8 = undefined;
+    var other_dividers: [MAX_DROP_WINDOWS][MAX_DROP_PANES]pane_drop.Divider = undefined;
 
     var cands: [MAX_DROP_WINDOWS + 1]pane_drop.Candidate = undefined;
     var cand_windows: [MAX_DROP_WINDOWS + 1]*Window = undefined;
     var n: usize = 0;
 
-    if (dropCandidateFor(self, d.self_depth, &own_slots, &own_rects, &own_tabs, &own_stash, &own_list)) |c| {
+    if (dropCandidateFor(self, d.self_depth, &own_slots, &own_rects, &own_tabs, &own_stash, &own_list, .{
+        .ids = &own_gap_ids,
+        .dividers = &own_dividers,
+    })) |c| {
         cands[n] = c;
         cand_windows[n] = self;
         n += 1;
@@ -5493,6 +5556,7 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
             &other_tabs[i],
             &other_stash[i],
             &other_list[i],
+            .{ .ids = &other_gap_ids[i], .dividers = &other_dividers[i] },
         )) |c| {
             cands[n] = c;
             cand_windows[n] = win;
@@ -6023,6 +6087,18 @@ fn commitRearrangeDrop(
                 return;
             };
         },
+        .insert => |ins| blk: {
+            // A lone pane has no divider to move into.
+            if (at == .root) return;
+            // Out first, then into the gap: the divider is named by its panes,
+            // and the dragged one may be among them (Mac `insert`).
+            var removed = tree.remove(alloc, at) catch |err| {
+                log.err("rearrange gap remove failed: {}", .{err});
+                return;
+            };
+            defer removed.deinit();
+            break :blk insertIntoGap(alloc, &removed, view, ins) orelse return;
+        },
         // All handled above, before the same-tab path is even chosen.
         .new_tab, .new_window, .stash, .sidebar_order, .reorder, .tile => unreachable,
     };
@@ -6042,6 +6118,45 @@ fn commitRearrangeDrop(
     if (focus != view) log.info("pane drop swapped into a strip's place; still folded", .{});
     self.tab_active_pane[source_tab] = focus;
     self.finishRearrangeDropFocusing(view, focus);
+}
+
+/// `base` with `view` in the gap of the divider `ins` names (T2704, Mac
+/// `SplitTree.inserting(view:between:and:)`), or null when that divider is no
+/// longer in it - the drop is then ignored, as Mac's is.
+fn insertIntoGap(
+    alloc: Allocator,
+    base: *const SplitTree(PaneView),
+    view: *PaneView,
+    ins: @FieldType(RearrangeDrag.Drop, "insert"),
+) ?SplitTree(PaneView) {
+    var before: [RearrangeDrag.MAX_BESIDE][]const u8 = undefined;
+    var after: [RearrangeDrag.MAX_BESIDE][]const u8 = undefined;
+    for (0..ins.nb) |i| before[i] = &ins.before[i];
+    for (0..ins.na) |i| after[i] = &ins.after[i];
+    var ids: [MAX_DRAG_NODES][]const u8 = undefined;
+    const at = pane_gap.findGap(
+        SplitTree(PaneView),
+        base,
+        paneViewId,
+        paneViewStashed,
+        ins.layout,
+        before[0..ins.nb],
+        after[0..ins.na],
+        view.paneId(),
+        &ids,
+    ) orelse {
+        log.warn("the divider is not in the tree; ignoring drop", .{});
+        return null;
+    };
+    var leaf = SplitTree(PaneView).init(alloc, view) catch |err| {
+        log.err("rearrange gap leaf failed: {}", .{err});
+        return null;
+    };
+    defer leaf.deinit();
+    return base.insertInGap(alloc, at, @floatCast(pane_drop.insert_share), &leaf) catch |err| {
+        log.err("rearrange gap insert failed: {}", .{err});
+        return null;
+    };
 }
 
 /// Two panes are about to trade places in this window's trees (a rearrange
@@ -6371,6 +6486,14 @@ fn commitCrossTabDrop(
                 return;
             };
         },
+        .insert => |ins| {
+            new_dst = insertIntoGap(alloc, dst, view, ins) orelse return;
+            new_src = src.remove(alloc, at) catch |err| {
+                log.err("cross-tab gap remove failed: {}", .{err});
+                new_dst.deinit();
+                return;
+            };
+        },
         // All handled by the caller, which never reaches this path with one.
         .new_tab, .new_window, .stash, .sidebar_order, .reorder, .tile => unreachable,
     }
@@ -6519,6 +6642,14 @@ fn commitCrossWindowDrop(
             };
             new_src = src.remove(alloc, at) catch |err| {
                 log.err("cross-window top-level remove failed: {}", .{err});
+                new_dst.deinit();
+                return;
+            };
+        },
+        .insert => |ins| {
+            new_dst = insertIntoGap(alloc, dst, view, ins) orelse return;
+            new_src = src.remove(alloc, at) catch |err| {
+                log.err("cross-window gap remove failed: {}", .{err});
                 new_dst.deinit();
                 return;
             };
