@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-05T13:50:18-08:00",
-    "commit":  "cb56ecd83",
+    "generated":  "2026-11-05T15:23:02-08:00",
+    "commit":  "1e65ac0c6",
     "uncommitted":  [
 
                     ],
@@ -1221,7 +1221,7 @@
                   "test/win32/frame-lab-card.ps1":  "5cd885d8050ac33dace3a749cba332868123ee03e4dcac1c5159c10a07fed5f8",
                   "test/win32/frame-lab-catalogue.ps1":  "d05be14346c2b972cb11adb4b0b4f41dbf72e3413a676699d0ef771fbd0edbb1",
                   "test/win32/frame-lab-input.ps1":  "87850410d5ef28bc397060cbea57e83ee026215e97e0adcaf0e63f002cabcb2b",
-                  "test/win32/frame-lab-live-scene.ps1":  "aa95b7c4c084d11b6e5ac2038e28c77101638de042e2ab31459bc188d7e6f4db",
+                  "test/win32/frame-lab-live-scene.ps1":  "b207664f76b521c150ce08cb1b6dac54fd732abe1b00a73bca0322ea84cc4c90",
                   "test/win32/frame-lab-report.ps1":  "00354861a681dc69eea52acb01372631d4fd307ed85841421fa56c31e6815d73",
                   "test/win32/frame-lab-scene.ps1":  "2ed3fdcc10b378d720a4ef23d95bbcc1a58cd9eaddb2f920dc625a163ade0f8a",
                   "test/win32/frame-score.ps1":  "d98795f50fd5c8a171332eef326942ed62398f6f8e62601c1102716d240b89d9",
