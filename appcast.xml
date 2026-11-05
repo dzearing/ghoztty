@@ -1197,5 +1197,34 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.52.0/Ghoztty-1.52.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="Ay09PoOlJKWceBdUP+WPDTyL2j/Zk4a92SLb/2CFuR8f8+ucw5fXl+KSuCwNJZdWy4oBsIms+GcN1Y4UGsulDA==" length="27643330" />
         </item>
+        <item>
+            <title>Version 1.53.0</title>
+            <sparkle:version>1.53.0</sparkle:version>
+            <sparkle:shortVersionString>1.53.0</sparkle:shortVersionString>
+            <pubDate>Thu, 05 Nov 2026 01:54:38 +0000</pubDate>
+            <description>{
+  "version": "1.53.0",
+  "sections": [
+    {
+      "title": "Rearranging panes",
+      "items": [
+        { "title": "Drag a pane by its grab handle", "text": "Hover the top of a pane and drag the handle to move it to another tab, window or spot, no rearrange mode needed." },
+        { "title": "A ghost follows your drag", "text": "A small preview of the pane stays under the pointer, so you can see what you're carrying." },
+        { "title": "Clearer drop targets", "text": "The four sides of a pane split it, the box in the middle swaps it, and a divider inserts the pane right there. Spots that wouldn't change anything stay quiet." },
+        { "title": "Much smoother dragging", "text": "Dragging no longer lags, even with lots of windows open." },
+        { "title": "Banners no longer get in the way", "text": "A pane's banner counts as part of the pane when you drop on it." }
+      ]
+    },
+    {
+      "title": "Banners",
+      "items": [
+        { "title": "Steady text as a banner opens and closes", "text": "Text at the bottom of a pane, like Claude's input box, no longer shifts a few pixels when you expand or collapse its banner." }
+      ]
+    }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.53.0/Ghoztty-1.53.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="XWKlwENrjHnZQ+lmdmgUy3Yv9aZ5truwu75VUUmoOJglSCgMWgX19tyC6MsfExPdp314VN6/ThtJqafdturMAw==" length="27683461" />
+        </item>
     </channel>
 </rss>
