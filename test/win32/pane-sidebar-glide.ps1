@@ -20,7 +20,9 @@
 #      the column itself just goes - Mac's hidden mode has no column to animate.
 #   2/3 also: the gutter between the column's edge and the grid's first pane
 #      is the same mid-glide as at rest (T2406, Mac 7e2d0a9da: the column
-#      follows the grid's glide, one motion).
+#      follows the grid's glide, one motion). And each draws the frame it
+#      goes to once (`drawn=1` on its landing, T2403), composing every frame
+#      after from that - drawn every frame, the glide dropped frames at 120 Hz.
 #   5. T2401: the rail's edge pulled out, then pushed back in, with pointer
 #      moves flooding in for longer than the glide (the user's drag): each
 #      step its glide takes is painted (frames= vs steps=). The user's own
@@ -148,6 +150,14 @@ function Get-GlideFrames([string[]]$Lines) {
     }
 }
 function Format-GlideFrames($Done) { ($Done | ForEach-Object { "$($_.Frames) of $($_.Steps) steps" }) -join ', ' }
+# How many times each landed glide drew the frame it goes to (T2403): once,
+# when it starts, and then only composed - drawn every frame it cost more
+# than a 120 Hz period. "none" when no landing names it.
+function Get-GlideDrawn([string[]]$Lines) {
+    $d = @(foreach ($l in $Lines) { if ($l -match 'column glide done .*drawn=(\d+)') { $Matches[1] } })
+    if ($d.Count -eq 0) { return 'none' }
+    return ($d -join ',')
+}
 # One glide landed, it moved more than once, and every step but the last
 # (which lands it, and paints as the plain column) was put on screen.
 function Test-GlidePainted($Done) {
@@ -230,6 +240,7 @@ try {
     Assert "the log names the column's glide (rail -> panel)" (@($new | Where-Object { $_ -match "pane sidebar column glide expanded from=$railW to=$panelW ms=$glideMs" }).Count -eq 1)
     Assert "...and the grid's (both cards)" (@($new | Where-Object { $_ -match 'pane grid glides for the sidebar column: cards=2' }).Count -ge 1)
     Assert "...and the column's landing" (@($new | Where-Object { $_ -match "pane sidebar column glide done width=$panelW" }).Count -eq 1)
+    Assert "...which drew the panel once, not once a frame (T2403; $(Get-GlideDrawn $new))" ((Get-GlideDrawn $new) -eq '1')
 
     "== 3: collapsing glides back"
     $mark = Get-LogCount
@@ -252,6 +263,7 @@ try {
     Assert "...and s1 back in its slot (left $($s1Back.Left) vs $($s1Rail.Left), width $($s1Back.Width) vs $($s1Rail.Width))" ($s1Back.Left -eq $s1Rail.Left -and $s1Back.Width -eq $s1Rail.Width)
     Assert "the log names the column's glide (panel -> rail)" (@($new | Where-Object { $_ -match "pane sidebar column glide mini from=$panelW to=$railW ms=$glideMs" }).Count -eq 1)
     Assert "...and the grid's" (@($new | Where-Object { $_ -match 'pane grid glides for the sidebar column: cards=2' }).Count -ge 1)
+    Assert "...and drew the rail once, not once a frame (T2403; $(Get-GlideDrawn $new))" ((Get-GlideDrawn $new) -eq '1')
 
     "== 4: hiding glides the grid; the column just goes"
     $mark = Get-LogCount

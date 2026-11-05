@@ -266,20 +266,59 @@ pub fn nowMs() u64 {
 /// (the window's backdrop, `w` wide), so the narrower frame fades out over
 /// the desk rather than over black.
 pub fn composeColumn(out: []u32, w: i32, h: i32, old: []const u32, old_w: i32, new: []const u32, new_w: i32, under: []const u32, p: f64) void {
-    const q = std.math.clamp(p, 0, 1);
-    const uw: usize = @intCast(@max(w, 0));
+    composeColumnStrided(out, w, w, h, old, old_w, new, new_w, under, p);
+}
+
+/// `composeColumn` into buffers `stride` wide (T2403): `out` and `under` are
+/// kept for the whole glide at the widest the column is drawn, and only the
+/// first `w` of each row is this frame's.
+pub fn composeColumnStrided(out: []u32, stride: i32, w: i32, h: i32, old: []const u32, old_w: i32, new: []const u32, new_w: i32, under: []const u32, p: f64) void {
+    // Every frame of the glide, every pixel of the column: the row slices
+    // below are bounds-checked once each, so the per-pixel checks a Debug
+    // build adds are pure cost here (T2403).
+    @setRuntimeSafety(false);
+    // In 1/256ths, once a frame (T2403): the per-pixel float blend cost 5-6
+    // ms a frame on a 330 x 826 column, most of a 120 Hz period on its own.
+    const a: i32 = @intFromFloat(@round(std.math.clamp(p, 0, 1) * 256));
+    const sw: usize = @intCast(@max(stride, 0));
+    const uw: usize = @min(@as(usize, @intCast(@max(w, 0))), sw);
     const ow: usize = @intCast(@max(old_w, 0));
     const nw: usize = @intCast(@max(new_w, 0));
+    // Where both frames reach, where only the wider one does, and where
+    // neither does - the backdrop alone, copied.
+    const lo = @min(@min(ow, nw), uw);
+    const hi = @min(@max(ow, nw), uw);
     for (0..@intCast(@max(h, 0))) |y| {
-        for (0..uw) |x| {
-            const bg = under[y * uw + x];
-            const o = if (x < ow) old[y * ow + x] else bg;
-            const n = if (x < nw) new[y * nw + x] else bg;
-            var acc = channels(o);
-            addDelta(&acc, n, o, q);
-            out[y * uw + x] = pack(acc);
+        const o_row = old[y * ow ..][0..ow];
+        const n_row = new[y * nw ..][0..nw];
+        const u_row = under[y * sw ..][0..uw];
+        const out_row = out[y * sw ..][0..uw];
+        if (a == 0) {
+            @memcpy(out_row[0..lo], o_row[0..lo]);
+        } else if (a == 256) {
+            @memcpy(out_row[0..lo], n_row[0..lo]);
+        } else for (0..lo) |x| {
+            out_row[x] = mix(o_row[x], n_row[x], a);
         }
+        for (lo..hi) |x| {
+            out_row[x] = if (ow > nw) mix(o_row[x], u_row[x], a) else mix(u_row[x], n_row[x], a);
+        }
+        @memcpy(out_row[hi..uw], u_row[hi..uw]);
     }
+}
+
+/// `from` moved `a`/256 of the way to `to`, channel by channel, rounded.
+fn mix(from: u32, to: u32, a: i32) u32 {
+    @setRuntimeSafety(false);
+    if (from == to) return from;
+    var c: u32 = 0;
+    inline for (.{ 16, 8, 0 }) |sh| {
+        const f: i32 = @intCast((from >> sh) & 0xFF);
+        const t: i32 = @intCast((to >> sh) & 0xFF);
+        const v = f + (((t - f) * a + 128) >> 8);
+        c |= @as(u32, @intCast(std.math.clamp(v, 0, 255))) << sh;
+    }
+    return c;
 }
 
 fn copySpan(out: []u32, src: []const u32, row: usize, r: Region) void {
@@ -493,6 +532,47 @@ test "T2291: rail and panel crossfade, each cut at the column's edge, over the b
     composeColumn(&out, 4, h, &rail, 2, &panel, 5, &under, 0.5);
     try std.testing.expectEqual(@as(u32, 0x00F07070), out[0]);
     try std.testing.expectEqual(@as(u32, 0x00901010), out[3]);
+}
+
+test "T2403: a glide composed into buffers wider than the column is drawn matches the tight one" {
+    const h = 2;
+    const rail = [_]u32{ ink, ink, ink, ink };
+    const panel = [_]u32{0x00FF0000} ** (5 * h);
+    const under_tight = [_]u32{bgc} ** (4 * h);
+    var tight = [_]u32{0} ** (4 * h);
+    composeColumn(&tight, 4, h, &rail, 2, &panel, 5, &under_tight, 0.5);
+    // The kept buffers are 6 wide; the column is drawn 4 wide in them.
+    const under_wide = [_]u32{bgc} ** (6 * h);
+    const sentinel: u32 = 0x00ABCDEF;
+    var wide = [_]u32{sentinel} ** (6 * h);
+    composeColumnStrided(&wide, 6, 4, h, &rail, 2, &panel, 5, &under_wide, 0.5);
+    for (0..h) |y| {
+        try std.testing.expectEqualSlices(u32, tight[y * 4 ..][0..4], wide[y * 6 ..][0..4]);
+        // Past the drawn width nothing is written.
+        try std.testing.expectEqualSlices(u32, &.{ sentinel, sentinel }, wide[y * 6 + 4 ..][0..2]);
+    }
+}
+
+test "T2403: the glide's blend in 256ths stays within a step of the exact one" {
+    const pairs = [_][2]u32{ .{ 0x00E0E0E0, 0x00FF0000 }, .{ 0x00202020, 0x0010F0A0 }, .{ 0x00FFFFFF, 0x00000000 }, .{ 0x00123456, 0x00654321 } };
+    for (pairs) |pr| {
+        for (0..33) |k| {
+            const p = @as(f64, @floatFromInt(k)) / 32.0;
+            const a: i32 = @intFromFloat(@round(p * 256));
+            const got = mix(pr[0], pr[1], a);
+            var acc = channels(pr[0]);
+            addDelta(&acc, pr[1], pr[0], p);
+            const want = pack(acc);
+            inline for (.{ 16, 8, 0 }) |sh| {
+                const g: i32 = @intCast((got >> sh) & 0xFF);
+                const e: i32 = @intCast((want >> sh) & 0xFF);
+                try std.testing.expect(@abs(g - e) <= 1);
+            }
+        }
+        // The ends are exact.
+        try std.testing.expectEqual(pr[0], mix(pr[0], pr[1], 0));
+        try std.testing.expectEqual(pr[1], mix(pr[0], pr[1], 256));
+    }
 }
 
 test "rows that would come from outside the viewport are bare material" {
