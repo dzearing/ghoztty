@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import SwiftUI
 
 /// The grabbable region that starts a pane drag.
@@ -49,8 +50,9 @@ struct PaneDragSource: NSViewRepresentable {
 /// That feed is what makes cross-window dragging work without any window
 /// needing to know about the drag.
 final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
-    /// Scale factor applied to the pane snapshot for the drag preview image.
-    fileprivate static let previewScale: CGFloat = 0.2
+    private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.dzearing.ghoztty",
+        category: "pane-drag")
 
     var pane: PaneView?
     var onDragStateChanged: ((Bool) -> Void)?
@@ -119,6 +121,7 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
         // Deliberately not calling super: consuming mouseDown keeps the
         // window drag handler out of it. The drag starts in mouseDragged.
         downLocation = event.locationInWindow
+        Self.logger.notice("mouse down on drag source, pane=\(self.pane?.id.uuidString ?? "none", privacy: .public)")
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -141,6 +144,32 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
         addCursorRect(bounds, cursor: isTracking ? .closedHand : .openHand)
     }
 
+    // A cursor rect alone can't hold the grip. The terminal's scroll view keeps
+    // its own document cursor rect over the whole pane, the two overlap as
+    // siblings, and AppKit promises nothing about which one wins. So a grip
+    // also takes the cursor itself, on arrival and on every move over it, and
+    // hands it back when the pointer leaves — when no rect is entered and
+    // nothing else would.
+    override var hoverTrackingOptions: NSTrackingArea.Options {
+        showsGrabCursor
+            ? super.hoverTrackingOptions.union([.cursorUpdate, .mouseMoved])
+            : super.hoverTrackingOptions
+    }
+
+    override func cursorUpdate(with event: NSEvent) { takeCursor() }
+    override func mouseMoved(with event: NSEvent) { takeCursor() }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        guard showsGrabCursor, !isTracking else { return }
+        (pane?.surfaceView?.pointerStyle.cursor ?? .arrow).set()
+    }
+
+    private func takeCursor() {
+        guard showsGrabCursor, !isTracking else { return }
+        NSCursor.openHand.set()
+    }
+
     override func mouseDragged(with event: NSEvent) {
         guard !isTracking, let pane else { return }
         if let downLocation {
@@ -155,13 +184,19 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
         // draggable — that is how you undo a pop-out.
         guard let controller = self.controller
                 ?? pane.contentView.window?.windowController as? BaseTerminalController
-        else { return }
+        else {
+            Self.logger.notice("drag refused: the pane has no terminal window")
+            return
+        }
         let otherTerminalWindows = NSApp.windows.contains { window in
             window.isVisible
                 && window.windowController !== controller
                 && window.windowController is BaseTerminalController
         }
-        guard controller.surfaceTree.isSplit || otherTerminalWindows else { return }
+        guard controller.surfaceTree.isSplit || otherTerminalWindows else {
+            Self.logger.notice("drag refused: a lone pane in the only terminal window")
+            return
+        }
 
         // The payload is a type marker only. The authoritative reference to
         // the dragged pane lives in `PaneDragSession`, which is safe because
@@ -170,34 +205,25 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
         item.setString(pane.id.uuidString, forType: .ghosttyPaneId)
         let draggingItem = NSDraggingItem(pasteboardWriter: item)
 
-        // A stashed pane is unmounted and has nothing to snapshot; the row it
-        // is being dragged from stands in for it.
-        if !showsPreview {
-            // AppKit wants a frame for the item; an empty image draws nothing.
-            let point = convert(event.locationInWindow, from: nil)
-            draggingItem.setDraggingFrame(NSRect(x: point.x, y: point.y, width: 1, height: 1),
-                                          contents: NSImage(size: NSSize(width: 1, height: 1)))
-        } else if let snapshot = pane.dragSnapshot ?? ownSnapshot {
-            let imageSize = NSSize(
-                width: snapshot.size.width * Self.previewScale,
-                height: snapshot.size.height * Self.previewScale)
-            let scaled = NSImage(size: imageSize)
-            scaled.lockFocus()
-            snapshot.draw(
-                in: NSRect(origin: .zero, size: imageSize),
-                from: NSRect(origin: .zero, size: snapshot.size),
-                operation: .copy,
-                fraction: 1.0)
-            scaled.unlockFocus()
-
-            // Centre the preview on the pointer, matching macOS tab dragging.
-            let mouseLocation = convert(event.locationInWindow, from: nil)
-            let origin = NSPoint(
-                x: mouseLocation.x - imageSize.width / 2,
-                y: mouseLocation.y - imageSize.height / 2)
+        let pointer = convert(event.locationInWindow, from: nil)
+        if showsPreview, let ghost = MainActor.assumeIsolated({ PaneDragGhost.image(for: pane) }) {
             draggingItem.setDraggingFrame(
-                NSRect(origin: origin, size: imageSize),
-                contents: scaled)
+                PaneDragGhost.frame(imageSize: ghost.size, pointer: pointer),
+                contents: ghost)
+        } else if showsPreview, let row = ownSnapshot {
+            // A stashed pane is unmounted and has nothing to show; the row it
+            // is being dragged from stands in for it.
+            draggingItem.setDraggingFrame(
+                NSRect(
+                    x: pointer.x - row.size.width / 2,
+                    y: pointer.y - row.size.height / 2,
+                    width: row.size.width,
+                    height: row.size.height),
+                contents: row)
+        } else {
+            // AppKit wants a frame for the item; an empty image draws nothing.
+            draggingItem.setDraggingFrame(NSRect(x: pointer.x, y: pointer.y, width: 1, height: 1),
+                                          contents: NSImage(size: NSSize(width: 1, height: 1)))
         }
 
         MainActor.assumeIsolated {
@@ -225,6 +251,8 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
     func draggingSession(_ session: NSDraggingSession, willBeginAt screenPoint: NSPoint) {
         isTracking = true
         dragCancelledByEscape = false
+        window?.invalidateCursorRects(for: self)
+        Self.logger.notice("drag began")
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.keyCode == 53 { // Escape
                 self?.dragCancelledByEscape = true
@@ -264,8 +292,10 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
             PaneDragSession.shared.end(commit: !cancelled)
         }
 
+        Self.logger.notice("drag ended, cancelled=\(cancelled, privacy: .public)")
         isTracking = false
         downLocation = nil
+        window?.invalidateCursorRects(for: self)
         onDragStateChanged?(false)
         onDragFinished?()
     }
@@ -273,16 +303,13 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
 
 extension PaneDragSourceView {
     /// What is drawn under this view — for a pane-sidebar row, the row
-    /// itself — as a stand-in drag preview, sized up so that `previewScale`
-    /// brings it back to its on-screen size.
+    /// itself — as a stand-in drag preview, at its on-screen size.
     fileprivate var ownSnapshot: NSImage? {
         guard let host = superview, !bounds.isEmpty else { return nil }
         let rect = convert(bounds, to: host)
         guard let rep = host.bitmapImageRepForCachingDisplay(in: rect) else { return nil }
         host.cacheDisplay(in: rect, to: rep)
-        let image = NSImage(size: NSSize(
-            width: rect.width / Self.previewScale,
-            height: rect.height / Self.previewScale))
+        let image = NSImage(size: rect.size)
         image.addRepresentation(rep)
         return image
     }
@@ -313,6 +340,9 @@ extension PaneView {
 /// — including a row that slides out from under a still pointer.
 class HoverTrackingView: NSView {
     var onHoverChanged: ((Bool) -> Void)?
+
+    /// What the tracking area asks AppKit for.
+    var hoverTrackingOptions: NSTrackingArea.Options { [.mouseEnteredAndExited, .activeInActiveApp] }
 
     private var isHovered = false
     private var holdObserver: NSObjectProtocol?
@@ -346,7 +376,7 @@ class HoverTrackingView: NSView {
         trackingAreas.forEach { removeTrackingArea($0) }
         addTrackingArea(NSTrackingArea(
             rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInActiveApp],
+            options: hoverTrackingOptions,
             owner: self,
             userInfo: nil))
         // Called mid-layout: report after it, not during a view update.

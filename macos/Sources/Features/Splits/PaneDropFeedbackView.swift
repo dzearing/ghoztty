@@ -2,33 +2,29 @@ import SwiftUI
 
 /// Live feedback for the pane drop that would happen right now.
 ///
-/// Three outcomes get three visuals, so they are never confusable:
+/// A preview of each outcome, so they are never confusable:
 ///
 /// - **Split** — a filled rectangle occupying exactly where the pane will
 ///   land, with a solid seam line on the edge the new divider will run along.
-/// - **Swap** — an outline and a ⇄ glyph, and deliberately NO fill: a fill
-///   is the language of "insert here", and a swap inserts nothing.
+/// - **Swap** — the box in the middle of the pane that means it
+///   (`PaneDropResolver.swapRect`), with a ⇄ glyph.
 /// - **Top level** — the same fill as a split, but spanning the whole window
 ///   (`TopLevelDropOverlay`).
+/// - **Insert** — the same fill, in the divider's gap, a seam down each side
+///   (`InsertDropOverlay`).
 struct PaneDropFeedbackView: View {
     let paneID: UUID
-    let isDraggedPane: Bool
 
-    @ObservedObject private var dragSession = PaneDragSession.shared
+    @ObservedObject private var feedback = PaneDragSession.shared.dropFeedback
 
     var body: some View {
         GeometryReader { geometry in
-            switch dragSession.target {
-            case .split(_, let target, let direction) where target == paneID && !isDraggedPane:
+            switch feedback.target {
+            case .split(_, let target, let direction) where target == paneID:
                 SplitDropFill(direction: direction, size: geometry.size)
 
-            case .swap(_, let target) where target == paneID && !isDraggedPane:
-                SwapDropOutline()
-
-            case .swap where isDraggedPane:
-                // The other half of the exchange: showing both ends is what
-                // makes a swap read as a swap rather than a move.
-                SwapDropOutline()
+            case .swap(_, let target) where target == paneID:
+                SwapDropBox(size: geometry.size)
 
             default:
                 EmptyView()
@@ -86,18 +82,24 @@ struct SplitDropFill: View {
     }
 }
 
-/// The outline that marks a pane as one end of a swap.
-struct SwapDropOutline: View {
+/// The box in the middle of a pane that swaps it: exactly where the pointer
+/// means a swap.
+struct SwapDropBox: View {
+    let size: CGSize
+
     var body: some View {
+        let box = PaneDropResolver.swapRect(in: CGRect(origin: .zero, size: size))
         ZStack {
-            Rectangle()
-                .strokeBorder(Color.accentColor, lineWidth: 3)
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.accentColor.opacity(0.3))
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(Color.accentColor, lineWidth: 2)
             Image(systemName: "arrow.left.arrow.right")
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(Color.accentColor)
-                .padding(10)
-                .background(.regularMaterial, in: Circle())
         }
+        .frame(width: box.width, height: box.height)
+        .position(x: box.midX, y: box.midY)
     }
 }
 
@@ -106,11 +108,11 @@ struct SwapDropOutline: View {
 struct TopLevelDropOverlay: View {
     let windowRef: PaneDropWindowRef
 
-    @ObservedObject private var dragSession = PaneDragSession.shared
+    @ObservedObject private var feedback = PaneDragSession.shared.dropFeedback
 
     var body: some View {
         GeometryReader { geometry in
-            if case .topLevel(let window, let side) = dragSession.target, window == windowRef {
+            if case .topLevel(let window, let side) = feedback.target, window == windowRef {
                 SplitDropFill(direction: side, size: geometry.size)
             }
         }
@@ -118,17 +120,55 @@ struct TopLevelDropOverlay: View {
     }
 }
 
+/// Feedback for a pane dropped on a divider: the fill of a split where it
+/// would land, with a seam down each side, the new dividers. Belongs to no
+/// leaf (it is between two).
+struct InsertDropOverlay: View {
+    let windowRef: PaneDropWindowRef
+
+    @ObservedObject private var feedback = PaneDragSession.shared.dropFeedback
+
+    var body: some View {
+        GeometryReader { geometry in
+            if case .insert(let window, _, _, let direction, let landing) = feedback.target, window == windowRef,
+               let rect = localRect(landing, in: geometry, windowRef: windowRef) {
+                ZStack {
+                    Rectangle().fill(Color.accentColor.opacity(0.3))
+                    if direction == .horizontal {
+                        HStack {
+                            seam.frame(width: 2)
+                            Spacer()
+                            seam.frame(width: 2)
+                        }
+                    } else {
+                        VStack {
+                            seam.frame(height: 2)
+                            Spacer()
+                            seam.frame(height: 2)
+                        }
+                    }
+                }
+                .frame(width: rect.width, height: rect.height)
+                .offset(x: rect.minX, y: rect.minY)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private var seam: some View { Rectangle().fill(Color.accentColor) }
+}
+
 /// Feedback for a strip dropped in a slot of its row: an insertion bar down
 /// the gutter it would land in. Belongs to no leaf (it is between two).
 struct BladeDropOverlay: View {
     let windowRef: PaneDropWindowRef
 
-    @ObservedObject private var dragSession = PaneDragSession.shared
+    @ObservedObject private var feedback = PaneDragSession.shared.dropFeedback
 
     var body: some View {
         GeometryReader { geometry in
-            if case .reorder(let window, _, _, let caret) = dragSession.target, window == windowRef,
-               let rect = local(caret, in: geometry) {
+            if case .reorder(let window, _, _, let caret) = feedback.target, window == windowRef,
+               let rect = localRect(caret, in: geometry, windowRef: windowRef) {
                 RoundedRectangle(cornerRadius: 1.5)
                     .fill(Color.accentColor)
                     .shadow(color: Color.accentColor.opacity(0.6), radius: 4)
@@ -138,17 +178,23 @@ struct BladeDropOverlay: View {
         }
         .allowsHitTesting(false)
     }
+}
 
-    /// `screen` (AppKit screen coordinates, y up) in this view's space.
-    private func local(_ screen: CGRect, in geometry: GeometryProxy) -> CGRect? {
-        guard let window = PaneMoveCoordinator.controller(for: windowRef)?.window,
-              let content = window.contentView else { return nil }
-        let inWindow = window.convertFromScreen(screen)
-        let flipped = CGRect(x: inWindow.minX, y: content.bounds.height - inWindow.maxY,
-                             width: inWindow.width, height: inWindow.height)
-        let origin = geometry.frame(in: .global).origin
-        return flipped.offsetBy(dx: -origin.x, dy: -origin.y)
-    }
+/// `screen` (AppKit screen coordinates, y up) in the space of the view
+/// `geometry` is for, in `windowRef`'s window.
+@MainActor
+private func localRect(
+    _ screen: CGRect,
+    in geometry: GeometryProxy,
+    windowRef: PaneDropWindowRef
+) -> CGRect? {
+    guard let window = PaneMoveCoordinator.controller(for: windowRef)?.window,
+          let content = window.contentView else { return nil }
+    let inWindow = window.convertFromScreen(screen)
+    let flipped = CGRect(x: inWindow.minX, y: content.bounds.height - inWindow.maxY,
+                         width: inWindow.width, height: inWindow.height)
+    let origin = geometry.frame(in: .global).origin
+    return flipped.offsetBy(dx: -origin.x, dy: -origin.y)
 }
 
 /// Feedback for a strip dropped at a screen's edge: the half of the screen

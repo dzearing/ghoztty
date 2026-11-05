@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import GhosttyKit
+import SwiftUI
 
 /// A single leaf pane in a window's split tree: either a terminal surface or
 /// a non-terminal viewer (markdown/text/website). This is the ViewType stored
@@ -100,6 +101,17 @@ final class PaneView: NSView, Codable, Identifiable, ObservableObject {
             kind: surfaceView != nil ? "Terminal" : "Viewer",
             banner: paneBanner,
             userTitle: surfaceView?.isTitleUserSet == true ? title : nil)
+    }
+
+    /// The view that fills the whole pane as drawn (`PaneFootprint`). The
+    /// content view is smaller: a banner and the rearrange header sit above
+    /// it, in the pane.
+    fileprivate weak var footprint: NSView?
+
+    /// What to measure for where the pane is on screen.
+    var footprintView: NSView {
+        if let footprint, footprint.window != nil { return footprint }
+        return contentView
     }
 
     /// Forward geometry to the mounted content view (see class doc).
@@ -239,5 +251,23 @@ final class PaneView: NSView, Codable, Identifiable, ObservableObject {
             try container.encode(Kind.viewer, forKey: .kind)
             try container.encode(view, forKey: .viewer)
         }
+    }
+}
+
+/// Behind a pane's leaf, the size of everything the pane draws, for what has
+/// to measure it (`PaneView.footprintView`). Only a measure: it takes no hits.
+struct PaneFootprint: NSViewRepresentable {
+    let pane: PaneView
+
+    private final class Marker: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        Marker()
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        pane.footprint = view
     }
 }

@@ -202,6 +202,12 @@ final class PaneSidebarSharedState: ObservableObject {
 /// which is what keeps a stashed pane in the window for everything else.
 @MainActor
 final class PaneSidebarState: ObservableObject {
+    /// Where a pane drag would land, while that is in this sidebar. Here and
+    /// not on the drag so that a target redraws this list alone: every window
+    /// redrawing its own, all-windows lists included, is what made a drag
+    /// stumble on each row it crossed.
+    @Published var dropTarget: PaneDropTarget?
+
     let shared: PaneSidebarSharedState
     private var sharedChanges: AnyCancellable?
     private var rosterChanges: AnyCancellable?
