@@ -254,9 +254,23 @@ fn resume_(self: *FrameClock) void {
 fn report(self: *const FrameClock, sub: frame_clock.Sub) void {
     if (!self.perf or !sub.stats.reportable()) return;
     const st = sub.stats;
+    // Several windows reuse small timer ids (a banner's collapse and a fade
+    // are both 1), so the window class says whose run this was (T2372).
+    var wide: [64]u16 = undefined;
+    var name: [64]u8 = undefined;
+    var name_len: usize = 0;
+    const hwnd: w32.HWND = @ptrFromInt(sub.hwnd);
+    const n = w32.GetClassNameW(hwnd, &wide, wide.len);
+    if (n > 0) {
+        for (wide[0..@intCast(n)]) |c| {
+            name[name_len] = if (c >= 0x21 and c < 0x7f) @intCast(c) else '_';
+            name_len += 1;
+        }
+    }
+    const class: []const u8 = if (name_len > 0) name[0..name_len] else "gone";
     log.info(
         "frame clock id=0x{x} ticks={d} intervals={d} mean_us={d} max_us={d} doubled={d} " ++
-            "period_us={d} cost_mean_us={d} cost_max_us={d} source={s}",
+            "period_us={d} cost_mean_us={d} cost_max_us={d} source={s} class={s}",
         .{
             sub.id,
             st.ticks,
@@ -268,6 +282,7 @@ fn report(self: *const FrameClock, sub: frame_clock.Sub) void {
             st.meanCostUs(),
             st.cost_max_ns / std.time.ns_per_us,
             @tagName(self.source),
+            class,
         },
     );
 }

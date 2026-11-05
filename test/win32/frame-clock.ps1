@@ -53,6 +53,11 @@
 #   D. A glow tick fits in a frame: its mean handler cost is under one period.
 #   E. What the user sees: the glow itself skipped fewer frames on the frame
 #      clock than on the 16 ms WM_TIMER.
+#   G. T2372 - the glides the user complained about, driven one after another
+#      on one frame-clock instance (Measure-Glides): hero slide, banner
+#      collapse, sidebar toggle, stack glide. G1: each one ran on the clock
+#      and reported. G2: each one's mean tick cost fits in a display period.
+#      Each row also prints its skipped-frame share.
 #
 # Runs on the BACKGROUND test desktop (lib\TestDesktop.ps1) - no foreground
 # stolen, no input sent.
@@ -64,6 +69,7 @@
 param(
     [string]$ExePath,
     [int]$FocusChanges = 12,
+    [int]$GlideRepeats = 6,
     [switch]$NegativeControl,
     [switch]$Interactive
 )
@@ -80,6 +86,7 @@ $env:GHOZTTY_PIPE_SUFFIX = "-frameclock$PID"
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\ChromeGeometry.ps1')
 Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
 
 $GLOW_ID = '4647'
@@ -198,6 +205,151 @@ function Measure-Clock([string]$mode, [int]$changes) {
     }
 }
 
+# ---- T2372: the glides themselves ------------------------------------------
+# The `frame clock` runs for timer $id on a window of class $class, reported
+# after line $from of $log. The class is on the line since T2372, because a
+# banner's collapse, a fade and a scrollbar all subscribe as id 1.
+function Get-GlideRuns([string]$log, [int]$from, [string]$id, [string]$class) {
+    if (-not (Test-Path $log)) { return @() }
+    $out = @()
+    $lines = @(Get-Content $log -ErrorAction SilentlyContinue)
+    for ($i = $from; $i -lt $lines.Count; $i++) {
+        $l = $lines[$i]
+        if ($l -match ('frame clock id=0x([0-9a-f]+) ticks=(\d+) intervals=(\d+) mean_us=(\d+) ' +
+                'max_us=(\d+) doubled=(\d+) period_us=(\d+) cost_mean_us=(\d+) cost_max_us=(\d+) ' +
+                'source=(\w+) class=(\S+)')) {
+            if ($Matches[1] -ne $id -or $Matches[11] -ne $class) { continue }
+            $out += [pscustomobject]@{
+                Ticks = [int]$Matches[2]; Intervals = [int]$Matches[3]
+                MeanUs = [int]$Matches[4]; MaxUs = [int]$Matches[5]
+                Doubled = [int]$Matches[6]; PeriodUs = [int]$Matches[7]
+                CostMeanUs = [int]$Matches[8]; CostMaxUs = [int]$Matches[9]
+                Source = $Matches[10]
+            }
+        }
+    }
+    return $out
+}
+
+function Get-LineCount([string]$log) {
+    if (-not (Test-Path $log)) { return 0 }
+    return @(Get-Content $log -ErrorAction SilentlyContinue).Count
+}
+
+# One instance on the frame clock, four glides driven in turn with no real
+# input (keys and clicks are posted to the background desktop's windows):
+#   hero    - hero mode on four panes, the selection moved down and up
+#             (Window 0x4841, the carousel slide)
+#   banner  - a three-line banner on s1, clicked collapsed and expanded
+#             (BannerOverlay 0x1 card resize, 0x2 the frozen copy's glide)
+#   sidebar - the pane sidebar's collapse/expand toggle clicked; the column
+#             follows the grid's glide (T2406), so its frames are the
+#             Window's 0x534C, plus PaneSidebar 0x5 when it runs alone
+#   stack   - P | s1 | s2 | s3 at 760 DIP (two on show), the focus moved
+#             to either end so the run changes (Window 0x534C)
+# Returns one summed row per glide subscriber.
+function Measure-Glides([int]$repeats) {
+    $log = Join-Path $outDir 'glides-stderr.log'
+    Kill-RepoInstances
+    Remove-Item env:GHOZTTY_FRAME_CLOCK -ErrorAction SilentlyContinue
+    Remove-Item env:GHOZTTY_FRAME_CLOCK_PROBE -ErrorAction SilentlyContinue
+    $env:GHOZTTY_PERF = '1'
+    $rows = @()
+    $app = Start-OnTestDesktop -Exe $exe -StdErr $log -Arguments @(
+        '--config-default-files=false', '--background=#101014', '--session-persistence=false',
+        '--macos-pane-style=flat')
+    try {
+        $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' -TimeoutMs 20000
+        if ($top -eq [IntPtr]::Zero) { throw 'no window for the glide instance' }
+        Start-Sleep -Milliseconds 800
+        $dpi = [int](Get-TestWindowDpi -Window $top)
+        if ($dpi -le 0) { $dpi = 96 }
+        $scale = $dpi / 96.0
+        $px = { param([double]$d) Get-TestChromeDip -Dip $d -Scale $scale }
+        [void](Set-TestWindowPos -Window $top -X 0 -Y 0 -Width (& $px 1500) -Height (& $px 700))
+        Start-Sleep -Milliseconds 1500
+        & $exe +split --direction=right --name=s1 2>&1 | Out-Null
+        Start-Sleep -Milliseconds 800
+        & $exe +split --pane=s1 --direction=right --name=s2 2>&1 | Out-Null
+        Start-Sleep -Milliseconds 800
+        & $exe +split --pane=s2 --direction=right --name=s3 2>&1 | Out-Null
+        Start-Sleep -Milliseconds 1500
+        $panes = { @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal' | Where-Object Visible) }
+        Rep ("  glide setup: dpi $dpi, {0} panes on show" -f @(& $panes).Count)
+
+        # -- hero ---------------------------------------------------------
+        $mark = Get-LineCount $log
+        $first = @(& $panes | Sort-Object Left)[0]
+        if ($first) {
+            [void](Send-TestKeys -Window $top -Target ([IntPtr]$first.Hwnd) -Modifiers ctrl, shift -Key Space)
+            # Every tile needs a snapshot before a swap can slide (Window.heroSlide).
+            Start-Sleep -Milliseconds 2500
+            for ($i = 0; $i -lt $repeats; $i++) {
+                $v = @(& $panes)
+                if ($v.Count -ne 1) { break }
+                $key = if ($i % 2 -eq 0) { 'Down' } else { 'Up' }
+                [void](Send-TestKeys -Window $top -Target ([IntPtr]$v[0].Hwnd) -Modifiers ctrl, alt -Key $key)
+                Start-Sleep -Milliseconds 900
+            }
+            $v = @(& $panes)
+            if ($v.Count -eq 1) {
+                [void](Send-TestKeys -Window $top -Target ([IntPtr]$v[0].Hwnd) -Modifiers ctrl, shift -Key Space)
+            }
+            Start-Sleep -Milliseconds 1200
+        }
+        $rows += Sum-Runs 'hero' 'slide' @(Get-GlideRuns $log $mark '4841' 'GhozttyWindow')
+
+        # -- banner -------------------------------------------------------
+        $mark = Get-LineCount $log
+        & $exe +set-banner --target=s1 "head\nrow2\nrow3" 2>&1 | Out-Null
+        Start-Sleep -Milliseconds 1200
+        for ($i = 0; $i -lt $repeats; $i++) {
+            $ov = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyBannerOverlay' |
+                Where-Object Visible) | Select-Object -First 1
+            if (-not $ov) { break }
+            $y = $ov.Top + [math]::Min([int]($ov.Height / 2), (& $px 12))
+            [void](Send-TestMouse -Window $top -Target ([IntPtr]$ov.Hwnd) -X ($ov.Left + [int]($ov.Width / 2)) -Y $y)
+            Start-Sleep -Milliseconds 900
+        }
+        $rows += Sum-Runs 'banner' 'card' @(Get-GlideRuns $log $mark '1' 'GhozttyBannerOverlay')
+        $rows += Sum-Runs 'banner' 'copy' @(Get-GlideRuns $log $mark '2' 'GhozttyBannerOverlay')
+
+        # -- sidebar ------------------------------------------------------
+        $mark = Get-LineCount $log
+        for ($i = 0; $i -lt $repeats; $i++) {
+            $sb = @(Get-TestChildWindows -Window $top -Class 'GhozttyPaneSidebar') | Select-Object -First 1
+            if (-not $sb -or -not $sb.Visible) { break }
+            # The collapse/expand toggle (pane-sidebar-glide.ps1's geometry, T2289).
+            $inset = [int][math]::Truncate(((& $px 52) - (& $px 28)) / 2)
+            $c = (& $px 12) + $inset + [int]((& $px 28) / 2)
+            [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X ($sb.Left + $c) -Y ($sb.Top + $c))
+            Start-Sleep -Milliseconds 1100
+        }
+        $rows += Sum-Runs 'sidebar' 'grid' @(Get-GlideRuns $log $mark '534c' 'GhozttyWindow')
+        $rows += Sum-Runs 'sidebar' 'column' @(Get-GlideRuns $log $mark '5' 'GhozttyPaneSidebar')
+
+        # -- stack --------------------------------------------------------
+        [void](Set-TestWindowPos -Window $top -X 0 -Y 0 -Width (& $px 760) -Height (& $px 700))
+        Start-Sleep -Milliseconds 1500
+        $mark = Get-LineCount $log
+        Rep ("  stack setup: {0} panes on show at 760 DIP" -f @(& $panes).Count)
+        for ($i = 0; $i -lt $repeats; $i++) {
+            # P is the unnamed first pane; s1 is next to it, so s1 / s3 are the
+            # two ends a named link can reach and each one changes the run.
+            $name = if ($i % 2 -eq 0) { 's3' } else { 's1' }
+            # A named +split that exists is focused (the IPC focus a
+            # ghoztty://focus link shares), which brings a tucked pane on show.
+            & $exe +split --name=$name --focus 2>&1 | Out-Null
+            Start-Sleep -Milliseconds 1100
+        }
+        $rows += Sum-Runs 'stack' 'glide' @(Get-GlideRuns $log $mark '534c' 'GhozttyWindow')
+    }
+    finally {
+        Kill-RepoInstances
+    }
+    return $rows
+}
+
 function Share($s) { if ($s.Intervals -eq 0) { return 1.0 } return [double]$s.Doubled / $s.Intervals }
 function Pct($x) { return [math]::Round(100 * $x, 1) }
 
@@ -249,6 +401,34 @@ try {
     Assert ((Share $vg) -lt (Share $lg)) `
     ("the glow itself skips fewer frames on the frame clock: $(Pct (Share $vg))% " +
         "(mean $($vg.MeanUs)us) vs $(Pct (Share $lg))% (mean $($lg.MeanUs)us) on the 16 ms WM_TIMER")
+
+    # ---- G. the glides users watch (T2372) --------------------------------
+    Rep ''
+    Rep "glides on the frame clock - $GlideRepeats of each"
+    $glides = @(Measure-Glides $GlideRepeats)
+    $by = @{}; foreach ($g in $glides) { $by["$($g.Mode)/$($g.What)"] = $g }
+    # G1. Each glide was driven and reported: the oracle reaches it.
+    foreach ($k in 'hero/slide', 'banner/card', 'stack/glide') {
+        Assert ($by[$k].Runs -ge 1 -and $by[$k].Intervals -ge 5) `
+        ("G1: the $k glide ran on the frame clock and reported ($($by[$k].Runs) runs, $($by[$k].Intervals) intervals)")
+    }
+    $sbRuns = $by['sidebar/grid'].Runs + $by['sidebar/column'].Runs
+    Assert ($sbRuns -ge 1) ("G1: the sidebar toggle glided on the frame clock " +
+        "($($by['sidebar/grid'].Runs) grid runs, $($by['sidebar/column'].Runs) column runs)")
+    # G2. Every glide's tick fits in a frame: mean handler cost under one
+    # display period. A tick that does not fit cannot be smooth on any clock.
+    foreach ($g in $glides) {
+        if ($g.Runs -eq 0) { continue }
+        Assert ($g.CostMeanUs -lt $g.PeriodUs) `
+        ("G2: a $($g.Mode) $($g.What) tick fits in a frame: mean cost $($g.CostMeanUs)us " +
+            "(max $($g.CostMaxUs)us) against a $($g.PeriodUs)us period; " +
+            "$($g.Doubled)/$($g.Intervals) intervals skipped a frame ($(Pct (Share $g))%)")
+    }
+    $periods = @($glides | Where-Object Runs | ForEach-Object PeriodUs)
+    if ($periods.Count) {
+        Rep ("  measured display period on this desktop: {0}us (the user's panel is 120 Hz = 8333us; " +
+            "the hidden test desktop composes at its own rate)" -f ($periods | Measure-Object -Minimum).Minimum)
+    }
 
     Rep ''
     Rep "report: $report"
