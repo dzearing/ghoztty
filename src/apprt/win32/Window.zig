@@ -184,6 +184,7 @@ const chrome_glass = @import("chrome_glass.zig");
 const rearrange_header = @import("rearrange_header.zig");
 const pane_drop = @import("pane_drop.zig");
 const pane_gap = @import("pane_gap.zig");
+const pane_layout = @import("pane_layout.zig");
 const pane_relocate = @import("pane_relocate.zig");
 const drop_highlight = @import("drop_highlight.zig");
 const DropHighlight = @import("DropHighlight.zig");
@@ -5394,6 +5395,23 @@ fn paneViewId(view: *PaneView) []const u8 {
     return view.paneId();
 }
 
+/// Whether dropping `view` on `target` in the active tab would leave the
+/// layout as it is (T2705): the move is made on a copy of the visible tree and
+/// the two compared (`pane_layout`), so the answer cannot disagree with the
+/// move. Allocates nothing - it runs on every mouse move of a drag.
+fn dropLeavesInPlace(self: *Window, view: *PaneView, target: pane_drop.Target) bool {
+    const move = pane_layout.Move.of(target) orelse return false;
+    if (self.tab_count == 0) return false;
+    var shape: pane_layout.Shape = .{};
+    const root = shape.fromTree(
+        SplitTree(PaneView),
+        &self.tab_trees[self.active_tab],
+        paneViewId,
+        paneViewStashed,
+    );
+    return shape.wouldLeaveInPlace(root, view.paneId(), move);
+}
+
 fn paneViewStashed(view: *PaneView) bool {
     return pane_stash.isStashed(view);
 }
@@ -5615,6 +5633,12 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
                 break :resolved;
             };
             const dest = cand_windows[i];
+            // A spot that would leave the pane where it is doesn't react: no
+            // target, no preview, and a release does nothing (T2705, Mac
+            // `wouldLeaveInPlace`). Only the tab the pane is in can be where
+            // it already is - a dwell switch can show another one.
+            if (dest == self and self.active_tab == d.source_tab and
+                self.dropLeavesInPlace(d.view, t)) break :resolved;
             const honoured = switch (t) {
                 .new_tab => |sp| if (dest == self)
                     self.canNewTabDrop(d.source_tab, sp.index)

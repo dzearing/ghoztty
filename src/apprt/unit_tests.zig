@@ -402,6 +402,7 @@ test {
     // no-OS-imports deal.
     _ = @import("win32/pane_drop.zig");
     _ = @import("win32/pane_gap.zig"); // T2704: divider drops
+    _ = @import("win32/pane_layout.zig"); // T2705: a drop that leaves the pane in place
 
     // Pure win32 rearrange-mode drop PREVIEW geometry — the rect a resolved
     // drop would put the dragged pane in (T1531), same no-OS-imports deal.

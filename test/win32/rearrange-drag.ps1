@@ -332,12 +332,14 @@ try {
     Assert ($hcDrag[1] -eq $hcPress[1]) 'G: and the pane that stays keeps its resting header'
     if ($prev) {
         Write-Host ("      preview: x={0} y={1} w={2} h={3}" -f $prev.Left, $prev.Top, $prev.Width, $prev.Height)
-        # A swap previews the WHOLE pane it would trade with - the pane's slot,
-        # which is the pane window plus the header band above it.
-        Assert (Test-Near $prev.Left $right.Left) 'A: the preview sits on the target pane (left edge)'
-        Assert (Test-Near $prev.Top ($right.Top - $band)) 'A: the preview covers the target pane INCLUDING its header'
-        Assert (Test-Near $prev.Width $right.Width) 'A: the preview is the target pane wide'
-        Assert (Test-Near $prev.Height ($right.Height + $band)) 'A: the preview is the target pane tall'
+        # A swap previews the box in the middle of the pane it would trade
+        # with - the box that means a swap (T2705, Mac `SwapDropBox`) - centred
+        # on the pane's slot, which is the pane window plus the header band.
+        $slotCx = $right.Left + $right.Width / 2
+        $slotCy = ($right.Top - $band) + ($right.Height + $band) / 2
+        Assert (Test-Near ($prev.Left + $prev.Width / 2) $slotCx) 'A: the swap box is centred across the target pane'
+        Assert (Test-Near ($prev.Top + $prev.Height / 2) $slotCy) 'A: the swap box is centred down the target pane INCLUDING its header'
+        Assert (($prev.Width -lt $right.Width) -and ($prev.Height -lt $right.Height)) 'A: the swap box is smaller than the pane - its center, not the whole of it'
     }
     Assert (Send-TestMouse -Window $top -Target $top -X $swapX -Y $swapY -Action up) 'A: release delivered'
     Start-Sleep -Milliseconds 1500

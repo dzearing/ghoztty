@@ -516,6 +516,22 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # T2705: a drop target that would leave the pane where it is doesn't
+    # react (Mac `wouldLeaveInPlace`), and the previews that do show say what
+    # they do - a swap's center box with its glyph, a split's one seam.
+    [pscustomobject]@{
+        Name   = 'rearrange-noop-drop'
+        Script = 'test\win32\rearrange-noop-drop.ps1'
+        Stamp  = 'test\win32\rearrange-noop-drop.stamp.json'
+        Covers = @(
+            'test\win32\rearrange-noop-drop.ps1',
+            'src\apprt\win32\pane_drop.zig',
+            'src\apprt\win32\pane_layout.zig',
+            'src\apprt\win32\drop_highlight.zig',
+            'src\apprt\win32\DropHighlight.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # T1537: the drops that leave the layout you are looking at - a pane onto
     # the tab strip, and the dwell that carries a drag into another tab. Same
     # covered set as the drag above, because it is the same gesture reaching

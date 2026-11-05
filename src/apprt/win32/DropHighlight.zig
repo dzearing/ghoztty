@@ -19,6 +19,7 @@ const std = @import("std");
 const w32 = @import("win32.zig");
 const drop_highlight = @import("drop_highlight.zig");
 const chrome_theme = @import("chrome_theme.zig");
+const icon_button_paint = @import("icon_button_paint.zig");
 
 const log = std.log.scoped(.win32_drop_highlight);
 
@@ -28,10 +29,17 @@ pub const WINDOW_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyDro
 ///
 /// An INSERT fills the rect the pane will take, so it is drawn as that pane's
 /// footprint. A SWAP is not a footprint — the pane under it stays where it is
-/// and the two exchange — so it is washed lighter and framed, which reads as
-/// "this one" rather than "here".
+/// and the two exchange — so it is the pane's center box, framed, with a swap
+/// glyph (T2705, Mac `SwapDropBox`). The box is small, so it is a touch more
+/// opaque than a footprint: the whole popup shares one alpha, and the glyph
+/// has to read through it.
 pub const alpha_insert: u8 = 110;
-pub const alpha_swap: u8 = 72;
+pub const alpha_swap: u8 = 150;
+
+/// The swap glyph: Segoe Fluent Icons / MDL2 `Switch` (two opposed arrows,
+/// Mac's `arrow.left.arrow.right`), at Mac's 22pt.
+pub const swap_glyph: u16 = 0xE8AB;
+pub const swap_glyph_dip: f32 = 22;
 
 /// A new-tab caret is a solid mark rather than a wash (T1537): it is a few
 /// pixels wide, and a 43%-opaque sliver on chrome is not a thing the eye
@@ -62,6 +70,7 @@ frame: ?w32.HBRUSH = null,
 frame_color: u32 = 0,
 frame_px: i32 = 1,
 seam_px: i32 = 1,
+scale: f32 = 1.0,
 alpha: u8 = 0,
 
 /// Is the preview currently in the always-on-top band (T1538)? Tracked rather
@@ -185,7 +194,7 @@ pub fn hide(self: *DropHighlight) void {
 }
 
 fn eql(a: drop_highlight.Highlight, b: drop_highlight.Highlight) bool {
-    return a.kind == b.kind and a.seams == b.seams and
+    return a.kind == b.kind and a.seams == b.seams and a.seam == b.seam and
         a.rect.left == b.rect.left and a.rect.top == b.rect.top and
         a.rect.right == b.rect.right and a.rect.bottom == b.rect.bottom;
 }
@@ -205,6 +214,7 @@ fn setBrushes(self: *DropHighlight, pal: chrome_theme.Palette, scale: f32) void 
     }
     self.frame_px = framePx(scale);
     self.seam_px = dipPx(seam_dip, scale);
+    self.scale = scale;
 }
 
 fn framePx(scale: f32) i32 {
@@ -250,6 +260,21 @@ fn paintInto(self: *const DropHighlight, hwnd: w32.HWND, hdc: w32.HDC) void {
         }
         return;
     }
+    // A split or top-level insert (T2705, Mac `SplitDropFill`): one seam, on
+    // the edge the new divider will run along.
+    if (hl.seam) |edge| {
+        const seam = self.frame orelse return;
+        const t = @min(self.seam_px, @divFloor(@max(rect.right - rect.left, 1), 2));
+        const u = @min(self.seam_px, @divFloor(@max(rect.bottom - rect.top, 1), 2));
+        const band: w32.RECT = switch (edge) {
+            .left => .{ .left = rect.left, .top = rect.top, .right = rect.left + t, .bottom = rect.bottom },
+            .right => .{ .left = rect.right - t, .top = rect.top, .right = rect.right, .bottom = rect.bottom },
+            .up => .{ .left = rect.left, .top = rect.top, .right = rect.right, .bottom = rect.top + u },
+            .down => .{ .left = rect.left, .top = rect.bottom - u, .right = rect.right, .bottom = rect.bottom },
+        };
+        _ = w32.FillRect(hdc, &band, seam);
+        return;
+    }
     // A swap reads as "these two trade places", and the new window a pop-out
     // creates is not on screen yet — both want the outline that says the rect
     // is a destination rather than a fill over something already there.
@@ -270,6 +295,19 @@ fn paintInto(self: *const DropHighlight, hwnd: w32.HWND, hdc: w32.HDC) void {
     _ = w32.FillRect(hdc, &band, brush);
     band = .{ .left = rect.right - t, .top = rect.top, .right = rect.right, .bottom = rect.bottom };
     _ = w32.FillRect(hdc, &band, brush);
+
+    // The swap glyph in the middle of the box (T2705). No icon font on the
+    // box draws no glyph: the framed box alone still says "swap here".
+    if (hl.kind == .swap) {
+        _ = icon_button_paint.fontCodepoint(
+            hdc,
+            self.scale,
+            .{ .left = rect.left, .top = rect.top, .right = rect.right, .bottom = rect.bottom },
+            swap_glyph,
+            swap_glyph_dip,
+            self.frame_color,
+        );
+    }
 }
 
 var class_registered: bool = false;

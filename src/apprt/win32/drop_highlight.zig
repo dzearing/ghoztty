@@ -7,7 +7,8 @@
 //! answers *what* a release would mean; this answers *where that lands*, from
 //! the same geometry the commit will use — a split at ratio 0.5 takes half of
 //! the pane it splits, a top-level insert takes half the window's content, and
-//! a swap takes the whole of the pane it trades with. A preview derived any
+//! a swap shows the very box in the pane's middle that means it (T2705, Mac
+//! `SwapDropBox`). A preview derived any
 //! other way (a fixed band, a whole-pane wash for a half-pane split) is a
 //! preview that lies, and the user only finds out after letting go.
 //!
@@ -80,6 +81,11 @@ pub const Highlight = struct {
     /// For an `insert`, the axis of the divider it lands in: `horizontal`
     /// (a left|right split) puts the seams down its left and right edges.
     seams: ?pane_drop.RowDirection = null,
+    /// For a `split` or `top_level`, the edge of `rect` the one new divider
+    /// runs along - the edge facing the middle of what it cuts (T2705, Mac
+    /// `SplitDropFill`'s seam). Without it a half-filled pane does not say
+    /// which axis is being cut.
+    seam: ?Side = null,
 };
 
 /// Everything the preview needs to know about the window it is being drawn
@@ -107,7 +113,7 @@ pub const Context = struct {
     /// one thing this module exists to prevent, a promise the release breaks.
     can_new_tab: bool = false,
 
-    /// The monitor scale, for the caret's thickness.
+    /// The monitor scale, for the caret's thickness and the swap box's floor.
     scale: f32 = 1.0,
 
     /// Where a `.new_window` drop would put the window it creates, in screen
@@ -167,14 +173,21 @@ pub fn forTarget(target: ?Target, ctx: Context) ?Highlight {
         .split => |s| .{
             .rect = halfOn(paneRect(ctx.pane_rects, s.pane) orelse return null, s.side),
             .kind = .split,
+            .seam = seamEdge(s.side),
         },
+        // The box the pointer is in, not the whole pane: exactly where the
+        // pointer means a swap (T2705).
         .swap => |s| .{
-            .rect = paneRect(ctx.pane_rects, s.pane) orelse return null,
+            .rect = pane_drop.swapRect(
+                paneRect(ctx.pane_rects, s.pane) orelse return null,
+                pane_drop.Metrics.forScale(ctx.scale),
+            ),
             .kind = .swap,
         },
         .top_level => |s| .{
             .rect = halfOn(ctx.content_rect, s.side),
             .kind = .top_level,
+            .seam = seamEdge(s.side),
         },
         .new_tab => |s| blk: {
             if (!ctx.can_new_tab) break :blk null;
@@ -204,6 +217,17 @@ pub fn forTarget(target: ?Target, ctx: Context) ?Highlight {
         },
         // Answered above, before the per-window arms are reached.
         .new_window, .tile => unreachable,
+    };
+}
+
+/// The edge of a half landing on `side` that its new divider runs along: the
+/// one facing the middle (Mac `SplitDropFill.seamAlignment`).
+pub fn seamEdge(side: Side) Side {
+    return switch (side) {
+        .left => .right,
+        .right => .left,
+        .up => .down,
+        .down => .up,
     };
 }
 
@@ -377,6 +401,15 @@ test "T1531: a split preview is the half of the target pane the pane will take" 
     try testing.expectEqual(@as(i32, 750), h.rect.right);
     try testing.expectEqual(@as(i32, 0), h.rect.top);
     try testing.expectEqual(@as(i32, 600), h.rect.bottom);
+    // T2705: the seam runs down the edge facing the rest of the pane.
+    try testing.expectEqual(@as(?Side, .right), h.seam);
+}
+
+test "T2705: a split's seam faces the middle of what it cuts" {
+    try testing.expectEqual(Side.right, seamEdge(.left));
+    try testing.expectEqual(Side.left, seamEdge(.right));
+    try testing.expectEqual(Side.down, seamEdge(.up));
+    try testing.expectEqual(Side.up, seamEdge(.down));
 }
 
 test "T1531: each side takes its own half of the pane" {
@@ -399,13 +432,17 @@ test "T1531: an odd extent never overflows the rect it is halving" {
     }
 }
 
-test "T1531: a swap preview is the WHOLE pane being traded with" {
+test "T2705: a swap preview is the pane's center box, the one that means a swap" {
     const h = forTarget(
         .{ .swap = .{ .window = win, .pane = panes[0].id } },
         baseCtx(),
     ).?;
     try testing.expectEqual(Kind.swap, h.kind);
-    try testing.expectEqual(pane_a, h.rect);
+    try testing.expectEqual(pane_drop.swapRect(pane_a, pane_drop.Metrics.forScale(1.0)), h.rect);
+    // Inside the pane, and smaller than it.
+    try testing.expect(h.rect.left > pane_a.left and h.rect.right < pane_a.right);
+    try testing.expect(h.rect.top > pane_a.top and h.rect.bottom < pane_a.bottom);
+    try testing.expect(h.seam == null);
 }
 
 test "T2704: a divider preview is the landing area, seamed on the divider's axis" {
@@ -436,6 +473,7 @@ test "T1531: a top-level preview is half the window's CONTENT, not half a pane" 
     try testing.expectEqual(@as(i32, 1000), h.rect.right);
     try testing.expectEqual(@as(i32, 300), h.rect.top);
     try testing.expectEqual(@as(i32, 600), h.rect.bottom);
+    try testing.expectEqual(@as(?Side, .up), h.seam);
 }
 
 test "T1531: pane ids match case-insensitively, as everywhere else" {
@@ -443,7 +481,8 @@ test "T1531: pane ids match case-insensitively, as everywhere else" {
         .{ .swap = .{ .window = win, .pane = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" } },
         baseCtx(),
     ).?;
-    try testing.expectEqual(pane_a, h.rect);
+    // Pane A's box, found by its lowercased id (T2705: the swap box).
+    try testing.expectEqual(pane_drop.swapRect(pane_a, pane_drop.Metrics.forScale(1.0)), h.rect);
 }
 
 test "T1531: nothing is previewed without a target" {
