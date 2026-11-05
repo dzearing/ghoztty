@@ -45,12 +45,27 @@ fn initPool() void {
     pool_workers = want;
 }
 
+/// Bands per thread (the workers and the caller). One band each left the whole
+/// sheet waiting on whichever worker woke last: in a Debug viewer edge drag the
+/// render read ~0.85 ms on most steps and 1.4-2.0 ms on a third of them, one
+/// band's worth late (T2715). With several small bands a thread that is
+/// awake takes the next one off the queue - the caller included, through
+/// `waitAndWork` - so a late worker costs at most a small band.
+pub const bands_per_thread: usize = 4;
+
+/// No band smaller than this: below it the hand-off is a real share of the
+/// band's own cost.
+pub const min_band_px: usize = 16 * 1024;
+
 /// How many bands a `w` x `h` region is cut into: 1 (the caller alone) when it
-/// is small or there are no workers, else one per worker plus the caller's,
-/// never more than there are rows.
+/// is small or there are no workers, else `bands_per_thread` for each worker
+/// and the caller - fewer when that would make a band under `min_band_px`,
+/// never fewer than one per thread, never more than there are rows.
 pub fn bandCount(w: usize, h: usize, workers: usize) usize {
     if (workers == 0 or h < 2 or w * h < min_parallel_px) return 1;
-    return @min(workers + 1, h);
+    const threads = workers + 1;
+    const by_size = @max(w * h / min_band_px, threads);
+    return @min(@min(threads * bands_per_thread, by_size), h);
 }
 
 /// The rows of band `i` of `bands` over `h` rows: [start, end). Bands differ by
@@ -139,8 +154,23 @@ test "T2702: a small region, a one-row region or no workers stays on the caller"
     try testing.expectEqual(@as(usize, 1), bandCount(100, 100, 3));
     try testing.expectEqual(@as(usize, 1), bandCount(1_000_000, 1, 3));
     try testing.expectEqual(@as(usize, 1), bandCount(1000, 1000, 0));
-    try testing.expectEqual(@as(usize, 4), bandCount(1000, 1000, 3));
     try testing.expectEqual(@as(usize, 3), bandCount(100_000, 3, 7));
+}
+
+test "T2715: a big region is cut into several bands a thread, none tiny" {
+    // A viewer's client (481x864, 4 workers): 4 bands for each of 5 threads.
+    try testing.expectEqual(@as(usize, 20), bandCount(481, 864, 4));
+    // 1000x1000, 3 workers: 16 bands, each ~62k px.
+    try testing.expectEqual(@as(usize, 16), bandCount(1000, 1000, 3));
+    // Just over the parallel threshold: the size floor holds it to one band
+    // a thread, not 4.
+    const n = bandCount(256, 260, 4);
+    try testing.expectEqual(@as(usize, 5), n);
+    // Never a band under the floor once there is more than one a thread.
+    for ([_][2]usize{ .{ 481, 864 }, .{ 300, 400 }, .{ 1920, 1080 }, .{ 700, 600 } }) |c| {
+        const b = bandCount(c[0], c[1], 4);
+        if (b > 5) try testing.expect(c[0] * c[1] / b >= min_band_px);
+    }
 }
 
 test "T2702: the shared sheet is byte-identical to the serial one" {
