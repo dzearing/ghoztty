@@ -3655,6 +3655,19 @@ $GuardTable = @(
             'test\win32\fullscreen-exit.ps1'
         )
     },
+    # Modified Enter/Tab/Backspace/Escape reach a program that asked for the
+    # kitty keyboard protocol or modifyOtherKeys, past ConPTY (T2693, the
+    # user's Ctrl+Enter in Claude Code). kitty-key-bridge.ps1 is the only
+    # thing that reads the bytes a raw-mode program actually receives.
+    [pscustomobject]@{
+        Name   = 'kitty-key-bridge'
+        Script = 'test\win32\kitty-key-bridge.ps1'
+        Stamp  = 'test\win32\kitty-key-bridge.stamp.json'
+        Covers = @(
+            'src\apprt\win32\kitty_key_bridge.zig',
+            'test\win32\kitty-key-bridge.ps1'
+        )
+    },
     # The What's New window (T624). `whats-new.ps1` is the only thing that
     # drives the real anchor store, launches the real app and reads the split
     # back out of the store the window paints - which bundled version counts

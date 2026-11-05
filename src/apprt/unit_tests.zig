@@ -393,6 +393,9 @@ test {
     // The desk's palettes - the ocean and a window's own seeded gradient
     // (T1832) - same deal.
     _ = @import("win32/desk_palette.zig");
+    // Which modified keys ride past ConPTY as the kitty / modifyOtherKeys
+    // bytes the program asked for (T2693), same deal.
+    _ = @import("win32/kitty_key_bridge.zig");
     // The glass title bar's desk band and its contrast scrim (T1886), same
     // deal.
     _ = @import("win32/chrome_glass.zig");

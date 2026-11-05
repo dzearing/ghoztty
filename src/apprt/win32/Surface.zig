@@ -14,6 +14,7 @@ const termio = @import("../../termio.zig");
 const CoreSurface = @import("../../Surface.zig");
 const rendererpkg = @import("../../renderer.zig");
 const desk_palette = @import("desk_palette.zig");
+const kitty_key_bridge = @import("kitty_key_bridge.zig");
 const pane_elevation = @import("pane_elevation.zig");
 const PaneDesk = @import("PaneDesk.zig");
 const internal_os = @import("../../os/main.zig");
@@ -5098,6 +5099,11 @@ pub fn handleKeyEvent(self: *Surface, wparam: usize, lparam: isize, action: inpu
             };
             // If a keybinding consumed the event, don't send Win32 input.
             if (effect == .consumed or effect == .closed) return;
+
+            // A modified Enter/Tab/Backspace/Escape the program asked to
+            // receive in kitty or modifyOtherKeys form cannot survive as a
+            // key record: conhost flattens Ctrl+Enter to LF (T2693).
+            if (self.sendKittyBridgedKey(key, mods, actual_action_w32)) return;
         }
 
         // No binding matched — send as Win32 input sequence.
@@ -6315,6 +6321,33 @@ fn sendWin32InputEvent(self: *Surface, vk: u16, lparam: isize, action: input.Act
         ctrl_state |= 0x0100; // ENHANCED_KEY
 
     self.writeWin32InputSequence(vk, scancode, unicode_char, key_down, ctrl_state, repeat_count);
+}
+
+/// Send a key the program asked for in kitty / modifyOtherKeys form as the
+/// encoder's bytes, one Win32 Input Mode char event per byte, which conhost
+/// passes through verbatim (T2693; the why is `kitty_key_bridge.zig`).
+/// Returns false when the key should go out as its key record as before.
+fn sendKittyBridgedKey(self: *Surface, key: input.Key, mods: input.Mods, action: input.Action) bool {
+    const opts = opts: {
+        self.core_surface.renderer_state.lockPriority();
+        defer self.core_surface.renderer_state.unlockPriority();
+        break :opts input.key_encode.Options.fromTerminal(&self.core_surface.io.terminal);
+    };
+    var buf: [64]u8 = undefined;
+    const bytes = kitty_key_bridge.encode(&buf, opts, action, key, mods) orelse return false;
+    if (bytes.len == 0) return true;
+    log.debug("kitty key bridge: key={s} bytes={d}", .{ @tagName(key), bytes.len });
+    // One write for the whole sequence, so conhost queues every record before
+    // the program's next read and the reader sees the sequence in one piece
+    // rather than an ESC [ 1 fragment followed by the rest.
+    var seq_buf: [2048]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&seq_buf);
+    for (bytes) |b| {
+        w.print("\x1b[0;0;{d};1;0;1_\x1b[0;0;{d};0;0;1_", .{ b, b }) catch return false;
+    }
+    const msg = termio.Message.writeReq(self.app.core_app.alloc, w.buffered()) catch return false;
+    self.core_surface.io.queueMessage(msg, .unlocked);
+    return true;
 }
 
 /// Send a Win32 Input Mode event for a WM_CHAR character (IME, PostMessage, etc.)

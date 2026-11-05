@@ -1,0 +1,14 @@
+{
+    "guard":  "kitty-key-bridge",
+    "script":  "test/win32/kitty-key-bridge.ps1",
+    "generated":  "2026-11-05T06:56:27-08:00",
+    "commit":  "11327aa0f",
+    "uncommitted":  [
+                        "src/apprt/win32/kitty_key_bridge.zig",
+                        "test/win32/kitty-key-bridge.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/kitty_key_bridge.zig":  "ce88e86d48e4bacb23842817c34324e6bfb1dd6968fd2ab4eea6deaaf01e7bde",
+                  "test/win32/kitty-key-bridge.ps1":  "d0abdeadfff0633fac70c7d4f15ebaf0812ba5ee95a2947016e6c95725d4b5d5"
+              }
+}
