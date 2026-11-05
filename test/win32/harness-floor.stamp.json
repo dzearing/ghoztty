@@ -1,8 +1,8 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-05T15:28:19-08:00",
-    "commit":  "1e65ac0c6",
+    "generated":  "2026-11-05T15:43:18-08:00",
+    "commit":  "76f1757cf",
     "uncommitted":  [
 
                     ],
@@ -380,7 +380,7 @@
                   "test/win32/pane-sidebar-close.ps1":  "a7c8945f88ead7c8d79aa9feec72ed7980d15ae76d8c6536c0bc8dc6dff0c107",
                   "test/win32/pane-sidebar-drag.ps1":  "0e495cd6242e26b11562e88cfc539b2df6acec5fccfd8511fe68193bf652151b",
                   "test/win32/pane-sidebar-elevated.ps1":  "d837bc24765f37ec4253475dc3b1efa0889ebddaad9cc5ec2ac0c6cf8e5731f4",
-                  "test/win32/pane-sidebar-glide.ps1":  "899a9400f774112a679a653a2245a05ec0bf1c8887694e5638547e888204c616",
+                  "test/win32/pane-sidebar-glide.ps1":  "67cb9a9a99708b53d31e92fc6db9fdc8480ebc6af8c2d5ad54062eb613ade3c3",
                   "test/win32/pane-sidebar-hover-resync.ps1":  "a05c2b4894385ba80ac8343db8817baf84fb27cabef9dd769164ebc54e27e551",
                   "test/win32/pane-sidebar-hue.ps1":  "576ac6eb12dee5b04364fdba582614f28dcf7b6a3967909c2f9518d49eccb88b",
                   "test/win32/pane-sidebar-motion-cost.ps1":  "3876019f1c5b333d7f95409c195a02164269315a1f52074e3aca1cc0b28cb02b",
