@@ -33,7 +33,14 @@
        folded into the grab offset;
     F. the backdrop window itself, on the background test desktop: shown
        directly below the window it backs, never activated, never topmost,
-       painting exactly its colour. Nothing reaches the user's desktop.
+       painting exactly its colour. Nothing reaches the user's desktop;
+    G. window-moving cells (T2398): caption-dblclick and maximize-button
+       calibrated on a restored AND a maximized still (no border, a shorter
+       caption), a maximize/restore scored frame by frame with a stale
+       maximized frame planted; aero-snap dragged onto the work area's edge,
+       snapped and dragged off with every divider carried; the refusals (no
+       maximized still, a "maximized" still that is not, a window that starts
+       against the edge) and the never-maximized run read as a miss.
 
   ASCII-only by design (PS 5.1 on this box mangles non-ASCII on rewrite).
 
@@ -75,9 +82,11 @@ $Monitor = @{ X = 0; Y = 0; W = 3000; H = 2000 }
 
 # Pane rects for a world: a Cols x Rows ratio split of the content area (the
 # window less its tab strip, its sidebar and a 1 px border right and bottom);
-# -DivAt pins the first column's right edge (a divider drag).
-function Get-World([int]$W, [int]$H, [int]$Cols = 1, [int]$Rows = 1, [int]$SbW = 0, [int]$DivAt = -1) {
-    $x0 = $WinX + $SbW; $y0 = $WinY + $TabH; $x1 = $WinX + $W - 1; $y1 = $WinY + $H - 1
+# -DivAt pins the first column's right edge (a divider drag). -WX/-WY put the
+# window elsewhere (it moves as a whole), -Border 0 is a maximized window's
+# missing border and -Tab its caption height (T2398).
+function Get-World([int]$W, [int]$H, [int]$Cols = 1, [int]$Rows = 1, [int]$SbW = 0, [int]$DivAt = -1, [int]$WX = $WinX, [int]$WY = $WinY, [int]$Border = 1, [int]$Tab = $TabH) {
+    $x0 = $WX + $SbW; $y0 = $WY + $Tab; $x1 = $WX + $W - $Border; $y1 = $WY + $H - $Border
     $cs = @(); $ce = @()
     for ($i = 0; $i -lt $Cols; $i++) {
         $cs += $x0 + [math]::Floor($i * ($x1 - $x0 + $DivW) / $Cols)
@@ -95,14 +104,14 @@ function Get-World([int]$W, [int]$H, [int]$Cols = 1, [int]$Rows = 1, [int]$SbW =
         $n++
         $panes += [pscustomobject]@{ Name = "P$n"; Index = $n; X = $cs[$i]; Y = $rs[$j]; W = $ce[$i] - $cs[$i]; H = $re[$j] - $rs[$j] }
     } }
-    [pscustomobject]@{ W = $W; H = $H; SbW = $SbW; X0 = $x0; Y0 = $y0; X1 = $x1; Y1 = $y1; Panes = $panes; DivX = $ce[0] }
+    [pscustomobject]@{ W = $W; H = $H; WX = $WX; WY = $WY; SbW = $SbW; X0 = $x0; Y0 = $y0; X1 = $x1; Y1 = $y1; Panes = $panes; DivX = $ce[0] }
 }
 
-function Get-WorldGeometry($World) {
+function Get-WorldGeometry($World, $Mon = $Monitor) {
     $g = @{
-        Window = @{ X = $WinX; Y = $WinY; W = $World.W; H = $World.H }
-        Monitor = $Monitor
-        Caption = $WinY + 10
+        Window = @{ X = $World.WX; Y = $World.WY; W = $World.W; H = $World.H }
+        Monitor = $Mon
+        Caption = $World.WY + 10
         Panes = @($World.Panes | ForEach-Object { @{ Name = $_.Name; Index = $_.Index; X = $_.X; Y = $_.Y; W = $_.W; H = $_.H } })
     }
     if ($World.Panes.Count -gt 1) { $g.Divider = @{ X = $World.DivX; Y0 = $World.Y0; Y1 = $World.Y1 } }
@@ -141,11 +150,11 @@ function New-WorldFrame($World, $Cap, [string]$Plant = '', $Prev) {
     $f = New-Object FsFrame ([int]$Cap.W), ([int]$Cap.H)
     $f.Fill((New-ScoreBox 0 0 $Cap.W $Cap.H), $(if ($Plant -eq 'NoBackdrop') { $Chrome } else { $Backdrop }))
     $ox = -$Cap.X; $oy = -$Cap.Y
-    $f.Fill((New-ScoreBox ($WinX + $ox) ($WinY + $oy) ($WinX + $World.W + $ox) ($WinY + $World.H + $oy)), $Chrome)
+    $f.Fill((New-ScoreBox ($World.WX + $ox) ($World.WY + $oy) ($World.WX + $World.W + $ox) ($World.WY + $World.H + $oy)), $Chrome)
     $dc = $(if ($Plant -eq 'DivIsCard') { (Get-FrameLabCardColors -Index 1).Bg } else { $DivCol })
     $f.Fill((New-ScoreBox ($World.X0 + $ox) ($World.Y0 + $oy) ($World.X1 + $ox) ($World.Y1 + $oy)), $dc)
     if ($World.SbW -gt 0) {
-        $f.Fill((New-ScoreBox ($WinX + $ox) ($World.Y0 + $oy) ($World.X0 - 2 + $ox) ($World.Y1 + $oy)), $SbBg)
+        $f.Fill((New-ScoreBox ($World.WX + $ox) ($World.Y0 + $oy) ($World.X0 - 2 + $ox) ($World.Y1 + $oy)), $SbBg)
         $f.Fill((New-ScoreBox ($World.X0 - 2 + $ox) ($World.Y0 + $oy) ($World.X0 + $ox) ($World.Y1 + $oy)), $SbEdge)
     }
     for ($i = 0; $i -lt $World.Panes.Count; $i++) {
@@ -233,14 +242,13 @@ try {
         $nv -eq 6 -and $nh -eq 6 -and @($t9.Spec.Edges.Name) -contains 'window-bottom' -and @($t9.Spec.Edges.Name) -notcontains 'window-right') "v=$nv h=$nh edges=$($t9.Spec.Edges.Name -join ',')"
 
     $ok = $true; $msgs = @()
-    foreach ($n in 'caption-dblclick', 'aero-snap') {
+    foreach ($n in 'banner', 'hero', 'tab-switch', 'split-close') {
         $geo = Get-WorldGeometry $w1
-        $g = Get-FrameLabGesture -Name $n -Geometry $geo
-        $sp = New-FrameLabCellSceneSpec -Interaction $n -Geometry $geo -CaptureRect $g.CaptureRect
-        if (-not $sp.Unsupported.Count -or ($sp.Unsupported -join ' ') -notmatch 'T2398') { $ok = $false }
+        $sp = New-FrameLabCellSceneSpec -Interaction $n -Geometry $geo -CaptureRect $t.Cap
+        if (-not $sp.Unsupported.Count -or ($sp.Unsupported -join ' ') -notmatch 'T2727') { $ok = $false }
         $msgs += "${n}: $($sp.Unsupported -join '; ')"
     }
-    Assert 'B6 the window-moving interactions are Unsupported, naming the task that models them, never a guessed scene' $ok ($msgs -join ' | ')
+    Assert 'B6 the pane-top and pane-set triggers are Unsupported, naming the task that models them (T2727), never a guessed scene' $ok ($msgs -join ' | ')
 
     # ---- C. calibrate and score a drag --------------------------------------
     ''
@@ -385,6 +393,94 @@ try {
         if ($app) { $app.Dispose() }
         Remove-TestDesktop
     }
+
+    # ---- G. window-moving cells (T2398) ---------------------------------------
+    ''
+    'G. caption-dblclick / aero-snap / maximize-button: the window moves as a whole'
+    $MonG = @{ X = 0; Y = 0; W = 1400; H = 900 }
+    function New-MovingCell([string]$Interaction, $W0, $WMax, [switch]$MaxIsRestored) {
+        $geo = Get-WorldGeometry $W0 $MonG
+        if ($Interaction -eq 'maximize-button') {
+            # A trigger: the plan, not a pointer path, says what is captured.
+            $geo.MaximizeButton = @{ X = $W0.WX + $W0.W - 69; Y = $W0.WY + 10 }
+            $g = Get-FrameLabTrigger -Name $Interaction -Geometry $geo
+        } else { $g = Get-FrameLabGesture -Name $Interaction -Geometry $geo }
+        $spec = New-FrameLabCellSceneSpec -Interaction $Interaction -Geometry $geo -CaptureRect $g.CaptureRect
+        $a = @{ Spec = $spec; Still = (New-WorldFrame $W0 $g.CaptureRect); Flash = @($Chrome) }
+        if ($WMax) { $a.MaximizedStill = New-WorldFrame $WMax $g.CaptureRect }
+        if ($MaxIsRestored) { $a.MaximizedStill = New-WorldFrame $W0 $g.CaptureRect }
+        [pscustomobject]@{ Geometry = $geo; Gesture = $g; Spec = $spec; Scene = (New-FrameLabCellScene @a); Cap = $g.CaptureRect }
+    }
+    $wantWin = { param($w) $h = @{ 'window-left' = $w.WX; 'window-top' = $w.WY; 'window-right' = $w.WX + $w.W; 'window-bottom' = $w.WY + $w.H }
+        if ($w.Panes.Count -gt 1) { $h['v:P1'] = $w.Panes[0].X + $w.Panes[0].W }
+        $h }
+    $r2 = Get-World 800 500 2 1
+    # Maximized: the whole work area, no border, and a caption 4 px shorter.
+    $m2 = Get-World 1400 900 2 1 -WX 0 -WY 0 -Border 0 -Tab ($TabH - 4)
+    $tc = New-MovingCell 'caption-dblclick' $r2 $m2
+    $names = ($tc.Spec.Edges.Name | Sort-Object) -join ','
+    $opens = (@($tc.Spec.Edges | Where-Object { $_.Open }).Name | Sort-Object) -join ','
+    $dv = @($tc.Spec.Edges | Where-Object { $_.Name -eq 'v:P1' })[0]
+    Assert 'G1 the spec: all four window edges, every one Open; the divider carried over the window''s left..right / top..bottom; every card side that touches no divider rides its window edge; the cell maximizes' (
+        $names -eq 'v:P1,window-bottom,window-left,window-right,window-top' -and $opens -eq 'window-bottom,window-left,window-right,window-top' -and
+        "$($dv.CarryX)/$($dv.CarryX2)/$($dv.CarryY)/$($dv.CarryY2)" -eq 'window-left/window-right/window-top/window-bottom' -and
+        (Get-Anchors $tc.Spec 'P1') -eq 'window-left window-top v:P1 window-bottom' -and (Get-Anchors $tc.Spec 'P2') -eq 'v:P1 window-top window-right window-bottom' -and
+        $tc.Spec.Maximizes -and $tc.Spec.Unsupported.Count -eq 0 -and "$($tc.Cap.X),$($tc.Cap.Y),$($tc.Cap.W),$($tc.Cap.H)" -eq '0,0,1400,900') (
+        "edges=$names open=$opens carry=$($dv.CarryX)/$($dv.CarryX2)/$($dv.CarryY)/$($dv.CarryY2) P1=$(Get-Anchors $tc.Spec 'P1') P2=$(Get-Anchors $tc.Spec 'P2') unsup=$($tc.Spec.Unsupported -join ';')")
+    $c1 = $(if ($tc.Scene.Ok) { $tc.Scene.Scorer.Cards[0] })
+    Assert 'G2 calibrated on both stills: the maximized offsets lose the border (bottom -1 -> 0) and the 4 px of caption (top 30 -> 26)' (
+        $tc.Scene.Ok -and $tc.Scene.Scorer.MaxCalibrated -and $c1.Offset[3] -eq -1 -and $c1.OffsetMax[3] -eq 0 -and $c1.Offset[1] -eq $TabH -and $c1.OffsetMax[1] -eq ($TabH - 4)) (
+        "ok=$($tc.Scene.Ok) reasons=$($tc.Scene.Reasons -join '; ') $(if ($c1) { "off=$($c1.Offset -join ',') max=$($c1.OffsetMax -join ',')" })")
+    if ($tc.Scene.Ok) {
+        $worlds = @($r2, $r2, $m2, $m2, $m2, $m2, $r2, $r2)
+        $d = Invoke-TestDrag $tc $worlds @{ 2 = 'B2' } $wantWin
+        $on = @(for ($i = 0; $i -lt $d.Records.Count; $i++) { if ($d.Records[$i].Failing) { $i } })
+        $mx = @(for ($i = 0; $i -lt $d.Records.Count; $i++) { if ($d.Records[$i].Maximized) { $i } })
+        Assert 'G3 maximize and restore: every frame clean but the planted stale one (#2, the maximized window still drawing the restored grid, B2), every edge where drawn, frames 2-5 read maximized and no other' (
+            $d.Dirty.Count -eq 0 -and $d.EdgeBad.Count -eq 0 -and ($on -join ',') -eq '2' -and $d.Records[2].Classes() -match 'B2' -and ($mx -join ',') -eq '2,3,4,5') (
+            "dirty=$($d.Dirty | Select-Object -First 2) edges=$($d.EdgeBad | Select-Object -First 3) failing=$($on -join ',') #2=$($d.Records[2].Classes()) maximized=$($mx -join ',')")
+        $timeline = @(0..7 | ForEach-Object { [pscustomobject]@{ Index = $_; Superseded = $false } })
+        $capture = [pscustomobject]@{ Stats = [pscustomobject]@{ QpcFrequency = 10000000; RefreshHz = 120 }; Timeline = $timeline }
+        $s = Get-FrameLabSceneScore -Scorer $tc.Scene.Scorer -Capture $capture -Gesture $tc.Gesture -ExpectMaximized
+        Assert 'G4 the score bridge counts the maximized frames (4) and a run that did maximize is no miss' ($s.MaximizedFrames -eq 4 -and $s.MotionMisses.Count -eq 0 -and $s.BleedFrames -eq 1) "maxed=$($s.MaximizedFrames) misses=$($s.MotionMisses -join ';') bleed=$($s.BleedFrames)"
+    }
+    $tq = New-MovingCell 'caption-dblclick' $r2 $m2
+    if ($tq.Scene.Ok) {
+        foreach ($i in 0..3) { [void]$tq.Scene.Scorer.ScoreFrame((New-WorldFrame $r2 $tq.Cap), $i, [long]$i * 83333) }
+        $timeline = @(0..3 | ForEach-Object { [pscustomobject]@{ Index = $_; Superseded = $false } })
+        $capture = [pscustomobject]@{ Stats = [pscustomobject]@{ QpcFrequency = 10000000; RefreshHz = 120 }; Timeline = $timeline }
+        $s = Get-FrameLabSceneScore -Scorer $tq.Scene.Scorer -Capture $capture -Gesture $tq.Gesture -ExpectMaximized
+        Assert 'G5 negative control: a maximizing run whose window never maximized is a miss (it fails), not a clean pass over a window that sat still' (
+            $s.MaximizedFrames -eq 0 -and $s.BleedFrames -eq 0 -and ($s.MotionMisses -join ' ') -match 'never showed maximized') "maxed=$($s.MaximizedFrames) misses=$($s.MotionMisses -join ';')"
+    } else { Assert 'G5 the second caption-dblclick cell calibrates' $false ($tq.Scene.Reasons -join '; ') }
+
+    $r4 = Get-World 800 500 2 2
+    $ta = New-MovingCell 'aero-snap' $r4 $null
+    Assert 'G6 aero-snap calibrates on the restored still alone (it never maximizes)' ($ta.Scene.Ok -and -not $ta.Spec.Maximizes) ($ta.Scene.Reasons -join '; ')
+    if ($ta.Scene.Ok) {
+        $worlds = @(250, 200, 150, 100, 50, 0 | ForEach-Object { Get-World 800 500 2 2 -WX $_ })
+        $worlds += Get-World 700 900 2 2 -WX 0 -WY 0
+        $worlds += Get-World 800 500 2 2 -WX 300
+        $d = Invoke-TestDrag $ta $worlds @{} $wantWin
+        $mx = @($d.Records | Where-Object { $_.Maximized }).Count
+        Assert 'G7 aero-snap: dragged left onto the work area''s edge, snapped (left half, full height, border kept) and dragged off - every frame clean, every edge where drawn, none maximized' (
+            $d.Dirty.Count -eq 0 -and $d.EdgeBad.Count -eq 0 -and $mx -eq 0) "dirty=$($d.Dirty | Select-Object -First 2) edges=$($d.EdgeBad | Select-Object -First 3) maximized=$mx"
+        $fr = $ta.Scene.Scorer.ScoreFrame((New-WorldFrame $m2 $ta.Cap), 99, 0)
+        Assert 'G8 a maximized frame in a scene with no maximized calibration fails as LOC naming why, never scored against the restored offsets as if clean' (
+            $fr.Failing -and $fr.Maximized -and (@($fr.Findings | Where-Object { $_.Cls -eq 'LOC' -and $_.Detail -match 'no maximized still' }).Count -eq 1)) "failing=$($fr.Failing) max=$($fr.Maximized) $($fr.Classes())"
+    }
+
+    $tn = New-MovingCell 'maximize-button' $r2 $null
+    $tr = New-MovingCell 'caption-dblclick' $r2 $null -MaxIsRestored
+    Assert 'G9 refusals: a maximizing cell with no maximized still, and one whose "maximized" still shows the restored window, are both refused, saying why' (
+        -not $tn.Scene.Ok -and ($tn.Scene.Reasons -join ' ') -match 'no maximized still frame was given' -and
+        -not $tr.Scene.Ok -and ($tr.Scene.Reasons -join ' ') -match 'does not show a maximized window') "none: $($tn.Scene.Reasons -join '; ') | restored: $($tr.Scene.Reasons -join '; ')"
+    $edge = Get-World 800 500 1 1 -WX 0
+    $geo = Get-WorldGeometry $edge $MonG
+    $g = Get-FrameLabGesture -Name 'caption-dblclick' -Geometry $geo
+    $sp = New-FrameLabCellSceneSpec -Interaction 'caption-dblclick' -Geometry $geo -CaptureRect $g.CaptureRect
+    Assert 'G10 a window-moving cell whose window starts against the work area''s edge is Unsupported (no backdrop to tell it from a snapped one)' (
+        ($sp.Unsupported -join ' ') -match 'backdrop on every side.*left') ($sp.Unsupported -join '; ')
 
     Complete-TestBody
 }

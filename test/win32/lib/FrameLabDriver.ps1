@@ -78,6 +78,8 @@ public static class GflWin {
     [DllImport("shcore.dll")] static extern int GetDpiForMonitor(IntPtr m, int type, out uint x, out uint y);
     [DllImport("user32.dll", SetLastError = true)] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int hh, uint f);
     [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int a, out RECT r, int n);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr h);
 
     static IntPtr Aware() { return SetThreadDpiAwarenessContext(new IntPtr(-4)); }
     static void Restore(IntPtr old) { if (old != IntPtr.Zero) SetThreadDpiAwarenessContext(old); }
@@ -130,6 +132,11 @@ public static class GflWin {
         try { return SetWindowPos(h, new IntPtr(-1), x, y, w, hh, 0x0010 | 0x0040); }
         finally { Restore(old); }
     }
+
+    // T2398: maximize (SW_MAXIMIZE) or restore (SW_RESTORE) the window, for
+    // a maximizing cell's maximized still frame; and whether it is maximized.
+    public static bool Maximize(IntPtr h, bool on) { ShowWindow(h, on ? 3 : 9); return IsZoomed(h) == on; }
+    public static bool Zoomed(IntPtr h) { return IsZoomed(h); }
 
     // Every VISIBLE descendant of class cls: "hwnd:x,y,w,h", its client rect on
     // the screen.
@@ -562,14 +569,33 @@ function New-FrameLabLiveDriver {
         try { $Launched.Backdrop = Show-FrameLabBackdrop -Rect $cap -Below $Launched.Top }
         catch { return & $no @("backdrop: $($_.Exception.Message)") }
         Start-Sleep -Milliseconds 400
-        $s = Start-FrameCapture -X $cap.X -Y $cap.Y -W $cap.W -H $cap.H -SampleEvery 0 -KeepFrames 1
-        Start-Sleep -Milliseconds 400
-        $res = Stop-FrameCapture -Session $s
-        if ($s -is [IDisposable]) { $s.Dispose() }
-        $kept = @($res.Kept)
-        if (-not $kept.Count -or $null -eq $kept[0].Px) { return & $no @('the still frame capture delivered no frame') }
-        try { [void][GfcSession]::WritePng($kept[0], (Join-Path $Launched.Dir 'still.png')) } catch { }
-        $scene = New-FrameLabCellScene -Spec $spec -Still (ConvertTo-FrameLabFsFrame $kept[0])
+        $still = {
+            param([string]$Png)
+            $s = Start-FrameCapture -X $cap.X -Y $cap.Y -W $cap.W -H $cap.H -SampleEvery 0 -KeepFrames 1
+            Start-Sleep -Milliseconds 400
+            $res = Stop-FrameCapture -Session $s
+            if ($s -is [IDisposable]) { $s.Dispose() }
+            $kept = @($res.Kept)
+            if (-not $kept.Count -or $null -eq $kept[0].Px) { return $null }
+            try { [void][GfcSession]::WritePng($kept[0], (Join-Path $Launched.Dir $Png)) } catch { }
+            return (ConvertTo-FrameLabFsFrame $kept[0])
+        }
+        # A maximizing cell (T2398) needs a still of the window maximized as
+        # well: taken FIRST and restored from, so the restored still - the one
+        # the geometry is checked against - is of the window the run starts on.
+        $sceneArgs = @{ Spec = $spec }
+        if ($spec.Maximizes) {
+            if (-not [GflWin]::Maximize($Launched.Top, $true)) { return & $no @('the window would not maximize for its maximized still frame') }
+            Start-Sleep -Milliseconds $script:FrameLabLive.SettleMs
+            $sceneArgs.MaximizedStill = & $still 'still-max.png'
+            $back = [GflWin]::Maximize($Launched.Top, $false)
+            Start-Sleep -Milliseconds $script:FrameLabLive.SettleMs
+            if (-not $back) { return & $no @('the window would not restore after its maximized still frame') }
+            if ($null -eq $sceneArgs.MaximizedStill) { return & $no @('the maximized still frame capture delivered no frame') }
+        }
+        $sceneArgs.Still = & $still 'still.png'
+        if ($null -eq $sceneArgs.Still) { return & $no @('the still frame capture delivered no frame') }
+        $scene = New-FrameLabCellScene @sceneArgs
         $Launched.Scene = $scene
         return $scene
     }
@@ -599,7 +625,7 @@ function New-FrameLabLiveDriver {
 
     $score = {
         param($Capture, $Frames, $Gesture, $Played, $Scene)
-        $sc = Get-FrameLabSceneScore -Scorer $Scene.Scorer -Capture $Capture -Gesture $Gesture -Played $Played -Delta $Scene.Delta
+        $sc = Get-FrameLabSceneScore -Scorer $Scene.Scorer -Capture $Capture -Gesture $Gesture -Played $Played -Delta $Scene.Delta -ExpectMaximized:([bool]$Scene.Maximizes)
         $png = @{}
         foreach ($t in @($Capture.Timeline)) { if ($t.Png) { $png[[long]$t.Index] = [string]$t.Png } }
         $root = $script:FrameLabLive.RunDir.TrimEnd('\') + '\'
@@ -613,7 +639,7 @@ function New-FrameLabLiveDriver {
                         })
                 }
             })
-        return [pscustomobject]@{ BleedFrames = $sc.BleedFrames; Frames = $frames; Motion = $sc.Motion; MotionMisses = @($sc.MotionMisses); Scored = $sc.Scored }
+        return [pscustomobject]@{ BleedFrames = $sc.BleedFrames; Frames = $frames; Motion = $sc.Motion; MotionMisses = @($sc.MotionMisses); Scored = $sc.Scored; MaximizedFrames = $sc.MaximizedFrames }
     }
 
     return @{
@@ -623,9 +649,10 @@ function New-FrameLabLiveDriver {
         StartCapture = $startCapture
         StopCapture  = $stopCapture
         Play         = $play
-        # Trigger cells are not this driver's yet (T2398 owns their scenes):
-        # a cell that fires nothing reads skipped, with the reason.
-        Fire         = { param($Plan) [pscustomobject]@{ Skipped = $true; SkipReason = 'trigger cells are not driven live yet (T2398)'; Aborted = $false } }
+        # Trigger cells are not driven live yet (T2727 owns the scenes the
+        # rest of them need): a cell that fires nothing reads skipped, with
+        # the reason.
+        Fire         = { param($Plan) [pscustomobject]@{ Skipped = $true; SkipReason = 'trigger cells are not driven live yet (T2727)'; Aborted = $false } }
         Score        = $score
     }
 }

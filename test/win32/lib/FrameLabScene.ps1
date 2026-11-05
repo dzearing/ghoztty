@@ -55,7 +55,7 @@ using System.Diagnostics;
 // One edge that moves during an interaction.
 public sealed class GfsEdge {
     public string Name = "";
-    public string Kind = "";            // window-right | window-bottom | divider | sidebar-edge
+    public string Kind = "";            // window-left | window-top | window-right | window-bottom | divider | sidebar-edge
     public bool Vertical = true;        // a vertical edge (an x), scanned along rows
     public int[] Lines = new int[0];    // the rows (Vertical) or columns scanned
     public int From, To;                // scan range along each line, From toward To, inclusive
@@ -63,11 +63,35 @@ public sealed class GfsEdge {
     public bool Until;                  // true: stop at the first pixel NOT near Color (a backdrop)
                                         // false: stop at the first pixel near it (a divider)
     public int Tol = 8;
+    // T2398. Open: a backdrop edge whose scan starts on the work area's own
+    // boundary. A line whose first pixel is already the window (no backdrop at
+    // all) puts the edge AT that boundary instead of not finding it - a
+    // maximized or snapped window fills the work area and has no backdrop
+    // beyond it. Without Open such a line finds nothing (T2397's rule).
+    public bool Open;
+    // CarryX / CarryY: EARLIER edges whose displacement from where Calibrate
+    // found them moves this edge's scan - x coordinates by CarryX's, y by
+    // CarryY's (a vertical edge's From/To are x, its Lines y). So a divider
+    // carried by window-left/window-top is still scanned from inside its pane
+    // after the whole window has moved. CarryX2 / CarryY2 name the FAR edge on
+    // the same axis (window-right / window-bottom): with both located the map
+    // is affine - x' = X' + (x - X) * (X2' - X') / (X2 - X) - so a scan that
+    // started inside a pane of a ratio split is still inside it after the
+    // window has been resized as well as moved (a maximize, a snap).
+    public string CarryX, CarryY, CarryX2, CarryY2;
     // Position is a pixel BOUNDARY: scanning upward it is the found pixel's
     // coordinate (where the thing starts); scanning downward it is one past it
     // (an exclusive right/bottom bound). So window-right scanned in from the
     // backdrop is the window's exclusive right, and a divider scanned from the
     // pane on its left is that pane's exclusive right.
+}
+
+// x' = To + (x - From) * Scale: where a carried scan coordinate lands (T2398).
+public struct GfsMap {
+    public readonly double From, To, Scale;
+    public GfsMap(double from, double to, double scale) { From = from; To = to; Scale = scale; }
+    public static readonly GfsMap Identity = new GfsMap(0, 0, 1);
+    public int Apply(int x) { return (int)Math.Round(To + (x - From) * Scale); }
 }
 
 // One pane's test card, and which edge each of its sides rides on.
@@ -82,11 +106,17 @@ public sealed class GfsCard {
     public int[] Offset = new int[4];             // side = edge + Offset (fixed: the coordinate)
     public FsBox Still;                           // the pane as Calibrate measured it
     public FsBox StillRing;
+    // T2398: the same offsets measured on a MAXIMIZED still frame. A maximized
+    // window has no border, and its caption need not be the restored one's
+    // height, so a maximized frame's panes sit at other offsets from the edges.
+    public int[] OffsetMax = new int[4];
+    public FsBox StillMax;
 }
 
 public sealed class GfsRecord {
     public long Index, Qpc;
     public bool Failing;
+    public bool Maximized;              // every Open edge sat on its boundary (T2398)
     public double[] Edges;              // per GfsSceneScorer.Edges, NaN = not located
     public FsFinding[] Findings;        // failing frames only
     public double Ms;                   // scoring time
@@ -119,33 +149,103 @@ public sealed class GfsSceneScorer {
 
     // ---- locating edges ----------------------------------------------------
 
-    public static double Locate(FsFrame f, GfsEdge e) {
+    public static double Locate(FsFrame f, GfsEdge e) { bool open; return Locate(f, e, GfsMap.Identity, GfsMap.Identity, out open); }
+
+    // mx/my: where the carrying edges have taken x and y (CarryX[2] /
+    // CarryY[2]). open: a majority of the lines met no backdrop and an Open
+    // edge put the edge on its boundary.
+    public static double Locate(FsFrame f, GfsEdge e, GfsMap mx, GfsMap my, out bool open) {
+        open = false;
         var found = new List<int>();
-        int step = e.To >= e.From ? 1 : -1;
-        foreach (int line in e.Lines) {
+        GfsMap along = e.Vertical ? mx : my, across = e.Vertical ? my : mx;
+        int from = along.Apply(e.From), to = along.Apply(e.To);
+        int step = to >= from ? 1 : -1;
+        int opened = 0;
+        foreach (int line0 in e.Lines) {
+            int line = across.Apply(line0);
             if (line < 0 || line >= (e.Vertical ? f.H : f.W)) continue;
             // A backdrop scan must cross some backdrop first: a window that has
-            // grown past the capture rect has no edge in it to find.
-            bool seen = false;
-            for (int i = e.From; step > 0 ? i <= e.To : i >= e.To; i += step) {
+            // grown past the capture rect has no edge in it to find - unless
+            // the edge is Open, when the window starting on the very first
+            // pixel IS the edge, on the boundary.
+            bool seen = false, first = true;
+            for (int i = from; step > 0 ? i <= to : i >= to; i += step) {
                 if (i < 0 || i >= (e.Vertical ? f.W : f.H)) continue;
                 int px = e.Vertical ? f.At(i, line) : f.At(line, i);
                 bool near = GhozttyFrameScore.Near(px, e.Color, e.Tol);
-                if (e.Until && !seen) { if (near) seen = true; else break; }
+                if (e.Until && !seen) {
+                    if (near) seen = true;
+                    else {
+                        if (e.Open && first) { found.Add(step > 0 ? i : i + 1); opened++; }
+                        break;
+                    }
+                }
+                first = false;
                 if (near != e.Until) { found.Add(step > 0 ? i : i + 1); break; }
             }
         }
         // A majority of the lines must agree there is an edge at all.
         if (found.Count * 2 <= e.Lines.Length) return double.NaN;
+        open = opened * 2 > e.Lines.Length;
         found.Sort();
         return found[found.Count / 2];
     }
 
-    public double[] LocateAll(FsFrame f) {
+    public double[] LocateAll(FsFrame f) { bool[] open; return LocateAll(f, out open); }
+
+    // Every edge in list order, each carried by the earlier edges it names
+    // (their displacement from StillPos, the still frame's positions; before
+    // Calibrate there is none). An edge whose carrier was not located is not
+    // located either.
+    public double[] LocateAll(FsFrame f, out bool[] open) {
         var p = new double[Edges.Count];
-        for (int i = 0; i < Edges.Count; i++) p[i] = Locate(f, Edges[i]);
+        open = new bool[Edges.Count];
+        for (int i = 0; i < Edges.Count; i++) {
+            GfsMap mx, my;
+            if (!Carry(Edges[i].CarryX, Edges[i].CarryX2, i, p, out mx) || !Carry(Edges[i].CarryY, Edges[i].CarryY2, i, p, out my)) { p[i] = double.NaN; continue; }
+            bool o;
+            p[i] = Locate(f, Edges[i], mx, my, out o);
+            open[i] = o;
+        }
         return p;
     }
+
+    public double[] StillPos;           // the still frame's edge positions, set by Calibrate
+
+    // The map one axis's carriers give: identity before Calibrate or with no
+    // carrier; a translation by the near edge's displacement; affine over the
+    // near and far edges when both are named and located. False: a carrier
+    // was not located (or is not an earlier edge), so neither is this edge.
+    bool Carry(string near, string far, int i, double[] p, out GfsMap m) {
+        m = GfsMap.Identity;
+        if (string.IsNullOrEmpty(near) || StillPos == null) return true;
+        int k = EdgeIndex(near);
+        if (k < 0 || k >= i || double.IsNaN(p[k]) || double.IsNaN(StillPos[k])) return false;
+        double scale = 1.0;
+        if (!string.IsNullOrEmpty(far)) {
+            int k2 = EdgeIndex(far);
+            if (k2 < 0 || k2 >= i || double.IsNaN(p[k2]) || double.IsNaN(StillPos[k2])) return false;
+            double span = StillPos[k2] - StillPos[k];
+            if (span > 0) scale = (p[k2] - p[k]) / span;
+        }
+        m = new GfsMap(StillPos[k], p[k], scale);
+        return true;
+    }
+
+    // A frame whose every Open edge sat on its boundary shows the window
+    // maximized (it fills the work area on all four sides). A snapped window
+    // keeps a side with backdrop beyond it, so it is not.
+    public bool IsMaximized(bool[] open) {
+        bool any = false;
+        for (int i = 0; i < Edges.Count; i++) {
+            if (!Edges[i].Open) continue;
+            if (!open[i]) return false;
+            any = true;
+        }
+        return any;
+    }
+
+    public bool MaxCalibrated;          // CalibrateMaximized succeeded
 
     // ---- the card layout (FrameLabCard's rules, in C#) ---------------------
 
@@ -177,27 +277,32 @@ public sealed class GfsSceneScorer {
 
     // Where the card's pane is, given the frame's edge positions; false (and
     // the missing edge's name) when an anchoring edge was not located.
-    public bool PaneFor(GfsCard c, double[] pos, out FsBox pane, out string missing) {
+    public bool PaneFor(GfsCard c, double[] pos, out FsBox pane, out string missing) { return PaneFor(c, pos, false, out pane, out missing); }
+
+    public bool PaneFor(GfsCard c, double[] pos, bool max, out FsBox pane, out string missing) {
         int[] v = new int[4];
+        int[] off = max ? c.OffsetMax : c.Offset;
         missing = null;
         for (int sd = 0; sd < 4; sd++) {
             string a = c.Anchor[sd];
-            if (string.IsNullOrEmpty(a)) { v[sd] = c.Offset[sd]; continue; }
+            if (string.IsNullOrEmpty(a)) { v[sd] = off[sd]; continue; }
             int k = EdgeIndex(a);
             if (k < 0) throw new ArgumentException("card " + c.Name + " rides on an unknown edge '" + a + "'");
             if (double.IsNaN(pos[k])) { missing = a; pane = new FsBox(); return false; }
-            v[sd] = (int)Math.Round(pos[k]) + c.Offset[sd];
+            v[sd] = (int)Math.Round(pos[k]) + off[sd];
         }
         pane = new FsBox(v[0], v[1], v[2], v[3]);
         return true;
     }
 
-    public FsScene SceneFor(double[] pos, List<string> missing) {
+    public FsScene SceneFor(double[] pos, List<string> missing) { return SceneFor(pos, missing, false); }
+
+    public FsScene SceneFor(double[] pos, List<string> missing, bool max) {
         var s = new FsScene();
         s.Flash = Flash; s.Tol = Tol; s.PosTol = PosTol;
         foreach (var c in Cards) {
             FsBox pane; string miss;
-            if (!PaneFor(c, pos, out pane, out miss)) { missing.Add(c.Name + " (" + miss + ")"); continue; }
+            if (!PaneFor(c, pos, max, out pane, out miss)) { missing.Add(c.Name + " (" + miss + ")"); continue; }
             s.Regions.Add(RegionFor(c, pane));
         }
         s.Elements.AddRange(Elements);
@@ -212,54 +317,117 @@ public sealed class GfsSceneScorer {
     // from the edge it rides on. Returns the reasons it could not, if any.
     public List<string> Calibrate(FsFrame f) {
         var why = new List<string>();
+        StillPos = null; MaxCalibrated = false;
+        for (int i = 0; i < Edges.Count; i++)
+            foreach (string cn in new string[] { Edges[i].CarryX, Edges[i].CarryY, Edges[i].CarryX2, Edges[i].CarryY2 }) {
+                if (string.IsNullOrEmpty(cn)) continue;
+                int k = EdgeIndex(cn);
+                if (k < 0 || k >= i) why.Add("edge " + Edges[i].Name + " is carried by '" + cn + "', which is not an earlier edge");
+            }
         double[] pos = LocateAll(f);
         for (int i = 0; i < Edges.Count; i++)
             if (double.IsNaN(pos[i])) why.Add("edge " + Edges[i].Name + " not located on the still frame");
         foreach (var c in Cards) {
-            if (c.Ring < 0) { why.Add("card " + c.Name + " has no ring to calibrate from"); continue; }
-            bool any = false; int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
-            for (int y = 0; y < f.H; y++)
-                for (int x = 0; x < f.W; x++)
-                    if (GhozttyFrameScore.Near(f.At(x, y), c.Ring, Tol)) {
-                        if (!any) { x0 = x; y0 = y; x1 = x + 1; y1 = y + 1; any = true; }
-                        if (x < x0) x0 = x; if (y < y0) y0 = y;
-                        if (x + 1 > x1) x1 = x + 1; if (y + 1 > y1) y1 = y + 1;
-                    }
-            if (!any) { why.Add("card " + c.Name + ": ring colour not on the still frame"); continue; }
-            var ring = new FsBox(x0, y0, x1, y1);
-            int my = (y0 + y1) / 2, mx = (x0 + x1) / 2;
-            int th = 0; while (x0 + th < x1 && GhozttyFrameScore.Near(f.At(x0 + th, my), c.Ring, Tol)) th++;
-            int tv = 0; while (y0 + tv < y1 && GhozttyFrameScore.Near(f.At(mx, y0 + tv), c.Ring, Tol)) tv++;
+            FsBox ring, box; int th, tv;
+            if (!MeasureCard(f, c, "the still frame", why, out ring, out box, out th, out tv)) continue;
             c.CellW = th; c.CellH = tv;
-            int l = x0, t = y0, r = x1, b = y1;
-            while (l > 0 && IsExtra(c, f.At(l - 1, my))) l--;
-            while (t > 0 && IsExtra(c, f.At(mx, t - 1))) t--;
-            while (r < f.W && IsExtra(c, f.At(r, my))) r++;
-            while (b < f.H && IsExtra(c, f.At(mx, b))) b++;
-            c.Still = new FsBox(l, t, r, b);
+            c.Still = box;
             c.StillRing = ring;
-            c.PadL = x0 - l; c.PadT = y0 - t;
-            int[] side = { l, t, r, b };
-            for (int sd = 0; sd < 4; sd++) {
-                string a = c.Anchor[sd];
-                if (string.IsNullOrEmpty(a)) { c.Offset[sd] = side[sd]; continue; }
-                int k = EdgeIndex(a);
-                if (k < 0) { why.Add("card " + c.Name + " rides on an unknown edge '" + a + "'"); continue; }
-                if (double.IsNaN(pos[k])) continue;
-                c.Offset[sd] = side[sd] - (int)Math.Round(pos[k]);
-            }
+            c.PadL = ring.X0 - box.X0; c.PadT = ring.Y0 - box.Y0;
+            SetOffsets(c, box, pos, c.Offset, why);
             // The still frame must itself score clean against what was measured,
             // or the scene is wrong before the drag starts.
             FsRegion reg = RegionFor(c, c.Still);
             if (reg.Slack[2] >= c.CellW + PadR(c) + PosTol || reg.Slack[3] >= c.CellH + PadB(c) + PosTol)
                 why.Add(string.Format("card {0}: padding right/bottom {1}/{2} is more than a cell plus the pad - the pads given do not match the app", c.Name, reg.Slack[2], reg.Slack[3]));
         }
+        StillPos = pos;
         if (why.Count == 0) {
             var miss = new List<string>();
             FsResult res = GhozttyFrameScore.Score(f, SceneFor(pos, miss));
             foreach (var fd in res.Findings) why.Add("the still frame does not score clean: " + fd);
         }
         return why;
+    }
+
+    // T2398: the same measurement on a still frame of the window MAXIMIZED,
+    // after Calibrate. Every Open edge must sit on its boundary there (or the
+    // frame is not of a maximized window), the cell size and padding must be
+    // the restored ones, and the frame must score clean against the offsets
+    // it yields. Until this succeeds a maximized frame cannot be scored.
+    public List<string> CalibrateMaximized(FsFrame f) {
+        var why = new List<string>();
+        MaxCalibrated = false;
+        if (StillPos == null) { why.Add("calibrate the restored still frame before the maximized one"); return why; }
+        bool[] open;
+        double[] pos = LocateAll(f, out open);
+        for (int i = 0; i < Edges.Count; i++)
+            if (double.IsNaN(pos[i])) why.Add("edge " + Edges[i].Name + " not located on the maximized still frame");
+        if (why.Count == 0 && !IsMaximized(open)) {
+            var shut = new List<string>();
+            for (int i = 0; i < Edges.Count; i++) if (Edges[i].Open && !open[i]) shut.Add(Edges[i].Name);
+            why.Add("the maximized still frame does not show a maximized window: backdrop beyond " + (shut.Count > 0 ? string.Join(", ", shut.ToArray()) : "(no Open edge in this scene)"));
+            return why;
+        }
+        foreach (var c in Cards) {
+            FsBox ring, box; int th, tv;
+            if (!MeasureCard(f, c, "the maximized still frame", why, out ring, out box, out th, out tv)) continue;
+            if (th != c.CellW || tv != c.CellH)
+                why.Add(string.Format("card {0}: the maximized still frame's cell is {1}x{2}, the restored one's {3}x{4}", c.Name, th, tv, c.CellW, c.CellH));
+            if (ring.X0 - box.X0 != c.PadL || ring.Y0 - box.Y0 != c.PadT)
+                why.Add(string.Format("card {0}: the maximized still frame's padding is {1}/{2}, the restored one's {3}/{4}", c.Name, ring.X0 - box.X0, ring.Y0 - box.Y0, c.PadL, c.PadT));
+            c.StillMax = box;
+            SetOffsets(c, box, pos, c.OffsetMax, why);
+        }
+        if (why.Count == 0) {
+            var miss = new List<string>();
+            FsResult res = GhozttyFrameScore.Score(f, SceneFor(pos, miss, true));
+            foreach (var fd in res.Findings) why.Add("the maximized still frame does not score clean: " + fd);
+            foreach (var m in miss) why.Add("the maximized still frame: no pane for " + m);
+        }
+        MaxCalibrated = why.Count == 0;
+        return why;
+    }
+
+    // A card on a settled frame: its ring's bounding box, the cell size from
+    // the ring's left and top thickness, and the pane grown outward from the
+    // ring through the card's Extra colours (its padding).
+    bool MeasureCard(FsFrame f, GfsCard c, string what, List<string> why, out FsBox ring, out FsBox box, out int th, out int tv) {
+        ring = new FsBox(); box = new FsBox(); th = 0; tv = 0;
+        if (c.Ring < 0) { why.Add("card " + c.Name + " has no ring to calibrate from"); return false; }
+        bool any = false; int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+        for (int y = 0; y < f.H; y++)
+            for (int x = 0; x < f.W; x++)
+                if (GhozttyFrameScore.Near(f.At(x, y), c.Ring, Tol)) {
+                    if (!any) { x0 = x; y0 = y; x1 = x + 1; y1 = y + 1; any = true; }
+                    if (x < x0) x0 = x; if (y < y0) y0 = y;
+                    if (x + 1 > x1) x1 = x + 1; if (y + 1 > y1) y1 = y + 1;
+                }
+        if (!any) { why.Add("card " + c.Name + ": ring colour not on " + what); return false; }
+        ring = new FsBox(x0, y0, x1, y1);
+        int my = (y0 + y1) / 2, mx = (x0 + x1) / 2;
+        while (x0 + th < x1 && GhozttyFrameScore.Near(f.At(x0 + th, my), c.Ring, Tol)) th++;
+        while (y0 + tv < y1 && GhozttyFrameScore.Near(f.At(mx, y0 + tv), c.Ring, Tol)) tv++;
+        int l = x0, t = y0, r = x1, b = y1;
+        while (l > 0 && IsExtra(c, f.At(l - 1, my))) l--;
+        while (t > 0 && IsExtra(c, f.At(mx, t - 1))) t--;
+        while (r < f.W && IsExtra(c, f.At(r, my))) r++;
+        while (b < f.H && IsExtra(c, f.At(mx, b))) b++;
+        box = new FsBox(l, t, r, b);
+        return true;
+    }
+
+    // Each side's offset from the edge it rides on (a fixed side: its coordinate).
+    void SetOffsets(GfsCard c, FsBox box, double[] pos, int[] off, List<string> why) {
+        int[] side = { box.X0, box.Y0, box.X1, box.Y1 };
+        for (int sd = 0; sd < 4; sd++) {
+            string a = c.Anchor[sd];
+            if (string.IsNullOrEmpty(a)) { off[sd] = side[sd]; continue; }
+            int k = EdgeIndex(a);
+            if (k < 0) { why.Add("card " + c.Name + " rides on an unknown edge '" + a + "'"); continue; }
+            if (double.IsNaN(pos[k])) continue;
+            off[sd] = side[sd] - (int)Math.Round(pos[k]);
+        }
     }
 
     static bool IsExtra(GfsCard c, int px) {
@@ -273,13 +441,21 @@ public sealed class GfsSceneScorer {
         var sw = Stopwatch.StartNew();
         var rec = new GfsRecord();
         rec.Index = index; rec.Qpc = qpc;
-        rec.Edges = LocateAll(f);
+        bool[] open;
+        rec.Edges = LocateAll(f, out open);
+        rec.Maximized = IsMaximized(open);
         var missing = new List<string>();
-        FsScene scene = SceneFor(rec.Edges, missing);
+        FsScene scene = SceneFor(rec.Edges, missing, rec.Maximized && MaxCalibrated);
         FsResult res = GhozttyFrameScore.Score(f, scene);
         foreach (string m in missing) {
             var fd = new FsFinding();
             fd.Cls = "LOC"; fd.Target = m; fd.Detail = "an edge this card rides on was not located; the frame cannot be scored";
+            res.Findings.Add(fd);
+        }
+        if (rec.Maximized && !MaxCalibrated) {
+            var fd = new FsFinding();
+            fd.Cls = "LOC"; fd.Target = "window";
+            fd.Detail = "the window is maximized on this frame and no maximized still frame was calibrated; the frame cannot be scored";
             res.Findings.Add(fd);
         }
         rec.Failing = res.Findings.Count > 0;
@@ -360,19 +536,32 @@ scanned along columns.
 function New-FrameLabSceneEdge {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
-        [Parameter(Mandatory = $true)][ValidateSet('window-right', 'window-bottom', 'divider', 'sidebar-edge')][string]$Kind,
+        [Parameter(Mandatory = $true)][ValidateSet('window-left', 'window-top', 'window-right', 'window-bottom', 'divider', 'sidebar-edge')][string]$Kind,
         [Parameter(Mandatory = $true)][int[]]$Lines,
         [Parameter(Mandatory = $true)][int]$From,
         [Parameter(Mandatory = $true)][int]$To,
         [Parameter(Mandatory = $true)][int]$Color,
         [switch]$Backdrop,
         [switch]$Vertical,
+        # T2398: -Open (a backdrop edge on the work area's boundary - see GfsEdge)
+        # and the earlier edges whose displacement carries this one's scan.
+        [switch]$Open,
+        [string]$CarryX,
+        [string]$CarryY,
+        [string]$CarryX2,
+        [string]$CarryY2,
         [int]$Tol = 8
     )
     Import-FrameLabScene
+    if ($Open -and -not $Backdrop) { throw "New-FrameLabSceneEdge: -Open is for a backdrop edge ($Name)" }
     $e = New-Object GfsEdge
     $e.Name = $Name; $e.Kind = $Kind; $e.Lines = $Lines; $e.From = $From; $e.To = $To
     $e.Color = $Color; $e.Until = [bool]$Backdrop; $e.Vertical = [bool]$Vertical; $e.Tol = $Tol
+    $e.Open = [bool]$Open
+    if ($CarryX) { $e.CarryX = $CarryX }
+    if ($CarryY) { $e.CarryY = $CarryY }
+    if ($CarryX2) { if (-not $CarryX) { throw "New-FrameLabSceneEdge: -CarryX2 needs -CarryX ($Name)" }; $e.CarryX2 = $CarryX2 }
+    if ($CarryY2) { if (-not $CarryY) { throw "New-FrameLabSceneEdge: -CarryY2 needs -CarryY ($Name)" }; $e.CarryY2 = $CarryY2 }
     return $e
 }
 

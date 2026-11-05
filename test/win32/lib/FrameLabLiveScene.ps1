@@ -33,10 +33,24 @@
 # the geometry says it is. A refusal is the cell's verdict - `incomplete` -
 # never a pass: Invoke-FrameLabCell's Scene hook.
 #
-# NOT MODELLED (T2398): interactions that move the window as a whole
-# (caption-dblclick, aero-snap, maximize-button) and the triggers whose edge
-# is not one of these (banner, hero, tab-switch, split-close). Their spec says
-# so in Unsupported and the cell reads incomplete with that reason.
+# WINDOW-MOVING CELLS (T2398): caption-dblclick, aero-snap and maximize-button
+# move the window as a whole, so its four sides are all edges - window-left and
+# window-top scanned in from the backdrop too - and every one of them is OPEN:
+# the capture is the work area, and a window that fills it (maximized, or
+# snapped against a side) has no backdrop beyond it, so a line that starts on
+# the window puts the edge on the boundary. Every other edge is CARRIED by
+# window-left/window-top, so a divider is still scanned from inside its pane
+# after the window has moved, and every card side that touches no divider
+# rides the window edge on that side. A frame whose four sides are all on the
+# boundary is MAXIMIZED; a maximized window has no border and its caption need
+# not be the restored height, so its cards ride on offsets calibrated from a
+# second still frame of the window maximized (-MaximizedStill). A maximizing
+# cell without one is refused, and Get-FrameLabSceneScore -ExpectMaximized
+# fails a run in which the window never showed maximized at all.
+#
+# NOT MODELLED (T2727): the triggers whose edge is not one of these - banner
+# (pane-top) and hero, tab-switch, split-close (the pane set changes mid-run).
+# Their spec says so in Unsupported and the cell reads incomplete.
 #
 # Acceptance: test\win32\frame-lab-live-scene.ps1.
 # ASCII-only by design (PS 5.1 on this box mangles non-ASCII on rewrite).
@@ -51,7 +65,12 @@ $script:FrameLabBackdropColor = 0x40C080
 $script:FrameLabSceneGap = 16
 
 # The interactions whose scene this file can build.
-$script:FrameLabSceneSupported = @('frame-right', 'frame-bottom', 'frame-corner', 'divider', 'sidebar-edge', 'blade-glide')
+$script:FrameLabSceneSupported = @('frame-right', 'frame-bottom', 'frame-corner', 'divider', 'sidebar-edge', 'blade-glide', 'caption-dblclick', 'aero-snap', 'maximize-button')
+
+# The ones that move the window as a whole (T2398), and of those the ones that
+# maximize it (they need a maximized still frame).
+$script:FrameLabSceneWindowMoving = @('caption-dblclick', 'aero-snap', 'maximize-button')
+$script:FrameLabSceneMaximizing = @('caption-dblclick', 'maximize-button')
 
 $script:FrameLabBackdropSource = @'
 using System;
@@ -307,8 +326,9 @@ function New-FrameLabCellSceneSpec {
     $wr = [int]$w.X + [int]$w.W; $wb = [int]$w.Y + [int]$w.H
     $unsupported = @()
     if ($Interaction -notin $script:FrameLabSceneSupported) {
-        $unsupported += "the scene for '$Interaction' is not modelled: it moves the window as a whole or tracks an edge this scene does not build (T2398)"
+        $unsupported += "the scene for '$Interaction' is not modelled: it tracks an edge this scene does not build or changes the pane set mid-run (T2727)"
     }
+    $moving = $Interaction -in $script:FrameLabSceneWindowMoving
     $panes = @($Geometry.Panes | ForEach-Object {
         [pscustomobject]@{ Name = [string]$_.Name; Index = [int]$_.Index; X = [int]$_.X - $cx; Y = [int]$_.Y - $cy; R = [int]$_.X + [int]$_.W - $cx; B = [int]$_.Y + [int]$_.H - $cy }
     })
@@ -317,18 +337,36 @@ function New-FrameLabCellSceneSpec {
     $anchor = @{}
     foreach ($p in $panes) { $anchor[$p.Name] = @('', '', '', '') }
     $WR = $wr - $cx; $WB = $wb - $cy
+    $WX = [int]$w.X - $cx; $WY = [int]$w.Y - $cy
+    # Carried by the window's own left and top when it moves as a whole.
+    $carX = $(if ($moving) { 'window-left' } else { $null }); $carY = $(if ($moving) { 'window-top' } else { $null })
+
+    # A window-moving cell: window-left and window-top first (every other edge
+    # is carried by them), and backdrop on every side of the window at the
+    # start, or nothing tells the still frame's window from one that fills the
+    # work area.
+    if ($moving -and $panes.Count) {
+        $short = @()
+        if ($WX -lt 8) { $short += 'left' }; if ($WY -lt 8) { $short += 'top' }
+        if ($cw - $WR -lt 8) { $short += 'right' }; if ($ch - $WB -lt 8) { $short += 'bottom' }
+        if ($short.Count) { $unsupported += "a window-moving cell needs backdrop on every side of the window at the start; the capture leaves none beyond its $($short -join ', ')" }
+        $y0 = ($panes | Measure-Object -Property Y -Minimum).Minimum; $y1 = ($panes | Measure-Object -Property B -Maximum).Maximum
+        $x0 = ($panes | Measure-Object -Property X -Minimum).Minimum; $x1 = ($panes | Measure-Object -Property R -Maximum).Maximum
+        [void]$edges.Add([pscustomobject]@{ Name = 'window-left'; Kind = 'window-left'; Vertical = $true; Lines = (Get-FrameLabSpanLines $y0 $y1); From = 0; To = $cw - 1; Backdrop = $true; Expect = $WX; Open = $true; Probe = $null })
+        [void]$edges.Add([pscustomobject]@{ Name = 'window-top'; Kind = 'window-top'; Vertical = $false; Lines = (Get-FrameLabSpanLines $x0 $x1); From = 0; To = $ch - 1; Backdrop = $true; Expect = $WY; Open = $true; CarryX = 'window-left'; Probe = $null })
+    }
 
     # Backdrop edges: only where the capture rect leaves backdrop beyond the window.
     $touchR = @($panes | Where-Object { $WR - $_.R -le $Gap })
     $touchB = @($panes | Where-Object { $WB - $_.B -le $Gap })
     if ($cw - $WR -ge 8 -and $touchR.Count) {
         $y0 = ($touchR | Measure-Object -Property Y -Minimum).Minimum; $y1 = ($touchR | Measure-Object -Property B -Maximum).Maximum
-        [void]$edges.Add([pscustomobject]@{ Name = 'window-right'; Kind = 'window-right'; Vertical = $true; Lines = (Get-FrameLabSpanLines $y0 $y1); From = $cw - 1; To = 0; Backdrop = $true; Expect = $WR; Probe = $null })
+        [void]$edges.Add([pscustomobject]@{ Name = 'window-right'; Kind = 'window-right'; Vertical = $true; Lines = (Get-FrameLabSpanLines $y0 $y1); From = $cw - 1; To = 0; Backdrop = $true; Expect = $WR; Open = $moving; CarryY = $carY; Probe = $null })
         foreach ($p in $touchR) { $anchor[$p.Name][2] = 'window-right' }
     }
     if ($ch - $WB -ge 8 -and $touchB.Count) {
         $x0 = ($touchB | Measure-Object -Property X -Minimum).Minimum; $x1 = ($touchB | Measure-Object -Property R -Maximum).Maximum
-        [void]$edges.Add([pscustomobject]@{ Name = 'window-bottom'; Kind = 'window-bottom'; Vertical = $false; Lines = (Get-FrameLabSpanLines $x0 $x1); From = $ch - 1; To = 0; Backdrop = $true; Expect = $WB; Probe = $null })
+        [void]$edges.Add([pscustomobject]@{ Name = 'window-bottom'; Kind = 'window-bottom'; Vertical = $false; Lines = (Get-FrameLabSpanLines $x0 $x1); From = $ch - 1; To = 0; Backdrop = $true; Expect = $WB; Open = $moving; CarryX = $carX; Probe = $null })
         foreach ($p in $touchB) { $anchor[$p.Name][3] = 'window-bottom' }
     }
 
@@ -378,10 +416,36 @@ function New-FrameLabCellSceneSpec {
         $unsupported += 'a sidebar cell with no sidebar in its geometry'
     }
 
+    if ($moving) {
+        # The window moves as a whole: the dividers and the sidebar edge are
+        # scanned where they are after the window has moved - and resized, so
+        # the map runs over the window's left..right and top..bottom (a ratio
+        # split scales with the window; a scan that started inside a pane
+        # stays inside it) - and a
+        # card side touching no divider rides the window edge on its side (the
+        # caption above the top row is part of that side's offset).
+        foreach ($e in $edges) {
+            if ($e.Kind -in 'divider', 'sidebar-edge') {
+                $e | Add-Member -Force -NotePropertyName CarryX -NotePropertyValue $carX
+                $e | Add-Member -Force -NotePropertyName CarryY -NotePropertyValue $carY
+                $e | Add-Member -Force -NotePropertyName CarryX2 -NotePropertyValue 'window-right'
+                $e | Add-Member -Force -NotePropertyName CarryY2 -NotePropertyValue 'window-bottom'
+            }
+        }
+        $have = @($edges | ForEach-Object { $_.Name })
+        $side = @('window-left', 'window-top', 'window-right', 'window-bottom')
+        foreach ($k in @($anchor.Keys)) {
+            for ($s = 0; $s -lt 4; $s++) { if (-not $anchor[$k][$s] -and $have -contains $side[$s]) { $anchor[$k][$s] = $side[$s] } }
+        }
+    }
+
     $cards = @($panes | ForEach-Object {
         [pscustomobject]@{ Name = $_.Name; Index = $_.Index; Anchor = [string[]]$anchor[$_.Name]; PadProbe = @{ X = $_.X; Y = $_.Y }; Pane = $_ }
     })
-    [pscustomobject]@{ Interaction = $Interaction; Edges = @($edges); Cards = $cards; Unsupported = $unsupported; Capture = $CaptureRect }
+    [pscustomobject]@{
+        Interaction = $Interaction; Edges = @($edges); Cards = $cards; Unsupported = $unsupported; Capture = $CaptureRect
+        Moving = $moving; Maximizes = ($Interaction -in $script:FrameLabSceneMaximizing)
+    }
 }
 
 <#
@@ -400,11 +464,15 @@ function New-FrameLabCellScene {
         [int]$Backdrop = $script:FrameLabBackdropColor,
         [int[]]$Flash = @(),
         [int]$ExpectTol = 3,
-        [int]$Tol = 8
+        [int]$Tol = 8,
+        # T2398: an FsFrame of the same capture rect with the window maximized
+        # (and settled). A maximizing cell is refused without one.
+        $MaximizedStill
     )
     Import-FrameLabScene
     $why = @()
-    if (@($Spec.Unsupported).Count) { return [pscustomobject]@{ Ok = $false; Scorer = $null; Reasons = @($Spec.Unsupported); Delta = @{} } }
+    $maxes = [bool]$Spec.Maximizes
+    if (@($Spec.Unsupported).Count) { return [pscustomobject]@{ Ok = $false; Scorer = $null; Reasons = @($Spec.Unsupported); Delta = @{}; Maximizes = $maxes } }
     $px = { param($x, $y) if ($x -lt 0 -or $y -lt 0 -or $x -ge $Still.W -or $y -ge $Still.H) { -1 } else { $Still.At([int]$x, [int]$y) } }
     $cardColors = @()
     foreach ($c in $Spec.Cards) { $k = Get-FrameLabCardColors -Index $c.Index; $cardColors += $k.Bg, $k.Ring, $k.Glyph }
@@ -440,7 +508,8 @@ function New-FrameLabCellScene {
             $clash = @($cardColors | Where-Object { (Get-FrameLabColorDistance $col $_) -le $Tol })
             if ($clash.Count) { $why += ('edge {0}: its colour 0x{1:X6} is a card colour, so a scan cannot tell it from the card' -f $e.Name, $col); continue }
         }
-        $edges += New-FrameLabSceneEdge -Name $e.Name -Kind $e.Kind -Lines $e.Lines -From $e.From -To $e.To -Color $col -Backdrop:$e.Backdrop -Vertical:$e.Vertical -Tol $Tol
+        $edges += New-FrameLabSceneEdge -Name $e.Name -Kind $e.Kind -Lines $e.Lines -From $e.From -To $e.To -Color $col -Backdrop:$e.Backdrop -Vertical:$e.Vertical -Tol $Tol `
+            -Open:([bool]$e.Open) -CarryX ([string]$e.CarryX) -CarryY ([string]$e.CarryY) -CarryX2 ([string]$e.CarryX2) -CarryY2 ([string]$e.CarryY2)
     }
     $cards = @()
     foreach ($c in $Spec.Cards) {
@@ -453,7 +522,7 @@ function New-FrameLabCellScene {
         }
         $cards += New-FrameLabSceneCard -Index $c.Index -Anchor $c.Anchor -Extra $extra -Name $c.Name
     }
-    if ($why.Count) { return [pscustomobject]@{ Ok = $false; Scorer = $null; Reasons = $why; Delta = @{} } }
+    if ($why.Count) { return [pscustomobject]@{ Ok = $false; Scorer = $null; Reasons = $why; Delta = @{}; Maximizes = $maxes } }
 
     $s = New-Object GfsSceneScorer
     foreach ($e in $edges) { $s.Edges.Add($e) }
@@ -470,7 +539,13 @@ function New-FrameLabCellScene {
         $delta[$e.Name] = $d
         if ([math]::Abs($d) -gt $ExpectTol) { $why += "edge $($e.Name) located at $($pos[$i]) on the still frame, $d from where the geometry puts it ($($e.Expect))" }
     }
-    [pscustomobject]@{ Ok = ($why.Count -eq 0); Scorer = $(if ($why.Count -eq 0) { $s } else { $null }); Reasons = $why; Delta = $delta }
+    # A maximized frame's panes sit at their own offsets (no border, maybe
+    # another caption height): measured on the maximized still, or refused.
+    if ($maxes -and $why.Count -eq 0) {
+        if ($null -eq $MaximizedStill) { $why += 'the cell maximizes the window and no maximized still frame was given: its maximized frames could not be scored' }
+        else { $why += @($s.CalibrateMaximized($MaximizedStill)) }
+    }
+    [pscustomobject]@{ Ok = ($why.Count -eq 0); Scorer = $(if ($why.Count -eq 0) { $s } else { $null }); Reasons = $why; Delta = $delta; Maximizes = $maxes }
 }
 
 <#
@@ -484,7 +559,12 @@ The cell's numbers from one scored capture: Invoke-FrameLabCell's Score.
 
 Superseded frames were never on screen and are not counted. Returns
 BleedFrames, Frames (each failing frame's Index, Classes, Findings), Motion
-(FsMotion, or $null for a bleed-only gesture) and MotionMisses.
+(FsMotion, or $null for a bleed-only gesture), MotionMisses and
+MaximizedFrames (how many scored frames showed the window maximized).
+
+-ExpectMaximized (T2398, a maximizing cell): a run in which no frame showed
+the window maximized never did what the cell is about, and that is a miss -
+never a clean pass over frames of a window that only sat there.
 #>
 function Get-FrameLabSceneScore {
     param(
@@ -492,14 +572,17 @@ function Get-FrameLabSceneScore {
         [Parameter(Mandatory = $true)]$Capture,
         [Parameter(Mandatory = $true)]$Gesture,
         $Played,
-        [hashtable]$Delta = @{}
+        [hashtable]$Delta = @{},
+        [switch]$ExpectMaximized
     )
     $sup = @{}
     foreach ($t in @($Capture.Timeline)) { if ($t.Superseded) { $sup[[long]$t.Index] = $true } }
     $recs = @($Scorer.Records | Where-Object { -not $sup.ContainsKey([long]$_.Index) })
     $failing = @($recs | Where-Object { $_.Failing })
     $frames = @($failing | ForEach-Object { [pscustomobject]@{ Index = $_.Index; Classes = $_.Classes(); Findings = @($_.Findings) } })
-    $out = [ordered]@{ BleedFrames = $failing.Count; Frames = $frames; Motion = $null; MotionMisses = @(); Scored = $recs.Count }
+    $maxed = @($recs | Where-Object { $_.Maximized }).Count
+    $out = [ordered]@{ BleedFrames = $failing.Count; Frames = $frames; Motion = $null; MotionMisses = @(); Scored = $recs.Count; MaximizedFrames = $maxed }
+    if ($ExpectMaximized -and $maxed -eq 0) { $out.MotionMisses = @("the window never showed maximized on any of the $($recs.Count) scored frame(s): the interaction did not happen") }
     if ($Gesture.Axis -eq 'none' -or -not $Gesture.Track) { return [pscustomobject]$out }
     $k = $Scorer.EdgeIndex($Gesture.Track)
     if ($k -lt 0) { $out.MotionMisses = @("the scene has no '$($Gesture.Track)' edge to measure"); return [pscustomobject]$out }

@@ -1,7 +1,7 @@
 {
     "guard":  "go-loop-resume",
     "script":  "test/win32/go-loop-resume.ps1",
-    "generated":  "2026-11-05T12:56:03-08:00",
+    "generated":  "2026-11-05T13:12:21-08:00",
     "commit":  "ee981dc0f",
     "uncommitted":  [
 
