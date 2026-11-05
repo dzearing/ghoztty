@@ -1,8 +1,8 @@
 {
     "guard":  "settings-window",
     "script":  "test/win32/settings-window.ps1",
-    "generated":  "2026-11-04T17:54:11-08:00",
-    "commit":  "e2dda7ca8",
+    "generated":  "2026-11-04T18:59:10-08:00",
+    "commit":  "752836d4d",
     "uncommitted":  [
 
                     ],

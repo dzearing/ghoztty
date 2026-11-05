@@ -1,8 +1,8 @@
 {
     "guard":  "settings-advanced",
     "script":  "test/win32/settings-advanced.ps1",
-    "generated":  "2026-11-04T17:54:03-08:00",
-    "commit":  "e2dda7ca8",
+    "generated":  "2026-11-04T18:58:48-08:00",
+    "commit":  "752836d4d",
     "uncommitted":  [
 
                     ],
