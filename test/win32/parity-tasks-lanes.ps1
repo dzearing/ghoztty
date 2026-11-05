@@ -40,6 +40,12 @@
 #      to lane b, fresh or as a resume, and the skip is named; lane a gets it;
 #      without the field lane b does (negative control); a lane that is not
 #      one letter is a validate failure.
+#   H. Split, then released (T2386): `set-status todo` on a task the lane has
+#      split (a changed/new task file names it) or edited (deps, summary) is a
+#      RELEASE reservation: the other lane skips it (RELEASED IN OTHER LANE)
+#      until its copy matches the released one; the watchdog heartbeat keeps
+#      the lane's own unpushed reservations alive; a plain abandonment still
+#      releases. Negative control: release-at-todo hands the parent out.
 #
 # Hermetic: fixtures, ledger and gate files live under $env:TEMP; the real task
 # dir and the real ledger (%LOCALAPPDATA%\ghoztty\loop-ledger.json) are never
@@ -526,6 +532,100 @@ try {
     New-FixtureTask -Dir $dirA -Id 'T3' -Lane 'lane-a'
     $r = Task-Run @('validate') $dirA 'a'
     Assert 'G5 validate names a lane that is not one letter' ($r.Out -match "ODD LANE: T3 = 'lane-a'") $r.Out
+
+    # --- H. split, then released (T2386) -------------------------------------------
+    # 2026-10-27: lane b claimed T2373, split it into children, set it back to
+    # todo (which released the claim) and built a child for 1h45 unpushed; lane
+    # a's next saw a bare todo, split it again and built the same scorer.
+    ""
+    'H. a task split and released in one lane is not handed to the other before the split arrives'
+    $bareH = Join-Path $work 'origin-h.git'
+    $gitH = {
+        param([string[]]$GitArgs)
+        $eapH = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        try { & git -C $dirB -c user.name=t -c user.email=t@t @GitArgs 2>&1 | Out-Null; return ($LASTEXITCODE -eq 0) }
+        finally { $ErrorActionPreference = $eapH }
+    }
+    $initH = {
+        Reset-Lanes
+        if (Test-Path $bareH) { Remove-Item -Recurse -Force $bareH }
+        $eapH = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        try { & git init -q --bare $bareH 2>&1 | Out-Null } finally { $ErrorActionPreference = $eapH }
+        $ok = (& $gitH @('init', '-q')) -and (& $gitH @('add', '-A')) -and (& $gitH @('commit', '-q', '-m', 'fixture')) -and
+            (& $gitH @('remote', 'add', 'origin', $bareH)) -and (& $gitH @('push', '-q', '-u', 'origin', 'HEAD'))
+        return $ok
+    }
+    Assert 'H0 setup: lane b''s fixture is a git tree with an upstream' (& $initH)
+    $null = Task-Run @('next', '-Claim') $dirB 'b'        # b: T1
+    # The split: a new child task (untracked, unpushed) that names its parent.
+    New-FixtureTask -Dir $dirB -Id 'T4'
+    $kid = Join-Path $dirB 'T4.md'
+    [System.IO.File]::AppendAllText($kid, "`n## Summary`n`nSplit from T1: the scorer slice.`n")
+    $r = Task-Run @('set-status', 'T1', '-Status', 'todo') $dirB 'b'
+    $j = Read-LedgerJson
+    Assert 'H1 set-status todo after a split keeps the task reserved to the releasing lane, naming the child' (
+        $r.Out -match 'T1 stays reserved to this lane until the release reaches the other lane \(split:T4\)' -and
+        (Get-ClaimLane 'T1') -eq 'b' -and [string]$j.claims.T1.closed -eq 'todo' -and $j.claims.T1.sha) $r.Out
+    $r = Task-Run @('next', '-Claim') $dirA 'a'           # a's copy: bare todo, no T4
+    Assert 'H2 the other lane does NOT get the parent, and says why' (
+        $r.Out -notmatch 'NEXT: T1\b' -and $r.Out -match 'RELEASED IN OTHER LANE: T1 \(lane b' -and $r.Out -match 'CLAIMED: T2\b') $r.Out
+    $r = Task-Run @('ledger') $dirA 'a'
+    Assert 'H3 `ledger` shows it as a release, unpushed' ($r.Out -match 'T1\s+live\s+lane=b\s+released\(todo, unpushed\)') $r.Out
+    # The watchdog's heartbeat keeps an unpushed reservation alive past the
+    # TTL a turn can spend building the child; never another lane's.
+    $old = Set-ClaimTouchedAgo -Id 'T1' -Minutes 50
+    $tA = @(Update-LedgerLaneReservationsTouch -Lane 'a' -LedgerPath $ledger)
+    $j = Read-LedgerJson
+    $stillOld = (ConvertTo-LedgerTime $j.claims.T1.touched) -lt (ConvertTo-LedgerTime $old).AddMinutes(1)
+    $tB = @(Update-LedgerLaneReservationsTouch -Lane 'b' -LedgerPath $ledger)
+    $j = Read-LedgerJson
+    Assert 'H4 the lane heartbeat refreshes its own unpushed reservation, and not another lane''s' (
+        $tA.Count -eq 0 -and $stillOld -and $tB -contains 'T1' -and
+        (ConvertTo-LedgerTime $j.claims.T1.touched) -gt (ConvertTo-LedgerTime $old).AddMinutes(40)) ("a=$($tA -join ',') b=$($tB -join ',')")
+    # Pushed: the upstream copy is the released one; the other lane (not yet
+    # pulled) still skips it until it reads it.
+    $pushed = (& $gitH @('add', '-A')) -and (& $gitH @('commit', '-q', '-m', 'split T1')) -and (& $gitH @('push', '-q'))
+    $r = Task-Run @('next') $dirA 'a'
+    $j = Read-LedgerJson
+    Assert 'H5 pushed: pushedAt is stamped and the unpulled lane still skips it' (
+        $pushed -and $r.Out -match 'T1 reservation: the release is on the upstream' -and $j.claims.T1.pushedAt -and
+        $r.Out -match 'RELEASED IN OTHER LANE: T1\b') $r.Out
+    # Caught up: lane a pulls (its copies now match lane b's).
+    Copy-Item -Force (Join-Path $dirB 'T1.md') (Join-Path $dirA 'T1.md')
+    Copy-Item -Force $kid (Join-Path $dirA 'T4.md')
+    $r = Task-Run @('next') $dirA 'a'
+    Assert 'H6 once the other lane reads the release, its next clears the reservation' (
+        $r.Out -match 'T1 reservation cleared: this lane already reads the release' -and $null -eq (Get-ClaimLane 'T1')) $r.Out
+
+    # An edit to the task itself (no child) is scope too.
+    Assert 'H7 setup: fresh git fixture' (& $initH)
+    $null = Task-Run @('next', '-Claim') $dirB 'b'
+    $p1 = Join-Path $dirB 'T1.md'
+    $t1 = [System.IO.File]::ReadAllText($p1) -replace '(?m)^deps: \[\]', 'deps: ["T3"]'
+    [System.IO.File]::WriteAllText($p1, $t1, (New-Object System.Text.UTF8Encoding $false))
+    $r = Task-Run @('set-status', 'T1', '-Status', 'todo') $dirB 'b'
+    Assert 'H8 set-status todo after editing the task''s own deps reserves it (edited)' (
+        $r.Out -match 'T1 stays reserved to this lane until the release reaches the other lane \(edited\)' -and (Get-ClaimLane 'T1') -eq 'b') $r.Out
+
+    # A plain abandonment - claimed, journaled, set back - still releases.
+    Assert 'H9 setup: fresh git fixture' (& $initH)
+    $null = Task-Run @('next', '-Claim') $dirB 'b'
+    $null = Task-Run @('note', 'T1', '-Text', 'looked; not today') $dirB 'b'
+    $r = Task-Run @('set-status', 'T1', '-Status', 'todo') $dirB 'b'
+    Assert 'H10 a plain abandonment in a git tree is released outright' (
+        $r.Out -match "released this lane's claim on T1" -and $null -eq (Get-ClaimLane 'T1')) $r.Out
+    $r = Task-Run @('next', '-Claim') $dirA 'a'
+    Assert 'H11 ...and the other lane is handed it' ($r.Out -match 'NEXT: T1\b') $r.Out
+
+    # Negative control: release-at-todo (the 2026-10-27 shape) hands the split
+    # parent to the other lane, so H2 can go red.
+    Assert 'H12 setup: fresh git fixture' (& $initH)
+    $null = Task-Run @('next', '-Claim') $dirB 'b'
+    New-FixtureTask -Dir $dirB -Id 'T4'
+    [System.IO.File]::AppendAllText($kid, "`nSplit from T1.`n")
+    $null = Task-Run @('set-status', 'T1', '-Status', 'todo') $dirB 'b' @{ GHOZTTY_LOOP_LEDGER_NO_RESERVE = '1' }
+    $r = Task-Run @('next', '-Claim') $dirA 'a'
+    Assert 'H13 negative control: with release-at-todo the other lane IS handed the split parent' ($r.Out -match 'NEXT: T1\b') $r.Out
     Complete-TestBody
 }
 finally {

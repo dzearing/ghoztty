@@ -1111,7 +1111,10 @@ switch ($Command) {
         $heldNames = @()
         $sayHeld = {
             param([string]$HeldId, $HeldClaim)
-            if ($HeldClaim.closed) {
+            if (Test-LedgerReleaseReservation $HeldClaim) {
+                Write-Host ("RELEASED IN OTHER LANE: {0} (lane {1}, back to todo with a split or edits not in this worktree yet - pull)" -f $HeldId, $HeldClaim.lane)
+            }
+            elseif ($HeldClaim.closed) {
                 Write-Host ("FINISHED IN OTHER LANE: {0} (lane {1}, {2}; not in this worktree yet - pull)" -f $HeldId, $HeldClaim.lane, $HeldClaim.closed)
             }
             else { Write-Host ("HELD BY OTHER LANE: {0} (lane {1})" -f $HeldId, $HeldClaim.lane) }
@@ -1384,8 +1387,27 @@ switch ($Command) {
                     if ($r.Result -eq 'reserved') { Write-Host ("      ledger: {0} stays reserved to this lane until the close reaches the other lane (T2033)" -f $tid) }
                 }
                 else {
-                    $r = Clear-LedgerClaim -Id $tid -Lane (Get-ThisLane)
-                    if ($r.Result -eq 'cleared') { Write-Host ("      ledger: released this lane's claim on {0}" -f $tid) }
+                    # T2386: back to todo after a SPLIT (or any edit to the task
+                    # itself) is not a plain release. The other worktree reads
+                    # the bare todo without the split until it is pushed and
+                    # pulled, and would hand the whole scope out again - so the
+                    # ledger holds it, exactly like a close, until the upstream
+                    # copy is this one. A plain abandonment still releases.
+                    $scope = $null
+                    if ($Status -match '^todo' -and $env:GHOZTTY_LOOP_LEDGER_NO_RESERVE -ne '1') {
+                        $scope = Get-LedgerReleaseScope -Id $tid -Path $path
+                    }
+                    if ($null -ne $scope -and $scope.Count -gt 0) {
+                        $sha = Get-LedgerTextHash ([System.IO.File]::ReadAllText($path))
+                        $r = Set-LedgerReservation -Id $tid -Lane (Get-ThisLane) -Root $RepoRoot -Status 'todo' -Path $path -Sha $sha
+                        if ($r.Result -eq 'reserved') {
+                            Write-Host ("      ledger: {0} stays reserved to this lane until the release reaches the other lane ({1}) (T2386)" -f $tid, ($scope -join '; '))
+                        }
+                    }
+                    else {
+                        $r = Clear-LedgerClaim -Id $tid -Lane (Get-ThisLane)
+                        if ($r.Result -eq 'cleared') { Write-Host ("      ledger: released this lane's claim on {0}" -f $tid) }
+                    }
                 }
             }
             catch { Write-Host ("      WARNING: ledger not updated for {0}: {1}" -f $tid, $_.Exception.Message) }
@@ -1820,7 +1842,9 @@ switch ($Command) {
             $state = if (Test-LedgerClaimLive -Claim $c -Now $now) { 'live' } else { 'EXPIRED' }
             $mine = if ($c.lane -eq $me) { ' [this lane]' } else { '' }
             # T2033: a reservation names the close it is holding the task for.
-            $res = if ($c.closed) { '  reserved({0}{1})' -f $c.closed, $(if ($c.pushedAt) { ', pushed' } else { ', unpushed' }) } else { '' }
+            # T2386: a release (back to todo after a split) says so.
+            $kind = if (Test-LedgerReleaseReservation $c) { 'released' } else { 'reserved' }
+            $res = if ($c.closed) { '  {0}({1}{2})' -f $kind, $c.closed, $(if ($c.pushedAt) { ', pushed' } else { ', unpushed' }) } else { '' }
             Write-Host ("  {0,-7} {1,-7} lane={2}{3}{4}  touched {5}  root={6}" -f $k, $state, $c.lane, $mine, $res, $age, $c.root)
         }
     }

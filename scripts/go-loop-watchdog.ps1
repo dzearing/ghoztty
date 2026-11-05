@@ -679,9 +679,12 @@ function Update-LaneClaimTouch {
     try {
         $ids = @(Select-String -Path (Join-Path $TaskDir 'T*.md') -Pattern '^status:\s*"?in-progress' -List `
                 -ErrorAction SilentlyContinue | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_.Path) })
-        if ($ids.Count -eq 0) { return '' }
         $ledgerLane = Get-LedgerLane -Root $Repo
         $touched = @($ids | Where-Object { Update-LedgerClaimTouch -Id $_ -Lane $ledgerLane -LedgerPath $ledger })
+        # T2386: and this lane's unpushed reservations (a close, or a release
+        # after a split), which a turn can leave unpushed for longer than the
+        # TTL while it builds a child task.
+        $touched += @(Update-LedgerLaneReservationsTouch -Lane $ledgerLane -LedgerPath $ledger)
         if ($touched.Count) { return " ledger-touch=$($touched -join ',')" }
         return ''
     } catch { return " ledger-touch-failed($($_.Exception.Message))" }

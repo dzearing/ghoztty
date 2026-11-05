@@ -25,6 +25,16 @@
 # T1981 shape) handed T2012 to lane A one second after lane B finished it, and
 # lane A re-did the whole task. Update-LedgerReservations says how one ends.
 #
+# `closed: "todo"` is a RELEASE reservation (T2386): the lane set the task back
+# to todo after SPLITTING it or otherwise editing it (new child tasks naming it,
+# new deps, a rewritten summary), so the other lane's copy - the bare todo,
+# without the split - would hand out the whole parent scope again. On
+# 2026-10-27 lane B split T2373 and released it, and lane A's next split and
+# built the same scorer an hour later. It is held until the task file on the
+# upstream matches the releasing lane's copy (`sha` is that copy's hash at
+# release time). A plain abandonment carries nothing of the kind and still
+# releases outright.
+#
 # Rules this file holds:
 #
 # - Every read and every read-modify-write happens under ONE named mutex, so a
@@ -186,7 +196,7 @@ function ConvertFrom-LedgerText {
             }
             # T2033: a reservation - a task this lane closed and has not
             # pushed yet. Absent on an ordinary claim.
-            foreach ($f in @('closed', 'path', 'pushedAt')) {
+            foreach ($f in @('closed', 'path', 'pushedAt', 'sha')) {
                 $v = $c.PSObject.Properties[$f]
                 if ($null -ne $v -and $v.Value) { $l.claims[$p.Name][$f] = [string]$v.Value }
             }
@@ -234,7 +244,7 @@ function Write-LedgerFile {
     foreach ($k in @($Ledger.claims.Keys | Sort-Object { [int]([regex]::Match($_, '\d+').Value) }, { $_ })) {
         $c = $Ledger.claims[$k]
         $o = [ordered]@{ lane = $c.lane; root = $c.root; pid = $c.pid; at = $c.at; touched = $c.touched }
-        foreach ($f in @('closed', 'path', 'pushedAt')) { if ($c[$f]) { $o[$f] = $c[$f] } }
+        foreach ($f in @('closed', 'path', 'pushedAt', 'sha')) { if ($c[$f]) { $o[$f] = $c[$f] } }
         $claims[$k] = $o
     }
     $doc = [ordered]@{ version = 1; maxId = [int]$Ledger.maxId; claims = $claims }
@@ -439,7 +449,7 @@ function Get-LedgerStatusFromText {
 # 'other' when another live lane holds it (left alone: only the holder closes).
 # A close with no claim at all (expired, or never claimed) still reserves.
 function Set-LedgerReservation {
-    param([string]$Id, [string]$Lane, [string]$Root, [string]$Status, [string]$Path, [string]$LedgerPath)
+    param([string]$Id, [string]$Lane, [string]$Root, [string]$Status, [string]$Path, [string]$Sha, [string]$LedgerPath)
     $now = Get-LedgerNowIso
     $procId = $PID
     $upd = {
@@ -451,9 +461,123 @@ function Set-LedgerReservation {
         $at = if ($null -ne $c -and $c.at) { $c.at } else { $now }
         $l.claims[$Id] = @{ lane = $Lane; root = $Root; pid = $procId; at = $at; touched = $now
             closed = $Status; path = $Path }
+        if ($Sha) { $l.claims[$Id].sha = $Sha }
         return [pscustomobject]@{ Result = 'reserved'; Holder = $null }
     }.GetNewClosure()
     return (Invoke-LedgerUpdate -Update $upd -LedgerPath $LedgerPath)
+}
+
+# --- release reservations (T2386) ---------------------------------------------
+
+# True for a reservation that holds a RELEASE (back to todo) rather than a close.
+function Test-LedgerReleaseReservation {
+    param($Claim)
+    if ($null -eq $Claim -or -not $Claim.closed) { return $false }
+    return ([string]$Claim.closed -match '^todo')
+}
+
+# A task file's text with CRs dropped and trailing whitespace trimmed, so a
+# CRLF working copy and an LF blob compare equal.
+function ConvertTo-LedgerNormalText {
+    param([string]$Text)
+    if ($null -eq $Text) { return '' }
+    $lines = @(($Text -replace "`r", '') -split "`n" | ForEach-Object { $_.TrimEnd() })
+    return (($lines -join "`n").TrimEnd())
+}
+
+function Get-LedgerTextHash {
+    param([string]$Text)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes((ConvertTo-LedgerNormalText $Text))) }
+    finally { $sha.Dispose() }
+    return (-join ($bytes[0..11] | ForEach-Object { $_.ToString('x2') }))
+}
+
+# The task text minus what every claim and release writes anyway - the
+# `status:` line and the `## Progress log` section - so what is left differs
+# from the upstream copy only when the lane changed the task itself.
+function Get-LedgerScopeText {
+    param([string]$Text)
+    $t = ConvertTo-LedgerNormalText $Text
+    $t = [regex]::Replace($t, '(?m)^status:.*$\n?', '')
+    $t = [regex]::Replace($t, '(?ms)^## Progress log\s*$.*?(?=^## |\z)', '')
+    return (ConvertTo-LedgerNormalText $t)
+}
+
+# git context for a task file: @{ Top; Rel; Upstream=$true/$false }, or $null
+# when the file is not in a git worktree.
+function Get-LedgerGitContext {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
+    $dir = Split-Path -Parent $Path
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $top = [string](& git -C $dir rev-parse --show-toplevel 2>$null | Select-Object -Last 1)
+        if ($LASTEXITCODE -ne 0 -or -not $top) { return $null }
+        $null = & git -C $top rev-parse --verify --quiet '@{u}' 2>$null
+        $hasU = ($LASTEXITCODE -eq 0)
+        $topFull = [System.IO.Path]::GetFullPath($top.Trim()).TrimEnd('\') + '\'
+        $full = [System.IO.Path]::GetFullPath($Path)
+        if (-not $full.StartsWith($topFull, [StringComparison]::OrdinalIgnoreCase)) { return $null }
+        return @{ Top = $top.Trim(); Rel = $full.Substring($topFull.Length).Replace('\', '/'); Upstream = $hasU }
+    }
+    catch { return $null }
+    finally { $ErrorActionPreference = $eap }
+}
+
+# The file's text at @{u}, or $null when the upstream does not have it.
+function Get-LedgerUpstreamText {
+    param($Ctx)
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $text = (& git -C $Ctx.Top show ('@{u}:' + $Ctx.Rel) 2>$null) -join "`n"
+        if ($LASTEXITCODE -ne 0) { return $null }
+        return $text
+    }
+    catch { return $null }
+    finally { $ErrorActionPreference = $eap }
+}
+
+# Why setting $Id back to todo must NOT release it outright: a list of reasons
+# (empty = a plain abandonment, release it), or $null when there is no git
+# upstream to compare with (release it, as before T2386).
+#   edited      - the task itself changed (deps, summary, details) and the
+#                 upstream copy does not have the change
+#   new         - the upstream does not have the task at all yet
+#   split:<ids> - other task files that differ from the upstream (new children,
+#                 edited siblings) name $Id
+function Get-LedgerReleaseScope {
+    param([string]$Id, [string]$Path)
+    $ctx = Get-LedgerGitContext -Path $Path
+    if ($null -eq $ctx -or -not $ctx.Upstream) { return $null }
+    $reasons = @()
+    $up = Get-LedgerUpstreamText -Ctx $ctx
+    if ($null -eq $up) { $reasons += 'new' }
+    elseif ((Get-LedgerScopeText $up) -ne (Get-LedgerScopeText ([System.IO.File]::ReadAllText($Path)))) { $reasons += 'edited' }
+    $dirRel = $ctx.Rel
+    $slash = $dirRel.LastIndexOf('/')
+    $dirRel = if ($slash -ge 0) { $dirRel.Substring(0, $slash) } else { '.' }
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $names = @()
+    try {
+        $names += @(& git -C $ctx.Top diff --name-only '@{u}' -- $dirRel 2>$null)
+        $names += @(& git -C $ctx.Top ls-files --others --exclude-standard -- $dirRel 2>$null)
+    }
+    catch { }
+    finally { $ErrorActionPreference = $eap }
+    $kids = @()
+    $pat = '\b' + [regex]::Escape($Id) + '\b'
+    foreach ($n in @($names | Where-Object { $_ } | Sort-Object -Unique)) {
+        if ($n -eq $ctx.Rel -or $n -notmatch '(^|/)T\d+\.md$') { continue }
+        $f = Join-Path $ctx.Top ($n.Replace('/', '\'))
+        if (-not (Test-Path -LiteralPath $f)) { continue }
+        if ([System.IO.File]::ReadAllText($f) -match $pat) { $kids += [IO.Path]::GetFileNameWithoutExtension($f) }
+    }
+    if ($kids.Count) { $reasons += ('split:' + ($kids -join ',')) }
+    return , $reasons
 }
 
 # Has the finishing lane's close reached its upstream? Reads the task file at
@@ -461,29 +585,64 @@ function Set-LedgerReservation {
 # and never fetches. 'pushed' (upstream shows a closed status), 'unpushed'
 # (upstream shows it open, or does not have the file yet), or 'unknown' (no
 # such worktree, not a git tree, no upstream configured).
+#
+# A release reservation (T2386) is pushed when the upstream copy is the one the
+# lane released - its hash is `sha` - or the lane's current copy, if it has
+# edited the file again since.
 function Get-LedgerReservationPushState {
     param($Claim)
-    $path = [string]$Claim.path
-    if (-not $path -or -not (Test-Path -LiteralPath $path)) { return 'unknown' }
-    $dir = Split-Path -Parent $path
-    $eap = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
+    $ctx = Get-LedgerGitContext -Path ([string]$Claim.path)
+    if ($null -eq $ctx -or -not $ctx.Upstream) { return 'unknown' }
     try {
-        $top = [string](& git -C $dir rev-parse --show-toplevel 2>$null | Select-Object -Last 1)
-        if ($LASTEXITCODE -ne 0 -or -not $top) { return 'unknown' }
-        $null = & git -C $top rev-parse --verify --quiet '@{u}' 2>$null
-        if ($LASTEXITCODE -ne 0) { return 'unknown' }
-        $topFull = [System.IO.Path]::GetFullPath($top.Trim()).TrimEnd('\') + '\'
-        $full = [System.IO.Path]::GetFullPath($path)
-        if (-not $full.StartsWith($topFull, [StringComparison]::OrdinalIgnoreCase)) { return 'unknown' }
-        $rel = $full.Substring($topFull.Length).Replace('\', '/')
-        $text = (& git -C $top show ('@{u}:' + $rel) 2>$null) -join "`n"
-        if ($LASTEXITCODE -ne 0) { return 'unpushed' }
+        $text = Get-LedgerUpstreamText -Ctx $ctx
+        if ($null -eq $text) { return 'unpushed' }
+        if (Test-LedgerReleaseReservation $Claim) {
+            $h = Get-LedgerTextHash $text
+            if ($Claim.sha -and $h -eq [string]$Claim.sha) { return 'pushed' }
+            if ($h -eq (Get-LedgerTextHash ([System.IO.File]::ReadAllText([string]$Claim.path)))) { return 'pushed' }
+            return 'unpushed'
+        }
         if (Test-LedgerClosedStatus (Get-LedgerStatusFromText $text)) { return 'pushed' }
         return 'unpushed'
     }
     catch { return 'unknown' }
-    finally { $ErrorActionPreference = $eap }
+}
+
+# Has THIS lane's copy ($MinePath) caught up with the reservation? A close is
+# caught up when the copy reads closed; a release when the copy is the text the
+# other lane released (or that lane's current copy of it).
+function Test-LedgerReservationCaughtUp {
+    param($Claim, [string]$MinePath)
+    if (-not (Test-Path -LiteralPath $MinePath)) { return $false }
+    $text = [System.IO.File]::ReadAllText($MinePath)
+    if (Test-LedgerReleaseReservation $Claim) {
+        $h = Get-LedgerTextHash $text
+        if ($Claim.sha -and $h -eq [string]$Claim.sha) { return $true }
+        $p = [string]$Claim.path
+        if ($p -and (Test-Path -LiteralPath $p) -and $h -eq (Get-LedgerTextHash ([System.IO.File]::ReadAllText($p)))) { return $true }
+        return $false
+    }
+    return (Test-LedgerClosedStatus (Get-LedgerStatusFromText $text))
+}
+
+# The watchdog's heartbeat for this lane's reservations (T2386). A close is
+# usually pushed within minutes, but a release made mid-turn (split, then build
+# a child) can sit unpushed for an hour or two - longer than the TTL - and
+# nothing else touches it unless some lane happens to run `next`. A healthy
+# lane keeps its reservations alive; a dead lane's age out. Returns the ids.
+function Update-LedgerLaneReservationsTouch {
+    param([string]$Lane, [string]$LedgerPath)
+    $now = Get-LedgerNowIso
+    $upd = {
+        param($l)
+        $out = @()
+        foreach ($k in @($l.claims.Keys)) {
+            $c = $l.claims[$k]
+            if ($c.lane -eq $Lane -and $c.closed -and -not $c.pushedAt) { $c.touched = $now; $out += $k }
+        }
+        return $out
+    }.GetNewClosure()
+    return @(Invoke-LedgerUpdate -Update $upd -LedgerPath $LedgerPath)
 }
 
 # The upkeep `next` runs before it reads the claims. For each live reservation:
@@ -511,10 +670,7 @@ function Update-LedgerReservations {
         if (-not $c.closed -or -not (Test-LedgerClaimLive -Claim $c -Now $now)) { continue }
         if ($c.lane -ne $Lane -and $ViewDir) {
             $mine = Join-Path $ViewDir ($k + '.md')
-            if (Test-Path -LiteralPath $mine) {
-                $st = Get-LedgerStatusFromText ([System.IO.File]::ReadAllText($mine))
-                if (Test-LedgerClosedStatus $st) { $plan += @{ Id = $k; Act = 'caught-up'; At = $c.at }; continue }
-            }
+            if (Test-LedgerReservationCaughtUp -Claim $c -MinePath $mine) { $plan += @{ Id = $k; Act = 'caught-up'; At = $c.at }; continue }
         }
         $ps = Get-LedgerReservationPushState -Claim $c
         if ($ps -eq 'unpushed') { $plan += @{ Id = $k; Act = 'refresh'; At = $c.at } }
@@ -533,10 +689,18 @@ function Update-LedgerReservations {
             $c = $ld.claims[$p.Id]
             if ($null -eq $c -or -not $c.closed -or $c.at -ne $p.At) { continue }
             switch ($p.Act) {
-                'caught-up' { $ld.claims.Remove($p.Id); $out += ('{0} reservation cleared: this lane already reads it {1}' -f $p.Id, $c.closed) }
+                'caught-up' {
+                    $ld.claims.Remove($p.Id)
+                    if (Test-LedgerReleaseReservation $c) { $out += ('{0} reservation cleared: this lane already reads the release (back to todo, with its split)' -f $p.Id) }
+                    else { $out += ('{0} reservation cleared: this lane already reads it {1}' -f $p.Id, $c.closed) }
+                }
                 'expired'   { $ld.claims.Remove($p.Id); $out += ('{0} reservation cleared: pushed more than a TTL ago' -f $p.Id) }
                 'refresh'   { $c.touched = $stamp }
-                'pushed'    { $c.pushedAt = $stamp; $out += ('{0} reservation: the close is on the upstream; held until the other lane reads it' -f $p.Id) }
+                'pushed'    {
+                    $c.pushedAt = $stamp
+                    $what = if (Test-LedgerReleaseReservation $c) { 'release' } else { 'close' }
+                    $out += ('{0} reservation: the {1} is on the upstream; held until the other lane reads it' -f $p.Id, $what)
+                }
             }
         }
         return $out

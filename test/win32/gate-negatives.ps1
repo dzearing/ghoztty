@@ -331,9 +331,12 @@ $Registry = @(
     # task another lane holds and picks other work, and `ledger` says when the
     # ledger is switched off. test\win32\parity-tasks-lanes.ps1 holds them
     # (A2/D2 for the first, E8 for the second; F2 for FINISHED IN OTHER LANE,
-    # the T2033 reservation of a task closed in the other lane).
+    # the T2033 reservation of a task closed in the other lane; H2 for
+    # RELEASED IN OTHER LANE, the T2386 reservation of a task the other lane
+    # split and set back to todo).
     [pscustomobject]@{ Label = 'HELD BY OTHER LANE'; Kind = 'status' }
     [pscustomobject]@{ Label = 'FINISHED IN OTHER LANE'; Kind = 'status' }
+    [pscustomobject]@{ Label = 'RELEASED IN OTHER LANE'; Kind = 'status' }
     [pscustomobject]@{ Label = 'LEDGER OFF'; Kind = 'status' }
     # 4f366d19d: `next` re-queues tasks parked for an idle box when the box
     # reads idle. A report, never a gate: it hands work out, it refuses none.
