@@ -1,13 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-06T09:22:26-08:00",
-    "commit":  "f945ce5fb",
+    "generated":  "2026-11-06T10:13:12-08:00",
+    "commit":  "f03dfa650",
     "uncommitted":  [
-                        "test/win32/bell-border.ps1",
-                        "test/win32/close-overlays.ps1",
-                        "test/win32/split-dim.ps1",
-                        "test/win32/split-dim-viewer.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -362,12 +359,12 @@
                   "test/win32/one-installer.ps1":  "e8f2855cab4c267362f75fe7d78b810375ebc6fd253a31ab70c43579b3cea76e",
                   "test/win32/opacity-reload.ps1":  "b79367eddf623fd7c5907d0eafccc471acae34b4d0bd1eede04277cdb400eeef",
                   "test/win32/orphan-notify.ps1":  "a8c7962850f4bdf5c8c5f8c09b20930b57e88264dedfa13a3bd47e69aaf2bf55",
-                  "test/win32/overlay-zorder.ps1":  "62d995250f699e0b28745c9045f9ab8fd57b33e1b92b8802cf9f6a4dcc72003b",
+                  "test/win32/overlay-zorder.ps1":  "74efd0670d18c50db7fb860e61377686d0194ac3c5d858cfa8393d3a20e85be3",
                   "test/win32/palette-close-crash.ps1":  "a22d78896b8a333e0dec14c230101606f0c13b48dbf1bb7ff7b79a44e2e63707",
                   "test/win32/palette-grid-size.ps1":  "503b63cbcb1bc6763c2d2800245923385ce4a4b5bb5a8e1649e5ddfe48f265b1",
                   "test/win32/palette-jump.ps1":  "ee11e403b39036691fbaf1f12aab1820f9a98ca96fc0d9a04f94e50200c1d7a7",
                   "test/win32/palette-order.ps1":  "1aa851b76eaafbb3d721aece4d5f934a9a142e0d9d23ac8b1645d38b86727580",
-                  "test/win32/pane-banner.ps1":  "094536db88e37024fec54adb6f3984ed907ae8af5c81daf0c23f790c5530b3a2",
+                  "test/win32/pane-banner.ps1":  "3b38da0ec613601d9fb32f240615e57ec391e1b4b5791a6cbcd8323e2c649b3f",
                   "test/win32/pane-busy-light.ps1":  "68aa8bd7cb6981af57d13b334f9224386e4446f49430609eb87ada8b9d8a9332",
                   "test/win32/pane-capture.ps1":  "bdf7b9c8d9b2e1c8e443e2a9b7abe8997f9f883df80d6d86d808861c36cc06a8",
                   "test/win32/pane-close-memory.ps1":  "6f1a65c7c071a65c9cb152fbc220fed6d5fbe0853246f630a5f032536caaea15",
