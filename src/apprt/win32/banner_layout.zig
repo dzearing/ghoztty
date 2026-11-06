@@ -124,6 +124,34 @@ pub fn stripChange(cur_left: i32, cur_right: i32, new_left: i32, new_right: i32)
     return .same;
 }
 
+/// Whether the banner draws as a visual in the pane's composition tree
+/// (T2559) rather than as the popup. The tree needs a published composition
+/// tree and a window that spans the band (T2566), and one more thing (T2749):
+/// the pane's window must not be hidden under a card opening out of its strip.
+/// That opening keeps the pane hidden for the whole glide while the strip face
+/// draws the card (T2458), and a visual in a hidden window's tree is hidden
+/// with it - so the banner popped in only when the glide landed, the user's
+/// 2026-11-03 report (T2661) back on the composition path. The popup comes out
+/// with the card, cut to it, so the opening rides the popup and the banner
+/// goes back into the tree the moment the pane shows.
+pub fn wantsVisual(tree: bool, band: u32, opening_hidden: bool) bool {
+    return tree and band > 0 and !opening_hidden;
+}
+
+test "wantsVisual: the banner lives in the pane's tree when it can (T2559)" {
+    try std.testing.expect(wantsVisual(true, 40, false));
+    // No tree (no GL/D3D interop) or no band in the window: the popup.
+    try std.testing.expect(!wantsVisual(false, 40, false));
+    try std.testing.expect(!wantsVisual(true, 0, false));
+}
+
+test "wantsVisual: a card opening out of its strip rides the popup (T2749)" {
+    // Its pane is hidden for the glide; the tree's visual would be too.
+    try std.testing.expect(!wantsVisual(true, 40, true));
+    // Landed: the pane shows again, and the banner goes back into the tree.
+    try std.testing.expect(wantsVisual(true, 40, false));
+}
+
 /// The band a pane's grid sits below INSIDE its own window (T2566): the
 /// inset when the window spans it, 0 when the layout moved the window down
 /// instead. `windowOffset` + `gridBand` is always the inset.

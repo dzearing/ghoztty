@@ -809,7 +809,11 @@ pub const BannerOverlay = struct {
     fn syncPath(self: *BannerOverlay) bool {
         const tree = if (self.slot) |s| self.layer.sync(s) else false;
         const band = if (self.surface) |s| s.gridBand() else 0;
-        const want = !T2559_NEUTERED and tree and band > 0;
+        // A card opening out of its strip hides its pane for the glide, and
+        // the tree's visual with it: the popup comes out with the card
+        // instead (T2749, banner_layout.wantsVisual).
+        const opening_hidden = w32.IsWindowVisible_(self.owner) == 0 and self.openingCarried();
+        const want = !T2559_NEUTERED and banner_layout.wantsVisual(tree, band, opening_hidden);
         if (want != self.on_visual) {
             if (want) {
                 _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
@@ -819,6 +823,9 @@ pub const BannerOverlay = struct {
             } else {
                 // A retracted tree already took the visual with it.
                 self.layer.setVisible(false);
+                // The popup sat hidden while the tree drew the card, so what
+                // it last painted may predate the text (T2749): repaint it.
+                _ = w32.InvalidateRect(self.hwnd, null, 1);
             }
             self.on_visual = want;
             self.visual_dirty = true;

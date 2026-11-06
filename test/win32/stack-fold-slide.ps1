@@ -81,6 +81,10 @@
 #       on show in 2+ samples, cut to 2+ distinct partial widths (the debug
 #       build's `banner cut span` oracle line) - not hidden until the glide
 #       lands - and it never reaches outside the window (F6, region-aware).
+#       On the composition path (GHOZTTY_COMP_PRESENT) the banner at rest is
+#       a visual in s2's own tree, hidden with s2's window; the opening glide
+#       puts it on its popup instead and the landing takes it back (T2749),
+#       read from the app's `banner path visual=` line.
 #   F17) opening carried (T2458): unfolding, s2's pane is placed at its new
 #       size while hidden and its card is drawn by its face alone - the live
 #       window is off show on every frame, the card shows no content until the
@@ -253,7 +257,10 @@ function Get-Samples([IntPtr]$top, [int]$ms) {
         $faces = @(Get-TestWindows -ProcessId $script:appPid -Class 'GhozttyStripFace' | Where-Object Visible)
         # s2's banner (F19, T2661): on show, and how much of it its region shows.
         $bn = $null
-        $bw = @(Get-TestWindows -ProcessId $script:appPid -Class 'GhozttyBannerOverlay' | Where-Object { $_.Visible -and $_.Hwnd -eq $script:watchBanner })
+        # On the composition path the popup is made only when the unfold
+        # first needs it (T2749), so any banner popup on show is s2's - the
+        # only pane wearing one.
+        $bw = @(Get-TestWindows -ProcessId $script:appPid -Class 'GhozttyBannerOverlay' | Where-Object { $_.Visible -and ($_.Hwnd -eq $script:watchBanner -or $script:bannerPath -eq 'visual') })
         if ($bw.Count -eq 1) { $bn = [pscustomobject]@{ Left = $bw[0].Left; Width = $bw[0].Width; Shown = (Get-ShownWidth $bw[0]) } }
         # One photograph of the face mid-glide (F13); it may hide under us.
         if ($null -eq $script:faceShot -and $faces.Count -gt 0) {
@@ -333,6 +340,25 @@ function Get-BannerCuts([int]$from, [int]$to) {
         }
     }
     return $out
+}
+# The path s2's banner last took (T2749): 'visual' when the composition
+# present draws it inside the pane (T2559, the default once T2514 flips),
+# 'popup' when it is the GhozttyBannerOverlay window, $null before any line.
+# The app logs `banner path visual=true|false` whenever it switches.
+function Get-BannerPath([int]$to = [int]::MaxValue) {
+    $lines = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue)
+    $path = $null
+    for ($i = 0; $i -lt [math]::Min($to, $lines.Count); $i++) {
+        if ($lines[$i] -match 'banner path visual=(true|false)') { $path = if ($Matches[1] -eq 'true') { 'visual' } else { 'popup' } }
+    }
+    return $path
+}
+# How many log lines match $pattern from line $from on (T2749).
+function Get-LogMatches([string]$pattern, [int]$from = 0) {
+    $lines = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue)
+    $n = 0
+    for ($i = $from; $i -lt $lines.Count; $i++) { if ($lines[$i] -match $pattern) { $n++ } }
+    return $n
 }
 # The `stack unfold landed resizes=N live=0|1` oracle lines (T2458) from line
 # $from to line $to.
@@ -454,9 +480,20 @@ try {
     $hS1 = $c3[1].Hwnd
     $hS2 = $c3[2].Hwnd
     $script:watchPane = [int64]$hS2
-    $bannerWins = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyBannerOverlay' | Where-Object Visible)
-    $script:watchBanner = if ($bannerWins.Count -eq 1) { [int64]$bannerWins[0].Hwnd } else { [int64]0 }
-    Assert ($bannerWins.Count -eq 1) "F19 precondition: s2's banner is on show before the fold ($($bannerWins.Count) banner popups)"
+    # On the composition path (T2559) the banner at rest is a visual inside
+    # s2 and its popup sits hidden; the popup is still the window the unfold
+    # puts on show over the carried card (T2749), so it is the one watched.
+    $script:bannerPath = Get-BannerPath
+    $bannerAll = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyBannerOverlay')
+    $bannerWins = @($bannerAll | Where-Object Visible)
+    if ($script:bannerPath -eq 'visual') {
+        $script:watchBanner = [int64]0
+        Assert ($bannerWins.Count -eq 0) "F19 precondition: s2's banner is on show before the fold, as a visual in its pane (path=visual, $($bannerWins.Count) popups on show)"
+    } else {
+        $script:watchBanner = if ($bannerWins.Count -eq 1) { [int64]$bannerWins[0].Hwnd } else { [int64]0 }
+        Assert ($bannerWins.Count -eq 1) "F19 precondition: s2's banner is on show before the fold ($($bannerWins.Count) banner popups, path=$($script:bannerPath))"
+    }
+    Say ("      banner path at rest: {0}" -f $script:bannerPath)
     $pW0 = $c3[0].Width
     $s2Left0 = $c3[2].Left
     Say ("      dpi {0}; columns: {1}" -f $dpi, (Format-Cols $c3))
@@ -483,13 +520,17 @@ try {
     [void](Send-TestMouse -Window $top -Target $top -X ([int](($c3[0].Left + $c3[0].Right) / 2)) -Y $y -Action click)
     Start-Sleep -Milliseconds 600
     $washes = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyDimOverlay' | Where-Object Visible)
-    Say ("      P focused; {0} dim wash(es) on show" -f $washes.Count)
+    # On the composition path the wash is a visual in its pane (T2491), read
+    # from the app's transition lines: shown less hidden is the washes up now.
+    # (s2 wears a banner, whose band keeps its wash on the popup.)
+    $visualWashes = [math]::Max(0, (Get-LogMatches 'dim overlay shown as visual') - (Get-LogMatches 'dim overlay hidden visual=true'))
+    Say ("      P focused; {0} dim wash popup(s) on show, {1} shown as a visual" -f $washes.Count, $visualWashes)
     # Glass panes never dim (T2281, Mac 9da9618f8): there F6 still checks
     # every popup, but has no wash to check.
     if ($PaneStyle -eq 'flat') {
-        Assert ($washes.Count -ge 2) "F6 precondition: with P focused, s1 and s2 carry the dim wash ($($washes.Count) on show)"
+        Assert (($washes.Count + $visualWashes) -ge 2) "F6 precondition: with P focused, s1 and s2 carry the dim wash ($($washes.Count) popups + $visualWashes visuals on show)"
     } else {
-        Assert ($washes.Count -eq 0) "F6 precondition: glass panes carry no dim wash (T2281) ($($washes.Count) on show)"
+        Assert (($washes.Count + $visualWashes) -eq 0) "F6 precondition: glass panes carry no dim wash (T2281) ($($washes.Count) popups + $visualWashes visuals on show)"
     }
 
     # ---- the fold, held, sampled ---------------------------------------------
@@ -707,8 +748,15 @@ try {
             Say ("      banner mid-unfold: on show over the carried card in {0} sample(s); cut to: {1} px" -f $hiddenWithBanner.Count, ($cutWidths -join ', '))
             Assert ($hiddenWithBanner.Count -ge 2) "F19: unfolding, s2's banner is on show in $($hiddenWithBanner.Count) samples while its live window is off show (need 2+): it comes out with the card"
             Assert ($cutWidths.Count -ge 2) "F19: unfolding, s2's banner is cut to $($cutWidths.Count) partial widths (need 2+): it widens with the card"
-            $bannerHome = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyBannerOverlay' | Where-Object { $_.Visible -and $_.Hwnd -eq $script:watchBanner }).Count
-            Assert ($bannerHome -eq 1) "F19: unfolded, s2's banner is on show at rest ($bannerHome)"
+            $bannerHome = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyBannerOverlay' | Where-Object { $_.Visible -and ($_.Hwnd -eq $script:watchBanner -or $script:bannerPath -eq 'visual') }).Count
+            if ($script:bannerPath -eq 'visual') {
+                # Landed, the pane shows again and the banner goes back into
+                # its tree (T2749): the path line says so and the popup is down.
+                $restPath = Get-BannerPath
+                Assert ($restPath -eq 'visual' -and $bannerHome -eq 0) "F19: unfolded, s2's banner is back on show at rest as a visual in its pane (path=$restPath, popup on show $bannerHome)"
+            } else {
+                Assert ($bannerHome -eq 1) "F19: unfolded, s2's banner is on show at rest ($bannerHome)"
+            }
         }
         $barBack = @(Get-GlidingBar $logBack | Where-Object { $_.Shown -gt $_.Laid })
         $barBackAt = @($barBack | ForEach-Object Shown | Sort-Object -Unique)

@@ -360,6 +360,14 @@ try {
     # Plants armed late enough that the launch's own settling does not use them
     # up, early enough that the scripted resizes below reach every one.
     $env:GHOZTTY_LAB_PLANT = 'erase@8,stale@12,overlay@4'
+    # The overlay plant holds the dim wash's POPUP back on a move (T2383,
+    # DimOverlay.zig) - lag only a popup can have. On the composition path
+    # (GHOZTTY_COMP_PRESENT, the default once T2514 flips) the wash is a
+    # visual inside its pane, moved with it in one commit, so the plant has
+    # nothing to hold and D9/D11 nothing to read (T2749). Pinned to the popup
+    # path, the fallback where there is no GL/D3D interop, for this launch.
+    $prevComp = $env:GHOZTTY_COMP_PRESENT
+    $env:GHOZTTY_COMP_PRESENT = '0'
     Start-TestForegroundWatch
     $td = New-TestDesktop -Interactive:$Interactive
     $app = Start-OnTestDesktop -Exe $exe -StdErr $errlog -Arguments @(
@@ -367,6 +375,7 @@ try {
         '--macos-pane-glass=false', '--unfocused-split-opacity=0.5',
         '-e', 'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $cardPs, '-Index', '1', '-Out', $out1)
     Remove-Item Env:\GHOZTTY_LAB_PLANT -ErrorAction SilentlyContinue
+    if ($null -eq $prevComp) { Remove-Item Env:\GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue } else { $env:GHOZTTY_COMP_PRESENT = $prevComp }
     $appPid = $app.Pid
     $top = Wait-TestWindow -ProcessId $appPid -Class 'GhozttyWindow' -TimeoutMs 20000
     if ($top -eq [IntPtr]::Zero) { Write-TestAssertedNothing -Reason 'no window' -Label 'frame-lab-card' }

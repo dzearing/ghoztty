@@ -1,8 +1,8 @@
 {
     "guard":  "rearrange-restore",
     "script":  "test/win32/rearrange-restore.ps1",
-    "generated":  "2026-11-06T09:35:19-08:00",
-    "commit":  "f945ce5fb",
+    "generated":  "2026-11-06T10:07:12-08:00",
+    "commit":  "f458464b1",
     "uncommitted":  [
 
                     ],

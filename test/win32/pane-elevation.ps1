@@ -143,6 +143,22 @@ function Start-Gui([string]$label, [string[]]$extraArgs, [switch]$Split) {
     [pscustomobject]@{ App = $app; Top = $top; Panes = $panes; Scale = $scale }
 }
 
+# Start-Gui on the banner's popup path (T2749): the composition present
+# (GHOZTTY_COMP_PRESENT, the default once T2514 flips) draws the banner as a
+# visual in the pane and keeps the GhozttyBannerOverlay popup hidden, so a
+# section whose probe IS that popup pins it off for its launch only. The
+# caller's setting comes back afterwards, so every other section runs on
+# whichever path the caller chose.
+function Start-PopupBannerGui([string]$label, [string[]]$extraArgs) {
+    $prev = $env:GHOZTTY_COMP_PRESENT
+    $env:GHOZTTY_COMP_PRESENT = '0'
+    try { return Start-Gui $label $extraArgs }
+    finally {
+        if ($null -eq $prev) { Remove-Item Env:\GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
+        else { $env:GHOZTTY_COMP_PRESENT = $prev }
+    }
+}
+
 # A glass pane over desk colour $c on a black terminal: 60% of the desk,
 # mixed in linear light (pane_elevation.glassMix, and the renderer's own
 # background-image blend under the default linear alpha-blending).
@@ -655,7 +671,11 @@ function Get-GlassHeadExpect($desk, $bar) {
 }
 
 function Get-BandProbes([string]$label, [string[]]$extra) {
-    $g = Start-Gui $label ($common + $extra + @('--keybind=ctrl+shift+f9=toggle_rearrange_mode'))
+    # The banner card's pixels are read off its popup (T2749): pinned to the
+    # popup path, the fallback where there is no GL/D3D interop. On the
+    # composition path the card is a visual inside the pane, which no capture
+    # reaches off the input desktop (pane-banner.ps1 section 13 measures it).
+    $g = Start-PopupBannerGui $label ($common + $extra + @('--keybind=ctrl+shift+f9=toggle_rearrange_mode'))
     $script:launched += $script:GhozttyTestDesktopPids
     $top = $g.Top
     $i = Get-InsetPx $g.Scale
@@ -1046,7 +1066,8 @@ Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
 # ---------------------------------------------------------------------------
 $hdrArgs = $common + @('--macos-pane-glass=false', '--window-show-tab-bar=always',
     '--keybind=ctrl+shift+f9=toggle_rearrange_mode')
-$g = Start-Gui 'corners' $hdrArgs
+# The banner strip's region is its popup's (T2749): pinned like the band probes.
+$g = Start-PopupBannerGui 'corners' $hdrArgs
 $launched += $script:GhozttyTestDesktopPids
 $top = $g.Top
 $i = Get-InsetPx $g.Scale
