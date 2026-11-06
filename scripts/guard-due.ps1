@@ -4606,6 +4606,38 @@ $GuardTable = @(
             'test\win32\divider-flicker.ps1'
         )
     },
+    # The real-pointer divider-ghost scorer (T2441, the T2418 probe made
+    # permanent): ghost bars, smears, a vanished bar, and the stale strip a
+    # widening pane leaves when it does not repaint. Proven on synthetic
+    # frames, so it runs anywhere and stamps from a plain run.
+    [pscustomobject]@{
+        Name   = 'divider-ghost'
+        Script = 'test\win32\divider-ghost.ps1'
+        Stamp  = 'test\win32\divider-ghost.stamp.json'
+        Covers = @(
+            'test\win32\lib\DividerGhostScore.ps1',
+            'test\win32\divider-ghost.ps1'
+        )
+    },
+    # The same harness's -Live run: SendInput drives the real pointer over the
+    # divider and WGC photographs every composed frame. It needs the input
+    # desktop and nobody at the box, so it stamps only from a green live run
+    # with no control; ADVISORY for the same reason as divider-flicker-live.
+    # Covers what paints a pane out to its new rect during the drag
+    # (OpenGL.drawFrameEnd, Window.layoutSplits) per T2441's filing.
+    [pscustomobject]@{
+        Name     = 'divider-ghost-live'
+        Script   = 'test\win32\divider-ghost.ps1'
+        Stamp    = 'test\win32\divider-ghost-live.stamp.json'
+        Advisory = $true
+        Covers   = @(
+            'src\renderer\OpenGL.zig',
+            'src\apprt\win32\Window.zig',
+            'test\win32\lib\DividerFlickerScore.ps1',
+            'test\win32\lib\DividerGhostScore.ps1',
+            'test\win32\divider-ghost.ps1'
+        )
+    },
     # The lab's deterministic scene and its planted positive controls (T2383).
     # A card that draws one cell wrong makes every lab frame a false B2/B6, and
     # a plant that stops firing makes the lab's 100%-caught control vacuous - so

@@ -1,0 +1,14 @@
+{
+    "guard":  "divider-ghost",
+    "script":  "test/win32/divider-ghost.ps1",
+    "generated":  "2026-11-05T17:12:42-08:00",
+    "commit":  "b6ad5ac20",
+    "uncommitted":  [
+                        "test/win32/divider-ghost.ps1",
+                        "test/win32/lib/DividerGhostScore.ps1"
+                    ],
+    "files":  {
+                  "test/win32/divider-ghost.ps1":  "d30204ed3b839c2d832b0a6f9b1d7ad6095a04d2eb25a5da4adf316de4d4bbb3",
+                  "test/win32/lib/DividerGhostScore.ps1":  "e546a557b77c218dcffa6fb07c688cd11c4e17d844974195c9e6783dcae45ebd"
+              }
+}

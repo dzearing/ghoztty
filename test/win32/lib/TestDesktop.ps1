@@ -303,6 +303,7 @@
 # @user-desktop-launch: profile-latency.ps1 -- (T53b) already interactive-by-design above: injection timing is the measurement, and it can only be taken where input is injected.
 # @user-desktop-launch: translucent-window.ps1 -- (T1787) already interactive-by-design above: its oracle is DWM's composite of the app over a backdrop, so the app has to be on the input desktop too.
 # @user-desktop-launch: background-blur.ps1 -- (T1788) already interactive-by-design above: its oracle is DWM's blurred composite of the app over a checker, so the app has to be on the input desktop too.
+# @user-desktop-launch: divider-ghost.ps1 -- (T2441) -Live only, gated on Assert-UserAbsent: the real-pointer drag it injects and the WGC capture of it reach only the input desktop, so the app has to be there too. (Not yet on the interactive-by-design list above: T2730.)
 # @user-desktop-launch: divider-flicker.ps1 -- (T2476) already interactive-by-design above, -Live only: WGC photographs only the input desktop, so the app whose drag it photographs has to be there too.
 # @user-desktop-launch: go-loop-guard.ps1 -- (T1193) the ONE bare launch is the fallback taken when New-TestDesktop throws - a desktop we cannot create must not cost the whole suite, and the fallback says so loudly before it runs.
 # @user-desktop-launch: go-loop-resume.ps1 -- (T1478) the same fallback, for the same reason: its GUI arms stage a parked loop pane, and a desktop that cannot be created must degrade to the interactive one with a NOTE rather than skip the whole recovery proof.
