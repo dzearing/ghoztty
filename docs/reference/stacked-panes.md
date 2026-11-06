@@ -50,14 +50,17 @@ by the pane's own title (else its directory's name, else its kind) —
 Cmd+R relabel the strip at once; clearing the banner (or a banner with no
 title) brings the pane title back.
 
-**What counts as a banner title** (`PaneSidebarText.bannerTitle`, pure) is
-deliberately narrow, never just the first line: a heading on the first line
-(`## Fix strip labels`), or a ONE-line banner opening with a bold run standing
+**What counts as a banner title** (`PaneSidebarText.bannerTitle`, pure) is the
+banner's first line, so typing `foo` at Cmd+R names the pane foo, and in
+`foo\nbar` the pane is foo. That covers a plain line, a heading
+(`## Fix strip labels`), and a ONE-line banner opening with a bold run standing
 alone or before ` · ` (`**Fix strip labels** · **Goal:** …`, the hook's OSC
-fallback). Not titles: a bold label (`**Goal:** …`), a bold run followed by
-prose (`**PR #12** — 3 files`), a bold line heading a multi-line banner
-(`**Last result**`), a title-less table. Markdown is stripped (bold, code,
-links → their label). Tests: `PaneSidebarTextTests`,
+fallback). A first line doing another job is no title, and nothing below it
+stands in: a bold label (`**Goal:** …`), a bold run followed by prose
+(`**PR #12** — 3 files`), a bold line heading a multi-line banner
+(`**Last result**`), a table or rule line (layout), a list item (`- [x] done`,
+`1. one`). Only bold marks a label: a plain `Status: ok` is a title. Markdown is
+stripped (bold, code, links → their label). Tests: `PaneSidebarTextTests`,
 `aStripIsLabeledByItsBannerTitleLive` (reads the composited window).
 
 ## Focus brings a pane forward
@@ -160,6 +163,12 @@ source. Pinned by `everyResizerSitsInAGutter` /
 `everyResizerOfAStackSitsInAGutter` (real windows: every resizer frame against
 every card frame, plus hit-tests just inside each card's edges) and by
 `PaneStackFuzzTests` in both styles.
+
+A strip's cursor is the pointing hand. A cursor rect alone can't hold it: each
+strip's terminal stays mounted under it with its own I-beam rect, and the grip's
+resize rect sits beside it, so the strip's drag source also takes the cursor on
+arrival and on every move (`PaneDragSourceView.hoverCursor`, as a pane's grab
+handle does; `aBladeTakesTheCursorBackFromTheGrip`).
 
 ## Dragging a gutter (`PaneLayout.dragged`)
 

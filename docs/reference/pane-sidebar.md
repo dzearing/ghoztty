@@ -191,8 +191,10 @@ shows the same view of it (see *Shared across windows*). Read before touching
 - A row (and a rail tile) names its pane the way a stacked strip does: the
   **banner's title** when it has one, else the pane's title
   (`PaneView.displayLabel`; see [stacked-panes.md](stacked-panes.md) → Strip
-  labels). The subtitle is then the working directory — and the banner's
-  first line only when the banner has no title. The all-windows search still
+  labels), which is usually its first line: a plain line typed at Cmd+R
+  counts. The subtitle is then the working directory — and the banner's
+  first meaningful line only when the banner has no title (a bold label, a
+  list). The all-windows search still
   matches the pane's own title. All-windows **window** names group by window
   title (`<project>: <worktree>`), which a pane banner has no say in.
   A native tab group's tabs each take the group's window title, whichever
