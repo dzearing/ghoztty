@@ -1,8 +1,8 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-05T20:34:36-08:00",
-    "commit":  "4da8e42e4",
+    "generated":  "2026-11-05T21:46:44-08:00",
+    "commit":  "b48752739",
     "uncommitted":  [
 
                     ],
@@ -141,7 +141,7 @@
                   "test/win32/doc-claims.ps1":  "89225631de66b3d1dc4c196c2dbea93fd7c416774c464c32fdc3e6f3198d3ece",
                   "test/win32/docs-routing.ps1":  "98d25cb8eaba89f37cb2fe892dc86cee04a2cec771acc0c588e39d69446ccf11",
                   "test/win32/dpi-change.ps1":  "ee556618b3c43764809203b4fa3d7da1cabb4135cdcba0d7e4bd8dabc4d54733",
-                  "test/win32/drag-glide.ps1":  "6b035c2d27212c505a29a34a16725526ae60776fcf35bfde1bcb6a1a412bd290",
+                  "test/win32/drag-glide.ps1":  "18b7174559acb721e08b2cebb694ff8d36630f3a90f95be282ce8bc2ab993c72",
                   "test/win32/drag-perf.ps1":  "b067f23ab5c86e878d16744287156776b82503cf0944f5e1faed207aca5d0c97",
                   "test/win32/echo-marker-audit.ps1":  "d896ea0055d1564eeba5ce6fc2bceda25aa0d32d3ccacd848d85c75d130d98f1",
                   "test/win32/edge-drag-rate.ps1":  "125ce6e7f6b4c0f89c1088f20c55a796353790615d82d956c14b1f4eb183e63e",
