@@ -123,6 +123,16 @@ pub const Mailbox = union(enum) {
         }
     }
 
+    /// Queue a message only if there is room right now, never waiting. Returns
+    /// false when it was not queued (full or closed). For latest-wins control
+    /// state whose value is held elsewhere (T2495's focus marker), where
+    /// waiting would park the producer and dropping is recoverable.
+    pub fn trySend(self: *Mailbox, msg: termio.Message) bool {
+        return switch (self.*) {
+            .spsc => |*mb| mb.queue.push(msg, .{ .instant = {} }) > 0,
+        };
+    }
+
     /// Notify that there are new messages. This may be a noop depending
     /// on the writer type.
     /// True when the queue is at least half full. The remote backend parses

@@ -23,6 +23,7 @@ const ProcessInfo = @import("../pty.zig").ProcessInfo;
 const session_notice = @import("session_notice.zig");
 const history_guard = @import("history_guard.zig");
 const conpty_sync_hold = @import("conpty_sync_hold.zig");
+const FocusSlot = @import("FocusSlot.zig");
 
 const log = std.log.scoped(.io_exec);
 
@@ -102,6 +103,10 @@ closing: std.atomic.Value(bool) = .init(false),
 /// `pending_resize_mutex`; null = nothing pending.
 pending_resize: ?renderer.Size = null,
 pending_resize_mutex: std.Thread.Mutex = .{},
+
+/// Latest-wins focus slot (T2495): FOCUS never waits on the bounded mailbox,
+/// for the same reason RESIZE does not. See `FocusSlot`.
+focus_slot: FocusSlot = .{},
 
 /// T423: a session-interrupted notice has been written to this pane's terminal
 /// and has not been folded above the viewport yet. Armed by the backend right
@@ -503,6 +508,18 @@ pub fn queueMessage(
             self.pending_resize_mutex.lock();
             self.pending_resize = size;
             self.pending_resize_mutex.unlock();
+            self.mailbox.notify();
+            return;
+        },
+        // FOCUS is latest-wins too (T2495): the value goes in `focus_slot`
+        // and at most one marker rides the queue, pushed without waiting.
+        // A burst of focus changes against a pane whose IO thread is slow to
+        // drain used to fill the queue and park the GUI thread 50 ms per
+        // change; a marker that cannot be queued is recovered by the drain.
+        .focused => |v| {
+            if (self.focus_slot.set(v)) {
+                if (!self.mailbox.trySend(msg)) self.focus_slot.markerDropped();
+            }
             self.mailbox.notify();
             return;
         },

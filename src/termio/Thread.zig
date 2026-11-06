@@ -371,6 +371,14 @@ fn drainMailbox(
         self.handleResize(cb, size);
     }
 
+    // A focus change whose queue marker could not be pushed (the queue was
+    // full) is applied here; one with a marker waits for it, so the report
+    // keeps its order against the writes around it (T2495, `FocusSlot`).
+    if (io.focus_slot.takeUnmarked()) |v| {
+        redraw = true;
+        try io.focusGained(data, v);
+    }
+
     while (mailbox.pop()) |message| {
         // If we have a message we always redraw
         redraw = true;
@@ -401,7 +409,8 @@ fn drainMailbox(
             .sync_hold => self.armSyncHold(cb, conpty_sync_hold.idle_ns),
             .title_flush => |ns| self.armTitle(cb, ns),
             .linefeed_mode => |v| self.flags.linefeed_mode = v,
-            .focused => |v| try io.focusGained(data, v),
+            // A marker: the value is the slot's newest, not the payload.
+            .focused => if (io.focus_slot.takeAtMarker()) |v| try io.focusGained(data, v),
             .write_small => |v| try io.queueWrite(
                 data,
                 v.data[0..v.len],
