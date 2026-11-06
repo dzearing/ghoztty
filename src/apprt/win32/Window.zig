@@ -835,6 +835,8 @@ drag_stats: drag_perf.Stats = .{},
 /// them and that is the stepping the user sees.
 glide_stats: drag_perf.GlideStats = .{},
 glide_tick_prev: ?std.time.Instant = null,
+/// The between-tick counters as the last glide tick ended (T2455).
+glide_between_mark: drag_perf.GlideStats.Between = .{},
 /// Motion ticks of this drag that left their layout to the running glide
 /// (`layoutDragStep`, T2448).
 drag_layout_deferred: u32 = 0,
@@ -8013,6 +8015,28 @@ fn reportDragCost(self: *Window, comptime what: []const u8) void {
     self.reportGlideCost(what);
 }
 
+/// The running totals of what can sit between two glide ticks (T2455).
+fn glideMark(self: *const Window) drag_perf.GlideStats.Between {
+    return .{
+        .paints = self.drag_wm_paints,
+        .paint_us = self.drag_wm_paint_us,
+        .motions = @intCast(@min(self.drag_stats.ticks, std.math.maxInt(u32))),
+        .motion_us = self.drag_stats.total_us,
+    };
+}
+
+/// What ran since the last glide tick ended: the totals less their mark.
+fn glideBetween(self: *const Window) drag_perf.GlideStats.Between {
+    const now = self.glideMark();
+    const m = self.glide_between_mark;
+    return .{
+        .paints = now.paints -| m.paints,
+        .paint_us = now.paint_us -| m.paint_us,
+        .motions = now.motions -| m.motions,
+        .motion_us = now.motion_us -| m.motion_us,
+    };
+}
+
 /// A desk paint's mean cost over `n` of them, in microseconds (T2454).
 fn deskMeanUs(total_ns: u64, n: u32) u64 {
     if (n == 0) return 0;
@@ -8056,10 +8080,35 @@ fn reportGlideCost(self: *Window, comptime what: []const u8) void {
         if (self.chrome_host) |*ch| ch.desk_partial_px else 0,
         @tagName(g.verdict()),
     };
-    switch (g.verdict()) {
-        .steppy => log.info(fmt, args),
-        else => log.debug(fmt, args),
-    }
+    // Info either way (T2455, as T2609 did for the drag line): a smooth glide
+    // is the result a release run has to be able to read.
+    log.info(fmt, args);
+    // T2455: what owned the widest gap, on its own line (the one above is at
+    // the formatter's argument limit).
+    const w = g.worst;
+    log.info(
+        what ++ " glide worst_gap_us={d} owner={s} before_us={d} before_viewer_us={d} " ++
+            "before_desk_full={} between_paints={d} between_paint_us={d} " ++
+            "between_motions={d} between_motion_us={d} idle_us={d}",
+        .{
+            w.gap_us,
+            @tagName(w.owner()),
+            w.before.cost_us,
+            w.before.viewer_us orelse 0,
+            w.before.desk_full,
+            w.between.paints,
+            w.between.paint_us,
+            w.between.motions,
+            w.between.motion_us,
+            w.idleUs(),
+        },
+    );
+    const p = w.before.parts;
+    log.info(
+        what ++ " glide worst_tick step_us={d} layout_us={d} resize_us={d} waits={d} wait_us={d} " ++
+            "place_us={d} paint_us={d} cards_us={d} overlay_us={d} flush_us={d}",
+        .{ p.step_us, p.layout_us, p.resize_us, p.waits, p.wait_us, p.place_us, p.paint_us, p.cards_us, p.overlay_us, p.flush_us },
+    );
 }
 
 /// Open a frame-wait batch for one layout pass (T1343). Nested passes join the
@@ -11064,17 +11113,44 @@ fn stackSlideTick(self: *Window) void {
     // glide line `reportGlideCost` writes when the drag ends.
     const gap_us: ?u64 = if (self.glide_tick_prev) |p| now.since(p) / std.time.ns_per_us else null;
     self.glide_tick_prev = now;
+    // T2455: what the UI thread did since the last tick ended, and whether
+    // this tick composes the whole desk - so the widest gap names its owner.
+    const between = self.glideBetween();
+    const misses0 = self.pane_desk.memo_misses;
+    const partial0 = self.pane_desk.memo_partial;
+    var step_us: u64 = 0;
+    var flush_us: u64 = 0;
     defer if (self.drag_perf_on) {
         const cost_us = if (std.time.Instant.now()) |e| e.since(now) / std.time.ns_per_us else |_| 0;
         const vc = ViewerPane.sync_cost;
+        const full = (self.pane_desk.memo_misses -% misses0) > (self.pane_desk.memo_partial -% partial0);
         self.glide_stats.record(
-            cost_us,
+            .{
+                .cost_us = cost_us,
+                .viewer_us = if (vc.count > 0) vc.total_ns / std.time.ns_per_us else null,
+                .desk_full = full,
+                .parts = .{
+                    .step_us = step_us,
+                    .layout_us = self.frame_layout_us,
+                    .resize_us = self.frame_resize_us,
+                    .waits = @intCast(@min(self.frame_wait_count, std.math.maxInt(u32))),
+                    .wait_us = self.frame_wait_last_us,
+                    .place_us = self.frame_place_us,
+                    .paint_us = self.frame_paint_us,
+                    .cards_us = self.frame_cards_us,
+                    .overlay_us = self.frame_overlay_us,
+                    .flush_us = flush_us,
+                },
+            },
             gap_us,
             FrameClock.periodNs() / std.time.ns_per_us,
-            if (vc.count > 0) vc.total_ns / std.time.ns_per_us else null,
+            between,
         );
+        self.glide_between_mark = self.glideMark();
     };
+    const step_t = if (self.drag_perf_on) std.time.Instant.now() catch null else null;
     const done = s.step(dt);
+    if (step_t) |t0| step_us = if (std.time.Instant.now()) |e| e.since(t0) / std.time.ns_per_us else |_| 0;
     // The acceptance oracle (pane-sidebar-glide.ps1, T2417): a strip that
     // stays a strip moves through the glide rather than jumping.
     for (s.stripItems()) |sg| if (s.movingStrip(sg.id)) |m| {
@@ -11092,7 +11168,9 @@ fn stackSlideTick(self: *Window) void {
     // the desk paint go up in one commit (T2571).
     const batch = self.treeGlideBatch();
     self.layoutSplitsLive();
+    const flush_t = if (self.drag_perf_on and batch != null) std.time.Instant.now() catch null else null;
     if (batch) |h| h.flush() catch self.deskVisualFailed();
+    if (flush_t) |t0| flush_us = if (std.time.Instant.now()) |e| e.since(t0) / std.time.ns_per_us else |_| 0;
     if (self.glide_stall_due) {
         self.glide_stall_due = false;
         glideDebugStall();
@@ -13558,6 +13636,7 @@ fn startDividerDrag(self: *Window, handle: SplitTree(PaneView).Node.Handle, layo
     self.dragging_split = true;
     // T2448: the glide line covers this drag's glide, not a glide before it.
     self.glide_stats.reset();
+    self.glide_between_mark = .{};
     self.drag_layout_deferred = 0;
     self.drag_wm_paints = 0;
     self.drag_wm_paint_us = 0;

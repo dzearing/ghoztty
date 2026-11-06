@@ -492,26 +492,97 @@ pub const GlideStats = struct {
     /// cost summed over the glide.
     viewer_ticks: u64 = 0,
     viewer_us: u64 = 0,
+    /// The previous tick's shape, kept so the gap after it can be owned.
+    prev: ?Shape = null,
+    /// What filled the widest gap (T2455): the tick before it and what ran on
+    /// the UI thread between that tick's end and the next tick's start. The
+    /// glide line used to carry only means and maxima, so a late frame's cause
+    /// had to be inferred from which maximum looked big enough.
+    worst: Worst = .{},
+
+    /// One tick, as `record` is handed it.
+    pub const Shape = struct {
+        cost_us: u64 = 0,
+        /// What this tick's own viewer resizes cost, if it resized one.
+        viewer_us: ?u64 = null,
+        /// This tick composed the whole desk (a card count, size or style
+        /// change), not just the rects that moved.
+        desk_full: bool = false,
+        /// Where the tick's own time went, from its layout pass's timers.
+        parts: Parts = .{},
+    };
+
+    pub const Parts = struct {
+        step_us: u64 = 0,
+        layout_us: u64 = 0,
+        resize_us: u64 = 0,
+        waits: u32 = 0,
+        wait_us: u64 = 0,
+        place_us: u64 = 0,
+        paint_us: u64 = 0,
+        cards_us: u64 = 0,
+        overlay_us: u64 = 0,
+        flush_us: u64 = 0,
+    };
+
+    /// The UI thread's other work between two glide ticks.
+    pub const Between = struct {
+        paints: u32 = 0,
+        paint_us: u64 = 0,
+        motions: u32 = 0,
+        motion_us: u64 = 0,
+    };
+
+    pub const Worst = struct {
+        gap_us: u64 = 0,
+        before: Shape = .{},
+        between: Between = .{},
+
+        /// The part of the gap no measured work accounts for: the frame
+        /// clock waiting for a vblank, or something unmeasured.
+        pub fn idleUs(self: Worst) u64 {
+            return self.gap_us -| self.before.cost_us -| self.between.paint_us -| self.between.motion_us;
+        }
+
+        /// The one measured piece of the gap that is largest - what owns it.
+        pub fn owner(self: Worst) Owner {
+            if (self.gap_us == 0) return .none;
+            const t = self.before.cost_us;
+            const p = self.between.paint_us;
+            const m = self.between.motion_us;
+            if (t >= p and t >= m) {
+                if (self.before.viewer_us) |v| if (v * 2 >= t) return .tick_viewer;
+                return if (self.before.desk_full) .tick_full_desk else .tick;
+            }
+            return if (p >= m) .wm_paint else .motion;
+        }
+    };
+
+    pub const Owner = enum { none, tick, tick_full_desk, tick_viewer, wm_paint, motion };
 
     pub fn reset(self: *GlideStats) void {
         self.* = .{};
     }
 
-    /// One glide tick that cost `cost_us`, `gap_us` after the tick before it
-    /// (null for the first tick of a glide), against a display period of
-    /// `period_us`.
-    pub fn record(self: *GlideStats, cost_us: u64, gap_us: ?u64, period_us: u64, viewer_us: ?u64) void {
+    /// One glide tick, `gap_us` after the tick before it (null for the first
+    /// tick of a glide), against a display period of `period_us`, with what
+    /// ran between the two.
+    pub fn record(self: *GlideStats, shape: Shape, gap_us: ?u64, period_us: u64, between: Between) void {
+        defer self.prev = shape;
         self.ticks += 1;
-        self.total_us += cost_us;
-        if (cost_us > self.max_us) self.max_us = cost_us;
-        if (viewer_us) |v| {
+        self.total_us += shape.cost_us;
+        if (shape.cost_us > self.max_us) self.max_us = shape.cost_us;
+        if (shape.viewer_us) |v| {
             self.viewer_ticks += 1;
             self.viewer_us += v;
         }
         const g = gap_us orelse return;
         self.gaps += 1;
         self.gap_total_us += g;
-        if (g > self.max_gap_us) self.max_gap_us = g;
+        if (g > self.max_gap_us) {
+            self.max_gap_us = g;
+            self.worst = .{ .gap_us = g, .before = self.prev orelse .{}, .between = between };
+        }
         if (g > 2 * period_us) self.late += 1;
     }
 
@@ -542,9 +613,9 @@ pub const GlideStats = struct {
 
 test "a glide's gaps are measured between ticks, not from the first" {
     var g: GlideStats = .{};
-    g.record(2_000, null, 16_667, null);
-    g.record(4_000, 16_000, 16_667, 1_500);
-    g.record(3_000, 18_000, 16_667, null);
+    g.record(.{ .cost_us = 2_000 }, null, 16_667, .{});
+    g.record(.{ .cost_us = 4_000, .viewer_us = 1_500 }, 16_000, 16_667, .{});
+    g.record(.{ .cost_us = 3_000 }, 18_000, 16_667, .{});
     try testing.expectEqual(@as(u64, 3), g.ticks);
     try testing.expectEqual(@as(u64, 2), g.gaps);
     try testing.expectEqual(@as(u64, 17_000), g.meanGapUs());
@@ -559,13 +630,45 @@ test "a glide's gaps are measured between ticks, not from the first" {
 test "a gap past two periods is a late frame, and one makes the glide steppy" {
     // The user's window (T2448): glide ticks 60-100 ms apart at 60 Hz.
     var g: GlideStats = .{};
-    g.record(1_000, null, 16_667, null);
-    g.record(1_000, 33_000, 16_667, null);
+    g.record(.{ .cost_us = 1_000 }, null, 16_667, .{});
+    g.record(.{ .cost_us = 1_000 }, 33_000, 16_667, .{});
     try testing.expectEqual(Verdict.smooth, g.verdict());
-    g.record(1_000, 80_000, 16_667, null);
+    g.record(.{ .cost_us = 1_000 }, 80_000, 16_667, .{});
     try testing.expectEqual(@as(u64, 1), g.late);
     try testing.expectEqual(@as(u64, 80_000), g.max_gap_us);
     try testing.expectEqual(Verdict.steppy, g.verdict());
     g.reset();
     try testing.expectEqual(Verdict.no_data, g.verdict());
+    try testing.expectEqual(GlideStats.Owner.none, g.worst.owner());
+}
+
+test "T2455: the widest gap is owned by the tick before it, or by what ran between" {
+    // A full-desk tick that overran a period, then the clock's next vblank.
+    var g: GlideStats = .{};
+    g.record(.{ .cost_us = 3_000 }, null, 16_250, .{});
+    g.record(.{ .cost_us = 18_000, .desk_full = true }, 16_250, 16_250, .{});
+    g.record(.{ .cost_us = 3_000 }, 33_500, 16_250, .{ .paints = 1, .paint_us = 1_200 });
+    g.record(.{ .cost_us = 3_000 }, 20_000, 16_250, .{ .motions = 1, .motion_us = 9_000 });
+    try testing.expectEqual(@as(u64, 33_500), g.worst.gap_us);
+    try testing.expectEqual(@as(u64, 18_000), g.worst.before.cost_us);
+    try testing.expectEqual(GlideStats.Owner.tick_full_desk, g.worst.owner());
+    try testing.expectEqual(@as(u64, 33_500 - 18_000 - 1_200), g.worst.idleUs());
+
+    // A cheap tick, then a WM_PAINT that took the frame.
+    g.reset();
+    g.record(.{ .cost_us = 3_000 }, null, 16_250, .{});
+    g.record(.{ .cost_us = 3_000 }, 34_000, 16_250, .{ .paints = 1, .paint_us = 20_000, .motions = 2, .motion_us = 4_000 });
+    try testing.expectEqual(GlideStats.Owner.wm_paint, g.worst.owner());
+
+    // A tick that was mostly a viewer resize.
+    g.reset();
+    g.record(.{ .cost_us = 14_000, .viewer_us = 9_000 }, null, 16_250, .{});
+    g.record(.{ .cost_us = 3_000 }, 34_000, 16_250, .{ .motions = 1, .motion_us = 2_000 });
+    try testing.expectEqual(GlideStats.Owner.tick_viewer, g.worst.owner());
+
+    // Motion ticks between two glide ticks.
+    g.reset();
+    g.record(.{ .cost_us = 2_000 }, null, 16_250, .{});
+    g.record(.{ .cost_us = 2_000 }, 34_000, 16_250, .{ .motions = 2, .motion_us = 25_000 });
+    try testing.expectEqual(GlideStats.Owner.motion, g.worst.owner());
 }
