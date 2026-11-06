@@ -88,6 +88,20 @@ if ($ExePath) { $exe = $ExePath }
 # answering the shared pipe would let another run's windows into this one.
 $env:GHOZTTY_PIPE_SUFFIX = "-bntest$PID"
 
+# T2747: sections 1-12 measure the banner POPUP (GhozttyBannerOverlay) - its
+# rect, its own GDI pixels through PrintWindow, messages sent to its HWND. On
+# the composition present (GHOZTTY_COMP_PRESENT, T2514 makes it the default)
+# the card is a child visual of the pane and the popup stays hidden, so every
+# one of those probes reads "overlay not found" (measured 2026-11-06: 38 red,
+# each one a missing popup, none a wrong card). The popup is still a shipped
+# path - the fallback on any machine without GL/D3D interop (Mesa, WARP,
+# Remote Desktop) - so the body pins it explicitly, and section 13 runs the
+# same banner on the composition path, where the card's oracles are the
+# app's own log lines (no capture route reaches a composition visual off the
+# input desktop). comp-present.ps1 H/J/K cover that path's geometry, hover
+# and clicks.
+$env:GHOZTTY_COMP_PRESENT = '0'
+
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 # T782: byte-exact argv - the OSC 7778 one-liners below carry embedded quotes.
@@ -2144,6 +2158,95 @@ try {
     $json = (& $exe +list --json 2>$null | Out-String).Trim()
     Assert ($json -match '"success":true') '+list still responds'
     Assert (-not (Test-TestDesktopLeak -ProcessId $appPid)) 'GUI never became visible on the interactive desktop'
+
+    # --- 13. the same banner on the composition path (T2747) -------------------
+    # A fresh instance with the composition present explicitly on (explicit
+    # wins over the default either way, so this section means the same before
+    # and after T2514's flip). The card is a visual inside the pane: no popup
+    # may show, and its layout is read from the app's own lines - `banner
+    # strip ... natural=` is the card's height (logged on both paths, only
+    # when it changes), `banner paint h=` a frame rendered for it.
+    Stop-RepoInstances
+    $env:GHOZTTY_COMP_PRESENT = '1'
+    $vlog = Join-Path $env:TEMP 'ghoztty-pane-banner-visual-stderr.log'
+    Remove-Item $vlog -ErrorAction SilentlyContinue
+    $vapp = Start-OnTestDesktop -Exe $exe -StdErr $vlog -Arguments @('--background=#101014', '--session-persistence=false', '--macos-pane-glass=false')
+    $env:GHOZTTY_COMP_PRESENT = '0'
+    Start-Sleep -Seconds 3
+    $vPid = $vapp.Pid
+    & $exe +new-window --target=bv | Out-Null
+    $bvWin = $null
+    for ($t = 0; $t -lt 25 -and -not $bvWin; $t++) {
+        $bvWin = Get-Win 'bv'
+        if (-not $bvWin) { Start-Sleep -Milliseconds 200 }
+    }
+    # The app holds its stderr open for writing: read it shared.
+    $vText = {
+        if (-not (Test-Path $vlog)) { return '' }
+        $fs = [IO.File]::Open($vlog, 'Open', 'Read', 'ReadWrite')
+        try { return (New-Object IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
+    }
+    $vCount = { param($pat) [regex]::Matches((& $vText), $pat).Count }
+    if (-not $bvWin -or ((& $vText) -match 'composition present unavailable')) {
+        # A machine with no interop runs the popup path, which sections 1-12
+        # already measured; there is no composition path here to measure.
+        Note-Skip "13: no composition path on this machine (window=$([bool]$bvWin))"
+    } else {
+        # Set a banner and wait for the frame it produced; returns the card's
+        # natural height from the last strip line (the line is only written
+        # when the height changes, so an equal height keeps the previous one).
+        $vSet = {
+            param([string]$text)
+            $paints = & $vCount 'banner paint h='
+            # argv-audit: $text is this helper's parameter and every caller passes literal markdown (rows, a heading, a table - no quotes, no spaces at the ends).
+            & $exe +set-banner --target=bv $text | Out-Null
+            for ($t = 0; $t -lt 30; $t++) {
+                Start-Sleep -Milliseconds 150
+                if ((& $vCount 'banner paint h=') -gt $paints) { break }
+            }
+            Start-Sleep -Milliseconds 300
+            $m = [regex]::Matches((& $vText), 'banner strip hwnd=\d+ natural=(\d+) band=\d+') | Select-Object -Last 1
+            if ($m) { return [int]$m.Groups[1].Value }
+            return 0
+        }
+        $h1 = & $vSet 'one line'
+        $vis = @(Get-TestWindows -ProcessId $vPid -Class 'GhozttyBannerOverlay' | Where-Object Visible)
+        Assert ((& $vCount 'banner path visual=true') -ge 1) '13: the banner took the composition path (log: banner path visual=true)'
+        Assert ((& $vCount 'banner shown as visual w=\d+ h=\d+') -ge 1) '13: the card was rendered and shown as a visual (log)'
+        Assert ($vis.Count -eq 0) "13: no banner popup is visible on the composition path ($($vis.Count))"
+        $h3 = & $vSet 'line one\nline two\nline three'
+        Assert ($h3 -gt $h1 -and $h1 -gt 0) "13: a 3-line card is taller than a 1-line card ($h1 -> $h3 px)"
+        $h10 = & $vSet ((1..10 | ForEach-Object { "row $_" }) -join '\n')
+        $h12 = & $vSet ((1..12 | ForEach-Object { "row $_" }) -join '\n')
+        Assert ($h10 -gt $h3 -and $h12 -eq $h10) "13: a 12-line source is capped at the 10-line card ($h3 / $h10 / $h12 px)"
+        $hPlain = & $vSet 'plain line'
+        $hHead = & $vSet '# Heading line'
+        Assert ($hHead -gt $hPlain -and $hPlain -gt 0) "13: an h1 heading card is taller than a plain one ($hPlain -> $hHead px)"
+        $hTable = & $vSet '| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |'
+        Assert ($hTable -gt $hPlain -and $hTable -lt $h10) "13: a 4-line table renders as a multi-row card ($hPlain < $hTable < $h10 px)"
+        # A second pane: the unfocused one keeps its own card on the visual path.
+        $shownBefore = & $vCount 'banner shown as visual w=\d+ h=\d+'
+        & $exe +split --target=bv --name=bv2 --direction=down --focus | Out-Null
+        Start-Sleep -Milliseconds 800
+        & $exe +set-banner --target=bv2 'second pane card' | Out-Null
+        $two = $false
+        for ($t = 0; $t -lt 30 -and -not $two; $t++) {
+            Start-Sleep -Milliseconds 150
+            $two = (& $vCount 'banner shown as visual w=\d+ h=\d+') -gt $shownBefore
+        }
+        $bvSplit = Get-Win 'bv'
+        $vLeaves = if ($bvSplit) { @(Get-Leaves $bvSplit.tabs[0].splits) } else { @() }
+        $vBanners = @($vLeaves | Where-Object { $_.banner })
+        $vis = @(Get-TestWindows -ProcessId $vPid -Class 'GhozttyBannerOverlay' | Where-Object Visible)
+        Assert ($two -and $vBanners.Count -eq 2 -and $vis.Count -eq 0) `
+            "13: split - the new pane's card is a visual too and the unfocused pane keeps its banner (shown=$two banners=$($vBanners.Count) popups=$($vis.Count))"
+        & $exe +set-banner --target=bv2 --clear | Out-Null
+        $cleared = Wait-Banner 'bv' 1 'NONE'
+        Assert ($cleared -eq '(absent)') "13: --clear on the composition path removes the banner (got $cleared)"
+        $vErr = @((& $vText) -split "`n" | Where-Object { $_ -match 'panic|banner visual upload failed' })
+        Assert ($vErr.Count -eq 0) "13: no panic and no failed visual upload ($($vErr -join ' | '))"
+        Assert (-not ($vapp.Process -and $vapp.Process.HasExited)) '13: GUI process alive after the composition-path banners'
+    }
 } catch {
     # T1511: the foreground-leak check below is part of this run too, so this
     # try cannot END in `Complete-TestBody`. It SCORES its own throw instead -

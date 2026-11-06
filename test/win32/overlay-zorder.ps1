@@ -110,6 +110,15 @@ if ($ExePath) { $exe = $ExePath }
 # answering the shared pipe would let another run's windows into this one.
 $env:GHOZTTY_PIPE_SUFFIX = "-oztest$PID"
 
+# T2747: this harness's subject is POPUP z-order, and its probe is the banner
+# popup. On the composition present (GHOZTTY_COMP_PRESENT, the default once
+# T2514 flips it) the banner is a visual inside the pane - no popup exists,
+# so nothing of the banner's can float over another application and the
+# setup reads "no banner overlay". The popup is still shipped (the fallback
+# on a machine without GL/D3D interop), so pin it; comp-present.ps1 K2/K3
+# assert the composition path shows no banner popup at all.
+$env:GHOZTTY_COMP_PRESENT = '0'
+
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
 $script:pass = 0
