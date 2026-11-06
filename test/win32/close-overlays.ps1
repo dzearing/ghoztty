@@ -22,6 +22,16 @@
 #      tree; this pins that path so a refactor cannot regress it).
 #   5. +close the whole cw window (parked for undo, since the launch window is
 #      still open): both of its banners leave the screen at once.
+#   6. The composition path (T2748): a second launch with the panes presenting
+#      through their composition swap chains - the default once T2514 flips
+#      it. There the banner, dim wash, scrollbar and bell border are child
+#      visuals of the pane window's own composition target (T2467/T2491/
+#      T2559), not popups, so they cannot outlive the pane window on screen:
+#      what is asserted is that the three banners go up as visuals with no
+#      overlay popup anywhere, and that +close c2 / +close cw hide the pane
+#      windows that carry them by the time +close answers. Sections 1-5 pin
+#      GHOZTTY_COMP_PRESENT=0: they are the popup path, which still serves
+#      viewer panes, the opt-out and machines with no GL/D3D interop.
 #
 # -NegativeControl runs the section-2 oracle BEFORE the close, when c2's banner
 # is legitimately visible, so it MUST fail: the proof that the oracle can see a
@@ -128,7 +138,11 @@ $td = New-TestDesktop -Interactive:$Interactive
 try {
     # Persistence off: a blank layout every run. A long undo window, so a
     # banner that only goes away at expiry cannot pass by luck.
-    $app = Start-OnTestDesktop -Exe $exe -Arguments @('--session-persistence=false', '--undo-timeout=20s', '--macos-pane-glass=false')
+    # Sections 1-5 are the popup path; explicit, so the default flip (T2514)
+    # does not change what they mean.
+    $env:GHOZTTY_COMP_PRESENT = '0'
+    try { $app = Start-OnTestDesktop -Exe $exe -Arguments @('--session-persistence=false', '--undo-timeout=20s', '--macos-pane-glass=false') }
+    finally { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
     Start-Sleep -Seconds 3
     if ($app.Process -and $app.Process.HasExited) { Write-Host 'SETUP FAIL: GUI died at launch'; exit 1 }
     $appPid = $app.Pid
@@ -231,6 +245,81 @@ try {
 
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'GUI process alive after all scenarios'
     Assert (-not (Test-TestDesktopLeak -ProcessId $appPid)) 'GUI never became visible on the interactive desktop'
+
+    if (-not $NegativeControl) {
+        # --- 6. the composition path: the overlays are the pane's visuals ----
+        Stop-RepoInstances
+        $log6 = Join-Path $env:TEMP "ghoztty-close-overlays-comp-$PID.log"
+        Remove-Item $log6 -ErrorAction SilentlyContinue
+        $env:GHOZTTY_COMP_PRESENT = '1'
+        try { $app = Start-OnTestDesktop -Exe $exe -StdErr $log6 -Arguments @('--session-persistence=false', '--undo-timeout=20s', '--macos-pane-glass=false') }
+        finally { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
+        Start-Sleep -Seconds 3
+        $appPid = $app.Pid
+        if ((Wait-TestWindow -ProcessId $appPid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) { throw 'comp setup: no GhozttyWindow' }
+        & $exe +new-window --target=cw | Out-Null
+        $cw = $null
+        for ($t = 0; $t -lt 25 -and -not $cw; $t++) { $cw = Get-Win 'cw'; if (-not $cw) { Start-Sleep -Milliseconds 200 } }
+        if (-not $cw) { throw 'comp setup: cw window not registered' }
+        foreach ($w in @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyWindow')) {
+            $dpi = Get-TestWindowDpi -Window ([IntPtr]$w.Hwnd)
+            $scale = if ($dpi -gt 0) { $dpi / 96.0 } else { 1.0 }
+            [void](Set-TestWindowSize -Window ([IntPtr]$w.Hwnd) -Width ([int][math]::Round(1300 * $scale, [MidpointRounding]::AwayFromZero)) -Height ([int][math]::Round(700 * $scale, [MidpointRounding]::AwayFromZero)))
+        }
+        & $exe +split --target=cw --direction=right --name=c2 | Out-Null
+        & $exe +split --target=c2 --direction=right --name=c3 | Out-Null
+        & $exe +set-banner --target=cw 'left pane' | Out-Null
+        & $exe +set-banner --target=c2 "c2 pane\nsecond line\nthird line" | Out-Null
+        & $exe +set-banner --target=c3 "c3 pane\nsecond line" | Out-Null
+        $three = Wait-Until { @(Get-Content $log6 -ErrorAction SilentlyContinue | Where-Object { $_ -match 'banner shown as visual' }).Count -ge 3 } 8000
+        Assert ([bool](Select-String -Path $log6 -Pattern 'pane presents through a composition swap chain' -Quiet)) 'comp: the panes present through the composition chain (log)'
+        Assert $three "comp: the three banners went up as visuals (log)"
+        # Every overlay is a visual here except the unfocused panes' dim wash:
+        # over a banner pane it stays the popup on this path too (it has to
+        # cover the band - comp-present.ps1 F4), so section 2's rule still
+        # applies to it and is asserted for c2's below.
+        $pop = @(@(Get-OverlayPopups $appPid) | Where-Object { $_.Visible -and $_.Class -ne 'GhozttyDimOverlay' })
+        Assert ($pop.Count -eq 0) "comp: no overlay popup but the banner panes' dim washes is on screen ($(($pop | ForEach-Object { $_.Class }) -join ','))"
+        # cw is the top-level holding three panes. Which one is c2 comes from
+        # the split tree's left-to-right leaf order, never from a position
+        # guess (the tree is not always cw|c2|c3 - see T2753).
+        $cwTop = $null; $panes = @()
+        foreach ($w in @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyWindow')) {
+            $kids = @(Get-TestChildWindows -Window ([IntPtr]$w.Hwnd) -Class 'GhozttyTerminal' | Where-Object Visible | Sort-Object Left)
+            if ($kids.Count -eq 3) { $cwTop = [IntPtr]$w.Hwnd; $panes = $kids }
+        }
+        $script:leafNames = @()
+        function Add-Leaves($node) {
+            if ($null -eq $node) { return }
+            if ($node.type -eq 'leaf') { $script:leafNames += $node.terminal.name; return }
+            Add-Leaves $node.left; Add-Leaves $node.right
+        }
+        $cwNow = Get-Win 'cw'
+        if ($cwNow) { Add-Leaves $cwNow.tabs[0].splits }
+        $c2i = [array]::IndexOf([string[]]$script:leafNames, 'c2')
+        Assert ($null -ne $cwTop -and $script:leafNames.Count -eq 3 -and $c2i -ge 0) "comp: setup: cw shows three panes side by side, c2 among them (leaves: $($script:leafNames -join ','))"
+        if ($null -ne $cwTop -and $script:leafNames.Count -eq 3 -and $c2i -ge 0) {
+            $c2 = $panes[$c2i]
+            $c2h = [int64]$c2.Hwnd
+            $c2Dims = @(@(Get-OverlayPopups $appPid) | Where-Object {
+                $_.Visible -and $_.Class -eq 'GhozttyDimOverlay' -and ((($_.Left + $_.Right) / 2) -ge $c2.Left) -and ((($_.Left + $_.Right) / 2) -lt $c2.Right) })
+            $paneVisible = { param($h) @(Get-TestChildWindows -Window $cwTop -Class 'GhozttyTerminal' | Where-Object { $_.Hwnd -eq $h -and $_.Visible }).Count -gt 0 }
+            & $exe +close --target=c2 | Out-Null
+            Assert (-not (& $paneVisible $c2h)) "comp: c2's pane window - its banner, scrollbar and bell visuals with it - is hidden by the time +close answered"
+            $stillDim = @($c2Dims | Where-Object { Test-HwndVisible $appPid $_.Hwnd })
+            Assert ($stillDim.Count -eq 0) "comp: c2's dim wash popup is hidden by then too ($($c2Dims.Count) before, $($stillDim.Count) still visible)"
+            Start-Sleep -Milliseconds 1000
+            Assert (-not (& $paneVisible $c2h)) 'comp: and still hidden 1 s later'
+            $stillDim = @($c2Dims | Where-Object { Test-HwndVisible $appPid $_.Hwnd })
+            $pop = @(@(Get-OverlayPopups $appPid) | Where-Object { $_.Visible -and $_.Class -ne 'GhozttyDimOverlay' })
+            Assert ($stillDim.Count -eq 0 -and $pop.Count -eq 0) "comp: c2's wash stayed hidden and no other overlay popup appeared over the gap ($(($pop | ForEach-Object { $_.Class }) -join ','))"
+            & $exe +close --target=cw | Out-Null
+            $goneW = Wait-Until { @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyWindow' | Where-Object { [int64]$_.Hwnd -eq $cwTop.ToInt64() }).Count -eq 0 } 300
+            Assert $goneW 'comp: +close the cw window: the window carrying the other two banners leaves the screen at once'
+        }
+        Assert (-not ($app.Process -and $app.Process.HasExited)) 'comp: GUI process alive'
+        Remove-Item $log6 -ErrorAction SilentlyContinue
+    }
 } catch {
     $script:fail++
     Write-Host "FAIL  the run terminated: $($_.Exception.Message)" -ForegroundColor Red

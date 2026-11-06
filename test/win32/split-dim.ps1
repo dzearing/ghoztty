@@ -17,6 +17,16 @@
 #   run 3 (opacity=0.5,      alpha 128, and the overlay paints #ff0000.
 #          fill=#ff0000,
 #          background=#000)
+#   run 4 (composition path, T2748): with the panes presenting through their
+#          composition swap chain - the default once T2514 flips it - the wash
+#          is a child visual of the unfocused pane, not the popup. Read from
+#          the log, whose lines name the pane window: the unfocused pane alone
+#          carries it at alpha 77, no GhozttyDimOverlay popup is visible, a
+#          focus flip moves it to the other pane, zoom takes it down and unzoom
+#          puts it back. Runs 1-3 pin GHOZTTY_COMP_PRESENT=0: they are the
+#          popup path, which still serves viewer panes, banner panes, the
+#          opt-out and machines with no GL/D3D interop. The visual's own rect
+#          and fill are comp-present.ps1's F and J.
 #
 # T225: runs on the BACKGROUND test desktop (lib\TestDesktop.ps1), so it never
 # steals the user's foreground - asserted here, not assumed.
@@ -178,9 +188,13 @@ function Get-OverlayFill($overlay) {
     return $null
 }
 
-function Start-Gui([string]$label, [string[]]$extraArgs, [bool]$control) {
+# $Comp: GHOZTTY_COMP_PRESENT for the launch - '0' the popup path (runs 1-3),
+# '1' the composition path (run 4); explicit both ways, so the default flip
+# (T2514) changes no run's meaning. $Log: a stderr log for this launch.
+function Start-Gui([string]$label, [string[]]$extraArgs, [bool]$control, [string]$Comp = '0', [string]$Log = '') {
     Stop-RepoInstances
     if ($control) { Remove-Item $errlog -ErrorAction SilentlyContinue }
+    if ($Log) { Remove-Item $Log -ErrorAction SilentlyContinue }
     # --session-persistence=false is mandatory, not optional: this script
     # launches a GUI per section, and each launch WRITES a session-layout
     # manifest that the NEXT launch would restore - so section 2 came up with
@@ -191,7 +205,10 @@ function Start-Gui([string]$label, [string[]]$extraArgs, [bool]$control) {
     # under it (T2086), asserted by pane-elevation.ps1's glass-dim run.
     $sp = @{ Exe = $exe; Arguments = (@('--session-persistence=false', '--macos-pane-glass=false') + $extraArgs) }
     if (-not $ExePath -and $control) { $sp.StdErr = $errlog }
-    $app = Start-OnTestDesktop @sp
+    if ($Log) { $sp.StdErr = $Log }
+    $env:GHOZTTY_COMP_PRESENT = $Comp
+    try { $app = Start-OnTestDesktop @sp }
+    finally { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
     Start-Sleep -Seconds 3
     if ($app.Process -and $app.Process.HasExited) { Write-Host "SETUP FAIL ($label): GUI died at launch"; exit 1 }
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
@@ -208,6 +225,32 @@ function Start-Gui([string]$label, [string[]]$extraArgs, [bool]$control) {
     Assert ($panes.Count -eq 2 -and @($panes | Where-Object Visible).Count -eq 2) "$label setup: 2 visible panes"
     if ($panes.Count -ne 2) { Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue; exit 1 }
     [pscustomobject]@{ App = $app; Top = $top; Panes = $panes }
+}
+
+# The composition path's washes (run 4), from the log: the pane windows whose
+# wash is up as a visual. A 'shown' line adds its pane, a 'hidden' line or a
+# move back to the popup path removes it.
+$errlog4 = Join-Path $env:TEMP 'ghoztty-split-dim-comp-stderr.log'
+function Get-VisualDims([string]$Log) {
+    $set = @{}
+    foreach ($l in @(Get-Content $Log -ErrorAction SilentlyContinue)) {
+        if ($l -match 'dim overlay shown as visual alpha=(?<a>\d+) pane=(?<p>\d+)') { $set[$Matches.p] = [int]$Matches.a }
+        elseif ($l -match 'dim overlay (hidden visual=true|path visual=false) pane=(?<p>\d+)') { $set.Remove($Matches.p) }
+    }
+    return $set
+}
+# Poll until the only visual wash is on $pane (T48 defers focus). $null pane:
+# until there is none.
+function Wait-VisualDim([string]$Log, $pane) {
+    $want = if ($pane) { [string][int64]$pane.Hwnd } else { $null }
+    for ($t = 0; $t -lt 30; $t++) {
+        $set = Get-VisualDims $Log
+        if ($want -and $set.Count -eq 1 -and $set.ContainsKey($want)) { return $set }
+        if (-not $want -and $set.Count -eq 0) { return $set }
+        Start-Sleep -Milliseconds 100
+    }
+    Write-Host "DEBUG visual dims: $(($set.Keys | ForEach-Object { "$_=$($set[$_])" }) -join ' ') want $want"
+    return $set
 }
 
 Stop-RepoInstances
@@ -322,6 +365,44 @@ try {
         Assert-Fill $fill $want "custom: overlay paints the configured fill #ff0000"
     }
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'custom: no crash'
+    Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
+
+    # -----------------------------------------------------------------------
+    # Run 4: the composition path (T2748) - the wash is the unfocused pane's
+    # child visual. Same chords as run 1, read from the log.
+    # -----------------------------------------------------------------------
+    $g = Start-Gui 'comp' @('--background=#101014') $false '1' $errlog4
+    $app = $g.App; $top = $g.Top
+    $launched += $script:GhozttyTestDesktopPids
+    $A = $g.Panes | Sort-Object Top | Select-Object -First 1
+    $B = $g.Panes | Sort-Object Top | Select-Object -Last 1
+    Assert ([bool](Select-String -Path $errlog4 -Pattern 'pane presents through a composition swap chain' -Quiet)) `
+        'comp: setup: the panes present through the composition chain (log)'
+    # Run 1's opening chord, for the same reason: a key into B is what focuses
+    # it on the test desktop, so A is the unfocused pane from here on.
+    $r = Send-TestKeys -Window $top -Target ([IntPtr]$B.Hwnd) -Modifiers ctrl -Key K
+    Assert $r "comp: focusing chord into pane B delivered"
+    $set = Wait-VisualDim $errlog4 $A
+    $aKey = [string][int64]$A.Hwnd
+    Assert ($set.Count -eq 1 -and $set.ContainsKey($aKey)) "comp: the unfocused (top) pane alone carries the wash as a visual ($($set.Count))"
+    Assert ($set[$aKey] -eq 77) "comp: the visual's alpha is 77 = (1-0.7)*255 (got $($set[$aKey]))"
+    $popups = @(Get-Overlays $app.Pid | Where-Object Visible)
+    Assert ($popups.Count -eq 0) "comp: no dim popup is visible ($($popups.Count))"
+    $r = Send-TestKeys -Window $top -Target ([IntPtr]$B.Hwnd) -Modifiers ctrl,alt -Key Up
+    Assert $r "comp: goto-up chord delivered"
+    $set = Wait-VisualDim $errlog4 $B
+    Assert ($set.Count -eq 1 -and $set.ContainsKey([string][int64]$B.Hwnd)) 'comp: focus flip moved the visual wash to pane B'
+    $r = Send-TestKeys -Window $top -Target ([IntPtr]$A.Hwnd) -Modifiers ctrl,shift -Key Enter
+    Assert $r "comp: zoom chord delivered"
+    $set = Wait-VisualDim $errlog4 $null
+    Assert ($set.Count -eq 0) "comp: zoomed -> no visual wash ($($set.Count))"
+    $r = Send-TestKeys -Window $top -Target ([IntPtr]$A.Hwnd) -Modifiers ctrl,shift -Key Enter
+    Assert $r "comp: unzoom chord delivered"
+    $set = Wait-VisualDim $errlog4 $B
+    Assert ($set.Count -eq 1 -and $set.ContainsKey([string][int64]$B.Hwnd)) 'comp: unzoom restored the visual wash on pane B'
+    $popups = @(Get-Overlays $app.Pid | Where-Object Visible)
+    Assert ($popups.Count -eq 0) "comp: still no dim popup after the flips ($($popups.Count))"
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'comp: no crash'
     Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
 } finally {
     Remove-TestDesktop

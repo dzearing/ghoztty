@@ -204,7 +204,7 @@ pub const DimOverlay = struct {
                 self.shown = false;
             }
             self.on_visual = want_visual;
-            log.info("dim overlay path visual={}", .{want_visual});
+            log.info("dim overlay path visual={} pane={d}", .{ want_visual, @intFromPtr(self.owner) });
         }
         if (want_visual) return self.showVisual(color, alpha);
 
@@ -398,7 +398,7 @@ pub const DimOverlay = struct {
             self.layer.setVisible(true);
             self.shown = true;
             changed = true;
-            log.info("dim overlay shown as visual alpha={d}", .{alpha});
+            log.info("dim overlay shown as visual alpha={d} pane={d}", .{ alpha, @intFromPtr(self.owner) });
         }
         return changed;
     }
@@ -491,7 +491,7 @@ pub const DimOverlay = struct {
             FrameClock.disarm(self.hwnd, LAB_HOLD_TIMER_ID);
         }
         if (self.on_visual) {
-            if (self.shown) log.info("dim overlay hidden visual=true", .{});
+            if (self.shown) log.info("dim overlay hidden visual=true pane={d}", .{@intFromPtr(self.owner)});
             self.layer.setVisible(false);
         } else _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
         self.shown = false;

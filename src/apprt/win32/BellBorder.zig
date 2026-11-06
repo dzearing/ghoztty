@@ -250,7 +250,7 @@ pub const BellBorder = struct {
             self.layer.setOpacity(self.alpha);
             self.layer.setVisible(true);
             self.shown = true;
-            log.info("bell border shown as visual px={d} size={d}x{d} top={d}", .{ width_px, w, h, rect.top });
+            log.info("bell border shown as visual px={d} size={d}x{d} top={d} pane={d}", .{ width_px, w, h, rect.top, @intFromPtr(self.owner) });
             if (self.fading and self.fade_on_compositor) self.redeclareFade();
         }
         if (self.fade_to != 255) self.startFade(255);
@@ -313,7 +313,7 @@ pub const BellBorder = struct {
         if (!self.shown) return;
         if (self.on_visual) self.layer.setVisible(false) else _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
         self.shown = false;
-        log.info("bell border hidden visual={}", .{self.on_visual});
+        log.info("bell border hidden visual={} pane={d}", .{ self.on_visual, @intFromPtr(self.owner) });
     }
 
     fn startFade(self: *BellBorder, to: u8) void {

@@ -10,6 +10,15 @@
 #      its popup goes away.
 #   4. Without the feature (a second launch, `bell-features = no-border`) a BEL
 #      makes no frame at all.
+#   5. The composition path (T2748): with the pane presenting through its
+#      composition swap chain - the default once T2514 flips it - the frame is
+#      a child visual of the pane instead of the popup. A BEL in the unfocused
+#      right pane puts it up on THAT pane (the log line names the pane window)
+#      at the same stroke, with no popup; the fade-in runs on the compositor; a
+#      window resize and move re-show nothing (the visual rides the pane); a
+#      key in the pane hides it. Sections 1-4 pin GHOZTTY_COMP_PRESENT=0: they
+#      are the popup path, which still serves the opt-out and machines with no
+#      GL/D3D interop. comp-present.ps1 E/J cover the visual's fade and rect.
 #
 # CAPTURE LIMIT, named rather than quietly dropped: the frame paints through
 # UpdateLayeredWindow and never services WM_PAINT, so PrintWindow (what
@@ -77,13 +86,19 @@ function Ring([int]$From, [string]$Target, [string]$Pattern) {
     return $null
 }
 
-function Start-App([string]$Features, [string]$Log) {
+# $Comp: GHOZTTY_COMP_PRESENT for this launch - '0' is the popup path
+# (sections 1-4), '1' the composition path (section 5). Explicit both ways, so
+# the default flip (T2514) changes neither arm's meaning.
+function Start-App([string]$Features, [string]$Log, [string]$Comp = '0') {
     $script:errlog = $Log
-    $app = Start-OnTestDesktop -Exe $Exe -StdErr $Log -Arguments @(
-        '--session-persistence=false',
-        '--command=powershell.exe -NoLogo',
-        "--bell-features=$Features"
-    )
+    $env:GHOZTTY_COMP_PRESENT = $Comp
+    try {
+        $app = Start-OnTestDesktop -Exe $Exe -StdErr $Log -Arguments @(
+            '--session-persistence=false',
+            '--command=powershell.exe -NoLogo',
+            "--bell-features=$Features"
+        )
+    } finally { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
     Start-Sleep -Seconds 3
     return $app
 }
@@ -206,11 +221,63 @@ try {
     Assert "no frame was shown (log)" ($null -eq (Wait-Log 0 'bell border shown' 100))
     Assert "no frame window exists" (@(Get-Borders $app2.Pid).Count -eq 0)
     Assert "no crash (second app)" (-not ($app2.Process -and $app2.Process.HasExited))
+    $launched += $script:GhozttyTestDesktopPids
+
+    "== 5: on the composition path the frame is the rung pane's child visual (T2748)"
+    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
+    $f5 = if ($NegativeControl) { 'no-border,title' } else { 'border,title' }
+    $app3 = Start-App $f5 (Join-Path $tmp 'app3-stderr.log') '1'
+    $top3 = Wait-TestWindow -ProcessId $app3.Pid -Class 'GhozttyWindow'
+    if ($top3 -eq [IntPtr]::Zero) { "  SETUP FAIL: third top window not found"; $script:failures++; return }
+    Assert "setup: +split s1 exit 0 ($(Get-CliErr))" ((Invoke-Cli "+split --direction=right --name=s1 --shell=powershell") -eq 0)
+    Start-Sleep -Milliseconds 1500
+    $panes3 = @(Get-Panes $top3)
+    Assert "setup: two visible panes" ($panes3.Count -eq 2)
+    Assert "setup: the panes present through the composition chain (log)" `
+        ($null -ne (Wait-Log 0 'pane presents through a composition swap chain' 3000))
+    $mark = Get-LogCount
+    $vis = Ring $mark 's1' 'bell border shown as visual px=(\d+)'
+    "  $vis"
+    Assert "the app showed the frame as a visual (log)" ($null -ne $vis)
+    $vpx = if ($vis -match 'px=(\d+)') { [int]$Matches[1] } else { -1 }
+    $dpi3 = Get-TestWindowDpi -Window $top3
+    $want3 = [Math]::Max(1, [int][Math]::Round(3 * $dpi3 / 96.0, [MidpointRounding]::AwayFromZero))
+    Assert "the visual's stroke is Mac's 3pt at $dpi3 dpi: $want3 px (got $vpx)" ($vpx -eq $want3)
+    $vPane = if ($vis -match 'pane=(\d+)') { [int64]$Matches[1] } else { -1 }
+    $right3 = if ($panes3.Count -eq 2) { [int64]$panes3[1].Hwnd } else { -2 }
+    $left3 = if ($panes3.Count -ge 1) { [int64]$panes3[0].Hwnd } else { -2 }
+    "  visual on pane $vPane; right pane $right3, left pane $left3"
+    Assert "the visual is on the right pane's window, not the left's" ($vPane -eq $right3 -and $vPane -ne $left3)
+    Assert "no bell border popup is visible" (@(Get-Borders $app3.Pid | Where-Object Visible).Count -eq 0)
+    $vfade = Wait-Log $mark 'bell border fade done alpha=255' 2000
+    Assert "the visual's fade-in ran on the compositor (log)" `
+        ($null -ne $vfade -and $vfade -match 'compositor=true ui_steps=0')
+    $wr = Get-TestWindowRect -Window $top3
+    [void](Set-TestWindowSize -Window $top3 -Width ($wr.Width + 120) -Height ($wr.Height + 60))
+    Start-Sleep -Milliseconds 700
+    $wr = Get-TestWindowRect -Window $top3
+    [void](Set-TestWindowPos -Window $top3 -X ($wr.Left + 70) -Y ($wr.Top + 40))
+    Start-Sleep -Milliseconds 700
+    $reshown = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $mark |
+        Where-Object { $_ -match 'bell border shown' }).Count
+    Assert "a resize and a move re-showed nothing and raised no popup ($reshown shown line(s))" `
+        ($reshown -eq 1 -and @(Get-Borders $app3.Pid | Where-Object Visible).Count -eq 0)
+    $mark = Get-LogCount
+    $pane3 = @(Get-Panes $top3)[1]
+    [void](Send-TestControlKey -Control ([IntPtr]$pane3.Hwnd) -Key 'Right')
+    $vhid = Wait-Log $mark 'bell border hidden visual=true' 3000
+    "  $vhid"
+    Assert "a key in the rung pane hid the visual, on that pane (log)" `
+        ($null -ne $vhid -and $vhid -match "pane=$right3(\D|$)")
+    Assert "no crash (composition app)" (-not ($app3.Process -and $app3.Process.HasExited))
 
     if ($script:failures -gt 0) {
         "  -- app log, bell lines --"
-        Get-Content (Join-Path $tmp 'app-stderr.log') -ErrorAction SilentlyContinue |
-            Where-Object { $_ -match 'bell' } | Select-Object -Last 20 | ForEach-Object { "  | $_" }
+        foreach ($l in 'app-stderr.log', 'app3-stderr.log') {
+            "  -- $l --"
+            Get-Content (Join-Path $tmp $l) -ErrorAction SilentlyContinue |
+                Where-Object { $_ -match 'bell|composition' } | Select-Object -Last 20 | ForEach-Object { "  | $_" }
+        }
     }
     $launched += $script:GhozttyTestDesktopPids
     $script:reachedEnd = $true

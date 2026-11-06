@@ -25,6 +25,16 @@
 #      happens if the viewer became the active pane through GotFocus.
 #   3. Resize: still nothing over the viewer; the terminal overlay re-glues.
 #   4. Zoom/unzoom and 5. a tab switch: nothing over the viewer, ever.
+#   6. The composition path (T2748): a second launch with the terminal
+#      presenting through its composition swap chain - the default once T2514
+#      flips it - where the terminal's wash is its child visual, not the popup
+#      (a viewer has no composition tree, so it would be the popup if it ever
+#      dimmed). Read from the log, whose lines name the pane window: viewer
+#      focused, goto_split into the viewer and focus straight into the page
+#      each put the wash up on the TERMINAL, focusing the terminal takes it
+#      down, and no dim popup ever appears. Steps 1-5 pin
+#      GHOZTTY_COMP_PRESENT=0: they are the popup path, which still serves the
+#      opt-out and machines with no GL/D3D interop.
 #
 # Oracles are window enumeration (rects, visibility) plus, for the terminal
 # overlay, GetLayeredWindowAttributes and the overlay's own painted fill - see
@@ -167,6 +177,40 @@ function Get-OverlayFill($overlay) {
     return $null
 }
 
+# The composition path's washes (step 6), from the log: the pane windows whose
+# wash is up as a visual (split-dim.ps1 run 4's reader).
+$errlog6 = Join-Path $env:TEMP 'ghoztty-split-dim-viewer-comp-stderr.log'
+function Get-VisualDims([string]$Log) {
+    $set = @{}
+    foreach ($l in @(Get-Content $Log -ErrorAction SilentlyContinue)) {
+        if ($l -match 'dim overlay shown as visual alpha=(?<a>\d+) pane=(?<p>\d+)') { $set[$Matches.p] = [int]$Matches.a }
+        elseif ($l -match 'dim overlay (hidden visual=true|path visual=false) pane=(?<p>\d+)') { $set.Remove($Matches.p) }
+    }
+    return $set
+}
+# Poll until the only visual wash is on $paneHwnd; [IntPtr]::Zero: none.
+function Wait-VisualDim([string]$Log, [IntPtr]$paneHwnd) {
+    $want = if ($paneHwnd -ne [IntPtr]::Zero) { [string]$paneHwnd.ToInt64() } else { $null }
+    for ($t = 0; $t -lt 30; $t++) {
+        $set = Get-VisualDims $Log
+        if ($want -and $set.Count -eq 1 -and $set.ContainsKey($want)) { return $set }
+        if (-not $want -and $set.Count -eq 0) { return $set }
+        Start-Sleep -Milliseconds 100
+    }
+    Write-Host "DEBUG visual dims: $(($set.Keys | ForEach-Object { "$_=$($set[$_])" }) -join ' ') want $want"
+    return $set
+}
+function Find-ChromeInput([IntPtr]$viewHwnd) {
+    for ($t = 0; $t -lt 50; $t++) {
+        $kids = @(Get-TestChildWindows -Window $viewHwnd -Class '*')
+        $widget = @($kids | Where-Object { $_.Class -eq 'Chrome_RenderWidgetHostHWND' })
+        if ($widget.Count -lt 1) { $widget = @($kids | Where-Object { $_.Class -eq 'Chrome_WidgetWin_1' }) }
+        if ($widget.Count -ge 1) { return [IntPtr][int64]$widget[0].Hwnd }
+        Start-Sleep -Milliseconds 200
+    }
+    return [IntPtr]::Zero
+}
+
 Stop-RepoInstances
 
 # Watch the user's desktop for the whole run: nothing we launch may ever take
@@ -189,7 +233,11 @@ try {
     # Solid panes (T2086): a glass pane's wash is the desk, not this fill.
     $sp = @{ Exe = $exe; Arguments = @('--session-persistence=false', '--macos-pane-glass=false', '--background=#101014') }
     if (-not $ExePath) { $sp.StdErr = $errlog }
-    $app = Start-OnTestDesktop @sp
+    # Steps 1-5 are the popup path; explicit, so the default flip (T2514)
+    # does not change what they mean.
+    $env:GHOZTTY_COMP_PRESENT = '0'
+    try { $app = Start-OnTestDesktop @sp }
+    finally { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
     Start-Sleep -Seconds 3
     if ($app.Process -and $app.Process.HasExited) { Write-Host 'SETUP FAIL: GUI died at launch'; exit 1 }
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
@@ -369,6 +417,64 @@ try {
     }
 
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash'
+    Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
+
+    # -----------------------------------------------------------------------
+    # 6. The composition path (T2748): the terminal's wash is its child
+    #    visual. Same focus moves as steps 1, 2, 2b and 2c, read from the log.
+    # -----------------------------------------------------------------------
+    Stop-RepoInstances
+    Remove-Item $errlog6 -ErrorAction SilentlyContinue
+    $sp6 = @{ Exe = $exe; StdErr = $errlog6
+        Arguments = @('--session-persistence=false', '--macos-pane-glass=false', '--background=#101014') }
+    $env:GHOZTTY_COMP_PRESENT = '1'
+    try { $app = Start-OnTestDesktop @sp6 }
+    finally { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
+    Start-Sleep -Seconds 3
+    $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
+    $launched += $script:GhozttyTestDesktopPids
+    if ($top -eq [IntPtr]::Zero) { Assert $false 'comp: setup: top window found' }
+    else {
+    & $exe +split --direction=down "--view=$md" --focus | Out-Null
+    Start-Sleep -Milliseconds 800
+    $terms = @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal')
+    $views = @(Get-TestChildWindows -Window $top -Class 'GhozttyViewer')
+    Assert ($terms.Count -eq 1 -and $views.Count -eq 1) "comp: setup: one terminal + one viewer pane (got $($terms.Count)/$($views.Count))"
+    if ($terms.Count -eq 1 -and $views.Count -eq 1) {
+        $termH = [IntPtr]$terms[0].Hwnd; $viewH = [IntPtr]$views[0].Hwnd
+        $tKey = [string]$termH.ToInt64()
+        Assert ([bool](Select-String -Path $errlog6 -Pattern 'pane presents through a composition swap chain' -Quiet)) `
+            'comp: setup: the terminal presents through the composition chain (log)'
+        $set = Wait-VisualDim $errlog6 $termH
+        Assert ($set.Count -eq 1 -and $set.ContainsKey($tKey)) "comp: viewer focused: the terminal alone carries the wash as a visual ($($set.Count))"
+        Assert ($set[$tKey] -eq 77) "comp: the visual's alpha is 77 (got $($set[$tKey]))"
+        Assert (@(Get-Overlays $app.Pid | Where-Object Visible).Count -eq 0) 'comp: viewer focused: no dim popup is visible'
+        $r = Send-TestKeys -Window $top -Target $termH -Modifiers ctrl -Key K
+        Assert $r 'comp: focusing chord into the terminal delivered'
+        $set = Wait-VisualDim $errlog6 ([IntPtr]::Zero)
+        Assert ($set.Count -eq 0) "comp: terminal focused: no wash anywhere ($($set.Count))"
+        $r = Send-TestKeys -Window $top -Target $termH -Modifiers ctrl,alt -Key Down
+        Assert $r 'comp: goto-down chord delivered'
+        $set = Wait-VisualDim $errlog6 $termH
+        Assert ($set.Count -eq 1 -and $set.ContainsKey($tKey)) 'comp: goto_split into the viewer: the terminal dims (visual)'
+        $tr = Get-TestWindowRect -Window $termH
+        $cx = [int](($tr.Left + $tr.Right) / 2); $cy = [int](($tr.Top + $tr.Bottom) / 2)
+        [void](Send-TestMouse -Window $top -Target $termH -X $cx -Y $cy)
+        $set = Wait-VisualDim $errlog6 ([IntPtr]::Zero)
+        Assert ($set.Count -eq 0) "comp: terminal clicked: no wash anywhere ($($set.Count))"
+        $chrome = Find-ChromeInput $viewH
+        Assert ($chrome -ne [IntPtr]::Zero) 'comp: the viewer Chromium input window is up'
+        if ($chrome -ne [IntPtr]::Zero) {
+            $vr = Get-TestWindowRect -Window $viewH
+            [void](Send-TestMouse -Window $top -Target $chrome -X ([int](($vr.Left + $vr.Right) / 2)) -Y ([int](($vr.Top + $vr.Bottom) / 2)))
+            $set = Wait-VisualDim $errlog6 $termH
+            Assert ($set.Count -eq 1 -and $set.ContainsKey($tKey)) 'comp: focus straight into the page: the terminal dims (visual, GotFocus)'
+        }
+        $all = @(Get-Overlays $app.Pid | Where-Object Visible)
+        Assert ($all.Count -eq 0) "comp: no dim popup was ever needed - none visible at the end ($($all.Count))"
+    }
+    }
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'comp: no crash'
     Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
 } finally {
     Remove-TestDesktop
