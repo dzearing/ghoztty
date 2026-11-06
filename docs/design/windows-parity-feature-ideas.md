@@ -644,3 +644,12 @@ as the digest that showed them.
 - Settings understands plain words (search "bigger text", "see-through", "stop beeping" finds the right setting)
 - A copy that fails says so (clipboard held by another app: retry briefly, then name the holder instead of silently copying nothing)
 - Moving a pane keeps everything it carries (program, scrollback, banner, zoom and session identity survive a cross-window move; the drop card warns if not)
+
+## 2026-11-06
+
+- Click a past command to run it again (click an earlier prompt line in scrollback; the command lands at the current prompt to edit or run)
+- Talk to your agent (Windows voice typing, Win+H, types into the pane with a listening chip on the pane)
+- Bring back what Clear wiped (cls / Ctrl+L keeps the cleared screen in scrollback behind a "cleared at" line)
+- A chime when the agent is done (optional sound when a busy pane finishes or asks a question, via Windows sound settings)
+- Save a pane's output to a file (right-click Save output: whole scrollback or the last command's output to a text file)
+- Smooth for the people watching your screen share (animations paced to what a Teams/Zoom share can carry while sharing)
