@@ -967,6 +967,10 @@ frame_wait_serial: bool = false,
 /// way it worked before T1476, instead of on one presented at the new size.
 /// The negative control for the blink — and the shape that made it possible.
 frame_wait_any: bool = false,
+/// How long the current layout pass's batched frame wait may hold the UI
+/// thread (T2738). One frame for a motion tick; `drag_perf.discrete_wait_ms`
+/// for a pass the user triggers once and watches (`showTabIndex`).
+frame_wait_budget_ms: u64 = drag_perf.frame_wait_ms,
 
 /// The keyboard's equivalent of that snapshot (T1129). `resize_split` has no
 /// key-up to end a gesture on, so the gesture ends itself: it remembers the
@@ -4566,8 +4570,17 @@ fn showTabIndex(self: *Window, idx: usize, focus: bool) void {
     // is watching the tab appear. Without the wait the pane is shown before
     // its renderer has presented at that size, which is the same flat frame
     // the whole-window resize was producing.
-    self.layoutSplitsLive();
-    self.reportResizePass("tabswitch");
+    // DISCRETE (T2738): every pane of the tab draws its first frame at a new
+    // size on a renderer that sat idle while the tab was hidden, and the user
+    // clicked once and is watching. One frame of budget is a motion tick's;
+    // here it ran out in 2 of 5 runs and showed old-size panes.
+    {
+        const budget_was = self.frame_wait_budget_ms;
+        self.frame_wait_budget_ms = drag_perf.discrete_wait_ms;
+        defer self.frame_wait_budget_ms = budget_was;
+        self.layoutSplitsLive();
+        self.reportResizePass("tabswitch");
+    }
     if (focus) if (pane.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
     self.updateWindowTitle();
 }
@@ -8189,7 +8202,7 @@ pub fn noteResize(self: *Window) void {
 /// relayout the user watched with no anti-flicker guarantee.
 fn reportResizePass(self: *Window, cause: []const u8) void {
     log.debug(
-        "window resize cause={s} panes={d} sync={d} fresh={d} waits={d} timeouts={d} stale={d} woken={d} held={d} blocked={d}",
+        "window resize cause={s} panes={d} sync={d} fresh={d} waits={d} timeouts={d} stale={d} woken={d} held={d} blocked={d} wait_us={d} budget_ms={d}",
         .{
             cause,
             self.frame_wait_resizes,
@@ -8201,6 +8214,8 @@ fn reportResizePass(self: *Window, cause: []const u8) void {
             self.frame_wait_woken,
             self.frame_wait_held,
             self.frame_wait_blocked,
+            self.frame_wait_last_us,
+            self.frame_wait_budget_ms,
         },
     );
 }
@@ -8319,10 +8334,23 @@ fn endFrameWaitBatch(self: *Window) void {
         // frame budget.
         if (timed_out or (answered and self.frame_wait_any)) {
             self.frame_wait_stale +|= @intCast(live);
+            // Which panes missed, and by how much (T2738): the pass line says
+            // only how many, which cannot tell a renderer still drawing the
+            // new size from one that never started.
+            for (self.frame_wait_panes[0..n]) |pane| {
+                const presented = pane.presented_size.load(.acquire);
+                if (!resize_paint.presentIsStale(pane.awaited_size, presented)) continue;
+                log.debug("frame wait stale pane awaited={x} presented={x} spent_us={d}", .{
+                    pane.awaited_size,
+                    presented,
+                    if (budget) |*t| t.read() / std.time.ns_per_us else 0,
+                });
+            }
             break;
         }
-        const spent_ms = if (budget) |*t| t.read() / std.time.ns_per_ms else drag_perf.frame_wait_ms;
-        if (spent_ms >= drag_perf.frame_wait_ms) {
+        const budget_ms = self.frame_wait_budget_ms;
+        const spent_ms = if (budget) |*t| t.read() / std.time.ns_per_ms else budget_ms;
+        if (spent_ms >= budget_ms) {
             timed_out = true;
             continue; // one last look before giving up on them
         }
@@ -8331,7 +8359,7 @@ fn endFrameWaitBatch(self: *Window) void {
             @intCast(live),
             &self.frame_wait_events,
             1, // bWaitAll: every pane still behind, not the first to finish
-            @intCast(drag_perf.frame_wait_ms - spent_ms),
+            @intCast(budget_ms - spent_ms),
         );
         if (rc == w32.WAIT_TIMEOUT) timed_out = true else answered = true;
     }

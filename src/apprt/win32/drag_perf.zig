@@ -36,6 +36,22 @@ pub const frame_wait_ms: u64 = 16;
 /// times out under the knob is a real miss rather than the knob's own doing.
 pub const present_lag_max_ms: u8 = frame_wait_ms / 2;
 
+/// The wait budget for a DISCRETE relayout - one the user triggers once and
+/// then watches, such as a tab switch - as opposed to a motion tick (T2738).
+///
+/// One frame is right for a drag: a tick that holds longer is a step the
+/// user sees, and the next tick is coming anyway. It is wrong for a tab
+/// switch. Every pane of the tab draws its first frame at a size it has not
+/// had before, on renderers that have been idle while the tab was hidden,
+/// and that frame then waits out the compositor's present lag - up to a whole
+/// frame on its own. Measured on this box under the 8 ms present lag, the
+/// four-pane switch took 1.5 to 17.5 ms and ran out the 16 ms budget in 2 of
+/// 5 runs, putting the tab on screen with panes still at their OLD size. A
+/// hold of a few frames once, on a click, reads as nothing; the old-size frame
+/// reads as a flash. So the discrete budget covers a full present lag plus a
+/// cold draw for every pane at once, with room to spare.
+pub const discrete_wait_ms: u64 = 3 * frame_wait_ms;
+
 /// What the frame wait can cost a motion tick when it is paid PER PANE: the
 /// pre-T1343 shape, where every resized surface waits its own 16 ms in turn.
 /// Linear in the pane count, which is why the drag got worse the more panes
@@ -319,6 +335,15 @@ pub const Stats = struct {
 };
 
 pub const Verdict = enum { no_data, smooth, steppy };
+
+test "a discrete relayout's wait outlasts a full present lag plus a frame (T2738)" {
+    // The motion budget leaves a lagged present no time to draw in; the
+    // discrete one must hold the worst lag the knob allows, a whole vsync
+    // interval of real compositor lag, and still a frame to draw.
+    try testing.expect(discrete_wait_ms >= frame_wait_ms + frame_wait_ms + present_lag_max_ms);
+    // Bounded: it is a hold on the UI thread, never a stall.
+    try testing.expect(discrete_wait_ms <= 50);
+}
 
 test "serial wait grows with pane count, batched does not" {
     // The whole claim the fix rests on, in one assertion pair.
