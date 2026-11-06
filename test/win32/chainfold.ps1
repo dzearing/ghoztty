@@ -98,14 +98,38 @@ function New-SynthFrame([int]$k, [hashtable]$Plant = @{}) {
     }
     if ($Plant.ContainsKey('black') -and $k -eq $Plant['black']) { $f.Fill(100, 0, 3, $H, 0x000000) }
     if ($Plant.ContainsKey('accent') -and $k -gt 0 -and $k -lt ($Glide + $Hold - 1)) { $f.Fill([int]($x + 41), 0, 3, $H, 0xA94DC1) }
+    # T2535: the accent already lit on the press frame (hover), with its
+    # anti-aliased edge a 1 px column whose blend changes colour as it moves
+    if ($Plant.ContainsKey('hover') -and $k -lt ($Glide + $Hold - 1)) { $f.Fill([int]($x + 41), 0, 3, $H, 0xA94DC1) }
+    if (($Plant.ContainsKey('hover') -or $Plant.ContainsKey('edge')) -and $k -lt ($Glide + $Hold - 1)) { $f.Fill([int]($x + 44), 0, 1, $H, (0x403060 + ($k % 6) * 0x100000)) }
+    if ($Plant.ContainsKey('accentOff') -and $k -eq $Plant['accentOff']) { $f.Fill([int]($x + 41), 0, 4, $H, $Plant['offColour']) }
+    # T2535: a GPU overlay's toast (brand bar, dark panel, logo, grey text) over the blade
+    if ($Plant.ContainsKey('toast') -and $Plant['toast'] -contains $k) {
+        $f.Fill(150, 25, 50, 70, 0x040607); $f.Fill(150, 25, 4, 70, 0x76B900); $f.Fill(158, 40, 12, 14, 0x3E5A0F)
+        $f.Fill(175, 45, 18, 2, 0xA0A0A0); $f.Fill(175, 60, 14, 2, 0xA0A0A0)
+    }
+    # T2535: a still strip crossfading from the backdrop to its rest colour
+    # (or, 'fadeOver', overshooting to a light line mid-fade)
+    if ($Plant.ContainsKey('fade')) {
+        $t = $k / ($Glide + $Hold - 1.0)
+        $c = Get-Mix $Bg 0x8090A0 $t
+        if ($Plant['fade'] -eq 'over' -and $k -ge 8 -and $k -le 14) { $c = 0xE8E8F0 }
+        $f.Fill(60, 0, 8, $H, $c)
+    }
     return $f
 }
-function Invoke-SynthScan([hashtable]$Plant = @{}) {
+function Get-Mix([int]$a, [int]$b, [double]$t) {
+    $o = 0
+    foreach ($sh in 16, 8, 0) { $ca = ($a -shr $sh) -band 255; $cb = ($b -shr $sh) -band 255; $o = $o -bor ([int][math]::Round($ca + ($cb - $ca) * $t) -shl $sh) }
+    return $o
+}
+function Invoke-SynthScan([hashtable]$Plant = @{}, [switch]$NoOverlay) {
     $s = New-ChainFoldScan -X0 0 -Y0 0 -X1 $W -Y1 $H -Bands 4
+    if ($NoOverlay) { $s.DetectOverlay = $false }
     for ($k = 0; $k -lt ($Glide + $Hold); $k++) { $s.Add($k, (New-SynthFrame $k $Plant)) }
     $s.PrepareRims()
     $rims = @(); for ($k = 0; $k -lt ($Glide + $Hold); $k++) { $rims += @($s.Rim($k, (New-SynthFrame $k $Plant))) }
-    return [pscustomobject]@{ Flashes = @($s.Flashes()); Black = @($s.Black); Novel = @($s.Novel()); Rims = $rims; Final = @($s.FinalSteps()); Motion = @($s.MotionFrames()) }
+    return [pscustomobject]@{ Flashes = @($s.Flashes()); Black = @($s.Black); Novel = @($s.Novel()); Rims = $rims; Final = @($s.FinalSteps()); Motion = @($s.MotionFrames()); Overlays = @($s.Overlays) }
 }
 function Format-Found($r) { return "flash=[$(@($r.Flashes) -join '; ')] black=[$(@($r.Black) -join '; ')] novel=[$(@($r.Novel | ForEach-Object { "f$($_.Frame)" }) -join ',')] rims=[$(@($r.Rims | ForEach-Object { "f$($_.Frame)" } | Select-Object -Unique) -join ',')] final=[$(@($r.Final) -join '; ')]" }
 
@@ -129,6 +153,7 @@ try {
         $r = Invoke-SynthScan @{ black = 8 }
         Assert 'B2 a 3 px pure-black column on f8 is a black finding at exactly x100-102' (
             $r.Black.Count -eq 1 -and $r.Black[0].Frame -eq 8 -and $r.Black[0].Detail -eq 'x100-102') (Format-Found $r)
+        Assert 'B2b ...and is not ALSO a rim (T2535: run49 reported each of its 32 black strips twice)' ($r.Rims.Count -eq 0) (Format-Found $r)
         $rim = @(5..12)
         $r = Invoke-SynthScan @{ rim = $rim }
         $nf = @($r.Rims | ForEach-Object { $_.Frame } | Select-Object -Unique)
@@ -144,6 +169,35 @@ try {
         Assert 'B5b ...nor a rim' ((Invoke-SynthScan @{ accent = $true }).Rims.Count -eq 0) ''
         $nf = @($r.Rims | ForEach-Object { $_.Frame } | Select-Object -Unique)
         Assert 'B6 ...and does not hide a rim that appears beside it (f5-f12 still found)' (($nf -join ',') -eq ($rim -join ',')) (Format-Found $r)
+
+        # ---- T2535: what the near-full-monitor captures misread ----------
+        $r = Invoke-SynthScan @{ edge = $true }
+        Assert 'B10a negative control: the accent''s 1 px anti-aliased edge alone (its blend changes colour as it moves) IS a rim' ($r.Rims.Count -gt 0) (Format-Found $r)
+        $r = Invoke-SynthScan @{ hover = $true }
+        Assert 'B10 ...but beside an accent already lit on the press frame (the divider was hovered) it is the accent''s edge, not a rim (run49: 93 such)' ($r.Rims.Count -eq 0) (Format-Found $r)
+        $r = Invoke-SynthScan @{ hover = $true; rim = $rim }
+        $nf = @($r.Rims | ForEach-Object { $_.Frame } | Select-Object -Unique)
+        Assert 'B10b ...and that does not hide a rim on the pane (f5-f12 still found)' (($nf -join ',') -eq ($rim -join ',')) (Format-Found $r)
+        $toast = @(4..15)
+        $r = Invoke-SynthScan @{ toast = $toast } -NoOverlay
+        Assert 'B11a negative control: a GPU overlay''s toast over the blade (f4-f15), unrecognised, IS novel colour and a rim' (
+            $r.Novel.Count -gt 0 -and $r.Rims.Count -gt 0) (Format-Found $r)
+        $r = Invoke-SynthScan @{ toast = $toast }
+        $of = @($r.Overlays | ForEach-Object { $_.Frame } | Select-Object -Unique)
+        Assert 'B11 ...recognised by its brand bar on exactly f4-f15, it is neither (run48/run49: NVIDIA "Press Alt+Z", #447700)' (
+            $r.Novel.Count -eq 0 -and $r.Rims.Count -eq 0 -and ($of -join ',') -eq ($toast -join ',')) "overlay=[$($of -join ',')] $(Format-Found $r)"
+        $r = Invoke-SynthScan @{ toast = $toast; rim = $rim }
+        $nf = @($r.Rims | ForEach-Object { $_.Frame } | Select-Object -Unique)
+        Assert 'B11b ...and the overlay does not hide a rim on the pane outside it (f5-f12 still found)' (($nf -join ',') -eq ($rim -join ',')) (Format-Found $r)
+        $r = Invoke-SynthScan @{ fade = 'in' }
+        Assert 'B12 a still strip crossfading from the backdrop to its rest colour is not a rim: every mid colour is between that pixel''s own end colours (run49 f322-f325 class)' ($r.Rims.Count -eq 0) (Format-Found $r)
+        $r = Invoke-SynthScan @{ fade = 'over' }
+        Assert 'B12b ...but the same strip turning light mid-fade, outside its own end colours, is a rim' ($r.Rims.Count -gt 0) (Format-Found $r)
+        $r = Invoke-SynthScan @{ accent = $true; accentOff = 9; offColour = 0xAA44BB }
+        Assert 'B13 the accent drawn one step off (#AA44BB for #A94DC1) for one frame is an accent blend, not novel (run48 f90)' ($r.Novel.Count -eq 0) (Format-Found $r)
+        $r = Invoke-SynthScan @{ accent = $true; accentOff = 9; offColour = 0xA933A1 }
+        Assert 'B13b ...but two steps off it is novel, on that frame' (
+            $r.Novel.Count -eq 1 -and $r.Novel[0].Frame -eq 9) (Format-Found $r)
 
         # Fine text (1 px strokes) saturates the band mean, so uneven steps of
         # a correct glide read as blinks unless the shift explains them (live
@@ -195,10 +249,32 @@ try {
         Assert 'C2 three still refreshes while moving is ONE gap of 33.3 ms' ($g.Gaps.Count -eq 1 -and $g.Gaps[0].Ms -eq 33.3 -and $g.Blind -eq 0) "gaps=$(@($g.Gaps | ForEach-Object { $_.Ms }) -join ',') blind=$($g.Blind)"
         $g = Get-ChainFoldGaps -Frames (New-FrameList 60 -Still @(20)) -Frequency $F -FromQpc 0 -ToQpc ([long]::MaxValue)
         Assert 'C3 one still refresh (16.7 ms between pictures) is within the limit' ($g.Gaps.Count -eq 0) "gaps=$(@($g.Gaps | ForEach-Object { $_.Ms }) -join ',')"
-        $g = Get-ChainFoldGaps -Frames (New-FrameList 60 -Still @(20, 22) -Missing @(21)) -Frequency $F -FromQpc 0 -ToQpc ([long]::MaxValue)
-        Assert 'C4 a stall with a frame missing from it is Blind, not passed and not a gap' ($g.Gaps.Count -eq 0 -and $g.Blind -eq 1) "gaps=$(@($g.Gaps | ForEach-Object { $_.Ms }) -join ',') blind=$($g.Blind)"
-        $g = Get-ChainFoldGaps -Frames (New-FrameList 60 -Still @(30, 31, 32) -Unscanned @(31)) -Frequency $F -FromQpc 0 -ToQpc ([long]::MaxValue)
+        $g = Get-ChainFoldGaps -Frames (New-FrameList 60 -Still @(20) -Missing @(21)) -Frequency $F -FromQpc 0 -ToQpc ([long]::MaxValue)
+        Assert 'C4 25 ms between pictures with a frame missing from it, and no still frame proving the stall, is Blind, not passed and not a gap' ($g.Gaps.Count -eq 0 -and $g.Blind -eq 1) "gaps=$(@($g.Gaps | ForEach-Object { $_.Ms }) -join ',') blind=$($g.Blind)"
+        $g = Get-ChainFoldGaps -Frames (New-FrameList 60 -Still @(30, 31) -Unscanned @(31)) -Frequency $F -FromQpc 0 -ToQpc ([long]::MaxValue)
         Assert 'C5 ...and so is one with a frame that has no picture' ($g.Gaps.Count -eq 0 -and $g.Blind -eq 1) "gaps=$(@($g.Gaps | ForEach-Object { $_.Ms }) -join ',') blind=$($g.Blind)"
+        # T2535: at ~3700 px WGC hands over a frame every 2-3 refreshes, so
+        # nearly every span had a hole and d went blind on 35 of them.
+        $g = Get-ChainFoldGaps -Frames (New-FrameList 60 -Still @(20, 21, 22) -Missing @(23)) -Frequency $F -FromQpc 0 -ToQpc ([long]::MaxValue)
+        Assert 'C7 a hole AFTER three still frames is a proven gap of at least those 25 ms (the screen says so), not Blind' (
+            $g.Gaps.Count -eq 1 -and $g.Gaps[0].Ms -eq 25.0 -and $g.Gaps[0].Source -eq 'screen' -and $g.Blind -eq 0) "gaps=$(@($g.Gaps | ForEach-Object { "$($_.Source):$($_.Ms)" }) -join ',') blind=$($g.Blind)"
+        $sparse = @(0..59 | Where-Object { $_ % 3 -ne 0 })
+        $steady = [long[]]@(0..59 | ForEach-Object { [long](1000000 + $_ * $per - 1000) })
+        $g = Get-ChainFoldGaps -Frames (New-FrameList 60 -Missing $sparse) -Frequency $F -FromQpc 0 -ToQpc ([long]::MaxValue)
+        Assert 'C8a negative control: a capture handing over every third refresh, alone, is Blind on every 25 ms span (19)' ($g.Blind -eq 19 -and $g.Gaps.Count -eq 0) "gaps=$($g.Gaps.Count) blind=$($g.Blind)"
+        $g = Get-ChainFoldGaps -Frames (New-FrameList 60 -Missing $sparse) -Frequency $F -FromQpc 0 -ToQpc ([long]::MaxValue) -AppQpc $steady
+        Assert 'C8 ...with the app''s layout batches every refresh, every span is Resolved: nothing blind, no gap' (
+            $g.Blind -eq 0 -and $g.Gaps.Count -eq 0 -and $g.Resolved -eq 19) "gaps=$($g.Gaps.Count) blind=$($g.Blind) resolved=$($g.Resolved)"
+        $stalled = [long[]]@($steady | Where-Object { $_ -ne $steady[31] -and $_ -ne $steady[32] })
+        $g = Get-ChainFoldGaps -Frames (New-FrameList 60 -Missing $sparse) -Frequency $F -FromQpc 0 -ToQpc ([long]::MaxValue) -AppQpc $stalled
+        Assert 'C9 ...and with two batches missing (25 ms between batches 30 and 33) it is ONE app gap of 25 ms' (
+            $g.Gaps.Count -eq 1 -and $g.Gaps[0].Source -eq 'app' -and $g.Gaps[0].Ms -eq 25.0 -and $g.Blind -eq 0) "gaps=$(@($g.Gaps | ForEach-Object { "$($_.Source):$($_.AtMs)+$($_.Ms)" }) -join ',') blind=$($g.Blind)"
+        $log = Join-Path $env:TEMP "chainfold-trace-$PID.log"
+        [IO.File]::WriteAllLines($log, @('info(win32): stack trace place hwnd=1 grid=0,0+1x1', 'info(win32): stack trace batch qpc=100 end=150 plan=90 grid=95', 'noise', 'info(win32): stack trace batch qpc=200 end=260 plan=190 grid=195'))
+        try { $st = Get-ChainFoldAppStamps -Path $log } finally { Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue }
+        Assert 'C10 the app''s batches are read from a ring-trace log as their end stamps (150, 260)' (($st -join ',') -eq '150,260') "stamps=$($st -join ',')"
+        $none = Get-ChainFoldAppStamps -Path (Join-Path $env:TEMP 'no-such-chainfold.log')
+        Assert 'C10b ...and a missing log is no stamps, not an error' ($null -ne $none -and $none.Count -eq 0) ''
         $g = Get-ChainFoldGaps -Frames (New-FrameList 60 -Still @(20, 21, 22)) -Frequency $F -FromQpc ([long](1000000 + 30 * $per)) -ToQpc ([long]::MaxValue)
         Assert 'C6 a stall outside the measured span does not count' ($g.Gaps.Count -eq 0) "gaps=$(@($g.Gaps | ForEach-Object { $_.Ms }) -join ',')"
 

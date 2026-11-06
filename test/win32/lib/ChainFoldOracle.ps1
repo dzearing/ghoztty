@@ -156,12 +156,14 @@ public sealed class ChainFoldScan {
             Compensate(count - 1, lumA, lumB, lum);
         }
         lumA = lumB; lumB = lum;
+        if (count == 0) firstFrame = f; lastFrame = f;   // the end states, per pixel (see Rim)
+        if (DetectOverlay) FindOverlay(frameIndex, f);
         // the colour histogram (4 bits a channel) and the black columns
         var hh = new int[4096];
         int h = y1 - y0; var blk = new int[x1 - x0];
         for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) {
             int o = (y * f.W + x) * 3; int r = f.Rgb[o], g = f.Rgb[o + 1], b = f.Rgb[o + 2];
-            hh[((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4)]++;
+            if (!InOverlay(x, y)) hh[((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4)]++;
             if (r <= BlackMax && g <= BlackMax && b <= BlackMax) blk[x - x0]++;
         }
         hist.Add(hh);
@@ -172,6 +174,61 @@ public sealed class ChainFoldScan {
             if (!on && s >= 0) { Black.Add(new CfFinding { Kind = "black", Frame = frameIndex, Band = BandOf(s + x0), Score = x - s, Detail = string.Format("x{0}-{1}", s + x0, x - 1 + x0) }); s = -1; }
         }
         count++;
+    }
+
+    // A GPU overlay's toast is not the app's (T2535: run48/run49 f82-f100, the
+    // NVIDIA "Press Alt+Z" toast over pane 6, read as 15000 px of novel colour
+    // #447700). It is recognised by its brand bar: an unbroken vertical run of
+    // saturated green at least OverlayBarMin px tall and at most OverlayBarMaxW
+    // px wide, which terminal text never forms (glyphs break between lines) and
+    // a green pane background does not either (too wide). The toast is the
+    // bar's height, from the bar rightward across the dark panel and its grey
+    // text to the first OverlayStop px of anything else (or the region's edge,
+    // which is where these toasts are anchored). The rect is sticky - the union
+    // of every frame's - so the toast's fade-out stays excluded too, and only
+    // the colour checks (novel, rim) skip it: a black hole or a blink there is
+    // still scored.
+    public bool DetectOverlay = true;
+    public int OverlayBarMin = 60, OverlayBarMaxW = 16, OverlayStop = 8;
+    bool hasOverlay; int ox0, oy0, ox1, oy1;
+    public readonly List<CfFinding> Overlays = new List<CfFinding>();
+    public bool InOverlay(int x, int y) { return hasOverlay && x >= ox0 && x < ox1 && y >= oy0 && y < oy1; }
+    static bool BrandGreen(int r, int g, int b) { return g >= 0x60 && g - r >= 0x20 && g - b >= 0x50; }
+    static bool PanelPixel(int r, int g, int b) {
+        int mx = Math.Max(r, Math.Max(g, b)), mn = Math.Min(r, Math.Min(g, b));
+        return mx <= 0x14 || mx - mn <= 8 || BrandGreen(r, g, b) || (g > r && g > b && b <= 0x30);
+    }
+    void FindOverlay(int frameIndex, CfFrame f) {
+        int w = x1 - x0; var run = new int[w]; var best = new int[w]; var top = new int[w]; var bot = new int[w];
+        for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) {
+            int o = (y * f.W + x) * 3, i = x - x0;
+            if (BrandGreen(f.Rgb[o], f.Rgb[o + 1], f.Rgb[o + 2])) {
+                run[i]++;
+                if (run[i] > best[i]) { best[i] = run[i]; bot[i] = y; top[i] = y - run[i] + 1; }
+            } else run[i] = 0;
+        }
+        int s = -1;
+        for (int i = 0; i <= w; i++) {
+            bool on = i < w && best[i] >= OverlayBarMin;
+            if (on && s < 0) s = i;
+            if (on || s < 0) continue;
+            int e = i;   // bar columns s..e-1
+            if (e - s <= OverlayBarMaxW) {
+                int bt = int.MaxValue, bb = -1;
+                for (int k = s; k < e; k++) { bt = Math.Min(bt, top[k]); bb = Math.Max(bb, bot[k]); }
+                int ym = (bt + bb) / 2, right = x1, foreign = 0;
+                for (int x = e + x0; x < x1; x++) {
+                    int o = (ym * f.W + x) * 3;
+                    if (PanelPixel(f.Rgb[o], f.Rgb[o + 1], f.Rgb[o + 2])) foreign = 0;
+                    else if (++foreign >= OverlayStop) { right = x - OverlayStop + 1; break; }
+                }
+                int rx0 = Math.Max(x0, s + x0 - 2), ry0 = Math.Max(y0, bt - 2), rx1 = Math.Min(x1, right + 2), ry1 = Math.Min(y1, bb + 3);
+                if (!hasOverlay) { ox0 = rx0; oy0 = ry0; ox1 = rx1; oy1 = ry1; hasOverlay = true; }
+                else { ox0 = Math.Min(ox0, rx0); oy0 = Math.Min(oy0, ry0); ox1 = Math.Max(ox1, rx1); oy1 = Math.Max(oy1, ry1); }
+                Overlays.Add(new CfFinding { Kind = "overlay", Frame = frameIndex, Band = -1, Score = (rx1 - rx0) * (ry1 - ry0), Detail = string.Format("x{0}-{1} y{2}-{3}", rx0, rx1 - 1, ry0, ry1 - 1) });
+            }
+            s = -1;
+        }
     }
 
     // the least mean abs difference of band k between a and b over every
@@ -248,8 +305,12 @@ public sealed class ChainFoldScan {
                 if (a[q] > 0 || z[q] > 0 || steady[q]) continue;
                 // a quantum next to one the end states hold is antialiasing or a
                 // tween blend, not a new colour: only a colour at least two
-                // steps from both end states on some channel counts.
-                if (NovelNear && NearKnown(q, a, z)) continue;
+                // steps from both end states on some channel counts. The drag's
+                // steady colours count as known too: run48 f90 drew the grabbed
+                // divider #AA44BB for one frame against its #A94DC1 (455 px, one
+                // step on blue), an accent blend rather than a new colour, and it
+                // was novel only because that run's press frame had no accent yet.
+                if (NovelNear && NearKnown(q, a, z, steady)) continue;
                 total += hist[i][q];
                 if (hist[i][q] > bestN) { bestN = hist[i][q]; best = q; }
             }
@@ -277,7 +338,15 @@ public sealed class ChainFoldScan {
             int on = 0;
             for (int i = 1; i + 1 < count; i++) if (hist[i][q] > 0) on++;
             rimQ[q] = a[q] == 0 && z[q] == 0 && on <= SteadyFraction * (count - 2);
-            steadyQ[q] = a[q] == 0 && on > SteadyFraction * (count - 2);  // the end frame may still show it (run40)
+            // Steady through the drag and missing from at least ONE end: the end
+            // frame may still show the accent (run40), and so may the press frame,
+            // when the divider was already lit under the pointer before the button
+            // went down (T2535: run49's 93 "rims" were the accent's anti-aliased
+            // edge, x1708 beside the accent at x1709-1713, because the press frame
+            // held the accent and this used to demand a[q] == 0). A colour in BOTH
+            // ends is the background, and must not switch the edge exclusion on
+            // for every column.
+            steadyQ[q] = (a[q] == 0 || z[q] == 0) && on > SteadyFraction * (count - 2);
         }
     }
     public List<CfFinding> Rim(int frameIndex, CfFrame f) {
@@ -297,7 +366,7 @@ public sealed class ChainFoldScan {
                 int p = (y * f.W + x) * 3;
                 int qq = ((f.Rgb[p] >> 4) << 8) | ((f.Rgb[p + 1] >> 4) << 4) | (f.Rgb[p + 2] >> 4);
                 if (steadyQ[qq]) accent[x - x0]++;
-                if (rimQ[qq]) {
+                if (rimQ[qq] && !InOverlay(x, y) && !Blend(f, p)) {
                     colRun[x - x0]++; rowRun++;
                     if (colRun[x - x0] > col[x - x0]) col[x - x0] = colRun[x - x0];
                     if (rowRun > row[y - y0]) row[y - y0] = rowRun;
@@ -310,9 +379,33 @@ public sealed class ChainFoldScan {
         // at x707-711). A line within 3 px of a steady accent column is that edge.
         for (int x = 0; x < w; x++) if (accent[x] >= RimFraction * h)
             for (int d = -3; d <= 3; d++) if (x + d >= 0 && x + d < w) col[x + d] = Math.Min(col[x + d], 0);
+        // A pure-black hole is a line of a colour neither end state has, so it
+        // reads as a rim as well; it is the black check's finding (run49: all
+        // 32 full-height "rims" were its 32 black strips), not a second defect.
+        foreach (var b in Black) {
+            if (b.Frame != frameIndex) continue;
+            int bx0 = int.Parse(b.Detail.Substring(1, b.Detail.IndexOf('-') - 1)), bx1 = int.Parse(b.Detail.Substring(b.Detail.IndexOf('-') + 1));
+            for (int x = Math.Max(x0, bx0); x <= Math.Min(x1 - 1, bx1); x++) col[x - x0] = 0;
+        }
         Lines(o, frameIndex, col, RimFraction * h, "x", x0, true);
         Lines(o, frameIndex, row, RimFraction * w, "y", y0, false);
         return o;
+    }
+    // A pixel whose colour lies between ITS OWN first and last colour (within
+    // a quantum, per channel) is that pixel crossfading from one end state to
+    // the other, not a border: run49 f322-f325, a blade fading in after the
+    // release (x3030: 1E393C at the press, 5B6E70 mid-fade, 65797B at rest),
+    // made 8 px wide "rims" 522-762 px tall. A light border is far outside the
+    // dark span it is drawn over, so it is never forgiven here.
+    CfFrame firstFrame, lastFrame;
+    public int BlendSlack = 16;
+    bool Blend(CfFrame f, int p) {
+        if (firstFrame == null || lastFrame == null || firstFrame.W != f.W || lastFrame.W != f.W) return false;
+        for (int c = 0; c < 3; c++) {
+            int a = firstFrame.Rgb[p + c], z = lastFrame.Rgb[p + c], v = f.Rgb[p + c];
+            if (v < Math.Min(a, z) - BlendSlack || v > Math.Max(a, z) + BlendSlack) return false;
+        }
+        return true;
     }
     void Lines(List<CfFinding> o, int frameIndex, int[] n, double min, string axis, int off, bool cols) {
         int s = -1, peak = 0;
@@ -326,13 +419,13 @@ public sealed class ChainFoldScan {
         }
     }
 
-    static bool NearKnown(int q, int[] a, int[] z) {
+    static bool NearKnown(int q, int[] a, int[] z, bool[] steady) {
         int r = q >> 8, g = (q >> 4) & 15, b = q & 15;
         for (int dr = -1; dr <= 1; dr++) for (int dg = -1; dg <= 1; dg++) for (int db = -1; db <= 1; db++) {
             int rr = r + dr, gg = g + dg, bb = b + db;
             if (rr < 0 || gg < 0 || bb < 0 || rr > 15 || gg > 15 || bb > 15) continue;
             int n = (rr << 8) | (gg << 4) | bb;
-            if (a[n] > 0 || z[n] > 0) return true;
+            if (a[n] > 0 || z[n] > 0 || steady[n]) return true;
         }
         return false;
     }
@@ -377,29 +470,72 @@ function Get-ChainFoldGaps {
       between DELIVERED frames can never fire; the gap that matters is between
       frames whose content changed. -Frames is the delivered list in order
       (Qpc, Scanned, Moved); a span with a frame missing from it (a queue drop,
-      or a frame with no picture) cannot say whether the app was still, so it
-      is counted as Blind rather than passed.
+      or a frame with no picture) cannot by itself say whether the app was
+      still, so it is settled by evidence or counted as Blind (T2535 - at a
+      near-full-monitor size WGC hands over a frame every 2-3 refreshes, and
+      every such span used to go blind):
+
+        - the capture's own still frames: a scanned frame that did not move
+          shows the picture unchanged since the last change, so a span whose
+          last still frame is already over -LimitMs past that change is a gap
+          of at least that long, whatever the missing frames held (Source
+          'screen');
+        - the app's own account (-AppQpc, the layout batches' end stamps from
+          the ring trace): when the batches from the one that drew the last
+          change through the span never leave more than -LimitMs between them,
+          the app kept producing and the capture merely did not hand those
+          pictures over (Resolved); a wider batch interval is a gap (Source
+          'app'). It is the app's word, not the screen's, so it is used only
+          where the capture cannot see.
+
+      Anything else stays Blind.
     #>
-    param([object[]]$Frames, [long]$Frequency, [long]$FromQpc, [long]$ToQpc, [double]$RefreshHz = 120, [double]$LimitMs = 16.7)
+    param([object[]]$Frames, [long]$Frequency, [long]$FromQpc, [long]$ToQpc, [double]$RefreshHz = 120, [double]$LimitMs = 16.7, [long[]]$AppQpc = @())
     $period = $Frequency / $RefreshHz
-    $gaps = @(); $blind = 0
-    $last = $null; $prev = $null; $hole = $false
+    $limitTicks = $LimitMs * $Frequency / 1000.0
+    $app = @($AppQpc | Sort-Object)
+    $gaps = @(); $blind = 0; $resolved = 0
+    $last = $null; $prev = $null; $hole = $false; $still = $null
     foreach ($f in @($Frames | Where-Object { [long]$_.Qpc -ge $FromQpc -and [long]$_.Qpc -le $ToQpc } | Sort-Object { [long]$_.Qpc })) {
         $q = [long]$f.Qpc
         if ($null -ne $prev -and ($q - $prev) -gt 1.5 * $period) { $hole = $true }
         if (-not $f.Scanned) { $hole = $true }
         $prev = $q
-        if (-not $f.Moved) { continue }
+        if (-not $f.Moved) { if ($f.Scanned) { $still = $q }; continue }
         if ($null -ne $last) {
             $ms = ($q - $last) * 1000.0 / $Frequency
+            $at = [math]::Round(($last - $FromQpc) * 1000.0 / $Frequency, 1)
             if ($ms -gt $LimitMs) {
-                if ($hole) { $blind++ }
-                else { $gaps += [pscustomobject]@{ Kind = 'gap'; AtMs = [math]::Round(($last - $FromQpc) * 1000.0 / $Frequency, 1); Ms = [math]::Round($ms, 1) } }
+                if (-not $hole) { $gaps += [pscustomobject]@{ Kind = 'gap'; Source = 'screen'; AtMs = $at; Ms = [math]::Round($ms, 1) } }
+                elseif ($null -ne $still -and ($still - $last) -gt $limitTicks) {
+                    $gaps += [pscustomobject]@{ Kind = 'gap'; Source = 'screen'; AtMs = $at; Ms = [math]::Round(($still - $last) * 1000.0 / $Frequency, 1) }
+                } else {
+                    # the batch that drew the picture at $last, then every one up to the picture at $q
+                    $before = @($app | Where-Object { $_ -le $last })
+                    $after = @($app | Where-Object { $_ -gt $last -and $_ -le $q })
+                    if ($before.Count -eq 0 -or $after.Count -eq 0) { $blind++ }
+                    else {
+                        $pts = @($before[-1]) + $after
+                        $worst = 0
+                        for ($i = 1; $i -lt $pts.Count; $i++) { $worst = [math]::Max($worst, $pts[$i] - $pts[$i - 1]) }
+                        if ($worst -gt $limitTicks) { $gaps += [pscustomobject]@{ Kind = 'gap'; Source = 'app'; AtMs = $at; Ms = [math]::Round($worst * 1000.0 / $Frequency, 1) } }
+                        else { $resolved++ }
+                    }
+                }
             }
         }
-        $last = $q; $hole = $false
+        $last = $q; $hole = $false; $still = $null
     }
-    return [pscustomobject]@{ Gaps = $gaps; Blind = $blind }
+    return [pscustomobject]@{ Gaps = $gaps; Blind = $blind; Resolved = $resolved }
+}
+
+function Get-ChainFoldAppStamps {
+    <# The app's layout batches' end stamps (QPC) from a GHOZTTY_STACK_TRACE=ring log ("stack trace batch qpc=N end=M"); empty when there is no log. #>
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return , ([long[]]@()) }
+    $o = New-Object System.Collections.Generic.List[long]
+    foreach ($m in (Select-String -LiteralPath $Path -Pattern 'stack trace batch qpc=\d+ end=(\d+)')) { $o.Add([long]$m.Matches[0].Groups[1].Value) }
+    return , ([long[]]$o.ToArray())
 }
 
 function Invoke-ChainFoldOracle {
@@ -407,9 +543,12 @@ function Invoke-ChainFoldOracle {
       Score a recorded run directory (geometry.json, timeline.json, frames\):
       every frame from the press to -SettleMs after the release, the region
       being the panes' row span across the whole window. Returns the four
-      criteria's findings plus what was scored.
+      criteria's findings plus what was scored. -TraceLog is the app's
+      GHOZTTY_STACK_TRACE=ring log (default: app.log in the run directory, else
+      <RunDir>-stderr.log beside it); criterion d reads its layout batches
+      where the capture is blind (see Get-ChainFoldGaps).
     #>
-    param([Parameter(Mandatory = $true)][string]$RunDir, [int]$SettleMs = 600, [int]$Bands = 8)
+    param([Parameter(Mandatory = $true)][string]$RunDir, [int]$SettleMs = 600, [int]$Bands = 8, [string]$TraceLog = '')
     $geo = Get-Content -Raw (Join-Path $RunDir 'geometry.json') | ConvertFrom-Json
     $tl = Get-Content -Raw (Join-Path $RunDir 'timeline.json') | ConvertFrom-Json
     $F = [long]$tl.freq
@@ -444,7 +583,11 @@ function Invoke-ChainFoldOracle {
     $all = @($tl.timeline | ForEach-Object { $_ } | Where-Object { -not $_.sup } | ForEach-Object {
             [pscustomobject]@{ Qpc = [long]$_.qpc; Scanned = $scanned.ContainsKey([int]$_.i); Moved = $moved.ContainsKey([int]$_.i) } })
     $hz = $(if ($tl.stats.RefreshHz) { [double]$tl.stats.RefreshHz } else { 120 })
-    $g = Get-ChainFoldGaps -Frames $all -Frequency $F -FromQpc $mv0 -ToQpc $mv1 -RefreshHz $hz
+    if (-not $TraceLog) {
+        $TraceLog = @((Join-Path $RunDir 'app.log'), ($RunDir.TrimEnd([char]92, [char]47) + '-stderr.log')) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    }
+    $appQpc = Get-ChainFoldAppStamps -Path $TraceLog
+    $g = Get-ChainFoldGaps -Frames $all -Frequency $F -FromQpc $mv0 -ToQpc $mv1 -RefreshHz $hz -AppQpc $appQpc
     return [pscustomobject]@{
         Frames  = $frames.Count
         FirstFrame = [int]$frames[0].i
@@ -458,5 +601,8 @@ function Invoke-ChainFoldOracle {
         Final   = @($scan.FinalSteps())
         Gaps    = @($g.Gaps)
         GapBlind = $g.Blind
+        GapResolved = $g.Resolved
+        AppBatches = $appQpc.Count
+        Overlays = @($scan.Overlays)
     }
 }
