@@ -829,6 +829,43 @@ try {
     $env:GHOZTTY_TEST_FORCE_DISPLAY_STATE = $prevDisplay
 }
 
+""
+"P0g. an idle box never re-queues an @input-desktop-exception run (T2478)"
+# 2026-10-29 / 2026-11-04: frame-lab -Live (T2395) and divider-flicker -Live
+# (T2672) were handed out at 838 s and 2,860 s of quiet input - runs go.md's
+# NEVER PULL FOCUS rule forbids the loop to start, so each turn re-parked them.
+Reset-Fixture
+New-FixtureTask -Id 'T1' -Status 'blocked(needs the box idle - no input for 5 min - for the frame-lab.ps1 -Live run)' -PriorityLine 'priority: "P0"'
+New-FixtureTask -Id 'T3' -Status 'blocked(needs the box idle for the live capture)' -PriorityLine 'priority: "P0"' `
+    -ExtraLines @(('unblock: ' + (ConvertTo-Json 'A turn finds the box idle. Then run test\win32\divider-flicker.ps1 -Live.' -Compress)))
+New-FixtureTask -Id 'T4' -Status 'blocked(needs the box idle; the probe needs the input desktop)' -PriorityLine 'priority: "P0"'
+New-FixtureTask -Id 'T5' -Status 'blocked(needs the box idle - no input for 5 min)' -PriorityLine 'priority: "P0"'
+New-FixtureTask -Id 'T2' -Status 'todo' -PriorityLine 'priority: "P1"'
+$prevPresence = $env:GHOZTTY_TEST_FORCE_USER_PRESENCE
+$prevDisplay = $env:GHOZTTY_TEST_FORCE_DISPLAY_STATE
+try {
+    $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = 'absent'
+    $env:GHOZTTY_TEST_FORCE_DISPLAY_STATE = 'on'
+    $r = Task-Run @('next')
+    Assert 'P0g1 the exception runs (status, unblock, phrase) are held for the user' ($r.Out -match 'parked for the user to start: T1, T3, T4 ')
+    Assert 'P0g2 an ordinary idle park still re-queues, alone' ($r.Out -match 'BOX IDLE[^\r\n]*: T5 parked' -and $r.Out -match 'NEXT: T5')
+    $r = Task-Run @('next', '-Claim')
+    Assert 'P0g3 -Claim leaves the exception runs blocked on disk' (@('T1', 'T3', 'T4' | Where-Object { (Get-Content -Raw (Join-Path $fixture "$_.md")) -match '(?m)^status: "blocked' }).Count -eq 3)
+    Assert 'P0g4 -Claim takes the ordinary one' ((Get-Content -Raw (Join-Path $fixture 'T5.md')) -match '(?m)^status: "in-progress"$')
+    # Negative control: with no exception named, the same shape re-queues -
+    # so P0g1 is the name doing the holding, not the fixture.
+    Reset-Fixture
+    New-FixtureTask -Id 'T1' -Status 'blocked(needs the box idle - no input for 5 min - for the frame-capture run)' -PriorityLine 'priority: "P0"'
+    $r = Task-Run @('next')
+    Assert 'P0g5 control: a near-miss name (no exception script) re-queues' ($r.Out -match 'BOX IDLE[^\r\n]*: T1 parked' -and $r.Out -notmatch 'parked for the user to start')
+} catch {
+    "  FAIL P0g the input-desktop section threw: $_"
+    $script:failures++
+} finally {
+    $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = $prevPresence
+    $env:GHOZTTY_TEST_FORCE_DISPLAY_STATE = $prevDisplay
+}
+
 "P. set-status gates the way OUT of blocked(...)"
 Reset-Fixture
 $unblockText = 'powercfg PROCTHROTTLEMAX must read 99 (boost off) before this comes back.'

@@ -1122,6 +1122,17 @@ behind it: on 2026-10-28 lane A sat 1h10m that way on T2395 while two P0 user
 reports (T2400, T2401) waited. Commit what is done, park the live part as
 `blocked(needs …)` with `blocked-on: event` (as T2396 is), and go to step 7.
 
+**Which parks come back on their own** (T2478). `next -Claim` re-queues a
+`blocked(needs … idle | unlocked | user away | absent …)` task when the box
+reads absent (and lit, when the park names the display) — that wording means
+*the loop may run it on its own*. It **never** re-queues a park whose status or
+`unblock:` names an `@input-desktop-exception` script (the list in
+`test\win32\lib\TestDesktop.ps1`) or says it needs the input desktop: those are
+*the user starts it*, whatever else the wording says, because the rule at the
+top of this file forbids the loop to run one and five quiet minutes is not
+absence. `next` names them as `parked for the user to start`. Park such a task
+`blocked(needs the user to start …)` with `blocked-on: user`.
+
 Since T139 there IS a supervisor, but do not lean on it: the watchdog
 (`scripts\go-loop-watchdog.ps1`) re-enters only after tens of minutes of dead
 time. It is the safety net for a crash, not a substitute for step 7.

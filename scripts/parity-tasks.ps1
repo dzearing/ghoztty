@@ -561,6 +561,27 @@ function Test-SeatMatch {
     return ($TaskSeat -eq $Wanted -or $TaskSeat -eq 'any')
 }
 
+# T2478: the regex that says a park text names an input-desktop run - any
+# script declared `@input-desktop-exception` in test\win32\lib\TestDesktop.ps1
+# (parsed by ForegroundAudit, the same reader the foreground audit enforces),
+# or the words "input desktop". If the declarations cannot be read, the phrase
+# alone still holds, and a warning says the names were not checked.
+function Get-InputDesktopParkPattern {
+    $alts = @('\binput[- ]desktop\b')
+    try {
+        . (Join-Path $RepoRoot 'test\win32\lib\ForegroundAudit.ps1')
+        $decl = @(Get-ForegroundAuditDeclarations -Path (Join-Path $RepoRoot 'test\win32\lib\TestDesktop.ps1') |
+            Where-Object { -not $_.Malformed -and $_.Script })
+        foreach ($d in $decl) {
+            $name = Split-Path -Leaf $d.Script
+            $alts += ('(?<![\w-])' + [regex]::Escape($name))
+        }
+        if ($decl.Count -eq 0) { Write-Host '      WARNING: no @input-desktop-exception declarations read; idle parks checked by phrase only' }
+    }
+    catch { Write-Host ("      WARNING: input-desktop exceptions not read ({0}); idle parks checked by phrase only" -f $_.Exception.Message) }
+    return ('(?i)(' + ($alts -join '|') + ')')
+}
+
 function Get-AllTasks {
     $tasks = @()
     foreach ($f in Get-ChildItem -Path $TaskDir -Filter 'T*.md') {
@@ -1173,6 +1194,21 @@ switch ($Command) {
         # input idle, fullscreen app); forced by GHOZTTY_TEST_FORCE_USER_PRESENCE.
         $idleRx = '^blocked\(needs[^)]*\b(idle|unlocked|user (is )?away|absent)\b'
         $idleParked = @($ordered | Where-Object { $_.Status -match $idleRx -and (Test-SeatMatch $_.Seat $wantSeat) -and (Test-LaneMatch $_.Lane) -and -not $heldElsewhere.ContainsKey($_.Id) })
+        # An idle box never authorises an @input-desktop-exception run (T2478):
+        # go.md's NEVER PULL FOCUS rule forbids the loop to start one at all,
+        # and 2026-10-28 showed five quiet minutes is not absence (the user was
+        # reading when frame-lab swept the cursor). A park whose status or
+        # unblock names a declared exception script - the set
+        # lib\TestDesktop.ps1 declares and ForegroundAudit enforces - or says
+        # it needs the input desktop waits for the user, whatever its wording.
+        if ($idleParked.Count -gt 0) {
+            $inputDesktopRx = Get-InputDesktopParkPattern
+            $userStarts = @($idleParked | Where-Object { (([string]$_.Status) + "`n" + ([string]$_.Unblock)) -match $inputDesktopRx })
+            if ($userStarts.Count -gt 0) {
+                Write-Host ("      parked for the user to start: {0} (an input-desktop run - an idle box does not authorise it, go.md NEVER PULL FOCUS)" -f (($userStarts | ForEach-Object { $_.Id }) -join ', '))
+                $idleParked = @($idleParked | Where-Object { $userStarts -notcontains $_ })
+            }
+        }
         if ($idleParked.Count -gt 0) {
             $presence = $null
             try {
