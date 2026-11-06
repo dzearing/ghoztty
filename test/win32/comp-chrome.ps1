@@ -67,6 +67,9 @@ $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
 function Set-Knobs($on, $loss, $fill, $present, $noredir) {
+    # The composition present is the default since T2514: an arm that does
+    # not ask for it gets the explicit opt-out, as it had before the flip.
+    if (-not $present) { $present = '0' }
     $vals = @{ GHOZTTY_COMP_CHROME = $on; GHOZTTY_COMP_CHROME_FORCE_LOSS = $loss; GHOZTTY_COMP_CHROME_TEST_FILL = $fill
         GHOZTTY_COMP_PRESENT = $present; GHOZTTY_COMP_NOREDIR = $noredir }
     foreach ($k in $knobs) {

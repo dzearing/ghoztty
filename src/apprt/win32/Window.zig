@@ -2126,7 +2126,9 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     var noredir = chrome_comp.noredirWanted(
         chrome_comp.noredirAsked(),
         chrome_comp.enabled(),
-        chrome_comp.presentKnobOn(),
+        // T2514: the renderer owns the knob, and since the flip it is an
+        // opt-out - one reader, so the window and its panes cannot disagree.
+        gl_comp_present.enabled(),
         app.config.@"background-opacity" >= 1.0 and !(self.ghost and !self.ghost_opaque),
     );
     const backstop: u32 = (@as(u32, app.config.background.r) << 16) |

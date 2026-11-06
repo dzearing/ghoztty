@@ -401,7 +401,7 @@ try {
         # renderer as occluded (T1951) after the first frame.
         $env:GHOZTTY_TEST_NO_OCCLUSION = '1'
         $env:GHOZTTY_STACK_SLIDE_MS = "$SlideMs"
-        if ($comp) { $env:GHOZTTY_COMP_PRESENT = '1' } else { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
+        if ($comp) { $env:GHOZTTY_COMP_PRESENT = '1' } else { $env:GHOZTTY_COMP_PRESENT = '0' }  # T2514: off is the explicit opt-out now
         foreach ($k in 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE') {
             if ($isTree) { Set-Item "env:$k" '1' } else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
         }

@@ -283,7 +283,8 @@ try {
         $env:GHOZTTY_DEBUG_GHOST = 'bottom'
         $env:GHOZTTY_TEST_NO_OCCLUSION = '1'
         foreach ($k in 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE') {
-            if ($isTree) { Set-Item "env:$k" '1' } else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
+            # T2514: the present is on by default, so the non-tree arm opts out.
+            if ($isTree) { Set-Item "env:$k" '1' } elseif ($k -eq 'GHOZTTY_COMP_PRESENT') { Set-Item "env:$k" '0' } else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
         }
         if ($arm -eq 'stall') { $env:GHOZTTY_DEBUG_HERO_STALL_MS = "$StallMs" } else { Remove-Item env:GHOZTTY_DEBUG_HERO_STALL_MS -ErrorAction SilentlyContinue }
         if ($NoDeclare) { $env:GHOZTTY_HERO_DECLARE = '0' } else { Remove-Item env:GHOZTTY_HERO_DECLARE -ErrorAction SilentlyContinue }

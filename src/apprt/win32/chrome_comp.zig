@@ -109,12 +109,6 @@ pub fn noredirAsked() bool {
     return envOn(noredir_knob);
 }
 
-/// `GHOZTTY_COMP_PRESENT`, read by name: the renderer owns the knob.
-pub fn presentKnobOn() bool {
-    if (comptime builtin.os.tag != .windows) return false;
-    return envOn("GHOZTTY_COMP_PRESENT");
-}
-
 fn seamBuild() bool {
     return builtin.mode == .Debug or builtin.mode == .ReleaseSafe;
 }

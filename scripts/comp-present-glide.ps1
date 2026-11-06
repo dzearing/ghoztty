@@ -363,7 +363,7 @@ try {
         # A ghost sits under the user's windows, so the app would park its
         # renderer as occluded (T1951) after the first frame.
         $env:GHOZTTY_TEST_NO_OCCLUSION = '1'
-        if ($arm -eq 'on') { $env:GHOZTTY_COMP_PRESENT = '1' } else { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
+        if ($arm -eq 'on') { $env:GHOZTTY_COMP_PRESENT = '1' } else { $env:GHOZTTY_COMP_PRESENT = '0' }  # T2514: off is the explicit opt-out now
         $err = Join-Path $armDir 'stderr.txt'
         # Unfocused panes are not dimmed, so every pane shows its own colour.
         $app = Start-OnTestDesktop -Exe $Exe -Arguments @(

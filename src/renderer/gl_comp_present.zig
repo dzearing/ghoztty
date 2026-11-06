@@ -25,7 +25,7 @@
 //! registration names one D3D resource for its lifetime. Copying into buffer 0
 //! after the GL write is correct on every driver, at the cost of one GPU copy.
 //!
-//! Opt-in while it is proven (`GHOZTTY_COMP_PRESENT=1`); any failure falls back
+//! Opt-in (`GHOZTTY_COMP_PRESENT=1`) until `default_on` flips (T2514); any failure falls back
 //! to the WGL path for the life of the pane and says why in the log. Every slot
 //! below was checked against the 10.0.22621.0 SDK headers (d3d11.h, dxgi.h,
 //! dxgi1_2.h, dcomp.h) and the WGL_NV_DX_interop2 spec.
@@ -64,11 +64,38 @@ pub fn knobOn(value: ?[]const u8) bool {
         std.ascii.eqlIgnoreCase(v, "on");
 }
 
+/// Whether the knob's value turns the path OFF. "0"/"false"/"off".
+pub fn knobOff(value: ?[]const u8) bool {
+    const v = std.mem.trim(u8, value orelse return false, " \t\r\n");
+    return std.mem.eql(u8, v, "0") or
+        std.ascii.eqlIgnoreCase(v, "false") or
+        std.ascii.eqlIgnoreCase(v, "off");
+}
+
+/// What a pane gets with no knob set (T2514). Flipping this to true makes
+/// the composition present the default and the knob an opt-out; it stays
+/// false until the harnesses that went red on the default path are cleared
+/// (T2514's deps). A machine that cannot build the path (no
+/// WGL_NV_DX_interop2 - Mesa, WARP-only, Remote Desktop) logs `composition
+/// present unavailable` and presents with SwapBuffers either way.
+pub const default_on = false;
+
+/// An explicit off wins, an explicit on wins, anything else is the default.
+pub fn wantedWith(value: ?[]const u8, default: bool) bool {
+    if (knobOff(value)) return false;
+    if (knobOn(value)) return true;
+    return default;
+}
+
+pub fn wanted(value: ?[]const u8) bool {
+    return wantedWith(value, default_on);
+}
+
 pub fn enabled() bool {
     if (comptime builtin.os.tag != .windows) return false;
-    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, env_knob) catch return false;
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, env_knob) catch return wanted(null);
     defer std.heap.page_allocator.free(raw);
-    return knobOn(raw);
+    return wanted(raw);
 }
 
 /// `GHOZTTY_COMP_RESIZE_BUFFERS=1` (T2598 A/B): resize the swap chain to the
@@ -86,6 +113,16 @@ fn debugFailAfter() ?u64 {
     const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_COMP_PRESENT_FAIL_AFTER") catch return null;
     defer std.heap.page_allocator.free(raw);
     return std.fmt.parseInt(u64, std.mem.trim(u8, raw, " \t\r\n"), 10) catch null;
+}
+
+/// `GHOZTTY_COMP_PRESENT_SIMULATE_NO_INTEROP=1` (debug builds only, T2514):
+/// every pane's chain fails to build at the interop stage, as on a GL with no
+/// WGL_NV_DX_interop2.
+fn debugNoInterop() bool {
+    if (comptime builtin.mode != .Debug) return false;
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_COMP_PRESENT_SIMULATE_NO_INTEROP") catch return false;
+    defer std.heap.page_allocator.free(raw);
+    return knobOn(raw);
 }
 
 /// The blit rectangle that copies a GL target (origin bottom-left) into a
@@ -300,6 +337,10 @@ const Interop = struct {
     const GetExtensionsStringFn = *const fn (?*anyopaque) callconv(.winapi) ?[*:0]const u8;
 
     fn resolve() Error!Interop {
+        // T2514: debug builds can pretend the extension is missing, which is
+        // what a Mesa, WARP-only or Remote Desktop GL looks like - the machines
+        // the default flip must leave drawing through SwapBuffers.
+        if (debugNoInterop()) return error.NoInterop;
         const api = gl_loader.active();
         const ext_proc = api.proc("wglGetExtensionsStringARB") orelse return error.NoInterop;
         const get_ext: GetExtensionsStringFn = @ptrCast(ext_proc);
@@ -793,6 +834,21 @@ test "knobOn accepts 1/true/on and nothing else" {
     try std.testing.expect(!knobOn(""));
     try std.testing.expect(!knobOn("0"));
     try std.testing.expect(!knobOn("yes please"));
+}
+
+test "explicit knob values win and anything else is the default (T2514)" {
+    for ([_]bool{ false, true }) |d| {
+        try std.testing.expect(wantedWith("1", d));
+        try std.testing.expect(wantedWith("on", d));
+        try std.testing.expect(!wantedWith("0", d));
+        try std.testing.expect(!wantedWith(" off\r\n", d));
+        try std.testing.expect(!wantedWith("FALSE", d));
+        // Unset or unrecognised: the default, never a silent flip either way.
+        try std.testing.expectEqual(d, wantedWith(null, d));
+        try std.testing.expectEqual(d, wantedWith("", d));
+        try std.testing.expectEqual(d, wantedWith("yes please", d));
+    }
+    try std.testing.expectEqual(default_on, wanted(null));
 }
 
 test "flipBlit turns the GL target right way up in a D3D texture" {

@@ -413,7 +413,7 @@ try {
         # A ghost sits under the user's windows, so the app would park its
         # renderer as occluded (T1951) after the first frame.
         $env:GHOZTTY_TEST_NO_OCCLUSION = '1'
-        if ($arm -notin 'off', 'reloadoff') { $env:GHOZTTY_COMP_PRESENT = '1' } else { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
+        if ($arm -notin 'off', 'reloadoff') { $env:GHOZTTY_COMP_PRESENT = '1' } else { $env:GHOZTTY_COMP_PRESENT = '0' }  # T2514: off is the explicit opt-out now
         $inTree = $arm -in 'tree', 'flat', 'fold'
         foreach ($k in 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE') {
             if ($inTree) { Set-Item "env:$k" '1' } else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }

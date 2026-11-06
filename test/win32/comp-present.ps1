@@ -3,22 +3,25 @@
 # THE CHANGE: a terminal pane can present through a DXGI flip-model swap chain
 # that is the content of a DirectComposition visual on the pane's window,
 # instead of WGL SwapBuffers into the window's redirection bitmap
-# (src/renderer/gl_comp_present.zig). It is opt-in while it is proven:
-# GHOZTTY_COMP_PRESENT=1.
+# (src/renderer/gl_comp_present.zig). GHOZTTY_COMP_PRESENT=1 asks for it and
+# =0 refuses it; with neither, `default_on` decides (off until T2514 flips
+# it). Every arm here names its knob explicitly so the file reads the same
+# on either side of that flip: "knob on" is 1, "knob off" is 0.
 #
 # THE CONTRACT this asserts:
 #
-#   A. With the knob on, every pane builds the chain (GL/D3D interop, swap
-#      chain, DComp target on the pane window) and keeps presenting through it:
-#      two panes, output, a resize, and no failure or fallback line. The panes
-#      still draw text (capture-pane reads the renderer's own target).
+#   A. With the knob on, every pane builds the chain
+#      (GL/D3D interop, swap chain, DComp target on the pane window) and keeps
+#      presenting through it: two panes, output, a resize, and no failure or
+#      fallback line. The panes still draw text (capture-pane reads the
+#      renderer's own target).
 #   B. A present that fails falls back to SwapBuffers for that pane, and the
 #      pane keeps drawing - the debug-only seam
 #      GHOZTTY_COMP_PRESENT_FAIL_AFTER=<n> fails the n+1th present.
 #   C. A lost GL device on the composition path is rebuilt, and the rebuilt
 #      context builds its chain again (T1690's seam).
-#   D. Negative control: with the knob off, no pane touches the composition
-#      path.
+#   D. The opt-out control (T2514): with GHOZTTY_COMP_PRESENT=0, no pane
+#      touches the composition path, and the panes still draw (SwapBuffers).
 #   E. Overlays as child visuals (T2467): a pane on the chain publishes its
 #      tree, and a BEL in it puts the bell border up as a child visual of the
 #      pane - no GhozttyBellBorder popup is ever shown, a window move re-shows
@@ -66,6 +69,11 @@
 #      card is the banner's (not a terminal press), a click on a multi-line
 #      card toggles it, and a press in the grid is still the terminal's. K8
 #      is the negative control: knob off, no card is ever a visual.
+#   L. No interop, knob on (T2514): with the debug seam
+#      GHOZTTY_COMP_PRESENT_SIMULATE_NO_INTEROP=1 standing in for Mesa, a
+#      WARP-only GL or Remote Desktop, every pane logs `composition present
+#      unavailable` at the interop stage, builds no chain, and draws through
+#      SwapBuffers - a banner pane included, its strip a popup over the band.
 #
 # NOT asserted here: the pixels DWM shows. This harness runs on a background
 # desktop, which DWM never composes and Windows.Graphics.Capture refuses
@@ -100,13 +108,14 @@ if (-not (Test-Path $Exe)) { "SETUP FAIL: $Exe not found - build it first"; exit
 
 $root = Join-Path $env:TEMP "ghoztty-comp-present-$PID"
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_PRESENT_FAIL_AFTER', 'GHOZTTY_GL_SIMULATE_RESET_AFTER'
+$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_PRESENT_FAIL_AFTER', 'GHOZTTY_GL_SIMULATE_RESET_AFTER', 'GHOZTTY_COMP_PRESENT_SIMULATE_NO_INTEROP'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
 function Set-Knobs($comp, $failAfter, $resetAfter) {
     $vals = @{ GHOZTTY_COMP_PRESENT = $comp; GHOZTTY_COMP_PRESENT_FAIL_AFTER = $failAfter; GHOZTTY_GL_SIMULATE_RESET_AFTER = $resetAfter }
-    foreach ($k in $knobs) {
+    # Only the three it names: section L sets the no-interop seam around a call.
+    foreach ($k in $vals.Keys) {
         if ($vals[$k]) { Set-Item "env:$k" $vals[$k] }
         else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
     }
@@ -199,6 +208,7 @@ try {
     # ========================================================================
     "== A: with the knob on, panes present through the composition swap chain"
     # ========================================================================
+    # T2514: becomes $null (no knob, the default) when default_on flips.
     Set-Knobs '1' $null $null
     $a = Start-Arm 'a'
     Assert "A0 the arm's window came up" ($a.Top -ne [IntPtr]::Zero -and $null -ne $a.Win)
@@ -285,9 +295,9 @@ try {
     Assert "C6 nothing fell back" ((Count-Log $c.Err $failLine) -eq 0)
 
     # ========================================================================
-    "== D: negative control - with the knob off, nothing takes the new path"
+    "== D: the opt-out control - GHOZTTY_COMP_PRESENT=0 keeps every pane off the new path"
     # ========================================================================
-    Set-Knobs $null $null $null
+    Set-Knobs '0' $null $null
     $d = Start-Arm 'd'
     Assert "D0 the arm's window came up" ($d.Top -ne [IntPtr]::Zero -and $null -ne $d.Win)
     & $Exe +send-keys "--target=$($d.Target)" 'echo plain-wgl' Enter 2>$null | Out-Null
@@ -496,7 +506,7 @@ try {
             Start-Sleep -Milliseconds 200
             # Knob on, the card is a visual at the top of the pane (T2559):
             # its rect is the pane's top-left at the size the visual logged.
-            $vis = if ($comp) { [regex]::Matches((Read-Text $arm.Err), $visualLine) | Select-Object -Last 1 } else { $null }
+            $vis = if ($comp -ne '0') { [regex]::Matches((Read-Text $arm.Err), $visualLine) | Select-Object -Last 1 } else { $null }
             foreach ($tw in @(Get-TestWindows -ProcessId $arm.App.Pid -Class 'GhozttyWindow')) {
                 foreach ($p in @(Get-TestChildWindows -Window ([IntPtr]$tw.Hwnd) -Class 'GhozttyTerminal' | Where-Object Visible)) {
                     if ($vis) {
@@ -544,7 +554,7 @@ try {
     }
     Assert "H5 clearing the banner gives the band back to the grid, the window unmoved (log + pane at the same rect)" `
         ($back -and $p5 -and $p5.Height -eq $h.Pane.Height)
-    $h0 = Measure-BannerArm 'h0' $null
+    $h0 = Measure-BannerArm 'h0' '0'
     Assert "H6 negative control: knob off, the pane window starts below the strip" `
         ($h0.Pane -and $h0.Strip -and [math]::Abs($h0.Strip.Bottom - $h0.Pane.Top) -le 2)
     Assert "H7 the knob-off window is the knob-on grid: same rows (off=$($h0.Pane.Height) on=$hGrid)" `
@@ -599,7 +609,7 @@ try {
     $iBand = if ($iBandM) { [int]$iBandM.Groups[1].Value } else { -1 }
     $on = Probe-Input $i1
     $iPane = $i1.Pane
-    $i0 = Measure-BannerArm 'i0' $null
+    $i0 = Measure-BannerArm 'i0' '0'
     $off = Probe-Input $i0
     Assert "I0 both arms are banded panes, knob on carries a band (band=$iBand)" `
         ($i1.Pane -and $i0.Pane -and $iBand -gt 0)
@@ -745,7 +755,7 @@ try {
         "alive=$(Test-Alive $j1.Arm) fallbacks=$(Count-Log $j1.Arm.Err $failLine)"
         (Read-Text $j1.Arm.Err) -split "`n" | Where-Object { $_ -match 'composition present|panic|error|banner path|banner shown' } | Select-Object -Last 12
     } else { @() }
-    $j0 = Measure-BannerArm 'j0' $null $jExtra
+    $j0 = Measure-BannerArm 'j0' '0' $jExtra
     $jOff = Probe-Overlays $j0 $false
     Assert "J0 knob on the pane window starts one band higher in its slot (band=$jBand on=$($jOn.PaneTop) off=$($jOff.PaneTop))" `
         ($null -ne $jOn.PaneTop -and $null -ne $jOff.PaneTop -and $jBand -gt 0 -and [math]::Abs($jOn.PaneTop) -le 2 -and [math]::Abs($jOff.PaneTop - $jBand) -le 2)
@@ -846,9 +856,30 @@ try {
     Assert "K7 a click in the grid is the terminal's (log)" `
         ((Wait-Log $kErr 'pane mouse left press' 2000) -and (Count-Log $kErr 'pane mouse left press') -gt $presses)
     Assert "K7a the app is still running, nothing fell back" ((Test-Alive $k.Arm) -and (Count-Log $kErr $failLine) -eq 0)
-    $k0 = Measure-BannerArm 'k0' $null
+    $k0 = Measure-BannerArm 'k0' '0'
     Assert "K8 negative control: knob off, the card is a popup and never a visual" `
         ($k0.Strip -and -not $k0.Strip.Visual -and (Count-Log $k0.Arm.Err $visualLine) -eq 0)
+
+    # ========================================================================
+    "== L: a machine with no GL/D3D interop falls back by default and draws (T2514)"
+    # ========================================================================
+    # Mesa, a WARP-only GL and Remote Desktop have no WGL_NV_DX_interop2. With
+    # the path now the default, every pane there must say so once and present
+    # with SwapBuffers - with a banner too, since the window still spans the
+    # band (T2566: the grid lands below it, the strip popup covers it).
+    $env:GHOZTTY_COMP_PRESENT_SIMULATE_NO_INTEROP = '1'
+    try { $l = Measure-BannerArm 'l' '1' }
+    finally { Remove-Item env:GHOZTTY_COMP_PRESENT_SIMULATE_NO_INTEROP -ErrorAction SilentlyContinue }
+    $lText = Read-Text $l.Arm.Err
+    $lUnavail = Count-Log $l.Arm.Err 'composition present unavailable \(error\.NoInterop\) at wgl-interop'
+    Assert "L1 every pane says the path is unavailable at the interop stage ($lUnavail lines)" ($lUnavail -ge 1)
+    Assert "L2 and none built a chain or failed mid-life" `
+        ($lText -notmatch $onLine -and (Count-Log $l.Arm.Err $failLine) -eq 0)
+    Assert "L3 the app is still running and the pane draws text" ((Test-Alive $l.Arm) -and (Test-DrawsText $l.Arm.Target))
+    Assert "L4 the banner is a popup glued over the pane window's top (strip=$($l.Strip.Top) pane=$($l.Pane.Top))" `
+        ($l.Pane -and $l.Strip -and -not $l.Strip.Visual -and [math]::Abs($l.Strip.Top - $l.Pane.Top) -le 2)
+    Assert "L5 no OpenGL error and no failed draw" `
+        ($lText -notmatch 'error\(opengl\)' -and $lText -notmatch 'error drawing err=')
 
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
 
@@ -873,4 +904,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'comp-present' -MinPass 82
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'comp-present' -MinPass 87

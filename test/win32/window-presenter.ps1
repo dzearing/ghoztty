@@ -110,6 +110,9 @@ $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
 function Set-Knobs($presenter, $comp, $plant = $null, $probe = $null, $trace = $null, $lag = $null) {
+    # The composition present is the default since T2514 and wins over the
+    # presenter, so "no comp" has to be the explicit opt-out here.
+    if (-not $comp) { $comp = '0' }
     $vals = @{ GHOZTTY_WINDOW_PRESENTER = $presenter; GHOZTTY_COMP_PRESENT = $comp; GHOZTTY_LAB_PLANT = $plant; GHOZTTY_PRESENTER_PROBE = $probe
         GHOZTTY_RESIZE_TRACE = $trace; GHOZTTY_PRESENT_LAG_MS = $lag }
     foreach ($k in $knobs) {
