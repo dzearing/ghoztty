@@ -12,6 +12,13 @@
 //! judders, and the coalescing rule that keeps input ahead of frames, are in
 //! `frame_clock.zig`.
 //!
+//! A compositor wait that FAILS (it does while the desktop is occluded:
+//! locked, or a hidden desktop) drops the worker onto the timer at the
+//! display's refresh period as DWM reports it, and the compositor is tried
+//! again on a backoff until it answers (T2724) - before that, one failure
+//! left the process on a 60 Hz timer until relaunch, half rate on a 120 Hz
+//! panel.
+//!
 //! With no clock running (unit tests, a window on another thread, a full
 //! subscription table) `arm` falls back to the `SetTimer` it replaced, so an
 //! animation always runs. `GHOZTTY_FRAME_CLOCK=settimer` drives the same
@@ -34,7 +41,7 @@ const log = std.log.scoped(.frame_clock);
 /// Posted to `App.msg_hwnd` once per vblank while an animation is live.
 pub const WM_APP_FRAME: u32 = w32.WM_APP + 43;
 
-pub const Source = enum { compositor, hrtimer, settimer };
+pub const Source = enum(u8) { compositor, hrtimer, settimer };
 
 const WaitForCompositorClockFn = *const fn (
     count: u32,
@@ -48,8 +55,20 @@ var current: ?*FrameClock = null;
 alloc: std.mem.Allocator,
 msg_hwnd: w32.HWND,
 ui_thread: u32,
+/// The clock asked for at start (`GHOZTTY_FRAME_CLOCK`, or the compositor).
 source: Source,
+/// What the worker is stepping on right now: `.hrtimer` while a failed
+/// compositor wait is being retried (T2724). Read by `report` on the UI thread.
+stepping: std.atomic.Value(Source) = .init(.compositor),
+/// The compositor clock entry point, kept after a failed wait so it can be
+/// tried again; null when it is missing or the clock was asked to skip it.
+compositor: ?WaitForCompositorClockFn = null,
+/// Set while the worker is waiting on the compositor; null on the timer.
 wait_clock: ?WaitForCompositorClockFn = null,
+/// Worker thread only.
+retry: frame_clock.CompositorRetry = .{},
+/// The period the timer fallback steps at (worker thread only, T2724).
+timer_period_ns: u64 = frame_clock.default_period_ns,
 wake: ?w32.HANDLE = null,
 timer: ?w32.HANDLE = null,
 thread: ?std.Thread = null,
@@ -87,25 +106,26 @@ pub fn start(alloc: std.mem.Allocator, msg_hwnd: w32.HWND) void {
     };
     self.source = requestedSource();
     if (self.source == .compositor) {
-        self.wait_clock = loadCompositorClock();
+        self.compositor = loadCompositorClock();
+        self.wait_clock = self.compositor;
         if (self.wait_clock == null) self.source = .hrtimer;
     }
+    self.stepping.store(self.source, .release);
     if (self.source != .settimer) {
         self.wake = w32.CreateEventW(null, 0, 0, null);
         if (self.wake == null) return self.destroy();
         if (self.source == .hrtimer) {
-            self.timer = w32.CreateWaitableTimerExW(
-                null,
-                null,
-                w32.CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
-                w32.TIMER_ALL_ACCESS,
-            );
+            self.timer = createTimer();
             if (self.timer == null) return self.destroy();
+            self.timer_period_ns = displayPeriodNs() orelse frame_clock.default_period_ns;
         }
         self.thread = std.Thread.spawn(.{}, run, .{self}) catch return self.destroy();
     }
     current = self;
-    log.debug("frame clock started source={s}", .{@tagName(self.source)});
+    log.debug("frame clock started source={s} timer_period_us={d}", .{
+        @tagName(self.source),
+        self.timer_period_ns / std.time.ns_per_us,
+    });
     self.armProbe();
 }
 
@@ -202,6 +222,28 @@ fn requestedSource() Source {
     return .compositor;
 }
 
+fn createTimer() ?w32.HANDLE {
+    return w32.CreateWaitableTimerExW(
+        null,
+        null,
+        w32.CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+        w32.TIMER_ALL_ACCESS,
+    );
+}
+
+/// The display's refresh period as DWM reports it, or null when it will not
+/// say (T2724). Asked each time the clock falls back to its timer, so a
+/// display change between fallbacks is picked up.
+fn displayPeriodNs() ?u64 {
+    var info: [w32.DWM_TIMING_INFO_SIZE]u8 align(8) = [_]u8{0} ** w32.DWM_TIMING_INFO_SIZE;
+    std.mem.writeInt(u32, info[0..4], w32.DWM_TIMING_INFO_SIZE, .little);
+    if (w32.DwmGetCompositionTimingInfo(null, &info) < 0) return null;
+    const off = w32.DWM_TIMING_INFO_RATE_REFRESH_OFFSET;
+    const num = std.mem.readInt(u32, info[off..][0..4], .little);
+    const den = std.mem.readInt(u32, info[off + 4 ..][0..4], .little);
+    return frame_clock.periodFromRate(num, den);
+}
+
 fn loadCompositorClock() ?WaitForCompositorClockFn {
     const lib = w32.LoadLibraryExW(
         std.unicode.utf8ToUtf16LeStringLiteral("dcomp.dll"),
@@ -281,7 +323,7 @@ fn report(self: *const FrameClock, sub: frame_clock.Sub) void {
             self.period_ns.load(.acquire) / std.time.ns_per_us,
             st.meanCostUs(),
             st.cost_max_ns / std.time.ns_per_us,
-            @tagName(self.source),
+            @tagName(self.stepping.load(.acquire)),
             class,
         },
     );
@@ -334,7 +376,11 @@ fn run(self: *FrameClock) void {
         const now = self.nowNs();
         if (last) |l| {
             est.record(now -| l);
-            self.period_ns.store(est.periodNs(), .release);
+            // On the timer the period is the one it was set to; the shortest
+            // jittered wakeup would undershoot it (7.9 ms against a known
+            // 8.33, T2724) and count on-time ticks as skipped frames.
+            const on_timer = self.stepping.load(.acquire) == .hrtimer;
+            self.period_ns.store(if (on_timer) self.timer_period_ns else est.periodNs(), .release);
         }
         last = now;
         if (frame_clock.shouldPost(self.live.load(.acquire), self.pending.load(.acquire))) {
@@ -347,7 +393,7 @@ fn run(self: *FrameClock) void {
 }
 
 /// Block until the next frame. False when woken for another reason (an arm,
-/// a stop), which the loop re-checks.
+/// a stop, a change of clock), which the loop re-checks.
 fn waitTick(self: *FrameClock, next_due: *u64) bool {
     const handles = [_]w32.HANDLE{self.wake.?};
     if (self.wait_clock) |wait| {
@@ -357,27 +403,31 @@ fn waitTick(self: *FrameClock, next_due: *u64) bool {
         const timeout_ms: u32 = @intCast(@max(1, 2 * self.period_ns.load(.acquire) / std.time.ns_per_ms));
         const r = wait(1, &handles, timeout_ms);
         if (r == w32.WAIT_OBJECT_0) return false;
-        if (r == w32.WAIT_OBJECT_0 + 1 or r == w32.WAIT_TIMEOUT) return true;
-        // The call itself failed: step on the high-resolution timer from here.
-        log.warn("compositor clock wait failed ({x}); falling back to a timer", .{r});
-        self.wait_clock = null;
-        self.timer = w32.CreateWaitableTimerExW(null, null, w32.CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, w32.TIMER_ALL_ACCESS);
-        self.source = .hrtimer;
-        if (self.timer == null) {
-            // Nothing to wait on at all: a plain sleep still steps evenly enough
-            // to keep animations moving rather than freezing them.
-            std.Thread.sleep(self.period_ns.load(.acquire));
+        if (r == w32.WAIT_OBJECT_0 + 1 or r == w32.WAIT_TIMEOUT) {
+            self.retry.succeeded();
             return true;
         }
+        self.fallBack(r);
         return false;
     }
+    // On the timer after a failed compositor wait: try the compositor again
+    // when the backoff says so (T2724). Before this one failure - an occluded
+    // desktop, a locked session - left the process on the timer for good.
+    if (self.compositor) |c| if (self.retry.due(self.nowNs())) {
+        log.debug("frame clock retrying the compositor clock", .{});
+        self.wait_clock = c;
+        self.stepping.store(.compositor, .release);
+        return false;
+    };
     const timer = self.timer orelse {
-        std.Thread.sleep(self.period_ns.load(.acquire));
+        // Nothing to wait on at all: a plain sleep still steps evenly enough
+        // to keep animations moving rather than freezing them.
+        std.Thread.sleep(self.timer_period_ns);
         return true;
     };
     // Even steps on an absolute schedule: a late wakeup does not push every
     // later frame back with it.
-    const period = frame_clock.default_period_ns;
+    const period = self.timer_period_ns;
     const now = self.nowNs();
     if (next_due.* <= now) next_due.* = now + period;
     const due: i64 = -@as(i64, @intCast(@max(1, (next_due.* - now) / 100)));
@@ -393,4 +443,26 @@ fn waitTick(self: *FrameClock, next_due: *u64) bool {
         return true;
     }
     return false;
+}
+
+/// The compositor wait itself failed (`r`): step on the high-resolution timer
+/// at the display's own period until the retry brings the compositor back.
+fn fallBack(self: *FrameClock, r: u32) void {
+    const first = self.retry.backoff_ns == frame_clock.CompositorRetry.first_ns;
+    self.retry.failed(self.nowNs());
+    self.wait_clock = null;
+    self.stepping.store(.hrtimer, .release);
+    if (self.timer == null) self.timer = createTimer();
+    // DWM's rate when it answers; else what the compositor clock measured
+    // before it failed, which is the display's period too once it has run.
+    self.timer_period_ns = displayPeriodNs() orelse self.period_ns.load(.acquire);
+    const fmt = "compositor clock wait failed ({x}); falling back to a timer at period_us={d}, " ++
+        "retrying in {d} ms";
+    const args = .{
+        r,
+        self.timer_period_ns / std.time.ns_per_us,
+        (self.retry.retry_at_ns.? -| self.nowNs()) / std.time.ns_per_ms,
+    };
+    // An occluded desktop fails every retry: say so once, then quietly.
+    if (first) log.warn(fmt, args) else log.debug(fmt, args);
 }

@@ -1,15 +1,16 @@
 {
     "guard":  "frame-clock",
     "script":  "test/win32/frame-clock.ps1",
-    "generated":  "2026-11-05T09:22:10-08:00",
-    "commit":  "c647253f8",
+    "generated":  "2026-11-06T06:02:05-08:00",
+    "commit":  "c4ac11fdd",
     "uncommitted":  [
+                        "src/apprt/win32/frame_clock.zig",
                         "src/apprt/win32/FrameClock.zig",
                         "test/win32/frame-clock.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/frame_clock.zig":  "22f0c48a5d72db85a9cacd4b0bfd0f79c177b468b781cefcb476032857109d1b",
-                  "src/apprt/win32/FrameClock.zig":  "01f8d3ccba5dba55d8fc5f46a6829b9f4006cecd013c4677bb0e64c039eee510",
-                  "test/win32/frame-clock.ps1":  "9608acb744c867a16998673678432761e94d90c5b52b370382d3619ce34a9f21"
+                  "src/apprt/win32/frame_clock.zig":  "3be39244fc2b0c3d4bad2852590a4c996198631a3d0af40ebd5de4397f811fcf",
+                  "src/apprt/win32/FrameClock.zig":  "a30d29e2f74546ee485b25d3e3a9d38718a3208ec12e4929c2a0f62555c3ccb3",
+                  "test/win32/frame-clock.ps1":  "7ee5ade07e1dee879d626c33bab070b6fb23e4ae0f23e8f9423cd08a15d4e16e"
               }
 }

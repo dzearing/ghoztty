@@ -2062,6 +2062,18 @@ pub extern "dwmapi" fn DwmSetWindowAttribute(
 /// just shown is only on screen after the next composition).
 pub extern "dwmapi" fn DwmFlush() callconv(.winapi) i32;
 
+/// `sizeof(DWM_TIMING_INFO)`: dwmapi.h declares it under `pshpack1`, so it is
+/// handled as raw bytes rather than an extern struct whose padding would make
+/// `cbSize` wrong (T2724). `rateRefresh` is the two u32s at offsets 4 and 8.
+pub const DWM_TIMING_INFO_SIZE: u32 = 292;
+pub const DWM_TIMING_INFO_RATE_REFRESH_OFFSET: usize = 4;
+
+/// The composition's timing; `hwnd` must be null on Windows 8.1 and later.
+pub extern "dwmapi" fn DwmGetCompositionTimingInfo(
+    hwnd: ?HWND,
+    pTimingInfo: *anyopaque,
+) callconv(.winapi) i32;
+
 pub extern "dwmapi" fn DwmGetWindowAttribute(
     hwnd: HWND,
     dwAttribute: u32,

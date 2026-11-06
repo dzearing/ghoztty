@@ -58,6 +58,14 @@
 #      collapse, sidebar toggle, stack glide. G1: each one ran on the clock
 #      and reported. G2: each one's mean tick cost fits in a display period.
 #      Each row also prints its skipped-frame share.
+#   H. T2724 - a failed compositor wait is not the end of the compositor.
+#      The background test desktop is occluded, so the compositor refuses
+#      the wait (0xC01E0006) and the clock falls back to its timer. H1: the
+#      fallback steps at the display's period as DWM reports it (read here
+#      independently, DwmGetCompositionTimingInfo), not a fixed 60 Hz. H2:
+#      the compositor is tried again after the fallback, rather than never.
+#      On a desktop whose compositor never fails, H records that the clock
+#      stayed on it.
 #
 # Runs on the BACKGROUND test desktop (lib\TestDesktop.ps1) - no foreground
 # stolen, no input sent.
@@ -350,6 +358,27 @@ function Measure-Glides([int]$repeats) {
     return $rows
 }
 
+# The display period DWM reports, in us, read the way FrameClock.zig reads it
+# (rateRefresh at offsets 4/8 of the 292-byte packed DWM_TIMING_INFO).
+function Get-DwmPeriodUs {
+    if (-not ('FcDwm' -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class FcDwm {
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmGetCompositionTimingInfo(IntPtr hwnd, byte[] info);
+}
+"@
+    }
+    $buf = New-Object byte[] 292
+    [BitConverter]::GetBytes([uint32]292).CopyTo($buf, 0)
+    if ([FcDwm]::DwmGetCompositionTimingInfo([IntPtr]::Zero, $buf) -lt 0) { return 0 }
+    $num = [BitConverter]::ToUInt32($buf, 4); $den = [BitConverter]::ToUInt32($buf, 8)
+    if ($num -eq 0) { return 0 }
+    return [int]([double]$den * 1000000 / $num)
+}
+
 function Share($s) { if ($s.Intervals -eq 0) { return 1.0 } return [double]$s.Doubled / $s.Intervals }
 function Pct($x) { return [math]::Round(100 * $x, 1) }
 
@@ -401,6 +430,29 @@ try {
     Assert ((Share $vg) -lt (Share $lg)) `
     ("the glow itself skips fewer frames on the frame clock: $(Pct (Share $vg))% " +
         "(mean $($vg.MeanUs)us) vs $(Pct (Share $lg))% (mean $($lg.MeanUs)us) on the 16 ms WM_TIMER")
+
+    # ---- H. a failed compositor wait is retried, at the display's rate (T2724)
+    $vlog = Join-Path $outDir 'vsync-stderr.log'
+    $vlines = @(Get-Content $vlog -ErrorAction SilentlyContinue)
+    $fails = @($vlines | Where-Object { $_ -match 'compositor clock wait failed \((\w+)\); falling back to a timer at period_us=(\d+)' })
+    $retries = @($vlines | Where-Object { $_ -match 'frame clock retrying the compositor clock' })
+    $dwmUs = Get-DwmPeriodUs
+    Rep ("  compositor waits failed $($fails.Count) time(s), retried $($retries.Count); " +
+        "DWM reports a ${dwmUs}us refresh period")
+    if ($fails.Count -gt 0) {
+        [void]($fails[0] -match 'period_us=(\d+)')
+        $fbUs = [int]$Matches[1]
+        Assert ($dwmUs -gt 0 -and [math]::Abs($fbUs - $dwmUs) -le 50) `
+        ("H1: the timer fallback steps at the display's period: ${fbUs}us against DWM's ${dwmUs}us " +
+            "(60 Hz would be 16666us)")
+        Assert ($retries.Count -ge 1) `
+        ("H2: the compositor clock was tried again after the fallback ($($retries.Count) retries, " +
+            "$($fails.Count) failures)")
+    }
+    else {
+        Assert ($vp.Sources -eq 'compositor') `
+        ("H: the compositor clock never failed on this desktop and the probe stayed on it (source=$($vp.Sources))")
+    }
 
     # ---- G. the glides users watch (T2372) --------------------------------
     Rep ''

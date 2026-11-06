@@ -176,6 +176,53 @@ pub const PeriodEstimator = struct {
     }
 };
 
+/// The display's period from DWM's refresh rate (`DWM_TIMING_INFO.rateRefresh`,
+/// a numerator/denominator in Hz), or null when DWM gave no usable rate (T2724).
+/// This is what the timer fallback steps at: before it, the fallback assumed
+/// 60 Hz whatever the display, so a 120 Hz panel stepped every glide at half
+/// rate for as long as the fallback lasted.
+pub fn periodFromRate(numerator: u32, denominator: u32) ?u64 {
+    if (numerator == 0 or denominator == 0) return null;
+    const ns = @as(u64, denominator) * std.time.ns_per_s / numerator;
+    if (ns < PeriodEstimator.min_ns or ns > PeriodEstimator.max_ns) return null;
+    return ns;
+}
+
+/// When the clock tries the compositor again after its wait failed (T2724).
+/// The compositor refuses the wait while the desktop it composes is not on
+/// screen (`0xC01E0006`, STATUS_GRAPHICS_PRESENT_OCCLUDED: a locked session,
+/// a hidden desktop), and it comes back when that ends - so a failure is a
+/// state to retry, not a verdict for the rest of the process. The retry backs
+/// off while it keeps failing, so an occluded desktop costs one failed call
+/// every few seconds rather than one per frame, and a success resets it.
+pub const CompositorRetry = struct {
+    pub const first_ns: u64 = 250 * std.time.ns_per_ms;
+    pub const max_ns: u64 = 8 * std.time.ns_per_s;
+
+    backoff_ns: u64 = first_ns,
+    retry_at_ns: ?u64 = null,
+
+    /// The compositor wait failed at `now`: schedule the next attempt.
+    pub fn failed(self: *CompositorRetry, now_ns: u64) void {
+        self.retry_at_ns = now_ns + self.backoff_ns;
+        self.backoff_ns = @min(self.backoff_ns * 2, max_ns);
+    }
+
+    /// The compositor wait worked: the next failure starts the backoff over.
+    pub fn succeeded(self: *CompositorRetry) void {
+        self.backoff_ns = first_ns;
+        self.retry_at_ns = null;
+    }
+
+    /// Whether to try the compositor now. True once per scheduled attempt.
+    pub fn due(self: *CompositorRetry, now_ns: u64) bool {
+        const at = self.retry_at_ns orelse return false;
+        if (now_ns < at) return false;
+        self.retry_at_ns = null;
+        return true;
+    }
+};
+
 /// Whether the worker should post a frame now. One frame message is ever in
 /// flight: the UI thread clears `pending` only AFTER it has run every tick, so
 /// a dispatch slower than a vblank skips the next post instead of queueing one
@@ -261,6 +308,43 @@ test "one frame in flight: post only while live and not already pending" {
     try testing.expect(shouldPost(1, false));
     try testing.expect(!shouldPost(1, true));
     try testing.expect(!shouldPost(0, false));
+}
+
+test "T2724: the timer fallback takes the display's period from DWM's rate" {
+    // The user's 120 Hz panel: 8.33 ms, not the 60 Hz default.
+    try testing.expectEqual(@as(u64, 8_333_333), periodFromRate(120, 1).?);
+    try testing.expectEqual(@as(u64, 16_683_333), periodFromRate(60000, 1001).?); // 59.94 Hz
+    try testing.expectEqual(@as(u64, 6_944_444), periodFromRate(144, 1).?);
+    // No rate, or one no display runs at: the caller keeps what it measured.
+    try testing.expectEqual(@as(?u64, null), periodFromRate(0, 1));
+    try testing.expectEqual(@as(?u64, null), periodFromRate(60, 0));
+    try testing.expectEqual(@as(?u64, null), periodFromRate(1000, 1));
+    try testing.expectEqual(@as(?u64, null), periodFromRate(5, 1));
+}
+
+test "T2724: a failed compositor wait is retried, backing off while it keeps failing" {
+    const ms = std.time.ns_per_ms;
+    var r: CompositorRetry = .{};
+    try testing.expect(!r.due(0)); // nothing failed yet
+    r.failed(1000 * ms);
+    try testing.expect(!r.due(1100 * ms));
+    try testing.expect(r.due(1250 * ms));
+    try testing.expect(!r.due(1260 * ms)); // once per scheduled attempt
+    // Still occluded: each failure waits twice as long, up to the cap.
+    r.failed(1250 * ms);
+    try testing.expect(!r.due(1700 * ms));
+    try testing.expect(r.due(1750 * ms));
+    var now: u64 = 2000 * ms;
+    for (0..10) |_| {
+        r.failed(now);
+        now = r.retry_at_ns.?;
+        try testing.expect(r.due(now));
+    }
+    try testing.expectEqual(CompositorRetry.max_ns, r.backoff_ns);
+    // Back on screen: the next failure is retried quickly again.
+    r.succeeded();
+    r.failed(now);
+    try testing.expect(r.due(now + CompositorRetry.first_ns));
 }
 
 test "T2401: a glide's first frame takes up at most one period, however late" {
