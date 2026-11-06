@@ -1,10 +1,10 @@
 {
     "guard":  "pane-banner",
     "script":  "test/win32/pane-banner.ps1",
-    "generated":  "2026-11-06T10:57:34-08:00",
-    "commit":  "3613b0ada",
+    "generated":  "2026-11-06T11:21:20-08:00",
+    "commit":  "6c5adfdb4",
     "uncommitted":  [
-                        "src/apprt/win32/banner_markdown.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/banner_card.zig":  "9697c5e10f7cbd77852c8d9318f8f1e65bffb6e934d6c8a673ccefc4ae5cb53f",
@@ -16,6 +16,6 @@
                   "src/apprt/win32/BannerFreeze.zig":  "71eaa115e64eed567e3d7626ed6fce9f336d068a09a2755f621cd155f63c21d2",
                   "src/apprt/win32/BannerOverlay.zig":  "47cb4aca88704b43e776c9e422c980e0f984cca7cdc2b21f379e20dd5c8e67e2",
                   "src/apprt/win32/ViewerPane.zig":  "b16ee32accd9d4707fb5bd569eb8d26838185ee7c98aef4d1e49b5a66d68fadb",
-                  "test/win32/pane-banner.ps1":  "3b38da0ec613601d9fb32f240615e57ec391e1b4b5791a6cbcd8323e2c649b3f"
+                  "test/win32/pane-banner.ps1":  "d4a45cd1385d9571e00634abc3bf028a980ca90d415539f58198fbd0153ed156"
               }
 }
