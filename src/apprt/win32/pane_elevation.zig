@@ -636,6 +636,23 @@ const GlassLut = struct {
         return l.mix(p) | l.cover[p >> 24];
     }
 
+    /// `sheet` over every pixel of `span`, in place (T2539). The desk under a
+    /// card is a gradient stretched eightfold, so a pixel is usually the one
+    /// before it again, and its answer is too: a repeat costs a compare.
+    fn sheetSpan(l: *const GlassLut, span: []u32) void {
+        if (span.len == 0) return;
+        var in = span[0];
+        var out = l.sheet(in);
+        for (span) |*p| {
+            const v = p.*;
+            if (v != in) {
+                in = v;
+                out = l.sheet(v);
+            }
+            p.* = out;
+        }
+    }
+
     /// `top.mix(base.mix(p))` as one table (T2537): both are per channel,
     /// so their composition is too - four reads a pixel where it was eight.
     /// Its coverage is `top`'s, read off `p` itself.
@@ -834,7 +851,7 @@ pub fn rimAlpha(glass: bool, is_light: bool, focus: f32) f32 {
 
 /// Light the desk around each glowing card. Runs before any shadow, the way
 /// Mac's glow is the card's backmost layer.
-fn paintGlows(buf: []u32, wi: i32, hi: i32, cards: []const Card, style: CardStyle, cols: ?[]f32) void {
+fn paintGlows(buf: []u32, wi: i32, hi: i32, cards: []const Card, style: CardStyle, cols: ?[]f32, corner: ?GlowCorner) void {
     const radius: f32 = @floatFromInt(radiusPx(style.scale));
     const reach = glowReachPx(style.scale);
     const ri: i32 = radiusPx(style.scale);
@@ -849,6 +866,9 @@ fn paintGlows(buf: []u32, wi: i32, hi: i32, cards: []const Card, style: CardStyl
         const x0: i32 = @max(c.left - reach, 0);
         const x1: i32 = @min(c.right + reach, wi);
         if (x1 <= x0) continue;
+        // The corners' glow, read off the patch (T2539) for a card whose
+        // corner is the style's own.
+        const cp: ?GlowCorner = if (corner) |k| (if (f.rad == k.rad) k else null) else null;
         // Per column: the horizontal term, and the glow a pixel gets where
         // that term is the distance (T1856).
         const t = columnTable(cols, x0, x1, f);
@@ -884,7 +904,7 @@ fn paintGlows(buf: []u32, wi: i32, hi: i32, cards: []const Card, style: CardStyl
                     const k: usize = @intCast(x - x0);
                     const qx = if (t) |tab| tab.q[k] else f.qx(@as(f32, @floatFromInt(x)) + 0.5);
                     const a = if (qx > 0 and qy > 0)
-                        glowAlpha(f.dist(qx, qy), style.is_light, style.scale)
+                        ((if (cp) |patch| patch.at(qx, qy) else null) orelse glowAlpha(f.dist(qx, qy), style.is_light, style.scale))
                     else if (qx >= qy)
                         (if (t) |tab| tab.a[0][k] else glowAlpha(f.edge(qx), style.is_light, style.scale))
                     else
@@ -899,6 +919,45 @@ fn paintGlows(buf: []u32, wi: i32, hi: i32, cards: []const Card, style: CardStyl
         }
     }
 }
+
+/// The glow round a card's corner, for every pixel where both axis terms are
+/// positive (T2539). There `qx` and `qy` are the pixel's half-integer offsets
+/// from the corner's centre - exactly, in f32, for any card on the window's
+/// pixel grid whose corner is `rad` - so the alpha is a function of the offset
+/// alone, the same for every card of one style, and `glowAlpha` of the same
+/// bits as the per-pixel call. It was two `erfc` a pixel over four corner
+/// squares, on every paint.
+const GlowCorner = struct {
+    rad: f32,
+    n: usize,
+    /// `a[j * n + i]` at `qx = i + 0.5`, `qy = j + 0.5`.
+    a: []const f32,
+
+    fn init(alloc: std.mem.Allocator, rad: f32, reach: i32, is_light: bool, scale: f32) !GlowCorner {
+        const n: usize = @intCast(reach + @as(i32, @intFromFloat(@ceil(rad))) + 1);
+        const a = try alloc.alloc(f32, n * n);
+        const f: Frame = .{ .cx = 0, .cy = 0, .ex = 0, .ey = 0, .rad = rad };
+        for (0..n) |j| for (0..n) |i| {
+            const qx = @as(f32, @floatFromInt(i)) + 0.5;
+            const qy = @as(f32, @floatFromInt(j)) + 0.5;
+            a[j * n + i] = glowAlpha(f.dist(qx, qy), is_light, scale);
+        };
+        return .{ .rad = rad, .n = n, .a = a };
+    }
+
+    /// The patch's alpha at (`qx`, `qy`), or null off it - an offset that is
+    /// not a half-integer, or past its reach.
+    fn at(k: GlowCorner, qx: f32, qy: f32) ?f32 {
+        const fi = qx - 0.5;
+        const fj = qy - 0.5;
+        if (fi < 0 or fj < 0) return null;
+        const i: usize = @intFromFloat(fi);
+        const j: usize = @intFromFloat(fj);
+        if (i >= k.n or j >= k.n) return null;
+        if (@as(f32, @floatFromInt(i)) != fi or @as(f32, @floatFromInt(j)) != fj) return null;
+        return k.a[j * k.n + i];
+    }
+};
 
 /// The column half of a card's distance over `[x0, x1)`, carved out of
 /// `scratch` (null when there is none, and every value is then computed per
@@ -1150,7 +1209,10 @@ fn paintShadows(
     scratch: ?[]f32,
     prepared: ?*const Prepared,
 ) void {
-    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    // The side profiles are a few hundred bytes (T2539): on the stack, where
+    // they used to be a fresh page from the OS on every paint.
+    var stack = std.heap.stackFallback(2048, std.heap.page_allocator);
+    var arena_state = std.heap.ArenaAllocator.init(stack.get());
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const patch: ?ShadowPatch = if (prepared) |p|
@@ -1326,6 +1388,8 @@ pub const Prepared = struct {
     /// card into a dozen bands a frame, each of which would build it again.
     sheet_lut: ?GlassLut = null,
     sheet_fill: color_math.Rgb = .{ .r = 0, .g = 0, .b = 0 },
+    /// The focus glow round a corner (T2539).
+    glow_corner: ?GlowCorner = null,
 
     /// Whether this was prepared for `style`.
     pub fn fits(self: *const Prepared, style: CardStyle) bool {
@@ -1349,6 +1413,7 @@ pub fn prepare(style: CardStyle) Prepared {
     const glass_layer = [1]Shadow{glassShadow(style.is_light, style.scale)};
     const layers: []const Shadow = if (style.glass) &glass_layer else &solid_layers;
     p.patch = ShadowPatch.init(p.arena.allocator(), @floatFromInt(radiusPx(style.scale)), radiusPx(style.scale), shadowReachPx(style.scale), layers, style.glass) catch null;
+    p.glow_corner = GlowCorner.init(p.arena.allocator(), @floatFromInt(radiusPx(style.scale)), glowReachPx(style.scale), style.is_light, style.scale) catch null;
     if (style.glass) {
         p.sheet_lut = GlassLut.initSheet(style.fill, .{});
         p.sheet_fill = style.fill;
@@ -1375,12 +1440,90 @@ pub fn paintCardShadows(buf: []u32, w: usize, h: usize, cards: []const Card, sty
     const solid_layers = shadows(style.is_light, style.scale);
     const glass_layer = [1]Shadow{glassShadow(style.is_light, style.scale)};
     const layers: []const Shadow = if (style.glass) &glass_layer else &solid_layers;
-    const alloc = std.heap.page_allocator;
-    const scratch: ?[]f32 = alloc.alloc(f32, (1 + MAX_TABLE_LAYERS) * w) catch null;
-    defer if (scratch) |s| alloc.free(s);
+    const scratch = tableScratch(w);
     const pre: ?*const Prepared = if (prepared) |p| (if (p.fits(style)) p else null) else null;
     paintShadows(buf, @intCast(w), @intCast(h), cards, style.glass, layers, radius, radiusPx(style.scale), shadowReachPx(style.scale), scratch, pre);
 }
+
+/// The axis tables' scratch for a `w`-wide buffer (T2539): kept per thread
+/// and grown, never shrunk, so a paint no longer maps and faults in fresh
+/// pages each time. Null when it cannot grow, and the painters then work
+/// every value out per pixel, as they always could.
+fn tableScratch(w: usize) ?[]f32 {
+    const n = (1 + MAX_TABLE_LAYERS) * w;
+    table_scratch.resize(std.heap.page_allocator, n) catch return null;
+    return table_scratch.items[0..n];
+}
+threadlocal var table_scratch: std.ArrayListUnmanaged(f32) = .empty;
+
+/// How far inside a card's edge its interior starts: past the band an
+/// antialiased rim pixel can sit in.
+fn interiorEdge(scale: f32) i32 {
+    return @as(i32, @intFromFloat(@ceil(RIM_DIP * scale))) + 1;
+}
+
+/// Row `y`'s interior of `c` within `[x0, x1)` - the run `paintCardsWith`
+/// lays in one go, between the rims of a straight row - or an empty run at
+/// `x1` on a rounded row.
+fn interiorSpan(c: Card, y: i32, ri: i32, edge: i32, x0: i32, x1: i32) [2]i32 {
+    const sides = y >= c.top + ri and y < c.bottom - ri and
+        y >= c.top + edge and y < c.bottom - edge;
+    if (!sides) return .{ x1, x1 };
+    const in0 = std.math.clamp(c.left + edge, x0, x1);
+    return .{ in0, std.math.clamp(c.right - edge, in0, x1) };
+}
+
+/// Copy `desk` into `buf` (both `w` x `h`) everywhere `paintCardsWith` will
+/// read it (T2539): all but the solid interiors - a viewer's page, every
+/// card of the solid style - which the paint fills without reading what is
+/// under them. The glows and shadows may still land there first; the fill
+/// covers them, exactly as it covers the desk. So this and a whole copy
+/// compose the same picture, and on a resize step it is a fresh window's
+/// worth of copying the fill used to throw away.
+pub fn copyDeskUnder(buf: []u32, desk: []const u32, w: usize, h: usize, cards: []const Card, style: CardStyle) void {
+    std.debug.assert(buf.len >= w * h and desk.len >= w * h);
+    const ri = radiusPx(style.scale);
+    const edge = interiorEdge(style.scale);
+    const wi: i32 = @intCast(w);
+    const hi: i32 = @intCast(h);
+    var y: i32 = 0;
+    while (y < hi) : (y += 1) {
+        // This row's solid interiors, left to right (cards never overlap,
+        // but nothing here relies on it: a run is copied unless it is under
+        // some solid interior).
+        var runs: [MAX_SOLID_RUNS][2]i32 = undefined;
+        var n: usize = 0;
+        for (cards) |c| {
+            if (y < c.top or y >= c.bottom) continue;
+            const glass = (style.glass and c.colorAt(y) == null) or c.glassHeadAt(y, style.glass);
+            if (glass) continue;
+            // A card wholly off the buffer, or with no width, has no interior
+            // here (the painter skips it the same way, T1912).
+            const cx0 = @max(c.left, 0);
+            const cx1 = @min(c.right, wi);
+            if (cx1 <= cx0) continue;
+            const span = interiorSpan(c, y, ri, edge, cx0, cx1);
+            if (span[1] <= span[0]) continue;
+            if (n == runs.len) {
+                n = 0;
+                break;
+            }
+            // Insertion, by start.
+            var at = n;
+            while (at > 0 and runs[at - 1][0] > span[0]) : (at -= 1) runs[at] = runs[at - 1];
+            runs[at] = span;
+            n += 1;
+        }
+        const row: usize = @as(usize, @intCast(y)) * w;
+        var x: i32 = 0;
+        for (runs[0..n]) |r| {
+            if (r[0] > x) @memcpy(buf[row + @as(usize, @intCast(x)) ..][0..@intCast(r[0] - x)], desk[row + @as(usize, @intCast(x)) ..][0..@intCast(r[0] - x)]);
+            x = @max(x, r[1]);
+        }
+        if (wi > x) @memcpy(buf[row + @as(usize, @intCast(x)) ..][0..@intCast(wi - x)], desk[row + @as(usize, @intCast(x)) ..][0..@intCast(wi - x)]);
+    }
+}
+const MAX_SOLID_RUNS = 32;
 
 /// `paintCards` with what `prepare` built for `style`, or without it (null,
 /// or prepared for another style) building it here as `paintCards` does.
@@ -1395,17 +1538,14 @@ pub fn paintCardsWith(buf: []u32, w: usize, h: usize, cards: []const Card, style
     const wi: i32 = @intCast(w);
     const hi: i32 = @intCast(h);
 
-    const alloc = std.heap.page_allocator;
-    const scratch: ?[]f32 = alloc.alloc(f32, (1 + MAX_TABLE_LAYERS) * w) catch null;
-    defer if (scratch) |s| alloc.free(s);
+    const scratch = tableScratch(w);
 
-    paintGlows(buf, wi, hi, cards, style, scratch);
     const pre: ?*const Prepared = if (prepared) |p| (if (p.fits(style)) p else null) else null;
+    paintGlows(buf, wi, hi, cards, style, scratch, if (pre) |p| p.glow_corner else null);
     paintShadows(buf, wi, hi, cards, style.glass, layers, radius, ri, reach, scratch, pre);
 
     const rim_w = RIM_DIP * style.scale;
-    // The inner edge of the band an antialiased rim pixel can sit in.
-    const edge: i32 = @as(i32, @intFromFloat(@ceil(rim_w))) + 1;
+    const edge = interiorEdge(style.scale);
     for (cards, 0..) |c, ci| {
         const f = Frame.of(c, radius);
         const focus = focusOf(style, ci);
@@ -1459,23 +1599,18 @@ pub fn paintCardsWith(buf: []u32, w: usize, h: usize, cards: []const Card, style
             const rim_rgb: Rgbf = if (light) black else .{ .r = 255, .g = 255, .b = 255 };
             const rim_a = rimAlpha(glass, light, focus);
             const rim_c = Rgbf.lerp(fill, rim_rgb, rim_a);
-            const sides = y >= c.top + ri and y < c.bottom - ri and
-                y >= c.top + edge and y < c.bottom - edge;
             const fy = @as(f32, @floatFromInt(y)) + 0.5;
             const qy = f.qy(fy);
             const row: usize = @intCast(y * wi);
             // A straight row's interior, in one go: the solid fill, or the
             // sheet over whatever is under it.
-            const in0: i32 = if (sides) std.math.clamp(c.left + edge, x0, x1) else x1;
-            const in1: i32 = if (sides) std.math.clamp(c.right - edge, in0, x1) else x1;
+            const in0, const in1 = interiorSpan(c, y, ri, edge, x0, x1);
             if (in1 > in0) {
                 const span = buf[row + @as(usize, @intCast(in0)) .. row + @as(usize, @intCast(in1))];
                 if (glass_head) {
-                    const l = &head_glass_lut.?;
-                    for (span) |*p| p.* = l.sheet(p.*);
+                    head_glass_lut.?.sheetSpan(span);
                 } else if (glass) {
-                    const l = &lut.?;
-                    for (span) |*p| p.* = l.sheet(p.*);
+                    lut.?.sheetSpan(span);
                 } else @memset(span, fill_px | 0xFF00_0000);
             }
             // A rounded row above or below the sides (T2537): between its
@@ -2516,7 +2651,176 @@ test "T2537: without shadows the paint is the direct rasteriser to the bit" {
             std.debug.print("scale={d} glass={} light={} pixel ({d},{d}): {x} != {x}\n", .{ scale, glass, is_light, i % w, i / w, a, b });
             return error.TestUnexpectedResult;
         };
+        // And through what `prepare` builds (T2539): the glow's corner patch
+        // and the sheet's table are the per-pixel answers, read back.
+        var pre = prepare(style);
+        defer pre.deinit();
+        try testing.expect(pre.glow_corner != null);
+        fast = desk;
+        paintCardsWith(&fast, w, h, cards, style, &pre);
+        for (fast, slow, 0..) |a, b, i| if (a != b) {
+            std.debug.print("prepared: scale={d} glass={} light={} pixel ({d},{d}): {x} != {x}\n", .{ scale, glass, is_light, i % w, i / w, a, b });
+            return error.TestUnexpectedResult;
+        };
     };
+}
+
+test "T2539: copying the desk only where the paint reads it composes the same picture" {
+    const w = 300;
+    const h = 200;
+    var desk: [w * h]u32 = undefined;
+    var prng = std.Random.DefaultPrng.init(25390);
+    const rnd = prng.random();
+    for (&desk) |*p| p.* = rnd.int(u32) & 0x00FF_FFFF;
+    var whole: [w * h]u32 = undefined;
+    var under: [w * h]u32 = undefined;
+    const cards = [_]Card{
+        // A terminal (glass when the style is), a viewer page under a nav bar
+        // (glass head or opaque), one hanging off the left, and one too small
+        // for an interior.
+        .{ .left = 15, .top = 15, .right = 140, .bottom = 185 },
+        .{ .left = 155, .top = 15, .right = 285, .bottom = 120, .fill = .{ .r = 250, .g = 250, .b = 250 }, .head = .{ .r = 44, .g = 46, .b = 52 }, .head_bottom = 40, .head_glass = true },
+        .{ .left = -40, .top = 135, .right = 60, .bottom = 230, .fill = .{ .r = 10, .g = 200, .b = 30 }, .head = .{ .r = 80, .g = 82, .b = 90 }, .head_bottom = 150 },
+        .{ .left = 200, .top = 140, .right = 212, .bottom = 150, .fill = .{ .r = 1, .g = 2, .b = 3 } },
+        // Wholly off the buffer to the right, and to the left (a partial
+        // compose moves every card into its rect, most of them out of it).
+        .{ .left = 320, .top = 20, .right = 400, .bottom = 180, .fill = .{ .r = 9, .g = 9, .b = 9 } },
+        .{ .left = -120, .top = 20, .right = -50, .bottom = 120, .fill = .{ .r = 9, .g = 9, .b = 9 } },
+    };
+    const glows = [_]Glow{ .{ .card = 1, .level = 1 }, .{ .card = 0, .level = 0.4 } };
+    var skipped_any = false;
+    for ([_]f32{ 1.0, 1.5, 2.0 }) |scale| for ([_]bool{ false, true }) |glass| for ([_]bool{ false, true }) |is_light| {
+        const style: CardStyle = .{
+            .fill = if (is_light) .{ .r = 247, .g = 246, .b = 240 } else .{ .r = 29, .g = 31, .b = 33 },
+            .is_light = is_light,
+            .scale = scale,
+            .glass = glass,
+            .glows = &glows,
+        };
+        var pre = prepare(style);
+        defer pre.deinit();
+        whole = desk;
+        paintCardsWith(&whole, w, h, &cards, style, &pre);
+        // Whatever was in the buffer before must not show.
+        @memset(&under, 0xDEAD_BEEF);
+        copyDeskUnder(&under, &desk, w, h, &cards, style);
+        if (std.mem.indexOfScalar(u32, &under, 0xDEAD_BEEF) != null) skipped_any = true;
+        paintCardsWith(&under, w, h, &cards, style, &pre);
+        for (whole, under, 0..) |a, b, i| if (a != b) {
+            std.debug.print("scale={d} glass={} light={} pixel ({d},{d}): {x} != {x}\n", .{ scale, glass, is_light, i % w, i / w, a, b });
+            return error.TestUnexpectedResult;
+        };
+    };
+    // Control: it does leave pixels uncopied, or the test above proves nothing.
+    try testing.expect(skipped_any);
+}
+
+test "T2539: the glow's corner patch is glowAlpha at every offset, and refuses what it does not hold" {
+    for ([_]f32{ 1.0, 1.25, 1.5, 2.0, 3.0 }) |scale| for ([_]bool{ false, true }) |is_light| {
+        const rad: f32 = @floatFromInt(radiusPx(scale));
+        const k = try GlowCorner.init(testing.allocator, rad, glowReachPx(scale), is_light, scale);
+        defer testing.allocator.free(k.a);
+        const f: Frame = .{ .cx = 0, .cy = 0, .ex = 0, .ey = 0, .rad = rad };
+        for (0..k.n) |j| for (0..k.n) |i| {
+            const qx = @as(f32, @floatFromInt(i)) + 0.5;
+            const qy = @as(f32, @floatFromInt(j)) + 0.5;
+            const want = glowAlpha(f.dist(qx, qy), is_light, scale);
+            try testing.expectEqual(@as(u32, @bitCast(want)), @as(u32, @bitCast(k.at(qx, qy).?)));
+        };
+        // Off the grid, past the reach, or not in a corner: not the patch's.
+        try testing.expectEqual(@as(?f32, null), k.at(1.25, 0.5));
+        try testing.expectEqual(@as(?f32, null), k.at(@as(f32, @floatFromInt(k.n)) + 0.5, 0.5));
+        try testing.expectEqual(@as(?f32, null), k.at(-0.5, 0.5));
+    };
+}
+
+test "T2539: a card's corner offsets are exact half-integers, so the patch is read at the per-pixel bits" {
+    // The premise of `GlowCorner`: `qx` at any column is (offset from the
+    // corner) + 0.5 to the bit, for cards anywhere on the grid, odd or even.
+    const radius: f32 = 17;
+    for ([_][4]i32{ .{ 15, 15, 760, 785 }, .{ 1000, 3, 2911, 1999 }, .{ -30, -12, 91, 80 } }) |e| {
+        const c: Card = .{ .left = e[0], .top = e[1], .right = e[2], .bottom = e[3] };
+        const f = Frame.of(c, radius);
+        try testing.expectEqual(radius, f.rad);
+        var u: i32 = 0;
+        while (u < 40) : (u += 1) {
+            const xl = c.left + 16 - u;
+            const want = @as(f32, @floatFromInt(u)) + 0.5;
+            try testing.expectEqual(want, f.qx(@as(f32, @floatFromInt(xl)) + 0.5));
+            const xr = c.right - 17 + u;
+            try testing.expectEqual(want, f.qx(@as(f32, @floatFromInt(xr)) + 0.5));
+        }
+    }
+}
+
+// T2539: a resize step's compose, the way the app lays it - a real desk
+// (rendered small and upscaled, as `PaneDesk.ensureDesk` does), copied, then
+// a glass terminal and a viewer with its nav bar, focus glow and shadows.
+//   GHOZTTY_BENCH=1 zig test src/apprt/win32/pane_elevation.zig -OReleaseSafe --test-filter T2539
+test "T2539: bench - a glass resize step's compose" {
+    if (!(std.process.hasEnvVar(testing.allocator, "GHOZTTY_BENCH") catch false)) return error.SkipZigTest;
+    const w: usize = 1500;
+    const h: usize = 800;
+    const scale: f32 = 1.5;
+    const alloc = testing.allocator;
+    const desk = try alloc.alloc(u32, w * h);
+    defer alloc.free(desk);
+    const buf = try alloc.alloc(u32, w * h);
+    defer alloc.free(buf);
+    {
+        const ds = desk_palette.deskDownscale(w, h);
+        const sw = w / ds + 1;
+        const sh = h / ds + 1;
+        const small = try alloc.alloc(u32, sw * sh + 3 * w);
+        defer alloc.free(small);
+        desk_palette.renderDesk(small[0 .. sw * sh], sw, sh, @floatFromInt(w), @floatFromInt(h), desk_palette.Palette.forWindow(null, false));
+        const rest = small[sw * sh ..];
+        desk_palette.upscaleDesk(desk, w, h, small[0 .. sw * sh], sw, sh, rest[0 .. 2 * w], rest[2 * w ..][0..w]);
+    }
+    const m = marginPx(.elevated, scale);
+    const g = gapPx(.elevated, scale).?;
+    const wi: i32 = @intCast(w);
+    const hi: i32 = @intCast(h);
+    const mid = @divFloor(wi, 2);
+    const cards = [_]Card{
+        .{ .left = m, .top = m, .right = mid - @divFloor(g, 2), .bottom = hi - m },
+        .{ .left = mid + g - @divFloor(g, 2), .top = m, .right = wi - m, .bottom = hi - m, .fill = .{ .r = 250, .g = 250, .b = 250 }, .head = .{ .r = 44, .g = 46, .b = 52 }, .head_bottom = m + 54, .head_glass = true },
+    };
+    const glows = [_]Glow{.{ .card = 0, .level = 1 }};
+    const style: CardStyle = .{ .fill = .{ .r = 29, .g = 31, .b = 33 }, .is_light = false, .scale = scale, .glass = true, .glows = &glows };
+    var pre = prepare(style);
+    defer pre.deinit();
+    const runs = 60;
+    var best_copy: u64 = std.math.maxInt(u64);
+    var best_all: u64 = std.math.maxInt(u64);
+    var sum_all: u64 = 0;
+    for (0..runs) |_| {
+        var timer = try std.time.Timer.start();
+        copyDeskUnder(buf, desk, w, h, &cards, style);
+        const t_copy = timer.read();
+        paintCardsWith(buf, w, h, &cards, style, &pre);
+        const t_all = timer.read();
+        best_copy = @min(best_copy, t_copy);
+        best_all = @min(best_all, t_all);
+        sum_all += t_all;
+    }
+    std.debug.print("T2539 {d}x{d} @{d}x glass: copy {d} us, copy+paint best {d} us, mean {d} us\n", .{
+        w, h, scale, best_copy / 1000, best_all / 1000, sum_all / runs / 1000,
+    });
+    // Each pass alone, over the desk.
+    var best_glow: u64 = std.math.maxInt(u64);
+    var best_shadow: u64 = std.math.maxInt(u64);
+    const layer = [1]Shadow{glassShadow(false, scale)};
+    for (0..runs) |_| {
+        @memcpy(buf, desk);
+        var timer = try std.time.Timer.start();
+        paintGlows(buf, wi, hi, &cards, style, tableScratch(w), pre.glow_corner);
+        const t_glow = timer.read();
+        paintShadows(buf, wi, hi, &cards, true, &layer, @floatFromInt(radiusPx(scale)), radiusPx(scale), shadowReachPx(scale), tableScratch(w), &pre);
+        best_glow = @min(best_glow, t_glow);
+        best_shadow = @min(best_shadow, timer.read() - t_glow);
+    }
+    std.debug.print("T2539 passes: glows {d} us, shadows {d} us\n", .{ best_glow / 1000, best_shadow / 1000 });
 }
 
 // T2450: the shadow pass's cost, at the window sizes the task measured.

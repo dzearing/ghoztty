@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-06T03:15:36-08:00",
-    "commit":  "873569748",
+    "generated":  "2026-11-06T04:43:10-08:00",
+    "commit":  "6ad53b665",
     "uncommitted":  [
 
                     ],
@@ -265,7 +265,7 @@
                   "src/apprt/win32/pane_clip_math.zig":  "5edf5126af539d7593f26ba7946774538268c4a9df21b4305db5c5e5dee26453",
                   "src/apprt/win32/pane_drag_ghost.zig":  "76b8876884de6afdb26c2d0b2866d22480f70fe793ca02dac18ff4f3aeef63fc",
                   "src/apprt/win32/pane_drop.zig":  "e2f039adc38a63d8091531c2ad1f693df83f7191872b33019f77332c7a7a1c20",
-                  "src/apprt/win32/pane_elevation.zig":  "5380c720704edc9943cd3c3e2cf1b21dba9c7aebc62b3e519945fd7d0e380f4d",
+                  "src/apprt/win32/pane_elevation.zig":  "cb2ecde48d5d8dc4ede3f9ede5b5445a3b5709c46ab4abc686c8ebcc78459e08",
                   "src/apprt/win32/pane_gap.zig":  "2863e80b271647f817383b8fd320d58612a17fcbce5d4b46fa7fe117e812c3e0",
                   "src/apprt/win32/pane_grab_handle.zig":  "c88d26a4c72cb14f51081890cb915598da1115058c14df06bd0707c8989e1f95",
                   "src/apprt/win32/pane_hue.zig":  "a9728a736592c2792ef3ccb3e6016b3101113454f68fc527f80568ed0a849e64",
@@ -299,7 +299,7 @@
                   "src/apprt/win32/pane_stack_state.zig":  "c15d1ccdc76fbfe92e93fb3602b93ddb062b4320a7748105d9896d2ef4404454",
                   "src/apprt/win32/pane_stack_strip.zig":  "da36ff7d695db742541d867c67bb20975e4a8b2590e68f3ed327a692cd5210d6",
                   "src/apprt/win32/pane_stash.zig":  "9630f313b9811db3497998a01772b4dce32497326ba99fdef7a2c883f48530cb",
-                  "src/apprt/win32/PaneDesk.zig":  "36079b57c7cffef8c9d89534eb2845ea02e5e7441d97b5926bad8e879ccb7dfd",
+                  "src/apprt/win32/PaneDesk.zig":  "2d1710080695d09d7004d694b405a8eb63448ce8621b7fdfeab4dccf50b31932",
                   "src/apprt/win32/PaneDragGhost.zig":  "75cb6d32f4313912ab7ddcd73a624140ca91ae60ca583fccd5f5f1d69658fea2",
                   "src/apprt/win32/PaneGrabHandle.zig":  "959df18a9af052cb606f2e4b5d9e5aa196a1e5a83c53e238103bcb407907ab4e",
                   "src/apprt/win32/panel_theme.zig":  "caf0cd7e30f705d17e3590985e3fa51a7a3a32f90b619fd38e51b932a6c7a134",

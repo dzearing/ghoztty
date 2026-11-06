@@ -1121,7 +1121,8 @@ fn compose(
     bar: ?Bar,
     prep: ?*const pane_elevation.Prepared,
 ) void {
-    @memcpy(buf[0 .. w * h], desk[0 .. w * h]);
+    // Not under a solid card's interior (T2539): the fill covers it unread.
+    pane_elevation.copyDeskUnder(buf, desk, w, h, cards, style);
     composeOver(buf, desk, w, h, cards, strips, style, bar, prep);
 }
 
