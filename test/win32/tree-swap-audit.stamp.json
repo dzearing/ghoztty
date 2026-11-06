@@ -1,8 +1,8 @@
 {
     "guard":  "tree-swap",
     "script":  "test/win32/tree-swap-audit.ps1",
-    "generated":  "2026-11-05T21:23:32-08:00",
-    "commit":  "b48752739",
+    "generated":  "2026-11-05T22:22:18-08:00",
+    "commit":  "20d874ffc",
     "uncommitted":  [
 
                     ],
@@ -86,6 +86,7 @@
                   "src/apprt/win32/com.zig":  "5bdb6803e4056d79ba1a1390ff939e62c4fca87688ff1516cffb19cf9ecc3f54",
                   "src/apprt/win32/commands.zig":  "982cc6405ee3cd7bf21a4a0b9aafc642ac695ba24c780ff494ede18a7ce6785d",
                   "src/apprt/win32/comp_spike_stats.zig":  "d3e57fabcbf58a7866dee9310b12289095d5805d64b50a991fcd299035c04430",
+                  "src/apprt/win32/comp_surface.zig":  "7a70e26915d4ba245093c1b6df5796977220ab7d4c20b87ce02c4294cc20ea3a",
                   "src/apprt/win32/ConfigFileStore.zig":  "f951b29a252dc69920bc7195dc5f50473caa82a967b58ae967b0dc9fcfad8286",
                   "src/apprt/win32/ConfigFileText.zig":  "5f9765c4c2f053e814911fd09ce5f4f5371a5a37939f1b78c749d83f35032544",
                   "src/apprt/win32/ConfigValidator.zig":  "5311968517c0ec8f1eb8b6a2647ecab81d6b3ba106c2138e5900bf7b15d29f6f",
