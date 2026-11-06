@@ -554,14 +554,19 @@ enum PaneSidebarText {
     }
 
     /// The title a pane banner gives itself, as plain text, or nil when it
-    /// has none. Only a line that IS a title counts, never just the first
-    /// line of whatever the banner says:
-    /// - a heading on the banner's first line (`## Fix strip labels`) — what
-    ///   the banner hook writes above its table;
-    /// - a one-line banner that opens with a bold run standing on its own
-    ///   (`**Fix strip labels**`, or followed by ` · …`) — the hook's OSC
-    ///   fallback. A bold label (`**Goal:** …`) is not a title, and neither
-    ///   is a bold run followed by more prose (`**PR #12** — 3 files`).
+    /// has none. A banner's first line names its pane — type `foo` at Cmd+R
+    /// and the pane is foo, whatever follows on later lines — unless that
+    /// line is doing some other job:
+    /// - a heading (`## Fix strip labels`, what the banner hook writes above
+    ///   its table) is a title by its text;
+    /// - a table or rule line is layout, and a list item is one of several;
+    /// - a line opening in bold is a label unless it is a one-line banner
+    ///   whose bold run stands on its own (`**Fix strip labels**`, or followed
+    ///   by ` · …`) — the hook's OSC fallback. So a bold label
+    ///   (`**Goal:** …`), a bold run followed by more prose
+    ///   (`**PR #12** — 3 files`) and a bold line heading more lines
+    ///   (`**Last result**`) name nothing: agents and hooks write these, and
+    ///   the pane's own title says more.
     static func bannerTitle(_ banner: String?) -> String? {
         let lines = bannerLines(banner)
         guard let first = lines.first else { return nil }
@@ -569,7 +574,13 @@ enum PaneSidebarText {
             let plain = stripInlineMarkdown(heading)
             return plain.isEmpty ? nil : plain
         }
-        guard lines.count == 1, first.hasPrefix("**") else { return nil }
+        if isLayout(first) || Ghostty.BannerMarkdown.listItem(Substring(first)) != nil { return nil }
+        if first.allSatisfy({ $0 == "#" }) { return nil } // a heading with no text yet
+        guard first.hasPrefix("**") else {
+            let plain = stripInlineMarkdown(first)
+            return plain.isEmpty ? nil : plain
+        }
+        guard lines.count == 1 else { return nil }
         let rest = first.dropFirst(2)
         guard let close = rest.range(of: "**") else { return nil }
         let after = rest[close.upperBound...].trimmingCharacters(in: .whitespaces)
@@ -605,9 +616,7 @@ enum PaneSidebarText {
     /// `` `code` ``, `[text](url)`, `\` escapes) stripped to its words. Table
     /// and rule lines are skipped — they are layout, not a summary.
     static func bannerLine(_ banner: String?) -> String? {
-        guard let line = bannerLines(banner).first(where: { line in
-            !line.hasPrefix("|") && !isThematicBreak(line)
-        }) else { return nil }
+        guard let line = bannerLines(banner).first(where: { !isLayout($0) }) else { return nil }
         let plain = stripInlineMarkdown(headingText(line) ?? line)
         return plain.isEmpty ? nil : plain
     }
@@ -627,6 +636,11 @@ enum PaneSidebarText {
         guard let subtitle else { return nil }
         let trim = { (s: String) in s.trimmingCharacters(in: .whitespaces) }
         return trim(subtitle) == trim(title) ? nil : subtitle
+    }
+
+    /// A table or rule line: it arranges the banner rather than says anything.
+    private static func isLayout(_ line: String) -> Bool {
+        line.hasPrefix("|") || isThematicBreak(line)
     }
 
     private static func isThematicBreak(_ line: String) -> Bool {

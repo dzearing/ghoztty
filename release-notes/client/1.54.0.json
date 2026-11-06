@@ -1,0 +1,13 @@
+{
+  "version": "1.54.0",
+  "sections": [
+    { "title": "Pane banners",
+      "items": [
+        { "title": "Name a pane by typing", "text": "Press Cmd-R, type a name, and the banner's first line becomes the pane's name in the sidebar and on stacked strips. No # heading needed. Bold labels, tables and lists still leave the pane's name alone." }
+      ] },
+    { "title": "Stacked panes",
+      "items": [
+        { "title": "Cursor on blades", "text": "Moving slowly off a divider onto a blade no longer leaves the resize cursor stuck." }
+      ] }
+  ]
+}

@@ -1,11 +1,10 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-11-06T10:55:39-08:00",
-    "commit":  "3613b0ada",
+    "generated":  "2026-11-06T11:58:23-08:00",
+    "commit":  "2d6fb0793",
     "uncommitted":  [
-                        "src/apprt/win32/banner_markdown.zig",
-                        "src/apprt/win32/pane_sidebar.zig"
+
                     ],
     "files":  {
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
@@ -115,12 +114,12 @@
                   "src/apprt/win32/background_zorder.zig":  "f365d4f6606a4f32c237ae49721ba46b6a7239e253fb205598df7a668e75d823",
                   "src/apprt/win32/banner_card.zig":  "9697c5e10f7cbd77852c8d9318f8f1e65bffb6e934d6c8a673ccefc4ae5cb53f",
                   "src/apprt/win32/banner_glide.zig":  "3975542db037c63aff42938225a925ca60996608cef458571279dd1b28126497",
-                  "src/apprt/win32/banner_layout.zig":  "9e6a83b66e67bdfcf62303508700f1797c3e569e9ef35ab4011156769d12386e",
+                  "src/apprt/win32/banner_layout.zig":  "828f198336f4b8640733688ff08ffda365a2565c73151cfb08147b266a9638a0",
                   "src/apprt/win32/banner_link.zig":  "0ca33afdba886a50a930f6cdb93f79e2a066ad776ea1a68b1215239d4bf020a7",
                   "src/apprt/win32/banner_markdown.zig":  "f3da3d926f154c400ce2cdacee1026703558114414255146b5b4be81eb087b15",
                   "src/apprt/win32/BannerDialog.zig":  "3a5e59dba40c6c4df9aab5cf5e87751d137bb81642399deb0adf59d33ec3b47d",
                   "src/apprt/win32/BannerFreeze.zig":  "71eaa115e64eed567e3d7626ed6fce9f336d068a09a2755f621cd155f63c21d2",
-                  "src/apprt/win32/BannerOverlay.zig":  "47cb4aca88704b43e776c9e422c980e0f984cca7cdc2b21f379e20dd5c8e67e2",
+                  "src/apprt/win32/BannerOverlay.zig":  "2a254ee805b98a2e03145063d70c73ea5a301950f4bce638edeee95796d457ce",
                   "src/apprt/win32/BannerScriptInstaller.zig":  "e349d9a86275fb68b44211120d5859a92e14dc2ce797f9060a8b5cd701cb923d",
                   "src/apprt/win32/bell_audio.zig":  "62fac1f75e392cebde66811ad0f7824931292e5ea76bac307847a6a854f40512",
                   "src/apprt/win32/bell_math.zig":  "035c306b1101152db30370b806871a5f9b7fa88ccfced31ae900c03192f9de0b",
