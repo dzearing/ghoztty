@@ -1299,6 +1299,19 @@ pub fn present(self: *OpenGL, target: Target) !void {
         gl.c.GL_NEAREST,
     );
 
+    // T2515: a premultiplied chain under a window toggled opaque shows its
+    // frame solid, the way the WGL pane's window stops honouring alpha then:
+    // only the alpha channel is cleared, to 1.
+    if (comptime apprt.runtime == apprt.win32) if (self.comp) |p| if (comp_fbo != null and
+        gl_comp_present.forceOpaqueAlpha(p.premultiplied, self.rt_surface.windowTranslucent()))
+    {
+        const ctx = gl.glad.context;
+        ctx.ColorMask.?(gl.c.GL_FALSE, gl.c.GL_FALSE, gl.c.GL_FALSE, gl.c.GL_TRUE);
+        ctx.ClearColor.?(0, 0, 0, 1);
+        ctx.Clear.?(gl.c.GL_COLOR_BUFFER_BIT);
+        ctx.ColorMask.?(gl.c.GL_TRUE, gl.c.GL_TRUE, gl.c.GL_TRUE, gl.c.GL_TRUE);
+    };
+
     // Keep track of this target in case we need to repeat it.
     self.last_target = target;
 }
@@ -1311,6 +1324,16 @@ fn compBegin(self: *OpenGL, width: usize, height: usize) ?gl.Framebuffer {
         self.comp_tried = true;
         if (gl_comp_present.enabled()) self.compInit(width, height);
     }
+    // T2515: a chain's alpha mode is fixed when it is made, so an opaque one
+    // under a window that has since turned translucent is made again.
+    if (self.comp) |old| if (gl_comp_present.needsAlphaRebuild(old.premultiplied, self.rt_surface.windowTranslucent())) {
+        compRetract(self);
+        old.deinit();
+        self.alloc.destroy(old);
+        self.comp = null;
+        log.info("composition swap chain rebuilt: the window turned translucent", .{});
+        self.compInit(width, height);
+    };
     const p = self.comp orelse return null;
     // The swap chain holds the grid; its visual sits below the banner band
     // the window spans (T2566).
@@ -1337,7 +1360,9 @@ fn compInit(self: *OpenGL, width: usize, height: usize) void {
     // the visual; a handle nobody adopts is a pane that never shows.
     const in_tree = gl_comp_present.treeEnabled() and
         self.rt_surface.comp_tree_slot.host_ready.load(.acquire);
-    p.* = gl_comp_present.Presenter.init(hwnd, @intCast(width), @intCast(height), in_tree) catch |err| {
+    // T2515: composed by alpha in a translucent window, as the WGL pane is.
+    const premultiplied = self.rt_surface.windowTranslucent();
+    p.* = gl_comp_present.Presenter.init(hwnd, @intCast(width), @intCast(height), in_tree, premultiplied) catch |err| {
         self.alloc.destroy(p);
         const f = gl_comp_present.Presenter.lastFailure();
         log.warn(
@@ -1347,7 +1372,7 @@ fn compInit(self: *OpenGL, width: usize, height: usize) void {
         return;
     };
     self.comp = p;
-    log.info("pane presents through a composition swap chain warp={} tree={}", .{ p.warp, in_tree });
+    log.info("pane presents through a composition swap chain warp={} tree={} premultiplied={}", .{ p.warp, in_tree, premultiplied });
     if (p.surface_handle) |h| {
         self.rt_surface.comp_tree_slot.publish(h);
         comp_overlay.notify(hwnd);

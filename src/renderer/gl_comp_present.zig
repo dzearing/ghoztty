@@ -114,6 +114,7 @@ const DXGI_FORMAT_B8G8R8A8_UNORM: u32 = 87;
 const DXGI_USAGE_RENDER_TARGET_OUTPUT: u32 = 0x20;
 const DXGI_SCALING_STRETCH: u32 = 0;
 const DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL: u32 = 3;
+const DXGI_ALPHA_MODE_PREMULTIPLIED: u32 = 1;
 const DXGI_ALPHA_MODE_IGNORE: u32 = 3;
 const D3D_DRIVER_TYPE_HARDWARE: u32 = 1;
 const D3D_DRIVER_TYPE_WARP: u32 = 5;
@@ -254,6 +255,30 @@ const DCompCreateDeviceFn = *const fn (?Obj, *const GUID, *?Obj) callconv(.winap
 const DCompCreateSurfaceHandleFn = *const fn (u32, ?*anyopaque, *HANDLE) callconv(.winapi) HRESULT;
 extern "kernel32" fn CloseHandle(*anyopaque) callconv(.winapi) i32;
 
+/// The swap chain's alpha mode (T2515). Opaque windows keep IGNORE, so DWM
+/// never blends a pane it can treat as solid; a translucent one composes by
+/// the frame's premultiplied alpha, as a per-pixel-alpha WGL pane does.
+pub fn alphaMode(premultiplied: bool) u32 {
+    return if (premultiplied) DXGI_ALPHA_MODE_PREMULTIPLIED else DXGI_ALPHA_MODE_IGNORE;
+}
+
+/// What a frame's alpha must be made before it is presented (T2515): on a
+/// premultiplied chain whose window is opaque right now (toggled with
+/// `toggle_background_opacity`), every pixel is forced to 1, which is the
+/// picture an IGNORE chain - and the WGL path, whose window then stops
+/// honouring alpha - shows. Otherwise the frame goes as drawn.
+pub fn forceOpaqueAlpha(premultiplied: bool, window_translucent: bool) bool {
+    return premultiplied and !window_translucent;
+}
+
+/// Whether a presenter must be rebuilt before this frame (T2515): an IGNORE
+/// chain under a window that has turned translucent (a config reload took
+/// `background-opacity` below 1) would keep the pane opaque, and a chain's
+/// alpha mode is fixed when it is made.
+pub fn needsAlphaRebuild(premultiplied: bool, window_translucent: bool) bool {
+    return !premultiplied and window_translucent;
+}
+
 /// Whether panes should present into their window's tree (T2553,
 /// `comp_tree.zig`) rather than a target on their own child window.
 pub fn treeEnabled() bool {
@@ -334,6 +359,8 @@ pub const Presenter = struct {
 
     locked: bool = false,
     warp: bool = false,
+    /// The swap chain composes by alpha (`init`'s `premultiplied`, T2515).
+    premultiplied: bool = false,
     /// The px the visual sits below its window's top: the banner band the
     /// window spans (T2566). Only the pane-local visual moves; in tree mode
     /// the window thread places the pane's visual.
@@ -349,7 +376,11 @@ pub const Presenter = struct {
     /// Build the whole chain for `hwnd`. Needs the pane's GL context current.
     /// `tree`: present into a composition surface handle for the window's
     /// tree to adopt (`surface_handle`) instead of a target on `hwnd`.
-    pub fn init(hwnd: HWND, width: u32, height: u32, tree: bool) Error!Presenter {
+    /// `premultiplied`: the window is translucent (T2515), so DWM composes
+    /// the frame by its alpha - the renderer writes the background at
+    /// `background-opacity`, premultiplied, the same pixels the WGL path
+    /// hands a per-pixel-alpha window - instead of ignoring it.
+    pub fn init(hwnd: HWND, width: u32, height: u32, tree: bool, premultiplied: bool) Error!Presenter {
         if (comptime builtin.os.tag != .windows) return error.Unavailable;
 
         stage = "wgl-interop";
@@ -402,7 +433,7 @@ pub const Presenter = struct {
             .buffer_count = 2,
             .scaling = DXGI_SCALING_STRETCH,
             .swap_effect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-            .alpha_mode = DXGI_ALPHA_MODE_IGNORE,
+            .alpha_mode = alphaMode(premultiplied),
             .flags = 0,
         };
         var swap: ?Obj = null;
@@ -442,6 +473,7 @@ pub const Presenter = struct {
                 .width = desc.width,
                 .height = desc.height,
                 .warp = warp,
+                .premultiplied = premultiplied,
                 .fail_after = debugFailAfter(),
             };
             stage = "shared-texture";
@@ -494,6 +526,7 @@ pub const Presenter = struct {
             .width = desc.width,
             .height = desc.height,
             .warp = warp,
+            .premultiplied = premultiplied,
             .fail_after = debugFailAfter(),
         };
         errdefer self.deinit();
@@ -789,4 +822,23 @@ test "copy box desc matches the SDK layout" {
 test "swap chain desc matches the SDK layout" {
     try std.testing.expectEqual(@as(usize, 48), @sizeOf(DXGI_SWAP_CHAIN_DESC1));
     try std.testing.expectEqual(@as(usize, 44), @sizeOf(D3D11_TEXTURE2D_DESC));
+}
+
+test "T2515: a translucent window's chain composes by alpha, an opaque one ignores it" {
+    try std.testing.expectEqual(DXGI_ALPHA_MODE_PREMULTIPLIED, alphaMode(true));
+    try std.testing.expectEqual(DXGI_ALPHA_MODE_IGNORE, alphaMode(false));
+}
+
+test "T2515: alpha is forced opaque only on a premultiplied chain under an opaque window" {
+    try std.testing.expect(forceOpaqueAlpha(true, false));
+    try std.testing.expect(!forceOpaqueAlpha(true, true));
+    try std.testing.expect(!forceOpaqueAlpha(false, false));
+    try std.testing.expect(!forceOpaqueAlpha(false, true));
+}
+
+test "T2515: an opaque chain is rebuilt only once its window turns translucent" {
+    try std.testing.expect(needsAlphaRebuild(false, true));
+    try std.testing.expect(!needsAlphaRebuild(false, false));
+    try std.testing.expect(!needsAlphaRebuild(true, true));
+    try std.testing.expect(!needsAlphaRebuild(true, false));
 }

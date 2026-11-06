@@ -1,14 +1,15 @@
 {
     "guard":  "comp-present",
     "script":  "test/win32/comp-present.ps1",
-    "generated":  "2026-11-04T06:11:40-08:00",
-    "commit":  "8b54f0dcf",
+    "generated":  "2026-11-06T05:15:55-08:00",
+    "commit":  "d9b25fca9",
     "uncommitted":  [
+                        "src/renderer/gl_comp_present.zig",
                         "src/renderer/OpenGL.zig"
                     ],
     "files":  {
-                  "src/renderer/gl_comp_present.zig":  "a39b79e451b26a908c936d9ab700df7b2d3a8653d2a13c24273228c60234f6f9",
-                  "src/renderer/OpenGL.zig":  "caa5232247b4a464bbbdedecfb29792f5100c29a5f3a3396b5e541418aea2aa4",
+                  "src/renderer/gl_comp_present.zig":  "c04c524a5773e7c7f23b84ee4c79ee9864552976a048eed38912b57c4113b648",
+                  "src/renderer/OpenGL.zig":  "6bd7c30fad8a9be0eb8bfc57fc2b34a5aec9692930626f011ca0e1b9c1edea86",
                   "test/win32/comp-present.ps1":  "824ca90d9c5e1cb1a075ee503df674ce57c31e50debf1a4f51d502ec21ab8928"
               }
 }

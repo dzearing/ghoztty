@@ -252,6 +252,14 @@ spans_banner_band: bool = false,
 /// (`bannerLayoutInset`, UI thread), read by the renderer for its size.
 grid_band: std.atomic.Value(u32) = .init(0),
 
+/// Whether this pane's window composes by per-pixel alpha right now
+/// (`Window.translucent`, T2515), for the renderer: the composition present
+/// builds its swap chain premultiplied for a translucent window and forces the
+/// frame's alpha opaque while the window is toggled opaque. Written by
+/// `Window.setTranslucent` and by every layout pass (`bannerLayoutInset`),
+/// which also covers a pane moved into another window; read by the renderer.
+window_translucent: std.atomic.Value(bool) = .init(false),
+
 /// The band changed under a window the layout may leave the same size, so no
 /// `WM_SIZE` would re-run the grid (T2566). UI thread; consumed by
 /// `settleGridBand`.
@@ -889,7 +897,13 @@ fn initOnce(
     // On that path pane windows stop presenting, so neither a layer of their
     // own (T2499) nor a parked window (T2597) buys anything.
     const presenter_on = parent.ensurePresenter();
-    const want_layer = !presenter_on and pane_layer.wantOwnLayer(pane_layer.enabled(), parent.translucent or config_translucent);
+    // T2515: nor on the composition path, where the pane presents into a swap
+    // chain and never into its window. A layer there is worse than useless:
+    // the visual composes over it, and once the window turns translucent the
+    // dropped layer still sits under the pane at ~40% alpha (WGC grab: 224
+    // where the WGL pane reads 204), so the desktop shows through too little.
+    const want_layer = !presenter_on and !gl_comp_present.enabled() and
+        pane_layer.wantOwnLayer(pane_layer.enabled(), parent.translucent or config_translucent);
     const reused: ?w32.HWND = if (presenter_on or want_layer or !pane_pool.enabled()) null else takeParkedWindow(parent, sr);
     const hwnd = reused orelse w32.CreateWindowExW(
         0,
@@ -918,6 +932,9 @@ fn initOnce(
     // knob, not the present path: that is decided on the first frame, after
     // the layout has already placed this window.
     self.spans_banner_band = gl_comp_present.enabled();
+    // T2515: the window's mode at birth, before the first frame decides the
+    // swap chain's alpha. A window that turns translucent later tells it.
+    self.window_translucent.store(parent.translucent, .release);
     // A surface of its own, so the GPU memory its presents use goes when the
     // pane does rather than when the window does (T2499, `pane_layer.zig`).
     // Never in a translucent window, or the configured one may turn so: the
@@ -1562,6 +1579,18 @@ fn initPresenterContext(self: *Surface, app: *App, parent: *Window) ?gl_robust.C
     return created;
 }
 
+/// The window turned translucent or opaque (T2515, `window_translucent`).
+/// UI thread; a change forces a frame, so the composition path re-decides
+/// the frame's alpha (or its swap chain) now rather than at the next draw.
+pub fn setWindowTranslucent(self: *Surface, on: bool) void {
+    if (self.window_translucent.swap(on, .acq_rel) != on) self.kickRenderer();
+}
+
+/// See `window_translucent`. Renderer thread.
+pub fn windowTranslucent(self: *const Surface) bool {
+    return self.window_translucent.load(.acquire);
+}
+
 /// Wake this pane's renderer for a forced frame. Any thread: the window
 /// presenter calls it after rebuilding its context (T2616), so a pane with
 /// nothing new to draw still notices that its context is in the old group.
@@ -2180,6 +2209,8 @@ pub fn setPaneBanner(self: *Surface, text: ?[]const u8) void {
 /// `slot_w` is the pane slot's width, fed down so the banner's tables size
 /// their columns to the pane and re-measure on every resize (T123).
 pub fn bannerLayoutInset(self: *Surface, slot_w: i32, slot_h: i32) i32 {
+    // T2515: the layout runs for every pane of the window it is in now.
+    self.window_translucent.store(self.parent_window.translucent, .release);
     const overlay = self.banner_overlay orelse {
         self.setGridBand(0);
         return 0;

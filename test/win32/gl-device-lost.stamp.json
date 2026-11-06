@@ -1,15 +1,15 @@
 {
     "guard":  "gl-device-lost",
     "script":  "test/win32/gl-device-lost.ps1",
-    "generated":  "2026-11-04T06:27:11-08:00",
-    "commit":  "8b54f0dcf",
+    "generated":  "2026-11-06T02:41:35-08:00",
+    "commit":  "d9b25fca9",
     "uncommitted":  [
                         "src/renderer/OpenGL.zig"
                     ],
     "files":  {
                   "src/apprt/win32/WindowPresenter.zig":  "8e0056c2db70066b50f52ed76f96d0e41116b108f0d66a047b43b58f4bac44d4",
                   "src/renderer/gl_robust.zig":  "56ae9ce9924d222d22ab1cb51cdbb4d6b4e3c47350d15d5d6bfad7aa45cc61d1",
-                  "src/renderer/OpenGL.zig":  "caa5232247b4a464bbbdedecfb29792f5100c29a5f3a3396b5e541418aea2aa4",
+                  "src/renderer/OpenGL.zig":  "6bd7c30fad8a9be0eb8bfc57fc2b34a5aec9692930626f011ca0e1b9c1edea86",
                   "src/renderer/Thread.zig":  "487c020f83c7d6be84b2ff81755426f86e70e87f1ea9f5c22b27f193f63df42f",
                   "test/win32/gl-device-lost.ps1":  "9ea50c131a98b6be564e055c6e196ee36d7209884b6c4ab792d83103336ec73e"
               }

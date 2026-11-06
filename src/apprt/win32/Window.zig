@@ -1587,6 +1587,13 @@ pub fn setTranslucent(self: *Window, enabled: bool) void {
     }
     self.translucent = enabled;
     log.info("window translucent={}", .{enabled});
+    // The composition present reads the mode off each pane (T2515).
+    for (0..self.tab_count) |tab| {
+        var it = self.tab_trees[tab].iterator();
+        while (it.next()) |entry| {
+            if (entry.view.surface()) |s| s.setWindowTranslucent(enabled);
+        }
+    }
     // A pane with an opaque layer of its own (T2499) would hide the desktop
     // the window now shows through, so it rejoins the window's surface.
     if (enabled) for (0..self.tab_count) |tab| {

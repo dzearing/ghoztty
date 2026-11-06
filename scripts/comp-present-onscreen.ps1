@@ -47,6 +47,18 @@
 # child window, or a second pane that is never adopted, is a failure.
 #   powershell -NoProfile -File scripts\comp-present-onscreen.ps1 -NegativeControl   # must go red
 #
+# TRANSLUCENT (T2515): -Opacity below 1 runs the on/off arms in a window with
+# that background-opacity and reads the grab's ALPHA (the raw BMP bytes - a
+# System.Drawing load of a 32bpp BMP drops it): the pane background must be
+# see-through at about the configured opacity, the glyphs opaque, and the
+# composition picture the WGL one. Each arm then toggles the window opaque
+# (toggle_background_opacity, a chord posted to the ghost) and the background
+# must read solid. The RELOAD arm starts opaque and reloads its config to the
+# opacity: a composition chain built for an opaque window is rebuilt to
+# compose by alpha. -NegativeControl inverts the see-through check and must
+# go red.
+#   powershell -NoProfile -File scripts\comp-present-onscreen.ps1 -Arms on,off,reload -Opacity 0.8
+#
 # FOLD is FLAT plus a stack fold (T2570): P | s1 | s2, the root divider
 # dragged past the fold point and held with the slide stretched
 # (GHOZTTY_STACK_SLIDE_MS), the stack-fold-slide.ps1 shape. s2 is filled with
@@ -80,12 +92,16 @@ param(
     # checks must then FAIL, or they cannot tell a flipped present apart.
     [switch]$NegativeControl,
     # Grab the mid-fold frame without the window's owned popups (fold arm).
-    [switch]$NoPopups
+    [switch]$NoPopups,
+    # T2515: run the window translucent (background-opacity below 1).
+    [double]$Opacity = 1.0
 )
 
 # This tree's build, whichever loop lane's tree it is (T2572: a default of
 # lane A's tree made lane B's run refuse).
 $Exe = [System.IO.Path]::GetFullPath($Exe)
+# `-File` hands `-Arms on,off` over as ONE string.
+$Arms = @($Arms | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $Spike = [System.IO.Path]::GetFullPath($Spike)
 
 $ErrorActionPreference = 'Continue'
@@ -133,6 +149,7 @@ public static class GhostWin {
     [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i);
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr h, int cmd);
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr h, uint m, IntPtr w, IntPtr l);
     public static IntPtr[] TopLevel(uint pid, string cls) {
         var list = new List<IntPtr>();
         EnumWindows((h, l) => {
@@ -215,6 +232,23 @@ public static class InkMath {
             }
         }
         return ink == 0 ? 0.0 : (double)near / ink;
+    }
+    // T2515: alpha of [x0,x1) x [y0,y1) split by ink. Returns
+    // { mean alpha of background pixels, mean alpha of ink pixels,
+    //   background count, ink count, fraction of background pixels with
+    //   alpha below 250 }.
+    public static double[] AlphaByInk(byte[] b, int stride, int x0, int y0, int x1, int y1, int lum) {
+        long bgSum = 0, bgN = 0, inkSum = 0, inkN = 0, bgSee = 0;
+        for (int y = y0; y < y1; y++) {
+            for (int x = x0, o = y * stride + x0 * 4; x < x1; x++, o += 4) {
+                int a = b[o + 3];
+                if (Ink(b, o, lum)) { inkSum += a; inkN++; }
+                else { bgSum += a; bgN++; if (a < 250) bgSee++; }
+            }
+        }
+        return new double[] {
+            bgN == 0 ? 0.0 : (double)bgSum / bgN, inkN == 0 ? 0.0 : (double)inkSum / inkN,
+            bgN, inkN, bgN == 0 ? 0.0 : (double)bgSee / bgN };
     }
     // Mean luminance of [x0,x1) x [y0,y1), sampled every 2 px (T2562: is the
     // dim wash on this pane's spot of the grab).
@@ -322,8 +356,42 @@ function Score-Grab($arm, $label, $hw, $target, $dir, [double]$minMatch = 0.80, 
     Assert "$label.6 the pane on screen is not blank" ($inkRows.Count -ge 20)
     Assert "$label.7 right way up: the marker lines are at the top, the bottom third is background" ($topInk -ge 20 -and $bottomInk -le 2)
     Assert "$label.8 the glyphs match capture-pane's (>= $('{0:N2}' -f $minMatch) ink overlap)" ($best.s -ge $minMatch)
+    # T2515: alpha from the file itself (top-down 32bpp, 54-byte header).
+    $raw = [IO.File]::ReadAllBytes($bmpPath)
+    $rb = New-Object byte[] ($raw.Length - 54)
+    [Array]::Copy($raw, 54, $rb, 0, $rb.Length)
+    if ($NegativeControl -and -not $NoFlip) {
+        # The same flip the scored bitmap took, so the regions line up.
+        $fl = New-Object byte[] $rb.Length; $row = $g.W * 4
+        for ($yy = 0; $yy -lt $g.H; $yy++) { [Array]::Copy($rb, $yy * $row, $fl, ($g.H - 1 - $yy) * $row, $row) }
+        $rb = $fl
+    }
+    $al = [InkMath]::AlphaByInk($rb, $g.W * 4, $x0 + 4, $y0 + 4, $x1 - 4, $y1 - 4, $lum)
+    $script:lastAlpha = $al
+    "  alpha: background mean=$('{0:N1}' -f $al[0]) see-through=$('{0:N3}' -f $al[4]) (n=$($al[2])) ink mean=$('{0:N1}' -f $al[1]) (n=$($al[3]))"
     return
 }
+
+# T2515: the last grab's alpha, see-through at the configured opacity or solid.
+function Assert-Alpha($label, [bool]$seeThrough) {
+    $al = $script:lastAlpha
+    if (-not $al) { Assert "$label.A0 the grab was scored for alpha" $false; return }
+    $want = 255.0 * $Opacity
+    if ($seeThrough) {
+        $ok = ($al[4] -ge 0.90) -and ([Math]::Abs($al[0] - $want) -le 16)
+        if ($NegativeControl) {
+            "  NEGATIVE CONTROL: asserting the background is NOT see-through - this check MUST fail"
+            $ok = -not $ok
+        }
+        Assert "$label.A1 the background shows the desktop through (see-through $('{0:N3}' -f $al[4]) >= 0.90, mean alpha $('{0:N1}' -f $al[0]) ~ $('{0:N0}' -f $want))" $ok
+    } else {
+        Assert "$label.A1 the background is solid (mean alpha $('{0:N1}' -f $al[0]) >= 250, see-through $('{0:N3}' -f $al[4]) <= 0.02)" ($al[0] -ge 250 -and $al[4] -le 0.02)
+    }
+    Assert "$label.A2 the glyphs stay opaque (ink mean alpha $('{0:N1}' -f $al[1]) >= 240)" ($al[1] -ge 240)
+}
+
+$alphaOf = @{}
+$confPath = $null
 
 [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
 [void](Set-GhozttyTestIsolation -Tag 'componscreen')
@@ -336,7 +404,7 @@ $td = New-TestDesktop -Interactive
 $results = @{}
 try {
     foreach ($arm in $Arms) {
-        "== arm '$arm' (GHOZTTY_COMP_PRESENT=$(if ($arm -ne 'off') { '1' } else { 'unset' }) PANE_TREE=$(if ($arm -in 'tree', 'flat', 'fold') { '1' } else { 'unset' }))"
+        "== arm '$arm' (GHOZTTY_COMP_PRESENT=$(if ($arm -notin 'off', 'reloadoff') { '1' } else { 'unset' }) PANE_TREE=$(if ($arm -in 'tree', 'flat', 'fold') { '1' } else { 'unset' }))"
         [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
         $dir = Join-Path $OutDir $arm
         New-Item -ItemType Directory -Force $dir | Out-Null
@@ -345,7 +413,7 @@ try {
         # A ghost sits under the user's windows, so the app would park its
         # renderer as occluded (T1951) after the first frame.
         $env:GHOZTTY_TEST_NO_OCCLUSION = '1'
-        if ($arm -ne 'off') { $env:GHOZTTY_COMP_PRESENT = '1' } else { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
+        if ($arm -notin 'off', 'reloadoff') { $env:GHOZTTY_COMP_PRESENT = '1' } else { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
         $inTree = $arm -in 'tree', 'flat', 'fold'
         foreach ($k in 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE') {
             if ($inTree) { Set-Item "env:$k" '1' } else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
@@ -356,6 +424,18 @@ try {
             '--config-default-files=false', '--session-persistence=false',
             '--window-width=110', '--window-height=34', '--background=#101418',
             "--title=t2488-$arm")
+        # T2515: translucent; the reload arm starts opaque from a config file
+        # and reloads it to the opacity.
+        if ($Opacity -lt 1.0) {
+            $appArgs += '--keybind=f9=toggle_background_opacity'
+            if ($arm -in 'reload', 'reloadoff') {
+                $confPath = Join-Path $dir 'opacity.conf'
+                [IO.File]::WriteAllText($confPath, "background-opacity = 1`n")
+                $appArgs += "--config-file=$confPath"
+            } else {
+                $appArgs += "--background-opacity=$Opacity"
+            }
+        }
         # The tree arm's split leaves one pane unfocused; a white wash makes
         # its dim visible on the grab (T2562) while its text stays ink. Glass
         # panes never dim (T2281), so glass is off.
@@ -384,7 +464,7 @@ try {
         }
         Assert "$arm.2 the named window came up" ($null -ne $hw)
         if (-not $hw) { continue }
-        if ($arm -eq 'on') {
+        if ($arm -in 'on', 'reload') {
             Assert "$arm.3 the panes present through the composition chain" (Wait-Log $err $onLine 15000)
             Assert "$arm.3b no pane went into the window tree" ((Read-Text $err) -notmatch [regex]::Escape($treeLine))
         } elseif ($inTree) {
@@ -397,7 +477,58 @@ try {
 
         Mark-Pane "on$arm"
         $script:lastRegion = $null
+        $script:lastAlpha = $null
         Score-Grab $arm "$arm" $hw "on$arm" $dir
+        if ($Opacity -lt 1.0 -and $arm -in 'on', 'off') {
+            Assert "$arm.T1 the window went translucent (log)" ((Read-Text $err) -match 'window translucent=true')
+            if ($arm -eq 'on') {
+                Assert "$arm.T2 the swap chain composes by alpha (log)" ((Read-Text $err) -match 'composition swap chain warp=\w+ tree=\w+ premultiplied=true')
+            }
+            Assert-Alpha $arm $true
+            $alphaOf[$arm] = $script:lastAlpha
+            # Toggled opaque: the background must read solid on both paths.
+            $before = ([regex]::Matches((Read-Text $err), 'window translucent=false')).Count
+            # A bare F9 POSTED to the pane: no thread attach, no SetFocus, so
+            # the foreground cannot move (a Send-TestKeys chord here made the
+            # ghost the foreground window - T2515's first run).
+            $paneHw = @(Get-TestChildWindows -Window $hw -Class 'GhozttyTerminal' | Where-Object Visible | Select-Object -First 1)
+            if ($paneHw.Count -gt 0) {
+                $ph = [IntPtr]$paneHw[0].Hwnd
+                [void][GhostWin]::PostMessageW($ph, 0x0100, [IntPtr]0x78, [IntPtr]0x00430001)
+                Start-Sleep -Milliseconds 40
+                [void][GhostWin]::PostMessageW($ph, 0x0101, [IntPtr]0x78, [IntPtr]([int64]0xC0430001 - 0x100000000))
+            }
+            $went = $false
+            for ($t = 0; $t -lt 50 -and -not $went; $t++) {
+                $went = ([regex]::Matches((Read-Text $err), 'window translucent=false')).Count -gt $before
+                if (-not $went) { Start-Sleep -Milliseconds 200 }
+            }
+            Assert "$arm.T3 toggle_background_opacity turned the window opaque (log)" $went
+            Start-Sleep -Milliseconds 800
+            $script:lastAlpha = $null
+            Score-Grab $arm "$arm.opaque" $hw "on$arm" $dir
+            Assert-Alpha "$arm.opaque" $false
+        }
+        if ($Opacity -lt 1.0 -and $arm -in 'reload', 'reloadoff') {
+            if ($arm -eq 'reload') {
+                Assert "$arm.T1 the chain was built for an opaque window (log)" ((Read-Text $err) -match 'premultiplied=false')
+            }
+            Assert-Alpha "$arm.before" $false
+            [IO.File]::WriteAllText($confPath, "background-opacity = $Opacity`n")
+            $rl = Start-Process -FilePath $Exe -ArgumentList @('+reload', '--config') -WindowStyle Hidden -PassThru `
+                -RedirectStandardOutput (Join-Path $dir 'reload.txt') -RedirectStandardError (Join-Path $dir 'reload.err')
+            [void]$rl.WaitForExit(20000)
+            Assert "$arm.T2 the reload turned the window translucent (log)" (Wait-Log $err 'window translucent=true' 10000)
+            if ($arm -eq 'reload') {
+                Assert "$arm.T3 the chain was rebuilt to compose by alpha (log)" (Wait-Log $err 'composition swap chain rebuilt: the window turned translucent' 10000)
+                Assert "$arm.T4 the rebuilt chain composes by alpha (log)" (Wait-Log $err 'premultiplied=true' 5000)
+            }
+            Mark-Pane "on$arm"
+            $script:lastAlpha = $null
+            Score-Grab $arm "$arm.after" $hw "on$arm" $dir
+            Assert-Alpha "$arm.after" $true
+            $alphaOf[$arm] = $script:lastAlpha
+        }
         # T2570: the pane's bottom-left corner pixel on the grab. Elevated
         # (the default, the tree arm), the visual takes the card's rounded
         # corner and the corner shows the desk round the card, as the pixel
@@ -621,6 +752,16 @@ try {
     $env:LOCALAPPDATA = $savedLocalAppData
 }
 
+if ($alphaOf.ContainsKey('on') -and $alphaOf.ContainsKey('off')) {
+    $a = $alphaOf['on']; $b = $alphaOf['off']
+    Assert "T2515.A3 the composition picture is the WGL one (background alpha on $('{0:N1}' -f $a[0]) / off $('{0:N1}' -f $b[0]), ink on $('{0:N1}' -f $a[1]) / off $('{0:N1}' -f $b[1]), within 8)" `
+        ([Math]::Abs($a[0] - $b[0]) -le 8 -and [Math]::Abs($a[1] - $b[1]) -le 8)
+}
+if ($alphaOf.ContainsKey('reload') -and $alphaOf.ContainsKey('reloadoff')) {
+    $a = $alphaOf['reload']; $b = $alphaOf['reloadoff']
+    Assert "T2515.A4 after the reload, the composition picture is the WGL one (background alpha $('{0:N1}' -f $a[0]) / $('{0:N1}' -f $b[0]), within 8)" `
+        ([Math]::Abs($a[0] - $b[0]) -le 8 -and [Math]::Abs($a[1] - $b[1]) -le 8)
+}
 "  grabs kept in $OutDir"
 if ($script:failures -eq 0) { "ALL PASS ($script:passes)"; exit 0 }
 "$script:failures FAILURE(S), $script:passes pass"
