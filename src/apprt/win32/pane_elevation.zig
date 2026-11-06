@@ -1365,6 +1365,23 @@ fn sheetLut(pre: ?*const Prepared, fill: color_math.Rgb, sheet: Sheet) GlassLut 
     return GlassLut.initSheet(fill, sheet);
 }
 
+/// Only the drop shadows `paintCardsWith` lays for `cards` - no glow, no
+/// fill, no rim - over whatever `buf` holds (T2740). A shadow only ever
+/// scales what is under it (`darken`), so laid over white it is the shadow's
+/// own picture, which `shadow_layer` turns into one the compositor can place.
+pub fn paintCardShadows(buf: []u32, w: usize, h: usize, cards: []const Card, style: CardStyle, prepared: ?*const Prepared) void {
+    std.debug.assert(buf.len >= w * h);
+    const radius: f32 = @floatFromInt(radiusPx(style.scale));
+    const solid_layers = shadows(style.is_light, style.scale);
+    const glass_layer = [1]Shadow{glassShadow(style.is_light, style.scale)};
+    const layers: []const Shadow = if (style.glass) &glass_layer else &solid_layers;
+    const alloc = std.heap.page_allocator;
+    const scratch: ?[]f32 = alloc.alloc(f32, (1 + MAX_TABLE_LAYERS) * w) catch null;
+    defer if (scratch) |s| alloc.free(s);
+    const pre: ?*const Prepared = if (prepared) |p| (if (p.fits(style)) p else null) else null;
+    paintShadows(buf, @intCast(w), @intCast(h), cards, style.glass, layers, radius, radiusPx(style.scale), shadowReachPx(style.scale), scratch, pre);
+}
+
 /// `paintCards` with what `prepare` built for `style`, or without it (null,
 /// or prepared for another style) building it here as `paintCards` does.
 pub fn paintCardsWith(buf: []u32, w: usize, h: usize, cards: []const Card, style: CardStyle, prepared: ?*const Prepared) void {
