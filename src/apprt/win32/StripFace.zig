@@ -8,13 +8,16 @@
 //! HWND, so DWM composites it above OpenGL and WebView2 content alike, and
 //! WS_EX_TRANSPARENT so it never takes the pointer. Uniform alpha, committed
 //! with UpdateLayeredWindow (T2485 D7) from the frame the window drew into
-//! its DIB (`begin`/`commit`). A copy of that frame answers WM_PRINT, so a
-//! pixel probe can still photograph it, where DefWindowProc would read an
+//! its DIB (`begin`/`commit`). That DIB lives for the whole glide (T2461): a
+//! fold paints a frame on every tick, and a fresh full-card bitmap each time
+//! was a fresh 16 MB to fault in at 4K. It also answers WM_PRINT, so a pixel
+//! probe can still photograph the face, where DefWindowProc would read an
 //! UpdateLayeredWindow face back black.
 
 const std = @import("std");
 const w32 = @import("win32.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
+const strip_face = @import("strip_face.zig");
 
 const log = std.log.scoped(.win32_strip_face);
 
@@ -30,16 +33,21 @@ pub const StripFace = struct {
     /// The constant alpha last committed.
     alpha: u8 = 0,
 
-    /// The frame being painted (`begin` to `commit`).
+    /// The glide's DIB: a memory DC over a top-down 32-bit bitmap of
+    /// `cap_w` x `cap_h`, kept from the first frame until `hide`.
     mem_dc: ?w32.HDC = null,
     bitmap: ?*anyopaque = null,
     old_bmp: ?*anyopaque = null,
     bits: ?[*]u32 = null,
+    cap_w: i32 = 0,
+    cap_h: i32 = 0,
+
+    /// The frame being painted (`begin` to `commit`), at the DIB's top-left.
     w: i32 = 0,
     h: i32 = 0,
+    painting: bool = false,
 
-    /// A copy of the frame on screen, which WM_PRINT paints from.
-    px: []u32 = &.{},
+    /// The size of the frame on screen, which WM_PRINT paints from the DIB.
     px_w: i32 = 0,
     px_h: i32 = 0,
 
@@ -70,52 +78,72 @@ pub const StripFace = struct {
     }
 
     pub fn destroy(self: *StripFace) void {
-        self.releaseFrame();
+        self.releaseDib();
         _ = w32.DestroyWindow(self.hwnd);
-        if (self.px.len > 0) self.alloc.free(self.px);
         self.alloc.destroy(self);
     }
 
-    /// A `w` x `h` frame to paint the face into: a memory DC over a top-down
-    /// 32-bit DIB, and its pixels. Null when GDI said no; the face is then
-    /// left as it was.
-    pub fn begin(self: *StripFace, w: i32, h: i32) ?struct { dc: w32.HDC, pixels: []u32 } {
-        self.releaseFrame();
+    /// A `w` x `h` frame to paint the face into: the memory DC over the
+    /// glide's DIB, and its pixels from the DIB's top-left. `cap_w` x `cap_h`
+    /// is the largest the face can get this glide (the pane it covers), so the
+    /// DIB is made once, at that size, and every narrower frame after reuses
+    /// it (T2461). Null when GDI said no; the face is then left as it was.
+    pub fn begin(self: *StripFace, w: i32, h: i32, cap_w: i32, cap_h: i32) ?struct { dc: w32.HDC, frame: strip_face.Frame } {
+        self.painting = false;
         if (w <= 0 or h <= 0) return null;
-        const screen_dc = w32.GetDC(null) orelse return null;
+        if (self.mem_dc == null or w > self.cap_w or h > self.cap_h) {
+            if (!self.makeDib(@max(w, cap_w, self.cap_w), @max(h, cap_h, self.cap_h))) return null;
+        }
+        self.w = w;
+        self.h = h;
+        self.painting = true;
+        const stride: usize = @intCast(self.cap_w);
+        return .{ .dc = self.mem_dc.?, .frame = .{
+            .pixels = self.bits.?[0 .. stride * @as(usize, @intCast(h))],
+            .stride = stride,
+            .w = @intCast(w),
+            .h = @intCast(h),
+        } };
+    }
+
+    fn makeDib(self: *StripFace, w: i32, h: i32) bool {
+        self.releaseDib();
+        const screen_dc = w32.GetDC(null) orelse return false;
         defer _ = w32.ReleaseDC(null, screen_dc);
-        const mem_dc = w32.CreateCompatibleDC(screen_dc) orelse return null;
+        const mem_dc = w32.CreateCompatibleDC(screen_dc) orelse return false;
         var bits: ?*anyopaque = null;
         const bmi = w32.BITMAPINFO{ .bmiHeader = .{ .biWidth = w, .biHeight = -h } };
         const bitmap = w32.CreateDIBSection(mem_dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse {
             _ = w32.DeleteDC(mem_dc);
-            return null;
+            return false;
         };
         const old = w32.SelectObject(mem_dc, bitmap) orelse {
             _ = w32.DeleteObject(bitmap);
             _ = w32.DeleteDC(mem_dc);
-            return null;
+            return false;
         };
         self.mem_dc = mem_dc;
         self.bitmap = bitmap;
         self.old_bmp = old;
         self.bits = @ptrCast(@alignCast(bits.?));
-        self.w = w;
-        self.h = h;
-        return .{ .dc = mem_dc, .pixels = self.bits.?[0..@intCast(w * h)] };
+        self.cap_w = w;
+        self.cap_h = h;
+        log.debug("strip face dib {d}x{d}", .{ w, h });
+        return true;
     }
 
     /// Put the frame `begin` handed out on screen at `left`/`top` (screen
     /// pixels), blended at `alpha`, cut to `region` (in the face's own
     /// coordinates; null for none - the system owns it once set).
     pub fn commit(self: *StripFace, left: i32, top: i32, alpha: u8, region: ?*anyopaque) void {
-        defer self.releaseFrame();
-        if (self.mem_dc == null) {
+        if (!self.painting or self.mem_dc == null) {
             if (region) |r| _ = w32.DeleteObject(r);
             return;
         }
+        self.painting = false;
         _ = w32.GdiFlush();
-        self.keep();
+        self.px_w = self.w;
+        self.px_h = self.h;
         chrome_fanout.noteMove(.dim);
         if (w32.SetWindowRgn(self.hwnd, region, 0) == 0) if (region) |r| {
             _ = w32.DeleteObject(r);
@@ -144,45 +172,28 @@ pub const StripFace = struct {
     }
     /// The uniform name every pane popup answers (T2012).
     pub fn hide(self: *StripFace) void {
-        self.releaseFrame();
+        // The glide is over: the DIB goes with it, so a 4K card's 30 MB is
+        // not held between glides.
+        self.releaseDib();
         if (!self.shown) return;
         _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
         self.shown = false;
         log.info("strip face hidden", .{});
     }
 
-    /// Copy the committed frame for WM_PRINTCLIENT.
-    fn keep(self: *StripFace) void {
-        const bits = self.bits orelse return;
-        const n: usize = @intCast(self.w * self.h);
-        if (self.px.len < n) {
-            if (self.px.len > 0) self.alloc.free(self.px);
-            self.px = self.alloc.alloc(u32, n) catch {
-                self.px = &.{};
-                self.px_w = 0;
-                self.px_h = 0;
-                return;
-            };
-        }
-        @memcpy(self.px[0..n], bits[0..n]);
-        self.px_w = self.w;
-        self.px_h = self.h;
-    }
-
-    /// The frame on screen, into a DC (WM_PAINT, WM_PRINT).
+    /// The frame on screen, into a DC (WM_PAINT, WM_PRINT), straight from
+    /// the DIB: nothing paints it between one commit and the next `begin`,
+    /// and the paint between them runs on this thread without pumping.
     fn printInto(self: *const StripFace, hdc: w32.HDC) void {
         if (self.px_w <= 0 or self.px_h <= 0) return;
-        const bmi = w32.BITMAPINFO{ .bmiHeader = .{
-            .biWidth = self.px_w,
-            .biHeight = -self.px_h,
-            .biPlanes = 1,
-            .biBitCount = 32,
-            .biCompression = w32.BI_RGB,
-        } };
-        _ = w32.StretchDIBits(hdc, 0, 0, self.px_w, self.px_h, 0, 0, self.px_w, self.px_h, self.px.ptr, &bmi, w32.DIB_RGB_COLORS, w32.SRCCOPY);
+        const src = self.mem_dc orelse return;
+        _ = w32.BitBlt(hdc, 0, 0, self.px_w, self.px_h, src, 0, 0, w32.SRCCOPY);
     }
 
-    fn releaseFrame(self: *StripFace) void {
+    fn releaseDib(self: *StripFace) void {
+        self.painting = false;
+        self.px_w = 0;
+        self.px_h = 0;
         const mem_dc = self.mem_dc orelse return;
         if (self.old_bmp) |o| _ = w32.SelectObject(mem_dc, o);
         if (self.bitmap) |b| _ = w32.DeleteObject(b);
@@ -191,6 +202,8 @@ pub const StripFace = struct {
         self.bitmap = null;
         self.old_bmp = null;
         self.bits = null;
+        self.cap_w = 0;
+        self.cap_h = 0;
     }
 };
 

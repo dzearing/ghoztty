@@ -53,6 +53,11 @@
 #      (2), against one per glide frame before T2448.
 #   D. The desk memo is live: some glide paint reused the composite - whole
 #      (desk_reused) or all but the cards that moved (desk_partial).
+#   E. The folding cards' strip faces paint inside a frame (T2461): the glide
+#      line's face_paints > 0 and face_max_us <= -FaceBudgetUs (16700, one
+#      60 Hz frame). A face paints its whole card every frame, so this is the
+#      cost that grows with the window: `-Width 3800 -Height 2100` is the 4K
+#      run, and on a debug build that number is a ceiling, not the release's.
 #   Numbers go to $env:TEMP\ghoztty-drag-glide\<stamp>\report.txt.
 #
 # -NegativeControl inverts B and C and MUST fail.
@@ -65,6 +70,9 @@ param(
     [int]$StepPx = 12,
     [int]$TickMs = 16,
     [int]$MaxWmPaints = 2,
+    [int]$Width = 1600,
+    [int]$Height = 900,
+    [int]$FaceBudgetUs = 16700,
     [switch]$NegativeControl,
     [switch]$Interactive
 )
@@ -142,14 +150,15 @@ function Get-GlideSample([string]$log) {
     $m = Get-LastMatch $log ('divider glide ticks=(\d+) mean_us=(\d+) max_us=(\d+) mean_gap_us=(\d+) ' +
         'max_gap_us=(\d+) late=(\d+) fps=(\d+) viewer_ticks=(\d+) viewer_us=(\d+) period_us=(\d+) ' +
         'deferred_moves=(\d+) wm_paints=(\d+) wm_paint_us=(\d+) desk_composed=(\d+) desk_reused=(\d+) ' +
-        'desk_partial=(\d+) .*verdict=(\w+)')
+        'desk_partial=(\d+) .*face_paints=(\d+) face_mean_us=(\d+) face_max_us=(\d+) verdict=(\w+)')
     if ($null -eq $m) { return $null }
     return [pscustomobject]@{
         Ticks = [int]$m[1]; MeanUs = [int]$m[2]; MaxUs = [int]$m[3]; MeanGapUs = [int]$m[4]
         MaxGapUs = [int]$m[5]; Late = [int]$m[6]; Fps = [int]$m[7]; ViewerTicks = [int]$m[8]
         ViewerUs = [int]$m[9]; PeriodUs = [int]$m[10]; Deferred = [int]$m[11]; WmPaints = [int]$m[12]
         WmPaintUs = [int]$m[13]; DeskComposed = [int]$m[14]; DeskReused = [int]$m[15]
-        DeskPartial = [int]$m[16]; Verdict = $m[17]
+        DeskPartial = [int]$m[16]; FacePaints = [int]$m[17]; FaceMeanUs = [int]$m[18]
+        FaceMaxUs = [int]$m[19]; Verdict = $m[20]
     }
 }
 
@@ -183,7 +192,7 @@ try {
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' -TimeoutMs 20000
     if ($top -eq [IntPtr]::Zero) { throw 'no window for the glide instance' }
     $top = [IntPtr]$top
-    [void](Set-TestWindowPos -Window $top -X 20 -Y 20 -Width 1600 -Height 900)
+    [void](Set-TestWindowPos -Window $top -X 20 -Y 20 -Width $Width -Height $Height)
     Start-Sleep -Milliseconds 1500
 
     # ---- the row: p1 | view | p3 | p4 | p5, equal widths ----------------
@@ -267,6 +276,7 @@ try {
     if ($glide) {
         Rep ("  glide:  ticks=$($glide.Ticks) mean=$($glide.MeanUs)us max=$($glide.MaxUs)us gap mean=$($glide.MeanGapUs)us max=$($glide.MaxGapUs)us " +
             "late=$($glide.Late) ~$($glide.Fps) fps (period $($glide.PeriodUs)us) verdict=$($glide.Verdict)")
+        Rep "  faces:  paints=$($glide.FacePaints) mean=$($glide.FaceMeanUs)us max=$($glide.FaceMaxUs)us (window ${Width}x${Height})"
         Rep ("          viewer_ticks=$($glide.ViewerTicks) viewer_us=$($glide.ViewerUs) deferred_moves=$($glide.Deferred) wm_paints=$($glide.WmPaints) " +
             "($($glide.WmPaintUs)us each) desk composed=$($glide.DeskComposed) reused=$($glide.DeskReused) partial=$($glide.DeskPartial)")
     }
@@ -292,6 +302,11 @@ try {
     # ---- D. the desk memo is live -----------------------------------------
     Assert (($glide.DeskReused + $glide.DeskPartial) -gt 0) ("D: some glide paint reused the desk composite " +
         "(reused=$($glide.DeskReused) partial=$($glide.DeskPartial) composed=$($glide.DeskComposed))")
+
+    # ---- E. the strip faces paint inside a frame (T2461) -------------------
+    Assert ($glide.FacePaints -gt 0) "E: the folding cards painted strip faces (face_paints=$($glide.FacePaints))"
+    Assert ($glide.FaceMaxUs -le $FaceBudgetUs) ("E: every strip face painted inside a frame at ${Width}x${Height} " +
+        "(face_max_us=$($glide.FaceMaxUs) mean=$($glide.FaceMeanUs) budget=$FaceBudgetUs)")
 
     Rep ''
     Rep "report: $report"

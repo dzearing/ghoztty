@@ -837,6 +837,12 @@ glide_stats: drag_perf.GlideStats = .{},
 glide_tick_prev: ?std.time.Instant = null,
 /// The between-tick counters as the last glide tick ended (T2455).
 glide_between_mark: drag_perf.GlideStats.Between = .{},
+/// What the glide's strip faces cost to paint (T2461), alongside it: a 4K
+/// fold paints a whole card into its face every frame, and this is the
+/// number that has to stay inside the frame.
+face_paints: u32 = 0,
+face_max_us: u64 = 0,
+face_total_us: u64 = 0,
 /// Motion ticks of this drag that left their layout to the running glide
 /// (`layoutDragStep`, T2448).
 drag_layout_deferred: u32 = 0,
@@ -8047,13 +8053,19 @@ fn deskMeanUs(total_ns: u64, n: u32) u64 {
 /// shape as the drag line above. Silent when no glide ran.
 fn reportGlideCost(self: *Window, comptime what: []const u8) void {
     const g = self.glide_stats;
-    defer self.glide_stats.reset();
+    defer {
+        self.glide_stats.reset();
+        self.face_paints = 0;
+        self.face_max_us = 0;
+        self.face_total_us = 0;
+    }
     if (!self.drag_perf_on or g.ticks == 0) return;
     const fmt = what ++ " glide ticks={d} mean_us={d} max_us={d} mean_gap_us={d} " ++
         "max_gap_us={d} late={d} fps={d} viewer_ticks={d} viewer_us={d} period_us={d} " ++
         "deferred_moves={d} wm_paints={d} wm_paint_us={d} desk_composed={d} desk_reused={d} desk_partial={d} " ++
         "desk_compose_us={d} desk_blit_us={d} desk_partial_permille={d} " ++
-        "desk_uploads_full={d} desk_uploads_rect={d} desk_upload_rect_px={d} verdict={s}";
+        "desk_uploads_full={d} desk_uploads_rect={d} desk_upload_rect_px={d} " ++
+        "face_paints={d} face_mean_us={d} face_max_us={d} verdict={s}";
     const args = .{
         g.ticks,
         g.meanUs(),
@@ -8078,6 +8090,9 @@ fn reportGlideCost(self: *Window, comptime what: []const u8) void {
         if (self.chrome_host) |*ch| ch.desk_full else 0,
         if (self.chrome_host) |*ch| ch.desk_partial else 0,
         if (self.chrome_host) |*ch| ch.desk_partial_px else 0,
+        self.face_paints,
+        if (self.face_paints > 0) self.face_total_us / self.face_paints else 0,
+        self.face_max_us,
         @tagName(g.verdict()),
     };
     // Info either way (T2455, as T2609 did for the drag line): a smooth glide
@@ -9327,9 +9342,25 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     const f = view.strip_face.?;
     var tb: i64 = 0;
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tb);
+    // T2461: the face's paint and commit, for the glide line.
+    const perf_t0: ?std.time.Instant = if (self.drag_perf_on) std.time.Instant.now() catch null else null;
     const w = vis.width();
     const ht = vis.height();
-    const frame = f.begin(w, ht) orelse return f.shown;
+    // The face never outgrows the pane it covers (`vis` is cut to it), so the
+    // DIB is made at the pane's size once and every frame of the glide reuses
+    // it (T2461).
+    const painting = f.begin(w, ht, at.width(), at.height()) orelse return f.shown;
+    const frame = painting.frame;
+    // The carried frame pinned where the glide has the pane.
+    const pinned: ?strip_face.Content = if (carried) |c| p: {
+        var p = c;
+        p.x = glide_at.left - vis.left;
+        p.y = glide_at.top - vis.top;
+        break :p p;
+    } else null;
+    // What the content covers at full strength - all of a fold's first,
+    // widest frames - no band shows under, so none is painted there (T2461).
+    const hole = strip_face.holeOf(pinned, content_alpha);
 
     // The band, as the strip paints it once the card is in: over the glass
     // sheet over the desk (T2160), else solid.
@@ -9337,35 +9368,29 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     const strip_rgb = pane_stack_strip.stripRgb(bg, false);
     if (self.glassDesk()) |g| {
         const lut = pane_stack_strip.GlassLut.init(.{ .bg = bg, .sheet = .{} });
-        strip_face.fillGlass(frame.pixels, @intCast(w), @intCast(ht), .{
+        strip_face.fillGlass(frame, .{
             .pixels = g.desk.pixels,
             .w = g.desk.w,
             .h = g.desk.h,
             .x = vis.left - g.area.left,
             .y = vis.top - g.area.top,
-        }, &lut);
-    } else strip_face.fillSolid(frame.pixels, strip_rgb);
+        }, &lut, hole);
+    } else strip_face.fillSolid(frame, strip_rgb, hole);
 
     // The name along it, laid out over the face as the strip lays it out
     // over itself.
     const axis = face.axis;
     if (self.stripFont(if (axis == .horizontal) 2700 else 0)) |font| {
         defer _ = w32.DeleteObject(font);
-        const old_mode = w32.SetBkMode(frame.dc, w32.TRANSPARENT);
-        defer _ = w32.SetBkMode(frame.dc, old_mode);
+        const old_mode = w32.SetBkMode(painting.dc, w32.TRANSPARENT);
+        defer _ = w32.SetBkMode(painting.dc, old_mode);
         const ink = pane_stack_strip.inkRgb(strip_rgb, color_math.isLight(bg), false);
-        self.paintStripLabel(frame.dc, view, .{ .left = 0, .top = 0, .right = w, .bottom = ht }, axis, font, ink);
+        self.paintStripLabel(painting.dc, view, .{ .left = 0, .top = 0, .right = w, .bottom = ht }, axis, font, ink);
     }
     _ = w32.GdiFlush();
-    strip_face.makeOpaque(frame.pixels);
-    // The carried frame over the band and its name: the name shows through at
-    // what the content has lost.
-    if (carried) |c| {
-        var pinned = c;
-        pinned.x = glide_at.left - vis.left;
-        pinned.y = glide_at.top - vis.top;
-        strip_face.blendContent(frame.pixels, @intCast(w), @intCast(ht), pinned, content_alpha);
-    }
+    // The carried frame over the band and its name - the name shows through
+    // at what the content has lost - and every pixel opaque, in one pass.
+    strip_face.finish(frame, pinned, content_alpha);
 
     // Cut to the pane's own region - its card's rounded shape, or its slide
     // cut - from where the face sits inside the pane window. Committed ahead
@@ -9395,6 +9420,12 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq[0]);
     f.commit(pt.x, pt.y, alpha, region);
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq[1]);
+    if (perf_t0) |t0| if (std.time.Instant.now()) |t1| {
+        const us = t1.since(t0) / std.time.ns_per_us;
+        self.face_paints +|= 1;
+        self.face_total_us +|= us;
+        self.face_max_us = @max(self.face_max_us, us);
+    } else |_| {};
     // Every face commit, where it stands against the pane window it carries
     // (T2485 D17): set against a captured frame, it says whether a dark
     // column at a fold's start is the face's, the pane's, or neither's.
