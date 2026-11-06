@@ -1,10 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-05T20:20:07-08:00",
-    "commit":  "d2553d207",
+    "generated":  "2026-11-05T21:17:53-08:00",
+    "commit":  "138aabafe",
     "uncommitted":  [
-
+                        "scripts/comp-spike.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -23,7 +23,7 @@
                   "scripts/comp-overlay-onscreen.ps1":  "1a2566f9318a69009bf2c91c63875bcdb4da4dd03f08c201834ac2699cedcbb3",
                   "scripts/comp-present-glide.ps1":  "a530ebc0d8a0a400bcedb0fd25ee788c60f3abaf0aecc24d6031e15fca67eba4",
                   "scripts/comp-present-onscreen.ps1":  "1765f8b7505edafbebcd5ac423e928b972c2bb42937a74a163ce48e9bb21d326",
-                  "scripts/comp-spike.ps1":  "0cb3e4fbe75df1ed7645ce6fd2a28ca71177ab94a87febee45e13a1201d10ab7",
+                  "scripts/comp-spike.ps1":  "1817e7050eabd16fc93fde49fec995cac88074516792ffc85c43732b3e79ba62",
                   "scripts/control-char-scan.ps1":  "a05f37ebf02bb8fb5bfdf123e54ee2a25488a7c25a6d46be7f29730ac8c2753f",
                   "scripts/crash-catch.ps1":  "c8515ad0ae67ec2fc457f54a7477f5afb5fc28281906f261d631ad0a640ca4aa",
                   "scripts/crash-databreak.ps1":  "ec45063075848cb962ca00262960aec8380bd5de3f0d9f9bc9f1d25c109e3b0d",

@@ -36,6 +36,7 @@ const w32 = @import("apprt/win32/win32.zig");
 const rt = @import("apprt/win32/winrt_comp.zig");
 const stats = @import("apprt/win32/comp_spike_stats.zig");
 const wgc = @import("apprt/win32/wgc_capture.zig");
+const surf = @import("apprt/win32/comp_surface.zig");
 
 const Mode = enum { gdi, comp, idle };
 const ThreadKind = enum { ui, worker };
@@ -55,6 +56,8 @@ const Opts = struct {
     /// Alpha 1/255, click-through, bottom of the z-order: on screen for DWM
     /// and capture, invisible to the person at the desk.
     ghost: bool = false,
+    /// `--ghost-alpha=N`: the ghost's layered alpha (default 1 of 255).
+    ghost_alpha: u8 = 1,
     /// `--grab-hwnd=<n>` (T2488): no spike window at all. Capture ONE whole
     /// frame of another process's window with WGC and write it to `--out` as
     /// a top-down 32-bit BMP - the on-screen picture of the app's ghost
@@ -78,6 +81,17 @@ const Opts = struct {
     /// it. A fold's mid-glide card is an owned popup, so a grab without them
     /// shows the fold with no card at all.
     popups: bool = false,
+    /// `--surface=auto|hardware|warp` (T2465): comp mode paints the blade
+    /// into a CompositionDrawingSurface on a D3D11 device of that kind instead
+    /// of wearing a colour brush, so the WARP path (Remote Desktop, no GPU) is
+    /// exercised. Null = colour sprites, no device at all.
+    surface: ?surf.DeviceKind = null,
+    /// `--rebind-after-glide=N`: right after glide N is declared, swap a fresh
+    /// D3D device in under the surface (`--rebind-to`), the way device-loss
+    /// recovery does after a Remote Desktop connect. The oracle then shows
+    /// whether that glide kept moving and the blade kept its content.
+    rebind_after: ?u32 = null,
+    rebind_to: surf.DeviceKind = .warp,
 };
 
 const HWND_BOTTOM: ?w32.HWND = @ptrFromInt(1);
@@ -88,6 +102,9 @@ const WS_EX_TOOLWINDOW: u32 = 0x00000080;
 const TIMER_NEXT: usize = 1;
 const TIMER_STEP: usize = 2;
 const TIMER_STALL: usize = 3;
+const TIMER_DEVICE: usize = 4;
+const WM_WTSSESSION_CHANGE: u32 = 0x02B1;
+const NOTIFY_FOR_THIS_SESSION: u32 = 0;
 const WM_APP_GLIDE: u32 = w32.WM_APP + 1;
 const WM_APP_QUIT: u32 = w32.WM_APP + 2;
 
@@ -291,6 +308,21 @@ extern "kernel32" fn GetProcAddress(*anyopaque, [*:0]const u8) callconv(.winapi)
 extern "kernel32" fn Sleep(u32) callconv(.winapi) void;
 extern "kernel32" fn GetCurrentThreadId() callconv(.winapi) u32;
 extern "user32" fn PostThreadMessageW(u32, u32, usize, isize) callconv(.winapi) i32;
+extern "wtsapi32" fn WTSRegisterSessionNotification(w32.HWND, u32) callconv(.winapi) i32;
+extern "kernel32" fn GetCurrentProcess() callconv(.winapi) std.os.windows.HANDLE;
+extern "kernel32" fn GetProcessTimes(std.os.windows.HANDLE, *u64, *u64, *u64, *u64) callconv(.winapi) i32;
+
+/// User + kernel CPU this process has used, in 100 ns ticks.
+fn processCpu() u64 {
+    var c: u64 = 0;
+    var e: u64 = 0;
+    var k: u64 = 0;
+    var u: u64 = 0;
+    if (GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u) == 0) return 0;
+    return k + u;
+}
+
+var cpu_at_first_glide: u64 = 0;
 
 fn rtLoad(comptime name: []const u8) ?*anyopaque {
     return LoadLibraryW(std.unicode.utf8ToUtf16LeStringLiteral(name));
@@ -349,6 +381,8 @@ const Comp = struct {
     blade: rt.Obj,
     card: rt.Obj,
     easing: rt.Obj,
+    /// The blade's drawn content when `--surface` asked for one.
+    surface: ?surf.Surface = null,
 
     fn init(hwnd: w32.HWND) !Comp {
         const dq = try stage("dispatcher-queue", rt.initThread());
@@ -362,6 +396,14 @@ const Comp = struct {
         try sprite(c, root, desk, .{ .a = 255, .r = 0x16, .g = 0x18, .b = 0x1d }, .{ .x = 0, .y = 0, .z = 0 }, .{ .x = client_w, .y = client_h });
         try sprite(c, root, blade, .{ .a = 255, .r = 0x2b, .g = 0x6c, .b = 0xd8 }, .{ .x = 0, .y = 0, .z = 0 }, .{ .x = blade_open, .y = client_h });
         try sprite(c, root, card, .{ .a = 255, .r = 0x3a, .g = 0x3f, .b = 0x4a }, .{ .x = blade_open + gutter, .y = 0, .z = 0 }, .{ .x = client_w - blade_open - gutter, .y = client_h });
+        var s: ?surf.Surface = null;
+        if (opts.surface) |kind| {
+            // Same colour as the sprite it replaces (BGRA), so the capture
+            // oracle tracks the blade's edge exactly as before; a surface that
+            // went blank after a rebind reads as a blade that vanished.
+            s = try stage("drawing-surface", surf.Surface.init(std.heap.page_allocator, c, kind, @intFromFloat(blade_open), @intFromFloat(client_h), .{ blade_bgr[0], blade_bgr[1], blade_bgr[2], 0xff }));
+            try stage("drawing-surface", rt.spriteSetBrush(blade, s.?.brush));
+        }
         return .{
             .dq = dq,
             .compositor = c,
@@ -369,6 +411,7 @@ const Comp = struct {
             .blade = blade,
             .card = card,
             .easing = try c.createCubicBezier(ease_p1, ease_p2),
+            .surface = s,
         };
     }
 
@@ -466,9 +509,40 @@ fn startGlide(hwnd: w32.HWND) void {
         },
         .idle => {},
     }
+    if (i == 0) cpu_at_first_glide = processCpu();
+    if (opts.rebind_after) |n| if (n == i) rebindNow("glide", i);
     if (opts.stall_ms > 0) _ = w32.SetTimer(hwnd, TIMER_STALL, opts.duration_ms / 2, null);
     glide_i += 1;
     _ = w32.SetTimer(hwnd, TIMER_NEXT, opts.duration_ms + opts.gap_ms, null);
+}
+
+/// Swap a fresh device in under the blade's surface mid-glide (T2465): the
+/// recovery path a Remote Desktop connect takes, driven on purpose.
+fn rebindNow(why: []const u8, i: u32) void {
+    const c = &(comp orelse return);
+    const s = &(c.surface orelse {
+        say("DEVICE rebind why={s} glide={d} skipped=no-surface", .{ why, i });
+        return;
+    });
+    const t0 = now();
+    const warp = s.rebind(opts.rebind_to) catch {
+        say("DEVICE rebind why={s} glide={d} ok=false hr=0x{x}", .{ why, i, @as(u32, @bitCast(surf.lastHr())) });
+        return;
+    };
+    const took_ms = @as(f64, @floatFromInt(now() - t0)) * 1000 / @as(f64, @floatFromInt(qpf));
+    say("DEVICE rebind why={s} glide={d} ok=true warp={} took_ms={d:.2} draws={d}", .{ why, i, warp, took_ms, s.draws });
+}
+
+/// The device-loss check: on a session change, and on a slow timer for the
+/// losses no message announces (driver update, TDR).
+fn checkDevice(why: []const u8) void {
+    const c = &(comp orelse return);
+    const s = &(c.surface orelse return);
+    const lost = s.recoverIfLost() catch {
+        say("DEVICE lost why={s} recovered=false hr=0x{x}", .{ why, @as(u32, @bitCast(surf.lastHr())) });
+        return;
+    };
+    if (lost) |reason| say("DEVICE lost why={s} reason=0x{x} recovered=true warp={} rebinds={d}", .{ why, @as(u32, @bitCast(reason)), s.device.warp, s.rebinds });
 }
 
 fn gdiStep(hwnd: w32.HWND) void {
@@ -559,6 +633,15 @@ fn finishWindow() void {
 }
 
 fn finish() void {
+    const cpu = processCpu() -| cpu_at_first_glide;
+    const cpu_ms = @as(f64, @floatFromInt(cpu)) / 10_000;
+    say("CPU mode={s} surface={s} process_ms={d:.1} per_glide_ms={d:.2}", .{
+        @tagName(opts.mode),
+        if (opts.surface) |k| @tagName(k) else "none",
+        cpu_ms,
+        cpu_ms / @as(f64, @floatFromInt(@max(1, glide_i))),
+    });
+    if (comp) |c| if (c.surface) |s| say("DEVICE final warp={} draws={d} rebinds={d} removed_reason=0x{x}", .{ s.device.warp, s.draws, s.rebinds, @as(u32, @bitCast(s.device.removedReason())) });
     finishWindow();
     const s = sampler orelse {
         say("SUMMARY mode={s} oracle=UNAVAILABLE (no DCompositionGetFrameId: needs Windows 11)", .{@tagName(opts.mode)});
@@ -628,8 +711,14 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wp: usize, lp: isize) callconv(.winapi) isi
                     Sleep(opts.stall_ms);
                     if (glide_i > 0) glides[glide_i - 1].stalled_ms = opts.stall_ms;
                 },
+                TIMER_DEVICE => checkDevice("timer"),
                 else => {},
             }
+            return 0;
+        },
+        WM_WTSSESSION_CHANGE => {
+            say("SESSION event={s} code={d}", .{ surf.sessionEventName(wp), wp });
+            if (surf.sessionEventChecksDevice(wp)) checkDevice(surf.sessionEventName(wp));
             return 0;
         },
         w32.WM_DESTROY => {
@@ -673,6 +762,8 @@ fn parseArgs(alloc: std.mem.Allocator) !void {
             opts.gap_ms = try std.fmt.parseInt(u32, a[9..], 10);
         } else if (std.mem.startsWith(u8, a, "--stall-ms=")) {
             opts.stall_ms = try std.fmt.parseInt(u32, a[11..], 10);
+        } else if (std.mem.startsWith(u8, a, "--ghost-alpha=")) {
+            opts.ghost_alpha = try std.fmt.parseInt(u8, a[14..], 10);
         } else if (std.mem.eql(u8, a, "--ghost")) {
             opts.ghost = true;
         } else if (std.mem.startsWith(u8, a, "--x=")) {
@@ -695,6 +786,12 @@ fn parseArgs(alloc: std.mem.Allocator) !void {
             opts.pool_h = try std.fmt.parseInt(i32, a[9..], 10);
         } else if (std.mem.eql(u8, a, "--popups")) {
             opts.popups = true;
+        } else if (std.mem.startsWith(u8, a, "--surface=")) {
+            opts.surface = std.meta.stringToEnum(surf.DeviceKind, a[10..]) orelse return error.BadSurface;
+        } else if (std.mem.startsWith(u8, a, "--rebind-after-glide=")) {
+            opts.rebind_after = try std.fmt.parseInt(u32, a[21..], 10);
+        } else if (std.mem.startsWith(u8, a, "--rebind-to=")) {
+            opts.rebind_to = std.meta.stringToEnum(surf.DeviceKind, a[12..]) orelse return error.BadSurface;
         } else if (std.mem.startsWith(u8, a, "--out=")) {
             opts.out = a[6..];
         } else return error.UnknownArg;
@@ -710,6 +807,12 @@ pub fn main() !u8 {
         return 2;
     };
     qpf = @intCast(std.os.windows.QueryPerformanceFrequency());
+    if (opts.surface != null and (opts.mode != .comp or opts.thread != .ui)) {
+        // The rebind and the session hook live on the UI thread's message loop.
+        say("SPIKE init=FAILED stage=args error=SurfaceNeedsCompModeOnUiThread", .{});
+        flushReport();
+        return 2;
+    }
     if (opts.grab_hwnd != 0) return grabMain(gpa.allocator());
     if (opts.film_hwnd != 0) return filmMain(gpa.allocator());
 
@@ -745,7 +848,7 @@ pub fn main() !u8 {
         return 2;
     };
     hwnd_main = hwnd;
-    if (opts.ghost) _ = w32.SetLayeredWindowAttributes(hwnd, 0, 1, w32.LWA_ALPHA);
+    if (opts.ghost) _ = w32.SetLayeredWindowAttributes(hwnd, 0, opts.ghost_alpha, w32.LWA_ALPHA);
 
     // idle builds the same child windows as gdi and never moves them, so the
     // noise floor shows the same picture as the gdi run.
@@ -759,10 +862,15 @@ pub fn main() !u8 {
     if (opts.mode == .comp) switch (opts.thread) {
         .ui => {
             comp = Comp.init(hwnd) catch {
-                say("SPIKE mode=comp thread=ui init=FAILED stage={s} hr=0x{x}", .{ failed_stage, @as(u32, @bitCast(rt.last_hr)) });
+                say("SPIKE mode=comp thread=ui init=FAILED stage={s} hr=0x{x} surface_hr=0x{x}", .{ failed_stage, @as(u32, @bitCast(rt.last_hr)), @as(u32, @bitCast(surf.lastHr())) });
                 flushReport();
                 return 3;
             };
+            if (comp.?.surface) |s| {
+                const registered = WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) != 0;
+                _ = w32.SetTimer(hwnd, TIMER_DEVICE, 250, null);
+                say("DEVICE init kind={s} warp={} draws={d} session_notify={}", .{ @tagName(s.kind), s.device.warp, s.draws, registered });
+            }
         },
         .worker => {
             _ = std.Thread.spawn(.{}, workerMain, .{hwnd}) catch return 2;
@@ -944,6 +1052,7 @@ test {
     _ = stats;
     _ = rt;
     _ = wgc;
+    _ = surf;
 }
 
 test "the GDI curve matches the compositor's endpoints and is monotonic" {
