@@ -310,16 +310,6 @@
             "unset": "shipped-elsewhere",
             "note": "T2615. Debug-only readback of each pane's center from the window presenter's back buffer, set by window-presenter.ps1 and gl-device-lost.ps1 arms D/E; it only reads, and unset is what every other run and the user's build use."
         },
-        "GHOZTTY_COMP_PRESENT": {
-            "class": "non-default",
-            "unset": "shipped-elsewhere",
-            "note": "T2466/T2514/T2748. 1 puts a pane on the composition swap-chain present, 0 keeps it on SwapBuffers; unset = gl_comp_present.default_on, the shipped default (off until T2514 flips it, then on). comp-present.ps1 section A runs with no knob, and every other acceptance launch that does not name it runs the default; bell-border, split-dim, split-dim-viewer and close-overlays pin both values so the flip changes neither arm's meaning."
-        },
-        "GHOZTTY_COMP_PRESENT_SIMULATE_NO_INTEROP": {
-            "class": "fault",
-            "unset": "shipped-elsewhere",
-            "note": "T2514. Debug seam standing in for a machine with no WGL_NV_DX_interop2 (Mesa, WARP, Remote Desktop): the composition present logs unavailable once and the pane keeps SwapBuffers. Unset = the box's real interop, which comp-present.ps1 A-K and every other composition launch use."
-        },
         "GHOZTTY_WINDOW_PRESENTER": {
             "class": "non-default",
             "unset": "shipped-elsewhere",

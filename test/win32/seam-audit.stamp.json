@@ -1,11 +1,9 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-06T09:22:20-08:00",
-    "commit":  "f945ce5fb",
+    "generated":  "2026-11-06T10:03:50-08:00",
+    "commit":  "75584d80f",
     "uncommitted":  [
-                        "src/apprt/win32/BellBorder.zig",
-                        "src/apprt/win32/DimOverlay.zig",
                         "test/win32/seam-audit.registry.json"
                     ],
     "files":  {
@@ -598,6 +596,6 @@
                   "src/termio/title_pace.zig":  "914afed249d211b9f119a1f551b1012008c75c2d4f9f1373639d40435eddf32d",
                   "test/win32/lib/SeamAudit.ps1":  "209b551bd95a6e77fbd4c47f40dd4cd8401b81b6c43503acd9ca77534c171b82",
                   "test/win32/seam-audit.ps1":  "e7ef6b8614ad022f48f0cfa94c7183270545ba2d3f29fc2e0b14669429e6c586",
-                  "test/win32/seam-audit.registry.json":  "3ef94ee56dc34cc19be72696f6b4e591069e88e76c2fddec515330f06f8ec148"
+                  "test/win32/seam-audit.registry.json":  "ad2b612a50caecad7b37d22809e2be3f9d9681ddbf15318aae7d3d51683002c7"
               }
 }
