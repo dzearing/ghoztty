@@ -270,6 +270,30 @@ function Get-TargetPaneShellPid([string]$Target) {
     return -1
 }
 
+# T2470: the pane's visible text, through `+read` (piped, never redirected: a
+# redirected ghoztty.exe writes nothing).
+function Read-PaneText([string]$Name) {
+    return (& $Exe +read --name=$Name --lines=40 2>$null | Out-String)
+}
+
+# True once the pane shows a shell prompt on its last non-blank line - cmd's
+# `C:\...>` and PowerShell's `PS C:\...>` both end in `>`.
+function Wait-PanePrompt([string]$Name, [int]$TimeoutMs = 20000) {
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($clock.ElapsedMilliseconds -lt $TimeoutMs) {
+        $lines = @((Read-PaneText $Name) -split "`r?`n" | Where-Object { $_.Trim() })
+        if ($lines.Count -gt 0 -and $lines[-1].TrimEnd() -match '>$') { return $true }
+        Start-Sleep -Milliseconds 400
+    }
+    return $false
+}
+
+function Write-PaneTail([string]$Name, [string]$Tag) {
+    $lines = @((Read-PaneText $Name) -split "`r?`n" | Where-Object { $_.Trim() })
+    Write-Host "       $Tag shows $($lines.Count) line(s); last 6:"
+    foreach ($l in ($lines | Select-Object -Last 6)) { Write-Host "       | $l" }
+}
+
 function Launch-Gui([string[]]$ExtraArgs) {
     # persistence: caller supplies - section A runs with =false and section B with =true, and the PAIR is what this script is for.
     $app = Start-OnTestDesktop -Exe $Exe -Arguments $ExtraArgs
@@ -425,6 +449,11 @@ function Invoke-RemoteSection([string]$Label) {
         Assert (-not (Test-TestDesktopLeak -ProcessId $g.Pid)) "$Label window is NOT on the interactive desktop"
 
         $before = @(Get-TestWindows -ProcessId $g.Pid | ForEach-Object { $_.Hwnd })
+        # T2470: the holders alive BEFORE the remote session exists. The shell
+        # search below only accepts a holder that is NOT in this set, so a
+        # holder still dying from an earlier section (slow under a parallel
+        # sweep) can never be mistaken for this session's.
+        $holdersBefore = @(Get-PtyHolderPids)
         & $Exe +new-remote-window --host=127.0.0.1 --port=$Port --name=t356rem 2>&1 | Out-Null
         $top = [IntPtr]::Zero
         for ($t = 0; $t -lt 60 -and $top -eq [IntPtr]::Zero; $t++) {
@@ -462,7 +491,8 @@ function Invoke-RemoteSection([string]$Label) {
         # would not start) still parents the shell to the agent.
         $shell = 0
         for ($t = 0; $t -lt 40 -and $shell -eq 0; $t++) {
-            foreach ($root in (@($agent.Id) + @(Get-PtyHolderPids))) {
+            $fresh = @(Get-PtyHolderPids | Where-Object { $holdersBefore -notcontains $_ })
+            foreach ($root in (@($agent.Id) + $fresh)) {
                 foreach ($p in (Get-DescendantPids $root)) {
                     if ($p.Name -match '^(conhost|openconsole)\.exe$') { continue }
                     # A holder reached through the agent is a waypoint, not the
@@ -487,12 +517,34 @@ function Invoke-RemoteSection([string]$Label) {
         # which is also a confirm.
         Start-Sleep -Milliseconds $script:PushSettleMs
 
+        # T2470: type only into a pane that has drawn its prompt - the readiness
+        # signal a person waits on. A shell process existing is not that: under
+        # a parallel sweep the app's side of the remote attach can still be
+        # settling, and text typed into it was the one step of this section
+        # that red-flaked beside other scripts and never alone.
+        $prompt = Wait-PanePrompt 't356rem'
+        Assert $prompt "$Label the remote pane drew its shell prompt"
+        if (-not $prompt) { Write-PaneTail 't356rem' "$Label pane"; return }
+
         # ---------------------------------------------------------------- busy
         Send-TestText -Window $top -Target $surface -Text 'ping -n 100 127.0.0.1' | Out-Null
         Send-TestKeys -Window $top -Target $surface -Key Enter | Out-Null
         $busy = @(Wait-Descendants $shell $true)
         Assert ($busy.Count -gt 0) "$Label ping is running under the remote shell ($($busy.Count) descendants)"
-        if ($busy.Count -eq 0) { return }
+        if ($busy.Count -eq 0) {
+            # Say WHICH failure this was: the text never reached the pane (no
+            # `ping` on screen), or ping ran under a different shell than the
+            # one this section is watching.
+            Write-PaneTail 't356rem' "$Label pane"
+            $everyHolder = @(Get-PtyHolderPids)
+            Write-Host "       watched shell=$shell holders before=[$($holdersBefore -join ',')] now=[$($everyHolder -join ',')]"
+            foreach ($root in $everyHolder) {
+                foreach ($p in (Get-DescendantPids $root)) {
+                    Write-Host "       holder $root -> $($p.Name) pid=$($p.ProcessId) ppid=$($p.ParentProcessId)"
+                }
+            }
+            return
+        }
         Start-Sleep -Milliseconds $script:PushSettleMs
 
         Send-TestKeys -Window $top -Target $surface -Modifiers ctrl -Key W | Out-Null

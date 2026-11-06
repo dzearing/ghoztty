@@ -1,8 +1,8 @@
 {
     "guard":  "rearrange-desktop-drop",
     "script":  "test/win32/rearrange-desktop-drop.ps1",
-    "generated":  "2026-11-05T21:19:02-08:00",
-    "commit":  "b48752739",
+    "generated":  "2026-11-05T22:26:22-08:00",
+    "commit":  "92f16bf9e",
     "uncommitted":  [
 
                     ],
