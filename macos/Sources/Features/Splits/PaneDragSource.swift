@@ -149,9 +149,16 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
     // siblings, and AppKit promises nothing about which one wins. So a grip
     // also takes the cursor itself, on arrival and on every move over it, and
     // hands it back when the pointer leaves — when no rect is entered and
-    // nothing else would.
+    // nothing else would. A blade takes its hand the same way, against the
+    // terminals' rects under it and the grip's beside it, but hands nothing
+    // back: it has no pane on show to return to, and it may be leaving onto
+    // that grip.
+    private var hoverCursor: NSCursor? {
+        isBlade ? .pointingHand : showsGrabCursor ? .openHand : nil
+    }
+
     override var hoverTrackingOptions: NSTrackingArea.Options {
-        showsGrabCursor
+        hoverCursor != nil
             ? super.hoverTrackingOptions.union([.cursorUpdate, .mouseMoved])
             : super.hoverTrackingOptions
     }
@@ -166,8 +173,8 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
     }
 
     private func takeCursor() {
-        guard showsGrabCursor, !isTracking else { return }
-        NSCursor.openHand.set()
+        guard !isTracking else { return }
+        hoverCursor?.set()
     }
 
     override func mouseDragged(with event: NSEvent) {

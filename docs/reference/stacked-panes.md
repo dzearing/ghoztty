@@ -164,6 +164,12 @@ source. Pinned by `everyResizerSitsInAGutter` /
 every card frame, plus hit-tests just inside each card's edges) and by
 `PaneStackFuzzTests` in both styles.
 
+A strip's cursor is the pointing hand. A cursor rect alone can't hold it: each
+strip's terminal stays mounted under it with its own I-beam rect, and the grip's
+resize rect sits beside it, so the strip's drag source also takes the cursor on
+arrival and on every move (`PaneDragSourceView.hoverCursor`, as a pane's grab
+handle does; `aBladeTakesTheCursorBackFromTheGrip`).
+
 ## Dragging a gutter (`PaneLayout.dragged`)
 
 **Every gutter of a row is one thing, and the row is a function of where the

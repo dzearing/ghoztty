@@ -1958,6 +1958,32 @@ struct PaneStackWindowTests {
         try expectResizersInGutters(narrowWindow, "stacked row")
     }
 
+    /// A blade holds the hand against the rects around it — the resize rect
+    /// of the grip beside it, the terminals' own under it — on arrival and
+    /// on every move, so a cursor left behind by the grip can't stick.
+    @Test func aBladeTakesTheCursorBackFromTheGrip() async throws {
+        let (controller, window, panes) = try await collapsedRow(.right)
+        defer { controller.close() }
+        let source = try #require(all(PaneDragSourceView.self, in: try tab(window, panes[4])).first)
+        #expect(source.hoverTrackingOptions.contains(.cursorUpdate))
+        #expect(source.hoverTrackingOptions.contains(.mouseMoved))
+
+        let event = try #require(NSEvent.mouseEvent(
+            with: .mouseMoved, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
+        NSCursor.resizeLeftRight.set()
+        source.mouseMoved(with: event)
+        #expect(NSCursor.current == NSCursor.pointingHand)
+        NSCursor.resizeLeftRight.set()
+        source.cursorUpdate(with: event)
+        #expect(NSCursor.current == NSCursor.pointingHand)
+
+        // Leaving, it hands nothing back: the pointer may be on the grip.
+        NSCursor.resizeLeftRight.set()
+        source.mouseExited(with: event)
+        #expect(NSCursor.current == NSCursor.resizeLeftRight)
+    }
+
     // MARK: - Dragging a strip
 
     /// A view's frame in screen coordinates.
