@@ -25,7 +25,7 @@
 //! registration names one D3D resource for its lifetime. Copying into buffer 0
 //! after the GL write is correct on every driver, at the cost of one GPU copy.
 //!
-//! Opt-in (`GHOZTTY_COMP_PRESENT=1`) until `default_on` flips (T2514); any failure falls back
+//! On by default since T2514 (`GHOZTTY_COMP_PRESENT=0` opts out); any failure falls back
 //! to the WGL path for the life of the pane and says why in the log. Every slot
 //! below was checked against the 10.0.22621.0 SDK headers (d3d11.h, dxgi.h,
 //! dxgi1_2.h, dcomp.h) and the WGL_NV_DX_interop2 spec.
@@ -72,13 +72,13 @@ pub fn knobOff(value: ?[]const u8) bool {
         std.ascii.eqlIgnoreCase(v, "off");
 }
 
-/// What a pane gets with no knob set (T2514). Flipping this to true makes
-/// the composition present the default and the knob an opt-out; it stays
-/// false until the harnesses that went red on the default path are cleared
-/// (T2514's deps). A machine that cannot build the path (no
+/// What a pane gets with no knob set (T2514): the composition present is the
+/// default and the knob is an opt-out (`GHOZTTY_COMP_PRESENT=0`). It was held
+/// at false until the harnesses that went red on the default path were
+/// cleared (T2747-T2749). A machine that cannot build the path (no
 /// WGL_NV_DX_interop2 - Mesa, WARP-only, Remote Desktop) logs `composition
 /// present unavailable` and presents with SwapBuffers either way.
-pub const default_on = false;
+pub const default_on = true;
 
 /// An explicit off wins, an explicit on wins, anything else is the default.
 pub fn wantedWith(value: ?[]const u8, default: bool) bool {

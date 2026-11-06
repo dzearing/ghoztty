@@ -4,13 +4,13 @@
 # that is the content of a DirectComposition visual on the pane's window,
 # instead of WGL SwapBuffers into the window's redirection bitmap
 # (src/renderer/gl_comp_present.zig). GHOZTTY_COMP_PRESENT=1 asks for it and
-# =0 refuses it; with neither, `default_on` decides (off until T2514 flips
-# it). Every arm here names its knob explicitly so the file reads the same
-# on either side of that flip: "knob on" is 1, "knob off" is 0.
+# =0 refuses it; with neither, `default_on` decides (on since T2514). Arms A
+# and L run with NO knob, so they measure the default itself; the rest name
+# theirs explicitly: "knob on" is 1, "knob off" is 0.
 #
 # THE CONTRACT this asserts:
 #
-#   A. With the knob on, every pane builds the chain
+#   A. With no knob set (the default since T2514), every pane builds the chain
 #      (GL/D3D interop, swap chain, DComp target on the pane window) and keeps
 #      presenting through it: two panes, output, a resize, and no failure or
 #      fallback line. The panes still draw text (capture-pane reads the
@@ -69,7 +69,7 @@
 #      card is the banner's (not a terminal press), a click on a multi-line
 #      card toggles it, and a press in the grid is still the terminal's. K8
 #      is the negative control: knob off, no card is ever a visual.
-#   L. No interop, knob on (T2514): with the debug seam
+#   L. No interop, no knob (T2514): with the debug seam
 #      GHOZTTY_COMP_PRESENT_SIMULATE_NO_INTEROP=1 standing in for Mesa, a
 #      WARP-only GL or Remote Desktop, every pane logs `composition present
 #      unavailable` at the interop stage, builds no chain, and draws through
@@ -206,10 +206,9 @@ function Test-Alive($arm) { return ($arm.App.Process -and -not $arm.App.Process.
 
 try {
     # ========================================================================
-    "== A: with the knob on, panes present through the composition swap chain"
+    "== A: with no knob (the default since T2514), panes present through the composition swap chain"
     # ========================================================================
-    # T2514: becomes $null (no knob, the default) when default_on flips.
-    Set-Knobs '1' $null $null
+    Set-Knobs $null $null $null
     $a = Start-Arm 'a'
     Assert "A0 the arm's window came up" ($a.Top -ne [IntPtr]::Zero -and $null -ne $a.Win)
     Assert "A1 the first pane built its chain" (Wait-Log $a.Err $onLine 15000)
@@ -868,7 +867,7 @@ try {
     # with SwapBuffers - with a banner too, since the window still spans the
     # band (T2566: the grid lands below it, the strip popup covers it).
     $env:GHOZTTY_COMP_PRESENT_SIMULATE_NO_INTEROP = '1'
-    try { $l = Measure-BannerArm 'l' '1' }
+    try { $l = Measure-BannerArm 'l' $null }
     finally { Remove-Item env:GHOZTTY_COMP_PRESENT_SIMULATE_NO_INTEROP -ErrorAction SilentlyContinue }
     $lText = Read-Text $l.Arm.Err
     $lUnavail = Count-Log $l.Arm.Err 'composition present unavailable \(error\.NoInterop\) at wgl-interop'
