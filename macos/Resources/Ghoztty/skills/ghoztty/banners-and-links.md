@@ -31,6 +31,8 @@ ghoztty +set-banner --target=<name> [--clear] [text...]
 
 Styles nest (`**bold with a [link](https://…)**`). Unterminated delimiters render literally.
 
+**The first line names the pane.** A plain or `#` heading first line replaces the pane's title in the sidebar and on stacked strips, so don't open a banner with a passing status unless it should name the pane. To leave the name alone, open with a bold label (`**Status:** deploying`) or a table.
+
 **Tables** (standard markdown pipe syntax): a `| a | b |` header line immediately followed by a `|---|---|` separator with the same column count, then `| 1 | 2 |` body rows, render as an aligned grid with a bold header. Separator cells accept `:` alignment markers (`:---` left, `:---:` center, `---:` right). Cells support the full inline subset; `\|` puts a literal pipe inside a cell. Ragged rows are padded/truncated to the header width. The separator row doesn't render, but every other table row counts toward the 10-line cap.
 
 ```bash

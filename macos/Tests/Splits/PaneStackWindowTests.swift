@@ -2292,6 +2292,11 @@ struct PaneStackWindowTests {
         #expect(strip.accessibilityLabel() == "Tucked pane: Another task")
         #expect(differs(titled, try await stripPixels("2-new-banner-title")), "a new banner title relabels it")
 
+        // What Cmd+R leaves behind: one plain line names the pane too.
+        surface.paneBanner = "foo"
+        await settle(0.4)
+        #expect(strip.accessibilityLabel() == "Tucked pane: foo")
+
         // A banner with no title names nothing: the pane's own title is back.
         surface.paneBanner = "|  |  |\n|---|---|\n| **Prompt** | do the thing |\n| **Status** | Idle |"
         await settle(0.4)

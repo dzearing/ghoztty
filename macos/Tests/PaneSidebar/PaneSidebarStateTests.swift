@@ -383,22 +383,63 @@ struct PaneSidebarTextTests {
         // The hook with no title set: just its table, or its OSC labels.
         #expect(Text.bannerTitle("|  |  |\n|---|---|\n| **Prompt** | do the thing |\n| **Status** | Idle |") == nil)
         #expect(Text.bannerTitle("**Prompt:** do the thing · **Status:** Idle") == nil)
-        // Prose, even prose that opens in bold, names no title.
-        #expect(Text.bannerTitle("Deploying to staging") == nil)
+        // Prose that opens in bold is a label and its value, not a name.
         #expect(Text.bannerTitle("**PR #123** — _3 files_, +120/−45") == nil)
         #expect(Text.bannerTitle("**PR** [#12](https://example.com/12)") == nil)
         // A bold line heads a multi-line banner only as a label.
         #expect(Text.bannerTitle("**Last result**\n- [x] Fixed it") == nil)
-        // A heading counts only on the first line.
-        #expect(Text.bannerTitle("Status: ok\n## Later") == nil)
+        #expect(Text.bannerTitle("**Build status**\n| Job | State |\n|---|---:|\n| lint | ok |") == nil)
         #expect(Text.bannerTitle(nil) == nil)
         #expect(Text.bannerTitle("  \n ") == nil)
     }
 
+    @Test func aPlainFirstLineIsTheTitle() {
+        #expect(Text.bannerTitle("foo") == "foo")
+        #expect(Text.bannerTitle("Deploying to staging") == "Deploying to staging")
+        #expect(Text.bannerTitle("  foo  ") == "foo")
+    }
+
+    @Test func aPlainFirstLineTitlesAMultiLineBanner() {
+        #expect(Text.bannerTitle("foo\nbar\nbaz") == "foo")
+        #expect(Text.bannerTitle("foo\\nbar") == "foo", "a literal \\n is a line break")
+        #expect(Text.bannerTitle("\n\nfoo\n\nbar") == "foo", "blank lines are not the first line")
+        #expect(Text.bannerTitle("foo\n| a | b |\n|---|---|\n| 1 | 2 |") == "foo")
+        #expect(Text.bannerTitle("Status: ok\n## Later") == "Status: ok")
+    }
+
+    @Test func aPlainFirstLineLosesItsMarkdown() {
+        #expect(Text.bannerTitle("Fix the `strip` [label](https://example.com) **now**") == "Fix the strip label now")
+        #expect(Text.bannerTitle("*foo*") == "foo")
+        #expect(Text.bannerTitle("run some_tool now") == "run some_tool now")
+        #expect(Text.bannerTitle("1.5 is out") == "1.5 is out", "a decimal is not a list")
+        #expect(Text.bannerTitle("[x](https://example.com) marks it") == "x marks it", "a link is not a checkbox")
+    }
+
+    @Test func layoutIsNeverATitle() {
+        #expect(Text.bannerTitle("| a | b |\n|---|---|\n| 1 | 2 |") == nil)
+        #expect(Text.bannerTitle("| a | b |\n|---|---|\nSummary") == nil)
+        #expect(Text.bannerTitle("---") == nil)
+        #expect(Text.bannerTitle("---\nfoo") == nil)
+        #expect(Text.bannerTitle("* * *\nfoo") == nil)
+    }
+
+    @Test func aListItemIsNeverATitle() {
+        #expect(Text.bannerTitle("- [x] Fixed it\n- [ ] Ship it") == nil)
+        #expect(Text.bannerTitle("[x] Fixed it") == nil)
+        #expect(Text.bannerTitle("- one\n- two") == nil)
+        #expect(Text.bannerTitle("* one") == nil)
+        #expect(Text.bannerTitle("1. one\n2. two") == nil)
+    }
+
+    @Test func aFirstLineWithNoWordsIsNoTitle() {
+        #expect(Text.bannerTitle("``") == nil)
+    }
+
     @Test func aHeadingNeedsItsSpaceAndText() {
-        #expect(Text.bannerTitle("##Title") == nil)
+        // Not headings: the banner shows these as typed, so they title as typed.
+        #expect(Text.bannerTitle("##Title") == "##Title")
+        #expect(Text.bannerTitle("####### Seven") == "####### Seven")
         #expect(Text.bannerTitle("## ") == nil)
-        #expect(Text.bannerTitle("####### Seven") == nil)
         #expect(Text.bannerTitle("# One") == "One")
         #expect(Text.bannerTitle("###### Six") == "Six")
     }
@@ -432,7 +473,16 @@ struct PaneSidebarTextTests {
         #expect(Text.label(title: "✳ Claude Code", pwd: "/tmp", kind: "Terminal", banner: nil) == "✳ Claude Code")
         #expect(Text.label(title: "✳ Claude Code", pwd: "/tmp", kind: "Terminal",
                            banner: "|  |  |\n|---|---|\n| **Status** | Idle |") == "✳ Claude Code")
-        #expect(Text.label(title: "👻", pwd: "/tmp/proj", kind: "Terminal", banner: "Just prose") == "proj")
+        #expect(Text.label(title: "👻", pwd: "/tmp/proj", kind: "Terminal", banner: "**PR #12** — 3 files") == "proj")
+    }
+
+    @Test func aPlainBannerNamesThePane() {
+        #expect(Text.label(title: "✳ Claude Code", pwd: "/tmp", kind: "Terminal", banner: "foo") == "foo")
+        #expect(Text.label(title: "👻", pwd: "/tmp/proj", kind: "Terminal", banner: "foo\nbar") == "foo")
+    }
+
+    @Test func aNameTheUserGaveItBeatsAPlainBanner() {
+        #expect(Text.label(title: "build", pwd: "/tmp", kind: "Terminal", banner: "foo", userTitle: "mine") == "mine")
     }
 
     // MARK: Subtitle
@@ -441,6 +491,16 @@ struct PaneSidebarTextTests {
         // The title already names the row; repeating it as the subtitle says
         // nothing.
         #expect(Text.subtitle(banner: Self.hookBanner, pwd: "/tmp", viewerLocation: nil) == "/tmp")
+    }
+
+    @Test func aPlainBannerLeavesTheSubtitleToTheDirectory() {
+        #expect(Text.subtitle(banner: "foo", pwd: "/tmp", viewerLocation: nil) == "/tmp")
+        #expect(Text.subtitle(banner: "foo\nbar", pwd: "/tmp", viewerLocation: nil) == "/tmp")
+    }
+
+    @Test func anUntitledBannerStillFillsTheSubtitle() {
+        #expect(Text.subtitle(banner: "- [x] Fixed it", pwd: "/tmp", viewerLocation: nil) == "Fixed it")
+        #expect(Text.subtitle(banner: "| a | b |\n|---|---|\nSummary", pwd: "/tmp", viewerLocation: nil) == "Summary")
     }
 
     @Test func theBannerBeatsTheWorkingDirectory() {
