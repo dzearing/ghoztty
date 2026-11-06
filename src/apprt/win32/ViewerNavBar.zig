@@ -209,6 +209,19 @@ cache_h: i32 = 0,
 cache_k: i32 = 0,
 cache_dirty: bool = true,
 
+/// The band's back buffer (T2550): a top-down 32bpp DIB section the whole bar
+/// is painted into, then put on screen with ONE blit. Painting straight into
+/// the window DC cost a GDI call per button against the redirection surface
+/// plus a `StretchDIBits` of the glass; here the glass is copied into the
+/// section's own pixels and the window DC sees a single `BitBlt`. Grown in
+/// `back_step` columns and never shrunk, so a drag does not reallocate per step.
+back_dc: ?w32.HDC = null,
+back_bmp: ?*anyopaque = null,
+back_old: ?*anyopaque = null,
+back_bits: ?[*]u32 = null,
+back_w: i32 = 0,
+back_h: i32 = 0,
+
 // Theme, derived from the pane's background in `applyTheme`.
 bar_rgb: color_math.Rgb = .{ .r = 0x20, .g = 0x20, .b = 0x20 },
 field_rgb: color_math.Rgb = .{ .r = 0x1A, .g = 0x1A, .b = 0x1A },
@@ -344,6 +357,7 @@ pub fn destroy(self: *ViewerNavBar) void {
     if (self.font) |f| _ = w32.DeleteObject(@ptrCast(f));
     if (self.edit_brush) |b| _ = w32.DeleteObject(@ptrCast(b));
     self.freeCache();
+    self.freeBack();
     self.glass.deinit(self.alloc);
     self.alloc.destroy(self);
 }
@@ -494,6 +508,13 @@ fn syncEdit(self: *ViewerNavBar) void {
     _ = w32.SetWindowPos(self.edit, null, f.left, f.top, f.right - f.left, f.bottom - f.top, flags);
 }
 
+/// What `place` asks `RedrawWindow` for (T2550): the whole band, painted now,
+/// and the field's own frame and client only while the field is a live window.
+pub fn redrawFlags(editing: bool) u32 {
+    const band = w32.RDW_INVALIDATE | w32.RDW_UPDATENOW;
+    return if (editing) band | w32.RDW_FRAME | w32.RDW_ALLCHILDREN else band;
+}
+
 /// Position the bar across the top of the pane and its EDIT inside it.
 /// Idempotent and cheap; the pane calls it from every bounds sync while the
 /// bar is visible.
@@ -538,18 +559,19 @@ pub fn place(self: *ViewerNavBar, width: i32, scale: f32) void {
     self.syncEditVisible(field_w);
     place_cost.edit_ns +|= tsince(t);
     t = tnow();
+    // The move is ~0.2 ms of a pass whatever the flags say (T2550 measured
+    // SWP_NOSENDCHANGING plus a handled WM_WINDOWPOSCHANGED: no change) - it
+    // is the cost of being a child window at all.
     if (changed) _ = w32.SetWindowPos(self.hwnd, null, 0, 0, width, l.bar_h, flags);
     place_cost.bar_ns +|= tsince(t);
     t = tnow();
     // `CS_HREDRAW | CS_VREDRAW` is what used to make a width change stale
     // everywhere; with `SWP_NOREDRAW` that is now said here, explicitly: the
-    // whole bar, the field's border (`RDW_FRAME`) and its client, painted now.
-    if (changed) _ = w32.RedrawWindow(
-        self.hwnd,
-        null,
-        null,
-        w32.RDW_INVALIDATE | w32.RDW_FRAME | w32.RDW_ALLCHILDREN | w32.RDW_UPDATENOW,
-    );
+    // whole bar, painted now. The field's frame and client (`RDW_FRAME |
+    // RDW_ALLCHILDREN`) only while it is a window on screen - an idle field is
+    // the band's own paint (T2538), and walking a hidden child is paid for
+    // nothing (T2550).
+    if (changed) _ = w32.RedrawWindow(self.hwnd, null, null, redrawFlags(self.editing));
     place_cost.paint_ns +|= tsince(t);
     if (self.scale != scale) self.applyScaleFont(scale);
     t = tnow();
@@ -1088,11 +1110,11 @@ fn openOverflowMenu(self: *ViewerNavBar) void {
     self.activate(chosen);
 }
 
-fn paint(self: *ViewerNavBar, hdc: w32.HDC, width: i32, height: i32) void {
+fn paint(self: *ViewerNavBar, hdc: w32.HDC, width: i32, height: i32, bits: ?Bits) void {
     place_cost.paints +|= 1;
     var tp = tnow();
     defer place_cost.buttons_ns +|= tsince(tp);
-    const glass = self.paintGlass(hdc, width, height);
+    const glass = self.paintGlass(hdc, width, height, bits);
     place_cost.glass_ns +|= tsince(tp);
     tp = tnow();
     if (!glass) {
@@ -1255,6 +1277,81 @@ fn printEdit(edit: w32.HWND, dc: w32.HDC) void {
     );
 }
 
+/// Columns the back buffer grows by, so a widening drag reallocates once per
+/// `back_step` pixels rather than on every step.
+const back_step: i32 = 256;
+
+/// The back buffer, at least `w` x `h`; null when GDI could not make one (the
+/// caller then paints straight into the window DC, as before T2550).
+fn ensureBack(self: *ViewerNavBar, w: i32, h: i32) ?w32.HDC {
+    if (w <= 0 or h <= 0) return null;
+    if (self.back_dc != null and self.back_bits != null and w <= self.back_w and h == self.back_h) return self.back_dc;
+    const bw = std.mem.alignForward(i32, w, back_step);
+    if (self.back_dc == null) {
+        const screen = w32.GetDC(null) orelse return null;
+        defer _ = w32.ReleaseDC(null, screen);
+        self.back_dc = w32.CreateCompatibleDC(screen);
+    }
+    const dc = self.back_dc orelse return null;
+    const bmi = w32.BITMAPINFO{ .bmiHeader = .{
+        .biWidth = bw,
+        .biHeight = -h,
+        .biPlanes = 1,
+        .biBitCount = 32,
+        .biCompression = w32.BI_RGB,
+    } };
+    var bits: ?*anyopaque = null;
+    const bmp = w32.CreateDIBSection(dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse return null;
+    const ptr = bits orelse {
+        _ = w32.DeleteObject(bmp);
+        return null;
+    };
+    const prev = w32.SelectObject(dc, bmp);
+    if (self.back_bmp) |old| {
+        _ = w32.DeleteObject(old);
+    } else {
+        self.back_old = prev;
+    }
+    self.back_bmp = bmp;
+    self.back_bits = @ptrCast(@alignCast(ptr));
+    self.back_w = bw;
+    self.back_h = h;
+    return dc;
+}
+
+fn freeBack(self: *ViewerNavBar) void {
+    if (self.back_dc) |dc| {
+        if (self.back_old) |o| _ = w32.SelectObject(dc, o);
+        _ = w32.DeleteDC(dc);
+    }
+    if (self.back_bmp) |b| _ = w32.DeleteObject(b);
+    self.back_dc = null;
+    self.back_bmp = null;
+    self.back_old = null;
+    self.back_bits = null;
+    self.back_w = 0;
+    self.back_h = 0;
+}
+
+/// The whole band into `hdc` at `width` x `height`: through the back buffer
+/// and one blit when there is one (T2550), straight into `hdc` otherwise.
+fn paintBuffered(self: *ViewerNavBar, hdc: w32.HDC, width: i32, height: i32) void {
+    const back = self.ensureBack(width, height) orelse return self.paint(hdc, width, height, null);
+    self.paint(back, width, height, .{ .bits = self.back_bits.?, .stride = @intCast(self.back_w) });
+    _ = w32.BitBlt(hdc, 0, 0, width, height, back, 0, 0, w32.SRCCOPY);
+}
+
+/// The back buffer's pixels, for a glass band copied in without a GDI call.
+const Bits = struct { bits: [*]u32, stride: usize };
+
+/// `src`, `w` x `h` and packed, into `dst` whose rows are `stride` pixels
+/// apart (the back buffer is wider than the band it holds). Pure, so the
+/// stride arithmetic is testable without a window.
+pub fn copyRows(dst: [*]u32, stride: usize, src: []const u32, w: usize, h: usize) void {
+    std.debug.assert(stride >= w and src.len >= w * h);
+    for (0..h) |y| @memcpy(dst[y * stride ..][0..w], src[y * w ..][0..w]);
+}
+
 fn freeCache(self: *ViewerNavBar) void {
     if (self.cache_dc) |dc| {
         if (self.cache_old) |o| _ = w32.SelectObject(dc, o);
@@ -1321,11 +1418,19 @@ fn overField(self: *ViewerNavBar, x: i32, y: i32) bool {
 /// (`place`), so its slice of the desk is the host's own. Website panes take
 /// it too - on Mac the chrome is glass whatever the page is. False off glass
 /// or when no buffer could be made: the caller fills `bar_rgb`.
-fn paintGlass(self: *ViewerNavBar, hdc: w32.HDC, width: i32, height: i32) bool {
+fn paintGlass(self: *ViewerNavBar, hdc: w32.HDC, width: i32, height: i32, bits: ?Bits) bool {
     const g = self.pane.glass orelse return false;
     if (width <= 0 or height <= 0) return true;
     // Rendered only when the size, the slice or a colour moved (T2695).
     const px = self.glass.render(self.alloc, @intCast(width), @intCast(height), g, self.pane.bg, self.bar_rgb) orelse return false;
+    // Into the back buffer's own pixels when painting there (T2550): rows
+    // copied, no GDI call. GdiFlush first, since GDI may still be writing the
+    // section from the last paint.
+    if (bits) |b| {
+        _ = w32.GdiFlush();
+        copyRows(b.bits, b.stride, px, @intCast(width), @intCast(height));
+        return true;
+    }
     const bmi = w32.BITMAPINFO{ .bmiHeader = .{
         .biWidth = width,
         .biHeight = -height,
@@ -1373,7 +1478,7 @@ fn wndProc(
             defer _ = w32.EndPaint(hwnd, &ps);
             var r: w32.RECT = undefined;
             if (w32.GetClientRect(hwnd, &r) != 0) {
-                self.paint(hdc, r.right - r.left, r.bottom - r.top);
+                self.paintBuffered(hdc, r.right - r.left, r.bottom - r.top);
             }
             return 0;
         },
@@ -1384,7 +1489,7 @@ fn wndProc(
             if (wparam == 0) return 0;
             var r: w32.RECT = undefined;
             if (w32.GetClientRect(hwnd, &r) == 0) return 0;
-            self.paint(@ptrFromInt(wparam), r.right - r.left, r.bottom - r.top);
+            self.paintBuffered(@ptrFromInt(wparam), r.right - r.left, r.bottom - r.top);
             return 0;
         },
 
@@ -1707,4 +1812,56 @@ test "T2538: the cache spliced to a narrower width is the EDIT's own print there
         }
     }
     try std.testing.expect(compared > 0);
+}
+
+// T2550: the band goes into the back buffer row by row; the buffer is wider
+// than the band, so each row lands at its own stride and the columns past the
+// band are left alone.
+test "T2550: copyRows lands each row at the buffer's stride" {
+    const src = [_]u32{ 1, 2, 3, 4, 5, 6 }; // 3 x 2
+    var dst = [_]u32{0xAA} ** 10; // stride 5, two rows
+    copyRows(&dst, 5, &src, 3, 2);
+    try std.testing.expectEqualSlices(u32, &.{ 1, 2, 3, 0xAA, 0xAA, 4, 5, 6, 0xAA, 0xAA }, &dst);
+}
+
+// T2550: an idle field is the band's own paint, so a move repaints the band
+// alone; the field's frame and client are walked only while it is a live EDIT.
+test "T2550: redrawFlags walks the field only while it is being edited" {
+    const band = w32.RDW_INVALIDATE | w32.RDW_UPDATENOW;
+    try std.testing.expectEqual(band, redrawFlags(false));
+    try std.testing.expectEqual(band | w32.RDW_FRAME | w32.RDW_ALLCHILDREN, redrawFlags(true));
+}
+
+// T2550: the back buffer is grown in `back_step` columns and reused for any
+// narrower band, so a drag does not make a bitmap per step; a new height makes
+// a new one.
+test "T2550: the back buffer grows in steps and is reused for narrower bands" {
+    var bar: ViewerNavBar = undefined;
+    bar.back_dc = null;
+    bar.back_bmp = null;
+    bar.back_old = null;
+    bar.back_bits = null;
+    bar.back_w = 0;
+    bar.back_h = 0;
+    defer bar.freeBack();
+
+    const dc1 = bar.ensureBack(300, 32) orelse return error.SkipZigTest;
+    try std.testing.expectEqual(@as(i32, 512), bar.back_w);
+    const bmp1 = bar.back_bmp;
+    try std.testing.expectEqual(dc1, bar.ensureBack(120, 32).?);
+    try std.testing.expectEqual(bmp1, bar.back_bmp); // narrower: same bitmap
+    _ = bar.ensureBack(513, 32) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(i32, 768), bar.back_w);
+    _ = bar.ensureBack(100, 40) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(i32, 40), bar.back_h);
+    try std.testing.expect(bar.ensureBack(0, 40) == null);
+
+    // The pixels GDI draws are the pixels `back_bits` sees.
+    const dc = bar.back_dc.?;
+    const brush = w32.CreateSolidBrush(w32.RGB(0x12, 0x34, 0x56)) orelse return error.SkipZigTest;
+    defer _ = w32.DeleteObject(@ptrCast(brush));
+    var px = w32.RECT{ .left = 7, .top = 3, .right = 8, .bottom = 4 };
+    _ = w32.FillRect(dc, &px, brush);
+    _ = w32.GdiFlush();
+    try std.testing.expectEqual(@as(u32, 0x123456), bar.back_bits.?[3 * @as(usize, @intCast(bar.back_w)) + 7] & 0xFFFFFF);
 }
