@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-06T10:13:12-08:00",
-    "commit":  "f03dfa650",
+    "generated":  "2026-11-06T11:03:54-08:00",
+    "commit":  "3613b0ada",
     "uncommitted":  [
-
+                        "test/win32/pane-banner.ps1",
+                        "test/win32/pane-sidebar.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -364,7 +365,7 @@
                   "test/win32/palette-grid-size.ps1":  "503b63cbcb1bc6763c2d2800245923385ce4a4b5bb5a8e1649e5ddfe48f265b1",
                   "test/win32/palette-jump.ps1":  "ee11e403b39036691fbaf1f12aab1820f9a98ca96fc0d9a04f94e50200c1d7a7",
                   "test/win32/palette-order.ps1":  "1aa851b76eaafbb3d721aece4d5f934a9a142e0d9d23ac8b1645d38b86727580",
-                  "test/win32/pane-banner.ps1":  "3b38da0ec613601d9fb32f240615e57ec391e1b4b5791a6cbcd8323e2c649b3f",
+                  "test/win32/pane-banner.ps1":  "d4a45cd1385d9571e00634abc3bf028a980ca90d415539f58198fbd0153ed156",
                   "test/win32/pane-busy-light.ps1":  "68aa8bd7cb6981af57d13b334f9224386e4446f49430609eb87ada8b9d8a9332",
                   "test/win32/pane-capture.ps1":  "bdf7b9c8d9b2e1c8e443e2a9b7abe8997f9f883df80d6d86d808861c36cc06a8",
                   "test/win32/pane-close-memory.ps1":  "6f1a65c7c071a65c9cb152fbc220fed6d5fbe0853246f630a5f032536caaea15",
@@ -375,7 +376,7 @@
                   "test/win32/pane-id.ps1":  "710f1f30c57bb798b7ac487cef16a07339692ed6bc3b4da99dc17dedda6f1ad0",
                   "test/win32/pane-ingest-ab.ps1":  "8a1c931c42ef7e346459a13bbd3c4a8e31a581ca00247520423b3d2bca6e984b",
                   "test/win32/pane-ingest-lag.ps1":  "1edc18cdbb6b7cf3450ee030f4a674d3a94e77b7d96a63a70e4a3d9197616dcf",
-                  "test/win32/pane-sidebar.ps1":  "d51d45d8aa99fc02ea74ba8779a566431bd47424ed0cf09c3401a58b78822df5",
+                  "test/win32/pane-sidebar.ps1":  "b2a65cde8fa769058aaff14b26505f282e0dad23352851095e04f2a4a0850e11",
                   "test/win32/pane-sidebar-actions.ps1":  "a9198ff447cc50f3d61e94b0ef27a1637656293818a7b6b35a3c0141c6c60ac3",
                   "test/win32/pane-sidebar-activity.ps1":  "6703d4bcce8e551c08795e5cf2a81091d22a49460d78a5f75abebf0ed6818a95",
                   "test/win32/pane-sidebar-add.ps1":  "c7ed6fc37ac65afb363beeedcb5b6c8c230d9223528d3e097e01d6e7f082090a",

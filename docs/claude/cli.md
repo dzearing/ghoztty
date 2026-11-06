@@ -614,7 +614,7 @@ shell redraws a round trip later).
 
 Banners are persisted per pane in the session-layout manifest (keyed to the stable pane id), so a session-persistence restore brings them back with their text intact — across app quit/relaunch/upgrade re-attach and across an agent-restart relaunch alike. **The banner slot belongs to the pane** (T422): the session-interrupted notice an agent-restart prints is always folded into the pane's scrollback, but only claims the banner slot when the pane has no banner of its own — a restored banner is never overwritten by it. `+list --json` reports each terminal pane's current banner in a `banner` field (absent when no banner is set), which is also the CLI way to read a banner back.
 
-A banner with a **title** — an `## ` heading on its first line, or a one-line banner opening with a standalone `**bold**` run — also **names its pane** in the pane sidebar and on a stacked pane's strip, in place of the pane title (see Stacked panes). **Windows:** the sidebar half landed in T2085; strips arrive with stacked panes (T2081).
+A banner with a **title** also **names its pane** in the pane sidebar and on a stacked pane's strip, in place of the pane title (see Stacked panes). The title is the banner's first line, plain or an `## ` heading, so typing `foo` at Cmd+R (Ctrl+Shift+R on Windows) names the pane foo. A first line that opens in bold counts only as a one-line banner opening with a standalone `**bold**` run; a bold label (`**Goal:** …`), a table or rule line, or a list item gives the banner no title. A name the user gave the pane still outranks it. **Windows:** same rule in `pane_sidebar.bannerTitle` (T2085, widened to the plain first line by T2756 after Mac 5b0a41036).
 
 ### `ghoztty +reload`
 
@@ -1561,14 +1561,17 @@ the 225x125 minimum is T2284.
   (OSC 0/2) with whatever it is doing. It is live — `+set-banner`, OSC 7778
   and Cmd+R relabel the strip at once, and clearing the banner (or a banner
   with no title) brings the pane's own title back. **What counts as a banner
-  title** (`PaneSidebarText.bannerTitle`, pure) is deliberately narrow, never
-  just the first line: a heading on the banner's first line (`## Fix strip
-  labels` — what the hook writes above its table), or a ONE-line banner that
-  opens with a bold run standing alone or before ` · ` (`**Fix strip labels**
-  · **Goal:** …` — the hook's OSC fallback). A bold label (`**Goal:** …`), a
-  bold run followed by prose (`**PR #12** — 3 files`), a bold line heading a
-  multi-line banner (`**Last result**`), and a title-less table are not
-  titles. Markdown is stripped (bold, code, links → their label). Tests:
+  title** (`PaneSidebarText.bannerTitle`, pure; win32 `pane_sidebar.bannerTitle`)
+  is the banner's first line, so typing `foo` at Cmd+R names the pane foo, and
+  in `foo\nbar` the pane is foo (Mac 5b0a41036, Windows T2756). That covers a
+  plain line, a heading (`## Fix strip labels`), and a ONE-line banner opening
+  with a bold run standing alone or before ` · ` (`**Fix strip labels** ·
+  **Goal:** …` — the hook's OSC fallback). A first line doing another job is no
+  title, and nothing below it stands in: a bold label (`**Goal:** …`), a bold
+  run followed by prose (`**PR #12** — 3 files`), a bold line heading a
+  multi-line banner (`**Last result**`), a table or rule line, a list item
+  (`- [x] done`, `1. one`). Only bold marks a label: a plain `Status: ok` is a
+  title. Markdown is stripped (bold, code, links → their label). Tests:
   `PaneSidebarTextTests`, `aStripIsLabeledByItsBannerTitleLive` (reads the
   composited window).
 

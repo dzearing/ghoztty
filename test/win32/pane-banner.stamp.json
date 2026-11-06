@@ -1,17 +1,17 @@
 {
     "guard":  "pane-banner",
     "script":  "test/win32/pane-banner.ps1",
-    "generated":  "2026-11-06T09:01:31-08:00",
-    "commit":  "fcbe8184a",
+    "generated":  "2026-11-06T10:57:34-08:00",
+    "commit":  "3613b0ada",
     "uncommitted":  [
-                        "test/win32/pane-banner.ps1"
+                        "src/apprt/win32/banner_markdown.zig"
                     ],
     "files":  {
                   "src/apprt/win32/banner_card.zig":  "9697c5e10f7cbd77852c8d9318f8f1e65bffb6e934d6c8a673ccefc4ae5cb53f",
                   "src/apprt/win32/banner_glide.zig":  "3975542db037c63aff42938225a925ca60996608cef458571279dd1b28126497",
                   "src/apprt/win32/banner_layout.zig":  "9e6a83b66e67bdfcf62303508700f1797c3e569e9ef35ab4011156769d12386e",
                   "src/apprt/win32/banner_link.zig":  "0ca33afdba886a50a930f6cdb93f79e2a066ad776ea1a68b1215239d4bf020a7",
-                  "src/apprt/win32/banner_markdown.zig":  "cc606914608fa4bca12b7c2efbc493c60bd37805d3cc3593d4b548139e28015d",
+                  "src/apprt/win32/banner_markdown.zig":  "f3da3d926f154c400ce2cdacee1026703558114414255146b5b4be81eb087b15",
                   "src/apprt/win32/BannerDialog.zig":  "3a5e59dba40c6c4df9aab5cf5e87751d137bb81642399deb0adf59d33ec3b47d",
                   "src/apprt/win32/BannerFreeze.zig":  "71eaa115e64eed567e3d7626ed6fce9f336d068a09a2755f621cd155f63c21d2",
                   "src/apprt/win32/BannerOverlay.zig":  "47cb4aca88704b43e776c9e422c980e0f984cca7cdc2b21f379e20dd5c8e67e2",

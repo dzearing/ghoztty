@@ -1,3 +1,4 @@
+# @timing-sensitive - its collapse/expand checks sample animation frames (T149/T833/T677/T2252), and box load from scripts beside it left 0 intermediate frames on T2756's due run while it passed alone, so it runs with nothing beside it (scripts/acceptance-parallel.ps1, T1960).
 # T35/T91 acceptance: sticky pane banner — `+set-banner` IPC, OSC 7778,
 # banner overlay strip on the glass, `+list` additive `banner` field, the
 # ctrl+shift+b "Set Pane Banner" editor dialog, and the T91 markdown

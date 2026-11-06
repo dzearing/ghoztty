@@ -422,7 +422,7 @@ fn columnAlignment(cell: []const u8) ?ColumnAlignment {
 /// that follows. A `- `/`* ` directly before a checkbox is the checkbox's
 /// marker, not a separate bullet. A decimal like `1.5` (no space after
 /// the dot) is not a list.
-fn listItem(line: []const u8) ?struct { marker: ListMarker, content: []const u8 } {
+pub fn listItem(line: []const u8) ?struct { marker: ListMarker, content: []const u8 } {
     var t = line;
     while (t.len > 0 and t[0] == ' ') t = t[1..];
     if (t.len == 0) return null;

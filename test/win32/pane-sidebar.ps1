@@ -48,7 +48,8 @@
 #      comctl32 tooltips are never shown on a background desktop.
 #  10. (T2085, Mac f9e99a860) A banner's title names its pane: `## Fix login`
 #      on P makes its row (and its tile's tip) read "Fix login" with the
-#      subtitle left to the directory; a banner with no title gives the pane
+#      subtitle left to the directory; a plain first line names it too (T2756,
+#      Mac 5b0a41036); a banner with no title (a list item) gives the pane
 #      title back and becomes the subtitle; a one-line bold banner is a title
 #      too; clearing restores the row exactly. Scored from the `pane sidebar
 #      text` log line - drawn text cannot be read back off a background desktop.
@@ -556,11 +557,18 @@ try {
         Assert "P's rail tile tip names it by the banner title" ($tip -match 'tile0=Fix login\|')
     } else { "  (rail not in mini mode now - tile tip not scored: $tip)" }
 
-    [void](Invoke-Cli "+set-banner --target=$pId0 `"Deploying to staging`"")
-    $plain = Wait-RowText $pId0 { param($r) $r.Title -ne 'Fix login' }
+    # T2756 (Mac 5b0a41036): a plain first line names the pane - what Ctrl+Shift+R leaves behind.
+    [void](Invoke-Cli "+set-banner --target=$pId0 `"Deploying to staging\nsecond line`"")
+    $plainTitled = Wait-RowText $pId0 { param($r) $r.Title -eq 'Deploying to staging' }
+    "  plain: title='$($plainTitled.Title)' sub='$($plainTitled.Sub)'"
+    Assert "a plain first line names P's row (T2756)" ($null -ne $plainTitled -and $plainTitled.Title -eq 'Deploying to staging')
+    Assert "...and the directory, not the banner, takes the subtitle" ($null -ne $plainTitled -and $plainTitled.Sub -notmatch 'Deploying|second line')
+
+    [void](Invoke-Cli "+set-banner --target=$pId0 `"- [x] Deployed to staging`"")
+    $plain = Wait-RowText $pId0 { param($r) $r.Title -ne 'Deploying to staging' }
     "  untitled: title='$($plain.Title)' sub='$($plain.Sub)'"
-    Assert "a banner with no title gives P its own title back" ($null -ne $plain -and $plain.Title -eq $before.Title)
-    Assert "...and its first line is the subtitle" ($null -ne $plain -and $plain.Sub -eq 'Deploying to staging')
+    Assert "a banner with no title (a list item) gives P its own title back" ($null -ne $plain -and $plain.Title -eq $before.Title)
+    Assert "...and its first line is the subtitle" ($null -ne $plain -and $plain.Sub -eq 'Deployed to staging')
 
     [void](Invoke-Cli "+set-banner --target=$pId0 `"**Ship it**`"")
     $bold = Wait-RowText $pId0 { param($r) $r.Title -eq 'Ship it' }
