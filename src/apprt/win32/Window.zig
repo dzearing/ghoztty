@@ -1176,6 +1176,9 @@ overlay_keep: [2]chrome_comp.Rect = undefined,
 overlay_keep_n: usize = 0,
 /// This paint's desk is on the compositor and something paints over it.
 over_desk: bool = false,
+/// The rect of a translucent window's own pixels last cleared whole under its
+/// desk visual (T2541); null when they were not, or the desk left the visual.
+desk_cleared: ?w32.RECT = null,
 /// The flat style's bottom layer on the compositor (T2545): the gutters,
 /// divider lines, gutter bar and strips the flat style paints between the
 /// panes, drawn into this mirror and sent to the desk visual by what changed.
@@ -12230,7 +12233,11 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     // to the desk's overlay (T2544); a host whose overlay failed keeps such a
     // window's desk on GDI.
     const over = headers or hero_split != null;
-    const on_visual = self.deskOnVisual(area, !over or self.overlayAvailable());
+    // A translucent window's painters over the desk stay on GDI with it: the
+    // overlay would carry their pixels at GDI's zero alpha (T2541).
+    const eligible = if (self.deskOpacity() != null) !over else (!over or self.overlayAvailable());
+    const on_visual = self.deskOnVisual(area, eligible);
+    if (on_visual) self.clearUnderDesk(area);
     self.over_desk = on_visual and over;
     if (on_visual) self.overlayPrepare(desk_dc, area, hero_split, over);
     self.pane_desk.sink = if (on_visual) .{ .ctx = self, .upload = deskSinkUpload } else null;
@@ -12271,7 +12278,7 @@ fn deskOnVisual(self: *Window, area: w32.RECT, eligible: bool) bool {
     }
     // The flat desk's picture is not the elevated one (T2545).
     if (self.flat_live) self.deskOffVisual();
-    if (eligible and self.deskOpacity() == null and host.deskAvailable()) {
+    if (eligible and host.deskAvailable()) {
         const clip: chrome_comp.Rect = .{
             .left = area.left,
             .top = @max(area.top, self.chromeHeight()),
@@ -12295,6 +12302,7 @@ fn deskOffVisual(self: *Window) void {
     self.pane_desk.forget();
     self.desk_overlay.reset();
     self.over_desk = false;
+    self.desk_cleared = null;
     const area = self.deskRect();
     if (self.hwnd) |hw| {
         _ = w32.InvalidateRect(hw, &area, 0);
@@ -12306,6 +12314,34 @@ fn deskOffVisual(self: *Window) void {
             _ = w32.InvalidateRect(hw, &band, 0);
         }
     }
+}
+
+/// A translucent window's own pixels under its desk visual, made fully
+/// transparent (T2541). The visual's desk is premultiplied and composes over
+/// them, so whatever they still held - the GDI desk it replaced, a strip a
+/// resize uncovered - would show through it at 1 - opacity. A new area, or
+/// the visual's first paint, clears the whole of it through its own DC; any
+/// other paint that is not blitting only what changed clears its own clip.
+/// The caption band is not the desk's and is left as it is.
+fn clearUnderDesk(self: *Window, area: w32.RECT) void {
+    if (self.deskOpacity() == null) return;
+    const hwnd = self.hwnd orelse return;
+    const r: w32.RECT = .{ .left = area.left, .top = @max(area.top, self.chromeHeight()), .right = area.right, .bottom = area.bottom };
+    if (r.right <= r.left or r.bottom <= r.top) return;
+    const brush = w32.GetStockObject(w32.BLACK_BRUSH) orelse return;
+    const whole = if (self.desk_cleared) |c| !std.meta.eql(c, r) else true;
+    if (whole) {
+        const dc = w32.GetDCEx(hwnd, null, w32.DCX_CACHE | w32.DCX_CLIPSIBLINGS | w32.DCX_CLIPCHILDREN) orelse return;
+        defer _ = w32.ReleaseDC(hwnd, dc);
+        // GDI writes a zero alpha byte: black at zero is premultiplied clear.
+        _ = w32.FillRect(dc, &r, @ptrCast(brush));
+        if (self.desk_cleared == null) log.info("chrome desk visual over a translucent window: cleared {d}x{d} under it", .{ r.right - r.left, r.bottom - r.top });
+        self.desk_cleared = r;
+        return;
+    }
+    if (self.pane_desk.blit_changed_only) return;
+    const dc = self.desk_hdc orelse return;
+    _ = w32.FillRect(dc, &r, @ptrCast(brush));
 }
 
 /// The flat style's window-owned pixels, in paint order (T2545): the
@@ -12357,6 +12393,7 @@ fn flatPass(self: *Window, ref: w32.HDC, comptime painter: fn (*Window, w32.HDC)
         self.deskVisualFailed();
         return false;
     };
+    host.deskPremultiplied(false);
     if (!self.flat_live) log.info("chrome flat desk on the desk visual: {d}x{d}", .{ w, h });
     self.flat_live = true;
     if (!fd.valid) {
@@ -12445,6 +12482,8 @@ fn deskSinkSend(self: *Window, px: []const u32, w: i32, h: i32, rects: ?[]const 
         break :blk buf[0..rr.len];
     } else null;
     const full = host.desk_full;
+    // A translucent window's desk is `out`, premultiplied (T2541).
+    host.deskPremultiplied(self.deskOpacity() != null);
     host.deskUpload(px, w, h, rs) catch return self.deskVisualFailed();
     // A new surface took the whole buffer, whatever `rs` said.
     const sent = if (host.desk_full != full) null else rs;

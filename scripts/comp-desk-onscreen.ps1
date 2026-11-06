@@ -34,6 +34,18 @@
 # survives the pointer being elsewhere, unlike a hover) - the pressed slab is
 # a dirty-rect upload, and its frame must match GDI's too, band rows included.
 #
+# The translucent pair (T2541): the same window at --background-opacity=0.8
+# (blur off). There the desk goes up premultiplied over window pixels cleared
+# under it, and the caption band stays GDI.
+#   - tgdi:    knob off, translucent. The reference.
+#   - tvisual: knob on, translucent. The log says the desk visual attached
+#              premultiplied and cleared the window under it; the frame
+#              matches tgdi's. WGC films the window alone, so the backdrop
+#              behind it is no variable: what is compared is the window's
+#              own composite.
+#   - tfill:   the test fill over a translucent window, scored as tvisual
+#              under -NegativeControl.
+#
 #   powershell -NoProfile -File scripts\comp-desk-onscreen.ps1
 #   powershell -NoProfile -File scripts\comp-desk-onscreen.ps1 -NegativeControl   # must go red
 
@@ -149,8 +161,8 @@ function Wait-Log($path, $pattern, $timeoutMs) {
     return $false
 }
 
-$arms = @('gdi', 'visual')
-if ($NegativeControl) { $arms += 'fill', 'freeze' }
+$arms = @('gdi', 'visual', 'tgdi', 'tvisual')
+if ($NegativeControl) { $arms += 'fill', 'freeze', 'tfill' }
 
 [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
 [void](Set-GhozttyTestIsolation -Tag 'deskonscreen')
@@ -172,15 +184,18 @@ try {
         $env:GHOZTTY_DEBUG_GHOST = 'bottom'
         $env:GHOZTTY_TEST_NO_OCCLUSION = '1'
         Remove-Item env:GHOZTTY_COMP_CHROME, env:GHOZTTY_COMP_CHROME_TEST_FILL, env:GHOZTTY_COMP_CHROME_CAPTION_FREEZE -ErrorAction SilentlyContinue
-        if ($arm -ne 'gdi') { $env:GHOZTTY_COMP_CHROME = '1' }
-        if ($arm -eq 'fill') { $env:GHOZTTY_COMP_CHROME_TEST_FILL = '1' }
+        $translucent = $arm.StartsWith('t')
+        if ($arm -ne 'gdi' -and $arm -ne 'tgdi') { $env:GHOZTTY_COMP_CHROME = '1' }
+        if ($arm -eq 'fill' -or $arm -eq 'tfill') { $env:GHOZTTY_COMP_CHROME_TEST_FILL = '1' }
         if ($arm -eq 'freeze') { $env:GHOZTTY_COMP_CHROME_CAPTION_FREEZE = '1' }
         $err = Join-Path $dir 'stderr.txt'
         $logs[$arm] = $err
-        $app = Start-OnTestDesktop -Exe $Exe -Arguments @(
+        $appArgs = @(
             '--config-default-files=false', '--session-persistence=false',
             '--window-width=110', '--window-height=30', '--background=#101418',
-            '--cursor-style-blink=false', '--title=t2509-desk') -StdErr $err
+            '--cursor-style-blink=false', '--title=t2509-desk')
+        if ($translucent) { $appArgs += '--background-opacity=0.8', '--background-blur=false' }
+        $app = Start-OnTestDesktop -Exe $Exe -Arguments $appArgs -StdErr $err
         $top = $null
         for ($t = 0; $t -lt 100 -and -not $top; $t++) {
             $w = @([DeskGhost]::TopLevel([uint32]$app.Pid, 'GhozttyWindow'))
@@ -207,7 +222,13 @@ try {
             Assert "$arm.3c the caption visual attached above it" (Wait-Log $err 'chrome caption visual attached' 10000)
             Assert "$arm.3d the caption never fell back to GDI" ((Read-Text $err) -notmatch 'chrome caption visual (failed|detached)')
             if ((Read-Text $err) -match 'chrome caption visual attached: (\d+)x(\d+)') { $script:bandH = [int]$Matches[2] }
-        } elseif ($arm -eq 'fill') {
+        } elseif ($arm -eq 'tvisual') {
+            Assert "$arm.2 the desk visual attached on the translucent window" (Wait-Log $err 'chrome desk visual attached' 10000)
+            Assert "$arm.3 its surface is premultiplied" (Wait-Log $err 'chrome desk visual alpha: premultiplied' 5000)
+            Assert "$arm.3b the window's own pixels under it were cleared" (Wait-Log $err 'chrome desk visual over a translucent window: cleared' 5000)
+            Assert "$arm.3c the desk never fell back to GDI" ((Read-Text $err) -notmatch 'chrome desk visual (failed|detached)')
+            Assert "$arm.3d the window is translucent" ((Read-Text $err) -match 'window translucent=true')
+        } elseif ($arm -eq 'fill' -or $arm -eq 'tfill') {
             Assert "$arm.2 the test fill is up (the desk stays GDI under it)" (Wait-Log $err 'chrome composition test fill attached' 10000)
         } else {
             Assert "$arm.2 knob off: no chrome host" ((Read-Text $err) -notmatch 'chrome composition')
@@ -226,6 +247,8 @@ try {
         "  $grabOut"
         Assert "$arm.4 WGC grabbed a frame of the ghost" ($grabOut -match '^GRAB ok' -and (Test-Path $bmpPath))
         if (Test-Path $bmpPath) { $grabs[$arm] = Get-Pixels $bmpPath }
+        # The translucent pair's caption band stays GDI: no press to score.
+        if ($translucent) { continue }
 
         # The press: WM_NCLBUTTONDOWN (0xA1) with HTMINBUTTON (8). Never
         # released, so the slab stays pressed for the grab.
@@ -300,6 +323,26 @@ if (-not $pref -or -not $pg) {
         "  $psrc vs gdi pressed band: differing=$pbd of $($pg.W * $script:bandH)"
         Assert "press.2 the $psrc pressed caption band matches GDI's (a dirty-rect upload)" ($pbd -le $pg.W * $script:bandH * $MaxDiffShare)
     }
+}
+# The translucent pair (T2541): tvisual (tfill under -NegativeControl) against
+# tgdi, after a positive control that the opacity reached the picture at all.
+$tref = $grabs['tgdi']
+$tsrc = if ($NegativeControl) { 'tfill' } else { 'tvisual' }
+$tg = $grabs[$tsrc]
+if ($ref -and $tref -and $ref.W -eq $tref.W -and $ref.H -eq $tref.H) {
+    $op = [DeskGhost]::Diff($ref.B, $tref.B, $ref.W, $ref.H, $ref.Stride, $Tolerance)
+    "  tgdi vs gdi (the opacity's own effect): differing=$op"
+    Assert "tmatch.0 the translucent GDI frame differs from the opaque one (positive control)" ($op -gt $ref.W * $ref.H * 0.05)
+}
+if (-not $tref -or -not $tg) {
+    Assert "tmatch.0b both translucent frames to compare" $false
+} elseif ($tref.W -ne $tg.W -or $tref.H -ne $tg.H) {
+    Assert "tmatch.0b the translucent frames are the same size ($($tref.W)x$($tref.H) vs $($tg.W)x$($tg.H))" $false
+} else {
+    $ttotal = $tg.W * $tg.H
+    $tdiff = [DeskGhost]::Diff($tref.B, $tg.B, $tg.W, $tg.H, $tg.Stride, $Tolerance)
+    "  $tsrc vs tgdi: $($tg.W)x$($tg.H) differing=$tdiff ($('{0:P2}' -f ($tdiff / [double]$ttotal)))"
+    Assert "tmatch.1 the $tsrc frame's translucent desk matches the GDI one" ($tdiff -le $ttotal * $MaxDiffShare)
 }
 "  grabs kept in $OutDir"
 if ($script:failures -eq 0) { "ALL PASS ($script:passes)"; exit 0 }

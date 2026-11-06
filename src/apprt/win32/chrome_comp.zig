@@ -662,6 +662,9 @@ pub const Host = struct {
     desk_x: i32 = 0,
     desk_y: i32 = 0,
     desk_clip: Rect = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+    /// The desk's pixels carry their own alpha (T2541): a translucent
+    /// window's, premultiplied over window pixels cleared under it.
+    desk_premul: bool = false,
     /// Uploads since the window last read them: whole buffers, rectangles,
     /// and the pixels the rectangles covered.
     desk_full: u32 = 0,
@@ -1001,6 +1004,17 @@ pub const Host = struct {
         }
     }
 
+    /// Whether the next desk uploads are premultiplied (T2541) - a translucent
+    /// window's - or opaque, whose alpha byte is GDI's zero and ignored. A
+    /// change takes a new surface, so the next upload sends the whole buffer.
+    pub fn deskPremultiplied(self: *Host, premul: bool) void {
+        if (premul == self.desk_premul) return;
+        self.desk_premul = premul;
+        log.info("chrome desk visual alpha: {s}", .{if (premul) "premultiplied (translucent window)" else "opaque"});
+        if (self.desk_surface) |old| release(old);
+        self.desk_surface = null;
+    }
+
     /// The desk's composed buffer, `w` x `h` BGRA rows, into the visual:
     /// only `rects` of it when the surface already holds the rest (null:
     /// all of it), then one commit. A new size, or a surface lost with the
@@ -1021,7 +1035,7 @@ pub const Host = struct {
             if (self.desk_surface) |old| release(old);
             self.desk_surface = null;
             var surface: ?Obj = null;
-            try check(slot(*const fn (Obj, u32, u32, u32, u32, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_surface)(self.dcomp, @intCast(w), @intCast(h), DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_IGNORE, &surface));
+            try check(slot(*const fn (Obj, u32, u32, u32, u32, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_surface)(self.dcomp, @intCast(w), @intCast(h), DXGI_FORMAT_B8G8R8A8_UNORM, if (self.desk_premul) DXGI_ALPHA_MODE_PREMULTIPLIED else DXGI_ALPHA_MODE_IGNORE, &surface));
             const surf = surface orelse return error.ComFailed;
             errdefer release(surf);
             try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_content)(vis, surf));
