@@ -223,6 +223,9 @@ function Get-ResizePasses([string]$log) {
                 Woken    = $(if ($l -match ' woken=(\d+)') { [int]$Matches[1] } else { -1 })
                 Stale    = $(if ($l -match ' stale=(\d+)') { [int]$Matches[1] } else { -1 })
                 Held     = $(if ($l -match ' held=(\d+)') { [int]$Matches[1] } else { 0 })
+                # T2506: how many of its waits blocked at all; -1 on a build
+                # that predates the field.
+                Blocked  = $(if ($l -match ' blocked=(\d+)') { [int]$Matches[1] } else { -1 })
             }
         }
     }
@@ -631,14 +634,10 @@ try {
     # new size, and a renderer's present - not the clock - ended them.
     $waited = @($withPanes | Where-Object { $_.Waits -gt 0 })
     $staleSum = ($waited | Measure-Object Stale -Sum).Sum
-    $wokenSum = ($waited | Measure-Object Woken -Sum).Sum
     Assert ($waited.Count -gt 0) "whole-window resizes still waited for frames ($($waited.Count) pass(es))"
     $staleOk = ($staleSum -eq 0)
     if ($NegativeControl) { $staleOk = -not $staleOk }
     Assert $staleOk "every whole-window frame wait came back on a frame drawn at the new size (stale=$staleSum)"
-    $wokenOk = ($wokenSum -gt 0)
-    if ($NegativeControl) { $wokenOk = -not $wokenOk }
-    Assert $wokenOk "a presented frame woke the whole-window frame waits (woken=$wokenSum; -1 means the build does not report it)"
 
     # THE TAB SWITCH ENDS ON A FRAME AT THE NEW SIZE (T2046). The guarantee
     # above says every pane WAITED; it does not say the wait was answered by the
@@ -662,19 +661,41 @@ try {
     }
 
     # And the waits those passes took were ended by a FRAME, not by the clock
-    # (T1035) - the whole-window half of section E's wiring check. Summed over
-    # the passes rather than per pass: whether one pass's frame was already on
-    # screen before its wait began is a race, but a run of whole-window resizes
-    # in which no present ever woke a wait is a wait with nothing signalling it.
+    # (T1035) - the whole-window half of section E's wiring check. Asked only
+    # of the waits that BLOCKED (T2506): a pass whose frames were already on
+    # screen before its wait began logs woken=0 timeouts=0 and proves nothing
+    # either way, and with an accurate 8 ms present lag (T2503) whole runs of
+    # 8 passes did exactly that in 3 of 10 runs. So: of the passes that
+    # blocked, a present woke at least one. (Timeouts are reported, not
+    # asserted: one that still ends on a fresh frame is harmless box load, and
+    # one that does not is already the stale= red above.) A run in
+    # which no pass blocked is a measured state, printed, not a red - the
+    # unwired signal always blocks (it can never be answered), so it cannot
+    # hide there.
     $waited = @($withPanes | Where-Object { $_.Waits -gt 0 })
     if ($waited.Count -gt 0) {
-        $wokeSum = 0; $oldBuild = $false
-        foreach ($p in $waited) { if ($p.Woken -lt 0) { $oldBuild = $true } else { $wokeSum += $p.Woken } }
-        $winWokenOk = (-not $oldBuild) -and ($wokeSum -gt 0)
+        $oldBuild = @($waited | Where-Object { $_.Woken -lt 0 -or $_.Blocked -lt 0 }).Count -gt 0
+        $blockedPasses = @($waited | Where-Object { $_.Blocked -gt 0 })
+        $wokeSum = ($blockedPasses | Measure-Object Woken -Sum).Sum
+        if ($null -eq $wokeSum) { $wokeSum = 0 }
+        $blockedTimeouts = ($blockedPasses | Measure-Object Timeouts -Sum).Sum
+        if ($null -eq $blockedTimeouts) { $blockedTimeouts = 0 }
+        if ($oldBuild) {
+            $winWokenOk = $false
+        } elseif ($blockedPasses.Count -eq 0) {
+            $winWokenOk = $true
+        } else {
+            $winWokenOk = ($wokeSum -gt 0)
+        }
         if ($NegativeControl) { $winWokenOk = -not $winWokenOk }
-        Assert $winWokenOk ("a presented frame woke the whole-window resize waits " +
-            "($wokeSum woken over $($waited.Count) waiting pass(es)" +
-            $(if ($oldBuild) { '; the build does not report woken=' } else { '' }) + ')')
+        Assert $winWokenOk ("a presented frame woke the whole-window resize waits that blocked " +
+            "($wokeSum woken, $blockedTimeouts timed out, over $($blockedPasses.Count) of " +
+            "$($waited.Count) waiting pass(es) that blocked" +
+            $(if ($oldBuild) { '; the build does not report woken=/blocked=' } else { '' }) + ')')
+        if (-not $oldBuild -and $blockedPasses.Count -eq 0) {
+            Write-Host ("  measured: none of the $($waited.Count) waiting pass(es) blocked - " +
+                "every frame was presented before its wait began") -ForegroundColor DarkGray
+        }
     }
 
     Assert (-not (Test-TestDesktopLeak -ProcessId $appPid)) 'GUI never became visible on the interactive desktop'

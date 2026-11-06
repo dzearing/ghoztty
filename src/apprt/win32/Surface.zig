@@ -6399,6 +6399,7 @@ fn waitForAwaitedFrame(self: *Surface) drag_perf.WaitOutcome {
     var budget = std.time.Timer.start() catch null;
     var timed_out = false;
     var answered = false;
+    var blocked = false;
     while (true) {
         // Reset before reading, so a signal cleared here belongs to a frame
         // whose size the load below can already see.
@@ -6406,16 +6407,17 @@ fn waitForAwaitedFrame(self: *Surface) drag_perf.WaitOutcome {
         if (!resize_paint.presentIsStale(
             self.awaited_size,
             self.presented_size.load(.acquire),
-        )) return .{ .woken = answered };
+        )) return .{ .woken = answered, .blocked = blocked };
         if (timed_out or (answered and self.parent_window.frame_wait_any)) {
             self.parent_window.noteStalePresent();
-            return .{ .timed_out = true, .woken = answered };
+            return .{ .timed_out = true, .woken = answered, .blocked = blocked };
         }
         const spent_ms = if (budget) |*t| t.read() / std.time.ns_per_ms else drag_perf.frame_wait_ms;
         if (spent_ms >= drag_perf.frame_wait_ms) {
             timed_out = true;
             continue; // one last look before giving up
         }
+        blocked = true;
         const rc = w32.WaitForSingleObject(
             event,
             @intCast(drag_perf.frame_wait_ms - spent_ms),

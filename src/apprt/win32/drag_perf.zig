@@ -61,6 +61,11 @@ pub fn batchedWaitCeilingUs(panes: usize) u64 {
 pub const WaitOutcome = struct {
     timed_out: bool = false,
     woken: bool = false,
+    /// The wait actually went onto the kernel wait at least once (T2506).
+    /// False is the third ending above — the frame was already on screen —
+    /// and an oracle asking "did a present wake the waits?" must ask it only
+    /// of the waits that blocked, or a quick renderer reads as an unwired one.
+    blocked: bool = false,
 };
 
 /// One motion tick of a divider drag.

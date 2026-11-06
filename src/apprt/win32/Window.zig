@@ -920,6 +920,10 @@ frame_wait_timeouts: usize = 0,
 /// Of those waits, how many a renderer's present actually woke (T1035) — see
 /// `drag_perf.WaitOutcome` for why this is not `count - timeouts`.
 frame_wait_woken: usize = 0,
+/// Of those waits, how many blocked at all (T2506): the rest found every
+/// frame already presented, so they say nothing about whether a present wakes
+/// a wait.
+frame_wait_blocked: usize = 0,
 /// Where the rest of a motion tick goes, so the breakdown is measured instead
 /// of guessed at: the dim-overlay refresh at the end of every layout pass, and
 /// the sum of the panes' own `sizeCallback` (grid reflow + renderer viewport +
@@ -8139,6 +8143,7 @@ fn beginFrameWaitBatch(self: *Window) void {
         self.frame_wait_count = 0;
         self.frame_wait_timeouts = 0;
         self.frame_wait_woken = 0;
+        self.frame_wait_blocked = 0;
         self.frame_wait_resizes = 0;
         self.frame_wait_deferred = 0;
         self.frame_wait_fresh = 0;
@@ -8175,7 +8180,7 @@ pub fn noteResize(self: *Window) void {
 /// relayout the user watched with no anti-flicker guarantee.
 fn reportResizePass(self: *Window, cause: []const u8) void {
     log.debug(
-        "window resize cause={s} panes={d} sync={d} fresh={d} waits={d} timeouts={d} stale={d} woken={d} held={d}",
+        "window resize cause={s} panes={d} sync={d} fresh={d} waits={d} timeouts={d} stale={d} woken={d} held={d} blocked={d}",
         .{
             cause,
             self.frame_wait_resizes,
@@ -8186,6 +8191,7 @@ fn reportResizePass(self: *Window, cause: []const u8) void {
             self.frame_wait_stale,
             self.frame_wait_woken,
             self.frame_wait_held,
+            self.frame_wait_blocked,
         },
     );
 }
@@ -8227,6 +8233,7 @@ pub fn addFrameWait(self: *Window, us: u64, outcome: drag_perf.WaitOutcome) void
     self.frame_wait_count +|= 1;
     if (outcome.timed_out) self.frame_wait_timeouts +|= 1;
     if (outcome.woken) self.frame_wait_woken +|= 1;
+    if (outcome.blocked) self.frame_wait_blocked +|= 1;
 }
 
 /// Take a pane's frame event instead of letting it wait for itself.
@@ -8277,6 +8284,7 @@ fn endFrameWaitBatch(self: *Window) void {
     var budget = std.time.Timer.start() catch null;
     var timed_out = false;
     var answered = false;
+    var blocked = false;
     while (true) {
         // Reset BEFORE reading the size. The renderer stores the size and then
         // sets the event, so a signal cleared here belongs to a frame whose
@@ -8309,6 +8317,7 @@ fn endFrameWaitBatch(self: *Window) void {
             timed_out = true;
             continue; // one last look before giving up on them
         }
+        blocked = true;
         const rc = w32.WaitForMultipleObjects(
             @intCast(live),
             &self.frame_wait_events,
@@ -8319,7 +8328,7 @@ fn endFrameWaitBatch(self: *Window) void {
     }
     self.addFrameWait(
         if (timer) |*t| t.read() / std.time.ns_per_us else 0,
-        .{ .timed_out = timed_out, .woken = answered },
+        .{ .timed_out = timed_out, .woken = answered, .blocked = blocked },
     );
 }
 
