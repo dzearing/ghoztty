@@ -602,6 +602,22 @@ function Update-State($fields) {
     foreach ($k in $fields.Keys) { $obj[$k] = $fields[$k] }
     $tmp = "$StatePath.$PID.tmp"
     ($obj | ConvertTo-Json -Depth 5) | Out-File -FilePath $tmp -Encoding utf8
+    # T2497: replace in ONE step. `Move-Item -Force` over an existing file
+    # deletes the destination and then renames, so a reader (-Status, the
+    # health line) landing between the two saw no state at all - and a process
+    # killed there left none: P9 read "last tick: never" off a watchdog that had
+    # ticked a dozen times. File.Replace swaps the content atomically; the
+    # first write (no destination yet) and a replace refused by a reader's
+    # handle fall back to the move.
+    try {
+        if (Test-Path -LiteralPath $StatePath) {
+            # .NET resolves relative paths against the process directory, not
+            # PowerShell's location, so hand it provider paths.
+            [IO.File]::Replace((Resolve-Path -LiteralPath $tmp).ProviderPath,
+                (Resolve-Path -LiteralPath $StatePath).ProviderPath, $null)
+            return
+        }
+    } catch { }
     Move-Item -Force $tmp $StatePath
 }
 

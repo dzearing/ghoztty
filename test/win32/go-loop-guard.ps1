@@ -227,10 +227,38 @@ function Find-Leaves($node, $acc) {
     Find-Leaves $node.left $acc
     Find-Leaves $node.right $acc
 }
+# T2497: every GUI wait in sections I-L polls for its condition for up to this
+# many 500ms ticks (30s). The old budget was 20 (10s), and on a box running two
+# lanes' builds and sweeps a window open, a title change or a typed line landed
+# after it - a different handful of assertions red each run, none of them about
+# the code. A wait breaks on success, so a green run is no slower.
+$pollTicks = 60
+
+# One `+list --json`, parsed, asked again on a failed round trip (T2497). A
+# single IPC call that times out under load is not "the window is gone", and
+# reading it that way scored L6 (unmarked window untouched) red off a title of
+# $null. Returns $null only when every attempt failed.
+function Get-ListJson {
+    for ($attempt = 1; $attempt -le 4; $attempt++) {
+        $r = Ghoz @('+list', '--json')
+        if ($r.Code -eq 0) {
+            try { return ($r.Out | ConvertFrom-Json) } catch { }
+        }
+        Start-Sleep -Milliseconds (500 * $attempt)
+    }
+    return $null
+}
+# Poll a condition until it holds or the budget runs out; $true if it held.
+function Wait-Cond([scriptblock]$cond, [int]$ticks = $pollTicks) {
+    for ($i = 0; $i -lt $ticks; $i++) {
+        if (& $cond) { return $true }
+        Start-Sleep -Milliseconds 500
+    }
+    return [bool](& $cond)
+}
 function Get-WindowPane($target) {
-    $r = Ghoz @('+list', '--json')
-    if ($r.Code -ne 0) { return $null }
-    try { $j = $r.Out | ConvertFrom-Json } catch { return $null }
+    $j = Get-ListJson
+    if (-not $j) { return $null }
     foreach ($w in $j.data.windows) {
         if ($w.target -ne $target) { continue }
         foreach ($t in $w.tabs) {
@@ -242,15 +270,28 @@ function Get-WindowPane($target) {
     return $null
 }
 function Get-WindowTitle($target) {
-    $r = Ghoz @('+list', '--json')
-    if ($r.Code -ne 0) { return $null }
-    try { $j = $r.Out | ConvertFrom-Json } catch { return $null }
+    $j = Get-ListJson
+    if (-not $j) { return $null }
     foreach ($w in $j.data.windows) { if ($w.target -eq $target) { return $w.title } }
     return $null
 }
+# A window's title once the shell inside it has stopped retitling it (T2497).
+# cmd sets the title as it starts, so a title captured the moment the window
+# exists can change a second later with nobody touching it - which L6 then
+# reported as "the unmarked window was touched".
+function Get-StableTitle($target) {
+    $prev = Get-WindowTitle $target
+    for ($i = 0; $i -lt $pollTicks; $i++) {
+        Start-Sleep -Milliseconds 1000
+        $cur = Get-WindowTitle $target
+        if ($null -ne $cur -and $cur -eq $prev) { return $cur }
+        $prev = $cur
+    }
+    return $prev
+}
 function New-TestWindow($target) {
     Ghoz @('+new-window', "--target=$target", "--working-directory=$Repo") | Out-Null
-    for ($i = 0; $i -lt 20; $i++) {
+    for ($i = 0; $i -lt $pollTicks; $i++) {
         Start-Sleep -Milliseconds 500
         $p = Get-WindowPane $target
         if ($p) { return $p }
@@ -517,7 +558,34 @@ Remove-Item $argvLog -Force -ErrorAction SilentlyContinue
 @('@echo off', "echo %*>>`"$argvLog`"", 'echo No running Ghoztty instance found. 1>&2', 'exit /b 1') -join "`r`n" |
     Out-File -FilePath $fakeAppGoneArgv -Encoding ascii
 $r = Recover-Run $fakeAppGoneArgv @('-HeldTimeoutSeconds', '6')
-$launchLine = @(Get-Content -LiteralPath $argvLog -ErrorAction SilentlyContinue | Where-Object { $_ -match '--working-directory' }) | Select-Object -First 1
+# T2497: what the app was launched WITH, read from either end. The stand-in
+# records its own argv - but it is a .cmd started into a new console, and on a
+# loaded box that console sometimes stalls for over a minute before running its
+# first line (measured: 2 of 60 launches under 16 CPU burners never exited
+# inside 60s). The launch itself had happened, with the right arguments, and
+# H19/H20 went red over it. The process exists from the moment it is created, so
+# its CommandLine carries the same argv whether or not cmd ever gets to echo it;
+# take whichever answers first, and end a stalled stand-in ourselves.
+$launchPid = 0
+if ($r.Out -match 'launch-app started .*fake-ghoztty-app-gone-argv\.cmd pid=(\d+)') { $launchPid = [int]$Matches[1] }
+$launchLine = $null
+[void](Wait-Cond {
+    $script:launchLine = @(Get-Content -LiteralPath $argvLog -ErrorAction SilentlyContinue |
+        Where-Object { $_ -match '--working-directory' }) | Select-Object -First 1
+    if (-not $script:launchLine -and $launchPid) {
+        $lp = Get-CimInstance Win32_Process -Filter "ProcessId=$launchPid" -ErrorAction SilentlyContinue
+        if ($lp -and $lp.CommandLine -match 'fake-ghoztty-app-gone-argv\.cmd' -and $lp.CommandLine -match '--working-directory') {
+            $script:launchLine = $lp.CommandLine
+        }
+    }
+    [bool]$script:launchLine
+})
+if ($launchPid) {
+    $lp = Get-CimInstance Win32_Process -Filter "ProcessId=$launchPid" -ErrorAction SilentlyContinue
+    if ($lp -and $lp.CommandLine -match 'fake-ghoztty-app-gone-argv\.cmd') {
+        Stop-Process -Id $launchPid -Force -ErrorAction SilentlyContinue
+    }
+}
 Assert 'H19 the app-gone launch hands the shim to --initial-command (first surface only)' `
     ($r.Out -match 'ACTION launch-app' -and $launchLine -and $launchLine -match '--initial-command=\S*resume')
 # Negative half: `--command=` anywhere on the launch line is the defect itself.
@@ -565,7 +633,7 @@ if ($ready) {
         '-WindowTarget', 'go-loop-test')
     Assert 'I1 the watchdog opened a window' ($r.Out -match 'ACTION new-window')
     $pane = $null
-    for ($i = 0; $i -lt 20; $i++) {
+    for ($i = 0; $i -lt $pollTicks; $i++) {
         Start-Sleep -Milliseconds 500
         $pane = Get-WindowPane 'go-loop-test'
         if ($pane) { break }
@@ -573,7 +641,7 @@ if ($ready) {
     Assert 'I2 the window exists and has a pane' ($null -ne $pane)
     if ($pane) {
         $seen = ''
-        for ($i = 0; $i -lt 20; $i++) {
+        for ($i = 0; $i -lt $pollTicks; $i++) {
             Start-Sleep -Milliseconds 500
             $seen = (Ghoz @('+read', "--name=$($pane.id)", '--lines=20')).Out
             if ($seen -match $marker) { break }
@@ -590,7 +658,7 @@ if ($ready) {
     "J. real re-entry (nudge a live but stalled session)"
     $r = Ghoz @('+new-window', '--target=go-loop-live', "--working-directory=$Repo")
     $pane = $null
-    for ($i = 0; $i -lt 20; $i++) {
+    for ($i = 0; $i -lt $pollTicks; $i++) {
         Start-Sleep -Milliseconds 500
         $pane = Get-WindowPane 'go-loop-live'
         if ($pane) { break }
@@ -606,7 +674,7 @@ if ($ready) {
         Assert 'J1 a live owner in a live pane is nudged, not replaced' ($r.Out -match 'ACTION nudge')
         Assert 'J2 no second window was opened' (-not (Get-WindowPane 'go-loop-test'))
         $seen = ''
-        for ($i = 0; $i -lt 20; $i++) {
+        for ($i = 0; $i -lt $pollTicks; $i++) {
             Start-Sleep -Milliseconds 500
             $seen = (Ghoz @('+read', "--name=$($pane.id)", '--lines=20')).Out
             if ($seen -match 'read go\.md and go') { break }
@@ -674,14 +742,14 @@ if ($ready) {
     if ($paneA -and $paneC) {
         $r = Exec-Run @('mark', '-PaneId', $paneA.id)
         Assert 'K1 mark succeeds' ($r.Code -eq 0 -and $r.Out -match '^MARKED')
-        Assert 'K2 the window title carries the marker' ((Get-WindowTitle 'exec-a') -like $laneMarkerLike)
+        Assert 'K2 the window title carries the marker' (Wait-Cond { (Get-WindowTitle 'exec-a') -like $laneMarkerLike })
         Assert 'K3 an unmarked window keeps its own title' ((Get-WindowTitle 'plain-c') -notlike $laneMarkerLike)
         $r = Exec-Run @('list', '-PaneId', $paneA.id)
         Assert 'K4 list flags only the marked window' `
             (([regex]::Matches($r.Out, '(?m)^EXEC ')).Count -eq 1 -and $r.Out -match 'EXEC exec-a')
         $r = Exec-Run @('unmark', '-PaneId', $paneA.id)
         Assert 'K5 unmark succeeds' ($r.Code -eq 0 -and $r.Out -match '^UNMARKED')
-        Assert 'K6 the marker is gone from the title' ((Get-WindowTitle 'exec-a') -notlike $laneMarkerLike)
+        Assert 'K6 the marker is gone from the title' (Wait-Cond { $t = Get-WindowTitle 'exec-a'; $null -ne $t -and $t -notlike $laneMarkerLike })
     }
 
     ""
@@ -695,15 +763,15 @@ if ($ready) {
         Remove-Item $lock -Force -ErrorAction SilentlyContinue
         Lock-Run @('acquire', '-PaneId', $paneA.id, '-ClaudePid', $primary.Id) | Out-Null
         Exec-Run @('mark', '-PaneId', $paneB.id) | Out-Null
-        $titleC = Get-WindowTitle 'plain-c'
+        $titleC = Get-StableTitle 'plain-c'
 
         $r = Exec-Run @('claim', '-PaneId', $paneA.id, '-GraceSeconds', 1)
         Assert 'L1 the lock holder claims primary' ($r.Code -eq 0 -and $r.Out -match '^PRIMARY')
-        Assert 'L2 it marks its own window' ((Get-WindowTitle 'exec-a') -like $laneMarkerLike)
+        Assert 'L2 it marks its own window' (Wait-Cond { (Get-WindowTitle 'exec-a') -like $laneMarkerLike })
         Assert 'L3 it names the duplicate' ($r.Out -match 'DUPLICATE execution window target=exec-b')
         Assert 'L4 it reports resolving exactly one' ($r.Out -match 'resolved 1 duplicate')
         $gone = $false
-        for ($i = 0; $i -lt 20; $i++) {
+        for ($i = 0; $i -lt $pollTicks; $i++) {
             Start-Sleep -Milliseconds 500
             if (-not (Get-WindowPane 'exec-b')) { $gone = $true; break }
         }
@@ -720,9 +788,9 @@ if ($ready) {
             $r = Exec-Run @('claim', '-PaneId', $paneD.id, '-NoSelfClose')
             Assert 'L8 it stands down with exit 3' ($r.Code -eq 3 -and $r.Out -match '^STAND-DOWN')
             Assert 'L9 it names the primary it deferred to' ($r.Out -match "notified primary in pane $($paneA.id)")
-            Assert 'L10 it unmarks itself' ((Get-WindowTitle 'exec-d') -notlike $laneMarkerLike)
+            Assert 'L10 it unmarks itself' (Wait-Cond { $t = Get-WindowTitle 'exec-d'; $null -ne $t -and $t -notlike $laneMarkerLike })
             $seen = ''
-            for ($i = 0; $i -lt 20; $i++) {
+            for ($i = 0; $i -lt $pollTicks; $i++) {
                 Start-Sleep -Milliseconds 500
                 $seen = (Ghoz @('+read', "--name=$($paneA.id)", '--lines=20')).Out
                 if ($seen -match 'stood down') { break }
@@ -733,7 +801,7 @@ if ($ready) {
             Exec-Run @('mark', '-PaneId', $paneD.id) | Out-Null
             Exec-Run @('claim', '-PaneId', $paneD.id) | Out-Null
             $gone = $false
-            for ($i = 0; $i -lt 20; $i++) {
+            for ($i = 0; $i -lt $pollTicks; $i++) {
                 Start-Sleep -Milliseconds 500
                 if (-not (Get-WindowPane 'exec-d')) { $gone = $true; break }
             }
@@ -1214,10 +1282,18 @@ Assert 'P3 the beacon records the tick that ran' ($beacon -and $beacon.last_tick
 Assert 'P4 the beacon carries the poll interval' ($beacon -and [int]$beacon.poll_seconds -eq 2)
 # It must keep beating while nothing happens - that is the whole point.
 $firstTick = $beacon.tick_at
-Start-Sleep -Seconds 4
-$beacon2 = Get-Content $pState -Raw | ConvertFrom-Json
-Assert 'P5 the beacon advances on a quiet tick' ($beacon2.tick_at -ne $firstTick)
+# Polled, not slept (T2497): a 2s poll interval is a floor, not a promise, and a
+# loaded box can take longer than one fixed 4s nap to run the next tick.
+$beacon2 = $null
+[void](Wait-Cond {
+    try { $script:beacon2 = Get-Content $pState -Raw -ErrorAction Stop | ConvertFrom-Json } catch { return $false }
+    $script:beacon2 -and $script:beacon2.tick_at -ne $firstTick
+})
+Assert 'P5 the beacon advances on a quiet tick' ($beacon2 -and $beacon2.tick_at -ne $firstTick)
 Stop-Process -Id $dog.Id -Force -ErrorAction SilentlyContinue
+# Gone before -Status reads the file, so P9 measures what a dead watchdog leaves
+# behind rather than racing the last write of a live one.
+Wait-Process -Id $dog.Id -Timeout 30 -ErrorAction SilentlyContinue
 
 # A -Once tick must NOT stamp it. The upgrade script's handoff runs -Once, and a
 # process that exits two seconds later stamping its pid here would report the

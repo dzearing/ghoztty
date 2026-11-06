@@ -104,9 +104,20 @@ function Ghoz([string[]]$argList) {
 }
 
 function Get-Windows {
-    $r = Ghoz @('+list', '--json')
-    if ($r.Code -ne 0) { return @() }
-    try { $j = $r.Out | ConvertFrom-Json } catch { return @() }
+    # T2497: one failed `+list` is not "no windows". On a loaded box a single
+    # IPC round trip can time out, and reading that as an empty list made claim
+    # skip its own marking, miss the primary it should notify, and leave a
+    # stood-down duplicate open - every one of them a wrong answer from a
+    # process that simply asked once. Ask again before believing the empty list.
+    $j = $null
+    for ($attempt = 1; $attempt -le 4; $attempt++) {
+        $r = Ghoz @('+list', '--json')
+        if ($r.Code -eq 0) {
+            try { $j = $r.Out | ConvertFrom-Json; break } catch { $j = $null }
+        }
+        Start-Sleep -Milliseconds (500 * $attempt)
+    }
+    if (-not $j) { return @() }
     $out = @()
     foreach ($w in $j.data.windows) {
         $panes = New-Object System.Collections.ArrayList
