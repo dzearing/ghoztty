@@ -1245,5 +1245,26 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.53.1/Ghoztty-1.53.1-arm64.dmg" type="application/octet-stream" sparkle:edSignature="mfuFPksp7sLYmBHbq31YmmfbNaVl+8SVplVz6VmOkm9/35Ev7IyB7f6hU1G8DpdJR7nEObfNW6W43ZmzQsAeCw==" length="27683558" />
         </item>
+        <item>
+            <title>Version 1.54.0</title>
+            <sparkle:version>1.54.0</sparkle:version>
+            <sparkle:shortVersionString>1.54.0</sparkle:shortVersionString>
+            <pubDate>Fri, 06 Nov 2026 18:07:11 +0000</pubDate>
+            <description>{
+  "version": "1.54.0",
+  "sections": [
+    { "title": "Pane banners",
+      "items": [
+        { "title": "Name a pane by typing", "text": "Press Cmd-R, type a name, and the banner's first line becomes the pane's name in the sidebar and on stacked strips. No # heading needed. Bold labels, tables and lists still leave the pane's name alone." }
+      ] },
+    { "title": "Stacked panes",
+      "items": [
+        { "title": "Cursor on blades", "text": "Moving slowly off a divider onto a blade no longer leaves the resize cursor stuck." }
+      ] }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.54.0/Ghoztty-1.54.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="2oAvOxzbjNR3hdetRlNKuJIR3IY0BsIz4tEplENDH3NxJEu/OlixsGkECz9xxysiF2qfjCV5xN0FMOFihVCRCA==" length="27682195" />
+        </item>
     </channel>
 </rss>
