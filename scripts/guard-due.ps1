@@ -6381,6 +6381,19 @@ $GuardTable = @(
             'test\win32\drag-perf.ps1'
         )
     },
+    # T2451: the fold glide under a divider drag, on a row with a viewer pane.
+    # Its counts (deferred_moves, wm_paints, desk reuse) come from GlideStats
+    # and the PaneDesk memo, so an edit to either is an edit to what it asserts.
+    [pscustomobject]@{
+        Name   = 'drag-glide'
+        Script = 'test\win32\drag-glide.ps1'
+        Stamp  = 'test\win32\drag-glide.stamp.json'
+        Covers = @(
+            'src\apprt\win32\drag_perf.zig',
+            'src\apprt\win32\PaneDesk.zig',
+            'test\win32\drag-glide.ps1'
+        )
+    },
     # T2603: what a window-edge drag step costs, with and without T2578's
     # pre-layout. The rule that decides which steps are laid out ahead is the
     # pre-layout's budget, so an edit there is an edit to what is measured.
