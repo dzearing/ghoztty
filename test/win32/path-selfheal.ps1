@@ -25,6 +25,10 @@
 #   H no-dup:    relaunching the owner -> byte-identical.
 #   I hand-added: the same Path with nothing recorded -> the other entry is
 #                not ours and stays (G's negative control).
+#   J sandbox:   a REAL release copy launched under Set-GhozttyTestIsolation
+#                -ReleaseSandbox (no force, the real gate) -> user Path and the
+#                release PathEntry record byte-identical; J2, the same copy
+#                with the seam cleared, does write (J1's control) (T2429).
 #
 # The REAL user Path is used as the base (never replaced wholesale — new
 # shells during the run must keep working); the original value + kind are
@@ -59,6 +63,9 @@ $exeDir = Split-Path $exe -Parent
 
 $script:pass = 0
 $script:fail = 0
+$script:skipped = 0
+$script:relOwnedTouched = $false
+$relCopy = $null
 function Assert([bool]$cond, [string]$label) {
     if ($cond) { $script:pass++; Write-Host "PASS  $label" }
     else { $script:fail++; Write-Host "FAIL  $label" -ForegroundColor Red }
@@ -258,10 +265,100 @@ try {
     Assert $alive 'I hand-added: GUI survived launch'
     Assert (Wait-PathContains $exeDir 10) 'I hand-added: exe dir appeared on the user Path'
     Assert ((Get-UserPathRaw).Value -eq "$base;$oldCopy;$exeDir;$installDir") 'I hand-added: unrecorded entry kept, ours placed ahead of the install'
+
+    # --- J (T2429): a -ReleaseSandbox run of a real RELEASE copy leaves the
+    # user Path and the release record byte-identical. The T2419 capture ran a
+    # portable under the sandbox and left its scratchpad folder on the user's
+    # Path, because the sandbox moved LOCALAPPDATA and the agent but not HKCU
+    # Environment. A release build heals with no env var at all, so this runs
+    # the REAL gate rather than `force`; J2 is its negative control - the same
+    # copy with the seam cleared does write, so J1's silence is the seam's.
+    $relBin = Join-Path $repo 'zig-out-release\bin'
+    if (-not (Test-Path (Join-Path $relBin 'ghoztty.exe'))) {
+        Write-Host 'SKIP  J release-sandbox: no zig-out-release build on this box'
+        $script:skipped++
+    } else {
+        $relOwnedBefore = (Get-ItemProperty $ownerKey -Name 'PathEntry' -ErrorAction SilentlyContinue).PathEntry
+        $script:relOwnedBefore = $relOwnedBefore
+        $script:relOwnedTouched = $true
+        $saveEnv = @{}
+        foreach ($n in 'GHOZTTY_PIPE_SUFFIX', 'GHOZTTY_AGENT_INSTANCE', 'LOCALAPPDATA',
+                'GHOZTTY_URL_SCHEME', 'GHOZTTY_PATH_SELFHEAL', 'GHOZTTY_TEST_ALLOW_RELEASE') {
+            $saveEnv[$n] = [Environment]::GetEnvironmentVariable($n, 'Process')
+        }
+        try {
+            Set-UserPathRaw $base $orig.Kind
+            Remove-Item Env:GHOZTTY_PATH_SELFHEAL -ErrorAction SilentlyContinue
+            [void](Set-GhozttyTestIsolation -Tag 't2429' -ReleaseSandbox -Quiet)
+            $env:GHOZTTY_TEST_ALLOW_RELEASE = '1'
+            # The copy goes where the sandbox's own install lives - the shape
+            # the update/install harnesses run - because every generation of
+            # the gate heals from there: before T2169 only the installed
+            # release healed, after it any real copy does. Deleted with the
+            # sandbox at exit, and by the cleanup below.
+            $relCopy = Join-Path $env:LOCALAPPDATA 'Programs\Ghoztty'
+            New-Item -ItemType Directory -Force $relCopy | Out-Null
+            Get-ChildItem -LiteralPath $relBin | Where-Object { $_.Extension -ne '.pdb' } |
+                Copy-Item -Destination $relCopy -Recurse -Force
+            $relExe = Join-Path $relCopy 'ghoztty.exe'
+            $pathJ = Get-UserPathRaw
+
+            $app = Start-OnTestDesktop -Exe $relExe -AllowReleaseBuild -Arguments @('--session-persistence=false')
+            Start-Sleep -Seconds 4
+            $aliveJ = -not $app.Process.HasExited
+            Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
+            Assert $aliveJ 'J1 release-sandbox: the release copy survived launch'
+            $afterJ = Get-UserPathRaw
+            Assert ($afterJ.Value -eq $pathJ.Value -and $afterJ.Kind -eq $pathJ.Kind) `
+                'J1 release-sandbox: user Path byte-identical after a sandboxed release launch'
+            $ownedJ = (Get-ItemProperty $ownerKey -Name 'PathEntry' -ErrorAction SilentlyContinue).PathEntry
+            Assert ($ownedJ -eq $relOwnedBefore) 'J1 release-sandbox: the release PathEntry record untouched'
+
+            # J2: the negative control. Clear the seam and the same copy, same
+            # sandbox, writes - so J1 measured the seam, not a gate that was shut.
+            Remove-Item Env:GHOZTTY_PATH_SELFHEAL -ErrorAction SilentlyContinue
+            $app = Start-OnTestDesktop -Exe $relExe -AllowReleaseBuild -Arguments @('--session-persistence=false')
+            $healed = Wait-PathContains $relCopy 10
+            Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
+            Assert $healed 'J2 control: without the seam the same sandboxed release copy DOES write the user Path'
+        } finally {
+            # Nothing from the copy outlives J. Killing the launched pid is not
+            # enough: a release build can respawn itself a beat after launch
+            # (the first run left an argument-less twin alive in the sandbox,
+            # caught by harness-process-leak.ps1 E1), and may start its own
+            # sandbox-lineage agent. So sweep by path until the folder has been
+            # quiet for two polls in a row, for at most ~8s.
+            $quiet = 0
+            for ($i = 0; $i -lt 16 -and $quiet -lt 2; $i++) {
+                # cleanslate-exempt: the copy lives in this run's sandbox, not the repo (Stop-RepoGhoztty refuses it); matched by that exact path
+                $left = @(Get-CimInstance Win32_Process -Filter "Name='ghoztty.exe' OR Name='ghoztty-agent.exe'" |
+                    Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($relCopy, [StringComparison]::OrdinalIgnoreCase) })
+                if ($left.Count -eq 0) { $quiet++ } else { $quiet = 0 }
+                $left | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+                Start-Sleep -Milliseconds 500
+            }
+            $stillJ = @(Get-CimInstance Win32_Process -Filter "Name='ghoztty.exe' OR Name='ghoztty-agent.exe'" |
+                Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($relCopy, [StringComparison]::OrdinalIgnoreCase) })
+            Assert ($stillJ.Count -eq 0) "J3 nothing launched from the release copy is left running ($($stillJ.Count) found)"
+            foreach ($n in $saveEnv.Keys) {
+                [Environment]::SetEnvironmentVariable($n, $saveEnv[$n], 'Process')
+            }
+        }
+    }
 } finally {
     Kill-RepoInstances
     Set-UserPathRaw $orig.Value $orig.Kind
     Set-Owned $origOwned
+    # J wrote (J2) or may have written the RELEASE record - the user's own,
+    # not the debug lineage's - so it is put back exactly as it was.
+    if ($script:relOwnedTouched) {
+        if ($null -eq $script:relOwnedBefore) {
+            if (Test-Path $ownerKey) { Remove-ItemProperty $ownerKey -Name 'PathEntry' -ErrorAction SilentlyContinue }
+        } else {
+            if (-not (Test-Path $ownerKey)) { New-Item $ownerKey -Force | Out-Null }
+            Set-ItemProperty $ownerKey -Name 'PathEntry' -Value $script:relOwnedBefore -Type String
+        }
+    }
     # The app creates the key on its first record; a box that had none gets
     # none back, or the run leaves durable state behind (T1230).
     if (-not $ownerKeyExisted -and (Test-Path $ownerKey) -and
@@ -276,7 +373,12 @@ try {
 $restored = Get-UserPathRaw
 Assert ($restored.Value -eq $orig.Value -and $restored.Kind -eq $orig.Kind) 'cleanup: original user Path restored'
 Assert ((Get-Owned) -eq $origOwned) 'cleanup: original owned-entry record restored'
+if ($script:relOwnedTouched) {
+    $relOwnedAfter = (Get-ItemProperty $ownerKey -Name 'PathEntry' -ErrorAction SilentlyContinue).PathEntry
+    Assert ($relOwnedAfter -eq $script:relOwnedBefore) 'cleanup: the release PathEntry record restored'
+}
+if ($relCopy) { Remove-Item -LiteralPath $relCopy -Recurse -Force -ErrorAction SilentlyContinue }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
+if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions$(if ($script:skipped) { ", $script:skipped SKIPPED" }))" }
 else { Write-Host "$script:fail FAILED / $script:pass passed" -ForegroundColor Red; exit 1 }

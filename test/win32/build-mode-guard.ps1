@@ -217,6 +217,25 @@ Assert "D10h and the user's ghoztty:// handler is unchanged ($classAfter)" ($cla
 if ($null -eq $savedScheme) { Remove-Item Env:GHOZTTY_URL_SCHEME -ErrorAction SilentlyContinue }
 else { $env:GHOZTTY_URL_SCHEME = $savedScheme }
 
+# T2429: the user's PATH is the fifth thing, and the same shape. A release build
+# writes its own folder into HKCU\Environment\Path (PathInstaller.zig), which no
+# sandbox knob moves - the T2419 capture left a scratchpad dir there. The live
+# proof that a sandboxed release launch leaves Path byte-identical is section J
+# of path-selfheal.ps1; this is the contract on the switch itself.
+$savedHeal = $env:GHOZTTY_PATH_SELFHEAL
+Remove-Item Env:GHOZTTY_PATH_SELFHEAL -ErrorAction SilentlyContinue
+[void](Set-GhozttyTestIsolation -Tag 'bmguard' -ReleaseSandbox -Quiet -SandboxRoot (Join-Path $tmp 'iso-sandbox5'))
+Assert "D10i -ReleaseSandbox turns the release build's PATH self-heal off" `
+    ($env:GHOZTTY_PATH_SELFHEAL -eq 'off')
+$env:GHOZTTY_PATH_SELFHEAL = 'force'
+[void](Set-GhozttyTestIsolation -Tag 'bmguard' -ReleaseSandbox -Quiet -SandboxRoot (Join-Path $tmp 'iso-sandbox6'))
+Assert "D10j and a seam value the caller set on purpose is kept" ($env:GHOZTTY_PATH_SELFHEAL -eq 'force')
+Remove-Item Env:GHOZTTY_PATH_SELFHEAL -ErrorAction SilentlyContinue
+[void](Set-GhozttyTestIsolation -Tag 'bmguard' -Quiet)
+Assert "D10k while the plain call does not touch it" ($null -eq $env:GHOZTTY_PATH_SELFHEAL)
+if ($null -eq $savedHeal) { Remove-Item Env:GHOZTTY_PATH_SELFHEAL -ErrorAction SilentlyContinue }
+else { $env:GHOZTTY_PATH_SELFHEAL = $savedHeal }
+
 # Hand section E the partial state it is written against: a release exe with a
 # private suffix and nothing else, which is what -AllowReleaseBuild has to be
 # able to opt out of. T2005: "nothing else" means the lineage is UNSET here, not

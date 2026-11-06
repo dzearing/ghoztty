@@ -137,10 +137,20 @@ function Set-GhozttyTestIsolation {
         # it per launch, after this call.
         if (-not $env:GHOZTTY_URL_SCHEME) { $env:GHOZTTY_URL_SCHEME = 'off' }
 
+        # T2429: and the fifth. A release build launched from any real copy
+        # writes its own folder into HKCU\Environment\Path and records it as
+        # HKCU\Software\Ghoztty\PathEntry (PathInstaller.zig) - the user's own
+        # record, which also REMOVES the entry it names. Neither is under
+        # LOCALAPPDATA, so the T2419 capture left a scratchpad folder on the
+        # user's Path. Same rule as the scheme: a caller that set the seam
+        # (path-selfheal.ps1, registration-sites.ps1) keeps its value.
+        if (-not $env:GHOZTTY_PATH_SELFHEAL) { $env:GHOZTTY_PATH_SELFHEAL = 'off' }
+
         if (-not $Quiet) {
             "  [isolation] GHOZTTY_AGENT_INSTANCE=$instance"
             "  [isolation] LOCALAPPDATA=$root"
             "  [isolation] GHOZTTY_URL_SCHEME=$($env:GHOZTTY_URL_SCHEME)"
+            "  [isolation] GHOZTTY_PATH_SELFHEAL=$($env:GHOZTTY_PATH_SELFHEAL)"
         }
     }
 
