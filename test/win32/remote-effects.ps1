@@ -17,8 +17,8 @@
 #   visible over the unfocused pane (unfocused-split-opacity swapped to 1).
 #
 #   LIVE BACK TO THE CONSOLE. Seam to '0' + the session message: the same
-#   window re-lays out as elevated cards and the unfocused pane gets its dim
-#   overlay back.
+#   window re-lays out as elevated cards. Glass is back on with them, and glass
+#   panes never dim (T2281), so no wash appears - the dim's return is run 4's.
 #
 #   LIVE BACK TO REMOTE. And again the other way, on the same window.
 #
@@ -27,6 +27,13 @@
 #   THE USER WINS. Seam '1' with `--macos-pane-glass=true` on the command
 #   line: the panes stay elevated (glass needs the elevated style), while the
 #   defaults nobody set (the dim) are still swapped.
+#
+#   THE DIM SWAP (T2750). `--macos-pane-glass=false` by name, so the dim
+#   exists on the console: none over Remote Desktop, one wash on the unfocused
+#   pane live back on the console, gone again live back to remote. Washes are
+#   counted on both draw paths - GhozttyDimOverlay popups plus the composition
+#   path's child visuals read from the launch log (T2748's oracle) - so no
+#   assertion changes meaning with the composition default (T2514).
 #
 # Cursor blink and blur are covered by the unit tests in
 # src/config/remote_effects.zig (no external probe can read them).
@@ -89,6 +96,26 @@ function Get-VisibleOverlays([int]$procId) {
     @(Get-TestWindows -ProcessId $procId -Class 'GhozttyDimOverlay' | Where-Object Visible)
 }
 
+# The composition path's washes (T2748's oracle, T2750): with the pane
+# presenting through its composition swap chain - the default since T2514 -
+# the dim is a child visual of the pane, not a GhozttyDimOverlay popup, so it
+# is read from the launch's log. A 'shown' line adds its pane; a 'hidden' line
+# or a move back to the popup path removes it.
+function Get-VisualDims([string]$Log) {
+    $set = @{}
+    foreach ($l in @(Get-Content $Log -ErrorAction SilentlyContinue)) {
+        if ($l -match 'dim overlay shown as visual alpha=(?<a>\d+) pane=(?<p>\d+)') { $set[$Matches.p] = [int]$Matches.a }
+        elseif ($l -match 'dim overlay (hidden visual=true|path visual=false) pane=(?<p>\d+)') { $set.Remove($Matches.p) }
+    }
+    return $set
+}
+
+# Every dim wash up, on either draw path: visible popups plus visual washes.
+# Counting both keeps each assertion's meaning whatever the composition default.
+function Get-DimCount($g) {
+    @(Get-VisibleOverlays $g.App.Pid).Count + (Get-VisualDims $g.Log).Count
+}
+
 # Zig's @round is half-away-from-zero; .NET's default is banker's.
 function Round-Away([double]$v) { [int][math]::Round($v, [MidpointRounding]::AwayFromZero) }
 # pane_elevation.zig mirrored: the margin/gap and the rim inset.
@@ -125,10 +152,10 @@ function Wait-Style([IntPtr]$top, [double]$scale, [string]$want) {
     return $s
 }
 
-function Wait-OverlayCount([int]$procId, [int]$want) {
+function Wait-OverlayCount($g, [int]$want) {
     $n = -1
     for ($t = 0; $t -lt 30; $t++) {
-        $n = @(Get-VisibleOverlays $procId).Count
+        $n = Get-DimCount $g
         if ($n -eq $want) { return $n }
         Start-Sleep -Milliseconds 200
     }
@@ -139,7 +166,10 @@ function Start-Gui([string]$label, [string[]]$extraArgs) {
     Kill-RepoInstances
     # persistence: off - every caller passes $common (--session-persistence=false);
     # a restored layout would seed panes whose style this script did not make.
-    $app = Start-OnTestDesktop -Exe $exe -Arguments $extraArgs
+    $script:launchSeq++
+    $log = Join-Path $env:TEMP "ghoztty-remote-effects-$PID-$($script:launchSeq).log"
+    Remove-Item $log -ErrorAction SilentlyContinue
+    $app = Start-OnTestDesktop -Exe $exe -Arguments $extraArgs -StdErr $log
     Start-Sleep -Seconds 3
     if ($app.Process -and $app.Process.HasExited) { Write-Host "SETUP FAIL ($label): GUI died at launch"; exit 1 }
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
@@ -151,8 +181,9 @@ function Start-Gui([string]$label, [string[]]$extraArgs) {
     Assert ($panes.Count -eq 2) "$label setup: split down gives 2 visible panes (saw $($panes.Count))"
     if ($panes.Count -ne 2) { Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue; exit 1 }
     $scale = (Get-TestWindowDpi -Window $top) / 96.0
-    [pscustomobject]@{ App = $app; Top = $top; Scale = $scale }
+    [pscustomobject]@{ App = $app; Top = $top; Scale = $scale; Log = $log }
 }
+$script:launchSeq = 0
 
 function Send-SessionChange([IntPtr]$top, [int]$code) {
     [void][RemoteFxPost]::PostMessageW($top, [uint32]$WM_WTSSESSION_CHANGE, [IntPtr]$code, [IntPtr]::Zero)
@@ -180,7 +211,7 @@ if ($NegativeControl) {
 } else {
     Assert $s.Flat 'remote: the panes come up flat (no margin, no card region: no glass, no glow)'
 }
-$n = Wait-OverlayCount $g.App.Pid 0
+$n = Wait-OverlayCount $g 0
 Assert ($n -eq 0) "remote: no dim overlay over the unfocused pane (saw $n)"
 
 Set-Seam '0'
@@ -188,15 +219,17 @@ Send-SessionChange $g.Top $WTS_CONSOLE_CONNECT
 $s = Wait-Style $g.Top $g.Scale 'Elevated'
 Write-Host "      console: right-gap=$($s.RightGap) region=$($s.HasRegion)"
 Assert $s.Elevated 'back on the console: the same window re-lays out as elevated cards, live'
-$n = Wait-OverlayCount $g.App.Pid 1
-Assert ($n -eq 1) "back on the console: the unfocused pane is dimmed again (saw $n overlays)"
+# Glass is on by default on the console, and glass panes never dim (T2281,
+# Mac 9da9618f8): focus changes only the rim and glow. Run 4 covers the dim.
+$n = Wait-OverlayCount $g 0
+Assert ($n -eq 0) "back on the console: glass is back, so the unfocused pane is NOT dimmed (saw $n washes)"
 
 Set-Seam '1'
 Send-SessionChange $g.Top $WTS_REMOTE_CONNECT
 $s = Wait-Style $g.Top $g.Scale 'Flat'
 Assert $s.Flat 'remote again: the same window goes flat, live'
-$n = Wait-OverlayCount $g.App.Pid 0
-Assert ($n -eq 0) "remote again: the dim overlay is gone (saw $n)"
+$n = Wait-OverlayCount $g 0
+Assert ($n -eq 0) "remote again: still no dim overlay (saw $n)"
 Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'remote run: no crash across three switches'
 Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
 
@@ -209,8 +242,8 @@ $launched += $script:GhozttyTestDesktopPids
 $s = Get-Style $g.Top $g.Scale
 Write-Host "      console launch: right-gap=$($s.RightGap) region=$($s.HasRegion)"
 Assert $s.Elevated 'console launch: the panes are elevated cards'
-$n = Wait-OverlayCount $g.App.Pid 1
-Assert ($n -eq 1) "console launch: the unfocused pane is dimmed (saw $n overlays)"
+$n = Wait-OverlayCount $g 0
+Assert ($n -eq 0) "console launch: glass panes do not dim (T2281) (saw $n washes)"
 Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
 
 # ---------------------------------------------------------------------------
@@ -222,8 +255,37 @@ $launched += $script:GhozttyTestDesktopPids
 $s = Get-Style $g.Top $g.Scale
 Write-Host "      user glass: right-gap=$($s.RightGap) region=$($s.HasRegion)"
 Assert $s.Elevated 'user set macos-pane-glass = true: the panes stay elevated (glass kept) over Remote Desktop'
-$n = Wait-OverlayCount $g.App.Pid 0
+$n = Wait-OverlayCount $g 0
 Assert ($n -eq 0) "user glass: the dim nobody set is still off (saw $n overlays)"
+Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
+
+# ---------------------------------------------------------------------------
+# Run 4 (T2750): the dim swap itself. Glass panes never dim (T2281), so the
+# dim only exists with glass off - set here by name, which the remote swap
+# leaves alone. Remote at launch: flat and no dim (unfocused-split-opacity
+# swapped to 1). Live to the console: elevated, and the unfocused pane is
+# dimmed - one wash, on whichever path the pane draws.
+# ---------------------------------------------------------------------------
+Set-Seam '1'
+$g = Start-Gui 'no-glass' ($common + @('--macos-pane-glass=false'))
+$launched += $script:GhozttyTestDesktopPids
+$s = Get-Style $g.Top $g.Scale
+Write-Host "      no-glass remote: right-gap=$($s.RightGap) region=$($s.HasRegion)"
+Assert $s.Flat 'no-glass remote: the panes come up flat (the style default is still swapped)'
+$n = Wait-OverlayCount $g 0
+Assert ($n -eq 0) "no-glass remote: the unfocused pane is not dimmed over Remote Desktop (saw $n washes)"
+
+Set-Seam '0'
+Send-SessionChange $g.Top $WTS_CONSOLE_CONNECT
+$s = Wait-Style $g.Top $g.Scale 'Elevated'
+Assert $s.Elevated 'no-glass back on the console: elevated cards, live'
+$n = Wait-OverlayCount $g 1
+Assert ($n -eq 1) "no-glass back on the console: the unfocused pane is dimmed again, live (saw $n washes)"
+
+Set-Seam '1'
+Send-SessionChange $g.Top $WTS_REMOTE_CONNECT
+$n = Wait-OverlayCount $g 0
+Assert ($n -eq 0) "no-glass remote again: the dim goes away, live (saw $n washes)"
 Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
 
 } catch {
