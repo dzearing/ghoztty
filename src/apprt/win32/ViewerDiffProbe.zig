@@ -33,6 +33,7 @@ const w32 = @import("win32.zig");
 const diff = @import("viewer_diff.zig");
 const worktree = @import("viewer_worktree.zig");
 const git_run = @import("git_run.zig");
+const worker_pool = @import("worker_pool.zig");
 
 const log = std.log.scoped(.viewer_diff);
 
@@ -188,7 +189,7 @@ patch_path: ?[]u8 = null,
 
 // --- request bookkeeping --------------------------------------------------
 
-thread: ?std.Thread = null,
+thread: ?worker_pool.Thread = null,
 job: ?*Job = null,
 /// A listing was asked for while a worker was out.
 want_listing: bool = false,
@@ -410,7 +411,7 @@ fn spawn(self: *Probe, job: *Job) void {
     self.job = job;
     self.spawns += 1;
     self.spawned_at_ms = std.time.milliTimestamp();
-    self.thread = std.Thread.spawn(.{}, work, .{ self, job }) catch |err| {
+    self.thread = worker_pool.spawn(work, .{ self, job }) catch |err| {
         log.warn("diff worker thread failed err={}; pane will not render", .{err});
         job.destroy();
         self.job = null;

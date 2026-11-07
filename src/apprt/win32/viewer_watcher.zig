@@ -20,6 +20,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const w32 = @import("win32.zig");
+const worker_pool = @import("worker_pool.zig");
 
 const log = std.log.scoped(.viewer_watcher);
 
@@ -55,7 +56,7 @@ pub const Watcher = struct {
     /// The overlapped read's completion event.
     io_event: ?w32.HANDLE = null,
 
-    thread: ?std.Thread = null,
+    thread: ?worker_pool.Thread = null,
 
     /// The watched file's basename in UTF-16, which is what the notification
     /// records carry. Owned.
@@ -144,7 +145,7 @@ pub const Watcher = struct {
         };
 
         // Spawned LAST, so the thread never reads a half-filled struct.
-        self.thread = std.Thread.spawn(.{}, run, .{self}) catch |err| {
+        self.thread = worker_pool.spawn(run, .{self}) catch |err| {
             log.warn("viewer watcher thread did not start: {s}", .{@errorName(err)});
             self.stop();
             return;

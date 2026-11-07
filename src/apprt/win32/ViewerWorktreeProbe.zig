@@ -31,6 +31,7 @@ const Allocator = std.mem.Allocator;
 const w32 = @import("win32.zig");
 const worktree = @import("viewer_worktree.zig");
 const git_run = @import("git_run.zig");
+const worker_pool = @import("worker_pool.zig");
 const internal_os = @import("../../os/main.zig");
 
 const log = std.log.scoped(.viewer_worktree);
@@ -127,7 +128,7 @@ current: ?[]u8 = null,
 want_location: ?[]u8 = null,
 want_origin: ?[]u8 = null,
 
-thread: ?std.Thread = null,
+thread: ?worker_pool.Thread = null,
 job: ?*Job = null,
 dirty: bool = false,
 
@@ -314,7 +315,7 @@ fn kick(self: *Probe) Outcome {
     self.attachMemo(job, now);
 
     self.job = job;
-    self.thread = std.Thread.spawn(.{}, work, .{ self, job }) catch |err| {
+    self.thread = worker_pool.spawn(work, .{ self, job }) catch |err| {
         log.warn("worktree probe thread failed err={}; feedback affordance off", .{err});
         job.destroy();
         self.job = null;

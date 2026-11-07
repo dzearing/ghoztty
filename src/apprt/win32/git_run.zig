@@ -30,6 +30,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const windows = std.os.windows;
 const Allocator = std.mem.Allocator;
+const worker_pool = @import("worker_pool.zig");
 
 /// How long any one `git` may take before it is given up on. Matches the Mac
 /// viewer's deadline, and generous on purpose: a cold `git diff` over a large
@@ -54,10 +55,10 @@ const Deadline = struct {
     ms: u64,
     done: std.Thread.ResetEvent = .{},
     fired: std.atomic.Value(bool) = .init(false),
-    thread: ?std.Thread = null,
+    thread: ?worker_pool.Thread = null,
 
     fn start(self: *Deadline) void {
-        self.thread = std.Thread.spawn(.{}, watch, .{self}) catch null;
+        self.thread = worker_pool.spawn(watch, .{self}) catch null;
     }
 
     fn watch(self: *Deadline) void {

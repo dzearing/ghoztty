@@ -52,6 +52,7 @@ test {
     // tests still ran nowhere — and the deadline is a thing that can only be
     // checked by actually spawning a child that does not come back.
     _ = @import("win32/git_run.zig");
+    _ = @import("win32/worker_pool.zig");
     // The GDI+ image decoder behind the hero thumbnail and the feedback
     // carousel (T397/T646). Listed here for the reason the whole list exists:
     // it was already imported and compiled, and its tests still ran nowhere —
