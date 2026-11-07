@@ -176,7 +176,15 @@ test "a resize step's bitmap reuses the section until it outgrows it or shrinks 
 test "a bitmap over a kept section shows what was written through the kept view, at every size" {
     var backing: Backing = .{};
     defer backing.deinit();
-    const sizes = [_][2]i32{ .{ 64, 48 }, .{ 70, 40 }, .{ 64, 48 } };
+    // Every size must be one the first size's section keeps: a size under a
+    // quarter of it maps a NEW section, and the handle check below then
+    // passes only when Windows hands the just-closed handle value back
+    // (64x48 then 70x40 did exactly that, red on 2026-11-01 - T2594).
+    const sizes = [_][2]i32{ .{ 128, 96 }, .{ 140, 80 }, .{ 128, 96 } };
+    comptime {
+        const have = Backing.sizeFor(sizes[0][0] * sizes[0][1] * 4);
+        for (sizes) |sz| std.debug.assert(Backing.keeps(have, sz[0] * sz[1] * 4));
+    }
     var section: ?w32.HANDLE = null;
     for (sizes, 0..) |sz, i| {
         const d = Dib.create(sz[0], sz[1], &backing) orelse return error.SkipZigTest;
