@@ -173,6 +173,7 @@ const pane_stack_strip = @import("pane_stack_strip.zig");
 const pane_stack_slide = @import("pane_stack_slide.zig");
 const strip_face = @import("strip_face.zig");
 const trace_ring = @import("trace_ring.zig");
+const resize_trace = @import("resize_trace.zig");
 const drag_hold = @import("drag_hold.zig");
 const StripFace = @import("StripFace.zig").StripFace;
 const pane_stack_state = @import("pane_stack_state.zig");
@@ -347,6 +348,9 @@ const STACK_SLIDE_TICK_MS: u32 = 16;
 /// drag, it fires once the hand has been still `drag_hold.quiet_ms`, and the
 /// terminals held under the drag take their size.
 const DRAG_QUIET_TIMER_ID: usize = 0x4451; // 'DQ'
+/// Writes the resize trace's ring out once a resize goes quiet (T2600).
+const RESIZE_TRACE_FLUSH_TIMER_ID: usize = 0x5254; // 'RT'
+
 pub const SIDEBAR_SYNC_MS: u32 = 250;
 pub const HERO_SLIDE_MS: f32 = 350.0;
 const HERO_RECENTER_MS: f32 = 300.0;
@@ -8529,7 +8533,7 @@ pub fn layoutSplits(self: *Window) void {
     if (self.hwnd) |h| resizeTrace("batch-end", h);
     if (resizeTraceOn()) {
         const nc = ViewerNavBar.place_cost;
-        log.info("resize trace viewer total_us={d} bounds_us={d} nav_us={d} nav_bar_us={d} nav_edit_us={d} nav_tip_us={d} nav_paint_us={d} nav_glass_us={d} nav_buttons_us={d} nav_paints={d}", .{ ViewerPane.sync_cost.total_ns / 1000, ViewerPane.sync_cost.bounds_ns / 1000, ViewerPane.sync_cost.nav_ns / 1000, nc.bar_ns / 1000, nc.edit_ns / 1000, nc.tip_ns / 1000, nc.paint_ns / 1000, nc.glass_ns / 1000, nc.buttons_ns / 1000, nc.paints });
+        resize_trace.line("resize trace viewer total_us={d} bounds_us={d} nav_us={d} nav_bar_us={d} nav_edit_us={d} nav_tip_us={d} nav_paint_us={d} nav_glass_us={d} nav_buttons_us={d} nav_paints={d}", .{ ViewerPane.sync_cost.total_ns / 1000, ViewerPane.sync_cost.bounds_ns / 1000, ViewerPane.sync_cost.nav_ns / 1000, nc.bar_ns / 1000, nc.edit_ns / 1000, nc.tip_ns / 1000, nc.paint_ns / 1000, nc.glass_ns / 1000, nc.buttons_ns / 1000, nc.paints });
     }
     if (stackTraceOn()) {
         var batch_t1: i64 = 0;
@@ -9803,7 +9807,7 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
                 s.setTreeShape(plan.treeShape(d));
                 if (defer_tree and s.tree_visual != null) {
                     if (resizeTraceOn() and entry.view.card_region_key != key)
-                        log.info("resize trace region-deferred hwnd={x}", .{@intFromPtr(h)});
+                        resize_trace.line("resize trace region-deferred hwnd={x}", .{@intFromPtr(h)});
                     continue;
                 }
             }
@@ -10278,16 +10282,14 @@ fn winRect(r: pane_stack_grid.PxRect) w32.RECT {
 /// put each pane and why - so a frame capture can name what moved a pane.
 /// Read once and cached: it runs on every drag step.
 var stack_trace_state: ?trace_ring.Mode = null;
-var resize_trace_state: ?bool = null;
 
 /// `GHOZTTY_RESIZE_TRACE` (T2516): QPC stamps on a window resize's messages,
 /// so a film of the window (whose frames carry the compose's QPC time) can be
 /// lined up against when the pass that should have painted each one ran.
+/// Kept in memory and written out once the resize is quiet (T2600,
+/// `resize_trace.zig`).
 fn resizeTraceOn() bool {
-    if (resize_trace_state) |v| return v;
-    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_TRACE");
-    resize_trace_state = v;
-    return v;
+    return resize_trace.on();
 }
 
 /// What the layout grid cost since the last `resize trace grid` line (T2577):
@@ -10297,16 +10299,26 @@ var grid_cost: struct { calls: u32 = 0, qpc: i64 = 0 } = .{};
 
 fn resizeTraceGrid() void {
     if (!resizeTraceOn()) return;
-    log.info("resize trace grid calls={d} us={d}", .{ grid_cost.calls, @divTrunc(grid_cost.qpc, 10) });
+    resize_trace.line("resize trace grid calls={d} us={d}", .{ grid_cost.calls, @divTrunc(grid_cost.qpc, 10) });
     grid_cost = .{};
 }
 
 fn resizeTraceMsg(hwnd: w32.HWND, msg: u32) void {
-    var t: i64 = 0;
-    _ = w32.QueryPerformanceCounter(&t);
-    var r: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
-    _ = w32.GetWindowRect(hwnd, &r);
-    log.info("resize trace msg=0x{x} qpc={d} w={d}", .{ msg, t, r.right - r.left });
+    resize_trace.msg(hwnd, msg);
+    // The ring is written out by this timer once the resize goes quiet
+    // (T2600); armed once per batch, so a stamp never pays for a SetTimer.
+    if (resize_trace.wantsTimer() and w32.SetTimer(hwnd, RESIZE_TRACE_FLUSH_TIMER_ID, @intCast(resize_trace.quiet_ms), null) != 0)
+        resize_trace.armed = true;
+}
+
+/// `WM_TIMER` for `RESIZE_TRACE_FLUSH_TIMER_ID`: write the resize trace's ring
+/// out once the size loop has ended and no layout pass has stamped for
+/// `resize_trace.quiet_ms`, so the write lands outside every timed pass.
+fn resizeTraceFlushTick(self: *Window, hwnd: w32.HWND) void {
+    if (self.in_size_loop or !resize_trace.quiet()) return;
+    _ = w32.KillTimer(hwnd, RESIZE_TRACE_FLUSH_TIMER_ID);
+    resize_trace.armed = false;
+    resize_trace.flush();
 }
 
 /// A lap timed twice under `GHOZTTY_RESIZE_TRACE` (T2712): wall clock, and
@@ -10357,7 +10369,7 @@ const CpuLap = struct {
         const wall_us = @divTrunc((q - self.qpc) * 1_000_000, qpcFreqWin());
         const rate = cycles_per_us orelse 1;
         const cpu_us: i64 = @intFromFloat(@as(f64, @floatFromInt(c -% self.cycles)) / @max(rate, 1));
-        log.info("resize trace cpu " ++ what ++ " wall_us={d} cpu_us={d}", .{ wall_us, cpu_us });
+        resize_trace.line("resize trace cpu " ++ what ++ " wall_us={d} cpu_us={d}", .{ wall_us, cpu_us });
     }
 };
 
@@ -10368,12 +10380,7 @@ fn qpcFreqWin() i64 {
 }
 
 fn resizeTrace(comptime what: []const u8, hwnd: w32.HWND) void {
-    if (!resizeTraceOn()) return;
-    var t: i64 = 0;
-    _ = w32.QueryPerformanceCounter(&t);
-    var r: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
-    _ = w32.GetWindowRect(hwnd, &r);
-    log.info("resize trace " ++ what ++ " qpc={d} w={d}", .{ t, r.right - r.left });
+    resize_trace.stamp(what, hwnd);
 }
 
 fn stackTraceMode() trace_ring.Mode {
@@ -10418,7 +10425,7 @@ pub fn traceRenderStage(comptime what: []const u8, hwnd: ?w32.HWND) void {
     var t: i64 = 0;
     _ = w32.QueryPerformanceCounter(&t);
     const h: usize = if (hwnd) |p| @intFromPtr(p) else 0;
-    log.info("resize trace " ++ what ++ " hwnd={x} qpc={d}", .{ h, t });
+    resize_trace.line("resize trace " ++ what ++ " hwnd={x} qpc={d}", .{ h, t });
 }
 
 /// The window presenter's swap put pane `hwnd`'s `width` x `height` frame on
@@ -10429,7 +10436,7 @@ pub fn tracePresenterShown(hwnd: ?w32.HWND, width: u32, height: u32) void {
     var t: i64 = 0;
     _ = w32.QueryPerformanceCounter(&t);
     const h: usize = if (hwnd) |p| @intFromPtr(p) else 0;
-    log.info("resize trace pres-shown hwnd={x} w={d} h={d} qpc={d}", .{ h, width, height, t });
+    resize_trace.line("resize trace pres-shown hwnd={x} w={d} h={d} qpc={d}", .{ h, width, height, t });
 }
 
 pub fn tracePresent(hwnd: ?w32.HWND, drawn: u64, swapped: bool) void {
@@ -10443,7 +10450,7 @@ pub fn tracePresent(hwnd: ?w32.HWND, drawn: u64, swapped: bool) void {
     // Each pane's present on the resize trace's clock (T2577): the pass ends
     // for the screen at the LAST of these, not at the frame wait.
     if (!stack) {
-        log.info("resize trace present hwnd={x} qpc={d} size={d}x{d}", .{ h, t, w, ht });
+        resize_trace.line("resize trace present hwnd={x} qpc={d} size={d}x{d}", .{ h, t, w, ht });
         return;
     }
     if (stackTraceMode() == .log) {
@@ -17428,9 +17435,9 @@ fn releaseBurst(self: *Window, hwnd: w32.HWND) void {
         // What the paint below is for (T2711).
         var ur: w32.RECT = undefined;
         if (w32.GetUpdateRect(hwnd, &ur, 0) != 0)
-            log.info("resize trace burst-invalid l={d} t={d} r={d} b={d}", .{ ur.left, ur.top, ur.right, ur.bottom })
+            resize_trace.line("resize trace burst-invalid l={d} t={d} r={d} b={d}", .{ ur.left, ur.top, ur.right, ur.bottom })
         else
-            log.info("resize trace burst-invalid none", .{});
+            resize_trace.line("resize trace burst-invalid none", .{});
     }
     // The window's own invalid area, then each viewer's bar - by name, not
     // `RDW_ALLCHILDREN`: that walks into the WebView2 host's cross-process
@@ -17442,7 +17449,7 @@ fn releaseBurst(self: *Window, hwnd: w32.HWND) void {
         const sheet_after = ViewerPane.glass_cost;
         // `render_us` is the pixels alone (T2702); the rest of `us` is the
         // buffer and the blit.
-        log.info("resize trace burst-sheet paints={d} px={d} us={d} render_us={d}", .{
+        resize_trace.line("resize trace burst-sheet paints={d} px={d} us={d} render_us={d}", .{
             sheet_after.paints -| sheet_before.paints,
             sheet_after.pixels -| sheet_before.pixels,
             (sheet_after.ns -| sheet_before.ns) / 1000,
@@ -17461,7 +17468,7 @@ fn releaseBurst(self: *Window, hwnd: w32.HWND) void {
     }
     if (resizeTraceOn()) {
         const nav_after = ViewerNavBar.place_cost;
-        log.info("resize trace burst-nav paints={d} glass_us={d} rest_us={d}", .{
+        resize_trace.line("resize trace burst-nav paints={d} glass_us={d} rest_us={d}", .{
             nav_after.paints -| nav_before.paints,
             (nav_after.glass_ns -| nav_before.glass_ns) / 1000,
             (nav_after.buttons_ns -| nav_before.buttons_ns) / 1000,
@@ -19567,6 +19574,10 @@ pub fn windowWndProc(
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
         w32.WM_TIMER => {
+            if (wparam == RESIZE_TRACE_FLUSH_TIMER_ID) {
+                window.resizeTraceFlushTick(hwnd);
+                return 0;
+            }
             if (wparam == RESIZE_OVERLAY_TIMER_ID) {
                 if (window.resize_overlay_hwnd) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
                 _ = w32.KillTimer(hwnd, RESIZE_OVERLAY_TIMER_ID);
@@ -19851,6 +19862,12 @@ pub fn windowWndProc(
             return 0;
         },
         w32.WM_DESTROY => {
+            // The resize trace's ring goes out with the window (T2600).
+            if (resize_trace.armed) {
+                _ = w32.KillTimer(hwnd, RESIZE_TRACE_FLUSH_TIMER_ID);
+                resize_trace.armed = false;
+            }
+            resize_trace.flush();
             // A property left on a destroyed window leaks its entry (T1536).
             _ = w32.RemovePropW(hwnd, DRAG_CURSOR_PROP);
             _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, 0);

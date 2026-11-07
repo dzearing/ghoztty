@@ -435,6 +435,13 @@ try {
     Assert "G4 every woken wait held a presenter report inside it ($answered of $intervals intervals, $woken woken)" ($answered -ge $woken)
     Assert "G5 the presenter reported the panes at their new width" ((Count-Log $w.Err 'resize trace pres-shown hwnd=[0-9a-f]+ w=\d+ h=\d+') -ge 2)
     Assert "G6 no presenter failure, no OpenGL error" ((Read-Text $w.Err) -notmatch 'error\(opengl\)|window presenter: ')
+    # T2600: the trace is held in memory and written once the resize is
+    # quiet, and a stamp costs microseconds, not the ~0.2 ms a logged line
+    # cost inside the pass it was timing. The header line carries its price.
+    $rings = @([regex]::Matches((Read-Text $w.Err), 'trace ring resize lines=(\d+) dropped=\d+ stamps=(\d+) stamp_avg_ns=(\d+)') |
+        Where-Object { [int]$_.Groups[2].Value -gt 0 })
+    $avgNs = if ($rings.Count) { ($rings | ForEach-Object { [int]$_.Groups[3].Value } | Measure-Object -Maximum).Maximum } else { -1 }
+    Assert "G7 the resize trace was written from its ring, a stamp under 10 us ($($rings.Count) flushes, worst avg ${avgNs} ns)" ($rings.Count -ge 1 -and $avgNs -ge 0 -and $avgNs -lt 10000)
 
     # ========================================================================
     "== E: negative controls"

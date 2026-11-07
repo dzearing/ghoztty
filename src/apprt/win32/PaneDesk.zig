@@ -38,6 +38,7 @@ const PaneDesk = @This();
 
 const std = @import("std");
 const w32 = @import("win32.zig");
+const resize_trace = @import("resize_trace.zig");
 const pane_elevation = @import("pane_elevation.zig");
 const desk_palette = @import("desk_palette.zig");
 const busy_light = @import("busy_light.zig");
@@ -773,13 +774,10 @@ pub fn deinit(self: *PaneDesk) void {
 
 /// Paint the desk and `cards` (in content-area pixels, i.e. relative to
 /// `origin_x`/`origin_y`) into `hdc` over a `w` x `h` content area.
-var resize_trace_state: ?bool = null;
-
+/// The desk's own lines ride the resize trace's ring (T2600), so they keep
+/// their place among the pass's stamps and cost what a stamp costs.
 fn resizeTraceOn() bool {
-    if (resize_trace_state) |v| return v;
-    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_TRACE");
-    resize_trace_state = v;
-    return v;
+    return resize_trace.on();
 }
 
 fn qpcFreq() i64 {
@@ -838,7 +836,7 @@ pub fn paint(
         var tq3: i64 = 0;
         _ = w32.QueryPerformanceCounter(&tq3);
         const f = qpcFreq();
-        log.info("desk trace desk_us={d} comp_us={d} rest_us={d} compose_us={d} lights_us={d} names_us={d} blit_us={d}", .{
+        resize_trace.line("desk trace desk_us={d} comp_us={d} rest_us={d} compose_us={d} lights_us={d} names_us={d} blit_us={d}", .{
             @divTrunc((tq1 - tq0) * 1_000_000, f),
             @divTrunc((tq2 - tq1) * 1_000_000, f),
             @divTrunc((tq3 - tq2) * 1_000_000, f),
@@ -1734,7 +1732,7 @@ fn ensureDesk(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_pa
     _ = w32.QueryPerformanceCounter(&tq[3]);
     if (resizeTraceOn()) {
         const f = qpcFreq();
-        log.info("desk build create_us={d} render_us={d} scale_us={d} ({d}x{d})", .{
+        resize_trace.line("desk build create_us={d} render_us={d} scale_us={d} ({d}x{d})", .{
             @divTrunc((tq[1] - tq[0]) * 1_000_000, f),
             @divTrunc((tq[2] - tq[1]) * 1_000_000, f),
             @divTrunc((tq[3] - tq[2]) * 1_000_000, f),

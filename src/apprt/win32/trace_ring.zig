@@ -73,7 +73,28 @@ pub fn modeOf(value: ?[]const u8) Mode {
     return .log;
 }
 
+/// Which way `GHOZTTY_RESIZE_TRACE` sends its lines (T2600). The resize trace
+/// is the other way round from the stack trace: every value that turns it on
+/// (the `1` every script sets) keeps the lines in the ring, because a logged
+/// stamp cost ~0.2 ms on the UI thread inside the very pass it was timing.
+/// `log` alone writes each line as it happens, the pre-T2600 behaviour, for a
+/// crash that would take the ring with it.
+pub fn resizeModeOf(value: ?[]const u8) Mode {
+    const v = std.mem.trim(u8, value orelse return .off, " \t\r\n");
+    if (v.len == 0) return .off;
+    if (std.ascii.eqlIgnoreCase(v, "log")) return .log;
+    return .ring;
+}
+
 const testing = std.testing;
+
+test "GHOZTTY_RESIZE_TRACE keeps its lines in the ring unless it says log" {
+    try testing.expectEqual(Mode.off, resizeModeOf(null));
+    try testing.expectEqual(Mode.off, resizeModeOf("\t"));
+    try testing.expectEqual(Mode.ring, resizeModeOf("1"));
+    try testing.expectEqual(Mode.ring, resizeModeOf("ring"));
+    try testing.expectEqual(Mode.log, resizeModeOf("LOG\r\n"));
+}
 
 test "a ring hands its lines back oldest first, and drops the oldest when full" {
     var r: Ring(3, 32) = .{};
