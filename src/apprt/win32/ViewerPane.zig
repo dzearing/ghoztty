@@ -106,6 +106,7 @@ const viewer_glass = @import("viewer_glass.zig");
 const pane_elevation = @import("pane_elevation.zig");
 const sheet_workers = @import("sheet_workers.zig");
 const Dib32 = @import("dib32.zig");
+const gl_comp_present = @import("../../renderer/gl_comp_present.zig");
 
 const log = std.log.scoped(.viewer_pane);
 
@@ -8419,7 +8420,20 @@ test "host floor: a real controller on a real window, on this box" {
         // ...which slides the card in.
         pane.toggleTOCPanel();
         try testing.expect(pane.toc_open);
-        try testing.expect(shownByStyle(toc_panel.hwnd));
+        // T2764: on the composition path (the default) the slide is declared
+        // to the compositor and its visual IS the card, so the card's window
+        // waits hidden at its resting place until the slide ends; the stepped
+        // path shows the window and moves it.
+        const on_comp = gl_comp_present.enabled() and
+            !std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DEBUG_TOC_SLIDE_STEPPED");
+        if (on_comp) {
+            try testing.expect(toc_panel.slidingOnCompositor());
+            try testing.expect(!shownByStyle(toc_panel.hwnd));
+            try testing.expectEqual(@as(u32, 0), toc_panel.comp_failures);
+        } else {
+            try testing.expect(shownByStyle(toc_panel.hwnd));
+        }
+        const comp_slides_before = toc_panel.comp_slides;
 
         // A FAST double-toggle lands in the state the last toggle asked for
         // (T543). The slide is one number walking toward its target, so
@@ -8440,6 +8454,16 @@ test "host floor: a real controller on a real window, on this box" {
         }
         try testing.expect(!toc_panel.sliding());
         try testing.expect(shownByStyle(toc_panel.hwnd));
+        // Each reversal was re-declared from where the card had got to, on
+        // the compositor again, and none fell back to stepping. The "shut"
+        // can land before the card has moved at all (same millisecond), and
+        // then there is nothing to slide back: one or two declarations.
+        if (on_comp) {
+            try testing.expect(toc_panel.comp_slides > comp_slides_before);
+            try testing.expect(toc_panel.comp_slides <= comp_slides_before + 2);
+            try testing.expectEqual(@as(u32, 0), toc_panel.comp_failures);
+        }
+        log.warn("toc: slide path compositor={} declared={d} failures={d}", .{ on_comp, toc_panel.comp_slides, toc_panel.comp_failures });
 
         // Clicking a row scrolls the page to that heading and PINS it: the
         // page posts the pinned id back as an `active` message, which is what
@@ -8452,6 +8476,11 @@ test "host floor: a real controller on a real window, on this box" {
         // for the length of the animation and hidden at the end of it. Waiting
         // it out is the assertion that a toggle lands in its final state.
         try testing.expect(toc_panel.sliding());
+        if (on_comp) {
+            try testing.expect(toc_panel.slidingOnCompositor());
+            // Sliding out: the visual carries it, the window is already hidden.
+            try testing.expect(!shownByStyle(toc_panel.hwnd));
+        }
         var slide_timer = try std.time.Timer.start();
         while (slide_timer.read() < 5 * std.time.ns_per_s and toc_panel.sliding()) {
             while (w32.PeekMessageW(&msg, null, 0, 0, w32.PM_REMOVE) != 0) {

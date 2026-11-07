@@ -61,6 +61,9 @@ const log = std.log.scoped(.viewer_toc);
 const paint_probe = @import("paint_probe.zig");
 const gutter_bar = @import("gutter_bar.zig");
 const gutter_bar_dc = @import("gutter_bar_dc.zig");
+const builtin = @import("builtin");
+const toc_comp = @import("viewer_toc_comp.zig");
+const gl_comp_present = @import("../../renderer/gl_comp_present.zig");
 
 pub const CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyViewerTOC");
 const class_name_utf8 = "GhozttyViewerTOC";
@@ -76,6 +79,10 @@ const filter_cap_utf16: usize = 256;
 /// rather than stretching it.
 const SLIDE_TIMER_ID: usize = 1;
 const SLIDE_TICK_MS: u32 = 15;
+/// The one end-of-slide tick of a slide declared to the compositor (T2764):
+/// a plain timer, because nothing moves on it - it only hands the card back
+/// from the visual to its window.
+const SLIDE_END_TIMER_ID: usize = 2;
 
 /// The document page's own background, kept in step with viewer.css (and with
 /// Mac's `SidePanelCard.documentBackground`) so the card's opaque composite is
@@ -196,6 +203,25 @@ slide_x: i32 = 0,
 slide_y: i32 = 0,
 slide_w: i32 = 1,
 slide_h: i32 = 1,
+/// Frame-clock steps the stepped slide has taken, for the done line.
+slide_steps: u32 = 0,
+
+/// The slide on the compositor (T2764). `comp` is the viewer host's
+/// DirectComposition target, built on the first slide. While `comp_slide`
+/// is set the card's window is hidden at its resting place and the visual is
+/// the card, moving from `comp_t0` toward `comp_want` since `comp_start_ms`
+/// along `comp_plan`; `comp_geom` is the resting rect the plan was made for.
+comp: ?toc_comp.Host = null,
+comp_slide: bool = false,
+comp_t0: f32 = 0,
+comp_want: f32 = 0,
+comp_start_ms: i64 = 0,
+comp_plan: toc.SlidePlan = .{ .c = .{ 0, 0, 0, 0 }, .span_s = 0, .end_x = 0 },
+comp_geom: [4]i32 = .{ 0, 0, 0, 0 },
+/// Slides declared to the compositor, and slides that could not be (for the
+/// pane's own test, which asserts the path it took).
+comp_slides: u32 = 0,
+comp_failures: u32 = 0,
 /// The presentation the last placement chose. A change of MODE snaps — the
 /// pane growing past the gutter threshold is a layout switch, not a toggle,
 /// and a card sliding out from under a window someone is dragging narrower
@@ -364,6 +390,9 @@ pub fn owningEdit(hwnd: w32.HWND) ?*ViewerTOCPanel {
 
 pub fn destroy(self: *ViewerTOCPanel) void {
     self.stopSlide();
+    self.cancelCompSlide();
+    if (self.comp) |*h| h.deinit();
+    self.comp = null;
     // Clear the back-pointer FIRST: DestroyWindow delivers messages
     // synchronously and they must not find a half-dead object.
     _ = w32.SetWindowLongPtrW(self.hwnd, w32.GWLP_USERDATA, 0);
@@ -1048,8 +1077,16 @@ fn showAbove(self: *ViewerTOCPanel) void {
 fn setVisible(self: *ViewerTOCPanel, visible: bool, animate: bool) void {
     self.slide_want = if (visible) 1.0 else 0.0;
     if (!animate) {
+        self.cancelCompSlide();
         self.slide = self.slide_want;
         self.stopSlide();
+    } else if (self.compWanted()) {
+        // T2764: the whole slide declared to the compositor, which then owns
+        // where the card is drawn until it ends. False: there was nothing to
+        // slide, or the compositor could not take it, and `slide` holds where
+        // the card is for the stepped path below to carry on from.
+        if (self.slideOnCompositor()) return;
+        if (self.slide != self.slide_want) self.startSlide();
     } else if (self.slide != self.slide_want) {
         // The timer is armed BEFORE the first frame is placed: the parked
         // position is a thing that exists only while one is running.
@@ -1065,13 +1102,236 @@ fn setVisible(self: *ViewerTOCPanel, visible: bool, animate: bool) void {
     }
 }
 
+/// Whether slides go to the compositor: the composition knob's default
+/// (`GHOZTTY_COMP_PRESENT=0` opts the whole app out, this card included), and
+/// not the oracle's stepped arm. `GHOZTTY_DEBUG_TOC_SLIDE_STEPPED=1` (debug
+/// builds) steps the slide on this thread instead - the A/B control, so the
+/// compositor rows of the pane's oracle can be watched going red.
+fn compWanted(self: *const ViewerTOCPanel) bool {
+    _ = self;
+    if (comptime builtin.os.tag != .windows) return false;
+    if (comptime builtin.mode == .Debug) {
+        if (std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DEBUG_TOC_SLIDE_STEPPED")) return false;
+    }
+    return gl_comp_present.enabled();
+}
+
+/// Where the card is right now, in slide `t`: read off the declared slide by
+/// the clock while one is on the compositor, else the stepped value.
+fn currentT(self: *const ViewerTOCPanel) f32 {
+    if (!self.comp_slide) return self.slide;
+    const el: f32 = @floatFromInt(std.time.milliTimestamp() - self.comp_start_ms);
+    return toc.slideStep(self.comp_t0, self.comp_want, el);
+}
+
+/// Declare the slide from wherever the card is to `slide_want`. True: it is
+/// on the compositor and the card's window is hidden at its resting place
+/// for the length of it.
+fn slideOnCompositor(self: *ViewerTOCPanel) bool {
+    const want = self.slide_want;
+    const geom: [4]i32 = .{ self.slide_x, self.slide_y, self.slide_w, self.slide_h };
+    // A bounds sync that changed nothing while a slide runs: it carries on.
+    if (self.comp_slide and want == self.comp_want and std.mem.eql(i32, &geom, &self.comp_geom)) return true;
+    const t = self.currentT();
+    if (t == want) {
+        // Already there (or nothing to do): hand the card back to its window.
+        if (self.comp_slide) self.finishCompSlide();
+        self.slide = want;
+        return false;
+    }
+    // Never both clocks at once: the stepped timer stops here, and `slide`
+    // keeps the value it reached.
+    self.stopSlide();
+    self.slide = t;
+    if (!self.declareCompSlide(t, want, geom)) {
+        self.comp_failures +|= 1;
+        // The stepped path carries on from `slide`, with the window shown.
+        self.cancelCompSlide();
+        self.slide = t;
+        return false;
+    }
+    return true;
+}
+
+fn declareCompSlide(self: *ViewerTOCPanel, t: f32, want: f32, geom: [4]i32) bool {
+    if (self.comp == null) {
+        const parent = w32.GetParent(self.hwnd) orelse return false;
+        self.comp = toc_comp.Host.init(parent) catch {
+            const f = toc_comp.Host.lastFailure();
+            log.warn("viewer toc slide compositor unavailable at {s} hr=0x{x:0>8}; stepping it", .{ f.stage, f.hr });
+            return false;
+        };
+    }
+    const host = &self.comp.?;
+    const w = self.slide_w;
+    const h = self.slide_h;
+    const pic = self.snapshotCard(w, h) orelse return false;
+    defer self.alloc.free(pic);
+    const plan = toc.slidePlan(t, want, self.slide_x, w);
+    host.setPicture(pic, w, h) catch return self.compFailed();
+    host.play(self.slide_y, plan) catch return self.compFailed();
+    // The visual is the card now (and the commit has reached DWM): the
+    // window waits at its resting place, hidden, for the hand-back.
+    _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
+    self.moveToSlide();
+    const was_running = self.comp_slide;
+    self.comp_slide = true;
+    self.comp_t0 = t;
+    self.comp_want = want;
+    self.comp_start_ms = std.time.milliTimestamp();
+    self.comp_plan = plan;
+    self.comp_geom = geom;
+    self.comp_slides +|= 1;
+    const ms = slideMs(plan);
+    _ = w32.SetTimer(self.hwnd, SLIDE_END_TIMER_ID, ms, null);
+    log.info("viewer toc slide on compositor pane={s} from={d:.3} to={d:.0} ms={d} x={d:.0}->{d:.0} retarget={}", .{
+        self.pane.paneId(), t, want, ms, plan.at(0), plan.end_x, was_running,
+    });
+    debugStall();
+    return true;
+}
+
+fn compFailed(self: *ViewerTOCPanel) bool {
+    const f = toc_comp.Host.lastFailure();
+    log.warn("viewer toc slide could not go on the compositor at {s} hr=0x{x:0>8}; stepping it", .{ f.stage, f.hr });
+    // Built again from nothing on the next slide.
+    if (self.comp) |*host| host.deinit();
+    self.comp = null;
+    self.comp_slide = false;
+    return false;
+}
+
+fn slideMs(plan: toc.SlidePlan) u32 {
+    return @intFromFloat(@ceil(plan.span_s * 1000.0));
+}
+
+/// `GHOZTTY_DEBUG_TOC_SLIDE_STALL_MS=<n>` (debug builds, T2764): block this
+/// thread for n ms the moment a slide starts - the oracle's stand-in for a
+/// busy UI thread. A compositor slide moves through it; a stepped one waits.
+fn debugStall() void {
+    if (comptime builtin.mode != .Debug) return;
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_DEBUG_TOC_SLIDE_STALL_MS") catch return;
+    defer std.heap.page_allocator.free(raw);
+    const ms = std.fmt.parseInt(u32, std.mem.trim(u8, raw, " \t\r\n"), 10) catch return;
+    if (ms == 0) return;
+    log.info("viewer toc slide debug stall ms={d}", .{ms});
+    std.Thread.sleep(@as(u64, @min(ms, 5000)) * std.time.ns_per_ms);
+}
+
+/// The end-of-slide tick. A timer that came in early waits out the rest; the
+/// compositor already holds the card's final place.
+fn compSlideTick(self: *ViewerTOCPanel) void {
+    if (!self.comp_slide) {
+        _ = w32.KillTimer(self.hwnd, SLIDE_END_TIMER_ID);
+        return;
+    }
+    const ms = slideMs(self.comp_plan);
+    const el = std.time.milliTimestamp() - self.comp_start_ms;
+    if (el < ms) {
+        _ = w32.SetTimer(self.hwnd, SLIDE_END_TIMER_ID, @intCast(@as(i64, ms) - el), null);
+        return;
+    }
+    self.finishCompSlide();
+}
+
+/// The slide reached its end: a card that came in is shown at its resting
+/// place FIRST (and painted), and the visual over it taken down after, so the
+/// hand-back is the same pixels throughout; a card that left stays hidden.
+fn finishCompSlide(self: *ViewerTOCPanel) void {
+    _ = w32.KillTimer(self.hwnd, SLIDE_END_TIMER_ID);
+    if (!self.comp_slide) return;
+    self.comp_slide = false;
+    self.slide = self.comp_want;
+    if (self.comp_want == 1) {
+        self.moveToSlide();
+        self.showAbove();
+        _ = w32.UpdateWindow(self.hwnd);
+    }
+    if (self.comp) |*host| host.stop(self.comp_plan.end_x);
+    log.info("viewer toc slide done pane={s} to={d:.0} ms={d} compositor=true ui_steps=0", .{
+        self.pane.paneId(), self.comp_want, std.time.milliTimestamp() - self.comp_start_ms,
+    });
+}
+
+/// Take a compositor slide down where it has got to, leaving `slide` there
+/// and the window hidden - for a snap, a hide, or a fall back to stepping.
+fn cancelCompSlide(self: *ViewerTOCPanel) void {
+    if (!self.comp_slide) return;
+    const el = std.time.milliTimestamp() - self.comp_start_ms;
+    self.slide = self.currentT();
+    _ = w32.KillTimer(self.hwnd, SLIDE_END_TIMER_ID);
+    self.comp_slide = false;
+    if (self.comp) |*host| host.stop(self.comp_plan.at(@as(f64, @floatFromInt(el)) / 1000.0));
+}
+
+/// The card as its window paints it, `w` x `h`, premultiplied, with the
+/// window region's rounded corners clear: the picture the visual carries for
+/// a slide. The filter field is a child window, so it is printed in on top
+/// at its own place. Caller frees.
+fn snapshotCard(self: *ViewerTOCPanel, w: i32, h: i32) ?[]u32 {
+    if (w <= 0 or h <= 0) return null;
+    const n: usize = @as(usize, @intCast(w)) * @as(usize, @intCast(h));
+    const pic = self.alloc.alloc(u32, n) catch return null;
+    errdefer self.alloc.free(pic);
+    const mask = self.alloc.alloc(u32, n) catch {
+        self.alloc.free(pic);
+        return null;
+    };
+    defer self.alloc.free(mask);
+    if (!self.paintToPixels(pic, w, h, false) or !self.paintToPixels(mask, w, h, true)) {
+        self.alloc.free(pic);
+        return null;
+    }
+    toc_comp.premultiplyByMask(pic, mask);
+    return pic;
+}
+
+/// Paint into a top-down 32-bit DIB and copy its rows to `out`: the card
+/// (with its filter field), or with `mask` the window region white on black.
+fn paintToPixels(self: *ViewerTOCPanel, out: []u32, w: i32, h: i32, mask: bool) bool {
+    const mem = w32.CreateCompatibleDC(null) orelse return false;
+    defer _ = w32.DeleteDC(mem);
+    const bmi = w32.BITMAPINFO{ .bmiHeader = .{ .biWidth = w, .biHeight = -h } };
+    var bits: ?*anyopaque = null;
+    const bmp = w32.CreateDIBSection(mem, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse return false;
+    defer _ = w32.DeleteObject(@ptrCast(bmp));
+    const raw = bits orelse return false;
+    const old = w32.SelectObject(mem, @ptrCast(bmp));
+    defer _ = w32.SelectObject(mem, old);
+    const dib: [*]u32 = @ptrCast(@alignCast(raw));
+    @memset(dib[0..out.len], 0);
+    if (mask) {
+        const r = self.px(banner_card.RADIUS);
+        const rgn = w32.CreateRoundRectRgn(0, 0, w + 1, h + 1, 2 * r, 2 * r) orelse return false;
+        defer _ = w32.DeleteObject(rgn);
+        const brush = w32.CreateSolidBrush(0x00FFFFFF) orelse return false;
+        defer _ = w32.DeleteObject(@ptrCast(brush));
+        _ = w32.FillRgn(mem, rgn, @ptrCast(brush));
+    } else {
+        self.paint(mem, w, h);
+        if (self.filter_edit) |edit| {
+            if (self.showsFiles() and w32.IsWindowVisible(edit) != 0) {
+                const b = self.filterBoxes();
+                _ = w32.SetViewportOrgEx(mem, b.edit.left, b.edit.top, null);
+                _ = w32.SendMessageW(edit, w32.WM_PRINT, @intFromPtr(mem), w32.PRF_CLIENT | w32.PRF_NONCLIENT | w32.PRF_ERASEBKGND);
+                _ = w32.SetViewportOrgEx(mem, 0, 0, null);
+            }
+        }
+    }
+    _ = w32.GdiFlush();
+    @memcpy(out, dib[0..out.len]);
+    return true;
+}
+
 /// Where the window sits right now: off the pane's left edge only while a
 /// slide is actually running, and at its resting origin the rest of the time.
 ///
 /// A PARKED card is hidden, and a hidden window still has a rect — leaving it
 /// out beyond the pane's left edge would make this the one piece of viewer
 /// chrome whose bounds escape the pane it belongs to, which
-/// `test/win32/viewer-narrow-pane.ps1` checks on every painted window.
+/// `test/win32/viewer-narrow-pane.ps1` checks on every painted window. A
+/// slide on the compositor moves the visual, never the window, so the window
+/// stays at rest through it.
 fn windowX(self: *const ViewerTOCPanel) i32 {
     if (!self.slide_timer) return self.slide_x;
     return toc.slideX(self.slide, self.slide_x, self.slide_w);
@@ -1094,6 +1354,7 @@ fn moveToSlide(self: *ViewerTOCPanel) void {
 fn startSlide(self: *ViewerTOCPanel) void {
     self.slide_last_ms = std.time.milliTimestamp();
     if (self.slide_timer) return;
+    self.slide_steps = 0;
     if (FrameClock.arm(self.hwnd, SLIDE_TIMER_ID, SLIDE_TICK_MS)) {
         self.slide_timer = true;
         return;
@@ -1117,6 +1378,7 @@ fn tickSlide(self: *ViewerTOCPanel) void {
     const dt: f32 = @floatFromInt(now - self.slide_last_ms);
     self.slide_last_ms = now;
     self.slide = toc.slideStep(self.slide, self.slide_want, dt);
+    self.slide_steps +|= 1;
     self.moveToSlide();
     if (self.slide == self.slide_want) self.settleSlide();
 }
@@ -1124,16 +1386,25 @@ fn tickSlide(self: *ViewerTOCPanel) void {
 /// The card reached the end of its travel: stop the timer, and hide the
 /// window if that end was the parked one.
 fn settleSlide(self: *ViewerTOCPanel) void {
+    const ran = self.slide_timer;
     self.stopSlide();
     // Back to the resting rect, which for a card that just parked means the
     // hidden window is inside its pane again.
     self.moveToSlide();
     if (self.slide_want == 0) _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
+    if (ran) log.info("viewer toc slide done pane={s} to={d:.0} compositor=false ui_steps={d}", .{
+        self.pane.paneId(), self.slide_want, self.slide_steps,
+    });
 }
 
 /// Whether the card is mid-slide — the state the pane's own tests wait out.
 pub fn sliding(self: *const ViewerTOCPanel) bool {
-    return self.slide_timer;
+    return self.slide_timer or self.comp_slide;
+}
+
+/// Whether the slide in flight is the compositor's (T2764).
+pub fn slidingOnCompositor(self: *const ViewerTOCPanel) bool {
+    return self.comp_slide;
 }
 
 pub fn hide(self: *ViewerTOCPanel) void {
@@ -1141,6 +1412,7 @@ pub fn hide(self: *ViewerTOCPanel) void {
     self.layout = .{ .which = .hidden };
     self.last_mode = .hidden;
     self.stopSlide();
+    self.cancelCompSlide();
     self.slide = 0;
     self.slide_want = 0;
     _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
@@ -1891,6 +2163,10 @@ fn wndProc(
         w32.WM_TIMER => {
             if (wparam == SLIDE_TIMER_ID) {
                 self.tickSlide();
+                return 0;
+            }
+            if (wparam == SLIDE_END_TIMER_ID) {
+                self.compSlideTick();
                 return 0;
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);

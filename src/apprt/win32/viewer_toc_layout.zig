@@ -438,6 +438,48 @@ pub fn slideX(t: f32, resting_x: i32, card_w: i32) i32 {
     return @intFromFloat(@round(out + (in - out) * slideEase(t)));
 }
 
+/// A whole slide, declared to the compositor (T2764): the card's x from `t0`
+/// to `want` as ONE cubic polynomial in the seconds since it began. `t` walks
+/// linearly in time (`slideStep`) and `slideEase` is itself a cubic in `t`,
+/// so the eased path is exactly a cubic in time, with no fitting error. `c` is
+/// c0..c3 of `x(s) = c0 + c1*s + c2*s^2 + c3*s^3` (pixels, s in seconds);
+/// `span_s` is how long the walk takes and `end_x` where it lands.
+pub const SlidePlan = struct {
+    c: [4]f64,
+    span_s: f64,
+    end_x: f64,
+
+    pub fn at(self: SlidePlan, s: f64) f64 {
+        if (s >= self.span_s) return self.end_x;
+        const q = @max(s, 0);
+        return self.c[0] + q * (self.c[1] + q * (self.c[2] + q * self.c[3]));
+    }
+};
+
+pub fn slidePlan(t0: f32, want: f32, resting_x: i32, card_w: i32) SlidePlan {
+    const out: f64 = @floatFromInt(-card_w);
+    const in: f64 = @floatFromInt(resting_x);
+    const span = in - out;
+    const from: f64 = std.math.clamp(@as(f64, t0), 0, 1);
+    const to: f64 = std.math.clamp(@as(f64, want), 0, 1);
+    const slide_s: f64 = slide_ms / 1000.0;
+    const span_s = @abs(to - from) * slide_s;
+    // t(s) = from + d*s, so u = 1 - t = ua - d*s and x = out + span*(1 - u^3).
+    const d: f64 = if (to > from) 1 / slide_s else if (to < from) -1 / slide_s else 0;
+    const ua = 1 - from;
+    const end_u = 1 - to;
+    return .{
+        .c = .{
+            out + span * (1 - ua * ua * ua),
+            span * 3 * ua * ua * d,
+            -span * 3 * ua * d * d,
+            span * d * d * d,
+        },
+        .span_s = span_s,
+        .end_x = out + span * (1 - end_u * end_u * end_u),
+    };
+}
+
 /// One row's height from its wrapped line count.
 pub fn rowHeight(lines: i32, line_h: i32, scale: f32) i32 {
     return lines * line_h + 2 * px(row_v_pad_dip, scale);
@@ -857,6 +899,45 @@ test "T543 slide: fully out clears the content edge, fully in is the rest" {
         const x = slideX(@as(f32, @floatFromInt(i)) / 20.0, resting, card_w);
         try testing.expect(x >= prev);
         try testing.expect(x <= resting);
+        prev = x;
+    }
+}
+
+test "T2764 slide plan: the declared cubic is the stepped slide's path, exactly" {
+    const resting: i32 = 12;
+    const card_w: i32 = 260;
+    const cases = [_][2]f32{ .{ 0, 1 }, .{ 1, 0 }, .{ 0.3, 1 }, .{ 0.7, 0 }, .{ 0.45, 0.45 } };
+    for (cases) |cs| {
+        const plan = slidePlan(cs[0], cs[1], resting, card_w);
+        try testing.expectApproxEqAbs(@as(f64, @abs(cs[1] - cs[0])) * slide_ms / 1000.0, plan.span_s, 1e-6);
+        // Wherever the stepped walk has got to after `ms`, the cubic is there
+        // too (to well under a pixel; slideX rounds, the compositor does not).
+        var ms: f32 = 0;
+        while (ms <= slide_ms + 20) : (ms += 7.5) {
+            const t = slideStep(cs[0], cs[1], ms);
+            const out: f64 = @floatFromInt(-card_w);
+            const exact = out + @as(f64, @floatFromInt(resting + card_w)) * @as(f64, slideEase(t));
+            try testing.expectApproxEqAbs(exact, plan.at(ms / 1000.0), 0.01);
+        }
+        try testing.expectApproxEqAbs(@as(f64, @floatFromInt(slideX(cs[1], resting, card_w))), plan.end_x, 0.5);
+    }
+}
+
+test "T2764 slide plan: a reversal mid-flight starts where the card is and never jumps" {
+    const resting: i32 = 8;
+    const card_w: i32 = 240;
+    const first = slidePlan(0, 1, resting, card_w);
+    const half_s = first.span_s / 2;
+    const t_mid = slideStep(0, 1, @floatCast(half_s * 1000));
+    const back = slidePlan(t_mid, 0, resting, card_w);
+    try testing.expectApproxEqAbs(first.at(half_s), back.at(0), 0.01);
+    try testing.expectApproxEqAbs(@as(f64, @floatFromInt(-card_w)), back.end_x, 1e-9);
+    // Moving left the whole way back.
+    var prev = back.at(0);
+    var s: f64 = 0.005;
+    while (s <= back.span_s) : (s += 0.005) {
+        const x = back.at(s);
+        try testing.expect(x <= prev + 1e-9);
         prev = x;
     }
 }
