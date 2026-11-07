@@ -61,6 +61,11 @@
 # the content-free arms really skipped the content (no frame waits). It never
 # stamps the guard.
 #
+# -Trace (T2624) runs every arm under GHOZTTY_RESIZE_TRACE (the ring, so the
+# stamps cost ~1 us each, T2600), so each arm's stderr log in the report
+# folder carries the phase stamps of every layout pass: where a step's place
+# time goes. It never stamps the guard.
+#
 # -ReleaseSandbox runs a release build (-ExePath, e.g. a ReleaseFast
 # `--prefix zig-out-perf`) under all three isolating knobs (lib\Isolation.ps1),
 # because a Debug build's own pixel loops inflate the very stages being
@@ -78,8 +83,9 @@ param(
     [int]$MinFps = 30,
     [switch]$NegativeControl,
     [switch]$ContentArms,
-[switch]$Burst,
-[int]$BurstBudgetPct = 150,
+    [switch]$Burst,
+    [int]$BurstBudgetPct = 150,
+    [switch]$Trace,
     [switch]$ReleaseSandbox,
     [switch]$Interactive
 )
@@ -241,7 +247,7 @@ function Measure-Scene([string]$scene, [string]$mode) {
     if ($mode -eq 'burst') { $env:GHOZTTY_RESIZE_BURST = '1' }
     else { Remove-Item env:GHOZTTY_RESIZE_BURST -ErrorAction SilentlyContinue }
     # Both -Burst arms trace, so the rate compares like with like.
-    if ($Burst) { $env:GHOZTTY_RESIZE_TRACE = '1' }
+    if ($Burst -or $Trace) { $env:GHOZTTY_RESIZE_TRACE = '1' }
     switch ($mode) {
         'held' { $env:GHOZTTY_RESIZE_NO_CONTENT = '1' }
         'empty' { $env:GHOZTTY_RESIZE_NO_CONTENT = 'empty' }
@@ -376,7 +382,7 @@ finally {
     Remove-Item env:GHOZTTY_PERF -ErrorAction SilentlyContinue
 }
 
-if ($script:fail -eq 0 -and $script:skipped -eq 0 -and -not $NegativeControl -and -not $ContentArms -and -not $Burst -and -not $ReleaseSandbox -and (Test-TestBodyComplete)) {
+if ($script:fail -eq 0 -and $script:skipped -eq 0 -and -not $NegativeControl -and -not $ContentArms -and -not $Burst -and -not $Trace -and -not $ReleaseSandbox -and (Test-TestBodyComplete)) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard edge-drag-rate -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
