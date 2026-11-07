@@ -10,10 +10,16 @@ extension AppDelegate {
         /// The user accepted CLI setup, so future repairs happen silently.
         static let installAccepted = "CommandLineToolInstallAccepted"
 
-        /// The user answered the one-time "switch off the Claude plugin" prompt
-        /// (either way). Set BEFORE the migration runs, so a failure — or a
-        /// crash mid-migration — cannot turn the prompt into a nag.
+        /// The "switch off the Claude plugin" prompt was answered, either way.
+        /// Set BEFORE the migration runs, so a failure, or a crash mid-migration,
+        /// cannot turn the prompt into a nag. Nothing reads it now: it stays
+        /// written so an older build, after a downgrade, does not ask again.
         static let pluginMigrationAnswered = "ClaudePluginMigrationAnswered"
+
+        /// Which answer it was (`ClaudePluginChoice`). The flag above cannot say,
+        /// so someone who answered before this existed and still has a working
+        /// plugin is asked one more time.
+        static let pluginMigrationChoice = "ClaudePluginMigrationChoice"
     }
 
     /// Called on every launch. Verifies the CLI in the background and repairs
@@ -180,31 +186,30 @@ extension AppDelegate {
 
     // MARK: - Claude plugin migration
 
-    /// Called on every launch, but asks at most once ever: the app now ships the
-    /// skills the standalone Claude plugin used to, so an existing plugin user
-    /// gets one prompt on their first launch after updating and never sees it
-    /// again — whichever way they answer.
+    /// Called on every launch: clears dead plugin registrations, keeps the app's
+    /// own Claude integration current, and asks about a working plugin only when
+    /// there is no recorded answer. See `ClaudePluginMigration.settleOnLaunch`.
     ///
-    /// Gated on the CLI prompt already being answered so a genuinely fresh
-    /// install cannot stack two modals on its first launch; for the users this
-    /// is actually aimed at, that flag is long since set.
+    /// Only the dialog waits for the CLI prompt to be answered, so a genuinely
+    /// fresh install cannot stack two modals on its first launch.
     func checkClaudePluginMigrationOnLaunch() {
         #if DEBUG
         // A debug build runs alongside the user's real install and would
-        // uninstall their real plugin. Never migrate unless a test opts in.
+        // uninstall their real plugin and rewrite their real skills with this
+        // build's copy. Never touch them unless a test opts in.
         guard ProcessInfo.processInfo.environment["GHOZTTY_TEST_PLUGIN_MIGRATION"] != nil else { return }
         #endif
 
         let defaults = UserDefaults.ghostty
-        guard defaults.bool(forKey: SetupDefaults.promptAnswered),
-              !defaults.bool(forKey: SetupDefaults.pluginMigrationAnswered)
-        else { return }
+        let choice = defaults.string(forKey: SetupDefaults.pluginMigrationChoice)
+            .flatMap(ClaudePluginChoice.init(rawValue:))
+        let mayPrompt = defaults.bool(forKey: SetupDefaults.promptAnswered)
 
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3) {
             let migration = ClaudePluginMigration(
                 homeDirectoryURL: URL(fileURLWithPath: LoginShell.homePath),
                 fileManager: .default)
-            guard migration.isNeeded else { return }
+            guard migration.settleOnLaunch(choice: choice, mayPrompt: mayPrompt) else { return }
             DispatchQueue.main.async { Self.presentPluginMigrationDialog(migration) }
         }
     }
@@ -226,6 +231,8 @@ extension AppDelegate {
         let switchOver = alert.runModal() == .alertFirstButtonReturn
         // Recorded either way, and BEFORE the work: answering is what retires
         // the prompt, not succeeding at it.
+        let choice: ClaudePluginChoice = switchOver ? .switched : .kept
+        UserDefaults.ghostty.set(choice.rawValue, forKey: SetupDefaults.pluginMigrationChoice)
         UserDefaults.ghostty.set(true, forKey: SetupDefaults.pluginMigrationAnswered)
         guard switchOver else { return }
 
@@ -240,7 +247,7 @@ extension AppDelegate {
                             \(error.localizedDescription)
 
                             Nothing was changed — the plugin still manages Claude. \
-                            You can try again from Ghoztty ▸ Agent Integrations.
+                            Ghoztty will try again the next time it starts.
                             """,
                         style: .warning)
                 }
