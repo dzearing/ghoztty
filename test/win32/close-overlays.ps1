@@ -165,7 +165,7 @@ try {
         [void](Set-TestWindowSize -Window ([IntPtr]$w.Hwnd) -Width ([int][math]::Round(1300 * $scale, [MidpointRounding]::AwayFromZero)) -Height ([int][math]::Round(700 * $scale, [MidpointRounding]::AwayFromZero)))
     }
     & $exe +split --target=cw --direction=right --name=c2 | Out-Null
-    & $exe +split --target=c2 --direction=right --name=c3 | Out-Null
+    & $exe +split --pane=c2 --direction=right --name=c3 | Out-Null
     & $exe +set-banner --target=cw 'left pane' | Out-Null
     # Three lines, so c2's banner is the TALLEST: that, not a left-to-right
     # guess, is how the run knows which popups are c2's.
@@ -267,7 +267,7 @@ try {
             [void](Set-TestWindowSize -Window ([IntPtr]$w.Hwnd) -Width ([int][math]::Round(1300 * $scale, [MidpointRounding]::AwayFromZero)) -Height ([int][math]::Round(700 * $scale, [MidpointRounding]::AwayFromZero)))
         }
         & $exe +split --target=cw --direction=right --name=c2 | Out-Null
-        & $exe +split --target=c2 --direction=right --name=c3 | Out-Null
+        & $exe +split --pane=c2 --direction=right --name=c3 | Out-Null
         & $exe +set-banner --target=cw 'left pane' | Out-Null
         & $exe +set-banner --target=c2 "c2 pane\nsecond line\nthird line" | Out-Null
         & $exe +set-banner --target=c3 "c3 pane\nsecond line" | Out-Null
@@ -282,7 +282,10 @@ try {
         Assert ($pop.Count -eq 0) "comp: no overlay popup but the banner panes' dim washes is on screen ($(($pop | ForEach-Object { $_.Class }) -join ','))"
         # cw is the top-level holding three panes. Which one is c2 comes from
         # the split tree's left-to-right leaf order, never from a position
-        # guess (the tree is not always cw|c2|c3 - see T2753).
+        # guess. c3 is split off with --pane=c2: --target=c2 would name c2's
+        # WINDOW and split its active pane (cw - CLI splits open in the
+        # background), which is the documented contract on both platforms
+        # and built cw|c3|c2 here twice (T2753, docs/claude/cli.md +split).
         $cwTop = $null; $panes = @()
         foreach ($w in @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyWindow')) {
             $kids = @(Get-TestChildWindows -Window ([IntPtr]$w.Hwnd) -Class 'GhozttyTerminal' | Where-Object Visible | Sort-Object Left)
@@ -298,6 +301,9 @@ try {
         if ($cwNow) { Add-Leaves $cwNow.tabs[0].splits }
         $c2i = [array]::IndexOf([string[]]$script:leafNames, 'c2')
         Assert ($null -ne $cwTop -and $script:leafNames.Count -eq 3 -and $c2i -ge 0) "comp: setup: cw shows three panes side by side, c2 among them (leaves: $($script:leafNames -join ','))"
+        # The window's own first pane carries no name (+list shows its id), so
+        # the order is: that pane, then c2, then c3.
+        Assert ($script:leafNames.Count -eq 3 -and $script:leafNames[0] -notin @('c2', 'c3') -and $script:leafNames[1] -eq 'c2' -and $script:leafNames[2] -eq 'c3') "comp: setup: --pane=c2 put c3 beside c2, leaf order <cw's pane>,c2,c3 (leaves: $($script:leafNames -join ','))"
         if ($null -ne $cwTop -and $script:leafNames.Count -eq 3 -and $c2i -ge 0) {
             $c2 = $panes[$c2i]
             $c2h = [int64]$c2.Hwnd
