@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-07T09:32:53-08:00",
-    "commit":  "5e2d7d366",
+    "generated":  "2026-11-07T09:49:59-08:00",
+    "commit":  "e56fc83c5",
     "uncommitted":  [
 
                     ],
@@ -1157,7 +1157,7 @@
                   "test/win32/cli-unknown-flag.ps1":  "113c82da658e4244469714ea10631d50b0f9b08f3c13ec11df628965ff719109",
                   "test/win32/close-confirm-idle.ps1":  "425c7bba70cc3832ff98bd4694b3e8cd7a65b320c67728495cb203d516a772d7",
                   "test/win32/close-glyph-white.ps1":  "6d6b3cc1c05e01ad16553375b1b4fbaa06ced25c674d0138108c41f692652238",
-                  "test/win32/close-overlays.ps1":  "1391ed75eecb51b39b155c7508d31c0d034ca92f3696449303f8c1a189cf8804",
+                  "test/win32/close-overlays.ps1":  "88db943f6f346474c38e0ceb43af78054083aba54323d385159932a659deb3be",
                   "test/win32/close-undo.ps1":  "f0d5e471acf3b10c6ac9905e916ae094a11c43677818827586974b990f164c42",
                   "test/win32/color-contrast.ps1":  "a0d85f63a9efea20b550fb7fe4add84e412859a53a40eca2937b5e08353c698f",
                   "test/win32/command-registry.ps1":  "362ddab500b622889f2a9872c99ae9111303fe1ff8d64c8731f7bcbb3df0b517",
@@ -1405,7 +1405,7 @@
                   "test/win32/release-parity.ps1":  "92babe2c0e154c766dd02f9578073f6a04ec281ee706aa8a8dc83c505d579f9f",
                   "test/win32/release-symbols.ps1":  "7c1a87e8cf563ea02c3f1e97d098729af03ddafd75144ce221afb945fc0fb862",
                   "test/win32/remote-disconnect.ps1":  "b028ff3675031fb478027e7b9010f1a39e6f3cf49fb56ca146a0d1bd580b2d59",
-                  "test/win32/remote-effects.ps1":  "d2ab829dbdeb0fdbcd539ac035e0914c585eeb631b3ce8a44a98cc22f0ced1a7",
+                  "test/win32/remote-effects.ps1":  "8d7891b2f3cc9c874d19063cdb28864ebb6139db5e98d26ab1c2597e673f33bc",
                   "test/win32/remote-inherit.ps1":  "51c3fd032cd9d40bd1318c0fe69c670dab65756103b4cf02cffe836c9009089a",
                   "test/win32/remote-pill.ps1":  "f5c2447debb4dc2867a0ae2b54f77acc20f8b4f8e562c3cb7cb305d60268e015",
                   "test/win32/remote-pill-relay-name.ps1":  "44a6e2888de14d59caa5e071c1910c3c5389930958860026d06e55cb0e5690c6",
