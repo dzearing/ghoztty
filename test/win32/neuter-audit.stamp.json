@@ -1,11 +1,11 @@
 {
     "guard":  "neuter-audit",
     "script":  "test/win32/neuter-audit.ps1",
-    "generated":  "2026-11-07T09:34:08-08:00",
-    "commit":  "5e2d7d366",
+    "generated":  "2026-11-07T10:33:49-08:00",
+    "commit":  "4bd18fbe6",
     "uncommitted":  [
-                        "src/apprt/win32/blade_layer.zig",
-                        "src/apprt/win32/pane_stack_strip.zig"
+                        "src/apprt/win32/HoverTint.zig",
+                        "src/apprt/win32/PaneView.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -132,7 +132,7 @@
                   "src/apprt/win32/host_defaults.zig":  "994b374543855d65b0203cfd687650c1d07d6ff5ff645d0455854f50e4ca59be",
                   "src/apprt/win32/HostSettingsDialog.zig":  "6f5a5ba088ac27d2385278af27ec6013246f79801542b8f4c085ddd95ff141fd",
                   "src/apprt/win32/hover_capture.zig":  "8ecc3234b911ff803f105bc21091aa33f5206fe9010b4afe3b73264ece4ad78c",
-                  "src/apprt/win32/HoverTint.zig":  "bb5ad3372e473089f0bf06ff3a27f0b7abfdcf999ea26878d033693846617a76",
+                  "src/apprt/win32/HoverTint.zig":  "76b666c7ea820b8eb7c26dbd2b4a4406978c6df0098200b355374aea73335945",
                   "src/apprt/win32/icon_button.zig":  "6a3a4f1eb1abe83ec20e99cf0bac21916ffc1de249530f199ba65cab4c421c08",
                   "src/apprt/win32/icon_button_paint.zig":  "0cf301f90a56c39e060eeb5da7e39ad4dc23f308d16c13427d1b72cd1e5eafbf",
                   "src/apprt/win32/image_clipboard.zig":  "e246e8ec082f089bb8dae081127d10116564680d39359c3a170454259b57fa9f",
@@ -232,7 +232,7 @@
                   "src/apprt/win32/PaneGrabHandle.zig":  "959df18a9af052cb606f2e4b5d9e5aa196a1e5a83c53e238103bcb407907ab4e",
                   "src/apprt/win32/panel_theme.zig":  "caf0cd7e30f705d17e3590985e3fa51a7a3a32f90b619fd38e51b932a6c7a134",
                   "src/apprt/win32/PaneSidebar.zig":  "1a1da1f04279f40f98e4d97fb29b571c137edc8fd5eaabd19916c27c2442a124",
-                  "src/apprt/win32/PaneView.zig":  "1324b2c56381ecfb5200f7dca6dfa3a7a4546783b3c9c34bfca5f82d33b888c0",
+                  "src/apprt/win32/PaneView.zig":  "3f63cca46c37110e3dbcd5128ba8c27138824a2bdb2ff50164fbf9b88c05d877",
                   "src/apprt/win32/PathInstaller.zig":  "77ee61d5ba639eb627756e917077c3de09b6f77c1fd2440fb707b1a7a9e5d2e5",
                   "src/apprt/win32/persistence_notice.zig":  "65baba4beff952a6d9d9f9753a3bf254bc8f050a6d7430978339ebf9ec848840",
                   "src/apprt/win32/png_encode.zig":  "ecbeaf3b60b8489b937306893aec36d61588e97a065cc8aa6670e34cdc218a3b",

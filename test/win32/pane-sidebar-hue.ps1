@@ -21,6 +21,17 @@
 #      `fade done alpha=0`) and the popup is hidden - the leave path.
 #   4. Hovering s2's row tints s2 in hue(2), not s1.
 #
+# Two arms (T2762). VISUAL, the default build (panes present through the
+# composition swap chain): the tint is a child visual of s1's pane - logged
+# `shown as visual`, no popup laid over the pane - and both its fade in and
+# its fade out are declared to the compositor once and end with no UI-thread
+# step (`compositor=true ui_steps=0`). POPUP, GHOZTTY_COMP_PRESENT=0: the
+# popup checks above (owned, glued to the rect, cut to the card), stepped.
+#
+# -SteppedControl runs the visual arm with GHOZTTY_DEBUG_HOVER_TINT_FADE_STEPPED
+# =1, which steps the visual's fade on the UI thread the old way: the
+# compositor rows MUST fail, or they cannot tell the two apart.
+#
 # The colours, the pixels of the wash and rim, and the 0.12 s / 0.2 s easeOut
 # fades are unit-tested in src\apprt\win32\pane_hue.zig. NOT covered here:
 # what the tint LOOKS like on screen - a layered popup on a background desktop
@@ -34,6 +45,7 @@
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
     [switch]$NegativeControl,
+    [switch]$SteppedControl,
     [switch]$Interactive
 )
 
@@ -167,9 +179,14 @@ $script:scale = 1.0
 
 & {
 try {
-    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
     Assert-GhozttyPrivateEndpoint -Exe $Exe
-    $script:errlog = Join-Path $tmp 'app-stderr.log'
+    # Each arm is a fresh app: the knob is read once, at launch (T2762).
+    foreach ($arm in @('visual', 'popup')) {
+    "==== arm: $arm"
+    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
+    if ($arm -eq 'popup') { $env:GHOZTTY_COMP_PRESENT = '0' } else { Remove-Item env:GHOZTTY_COMP_PRESENT -ErrorAction SilentlyContinue }
+    if ($arm -eq 'visual' -and $SteppedControl) { $env:GHOZTTY_DEBUG_HOVER_TINT_FADE_STEPPED = '1' } else { Remove-Item env:GHOZTTY_DEBUG_HOVER_TINT_FADE_STEPPED -ErrorAction SilentlyContinue }
+    $script:errlog = Join-Path $tmp "app-stderr-$arm.log"
     $app = Start-OnTestDesktop -Exe $Exe -StdErr $script:errlog -Arguments @('--session-persistence=false', '--macos-pane-style=elevated', '--background=#1e1e1e')
     Start-Sleep -Seconds 3
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
@@ -223,7 +240,22 @@ try {
         $ok = ([math]::Abs([int]$Matches[1] - $exp[0]) -le 1) -and ([math]::Abs([int]$Matches[2] - $exp[1]) -le 1) -and ([math]::Abs([int]$Matches[3] - $exp[2]) -le 1)
     }
     Assert "in Mac's colour for index 1 on a dark theme (expected $($exp -join ','))" $ok
-    Assert "the tint popup was shown (log)" ($null -ne (Wait-Log 'hover tint shown ' $h.From))
+    if ($arm -eq 'visual') {
+    # The tint is a child visual of s1's pane (T2762): no popup laid over
+    # any pane, and the fade in handed to the compositor in one declaration.
+    $vis = Wait-Log 'hover tint shown as visual rgb=' $h.From
+    Assert "[visual] the tint went up as a child visual of the pane (log: $vis)" ($null -ne $vis)
+    Assert "[visual] no tint popup is laid over any pane" ($null -eq (Find-TintFor $app.Pid $panes[0]) -and $null -eq (Find-TintFor $app.Pid $panes[1]) -and $null -eq (Find-TintFor $app.Pid $panes[2]))
+    Assert "[visual] the fade in was declared to the compositor (log)" ($null -ne (Wait-Log 'hover tint fade on compositor from=0 to=255 ms=120' $h.From 1500))
+    "== 3 [visual]: the pointer leaves - the tint fades back out on the compositor"
+    $done = Wait-Log 'hover tint fade done alpha=0 ' $h.From 3000
+    Assert "[visual] the fade out finished at alpha 0 (log: $done)" ($null -ne $done)
+    Assert "[visual] ... declared to the compositor and with no UI-thread step" ($done -match 'compositor=true ui_steps=0$')
+    Assert "[visual] ... and the visual is taken off the pane (log)" ($null -ne (Wait-Log 'hover tint hidden visual=true' $h.From 1500))
+    $stepped = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Where-Object { $_ -match 'hover tint fade done alpha=\d+ ms=\d+ compositor=false' }).Count
+    Assert "[visual] no tint fade was stepped on the UI thread ($stepped stepped)" ($stepped -eq 0)
+    } else {
+    Assert "the tint popup was shown (log)" ($null -ne (Wait-Log 'hover tint shown rgb=' $h.From))
     $tints = @(Get-Tints $app.Pid)
     "  (tint popups: $(@($tints | ForEach-Object { "$($_.Left),$($_.Top) $($_.Width)x$($_.Height) vis=$($_.Visible)" }) -join '; '))"
     Assert "exactly one tint popup so far" ($tints.Count -eq 1)
@@ -244,21 +276,30 @@ try {
     "== 3: the pointer leaves - the tint fades back out"
     Assert "the fade-out finishes at alpha 0 (log)" ($null -ne (Wait-Log 'hover tint fade done alpha=0 ' $h.From 3000))
     Assert "and the popup is hidden" (Wait-Until { $t = Find-TintFor $app.Pid $panes[1]; $t -and -not $t.Visible } 3000)
+    }
 
     "== 4: hovering s2's row tints s2, in its own hue"
     $h2 = Invoke-RowHover $top $sb $rows 2
     Assert "the tint goes to index 2 (log: $($h2.Line))" ($h2.Line -match 'index=2 ')
     $exp2 = Get-DarkHueRgb 2
     Assert "in index 2's colour (expected $($exp2 -join ','))" ($h2.Line -match "rgb=$($exp2[0]),$($exp2[1]),$($exp2[2])$" -or ($h2.Line -match 'rgb=(\d+),(\d+),(\d+)' -and ([math]::Abs([int]$Matches[1] - $exp2[0]) -le 1) -and ([math]::Abs([int]$Matches[2] - $exp2[1]) -le 1) -and ([math]::Abs([int]$Matches[3] - $exp2[2]) -le 1)))
-    Assert "s2's pane has its own tint popup" (Wait-Until { $null -ne (Find-TintFor $app.Pid $panes[2]) } 2000)
+    if ($arm -eq 'visual') {
+        $s2v = Wait-Log "hover tint shown as visual .* pane=$([int64]$panes[2].Hwnd)$" $h2.From 2000
+        Assert "[visual] s2's pane carries its own tint visual (log: $s2v)" ($null -ne $s2v)
+    } else {
+        Assert "s2's pane has its own tint popup" (Wait-Until { $null -ne (Find-TintFor $app.Pid $panes[2]) } 2000)
+    }
 
-    Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
+    Assert "[$arm] no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids
+    }
+    Remove-Item env:GHOZTTY_COMP_PRESENT, env:GHOZTTY_DEBUG_HOVER_TINT_FADE_STEPPED -ErrorAction SilentlyContinue
     $script:reachedEnd = $true
 } catch {
     "  FAIL body threw: $($_.Exception.Message)"
     $script:failures++
 } finally {
+    Remove-Item env:GHOZTTY_COMP_PRESENT, env:GHOZTTY_DEBUG_HOVER_TINT_FADE_STEPPED -ErrorAction SilentlyContinue
     Remove-TestDesktop
     [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
 }
@@ -277,7 +318,7 @@ Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 
 Complete-TestBody  # T1039: the run reached the end of its body
 
-if ($script:failures -eq 0 -and -not $NegativeControl) {
+if ($script:failures -eq 0 -and -not $NegativeControl -and -not $SteppedControl) {
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard pane-sidebar-hue -Repo $repo 2>&1 | ForEach-Object { "  $_" }

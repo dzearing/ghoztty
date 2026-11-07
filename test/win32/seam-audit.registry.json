@@ -245,6 +245,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the marker's default state, which every other window draws."
         },
+        "GHOZTTY_DEBUG_HOVER_TINT_FADE_STEPPED": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "T2762: pane-sidebar-hue.ps1 -SteppedControl steps the visual tint's fade on the UI thread, the oracle's red arm; unset is the compositor fade the same script's visual arm runs every time."
+        },
         "GHOZTTY_KEEP_VACATED_GUTTERS": {
             "class": "non-default",
             "unset": "shipped-elsewhere",

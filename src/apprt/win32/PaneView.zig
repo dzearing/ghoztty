@@ -377,10 +377,20 @@ pub fn updateHoverTint(self: *PaneView, want: bool, c: color_math.Rgb, scale: f3
     const owner = self.hwnd() orelse return;
     if (self.hover_tint == null) {
         const app = self.parentWindow().app;
-        self.hover_tint = HoverTint.create(app.core_app.alloc, owner, app.hinstance) catch |err| {
+        // A terminal pane's composition tree carries the tint as a child
+        // visual (T2762); a viewer has none, so its tint is the popup.
+        const slot = switch (self.kind) {
+            .terminal => |s| &s.comp_overlay_slot,
+            .viewer => null,
+        };
+        self.hover_tint = HoverTint.create(app.core_app.alloc, owner, app.hinstance, slot) catch |err| {
             std.log.scoped(.win32_hover_tint).warn("hover tint create failed err={}", .{err});
             return;
         };
+        switch (self.kind) {
+            .terminal => |s| self.hover_tint.?.grid_band = &s.grid_band,
+            .viewer => {},
+        }
     }
     const t = self.hover_tint.?;
     t.matchOwnerRegion(self.card_region_key);
