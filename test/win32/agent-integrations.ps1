@@ -105,6 +105,37 @@ function Kill-RepoInstances {
 # Manifest-hash of the REAL user's integration surfaces. Volatile trees the
 # subsystem never touches (~\.claude\projects, banner-state) are excluded on
 # purpose: live sessions write there and would false-fail the comparison.
+# ~\.claude\skills\synced is Claude Code's own cloud-skill sync cache: it
+# rewrites <id>\manifest.json and .last-complete-round every few minutes
+# whether or not a test runs, and the subsystem only ever installs NAMED
+# skill dirs beside it - which stay watched. That subtree was the canary's
+# three red runs on 2026-11-06 (T2760), all on the slow alone re-run.
+#
+# The manifest is returned as LINES, not a hash, so a mismatch can name the
+# paths that moved (Compare-CanaryManifest) instead of one opaque SHA.
+function Test-CanaryVolatile([string]$fullName) {
+    $synced = Join-Path $env:USERPROFILE '.claude\skills\synced\'
+    return $fullName.StartsWith($synced, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+# Set difference of two manifests, keyed by path: '+ path' appeared,
+# '- path' vanished, '~ path (before -> after)' changed length/mtime.
+function Get-CanaryKey([string]$line) {
+    if ($line.StartsWith('absent|')) { return $line.Substring(7) }
+    return $line.Substring(0, $line.IndexOf('|'))
+}
+function Compare-CanaryManifest([string[]]$before, [string[]]$after) {
+    $b = @{}; foreach ($l in $before) { $b[(Get-CanaryKey $l)] = $l }
+    $a = @{}; foreach ($l in $after)  { $a[(Get-CanaryKey $l)] = $l }
+    $out = New-Object System.Collections.Generic.List[string]
+    foreach ($k in ($a.Keys | Sort-Object)) {
+        if (-not $b.ContainsKey($k)) { $out.Add("+ $($a[$k])") }
+        elseif ($b[$k] -ne $a[$k]) { $out.Add("~ $($b[$k]) -> $($a[$k])") }
+    }
+    foreach ($k in ($b.Keys | Sort-Object)) { if (-not $a.ContainsKey($k)) { $out.Add("- $($b[$k])") } }
+    return $out.ToArray()
+}
+
 function Get-CanaryManifest {
     $roots = @(
         (Join-Path $env:USERPROFILE '.claude\settings.json'),
@@ -121,6 +152,7 @@ function Get-CanaryManifest {
         $item = Get-Item $root -Force
         if ($item.PSIsContainer) {
             Get-ChildItem $root -Recurse -File -Force -ErrorAction SilentlyContinue |
+                Where-Object { -not (Test-CanaryVolatile $_.FullName) } |
                 Sort-Object FullName | ForEach-Object {
                     $lines.Add("$($_.FullName)|$($_.Length)|$($_.LastWriteTimeUtc.Ticks)")
                 }
@@ -128,9 +160,7 @@ function Get-CanaryManifest {
             $lines.Add("$($item.FullName)|$($item.Length)|$($item.LastWriteTimeUtc.Ticks)")
         }
     }
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes(($lines -join "`n"))
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try { return [System.BitConverter]::ToString($sha.ComputeHash($bytes)) } finally { $sha.Dispose() }
+    return $lines.ToArray()
 }
 
 # ------------------------------------------------------------------ helpers
@@ -186,7 +216,7 @@ function Wait-Class([int]$gpid, [string]$cls, [bool]$appear, [int]$timeoutMs = 3
 }
 
 # ----------------------------------------------------------------- fixtures
-$canaryBefore = Get-CanaryManifest
+$canaryBefore = @(Get-CanaryManifest)
 
 $base = Join-Path $env:TEMP 'ghoztty-t872'
 Remove-Item -Recurse -Force $base -ErrorAction SilentlyContinue
@@ -529,8 +559,18 @@ try {
 }
 
 # --------------------------------------------------- the canary, measured
-$canaryAfter = Get-CanaryManifest
-Assert ($canaryAfter -eq $canaryBefore) 'the real user integration surfaces are bit-for-bit undisturbed (canary)'
+$canaryAfter = @(Get-CanaryManifest)
+$canaryMoved = @(Compare-CanaryManifest $canaryBefore $canaryAfter)
+foreach ($m in $canaryMoved) { "  canary moved: $m" }
+Assert ($canaryMoved.Count -eq 0) "the real user integration surfaces are bit-for-bit undisturbed (canary; $($canaryMoved.Count) path(s) moved)"
+# The diff itself must be able to say something (T2760): a doctored copy of
+# the before-manifest - one line changed, one dropped, one added - has to
+# come back as exactly those three, or a red canary could again name nothing.
+$probeBefore = @($canaryBefore) + @('C:\t2760-probe-drop|1|1', 'C:\t2760-probe-edit|2|2')
+$probeAfter  = @($canaryBefore) + @('C:\t2760-probe-edit|2|3', 'C:\t2760-probe-add|4|4')
+$probeMoved = @(Compare-CanaryManifest $probeBefore $probeAfter)
+$expectMoved = 3
+Assert ($probeMoved.Count -eq $expectMoved) "the canary diff names every moved path (doctored manifest: $($probeMoved.Count) of $expectMoved named)"
 
 # ------------------------------------------------- foreground discipline
 $fgSeen = @(Stop-TestForegroundWatch)
