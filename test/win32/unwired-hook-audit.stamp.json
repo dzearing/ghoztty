@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-07T02:22:57-08:00",
-    "commit":  "bf12298a8",
+    "generated":  "2026-11-07T02:39:21-08:00",
+    "commit":  "16c435bc3",
     "uncommitted":  [
 
                     ],
@@ -1161,6 +1161,7 @@
                   "test/win32/color-contrast.ps1":  "a0d85f63a9efea20b550fb7fe4add84e412859a53a40eca2937b5e08353c698f",
                   "test/win32/command-registry.ps1":  "362ddab500b622889f2a9872c99ae9111303fe1ff8d64c8731f7bcbb3df0b517",
                   "test/win32/command-resolve-audit.ps1":  "01120dbe18e6961dbb2a463fdbba0632e52388a374252a20b266a88be81e5125",
+                  "test/win32/comp-box-state.ps1":  "f007f61ca91b34758b85ba37fe02d3f1bbf4fc596362f0783a400cb3991a43b6",
                   "test/win32/comp-chrome.ps1":  "cd1e090b66d89614885de62a693fb50e0cb0e2956fec8b3e397458e895880314",
                   "test/win32/comp-present.ps1":  "d993e0b442d4c312cade4b640a20322ef78544697701438685164cadd2674ab1",
                   "test/win32/config-errors.ps1":  "1d64c1391b3f98388d3d4cdee2f6a23c4c30d952f005b977afb40b32625fe8c3",
@@ -1228,7 +1229,7 @@
                   "test/win32/frame-lab-card.ps1":  "2a1f0d5494a615a7eef2363b67e330be8c3fbba79f52f59fc76d72a6373ce7cd",
                   "test/win32/frame-lab-catalogue.ps1":  "120058a164916bc96adb7194be43299e5c1abcf29e27c31729ad4fbb74faef64",
                   "test/win32/frame-lab-input.ps1":  "87850410d5ef28bc397060cbea57e83ee026215e97e0adcaf0e63f002cabcb2b",
-                  "test/win32/frame-lab-live-scene.ps1":  "b207664f76b521c150ce08cb1b6dac54fd732abe1b00a73bca0322ea84cc4c90",
+                  "test/win32/frame-lab-live-scene.ps1":  "f8bda32a604f4889f881710c9b5d281f67f4e5c42b7a6da5575ef18643134cc5",
                   "test/win32/frame-lab-report.ps1":  "00354861a681dc69eea52acb01372631d4fd307ed85841421fa56c31e6815d73",
                   "test/win32/frame-lab-scene.ps1":  "2ed3fdcc10b378d720a4ef23d95bbcc1a58cd9eaddb2f920dc625a163ade0f8a",
                   "test/win32/frame-score.ps1":  "d98795f50fd5c8a171332eef326942ed62398f6f8e62601c1102716d240b89d9",
@@ -1238,7 +1239,7 @@
                   "test/win32/ghoztty-cleanup.ps1":  "443de2b0fdefdd38c064d1245b3ccb9ce653ac68a37f664590ade379dd93d7ee",
                   "test/win32/glass-frame-origin.ps1":  "0a0dfeed8dff3e6ba20ec9402905ac5490ab37b43d85d9316be106de72e26b56",
                   "test/win32/gl-device-lost.ps1":  "9ea50c131a98b6be564e055c6e196ee36d7209884b6c4ab792d83103336ec73e",
-                  "test/win32/go-loop-guard.ps1":  "462a71576c4595c66df1fe7a3997a3b87f0bc5978fb4ea72cbe2e198176084df",
+                  "test/win32/go-loop-guard.ps1":  "5ac4d6e859e51f1314c0d5acd32d9cb20d9a4b48964d1a7671b5c20e045fd550",
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/guard-due.ps1":  "281420e26fbca13e3dfdd2707d8ef2294e277a3c0171aff3e53e5d0f87b939d6",

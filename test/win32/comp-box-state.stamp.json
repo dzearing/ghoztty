@@ -1,0 +1,14 @@
+{
+    "guard":  "comp-box-state",
+    "script":  "test/win32/comp-box-state.ps1",
+    "generated":  "2026-11-07T02:39:01-08:00",
+    "commit":  "16c435bc3",
+    "uncommitted":  [
+                        "scripts/lib/CompBoxState.ps1",
+                        "test/win32/comp-box-state.ps1"
+                    ],
+    "files":  {
+                  "scripts/lib/CompBoxState.ps1":  "243ed647a2cd48194b0e8d7cb854b2839f07f97af3d89ef794c30007d6a0d773",
+                  "test/win32/comp-box-state.ps1":  "f007f61ca91b34758b85ba37fe02d3f1bbf4fc596362f0783a400cb3991a43b6"
+              }
+}

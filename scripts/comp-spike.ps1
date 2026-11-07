@@ -61,17 +61,19 @@ param(
     [int]$RebindAfterGlide = -1,
     [ValidateSet('auto', 'hardware', 'warp')][string]$RebindTo = 'warp',
     [switch]$CheckSurface,
-    # Where the -Live ghost sits. It is bottom-most, and DWM stops running
-    # compositor animations for a window that is COMPLETELY covered (measured
-    # 2026-11-05, T2465: under a maximized window comp captured 1 frame per
-    # run while gdi's repaints still came through), so pick a spot some part of
-    # the desktop shows through - a second monitor, or beside a window.
+    # Where the -Live ghost sits (bottom-most). T2465 read comp=1 frame per run
+    # under a maximized window on 2026-11-05 and blamed the cover, but on
+    # 2026-11-07 the same spot, fully covered (BOXSTATE uncovered=0.00), scored
+    # 0.944 (T2733): the blind runs were some other desktop state. Every -Live
+    # run prints a BOXSTATE line and a blind verdict carries it - diff it
+    # against a green run's.
     [int]$X = 200,
     [int]$Y = 200
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 . (Join-Path $repo 'test\win32\lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\CompBoxState.ps1')
 $exe = Join-Path $repo 'zig-out\bin\ghoztty-comp-spike.exe'
 if (-not (Test-Path $exe)) {
     Write-Host "comp-spike: $exe is missing - run: zig build comp-spike -Dapp-runtime=win32 -Doptimize=Debug"
@@ -127,6 +129,10 @@ try {
         $dwm0 = $null
         try { $dwm0 = Get-DwmCpuMs } catch { $dwm0 = $null }
         if ($Live) {
+            # T2733: the desktop this run lands on, so a blind score names its cause.
+            try { $box = Get-CompBoxState -X $X -Y $Y } catch { $box = "BOXSTATE unavailable ($($_.Exception.Message))" }
+            Write-Host "$box mode=$m"
+            if ($m -eq 'comp') { $script:compBox = $box }
             $spikeArgs += @('--ghost', "--x=$X", "--y=$Y")
             $proc = Start-Process -FilePath $exe -ArgumentList $spikeArgs -PassThru -WindowStyle Hidden
         } else {
@@ -174,7 +180,7 @@ if ($CheckOracle) {
         $compAdv = [double](Get-Field $wsum['comp'] 'advance_mean')
         if ($idleNew -ne 0) { $bad += "idle scored $idleNew new frames (want 0)" }
         if ($gdiAdv -ge 0.6) { $bad += "gdi advance_mean $gdiAdv (want < 0.6)" }
-        if ($compAdv -lt 0.9) { $bad += "comp advance_mean $compAdv (want >= 0.9)" }
+        if ($compAdv -lt 0.9) { $bad += "comp advance_mean $compAdv (want >= 0.9)$(Get-CompBlindHint $script:compBox)" }
     }
     if ($bad.Count -gt 0) {
         Write-Host ('comp-spike: ORACLE FAIL - ' + ($bad -join '; '))
@@ -192,7 +198,7 @@ if ($CheckSurface) {
     elseif ($Surface -eq 'warp' -and (Get-Field $init 'warp') -ne 'true') { $bad += "asked for warp, got: $init" }
     elseif ($Surface -eq 'hardware' -and (Get-Field $init 'warp') -ne 'false') { $bad += "asked for hardware, got: $init" }
     if (-not $ws -or $ws -match 'oracle=UNAVAILABLE') { $bad += 'no per-window score' }
-    elseif ([double](Get-Field $ws 'advance_mean') -lt 0.9) { $bad += "surface comp advance_mean $(Get-Field $ws 'advance_mean') (want >= 0.9)" }
+    elseif ([double](Get-Field $ws 'advance_mean') -lt 0.9) { $bad += "surface comp advance_mean $(Get-Field $ws 'advance_mean') (want >= 0.9)$(Get-CompBlindHint $script:compBox)" }
     if ($RebindAfterGlide -ge 0) {
         $rb = $L | Where-Object { $_ -match '^DEVICE rebind ' } | Select-Object -First 1
         if (-not $rb -or (Get-Field $rb 'ok') -ne 'true') { $bad += "the rebind did not succeed: $rb" }

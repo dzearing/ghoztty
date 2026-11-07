@@ -4491,6 +4491,18 @@ $GuardTable = @(
             'test\win32\count-or-zero.ps1'
         )
     },
+    # The comp-spike live oracle's box-state snapshot (T2733). A blind comp
+    # score is a desktop state, not a code defect, until this line says which
+    # state; its coverage math is the part that can silently lie.
+    [pscustomobject]@{
+        Name   = 'comp-box-state'
+        Script = 'test\win32\comp-box-state.ps1'
+        Stamp  = 'test\win32\comp-box-state.stamp.json'
+        Covers = @(
+            'scripts\lib\CompBoxState.ps1',
+            'test\win32\comp-box-state.ps1'
+        )
+    },
     # The compiled exact-colour scan (T1373). Its callers poll on the NEGATIVE
     # answer, so the two ways it can rot are both quiet: a scan that drifts from
     # the GetPixel walk it replaced turns a pixel oracle green against nothing,
