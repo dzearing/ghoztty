@@ -24,9 +24,11 @@
 
 const std = @import("std");
 const pane_elevation = @import("pane_elevation.zig");
+const color_math = @import("color_math.zig");
 
 /// A rendered layer: premultiplied BGRA (black, alpha = how much of what is
-/// under it the shadow takes away), `w` x `h`, top-down. Its top-left sits
+/// under it the shadow takes away - and, with a body, the card's own colours
+/// over it, T2742), `w` x `h`, top-down. Its top-left sits
 /// `reach` pixels above and left of the card's.
 pub const Layer = struct {
     px: []u32,
@@ -63,6 +65,9 @@ pub const Key = struct {
     /// this card's top-left: only their position next to this card matters,
     /// so a pair that moves together keeps its layers.
     mask: Mask = .{},
+    /// The card itself rides in the layer too (T2742), over its shadow: null
+    /// for a shadow-only layer, clear under the card.
+    body: ?Body = null,
 
     pub fn of(card: pane_elevation.Card, style: pane_elevation.CardStyle) Key {
         return .{
@@ -83,9 +88,44 @@ pub const Key = struct {
         return k;
     }
 
+    /// `masked`, carrying the card's own pixels as well (T2742): its fill,
+    /// head band, rim and antialiased edge, so the desk under a card that
+    /// moves needs nothing of it. Null on glass, whose sheet is the desk
+    /// under the card seen through a tint, so it cannot leave the desk.
+    pub fn withBody(card: pane_elevation.Card, style: pane_elevation.CardStyle, others: []const pane_elevation.Card) ?Key {
+        const b = Body.of(card, style) orelse return null;
+        var k = masked(card, style, others);
+        k.body = b;
+        return k;
+    }
+
     /// Whether the card casts anything at all.
     pub fn casts(self: Key) bool {
-        return self.shadow > 0 and self.w > 0 and self.h > 0;
+        if (self.w <= 0 or self.h <= 0) return false;
+        return self.shadow > 0 or self.body != null;
+    }
+};
+
+/// What a card's own pixels depend on (T2742), besides the key's size and
+/// style: its colours, with the head band measured from the card's top. The
+/// rim is the resting one - a lit card's brighter rim and glow are the glow
+/// layers' (T2574), so a body rides only over a desk composed without glows.
+pub const Body = struct {
+    /// The terminal's fill, the style's.
+    fill: color_math.Rgb,
+    /// A viewer's page (`Card.fill`).
+    own: ?color_math.Rgb = null,
+    head: ?color_math.Rgb = null,
+    head_rows: i32 = 0,
+
+    pub fn of(card: pane_elevation.Card, style: pane_elevation.CardStyle) ?Body {
+        if (style.glass) return null;
+        return .{
+            .fill = style.fill,
+            .own = card.fill,
+            .head = card.head,
+            .head_rows = if (card.head != null) card.head_bottom - card.top else 0,
+        };
     }
 };
 
@@ -160,18 +200,45 @@ pub fn renderKey(
     const px = try alloc.alloc(u32, @intCast(lw * lh));
     errdefer alloc.free(px);
     @memset(px, 0xFFFF_FFFF);
-    const at: pane_elevation.Card = .{
+    var at: pane_elevation.Card = .{
         .left = reach,
         .top = reach,
         .right = reach + key.w,
         .bottom = reach + key.h,
         .shadow = key.shadow,
     };
-    pane_elevation.paintCardShadows(px, @intCast(lw), @intCast(lh), &.{at}, style, prepared);
-    // White under the shadow: every channel is 255 * k. Its alpha is 1 - k.
-    for (px) |*p| p.* = @as(u32, 255 - ((p.* >> 8) & 0xFF)) << 24;
     const radius: f32 = @floatFromInt(pane_elevation.radiusPx(style.scale));
-    clearUnderCard(px, lw, lh, at, radius);
+    if (key.body) |b| {
+        // The card's whole compose over a black desk and over a white one
+        // (T2742). Every pixel the compose lays is a mix of the card's own
+        // colours and the desk under it - `cov * colour + (1 - cov) * k *
+        // desk` - so over black it is the premultiplied colour and the step
+        // to white is what of the desk shows: 255 - that step is the alpha.
+        at.fill = b.own;
+        at.head = b.head;
+        at.head_bottom = at.top + b.head_rows;
+        var solid = style;
+        solid.fill = b.fill;
+        solid.glows = &.{};
+        const dark = try alloc.alloc(u32, px.len);
+        defer alloc.free(dark);
+        @memset(dark, 0xFF00_0000);
+        pane_elevation.paintCardsWith(px, @intCast(lw), @intCast(lh), &.{at}, solid, prepared);
+        pane_elevation.paintCardsWith(dark, @intCast(lw), @intCast(lh), &.{at}, solid, prepared);
+        for (px, dark) |*p, d| {
+            const shows = ((p.* >> 8) & 0xFF) -| ((d >> 8) & 0xFF);
+            const a: u32 = 255 - shows;
+            var out: u32 = a << 24;
+            var k: u5 = 0;
+            while (k < 24) : (k += 8) out |= @min((d >> k) & 0xFF, a) << k;
+            p.* = out;
+        }
+    } else {
+        pane_elevation.paintCardShadows(px, @intCast(lw), @intCast(lh), &.{at}, style, prepared);
+        // White under the shadow: every channel is 255 * k. Its alpha is 1 - k.
+        for (px) |*p| p.* = @as(u32, 255 - ((p.* >> 8) & 0xFF)) << 24;
+        clearUnderCard(px, lw, lh, at, radius);
+    }
     for (key.mask.slice()) |o| clearUnderCard(px, lw, lh, .{
         .left = reach + o.left,
         .top = reach + o.top,
@@ -205,8 +272,16 @@ fn clearUnderCard(px: []u32, lw: i32, lh: i32, card: pane_elevation.Card, radius
             }
             const d = pane_elevation.roundRectDistance(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, card, radius);
             const open = std.math.clamp(0.5 + d, 0, 1);
-            const a: f32 = @floatFromInt(row[i] >> 24);
-            row[i] = @as(u32, @intFromFloat(@round(a * open))) << 24;
+            // Premultiplied, so every channel scales with the alpha: a
+            // body's colour as well as a shadow's black (T2742).
+            var out: u32 = 0;
+            var k: u5 = 0;
+            while (true) : (k += 8) {
+                const c: f32 = @floatFromInt((row[i] >> k) & 0xFF);
+                out |= @as(u32, @intFromFloat(@round(c * open))) << k;
+                if (k == 24) break;
+            }
+            row[i] = out;
         }
     }
 }
@@ -480,6 +555,119 @@ test "T2740: the layer is clear under the card, darkest just below it, and gone 
     try testing.expectEqual(@as(u8, 0), l.alphaAt(0, 0));
     // Black, premultiplied: nothing in the colour channels.
     for (l.px) |p| try testing.expectEqual(@as(u32, 0), p & 0x00FF_FFFF);
+}
+
+/// The desk compose with every card baked, against the bare desk with each
+/// card's body layer laid over it (T2742): the desk under a riding card
+/// holds nothing of it.
+fn compareBodies(cards: []const pane_elevation.Card, style: pane_elevation.CardStyle, w: usize, h: usize) !Gap {
+    const alloc = testing.allocator;
+    const want = try alloc.alloc(u32, w * h);
+    defer alloc.free(want);
+    const got = try alloc.alloc(u32, w * h);
+    defer alloc.free(got);
+    testDesk(want, w, h);
+    @memcpy(got, want);
+    pane_elevation.paintCards(want, w, h, cards, style);
+    for (cards) |c| {
+        const key = Key.withBody(c, style, cards) orelse return error.NoBody;
+        var layer = (try renderKey(alloc, key, style, null)) orelse return error.NoLayer;
+        defer layer.deinit(alloc);
+        const o = layer.origin(c);
+        composite(got, @intCast(w), @intCast(h), &layer, o[0], o[1]);
+    }
+    const radius: f32 = @floatFromInt(pane_elevation.radiusPx(style.scale));
+    var gap: Gap = .{};
+    for (0..h) |y| for (0..w) |x| {
+        var nearest: f32 = std.math.inf(f32);
+        for (cards) |c| nearest = @min(nearest, pane_elevation.roundRectDistance(@as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5, c, radius));
+        const diff = channelDiff(want[y * w + x], got[y * w + x]);
+        if (nearest >= 1.5) gap.out = @max(gap.out, diff) else if (nearest <= -1.5) gap.in = @max(gap.in, diff) else gap.edge = @max(gap.edge, diff);
+    };
+    return gap;
+}
+
+test "T2742: a card's body layer over the bare desk is the card the desk compose lays" {
+    const dark: pane_elevation.CardStyle = .{ .fill = .{ .r = 24, .g = 26, .b = 30 }, .is_light = false, .scale = 1.5 };
+    const one = [_]pane_elevation.Card{.{ .left = 40, .top = 30, .right = 210, .bottom = 160 }};
+    // Measured 1 / 1 / 0 here, 2 / 3 / 0 for the viewer: tighter than a
+    // shadow-only layer's edge (T2740's 12), since the edge is now mixed in
+    // the compose's own order - fill over the shadowed desk.
+    const g1 = try compareBodies(&one, dark, 300, 230);
+    try testing.expect(g1.out <= 2 and g1.in == 0 and g1.edge <= 2);
+    // A light window, and a viewer's page under a nav band in another colour.
+    const light: pane_elevation.CardStyle = .{ .fill = .{ .r = 250, .g = 250, .b = 248 }, .is_light = true, .scale = 1.0 };
+    const viewer = [_]pane_elevation.Card{.{
+        .left = 50,
+        .top = 40,
+        .right = 230,
+        .bottom = 170,
+        .fill = .{ .r = 255, .g = 255, .b = 255 },
+        .head = .{ .r = 236, .g = 236, .b = 240 },
+        .head_bottom = 40 + 28,
+    }};
+    const g2 = try compareBodies(&viewer, light, 300, 230);
+    try testing.expect(g2.out <= 3 and g2.in == 0 and g2.edge <= 4);
+    // The control: laid as a shadow-only layer over the same bare desk, the
+    // card is missing - what the body is for.
+    const alloc = testing.allocator;
+    var l = (try renderKey(alloc, Key.of(one[0], dark), dark, null)).?;
+    defer l.deinit(alloc);
+    var lb = (try renderKey(alloc, Key.withBody(one[0], dark, &.{}).?, dark, null)).?;
+    defer lb.deinit(alloc);
+    const mid = l.reach + 60;
+    try testing.expectEqual(@as(u8, 0), l.alphaAt(mid, mid));
+    try testing.expectEqual(@as(u8, 255), lb.alphaAt(mid, mid));
+    // Deep inside it is the fill itself, opaque.
+    try testing.expectEqual(@as(u32, 0xFF18_1A1E), lb.px[@intCast(mid * lb.w + mid)]);
+}
+
+test "T2742: neighbouring bodies across a gap narrower than the reach" {
+    const reach = pane_elevation.shadowReachPx(1.0);
+    const gap_px: i32 = 8;
+    try testing.expect(gap_px < reach);
+    const stacked = [_]pane_elevation.Card{
+        .{ .left = 30, .top = 20, .right = 250, .bottom = 110 },
+        .{ .left = 30, .top = 110 + gap_px, .right = 250, .bottom = 210 },
+    };
+    const light: pane_elevation.CardStyle = .{ .fill = .{ .r = 250, .g = 250, .b = 248 }, .is_light = true, .scale = 1.0 };
+    const g = try compareBodies(&stacked, light, 290, 240);
+    // Inside and on the desk as one card; the lower edge takes the upper
+    // layer by its open share, T2741's own-edge bound.
+    try testing.expect(g.in == 0 and g.out <= 4 and g.edge <= 12);
+    const dark: pane_elevation.CardStyle = .{ .fill = .{ .r = 24, .g = 26, .b = 30 }, .is_light = false, .scale = 1.5 };
+    const side = [_]pane_elevation.Card{
+        .{ .left = 20, .top = 24, .right = 160, .bottom = 150 },
+        .{ .left = 172, .top = 24, .right = 300, .bottom = 150 },
+        .{ .left = 20, .top = 162, .right = 300, .bottom = 230 },
+    };
+    const gd = try compareBodies(&side, dark, 340, 270);
+    try testing.expect(gd.in == 0 and gd.out <= 4 and gd.edge <= 12);
+}
+
+test "T2742: a body key keeps its picture wherever the card moves, and glass has none" {
+    const style: pane_elevation.CardStyle = .{ .fill = .{ .r = 24, .g = 26, .b = 30 }, .is_light = false, .scale = 1.25 };
+    const a: pane_elevation.Card = .{ .left = 10, .top = 10, .right = 130, .bottom = 90, .head = .{ .r = 50, .g = 50, .b = 60 }, .head_bottom = 30 };
+    var b = a;
+    b.left += 507;
+    b.right += 507;
+    b.top -= 43;
+    b.bottom -= 43;
+    b.head_bottom -= 43;
+    const ka = Key.withBody(a, style, &.{}).?;
+    try testing.expect(std.meta.eql(ka, Key.withBody(b, style, &.{}).?));
+    try testing.expect(!std.meta.eql(ka, Key.of(a, style)));
+    // A new colour is a new picture.
+    var c = a;
+    c.fill = .{ .r = 255, .g = 255, .b = 255 };
+    try testing.expect(!std.meta.eql(ka, Key.withBody(c, style, &.{}).?));
+    // A card that casts no shadow still has a body to lay.
+    var faint = a;
+    faint.shadow = 0;
+    try testing.expect(Key.withBody(faint, style, &.{}).?.casts());
+    var glass = style;
+    glass.glass = true;
+    try testing.expect(Key.withBody(a, glass, &.{}) == null);
 }
 
 test "T2740: over() is darken - premultiplied black scales what is under it" {
