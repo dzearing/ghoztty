@@ -745,6 +745,7 @@ pub fn drawFrameEnd(self: *OpenGL) void {
         self.rt_surface.holdSwap(self.drawn_client);
         const swap_start = perf.now();
         self.traceStage("swap-begin");
+        self.rt_surface.traceSwapBegin();
         if (self.comp) |p| {
             p.end(true) catch |err| self.compFail(err);
         } else {

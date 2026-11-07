@@ -4889,8 +4889,20 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
     // those, here, inside the batch's `EndDeferWindowPos`, so the frame that
     // shows the new rect shows background there instead. A cache DC: the
     // own DC belongs to the renderer thread's GL context.
+    var cost_t: [3]i64 = .{ 0, 0, 0 };
+    const cost_on = Window.batchCostOn();
+    if (cost_on) _ = w32.QueryPerformanceCounter(&cost_t[0]);
+    defer if (cost_on) {
+        var t_end: i64 = 0;
+        _ = w32.QueryPerformanceCounter(&t_end);
+        Window.batch_cost.sizes +|= 1;
+        Window.batch_cost.size_qpc += t_end - cost_t[0];
+        Window.batch_cost.fill_qpc += cost_t[2] - cost_t[1];
+    };
     if (self.own_layer and (self.in_live_resize or self.parent_window.in_live_layout)) {
+        if (cost_on) _ = w32.QueryPerformanceCounter(&cost_t[1]);
         self.fillUncoveredStrips(width, height);
+        if (cost_on) _ = w32.QueryPerformanceCounter(&cost_t[2]);
     }
 
     Window.traceRenderStage("pane-size", self.hwnd);
@@ -6614,6 +6626,13 @@ pub fn labPlantOnFrame(self: *Surface, size_changed: bool) lab_plant.FrameFire {
 pub fn tracePresent(self: *Surface, drawn: u64, swapped: bool) void {
     if (swapped) _ = self.swap_seq.fetchAdd(1, .release);
     Window.tracePresent(self.hwnd, drawn, swapped);
+}
+
+/// Renderer thread, just before its swap: where the swap began, for the
+/// stack trace's present line (T2732).
+pub fn traceSwapBegin(self: *Surface) void {
+    _ = self;
+    Window.traceSwapBegin();
 }
 
 /// UI thread (T2666): hold this pane's next frame at `size` (packed, the

@@ -10126,8 +10126,11 @@ fn endPaneBatch(hdwp: ?w32.HDWP) void {
 fn endPaneBatchFilled(self: *Window, hdwp: ?w32.HDWP) void {
     if (!self.in_live_layout or self.held_resizes_on or hdwp == null) return endPaneBatch(hdwp);
     self.held_resizes_on = true;
+    batch_cost = .{};
     endPaneBatch(hdwp);
     self.held_resizes_on = false;
+    var defer_end: i64 = 0;
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&defer_end);
     if (self.hwnd) |h| resizeTrace("defer-end", h);
     if (self.cut_in_batch and !cutOrderLegacy()) {
         self.cutCardRegions();
@@ -10137,7 +10140,11 @@ fn endPaneBatchFilled(self: *Window, hdwp: ?w32.HDWP) void {
     if (stackTraceOn()) {
         var qpc: i64 = 0;
         _ = w32.QueryPerformanceCounter(&qpc);
-        stackTrace("stack trace filled qpc={d} held={d}", .{ qpc, held.len });
+        // T2732: how much of `EndDeferWindowPos` was the panes' own WM_SIZE
+        // work (and of that, the uncovered-strip fill), and how much the OS.
+        stackTrace("stack trace filled qpc={d} held={d} defer_end={d} sizes={d} size_qpc={d} fill_qpc={d}", .{
+            qpc, held.len, defer_end, batch_cost.sizes, batch_cost.size_qpc, batch_cost.fill_qpc,
+        });
     }
     for (held.entries[0..held.len]) |e| e.pane.applyResize(e.width, e.height);
 }
@@ -10407,6 +10414,15 @@ fn resizeTraceOn() bool {
 /// per walk.
 var grid_cost: struct { calls: u32 = 0, qpc: i64 = 0 } = .{};
 
+/// The panes' WM_SIZE work inside one live batch's `EndDeferWindowPos`
+/// (T2732), stack trace only: UI thread, reset at each batch.
+pub var batch_cost: struct { sizes: u32 = 0, size_qpc: i64 = 0, fill_qpc: i64 = 0 } = .{};
+
+/// `stackTraceOn` for the pane's resize stamps (T2732).
+pub fn batchCostOn() bool {
+    return stackTraceOn();
+}
+
 fn resizeTraceGrid() void {
     if (!resizeTraceOn()) return;
     resize_trace.line("resize trace grid calls={d} us={d}", .{ grid_cost.calls, @divTrunc(grid_cost.qpc, 10) });
@@ -10549,6 +10565,14 @@ pub fn tracePresenterShown(hwnd: ?w32.HWND, width: u32, height: u32) void {
     resize_trace.line("resize trace pres-shown hwnd={x} w={d} h={d} qpc={d}", .{ h, width, height, t });
 }
 
+/// The renderer thread's last swap began here (T2732), stack trace only.
+threadlocal var swap_began_qpc: i64 = 0;
+
+pub fn traceSwapBegin() void {
+    if (!stackTraceOn()) return;
+    _ = w32.QueryPerformanceCounter(&swap_began_qpc);
+}
+
 pub fn tracePresent(hwnd: ?w32.HWND, drawn: u64, swapped: bool) void {
     const stack = stackTraceOn();
     if (!stack and !resizeTraceOn()) return;
@@ -10569,7 +10593,7 @@ pub fn tracePresent(hwnd: ?w32.HWND, drawn: u64, swapped: bool) void {
     }
     present_ring_lock.lock();
     defer present_ring_lock.unlock();
-    present_ring.add("stack trace present hwnd={x} qpc={d} size={d}x{d} swapped={}", .{ h, t, w, ht, swapped });
+    present_ring.add("stack trace present hwnd={x} qpc={d} size={d}x{d} swapped={} began={d}", .{ h, t, w, ht, swapped, if (swapped) swap_began_qpc else 0 });
 }
 
 /// The back-buffer check of a first frame at a new size (T2485 D22 `verify`):
