@@ -674,6 +674,16 @@ Concretely, in order, with no stops in between:
    script. Rules and the `-Width 1` serial baseline: `docs/claude/testing.md`.
    Still never beside a floor LANE (the T401 rule above stands).
 
+   **Run ONE sweep, and wait for THAT one** (T2717). If you background a
+   sweep, do not launch another while it runs: a second `due` (or `harness`)
+   beside the first doubles the box load and makes neither of them faster. On
+   2026-11-04/05 turns sat idle with four to six duplicate "Run all due
+   harnesses" tasks outstanding, and none of them was still running. If a
+   notification seems overdue, read the task's `.output` file once rather than
+   relaunching. The watchdog no longer waits on a task whose output file nobody
+   is writing (`bgdead=` in its log), so a lost notification costs minutes, not
+   the 180m backstop.
+
    **One of those rows is a whole family: `harness-floor`** (T725). The audits
    that sweep `test\win32\` for harness defects - exit codes, skips, verdicts,
    isolation, capture - are a single command now:

@@ -3193,11 +3193,46 @@ $aiDone = @(Get-LoopPendingBackgroundTasksFromLines -Lines ($aiLines +
 Assert 'AI6 a notification of any status ends the wait' ($aiDone.Count -eq 0)
 $aiFile = Join-Path $env:TEMP "go-loop-guard-ai-$PID.jsonl"
 [System.IO.File]::WriteAllLines($aiFile, [string[]]$aiLines)
-$aiRead = @(Get-LoopPendingBackgroundTasks -TranscriptPath $aiFile)
-$aiMissing = @(Get-LoopPendingBackgroundTasks -TranscriptPath (Join-Path $env:TEMP 'no-such-transcript.jsonl'))
-Remove-Item $aiFile -Force -ErrorAction SilentlyContinue
+# An empty tasks root: no output file for any id, so every probe answers
+# 'unknown' and the T1711 waiver stands exactly as before T2717.
+$aiRoot = Join-Path $env:TEMP "go-loop-guard-ai-root-$PID"
+[void][System.IO.Directory]::CreateDirectory($aiRoot)
+$aiRead = @(Get-LoopPendingBackgroundTasks -TranscriptPath $aiFile -TasksRoot $aiRoot)
+$aiMissing = @(Get-LoopPendingBackgroundTasks -TranscriptPath (Join-Path $env:TEMP 'no-such-transcript.jsonl') -TasksRoot $aiRoot)
 Assert 'AI7 the IO half reads a file to the same answer' ($aiRead.Count -eq 1 -and $aiRead[0] -eq 'b03svkhsd')
 Assert 'AI8 an unreadable transcript waits on nothing (the pre-T1711 behavior)' ($aiMissing.Count -eq 0)
+
+# --- AI9-AI13. a lost notification no longer holds the loop (T2717) ---
+# WHY. Four stalls on 2026-11-04/05 sat 1.5-2.5h at `bg=1..3` with no harness
+# process on the box: the notification was lost and the waiver trusted the
+# transcript until the 180m backstop. The output file Claude Code writes each
+# backgrounded command to is the evidence: held open while the command runs,
+# free once it ends. Fixture layout is the real one,
+# <root>\<project>\<session>\tasks\<id>.output.
+$aiTasks = Join-Path $aiRoot 'proj01\sess01\tasks'
+[void][System.IO.Directory]::CreateDirectory($aiTasks)
+$aiOut = Join-Path $aiTasks 'b03svkhsd.output'
+[System.IO.File]::WriteAllText($aiOut, 'harness output')
+$aiDeadState = Test-LoopBackgroundTaskLive -Id 'b03svkhsd' -TasksRoot $aiRoot
+$aiDeadPend = @(Get-LoopPendingBackgroundTasks -TranscriptPath $aiFile -TasksRoot $aiRoot)
+Assert "AI9 an output file nobody is writing reads dead (got '$aiDeadState')" ($aiDeadState -eq 'dead')
+Assert "AI10 and a dead task is no longer pending, so the waiver lifts (got $($aiDeadPend.Count))" ($aiDeadPend.Count -eq 0)
+# Teeth: the SAME file with a writer holding it - the running command - is live
+# and still waits. Without this arm AI10 passes on a probe that calls everything dead.
+$aiHold = [System.IO.File]::Open($aiOut, 'Open', 'Write', 'ReadWrite')
+try {
+    $aiLiveState = Test-LoopBackgroundTaskLive -Id 'b03svkhsd' -TasksRoot $aiRoot
+    $aiLivePend = @(Get-LoopPendingBackgroundTasks -TranscriptPath $aiFile -TasksRoot $aiRoot)
+} finally { $aiHold.Dispose() }
+Assert "AI11 an output file a writer still holds reads live (got '$aiLiveState')" ($aiLiveState -eq 'live')
+Assert "AI12 and a live task still holds the waiver (got $($aiLivePend.Count))" `
+    ($aiLivePend.Count -eq 1 -and $aiLivePend[0] -eq 'b03svkhsd')
+$aiStates = @(Get-LoopBackgroundTaskStates -TranscriptPath $aiFile -TasksRoot $aiRoot)
+$aiNone = Test-LoopBackgroundTaskLive -Id 'bnosuchid' -TasksRoot $aiRoot
+Assert "AI13 the states list names the dead task, and an id with no file is unknown, not dead (got '$aiNone')" `
+    ($aiStates.Count -eq 1 -and $aiStates[0].State -eq 'dead' -and $aiNone -eq 'unknown')
+Remove-Item $aiFile -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $aiRoot -Recurse -Force -ErrorAction SilentlyContinue
 
 # --- the watchdog acts on it ---
 Remove-Item $lock, $state -Force -ErrorAction SilentlyContinue
@@ -3242,7 +3277,7 @@ Assert 'BB22 an unreadable composer does not count as unsent text' `
 Assert 'BB22b and the healthy line names the observation, not just the clocks' `
     ($r.Out -match 'healthy:.*composer=none session=unknown')
 Assert 'BB22c and how many of its own background tasks the session is waiting on (T1711)' `
-    ($r.Out -match 'healthy:.*session=unknown bg=\d+ probed=')
+    ($r.Out -match 'healthy:.*session=unknown bg=\d+ bgdead=\d+ probed=')
 
 # --- BB23-BB34. is the session WORKING, or merely present? (T1370) ---------
 #

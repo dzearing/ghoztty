@@ -534,10 +534,80 @@ function Get-LoopPendingBackgroundTasksFromLines {
     return $pending
 }
 
-# The IO half. Opened share-everything because Claude Code is appending to the
-# file while this reads it; a transcript that cannot be read answers "none
-# pending", which leaves the stall arms exactly as they were before T1711.
-function Get-LoopPendingBackgroundTasks {
+# --- is an un-notified task still RUNNING? (T2717) ---------------------------
+#
+# WHY. "Launched and never notified" is not the same as "still running". Four
+# times on 2026-11-04/05 a lane sat idle 1.5-2.5h with `bg=1..3`, and the tasks
+# the transcript counted as pending had no process left on the box: the
+# notification had been lost, so T1711's waiver held the loop until the 180m
+# backstop. The pending list was even cumulative across turns (a task from
+# T2704's turn still counted under T2386's).
+#
+# The evidence that answers it is the task's own output file. Claude Code writes
+# each backgrounded command to `%TEMP%\claude\<project>\<session>\tasks\<id>.output`
+# and HOLDS IT OPEN FOR WRITING until the command ends (measured 2026-11-07: a
+# 0-byte `sleep 90` reads HELD for its whole life, and every finished task's
+# file opens deny-write freely). The files persist after the task, so a dead
+# task's file is still there to be found. The session dir is the Claude
+# PROCESS's first session, not the transcript's, so the probe searches every
+# session dir rather than deriving one.
+#
+# Returns 'live' (a writer still holds the file), 'dead' (the file exists and
+# nobody is writing it - the task ended, whatever the transcript says) or
+# 'unknown' (no file: a background agent, or a layout this probe does not
+# know). Only 'dead' is acted on, so an unknown keeps the T1711 waiver exactly
+# as it was - the probe can only ever give a stalled loop back, never take a
+# genuine wait away.
+function Get-LoopBackgroundTaskOutputFile {
+    param([string]$Id, [string]$TasksRoot = '')
+    if (-not $Id) { return '' }
+    if (-not $TasksRoot) { $TasksRoot = Join-Path $env:TEMP 'claude' }
+    if (-not [System.IO.Directory]::Exists($TasksRoot)) { return '' }
+    try {
+        foreach ($proj in [System.IO.Directory]::GetDirectories($TasksRoot)) {
+            foreach ($sess in [System.IO.Directory]::GetDirectories($proj)) {
+                $p = [System.IO.Path]::Combine($sess, 'tasks', "$Id.output")
+                if ([System.IO.File]::Exists($p)) { return $p }
+            }
+        }
+    } catch { }
+    return ''
+}
+
+function Test-LoopBackgroundTaskLive {
+    param([string]$Id, [string]$TasksRoot = '')
+    $p = Get-LoopBackgroundTaskOutputFile -Id $Id -TasksRoot $TasksRoot
+    if (-not $p) { return 'unknown' }
+    try {
+        # FileShare.Read = deny every other writer. It fails exactly when a
+        # writer already holds the file - the running task.
+        $s = [System.IO.File]::Open($p, 'Open', 'Read', 'Read')
+        $s.Dispose()
+        return 'dead'
+    } catch [System.IO.FileNotFoundException] {
+        return 'unknown'
+    } catch [System.IO.DirectoryNotFoundException] {
+        return 'unknown'
+    } catch {
+        return 'live'
+    }
+}
+
+# Every un-notified task with its liveness: @{ Id; State }.
+function Get-LoopBackgroundTaskStates {
+    param([string]$TranscriptPath = '', [string]$TasksRoot = '')
+    $out = @()
+    foreach ($id in @(Get-LoopUnnotifiedBackgroundTasks -TranscriptPath $TranscriptPath)) {
+        if (-not $id) { continue }
+        $out += @{ Id = $id; State = (Test-LoopBackgroundTaskLive -Id $id -TasksRoot $TasksRoot) }
+    }
+    return $out
+}
+
+# The transcript half. Opened share-everything because Claude Code is appending
+# to the file while this reads it; a transcript that cannot be read answers
+# "none pending", which leaves the stall arms exactly as they were before T1711.
+function Get-LoopUnnotifiedBackgroundTasks {
     param([string]$TranscriptPath = '')
     if (-not $TranscriptPath -or -not (Test-Path -LiteralPath $TranscriptPath)) { return }
     $lines = @()
@@ -549,6 +619,19 @@ function Get-LoopPendingBackgroundTasks {
         } finally { $fs.Dispose() }
     } catch { return }
     return (Get-LoopPendingBackgroundTasksFromLines -Lines $lines)
+}
+
+# What both supervisors call: the tasks the session is GENUINELY waiting on -
+# un-notified AND not proven finished (T2717). A task whose output file nobody
+# is writing any more ended long ago, and waiting for its notification is the
+# 1.5-2h stall this exists to close.
+function Get-LoopPendingBackgroundTasks {
+    param([string]$TranscriptPath = '', [string]$TasksRoot = '')
+    $live = @()
+    foreach ($t in @(Get-LoopBackgroundTaskStates -TranscriptPath $TranscriptPath -TasksRoot $TasksRoot)) {
+        if ($t -and $t.State -ne 'dead') { $live += $t.Id }
+    }
+    return $live
 }
 
 # What both supervisors call. Transcript first, pane as the fallback.

@@ -1,10 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-07T00:31:43-08:00",
-    "commit":  "c87965a65",
+    "generated":  "2026-11-07T01:23:48-08:00",
+    "commit":  "6af7f163b",
     "uncommitted":  [
-                        "scripts/parity-tasks.ps1"
+                        "scripts/go-loop-watchdog.ps1",
+                        "scripts/loop-session.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -46,7 +47,7 @@
                   "scripts/go-loop-health.ps1":  "01ebcc1f5a53a58ecb399203c371fc75115360b4fcf41c03e70799180567363d",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8bc76326d576230a4aaf9b046c9f12cb7c3d59d25d3ed65672c628ddd64b5ac0",
-                  "scripts/go-loop-watchdog.ps1":  "e1a130d159be81d8feb5e92862e8ed500d6367bca7a17407521e8371e3fcbf1c",
+                  "scripts/go-loop-watchdog.ps1":  "de5776760f33e933bdc8fc6273996848631ac4efba11944b580d6f4a53641adb",
                   "scripts/guard-due.ps1":  "89bb8e1936f897d4639b3d2b72bcc651035dc2bff526a58f60854cf5bead9256",
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
                   "scripts/hero-glide-onscreen.ps1":  "46d211f7ec7843d13506f4e3bd13933630339adb8aff13b5c97d69ae3fd248a7",
@@ -84,7 +85,7 @@
                   "scripts/lib/TreeIdle.ps1":  "2c4d18f221cbed25de68a4ebb694b447bb35b3307f5ccc28b025aa31a1ed9149",
                   "scripts/lib/UserAlert.ps1":  "785ec9f42291ab67113193989a0a59f2f576c2cc2801fb26cbf7217edd346563",
                   "scripts/lib/WebViewLane.ps1":  "14ff86074a34aef73316a5c94032bf32bd42845d7e831170366034700898a579",
-                  "scripts/loop-session.ps1":  "39189157a285514dc8e68c86a5f844d688463d1124c90e882623373045895ade",
+                  "scripts/loop-session.ps1":  "dbf8891043f9fade8b2f0a7ebc4a84af0ea736f924e1477c1d7b425e3a326ccb",
                   "scripts/main-intake.ps1":  "16e52bcca79577cdfaf9eb2ca8485d3969001c6e2225ed33cc9140fe9ef2c00d",
                   "scripts/morning-owner.ps1":  "3ce353184a905647f855f15bcc8e2206d7772a22c4af7501488a0a556267faf0",
                   "scripts/msi-test-identity.ps1":  "f4114e015c29fa884abebff8fb7e057aab52582cf89584351f7b9b0c08ecce63",
