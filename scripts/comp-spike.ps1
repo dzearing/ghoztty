@@ -92,12 +92,21 @@ New-Item -ItemType Directory -Force $outDir | Out-Null
 
 # dwm.exe CPU in ms (every session's dwm summed), or a throw when Windows will
 # not say. Composition work happens there, not in the spike's own process.
+# Get-Process cannot open dwm.exe without elevation, so its TotalProcessorTime
+# reads null; the perf-data provider serves the same counter (100 ns units)
+# to an ordinary user (T2734).
 function Get-DwmCpuMs {
     $t = 0.0
+    $ok = $true
     foreach ($p in @(Get-Process -Name dwm -ErrorAction Stop)) {
-        if ($null -eq $p.TotalProcessorTime) { throw 'no access' }
+        if ($null -eq $p.TotalProcessorTime) { $ok = $false; break }
         $t += $p.TotalProcessorTime.TotalMilliseconds
     }
+    if ($ok) { return $t }
+    $raw = @(Get-CimInstance Win32_PerfRawData_PerfProc_Process -Filter "Name like 'dwm%'" -ErrorAction Stop)
+    if ($raw.Count -eq 0) { throw 'no access' }
+    $t = 0.0
+    foreach ($r in $raw) { $t += [double]$r.PercentProcessorTime / 10000.0 }
     return $t
 }
 

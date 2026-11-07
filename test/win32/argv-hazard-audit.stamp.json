@@ -1,12 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-07T02:42:01-08:00",
-    "commit":  "16c435bc3",
+    "generated":  "2026-11-07T04:30:02-08:00",
+    "commit":  "3a9ba5893",
     "uncommitted":  [
-                        "scripts/comp-spike.ps1",
-                        "scripts/guard-due.ps1",
-                        "scripts/lib/CompBoxState.ps1"
+                        "scripts/comp-gl-baseline.ps1",
+                        "scripts/comp-spike.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -21,11 +20,12 @@
                   "scripts/comp-chrome-onscreen.ps1":  "17710196373f1cc76a97d4a3a6278cdef6006f71bdffff8e7c99e668ffddc0ec",
                   "scripts/comp-desk-onscreen.ps1":  "aaab26f3dd26297f681e4736416e43a73636231adf51a7f048f772762d749c38",
                   "scripts/comp-flat-onscreen.ps1":  "f4e677d04745196654ca641c7ffe5053b84320318a24f6c4621371136ca4bebc",
+                  "scripts/comp-gl-baseline.ps1":  "b7f792f81e8cd6e6ad7b62ac7329665ec70edbf3a8bde0b37ff3157ec48e05ae",
                   "scripts/comp-glide-hold-onscreen.ps1":  "55b0f461d4f2bd08d56c2062a32eaea1a7bf6f3d1651616fa136dbeb19172a52",
                   "scripts/comp-overlay-onscreen.ps1":  "caad81c2f4ba9863f6e436a26e8ae5b564a8e20da35b893cf5bced8175d8d06a",
                   "scripts/comp-present-glide.ps1":  "70bb4876a8a90a82052cc33848ba70c02f6a81d15dc6e379fab01fa03598b81f",
                   "scripts/comp-present-onscreen.ps1":  "8e30e7b69d5d7628e2a2cf3c76590a12a20644b942a6a8c71c365b89a131c1fa",
-                  "scripts/comp-spike.ps1":  "f3b7db1a79e8f83b09d69647709d2e623bde3d1d7b3ef2f40eda190474d998a3",
+                  "scripts/comp-spike.ps1":  "e380b07244c89dcec7a35bfc6a02a6faca43838a93f8a030c9421896024b11ff",
                   "scripts/control-char-scan.ps1":  "a05f37ebf02bb8fb5bfdf123e54ee2a25488a7c25a6d46be7f29730ac8c2753f",
                   "scripts/crash-catch.ps1":  "c8515ad0ae67ec2fc457f54a7477f5afb5fc28281906f261d631ad0a640ca4aa",
                   "scripts/crash-databreak.ps1":  "ec45063075848cb962ca00262960aec8380bd5de3f0d9f9bc9f1d25c109e3b0d",

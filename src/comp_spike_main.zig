@@ -322,7 +322,43 @@ fn processCpu() u64 {
     return k + u;
 }
 
-var cpu_at_first_glide: u64 = 0;
+extern "kernel32" fn GetCurrentThread() callconv(.winapi) std.os.windows.HANDLE;
+extern "kernel32" fn GetThreadTimes(std.os.windows.HANDLE, *u64, *u64, *u64, *u64) callconv(.winapi) i32;
+
+/// User + kernel CPU one thread has used, in 100 ns ticks (0 when unreadable).
+fn threadCpu(h: std.os.windows.HANDLE) u64 {
+    var c: u64 = 0;
+    var e: u64 = 0;
+    var k: u64 = 0;
+    var u: u64 = 0;
+    if (GetThreadTimes(h, &c, &e, &k, &u) == 0) return 0;
+    return k + u;
+}
+
+/// The CPU the run's work costs, apart from the oracle's own (T2734). Both
+/// samplers poll in a loop and the WGC one reads back every frame, so they
+/// spend ~1.4 s a glide in every mode and drown the path being measured.
+const CpuMark = struct {
+    process: u64 = 0,
+    /// The thread this is called on: the UI thread (startGlide / finish).
+    ui: u64 = 0,
+    /// Both sampler threads together.
+    samplers: u64 = 0,
+};
+
+/// 100 ns ticks between two readings, in ms.
+fn cpuMs(end: u64, start: u64) f64 {
+    return @as(f64, @floatFromInt(end -| start)) / 10_000;
+}
+
+fn cpuMark() CpuMark {
+    var m: CpuMark = .{ .process = processCpu(), .ui = threadCpu(GetCurrentThread()) };
+    if (sampler_thread) |t| m.samplers += threadCpu(t.getHandle());
+    if (win_sampler_thread) |t| m.samplers += threadCpu(t.getHandle());
+    return m;
+}
+
+var cpu_at_first_glide: CpuMark = .{};
 
 fn rtLoad(comptime name: []const u8) ?*anyopaque {
     return LoadLibraryW(std.unicode.utf8ToUtf16LeStringLiteral(name));
@@ -509,7 +545,7 @@ fn startGlide(hwnd: w32.HWND) void {
         },
         .idle => {},
     }
-    if (i == 0) cpu_at_first_glide = processCpu();
+    if (i == 0) cpu_at_first_glide = cpuMark();
     if (opts.rebind_after) |n| if (n == i) rebindNow("glide", i);
     if (opts.stall_ms > 0) _ = w32.SetTimer(hwnd, TIMER_STALL, opts.duration_ms / 2, null);
     glide_i += 1;
@@ -633,13 +669,23 @@ fn finishWindow() void {
 }
 
 fn finish() void {
-    const cpu = processCpu() -| cpu_at_first_glide;
-    const cpu_ms = @as(f64, @floatFromInt(cpu)) / 10_000;
-    say("CPU mode={s} surface={s} process_ms={d:.1} per_glide_ms={d:.2}", .{
+    // Read before either sampler is joined: a joined thread's handle is closed.
+    const end = cpuMark();
+    const n: f64 = @floatFromInt(@max(1, glide_i));
+    const cpu_ms = cpuMs(end.process, cpu_at_first_glide.process);
+    const samplers_ms = cpuMs(end.samplers, cpu_at_first_glide.samplers);
+    const work_ms = @max(0, cpu_ms - samplers_ms);
+    const ui_ms = cpuMs(end.ui, cpu_at_first_glide.ui);
+    say("CPU mode={s} surface={s} process_ms={d:.1} per_glide_ms={d:.2} samplers_ms={d:.1} work_ms={d:.1} work_per_glide_ms={d:.2} ui_ms={d:.1} ui_per_glide_ms={d:.2}", .{
         @tagName(opts.mode),
         if (opts.surface) |k| @tagName(k) else "none",
         cpu_ms,
-        cpu_ms / @as(f64, @floatFromInt(@max(1, glide_i))),
+        cpu_ms / n,
+        samplers_ms,
+        work_ms,
+        work_ms / n,
+        ui_ms,
+        ui_ms / n,
     });
     if (comp) |c| if (c.surface) |s| say("DEVICE final warp={} draws={d} rebinds={d} removed_reason=0x{x}", .{ s.device.warp, s.draws, s.rebinds, @as(u32, @bitCast(s.device.removedReason())) });
     finishWindow();
