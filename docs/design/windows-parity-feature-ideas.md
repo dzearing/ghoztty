@@ -653,3 +653,12 @@ as the digest that showed them.
 - A chime when the agent is done (optional sound when a busy pane finishes or asks a question, via Windows sound settings)
 - Save a pane's output to a file (right-click Save output: whole scrollback or the last command's output to a text file)
 - Smooth for the people watching your screen share (animations paced to what a Teams/Zoom share can carry while sharing)
+
+## 2026-11-07
+
+- Line up the next command (type the next command while one runs; it waits in a chip and runs when the first ends, or only if it succeeded)
+- Continue on your other PC (pane menu "Continue on..." opens the same live session on another signed-in machine)
+- Open this link on your phone (right-click a link shows a QR code card)
+- A pasted key stays hidden (new angle on secret redaction: pasted API keys/passwords show as dots on the live screen and in scrollback)
+- Quiet while you focus (new angle on the demo quiet mode: Windows Focus / Do not disturb holds toasts and chimes, then one summary card)
+- Stays light after days open (memory of a long-open window stays flat; Settings shows the number)
