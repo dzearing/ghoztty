@@ -891,6 +891,13 @@ frame_wait_panes: [MAX_FRAME_WAITS]*Surface = undefined,
 /// `EndDeferWindowPos`.
 held_resizes: resize_paint.Pending(*Surface, MAX_FRAME_WAITS) = .{},
 held_resizes_on: bool = false,
+/// A live grid pass cuts the card regions inside `endPaneBatchFilled`, after
+/// the batch and BEFORE the held resize work wakes the panes' renderers
+/// (T2732): cut after it, each `SetWindowRgn` on a resized GL pane waited on
+/// that pane's first present at the new size, 0.4-1.2 ms a pane, every glide
+/// tick. `cut_in_batch` asks for it; `cut_in_batch_done` says it ran.
+cut_in_batch: bool = false,
+cut_in_batch_done: bool = false,
 /// Panes whose wait ended with the renderer's last present still at the OLD
 /// size (T1476). This is the blink, counted: one displayed frame in which the
 /// pane holds content for a size it no longer is.
@@ -8529,7 +8536,17 @@ pub fn layoutSplits(self: *Window) void {
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&batch_t0);
     if (self.hwnd) |h| resizeTrace("batch-begin", h);
     resizeTraceGrid();
+    // The elevated desk fill below wants the regions cut before it paints
+    // (T2516); a live batch cuts them ahead of its held resize work (T2732).
+    const desk_fill = self.applied_pane_style == .elevated;
+    self.cut_in_batch = desk_fill;
+    self.cut_in_batch_done = false;
+    defer {
+        self.cut_in_batch = false;
+        self.cut_in_batch_done = false;
+    }
     self.endPaneBatchFilled(hdwp);
+    self.cut_in_batch = false;
     if (self.hwnd) |h| resizeTrace("batch-end", h);
     if (resizeTraceOn()) {
         const nc = ViewerNavBar.place_cost;
@@ -8540,15 +8557,16 @@ pub fn layoutSplits(self: *Window) void {
         _ = w32.QueryPerformanceCounter(&batch_t1);
         stackTrace("stack trace batch qpc={d} end={d} plan={d} grid={d}", .{ batch_t0, batch_t1, plan_t0, plan_t1 });
     }
-    // The strip faces next, before the cut and the desk fill (T2485 D15 i).
+    // The strip faces next, before the desk fill (T2485 D15 i) - and before
+    // the cut too, unless the live batch already made it (T2732).
     defer self.strip_faces_placed = false;
     self.commitStripFacesEarly();
     if (self.hwnd) |h| resizeTrace("faces-end", h);
     // The regions first, when the desk fills what the panes left (T2516):
     // that paint clips to the children as they now stand, so the corners a
     // new cut gives back to the window are its to paint (`desk_paints_next`).
-    const desk_fill = self.applied_pane_style == .elevated;
-    if (desk_fill) self.cutCardRegions();
+    // A live batch cut them already, ahead of its held resizes.
+    if (desk_fill and !self.cut_in_batch_done) self.cutCardRegions();
     if (stackTraceOn()) {
         var cut_t1: i64 = 0;
         _ = w32.QueryPerformanceCounter(&cut_t1);
@@ -9277,6 +9295,21 @@ fn faceOrderLegacy() bool {
     };
     if (S.v) |v| return v;
     const v = if (std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_FACE_ORDER")) |s| blk: {
+        defer std.heap.page_allocator.free(s);
+        break :blk std.mem.eql(u8, s, "legacy");
+    } else |_| false;
+    S.v = v;
+    return v;
+}
+
+/// `GHOZTTY_CUT_ORDER=legacy` (T2732 A/B): cut the card regions after the
+/// held resize work and the strip faces, as before.
+fn cutOrderLegacy() bool {
+    const S = struct {
+        var v: ?bool = null;
+    };
+    if (S.v) |v| return v;
+    const v = if (std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_CUT_ORDER")) |s| blk: {
         defer std.heap.page_allocator.free(s);
         break :blk std.mem.eql(u8, s, "legacy");
     } else |_| false;
@@ -10023,6 +10056,10 @@ fn endPaneBatchFilled(self: *Window, hdwp: ?w32.HDWP) void {
     endPaneBatch(hdwp);
     self.held_resizes_on = false;
     if (self.hwnd) |h| resizeTrace("defer-end", h);
+    if (self.cut_in_batch and !cutOrderLegacy()) {
+        self.cutCardRegions();
+        self.cut_in_batch_done = true;
+    }
     var held = self.held_resizes.take();
     if (stackTraceOn()) {
         var qpc: i64 = 0;

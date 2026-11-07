@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-07T04:42:54-08:00",
-    "commit":  "0f8fd91bc",
+    "generated":  "2026-11-07T05:02:01-08:00",
+    "commit":  "5f7b5a418",
     "uncommitted":  [
 
                     ],
@@ -457,7 +457,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "565ef6a755fd254fa93edadf54eec0929a83929b67d8406d661edb46f3c9afe9",
-                  "src/apprt/win32/Window.zig":  "e15453c302d2668d623a65eca35a4e9062972a4487f6699df672fcf318a79e34",
+                  "src/apprt/win32/Window.zig":  "afe4136a0f3b1be5139b9f59f89a2d7a1d48c2093e5d40c0ea9fab64cf1ddcc1",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
                   "src/apprt/win32/window_broadcast.zig":  "9aaf66d945d0899628ede661e9e40f04f55551342659448b62aee06b979b1e4e",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
@@ -584,7 +584,7 @@
                   "src/cli/view_arg.zig":  "e743f118fc97e7c676b7fc40e2448b0285439e956a8131bdb03bc5faa0697cbf",
                   "src/Command.zig":  "8778edb17bc58923a1ab18e285628550a5cf1420f5633154396861b8c290646f",
                   "src/CommandCore.zig":  "61295086bf7728c47980421f44eb2e00a4a2ffc85c3c0c277a94e35b793ee50a",
-                  "src/comp_spike_main.zig":  "fca956ca400cc842e03ac1b39d2a6289b0b89f91655955ed5b09f2a1cd5bd031",
+                  "src/comp_spike_main.zig":  "c8444b3b5b655a47133479f4032c2ae8ab192f0ec77d630ed606db67a6dbd861",
                   "src/config.zig":  "04bd8f6a2f2db2c17ebed4e0a60c0391473e83161b8f0d9bd0a2bacb8b05f74d",
                   "src/config/c_get.zig":  "abffc60fc3226ae8bfb52b9a8a94ed7fcef37069806fe5bbae84288508654985",
                   "src/config/CApi.zig":  "351db3cfc1a1cee620c26598b249910a5ce970b81a706f7d69ecb49b8acc4995",
