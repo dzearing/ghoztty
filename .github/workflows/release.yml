@@ -142,8 +142,21 @@ jobs:
 
           xcrun notarytool submit "$DMG_NAME" --keychain-profile "notarytool-profile" --wait
 
-          xcrun stapler staple "$DMG_NAME"
-          xcrun stapler staple "macos/build/ReleaseLocal/Ghoztty.app"
+          # Stapling fetches the ticket from Apple's CloudKit seconds after
+          # notarization is accepted, and that fetch often drops ("network
+          # connection was lost", error 68) before the ticket propagates. It
+          # cost v1.51.0, v1.53.0, v1.54.0 and v1.54.1 manual re-runs, so retry
+          # with backoff instead of failing the whole build.
+          staple() {
+            for delay in 15 30 60 120; do
+              xcrun stapler staple "$1" && return 0
+              echo "::warning::stapling $1 failed; retrying in ${delay}s"
+              sleep "$delay"
+            done
+            xcrun stapler staple "$1"
+          }
+          staple "$DMG_NAME"
+          staple "macos/build/ReleaseLocal/Ghoztty.app"
 
       - name: Download Sparkle tools
         run: |

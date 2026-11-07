@@ -1,8 +1,8 @@
 {
     "guard":  "neuter-audit",
     "script":  "test/win32/neuter-audit.ps1",
-    "generated":  "2026-11-07T14:23:59-08:00",
-    "commit":  "83ed1f361",
+    "generated":  "2026-11-07T15:36:11-08:00",
+    "commit":  "3063f2e4b",
     "uncommitted":  [
 
                     ],
@@ -57,6 +57,7 @@
                   "src/apprt/win32/brush_cache.zig":  "6ca6b43b601eb13b29ace632ea449ab7e6c1a5e9133847d29c51f21a69483a78",
                   "src/apprt/win32/busy_light.zig":  "a6573cd9d166705097cadf69bc7a19316b04edc98136f92234842ccb07f226ce",
                   "src/apprt/win32/caption_layout.zig":  "787f2a9f6747b245d2eef7d3b5b089b5accd0ba43d61e319bb8885622f6beb44",
+                  "src/apprt/win32/child_comp.zig":  "d14e007155c51d827355e59aadbe58b9d875a1209e0ba53df6d5c87449778a9a",
                   "src/apprt/win32/chooser_cpu.zig":  "8aecf1253b878bcb951b7928f7244718e59f9ac10ae626dfb9ffddee6e7d06bd",
                   "src/apprt/win32/chooser_help.zig":  "b886379f026f9de00a4411270464122322200e2eebc1385961bc821408c6bfe9",
                   "src/apprt/win32/chooser_layout.zig":  "a76bcd60ab3371f126e7873989c7b2a1f9060fe4b72d1a12d7ef89490d19639e",
@@ -230,7 +231,7 @@
                   "src/apprt/win32/PaneDragGhost.zig":  "75cb6d32f4313912ab7ddcd73a624140ca91ae60ca583fccd5f5f1d69658fea2",
                   "src/apprt/win32/PaneGrabHandle.zig":  "959df18a9af052cb606f2e4b5d9e5aa196a1e5a83c53e238103bcb407907ab4e",
                   "src/apprt/win32/panel_theme.zig":  "caf0cd7e30f705d17e3590985e3fa51a7a3a32f90b619fd38e51b932a6c7a134",
-                  "src/apprt/win32/PaneSidebar.zig":  "1a1da1f04279f40f98e4d97fb29b571c137edc8fd5eaabd19916c27c2442a124",
+                  "src/apprt/win32/PaneSidebar.zig":  "8641c68eed47923d1116bfa2f819d9d1d447cbddd7d8c7bfa55b449b45910905",
                   "src/apprt/win32/PaneView.zig":  "3f63cca46c37110e3dbcd5128ba8c27138824a2bdb2ff50164fbf9b88c05d877",
                   "src/apprt/win32/PathInstaller.zig":  "77ee61d5ba639eb627756e917077c3de09b6f77c1fd2440fb707b1a7a9e5d2e5",
                   "src/apprt/win32/persistence_notice.zig":  "65baba4beff952a6d9d9f9753a3bf254bc8f050a6d7430978339ebf9ec848840",

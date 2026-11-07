@@ -112,28 +112,63 @@ Ghoztty registers itself with AI coding agents (Claude Code and Copilot CLI) via
 ### Superseding the standalone Claude plugin
 
 These skills previously shipped as a standalone Claude Code plugin
-([dzearing/ghoztty-claude-plugin](https://github.com/dzearing/ghoztty-claude-plugin)),
-which the app now supersedes — one repo for the skill and the CLI it documents,
-so the two cannot drift. Two mechanisms handle the overlap:
+(`ghoztty-claude-plugin`, since retired), which the app now supersedes: one repo
+for the skill and the CLI it documents, so the two cannot drift. Two mechanisms
+handle the overlap:
 
 - **Coexistence.** `RuntimeIntegrationFactory.isPluginManaged` gates **both**
   the skills and the hooks component for Claude, so while the plugin is
-  installed Ghoztty writes nothing into `~/.claude` and reports `plugin already
+  registered Ghoztty writes nothing into `~/.claude` and reports `plugin already
   present`. Detection **parses** `installed_plugins.json` and matches the plugin
-  name (the part before `@`) across every marketplace it is registered under —
+  name (the part before `@`) across every marketplace it is registered under,
   never a substring match over the file, which false-positives on any unrelated
-  plugin installed from a ghoztty checkout.
-- **Migration.** `ClaudePluginMigration` hands the integration over on the first
-  launch after updating: one dialog, then it uninstalls each registration via
-  **Claude's own `claude plugin uninstall`** (never by deleting from
-  `~/.claude/plugins/cache`, which is Claude Code's package-manager state),
-  copies the plugin's per-tty banner state from `~/.claude/ghoztty-banner/` into
-  `~/.config/ghoztty/banner-state/` without overwriting, and removes the now-
-  unmaintained `~/.claude/scripts/ghoztty-banner.sh` symlink. Uninstall runs
-  first, so a failure leaves the user exactly where they started. The prompt is
-  retired by being *answered*, not by succeeding, so a failed run cannot become
-  a nag; `AgentIntegrationsController` is the retry path. Debug builds skip the
-  whole thing unless `GHOZTTY_TEST_PLUGIN_MIGRATION` is set, since they run
+  plugin installed from a ghoztty checkout. The gate reads a file, so it cannot
+  tell a working plugin from a dead registration. That is the next mechanism's
+  job.
+- **Launch cleanup.** `ClaudePluginMigration.settleOnLaunch` runs on **every**
+  launch, because the plugin can come back after the hand-over (an old
+  `dzearing-skills` dependency reinstalled it). `claude plugin list --json`
+  decides each registration's health:
+
+  | Registration | Choice | What happens |
+  |---|---|---|
+  | Dead: `plugin-not-found`, or any load error under the retired marketplace | any | Removed silently. A dead plugin supplies nothing, so "Keep Plugin" has nothing to protect. |
+  | Loads | `kept` | Left alone, along with its marketplace. |
+  | Loads | `switched` | Removed silently. It came back on its own. |
+  | Loads | none recorded | One dialog, whose answer is recorded in `ClaudePluginMigrationChoice`. |
+  | Any other error, or `claude` unavailable | any | Nothing. It may be transient, so the next launch decides. |
+
+  `ClaudePluginMigrationAnswered` cannot say which way a user answered, so
+  someone who answered before the choice was recorded and still has a working
+  plugin is asked once more. Only the dialog waits for the CLI prompt, so a
+  fresh install cannot stack two modals.
+
+  Removal goes through **Claude's own CLI**, never by deleting from
+  `~/.claude/plugins/cache`, which is Claude Code's package-manager state. The
+  CLI has edges this relies on:
+
+  - `claude plugin uninstall` works when the marketplace no longer lists the
+    plugin, and clears its `enabledPlugins` key too. For a key with no manifest
+    entry it fails with `not_installed`, so that goes through `claude plugin
+    disable --scope user`, which leaves it `false`.
+  - `claude plugin marketplace remove` also uninstalls every plugin under that
+    marketplace, so it waits until no registration is left there. Until it runs,
+    `claude plugin marketplace update` keeps cloning the retired repo.
+  - That command cannot remove an entry only `extraKnownMarketplaces` declares
+    (`not_configured`), so such an entry stays. It is inert: neither a startup
+    nor `marketplace update` clones it.
+
+  Uninstall runs before anything else, so a failure leaves the plugin in charge.
+  `migrateBannerState` then copies the plugin's per-tty banner state from
+  `~/.claude/ghoztty-banner/` into `~/.config/ghoztty/banner-state/` without
+  overwriting, and the now-unmaintained `~/.claude/scripts/ghoztty-banner.sh`
+  symlink is removed.
+
+  Once no registration is left, an `.outdated` integration is refreshed, and
+  this launch step is the only thing that keeps Claude's skills and hooks
+  current with the app. `.notInstalled` is left alone, since that is what the
+  panel's Uninstall leaves, unless a plugin was just removed. Debug builds skip
+  all of this unless `GHOZTTY_TEST_PLUGIN_MIGRATION` is set, since they run
   beside the user's real install.
 
 When re-vendoring skills from a newer plugin release, the copy is a **rewrite**:
