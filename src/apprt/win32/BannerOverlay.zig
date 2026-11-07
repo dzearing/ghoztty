@@ -32,6 +32,7 @@
 //! measurement, and painting.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const w32 = @import("win32.zig");
 const FrameClock = @import("FrameClock.zig");
 const pane_clip = @import("pane_clip.zig");
@@ -332,6 +333,11 @@ pub const BannerOverlay = struct {
         seq_at: std.time.Instant,
         /// Frames the terminal presented while the copy was up.
         frames: u32 = 0,
+        /// The copy's glide was declared to the compositor (T2763) and the
+        /// tick only watches for the release.
+        compositor: bool = false,
+        /// Ticks that moved the copy on this thread (the stepped path).
+        ui_steps: u32 = 0,
     } = null,
     hinstance: w32.HINSTANCE,
     /// Expanded content height in px (excludes padding), lazily computed;
@@ -3061,7 +3067,53 @@ pub const BannerOverlay = struct {
         // T2261 oracle: an unfocused pane's dim is stacked over the copy, as
         // Mac stacks it over its frozen terminal.
         log.debug("banner glide dim={s}", .{@tagName(self.freeze.dimOver(self.owner, dim))});
-        _ = FrameClock.arm(self.hwnd, GLIDE_TIMER_ID, banner_layout.COLLAPSE_TICK_MS);
+        if (self.freeze.on_visual and self.declareGlide(delta)) {
+            // DWM moves the copy (T2763). What is left on this thread is the
+            // release, which waits on the terminal, not on the display: a
+            // plain timer, not the frame clock.
+            self.glide.?.compositor = true;
+            _ = w32.SetTimer(self.hwnd, GLIDE_TIMER_ID, banner_layout.COLLAPSE_TICK_MS, null);
+        } else {
+            _ = FrameClock.arm(self.hwnd, GLIDE_TIMER_ID, banner_layout.COLLAPSE_TICK_MS);
+        }
+        glideDebugStall();
+    }
+
+    /// Declare the visual copy's whole glide to the compositor (T2763), on
+    /// the card's clock: the part of it the capture already used is skipped,
+    /// so the copy is exactly as far along as the card. False: the caller
+    /// steps it.
+    fn declareGlide(self: *BannerOverlay, delta: i32) bool {
+        // `GHOZTTY_DEBUG_BANNER_GLIDE_STEPPED=1` (debug builds): step the
+        // visual copy on this thread instead - the oracle's A/B arm.
+        if (comptime builtin.mode == .Debug) {
+            if (std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DEBUG_BANNER_GLIDE_STEPPED")) return false;
+        }
+        const g = self.glide orelse return false;
+        const now = std.time.Instant.now() catch return false;
+        const elapsed_s = @as(f64, @floatFromInt(now.since(g.start))) / std.time.ns_per_s;
+        const dur_s: f64 = banner_layout.COLLAPSE_MS / 1000.0;
+        if (!self.freeze.glideOnCompositor(delta, elapsed_s, dur_s)) {
+            log.warn("banner glide could not go on the compositor; stepping it", .{});
+            return false;
+        }
+        // comp-present.ps1's T2763 oracle: the glide was handed over whole.
+        log.info("banner glide on compositor delta={d} ms={d} skipped_ms={d}", .{ delta, @as(u32, @intFromFloat(banner_layout.COLLAPSE_MS)), @as(u32, @intFromFloat(elapsed_s * 1000)) });
+        return true;
+    }
+
+    /// `GHOZTTY_DEBUG_BANNER_GLIDE_STALL_MS=<n>` (debug builds, T2763): block
+    /// this thread for n ms the moment a glide starts - the oracle's stand-in
+    /// for a busy UI thread. A compositor glide moves through it; a stepped
+    /// one freezes.
+    fn glideDebugStall() void {
+        if (comptime builtin.mode != .Debug) return;
+        const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_DEBUG_BANNER_GLIDE_STALL_MS") catch return;
+        defer std.heap.page_allocator.free(raw);
+        const ms = std.fmt.parseInt(u32, std.mem.trim(u8, raw, " \t\r\n"), 10) catch return;
+        if (ms == 0) return;
+        log.info("banner glide debug stall ms={d}", .{ms});
+        std.Thread.sleep(@as(u64, @min(ms, 5000)) * std.time.ns_per_ms);
     }
 
     /// The pane's unfocused dim, when it is on screen: the frozen copy goes
@@ -3080,6 +3132,8 @@ pub const BannerOverlay = struct {
         self.freeze.hide();
         const ms = if (std.time.Instant.now()) |now| now.since(g.start) / std.time.ns_per_ms else |_| 0;
         log.debug("banner glide end reason={s} ms={} frames={}", .{ reason, ms, g.frames });
+        // comp-present.ps1's T2763 oracle: who moved the copy.
+        log.info("banner glide done compositor={} ui_steps={d}", .{ g.compositor, g.ui_steps });
     }
 
     /// One step of the glide (T2252): move the copy with the card, and once
@@ -3095,6 +3149,7 @@ pub const BannerOverlay = struct {
         const now = std.time.Instant.now() catch return self.endGlide("no-clock");
         const p = self.collapseProgress();
         const off = banner_glide.offset(g.delta, p orelse 1.0);
+        if (!g.compositor and off != self.freeze.offset) g.ui_steps +%= 1;
         if (self.freeze.on_visual)
             self.freeze.updateVisual(off, s.gridBand())
         else

@@ -50,6 +50,9 @@ vis_px: []u32 = &.{},
 vis_pad: u32 = 0,
 /// Is the copy the visual (rather than the popup) right now?
 on_visual: bool = false,
+/// The visual copy's glide was declared to the compositor (T2763): DWM moves
+/// it, and `updateVisual` only re-seats it when the band moves under it.
+on_compositor: bool = false,
 
 pub fn init(alloc: std.mem.Allocator) BannerFreeze {
     return .{ .alloc = alloc };
@@ -169,9 +172,15 @@ fn placeVisual(self: *BannerFreeze, s: *comp_overlay.Slot, w: u32, h: u32, img_t
     self.img_top = img_top;
     self.offset = 0;
     self.vis_pad = pad;
+    self.on_compositor = false;
     // Placed before it is attached, so its first composited frame is in the
-    // right place.
-    if (!self.layer.setOffset(0, banner_glide.visualTop(img_top, 0, pad, band))) return false;
+    // right place. The band the tree's root hangs at is carried by the
+    // transform's shift, apart from the glide's offset (T2763), so the glide
+    // can be one compositor animation while the band moves under it.
+    if (!self.layer.setShiftY(bandShift(band))) return false;
+    if (!self.layer.setOffset(0, banner_glide.visualTop(img_top, 0, pad, 0))) return false;
+    // Whole pixels mid-glide, as the stepped path's rounded offsets give.
+    _ = self.layer.setNearest();
     if (!self.layer.setPixels(self.vis_px, w, rows)) return false;
     self.layer.setVisible(false);
     self.layer.attach(.back);
@@ -185,8 +194,39 @@ fn placeVisual(self: *BannerFreeze, s: *comp_overlay.Slot, w: u32, h: u32, img_t
 /// has to hold its place in the window across that.
 pub fn updateVisual(self: *BannerFreeze, offset: i32, band: u32) void {
     if (!self.on_visual) return;
+    // The band moving under it is one static shift, never a glide step.
+    _ = self.layer.setShiftY(bandShift(band));
+    // On the compositor DWM is moving it (T2763); nothing else to do here.
+    if (self.on_compositor) return;
     self.offset = offset;
-    _ = self.layer.setOffset(0, banner_glide.visualTop(self.img_top, offset, self.vis_pad, band));
+    _ = self.layer.setOffset(0, banner_glide.visualTop(self.img_top, offset, self.vis_pad, 0));
+}
+
+/// The transform shift that holds the copy's place in the pane WINDOW while
+/// the tree's root hangs `band` px below the window's top (T2566).
+fn bandShift(band: u32) i32 {
+    return -@as(i32, @intCast(band));
+}
+
+/// Hand the visual copy's whole glide to the compositor (T2763): `delta` px
+/// along the card's ease over `duration_s`, of which `elapsed_s` has already
+/// gone by (the capture ran on the card's clock), declared once and played
+/// by DWM. False: nothing was declared, and the caller steps it with
+/// `updateVisual` as before.
+pub fn glideOnCompositor(self: *BannerFreeze, delta: i32, elapsed_s: f64, duration_s: f64) bool {
+    if (!self.on_visual or !self.layer.attached) return false;
+    const left = duration_s - elapsed_s;
+    if (left <= 0) return false;
+    var segs: [comp_overlay.ease_segments]comp_overlay.Cubic = undefined;
+    comp_overlay.fitCurve(banner_glide.easeF64, duration_s, &segs);
+    var buf: [comp_overlay.ease_segments]comp_overlay.Cubic = undefined;
+    const tail = comp_overlay.tailOf(&segs, elapsed_s, &buf);
+    const from: f32 = @floatFromInt(banner_glide.visualTop(self.img_top, 0, self.vis_pad, 0));
+    const to: f32 = @floatFromInt(banner_glide.visualTop(self.img_top, delta, self.vis_pad, 0));
+    if (!self.layer.animateOffsetY(from, to, tail, left)) return false;
+    self.on_compositor = true;
+    self.offset = delta;
+    return true;
 }
 
 /// Move the copy along its glide and the mask with the card's edge.
@@ -241,6 +281,7 @@ test "BannerFreeze: the T2261 negative control ships clear" {
 }
 
 pub fn hide(self: *BannerFreeze) void {
+    self.on_compositor = false;
     if (self.on_visual) {
         self.on_visual = false;
         // Let go of the whole visual, not just detach it: its surface is a

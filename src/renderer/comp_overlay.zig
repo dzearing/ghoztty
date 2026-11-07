@@ -169,6 +169,7 @@ const slot_anim_end = 8;
 // SetOffsetY(animation) 5, SetOffsetY(float) 6 - the same overload order as
 // SetTransform(transform) 7, SetTransform(matrix) 8.
 const slot_visual_set_offset_x_float = 4;
+const slot_visual_set_offset_y_anim = 5;
 const slot_visual_set_offset_y_float = 6;
 const slot_visual_set_transform_matrix = 8;
 const slot_visual_set_effect = 10;
@@ -352,6 +353,38 @@ pub fn followerAt(dist_px: f64, tau_s: f64, snap_px: f64, t_s: f64) f64 {
     return (1 - @exp(-t_s / tau_s)) / (1 - snap_px / d);
 }
 
+/// The part of `curve` from `from_s` on, re-based so it starts at 0 (T2763):
+/// what is left of a motion that began `from_s` seconds before it could be
+/// declared. The segment `from_s` falls in is re-expanded about that point
+/// (an exact Taylor shift of its cubic), the ones after it move earlier by
+/// `from_s`, and the ones before it are dropped. Returns the used prefix of
+/// `out` (at least as long as `curve`); empty when nothing is left.
+pub fn tailOf(curve: []const Cubic, from_s: f64, out: []Cubic) []Cubic {
+    if (curve.len == 0) return out[0..0];
+    const t = @max(from_s, 0);
+    var first: usize = 0;
+    for (curve, 0..) |c, i| {
+        if (c.begin_s <= t) first = i;
+    }
+    const n = curve.len - first;
+    for (curve[first..], 0..) |c, i| {
+        if (i == 0) {
+            const s = t - c.begin_s;
+            out[0] = .{
+                .begin_s = 0,
+                .c0 = c.at(t),
+                .c1 = c.c1 + s * (2 * c.c2 + 3 * c.c3 * s),
+                .c2 = c.c2 + 3 * c.c3 * s,
+                .c3 = c.c3,
+            };
+        } else {
+            out[i] = c;
+            out[i].begin_s = c.begin_s - t;
+        }
+    }
+    return out[0..n];
+}
+
 /// A curve's slope at `t`, one-sided at the ends so it never samples
 /// outside 0..1 (where an ease is clamped flat).
 fn slope(curve: *const fn (f64) f64, t: f64) f64 {
@@ -378,6 +411,8 @@ pub const Layer = struct {
     /// The visual's offset in the pane (`setOffset`); a new visual is at 0,0.
     offset_x: i32 = 0,
     offset_y: i32 = 0,
+    /// The transform's vertical shift (`setShiftY`); a new visual has none.
+    shift_y: i32 = 0,
 
     /// Bring the layer onto the slot's current tree. False: nothing is
     /// published (the pane presents with SwapBuffers), so the caller uses its
@@ -477,6 +512,59 @@ pub const Layer = struct {
         self.offset_y = y;
         self.commit();
         return true;
+    }
+
+    /// Hand a whole vertical move to the compositor (T2763): the visual's
+    /// offset Y runs `from` -> `to` (pane px) along `curve` (0..1 units, from
+    /// `fitCurve`, or a `tailOf` one) over `duration_s`, declared in one
+    /// commit and then played by DWM at the display's refresh. The X offset
+    /// is left where it is. False: nothing was declared and the caller steps
+    /// the move itself with `setOffset`.
+    pub fn animateOffsetY(self: *Layer, from: f32, to: f32, curve: []const Cubic, duration_s: f64) bool {
+        if (comptime builtin.os.tag != .windows) return false;
+        const d = self.dev orelse return false;
+        const vis = self.visual orelse return false;
+        var made: ?Obj = null;
+        if (!ok(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, d.dcomp, slot_dcomp_create_animation)(d.dcomp, &made))) return false;
+        const anim = made orelse return false;
+        // The visual keeps its own snapshot of the function once it is set.
+        defer comRelease(anim);
+        const span: f64 = @as(f64, to) - @as(f64, from);
+        const add = slot(*const fn (Obj, f64, f32, f32, f32, f32) callconv(.winapi) HRESULT, anim, slot_anim_add_cubic);
+        for (curve) |c| {
+            if (!ok(add(anim, c.begin_s, @floatCast(@as(f64, from) + span * c.c0), @floatCast(span * c.c1), @floatCast(span * c.c2), @floatCast(span * c.c3)))) return false;
+        }
+        if (!ok(slot(*const fn (Obj, f64, f32) callconv(.winapi) HRESULT, anim, slot_anim_end)(anim, @max(duration_s, 0), to))) return false;
+        if (!ok(slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, vis, slot_visual_set_offset_y_anim)(vis, anim))) return false;
+        // Where the move lands: a later static `setOffset` to it is a no-op.
+        self.offset_y = @intFromFloat(@round(to));
+        self.commit();
+        return true;
+    }
+
+    /// A static vertical shift on top of the offset (T2763), carried by the
+    /// visual's transform so it composes with an `animateOffsetY` in flight
+    /// instead of replacing it: a moving copy can hold its place in the
+    /// window while its parent moves under it. Not for a `cover` layer, whose
+    /// transform is its stretch.
+    pub fn setShiftY(self: *Layer, dy: i32) bool {
+        if (comptime builtin.os.tag != .windows) return false;
+        const vis = self.visual orelse return false;
+        if (dy == self.shift_y) return true;
+        const m: Matrix3x2 = .{ .dy = @floatFromInt(dy) };
+        if (!ok(slot(*const fn (Obj, *const Matrix3x2) callconv(.winapi) HRESULT, vis, slot_visual_set_transform_matrix)(vis, &m))) return false;
+        self.shift_y = dy;
+        self.commit();
+        return true;
+    }
+
+    /// Sample the pixels without filtering (T2763): a layer moved by a
+    /// fractional offset mid-animation lands on whole pixels instead of
+    /// blurring text between two rows.
+    pub fn setNearest(self: *Layer) bool {
+        if (comptime builtin.os.tag != .windows) return false;
+        const vis = self.visual orelse return false;
+        return ok(slot(*const fn (Obj, u32) callconv(.winapi) HRESULT, vis, slot_visual_set_bitmap_interpolation_mode)(vis, DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR));
     }
 
     /// Whole-layer opacity, the popup path's `SourceConstantAlpha`.
@@ -732,6 +820,37 @@ test "uploadBox places the pixels at the BeginDraw offset" {
 fn smoothstep(t: f64) f64 {
     const c = std.math.clamp(t, 0, 1);
     return c * c * (3 - 2 * c);
+}
+
+/// The value of a piecewise curve at `t_s`: the last segment begun by then.
+fn curveAt(curve: []const Cubic, t_s: f64) f64 {
+    var i: usize = 0;
+    for (curve, 0..) |c, j| {
+        if (c.begin_s <= t_s) i = j;
+    }
+    return curve[i].at(t_s);
+}
+
+test "tailOf: the rest of a curve from a point is the same curve, re-based to 0 (T2763)" {
+    var segs: [ease_segments]Cubic = undefined;
+    fitCurve(smoothstep, 0.18, &segs);
+    var buf: [ease_segments]Cubic = undefined;
+    // Mid-segment, on a boundary, at 0 and past the end.
+    for ([_]f64{ 0.0, 0.0225, 0.05, 0.1234, 0.17, 0.2 }) |from| {
+        const tail = tailOf(&segs, from, &buf);
+        try std.testing.expect(tail.len >= 1 and tail.len <= segs.len);
+        try std.testing.expectEqual(@as(f64, 0), tail[0].begin_s);
+        var k: usize = 0;
+        while (k <= 40) : (k += 1) {
+            const u = 0.18 * @as(f64, @floatFromInt(k)) / 40.0;
+            if (u < from) continue;
+            try std.testing.expectApproxEqAbs(curveAt(&segs, u), curveAt(tail, u - from), 1e-9);
+        }
+    }
+    // From the start: the whole curve, untouched.
+    try std.testing.expectEqual(segs.len, tailOf(&segs, 0, &buf).len);
+    // An empty curve has no tail.
+    try std.testing.expectEqual(@as(usize, 0), tailOf(&.{}, 0.1, &buf).len);
 }
 
 test "fitCurve: segments tile the duration, are C0 at every joint and land on the curve" {

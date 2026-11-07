@@ -41,6 +41,16 @@ pub fn offset(delta: i32, linear: f32) i32 {
     return @intFromFloat(@round(d * p));
 }
 
+/// `offset`'s ease as an f64 curve (T2763), the shape the compositor glide
+/// is fitted to (`comp_overlay.fitCurve`), so DWM moves the copy along the
+/// same path the stepped glide rounds to.
+pub fn easeF64(t: f64) f64 {
+    const c = std.math.clamp(t, 0, 1);
+    if (c < 0.5) return 4 * c * c * c;
+    const u = -2 * c + 2;
+    return 1 - (u * u * u) / 2;
+}
+
 /// The height the grid will be resized to: the surface gives up (or takes
 /// back) exactly what the band gains (or loses). Never below one pixel.
 pub fn resizedHeight(old_h: i32, old_inset: i32, new_inset: i32) u32 {
@@ -175,6 +185,16 @@ test "offset: exact endpoints, eased between, never past the travel" {
     }
     // Eased, not linear: a quarter of the way through is well short of 25.
     try std.testing.expect(offset(100, 0.25) < 25);
+}
+
+test "easeF64: the stepped glide's ease, so both paths run one path (T2763)" {
+    var i: usize = 0;
+    while (i <= 100) : (i += 1) {
+        const t: f32 = @as(f32, @floatFromInt(i)) / 100.0;
+        try std.testing.expectApproxEqAbs(@as(f64, hero_math.easeInOutCubic(t)), easeF64(t), 1e-5);
+    }
+    try std.testing.expectEqual(@as(f64, 0), easeF64(-1));
+    try std.testing.expectEqual(@as(f64, 1), easeF64(2));
 }
 
 test "resizedHeight: the surface trades height with the band" {

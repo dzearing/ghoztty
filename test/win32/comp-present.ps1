@@ -720,6 +720,11 @@ try {
             if ($ge) { $r.GlideEnd = $ge.Groups[1].Value }
             $gc = Last-Match $m.Arm.Err 'banner glide copy=(\w+)'
             if ($gc) { $r.GlideCopy = $gc.Groups[1].Value }
+            # T2763: who moved the copy, and whether it was handed over whole.
+            [void](Wait-Log $m.Arm.Err 'banner glide done compositor=' 1500)
+            $gd = Last-Match $m.Arm.Err 'banner glide done compositor=(true|false) ui_steps=(\d+)'
+            if ($gd) { $r.GlideMover = "compositor=$($gd.Groups[1].Value) ui_steps=$($gd.Groups[2].Value)" }
+            $r.GlideDeclared = (Count-Log $m.Arm.Err 'banner glide on compositor delta=-?\d+ ms=180 skipped_ms=\d+') -gt 0
         }
         # Read-only badge.
         [void](Send-TestKeys -Window $m.Top -Target $hw -Modifiers ctrl, shift -Key O)
@@ -790,6 +795,17 @@ try {
         ($jOn.GlideEnd -eq 'landed' -and $jOff.GlideEnd -eq 'landed')
     Assert "J9 knob on a click on the card's visual toggles it and the copy is a visual, knob off a popup (toggled=$($jOn.Toggled) on=$($jOn.GlideCopy) off=$($jOff.GlideCopy))" `
         ($jOn.Toggled -and $jOn.GlideCopy -eq 'visual' -and $jOff.GlideCopy -eq 'popup')
+    # T2763: knob on, the visual copy's whole glide is declared to the
+    # compositor once and DWM moves it - no tick of this thread steps it. Knob
+    # off the popup copy is still stepped, as before. The A/B arm
+    # GHOZTTY_DEBUG_BANNER_GLIDE_STEPPED=1 steps the visual copy and reddens
+    # exactly J10/J11.
+    Assert "J10 knob on the visual copy's glide was declared to the compositor (log)" ($jOn.GlideDeclared -eq $true)
+    # (This collapse's travel is delta=0 - the grid's row shift cancels the
+    # inset change - so knob off has nothing to step either; what tells the
+    # arms apart is who owned the move.)
+    Assert "J11 ... and no tick moved it on the UI thread, while knob off the popup stays on this thread (on=$($jOn.GlideMover) off=$($jOff.GlideMover))" `
+        ($jOn.GlideMover -eq 'compositor=true ui_steps=0' -and $jOff.GlideMover -match '^compositor=false ui_steps=\d+$')
 
     # ========================================================================
     "== K: the banner is a child visual of the pane, hit-tested by the pane (T2559)"
