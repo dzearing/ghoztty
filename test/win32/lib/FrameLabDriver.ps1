@@ -626,7 +626,7 @@ function New-FrameLabLiveDriver {
 
     $score = {
         param($Capture, $Frames, $Gesture, $Played, $Scene)
-        $sc = Get-FrameLabSceneScore -Scorer $Scene.Scorer -Capture $Capture -Gesture $Gesture -Played $Played -Delta $Scene.Delta -ExpectMaximized:([bool]$Scene.Maximizes)
+        $sc = Get-FrameLabSceneScore -Scorer $Scene.Scorer -Capture $Capture -Gesture $Gesture -Played $Played -Delta $Scene.Delta -ExpectMaximized:([bool]$Scene.Maximizes) -ExpectStates:([bool]$Scene.PaneSet)
         $png = @{}
         foreach ($t in @($Capture.Timeline)) { if ($t.Png) { $png[[long]$t.Index] = [string]$t.Png } }
         $root = $script:FrameLabLive.RunDir.TrimEnd('\') + '\'
@@ -640,7 +640,7 @@ function New-FrameLabLiveDriver {
                         })
                 }
             })
-        return [pscustomobject]@{ BleedFrames = $sc.BleedFrames; Frames = $frames; Motion = $sc.Motion; MotionMisses = @($sc.MotionMisses); Scored = $sc.Scored; MaximizedFrames = $sc.MaximizedFrames }
+        return [pscustomobject]@{ BleedFrames = $sc.BleedFrames; Frames = $frames; Motion = $sc.Motion; MotionMisses = @($sc.MotionMisses); Scored = $sc.Scored; MaximizedFrames = $sc.MaximizedFrames; StateFrames = $sc.StateFrames }
     }
 
     return @{
@@ -650,10 +650,10 @@ function New-FrameLabLiveDriver {
         StartCapture = $startCapture
         StopCapture  = $stopCapture
         Play         = $play
-        # Trigger cells are not driven live yet (T2727 owns the scenes the
-        # rest of them need): a cell that fires nothing reads skipped, with
-        # the reason.
-        Fire         = { param($Plan) [pscustomobject]@{ Skipped = $true; SkipReason = 'trigger cells are not driven live yet (T2727)'; Aborted = $false } }
+        # Trigger cells are not driven live yet: their scenes exist (T2727),
+        # firing the plan and taking each pane-set state's still is T2784. A
+        # cell that fires nothing reads skipped, with the reason.
+        Fire         = { param($Plan) [pscustomobject]@{ Skipped = $true; SkipReason = 'trigger cells are not driven live yet (T2784)'; Aborted = $false } }
         Score        = $score
         # T2650: the app's own word that the display was occluded (lib\OccludedDisplay.ps1).
         Occluded     = { param($Scene) Get-OccludedDisplayLine -LogPath (Join-Path $Scene.Dir 'app.log') }

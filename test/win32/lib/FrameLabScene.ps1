@@ -55,7 +55,7 @@ using System.Diagnostics;
 // One edge that moves during an interaction.
 public sealed class GfsEdge {
     public string Name = "";
-    public string Kind = "";            // window-left | window-top | window-right | window-bottom | divider | sidebar-edge
+    public string Kind = "";            // window-left | window-top | window-right | window-bottom | divider | sidebar-edge | pane-top
     public bool Vertical = true;        // a vertical edge (an x), scanned along rows
     public int[] Lines = new int[0];    // the rows (Vertical) or columns scanned
     public int From, To;                // scan range along each line, From toward To, inclusive
@@ -117,6 +117,10 @@ public sealed class GfsRecord {
     public long Index, Qpc;
     public bool Failing;
     public bool Maximized;              // every Open edge sat on its boundary (T2398)
+    // T2727: which pane set the frame was scored against - 0 the scorer's own
+    // (the one the run starts on), k its States[k-1]. A failing frame carries
+    // the state that came closest (fewest findings).
+    public int State;
     public double[] Edges;              // per GfsSceneScorer.Edges, NaN = not located
     public FsFinding[] Findings;        // failing frames only
     public double Ms;                   // scoring time
@@ -246,6 +250,14 @@ public sealed class GfsSceneScorer {
     }
 
     public bool MaxCalibrated;          // CalibrateMaximized succeeded
+
+    // T2727: the OTHER pane sets a trigger shows mid-run (hero, a second tab,
+    // a split), each its own calibrated scorer. A frame the scorer's own scene
+    // does not pass is scored against each in turn; the first that passes it
+    // is the frame's state, and a frame no state passes fails. Their records
+    // are never kept - every record lands here.
+    public readonly List<GfsSceneScorer> States = new List<GfsSceneScorer>();
+    public string StateName = "";
 
     // ---- the card layout (FrameLabCard's rules, in C#) ---------------------
 
@@ -439,8 +451,37 @@ public sealed class GfsSceneScorer {
 
     public GfsRecord ScoreFrame(FsFrame f, long index, long qpc) {
         var sw = Stopwatch.StartNew();
-        var rec = new GfsRecord();
+        int missingCount;
+        var rec = Evaluate(f, out missingCount);
+        if (rec.Failing && States.Count > 0) {
+            GfsRecord best = rec; int bestMiss = missingCount;
+            for (int k = 0; k < States.Count; k++) {
+                int m;
+                GfsRecord r = States[k].Evaluate(f, out m);
+                r.State = k + 1;
+                if (!r.Failing) { best = r; bestMiss = m; break; }
+                if (r.Findings.Length < best.Findings.Length) { best = r; bestMiss = m; }
+            }
+            // The edges recorded are always this scorer's, so a tracked edge
+            // indexes the same way whatever state the frame matched.
+            best.Edges = rec.Edges;
+            rec = best; missingCount = bestMiss;
+        }
         rec.Index = index; rec.Qpc = qpc;
+        sw.Stop();
+        rec.Ms = sw.Elapsed.TotalMilliseconds;
+        lock (gate) {
+            records.Add(rec);
+            Scored++;
+            if (rec.Failing) FailingCount++;
+            if (missingCount > 0) UnlocatedCount++;
+        }
+        return rec;
+    }
+
+    // One frame against this scorer's own scene, recording nothing.
+    public GfsRecord Evaluate(FsFrame f, out int missingCount) {
+        var rec = new GfsRecord();
         bool[] open;
         rec.Edges = LocateAll(f, out open);
         rec.Maximized = IsMaximized(open);
@@ -460,14 +501,7 @@ public sealed class GfsSceneScorer {
         }
         rec.Failing = res.Findings.Count > 0;
         if (rec.Failing) rec.Findings = res.Findings.ToArray();
-        sw.Stop();
-        rec.Ms = sw.Elapsed.TotalMilliseconds;
-        lock (gate) {
-            records.Add(rec);
-            Scored++;
-            if (rec.Failing) FailingCount++;
-            if (missing.Count > 0) UnlocatedCount++;
-        }
+        missingCount = missing.Count;
         return rec;
     }
 
@@ -536,12 +570,15 @@ scanned along columns.
 function New-FrameLabSceneEdge {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
-        [Parameter(Mandatory = $true)][ValidateSet('window-left', 'window-top', 'window-right', 'window-bottom', 'divider', 'sidebar-edge')][string]$Kind,
+        [Parameter(Mandatory = $true)][ValidateSet('window-left', 'window-top', 'window-right', 'window-bottom', 'divider', 'sidebar-edge', 'pane-top')][string]$Kind,
         [Parameter(Mandatory = $true)][int[]]$Lines,
         [Parameter(Mandatory = $true)][int]$From,
         [Parameter(Mandatory = $true)][int]$To,
         [Parameter(Mandatory = $true)][int]$Color,
         [switch]$Backdrop,
+        # T2727: scan until the pixel stops being -Color without it being a
+        # backdrop (pane-top: up a pane's padding column to whatever is above).
+        [switch]$Until,
         [switch]$Vertical,
         # T2398: -Open (a backdrop edge on the work area's boundary - see GfsEdge)
         # and the earlier edges whose displacement carries this one's scan.
@@ -556,7 +593,7 @@ function New-FrameLabSceneEdge {
     if ($Open -and -not $Backdrop) { throw "New-FrameLabSceneEdge: -Open is for a backdrop edge ($Name)" }
     $e = New-Object GfsEdge
     $e.Name = $Name; $e.Kind = $Kind; $e.Lines = $Lines; $e.From = $From; $e.To = $To
-    $e.Color = $Color; $e.Until = [bool]$Backdrop; $e.Vertical = [bool]$Vertical; $e.Tol = $Tol
+    $e.Color = $Color; $e.Until = [bool]$Backdrop -or [bool]$Until; $e.Vertical = [bool]$Vertical; $e.Tol = $Tol
     $e.Open = [bool]$Open
     if ($CarryX) { $e.CarryX = $CarryX }
     if ($CarryY) { $e.CarryY = $CarryY }

@@ -1,10 +1,13 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-07T01:30:18-08:00",
-    "commit":  "6af7f163b",
+    "generated":  "2026-11-07T02:28:50-08:00",
+    "commit":  "331744411",
     "uncommitted":  [
-                        "test/win32/go-loop-guard.ps1"
+                        "test/win32/frame-lab-live-scene.ps1",
+                        "test/win32/lib/FrameLabDriver.ps1",
+                        "test/win32/lib/FrameLabLiveScene.ps1",
+                        "test/win32/lib/FrameLabScene.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -176,7 +179,7 @@
                   "test/win32/frame-lab-card.ps1":  "2a1f0d5494a615a7eef2363b67e330be8c3fbba79f52f59fc76d72a6373ce7cd",
                   "test/win32/frame-lab-catalogue.ps1":  "120058a164916bc96adb7194be43299e5c1abcf29e27c31729ad4fbb74faef64",
                   "test/win32/frame-lab-input.ps1":  "87850410d5ef28bc397060cbea57e83ee026215e97e0adcaf0e63f002cabcb2b",
-                  "test/win32/frame-lab-live-scene.ps1":  "b207664f76b521c150ce08cb1b6dac54fd732abe1b00a73bca0322ea84cc4c90",
+                  "test/win32/frame-lab-live-scene.ps1":  "f8bda32a604f4889f881710c9b5d281f67f4e5c42b7a6da5575ef18643134cc5",
                   "test/win32/frame-lab-report.ps1":  "00354861a681dc69eea52acb01372631d4fd307ed85841421fa56c31e6815d73",
                   "test/win32/frame-lab-scene.ps1":  "2ed3fdcc10b378d720a4ef23d95bbcc1a58cd9eaddb2f920dc625a163ade0f8a",
                   "test/win32/frame-score.ps1":  "d98795f50fd5c8a171332eef326942ed62398f6f8e62601c1102716d240b89d9",
@@ -284,11 +287,11 @@
                   "test/win32/lib/FrameCapture.ps1":  "aa2c93fabf2ab32a181df3600b58141d39ebc7d6970280c92b4d7c7d57db1e4b",
                   "test/win32/lib/FrameLabCard.ps1":  "ab2e320bcc7db90e43429596eca1732f5dc924004a295659376eb401d49b8430",
                   "test/win32/lib/FrameLabCatalogue.ps1":  "a7f1cc92b0b7c69993ed3191b3510a44f0bf1f8c4222d15cd67502a79416ee26",
-                  "test/win32/lib/FrameLabDriver.ps1":  "a8d7a9f24f94cdfbe66768aa0ad58dedf40ab8d48b4af984a2c3e30ccea3ab75",
+                  "test/win32/lib/FrameLabDriver.ps1":  "80ec091bfc9d39e32a8b4fef2994c8c3050fb7fcb6970b8e992301fb6c5e9f46",
                   "test/win32/lib/FrameLabInput.ps1":  "c10386b0534bbf823329a2801b8f86c8a5b0ef66fae405aa69663b7e9c2ab0f4",
-                  "test/win32/lib/FrameLabLiveScene.ps1":  "6cabaf56e14a23bb1682acc9b3e1168eff347069cb086b5c352be696a79873d8",
+                  "test/win32/lib/FrameLabLiveScene.ps1":  "3b36abe603bd32de04b2df9908b9a448b3bb1cf16d2f95046b8478b2ef3443c3",
                   "test/win32/lib/FrameLabReport.ps1":  "ef71f0b8dfc91278328690dbdac7c9f507fe467a1906bc681dfd9d57bfe4f8ed",
-                  "test/win32/lib/FrameLabScene.ps1":  "1f94971636d5297950aede8f1ec34dcb603660375e82d151dfdb701efcc571c4",
+                  "test/win32/lib/FrameLabScene.ps1":  "a3b63160c9c0b1229e7aae3241a49f3d8f51a8ba588735059926b22f1f7670e7",
                   "test/win32/lib/FrameLabTrigger.ps1":  "e34b9a8562bf5e4266c62f7fa51d2b41b25976908a39f5310d250eedb78d2078",
                   "test/win32/lib/FrameScore.ps1":  "bbae7d0196076712df01ca2625a8eac5af348c03f31b9589fafc48f0dc43aae7",
                   "test/win32/lib/FreePort.ps1":  "1f6d3230171a1f76c1f1327e8ad01ddd9c65aba78cbe70f7b7716b9a1a2109c7",

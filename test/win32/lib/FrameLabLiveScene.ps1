@@ -48,9 +48,23 @@
 # cell without one is refused, and Get-FrameLabSceneScore -ExpectMaximized
 # fails a run in which the window never showed maximized at all.
 #
-# NOT MODELLED (T2727): the triggers whose edge is not one of these - banner
-# (pane-top) and hero, tab-switch, split-close (the pane set changes mid-run).
-# Their spec says so in Unsupported and the cell reads incomplete.
+# BANNER (T2727): the banner pushes one pane's top down - the trigger plan's
+# Target, Geometry.Target. Its top is the 'pane-top' edge: scanned UPWARD in
+# the pane's left padding column (the theme background, never a card colour)
+# from near its bottom until the padding colour stops, which is the banner's
+# bottom while it shows and the chrome above the pane while it does not. A
+# still frame whose chrome above the pane is the padding colour is refused:
+# nothing there would stop the scan.
+#
+# PANE-SET TRIGGERS (T2727): hero, tab-switch and split-close change which
+# panes are on screen mid-run, so one calibrated scene cannot describe every
+# frame. New-FrameLabCellScene takes -States: one still frame (and its
+# geometry) per OTHER pane set the run shows, each calibrated into its own
+# scorer on the cell scorer's States. A frame is scored against the pane set
+# the run starts on and then each state; the first that passes it is the
+# frame's state, and a frame no state passes fails (Get-FrameLabSceneScore
+# -ExpectStates also fails a run whose pane set never changed). A pane-set
+# cell without states is refused, as is a state still that is the start's.
 #
 # Acceptance: test\win32\frame-lab-live-scene.ps1.
 # ASCII-only by design (PS 5.1 on this box mangles non-ASCII on rewrite).
@@ -65,7 +79,11 @@ $script:FrameLabBackdropColor = 0x40C080
 $script:FrameLabSceneGap = 16
 
 # The interactions whose scene this file can build.
-$script:FrameLabSceneSupported = @('frame-right', 'frame-bottom', 'frame-corner', 'divider', 'sidebar-edge', 'blade-glide', 'caption-dblclick', 'aero-snap', 'maximize-button')
+$script:FrameLabSceneSupported = @('frame-right', 'frame-bottom', 'frame-corner', 'divider', 'sidebar-edge', 'blade-glide', 'caption-dblclick', 'aero-snap', 'maximize-button', 'banner', 'hero', 'tab-switch', 'split-close')
+
+# The triggers that change the pane set mid-run (T2727): scored against one
+# calibrated state per pane set.
+$script:FrameLabScenePaneSet = @('hero', 'tab-switch', 'split-close')
 
 # The ones that move the window as a whole (T2398), and of those the ones that
 # maximize it (they need a maximized still frame).
@@ -326,7 +344,7 @@ function New-FrameLabCellSceneSpec {
     $wr = [int]$w.X + [int]$w.W; $wb = [int]$w.Y + [int]$w.H
     $unsupported = @()
     if ($Interaction -notin $script:FrameLabSceneSupported) {
-        $unsupported += "the scene for '$Interaction' is not modelled: it tracks an edge this scene does not build or changes the pane set mid-run (T2727)"
+        $unsupported += "the scene for '$Interaction' is not modelled: no interaction by that name has a scene"
     }
     $moving = $Interaction -in $script:FrameLabSceneWindowMoving
     $panes = @($Geometry.Panes | ForEach-Object {
@@ -399,6 +417,21 @@ function New-FrameLabCellSceneSpec {
         }
     }
 
+    # The banner's pane top (T2727): the pane the trigger targets, scanned up
+    # its left padding column. The scan's lines are measured on the still
+    # frame (New-FrameLabCellScene), where the padding's width can be read.
+    if ($Interaction -eq 'banner') {
+        $tn = [string]$Geometry.Target
+        $tp = @($panes | Where-Object { $_.Name -eq $tn })
+        if (-not $tn) { $unsupported += 'a banner cell needs Geometry.Target, the pane the banner is set on' }
+        elseif (-not $tp.Count) { $unsupported += "a banner cell whose target '$tn' is not one of the geometry's panes" }
+        else {
+            $p = $tp[0]
+            [void]$edges.Add([pscustomobject]@{ Name = 'pane-top'; Kind = 'pane-top'; Vertical = $false; Lines = @($p.X); From = $p.B - 2; To = 0; Backdrop = $false; Until = $true; PadColumn = $true; Expect = $p.Y; Probe = @{ X = $p.X; Y = [int](($p.Y + $p.B) / 2) } })
+            $anchor[$p.Name][1] = 'pane-top'
+        }
+    }
+
     # The sidebar edge, scanned leftward from inside the first column.
     if ($Geometry.Sidebar) {
         $ex = [int]$Geometry.Sidebar.EdgeX - $cx
@@ -445,6 +478,7 @@ function New-FrameLabCellSceneSpec {
     [pscustomobject]@{
         Interaction = $Interaction; Edges = @($edges); Cards = $cards; Unsupported = $unsupported; Capture = $CaptureRect
         Moving = $moving; Maximizes = ($Interaction -in $script:FrameLabSceneMaximizing)
+        PaneSet = ($Interaction -in $script:FrameLabScenePaneSet)
     }
 }
 
@@ -467,12 +501,20 @@ function New-FrameLabCellScene {
         [int]$Tol = 8,
         # T2398: an FsFrame of the same capture rect with the window maximized
         # (and settled). A maximizing cell is refused without one.
-        $MaximizedStill
+        $MaximizedStill,
+        # T2727: a pane-set cell's other pane sets, each @{ Name; Geometry;
+        # Still } - the geometry the launcher measured in that state and a
+        # settled FsFrame of the same capture rect. Refused without one.
+        [object[]]$States = @(),
+        # Internal: this scene IS one of a pane-set cell's states.
+        [switch]$AsState
     )
     Import-FrameLabScene
     $why = @()
     $maxes = [bool]$Spec.Maximizes
-    if (@($Spec.Unsupported).Count) { return [pscustomobject]@{ Ok = $false; Scorer = $null; Reasons = @($Spec.Unsupported); Delta = @{}; Maximizes = $maxes } }
+    $paneSet = [bool]$Spec.PaneSet -and -not $AsState
+    $fail = { param($r) [pscustomobject]@{ Ok = $false; Scorer = $null; Reasons = @($r); Delta = @{}; Maximizes = $maxes; PaneSet = $paneSet } }
+    if (@($Spec.Unsupported).Count) { return & $fail @($Spec.Unsupported) }
     $px = { param($x, $y) if ($x -lt 0 -or $y -lt 0 -or $x -ge $Still.W -or $y -ge $Still.H) { -1 } else { $Still.At([int]$x, [int]$y) } }
     $cardColors = @()
     foreach ($c in $Spec.Cards) { $k = Get-FrameLabCardColors -Index $c.Index; $cardColors += $k.Bg, $k.Ring, $k.Glyph }
@@ -497,6 +539,17 @@ function New-FrameLabCellScene {
                     if ($c2 -ge 0 -and (Get-FrameLabColorDistance $c2 $col) -gt $Tol) { $col = $c2; $e.Expect = $v; break }
                 }
             }
+            # The banner's pane top (T2727): the scan runs up the padding
+            # column, so the padding must be there to scan and something that
+            # is not padding must sit above the pane to stop it. Its lines
+            # are spread across the padding's width, measured here.
+            if ($e.PadColumn) {
+                $above = & $px $e.Probe.X ($e.Expect - 1)
+                if ($above -lt 0 -or (Get-FrameLabColorDistance $above $col) -le $Tol) { $why += ('edge {0}: the chrome above the pane (0x{1:X6}) is its padding colour 0x{2:X6}, so nothing would stop the scan at the pane''s top' -f $e.Name, $above, $col); continue }
+                $pw = 0
+                while ($pw -lt 64 -and (Get-FrameLabColorDistance (& $px ($e.Probe.X + $pw) $e.Probe.Y) $col) -le $Tol) { $pw++ }
+                $e.Lines = [int[]]@(0..2 | ForEach-Object { $e.Probe.X + [int][math]::Floor($_ * ($pw - 1) / 2) })
+            }
             # The sidebar edge's colour is the window background, which is
             # also the padding strip at the first pane's right: start the
             # leftward scan inside the card, past that strip and a cell's slack.
@@ -508,7 +561,7 @@ function New-FrameLabCellScene {
             $clash = @($cardColors | Where-Object { (Get-FrameLabColorDistance $col $_) -le $Tol })
             if ($clash.Count) { $why += ('edge {0}: its colour 0x{1:X6} is a card colour, so a scan cannot tell it from the card' -f $e.Name, $col); continue }
         }
-        $edges += New-FrameLabSceneEdge -Name $e.Name -Kind $e.Kind -Lines $e.Lines -From $e.From -To $e.To -Color $col -Backdrop:$e.Backdrop -Vertical:$e.Vertical -Tol $Tol `
+        $edges += New-FrameLabSceneEdge -Name $e.Name -Kind $e.Kind -Lines $e.Lines -From $e.From -To $e.To -Color $col -Backdrop:$e.Backdrop -Until:([bool]$e.Until) -Vertical:$e.Vertical -Tol $Tol `
             -Open:([bool]$e.Open) -CarryX ([string]$e.CarryX) -CarryY ([string]$e.CarryY) -CarryX2 ([string]$e.CarryX2) -CarryY2 ([string]$e.CarryY2)
     }
     $cards = @()
@@ -522,7 +575,7 @@ function New-FrameLabCellScene {
         }
         $cards += New-FrameLabSceneCard -Index $c.Index -Anchor $c.Anchor -Extra $extra -Name $c.Name
     }
-    if ($why.Count) { return [pscustomobject]@{ Ok = $false; Scorer = $null; Reasons = $why; Delta = @{}; Maximizes = $maxes } }
+    if ($why.Count) { return & $fail $why }
 
     $s = New-Object GfsSceneScorer
     foreach ($e in $edges) { $s.Edges.Add($e) }
@@ -545,7 +598,25 @@ function New-FrameLabCellScene {
         if ($null -eq $MaximizedStill) { $why += 'the cell maximizes the window and no maximized still frame was given: its maximized frames could not be scored' }
         else { $why += @($s.CalibrateMaximized($MaximizedStill)) }
     }
-    [pscustomobject]@{ Ok = ($why.Count -eq 0); Scorer = $(if ($why.Count -eq 0) { $s } else { $null }); Reasons = $why; Delta = $delta; Maximizes = $maxes }
+    # A pane-set cell (T2727): every other pane set calibrated into its own
+    # scorer. A state whose still the start's scene already passes is not
+    # another pane set, and scoring against it would pass anything.
+    if ($paneSet -and $why.Count -eq 0) {
+        if (@($States).Count -eq 0) { $why += "the cell changes the pane set mid-run ($($Spec.Interaction)) and no still frame of the other pane set was given: its frames could not be scored" }
+        foreach ($st in @($States)) {
+            $sn = [string]$st.Name
+            if ($null -eq $st.Still -or $null -eq $st.Geometry) { $why += "state ${sn}: it needs both Geometry and Still"; continue }
+            if ($st.Still.W -ne $Still.W -or $st.Still.H -ne $Still.H) { $why += "state ${sn}: its still frame is $($st.Still.W)x$($st.Still.H), the cell's $($Still.W)x$($Still.H)"; continue }
+            $sspec = New-FrameLabCellSceneSpec -Interaction $Spec.Interaction -Geometry $st.Geometry -CaptureRect $Spec.Capture
+            $ss = New-FrameLabCellScene -Spec $sspec -Still $st.Still -Backdrop $Backdrop -Flash $Flash -ExpectTol $ExpectTol -Tol $Tol -AsState
+            if (-not $ss.Ok) { $why += @($ss.Reasons | ForEach-Object { "state ${sn}: $_" }); continue }
+            $m = 0
+            if (-not $s.Evaluate($st.Still, [ref]$m).Failing) { $why += "state ${sn}: its still frame already scores clean against the pane set the run starts on - it is not another pane set"; continue }
+            $ss.Scorer.StateName = $sn
+            $s.States.Add($ss.Scorer)
+        }
+    }
+    [pscustomobject]@{ Ok = ($why.Count -eq 0); Scorer = $(if ($why.Count -eq 0) { $s } else { $null }); Reasons = $why; Delta = $delta; Maximizes = $maxes; PaneSet = $paneSet }
 }
 
 <#
@@ -560,7 +631,8 @@ The cell's numbers from one scored capture: Invoke-FrameLabCell's Score.
 Superseded frames were never on screen and are not counted. Returns
 BleedFrames, Frames (each failing frame's Index, Classes, Findings), Motion
 (FsMotion, or $null for a bleed-only gesture), MotionMisses and
-MaximizedFrames (how many scored frames showed the window maximized).
+MaximizedFrames (how many scored frames showed the window maximized) and
+StateFrames (how many passed as another pane set, T2727).
 
 -ExpectMaximized (T2398, a maximizing cell): a run in which no frame showed
 the window maximized never did what the cell is about, and that is a miss -
@@ -573,7 +645,10 @@ function Get-FrameLabSceneScore {
         [Parameter(Mandatory = $true)]$Gesture,
         $Played,
         [hashtable]$Delta = @{},
-        [switch]$ExpectMaximized
+        [switch]$ExpectMaximized,
+        # T2727: a pane-set cell - a run in which no frame showed another pane
+        # set never did what the cell is about.
+        [switch]$ExpectStates
     )
     $sup = @{}
     foreach ($t in @($Capture.Timeline)) { if ($t.Superseded) { $sup[[long]$t.Index] = $true } }
@@ -581,8 +656,10 @@ function Get-FrameLabSceneScore {
     $failing = @($recs | Where-Object { $_.Failing })
     $frames = @($failing | ForEach-Object { [pscustomobject]@{ Index = $_.Index; Classes = $_.Classes(); Findings = @($_.Findings) } })
     $maxed = @($recs | Where-Object { $_.Maximized }).Count
-    $out = [ordered]@{ BleedFrames = $failing.Count; Frames = $frames; Motion = $null; MotionMisses = @(); Scored = $recs.Count; MaximizedFrames = $maxed }
+    $stated = @($recs | Where-Object { $_.State -gt 0 -and -not $_.Failing }).Count
+    $out = [ordered]@{ BleedFrames = $failing.Count; Frames = $frames; Motion = $null; MotionMisses = @(); Scored = $recs.Count; MaximizedFrames = $maxed; StateFrames = $stated }
     if ($ExpectMaximized -and $maxed -eq 0) { $out.MotionMisses = @("the window never showed maximized on any of the $($recs.Count) scored frame(s): the interaction did not happen") }
+    if ($ExpectStates -and $stated -eq 0) { $out.MotionMisses = @("no scored frame showed another pane set ($($recs.Count) scored): the interaction did not happen") }
     if ($Gesture.Axis -eq 'none' -or -not $Gesture.Track) { return [pscustomobject]$out }
     $k = $Scorer.EdgeIndex($Gesture.Track)
     if ($k -lt 0) { $out.MotionMisses = @("the scene has no '$($Gesture.Track)' edge to measure"); return [pscustomobject]$out }

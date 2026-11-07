@@ -20,7 +20,7 @@
        synthetic 0x10F010, a card's own Bg) is refused, and says why;
     B. the spec from geometry: which edges exist, which side of each card
        rides which edge, for 1/2/4/9 panes, a sidebar, and the grabbed
-       divider; window-moving interactions are Unsupported, not guessed;
+       divider; every catalogued interaction has a scene (T2727);
     C. calibrate and score a drag: frame-right (1 pane), frame-corner (4
        panes, inner dividers moving), divider (2 panes), sidebar-edge (a
        sidebar) - every clean frame clean, every tracked edge where it was
@@ -41,6 +41,13 @@
        snapped and dragged off with every divider carried; the refusals (no
        maximized still, a "maximized" still that is not, a window that starts
        against the edge) and the never-maximized run read as a miss.
+    H. trigger cells (T2727): banner tracks the target pane's top up its
+       padding column - on, off, a stale grid and a banner painted over an
+       unmoved pane both caught; hero, tab-switch and split-close scored
+       against one calibrated state per pane set, a frame matching no state
+       failing, and the refusals (no state, a state that is the start's, a
+       padding-coloured chrome above the banner pane, no target) plus the
+       run whose pane set never changed read as a miss.
 
   ASCII-only by design (PS 5.1 on this box mangles non-ASCII on rewrite).
 
@@ -76,6 +83,7 @@ $DivCol = 0x808080
 $SbBg = 0x303848
 $SbEdge = 0x9090B0
 $Pad = 0x282C34
+$BannerCol = 0x6A5A30
 $CellW = 9; $CellH = 19; $PadPx = 4; $DivW = 2; $TabH = 30
 $WinX = 250; $WinY = 140
 $Monitor = @{ X = 0; Y = 0; W = 3000; H = 2000 }
@@ -85,7 +93,9 @@ $Monitor = @{ X = 0; Y = 0; W = 3000; H = 2000 }
 # -DivAt pins the first column's right edge (a divider drag). -WX/-WY put the
 # window elsewhere (it moves as a whole), -Border 0 is a maximized window's
 # missing border and -Tab its caption height (T2398).
-function Get-World([int]$W, [int]$H, [int]$Cols = 1, [int]$Rows = 1, [int]$SbW = 0, [int]$DivAt = -1, [int]$WX = $WinX, [int]$WY = $WinY, [int]$Border = 1, [int]$Tab = $TabH) {
+# -Banner N pushes the first pane's top down N px under a banner, and
+# -IndexBase shifts the card indices (another tab's cards, T2727).
+function Get-World([int]$W, [int]$H, [int]$Cols = 1, [int]$Rows = 1, [int]$SbW = 0, [int]$DivAt = -1, [int]$WX = $WinX, [int]$WY = $WinY, [int]$Border = 1, [int]$Tab = $TabH, [int]$Banner = 0, [int]$IndexBase = 0) {
     $x0 = $WX + $SbW; $y0 = $WY + $Tab; $x1 = $WX + $W - $Border; $y1 = $WY + $H - $Border
     $cs = @(); $ce = @()
     for ($i = 0; $i -lt $Cols; $i++) {
@@ -102,12 +112,18 @@ function Get-World([int]$W, [int]$H, [int]$Cols = 1, [int]$Rows = 1, [int]$SbW =
     $n = 0
     for ($j = 0; $j -lt $Rows; $j++) { for ($i = 0; $i -lt $Cols; $i++) {
         $n++
-        $panes += [pscustomobject]@{ Name = "P$n"; Index = $n; X = $cs[$i]; Y = $rs[$j]; W = $ce[$i] - $cs[$i]; H = $re[$j] - $rs[$j] }
+        $panes += [pscustomobject]@{ Name = "P$n"; Index = $n + $IndexBase; X = $cs[$i]; Y = $rs[$j]; W = $ce[$i] - $cs[$i]; H = $re[$j] - $rs[$j] }
     } }
-    [pscustomobject]@{ W = $W; H = $H; WX = $WX; WY = $WY; SbW = $SbW; X0 = $x0; Y0 = $y0; X1 = $x1; Y1 = $y1; Panes = $panes; DivX = $ce[0] }
+    $bn = $null
+    if ($Banner -gt 0) {
+        $p1 = $panes[0]
+        $bn = [pscustomobject]@{ X = $p1.X; Y = $p1.Y; W = $p1.W; H = $Banner }
+        $p1.Y += $Banner; $p1.H -= $Banner
+    }
+    [pscustomobject]@{ W = $W; H = $H; WX = $WX; WY = $WY; SbW = $SbW; X0 = $x0; Y0 = $y0; X1 = $x1; Y1 = $y1; Panes = $panes; DivX = $ce[0]; Banner = $bn }
 }
 
-function Get-WorldGeometry($World, $Mon = $Monitor) {
+function Get-WorldGeometry($World, $Mon = $Monitor, [string]$Target = '') {
     $g = @{
         Window = @{ X = $World.WX; Y = $World.WY; W = $World.W; H = $World.H }
         Monitor = $Mon
@@ -116,6 +132,7 @@ function Get-WorldGeometry($World, $Mon = $Monitor) {
     }
     if ($World.Panes.Count -gt 1) { $g.Divider = @{ X = $World.DivX; Y0 = $World.Y0; Y1 = $World.Y1 } }
     if ($World.SbW -gt 0) { $g.Sidebar = @{ EdgeX = $World.X0; Y0 = $World.Y0; Y1 = $World.Y1 } }
+    if ($Target) { $g.Target = $Target }
     return $g
 }
 
@@ -145,22 +162,29 @@ function Draw-Card($f, $cap, $pane, [int]$Index, $Grid) {
 }
 
 # A whole frame of the capture rect. -Plant: B2 (grids sized for -Prev) /
-# NoBackdrop / DivIsCard (the dividers drawn in card 1's Bg).
+# NoBackdrop / DivIsCard (the dividers drawn in card 1's Bg) / BannerOver
+# (this world's banner painted over -Prev's panes, which never moved) /
+# PadChrome (the chrome painted in the padding colour).
 function New-WorldFrame($World, $Cap, [string]$Plant = '', $Prev) {
     $f = New-Object FsFrame ([int]$Cap.W), ([int]$Cap.H)
     $f.Fill((New-ScoreBox 0 0 $Cap.W $Cap.H), $(if ($Plant -eq 'NoBackdrop') { $Chrome } else { $Backdrop }))
     $ox = -$Cap.X; $oy = -$Cap.Y
-    $f.Fill((New-ScoreBox ($World.WX + $ox) ($World.WY + $oy) ($World.WX + $World.W + $ox) ($World.WY + $World.H + $oy)), $Chrome)
+    $f.Fill((New-ScoreBox ($World.WX + $ox) ($World.WY + $oy) ($World.WX + $World.W + $ox) ($World.WY + $World.H + $oy)), $(if ($Plant -eq 'PadChrome') { $Pad } else { $Chrome }))
     $dc = $(if ($Plant -eq 'DivIsCard') { (Get-FrameLabCardColors -Index 1).Bg } else { $DivCol })
     $f.Fill((New-ScoreBox ($World.X0 + $ox) ($World.Y0 + $oy) ($World.X1 + $ox) ($World.Y1 + $oy)), $dc)
     if ($World.SbW -gt 0) {
         $f.Fill((New-ScoreBox ($World.WX + $ox) ($World.Y0 + $oy) ($World.X0 - 2 + $ox) ($World.Y1 + $oy)), $SbBg)
         $f.Fill((New-ScoreBox ($World.X0 - 2 + $ox) ($World.Y0 + $oy) ($World.X0 + $ox) ($World.Y1 + $oy)), $SbEdge)
     }
-    for ($i = 0; $i -lt $World.Panes.Count; $i++) {
-        $p = $World.Panes[$i]
+    $drawn = $(if ($Plant -eq 'BannerOver' -and $Prev) { $Prev } else { $World })
+    for ($i = 0; $i -lt $drawn.Panes.Count; $i++) {
+        $p = $drawn.Panes[$i]
         $grid = $(if ($Plant -eq 'B2' -and $Prev) { $Prev.Panes[$i] } else { $null })
         Draw-Card $f $Cap $p $p.Index $grid
+    }
+    if ($World.Banner) {
+        $b = $World.Banner
+        $f.Fill((New-ScoreBox ($b.X + $ox) ($b.Y + $oy) ($b.X + $b.W + $ox) ($b.Y + $b.H + $oy)), $BannerCol)
     }
     return $f
 }
@@ -241,14 +265,19 @@ try {
     Assert 'B5 frame-bottom, 3x3: six vertical and six horizontal divider edges, window-bottom and no window-right' (
         $nv -eq 6 -and $nh -eq 6 -and @($t9.Spec.Edges.Name) -contains 'window-bottom' -and @($t9.Spec.Edges.Name) -notcontains 'window-right') "v=$nv h=$nh edges=$($t9.Spec.Edges.Name -join ',')"
 
-    $ok = $true; $msgs = @()
-    foreach ($n in 'banner', 'hero', 'tab-switch', 'split-close') {
-        $geo = Get-WorldGeometry $w1
+    # T2727: every catalogued interaction has a scene - none is refused as
+    # "not modelled" - and a name that is not catalogued still is.
+    $cat = @(Get-FrameLabInteractions | ForEach-Object { $_.Name })
+    $none = @($cat | Where-Object { $_ -notin $script:FrameLabSceneSupported })
+    $geo = Get-WorldGeometry $w1 $Monitor 'P1'
+    $msgs = @(foreach ($n in $cat) {
         $sp = New-FrameLabCellSceneSpec -Interaction $n -Geometry $geo -CaptureRect $t.Cap
-        if (-not $sp.Unsupported.Count -or ($sp.Unsupported -join ' ') -notmatch 'T2727') { $ok = $false }
-        $msgs += "${n}: $($sp.Unsupported -join '; ')"
-    }
-    Assert 'B6 the pane-top and pane-set triggers are Unsupported, naming the task that models them (T2727), never a guessed scene' $ok ($msgs -join ' | ')
+        $u = @($sp.Unsupported | Where-Object { $_ -match 'not modelled' })
+        if ($u.Count) { "${n}: $($u -join '; ')" }
+    })
+    $bogus = New-FrameLabCellSceneSpec -Interaction 'no-such-gesture' -Geometry $geo -CaptureRect $t.Cap
+    Assert "B6 the Unsupported list is empty for the catalogue: all $($cat.Count) interactions have a scene, and an uncatalogued name is still refused" (
+        $cat.Count -ge 13 -and $none.Count -eq 0 -and $msgs.Count -eq 0 -and ($bogus.Unsupported -join ' ') -match 'not modelled') "unscened=$($none -join ',') $($msgs -join ' | ') bogus=$($bogus.Unsupported -join ';')"
 
     # ---- C. calibrate and score a drag --------------------------------------
     ''
@@ -481,6 +510,106 @@ try {
     $sp = New-FrameLabCellSceneSpec -Interaction 'caption-dblclick' -Geometry $geo -CaptureRect $g.CaptureRect
     Assert 'G10 a window-moving cell whose window starts against the work area''s edge is Unsupported (no backdrop to tell it from a snapped one)' (
         ($sp.Unsupported -join ' ') -match 'backdrop on every side.*left') ($sp.Unsupported -join '; ')
+
+    # ---- H. trigger cells (T2727) ---------------------------------------------
+    ''
+    'H. banner (pane-top) and the pane-set triggers (hero, tab-switch, split-close)'
+    function New-TriggerCell([string]$Interaction, $W0, [object[]]$StateWorlds = @(), [string]$Target = 'P1', [string]$StillPlant = '', [switch]$NoTarget) {
+        $geo = Get-WorldGeometry $W0 $Monitor $(if ($NoTarget) { '' } else { $Target })
+        $pg = $geo.Clone(); $pg.Target = $Target
+        $plan = Get-FrameLabTrigger -Name $Interaction -Geometry $pg
+        $spec = New-FrameLabCellSceneSpec -Interaction $Interaction -Geometry $geo -CaptureRect $plan.CaptureRect
+        $states = @(for ($i = 0; $i -lt $StateWorlds.Count; $i++) {
+            @{ Name = "s$($i + 1)"; Geometry = (Get-WorldGeometry $StateWorlds[$i]); Still = (New-WorldFrame $StateWorlds[$i] $plan.CaptureRect) }
+        })
+        $scene = New-FrameLabCellScene -Spec $spec -Still (New-WorldFrame $W0 $plan.CaptureRect $StillPlant) -Flash @($Chrome) -States $states
+        [pscustomobject]@{ Geometry = $geo; Gesture = $plan; Spec = $spec; Scene = $scene; Cap = $plan.CaptureRect }
+    }
+    function Get-Failing($d) { @(for ($i = 0; $i -lt $d.Records.Count; $i++) { if ($d.Records[$i].Failing) { $i } }) -join ',' }
+    function Get-States($d) { @($d.Records | ForEach-Object { $_.State }) -join '' }
+    function Get-Bridge($T, [int]$N, [switch]$States) {
+        $timeline = @(0..($N - 1) | ForEach-Object { [pscustomobject]@{ Index = $_; Superseded = $false } })
+        $capture = [pscustomobject]@{ Stats = [pscustomobject]@{ QpcFrequency = 10000000; RefreshHz = 120 }; Timeline = $timeline }
+        Get-FrameLabSceneScore -Scorer $T.Scene.Scorer -Capture $capture -Gesture ([pscustomobject]@{ Axis = 'none'; Track = '' }) -ExpectStates:$States
+    }
+
+    # Banner: two panes side by side, the banner on the left one.
+    $b0 = Get-World 1000 600 2 1
+    $tb = New-TriggerCell 'banner' $b0
+    $pt = @($tb.Spec.Edges | Where-Object { $_.Name -eq 'pane-top' })
+    Assert 'H1 banner spec: a pane-top edge on the target pane, scanned UP (From below To), the target''s T riding it and the other pane''s T fixed; the plan tracks pane-top' (
+        $pt.Count -eq 1 -and -not $pt[0].Vertical -and $pt[0].From -gt $pt[0].To -and (Get-Anchors $tb.Spec 'P1') -eq '- pane-top v:P1 -' -and (Get-Anchors $tb.Spec 'P2') -eq 'v:P1 - - -' -and $tb.Gesture.Track -eq 'pane-top' -and $tb.Spec.Unsupported.Count -eq 0) (
+        "pane-top=$($pt.Count) P1=$(Get-Anchors $tb.Spec 'P1') P2=$(Get-Anchors $tb.Spec 'P2') track=$($tb.Gesture.Track) unsup=$($tb.Spec.Unsupported -join ';')")
+    $ptl = $(if ($tb.Scene.Ok) { $tb.Scene.Scorer.Edges[$tb.Scene.Scorer.EdgeIndex('pane-top')].Lines })
+    Assert 'H2 banner calibrates on its still frame: pane-top located where the geometry puts it, its scan lines spread across the pane''s padding column' (
+        $tb.Scene.Ok -and $tb.Scene.Delta['pane-top'] -eq 0 -and @($ptl | Where-Object { $_ -lt $b0.Panes[0].X - $tb.Cap.X -or $_ -ge $b0.Panes[0].X - $tb.Cap.X + $PadPx }).Count -eq 0 -and @($ptl | Select-Object -Unique).Count -gt 1) (
+        "ok=$($tb.Scene.Ok) reasons=$($tb.Scene.Reasons -join '; ') delta=$($tb.Scene.Delta['pane-top']) lines=$($ptl -join ',')")
+    if ($tb.Scene.Ok) {
+        $on = Get-World 1000 600 2 1 -Banner 36
+        $worlds = @($b0, $b0, $on, $on, $on, $on, $b0, $b0)
+        $d = Invoke-TestDrag $tb $worlds @{} { param($w) @{ 'pane-top' = $w.Panes[0].Y - $tb.Cap.Y } }
+        Assert 'H3 banner on and off: every frame clean, pane-top where drawn on all 8 (pushed 36 px down while the banner shows)' (
+            $d.Dirty.Count -eq 0 -and $d.EdgeBad.Count -eq 0 -and (Get-Failing $d) -eq '') "dirty=$($d.Dirty | Select-Object -First 2) edges=$($d.EdgeBad | Select-Object -First 3)"
+        $worlds = @($b0, $b0, $on, $on, $b0, $on, $on, $b0)
+        $d = Invoke-TestDrag $tb $worlds @{ 2 = 'B2'; 5 = 'BannerOver' } { param($w) @{} }
+        Assert 'H4 stale frames caught on exactly their frames: #2 the banner pane still drawing the full-height grid, #5 a banner painted over a pane that never moved' (
+            $d.Dirty.Count -eq 0 -and (Get-Failing $d) -eq '2,5') "failing=$(Get-Failing $d) #2=$($d.Records[2].Classes()) #5=$($d.Records[5].Classes()) dirty=$($d.Dirty | Select-Object -First 2)"
+    }
+    $tpc = New-TriggerCell 'banner' $b0 -StillPlant 'PadChrome'
+    $tnt = New-TriggerCell 'banner' $b0 -NoTarget
+    Assert 'H5 banner refusals: chrome above the pane in its padding colour (nothing would stop the scan), and a geometry with no target pane' (
+        -not $tpc.Scene.Ok -and ($tpc.Scene.Reasons -join ' ') -match 'pane-top: the chrome above the pane .* is its padding colour' -and
+        ($tnt.Spec.Unsupported -join ' ') -match 'needs Geometry.Target' -and -not $tnt.Scene.Ok) "padchrome: $($tpc.Scene.Reasons -join '; ') | notarget: $($tnt.Spec.Unsupported -join '; ')"
+
+    # Hero: two panes, then the first alone filling the window, then back.
+    $h0 = Get-World 1000 600 2 1
+    $h1 = Get-World 1000 600 1 1
+    $th = New-TriggerCell 'hero' $h0 @($h1)
+    Assert 'H6 hero calibrates the start (2 panes) and one state (the hero pane alone), and the spec says it changes the pane set' (
+        $th.Scene.Ok -and $th.Spec.PaneSet -and $th.Scene.PaneSet -and $th.Scene.Scorer.States.Count -eq 1 -and $th.Scene.Scorer.States[0].StateName -eq 's1') "ok=$($th.Scene.Ok) reasons=$($th.Scene.Reasons -join '; ')"
+    if ($th.Scene.Ok) {
+        $three = Get-World 1000 600 3 1
+        $worlds = @($h0, $h0, $h1, $h1, $h1, $h1, $h0, $three, $h0)
+        $d = Invoke-TestDrag $th $worlds @{ 2 = 'B2' } { param($w) @{} }
+        Assert 'H7 hero in and out: every frame clean but #2 (the hero pane still drawing its half-width grid) and #7 (a pane set that is neither state); frames 3-5 matched the hero state, the rest the start' (
+            $d.Dirty.Count -eq 1 -and (Get-Failing $d) -eq '2,7' -and (Get-States $d).Substring(3, 3) -eq '111' -and (Get-States $d).Substring(0, 2) -eq '00' -and (Get-States $d)[6] -eq '0' -and (Get-States $d)[8] -eq '0') (
+            "failing=$(Get-Failing $d) states=$(Get-States $d) dirty=$($d.Dirty -join ' | ')")
+        $s = Get-Bridge $th $worlds.Count -States
+        Assert 'H8 the score bridge: two bleed frames, three frames passed as the hero state, and a run that changed pane set is no miss' ($s.BleedFrames -eq 2 -and $s.StateFrames -eq 3 -and $s.MotionMisses.Count -eq 0) "bleed=$($s.BleedFrames) states=$($s.StateFrames) misses=$($s.MotionMisses -join ';')"
+    }
+
+    # Tab-switch: the second tab shows another card; a third card is no state.
+    $t0 = Get-World 900 600
+    $t1 = Get-World 900 600 -IndexBase 4
+    $tt = New-TriggerCell 'tab-switch' $t0 @($t1)
+    if ($tt.Scene.Ok) {
+        $worlds = @($t0, $t1, $t1, (Get-World 900 600 -IndexBase 2), $t0)
+        $d = Invoke-TestDrag $tt $worlds @{} { param($w) @{} }
+        Assert 'H9 tab-switch: the start and the second tab (card 5) both pass, each as its own state; a frame of a third card (3) matches no state and fails' (
+            (Get-Failing $d) -eq '3' -and (Get-States $d).Substring(0, 3) -eq '011' -and (Get-States $d)[4] -eq '0') "failing=$(Get-Failing $d) states=$(Get-States $d)"
+    } else { Assert 'H9 tab-switch calibrates' $false ($tt.Scene.Reasons -join '; ') }
+
+    # Split-close: one pane, split right, closed again.
+    $s0 = Get-World 1000 600
+    $s1 = Get-World 1000 600 2 1
+    $ts = New-TriggerCell 'split-close' $s0 @($s1)
+    if ($ts.Scene.Ok) {
+        $worlds = @($s0, $s1, $s1, $s1, $s0, $s0)
+        $d = Invoke-TestDrag $ts $worlds @{ 1 = 'B2' } { param($w) @{} }
+        Assert 'H10 split-close: split and closed, every frame clean but #1 (the split pane still drawing its full-width grid); frames 2-3 matched the split state' (
+            (Get-Failing $d) -eq '1' -and (Get-States $d).Substring(2, 2) -eq '11' -and (Get-States $d).Substring(4) -eq '00') "failing=$(Get-Failing $d) states=$(Get-States $d) #1=$($d.Records[1].Classes())"
+        $ts2 = New-TriggerCell 'split-close' $s0 @($s1)
+        foreach ($i in 0..3) { [void]$ts2.Scene.Scorer.ScoreFrame((New-WorldFrame $s0 $ts2.Cap), $i, [long]$i * 83333) }
+        $s = Get-Bridge $ts2 4 -States
+        Assert 'H11 negative control: a pane-set run whose pane set never changed is a miss, not a clean pass over a window that sat still' (
+            $s.StateFrames -eq 0 -and $s.BleedFrames -eq 0 -and ($s.MotionMisses -join ' ') -match 'no scored frame showed another pane set') "states=$($s.StateFrames) misses=$($s.MotionMisses -join ';')"
+    } else { Assert 'H10 split-close calibrates' $false ($ts.Scene.Reasons -join '; ') }
+
+    $tn = New-TriggerCell 'hero' $h0
+    $tsame = New-TriggerCell 'hero' $h0 @($h0)
+    Assert 'H12 pane-set refusals: no state still at all, and a "state" that is the pane set the run starts on, both refused saying why' (
+        -not $tn.Scene.Ok -and ($tn.Scene.Reasons -join ' ') -match 'no still frame of the other pane set' -and
+        -not $tsame.Scene.Ok -and ($tsame.Scene.Reasons -join ' ') -match 'state s1: .*not another pane set') "none: $($tn.Scene.Reasons -join '; ') | same: $($tsame.Scene.Reasons -join '; ')"
 
     Complete-TestBody
 }
