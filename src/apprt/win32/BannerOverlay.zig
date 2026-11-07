@@ -150,6 +150,11 @@ const WM_APP_BANNER_VISUAL: u32 = 0x8000 + 1;
 /// section's "shown as visual" and band-click assertions go red.
 const T2559_NEUTERED = false;
 
+/// Negative control for `comp-present.ps1`'s J7-J9. Flipping it drops the
+/// visual frozen copy on the composition path, as T2559 left it, so a toggle
+/// there reflows in view and J7/J9 go red.
+const T2617_NEUTERED = false;
+
 /// Negative control for `pane-banner.ps1`'s T149 section, the same seam
 /// `T377_NEUTERED` gives the wrap work above. Flipping it restores the
 /// pre-T149 jump cut — card and terminal both snapping in one frame — and
@@ -815,11 +820,12 @@ pub const BannerOverlay = struct {
         const opening_hidden = w32.IsWindowVisible_(self.owner) == 0 and self.openingCarried();
         const want = !T2559_NEUTERED and banner_layout.wantsVisual(tree, band, opening_hidden);
         if (want != self.on_visual) {
+            // A copy is on the path being left - a popup that would cover a
+            // card drawn inside the pane, or a visual under a card that is a
+            // popup again - so the live terminal takes over (T2617).
+            self.endGlide(if (want) "visual" else "popup");
             if (want) {
                 _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
-                // The frozen copy is a popup over the pane, which would
-                // cover a card drawn inside it.
-                self.endGlide("visual");
             } else {
                 // A retracted tree already took the visual with it.
                 self.layer.setVisible(false);
@@ -2988,10 +2994,11 @@ pub const BannerOverlay = struct {
     fn beginGlide(self: *BannerOverlay, from_h: i32, old_inset: i32) void {
         self.endGlide("retoggled");
         if (T2252_NEUTERED) return;
-        // The copy is a popup over the pane, which would cover a card drawn
-        // inside it (T2559): the terminal reflows in view under the card
-        // until the copy is a visual too (T2617).
-        if (self.on_visual) return;
+        // A card drawn inside the pane (T2559) would be covered by a popup
+        // copy, so there the copy is a visual at the back of the pane's
+        // overlays instead (T2617). The negative control puts back the
+        // T2559 stopgap: no copy, the terminal reflows in view.
+        if (self.on_visual and T2617_NEUTERED) return;
         const s = self.surface orelse return;
         if (!s.core_surface_ready) return;
         s.flush_next_resize = true;
@@ -3030,7 +3037,14 @@ pub const BannerOverlay = struct {
         const now = self.collapse_anim.?.start;
         const bg =@as(u32, self.pane_bg_rgb.r) | (@as(u32, self.pane_bg_rgb.g) << 8) | (@as(u32, self.pane_bg_rgb.b) << 16);
         const dim = self.shownDim();
-        if (!self.freeze.show(self.hinstance, self.owner, self.hwnd, dim, @intCast(w), @intCast(h), .{
+        if (self.on_visual) {
+            // The frame's row in the pane window is the band above the grid.
+            const slot = self.slot orelse return;
+            if (!self.freeze.showVisual(slot, @intCast(w), @intCast(h), @intCast(band), delta, band, bg)) {
+                log.debug("banner glide skip reason=visual-failed", .{});
+                return;
+            }
+        } else if (!self.freeze.show(self.hinstance, self.owner, self.hwnd, dim, @intCast(w), @intCast(h), .{
             .left = screen.left,
             .top = screen.top - @max(old_inset, 0),
             .width = w,
@@ -3042,6 +3056,8 @@ pub const BannerOverlay = struct {
         // Debug-build oracle for pane-banner.ps1's T2252 section: where the
         // copy is going and why (the inset change plus the grid's shift).
         log.debug("banner glide begin delta={} shift={} inset={}->{} w={} h={}->{}", .{ delta, shift, old_inset, new_inset, w, h, new_h });
+        // comp-present.ps1 J9's oracle (T2617): which copy stands in.
+        log.debug("banner glide copy={s}", .{if (self.freeze.on_visual) "visual" else "popup"});
         // T2261 oracle: an unfocused pane's dim is stacked over the copy, as
         // Mac stacks it over its frozen terminal.
         log.debug("banner glide dim={s}", .{@tagName(self.freeze.dimOver(self.owner, dim))});
@@ -3079,7 +3095,10 @@ pub const BannerOverlay = struct {
         const now = std.time.Instant.now() catch return self.endGlide("no-clock");
         const p = self.collapseProgress();
         const off = banner_glide.offset(g.delta, p orelse 1.0);
-        self.freeze.update(self.owner, self.hwnd, self.shownDim(), off, banner_layout.bandHeight(self.paintedCardHeight(), self.px(MARGIN)));
+        if (self.freeze.on_visual)
+            self.freeze.updateVisual(off, s.gridBand())
+        else
+            self.freeze.update(self.owner, self.hwnd, self.shownDim(), off, banner_layout.bandHeight(self.paintedCardHeight(), self.px(MARGIN)));
 
         const seq = s.present_seq.load(.acquire);
         if (seq != g.seq) {
@@ -3562,6 +3581,7 @@ test "T283: the banner's negative controls are clear and non-empty" {
     try std.testing.expect(!T2252_NEUTERED);
     try std.testing.expect(!T2400_NEUTERED);
     try std.testing.expect(!T2559_NEUTERED);
+    try std.testing.expect(!T2617_NEUTERED);
     try std.testing.expect(!T2707_NEUTERED);
     try std.testing.expect(!BannerFreeze.T2261_NEUTERED);
 

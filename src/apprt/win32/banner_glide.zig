@@ -79,6 +79,75 @@ pub fn copySeat(dim_shown: bool, dim_below_card: bool) Seat {
     return if (dim_shown and dim_below_card) .dim else .card;
 }
 
+/// The visual copy (T2617) cannot paint background around itself the way the
+/// popup does, so it carries that background: `pad` rows of it above and
+/// below the frame, enough to fill whatever gap the glide opens on either side.
+pub fn visualPad(delta: i32) u32 {
+    return @intCast(if (delta < 0) -delta else delta);
+}
+
+/// Where the visual copy's top sits in its parent - the pane's tree root,
+/// which hangs `band` px below the pane window's top (T2566) - when the frame
+/// started at window row `img_top` and has glided `off` px.
+pub fn visualTop(img_top: i32, off: i32, pad: u32, band: u32) i32 {
+    return img_top + off - @as(i32, @intCast(pad)) - @as(i32, @intCast(band));
+}
+
+/// Build the visual copy's pixels (T2617): the captured frame - BGRA,
+/// bottom-up, `w` x `h`, the renderer's capture layout - turned top-down and
+/// opaque, between `pad` rows of the pane background (`bg_rgb` a COLORREF,
+/// 0x00BBGGRR) above and below. `out` holds `w * (h + 2 * pad)`.
+pub fn buildVisualPixels(out: []u32, frame: []const u8, w: u32, h: u32, pad: u32, bg_rgb: u32) void {
+    const bg: u32 = 0xFF000000 | ((bg_rgb & 0xFF) << 16) | (bg_rgb & 0xFF00) | ((bg_rgb >> 16) & 0xFF);
+    const wi: usize = w;
+    const pad_n: usize = @as(usize, pad) * wi;
+    @memset(out[0..pad_n], bg);
+    var row: usize = 0;
+    while (row < h) : (row += 1) {
+        const src = frame[(@as(usize, h) - 1 - row) * wi * 4 ..][0 .. wi * 4];
+        const dst = out[pad_n + row * wi ..][0..wi];
+        for (dst, 0..) |*p, x| p.* = 0xFF000000 | std.mem.readInt(u32, src[x * 4 ..][0..4], .little);
+    }
+    @memset(out[pad_n + @as(usize, h) * wi ..][0..pad_n], bg);
+}
+
+test "visualPad: the glide's distance, either way" {
+    try std.testing.expectEqual(@as(u32, 72), visualPad(-72));
+    try std.testing.expectEqual(@as(u32, 72), visualPad(72));
+    try std.testing.expectEqual(@as(u32, 0), visualPad(0));
+}
+
+test "visualTop: the frame's window row, less the pad above it, in the root's coordinates" {
+    // Band 120 at the start: the frame sits at the root's origin less the pad.
+    try std.testing.expectEqual(@as(i32, -72), visualTop(120, 0, 72, 120));
+    // Glided up 72 with the root still at the old band (the renderer has not
+    // presented the new one yet).
+    try std.testing.expectEqual(@as(i32, -144), visualTop(120, -72, 72, 120));
+    // Same window position once the root has moved to the new band 48: the
+    // copy stays put on screen across the band change.
+    try std.testing.expectEqual(@as(i32, -72), visualTop(120, -72, 72, 48));
+}
+
+test "buildVisualPixels: top-down, opaque, background above and below" {
+    // 2x2 frame, bottom-up: bottom row first.
+    const frame = [_]u8{
+        1, 2, 3, 0, 4, 5, 6, 0, // bottom row
+        7, 8, 9, 0, 10, 11, 12, 0, // top row
+    };
+    var out: [2 * (2 + 2)]u32 = undefined;
+    // Background RGB(0x11,0x22,0x33) as a COLORREF.
+    buildVisualPixels(&out, &frame, 2, 2, 1, 0x00332211);
+    const bg: u32 = 0xFF112233;
+    try std.testing.expectEqual(bg, out[0]);
+    try std.testing.expectEqual(bg, out[1]);
+    try std.testing.expectEqual(@as(u32, 0xFF090807), out[2]);
+    try std.testing.expectEqual(@as(u32, 0xFF0C0B0A), out[3]);
+    try std.testing.expectEqual(@as(u32, 0xFF030201), out[4]);
+    try std.testing.expectEqual(@as(u32, 0xFF060504), out[5]);
+    try std.testing.expectEqual(bg, out[6]);
+    try std.testing.expectEqual(bg, out[7]);
+}
+
 test "travel: collapse moves content up by the band it gives back" {
     // Band 120 -> 48, a shell at the top of a fresh screen: no grid shift.
     try std.testing.expectEqual(@as(i32, -72), travel(120, 48, 0));

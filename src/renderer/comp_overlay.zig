@@ -507,18 +507,37 @@ pub const Layer = struct {
         _ = slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, e, slot_effect_set_opacity_float)(e, f);
     }
 
+    /// Where `attach` puts a layer among the root's other children.
+    pub const Place = enum { front, back };
+
     /// On or off the pane: added to / removed from the root's children.
+    /// Added at the BACK of its siblings: with no reference visual,
+    /// `AddVisual`'s insertAbove = TRUE means "above no sibling", which the
+    /// docs spell out renders it below all of them. (This comment used to say
+    /// "on top"; T2617 read the docs. Which overlay should win where two
+    /// overlap is T2771.)
     pub fn setVisible(self: *Layer, on: bool) void {
+        if (on) self.attach(.back) else self.detach();
+    }
+
+    /// On the pane at an explicit end of the sibling order (T2617): `.back`
+    /// is under every other overlay and over only the swap chain the root
+    /// itself carries. A no-op when already attached.
+    pub fn attach(self: *Layer, place: Place) void {
         const d = self.dev orelse return;
         const vis = self.visual orelse return;
-        if (on == self.attached) return;
-        if (on) {
-            // insertAbove = TRUE with no reference: on top of its siblings.
-            if (!ok(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, d.root, slot_visual_add_visual)(d.root, vis, 1, null))) return;
-        } else {
-            _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, d.root, slot_visual_remove_visual)(d.root, vis);
-        }
-        self.attached = on;
+        if (self.attached) return;
+        if (!ok(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, d.root, slot_visual_add_visual)(d.root, vis, addVisualInsertAbove(place), null))) return;
+        self.attached = true;
+        self.commit();
+    }
+
+    fn detach(self: *Layer) void {
+        const d = self.dev orelse return;
+        const vis = self.visual orelse return;
+        if (!self.attached) return;
+        _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, d.root, slot_visual_remove_visual)(d.root, vis);
+        self.attached = false;
         self.commit();
     }
 
@@ -547,6 +566,20 @@ pub const Layer = struct {
         self.generation = 0;
     }
 };
+
+/// `AddVisual`'s insertAbove for a placement with no reference visual. The
+/// flag reads backwards there: TRUE is "above no sibling", i.e. at the back.
+pub fn addVisualInsertAbove(place: Layer.Place) i32 {
+    return switch (place) {
+        .back => 1,
+        .front => 0,
+    };
+}
+
+test "addVisualInsertAbove: with no reference, TRUE is the back (dcomp.h AddVisual remarks)" {
+    try std.testing.expectEqual(@as(i32, 1), addVisualInsertAbove(.back));
+    try std.testing.expectEqual(@as(i32, 0), addVisualInsertAbove(.front));
+}
 
 // --- tests ------------------------------------------------------------------
 

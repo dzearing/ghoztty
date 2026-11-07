@@ -59,9 +59,8 @@
 #      palette are placed off the top-level window, not the pane, so the band
 #      cannot reach them and they are not re-measured here. J7-J8: the banner
 #      collapse glide (T2252) runs knob on as well, measured off the grid, and
-#      lands the way the knob-off one does - knob off only since T2559: the
-#      copy is a popup that would cover the card's visual, so knob on the
-#      toggle reflows in view (J9) until T2617.
+#      lands the way the knob-off one does; knob on the copy is a visual at
+#      the back of the pane's overlays, under the card's visual (J9, T2617).
 #   K. The banner as a child visual of the pane (T2559): knob on, the card is
 #      shown as a visual and no GhozttyBannerOverlay popup is ever visible, a
 #      window move re-renders and re-shows nothing, and its input arrives on
@@ -670,7 +669,7 @@ try {
     # pane and are read from their log lines (pane-local, so offset by the
     # pane's rect).
     function Probe-Overlays($m, $visual) {
-        $r = [ordered]@{ Scroll = $null; Bell = $null; Pill = $null; Badge = $null; Dim = $null; PaneTop = $null; Glide = $null; GlideEnd = $null; Toggled = $false }
+        $r = [ordered]@{ Scroll = $null; Bell = $null; Pill = $null; Badge = $null; Dim = $null; PaneTop = $null; Glide = $null; GlideEnd = $null; GlideCopy = $null; Toggled = $false }
         if (-not $m.Pane -or -not $m.Strip -or $m.Top -eq [IntPtr]::Zero) { return [pscustomobject]$r }
         $hw = [IntPtr]$m.Pane.Hwnd
         $p = $m.Pane
@@ -719,6 +718,8 @@ try {
             $ge = Last-Match $m.Arm.Err 'banner glide end reason=([\w-]+)'
             if ($gb) { $r.Glide = "delta=$($gb.Groups[1].Value) inset=$($gb.Groups[3].Value)->$($gb.Groups[4].Value) w=$($gb.Groups[5].Value) h=$($gb.Groups[6].Value)->$($gb.Groups[7].Value)" }
             if ($ge) { $r.GlideEnd = $ge.Groups[1].Value }
+            $gc = Last-Match $m.Arm.Err 'banner glide copy=(\w+)'
+            if ($gc) { $r.GlideCopy = $gc.Groups[1].Value }
         }
         # Read-only badge.
         [void](Send-TestKeys -Window $m.Top -Target $hw -Modifiers ctrl, shift -Key O)
@@ -778,17 +779,17 @@ try {
     Assert "J5 the unfocused dim covers the pane and its band, as knob off (on=$(Rect-Text $jOn.Dim) off=$(Rect-Text $jOff.Dim))" (Same-Rect $jOn.Dim $jOff.Dim)
     Assert "J6 the knob-on app was still running, nothing fell back" $jOnAlive
     if (-not $jOnAlive) { "    fallback/panic lines:"; $jOnTail | ForEach-Object { "      $_" } }
-    # Knob on the card is a visual inside the pane (T2559) and the frozen
-    # copy is still a popup that would cover it, so there the toggle reflows
-    # in view until the copy is a visual too (T2617). J7-J8 hold the
-    # knob-off glide to its old shape; J9 holds the knob-on toggle to having
-    # happened, from a click on the pane window, with no copy over the card.
-    Assert "J7 knob off a collapse glides the frozen copy (off=$($jOff.Glide))" `
-        ($jOff.Glide -match '^delta=-?\d+ inset=\d+->\d+')
-    Assert "J8 ... and it comes down because the grid redrew at its new size (off=$($jOff.GlideEnd))" `
-        ($jOff.GlideEnd -eq 'landed')
-    Assert "J9 knob on a click on the card's visual toggles it, with no copy over the card (toggled=$($jOn.Toggled) glide=$($jOn.Glide))" `
-        ($jOn.Toggled -and -not $jOn.Glide)
+    # Knob on the card is a visual inside the pane (T2559), so the frozen copy
+    # is a visual too, at the back of the pane's overlays (T2617): the glide
+    # measures exactly as knob off (J7), lands the same way (J8), and knob on
+    # it is the visual copy that stands in, from a click on the card's visual
+    # (J9). T2617_NEUTERED (BannerOverlay.zig) drops it and reddens J7/J9.
+    Assert "J7 a collapse glides the frozen copy knob on too, measured as knob off (on=$($jOn.Glide) off=$($jOff.Glide))" `
+        ($jOn.Glide -and $jOn.Glide -match '^delta=-?\d+ inset=\d+->\d+' -and $jOn.Glide -eq $jOff.Glide)
+    Assert "J8 ... and it comes down because the grid redrew at its new size (on=$($jOn.GlideEnd) off=$($jOff.GlideEnd))" `
+        ($jOn.GlideEnd -eq 'landed' -and $jOff.GlideEnd -eq 'landed')
+    Assert "J9 knob on a click on the card's visual toggles it and the copy is a visual, knob off a popup (toggled=$($jOn.Toggled) on=$($jOn.GlideCopy) off=$($jOff.GlideCopy))" `
+        ($jOn.Toggled -and $jOn.GlideCopy -eq 'visual' -and $jOff.GlideCopy -eq 'popup')
 
     # ========================================================================
     "== K: the banner is a child visual of the pane, hit-tested by the pane (T2559)"

@@ -14,6 +14,7 @@
 const std = @import("std");
 const w32 = @import("win32.zig");
 const banner_glide = @import("banner_glide.zig");
+const comp_overlay = @import("../../renderer/comp_overlay.zig");
 
 const BannerFreeze = @This();
 
@@ -38,11 +39,26 @@ edge: i32 = 0,
 bg: u32 = 0,
 bg_brush: ?w32.HBRUSH = null,
 
+/// The composition path's copy (T2617): when the banner card is a child
+/// visual of the pane, a popup copy would cover it, so the copy is a visual
+/// too - at the BACK of the pane's overlays, over only the swap chain, so the
+/// card, a dim wash and every other overlay stay above it.
+layer: comp_overlay.Layer = .{},
+/// The layer's pixels (`banner_glide.buildVisualPixels`), reused.
+vis_px: []u32 = &.{},
+/// Background rows above and below the frame in `vis_px`.
+vis_pad: u32 = 0,
+/// Is the copy the visual (rather than the popup) right now?
+on_visual: bool = false,
+
 pub fn init(alloc: std.mem.Allocator) BannerFreeze {
     return .{ .alloc = alloc };
 }
 
 pub fn deinit(self: *BannerFreeze) void {
+    self.layer.deinit();
+    if (self.vis_px.len > 0) self.alloc.free(self.vis_px);
+    self.vis_px = &.{};
     if (self.hwnd) |h| {
         _ = w32.SetWindowLongPtrW(h, w32.GWLP_USERDATA, 0);
         _ = w32.DestroyWindow(h);
@@ -56,6 +72,7 @@ pub fn deinit(self: *BannerFreeze) void {
 
 /// Is the copy on screen?
 pub fn active(self: *const BannerFreeze) bool {
+    if (self.on_visual) return self.layer.attached;
     const h = self.hwnd orelse return false;
     return w32.IsWindowVisible_(h) != 0;
 }
@@ -120,6 +137,58 @@ pub fn show(
     return true;
 }
 
+/// Put the captured frame (already in `buffer`) on the pane's composition
+/// tree (T2617), at the back of its overlays. `img_top` is the frame's row in
+/// the pane WINDOW (the band above the grid), `band` where the tree's root
+/// sits in that window now, `delta` the glide's whole travel. No mask is
+/// needed: rows above the card's edge are under the card's own opaque visual.
+pub fn showVisual(self: *BannerFreeze, s: *comp_overlay.Slot, w: u32, h: u32, img_top: i32, delta: i32, band: u32, bg: u32) bool {
+    if (self.placeVisual(s, w, h, img_top, delta, band, bg)) return true;
+    // Nothing half-built is kept: the caller falls back to the reflow.
+    self.on_visual = false;
+    self.layer.deinit();
+    return false;
+}
+
+fn placeVisual(self: *BannerFreeze, s: *comp_overlay.Slot, w: u32, h: u32, img_top: i32, delta: i32, band: u32, bg: u32) bool {
+    if (!self.layer.sync(s)) return false;
+    const pad = banner_glide.visualPad(delta);
+    const rows = h + 2 * pad;
+    const len: usize = @as(usize, w) * rows;
+    if (self.vis_px.len != len) {
+        if (self.vis_px.len > 0) self.alloc.free(self.vis_px);
+        self.vis_px = self.alloc.alloc(u32, len) catch {
+            self.vis_px = &.{};
+            return false;
+        };
+    }
+    if (self.pixels.len != @as(usize, w) * h * 4) return false;
+    banner_glide.buildVisualPixels(self.vis_px, self.pixels, w, h, pad, bg);
+    self.img_w = @intCast(w);
+    self.img_h = @intCast(h);
+    self.img_top = img_top;
+    self.offset = 0;
+    self.vis_pad = pad;
+    // Placed before it is attached, so its first composited frame is in the
+    // right place.
+    if (!self.layer.setOffset(0, banner_glide.visualTop(img_top, 0, pad, band))) return false;
+    if (!self.layer.setPixels(self.vis_px, w, rows)) return false;
+    self.layer.setVisible(false);
+    self.layer.attach(.back);
+    if (!self.layer.attached) return false;
+    self.on_visual = true;
+    return true;
+}
+
+/// Move the visual copy along its glide (T2617). `band` is read every step:
+/// the root moves to the new band once the renderer presents, and the copy
+/// has to hold its place in the window across that.
+pub fn updateVisual(self: *BannerFreeze, offset: i32, band: u32) void {
+    if (!self.on_visual) return;
+    self.offset = offset;
+    _ = self.layer.setOffset(0, banner_glide.visualTop(self.img_top, offset, self.vis_pad, band));
+}
+
 /// Move the copy along its glide and the mask with the card's edge.
 pub fn update(self: *BannerFreeze, owner: w32.HWND, card: w32.HWND, dim: ?w32.HWND, offset: i32, edge: i32) void {
     const hwnd = self.hwnd orelse return;
@@ -172,6 +241,13 @@ test "BannerFreeze: the T2261 negative control ships clear" {
 }
 
 pub fn hide(self: *BannerFreeze) void {
+    if (self.on_visual) {
+        self.on_visual = false;
+        // Let go of the whole visual, not just detach it: its surface is a
+        // pane-sized texture, and a toggle is rare. `deinit` (generation 0)
+        // rather than `drop`, so the next `sync` borrows the tree afresh.
+        self.layer.deinit();
+    }
     const hwnd = self.hwnd orelse return;
     _ = w32.ShowWindow(hwnd, w32.SW_HIDE);
 }
