@@ -50,8 +50,11 @@ pub const Shared = struct {
 pub const RefOps = struct {
     add: *const fn (Obj) void,
     release: *const fn (Obj) void,
+    /// IDCompositionDevice::Commit (T2606): DComp destroys a released visual
+    /// only at the device's next commit.
+    commit: *const fn (Obj) void,
 
-    pub const com: RefOps = .{ .add = comAddRef, .release = comRelease };
+    pub const com: RefOps = .{ .add = comAddRef, .release = comRelease, .commit = comCommit };
 };
 
 /// The meeting point between a pane's renderer thread and its window thread.
@@ -125,8 +128,17 @@ pub const Slot = struct {
     }
 };
 
+/// T2606: the root visual carries the pane's swap chain, and whoever lets go
+/// of it last - the presenter, the slot or an overlay layer - may be dropping
+/// its final reference. DComp frees a released visual only at the device's
+/// next Commit, so the commit comes AFTER the root's release and before the
+/// device's: committing first (as every caller did) left the root and the
+/// swap-chain buffers under it - ~3 MB a window-sized pane - pending on a
+/// device nobody committed again, once for every closed window whose overlay
+/// layer outlived its presenter.
 fn releaseShared(s: Shared, ops: RefOps) void {
     ops.release(s.root);
+    ops.commit(s.dcomp);
     ops.release(s.context);
     ops.release(s.dcomp);
 }
@@ -219,6 +231,10 @@ fn comAddRef(obj: Obj) void {
 
 fn comRelease(obj: Obj) void {
     _ = slot(*const fn (Obj) callconv(.winapi) u32, obj, 2)(obj);
+}
+
+fn comCommit(dcomp: Obj) void {
+    _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, dcomp, slot_dcomp_commit)(dcomp);
 }
 
 fn ok(hr: HRESULT) bool {
@@ -555,13 +571,14 @@ pub const Layer = struct {
         if (self.effect) |o| comRelease(o);
         if (self.visual) |o| comRelease(o);
         if (self.dev) |d| {
-            // T2772: one commit, AFTER the releases. It takes the visual off
-            // the pane, and DComp destroys a released object only at the
+            // T2772: the commit comes AFTER the releases. It takes the visual
+            // off the pane, and DComp destroys a released object only at the
             // device's next Commit: committing before the releases (as this
-            // did) left the surface, effect and visual pending, and they kept
-            // the device - and the pane's whole D3D11 device, ~55 driver
+            // once did) left the surface, effect and visual pending, and they
+            // kept the device - and the pane's whole D3D11 device, ~55 driver
             // threads and its GPU memory - alive after every closed window.
-            _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, d.dcomp, slot_dcomp_commit)(d.dcomp);
+            // `releaseShared` commits after its root release too (T2606), so
+            // that one commit covers this layer's objects as well.
             releaseShared(d, RefOps.com);
         }
         self.* = .{ .generation = self.generation, .opacity = self.opacity };
@@ -601,8 +618,22 @@ const Fake = struct {
     }
     fn rel(o: Obj) void {
         refs[idx(o)] -= 1;
+        record(if (idx(o) == 2) 'r' else if (idx(o) == 1) 'x' else 'd');
     }
-    const ops: RefOps = .{ .add = add, .release = rel };
+    fn commit(o: Obj) void {
+        _ = o;
+        record('C');
+    }
+    /// The order releases and commits happened in (T2606).
+    var trail: [32]u8 = undefined;
+    var trail_len: usize = 0;
+    fn record(c: u8) void {
+        if (trail_len < trail.len) {
+            trail[trail_len] = c;
+            trail_len += 1;
+        }
+    }
+    const ops: RefOps = .{ .add = add, .release = rel, .commit = commit };
     fn shared() Shared {
         return .{ .dcomp = &objs[0], .context = &objs[1], .root = &objs[2] };
     }
@@ -652,6 +683,22 @@ test "publish over a live publish releases the old tree" {
     try std.testing.expectEqual([3]i32{ 1, 1, 1 }, Fake.refs);
     try std.testing.expectEqual(@as(u64, 2), s.generation);
     _ = s.retract(Fake.ops);
+    try std.testing.expectEqual([3]i32{ 0, 0, 0 }, Fake.refs);
+}
+
+test "the last holder of a tree commits after the root goes and before the device does (T2606)" {
+    Fake.refs = .{ 0, 0, 0 };
+    var s: Slot = .{};
+    s.publish(Fake.shared(), Fake.ops);
+    // An overlay layer borrows the tree, then the presenter retracts it: the
+    // layer is the root visual's last holder.
+    const b = s.borrow(0, Fake.ops);
+    try std.testing.expect(s.retract(Fake.ops));
+    Fake.trail_len = 0;
+    releaseShared(b.shared.?, Fake.ops);
+    // root, commit, context, device: the commit that frees the root (and the
+    // swap chain under it) runs while the device is still held.
+    try std.testing.expectEqualStrings("rCxd", Fake.trail[0..Fake.trail_len]);
     try std.testing.expectEqual([3]i32{ 0, 0, 0 }, Fake.refs);
 }
 
