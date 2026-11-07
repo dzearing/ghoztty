@@ -1,10 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-06T13:08:19-08:00",
-    "commit":  "e08cebac5",
+    "generated":  "2026-11-06T21:30:32-08:00",
+    "commit":  "ecf89e213",
     "uncommitted":  [
-                        "scripts/comp-desk-onscreen.ps1"
+                        "scripts/hero-glide-onscreen.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -49,7 +49,7 @@
                   "scripts/go-loop-watchdog.ps1":  "f1cae3f22a4f5ac9b09c212db6d6fd86c0fc477d2561add5c5efe6ad83ff3598",
                   "scripts/guard-due.ps1":  "a336b4df18ab6b4050e089b70df757710c11bfae5d7f9b8d92294561724bcdf3",
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
-                  "scripts/hero-glide-onscreen.ps1":  "c2aa3ac610a9f18230de368498d66c7d4db01e2c27ee477d7d47cf87f5869446",
+                  "scripts/hero-glide-onscreen.ps1":  "2aebfc969fb2e790949ff8413839fe5aed52654789d28582617e09552e918272",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "f055b029eedf4387b748f3e8e0e2b545e90023a017eddf18e5662024a1244ac8",
                   "scripts/launch-upgrade.ps1":  "cdac13e044f5b31ec2346cbd23556ea45ddf937972e033f56f7a6451ffbaaaa1",

@@ -30,7 +30,9 @@
 #   .5 glide: the incoming block is seen at 2+ distinct heights on the way
 #   .6 rest:  before and after, one block on show in the hero region
 #   .6m       (tree/stall) the landing rests where `off` lands, to 2 px
-#             (the rest before the slide is reported as known T2641)
+#   .6b       (tree/stall) the rest BEFORE the slide matches `off` too, to 2 px:
+#             the hero picture is not stretched after entering hero mode
+#             (T2641, fixed by T2625's 1:1 source transform)
 #   .10 (stall) the incoming block's longest still stretch on the way is under
 #             a quarter of the stall
 #   .11 (tree/stall) the app declared the slide ("hero slide declared"); 0
@@ -366,22 +368,21 @@ try {
         Assert "$arm.F the ghost never took the foreground (fg pid $fgPid)" ($fgPid -ne [uint32]$app.Pid)
         if (-not $KeepFrames) { Get-ChildItem $fdir -Filter 'f*.bmp' -ErrorAction SilentlyContinue | ForEach-Object { Remove-Item $_.FullName } }
     }
-    # The frame match: the composition arms land where the painted one does.
-    # The rest BEFORE the slide is reported, not scored: in the composition
-    # tree the hero pane is drawn too large after entering hero mode, with or
-    # without a declared slide (T2641).
+    # The frame match: the composition arms rest where the painted one does,
+    # before the slide (the hero picture right after entering hero mode, which
+    # T2641 saw stretched ~1.5x until T2625) and after it (the landing).
     if ($script:rest.ContainsKey('off')) {
         foreach ($arm in @($script:rest.Keys | Where-Object { $_ -ne 'off' })) {
-            $bad = @(); $known = @()
+            $bad = @(); $before = @()
             for ($i = 0; $i -lt 2; $i++) {
                 $a = $script:rest['off'][$i]; $b = $script:rest[$arm][$i]
                 foreach ($f in 'Left', 'Right', 'Top', 'Bottom') {
                     if ([Math]::Abs($a.$f - $b.$f) -le 2) { continue }
                     $d = "$($colourNames[$i]).$f off=$($a.$f) $arm=$($b.$f)"
-                    if ($i -eq 0) { $known += $d } else { $bad += $d }
+                    if ($i -eq 0) { $before += $d } else { $bad += $d }
                 }
             }
-            if ($known) { "    known T2641 (before the slide): $($known -join '; ')" }
+            Assert "$arm.6b before the slide: the hero block rests where the painted arm's does (2 px)$(if ($before) { ': ' + ($before -join '; ') })" ($before.Count -eq 0)
             Assert "$arm.6m landing: the incoming block rests where the painted arm's does (2 px)$(if ($bad) { ': ' + ($bad -join '; ') })" ($bad.Count -eq 0)
         }
     }
