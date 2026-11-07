@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-06T17:12:20-08:00",
-    "commit":  "910a71f05",
+    "generated":  "2026-11-06T18:19:57-08:00",
+    "commit":  "12a871220",
     "uncommitted":  [
 
                     ],
@@ -343,7 +343,7 @@
                   "src/apprt/win32/RuntimeIntegration.zig":  "a09010c06fee25dd7af7bc875ae9490b1c1d23e61c633e5ef93bd4c6bed0253d",
                   "src/apprt/win32/sample_gate.zig":  "5984ec3f9f607c5437c4c49cd5e26defda53e10205fa17e19f40d10d81fb1080",
                   "src/apprt/win32/screen_capture.zig":  "607dc7af49664c1d481275c89183a0a2a88ff1d5b84070afab7339bcf6b05d62",
-                  "src/apprt/win32/Scrollbar.zig":  "efd960a129ead4dbdc6d7e4671694c4a308596732b7d34f578f18026a58a9824",
+                  "src/apprt/win32/Scrollbar.zig":  "81fa37d4b7dc956e81061513d470029deda41edfa71623b9ea45d9d8da6f5055",
                   "src/apprt/win32/session_disconnect.zig":  "48e500d2b9b46d62ba035fa218d792e4a6047d35065952cb3428ebc0c40db025",
                   "src/apprt/win32/session_layout.zig":  "767ab41a283de254194d1653394b90ed2155e46e4c0be408d5f064d146f4486c",
                   "src/apprt/win32/SessionCpuProbe.zig":  "7df0891891508e68f8d022e8fa0245f3ac4e147a1db8f8f395b8e7e9f13e919f",
@@ -1161,7 +1161,7 @@
                   "test/win32/command-registry.ps1":  "362ddab500b622889f2a9872c99ae9111303fe1ff8d64c8731f7bcbb3df0b517",
                   "test/win32/command-resolve-audit.ps1":  "01120dbe18e6961dbb2a463fdbba0632e52388a374252a20b266a88be81e5125",
                   "test/win32/comp-chrome.ps1":  "cd1e090b66d89614885de62a693fb50e0cb0e2956fec8b3e397458e895880314",
-                  "test/win32/comp-present.ps1":  "9cd7a29887894f62c2887dac6303cb977e9c9580e7ceb8cdd6c858b9e7562d98",
+                  "test/win32/comp-present.ps1":  "b6e3bf9149d45db8e4fcaadc1cb71a0ebc03e1f8a20d2511bfa42eb2d89a5ebb",
                   "test/win32/config-errors.ps1":  "1d64c1391b3f98388d3d4cdee2f6a23c4c30d952f005b977afb40b32625fe8c3",
                   "test/win32/confirm-dialogs.ps1":  "2c9006992673ec1ab476cf6a332bebe026939034ad9bb90ee07b0e5fcbf7afa8",
                   "test/win32/conformance.ps1":  "c2f6486404a9ccfa710968614aa1ae24ea7ccced0d4677ffc1bd42c853aa73da",
