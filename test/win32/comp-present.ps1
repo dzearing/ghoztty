@@ -442,6 +442,16 @@ try {
     # Scrollback in the right pane: powershell prints the range, one per row.
     & $Exe +send-keys '--target=compg2' '1..400' Enter 2>$null | Out-Null
     Start-Sleep -Milliseconds 1500
+    # T2761: the output lit the thumb and the idle second faded it out again,
+    # each as one ramp declared to the compositor, with no UI-thread steps.
+    Assert "G1a the scrollbar's fade-in was declared to the compositor (log)" `
+        (Wait-Log $g.Err 'scrollbar fade on compositor from=0 to=255 ms=128' 1500)
+    Assert "G1b ... and ended without a UI-thread step (log)" `
+        (Wait-Log $g.Err 'scrollbar fade done fade=255 ms=\d+ compositor=true ui_steps=0' 1500)
+    Assert "G1c the idle fade-out ran on the compositor too (log)" `
+        (Wait-Log $g.Err 'scrollbar fade done fade=0 ms=\d+ compositor=true ui_steps=0' 3000)
+    Assert "G1d no visual-path fade was stepped ($(Count-Log $g.Err 'scrollbar fade done fade=\d+ ms=\d+ compositor=false') stepped)" `
+        ((Count-Log $g.Err 'scrollbar fade done fade=\d+ ms=\d+ compositor=false') -eq 0)
     $shownBefore = Count-Log $g.Err 'scrollbar shown as visual'
     if ($gTop -ne [IntPtr]::Zero) {
         $wr = Get-TestWindowRect -Window $gTop

@@ -35,6 +35,9 @@ const FADE_TIMER_ID: usize = 1;
 const IDLE_TIMER_ID: usize = 2;
 const FADE_INTERVAL_MS: u32 = 16; // ~60Hz
 const FADE_STEP: u8 = 32;
+/// A whole 0 -> 255 fade on the compositor (T2761): the stepped path's
+/// eight 32-steps at 16 ms, as one linear ramp.
+const FADE_FULL_MS: u32 = 128;
 const IDLE_DELAY_MS: u32 = 1000;
 
 const ALPHA_IDLE: u8 = 80;
@@ -112,6 +115,24 @@ pub fn dragOffset(
 pub fn effectiveAlpha(base_alpha: u8, fade: u8) u8 {
     const product: u16 = @as(u16, base_alpha) * @as(u16, fade) / 255;
     return @intCast(@min(product, 255));
+}
+
+/// How long a compositor fade from `from` to `to` runs (T2761): the full
+/// ramp's rate, so a fade retargeted halfway takes half as long. At least 1.
+pub fn fadeDurationMs(from: u8, to: u8) u32 {
+    const dist: u32 = if (to > from) to - from else from - to;
+    return @max(1, (dist * FADE_FULL_MS + 254) / 255);
+}
+
+/// Where a compositor fade is `elapsed_ms` after it began: the linear ramp
+/// DirectComposition was handed, read back on this side by the clock.
+pub fn fadeAt(from: u8, to: u8, elapsed_ms: i64) u8 {
+    const dur: i64 = fadeDurationMs(from, to);
+    if (elapsed_ms >= dur) return to;
+    if (elapsed_ms <= 0) return from;
+    const f: i64 = from;
+    const v = f + @divTrunc((@as(i64, to) - f) * elapsed_ms, dur);
+    return @intCast(std.math.clamp(v, 0, 255));
 }
 
 /// Pane mouse input the strip is offered on the visual path (T2492).
@@ -221,8 +242,17 @@ pub const Scrollbar = struct {
 
     /// Visibility state (overlay mode only).
     visibility: Visibility = .hidden,
-    /// Fade alpha [0..255]. Multiplied into base_alpha at paint time.
+    /// Fade alpha [0..255]. Multiplied into base_alpha at paint time on the
+    /// popup path; the layer's opacity on the visual path (T2761), where
+    /// during a compositor fade it is where the fade started (`fadeNow`).
     fade: u8 = 0,
+    /// The fade in flight (T2761): its ends, start and whether DWM runs it.
+    fade_from: u8 = 0,
+    fade_to: u8 = 0,
+    fade_t0_ms: i64 = 0,
+    fade_on_compositor: bool = false,
+    /// UI-thread steps the fade in flight took (the oracle's count).
+    fade_steps: u32 = 0,
 
     /// Hover tracking.
     hover: bool = false,
@@ -332,6 +362,7 @@ pub const Scrollbar = struct {
         self.first_update = false;
 
         if (was_first) {
+            self.cancelFade();
             switch (self.mode) {
                 .overlay => {
                     // Initial state — silent. Start hidden + transparent.
@@ -630,7 +661,12 @@ pub const Scrollbar = struct {
         const h = self.local.h;
         if (w <= 0 or h <= 0) return;
         const sig = self.signature(w, h);
-        const fresh = !self.layer.hasPixels() or !self.layer.attached;
+        const rebuilt = !self.layer.hasPixels();
+        const fresh = rebuilt or !self.layer.attached;
+        // The fade is the layer's opacity here (T2761), not the pixels', so
+        // the pixels hold still through it. A compositor fade in flight owns
+        // the opacity; a static set would cut it short.
+        if (!self.compositorFading()) self.layer.setOpacity(self.fade);
         if (!fresh and !chrome_fanout.blitNeeded(self.painted, sig)) {
             chrome_fanout.noteBlitSkipped();
             _ = self.layer.setOffset(self.local.x, self.local.y);
@@ -646,6 +682,9 @@ pub const Scrollbar = struct {
             return;
         }
         self.painted = sig;
+        // A rebuilt tree (the renderer remade its chain) lost the declared
+        // fade with the old visual: carry on from where it had got to.
+        if (rebuilt and self.compositorFading()) self.redeclareFade();
         if (!self.layer.attached) {
             self.layer.setVisible(true);
             log.info("scrollbar shown as visual w={d} h={d}", .{ w, h });
@@ -669,6 +708,13 @@ pub const Scrollbar = struct {
             }
             self.dragging = false;
             self.hover = false;
+            // A compositor fade does not cross paths: the popup steps the
+            // rest of it from where it had got to (T2761).
+            if (self.compositorFading()) {
+                self.fade = self.fadeNow();
+                self.fade_on_compositor = false;
+                _ = FrameClock.arm(self.hwnd, FADE_TIMER_ID, FADE_INTERVAL_MS);
+            }
             self.on_visual = want;
             self.painted = null;
             log.info("scrollbar path visual={}", .{want});
@@ -698,7 +744,7 @@ pub const Scrollbar = struct {
     fn hitGrid(self: *const Scrollbar, x: i32, y: i32) bool {
         if (!self.on_visual or !self.layer.attached) return false;
         const r = thumbRect(self.state.total, self.state.offset, self.state.len, self.local.h, self.dpiScaled(THUMB_MIN_HEIGHT_BASE));
-        const lit = self.visibility != .hidden and self.thumbAlpha() > 0;
+        const lit = self.visibility != .hidden and self.shownAlpha() > 0;
         return stripHit(self.mode, lit, self.local, r, x, y);
     }
 
@@ -772,12 +818,27 @@ pub const Scrollbar = struct {
         }
     }
 
+    /// The thumb's alpha in the pixels. On the visual path the fade is the
+    /// layer's opacity instead (T2761), so the pixels carry the base alone.
     fn thumbAlpha(self: *const Scrollbar) u8 {
-        const base = if (self.dragging) ALPHA_DRAG else if (self.hover) ALPHA_HOVER else ALPHA_IDLE;
+        const base = self.baseAlpha();
         return switch (self.mode) {
             .always_visible => base,
-            .overlay => effectiveAlpha(base, self.fade),
+            .overlay => if (self.on_visual) base else effectiveAlpha(base, self.fade),
         };
+    }
+
+    /// The thumb's alpha as it is on screen right now, whichever path.
+    fn shownAlpha(self: *const Scrollbar) u8 {
+        const base = self.baseAlpha();
+        return switch (self.mode) {
+            .always_visible => base,
+            .overlay => effectiveAlpha(base, self.fadeNow()),
+        };
+    }
+
+    fn baseAlpha(self: *const Scrollbar) u8 {
+        return if (self.dragging) ALPHA_DRAG else if (self.hover) ALPHA_HOVER else ALPHA_IDLE;
     }
 
     fn ensureLeaveTracking(self: *Scrollbar) void {
@@ -885,6 +946,7 @@ pub const Scrollbar = struct {
         self.mode = new_mode;
 
         // Apply the initial state for the new mode.
+        self.cancelFade();
         switch (new_mode) {
             .overlay => {
                 self.visibility = .hidden;
@@ -910,16 +972,105 @@ pub const Scrollbar = struct {
     }
 
     fn startFadeIn(self: *Scrollbar) void {
-        self.visibility = .fading_in;
-        _ = FrameClock.arm(self.hwnd, FADE_TIMER_ID, FADE_INTERVAL_MS);
         self.clearTransparent();
-        self.repaint();
+        self.startFade(255);
     }
 
     fn startFadeOut(self: *Scrollbar) void {
-        self.visibility = .fading_out;
-        _ = FrameClock.arm(self.hwnd, FADE_TIMER_ID, FADE_INTERVAL_MS);
+        self.startFade(0);
+    }
+
+    /// Fade toward `to` from wherever the fade is now. On the visual path the
+    /// whole ramp is declared to DirectComposition at once and DWM runs it at
+    /// the display's refresh, with one timer for its end (T2761); otherwise,
+    /// or when the layer cannot take it, it is stepped on the frame clock.
+    fn startFade(self: *Scrollbar, to: u8) void {
+        self.visibility = if (to == 255) .fading_in else .fading_out;
+        const now = self.fadeNow();
+        self.fade = now;
+        self.fade_from = now;
+        self.fade_to = to;
+        self.fade_t0_ms = std.time.milliTimestamp();
+        self.fade_steps = 0;
+        self.fade_on_compositor = false;
+        FrameClock.disarm(self.hwnd, FADE_TIMER_ID);
+        // Pixels and placement first: a strip going up for the first time
+        // is attached at the fade's current value, then the ramp declared.
         self.repaint();
+        if (self.on_visual and self.layer.attached and self.declareFade()) {
+            self.fade_on_compositor = true;
+            const ms = fadeDurationMs(self.fade_from, to);
+            log.info("scrollbar fade on compositor from={d} to={d} ms={d}", .{ self.fade_from, to, ms });
+            _ = w32.SetTimer(self.hwnd, FADE_TIMER_ID, ms, null);
+        } else {
+            _ = FrameClock.arm(self.hwnd, FADE_TIMER_ID, FADE_INTERVAL_MS);
+        }
+        debugStall();
+    }
+
+    /// Declare `fade_from` -> `fade_to` as one linear opacity ramp. False:
+    /// nothing was declared and the caller steps the fade.
+    fn declareFade(self: *Scrollbar) bool {
+        // `GHOZTTY_DEBUG_SCROLLBAR_FADE_STEPPED=1` (debug builds): step the
+        // visual's fade on this thread instead - the oracle's A/B arm.
+        if (comptime builtin.mode == .Debug) {
+            if (std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DEBUG_SCROLLBAR_FADE_STEPPED")) return false;
+        }
+        const dur_s = @as(f64, @floatFromInt(fadeDurationMs(self.fade_from, self.fade_to))) / 1000.0;
+        // A straight line is one cubic, exactly: 0 -> 1 over the duration.
+        const ramp = [_]comp_overlay.Cubic{.{ .begin_s = 0, .c0 = 0, .c1 = 1 / dur_s, .c2 = 0, .c3 = 0 }};
+        if (self.layer.animateOpacity(self.fade_from, self.fade_to, &ramp, dur_s)) return true;
+        log.warn("scrollbar fade could not go on the compositor; stepping it", .{});
+        return false;
+    }
+
+    /// The tree was rebuilt mid-fade: the new layer starts from the value
+    /// the fade had reached and runs the rest of it.
+    fn redeclareFade(self: *Scrollbar) void {
+        const now = self.fadeNow();
+        self.fade = now;
+        self.fade_from = now;
+        self.fade_t0_ms = std.time.milliTimestamp();
+        self.layer.setOpacity(now);
+        if (self.declareFade()) {
+            _ = w32.SetTimer(self.hwnd, FADE_TIMER_ID, fadeDurationMs(now, self.fade_to), null);
+            return;
+        }
+        self.fade_on_compositor = false;
+        _ = FrameClock.arm(self.hwnd, FADE_TIMER_ID, FADE_INTERVAL_MS);
+    }
+
+    fn compositorFading(self: *const Scrollbar) bool {
+        return self.fade_on_compositor and
+            (self.visibility == .fading_in or self.visibility == .fading_out);
+    }
+
+    /// The fade's value on screen now. A compositor fade's lives in DWM, so
+    /// this side reads it off the ramp by the clock; a stepped one's is
+    /// already `fade`.
+    fn fadeNow(self: *const Scrollbar) u8 {
+        if (!self.compositorFading()) return self.fade;
+        return fadeAt(self.fade_from, self.fade_to, std.time.milliTimestamp() - self.fade_t0_ms);
+    }
+
+    /// Drop any fade in flight; the caller sets `fade` and `visibility`.
+    fn cancelFade(self: *Scrollbar) void {
+        FrameClock.disarm(self.hwnd, FADE_TIMER_ID);
+        self.fade_on_compositor = false;
+    }
+
+    /// `GHOZTTY_DEBUG_SCROLLBAR_FADE_STALL_MS=<n>` (debug builds, T2761):
+    /// block this thread for n ms the moment a fade starts - the oracle's
+    /// stand-in for a busy UI thread. A compositor fade moves through it; a
+    /// stepped one freezes.
+    fn debugStall() void {
+        if (comptime builtin.mode != .Debug) return;
+        const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_DEBUG_SCROLLBAR_FADE_STALL_MS") catch return;
+        defer std.heap.page_allocator.free(raw);
+        const ms = std.fmt.parseInt(u32, std.mem.trim(u8, raw, " \t\r\n"), 10) catch return;
+        if (ms == 0) return;
+        log.info("scrollbar debug stall ms={d}", .{ms});
+        std.Thread.sleep(@as(u64, @min(ms, 5000)) * std.time.ns_per_ms);
     }
 
     fn restartIdleTimer(self: *Scrollbar) void {
@@ -927,28 +1078,36 @@ pub const Scrollbar = struct {
     }
 
     fn onFadeTick(self: *Scrollbar) void {
-        switch (self.visibility) {
-            .fading_in => {
-                const new_fade = @min(@as(u16, self.fade) + FADE_STEP, 255);
-                self.fade = @intCast(new_fade);
-                if (self.fade == 255) {
-                    self.visibility = .shown;
-                    FrameClock.disarm(self.hwnd, FADE_TIMER_ID);
-                }
-                self.repaint();
-            },
-            .fading_out => {
-                const new_fade = if (self.fade > FADE_STEP) self.fade - FADE_STEP else 0;
-                self.fade = new_fade;
-                if (self.fade == 0) {
-                    self.visibility = .hidden;
-                    FrameClock.disarm(self.hwnd, FADE_TIMER_ID);
-                    self.setTransparent();
-                }
-                self.repaint();
-            },
-            else => FrameClock.disarm(self.hwnd, FADE_TIMER_ID),
+        if (self.visibility != .fading_in and self.visibility != .fading_out) {
+            self.cancelFade();
+            return;
         }
+        const elapsed = std.time.milliTimestamp() - self.fade_t0_ms;
+        if (self.fade_on_compositor) {
+            // The one end-of-fade tick. Early: wait out the rest; the
+            // compositor already holds the final value.
+            const ms = fadeDurationMs(self.fade_from, self.fade_to);
+            if (elapsed < ms) {
+                _ = w32.SetTimer(self.hwnd, FADE_TIMER_ID, @intCast(@as(i64, ms) - elapsed), null);
+                return;
+            }
+            self.fade = self.fade_to;
+        } else {
+            self.fade_steps += 1;
+            self.fade = if (self.visibility == .fading_in)
+                @intCast(@min(@as(u16, self.fade) + FADE_STEP, 255))
+            else if (self.fade > FADE_STEP) self.fade - FADE_STEP else 0;
+        }
+        const done = (self.visibility == .fading_in and self.fade == 255) or
+            (self.visibility == .fading_out and self.fade == 0);
+        if (done) {
+            FrameClock.disarm(self.hwnd, FADE_TIMER_ID);
+            log.info("scrollbar fade done fade={d} ms={d} compositor={} ui_steps={d}", .{ self.fade, elapsed, self.fade_on_compositor, self.fade_steps });
+            self.fade_on_compositor = false;
+            self.visibility = if (self.fade == 255) .shown else .hidden;
+            if (self.fade == 0) self.setTransparent();
+        }
+        self.repaint();
     }
 
     fn onIdleTick(self: *Scrollbar) void {
@@ -1118,6 +1277,26 @@ test "dragOffset: returns null when total <= len" {
 test "dragOffset: returns null when thumb fills track" {
     // thumb_h == track_h → track_range == 0
     try testing.expectEqual(@as(?usize, null), dragOffset(0, 0, 400, 400, 1000, 50));
+}
+
+test "fadeDurationMs: the full ramp is the stepped path's 128 ms, a part of it its share" {
+    try testing.expectEqual(@as(u32, 128), fadeDurationMs(0, 255));
+    try testing.expectEqual(@as(u32, 128), fadeDurationMs(255, 0));
+    try testing.expectEqual(@as(u32, 65), fadeDurationMs(0, 128));
+    try testing.expectEqual(@as(u32, 1), fadeDurationMs(77, 77));
+}
+
+test "fadeAt: linear between its ends, clamped outside them" {
+    try testing.expectEqual(@as(u8, 0), fadeAt(0, 255, -5));
+    try testing.expectEqual(@as(u8, 0), fadeAt(0, 255, 0));
+    try testing.expectEqual(@as(u8, 127), fadeAt(0, 255, 64));
+    try testing.expectEqual(@as(u8, 255), fadeAt(0, 255, 128));
+    try testing.expectEqual(@as(u8, 255), fadeAt(0, 255, 9999));
+    try testing.expectEqual(@as(u8, 128), fadeAt(255, 0, 64));
+    try testing.expectEqual(@as(u8, 0), fadeAt(255, 0, 128));
+    // A retarget from halfway runs the rest at the same rate.
+    try testing.expectEqual(@as(u8, 255), fadeAt(128, 255, fadeDurationMs(128, 255)));
+    try testing.expectEqual(@as(u32, 64), fadeDurationMs(128, 255));
 }
 
 test "effectiveAlpha: full fade" {
