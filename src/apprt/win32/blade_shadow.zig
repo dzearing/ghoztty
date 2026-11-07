@@ -115,7 +115,10 @@ pub fn paint(
     const wi: i32 = @intCast(w);
     const hi: i32 = @intCast(h);
     const black: desk_palette.Rgbf = .{ .r = 0, .g = 0, .b = 0 };
-    const px_of: Pixel = .{ .card = card, .caster = caster, .rad = rad, .dx = dx, .dy = dy, .s = s };
+    // Worked out from the strip's own corner (T2732), so a compose of part of
+    // the desk lays, to the bit, what a whole one does: in buffer coordinates
+    // the floats rounded by where the buffer starts.
+    const px_of: Pixel = .{ .card = local(card, rect), .caster = local(caster, rect), .ox = rect.left, .oy = rect.top, .rad = rad, .dx = dx, .dy = dy, .s = s };
     // A row clear of the rounded ends crosses the shape's interior, where the
     // mask leaves nothing to lay: jump it (T2454). A gliding card casts this
     // from its own rect, so the interior is most of a big pane.
@@ -143,24 +146,21 @@ pub fn paint(
     const rows = tables and row_lo < row_hi;
     const cols = tables and col_lo < col_hi;
     if (rows) {
-        const py = @as(f32, @floatFromInt(row_lo)) + 0.5;
         for (0..side) |k| {
             const ki: i32 = @intCast(k);
-            left_t[k] = px_of.alpha(@as(f32, @floatFromInt(x0 + ki)) + 0.5, py);
-            right_t[k] = px_of.alpha(@as(f32, @floatFromInt(in_r + ki)) + 0.5, py);
+            left_t[k] = px_of.alpha(x0 + ki, row_lo);
+            right_t[k] = px_of.alpha(in_r + ki, row_lo);
         }
     }
     if (cols) {
-        const px = @as(f32, @floatFromInt(col_lo)) + 0.5;
         for (0..side) |k| {
             const ki: i32 = @intCast(k);
-            top_t[k] = px_of.alpha(px, @as(f32, @floatFromInt(y0 + ki)) + 0.5);
-            bot_t[k] = px_of.alpha(px, @as(f32, @floatFromInt(in_b + ki)) + 0.5);
+            top_t[k] = px_of.alpha(col_lo, y0 + ki);
+            bot_t[k] = px_of.alpha(col_lo, in_b + ki);
         }
     }
     var y: i32 = @max(y0, 0);
     while (y < @min(y1, hi)) : (y += 1) {
-        const py = @as(f32, @floatFromInt(y)) + 0.5;
         const straight = y >= rect.top + radius and y < rect.bottom - radius;
         const row_table = rows and y >= row_lo and y < row_hi;
         var x: i32 = @max(x0, 0);
@@ -174,7 +174,7 @@ pub fn paint(
             else if (cols and x >= col_lo and x < col_hi)
                 (if (y < in_t) top_t[@intCast(y - y0)] else if (y >= in_b) bot_t[@intCast(y - in_b)] else 0)
             else
-                px_of.alpha(@as(f32, @floatFromInt(x)) + 0.5, py);
+                px_of.alpha(x, y);
             if (a < 1.0 / 512.0) continue;
             const i: usize = @intCast(y * wi + x);
             const dst = buf[i];
@@ -193,20 +193,36 @@ const MAX_SIDE = 256;
 /// One pixel's share of the shadow: outside the shape only (Mac's even-odd
 /// mask), antialiased, cast from the caster moved by the lean.
 const Pixel = struct {
+    /// Both relative to (`ox`, `oy`), the strip's corner in the buffer.
     card: pane_elevation.Card,
     caster: pane_elevation.Card,
+    ox: i32,
+    oy: i32,
     rad: f32,
     dx: f32,
     dy: f32,
     s: pane_elevation.Shadow,
 
-    fn alpha(self: Pixel, px: f32, py: f32) f32 {
+    /// Buffer pixel (`x`, `y`)'s, sampled at its centre.
+    fn alpha(self: Pixel, x: i32, y: i32) f32 {
+        const px = @as(f32, @floatFromInt(x - self.ox)) + 0.5;
+        const py = @as(f32, @floatFromInt(y - self.oy)) + 0.5;
         const d0 = pane_elevation.roundRectDistance(px, py, self.card, self.rad);
         const outside = std.math.clamp(0.5 + d0, 0, 1);
         if (outside <= 0) return 0;
         return pane_elevation.shadowAlpha(pane_elevation.roundRectDistance(px - self.dx, py - self.dy, self.caster, self.rad), self.s) * outside;
     }
 };
+
+/// `c` relative to `o`'s top-left corner.
+fn local(c: pane_elevation.Card, o: Rect) pane_elevation.Card {
+    var r = c;
+    r.left -= o.left;
+    r.right -= o.left;
+    r.top -= o.top;
+    r.bottom -= o.top;
+    return r;
+}
 
 /// The shape the shadow is cast from: `rect` pulled in from each end of the
 /// strip (across the stack) by `ends` of the corner radius, at most a quarter
@@ -369,16 +385,18 @@ fn paintReference(buf: []u32, w: usize, h: usize, rect: Rect, axis: Direction, l
     const wi: i32 = @intCast(w);
     const hi: i32 = @intCast(h);
     const black: desk_palette.Rgbf = .{ .r = 0, .g = 0, .b = 0 };
+    const lcard = local(card, rect);
+    const lcaster = local(caster, rect);
     var y: i32 = @max(rect.top - reach, 0);
     while (y < @min(rect.bottom + reach, hi)) : (y += 1) {
-        const py = @as(f32, @floatFromInt(y)) + 0.5;
+        const py = @as(f32, @floatFromInt(y - rect.top)) + 0.5;
         var x: i32 = @max(rect.left - reach, 0);
         while (x < @min(rect.right + reach, wi)) : (x += 1) {
-            const px = @as(f32, @floatFromInt(x)) + 0.5;
-            const d0 = pane_elevation.roundRectDistance(px, py, card, rad);
+            const px = @as(f32, @floatFromInt(x - rect.left)) + 0.5;
+            const d0 = pane_elevation.roundRectDistance(px, py, lcard, rad);
             const outside = std.math.clamp(0.5 + d0, 0, 1);
             if (outside <= 0) continue;
-            const a = pane_elevation.shadowAlpha(pane_elevation.roundRectDistance(px - dx, py - dy, caster, rad), s) * outside;
+            const a = pane_elevation.shadowAlpha(pane_elevation.roundRectDistance(px - dx, py - dy, lcaster, rad), s) * outside;
             if (a < 1.0 / 512.0) continue;
             const i: usize = @intCast(y * wi + x);
             const dst = buf[i];
@@ -412,5 +430,35 @@ test "T2454: paint's interior skip and side tables lay exactly what every pixel 
             paint(&got, w, h, r, axis, leads, collapse, light, scale, radius);
             paintReference(&want, w, h, r, axis, leads, collapse, light, scale, radius);
             try testing.expectEqualSlices(u32, &want, &got);
+        };
+}
+
+test "T2732: a blade painted into part of the buffer lays exactly the pixels a whole paint does there" {
+    // The desk's partial compose paints into a scratch the size of one dirty
+    // rectangle, every rect moved by its corner; before T2732 four pixels
+    // beside a gliding card came out a bit apart from the whole compose.
+    const w = 400;
+    const h = 300;
+    var whole: [w * h]u32 = undefined;
+    for (&whole, 0..) |*p, i| p.* = @intCast((i * 2654435761) & 0x00FF_FFFF);
+    const base = whole;
+    const sub_l = 137;
+    const sub_t = 23;
+    const sw = 211;
+    const sh = 250;
+    var part: [sw * sh]u32 = undefined;
+    const rects = [_]Rect{
+        .{ .left = 150, .top = 40, .right = 343, .bottom = 280 },
+        .{ .left = 161, .top = 31, .right = 181, .bottom = 271 },
+    };
+    for (rects) |r| for ([_]Direction{ .horizontal, .vertical }) |axis| for ([_]bool{ false, true }) |leads|
+        for ([_]f32{ 0.1, 0.6, 1 }) |collapse| for ([_]f32{ 1, 1.25, 1.5 }) |scale| {
+            whole = base;
+            for (0..sh) |y| @memcpy(part[y * sw ..][0..sw], whole[(sub_t + y) * w + sub_l ..][0..sw]);
+            const radius: i32 = @intFromFloat(@round(11 * scale));
+            paint(&whole, w, h, r, axis, leads, collapse, false, scale, radius);
+            const moved: Rect = .{ .left = r.left - sub_l, .top = r.top - sub_t, .right = r.right - sub_l, .bottom = r.bottom - sub_t };
+            paint(&part, sw, sh, moved, axis, leads, collapse, false, scale, radius);
+            for (0..sh) |y| try testing.expectEqualSlices(u32, whole[(sub_t + y) * w + sub_l ..][0..sw], part[y * sw ..][0..sw]);
         };
 }

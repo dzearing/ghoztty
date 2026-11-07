@@ -446,16 +446,31 @@ const Memo = struct {
         bar: ?Bar,
     ) Partial {
         if (!m.valid or m.w != w or m.h != h or m.desk_gen != desk_gen) return .full;
-        if (m.cards_len != cards.len or m.strips_len != strips.len) return .full;
         if (!std.meta.eql(m.fill, style.fill) or m.is_light != style.is_light or
             m.scale != style.scale or m.glass != style.glass) return .full;
+        const old = m.cards[0..m.cards_len];
+        const old_strips = m.strips[0..m.strips_len];
+        // A card or a strip that came or went (T2732): a fold's first glide
+        // frame adds the folding card's strip, its last takes the card away.
+        // More than one at once is a different grid, and composed whole.
+        const card_extra = Extra.find(pane_elevation.Card, old, cards) orelse return .full;
+        const strip_extra = Extra.find(pane_stack_strip.Band, old_strips, strips) orelse return .full;
         var out: Rects = .{ .w = w, .h = h };
         const reach = reachPx(style.scale);
         const ri = pane_elevation.radiusPx(style.scale);
         const inner = pane_elevation.edgeInnerPx(style.scale);
-        const old = m.cards[0..m.cards_len];
-        for (cards, old) |a, b| if (!std.meta.eql(a, b)) out.addCard(b, a, ri, inner, reach);
-        for (strips, m.strips[0..m.strips_len]) |a, b| if (!std.meta.eql(a, b)) out.addStrip(b, a, ri, inner, reach);
+        var ci = card_extra.pairs(old.len, cards.len);
+        while (ci.next()) |p| switch (p) {
+            .pair => |ab| if (!std.meta.eql(old[ab[0]], cards[ab[1]])) out.addCard(old[ab[0]], cards[ab[1]], ri, inner, reach),
+            .old => |i| out.addAround(old[i].left, old[i].top, old[i].right, old[i].bottom, reach),
+            .new => |i| out.addAround(cards[i].left, cards[i].top, cards[i].right, cards[i].bottom, reach),
+        };
+        var si = strip_extra.pairs(old_strips.len, strips.len);
+        while (si.next()) |p| switch (p) {
+            .pair => |ab| if (!std.meta.eql(old_strips[ab[0]], strips[ab[1]])) out.addStrip(old_strips[ab[0]], strips[ab[1]], ri, inner, reach),
+            .old => |i| out.addAround(old_strips[i].tab.left, old_strips[i].tab.top, old_strips[i].tab.right, old_strips[i].tab.bottom, reach),
+            .new => |i| out.addAround(strips[i].tab.left, strips[i].tab.top, strips[i].tab.right, strips[i].tab.bottom, reach),
+        };
         const glows_same = m.glows_len == style.glows.len and for (style.glows, m.glows[0..m.glows_len]) |a, b| {
             if (!std.meta.eql(a, b)) break false;
         } else true;
@@ -485,6 +500,72 @@ const Memo = struct {
         if (out.area() * 4 > @as(i64, w) * h * 3) return .full;
         return .{ .rects = out };
     }
+
+    /// How a remembered list became this one when it gained or lost at most
+    /// one element (T2732). A compose lays each list in order and a pixel
+    /// depends only on the elements whose reach covers it, so pairing the rest
+    /// in order keeps every pixel outside the dirty rects what it was: the
+    /// extra element is dirty whole, and each pair as `dirty` already treats
+    /// it. Which element is the extra one is not known - its neighbours may
+    /// have moved in the same frame - so it is the one that leaves the most
+    /// pairs equal; any choice would be correct, this one is the cheapest.
+    const Extra = struct {
+        /// Which list holds the extra element, and where; `none` when the
+        /// two are the same length.
+        side: enum { none, old, new } = .none,
+        at: usize = 0,
+
+        fn find(comptime T: type, old: []const T, new: []const T) ?Extra {
+            if (old.len == new.len) return .{};
+            const long, const short, const side: @TypeOf(@as(Extra, .{}).side) = if (old.len > new.len)
+                .{ old, new, .old }
+            else
+                .{ new, old, .new };
+            if (long.len != short.len + 1) return null;
+            var best: usize = 0;
+            var best_eq: usize = 0;
+            for (0..long.len) |k| {
+                var eq: usize = 0;
+                for (short, 0..) |s, j| {
+                    if (std.meta.eql(s, long[if (j < k) j else j + 1])) eq += 1;
+                }
+                if (k == 0 or eq > best_eq) {
+                    best = k;
+                    best_eq = eq;
+                }
+            }
+            return .{ .side = side, .at = best };
+        }
+
+        const Step = union(enum) {
+            /// Indices into the old list and the new one.
+            pair: [2]usize,
+            old: usize,
+            new: usize,
+        };
+
+        const Iter = struct {
+            e: Extra,
+            n: usize,
+            i: usize = 0,
+
+            fn next(it: *Iter) ?Step {
+                if (it.i >= it.n) return null;
+                const i = it.i;
+                it.i += 1;
+                return switch (it.e.side) {
+                    .none => .{ .pair = .{ i, i } },
+                    .old => if (i == it.e.at) .{ .old = i } else .{ .pair = .{ i, if (i < it.e.at) i else i - 1 } },
+                    .new => if (i == it.e.at) .{ .new = i } else .{ .pair = .{ if (i < it.e.at) i else i - 1, i } },
+                };
+            }
+        };
+
+        /// Every step, over the longer list.
+        fn pairs(e: Extra, old_len: usize, new_len: usize) Iter {
+            return .{ .e = e, .n = @max(old_len, new_len) };
+        }
+    };
 
     /// A few rectangles of a `w` x `h` buffer. They may overlap - each is
     /// composed whole, so a pixel two of them share is laid twice, the same
@@ -1965,6 +2046,122 @@ test "T2454: composing only the rectangle that changed paints exactly what a who
     // Nothing composed changed (a light moved, say): no rectangle at all.
     const same = m.dirty(w, h, 1, &base_cards, &base_strips, style, null);
     try testing.expect(same == .rects and same.rects.len == 0);
+}
+
+test "T2732: a card or strip that comes or goes is composed over its own reach, the same as a whole compose" {
+    const testing = std.testing;
+    const w = 960;
+    const h = 460;
+    const desk = try testing.allocator.alloc(u32, w * h);
+    defer testing.allocator.free(desk);
+    for (0..h) |y| for (0..w) |x| {
+        desk[y * w + x] = @as(u32, @intCast(x % 256)) << 16 | @as(u32, @intCast(y % 256)) << 8 | @as(u32, @intCast((x * 5 + y) % 256));
+    };
+    const full = try testing.allocator.alloc(u32, w * h);
+    defer testing.allocator.free(full);
+    const comp = try testing.allocator.alloc(u32, w * h);
+    defer testing.allocator.free(comp);
+    var scratch: std.ArrayListUnmanaged(u32) = .empty;
+    defer scratch.deinit(light_alloc);
+    var scratch_desk: std.ArrayListUnmanaged(u32) = .empty;
+    defer scratch_desk.deinit(light_alloc);
+
+    // A row of four cards; the second is folding into a strip at the far end.
+    const row = [_]pane_elevation.Card{
+        .{ .left = 10, .top = 10, .right = 300, .bottom = 450 },
+        .{ .left = 315, .top = 10, .right = 520, .bottom = 450, .fill = .{ .r = 240, .g = 240, .b = 236 } },
+        .{ .left = 535, .top = 10, .right = 740, .bottom = 450 },
+        .{ .left = 755, .top = 10, .right = 900, .bottom = 450, .shadow = 0.5 },
+    };
+    const rgb: color_math.Rgb = .{ .r = 60, .g = 60, .b = 70 };
+    const at_rest: pane_stack_strip.Band = .{ .tab = .{ .left = 905, .top = 10, .right = 925, .bottom = 450 }, .axis = .horizontal, .rgb = rgb, .leads = false };
+    const glass_rest: pane_stack_strip.Band = .{ .tab = .{ .left = 928, .top = 10, .right = 948, .bottom = 450 }, .axis = .horizontal, .rgb = rgb, .leads = false, .glass = .{ .bg = .{ .r = 20, .g = 20, .b = 24 }, .sheet = .{} } };
+    const gliding: pane_stack_strip.Band = .{ .tab = .{ .left = 315, .top = 10, .right = 520, .bottom = 450 }, .axis = .horizontal, .rgb = rgb, .leads = false, .collapse = 0.1, .band = false };
+
+    const Case = struct {
+        name: []const u8,
+        cards0: []const pane_elevation.Card,
+        strips0: []const pane_stack_strip.Band,
+        cards1: []const pane_elevation.Card,
+        strips1: []const pane_stack_strip.Band,
+        glows1: []const pane_elevation.Glow = &.{.{ .card = 0, .level = 1 }},
+    };
+    // A fold's first frame: the strip appears as a blade shadow, and the card
+    // that will fold narrows and its neighbour moves up in the same frame.
+    var narrowed = row;
+    narrowed[1].right -= 12;
+    narrowed[1].shadow = 0.9;
+    narrowed[2].left -= 12;
+    var gliding1 = gliding;
+    gliding1.tab.right -= 12;
+    // A fold's last frame: the folded card leaves the row, its strip comes
+    // to rest, and the glow (on the card after it) shifts index.
+    const after = [_]pane_elevation.Card{ row[0], row[2], row[3] };
+    var resting = gliding;
+    resting.tab = .{ .left = 882, .top = 10, .right = 902, .bottom = 450 };
+    resting.band = true;
+    resting.collapse = 1;
+    const cases = [_]Case{
+        .{ .name = "fold starts", .cards0 = &row, .strips0 = &.{ at_rest, glass_rest }, .cards1 = &narrowed, .strips1 = &.{ gliding1, at_rest, glass_rest } },
+        .{ .name = "fold ends", .cards0 = &narrowed, .strips0 = &.{ gliding1, at_rest, glass_rest }, .cards1 = &after, .strips1 = &.{ resting, at_rest, glass_rest }, .glows1 = &.{.{ .card = 1, .level = 1 }} },
+        .{ .name = "card leaves, nothing else moves", .cards0 = &row, .strips0 = &.{at_rest}, .cards1 = &after, .strips1 = &.{at_rest} },
+        .{ .name = "card arrives", .cards0 = &after, .strips0 = &.{}, .cards1 = &row, .strips1 = &.{} },
+        .{ .name = "a strip goes away", .cards0 = &row, .strips0 = &.{ at_rest, glass_rest }, .cards1 = &row, .strips1 = &.{glass_rest} },
+    };
+    for ([_]bool{ false, true }) |glass| for ([_]f32{ 1, 1.5 }) |scale| for (cases) |cs| {
+        const glow0 = [_]pane_elevation.Glow{.{ .card = 0, .level = 1 }};
+        const style0: pane_elevation.CardStyle = .{ .fill = .{ .r = 24, .g = 26, .b = 30 }, .is_light = false, .scale = scale, .glass = glass, .glows = &glow0 };
+        var style1 = style0;
+        style1.glows = cs.glows1;
+        var m: Memo = .{};
+        compose(comp, desk, w, h, cs.cards0, cs.strips0, style0, null, null);
+        m.store(w, h, 1, cs.cards0, cs.strips0, style0, null, &.{});
+        compose(full, desk, w, h, cs.cards1, cs.strips1, style1, null, null);
+        const p = m.dirty(w, h, 1, cs.cards1, cs.strips1, style1, null);
+        const r = switch (p) {
+            .full => {
+                std.debug.print("{s} glass={} scale={d}: composed whole\n", .{ cs.name, glass, scale });
+                return error.TestExpectedEqual;
+            },
+            .rects => |r| r,
+        };
+        // Patched, not the whole desk again.
+        try testing.expect(r.area() * 4 <= @as(i64, w) * h * 3);
+        var prep = pane_elevation.prepare(style1);
+        defer prep.deinit();
+        try testing.expect(composeRects(&scratch, &scratch_desk, comp, desk, w, r.slice(), cs.cards1, cs.strips1, style1, null, &.{}, w, h, &prep));
+        for (full, comp, 0..) |a, b, i| if (a != b) {
+            std.debug.print("{s} glass={} scale={d}: first difference at ({d},{d}): {x} vs {x}\n", .{ cs.name, glass, scale, i % w, i / w, a, b });
+            return error.TestExpectedEqual;
+        };
+    };
+
+    // Two at once is a different grid.
+    var m: Memo = .{};
+    const style: pane_elevation.CardStyle = .{ .fill = .{ .r = 24, .g = 26, .b = 30 }, .is_light = false, .scale = 1 };
+    m.store(w, h, 1, &row, &.{}, style, null, &.{});
+    try testing.expect(m.dirty(w, h, 1, row[0..2], &.{}, style, null) == .full);
+    try testing.expect(m.dirty(w, h, 1, &row, &.{ at_rest, glass_rest }, style, null) == .full);
+}
+
+test "T2732: the extra element is the one that leaves the most pairs equal" {
+    const testing = std.testing;
+    const a = [_]u8{ 1, 2, 3, 4 };
+    try testing.expectEqual(Memo.Extra{}, Memo.Extra.find(u8, &a, &a).?);
+    // 3 inserted: everything after it pairs again.
+    const e = Memo.Extra.find(u8, &a, &.{ 1, 2, 9, 3, 4 }).?;
+    try testing.expect(e.side == .new and e.at == 2);
+    const g = Memo.Extra.find(u8, &.{ 1, 2, 9, 3, 4 }, &a).?;
+    try testing.expect(g.side == .old and g.at == 2);
+    var it = g.pairs(5, 4);
+    var seen: [5]Memo.Extra.Step = undefined;
+    var n: usize = 0;
+    while (it.next()) |s| : (n += 1) seen[n] = s;
+    try testing.expectEqual(@as(usize, 5), n);
+    try testing.expectEqual(Memo.Extra.Step{ .pair = .{ 1, 1 } }, seen[1]);
+    try testing.expectEqual(Memo.Extra.Step{ .old = 2 }, seen[2]);
+    try testing.expectEqual(Memo.Extra.Step{ .pair = .{ 3, 2 } }, seen[3]);
+    try testing.expect(Memo.Extra.find(u8, &a, &.{1}) == null);
 }
 
 test "T2454: a partial compose lifts the lights off first, so their rings rebase onto the bare picture" {
