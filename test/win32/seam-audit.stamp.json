@@ -1,10 +1,11 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-06T18:19:48-08:00",
-    "commit":  "12a871220",
+    "generated":  "2026-11-06T19:15:44-08:00",
+    "commit":  "585f4d7ae",
     "uncommitted":  [
-
+                        "src/renderer/comp_overlay.zig",
+                        "src/renderer/gl_comp_present.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -552,11 +553,11 @@
                   "src/remote/ws_client.zig":  "e5ebe28e8a2e5442c596a12fcaa6468d9646d9aaeaa08c40e5f1dce1e71370c2",
                   "src/renderer/backend.zig":  "6c17bdd1d4eeb9eda89fc7259147fd4e28b207a684dece941104c6e1e6cf5b79",
                   "src/renderer/cell.zig":  "e7b1395f5740944729142bdb88371003d61839c05f0baef19ccd64a6642663f5",
-                  "src/renderer/comp_overlay.zig":  "66709b4bfae5f90d5521ef7df8eaf897b5fec46ec73aab2b0e9b54f04bb6ae8d",
+                  "src/renderer/comp_overlay.zig":  "3bb9e6ec7c4b74a2410a90e28a735a81b5e153a2b82bab04eb77174ac2f29001",
                   "src/renderer/comp_tree.zig":  "3191fe8c32a7f077e64299e55dbd413f9848b8fce9ef378efd63a2b9b8d54d9f",
                   "src/renderer/cursor.zig":  "1a37e555c743fe01ea9033da827af9656371799ecb1df7869044a48311f00395",
                   "src/renderer/generic.zig":  "4a86a8a796822cc44905163852f7f67df70f283f72d0ccd0b3bfa97212b8fe23",
-                  "src/renderer/gl_comp_present.zig":  "f3c99cd98f0bce00313ff697426dda204bf08a31139584a50b771788d99d8bb1",
+                  "src/renderer/gl_comp_present.zig":  "521828dd5e74b013a8baa4272b81694594cfaadd1b915342d54c04f57242caac",
                   "src/renderer/gl_loader.zig":  "5e48c65d81df3cf24ab97ecd9e2d29f658aade47867fa4687af3efdaf84f8992",
                   "src/renderer/gl_report.zig":  "cab949c5e9d9586daef1261de0090f4cd58a53dee78ef01022aa478d1ce3f51e",
                   "src/renderer/gl_robust.zig":  "56ae9ce9924d222d22ab1cb51cdbb4d6b4e3c47350d15d5d6bfad7aa45cc61d1",

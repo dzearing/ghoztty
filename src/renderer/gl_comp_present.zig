@@ -817,7 +817,13 @@ pub const Presenter = struct {
         if (self.target) |t| release(t);
         if (self.swap2) |s2| release(s2);
         self.swap2 = null;
-        if (self.dcomp) |d| release(d);
+        // T2772: DComp destroys the released visual and target only at the
+        // next Commit; without it they hold the device (and the D3D11 device
+        // under it) alive past the pane.
+        if (self.dcomp) |d| {
+            _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, d, slot_dcomp_device_commit)(d);
+            release(d);
+        }
         release(self.swap);
         if (self.surface_handle) |h| _ = CloseHandle(h);
         self.surface_handle = null;

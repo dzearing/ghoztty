@@ -548,16 +548,22 @@ pub const Layer = struct {
 
     /// Let go of everything built on the current tree.
     pub fn drop(self: *Layer) void {
-        if (self.dev) |d| {
-            if (self.attached) {
-                if (self.visual) |vis| _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, d.root, slot_visual_remove_visual)(d.root, vis);
-                _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, d.dcomp, slot_dcomp_commit)(d.dcomp);
-            }
-        }
+        if (self.dev) |d| if (self.attached) if (self.visual) |vis| {
+            _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, d.root, slot_visual_remove_visual)(d.root, vis);
+        };
         if (self.surface) |o| comRelease(o);
         if (self.effect) |o| comRelease(o);
         if (self.visual) |o| comRelease(o);
-        if (self.dev) |d| releaseShared(d, RefOps.com);
+        if (self.dev) |d| {
+            // T2772: one commit, AFTER the releases. It takes the visual off
+            // the pane, and DComp destroys a released object only at the
+            // device's next Commit: committing before the releases (as this
+            // did) left the surface, effect and visual pending, and they kept
+            // the device - and the pane's whole D3D11 device, ~55 driver
+            // threads and its GPU memory - alive after every closed window.
+            _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, d.dcomp, slot_dcomp_commit)(d.dcomp);
+            releaseShared(d, RefOps.com);
+        }
         self.* = .{ .generation = self.generation, .opacity = self.opacity };
     }
 
