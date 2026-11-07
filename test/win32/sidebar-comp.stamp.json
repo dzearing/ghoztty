@@ -1,0 +1,15 @@
+{
+    "guard":  "sidebar-comp",
+    "script":  "test/win32/sidebar-comp.ps1",
+    "generated":  "2026-11-07T12:14:49-08:00",
+    "commit":  "8a880a392",
+    "uncommitted":  [
+                        "src/apprt/win32/child_comp.zig",
+                        "test/win32/sidebar-comp.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/child_comp.zig":  "d14e007155c51d827355e59aadbe58b9d875a1209e0ba53df6d5c87449778a9a",
+                  "src/renderer/comp_overlay.zig":  "4e81a29a5bb2793b19935a319b0deecd7767241ea7a2ee58276f62a0773a0b4d",
+                  "test/win32/sidebar-comp.ps1":  "bbb3c4e76cfd70353aa9d894d073cc967f2807bc5918f73dda54de4d95907fb5"
+              }
+}

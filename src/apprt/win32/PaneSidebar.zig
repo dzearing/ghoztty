@@ -53,6 +53,8 @@ const rename_rules = @import("pane_sidebar_rename.zig");
 const search_field = @import("pane_sidebar_search.zig");
 const scroll_mod = @import("pane_sidebar_scroll.zig");
 const motion = @import("pane_sidebar_motion.zig");
+const child_comp = @import("child_comp.zig");
+const comp_overlay = @import("../../renderer/comp_overlay.zig");
 const reorder = @import("pane_sidebar_reorder.zig");
 const pane_sidebar_order = @import("pane_sidebar_order.zig");
 const window_order = @import("pane_sidebar_window_order.zig");
@@ -477,6 +479,12 @@ const Rename = struct {
 hwnd: w32.HWND,
 window: *Window,
 alloc: Allocator,
+/// The column's own composition tree (T2765): built when a motion first
+/// asks for it, and what that motion's visuals hang on (T2801-T2804).
+comp: child_comp.Host,
+/// The debug fill seam's layer (`GHOZTTY_DEBUG_SIDEBAR_COMP_FILL`); idle
+/// otherwise.
+comp_fill: comp_overlay.Layer = .{},
 
 entries: std.ArrayListUnmanaged(Entry) = .{},
 signature: u64 = 0,
@@ -743,7 +751,7 @@ pub fn create(alloc: Allocator, window: *Window, parent: w32.HWND) ?*PaneSidebar
         alloc.destroy(self);
         return null;
     };
-    self.* = .{ .hwnd = hwnd, .window = window, .alloc = alloc };
+    self.* = .{ .hwnd = hwnd, .window = window, .alloc = alloc, .comp = child_comp.Host.init(hwnd, "pane sidebar") };
     _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
     // A new window's sidebar is the one every window shows (T2336).
     self.takeShared();
@@ -822,6 +830,10 @@ pub fn destroy(self: *PaneSidebar) void {
     // Let go of the tint this sidebar handed out (T2278).
     self.hover = .none;
     self.syncHoverTint();
+    // The composition tree goes while its window is still there (T2765):
+    // layers first, then the target and the devices.
+    self.comp_fill.deinit();
+    self.comp.deinit();
     // Clear the back-pointer FIRST: DestroyWindow delivers messages
     // synchronously and they must not find a half-dead object.
     _ = w32.SetWindowLongPtrW(self.hwnd, w32.GWLP_USERDATA, 0);
@@ -907,6 +919,7 @@ pub fn place(self: *PaneSidebar, target: w32.RECT, mode: pane_sidebar.Mode, scal
             w32.SWP_NOZORDER | w32.SWP_NOACTIVATE | w32.SWP_SHOWWINDOW,
         );
     }
+    self.syncCompFill();
     // A new shape (the rail expanded into the panel, or back) shows the
     // selected row in it (T1878).
     if (changed) if (self.selectedIndex()) |i| self.revealItem(i);
@@ -3294,6 +3307,33 @@ fn paintHeldItem(self: *PaneSidebar, hdc: w32.HDC, laid: *const pane_sidebar.Lay
         at.bottom += dy;
         self.paintRow(hdc, laid, i, at, false, self.isEmphasized(), t);
     }
+}
+
+// -------------------------------------------------------------------------
+// The column's composition tree (T2765)
+// -------------------------------------------------------------------------
+
+/// The debug fill seam (`GHOZTTY_DEBUG_SIDEBAR_COMP_FILL`): build the tree
+/// as the column is placed and cover it with one half-magenta layer, so the
+/// whole path - device, target on this window, root, a layer's surface and
+/// upload - runs end to end. After a device loss (the paint noticed) it goes
+/// up again on the new tree. A no-op without the seam.
+fn syncCompFill(self: *PaneSidebar) void {
+    if (!child_comp.fillSeam()) return;
+    if (w32.IsWindowVisible(self.hwnd) == 0) return;
+    const s = self.comp.ensure(w32.GetTickCount64(), "debug-fill") orelse return;
+    if (!self.comp_fill.sync(s)) {
+        log.warn("pane sidebar composition fill: the layer could not join the tree", .{});
+        return;
+    }
+    if (self.comp_fill.hasPixels()) return;
+    // Premultiplied BGRA: magenta at half alpha.
+    if (!self.comp_fill.cover(0x80800080)) {
+        log.warn("pane sidebar composition fill: upload failed", .{});
+        return;
+    }
+    self.comp_fill.attach(.back);
+    log.info("pane sidebar composition fill attached build={d} generation={d}", .{ self.comp.builds, s.generation });
 }
 
 // -------------------------------------------------------------------------
@@ -6322,6 +6362,9 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             defer _ = w32.EndPaint(hwnd, &ps);
             var r: w32.RECT = undefined;
             if (w32.GetClientRect(hwnd, &r) != 0) self.paintBuffered(hdc, r.right - r.left, r.bottom - r.top, ps.rcPaint);
+            // A lost device takes the tree with it (T2765); whatever hangs
+            // on it comes back on the rebuilt one.
+            if (self.comp.checkLost()) self.syncCompFill();
             return 0;
         },
         w32.WM_NCHITTEST => {

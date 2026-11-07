@@ -6036,6 +6036,19 @@ $GuardTable = @(
             'test\win32\pane-sidebar-hue.ps1'
         )
     },
+    # The pane sidebar's own composition tree (T2765): built only when asked,
+    # a layer hung on it, rebuilt after a device loss with the layer back on
+    # the new generation. The back-off is unit-tested in child_comp.zig.
+    [pscustomobject]@{
+        Name   = 'sidebar-comp'
+        Script = 'test\win32\sidebar-comp.ps1'
+        Stamp  = 'test\win32\sidebar-comp.stamp.json'
+        Covers = @(
+            'src\apprt\win32\child_comp.zig',
+            'src\renderer\comp_overlay.zig',
+            'test\win32\sidebar-comp.ps1'
+        )
+    },
     # A bell's `title` and `audio` features (T1890): the glyph in front of the
     # caption while the rung pane is unlooked-at, and the sound file played at
     # its volume. The strings and the volume mapping are unit-tested in

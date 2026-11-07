@@ -250,6 +250,17 @@
             "unset": "shipped-elsewhere",
             "note": "T2762: pane-sidebar-hue.ps1 -SteppedControl steps the visual tint's fade on the UI thread, the oracle's red arm; unset is the compositor fade the same script's visual arm runs every time."
         },
+        "GHOZTTY_DEBUG_SIDEBAR_COMP_FILL": {
+            "class": "enable",
+            "unset": "armed",
+            "unsetArm": "test\\win32\\sidebar-comp.ps1::[plain] no composition tree was built",
+            "note": "T2765: builds the pane sidebar's composition tree at placement and hangs one cover layer on it; unset, no tree is built until a motion asks, which the same script's plain arm asserts."
+        },
+        "GHOZTTY_DEBUG_SIDEBAR_COMP_LOSS": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "T2765: the first device check after the sidebar tree's build reports a (simulated) loss so the rebuild can be watched; unset is the real device check every paint runs (sidebar-comp.ps1 fill arm)."
+        },
         "GHOZTTY_KEEP_VACATED_GUTTERS": {
             "class": "non-default",
             "unset": "shipped-elsewhere",
