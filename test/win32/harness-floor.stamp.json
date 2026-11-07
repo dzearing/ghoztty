@@ -1,17 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-06T23:17:32-08:00",
-    "commit":  "61d11ab13",
+    "generated":  "2026-11-07T00:11:26-08:00",
+    "commit":  "fb885fa3f",
     "uncommitted":  [
-                        "test/win32/chainfold.ps1",
-                        "test/win32/divider-flicker.ps1",
-                        "test/win32/divider-ghost.ps1",
-                        "test/win32/frame-lab-catalogue.ps1",
-                        "test/win32/lib/DividerFlickerScore.ps1",
-                        "test/win32/lib/FrameLabCatalogue.ps1",
-                        "test/win32/lib/FrameLabDriver.ps1",
-                        "test/win32/lib/OccludedDisplay.ps1"
+                        "test/win32/resolve-window-persist.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -193,7 +186,7 @@
                   "test/win32/ghoztty-cleanup.ps1":  "443de2b0fdefdd38c064d1245b3ccb9ce653ac68a37f664590ade379dd93d7ee",
                   "test/win32/glass-frame-origin.ps1":  "0a0dfeed8dff3e6ba20ec9402905ac5490ab37b43d85d9316be106de72e26b56",
                   "test/win32/gl-device-lost.ps1":  "9ea50c131a98b6be564e055c6e196ee36d7209884b6c4ab792d83103336ec73e",
-                  "test/win32/go-loop-guard.ps1":  "52e4415374ef20449b31fc713777c8b602b5a40858bcc6921ea6c2701961e65d",
+                  "test/win32/go-loop-guard.ps1":  "462a71576c4595c66df1fe7a3997a3b87f0bc5978fb4ea72cbe2e198176084df",
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/guard-due.ps1":  "281420e26fbca13e3dfdd2707d8ef2294e277a3c0171aff3e53e5d0f87b939d6",
@@ -458,7 +451,7 @@
                   "test/win32/reset-window-size.ps1":  "28e18f6472e20ae4a5e0f9b5d93ec392c6a81e67c8b519785e1b433b18ada3ba",
                   "test/win32/resize-debounce.ps1":  "2e44a1b8cfe58c0ef286df245380afc6abbb1e11d691ef4ac3820d1d683a531d",
                   "test/win32/resize-flicker.ps1":  "7b682dc5d09fc02288831203000c419002a200594a6e37f1ac0e195df87c47b0",
-                  "test/win32/resolve-window-persist.ps1":  "9771bd0681e4d07ab37db752daf7e3e3fee9c6474947c6d7b71d5f2917eda9dc",
+                  "test/win32/resolve-window-persist.ps1":  "56769f3e10f912f800abb2ffb03a46adf580d32ca0187014e1a96f59583e5ade",
                   "test/win32/restore-dead-sessions.ps1":  "95e0b3b6d0e2c2c6cd9c02e0823c715a4eff72e8ac7d12a70a50976d5baf25ce",
                   "test/win32/restore-dpi-frame.ps1":  "d108aa2a21aa785326a2f845906c3d9a7f252f1dd5711cb9d33f28a7fb6fdcbe",
                   "test/win32/restore-late-agent.ps1":  "ff641c3eea23c1f66215805145b3b262c388b459c8d4f069fd345587cc888b80",

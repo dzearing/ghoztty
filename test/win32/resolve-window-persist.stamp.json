@@ -1,14 +1,14 @@
 {
     "guard":  "resolve-window-persist",
     "script":  "test/win32/resolve-window-persist.ps1",
-    "generated":  "2026-10-22T17:57:28-07:00",
-    "commit":  "bbfffbf77",
+    "generated":  "2026-11-06T23:29:44-08:00",
+    "commit":  "fb885fa3f",
     "uncommitted":  [
-                        "src/apprt/win32/LocalAgent.zig"
+                        "test/win32/resolve-window-persist.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/LocalAgent.zig":  "297f4e7a5c465487750ddbe76da8e551a6f5d72dbab6acd1be1e04cc7c3b44bc",
+                  "src/apprt/win32/LocalAgent.zig":  "9c116178296552aa605d6a323db75d4cdea89b76aafcbaeb85e22fdf3c38ed37",
                   "src/apprt/win32/resolve_defer.zig":  "267a538d490ece3f25763b40bb3b88b1ea1b9f7e0d026bdb126f510d06f07f80",
-                  "test/win32/resolve-window-persist.ps1":  "9771bd0681e4d07ab37db752daf7e3e3fee9c6474947c6d7b71d5f2917eda9dc"
+                  "test/win32/resolve-window-persist.ps1":  "56769f3e10f912f800abb2ffb03a46adf580d32ca0187014e1a96f59583e5ade"
               }
 }

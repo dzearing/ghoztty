@@ -22,7 +22,10 @@
 #   C. The agent STARTS but never answers (T1693): GHOSTTY_LOCAL_AGENT_BIN
 #      names an exe that runs and exits without serving the pipe. The launch
 #      window's resolve times out, and the window asked for next lands in the
-#      15s cooldown after it. Neither can be persisted, and each must SAY so -
+#      15s cooldown after it. Since T2162 a cold `+new-window` opens only the
+#      window asked for, so the launch window is the first request (rdC) and
+#      the cooldown window is a second one (rdC-2), asked for once the first
+#      has its notice (T2688). Neither can be persisted, and each must SAY so -
 #      a "Not persisted ... did not respond" banner on its pane - instead of
 #      passing for a persisted window. The notice must also stay out of the
 #      saved layout, so a later restore onto a healthy agent does not repeat it.
@@ -115,12 +118,12 @@ function Wait-Settled([string]$Name, [int]$TimeoutSec = 25) {
 # a banner, or the timeout passes (sections C/D). Returns the last state seen,
 # so a pane that never gets its notice still fails the assertion rather than
 # hanging the run.
-function Wait-Noticed([string]$Name, [int]$TimeoutSec = 25) {
+function Wait-Noticed([string]$Name, [int]$Min = 2, [int]$TimeoutSec = 25) {
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     do {
         $p = @(Get-Panes)
         $mine = @($p | Where-Object { $_.window -eq $Name })
-        if ($mine.Count -ge 1 -and $p.Count -ge 2 -and @($p | Where-Object { -not $_.banner }).Count -eq 0) { return $p }
+        if ($mine.Count -ge 1 -and $p.Count -ge $Min -and @($p | Where-Object { -not $_.banner }).Count -eq 0) { return $p }
         Start-Sleep -Milliseconds 700
     } while ((Get-Date) -lt $deadline)
     return @(Get-Panes)
@@ -146,8 +149,15 @@ function Invoke-FailedLaunch([string]$Tag, [string]$Name, [string]$AgentBin) {
     $saved = $env:GHOSTTY_LOCAL_AGENT_BIN
     $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentBin
     try {
+        # T2688: since T2162 a cold `+new-window` opens ONLY the window asked
+        # for - the auto-launch passes `--initial-window=false` - so the first
+        # request IS the launch window, and its own resolve is the one that
+        # fails. The second request lands in the cooldown after that failure,
+        # which is the window the sections used to get from the stray blank one.
         [void](Ghoz @('+new-window', "--target=$Name"))
-        $panes = Wait-Noticed -Name $Name
+        [void](Wait-Noticed -Name $Name -Min 1)
+        [void](Ghoz @('+new-window', "--target=$Name-2"))
+        $panes = Wait-Noticed -Name "$Name-2" -Min 2
         # The layout write is debounced; give it time to land before reading.
         Start-Sleep -Seconds 3
         $manifests = Read-Manifests -Root $sandbox
@@ -221,8 +231,10 @@ try {
         $r = Invoke-FailedLaunch -Tag 'rdC' -Name 'rdC' -AgentBin (Join-Path $env:SystemRoot 'System32\whoami.exe')
         $r.log
         "  panes: " + (Show-Panes $r.panes) + "; manifests: $($r.manifests.count)"
-        $mine = @($r.panes | Where-Object { $_.window -eq 'rdC' })
-        $launch = @($r.panes | Where-Object { $_.window -ne 'rdC' })
+        # T2688: the launch window is the first one asked for (rdC); the one
+        # opened in the cooldown is rdC-2.
+        $launch = @($r.panes | Where-Object { $_.window -eq 'rdC' })
+        $mine = @($r.panes | Where-Object { $_.window -eq 'rdC-2' })
         Assert "C1 both windows opened, and neither is persisted (no agent to hold them)" `
             ($mine.Count -ge 1 -and $launch.Count -ge 1 -and @($r.panes | Where-Object { $_.sid }).Count -eq 0)
         Assert "C2 the launch window says it is not persisted, and why" `
