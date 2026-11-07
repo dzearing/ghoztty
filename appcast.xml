@@ -1266,5 +1266,23 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.54.0/Ghoztty-1.54.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="2oAvOxzbjNR3hdetRlNKuJIR3IY0BsIz4tEplENDH3NxJEu/OlixsGkECz9xxysiF2qfjCV5xN0FMOFihVCRCA==" length="27682195" />
         </item>
+        <item>
+            <title>Version 1.54.1</title>
+            <sparkle:version>1.54.1</sparkle:version>
+            <sparkle:shortVersionString>1.54.1</sparkle:shortVersionString>
+            <pubDate>Sat, 07 Nov 2026 22:47:05 +0000</pubDate>
+            <description>{
+  "version": "1.54.1",
+  "sections": [
+    { "title": "Agent integrations",
+      "items": [
+        { "title": "Claude skills stay current", "text": "Ghoztty now refreshes its Claude skills and hooks when it starts, so they always match the version you have installed instead of staying at whatever version first wrote them." },
+        { "title": "Old plugin leftovers clean themselves up", "text": "An old ghoztty Claude plugin install that no longer works is removed automatically through Claude's own uninstaller, along with its retired marketplace, so it can't block Ghoztty's own skills. A plugin that still works and that you chose to keep is left alone." }
+      ] }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.54.1/Ghoztty-1.54.1-arm64.dmg" type="application/octet-stream" sparkle:edSignature="CshNiANftzyVyr6tqC3Ua+shw9Txuv1kkS7tghrHH2/zCv42uniIlHelSIfJhJ2f1jtc8xr7dBj9OGmWCCd4CQ==" length="27695683" />
+        </item>
     </channel>
 </rss>
