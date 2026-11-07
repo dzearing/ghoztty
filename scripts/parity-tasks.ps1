@@ -703,11 +703,26 @@ function Get-OpenDeps {
 # Reported once per ring rather than once per member, keyed on the ring's
 # member set, so a two-task cycle is one line and not two. A dep naming an id
 # that does not exist is skipped here and owned by DANGLING DEP above.
+#
+# T2689: the walk follows the SAME edges `next` follows (Get-OpenDeps), not the
+# literal `deps:` lists. An open task waits on its deps; a skipped task is not
+# waited on at all - a dep on it resolves to its split children or its redirect
+# target - so those are its edges; a done task resolves to nothing. Walking the
+# literal lists missed the commonest real ring: a split child that depends on
+# its own split parent (T2666, out of the queue for a day) has no literal edge
+# back, because the parent's own deps are empty. It also reported rings among
+# closed tasks, which can stall nothing.
+function Get-ResolvedEdges {
+    param([string]$Id, [hashtable]$ById)
+    $status = $ById[$Id].Status
+    if (-not (Test-Done $status)) { return @($ById[$Id].Deps) }
+    return @(@(Get-SplitChildren $status) + @(Get-RedirectTarget $status))
+}
 function Invoke-DepWalk {
     param([string]$Id, [hashtable]$ById, [System.Collections.ArrayList]$Path)
     $script:dcColor[$Id] = 1        # 1 = on the current path, 2 = finished
     [void]$Path.Add($Id)
-    foreach ($d in @($ById[$Id].Deps)) {
+    foreach ($d in @(Get-ResolvedEdges -Id $Id -ById $ById)) {
         if (-not $d -or -not $ById.ContainsKey($d)) { continue }
         if ($script:dcColor[$d] -eq 1) {
             $at = $Path.IndexOf($d)
@@ -2240,6 +2255,13 @@ switch ($Command) {
         foreach ($ring in @(Get-DepCycles -ById $byId)) {
             $shown = @($ring) + @($ring)[0]
             Write-Host ("DEP CYCLE: {0} - nothing in this ring can ever be offered by next" -f ($shown -join ' -> ')); $problems++
+            # T2689: name the closed link, since a skipped member's edge is not
+            # in its deps: list and the ring otherwise reads as impossible.
+            foreach ($m in @($ring)) {
+                if (Test-Done $byId[$m].Status) {
+                    Write-Host ("  {0} is {1}: a dep on it resolves to {2}, so the dependent waits on itself - drop that dep (or point it at what the split/redirect really waits on)" -f $m, $byId[$m].Status, ((@(Get-ResolvedEdges -Id $m -ById $byId)) -join ', '))
+                }
+            }
         }
 
         # An acceptance harness that has gone unrun since the code it covers

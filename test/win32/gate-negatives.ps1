@@ -610,6 +610,46 @@ try {
     Check 'B10 a ring reached through a chain is still found' `
         ($r.Code -ne 0 -and $r.Text -match 'DEP CYCLE: T31 -> T32 -> T31') "exit=$($r.Code): $($r.Text)"
 
+    # T2689: a ring through a SPLIT. `next` resolves a dep on a
+    # skipped(split -> X) parent to X, so a child X that depends on its own
+    # split parent waits on itself - and no literal deps edge closes the ring
+    # (the parent's deps are empty). T2666 sat out of the queue a day that way.
+    $d = New-CaseDir 'splitself'
+    New-TaskFile -Dir $d -Id 'T40' -Status 'skipped(split -> T41, T42)'
+    New-TaskFile -Dir $d -Id 'T41' -Deps '"T40"'
+    New-TaskFile -Dir $d -Id 'T42'
+    $r = Invoke-Validate $d
+    Check 'B10b a split child that depends on its own split parent fails' `
+        ($r.Code -ne 0 -and $r.Text -match 'DEP CYCLE: T40 -> T41 -> T40' -and $r.Text -match 'T40 is skipped') "exit=$($r.Code): $($r.Text)"
+
+    # The same misroute by the redirect road (T518): X depends on P, and P is
+    # closed as a duplicate OF X, so X waits on itself.
+    $d = New-CaseDir 'redirectself'
+    New-TaskFile -Dir $d -Id 'T43' -Status 'skipped(duplicate of T44)'
+    New-TaskFile -Dir $d -Id 'T44' -Deps '"T43"'
+    $r = Invoke-Validate $d
+    Check 'B10c a redirect target that depends on its own redirect source fails' `
+        ($r.Code -ne 0 -and $r.Text -match 'DEP CYCLE: T43 -> T44 -> T43') "exit=$($r.Code): $($r.Text)"
+
+    # Negative controls: waiting on a split from OUTSIDE it is an ordinary
+    # queue state (SPLIT DEP, informational), and a ring among CLOSED tasks
+    # stalls nothing, since `next` never follows a done task's own deps.
+    $d = New-CaseDir 'splitoutside'
+    New-TaskFile -Dir $d -Id 'T45' -Status 'skipped(split -> T46, T47)'
+    New-TaskFile -Dir $d -Id 'T46' -Deps '"T47"'
+    New-TaskFile -Dir $d -Id 'T47'
+    New-TaskFile -Dir $d -Id 'T48' -Deps '"T45"'
+    $r = Invoke-Validate $d
+    Check 'B10d ...but a dependent outside the split (and a sibling dep inside it) is no cycle' `
+        ($r.Code -eq 0 -and $r.Text -notmatch 'DEP CYCLE' -and $r.Text -match 'SPLIT DEP: T48 -> T45') "exit=$($r.Code): $($r.Text)"
+
+    $d = New-CaseDir 'donering'
+    New-TaskFile -Dir $d -Id 'T49' -Deps '"T50"' -Status 'done'
+    New-TaskFile -Dir $d -Id 'T50' -Deps '"T49"' -Status 'done'
+    $r = Invoke-Validate $d
+    Check 'B10e ...and a ring of closed tasks, which can stall nothing, is not reported' `
+        ($r.Code -eq 0 -and $r.Text -notmatch 'DEP CYCLE') "exit=$($r.Code): $($r.Text)"
+
     # The escape hatch must say it was used - the whole reason a hatch is
     # allowed is that the commit made under it can be explained afterwards.
     $d = New-CaseDir 'hatch'
