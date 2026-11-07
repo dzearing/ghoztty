@@ -211,7 +211,7 @@ struct ClaudeHookSpec: HookSpec {
         return []
     }
 
-    private static func name(ofRegistration key: String) -> String {
+    static func name(ofRegistration key: String) -> String {
         key.split(separator: "@").first.map(String.init) ?? key
     }
 }
