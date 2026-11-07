@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-06T21:16:01-08:00",
-    "commit":  "b2cf4878d",
+    "generated":  "2026-11-06T22:49:44-08:00",
+    "commit":  "2d8fd724f",
     "uncommitted":  [
-
+                        "test/win32/go-loop-guard.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -186,7 +186,7 @@
                   "test/win32/ghoztty-cleanup.ps1":  "443de2b0fdefdd38c064d1245b3ccb9ce653ac68a37f664590ade379dd93d7ee",
                   "test/win32/glass-frame-origin.ps1":  "0a0dfeed8dff3e6ba20ec9402905ac5490ab37b43d85d9316be106de72e26b56",
                   "test/win32/gl-device-lost.ps1":  "9ea50c131a98b6be564e055c6e196ee36d7209884b6c4ab792d83103336ec73e",
-                  "test/win32/go-loop-guard.ps1":  "52e4415374ef20449b31fc713777c8b602b5a40858bcc6921ea6c2701961e65d",
+                  "test/win32/go-loop-guard.ps1":  "462a71576c4595c66df1fe7a3997a3b87f0bc5978fb4ea72cbe2e198176084df",
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/guard-due.ps1":  "281420e26fbca13e3dfdd2707d8ef2294e277a3c0171aff3e53e5d0f87b939d6",

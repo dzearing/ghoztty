@@ -655,6 +655,50 @@ if ($ready) {
     Ghoz @('+close', '--target=go-loop-test') | Out-Null
 
     ""
+    "I6. re-entry when the target name is held by a window that is not the loop (T2663)"
+    # The 2026-11-03 shape: the user's own chat window is named `main`, the
+    # watchdog runs `+new-window --target=main`, the existing window is merely
+    # focused, the command exits 0 and no loop ever starts.
+    $busyName = 'go-loop-held'
+    Ghoz @('+new-window', "--target=$busyName", "--working-directory=$Repo") | Out-Null
+    $busyPane = $null
+    for ($i = 0; $i -lt $pollTicks; $i++) {
+        Start-Sleep -Milliseconds 500
+        $busyPane = Get-WindowPane $busyName
+        if ($busyPane) { break }
+    }
+    Assert 'I6a an unmarked window already answers to the target name' ($null -ne $busyPane)
+    if ($busyPane) {
+        Remove-Item $lock, $state -Force -ErrorAction SilentlyContinue
+        $marker6 = 'GO-LOOP-REENTRY-T2663'
+        $r = Dog-Run @('-GhozttyExe', $Exe, '-ClaudeCommand', 'echo', '-ResumePrompt', $marker6,
+            '-WindowTarget', $busyName)
+        Assert 'I6b the watchdog still reports a new window' ($r.Out -match 'ACTION new-window')
+        $altPane = $null
+        for ($i = 0; $i -lt $pollTicks; $i++) {
+            Start-Sleep -Milliseconds 500
+            $altPane = Get-WindowPane "$busyName-loop"
+            if ($altPane) { break }
+        }
+        Assert 'I6c a NEW window opened under the reserved <target>-loop name' ($null -ne $altPane)
+        if ($altPane) {
+            $seen = ''
+            for ($i = 0; $i -lt $pollTicks; $i++) {
+                Start-Sleep -Milliseconds 500
+                $seen = (Ghoz @('+read', "--name=$($altPane.id)", '--lines=20')).Out
+                if ($seen -match $marker6) { break }
+            }
+            Assert 'I6d the new window really ran the resume shim' ($seen -match $marker6)
+        }
+        $busySeen = (Ghoz @('+read', "--name=$($busyPane.id)", '--lines=40')).Out
+        Assert 'I6e the window that held the name was left alone' ($busySeen -notmatch $marker6)
+        $logText = if (Test-Path $log) { Get-Content $log -Raw } else { '' }
+        Assert 'I6f the log says why the name moved' ($logText -match "held by a window that is not this lane's loop")
+        Ghoz @('+close', "--target=$busyName-loop") | Out-Null
+    }
+    Ghoz @('+close', "--target=$busyName") | Out-Null
+
+    ""
     "J. real re-entry (nudge a live but stalled session)"
     $r = Ghoz @('+new-window', '--target=go-loop-live', "--working-directory=$Repo")
     $pane = $null

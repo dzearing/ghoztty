@@ -506,6 +506,40 @@ function Test-PaneExists($paneId) {
     return ($r.Out -match [regex]::Escape($paneId))
 }
 
+# The window name a re-entry may open (T2663).
+#
+# Named targets are focused, not recreated, so `+new-window --target=main` is
+# only a re-entry when no OTHER window already answers to `main`. And `main`
+# is exactly the name the user's own chat gets (the upgrade script opens it
+# as --target=main): on 2026-11-03 07:01 a forced re-entry focused the
+# controller chat's window, exited 0, opened nothing, and the lock never
+# reached held. So the configured name is used only when it is free or is
+# already this lane's marked loop window; when a window that is NOT ours holds
+# it, the re-entry opens under `<target>-loop` instead - a name nothing but this
+# function ever gives a window, so it is trusted marked or not (a re-entry
+# whose session has not claimed yet is unmarked, and a rearm must focus it
+# rather than open a second one). A `+list` that cannot be read keeps the
+# configured name: that is the pre-T2663 behavior, never a worse one.
+function Resolve-ReentryTarget {
+    $r = $null
+    try { $r = Invoke-Ghoztty @('+list', '--json') } catch { $r = $null }
+    if (-not $r -or $r.Code -ne 0) { return $WindowTarget }
+    $j = $null
+    try { $j = $r.Out | ConvertFrom-Json } catch { return $WindowTarget }
+    $marker = Get-LoopLaneMarker $Lane
+    foreach ($w in @($j.data.windows | ForEach-Object { $_ })) {
+        if ([string]$w.target -ne $WindowTarget) { continue }
+        $title = [string]$w.title
+        if ($title.StartsWith($marker, [StringComparison]::Ordinal)) { return $WindowTarget }
+        $alt = "$WindowTarget-loop"
+        Log ("  re-entry target '$WindowTarget' is held by a window that is not this lane's loop " +
+             "(title '$title', no '$marker' marker) - opening as '$alt' instead, so the re-entry " +
+             "opens a window rather than focusing somebody else's (T2663)")
+        return $alt
+    }
+    return $WindowTarget
+}
+
 # Is there an APP to talk to at all (T849)? Distinct from Test-PaneExists, which
 # answers `$false` for both "that pane is closed" and "nothing is listening" -
 # the same answer for two states whose recoveries are opposite. Every IPC verb
@@ -1084,7 +1118,8 @@ function Invoke-Tick {
         return 'launch-app'
     }
     if ($DryRun) { return 'new-window' }
-    $r = Invoke-Ghoztty @('+new-window', "--target=$WindowTarget", "--working-directory=$Repo", "--command=$shim")
+    $target = Resolve-ReentryTarget
+    $r = Invoke-Ghoztty @('+new-window', "--target=$target", "--working-directory=$Repo", "--command=$shim")
     Log "  new-window exit=$($r.Code) $($r.Out)"
     Add-Ineffective $turnKey $blocker
     Write-State 'new-window'
