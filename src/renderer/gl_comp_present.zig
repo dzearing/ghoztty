@@ -227,6 +227,32 @@ const slot_swapchain_present = 8;
 const slot_swapchain_get_buffer = 9;
 const slot_swapchain_resize_buffers = 13;
 const slot_swapchain2_set_source_size = 29; // IDXGISwapChain 8-17, IDXGISwapChain1 18-28 (dxgi1_3.h)
+// IDXGISwapChain2 after SetSourceSize: GetSourceSize 30, Set/GetMaximumFrameLatency
+// 31/32, GetFrameLatencyWaitableObject 33, SetMatrixTransform 34 (dxgi1_3.h).
+const slot_swapchain2_set_matrix_transform = 34;
+
+/// DXGI_MATRIX_3X2_F: row-major 2x3 affine, `_11 _12 / _21 _22 / _31 _32`.
+pub const Matrix3x2 = extern struct {
+    m11: f32,
+    m12: f32,
+    m21: f32,
+    m22: f32,
+    m31: f32,
+    m32: f32,
+};
+
+/// The transform that shows a `w` x `h` source rectangle of a `buf_w` x
+/// `buf_h` composition swap chain at 1:1 (T2625). A composition chain
+/// (DXGI_SCALING_STRETCH, the only scaling it allows) stretches its source
+/// rectangle over the whole buffer size, so without this a split that shrank
+/// a pane from 950 to 471 px showed its text at twice its width, and every
+/// bucketed grow (T2598) was stretched by up to a bucket. Scaling by
+/// source/buffer undoes exactly that stretch.
+pub fn sourceTransform(w: u32, h: u32, buf_w: u32, buf_h: u32) Matrix3x2 {
+    const sx: f32 = if (buf_w == 0) 1 else @as(f32, @floatFromInt(w)) / @as(f32, @floatFromInt(buf_w));
+    const sy: f32 = if (buf_h == 0) 1 else @as(f32, @floatFromInt(h)) / @as(f32, @floatFromInt(buf_h));
+    return .{ .m11 = sx, .m12 = 0, .m21 = 0, .m22 = sy, .m31 = 0, .m32 = 0 };
+}
 const slot_d3d11_device_create_texture2d = 5;
 const slot_d3d11_context_copy_subresource_region = 46;
 const slot_d3d11_context_copy_resource = 47;
@@ -604,8 +630,18 @@ pub const Presenter = struct {
             }
             stage = "source-size";
             const set_source = slot(*const fn (Obj, u32, u32) callconv(.winapi) HRESULT, s2, slot_swapchain2_set_source_size);
-            if (set_source(s2, w, h) >= 0) return;
+            const set_matrix = slot(*const fn (Obj, *const Matrix3x2) callconv(.winapi) HRESULT, s2, slot_swapchain2_set_matrix_transform);
+            if (set_source(s2, w, h) >= 0) {
+                // Undo the chain's stretch of the source rectangle over the
+                // buffer (T2625); applies from the next present.
+                stage = "source-transform";
+                const m = sourceTransform(w, h, self.swap_w, self.swap_h);
+                if (set_matrix(s2, &m) >= 0) return;
+            }
             log.warn("swap chain refused source size {}x{} of {}x{}; resizing it exactly from here on", .{ w, h, self.swap_w, self.swap_h });
+            // Back to the whole buffer at 1:1 before the exact resize below.
+            const identity = sourceTransform(1, 1, 1, 1);
+            _ = set_matrix(s2, &identity);
             release(s2);
             self.swap2 = null;
         }
@@ -875,6 +911,25 @@ test "sharedCapacity grows by whole buckets and never shrinks" {
     // Growing past one side grows only that side.
     try std.testing.expectEqual([2]u32{ 768, 768 }, sharedCapacity(512, 768, 513, 700));
     try std.testing.expectEqual([2]u32{ 512, 1024 }, sharedCapacity(512, 768, 500, 769));
+}
+
+test "T2625: a source rectangle is shown 1:1, not stretched over the buffer" {
+    // The split that showed text at twice its width: 471 px of a 950 px chain.
+    const m = sourceTransform(471, 646, 950, 646);
+    try std.testing.expectApproxEqAbs(@as(f32, 471.0 / 950.0), m.m11, 1e-6);
+    try std.testing.expectEqual(@as(f32, 1), m.m22);
+    // A transform that maps the stretched buffer back onto the source size.
+    try std.testing.expectApproxEqAbs(@as(f32, 471), m.m11 * 950, 1e-3);
+    try std.testing.expectEqual(@as(f32, 0), m.m12);
+    try std.testing.expectEqual(@as(f32, 0), m.m21);
+    try std.testing.expectEqual(@as(f32, 0), m.m31);
+    try std.testing.expectEqual(@as(f32, 0), m.m32);
+    // A bucketed grow (T2598) is unstretched too; a full buffer is identity.
+    try std.testing.expectApproxEqAbs(@as(f32, 1000.0 / 1024.0), sourceTransform(1000, 700, 1024, 768).m11, 1e-6);
+    const id = sourceTransform(512, 768, 512, 768);
+    try std.testing.expectEqual(@as(f32, 1), id.m11);
+    try std.testing.expectEqual(@as(f32, 1), id.m22);
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(Matrix3x2));
 }
 
 test "copy box desc matches the SDK layout" {
