@@ -428,6 +428,15 @@ function Invoke-FrameLabCell {
         $acct = $(if ($in2.Skipped -or $in2.Aborted) { $null } else { $a.Account })
         $out.Accounting = [pscustomobject]@{ Input = $in2; Account = $acct }
 
+        # T2650: a display occluded while the app ran (asleep, locked) shows
+        # a terminal that never presented, so these frames say nothing about
+        # the app. Optional hook: the driver reads the app's own log.
+        $occl = $(if ($Driver.ContainsKey('Occluded')) { & $Driver.Occluded $scene })
+        if ($occl) {
+            $out.Verdict = [pscustomobject]@{ Verdict = 'skipped'; Reasons = @("the display was occluded while the app ran (asleep or locked): $occl"); SlotGaps = 0 }
+            return [pscustomobject]$out
+        }
+
         $out.Verdict = Resolve-FrameLabCellVerdict -Input1 $in1 -BleedFrames ([int]$sc.BleedFrames) `
             -MotionMisses @($sc.MotionMisses) -Account $acct -SlotGaps $m.Stats.SlotGaps
     } finally {

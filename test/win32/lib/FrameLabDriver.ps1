@@ -45,7 +45,7 @@
 
 Set-StrictMode -Off
 
-foreach ($lib in 'ChromeGeometry', 'UserPresence', 'FrameLabCatalogue', 'FrameLabLiveScene', 'FrameLabReport', 'FrameCapture') {
+foreach ($lib in 'ChromeGeometry', 'UserPresence', 'OccludedDisplay', 'FrameLabCatalogue', 'FrameLabLiveScene', 'FrameLabReport', 'FrameCapture') {
     . (Join-Path $PSScriptRoot "$lib.ps1")
 }
 
@@ -485,7 +485,8 @@ function New-FrameLabLiveDriver {
         $env:GHOZTTY_NO_STARTUP_ESCAPE = '1'
         try {
             $argv = @('--config-default-files=false', '--session-persistence=false', "--config-file=$conf", '-e') + (Get-FrameLabCardArgv 1 $outs[0])
-            $proc = Start-Process -FilePath $script:FrameLabLive.Exe -ArgumentList $argv -PassThru
+            # The app's stderr is kept per cell: the Occluded hook reads it (T2650).
+            $proc = Start-Process -FilePath $script:FrameLabLive.Exe -ArgumentList $argv -PassThru -RedirectStandardError (Join-Path $dir 'app.log')
         } finally { $env:LOCALAPPDATA = $savedLocal }
         $launched = @{ Pid = $proc.Id; Top = [IntPtr]::Zero; Geometry = $null; Backdrop = $null; Dir = $dir; Problems = @(); Scale = 1.0 }
         # Plain scriptblocks resolve names where they are CALLED (Invoke-
@@ -654,6 +655,8 @@ function New-FrameLabLiveDriver {
         # the reason.
         Fire         = { param($Plan) [pscustomobject]@{ Skipped = $true; SkipReason = 'trigger cells are not driven live yet (T2727)'; Aborted = $false } }
         Score        = $score
+        # T2650: the app's own word that the display was occluded (lib\OccludedDisplay.ps1).
+        Occluded     = { param($Scene) Get-OccludedDisplayLine -LogPath (Join-Path $Scene.Dir 'app.log') }
     }
 }
 

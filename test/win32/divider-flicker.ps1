@@ -114,6 +114,7 @@ function Assert($name, $cond, $detail = '') {
 Import-FrameLabDriver
 Import-FrameCapture
 . (Join-Path $PSScriptRoot 'lib\DividerFlickerScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\OccludedDisplay.ps1')   # T2645's gate, shared since T2650
 Import-DividerFlickerScore
 
 # ---- the synthetic world ----------------------------------------------------
@@ -268,15 +269,34 @@ try {
             [IO.File]::WriteAllText($lit, "info: ghoztty build optimize=Debug`nwarning(config): no default shell found, will default to using cmd`n")
             [IO.File]::WriteAllText($dim, "info: ghoztty build optimize=Debug`nwarning(frame_clock): compositor clock wait failed (c01e0006); falling back to a timer`n")
             Assert 'E1 a lit run reads not-occluded; a missing log reads not-occluded' (
-                $null -eq (Get-DividerFlickerOccluded -LogPath $lit) -and $null -eq (Get-DividerFlickerOccluded -LogPath (Join-Path $tmp 'none.log')))
+                $null -eq (Get-OccludedDisplayLine -LogPath $lit) -and $null -eq (Get-OccludedDisplayLine -LogPath (Join-Path $tmp 'none.log')))
             # The app holds its stderr open while the harness reads it.
             $hold = [IO.File]::Open($dim, 'Open', 'ReadWrite', 'ReadWrite')
-            try { $got = Get-DividerFlickerOccluded -LogPath $dim } finally { $hold.Dispose() }
+            try { $got = Get-OccludedDisplayLine -LogPath $dim } finally { $hold.Dispose() }
             Assert 'E2 the 0xC01E0006 clock failure is found, in a log the app still holds open' ($got -match 'c01e0006') "got=$got"
             # The gate matches the app's own words: a reworded log line would
             # silently score occluded runs again.
-            $fc = [IO.File]::ReadAllText((Join-Path $repo 'src\apprt\win32\FrameClock.zig'))
-            Assert 'E3 FrameClock.zig still logs the line the gate matches' ($fc.Contains('"compositor clock wait failed ({x}); falling back to a timer"'))
+            # T2650: matched on the format string's fixed prefix, so a new tail
+            # (T2724 added the period and the retry) does not blind it.
+            Assert 'E3 FrameClock.zig still logs the line the gate matches' (Test-OccludedDisplaySource -Repo $repo)
+            # T2650: the shared forms every live capture harness calls.
+            $sk = Get-OccludedDisplaySkip -LogPath $dim -What 'drag fold'
+            Assert 'E4 the per-cell SKIP line names the unit and quotes the app; a lit log gives none' (
+                $sk -match '^  SKIP drag fold: the display was occluded' -and $sk -match 'c01e0006' -and
+                $null -eq (Get-OccludedDisplaySkip -LogPath $lit -What 'x')) "got=$sk"
+            # The whole-run form exits its script, so it runs in a child.
+            $lib = Join-Path $PSScriptRoot 'lib\OccludedDisplay.ps1'
+            $armDim = Join-Path $tmp 'run-dim\arm-b'; $armLit = Join-Path $tmp 'run-lit\arm-a'
+            $null = New-Item -ItemType Directory -Force -Path $armDim, $armLit
+            Copy-Item -LiteralPath $lit -Destination (Join-Path $armLit 'stderr.txt')
+            Copy-Item -LiteralPath $dim -Destination (Join-Path $armDim 'stderr.txt')
+            $probe = Join-Path $tmp 'probe.ps1'
+            [IO.File]::WriteAllText($probe, "param(`$Root)`n. '$lib'`nExit-IfOccludedDisplay -Root `$Root`n'VERDICT ALL PASS'`nexit 0`n")
+            $outLit = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $probe -Root (Join-Path $tmp 'run-lit') 2>&1 | ForEach-Object { "$_" })
+            $outDim = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $probe -Root (Join-Path $tmp 'run-dim') 2>&1 | ForEach-Object { "$_" })
+            Assert 'E5 a whole run with every arm lit falls through to its own verdict' (($outLit -join '|') -match 'VERDICT ALL PASS' -and ($outLit -join '|') -notmatch 'SKIP ALL') ($outLit -join ' | ')
+            Assert 'E6 one occluded arm turns the whole run into SKIP ALL naming its log, before any verdict' (
+                $outDim[0] -match '^SKIP ALL: the display was occluded' -and ($outDim -join '|') -match 'arm-b' -and ($outDim -join '|') -cnotmatch 'VERDICT ALL PASS') ($outDim -join ' | ')
         } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
     } else {
         # ---- L. the real app, photographed --------------------------------------
@@ -480,9 +500,9 @@ try {
                     # T2645: a display the compositor called occluded (asleep,
                     # locked) shows a terminal that never presented - every pixel
                     # verdict of this cell would be about the box, not the app.
-                    $occl = Get-DividerFlickerOccluded -LogPath $errlog
+                    $occl = Get-OccludedDisplaySkip -LogPath $errlog -What "La/Lb/Lc/Ld $cell"
                     if ($occl) {
-                        "  SKIP La/Lb/Lc/Ld ${cell}: the display was occluded while the app ran (asleep or locked), so these frames say nothing about a drag -- $occl"
+                        $occl
                         $script:skipped++; $seen.occluded++
                         continue
                     }

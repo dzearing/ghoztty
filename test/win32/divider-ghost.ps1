@@ -105,9 +105,10 @@ Import-FrameLabDriver
 Import-FrameCapture
 . (Join-Path $PSScriptRoot 'lib\DividerGhostScore.ps1')
 Import-DividerGhostScore
-# T2645's occluded-display reading (FrameClock's own log line), shared with
-# divider-flicker: a run on an asleep or locked display is SKIPPED, never scored.
-. (Join-Path $PSScriptRoot 'lib\DividerFlickerScore.ps1')
+# T2645's occluded-display reading (FrameClock's own log line), shared by every
+# harness that photographs the app (T2650): a run on an asleep or locked
+# display is SKIPPED, never scored.
+. (Join-Path $PSScriptRoot 'lib\OccludedDisplay.ps1')
 
 # ---- the synthetic world ----------------------------------------------------
 # 200x120. Left pane x0-79 (blank, colour LeftBg), the bar x80-83, right pane
@@ -378,8 +379,8 @@ if (-not $Live) {
         "  captured=$($cap.Stats.Captured) scored=$($sum.Frames) drag=$($sum.DragFrames) hover=$($sum.HoverFrames) ghost=$($sum.Ghost) smear=$($sum.Smear) strip=$($sum.Strip) gone=$($sum.Gone) travel=$($sum.Travel) png=$($cap.Stats.PngWritten)"
         if ($sum.Worst.Count) { "  worst: $($sum.Worst -join ' ; ')" }
         $worst = $sum.Worst -join ' ; '
-        $occl = Get-DividerFlickerOccluded -LogPath $errlog
-        if ($occl) { "  SKIP La-Le: the display was occluded while the app ran (asleep or locked), so these frames say nothing about a drag -- $occl"; $script:skipped++; throw 'skipped' }
+        $occl = Get-OccludedDisplaySkip -LogPath $errlog -What 'La-Le'
+        if ($occl) { $occl; $script:skipped++; throw 'skipped' }
         if ($Control -eq 'none') {
             Assert 'La no GHOST frame (the old bar left behind)' ($sum.Ghost -eq 0) $worst
             Assert 'Lb no SMEAR frame (two positions fused)' ($sum.Smear -eq 0) $worst

@@ -332,8 +332,14 @@ try {
             $rec = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'docs\design\t2485-chainfold\tools\record-chainfold.ps1') -Exe $Exe -Out $out -WinW $WinW -WinH $WinH -QueueGB $(if ($WinW -gt 2000) { 16 } else { 3 }) -StdErr (Join-Path $out 'app.log') 2>&1 | ForEach-Object { "$_" }
         } finally { $env:GHOZTTY_STACK_TRACE = $priorTrace }
         $rec | ForEach-Object { "  $_" }
+        . (Join-Path $PSScriptRoot 'lib\OccludedDisplay.ps1')
+        $occl = Get-OccludedDisplaySkip -LogPath (Join-Path $out 'app.log') -What 'L'
         if (@($rec | Where-Object { $_ -match '^SKIP' }).Count -gt 0) {
             "  SKIP L: the recorder did not record (above)"
+            $script:skipped++
+        } elseif ($occl) {
+            # T2650: a film of an occluded display (asleep, locked) is all black.
+            $occl
             $script:skipped++
         } else {
             $o = Invoke-ChainFoldOracle -RunDir $out

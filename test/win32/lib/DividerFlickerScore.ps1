@@ -228,26 +228,5 @@ function Get-DividerFlickerCounts {
     }
 }
 
-<#
-T2645: the app's own word that the display was OCCLUDED while it ran - the
-monitor asleep, the session locked or a screen saver up. FrameClock.zig logs
-it once, when DCompositionWaitForCompositorClock first fails with
-STATUS_GRAPHICS_PRESENT_OCCLUDED (0xC01E0006). A capture taken then shows a
-terminal that never presented (all black) and a strip wherever it grows, so
-every pixel verdict of that run reads a fault the app does not have: on
-2026-11-02 all 23 red runs logged this line and none of the green ones did.
-Returns the line, or $null. Reads a log the app may still hold open.
-#>
-$script:DfOccludedPattern = 'compositor clock wait failed \(c01e0006\)'
-function Get-DividerFlickerOccluded {
-    param([Parameter(Mandatory = $true)][string]$LogPath)
-    if (-not (Test-Path -LiteralPath $LogPath)) { return $null }
-    $fs = $null
-    try {
-        $fs = [IO.File]::Open($LogPath, 'Open', 'Read', 'ReadWrite')
-        $text = (New-Object IO.StreamReader($fs)).ReadToEnd()
-    } catch { return $null } finally { if ($fs) { $fs.Dispose() } }
-    $m = [regex]::Match($text, "(?im)^.*$script:DfOccludedPattern.*$")
-    if ($m.Success) { return $m.Value.Trim() }
-    return $null
-}
+# T2645's occluded-display reading moved to lib\OccludedDisplay.ps1 (T2650),
+# shared by every harness that photographs the real app.

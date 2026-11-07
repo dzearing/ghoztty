@@ -4579,12 +4579,18 @@ $GuardTable = @(
     # The divider-drag flicker scorer (T2476): dark strips, a bar gone from
     # the mid line, a banner biting the bar, the nav-vs-page edge. Proven on
     # synthetic frames, so it runs anywhere and stamps from a plain run.
+    # Section E is also the acceptance for lib\OccludedDisplay.ps1 (T2650),
+    # the occluded-display gate every live capture harness shares, and E3
+    # reads FrameClock.zig's log format: T2724 reworded that line and nothing
+    # made this row due, so the gate's own check sat red unseen.
     [pscustomobject]@{
         Name   = 'divider-flicker'
         Script = 'test\win32\divider-flicker.ps1'
         Stamp  = 'test\win32\divider-flicker.stamp.json'
         Covers = @(
             'test\win32\lib\DividerFlickerScore.ps1',
+            'test\win32\lib\OccludedDisplay.ps1',
+            'src\apprt\win32\FrameClock.zig',
             'test\win32\divider-flicker.ps1'
         )
     },
@@ -4603,6 +4609,7 @@ $GuardTable = @(
             'src\apprt\win32\BannerOverlay.zig',
             'src\apprt\win32\Window.zig',
             'test\win32\lib\DividerFlickerScore.ps1',
+            'test\win32\lib\OccludedDisplay.ps1',
             'test\win32\divider-flicker.ps1'
         )
     },
@@ -4633,7 +4640,7 @@ $GuardTable = @(
         Covers   = @(
             'src\renderer\OpenGL.zig',
             'src\apprt\win32\Window.zig',
-            'test\win32\lib\DividerFlickerScore.ps1',
+            'test\win32\lib\OccludedDisplay.ps1',
             'test\win32\lib\DividerGhostScore.ps1',
             'test\win32\divider-ghost.ps1'
         )

@@ -61,6 +61,7 @@ $testLib = Join-Path $PSScriptRoot '..\test\win32\lib'
 . (Join-Path $testLib 'CleanSlate.ps1')
 . (Join-Path $testLib 'Isolation.ps1')
 . (Join-Path $testLib 'TestDesktop.ps1')
+. (Join-Path $testLib 'OccludedDisplay.ps1')   # T2650: a film of an occluded display is skipped, never scored
 Add-Type -AssemblyName System.Drawing
 
 $script:passes = 0
@@ -396,6 +397,7 @@ try {
 }
 
 "  films kept in $OutDir"
+Exit-IfOccludedDisplay -Root $OutDir
 if ($script:failures -eq 0) { "ALL PASS ($script:passes)"; exit 0 }
 "$script:failures FAILURE(S), $script:passes pass"
 exit 1

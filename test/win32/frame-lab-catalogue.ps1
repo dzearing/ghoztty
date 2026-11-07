@@ -283,6 +283,18 @@ try {
     $e5 = try { $null = Invoke-FrameLabCell -Cell $cell -Driver @{ Presence = {} }; '' } catch { $_.Exception.Message }
     Assert 'D10 a driver missing a piece is refused up front' ($e5 -match 'driver has no')
 
+    # T2650: the optional Occluded hook - the app's log says the display was
+    # asleep or locked, so the cell's frames are about the box, not the app.
+    $d = New-FakeDriver @{ Bleed = 4 }
+    $d.Occluded = { param($Scene) 'warning(frame_clock): compositor clock wait failed (c01e0006); falling back to a timer' }
+    $r = Invoke-FrameLabCell -Cell $cell -Driver $d
+    Assert 'D11 an occluded display: skipped with the app''s line, never a bleed fail, and the scene still closes' (
+        $r.Verdict.Verdict -eq 'skipped' -and $r.Verdict.Reasons[0] -match 'occluded.*c01e0006' -and $d.Log[-1] -eq 'close') "$($r.Verdict.Verdict): $($r.Verdict.Reasons -join ' ; ')"
+    $d = New-FakeDriver @{}
+    $d.Occluded = { param($Scene) $null }
+    $r = Invoke-FrameLabCell -Cell $cell -Driver $d
+    Assert 'D12 a lit display (the hook answers nothing) is scored as before' ($r.Verdict.Verdict -eq 'pass') $r.Verdict.Verdict
+
     # ---- E. verdict ------------------------------------------------------------
     'E. verdict'
     $ok = [pscustomobject]@{ Skipped = $false; Aborted = $false }

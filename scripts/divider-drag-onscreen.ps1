@@ -65,6 +65,7 @@ $testLib = Join-Path $repo 'test\win32\lib'
 . (Join-Path $testLib 'CleanSlate.ps1')
 . (Join-Path $testLib 'Isolation.ps1')
 . (Join-Path $testLib 'TestDesktop.ps1')
+. (Join-Path $testLib 'OccludedDisplay.ps1')   # T2650: a film of an occluded display is skipped, never scored
 . (Join-Path $testLib 'BuildMode.ps1')
 . (Join-Path $testLib 'UserPresence.ps1')
 
@@ -302,6 +303,7 @@ try {
 $all | Format-Table Build, Desktop, Panes, Ticks, MeanMs, WaitMs, WaitsTotal, ResizesMax, MovesPerSec -AutoSize | Out-String -Width 200
 $all | ConvertTo-Json | Set-Content -Encoding ascii (Join-Path $OutDir 'summary.json')
 "  results in $OutDir"
+Exit-IfOccludedDisplay -Root $OutDir
 if ($script:failures -eq 0) { "ALL PASS ($script:passes)"; exit 0 }
 "$script:failures FAILURE(S), $script:passes pass"
 exit 1

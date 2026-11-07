@@ -80,7 +80,7 @@ $testLib = Join-Path $PSScriptRoot '..\test\win32\lib'
 . (Join-Path $testLib 'CleanSlate.ps1')
 . (Join-Path $testLib 'Isolation.ps1')
 . (Join-Path $testLib 'TestDesktop.ps1')
-. (Join-Path $testLib 'DividerFlickerScore.ps1')   # Get-DividerFlickerOccluded (T2645)
+. (Join-Path $testLib 'OccludedDisplay.ps1')   # Get-OccludedDisplaySkip (T2645, shared since T2650)
 Add-Type -AssemblyName System.Drawing
 
 $script:passes = 0
@@ -97,10 +97,10 @@ function Assert($name, $cond) {
 # have. The app says so in its own log (FrameClock's c01e0006 line), so such
 # a drag is SKIPPED by name and never scored. Returns the SKIP line, or $null.
 function Get-OccludedSkip($drag, $errLog) {
-    $occl = Get-DividerFlickerOccluded -LogPath $errLog
-    if ($null -eq $occl) { return $null }
+    $skip = Get-OccludedDisplaySkip -LogPath $errLog -What $drag
+    if ($null -eq $skip) { return $null }
     $script:skipped++
-    return "  SKIP ${drag}: the display was occluded while the app ran (asleep or locked), so these frames say nothing about a drag -- $occl"
+    return $skip
 }
 function Exit-Verdict {
     $skips = if ($script:skipped) { ", $script:skipped SKIPPED" } else { '' }
