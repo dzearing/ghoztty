@@ -1,0 +1,10 @@
+{
+  "version": "1.54.1",
+  "sections": [
+    { "title": "Agent integrations",
+      "items": [
+        { "title": "Claude skills stay current", "text": "Ghoztty now refreshes its Claude skills and hooks when it starts, so they always match the version you have installed instead of staying at whatever version first wrote them." },
+        { "title": "Old plugin leftovers clean themselves up", "text": "An old ghoztty Claude plugin install that no longer works is removed automatically through Claude's own uninstaller, along with its retired marketplace, so it can't block Ghoztty's own skills. A plugin that still works and that you chose to keep is left alone." }
+      ] }
+  ]
+}
