@@ -202,19 +202,25 @@ const OverDesk = struct {
     }
 };
 
+/// The corner radius a band at `tab` is actually drawn with: never more than
+/// half the side the two corners share, nor more than the other side, as
+/// SwiftUI clamps an uneven rectangle's radii. With `bandCoverage` it is the
+/// band's shape, for whatever must match it (`blade_layer`'s mask, T2743).
+pub fn bandRadius(tab: Rect, axis: Direction, radius: i32) i32 {
+    const shared, const other = switch (axis) {
+        .horizontal => .{ tab.height(), tab.width() },
+        .vertical => .{ tab.width(), tab.height() },
+    };
+    return @max(0, @min(radius, @min(@divTrunc(shared, 2), other)));
+}
+
 fn paintWith(buf: []u32, w: usize, h: usize, tab: Rect, axis: Direction, radius: i32, source: anytype, rim: ?Rim) void {
     const x0: i32 = @max(tab.left, 0);
     const y0: i32 = @max(tab.top, 0);
     const x1: i32 = @min(tab.right, @as(i32, @intCast(w)));
     const y1: i32 = @min(tab.bottom, @as(i32, @intCast(h)));
     if (x1 <= x0 or y1 <= y0) return;
-    // Never more than half the side the two corners share, nor more than
-    // the other side, as SwiftUI clamps an uneven rectangle's radii.
-    const shared, const other = switch (axis) {
-        .horizontal => .{ tab.height(), tab.width() },
-        .vertical => .{ tab.width(), tab.height() },
-    };
-    const rad: i32 = @max(0, @min(radius, @min(@divTrunc(shared, 2), other)));
+    const rad = bandRadius(tab, axis, radius);
     // How far in from a straight edge a pixel can still be rim; past it, and
     // off the corner squares, a pixel is the source alone (T2505). Each row's
     // run between those is copied straight, so the rim costs only the edges.

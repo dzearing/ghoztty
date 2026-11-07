@@ -384,6 +384,9 @@ test {
     // One card's drop shadow as its own premultiplied layer, for the
     // compositor to move with the card (T2740).
     _ = @import("win32/shadow_layer.zig");
+    // A stack strip's blade shadow as its own layer, kept off the bands in
+    // front of it (T2743).
+    _ = @import("win32/blade_layer.zig");
     // A divider or stack-grip drag that folds panes into strips and back
     // (T2124, Mac's RowDrag) - same deal.
     _ = @import("win32/stack_drag.zig");
