@@ -1032,6 +1032,9 @@ stack_slide_fresh: bool = false,
 /// `glide_moves_report` is the ended glide whose landing pass reports them.
 glide_child_moves: u32 = 0,
 glide_tree_moves: u32 = 0,
+/// How many tree panes' card shadows were up as visuals at the last desk
+/// paint (T2741), for the log line that says when it changes.
+tree_shadows_up: usize = 0,
 glide_moves_report: bool = false,
 /// The first tick of a glide has yet to run: `GHOZTTY_DEBUG_GLIDE_STALL_MS`
 /// blocks the thread right after it (T2572).
@@ -8954,6 +8957,76 @@ fn glowOnCompositor(self: *Window) bool {
     return true;
 }
 
+var tree_shadows_state: ?bool = null;
+
+/// Whether tree panes' card shadows go up as their own visuals (T2741).
+/// `GHOZTTY_COMP_SHADOWS=0` keeps them in the desk compose: the A/B of
+/// scripts\comp-shadow-onscreen.ps1, and the way back if a box misdraws them.
+fn treeShadowsOn() bool {
+    if (tree_shadows_state) |v| return v;
+    var buf: [8]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const raw = std.process.getEnvVarOwned(fba.allocator(), "GHOZTTY_COMP_SHADOWS") catch null;
+    const v = if (raw) |r| !std.mem.eql(u8, r, "0") else true;
+    tree_shadows_state = v;
+    return v;
+}
+
+var tree_shadow_knobs: ?struct { double: bool, nomask: bool } = null;
+
+fn treeShadowKnobs() struct { double: bool, nomask: bool } {
+    if (tree_shadow_knobs) |k| return .{ .double = k.double, .nomask = k.nomask };
+    const double = chrome_comp.debugKnob("GHOZTTY_COMP_SHADOWS_DOUBLE");
+    const nomask = chrome_comp.debugKnob("GHOZTTY_COMP_SHADOWS_NOMASK");
+    tree_shadow_knobs = .{ .double = double, .nomask = nomask };
+    return .{ .double = double, .nomask = nomask };
+}
+
+/// The desk paint's half of the tree panes' card shadows (T2741): every pane
+/// in `slots` whose visual is in the window's tree puts its card's shadow up
+/// as a visual and has its card (`cards`, the same order) composed without
+/// one; every other pane of the window takes its shadow down. `all` is every
+/// card on the desk - the sidebar's included - which a layer keeps off.
+/// `eligible` false takes every shadow down, back into the compose.
+fn syncTreeShadows(
+    self: *Window,
+    slots: []const PaneSlot,
+    cards: []pane_elevation.Card,
+    all: []const pane_elevation.Card,
+    style: pane_elevation.CardStyle,
+    eligible: bool,
+) void {
+    const on = eligible and treeShadowsOn() and
+        (if (self.chrome_host) |*h| h.shadowAvailable() else false);
+    const alloc = self.app.core_app.alloc;
+    // The on-screen oracle's controls (comp-shadow-onscreen.ps1): the desk
+    // keeps baking a shadow that went up (it must then fail to match), and
+    // a layer laid without keeping off its neighbours.
+    const knobs = treeShadowKnobs();
+    var up: usize = 0;
+    for (0..self.tab_count) |tab| {
+        var it = self.tab_trees[tab].iterator();
+        while (it.next()) |entry| {
+            const sf = entry.view.surface() orelse continue;
+            const at: ?usize = if (on) for (slots, 0..) |sl, i| {
+                if (sl.view == entry.view) break i;
+            } else null else null;
+            const i = at orelse {
+                sf.dropTreeShadow();
+                continue;
+            };
+            if (sf.syncTreeShadow(alloc, cards[i], if (knobs.nomask) all[0..0] else all, style)) {
+                if (!knobs.double) cards[i].shadow = 0;
+                up += 1;
+            }
+        }
+    }
+    if (up != self.tree_shadows_up) {
+        log.info("pane shadow visuals up={d}", .{up});
+        self.tree_shadows_up = up;
+    }
+}
+
 /// Match the chrome host's glow layers to the lit panes (T2574), after a
 /// paint that put the desk - composed without any glow - on the compositor:
 /// a layer for the pane the glow is moving to and, mid-move, the one it is
@@ -12296,6 +12369,25 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         .glass = glass,
         .glows = if (glow_layers) glows[0..0] else glows[0..ng],
     };
+    // Each tree pane's card shadow as its own visual (T2741), riding with the
+    // pane's: a card whose shadow went up is composed without it. Only over
+    // a desk on the compositor with nothing GDI-drawn over it - a header band
+    // or a hero split would be painted over a shadow it never had, and so
+    // would a lit gutter bar, which the compose lays over every shadow. The
+    // tucked strips' bands go down after the cards too, so a layer keeps off
+    // them as it keeps off the other cards.
+    var keep_off: [MAX_DRAG_NODES * 2 + 1]pane_elevation.Card = undefined;
+    var nk: usize = 0;
+    for (cards[0..nc]) |c| {
+        keep_off[nk] = c;
+        nk += 1;
+    }
+    for (bands[0..nt]) |b| {
+        if (!b.band or nk >= keep_off.len) continue;
+        keep_off[nk] = .{ .left = b.tab.left, .top = b.tab.top, .right = b.tab.right, .bottom = b.tab.bottom };
+        nk += 1;
+    }
+    self.syncTreeShadows(slots[0..n], cards[0..n], keep_off[0..nk], style, on_visual and !over and bar == null);
     if (self.hwnd) |hw| resizeTrace("desk-pre", hw);
     self.pane_desk.paint(desk_dc, area.left, area.top, w, h, cards[0..nc], bands[0..nt], style, self.desk_variant, lights[0..nl], self.busyHead(), bar, self.deskOpacity());
     if (self.hwnd) |hw| resizeTrace("desk-paint", hw);

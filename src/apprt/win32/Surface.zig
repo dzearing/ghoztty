@@ -16,6 +16,7 @@ const rendererpkg = @import("../../renderer.zig");
 const desk_palette = @import("desk_palette.zig");
 const kitty_key_bridge = @import("kitty_key_bridge.zig");
 const pane_elevation = @import("pane_elevation.zig");
+const shadow_layer = @import("shadow_layer.zig");
 const PaneDesk = @import("PaneDesk.zig");
 const internal_os = @import("../../os/main.zig");
 const remote_connection = @import("../../remote/connection.zig");
@@ -356,6 +357,16 @@ tree_glide_landing: bool = false,
 /// once, and again only when the landing moves; while it runs, the visual is
 /// not placed from the window's thread. Null off a declared glide.
 tree_glide_decl: ?TreeGlide = null,
+/// This pane's card shadow as a visual of its own under the desk's glow and
+/// overlay (T2741), while the window composes the desk without it: the
+/// layer `shadow_layer` rendered for `tree_shadow_key`, on the host built
+/// `tree_shadow_epoch` rebuilds in, and its offset from the pane visual's
+/// (`tree_shadow_d`, the desk's origin taken out) - which `panePlace` and
+/// `paneGlide` carry, so the shadow moves in the pane's own commit.
+tree_shadow: chrome_comp.ShadowVis = .{},
+tree_shadow_key: ?shadow_layer.Key = null,
+tree_shadow_epoch: u32 = 0,
+tree_shadow_d: ?[2]f32 = null,
 
 /// Sticky pane banner (T35): overlay strip above the terminal content,
 /// plus the raw markdown source (owned) so the editor can prefill it and
@@ -1986,10 +1997,130 @@ pub fn syncTreeVisual(self: *Surface) void {
     if (self.tree_glide_at == null) self.tree_glide_decl = null;
     if (self.tree_glide_decl != null) return;
     const at = self.treePlacement(.{ .left = pts[0].x, .top = pts[0].y, .right = pts[1].x, .bottom = pts[1].y }, shown);
-    h.panePlace(self.tree_visual.?, at.x, at.y, comp_tree.clip(at, @intCast(self.gridBand()), self.tree_shape), &self.tree_clip) catch {
+    h.panePlace(self.tree_visual.?, at.x, at.y, comp_tree.clip(at, @intCast(self.gridBand()), self.tree_shape), &self.tree_clip, self.treeShadowRide(h)) catch {
         const f = chrome_comp.Host.lastFailure();
         log.warn("pane visual place failed at {s}: hr=0x{x:0>8}", .{ f.stage, chrome_comp.hex(f.hr) });
     };
+}
+
+/// The shadow riding with this pane's visual (T2741), when it is up under
+/// `h`'s current desk and placed once.
+fn treeShadowRide(self: *Surface, h: *chrome_comp.Host) ?chrome_comp.ShadowRide {
+    const d = self.tree_shadow_d orelse return null;
+    if (self.tree_shadow_epoch != h.rebuilds or !h.shadowCurrent(&self.tree_shadow)) return null;
+    return .{ .sv = &self.tree_shadow, .dx = d[0], .dy = d[1] };
+}
+
+/// Window thread, from the desk paint: put this pane's card shadow on the
+/// compositor (T2741) - `card` and `others` in the desk's own pixels (the
+/// content area's), `others` every card the layer must keep off, the pane's
+/// own among them or not. True when it is up, so the desk composes this card
+/// without its shadow; false when it cannot be (no tree visual, no shadow
+/// layer on the host, a failed step), and the desk keeps baking it.
+///
+/// The layer is rendered at the full share and faded to the card's share
+/// by opacity (T2740's probe: within 4 levels), so a card trading its shadow
+/// for its strip's renders nothing per frame. It is re-rendered only when
+/// its size, the style, or a neighbour's place next to it changes - and on
+/// a glide not for the neighbours, which move past it: it keeps the mask it
+/// had, and the paint that lands it renders the true one.
+pub fn syncTreeShadow(
+    self: *Surface,
+    alloc: std.mem.Allocator,
+    card: pane_elevation.Card,
+    others: []const pane_elevation.Card,
+    style: pane_elevation.CardStyle,
+) bool {
+    const h: *chrome_comp.Host = if (self.parent_window.chrome_host) |*host| host else {
+        self.dropTreeShadow();
+        return false;
+    };
+    if (self.tree_visual == null or !h.shadowAvailable()) {
+        self.dropTreeShadow();
+        return false;
+    }
+    // A rebuilt host's tree no longer holds it: only the references go.
+    if (self.tree_shadow.live() and self.tree_shadow_epoch != h.rebuilds) {
+        chrome_comp.Host.releaseShadow(&self.tree_shadow);
+        self.tree_shadow_key = null;
+        self.tree_shadow_d = null;
+    }
+    const share = std.math.clamp(card.shadow, 0, 1);
+    var full = card;
+    full.shadow = 1;
+    var key = shadow_layer.Key.masked(full, style, others);
+    const gliding = self.tree_glide_at != null;
+    if (gliding) if (self.tree_shadow_key) |old| {
+        var same = old;
+        same.mask = key.mask;
+        if (std.meta.eql(same, key)) key.mask = old.mask;
+    };
+    const fresh = !h.shadowCurrent(&self.tree_shadow) or self.tree_shadow_key == null or !std.meta.eql(self.tree_shadow_key.?, key);
+    if (fresh) {
+        var layer = (shadow_layer.renderKey(alloc, key, style, null) catch null) orelse {
+            self.dropTreeShadow();
+            return false;
+        };
+        defer layer.deinit(alloc);
+        h.shadowUpload(&self.tree_shadow, layer.px, layer.w, layer.h) catch {
+            const f = chrome_comp.Host.lastFailure();
+            log.warn("pane shadow visual failed at {s}: hr=0x{x:0>8}; the desk keeps its shadow", .{ f.stage, chrome_comp.hex(f.hr) });
+            self.dropTreeShadow();
+            return false;
+        };
+        self.tree_shadow_key = key;
+        self.tree_shadow_epoch = h.rebuilds;
+        log.debug("pane shadow visual rendered {d}x{d} share={d:.2} mask={d}", .{ layer.w, layer.h, share, key.mask.n });
+    }
+    const reach: f32 = @floatFromInt(pane_elevation.shadowReachPx(style.scale));
+    const origin = [2]f32{ @as(f32, @floatFromInt(card.left)) - reach, @as(f32, @floatFromInt(card.top)) - reach };
+    // Its offset from the pane visual's: read at rest, where the card and
+    // the window it is drawn from agree. A glide moves both together, so it
+    // keeps the one it had.
+    if (!gliding or self.tree_shadow_d == null) {
+        if (self.treeRestAt()) |at| {
+            self.tree_shadow_d = .{ origin[0] - @as(f32, @floatFromInt(at.x)), origin[1] - @as(f32, @floatFromInt(at.y)) };
+        }
+    }
+    // A glide the compositor runs carries it; otherwise it goes where the
+    // card is now.
+    const place: ?[2]f32 = if (self.tree_glide_decl != null) null else origin;
+    h.shadowShow(&self.tree_shadow, share, place) catch {
+        const f = chrome_comp.Host.lastFailure();
+        log.warn("pane shadow visual show failed at {s}: hr=0x{x:0>8}; the desk keeps its shadow", .{ f.stage, chrome_comp.hex(f.hr) });
+        self.dropTreeShadow();
+        return false;
+    };
+    return true;
+}
+
+/// Window thread: take this pane's card shadow off the compositor (T2741),
+/// so the desk bakes it again from the next compose.
+pub fn dropTreeShadow(self: *Surface) void {
+    self.tree_shadow_key = null;
+    self.tree_shadow_d = null;
+    if (!self.tree_shadow.live()) return;
+    if (self.parent_window.chrome_host) |*h| {
+        if (h.rebuilds == self.tree_shadow_epoch) return h.shadowDrop(&self.tree_shadow);
+    }
+    chrome_comp.Host.releaseShadow(&self.tree_shadow);
+}
+
+/// Whether this pane's card shadow is on the compositor (T2741).
+pub fn treeShadowLive(self: *const Surface) bool {
+    return self.tree_shadow.live();
+}
+
+/// Where the pane visual sits with the child window where it is now (no
+/// glide): `syncTreeVisual`'s placement.
+fn treeRestAt(self: *Surface) ?comp_tree.Placement {
+    const hwnd = self.hwnd orelse return null;
+    const top = self.parent_window.hwnd orelse return null;
+    var rc: w32.RECT = undefined;
+    if (w32.GetClientRect(hwnd, &rc) == 0) return null;
+    var pts = [2]w32.POINT{ .{ .x = rc.left, .y = rc.top }, .{ .x = rc.right, .y = rc.bottom } };
+    _ = w32.MapWindowPoints(hwnd, top, &pts, 2);
+    return self.treePlacement(.{ .left = pts[0].x, .top = pts[0].y, .right = pts[1].x, .bottom = pts[1].y }, true);
 }
 
 /// Where the visual of a pane window at `win` (top-level client pixels)
@@ -2057,14 +2188,16 @@ fn declareTreeGlide(self: *Surface, now: w32.RECT, now_shape: comp_tree.Shape, l
     var segs: [comp_overlay.follower_segments]comp_overlay.Cubic = undefined;
     const span_s = comp_overlay.fitFollower(dist, tau_s, pane_stack_slide.snap_px, &segs);
     if (span_s <= 0) return false;
-    h.paneGlide(vis, from, to, &segs, span_s, &self.tree_clip) catch {
+    // The card's shadow rides the same curve in the same commit (T2741).
+    const ride = self.treeShadowRide(h);
+    h.paneGlide(vis, from, to, &segs, span_s, &self.tree_clip, ride) catch {
         const f = chrome_comp.Host.lastFailure();
         log.warn("pane visual glide failed at {s}: hr=0x{x:0>8}; frames place it", .{ f.stage, chrome_comp.hex(f.hr) });
         return false;
     };
     self.tree_glide_decl = .{ .t0 = t, .from = from, .to = to, .dist = dist, .tau_s = tau_s };
     // The on-screen oracle reads this (comp-glide-hold-onscreen.ps1).
-    log.debug("pane visual glide declared from={d:.1},{d:.1} to={d:.1},{d:.1} clip_right={d:.1}->{d:.1} span_ms={d:.0} retarget={}", .{ from.x, from.y, to.x, to.y, from.clip.right, to.clip.right, span_s * 1000, retarget });
+    log.debug("pane visual glide declared from={d:.1},{d:.1} to={d:.1},{d:.1} clip_right={d:.1}->{d:.1} span_ms={d:.0} retarget={} shadow={}", .{ from.x, from.y, to.x, to.y, from.clip.right, to.clip.right, span_s * 1000, retarget, ride != null });
     return true;
 }
 
@@ -2093,6 +2226,7 @@ pub fn setTreeShape(self: *Surface, shape: comp_tree.Shape) void {
 /// Window thread: take this pane's visual out of the window's tree. A host
 /// rebuilt since the adopt no longer holds it, so only the reference goes.
 fn dropTreeVisual(self: *Surface) void {
+    self.dropTreeShadow();
     const vis = self.tree_visual orelse return;
     self.tree_visual = null;
     self.tree_glide_decl = null;

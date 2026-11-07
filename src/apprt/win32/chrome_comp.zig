@@ -113,6 +113,12 @@ fn seamBuild() bool {
     return builtin.mode == .Debug or builtin.mode == .ReleaseSafe;
 }
 
+/// A debug knob a test arm sets (a seam build only, read when asked): the
+/// on-screen oracles' negative controls.
+pub fn debugKnob(comptime name: []const u8) bool {
+    return seamBuild() and envOn(name);
+}
+
 fn guid(comptime s: []const u8) GUID {
     return GUID.parse("{" ++ s ++ "}");
 }
@@ -617,6 +623,40 @@ pub const GlowVis = struct {
     y: i32 = 0,
 };
 
+/// One pane card's drop shadow on the compositor (T2741): a child of the
+/// desk's shadow layer (under the glow and the overlay, over the desk's
+/// own pixels), its own premultiplied surface (`shadow_layer.render`), and
+/// the effect group whose opacity is the card's shadow share. The pane's
+/// `Surface` owns it; `panePlace` and `paneGlide` move it with the pane.
+pub const ShadowVis = struct {
+    visual: ?Obj = null,
+    effect: ?Obj = null,
+    surface: ?Obj = null,
+    w: i32 = 0,
+    h: i32 = 0,
+    /// The desk it hangs under (`Host.desk_gen`): a desk taken down and put
+    /// back up again is a new tree, and this one is no longer in it.
+    desk_gen: u32 = 0,
+    opacity: f32 = -1,
+    /// Where it was last placed, in the desk's pixels (NaN: unknown, as
+    /// after a glide).
+    x: f32 = std.math.nan(f32),
+    y: f32 = std.math.nan(f32),
+
+    pub fn live(self: *const ShadowVis) bool {
+        return self.visual != null;
+    }
+};
+
+/// A pane card's shadow riding with its pane visual (T2741): its offset is
+/// the pane visual's plus `dx`, `dy` - the desk's origin already taken out -
+/// set or glided in the same commit as the pane's.
+pub const ShadowRide = struct {
+    sv: *ShadowVis,
+    dx: f32,
+    dy: f32,
+};
+
 /// One `IDCompositionAnimation::AddCubic` segment, in 0..1 opacity units:
 /// from `begin_s` on, c0 + c1 s + c2 s^2 + c3 s^3 with `s` the seconds since.
 pub const Cubic = comp_overlay.Cubic;
@@ -712,6 +752,17 @@ pub const Host = struct {
     /// A step of a glow layer failed on this host; the glow stays in the
     /// desk until the host is rebuilt.
     glow_failed: bool = false,
+    /// The card shadows' layer (T2741): the desk's bottom child, made with
+    /// the desk, holding one `ShadowVis` per card whose shadow left the desk
+    /// compose. `desk_gen` counts desks put up, so a shadow can tell it hangs
+    /// under one that is gone.
+    shadow_root: ?Obj = null,
+    desk_gen: u32 = 0,
+    /// Shadow uploads since the window last read them.
+    shadow_uploads: u32 = 0,
+    /// A step of a shadow visual failed on this host; the shadows stay in the
+    /// desk compose until the host is rebuilt.
+    shadow_failed: bool = false,
     /// A hero selection slide the compositor runs (T2573): a container at
     /// the hero rect, clipped to it, over the overlay, holding the outgoing
     /// and incoming panes' pictures whose offsets glide on DWM's clock. Live
@@ -979,9 +1030,17 @@ pub const Host = struct {
             // null reference means.
             try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, root, slot_dcomp_visual_add_visual)(root, vis, 0, self.cap_visual));
             self.desk_visual = vis;
+            self.desk_gen +%= 1;
             // Placed below whatever it was before.
             self.desk_x = std.math.minInt(i32);
             log.info("chrome desk visual attached", .{});
+            // The card shadows' layer is the desk's first child, so every
+            // child added on top later (the glow, the overlay, a hero slide)
+            // lies over it (T2741). Failing it costs only the shadows.
+            self.makeShadowRoot(vis) catch {
+                self.shadow_failed = true;
+                log.warn("chrome shadow layer failed at {s}: hr=0x{x:0>8}; card shadows stay in the desk", .{ stage, hex(last_hr) });
+            };
         }
         const vis = self.desk_visual.?;
         if (x != self.desk_x or y != self.desk_y) {
@@ -1439,6 +1498,142 @@ pub const Host = struct {
         try check(slot(*const fn (Obj) callconv(.winapi) HRESULT, surf, slot_dcomp_surface_end_draw)(surf));
     }
 
+    fn makeShadowRoot(self: *Host, desk: Obj) Error!void {
+        stage = "shadow-root";
+        const root = try self.newVisual();
+        errdefer release(root);
+        try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, desk, slot_dcomp_visual_add_visual)(desk, root, 1, null));
+        self.shadow_root = root;
+        stage = "";
+    }
+
+    /// Whether card shadows can go up as their own visuals (T2741): the
+    /// desk is on the compositor with its shadow layer, and no shadow step
+    /// has failed here.
+    pub fn shadowAvailable(self: *const Host) bool {
+        return self.desk_visual != null and self.shadow_root != null and !self.shadow_failed;
+    }
+
+    /// Put `px` (`w` x `h`, premultiplied) up as `sv`'s picture: the visual
+    /// made (or remade under a new desk) the first time, at opacity 0 until
+    /// `shadowShow`, the surface remade for a new size. Commits.
+    pub fn shadowUpload(self: *Host, sv: *ShadowVis, px: []const u32, w: i32, h: i32) Error!void {
+        const root = self.shadow_root orelse return error.Unavailable;
+        if (w <= 0 or h <= 0 or px.len < @as(usize, @intCast(w)) * @as(usize, @intCast(h))) return error.ComFailed;
+        errdefer self.shadow_failed = true;
+        if (sv.visual != null and sv.desk_gen != self.desk_gen) releaseShadow(sv);
+        if (sv.visual == null) {
+            stage = "shadow-visual";
+            const vis = try self.newVisual();
+            errdefer release(vis);
+            var e: ?Obj = null;
+            try check(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_effect_group)(self.dcomp, &e));
+            const effect = e orelse return error.ComFailed;
+            errdefer release(effect);
+            try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, effect, slot_dcomp_effect_set_opacity_float)(effect, 0));
+            try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_effect)(vis, effect));
+            try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, root, slot_dcomp_visual_add_visual)(root, vis, 1, null));
+            sv.* = .{ .visual = vis, .effect = effect, .desk_gen = self.desk_gen, .opacity = 0 };
+        }
+        if (sv.surface == null or w != sv.w or h != sv.h) {
+            stage = "shadow-surface";
+            if (sv.surface) |old| release(old);
+            sv.surface = null;
+            var surface: ?Obj = null;
+            try check(slot(*const fn (Obj, u32, u32, u32, u32, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_surface)(self.dcomp, @intCast(w), @intCast(h), DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &surface));
+            const surf = surface orelse return error.ComFailed;
+            errdefer release(surf);
+            try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, sv.visual.?, slot_dcomp_visual_set_content)(sv.visual.?, surf));
+            sv.surface = surf;
+            sv.w = w;
+            sv.h = h;
+        }
+        stage = "shadow-upload";
+        try self.drawRect(sv.surface.?, px, w, .{ .left = 0, .top = 0, .right = w, .bottom = h });
+        self.shadow_uploads +|= 1;
+        stage = "";
+        try self.commit();
+    }
+
+    /// `sv` at its card's share (`opacity`, 0..1) and, unless a glide
+    /// carries it, at `at` in the desk's pixels. Commits.
+    pub fn shadowShow(self: *Host, sv: *ShadowVis, opacity: f32, at: ?[2]f32) Error!void {
+        if (!self.shadowCurrent(sv)) return error.Unavailable;
+        errdefer self.shadow_failed = true;
+        stage = "shadow-show";
+        defer stage = "";
+        if (opacity != sv.opacity) {
+            try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, sv.effect.?, slot_dcomp_effect_set_opacity_float)(sv.effect.?, opacity));
+            sv.opacity = opacity;
+        }
+        if (at) |p| try shadowSetOffset(sv, p[0], p[1]);
+        try self.commit();
+    }
+
+    /// Whether `sv` hangs under this host's current desk.
+    pub fn shadowCurrent(self: *const Host, sv: *const ShadowVis) bool {
+        return sv.visual != null and sv.desk_gen == self.desk_gen and self.shadow_root != null;
+    }
+
+    fn shadowSetOffset(sv: *ShadowVis, x: f32, y: f32) Error!void {
+        if (x == sv.x and y == sv.y) return;
+        const vis = sv.visual.?;
+        try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_x)(vis, x));
+        try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_y)(vis, y));
+        sv.x = x;
+        sv.y = y;
+    }
+
+    /// Take `sv` off the compositor and drop its references. Commits.
+    pub fn shadowDrop(self: *Host, sv: *ShadowVis) void {
+        const vis = sv.visual orelse return;
+        if (self.shadowCurrent(sv)) {
+            _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, self.shadow_root.?, slot_dcomp_visual_remove_visual)(self.shadow_root.?, vis);
+            self.commit() catch {};
+        }
+        releaseShadow(sv);
+    }
+
+    /// Drop `sv`'s references without touching a tree: its host or desk is
+    /// gone.
+    pub fn releaseShadow(sv: *ShadowVis) void {
+        if (sv.surface) |o| release(o);
+        if (sv.effect) |o| release(o);
+        if (sv.visual) |o| release(o);
+        sv.* = .{};
+    }
+
+    /// The shadow riding with a pane placed at `(x, y)`, set in the same
+    /// commit (`panePlace`).
+    fn rideAt(self: *Host, ride: ?ShadowRide, x: f32, y: f32) Error!void {
+        const r = ride orelse return;
+        if (!self.shadowCurrent(r.sv)) return;
+        stage = "shadow-ride";
+        try shadowSetOffset(r.sv, x + r.dx, y + r.dy);
+    }
+
+    /// The shadow riding with a pane's glide (`paneGlide`): the same curve,
+    /// offset by the ride's delta, so it moves with the card exactly.
+    fn rideGlide(self: *Host, ride: ?ShadowRide, from: comp_tree.Pose, to: comp_tree.Pose, curve: []const Cubic, span_s: f64) Error!void {
+        const r = ride orelse return;
+        if (!self.shadowCurrent(r.sv)) return;
+        stage = "shadow-glide";
+        const vis = r.sv.visual.?;
+        const SetAnim = *const fn (Obj, Obj) callconv(.winapi) HRESULT;
+        const offsets = [2]struct { usize, f32, f32 }{
+            .{ slot_dcomp_visual_set_offset_x - 1, from.x + r.dx, to.x + r.dx },
+            .{ slot_dcomp_visual_set_offset_y - 1, from.y + r.dy, to.y + r.dy },
+        };
+        for (offsets) |o| {
+            const anim = try self.followAnimation(o[1], o[2], curve, span_s);
+            defer release(anim);
+            try check(slot(SetAnim, vis, o[0])(vis, anim));
+        }
+        // Wherever the animation leaves it, the next static set must go out.
+        r.sv.x = std.math.nan(f32);
+        r.sv.y = std.math.nan(f32);
+    }
+
     /// Wrap a pane renderer's composition surface handle in a visual of the
     /// pane layer, on top of the panes adopted before it. The caller owns
     /// the returned visual's reference and hands it back to `paneDrop`.
@@ -1471,7 +1666,8 @@ pub const Host = struct {
     /// goes through a rectangle clip object kept in `rounded`, which the
     /// caller owns and hands to `releaseRef` with the visual; a plain one is
     /// the visual's own clip rect.
-    pub fn panePlace(self: *Host, vis: Obj, x: i32, y: i32, c: comp_tree.Clip, rounded: *?Obj) Error!void {
+    pub fn panePlace(self: *Host, vis: Obj, x: i32, y: i32, c: comp_tree.Clip, rounded: *?Obj, ride: ?ShadowRide) Error!void {
+        try self.rideAt(ride, @floatFromInt(x), @floatFromInt(y));
         stage = "pane-place";
         try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_x)(vis, @floatFromInt(x)));
         try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_y)(vis, @floatFromInt(y)));
@@ -1513,9 +1709,10 @@ pub const Host = struct {
     /// long), on the compositor's clock, so the glide keeps moving while the
     /// window's thread is busy. A later `panePlace` or `paneGlide` replaces it.
     /// A clip that does not change is set, not animated.
-    pub fn paneGlide(self: *Host, vis: Obj, from: comp_tree.Pose, to: comp_tree.Pose, curve: []const Cubic, span_s: f64, rounded: *?Obj) Error!void {
-        stage = "pane-glide";
+    pub fn paneGlide(self: *Host, vis: Obj, from: comp_tree.Pose, to: comp_tree.Pose, curve: []const Cubic, span_s: f64, rounded: *?Obj, ride: ?ShadowRide) Error!void {
         defer stage = "";
+        try self.rideGlide(ride, from, to, curve, span_s);
+        stage = "pane-glide";
         const SetAnim = *const fn (Obj, Obj) callconv(.winapi) HRESULT;
         const offsets = [2]struct { usize, f32, f32 }{
             .{ slot_dcomp_visual_set_offset_x - 1, from.x, to.x },
@@ -1621,6 +1818,8 @@ pub const Host = struct {
     }
 
     fn releaseDesk(self: *Host) void {
+        if (self.shadow_root) |r| release(r);
+        self.shadow_root = null;
         self.releaseCap();
         self.releaseOvl();
         for (&self.glows) |*g| releaseGlow(g);

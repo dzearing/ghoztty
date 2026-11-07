@@ -59,6 +59,10 @@ pub const Key = struct {
     scale: f32,
     is_light: bool,
     glass: bool,
+    /// The neighbouring cards the layer is kept off (T2741), relative to
+    /// this card's top-left: only their position next to this card matters,
+    /// so a pair that moves together keeps its layers.
+    mask: Mask = .{},
 
     pub fn of(card: pane_elevation.Card, style: pane_elevation.CardStyle) Key {
         return .{
@@ -71,9 +75,49 @@ pub const Key = struct {
         };
     }
 
+    /// `of`, kept off whichever of `others` the layer reaches (`card`
+    /// itself, if it is among them, is skipped).
+    pub fn masked(card: pane_elevation.Card, style: pane_elevation.CardStyle, others: []const pane_elevation.Card) Key {
+        var k = of(card, style);
+        k.mask = Mask.of(card, others, pane_elevation.shadowReachPx(style.scale));
+        return k;
+    }
+
     /// Whether the card casts anything at all.
     pub fn casts(self: Key) bool {
         return self.shadow > 0 and self.w > 0 and self.h > 0;
+    }
+};
+
+/// Neighbouring cards a layer reaches, relative to its card's top-left
+/// (T2741). On the desk no card's shadow ever lands on another card - every
+/// fill goes down after every shadow - but a layer laid over the desk under
+/// its own pane would darken a neighbour's rim and antialiased edge (desk
+/// pixels round the neighbour's pane visual) wherever its reach crosses the
+/// gap. The layer is cleared there instead, by the neighbour's coverage.
+pub const Mask = struct {
+    pub const max = 8;
+    pub const Rel = struct { left: i32, top: i32, right: i32, bottom: i32 };
+    n: u8 = 0,
+    r: [max]Rel = [_]Rel{.{ .left = 0, .top = 0, .right = 0, .bottom = 0 }} ** max,
+
+    pub fn of(card: pane_elevation.Card, others: []const pane_elevation.Card, reach: i32) Mask {
+        var m: Mask = .{};
+        for (others) |o| {
+            if (m.n >= max) break;
+            if (o.left == card.left and o.top == card.top and o.right == card.right and o.bottom == card.bottom) continue;
+            if (o.right <= o.left or o.bottom <= o.top) continue;
+            // Out of the layer's reach: nothing to clear.
+            if (o.right <= card.left - reach or o.left >= card.right + reach or
+                o.bottom <= card.top - reach or o.top >= card.bottom + reach) continue;
+            m.r[m.n] = .{ .left = o.left - card.left, .top = o.top - card.top, .right = o.right - card.left, .bottom = o.bottom - card.top };
+            m.n += 1;
+        }
+        return m;
+    }
+
+    pub fn slice(self: *const Mask) []const Rel {
+        return self.r[0..self.n];
     }
 };
 
@@ -86,7 +130,29 @@ pub fn render(
     style: pane_elevation.CardStyle,
     prepared: ?*const pane_elevation.Prepared,
 ) error{OutOfMemory}!?Layer {
-    const key = Key.of(card, style);
+    return renderKey(alloc, Key.of(card, style), style, prepared);
+}
+
+/// `render`, kept off the neighbouring cards in `others` (T2741): the layer
+/// is clear wherever one of them covers it, as the desk compose never lays a
+/// shadow on another card.
+pub fn renderMasked(
+    alloc: std.mem.Allocator,
+    card: pane_elevation.Card,
+    others: []const pane_elevation.Card,
+    style: pane_elevation.CardStyle,
+    prepared: ?*const pane_elevation.Prepared,
+) error{OutOfMemory}!?Layer {
+    return renderKey(alloc, Key.masked(card, style, others), style, prepared);
+}
+
+/// The layer `key` describes (its size, share, style and mask).
+pub fn renderKey(
+    alloc: std.mem.Allocator,
+    key: Key,
+    style: pane_elevation.CardStyle,
+    prepared: ?*const pane_elevation.Prepared,
+) error{OutOfMemory}!?Layer {
     if (!key.casts()) return null;
     const reach = pane_elevation.shadowReachPx(style.scale);
     const lw = key.w + 2 * reach;
@@ -104,21 +170,30 @@ pub fn render(
     pane_elevation.paintCardShadows(px, @intCast(lw), @intCast(lh), &.{at}, style, prepared);
     // White under the shadow: every channel is 255 * k. Its alpha is 1 - k.
     for (px) |*p| p.* = @as(u32, 255 - ((p.* >> 8) & 0xFF)) << 24;
-    clearUnderCard(px, lw, at, @floatFromInt(pane_elevation.radiusPx(style.scale)));
+    const radius: f32 = @floatFromInt(pane_elevation.radiusPx(style.scale));
+    clearUnderCard(px, lw, lh, at, radius);
+    for (key.mask.slice()) |o| clearUnderCard(px, lw, lh, .{
+        .left = reach + o.left,
+        .top = reach + o.top,
+        .right = reach + o.right,
+        .bottom = reach + o.bottom,
+    }, radius);
     return .{ .px = px, .w = lw, .h = lh, .reach = reach, .key = key };
 }
 
-/// Clear the layer where the card covers it: wholly inside its straight
-/// sides, and by the card's coverage along its antialiased edge and corners.
-fn clearUnderCard(px: []u32, lw: i32, card: pane_elevation.Card, radius: f32) void {
+/// Clear the layer where `card` (in the layer's own pixels) covers it:
+/// wholly inside its straight sides, and by the card's coverage along its
+/// antialiased edge and corners. Clipped to the layer, so a neighbour that
+/// only partly lies in it clears only that part.
+fn clearUnderCard(px: []u32, lw: i32, lh: i32, card: pane_elevation.Card, radius: f32) void {
     const ri: i32 = @intFromFloat(radius);
-    var y = card.top;
-    while (y < card.bottom) : (y += 1) {
+    var y = @max(card.top, 0);
+    while (y < @min(card.bottom, lh)) : (y += 1) {
         const row = px[@intCast(y * lw)..][0..@intCast(lw)];
         const side_rows = y >= card.top + ri and y < card.bottom - ri;
         const edge_rows = y >= card.top + 2 and y < card.bottom - 2;
-        var x = card.left;
-        while (x < card.right) : (x += 1) {
+        var x = @max(card.left, 0);
+        while (x < @min(card.right, lw)) : (x += 1) {
             // Two pixels in from a straight side, or past the corners'
             // radius, a pixel is the card's alone.
             const deep = (side_rows and x >= card.left + 2 and x < card.right - 2) or
@@ -201,6 +276,13 @@ fn compareCompose(cards: []const pane_elevation.Card, style: pane_elevation.Card
 }
 
 fn compareWith(cards: []const pane_elevation.Card, style: pane_elevation.CardStyle, w: usize, h: usize, lay: bool) !Gap {
+    return compareLaid(cards, style, w, h, lay, false);
+}
+
+/// `compareWith`, each layer kept off the other cards (`mask`, T2741) or
+/// not; the inside of a card is then also where a neighbour's layer would
+/// have darkened it.
+fn compareLaid(cards: []const pane_elevation.Card, style: pane_elevation.CardStyle, w: usize, h: usize, lay: bool, mask: bool) !Gap {
     const alloc = testing.allocator;
     const want = try alloc.alloc(u32, w * h);
     defer alloc.free(want);
@@ -219,7 +301,7 @@ fn compareWith(cards: []const pane_elevation.Card, style: pane_elevation.CardSty
     var prep = pane_elevation.prepare(style);
     defer prep.deinit();
     if (lay) for (cards) |c| {
-        var layer = (try render(alloc, c, style, &prep)) orelse continue;
+        var layer = (try (if (mask) renderMasked(alloc, c, cards, style, &prep) else render(alloc, c, style, &prep))) orelse continue;
         defer layer.deinit(alloc);
         const o = layer.origin(c);
         composite(got, @intCast(w), @intCast(h), &layer, o[0], o[1]);
@@ -281,6 +363,77 @@ test "T2740: overlapping shadows on the desk multiply, laid one over the other" 
     };
     const gap = try compareCompose(&cards, style, 320, 180);
     try testing.expect(gap.out <= 4);
+}
+
+test "T2741: a layer kept off its neighbour leaves the neighbour's rim and edge as the desk has them" {
+    // A card above another across a gap narrower than the reach (a split's
+    // top and bottom panes): the shadow falls downwards, so the upper card's
+    // crosses the gap at strength onto the lower card's top rim.
+    const reach = pane_elevation.shadowReachPx(1.0);
+    const gap_px: i32 = 8;
+    try testing.expect(gap_px < reach);
+    const stacked = [_]pane_elevation.Card{
+        .{ .left = 30, .top = 20, .right = 250, .bottom = 110 },
+        .{ .left = 30, .top = 110 + gap_px, .right = 250, .bottom = 210 },
+    };
+    const light: pane_elevation.CardStyle = .{ .fill = .{ .r = 250, .g = 250, .b = 248 }, .is_light = true, .scale = 1.0 };
+    // Unmasked, the upper layer lies over the lower card: its edge and its
+    // inside (where only the pane visual would cover it) come out darker
+    // than the desk compose's - what the mask is for.
+    const bare = try compareLaid(&stacked, light, 290, 240, true, false);
+    // (Measured: 12 levels inside, 13 on the edge, at 8 px.)
+    try testing.expect(bare.in >= 10);
+    try testing.expect(bare.edge > 12);
+    // Masked: the neighbour's pixels are the desk's, its antialiased edge
+    // within T2740's own-edge bound, and the gap where the two shadows meet
+    // multiplies as before.
+    const kept = try compareLaid(&stacked, light, 290, 240, true, true);
+    try testing.expectEqual(@as(u32, 0), kept.in);
+    try testing.expect(kept.edge <= 12);
+    try testing.expect(kept.out <= 4);
+    // Side by side on a dark window at 1.5x, and dark glass at 2x.
+    const dark: pane_elevation.CardStyle = .{ .fill = .{ .r = 24, .g = 26, .b = 30 }, .is_light = false, .scale = 1.5 };
+    const side = [_]pane_elevation.Card{
+        .{ .left = 20, .top = 24, .right = 160, .bottom = 150 },
+        .{ .left = 172, .top = 24, .right = 300, .bottom = 150 },
+        .{ .left = 20, .top = 162, .right = 300, .bottom = 230 },
+    };
+    const kd = try compareLaid(&side, dark, 340, 270, true, true);
+    try testing.expect(kd.in == 0 and kd.edge <= 12 and kd.out <= 4);
+    const glass: pane_elevation.CardStyle = .{ .fill = .{ .r = 20, .g = 22, .b = 28 }, .is_light = false, .scale = 2.0, .glass = true };
+    const kg = try compareLaid(&side, glass, 340, 270, true, true);
+    // On glass the desk compose lets a neighbour's shadow through the sheet
+    // a little (measured 4 levels), where the mask keeps it off. Those are
+    // pixels under the pane visual, which paints its own sheet, so only the
+    // rim and edge are on screen - and they hold.
+    try testing.expect(kg.in <= 6 and kg.edge <= 12 and kg.out <= 4);
+}
+
+test "T2741: the mask names only neighbours in reach, relative to the card, so a pair that moves together keeps its layers" {
+    const style: pane_elevation.CardStyle = .{ .fill = .{ .r = 24, .g = 26, .b = 30 }, .is_light = false, .scale = 1.0 };
+    const reach = pane_elevation.shadowReachPx(style.scale);
+    const a: pane_elevation.Card = .{ .left = 100, .top = 100, .right = 200, .bottom = 180 };
+    const near: pane_elevation.Card = .{ .left = 208, .top = 100, .right = 300, .bottom = 180 };
+    const far: pane_elevation.Card = .{ .left = 200 + reach + 5, .top = 100, .right = 400 + reach, .bottom = 180 };
+    const k = Key.masked(a, style, &.{ a, near, far });
+    try testing.expectEqual(@as(u8, 1), k.mask.n);
+    try testing.expectEqual(Mask.Rel{ .left = 108, .top = 0, .right = 200, .bottom = 80 }, k.mask.r[0]);
+    // Both moved by the same amount: the same key.
+    var a2 = a;
+    var n2 = near;
+    inline for (.{ &a2, &n2 }) |c| {
+        c.left += 37;
+        c.right += 37;
+        c.top -= 11;
+        c.bottom -= 11;
+    }
+    try testing.expect(std.meta.eql(k, Key.masked(a2, style, &.{ a2, n2 })));
+    // The neighbour moved on its own: a new picture.
+    var n3 = near;
+    n3.left += 3;
+    try testing.expect(!std.meta.eql(k, Key.masked(a, style, &.{ a, n3 })));
+    // No neighbour: the plain key.
+    try testing.expect(std.meta.eql(Key.of(a, style), Key.masked(a, style, &.{ a, far })));
 }
 
 test "T2740: a layer depends on the card's size and share, never on where it is" {

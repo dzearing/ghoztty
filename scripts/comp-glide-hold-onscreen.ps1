@@ -506,6 +506,11 @@ try {
         if ($arm -eq 'stall') {
             $dec = [regex]::Matches((Read-Text $err), 'pane visual glide declared').Count
             Assert "$arm.11 the glide was handed to the compositor ($dec pane path(s) declared)" ($dec -ge 1)
+            # T2741: each card's shadow is a visual that rides its pane's
+            # declared path in the same commit, so it travels through the
+            # stall with the card instead of staying baked where it started.
+            $rode = [regex]::Matches((Read-Text $err), 'pane visual glide declared [^\r\n]*shadow=true').Count
+            Assert "$arm.12 the cards' shadows rode the declared paths ($rode of $dec)" ($dec -ge 1 -and $rode -eq $dec)
         }
 
         $fgPid = [uint32]0
