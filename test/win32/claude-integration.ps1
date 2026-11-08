@@ -143,15 +143,25 @@ Set-Content -Path $emptyManifest -Value '{"version":2,"plugins":{}}' -Encoding a
 # Stub claude CLI: logs argument lines; `plugin uninstall` empties the
 # sandbox manifest like the real uninstaller (unless CLAUDE_STUB_MODE=fail).
 $stub = Join-Path $home1 '.local\bin\claude.cmd'
+# `plugin list --json` answers from $listFile, which Install-FakePlugin
+# writes (T2806: the launch settle acts only on what Claude reports, so the
+# offer appears only for a registration listed as loading). It answers in
+# every mode: CLAUDE_STUB_MODE=fail fails the uninstall, not the question.
+$listFile = Join-Path $base 'plugin-list.json'
 @"
 @echo off
 >> "$stubLog" echo %*
+if /i "%1"=="plugin" if /i "%2"=="list" (
+  type "$listFile"
+  exit /b 0
+)
 if /i "%CLAUDE_STUB_MODE%"=="fail" (
   echo Error: stub failure
   exit /b 1
 )
 if /i "%1"=="plugin" if /i "%2"=="uninstall" (
   copy /y "$emptyManifest" "$manifest" >nul
+  > "$listFile" echo []
 )
 echo ok
 exit /b 0
@@ -161,7 +171,15 @@ exit /b 0
 # cache dir inside the sandbox home, with the plugin's own banner-script copy.
 $cacheDir = Join-Path $home1 '.claude\plugins\cache\test-marketplace\ghoztty\0.8.0'
 $pluginScriptText = "#!/bin/bash`necho plugin banner v0.8.0`n"
-function Install-FakePlugin {
+function Install-FakePlugin([switch]$Dead) {
+    # What `claude plugin list --json` reports for it: loading, or the
+    # plugin-not-found shape a deleted marketplace entry leaves (T2806).
+    $listEntry = if ($Dead) {
+        '{"id":"ghoztty@test-marketplace","errors":["Plugin ghoztty not found in marketplace test-marketplace"],"errorDetails":[{"type":"plugin-not-found","plugin":"ghoztty","marketplace":"test-marketplace"}]}'
+    } else {
+        '{"id":"ghoztty@test-marketplace","enabled":true}'
+    }
+    Set-Content -Path $listFile -Value "[`r`n$listEntry`r`n]" -Encoding ascii
     New-Item -ItemType Directory -Force (Join-Path $cacheDir 'hooks') | Out-Null
     Set-Content -Path (Join-Path $cacheDir 'hooks\ghoztty-banner.sh') -Value $pluginScriptText -Encoding ascii -NoNewline
     $escaped = $cacheDir -replace '\\', '\\'
@@ -554,6 +572,58 @@ try {
     Assert ((Get-Content $manifest -Raw) -match 'ghoztty@test-marketplace') 'failed uninstall leaves the manifest registered'
     $mstate6 = Join-Path $state6 'claude_plugin_migration'
     Assert ((Test-Path $mstate6) -and ((Get-Content $mstate6 -Raw).Trim() -eq 'accepted')) 'the answer is still recorded: answering retires the prompt, not succeeding'
+    Stop-Process -Id $gpid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+
+    # ------------------------------------------------------------ case 6b:
+    # T2806 (Mac 2c9432071): a DEAD registration - the plugin came back after
+    # it was retired and its marketplace no longer has it - is cleared at
+    # launch with no dialog, even though this user answered Keep Plugin, and
+    # the app's own integration takes its place. Before T2806 the declined
+    # answer closed the question for good and the dead entry kept the app's
+    # skills frozen.
+    Install-FakePlugin -Dead
+    Clear-Content $stubLog -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $home1 '.claude\skills\ghoztty') -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $home1 '.config\ghoztty\banner-state\pane-abc.json') -Force -ErrorAction SilentlyContinue
+    $state6b = Join-Path $base 'state6b'
+    New-Item -ItemType Directory -Force $state6b | Out-Null
+    Set-Content -Path (Join-Path $state6b 'claude_setup') -Value 'accepted' -Encoding ascii -NoNewline
+    Set-Content -Path (Join-Path $state6b 'claude_plugin_migration') -Value 'declined' -Encoding ascii -NoNewline
+
+    $g = Launch-Gui $state6b $home1 'ok'
+    $gpid = $g.Pid
+    $settled = $false
+    for ($t = 0; $t -lt 150 -and -not $settled; $t++) {
+        $settled = (Test-Path (Join-Path $home1 '.claude\skills\ghoztty\SKILL.md')) -and
+            (Test-Path (Join-Path $home1 '.config\ghoztty\banner-state\pane-abc.json'))
+        Start-Sleep -Milliseconds 100
+    }
+    Assert $settled '6b: a dead registration is cleared at launch and the app integration installed'
+    $lines = Get-StubLines
+    Assert (@($lines | Where-Object { $_ -match 'plugin list --json' }).Count -ge 1) '6b: the settle asked claude which registrations load'
+    Assert (@($lines | Where-Object { $_ -match 'plugin uninstall ghoztty@test-marketplace' }).Count -eq 1) '6b: the dead registration was uninstalled through claude'
+    Assert ((Get-Content $manifest -Raw) -notmatch 'ghoztty@test-marketplace') '6b: the manifest no longer registers it'
+    Assert (-not (Test-Path (Join-Path $home1 '.claude\scripts\ghoztty-banner.sh'))) '6b: the stale byte-identical script copy is removed'
+    Start-Sleep -Milliseconds 1500
+    Assert ((Get-TestWindow -ProcessId $gpid -Class 'GhozttyConfirmDialog') -eq [IntPtr]::Zero) '6b: no dialog - a dead plugin is not the user''s to decide about'
+    Assert ((Get-Content (Join-Path $state6b 'claude_plugin_migration') -Raw).Trim() -eq 'declined') '6b: the Keep Plugin answer is left as recorded'
+    Stop-Process -Id $gpid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+
+    # ------------------------------------------------------------ case 6c:
+    # T2806: Keep Plugin still keeps a plugin that WORKS - no uninstall, no
+    # dialog, nothing written into ~/.claude.
+    Install-FakePlugin
+    Clear-Content $stubLog -ErrorAction SilentlyContinue
+    $g = Launch-Gui $state6b $home1 'ok'
+    $gpid = $g.Pid
+    $dlg = Wait-Class $gpid 'GhozttyConfirmDialog' $true 8000
+    Assert ($dlg -eq [IntPtr]::Zero) '6c: a working plugin the user kept raises no offer'
+    $lines = Get-StubLines
+    Assert (@($lines | Where-Object { $_ -match 'plugin list --json' }).Count -ge 1) '6c: the settle still asked (positive control: it ran)'
+    Assert (@($lines | Where-Object { $_ -match 'plugin uninstall' }).Count -eq 0) '6c: a working, kept plugin is never uninstalled'
+    Assert ((Get-Content $manifest -Raw) -match 'ghoztty@test-marketplace') '6c: the manifest still registers it'
     Stop-Process -Id $gpid -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 500
 

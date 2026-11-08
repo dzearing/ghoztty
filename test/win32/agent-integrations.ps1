@@ -238,11 +238,20 @@ $manifest = Join-Path $sbHome '.claude\plugins\installed_plugins.json'
 $emptyManifest = Join-Path $base 'empty_manifest.json'
 Set-Content -Path $emptyManifest -Value '{"version":2,"plugins":{}}' -Encoding ascii
 $stub = Join-Path $sbHome '.local\bin\claude.cmd'
+# T2806: the launch settle raises the offer only for a registration that
+# `claude plugin list --json` reports as loading, so the stub answers it
+# from $listFile (section H writes a loading entry; an uninstall empties it).
+$listFile = Join-Path $base 'plugin-list.json'
 @"
 @echo off
 >> "$stubLog" echo %*
+if /i "%1"=="plugin" if /i "%2"=="list" (
+  type "$listFile"
+  exit /b 0
+)
 if /i "%1"=="plugin" if /i "%2"=="uninstall" (
   copy /y "$emptyManifest" "$manifest" >nul
+  > "$listFile" echo []
 )
 echo ok
 exit /b 0
@@ -519,8 +528,16 @@ try {
     Set-Content -Path (Join-Path $sbHome '.claude\scripts\ghoztty-banner.sh') -Value $userScript -Encoding ascii -NoNewline
     New-Item -ItemType Directory -Force (Join-Path $sbHome '.claude\ghoztty-banner') | Out-Null
     Set-Content -Path (Join-Path $sbHome '.claude\ghoztty-banner\pane-a.json') -Value '{"title":"carried"}' -Encoding ascii -NoNewline
-    # First-run already answered; migration unanswered.
+    # What claude reports for it: loading (T2806), so the offer is raised.
+    Set-Content -Path $listFile -Value "[`r`n{`"id`":`"ghoztty@test-marketplace`",`"enabled`":true}`r`n]" -Encoding ascii
+    # First-run already answered; migration unanswered. Per agent too (T2604):
+    # copilot is detected in this sandbox by now, and an unanswered
+    # agent_offer_copilot raised ITS first-run offer ahead of the migration -
+    # the T2665 red, where the dialog the test read was the wrong one.
     Set-Content -Path (Join-Path $stateDir 'claude_setup') -Value 'accepted' -Encoding ascii -NoNewline
+    'agent_offer_claude', 'agent_offer_copilot' | ForEach-Object {
+        Set-Content -Path (Join-Path $stateDir $_) -Value 'accepted' -Encoding ascii -NoNewline
+    }
     Remove-Item (Join-Path $stateDir 'claude_plugin_migration') -Force -ErrorAction SilentlyContinue
 
     $g = Launch-Gui 'force'

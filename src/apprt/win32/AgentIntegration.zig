@@ -4,14 +4,17 @@
 //! and offers to set up Ghoztty's integration for each — skills, hooks and
 //! the status banner, installed by `agent_integration_service` — with a
 //! checkbox per agent. A box still running the OLD standalone Claude plugin
-//! gets a separate one-time offer to switch over (`claude_plugin_migration`,
-//! Mac's `ClaudePluginMigration.swift`), which removes the plugin through
-//! Claude's own CLI and carries the banner state across.
+//! is settled on every launch (`claude_plugin_migration.settleOnLaunch`,
+//! Mac's `ClaudePluginMigration.swift`, T2806): dead registrations are
+//! removed through Claude's own CLI silently, a working plugin follows the
+//! recorded Switch Over / Keep Plugin answer (the offer is raised once when
+//! there is none), and an outdated integration is refreshed.
 //!
 //! This replaced the T71 flow (`claude plugin marketplace add` +
 //! `claude plugin install`): the app now ships the skills itself, tied to
 //! the installed Ghoztty rather than to a separately-versioned marketplace
-//! release. The only `claude` invocation left is the migration's uninstall.
+//! release. The only `claude` invocations left are the settle's
+//! `plugin list --json` / `uninstall` / `marketplace remove` / `disable`.
 //!
 //! Threading: detection, installs and the migration run on detached
 //! background threads (probes walk the filesystem; a `claude` run can take
@@ -190,20 +193,83 @@ fn launchCheck(app: *App, at_launch: bool) void {
     }
     if (!at_launch) return;
 
-    // Nothing to offer, and the offer was answered on an earlier launch:
-    // consider the migration. Never before, so two modals cannot stack.
-    if (!anyAnswered(arena)) return;
-    if (readState(arena, migration_state_name) != .unanswered) return;
+    // Nothing to offer: settle the old plugin (T2806, Mac's settleOnLaunch).
+    // Every launch, not once: dead registrations are cleared and an outdated
+    // integration refreshed silently; only a WORKING plugin with no recorded
+    // answer raises the offer, and only once the first-run offer has been
+    // answered on an earlier launch, so two modals cannot stack.
     const home = openAgentHome(arena) orelse return;
     var home_dir = home.dir;
     defer home_dir.close();
-    const needed = migration.isNeeded(arena, home_dir) catch false;
-    if (!needed) return;
+    const choice = choiceOf(readState(arena, migration_state_name));
+    const may_prompt = anyAnswered(arena);
 
+    // Let the first window appear and settle before spawning claude (the Mac
+    // flow waits 3s too).
     std.Thread.sleep(3 * std.time.ns_per_s);
+    var cli_ctx: ClaudeCli = .{ .arena = arena, .claude = findClaude(arena) };
+    var integ_ctx: ClaudeIntegrationCtx = .{
+        .arena = arena,
+        .home_dir = home_dir,
+        .home_path = home.path,
+    };
+    const show = migration.settleOnLaunch(
+        arena,
+        home_dir,
+        choice,
+        may_prompt,
+        cli_ctx.cli(),
+        integ_ctx.integration(),
+    ) catch false;
+    if (!show) return;
+
     const hwnd = app.msg_hwnd orelse return;
     _ = w32.PostMessageW(hwnd, WM_APP_MIGRATION_PROMPT, 0, 0);
 }
+
+/// The recorded Switch Over / Keep Plugin answer.
+fn choiceOf(state: setup.State) ?migration.Choice {
+    return switch (state) {
+        .unanswered => null,
+        .accepted => .switched,
+        .declined => .kept,
+    };
+}
+
+/// The app's own Claude integration, for the launch settle's refresh.
+const ClaudeIntegrationCtx = struct {
+    arena: std.mem.Allocator,
+    home_dir: std.fs.Dir,
+    home_path: []const u8,
+
+    fn integration(self: *ClaudeIntegrationCtx) migration.Integration {
+        return .{ .ctx = self, .stateFn = &stateCall, .installFn = &installCall };
+    }
+
+    fn stateCall(ctx: ?*anyopaque) service.InstallState {
+        const self: *ClaudeIntegrationCtx = @ptrCast(@alignCast(ctx.?));
+        const integ = RuntimeIntegration.make(
+            self.arena,
+            .claude,
+            self.home_dir,
+            self.home_path,
+            probeFor(self.arena),
+        ) catch return .installed; // unknown: refresh nothing
+        return integ.state(self.arena);
+    }
+
+    fn installCall(ctx: ?*anyopaque) void {
+        const self: *ClaudeIntegrationCtx = @ptrCast(@alignCast(ctx.?));
+        const outcome = service.install(
+            self.arena,
+            .claude,
+            self.home_dir,
+            self.home_path,
+            probeFor(self.arena),
+        ) catch service.IntegrationOutcome{ .failed = "out of memory" };
+        log.info("plugin settle: refreshed the Claude integration: {s}", .{outcome.label()});
+    }
+};
 
 /// GUI thread (msgWndProc): show the one-time first-run prompt for the
 /// detected agents.
@@ -427,27 +493,42 @@ pub fn showMigrationPrompt(app: *App) void {
     thread.detach();
 }
 
-/// The migration's `claude plugin uninstall` runner (see
-/// `claude_plugin_migration.Runner`).
-const UninstallCtx = struct {
+/// The migration's `claude` CLI (see `claude_plugin_migration.Cli`). A
+/// null path (claude not found) fails every call, which the settle reads as
+/// "nothing known" and acts on nothing.
+const ClaudeCli = struct {
     arena: std.mem.Allocator,
-    claude: []const u8,
+    claude: ?[]const u8,
+    /// The last failure's output tail, for the offer's outcome dialog.
     detail: []const u8 = "",
-};
 
-fn uninstallRun(ctx_ptr: ?*anyopaque, registration: []const u8) migration.UninstallError!void {
-    const ctx: *UninstallCtx = @ptrCast(@alignCast(ctx_ptr.?));
-    const r = runClaude(ctx.arena, ctx.claude, &.{ "plugin", "uninstall", registration });
-    if (!r.ok) {
-        ctx.detail = if (r.detail.len > 0) r.detail else std.fmt.allocPrint(
-            ctx.arena,
-            "`claude plugin uninstall {s}` failed.",
-            .{registration},
-        ) catch "";
-        return error.UninstallFailed;
+    fn cli(self: *ClaudeCli) migration.Cli {
+        return .{ .ctx = self, .runFn = &runCall, .readFn = &readCall };
     }
-    log.info("plugin migration: uninstalled {s}", .{registration});
-}
+
+    fn runCall(ctx_ptr: ?*anyopaque, args: []const []const u8) bool {
+        const self: *ClaudeCli = @ptrCast(@alignCast(ctx_ptr.?));
+        const claude = self.claude orelse return false;
+        const r = runClaude(self.arena, claude, args);
+        if (!r.ok) {
+            const joined = std.mem.join(self.arena, " ", args) catch "";
+            self.detail = if (r.detail.len > 0) r.detail else std.fmt.allocPrint(
+                self.arena,
+                "`claude {s}` failed.",
+                .{joined},
+            ) catch "";
+            return false;
+        }
+        return true;
+    }
+
+    fn readCall(ctx_ptr: ?*anyopaque, arena: std.mem.Allocator, args: []const []const u8) ?[]const u8 {
+        const self: *ClaudeCli = @ptrCast(@alignCast(ctx_ptr.?));
+        const claude = self.claude orelse return null;
+        const r = runClaude(arena, claude, args);
+        return if (r.ok) r.stdout else null;
+    }
+};
 
 fn migrateThread(app: *App) void {
     defer migration_running.store(false, .release);
@@ -474,8 +555,8 @@ fn migrateThread(app: *App) void {
             done.detail = alloc.dupe(u8, "Could not run the claude command.") catch "";
             break :run;
         };
-        var ctx: UninstallCtx = .{ .arena = arena, .claude = claude };
-        migration.run(arena, home_dir, .{ .ctx = &ctx, .runFn = &uninstallRun }) catch {
+        var ctx: ClaudeCli = .{ .arena = arena, .claude = claude };
+        migration.run(arena, home_dir, ctx.cli()) catch {
             // Uninstall failed: nothing was migrated (see migration.run).
             done.outcome = .uninstall_failed;
             done.detail = alloc.dupe(
@@ -604,6 +685,8 @@ fn detectAgents(arena: std.mem.Allocator) std.EnumSet(RuntimeAgent) {
 const RunResult = struct {
     ok: bool,
     detail: []const u8,
+    /// The whole stdout (empty on a failure to run).
+    stdout: []const u8 = "",
 };
 
 /// Run `claude <args...>` hidden (no console flash from the GUI process)
@@ -652,7 +735,7 @@ fn runClaude(
         &.{ stdout.items, "\n", stderr.items },
     ) catch stdout.items;
     log.info("claude {s}: exit_ok={}", .{ args[args.len - 1], exit_ok });
-    return .{ .ok = exit_ok, .detail = setup.detailTail(combined, 300) };
+    return .{ .ok = exit_ok, .detail = setup.detailTail(combined, 300), .stdout = stdout.items };
 }
 
 /// Find the claude CLI for the migration's uninstall: env override, then

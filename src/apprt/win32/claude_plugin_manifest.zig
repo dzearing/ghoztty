@@ -117,9 +117,17 @@ pub fn isExternalPluginInstalled(alloc: Allocator, home: std.fs.Dir) Allocator.E
     return (try registrations(arena_state.allocator(), home)).len > 0;
 }
 
-fn nameOfRegistration(key: []const u8) []const u8 {
+/// The plugin-name half of a `<name>@<marketplace>` key (the whole key when
+/// it carries no marketplace).
+pub fn nameOfRegistration(key: []const u8) []const u8 {
     const at = std.mem.indexOfScalar(u8, key, '@') orelse return key;
     return key[0..at];
+}
+
+/// The marketplace half of a `<name>@<marketplace>` key, or null.
+pub fn marketplaceOfRegistration(key: []const u8) ?[]const u8 {
+    const at = std.mem.indexOfScalar(u8, key, '@') orelse return null;
+    return key[at + 1 ..];
 }
 
 // -----------------------------------------------------------------------------
