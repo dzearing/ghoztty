@@ -1,15 +1,15 @@
 {
     "guard":  "rdp-perf-probe",
     "script":  "test/win32/rdp-perf-probe.ps1",
-    "generated":  "2026-11-07T06:43:05-08:00",
-    "commit":  "2f1bc0234",
+    "generated":  "2026-11-08T10:07:12-08:00",
+    "commit":  "2c67d366d",
     "uncommitted":  [
                         "src/renderer/OpenGL.zig"
                     ],
     "files":  {
                   "scripts/rdp-perf-probe.ps1":  "b5e70fb1c4b8eb1ae74033ad8131b48e9aa20a3aacc7b4291d355d81c33b866a",
                   "src/renderer/low_power.zig":  "561c61649c3385011078e4c7646604e1f28b70e3cd6889967b8d997e8788e8cb",
-                  "src/renderer/OpenGL.zig":  "b7ce634be2239e61b19eff9e18d27478b958737df99f60e5ce175d173a18863a",
+                  "src/renderer/OpenGL.zig":  "5330c121e0fcae3cfe5e6f116f80b2e14a4f694f226c9fb1bcd4a226e80e0041",
                   "test/win32/rdp-perf-probe.ps1":  "d9a2438358328f459c637242375193fb1651d6b4ee3ba98358617290aa0bb183"
               }
 }

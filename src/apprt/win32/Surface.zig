@@ -656,8 +656,13 @@ own_layer: bool = false,
 present_link: ?*WindowPresenter.PaneLink = null,
 /// On that path the context is current on this hidden popup, not on the
 /// pane window, which has no pixel format (`WindowPresenter.createHelper`).
-/// `hdc` is this window's DC then.
+/// `hdc` is this window's DC then. The composition path (T2788) puts its
+/// context on one too, with no `present_link`.
 gl_helper: ?w32.HWND = null,
+/// T2788: a composition-path pane fell back to SwapBuffers and moved its
+/// context onto its own window (`adoptPaneDrawable`): `hdc` is the pane
+/// window's DC from then on, and `helper_hdc` is the helper's, still held.
+helper_hdc: ?w32.HDC = null,
 /// GUI-thread-only: when the carousel heartbeat last asked this pane for a
 /// thumbnail (T1423), or null for never. What `hero_snap_schedule` paces the
 /// next request against. `captureContent` deliberately does not stamp it.
@@ -973,9 +978,20 @@ fn initOnce(
     const shared: ?gl_robust.Created = if (presenter_on) self.initPresenterContext(app, parent) else null;
     errdefer self.dropPresenterContext();
 
+    // T2788: on the composition path the pane renders offscreen and presents
+    // through a swap chain, so its window never needs to be a GL drawable.
+    // Its context goes on a hidden helper instead: a window that carries a
+    // GL pixel format makes every move of it (the fold glide's per-tick
+    // `EndDeferWindowPos`) wait on whatever that pane still has on the GPU
+    // (release, 120 Hz glide A/B x3: slow batches 45-47% -> 4%, late
+    // 325-357 -> 28-37). A pane that falls back to SwapBuffers moves its
+    // context back onto its own window (`adoptPaneDrawable`).
+    const on_helper = shared == null and gl_comp_present.enabled() and paneHelperEnabled() and
+        self.initHelperDrawable(app);
+
     // Get the device context. With CS_OWNDC, this DC is valid for
     // the lifetime of the window.
-    if (shared == null) {
+    if (shared == null and !on_helper) {
         self.hdc = w32.GetDC(hwnd);
         if (self.hdc == null) return error.Win32Error;
     }
@@ -986,7 +1002,7 @@ fn initOnce(
 
     // Set up the pixel format for OpenGL. A parked window already has it: a
     // window takes one pixel format for life (T2597).
-    if (shared == null and reused == null) try self.setupPixelFormat();
+    if (shared == null and reused == null and !on_helper) try self.setupPixelFormat();
 
     // Create the WGL context — a robust one where the driver offers it, so a
     // graphics driver reset or swap is something the renderer can detect and
@@ -1591,6 +1607,63 @@ fn initPresenterContext(self: *Surface, app: *App, parent: *Window) ?gl_robust.C
     return created;
 }
 
+/// `GHOZTTY_PANE_GL_HELPER=0` keeps a composition-path pane's context on its
+/// own window (the pre-T2788 shape). On by default.
+pub const pane_helper_knob = "GHOZTTY_PANE_GL_HELPER";
+
+fn paneHelperEnabled() bool {
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, pane_helper_knob) catch return true;
+    defer std.heap.page_allocator.free(raw);
+    return !gl_comp_present.knobOff(raw);
+}
+
+/// T2788: `hdc` on a hidden helper with the pane pixel format, so the pane
+/// window itself never takes one. False, with nothing left behind, on any
+/// failure: the pane then makes its context on its own window as before.
+fn initHelperDrawable(self: *Surface, app: *App) bool {
+    const helper = WindowPresenter.createHelper(app.hinstance) orelse return false;
+    const hdc = w32.GetDC(helper) orelse {
+        _ = w32.DestroyWindow(helper);
+        return false;
+    };
+    setupGlPixelFormat(hdc) catch {
+        _ = w32.ReleaseDC(helper, hdc);
+        _ = w32.DestroyWindow(helper);
+        return false;
+    };
+    self.hdc = hdc;
+    self.gl_helper = helper;
+    log.info("terminal pane context on a hidden helper (composition path; GHOZTTY_PANE_GL_HELPER=0 opts out)", .{});
+    return true;
+}
+
+/// T2788: this composition-path pane is dropping to SwapBuffers, which needs
+/// its context current on its OWN window: give that window the pane pixel
+/// format and move the context onto its DC. Renderer thread, with the
+/// context current. True when the pane's window is now the drawable, or
+/// already was (no helper, or the presenter path, whose helper is its
+/// drawable by design).
+pub fn adoptPaneDrawable(self: *Surface) bool {
+    if (self.gl_helper == null or self.present_link != null or self.helper_hdc != null) return true;
+    const hwnd = self.hwnd orelse return false;
+    const hglrc = self.hglrc orelse return false;
+    const dc = w32.GetDC(hwnd) orelse return false;
+    if (GetPixelFormat(dc) == 0) setupGlPixelFormat(dc) catch {
+        _ = w32.ReleaseDC(hwnd, dc);
+        return false;
+    };
+    if (gl_loader.active().makeCurrent(@ptrCast(dc), @ptrCast(hglrc)) == 0) {
+        _ = w32.ReleaseDC(hwnd, dc);
+        return false;
+    }
+    self.helper_hdc = self.hdc;
+    self.hdc = dc;
+    log.info("terminal pane context moved onto its own window for SwapBuffers", .{});
+    return true;
+}
+
+extern "gdi32" fn GetPixelFormat(hdc: w32.HDC) callconv(.winapi) i32;
+
 /// The window turned translucent or opaque (T2515, `window_translucent`).
 /// UI thread; a change forces a frame, so the composition path re-decides
 /// the frame's alpha (or its swap chain) now rather than at the next draw.
@@ -1617,8 +1690,15 @@ fn dropPresenterContext(self: *Surface) void {
     if (self.present_link) |l| WindowPresenter.freeLink(self.app.core_app.alloc, l);
     self.present_link = null;
     if (self.gl_helper) |helper| {
-        if (self.hdc) |hdc| _ = w32.ReleaseDC(helper, hdc);
-        self.hdc = null;
+        if (self.helper_hdc) |hdc| {
+            // T2788: the context moved onto the pane window; `hdc` is that
+            // window's now and the caller releases it with the window.
+            _ = w32.ReleaseDC(helper, hdc);
+            self.helper_hdc = null;
+        } else {
+            if (self.hdc) |hdc| _ = w32.ReleaseDC(helper, hdc);
+            self.hdc = null;
+        }
         _ = w32.DestroyWindow(helper);
     }
     self.gl_helper = null;

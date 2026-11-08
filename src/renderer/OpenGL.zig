@@ -1150,7 +1150,7 @@ fn frameOutlivedItsWindow(self: *const OpenGL, hdc: anytype) bool {
 /// current on a hidden helper (T2615), so it is the surface's own pane window.
 fn paneWindow(self: *const OpenGL, hdc: anytype) ?std.os.windows.HWND {
     if (comptime apprt.runtime != apprt.win32) return null;
-    if (self.rt_surface.present_link != null) {
+    if (self.rt_surface.present_link != null or self.rt_surface.gl_helper != null) {
         const h = self.rt_surface.hwnd orelse return null;
         return @ptrCast(h);
     }
@@ -1370,6 +1370,7 @@ fn compInit(self: *OpenGL, width: usize, height: usize) void {
             "composition present unavailable ({}) at {s} hr=0x{x}; this pane presents with SwapBuffers",
             .{ err, f.stage, @as(u32, @bitCast(f.hr)) },
         );
+        compLeaveHelper(self);
         return;
     };
     self.comp = p;
@@ -1412,6 +1413,15 @@ fn compFail(self: *OpenGL, err: anyerror) void {
     p.deinit();
     self.alloc.destroy(p);
     self.comp = null;
+    compLeaveHelper(self);
+}
+
+/// T2788: a composition pane's context lives on a hidden helper; SwapBuffers
+/// needs it on the pane's own window.
+fn compLeaveHelper(self: *OpenGL) void {
+    if (comptime apprt.runtime != apprt.win32) return;
+    if (!self.rt_surface.adoptPaneDrawable())
+        log.warn("could not move the pane context onto its window; this pane may not show", .{});
 }
 
 /// May the renderer free this pane's targets now that it is hidden (T2474)?

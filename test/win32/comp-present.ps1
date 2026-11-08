@@ -107,7 +107,7 @@ if (-not (Test-Path $Exe)) { "SETUP FAIL: $Exe not found - build it first"; exit
 
 $root = Join-Path $env:TEMP "ghoztty-comp-present-$PID"
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_PRESENT_FAIL_AFTER', 'GHOZTTY_GL_SIMULATE_RESET_AFTER', 'GHOZTTY_COMP_PRESENT_SIMULATE_NO_INTEROP'
+$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_PRESENT_FAIL_AFTER', 'GHOZTTY_GL_SIMULATE_RESET_AFTER', 'GHOZTTY_COMP_PRESENT_SIMULATE_NO_INTEROP', 'GHOZTTY_PANE_GL_HELPER'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
@@ -185,6 +185,10 @@ function Test-DrawsText($target) {
 $onLine = 'pane presents through a composition swap chain'
 $failLine = 'composition present failed'
 $unavailLine = 'composition present unavailable'
+# T2788: a composition pane's GL context sits on a hidden helper, so its own
+# window is never a GL drawable; a pane that falls back moves it back.
+$helperLine = 'terminal pane context on a hidden helper'
+$adoptLine = 'terminal pane context moved onto its own window for SwapBuffers'
 
 function Start-Arm($name, [string[]]$Extra = @()) {
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
@@ -243,6 +247,9 @@ try {
     Assert "A6 the split pane still draws text" (Test-DrawsText 'compa2')
     Assert "A7 no OpenGL errors were raised" ((Read-Text $a.Err) -notmatch 'error\(opengl\)')
     Assert "A8 and no draw failed" ((Read-Text $a.Err) -notmatch 'error drawing err=')
+    $nh = Count-Log $a.Err $helperLine
+    Assert "A9 every pane's GL context is on a hidden helper, not its window (T2788: $nh of $(Count-Log $a.Err $onLine))" `
+        ($nh -ge 2 -and $nh -eq (Count-Log $a.Err $onLine))
 
     # ========================================================================
     "== B: a failed present falls back to SwapBuffers and the pane keeps drawing"
@@ -267,6 +274,10 @@ try {
     # frame. Which of them reaches 6 frames first is timing (1 or 2 lines).
     $nb = Count-Log $b.Err $failLine
     Assert "B5 the fallback happened once per pane, not per frame ($nb lines)" ($nb -ge 1 -and $nb -le 2)
+    # T2788: SwapBuffers needs the context on the pane's own window.
+    $na = Count-Log $b.Err $adoptLine
+    Assert "B6 each fallen-back pane moved its context onto its own window ($na of $nb)" ($na -eq $nb)
+    Assert "B7 and no move failed" ((Read-Text $b.Err) -notmatch 'could not move the pane context')
 
     # ========================================================================
     "== C: a lost device on the composition path rebuilds its chain"
@@ -304,6 +315,7 @@ try {
     $text = Read-Text $d.Err
     Assert "D2 and no composition line was logged" `
         ($text -notmatch $onLine -and $text -notmatch $failLine -and $text -notmatch $unavailLine)
+    Assert "D4 nor a helper context: a SwapBuffers pane draws on its own window (T2788)" ($text -notmatch $helperLine)
     $dBars = @(Get-TestWindows -ProcessId $d.App.Pid -Class 'GhozttyScrollbar')
     Assert "D3 the knob-off scrollbar is its popup ($($dBars.Count) visible, no visual line)" `
         ($dBars.Count -ge 1 -and $text -notmatch 'scrollbar path visual=true')
