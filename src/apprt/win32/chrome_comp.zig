@@ -756,11 +756,13 @@ pub const FacePic = struct {
     h: i32,
 };
 
-/// A folding card's face, declared whole (T2778): its band at (`band_x`,
-/// `band_y`) and never moved, the name and the carried frame placed, the
-/// card clip, and the frame's strength from `from` to `to` along `curve`
-/// (`span_s` long; `comp_overlay.fitFollower`). The strength is held at
-/// `fade_hold` from `fade_knee_s` on, where its line leaves 0..1.
+/// A strip card's face, declared whole (T2778; an opening card's since
+/// T2779): its band at (`band_x`, `band_y`) and never moved, the name and the
+/// carried frame placed, the card clip, and the frame's strength from `from`
+/// to `to` along `curve` (`span_s` long; `comp_overlay.fitFollower`). The
+/// strength line runs only between `fade_enter_s` (null: from the start) and
+/// `fade_leave_s` (null: to the end), held at its ends clamped to 0..1
+/// outside them. `content` empty (w 0): no frame yet, the band and name alone.
 pub const FaceGlide = struct {
     band: FacePic,
     band_x: i32,
@@ -771,8 +773,8 @@ pub const FaceGlide = struct {
     to: comp_tree.FacePose,
     curve: []const comp_overlay.Cubic,
     span_s: f64,
-    fade_knee_s: ?f64 = null,
-    fade_hold: f32 = 0,
+    fade_enter_s: ?f64 = null,
+    fade_leave_s: ?f64 = null,
 };
 
 /// A pane card's shadow riding with its pane visual (T2741): its offset is
@@ -1892,14 +1894,20 @@ pub const Host = struct {
     /// of the way), holding `to` from `span_s` on. The caller releases it
     /// once it is set: the property keeps its own snapshot.
     fn followAnimation(self: *Host, from: f32, to: f32, curve: []const Cubic, span_s: f64) Error!Obj {
-        return self.followAnimationHeld(from, to, curve, span_s, null, to);
+        return self.followAnimationHeld(from, to, curve, span_s, null, null);
     }
 
-    /// `followAnimation`, held at `hold` from `knee_s` on (T2778): a value
-    /// whose straight line along the curve runs out before the curve ends -
-    /// a fade reaching 0 before the card lands. The piece the knee falls in
-    /// is cut there.
-    fn followAnimationHeld(self: *Host, from: f32, to: f32, curve: []const Cubic, span_s: f64, knee_s: ?f64, hold: f32) Error!Obj {
+    /// A value held flat at `value` before (an enter) or from (a leave)
+    /// `at_s` (`followAnimationHeld`).
+    const Hold = struct { at_s: f64, value: f32 };
+
+    /// `followAnimation`, held flat outside the stretch its straight line
+    /// runs (T2778, T2779): at `enter.value` until `enter.at_s` - an unfold's
+    /// fade rising in part-way - and at `leave.value` from `leave.at_s` on - a
+    /// fold's fade reaching 0 before the card lands. The pieces the two
+    /// times fall in are cut there (`comp_overlay.tailOf` re-expands the
+    /// entering one about its time).
+    fn followAnimationHeld(self: *Host, from: f32, to: f32, curve: []const Cubic, span_s: f64, enter: ?Hold, leave: ?Hold) Error!Obj {
         var made: ?Obj = null;
         try check(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_animation)(self.dcomp, &made));
         const anim = made orelse return error.ComFailed;
@@ -1908,12 +1916,29 @@ pub const Host = struct {
         const span: f64 = to - from;
         // A value that does not move still takes the same span, as one flat
         // piece.
-        if (span == 0) try check(add(anim, 0, to, 0, 0, 0)) else for (curve) |c| {
-            if (knee_s) |k| if (c.begin_s >= k) break;
-            try check(add(anim, c.begin_s, @floatCast(from + span * c.c0), @floatCast(span * c.c1), @floatCast(span * c.c2), @floatCast(span * c.c3)));
+        if (span == 0) try check(add(anim, 0, to, 0, 0, 0)) else {
+            var pieces: []const Cubic = curve;
+            var shift: f64 = 0;
+            var tail: [2 * comp_overlay.follower_segments]Cubic = undefined;
+            if (enter) |e| if (e.at_s > 0) {
+                if (curve.len > tail.len) return error.ComFailed;
+                try check(add(anim, 0, e.value, 0, 0, 0));
+                // Never comes in: held the whole way.
+                if (e.at_s >= span_s) {
+                    try check(slot(*const fn (Obj, f64, f32) callconv(.winapi) HRESULT, anim, slot_dcomp_anim_end)(anim, span_s, e.value));
+                    return anim;
+                }
+                pieces = comp_overlay.tailOf(curve, e.at_s, &tail);
+                shift = e.at_s;
+            };
+            for (pieces) |c| {
+                const begin = c.begin_s + shift;
+                if (leave) |k| if (begin >= k.at_s) break;
+                try check(add(anim, begin, @floatCast(from + span * c.c0), @floatCast(span * c.c1), @floatCast(span * c.c2), @floatCast(span * c.c3)));
+            }
+            if (leave) |k| if (k.at_s < span_s) try check(add(anim, @max(k.at_s, 0), k.value, 0, 0, 0));
         }
-        if (knee_s) |k| if (span != 0 and k < span_s) try check(add(anim, @max(k, 0), hold, 0, 0, 0));
-        try check(slot(*const fn (Obj, f64, f32) callconv(.winapi) HRESULT, anim, slot_dcomp_anim_end)(anim, span_s, if (knee_s != null) hold else to));
+        try check(slot(*const fn (Obj, f64, f32) callconv(.winapi) HRESULT, anim, slot_dcomp_anim_end)(anim, span_s, if (leave) |k| k.value else to));
         return anim;
     }
 
@@ -2141,7 +2166,14 @@ pub const Host = struct {
             defer release(anim);
             try check(slot(SetAnim, rc, s - 1)(rc, anim));
         }
-        const fade = try self.followAnimationHeld(g.from.opacity, g.to.opacity, g.curve, g.span_s, g.fade_knee_s, g.fade_hold);
+        const fade = try self.followAnimationHeld(
+            g.from.opacity,
+            g.to.opacity,
+            g.curve,
+            g.span_s,
+            if (g.fade_enter_s) |e| .{ .at_s = e, .value = std.math.clamp(g.from.opacity, 0, 1) } else null,
+            if (g.fade_leave_s) |k| .{ .at_s = k, .value = std.math.clamp(g.to.opacity, 0, 1) } else null,
+        );
         defer release(fade);
         try check(slot(SetAnim, fv.content_effect.?, slot_dcomp_effect_set_opacity_anim)(fv.content_effect.?, fade));
         self.face_uploads +|= 1;

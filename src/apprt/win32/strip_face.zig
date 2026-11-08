@@ -598,16 +598,17 @@ test "clipBox: a card inside the face keeps its corners; a cut one does not; an 
 /// (T2778): `tweenCollapse` of the card's extent is linear in it, and the
 /// extent is linear in the glide's follower, so the strength is a straight
 /// line in the same 0..1 of the way - from the card drawn at `d0` to it
-/// landed at `d1`. `to` is the line's UNCLAMPED end: a strip narrower than
-/// `strip` runs it past 0 before the card lands, and the compositor holds it
-/// from the knee (`FacePose.fadeKnee`). Null when the line does not start
-/// inside 0..1 (a card drawn wider than its pane), which frames handle.
+/// landed at `d1`. Both ends are UNCLAMPED: a strip narrower than `strip`
+/// runs a fold's line past 0 before the card lands, and an unfold's (T2779)
+/// starts below 0 and rises into 0..1 part of the way; the compositor holds
+/// it outside (`FacePose.fadeSpan`). Null when the line starts above 1 (a
+/// card drawn wider than its pane), which frames handle.
 pub fn fadeLine(d0: f64, d1: f64, strip: f64, full: f64, min_span: f64) ?struct { from: f32, to: f32 } {
     const span = @max(full - strip, min_span);
     if (span <= 0) return null;
     const from = 1 - (full - d0) / span;
-    if (from < -1e-6 or from > 1 + 1e-6) return null;
-    return .{ .from = @floatCast(std.math.clamp(from, 0, 1)), .to = @floatCast(1 - (full - d1) / span) };
+    if (from > 1 + 1e-6) return null;
+    return .{ .from = @floatCast(@min(from, 1)), .to = @floatCast(1 - (full - d1) / span) };
 }
 
 test "fadeLine: the same strength tweenCollapse gives, as a line (T2778)" {
@@ -624,6 +625,19 @@ test "fadeLine: the same strength tweenCollapse gives, as a line (T2778)" {
     }
     // A card drawn wider than the pane it carries: frames, not a line.
     try testing.expectEqual(@as(@TypeOf(fadeLine(0, 0, 0, 0, 0)), null), fadeLine(500, 36, 46, 400, 120));
+}
+
+test "fadeLine: an unfold's strength rises from below 0, as tweenCollapse gives it (T2779)" {
+    // A 400 px pane opening out of a 36 px strip to its whole width.
+    const l = fadeLine(36, 400, 46, 400, 120).?;
+    try testing.expect(l.from < 0);
+    try testing.expectEqual(@as(f32, 1), l.to);
+    for ([_]f64{ 0, 0.01, 0.3, 0.7, 1 }) |f| {
+        const d = 36 + (400 - 36) * f;
+        const want: f32 = @floatCast(1 - tweenCollapse(d, 46, 400, 120));
+        const got = std.math.clamp(l.from + (l.to - l.from) * @as(f32, @floatCast(f)), 0, 1);
+        try testing.expectApproxEqAbs(want, got, 1e-5);
+    }
 }
 
 /// Where the strip name's picture goes for a face showing `vis` (client
@@ -680,15 +694,38 @@ test "inkFromCoverage: text coverage becomes premultiplied ink; no text is clear
 const comp_tree = @import("../../renderer/comp_tree.zig");
 const comp_overlay = @import("../../renderer/comp_overlay.zig");
 
-/// A fold handed to the compositor whole (T2778): when, from what, to what,
-/// and on which follower - so a retarget starts from where the compositor
-/// has the face rather than from where the window's last frame did.
+/// A strip face's glide handed to the compositor whole (T2778; an unfold
+/// since T2779): when, from what, to what, on which follower, and which
+/// carried frame it shows - so a retarget, or an opening card's frame landing,
+/// starts from where the compositor has the face rather than from where the
+/// window's last frame did.
 pub const FaceDecl = struct {
     t0: std.time.Instant,
     from: comp_tree.FacePose,
     to: comp_tree.FacePose,
     dist: f32,
     tau_s: f64,
+    /// The carried frame the face shows (null: the band and name alone, an
+    /// opening card whose frame has not landed yet).
+    content: ?ContentId = null,
+
+    /// Which frame a face carries: a frame that lands, or is replaced by one
+    /// asked at another size, is a new declaration.
+    pub const ContentId = struct {
+        ptr: usize,
+        w: i32,
+        h: i32,
+
+        pub fn of(c: ?Content) ?ContentId {
+            const v = c orelse return null;
+            return .{ .ptr = @intFromPtr(v.pixels.ptr), .w = v.w, .h = v.h };
+        }
+
+        pub fn eql(a: ?ContentId, b: ?ContentId) bool {
+            if (a == null or b == null) return a == null and b == null;
+            return a.?.ptr == b.?.ptr and a.?.w == b.?.w and a.?.h == b.?.h;
+        }
+    };
 
     /// Where the compositor has the face `now`: the exact path its cubics
     /// stand in for, the strength held inside 0..1.
@@ -702,11 +739,20 @@ pub const FaceDecl = struct {
         return comp_tree.FacePose.lerp(self.from, self.to, @floatCast(f));
     }
 
-    /// When the strength reaches the end of 0..1 and is held, in seconds
-    /// after `t0`; null when it runs the whole way.
-    pub fn kneeS(self: FaceDecl) ?f64 {
-        const k = comp_tree.FacePose.fadeKnee(self.from, self.to) orelse return null;
-        return comp_overlay.followerTimeOf(self.dist, self.tau_s, pane_stack_slide.snap_px, k);
+    /// When the strength comes inside 0..1 (`enter_s`, null from the start)
+    /// and when it leaves it to be held (`leave_s`, null: it runs to the
+    /// end), in seconds after `t0` (T2779: an unfold's rises in part-way).
+    pub fn fadeTimes(self: FaceDecl) struct { enter_s: ?f64, leave_s: ?f64 } {
+        const s = comp_tree.FacePose.fadeSpan(self.from, self.to);
+        const T = struct {
+            fn of(d: FaceDecl, f: f32) f64 {
+                return comp_overlay.followerTimeOf(d.dist, d.tau_s, pane_stack_slide.snap_px, f);
+            }
+        };
+        return .{
+            .enter_s = if (s.enter > 0) T.of(self, s.enter) else null,
+            .leave_s = if (s.leave < 1) T.of(self, s.leave) else null,
+        };
     }
 };
 
@@ -720,11 +766,44 @@ test "FaceDecl: reached follows the follower, the fade held from its knee (T2778
         .tau_s = 0.045,
     };
     try testing.expectEqual(d.from, d.at(0));
-    const k = d.kneeS().?;
+    const times = d.fadeTimes();
+    try testing.expectEqual(@as(?f64, null), times.enter_s);
+    const k = times.leave_s.?;
     // At the knee the strength has just run out, and stays out; the card
     // is still on its way.
     try testing.expectApproxEqAbs(@as(f32, 0), d.at(k).opacity, 1e-4);
     try testing.expectEqual(@as(f32, 0), d.at(k + 0.05).opacity);
     try testing.expect(d.at(k).clip.right > 56);
     try testing.expectApproxEqAbs(@as(f32, 56), d.at(10).clip.right, 1e-4);
+}
+
+test "FaceDecl: an unfold's strength is held at 0 until it rises in (T2779)" {
+    const t0 = std.time.Instant.now() catch return error.SkipZigTest;
+    const d: FaceDecl = .{
+        .t0 = t0,
+        .from = .{ .clip = .{ .left = 20, .right = 56, .bottom = 600 }, .content_x = 20, .opacity = -0.03 },
+        .to = .{ .clip = .{ .left = 20, .right = 420, .bottom = 600 }, .content_x = 20, .opacity = 1 },
+        .dist = 364,
+        .tau_s = 0.045,
+    };
+    const times = d.fadeTimes();
+    try testing.expectEqual(@as(?f64, null), times.leave_s);
+    const e = times.enter_s.?;
+    try testing.expect(e > 0);
+    try testing.expectEqual(@as(f32, 0), d.at(e / 2).opacity);
+    try testing.expectApproxEqAbs(@as(f32, 0), d.at(e).opacity, 1e-4);
+    try testing.expect(d.at(e + 0.05).opacity > 0);
+    try testing.expectApproxEqAbs(@as(f32, 1), d.at(10).opacity, 1e-4);
+}
+
+test "FaceDecl.ContentId: a landed or replaced frame is a new one (T2779)" {
+    var a = [_]u32{ 1, 2, 3, 4 };
+    var b = [_]u32{ 1, 2, 3, 4 };
+    const ca: Content = .{ .pixels = &a, .w = 2, .h = 2, .x = 0, .y = 0 };
+    const cb: Content = .{ .pixels = &b, .w = 2, .h = 2, .x = 0, .y = 0 };
+    const Id = FaceDecl.ContentId;
+    try testing.expect(Id.eql(null, null));
+    try testing.expect(!Id.eql(null, Id.of(ca)));
+    try testing.expect(Id.eql(Id.of(ca), Id.of(ca)));
+    try testing.expect(!Id.eql(Id.of(ca), Id.of(cb)));
 }

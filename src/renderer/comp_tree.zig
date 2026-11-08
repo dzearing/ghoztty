@@ -232,16 +232,26 @@ pub const FacePose = struct {
         return d;
     }
 
-    /// Where along the way (0..1) the opacity line leaves 0..1, or null when
-    /// it stays inside all the way: from there the compositor holds it.
-    pub fn fadeKnee(a: FacePose, b: FacePose) ?f32 {
-        const lo = @min(a.opacity, b.opacity);
-        const hi = @max(a.opacity, b.opacity);
-        if (lo >= 0 and hi <= 1) return null;
-        if (a.opacity == b.opacity) return null;
-        const edge: f32 = if (b.opacity < 0) 0 else 1;
-        return std.math.clamp((edge - a.opacity) / (b.opacity - a.opacity), 0, 1);
+    /// The stretch of the way (0..1) on which the opacity line is inside
+    /// 0..1 (T2779): before `enter` the compositor holds it at `a`'s end
+    /// clamped, from `leave` at `b`'s. A fold's line can run out past 0
+    /// before the card lands (`leave` < 1); an unfold's starts below 0 and
+    /// rises into it (`enter` > 0). A line outside 0..1 the whole way has
+    /// `enter == leave`: it is held flat.
+    pub fn fadeSpan(a: FacePose, b: FacePose) FadeSpan {
+        if (a.opacity == b.opacity) return .{};
+        const at0 = (0 - a.opacity) / (b.opacity - a.opacity);
+        const at1 = (1 - a.opacity) / (b.opacity - a.opacity);
+        const enter = std.math.clamp(@min(at0, at1), 0, 1);
+        const leave = std.math.clamp(@max(at0, at1), 0, 1);
+        return .{ .enter = enter, .leave = @max(enter, leave) };
     }
+};
+
+/// `FacePose.fadeSpan`: where along the way the opacity runs.
+pub const FadeSpan = struct {
+    enter: f32 = 0,
+    leave: f32 = 1,
 };
 
 test "FacePose: lerp, distance and the fade's knee (T2778)" {
@@ -253,10 +263,26 @@ test "FacePose: lerp, distance and the fade's knee (T2778)" {
     try std.testing.expectEqual(@as(f32, 278), mid.clip.right);
     try std.testing.expectEqual(@as(f32, 0.375), mid.opacity);
     // The line crosses 0 at 0.8 of the way; the pose holds it there.
-    try std.testing.expectEqual(@as(f32, 0.8), FacePose.fadeKnee(a, b).?);
+    try std.testing.expectEqual(FadeSpan{ .enter = 0, .leave = 0.8 }, FacePose.fadeSpan(a, b));
     try std.testing.expectEqual(@as(f32, 0), FacePose.lerp(a, b, 0.9).opacity);
-    // Inside 0..1 all the way: no knee.
-    try std.testing.expectEqual(@as(?f32, null), FacePose.fadeKnee(a, .{ .opacity = 0 }));
+    // Inside 0..1 all the way: it runs the whole way.
+    try std.testing.expectEqual(FadeSpan{}, FacePose.fadeSpan(a, .{ .opacity = 0 }));
+}
+
+test "FacePose.fadeSpan: an unfold's line rises into 0..1; one outside it is flat (T2779)" {
+    // Opening: from -0.25 to 1, inside from a fifth of the way on.
+    const s = FacePose.fadeSpan(.{ .opacity = -0.25 }, .{ .opacity = 1 });
+    try std.testing.expectApproxEqAbs(@as(f32, 0.2), s.enter, 1e-6);
+    try std.testing.expectEqual(@as(f32, 1), s.leave);
+    // Past both ends: inside from 0.2 to 0.6 of the way.
+    const both = FacePose.fadeSpan(.{ .opacity = -0.5 }, .{ .opacity = 2 });
+    try std.testing.expectApproxEqAbs(@as(f32, 0.2), both.enter, 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.6), both.leave, 1e-6);
+    // Below 0 the whole way: held flat from the start.
+    const flat = FacePose.fadeSpan(.{ .opacity = -0.5 }, .{ .opacity = -0.1 });
+    try std.testing.expectEqual(flat.enter, flat.leave);
+    // Unmoving: runs (flat) the whole way.
+    try std.testing.expectEqual(FadeSpan{}, FacePose.fadeSpan(.{ .opacity = 0.5 }, .{ .opacity = 0.5 }));
 }
 
 test "Pose: lerp moves every value on its own; distance is the farthest one (T2572)" {

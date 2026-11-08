@@ -237,7 +237,7 @@ pub const StripFace = struct {
     /// again. `decl` is what was declared, for a retarget to start from
     /// where the compositor has got to. False when the host cannot take it;
     /// the face is then off the tree and the caller steps it on frames.
-    pub fn declareVisual(self: *StripFace, host_slot: *?chrome_comp.Host, g: chrome_comp.FaceGlide, decl: strip_face.FaceDecl) bool {
+    pub fn declareVisual(self: *StripFace, host_slot: *?chrome_comp.Host, g: chrome_comp.FaceGlide, decl: strip_face.FaceDecl, opening: bool) bool {
         self.painting = false;
         const host = if (host_slot.*) |*h| h else return false;
         if (!host.faceAvailable()) return false;
@@ -271,12 +271,22 @@ pub const StripFace = struct {
             @as(i32, @intFromFloat(g.from.clip.right - g.from.clip.left)),
             @as(i32, @intFromFloat(g.from.clip.bottom - g.from.clip.top)),
         });
-        log.debug("strip face glide declared clip_left={d:.1}->{d:.1} clip_right={d:.1}->{d:.1} content_x={d:.1}->{d:.1} opacity={d:.3}->{d:.3} knee_ms={d:.0} span_ms={d:.0}", .{
-            g.from.clip.left,                                     g.to.clip.left,
-            g.from.clip.right,                                    g.to.clip.right,
-            g.from.content_x,                                     g.to.content_x,
-            g.from.opacity,                                       g.to.opacity,
-            if (g.fade_knee_s) |k| k * 1000 else g.span_s * 1000, g.span_s * 1000,
+        // `opening`/`content`: an unfold (T2779), and whether its frame has
+        // landed - comp-glide-hold-onscreen.ps1's unfold arm reads both.
+        log.debug("strip face glide declared clip_left={d:.1}->{d:.1} clip_right={d:.1}->{d:.1} content_x={d:.1}->{d:.1} opacity={d:.3}->{d:.3} enter_ms={d:.0} knee_ms={d:.0} span_ms={d:.0} opening={} content={}", .{
+            g.from.clip.left,
+            g.to.clip.left,
+            g.from.clip.right,
+            g.to.clip.right,
+            g.from.content_x,
+            g.to.content_x,
+            g.from.opacity,
+            g.to.opacity,
+            if (g.fade_enter_s) |e| e * 1000 else 0,
+            if (g.fade_leave_s) |k| k * 1000 else g.span_s * 1000,
+            g.span_s * 1000,
+            opening,
+            g.content.w > 0,
         });
         return true;
     }

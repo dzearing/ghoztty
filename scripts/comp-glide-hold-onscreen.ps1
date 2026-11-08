@@ -75,6 +75,18 @@
 # -NoDeclare sets GHOZTTY_GLIDE_DECLARE=0: the visuals are placed on every
 # frame from the window's thread again, as T2571 left them.
 #
+# UNFOLD (T2779) is the STALL arm with the stall moved
+# (GHOZTTY_DEBUG_GLIDE_STALL_AT=unfold): it lands once the card opening out of
+# its strip is carrying the frame its pane drew at its new size and that
+# content is well in, so the film has seen it before the window's thread
+# blocks. Declared, the opening face - its card clip, the frame's place and
+# its fade rising in - goes on opening through the stall; stepped, it freezes
+# where the stall caught it. .15 scores its longest still stretch from its
+# first appearance until it is within 5% of where it settles, .16 reads that
+# the opening face was declared with its frame.
+#   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms unfold
+#   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms unfold -NoDeclare   # unfold.15 must go red
+#
 # -NegativeControl sets the slide to 0 ms (the instant re-layout from before
 # T2102): .5 must FAIL on every arm.
 
@@ -117,7 +129,7 @@ if ($NegativeControl) { $SlideMs = 0; "NEGATIVE CONTROL: the slide is 0 ms (an i
 if (-not $OutDir) { $OutDir = Join-Path $env:TEMP "ghoztty-comp-glide-$PID" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_GLIDE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS', 'GHOZTTY_DEBUG_GLIDE_STALL_MS', 'GHOZTTY_GLIDE_DECLARE'
+$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_GLIDE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS', 'GHOZTTY_DEBUG_GLIDE_STALL_MS', 'GHOZTTY_GLIDE_DECLARE', 'GHOZTTY_DEBUG_GLIDE_STALL_AT'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
@@ -318,7 +330,14 @@ function Score-Film($arm, $fdir) {
             if ($b.Rows -gt $restH + 2 -or $w -gt $restW + 2) { $heldBad += "$($colourNames[$k]) f$($f.I) ${w}x$($b.Rows) vs rest ${restW}x$restH" }
             # Torn: rows disagree on an edge. A card's clip is a straight
             # vertical line, so occlusion moves an edge for every row at once.
-            if (($b.LeftMax - $b.LeftMin) -gt 2 -or ($b.RightMax - $b.RightMin) -gt 2) {
+            # A card coming out of (or going into) its strip is judged only
+            # while it is whole (90% of its rest rows, the .6 bar): its face
+            # fades the block in over the glass band, whose gradient puts a
+            # half-strength block across the pure-colour threshold row by row
+            # (T2779: green 113 at its top, 109 at its foot), and a block
+            # caught there is partly detected, not torn.
+            $judged = ($on0 -and $on1) -or $b.Rows -ge [Math]::Floor(0.9 * $restH)
+            if ($judged -and (($b.LeftMax - $b.LeftMin) -gt 2 -or ($b.RightMax - $b.RightMin) -gt 2)) {
                 $tornBad += "$($colourNames[$k]) f$($f.I) left $($b.LeftMin)..$($b.LeftMax) right $($b.RightMin)..$($b.RightMax)"
             }
             if ($null -ne $lo -and $b.RightMax -gt $lo -and $b.RightMax -lt $hi) { $positions[$b.RightMax] = $true }
@@ -342,6 +361,7 @@ function Score-Film($arm, $fdir) {
     Assert "$arm.7 held: no card's picture is ever larger than its rest size (clipped, never stretched)$(if ($heldBad) { ': ' + (($heldBad | Select-Object -First 4) -join '; ') + " ($($heldBad.Count))" })" ($heldBad.Count -eq 0)
     Assert "$arm.8 untorn: every card's rows share one left and one right edge in every frame$(if ($tornBad) { ': ' + (($tornBad | Select-Object -First 4) -join '; ') + " ($($tornBad.Count))" })" ($tornBad.Count -eq 0)
     if ($arm -eq 'stall') { Score-Stall $arm $rows }
+    if ($arm -eq 'unfold') { Score-StallUnfold $arm $rows ($StallMs / 4.0) }
 }
 
 # T2572: the card that travels furthest, frame by frame - the longest gap in
@@ -413,6 +433,38 @@ function Score-StallFace($arm, $rows, $limit) {
     Assert "$arm.13 through the stall the folding card's face keeps folding: longest still stretch $([Math]::Round($gap)) ms (need < $limit)" ($moves -ge 2 -and $gap -lt $limit)
 }
 
+# T2779: the card opening out of its strip, through a stall that lands once
+# its content is well in (GHOZTTY_DEBUG_GLIDE_STALL_AT=unfold). Its block is
+# not on show at the start and is at the end; every change of its edges is a
+# move, timed from its first appearance until both edges are within 5% of
+# where they settle (the follower's last pixels come slowly by design). A
+# face stepped from the window's thread holds still for the whole stall.
+function Score-StallUnfold($arm, $rows, $limit) {
+    $uk = -1
+    for ($k = 0; $k -lt 4; $k++) {
+        if ($rows[0].B[$k].Rows -eq 0 -and $rows[$rows.Count - 1].B[$k].Rows -gt 0) { $uk = $k; break }
+    }
+    if ($uk -lt 0) { Assert "$arm.15 a card opens out of its strip on film (not on show at the start, on show at the end)" $false; return }
+    $z = $rows[$rows.Count - 1].B[$uk]
+    $firstI = -1
+    for ($i = 0; $i -lt $rows.Count; $i++) { if ($rows[$i].B[$uk].Rows -gt 0) { $firstI = $i; break } }
+    $a = $rows[$firstI].B[$uk]
+    $travel = [Math]::Max([Math]::Abs($z.LeftMin - $a.LeftMin), [Math]::Abs($z.RightMax - $a.RightMax))
+    $near = [Math]::Max(2, [int](0.05 * $travel))
+    $prev = $a; $lastT = $rows[$firstI].T; $gap = 0.0; $gapAt = ''; $moves = 0
+    for ($i = $firstI + 1; $i -lt $rows.Count; $i++) {
+        $f = $rows[$i]; $b = $f.B[$uk]
+        if ($b.Rows -eq 0 -or ($b.LeftMin -eq $prev.LeftMin -and $b.RightMax -eq $prev.RightMax)) { continue }
+        if (($f.T - $lastT) -gt $gap) { $gap = $f.T - $lastT; $gapAt = "f$($f.I)" }
+        $lastT = $f.T; $prev = $b; $moves++
+        if ([Math]::Abs($b.LeftMin - $z.LeftMin) -le $near -and [Math]::Abs($b.RightMax - $z.RightMax) -le $near) { break }
+    }
+    $t0 = $rows[0].T
+    "    unfold trace ($($colourNames[$uk]) ms:left-right): " + (($rows | ForEach-Object { $b = $_.B[$uk]; "$([Math]::Round($_.T - $t0)):$($b.LeftMin)-$($b.RightMax)" }) -join ' ')
+    "    unfold:$($colourNames[$uk]) first on film at $($a.LeftMin)-$($a.RightMax), settles at $($z.LeftMin)-$($z.RightMax); $moves moves; longest still stretch $([Math]::Round($gap)) ms (ending $gapAt)"
+    Assert "$arm.15 through the stall the opening card's face keeps opening: longest still stretch $([Math]::Round($gap)) ms (need < $limit)" ($moves -ge 2 -and $travel -gt 40 -and $gap -lt $limit)
+}
+
 $onLine = 'pane presents through a composition swap chain'
 
 [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
@@ -425,9 +477,10 @@ $td = New-TestDesktop -Interactive
 
 try {
     foreach ($arm in $Arms) {
-        $comp = $arm -in 'on', 'tree', 'stall'
-        $isTree = $arm -in 'tree', 'stall'
-        "== arm '$arm' (GHOZTTY_COMP_PRESENT=$(if ($comp) { '1' } else { 'unset' }) PANE_TREE=$(if ($isTree) { '1' } else { 'unset' }), slide $SlideMs ms$(if ($arm -eq 'stall') { ", stall $StallMs ms, declare $(if ($NoDeclare) { 'off' } else { 'on' })" }))"
+        $comp = $arm -in 'on', 'tree', 'stall', 'unfold'
+        $isTree = $arm -in 'tree', 'stall', 'unfold'
+        $stalls = $arm -in 'stall', 'unfold'
+        "== arm '$arm' (GHOZTTY_COMP_PRESENT=$(if ($comp) { '1' } else { 'unset' }) PANE_TREE=$(if ($isTree) { '1' } else { 'unset' }), slide $SlideMs ms$(if ($stalls) { ", stall $StallMs ms$(if ($arm -eq 'unfold') { ' once the opening card is in' }), declare $(if ($NoDeclare) { 'off' } else { 'on' })" }))"
         [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
         $dir = Join-Path $OutDir $arm
         if (Test-Path $dir) { Get-ChildItem $dir -File -Recurse | ForEach-Object { Remove-Item $_.FullName } }
@@ -443,7 +496,8 @@ try {
             if ($isTree) { Set-Item "env:$k" '1' } else { Remove-Item "env:$k" -ErrorAction SilentlyContinue }
         }
         if ($NoGlideTree) { $env:GHOZTTY_GLIDE_TREE = '0' } else { Remove-Item env:GHOZTTY_GLIDE_TREE -ErrorAction SilentlyContinue }
-        if ($arm -eq 'stall') { $env:GHOZTTY_DEBUG_GLIDE_STALL_MS = "$StallMs" } else { Remove-Item env:GHOZTTY_DEBUG_GLIDE_STALL_MS -ErrorAction SilentlyContinue }
+        if ($stalls) { $env:GHOZTTY_DEBUG_GLIDE_STALL_MS = "$StallMs" } else { Remove-Item env:GHOZTTY_DEBUG_GLIDE_STALL_MS -ErrorAction SilentlyContinue }
+        if ($arm -eq 'unfold') { $env:GHOZTTY_DEBUG_GLIDE_STALL_AT = 'unfold' } else { Remove-Item env:GHOZTTY_DEBUG_GLIDE_STALL_AT -ErrorAction SilentlyContinue }
         if ($NoDeclare) { $env:GHOZTTY_GLIDE_DECLARE = '0' } else { Remove-Item env:GHOZTTY_GLIDE_DECLARE -ErrorAction SilentlyContinue }
         $err = Join-Path $dir 'stderr.txt'
         $app = Start-OnTestDesktop -Exe $Exe -Arguments @(
@@ -551,6 +605,15 @@ try {
             # and fade - went to the compositor whole too.
             $faces = [regex]::Matches((Read-Text $err), 'strip face glide declared').Count
             Assert "$arm.14 the folding card's face was handed to the compositor ($faces face path(s) declared)" ($faces -ge 1)
+        }
+        # T2779: the opening card's face went to the compositor with the frame
+        # it lands with, and the stall it was scored through happened.
+        if ($arm -eq 'unfold') {
+            $text = Read-Text $err
+            $stalled = [regex]::Matches($text, 'stack glide debug stall ms=').Count
+            Assert "$arm.16a the stall landed once the opening card was in ($stalled)" ($stalled -eq 1)
+            $opened = [regex]::Matches($text, 'strip face glide declared [^\r\n]*opening=true content=true').Count
+            Assert "$arm.16 the opening card's face was handed to the compositor with its frame ($opened declaration(s))" ($opened -ge 1)
         }
 
         $fgPid = [uint32]0

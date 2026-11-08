@@ -1059,8 +1059,13 @@ glide_tree_moves: u32 = 0,
 tree_shadows_up: usize = 0,
 glide_moves_report: bool = false,
 /// The first tick of a glide has yet to run: `GHOZTTY_DEBUG_GLIDE_STALL_MS`
-/// blocks the thread right after it (T2572).
+/// blocks the thread right after it (T2572) - or, under
+/// `GHOZTTY_DEBUG_GLIDE_STALL_AT=unfold`, after the tick an opening card's
+/// content is well in (T2779).
 glide_stall_due: bool = false,
+/// This glide's unfold stall (`GHOZTTY_DEBUG_GLIDE_STALL_AT=unfold`) is
+/// spent (T2779).
+glide_unfold_stalled: bool = false,
 /// A test's slow frames (T2442; `GHOZTTY_STACK_SLIDE_DT_MS`, read once): every
 /// tick steps the glide as if this long had passed. Null in use.
 stack_slide_dt_ms: ?f64 = null,
@@ -9585,11 +9590,20 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     }
     const f = view.strip_face.?;
     const face_was_up = f.shown;
-    // A fold carrying its frame, in the composition pane tree, is handed to
-    // the compositor whole (T2778) and only handed again on a retarget, so
-    // it folds on through a busy window thread; frames step the rest.
-    if (carried != null and !opening and self.declareStripFace(view, f, face.card, face.axis, at, glide_at, carried.?, client)) {
-        self.stripFaceCarriedTail(view, h, f, live, true, face_was_up, false, content_alpha, face.card, face.axis);
+    // The unfold arm of comp-glide-hold-onscreen.ps1 (T2779): its stall
+    // lands once the opening card's content is well in, so the film sees
+    // whether the face goes on opening through it.
+    if (opening and carried != null and content_alpha >= 153 and !self.glide_unfold_stalled and glideStallAtUnfold()) {
+        self.glide_unfold_stalled = true;
+        self.glide_stall_due = true;
+    }
+    // A fold carrying its frame, and a card opening out of its strip (T2779),
+    // in the composition pane tree, are handed to the compositor whole
+    // (T2778) and only handed again on a retarget or when the opening card's
+    // frame lands, so they glide on through a busy window thread; frames
+    // step the rest.
+    if ((carried != null or opening) and self.declareStripFace(view, f, face.card, face.axis, at, glide_at, carried, opening, client)) {
+        self.stripFaceCarriedTail(view, h, f, live, carried != null, face_was_up, opening, content_alpha, face.card, face.axis);
         return f.shown;
     }
     var tb: i64 = 0;
@@ -9719,6 +9733,14 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
 /// Declared on the fold's first face, then again only when the landing moves
 /// (a drag reshaping the row), from where the compositor has got to.
 ///
+/// An opening card (T2458, `opening`) the same way since T2779: its face is
+/// the band and name alone until the frame its pane draws at its new size
+/// lands (`carried` null), then that frame fading in - its strength held at
+/// 0 until its line rises into 0..1. The landing of the frame is a window
+/// thread event, so it is a new declaration from where the compositor has
+/// the face, the way a retarget is; so is a frame asked again at another
+/// size by a drag.
+///
 /// The per-frame fade limit (T2442, `Slide.limitFade`) is not applied: it
 /// exists for SLOW window-thread frames, and on the compositor's clock every
 /// frame is a display frame, where the limit never bites. A test's forced
@@ -9736,7 +9758,8 @@ fn declareStripFace(
     axis: pane_stack_layout.Direction,
     at: pane_stack_grid.PxRect,
     glide_at: pane_stack_grid.PxRect,
-    carried: strip_face.Content,
+    carried: ?strip_face.Content,
+    opening: bool,
     client: w32.RECT,
 ) bool {
     if (!faceCompWanted() or !glideDeclareOn() or self.stack_slide_dt_ms != null) return false;
@@ -9769,11 +9792,13 @@ fn declareStripFace(
     // retarget, this frame's on a new one.
     var from: comp_tree.FacePose = undefined;
     var d0: f64 = undefined;
+    const content_id = strip_face.FaceDecl.ContentId.of(carried);
     if (f.decl) |d| {
-        // Unchanged landing: the declared fold runs on.
+        // Unchanged landing and the same frame: the declared glide runs on.
         if (d.to.clip.left == to_box.l and d.to.clip.top == to_box.t and d.to.clip.right == to_box.r and
             d.to.clip.bottom == to_box.b and d.to.content_x == @as(f32, @floatFromInt(land_pane.left)) and
-            d.to.content_y == @as(f32, @floatFromInt(land_pane.top))) return true;
+            d.to.content_y == @as(f32, @floatFromInt(land_pane.top)) and
+            strip_face.FaceDecl.ContentId.eql(d.content, content_id)) return true;
         from = d.reached(now);
         d0 = if (horiz) from.clip.right - from.clip.left else from.clip.bottom - from.clip.top;
     } else {
@@ -9831,7 +9856,7 @@ fn declareStripFace(
     var segs: [comp_overlay.follower_segments]comp_overlay.Cubic = undefined;
     const span_s = comp_overlay.fitFollower(dist, tau_s, pane_stack_slide.snap_px, &segs);
     if (span_s <= 0) return false;
-    const decl: strip_face.FaceDecl = .{ .t0 = now, .from = from, .to = to, .dist = dist, .tau_s = tau_s };
+    const decl: strip_face.FaceDecl = .{ .t0 = now, .from = from, .to = to, .dist = dist, .tau_s = tau_s, .content = content_id };
 
     // The band: everywhere the face goes on the way, never moved - the
     // glass over the desk is the desk's pixel where it stands.
@@ -9864,16 +9889,22 @@ fn declareStripFace(
         strip_face.finish(fr, null, 0);
     }
 
-    // The carried frame, top-down and opaque.
-    const content_px = alloc.alloc(u32, @as(usize, @intCast(carried.w)) * @as(usize, @intCast(carried.h))) catch return false;
-    defer alloc.free(content_px);
-    strip_face.finish(.{ .pixels = content_px, .stride = @intCast(carried.w), .w = @intCast(carried.w), .h = @intCast(carried.h) }, .{
-        .pixels = carried.pixels,
-        .w = carried.w,
-        .h = carried.h,
-        .x = 0,
-        .y = 0,
-    }, 255);
+    // The carried frame, top-down and opaque; none yet on an opening card
+    // whose frame has not landed.
+    var content_pic: chrome_comp.FacePic = .{ .px = &.{}, .stride = 0, .w = 0, .h = 0 };
+    var content_px: []u32 = &.{};
+    defer if (content_px.len > 0) alloc.free(content_px);
+    if (carried) |c| {
+        content_px = alloc.alloc(u32, @as(usize, @intCast(c.w)) * @as(usize, @intCast(c.h))) catch return false;
+        strip_face.finish(.{ .pixels = content_px, .stride = @intCast(c.w), .w = @intCast(c.w), .h = @intCast(c.h) }, .{
+            .pixels = c.pixels,
+            .w = c.w,
+            .h = c.h,
+            .x = 0,
+            .y = 0,
+        }, 255);
+        content_pic = .{ .px = content_px, .stride = c.w, .w = c.w, .h = c.h };
+    }
 
     // The name: white on black in the face's DIB, then ink at that coverage.
     var name_pic: ?chrome_comp.FacePic = null;
@@ -9891,20 +9922,20 @@ fn declareStripFace(
         name_pic = .{ .px = p.frame.pixels, .stride = @intCast(p.frame.stride), .w = nw, .h = nh };
     }
 
-    const knee = decl.kneeS();
+    const fade = decl.fadeTimes();
     const ok = f.declareVisual(&self.chrome_host, .{
         .band = .{ .px = band_px, .stride = bw, .w = bw, .h = bh },
         .band_x = band.left,
         .band_y = band.top,
         .name = name_pic,
-        .content = .{ .px = content_px, .stride = carried.w, .w = carried.w, .h = carried.h },
+        .content = content_pic,
         .from = from,
         .to = to,
         .curve = &segs,
         .span_s = span_s,
-        .fade_knee_s = knee,
-        .fade_hold = if (to.opacity < 0) 0 else 1,
-    }, decl);
+        .fade_enter_s = fade.enter_s,
+        .fade_leave_s = fade.leave_s,
+    }, decl, opening);
     return ok;
 }
 
@@ -11452,8 +11483,29 @@ fn runStackSlide(self: *Window) void {
         return;
     };
     self.stack_slide_fresh = true;
-    self.glide_stall_due = true;
+    self.glide_stall_due = !glideStallAtUnfold();
+    self.glide_unfold_stalled = false;
     if (self.hwnd) |h| _ = FrameClock.arm(h, STACK_SLIDE_TIMER_ID, STACK_SLIDE_TICK_MS);
+}
+
+/// `GHOZTTY_DEBUG_GLIDE_STALL_AT=unfold` (debug builds, T2779): the
+/// `GHOZTTY_DEBUG_GLIDE_STALL_MS` stall lands not after a glide's first
+/// tick but after the tick on which an opening card's carried content is
+/// well in (`paintStripFace`) - the unfold arm of
+/// comp-glide-hold-onscreen.ps1, which has to see that content on film
+/// before the stall to tell a declared unfold from a stepped one.
+fn glideStallAtUnfold() bool {
+    if (comptime builtin.mode != .Debug) return false;
+    const S = struct {
+        var v: ?bool = null;
+    };
+    if (S.v) |v| return v;
+    const v = if (std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_DEBUG_GLIDE_STALL_AT")) |raw| blk: {
+        defer std.heap.page_allocator.free(raw);
+        break :blk std.mem.eql(u8, std.mem.trim(u8, raw, " \t\r\n"), "unfold");
+    } else |_| false;
+    S.v = v;
+    return v;
 }
 
 /// `GHOZTTY_DEBUG_GLIDE_STALL_MS=<n>` (debug builds, T2572): block the
