@@ -1,8 +1,8 @@
 {
     "guard":  "tree-swap",
     "script":  "test/win32/tree-swap-audit.ps1",
-    "generated":  "2026-11-08T02:11:55-08:00",
-    "commit":  "ea7e21e3b",
+    "generated":  "2026-11-08T02:21:43-08:00",
+    "commit":  "352734e3e",
     "uncommitted":  [
 
                     ],

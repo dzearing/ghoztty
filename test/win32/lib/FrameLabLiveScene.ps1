@@ -347,8 +347,10 @@ function New-FrameLabCellSceneSpec {
         $unsupported += "the scene for '$Interaction' is not modelled: no interaction by that name has a scene"
     }
     $moving = $Interaction -in $script:FrameLabSceneWindowMoving
+    # Target (T2784): the pane's IPC address when it is not its name - the
+    # live launcher's pane 1 is addressed by its pane id.
     $panes = @($Geometry.Panes | ForEach-Object {
-        [pscustomobject]@{ Name = [string]$_.Name; Index = [int]$_.Index; X = [int]$_.X - $cx; Y = [int]$_.Y - $cy; R = [int]$_.X + [int]$_.W - $cx; B = [int]$_.Y + [int]$_.H - $cy }
+        [pscustomobject]@{ Name = [string]$_.Name; Index = [int]$_.Index; X = [int]$_.X - $cx; Y = [int]$_.Y - $cy; R = [int]$_.X + [int]$_.W - $cx; B = [int]$_.Y + [int]$_.H - $cy; Target = [string]$_.Target }
     })
     if ($panes.Count -eq 0) { $unsupported += 'the geometry has no panes' }
     $edges = New-Object System.Collections.ArrayList
@@ -422,7 +424,7 @@ function New-FrameLabCellSceneSpec {
     # frame (New-FrameLabCellScene), where the padding's width can be read.
     if ($Interaction -eq 'banner') {
         $tn = [string]$Geometry.Target
-        $tp = @($panes | Where-Object { $_.Name -eq $tn })
+        $tp = @($panes | Where-Object { $_.Name -eq $tn -or ($_.Target -and $_.Target -eq $tn) })
         if (-not $tn) { $unsupported += 'a banner cell needs Geometry.Target, the pane the banner is set on' }
         elseif (-not $tp.Count) { $unsupported += "a banner cell whose target '$tn' is not one of the geometry's panes" }
         else {
@@ -663,6 +665,31 @@ function Get-FrameLabSceneScore {
     if ($Gesture.Axis -eq 'none' -or -not $Gesture.Track) { return [pscustomobject]$out }
     $k = $Scorer.EdgeIndex($Gesture.Track)
     if ($k -lt 0) { $out.MotionMisses = @("the scene has no '$($Gesture.Track)' edge to measure"); return [pscustomobject]$out }
+    $period = 1000.0 / [math]::Max(1, $Capture.Stats.RefreshHz)
+    # A trigger plan (T2784: banner, blade-glide) has fire stamps, not a
+    # pointer path: time runs from the first fire, and a glide's eased curve
+    # is the expected edge. Positions go back to screen px (the plan's
+    # coordinates), less the still frame's offset of the tracked edge.
+    if ($Gesture.PSObject.Properties['Steps']) {
+        if (-not (Get-Command Get-FrameLabTriggerMotionArgs -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'FrameLabTrigger.ps1') }
+        $fired = @($(if ($Played) { $Played.Stamps }))
+        if ($fired.Count -lt @($Gesture.Steps).Count) { $out.MotionMisses = @("$($fired.Count) of $(@($Gesture.Steps).Count) trigger step(s) fired: the motion has no clock to be measured on"); return [pscustomobject]$out }
+        $d = $(if ($Delta.ContainsKey($Gesture.Track)) { [double]$Delta[$Gesture.Track] } else { 0.0 })
+        $o = $(if ($Gesture.Axis -eq 'y') { [double]$Gesture.CaptureRect.Y } else { [double]$Gesture.CaptureRect.X })
+        $a = Get-FrameLabTriggerMotionArgs -Plan $Gesture -Fired $Played -FrameQpc ([long[]]@($recs | ForEach-Object { $_.Qpc })) `
+            -Position ([double[]]@($recs | ForEach-Object { $_.Edges[$k] + $o - $d })) -PeriodMs $period
+        $m = Measure-FrameMotion @a
+        $out.Motion = $m
+        # The smoothness targets assume continuous motion: a glide has an
+        # eased path to follow, but a trigger with none (banner) jumps, and
+        # every refresh it holds still would count as a stall. Its motion is
+        # reported, never scored, until T2824 says what it is held to.
+        if (@($Gesture.Glides).Count) {
+            $glideMisses = Test-FrameMotionTargets -Motion $m
+            $out.MotionMisses = @(@($out.MotionMisses) + $glideMisses | Where-Object { $_ })
+        }
+        return [pscustomobject]$out
+    }
     $stamps = @($(if ($Played) { $Played.Stamps }))
     if ($stamps.Count -lt 2) { $out.MotionMisses = @('no pointer stamps: the motion has no clock to be measured on'); return [pscustomobject]$out }
     $F = [double]$Capture.Stats.QpcFrequency
@@ -674,7 +701,6 @@ function Get-FrameLabSceneScore {
     $pt = [double[]]@($stamps | ForEach-Object { ($_.SentQpc - $t0) * 1000.0 / $F })
     $pp = [double[]]@($stamps | ForEach-Object { if ($useY) { $_.Y - $cap.Y } else { $_.X - $cap.X } })
     $d = $(if ($Delta.ContainsKey($Gesture.Track)) { [double]$Delta[$Gesture.Track] } else { 0.0 })
-    $period = 1000.0 / [math]::Max(1, $Capture.Stats.RefreshHz)
     # Measure-FrameMotion's offset is EDGE minus pointer (its target is the
     # pointer plus it); the gesture's GrabOffset is pointer minus edge. The
     # located edge sits $d from the geometry's, so it is due at pointer - grab + d.

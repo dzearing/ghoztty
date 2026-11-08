@@ -417,6 +417,40 @@ try {
     Assert 'A17 Get-UserPresence -IdleSecondsOverride replaces only the input reading' (
         $ov.Reason -notmatch 'keyboard/mouse input' -and ($ov.Reason -match '100,000s' -or $ov.Present)) "$($ov.Reason)"
 
+    # ---- the trigger cells' live driver (T2784) ------------------------------
+    $known = @{ [long]101 = 1; [long]102 = 2 }
+    $st = Get-FrameLabStatePanes -Rects @(@{ X = 600; Y = 40; W = 300; H = 600; Hwnd = 102 }, @{ X = 10; Y = 40; W = 290; H = 600; Hwnd = 101 }, @{ X = 305; Y = 40; W = 290; H = 600; Hwnd = 555 }) -Known $known -NewIndex 3
+    Assert 'A18 a pane-set state names each pane by the card it runs: the start''s panes by hwnd, the one the trigger added as the spare card' (
+        @($st.Problems).Count -eq 0 -and (($st.Panes | ForEach-Object { "$($_.Name)@$($_.X)" }) -join ' ') -eq 'p1@10 p2@600 p3@305') (
+        "panes=$(($st.Panes | ForEach-Object { "$($_.Name)@$($_.X)" }) -join ' ') problems=$($st.Problems -join ';')")
+    $st2 = Get-FrameLabStatePanes -Rects @(@{ X = 0; Y = 0; W = 9; H = 9; Hwnd = 101 }, @{ X = 9; Y = 0; W = 9; H = 9; Hwnd = 7 }, @{ X = 18; Y = 0; W = 9; H = 9; Hwnd = 8 }) -Known $known -NewIndex 3
+    $st3 = Get-FrameLabStatePanes -Rects @(@{ X = 0; Y = 0; W = 9; H = 9; Hwnd = 7 }) -Known $known
+    $st4 = Get-FrameLabStatePanes -Rects @(@{ X = 0; Y = 0; W = 9; H = 9; Hwnd = 101 }) -Known $known
+    Assert 'A18b negative controls: two new panes, a new pane in a cell that adds none, both named as problems; a known pane alone (hero) is none' (
+        ($st2.Problems -join ' ') -match 'more than one pane appeared' -and ($st3.Problems -join ' ') -match 'this cell adds none' -and
+        @($st4.Problems).Count -eq 0 -and $st4.Panes[0].Name -eq 'p1') "two: $($st2.Problems -join ';') | none: $($st3.Problems -join ';') | hero: $($st4.Problems -join ';')"
+
+    $tm = @(Get-FrameLabLiveMatrix -MonitorDpi 125 -Interaction maximize-button, blade-glide, banner, hero, tab-switch, split-close -Panes 1, 4, 9 -Theme flat -Sidebar expanded -StallMs 0 -Dpi 125)
+    $runIds = @($tm | Where-Object { -not $_.Blocked } | ForEach-Object { "$($_.Interaction)/$($_.Panes)" } | Sort-Object)
+    $want = @('banner/1', 'banner/4', 'banner/9', 'hero/1', 'hero/4', 'hero/9', 'split-close/1', 'split-close/4', 'tab-switch/1', 'tab-switch/4') | Sort-Object
+    $gap = @($tm | Where-Object { $_.Interaction -in 'maximize-button', 'blade-glide' })
+    $full = @($tm | Where-Object { $_.Interaction -in 'split-close', 'tab-switch' -and $_.Panes -eq 9 })
+    Assert 'A19 the trigger cells the live driver runs: banner, hero, and split-close/tab-switch wherever a spare card exists; maximize-button and blade-glide are Blocked naming T2823, 9-pane adders naming the palette' (
+        ($runIds -join ',') -eq ($want -join ',') -and $gap.Count -eq 6 -and @($gap | Where-Object { $_.Blocked -notmatch 'T2823' }).Count -eq 0 -and
+        $full.Count -eq 2 -and @($full | Where-Object { $_.Blocked -notmatch "palette's nine" }).Count -eq 0 -and
+        (Get-FrameLabSpareCard 1) -eq 2 -and (Get-FrameLabSpareCard 4) -eq 5 -and (Get-FrameLabSpareCard 9) -eq 0) (
+        "run=$($runIds -join ',') gap=$(($gap | ForEach-Object { $_.Blocked }) | Select-Object -First 1) full=$(($full | ForEach-Object { $_.Blocked }) | Select-Object -First 1)")
+
+    $cl = Format-FrameLabCommandLine @('powershell', '-File', 'C:\a b\lab-card.ps1', '-Index', '5')
+    $one = Get-FrameLabTriggerStep (Get-FrameLabTrigger -Name split-close -Geometry ([pscustomobject]@{ Window = @{ X = 0; Y = 0; W = 9; H = 9 }; Monitor = @{ X = 0; Y = 0; W = 9; H = 9 }; Target = 'pane-7' })) 1
+    Assert 'A20 the spare card''s config command quotes only what has spaces; one plan step fires alone at once (a state still''s round trip)' (
+        $cl -eq 'powershell -File "C:\a b\lab-card.ps1" -Index 5' -and @($one.Steps).Count -eq 1 -and $one.Steps[0].AtMs -eq 0 -and
+        $one.Steps[0].Label -eq 'close' -and ($one.Steps[0].Args -join ' ') -eq '+close --target=framelab-split') "cmd=$cl step=$($one.Steps[0].Label) $($one.Steps[0].Args -join ' ')"
+    $cr = ConvertFrom-FrameLabChildRect '123456:10,20,300,400'
+    $po2 = Get-FrameLabPaneOrder -Rects @($cr)
+    Assert 'A21 a pane keeps its hwnd from the child-window read through the pane order (what ties a state''s pane to its card)' (
+        $cr.Hwnd -eq 123456 -and $po2[0].Hwnd -eq 123456 -and $po2[0].W -eq 300) "hwnd=$($cr.Hwnd) order=$($po2[0].Hwnd)"
+
     if ($PureOnly -or -not $Live) {
         # B/C/D move the REAL pointer across the user's screen, and five idle
         # minutes is not absence: on 2026-10-28 sweeps re-ran this whenever its

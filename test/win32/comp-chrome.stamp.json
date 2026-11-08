@@ -1,8 +1,8 @@
 {
     "guard":  "comp-chrome",
     "script":  "test/win32/comp-chrome.ps1",
-    "generated":  "2026-11-08T02:04:29-08:00",
-    "commit":  "ea7e21e3b",
+    "generated":  "2026-11-08T02:11:37-08:00",
+    "commit":  "352734e3e",
     "uncommitted":  [
 
                     ],

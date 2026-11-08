@@ -138,6 +138,10 @@ public static class GflWin {
     public static bool Maximize(IntPtr h, bool on) { ShowWindow(h, on ? 3 : 9); return IsZoomed(h) == on; }
     public static bool Zoomed(IntPtr h) { return IsZoomed(h); }
 
+    // T2784: who has the keyboard (a key-chord trigger goes there).
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    public static IntPtr Foreground() { return GetForegroundWindow(); }
+
     // Every VISIBLE descendant of class cls: "hwnd:x,y,w,h", its client rect on
     // the screen.
     public static string[] Children(IntPtr parent, string cls) {
@@ -256,10 +260,13 @@ function Get-FrameLabLiveMatrix {
     if ($MonitorDpi -notin $d) { $d += $MonitorDpi }
     $a.Dpi = $d
     foreach ($c in @(Get-FrameLabMatrix @a)) {
-        if ($c.Dpi -ne $MonitorDpi) {
-            $why = "the monitor is at $MonitorDpi% and the lab never changes the display scaling"
-            $c.Blocked = (@($c.Blocked, $why) | Where-Object { $_ }) -join '; '
+        $why = @($c.Blocked)
+        if ($c.Dpi -ne $MonitorDpi) { $why += "the monitor is at $MonitorDpi% and the lab never changes the display scaling" }
+        if ($script:FrameLabLiveTriggerGaps.ContainsKey($c.Interaction)) { $why += $script:FrameLabLiveTriggerGaps[$c.Interaction] }
+        if ($c.Interaction -in $script:FrameLabAddsPane -and (Get-FrameLabSpareCard $c.Panes) -eq 0) {
+            $why += "the pane $($c.Interaction) adds needs a card no start pane runs, and $($c.Panes) panes use the palette's nine"
         }
+        $c.Blocked = (@($why | Where-Object { $_ }) -join '; ')
         $c
     }
 }
@@ -299,10 +306,74 @@ function Get-FrameLabPaneOrder {
         $left = @($left | Where-Object { [math]::Abs([int]$_.Y - $top) -gt $RowTol })
         foreach ($r in $row) {
             $n++
-            $out += [pscustomobject]@{ Name = "p$n"; Index = $n; X = [int]$r.X; Y = [int]$r.Y; W = [int]$r.W; H = [int]$r.H }
+            # Hwnd (T2784): what ties a pane to its card once the pane set
+            # changes and position no longer says which card is where.
+            $out += [pscustomobject]@{ Name = "p$n"; Index = $n; X = [int]$r.X; Y = [int]$r.Y; W = [int]$r.W; H = [int]$r.H; Hwnd = [long]$r.Hwnd }
         }
     }
     return , $out
+}
+
+<#
+The panes of one of a pane-set cell's OTHER states (T2784: hero, the second
+tab, the split), each named by the card it runs. -Rects carry Hwnd; -Known maps
+the start's pane hwnds to their card index; a pane the start did not have is
+the one the trigger added and runs card -NewIndex (0 = the cell adds none).
+Returns Panes (Name p<card>, Index = card) and Problems: a pane nobody can
+name, or more than one new pane, would calibrate against the wrong card.
+#>
+function Get-FrameLabStatePanes {
+    param([Parameter(Mandatory = $true)][object[]]$Rects, [Parameter(Mandatory = $true)][hashtable]$Known, [int]$NewIndex = 0)
+    $panes = @(); $problems = @(); $new = 0
+    foreach ($r in $Rects) {
+        $h = [long]$r.Hwnd
+        if ($Known.ContainsKey($h)) { $i = [int]$Known[$h] }
+        elseif ($NewIndex -gt 0 -and $new -eq 0) { $i = $NewIndex; $new++ }
+        else {
+            $problems += $(if ($NewIndex -gt 0) { "more than one pane appeared (hwnd $h too); only one runs card $NewIndex" } else { "a pane appeared (hwnd $h) the start did not have, and this cell adds none" })
+            continue
+        }
+        $panes += [pscustomobject]@{ Name = "p$i"; Index = $i; X = [int]$r.X; Y = [int]$r.Y; W = [int]$r.W; H = [int]$r.H; Hwnd = $h }
+    }
+    if (-not $panes.Count) { $problems += 'no pane on show in this state' }
+    [pscustomobject]@{ Panes = @($panes | Sort-Object Index); Problems = $problems }
+}
+
+<#
+The card a pane the trigger ADDS runs (T2784: split-close's new pane, the
+tab-switch cell's second tab): the first index the start leaves free, 0 when
+a 9-pane start has used the palette's nine. Pure.
+#>
+function Get-FrameLabSpareCard([int]$Panes) {
+    if ($Panes -ge 9) { return 0 }
+    return $Panes + 1
+}
+
+<# An argv as one command line for the config's `command` (quoted where it has spaces). Pure. #>
+function Format-FrameLabCommandLine([string[]]$Argv) {
+    (@($Argv | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
+}
+
+<#
+Trigger interactions the live driver cannot fire yet, and why: their plans
+need geometry the launcher does not measure. Their cells are Blocked naming
+the task, never run into a driver error.
+#>
+$script:FrameLabLiveTriggerGaps = @{
+    'maximize-button' = 'the launcher does not measure Geometry.MaximizeButton yet (T2823)'
+    'blade-glide'     = 'the launcher does not measure the sidebar toggle and its other-mode edge yet (T2823)'
+}
+
+# The pane-set triggers that ADD a pane, so need a spare card (T2784).
+$script:FrameLabAddsPane = @('split-close', 'tab-switch')
+# The triggers that send key chords, so need the lab window in the foreground.
+$script:FrameLabKeyTriggers = @('hero', 'tab-switch')
+
+<# One step of a trigger plan as a plan of its own, fired at once (a state still's round trip). Pure. #>
+function Get-FrameLabTriggerStep($Plan, [int]$Index) {
+    $s = $Plan.Steps[$Index]
+    $one = [pscustomobject]@{ Action = $s.Action; AtMs = 0.0; Label = $s.Label; X = $s.X; Y = $s.Y; Chord = $s.Chord; Args = $s.Args }
+    [pscustomobject]@{ Name = $Plan.Name; Steps = @($one); Axis = 'none'; Track = ''; CaptureRect = $Plan.CaptureRect; Glides = @(); DurationMs = 0 }
 }
 
 <#
@@ -439,7 +510,7 @@ function ConvertTo-FrameLabFsFrame($Kept) {
 function ConvertFrom-FrameLabChildRect([string]$Row) {
     $hw, $r = $Row -split ':'
     $c = $r -split ','
-    [pscustomobject]@{ X = [int]$c[0]; Y = [int]$c[1]; W = [int]$c[2]; H = [int]$c[3] }
+    [pscustomobject]@{ X = [int]$c[0]; Y = [int]$c[1]; W = [int]$c[2]; H = [int]$c[3]; Hwnd = [long]$hw }
 }
 
 # A pane's command: lib\lab-card.ps1 drawing card -Index, reporting to -Out.
@@ -447,6 +518,64 @@ function Get-FrameLabCardArgv([int]$Index, [string]$Out) {
     $a = @('powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:FrameLabLive.Card, '-Index', [string]$Index, '-Out', $Out)
     if ($script:FrameLabLive.Busy) { $a += '-Busy' }
     return , $a
+}
+
+# Wait until every card in -Outs has drawn and none has changed for SettleMs.
+# Returns the last reading ('<none>' marks a card that never drew).
+function Wait-FrameLabCardsQuiet([string[]]$Outs, [int]$SettleMs, [int]$TimeoutS = 15) {
+    $deadline = (Get-Date).AddSeconds($TimeoutS)
+    $quietSince = Get-Date; $last = ''
+    do {
+        Start-Sleep -Milliseconds 200
+        $now = (@($Outs | ForEach-Object { if (Test-Path $_) { [string](Get-Content $_ -Raw -ErrorAction SilentlyContinue) } else { '<none>' } }) -join '|')
+        if ($now -ne $last -or $now -match '<none>') { $last = $now; $quietSince = Get-Date }
+    } while (((Get-Date) - $quietSince).TotalMilliseconds -lt $SettleMs -and (Get-Date) -lt $deadline)
+    return $last
+}
+
+# The visible panes of the lab window, each with its hwnd (physical px).
+function Get-FrameLabPaneRects([IntPtr]$Top) {
+    , @([GflWin]::Children($Top, 'GhozttyTerminal') | ForEach-Object { ConvertFrom-FrameLabChildRect $_ })
+}
+
+<#
+Fire a trigger plan live (T2784): presence-gated (the lab's own earlier input
+is not a person), IPC through the debug build. Input the lab sent is recorded
+as its own, so the next presence check does not read it as somebody.
+#>
+function Invoke-FrameLabLiveTrigger($Plan) {
+    $r = Invoke-FrameLabTrigger -Plan $Plan -Presence (Get-FrameLabPresence) -Cli $script:FrameLabLive.Exe
+    if (-not $r.Skipped -and @($r.Stamps | Where-Object { $_.Action -ne 'ipc' }).Count) { Set-FrameLabOwnInput }
+    return $r
+}
+
+<#
+Bring the lab window to the foreground for a key-chord cell: one click on the
+caption point (clear of the tabs and the buttons). The window is placed
+never-activated, and a chord goes to whatever has the keyboard. Returns '' or
+why it could not.
+#>
+function Enter-FrameLabForeground($Launched) {
+    $g = $Launched.Geometry
+    $click = [pscustomobject]@{ Action = 'click'; AtMs = 0.0; Label = 'activate'; X = [int]$g.CaptionX; Y = [int]$g.Caption; Chord = ''; Args = @() }
+    $r = Invoke-FrameLabLiveTrigger ([pscustomobject]@{ Name = 'activate'; Steps = @($click); Axis = 'none'; Track = ''; CaptureRect = $g.Window; Glides = @(); DurationMs = 0 })
+    if ($r.Skipped) { return "activate: $($r.SkipReason)" }
+    if ($r.Aborted) { return "activate: $($r.AbortReason)" }
+    Start-Sleep -Milliseconds 300
+    if ([GflWin]::Foreground() -ne $Launched.Top) { return 'the lab window did not take the foreground after a caption click, so a key chord would go elsewhere' }
+    return ''
+}
+
+# The window's geometry as measured now (after a tab, a hero, a split).
+function Measure-FrameLabLiveGeometry($Launched, [object[]]$Panes) {
+    $top = $Launched.Top
+    $fr = [GflWin]::Frame($top)
+    $wa = [GflWin]::WorkArea($top)
+    $sb = @([GflWin]::Children($top, 'GhozttyPaneSidebar') | ForEach-Object { ConvertFrom-FrameLabChildRect $_ })[0]
+    $g = New-FrameLabLiveGeometry -Window @{ X = $fr[0]; Y = $fr[1]; W = $fr[2]; H = $fr[3] } `
+        -Monitor @{ X = $wa[0]; Y = $wa[1]; W = $wa[2]; H = $wa[3] } -Panes $Panes -Sidebar $sb -Scale $Launched.Scale -Mode $Launched.Mode
+    if ($Launched.Target) { $g | Add-Member -Force -NotePropertyName Target -NotePropertyValue $Launched.Target }
+    return $g
 }
 
 <#
@@ -477,8 +606,17 @@ function New-FrameLabLiveDriver {
         [IO.File]::WriteAllText((Join-Path $prof 'ghoztty\pane_sidebar-debug'), (Get-FrameLabSidebarPref $Cell.Sidebar))
         $conf = Join-Path $dir 'config'
         $lines = (Get-FrameLabThemeConfig $Cell.Theme) + @('confirm-close-surface = false', 'undo-timeout = 0')
-        [IO.File]::WriteAllText($conf, (($lines -join "`n") + "`n"))
         $outs = @(1..$Cell.Panes | ForEach-Object { Join-Path $dir "card$_.txt" })
+        # T2784: a pane the trigger adds (split-close's split, tab-switch's
+        # second tab) runs the config's `command` - every surface after the
+        # first one - so it draws the spare card and its state can calibrate.
+        $spare = 0; $spareOut = ''
+        if ($Cell.Interaction -in $script:FrameLabAddsPane) {
+            $spare = Get-FrameLabSpareCard $Cell.Panes
+            $spareOut = Join-Path $dir "card$spare.txt"
+            if ($spare -gt 0) { $lines += 'command = ' + (Format-FrameLabCommandLine (Get-FrameLabCardArgv $spare $spareOut)) }
+        }
+        [IO.File]::WriteAllText($conf, (($lines -join "`n") + "`n"))
 
         $savedLocal = $env:LOCALAPPDATA
         $env:LOCALAPPDATA = $prof
@@ -488,7 +626,8 @@ function New-FrameLabLiveDriver {
             # The app's stderr is kept per cell: the Occluded hook reads it (T2650).
             $proc = Start-Process -FilePath $script:FrameLabLive.Exe -ArgumentList $argv -PassThru -RedirectStandardError (Join-Path $dir 'app.log')
         } finally { $env:LOCALAPPDATA = $savedLocal }
-        $launched = @{ Pid = $proc.Id; Top = [IntPtr]::Zero; Geometry = $null; Backdrop = $null; Dir = $dir; Problems = @(); Scale = 1.0 }
+        $launched = @{ Pid = $proc.Id; Top = [IntPtr]::Zero; Geometry = $null; Backdrop = $null; Dir = $dir; Problems = @(); Scale = 1.0
+            Mode = $Cell.Sidebar; Target = ''; Known = @{}; Outs = $outs; Spare = $spare; SpareOut = $spareOut }
         # Plain scriptblocks resolve names where they are CALLED (Invoke-
         # FrameLabCell), so the cell in hand is reached through the script's
         # state, never a captured local; GetNewClosure would hide this file's
@@ -519,9 +658,15 @@ function New-FrameLabLiveDriver {
         [void][GflWin]::Place($top, $work[0] + (Get-TestChromeDip 80 $scale), $work[1] + (Get-TestChromeDip 60 $scale), $w, $h)
         Start-Sleep -Milliseconds 500
 
-        if ($Cell.Panes -gt 1) {
+        $launched.Scale = $scale
+        $first = $null
+        if ($Cell.Panes -gt 1 -or $Cell.Kind -eq 'trigger') {
             $first = Get-FrameLabFirstPaneId $script:FrameLabLive.Exe $top
             if (-not $first) { $launched.Problems += "+list --json did not name the window's first pane"; return $launched }
+            # T2784: an IPC trigger (banner, split-close) acts on pane 1, by id.
+            $launched.Target = $first.PaneId
+        }
+        if ($Cell.Panes -gt 1) {
             $plan = Get-FrameLabGridPlan $Cell.Panes
             foreach ($s in $plan.Splits) {
                 $from = $(if ($s.From -eq 'p1') { $first.PaneId } else { $s.From })
@@ -537,24 +682,40 @@ function New-FrameLabLiveDriver {
 
         # Every card has drawn at its pane's settled size: its -Out file exists
         # and none has changed for SettleMs.
-        $deadline = (Get-Date).AddSeconds(15)
-        $quietSince = Get-Date; $last = ''
-        do {
-            Start-Sleep -Milliseconds 200
-            $now = (@($outs | ForEach-Object { if (Test-Path $_) { [string](Get-Content $_ -Raw -ErrorAction SilentlyContinue) } else { '<none>' } }) -join '|')
-            if ($now -ne $last -or $now -match '<none>') { $last = $now; $quietSince = Get-Date }
-        } while (((Get-Date) - $quietSince).TotalMilliseconds -lt $script:FrameLabLive.SettleMs -and (Get-Date) -lt $deadline)
+        $last = Wait-FrameLabCardsQuiet $outs $script:FrameLabLive.SettleMs
         if ($last -match '<none>') { $launched.Problems += "a card never drew (lab-card -Out): $($last.Trim())" }
 
-        $fr = [GflWin]::Frame($top)
-        $wa = [GflWin]::WorkArea($top)
-        $rects = @([GflWin]::Children($top, 'GhozttyTerminal') | ForEach-Object { ConvertFrom-FrameLabChildRect $_ })
+        $rects = Get-FrameLabPaneRects $top
         if ($rects.Count -ne $Cell.Panes) { $launched.Problems += "$($rects.Count) pane(s) on show, the cell wants $($Cell.Panes)" }
-        $sb = @([GflWin]::Children($top, 'GhozttyPaneSidebar') | ForEach-Object { ConvertFrom-FrameLabChildRect $_ })[0]
-        $launched.Geometry = New-FrameLabLiveGeometry -Window @{ X = $fr[0]; Y = $fr[1]; W = $fr[2]; H = $fr[3] } `
-            -Monitor @{ X = $wa[0]; Y = $wa[1]; W = $wa[2]; H = $wa[3] } -Panes (Get-FrameLabPaneOrder -Rects $rects) `
-            -Sidebar $sb -Scale $scale -Mode $Cell.Sidebar
-        $launched.Scale = $scale
+        $launched.Geometry = Measure-FrameLabLiveGeometry $launched (Get-FrameLabPaneOrder -Rects $rects)
+
+        # T2784: a key-chord cell needs the keyboard; tab-switch also needs
+        # its second tab (running the spare card), opened here and switched
+        # back from, so the run starts on the first tab with two to switch.
+        if (-not @($launched.Problems).Count -and $Cell.Interaction -in $script:FrameLabKeyTriggers) {
+            $why = Enter-FrameLabForeground $launched
+            if ($why) { $launched.Problems += $why }
+            elseif ($Cell.Interaction -eq 'tab-switch') {
+                foreach ($chord in 'ctrl+t', 'ctrl+shift+tab') {
+                    $k = [pscustomobject]@{ Action = 'keys'; AtMs = 0.0; Label = $chord; X = 0; Y = 0; Chord = $chord; Args = @() }
+                    $r = Invoke-FrameLabLiveTrigger ([pscustomobject]@{ Name = 'second tab'; Steps = @($k); Axis = 'none'; Track = ''; CaptureRect = $launched.Geometry.Window; Glides = @(); DurationMs = 0 })
+                    if ($r.Skipped -or $r.Aborted) { $launched.Problems += "second tab ($chord): $($r.SkipReason)$($r.AbortReason)"; break }
+                    if ($chord -eq 'ctrl+t') {
+                        $t = Wait-FrameLabCardsQuiet @($spareOut) $script:FrameLabLive.SettleMs
+                        if ($t -match '<none>') { $launched.Problems += "the second tab's card (card $spare) never drew: the config command did not run in the new tab" }
+                    }
+                }
+                [void](Wait-FrameLabCardsQuiet $outs $script:FrameLabLive.SettleMs)
+                $rects = Get-FrameLabPaneRects $top
+                if ($rects.Count -ne $Cell.Panes) { $launched.Problems += "back on the first tab, $($rects.Count) pane(s) on show, the cell wants $($Cell.Panes)" }
+                $launched.Geometry = Measure-FrameLabLiveGeometry $launched (Get-FrameLabPaneOrder -Rects $rects)
+            }
+        }
+        # Which card each pane runs, by hwnd: how a pane-set state is named.
+        foreach ($p in @($launched.Geometry.Panes)) { $launched.Known[[long]$p.Hwnd] = [int]$p.Index }
+        foreach ($p in @($launched.Geometry.Panes)) {
+            $p | Add-Member -Force -NotePropertyName Target -NotePropertyValue $(if ($p.Index -eq 1 -and $launched.Target) { $launched.Target } else { $p.Name })
+        }
         # Beside still.png: enough to rebuild the cell's scene offline.
         [IO.File]::WriteAllText((Join-Path $dir 'geometry.json'), ($launched.Geometry | ConvertTo-Json -Depth 6))
         return $launched
@@ -593,6 +754,29 @@ function New-FrameLabLiveDriver {
             Start-Sleep -Milliseconds $script:FrameLabLive.SettleMs
             if (-not $back) { return & $no @('the window would not restore after its maximized still frame') }
             if ($null -eq $sceneArgs.MaximizedStill) { return & $no @('the maximized still frame capture delivered no frame') }
+        }
+        # A pane-set cell (T2784) needs a still of its other pane set: the
+        # plan's first step fired, settled, measured and photographed, then
+        # its second fired back - so the start's still is of the window the
+        # run starts on. Panes keep their card by hwnd; the one the trigger
+        # added runs the spare card.
+        if ($spec.PaneSet) {
+            $r = Invoke-FrameLabLiveTrigger (Get-FrameLabTriggerStep $Gesture 0)
+            if ($r.Skipped -or $r.Aborted) { return & $no @("state still, $($Gesture.Steps[0].Label): $($r.SkipReason)$($r.AbortReason)") }
+            $outs = @($Launched.Outs) + @($(if ($Launched.Spare -gt 0) { $Launched.SpareOut }))
+            [void](Wait-FrameLabCardsQuiet $outs $script:FrameLabLive.SettleMs)
+            $sp = Get-FrameLabStatePanes -Rects (Get-FrameLabPaneRects $Launched.Top) -Known $Launched.Known -NewIndex $Launched.Spare
+            $sg = Measure-FrameLabLiveGeometry $Launched $sp.Panes
+            $ss = & $still 'still-state.png'
+            [IO.File]::WriteAllText((Join-Path $Launched.Dir 'geometry-state.json'), ($sg | ConvertTo-Json -Depth 6))
+            $r = Invoke-FrameLabLiveTrigger (Get-FrameLabTriggerStep $Gesture 1)
+            if ($r.Skipped -or $r.Aborted) { return & $no @("state still, $($Gesture.Steps[1].Label): $($r.SkipReason)$($r.AbortReason)") }
+            [void](Wait-FrameLabCardsQuiet $Launched.Outs $script:FrameLabLive.SettleMs)
+            if (@($sp.Problems).Count) { return & $no @($sp.Problems | ForEach-Object { "state s1: $_" }) }
+            if ($null -eq $ss) { return & $no @('the state still frame capture delivered no frame') }
+            $back = Get-FrameLabPaneRects $Launched.Top
+            if ($back.Count -ne @($Launched.Geometry.Panes).Count) { return & $no @("after $($Gesture.Steps[1].Label) $($back.Count) pane(s) are on show, the start had $(@($Launched.Geometry.Panes).Count)") }
+            $sceneArgs.States = @(@{ Name = 's1'; Geometry = $sg; Still = $ss })
         }
         $sceneArgs.Still = & $still 'still.png'
         if ($null -eq $sceneArgs.Still) { return & $no @('the still frame capture delivered no frame') }
@@ -650,10 +834,18 @@ function New-FrameLabLiveDriver {
         StartCapture = $startCapture
         StopCapture  = $stopCapture
         Play         = $play
-        # Trigger cells are not driven live yet: their scenes exist (T2727),
-        # firing the plan and taking each pane-set state's still is T2784. A
-        # cell that fires nothing reads skipped, with the reason.
-        Fire         = { param($Plan) [pscustomobject]@{ Skipped = $true; SkipReason = 'trigger cells are not driven live yet (T2784)'; Aborted = $false } }
+        # T2784: the trigger plan, fired once per run (measurement, then
+        # accounting), presence-gated like Play. A key-chord cell checks the
+        # window still has the keyboard first: a chord sent elsewhere would
+        # be a quiet run that never did the interaction.
+        Fire         = {
+            param($Plan)
+            $l = $script:FrameLabLive.Current
+            if ($l -and @($Plan.Steps | Where-Object { $_.Action -eq 'keys' }).Count -and [GflWin]::Foreground() -ne $l.Top) {
+                return [pscustomobject]@{ Skipped = $false; SkipReason = ''; Aborted = $true; AbortReason = 'the lab window lost the foreground before its key chords'; Stamps = @() }
+            }
+            Invoke-FrameLabLiveTrigger $Plan
+        }
         Score        = $score
         # T2650: the app's own word that the display was occluded (lib\OccludedDisplay.ps1).
         Occluded     = { param($Scene) Get-OccludedDisplayLine -LogPath (Join-Path $Scene.Dir 'app.log') }

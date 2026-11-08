@@ -1,8 +1,8 @@
 {
     "guard":  "stack-collapse-carry",
     "script":  "test/win32/stack-collapse-carry.ps1",
-    "generated":  "2026-11-08T02:05:32-08:00",
-    "commit":  "ea7e21e3b",
+    "generated":  "2026-11-08T02:15:23-08:00",
+    "commit":  "352734e3e",
     "uncommitted":  [
 
                     ],

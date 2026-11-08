@@ -605,6 +605,46 @@ try {
             $s.StateFrames -eq 0 -and $s.BleedFrames -eq 0 -and ($s.MotionMisses -join ' ') -match 'no scored frame showed another pane set') "states=$($s.StateFrames) misses=$($s.MotionMisses -join ';')"
     } else { Assert 'H10 split-close calibrates' $false ($ts.Scene.Reasons -join '; ') }
 
+    # T2784: the live driver scores a trigger's tracked edge on its FIRE
+    # stamps (there is no pointer path), with positions back in screen px.
+    $tb2 = New-TriggerCell 'banner' $b0
+    if ($tb2.Scene.Ok) {
+        $on = Get-World 1000 600 2 1 -Banner 36
+        $ws = @($b0, $b0, $b0, $on, $on, $on, $on, $on, $on, $b0, $b0, $b0)
+        for ($i = 0; $i -lt $ws.Count; $i++) { [void]$tb2.Scene.Scorer.ScoreFrame((New-WorldFrame $ws[$i] $tb2.Cap), $i, [long]$i * 83333) }
+        $timeline = @(0..($ws.Count - 1) | ForEach-Object { [pscustomobject]@{ Index = $_; Superseded = $false } })
+        $capture = [pscustomobject]@{ Stats = [pscustomobject]@{ QpcFrequency = 10000000; RefreshHz = 120 }; Timeline = $timeline }
+        $st = { param([int]$i, [long]$q) [pscustomobject]@{ Index = $i; Action = 'ipc'; FireQpc = $q; StartQpc = $q; DoneQpc = $q } }
+        $fired = [pscustomobject]@{ Frequency = 10000000; Stamps = @((& $st 0 (2 * 83333 + 1000)), (& $st 1 (8 * 83333 + 1000))) }
+        $sb = Get-FrameLabSceneScore -Scorer $tb2.Scene.Scorer -Capture $capture -Gesture $tb2.Gesture -Played $fired -Delta $tb2.Scene.Delta
+        # The same frames under a plan WITH a glide are held to the targets: a
+        # 36 px jump that holds for six refreshes is no eased glide.
+        $gl = $tb2.Gesture.PSObject.Copy()
+        $py = [double]$b0.Panes[0].Y
+        $gl.Glides = @([pscustomobject]@{ Step = 0; FromPx = $py; ToPx = $py + 36; Ms = 240.0; Curve = @(0.2, 0.8, 0.2, 1.0) }, [pscustomobject]@{ Step = 1; FromPx = $py + 36; ToPx = $py; Ms = 240.0; Curve = @(0.2, 0.8, 0.2, 1.0) })
+        $sg = Get-FrameLabSceneScore -Scorer $tb2.Scene.Scorer -Capture $capture -Gesture $gl -Played $fired -Delta $tb2.Scene.Delta
+        Assert 'H13b positive control: a trigger plan with a glide is held to the smoothness targets, so a jump that holds reads as a miss' (
+            @($sg.MotionMisses).Count -gt 0 -and $sg.Motion.MaxCurveDev -gt 0) "misses=$($sg.MotionMisses -join ';') curveDev=$($sg.Motion.MaxCurveDev)"
+        $half = [pscustomobject]@{ Frequency = 10000000; Stamps = @((& $st 0 (2 * 83333))) }
+        $sh = Get-FrameLabSceneScore -Scorer $tb2.Scene.Scorer -Capture $capture -Gesture $tb2.Gesture -Played $half -Delta $tb2.Scene.Delta
+        Assert 'H13 a trigger''s tracked edge is measured on its fire stamps: banner on/off gives a motion over every frame, none unlocated, its two jumps the only advances, and no miss (a jump is not held to the glide targets, T2824); negative control: one of two steps fired is a miss, never a motion' (
+            $null -ne $sb.Motion -and $sb.Motion.Unlocated -eq 0 -and @($sb.MotionMisses).Count -eq 0 -and $sb.BleedFrames -eq 0 -and $sb.Motion.Advanced -eq 2 -and
+            $null -eq $sh.Motion -and ($sh.MotionMisses -join ' ') -match '1 of 2 trigger step\(s\) fired') (
+            "motion=$($null -ne $sb.Motion) unlocated=$($sb.Motion.Unlocated) misses=$($sb.MotionMisses -join ';') bleed=$($sb.BleedFrames) | half=$($sh.MotionMisses -join ';')")
+    } else { Assert 'H13 banner calibrates for the fire-stamp bridge' $false ($tb2.Scene.Reasons -join '; ') }
+
+    # T2784: the live launcher addresses pane 1 by its pane id, so the banner's
+    # Geometry.Target is that id and the pane carries it as Target.
+    $gid = Get-WorldGeometry $b0 $Monitor 'pane-42'
+    $gid.Panes[0].Target = 'pane-42'
+    $spid = New-FrameLabCellSceneSpec -Interaction banner -Geometry $gid -CaptureRect (Get-FrameLabTrigger -Name banner -Geometry $gid).CaptureRect
+    $gno = Get-WorldGeometry $b0 $Monitor 'pane-43'
+    $gno.Panes[0].Target = 'pane-42'
+    $spno = New-FrameLabCellSceneSpec -Interaction banner -Geometry $gno -CaptureRect (Get-FrameLabTrigger -Name banner -Geometry $gno).CaptureRect
+    Assert 'H14 a banner Target that is a pane id finds the pane carrying it; one no pane carries is refused' (
+        @($spid.Unsupported).Count -eq 0 -and @($spid.Edges | Where-Object { $_.Name -eq 'pane-top' }).Count -eq 1 -and
+        ($spno.Unsupported -join ' ') -match "target 'pane-43' is not one of the geometry's panes") "id: $($spid.Unsupported -join ';') | none: $($spno.Unsupported -join ';')"
+
     $tn = New-TriggerCell 'hero' $h0
     $tsame = New-TriggerCell 'hero' $h0 @($h0)
     Assert 'H12 pane-set refusals: no state still at all, and a "state" that is the pane set the run starts on, both refused saying why' (
