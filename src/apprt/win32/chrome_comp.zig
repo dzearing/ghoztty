@@ -60,7 +60,7 @@ const log = std.log.scoped(.comp_chrome);
 const GUID = std.os.windows.GUID;
 const HRESULT = std.os.windows.HRESULT;
 const HWND = std.os.windows.HWND;
-const Obj = *anyopaque;
+pub const Obj = *anyopaque;
 
 pub const Error = error{ Unavailable, ComFailed };
 
@@ -566,6 +566,57 @@ fn release(obj: Obj) void {
     const F = *const fn (Obj) callconv(.winapi) u32;
     _ = slot(F, obj, 2)(obj);
 }
+
+// The composition thread's writes (T2770). DirectComposition objects are
+// free-threaded; these touch no Host state and none of the diagnostics
+// (`stage`, `last_hr`) the window thread's own calls write, so the thread
+// can call them under the drag's device lock without a Host at all.
+
+/// Take a reference for another thread to hold.
+pub fn addRefObj(obj: Obj) void {
+    const F = *const fn (Obj) callconv(.winapi) u32;
+    _ = slot(F, obj, 1)(obj);
+}
+
+pub fn releaseObj(obj: Obj) void {
+    release(obj);
+}
+
+/// A pane visual at `pose`: its offset, and its clip - through the rounded
+/// clip object `rounded` when the clip has corners (the window thread made
+/// it and set its radii; null leaves a rounded clip as it was), else the
+/// visual's own clip rect. The shadow riding with it, if any, follows at its
+/// delta. False on the first failed call (a lost device): the caller stops.
+pub fn writePose(vis: Obj, rounded: ?Obj, pose: comp_tree.Pose, shadow: ?Obj, sdx: f32, sdy: f32) bool {
+    const Set = *const fn (Obj, f32) callconv(.winapi) HRESULT;
+    if (shadow) |s| {
+        if (slot(Set, s, slot_dcomp_visual_set_offset_x)(s, pose.x + sdx) < 0) return false;
+        if (slot(Set, s, slot_dcomp_visual_set_offset_y)(s, pose.y + sdy) < 0) return false;
+    }
+    if (slot(Set, vis, slot_dcomp_visual_set_offset_x)(vis, pose.x) < 0) return false;
+    if (slot(Set, vis, slot_dcomp_visual_set_offset_y)(vis, pose.y) < 0) return false;
+    const c = pose.clip;
+    if (c.rounded()) {
+        const rc = rounded orelse return true;
+        if (slot(Set, rc, slot_dcomp_rect_clip_set_left)(rc, c.left) < 0) return false;
+        if (slot(Set, rc, slot_dcomp_rect_clip_set_top)(rc, c.top) < 0) return false;
+        if (slot(Set, rc, slot_dcomp_rect_clip_set_right)(rc, c.right) < 0) return false;
+        if (slot(Set, rc, slot_dcomp_rect_clip_set_bottom)(rc, c.bottom) < 0) return false;
+        return true;
+    }
+    const r: D2D1_RECT_F = .{ .left = c.left, .top = c.top, .right = c.right, .bottom = c.bottom };
+    return slot(*const fn (Obj, *const D2D1_RECT_F) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_clip_rect)(vis, &r) >= 0;
+}
+
+/// `IDCompositionDevice::Commit`, its HRESULT.
+pub fn commitDevice(dcomp: Obj) HRESULT {
+    return slot(*const fn (Obj) callconv(.winapi) HRESULT, dcomp, slot_dcomp_device_commit)(dcomp);
+}
+
+/// `DCOMPOSITION_ERROR_SURFACE_BEING_RENDERED`: a Commit made while some
+/// surface of the device is between BeginDraw and EndDraw. Transient - the
+/// device is fine and the next Commit goes up.
+pub const dcomp_surface_being_rendered: HRESULT = @bitCast(@as(u32, 0x88980801));
 
 /// An HRESULT the way the SDK prints it, for the log.
 pub fn hex(hr: HRESULT) u32 {

@@ -1998,6 +1998,14 @@ pub fn syncTreeVisual(self: *Surface) void {
     if (self.tree_glide_at == null) self.tree_glide_decl = null;
     if (self.tree_glide_decl != null) return;
     const at = self.treePlacement(.{ .left = pts[0].x, .top = pts[0].y, .right = pts[1].x, .bottom = pts[1].y }, shown);
+    // A divider drag's composition thread shares the device (T2770): this
+    // write and its commit hold its lock, whoever on this thread asked.
+    const cdt = win.comp_drag_thread;
+    const take = if (cdt) |t| !t.lockedByMe() else false;
+    if (take) cdt.?.acquire();
+    defer if (take) cdt.?.release();
+    // The thread's next tick writes its pose again over this one.
+    defer if (cdt) |t| t.invalidate();
     h.panePlace(self.tree_visual.?, at.x, at.y, comp_tree.clip(at, @intCast(self.gridBand()), self.tree_shape), &self.tree_clip, self.treeShadowRide(h)) catch {
         const f = chrome_comp.Host.lastFailure();
         log.warn("pane visual place failed at {s}: hr=0x{x:0>8}", .{ f.stage, chrome_comp.hex(f.hr) });
@@ -2218,6 +2226,49 @@ pub fn preplaceTreeAt(self: *Surface, at: w32.RECT) void {
     self.tree_shape = comp_drag.reshape(self.tree_shape, rc.right - rc.left, rc.bottom - rc.top, at.right - at.left, at.bottom - at.top);
     self.tree_glide_at = at;
     self.syncTreeVisual();
+}
+
+/// What the drag's composition thread needs to move this pane's visual
+/// (T2770), as `preplaceTreeAt` just put it: the visual, its rounded clip
+/// object, the shadow riding with it, and the pose it is at.
+pub const CompDragPane = struct {
+    vis: chrome_comp.Obj,
+    rounded: ?chrome_comp.Obj,
+    shadow: ?chrome_comp.Obj,
+    sdx: f32,
+    sdy: f32,
+    pose: comp_tree.Pose,
+    /// The placement's size (the visual's own pixels, banner band out).
+    w: i32,
+    h: i32,
+};
+
+/// Window thread: this pane's `CompDragPane` at its preplaced slot, or null
+/// when it has no visual or no preplaced slot. No references taken.
+pub fn compDragPane(self: *Surface) ?CompDragPane {
+    const vis = self.tree_visual orelse return null;
+    const at = self.tree_glide_at orelse return null;
+    const h = if (self.parent_window.chrome_host) |*host| host else return null;
+    const ride = self.treeShadowRide(h);
+    const place = self.treePlacement(at, true);
+    return .{
+        .vis = vis,
+        .rounded = self.tree_clip,
+        .shadow = if (ride) |r| r.sv.visual else null,
+        .sdx = if (ride) |r| r.dx else 0,
+        .sdy = if (ride) |r| r.dy else 0,
+        .pose = self.treePose(at, self.tree_shape),
+        .w = place.w,
+        .h = place.h,
+    };
+}
+
+/// Window thread: the drag's composition thread moved this pane's shadow
+/// behind the host's back (T2770), so its remembered offset is unknown and
+/// the next placement must go out.
+pub fn compDragForgetShadow(self: *Surface) void {
+    self.tree_shadow.x = std.math.nan(f32);
+    self.tree_shadow.y = std.math.nan(f32);
 }
 
 /// Window thread: draw this pane's visual at `at` (top-level client pixels)

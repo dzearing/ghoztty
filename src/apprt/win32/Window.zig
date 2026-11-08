@@ -198,6 +198,7 @@ const split_ratio_shadow = @import("split_ratio_shadow.zig");
 const stack_drag = @import("stack_drag.zig");
 const drag_perf = @import("drag_perf.zig");
 const comp_drag = @import("comp_drag.zig");
+const CompDragThread = @import("CompDragThread.zig");
 
 /// How large a tab's split tree may be for a divider drag to compensate the
 /// rest of it (T533). 128 nodes is 64 panes in one tab — far past anything a
@@ -867,6 +868,12 @@ comp_drag_move_t0: ?std.time.Instant = null,
 /// A sidebar-edge move whose pass (and the panel's own sync and paint after
 /// it) the coalescer left to a later move or the frame timer.
 comp_drag_sidebar_pending: bool = false,
+/// The divider drag's composition thread (T2770): the dragged visuals follow
+/// the cursor on the compositor clock while this thread is busy. Null off
+/// the composition tree, with the knob off, and between drags.
+comp_drag_thread: ?*CompDragThread = null,
+/// This divider drag's moves, for the debug stall seam's trigger.
+comp_drag_moves: u32 = 0,
 /// The window's own `WM_PAINT`s during this drag, and what they cost.
 drag_wm_paints: u32 = 0,
 drag_wm_paint_us: u64 = 0,
@@ -2367,6 +2374,8 @@ pub fn setRemoteDialed(self: *Window, dialed: RemoteDialed) void {
 }
 
 pub fn deinit(self: *Window) void {
+    // A drag's composition thread holds the window's device (T2770).
+    self.compDragThreadStop();
     // Close the rename dialog / machine chooser first (each re-enables and
     // refocuses this window's HWND, which must still be alive).
     if (self.rename_dialog) |dlg| dlg.cancel();
@@ -14223,6 +14232,7 @@ fn startDividerDrag(self: *Window, handle: SplitTree(PaneView).Node.Handle, layo
     // T2769: this drag's compositor moves, from its first.
     self.comp_drag_stats.reset();
     self.comp_drag_base = null;
+    self.comp_drag_moves = 0;
     // T2448: the glide line covers this drag's glide, not a glide before it.
     self.glide_stats.reset();
     self.glide_between_mark = .{};
@@ -14388,6 +14398,9 @@ fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
     defer if (timer) |*t| self.recordDragTick(t.read() / std.time.ns_per_us);
     // T2769: and from the same instant, the move's pointer-to-commit.
     self.comp_drag_move_t0 = if (self.drag_perf_on) std.time.Instant.now() catch null else null;
+    // T2770's seam: a window-thread stall in the middle of the drag.
+    self.comp_drag_moves +|= 1;
+    CompDragThread.debugStall(self.comp_drag_moves);
     const rect = self.drag_start_rect;
     const handle = self.drag_split_handle;
 
@@ -14533,6 +14546,10 @@ fn compDragPass(self: *Window, now: u64, period: u64) void {
     self.comp_drag_stats.recordPass(now, period);
     self.drag_layout_pending = false;
     var lt = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
+    // Not under the composition thread's lock as a whole: the pass waits on
+    // the panes' resized frames, and the thread must keep moving the edge
+    // through exactly that. Each visual write takes the lock on its own
+    // (`Surface.syncTreeVisual`, T2770).
     self.layoutSplitsLive();
     if (lt) |*t| self.frame_layout_us = t.read() / std.time.ns_per_us;
     if (self.comp_drag_sidebar_pending) {
@@ -14604,6 +14621,48 @@ fn compDragEnd(self: *Window, comptime what: []const u8) void {
     );
 }
 
+/// Start the divider drag's composition thread (T2770) the first time a move
+/// writes the visuals: a divider drag only (a sidebar-edge drag moves every
+/// pane and stays on this thread), with the knob on.
+fn compDragThreadEnsure(self: *Window, host: *chrome_comp.Host) void {
+    if (self.comp_drag_thread != null) return;
+    if (!self.dragging_split or self.comp_drag_sidebar_pending) return;
+    if (!CompDragThread.enabled()) return;
+    self.comp_drag_thread = CompDragThread.start(self.app.core_app.alloc, host.dcomp);
+    if (self.comp_drag_thread != null) log.debug("divider drag composition thread started", .{});
+}
+
+/// Stop the drag's composition thread (button-up, capture loss, window
+/// close): joined before anything it held can go, its line written, and the
+/// shadows it moved behind the host's back forgotten so the next placement
+/// goes out.
+fn compDragThreadStop(self: *Window) void {
+    const t = self.comp_drag_thread orelse return;
+    self.comp_drag_thread = null;
+    var st = t.stop();
+    // Whatever the thread extrapolated, the window lays out the truth once
+    // more before the drag is over.
+    if (st.writes > 0) self.drag_layout_pending = true;
+    if (self.tab_count > 0) {
+        var it = self.tab_trees[self.active_tab].iterator();
+        while (it.next()) |entry| {
+            const sf = entry.view.surface() orelse continue;
+            sf.compDragForgetShadow();
+            // Back to the window thread's own pose, wherever the thread left it.
+            if (sf.tree_visual != null) sf.syncTreeVisual();
+        }
+    }
+    if (!self.drag_perf_on) return;
+    log.info(
+        "divider drag thread ticks={d} writes={d} ticks_in_stall={d} writes_in_stall={d} clamped={d} lag_p95_us={d} lag_max_us={d}",
+        .{ st.ticks, st.writes, st.ticks_in_stall, st.writes_in_stall, st.clamped, st.lagP95(), st.lag_max_us },
+    );
+    log.info(
+        "divider drag thread stall skips same={d} empty={d} dead={d} nocursor={d} commit_retries={d}",
+        .{ st.stall_same, st.stall_empty, st.stall_dead, st.stall_nocursor, st.commit_retries },
+    );
+}
+
 /// The compositor half of a drag move (T2769): every pane of the active tab
 /// that is in the window's composition tree, on show and staying on show, has
 /// its visual written where the layout is about to put its window, and the
@@ -14648,6 +14707,19 @@ fn preplaceDragVisuals(self: *Window) bool {
     }
     if (!any) return false;
     const host = self.treeGlideBatch() orelse return false;
+    // A divider drag hands its visuals to a composition thread (T2770); the
+    // writes below and their commit hold its device lock.
+    self.compDragThreadEnsure(host);
+    const cdt = self.comp_drag_thread;
+    if (cdt) |t| t.acquire();
+    defer if (cdt) |t| t.release();
+    const gutter: ?pane_stack_grid.PxRect = if (cdt != null) blk: {
+        const gi = gridDivider(&grid, self.drag_split_handle) orelse break :blk null;
+        break :blk grid.dividerGutter(gi);
+    } else null;
+    const axis: comp_drag.Axis = if (self.drag_split_layout == .horizontal) .x else .y;
+    var models: [CompDragThread.max_panes]CompDragThread.Pane = undefined;
+    var nm: usize = 0;
     it = tree.iterator();
     while (it.next()) |entry| {
         const view = entry.view;
@@ -14658,8 +14730,35 @@ fn preplaceDragVisuals(self: *Window) bool {
         if (w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE == 0) continue;
         const p = grid.placement(pane_stack_grid.viewId(view)) orelse continue;
         sf.preplaceTreeAt(self.leafRect(view, winRect(p.rect)));
+        const g = gutter orelse continue;
+        if (nm == models.len) continue;
+        const cp = sf.compDragPane() orelse continue;
+        const r = p.rect;
+        const tol: i32 = 2;
+        const e = switch (axis) {
+            .x => comp_drag.classify(r.left, r.right, g.left, g.right, r.top < g.bottom and r.bottom > g.top, tol),
+            .y => comp_drag.classify(r.top, r.bottom, g.top, g.bottom, r.left < g.right and r.right > g.left, tol),
+        };
+        models[nm] = CompDragThread.pane(cp.vis, cp.rounded, cp.shadow, cp.sdx, cp.sdy, .{
+            .pose = cp.pose,
+            .size = @floatFromInt(if (axis == .x) cp.w else cp.h),
+            .lo_moves = e.lo,
+            .hi_moves = e.hi,
+        });
+        nm += 1;
     }
     host.flush() catch self.deskVisualFailed();
+    if (cdt) |t| if (gutter != null) if (self.hwnd) |hw| {
+        var origin: w32.POINT = .{ .x = 0, .y = 0 };
+        _ = w32.ClientToScreen(hw, &origin);
+        const min = self.paneMinimum();
+        const min_px: f32 = @floatCast(@as(f64, if (axis == .x) min.width else min.height) * self.scale);
+        t.publish(.{
+            .axis = axis,
+            .base = self.drag_split_at + if (axis == .x) origin.x else origin.y,
+            .min = min_px,
+        }, models[0..nm]);
+    };
     if (self.comp_drag_move_t0) |t0| {
         if (std.time.Instant.now()) |t1| self.comp_drag_stats.recordCommit(t1.since(t0) / std.time.ns_per_us) else |_| {}
         self.comp_drag_move_t0 = null;
@@ -14673,6 +14772,9 @@ fn endDividerDrag(self: *Window) void {
     self.drag_node_len = 0;
     self.endRowDrag();
     self.stackDragEnded();
+    // The composition thread lets go first: the last pass below must not be
+    // overwritten by a tick behind it (T2770).
+    self.compDragThreadStop();
     // A motion left to a glide that has now ended is laid out here (T2448),
     // and so is one the compositor coalescer left to its timer (T2769).
     if (self.drag_layout_pending and self.stack_slide_last == null) self.layoutSplitsLive();

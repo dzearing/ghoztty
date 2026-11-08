@@ -1,15 +1,13 @@
 {
     "guard":  "divider-flicker",
     "script":  "test/win32/divider-flicker.ps1",
-    "generated":  "2026-11-06T22:51:01-08:00",
-    "commit":  "61d11ab13",
+    "generated":  "2026-11-07T21:07:28-08:00",
+    "commit":  "bdf08f664",
     "uncommitted":  [
-                        "test/win32/divider-flicker.ps1",
-                        "test/win32/lib/DividerFlickerScore.ps1",
-                        "test/win32/lib/OccludedDisplay.ps1"
+                        "src/apprt/win32/FrameClock.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/FrameClock.zig":  "a30d29e2f74546ee485b25d3e3a9d38718a3208ec12e4929c2a0f62555c3ccb3",
+                  "src/apprt/win32/FrameClock.zig":  "e9e98ca0f05b08a423a9d2f024ce105921b132858e1158a3690b78b9c665a9cd",
                   "test/win32/divider-flicker.ps1":  "a2f3802113607c54502bccdffa79ca8eca2cfe0fefe1b3e5466d52d9f4c5aad4",
                   "test/win32/lib/DividerFlickerScore.ps1":  "1a35204043813baad3b6252051e0571fb6ca3acbd0c903e944ada0e7c8105854",
                   "test/win32/lib/OccludedDisplay.ps1":  "8dd39834f961bd5884304a53447ecaf2ea1984920d42e6082e5afe992d5f5087"

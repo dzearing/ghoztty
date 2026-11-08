@@ -1,14 +1,14 @@
 {
     "guard":  "clipboard-paste",
     "script":  "test/win32/clipboard-paste.ps1",
-    "generated":  "2026-11-07T19:20:58-08:00",
-    "commit":  "4552bb60b",
+    "generated":  "2026-11-07T21:24:17-08:00",
+    "commit":  "bdf08f664",
     "uncommitted":  [
                         "src/apprt/win32/Surface.zig"
                     ],
     "files":  {
                   "src/apprt/win32/clipboard_open.zig":  "2c4245d76adba7068a5a1c6a498d32bbfe811d48b29446ef25091842d5d90b4d",
-                  "src/apprt/win32/Surface.zig":  "9b5017991a93f4397af99a6aee5482d696a962aceac4e49aa08b79502062c756",
+                  "src/apprt/win32/Surface.zig":  "9e77f58b7c062475b067d2fdde2c5313847277c5cc3afa9c52737b936825e4bb",
                   "src/config/Config.zig":  "56a5d6897f27a43d735affe8533be6a5fb60d9e50a9cf97781d1ff588202c5df",
                   "test/win32/clipboard-paste.ps1":  "b931eeb01938913c1b2d91fdbe7819c2a5b67c7de99db9712bd475226fd8c5fd"
               }

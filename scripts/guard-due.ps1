@@ -6428,6 +6428,19 @@ $GuardTable = @(
             'test\win32\drag-perf.ps1'
         )
     },
+    # T2770: a divider drag keeps moving through a UI-thread stall - the
+    # drag's composition thread and the pure model it extrapolates. NARROW:
+    # the thread, the model and the pose writes it makes, not Window.zig.
+    [pscustomobject]@{
+        Name   = 'drag-stall'
+        Script = 'test\win32\drag-stall.ps1'
+        Stamp  = 'test\win32\drag-stall.stamp.json'
+        Covers = @(
+            'src\apprt\win32\CompDragThread.zig',
+            'src\apprt\win32\comp_drag.zig',
+            'test\win32\drag-stall.ps1'
+        )
+    },
     # T2451: the fold glide under a divider drag, on a row with a viewer pane.
     # Its counts (deferred_moves, wm_paints, desk reuse) come from GlideStats
     # and the PaneDesk memo, so an edit to either is an edit to what it asserts.

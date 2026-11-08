@@ -43,7 +43,7 @@ pub const WM_APP_FRAME: u32 = w32.WM_APP + 43;
 
 pub const Source = enum(u8) { compositor, hrtimer, settimer };
 
-const WaitForCompositorClockFn = *const fn (
+pub const WaitForCompositorClockFn = *const fn (
     count: u32,
     handles: ?[*]const w32.HANDLE,
     timeout_ms: u32,
@@ -244,7 +244,7 @@ fn displayPeriodNs() ?u64 {
     return frame_clock.periodFromRate(num, den);
 }
 
-fn loadCompositorClock() ?WaitForCompositorClockFn {
+pub fn loadCompositorClock() ?WaitForCompositorClockFn {
     const lib = w32.LoadLibraryExW(
         std.unicode.utf8ToUtf16LeStringLiteral("dcomp.dll"),
         null,

@@ -235,6 +235,11 @@
             "unset": "shipped-elsewhere",
             "note": "T2769: =1 forces the pre-T2769 serial drag ordering in the composition tree (the A/B control, drag-perf.ps1 mode treeserial); unset = the coalesced preplaced drag, which drag-perf.ps1's tree mode runs."
         },
+        "GHOZTTY_COMP_DRAG_THREAD": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "T2770: =0 keeps a composition-tree divider drag on the window thread alone (drag-stall.ps1's off arm, the negative control); unset = the composition drag thread, which drag-stall.ps1's thread, frozen and nostall arms run."
+        },
         "GHOZTTY_COMP_PANE_TREE": {
             "class": "enable",
             "unset": "shipped-elsewhere",
@@ -254,6 +259,16 @@
             "class": "non-default",
             "unset": "shipped-elsewhere",
             "note": "T1763. =0 turns the ConPTY sync hold OFF for conpty-sync-hold.ps1's negative control; unset = the hold on, which that script's default run and every other run exercise."
+        },
+        "GHOZTTY_DEBUG_DRAG_CURSOR_FILE": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "T2770: the composition drag thread reads the pointer as 'x y' from this file instead of GetCursorPos, because the test desktop drag-stall.ps1 runs on has no cursor of its own; unset is the real GetCursorPos, which only a live run on the input desktop exercises and the go-loop may not take the user's cursor."
+        },
+        "GHOZTTY_DEBUG_DRAG_STALL_MS": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "T2770: blocks the window thread for N ms at a divider drag's 6th move, so drag-stall.ps1 can prove the composition thread keeps the edge moving through a busy UI; unset = no stall, which drag-stall.ps1's nostall arm and every other drag run take."
         },
         "GHOZTTY_DEBUG_MARKER": {
             "class": "non-default",
