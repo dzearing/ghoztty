@@ -197,6 +197,7 @@ const split_resize = @import("split_resize.zig");
 const split_ratio_shadow = @import("split_ratio_shadow.zig");
 const stack_drag = @import("stack_drag.zig");
 const drag_perf = @import("drag_perf.zig");
+const comp_drag = @import("comp_drag.zig");
 
 /// How large a tab's split tree may be for a divider drag to compensate the
 /// rest of it (T533). 128 nodes is 64 panes in one tab — far past anything a
@@ -348,6 +349,10 @@ const STACK_SLIDE_TICK_MS: u32 = 16;
 /// drag, it fires once the hand has been still `drag_hold.quiet_ms`, and the
 /// terminals held under the drag take their size.
 const DRAG_QUIET_TIMER_ID: usize = 0x4451; // 'DQ'
+/// A drag move's coalesced layout pass (T2769): armed when a move wrote the
+/// pane visuals but left its pass because one ran less than a frame ago, so
+/// a pointer that stops still has its windows land.
+const COMP_DRAG_TIMER_ID: usize = 0x4344; // 'CD'
 /// Writes the resize trace's ring out once a resize goes quiet (T2600).
 const RESIZE_TRACE_FLUSH_TIMER_ID: usize = 0x5254; // 'RT'
 
@@ -852,6 +857,16 @@ face_total_us: u64 = 0,
 drag_layout_deferred: u32 = 0,
 /// A deferred motion the glide has not laid out yet.
 drag_layout_pending: bool = false,
+/// This drag's compositor-first moves (T2769): pane visuals written and
+/// committed ahead of a layout pass that coalesces behind them.
+comp_drag_stats: comp_drag.Stats = .{},
+/// The drag's clock origin, for the coalescer's nanoseconds.
+comp_drag_base: ?std.time.Instant = null,
+/// The current move's start, for its pointer-to-commit time (perf only).
+comp_drag_move_t0: ?std.time.Instant = null,
+/// A sidebar-edge move whose pass (and the panel's own sync and paint after
+/// it) the coalescer left to a later move or the frame timer.
+comp_drag_sidebar_pending: bool = false,
 /// The window's own `WM_PAINT`s during this drag, and what they cost.
 drag_wm_paints: u32 = 0,
 drag_wm_paint_us: u64 = 0,
@@ -3217,13 +3232,25 @@ pub fn setPaneSidebarWidth(self: *Window, dip: f32) void {
         // (T1031/T1393). The plain pass resized every terminal and walked
         // away, and the grid read as lagging behind the pointer and snapping.
         var timer = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
+        defer if (timer) |*t| self.recordDragTick(t.read() / std.time.ns_per_us);
+        // In the composition tree the cards follow the edge first and the
+        // pass - with the panel's sync and paint behind it - coalesces (T2769).
+        self.comp_drag_move_t0 = if (self.drag_perf_on) std.time.Instant.now() catch null else null;
+        self.comp_drag_sidebar_pending = true;
+        if (self.compDragMove()) return;
+        self.comp_drag_sidebar_pending = false;
         self.layoutSplitsLive();
         if (timer) |*t| self.frame_layout_us = t.read() / std.time.ns_per_us;
-        self.reportResizePass("sidebar");
-        self.syncPaneSidebar();
-        self.paintSidebarTick();
-        if (timer) |*t| self.recordDragTick(t.read() / std.time.ns_per_us);
+        self.sidebarTickTail();
     }
+}
+
+/// What a sidebar-edge tick does after its layout pass: the pass's line, the
+/// panel at its new width, and what the tick uncovered painted (T2359/T2418).
+fn sidebarTickTail(self: *Window) void {
+    self.reportResizePass("sidebar");
+    self.syncPaneSidebar();
+    self.paintSidebarTick();
 }
 
 /// Paint what a sidebar edge-drag tick just uncovered, before the next tick
@@ -3253,6 +3280,12 @@ fn paintSidebarTick(self: *Window) void {
 /// The panel's edge drag let go (T2359): what it cost, in the same line a
 /// divider drag reports.
 pub fn paneSidebarDragEnded(self: *Window) void {
+    // A tick the compositor coalescer left behind lands now (T2769).
+    if (self.comp_drag_sidebar_pending and self.drag_layout_pending and self.stack_slide_last == null)
+        self.compDragPass(self.compDragNow(), FrameClock.periodNs());
+    if (self.comp_drag_sidebar_pending) self.drag_layout_pending = false;
+    self.comp_drag_sidebar_pending = false;
+    self.compDragEnd("sidebar");
     self.reportDragCost("sidebar");
 }
 
@@ -13910,6 +13943,9 @@ fn updateDividerHover(self: *Window, x: i32, y: i32) void {
 
 fn startDividerDrag(self: *Window, handle: SplitTree(PaneView).Node.Handle, layout: SplitTree(PaneView).Split.Layout) void {
     self.dragging_split = true;
+    // T2769: this drag's compositor moves, from its first.
+    self.comp_drag_stats.reset();
+    self.comp_drag_base = null;
     // T2448: the glide line covers this drag's glide, not a glide before it.
     self.glide_stats.reset();
     self.glide_between_mark = .{};
@@ -14073,6 +14109,8 @@ fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
     // so time it end to end rather than timing the parts we suspect.
     var timer = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
     defer if (timer) |*t| self.recordDragTick(t.read() / std.time.ns_per_us);
+    // T2769: and from the same instant, the move's pointer-to-commit.
+    self.comp_drag_move_t0 = if (self.drag_perf_on) std.time.Instant.now() catch null else null;
     const rect = self.drag_start_rect;
     const handle = self.drag_split_handle;
 
@@ -14150,10 +14188,206 @@ fn layoutDragStep(self: *Window) void {
         self.drag_layout_pending = true;
         return;
     }
+    // In the composition tree the panes' visuals follow the pointer first,
+    // and the pass that moves their windows coalesces behind them (T2769).
+    if (self.compDragMove()) return;
     self.drag_layout_pending = false;
     var lt = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
     self.layoutSplitsLive();
     if (lt) |*t| self.frame_layout_us = t.read() / std.time.ns_per_us;
+}
+
+var comp_drag_serial_state: ?bool = null;
+
+/// `GHOZTTY_COMP_DRAG_SERIAL=1`: a drag move in the composition tree runs its
+/// whole layout pass before anything reaches the screen, as before T2769 -
+/// the A/B, and the negative control of drag-perf.ps1's pointer-to-commit row.
+fn compDragSerial() bool {
+    if (comp_drag_serial_state) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_COMP_DRAG_SERIAL");
+    comp_drag_serial_state = v;
+    return v;
+}
+
+/// Nanoseconds since this drag's first move, on the monotonic clock.
+fn compDragNow(self: *Window) u64 {
+    const now = std.time.Instant.now() catch return 0;
+    const base = self.comp_drag_base orelse {
+        self.comp_drag_base = now;
+        return 0;
+    };
+    return now.since(base);
+}
+
+/// Whether the thread has a newer pointer move waiting: the move after this
+/// one will write the visuals and decide about the pass itself.
+fn newerMoveQueued() bool {
+    var msg: w32.MSG = undefined;
+    return w32.PeekMessageW(&msg, null, w32.WM_MOUSEMOVE, w32.WM_MOUSEMOVE, w32.PM_NOREMOVE) != 0;
+}
+
+/// One drag move in the composition tree (T2769): the pane visuals go where
+/// the layout puts them and commit, then the layout pass runs now or is left
+/// to the next move or the frame timer (`comp_drag.decide`). True when the
+/// move was handled here, pass or no pass; false when the panes are not in a
+/// tree (or the drag is the serial A/B), and the caller lays out as before.
+fn compDragMove(self: *Window) bool {
+    if (!self.preplaceDragVisuals()) return false;
+    const period = FrameClock.periodNs();
+    const now = self.compDragNow();
+    const st = &self.comp_drag_stats;
+    const pass = comp_drag.decide(now, st.last_pass_ns, st.pending_ns, period, newerMoveQueued());
+    if (pass != .run) {
+        st.recordSkip(pass, now);
+        self.drag_layout_pending = true;
+        if (pass == .skip_frame) if (self.hwnd) |h| {
+            _ = w32.SetTimer(h, COMP_DRAG_TIMER_ID, comp_drag.timerDelayMs(now, st.last_pass_ns orelse now, period), null);
+        };
+        return true;
+    }
+    self.compDragPass(now, period);
+    return true;
+}
+
+/// The coalesced layout pass of a drag in the composition tree (T2769), and
+/// - for a sidebar-edge drag - the panel's own sync and paint behind it.
+fn compDragPass(self: *Window, now: u64, period: u64) void {
+    if (self.hwnd) |h| _ = w32.KillTimer(h, COMP_DRAG_TIMER_ID);
+    self.comp_drag_stats.recordPass(now, period);
+    self.drag_layout_pending = false;
+    var lt = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
+    self.layoutSplitsLive();
+    if (lt) |*t| self.frame_layout_us = t.read() / std.time.ns_per_us;
+    if (self.comp_drag_sidebar_pending) {
+        self.comp_drag_sidebar_pending = false;
+        self.sidebarTickTail();
+    }
+}
+
+/// The frame timer of a drag move that left its pass (T2769): the pointer
+/// stopped, or no move came for the rest of the frame, and the windows still
+/// have to land where the visuals already are.
+fn compDragTimerTick(self: *Window) void {
+    if (self.hwnd) |h| _ = w32.KillTimer(h, COMP_DRAG_TIMER_ID);
+    if (!self.drag_layout_pending) return;
+    if (self.stack_slide_last != null and self.stack_slide != null) return;
+    self.compDragPass(self.compDragNow(), FrameClock.periodNs());
+}
+
+/// A drag in the composition tree is over (T2769): whatever pass its last
+/// moves left behind runs now, and the drag's line is written.
+fn compDragEnd(self: *Window, comptime what: []const u8) void {
+    if (self.hwnd) |h| _ = w32.KillTimer(h, COMP_DRAG_TIMER_ID);
+    const st = self.comp_drag_stats;
+    defer {
+        self.comp_drag_stats.reset();
+        self.comp_drag_base = null;
+        self.comp_drag_move_t0 = null;
+    }
+    if (st.commits == 0) return;
+    if (!self.drag_perf_on) return;
+    // Where the drag left things: every pane visual back over its window, and
+    // every window at the slot the layout gives it - no residual offset.
+    var landed: u32 = 0;
+    var off: u32 = 0;
+    if (self.hwnd) |parent| if (self.stackGrid()) |laid| {
+        var grid = laid;
+        defer grid.deinit();
+        var it = self.tab_trees[self.active_tab].iterator();
+        while (it.next()) |entry| {
+            const view = entry.view;
+            const sf = view.surface() orelse continue;
+            if (sf.tree_visual == null) continue;
+            const h = view.hwnd() orelse continue;
+            const p = grid.placement(pane_stack_grid.viewId(view)) orelse continue;
+            if (p.is_tucked) continue;
+            const want = self.leafRect(view, winRect(p.rect));
+            const real = childClientRect(parent, h) orelse continue;
+            const at_slot = real.left == want.left and real.top == want.top and
+                real.right == want.right and real.bottom == want.bottom;
+            if (sf.tree_glide_at == null and at_slot) landed += 1 else off += 1;
+        }
+    };
+    // The perf line (drag-perf.ps1 reads it). Info, as the drag line is: a
+    // release run is what a drag's cost is read off.
+    log.info(what ++ " drag comp landed={d} off={d}", .{ landed, off });
+    log.info(
+        what ++ " drag comp commits={d} mean_commit_us={d} max_commit_us={d} passes={d} " ++
+            "skipped_queued={d} skipped_frame={d} passes_inside_frame={d} period_us={d}",
+        .{
+            st.commits,
+            st.meanCommitUs(),
+            st.commit_max_us,
+            st.passes,
+            st.skipped_queued,
+            st.skipped_frame,
+            st.passes_inside_frame,
+            FrameClock.periodNs() / std.time.ns_per_us,
+        },
+    );
+}
+
+/// The compositor half of a drag move (T2769): every pane of the active tab
+/// that is in the window's composition tree, on show and staying on show, has
+/// its visual written where the layout is about to put its window, and the
+/// whole move goes up in one commit. False - nothing written - when there is
+/// no tree, a glide owns the visuals, the move shows or hides a pane (a fold,
+/// an unfold: the window pass carries those), or the serial A/B is on.
+fn preplaceDragVisuals(self: *Window) bool {
+    if (compDragSerial()) return false;
+    if (self.stack_slide != null or self.hwnd == null or self.chrome_host == null) return false;
+    if (self.tab_count == 0) return false;
+    // Off the tree (the knob off) a move takes the old path with nothing
+    // computed for it: no pane visual, no grid.
+    var in_tree = false;
+    var probe = self.tab_trees[self.active_tab].iterator();
+    while (probe.next()) |entry| {
+        const sf = entry.view.surface() orelse continue;
+        if (sf.tree_visual != null) {
+            in_tree = true;
+            break;
+        }
+    }
+    if (!in_tree) return false;
+    var grid = self.stackGrid() orelse return false;
+    defer grid.deinit();
+    const tree = self.tab_trees[self.active_tab];
+    // First look, write nothing: a move that changes which panes are on show
+    // is the window pass's, whole.
+    var any = false;
+    var it = tree.iterator();
+    while (it.next()) |entry| {
+        const view = entry.view;
+        if (pane_stash.isStashed(view)) continue;
+        const h = view.hwnd() orelse continue;
+        const shown = w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE != 0;
+        const p = grid.placement(pane_stack_grid.viewId(view)) orelse continue;
+        if (p.is_tucked == shown) return false;
+        if (!shown) continue;
+        const sf = view.surface() orelse continue;
+        if (sf.tree_visual == null) continue;
+        if (sf.tree_glide_decl != null) return false;
+        any = true;
+    }
+    if (!any) return false;
+    const host = self.treeGlideBatch() orelse return false;
+    it = tree.iterator();
+    while (it.next()) |entry| {
+        const view = entry.view;
+        if (pane_stash.isStashed(view)) continue;
+        const sf = view.surface() orelse continue;
+        if (sf.tree_visual == null) continue;
+        const h = view.hwnd() orelse continue;
+        if (w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE == 0) continue;
+        const p = grid.placement(pane_stack_grid.viewId(view)) orelse continue;
+        sf.preplaceTreeAt(self.leafRect(view, winRect(p.rect)));
+    }
+    host.flush() catch self.deskVisualFailed();
+    if (self.comp_drag_move_t0) |t0| {
+        if (std.time.Instant.now()) |t1| self.comp_drag_stats.recordCommit(t1.since(t0) / std.time.ns_per_us) else |_| {}
+        self.comp_drag_move_t0 = null;
+    } else self.comp_drag_stats.recordCommit(0);
+    return true;
 }
 
 fn endDividerDrag(self: *Window) void {
@@ -14162,9 +14396,11 @@ fn endDividerDrag(self: *Window) void {
     self.drag_node_len = 0;
     self.endRowDrag();
     self.stackDragEnded();
-    // A motion left to a glide that has now ended is laid out here (T2448).
+    // A motion left to a glide that has now ended is laid out here (T2448),
+    // and so is one the compositor coalescer left to its timer (T2769).
     if (self.drag_layout_pending and self.stack_slide_last == null) self.layoutSplitsLive();
     self.drag_layout_pending = false;
+    self.compDragEnd("divider");
     // Nothing left moving: the terminals take their size (T2459).
     self.syncDragHolds(false);
     self.reportDragCost("divider");
@@ -19770,6 +20006,10 @@ pub fn windowWndProc(
             }
             if (wparam == DRAG_QUIET_TIMER_ID) {
                 window.dragQuietTick();
+                return 0;
+            }
+            if (wparam == COMP_DRAG_TIMER_ID) {
+                window.compDragTimerTick();
                 return 0;
             }
             if (wparam == FULLSCREEN_POLL_TIMER_ID) {

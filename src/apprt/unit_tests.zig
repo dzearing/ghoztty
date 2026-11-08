@@ -812,6 +812,12 @@ test {
     // box.
     _ = @import("win32/drag_perf.zig");
 
+    // A drag move on the composition tree (T2769): whether its layout pass
+    // runs now or coalesces behind the compositor write, and how a pane
+    // visual's card shape follows a size its window does not have yet. Same
+    // no-OS-imports deal.
+    _ = @import("win32/comp_drag.zig");
+
     // What that same motion tick costs in LAYERED-CHROME operations — the
     // window moves, the `UpdateLayeredWindow` blits and the z-order walks one
     // pane's banner/dim/scrollbar/badge/pill fan out into (T1345). Counting

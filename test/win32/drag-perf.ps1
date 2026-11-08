@@ -250,6 +250,17 @@ function Measure-DragShape([string]$mode, [int[]]$counts, [int]$moves) {
     # batched here so the only thing that differs from 'batched' is the chrome.
     if ($mode -eq 'fanout') { $env:GHOZTTY_CHROME_FANOUT_LEGACY = '1' }
     else { Remove-Item env:GHOZTTY_CHROME_FANOUT_LEGACY -ErrorAction SilentlyContinue }
+    # T2769: the panes in the window's composition tree, pointer first
+    # ('tree') and with the old ordering forced back ('treeserial').
+    if ($mode -like 'tree*') {
+        $env:GHOZTTY_COMP_PANE_TREE = '1'
+        $env:GHOZTTY_COMP_CHROME = '1'
+    } else {
+        Remove-Item env:GHOZTTY_COMP_PANE_TREE -ErrorAction SilentlyContinue
+        Remove-Item env:GHOZTTY_COMP_CHROME -ErrorAction SilentlyContinue
+    }
+    if ($mode -eq 'treeserial') { $env:GHOZTTY_COMP_DRAG_SERIAL = '1' }
+    else { Remove-Item env:GHOZTTY_COMP_DRAG_SERIAL -ErrorAction SilentlyContinue }
     $env:GHOZTTY_PERF = '1'
 
     $results = @{}
@@ -258,7 +269,13 @@ function Measure-DragShape([string]$mode, [int[]]$counts, [int]$moves) {
     try {
         $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' -TimeoutMs 20000
         if ($top -eq [IntPtr]::Zero) { throw "no window for the $mode instance" }
-        [void](Set-TestWindowPos -Window ([IntPtr]$top) -X 40 -Y 40 -Width 1400 -Height 900)
+        # The tree shapes (T2769) stack the extra panes in one column of a
+        # window tall enough that none of them goes under the pane minimum and
+        # folds into a strip: at 8 panes the alternating layout below folds,
+        # and the drag then never finds the root divider (T1854's shape).
+        $tall = ($mode -like 'tree*')
+        $height = if ($tall) { [math]::Max(900, 360 * (($counts | Measure-Object -Maximum).Maximum - 1) + 160) } else { 900 }
+        [void](Set-TestWindowPos -Window ([IntPtr]$top) -X 40 -Y 40 -Width 1400 -Height $height)
         Start-Sleep -Milliseconds 800
 
         $have = 1
@@ -266,7 +283,7 @@ function Measure-DragShape([string]$mode, [int[]]$counts, [int]$moves) {
             while ($have -lt $want) {
                 # First split makes the root boundary; the rest nest inside the
                 # right half, so the root divider keeps resizing everything.
-                $dir = if ($have -eq 1) { 'right' } elseif ($have % 2 -eq 0) { 'down' } else { 'right' }
+                $dir = if ($have -eq 1) { 'right' } elseif ($tall -or $have % 2 -eq 0) { 'down' } else { 'right' }
                 & $exe +split --direction=$dir 2>&1 | Out-Null
                 $have++
                 # Wait for the pane to actually exist rather than guessing at a
@@ -302,8 +319,55 @@ function Measure-DragShape([string]$mode, [int[]]$counts, [int]$moves) {
         Kill-RepoInstances
         Remove-Item env:GHOZTTY_DRAG_SERIAL_WAIT -ErrorAction SilentlyContinue
         Remove-Item env:GHOZTTY_CHROME_FANOUT_LEGACY -ErrorAction SilentlyContinue
+        Remove-Item env:GHOZTTY_COMP_PANE_TREE -ErrorAction SilentlyContinue
+        Remove-Item env:GHOZTTY_COMP_CHROME -ErrorAction SilentlyContinue
+        Remove-Item env:GHOZTTY_COMP_DRAG_SERIAL -ErrorAction SilentlyContinue
+    }
+    # T2769: each drag's compositor line, in the same order as the drags.
+    $comp = @(Get-CompSamples $log)
+    $i = 0
+    foreach ($want in ($counts | Sort-Object)) {
+        if (-not $results.ContainsKey($want)) { continue }
+        $c = if ($i -lt $comp.Count) { $comp[$i] } else { $null }
+        Add-Member -InputObject $results[$want] -NotePropertyName Comp -NotePropertyValue $c -Force
+        if ($null -ne $c) {
+            Rep ("  {0,-10} panes={1,-2} pointer-to-commit mean={2,5}us max={3,5}us commits={4,-3} passes={5,-3} skipped(queued/frame)={6}/{7} inside-frame={8} landed={9} off={10}" -f
+                $mode, $results[$want].Panes, $c.MeanCommitUs, $c.MaxCommitUs, $c.Commits, $c.Passes,
+                $c.SkippedQueued, $c.SkippedFrame, $c.InsideFrame, $c.Landed, $c.Off)
+        }
+        $i++
     }
     return $results
+}
+
+# Every `divider drag comp ...` pair the app has printed (T2769): the landed
+# line, then the cost line, one pair per drag that wrote the visuals first.
+function Get-CompSamples([string]$log) {
+    if (-not (Test-Path $log)) { return @() }
+    $out = @()
+    $landed = $null
+    foreach ($l in @(Get-Content $log -ErrorAction SilentlyContinue)) {
+        if ($l -match 'divider drag comp landed=(\d+) off=(\d+)') {
+            $landed = @([int]$Matches[1], [int]$Matches[2])
+            continue
+        }
+        if ($l -match ('divider drag comp commits=(\d+) mean_commit_us=(\d+) max_commit_us=(\d+) ' +
+                'passes=(\d+) skipped_queued=(\d+) skipped_frame=(\d+) passes_inside_frame=(\d+)')) {
+            $out += [pscustomobject]@{
+                Commits       = [int]$Matches[1]
+                MeanCommitUs  = [int]$Matches[2]
+                MaxCommitUs   = [int]$Matches[3]
+                Passes        = [int]$Matches[4]
+                SkippedQueued = [int]$Matches[5]
+                SkippedFrame  = [int]$Matches[6]
+                InsideFrame   = [int]$Matches[7]
+                Landed        = if ($landed) { $landed[0] } else { -1 }
+                Off           = if ($landed) { $landed[1] } else { -1 }
+            }
+            $landed = $null
+        }
+    }
+    return @($out)
 }
 
 $td = New-TestDesktop -Interactive:$Interactive
@@ -317,6 +381,17 @@ try {
     $serial = Measure-DragShape 'serial' $PaneCounts $Moves
     $fanout = Measure-DragShape 'fanout' $PaneCounts $Moves
     $batched = Measure-DragShape 'batched' $PaneCounts $Moves
+    # One instance per pane count for the tree shapes: an instance reports
+    # only its first drag (T1854), and section F's 8-pane row has to be an
+    # 8-pane drag, not the 2-pane one read again.
+    $tree = @{}
+    $treeSerial = @{}
+    foreach ($c in ($PaneCounts | Sort-Object)) {
+        $r = Measure-DragShape 'tree' @($c) $Moves
+        if ($r.ContainsKey($c)) { $tree[$c] = $r[$c] }
+        $r = Measure-DragShape 'treeserial' @($c) $Moves
+        if ($r.ContainsKey($c)) { $treeSerial[$c] = $r[$c] }
+    }
     Rep ''
 
     # ---- A. the oracle is live in both shapes ---------------------------
@@ -446,6 +521,42 @@ try {
         Rep ("  one popup per pane (T1350) at $hi panes: $($bHi.ChromeMoves) chrome moves " +
             "-> at most $kept, saving at most ${ceiling}us of a $($bHi.MeanUs)us move ($pct%)")
     }
+
+    # ---- F. pointer first in the composition tree (T2769) ---------------
+    # With the panes in the window's composition tree, a move writes every
+    # pane visual where the layout puts it and commits BEFORE the layout pass
+    # (the windows and their resizes), which then runs at most once a frame.
+    # The app clocks the move from its top to that commit; the T2556
+    # measurement had the pointer waiting ~15.7 ms on the whole pass.
+    $tLo = $tree[$lo]; $tHi = $tree[$hi]
+    $compLo = if ($tLo) { $tLo.Comp } else { $null }
+    $compHi = if ($tHi) { $tHi.Comp } else { $null }
+    Assert ($null -ne $compLo -and $null -ne $compHi -and $compLo.Commits -gt 0 -and $compHi.Commits -gt 0) `
+    ("in the composition tree every drag wrote the visuals ahead of its pass " +
+        "($lo panes: $(if ($compLo) { $compLo.Commits } else { 'no line' }) commits, " +
+        "$hi panes: $(if ($compHi) { $compHi.Commits } else { 'no line' }))")
+    if ($null -ne $compLo -and $null -ne $compHi) {
+        $fast = ($compLo.MeanCommitUs -lt 2000 -and $compHi.MeanCommitUs -lt 2000)
+        if ($NegativeControl) { $fast = -not $fast }
+        Assert $fast ("the card edge reaches the screen within 2 ms of the move: pointer-to-commit " +
+            "mean $($compLo.MeanCommitUs)us at $lo panes, $($compHi.MeanCommitUs)us at $hi " +
+            "(the whole move: $($tLo.MeanUs)us / $($tHi.MeanUs)us)")
+        Assert ($compLo.InsideFrame -eq 0 -and $compHi.InsideFrame -eq 0) `
+        ("at most one layout pass per display frame (passes inside a frame of the last: " +
+            "$($compLo.InsideFrame) at $lo panes, $($compHi.InsideFrame) at $hi; " +
+            "passes $($compLo.Passes)/$($compHi.Passes) for $($compLo.Commits)/$($compHi.Commits) moves)")
+        Assert ($compLo.Off -eq 0 -and $compHi.Off -eq 0 -and $compLo.Landed -gt 0 -and $compHi.Landed -gt 0) `
+        ("the drag ends with every pane window at its slot and its visual back over it " +
+            "($lo panes: $($compLo.Landed) landed/$($compLo.Off) off, $hi panes: $($compHi.Landed)/$($compHi.Off))")
+    }
+    # The control: the old ordering on the same build writes nothing ahead of
+    # its pass, so the pointer waits on the whole move - which is what makes the
+    # 2 ms row above a measurement of the fix rather than of the box.
+    $sComp = @($treeSerial.Values | Where-Object { $null -ne $_.Comp })
+    $sMean = ($treeSerial.Values | Measure-Object -Property MeanUs -Minimum).Minimum
+    Assert ($treeSerial.Keys.Count -gt 0 -and $sComp.Count -eq 0) `
+    ("GHOZTTY_COMP_DRAG_SERIAL puts the old ordering back: no compositor write ahead of the pass " +
+        "in $($treeSerial.Keys.Count) drags, the pointer waits the whole move (fastest mean ${sMean}us)")
 
     Rep ''
     Rep "report: $report"

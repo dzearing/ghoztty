@@ -53,6 +53,7 @@ const DimOverlay = @import("DimOverlay.zig").DimOverlay;
 const BellBorder = @import("BellBorder.zig").BellBorder;
 const comp_overlay = @import("../../renderer/comp_overlay.zig");
 const comp_tree = @import("../../renderer/comp_tree.zig");
+const comp_drag = @import("comp_drag.zig");
 const pane_stack_slide = @import("pane_stack_slide.zig");
 const gl_comp_present = @import("../../renderer/gl_comp_present.zig");
 const BannerOverlay = @import("BannerOverlay.zig").BannerOverlay;
@@ -2199,6 +2200,24 @@ fn declareTreeGlide(self: *Surface, now: w32.RECT, now_shape: comp_tree.Shape, l
     // The on-screen oracle reads this (comp-glide-hold-onscreen.ps1).
     log.debug("pane visual glide declared from={d:.1},{d:.1} to={d:.1},{d:.1} clip_right={d:.1}->{d:.1} span_ms={d:.0} retarget={} shadow={}", .{ from.x, from.y, to.x, to.y, from.clip.right, to.clip.right, span_s * 1000, retarget, ride != null });
     return true;
+}
+
+/// Window thread: a drag move's compositor write (T2769) - this pane's visual
+/// drawn at `at` (top-level client pixels, where the layout is about to put
+/// its window), its card shape carried to that size, ahead of the layout pass
+/// that moves the window there. The caller holds the host's batch, so every
+/// pane of the move goes up in one commit; the pass's `placeLeaf` lands the
+/// visual over its window again, and its cut sets the true shape. Until the
+/// pane's resize lands its swap chain is the size it was, so a pane that grew
+/// shows desk past its old edge, never a stretched grid.
+pub fn preplaceTreeAt(self: *Surface, at: w32.RECT) void {
+    if (self.tree_visual == null) return;
+    const hwnd = self.hwnd orelse return;
+    var rc: w32.RECT = undefined;
+    if (w32.GetClientRect(hwnd, &rc) == 0) return;
+    self.tree_shape = comp_drag.reshape(self.tree_shape, rc.right - rc.left, rc.bottom - rc.top, at.right - at.left, at.bottom - at.top);
+    self.tree_glide_at = at;
+    self.syncTreeVisual();
 }
 
 /// Window thread: draw this pane's visual at `at` (top-level client pixels)

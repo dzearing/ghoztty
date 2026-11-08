@@ -566,6 +566,7 @@ pub extern "user32" fn GetMessageW(
 ) callconv(.winapi) i32;
 
 pub const PM_REMOVE: u32 = 0x0001;
+pub const PM_NOREMOVE: u32 = 0x0000;
 
 pub extern "user32" fn PeekMessageW(
     lpMsg: *MSG,
