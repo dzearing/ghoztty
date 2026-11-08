@@ -1,10 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-07T16:10:27-08:00",
-    "commit":  "faa5e7cb3",
+    "generated":  "2026-11-07T18:09:03-08:00",
+    "commit":  "1ed650c25",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+                        "scripts/scrollbar-fade-onscreen.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -100,6 +100,7 @@
                   "scripts/rdp-perf-probe.ps1":  "b5e70fb1c4b8eb1ae74033ad8131b48e9aa20a3aacc7b4291d355d81c33b866a",
                   "scripts/report-false-positive.ps1":  "67875bcfc4d235afa9a8810294a7ea9d48fc7cb57f69e74c9617970b65d68534",
                   "scripts/resize-sync-onscreen.ps1":  "1877412836c7a5b9505712a9ce5529b08d60b050cbe2a58594aa7c13d42f69f7",
+                  "scripts/scrollbar-fade-onscreen.ps1":  "36c30979affd7da2f29934b686a78fa78d1dfdcb15b04ceee8ec0828732bb9fc",
                   "scripts/ship-feature.ps1":  "b53f3d8a44440cf33b6e2ce3c40819ca0695ffa48b1226b7545eddf8cac45915",
                   "scripts/ship-readiness.ps1":  "1fcab42cac628cae5852b0d1bd93b266c0d9809b015ff996362f02c5895c84f7",
                   "scripts/soak-daemon.ps1":  "9b573c837b02c45c2be053a2f2d6f9f1024363ba531b35a5bf7c25a86b8df3ad",
