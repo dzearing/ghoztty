@@ -711,7 +711,9 @@ const Memo = struct {
         fn addStrip(self: *Rects, a: pane_stack_strip.Band, b: pane_stack_strip.Band, ri: i32, inner: i32, reach: i32) void {
             const ta = a.tab;
             const tb = b.tab;
-            const ok = !a.band and !b.band and a.axis == b.axis and
+            // A blade shadow that went up or came down (T2796) is the
+            // whole strip, both places.
+            const ok = !a.band and !b.band and a.axis == b.axis and a.blade == b.blade and
                 big(ta.left, ta.top, ta.right, ta.bottom, ri, reach) and big(tb.left, tb.top, tb.right, tb.bottom, ri, reach);
             if (!ok) {
                 self.addAround(ta.left, ta.top, ta.right, ta.bottom, reach);
@@ -1463,8 +1465,9 @@ fn composeOver(
     for (strips) |s| {
         // Each blade's shadow lands on the blade behind it, which is already
         // down (T2307): leaning away from the run, fading out inside its
-        // rounded ends (T2410).
-        blade_shadow.paint(buf, w, h, s.tab, s.axis, s.leads, s.collapse, style.is_light, style.scale, radius);
+        // rounded ends (T2410). One that went up as its own layer (T2796)
+        // is the compositor's to lay.
+        if (s.blade) blade_shadow.paint(buf, w, h, s.tab, s.axis, s.leads, s.collapse, style.is_light, style.scale, radius);
         if (!s.band) continue;
         // On glass the band is the tucked card's sheet, so the desk reads
         // through it (T2160, T2505), edged with the card's rim.

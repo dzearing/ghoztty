@@ -163,6 +163,7 @@ const chrome_alpha = @import("chrome_alpha.zig");
 const opacity_mode = @import("opacity_mode.zig");
 const blur_backdrop = @import("blur_backdrop.zig");
 const chrome_comp = @import("chrome_comp.zig");
+const blade_rides_mod = @import("blade_rides.zig");
 const split_geometry = @import("split_geometry.zig");
 const gutter_bar = @import("gutter_bar.zig");
 const pane_elevation = @import("pane_elevation.zig");
@@ -1059,6 +1060,8 @@ glide_tree_moves: u32 = 0,
 tree_shadows_up: usize = 0,
 /// How many of those carried their whole card (T2793).
 tree_wholes_up: usize = 0,
+/// The tucked strips' blade shadows on the compositor (T2796).
+blade_rides: blade_rides_mod.Set = .{},
 glide_moves_report: bool = false,
 /// The desk's compose counters when the stack glide began (T2793), for the
 /// landing's report: how often the glide recomposed the desk, and how often
@@ -2465,6 +2468,7 @@ fn releaseOwnedResources(self: *Window) void {
     // on the presenter window's DC until it is stopped.
     if (self.presenter) |p| p.destroy(self.app.core_app.alloc);
     self.presenter = null;
+    self.blade_rides.dropAll(null);
     if (self.chrome_host) |*cc| cc.deinit();
     self.chrome_host = null;
     self.caption_mirror.deinit();
@@ -9135,6 +9139,54 @@ fn syncTreeShadows(
     }
 }
 
+/// The desk paint's half of the tucked strips' blade shadows (T2796): see
+/// `blade_rides`. `eligible` is the tree shadows' terms (the desk on the
+/// compositor, nothing GDI-drawn over it, no lit gutter bar) and a solid
+/// style; `GHOZTTY_COMP_SHADOWS=0` keeps every blade in the compose with
+/// the card shadows, and the tree shadows' DOUBLE / NOMASK knobs are its
+/// on-screen oracle's controls too.
+fn syncBladeRides(self: *Window, bands: []pane_stack_strip.Band, tucked: []const TuckedStrip, style: pane_elevation.CardStyle, eligible: bool) void {
+    const host = if (self.chrome_host) |*h| h else return self.blade_rides.dropAll(null);
+    var ids: [MAX_DRAG_NODES]usize = undefined;
+    for (tucked, 0..) |s, i| ids[i] = @intFromPtr(s.view);
+    const knobs = bladeKnobs();
+    const before = self.blade_rides.up;
+    const up = self.blade_rides.sync(
+        self.app.core_app.alloc,
+        host,
+        bands,
+        ids[0..tucked.len],
+        style.is_light,
+        style.scale,
+        pane_elevation.radiusPx(style.scale),
+        eligible and treeShadowsOn() and !knobs.off,
+        .{ .double = knobs.double, .nomask = knobs.nomask },
+    );
+    if (up != before) log.info("blade layer visuals up={d}", .{up});
+}
+
+const BladeKnobs = struct { off: bool, double: bool, nomask: bool };
+var blade_knobs: ?BladeKnobs = null;
+
+/// The blade layers' own A/B (scripts\comp-blade-onscreen.ps1, T2796):
+/// `GHOZTTY_COMP_BLADES=0` keeps the blades baked while the card layers
+/// ride, and `_DOUBLE` / `_NOMASK` are the tree shadows' controls for the
+/// blades alone (the tree shadows' own knobs reach the blades too).
+fn bladeKnobs() BladeKnobs {
+    if (blade_knobs) |k| return k;
+    var buf: [8]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const raw = std.process.getEnvVarOwned(fba.allocator(), "GHOZTTY_COMP_BLADES") catch null;
+    const tree = treeShadowKnobs();
+    const k: BladeKnobs = .{
+        .off = if (raw) |r| std.mem.eql(u8, r, "0") else false,
+        .double = tree.double or chrome_comp.debugKnob("GHOZTTY_COMP_BLADES_DOUBLE"),
+        .nomask = tree.nomask or chrome_comp.debugKnob("GHOZTTY_COMP_BLADES_NOMASK"),
+    };
+    blade_knobs = k;
+    return k;
+}
+
 /// Match the chrome host's glow layers to the lit panes (T2574), after a
 /// paint that put the desk - composed without any glow - on the compositor:
 /// a layer for the pane the glow is moving to and, mid-move, the one it is
@@ -12895,8 +12947,15 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         nd += 1;
     }
     self.noteDeskFullCards(slots[0..n], glow_cards[0..n], whole[0..n]);
+    // Each resting strip's blade shadow as its own layer (T2796), over the
+    // card layers, on the same terms as theirs: the desk composes those
+    // strips without it. `bands` keeps every blade for the glow layers,
+    // which unblend against the picture with every shadow in it.
+    var desk_bands: [MAX_DRAG_NODES]pane_stack_strip.Band = undefined;
+    @memcpy(desk_bands[0..nt], bands[0..nt]);
+    self.syncBladeRides(desk_bands[0..nt], tucked[0..nt], style, on_visual and !over and bar == null and !glass);
     if (self.hwnd) |hw| resizeTrace("desk-pre", hw);
-    self.pane_desk.paint(desk_dc, area.left, area.top, w, h, desk_cards[0..nd], bands[0..nt], style, self.desk_variant, lights[0..nl], self.busyHead(), bar, self.deskOpacity());
+    self.pane_desk.paint(desk_dc, area.left, area.top, w, h, desk_cards[0..nd], desk_bands[0..nt], style, self.desk_variant, lights[0..nl], self.busyHead(), bar, self.deskOpacity());
     if (self.hwnd) |hw| resizeTrace("desk-paint", hw);
     if (glow_layers) self.syncGlowLayers(slots[0..n], glow_cards[0..nc], bands[0..nt], style, bar) else self.dropGlowLayers();
     if (self.hwnd) |hw| resizeTrace("desk-glow", hw);

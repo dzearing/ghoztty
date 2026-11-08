@@ -1661,6 +1661,19 @@ pub const Host = struct {
     /// made (or remade under a new desk) the first time, at opacity 0 until
     /// `shadowShow`, the surface remade for a new size. Commits.
     pub fn shadowUpload(self: *Host, sv: *ShadowVis, px: []const u32, w: i32, h: i32) Error!void {
+        return self.uploadShadow(sv, px, w, h, false);
+    }
+
+    /// `shadowUpload` for a stack strip's blade layer (T2796): a new visual
+    /// goes on TOP of the shadow root, where a card's goes to the bottom. On
+    /// the desk the strips are laid after every card, so a blade shadow
+    /// lands on a card beside it - and on a card riding whole (T2793), whose
+    /// layer is that card, only from above it.
+    pub fn bladeUpload(self: *Host, sv: *ShadowVis, px: []const u32, w: i32, h: i32) Error!void {
+        return self.uploadShadow(sv, px, w, h, true);
+    }
+
+    fn uploadShadow(self: *Host, sv: *ShadowVis, px: []const u32, w: i32, h: i32, top: bool) Error!void {
         const root = self.shadow_root orelse return error.Unavailable;
         if (w <= 0 or h <= 0 or px.len < @as(usize, @intCast(w)) * @as(usize, @intCast(h))) return error.ComFailed;
         errdefer self.shadow_failed = true;
@@ -1675,7 +1688,9 @@ pub const Host = struct {
             errdefer release(effect);
             try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, effect, slot_dcomp_effect_set_opacity_float)(effect, 0));
             try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_effect)(vis, effect));
-            try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, root, slot_dcomp_visual_add_visual)(root, vis, 1, null));
+            // `insertAbove` TRUE with no reference is the bottom of the
+            // z-order, FALSE the top.
+            try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, root, slot_dcomp_visual_add_visual)(root, vis, if (top) 0 else 1, null));
             sv.* = .{ .visual = vis, .effect = effect, .desk_gen = self.desk_gen, .opacity = 0 };
         }
         if (sv.surface == null or w != sv.w or h != sv.h) {

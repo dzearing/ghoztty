@@ -157,6 +157,8 @@ test {
     _ = @import("win32/wgc_capture.zig");
     _ = @import("win32/comp_surface.zig");
     _ = @import("win32/chrome_comp.zig");
+    // The tucked strips' blade layers on the compositor (T2796).
+    _ = @import("win32/blade_rides.zig");
     _ = @import("win32/child_comp.zig");
     _ = @import("win32/provenance.zig");
     _ = @import("win32/restore_retry.zig");

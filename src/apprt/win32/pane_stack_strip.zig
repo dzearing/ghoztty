@@ -163,6 +163,9 @@ pub const Band = struct {
     /// False for a card still gliding (T2287): it is a card until the glide
     /// reaches the strip, so only its shadow is laid here, in paint order.
     band: bool = true,
+    /// False when the strip's blade shadow is on the compositor as a layer
+    /// of its own (`blade_rides`, T2796): the desk lays the band without it.
+    blade: bool = true,
 };
 
 /// Paint a strip's band into a desk composite (`PaneDesk`; 0x00RRGGBB with
