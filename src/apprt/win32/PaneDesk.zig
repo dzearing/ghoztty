@@ -318,6 +318,13 @@ memo_hits: u32 = 0,
 memo_misses: u32 = 0,
 /// Of the misses, those that composed only the rectangle that changed (T2454).
 memo_partial: u32 = 0,
+/// Of the misses, those where a card itself had moved or changed (T2793):
+/// what a glide that only moves cards riding whole must keep at zero. Never
+/// reset by the window - read it as a difference.
+memo_card_misses: u32 = 0,
+/// Every compose's area in thousandths of the buffer, summed (T2793): a full
+/// compose is 1000, a partial its rectangles'. Never reset - a difference.
+composed_permille: u64 = 0,
 /// Time spent composing and blitting, since the window last read them
 /// (T2454): what a glide frame's desk costs, split where it can be cut.
 compose_ns: u64 = 0,
@@ -424,6 +431,13 @@ const Memo = struct {
         for (lights[0..m.lights_len], m.lights[0..m.lights_len]) |a, b| {
             if (a.key != b.key or !std.meta.eql(a.card, b.card) or !std.meta.eql(a.shape, b.shape)) return false;
         }
+        return true;
+    }
+
+    /// Whether `cards` are the cards remembered (T2793).
+    fn cardsMatch(m: *const Memo, cards: []const pane_elevation.Card) bool {
+        if (!m.valid or m.cards_len != cards.len) return false;
+        for (cards, m.cards[0..m.cards_len]) |a, b| if (!std.meta.eql(a, b)) return false;
         return true;
     }
 
@@ -950,6 +964,7 @@ pub fn paint(
         return self.timedBlit(hdc, origin_x, origin_y, w, h, comp, desk, opacity);
     }
     self.memo_misses +|= 1;
+    if (fresh or !self.memo.cardsMatch(cards)) self.memo_card_misses +%= 1;
     self.compose_gen +%= 1;
     var timer = std.time.Timer.start() catch null;
     // Only the cards, strips or bar that moved (T2454): what lies outside
@@ -963,6 +978,7 @@ pub fn paint(
         .rects => |r| self.composePartial(comp, desk, r.slice(), cards, strips, style, bar, prep),
     };
     if (done) self.partial_permille +|= @intCast(@divFloor(partial.rects.area() * 1000, @as(i64, w) * h));
+    self.composed_permille +%= if (done) @intCast(@divFloor(partial.rects.area() * 1000, @as(i64, w) * h)) else 1000;
     if (done) self.memo_partial +|= 1 else compose(comp.pixels(), desk.pixels(), @intCast(w), @intCast(h), cards, strips, style, bar, prep);
     _ = w32.QueryPerformanceCounter(&tq_compose);
     // What changed on the window, for a paint that blits only that: the

@@ -1,10 +1,11 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-08T03:30:21-08:00",
-    "commit":  "352734e3e",
+    "generated":  "2026-11-08T11:41:12-08:00",
+    "commit":  "533fce09a",
     "uncommitted":  [
-
+                        "scripts/comp-glide-hold-onscreen.ps1",
+                        "scripts/comp-shadow-onscreen.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -20,11 +21,11 @@
                   "scripts/comp-desk-onscreen.ps1":  "aaab26f3dd26297f681e4736416e43a73636231adf51a7f048f772762d749c38",
                   "scripts/comp-flat-onscreen.ps1":  "f4e677d04745196654ca641c7ffe5053b84320318a24f6c4621371136ca4bebc",
                   "scripts/comp-gl-baseline.ps1":  "b7f792f81e8cd6e6ad7b62ac7329665ec70edbf3a8bde0b37ff3157ec48e05ae",
-                  "scripts/comp-glide-hold-onscreen.ps1":  "870d6cca6105b2d2bdeeccdfc508c9c164322d3bb67f328e3ffd95047be53b9c",
+                  "scripts/comp-glide-hold-onscreen.ps1":  "fc7c7623f63448cb667bf8bcd2013e24cb17e79ac17709f5e4386e783fdc0ff7",
                   "scripts/comp-overlay-onscreen.ps1":  "caad81c2f4ba9863f6e436a26e8ae5b564a8e20da35b893cf5bced8175d8d06a",
                   "scripts/comp-present-glide.ps1":  "70bb4876a8a90a82052cc33848ba70c02f6a81d15dc6e379fab01fa03598b81f",
                   "scripts/comp-present-onscreen.ps1":  "8e30e7b69d5d7628e2a2cf3c76590a12a20644b942a6a8c71c365b89a131c1fa",
-                  "scripts/comp-shadow-onscreen.ps1":  "5f32ff6cb297a09184e7a5747bb24501594139ccc9c9387a4bdda12c4c42a670",
+                  "scripts/comp-shadow-onscreen.ps1":  "0ee2700cf33fc9e49dae2f2994b2641d26e57420d4ca5c6b22511eca4e621071",
                   "scripts/comp-spike.ps1":  "e380b07244c89dcec7a35bfc6a02a6faca43838a93f8a030c9421896024b11ff",
                   "scripts/control-char-scan.ps1":  "a05f37ebf02bb8fb5bfdf123e54ee2a25488a7c25a6d46be7f29730ac8c2753f",
                   "scripts/crash-catch.ps1":  "c8515ad0ae67ec2fc457f54a7477f5afb5fc28281906f261d631ad0a640ca4aa",

@@ -1057,7 +1057,20 @@ glide_tree_moves: u32 = 0,
 /// How many tree panes' card shadows were up as visuals at the last desk
 /// paint (T2741), for the log line that says when it changes.
 tree_shadows_up: usize = 0,
+/// How many of those carried their whole card (T2793).
+tree_wholes_up: usize = 0,
 glide_moves_report: bool = false,
+/// The desk's compose counters when the stack glide began (T2793), for the
+/// landing's report: how often the glide recomposed the desk, and how often
+/// because a card on it had moved.
+glide_desk_mark: ?struct { misses: u32, card_misses: u32, permille: u64, full_moves: u32 } = null,
+/// The desk paints in which a card at its full share - one that could ride
+/// whole - moved on the desk (T2793): what bodies riding their layers take
+/// to zero, and what is left of a glide's desk work when they cannot. The
+/// cards the last paint laid at full share, by view, to compare against.
+desk_full_moves: u32 = 0,
+desk_full_cards: [MAX_DRAG_NODES]struct { view: *PaneView, card: pane_elevation.Card } = undefined,
+desk_full_n: usize = 0,
 /// The first tick of a glide has yet to run: `GHOZTTY_DEBUG_GLIDE_STALL_MS`
 /// blocks the thread right after it (T2572) - or, under
 /// `GHOZTTY_DEBUG_GLIDE_STALL_AT=unfold`, after the tick an opening card's
@@ -9023,14 +9036,19 @@ fn treeShadowsOn() bool {
     return v;
 }
 
-var tree_shadow_knobs: ?struct { double: bool, nomask: bool } = null;
+const TreeShadowKnobs = struct { double: bool, nomask: bool, nobody: bool };
+var tree_shadow_knobs: ?TreeShadowKnobs = null;
 
-fn treeShadowKnobs() struct { double: bool, nomask: bool } {
-    if (tree_shadow_knobs) |k| return .{ .double = k.double, .nomask = k.nomask };
-    const double = chrome_comp.debugKnob("GHOZTTY_COMP_SHADOWS_DOUBLE");
-    const nomask = chrome_comp.debugKnob("GHOZTTY_COMP_SHADOWS_NOMASK");
-    tree_shadow_knobs = .{ .double = double, .nomask = nomask };
-    return .{ .double = double, .nomask = nomask };
+fn treeShadowKnobs() TreeShadowKnobs {
+    if (tree_shadow_knobs) |k| return k;
+    const k: TreeShadowKnobs = .{
+        .double = chrome_comp.debugKnob("GHOZTTY_COMP_SHADOWS_DOUBLE"),
+        .nomask = chrome_comp.debugKnob("GHOZTTY_COMP_SHADOWS_NOMASK"),
+        // T2793's A/B: shadows ride, bodies stay in the desk compose.
+        .nobody = chrome_comp.debugKnob("GHOZTTY_COMP_SHADOWS_NOBODY"),
+    };
+    tree_shadow_knobs = k;
+    return k;
 }
 
 /// The desk paint's half of the tree panes' card shadows (T2741): every pane
@@ -9039,6 +9057,14 @@ fn treeShadowKnobs() struct { double: bool, nomask: bool } {
 /// one; every other pane of the window takes its shadow down. `all` is every
 /// card on the desk - the sidebar's included - which a layer keeps off.
 /// `eligible` false takes every shadow down, back into the compose.
+///
+/// A card may ride WHOLE (T2793): its layer carries its fill, rim and edge
+/// too, and `whole[i]` comes back true so the desk leaves it out - a glide
+/// that only moves such cards then recomposes nothing on the desk. Only
+/// where every pixel of the card is the layer's: `bodies` (solid style, the
+/// glow on its own layers, so the desk's rim is the resting one the body
+/// carries), the full share (not trading its shadow for a strip's), and no
+/// busy light round it (`lit[i]`, the desk's ring).
 fn syncTreeShadows(
     self: *Window,
     slots: []const PaneSlot,
@@ -9046,7 +9072,11 @@ fn syncTreeShadows(
     all: []const pane_elevation.Card,
     style: pane_elevation.CardStyle,
     eligible: bool,
+    bodies: bool,
+    lit: []const bool,
+    whole: []bool,
 ) void {
+    @memset(whole, false);
     const on = eligible and treeShadowsOn() and
         (if (self.chrome_host) |*h| h.shadowAvailable() else false);
     const alloc = self.app.core_app.alloc;
@@ -9055,6 +9085,7 @@ fn syncTreeShadows(
     // a layer laid without keeping off its neighbours.
     const knobs = treeShadowKnobs();
     var up: usize = 0;
+    var wholes: usize = 0;
     for (0..self.tab_count) |tab| {
         var it = self.tab_trees[tab].iterator();
         while (it.next()) |entry| {
@@ -9066,15 +9097,27 @@ fn syncTreeShadows(
                 sf.dropTreeShadow();
                 continue;
             };
-            if (sf.syncTreeShadow(alloc, cards[i], if (knobs.nomask) all[0..0] else all, style)) {
-                if (!knobs.double) cards[i].shadow = 0;
-                up += 1;
+            const can_whole = bodies and !knobs.nobody and !knobs.double and
+                cards[i].shadow >= 1 and !(i < lit.len and lit[i]);
+            switch (sf.syncTreeShadow(alloc, cards[i], if (knobs.nomask) all[0..0] else all, style, can_whole)) {
+                .off => {},
+                .shadow => {
+                    if (!knobs.double) cards[i].shadow = 0;
+                    up += 1;
+                },
+                .whole => {
+                    cards[i].shadow = 0;
+                    if (i < whole.len) whole[i] = true;
+                    up += 1;
+                    wholes += 1;
+                },
             }
         }
     }
-    if (up != self.tree_shadows_up) {
-        log.info("pane shadow visuals up={d}", .{up});
+    if (up != self.tree_shadows_up or wholes != self.tree_wholes_up) {
+        log.info("pane shadow visuals up={d} whole={d}", .{ up, wholes });
         self.tree_shadows_up = up;
+        self.tree_wholes_up = wholes;
     }
 }
 
@@ -11239,6 +11282,7 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
         next.fade = strip_face.fadeOf(self.scale);
         if (next.active()) {
             log.info("pane grid glides for the sidebar column: cards={d} strips={d}", .{ next.len, next.strips_len });
+            self.markGlideDesk();
             self.stack_slide = next;
             self.stack_slide_column = true;
             self.orderStackCards(tree, grid);
@@ -11265,6 +11309,7 @@ fn planStackSlide(self: *Window, tree: SplitTree(PaneView), grid: *const pane_st
             next.fade = strip_face.fadeOf(self.scale);
             if (stackTraceOn()) self.traceStackPlan("runs", &next);
             if (next.active()) {
+                self.markGlideDesk();
                 self.stack_slide = next;
                 self.orderStackCards(tree, grid);
                 self.armGlideSnaps(tree);
@@ -11559,9 +11604,24 @@ fn treeGlideBatch(self: *Window) ?*chrome_comp.Host {
 fn reportGlideMoves(self: *Window) void {
     if (!self.glide_moves_report or self.stack_slide != null) return;
     log.debug("stack glide child moves={d} visual_moves={d} panes={d}", .{ self.glide_child_moves, self.glide_tree_moves, self.leafCount(self.active_tab) });
+    if (self.glide_desk_mark) |m| log.info("stack glide desk composed={d} card_composed={d} area_permille={d} full_card_moves={d} wholes={d}", .{
+        self.pane_desk.memo_misses -% m.misses,
+        self.pane_desk.memo_card_misses -% m.card_misses,
+        self.pane_desk.composed_permille -% m.permille,
+        self.desk_full_moves -% m.full_moves,
+        self.tree_wholes_up,
+    });
+    self.glide_desk_mark = null;
     self.glide_moves_report = false;
     self.glide_child_moves = 0;
     self.glide_tree_moves = 0;
+}
+
+/// The desk's compose counters as a stack glide starts (T2793); a glide that
+/// takes over one under way keeps the first one's.
+fn markGlideDesk(self: *Window) void {
+    if (self.stack_slide != null and self.glide_desk_mark != null) return;
+    self.glide_desk_mark = .{ .misses = self.pane_desk.memo_misses, .card_misses = self.pane_desk.memo_card_misses, .permille = self.pane_desk.composed_permille, .full_moves = self.desk_full_moves };
 }
 
 fn endStackSlide(self: *Window) void {
@@ -12617,11 +12677,15 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     // Each busy pane's light (T1899), round its whole card.
     var lights: [PaneDesk.MAX_LIGHTS]PaneDesk.Light = undefined;
     var nl: usize = 0;
+    // Which cards carry a light: theirs is the desk's ring, so they never
+    // ride whole (T2793).
+    var lit_cards = [_]bool{false} ** MAX_DRAG_NODES;
     const now = std.time.milliTimestamp();
     for (slots[0..n], 0..) |slot, i| {
         if (nl >= lights.len) break;
         const r = busyReportFor(slot.view, now) orelse continue;
         const shape = busy_light.shapeFor(r) orelse continue;
+        lit_cards[i] = true;
         lights[nl] = .{
             .key = @intFromPtr(slot.view),
             .card = cards[i],
@@ -12786,11 +12850,29 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         keep_off[nk] = .{ .left = b.tab.left, .top = b.tab.top, .right = b.tab.right, .bottom = b.tab.bottom };
         nk += 1;
     }
-    self.syncTreeShadows(slots[0..n], cards[0..n], keep_off[0..nk], style, on_visual and !over and bar == null);
+    // The glow layers go over the card layers (T2793), so each is unblended
+    // against the picture under it with every shadow in it - the cards as
+    // they are before their shadows leave the desk for those layers.
+    var glow_cards: [MAX_DRAG_NODES + 1]pane_elevation.Card = undefined;
+    @memcpy(glow_cards[0..nc], cards[0..nc]);
+    var whole = [_]bool{false} ** MAX_DRAG_NODES;
+    self.syncTreeShadows(slots[0..n], cards[0..n], keep_off[0..nk], style, on_visual and !over and bar == null, glow_layers and !glass, lit_cards[0..n], whole[0..n]);
+    // A card riding whole is its layer's (T2793): the desk composes without
+    // it, so its memo holds while only such cards move. It stays in
+    // `keep_off`, so every other layer still keeps off it, and in
+    // `glow_cards` for the glow layers, which are indexed by slot.
+    var desk_cards: [MAX_DRAG_NODES + 1]pane_elevation.Card = undefined;
+    var nd: usize = 0;
+    for (cards[0..nc], 0..) |c, i| {
+        if (i < n and whole[i]) continue;
+        desk_cards[nd] = c;
+        nd += 1;
+    }
+    self.noteDeskFullCards(slots[0..n], glow_cards[0..n], whole[0..n]);
     if (self.hwnd) |hw| resizeTrace("desk-pre", hw);
-    self.pane_desk.paint(desk_dc, area.left, area.top, w, h, cards[0..nc], bands[0..nt], style, self.desk_variant, lights[0..nl], self.busyHead(), bar, self.deskOpacity());
+    self.pane_desk.paint(desk_dc, area.left, area.top, w, h, desk_cards[0..nd], bands[0..nt], style, self.desk_variant, lights[0..nl], self.busyHead(), bar, self.deskOpacity());
     if (self.hwnd) |hw| resizeTrace("desk-paint", hw);
-    if (glow_layers) self.syncGlowLayers(slots[0..n], cards[0..nc], bands[0..nt], style, bar) else self.dropGlowLayers();
+    if (glow_layers) self.syncGlowLayers(slots[0..n], glow_cards[0..nc], bands[0..nt], style, bar) else self.dropGlowLayers();
     if (self.hwnd) |hw| resizeTrace("desk-glow", hw);
     // On the compositor the visual already lies under every pane.
     if (hero_split == null and self.deskOpacity() == null and !on_visual) self.paintDeskUnderPanes(slots[0..n], area, name_rects[0..nn]);
@@ -12798,6 +12880,30 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     self.syncGlassBackdrops(slots[0..n], area, glass, color_math.isLight(fill));
     if (self.hwnd) |hw| resizeTrace("desk-glass", hw);
     if (self.sidebar) |sb| sb.deskPainted(self.pane_desk.desk_gen);
+}
+
+/// Count a desk paint in which a card the desk lays at its full share moved
+/// or arrived (T2793) - `cards` before their shadows left for layers, so a
+/// card trading its shadow for a strip's (share below 1) is not one - and
+/// remember this paint's such cards for the next.
+fn noteDeskFullCards(self: *Window, slots: []const PaneSlot, cards: []const pane_elevation.Card, whole: []const bool) void {
+    var next: [MAX_DRAG_NODES]@TypeOf(self.desk_full_cards[0]) = undefined;
+    var nn: usize = 0;
+    var moved = false;
+    for (slots, cards, whole) |sl, c, wh| {
+        if (wh or c.shadow < 1 or nn >= next.len) continue;
+        next[nn] = .{ .view = sl.view, .card = c };
+        nn += 1;
+        const was = for (self.desk_full_cards[0..self.desk_full_n]) |e| {
+            if (e.view == sl.view) break e.card;
+        } else null;
+        if (was) |w| {
+            if (w.left != c.left or w.top != c.top or w.right != c.right or w.bottom != c.bottom) moved = true;
+        } else moved = true;
+    }
+    if (moved) self.desk_full_moves +%= 1;
+    @memcpy(self.desk_full_cards[0..nn], next[0..nn]);
+    self.desk_full_n = nn;
 }
 
 /// Whether this paint's desk goes to the chrome host's visual (T2509),

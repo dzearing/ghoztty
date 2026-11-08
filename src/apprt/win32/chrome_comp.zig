@@ -1395,8 +1395,11 @@ pub const Host = struct {
             stage = "overlay-visual";
             const vis = try self.newVisual();
             errdefer release(vis);
-            // The desk's only child: drawn over its content, inside its clip.
-            try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, desk, slot_dcomp_visual_add_visual)(desk, vis, 1, null));
+            // The desk's top child: drawn over its content and every layer
+            // on it, inside its clip. `insertAbove` FALSE with no reference
+            // is the TOP of the z-order; TRUE with none is the bottom, which
+            // put it under the card shadows' layer (T2793).
+            try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, desk, slot_dcomp_visual_add_visual)(desk, vis, 0, null));
             self.ovl_visual = vis;
             log.info("chrome overlay visual attached: {d}x{d}", .{ w, h });
             whole = true;
@@ -1464,12 +1467,14 @@ pub const Host = struct {
             errdefer release(effect);
             try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, effect, slot_dcomp_effect_set_opacity_float)(effect, 0));
             try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_effect)(vis, effect));
-            // Over the desk's content, under what the painters over it drew:
-            // below the overlay when it is up, else on top (an overlay that
-            // comes later goes on top of it).
+            // Over the desk's content and the card layers (a card riding
+            // whole carries its resting rim, which the lit one goes over,
+            // T2793), under what the painters over it drew: below the
+            // overlay when it is up, else on top - `insertAbove` FALSE with
+            // no reference (an overlay that comes later goes on top of it).
             if (self.ovl_visual) |ovl| {
                 try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, desk, slot_dcomp_visual_add_visual)(desk, vis, 0, ovl));
-            } else try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, desk, slot_dcomp_visual_add_visual)(desk, vis, 1, null));
+            } else try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, desk, slot_dcomp_visual_add_visual)(desk, vis, 0, null));
             g.visual = vis;
             g.effect = effect;
             g.x = std.math.minInt(i32);

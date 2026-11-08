@@ -2100,6 +2100,11 @@ fn treeShadowRide(self: *Surface, h: *chrome_comp.Host) ?chrome_comp.ShadowRide 
     return .{ .sv = &self.tree_shadow, .dx = d[0], .dy = d[1] };
 }
 
+/// What `syncTreeShadow` put up (T2793): nothing (the desk bakes the card
+/// whole), the card's shadow alone (the desk lays its body), or the whole
+/// card (the desk leaves it out).
+pub const TreeShadowRide = enum { off, shadow, whole };
+
 /// Window thread, from the desk paint: put this pane's card shadow on the
 /// compositor (T2741) - `card` and `others` in the desk's own pixels (the
 /// content area's), `others` every card the layer must keep off, the pane's
@@ -2113,20 +2118,27 @@ fn treeShadowRide(self: *Surface, h: *chrome_comp.Host) ?chrome_comp.ShadowRide 
 /// its size, the style, or a neighbour's place next to it changes - and on
 /// a glide not for the neighbours, which move past it: it keeps the mask it
 /// had, and the paint that lands it renders the true one.
+///
+/// `whole` (T2793): the caller has checked that every pixel of the card is
+/// the layer's to lay (solid style, glow layers on, full share, no busy
+/// light), so the layer carries the card's body too - fill, rim and edge
+/// over its shadow - at full opacity, and `.whole` tells the desk to leave
+/// the card out. A style with no body (glass) answers `.shadow`.
 pub fn syncTreeShadow(
     self: *Surface,
     alloc: std.mem.Allocator,
     card: pane_elevation.Card,
     others: []const pane_elevation.Card,
     style: pane_elevation.CardStyle,
-) bool {
+    whole: bool,
+) TreeShadowRide {
     const h: *chrome_comp.Host = if (self.parent_window.chrome_host) |*host| host else {
         self.dropTreeShadow();
-        return false;
+        return .off;
     };
     if (self.tree_visual == null or !h.shadowAvailable()) {
         self.dropTreeShadow();
-        return false;
+        return .off;
     }
     // A rebuilt host's tree no longer holds it: only the references go.
     if (self.tree_shadow.live() and self.tree_shadow_epoch != h.rebuilds) {
@@ -2137,7 +2149,8 @@ pub fn syncTreeShadow(
     const share = std.math.clamp(card.shadow, 0, 1);
     var full = card;
     full.shadow = 1;
-    var key = shadow_layer.Key.masked(full, style, others);
+    var key = (if (whole) shadow_layer.Key.withBody(full, style, others) else null) orelse
+        shadow_layer.Key.masked(full, style, others);
     const gliding = self.tree_glide_at != null;
     if (gliding) if (self.tree_shadow_key) |old| {
         var same = old;
@@ -2148,18 +2161,18 @@ pub fn syncTreeShadow(
     if (fresh) {
         var layer = (shadow_layer.renderKey(alloc, key, style, null) catch null) orelse {
             self.dropTreeShadow();
-            return false;
+            return .off;
         };
         defer layer.deinit(alloc);
         h.shadowUpload(&self.tree_shadow, layer.px, layer.w, layer.h) catch {
             const f = chrome_comp.Host.lastFailure();
             log.warn("pane shadow visual failed at {s}: hr=0x{x:0>8}; the desk keeps its shadow", .{ f.stage, chrome_comp.hex(f.hr) });
             self.dropTreeShadow();
-            return false;
+            return .off;
         };
         self.tree_shadow_key = key;
         self.tree_shadow_epoch = h.rebuilds;
-        log.debug("pane shadow visual rendered {d}x{d} share={d:.2} mask={d}", .{ layer.w, layer.h, share, key.mask.n });
+        log.debug("pane shadow visual rendered {d}x{d} share={d:.2} mask={d} body={}", .{ layer.w, layer.h, share, key.mask.n, key.body != null });
     }
     const reach: f32 = @floatFromInt(pane_elevation.shadowReachPx(style.scale));
     const origin = [2]f32{ @as(f32, @floatFromInt(card.left)) - reach, @as(f32, @floatFromInt(card.top)) - reach };
@@ -2174,13 +2187,15 @@ pub fn syncTreeShadow(
     // A glide the compositor runs carries it; otherwise it goes where the
     // card is now.
     const place: ?[2]f32 = if (self.tree_glide_decl != null) null else origin;
-    h.shadowShow(&self.tree_shadow, share, place) catch {
+    // A body is the card itself, which never fades with its shadow's share.
+    const opacity: f32 = if (key.body != null) 1 else share;
+    h.shadowShow(&self.tree_shadow, opacity, place) catch {
         const f = chrome_comp.Host.lastFailure();
         log.warn("pane shadow visual show failed at {s}: hr=0x{x:0>8}; the desk keeps its shadow", .{ f.stage, chrome_comp.hex(f.hr) });
         self.dropTreeShadow();
-        return false;
+        return .off;
     };
-    return true;
+    return if (key.body != null) .whole else .shadow;
 }
 
 /// Window thread: take this pane's card shadow off the compositor (T2741),

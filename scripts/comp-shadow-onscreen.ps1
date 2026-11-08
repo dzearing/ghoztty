@@ -24,6 +24,9 @@
 #                        the desk visual. The reference picture.
 #   - lshadow/dshadow/gshadow: the shadows are visuals. The log says both went up
 #                        and none failed; the frame matches the base arm's.
+#                        Since T2793 a solid card's layer carries the whole
+#                        card (fill, rim, edge) and the desk leaves it out
+#                        (.8 reads whole=2), so the match proves the body too.
 #   - lnomask:           GHOZTTY_COMP_SHADOWS_NOMASK=1: the layers are laid
 #                        without keeping off the neighbouring card. A positive
 #                        control that the mask is measurable on screen: it
@@ -213,6 +216,15 @@ try {
             Assert "$arm.5 both cards' shadows went up as visuals" (Wait-Log $err 'pane shadow visuals up=2' 10000)
             $text = Read-Text $err
             Assert "$arm.6 no shadow step failed" ($text -notmatch 'pane shadow visual (show )?failed|chrome shadow layer failed')
+            # T2793: a solid card rides WHOLE - its fill, rim and edge in the
+            # layer, the desk composed without it - so the match below is a
+            # proof of the body as well as the shadow. Glass has no body, and
+            # the double control keeps the desk baking the card.
+            if ($arm.StartsWith('g') -or $arm -eq 'ddouble') {
+                Assert "$arm.8 no card rode whole (glass / double)" ($text -notmatch 'pane shadow visuals up=\d+ whole=[1-9]')
+            } else {
+                Assert "$arm.8 both solid cards rode whole (body in the layer)" (Wait-Log $err 'pane shadow visuals up=2 whole=2' 10000)
+            }
         }
 
         $fgPid = [uint32]0

@@ -100,7 +100,14 @@ param(
     [switch]$NegativeControl,
     [switch]$NoGlideTree,
     [int]$StallMs = 500,
-    [switch]$NoDeclare
+    [switch]$NoDeclare,
+    # T2793: the solid card style (--macos-pane-glass=false), whose cards
+    # ride their layers whole - fill, rim and edge - so a glide that moves
+    # them recomposes no card on the desk. -NoBody keeps the bodies in the
+    # desk compose (GHOZTTY_COMP_SHADOWS_NOBODY=1): the stall arm's .17
+    # must then go red.
+    [switch]$Solid,
+    [switch]$NoBody
 )
 
 $ErrorActionPreference = 'Continue'
@@ -499,12 +506,14 @@ try {
         if ($stalls) { $env:GHOZTTY_DEBUG_GLIDE_STALL_MS = "$StallMs" } else { Remove-Item env:GHOZTTY_DEBUG_GLIDE_STALL_MS -ErrorAction SilentlyContinue }
         if ($arm -eq 'unfold') { $env:GHOZTTY_DEBUG_GLIDE_STALL_AT = 'unfold' } else { Remove-Item env:GHOZTTY_DEBUG_GLIDE_STALL_AT -ErrorAction SilentlyContinue }
         if ($NoDeclare) { $env:GHOZTTY_GLIDE_DECLARE = '0' } else { Remove-Item env:GHOZTTY_GLIDE_DECLARE -ErrorAction SilentlyContinue }
+        if ($NoBody) { $env:GHOZTTY_COMP_SHADOWS_NOBODY = '1' } else { Remove-Item env:GHOZTTY_COMP_SHADOWS_NOBODY -ErrorAction SilentlyContinue }
         $err = Join-Path $dir 'stderr.txt'
         $app = Start-OnTestDesktop -Exe $Exe -Arguments @(
             '--config-default-files=false', '--session-persistence=false',
             '--window-width=100', '--window-height=30', '--background=#000000',
             '--palette=1=#ff0000', '--palette=2=#00ff00', '--palette=4=#0000ff', '--palette=5=#ff00ff',
-            '--command=powershell.exe -NoLogo -NoProfile', "--title=t2513-$arm") -StdErr $err
+            '--command=powershell.exe -NoLogo -NoProfile', "--title=t2513-$arm",
+            "--macos-pane-glass=$(if ($Solid) { 'false' } else { 'true' })") -StdErr $err
         $top = $null
         for ($t = 0; $t -lt 100 -and -not $top; $t++) {
             $w = @([GhWin]::TopLevel([uint32]$app.Pid, 'GhozttyWindow'))
@@ -605,6 +614,21 @@ try {
             # and fade - went to the compositor whole too.
             $faces = [regex]::Matches((Read-Text $err), 'strip face glide declared').Count
             Assert "$arm.14 the folding card's face was handed to the compositor ($faces face path(s) declared)" ($faces -ge 1)
+            # T2793: the desk's recomposes over the glide - all of them, and
+            # those where a card on the desk had moved.
+            # With -Solid the cards on show ride whole, so no paint of the
+            # glide recomposed the desk because a full-share card moved: the
+            # folding and opening cards (share below 1, trading their shadow
+            # for the strip's) are what is left of its desk work.
+            $dm = [regex]::Matches((Read-Text $err), 'stack glide desk composed=(\d+) card_composed=(\d+) area_permille=(\d+) full_card_moves=(\d+) wholes=(\d+)')
+            if ($dm.Count -gt 0) {
+                $d = $dm[$dm.Count - 1]
+                $full = [int]$d.Groups[4].Value; $wholes = [int]$d.Groups[5].Value
+                "  glide desk: composed $($d.Groups[1].Value), card_composed $($d.Groups[2].Value), area_permille $($d.Groups[3].Value), full_card_moves $full, wholes $wholes"
+                if ($Solid) {
+                    Assert "$arm.17 the cards on show rode whole and the desk never recomposed for one moving ($full full-share card moves, $wholes riding whole at the landing)" ($full -eq 0 -and $wholes -ge 1)
+                }
+            } else { Assert "$arm.17 the glide reported its desk work" $false }
         }
         # T2779: the opening card's face went to the compositor with the frame
         # it lands with, and the stall it was scored through happened.
