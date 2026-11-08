@@ -342,6 +342,31 @@ pub fn needsAlphaRebuild(premultiplied: bool, window_translucent: bool) bool {
     return !premultiplied and window_translucent;
 }
 
+/// `D3D11_RESOURCE_MISC_SHARED`. The interop texture is created with it
+/// (T2785): without it the GL driver opens the texture's allocation through
+/// an internal alias, and about one close in seven of a pane that had been
+/// resized left that window-sized allocation behind after a successful
+/// `wglDXUnregisterObjectNV` (3 MB steps that never settled). With the flag
+/// the driver opens the resource by its share handle, and the same 60-cycle
+/// resize-and-close run stays flat.
+const D3D11_RESOURCE_MISC_SHARED: u32 = 0x2;
+
+/// The misc flags to try for the interop texture, in order: shared first,
+/// then plain for a driver that refuses a shared render target.
+pub fn sharedTextureMiscFlags(disabled: bool) []const u32 {
+    const both = [_]u32{ D3D11_RESOURCE_MISC_SHARED, 0 };
+    return if (disabled) both[1..] else both[0..];
+}
+
+/// `GHOZTTY_COMP_SHARED_TEXTURE=0` creates the interop texture plain (the
+/// pre-T2785 shape), for an A/B on a driver where the shared one misbehaves.
+fn sharedTextureDisabled() bool {
+    if (comptime builtin.os.tag != .windows) return false;
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_COMP_SHARED_TEXTURE") catch return false;
+    defer std.heap.page_allocator.free(raw);
+    return !wantedWith(raw, true);
+}
+
 /// Whether panes should present into their window's tree (T2553,
 /// `comp_tree.zig`) rather than a target on their own child window.
 pub fn treeEnabled() bool {
@@ -659,7 +684,7 @@ pub const Presenter = struct {
 
     fn createShared(self: *Presenter, w: u32, h: u32) Error!void {
         const cap = sharedCapacity(0, 0, w, h);
-        const desc: D3D11_TEXTURE2D_DESC = .{
+        var desc: D3D11_TEXTURE2D_DESC = .{
             .width = cap[0],
             .height = cap[1],
             .mip_levels = 1,
@@ -672,8 +697,17 @@ pub const Presenter = struct {
             .cpu_access_flags = 0,
             .misc_flags = 0,
         };
+        const create = slot(*const fn (Obj, *const D3D11_TEXTURE2D_DESC, ?*const anyopaque, *?Obj) callconv(.winapi) HRESULT, self.device, slot_d3d11_device_create_texture2d);
         var tex: ?Obj = null;
-        try check(slot(*const fn (Obj, *const D3D11_TEXTURE2D_DESC, ?*const anyopaque, *?Obj) callconv(.winapi) HRESULT, self.device, slot_d3d11_device_create_texture2d)(self.device, &desc, null, &tex));
+        var hr: HRESULT = 0;
+        for (sharedTextureMiscFlags(sharedTextureDisabled())) |misc| {
+            desc.misc_flags = misc;
+            tex = null;
+            hr = create(self.device, &desc, null, &tex);
+            if (hr >= 0 and tex != null) break;
+            if (misc != 0) log.warn("shared interop texture refused (0x{x}); using a plain one", .{@as(u32, @bitCast(hr))});
+        }
+        try check(hr);
         const t = tex orelse return error.ComFailed;
         errdefer release(t);
 
@@ -891,6 +925,12 @@ test "explicit knob values win and anything else is the default (T2514)" {
         try std.testing.expectEqual(d, wantedWith("yes please", d));
     }
     try std.testing.expectEqual(default_on, wanted(null));
+}
+
+test "the interop texture is tried shared first, plain as the fallback (T2785)" {
+    try std.testing.expectEqualSlices(u32, &.{ D3D11_RESOURCE_MISC_SHARED, 0 }, sharedTextureMiscFlags(false));
+    // The A/B knob drops the shared attempt entirely.
+    try std.testing.expectEqualSlices(u32, &.{0}, sharedTextureMiscFlags(true));
 }
 
 test "flipBlit turns the GL target right way up in a D3D texture" {
