@@ -45,10 +45,18 @@
 # repo's zig-out. Runs on the BACKGROUND test desktop.
 #
 #   powershell -NoProfile -File test\win32\pane-stack-unfold.ps1
+# -Tree (T2777) runs the app in the composition pane tree
+# (GHOZTTY_COMP_PRESENT + GHOZTTY_COMP_CHROME + GHOZTTY_COMP_PANE_TREE). The
+# opening card's face is then a picture in the window's own tree, in a layer
+# over every pane visual, instead of the GhozttyStripFace popup: carried, U2
+# reads it from the app's `strip face visual shown|hidden` lines and requires
+# that the popup is never on show. GHOZTTY_FACE_COMP=0 set by the caller
+# keeps the face on its popup and MUST fail that U2.
 param(
     [string]$ExePath,
     [string]$AgentExe,
     [switch]$NegativeControl,
+    [switch]$Tree,
     [ValidateSet('flat', 'elevated')][string]$PaneStyle = 'flat',
     [switch]$Interactive
 )
@@ -130,6 +138,17 @@ function Test-Shows($q, [int]$x, [int]$y) {
     return [bool]$hits[0]
 }
 
+# The face's visual in the window's tree (T2777, -Tree) from line $from on.
+function Get-FaceVisual([int]$from) {
+    $lines = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue)
+    $o = [pscustomobject]@{ Shown = 0; Hidden = 0; Failed = 0 }
+    for ($i = $from; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match 'strip face visual shown') { $o.Shown++ }
+        elseif ($lines[$i] -match 'strip face visual hidden') { $o.Hidden++ }
+        elseif ($lines[$i] -match 'strip face visual failed|strip face moved to its popup') { $o.Failed++ }
+    }
+    return $o
+}
 function Get-LogLength { return @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue).Count }
 # The `stack unfold carried content_alpha=N card=L,W live=0|1 frame=0|1
 # resizes=N` oracle lines (T2458) from line $from on.
@@ -163,6 +182,11 @@ $savedPipe = $env:GHOZTTY_PIPE_SUFFIX
 $savedSlide = $env:GHOZTTY_STACK_SLIDE_MS
 $env:GHOZTTY_PIPE_SUFFIX = "-stackunfold$PID"
 $env:GHOZTTY_STACK_SLIDE_MS = "$slideMs"
+# -Tree (T2777): the composition pane tree, restored on the way out.
+$treeKnobs = @('GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE')
+$savedTree = @{}
+foreach ($k in $treeKnobs) { $savedTree[$k] = [Environment]::GetEnvironmentVariable($k) }
+if ($Tree) { foreach ($k in $treeKnobs) { [Environment]::SetEnvironmentVariable($k, '1') } }
 
 Stop-RepoInstances
 New-Item -ItemType Directory -Force $root | Out-Null
@@ -283,7 +307,15 @@ try {
     if ($carriedMode) {
         # The face is a popup above every pane window: nothing can cover it.
         $faceSeen = @($samples | Where-Object { $_.Faces -gt 0 }).Count
-        Assert ($faceSeen -ge 2) "U2: carried, s2's card is drawn by its face on $faceSeen samples (need 2+), which no pane window can cover"
+        if ($Tree) {
+            # In the tree the face is a visual in the layer over every pane's.
+            $fv = Get-FaceVisual $logClick
+            Say ("      face visual: shown {0}, hidden {1}, failed {2}; popup on show in {3} samples" -f $fv.Shown, $fv.Hidden, $fv.Failed, $faceSeen)
+            Assert ($fv.Shown -ge 1 -and $fv.Failed -eq 0 -and $faceSeen -eq 0) "U2: carried, s2's card is drawn by its face in the window's tree ($($fv.Shown) up, $($fv.Failed) fell back), over every pane visual, never on its popup ($faceSeen samples)"
+            Assert ($fv.Shown -eq $fv.Hidden) "U2: the face's visual is down once s2 has landed (up $($fv.Shown), down $($fv.Hidden))"
+        } else {
+            Assert ($faceSeen -ge 2) "U2: carried, s2's card is drawn by its face on $faceSeen samples (need 2+), which no pane window can cover"
+        }
         Assert ($coveredAt.Count -eq 0) "U2: no other pane covers s2's leading edge in any of $judged live mid-slide samples ($($coveredAt.Count) covered)"
     } else {
         Assert ($judged -ge 2) "U2: precondition - $judged mid-slide samples to judge (need 2+)"
@@ -327,6 +359,7 @@ try {
     if ($null -ne $savedAgentBin) { $env:GHOSTTY_LOCAL_AGENT_BIN = $savedAgentBin }
     else { Remove-Item env:GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue }
     $env:GHOZTTY_PIPE_SUFFIX = $savedPipe
+    foreach ($k in $treeKnobs) { [Environment]::SetEnvironmentVariable($k, $savedTree[$k]) }
     if ($null -ne $savedSlide) { $env:GHOZTTY_STACK_SLIDE_MS = $savedSlide }
     else { Remove-Item env:GHOZTTY_STACK_SLIDE_MS -ErrorAction SilentlyContinue }
     if ($script:fail -eq 0) { Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue }

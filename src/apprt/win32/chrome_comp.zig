@@ -648,6 +648,31 @@ pub const ShadowVis = struct {
     }
 };
 
+/// A folding card's face as a picture in the window's pane layer (T2777):
+/// the strip's band and name with the pane's carried frame over it, the
+/// same pixels the face popup (`StripFace`) shows, placed and faded from the
+/// window's thread. A child of the layer's face container, which stays over
+/// every pane visual, so the face covers the card it stands for. The face
+/// owns it; `faceShow` makes it on first use and `faceDrop` ends it.
+pub const FaceVis = struct {
+    visual: ?Obj = null,
+    effect: ?Obj = null,
+    surface: ?Obj = null,
+    /// The rounded clip object, once a card shape needs one.
+    clip: ?Obj = null,
+    /// The surface's size: the largest frame this glide has needed.
+    sw: i32 = 0,
+    sh: i32 = 0,
+    /// The host it was made on (`Host.rebuilds`): a rebuilt host's tree no
+    /// longer holds it.
+    epoch: u32 = 0,
+    opacity: f32 = -1,
+
+    pub fn live(self: *const FaceVis) bool {
+        return self.visual != null;
+    }
+};
+
 /// A pane card's shadow riding with its pane visual (T2741): its offset is
 /// the pane visual's plus `dx`, `dy` - the desk's origin already taken out -
 /// set or glided in the same commit as the pane's.
@@ -793,6 +818,15 @@ pub const Host = struct {
     pane_root: ?Obj = null,
     /// Pane visuals adopted since the host was built, for the log.
     pane_adopts: u32 = 0,
+    /// The folding cards' faces (T2777): a container in the pane layer, over
+    /// every pane visual (a pane adopted later goes in below it), made the
+    /// first time a face goes up.
+    face_root: ?Obj = null,
+    /// A step of a face visual failed on this host; faces stay on their
+    /// popups until the host is rebuilt.
+    face_failed: bool = false,
+    /// Face frames uploaded since the host was built, for the log.
+    face_uploads: u32 = 0,
 
     /// How many times this window's host was rebuilt after a device loss.
     rebuilds: u32 = 0,
@@ -1653,7 +1687,11 @@ pub const Host = struct {
         // before its first placement.
         const none: D2D1_RECT_F = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
         try check(slot(*const fn (Obj, *const D2D1_RECT_F) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_clip_rect)(vis, &none));
-        try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, root, slot_dcomp_visual_add_visual)(root, vis, 1, null));
+        // On top of the panes, under the faces (T2777): a face covers the
+        // card it stands for whichever pane was adopted last.
+        if (self.face_root) |faces| {
+            try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, root, slot_dcomp_visual_add_visual)(root, vis, 0, faces));
+        } else try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, root, slot_dcomp_visual_add_visual)(root, vis, 1, null));
         stage = "";
         self.pane_adopts +|= 1;
         log.info("pane visual adopted into the window tree (adopts={d})", .{self.pane_adopts});
@@ -1779,6 +1817,125 @@ pub const Host = struct {
         self.commit() catch {};
     }
 
+    /// Whether a folding card's face can be a picture in the pane layer
+    /// (T2777): the layer exists - a pane has been adopted into the window's
+    /// tree - and no face step has failed here.
+    pub fn faceAvailable(self: *const Host) bool {
+        return self.pane_root != null and !self.face_failed;
+    }
+
+    /// Whether `fv` hangs in this host's tree.
+    pub fn faceCurrent(self: *const Host, fv: *const FaceVis) bool {
+        return fv.visual != null and fv.epoch == self.rebuilds and self.face_root != null;
+    }
+
+    /// Put a face frame up as `fv`'s picture (T2777): `px` is the face's
+    /// whole `cap_w` x `cap_h` DIB (the largest frame this glide can need),
+    /// whose top-left `w` x `h` is this frame, shown at (`x`, `y`) in the
+    /// client area, cut to `c` (its own pixels), at `opacity` (0..1). The
+    /// surface is made at the DIB's size, so every narrower frame of the
+    /// glide reuses it; a surface's first draw must cover all of it, so
+    /// that one uploads the whole DIB. Commits, or leaves it to the batch.
+    pub fn faceShow(self: *Host, fv: *FaceVis, px: []const u32, w: i32, h: i32, cap_w: i32, cap_h: i32, x: i32, y: i32, c: comp_tree.Clip, opacity: f32) Error!void {
+        if (!self.faceAvailable()) return error.Unavailable;
+        if (w <= 0 or h <= 0 or w > cap_w or h > cap_h) return error.ComFailed;
+        if (px.len < @as(usize, @intCast(cap_w)) * @as(usize, @intCast(cap_h))) return error.ComFailed;
+        errdefer self.face_failed = true;
+        if (fv.visual != null and !self.faceCurrent(fv)) releaseFace(fv);
+        if (fv.visual == null) {
+            const faces = try self.ensureFaceRoot();
+            stage = "face-visual";
+            const vis = try self.newVisual();
+            errdefer release(vis);
+            var e: ?Obj = null;
+            try check(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_effect_group)(self.dcomp, &e));
+            const effect = e orelse return error.ComFailed;
+            errdefer release(effect);
+            try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_effect)(vis, effect));
+            try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, faces, slot_dcomp_visual_add_visual)(faces, vis, 1, null));
+            fv.* = .{ .visual = vis, .effect = effect, .epoch = self.rebuilds };
+        }
+        const vis = fv.visual.?;
+        var whole = false;
+        if (fv.surface == null or cap_w != fv.sw or cap_h != fv.sh) {
+            stage = "face-surface";
+            const sw = cap_w;
+            const sh = cap_h;
+            whole = true;
+            if (fv.surface) |old| release(old);
+            fv.surface = null;
+            var surface: ?Obj = null;
+            try check(slot(*const fn (Obj, u32, u32, u32, u32, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_surface)(self.dcomp, @intCast(sw), @intCast(sh), DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &surface));
+            const surf = surface orelse return error.ComFailed;
+            errdefer release(surf);
+            try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_content)(vis, surf));
+            fv.surface = surf;
+            fv.sw = sw;
+            fv.sh = sh;
+        }
+        stage = "face-upload";
+        try self.drawRect(fv.surface.?, px, cap_w, .{ .left = 0, .top = 0, .right = if (whole) cap_w else w, .bottom = if (whole) cap_h else h });
+        stage = "face-place";
+        try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_x)(vis, @floatFromInt(x)));
+        try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_y)(vis, @floatFromInt(y)));
+        // Never past this frame: the surface beyond it holds an older one.
+        var cut = c;
+        cut.left = @max(cut.left, 0);
+        cut.top = @max(cut.top, 0);
+        cut.right = @min(cut.right, @as(f32, @floatFromInt(w)));
+        cut.bottom = @min(cut.bottom, @as(f32, @floatFromInt(h)));
+        if (cut.rounded()) {
+            const rc = try self.paneClipObject(vis, cut, &fv.clip);
+            const Set = *const fn (Obj, f32) callconv(.winapi) HRESULT;
+            inline for (.{ slot_dcomp_rect_clip_set_left, slot_dcomp_rect_clip_set_top, slot_dcomp_rect_clip_set_right, slot_dcomp_rect_clip_set_bottom }, .{ "left", "top", "right", "bottom" }) |s, f| {
+                try check(slot(Set, rc, s)(rc, @field(cut, f)));
+            }
+        } else {
+            const r: D2D1_RECT_F = .{ .left = cut.left, .top = cut.top, .right = cut.right, .bottom = cut.bottom };
+            try check(slot(*const fn (Obj, *const D2D1_RECT_F) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_clip_rect)(vis, &r));
+        }
+        const o = std.math.clamp(opacity, 0, 1);
+        if (o != fv.opacity) {
+            try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, fv.effect.?, slot_dcomp_effect_set_opacity_float)(fv.effect.?, o));
+            fv.opacity = o;
+        }
+        self.face_uploads +|= 1;
+        stage = "";
+        try self.commit();
+    }
+
+    /// Take `fv` off the compositor and drop its references. Commits, or
+    /// leaves it to the batch.
+    pub fn faceDrop(self: *Host, fv: *FaceVis) void {
+        const vis = fv.visual orelse return;
+        if (self.faceCurrent(fv)) {
+            _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, self.face_root.?, slot_dcomp_visual_remove_visual)(self.face_root.?, vis);
+            self.commit() catch {};
+        }
+        releaseFace(fv);
+    }
+
+    /// Drop `fv`'s references without touching a tree: its host is gone.
+    pub fn releaseFace(fv: *FaceVis) void {
+        if (fv.clip) |o| release(o);
+        if (fv.surface) |o| release(o);
+        if (fv.effect) |o| release(o);
+        if (fv.visual) |o| release(o);
+        fv.* = .{};
+    }
+
+    fn ensureFaceRoot(self: *Host) Error!Obj {
+        if (self.face_root) |r| return r;
+        const root = try self.ensurePaneRoot();
+        stage = "face-root";
+        const faces = try self.newVisual();
+        errdefer release(faces);
+        // Over every pane visual already in the layer.
+        try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, root, slot_dcomp_visual_add_visual)(root, faces, 1, null));
+        self.face_root = faces;
+        return faces;
+    }
+
     fn ensurePaneRoot(self: *Host) Error!Obj {
         if (self.pane_root) |r| return r;
         if (self.pane_target == null) {
@@ -1858,6 +2015,7 @@ pub const Host = struct {
             _ = slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, pt, slot_dcomp_target_set_root)(pt, null);
             _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_commit)(self.dcomp);
         }
+        if (self.face_root) |r| release(r);
         if (self.pane_root) |r| release(r);
         if (self.pane_target) |t| release(t);
         if (self.fill_visual) |v| release(v);

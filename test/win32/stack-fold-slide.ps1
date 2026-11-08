@@ -112,6 +112,17 @@
 # -NegativeControl sets the slide to 0 ms (an instant re-layout, the answer
 # before any slide) and keeps F1/F2/F7/F8/F10/F14 as written: they MUST fail.
 #
+# -Tree (T2777) runs the app in the composition pane tree
+# (GHOZTTY_COMP_PRESENT + GHOZTTY_COMP_CHROME + GHOZTTY_COMP_PANE_TREE). The
+# face is then a picture in the window's own tree, not the GhozttyStripFace
+# popup, so F10/F12/F13 read it from the app's `strip face visual
+# shown|hidden` lines and require that the popup is NEVER on show: F10 the
+# visual went up mid-fold, F12 it is down at rest, F13 no frame of the run
+# fell back to the popup. The face's pixels in a window capture are the
+# on-screen oracle's to score (the background desktop is never composed).
+# Its negative control is GHOZTTY_FACE_COMP=0 set by the caller, which keeps
+# the face on its popup: F10 and F13 MUST fail.
+#
 # Hermetic: per-run LOCALAPPDATA, per-run agent binary override, a private IPC
 # pipe suffix, and it only ever kills ghoztty processes launched from this
 # repo's zig-out. Runs on the BACKGROUND test desktop.
@@ -122,6 +133,7 @@ param(
     [string]$AgentExe,
     [switch]$NegativeControl,
     [switch]$SlowFrames,
+    [switch]$Tree,
     [ValidateSet('flat', 'elevated')][string]$PaneStyle = 'flat',
     [switch]$Interactive
 )
@@ -289,6 +301,18 @@ function Get-GlidingBar([int]$from) {
     }
     return $out
 }
+# The face's visual in the window's tree (T2777, -Tree) from line $from to
+# line $to: how often it went up, came down, or failed back to the popup.
+function Get-FaceVisual([int]$from, [int]$to) {
+    $lines = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue)
+    $o = [pscustomobject]@{ Shown = 0; Hidden = 0; Failed = 0 }
+    for ($i = $from; $i -lt [math]::Min($to, $lines.Count); $i++) {
+        if ($lines[$i] -match 'strip face visual shown') { $o.Shown++ }
+        elseif ($lines[$i] -match 'strip face visual hidden') { $o.Hidden++ }
+        elseif ($lines[$i] -match 'strip face visual failed|strip face moved to its popup') { $o.Failed++ }
+    }
+    return $o
+}
 # The `strip face alpha=N band=RRGGBB` oracle lines (T2288) from line $from
 # to line $to of the app's stderr: each as its alpha and band.
 function Get-FaceAlphas([int]$from, [int]$to) {
@@ -429,6 +453,11 @@ $savedPipe = $env:GHOZTTY_PIPE_SUFFIX
 $savedSlide = $env:GHOZTTY_STACK_SLIDE_MS
 $env:GHOZTTY_PIPE_SUFFIX = "-foldslide$PID"
 $env:GHOZTTY_STACK_SLIDE_MS = "$slideMs"
+# -Tree (T2777): the composition pane tree, restored on the way out.
+$treeKnobs = @('GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE')
+$savedTree = @{}
+foreach ($k in $treeKnobs) { $savedTree[$k] = [Environment]::GetEnvironmentVariable($k) }
+if ($Tree) { foreach ($k in $treeKnobs) { [Environment]::SetEnvironmentVariable($k, '1') } }
 $savedDt = $env:GHOZTTY_STACK_SLIDE_DT_MS
 if ($SlowFrames) { $env:GHOZTTY_STACK_SLIDE_DT_MS = '80' }
 
@@ -657,7 +686,13 @@ try {
         $inMid = @($fadeIn | Where-Object { $_.Alpha -gt 0 -and $_.Alpha -lt 255 } | ForEach-Object Alpha | Sort-Object -Unique)
         $faceSeen = @($fold | Where-Object { $_.Faces -gt 0 }).Count
         Say ("      face alphas folding: {0}; face on show in {1} of {2} samples" -f (($fadeIn | ForEach-Object Alpha) -join ' > '), $faceSeen, $fold.Count)
-        Assert ($faceSeen -ge 1) "F10: folding, the strip's face is seen on show over s2's card ($faceSeen samples)"
+        if ($Tree) {
+            $fv = Get-FaceVisual $logFold $logBack
+            Say ("      face visual folding: shown {0}, hidden {1}, failed {2}; popup on show in {3} samples" -f $fv.Shown, $fv.Hidden, $fv.Failed, $faceSeen)
+            Assert ($fv.Shown -ge 1 -and $faceSeen -eq 0) "F10: folding, the strip's face goes up in the window's tree ($($fv.Shown) times), never on its popup ($faceSeen samples)"
+        } else {
+            Assert ($faceSeen -ge 1) "F10: folding, the strip's face is seen on show over s2's card ($faceSeen samples)"
+        }
         # T2457: the card carries its content, so the fade is the CONTENT's
         # strength, falling over the tween - never rising, which is the flash.
         $cMid = @($carried | Where-Object { $_.Alpha -gt 0 -and $_.Alpha -lt 255 } | ForEach-Object Alpha | Sort-Object -Unique)
@@ -688,6 +723,10 @@ try {
         Assert ($appliedIn -le 3) "F18: folding under the hand, the terminals take their size about once a pane, not once a frame ($appliedIn applied over $heldIn resizes, bound 3)"
         $facesFolded = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyStripFace' | Where-Object Visible).Count
         Assert ($facesFolded -eq 0) "F12: folded and at rest, no face is on show ($facesFolded): the window's strip has taken over"
+        if ($Tree) {
+            $fvRest = Get-FaceVisual 0 (Get-LogLength)
+            Assert ($fvRest.Shown -ge 1 -and $fvRest.Shown -eq $fvRest.Hidden) "F12: folded and at rest, the face's visual is down too (up $($fvRest.Shown), down $($fvRest.Hidden))"
+        }
 
         # F4: the T2124 layout at rest.
         $shown = @($rest | Where-Object Visible)
@@ -783,6 +822,10 @@ try {
             }
         }
         Assert ($facesAtRest -eq 0) "F12: unfolded and at rest, no face is on show ($facesAtRest)"
+        if ($Tree) {
+            $fvEnd = Get-FaceVisual 0 (Get-LogLength)
+            Assert ($fvEnd.Shown -ge 2 -and $fvEnd.Shown -eq $fvEnd.Hidden) "F12: unfolded and at rest, the face's visual is down too (up $($fvEnd.Shown), down $($fvEnd.Hidden))"
+        }
         # F14: a growing cut is redrawn - the pixels it gives back were never drawn.
         # Carried (T2458) the opening pane is hidden: no pixel of it shows, so
         # there is nothing a redraw could owe.
@@ -794,7 +837,13 @@ try {
         }
 
         # F13: the face's pixels are the strip's band (flat: one solid band).
-        if ($PaneStyle -eq 'flat' -and -not $NegativeControl) {
+        if ($Tree -and -not $NegativeControl) {
+            # The face is the visual: no frame of the run may fall back to the
+            # popup, and the popup is never photographed because it is never up.
+            $fvAll = Get-FaceVisual 0 (Get-LogLength)
+            $popupShown = Get-LogMatches 'strip face shown alpha='
+            Assert ($fvAll.Failed -eq 0 -and $popupShown -eq 0 -and $null -eq $script:faceShot) "F13: every face frame was a picture in the window's tree ($($fvAll.Failed) fell back, the popup shown $popupShown times)"
+        } elseif ($PaneStyle -eq 'flat' -and -not $NegativeControl) {
             $bands = @(@($fadeIn) + @($fadeOut) | ForEach-Object Band | Sort-Object -Unique)
             if ($null -eq $script:faceShot) {
                 Assert $false 'F13: the face was photographed mid-glide (no capture landed)'
@@ -830,6 +879,7 @@ try {
     if ($null -ne $savedAgentBin) { $env:GHOSTTY_LOCAL_AGENT_BIN = $savedAgentBin }
     else { Remove-Item env:GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue }
     $env:GHOZTTY_PIPE_SUFFIX = $savedPipe
+    foreach ($k in $treeKnobs) { [Environment]::SetEnvironmentVariable($k, $savedTree[$k]) }
     if ($null -ne $savedSlide) { $env:GHOZTTY_STACK_SLIDE_MS = $savedSlide }
     else { Remove-Item env:GHOZTTY_STACK_SLIDE_MS -ErrorAction SilentlyContinue }
     if ($null -ne $savedDt) { $env:GHOZTTY_STACK_SLIDE_DT_MS = $savedDt }

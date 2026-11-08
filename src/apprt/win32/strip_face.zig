@@ -565,3 +565,31 @@ test "fillGlass: each pixel the strip over the desk under it, clamped at the des
     try testing.expectEqual(pack(lut.at(0xFFFFFF)), holed[3]);
     try testing.expectEqual(pack(lut.at(0xFFFFFF)), holed[4]);
 }
+
+/// A face visual's clip box (T2777): the card region's box `box` cut to the
+/// `w` x `h` face, and whether it was the whole card - nothing cut away -
+/// so the card's rounded corners belong on it. A cut edge is a straight
+/// line through the card, where a corner radius would round off the face.
+pub fn clipBox(box: PxRect, w: i32, h: i32) struct { box: PxRect, whole: bool } {
+    const cut: PxRect = .{
+        .left = std.math.clamp(box.left, 0, w),
+        .top = std.math.clamp(box.top, 0, h),
+        .right = std.math.clamp(box.right, 0, w),
+        .bottom = std.math.clamp(box.bottom, 0, h),
+    };
+    if (cut.right <= cut.left or cut.bottom <= cut.top) return .{ .box = .{}, .whole = false };
+    return .{ .box = cut, .whole = std.meta.eql(cut, box) };
+}
+
+test "clipBox: a card inside the face keeps its corners; a cut one does not; an empty one clips to nothing (T2777)" {
+    const in = clipBox(.{ .left = 2, .top = 0, .right = 90, .bottom = 50 }, 100, 50);
+    try testing.expect(in.whole);
+    try testing.expectEqual(PxRect{ .left = 2, .top = 0, .right = 90, .bottom = 50 }, in.box);
+    // A fold's card running past the face's right edge: cut, straight.
+    const cut = clipBox(.{ .left = -4, .top = 0, .right = 140, .bottom = 50 }, 100, 50);
+    try testing.expect(!cut.whole);
+    try testing.expectEqual(PxRect{ .left = 0, .top = 0, .right = 100, .bottom = 50 }, cut.box);
+    const none = clipBox(.{ .left = 120, .top = 0, .right = 140, .bottom = 50 }, 100, 50);
+    try testing.expect(!none.whole);
+    try testing.expectEqual(PxRect{}, none.box);
+}

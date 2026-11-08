@@ -9397,6 +9397,45 @@ fn commitStripFacesEarly(self: *Window) void {
     }
 }
 
+/// `GHOZTTY_FACE_COMP=0` (T2777 A/B, negative control): a strip face stays on
+/// its layered popup even in the composition pane tree.
+fn faceCompWanted() bool {
+    const S = struct {
+        var v: ?bool = null;
+    };
+    if (S.v) |v| return v;
+    const v = if (std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_FACE_COMP")) |s| blk: {
+        defer std.heap.page_allocator.free(s);
+        break :blk !std.mem.eql(u8, s, "0");
+    } else |_| true;
+    S.v = v;
+    return v;
+}
+
+/// The clip a strip face's visual takes (T2777), in the face's own pixels:
+/// the box of its card's region (`region`, already moved to the face's
+/// origin; null for the whole face), with the card's corner radius when the
+/// box is the whole card. A region does not clip a visual, so the visual
+/// carries the shape the popup's region gave it.
+fn faceClip(view: *PaneView, region: ?*anyopaque, w: i32, h: i32) comp_tree.Clip {
+    var c: comp_tree.Clip = .{ .right = @floatFromInt(w), .bottom = @floatFromInt(h) };
+    const rgn = region orelse return c;
+    var box: w32.RECT = undefined;
+    if (w32.GetRgnBox(rgn, &box) == 0) return c;
+    const cut = strip_face.clipBox(.{ .left = box.left, .top = box.top, .right = box.right, .bottom = box.bottom }, w, h);
+    c = .{
+        .left = @floatFromInt(cut.box.left),
+        .top = @floatFromInt(cut.box.top),
+        .right = @floatFromInt(cut.box.right),
+        .bottom = @floatFromInt(cut.box.bottom),
+    };
+    if (cut.whole) if (view.surface()) |s| if (s.tree_shape.radius > 0) {
+        c.bottom_radius = s.tree_shape.radius;
+        if (!s.tree_shape.square_top) c.top_radius = s.tree_shape.radius;
+    };
+    return c;
+}
+
 /// `GHOZTTY_FACE_ORDER=legacy` (T2485 D15 i A/B): commit the strip faces with
 /// the other overlays, after the cut and the desk fill.
 fn faceOrderLegacy() bool {
@@ -9614,7 +9653,16 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     const face_was_up = f.shown;
     var tq: [2]i64 = .{ 0, 0 };
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq[0]);
-    f.commit(pt.x, pt.y, alpha, region);
+    // In the composition pane tree the face is a picture in this window's
+    // own tree, over the pane visuals (T2777): a window capture contains it
+    // (the T2561 blind spot), and the compositor carries it with the panes.
+    // The popup stays the path off the tree and when the host cannot take
+    // it; `GHOZTTY_FACE_COMP=0` keeps it for an A/B.
+    const on_tree = faceCompWanted() and self.chrome_host != null and
+        f.commitVisual(&self.chrome_host, vis.left, vis.top, alpha, faceClip(view, region, w, ht));
+    if (on_tree) {
+        if (region) |r| _ = w32.DeleteObject(r);
+    } else f.commit(pt.x, pt.y, alpha, region);
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq[1]);
     if (perf_t0) |t0| if (std.time.Instant.now()) |t1| {
         const us = t1.since(t0) / std.time.ns_per_us;

@@ -17,6 +17,8 @@
 const std = @import("std");
 const w32 = @import("win32.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
+const chrome_comp = @import("chrome_comp.zig");
+const comp_tree = @import("../../renderer/comp_tree.zig");
 const strip_face = @import("strip_face.zig");
 
 const log = std.log.scoped(.win32_strip_face);
@@ -51,6 +53,14 @@ pub const StripFace = struct {
     px_w: i32 = 0,
     px_h: i32 = 0,
 
+    /// In the composition pane tree (T2777) the face is a picture in the
+    /// window's own tree instead of this popup: `comp` is that visual, and
+    /// `comp_host` the window's host slot it was put up on. `on_visual` says
+    /// the frame on show is the visual's; the popup is hidden then.
+    comp: chrome_comp.FaceVis = .{},
+    comp_host: ?*?chrome_comp.Host = null,
+    on_visual: bool = false,
+
     pub fn create(alloc: std.mem.Allocator, owner: w32.HWND, hinstance: w32.HINSTANCE) !*StripFace {
         try registerClassOnce(hinstance);
         const self = try alloc.create(StripFace);
@@ -78,6 +88,7 @@ pub const StripFace = struct {
     }
 
     pub fn destroy(self: *StripFace) void {
+        self.dropVisual();
         self.releaseDib();
         _ = w32.DestroyWindow(self.hwnd);
         self.alloc.destroy(self);
@@ -168,7 +179,60 @@ pub const StripFace = struct {
             self.shown = true;
             log.info("strip face shown alpha={d} rect={d},{d},{d}x{d}", .{ alpha, left, top, self.px_w, self.px_h });
         }
-        w32.healOverlayZOrderAfterMove(self.hwnd, self.owner, was_shown);
+        w32.healOverlayZOrderAfterMove(self.hwnd, self.owner, was_shown and !self.on_visual);
+        // Back on the popup from the visual (the host went away mid-glide):
+        // the visual goes once the popup carries the frame.
+        if (self.on_visual) {
+            self.on_visual = false;
+            self.dropVisual();
+            log.info("strip face moved to its popup", .{});
+        }
+    }
+
+    /// Put the frame `begin` handed out up as a picture in the window's
+    /// composition tree (T2777) at (`x`, `y`) in the window's client area,
+    /// at `alpha`, cut to `clip` (the face's own pixels), on the host in
+    /// `host_slot`. False when the host cannot take it; nothing changed
+    /// then, so the caller commits the popup instead.
+    pub fn commitVisual(self: *StripFace, host_slot: *?chrome_comp.Host, x: i32, y: i32, alpha: u8, clip: comp_tree.Clip) bool {
+        if (!self.painting or self.mem_dc == null) return false;
+        const host = if (host_slot.*) |*h| h else return false;
+        if (!host.faceAvailable()) return false;
+        _ = w32.GdiFlush();
+        const n: usize = @as(usize, @intCast(self.cap_w)) * @as(usize, @intCast(self.cap_h));
+        host.faceShow(&self.comp, self.bits.?[0..n], self.w, self.h, self.cap_w, self.cap_h, x, y, clip, @as(f32, @floatFromInt(alpha)) / 255.0) catch |err| {
+            const f = chrome_comp.Host.lastFailure();
+            log.warn("strip face visual failed ({}) at {s}: hr=0x{x:0>8}; the face goes back to its popup", .{ err, f.stage, chrome_comp.hex(f.hr) });
+            chrome_comp.Host.releaseFace(&self.comp);
+            return false;
+        };
+        self.comp_host = host_slot;
+        self.painting = false;
+        self.px_w = self.w;
+        self.px_h = self.h;
+        self.alpha = alpha;
+        // Off the popup, after the visual carries the frame.
+        if (self.shown and !self.on_visual) {
+            _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
+            log.info("strip face moved to its visual", .{});
+        }
+        const was_shown = self.shown;
+        self.shown = true;
+        self.on_visual = true;
+        // The acceptance oracle (stack-fold-slide.ps1 / pane-stack-unfold.ps1
+        // tree arms): a face shown in the window's tree, never the popup.
+        if (!was_shown) log.info("strip face visual shown alpha={d} rect={d},{d},{d}x{d}", .{ alpha, x, y, self.w, self.h });
+        return true;
+    }
+
+    /// Take the face's visual off the window's tree, if it has one.
+    fn dropVisual(self: *StripFace) void {
+        if (!self.comp.live()) return;
+        if (self.comp_host) |slot_ptr| if (slot_ptr.*) |*h| {
+            h.faceDrop(&self.comp);
+            return;
+        };
+        chrome_comp.Host.releaseFace(&self.comp);
     }
     /// The uniform name every pane popup answers (T2012).
     pub fn hide(self: *StripFace) void {
@@ -176,6 +240,13 @@ pub const StripFace = struct {
         // not held between glides.
         self.releaseDib();
         if (!self.shown) return;
+        if (self.on_visual) {
+            self.on_visual = false;
+            self.dropVisual();
+            self.shown = false;
+            log.info("strip face visual hidden", .{});
+            return;
+        }
         _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
         self.shown = false;
         log.info("strip face hidden", .{});

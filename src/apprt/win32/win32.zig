@@ -2200,6 +2200,9 @@ pub extern "gdi32" fn CreateRectRgn(x1: i32, y1: i32, x2: i32, y2: i32) callconv
 /// Move a region by `x`,`y` - a pane's dim wash covering only the part of
 /// the pane in view takes the card shape shifted to its own origin (T2227).
 pub extern "gdi32" fn OffsetRgn(hrgn: *anyopaque, x: i32, y: i32) callconv(.winapi) i32;
+/// A region's bounding box; 0 (`ERROR`) when it is not a region. A strip
+/// face in the composition tree takes its card's region as a clip (T2777).
+pub extern "gdi32" fn GetRgnBox(hrgn: *anyopaque, rect: *RECT) callconv(.winapi) i32;
 /// `dst = src1 <mode> src2`; `dst` must already exist (any region). Returns
 /// the result's complexity, or `ERROR` (0). The pane sidebar's open card is
 /// the rail column OR its rounded card (T1842).
