@@ -48,6 +48,13 @@
 # asserts the app still answers: the second close used to crash the debug
 # build on a freed pane the sidebar's desk card still named.
 #
+# WARM-UP IS ADAPTIVE (T2782): after the -Warmup fixed cycles it keeps
+# cycling until two in a row each grow private bytes and GPU memory by <= the
+# 1 MB budget (cap -MaxWarmup, 0 = fixed warm-up only). A census named the fill
+# it waits out: the GPU driver's write-combined upload pool (+12 MB, the
+# GpuShMB climb) and ~6 MB of non-heap driver arena, grown in steps over the
+# first ~5 windows and flat for 20-30 cycles after; the NT heaps do not move.
+#
 # -NegativeControl leaves every measured window OPEN instead of closing it.
 # The budget asserts MUST go red: it is the proof that this meter can see a
 # retained window at all.
@@ -63,7 +70,7 @@
 #
 # Only touches ghoztty processes running from this repo's zig-out*.
 #   powershell -NoProfile -File test\win32\window-close-memory.ps1
-param([string]$ExePath, [ValidateSet('full', 'single', 'split', 'viewer')][string]$Shape = 'full', [int]$Cycles = 10, [int]$Warmup = 2, [string[]]$AppArgs = @(), [switch]$Resize, [switch]$CloseSplitFirst, [switch]$NegativeControl, [switch]$Interactive, [switch]$Report, [switch]$HeapCensus, [string[]]$HeapCensusCommands = @(), [switch]$HeapCensusRegions, [switch]$ReleaseSandbox)
+param([string]$ExePath, [ValidateSet('full', 'single', 'split', 'viewer')][string]$Shape = 'full', [int]$Cycles = 10, [int]$Warmup = 2, [int]$MaxWarmup = 10, [string[]]$AppArgs = @(), [switch]$Resize, [switch]$CloseSplitFirst, [switch]$NegativeControl, [switch]$Interactive, [switch]$Report, [switch]$HeapCensus, [string[]]$HeapCensusCommands = @(), [switch]$HeapCensusRegions, [switch]$ReleaseSandbox)
 
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 $ErrorActionPreference = 'Stop'
@@ -234,6 +241,27 @@ try {
     for ($i = 1; $i -le $Warmup; $i++) {
         [void](Invoke-Cycle $appPid "wcmw$i" $true $false)
     }
+    # T2782: the GPU driver grows its write-combined upload pool (GPU shared
+    # memory) and a few MB of private arena in steps over the first ~5 windows
+    # after the fixed warm-ups, then stops - ~15 MB of bounded fill that a
+    # fixed 2 warm-ups put inside the measured slope. So keep warming until
+    # TWO consecutive cycles each grow private bytes AND GPU memory by no more
+    # than the per-window budget. A real leak grows every cycle, never settles,
+    # runs to -MaxWarmup and is then measured exactly as before.
+    $prevS = Wait-Settled $appPid 'warm'
+    $quiet = 0
+    $extra = 0
+    while ($quiet -lt 2 -and $extra -lt $MaxWarmup) {
+        $extra++
+        [void](Invoke-Cycle $appPid "wcmx$extra" $true $false)
+        $s = Wait-Settled $appPid 'warm'
+        $dPriv = $s.PrivMB - $prevS.PrivMB
+        $dGpu = ($s.GpuDedMB + $s.GpuShMB) - ($prevS.GpuDedMB + $prevS.GpuShMB)
+        if ($dPriv -le 1.0 -and $dGpu -le 1.0) { $quiet++ } else { $quiet = 0 }
+        $prevS = $s
+    }
+    $settledNote = if ($MaxWarmup -le 0) { 'adaptive warm-up off' } elseif ($quiet -ge 2) { 'settled' } else { "NEVER settled (cap $MaxWarmup) - measuring anyway" }
+    Write-Host "warm-up: $Warmup fixed + $extra adaptive cycles, $settledNote"
     $base = Wait-Settled $appPid 'baseline'
     [void]$samples.Add($base)
     $baseTypes = Get-HandleTypes $appPid
