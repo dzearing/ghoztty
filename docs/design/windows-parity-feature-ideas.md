@@ -662,3 +662,12 @@ as the digest that showed them.
 - A pasted key stays hidden (new angle on secret redaction: pasted API keys/passwords show as dots on the live screen and in scrollback)
 - Quiet while you focus (new angle on the demo quiet mode: Windows Focus / Do not disturb holds toasts and chimes, then one summary card)
 - Stays light after days open (memory of a long-open window stays flat; Settings shows the number)
+
+## 2026-11-08
+
+- Pop a pane out on top (picture-in-picture: any pane floats above other apps in a small always-on-top window; click to return it to the layout)
+- Run the line you selected (select a command in a viewer README or another pane's output; one key puts it at the neighbouring pane's prompt)
+- Read only what is new (new angle on the unread-output dot: a faint "you were here" line inside the pane where the screen ended when you last looked)
+- The taskbar preview shows your panes (new angle on taskbar badges: the hover preview maps each window's panes, names and busy/waiting state; click a pane to jump)
+- Share a selection the Windows way (right-click Share sends selected text, with its command, through the Windows share panel)
+- Many saved sessions never slow the first window (restore brings up the opened window's prompt first, the rest behind it without stalling typing)
