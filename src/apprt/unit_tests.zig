@@ -639,6 +639,10 @@ test {
     // no-OS-imports deal.
     _ = @import("win32/viewer_toc_layout.zig");
 
+    // Pure win32 quick-terminal slide geometry + the packed DWM thumbnail
+    // properties (T2766), same no-OS-imports deal.
+    _ = @import("win32/quick_terminal_slide.zig");
+
     // Pure win32 diff-pane file tree — git's flat list of changed paths turned
     // into the side panel's nested rows (T464), same no-OS-imports deal.
     _ = @import("win32/viewer_file_tree.zig");

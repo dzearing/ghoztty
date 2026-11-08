@@ -13750,6 +13750,12 @@ fn msgWndProc(
         return 0;
     }
 
+    // The quick terminal's slider thread answering for a DWM slide (T2766).
+    if (msg == QuickTerminal.WM_APP_QT_SLIDE) {
+        if (app.quick_terminal) |qt| qt.onSlideMessage(@truncate(wparam), lparam);
+        return 0;
+    }
+
     // Notification icon cleanup timers. Each notification kind has its
     // own (uID, timer-id) pair so an in-flight balloon isn't removed by
     // an unrelated timeout.

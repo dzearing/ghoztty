@@ -1075,6 +1075,18 @@ pub extern "kernel32" fn CloseHandle(
     hObject: HANDLE,
 ) callconv(.winapi) i32;
 
+/// Wait on handles OR on a message for this thread's windows - what a thread
+/// that owns a window waits with, so a broadcast `SendMessage` to that window
+/// never hangs on it (T2766's slider thread).
+pub extern "user32" fn MsgWaitForMultipleObjects(
+    nCount: u32,
+    pHandles: ?[*]const HANDLE,
+    fWaitAll: i32,
+    dwMilliseconds: u32,
+    dwWakeMask: u32,
+) callconv(.winapi) u32;
+pub const QS_ALLINPUT: u32 = 0x04FF;
+
 /// Cross-process coalescing (T695): the URL-scheme activation processes race
 /// for this, and whoever creates it first owns the failure dialog. We never
 /// wait on it — `ERROR_ALREADY_EXISTS` from `GetLastError` IS the answer.
@@ -2061,6 +2073,31 @@ pub extern "dwmapi" fn DwmSetWindowAttribute(
 /// Block until the compositor has presented a frame (T2485: a layered window
 /// just shown is only on screen after the next composition).
 pub extern "dwmapi" fn DwmFlush() callconv(.winapi) i32;
+
+/// A live DWM thumbnail of `hwndSource` drawn into `hwndDestination` (both
+/// top-level windows of this process here). The quick terminal's slide is one
+/// (T2766, `QuickTerminalSlider.zig`). `HTHUMBNAIL` is a handle.
+pub extern "dwmapi" fn DwmRegisterThumbnail(
+    hwndDestination: HWND,
+    hwndSource: HWND,
+    phThumbnailId: *?*anyopaque,
+) callconv(.winapi) i32;
+
+pub extern "dwmapi" fn DwmUnregisterThumbnail(
+    hThumbnailId: *anyopaque,
+) callconv(.winapi) i32;
+
+/// `ptnProperties` is a packed `DWM_THUMBNAIL_PROPERTIES` (45 bytes; dwmapi.h
+/// is `pshpack1`) - build it with `quick_terminal_slide.thumbProps`.
+pub extern "dwmapi" fn DwmUpdateThumbnailProperties(
+    hThumbnailId: *anyopaque,
+    ptnProperties: *const anyopaque,
+) callconv(.winapi) i32;
+
+/// `DWMWA_CLOAK` [set] — cloak or uncloak a window of this process (BOOL). A
+/// cloaked window is still composed by DWM (so a thumbnail of it is live) but
+/// is not drawn and takes no input.
+pub const DWMWA_CLOAK: u32 = 13;
 
 /// `sizeof(DWM_TIMING_INFO)`: dwmapi.h declares it under `pshpack1`, so it is
 /// handled as raw bytes rather than an extern struct whose padding would make

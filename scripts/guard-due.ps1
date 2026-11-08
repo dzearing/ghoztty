@@ -6036,6 +6036,21 @@ $GuardTable = @(
             'test\win32\pane-sidebar-hue.ps1'
         )
     },
+    # The quick terminal's slide on DWM (T2766): a slider thread carries it
+    # through a stalled UI thread, lands it uncloaked with the host down, and
+    # drops a stale answer after a reversal; the stepped arm is the control.
+    # The slide's numbers are unit-tested in quick_terminal_slide.zig.
+    [pscustomobject]@{
+        Name   = 'quick-terminal-slide'
+        Script = 'test\win32\quick-terminal-slide.ps1'
+        Stamp  = 'test\win32\quick-terminal-slide.stamp.json'
+        Covers = @(
+            'src\apprt\win32\QuickTerminal.zig',
+            'src\apprt\win32\QuickTerminalSlider.zig',
+            'src\apprt\win32\quick_terminal_slide.zig',
+            'test\win32\quick-terminal-slide.ps1'
+        )
+    },
     # The pane sidebar's own composition tree (T2765): built only when asked,
     # a layer hung on it, rebuilt after a device loss with the layer back on
     # the new generation. The back-off is unit-tested in child_comp.zig.

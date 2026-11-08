@@ -14,11 +14,18 @@ const Surface = @import("Surface.zig");
 const w32 = @import("win32.zig");
 const FrameClock = @import("FrameClock.zig");
 const msg_timer = @import("msg_timer.zig");
+const builtin = @import("builtin");
+const slide = @import("quick_terminal_slide.zig");
+const Slider = @import("QuickTerminalSlider.zig");
+const gl_comp_present = @import("../../renderer/gl_comp_present.zig");
 
 const log = std.log.scoped(.win32_quick_terminal);
 
 /// Animation timer ID (must not collide with QUIT_TIMER_ID=1 or notification=2).
 pub const ANIM_TIMER_ID: usize = msg_timer.quick_terminal_anim;
+
+/// The slider thread's answer for a DWM slide, posted to `App.msg_hwnd`.
+pub const WM_APP_QT_SLIDE: u32 = Slider.WM_APP_QT_SLIDE;
 
 /// Animation tick interval in milliseconds (~60fps).
 const ANIM_TICK_MS: u32 = 16;
@@ -35,6 +42,20 @@ perf_freq: i64 = 1, // avoid division by zero
 // Cached rects for animation interpolation.
 target_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
 hidden_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+/// The monitor the rects were computed on (`rcMonitor`), which clips the
+/// DWM slide's host (T2766).
+monitor_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+
+// The DWM slide (T2766, `QuickTerminalSlider.zig`). While `dwm_slide` is
+// set the slide belongs to the slider thread: the window sits cloaked at
+// `target_rect` and the frame clock is not armed.
+slider: ?*Slider = null,
+dwm_slide: bool = false,
+dwm_gen: u32 = 0,
+/// Slides carried by the slider / that fell back to the frame clock. Three
+/// failures and the quick terminal stops asking for the rest of its life.
+dwm_slides: u32 = 0,
+dwm_failures: u32 = 0,
 
 pub fn init(app: *App) !*QuickTerminal {
     const alloc = app.core_app.alloc;
@@ -73,6 +94,7 @@ pub fn deinit(self: *QuickTerminal) void {
         FrameClock.disarm(app.msg_hwnd, ANIM_TIMER_ID);
         self.animating = false;
     }
+    self.dropSlider();
 
     // Prevent onDestroy from calling onWindowDestroyed (we're cleaning up ourselves).
     app.quick_terminal = null;
@@ -94,6 +116,12 @@ pub fn toggle(self: *QuickTerminal) void {
         const progress = @min(elapsed / self.animation_duration, 1.0);
         const remaining = (1.0 - progress) * self.animation_duration;
         self.animation_start_time = self.now() - @as(i64, @intFromFloat(remaining * @as(f64, @floatFromInt(self.perf_freq))));
+        if (self.dwm_slide) {
+            if (self.slider) |s| {
+                self.dwm_gen = s.reverse(toSlideDir(self.animation_direction), self.animation_start_time);
+                log.info("quick terminal slide on dwm reversed dir={s} gen={d}", .{ @tagName(self.animation_direction), self.dwm_gen });
+            }
+        }
         return;
     }
 
@@ -109,6 +137,10 @@ fn animateIn(self: *QuickTerminal) void {
     self.calculateRects();
 
     const hwnd = self.window.hwnd orelse return;
+
+    // A slide the slider will carry (T2766) shows the window cloaked, so not
+    // one frame of it is drawn before the thumbnail takes over.
+    const cloaked = self.animation_duration > 0 and self.dwmWanted() and setCloak(hwnd, true);
 
     // Position at hidden rect before showing.
     _ = w32.SetWindowPos(
@@ -148,6 +180,8 @@ fn animateIn(self: *QuickTerminal) void {
     self.animation_direction = .in;
     self.animation_start_time = self.now();
     self.animating = true;
+    if (self.startDwmSlide()) return;
+    if (cloaked) _ = setCloak(hwnd, false);
     _ = FrameClock.arm(self.app.msg_hwnd, ANIM_TIMER_ID, ANIM_TICK_MS);
 }
 
@@ -164,7 +198,158 @@ fn animateOut(self: *QuickTerminal) void {
     self.animation_direction = .out;
     self.animation_start_time = self.now();
     self.animating = true;
+    if (self.startDwmSlide()) return;
     _ = FrameClock.arm(self.app.msg_hwnd, ANIM_TIMER_ID, ANIM_TICK_MS);
+}
+
+// -----------------------------------------------------------------------
+// The DWM slide (T2766)
+// -----------------------------------------------------------------------
+
+/// Whether slides go to the slider thread: the composition knob's default
+/// (`GHOZTTY_COMP_PRESENT=0` opts the whole app out, this slide included),
+/// not backed off after repeated failures, and not the oracle's stepped arm
+/// (`GHOZTTY_DEBUG_QT_SLIDE_STEPPED=1`, debug builds).
+fn dwmWanted(self: *const QuickTerminal) bool {
+    if (comptime builtin.os.tag != .windows) return false;
+    if (self.dwm_failures >= 3) return false;
+    if (comptime builtin.mode == .Debug) {
+        if (std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DEBUG_QT_SLIDE_STEPPED")) return false;
+    }
+    return gl_comp_present.enabled();
+}
+
+/// Hand the slide just set up (`animation_direction`, `animation_start_time`)
+/// to the slider thread. True: it is the slider's, and the window is cloaked
+/// at its target rect. False: nothing was handed over and the caller steps it.
+fn startDwmSlide(self: *QuickTerminal) bool {
+    if (!self.dwmWanted()) return false;
+    const hwnd = self.window.hwnd orelse return false;
+    const host = slide.hostRect(toRect(self.hidden_rect), toRect(self.target_rect), toRect(self.monitor_rect)) orelse return false;
+    if (self.slider == null) {
+        const notify = self.app.msg_hwnd orelse return false;
+        self.slider = Slider.create(self.app.core_app.alloc, hwnd, notify) catch |err| {
+            log.warn("quick terminal slide slider unavailable err={}; stepping it", .{err});
+            self.dwm_failures +|= 1;
+            return false;
+        };
+    }
+    if (self.animation_direction == .in) {
+        // The window waits at its final place, cloaked: composed (so the
+        // slider's thumbnail of it is live) but not drawn, and taking no
+        // input until it lands. animateIn showed it cloaked already.
+        if (!setCloak(hwnd, true)) {
+            log.warn("quick terminal slide could not cloak the window; stepping it", .{});
+            self.dwm_failures +|= 1;
+            return false;
+        }
+        _ = w32.SetWindowPos(
+            hwnd,
+            w32.HWND_TOPMOST,
+            self.target_rect.left,
+            self.target_rect.top,
+            self.target_rect.right - self.target_rect.left,
+            self.target_rect.bottom - self.target_rect.top,
+            w32.SWP_NOACTIVATE,
+        );
+    }
+    // An out slide: the slider cloaks the window itself once its thumbnail
+    // is on screen, so there is never a frame showing neither.
+    self.dwm_gen = self.slider.?.start(.{
+        .hidden = toRect(self.hidden_rect),
+        .target = toRect(self.target_rect),
+        .host = host,
+        .dir = toSlideDir(self.animation_direction),
+        .start_qpc = self.animation_start_time,
+        .duration_s = self.animation_duration,
+    });
+    self.dwm_slide = true;
+    self.dwm_slides +|= 1;
+    log.info("quick terminal slide on dwm dir={s} gen={d} ms={d} host={d},{d} {d}x{d}", .{
+        @tagName(self.animation_direction),
+        self.dwm_gen,
+        @as(u32, @intFromFloat(@ceil(self.animation_duration * 1000.0))),
+        host.left,
+        host.top,
+        host.width(),
+        host.height(),
+    });
+    debugStall();
+    return true;
+}
+
+/// The slider's answer for a slide (App's `WM_APP_QT_SLIDE`).
+pub fn onSlideMessage(self: *QuickTerminal, gen: u32, status_raw: isize) void {
+    // An answer for a slide since turned round, or one already over, is not
+    // this slide's.
+    if (!self.dwm_slide or gen != self.dwm_gen) return;
+    const s = self.slider orelse return;
+    const hwnd = self.window.hwnd orelse return;
+    const status: Slider.Status = std.meta.intToEnum(Slider.Status, status_raw) catch .failed;
+    switch (status) {
+        .in_done => {
+            self.dwm_slide = false;
+            self.animating = false;
+            _ = setCloak(hwnd, false);
+            s.release(gen);
+            self.visible = true;
+            log.info("quick terminal slide landed dir=in frames={d} ms={d}", .{ s.last_frames.load(.acquire), s.last_ms.load(.acquire) });
+            self.forceForeground();
+        },
+        .out_done => {
+            self.dwm_slide = false;
+            self.animating = false;
+            _ = w32.ShowWindow(hwnd, w32.SW_HIDE);
+            _ = setCloak(hwnd, false);
+            self.visible = false;
+            log.info("quick terminal slide landed dir=out frames={d} ms={d}", .{ s.last_frames.load(.acquire), s.last_ms.load(.acquire) });
+        },
+        .failed => {
+            self.dwm_slide = false;
+            self.dwm_failures +|= 1;
+            log.warn("quick terminal slide could not stay on dwm at {s} hr=0x{x:0>8}; stepping the rest", .{ s.fail_stage, @as(u32, @bitCast(s.fail_hr)) });
+            // The frame clock carries on from the same start and direction:
+            // place the window where the slide has got to, then show it.
+            _ = FrameClock.arm(self.app.msg_hwnd, ANIM_TIMER_ID, ANIM_TICK_MS);
+            self.onAnimationTick();
+            _ = setCloak(hwnd, false);
+        },
+    }
+}
+
+fn dropSlider(self: *QuickTerminal) void {
+    if (self.slider) |s| s.destroy();
+    self.slider = null;
+    self.dwm_slide = false;
+}
+
+fn setCloak(hwnd: w32.HWND, on: bool) bool {
+    const v: i32 = @intFromBool(on);
+    return w32.DwmSetWindowAttribute(hwnd, w32.DWMWA_CLOAK, &v, @sizeOf(i32)) >= 0;
+}
+
+fn toRect(r: w32.RECT) slide.Rect {
+    return .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
+}
+
+fn toSlideDir(d: anytype) slide.Direction {
+    return switch (d) {
+        .in => .in,
+        .out => .out,
+    };
+}
+
+/// `GHOZTTY_DEBUG_QT_SLIDE_STALL_MS=<n>` (debug builds, T2766): block the UI
+/// thread for n ms the moment a slide starts - the oracle's stand-in for a
+/// busy UI thread. A DWM slide moves through it; a stepped one waits.
+fn debugStall() void {
+    if (comptime builtin.mode != .Debug) return;
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_DEBUG_QT_SLIDE_STALL_MS") catch return;
+    defer std.heap.page_allocator.free(raw);
+    const ms = std.fmt.parseInt(u32, std.mem.trim(u8, raw, " \t\r\n"), 10) catch return;
+    if (ms == 0) return;
+    log.info("quick terminal slide debug stall ms={d}", .{ms});
+    std.Thread.sleep(@as(u64, @min(ms, 5000)) * std.time.ns_per_ms);
 }
 
 /// Called from App's WM_TIMER handler on each animation tick.
@@ -176,13 +361,13 @@ pub fn onAnimationTick(self: *QuickTerminal) void {
     const progress = @min(elapsed / self.animation_duration, 1.0);
 
     // For animate-out, invert progress so interpolation goes from visible→hidden.
-    const t = if (self.animation_direction == .in) easeInOutCubic(progress) else 1.0 - easeInOutCubic(progress);
+    const t = slide.easedT(progress, toSlideDir(self.animation_direction));
 
     const hwnd = self.window.hwnd orelse return;
 
     // Interpolate position.
-    const x = lerp(self.hidden_rect.left, self.target_rect.left, t);
-    const y = lerp(self.hidden_rect.top, self.target_rect.top, t);
+    const x = slide.lerp(self.hidden_rect.left, self.target_rect.left, t);
+    const y = slide.lerp(self.hidden_rect.top, self.target_rect.top, t);
     const w = self.target_rect.right - self.target_rect.left;
     const h = self.target_rect.bottom - self.target_rect.top;
 
@@ -222,6 +407,9 @@ pub fn onWindowDestroyed(self: *QuickTerminal) void {
     // be false but a stray WM_TIMER could already be queued. Once `self`
     // is freed below, dispatching that timer would touch freed memory.
     FrameClock.disarm(app.msg_hwnd, ANIM_TIMER_ID);
+    // The slider's thumbnail names a window that is gone; its thread and
+    // host go with it.
+    self.dropSlider();
 
     alloc.destroy(self.window);
     app.quick_terminal = null;
@@ -259,6 +447,7 @@ fn calculateRects(self: *QuickTerminal) void {
     if (w32.GetMonitorInfoW(monitor, &mi) == 0) return;
 
     const work = mi.rcWork;
+    self.monitor_rect = mi.rcMonitor;
     const mw: u32 = @intCast(work.right - work.left);
     const mh: u32 = @intCast(work.bottom - work.top);
 
@@ -366,17 +555,5 @@ fn now(_: *QuickTerminal) i64 {
     return count;
 }
 
-/// Cubic ease-in-out: smooth acceleration and deceleration.
-fn easeInOutCubic(t: f64) f64 {
-    if (t < 0.5) {
-        return 4.0 * t * t * t;
-    } else {
-        const f = -2.0 * t + 2.0;
-        return 1.0 - (f * f * f) / 2.0;
-    }
-}
-
-/// Interpolate between two values using eased progress.
-fn lerp(a: i32, b: i32, t: f64) i32 {
-    return a + @as(i32, @intFromFloat(@round(@as(f64, @floatFromInt(b - a)) * t)));
-}
+// The ease and the lerp live in `quick_terminal_slide.zig` (T2766), where
+// both slide paths share them and the `none` lane asserts them.

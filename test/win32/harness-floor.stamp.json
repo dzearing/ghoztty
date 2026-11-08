@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-07T15:59:31-08:00",
-    "commit":  "3380d172c",
+    "generated":  "2026-11-07T17:15:03-08:00",
+    "commit":  "faa5e7cb3",
     "uncommitted":  [
-
+                        "test/win32/quick-terminal-slide.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -419,6 +419,7 @@
                   "test/win32/prompt-reflow.ps1":  "566e5e362676f4fe06e2364f1be7255015dc2d9f9c83acef163a2167e6f4aedf",
                   "test/win32/pty-holder.ps1":  "ac9811305a50f2a86dca0af16b2725c8414ed78ebe26c84572ca6599326af88e",
                   "test/win32/pty-host.ps1":  "466be0c285d0654ebf15bb7e7e545b38b5e1b9e12d3328ed49f9b009b469b2d5",
+                  "test/win32/quick-terminal-slide.ps1":  "ac8e12adcfce3621ad347f4b9b957e0b4e986599894cb43734fb7ba64d735609",
                   "test/win32/rdp-perf-probe.ps1":  "d9a2438358328f459c637242375193fb1651d6b4ee3ba98358617290aa0bb183",
                   "test/win32/rdp-session.ps1":  "26fa35ab178060d0a6ff53c6e00ff3149c78bd04f041c1a953a37d575aac82df",
                   "test/win32/readonly-badge.ps1":  "be8e9c5793795ff3502b077f674c531a510b2755819fbe989237897e6076ae61",

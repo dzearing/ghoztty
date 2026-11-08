@@ -250,6 +250,16 @@
             "unset": "shipped-elsewhere",
             "note": "T2762: pane-sidebar-hue.ps1 -SteppedControl steps the visual tint's fade on the UI thread, the oracle's red arm; unset is the compositor fade the same script's visual arm runs every time."
         },
+        "GHOZTTY_DEBUG_QT_SLIDE_STEPPED": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "T2766: =1 slides the quick terminal with the old per-tick SetWindowPos on the UI thread, the stepped A/B arm of quick-terminal-slide.ps1 [stepped]; unset is the DWM-thumbnail slide the same script's [dwm] and [reverse] arms run."
+        },
+        "GHOZTTY_DEBUG_QT_SLIDE_STALL_MS": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "T2766: stalls the UI thread for N ms just after a quick-terminal slide is handed to the slider thread, so quick-terminal-slide.ps1 [dwm] can prove the slide lands on time through a busy UI; unset = no stall, which every other run takes."
+        },
         "GHOZTTY_DEBUG_SIDEBAR_COMP_FILL": {
             "class": "enable",
             "unset": "armed",
