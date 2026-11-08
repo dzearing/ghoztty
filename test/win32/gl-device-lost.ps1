@@ -68,7 +68,10 @@ $savedLocalAppData = $env:LOCALAPPDATA
 $savedResetAfter = $env:GHOZTTY_GL_SIMULATE_RESET_AFTER
 $savedRebuildFailures = $env:GHOZTTY_GL_SIMULATE_REBUILD_FAILURES
 # The window presenter arms' knobs (T2616): unset for A-C, set by D-E.
-$presenterKnobs = 'GHOZTTY_WINDOW_PRESENTER', 'GHOZTTY_PRESENTER_PROBE', 'GHOZTTY_GL_SIMULATE_PRESENTER_RESET_AFTER'
+# GHOZTTY_COMP_PRESENT rides with them (T2795): the composition present is
+# the default now and wins over GHOZTTY_WINDOW_PRESENTER, so D-E turn it off
+# or the presenter they test is never made.
+$presenterKnobs = 'GHOZTTY_WINDOW_PRESENTER', 'GHOZTTY_PRESENTER_PROBE', 'GHOZTTY_GL_SIMULATE_PRESENTER_RESET_AFTER', 'GHOZTTY_COMP_PRESENT'
 $savedPresenterKnobs = @{}
 foreach ($k in $presenterKnobs) {
     $savedPresenterKnobs[$k] = [Environment]::GetEnvironmentVariable($k, 'Process')
@@ -309,6 +312,7 @@ try {
     # ========================================================================
     $env:GHOZTTY_WINDOW_PRESENTER = '1'
     $env:GHOZTTY_PRESENTER_PROBE = '1'
+    $env:GHOZTTY_COMP_PRESENT = '0'
 
     "== D: presenter on, the loss seen first by a pane"
     $env:GHOZTTY_GL_SIMULATE_RESET_AFTER = '3'

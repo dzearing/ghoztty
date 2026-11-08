@@ -1,16 +1,16 @@
 {
     "guard":  "gl-device-lost",
     "script":  "test/win32/gl-device-lost.ps1",
-    "generated":  "2026-11-06T02:41:35-08:00",
-    "commit":  "d9b25fca9",
+    "generated":  "2026-11-08T13:50:18-08:00",
+    "commit":  "015a5f3e3",
     "uncommitted":  [
-                        "src/renderer/OpenGL.zig"
+                        "test/win32/gl-device-lost.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/WindowPresenter.zig":  "8e0056c2db70066b50f52ed76f96d0e41116b108f0d66a047b43b58f4bac44d4",
                   "src/renderer/gl_robust.zig":  "56ae9ce9924d222d22ab1cb51cdbb4d6b4e3c47350d15d5d6bfad7aa45cc61d1",
-                  "src/renderer/OpenGL.zig":  "6bd7c30fad8a9be0eb8bfc57fc2b34a5aec9692930626f011ca0e1b9c1edea86",
-                  "src/renderer/Thread.zig":  "487c020f83c7d6be84b2ff81755426f86e70e87f1ea9f5c22b27f193f63df42f",
-                  "test/win32/gl-device-lost.ps1":  "9ea50c131a98b6be564e055c6e196ee36d7209884b6c4ab792d83103336ec73e"
+                  "src/renderer/OpenGL.zig":  "5330c121e0fcae3cfe5e6f116f80b2e14a4f694f226c9fb1bcd4a226e80e0041",
+                  "src/renderer/Thread.zig":  "b58cd1ee1ea48a4a0997ca76d90160e814cd21bcc06500ecedfff8068829c5ff",
+                  "test/win32/gl-device-lost.ps1":  "846da12ba3f0648dab4b6eade32c0964bd390a9f5f2d88f2afee2417587c6ff0"
               }
 }
