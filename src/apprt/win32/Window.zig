@@ -9575,6 +9575,14 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
         };
     }
     const f = view.strip_face.?;
+    const face_was_up = f.shown;
+    // A fold carrying its frame, in the composition pane tree, is handed to
+    // the compositor whole (T2778) and only handed again on a retarget, so
+    // it folds on through a busy window thread; frames step the rest.
+    if (carried != null and !opening and self.declareStripFace(view, f, face.card, face.axis, at, glide_at, carried.?, client)) {
+        self.stripFaceCarriedTail(view, h, f, live, true, face_was_up, false, content_alpha, face.card, face.axis);
+        return f.shown;
+    }
     var tb: i64 = 0;
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tb);
     // T2461: the face's paint and commit, for the glide line.
@@ -9650,7 +9658,6 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     // The acceptance oracle (stack-fold-slide.ps1 F10-F12): how far in, and
     // the band, read at the face's corner where no name is drawn.
     log.debug("strip face alpha={d} band={x:0>6} size={d}x{d}", .{ alpha, frame.pixels[0] & 0xFF_FFFF, w, ht });
-    const face_was_up = f.shown;
     var tq: [2]i64 = .{ 0, 0 };
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq[0]);
     // In the composition pane tree the face is a picture in this window's
@@ -9690,6 +9697,225 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
             @divTrunc(tq[0] - tb, 10), @divTrunc(tq[1] - tq[0], 10), @intFromBool(live),
         });
     }
+    self.stripFaceCarriedTail(view, h, f, live, carried != null, face_was_up, opening, content_alpha, face.card, face.axis);
+    return f.shown;
+}
+
+/// A fold's face handed to the compositor whole (T2778; the T2572 shape for
+/// the cards beside it): the band, the strip's name and the carried frame as
+/// three pictures, the face cut to the card, and the card's edges, the
+/// frame's place (pinned where the glide has the pane), the name's place and
+/// the frame's strength all on the glide's 45 ms follower - so a busy window
+/// thread no longer freezes the folding card while its neighbours glide on.
+/// Declared on the fold's first face, then again only when the landing moves
+/// (a drag reshaping the row), from where the compositor has got to.
+///
+/// The per-frame fade limit (T2442, `Slide.limitFade`) is not applied: it
+/// exists for SLOW window-thread frames, and on the compositor's clock every
+/// frame is a display frame, where the limit never bites. A test's forced
+/// slow frames (`GHOZTTY_STACK_SLIDE_DT_MS`) stay on frames, so its oracle
+/// still sees the limit.
+///
+/// `card` is the face's card (grid pixels), `at` the pane window and
+/// `glide_at` where the glide has it, `client` the layout's client rect.
+/// False: frames step the face.
+fn declareStripFace(
+    self: *Window,
+    view: *PaneView,
+    f: *StripFace,
+    card: pane_stack_grid.PxRect,
+    axis: pane_stack_layout.Direction,
+    at: pane_stack_grid.PxRect,
+    glide_at: pane_stack_grid.PxRect,
+    carried: strip_face.Content,
+    client: w32.RECT,
+) bool {
+    if (!faceCompWanted() or !glideDeclareOn() or self.stack_slide_dt_ms != null) return false;
+    if (self.chrome_host == null) return false;
+    const slide = if (self.stack_slide) |*s| s else return false;
+    const id = pane_stack_grid.viewId(view);
+    const land = slide.landing(id) orelse return false;
+    const now = std.time.Instant.now() catch return false;
+    const Box = struct { l: f32, t: f32, r: f32, b: f32 };
+    const cut = struct {
+        fn of(a: anytype, b: anytype, c: anytype) Box {
+            return .{
+                .l = @floatFromInt(@max(@max(a.left, b.left), c.left)),
+                .t = @floatFromInt(@max(@max(a.top, b.top), c.top)),
+                .r = @floatFromInt(@min(@min(a.right, b.right), c.right)),
+                .b = @floatFromInt(@min(@min(a.bottom, b.bottom), c.bottom)),
+            };
+        }
+    }.of;
+    const land_pane = self.leafRect(view, winRect(land.pane));
+    const land_card = self.leafRect(view, winRect(land.card));
+    const to_box = cut(land_pane, land_card, client);
+    if (to_box.r <= to_box.l or to_box.b <= to_box.t) return false;
+    const horiz = axis == .horizontal;
+    const sc: f64 = @floatCast(self.scale);
+    const full: f64 = @floatFromInt(if (horiz) at.width() else at.height());
+    const d1: f64 = @floatFromInt(if (horiz) land.card.width() else land.card.height());
+
+    // Where this declaration starts: the compositor's own place on a
+    // retarget, this frame's on a new one.
+    var from: comp_tree.FacePose = undefined;
+    var d0: f64 = undefined;
+    if (f.decl) |d| {
+        // Unchanged landing: the declared fold runs on.
+        if (d.to.clip.left == to_box.l and d.to.clip.top == to_box.t and d.to.clip.right == to_box.r and
+            d.to.clip.bottom == to_box.b and d.to.content_x == @as(f32, @floatFromInt(land_pane.left)) and
+            d.to.content_y == @as(f32, @floatFromInt(land_pane.top))) return true;
+        from = d.reached(now);
+        d0 = if (horiz) from.clip.right - from.clip.left else from.clip.bottom - from.clip.top;
+    } else {
+        const inner = self.leafRect(view, winRect(card));
+        const b = cut(glide_at, inner, client);
+        if (b.r <= b.l or b.b <= b.t) return false;
+        from = .{
+            .clip = .{ .left = b.l, .top = b.t, .right = b.r, .bottom = b.b },
+            .content_x = @floatFromInt(glide_at.left),
+            .content_y = @floatFromInt(glide_at.top),
+        };
+        // Rounded as the card's region rounds it, when nothing cuts the card.
+        if (b.l == @as(f32, @floatFromInt(inner.left)) and b.r == @as(f32, @floatFromInt(inner.right)) and
+            b.t == @as(f32, @floatFromInt(inner.top)) and b.b == @as(f32, @floatFromInt(inner.bottom)))
+        {
+            if (view.surface()) |s| if (s.tree_shape.radius > 0) {
+                from.clip.bottom_radius = s.tree_shape.radius;
+                if (!s.tree_shape.square_top) from.clip.top_radius = s.tree_shape.radius;
+            };
+        }
+        d0 = @floatFromInt(if (horiz) card.width() else card.height());
+    }
+    const line = strip_face.fadeLine(d0, d1, strip_face.strip_dip * sc, full, strip_face.fade_span_dip * sc) orelse return false;
+    from.opacity = line.from;
+    var to: comp_tree.FacePose = .{
+        .clip = .{
+            .left = to_box.l,
+            .top = to_box.t,
+            .right = to_box.r,
+            .bottom = to_box.b,
+            .top_radius = from.clip.top_radius,
+            .bottom_radius = from.clip.bottom_radius,
+        },
+        .content_x = @floatFromInt(land_pane.left),
+        .content_y = @floatFromInt(land_pane.top),
+        .opacity = line.to,
+    };
+
+    // The name's picture: the face as it starts, laid out as the stepped
+    // face lays it out; it rides the face's centre from there.
+    const nw: i32 = @intFromFloat(@round(from.clip.right - from.clip.left));
+    const nh: i32 = @intFromFloat(@round(from.clip.bottom - from.clip.top));
+    if (nw <= 0 or nh <= 0) return false;
+    const pw: f32 = @floatFromInt(nw);
+    const ph: f32 = @floatFromInt(nh);
+    const n0 = strip_face.nameOffset(axis, from.clip.left, from.clip.top, from.clip.right, from.clip.bottom, pw, ph);
+    const n1 = strip_face.nameOffset(axis, to.clip.left, to.clip.top, to.clip.right, to.clip.bottom, pw, ph);
+    from.name_x = n0.x;
+    from.name_y = n0.y;
+    to.name_x = n1.x;
+    to.name_y = n1.y;
+
+    const dist = comp_tree.FacePose.distance(from, to);
+    const tau_s = slide.tau_ms / 1000.0;
+    var segs: [comp_overlay.follower_segments]comp_overlay.Cubic = undefined;
+    const span_s = comp_overlay.fitFollower(dist, tau_s, pane_stack_slide.snap_px, &segs);
+    if (span_s <= 0) return false;
+    const decl: strip_face.FaceDecl = .{ .t0 = now, .from = from, .to = to, .dist = dist, .tau_s = tau_s };
+
+    // The band: everywhere the face goes on the way, never moved - the
+    // glass over the desk is the desk's pixel where it stands.
+    const band: w32.RECT = .{
+        .left = @max(@as(i32, @intFromFloat(@floor(@min(from.clip.left, to.clip.left)))), client.left),
+        .top = @max(@as(i32, @intFromFloat(@floor(@min(from.clip.top, to.clip.top)))), client.top),
+        .right = @min(@as(i32, @intFromFloat(@ceil(@max(from.clip.right, to.clip.right)))), client.right),
+        .bottom = @min(@as(i32, @intFromFloat(@ceil(@max(from.clip.bottom, to.clip.bottom)))), client.bottom),
+    };
+    const bw = band.right - band.left;
+    const bh = band.bottom - band.top;
+    if (bw <= 0 or bh <= 0) return false;
+    const alloc = self.app.core_app.alloc;
+    const band_px = alloc.alloc(u32, @as(usize, @intCast(bw)) * @as(usize, @intCast(bh))) catch return false;
+    defer alloc.free(band_px);
+    const bg = self.stripBackground();
+    const strip_rgb = pane_stack_strip.stripRgb(bg, false);
+    {
+        const fr: strip_face.Frame = .{ .pixels = band_px, .stride = @intCast(bw), .w = @intCast(bw), .h = @intCast(bh) };
+        if (self.glassDesk()) |g| {
+            const lut = pane_stack_strip.GlassLut.init(.{ .bg = bg, .sheet = .{} });
+            strip_face.fillGlass(fr, .{
+                .pixels = g.desk.pixels,
+                .w = g.desk.w,
+                .h = g.desk.h,
+                .x = band.left - g.area.left,
+                .y = band.top - g.area.top,
+            }, &lut, null);
+        } else strip_face.fillSolid(fr, strip_rgb, null);
+        strip_face.finish(fr, null, 0);
+    }
+
+    // The carried frame, top-down and opaque.
+    const content_px = alloc.alloc(u32, @as(usize, @intCast(carried.w)) * @as(usize, @intCast(carried.h))) catch return false;
+    defer alloc.free(content_px);
+    strip_face.finish(.{ .pixels = content_px, .stride = @intCast(carried.w), .w = @intCast(carried.w), .h = @intCast(carried.h) }, .{
+        .pixels = carried.pixels,
+        .w = carried.w,
+        .h = carried.h,
+        .x = 0,
+        .y = 0,
+    }, 255);
+
+    // The name: white on black in the face's DIB, then ink at that coverage.
+    var name_pic: ?chrome_comp.FacePic = null;
+    if (f.begin(nw, nh, nw, nh)) |p| {
+        for (0..p.frame.h) |y| @memset(p.frame.row(y), 0);
+        if (self.stripFont(if (horiz) 2700 else 0)) |font| {
+            defer _ = w32.DeleteObject(font);
+            const old_mode = w32.SetBkMode(p.dc, w32.TRANSPARENT);
+            defer _ = w32.SetBkMode(p.dc, old_mode);
+            self.paintStripLabel(p.dc, view, .{ .left = 0, .top = 0, .right = nw, .bottom = nh }, axis, font, .{ .r = 255, .g = 255, .b = 255 });
+        }
+        _ = w32.GdiFlush();
+        const ink = pane_stack_strip.inkRgb(strip_rgb, color_math.isLight(bg), false);
+        for (0..p.frame.h) |y| strip_face.inkFromCoverage(p.frame.row(y), ink);
+        name_pic = .{ .px = p.frame.pixels, .stride = @intCast(p.frame.stride), .w = nw, .h = nh };
+    }
+
+    const knee = decl.kneeS();
+    const ok = f.declareVisual(&self.chrome_host, .{
+        .band = .{ .px = band_px, .stride = bw, .w = bw, .h = bh },
+        .band_x = band.left,
+        .band_y = band.top,
+        .name = name_pic,
+        .content = .{ .px = content_px, .stride = carried.w, .w = carried.w, .h = carried.h },
+        .from = from,
+        .to = to,
+        .curve = &segs,
+        .span_s = span_s,
+        .fade_knee_s = knee,
+        .fade_hold = if (to.opacity < 0) 0 else 1,
+    }, decl);
+    return ok;
+}
+
+/// After a face commit (stepped or declared): the live pane under a face
+/// carrying it goes, and the carried content's oracle lines. `carried`: the
+/// face carries the card's frame; `face_was_up`: it was up before this pass.
+fn stripFaceCarriedTail(
+    self: *Window,
+    view: *PaneView,
+    h: w32.HWND,
+    f: *StripFace,
+    live: bool,
+    carried: bool,
+    face_was_up: bool,
+    opening: bool,
+    content_alpha: u8,
+    card: pane_stack_grid.PxRect,
+    axis: pane_stack_layout.Direction,
+) void {
+    _ = self;
     // The face is up carrying the card, so the live pane under it goes -
     // after, never before, so no frame shows the desk where the card is. A
     // face this pass first showed is on screen only after the next
@@ -9699,7 +9925,7 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     // at every fold (T2485 D10). So the pane stays up under the face for this
     // pass, and the next pass's placement batch hides it (`placeGrid` hides a
     // card its face carries) in the same frame as its neighbours' moves.
-    if (carried != null and live and f.shown and face_was_up) {
+    if (carried and live and f.shown and face_was_up) {
         _ = w32.SetWindowPos(h, null, 0, 0, 0, 0, w32.SWP_NOZORDER | w32.SWP_NOACTIVATE |
             w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_HIDEWINDOW);
         view.setVisible(false);
@@ -9710,18 +9936,17 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     // and how often the pane was resized since it stood at its new size.
     if (opening) log.debug("stack unfold carried content_alpha={d} card={d},{d} live={d} frame={d} resizes={d}", .{
         content_alpha,
-        face.card.left,
-        if (face.axis == .horizontal) face.card.width() else face.card.height(),
+        card.left,
+        if (axis == .horizontal) card.width() else card.height(),
         @intFromBool(w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE != 0),
-        @intFromBool(carried != null),
+        @intFromBool(carried),
         view.resizeCount() -% view.glide_resizes_at,
-    }) else if (carried != null) log.debug("stack fold carried content_alpha={d} card={d},{d} live={d}", .{
+    }) else if (carried) log.debug("stack fold carried content_alpha={d} card={d},{d} live={d}", .{
         content_alpha,
-        face.card.left,
-        if (face.axis == .horizontal) face.card.width() else face.card.height(),
+        card.left,
+        if (axis == .horizontal) card.width() else card.height(),
         @intFromBool(w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE != 0),
     });
-    return f.shown;
 }
 
 pub fn updateReadonlyBadges(self: *Window) void {

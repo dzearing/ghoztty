@@ -667,10 +667,61 @@ pub const FaceVis = struct {
     /// longer holds it.
     epoch: u32 = 0,
     opacity: f32 = -1,
+    /// A declared glide (T2778): the face is three pictures under `visual`
+    /// - the band, the strip's name over it, the carried frame over both at
+    /// its own strength - whose clip, places and strength the compositor
+    /// runs. `visual` holds no picture of its own then.
+    band: FaceLayer = .{},
+    name: FaceLayer = .{},
+    content: FaceLayer = .{},
+    content_effect: ?Obj = null,
+    declared: bool = false,
 
     pub fn live(self: *const FaceVis) bool {
         return self.visual != null;
     }
+};
+
+/// One picture of a declared face (`FaceVis.declared`, T2778).
+pub const FaceLayer = struct {
+    visual: ?Obj = null,
+    surface: ?Obj = null,
+    sw: i32 = 0,
+    sh: i32 = 0,
+
+    fn release_(self: *FaceLayer) void {
+        if (self.surface) |o| release(o);
+        if (self.visual) |o| release(o);
+        self.* = .{};
+    }
+};
+
+/// A picture handed to `Host.faceDeclare`: `w` x `h` of a buffer whose rows
+/// are `stride` pixels apart, premultiplied, top-down.
+pub const FacePic = struct {
+    px: []const u32,
+    stride: i32,
+    w: i32,
+    h: i32,
+};
+
+/// A folding card's face, declared whole (T2778): its band at (`band_x`,
+/// `band_y`) and never moved, the name and the carried frame placed, the
+/// card clip, and the frame's strength from `from` to `to` along `curve`
+/// (`span_s` long; `comp_overlay.fitFollower`). The strength is held at
+/// `fade_hold` from `fade_knee_s` on, where its line leaves 0..1.
+pub const FaceGlide = struct {
+    band: FacePic,
+    band_x: i32,
+    band_y: i32,
+    name: ?FacePic,
+    content: FacePic,
+    from: comp_tree.FacePose,
+    to: comp_tree.FacePose,
+    curve: []const comp_overlay.Cubic,
+    span_s: f64,
+    fade_knee_s: ?f64 = null,
+    fade_hold: f32 = 0,
 };
 
 /// A pane card's shadow riding with its pane visual (T2741): its offset is
@@ -1790,6 +1841,14 @@ pub const Host = struct {
     /// of the way), holding `to` from `span_s` on. The caller releases it
     /// once it is set: the property keeps its own snapshot.
     fn followAnimation(self: *Host, from: f32, to: f32, curve: []const Cubic, span_s: f64) Error!Obj {
+        return self.followAnimationHeld(from, to, curve, span_s, null, to);
+    }
+
+    /// `followAnimation`, held at `hold` from `knee_s` on (T2778): a value
+    /// whose straight line along the curve runs out before the curve ends -
+    /// a fade reaching 0 before the card lands. The piece the knee falls in
+    /// is cut there.
+    fn followAnimationHeld(self: *Host, from: f32, to: f32, curve: []const Cubic, span_s: f64, knee_s: ?f64, hold: f32) Error!Obj {
         var made: ?Obj = null;
         try check(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_animation)(self.dcomp, &made));
         const anim = made orelse return error.ComFailed;
@@ -1799,9 +1858,11 @@ pub const Host = struct {
         // A value that does not move still takes the same span, as one flat
         // piece.
         if (span == 0) try check(add(anim, 0, to, 0, 0, 0)) else for (curve) |c| {
+            if (knee_s) |k| if (c.begin_s >= k) break;
             try check(add(anim, c.begin_s, @floatCast(from + span * c.c0), @floatCast(span * c.c1), @floatCast(span * c.c2), @floatCast(span * c.c3)));
         }
-        try check(slot(*const fn (Obj, f64, f32) callconv(.winapi) HRESULT, anim, slot_dcomp_anim_end)(anim, span_s, to));
+        if (knee_s) |k| if (span != 0 and k < span_s) try check(add(anim, @max(k, 0), hold, 0, 0, 0));
+        try check(slot(*const fn (Obj, f64, f32) callconv(.winapi) HRESULT, anim, slot_dcomp_anim_end)(anim, span_s, if (knee_s != null) hold else to));
         return anim;
     }
 
@@ -1841,21 +1902,9 @@ pub const Host = struct {
         if (w <= 0 or h <= 0 or w > cap_w or h > cap_h) return error.ComFailed;
         if (px.len < @as(usize, @intCast(cap_w)) * @as(usize, @intCast(cap_h))) return error.ComFailed;
         errdefer self.face_failed = true;
-        if (fv.visual != null and !self.faceCurrent(fv)) releaseFace(fv);
-        if (fv.visual == null) {
-            const faces = try self.ensureFaceRoot();
-            stage = "face-visual";
-            const vis = try self.newVisual();
-            errdefer release(vis);
-            var e: ?Obj = null;
-            try check(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_effect_group)(self.dcomp, &e));
-            const effect = e orelse return error.ComFailed;
-            errdefer release(effect);
-            try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_effect)(vis, effect));
-            try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, faces, slot_dcomp_visual_add_visual)(faces, vis, 1, null));
-            fv.* = .{ .visual = vis, .effect = effect, .epoch = self.rebuilds };
-        }
-        const vis = fv.visual.?;
+        // Off a declared glide, back to one picture stepped from frames.
+        if (fv.declared) self.faceUndeclare(fv);
+        const vis = try self.ensureFaceVisual(fv);
         var whole = false;
         if (fv.surface == null or cap_w != fv.sw or cap_h != fv.sh) {
             stage = "face-surface";
@@ -1915,8 +1964,143 @@ pub const Host = struct {
         releaseFace(fv);
     }
 
+    /// `fv`'s container in the face layer, made (with its opacity effect) on
+    /// first use, or remade under a rebuilt host.
+    fn ensureFaceVisual(self: *Host, fv: *FaceVis) Error!Obj {
+        if (fv.visual != null and !self.faceCurrent(fv)) releaseFace(fv);
+        if (fv.visual) |v| return v;
+        const faces = try self.ensureFaceRoot();
+        stage = "face-visual";
+        const vis = try self.newVisual();
+        errdefer release(vis);
+        var e: ?Obj = null;
+        try check(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_effect_group)(self.dcomp, &e));
+        const effect = e orelse return error.ComFailed;
+        errdefer release(effect);
+        try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_effect)(vis, effect));
+        try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, faces, slot_dcomp_visual_add_visual)(faces, vis, 1, null));
+        fv.* = .{ .visual = vis, .effect = effect, .epoch = self.rebuilds };
+        return vis;
+    }
+
+    /// Take a declared face's three pictures off its container (T2778); the
+    /// container's own picture is remade by the next `faceShow`.
+    fn faceUndeclare(_: *Host, fv: *FaceVis) void {
+        const vis = fv.visual orelse return;
+        for ([_]*FaceLayer{ &fv.band, &fv.name, &fv.content }) |l| {
+            if (l.visual) |kid| _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_remove_visual)(vis, kid);
+            l.release_();
+        }
+        if (fv.content_effect) |o| release(o);
+        fv.content_effect = null;
+        fv.declared = false;
+        // The animated clip goes with its object; `faceShow` sets a fresh one.
+        if (fv.clip) |o| release(o);
+        fv.clip = null;
+        _ = slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_clip)(vis, null);
+    }
+
+    /// One of a declared face's pictures: made under `parent` above `below`
+    /// (null: as its first child) the first time, its surface remade for a
+    /// new size, and all of `pic` uploaded - a new surface's first draw must
+    /// cover it whole, and a declare is once a glide, not once a frame.
+    fn faceLayer(self: *Host, l: *FaceLayer, parent: Obj, below: ?Obj, pic: FacePic) Error!Obj {
+        if (l.visual == null) {
+            const v = try self.newVisual();
+            errdefer release(v);
+            try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, parent, slot_dcomp_visual_add_visual)(parent, v, 1, below));
+            l.visual = v;
+        }
+        const v = l.visual.?;
+        if (pic.w <= 0 or pic.h <= 0) {
+            _ = slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, v, slot_dcomp_visual_set_content)(v, null);
+            return v;
+        }
+        if (pic.px.len < @as(usize, @intCast(pic.stride)) * @as(usize, @intCast(pic.h - 1)) + @as(usize, @intCast(pic.w))) return error.ComFailed;
+        if (l.surface == null or l.sw != pic.w or l.sh != pic.h) {
+            if (l.surface) |old| release(old);
+            l.surface = null;
+            var surface: ?Obj = null;
+            try check(slot(*const fn (Obj, u32, u32, u32, u32, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_surface)(self.dcomp, @intCast(pic.w), @intCast(pic.h), DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &surface));
+            l.surface = surface orelse return error.ComFailed;
+            l.sw = pic.w;
+            l.sh = pic.h;
+            try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, v, slot_dcomp_visual_set_content)(v, l.surface.?));
+        }
+        try self.drawRect(l.surface.?, pic.px, pic.stride, .{ .left = 0, .top = 0, .right = pic.w, .bottom = pic.h });
+        return v;
+    }
+
+    /// Hand a folding card's whole face to the compositor (T2778): the band,
+    /// the name and the carried frame as three pictures under the face's
+    /// container, the container cut to the card, and the card's edges, the
+    /// frame's place, the name's place and the frame's strength all set
+    /// running from `g.from` to `g.to` on the glide's follower - so the face
+    /// keeps folding while the window's thread is busy. A later `faceShow`
+    /// or `faceDeclare` replaces it. Commits, or leaves it to the batch.
+    pub fn faceDeclare(self: *Host, fv: *FaceVis, g: FaceGlide) Error!void {
+        if (!self.faceAvailable()) return error.Unavailable;
+        errdefer self.face_failed = true;
+        const vis = try self.ensureFaceVisual(fv);
+        stage = "face-declare";
+        defer stage = "";
+        // The container is no picture now, at the client's origin, opaque:
+        // its kids carry the face, and the clip is in client pixels.
+        if (!fv.declared) {
+            _ = slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_content)(vis, null);
+            if (fv.surface) |o| release(o);
+            fv.surface = null;
+            fv.sw = 0;
+            fv.sh = 0;
+        }
+        try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_x)(vis, 0));
+        try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_y)(vis, 0));
+        if (fv.opacity != 1) {
+            try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, fv.effect.?, slot_dcomp_effect_set_opacity_float)(fv.effect.?, 1));
+            fv.opacity = 1;
+        }
+        const band = try self.faceLayer(&fv.band, vis, null, g.band);
+        const name = try self.faceLayer(&fv.name, vis, band, g.name orelse .{ .px = &.{}, .stride = 0, .w = 0, .h = 0 });
+        const content = try self.faceLayer(&fv.content, vis, name, g.content);
+        if (fv.content_effect == null) {
+            var e: ?Obj = null;
+            try check(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_create_effect_group)(self.dcomp, &e));
+            fv.content_effect = e orelse return error.ComFailed;
+            try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, content, slot_dcomp_visual_set_effect)(content, fv.content_effect.?));
+        }
+        fv.declared = true;
+        try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, band, slot_dcomp_visual_set_offset_x)(band, @floatFromInt(g.band_x)));
+        try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, band, slot_dcomp_visual_set_offset_y)(band, @floatFromInt(g.band_y)));
+        const SetAnim = *const fn (Obj, Obj) callconv(.winapi) HRESULT;
+        const moves = [4]struct { Obj, usize, f32, f32 }{
+            .{ content, slot_dcomp_visual_set_offset_x - 1, g.from.content_x, g.to.content_x },
+            .{ content, slot_dcomp_visual_set_offset_y - 1, g.from.content_y, g.to.content_y },
+            .{ name, slot_dcomp_visual_set_offset_x - 1, g.from.name_x, g.to.name_x },
+            .{ name, slot_dcomp_visual_set_offset_y - 1, g.from.name_y, g.to.name_y },
+        };
+        for (moves) |m| {
+            const anim = try self.followAnimation(m[2], m[3], g.curve, g.span_s);
+            defer release(anim);
+            try check(slot(SetAnim, m[0], m[1])(m[0], anim));
+        }
+        // The card: the clip object, whose edges take animations.
+        const rc = try self.paneClipObject(vis, g.to.clip, &fv.clip);
+        inline for (.{ slot_dcomp_rect_clip_set_left, slot_dcomp_rect_clip_set_top, slot_dcomp_rect_clip_set_right, slot_dcomp_rect_clip_set_bottom }, .{ "left", "top", "right", "bottom" }) |s, f| {
+            const anim = try self.followAnimation(@field(g.from.clip, f), @field(g.to.clip, f), g.curve, g.span_s);
+            defer release(anim);
+            try check(slot(SetAnim, rc, s - 1)(rc, anim));
+        }
+        const fade = try self.followAnimationHeld(g.from.opacity, g.to.opacity, g.curve, g.span_s, g.fade_knee_s, g.fade_hold);
+        defer release(fade);
+        try check(slot(SetAnim, fv.content_effect.?, slot_dcomp_effect_set_opacity_anim)(fv.content_effect.?, fade));
+        self.face_uploads +|= 1;
+        try self.commit();
+    }
+
     /// Drop `fv`'s references without touching a tree: its host is gone.
     pub fn releaseFace(fv: *FaceVis) void {
+        for ([_]*FaceLayer{ &fv.band, &fv.name, &fv.content }) |l| l.release_();
+        if (fv.content_effect) |o| release(o);
         if (fv.clip) |o| release(o);
         if (fv.surface) |o| release(o);
         if (fv.effect) |o| release(o);

@@ -593,3 +593,138 @@ test "clipBox: a card inside the face keeps its corners; a cut one does not; an 
     try testing.expect(!none.whole);
     try testing.expectEqual(PxRect{}, none.box);
 }
+
+/// The carried content's strength along a fold declared to the compositor
+/// (T2778): `tweenCollapse` of the card's extent is linear in it, and the
+/// extent is linear in the glide's follower, so the strength is a straight
+/// line in the same 0..1 of the way - from the card drawn at `d0` to it
+/// landed at `d1`. `to` is the line's UNCLAMPED end: a strip narrower than
+/// `strip` runs it past 0 before the card lands, and the compositor holds it
+/// from the knee (`FacePose.fadeKnee`). Null when the line does not start
+/// inside 0..1 (a card drawn wider than its pane), which frames handle.
+pub fn fadeLine(d0: f64, d1: f64, strip: f64, full: f64, min_span: f64) ?struct { from: f32, to: f32 } {
+    const span = @max(full - strip, min_span);
+    if (span <= 0) return null;
+    const from = 1 - (full - d0) / span;
+    if (from < -1e-6 or from > 1 + 1e-6) return null;
+    return .{ .from = @floatCast(std.math.clamp(from, 0, 1)), .to = @floatCast(1 - (full - d1) / span) };
+}
+
+test "fadeLine: the same strength tweenCollapse gives, as a line (T2778)" {
+    // A 400 px pane folding from its whole width into a 46 px strip, which
+    // lands at 36 px: the line ends past 0.
+    const l = fadeLine(400, 36, 46, 400, 120).?;
+    try testing.expectEqual(@as(f32, 1), l.from);
+    try testing.expect(l.to < 0);
+    for ([_]f64{ 0, 0.3, 0.7, 0.95 }) |f| {
+        const d = 400 + (36 - 400) * f;
+        const want: f32 = @floatCast(1 - tweenCollapse(d, 46, 400, 120));
+        const got = std.math.clamp(l.from + (l.to - l.from) * @as(f32, @floatCast(f)), 0, 1);
+        try testing.expectApproxEqAbs(want, got, 1e-5);
+    }
+    // A card drawn wider than the pane it carries: frames, not a line.
+    try testing.expectEqual(@as(@TypeOf(fadeLine(0, 0, 0, 0, 0)), null), fadeLine(500, 36, 46, 400, 120));
+}
+
+/// Where the strip name's picture goes for a face showing `vis` (client
+/// pixels, fractional), the picture painted for a face `pic_w` x `pic_h`
+/// (T2778): `pane_stack_strip.labelOrigin` centres the name across a tall
+/// strip and down a short one, so the picture rides that centre as the face
+/// narrows, and keeps to the face's top (tall) or left (short) edge.
+pub fn nameOffset(axis: Direction, left: f32, top: f32, right: f32, bottom: f32, pic_w: f32, pic_h: f32) struct { x: f32, y: f32 } {
+    return switch (axis) {
+        .horizontal => .{ .x = left + ((right - left) - pic_w) / 2, .y = top },
+        .vertical => .{ .x = left, .y = top + ((bottom - top) - pic_h) / 2 },
+    };
+}
+
+test "nameOffset: the name rides the face's centre across its narrowing side (T2778)" {
+    const a = nameOffset(.horizontal, 100, 0, 500, 600, 400, 600);
+    try testing.expectEqual(@as(f32, 100), a.x);
+    const b = nameOffset(.horizontal, 20, 0, 56, 600, 400, 600);
+    // The picture's centre on the 36 px face's centre.
+    try testing.expectEqual(@as(f32, 38), b.x + 200);
+    try testing.expectEqual(@as(f32, 0), b.y);
+    const c = nameOffset(.vertical, 10, 0, 410, 40, 400, 300);
+    try testing.expectEqual(@as(f32, 10), c.x);
+    try testing.expectEqual(@as(f32, 20), c.y + 150);
+}
+
+/// A name drawn white on black (GDI, ClearType or not) made into `ink` at
+/// the coverage it drew, premultiplied (T2778): the name's own picture,
+/// clear wherever no text is, laid over the band by the compositor.
+pub fn inkFromCoverage(px: []u32, ink: Rgb) void {
+    for (px) |*p| {
+        const v = p.*;
+        const cov: u32 = @max(@max((v >> 16) & 0xFF, (v >> 8) & 0xFF), v & 0xFF);
+        if (cov == 0) {
+            p.* = 0;
+            continue;
+        }
+        const r = (@as(u32, ink.r) * cov + 127) / 255;
+        const g = (@as(u32, ink.g) * cov + 127) / 255;
+        const b = (@as(u32, ink.b) * cov + 127) / 255;
+        p.* = (cov << 24) | (r << 16) | (g << 8) | b;
+    }
+}
+
+test "inkFromCoverage: text coverage becomes premultiplied ink; no text is clear (T2778)" {
+    var px = [_]u32{ 0x000000, 0xFFFFFF, 0x408020 };
+    inkFromCoverage(&px, .{ .r = 0xFF, .g = 0x80, .b = 0x00 });
+    try testing.expectEqual(@as(u32, 0), px[0]);
+    try testing.expectEqual(@as(u32, 0xFFFF8000), px[1]);
+    // Coverage 0x80: half of the ink, alpha 0x80.
+    try testing.expectEqual(@as(u32, 0x80804000), px[2]);
+}
+
+const comp_tree = @import("../../renderer/comp_tree.zig");
+const comp_overlay = @import("../../renderer/comp_overlay.zig");
+
+/// A fold handed to the compositor whole (T2778): when, from what, to what,
+/// and on which follower - so a retarget starts from where the compositor
+/// has the face rather than from where the window's last frame did.
+pub const FaceDecl = struct {
+    t0: std.time.Instant,
+    from: comp_tree.FacePose,
+    to: comp_tree.FacePose,
+    dist: f32,
+    tau_s: f64,
+
+    /// Where the compositor has the face `now`: the exact path its cubics
+    /// stand in for, the strength held inside 0..1.
+    pub fn reached(self: FaceDecl, now: std.time.Instant) comp_tree.FacePose {
+        const t_s = @as(f64, @floatFromInt(now.since(self.t0))) / std.time.ns_per_s;
+        return self.at(t_s);
+    }
+
+    fn at(self: FaceDecl, t_s: f64) comp_tree.FacePose {
+        const f = comp_overlay.followerAt(self.dist, self.tau_s, pane_stack_slide.snap_px, t_s);
+        return comp_tree.FacePose.lerp(self.from, self.to, @floatCast(f));
+    }
+
+    /// When the strength reaches the end of 0..1 and is held, in seconds
+    /// after `t0`; null when it runs the whole way.
+    pub fn kneeS(self: FaceDecl) ?f64 {
+        const k = comp_tree.FacePose.fadeKnee(self.from, self.to) orelse return null;
+        return comp_overlay.followerTimeOf(self.dist, self.tau_s, pane_stack_slide.snap_px, k);
+    }
+};
+
+test "FaceDecl: reached follows the follower, the fade held from its knee (T2778)" {
+    const t0 = std.time.Instant.now() catch return error.SkipZigTest;
+    const d: FaceDecl = .{
+        .t0 = t0,
+        .from = .{ .clip = .{ .left = 100, .right = 500, .bottom = 600 }, .content_x = 100, .opacity = 1 },
+        .to = .{ .clip = .{ .left = 20, .right = 56, .bottom = 600 }, .content_x = 20, .opacity = -0.25 },
+        .dist = 444,
+        .tau_s = 0.045,
+    };
+    try testing.expectEqual(d.from, d.at(0));
+    const k = d.kneeS().?;
+    // At the knee the strength has just run out, and stays out; the card
+    // is still on its way.
+    try testing.expectApproxEqAbs(@as(f32, 0), d.at(k).opacity, 1e-4);
+    try testing.expectEqual(@as(f32, 0), d.at(k + 0.05).opacity);
+    try testing.expect(d.at(k).clip.right > 56);
+    try testing.expectApproxEqAbs(@as(f32, 56), d.at(10).clip.right, 1e-4);
+}

@@ -191,6 +191,74 @@ pub const Pose = struct {
     }
 };
 
+/// A folding card's face, declared (T2778): every value of it that moves on
+/// the glide's follower, in the window's client pixels. `clip` is the card -
+/// what of the face shows; `content_x`/`_y` the carried frame's top-left,
+/// pinned where the glide has the pane; `name_x`/`_y` the strip name's
+/// picture; `opacity` the carried frame's strength, on its UNCLAMPED line
+/// (it can run past 0 before the card lands; the compositor holds it there).
+pub const FacePose = struct {
+    clip: Clip = .{},
+    content_x: f32 = 0,
+    content_y: f32 = 0,
+    name_x: f32 = 0,
+    name_y: f32 = 0,
+    opacity: f32 = 1,
+
+    /// `f` of the way from `a` to `b`, every value on its own; the opacity
+    /// held inside 0..1, as the compositor shows it.
+    pub fn lerp(a: FacePose, b: FacePose, f: f32) FacePose {
+        const L = struct {
+            fn v(p: f32, q: f32, t: f32) f32 {
+                return p + (q - p) * t;
+            }
+        };
+        const c = Pose.lerp(.{ .clip = a.clip }, .{ .clip = b.clip }, f).clip;
+        return .{
+            .clip = c,
+            .content_x = L.v(a.content_x, b.content_x, f),
+            .content_y = L.v(a.content_y, b.content_y, f),
+            .name_x = L.v(a.name_x, b.name_x, f),
+            .name_y = L.v(a.name_y, b.name_y, f),
+            .opacity = std.math.clamp(L.v(a.opacity, b.opacity, f), 0, 1),
+        };
+    }
+
+    /// The farthest any one place has to go from `a` to `b`, in px (the
+    /// opacity is not a distance).
+    pub fn distance(a: FacePose, b: FacePose) f32 {
+        var d = Pose.distance(.{ .clip = a.clip }, .{ .clip = b.clip });
+        inline for (.{ "content_x", "content_y", "name_x", "name_y" }) |f| d = @max(d, @abs(@field(b, f) - @field(a, f)));
+        return d;
+    }
+
+    /// Where along the way (0..1) the opacity line leaves 0..1, or null when
+    /// it stays inside all the way: from there the compositor holds it.
+    pub fn fadeKnee(a: FacePose, b: FacePose) ?f32 {
+        const lo = @min(a.opacity, b.opacity);
+        const hi = @max(a.opacity, b.opacity);
+        if (lo >= 0 and hi <= 1) return null;
+        if (a.opacity == b.opacity) return null;
+        const edge: f32 = if (b.opacity < 0) 0 else 1;
+        return std.math.clamp((edge - a.opacity) / (b.opacity - a.opacity), 0, 1);
+    }
+};
+
+test "FacePose: lerp, distance and the fade's knee (T2778)" {
+    const a: FacePose = .{ .clip = .{ .left = 100, .right = 500, .bottom = 600 }, .content_x = 100, .name_x = 100, .opacity = 1 };
+    const b: FacePose = .{ .clip = .{ .left = 20, .right = 56, .bottom = 600, .top_radius = 6 }, .content_x = 20, .name_x = -162, .opacity = -0.25 };
+    try std.testing.expectEqual(@as(f32, 444), FacePose.distance(a, b));
+    const mid = FacePose.lerp(a, b, 0.5);
+    try std.testing.expectEqual(@as(f32, 60), mid.content_x);
+    try std.testing.expectEqual(@as(f32, 278), mid.clip.right);
+    try std.testing.expectEqual(@as(f32, 0.375), mid.opacity);
+    // The line crosses 0 at 0.8 of the way; the pose holds it there.
+    try std.testing.expectEqual(@as(f32, 0.8), FacePose.fadeKnee(a, b).?);
+    try std.testing.expectEqual(@as(f32, 0), FacePose.lerp(a, b, 0.9).opacity);
+    // Inside 0..1 all the way: no knee.
+    try std.testing.expectEqual(@as(?f32, null), FacePose.fadeKnee(a, .{ .opacity = 0 }));
+}
+
 test "Pose: lerp moves every value on its own; distance is the farthest one (T2572)" {
     const a: Pose = .{ .x = 100, .y = 0, .clip = .{ .left = 0, .top = -20, .right = 400, .bottom = 600 } };
     const b: Pose = .{ .x = 20, .y = 0, .clip = .{ .left = 0, .top = -20, .right = 10, .bottom = 600, .top_radius = 6 } };

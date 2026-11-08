@@ -66,6 +66,10 @@
 # stepped from the window's thread they freeze for all of it. .10 reads the
 # film: the longest stretch of the glide in which the card that travels
 # furthest did not move, which must stay under a quarter of the stall.
+# Since T2778 the card folding into its strip is declared too - its face's
+# card clip, carried frame and fade - and, in the tree, the face is a picture
+# of the window's own tree, so the film sees it: .13 scores its longest still
+# stretch until it fades out of the film, .14 reads that it was declared.
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms stall
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms stall -NoDeclare   # stall.10 must go red
 # -NoDeclare sets GHOZTTY_GLIDE_DECLARE=0: the visuals are placed on every
@@ -375,6 +379,38 @@ function Score-Stall($arm, $rows) {
     "    trace ($($colourNames[$bestK]) ms:left-right): " + (($rows | ForEach-Object { $b = $_.B[$bestK]; "$([Math]::Round($_.T - $t0)):$($b.LeftMin)-$($b.RightMax)" }) -join ' ')
     "    stall:$($colourNames[$bestK]) travels $best px in $moves moves; longest still stretch $([Math]::Round($gap)) ms (ending $gapAt), stall $StallMs ms"
     Assert "$arm.10 through a $StallMs ms stall the glide keeps moving: longest still stretch $([Math]::Round($gap)) ms (need < $limit)" ($moves -ge 2 -and $gap -lt $limit)
+    Score-StallFace $arm $rows $limit
+}
+
+# T2778: the card folding into its strip, through the same stall. In the
+# composition pane tree its face is a picture in the window's own tree, so
+# the film sees it: the carried frame (the card's block) cut to the card,
+# fading as the card narrows. Every change of the block counts as a move -
+# an edge, and the frame it fades out of the film - from the first frame to
+# that one; a face stepped from the window's thread holds still for the
+# whole stall.
+function Score-StallFace($arm, $rows, $limit) {
+    $fk = -1
+    for ($k = 0; $k -lt 4; $k++) {
+        if ($rows[0].B[$k].Rows -gt 0 -and $rows[$rows.Count - 1].B[$k].Rows -eq 0) { $fk = $k; break }
+    }
+    if ($fk -lt 0) { Assert "$arm.13 a card folds into its strip on film (none on show at the start and gone at the end)" $false; return }
+    $prev = $rows[0].B[$fk]
+    # Timed from its first move: the film opens on the card at rest before
+    # the click, which is not a stall.
+    $lastT = $null; $gap = 0.0; $gapAt = ''; $moves = 0
+    foreach ($f in $rows) {
+        $b = $f.B[$fk]
+        $gone = $b.Rows -eq 0
+        if (-not $gone -and $b.LeftMin -eq $prev.LeftMin -and $b.RightMax -eq $prev.RightMax) { continue }
+        if ($null -ne $lastT -and ($f.T - $lastT) -gt $gap) { $gap = $f.T - $lastT; $gapAt = "f$($f.I)" }
+        $lastT = $f.T; $prev = $b; $moves++
+        if ($gone) { break }
+    }
+    $t0 = $rows[0].T
+    "    face trace ($($colourNames[$fk]) ms:left-right): " + (($rows | ForEach-Object { $b = $_.B[$fk]; "$([Math]::Round($_.T - $t0)):$($b.LeftMin)-$($b.RightMax)" }) -join ' ')
+    "    face:$($colourNames[$fk]) $moves moves until it left the film; longest still stretch $([Math]::Round($gap)) ms (ending $gapAt)"
+    Assert "$arm.13 through the stall the folding card's face keeps folding: longest still stretch $([Math]::Round($gap)) ms (need < $limit)" ($moves -ge 2 -and $gap -lt $limit)
 }
 
 $onLine = 'pane presents through a composition swap chain'
@@ -511,6 +547,10 @@ try {
             # stall with the card instead of staying baked where it started.
             $rode = [regex]::Matches((Read-Text $err), 'pane visual glide declared [^\r\n]*shadow=true').Count
             Assert "$arm.12 the cards' shadows rode the declared paths ($rode of $dec)" ($dec -ge 1 -and $rode -eq $dec)
+            # T2778: the folding card's face - its card clip, carried frame
+            # and fade - went to the compositor whole too.
+            $faces = [regex]::Matches((Read-Text $err), 'strip face glide declared').Count
+            Assert "$arm.14 the folding card's face was handed to the compositor ($faces face path(s) declared)" ($faces -ge 1)
         }
 
         $fgPid = [uint32]0

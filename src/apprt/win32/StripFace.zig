@@ -60,6 +60,9 @@ pub const StripFace = struct {
     comp: chrome_comp.FaceVis = .{},
     comp_host: ?*?chrome_comp.Host = null,
     on_visual: bool = false,
+    /// The fold handed to the compositor whole (T2778), while it runs; null
+    /// on a face stepped from frames.
+    decl: ?strip_face.FaceDecl = null,
 
     pub fn create(alloc: std.mem.Allocator, owner: w32.HWND, hinstance: w32.HINSTANCE) !*StripFace {
         try registerClassOnce(hinstance);
@@ -207,6 +210,8 @@ pub const StripFace = struct {
             return false;
         };
         self.comp_host = host_slot;
+        // Stepped again: a declared fold is replaced (`faceShow`).
+        self.decl = null;
         self.painting = false;
         self.px_w = self.w;
         self.px_h = self.h;
@@ -225,8 +230,60 @@ pub const StripFace = struct {
         return true;
     }
 
+    /// Hand the face's whole fold to the compositor (T2778): `g`'s pictures
+    /// go up under the face's visual in the window's tree on the host in
+    /// `host_slot`, and its card clip, places and strength run on the
+    /// compositor's clock until the glide drops the face or declares it
+    /// again. `decl` is what was declared, for a retarget to start from
+    /// where the compositor has got to. False when the host cannot take it;
+    /// the face is then off the tree and the caller steps it on frames.
+    pub fn declareVisual(self: *StripFace, host_slot: *?chrome_comp.Host, g: chrome_comp.FaceGlide, decl: strip_face.FaceDecl) bool {
+        self.painting = false;
+        const host = if (host_slot.*) |*h| h else return false;
+        if (!host.faceAvailable()) return false;
+        host.faceDeclare(&self.comp, g) catch |err| {
+            const f = chrome_comp.Host.lastFailure();
+            log.warn("strip face declare failed ({}) at {s}: hr=0x{x:0>8}; the face goes back to frames", .{ err, f.stage, chrome_comp.hex(f.hr) });
+            host.faceDrop(&self.comp);
+            self.decl = null;
+            if (self.on_visual) {
+                self.on_visual = false;
+                self.shown = false;
+            }
+            return false;
+        };
+        self.comp_host = host_slot;
+        self.decl = decl;
+        self.alpha = 255;
+        if (self.shown and !self.on_visual) {
+            _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
+            log.info("strip face moved to its visual", .{});
+        }
+        const was_shown = self.shown;
+        self.shown = true;
+        self.on_visual = true;
+        // The acceptance oracle (stack-fold-slide.ps1 / pane-stack-unfold.ps1
+        // tree arms read the first line; comp-glide-hold-onscreen.ps1's stall
+        // arm reads the second).
+        if (!was_shown) log.info("strip face visual shown alpha=255 rect={d},{d},{d}x{d}", .{
+            @as(i32, @intFromFloat(g.from.clip.left)),
+            @as(i32, @intFromFloat(g.from.clip.top)),
+            @as(i32, @intFromFloat(g.from.clip.right - g.from.clip.left)),
+            @as(i32, @intFromFloat(g.from.clip.bottom - g.from.clip.top)),
+        });
+        log.debug("strip face glide declared clip_left={d:.1}->{d:.1} clip_right={d:.1}->{d:.1} content_x={d:.1}->{d:.1} opacity={d:.3}->{d:.3} knee_ms={d:.0} span_ms={d:.0}", .{
+            g.from.clip.left,                                     g.to.clip.left,
+            g.from.clip.right,                                    g.to.clip.right,
+            g.from.content_x,                                     g.to.content_x,
+            g.from.opacity,                                       g.to.opacity,
+            if (g.fade_knee_s) |k| k * 1000 else g.span_s * 1000, g.span_s * 1000,
+        });
+        return true;
+    }
+
     /// Take the face's visual off the window's tree, if it has one.
     fn dropVisual(self: *StripFace) void {
+        self.decl = null;
         if (!self.comp.live()) return;
         if (self.comp_host) |slot_ptr| if (slot_ptr.*) |*h| {
             h.faceDrop(&self.comp);

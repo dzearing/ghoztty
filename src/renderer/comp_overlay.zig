@@ -353,6 +353,30 @@ pub fn followerAt(dist_px: f64, tau_s: f64, snap_px: f64, t_s: f64) f64 {
     return (1 - @exp(-t_s / tau_s)) / (1 - snap_px / d);
 }
 
+/// When the follower `followerAt` describes first reaches `f` of the way
+/// (T2778): its inverse, so a value that stops part-way along the same path -
+/// a fade that has run out before the card lands - is held from that moment.
+/// 0 for `f` at or before the start, the snap time for `f` at or past 1.
+pub fn followerTimeOf(dist_px: f64, tau_s: f64, snap_px: f64, f: f64) f64 {
+    const d = @abs(dist_px);
+    if (d <= snap_px or tau_s <= 0 or f <= 0) return 0;
+    const span = tau_s * @log(d / snap_px);
+    if (f >= 1) return span;
+    return @min(span, -tau_s * @log(1 - f * (1 - snap_px / d)));
+}
+
+test "followerTimeOf: the inverse of followerAt (T2778)" {
+    const tau = 0.045;
+    for ([_]f64{ 0.05, 0.25, 0.5, 0.9, 0.999 }) |f| {
+        const t = followerTimeOf(300, tau, 0.5, f);
+        try std.testing.expectApproxEqAbs(f, followerAt(300, tau, 0.5, t), 1e-9);
+    }
+    try std.testing.expectEqual(@as(f64, 0), followerTimeOf(300, tau, 0.5, 0));
+    try std.testing.expectEqual(tau * @log(300.0 / 0.5), followerTimeOf(300, tau, 0.5, 1));
+    // Nothing to travel: no time.
+    try std.testing.expectEqual(@as(f64, 0), followerTimeOf(0.2, tau, 0.5, 0.5));
+}
+
 /// The part of `curve` from `from_s` on, re-based so it starts at 0 (T2763):
 /// what is left of a motion that began `from_s` seconds before it could be
 /// declared. The segment `from_s` falls in is re-expanded about that point

@@ -1,10 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-07T18:09:14-08:00",
-    "commit":  "1ed650c25",
+    "generated":  "2026-11-07T23:53:54-08:00",
+    "commit":  "9d53475a8",
     "uncommitted":  [
-                        "scripts/scrollbar-fade-onscreen.ps1"
+                        "scripts/comp-glide-hold-onscreen.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -20,7 +20,7 @@
                   "scripts/comp-desk-onscreen.ps1":  "aaab26f3dd26297f681e4736416e43a73636231adf51a7f048f772762d749c38",
                   "scripts/comp-flat-onscreen.ps1":  "f4e677d04745196654ca641c7ffe5053b84320318a24f6c4621371136ca4bebc",
                   "scripts/comp-gl-baseline.ps1":  "b7f792f81e8cd6e6ad7b62ac7329665ec70edbf3a8bde0b37ff3157ec48e05ae",
-                  "scripts/comp-glide-hold-onscreen.ps1":  "2ed9e7f4258cae03ff19a7e9df75c08eca7edd22c8097a6be7ee6c8bd47332cc",
+                  "scripts/comp-glide-hold-onscreen.ps1":  "0aef739c72bef7382028eeaf8ae09ec707a738d9a8b9f5ba0fa6bbf362c874eb",
                   "scripts/comp-overlay-onscreen.ps1":  "caad81c2f4ba9863f6e436a26e8ae5b564a8e20da35b893cf5bced8175d8d06a",
                   "scripts/comp-present-glide.ps1":  "70bb4876a8a90a82052cc33848ba70c02f6a81d15dc6e379fab01fa03598b81f",
                   "scripts/comp-present-onscreen.ps1":  "8e30e7b69d5d7628e2a2cf3c76590a12a20644b942a6a8c71c365b89a131c1fa",
