@@ -8586,7 +8586,11 @@ pub fn layoutSplits(self: *Window) void {
     if (self.hwnd) |h| resizeTrace("batch-end", h);
     if (resizeTraceOn()) {
         const nc = ViewerNavBar.place_cost;
-        resize_trace.line("resize trace viewer total_us={d} bounds_us={d} nav_us={d} nav_bar_us={d} nav_edit_us={d} nav_tip_us={d} nav_paint_us={d} nav_glass_us={d} nav_buttons_us={d} nav_paints={d}", .{ ViewerPane.sync_cost.total_ns / 1000, ViewerPane.sync_cost.bounds_ns / 1000, ViewerPane.sync_cost.nav_ns / 1000, nc.bar_ns / 1000, nc.edit_ns / 1000, nc.tip_ns / 1000, nc.paint_ns / 1000, nc.glass_ns / 1000, nc.buttons_ns / 1000, nc.paints });
+        const hb = ViewerNavBar.host_band_cost;
+        resize_trace.line("resize trace viewer total_us={d} bounds_us={d} nav_us={d} nav_bar_us={d} nav_edit_us={d} nav_tip_us={d} nav_paint_us={d} nav_glass_us={d} nav_buttons_us={d} nav_paints={d} nav_host_us={d} nav_host_paints={d} sheet_paints_total={d} sheet_us_total={d}", .{ ViewerPane.sync_cost.total_ns / 1000, ViewerPane.sync_cost.bounds_ns / 1000, ViewerPane.sync_cost.nav_ns / 1000, nc.bar_ns / 1000, nc.edit_ns / 1000, nc.tip_ns / 1000, nc.paint_ns / 1000, nc.glass_ns / 1000, nc.buttons_ns / 1000, nc.paints, hb.ns / 1000, hb.paints, ViewerPane.glass_cost.paints, ViewerPane.glass_cost.ns / 1000 });
+        // The host-painted bands since the last line (T2767): the previous
+        // pass's, since a host paints after the pass that laid it out.
+        ViewerNavBar.host_band_cost = .{};
     }
     if (stackTraceOn()) {
         var batch_t1: i64 = 0;
@@ -17852,7 +17856,8 @@ fn releaseBurst(self: *Window, hwnd: w32.HWND) void {
         var it = self.tab_trees[self.active_tab].iterator();
         while (it.next()) |entry| {
             const v = entry.view.viewer() orelse continue;
-            if (v.nav) |nav| _ = w32.UpdateWindow(nav.hwnd);
+            // A drag-hidden bar's band is the host's to paint (T2767).
+            if (v.nav) |nav| _ = w32.UpdateWindow(if (nav.deferred) (v.hwnd orelse nav.hwnd) else nav.hwnd);
         }
     }
     if (resizeTraceOn()) {

@@ -455,6 +455,19 @@ pub fn deferRegionCut(noredir: bool, in_size_loop: bool, in_live_layout: bool, i
     return noredir and in_size_loop and in_live_layout and in_tree;
 }
 
+var nav_nodefer_state: ?bool = null;
+
+/// `GHOZTTY_RESIZE_NAV_NODEFER` (T2767): keep the viewer nav bar a moving,
+/// self-painting window through a window-edge drag, as before, rather than
+/// hiding it and letting the host paint its band - so a film can score the
+/// drag both ways on one build. UI thread only; read once per process.
+pub fn navStaysLive() bool {
+    if (nav_nodefer_state) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_NAV_NODEFER");
+    nav_nodefer_state = v;
+    return v;
+}
+
 var viewer_moves_state: ?bool = null;
 
 /// `GHOZTTY_RESIZE_VIEWER_MOVES` (T2577): refresh WebView2's parent position on

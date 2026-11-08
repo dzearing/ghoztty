@@ -44,6 +44,7 @@ const viewer_accel = @import("viewer_accel.zig");
 const ViewerPane = @import("ViewerPane.zig");
 const input = @import("../../input.zig");
 const utf16_text = @import("utf16_text.zig");
+const resize_paint = @import("resize_paint.zig");
 
 const log = std.log.scoped(.viewer_nav);
 
@@ -70,6 +71,11 @@ const edit_id: usize = 1;
 /// last moved, so a drag's steps never pay for it.
 const edit_sync_timer: usize = 0x2538;
 const edit_sync_ms: u32 = 120;
+
+/// The drag-hidden bar's return (T2767, `settle`): the same beat after the
+/// band last moved. `WM_EXITSIZEMOVE` settles it at once; this covers a drag
+/// that pauses, and a size loop whose end never arrives.
+const bar_settle_timer: usize = 0x2767;
 
 /// Bytes the tooltip log line may hold: every button in the strip, each a name
 /// and two rects at roughly 70 bytes. Sized with headroom because the writer
@@ -195,6 +201,15 @@ editing: bool = false,
 /// EDIT has not been moved there yet (`syncEdit`).
 field_rect: ?w32.RECT = null,
 edit_stale: bool = false,
+
+/// Whether a window-edge drag has the bar window hidden (T2767), and the width
+/// its band was last laid out at. While it is, the viewer host paints the band
+/// in its own paint (`paintDeferred`) and the bar window is neither moved nor
+/// painted: as a child window it cost ~0.2 ms of move and a BeginPaint/EndPaint
+/// of its own on every pass. `settle` puts it back at its true rect.
+deferred: bool = false,
+deferred_w: i32 = 0,
+deferred_h: i32 = 0,
 
 /// The idle field's pixels (T2538): the EDIT printed once, `cache_w` wide -
 /// wide enough for all of its text - and re-printed only when its text,
@@ -455,6 +470,16 @@ pub const PlaceCost = struct {
 };
 pub var place_cost: PlaceCost = .{};
 
+/// What the hosts' paints of drag-hidden bands cost (T2767), summed until the
+/// window's next `resize trace viewer` line reads and clears it: that paint
+/// runs after the pass that laid the band out, so `place_cost` (reset when a
+/// pass opens) never sees it.
+pub const HostBandCost = struct {
+    ns: u64 = 0,
+    paints: u32 = 0,
+};
+pub var host_band_cost: HostBandCost = .{};
+
 fn tnow() ?std.time.Instant {
     return std.time.Instant.now() catch null;
 }
@@ -515,6 +540,44 @@ pub fn redrawFlags(editing: bool) u32 {
     return if (editing) band | w32.RDW_FRAME | w32.RDW_ALLCHILDREN else band;
 }
 
+/// Whether `place` hides the bar window and leaves its band to the host
+/// (T2767): inside a window-edge drag's size loop, and never while the field
+/// is being edited - the live EDIT is a child of the bar and has to stay on
+/// screen and move with the band under the user's typing. Pure, so the rule is
+/// testable without a window.
+pub fn deferWhileSizing(in_size_loop: bool, editing: bool) bool {
+    return in_size_loop and !editing;
+}
+
+/// Put a drag-hidden bar back (T2767): at the rect `place` last laid out, shown
+/// without activation, painted now, its tooltips moved. A no-op when the bar is
+/// not hidden, so the pane can call it at every `WM_EXITSIZEMOVE`.
+pub fn settle(self: *ViewerNavBar) void {
+    _ = w32.KillTimer(self.hwnd, bar_settle_timer);
+    if (!self.deferred) return;
+    self.deferred = false;
+    const l = layout_mod.Layout.init(self.scale, self.deferred_w, self.shown());
+    const flags = w32.SWP_NOACTIVATE | w32.SWP_NOZORDER | w32.SWP_NOREDRAW | w32.SWP_NOCOPYBITS | w32.SWP_SHOWWINDOW;
+    _ = w32.SetWindowPos(self.hwnd, null, 0, 0, self.deferred_w, l.bar_h, flags);
+    _ = w32.RedrawWindow(self.hwnd, null, null, redrawFlags(self.editing));
+    self.syncTip(l);
+}
+
+/// The band, into the viewer host's own paint DC at its top-left, while a drag
+/// has the bar window hidden (T2767). The same `paintBuffered` the bar's own
+/// WM_PAINT runs - the band is a pure function of its width and state, and on
+/// glass its slice of the sheet is the host's top-left - so the pixels are the
+/// pixels the window would have painted. False (nothing drawn) otherwise.
+pub fn paintDeferred(self: *ViewerNavBar, hdc: w32.HDC) bool {
+    if (!self.deferred or self.deferred_w <= 0) return false;
+    const t = tnow();
+    const l = layout_mod.Layout.init(self.scale, self.deferred_w, self.shown());
+    self.paintBuffered(hdc, self.deferred_w, l.bar_h);
+    host_band_cost.paints +|= 1;
+    host_band_cost.ns +|= tsince(t);
+    return true;
+}
+
 /// Position the bar across the top of the pane and its EDIT inside it.
 /// Idempotent and cheap; the pane calls it from every bounds sync while the
 /// bar is visible.
@@ -529,6 +592,11 @@ pub fn redrawFlags(editing: bool) u32 {
 /// `resize-sync-onscreen.ps1`, 128 passes) that took the bar's share of a
 /// pass from ~1.45 ms to ~1.14 ms median.
 pub fn place(self: *ViewerNavBar, width: i32, scale: f32) void {
+    const hide = deferWhileSizing(self.pane.in_size_loop, self.editing) and !resize_paint.navStaysLive();
+    // Leaving a drag by any road other than `settle` (the field took focus, a
+    // pass after the loop ended): the window comes back first, and the
+    // ordinary path below compares against where it really is.
+    if (!hide and self.deferred) self.settle();
     const l = layout_mod.Layout.init(scale, width, self.shown());
     const field_w = @max(l.address.right - l.address.left, 0);
     const want: Placement = .{
@@ -558,6 +626,34 @@ pub fn place(self: *ViewerNavBar, width: i32, scale: f32) void {
     // at the band's left edge, so it stays hidden there even while focused.
     self.syncEditVisible(field_w);
     place_cost.edit_ns +|= tsince(t);
+    if (self.scale != scale) self.applyScaleFont(scale);
+    if (hide) {
+        // A window-edge drag (T2767): no move, no paint of the bar's own, no
+        // tooltip sync - the host paints the band, and `settle` does the rest
+        // a beat after the band stops moving. Hiding is paid once a drag.
+        t = tnow();
+        const first = !self.deferred;
+        if (first) {
+            self.deferred = true;
+            _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
+        }
+        const resized = self.deferred_w != width or self.deferred_h != l.bar_h;
+        self.deferred_w = width;
+        self.deferred_h = l.bar_h;
+        _ = w32.SetTimer(self.hwnd, bar_settle_timer, edit_sync_ms, null);
+        // Only a band that changed size is asked for: every host paint lays
+        // the band (`paintDeferred`) over its own sheet whatever else it was
+        // painting for, so an unchanged band is never left stale - and
+        // invalidating it on every pass bought a whole-client glass paint
+        // for passes that resized nothing in this pane (measured: +26 sheet
+        // paints over a 128-pass film).
+        if (first or resized) if (self.pane.hwnd) |host| {
+            const band = w32.RECT{ .left = 0, .top = 0, .right = width, .bottom = l.bar_h };
+            _ = w32.InvalidateRect(host, &band, 0);
+        };
+        place_cost.bar_ns +|= tsince(t);
+        return;
+    }
     t = tnow();
     // The move is ~0.2 ms of a pass whatever the flags say (T2550 measured
     // SWP_NOSENDCHANGING plus a handled WM_WINDOWPOSCHANGED: no change) - it
@@ -573,7 +669,6 @@ pub fn place(self: *ViewerNavBar, width: i32, scale: f32) void {
     // nothing (T2550).
     if (changed) _ = w32.RedrawWindow(self.hwnd, null, null, redrawFlags(self.editing));
     place_cost.paint_ns +|= tsince(t);
-    if (self.scale != scale) self.applyScaleFont(scale);
     t = tnow();
     self.syncTip(l);
     place_cost.tip_ns +|= tsince(t);
@@ -1389,6 +1484,8 @@ fn fieldWidth(self: *ViewerNavBar) i32 {
 /// The field became the focus (a click, a chord, a restored focus): put the
 /// real control on screen over its printed image.
 fn beginEdit(self: *ViewerNavBar) void {
+    // A drag-hidden bar comes back before its field goes live (T2767).
+    self.settle();
     self.syncEdit();
     self.editing = true;
     self.syncEditVisible(self.fieldWidth());
@@ -1560,6 +1657,10 @@ fn wndProc(
         w32.WM_TIMER => {
             if (wparam == edit_sync_timer) {
                 self.syncEdit();
+                return 0;
+            }
+            if (wparam == bar_settle_timer) {
+                self.settle();
                 return 0;
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
@@ -1830,6 +1931,15 @@ test "T2550: redrawFlags walks the field only while it is being edited" {
     const band = w32.RDW_INVALIDATE | w32.RDW_UPDATENOW;
     try std.testing.expectEqual(band, redrawFlags(false));
     try std.testing.expectEqual(band | w32.RDW_FRAME | w32.RDW_ALLCHILDREN, redrawFlags(true));
+}
+
+// T2767: the bar window steps aside only inside a size loop, and never under
+// the user's typing - the live EDIT is its child.
+test "T2767: deferWhileSizing hides the bar in a drag, never while editing" {
+    try std.testing.expect(deferWhileSizing(true, false));
+    try std.testing.expect(!deferWhileSizing(true, true));
+    try std.testing.expect(!deferWhileSizing(false, false));
+    try std.testing.expect(!deferWhileSizing(false, true));
 }
 
 // T2550: the back buffer is grown in `back_step` columns and reused for any

@@ -5582,6 +5582,8 @@ pub fn syncBounds(self: *ViewerPane) void {
 /// window calls this at `WM_EXITSIZEMOVE`.
 pub fn settleMove(self: *ViewerPane) void {
     self.in_size_loop = false;
+    // The nav bar the drag hid comes back now (T2767), not a beat later.
+    if (self.nav) |nav| nav.settle();
     if (!self.move_owed) return;
     self.move_owed = false;
     if (self.controller) |c| c.notifyParentWindowPositionChanged();
@@ -7112,6 +7114,8 @@ fn paintUnderPage(self: *ViewerPane) void {
         _ = w32.ExcludeClipRect(dc, pts[0].x, pts[0].y, pts[1].x, pts[1].y);
     }
     self.paint(dc, r.right - r.left, r.bottom - r.top);
+    // A drag-hidden nav bar's band (T2767), over the sheet just laid there.
+    if (self.nav) |nav| _ = nav.paintDeferred(dc);
 }
 
 /// Whether a child of the host is one of our own GDI windows - every class
@@ -7485,6 +7489,9 @@ pub fn wndProc(
             var r: w32.RECT = undefined;
             if (self.glass == null and w32.GetClientRect(hwnd, &r) != 0) {
                 self.paint(hdc, r.right - r.left, r.bottom - r.top);
+                // The nav bar's band while a drag has its window hidden
+                // (T2767); on glass `paintUnderPage` lays it.
+                if (self.nav) |nav| _ = nav.paintDeferred(hdc);
             }
             _ = w32.EndPaint(hwnd, &ps);
             self.paintUnderPage();
@@ -7498,6 +7505,8 @@ pub fn wndProc(
             var r: w32.RECT = undefined;
             if (w32.GetClientRect(hwnd, &r) == 0) return 0;
             self.paint(@ptrFromInt(wparam), r.right - r.left, r.bottom - r.top);
+            // What the screen shows while a drag has the nav bar hidden (T2767).
+            if (self.nav) |nav| _ = nav.paintDeferred(@ptrFromInt(wparam));
             return 0;
         },
 
@@ -8257,6 +8266,57 @@ test "host floor: a real controller on a real window, on this box" {
             const solid: u32 = (@as(u32, nav.bar_rgb.r) << 16) | (@as(u32, nav.bar_rgb.g) << 8) | nav.bar_rgb.b;
             try testing.expect(got[0] != solid);
             log.warn("glass nav band: x0=0x{X:0>6} mid=0x{X:0>6} solid=0x{X:0>6}", .{ got[0], got[got.len / 2], solid });
+        }
+
+        // T2767: inside a window-edge drag the bar window steps aside and the
+        // host paints its band. The host's band must be the bar's own pixels,
+        // every one of them, and the window must be back at its rect, shown,
+        // once the size loop ends. (The host is never shown here, so the
+        // window's own WS_VISIBLE bit is read rather than IsWindowVisible.)
+        {
+            const nav = pane.nav.?;
+            const host_w = pane.hwnd.?;
+            var hr: w32.RECT = undefined;
+            if (w32.GetClientRect(host_w, &hr) == 0) return error.Win32Error;
+            const hw = hr.right - hr.left;
+            const hh = hr.bottom - hr.top;
+            const bh = nav_layout.Layout.init(pane.scale, hw, nav.shown()).bar_h;
+            try testing.expect(hw > 0 and bh > 0 and hh >= bh);
+            const screen = w32.GetDC(null) orelse return error.Win32Error;
+            defer _ = w32.ReleaseDC(null, screen);
+            const own = Dib32.create(screen, hw, bh) orelse return error.Win32Error;
+            defer own.destroy();
+            _ = w32.SendMessageW(nav.hwnd, w32.WM_PRINTCLIENT, @intFromPtr(own.dc), 0);
+
+            const shownBit = struct {
+                fn on(h: w32.HWND) bool {
+                    return (@as(u32, @bitCast(w32.GetWindowLongW(h, w32.GWL_STYLE))) & w32.WS_VISIBLE_STYLE) != 0;
+                }
+            }.on;
+            try testing.expect(shownBit(nav.hwnd));
+            pane.in_size_loop = true;
+            pane.syncBounds();
+            try testing.expect(nav.deferred);
+            try testing.expect(!shownBit(nav.hwnd));
+
+            const host_px = Dib32.create(screen, hw, hh) orelse return error.Win32Error;
+            defer host_px.destroy();
+            _ = w32.SendMessageW(host_w, w32.WM_PRINTCLIENT, @intFromPtr(host_px.dc), 0);
+            const n: usize = @intCast(hw * bh);
+            var diffs: usize = 0;
+            for (own.pixels[0..n], host_px.pixels[0..n]) |op, hp| {
+                if ((op & 0x00FFFFFF) != (hp & 0x00FFFFFF)) diffs += 1;
+            }
+            log.warn("T2767 deferred host_px: {d}x{d} px, {d} differ from the bar's own paint", .{ hw, bh, diffs });
+            try testing.expectEqual(@as(usize, 0), diffs);
+
+            pane.settleMove();
+            try testing.expect(!nav.deferred);
+            try testing.expect(shownBit(nav.hwnd));
+            var nr: w32.RECT = undefined;
+            if (w32.GetClientRect(nav.hwnd, &nr) == 0) return error.Win32Error;
+            try testing.expectEqual(hw, nr.right - nr.left);
+            try testing.expectEqual(bh, nr.bottom - nr.top);
         }
 
         // The feedback composer is the same material one band down (T1926):
