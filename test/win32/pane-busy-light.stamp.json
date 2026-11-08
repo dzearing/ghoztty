@@ -1,14 +1,14 @@
 {
     "guard":  "pane-busy-light",
     "script":  "test/win32/pane-busy-light.ps1",
-    "generated":  "2026-11-08T11:30:26-08:00",
-    "commit":  "533fce09a",
+    "generated":  "2026-11-08T12:31:23-08:00",
+    "commit":  "f384a725b",
     "uncommitted":  [
                         "src/apprt/win32/PaneDesk.zig"
                     ],
     "files":  {
                   "src/apprt/win32/busy_light.zig":  "a6573cd9d166705097cadf69bc7a19316b04edc98136f92234842ccb07f226ce",
-                  "src/apprt/win32/PaneDesk.zig":  "1976ed05cdb8ac5fcf581e88e1ee765fe6454dd88a4b55264794022ab4583e4e",
+                  "src/apprt/win32/PaneDesk.zig":  "1838ced7ebcdcd35bc19736b0485326a4b97be77f15e3a01888d41dbadfd9376",
                   "test/win32/pane-busy-light.ps1":  "68aa8bd7cb6981af57d13b334f9224386e4446f49430609eb87ada8b9d8a9332"
               }
 }

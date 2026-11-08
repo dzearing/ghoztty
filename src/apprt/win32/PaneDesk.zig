@@ -350,6 +350,17 @@ also_blit: ?busy_light.Rect = null,
 /// What the last paint put on the window when it was not the whole content
 /// area (content-area pixels).
 last_blit: ?Memo.Rects = null,
+/// What the last compose changed, owed to the window again by the next paint
+/// that blits only what changed (T2732): the paint that composed it may have
+/// been clipped short of it - a layout pass's vacated-strip paint is clipped
+/// to the box the panes left - so the band paint after it, a memo hit, puts
+/// these out again rather than the whole desk. `carry_full` is the same debt
+/// for a whole-desk blit, which may have been clipped too.
+carry: ?Memo.Rects = null,
+carry_full: bool = false,
+/// Set by the window around a paint whose DC it clipped short of the desk
+/// (T2732: the vacated-strip paint), so what it blits stays owed.
+clip_short: bool = false,
 /// The tucked strips' names, laid into `comp` for the blit and lifted off it
 /// after (T2485), so a band and its name reach the window in the same
 /// `BitBlt`. Drawn after it, as their own GDI pass, the window could be
@@ -961,7 +972,30 @@ pub fn paint(
             if (laid) for (self.names.?.rects) |r| up.add(r.left, r.top, r.right, r.bottom);
             return self.toSink(s, comp, up.slice(), opacity);
         }
-        return self.timedBlit(hdc, origin_x, origin_y, w, h, comp, desk, opacity);
+        // The window kept what the last paints put there (T2732): a paint
+        // that blits only what changed owes it the rings, the names, its
+        // invalid box, and whatever the last compose changed - not the whole
+        // desk again, which a layout pass's band paint used to blit on every
+        // glide tick (~0.9 ms of a 8.3 ms period at 120 Hz).
+        if (self.blit_changed_only) {
+            if (self.owedRects(w, h)) |owed| {
+                var sh = owed;
+                self.addLightStrips(&sh, comp);
+                if (self.also_blit) |r| sh.add(r.left, r.top, r.right, r.bottom);
+                if (laid) for (self.names.?.rects) |r| sh.add(r.left, r.top, r.right, r.bottom);
+                if (sh.area() * 4 <= @as(i64, w) * h * 3) {
+                    var timer2 = std.time.Timer.start() catch null;
+                    for (sh.slice()) |r| self.blitRect(hdc, origin_x, origin_y, comp, desk, opacity, r);
+                    if (timer2) |*t| self.blit_ns +|= t.read();
+                    self.last_blit = sh;
+                    self.settleDebt(false, &sh);
+                    return;
+                }
+            }
+        }
+        self.timedBlit(hdc, origin_x, origin_y, w, h, comp, desk, opacity);
+        self.settleDebt(false, null);
+        return;
     }
     self.memo_misses +|= 1;
     if (fresh or !self.memo.cardsMatch(cards)) self.memo_card_misses +%= 1;
@@ -1006,19 +1040,63 @@ pub fn paint(
         return self.toSink(s, comp, null, opacity);
     }
     if (shown) |*sh| {
-        self.addLightStrips(sh, comp);
-        if (self.also_blit) |r| sh.add(r.left, r.top, r.right, r.bottom);
-        // Every name goes out with this paint: the window draws none itself.
-        if (laid) for (self.names.?.rects) |r| sh.add(r.left, r.top, r.right, r.bottom);
-        if (sh.area() * 4 <= @as(i64, w) * h * 3) {
-            var timer2 = std.time.Timer.start() catch null;
-            for (sh.slice()) |r| self.blitRect(hdc, origin_x, origin_y, comp, desk, opacity, r);
-            if (timer2) |*t| self.blit_ns +|= t.read();
-            self.last_blit = sh.*;
-            return;
+        // And whatever an earlier paint was clipped short of (T2732).
+        if (self.owedRects(w, h)) |owed| {
+            for (owed.slice()) |r| sh.add(r.left, r.top, r.right, r.bottom);
+            self.addLightStrips(sh, comp);
+            if (self.also_blit) |r| sh.add(r.left, r.top, r.right, r.bottom);
+            // Every name goes out with this paint: the window draws none itself.
+            if (laid) for (self.names.?.rects) |r| sh.add(r.left, r.top, r.right, r.bottom);
+            if (sh.area() * 4 <= @as(i64, w) * h * 3) {
+                var timer2 = std.time.Timer.start() catch null;
+                for (sh.slice()) |r| self.blitRect(hdc, origin_x, origin_y, comp, desk, opacity, r);
+                if (timer2) |*t| self.blit_ns +|= t.read();
+                self.last_blit = sh.*;
+                self.settleDebt(true, sh);
+                return;
+            }
         }
     }
     self.timedBlit(hdc, origin_x, origin_y, w, h, comp, desk, opacity);
+    self.settleDebt(true, null);
+}
+
+/// What an earlier paint owes the window (T2732), as rects to blit; null when
+/// it owes the whole desk (a clipped whole blit, or a canvas that changed size).
+fn owedRects(self: *const PaneDesk, w: i32, h: i32) ?Memo.Rects {
+    if (self.carry_full) return null;
+    const c = self.carry orelse return .{ .w = w, .h = h };
+    if (c.w != w or c.h != h) return null;
+    return c;
+}
+
+/// After a blit of `blitted` (null: the whole desk), record what this paint
+/// may have kept off the window (T2732):
+/// - a paint that blits only what changed through a DC that reaches the
+///   whole desk (a layout pass's band paint) put out everything owed - its
+///   `blitted` included it - so nothing is owed after it;
+/// - one the window clipped short (`clip_short`: the vacated-strip paint, to
+///   the box the panes left) owes what it blitted;
+/// - any other paint (`WM_PAINT`, clipped to its update region) owes the
+///   whole desk if it composed a new picture, and leaves the debt as it was
+///   if it did not.
+fn settleDebt(self: *PaneDesk, composed: bool, blitted: ?*const Memo.Rects) void {
+    if (self.blit_changed_only and !self.clip_short) {
+        self.carry = null;
+        self.carry_full = false;
+        return;
+    }
+    if (self.blit_changed_only) {
+        if (blitted) |b| self.carry = b.* else {
+            self.carry = null;
+            self.carry_full = true;
+        }
+        return;
+    }
+    if (composed) {
+        self.carry = null;
+        self.carry_full = true;
+    }
 }
 
 /// The strips every cached light's ring lies in, built for `comp`'s size.
@@ -1267,6 +1345,45 @@ fn restoreUnder(buf: []u32, w: i32, h: i32, rects: []const busy_light.Rect, save
             at += rw;
         }
     }
+}
+
+test "T2732: a clipped vacated-strip paint owes what it blitted, and the unclipped band paint after it settles the debt" {
+    var d: PaneDesk = .{};
+    // Nothing owed at first: an empty set, not the whole desk.
+    try std.testing.expectEqual(@as(usize, 0), d.owedRects(100, 50).?.len);
+
+    // The vacated-strip paint: changed-only, clipped to the box the panes left.
+    var shown: Memo.Rects = .{ .w = 100, .h = 50 };
+    shown.add(10, 0, 20, 50);
+    d.blit_changed_only = true;
+    d.clip_short = true;
+    d.settleDebt(true, &shown);
+    const owed = d.owedRects(100, 50).?;
+    try std.testing.expectEqual(@as(usize, 1), owed.len);
+    try std.testing.expectEqual(@as(i32, 10), owed.slice()[0].left);
+    // A canvas of another size is owed whole.
+    try std.testing.expect(d.owedRects(120, 50) == null);
+
+    // The band paint: changed-only through a DC that reaches the whole desk.
+    d.clip_short = false;
+    d.settleDebt(false, &owed);
+    try std.testing.expectEqual(@as(usize, 0), d.owedRects(100, 50).?.len);
+
+    // A clipped paint that had to blit the whole desk owes the whole desk.
+    d.clip_short = true;
+    d.settleDebt(true, null);
+    try std.testing.expect(d.owedRects(100, 50) == null);
+    d.clip_short = false;
+    d.settleDebt(false, null);
+    try std.testing.expectEqual(@as(usize, 0), d.owedRects(100, 50).?.len);
+
+    // A WM_PAINT (not changed-only) that composed owes the whole desk; one that
+    // only re-blitted the cached picture leaves the debt as it was.
+    d.blit_changed_only = false;
+    d.settleDebt(false, null);
+    try std.testing.expectEqual(@as(usize, 0), d.owedRects(100, 50).?.len);
+    d.settleDebt(true, null);
+    try std.testing.expect(d.owedRects(100, 50) == null);
 }
 
 test "a name laid for the blit is lifted off the cached picture, overlaps and edges included" {

@@ -8700,7 +8700,12 @@ pub fn layoutSplits(self: *Window) void {
             // Not after a desk fill of the vacated strips (T2516): that paint
             // composed the desk already and blitted only the strips, so here
             // nothing reads as changed and the rest would never go out.
-            self.pane_desk.blit_changed_only = !self.vacated_desk_painted;
+            //
+            // After a desk fill of the vacated strips, this paint is a memo
+            // hit and puts out what that paint's box clip kept off the window
+            // (T2732, `PaneDesk.carry`) - before it, the whole desk (T2516:
+            // otherwise nothing read as changed and the rest never went out).
+            self.pane_desk.blit_changed_only = !self.vacated_desk_painted or !vacatedChangedOnlyOff();
             self.vacated_desk_painted = false;
             self.paintAlphaCorrect(dc, paintMovedBands);
             self.pane_desk.blit_changed_only = false;
@@ -8718,6 +8723,15 @@ pub fn layoutSplits(self: *Window) void {
 }
 
 var repaint_bands_state: ?bool = null;
+var vacated_whole_state: ?bool = null;
+
+/// `GHOZTTY_VACATED_WHOLE=1` puts the layout pass's desk paints back to
+/// blitting the whole box and then the whole desk (T2732), for an A/B run.
+fn vacatedChangedOnlyOff() bool {
+    if (vacated_whole_state == null)
+        vacated_whole_state = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_VACATED_WHOLE");
+    return vacated_whole_state.?;
+}
 
 /// Whether a layout pass's vacated-strip desk paint is its last band paint
 /// (T2577): on a window with no redirection surface every band it paints is
@@ -12194,7 +12208,19 @@ fn clearVacatedPaneStrips(self: *Window, hwnd: w32.HWND, old: []const w32.RECT) 
         const gutters_len = self.painted_gutters_len;
         resizeTrace("vacated-dc", hwnd);
         const lap = CpuLap.start();
+        // Only what the compose changed goes out (T2732), not the whole box
+        // the panes left: the band paint after this blits what the box clip
+        // kept off (`PaneDesk.carry`), so the two paints no longer put the
+        // desk out twice on every glide tick. A desk on the compositor keeps
+        // its whole-paint semantics (its overlay erase and under-desk clear).
+        const gdi_desk = if (self.chrome_host) |*ch| !ch.deskLive() else true;
+        if (gdi_desk and !vacatedChangedOnlyOff()) {
+            self.pane_desk.blit_changed_only = true;
+            self.pane_desk.clip_short = true;
+        }
         self.paintAlphaCorrect(dc, paintMovedBands);
+        self.pane_desk.blit_changed_only = false;
+        self.pane_desk.clip_short = false;
         lap.report("vacated");
         resizeTrace("vacated-painted", hwnd);
         // No band paint follows to clear from the old record (T2577): this
