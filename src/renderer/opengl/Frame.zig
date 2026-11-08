@@ -55,6 +55,8 @@ pub inline fn renderPass(
 pub fn complete(self: *const Self, sync: bool) void {
     _ = sync;
     self.renderer.api.traceStage("finish-begin");
+    // T2788 A/B: glFlush here instead made the glide's pane batch slower
+    // (mean 5.7 -> 9.3 ms), since the move then waits on the same GPU work.
     gl.finish();
     self.renderer.api.traceStage("finish-end");
 

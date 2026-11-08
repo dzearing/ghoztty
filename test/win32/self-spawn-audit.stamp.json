@@ -1,10 +1,13 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-11-08T02:23:51-08:00",
-    "commit":  "352734e3e",
+    "generated":  "2026-11-08T06:45:00-08:00",
+    "commit":  "4d8d67e29",
     "uncommitted":  [
-
+                        "src/apprt/win32/Window.zig",
+                        "src/renderer/generic.zig",
+                        "src/renderer/opengl/Frame.zig",
+                        "src/renderer/Thread.zig"
                     ],
     "files":  {
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
@@ -463,7 +466,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "0c702da8c16da658a55e6ae84c5315250658f56bc881edcbc12d6c7ba5aa78a3",
-                  "src/apprt/win32/Window.zig":  "e14f8ff1e6758307858887a3349797a0e6f842c1d571e59a31ce21c86756c8a6",
+                  "src/apprt/win32/Window.zig":  "f2fb4959b19d08cab4568d88eb699cd0d75354a7cdcd3903a8e590b5c23cf906",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
                   "src/apprt/win32/window_broadcast.zig":  "9aaf66d945d0899628ede661e9e40f04f55551342659448b62aee06b979b1e4e",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
@@ -868,7 +871,7 @@
                   "src/renderer/comp_overlay.zig":  "597593dd225e19b1a472ef97c820aeec40404e93c5e4f2c05c3c6947e208ebff",
                   "src/renderer/comp_tree.zig":  "796b0cb57c6c43a027e070605dcd3c2d1ca2bfa37be914b5fbbceda43dc02876",
                   "src/renderer/cursor.zig":  "1a37e555c743fe01ea9033da827af9656371799ecb1df7869044a48311f00395",
-                  "src/renderer/generic.zig":  "4a86a8a796822cc44905163852f7f67df70f283f72d0ccd0b3bfa97212b8fe23",
+                  "src/renderer/generic.zig":  "c24794a8f446000c814586aa74d141e1c0b0d33d3d8ab09c8770d3395ba9931a",
                   "src/renderer/gl_comp_present.zig":  "fe591b2ae950244811f7a63688c2a69be7353076764585b8590d92280b362c30",
                   "src/renderer/gl_loader.zig":  "5e48c65d81df3cf24ab97ecd9e2d29f658aade47867fa4687af3efdaf84f8992",
                   "src/renderer/gl_report.zig":  "cab949c5e9d9586daef1261de0090f4cd58a53dee78ef01022aa478d1ce3f51e",
@@ -891,7 +894,7 @@
                   "src/renderer/metal/Texture.zig":  "73a5c2caa4cf00cff88a4136bf14c5f85b9f269a187418794af74feac7eaabbc",
                   "src/renderer/OpenGL.zig":  "b7ce634be2239e61b19eff9e18d27478b958737df99f60e5ce175d173a18863a",
                   "src/renderer/opengl/buffer.zig":  "373e7c32ad2277636eaa166dc8e08780a03e991ac56f560a48f1af1b6dca2d0a",
-                  "src/renderer/opengl/Frame.zig":  "227a4faf6e38a5168d30cdb0c8a4a7a5f75023617a0e1b8ffc5cf393584e4d23",
+                  "src/renderer/opengl/Frame.zig":  "e4a5a9af86f9474236f131b342023a6d63f81c6fe1e2b60f487852388d629b1c",
                   "src/renderer/opengl/Pipeline.zig":  "47ae430d1ccaaa1ab75052eb3638b47e0fe0dd337d5170884da7dee4d11d5193",
                   "src/renderer/opengl/RenderPass.zig":  "c6f8b57c180bce25436320be89b3bb9bdae6bbc9dc94ca04448608e5edbda343",
                   "src/renderer/opengl/Sampler.zig":  "9a637fd1d9aa3150ee65fa7861c69b6658e8c36887badd24873a17a007a2ff20",
@@ -904,7 +907,7 @@
                   "src/renderer/shadertoy.zig":  "ae13286ef5418a9484d0f773ce546eac132e6c053a5549244a748d9707e61e12",
                   "src/renderer/size.zig":  "db99bca7a2b82857fc918748a6b8687745e8282ccf675fa4d2a716dad580b465",
                   "src/renderer/State.zig":  "8d9a370885f463ab3c510bef7e0c5a4f07adaa05637c258678fa48ebbdb1ae02",
-                  "src/renderer/Thread.zig":  "487c020f83c7d6be84b2ff81755426f86e70e87f1ea9f5c22b27f193f63df42f",
+                  "src/renderer/Thread.zig":  "b58cd1ee1ea48a4a0997ca76d90160e814cd21bcc06500ecedfff8068829c5ff",
                   "src/renderer/WebGL.zig":  "963023a42188b6d00f8a1a645653d82cf8204e7aed3a7c94946a6b004cae07fd",
                   "src/simd/base64.zig":  "72b444f30b59cf05fc4ce8c80e7980043b4018e04909624fa24da40ef39ee611",
                   "src/simd/base64_scalar.zig":  "67b9939963fdacb07f5cc8acd114e69a7cdca3905a2a231d6af803226ea52af2",

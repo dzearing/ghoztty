@@ -10496,7 +10496,11 @@ fn endPaneBatchFilled(self: *Window, hdwp: ?w32.HDWP) void {
             qpc, held.len, defer_end, batch_cost.sizes, batch_cost.size_qpc, batch_cost.fill_qpc,
         });
     }
-    for (held.entries[0..held.len]) |e| e.pane.applyResize(e.width, e.height);
+    for (held.entries[0..held.len]) |e| {
+        // T2788: the wake each resized pane's renderer frame starts from.
+        if (e.pane.hwnd) |h| traceRenderStage("held-apply", h);
+        e.pane.applyResize(e.width, e.height);
+    }
 }
 
 /// Hold a pane's resize work for `endPaneBatchFilled`, which runs it after

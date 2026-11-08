@@ -1357,6 +1357,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 self.terminal_state = .empty;
             }
             self.terminal_state_frame_count += 1;
+            // T2788: a resized pane's frame by phase, on the resize trace.
+            if (comptime @hasDecl(GraphicsAPI, "traceStage")) self.api.traceStage("update-begin");
 
             // Create an arena for all our temporary allocations while rebuilding
             var arena = ArenaAllocator.init(self.alloc);
@@ -1400,6 +1402,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 // as it lasts (measured: a 65 s acquire => a 33 s `+close`).
                 state.lockPriority();
                 defer state.unlockPriority();
+                if (comptime @hasDecl(GraphicsAPI, "traceStage")) self.api.traceStage("state-locked");
 
                 if (lock_start) |start| {
                     if (std.time.Instant.now() catch null) |end| {
@@ -1691,8 +1694,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             // Acquire the draw mutex for all remaining state updates.
             {
+                if (comptime @hasDecl(GraphicsAPI, "traceStage")) self.api.traceStage("critical-done");
                 self.draw_mutex.lock();
                 defer self.draw_mutex.unlock();
+                defer if (comptime @hasDecl(GraphicsAPI, "traceStage")) self.api.traceStage("cells-rebuilt");
 
                 // Build our GPU cells
                 self.rebuildCells(

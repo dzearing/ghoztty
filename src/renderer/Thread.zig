@@ -657,6 +657,10 @@ fn wakeupCallback(
 
     const t = self_.?;
     wakeup_telemetry.hit();
+    // T2788: when a woken frame starts, on the Win32 resize trace.
+    if (comptime @hasField(rendererpkg.Renderer, "api")) {
+        if (comptime @hasDecl(@FieldType(rendererpkg.Renderer, "api"), "traceStage")) t.renderer.api.traceStage("wake");
+    }
 
     // When we wake up, we check the mailbox. Mailbox producers should
     // wake up our thread after publishing.

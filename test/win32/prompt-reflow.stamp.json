@@ -1,15 +1,15 @@
 {
     "guard":  "prompt-reflow",
     "script":  "test/win32/prompt-reflow.ps1",
-    "generated":  "2026-11-05T23:41:01-08:00",
-    "commit":  "be670923e",
+    "generated":  "2026-11-08T08:32:10-08:00",
+    "commit":  "4d8d67e29",
     "uncommitted":  [
-                        "src/termio/Termio.zig",
-                        "src/termio/Thread.zig"
+                        "src/renderer/generic.zig",
+                        "src/renderer/Thread.zig"
                     ],
     "files":  {
-                  "src/renderer/generic.zig":  "4a86a8a796822cc44905163852f7f67df70f283f72d0ccd0b3bfa97212b8fe23",
-                  "src/renderer/Thread.zig":  "487c020f83c7d6be84b2ff81755426f86e70e87f1ea9f5c22b27f193f63df42f",
+                  "src/renderer/generic.zig":  "c24794a8f446000c814586aa74d141e1c0b0d33d3d8ab09c8770d3395ba9931a",
+                  "src/renderer/Thread.zig":  "b58cd1ee1ea48a4a0997ca76d90160e814cd21bcc06500ecedfff8068829c5ff",
                   "src/shell-integration/powershell/ghostty.ps1":  "0e2c1488bf860cd453bb87a7f0e6464c526fb3a8e23d1f5dd0f30a7e5b80a726",
                   "src/termio/shell_integration.zig":  "9516f3dc973e902e406f09418bce7454e2f09400de0f70462fdf0fd5c9492c58",
                   "src/termio/Termio.zig":  "426181dc54d90aeadcd063ca81159945fe800f9851c4e9c892c94841a5ffac68",
