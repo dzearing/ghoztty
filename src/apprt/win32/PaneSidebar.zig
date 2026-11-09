@@ -64,6 +64,7 @@ const window_order = @import("pane_sidebar_window_order.zig");
 const cross_drop = @import("pane_sidebar_cross_drop.zig");
 const transition = @import("pane_sidebar_transition.zig");
 const xf = @import("pane_sidebar_xfade.zig");
+const list_comp = @import("pane_sidebar_transition_comp.zig");
 const Dib32 = @import("dib32.zig");
 const App = @import("App.zig");
 const toc = @import("viewer_toc_layout.zig");
@@ -522,6 +523,8 @@ paint_view: pane_sidebar.Rect = .{},
 paint_sticky: ?pane_sidebar.Rect = null,
 /// The motion clock runs slow: only the compositor's sheens move (T2801).
 anim_slow: bool = false,
+/// A list transition's layers while the compositor plays it (T2802).
+list_layers: list_comp.ListLayers = .{},
 
 entries: std.ArrayListUnmanaged(Entry) = .{},
 signature: u64 = 0,
@@ -872,6 +875,7 @@ pub fn destroy(self: *PaneSidebar) void {
     self.sheens.dropAll();
     self.reorders.dropAll();
     self.comp_fill.deinit();
+    self.list_layers.drop();
     self.comp.deinit();
     // Clear the back-pointer FIRST: DestroyWindow delivers messages
     // synchronously and they must not find a half-dead object.
@@ -3695,6 +3699,7 @@ fn startTransition(self: *PaneSidebar, snap: ?xf.Xfade) void {
 
 /// Stop the transition, if one runs, without a repaint.
 fn dropTransition(self: *PaneSidebar) void {
+    self.list_layers.drop();
     if (self.xfade) |*x| x.deinit();
     self.xfade = null;
     FrameClock.disarm(self.hwnd, TIMER_XFADE);
@@ -3707,7 +3712,11 @@ fn onTransitionTick(self: *PaneSidebar) void {
     };
     if (w32.GetTickCount64() -| x.start_ms >= x.duration()) {
         self.dropTransition();
-        log.info("pane sidebar transition done surface=rail", .{});
+        // sidebar-transition-comp.ps1's oracle: who moved it.
+        log.info("pane sidebar transition done surface=rail compositor={} ui_steps={d}", .{ x.on_comp, x.ui_steps });
+    } else if (x.on_comp and self.list_layers.current(&self.comp.slot)) {
+        // DWM plays it: nothing to draw until it lands.
+        return;
     }
     _ = w32.InvalidateRect(self.hwnd, null, 0);
 }
@@ -3718,6 +3727,11 @@ fn onTransitionTick(self: *PaneSidebar) void {
 /// has run out or the surface changed size under it - and the plain frame is
 /// painted instead. A fold whose head moved (the list re-scrolled under it)
 /// is dropped the same way: the fold just lands.
+///
+/// Since T2802 the first frame hands the whole transition to the compositor
+/// (`declareTransitionComp`) and later paints are the plain frame under its
+/// layers; the stepped compose is the fallback when the tree cannot be had,
+/// and takes over mid-way when the device is lost.
 fn paintTransition(self: *PaneSidebar, hdc: w32.HDC, w: i32, h: i32) bool {
     const x = &(self.xfade.?);
     const old = x.old orelse return false;
@@ -3726,30 +3740,12 @@ fn paintTransition(self: *PaneSidebar, hdc: w32.HDC, w: i32, h: i32) bool {
         self.dropTransition();
         return false;
     }
-    const p = transition.progress(elapsed, x.duration());
-    const bg = Dib32.create(hdc, w, h) orelse return false;
-    defer bg.destroy();
-    const new = Dib32.create(hdc, w, h) orelse return false;
-    defer new.destroy();
-    const out = Dib32.create(hdc, w, h) orelse return false;
-    defer out.destroy();
-    // The material first, so the motion tally the live frame leaves is the
-    // one that stands.
-    self.paint_bare = true;
-    self.paintFrame(bg.dc, w, h);
-    self.paint_bare = false;
-    self.paintFrame(new.dc, w, h);
-    _ = w32.GdiFlush();
     const l = self.currentLayout();
     const vp = l.viewport;
     const bottom = if (vp.height() > 0) vp.bottom else l.height;
+    var fold: ?TransitionFold = null;
     switch (x.kind) {
-        .scope => |to_all| transition.composeSlide(out.pixels, bg.pixels, old.pixels, new.pixels, w, h, .{
-            .left = l.header.left,
-            .top = l.header.bottom,
-            .right = l.header.right,
-            .bottom = bottom,
-        }, p, to_all, pane_sidebar.px(transition.scope_slide_dip, self.scale)),
+        .scope => {},
         .fold => |f| {
             const nb = scroll_mod.contentBottom(&l, vp.top);
             if (f.head >= l.head_count or l.heads[f.head].rect.bottom != f.y0 or l.scroll != f.scroll or nb == f.bottom) {
@@ -3758,24 +3754,129 @@ fn paintTransition(self: *PaneSidebar, hdc: w32.HDC, w: i32, h: i32) bool {
                 return false;
             }
             const opening = nb > f.bottom;
+            fold = .{ .y0 = f.y0, .group_h = if (opening) nb - f.bottom else f.bottom - nb, .opening = opening };
+        },
+    }
+    if (x.on_comp) {
+        // The compositor plays it; the live frame goes under its layers.
+        if (self.list_layers.current(&self.comp.slot)) return false;
+        self.list_layers.drop();
+        x.on_comp = false;
+        log.info("pane sidebar transition {s} left the compositor (tree lost); stepping the rest", .{@tagName(x.kind)});
+    }
+    const p = transition.progress(elapsed, x.duration());
+    const bg = Dib32.create(hdc, w, h) orelse return false;
+    defer bg.destroy();
+    const new = Dib32.create(hdc, w, h) orelse return false;
+    defer new.destroy();
+    // The material first, so the motion tally the live frame leaves is the
+    // one that stands.
+    self.paint_bare = true;
+    self.paintFrame(bg.dc, w, h);
+    self.paint_bare = false;
+    self.paintFrame(new.dc, w, h);
+    _ = w32.GdiFlush();
+    const scope_region: transition.Region = .{
+        .left = l.header.left,
+        .top = l.header.bottom,
+        .right = l.header.right,
+        .bottom = bottom,
+    };
+    const fold_region: transition.Region = .{ .left = vp.left, .top = vp.top, .right = vp.right, .bottom = bottom };
+    if (!x.comp_tried) {
+        x.comp_tried = true;
+        if (self.declareTransitionComp(x, bg, old, new, if (fold != null) fold_region else scope_region, fold, elapsed)) {
+            x.on_comp = true;
+            _ = w32.BitBlt(hdc, 0, 0, w, h, new.dc, 0, 0, w32.SRCCOPY);
+            return true;
+        }
+    }
+    x.ui_steps += 1;
+    const out = Dib32.create(hdc, w, h) orelse return false;
+    defer out.destroy();
+    switch (x.kind) {
+        .scope => |to_all| transition.composeSlide(out.pixels, bg.pixels, old.pixels, new.pixels, w, h, scope_region, p, to_all, pane_sidebar.px(transition.scope_slide_dip, self.scale)),
+        .fold => {
+            const f = fold.?;
             transition.composeFold(
                 out.pixels,
                 bg.pixels,
-                if (opening) new.pixels else old.pixels,
-                if (opening) old.pixels else new.pixels,
+                if (f.opening) new.pixels else old.pixels,
+                if (f.opening) old.pixels else new.pixels,
                 new.pixels,
                 w,
                 h,
-                .{ .left = vp.left, .top = vp.top, .right = vp.right, .bottom = bottom },
+                fold_region,
                 f.y0,
-                if (opening) nb - f.bottom else f.bottom - nb,
-                opening,
+                f.group_h,
+                f.opening,
                 p,
             );
         },
     }
     _ = w32.BitBlt(hdc, 0, 0, w, h, out.dc, 0, 0, w32.SRCCOPY);
     return true;
+}
+
+/// A fold measured against the list after it: where the group's rows begin
+/// (its header's bottom), how tall they are open, and which way it goes.
+const TransitionFold = struct { y0: i32, group_h: i32, opening: bool };
+
+/// Hand transition `x` to the compositor (T2802): its pieces rendered once
+/// from the material `bg`, the picture before (`old`) and the frame after
+/// (`new`), and their motion declared to DirectComposition on the column's
+/// own tree. False: nothing went on the tree and the caller steps it -
+/// the tree could not be had, or the stepped knob asks for the A/B arm.
+fn declareTransitionComp(
+    self: *PaneSidebar,
+    x: *const xf.Xfade,
+    bg: Dib32,
+    old: Dib32,
+    new: Dib32,
+    region: transition.Region,
+    fold: ?TransitionFold,
+    elapsed_ms: u64,
+) bool {
+    if (transitionSteppedKnob()) {
+        log.info("pane sidebar transition {s} stepped: the stepped knob is set", .{@tagName(x.kind)});
+        return false;
+    }
+    const band: list_comp.Rect = .{ .left = region.left, .top = region.top, .right = region.right, .bottom = region.bottom };
+    const fold_plan: ?list_comp.FoldPlan = if (fold) |f| list_comp.foldPlan(band, f.y0, f.group_h, f.opening) else null;
+    const r: list_comp.Rect = switch (x.kind) {
+        .scope => band,
+        .fold => (fold_plan orelse return false).rect,
+    };
+    if (!r.fits(x.w, x.h)) return false;
+    const s = self.comp.ensure(w32.GetTickCount64(), "list-transition") orelse return false;
+    const scratch = self.alloc.alloc(u32, r.area()) catch return false;
+    defer self.alloc.free(scratch);
+    const elapsed_s: f64 = @as(f64, @floatFromInt(elapsed_ms)) / 1000.0;
+    const dur_s: f64 = @as(f64, @floatFromInt(x.duration())) / 1000.0;
+    const ok = switch (x.kind) {
+        .scope => |to_all| self.list_layers.declareSlide(s, r, .{ .w = x.w, .h = x.h, .bg = bg.pixels, .a = old.pixels, .b = new.pixels }, to_all, pane_sidebar.px(transition.scope_slide_dip, self.scale), elapsed_s, dur_s, scratch),
+        .fold => blk: {
+            const f = fold.?;
+            const tall = if (f.opening) new.pixels else old.pixels;
+            const short = if (f.opening) old.pixels else new.pixels;
+            break :blk self.list_layers.declareFold(s, fold_plan.?, .{ .w = x.w, .h = x.h, .bg = bg.pixels, .a = tall, .b = short }, elapsed_s, dur_s, scratch);
+        },
+    };
+    if (!ok) {
+        log.warn("pane sidebar transition {s} could not go on the compositor; stepping it", .{@tagName(x.kind)});
+        return false;
+    }
+    // sidebar-transition-comp.ps1's oracle: the transition was handed over whole.
+    log.info("pane sidebar transition {s} on compositor layers=3 band={d}x{d} skipped_ms={d} generation={d}", .{ @tagName(x.kind), r.width(), r.height(), elapsed_ms, s.generation });
+    return true;
+}
+
+/// `GHOZTTY_DEBUG_SIDEBAR_TRANSITION_STEPPED=1` (debug builds, T2802): step
+/// the list transitions on the frame clock as before, the A/B arm of
+/// sidebar-transition-comp.ps1.
+fn transitionSteppedKnob() bool {
+    if (comptime builtin.mode != .Debug) return false;
+    return std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DEBUG_SIDEBAR_TRANSITION_STEPPED");
 }
 
 // -------------------------------------------------------------------------

@@ -582,6 +582,20 @@ pub const Layer = struct {
         return true;
     }
 
+    /// The horizontal twin of `animateOffsetY` (T2802): the visual's offset X
+    /// runs `from` -> `to` (parent px) along `curve` over `duration_s`, played
+    /// by DWM. The Y offset is left where it is. False: nothing was declared.
+    pub fn animateOffsetX(self: *Layer, from: f32, to: f32, curve: []const Cubic, duration_s: f64) bool {
+        if (comptime builtin.os.tag != .windows) return false;
+        const vis = self.visual orelse return false;
+        const anim = self.makeAnim(from, to, curve, duration_s) orelse return false;
+        defer comRelease(anim);
+        if (!ok(slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, vis, slot_visual_set_offset_x_anim)(vis, anim))) return false;
+        self.offset_x = @intFromFloat(@round(to));
+        self.commit();
+        return true;
+    }
+
     /// An animation running `from` -> `to` along `curve` (0..1 units) over
     /// `duration_s`, holding `to` after it; the caller releases it once it is
     /// set on a property. Null when DirectComposition refused any step.
@@ -683,6 +697,33 @@ pub const Layer = struct {
         }
         if (!ok(slot(*const fn (Obj, f64, f64) callconv(.winapi) HRESULT, anim, slot_anim_add_repeat)(anim, period_s, period_s))) return false;
         if (!ok(slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, vis, slot_visual_set_offset_x_anim)(vis, anim))) return false;
+        self.commit();
+        return true;
+    }
+
+    /// Clip the visual - and every layer hung under it - to a fixed
+    /// rectangle in its own pixels (T2802): a band the children slide
+    /// through and are cut at, as a clipped list is. False: no clip was set.
+    pub fn setClip(self: *Layer, left: f32, top: f32, right: f32, bottom: f32) bool {
+        if (comptime builtin.os.tag != .windows) return false;
+        const d = self.dev orelse return false;
+        const vis = self.visual orelse return false;
+        if (self.clip == null) {
+            var made: ?Obj = null;
+            if (!ok(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, d.dcomp, slot_dcomp_create_rectangle_clip)(d.dcomp, &made))) return false;
+            self.clip = made orelse return false;
+        }
+        const c = self.clip.?;
+        const Set = *const fn (Obj, f32) callconv(.winapi) HRESULT;
+        if (!ok(slot(Set, c, slot_clip_set_left_float)(c, left))) return false;
+        if (!ok(slot(Set, c, slot_clip_set_top_float)(c, top))) return false;
+        if (!ok(slot(Set, c, slot_clip_set_right_float)(c, right))) return false;
+        if (!ok(slot(Set, c, slot_clip_set_bottom_float)(c, bottom))) return false;
+        var k: usize = 0;
+        while (k < 8) : (k += 1) {
+            if (!ok(slot(Set, c, slot_clip_first_radius_float + 2 * k)(c, 0))) return false;
+        }
+        if (!ok(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_visual_set_clip_obj)(vis, c))) return false;
         self.commit();
         return true;
     }

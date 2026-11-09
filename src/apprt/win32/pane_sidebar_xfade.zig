@@ -98,6 +98,14 @@ pub const Xfade = struct {
     w: i32,
     h: i32,
     old: ?Dib32 = null,
+    /// The compositor was asked to play it (T2802): once, on its first
+    /// frame.
+    comp_tried: bool = false,
+    /// It is on the compositor now; paints are the plain frame under it.
+    on_comp: bool = false,
+    /// Frames the UI thread composed itself, logged as it lands: 0 when the
+    /// compositor played it all.
+    ui_steps: u32 = 0,
 
     pub fn duration(self: *const Xfade) u64 {
         return switch (self.kind) {

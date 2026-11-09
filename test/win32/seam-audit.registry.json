@@ -313,6 +313,11 @@
             "unsetArm": "test\\win32\\pane-sidebar-drag.ps1::F: the drag went on the tree - its box and the held tile (log)",
             "note": "T2803: keeps a pane drag's sliding sidebar rows and the held row stepped on the reorder clock (the pre-T2803 path); unset, the drag goes on the sidebar's composition tree, which pane-sidebar-drag.ps1 section F asserts. Set only by that script's -ReorderStepped control arm."
         },
+        "GHOZTTY_DEBUG_SIDEBAR_TRANSITION_STEPPED": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "T2802: =1 steps the sidebar's scope slide and fold on the UI thread's frame clock, the stepped A/B arm of sidebar-transition-comp.ps1; unset is the compositor transition the same script's comp arm runs."
+        },
         "GHOZTTY_KEEP_VACATED_GUTTERS": {
             "class": "non-default",
             "unset": "shipped-elsewhere",

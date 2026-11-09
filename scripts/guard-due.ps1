@@ -6067,6 +6067,22 @@ $GuardTable = @(
             'test\win32\sidebar-comp.ps1'
         )
     },
+    # The sidebar's list transitions on the compositor (T2802): the scope
+    # slide and a fold rendered once as layers on the column's tree, their
+    # motion played by DWM - no frame composed on the UI thread. The crop,
+    # mask and plans are unit-tested in pane_sidebar_transition_comp.zig.
+    [pscustomobject]@{
+        Name   = 'sidebar-transition-comp'
+        Script = 'test\win32\sidebar-transition-comp.ps1'
+        Stamp  = 'test\win32\sidebar-transition-comp.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_sidebar_transition_comp.zig',
+            'src\apprt\win32\pane_sidebar_xfade.zig',
+            'src\apprt\win32\child_comp.zig',
+            'src\renderer\comp_overlay.zig',
+            'test\win32\sidebar-transition-comp.ps1'
+        )
+    },
     # A bell's `title` and `audio` features (T1890): the glyph in front of the
     # caption while the rung pane is unlooked-at, and the sound file played at
     # its volume. The strings and the volume mapping are unit-tested in
