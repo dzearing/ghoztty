@@ -11972,6 +11972,17 @@ fn glideStallAtUnfold() bool {
     return v;
 }
 
+/// The glide's debug stall, if this tick owes it - always at the END of a
+/// tick (T2855): a busy thread lands between frames, never between the grid's
+/// commit and the sidebar column's declaration in one frame. Before T2855 it
+/// sat mid-tick, so the column was declared only after the stall and the film
+/// read a column frozen beside a gliding grid that no real hitch produces.
+fn glideStallIfDue(self: *Window) void {
+    if (!self.glide_stall_due) return;
+    self.glide_stall_due = false;
+    glideDebugStall();
+}
+
 /// `GHOZTTY_DEBUG_GLIDE_STALL_MS=<n>` (debug builds, T2572): block the
 /// window's thread for n ms once a glide's first frame is up - the on-screen
 /// oracle's stand-in for a busy UI thread (the
@@ -12098,7 +12109,7 @@ pub fn paneSidebarFollowLag(self: *const Window) ?i32 {
 /// off the composition tree, under `GHOZTTY_GLIDE_DECLARE=0`, under a test's
 /// forced slow frames, or when the host cannot take it.
 pub fn declareSidebarColumn(self: *Window, sb_hwnd: w32.HWND, band: chrome_comp.FacePic, content: chrome_comp.FacePic, w0: i32, to_w: i32, from_opacity: f32) bool {
-    if (!faceCompWanted() or !glideDeclareOn() or self.stack_slide_dt_ms != null) return false;
+    if (!faceCompWanted() or !glideDeclareOn() or !sidebarColumnDeclareOn() or self.stack_slide_dt_ms != null) return false;
     if (!self.stack_slide_column or w0 == to_w) return false;
     const slide = if (self.stack_slide) |*s| s else return false;
     const host = if (self.chrome_host) |*h| h else return false;
@@ -12145,6 +12156,24 @@ pub fn declareSidebarColumn(self: *Window, sb_hwnd: w32.HWND, band: chrome_comp.
     // The acceptance oracle (pane-sidebar-glide.ps1 -Tree) reads this.
     log.info("pane sidebar column declared from={d} to={d} at={d},{d} h={d} opacity={d:.3}->1 span_ms={d:.0}", .{ w0, to_w, o.x, o.y, band.h, from.opacity, span_s * 1000 });
     return true;
+}
+
+var sidebar_column_declare_state: ?bool = null;
+
+/// `GHOZTTY_SIDEBAR_COLUMN_DECLARE=0` (T2855) steps the sidebar column from
+/// the window's thread while the grid beside it stays declared - the T2827
+/// regression on its own, and the negative control of the on-screen gutter
+/// film (comp-glide-hold-onscreen.ps1 `-Arms sidebar -NoColumnDeclare`).
+/// `GHOZTTY_GLIDE_DECLARE=0` cannot be that control: it steps both, and two
+/// shapes frozen together hold their gutter.
+fn sidebarColumnDeclareOn() bool {
+    if (sidebar_column_declare_state) |v| return v;
+    var buf: [8]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const raw = std.process.getEnvVarOwned(fba.allocator(), "GHOZTTY_SIDEBAR_COLUMN_DECLARE") catch null;
+    const v = if (raw) |s| !std.mem.eql(u8, s, "0") else true;
+    sidebar_column_declare_state = v;
+    return v;
 }
 
 /// Take the sidebar column's declared glide (T2827) off the compositor, if
@@ -12403,14 +12432,11 @@ fn stackSlideTick(self: *Window) void {
     if (quiet) {
         laid = false;
         self.glide_quiet_ticks += 1;
-        if (self.glide_stall_due) {
-            self.glide_stall_due = false;
-            glideDebugStall();
-        }
         // The sidebar's declared column only steps its model (T2827).
         if (self.stack_slide_column) {
             if (self.sidebar) |sb| sb.gridStepped();
         }
+        self.glideStallIfDue();
         return;
     }
     self.glide_laid_ticks += 1;
@@ -12426,10 +12452,9 @@ fn stackSlideTick(self: *Window) void {
     const flush_t = if (self.drag_perf_on and batch != null) std.time.Instant.now() catch null else null;
     if (batch) |h| h.flush() catch self.deskVisualFailed();
     if (flush_t) |t0| flush_us = if (std.time.Instant.now()) |e| e.since(t0) / std.time.ns_per_us else |_| 0;
-    if (self.glide_stall_due) {
-        self.glide_stall_due = false;
-        glideDebugStall();
-    }
+    // The debug stall lands at the end of this tick (T2855), once the whole
+    // frame is up - the sidebar column beside the grid included.
+    defer self.glideStallIfDue();
     // T2485: where a glide frame's time goes, tick by tick, to set against
     // the captured frames (`stack trace batch` carries the same clock).
     if (stackTraceOn()) {

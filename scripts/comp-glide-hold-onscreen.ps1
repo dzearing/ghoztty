@@ -134,8 +134,28 @@
 #   .23  the log names the face's declaration
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms strip
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms strip -NoDeclare   # strip.22b and strip.23 must go red
-# As of 2026-11-09 the declared arm is red on .22 (T2869) and .22c (T2870),
-# both on film; -StallMs 0 passes both (no stall, no glitch).
+# As of 2026-11-09 (T2855) the declared arm is red on .22c alone (T2870: the
+# leading blade missing for a few frames after its landing). The .22 frozen
+# copy (T2869) was the debug stall's own doing: it landed mid-tick, between
+# the grid's commit and the sidebar column's declaration, which no real hitch
+# can do. It lands at the end of the tick now, and .22 is green.
+#
+# SIDEBAR (T2855) films the pane sidebar column's declared glide (T2827)
+# through the same stall (Invoke-SidebarArm): two panes beside the rail, a
+# posted click on the toggle expands it, and the gutter between the sidebar
+# card's right edge and the grid's leading card's left edge is measured on
+# every frame.
+#   .24  the column follows the grid: its visible edge leaves the rail within
+#        a quarter of the stall of the grid's first move, and the gutter
+#        never opens past its rest width after that
+#   .24d the gutter within 2 px of its rest width on every frame - red as of
+#        2026-11-09 with or without the stall (T2872: the crossfade starts
+#        near-invisible, and its clipped edge drops the card's margin)
+#   .24b the leading card keeps moving through the stall
+#   .25  the log names the column's declaration
+#   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms sidebar
+#   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms sidebar -NoColumnDeclare   # sidebar.24 and .25 must go red
+#   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms sidebar -NoDeclare         # sidebar.24b and .25 must go red
 #
 # -NegativeControl sets the slide to 0 ms (the instant re-layout from before
 # T2102): .5 must FAIL on every arm.
@@ -170,7 +190,11 @@ param(
     [switch]$NoLandingTimer,
     # T2851: the strip arm's background - the blade is its stripRgb, which
     # has to be a colour no other chrome in the filmed band uses.
-    [string]$StripBg = '#0060c0'
+    [string]$StripBg = '#0060c0',
+    # T2855: GHOZTTY_SIDEBAR_COLUMN_DECLARE=0 steps the sidebar column while
+    # the grid beside it stays declared (the T2827 regression) - the sidebar
+    # arm's .24 must then go red.
+    [switch]$NoColumnDeclare
 )
 
 $ErrorActionPreference = 'Continue'
@@ -199,7 +223,7 @@ if ($NegativeControl) { $SlideMs = 0; "NEGATIVE CONTROL: the slide is 0 ms (an i
 if (-not $OutDir) { $OutDir = Join-Path $env:TEMP "ghoztty-comp-glide-$PID" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_GLIDE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS', 'GHOZTTY_DEBUG_GLIDE_STALL_MS', 'GHOZTTY_GLIDE_DECLARE', 'GHOZTTY_DEBUG_GLIDE_STALL_AT', 'GHOZTTY_FACE_COMP', 'GHOZTTY_DEBUG_GLIDE_LIVE_FACE', 'GHOZTTY_GLIDE_REGION_CUT', 'GHOZTTY_GLIDE_LANDING_TIMER'
+$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_GLIDE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS', 'GHOZTTY_DEBUG_GLIDE_STALL_MS', 'GHOZTTY_GLIDE_DECLARE', 'GHOZTTY_DEBUG_GLIDE_STALL_AT', 'GHOZTTY_FACE_COMP', 'GHOZTTY_DEBUG_GLIDE_LIVE_FACE', 'GHOZTTY_GLIDE_REGION_CUT', 'GHOZTTY_GLIDE_LANDING_TIMER', 'GHOZTTY_SIDEBAR_COLUMN_DECLARE', 'GHOZTTY_SIDEBAR_COLUMN_MS'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
@@ -348,6 +372,41 @@ public static class Blocks {
             run = 0;
         }
         return lefts.ToArray();
+    }
+    // T2855: is column x of a band (y0..y1) the background (r,g,b)? 90% of
+    // its pixels within `tol`.
+    static bool Bg(byte[] px, int stride, int x, int r, int g, int b, int tol, int y0, int y1) {
+        int n = 0, need = (int)Math.Ceiling(0.9 * (y1 - y0));
+        for (int y = y0; y < y1; y++) {
+            int i = y * stride + x * 4;
+            if (Math.Abs(px[i + 2] - r) <= tol && Math.Abs(px[i + 1] - g) <= tol && Math.Abs(px[i] - b) <= tol) n++;
+        }
+        return n >= need;
+    }
+    // T2855: the sidebar card's right edge in a band of rows: from xStart
+    // (inside the card) rightwards, the first of `minRun`+ background
+    // columns in a row. -1 when the band never meets the background.
+    public static int CardEdge(byte[] px, int stride, int w, int h, int r, int g, int b, int tol, int y0, int y1, int xStart, int minRun) {
+        y0 = Math.Max(0, y0); y1 = Math.Min(h, y1);
+        int run = 0;
+        for (int x = Math.Max(0, xStart); x < w; x++) {
+            if (Bg(px, stride, x, r, g, b, tol, y0, y1)) { run++; if (run >= minRun) return x - run + 1; }
+            else run = 0;
+        }
+        return -1;
+    }
+    // T2855: the leftmost column at or right of xStart holding ink - a
+    // pixel at least `delta` (summed over r,g,b) off the background - in a
+    // band of rows: the pane's prompt, which rides the pane's left edge.
+    public static int Ink(byte[] px, int stride, int w, int h, int r, int g, int b, int delta, int y0, int y1, int xStart) {
+        y0 = Math.Max(0, y0); y1 = Math.Min(h, y1);
+        for (int x = Math.Max(0, xStart); x < w; x++) {
+            for (int y = y0; y < y1; y++) {
+                int i = y * stride + x * 4;
+                if (Math.Abs(px[i + 2] - r) + Math.Abs(px[i + 1] - g) + Math.Abs(px[i] - b) >= delta) return x;
+            }
+        }
+        return -1;
     }
 }
 '@
@@ -811,6 +870,171 @@ function Invoke-StripArm($arm, $dir, $err) {
     return
 }
 
+# T2855: the pane sidebar column's declared glide (T2827), filmed through a
+# stall. Two panes beside the rail in the flat style (pane-sidebar-glide.ps1
+# section 7's shape), the panes' background a colour nothing else in the
+# band uses (-StripBg); a posted click on the toggle expands the sidebar and
+# the grid glides right with the column's edge on the same follower. Each
+# frame, the sidebar card's right edge (in a band of rows at mid-height, where
+# its lighter fill meets the background) and the leading pane's prompt (its
+# leftmost ink on the first cell row - a flat pane is the background colour,
+# so the prompt is what rides its left edge) are found.
+#   .24  the column follows the grid: its card's edge leaves the rail within
+#        a quarter of the stall of the grid's first move, and the gutter then
+#        never opens past its rest width - a column stepped from the stalled
+#        thread freezes while the declared grid glides on
+#        (-NoColumnDeclare must go red here)
+#   .24d the gutter within 2 px of its rest width on every frame (T2872)
+#   .24b the leading card keeps moving through the stall (-NoDeclare, which
+#        steps both, must go red here: frozen together, the gutter holds)
+#   .25  the log names the column's declaration
+function Invoke-SidebarArm($arm, $dir, $err) {
+    $app = Start-OnTestDesktop -Exe $Exe -Arguments @(
+        '--config-default-files=false', '--session-persistence=false',
+        '--window-width=100', '--window-height=30', "--background=$StripBg",
+        '--command=powershell.exe -NoLogo -NoProfile', "--title=t2855-$arm",
+        '--macos-pane-style=flat') -StdErr $err
+    $top = $null
+    for ($t = 0; $t -lt 100 -and -not $top; $t++) {
+        $w = @([GhWin]::TopLevel([uint32]$app.Pid, 'GhozttyWindow'))
+        if ($w.Count -gt 0) { $top = $w[0] } else { Start-Sleep -Milliseconds 200 }
+    }
+    Assert "$arm.0 the ghost window came up" ($null -ne $top)
+    if (-not $top) { return }
+    $name = "gl$arm"
+    & $Exe +new-window "--target=$name" 2>$null | Out-Null
+    $hw = $null
+    for ($t = 0; $t -lt 50 -and -not $hw; $t++) {
+        $hw = @([GhWin]::TopLevel([uint32]$app.Pid, 'GhozttyWindow') | Where-Object { $_ -ne $top }) | Select-Object -First 1
+        if (-not $hw) { Start-Sleep -Milliseconds 200 }
+    }
+    Assert "$arm.1 the named window came up" ($null -ne $hw)
+    if (-not $hw) { return }
+    $scale = [Math]::Max(1, [GhWin]::GetDpiForWindow($hw)) / 96.0
+    [void][GhWin]::Size($hw, [int](1100 * $scale), [int](700 * $scale))
+    Start-Sleep -Milliseconds 1500
+    & $Exe +split "--target=$name" '--direction=right' "--name=$name-1" 2>$null | Out-Null
+    Start-Sleep -Milliseconds 1500
+    $all = @(Get-Panes $hw | Where-Object { $_.Visible } | Sort-Object Left)
+    "  panes: $(($all | ForEach-Object { "$($_.Left)-$($_.Right)" }) -join ' | ')"
+    $sbRow = [GhWin]::Child($hw, 'GhozttyPaneSidebar')
+    $okSetup = ($all.Count -eq 2 -and $null -ne $sbRow)
+    Assert "$arm.2 two panes beside the rail" $okSetup
+    if (-not $okSetup) { return }
+    Assert "$arm.3t both panes went into the window tree (adopts=2)" (Wait-Log $err 'adopted into the window tree \(adopts=2\)' 15000)
+    $sbf = $sbRow -split ' '
+    $sbH = [IntPtr][int64]$sbf[0]; $sbLeft = [int]$sbf[1]; $sbTop = [int]$sbf[2]; $sbRight = [int]$sbf[3]
+    $leadLeft = $all[0].Left
+    $wr = New-Object GhWin+RECT
+    [void][GhWin]::GetWindowRect($hw, [ref]$wr)
+
+    $fdir = Join-Path $dir 'film'
+    $filmErr = Join-Path $dir 'film.txt'
+    $fp = Start-Process -FilePath $Spike -ArgumentList @("--film-hwnd=$([int64]$hw)", "--film-dir=`"$fdir`"", "--film-ms=$($SlideMs + 1500)") `
+        -NoNewWindow -PassThru -RedirectStandardError $filmErr
+    $ready = $false
+    for ($t = 0; $t -lt 100 -and -not $ready; $t++) { $ready = Test-Path (Join-Path $fdir 'ready'); if (-not $ready) { Start-Sleep -Milliseconds 50 } }
+    Assert "$arm.3a the film started" $ready
+    Start-Sleep -Milliseconds 300
+    # The toggle: the rail's 12 DIP margin, the card's inset to its 28 DIP
+    # tile, the tile's middle (the strip arm's point).
+    $tc = [int][Math]::Round((12 + 12 + 14) * $scale)
+    [GhWin]::ClickClient($sbH, $tc, $tc)
+    [void]$fp.WaitForExit(60000)
+    $filmOut = (Read-Text $filmErr).Trim()
+    "  $filmOut"
+    Assert "$arm.3b the film finished" ($filmOut -match '^FILM ok')
+    $sbAfter = [GhWin]::Child($hw, 'GhozttyPaneSidebar')
+    $grew = $false
+    if ($sbAfter) { $f2 = $sbAfter -split ' '; $grew = ([int]$f2[3] - [int]$f2[1]) -gt ($sbRight - $sbLeft) + 40 }
+    Assert "$arm.3c the sidebar expanded ($sbRow -> $sbAfter)" $grew
+
+    $rows = @(Get-Content (Join-Path $fdir 'frames.txt') -ErrorAction SilentlyContinue | Where-Object { $_ -match '^\d' } | ForEach-Object {
+            $p = $_ -split ' '
+            [pscustomobject]@{ I = [int]$p[0]; T = [double]$p[1] / 10000.0; Path = (Join-Path $fdir ('f{0:d4}.bmp' -f [int]$p[0])) }
+        })
+    Assert "$arm.4 the film has frames ($($rows.Count))" ($rows.Count -ge 5)
+    if ($rows.Count -lt 5) { return }
+    $f0 = Read-Bmp $rows[0].Path
+    $kx = $f0.W / [double]($wr.Right - $wr.Left); $ky = $f0.H / [double]($wr.Bottom - $wr.Top)
+    $railX = [int](($sbRight - $wr.Left) * $kx)
+    $leadX = [int](($leadLeft - $wr.Left) * $kx)
+    $cardIn = [int](($sbLeft - $wr.Left) * $kx + 30 * $scale)
+    # The card's edge is read in a band at mid-height (blank there, both in
+    # the card and in the pane); the pane's edge by its prompt, on the first
+    # cell row. Flat panes are the window's background, so the prompt is the
+    # one thing on film that rides the leading card's left edge.
+    $y0 = [int](($sbTop - $wr.Top + 0.40 * ($wr.Bottom - $sbTop)) * $ky); $y1 = [int](($sbTop - $wr.Top + 0.60 * ($wr.Bottom - $sbTop)) * $ky)
+    $ty0 = [int](($all[0].Top - $wr.Top) * $ky); $ty1 = $ty0 + [int](32 * $scale)
+    $bx = $leadX + [int](300 * $scale); $sy = [int](($y0 + $y1) / 2)
+    $i = $sy * $f0.Stride + $bx * 4; $br = $f0.Px[$i + 2]; $bg = $f0.Px[$i + 1]; $bb = $f0.Px[$i]
+    "  frame $($f0.W)x$($f0.H) for window $($wr.Right - $wr.Left)x$($wr.Bottom - $wr.Top); rail window edge x=$railX, leading pane x=$leadX; background $br,$bg,$bb at x=$bx; card band y=$y0..$y1 from x=$cardIn, prompt band y=$ty0..$ty1"
+    $minRun = [int](8 * $scale)
+    $meas = @(foreach ($r in $rows) {
+            $b = if ($r -eq $rows[0]) { $f0 } else { Read-Bmp $r.Path }
+            $e = [Blocks]::CardEdge($b.Px, $b.Stride, $b.W, $b.H, $br, $bg, $bb, 6, $y0, $y1, $cardIn, $minRun)
+            $l = if ($e -ge 0) { [Blocks]::Ink($b.Px, $b.Stride, $b.W, $b.H, $br, $bg, $bb, 150, $ty0, $ty1, $e) } else { -1 }
+            [pscustomobject]@{ I = $r.I; T = $r.T; E = $e; L = $l; Gap = $(if ($e -ge 0 -and $l -ge 0) { $l - $e } else { -1 }) }
+        })
+    $t0 = $meas[0].T
+    "    gutter trace (ms:card|prompt=gap): " + (($meas | ForEach-Object { "$([Math]::Round($_.T - $t0)):$($_.E)|$($_.L)=$($_.Gap)" }) -join ' ')
+    $rest = $meas[0].Gap; $a = $meas[0].L; $z = $meas[-1].L
+    $okRest = $a -ge 0 -and $rest -gt 0 -and [Math]::Abs($a - $leadX) -le [int](40 * $scale) -and [Math]::Abs($meas[0].E - $railX) -le [int](24 * $scale)
+    Assert "$arm.2c the gutter is found on the first frame (card edge $($meas[0].E) by the rail's $railX, prompt at $a in the pane from $leadX, $rest px apart)" $okRest
+    $travel = $z - $a
+    if (-not $okRest -or $z -lt 0 -or $travel -le 40) { Assert "$arm.24 the card travels far enough to score ($a -> $z)" $false; return }
+    $near = [Math]::Max(2, [int](0.02 * $travel))
+    # The glide: from the first frame the card has left its rest to the first
+    # at its landing. Every frame in it is scored, the stall's included.
+    $glide = @(); $started = $false
+    foreach ($m in $meas) {
+        if (-not $started) { $started = $m.L -ge 0 -and $m.L -ne $a }
+        if (-not $started) { continue }
+        $glide += $m
+        if ($m.L -ge 0 -and [Math]::Abs($m.L - $z) -le $near) { break }
+    }
+    $e0 = $meas[0].E; $limit = [Math]::Max(100.0, $StallMs / 4.0)
+    # .24 the column follows the grid through the stall: its visible edge
+    # leaves the rail within a quarter of the stall of the grid's first move,
+    # and from there to the landing the gutter never opens past its rest
+    # width (2 px) nor closes to nothing. A column stepped from the stalled
+    # thread holds at the rail for all of the stall while the declared grid
+    # glides on, the gutter opening by the grid's travel.
+    $leave = @($glide | Where-Object { $_.E -gt $e0 + 2 }) | Select-Object -First 1
+    $lagMs = if ($leave -and $glide.Count) { [Math]::Round($leave.T - $glide[0].T) } else { -1 }
+    $after = if ($leave) { @($glide | Where-Object { $_.T -ge $leave.T }) } else { @() }
+    $open = @($after | Where-Object { $_.Gap -lt 1 -or $_.Gap -gt $rest + 2 })
+    $widest = 0; foreach ($m in $glide) { $widest = [Math]::Max($widest, $m.Gap) }
+    "    the card travels $travel px over $($glide.Count) frame(s); the column's edge leaves the rail $lagMs ms after the grid$(if ($leave) { " (f$($leave.I))" }); widest gutter $widest px against $rest at rest; after it leaves, $($open.Count) frame(s) open past rest or shut$(if ($open) { ' (' + (($open | Select-Object -First 4 | ForEach-Object { "f$($_.I) $($_.Gap)" }) -join '; ') + ')' })"
+    Assert "$arm.24 through a $StallMs ms stall the column follows the grid: its edge leaves the rail $lagMs ms after the grid's first move (need 0..$limit), and the gutter never opens past its rest $rest px + 2 after that ($($open.Count) of $($after.Count) frame(s))" ($null -ne $leave -and $lagMs -ge 0 -and $lagMs -lt $limit -and $after.Count -ge 3 -and $open.Count -eq 0)
+    # .24d the literal claim: within 2 px of its rest width on every frame of
+    # the glide, both ways - the crossfade's fade-in and its clipped edge
+    # count against it (T2855's filing).
+    $off = @($glide | Where-Object { $_.Gap -lt 0 -or [Math]::Abs($_.Gap - $rest) -gt 2 })
+    $worst = 0; foreach ($m in $glide) { if ($m.Gap -ge 0) { $worst = [Math]::Max($worst, [Math]::Abs($m.Gap - $rest)) } }
+    Assert "$arm.24d the gutter is within 2 px of its rest $rest px on every frame of the glide (off on $($off.Count) of $($glide.Count), worst $worst px$(if ($off) { '; first ' + (($off | Select-Object -First 3 | ForEach-Object { "f$($_.I) $($_.Gap)" }) -join ', ') }))" ($glide.Count -ge 3 -and $off.Count -eq 0)
+    # .24b the card keeps moving: its longest still stretch, from its first
+    # move to its landing, under a quarter of the stall.
+    $prevX = $a; $lastT = $null; $gap = 0.0; $gapAt = ''; $moves = 0
+    foreach ($m in $glide) {
+        if ($m.L -lt 0 -or $m.L -eq $prevX) { continue }
+        if ($null -ne $lastT -and ($m.T - $lastT) -gt $gap) { $gap = $m.T - $lastT; $gapAt = "f$($m.I)" }
+        $lastT = $m.T; $prevX = $m.L; $moves++
+    }
+    Assert "$arm.24b through the stall the leading card keeps moving: longest still stretch $([Math]::Round($gap)) ms (ending $gapAt; need < $limit), $moves moves" ($moves -ge 2 -and $gap -lt $limit)
+
+    $text = Read-Text $err
+    $stalled = [regex]::Matches($text, 'stack glide debug stall ms=').Count
+    Assert "$arm.24a the stall landed in the glide ($stalled)" ($stalled -ge 1)
+    $decl = [regex]::Matches($text, 'pane sidebar column declared from=').Count
+    Assert "$arm.25 the column was handed to the compositor ($decl declaration(s))" ($decl -ge 1)
+    $fgPid = [uint32]0
+    [void][GhWin]::GetWindowThreadProcessId([GhWin]::GetForegroundWindow(), [ref]$fgPid)
+    Assert "$arm.F the ghost never took the foreground (fg pid $fgPid)" ($fgPid -ne [uint32]$app.Pid)
+    if (-not $KeepFrames) { Get-ChildItem $fdir -Filter 'f*.bmp' -ErrorAction SilentlyContinue | ForEach-Object { Remove-Item $_.FullName } }
+    return
+}
+
 [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
 [void](Set-GhozttyTestIsolation -Tag 'compglide')
 Assert-GhozttyIsolatedBuild -Exe $Exe | Out-Null
@@ -821,9 +1045,9 @@ $td = New-TestDesktop -Interactive
 
 try {
     foreach ($arm in $Arms) {
-        $comp = $arm -in 'on', 'tree', 'stall', 'unfold', 'live', 'strip'
-        $isTree = $arm -in 'tree', 'stall', 'unfold', 'live', 'strip'
-        $stalls = $arm -in 'stall', 'unfold', 'live', 'strip'
+        $comp = $arm -in 'on', 'tree', 'stall', 'unfold', 'live', 'strip', 'sidebar'
+        $isTree = $arm -in 'tree', 'stall', 'unfold', 'live', 'strip', 'sidebar'
+        $stalls = $arm -in 'stall', 'unfold', 'live', 'strip', 'sidebar'
         "== arm '$arm' (GHOZTTY_COMP_PRESENT=$(if ($comp) { '1' } else { 'unset' }) PANE_TREE=$(if ($isTree) { '1' } else { 'unset' }), slide $SlideMs ms$(if ($stalls) { ", stall $StallMs ms$(if ($arm -eq 'unfold') { ' once the opening card is in' }), declare $(if ($NoDeclare) { 'off' } else { 'on' })" }))"
         [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
         $dir = Join-Path $OutDir $arm
@@ -849,7 +1073,10 @@ try {
         if ($NoLandingTimer) { $env:GHOZTTY_GLIDE_LANDING_TIMER = '0' } else { Remove-Item env:GHOZTTY_GLIDE_LANDING_TIMER -ErrorAction SilentlyContinue }
         if ($NoBody) { $env:GHOZTTY_COMP_SHADOWS_NOBODY = '1' } else { Remove-Item env:GHOZTTY_COMP_SHADOWS_NOBODY -ErrorAction SilentlyContinue }
         $err = Join-Path $dir 'stderr.txt'
+        if ($NoColumnDeclare) { $env:GHOZTTY_SIDEBAR_COLUMN_DECLARE = '0' } else { Remove-Item env:GHOZTTY_SIDEBAR_COLUMN_DECLARE -ErrorAction SilentlyContinue }
+        if ($arm -eq 'sidebar') { $env:GHOZTTY_SIDEBAR_COLUMN_MS = "$SlideMs" } else { Remove-Item env:GHOZTTY_SIDEBAR_COLUMN_MS -ErrorAction SilentlyContinue }
         if ($arm -eq 'strip') { Invoke-StripArm $arm $dir $err; continue }
+        if ($arm -eq 'sidebar') { Invoke-SidebarArm $arm $dir $err; continue }
         $app = Start-OnTestDesktop -Exe $Exe -Arguments @(
             '--config-default-files=false', '--session-persistence=false',
             '--window-width=100', '--window-height=30', '--background=#000000',
