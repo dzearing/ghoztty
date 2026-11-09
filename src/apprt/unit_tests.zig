@@ -382,6 +382,7 @@ test {
     _ = @import("win32/pane_stack_slide.zig");
     // Which glide ticks can skip the live layout pass (T2828) - same deal.
     _ = @import("win32/glide_landing_timer.zig");
+    _ = @import("win32/pane_move_trace.zig");
     // Terminals hold their size under a drag, one resize per settle (T2459).
     _ = @import("win32/drag_hold.zig");
     // The strip face a card fades to as it narrows into its strip (T2288).

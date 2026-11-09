@@ -29,6 +29,8 @@ const Surface = @import("Surface.zig");
 const WindowPresenter = @import("WindowPresenter.zig");
 const gl_window_presenter = @import("../../renderer/gl_window_presenter.zig");
 const gl_comp_present = @import("../../renderer/gl_comp_present.zig");
+const present_stamps = @import("../../renderer/present_stamps.zig");
+const pane_move_trace = @import("pane_move_trace.zig");
 const window_chord = @import("window_chord.zig");
 const paint_probe = @import("paint_probe.zig");
 const PaneView = @import("PaneView.zig");
@@ -8242,6 +8244,8 @@ fn reportGlideCost(self: *Window, comptime what: []const u8) void {
             "place_us={d} paint_us={d} cards_us={d} overlay_us={d} flush_us={d}",
         .{ p.step_us, p.layout_us, p.resize_us, p.waits, p.wait_us, p.place_us, p.paint_us, p.cards_us, p.overlay_us, p.flush_us },
     );
+    // T2845: the per-pane move attribution for the same glide.
+    if (pane_move_trace.on()) pane_move_trace.summary();
 }
 
 /// Open a frame-wait batch for one layout pass (T1343). Nested passes join the
@@ -8598,6 +8602,12 @@ pub fn layoutSplits(self: *Window) void {
     var plan_t0: i64 = 0;
     var plan_t1: i64 = 0;
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&plan_t0);
+    // T2845: a traced live pass moves each pane in a batch of its own.
+    const split = self.in_live_layout and !self.held_resizes_on and pane_move_trace.on();
+    if (split) move_split = self;
+    defer if (split) {
+        move_split = null;
+    };
     if (self.stackGrid()) |laid| {
         var grid = laid;
         defer grid.deinit();
@@ -8608,6 +8618,7 @@ pub fn layoutSplits(self: *Window) void {
         self.stackState().noteStacks(grid.result.stacks.items) catch {};
     }
     if (pane_stash.stashedCount(tree) > 0) self.placeStashed(tree, rect, &hdwp);
+    if (split) move_split = null;
     // Every pane of this pass lands in ONE frame here, before the divider
     // bands are painted below (T1031).
     var batch_t0: i64 = 0;
@@ -10431,6 +10442,7 @@ fn placePane(
     const extra: u32 = if (place_extra_flags != 0 and show and w32.IsWindowVisible(h) != 0) place_extra_flags else 0;
     const flags: u32 = w32.SWP_NOZORDER | w32.SWP_NOACTIVATE | extra |
         (if (show) w32.SWP_SHOWWINDOW else w32.SWP_HIDEWINDOW);
+    if (move_split) |w| if (hdwp.* != null) return w.tracedMove(h, x, y, cx, cy, flags);
     if (hdwp.*) |batch| {
         if (w32.DeferWindowPos(batch, h, null, x, y, cx, cy, flags)) |next| {
             hdwp.* = next;
@@ -11156,9 +11168,47 @@ var grid_cost: struct { calls: u32 = 0, qpc: i64 = 0 } = .{};
 /// (T2732), stack trace only: UI thread, reset at each batch.
 pub var batch_cost: struct { sizes: u32 = 0, size_qpc: i64 = 0, fill_qpc: i64 = 0 } = .{};
 
-/// `stackTraceOn` for the pane's resize stamps (T2732).
+/// `stackTraceOn` for the pane's resize stamps (T2732), and the per-pane move
+/// trace, which takes each pane's own WM_SIZE back out of its move (T2845).
 pub fn batchCostOn() bool {
-    return stackTraceOn();
+    return stackTraceOn() or pane_move_trace.on();
+}
+
+/// The window whose live pass moves its panes one batch each under
+/// `GHOZTTY_PANE_MOVE_TRACE` (T2845); null otherwise. UI thread only.
+var move_split: ?*Window = null;
+
+/// Move one pane in a batch of its own and attribute the time (T2845,
+/// `pane_move_trace.zig`). Its WM_SIZE is held exactly as the shared batch
+/// holds it, so the resize work still runs in `endPaneBatchFilled`.
+fn tracedMove(self: *Window, h: w32.HWND, x: i32, y: i32, cx: i32, cy: i32, flags: u32) void {
+    const key = @intFromPtr(h);
+    const was_held = self.held_resizes_on;
+    self.held_resizes_on = true;
+    defer self.held_resizes_on = was_held;
+    const own0 = batch_cost.size_qpc;
+    const before = present_stamps.table.read(key);
+    const others = pane_move_trace.othersBusy(key);
+    var t0: i64 = 0;
+    _ = w32.QueryPerformanceCounter(&t0);
+    var moved = false;
+    if (w32.BeginDeferWindowPos(1)) |b| {
+        if (w32.DeferWindowPos(b, h, null, x, y, cx, cy, flags)) |n| {
+            _ = w32.EndDeferWindowPos(n);
+            moved = true;
+        }
+    }
+    if (!moved) _ = w32.SetWindowPos(h, null, x, y, cx, cy, flags);
+    var t1: i64 = 0;
+    _ = w32.QueryPerformanceCounter(&t1);
+    pane_move_trace.record(key, .{
+        .begin = t0,
+        .end = t1,
+        .own = batch_cost.size_qpc - own0,
+        .before = before,
+        .after = present_stamps.table.read(key),
+        .others_busy = others,
+    });
 }
 
 fn resizeTraceGrid() void {

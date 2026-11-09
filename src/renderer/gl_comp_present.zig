@@ -35,6 +35,7 @@ const gl = @import("opengl");
 const gl_loader = @import("gl_loader.zig");
 const gl_robust = @import("gl_robust.zig");
 const comp_overlay = @import("comp_overlay.zig");
+const present_stamps = @import("present_stamps.zig");
 
 const log = std.log.scoped(.comp_present);
 
@@ -460,6 +461,9 @@ pub const Presenter = struct {
 
     /// Frames presented, for the debug-only failure seam below.
     presents: u64 = 0,
+    /// The pane window this chain presents for, set by the caller after
+    /// `init`: the key of its `present_stamps` clock (T2845).
+    hwnd: ?HWND = null,
     /// `GHOZTTY_COMP_PRESENT_FAIL_AFTER=<n>`: debug builds fail the n+1th
     /// present, so the fallback to SwapBuffers can be watched happening
     /// (test\win32\comp-present.ps1). Never read in a release build.
@@ -644,7 +648,16 @@ pub const Presenter = struct {
     /// rectangle; a source size the chain refuses drops to exact resizes for
     /// the life of the presenter.
     fn resizeSwap(self: *Presenter, w: u32, h: u32) Error!void {
-        const resize = slot(*const fn (Obj, u32, u32, u32, u32, u32) callconv(.winapi) HRESULT, self.swap, slot_swapchain_resize_buffers);
+        // T2845: the window thread reads whether this was in flight.
+        if (present_stamps.stampBegin(self.hwnd, .resize)) {
+            defer present_stamps.stampEnd(self.hwnd, .resize);
+            return self.resizeSwapInner(w, h);
+        }
+        return self.resizeSwapInner(w, h);
+    }
+
+    fn resizeSwapInner(self: *Presenter, w: u32, h: u32) Error!void {
+        const resize =slot(*const fn (Obj, u32, u32, u32, u32, u32) callconv(.winapi) HRESULT, self.swap, slot_swapchain_resize_buffers);
         if (self.swap2) |s2| {
             const cap = sharedCapacity(self.swap_w, self.swap_h, w, h);
             if (cap[0] != self.swap_w or cap[1] != self.swap_h) {
@@ -785,7 +798,9 @@ pub const Presenter = struct {
         const dc = self.dcomp orelse return;
         stage = "band-offset";
         try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_y_float)(vis, @floatFromInt(band)));
-        const hr = slot(*const fn (Obj) callconv(.winapi) HRESULT, dc, slot_dcomp_device_commit)(dc);
+        const stamped = present_stamps.stampBegin(self.hwnd, .commit);
+        defer if (stamped) present_stamps.stampEnd(self.hwnd, .commit);
+        const hr =slot(*const fn (Obj) callconv(.winapi) HRESULT, dc, slot_dcomp_device_commit)(dc);
         stage = "";
         // The window thread uploads overlay pixels on this device (T2559's
         // banner, T2492's scrollbar), and a commit that lands between its
@@ -831,6 +846,8 @@ pub const Presenter = struct {
 
         stage = "present";
         // Sync interval 1: one frame per vblank, the same pacing SwapBuffers had.
+        const stamped = present_stamps.stampBegin(self.hwnd, .present);
+        defer if (stamped) present_stamps.stampEnd(self.hwnd, .present);
         try check(slot(*const fn (Obj, u32, u32) callconv(.winapi) HRESULT, self.swap, slot_swapchain_present)(self.swap, 1, 0));
     }
 

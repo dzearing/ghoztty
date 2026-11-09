@@ -1373,6 +1373,7 @@ fn compInit(self: *OpenGL, width: usize, height: usize) void {
         compLeaveHelper(self);
         return;
     };
+    p.hwnd = hwnd;
     self.comp = p;
     log.info("pane presents through a composition swap chain warp={} tree={} premultiplied={}", .{ p.warp, in_tree, premultiplied });
     if (p.surface_handle) |h| {
