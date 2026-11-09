@@ -593,13 +593,247 @@ function Test-LoopBackgroundTaskLive {
     }
 }
 
-# Every un-notified task with its liveness: @{ Id; State }.
+# --- a HELD file can still be a finished task (T2805) -------------------------
+#
+# WHY. T2717's probe trusts "a writer holds the output file" to mean "the command
+# is running". Three stalls on 2026-11-07/08 (lane b T2765, lane a T2767 and
+# T2798) sat 2-2.5h at `bg=1 bgdead=0` over sweeps that had FINISHED: the
+# result files were complete, and the file was held by the PowerShell tool host
+# - no child, 0.25s of CPU, never exiting - and by one more process. That one is
+# the cause. It was an orphaned Start-Job worker (`powershell.exe -Version 5.1
+# -s -NoLogo -NoProfile`, its parent gone): a test library's fake relay job
+# whose script died without Stop-Job. Job workers inherit every inheritable
+# handle in the parent, so it held the host's output file AND the write end of
+# the pipe the host reads its native command's output from. The host never
+# sees EOF, never exits, and Claude Code never sends the notification. Measured
+# 2026-11-08: 62 such orphans on the box since 2026-11-03; killing one (58340)
+# made its host exit within 4s and the lost notification arrived.
+#
+# So a held file is judged by WHO holds it (Restart Manager names the
+# processes). It is 'hung' - finished, whatever the lock says - only when:
+#   - at least one holder is an ORPHAN (parent gone, or its pid reused by a
+#     younger process), which is the leak's signature; and
+#   - the holders that are NOT orphans are at most two (the tool's wrapper and
+#     its shell host: a native command still running makes a third), have no
+#     live child of their own other than conhost or each other, and used no CPU
+#     across a one-second sample.
+# Anything unread or ambiguous stays 'live', so this can only ever give a
+# stalled loop back - the T2717 rule - never take a genuine wait away.
+
+function Initialize-LoopRmProbe {
+    if ('LoopRmProbe' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public static class LoopRmProbe {
+    [StructLayout(LayoutKind.Sequential)]
+    struct RM_UNIQUE_PROCESS { public int dwProcessId; public System.Runtime.InteropServices.ComTypes.FILETIME ProcessStartTime; }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct RM_PROCESS_INFO {
+        public RM_UNIQUE_PROCESS Process;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string strAppName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string strServiceShortName;
+        public int ApplicationType; public uint AppStatus; public uint TSSessionId;
+        [MarshalAs(UnmanagedType.Bool)] public bool bRestartable;
+    }
+    [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)] static extern int RmStartSession(out uint h, int f, string key);
+    [DllImport("rstrtmgr.dll")] static extern int RmEndSession(uint h);
+    [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)] static extern int RmRegisterResources(uint h, uint nf, string[] files, uint na, IntPtr apps, uint ns, string[] svcs);
+    [DllImport("rstrtmgr.dll")] static extern int RmGetList(uint h, out uint needed, ref uint n, [In, Out] RM_PROCESS_INFO[] info, ref uint reasons);
+    // The pids holding a file open, or null when Restart Manager cannot say.
+    public static int[] Holders(string path) {
+        uint h;
+        if (RmStartSession(out h, 0, Guid.NewGuid().ToString()) != 0) return null;
+        try {
+            if (RmRegisterResources(h, 1, new[] { path }, 0, IntPtr.Zero, 0, null) != 0) return null;
+            uint needed = 0, n = 0, reasons = 0;
+            int r = RmGetList(h, out needed, ref n, null, ref reasons);
+            var res = new List<int>();
+            if (r == 234) {
+                var info = new RM_PROCESS_INFO[needed]; n = needed;
+                if (RmGetList(h, out needed, ref n, info, ref reasons) != 0) return null;
+                for (int i = 0; i < n; i++) res.Add(info[i].Process.dwProcessId);
+            } else if (r != 0) return null;
+            return res.ToArray();
+        } finally { RmEndSession(h); }
+    }
+}
+'@
+}
+
+function Get-LoopFileHolderPids {
+    param([string]$Path)
+    if (-not $Path) { return $null }
+    try { Initialize-LoopRmProbe; return [LoopRmProbe]::Holders($Path) } catch { return $null }
+}
+
+# Every process on the box as @{ Pid; Parent; Name; CommandLine; Created }, from
+# ONE query, so parent/child and orphan judgements all read the same instant.
+function Get-LoopProcTable {
+    $out = @()
+    foreach ($p in @(Get-CimInstance Win32_Process -ErrorAction Stop)) {
+        $out += @{ Pid = [int]$p.ProcessId; Parent = [int]$p.ParentProcessId; Name = [string]$p.Name
+                   CommandLine = [string]$p.CommandLine; Created = $p.CreationDate }
+    }
+    return $out
+}
+
+function ConvertTo-LoopProcIndex([object[]]$Procs) {
+    $byPid = @{}
+    foreach ($p in $Procs) { if ($p) { $byPid[[int]$p.Pid] = $p } }
+    return $byPid
+}
+
+# An orphan: its parent is gone, or the pid now names a process YOUNGER than it
+# (pid reuse), which is the same thing.
+function Test-LoopProcOrphan {
+    param($Proc, [hashtable]$ByPid)
+    $parent = $ByPid[[int]$Proc.Parent]
+    if (-not $parent) { return $true }
+    if ($parent.Created -and $Proc.Created -and $parent.Created -gt $Proc.Created) { return $true }
+    return $false
+}
+
+# The decision, pure (no IO), so the guard can score every arm of it.
+# Returns @{ Hung; Why; Orphans (pids) }.
+function Resolve-LoopHeldTaskHung {
+    param([AllowEmptyCollection()][int[]]$HolderPids = @(),
+          [AllowEmptyCollection()][object[]]$Procs = @(),
+          [hashtable]$CpuDeltaMs = @{})
+    $byPid = ConvertTo-LoopProcIndex $Procs
+    $orphans = @(); $owned = @()
+    foreach ($h in $HolderPids) {
+        $p = $byPid[[int]$h]
+        if (-not $p) { continue }   # exited between the two reads
+        if (Test-LoopProcOrphan -Proc $p -ByPid $byPid) { $orphans += $p } else { $owned += $p }
+    }
+    $orphanPids = @($orphans | ForEach-Object { $_.Pid })
+    if ($orphans.Count -eq 0) { return @{ Hung = $false; Why = 'no orphaned holder'; Orphans = @() } }
+    if ($owned.Count -gt 2) {
+        return @{ Hung = $false; Why = "$($owned.Count) live holders - the command still has a process tree"; Orphans = $orphanPids }
+    }
+    $ownedPids = @($owned | ForEach-Object { $_.Pid })
+    foreach ($o in $owned) {
+        foreach ($k in $Procs) {
+            if (-not $k -or [int]$k.Parent -ne [int]$o.Pid) { continue }
+            if ($o.Created -and $k.Created -and $k.Created -lt $o.Created) { continue }   # pid reuse, not a child
+            if ($k.Name -eq 'conhost.exe' -or $ownedPids -contains $k.Pid) { continue }
+            return @{ Hung = $false; Why = "holder $($o.Pid) still has a live child $($k.Pid) ($($k.Name))"; Orphans = $orphanPids }
+        }
+    }
+    foreach ($o in $owned) {
+        if (-not $CpuDeltaMs.ContainsKey([int]$o.Pid)) {
+            return @{ Hung = $false; Why = "holder $($o.Pid) CPU unread"; Orphans = $orphanPids }
+        }
+        if ([double]$CpuDeltaMs[[int]$o.Pid] -gt 0) {
+            return @{ Hung = $false; Why = "holder $($o.Pid) is still using CPU"; Orphans = $orphanPids }
+        }
+    }
+    return @{ Hung = $true; Why = "held only by an idle childless host and orphan(s) $($orphanPids -join ',')"; Orphans = $orphanPids }
+}
+
+# CPU used by each pid across one sample window, in ms. A pid that cannot be read
+# at either end is left out, which the decision reads as "not hung".
+function Get-LoopCpuDeltaMs {
+    param([int[]]$Pids = @(), [int]$SampleMs = 1000)
+    $first = @{}
+    foreach ($id in ($Pids | Select-Object -Unique)) {
+        try { $first[[int]$id] = (Get-Process -Id $id -ErrorAction Stop).TotalProcessorTime.TotalMilliseconds } catch { }
+    }
+    if ($first.Count -eq 0) { return @{} }
+    Start-Sleep -Milliseconds $SampleMs
+    $out = @{}
+    foreach ($id in @($first.Keys)) {
+        try { $out[[int]$id] = (Get-Process -Id $id -ErrorAction Stop).TotalProcessorTime.TotalMilliseconds - $first[$id] } catch { }
+    }
+    return $out
+}
+
+# Re-judge the 'live' records in place: 'hung' when Resolve-LoopHeldTaskHung
+# says so. One process table and ONE CPU sample for the whole batch, so a long
+# list of held tasks costs one second, not one each.
+function Update-LoopHungTaskStates {
+    param([object[]]$Records = @(), [string]$TasksRoot = '', [int]$SampleMs = 1000)
+    $live = @($Records | Where-Object { $_ -and $_.State -eq 'live' })
+    if ($live.Count -eq 0) { return }
+    $procs = Get-LoopProcTable
+    $byPid = ConvertTo-LoopProcIndex $procs
+    $holders = @{}
+    $sample = @()
+    foreach ($r in $live) {
+        $pids = Get-LoopFileHolderPids -Path (Get-LoopBackgroundTaskOutputFile -Id $r.Id -TasksRoot $TasksRoot)
+        if ($null -eq $pids) { continue }
+        $holders[$r.Id] = @($pids)
+        $hasOrphan = $false
+        foreach ($h in $pids) {
+            $p = $byPid[[int]$h]
+            if ($p -and (Test-LoopProcOrphan -Proc $p -ByPid $byPid)) { $hasOrphan = $true }
+        }
+        # Only a file with an orphaned holder can be hung; skip the sample otherwise.
+        if ($hasOrphan) { foreach ($h in $pids) { $sample += [int]$h } }
+    }
+    if ($sample.Count -eq 0) { return }
+    $cpu = Get-LoopCpuDeltaMs -Pids $sample -SampleMs $SampleMs
+    foreach ($r in $live) {
+        if (-not $holders.ContainsKey($r.Id)) { continue }
+        $v = Resolve-LoopHeldTaskHung -HolderPids $holders[$r.Id] -Procs $procs -CpuDeltaMs $cpu
+        if ($v.Hung) { $r.State = 'hung'; $r.Orphans = $v.Orphans; $r.Why = $v.Why }
+    }
+}
+
+# --- the leak itself: orphaned Start-Job workers (T2805) ---------------------
+#
+# A Start-Job worker is `powershell.exe ... -s -NoLogo -NoProfile`, talking to
+# its parent over pipes. With the parent gone it can do nothing for anyone, and
+# what it still holds - inherited handles - is what wedges a tool host forever.
+# So the watchdog reaps them. Never a worker whose parent is alive, never one
+# younger than -MinAgeSeconds (a parent that is mid-spawn), and the kill
+# re-checks the start time so a recycled pid is never hit.
+function Test-LoopJobWorkerCommandLine([string]$CommandLine) {
+    return [bool]($CommandLine -match '(?i)\s-s\s+-NoLogo\s+-NoProfile\s*$')
+}
+
+function Get-LoopOrphanJobWorkers {
+    param([AllowEmptyCollection()][object[]]$Procs = $null, [int]$MinAgeSeconds = 120, [datetime]$Now = (Get-Date))
+    if ($null -eq $Procs) { $Procs = Get-LoopProcTable }
+    $byPid = ConvertTo-LoopProcIndex $Procs
+    $out = @()
+    foreach ($p in $Procs) {
+        if (-not $p -or $p.Name -notmatch '^(?i)(powershell|pwsh)\.exe$') { continue }
+        if (-not (Test-LoopJobWorkerCommandLine $p.CommandLine)) { continue }
+        if ($p.Created -and ($Now - $p.Created).TotalSeconds -lt $MinAgeSeconds) { continue }
+        if (Test-LoopProcOrphan -Proc $p -ByPid $byPid) { $out += $p }
+    }
+    return $out
+}
+
+# Kills them; returns the pids it killed.
+function Stop-LoopOrphanJobWorkers {
+    param([int]$MinAgeSeconds = 120)
+    $killed = @()
+    foreach ($w in @(Get-LoopOrphanJobWorkers -MinAgeSeconds $MinAgeSeconds)) {
+        try {
+            $gp = Get-Process -Id $w.Pid -ErrorAction Stop
+            if ($w.Created -and [math]::Abs(($gp.StartTime - $w.Created).TotalSeconds) -gt 2) { continue }
+            Stop-Process -Id $w.Pid -Force -ErrorAction Stop
+            $killed += $w.Pid
+        } catch { }
+    }
+    return $killed
+}
+
+# Every un-notified task with its liveness: @{ Id; State }. State is 'live',
+# 'dead', 'unknown' or (T2805) 'hung' - held, but only by leaked handles.
 function Get-LoopBackgroundTaskStates {
-    param([string]$TranscriptPath = '', [string]$TasksRoot = '')
+    param([string]$TranscriptPath = '', [string]$TasksRoot = '', [switch]$NoHungCheck)
     $out = @()
     foreach ($id in @(Get-LoopUnnotifiedBackgroundTasks -TranscriptPath $TranscriptPath)) {
         if (-not $id) { continue }
         $out += @{ Id = $id; State = (Test-LoopBackgroundTaskLive -Id $id -TasksRoot $TasksRoot) }
+    }
+    if (-not $NoHungCheck) {
+        try { Update-LoopHungTaskStates -Records $out -TasksRoot $TasksRoot } catch { }
     }
     return $out
 }
@@ -629,7 +863,7 @@ function Get-LoopPendingBackgroundTasks {
     param([string]$TranscriptPath = '', [string]$TasksRoot = '')
     $live = @()
     foreach ($t in @(Get-LoopBackgroundTaskStates -TranscriptPath $TranscriptPath -TasksRoot $TasksRoot)) {
-        if ($t -and $t.State -ne 'dead') { $live += $t.Id }
+        if ($t -and $t.State -ne 'dead' -and $t.State -ne 'hung') { $live += $t.Id }
     }
     return $live
 }

@@ -3231,6 +3231,106 @@ $aiStates = @(Get-LoopBackgroundTaskStates -TranscriptPath $aiFile -TasksRoot $a
 $aiNone = Test-LoopBackgroundTaskLive -Id 'bnosuchid' -TasksRoot $aiRoot
 Assert "AI13 the states list names the dead task, and an id with no file is unknown, not dead (got '$aiNone')" `
     ($aiStates.Count -eq 1 -and $aiStates[0].State -eq 'dead' -and $aiNone -eq 'unknown')
+
+# --- AI14-AI21. a HELD file can still be a finished task (T2805) ---
+# WHY. Three stalls on 2026-11-07/08 sat 2-2.5h at `bg=1 bgdead=0` over sweeps
+# that had finished: the output file was held by the tool host (no child, no
+# CPU, never exiting) and by an ORPHANED Start-Job worker that had inherited
+# the host's handles - so the host never saw EOF and the notification never
+# came. The decision is scored pure first, one arm per condition, each with a
+# fixture that differs from the hung one in exactly that condition.
+$hT0 = Get-Date '2026-11-08T10:00:00'
+$hProcs = @(
+    @{ Pid = 100; Parent = 1;   Name = 'claude.exe';     CommandLine = 'claude';  Created = $hT0 },
+    @{ Pid = 1;   Parent = 0;   Name = 'explorer.exe';   CommandLine = '';        Created = $hT0.AddDays(-1) },
+    @{ Pid = 200; Parent = 100; Name = 'cmd.exe';        CommandLine = 'cmd /c';  Created = $hT0.AddMinutes(1) },
+    @{ Pid = 300; Parent = 200; Name = 'powershell.exe'; CommandLine = 'powershell -Command x'; Created = $hT0.AddMinutes(1) },
+    @{ Pid = 301; Parent = 300; Name = 'conhost.exe';    CommandLine = 'conhost'; Created = $hT0.AddMinutes(1) },
+    # The orphan: its parent 999 is gone.
+    @{ Pid = 400; Parent = 999; Name = 'powershell.exe'; CommandLine = '"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -Version 5.1 -s -NoLogo -NoProfile'; Created = $hT0.AddMinutes(30) }
+)
+$hCpu0 = @{ 200 = 0; 300 = 0 }
+$hV = Resolve-LoopHeldTaskHung -HolderPids @(200, 300, 400) -Procs $hProcs -CpuDeltaMs $hCpu0
+Assert "AI14 idle childless host + an orphaned holder reads hung (got $($hV.Hung): $($hV.Why))" `
+    ($hV.Hung -and @($hV.Orphans) -contains 400)
+$hV = Resolve-LoopHeldTaskHung -HolderPids @(200, 300) -Procs $hProcs -CpuDeltaMs $hCpu0
+Assert "AI15 no orphaned holder is never hung - a host waiting in-process is a real wait (got $($hV.Hung))" (-not $hV.Hung)
+$hKid = @{ Pid = 500; Parent = 300; Name = 'powershell.exe'; CommandLine = 'powershell -File sweep.ps1'; Created = $hT0.AddMinutes(2) }
+$hV = Resolve-LoopHeldTaskHung -HolderPids @(200, 300, 400) -Procs ($hProcs + $hKid) -CpuDeltaMs $hCpu0
+Assert "AI16 a host with a live native child is still running (got $($hV.Hung): $($hV.Why))" (-not $hV.Hung)
+$hV = Resolve-LoopHeldTaskHung -HolderPids @(200, 300, 500, 400) -Procs ($hProcs + $hKid) -CpuDeltaMs @{ 200 = 0; 300 = 0; 500 = 0 }
+Assert "AI16b three live holders - a command tree - is never hung (got $($hV.Hung): $($hV.Why))" (-not $hV.Hung)
+$hV = Resolve-LoopHeldTaskHung -HolderPids @(200, 300, 400) -Procs $hProcs -CpuDeltaMs @{ 200 = 0; 300 = 15.6 }
+Assert "AI17 a host still using CPU is still working (got $($hV.Hung))" (-not $hV.Hung)
+$hV = Resolve-LoopHeldTaskHung -HolderPids @(200, 300, 400) -Procs $hProcs -CpuDeltaMs @{ 200 = 0 }
+Assert "AI18 a host whose CPU could not be read is not hung - unread is never evidence (got $($hV.Hung))" (-not $hV.Hung)
+# Pid reuse: the orphan's parent pid is alive again, as a YOUNGER process.
+$hReused = @($hProcs | Where-Object { $_.Pid -ne 400 }) + @(
+    @{ Pid = 400; Parent = 600; Name = 'powershell.exe'; CommandLine = '-s -NoLogo -NoProfile'; Created = $hT0.AddMinutes(30) },
+    @{ Pid = 600; Parent = 1; Name = 'notepad.exe'; CommandLine = 'notepad'; Created = $hT0.AddHours(5) })
+$hV = Resolve-LoopHeldTaskHung -HolderPids @(200, 300, 400) -Procs $hReused -CpuDeltaMs $hCpu0
+Assert "AI18b a parent pid reused by a younger process still counts as gone (got $($hV.Hung))" $hV.Hung
+Assert 'AI18c the job-worker shape is recognised, and an ordinary powershell is not' `
+    ((Test-LoopJobWorkerCommandLine '"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -Version 5.1 -s -NoLogo -NoProfile') -and
+     -not (Test-LoopJobWorkerCommandLine 'powershell.exe -NoProfile -File scripts\x.ps1 -s'))
+$hOrph = @(Get-LoopOrphanJobWorkers -Procs $hProcs -MinAgeSeconds 120 -Now $hT0.AddHours(1))
+$hYoung = @(Get-LoopOrphanJobWorkers -Procs $hProcs -MinAgeSeconds 120 -Now $hT0.AddMinutes(31))
+Assert "AI18d the reaper picks the orphaned worker only, and never one younger than its age bar (got $($hOrph.Count)/$($hYoung.Count))" `
+    ($hOrph.Count -eq 1 -and $hOrph[0].Pid -eq 400 -and $hYoung.Count -eq 0)
+
+# The real shape, end to end. Host A (our child, so never an orphan) writes to
+# the task's output file and captures native child B's output through a pipe;
+# B starts a grandchild J that inherits every inheritable handle, and B is then
+# killed. J holds A's file AND B's pipe, so A blocks forever - exactly the
+# 2026-11-07 tool host. J is given a Start-Job worker's command-line tail so the
+# reaper's real selector picks it: a genuine Start-Job worker built here exits
+# with its parent (measured while writing this), and the box's 62 survived for a
+# reason that is still open (T2850), so the fixture builds the surviving
+# state directly rather than depending on that reason.
+$hId = 'bhung2805'
+$hOut = Join-Path $aiTasks "$hId.output"
+[System.IO.File]::WriteAllLines($aiFile, [string[]]@(
+    "{`"type`":`"user`",`"toolUseResult`":{`"stdout`":`"`",`"backgroundTaskId`":`"$hId`"}}"))
+$hInner = ('$psi = New-Object System.Diagnostics.ProcessStartInfo ''powershell.exe'', ''-NoProfile -Command "Start-Sleep 900;#" -s -NoLogo -NoProfile''; ' +
+           '$psi.UseShellExecute = $false; [void][System.Diagnostics.Process]::Start($psi); Start-Sleep 900')
+$hCmd = "`$o = & powershell.exe -NoProfile -EncodedCommand $([Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($hInner))); 'host-done'"
+$hA = Start-Process powershell.exe -PassThru -WindowStyle Hidden -RedirectStandardOutput $hOut `
+    -ArgumentList @('-NoProfile', '-EncodedCommand', [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($hCmd)))
+$hB = $null; $hJ = $null
+$hDeadline = (Get-Date).AddSeconds(45)
+while ((Get-Date) -lt $hDeadline -and -not $hJ) {
+    Start-Sleep -Milliseconds 500
+    if (-not $hB) { $hB = Get-CimInstance Win32_Process -Filter "ParentProcessId=$($hA.Id) AND Name='powershell.exe'" | Select-Object -First 1 }
+    if ($hB) { $hJ = Get-CimInstance Win32_Process -Filter "ParentProcessId=$($hB.ProcessId) AND Name='powershell.exe'" | Select-Object -First 1 }
+}
+try {
+    Assert "AI19 fixture: the host, its child and the job worker all started (A=$($hA.Id) B=$($hB.ProcessId) J=$($hJ.ProcessId))" `
+        ($hB -and $hJ -and (Test-LoopJobWorkerCommandLine $hJ.CommandLine))
+    $hLive = @(Get-LoopBackgroundTaskStates -TranscriptPath $aiFile -TasksRoot $aiRoot)
+    Assert "AI19b teeth: while B runs the task is live, not hung (got '$($hLive[0].State)')" `
+        ($hLive.Count -eq 1 -and $hLive[0].State -eq 'live')
+    Stop-Process -Id $hB.ProcessId -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    $hHung = @(Get-LoopBackgroundTaskStates -TranscriptPath $aiFile -TasksRoot $aiRoot)
+    $hPend = @(Get-LoopPendingBackgroundTasks -TranscriptPath $aiFile -TasksRoot $aiRoot)
+    Assert "AI20 with B gone the host is held open only by the orphaned worker: hung (got '$($hHung[0].State)': $($hHung[0].Why))" `
+        ($hHung.Count -eq 1 -and $hHung[0].State -eq 'hung' -and @($hHung[0].Orphans) -contains [int]$hJ.ProcessId)
+    Assert "AI20b and a hung task no longer holds the waiver (got $($hPend.Count))" ($hPend.Count -eq 0)
+    Assert 'AI20c the host really is stuck - it has not exited' (-not $hA.HasExited)
+    $hKilled = @(Stop-LoopOrphanJobWorkers -MinAgeSeconds 0)
+    Assert "AI21 the reaper kills the orphaned worker (killed: $($hKilled -join ','))" ($hKilled -contains [int]$hJ.ProcessId)
+    $hExited = $hA.WaitForExit(15000)
+    $hAfter = Test-LoopBackgroundTaskLive -Id $hId -TasksRoot $aiRoot
+    Assert "AI21b and the host exits by itself once the leaked handles go, freeing the file (exited=$hExited, state '$hAfter')" `
+        ($hExited -and $hAfter -eq 'dead' -and ((Get-Content -LiteralPath $hOut -Raw) -match 'host-done'))
+} catch {
+    "  FAIL AI19-AI21 the end-to-end hung-host fixture threw: $($_.Exception.Message)"
+    $script:failures++
+} finally {
+    foreach ($hp in @($hA.Id, $hB.ProcessId, $hJ.ProcessId)) {
+        if ($hp) { Stop-Process -Id $hp -Force -ErrorAction SilentlyContinue }
+    }
+}
 Remove-Item $aiFile -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $aiRoot -Recurse -Force -ErrorAction SilentlyContinue
 
@@ -3277,7 +3377,7 @@ Assert 'BB22 an unreadable composer does not count as unsent text' `
 Assert 'BB22b and the healthy line names the observation, not just the clocks' `
     ($r.Out -match 'healthy:.*composer=none session=unknown')
 Assert 'BB22c and how many of its own background tasks the session is waiting on (T1711)' `
-    ($r.Out -match 'healthy:.*session=unknown bg=\d+ bgdead=\d+ probed=')
+    ($r.Out -match 'healthy:.*session=unknown bg=\d+ bgdead=\d+ bghung=\d+ probed=')
 
 # --- BB23-BB34. is the session WORKING, or merely present? (T1370) ---------
 #

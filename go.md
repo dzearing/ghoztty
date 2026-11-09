@@ -684,6 +684,16 @@ Concretely, in order, with no stops in between:
    is writing (`bgdead=` in its log), so a lost notification costs minutes, not
    the 180m backstop.
 
+   **The sweep's own result file is the signal, not the notification** (T2805).
+   Redirect the sweep to a named file (`> $env:TEMP\<task>-due-$PID.txt`), and
+   if the notification seems late, read that file: a final verdict line there
+   means the sweep is over, whatever the tool says. A finished sweep's tool
+   host used to stay alive for hours because an orphaned Start-Job worker (a
+   test's fake relay, its script killed) had inherited its handles. The
+   watchdog now reaps orphaned job workers every tick, which lets the host
+   exit and the notification arrive. It also stops waiting on a file held
+   only by such leaked handles (`bghung=` in its log).
+
    **One of those rows is a whole family: `harness-floor`** (T725). The audits
    that sweep `test\win32\` for harness defects - exit codes, skips, verdicts,
    isolation, capture - are a single command now:

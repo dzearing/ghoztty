@@ -851,17 +851,32 @@ function Invoke-Tick {
         # Since T2717 `bg=` counts only tasks still RUNNING (or unprovable);
         # `bgdead=` names the un-notified ones whose output nobody is writing
         # any more - a lost notification, which no longer excuses an idle pane.
+        # Since T2805 it first REAPS orphaned Start-Job workers: their inherited
+        # handles are what keep a finished task's tool host alive forever, and
+        # once they go the host exits and Claude Code delivers the notification
+        # itself - a real wake-up, not a nudge. `bghung=` counts the tasks still
+        # held only by leaked handles (no longer a wait either).
+        try {
+            # -DryRun takes no action: it names what it WOULD reap.
+            $reaped = if ($DryRun) { @(Get-LoopOrphanJobWorkers | ForEach-Object { $_.Pid }) } else { @(Stop-LoopOrphanJobWorkers) }
+            if ($reaped.Count -gt 0) {
+                Log "  $(if ($DryRun) { 'would reap' } else { 'reaped' }) $($reaped.Count) orphaned Start-Job worker(s) (pid $($reaped -join ',')): their parent is gone and their inherited handles hold tool hosts open (T2805)"
+            }
+        } catch { Log "  note: the orphan-job reaper failed: $($_.Exception.Message)" }
         $bgPending = @()
         $bgDead = @()
+        $bgHung = @()
         try {
             $bgTp = if ($lock -and ($lock.PSObject.Properties.Name -contains 'transcript')) { [string]$lock.transcript } else { '' }
             foreach ($bgT in @(Get-LoopBackgroundTaskStates -TranscriptPath $bgTp)) {
                 if (-not $bgT) { continue }
-                if ($bgT.State -eq 'dead') { $bgDead += $bgT.Id } else { $bgPending += $bgT.Id }
+                if ($bgT.State -eq 'dead') { $bgDead += $bgT.Id }
+                elseif ($bgT.State -eq 'hung') { $bgHung += $bgT.Id }
+                else { $bgPending += $bgT.Id }
             }
         } catch { Log "  note: the background-task probe failed: $($_.Exception.Message)" }
         $seen = ("composer=$(if ($pane.Composer) { 'pending' } else { 'none' }) " +
-                 "session=$($pane.Working) bg=$($bgPending.Count) bgdead=$($bgDead.Count) probed=$probed")
+                 "session=$($pane.Working) bg=$($bgPending.Count) bgdead=$($bgDead.Count) bghung=$($bgHung.Count) probed=$probed")
         $verdict = Resolve-LoopStallVerdict -TurnAgeMinutes $turnAge `
             -StaleMinutes $TurnStaleMinutes -SuspectMinutes $TurnSuspectMinutes `
             -ComposerText $pane.Composer -PaneState $pane.Working `
