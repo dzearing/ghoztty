@@ -40,9 +40,12 @@
 #             (C) pairs with captured tab 1 and comes back holding P2 - B's
 #             session, in C's tab.
 #
-# Both halves of that are checked: the pids, and the surface set (a rebuild
-# replaces every `GhozttyTerminal` child, which is what proves a rebuild ran at
-# all rather than the recovery having quietly done nothing).
+# Both halves of that are checked: the pids, and the surfaces (a rebuild
+# replaces each survivor's terminal surface, which is what proves a rebuild ran
+# at all rather than the recovery having quietly done nothing). Since T2865 that
+# second half reads the app's own teardown record, not the HWND set: T2597 reuses
+# a departing pane's window for the next pane, so window identity no longer
+# says whether a surface is fresh.
 #
 # -NegativeControl inverts the load-bearing claim (D4) so a run MUST fail,
 # proving the oracle discriminates rather than passing for free.
@@ -368,20 +371,39 @@ try {
     Assert (-not $reentered) `
         'D2 the rebuild came from the ORIGINAL capture - the re-dial never aborted and re-entered'
 
-    # A rebuild replaces every terminal surface, so a fresh set is positive proof
-    # one ran - the same oracle agent-recovery.ps1 uses, and what keeps D4 from
-    # being satisfied by a recovery that quietly did nothing.
-    $surf1 = @()
-    $deadline = (Get-Date).AddSeconds(60)
-    while ((Get-Date) -lt $deadline) {
-        $surf1 = Get-TerminalSurfaces $top
-        $reused = @($surf1 | Where-Object { $surf0 -contains $_ })
-        if ($surf1.Count -eq 2 -and $reused.Count -eq 0) { break }
-        Start-Sleep -Milliseconds 500
+    # A rebuild replaces each survivor's terminal surface, which is positive proof
+    # one ran - what keeps D4 from being satisfied by a recovery that quietly did
+    # nothing.
+    #
+    # The oracle is the app's own teardown record, NOT the HWND set (T2865).
+    # This used to assert "two surfaces, none of them from before the wedge",
+    # which held only while a departing surface destroyed its window. Since T2597
+    # (`pane_pool.zig`) a closed pane's window is PARKED hidden in its top-level
+    # and handed to the next pane built there - so the second survivor's fresh
+    # surface legitimately lands in the first survivor's old window, and the
+    # parked spares stay enumerable: a correct rebuild read "count=4 reused=3".
+    # Each departing surface logs `surface closed` from `old_tree.deinit()`,
+    # synchronously inside the rebuild, so exactly the survivors' surfaces close
+    # between the re-dial and the `rebuilt` line. The closed tab is not among
+    # them: it is parked for undo (T1825) and closes only when the undo expires.
+    $tail = Read-AppLog $logMark
+    $iDial = $tail.IndexOf('in-place recovery: re-dialed')
+    $iDone = $tail.IndexOf('in-place recovery: rebuilt')
+    $closedInRebuild = -1
+    if ($iDial -ge 0 -and $iDone -gt $iDial) {
+        $closedInRebuild = ([regex]::Matches($tail.Substring($iDial, $iDone - $iDial), 'surface closed')).Count
     }
-    $reused = @($surf1 | Where-Object { $surf0 -contains $_ })
-    Assert ($surf1.Count -eq 2 -and $reused.Count -eq 0) `
-        "D3 two freshly rebuilt terminal surfaces (count=$($surf1.Count) reused=$($reused.Count))"
+    Assert ($closedInRebuild -eq 2) `
+        "D3 the rebuild replaced both survivors' surfaces (surfaces closed inside it: $closedInRebuild, want 2)"
+    if ($closedInRebuild -ne 2) {
+        foreach ($s in @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal')) {
+            $age = if ($surf0 -contains [int64]$s.Hwnd) { 'pre-wedge' } else { 'new' }
+            "    [D3] hwnd=$($s.Hwnd) $age visible=$($s.Visible)"
+        }
+        foreach ($ln in ($tail -split "`r?`n")) {
+            if ($ln -match 'recovery|surface closed|close_undo') { "    [D3] log: $ln" }
+        }
+    }
 
     $after = Wait-TabCount 'd0' 2 60
     $afterPids = @($after | ForEach-Object { $_.ShellPid })
