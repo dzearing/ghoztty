@@ -63,6 +63,11 @@ pub const StripFace = struct {
     /// The fold handed to the compositor whole (T2778), while it runs; null
     /// on a face stepped from frames.
     decl: ?strip_face.FaceDecl = null,
+    /// A strip that stays a strip and moves, declared as this face (T2825):
+    /// the part of its tab it covers at both ends of the glide, which the
+    /// desk goes on painting while the face carries the rest. Null on any
+    /// other face.
+    still: ?w32.RECT = null,
 
     pub fn create(alloc: std.mem.Allocator, owner: w32.HWND, hinstance: w32.HINSTANCE) !*StripFace {
         try registerClassOnce(hinstance);
@@ -246,6 +251,7 @@ pub const StripFace = struct {
             log.warn("strip face declare failed ({}) at {s}: hr=0x{x:0>8}; the face goes back to frames", .{ err, f.stage, chrome_comp.hex(f.hr) });
             host.faceDrop(&self.comp);
             self.decl = null;
+            self.still = null;
             if (self.on_visual) {
                 self.on_visual = false;
                 self.shown = false;
@@ -294,6 +300,7 @@ pub const StripFace = struct {
     /// Take the face's visual off the window's tree, if it has one.
     fn dropVisual(self: *StripFace) void {
         self.decl = null;
+        self.still = null;
         if (!self.comp.live()) return;
         if (self.comp_host) |slot_ptr| if (slot_ptr.*) |*h| {
             h.faceDrop(&self.comp);
@@ -306,6 +313,7 @@ pub const StripFace = struct {
         // The glide is over: the DIB goes with it, so a 4K card's 30 MB is
         // not held between glides.
         self.releaseDib();
+        self.still = null;
         if (!self.shown) return;
         if (self.on_visual) {
             self.on_visual = false;

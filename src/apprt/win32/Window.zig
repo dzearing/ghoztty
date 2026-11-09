@@ -9618,7 +9618,8 @@ fn retireStripFaces(self: *Window) void {
 /// gliding to or from a strip, or still too wide for any of the face.
 fn paintStripFace(self: *Window, view: *PaneView) bool {
     const slide = if (self.stack_slide) |*s| s else return false;
-    const face = slide.stripFace(pane_stack_grid.viewId(view)) orelse return false;
+    // A strip that stays a strip and moves (T2825) has a face of its own.
+    const face = slide.stripFace(pane_stack_grid.viewId(view)) orelse return self.declareMovingStrip(view);
     const parent = self.hwnd orelse return false;
     const h = view.hwnd() orelse return false;
     const live = w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE != 0;
@@ -9698,6 +9699,9 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
         };
     }
     const f = view.strip_face.?;
+    // A strip that was moving on this face (T2825) is a card now: the desk
+    // paints none of its strip.
+    f.still = null;
     const face_was_up = f.shown;
     // The unfold arm of comp-glide-hold-onscreen.ps1 (T2779): its stall
     // lands once the opening card's content is well in, so the film sees
@@ -10046,6 +10050,208 @@ fn declareStripFace(
         .fade_leave_s = fade.leave_s,
     }, decl, opening);
     return ok;
+}
+
+/// A strip that stays a strip and moves (T2417 - the grid shifting under a
+/// pane sidebar's collapse or expand) handed to the compositor whole (T2825;
+/// the T2778 shape): its band over everywhere it goes, never moved, and its
+/// name, both cut to the part of the strip that shows - `visiblePart` of
+/// the tab as drawn when the glide starts, running on the glide's follower
+/// to the landing's. Stepped, the strip is painted into the desk at every
+/// tick, so a busy window thread froze it while the cards beside it glided
+/// on. Declared, the desk paints only the part the strip covers at both
+/// ends (`StripFace.still`: every edge moves one way on the follower, so it
+/// is under the face all the way) and stops changing on the tick.
+/// Declared again only when the landing moves, from where the compositor
+/// has got to. False - the strip is stepped as before - off the
+/// composition tree, under `-NoDeclare`, under a test's forced slow frames,
+/// or once the strip has caught up.
+fn declareMovingStrip(self: *Window, view: *PaneView) bool {
+    if (!faceCompWanted() or !glideDeclareOn() or self.stack_slide_dt_ms != null) return false;
+    if (self.chrome_host == null) return false;
+    const slide = if (self.stack_slide) |*s| s else return false;
+    const id = pane_stack_grid.viewId(view);
+    const sg = slide.findStrip(id) orelse return false;
+    // Caught up: the strip the desk paints stands for it.
+    if (slide.movingStrip(id) == null) return false;
+    const parent = self.hwnd orelse return false;
+    const h = view.hwnd() orelse return false;
+    var grid = self.stackGrid() orelse return false;
+    defer grid.deinit();
+    const p = grid.placement(id) orelse return false;
+    // The rule `Slide.shownStrip` draws by: a strip whose tab has moved on
+    // again since the glide was set up is drawn where the layout has it.
+    const laid = p.tab orelse return false;
+    if (!std.meta.eql(laid, sg.to)) return false;
+    const axis = p.tab_axis orelse .horizontal;
+    const leads = p.strip_leads orelse true;
+    var client: w32.RECT = undefined;
+    if (!self.layoutClientRect(parent, &client)) return false;
+    const now = std.time.Instant.now() catch return false;
+    const horiz = axis == .horizontal;
+
+    const Rect = pane_stack_strip.Rect;
+    const rectOf = struct {
+        fn f(r: pane_stack_grid.PxRect) Rect {
+            return .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
+        }
+    }.f;
+    const clipOf = struct {
+        fn f(r: Rect, c: w32.RECT) comp_tree.Clip {
+            return .{
+                .left = @floatFromInt(@max(r.left, c.left)),
+                .top = @floatFromInt(@max(r.top, c.top)),
+                .right = @floatFromInt(@min(r.right, c.right)),
+                .bottom = @floatFromInt(@min(r.bottom, c.bottom)),
+            };
+        }
+    }.f;
+    const drawn = sg.drawn.round();
+    const tuck = p.strip_tuck;
+    // The tuck is the strip in front's reach over this one; a tab drawn no
+    // longer than it is shown whole (`visiblePart`).
+    const tuck0 = @min(tuck, pane_stack_slide.along(drawn, axis) - 1);
+    const to_clip = clipOf(pane_stack_strip.visiblePart(rectOf(sg.to), axis, leads, tuck), client);
+    if (to_clip.right <= to_clip.left or to_clip.bottom <= to_clip.top) return false;
+
+    if (view.strip_face == null) {
+        view.strip_face = StripFace.create(self.app.core_app.alloc, h, self.app.hinstance) catch |err| {
+            log.warn("strip face create failed err={}", .{err});
+            return false;
+        };
+    }
+    const f = view.strip_face.?;
+    var from: comp_tree.FacePose = .{ .opacity = 0 };
+    if (f.decl) |d| if (f.still != null and f.on_visual) {
+        // Unchanged landing: the declared glide runs on.
+        if (d.to.clip.left == to_clip.left and d.to.clip.top == to_clip.top and
+            d.to.clip.right == to_clip.right and d.to.clip.bottom == to_clip.bottom) return true;
+        from = d.reached(now);
+    };
+    if (f.decl == null or f.still == null or !f.on_visual) {
+        from.clip = clipOf(pane_stack_strip.visiblePart(rectOf(drawn), axis, leads, tuck0), client);
+    }
+    if (from.clip.right <= from.clip.left or from.clip.bottom <= from.clip.top) return false;
+    from.opacity = 0;
+    var to: comp_tree.FacePose = .{ .clip = to_clip, .opacity = 0 };
+    // Nothing is carried: the content layer is empty, and placed with the
+    // clip so no offset moves.
+    from.content_x = from.clip.left;
+    from.content_y = from.clip.top;
+    to.content_x = from.clip.left;
+    to.content_y = from.clip.top;
+
+    // The name's picture: the strip's visible part as the glide starts, laid
+    // out as the desk lays the name out over it; it rides the part's centre.
+    const nw: i32 = @intFromFloat(@round(from.clip.right - from.clip.left));
+    const nh: i32 = @intFromFloat(@round(from.clip.bottom - from.clip.top));
+    if (nw <= 0 or nh <= 0) return false;
+    const pw: f32 = @floatFromInt(nw);
+    const ph: f32 = @floatFromInt(nh);
+    const n0 = strip_face.nameOffset(axis, from.clip.left, from.clip.top, from.clip.right, from.clip.bottom, pw, ph);
+    const n1 = strip_face.nameOffset(axis, to.clip.left, to.clip.top, to.clip.right, to.clip.bottom, pw, ph);
+    from.name_x = n0.x;
+    from.name_y = n0.y;
+    to.name_x = n1.x;
+    to.name_y = n1.y;
+
+    const dist = comp_tree.FacePose.distance(from, to);
+    const tau_s = slide.tau_ms / 1000.0;
+    var segs: [comp_overlay.follower_segments]comp_overlay.Cubic = undefined;
+    const span_s = comp_overlay.fitFollower(dist, tau_s, pane_stack_slide.snap_px, &segs);
+    if (span_s <= 0) return false;
+    const decl: strip_face.FaceDecl = .{ .t0 = now, .from = from, .to = to, .dist = dist, .tau_s = tau_s };
+
+    // The band over both tabs whole and everything between: the glass over
+    // the desk is the desk's pixel where it stands.
+    const band: w32.RECT = .{
+        .left = @max(@min(drawn.left, sg.to.left), client.left),
+        .top = @max(@min(drawn.top, sg.to.top), client.top),
+        .right = @min(@max(drawn.right, sg.to.right), client.right),
+        .bottom = @min(@max(drawn.bottom, sg.to.bottom), client.bottom),
+    };
+    const bw = band.right - band.left;
+    const bh = band.bottom - band.top;
+    if (bw <= 0 or bh <= 0) return false;
+    const alloc = self.app.core_app.alloc;
+    const band_px = alloc.alloc(u32, @as(usize, @intCast(bw)) * @as(usize, @intCast(bh))) catch return false;
+    defer alloc.free(band_px);
+    const bg = self.stripBackground();
+    const hovered = if (self.strip_hover) |hv| hv == view else false;
+    const strip_rgb = pane_stack_strip.stripRgb(bg, hovered);
+    {
+        const fr: strip_face.Frame = .{ .pixels = band_px, .stride = @intCast(bw), .w = @intCast(bw), .h = @intCast(bh) };
+        if (self.glassDesk()) |g| {
+            const lut = pane_stack_strip.GlassLut.init(.{ .bg = bg, .sheet = .{} });
+            strip_face.fillGlass(fr, .{
+                .pixels = g.desk.pixels,
+                .w = g.desk.w,
+                .h = g.desk.h,
+                .x = band.left - g.area.left,
+                .y = band.top - g.area.top,
+            }, &lut, null);
+        } else strip_face.fillSolid(fr, strip_rgb, null);
+        strip_face.finish(fr, null, 0);
+    }
+
+    // The name: white on black in the face's DIB, then ink at that coverage.
+    var name_pic: ?chrome_comp.FacePic = null;
+    if (f.begin(nw, nh, nw, nh)) |pt| {
+        for (0..pt.frame.h) |y| @memset(pt.frame.row(y), 0);
+        if (self.stripFont(if (horiz) 2700 else 0)) |font| {
+            defer _ = w32.DeleteObject(font);
+            const old_mode = w32.SetBkMode(pt.dc, w32.TRANSPARENT);
+            defer _ = w32.SetBkMode(pt.dc, old_mode);
+            self.paintStripLabel(pt.dc, view, .{ .left = 0, .top = 0, .right = nw, .bottom = nh }, axis, font, .{ .r = 255, .g = 255, .b = 255 });
+        }
+        _ = w32.GdiFlush();
+        const ink = pane_stack_strip.inkRgb(strip_rgb, color_math.isLight(bg), hovered);
+        for (0..pt.frame.h) |y| strip_face.inkFromCoverage(pt.frame.row(y), ink);
+        name_pic = .{ .px = pt.frame.pixels, .stride = @intCast(pt.frame.stride), .w = nw, .h = nh };
+    }
+
+    const ok = f.declareVisual(&self.chrome_host, .{
+        .band = .{ .px = band_px, .stride = bw, .w = bw, .h = bh },
+        .band_x = band.left,
+        .band_y = band.top,
+        .name = name_pic,
+        .content = .{ .px = &.{}, .stride = 0, .w = 0, .h = 0 },
+        .from = from,
+        .to = to,
+        .curve = &segs,
+        .span_s = span_s,
+    }, decl, false);
+    if (!ok) return false;
+    // What the desk goes on painting: the tab as it is drawn now and as it
+    // lands, both - inside the face wherever the follower has it.
+    f.still = .{
+        .left = @max(drawn.left, sg.to.left),
+        .top = @max(drawn.top, sg.to.top),
+        .right = @min(drawn.right, sg.to.right),
+        .bottom = @min(drawn.bottom, sg.to.bottom),
+    };
+    // The acceptance oracle (comp-glide-hold-onscreen.ps1's strip arm).
+    log.debug("stack strip face declared clip_left={d:.0}->{d:.0} clip_right={d:.0}->{d:.0} still={d},{d},{d},{d}", .{
+        from.clip.left, to.clip.left, from.clip.right, to.clip.right,
+        f.still.?.left, f.still.?.top, f.still.?.right, f.still.?.bottom,
+    });
+    return true;
+}
+
+/// Where the desk paints tucked card `id`'s strip (T2825): `shownStripTab`,
+/// or - while the strip moves on a face declared to the compositor
+/// (`declareMovingStrip`) - only the part it covers at both ends of the
+/// glide, so the desk stands still on the tick; `faced` then says the face
+/// carries its name. Null for a card with no strip.
+fn deskStripTab(self: *Window, id: pane_stack_grid.Id, p: pane_stack_grid.Placement) ?struct { tab: pane_stack_grid.PxRect, faced: bool } {
+    const t = self.shownStripTab(id, p) orelse return null;
+    const slide = if (self.stack_slide) |*s| s else return .{ .tab = t, .faced = false };
+    if (slide.movingStrip(id) == null) return .{ .tab = t, .faced = false };
+    const view: *PaneView = @ptrFromInt(id);
+    const f = view.strip_face orelse return .{ .tab = t, .faced = false };
+    if (!f.on_visual) return .{ .tab = t, .faced = false };
+    const s = f.still orelse return .{ .tab = t, .faced = false };
+    return .{ .tab = .{ .left = s.left, .top = s.top, .right = @max(s.left, s.right), .bottom = @max(s.top, s.bottom) }, .faced = true };
 }
 
 /// After a face commit (stepped or declared): the live pane under a face
@@ -12088,7 +12294,7 @@ fn paintDividers(self: *Window, hdc: w32.HDC) void {
         // nothing else paints it, so it is filled like any gutter. The
         // panes themselves are clipped off by `WS_CLIPCHILDREN`.
         const shown = if (e.value_ptr.tab != null)
-            (if (grid.placement(e.key_ptr.*)) |p| self.shownStripTab(e.key_ptr.*, p) orelse continue else continue)
+            (if (grid.placement(e.key_ptr.*)) |p| (self.deskStripTab(e.key_ptr.*, p) orelse continue).tab else continue)
         else if (!e.value_ptr.is_tucked and self.stackSlideRect(e.key_ptr.*) == null) grid.px(e.value_ptr.frame) else continue;
         _ = w32.ExcludeClipRect(hdc, shown.left, shown.top, shown.right, shown.bottom);
     }
@@ -12444,6 +12650,8 @@ fn paintStripBandsAndNames(self: *Window, hdc: w32.HDC, bands: bool) void {
             var band: w32.RECT = .{ .left = s.tab.left, .top = s.tab.top, .right = s.tab.right, .bottom = s.tab.bottom };
             _ = w32.FillRect(hdc, &band, if (hovered) hover_brush else brush);
         }
+        // Its name rides its face (T2825).
+        if (s.faced) continue;
         const ink = pane_stack_strip.inkRgb(if (hovered) hover_rgb else strip_rgb, light, hovered);
         const font = (if (s.axis == .horizontal) down else across) orelse continue;
         self.paintStripLabel(hdc, s.view, s.label, s.axis, font, ink);
@@ -12464,6 +12672,10 @@ const TuckedStrip = struct {
     /// is the card as drawn and this how far into the strip it is. It casts
     /// the blade shadow at that strength and is no band yet.
     glide: ?f32 = null,
+    /// Moving on a face declared to the compositor (T2825): `tab` is the
+    /// part it covers at both ends of the glide, and the face carries its
+    /// name.
+    faced: bool = false,
 };
 
 /// How far into its strip card `id` is while it glides in or out (T2307;
@@ -12534,7 +12746,10 @@ fn tuckedStrips(self: *Window, out: []TuckedStrip) usize {
         const leads = p.strip_leads orelse true;
         // Held short of its reach until the glide is over (T2312): what it
         // has not reached yet is not under anything, so none of it is hidden.
-        const t = self.shownStripTab(id, p) orelse continue;
+        // Moving on its declared face (T2825), only the part it covers at
+        // both ends of the glide.
+        const shown = self.deskStripTab(id, p) orelse continue;
+        const t = shown.tab;
         const tuck = @max(0, p.strip_tuck - (pane_stack_slide.along(laid, axis) - pane_stack_slide.along(t, axis)));
         const tab: pane_stack_strip.Rect = .{ .left = t.left, .top = t.top, .right = t.right, .bottom = t.bottom };
         out[m] = .{
@@ -12543,6 +12758,7 @@ fn tuckedStrips(self: *Window, out: []TuckedStrip) usize {
             .axis = axis,
             .label = pane_stack_strip.visiblePart(tab, axis, leads, tuck),
             .leads = leads,
+            .faced = shown.faced,
         };
         m += 1;
     }

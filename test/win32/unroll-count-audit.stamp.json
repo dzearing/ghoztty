@@ -1,8 +1,8 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-09T01:06:34-08:00",
-    "commit":  "33ef4f51c",
+    "generated":  "2026-11-09T01:56:28-08:00",
+    "commit":  "3949027f0",
     "uncommitted":  [
 
                     ],
@@ -49,7 +49,7 @@
                   "scripts/go-loop-health.ps1":  "01ebcc1f5a53a58ecb399203c371fc75115360b4fcf41c03e70799180567363d",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8bc76326d576230a4aaf9b046c9f12cb7c3d59d25d3ed65672c628ddd64b5ac0",
-                  "scripts/go-loop-watchdog.ps1":  "de5776760f33e933bdc8fc6273996848631ac4efba11944b580d6f4a53641adb",
+                  "scripts/go-loop-watchdog.ps1":  "c9e028f6040e12199efab1bc31a4b2b6d647ecb9c90461682af314330034fc23",
                   "scripts/guard-due.ps1":  "0b0d8a026a7a98d15781e0b756e112547d0fae65344fb017cd359fd07046ebd4",
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
                   "scripts/hero-glide-onscreen.ps1":  "46d211f7ec7843d13506f4e3bd13933630339adb8aff13b5c97d69ae3fd248a7",
@@ -88,7 +88,7 @@
                   "scripts/lib/TreeIdle.ps1":  "2c4d18f221cbed25de68a4ebb694b447bb35b3307f5ccc28b025aa31a1ed9149",
                   "scripts/lib/UserAlert.ps1":  "785ec9f42291ab67113193989a0a59f2f576c2cc2801fb26cbf7217edd346563",
                   "scripts/lib/WebViewLane.ps1":  "14ff86074a34aef73316a5c94032bf32bd42845d7e831170366034700898a579",
-                  "scripts/loop-session.ps1":  "dbf8891043f9fade8b2f0a7ebc4a84af0ea736f924e1477c1d7b425e3a326ccb",
+                  "scripts/loop-session.ps1":  "4c8c72cf3dff223521c69b4c66bb95a215e2c45c695198688b4b9f08a471ff90",
                   "scripts/main-intake.ps1":  "16e52bcca79577cdfaf9eb2ca8485d3969001c6e2225ed33cc9140fe9ef2c00d",
                   "scripts/morning-owner.ps1":  "3ce353184a905647f855f15bcc8e2206d7772a22c4af7501488a0a556267faf0",
                   "scripts/msi-test-identity.ps1":  "f4114e015c29fa884abebff8fb7e057aab52582cf89584351f7b9b0c08ecce63",

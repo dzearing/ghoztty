@@ -351,7 +351,7 @@ pub const Slide = struct {
         return self.len > 0 or self.strips_len > 0;
     }
 
-    fn findStrip(self: *const Slide, id: Id) ?StripGlide {
+    pub fn findStrip(self: *const Slide, id: Id) ?StripGlide {
         for (self.stripItems()) |s| if (s.id == id) return s;
         return null;
     }
