@@ -114,7 +114,6 @@ pub fn paint(
     const y1 = rect.bottom + reach;
     const wi: i32 = @intCast(w);
     const hi: i32 = @intCast(h);
-    const black: desk_palette.Rgbf = .{ .r = 0, .g = 0, .b = 0 };
     // Worked out from the strip's own corner (T2732), so a compose of part of
     // the desk lays, to the bit, what a whole one does: in buffer coordinates
     // the floats rounded by where the buffer starts.
@@ -159,10 +158,25 @@ pub fn paint(
             bot_t[k] = px_of.alpha(col_lo, in_b + ki);
         }
     }
+    const per_pixel_rows = @import("builtin").is_test and test_per_pixel_rows;
     var y: i32 = @max(y0, 0);
     while (y < @min(y1, hi)) : (y += 1) {
         const straight = y >= rect.top + radius and y < rect.bottom - radius;
         const row_table = rows and y >= row_lo and y < row_hi;
+        if (row_table and !per_pixel_rows) {
+            // A table row is a straight one (`row_lo`/`row_hi` sit inside the
+            // rounded ends), so it is two runs and the interior between them:
+            // blend each run in one go (T2732), to the bit what the loop
+            // below lays pixel by pixel.
+            const row: usize = @intCast(y * wi);
+            const l0 = @max(x0, 0);
+            const l1 = @min(in_l, wi);
+            if (l1 > l0) shadeRun(buf[row + @as(usize, @intCast(l0)) ..][0..@intCast(l1 - l0)], left_t[@intCast(l0 - x0)..][0..@intCast(l1 - l0)]);
+            const r0 = @max(in_r, 0);
+            const r1 = @min(x1, wi);
+            if (r1 > r0) shadeRun(buf[row + @as(usize, @intCast(r0)) ..][0..@intCast(r1 - r0)], right_t[@intCast(r0 - in_r)..][0..@intCast(r1 - r0)]);
+            continue;
+        }
         var x: i32 = @max(x0, 0);
         while (x < @min(x1, wi)) : (x += 1) {
             if (straight and x >= in_l and x < in_r) {
@@ -177,11 +191,7 @@ pub fn paint(
                 px_of.alpha(x, y);
             if (a < 1.0 / 512.0) continue;
             const i: usize = @intCast(y * wi + x);
-            const dst = buf[i];
-            buf[i] = desk_palette.withCoverage(
-                desk_palette.Rgbf.lerp(desk_palette.Rgbf.unpack(dst), black, a).pack(),
-                desk_palette.coverOver(desk_palette.coverage(dst), a),
-            );
+            buf[i] = shadePixel(buf[i], a);
         }
     }
 }
@@ -189,6 +199,60 @@ pub fn paint(
 /// The widest side table `paint` keeps on the stack: a reach past this (a
 /// blade shadow at a scale no display has) is worked out per pixel.
 const MAX_SIDE = 256;
+
+/// Tests only: lay the table rows pixel by pixel too, the way `paint` did
+/// before `shadeRun`, so a test can hold the runs to it.
+var test_per_pixel_rows = false;
+
+/// Lay the shadow over a run of `px` whose alphas are `alpha`, eight at a
+/// time (T2732): black lerped in by each alpha and its coverage put over,
+/// the exact float steps `paint`'s per-pixel loop takes, so to the bit the
+/// same pixels; an alpha under 1/512 leaves its pixel alone.
+fn shadeRun(px: []u32, alpha: []const f32) void {
+    std.debug.assert(px.len == alpha.len);
+    const L = 8;
+    const V = @Vector(L, f32);
+    const U = @Vector(L, u32);
+    const zero: V = @splat(0);
+    const top: V = @splat(255);
+    const one: V = @splat(1);
+    const tiny: V = @splat(1.0 / 512.0);
+    const ff: U = @splat(0xFF);
+    var i: usize = 0;
+    while (i + L <= px.len) : (i += L) {
+        const a: V = alpha[i..][0..L].*;
+        const keep = a < tiny;
+        if (@reduce(.And, keep)) continue;
+        const dst: U = px[i..][0..L].*;
+        const r: V = @floatFromInt((dst >> @splat(16)) & ff);
+        const g: V = @floatFromInt((dst >> @splat(8)) & ff);
+        const b: V = @floatFromInt(dst & ff);
+        // `Rgbf.lerp` to black, then `chan`: round, clamp, truncate.
+        const r1: U = @intFromFloat(@min(@max(@round(r + (zero - r) * a), zero), top));
+        const g1: U = @intFromFloat(@min(@max(@round(g + (zero - g) * a), zero), top));
+        const b1: U = @intFromFloat(@min(@max(@round(b + (zero - b) * a), zero), top));
+        // `coverage`, `coverOver`, `withCoverage`.
+        const c: V = @as(V, @floatFromInt(dst >> @splat(24))) / top;
+        const cov = a + c * (one - a);
+        const c1: U = @intFromFloat(@round(@min(@max(cov, zero), one) * top));
+        const out = (c1 << @splat(24)) | (r1 << @splat(16)) | (g1 << @splat(8)) | b1;
+        px[i..][0..L].* = @select(u32, keep, dst, out);
+    }
+    while (i < px.len) : (i += 1) {
+        const a = alpha[i];
+        if (a < 1.0 / 512.0) continue;
+        px[i] = shadePixel(px[i], a);
+    }
+}
+
+/// One pixel of `paint`'s shadow at alpha `a`.
+fn shadePixel(dst: u32, a: f32) u32 {
+    const black: desk_palette.Rgbf = .{ .r = 0, .g = 0, .b = 0 };
+    return desk_palette.withCoverage(
+        desk_palette.Rgbf.lerp(desk_palette.Rgbf.unpack(dst), black, a).pack(),
+        desk_palette.coverOver(desk_palette.coverage(dst), a),
+    );
+}
 
 /// One pixel's share of the shadow: outside the shape only (Mac's even-odd
 /// mask), antialiased, cast from the caster moved by the lean.
@@ -429,6 +493,37 @@ test "T2454: paint's interior skip and side tables lay exactly what every pixel 
             const radius: i32 = @intFromFloat(@round(11 * scale));
             paint(&got, w, h, r, axis, leads, collapse, light, scale, radius);
             paintReference(&want, w, h, r, axis, leads, collapse, light, scale, radius);
+            try testing.expectEqualSlices(u32, &want, &got);
+        };
+}
+
+test "T2732: a table row blended as two runs lays exactly what the per-pixel loop does, coverage and all" {
+    // The pixels carry coverage in the alpha byte (a desk under a card's
+    // shadow, a glow), which the reference test above leaves at 0; and the
+    // runs' lengths are not multiples of eight, so the scalar tail runs too.
+    const w = 411;
+    const h = 307;
+    var got: [w * h]u32 = undefined;
+    var want: [w * h]u32 = undefined;
+    const rects = [_]Rect{
+        .{ .left = 60, .top = 20, .right = 341, .bottom = 280 },
+        .{ .left = 151, .top = 10, .right = 177, .bottom = 290 },
+        .{ .left = 9, .top = 121, .right = 399, .bottom = 143 },
+        .{ .left = -31, .top = -20, .right = 123, .bottom = 203 },
+        .{ .left = 300, .top = 30, .right = 420, .bottom = 330 },
+    };
+    defer test_per_pixel_rows = false;
+    for (rects) |r| for ([_]Direction{ .horizontal, .vertical }) |axis| for ([_]bool{ false, true }) |leads|
+        for ([_]f32{ 0.2, 0.55, 1 }) |collapse| for ([_]f32{ 1, 1.25, 1.75 }) |scale| for ([_]bool{ false, true }) |light| {
+            for (&got, &want, 0..) |*g, *v, i| {
+                g.* = @truncate(i *% 2654435761 +% 0x9E3779B9);
+                v.* = g.*;
+            }
+            const radius: i32 = @intFromFloat(@round(11 * scale));
+            test_per_pixel_rows = false;
+            paint(&got, w, h, r, axis, leads, collapse, light, scale, radius);
+            test_per_pixel_rows = true;
+            paint(&want, w, h, r, axis, leads, collapse, light, scale, radius);
             try testing.expectEqualSlices(u32, &want, &got);
         };
 }

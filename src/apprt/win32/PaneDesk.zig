@@ -1562,9 +1562,66 @@ fn composeRects(
     scratch.resize(light_alloc, most) catch return false;
     if (scratch_desk) |d| d.resize(light_alloc, most) catch return false;
     for (lights) |*c| if (c.w == lw and c.h == lh) busy_light.restore(comp, c.px.items);
-    for (rects) |r| composeRect(scratch.items, if (scratch_desk) |d| d.items else null, comp, desk, stride, r, cards, strips, style, bar, prep);
+    // Each rect less what the ones before it already laid (T2732): they may
+    // overlap, and where they do is often a shadow's corner - the costliest
+    // pixels a compose works out - so lay each pixel once. A compose is the
+    // same function of a pixel's place whichever rect it is laid from.
+    for (rects, 0..) |r, i| {
+        var pieces: Pieces = .{};
+        pieces.items[0] = r;
+        pieces.len = 1;
+        for (rects[0..i]) |o| if (!pieces.subtract(o)) {
+            pieces.items[0] = r;
+            pieces.len = 1;
+            break;
+        };
+        for (pieces.slice()) |p| composeRect(scratch.items, if (scratch_desk) |d| d.items else null, comp, desk, stride, p, cards, strips, style, bar, prep);
+    }
     return true;
 }
+
+/// What is left of a rect as others are taken out of it (T2732), as a few
+/// disjoint rects; `subtract` says false when that needs more than it holds,
+/// and the caller then lays the rect whole.
+const Pieces = struct {
+    const MAX = 32;
+    items: [MAX]busy_light.Rect = undefined,
+    len: usize = 0,
+
+    fn slice(self: *const Pieces) []const busy_light.Rect {
+        return self.items[0..self.len];
+    }
+
+    fn subtract(self: *Pieces, o: busy_light.Rect) bool {
+        var out: [MAX]busy_light.Rect = undefined;
+        var n: usize = 0;
+        for (self.slice()) |p| {
+            const l = @max(p.left, o.left);
+            const t = @max(p.top, o.top);
+            const rt = @min(p.right, o.right);
+            const b = @min(p.bottom, o.bottom);
+            const parts = if (rt <= l or b <= t)
+                [4]?busy_light.Rect{ p, null, null, null }
+            else
+                [4]?busy_light.Rect{
+                    // Above and below `o`, the piece's full width; beside it,
+                    // only its rows.
+                    if (t > p.top) .{ .left = p.left, .top = p.top, .right = p.right, .bottom = t } else null,
+                    if (p.bottom > b) .{ .left = p.left, .top = b, .right = p.right, .bottom = p.bottom } else null,
+                    if (l > p.left) .{ .left = p.left, .top = t, .right = l, .bottom = b } else null,
+                    if (p.right > rt) .{ .left = rt, .top = t, .right = p.right, .bottom = b } else null,
+                };
+            for (parts) |q| if (q) |x| {
+                if (n == MAX) return false;
+                out[n] = x;
+                n += 1;
+            };
+        }
+        self.items = out;
+        self.len = n;
+        return true;
+    }
+};
 
 /// One of `composeRects`' rectangles, through `scratch` (and `sd`, the desk
 /// under it, for a glass band), each at least its size.
@@ -2278,6 +2335,83 @@ test "T2732: a card or strip that comes or goes is composed over its own reach, 
     m.store(w, h, 1, &row, &.{}, style, null, &.{});
     try testing.expect(m.dirty(w, h, 1, row[0..2], &.{}, style, null) == .full);
     try testing.expect(m.dirty(w, h, 1, &row, &.{ at_rest, glass_rest }, style, null) == .full);
+}
+
+test "T2732: overlapping rects are each laid once, and every pixel of their union is what a whole compose lays" {
+    const testing = std.testing;
+    const w = 640;
+    const h = 360;
+    const desk = try testing.allocator.alloc(u32, w * h);
+    defer testing.allocator.free(desk);
+    for (desk, 0..) |*p, i| p.* = @truncate((i *% 2654435761) & 0x00FF_FFFF);
+    const full = try testing.allocator.alloc(u32, w * h);
+    defer testing.allocator.free(full);
+    const comp = try testing.allocator.alloc(u32, w * h);
+    defer testing.allocator.free(comp);
+    var scratch: std.ArrayListUnmanaged(u32) = .empty;
+    defer scratch.deinit(light_alloc);
+    var scratch_desk: std.ArrayListUnmanaged(u32) = .empty;
+    defer scratch_desk.deinit(light_alloc);
+    const cards = [_]pane_elevation.Card{
+        .{ .left = 10, .top = 10, .right = 230, .bottom = 350 },
+        .{ .left = 245, .top = 10, .right = 420, .bottom = 350, .shadow = 0.7 },
+        .{ .left = 435, .top = 10, .right = 600, .bottom = 350 },
+    };
+    const rgb: color_math.Rgb = .{ .r = 60, .g = 60, .b = 70 };
+    const strips = [_]pane_stack_strip.Band{
+        .{ .tab = .{ .left = 245, .top = 10, .right = 420, .bottom = 350 }, .axis = .horizontal, .rgb = rgb, .leads = false, .collapse = 0.4, .band = false },
+        .{ .tab = .{ .left = 605, .top = 10, .right = 625, .bottom = 350 }, .axis = .horizontal, .rgb = rgb, .leads = false, .glass = .{ .bg = .{ .r = 20, .g = 20, .b = 24 }, .sheet = .{} } },
+    };
+    // Two bands crossing at a shadow's corner, one inside another, two the
+    // same, two that only touch, and one over the buffer's corner.
+    const rects = [_]busy_light.Rect{
+        .{ .left = 200, .top = 0, .right = 280, .bottom = 360 },
+        .{ .left = 180, .top = 0, .right = 470, .bottom = 40 },
+        .{ .left = 220, .top = 5, .right = 260, .bottom = 30 },
+        .{ .left = 400, .top = 300, .right = 460, .bottom = 360 },
+        .{ .left = 400, .top = 300, .right = 460, .bottom = 360 },
+        .{ .left = 460, .top = 300, .right = 500, .bottom = 360 },
+        .{ .left = 590, .top = 0, .right = 640, .bottom = 60 },
+        .{ .left = 600, .top = 20, .right = 640, .bottom = 360 },
+    };
+    for ([_]bool{ false, true }) |glass| for ([_]f32{ 1, 1.5 }) |scale| {
+        const style: pane_elevation.CardStyle = .{ .fill = .{ .r = 24, .g = 26, .b = 30 }, .is_light = false, .scale = scale, .glass = glass };
+        compose(full, desk, w, h, &cards, &strips, style, null, null);
+        @memcpy(comp, full);
+        for (rects) |r| for (@intCast(r.top)..@intCast(r.bottom)) |y| @memset(comp[y * w + @as(usize, @intCast(r.left)) ..][0..@intCast(r.right - r.left)], 0xDEAD_BEEF);
+        var prep = pane_elevation.prepare(style);
+        defer prep.deinit();
+        try testing.expect(composeRects(&scratch, &scratch_desk, comp, desk, w, &rects, &cards, &strips, style, null, &.{}, w, h, &prep));
+        try testing.expectEqualSlices(u32, full, comp);
+    };
+
+    // The pieces of one rect less another are disjoint, inside it, clear of
+    // the other, and make up the rest of its area.
+    const a: busy_light.Rect = .{ .left = 0, .top = 0, .right = 100, .bottom = 80 };
+    for ([_]busy_light.Rect{
+        .{ .left = 20, .top = 10, .right = 60, .bottom = 50 },
+        .{ .left = -10, .top = 30, .right = 200, .bottom = 40 },
+        .{ .left = 100, .top = 0, .right = 150, .bottom = 80 },
+        .{ .left = -5, .top = -5, .right = 105, .bottom = 85 },
+    }) |o| {
+        var p: Pieces = .{};
+        p.items[0] = a;
+        p.len = 1;
+        try testing.expect(p.subtract(o));
+        var area: i64 = 0;
+        for (p.slice(), 0..) |x, i| {
+            try testing.expect(x.left >= a.left and x.right <= a.right and x.top >= a.top and x.bottom <= a.bottom);
+            try testing.expect(x.right <= o.left or x.left >= o.right or x.bottom <= o.top or x.top >= o.bottom);
+            for (p.slice()[i + 1 ..]) |y| try testing.expect(x.right <= y.left or x.left >= y.right or x.bottom <= y.top or x.top >= y.bottom);
+            area += Memo.Rects.areaOf(x);
+        }
+        const il = @max(a.left, o.left);
+        const it = @max(a.top, o.top);
+        const ir = @min(a.right, o.right);
+        const ib = @min(a.bottom, o.bottom);
+        const inter: i64 = if (ir > il and ib > it) @as(i64, ir - il) * (ib - it) else 0;
+        try testing.expectEqual(Memo.Rects.areaOf(a) - inter, area);
+    }
 }
 
 test "T2732: the extra element is the one that leaves the most pairs equal" {
