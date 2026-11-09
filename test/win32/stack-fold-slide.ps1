@@ -62,7 +62,11 @@
 #       window's own strip takes over, and a card on show wears none
 #   F13) the face IS the strip's band (flat style): photographed mid-glide
 #       through WM_PRINTCLIENT, its commonest pixel is the band the oracle
-#       logged and covers most of it - not the pane's colour, not a hole
+#       logged and covers most of it - not the pane's colour, not a hole.
+#       A pure-black photo is retaken (up to 5 times, then scored): the system
+#       answers PrintWindow for the layered popup from its own surface, never
+#       the app's WM_PRINT, and under load hands back an untouched bitmap -
+#       this row's intermittent red (T2752/T2836)
 #   F14) folding re-cuts s2 to its narrowing card on 2+ frames and redraws it
 #       on at most one, its first (T2415): a cut that only shrinks shows no
 #       pixel of the pane that was not on show already, and a redraw per frame
@@ -275,8 +279,26 @@ function Get-Samples([IntPtr]$top, [int]$ms) {
         $bw = @(Get-TestWindows -ProcessId $script:appPid -Class 'GhozttyBannerOverlay' | Where-Object { $_.Visible -and ($_.Hwnd -eq $script:watchBanner -or $script:bannerPath -eq 'visual') })
         if ($bw.Count -eq 1) { $bn = [pscustomobject]@{ Left = $bw[0].Left; Width = $bw[0].Width; Shown = (Get-ShownWidth $bw[0]) } }
         # One photograph of the face mid-glide (F13); it may hide under us.
+        # The face is an UpdateLayeredWindow popup, and the system answers
+        # PrintWindow for it from the layered surface itself - the app's
+        # WM_PRINT is never sent (T2836: a receipt there logged 0 times in 9
+        # runs). Under box load that answer is sometimes the capture's own
+        # untouched bitmap, pure 000000 (T2752's intermittent red). The face
+        # is never drawn pure black, so such a photo is retaken on a later
+        # sample - at most $faceRetakes times, after which the black photo is
+        # kept and scored: a face that really draws nothing still fails F13.
         if ($null -eq $script:faceShot -and $faces.Count -gt 0) {
-            try { $script:faceShot = Get-TestWindowPixels -Window ([IntPtr]$faces[0].Hwnd) -Sync -AllowUniform -UniformTimeoutMs 0 } catch { }
+            $shot = $null
+            try { $shot = Get-TestWindowPixels -Window ([IntPtr]$faces[0].Hwnd) -Sync -AllowUniform -UniformTimeoutMs 0 } catch { }
+            if ($null -ne $shot) {
+                $tc0 = Get-TopColor $shot
+                if ($tc0.Color -eq '000000' -and $tc0.Share -ge 0.99 -and $script:faceShotsEmpty -lt $faceRetakes) {
+                    $script:faceShotsEmpty++
+                    Close-TestWindowPixels -Shot $shot
+                } else {
+                    $script:faceShot = $shot
+                }
+            }
         }
         $out.Add([pscustomobject]@{ Ms = $sw.ElapsedMilliseconds; Panes = $panes; Stray = @(Get-StrayPopups $script:appPid $top); Watch = $w; Faces = $faces.Count; Banner = $bn })
         Start-Sleep -Milliseconds 15
@@ -472,6 +494,8 @@ Reset-TestBody
 Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
 $script:faceShot = $null
+$script:faceShotsEmpty = 0
+$faceRetakes = 5
 
 try {
     Assert (Test-Path $exe) 'ghoztty exe exists in zig-out'
@@ -846,10 +870,10 @@ try {
         } elseif ($PaneStyle -eq 'flat' -and -not $NegativeControl) {
             $bands = @(@($fadeIn) + @($fadeOut) | ForEach-Object Band | Sort-Object -Unique)
             if ($null -eq $script:faceShot) {
-                Assert $false 'F13: the face was photographed mid-glide (no capture landed)'
+                Assert $false "F13: the face was photographed mid-glide (no capture landed; $($script:faceShotsEmpty) untouched black photo(s) retaken)"
             } else {
                 $tc = Get-TopColor $script:faceShot
-                Say ("      face photo {0}x{1}: top colour {2} ({3:p0}); logged bands {4}" -f $script:faceShot.Width, $script:faceShot.Height, $tc.Color, $tc.Share, ($bands -join ', '))
+                Say ("      face photo {0}x{1}: top colour {2} ({3:p0}); {4} untouched black photo(s) retaken; logged bands {5}" -f $script:faceShot.Width, $script:faceShot.Height, $tc.Color, $tc.Share, $script:faceShotsEmpty, ($bands -join ', '))
                 Assert ($bands -contains $tc.Color) "F13: the face's commonest pixel $($tc.Color) is the strip band the face logged ($($bands -join ', '))"
                 Assert ($tc.Share -ge 0.6) "F13: the band covers most of the face ($([math]::Round($tc.Share * 100))%)"
                 Close-TestWindowPixels -Shot $script:faceShot

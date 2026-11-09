@@ -399,6 +399,11 @@ fn faceWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(
         // synchronously (T835/T940). PrintWindow sends WM_PRINT, whose
         // default would ask for the erase and the client in turn; answered
         // here whole, since this window has no frame and no erase of its own.
+        // Once `commit` has made it an UpdateLayeredWindow window, though,
+        // the system answers PrintWindow from the layered surface and this
+        // is never reached (T2836: a receipt here logged 0 times in 9
+        // stack-fold-slide runs); under box load that answer can be the
+        // caller's untouched bitmap, which the probe retakes.
         w32.WM_PRINT => {
             if (wparam == 0) return 0;
             if (self_opt) |self| self.printInto(@ptrFromInt(wparam));
