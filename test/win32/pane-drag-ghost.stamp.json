@@ -1,15 +1,15 @@
 {
     "guard":  "pane-drag-ghost",
     "script":  "test/win32/pane-drag-ghost.ps1",
-    "generated":  "2026-11-09T08:55:01-08:00",
-    "commit":  "7278b4c93",
+    "generated":  "2026-11-09T11:22:46-08:00",
+    "commit":  "c3073c493",
     "uncommitted":  [
                         "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/apprt/win32/pane_drag_ghost.zig":  "76b8876884de6afdb26c2d0b2866d22480f70fe793ca02dac18ff4f3aeef63fc",
                   "src/apprt/win32/PaneDragGhost.zig":  "75cb6d32f4313912ab7ddcd73a624140ca91ae60ca583fccd5f5f1d69658fea2",
-                  "src/apprt/win32/Window.zig":  "ce320635b69e6177abedd724c64d045ab11282461600af6d332aefad79ccd98e",
+                  "src/apprt/win32/Window.zig":  "cb68e182b49aabbf1b8b408bc208da99bcfca36f146ac573eac72e8fca80fe83",
                   "test/win32/pane-drag-ghost.ps1":  "75e23ac4bad14fc4fb694c8eaede2b16b6b4e132ead98793b60a371b693d0de1"
               }
 }

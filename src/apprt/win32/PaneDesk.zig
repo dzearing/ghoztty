@@ -329,6 +329,11 @@ composed_permille: u64 = 0,
 /// (T2454): what a glide frame's desk costs, split where it can be cut.
 compose_ns: u64 = 0,
 blit_ns: u64 = 0,
+/// The last `paint`'s phase boundaries on the QPC clock (T2732), for the
+/// window's stack trace to split a slow desk paint with: entered, the canvas
+/// ready, composed (or the memo hit), the names drawn and laid, returned. Zero where the
+/// paint left before that phase.
+last_stamps: struct { enter: i64 = 0, ready: i64 = 0, composed: i64 = 0, named: i64 = 0, done: i64 = 0, hit: bool = false, drawn: i64 = 0 } = .{},
 /// What the partial composes covered, in thousandths of the buffer, summed.
 partial_permille: u64 = 0,
 /// `composePartial`'s buffers, kept between paints: the rectangle being
@@ -925,6 +930,8 @@ pub fn paint(
     const w, const h = self.canvas(area_w, area_h);
     var tq0: i64 = 0;
     _ = w32.QueryPerformanceCounter(&tq0);
+    self.last_stamps = .{ .enter = tq0 };
+    defer _ = w32.QueryPerformanceCounter(&self.last_stamps.done);
     const desk = self.ensureDesk(w, h, style.is_light, variant) orelse return;
     var tq1: i64 = 0;
     _ = w32.QueryPerformanceCounter(&tq1);
@@ -937,6 +944,7 @@ pub fn paint(
     var tq_compose: i64 = tq2;
     var tq_lights: i64 = tq2;
     var tq_names: i64 = tq2;
+    self.last_stamps.ready = tq2;
     // A new size is a whole new desk (T2516): what each part of that costs, on
     // every window-resize step, under `GHOZTTY_RESIZE_TRACE`; and on the canvas
     // of a live one (T2577), what a step costs that is not.
@@ -963,9 +971,12 @@ pub fn paint(
             c.color = l.color;
             busy_light.apply(comp.pixels(), c.px.items, c.shape, c.color, head);
         }
+        self.last_stamps.hit = true;
+        _ = w32.QueryPerformanceCounter(&self.last_stamps.composed);
         self.last_blit = null;
         const laid = self.layNames(comp, origin_x, origin_y, opacity);
         defer if (laid) self.liftNames(comp);
+        _ = w32.QueryPerformanceCounter(&self.last_stamps.named);
         // A surface keeps its pixels, so only what moved goes up: the rings
         // and the names (T2509).
         if (self.sink) |s| {
@@ -1031,6 +1042,8 @@ pub fn paint(
     const laid = self.layNames(comp, origin_x, origin_y, opacity);
     defer if (laid) self.liftNames(comp);
     _ = w32.QueryPerformanceCounter(&tq_names);
+    self.last_stamps.composed = tq_lights;
+    self.last_stamps.named = tq_names;
     // The composition surface (T2509) takes what changed; the window's
     // invalid box is GDI's business and none of its.
     if (self.sink) |s| {
@@ -1246,6 +1259,7 @@ fn layNames(self: *PaneDesk, comp: Dib, origin_x: i32, origin_y: i32, opacity: ?
     _ = w32.SelectClipRgn(comp.dc, rgn);
     _ = w32.SetViewportOrgEx(comp.dc, -origin_x, -origin_y, null);
     n.draw(n.ctx, comp.dc);
+    _ = w32.QueryPerformanceCounter(&self.last_stamps.drawn);
     _ = w32.RestoreDC(comp.dc, saved);
     // The text is in the pixels before anything reads them.
     _ = w32.GdiFlush();

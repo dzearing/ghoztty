@@ -11316,6 +11316,10 @@ fn stackTraceOn() bool {
 /// zeroed, so the pages stay untouched unless the knob is set.
 var stack_ring: trace_ring.Ring(16384, 256) = .{};
 
+/// `paintMovedBands`' phase ends on the QPC clock (T2732), read by the
+/// vacated-strip paint's stack trace line. UI thread only.
+var moved_band_stamps: struct { desk: i64 = 0, headers: i64 = 0 } = .{};
+
 fn stackTrace(comptime fmt: []const u8, args: anytype) void {
     switch (stackTraceMode()) {
         .off => {},
@@ -12512,6 +12516,7 @@ fn paintMovedBands(self: *Window, hdc: w32.HDC) void {
     const flat = self.flatPass(hdc, paintFlatBands, true);
     if (!flat) self.paintDividers(hdc);
     if (self.hwnd) |w| resizeTrace("bands-desk", w);
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&moved_band_stamps.desk);
     // Same moved-band argument, one level in: a pane that just slid
     // takes its header band with it (T1530). On the compositor they paint
     // the desk's overlay, and the rest of it stays (T2544).
@@ -12519,6 +12524,7 @@ fn paintMovedBands(self: *Window, hdc: w32.HDC) void {
         self.overlayPass(hdc, self.rearrangeHeadersBox(), paintRearrangeHeaders)
     else
         self.paintRearrangeHeaders(hdc);
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&moved_band_stamps.headers);
     // A strip moves with its stack, and a banner change re-lays the window
     // out, so the relabelled strip is painted here too (T2109).
     if (!flat) self.paintStackStrips(hdc);
@@ -12774,6 +12780,8 @@ fn clearVacatedPaneStrips(self: *Window, hwnd: w32.HWND, old: []const w32.RECT) 
         box.right = @max(box.right, r.right);
         box.bottom = @max(box.bottom, r.bottom);
     }
+    var t_in: i64 = 0;
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&t_in);
     const dc = w32.GetDCEx(hwnd, null, w32.DCX_CACHE | w32.DCX_CLIPSIBLINGS | w32.DCX_CLIPCHILDREN) orelse return;
     defer _ = w32.ReleaseDC(hwnd, dc);
     _ = w32.IntersectClipRect(dc, box.left, box.top, box.right, box.bottom);
@@ -12799,9 +12807,37 @@ fn clearVacatedPaneStrips(self: *Window, hwnd: w32.HWND, old: []const w32.RECT) 
             self.pane_desk.blit_changed_only = true;
             self.pane_desk.clip_short = true;
         }
+        var t_dc: i64 = 0;
+        if (stackTraceOn()) {
+            _ = w32.QueryPerformanceCounter(&t_dc);
+            moved_band_stamps = .{};
+            label_cost = .{};
+        }
+        self.pane_desk.last_stamps = .{};
         self.paintAlphaCorrect(dc, paintMovedBands);
         self.pane_desk.blit_changed_only = false;
         self.pane_desk.clip_short = false;
+        if (stackTraceOn()) {
+            // Where a slow vacated paint went (T2732): the DC, the desk paint's
+            // phases (`PaneDesk.last_stamps`), and the bands after the desk.
+            var t_out: i64 = 0;
+            _ = w32.QueryPerformanceCounter(&t_out);
+            const s = self.pane_desk.last_stamps;
+            const b = moved_band_stamps;
+            // Each stamp as QPC ticks after `in` (0 where the paint never got
+            // there), so the line fits a ring slot.
+            const at = struct {
+                fn f(t0: i64, t: i64) i64 {
+                    return if (t == 0) 0 else t - t0;
+                }
+            }.f;
+            stackTrace("stack trace vacated in={d} dc={d} desk_in={d} ready={d} composed={d} iters={d} extent={d} textout={d} drawn={d} named={d} desk_out={d} bands_desk={d} headers={d} out={d} hit={}", .{
+                t_in,                 at(t_in, t_dc),    at(t_in, s.enter), at(t_in, s.ready),
+                at(t_in, s.composed), label_cost.iters,  label_cost.extent, label_cost.out,
+                at(t_in, s.drawn),    at(t_in, s.named), at(t_in, s.done),  at(t_in, b.desk),
+                at(t_in, b.headers),  at(t_in, t_out),   s.hit,
+            });
+        }
         lap.report("vacated");
         resizeTrace("vacated-painted", hwnd);
         // No band paint follows to clear from the old record (T2577): this
@@ -13144,16 +13180,31 @@ fn paintStripLabel(
     var keep: usize = wlen;
     var text: []const u16 = wide[0..wlen];
     var size: w32.SIZE = .{ .cx = 0, .cy = 0 };
+    var tq0: i64 = 0;
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq0);
     while (true) {
         text = pane_stack_strip.middleCut(wide[0..wlen], keep, &cut_buf);
         _ = w32.GetTextExtentPoint32W(hdc, text.ptr, @intCast(text.len), &size);
+        label_cost.iters +%= 1;
         if (size.cx <= room or keep == 0) break;
         keep -= 1;
     }
+    var tq1: i64 = 0;
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq1);
+    defer if (stackTraceOn()) {
+        var tq2: i64 = 0;
+        _ = w32.QueryPerformanceCounter(&tq2);
+        label_cost.extent += tq1 - tq0;
+        label_cost.out += tq2 - tq1;
+    };
     if (size.cx > room) return;
     const o = pane_stack_strip.labelOrigin(tab, axis, size.cx, size.cy, self.scale);
     _ = w32.TextOutW(hdc, o.x, o.y, text.ptr, @intCast(text.len));
 }
+
+/// What `paintStripLabel` spent since the vacated paint's stack trace last
+/// reset it (T2732): measuring the cut, and putting the text out. UI thread.
+var label_cost: struct { iters: u32 = 0, extent: i64 = 0, out: i64 = 0 } = .{};
 
 /// What a pane's strip calls it: the banner's title when it has one, else the
 /// pane's own (the pane sidebar's name for it, T2085).
