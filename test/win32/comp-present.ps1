@@ -737,6 +737,11 @@ try {
             $gd = Last-Match $m.Arm.Err 'banner glide done compositor=(true|false) ui_steps=(\d+)'
             if ($gd) { $r.GlideMover = "compositor=$($gd.Groups[1].Value) ui_steps=$($gd.Groups[2].Value)" }
             $r.GlideDeclared = (Count-Log $m.Arm.Err 'banner glide on compositor delta=-?\d+ ms=180 skipped_ms=\d+') -gt 0
+            # T2798: who moved the card itself, and whether it was declared.
+            [void](Wait-Log $m.Arm.Err 'banner collapse done compositor=' 1500)
+            $cd = Last-Match $m.Arm.Err 'banner collapse done compositor=(true|false) ui_steps=(\d+)'
+            if ($cd) { $r.CardMover = "compositor=$($cd.Groups[1].Value) ui_steps=$($cd.Groups[2].Value)" }
+            $r.CardDeclared = (Count-Log $m.Arm.Err 'banner collapse on compositor from=\d+ to=\d+ ms=180 skipped_ms=\d+') -gt 0
         }
         # Read-only badge.
         [void](Send-TestKeys -Window $m.Top -Target $hw -Modifiers ctrl, shift -Key O)
@@ -818,6 +823,15 @@ try {
     # arms apart is who owned the move.)
     Assert "J11 ... and no tick moved it on the UI thread, while knob off the popup stays on this thread (on=$($jOn.GlideMover) off=$($jOff.GlideMover))" `
         ($jOn.GlideMover -eq 'compositor=true ui_steps=0' -and $jOff.GlideMover -match '^compositor=false ui_steps=\d+$')
+    # T2798: the card's own collapse is handed over too - rendered once as
+    # pieces (a clipped card, its body under an opacity animation, its bottom
+    # edge riding an offset animation) and moved by DWM. Knob off the popup
+    # card is re-rendered on every tick, as before. The A/B arm
+    # GHOZTTY_DEBUG_BANNER_COLLAPSE_STEPPED=1 steps the visual card and
+    # reddens exactly J12/J13.
+    Assert "J12 knob on the card's collapse was declared to the compositor (log)" ($jOn.CardDeclared -eq $true)
+    Assert "J13 ... and no tick re-rendered the card on the UI thread, while knob off it is stepped (on=$($jOn.CardMover) off=$($jOff.CardMover))" `
+        ($jOn.CardMover -eq 'compositor=true ui_steps=0' -and $jOff.CardMover -match '^compositor=false ui_steps=[1-9]\d*$')
 
     # ========================================================================
     "== K: the banner is a child visual of the pane, hit-tested by the pane (T2559)"
@@ -872,8 +886,9 @@ try {
     Assert "K5 a click on the card arrived on the pane window and was the banner's (log visual=true)" `
         (Wait-Log $kErr 'banner click x=\d+ y=\d+ visual=true' 3000)
     Assert "K5a ... and the terminal saw no press for it" ((Count-Log $kErr 'pane mouse left press') -eq $presses)
-    # A multi-line card: the click toggles it, and the toggle re-renders the
-    # visual every frame (no popup paints).
+    # A multi-line card: the click toggles it, and the toggle is drawn on the
+    # visual, never by the popup: since T2798 as compositor pieces plus the
+    # settled frame they land on, stepped (the A/B arm) as a frame per tick.
     & $Exe +set-banner "--target=$($k.Arm.Target)" 'one\ntwo\nthree\nfour' 2>$null | Out-Null
     Start-Sleep -Milliseconds 800
     $paints = Count-Log $kErr 'banner paint h='
@@ -884,7 +899,8 @@ try {
     Start-Sleep -Milliseconds 600
     Assert "K6 a click on a multi-line card's visual toggles it (log)" $toggled
     Assert "K6a ... and the card's frames were rendered for the visual ($((Count-Log $kErr 'banner paint h=') - $paints) paints), no popup shown" `
-        ($toggled -and (Count-Log $kErr 'banner paint h=') -gt ($paints + 2) -and
+        ($toggled -and ((Count-Log $kErr 'banner paint h=') -gt ($paints + 2) -or
+            ((Count-Log $kErr 'banner collapse on compositor from=') -ge 1 -and (Count-Log $kErr 'banner paint h=') -gt $paints)) -and
             @(Get-TestWindows -ProcessId $k.Arm.App.Pid -Class 'GhozttyBannerOverlay' | Where-Object Visible).Count -eq 0)
     # A press in the grid is still the terminal's.
     $presses = Count-Log $kErr 'pane mouse left press'

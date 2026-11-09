@@ -44,6 +44,7 @@ const card = @import("banner_card.zig");
 const banner_layout = @import("banner_layout.zig");
 const banner_glide = @import("banner_glide.zig");
 const BannerFreeze = @import("BannerFreeze.zig");
+const banner_card_layers = @import("banner_card_layers.zig");
 const resize_paint = @import("resize_paint.zig");
 const banner_link = @import("banner_link.zig");
 const type_ramp = @import("type_ramp.zig");
@@ -182,6 +183,11 @@ const T833_NEUTERED = false;
 /// the six T2252 assertions go red - one copy per click, the copy up before
 /// the resize, released on landing, each direction - and all 154 others pass.)
 const T2252_NEUTERED = false;
+/// Negative control for `comp-present.ps1`'s T2798 rows: the card's toggle
+/// stays on the stepped tick, as before T2798. (Measured 2026-11-08 through
+/// the same early return under GHOZTTY_DEBUG_BANNER_COLLAPSE_STEPPED=1:
+/// exactly J12/J13 go red and the 111 others pass.)
+const T2798_NEUTERED = false;
 
 /// Negative control for `pane-banner.ps1`'s T2707 section. Flipping it
 /// reserves the strip's raw height again, not whole grid rows, so the last
@@ -486,6 +492,16 @@ pub const BannerOverlay = struct {
     /// banner's wherever the pointer went and a drag that began in the grid
     /// keeps its release.
     visual_press: enum { none, left, right } = .none,
+    /// A toggle's card as compositor pieces over the layer (T2798), and the
+    /// overrides `renderOverride` cuts them with.
+    pieces: banner_card_layers.CardLayers = .{},
+    force_card_h: ?i32 = null,
+    force_body_alpha: ?u8 = null,
+    force_no_tail: bool = false,
+    /// The running toggle's card was declared to the compositor (T2798), and
+    /// how many ticks re-rendered it on this thread instead.
+    collapse_on_comp: bool = false,
+    collapse_ui_steps: u32 = 0,
 
     /// Link hit rects, rebuilt on every paint (client coordinates).
     links: std.ArrayList(LinkRect) = .empty,
@@ -579,6 +595,8 @@ pub const BannerOverlay = struct {
     pub fn destroy(self: *BannerOverlay) void {
         _ = w32.SetWindowLongPtrW(self.hwnd, w32.GWLP_USERDATA, 0);
         _ = w32.DestroyWindow(self.hwnd);
+        // Children before the layer they hang on (T2798).
+        self.pieces.drop();
         self.layer.deinit();
         self.dropPrepared();
         self.freeze.deinit();
@@ -830,6 +848,7 @@ pub const BannerOverlay = struct {
             // card drawn inside the pane, or a visual under a card that is a
             // popup again - so the live terminal takes over (T2617).
             self.endGlide(if (want) "visual" else "popup");
+            self.dropPieces("path");
             if (want) {
                 _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
             } else {
@@ -868,6 +887,20 @@ pub const BannerOverlay = struct {
         const band: i32 = @intCast(if (self.surface) |s| s.gridBand() else 0);
         // The tree's root sits at the grid top; the card is the band above.
         _ = self.layer.setOffset(0, -band);
+        // A toggle on the compositor (T2798): the pieces ARE the card until
+        // it lands. Anything they cannot stand for - a new width, a new
+        // tree, a changed frame - puts the stepped card back, rendered
+        // before the pieces come off so no frame shows neither.
+        var stale_pieces: ?[]const u8 = null;
+        if (self.pieces.active) {
+            if (self.pieces.current(&self.layer, w) and !self.visual_dirty) return;
+            stale_pieces = if (self.visual_dirty) "dirty" else "stale";
+            self.visual_dirty = true;
+        }
+        defer if (stale_pieces) |r| {
+            self.pieces.drop();
+            self.piecesDropped(r);
+        };
         const fresh = !self.layer.hasPixels() or !self.layer.attached or
             w != self.layer.width or h != self.layer.height;
         if (!fresh and !self.visual_dirty) {
@@ -1393,6 +1426,7 @@ pub const BannerOverlay = struct {
     /// settled height when nothing is animating, which is every paint but
     /// the ~11 frames after a toggle.
     fn paintedCardHeight(self: *BannerOverlay) i32 {
+        if (self.force_card_h) |h| return h;
         const target = self.cardHeight();
         const a = self.collapse_anim orelse return target;
         const p = self.collapseProgress() orelse return target;
@@ -2496,7 +2530,9 @@ pub const BannerOverlay = struct {
         // really are landing on the screen one at a time. That is the whole
         // claim, and it is the thing the negative control flips.
         self.last_frame_buffered = w32.WindowFromDC(hdc) == null;
-        log.debug("banner paint h={} cw={} pw={} buffered={}", .{
+        // A T2798 piece is not a frame on the screen: the oracles read only
+        // the frames that are.
+        if (self.force_card_h == null) log.debug("banner paint h={} cw={} pw={} buffered={}", .{
             self.painted_h,
             client.right,
             self.pane_w,
@@ -2558,7 +2594,7 @@ pub const BannerOverlay = struct {
         // shorter than the content wants.
         const wanted = self.px(PAD) * 2 + self.ensureContentHeight();
         const shown = (band.bottom - band.top) - self.px(MARGIN) * 2;
-        if (shown < wanted) self.paintCollapseFade(hdc, band);
+        if (shown < wanted and !self.force_no_tail) self.paintCollapseFade(hdc, band);
 
         if (self.collapsible) self.paintChevron(hdc, client);
     }
@@ -2570,6 +2606,7 @@ pub const BannerOverlay = struct {
     /// and a tick watching only the height calls that frame clean and leaves
     /// the text permanently washed out.
     fn paintedBodyAlpha(self: *BannerOverlay) u8 {
+        if (self.force_body_alpha) |a| return a;
         const anim = self.collapse_anim orelse return 255;
         const p = self.collapseProgress() orelse return 255;
         return banner_layout.collapseBodyAlpha(anim.from_h, self.cardHeight(), p);
@@ -2598,7 +2635,7 @@ pub const BannerOverlay = struct {
     fn paintBodyFade(self: *BannerOverlay, hdc: w32.HDC, band: w32.RECT) void {
         const alpha = self.paintedBodyAlpha();
         self.last_body_alpha = alpha;
-        log.debug("banner body alpha={}", .{alpha});
+        if (self.force_card_h == null) log.debug("banner body alpha={}", .{alpha});
         if (alpha >= 255) return;
 
         // Without the cached card surface there is nothing to fade back over
@@ -2988,6 +3025,10 @@ pub const BannerOverlay = struct {
         // A toggle that resized nothing must not flush some later resize.
         if (self.surface) |s| s.flush_next_resize = false;
         self.invalidate();
+        // The card's own motion goes to the compositor too (T2798), or back
+        // to the stepped tick when it cannot.
+        if (!(self.collapse_anim != null and self.declareCollapse())) self.dropPieces("stepped");
+        glideDebugStall();
     }
 
     /// Freeze the terminal for a toggle whose card just started moving from
@@ -3076,7 +3117,6 @@ pub const BannerOverlay = struct {
         } else {
             _ = FrameClock.arm(self.hwnd, GLIDE_TIMER_ID, banner_layout.COLLAPSE_TICK_MS);
         }
-        glideDebugStall();
     }
 
     /// Declare the visual copy's whole glide to the compositor (T2763), on
@@ -3188,6 +3228,8 @@ pub const BannerOverlay = struct {
         if (!App.clientAreaAnimationsEnabled()) return;
         const start = std.time.Instant.now() catch return;
         self.collapse_anim = .{ .from_h = from_h, .start = start };
+        self.collapse_on_comp = false;
+        self.collapse_ui_steps = 0;
         _ = FrameClock.arm(self.hwnd, COLLAPSE_TIMER_ID, banner_layout.COLLAPSE_TICK_MS);
     }
 
@@ -3195,6 +3237,143 @@ pub const BannerOverlay = struct {
         if (self.collapse_anim == null) return;
         self.collapse_anim = null;
         FrameClock.disarm(self.hwnd, COLLAPSE_TIMER_ID);
+        // comp-present.ps1's T2798 oracle: who moved the card.
+        log.info("banner collapse done compositor={} ui_steps={d} visual={}", .{ self.collapse_on_comp, self.collapse_ui_steps, self.on_visual });
+    }
+
+    /// Hand the running toggle's card to the compositor (T2798): render it
+    /// once as `banner_card_layers` pieces, declare their motion, and put
+    /// the band's own fill under them at the settled size. False: the card
+    /// stays on the stepped tick.
+    fn declareCollapse(self: *BannerOverlay) bool {
+        // `GHOZTTY_DEBUG_BANNER_COLLAPSE_STEPPED=1` (debug builds): step the
+        // card on this thread instead - the oracle's A/B arm.
+        if (comptime builtin.mode == .Debug) {
+            if (std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DEBUG_BANNER_COLLAPSE_STEPPED")) return false;
+        }
+        if (T2798_NEUTERED or !self.on_visual or !self.layer.attached) return false;
+        const a = self.collapse_anim orelse return false;
+        const slot = self.slot orelse return false;
+        const now = std.time.Instant.now() catch return false;
+        const elapsed_s = @as(f64, @floatFromInt(now.since(a.start))) / std.time.ns_per_s;
+        const dur_s: f64 = banner_layout.COLLAPSE_MS / 1000.0;
+        const margin = self.px(MARGIN);
+        const wanted = self.px(PAD) * 2 + self.ensureContentHeight();
+        const p = banner_card_layers.plan(a.from_h, self.cardHeight(), margin, self.px(PAD), wanted) orelse return false;
+        const w = self.layer.width;
+        if (w == 0) return false;
+        var rect: w32.RECT = undefined;
+        if (w32.GetClientRect(self.owner, &rect) == 0) return false;
+        const settled: u32 = @intCast(@max(self.settledHeight(self.insetHeight(self.scale, rect.right - rect.left)), 1));
+
+        const no_body = self.renderOverride(w, @intCast(p.bigBand(margin)), p.big_h, 0, false) orelse return false;
+        defer no_body.destroy();
+        const full = self.renderOverride(w, @intCast(p.bigBand(margin)), p.big_h, 255, false) orelse return false;
+        defer full.destroy();
+        // Last, so the cached card surface is the short frame's: on glass
+        // the ramp fades into its rows.
+        const short = self.renderOverride(w, @intCast(p.smallBand(margin)), p.small_h, 0, true) orelse return false;
+        defer short.destroy();
+        const uw: usize = w;
+        const edge = self.alloc.alloc(u32, uw * @as(usize, @intCast(p.edgeHeight()))) catch return false;
+        defer self.alloc.free(edge);
+        const ramp_top = p.smallBand(margin) - p.edge_rows - p.ramp_rows;
+        const src: banner_card_layers.RampSource = blk: {
+            if (self.card_glass != null) if (self.card_bits) |bits| {
+                if (self.card_w == @as(i32, @intCast(w)) and self.card_h >= p.smallBand(margin) and ramp_top >= 0)
+                    break :blk .{ .rows = bits[@as(usize, @intCast(ramp_top)) * uw .. @as(usize, @intCast(self.card_h)) * uw] };
+            };
+            break :blk .{ .flat = (@as(u32, self.bg_rgb.r) << 16) | (@as(u32, self.bg_rgb.g) << 8) | self.bg_rgb.b };
+        };
+        if (!banner_card_layers.fillEdge(edge, uw, p, margin, short.pixels, src)) return false;
+
+        // The band's own fill, settled: what an expanding card uncovers.
+        const base = self.renderBase(w, settled) orelse return false;
+        defer base.destroy();
+        if (!self.pieces.declare(slot, &self.layer, p, margin, w, .{ .no_body = no_body.pixels, .full = full.pixels, .edge = edge }, elapsed_s, dur_s)) {
+            log.warn("banner collapse could not go on the compositor; stepping it", .{});
+            return false;
+        }
+        if (!self.layer.setPixels(base.pixels, w, settled)) {
+            self.pieces.drop();
+            return false;
+        }
+        self.visual_dirty = false;
+        self.collapse_on_comp = true;
+        // DWM moves the card. What is left on this thread is noticing it
+        // landed: a plain timer, not the frame clock.
+        FrameClock.disarm(self.hwnd, COLLAPSE_TIMER_ID);
+        _ = w32.SetTimer(self.hwnd, COLLAPSE_TIMER_ID, banner_layout.COLLAPSE_TICK_MS, null);
+        log.info("banner collapse on compositor from={d} to={d} ms={d} skipped_ms={d}", .{ a.from_h, self.cardHeight(), @as(u32, @intFromFloat(banner_layout.COLLAPSE_MS)), @as(u32, @intFromFloat(elapsed_s * 1000)) });
+        return true;
+    }
+
+    /// One frame `w` x `h` at card height `card_h` with the body at
+    /// `body_alpha` and the tail fade on or off (T2798), into a fresh opaque
+    /// DIB the caller destroys. What the screen shows is not touched.
+    fn renderOverride(self: *BannerOverlay, w: u32, h: u32, card_h: i32, body_alpha: u8, tail: bool) ?Dib32 {
+        const screen = w32.GetDC(null) orelse return null;
+        defer _ = w32.ReleaseDC(null, screen);
+        const dib = Dib32.create(screen, @intCast(w), @intCast(h)) orelse return null;
+        const keep_h = self.painted_h;
+        const keep_a = self.last_body_alpha;
+        self.force_card_h = card_h;
+        self.force_body_alpha = body_alpha;
+        self.force_no_tail = !tail;
+        self.present_size = .{ .left = 0, .top = 0, .right = @intCast(w), .bottom = @intCast(h) };
+        self.present_at = self.ownerOnDesk();
+        self.paintFrame(dib.dc);
+        self.present_size = null;
+        self.present_at = null;
+        self.force_card_h = null;
+        self.force_body_alpha = null;
+        self.force_no_tail = false;
+        self.painted_h = keep_h;
+        self.last_body_alpha = keep_a;
+        _ = w32.GdiFlush();
+        for (dib.pixels) |*pix| pix.* |= 0xFF000000;
+        return dib;
+    }
+
+    /// The band's own fill, `w` x `h`, opaque (T2798).
+    fn renderBase(self: *BannerOverlay, w: u32, h: u32) ?Dib32 {
+        const screen = w32.GetDC(null) orelse return null;
+        defer _ = w32.ReleaseDC(null, screen);
+        const dib = Dib32.create(screen, @intCast(w), @intCast(h)) orelse return null;
+        self.present_at = self.ownerOnDesk();
+        self.fillBand(dib.dc, .{ .left = 0, .top = 0, .right = @intCast(w), .bottom = @intCast(h) });
+        self.present_at = null;
+        _ = w32.GdiFlush();
+        for (dib.pixels) |*pix| pix.* |= 0xFF000000;
+        return dib;
+    }
+
+    /// Take the pieces off now (T2798) and put the card back on the stepped
+    /// tick if a toggle is still running.
+    fn dropPieces(self: *BannerOverlay, reason: []const u8) void {
+        if (!self.pieces.active) return;
+        self.pieces.drop();
+        self.visual_dirty = true;
+        self.piecesDropped(reason);
+    }
+
+    fn piecesDropped(self: *BannerOverlay, reason: []const u8) void {
+        log.info("banner collapse pieces dropped reason={s}", .{reason});
+        if (self.collapse_anim != null and self.collapse_on_comp) {
+            self.collapse_on_comp = false;
+            FrameClock.disarm(self.hwnd, COLLAPSE_TIMER_ID);
+            _ = FrameClock.arm(self.hwnd, COLLAPSE_TIMER_ID, banner_layout.COLLAPSE_TICK_MS);
+        }
+    }
+
+    /// The toggle on the compositor has landed (T2798): render the settled
+    /// card under the pieces, then take them off.
+    fn finishPieces(self: *BannerOverlay) void {
+        if (!self.pieces.active) return;
+        self.pieces.active = false;
+        self.visual_dirty = true;
+        self.updatePosition(self.scale);
+        self.pieces.drop();
     }
 
     /// ~60Hz heartbeat while the card resizes (T149): re-glue the popup to
@@ -3202,6 +3381,16 @@ pub const BannerOverlay = struct {
     /// not move — only this window does, which is what keeps the terminal
     /// grid out of the animation.
     fn onCollapseTick(self: *BannerOverlay) void {
+        if (self.collapse_on_comp and self.collapse_anim != null) {
+            // DWM is moving the card (T2798): only watch for it landing.
+            const landed = self.collapseProgress() == null;
+            log.debug("banner collapse h={}", .{self.paintedCardHeight()});
+            if (landed) {
+                self.stopCollapseAnim();
+                self.finishPieces();
+            }
+            return;
+        }
         const done = self.collapseProgress() == null;
         // The frame this tick is about to draw, for pane-banner.ps1's T149
         // section (the other half of the oracle `toggleCollapsed` opens).
@@ -3228,6 +3417,7 @@ pub const BannerOverlay = struct {
         // clean.
         const dirty = !T833_NEUTERED and (self.paintedCardHeight() != self.painted_h or
             self.paintedBodyAlpha() != self.last_body_alpha);
+        if (dirty) self.collapse_ui_steps +%= 1;
         if (dirty) self.invalidate();
         // `updatePosition` invalidates and repaints synchronously whenever
         // the height actually changed, which is every frame of a COLLAPSE.
@@ -3638,6 +3828,7 @@ test "T283: the banner's negative controls are clear and non-empty" {
     try std.testing.expect(!T2559_NEUTERED);
     try std.testing.expect(!T2617_NEUTERED);
     try std.testing.expect(!T2707_NEUTERED);
+    try std.testing.expect(!T2798_NEUTERED);
     try std.testing.expect(!BannerFreeze.T2261_NEUTERED);
 
     const CellWrap = BannerOverlay.CellWrap;

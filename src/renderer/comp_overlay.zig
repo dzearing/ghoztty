@@ -160,7 +160,14 @@ const slot_dcomp_commit = 3;
 const slot_dcomp_create_visual = 7;
 const slot_dcomp_create_surface = 8;
 const slot_dcomp_create_effect_group = 23;
+const slot_dcomp_create_rectangle_clip = 24;
 const slot_dcomp_create_animation = 25;
+// IDCompositionRectangleClip (T2798): SetLeft(animation) 3, SetLeft(float) 4,
+// SetTop 5/6, SetRight 7/8, SetBottom 9/10 - the same overload order.
+const slot_clip_set_left_float = 4;
+const slot_clip_set_top_float = 6;
+const slot_clip_set_right_float = 8;
+const slot_clip_set_bottom_anim = 9;
 // IDCompositionAnimation (dcompanimation.h): Reset 3, SetAbsoluteBeginTime 4,
 // AddCubic 5, AddSinusoidal 6, AddRepeat 7, End 8.
 const slot_anim_add_cubic = 5;
@@ -174,6 +181,8 @@ const slot_visual_set_offset_y_float = 6;
 const slot_visual_set_transform_matrix = 8;
 const slot_visual_set_effect = 10;
 const slot_visual_set_bitmap_interpolation_mode = 11;
+// SetClip(IDCompositionClip*) 13, SetClip(D2D_RECT_F) 14 (T2798).
+const slot_visual_set_clip_obj = 13;
 const slot_visual_set_content = 15;
 const slot_visual_add_visual = 16;
 const slot_visual_remove_visual = 17;
@@ -437,6 +446,11 @@ pub const Layer = struct {
     offset_y: i32 = 0,
     /// The transform's vertical shift (`setShiftY`); a new visual has none.
     shift_y: i32 = 0,
+    /// The visual this layer is a child of (`attachUnder`, T2798), with a
+    /// reference of its own; null when it hangs off the root (or nowhere).
+    parent_visual: ?Obj = null,
+    /// The rectangle clip `animateClipBottom` made (T2798).
+    clip: ?Obj = null,
 
     /// Bring the layer onto the slot's current tree. False: nothing is
     /// published (the pane presents with SwapBuffers), so the caller uses its
@@ -546,22 +560,63 @@ pub const Layer = struct {
     /// the move itself with `setOffset`.
     pub fn animateOffsetY(self: *Layer, from: f32, to: f32, curve: []const Cubic, duration_s: f64) bool {
         if (comptime builtin.os.tag != .windows) return false;
-        const d = self.dev orelse return false;
         const vis = self.visual orelse return false;
-        var made: ?Obj = null;
-        if (!ok(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, d.dcomp, slot_dcomp_create_animation)(d.dcomp, &made))) return false;
-        const anim = made orelse return false;
+        const anim = self.makeAnim(from, to, curve, duration_s) orelse return false;
         // The visual keeps its own snapshot of the function once it is set.
         defer comRelease(anim);
-        const span: f64 = @as(f64, to) - @as(f64, from);
-        const add = slot(*const fn (Obj, f64, f32, f32, f32, f32) callconv(.winapi) HRESULT, anim, slot_anim_add_cubic);
-        for (curve) |c| {
-            if (!ok(add(anim, c.begin_s, @floatCast(@as(f64, from) + span * c.c0), @floatCast(span * c.c1), @floatCast(span * c.c2), @floatCast(span * c.c3)))) return false;
-        }
-        if (!ok(slot(*const fn (Obj, f64, f32) callconv(.winapi) HRESULT, anim, slot_anim_end)(anim, @max(duration_s, 0), to))) return false;
         if (!ok(slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, vis, slot_visual_set_offset_y_anim)(vis, anim))) return false;
         // Where the move lands: a later static `setOffset` to it is a no-op.
         self.offset_y = @intFromFloat(@round(to));
+        self.commit();
+        return true;
+    }
+
+    /// An animation running `from` -> `to` along `curve` (0..1 units) over
+    /// `duration_s`, holding `to` after it; the caller releases it once it is
+    /// set on a property. Null when DirectComposition refused any step.
+    fn makeAnim(self: *Layer, from: f32, to: f32, curve: []const Cubic, duration_s: f64) ?Obj {
+        const d = self.dev orelse return null;
+        var made: ?Obj = null;
+        if (!ok(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, d.dcomp, slot_dcomp_create_animation)(d.dcomp, &made))) return null;
+        const anim = made orelse return null;
+        const span: f64 = @as(f64, to) - @as(f64, from);
+        const add = slot(*const fn (Obj, f64, f32, f32, f32, f32) callconv(.winapi) HRESULT, anim, slot_anim_add_cubic);
+        for (curve) |c| {
+            if (!ok(add(anim, c.begin_s, @floatCast(@as(f64, from) + span * c.c0), @floatCast(span * c.c1), @floatCast(span * c.c2), @floatCast(span * c.c3)))) {
+                comRelease(anim);
+                return null;
+            }
+        }
+        if (!ok(slot(*const fn (Obj, f64, f32) callconv(.winapi) HRESULT, anim, slot_anim_end)(anim, @max(duration_s, 0), to))) {
+            comRelease(anim);
+            return null;
+        }
+        return anim;
+    }
+
+    /// Clip the visual to a rectangle whose bottom edge runs `from` -> `to`
+    /// (layer px) along `curve` over `duration_s` (T2798): a card that
+    /// shrinks or grows by uncovering less or more of one bitmap, with no
+    /// re-upload per frame. Left, top and right are static: 0, `top` and
+    /// `right`. False: no clip was set and the caller steps the frames.
+    pub fn animateClipBottom(self: *Layer, top: f32, right: f32, from: f32, to: f32, curve: []const Cubic, duration_s: f64) bool {
+        if (comptime builtin.os.tag != .windows) return false;
+        const d = self.dev orelse return false;
+        const vis = self.visual orelse return false;
+        if (self.clip == null) {
+            var made: ?Obj = null;
+            if (!ok(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, d.dcomp, slot_dcomp_create_rectangle_clip)(d.dcomp, &made))) return false;
+            self.clip = made orelse return false;
+        }
+        const c = self.clip.?;
+        const Set = *const fn (Obj, f32) callconv(.winapi) HRESULT;
+        if (!ok(slot(Set, c, slot_clip_set_left_float)(c, 0))) return false;
+        if (!ok(slot(Set, c, slot_clip_set_top_float)(c, top))) return false;
+        if (!ok(slot(Set, c, slot_clip_set_right_float)(c, right))) return false;
+        const anim = self.makeAnim(from, to, curve, duration_s) orelse return false;
+        defer comRelease(anim);
+        if (!ok(slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, c, slot_clip_set_bottom_anim)(c, anim))) return false;
+        if (!ok(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_visual_set_clip_obj)(vis, c))) return false;
         self.commit();
         return true;
     }
@@ -660,12 +715,37 @@ pub const Layer = struct {
         self.commit();
     }
 
+    /// On another layer's visual, in front of that layer's own pixels and of
+    /// every child it already has (T2798): a part of one overlay that moves
+    /// on its own. Takes a reference on the parent visual, so a parent
+    /// rebuilt under it cannot leave this layer pointing at a freed one.
+    /// A no-op when already attached anywhere.
+    pub fn attachUnder(self: *Layer, parent: *const Layer) void {
+        const vis = self.visual orelse return;
+        const pv = parent.visual orelse return;
+        if (self.attached) return;
+        if (!ok(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, pv, slot_visual_add_visual)(pv, vis, addVisualInsertAbove(.front), null))) return;
+        comAddRef(pv);
+        self.parent_visual = pv;
+        self.attached = true;
+        self.commit();
+    }
+
+    /// The visual this layer was added to: its parent layer's, or the root.
+    fn holder(self: *const Layer) ?Obj {
+        if (self.parent_visual) |pv| return pv;
+        const d = self.dev orelse return null;
+        return d.root;
+    }
+
     fn detach(self: *Layer) void {
-        const d = self.dev orelse return;
         const vis = self.visual orelse return;
         if (!self.attached) return;
-        _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, d.root, slot_visual_remove_visual)(d.root, vis);
+        const h = self.holder() orelse return;
+        _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, h, slot_visual_remove_visual)(h, vis);
         self.attached = false;
+        if (self.parent_visual) |pv| comRelease(pv);
+        self.parent_visual = null;
         self.commit();
     }
 
@@ -676,9 +756,11 @@ pub const Layer = struct {
 
     /// Let go of everything built on the current tree.
     pub fn drop(self: *Layer) void {
-        if (self.dev) |d| if (self.attached) if (self.visual) |vis| {
-            _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, d.root, slot_visual_remove_visual)(d.root, vis);
+        if (self.attached) if (self.visual) |vis| if (self.holder()) |h| {
+            _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, h, slot_visual_remove_visual)(h, vis);
         };
+        if (self.parent_visual) |pv| comRelease(pv);
+        if (self.clip) |o| comRelease(o);
         if (self.surface) |o| comRelease(o);
         if (self.effect) |o| comRelease(o);
         if (self.visual) |o| comRelease(o);
