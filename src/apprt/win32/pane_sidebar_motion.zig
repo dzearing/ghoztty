@@ -67,8 +67,8 @@ pub fn travel(width: f64, height: f64) Travel {
 
 /// Mac's sweep curve, `CAMediaTimingFunction(0.455, 0.03, 0.515, 0.955)`:
 /// the classic ease-in-out, which a quadratic tracks to within a pixel on a
-/// row.
-fn easeInOut(t: f64) f64 {
+/// row. Public for the compositor's copy of the same curves (T2801).
+pub fn easeInOut(t: f64) f64 {
     const c = std.math.clamp(t, 0, 1);
     return if (c < 0.5) 2 * c * c else 1 - std.math.pow(f64, -2 * c + 2, 2) / 2;
 }

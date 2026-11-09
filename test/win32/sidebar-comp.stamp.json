@@ -1,14 +1,19 @@
 {
     "guard":  "sidebar-comp",
     "script":  "test/win32/sidebar-comp.ps1",
-    "generated":  "2026-11-08T16:31:22-08:00",
-    "commit":  "42f796649",
+    "generated":  "2026-11-08T19:56:34-08:00",
+    "commit":  "8e40cf8e3",
     "uncommitted":  [
-                        "src/renderer/comp_overlay.zig"
+                        "src/apprt/win32/pane_sidebar_sheen_comp.zig",
+                        "src/apprt/win32/pane_sidebar_sheen_layers.zig",
+                        "src/renderer/comp_overlay.zig",
+                        "test/win32/sidebar-comp.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/child_comp.zig":  "d14e007155c51d827355e59aadbe58b9d875a1209e0ba53df6d5c87449778a9a",
-                  "src/renderer/comp_overlay.zig":  "43d915dad66aeeccc2b74ec48fc62c3186435b5f2db14a178dc0497c090ee2e1",
-                  "test/win32/sidebar-comp.ps1":  "bbb3c4e76cfd70353aa9d894d073cc967f2807bc5918f73dda54de4d95907fb5"
+                  "src/apprt/win32/pane_sidebar_sheen_comp.zig":  "f06165afea46db99c6820b31940085308e61d07da1b02803659b0e218ba68ad4",
+                  "src/apprt/win32/pane_sidebar_sheen_layers.zig":  "28b536177be237a04c713120610c9498af69ff4aacb1322c0925b99c3084adfd",
+                  "src/renderer/comp_overlay.zig":  "9ce3aeac930abf61ed14fd97bfc23587d2061692ac77468e605c2eed71ccf449",
+                  "test/win32/sidebar-comp.ps1":  "8f24185c8d9e69ec538498b639a1ec03846f6b9ad02cf1684030a0e5ef81a20a"
               }
 }

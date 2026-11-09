@@ -34,6 +34,7 @@
 const PaneSidebar = @This();
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 const w32 = @import("win32.zig");
@@ -54,6 +55,7 @@ const search_field = @import("pane_sidebar_search.zig");
 const scroll_mod = @import("pane_sidebar_scroll.zig");
 const motion = @import("pane_sidebar_motion.zig");
 const child_comp = @import("child_comp.zig");
+const sheen_comp = @import("pane_sidebar_sheen_comp.zig");
 const comp_overlay = @import("../../renderer/comp_overlay.zig");
 const reorder = @import("pane_sidebar_reorder.zig");
 const pane_sidebar_order = @import("pane_sidebar_order.zig");
@@ -485,6 +487,29 @@ comp: child_comp.Host,
 /// The debug fill seam's layer (`GHOZTTY_DEBUG_SIDEBAR_COMP_FILL`); idle
 /// otherwise.
 comp_fill: comp_overlay.Layer = .{},
+/// The busy pills' sheens on that tree (T2801): placed by the paint, played
+/// by the compositor, so a stall on this thread no longer stutters them.
+sheens: sheen_comp.SheenComp = .{},
+/// The paint running is the window's own (WM_PAINT), not a picture taken
+/// for a transition or a probe: only it may move the sheens on the tree,
+/// and only its tally drives the motion clock (T2801).
+paint_live: bool = false,
+/// ...and it repaints the whole column, so a sheen it did not ask for is
+/// gone (T2801).
+paint_full: bool = false,
+/// Whether this paint may hand sheens to the compositor: motion on, and
+/// nothing else moving the column's rows (T2801).
+paint_comp_ok: bool = false,
+/// A moving pill this paint steps itself (T2801): the clock has to run at
+/// the display rate. Otherwise every moving pill is the compositor's and the
+/// clock only polls the roster and reaps finished fades.
+paint_stepped: bool = false,
+/// Where a pill is wholly on show this paint (T2801): the list's viewport
+/// (empty: the column) and the head pinned over its top.
+paint_view: pane_sidebar.Rect = .{},
+paint_sticky: ?pane_sidebar.Rect = null,
+/// The motion clock runs slow: only the compositor's sheens move (T2801).
+anim_slow: bool = false,
 
 entries: std.ArrayListUnmanaged(Entry) = .{},
 signature: u64 = 0,
@@ -832,6 +857,7 @@ pub fn destroy(self: *PaneSidebar) void {
     self.syncHoverTint();
     // The composition tree goes while its window is still there (T2765):
     // layers first, then the target and the devices.
+    self.sheens.dropAll();
     self.comp_fill.deinit();
     self.comp.deinit();
     // Clear the back-pointer FIRST: DestroyWindow delivers messages
@@ -2366,6 +2392,8 @@ fn paintFrame(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
     self.paint_dirty = .{};
     self.paint_ms = w32.GetTickCount64();
     self.paint_motion = App.clientAreaAnimationsEnabled();
+    self.paint_stepped = false;
+    self.beginSheenComp(&l);
     // A drag over the column: the rows as they slide, the dragged one lifted
     // out (T2304). The layout itself - hit-testing, the drop geometry - stays
     // where the rows are laid out, so the drop index never chases them.
@@ -2384,9 +2412,13 @@ fn paintFrame(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
     }
     if (l.mode != .hidden) self.paintHeld(hdc, &laid, height, t);
     if (l.mode == .expanded) self.paintHeldItem(hdc, &laid, t);
+    // T2801: a picture taken for a transition or a probe draws every sheen
+    // itself and leaves the clock to the window's own paints.
+    if (!self.paint_live) return;
+    if (self.paint_full) self.sheens.endFullPaint();
     self.marks = self.paint_marks;
     self.dirty = self.paint_dirty;
-    if (self.paint_marks.moving(self.paint_motion)) self.armMotion();
+    if (self.paint_marks.moving(self.paint_motion)) self.armMotion(self.paint_stepped);
 }
 
 // -------------------------------------------------------------------------
@@ -3343,15 +3375,69 @@ fn syncCompFill(self: *PaneSidebar) void {
 /// Start the motion clock, if it is not already running. The logs keep
 /// their `surface=rail` field from when the hover-open card had a clock of
 /// its own (T2289); the scripts read the lines as they were.
-fn armMotion(self: *PaneSidebar) void {
+fn armMotion(self: *PaneSidebar, stepped: bool) void {
+    if (self.anim_armed and self.anim_slow == !stepped) return;
+    // T2801: with every moving pill the compositor's, the clock only polls.
+    const armed = if (stepped) blk: {
+        if (self.anim_armed) _ = w32.KillTimer(self.hwnd, TIMER_ANIM);
+        break :blk FrameClock.arm(self.hwnd, TIMER_ANIM, motion.frame_ms);
+    } else blk: {
+        FrameClock.disarm(self.hwnd, TIMER_ANIM);
+        break :blk w32.SetTimer(self.hwnd, TIMER_ANIM, comp_tick_ms, null) != 0;
+    };
+    if (!armed) {
+        self.anim_armed = false;
+        return;
+    }
+    self.anim_slow = !stepped;
     if (self.anim_armed) return;
-    if (!FrameClock.arm(self.hwnd, TIMER_ANIM, motion.frame_ms)) return;
     self.anim_armed = true;
     self.motion_frames = 0;
     self.motion_px = 0;
     self.motion_client_px = 0;
     const m = self.marks;
-    log.info("pane sidebar motion on surface=rail busy={d}", .{m.busy});
+    log.info("pane sidebar motion on surface=rail busy={d} comp={d}", .{ m.busy, self.sheens.count });
+}
+
+/// The slow clock's period while every moving pill is the compositor's
+/// (T2801): it only re-reads the roster and takes finished fades off.
+const comp_tick_ms: u32 = 250;
+
+/// Ready the compositor's sheens for a paint (T2801): what this paint may
+/// hand over, and where a pill is wholly on show.
+fn beginSheenComp(self: *PaneSidebar, l: *const pane_sidebar.Layout) void {
+    if (!self.paint_live) return;
+    self.sheens.beginPaint();
+    self.paint_comp_ok = self.paint_motion and !sheenStepSeam() and self.column == null and self.xfade == null and self.drag == null and self.item_drag == null;
+    if (!self.paint_comp_ok) self.sheens.dropAll();
+    self.paint_view = l.viewport;
+    self.paint_sticky = if (l.sticky) |k| l.heads[k].rect else null;
+}
+
+/// `GHOZTTY_DEBUG_SIDEBAR_SHEEN_STEPPED`: the sheen stays on the frame clock
+/// the way it was before T2801 - the oracle's control arm.
+fn sheenStepSeam() bool {
+    if (comptime !(builtin.mode == .Debug or builtin.mode == .ReleaseSafe)) return false;
+    return std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DEBUG_SIDEBAR_SHEEN_STEPPED");
+}
+
+/// Whether the pill at `r` is wholly on show this paint (T2801): inside the
+/// list's viewport and clear of the head pinned over it. A pill half under
+/// either is cut by the paint's clip, which a sheen on the tree would not be.
+fn shownWhole(self: *const PaneSidebar, r: pane_sidebar.Rect) bool {
+    const v = self.paint_view;
+    if (v.height() > 0 and (r.top < v.top or r.bottom > v.bottom or r.left < v.left or r.right > v.right)) return false;
+    if (self.paint_sticky) |s| {
+        const same = s.left == r.left and s.top == r.top and s.right == r.right and s.bottom == r.bottom;
+        if (!same and motion.overlaps(s, r)) return false;
+    }
+    return true;
+}
+
+/// The fade the sheen `key` names is on, if it has a slot.
+fn fadeOf(self: *const PaneSidebar, key: u64) ?motion.Fade {
+    for (self.fades[0..self.fade_count]) |s| if (s.key == key) return s.fade;
+    return null;
 }
 
 /// How often a running motion clock re-reads the roster (`onMotionTick`).
@@ -3374,11 +3460,21 @@ fn onMotionTick(self: *PaneSidebar) void {
             self.busy_poll_ms = now;
             self.refresh();
         }
-        self.invalidateMoving();
+        // T2801: a compositor sheen that has faded out comes off the tree,
+        // and its pill repaints so the next tally no longer counts it.
+        var reaped: motion.Dirty = .{};
+        self.sheens.reap(self.fades[0..self.fade_count], now, &reaped);
+        for (reaped.items()) |r| {
+            const rc: w32.RECT = .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
+            _ = w32.InvalidateRect(hwnd, &rc, 0);
+        }
+        if (!self.anim_slow) self.invalidateMoving();
         return;
     }
     FrameClock.disarm(hwnd, TIMER_ANIM);
+    _ = w32.KillTimer(hwnd, TIMER_ANIM);
     self.anim_armed = false;
+    self.anim_slow = false;
     // The run's cost (T1925): `area` is the share of the column the frames
     // painted, in percent - near 100 is the whole sidebar every frame.
     const area = if (self.motion_client_px > 0) self.motion_px * 100 / self.motion_client_px else 0;
@@ -3757,7 +3853,19 @@ fn sheenFor(self: *PaneSidebar, key: u64, busy: bool, r: pane_sidebar.Rect) f64 
     const before = self.paint_marks;
     const level = self.sheenLevel(key, busy);
     const after = self.paint_marks;
-    if (self.paint_motion and (after.busy != before.busy or after.fading != before.fading)) self.paint_dirty.add(r);
+    if (!(self.paint_motion and (after.busy != before.busy or after.fading != before.fading))) return level;
+    // T2801: a pill wholly on show is the compositor's, and the paint draws
+    // no sheen on it; any other is stepped here, as before.
+    if (self.paint_live) {
+        if (self.paint_comp_ok and self.shownWhole(r)) if (self.fadeOf(key)) |f| {
+            const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
+            const rim_w = motion.rim_dip * @as(f64, self.scale);
+            if (self.sheens.place(&self.comp, self.alloc, key, r, radius, rim_w, self.theme().dark, f, self.paint_ms)) return 0;
+        };
+        _ = self.sheens.forget(key);
+    }
+    self.paint_stepped = true;
+    self.paint_dirty.add(r);
     return level;
 }
 
@@ -6361,7 +6469,14 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             const hdc = w32.BeginPaint(hwnd, &ps) orelse return 0;
             defer _ = w32.EndPaint(hwnd, &ps);
             var r: w32.RECT = undefined;
-            if (w32.GetClientRect(hwnd, &r) != 0) self.paintBuffered(hdc, r.right - r.left, r.bottom - r.top, ps.rcPaint);
+            if (w32.GetClientRect(hwnd, &r) != 0) {
+                // T2801: the window's own paint, the one that moves the
+                // compositor's sheens and drives the motion clock.
+                self.paint_live = true;
+                defer self.paint_live = false;
+                self.paint_full = ps.rcPaint.left <= r.left and ps.rcPaint.top <= r.top and ps.rcPaint.right >= r.right and ps.rcPaint.bottom >= r.bottom;
+                self.paintBuffered(hdc, r.right - r.left, r.bottom - r.top, ps.rcPaint);
+            }
             // A lost device takes the tree with it (T2765); whatever hangs
             // on it comes back on the rebuilt one.
             if (self.comp.checkLost()) self.syncCompFill();

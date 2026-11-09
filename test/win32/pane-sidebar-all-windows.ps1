@@ -57,6 +57,10 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+# T2801: a busy sheen is the compositor's now, and this harness photographs
+# the STEPPED sheen (the GDI frame) of folded headers and rail tiles: pin
+# that path. The compositor's own arm is sidebar-comp.ps1.
+$env:GHOZTTY_DEBUG_SIDEBAR_SHEEN_STEPPED = '1'
 $script:failures = 0
 $script:passes = 0
 $tmp = Join-Path $env:TEMP "ghoztty-t1829-$PID"

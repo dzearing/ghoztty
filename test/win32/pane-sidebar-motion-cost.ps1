@@ -38,6 +38,10 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+# T2801: a busy sheen is the compositor's now, and this harness costs the
+# STEPPED sheen (frame-clock repaints): pin that path. The compositor arm,
+# 2 frames against the stepped 499, is sidebar-comp.ps1.
+$env:GHOZTTY_DEBUG_SIDEBAR_SHEEN_STEPPED = '1'
 $script:failures = 0
 $script:passes = 0
 $tmp = Join-Path $env:TEMP "ghoztty-t1925-$PID"

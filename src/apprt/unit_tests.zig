@@ -324,6 +324,7 @@ test {
     _ = @import("win32/banner_layout.zig");
     _ = @import("win32/banner_glide.zig");
     _ = @import("win32/banner_card_layers.zig");
+    _ = @import("win32/pane_sidebar_sheen_layers.zig");
 
     // Pure win32 banner glass-card pixel math (T131), same no-OS-imports
     // deal.

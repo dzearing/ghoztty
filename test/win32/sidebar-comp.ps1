@@ -19,6 +19,16 @@
 #   tree is dropped, built again (`build=2`), and the layer comes back on the
 #   NEW generation - a later one than it first joined.
 #
+#   SHEEN (T2801, no seam): `+set-state busy` on s1 puts its pill's sheen on
+#   the tree (`tree up for=sheen`, `sheen comp placed`), the motion clock
+#   starts with `comp=1` and runs slow, so 3 s busy costs a handful of
+#   paints (`motion off ... frames=N`, N <= 12) rather than one a vblank;
+#   idle again, the faded-out sheen comes off the tree (`sheen comp reaped`).
+#   STEPPED (GHOZTTY_DEBUG_SIDEBAR_SHEEN_STEPPED=1): the control - nothing on
+#   the tree, the sheen painted frame by frame (frames >= 60). The sheen's
+#   pieces are unit-tested against the stepped paint pixel for pixel
+#   (pane_sidebar_sheen_layers.zig).
+#
 # The build back-off is unit-tested (child_comp.zig `Policy`). NOT covered
 # here: what the layer LOOKS like on screen - a background desktop cannot be
 # photographed (CopyFromScreen is dead there) and WM_PRINTCLIENT returns the
@@ -78,17 +88,20 @@ Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
 $launched = @()
 $script:reachedEnd = $false
-$seams = @('GHOZTTY_DEBUG_SIDEBAR_COMP_FILL', 'GHOZTTY_DEBUG_SIDEBAR_COMP_LOSS')
+$seams = @('GHOZTTY_DEBUG_SIDEBAR_COMP_FILL', 'GHOZTTY_DEBUG_SIDEBAR_COMP_LOSS', 'GHOZTTY_DEBUG_SIDEBAR_SHEEN_STEPPED')
 
 & {
 try {
     Assert-GhozttyPrivateEndpoint -Exe $Exe
-    foreach ($arm in @('plain', 'fill', 'loss')) {
+    foreach ($arm in @('plain', 'fill', 'loss', 'sheen', 'stepped')) {
     "==== arm: $arm"
     [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
     Remove-Item ($seams | ForEach-Object { "env:$_" }) -ErrorAction SilentlyContinue
-    if ($arm -ne 'plain') { $env:GHOZTTY_DEBUG_SIDEBAR_COMP_FILL = '1' }
+    if ($arm -in 'fill', 'loss') { $env:GHOZTTY_DEBUG_SIDEBAR_COMP_FILL = '1' }
     if ($arm -eq 'loss') { $env:GHOZTTY_DEBUG_SIDEBAR_COMP_LOSS = '1' }
+    # T2801: the control arm keeps the sheen stepped; -NegativeControl steps
+    # the compositor arm too, so its rows must go red.
+    if ($arm -eq 'stepped' -or ($arm -eq 'sheen' -and $NegativeControl)) { $env:GHOZTTY_DEBUG_SIDEBAR_SHEEN_STEPPED = '1' }
     $script:errlog = Join-Path $tmp "app-stderr-$arm.log"
     $app = Start-OnTestDesktop -Exe $Exe -StdErr $script:errlog -Arguments @('--session-persistence=false')
     Start-Sleep -Seconds 3
@@ -136,6 +149,36 @@ try {
             Assert "[loss] ... on a LATER generation than it first joined ($g1 -> $g2)" ($g1 -gt 0 -and $g2 -gt $g1)
             Start-Sleep -Milliseconds 800
             Assert "[loss] the loss seam fires once: two trees, not a rebuild loop ($(@(Get-LogLines 'pane sidebar composition tree up').Count))" (@(Get-LogLines 'pane sidebar composition tree up').Count -eq 2)
+        }
+        { $_ -in 'sheen', 'stepped' } {
+            "== T2801: a busy pane's sheen - on the compositor, or (control) stepped on the frame clock"
+            $comp = ($arm -eq 'sheen')
+            Assert "[$arm] +set-state busy s1 exit 0 ($(Get-CliErr))" ((Invoke-Cli "+set-state --target=s1 --state=busy") -eq 0)
+            $on = Wait-Log 'pane sidebar motion on surface=rail busy=1 comp=(\d+)'
+            "  $on"
+            Assert "[$arm] the motion clock started for the busy pane (log)" ($null -ne $on)
+            $n = if ($on -match 'comp=(\d+)') { [int]$Matches[1] } else { -1 }
+            # Three seconds busy: one and a half glints, most of a drift.
+            Start-Sleep -Milliseconds 3000
+            Assert "[$arm] +set-state idle s1 exit 0 ($(Get-CliErr))" ((Invoke-Cli "+set-state --target=s1 --state=idle") -eq 0)
+            $off = Wait-Log 'pane sidebar motion off surface=rail frames=(\d+) area=(\d+)' 6000
+            "  $off"
+            Assert "[$arm] the clock stopped itself once the sheen faded out (log)" ($null -ne $off)
+            $frames = if ($off -match 'frames=(\d+)') { [int]$Matches[1] } else { -1 }
+            $placed = @(Get-LogLines 'pane sidebar sheen comp placed key=').Count
+            $treeUp = Wait-Log 'pane sidebar composition tree up for=sheen adapter=(hardware|warp) build=1' 500
+            if ($comp) {
+                Assert "[sheen] the sheen built the column's tree (log: $treeUp)" ($null -ne $treeUp)
+                Assert "[sheen] its pieces went on the tree ($placed placed)" ($placed -ge 1)
+                Assert "[sheen] the busy pill was the compositor's when the clock started (comp=$n)" ($n -eq 1)
+                # Stepped, 3.6 s at the display rate is 200+ frames; here the
+                # only paints are the roster's own (busy on, busy off, reap).
+                Assert "[sheen] the column barely repainted while it sheened ($frames frames, want <= 12)" ($frames -ge 0 -and $frames -le 12)
+                Assert "[sheen] the faded-out sheen came off the tree (log)" ($null -ne (Wait-Log 'pane sidebar sheen comp reaped key=' 500))
+            } else {
+                Assert "[stepped] nothing went on the tree (comp=$n, $placed placed)" ($n -eq 0 -and $placed -eq 0)
+                Assert "[stepped] the control steps the sheen frame by frame ($frames frames, want >= 60)" ($frames -ge 60)
+            }
         }
     }
 

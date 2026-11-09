@@ -167,15 +167,26 @@ const slot_dcomp_create_animation = 25;
 const slot_clip_set_left_float = 4;
 const slot_clip_set_top_float = 6;
 const slot_clip_set_right_float = 8;
+const slot_clip_set_bottom_float = 10;
 const slot_clip_set_bottom_anim = 9;
+// T2801: then the eight corner radii in the same pairs - TopLeftX 11/12,
+// TopLeftY 13/14, TopRightX 15/16, TopRightY 17/18, BottomLeftX 19/20,
+// BottomLeftY 21/22, BottomRightX 23/24, BottomRightY 25/26.
+const slot_clip_first_radius_float = 12;
 // IDCompositionAnimation (dcompanimation.h): Reset 3, SetAbsoluteBeginTime 4,
 // AddCubic 5, AddSinusoidal 6, AddRepeat 7, End 8.
+const slot_anim_set_absolute_begin_time = 4;
 const slot_anim_add_cubic = 5;
+const slot_anim_add_repeat = 7;
 const slot_anim_end = 8;
 // IDCompositionVisual. SetOffsetX(animation) 3, SetOffsetX(float) 4,
 // SetOffsetY(animation) 5, SetOffsetY(float) 6 - the same overload order as
 // SetTransform(transform) 7, SetTransform(matrix) 8.
+const slot_visual_set_offset_x_anim = 3;
 const slot_visual_set_offset_x_float = 4;
+// SetBorderMode 12 (T2801): SOFT antialiases the edges of a visual's clip.
+const slot_visual_set_border_mode = 12;
+const DCOMPOSITION_BORDER_MODE_SOFT: u32 = 0;
 const slot_visual_set_offset_y_anim = 5;
 const slot_visual_set_offset_y_float = 6;
 const slot_visual_set_transform_matrix = 8;
@@ -617,6 +628,61 @@ pub const Layer = struct {
         defer comRelease(anim);
         if (!ok(slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, c, slot_clip_set_bottom_anim)(c, anim))) return false;
         if (!ok(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_visual_set_clip_obj)(vis, c))) return false;
+        self.commit();
+        return true;
+    }
+
+    /// Clip the visual (and everything under it) to a `w` x `h` rectangle
+    /// at its origin with every corner rounded to `radius`, its edge
+    /// antialiased (T2801): a pill's silhouette for pieces that slide across
+    /// it. False: no clip was set.
+    pub fn setRoundClip(self: *Layer, w: f32, h: f32, radius: f32) bool {
+        if (comptime builtin.os.tag != .windows) return false;
+        const d = self.dev orelse return false;
+        const vis = self.visual orelse return false;
+        if (self.clip == null) {
+            var made: ?Obj = null;
+            if (!ok(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, d.dcomp, slot_dcomp_create_rectangle_clip)(d.dcomp, &made))) return false;
+            self.clip = made orelse return false;
+        }
+        const c = self.clip.?;
+        const Set = *const fn (Obj, f32) callconv(.winapi) HRESULT;
+        if (!ok(slot(Set, c, slot_clip_set_left_float)(c, 0))) return false;
+        if (!ok(slot(Set, c, slot_clip_set_top_float)(c, 0))) return false;
+        if (!ok(slot(Set, c, slot_clip_set_right_float)(c, w))) return false;
+        if (!ok(slot(Set, c, slot_clip_set_bottom_float)(c, h))) return false;
+        var k: usize = 0;
+        while (k < 8) : (k += 1) {
+            if (!ok(slot(Set, c, slot_clip_first_radius_float + 2 * k)(c, radius))) return false;
+        }
+        if (!ok(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, vis, slot_visual_set_clip_obj)(vis, c))) return false;
+        _ = slot(*const fn (Obj, u32) callconv(.winapi) HRESULT, vis, slot_visual_set_border_mode)(vis, DCOMPOSITION_BORDER_MODE_SOFT);
+        self.commit();
+        return true;
+    }
+
+    /// Hand an endless loop of the visual's X offset to the compositor
+    /// (T2801): `segs` (absolute values, pane px, `begin_s` from 0) describe
+    /// one `period_s` cycle, repeated for as long as the visual lives, with
+    /// the first cycle starting at QueryPerformanceCounter time `begin_qpc` -
+    /// so loops declared at different moments share one phase. False:
+    /// nothing was declared and the caller steps it.
+    pub fn loopOffsetX(self: *Layer, segs: []const Cubic, period_s: f64, begin_qpc: i64) bool {
+        if (comptime builtin.os.tag != .windows) return false;
+        const d = self.dev orelse return false;
+        const vis = self.visual orelse return false;
+        if (segs.len == 0 or period_s <= 0) return false;
+        var made: ?Obj = null;
+        if (!ok(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, d.dcomp, slot_dcomp_create_animation)(d.dcomp, &made))) return false;
+        const anim = made orelse return false;
+        defer comRelease(anim);
+        if (!ok(slot(*const fn (Obj, i64) callconv(.winapi) HRESULT, anim, slot_anim_set_absolute_begin_time)(anim, begin_qpc))) return false;
+        const add = slot(*const fn (Obj, f64, f32, f32, f32, f32) callconv(.winapi) HRESULT, anim, slot_anim_add_cubic);
+        for (segs) |c| {
+            if (!ok(add(anim, c.begin_s, @floatCast(c.c0), @floatCast(c.c1), @floatCast(c.c2), @floatCast(c.c3)))) return false;
+        }
+        if (!ok(slot(*const fn (Obj, f64, f64) callconv(.winapi) HRESULT, anim, slot_anim_add_repeat)(anim, period_s, period_s))) return false;
+        if (!ok(slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, vis, slot_visual_set_offset_x_anim)(vis, anim))) return false;
         self.commit();
         return true;
     }
