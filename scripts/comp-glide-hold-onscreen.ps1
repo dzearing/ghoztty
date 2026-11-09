@@ -118,6 +118,25 @@
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms live
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms live -NoDeclare   # live.13 must go red
 #
+# STRIP (T2851) films a strip that stays a strip and moves (T2417), declared
+# to the compositor as a face since T2825, through the same stall. Its own
+# layout (Invoke-StripArm): five panes beside the pane sidebar's rail in the
+# flat style, so the first is a blade at the grid's leading edge, and a
+# posted click on the sidebar's toggle expands it - the grid, blade and all,
+# glides right (a second pane folds on the way). The blade is its
+# background's stripRgb (-StripBg), read off the first frame beside the rail.
+#   .22  the leading (leftmost) blade keeps moving through the stall and
+#        never jumps back - a copy left at the start, frozen with the
+#        thread, holds it still (T2869)
+#   .22b some blade in the band is on the move through the stall - what a
+#        declared face does whatever the desk under it shows
+#   .22c once at its landing the leading blade stays on screen (T2870)
+#   .23  the log names the face's declaration
+#   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms strip
+#   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms strip -NoDeclare   # strip.22b and strip.23 must go red
+# As of 2026-11-09 the declared arm is red on .22 (T2869) and .22c (T2870),
+# both on film; -StallMs 0 passes both (no stall, no glitch).
+#
 # -NegativeControl sets the slide to 0 ms (the instant re-layout from before
 # T2102): .5 must FAIL on every arm.
 
@@ -148,7 +167,10 @@ param(
     [switch]$GlideRegionCut,
     # T2828: GHOZTTY_GLIDE_LANDING_TIMER=0 runs the layout pass on every
     # glide tick, as before - the tree arms' .21 must then go red.
-    [switch]$NoLandingTimer
+    [switch]$NoLandingTimer,
+    # T2851: the strip arm's background - the blade is its stripRgb, which
+    # has to be a colour no other chrome in the filmed band uses.
+    [string]$StripBg = '#0060c0'
 )
 
 $ErrorActionPreference = 'Continue'
@@ -227,6 +249,28 @@ public static class GhWin {
     public static bool Size(IntPtr h, int w, int ht) {
         return SetWindowPos(h, IntPtr.Zero, 0, 0, w, ht, 0x0002 | 0x0004 | 0x0010); // NOMOVE|NOZORDER|NOACTIVATE
     }
+    // T2851: the first visible child window of a class ("hwnd left top right
+    // bottom"), or null.
+    public static string Child(IntPtr top, string cls) {
+        string found = null;
+        EnumChildWindows(top, (h, l) => {
+            if (found == null && IsWindowVisible(h) && Cls(h) == cls) {
+                RECT r; GetWindowRect(h, out r);
+                found = ((long)h) + " " + r.Left + " " + r.Top + " " + r.Right + " " + r.Bottom;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+    // A left click posted straight to a child window at its CLIENT point.
+    public static void ClickClient(IntPtr h, int cx, int cy) {
+        IntPtr lp = (IntPtr)(((cy & 0xFFFF) << 16) | (cx & 0xFFFF));
+        PostMessageW(h, 0x0200, IntPtr.Zero, lp);
+        System.Threading.Thread.Sleep(20);
+        PostMessageW(h, 0x0201, (IntPtr)1, lp);
+        System.Threading.Thread.Sleep(40);
+        PostMessageW(h, 0x0202, IntPtr.Zero, lp);
+    }
     // A left click at a SCREEN point, posted: no SetCursorPos, no input
     // attachment, nothing the person at the desk can feel.
     public static void Click(IntPtr top, int sx, int sy) {
@@ -281,6 +325,29 @@ public static class Blocks {
             }
         }
         return o;
+    }
+    // T2851: the blades in a band of rows (y0..y1) - a column is a blade's
+    // when 60%+ of the band's pixels in it are within `tol` of (r,g,b) (the
+    // name's ink is the rest); a run of 3+ such columns is a blade. Returns
+    // each blade's left edge, left to right.
+    public static int[] Runs(byte[] px, int stride, int w, int h, int r, int g, int b, int tol, int y0, int y1) {
+        y0 = Math.Max(0, y0); y1 = Math.Min(h, y1);
+        int need = (int)Math.Ceiling(0.6 * (y1 - y0));
+        var lefts = new List<int>();
+        int run = 0;
+        for (int x = 0; x <= w; x++) {
+            int n = 0;
+            if (x < w) {
+                for (int y = y0; y < y1; y++) {
+                    int i = y * stride + x * 4;
+                    if (Math.Abs(px[i + 2] - r) <= tol && Math.Abs(px[i + 1] - g) <= tol && Math.Abs(px[i] - b) <= tol) n++;
+                }
+            }
+            if (x < w && n >= need) { run++; continue; }
+            if (run >= 3) lefts.Add(x - run);
+            run = 0;
+        }
+        return lefts.ToArray();
     }
 }
 '@
@@ -567,6 +634,183 @@ function Score-StallUnfold($arm, $rows, $limit) {
 
 $onLine = 'pane presents through a composition swap chain'
 
+function Read-Bmp($path) {
+    $bmp = New-Object System.Drawing.Bitmap $path
+    try {
+        $rect = New-Object System.Drawing.Rectangle(0, 0, $bmp.Width, $bmp.Height)
+        $data = $bmp.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::ReadOnly, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $bytes = New-Object byte[] ($data.Stride * $bmp.Height)
+        [System.Runtime.InteropServices.Marshal]::Copy($data.Scan0, $bytes, 0, $bytes.Length)
+        $o = [pscustomobject]@{ Px = $bytes; Stride = $data.Stride; W = $bmp.Width; H = $bmp.Height }
+        $bmp.UnlockBits($data)
+        return $o
+    } finally { $bmp.Dispose() }
+}
+
+# T2851: a strip that stays a strip and moves (T2417/T2825), filmed through a
+# stall. Five panes beside the pane sidebar's rail in the flat style, so the
+# first is tucked into a blade at the grid's leading edge (the
+# pane-sidebar-glide.ps1 section 6 shape); a posted click on the sidebar's
+# toggle expands it and the grid - blade and all - glides right. The blade is
+# a band of `pane_stack_strip.stripRgb` of the background, read off the first
+# frame just right of the rail; its leading edge is followed frame by frame.
+#   .22 through the stall the blade keeps moving: its longest still stretch,
+#       from its first move until within 5% of where it lands, stays under a
+#       quarter of the stall (stepped from the window's thread it holds for
+#       all of it - -NoDeclare must go red here)
+#   .23 the blade was declared to the compositor as a face (the log)
+function Invoke-StripArm($arm, $dir, $err) {
+    $app = Start-OnTestDesktop -Exe $Exe -Arguments @(
+        '--config-default-files=false', '--session-persistence=false',
+        '--window-width=100', '--window-height=30', "--background=$StripBg",
+        '--command=powershell.exe -NoLogo -NoProfile', "--title=t2851-$arm",
+        '--macos-pane-style=flat') -StdErr $err
+    $top = $null
+    for ($t = 0; $t -lt 100 -and -not $top; $t++) {
+        $w = @([GhWin]::TopLevel([uint32]$app.Pid, 'GhozttyWindow'))
+        if ($w.Count -gt 0) { $top = $w[0] } else { Start-Sleep -Milliseconds 200 }
+    }
+    Assert "$arm.0 the ghost window came up" ($null -ne $top)
+    if (-not $top) { return }
+    $name = "gl$arm"
+    & $Exe +new-window "--target=$name" 2>$null | Out-Null
+    $hw = $null
+    for ($t = 0; $t -lt 50 -and -not $hw; $t++) {
+        $hw = @([GhWin]::TopLevel([uint32]$app.Pid, 'GhozttyWindow') | Where-Object { $_ -ne $top }) | Select-Object -First 1
+        if (-not $hw) { Start-Sleep -Milliseconds 200 }
+    }
+    Assert "$arm.1 the named window came up" ($null -ne $hw)
+    if (-not $hw) { return }
+    $scale = [Math]::Max(1, [GhWin]::GetDpiForWindow($hw)) / 96.0
+    [void][GhWin]::Size($hw, [int](1100 * $scale), [int](700 * $scale))
+    Start-Sleep -Milliseconds 1500
+    $prev = $name
+    for ($k = 1; $k -le 4; $k++) {
+        $flag = if ($k -eq 1) { '--target' } else { '--pane' }
+        & $Exe +split "$flag=$prev" '--direction=right' "--name=$name-$k" 2>$null | Out-Null
+        Start-Sleep -Milliseconds 1000
+        $prev = "$name-$k"
+    }
+    Start-Sleep -Milliseconds 1500
+    $all = @(Get-Panes $hw)
+    "  panes: $(($all | ForEach-Object { "$($_.Left)-$($_.Right)$(if (-not $_.Visible) { '(tucked)' })" }) -join ' | ')"
+    $sbRow = [GhWin]::Child($hw, 'GhozttyPaneSidebar')
+    $okSetup = ($all.Count -eq 5 -and -not $all[0].Visible -and $null -ne $sbRow)
+    Assert "$arm.2 five panes beside the rail, the first tucked into a blade at the grid's leading edge" $okSetup
+    if (-not $okSetup) { return }
+    Assert "$arm.3t every pane went into the window tree (adopts=5)" (Wait-Log $err 'adopted into the window tree \(adopts=5\)' 15000)
+    $sbf = $sbRow -split ' '
+    $sbH = [IntPtr][int64]$sbf[0]; $sbLeft = [int]$sbf[1]; $sbTop = [int]$sbf[2]; $sbRight = [int]$sbf[3]
+    $wr = New-Object GhWin+RECT
+    [void][GhWin]::GetWindowRect($hw, [ref]$wr)
+
+    $fdir = Join-Path $dir 'film'
+    $filmErr = Join-Path $dir 'film.txt'
+    $fp = Start-Process -FilePath $Spike -ArgumentList @("--film-hwnd=$([int64]$hw)", "--film-dir=`"$fdir`"", "--film-ms=$($SlideMs + 1500)") `
+        -NoNewWindow -PassThru -RedirectStandardError $filmErr
+    $ready = $false
+    for ($t = 0; $t -lt 100 -and -not $ready; $t++) { $ready = Test-Path (Join-Path $fdir 'ready'); if (-not $ready) { Start-Sleep -Milliseconds 50 } }
+    Assert "$arm.3a the film started" $ready
+    Start-Sleep -Milliseconds 300
+    # The toggle (T2289, pane-sidebar-glide.ps1 Get-ToggleCenter): the rail's
+    # 12 DIP margin, the 52 DIP card's inset to its 28 DIP tile, the tile's middle.
+    $tc = [int][Math]::Round((12 + 12 + 14) * $scale)
+    [GhWin]::ClickClient($sbH, $tc, $tc)
+    [void]$fp.WaitForExit(60000)
+    $filmOut = (Read-Text $filmErr).Trim()
+    "  $filmOut"
+    Assert "$arm.3b the film finished" ($filmOut -match '^FILM ok')
+    $sbAfter = [GhWin]::Child($hw, 'GhozttyPaneSidebar')
+    $grew = $false
+    if ($sbAfter) { $f2 = $sbAfter -split ' '; $grew = ([int]$f2[3] - [int]$f2[1]) -gt ($sbRight - $sbLeft) + 40 }
+    Assert "$arm.3c the sidebar expanded ($sbRow -> $sbAfter)" $grew
+
+    $rows = @(Get-Content (Join-Path $fdir 'frames.txt') -ErrorAction SilentlyContinue | Where-Object { $_ -match '^\d' } | ForEach-Object {
+            $p = $_ -split ' '
+            [pscustomobject]@{ I = [int]$p[0]; T = [double]$p[1] / 10000.0; Path = (Join-Path $fdir ('f{0:d4}.bmp' -f [int]$p[0])) }
+        })
+    Assert "$arm.4 the film has frames ($($rows.Count))" ($rows.Count -ge 5)
+    if ($rows.Count -lt 5) { return }
+    # Window rect -> frame: the film is the window's own picture, so a screen
+    # point maps by the window's origin, scaled if the frame is not 1:1.
+    $f0 = Read-Bmp $rows[0].Path
+    $kx = $f0.W / [double]($wr.Right - $wr.Left); $ky = $f0.H / [double]($wr.Bottom - $wr.Top)
+    $railX = [int](($sbRight - $wr.Left) * $kx)
+    $y0 = [int](($sbTop - $wr.Top + 0.35 * ($wr.Bottom - $sbTop)) * $ky); $y1 = [int](($sbTop - $wr.Top + 0.65 * ($wr.Bottom - $sbTop)) * $ky)
+    $sx = $railX + [int][Math]::Round(6 * $scale); $sy = [int](($y0 + $y1) / 2)
+    $i = $sy * $f0.Stride + $sx * 4
+    $sr = $f0.Px[$i + 2]; $sg = $f0.Px[$i + 1]; $sbb = $f0.Px[$i]
+    "  frame $($f0.W)x$($f0.H) for window $($wr.Right - $wr.Left)x$($wr.Bottom - $wr.Top); rail edge at x=$railX; blade colour at ($sx,$sy) = $sr,$sg,$sbb"
+    $edges = @(foreach ($r in $rows) {
+            $b = if ($r -eq $rows[0]) { $f0 } else { Read-Bmp $r.Path }
+            $runs = @([Blocks]::Runs($b.Px, $b.Stride, $b.W, $b.H, $sr, $sg, $sbb, 10, $y0, $y1))
+            [pscustomobject]@{ I = $r.I; T = $r.T; X = $(if ($runs.Count -gt 0) { $runs[0] } else { -1 }); Set = ($runs -join ',') }
+        })
+    $t0 = $edges[0].T
+    "    blade trace (ms:lefts): " + (($edges | ForEach-Object { "$([Math]::Round($_.T - $t0)):$(if ($_.Set) { $_.Set } else { '-' })" }) -join ' ')
+    $a = $edges[0].X; $z = $edges[$edges.Count - 1].X
+    $okRest = $a -ge 0 -and [Math]::Abs($a - $railX) -le [int](20 * $scale)
+    Assert "$arm.2c the blade is found on the first frame at the rail's edge (left $a, rail $railX)" $okRest
+    $travel = $z - $a
+    if (-not $okRest -or $z -lt 0 -or $travel -le 40) { Assert "$arm.22 the blade travels far enough to time ($a -> $z)" $false; return }
+    $near = [Math]::Max(2, [int](0.05 * $travel))
+    $limit = $StallMs / 4.0
+    # .22 the LEADING edge - the leftmost blade on screen, which is what the
+    # user reads as where the grid starts. A copy of the blade left behind at
+    # its start (a desk the stalled thread never repainted), or a blade gone
+    # from the screen, holds it still or throws it back, and both are on film.
+    $prevX = $a; $lastT = $null; $gap = 0.0; $gapAt = ''; $moves = 0; $back = @()
+    foreach ($e in $edges) {
+        if ($e.X -lt 0 -or $e.X -eq $prevX) { continue }
+        if ($e.X -lt $prevX) { $back += "f$($e.I) $prevX->$($e.X)" }
+        if ($null -ne $lastT -and ($e.T - $lastT) -gt $gap) { $gap = $e.T - $lastT; $gapAt = "f$($e.I)" }
+        $lastT = $e.T; $prevX = $e.X; $moves++
+        if ([Math]::Abs($e.X - $z) -le $near) { break }
+    }
+    # The leading edge after it first reached its landing: a blade that
+    # leaves the screen before the landing is painted reads as the next one.
+    $arrived = $false; $gone = @()
+    foreach ($e in $edges) {
+        if (-not $arrived) { $arrived = [Math]::Abs($e.X - $z) -le $near; continue }
+        if ($e.X -lt 0 -or $e.X -gt $z + $near) { $gone += $e }
+    }
+    "    leading blade travels $travel px in $moves moves; longest still stretch $([Math]::Round($gap)) ms (ending $gapAt), stall $StallMs ms; went back $($back.Count)x$(if ($back) { ' (' + (($back | Select-Object -First 3) -join '; ') + ')' })"
+    Assert "$arm.22 through a $StallMs ms stall the leading blade keeps moving: longest still stretch $([Math]::Round($gap)) ms (need < $limit), never back ($($back.Count))" ($moves -ge 2 -and $gap -lt $limit -and $back.Count -eq 0)
+    $goneMs = if ($gone.Count) { [Math]::Round($gone[-1].T - $gone[0].T) } else { 0 }
+    Assert "$arm.22c once at its landing the leading blade stays on screen ($($gone.Count) frame(s) without it$(if ($gone.Count) { ", f$($gone[0].I)-f$($gone[-1].I), $goneMs ms" }))" ($gone.Count -eq 0)
+    # .22b ANY blade on the move: the band's set of blades changes - one
+    # declared to the compositor moves on through the stall whatever the
+    # desk under it shows; a stepped one freezes with the thread. Timed from
+    # the glide's first change over the stall's span and half as much again (the
+    # stall lands on the glide's first tick); the follower's slow tail after
+    # that is not the stall's.
+    $prevSet = $edges[0].Set; $lastT = $null; $gapB = 0.0; $gapBAt = ''; $changes = 0; $tEnd = $null
+    foreach ($e in $edges) {
+        if ($null -ne $tEnd -and $e.T -gt $tEnd) {
+            # Still since the last change, up to the window's end, counts too.
+            if (($tEnd - $lastT) -gt $gapB) { $gapB = $tEnd - $lastT; $gapBAt = "the window's end" }
+            break
+        }
+        if ($e.Set -eq $prevSet) { continue }
+        if ($null -eq $tEnd) { $tEnd = $e.T + 1.5 * $StallMs }
+        if ($null -ne $lastT -and ($e.T - $lastT) -gt $gapB) { $gapB = $e.T - $lastT; $gapBAt = "f$($e.I)" }
+        $lastT = $e.T; $prevSet = $e.Set; $changes++
+    }
+    "    the band's blades change $changes times in the $(1.5 * $StallMs) ms from the glide's first change; longest still stretch $([Math]::Round($gapB)) ms (ending $gapBAt)"
+    Assert "$arm.22b through the stall a blade is on the move: longest still stretch of the band $([Math]::Round($gapB)) ms (need < $limit)" ($changes -ge 2 -and $gapB -lt $limit)
+
+    $text = Read-Text $err
+    $stalled = [regex]::Matches($text, 'stack glide debug stall ms=').Count
+    Assert "$arm.22a the stall landed in the glide ($stalled)" ($stalled -ge 1)
+    $faces = [regex]::Matches($text, 'stack strip face declared').Count
+    Assert "$arm.23 the blade was handed to the compositor as a face ($faces declaration(s))" ($faces -ge 1)
+    $fgPid = [uint32]0
+    [void][GhWin]::GetWindowThreadProcessId([GhWin]::GetForegroundWindow(), [ref]$fgPid)
+    Assert "$arm.F the ghost never took the foreground (fg pid $fgPid)" ($fgPid -ne [uint32]$app.Pid)
+    if (-not $KeepFrames) { Get-ChildItem $fdir -Filter 'f*.bmp' -ErrorAction SilentlyContinue | ForEach-Object { Remove-Item $_.FullName } }
+    return
+}
+
 [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
 [void](Set-GhozttyTestIsolation -Tag 'compglide')
 Assert-GhozttyIsolatedBuild -Exe $Exe | Out-Null
@@ -577,9 +821,9 @@ $td = New-TestDesktop -Interactive
 
 try {
     foreach ($arm in $Arms) {
-        $comp = $arm -in 'on', 'tree', 'stall', 'unfold', 'live'
-        $isTree = $arm -in 'tree', 'stall', 'unfold', 'live'
-        $stalls = $arm -in 'stall', 'unfold', 'live'
+        $comp = $arm -in 'on', 'tree', 'stall', 'unfold', 'live', 'strip'
+        $isTree = $arm -in 'tree', 'stall', 'unfold', 'live', 'strip'
+        $stalls = $arm -in 'stall', 'unfold', 'live', 'strip'
         "== arm '$arm' (GHOZTTY_COMP_PRESENT=$(if ($comp) { '1' } else { 'unset' }) PANE_TREE=$(if ($isTree) { '1' } else { 'unset' }), slide $SlideMs ms$(if ($stalls) { ", stall $StallMs ms$(if ($arm -eq 'unfold') { ' once the opening card is in' }), declare $(if ($NoDeclare) { 'off' } else { 'on' })" }))"
         [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
         $dir = Join-Path $OutDir $arm
@@ -605,6 +849,7 @@ try {
         if ($NoLandingTimer) { $env:GHOZTTY_GLIDE_LANDING_TIMER = '0' } else { Remove-Item env:GHOZTTY_GLIDE_LANDING_TIMER -ErrorAction SilentlyContinue }
         if ($NoBody) { $env:GHOZTTY_COMP_SHADOWS_NOBODY = '1' } else { Remove-Item env:GHOZTTY_COMP_SHADOWS_NOBODY -ErrorAction SilentlyContinue }
         $err = Join-Path $dir 'stderr.txt'
+        if ($arm -eq 'strip') { Invoke-StripArm $arm $dir $err; continue }
         $app = Start-OnTestDesktop -Exe $Exe -Arguments @(
             '--config-default-files=false', '--session-persistence=false',
             '--window-width=100', '--window-height=30', '--background=#000000',
