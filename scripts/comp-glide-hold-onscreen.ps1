@@ -55,6 +55,14 @@
 # per frame.
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms tree -GlideRegionCut   # tree.20 must go red
 #
+# .21 (T2828, tree arms) reads the app's count of the glide's ticks: with
+# everything on the move declared to the compositor, a tick that lands
+# nothing only steps the glide's model and skips the window's layout pass,
+# so most of the glide's ticks are quiet. Under -NoDeclare none may be (the
+# panes are stepped from the window's thread), which .21 checks instead.
+#   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms stall -NoLandingTimer   # stall.21 must go red
+# -NoLandingTimer sets GHOZTTY_GLIDE_LANDING_TIMER=0: every tick lays out.
+#
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms on
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -NegativeControl   # must go red
@@ -137,7 +145,10 @@ param(
     [switch]$NoFaceComp,
     # T2826: GHOZTTY_GLIDE_REGION_CUT=1 re-cuts a gliding tree pane's window
     # region on every frame, as before - the tree arms' .20 must then go red.
-    [switch]$GlideRegionCut
+    [switch]$GlideRegionCut,
+    # T2828: GHOZTTY_GLIDE_LANDING_TIMER=0 runs the layout pass on every
+    # glide tick, as before - the tree arms' .21 must then go red.
+    [switch]$NoLandingTimer
 )
 
 $ErrorActionPreference = 'Continue'
@@ -166,7 +177,7 @@ if ($NegativeControl) { $SlideMs = 0; "NEGATIVE CONTROL: the slide is 0 ms (an i
 if (-not $OutDir) { $OutDir = Join-Path $env:TEMP "ghoztty-comp-glide-$PID" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_GLIDE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS', 'GHOZTTY_DEBUG_GLIDE_STALL_MS', 'GHOZTTY_GLIDE_DECLARE', 'GHOZTTY_DEBUG_GLIDE_STALL_AT', 'GHOZTTY_FACE_COMP', 'GHOZTTY_DEBUG_GLIDE_LIVE_FACE', 'GHOZTTY_GLIDE_REGION_CUT'
+$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_GLIDE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS', 'GHOZTTY_DEBUG_GLIDE_STALL_MS', 'GHOZTTY_GLIDE_DECLARE', 'GHOZTTY_DEBUG_GLIDE_STALL_AT', 'GHOZTTY_FACE_COMP', 'GHOZTTY_DEBUG_GLIDE_LIVE_FACE', 'GHOZTTY_GLIDE_REGION_CUT', 'GHOZTTY_GLIDE_LANDING_TIMER'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
@@ -591,6 +602,7 @@ try {
         if ($NoDeclare) { $env:GHOZTTY_GLIDE_DECLARE = '0' } else { Remove-Item env:GHOZTTY_GLIDE_DECLARE -ErrorAction SilentlyContinue }
         if ($NoFaceComp) { $env:GHOZTTY_FACE_COMP = '0' } else { Remove-Item env:GHOZTTY_FACE_COMP -ErrorAction SilentlyContinue }
         if ($GlideRegionCut) { $env:GHOZTTY_GLIDE_REGION_CUT = '1' } else { Remove-Item env:GHOZTTY_GLIDE_REGION_CUT -ErrorAction SilentlyContinue }
+        if ($NoLandingTimer) { $env:GHOZTTY_GLIDE_LANDING_TIMER = '0' } else { Remove-Item env:GHOZTTY_GLIDE_LANDING_TIMER -ErrorAction SilentlyContinue }
         if ($NoBody) { $env:GHOZTTY_COMP_SHADOWS_NOBODY = '1' } else { Remove-Item env:GHOZTTY_COMP_SHADOWS_NOBODY -ErrorAction SilentlyContinue }
         $err = Join-Path $dir 'stderr.txt'
         $app = Start-OnTestDesktop -Exe $Exe -Arguments @(
@@ -695,6 +707,24 @@ try {
             $held = [regex]::Matches($text, 'pane glide region held').Count
             "  glide region: $cuts cut(s), $held held, $np panes"
             Assert "$arm.20 a gliding pane's window region is not re-cut per frame ($cuts cuts for $np panes, $held held)" ($cuts -le $np -and $held -ge 1)
+        }
+
+        # T2828: the glide's ticks that only stepped its model (everything on
+        # the move declared) against those that ran the layout pass.
+        if ($isTree -and $moves) {
+            $lt = [regex]::Matches((Read-Text $err), 'stack glide landing timer laid=(\d+) quiet=(\d+)')
+            if ($lt.Count -eq 0) {
+                Assert "$arm.21 the glide reported its ticks" $false
+            } else {
+                $l = $lt[$lt.Count - 1]
+                $laid = [int]$l.Groups[1].Value; $quiet = [int]$l.Groups[2].Value
+                "  glide ticks: $laid laid out, $quiet quiet"
+                if ($NoDeclare) {
+                    Assert "$arm.21 control: a stepped glide lays out on every tick ($laid laid, $quiet quiet)" ($quiet -eq 0 -and $laid -ge 1)
+                } else {
+                    Assert "$arm.21 most of the glide's ticks skipped the layout pass ($quiet quiet of $($laid + $quiet))" ($quiet -gt $laid)
+                }
+            }
         }
 
         # T2572: the panes' paths went to the compositor (none under -NoDeclare).

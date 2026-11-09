@@ -3977,6 +3977,14 @@ pub fn gridStepped(self: *PaneSidebar) void {
     _ = w32.UpdateWindow(self.hwnd);
 }
 
+/// Whether the column following the grid's glide is played by the
+/// compositor (T2827), so a grid step has nothing to place or paint for it
+/// (T2828). False with no followed glide, or one stepped from frames.
+pub fn columnDeclared(self: *const PaneSidebar) bool {
+    const c = if (self.column) |*v| v else return false;
+    return c.following and c.declared;
+}
+
 /// Hand a followed glide to the compositor (T2827), on its first grid
 /// step, with the column's window `cur_w` wide: the two pictures
 /// `paintColumn` crossfades - the frame it left and the frame it goes to,

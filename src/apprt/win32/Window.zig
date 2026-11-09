@@ -172,6 +172,7 @@ const pane_stack_grid = @import("pane_stack_grid.zig");
 const pane_stack_layout = @import("pane_stack_layout.zig");
 const pane_stack_strip = @import("pane_stack_strip.zig");
 const pane_stack_slide = @import("pane_stack_slide.zig");
+const glide_landing_timer = @import("glide_landing_timer.zig");
 const strip_face = @import("strip_face.zig");
 const trace_ring = @import("trace_ring.zig");
 const resize_trace = @import("resize_trace.zig");
@@ -1055,6 +1056,11 @@ stack_slide_fresh: bool = false,
 /// `glide_moves_report` is the ended glide whose landing pass reports them.
 glide_child_moves: u32 = 0,
 glide_tree_moves: u32 = 0,
+/// The glide's ticks that ran the live layout pass, and those that only
+/// stepped the glide because everything on the move was declared (T2828),
+/// for the landing's report.
+glide_laid_ticks: u32 = 0,
+glide_quiet_ticks: u32 = 0,
 /// How many tree panes' card shadows were up as visuals at the last desk
 /// paint (T2741), for the log line that says when it changes.
 tree_shadows_up: usize = 0,
@@ -11966,10 +11972,15 @@ fn reportGlideMoves(self: *Window) void {
         self.desk_full_moves -% m.full_moves,
         self.tree_wholes_up,
     });
+    // T2828's oracle (comp-glide-hold-onscreen.ps1 .21): how many of the
+    // glide's ticks ran the layout pass, and how many only stepped it.
+    log.info("stack glide landing timer laid={d} quiet={d}", .{ self.glide_laid_ticks, self.glide_quiet_ticks });
     self.glide_desk_mark = null;
     self.glide_moves_report = false;
     self.glide_child_moves = 0;
     self.glide_tree_moves = 0;
+    self.glide_laid_ticks = 0;
+    self.glide_quiet_ticks = 0;
 }
 
 /// The desk's compose counters as a stack glide starts (T2793); a glide that
@@ -12165,6 +12176,68 @@ fn stackDragEnded(self: *Window) void {
     if (self.treeGlideUnlanded()) self.layoutSplitsLive();
 }
 
+var landing_timer_state: ?bool = null;
+
+/// Whether a glide's ticks may skip the live layout pass once everything on
+/// the move is declared (T2828): the composition pane tree with declared
+/// glides and no forced slow frames. `GHOZTTY_GLIDE_LANDING_TIMER=0` lays out
+/// on every tick again - the A/B and the negative control of
+/// comp-glide-hold-onscreen.ps1's .21.
+fn landingTimerOn(self: *const Window) bool {
+    if (!faceCompWanted() or !glideDeclareOn() or !glideTreeOn()) return false;
+    if (self.stack_slide_dt_ms != null or self.chrome_host == null) return false;
+    if (landing_timer_state) |v| return v;
+    var buf: [8]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const raw = std.process.getEnvVarOwned(fba.allocator(), "GHOZTTY_GLIDE_LANDING_TIMER") catch null;
+    const v = if (raw) |r| !std.mem.eql(u8, r, "0") else true;
+    landing_timer_state = v;
+    return v;
+}
+
+/// Whether everything glide `s` still moves is on the compositor (T2828):
+/// every card on its way with its pane's path declared (or its pane hidden
+/// under a face) and, going into or out of its strip, its face declared;
+/// every moving strip on its declared face; the sidebar column it carries
+/// declared; and no carried frame still on its way from a renderer, whose
+/// landing declares a face again. One card or strip stepped from frames is
+/// enough to keep the layout pass on every tick.
+fn glideAllDeclared(self: *Window, s: *const pane_stack_slide.Slide) bool {
+    if (self.stack_slide_column) {
+        const sb = self.sidebar orelse return false;
+        if (!sb.columnDeclared()) return false;
+    }
+    for (s.items()) |c| {
+        if (s.rect(c.id) == null) continue;
+        const view: *PaneView = @ptrFromInt(c.id);
+        if (view.glide_snap == .waiting) return false;
+        const sf = view.surface() orelse return false;
+        if (sf.tree_visual == null) return false;
+        const h = view.hwnd() orelse return false;
+        const shown = w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE != 0;
+        if (shown and sf.tree_glide_decl == null) return false;
+        if (c.strip != null) {
+            const f = view.strip_face orelse return false;
+            const d = f.decl orelse return false;
+            // A frame landed since the face was declared - an opening card's
+            // band-only face, or a fold's frame replaced: the pass declares
+            // it again with the frame it carries now.
+            if (view.glide_snap == .ready and !d.live) {
+                const fr = view.glideFrame();
+                const now_id: ?strip_face.FaceDecl.ContentId = if (fr) |x| .{ .ptr = @intFromPtr(x.pixels.ptr), .w = x.w, .h = x.h } else null;
+                if (!strip_face.FaceDecl.ContentId.eql(now_id, d.content)) return false;
+            }
+        } else if (!shown) return false;
+    }
+    for (s.stripItems()) |g| {
+        if (s.movingStrip(g.id) == null) continue;
+        const view: *PaneView = @ptrFromInt(g.id);
+        const f = view.strip_face orelse return false;
+        if (f.decl == null or f.still == null) return false;
+    }
+    return true;
+}
+
 /// One frame of the glide: every card eased toward its slot by the time since
 /// the last (Mac `PaneStageView.stepGlide`). Once every card has caught up the
 /// glide ends and lays every card out at its slot - which is where a card that
@@ -12205,6 +12278,9 @@ fn stackSlideTick(self: *Window) void {
     const partial0 = self.pane_desk.memo_partial;
     var step_us: u64 = 0;
     var flush_us: u64 = 0;
+    // A quiet tick (T2828) ran no layout pass: the pass's parts below hold
+    // the last laid tick's, so they read as nothing on this one.
+    var laid = true;
     defer if (self.drag_perf_on) {
         const cost_us = if (std.time.Instant.now()) |e| e.since(now) / std.time.ns_per_us else |_| 0;
         const vc = ViewerPane.sync_cost;
@@ -12212,9 +12288,9 @@ fn stackSlideTick(self: *Window) void {
         self.glide_stats.record(
             .{
                 .cost_us = cost_us,
-                .viewer_us = if (vc.count > 0) vc.total_ns / std.time.ns_per_us else null,
+                .viewer_us = if (laid and vc.count > 0) vc.total_ns / std.time.ns_per_us else null,
                 .desk_full = full,
-                .parts = .{
+                .parts = if (laid) .{
                     .step_us = step_us,
                     .layout_us = self.frame_layout_us,
                     .resize_us = self.frame_resize_us,
@@ -12225,6 +12301,17 @@ fn stackSlideTick(self: *Window) void {
                     .cards_us = self.frame_cards_us,
                     .overlay_us = self.frame_overlay_us,
                     .flush_us = flush_us,
+                } else .{
+                    .step_us = step_us,
+                    .layout_us = 0,
+                    .resize_us = 0,
+                    .waits = 0,
+                    .wait_us = 0,
+                    .place_us = 0,
+                    .paint_us = 0,
+                    .cards_us = 0,
+                    .overlay_us = 0,
+                    .flush_us = 0,
                 },
             },
             gap_us,
@@ -12234,8 +12321,23 @@ fn stackSlideTick(self: *Window) void {
         self.glide_between_mark = self.glideMark();
     };
     const step_t = if (self.drag_perf_on) std.time.Instant.now() catch null else null;
+    const caught0 = s.caughtUp();
     const done = s.step(dt);
     if (step_t) |t0| step_us = if (std.time.Instant.now()) |e| e.since(t0) / std.time.ns_per_us else |_| 0;
+    // The landing timer (T2828): with everything on the move declared to the
+    // compositor, a tick that lands nothing has nothing for the layout pass
+    // to place or paint - it only keeps the glide's model in step, for the
+    // landing and for a retarget to start from.
+    const quiet = glide_landing_timer.quiet(.{
+        .enabled = self.landingTimerOn(),
+        .done = done,
+        .gesturing = self.stackGesturing(),
+        .resizing = s.resize,
+        .layout_pending = self.drag_layout_pending,
+        .caught_before = caught0,
+        .caught_after = s.caughtUp(),
+        .all_declared = self.glideAllDeclared(s),
+    });
     // The acceptance oracle (pane-sidebar-glide.ps1, T2417): a strip that
     // stays a strip moves through the glide rather than jumping.
     for (s.stripItems()) |sg| if (s.movingStrip(sg.id)) |m| {
@@ -12244,6 +12346,20 @@ fn stackSlideTick(self: *Window) void {
     if (done) {
         if (self.stackGesturing()) self.restStackSlide() else self.endStackSlide();
     }
+    if (quiet) {
+        laid = false;
+        self.glide_quiet_ticks += 1;
+        if (self.glide_stall_due) {
+            self.glide_stall_due = false;
+            glideDebugStall();
+        }
+        // The sidebar's declared column only steps its model (T2827).
+        if (self.stack_slide_column) {
+            if (self.sidebar) |sb| sb.gridStepped();
+        }
+        return;
+    }
+    self.glide_laid_ticks += 1;
     self.drag_layout_pending = false;
     // Watched (T2359): the tick that lands a sidebar glide resizes each card
     // to its slot, and a glide under a drag resizes on every tick - each pane

@@ -517,6 +517,21 @@ pub const Slide = struct {
         return true;
     }
 
+    /// How many of the glide's cards and moving strips have caught up
+    /// (T2828). A tick that changes it lands one of them - a card at its
+    /// slot, a fold at its strip - and so is one the layout has to see; a
+    /// tick that leaves it alone only moves things along their paths.
+    pub fn caughtUp(self: *const Slide) u32 {
+        var n: u32 = 0;
+        for (self.items()) |c| {
+            if (c.drawn.eql(c.to)) n += 1;
+        }
+        for (self.stripItems()) |s| {
+            if (s.drawn.eql(s.to)) n += 1;
+        }
+        return n;
+    }
+
     /// Point every sliding card at where the layout puts it NOW (T2186): a
     /// drag goes on reshaping the row while the fold's glide runs, and each
     /// card eases toward the hand's layout from where it is drawn, rather than
@@ -1000,6 +1015,32 @@ test "plan: a card that changes size holds its old size until it has caught up" 
     // One size change in the whole glide, at its end.
     _ = runOut(&s);
     try testing.expectEqual(r(100, 0, 500, 600), s.placed(1).?);
+}
+
+test "caughtUp: counts the cards and strips at their targets, and moves only when one lands (T2828)" {
+    // A short move (1) and a long one (2): the short one lands first.
+    const before = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 400, 600), .tucked = false },
+        .{ .id = 2, .rect = r(400, 0, 400, 600), .tucked = false },
+    };
+    const after = [_]Placed{
+        .{ .id = 1, .rect = r(10, 0, 400, 600), .tucked = false },
+        .{ .id = 2, .rect = r(900, 0, 400, 600), .tucked = false },
+    };
+    var s = plan(&before, &after, null, glide_ms, false);
+    try testing.expectEqual(@as(usize, 2), s.len);
+    try testing.expectEqual(@as(u32, 0), s.caughtUp());
+    // A frame that only moves both along leaves the count alone.
+    _ = s.step(5);
+    try testing.expectEqual(@as(u32, 0), s.caughtUp());
+    // Card 1 lands while card 2 is still on its way: the count moves once.
+    var landed_alone = false;
+    for (0..200) |_| {
+        if (s.step(16)) break;
+        if (s.caughtUp() == 1 and s.rect(2) != null) landed_alone = true;
+    }
+    try testing.expect(landed_alone);
+    try testing.expectEqual(@as(u32, 2), s.caughtUp());
 }
 
 test "plan: the sidebar expanding glides every card over from where it was, each resized once at the end (T2291)" {
