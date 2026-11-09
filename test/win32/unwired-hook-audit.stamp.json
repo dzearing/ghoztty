@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-09T13:32:24-08:00",
-    "commit":  "285d116c3",
+    "generated":  "2026-11-09T14:42:20-08:00",
+    "commit":  "449af8e2a",
     "uncommitted":  [
 
                     ],
@@ -472,7 +472,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "0c702da8c16da658a55e6ae84c5315250658f56bc881edcbc12d6c7ba5aa78a3",
-                  "src/apprt/win32/Window.zig":  "09323f6f2eebd141f1a22c1cbde5956e6d13fbacf0d78ed619f486680dffef0f",
+                  "src/apprt/win32/Window.zig":  "67889418443e14af2e076352f7463acf10d0a7292c8d61bcbe0340377db76902",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
                   "src/apprt/win32/window_broadcast.zig":  "9aaf66d945d0899628ede661e9e40f04f55551342659448b62aee06b979b1e4e",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
@@ -1369,7 +1369,7 @@
                   "test/win32/pane-sidebar-hue.ps1":  "661c963a69bf741e1c3030d49ae248108567b4d47590b52d97d3439e1c61df28",
                   "test/win32/pane-sidebar-motion-cost.ps1":  "2bd9f57da5b080fbd59d90559597bd84941ff895ac06910adf416def26dbd605",
                   "test/win32/pane-sidebar-persist.ps1":  "6ad94a4ee6ad93814b7d8bc63411924141cf842a50e8825f0b5a7e87eb7d9492",
-                  "test/win32/pane-sidebar-press-activate.ps1":  "08d4080c4fb836f8544d8a24ea4f4fc654b37429edc69f175bc98b5fd01ac957",
+                  "test/win32/pane-sidebar-press-activate.ps1":  "96ceeccac40d0c772c55649901ad20c6d3374147cd1f1269126fbaab6f450bb1",
                   "test/win32/pane-sidebar-rename.ps1":  "59ae17ddcee0857665100f6091041c1a789e7bb60c23fd5f11a4c81d1fd55bdf",
                   "test/win32/pane-sidebar-resize.ps1":  "49d9d94a8b58fecb90697d43fee251b046bd91cd4c29a4d88e798bfdaba9d274",
                   "test/win32/pane-sidebar-scroll.ps1":  "3de92ddbc84f348cc0b541d1e842094e0adb541ffee0531c80b1f75c3daeb970",
