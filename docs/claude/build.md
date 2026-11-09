@@ -308,6 +308,11 @@ zig build -Dapp-runtime=win32 -Doptimize=Debug      # -> zig-out\bin\ghoztty.exe
   installed app (or a user's dump or WPR trace), run
   `scripts\fetch-symbols.ps1` and use the `_NT_SYMBOL_PATH` it prints. The
   full recipe is in HACKING.md, "Symbolizing an installed build".
+  **Never use a `ghoztty.pdb` found beside the installed exe**: on this box
+  the one in `%LOCALAPPDATA%\Programs\Ghoztty` is a 2026-08-31 leftover from
+  the retired repo-build swap and matches no released build. cdb reports it
+  as `mismatched pdb`; forcing it with `.reload /i` gives confident, wrong
+  frame names (png, spirv_cross and ImGui symbols on a GL thread, T2839).
 
 - **Slow over Remote Desktop or on a Cloud PC** (T1950/T1951). With no GPU in
   the session, Ghoztty falls back to the bundled Mesa (`<install>\gl\opengl32.dll`)

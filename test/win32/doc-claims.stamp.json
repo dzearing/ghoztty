@@ -1,14 +1,14 @@
 {
     "guard":  "doc-claims",
     "script":  "test/win32/doc-claims.ps1",
-    "generated":  "2026-11-09T00:12:21-08:00",
-    "commit":  "c0ac7772d",
+    "generated":  "2026-11-09T07:50:32-08:00",
+    "commit":  "331830688",
     "uncommitted":  [
-                        "go.md"
+                        "docs/claude/build.md"
                     ],
     "files":  {
                   "CLAUDE.md":  "f31673951b69a322ddcd8112adb370a1306c472020828cccfb7c688b0ca379ea",
-                  "docs/claude/build.md":  "5e89df090efe84c6e21c90cb31b8cbab73f667b6da8028c6bd76be2ca2a1a4da",
+                  "docs/claude/build.md":  "5b079a9b0c75efac1c92ed4b7c6b159adf21f40c04ef2a04b4c08c9445d59824",
                   "docs/claude/cli.md":  "6721d0fdc91a29b3b8c502cb6cc3fedc390fe023052acdd64b0299a629b7cee9",
                   "docs/claude/remote.md":  "cadcd3be8a1f8ab4ee2a4d2ea0046e8cc5a30493df8f6da0b66b8989ac20dba6",
                   "docs/claude/sessions.md":  "a22df8938522820abff54aabee495046f68cacf89dead624872a3427531c94c7",

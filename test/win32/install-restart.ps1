@@ -21,8 +21,8 @@
 # What this asserts:
 #
 #   A  the source of both halves is in the shipped shape: the app registers for
-#      restart with the flags that mean "restart me for an update and nothing
-#      else", the window handler exits on a Restart Manager close and does NOT
+#      restart with the flags that mean "restart me for an update, and after a
+#      crash in a shipping build only" (T2839), the window handler exits on a Restart Manager close and does NOT
 #      on a cancelled session end, the module's tests are wired into the lane
 #      (T1191), and the MSI carries REBOOT=ReallySuppress with the Restart
 #      Manager left enabled.
@@ -102,13 +102,13 @@ foreach ($k in $paths.Keys) {
 
 $checks = [ordered]@{
     'A1 the app asks Windows to restart it after an update' =
-        { param($t) $t.rm -match 'RegisterApplicationRestart\(null, restart_flags\)' }
-    'A2 the restart flags exclude crash, hang and reboot relaunches' =
-        { param($t) $t.rm -match 'pub const restart_flags: u32 = RESTART_NO_CRASH \| RESTART_NO_HANG \| RESTART_NO_REBOOT;' }
+        { param($t) $t.rm -match 'RegisterApplicationRestart\(null, flags\)' -and $t.rm -match 'const flags = restartFlags\(builtin\.mode, isSandboxed\(\)\);' }
+    'A2 the restart flags always exclude hang and reboot relaunches' =
+        { param($t) $t.rm -match 'const base = RESTART_NO_HANG \| RESTART_NO_REBOOT;' }
     'A3 and do NOT exclude the update case they exist for' =
-        { param($t)
-          $line = ([regex]'(?m)^pub const restart_flags:.*$').Match($t.rm).Value
-          $line -and ($line -notmatch 'RESTART_NO_PATCH') }
+        { param($t) $t.rm -match 'pub fn restartFlags' -and $t.rm -notmatch '(?m)^\s*(const base|return)[^\r\n]*RESTART_NO_PATCH' }
+    'A3b a debug build or a test sandbox is never relaunched after a crash (T2839)' =
+        { param($t) $t.rm -match 'if \(mode == \.Debug or sandboxed\) return base \| RESTART_NO_CRASH;' -and $t.rm -match 'sandbox_env_vars = \[_\]\[\]const u8\{ "GHOZTTY_PIPE_SUFFIX", "GHOZTTY_AGENT_INSTANCE" \}' }
     'A4 a launched app registers itself' =
         { param($t) $t.app -match '(?m)^\s*restart_manager\.register\(\);' }
     'A5 an installer close is told apart from a logoff' =
@@ -151,11 +151,13 @@ $checks = [ordered]@{
 
 $mutations = [ordered]@{
     'A1 the app asks Windows to restart it after an update' =
-        @{ Key = 'rm'; Find = 'RegisterApplicationRestart(null, restart_flags)'; Replace = '0' }
-    'A2 the restart flags exclude crash, hang and reboot relaunches' =
-        @{ Key = 'rm'; Find = 'RESTART_NO_CRASH | RESTART_NO_HANG | RESTART_NO_REBOOT;'; Replace = '0;' }
+        @{ Key = 'rm'; Find = 'RegisterApplicationRestart(null, flags)'; Replace = '0' }
+    'A2 the restart flags always exclude hang and reboot relaunches' =
+        @{ Key = 'rm'; Find = 'const base = RESTART_NO_HANG | RESTART_NO_REBOOT;'; Replace = 'const base = 0;' }
     'A3 and do NOT exclude the update case they exist for' =
-        @{ Key = 'rm'; Find = 'RESTART_NO_CRASH | RESTART_NO_HANG | RESTART_NO_REBOOT;'; Replace = 'RESTART_NO_CRASH | RESTART_NO_HANG | RESTART_NO_REBOOT | RESTART_NO_PATCH;' }
+        @{ Key = 'rm'; Find = 'const base = RESTART_NO_HANG | RESTART_NO_REBOOT;'; Replace = 'const base = RESTART_NO_HANG | RESTART_NO_REBOOT | RESTART_NO_PATCH;' }
+    'A3b a debug build or a test sandbox is never relaunched after a crash (T2839)' =
+        @{ Key = 'rm'; Find = 'if (mode == .Debug or sandboxed) return base | RESTART_NO_CRASH;'; Replace = 'if (mode == .Debug) return base | RESTART_NO_CRASH;' }
     'A4 a launched app registers itself' =
         @{ Key = 'app'; Find = '    restart_manager.register();'; Replace = '' }
     'A5 an installer close is told apart from a logoff' =
@@ -479,7 +481,9 @@ try {
         Assert "L1 Windows reports the process registered for restart (flags=$flags)" ($flags -ge 0)
         Assert 'L2 registered for an UPDATE restart specifically (no RESTART_NO_PATCH)' `
             ($flags -ge 0 -and ($flags -band 4) -eq 0)
-        Assert 'L3 and not for crash, hang or reboot relaunches' `
+        # A debug build (and a sandboxed run) keeps RESTART_NO_CRASH (T2839):
+        # only a shipping build is relaunched after a crash.
+        Assert 'L3 and not for crash, hang or reboot relaunches (debug build)' `
             ($flags -eq 11)
 
         # The Restart Manager's close: WM_QUERYENDSESSION with

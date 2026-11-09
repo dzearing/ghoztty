@@ -37,30 +37,64 @@ const log = std.log.scoped(.restart_manager);
 /// of THIS application rather than a machine logoff or shutdown.
 pub const ENDSESSION_CLOSEAPP: usize = 0x00000001;
 
-/// Do not relaunch us after a crash. Crash handling is ours (the dump-and-
-/// report path), and a second process racing it helps nobody.
+/// Do not relaunch us after a crash. Set for Debug builds and test sandboxes
+/// only (see `restartFlags`): a shipping build WANTS the crash relaunch.
 pub const RESTART_NO_CRASH: u32 = 1;
-/// Do not relaunch us after a hang. Same reason.
+/// Do not relaunch us after a hang. A hang is answered by the user in the
+/// "not responding" dialog, and a relaunch there is out of this module's
+/// scope.
 pub const RESTART_NO_HANG: u32 = 2;
 /// Do not relaunch us after a reboot. Session restore already rebuilds the
 /// windows on the next real launch, and a reboot-relaunch would race it.
 pub const RESTART_NO_REBOOT: u32 = 8;
 
-/// The flags Ghoztty registers with: restart me for an UPDATE and for nothing
-/// else.
+/// The flags Ghoztty registers with (T2839).
 ///
-/// `RESTART_NO_PATCH` (4) is deliberately NOT in this set, and it is the whole
-/// point of the registration — that flag means "do not restart me when I was
-/// terminated for a system update", which is precisely the case this module
-/// exists to serve.
-pub const restart_flags: u32 = RESTART_NO_CRASH | RESTART_NO_HANG | RESTART_NO_REBOOT;
+/// **An update** is the case this module was written for (T1204):
+/// `RESTART_NO_PATCH` (4) is NEVER in the set, because that flag means "do not
+/// restart me when I was terminated for a system update".
+///
+/// **A crash** is the second case, for shipping builds only. On 2026-11-08 the
+/// installed release died inside the graphics driver's own thread, with no
+/// Ghoztty code on it, and every window went with it. The sessions were alive
+/// in the agent the whole time; nothing brought the windows back to them. On
+/// macOS the system answers a crash with its "quit unexpectedly - Reopen"
+/// prompt; Windows' counterpart is this registration, under which Windows
+/// Error Reporting relaunches the app once the crash is reported. Our own
+/// crash filter (`crash/windows.zig`) has already written its dump and
+/// returned by then, so nothing races it, and Windows only relaunches a
+/// process that ran at least 60 seconds, which is the crash-loop guard. The
+/// relaunch is a plain launch, so session restore re-attaches what the agent
+/// kept.
+///
+/// A Debug build and a test sandbox (`sandboxed`) keep `RESTART_NO_CRASH`:
+/// acceptance scripts crash the app on purpose (`crash:main`), and a relaunch
+/// from Windows lands on the user's own desktop, not the test desktop.
+pub fn restartFlags(mode: std.builtin.OptimizeMode, sandboxed: bool) u32 {
+    const base = RESTART_NO_HANG | RESTART_NO_REBOOT;
+    if (mode == .Debug or sandboxed) return base | RESTART_NO_CRASH;
+    return base;
+}
+
+/// The environment variables that put a process in a test sandbox: a private
+/// IPC endpoint (`os/ipc_client.zig`) or a private agent lineage
+/// (`remote/agent_lineage.zig`). Neither is ever set for a user's launch.
+pub const sandbox_env_vars = [_][]const u8{ "GHOZTTY_PIPE_SUFFIX", "GHOZTTY_AGENT_INSTANCE" };
+
+fn isSandboxed() bool {
+    inline for (sandbox_env_vars) |name| {
+        if (std.process.hasEnvVarConstant(name)) return true;
+    }
+    return false;
+}
 
 extern "kernel32" fn RegisterApplicationRestart(
     pwzCommandline: ?[*:0]const u16,
     dwFlags: u32,
 ) callconv(.winapi) i32;
 
-/// Register this process for Restart Manager relaunch after an update.
+/// Register this process for relaunch after an update and, in a shipping
+/// build, after a crash (`restartFlags`).
 ///
 /// The command line is null, which means "restart me with no arguments" — the
 /// executable name is supplied by Windows and must not be repeated here. No
@@ -68,15 +102,15 @@ extern "kernel32" fn RegisterApplicationRestart(
 /// session layout, where replaying whatever argv this process happened to carry
 /// (a `-e` launch command, a URL activation) would re-run it.
 ///
-/// Best effort by design. A failure here costs the polish of being reopened
-/// after an update; it must never cost the launch, so it is logged and
-/// swallowed.
+/// Best effort by design. A failure here costs the polish of being reopened;
+/// it must never cost the launch, so it is logged and swallowed.
 pub fn register() void {
     if (builtin.os.tag != .windows) return;
 
-    const hr = RegisterApplicationRestart(null, restart_flags);
+    const flags = restartFlags(builtin.mode, isSandboxed());
+    const hr = RegisterApplicationRestart(null, flags);
     if (hr == 0) {
-        log.info("registered for restart-after-update (flags=0x{x})", .{restart_flags});
+        log.info("registered for restart (flags=0x{x}, after crash={})", .{ flags, flags & RESTART_NO_CRASH == 0 });
     } else {
         log.warn("RegisterApplicationRestart failed hr=0x{x}; an installer can close us but will not reopen us", .{@as(u32, @bitCast(hr))});
     }
@@ -93,19 +127,39 @@ pub fn isCloseAppRequest(lparam: usize) bool {
     return (lparam & ENDSESSION_CLOSEAPP) != 0;
 }
 
-test "restart flags ask for update restarts and nothing else" {
+test "restart flags never exclude an update restart, in any build" {
     const testing = std.testing;
 
-    // The bit that would defeat the feature. RESTART_NO_PATCH == 4 means "do
-    // not restart me after a system update", and an update is the only case
-    // this registration serves.
+    // The bit that would defeat the update case. RESTART_NO_PATCH == 4 means
+    // "do not restart me after a system update".
     const RESTART_NO_PATCH: u32 = 4;
-    try testing.expect(restart_flags & RESTART_NO_PATCH == 0);
+    for ([_]std.builtin.OptimizeMode{ .Debug, .ReleaseSafe, .ReleaseFast, .ReleaseSmall }) |mode| {
+        for ([_]bool{ false, true }) |sandboxed| {
+            const flags = restartFlags(mode, sandboxed);
+            try testing.expect(flags & RESTART_NO_PATCH == 0);
+            try testing.expect(flags & RESTART_NO_HANG != 0);
+            try testing.expect(flags & RESTART_NO_REBOOT != 0);
+        }
+    }
+}
 
-    try testing.expect(restart_flags & RESTART_NO_CRASH != 0);
-    try testing.expect(restart_flags & RESTART_NO_HANG != 0);
-    try testing.expect(restart_flags & RESTART_NO_REBOOT != 0);
-    try testing.expectEqual(@as(u32, 11), restart_flags);
+test "a shipping build is relaunched after a crash (T2839)" {
+    const testing = std.testing;
+
+    // 10 = RESTART_NO_HANG | RESTART_NO_REBOOT: a crash relaunch is allowed.
+    try testing.expectEqual(@as(u32, 10), restartFlags(.ReleaseFast, false));
+    try testing.expectEqual(@as(u32, 10), restartFlags(.ReleaseSafe, false));
+    try testing.expectEqual(@as(u32, 10), restartFlags(.ReleaseSmall, false));
+}
+
+test "a debug build or a test sandbox is never relaunched after a crash" {
+    const testing = std.testing;
+
+    // 11 adds RESTART_NO_CRASH. A test that crashes the app on purpose must
+    // not get a window back on the user's desktop.
+    try testing.expectEqual(@as(u32, 11), restartFlags(.Debug, false));
+    try testing.expectEqual(@as(u32, 11), restartFlags(.Debug, true));
+    try testing.expectEqual(@as(u32, 11), restartFlags(.ReleaseFast, true));
 }
 
 test "an RM close is told apart from a logoff" {

@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-09T06:34:36-08:00",
-    "commit":  "ec4231c5c",
+    "generated":  "2026-11-09T07:28:42-08:00",
+    "commit":  "331830688",
     "uncommitted":  [
-
+                        "test/win32/install-restart.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -215,7 +215,7 @@
                   "test/win32/install-maintenance.ps1":  "bfd4f065d52cebcac54c03366eecbe1f5749b82aeab9b38d0b6d990b6fbe2839",
                   "test/win32/install-ownership.ps1":  "d6827b12d6ca61c014375f689c60247ff0e9810c84568c9fd397fb0b420bbc08",
                   "test/win32/install-prepare.ps1":  "ea23f3d11ebd6f3e08001d961084ffac716bfde439a96f3511ce7a6db0fe2972",
-                  "test/win32/install-restart.ps1":  "6f89730a5d506f7868f089548f72b392ea4d7c4ac02ca1a77b55429bed9562e5",
+                  "test/win32/install-restart.ps1":  "8b5d287e53876170027ce6dba82d31afb89b9a1e7db242f761606d893da7cae7",
                   "test/win32/install-walkthrough.ps1":  "1dc336fce66aff659cf18b7e4b8b240ea3cf814f382b13b8e8d0634237c2ff26",
                   "test/win32/ipc-child-exited.ps1":  "d976a5172b4773f582972eedc3fa1b00bb1c03f5c33eeb5efc06e5d52542112b",
                   "test/win32/ipc-command-keepalive.ps1":  "323e4bf749e4088eb5b1e82337f75ec0f87bc4c0cc9ccdad00679e416a7dc786",
