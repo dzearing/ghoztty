@@ -1,13 +1,13 @@
 {
     "guard":  "focus-glow-comp",
     "script":  "test/win32/focus-glow-comp.ps1",
-    "generated":  "2026-11-08T18:15:28-08:00",
-    "commit":  "43965bfb1",
+    "generated":  "2026-11-09T02:03:29-08:00",
+    "commit":  "3949027f0",
     "uncommitted":  [
-                        "src/apprt/win32/PaneDesk.zig"
+                        "src/apprt/win32/chrome_comp.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/chrome_comp.zig":  "bcd21500d09f27eb2580dae1e564c8b07cefa8a63795f8e89f8de67b4a629528",
+                  "src/apprt/win32/chrome_comp.zig":  "5b828ce3d3447436286c6e6bc9394706d2db0c2689c0f1b76171ad03b5e0138a",
                   "src/apprt/win32/PaneDesk.zig":  "ba0290a6c0c60c2a5599d13f998a854f33fc2d7665e0f3249de23b93d68b8739",
                   "test/win32/focus-glow-comp.ps1":  "2c73ede71171b8ebc8bfafa802d4af2fb8ee11d76201f0b81485b59a42f616f9"
               }

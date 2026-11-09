@@ -594,6 +594,10 @@ test "clipBox: a card inside the face keeps its corners; a cut one does not; an 
     try testing.expectEqual(PxRect{}, none.box);
 }
 
+/// A strength line along a declared face's glide: its value at the start
+/// and at the landing, unclamped.
+pub const Line = struct { from: f32, to: f32 };
+
 /// The carried content's strength along a fold declared to the compositor
 /// (T2778): `tweenCollapse` of the card's extent is linear in it, and the
 /// extent is linear in the glide's follower, so the strength is a straight
@@ -603,7 +607,7 @@ test "clipBox: a card inside the face keeps its corners; a cut one does not; an 
 /// starts below 0 and rises into 0..1 part of the way; the compositor holds
 /// it outside (`FacePose.fadeSpan`). Null when the line starts above 1 (a
 /// card drawn wider than its pane), which frames handle.
-pub fn fadeLine(d0: f64, d1: f64, strip: f64, full: f64, min_span: f64) ?struct { from: f32, to: f32 } {
+pub fn fadeLine(d0: f64, d1: f64, strip: f64, full: f64, min_span: f64) ?Line {
     const span = @max(full - strip, min_span);
     if (span <= 0) return null;
     const from = 1 - (full - d0) / span;
@@ -638,6 +642,34 @@ test "fadeLine: an unfold's strength rises from below 0, as tweenCollapse gives 
         const got = std.math.clamp(l.from + (l.to - l.from) * @as(f32, @floatCast(f)), 0, 1);
         try testing.expectApproxEqAbs(want, got, 1e-5);
     }
+}
+
+/// A live strip card's face strength along a glide declared to the
+/// compositor (T2822): the face is blended over its live pane at Mac's
+/// last-120 collapse (`collapseOf`), which is linear in the card's extent
+/// along the stack, so it too is a straight line in the follower's 0..1 -
+/// from the card drawn at `d0` to it landed at `d1`, both ends UNCLAMPED (a
+/// fold's starts below 0 while the card is still wider than the fade zone
+/// and is held at 0 until it rises in; it ends past 1 once the card is
+/// narrower than a strip). The extent is the card's along the stack, which
+/// is `collapseOf`'s shorter side for every card the fade reaches.
+pub fn liveLine(d0: f64, d1: f64, strip: f64, span: f64) ?Line {
+    if (span <= 0) return null;
+    return .{ .from = @floatCast(1 - (d0 - strip) / span), .to = @floatCast(1 - (d1 - strip) / span) };
+}
+
+test "liveLine: the strength collapseOf gives, as a line (T2822)" {
+    // A 400 px card folding into a strip landing at 36 px, zone 46 + 120.
+    const l = liveLine(400, 36, 46, 120).?;
+    try testing.expect(l.from < 0);
+    try testing.expect(l.to > 1);
+    for ([_]f64{ 0, 0.3, 0.6, 0.7, 0.8, 0.95, 1 }) |f| {
+        const d = 400 + (36 - 400) * f;
+        const want: f32 = @floatCast(pane_stack_slide.collapse(d, 46, 120));
+        const got = std.math.clamp(l.from + (l.to - l.from) * @as(f32, @floatCast(f)), 0, 1);
+        try testing.expectApproxEqAbs(want, got, 1e-5);
+    }
+    try testing.expectEqual(@as(@TypeOf(liveLine(0, 0, 0, 0)), null), liveLine(400, 36, 46, 0));
 }
 
 /// Where the strip name's picture goes for a face showing `vis` (client
@@ -708,6 +740,9 @@ pub const FaceDecl = struct {
     /// The carried frame the face shows (null: the band and name alone, an
     /// opening card whose frame has not landed yet).
     content: ?ContentId = null,
+    /// A live strip card's face (T2822): `opacity` is the whole face's
+    /// strength over its live pane (`liveLine`), not a carried frame's.
+    live: bool = false,
 
     /// Which frame a face carries: a frame that lands, or is replaced by one
     /// asked at another size, is a new declaration.

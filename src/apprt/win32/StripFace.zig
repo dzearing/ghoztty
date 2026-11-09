@@ -32,6 +32,10 @@ pub const StripFace = struct {
     hwnd: w32.HWND,
 
     shown: bool = false,
+    /// Up carrying its card's frame (T2457), not blended over a live pane:
+    /// only then does the live pane under it go (T2822 - a face declared
+    /// live from a fold's first frame is shown before its frame lands).
+    carrying: bool = false,
     /// The constant alpha last committed.
     alpha: u8 = 0,
 
@@ -278,8 +282,9 @@ pub const StripFace = struct {
             @as(i32, @intFromFloat(g.from.clip.bottom - g.from.clip.top)),
         });
         // `opening`/`content`: an unfold (T2779), and whether its frame has
-        // landed - comp-glide-hold-onscreen.ps1's unfold arm reads both.
-        log.debug("strip face glide declared clip_left={d:.1}->{d:.1} clip_right={d:.1}->{d:.1} content_x={d:.1}->{d:.1} opacity={d:.3}->{d:.3} enter_ms={d:.0} knee_ms={d:.0} span_ms={d:.0} opening={} content={}", .{
+        // landed - comp-glide-hold-onscreen.ps1's unfold arm reads both;
+        // `live`: a face blended over its live pane (T2822, the live arm).
+        log.debug("strip face glide declared clip_left={d:.1}->{d:.1} clip_right={d:.1}->{d:.1} content_x={d:.1}->{d:.1} opacity={d:.3}->{d:.3} enter_ms={d:.0} knee_ms={d:.0} span_ms={d:.0} opening={} content={} live={}", .{
             g.from.clip.left,
             g.to.clip.left,
             g.from.clip.right,
@@ -293,6 +298,7 @@ pub const StripFace = struct {
             g.span_s * 1000,
             opening,
             g.content.w > 0,
+            g.live,
         });
         return true;
     }
@@ -310,6 +316,7 @@ pub const StripFace = struct {
     }
     /// The uniform name every pane popup answers (T2012).
     pub fn hide(self: *StripFace) void {
+        self.carrying = false;
         // The glide is over: the DIB goes with it, so a 4K card's 30 MB is
         // not held between glides.
         self.releaseDib();

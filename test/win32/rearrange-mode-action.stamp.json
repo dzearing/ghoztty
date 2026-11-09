@@ -1,7 +1,7 @@
 {
     "guard":  "rearrange-mode-action",
     "script":  "test/win32/rearrange-mode-action.ps1",
-    "generated":  "2026-11-09T01:46:49-08:00",
+    "generated":  "2026-11-09T02:03:36-08:00",
     "commit":  "3949027f0",
     "uncommitted":  [
                         "src/apprt/win32/Window.zig"
@@ -9,7 +9,7 @@
     "files":  {
                   "src/apprt/win32/App.zig":  "a6345258d1eda0036a01a1dbf90b7bc1c16e8ced4276aca47e4a5803c5c48b16",
                   "src/apprt/win32/viewer_accel.zig":  "eddd19b45c76df3c4f397d96455e8690717b42f1f25de40b9d3c614f0e72e975",
-                  "src/apprt/win32/Window.zig":  "e90083a63d2ca0bb773adb957eb183aca87acac7a474d34b0c70b0ce98124e4b",
+                  "src/apprt/win32/Window.zig":  "caab4f68f44dc03f09359c78399e23733fe161f8c1963cafaca92a5ba43e2cd3",
                   "test/win32/rearrange-mode-action.ps1":  "6b737090574504451c98fb36261a4d38db4fa30dac1f8ee8fdde33689c6ece07"
               }
 }

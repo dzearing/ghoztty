@@ -727,6 +727,8 @@ pub const FaceVis = struct {
     content: FaceLayer = .{},
     content_effect: ?Obj = null,
     declared: bool = false,
+    /// The declared glide fades the whole face over a live pane (T2822).
+    declared_live: bool = false,
 
     pub fn live(self: *const FaceVis) bool {
         return self.visual != null;
@@ -775,6 +777,11 @@ pub const FaceGlide = struct {
     span_s: f64,
     fade_enter_s: ?f64 = null,
     fade_leave_s: ?f64 = null,
+    /// A live strip card's face (T2822): no carried frame, the band and name
+    /// blended over the live pane - so the strength line fades the WHOLE
+    /// face (the container's effect) at Mac's last-120 collapse, not a
+    /// frame over an opaque band.
+    live: bool = false,
 };
 
 /// A pane card's shadow riding with its pane visual (T2741): its offset is
@@ -2090,6 +2097,7 @@ pub const Host = struct {
         if (fv.content_effect) |o| release(o);
         fv.content_effect = null;
         fv.declared = false;
+        fv.declared_live = false;
         // The animated clip goes with its object; `faceShow` sets a fresh one.
         if (fv.clip) |o| release(o);
         fv.clip = null;
@@ -2137,6 +2145,13 @@ pub const Host = struct {
     pub fn faceDeclare(self: *Host, fv: *FaceVis, g: FaceGlide) Error!void {
         if (!self.faceAvailable()) return error.Unavailable;
         errdefer self.face_failed = true;
+        // A live face taking a carried frame (or back): the face is made
+        // again, container and all, so the live shape's animated strength on
+        // the container never rides over a frame meant to show at its own.
+        if (fv.declared and fv.declared_live != g.live and self.faceCurrent(fv)) {
+            _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, self.face_root.?, slot_dcomp_visual_remove_visual)(self.face_root.?, fv.visual.?);
+            releaseFace(fv);
+        }
         const vis = try self.ensureFaceVisual(fv);
         stage = "face-declare";
         defer stage = "";
@@ -2151,7 +2166,9 @@ pub const Host = struct {
         }
         try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_x)(vis, 0));
         try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, vis, slot_dcomp_visual_set_offset_y)(vis, 0));
-        if (fv.opacity != 1) {
+        // A carried or opening face is opaque and its frame fades; a live
+        // one (T2822) fades whole, its strength animated below.
+        if (!g.live and fv.opacity != 1) {
             try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, fv.effect.?, slot_dcomp_effect_set_opacity_float)(fv.effect.?, 1));
             fv.opacity = 1;
         }
@@ -2165,6 +2182,7 @@ pub const Host = struct {
             try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, content, slot_dcomp_visual_set_effect)(content, fv.content_effect.?));
         }
         fv.declared = true;
+        fv.declared_live = g.live;
         try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, band, slot_dcomp_visual_set_offset_x)(band, @floatFromInt(g.band_x)));
         try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, band, slot_dcomp_visual_set_offset_y)(band, @floatFromInt(g.band_y)));
         const SetAnim = *const fn (Obj, Obj) callconv(.winapi) HRESULT;
@@ -2195,7 +2213,13 @@ pub const Host = struct {
             if (g.fade_leave_s) |k| .{ .at_s = k, .value = std.math.clamp(g.to.opacity, 0, 1) } else null,
         );
         defer release(fade);
-        try check(slot(SetAnim, fv.content_effect.?, slot_dcomp_effect_set_opacity_anim)(fv.content_effect.?, fade));
+        if (g.live) {
+            // The whole face fades; nothing of it is a frame of its own.
+            try check(slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, fv.content_effect.?, slot_dcomp_effect_set_opacity_float)(fv.content_effect.?, 1));
+            try check(slot(SetAnim, fv.effect.?, slot_dcomp_effect_set_opacity_anim)(fv.effect.?, fade));
+            // Animated: the next plain set must go out whatever it is.
+            fv.opacity = -1;
+        } else try check(slot(SetAnim, fv.content_effect.?, slot_dcomp_effect_set_opacity_anim)(fv.content_effect.?, fade));
         self.face_uploads +|= 1;
         try self.commit();
     }
@@ -2217,8 +2241,11 @@ pub const Host = struct {
         stage = "face-root";
         const faces = try self.newVisual();
         errdefer release(faces);
-        // Over every pane visual already in the layer.
-        try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, root, slot_dcomp_visual_add_visual)(root, faces, 1, null));
+        // Over every pane visual already in the layer: `insertAbove` FALSE
+        // with no reference is the TOP of the z-order (TRUE is the bottom,
+        // which hid a face under a live pane it was blended over - T2822;
+        // a fold's or an opening card's pane is hidden, so nothing showed it).
+        try check(slot(*const fn (Obj, Obj, i32, ?Obj) callconv(.winapi) HRESULT, root, slot_dcomp_visual_add_visual)(root, faces, 0, null));
         self.face_root = faces;
         return faces;
     }

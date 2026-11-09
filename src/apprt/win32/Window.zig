@@ -9690,7 +9690,11 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
         break :a 255 - strip_face.alphaOf(c);
     } else 0;
     const alpha: u8 = if (carried != null or opening) 255 else strip_face.alphaOf(strip_face.collapseOf(vis, self.scale));
-    if (alpha == 0) return false;
+    // A live strip card in the composition pane tree (T2822) has its face
+    // declared from the fold's first frame - held at nothing until the card
+    // reaches the fade - so it is up on the compositor before any stall.
+    const live_decl = carried == null and !opening and self.liveFaceDeclarable(view);
+    if (alpha == 0 and !live_decl) return false;
 
     if (view.strip_face == null) {
         view.strip_face = StripFace.create(self.app.core_app.alloc, h, self.app.hinstance) catch |err| {
@@ -9715,10 +9719,13 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     // (T2778) and only handed again on a retarget or when the opening card's
     // frame lands, so they glide on through a busy window thread; frames
     // step the rest.
-    if ((carried != null or opening) and self.declareStripFace(view, f, face.card, face.axis, at, glide_at, carried, opening, client)) {
+    if ((carried != null or opening or live_decl) and self.declareStripFace(view, f, face.card, face.axis, at, glide_at, carried, opening, client)) {
         self.stripFaceCarriedTail(view, h, f, live, carried != null, face_was_up, opening, content_alpha, face.card, face.axis);
         return f.shown;
     }
+    // Not declared after all: frames step the face, and a live one shows
+    // only inside the fade.
+    if (alpha == 0) return false;
     var tb: i64 = 0;
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tb);
     // T2461: the face's paint and commit, for the glide line.
@@ -9911,7 +9918,7 @@ fn declareStripFace(
         if (d.to.clip.left == to_box.l and d.to.clip.top == to_box.t and d.to.clip.right == to_box.r and
             d.to.clip.bottom == to_box.b and d.to.content_x == @as(f32, @floatFromInt(land_pane.left)) and
             d.to.content_y == @as(f32, @floatFromInt(land_pane.top)) and
-            strip_face.FaceDecl.ContentId.eql(d.content, content_id)) return true;
+            strip_face.FaceDecl.ContentId.eql(d.content, content_id) and d.live == (carried == null and !opening)) return true;
         from = d.reached(now);
         d0 = if (horiz) from.clip.right - from.clip.left else from.clip.bottom - from.clip.top;
     } else {
@@ -9934,7 +9941,13 @@ fn declareStripFace(
         }
         d0 = @floatFromInt(if (horiz) card.width() else card.height());
     }
-    const line = strip_face.fadeLine(d0, d1, strip_face.strip_dip * sc, full, strip_face.fade_span_dip * sc) orelse return false;
+    // A live card's face (T2822) fades whole at Mac's last-120 collapse; a
+    // carried or opening one fades its frame over the tween.
+    const live = carried == null and !opening;
+    const line = if (live)
+        strip_face.liveLine(d0, d1, strip_face.strip_dip * sc, strip_face.fade_span_dip * sc) orelse return false
+    else
+        strip_face.fadeLine(d0, d1, strip_face.strip_dip * sc, full, strip_face.fade_span_dip * sc) orelse return false;
     from.opacity = line.from;
     var to: comp_tree.FacePose = .{
         .clip = .{
@@ -9969,7 +9982,7 @@ fn declareStripFace(
     var segs: [comp_overlay.follower_segments]comp_overlay.Cubic = undefined;
     const span_s = comp_overlay.fitFollower(dist, tau_s, pane_stack_slide.snap_px, &segs);
     if (span_s <= 0) return false;
-    const decl: strip_face.FaceDecl = .{ .t0 = now, .from = from, .to = to, .dist = dist, .tau_s = tau_s, .content = content_id };
+    const decl: strip_face.FaceDecl = .{ .t0 = now, .from = from, .to = to, .dist = dist, .tau_s = tau_s, .content = content_id, .live = live };
 
     // The band: everywhere the face goes on the way, never moved - the
     // glass over the desk is the desk's pixel where it stands.
@@ -10048,6 +10061,7 @@ fn declareStripFace(
         .span_s = span_s,
         .fade_enter_s = fade.enter_s,
         .fade_leave_s = fade.leave_s,
+        .live = live,
     }, decl, opening);
     return ok;
 }
@@ -10271,6 +10285,7 @@ fn stripFaceCarriedTail(
     axis: pane_stack_layout.Direction,
 ) void {
     _ = self;
+    f.carrying = carried and f.shown;
     // The face is up carrying the card, so the live pane under it goes -
     // after, never before, so no frame shows the desk where the card is. A
     // face this pass first showed is on screen only after the next
@@ -11348,7 +11363,7 @@ fn placeGrid(self: *Window, tree: SplitTree(PaneView), grid: *const pane_stack_g
         // live pane stays where the glide has it, hidden, so the face can
         // still read where it is.
         const carried = sliding != null and view.glide_snap == .ready and
-            if (view.strip_face) |f| f.shown else false;
+            if (view.strip_face) |f| f.shown and f.carrying else false;
         // One opening out of its strip (T2458) is placed at its slot's size
         // while hidden, its renderer awake to draw the frame its card
         // carries; the live window is shown once the card is out, at the size
@@ -11467,7 +11482,9 @@ fn declareGlideTreePane(self: *Window, view: *PaneView, sf: *Surface, now: w32.R
     if (!glideDeclareOn() or self.stack_slide_dt_ms != null) return false;
     const slide = if (self.stack_slide) |*s| s else return false;
     const id = pane_stack_grid.viewId(view);
-    if (slide.stripFace(id) != null) return false;
+    // A live strip card (T2822) is declared with its face: the pane here,
+    // the face blended over it by `paintStripFace` on the same follower.
+    if (slide.stripFace(id) != null and !self.liveFaceDeclarable(view)) return false;
     const now_card = slide.cardRect(id) orelse return false;
     const land = slide.landing(id) orelse return false;
     const land_win = self.leafRect(view, winRect(land.pane));
@@ -11479,6 +11496,21 @@ fn declareGlideTreePane(self: *Window, view: *PaneView, sf: *Surface, now: w32.R
         slide.tau_ms,
     );
     return true;
+}
+
+/// Whether `view`'s strip card glides with its LIVE pane under a face the
+/// compositor runs (T2822): a fold not carrying its frame - the frame not
+/// landed yet, or never asked for - in the composition pane tree, with the
+/// pane and the face both declarable. Its pane visual's offset and clip and
+/// the face's blend at Mac's last-120 collapse are then handed over
+/// together, so a busy window thread no longer freezes the card while its
+/// neighbours glide on. False: frames step both, as before.
+fn liveFaceDeclarable(self: *Window, view: *PaneView) bool {
+    if (!faceCompWanted() or !glideDeclareOn() or !glideTreeOn()) return false;
+    if (self.stack_slide_dt_ms != null or self.chrome_host == null) return false;
+    if (view.glide_snap == .ready or view.openingCarried()) return false;
+    const sf = view.surface() orelse return false;
+    return sf.tree_visual != null;
 }
 
 /// The shape a tree pane's visual has with its window at `win` (top-level
@@ -11759,6 +11791,9 @@ fn armGlideSnaps(self: *Window, tree: SplitTree(PaneView)) void {
             continue;
         }
         if (view.glide_snap != .none) continue;
+        // The live arm of comp-glide-hold-onscreen.ps1 (T2822): the fold
+        // never carries a frame, so its face is blended over the live pane.
+        if (chrome_comp.debugKnob("GHOZTTY_DEBUG_GLIDE_LIVE_FACE")) continue;
         const h = view.hwnd() orelse continue;
         if (w32.GetWindowLongW(h, w32.GWL_STYLE) & w32.WS_VISIBLE_STYLE == 0) continue;
         const at = childClientRect(parent, h) orelse continue;

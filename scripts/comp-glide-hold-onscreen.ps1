@@ -94,6 +94,16 @@
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms unfold
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms unfold -NoDeclare   # unfold.15 must go red
 #
+# LIVE (T2822) is the STALL arm with the fold never carrying a frame
+# (GHOZTTY_DEBUG_GLIDE_LIVE_FACE=1, debug builds): the folding card is its
+# live pane with the strip's face blended over it at Mac's last-120
+# collapse. Declared, the pane visual's path and the face's fade go to the
+# compositor together and the card folds on through the stall; stepped, it
+# freezes. .13 scores the folding card on film, .14 reads that its face was
+# declared live.
+#   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms live
+#   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms live -NoDeclare   # live.13 must go red
+#
 # -NegativeControl sets the slide to 0 ms (the instant re-layout from before
 # T2102): .5 must FAIL on every arm.
 
@@ -147,7 +157,7 @@ if ($NegativeControl) { $SlideMs = 0; "NEGATIVE CONTROL: the slide is 0 ms (an i
 if (-not $OutDir) { $OutDir = Join-Path $env:TEMP "ghoztty-comp-glide-$PID" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_GLIDE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS', 'GHOZTTY_DEBUG_GLIDE_STALL_MS', 'GHOZTTY_GLIDE_DECLARE', 'GHOZTTY_DEBUG_GLIDE_STALL_AT', 'GHOZTTY_FACE_COMP'
+$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_GLIDE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS', 'GHOZTTY_DEBUG_GLIDE_STALL_MS', 'GHOZTTY_GLIDE_DECLARE', 'GHOZTTY_DEBUG_GLIDE_STALL_AT', 'GHOZTTY_FACE_COMP', 'GHOZTTY_DEBUG_GLIDE_LIVE_FACE'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
@@ -388,7 +398,7 @@ function Score-Film($arm, $fdir) {
     Assert "$arm.7 held: no card's picture is ever larger than its rest size (clipped, never stretched)$(if ($heldBad) { ': ' + (($heldBad | Select-Object -First 4) -join '; ') + " ($($heldBad.Count))" })" ($heldBad.Count -eq 0)
     Assert "$arm.8 untorn: every card's rows share one left and one right edge in every frame$(if ($tornBad) { ': ' + (($tornBad | Select-Object -First 4) -join '; ') + " ($($tornBad.Count))" })" ($tornBad.Count -eq 0)
     if ($arm -eq 'tree') { Score-TreeFaces $arm $rows }
-    if ($arm -eq 'stall') { Score-Stall $arm $rows }
+    if ($arm -in 'stall', 'live') { Score-Stall $arm $rows }
     if ($arm -eq 'unfold') { Score-StallUnfold $arm $rows ($StallMs / 4.0) }
 }
 
@@ -547,9 +557,9 @@ $td = New-TestDesktop -Interactive
 
 try {
     foreach ($arm in $Arms) {
-        $comp = $arm -in 'on', 'tree', 'stall', 'unfold'
-        $isTree = $arm -in 'tree', 'stall', 'unfold'
-        $stalls = $arm -in 'stall', 'unfold'
+        $comp = $arm -in 'on', 'tree', 'stall', 'unfold', 'live'
+        $isTree = $arm -in 'tree', 'stall', 'unfold', 'live'
+        $stalls = $arm -in 'stall', 'unfold', 'live'
         "== arm '$arm' (GHOZTTY_COMP_PRESENT=$(if ($comp) { '1' } else { 'unset' }) PANE_TREE=$(if ($isTree) { '1' } else { 'unset' }), slide $SlideMs ms$(if ($stalls) { ", stall $StallMs ms$(if ($arm -eq 'unfold') { ' once the opening card is in' }), declare $(if ($NoDeclare) { 'off' } else { 'on' })" }))"
         [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
         $dir = Join-Path $OutDir $arm
@@ -568,6 +578,7 @@ try {
         if ($NoGlideTree) { $env:GHOZTTY_GLIDE_TREE = '0' } else { Remove-Item env:GHOZTTY_GLIDE_TREE -ErrorAction SilentlyContinue }
         if ($stalls) { $env:GHOZTTY_DEBUG_GLIDE_STALL_MS = "$StallMs" } else { Remove-Item env:GHOZTTY_DEBUG_GLIDE_STALL_MS -ErrorAction SilentlyContinue }
         if ($arm -eq 'unfold') { $env:GHOZTTY_DEBUG_GLIDE_STALL_AT = 'unfold' } else { Remove-Item env:GHOZTTY_DEBUG_GLIDE_STALL_AT -ErrorAction SilentlyContinue }
+        if ($arm -eq 'live') { $env:GHOZTTY_DEBUG_GLIDE_LIVE_FACE = '1' } else { Remove-Item env:GHOZTTY_DEBUG_GLIDE_LIVE_FACE -ErrorAction SilentlyContinue }
         if ($NoDeclare) { $env:GHOZTTY_GLIDE_DECLARE = '0' } else { Remove-Item env:GHOZTTY_GLIDE_DECLARE -ErrorAction SilentlyContinue }
         if ($NoFaceComp) { $env:GHOZTTY_FACE_COMP = '0' } else { Remove-Item env:GHOZTTY_FACE_COMP -ErrorAction SilentlyContinue }
         if ($NoBody) { $env:GHOZTTY_COMP_SHADOWS_NOBODY = '1' } else { Remove-Item env:GHOZTTY_COMP_SHADOWS_NOBODY -ErrorAction SilentlyContinue }
@@ -693,6 +704,16 @@ try {
                     Assert "$arm.17 the cards on show rode whole and the desk never recomposed for one moving ($full full-share card moves, $wholes riding whole at the landing)" ($full -eq 0 -and $wholes -ge 1)
                 }
             } else { Assert "$arm.17 the glide reported its desk work" $false }
+        }
+        # T2822: the folding card's live pane and its face went to the
+        # compositor together - the pane's path and the face, declared live.
+        if ($arm -eq 'live') {
+            $text = Read-Text $err
+            $dec = [regex]::Matches($text, 'pane visual glide declared').Count
+            Assert "$arm.11 the glide was handed to the compositor ($dec pane path(s) declared)" ($dec -ge 1)
+            $lf = [regex]::Matches($text, 'strip face glide declared [^\r\n]*content=false live=true').Count
+            $carried = [regex]::Matches($text, 'strip face glide declared [^\r\n]*opening=false content=true').Count
+            Assert "$arm.14 the folding card's face was handed to the compositor live, over its pane ($lf live declaration(s), $carried carrying a frame)" ($lf -ge 1 -and $carried -eq 0)
         }
         # T2779: the opening card's face went to the compositor with the frame
         # it lands with, and the stall it was scored through happened.
