@@ -12426,9 +12426,11 @@ fn stackSlideTick(self: *Window) void {
     for (s.stripItems()) |sg| if (s.movingStrip(sg.id)) |m| {
         log.debug("stack strip glide left={d} top={d} right={d} bottom={d}", .{ m.left, m.top, m.right, m.bottom });
     };
+    const end_t = if (done and self.drag_perf_on) std.time.Instant.now() catch null else null;
     if (done) {
         if (self.stackGesturing()) self.restStackSlide() else self.endStackSlide();
     }
+    const end_us: u64 = if (end_t) |t0| (if (std.time.Instant.now()) |e| e.since(t0) / std.time.ns_per_us else |_| 0) else 0;
     if (quiet) {
         laid = false;
         self.glide_quiet_ticks += 1;
@@ -12448,7 +12450,9 @@ fn stackSlideTick(self: *Window) void {
     // In the composition tree the tick's pane moves, their card shapes and
     // the desk paint go up in one commit (T2571).
     const batch = self.treeGlideBatch();
+    const live_t = if (self.drag_perf_on) std.time.Instant.now() catch null else null;
     self.layoutSplitsLive();
+    const live_us: u64 = if (live_t) |t0| (if (std.time.Instant.now()) |e| e.since(t0) / std.time.ns_per_us else |_| 0) else 0;
     const flush_t = if (self.drag_perf_on and batch != null) std.time.Instant.now() catch null else null;
     if (batch) |h| h.flush() catch self.deskVisualFailed();
     if (flush_t) |t0| flush_us = if (std.time.Instant.now()) |e| e.since(t0) / std.time.ns_per_us else |_| 0;
@@ -12459,9 +12463,15 @@ fn stackSlideTick(self: *Window) void {
     // the captured frames (`stack trace batch` carries the same clock).
     if (stackTraceOn()) {
         const cost_us = if (std.time.Instant.now()) |e| e.since(now) / std.time.ns_per_us else |_| 0;
-        stackTrace("stack trace tick gap_us={d} cost_us={d} wait_us={d} waits={d} resizes={d} timeouts={d} resize_us={d} place_us={d} paint_us={d} cards_us={d} overlay_us={d}", .{
+        // T2732: step, the glide's end, the whole layout pass and the flush
+        // too, so a tick whose cost is not place + paint names where it went.
+        stackTrace("stack trace tick gap_us={d} cost_us={d} step_us={d} end_us={d} live_us={d} flush_us={d} wait_us={d} waits={d} resizes={d} timeouts={d} resize_us={d} place_us={d} paint_us={d} cards_us={d} overlay_us={d}", .{
             gap_us orelse 0,
             cost_us,
+            step_us,
+            end_us,
+            live_us,
+            flush_us,
             self.frame_wait_last_us,
             self.frame_wait_count,
             self.frame_wait_resizes,
