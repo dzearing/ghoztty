@@ -730,9 +730,11 @@ pub fn reconcile(
 /// Whether an agent-held window is ALREADY on this instance's screen (T1002),
 /// so rebuilding it would put the same window up twice.
 ///
-/// Asked by the DEFERRED restore about the windows only the agent remembers.
-/// The launch pass never has to ask: it runs before any window of this process
-/// exists. The deferred pass runs up to a minute later, by which time this
+/// Asked by the DEFERRED restore about the windows only the agent remembers,
+/// and by the LAUNCH pass whenever a launch command's window already exists
+/// (T2842 - `appendNotShownHere`): that window is created before restore
+/// (T406), and its own layout sync can mirror it into the agent's store before
+/// the pull reads it back. The deferred pass runs up to a minute later, by which time this
 /// process has a startup window, anything the user opened since, and a blob in
 /// the agent's store for each of them (`pushLayoutBlobs` mirrors every live
 /// window under its uuid). Two ways the agent's copy can be one of ours:
@@ -751,6 +753,24 @@ pub fn shownHere(
 ) bool {
     if (live_keys.contains(windowKey(win))) return true;
     return sessionsClaimed(live_sessions, win);
+}
+
+/// Append to `out` every window of `windows` that is NOT `shownHere`, and
+/// return how many were appended (T2842). `out` borrows from `windows`.
+pub fn appendNotShownHere(
+    alloc: Allocator,
+    windows: []const Window,
+    live_keys: *const std.StringHashMapUnmanaged(void),
+    live_sessions: *const std.StringHashMapUnmanaged(void),
+    out: *std.ArrayList(Window),
+) Allocator.Error!usize {
+    var kept: usize = 0;
+    for (windows) |win| {
+        if (shownHere(win, live_keys, live_sessions)) continue;
+        try out.append(alloc, win);
+        kept += 1;
+    }
+    return kept;
 }
 
 /// The persisted IPC name (a window target or a pane name) a restored window
@@ -1599,6 +1619,49 @@ test "shownHere: a live key or a live session makes an agent window ours already
     try testing.expect(shownHere(same_shell, &keys, &sessions));
     // The crash orphan the deferred pass exists to bring back.
     try testing.expect(!shownHere(orphan, &keys, &sessions));
+}
+
+test "T2842: the launch pass drops the launch command's own window and keeps the orphans" {
+    const alloc = testing.allocator;
+    var n0: [1]Node = undefined;
+    var t0: [1]Tab = undefined;
+    var n1: [1]Node = undefined;
+    var t1: [1]Tab = undefined;
+    var n2: [1]Node = undefined;
+    var t2: [1]Tab = undefined;
+    // 2026-11-08's shape: the union holds two genuine crash orphans and the
+    // launch command's window, read back from the agent's store by its session
+    // (its blob landed under a key the pull had never seen).
+    const orphan_a = reconcileWindow("window-1", "uuid-a", "sess-a", &n0, &t0);
+    const ours = reconcileWindow("window-1", "uuid-launch", "sess-launch", &n1, &t1);
+    const orphan_b = reconcileWindow("window-3", "uuid-b", "sess-b", &n2, &t2);
+    const offered = [_]Window{ orphan_a, ours, orphan_b };
+
+    var keys: std.StringHashMapUnmanaged(void) = .empty;
+    defer keys.deinit(alloc);
+    var sessions: std.StringHashMapUnmanaged(void) = .empty;
+    defer sessions.deinit(alloc);
+    var out: std.ArrayList(Window) = .empty;
+    defer out.deinit(alloc);
+
+    // Nothing on screen (an ordinary launch): the whole set, in order.
+    try testing.expectEqual(@as(usize, 3), try appendNotShownHere(alloc, &offered, &keys, &sessions, &out));
+    try testing.expectEqualStrings("uuid-b", out.items[2].uuid.?);
+    out.clearRetainingCapacity();
+
+    // The launch command's pane holds sess-launch: its window is not rebuilt,
+    // and both orphans still are.
+    try sessions.put(alloc, "sess-launch", {});
+    try testing.expectEqual(@as(usize, 2), try appendNotShownHere(alloc, &offered, &keys, &sessions, &out));
+    try testing.expectEqualStrings("uuid-a", out.items[0].uuid.?);
+    try testing.expectEqualStrings("uuid-b", out.items[1].uuid.?);
+    out.clearRetainingCapacity();
+
+    // Same answer by key alone (the mirror read back before its session id
+    // was published).
+    sessions.clearRetainingCapacity();
+    try keys.put(alloc, "uuid-launch", {});
+    try testing.expectEqual(@as(usize, 2), try appendNotShownHere(alloc, &offered, &keys, &sessions, &out));
 }
 
 test "reconcile: LOCAL wins on a key collision" {

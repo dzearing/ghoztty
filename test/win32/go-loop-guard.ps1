@@ -3850,6 +3850,37 @@ $env:GHOZTTY_LOOP_ALERT_SINK = $ccPrevSink
 
 Remove-Item $lock, $state -Force -ErrorAction SilentlyContinue
 
+# --- MK: claim marks the RIGHT window, or says it did not (T2842) ----------
+# 2026-11-08: one pane id on two windows made `+rename --target=<id>` answer
+# "ambiguous"; the claim discarded that and printed "marked this window", so
+# lane a ran unmarked for 1h50m. The fallback picks a window by TARGET - the
+# only holder, or the holder whose copy of the pane runs this process's shell -
+# and anything it cannot decide must read MARK FAILED. Pure: the selector
+# alone, so it needs no app.
+. (Join-Path $repo 'scripts\lib\LoopMark.ps1')
+$mkPane = 'F6AEC833-7923-4048-85E5-7A4D1F2E4EE4'
+function MkWin($target, $leaves) { [pscustomobject]@{ Target = $target; Leaves = @($leaves) } }
+function MkLeaf($id, $leafPid) { [pscustomobject]@{ id = $id; pid = $leafPid } }
+$mkOther = MkWin 'window-5' @((MkLeaf 'AAAA0000-0000-0000-0000-000000000000' 900))
+$mkOne = Select-LoopMarkTarget -Windows @($mkOther, (MkWin 'window-1' @((MkLeaf $mkPane 72412)))) -PaneId $mkPane -Ancestors @(1, 2)
+Assert "MK1 one holder: marked by its target (got '$($mkOne.Target)')" ($mkOne.Target -eq 'window-1')
+# The 2026-11-08 shape: two holders; this process runs under pid 72412's shell.
+$mkTwo = @($mkOther, (MkWin 'window-2' @((MkLeaf $mkPane 46668))), (MkWin 'window-1' @((MkLeaf $mkPane 72412))))
+$mkDup = Select-LoopMarkTarget -Windows $mkTwo -PaneId $mkPane -Ancestors @(36904, 72412, 69172)
+Assert "MK2 duplicate id: the holder running THIS shell is picked (got '$($mkDup.Target)')" ($mkDup.Target -eq 'window-1')
+$mkNone = Select-LoopMarkTarget -Windows $mkTwo -PaneId $mkPane -Ancestors @(36904)
+Assert 'MK3 duplicate id and no ancestor match: no target (reads MARK FAILED)' ($null -eq $mkNone.Target -and $mkNone.Why -match '2 windows')
+$mkGone = Select-LoopMarkTarget -Windows @($mkOther) -PaneId $mkPane -Ancestors @(72412)
+Assert 'MK4 no holder at all: no target' ($null -eq $mkGone.Target)
+# The live walk: this harness's own parent is an ancestor, and the walk never
+# lists this process itself.
+$mkAnc = @(Get-SelfAncestorPids)
+$mkParent = [int](Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId
+Assert 'MK5 the ancestor walk starts at this process''s parent' ($mkAnc.Count -ge 1 -and $mkAnc[0] -eq $mkParent -and -not ($mkAnc -contains $PID))
+# And the claim no longer prints a mark it never checked.
+$mkSrc = Get-Content (Join-Path $repo 'scripts\go-loop-exec.ps1') -Raw
+Assert 'MK6 claim does not discard the rename result' (-not ($mkSrc -match 'Set-Mark \$PaneId \| Out-Null'))
+
 # --- cleanup --------------------------------------------------------------
 Kill-Sleepers
 Stop-DebugGhoztty

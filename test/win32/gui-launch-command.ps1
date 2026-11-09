@@ -364,6 +364,15 @@ $winsD = @(Snapshot-Windows $tmpD 'd2')
 Assert "D6 restore also rebuilt the previous window (>= 2 windows)" ($winsD.Count -ge 2)
 $idsD = @(Leaves-Of-Windows $winsD | ForEach-Object { [string]$_.id })
 Assert "D7 the seed pane came back with its own pane id" ($idsD -contains $seedId)
+# T2842: and NOTHING ELSE came back. On 2026-11-08 a crash-recovery launch with
+# `--initial-command` put up the command window AND a second window holding a
+# bare shell under the SAME pane id, so every `--target=<id>` after it answered
+# "ambiguous" and the go-loop could not mark its own window. D6 (>= 2) passes
+# with that duplicate on screen; these two do not.
+AssertEq "D8 exactly the seed window and the command window (T2842: no duplicate)" 2 $winsD.Count
+$dupIds = @($idsD | Where-Object { $_ -ne '' } | Group-Object | Where-Object { $_.Count -gt 1 } |
+    ForEach-Object { $_.Name })
+Assert "D9 no pane id is issued to two panes (T2842; dup: $($dupIds -join ','))" ($dupIds.Count -eq 0)
 
 Stop-TestProcs
 

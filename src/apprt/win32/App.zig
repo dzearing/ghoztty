@@ -4584,6 +4584,16 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
     const pass_windows: []const session_layout.Window = if (only) |keys| blk: {
         self.collectDeferredWindows(union_set, keys, &deferred_set);
         break :blk deferred_set.items;
+    } else if (self.windows.items.len > 0) blk: {
+        // T2842: the launch pass is NOT always first any more. A launch command
+        // (T406) opens its window before this runs, and the pumps above let that
+        // window's layout sync mirror it into the agent's store - so the pull
+        // reads our own window back as a "crash orphan". Rebuilding it put a
+        // second window on screen with the SAME pane id and a fresh shell
+        // (2026-11-08: every `--target=<id>` then answered "ambiguous"). Same
+        // filter the deferred pass applies, for the same reason.
+        self.collectNotShownHere(union_set.windows, &deferred_set);
+        break :blk deferred_set.items;
     } else union_set.windows;
 
     // Probe the roster. A null set ⇒ the probe failed (UNKNOWN — attempt every
@@ -4839,31 +4849,17 @@ fn collectDeferredWindows(
     }
     if (!self.restore_agent_unasked) return;
 
-    // What is on screen right now. Keys borrow each Window's `layout_uuid` and
-    // ids borrow each pane's termio; both outlive this function, which is the
-    // only place the sets are read.
-    var live_keys: std.StringHashMapUnmanaged(void) = .empty;
-    defer live_keys.deinit(gpa);
-    var live_sessions: std.StringHashMapUnmanaged(void) = .empty;
-    defer live_sessions.deinit(gpa);
-    for (self.windows.items) |w| {
-        live_keys.put(gpa, w.layoutUuid(), {}) catch {};
-        for (0..w.tab_count) |t| {
-            var it = w.tab_trees[t].iterator();
-            while (it.next()) |entry| {
-                const surface = entry.view.surface() orelse continue;
-                if (!surface.core_surface_ready) continue;
-                const sid = surface.core_surface.remoteSessionId() orelse continue;
-                live_sessions.put(gpa, sid, {}) catch {};
-            }
-        }
-    }
+    var live: LiveSets = .{};
+    defer live.deinit(gpa);
+    self.collectLiveSets(&live);
+    const live_keys = &live.keys;
+    const live_sessions = &live.sessions;
 
     var late: usize = 0;
     var shown: usize = 0;
     for (union_set.adoptedWindows()) |win| {
         if (containsKey(carried, session_layout.windowKey(win))) continue;
-        if (session_layout.shownHere(win, &live_keys, &live_sessions)) {
+        if (session_layout.shownHere(win, live_keys, live_sessions)) {
             shown += 1;
             continue;
         }
@@ -4874,6 +4870,61 @@ fn collectDeferredWindows(
         "session-restore: the agent holds {d} window(s) the launch could not ask about " ++
             "({d} already on screen here, left alone)",
         .{ late, shown },
+    );
+}
+
+/// What this instance has on screen right now: every window's layout key and
+/// every session a live pane shows. Keys borrow each Window's `layout_uuid` and
+/// ids borrow each pane's termio; both outlive the restore pass that reads them.
+const LiveSets = struct {
+    keys: std.StringHashMapUnmanaged(void) = .empty,
+    sessions: std.StringHashMapUnmanaged(void) = .empty,
+
+    fn deinit(self: *LiveSets, gpa: Allocator) void {
+        self.keys.deinit(gpa);
+        self.sessions.deinit(gpa);
+    }
+};
+
+/// Fill `out` from the live windows. GUI thread.
+fn collectLiveSets(self: *App, out: *LiveSets) void {
+    const gpa = self.core_app.alloc;
+    for (self.windows.items) |w| {
+        out.keys.put(gpa, w.layoutUuid(), {}) catch {};
+        for (0..w.tab_count) |t| {
+            var it = w.tab_trees[t].iterator();
+            while (it.next()) |entry| {
+                const surface = entry.view.surface() orelse continue;
+                if (!surface.core_surface_ready) continue;
+                const sid = surface.core_surface.remoteSessionId() orelse continue;
+                out.sessions.put(gpa, sid, {}) catch {};
+            }
+        }
+    }
+}
+
+/// The LAUNCH pass's window set when this process already shows a window
+/// (T2842): every offered window except the ones that ARE ours - a launch
+/// command's window, read back from the agent's store or the manifest after
+/// its own layout sync mirrored it there. `out` borrows from `windows`.
+fn collectNotShownHere(
+    self: *App,
+    windows: []const session_layout.Window,
+    out: *std.ArrayList(session_layout.Window),
+) void {
+    const gpa = self.core_app.alloc;
+    var live: LiveSets = .{};
+    defer live.deinit(gpa);
+    self.collectLiveSets(&live);
+    const kept = session_layout.appendNotShownHere(gpa, windows, &live.keys, &live.sessions, out) catch |err| {
+        log.warn("session-restore: own-window filter failed err={}; restoring the full set", .{err});
+        out.clearRetainingCapacity();
+        out.appendSlice(gpa, windows) catch {};
+        return;
+    };
+    if (kept != windows.len) log.info(
+        "session-restore: {d} offered window(s) are already on screen here (the launch command's own); left alone",
+        .{windows.len - kept},
     );
 }
 

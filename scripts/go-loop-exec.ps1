@@ -78,6 +78,7 @@ $ErrorActionPreference = 'Continue'
 
 if (-not $Repo) { $Repo = Split-Path -Parent $PSScriptRoot }
 . (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
+. (Join-Path $PSScriptRoot 'lib\LoopMark.ps1')
 if (-not $Marker) { $Marker = Get-LoopLaneMarker (Get-LoopLaneId -Repo $Repo) }
 if (-not $LockPath) { $LockPath = Join-Path (Join-Path $Repo 'temp') 'go-loop.lock.json' }
 if (-not $GhozttyExe) {
@@ -127,6 +128,8 @@ function Get-Windows {
             Target = $w.target
             Title  = $w.title
             Panes  = @($panes | ForEach-Object { $_.id })
+            # T2842: id + shell pid per pane, for Set-MarkChecked's fallback.
+            Leaves = @($panes)
         }
     }
     return $out
@@ -151,6 +154,24 @@ function Test-Marked($w) {
 
 function Set-Mark($paneId) {
     return Ghoz @('+rename', "--target=$paneId", "--title=$Marker $Label")
+}
+# T2842: mark, and SAY whether it worked. A rename by pane id fails when that
+# id is ambiguous (two windows hold it); fall back to the window target that
+# holds THIS process's pane. Returns @{ Ok; Line } - the line is what the
+# caller prints, `MARK FAILED ...` whenever the title did not land.
+function Set-MarkChecked($paneId) {
+    $r = Set-Mark $paneId
+    if ($r.Code -eq 0) { return @{ Ok = $true; Line = "  marked this window `"$Marker $Label`"" } }
+    $first = "$($r.Out) $($r.Err)".Trim()
+    $pick = Select-LoopMarkTarget -Windows (Get-Windows) -PaneId $paneId -Ancestors (Get-SelfAncestorPids)
+    if ($pick.Target) {
+        $r2 = Ghoz @('+rename', "--target=$($pick.Target)", "--title=$Marker $Label")
+        if ($r2.Code -eq 0) {
+            return @{ Ok = $true; Line = "  marked this window `"$Marker $Label`" by target $($pick.Target) (rename by pane id failed: $first; $($pick.Why))" }
+        }
+        return @{ Ok = $false; Line = "  MARK FAILED: rename by pane id: $first; by target $($pick.Target): $("$($r2.Out) $($r2.Err)".Trim())" }
+    }
+    return @{ Ok = $false; Line = "  MARK FAILED: rename by pane id: $first; no fallback ($($pick.Why)). Mark by hand: ghoztty +rename --target=<window> --title=`"$Marker $Label`"" }
 }
 function Clear-Mark($paneId) {
     # An empty title unpins the window title; the pane's own title takes over.
@@ -215,8 +236,8 @@ switch ($Action) {
 
     'mark' {
         if (-not $PaneId) { 'ERROR no pane id (not running in a Ghoztty pane)'; exit 2 }
-        $r = Set-Mark $PaneId
-        if ($r.Code -ne 0) { "ERROR rename failed: $($r.Out) $($r.Err)".Trim(); exit 2 }
+        $m = Set-MarkChecked $PaneId
+        if (-not $m.Ok) { "ERROR rename failed:$($m.Line)"; exit 2 }
         "MARKED pane=$PaneId title=`"$Marker $Label`""
         exit 0
     }
@@ -414,8 +435,8 @@ switch ($Action) {
         # 3. We are primary. Say so in the title, then clear out any rival.
         "PRIMARY $acq"
         if ($PaneId) {
-            Set-Mark $PaneId | Out-Null
-            "  marked this window `"$Marker $Label`""
+            # T2842: never claim a mark that did not land.
+            (Set-MarkChecked $PaneId).Line
         }
 
         # T783: is the loop's own harness stale? Reported here because this is

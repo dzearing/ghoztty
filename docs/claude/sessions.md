@@ -168,6 +168,15 @@ already exists), which is how the command used to vanish with no window, no
 error and no log line (T406). Acceptance: section D of
 `test/win32/gui-launch-command.ps1`.
 
+Because that window exists first, the launch restore is **not** the only
+window owner any more: its pumps can let the command window's layout sync
+mirror it into the agent's store, and the pull then reads it back as a crash
+orphan. The launch pass therefore skips every offered window that is already
+on screen here (`session_layout.appendNotShownHere`, by key or by session),
+the same filter the deferred pass applies. Without it the 2026-11-08 crash
+recovery rebuilt the command window as a second window with a fresh shell
+under the SAME pane id, and every `--target=<id>` answered "ambiguous" (T2842).
+
 Session lifecycle: a process DIES when the user closes its pane/tab/window (or
 `+close`s it — the CLOSE lands when the close's undo window expires), when the
 shell itself exits, or when the agent dies (children then relaunch as

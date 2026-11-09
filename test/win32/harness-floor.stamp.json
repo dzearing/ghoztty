@@ -1,10 +1,12 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-09T07:28:42-08:00",
-    "commit":  "331830688",
+    "generated":  "2026-11-09T08:50:30-08:00",
+    "commit":  "1e0b4c0d7",
     "uncommitted":  [
-                        "test/win32/install-restart.ps1"
+                        "test/win32/gate-negatives.ps1",
+                        "test/win32/go-loop-guard.ps1",
+                        "test/win32/gui-launch-command.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -184,15 +186,15 @@
                   "test/win32/frame-score.ps1":  "d98795f50fd5c8a171332eef326942ed62398f6f8e62601c1102716d240b89d9",
                   "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",
                   "test/win32/fullscreen-guard.ps1":  "a6c1a301a11d7493a2e7b5411fbcb25daea08302c0a822e91d98fd6db0a67450",
-                  "test/win32/gate-negatives.ps1":  "7e0ef9062e784a8030023ed4a1f56dd6c2ca19acc4338fdd935bd881a8a2b0c3",
+                  "test/win32/gate-negatives.ps1":  "fba6f5bac7c19ce352c3d7499b123325858e0d639f7f9ec2119e04777b08cdec",
                   "test/win32/ghoztty-cleanup.ps1":  "443de2b0fdefdd38c064d1245b3ccb9ce653ac68a37f664590ade379dd93d7ee",
                   "test/win32/glass-frame-origin.ps1":  "0a0dfeed8dff3e6ba20ec9402905ac5490ab37b43d85d9316be106de72e26b56",
                   "test/win32/gl-device-lost.ps1":  "846da12ba3f0648dab4b6eade32c0964bd390a9f5f2d88f2afee2417587c6ff0",
-                  "test/win32/go-loop-guard.ps1":  "867938928ab88455778f06787818514206383446c1bb923ef6eafbe1d266f2ef",
+                  "test/win32/go-loop-guard.ps1":  "f9c7e73ba9fd8c201ebb19aa1fd1a1b22197e0b34bbb5f9b36d1df43fc0f0780",
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/guard-due.ps1":  "281420e26fbca13e3dfdd2707d8ef2294e277a3c0171aff3e53e5d0f87b939d6",
-                  "test/win32/gui-launch-command.ps1":  "8e90681b56d560d7779cccbeb8ba4c3c652d48b42fbc2546a0e35ac4662c69aa",
+                  "test/win32/gui-launch-command.ps1":  "fa0a4aad0300e381786ac6c0d32b7666372c22ab9351bfb6d44a6ddfdcb84de3",
                   "test/win32/gui-postmortem.ps1":  "4f9ba3bb7629a71ca32e0c793212c56dfabeb1ed8c96dc41eacddf0d0598da98",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",
                   "test/win32/harness-floor.ps1":  "3b83bf58f86f59dbf9fc47524f5401100fd4bdfce9f9a1a550fed0c1947b5e9b",
@@ -215,7 +217,7 @@
                   "test/win32/install-maintenance.ps1":  "bfd4f065d52cebcac54c03366eecbe1f5749b82aeab9b38d0b6d990b6fbe2839",
                   "test/win32/install-ownership.ps1":  "d6827b12d6ca61c014375f689c60247ff0e9810c84568c9fd397fb0b420bbc08",
                   "test/win32/install-prepare.ps1":  "ea23f3d11ebd6f3e08001d961084ffac716bfde439a96f3511ce7a6db0fe2972",
-                  "test/win32/install-restart.ps1":  "8b5d287e53876170027ce6dba82d31afb89b9a1e7db242f761606d893da7cae7",
+                  "test/win32/install-restart.ps1":  "6f89730a5d506f7868f089548f72b392ea4d7c4ac02ca1a77b55429bed9562e5",
                   "test/win32/install-walkthrough.ps1":  "1dc336fce66aff659cf18b7e4b8b240ea3cf814f382b13b8e8d0634237c2ff26",
                   "test/win32/ipc-child-exited.ps1":  "d976a5172b4773f582972eedc3fa1b00bb1c03f5c33eeb5efc06e5d52542112b",
                   "test/win32/ipc-command-keepalive.ps1":  "323e4bf749e4088eb5b1e82337f75ec0f87bc4c0cc9ccdad00679e416a7dc786",

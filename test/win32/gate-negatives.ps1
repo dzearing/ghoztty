@@ -124,6 +124,10 @@ $Registry = @(
     [pscustomobject]@{ Label = 'PRIMARY'; Kind = 'status' }
     [pscustomobject]@{ Label = 'ERROR'; Kind = 'status' }
     [pscustomobject]@{ Label = 'MARKED'; Kind = 'status' }
+    # T2842: the claim could not title its window (ambiguous pane id, no
+    # fallback). Reported instead of "marked"; never a refusal - the turn goes
+    # on unmarked, which is what the line exists to make visible.
+    [pscustomobject]@{ Label = 'MARK FAILED'; Kind = 'status' }
     [pscustomobject]@{ Label = 'UNMARKED'; Kind = 'status' }
     [pscustomobject]@{ Label = 'EXEC'; Kind = 'status' }
     # The off switch (2026-08-23). STOPPED is a GATE, not a status line: it is a
