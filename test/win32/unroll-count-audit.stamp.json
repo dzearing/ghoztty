@@ -1,8 +1,8 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-09T00:26:29-08:00",
-    "commit":  "29d98abef",
+    "generated":  "2026-11-09T01:06:34-08:00",
+    "commit":  "33ef4f51c",
     "uncommitted":  [
 
                     ],
@@ -21,7 +21,7 @@
                   "scripts/comp-desk-onscreen.ps1":  "aaab26f3dd26297f681e4736416e43a73636231adf51a7f048f772762d749c38",
                   "scripts/comp-flat-onscreen.ps1":  "f4e677d04745196654ca641c7ffe5053b84320318a24f6c4621371136ca4bebc",
                   "scripts/comp-gl-baseline.ps1":  "b7f792f81e8cd6e6ad7b62ac7329665ec70edbf3a8bde0b37ff3157ec48e05ae",
-                  "scripts/comp-glide-hold-onscreen.ps1":  "fc7c7623f63448cb667bf8bcd2013e24cb17e79ac17709f5e4386e783fdc0ff7",
+                  "scripts/comp-glide-hold-onscreen.ps1":  "276196703656d6eb4019a993a637dcfacebb059db599ae4bc636fc323d40b18f",
                   "scripts/comp-overlay-onscreen.ps1":  "caad81c2f4ba9863f6e436a26e8ae5b564a8e20da35b893cf5bced8175d8d06a",
                   "scripts/comp-present-glide.ps1":  "70bb4876a8a90a82052cc33848ba70c02f6a81d15dc6e379fab01fa03598b81f",
                   "scripts/comp-present-onscreen.ps1":  "8e30e7b69d5d7628e2a2cf3c76590a12a20644b942a6a8c71c365b89a131c1fa",
