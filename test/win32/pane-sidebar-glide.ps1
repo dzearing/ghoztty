@@ -36,12 +36,21 @@
 # user's foreground - asserted by the foreground watcher, not assumed.
 # -NegativeControl runs with both motions at 0 ms (a snap) and MUST fail.
 #
-#   powershell -NoProfile -File test\win32\pane-sidebar-glide.ps1
+#   7. -Tree (T2827): in the composition pane tree the column's glide is the
+#      compositor's - the log names its declaration, and the column's window
+#      holds one width the whole way (the rail's: an expand leaves it, a
+#      collapse shrinks it at once) while a visual over it draws the glide,
+#      landing at the new width. Sections 2-6 are the stepped glide's and are
+#      not run there. -Tree with GHOZTTY_GLIDE_DECLARE=0 is its negative
+#      control and MUST fail.
+#
+#   powershell -NoProfile -File test\win32\pane-sidebar-glide.ps1 [-Tree]
 # @timing-sensitive
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
     [switch]$NegativeControl,
-    [switch]$Interactive
+    [switch]$Interactive,
+    [switch]$Tree
 )
 
 $ErrorActionPreference = 'Continue'
@@ -176,6 +185,13 @@ $savedColumn = $env:GHOZTTY_SIDEBAR_COLUMN_MS
 $savedSlide = $env:GHOZTTY_STACK_SLIDE_MS
 $env:GHOZTTY_SIDEBAR_COLUMN_MS = "$glideMs"
 $env:GHOZTTY_STACK_SLIDE_MS = "$glideMs"
+# The composition pane tree (T2827's arm): the window's chrome host, its pane
+# layer and the presenter that puts the panes on it.
+$treeVars = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE'
+$savedTree = @{}
+if ($Tree) {
+    foreach ($v in $treeVars) { $savedTree[$v] = [Environment]::GetEnvironmentVariable($v); [Environment]::SetEnvironmentVariable($v, '1') }
+}
 
 Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
@@ -218,6 +234,38 @@ try {
     $gutter = (Get-Pane $top $hP).Left - $sb.Right
     "  the gutter between the column and P at rest: $gutter"
 
+    if ($Tree) {
+    "== 7: in the composition tree the column's glide is the compositor's (T2827)"
+    foreach ($leg in @(
+            @{ Name = 'expanding'; From = $railW; To = $panelW; Mode = 'expanded' },
+            @{ Name = 'collapsing'; From = $panelW; To = $railW; Mode = 'mini' })) {
+        $sb = Get-Sidebar $top
+        $mark = Get-LogCount
+        Assert "$($leg.Name): toggle click delivered" (Click $top $sb.Hwnd (Get-ToggleCenter $sb))
+        Start-Sleep -Milliseconds 250
+        $widths = @()
+        for ($i = 0; $i -lt 6; $i++) {
+            $c = Get-Sidebar $top
+            if ($null -ne $c) { $widths += $c.Width }
+            Start-Sleep -Milliseconds 120
+        }
+        Start-Sleep -Milliseconds 2400
+        $new = New-LogLines $mark
+        $new | Where-Object { $_ -match 'pane sidebar column (glide|declared|undeclared)' } | ForEach-Object { "    log: $_" }
+        $sb = Get-Sidebar $top
+        Assert "$($leg.Name): the column's glide ran ($($leg.From) -> $($leg.To))" (@($new | Where-Object { $_ -match "pane sidebar column glide $($leg.Mode) from=$($leg.From) to=$($leg.To) .*follows_grid=true" }).Count -eq 1)
+        Assert "...and was declared to the compositor, toward $($leg.To) (log)" (@($new | Where-Object { $_ -match "pane sidebar column declared from=\d+ to=$($leg.To) " }).Count -eq 1)
+        Assert "...and its landing did not move (no undeclare)" (@($new | Where-Object { $_ -match 'pane sidebar column undeclared' }).Count -eq 0)
+        # Held where it was when the glide was declared, or shrunk at once to
+        # where it goes - the narrower: never wider than the visual's start.
+        $declFrom = @($new | ForEach-Object { if ($_ -match 'pane sidebar column declared from=(\d+) ') { [int]$Matches[1] } }) | Select-Object -First 1
+        $hold = if ($null -ne $declFrom) { [math]::Min($declFrom, $leg.To) } else { -1 }
+        Assert "...the column's window held one width mid-glide, under the visual ($($widths -join ',') vs $hold, the narrower of $declFrom and $($leg.To))" ($widths.Count -eq 6 -and @($widths | Where-Object { $_ -ne $hold }).Count -eq 0)
+        Assert "...it landed declared (log)" (@($new | Where-Object { $_ -match "pane sidebar column glide done width=$($leg.To) .*declared=true" }).Count -eq 1)
+        Assert "...at its new width ($($sb.Width) vs $($leg.To))" ($null -ne $sb -and [math]::Abs($sb.Width - $leg.To) -le 1)
+    }
+    }
+    if (-not $Tree) {
     "== 2: expanding glides"
     $mark = Get-LogCount
     Assert "toggle click delivered" (Click $top $sb.Hwnd (Get-ToggleCenter $sb))
@@ -355,6 +403,7 @@ try {
         Assert "the blade is drawn at $($lefts.Count) places on its way (need 2+): it glides, not jumps" ($lefts.Count -ge 2)
         Assert "P's pane stays hidden behind its blade throughout ($pSeen samples on show)" ($pSeen -eq 0)
     }
+    } # -not $Tree
 
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids
@@ -383,10 +432,11 @@ if ($null -ne $savedColumn) { $env:GHOZTTY_SIDEBAR_COLUMN_MS = $savedColumn }
 else { Remove-Item env:GHOZTTY_SIDEBAR_COLUMN_MS -ErrorAction SilentlyContinue }
 if ($null -ne $savedSlide) { $env:GHOZTTY_STACK_SLIDE_MS = $savedSlide }
 else { Remove-Item env:GHOZTTY_STACK_SLIDE_MS -ErrorAction SilentlyContinue }
+foreach ($v in $savedTree.Keys) { [Environment]::SetEnvironmentVariable($v, $savedTree[$v]) }
 
 Complete-TestBody  # T1039: the run reached the end of its body
 
-if ($script:failures -eq 0 -and -not $NegativeControl) {
+if ($script:failures -eq 0 -and -not $NegativeControl -and -not $Tree) {
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard pane-sidebar-glide -Repo $repo 2>&1 | ForEach-Object { "  $_" }

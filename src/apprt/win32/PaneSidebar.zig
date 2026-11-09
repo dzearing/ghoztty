@@ -66,6 +66,7 @@ const transition = @import("pane_sidebar_transition.zig");
 const xf = @import("pane_sidebar_xfade.zig");
 const list_comp = @import("pane_sidebar_transition_comp.zig");
 const Dib32 = @import("dib32.zig");
+const chrome_comp = @import("chrome_comp.zig");
 const App = @import("App.zig");
 const toc = @import("viewer_toc_layout.zig");
 const color_math = @import("color_math.zig");
@@ -926,6 +927,13 @@ pub fn place(self: *PaneSidebar, target: w32.RECT, mode: pane_sidebar.Mode, scal
     if (self.column) |*c| {
         // Placed again mid-glide (a layout pass, a window resize): it goes to
         // the width the window gives it now, from where it is drawn.
+        // Declared (T2827), the compositor's glide goes somewhere else now:
+        // back to steps, from the width the grid's edge gives it.
+        if (c.declared and c.to_w != rect.right - rect.left) {
+            c.declared = false;
+            self.window.dropSidebarColumn();
+            log.info("pane sidebar column undeclared: its landing moved {d} -> {d}", .{ c.to_w, rect.right - rect.left });
+        }
         c.to_w = rect.right - rect.left;
         if (c.h != rect.bottom - rect.top) {
             self.dropColumn();
@@ -3933,6 +3941,9 @@ fn startColumn(self: *PaneSidebar, c: xf.Column, to_w: i32) void {
 /// The column's width now: where the grid's leading edge is drawn less the
 /// gutter while it follows the grid (T2406), else its own clock's.
 fn columnWidth(self: *PaneSidebar, c: *const xf.Column) i32 {
+    // Declared (T2827): the window stays where it was placed, under the
+    // visual that draws the glide.
+    if (c.declared) return c.hold_w;
     if (c.following) {
         if (self.window.paneSidebarFollowLag()) |lag| return transition.followWidth(c.from_w, c.to_w, lag);
         return c.to_w;
@@ -3950,8 +3961,14 @@ pub fn gridStepped(self: *PaneSidebar) void {
     if (self.window.paneSidebarFollowLag() == null) return self.landColumn();
     var cur: w32.RECT = undefined;
     if (w32.GetClientRect(self.hwnd, &cur) == 0) return;
-    const w = self.columnWidth(c);
     c.frames.step();
+    // The compositor plays it (T2827): nothing to place or paint per step.
+    if (c.declared) return;
+    if (!c.declare_tried) {
+        c.declare_tried = true;
+        if (self.declareColumn(c, cur.right - cur.left)) return;
+    }
+    const w = self.columnWidth(c);
     if (w != cur.right - cur.left) {
         _ = w32.SetWindowPos(self.hwnd, null, 0, 0, w, cur.bottom - cur.top, w32.SWP_NOMOVE | w32.SWP_NOZORDER | w32.SWP_NOACTIVATE);
     }
@@ -3960,22 +3977,85 @@ pub fn gridStepped(self: *PaneSidebar) void {
     _ = w32.UpdateWindow(self.hwnd);
 }
 
+/// Hand a followed glide to the compositor (T2827), on its first grid
+/// step, with the column's window `cur_w` wide: the two pictures
+/// `paintColumn` crossfades - the frame it left and the frame it goes to,
+/// each over the desk where it does not reach, opaque - go up whole, and
+/// `Window.declareSidebarColumn` runs the cut at the card's edge and the
+/// new frame's strength on the grid glide's follower. The window is then
+/// placed once at the narrower of where it is and where it goes (a
+/// collapse shrinks it now; an expand leaves it), so it is never seen past
+/// the visual, and the grid's steps neither place nor paint it. False -
+/// stepped as before - when the window cannot take it, or while the edge
+/// is held: its bar is drawn on the card's moving edge every frame.
+fn declareColumn(self: *PaneSidebar, c: *xf.Column, cur_w: i32) bool {
+    if (self.edge != null) return false;
+    const old = c.old orelse return false;
+    const w0 = self.columnWidth(c);
+    if (w0 == c.to_w or c.h <= 0 or c.from_w <= 0) return false;
+    {
+        const screen = w32.GetDC(null) orelse return false;
+        defer _ = w32.ReleaseDC(null, screen);
+        if (!self.keepColumnFrames(c, screen, w0, c.h)) return false;
+    }
+    _ = w32.GdiFlush();
+    const new = c.new orelse return false;
+    const under = c.under orelse return false;
+    const bw: usize = @intCast(c.buf_w);
+    const h: usize = @intCast(c.h);
+    if (c.buf_w < @max(w0, c.to_w) or old.pixels.len < @as(usize, @intCast(c.from_w)) * h) return false;
+    const n = bw * h;
+    const px = self.alloc.alloc(u32, n * 2) catch return false;
+    defer self.alloc.free(px);
+    const opaque_ = 0xFF000000;
+    const ow: usize = @intCast(c.from_w);
+    const nw: usize = @intCast(c.new_w);
+    for (0..h) |y| {
+        const u_row = under.pixels[y * bw ..][0..bw];
+        const band = px[y * bw ..][0..bw];
+        const content = px[n + y * bw ..][0..bw];
+        for (0..bw) |x| {
+            band[x] = (if (x < ow) old.pixels[y * ow + x] else u_row[x]) | opaque_;
+            content[x] = (if (x < nw) new.pixels[y * nw + x] else u_row[x]) | opaque_;
+        }
+    }
+    const pic = struct {
+        fn f(s: []const u32, w: usize, ht: usize) chrome_comp.FacePic {
+            return .{ .px = s, .stride = @intCast(w), .w = @intCast(w), .h = @intCast(ht) };
+        }
+    }.f;
+    const p = transition.followProgress(c.from_w, c.to_w, w0);
+    if (!self.window.declareSidebarColumn(self.hwnd, pic(px[0..n], bw, h), pic(px[n..], bw, h), w0, c.to_w, @floatCast(p))) return false;
+    c.declared = true;
+    c.hold_w = @min(cur_w, c.to_w);
+    if (c.hold_w != cur_w) {
+        _ = w32.SetWindowPos(self.hwnd, null, 0, 0, c.hold_w, c.h, w32.SWP_NOMOVE | w32.SWP_NOZORDER | w32.SWP_NOACTIVATE);
+    }
+    return true;
+}
+
 /// The glide is over: the column at the width it went to, repainted plain.
 fn landColumn(self: *PaneSidebar) void {
     const c = self.column orelse return;
+    // A declared glide's visual comes down only once the window under it
+    // shows the column as it lands (T2827), so no frame shows the window at
+    // the width it held.
+    self.column.?.declared = false;
     self.dropColumn();
     const f = c.frames;
-    log.info("pane sidebar column glide done width={d} frames={d} steps={d} gap_max_us={d} paint_max_us={d} drawn={d} followed={}", .{ c.to_w, f.count, f.steps, f.gap_max_us, f.cost_max_us, c.drawn, c.following });
+    log.info("pane sidebar column glide done width={d} frames={d} steps={d} gap_max_us={d} paint_max_us={d} drawn={d} followed={} declared={}", .{ c.to_w, f.count, f.steps, f.gap_max_us, f.cost_max_us, c.drawn, c.following, c.declared });
     var cur: w32.RECT = undefined;
     if (w32.GetClientRect(self.hwnd, &cur) != 0 and cur.right - cur.left != c.to_w) {
         _ = w32.SetWindowPos(self.hwnd, null, 0, 0, c.to_w, cur.bottom - cur.top, w32.SWP_NOMOVE | w32.SWP_NOZORDER | w32.SWP_NOACTIVATE);
     }
     _ = w32.InvalidateRect(self.hwnd, null, 0);
     _ = w32.UpdateWindow(self.hwnd);
+    if (c.declared) self.window.dropSidebarColumn();
 }
 
 /// Stop the glide, if one runs, without placing or repainting.
 fn dropColumn(self: *PaneSidebar) void {
+    if (self.column) |*c| if (c.declared) self.window.dropSidebarColumn();
     if (self.column) |*c| c.deinit();
     self.column = null;
     FrameClock.disarm(self.hwnd, TIMER_COLUMN);

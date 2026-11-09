@@ -1088,6 +1088,10 @@ stack_slide_dt_ms: ?f64 = null,
 /// Whether the glide under way is the grid's for the pane sidebar collapsing
 /// or expanding (T2406): the sidebar's card follows it step by step.
 stack_slide_column: bool = false,
+/// The pane sidebar's column handed to the compositor for the grid glide it
+/// follows (T2827, `declareSidebarColumn`): its two frames under one visual
+/// in the window's face layer, the right edge on the grid's follower.
+sidebar_face: chrome_comp.FaceVis = .{},
 /// The hand has rested `drag_hold.quiet_ms` mid-drag (T2459): the terminals
 /// took the size the layout has them at, until the next move holds them again.
 drag_hold_quiet: bool = false,
@@ -2469,6 +2473,7 @@ fn releaseOwnedResources(self: *Window) void {
     if (self.presenter) |p| p.destroy(self.app.core_app.alloc);
     self.presenter = null;
     self.blade_rides.dropAll(null);
+    self.dropSidebarColumn();
     if (self.chrome_host) |*cc| cc.deinit();
     self.chrome_host = null;
     self.caption_mirror.deinit();
@@ -12008,6 +12013,80 @@ pub fn paneSidebarFollowLag(self: *const Window) ?i32 {
     if (!self.stack_slide_column) return null;
     const s = if (self.stack_slide) |*v| v else return null;
     return s.leadingLag();
+}
+
+/// Hand the pane sidebar's column glide to the compositor whole (T2827):
+/// the column window `sb_hwnd` is drawn, for the rest of the grid glide it
+/// follows, by one visual in the window's face layer - `band` (the frame it
+/// left, over the desk where that frame does not reach) with `content` (the
+/// frame it goes to, likewise) over it at a strength running from
+/// `from_opacity` to 1, both `band.w` x `band.h` and never moved, cut at the
+/// column's right edge, which runs from `w0` to `to_w` on the grid glide's
+/// follower. That is `PaneSidebar.paintColumn`'s crossfade by how far the
+/// card is between its widths, played by the compositor: the edge goes
+/// where the grid's leading card goes (both on the same follower over the
+/// same distance, declared in the same tick), so the gutter between them
+/// holds through a busy window thread instead of opening and closing. The
+/// face layer is over every child window, so the column window under it is
+/// placed once (`PaneSidebar.gridStepped`) and its pixels are not seen
+/// until the landing drops this. False - the column is stepped as before -
+/// off the composition tree, under `GHOZTTY_GLIDE_DECLARE=0`, under a test's
+/// forced slow frames, or when the host cannot take it.
+pub fn declareSidebarColumn(self: *Window, sb_hwnd: w32.HWND, band: chrome_comp.FacePic, content: chrome_comp.FacePic, w0: i32, to_w: i32, from_opacity: f32) bool {
+    if (!faceCompWanted() or !glideDeclareOn() or self.stack_slide_dt_ms != null) return false;
+    if (!self.stack_slide_column or w0 == to_w) return false;
+    const slide = if (self.stack_slide) |*s| s else return false;
+    const host = if (self.chrome_host) |*h| h else return false;
+    if (!host.faceAvailable()) return false;
+    const parent = self.hwnd orelse return false;
+    if (band.w < @max(w0, to_w) or content.w != band.w or content.h != band.h or band.h <= 0) return false;
+    var wr: w32.RECT = undefined;
+    if (w32.GetWindowRect(sb_hwnd, &wr) == 0) return false;
+    var o: w32.POINT = .{ .x = wr.left, .y = wr.top };
+    if (w32.ScreenToClient(parent, &o) == 0) return false;
+    const ox: f32 = @floatFromInt(o.x);
+    const oy: f32 = @floatFromInt(o.y);
+    const bottom = oy + @as(f32, @floatFromInt(band.h));
+    const from: comp_tree.FacePose = .{
+        .clip = .{ .left = ox, .top = oy, .right = ox + @as(f32, @floatFromInt(w0)), .bottom = bottom },
+        .content_x = ox,
+        .content_y = oy,
+        .opacity = std.math.clamp(from_opacity, 0, 1),
+    };
+    var to = from;
+    to.clip.right = ox + @as(f32, @floatFromInt(to_w));
+    to.opacity = 1;
+    const dist = comp_tree.FacePose.distance(from, to);
+    const tau_s = slide.tau_ms / 1000.0;
+    var segs: [comp_overlay.follower_segments]comp_overlay.Cubic = undefined;
+    const span_s = comp_overlay.fitFollower(dist, tau_s, pane_stack_slide.snap_px, &segs);
+    if (span_s <= 0) return false;
+    host.faceDeclare(&self.sidebar_face, .{
+        .band = band,
+        .band_x = o.x,
+        .band_y = o.y,
+        .name = null,
+        .content = content,
+        .from = from,
+        .to = to,
+        .curve = &segs,
+        .span_s = span_s,
+    }) catch |err| {
+        const f = chrome_comp.Host.lastFailure();
+        log.warn("pane sidebar column declare failed ({}) at {s}: hr=0x{x:0>8}; the column is stepped", .{ err, f.stage, chrome_comp.hex(f.hr) });
+        host.faceDrop(&self.sidebar_face);
+        return false;
+    };
+    // The acceptance oracle (pane-sidebar-glide.ps1 -Tree) reads this.
+    log.info("pane sidebar column declared from={d} to={d} at={d},{d} h={d} opacity={d:.3}->1 span_ms={d:.0}", .{ w0, to_w, o.x, o.y, band.h, from.opacity, span_s * 1000 });
+    return true;
+}
+
+/// Take the sidebar column's declared glide (T2827) off the compositor, if
+/// one is up. Commits.
+pub fn dropSidebarColumn(self: *Window) void {
+    if (!self.sidebar_face.live()) return;
+    if (self.chrome_host) |*h| h.faceDrop(&self.sidebar_face) else chrome_comp.Host.releaseFace(&self.sidebar_face);
 }
 
 /// Hold or release every terminal's grid for the drag under way (T2459,

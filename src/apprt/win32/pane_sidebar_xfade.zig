@@ -47,6 +47,15 @@ pub const Column = struct {
     /// grid step, and it lands when the grid's glide does. Off when there is
     /// no grid glide to follow; then it eases alone, on its own clock.
     following: bool = false,
+    /// A followed glide handed to the compositor (T2827,
+    /// `Window.declareSidebarColumn`), asked once, on its first grid step:
+    /// whether it was tried, whether it took, and the width the column's
+    /// window holds meanwhile - placed once, never past the narrower of the
+    /// two widths, under the visual that draws the glide. A change of where
+    /// it goes takes it back to steps.
+    declare_tried: bool = false,
+    declared: bool = false,
+    hold_w: i32 = 0,
     /// The frame it goes to (`new_w` x `h`), drawn once and kept for the
     /// glide (T2403): re-rendering the whole panel every frame cost 8-11 ms
     /// against an 8.3 ms period at 120 Hz. Drawn again only when the width
