@@ -124,15 +124,26 @@ public static class T2401Flood {
 # The log since `$From` once a column glide there has landed and the drag has
 # let go (or `$Ms` ran out): the posted moves drain after the flood, so a
 # fixed sleep reads too early.
+#
+# T2846: the drain is the app's, and posted moves are never coalesced the way
+# a real mouse's are, so on a slow day 1300 of them took longer than 15 s. The
+# push then pressed while the PULL was still being dragged: its own lines fell
+# after the budget and the pull's late `edge drag end` was read as the push's.
+# So the budget is generous, `$script:GlideWaitMs` says how long the drain
+# took, and the caller asserts the drag let go before starting another one.
 function Wait-GlideDone([int]$From, [int]$Ms) {
     $sw = [Diagnostics.Stopwatch]::StartNew()
     do {
         $l = New-LogLines $From
         $landed = @($l | Where-Object { $_ -match 'column glide done' }).Count -ge 1
         $let = @($l | Where-Object { $_ -match 'edge drag end' }).Count -ge 1
-        if ($landed -and $let) { Start-Sleep -Milliseconds 300; return New-LogLines $From }
+        if ($landed -and $let) {
+            $script:GlideWaitMs = $sw.ElapsedMilliseconds
+            Start-Sleep -Milliseconds 300; return New-LogLines $From
+        }
         Start-Sleep -Milliseconds 200
     } while ($sw.ElapsedMilliseconds -lt $Ms)
+    $script:GlideWaitMs = -1
     return New-LogLines $From
 }
 # T2406 (Mac 7e2d0a9da): the gutter between the column's drawn edge and the
@@ -343,12 +354,15 @@ try {
     $cx = $ex - $sb.Left; $cy = $ey - $sb.Top
     $posted = [T2401Flood]::Run($sb.Hwnd, $cx + (Px 150), $cx + (Px 170), $cy, $glideMs + 600)
     [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X ($ex + (Px 170)) -Y $ey -Action up)
-    $new = Wait-GlideDone $mark 15000
-    "  pulled out under $posted posted moves"
+    $new = Wait-GlideDone $mark 45000
+    "  pulled out under $posted posted moves (drained in $($script:GlideWaitMs) ms; -1 = not within 45 s)"
     $new | Where-Object { $_ -match 'column glide|expanded=' } | ForEach-Object { "    log: $_" }
     $done = @(Get-GlideFrames $new)
     Assert "the pull expanded it (log)" (@($new | Where-Object { $_ -match 'pane sidebar expanded=true cause=edge drag' }).Count -ge 1)
     Assert "...and every step its glide took was painted while the moves kept coming ($(Format-GlideFrames $done))" (Test-GlidePainted $done)
+    # T2846: the push must not press until the pull has let go, or its lines
+    # and the pull's interleave and the push is scored on the pull's release.
+    Assert "...and the pull's drag let go before the push presses (log 'edge drag end')" (@($new | Where-Object { $_ -match 'edge drag end' }).Count -ge 1)
     $sb = Get-Sidebar $top
     $px = Get-PanelEdgeX $sb
     $mark = Get-LogCount
@@ -356,8 +370,8 @@ try {
     $cx = $px - $sb.Left
     $posted = [T2401Flood]::Run($sb.Hwnd, $cx - (Px 130), $cx - (Px 140), $cy, $glideMs + 600)
     [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X ($px - (Px 140)) -Y $ey -Action up)
-    $new = Wait-GlideDone $mark 15000
-    "  pushed in under $posted posted moves"
+    $new = Wait-GlideDone $mark 45000
+    "  pushed in under $posted posted moves (drained in $($script:GlideWaitMs) ms; -1 = not within 45 s)"
     $new | Where-Object { $_ -match 'column glide|expanded=' } | ForEach-Object { "    log: $_" }
     $done = @(Get-GlideFrames $new)
     Assert "the push tucked it into the rail (log)" (@($new | Where-Object { $_ -match 'pane sidebar expanded=false cause=edge drag' }).Count -ge 1)
