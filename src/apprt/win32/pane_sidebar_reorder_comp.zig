@@ -17,9 +17,13 @@
 //! row's own antialiased edges, the lift's glass and its soft shadow with
 //! whatever the column shows beneath it.
 //!
-//! Stays stepped: the held row's settle once let go (T2848), the tray
-//! header's hairline and caption, and window/group drags in the all-windows
-//! list (T2849).
+//! Let go, the held row settles on the tree too (T2848): it is two pictures
+//! under one box - the lift's glass and shadow, and the row itself - so the
+//! lift's fade is one declared opacity animation on the first, and the glide
+//! to where the row landed one declared offset animation on the box.
+//!
+//! Stays stepped: the tray header's hairline and caption, and window/group
+//! drags in the all-windows list (T2849).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -104,9 +108,19 @@ pub const ReorderComp = struct {
     generation: u64 = 0,
     rows: [cap]Row = undefined,
     count: usize = 0,
+    /// The held row: a box the pointer (and, let go, the glide) moves, with
+    /// its lift - glass and shadow - and the row itself on it (T2848).
     held: Layer = .{},
+    held_back: Layer = .{},
+    held_row: Layer = .{},
     held_key: usize = 0,
     held_pad: [2]i32 = .{ 0, 0 },
+    held_left: i32 = 0,
+    /// The settle declared so far: the lift's fade, and the glide's target
+    /// (column px top) and start.
+    fade_declared: bool = false,
+    glide_to: ?i32 = null,
+    glide_ms: u64 = 0,
     /// Slides declared and captures taken this drag, for the log and the oracle.
     declared: u64 = 0,
     captures: u64 = 0,
@@ -119,12 +133,8 @@ pub const ReorderComp = struct {
     /// tree went.
     pub fn dropAll(self: *ReorderComp) void {
         if (!self.box.active()) return;
-        self.held.deinit();
-        self.held = .{};
-        while (self.count > 0) {
-            self.count -= 1;
-            self.rows[self.count].layer.deinit();
-        }
+        self.dropHeld();
+        self.dropRows();
         self.rows_box.deinit();
         self.rows_box = .{};
         self.box.deinit();
@@ -157,6 +167,26 @@ pub const ReorderComp = struct {
         self.generation = s.generation;
         log.info("pane sidebar reorder comp on view={d},{d},{d},{d} generation={d}", .{ view.left, view.top, view.width(), view.height(), s.generation });
         return true;
+    }
+
+    /// The sliding rows off the tree, the held row left on it: the drop
+    /// re-laid the list out where they were drawn, and the paint has them.
+    pub fn dropRows(self: *ReorderComp) void {
+        while (self.count > 0) {
+            self.count -= 1;
+            self.rows[self.count].layer.deinit();
+        }
+    }
+
+    fn dropHeld(self: *ReorderComp) void {
+        self.held_row.deinit();
+        self.held_row = .{};
+        self.held_back.deinit();
+        self.held_back = .{};
+        self.held.deinit();
+        self.held = .{};
+        self.fade_declared = false;
+        self.glide_to = null;
     }
 
     fn fail(self: *ReorderComp) bool {
@@ -240,30 +270,36 @@ pub const ReorderComp = struct {
         _ = row.layer.setOffset(x, @intFromFloat(@round(y + tw.to)));
     }
 
-    /// The held row on the tree, above every sliding one: `px` (`w`x`h`) is
-    /// its lifted picture, padded by `pad` around the row for the glass and
-    /// shadow. Built once per drag; `moveHeld` follows the pointer.
-    pub fn setHeld(self: *ReorderComp, host: *child_comp.Host, key: usize, px: []const u32, w: i32, h: i32, pad: [2]i32, now_ms: u64) bool {
+    /// The held row on the tree, above every sliding one: `back` is its
+    /// lift - glass and shadow - and `row` the row, both `w`x`h` and padded
+    /// by `pad` around the row for the lift. Built once per drag; `moveHeld`
+    /// follows the pointer, `settle` plays the rest once it is let go.
+    pub fn setHeld(self: *ReorderComp, host: *child_comp.Host, key: usize, back: []const u32, row: []const u32, w: i32, h: i32, pad: [2]i32, now_ms: u64) bool {
         const s = host.ensure(now_ms, "reorder") orelse return false;
-        self.held.deinit();
-        self.held = .{};
-        const ok = self.held.sync(s) and self.held.setPixels(px, @intCast(w), @intCast(h));
+        self.dropHeld();
+        const ok = self.held.sync(s) and
+            self.held_back.sync(s) and self.held_back.setPixels(back, @intCast(w), @intCast(h)) and
+            self.held_row.sync(s) and self.held_row.setPixels(row, @intCast(w), @intCast(h));
         if (!ok) {
-            self.held.deinit();
-            self.held = .{};
+            self.dropHeld();
             return false;
         }
         self.held.attachUnder(&self.box);
-        if (!self.held.attached) {
-            self.held.deinit();
-            self.held = .{};
+        // Each in front of what is already on the box: the row over its lift.
+        self.held_back.attachUnder(&self.held);
+        self.held_row.attachUnder(&self.held);
+        if (!self.held.attached or !self.held_back.attached or !self.held_row.attached) {
+            self.dropHeld();
             return false;
         }
         self.held_key = key;
         self.held_pad = pad;
         self.captures += 1;
-        const cv = coverage(px);
-        log.info("pane sidebar reorder comp held key={x} size={d}x{d} any={d} solid={d}", .{ key, w, h, cv.any, cv.solid });
+        // The oracle scores the lifted picture as a whole, as it did when it
+        // was one layer; `row_any` is the row's own share.
+        const cb = coverage(back);
+        const cr = coverage(row);
+        log.info("pane sidebar reorder comp held key={x} size={d}x{d} any={d} solid={d} row_any={d}", .{ key, w, h, @max(cb.any, cr.any), @max(cb.solid, cr.solid), cr.any });
         return true;
     }
 
@@ -274,7 +310,56 @@ pub const ReorderComp = struct {
     /// The held row's place: its row at `left`,`top` (column px).
     pub fn moveHeld(self: *ReorderComp, left: i32, top: i32) void {
         if (!self.held.active()) return;
+        self.held_left = left;
         _ = self.held.setOffset(left - self.held_pad[0] - self.view.left, top - self.held_pad[1] - self.view.top);
+    }
+
+    fn heldY(self: *const ReorderComp, top: i32) f64 {
+        return @floatFromInt(top - self.held_pad[1] - self.view.top);
+    }
+
+    /// The held row let go (T2848; the paint's `reorder.Settle`, played by
+    /// the compositor): the lift fades over `settle_ms` from the drop,
+    /// `elapsed_ms` ago - declared once - and the row waits at `from` until
+    /// `glide` says when its glide to `to` began, then glides there, declared
+    /// once per target. False: something could not be declared, and the
+    /// caller steps the rest.
+    pub fn settle(self: *ReorderComp, from: i32, to: i32, elapsed_ms: u64, glide: ?u64, now_ms: u64) bool {
+        if (!self.held.active()) return false;
+        if (!self.fade_declared) {
+            var full: [comp_overlay.ease_segments]comp_overlay.Cubic = undefined;
+            var tail: [comp_overlay.ease_segments + 1]comp_overlay.Cubic = undefined;
+            const curve = slideCurve(reorder.settle_ms, elapsed_ms, &full, &tail);
+            if (curve.len == 0) {
+                self.held_back.setOpacity(0);
+            } else {
+                const left_s = @as(f64, @floatFromInt(reorder.settle_ms - elapsed_ms)) / 1000;
+                if (!self.held_back.animateOpacity(255, 0, curve, left_s)) return false;
+            }
+            self.fade_declared = true;
+            log.info("pane sidebar reorder comp settle fade left_ms={d}", .{reorder.settle_ms -| elapsed_ms});
+        }
+        const g = glide orelse {
+            self.moveHeld(self.held_left, from);
+            return true;
+        };
+        if (self.glide_to == to and self.glide_ms == g) return true;
+        self.glide_to = to;
+        self.glide_ms = g;
+        const since = now_ms -| g;
+        var full: [comp_overlay.ease_segments]comp_overlay.Cubic = undefined;
+        var tail: [comp_overlay.ease_segments + 1]comp_overlay.Cubic = undefined;
+        const curve = if (from == to) tail[0..0] else slideCurve(reorder.settle_ms, since, &full, &tail);
+        if (curve.len == 0) {
+            self.moveHeld(self.held_left, to);
+            log.info("pane sidebar reorder comp settle glide from={d} to={d} left_ms=0", .{ from, to });
+            return true;
+        }
+        const left_s = @as(f64, @floatFromInt(reorder.settle_ms - since)) / 1000;
+        if (!self.held.animateOffsetY(@floatCast(self.heldY(from)), @floatCast(self.heldY(to)), curve, left_s)) return false;
+        self.declared += 1;
+        log.info("pane sidebar reorder comp settle glide from={d} to={d} left_ms={d}", .{ from, to, reorder.settle_ms - since });
+        return true;
     }
 };
 

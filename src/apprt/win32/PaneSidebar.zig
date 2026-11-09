@@ -110,6 +110,9 @@ const TIMER_COLUMN: usize = 5;
 /// Rows sliding to make room for a dragged pane, or the held row gliding to
 /// where it landed (T2304).
 const TIMER_REORDER: usize = 6;
+/// A held row's settle on the tree (T2848): one-shot, at the end of the hold
+/// and of the glide - never per frame.
+const TIMER_SETTLE: usize = 7;
 
 /// Tooltip tool ids: the toggle, then one per item, then one per row button.
 const tool_toggle: usize = 0;
@@ -502,6 +505,9 @@ paint_held_comp: bool = false,
 /// Every moving row of the drag is the tree's: the reorder clock need not
 /// repaint for them (T2803).
 reorder_comp_all: bool = false,
+/// The held row's settle is the tree's (T2848): declared once, ended by
+/// TIMER_SETTLE, and the reorder clock is not its.
+settle_comp: bool = false,
 /// Frames the reorder clock ticked since it armed, for the log (T2803).
 reorder_frames: u32 = 0,
 /// The paint running is the window's own (WM_PAINT), not a picture taken
@@ -2191,6 +2197,7 @@ fn maybeStartRowDrag(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) bool {
     log.info("pane sidebar row drag start item={d} section={s}", .{ i, @tagName(self.entries.items[i].section) });
     // The row itself follows the pointer from here (T2304).
     self.stopReorderClock();
+    self.endSettleComp();
     self.drag = .{ .pane = pane, .held = .{ .press_y = self.press_y } };
     self.window.beginSidebarDrag(pane, press, cur);
     return true;
@@ -2471,7 +2478,10 @@ pub const DragAt = struct {
 pub fn noteDrag(self: *PaneSidebar, at: DragAt) void {
     if (self.drag) |d| {
         const settling = if (d.held) |h| h.settle != null else false;
-        if (d.pane != at.pane or settling) self.drag = null;
+        if (d.pane != at.pane or settling) {
+            self.endSettleComp();
+            self.drag = null;
+        }
     }
     if (self.drag == null) self.drag = .{ .pane = at.pane };
     const d = &self.drag.?;
@@ -2579,9 +2589,11 @@ fn endDragMotion(self: *PaneSidebar) void {
         if (d.held) |*h| if (h.drawn_top) |top| if (h.settle == null) {
             const origin = h.laid_top orelse top;
             h.settle = .{ .from = top, .origin = origin, .start_ms = w32.GetTickCount64() };
-            log.info("pane sidebar row settle from={d} origin={d}", .{ top, origin });
+            // T2848: a held row already on the tree settles there.
+            self.settle_comp = self.reorders.holds(@intFromPtr(d.pane));
+            log.info("pane sidebar row settle from={d} origin={d} comp={d}", .{ top, origin, @intFromBool(self.settle_comp) });
             _ = w32.InvalidateRect(self.hwnd, null, 0);
-            self.armReorderClock();
+            if (self.settle_comp) self.armSettleTimer(reorder.settle_hold_ms) else self.armReorderClock();
             return;
         };
         self.drag = null;
@@ -2651,7 +2663,20 @@ fn paintHeld(self: *PaneSidebar, hdc: w32.HDC, laid: *const pane_sidebar.Layout,
     const at: pane_sidebar.Rect = .{ .left = r.left, .top = top, .right = r.right, .bottom = top + r.height() };
     // T2803: the tree carries it; the pointer only moves it.
     if (self.paint_held_comp) {
-        self.reorders.moveHeld(at.left, at.top);
+        const s = if (h.settle) |*x| x else {
+            self.reorders.moveHeld(at.left, at.top);
+            return;
+        };
+        // T2848: let go, the tree plays the fade and the glide.
+        if (self.reorders.settle(s.from, r.top, self.paint_ms -| s.start_ms, s.glide_ms, self.paint_ms)) {
+            if (!gliding) if (s.glide_ms) |g| self.armSettleTimer((g + reorder.settle_ms) -| self.paint_ms + 1);
+            return;
+        }
+        // Nothing more could be declared: the clock steps the rest.
+        log.info("pane sidebar reorder comp settle refused - stepped", .{});
+        self.settle_comp = false;
+        _ = w32.InvalidateRect(self.hwnd, null, 0);
+        self.armReorderClock();
         return;
     }
     const saved = w32.SaveDC(hdc);
@@ -2754,9 +2779,9 @@ fn reorderStepSeam() bool {
 /// Hand this drag's sliding rows, and its held row, to the tree (T2803):
 /// a row is captured the first time it has somewhere to slide and declared
 /// once per retarget after that; the held row is captured once and moved by
-/// `paintHeld`. Anything that cannot go on the tree - motion off, a
-/// transition, a held row let go (its settle stays stepped, T2848), a window
-/// or group drag (T2849) - leaves the whole drag to the paint, as before.
+/// `paintHeld`; let go, the held row alone stays to settle (T2848). Anything
+/// that cannot go on the tree - motion off, a transition, a window or group
+/// drag (T2849) - leaves the whole drag to the paint, as before.
 fn composeDrag(self: *PaneSidebar, laid: *const pane_sidebar.Layout, width: i32, height: i32, t: Theme) void {
     self.paint_comp_rows = .initEmpty();
     self.paint_held_comp = false;
@@ -2768,9 +2793,18 @@ fn composeDrag(self: *PaneSidebar, laid: *const pane_sidebar.Layout, width: i32,
     };
     const settling = if (d.held) |h| h.settle != null else false;
     const eligible = self.paint_motion and !reorderStepSeam() and self.column == null and self.xfade == null and
-        self.item_drag == null and !settling and laid.mode != .hidden and !(laid.mode == .mini and laid.windowTiles());
+        self.item_drag == null and (!settling or self.settle_comp) and laid.mode != .hidden and !(laid.mode == .mini and laid.windowTiles());
     const view: pane_sidebar.Rect = if (laid.viewport.height() > 0) laid.viewport else .{ .right = width, .bottom = height };
     if (!eligible or !self.reorders.begin(&self.comp, view, self.paint_ms)) return self.stepDrag();
+    // T2848: let go, only the held row is left on the tree - the drop laid
+    // the rows out where they were drawn, and the paint has them back.
+    if (settling) {
+        if (!self.reorders.holds(@intFromPtr(d.pane))) return self.stepDrag();
+        self.reorders.dropRows();
+        self.paint_held_comp = true;
+        self.reorder_comp_all = true;
+        return;
+    }
     const emphasized = self.isEmphasized();
     const count = @min(laid.count, self.entries.items.len);
     // The held row first: were it the paint's, every composed row would
@@ -2781,9 +2815,11 @@ fn composeDrag(self: *PaneSidebar, laid: *const pane_sidebar.Layout, width: i32,
             const i = for (0..count) |k| {
                 if (self.entries.items[k].pane == d.pane) break k;
             } else return self.stepDrag();
-            const c = self.captureDrag(laid, i, true, emphasized, t) orelse return self.stepDrag();
-            defer self.alloc.free(c.px);
-            if (!self.reorders.setHeld(&self.comp, key, c.px, c.w, c.h, c.pad, self.paint_ms)) return self.stepDrag();
+            const back = self.captureDrag(laid, i, .lift, emphasized, t) orelse return self.stepDrag();
+            defer self.alloc.free(back.px);
+            const row = self.captureDrag(laid, i, .lifted_row, emphasized, t) orelse return self.stepDrag();
+            defer self.alloc.free(row.px);
+            if (!self.reorders.setHeld(&self.comp, key, back.px, row.px, back.w, back.h, back.pad, self.paint_ms)) return self.stepDrag();
         }
         self.paint_held_comp = true;
     }
@@ -2801,7 +2837,7 @@ fn composeDrag(self: *PaneSidebar, laid: *const pane_sidebar.Layout, width: i32,
             self.reorders.follow(key, r, tw, self.paint_ms);
         } else {
             if (tw.to == 0 and tw.done(self.paint_ms)) continue;
-            const c = self.captureDrag(laid, i, false, emphasized, t) orelse {
+            const c = self.captureDrag(laid, i, .row, emphasized, t) orelse {
                 all = false;
                 continue;
             };
@@ -2823,6 +2859,11 @@ fn stepDrag(self: *PaneSidebar) void {
     self.reorders.dropAll();
     self.paint_comp_rows = .initEmpty();
     self.paint_held_comp = false;
+    if (self.settle_comp) {
+        log.info("pane sidebar reorder comp settle left the tree - stepped", .{});
+        self.settle_comp = false;
+        self.reorder_comp_all = true;
+    }
     if (self.reorder_comp_all) {
         self.reorder_comp_all = false;
         self.armReorderClock();
@@ -2831,10 +2872,18 @@ fn stepDrag(self: *PaneSidebar) void {
 
 const DragCapture = struct { px: []u32, w: i32, h: i32, pad: [2]i32 };
 
+/// What `captureDrag` takes of a row: the row alone at its size (a row that
+/// slides), or - held, padded for its lift - the lift's glass and shadow, or
+/// the row over nothing at its place on them (T2848: the lift fades on its
+/// own once let go).
+const CapturePart = enum { row, lift, lifted_row };
+
 /// Row `i` as `paintRows` (or `paintMini`) draws it at its laid-out place,
-/// as premultiplied pixels (T2803) - `held`, lifted on its glass with its
-/// shadow, padded by `pad` around the row for them. The caller frees `px`.
-fn captureDrag(self: *PaneSidebar, laid: *const pane_sidebar.Layout, i: usize, held: bool, emphasized: bool, t: Theme) ?DragCapture {
+/// as premultiplied pixels (T2803) - held, padded by `pad` around the row
+/// for its lift, `part` saying which of the two pictures. The caller frees
+/// `px`.
+fn captureDrag(self: *PaneSidebar, laid: *const pane_sidebar.Layout, i: usize, part: CapturePart, emphasized: bool, t: Theme) ?DragCapture {
+    const held = part != .row;
     const r = laid.items[i];
     if (r.width() <= 0 or r.height() <= 0) return null;
     const g = reorder.liftInset(r.width(), r.height());
@@ -2855,12 +2904,15 @@ fn captureDrag(self: *PaneSidebar, laid: *const pane_sidebar.Layout, i: usize, h
     for ([_]Dib32{ black, white }) |dib| {
         _ = w32.SetBkMode(dib.dc, w32.TRANSPARENT);
         _ = w32.SetViewportOrgEx(dib.dc, pad[0] - r.left, pad[1] - r.top, null);
-        if (held) self.paintLiftBacking(dib.dc, .{
-            .left = r.left - g.x,
-            .top = r.top - g.y,
-            .right = r.right + g.x,
-            .bottom = r.bottom + g.y,
-        }, 1, t);
+        if (part == .lift) {
+            self.paintLiftBacking(dib.dc, .{
+                .left = r.left - g.x,
+                .top = r.top - g.y,
+                .right = r.right + g.x,
+                .bottom = r.bottom + g.y,
+            }, 1, t);
+            continue;
+        }
         if (laid.mode == .mini)
             self.paintTile(dib.dc, i, r, false, emphasized, t)
         else
@@ -2898,12 +2950,48 @@ fn reorderMoving(self: *PaneSidebar, now: u64) bool {
     }
     if (now -| self.tray_hot_ms < tray_fade_ms) return true;
     const d = self.drag orelse return false;
-    if (d.held) |h| if (h.settle) |s| return s.moving(now) or now -| s.start_ms < reorder.settle_ms;
+    if (d.held) |h| if (h.settle) |s| return !self.settle_comp and (s.moving(now) or now -| s.start_ms < reorder.settle_ms);
     if (!d.header.done(now)) return true;
     // T2803: the tree plays the rows' slides; the clock is not theirs.
     if (self.reorder_comp_all) return false;
     for (d.shifts[0..d.shift_count]) |s| if (!s.tween.done(now)) return true;
     return false;
+}
+
+fn armSettleTimer(self: *PaneSidebar, ms: u64) void {
+    _ = w32.SetTimer(self.hwnd, TIMER_SETTLE, @intCast(@max(ms, 1)), null);
+}
+
+/// The settle on the tree is over or abandoned: its timer off, and the held
+/// row off the tree (the paint draws it, if anything still does).
+fn endSettleComp(self: *PaneSidebar) void {
+    if (!self.settle_comp) return;
+    self.settle_comp = false;
+    _ = w32.KillTimer(self.hwnd, TIMER_SETTLE);
+    self.reorders.dropAll();
+}
+
+/// The tree's settle at one of its two edges (T2848): the hold over - a
+/// paint starts the glide where the list has the row now - or the glide and
+/// the fade done, and the row back in the list.
+fn onSettleTick(self: *PaneSidebar) void {
+    _ = w32.KillTimer(self.hwnd, TIMER_SETTLE);
+    if (!self.settle_comp) return;
+    const d = if (self.drag) |*x| x else return self.endSettleComp();
+    const h = if (d.held) |*x| x else return self.endSettleComp();
+    const s = h.settle orelse return self.endSettleComp();
+    const now = w32.GetTickCount64();
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+    const g = s.glide_ms orelse {
+        // The paint starts the glide; until one has, look again shortly.
+        self.armSettleTimer(reorder.frame_ms);
+        return;
+    };
+    const end = @max(g + reorder.settle_ms, s.start_ms + reorder.settle_ms);
+    if (now < end) return self.armSettleTimer(end - now + 1);
+    log.info("pane sidebar row settled comp=1", .{});
+    self.settle_comp = false;
+    self.drag = null;
 }
 
 /// A frame of the reorder motion: repaint, and stop the clock - and let a
@@ -2913,7 +3001,8 @@ fn onReorderTick(self: *PaneSidebar) void {
     _ = w32.InvalidateRect(self.hwnd, null, 0);
     if (self.reorderMoving(w32.GetTickCount64())) return;
     self.stopReorderClock();
-    if (self.drag) |d| if (d.held) |h| if (h.settle != null) {
+    // A settle on the tree ends on its own timer (T2848), not this clock.
+    if (!self.settle_comp) if (self.drag) |d| if (d.held) |h| if (h.settle != null) {
         log.info("pane sidebar row settled", .{});
         self.drag = null;
     };
@@ -6805,6 +6894,7 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
                 TIMER_XFADE => self.onTransitionTick(),
                 TIMER_COLUMN => self.onColumnTick(),
                 TIMER_REORDER => self.onReorderTick(),
+                TIMER_SETTLE => self.onSettleTick(),
                 else => {},
             }
             return 0;

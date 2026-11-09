@@ -61,6 +61,11 @@
 # go, the drag comes off the tree (`reorder comp off slides=N`, N >= 1).
 # -ReorderStepped is the control (GHOZTTY_DEBUG_SIDEBAR_REORDER_STEPPED=1):
 # nothing on the tree, the clock repaints the slide (frames >= 5).
+# T2848: let go, the held tile SETTLES on the tree as well - the lift's fade
+# (`reorder comp settle fade`) and the glide to where it landed (`reorder
+# comp settle glide`) are each declared, the settle logs `comp=1`, and the
+# reorder clock runs for none of F, release included. Stepped, `comp=0` and
+# the clock repaints the settle.
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
 # user's foreground - asserted by the foreground watcher, not assumed.
@@ -452,7 +457,7 @@ try {
     # straight to its new place - every frame between the two, never back
     # toward the place it left first.
     $linesE = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $logE)
-    $si = -1; $sFrom = $null; $sOrigin = $null; $gTo = $null; $tops = @()
+    $si = -1; $sFrom = $null; $sOrigin = $null; $gTo = $null; $tops = @(); $cg = @()
     for ($k = 0; $k -lt $linesE.Count; $k++) {
         if ($linesE[$k] -match 'pane sidebar row settle from=(-?\d+) origin=(-?\d+)') { $si = $k; $sFrom = [int]$Matches[1]; $sOrigin = [int]$Matches[2]; break }
     }
@@ -460,16 +465,23 @@ try {
         for ($k = $si + 1; $k -lt $linesE.Count; $k++) {
             if ($linesE[$k] -match 'pane sidebar row glide from=-?\d+ to=(-?\d+)') { $gTo = [int]$Matches[1] }
             if ($linesE[$k] -match 'pane sidebar row held top=(-?\d+)') { $tops += [int]$Matches[1] }
+            # T2848: on the tree the glide is DECLARED, not painted frame by
+            # frame - its endpoints are the frames to score.
+            if ($linesE[$k] -match 'pane sidebar reorder comp settle glide from=(-?\d+) to=(-?\d+)') { $cg += ,@([int]$Matches[1], [int]$Matches[2]) }
             if ($linesE[$k] -match 'pane sidebar row settled') { break }
         }
     }
     $stray = @()
+    $cgStray = @()
     if ($null -ne $sFrom -and $null -ne $gTo) {
         $lo = [math]::Min($sFrom, $gTo); $hi = [math]::Max($sFrom, $gTo)
         $stray = @($tops | Where-Object { $_ -lt $lo -or $_ -gt $hi })
+        # Declared from where it was let go, to a place on the way to where
+        # it landed - never toward where it left.
+        $cgStray = @($cg | Where-Object { $_[0] -ne $sFrom -or $_[1] -lt $lo -or $_[1] -gt $hi })
     }
-    "  (settle from=$sFrom origin=$sOrigin glide to=$gTo; $($tops.Count) frame(s), $($stray.Count) outside)"
-    Assert "E: let go, the tile glides from the drop to its new place and never back toward where it left (log)" ($si -ge 0 -and $null -ne $gTo -and $tops.Count -ge 1 -and $stray.Count -eq 0)
+    "  (settle from=$sFrom origin=$sOrigin glide to=$gTo; $($tops.Count) frame(s), $($stray.Count) outside; $($cg.Count) declared glide(s), $($cgStray.Count) astray)"
+    Assert "E: let go, the tile glides from the drop to its new place and never back toward where it left (log)" ($si -ge 0 -and $null -ne $gTo -and ($tops.Count + $cg.Count) -ge 1 -and $stray.Count -eq 0 -and $cgStray.Count -eq 0)
     $orderE = Get-ListOrder
     "  (list: $($orderE -join ', '))"
     Assert "E: the list reads s2, P" ($orderE.Count -eq 2 -and $orderE[0] -eq $id2 -and $orderE[1] -eq $idP)
@@ -518,6 +530,25 @@ try {
     Assert "F: the drop placed P in the list at 0 (log)" (@(Get-LogLines $logF 'pane drop placed in list index=0 restored=false').Count -ge 1)
     if (-not $ReorderStepped) {
         Assert "F: let go, the drag came off the tree (log)" (@(Get-LogLines $logF 'pane sidebar reorder comp off slides=[1-9]').Count -ge 1)
+    }
+    # T2848: the settle once let go - the lift fading and the glide to where
+    # the tile landed - is the tree's too: declared once each, ended by its
+    # own one-shot timer, and the reorder clock never runs for it. Stepped,
+    # the clock repaints the settle frame by frame, as before.
+    $settleF = @(Get-LogLines $logF 'pane sidebar row settle from=-?\d+ origin=-?\d+ comp=(\d)' | ForEach-Object { if ($_ -match 'comp=(\d)') { [int]$Matches[1] } })
+    $fadeF = @(Get-LogLines $logF 'pane sidebar reorder comp settle fade ').Count
+    $glideF = @(Get-LogLines $logF 'pane sidebar reorder comp settle glide from=').Count
+    $settledF = @(Get-LogLines $logF 'pane sidebar row settled').Count
+    $clockAll = @(Get-LogLines $logF 'pane sidebar reorder clock off frames=' | ForEach-Object { if ($_ -match 'frames=(\d+)') { [int]$Matches[1] } })
+    $clockAllFrames = [int](($clockAll | Measure-Object -Sum).Sum)
+    "  (T2848 settle: comp=$($settleF -join ',') fade=$fadeF glide=$glideF settled=$settledF clock runs=$($clockAll.Count) frames=$clockAllFrames)"
+    if ($ReorderStepped) {
+        Assert "F stepped: the settle was the paint's (log)" ($settleF.Count -ge 1 -and $settleF[0] -eq 0 -and $fadeF -eq 0 -and $glideF -eq 0)
+        Assert "F stepped: the reorder clock repainted the settle (log)" ($clockAllFrames -ge 5 -and $settledF -ge 1)
+    } else {
+        Assert "F: let go, the held tile settled on the tree - its fade and its glide declared (log)" ($settleF.Count -ge 1 -and $settleF[0] -eq 1 -and $fadeF -ge 1 -and $glideF -ge 1)
+        Assert "F: the tile was let back into the list (log)" ($settledF -ge 1)
+        Assert "F: the reorder clock never ran, slide or settle (log)" ($clockAll.Count -eq 0)
     }
     $orderF = Get-ListOrder
     "  (list: $($orderF -join ', '))"
