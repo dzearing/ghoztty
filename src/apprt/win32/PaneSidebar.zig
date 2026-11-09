@@ -35,6 +35,7 @@ const PaneSidebar = @This();
 
 const std = @import("std");
 const builtin = @import("builtin");
+const build_config = @import("../../build_config.zig");
 const Allocator = std.mem.Allocator;
 
 const w32 = @import("win32.zig");
@@ -99,6 +100,9 @@ pub const CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyPaneSideba
 /// ask the hover again once the windows have changed places. wParam 1 is an
 /// activation, 0 a deactivation.
 const WM_RESYNC_HOVER: u32 = w32.WM_APP + 0x41;
+/// Debug builds: ask what a press at a client point does to activation
+/// (T2863; `test\win32\pane-sidebar-press-activate.ps1`).
+const WM_PRESS_PROBE: u32 = w32.WM_APP + 0x42;
 
 /// Timer ids. (1 and 2 were the hover-open card's, retired with it in T2289.)
 /// The motion clock (T1843), while something on the column moves.
@@ -5247,6 +5251,41 @@ fn paintWindowTile(self: *PaneSidebar, hdc: w32.HDC, i: usize, r: pane_sidebar.R
 
 /// The window group item `i`'s rail tile stands for, when it carries one
 /// (`Layout.windowTile`, read from the roster so it needs no layout).
+/// Whether the press arriving now - the pointer is where it landed - is one
+/// whose click raises another window (T2863, `row_menu.pressLeavesWindowBehind`).
+fn pressLeavesWindowBehind(self: *PaneSidebar) bool {
+    var pt: w32.POINT = undefined;
+    if (w32.GetCursorPos_(&pt) == 0 or w32.ScreenToClient(self.hwnd, &pt) == 0) return false;
+    return self.pressLeavesWindowBehindAt(pt.x, pt.y);
+}
+
+/// The same question for a press at client `(x, y)`.
+fn pressLeavesWindowBehindAt(self: *PaneSidebar, x: i32, y: i32) bool {
+    // A held drag, the edge, the thumb and an open name field are this
+    // window's business.
+    if (self.rename != null or self.item_drag != null or self.edge != null) return false;
+    if (self.thumbAt(x, y) != null or self.onEdgeAt(x, y)) return false;
+    const hit = self.hitAt(x, y);
+    const press: row_menu.Press, const own: bool = switch (hit) {
+        .item => |i| blk: {
+            if (i >= self.entries.items.len) return false;
+            if (self.tileGroup(i)) |g| break :blk .{ .tile, g.own };
+            break :blk .{ .row, self.entries.items[i].own };
+        },
+        .head, .head_add => |k| blk: {
+            const l = self.currentLayout();
+            if (k >= l.head_count) return false;
+            const hd = l.heads[k];
+            if (hd.kind != .window or hd.index >= self.groups.items.len) return false;
+            const g = self.groups.items[hd.index];
+            const p: row_menu.Press = if (hit == .head) .window_header else .window_add;
+            break :blk .{ p, g.own };
+        },
+        else => return false,
+    };
+    return row_menu.pressLeavesWindowBehind(press, own);
+}
+
 fn tileGroup(self: *const PaneSidebar, i: usize) ?Group {
     if (!self.all_windows or self.mode != .mini or i >= self.entries.items.len) return null;
     const e = self.entries.items[i];
@@ -6925,6 +6964,26 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             // double-click maximizes it, as on the rest of the band.
             if (pt.y < self.window.paneSidebarReachPx()) return w32.HTTRANSPARENT;
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+        // A press that will raise ANOTHER window must not first bring this
+        // one over it (T2863): the down would activate this window and only
+        // the up raise the target.
+        w32.WM_MOUSEACTIVATE => {
+            if (((@as(usize, @bitCast(lparam)) >> 16) & 0xFFFF) == w32.WM_LBUTTONDOWN) {
+                if (self.pressLeavesWindowBehind()) {
+                    log.info("pane sidebar press raises another window; this one stays behind", .{});
+                    return w32.MA_NOACTIVATE;
+                }
+            }
+            return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+        // Debug builds only: what WM_MOUSEACTIVATE would answer for a press
+        // at client (LOWORD, HIWORD) of lparam (T2863). A harness on a
+        // background desktop has no cursor to press with, and a posted click
+        // never brings the activation message at all.
+        WM_PRESS_PROBE => {
+            if (comptime !build_config.is_debug) return 0;
+            return if (self.pressLeavesWindowBehindAt(xOf(lparam), yOf(lparam))) w32.MA_NOACTIVATE else w32.MA_ACTIVATE;
         },
         // The same column into a caller's DC, so a pixel probe can photograph
         // it synchronously (the TOC card's T835 reason).

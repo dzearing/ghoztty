@@ -51,6 +51,41 @@ pub fn clickVerb(section: pane_sidebar.Section, own: bool, alt: bool) ClickVerb 
     };
 }
 
+/// What a left press in the sidebar lands on, as far as activating the
+/// sidebar's own window is concerned (T2863).
+pub const Press = enum {
+    /// Anything that acts on this window: a fold, the search field, the
+    /// edge, a project header, a header's x, empty space.
+    other,
+    /// A pane's row.
+    row,
+    /// A window's tile on the all-windows rail.
+    tile,
+    /// A window header (not its fold chevron).
+    window_header,
+    /// A window header's + (raises that window and splits it).
+    window_add,
+};
+
+/// Whether a press should leave the sidebar's own window where it is in the
+/// z-order rather than activating it (T2863).
+///
+/// A press in a background window normally activates it on the DOWN, and the
+/// click's verb runs on the UP. For a press whose verb raises ANOTHER window
+/// that ordering is visible: the background window the sidebar sits in comes
+/// over the window already in front, and only on release does the target come
+/// forward - over a held press it stays on top. Users read it as the window
+/// rising on its own ("hovering it raised it"). Those presses leave the
+/// window alone; the release raises the target, which the click's input
+/// entitles this process to do.
+pub fn pressLeavesWindowBehind(press: Press, own: bool) bool {
+    if (own) return false;
+    return switch (press) {
+        .row, .tile, .window_header, .window_add => true,
+        .other => false,
+    };
+}
+
 /// A context-menu command. Non-zero, because `TrackPopupMenuEx` answers 0 for
 /// a menu dismissed without a choice.
 pub const Id = enum(u16) {
@@ -250,6 +285,19 @@ test "pane_sidebar_menu: a click focuses, restores, swaps with Alt, or reveals a
     for ([_]pane_sidebar.Section{ .grid, .stashed }) |s| for ([_]bool{ false, true }) |alt| {
         try testing.expectEqual(ClickVerb.reveal, clickVerb(s, false, alt));
     };
+}
+
+test "T2863: a press that raises another window leaves this one where it is" {
+    // Every press whose click brings ANOTHER window forward.
+    for ([_]Press{ .row, .tile, .window_header, .window_add }) |p| {
+        try testing.expect(pressLeavesWindowBehind(p, false));
+        // The same press on this window's own item acts here, so the
+        // window comes forward as any click in it would.
+        try testing.expect(!pressLeavesWindowBehind(p, true));
+    }
+    // Folds, the search field, the edge, project headers: this window's.
+    try testing.expect(!pressLeavesWindowBehind(.other, false));
+    try testing.expect(!pressLeavesWindowBehind(.other, true));
 }
 
 test "pane_sidebar_menu: a grid row offers Stash / Move to New Window / Close Pane" {

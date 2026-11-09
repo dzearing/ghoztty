@@ -6162,6 +6162,21 @@ $GuardTable = @(
             'test\win32\pane-sidebar-all-windows.ps1'
         )
     },
+    # A press in a background window's sidebar that raises ANOTHER window
+    # leaves the background window where it is (T2863): the verb is
+    # unit-tested in every lane; that WM_MOUSEACTIVATE reads the press the
+    # click will act on, row, header and rail tile alike, is only answered on
+    # the box.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-press-activate'
+        Script = 'test\win32\pane-sidebar-press-activate.ps1'
+        Stamp  = 'test\win32\pane-sidebar-press-activate.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_sidebar_menu.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'test\win32\pane-sidebar-press-activate.ps1'
+        )
+    },
     # One sidebar for every window (T2336): the shared/per-window split, the
     # absolute folds and the catch-up rule are unit-tested in every lane; that
     # a background window stays as it was and takes a collapse, a width, the

@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-09T10:49:13-08:00",
-    "commit":  "c3073c493",
+    "generated":  "2026-11-09T14:33:24-08:00",
+    "commit":  "285d116c3",
     "uncommitted":  [
-                        "test/win32/pane-sidebar-drag.ps1"
+                        "test/win32/pane-sidebar-press-activate.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -391,6 +391,7 @@
                   "test/win32/pane-sidebar-hue.ps1":  "661c963a69bf741e1c3030d49ae248108567b4d47590b52d97d3439e1c61df28",
                   "test/win32/pane-sidebar-motion-cost.ps1":  "2bd9f57da5b080fbd59d90559597bd84941ff895ac06910adf416def26dbd605",
                   "test/win32/pane-sidebar-persist.ps1":  "6ad94a4ee6ad93814b7d8bc63411924141cf842a50e8825f0b5a7e87eb7d9492",
+                  "test/win32/pane-sidebar-press-activate.ps1":  "96ceeccac40d0c772c55649901ad20c6d3374147cd1f1269126fbaab6f450bb1",
                   "test/win32/pane-sidebar-rename.ps1":  "59ae17ddcee0857665100f6091041c1a789e7bb60c23fd5f11a4c81d1fd55bdf",
                   "test/win32/pane-sidebar-resize.ps1":  "49d9d94a8b58fecb90697d43fee251b046bd91cd4c29a4d88e798bfdaba9d274",
                   "test/win32/pane-sidebar-scroll.ps1":  "3de92ddbc84f348cc0b541d1e842094e0adb541ffee0531c80b1f75c3daeb970",
