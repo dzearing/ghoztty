@@ -49,6 +49,12 @@
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms tree -NoFaceComp   # tree.18 and tree.19 must go red
 # -NoFaceComp sets GHOZTTY_FACE_COMP=0: the faces stay on their popups.
 #
+# .20 (T2826, tree arms) reads the app's count of window-region cuts made for
+# gliding panes: with the desk on the compositor a gliding pane's window keeps
+# its region (at most one cut a pane), instead of one SetWindowRgn per pane
+# per frame.
+#   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms tree -GlideRegionCut   # tree.20 must go red
+#
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms on
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -NegativeControl   # must go red
@@ -128,7 +134,10 @@ param(
     # T2818: GHOZTTY_FACE_COMP=0 keeps a folding or opening card's face on its
     # layered popup, which a window capture never contains - the tree arm's
     # .18/.19 must then go red.
-    [switch]$NoFaceComp
+    [switch]$NoFaceComp,
+    # T2826: GHOZTTY_GLIDE_REGION_CUT=1 re-cuts a gliding tree pane's window
+    # region on every frame, as before - the tree arms' .20 must then go red.
+    [switch]$GlideRegionCut
 )
 
 $ErrorActionPreference = 'Continue'
@@ -157,7 +166,7 @@ if ($NegativeControl) { $SlideMs = 0; "NEGATIVE CONTROL: the slide is 0 ms (an i
 if (-not $OutDir) { $OutDir = Join-Path $env:TEMP "ghoztty-comp-glide-$PID" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_GLIDE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS', 'GHOZTTY_DEBUG_GLIDE_STALL_MS', 'GHOZTTY_GLIDE_DECLARE', 'GHOZTTY_DEBUG_GLIDE_STALL_AT', 'GHOZTTY_FACE_COMP', 'GHOZTTY_DEBUG_GLIDE_LIVE_FACE'
+$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_GLIDE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS', 'GHOZTTY_DEBUG_GLIDE_STALL_MS', 'GHOZTTY_GLIDE_DECLARE', 'GHOZTTY_DEBUG_GLIDE_STALL_AT', 'GHOZTTY_FACE_COMP', 'GHOZTTY_DEBUG_GLIDE_LIVE_FACE', 'GHOZTTY_GLIDE_REGION_CUT'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
@@ -581,6 +590,7 @@ try {
         if ($arm -eq 'live') { $env:GHOZTTY_DEBUG_GLIDE_LIVE_FACE = '1' } else { Remove-Item env:GHOZTTY_DEBUG_GLIDE_LIVE_FACE -ErrorAction SilentlyContinue }
         if ($NoDeclare) { $env:GHOZTTY_GLIDE_DECLARE = '0' } else { Remove-Item env:GHOZTTY_GLIDE_DECLARE -ErrorAction SilentlyContinue }
         if ($NoFaceComp) { $env:GHOZTTY_FACE_COMP = '0' } else { Remove-Item env:GHOZTTY_FACE_COMP -ErrorAction SilentlyContinue }
+        if ($GlideRegionCut) { $env:GHOZTTY_GLIDE_REGION_CUT = '1' } else { Remove-Item env:GHOZTTY_GLIDE_REGION_CUT -ErrorAction SilentlyContinue }
         if ($NoBody) { $env:GHOZTTY_COMP_SHADOWS_NOBODY = '1' } else { Remove-Item env:GHOZTTY_COMP_SHADOWS_NOBODY -ErrorAction SilentlyContinue }
         $err = Join-Path $dir 'stderr.txt'
         $app = Start-OnTestDesktop -Exe $Exe -Arguments @(
@@ -674,6 +684,17 @@ try {
             } else {
                 Assert "$arm.9 control: the window path moves child windows and no visual ($cm child, $vm visual)" ($cm -gt 2 * $np -and $vm -eq 0)
             }
+        }
+
+        # T2826: a gliding tree pane's window keeps its region while the desk
+        # is on the compositor; the per-frame SetWindowRgn is gone. At most one
+        # cut per pane per glide (a desk that fell back to GDI mid-glide).
+        if ($isTree -and $moves) {
+            $text = Read-Text $err
+            $cuts = [regex]::Matches($text, 'pane glide region cut').Count
+            $held = [regex]::Matches($text, 'pane glide region held').Count
+            "  glide region: $cuts cut(s), $held held, $np panes"
+            Assert "$arm.20 a gliding pane's window region is not re-cut per frame ($cuts cuts for $np panes, $held held)" ($cuts -le $np -and $held -ge 1)
         }
 
         # T2572: the panes' paths went to the compositor (none under -NoDeclare).

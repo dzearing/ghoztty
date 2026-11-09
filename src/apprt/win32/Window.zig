@@ -10719,6 +10719,14 @@ fn createCardRegion(plan: CardRegionPlan, d: i32) ?*anyopaque {
 /// own coordinates. The window paints nothing itself; what its region decides
 /// is what the desk paint under it is clipped out of, so the desk fills
 /// exactly what the visual has left and nothing the visual still covers.
+///
+/// That is the only thing the cut is for, so it is made only while the desk
+/// is painted through the window's DC (T2826). With the desk on the chrome
+/// host's visual nothing is clipped by it, and the key - which moves with the
+/// visual's offset - made it a `SetWindowRgn` per gliding pane per frame on
+/// the window thread. The bookkeeping above it still follows every frame;
+/// the window keeps the region it had, and is cut once when `placeLeaf` lands
+/// it (`glide_region_pending` never matches a real key).
 fn cutGlideTreeRegion(
     self: *Window,
     parent: w32.HWND,
@@ -10728,16 +10736,23 @@ fn cutGlideTreeRegion(
     at: w32.RECT,
     d: i32,
 ) void {
-    _ = self;
+    // The plan is in the visual's coordinates, as the visual's own clip is.
+    view.card_region_cut = plan.cut;
+    view.card_region_shown = if (plan.key == 0) null else plan.cut orelse plan.shown;
+    if (self.glideRegionIdle(view)) {
+        if (view.card_region_key != glide_region_pending) {
+            view.card_region_key = glide_region_pending;
+            // The acceptance oracle counts these (T2826): one per pane per glide.
+            log.debug("pane glide region held hwnd={x}", .{@intFromPtr(h)});
+        }
+        return;
+    }
     const real = childClientRect(parent, h) orelse return;
     const dx = at.left - real.left;
     const dy = at.top - real.top;
     var hasher = std.hash.Wyhash.init(2);
     std.hash.autoHash(&hasher, .{ plan.key, dx, dy, at.right - at.left, at.bottom - at.top });
     const key = hasher.final() | 1;
-    // The plan is in the visual's coordinates, as the visual's own clip is.
-    view.card_region_cut = plan.cut;
-    view.card_region_shown = if (plan.key == 0) null else plan.cut orelse plan.shown;
     if (view.card_region_key == key) return;
     view.card_region_key = key;
     const rgn = (if (plan.key != 0)
@@ -10745,7 +10760,35 @@ fn cutGlideTreeRegion(
     else
         w32.CreateRectRgn(0, 0, at.right - at.left, at.bottom - at.top)) orelse return;
     _ = w32.OffsetRgn(rgn, dx, dy);
+    // The acceptance oracle counts these (T2826).
+    log.debug("pane glide region cut hwnd={x}", .{@intFromPtr(h)});
     if (w32.SetWindowRgn(h, rgn, 0) == 0) _ = w32.DeleteObject(rgn);
+}
+
+/// `PaneView.card_region_key` for a gliding pane whose window kept its region
+/// (T2826). Even, so no `cardRegionKey` (always odd) ever equals it, and the
+/// landing's pass always cuts.
+const glide_region_pending: u64 = 2;
+
+/// Whether a gliding pane's window region clips nothing anyone paints
+/// (T2826): its visual draws the pane, and the desk goes to the chrome host's
+/// visual rather than through the window's DC. `GHOZTTY_GLIDE_REGION_CUT=1`
+/// cuts it every frame as before, the A/B for the drag line's `cards` term.
+fn glideRegionIdle(self: *Window, view: *PaneView) bool {
+    if (glideRegionCutForced()) return false;
+    const s = view.surface() orelse return false;
+    if (s.tree_visual == null) return false;
+    if (self.desk_printing) return false;
+    const host = if (self.chrome_host) |*hh| hh else return false;
+    return host.deskLive();
+}
+
+var glide_region_cut_forced: ?bool = null;
+fn glideRegionCutForced() bool {
+    if (glide_region_cut_forced) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_GLIDE_REGION_CUT");
+    glide_region_cut_forced = v;
+    return v;
 }
 
 /// The region the next `cutCardRegions` gives `view`'s window, for a strip
