@@ -54,6 +54,14 @@
 # (`row settle from=` ... `row settled`). Mid-drag captures of the rail are
 # saved as evidence (t2304-*.png).
 #
+# T2803: the rows making room and the held tile are the COMPOSITOR's. In F,
+# mid-drag, the log shows the tree up (`reorder comp on`), the held tile on
+# it (`reorder comp held`), the slide declared (`reorder comp slide`) and
+# the reorder clock never stepping it (no `reorder clock off frames=`); let
+# go, the drag comes off the tree (`reorder comp off slides=N`, N >= 1).
+# -ReorderStepped is the control (GHOZTTY_DEBUG_SIDEBAR_REORDER_STEPPED=1):
+# nothing on the tree, the clock repaints the slide (frames >= 5).
+#
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
 # user's foreground - asserted by the foreground watcher, not assumed.
 # -NegativeControl expects claim A's release NOT to stash and MUST fail.
@@ -62,6 +70,7 @@
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
     [switch]$NegativeControl,
+    [switch]$ReorderStepped,
     [switch]$Interactive
 )
 
@@ -256,7 +265,12 @@ try {
     # Flat panes, as pane-sidebar.ps1 runs: the tile model assumes the rail's
     # column starts at the client edge.
     $script:errlog = Join-Path $tmp 'app-stderr.log'
-    $app = Start-OnTestDesktop -Exe $Exe -StdErr $script:errlog -Arguments @('--session-persistence=false', '--macos-pane-style=flat')
+    if ($ReorderStepped) { $env:GHOZTTY_DEBUG_SIDEBAR_REORDER_STEPPED = '1' }
+    try {
+        $app = Start-OnTestDesktop -Exe $Exe -StdErr $script:errlog -Arguments @('--session-persistence=false', '--macos-pane-style=flat')
+    } finally {
+        Remove-Item Env:GHOZTTY_DEBUG_SIDEBAR_REORDER_STEPPED -ErrorAction SilentlyContinue
+    }
     Start-Sleep -Seconds 3
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
     $script:appPid = $app.Pid
@@ -477,9 +491,34 @@ try {
     $heldF = Get-HeldTop $logF
     Assert "F: P's tile is held up the rail, by the pointer (log)" ($null -ne $heldF -and $heldF -lt (($from.Y - $sb.Top) - (Px 20)))
     Save-RailShot $sb 't2304-held-in-list.png'
+    # T2803: the slide and the held tile on the tree, not on the clock.
+    $compOn = @(Get-LogLines $logF 'pane sidebar reorder comp on ').Count
+    $compHeld = @(Get-LogLines $logF 'pane sidebar reorder comp held ').Count
+    $slides = @(Get-LogLines $logF 'pane sidebar reorder comp slide ').Count
+    $clock = @(Get-LogLines $logF 'pane sidebar reorder clock off frames=' | ForEach-Object { if ($_ -match 'frames=(\d+)') { [int]$Matches[1] } })
+    $clockFrames = [int](($clock | Measure-Object -Sum).Sum)
+    "  (T2803 mid-drag: comp on=$compOn held=$compHeld slides=$slides clock runs=$($clock.Count) frames=$clockFrames)"
+    if ($ReorderStepped) {
+        Assert "F stepped: nothing of the drag went on the tree (log)" ($compOn -eq 0 -and $compHeld -eq 0 -and $slides -eq 0)
+        Assert "F stepped: the reorder clock repainted the slide frame by frame (log)" ($clockFrames -ge 5)
+    } else {
+        Assert "F: the drag went on the tree - its box and the held tile (log)" ($compOn -ge 1 -and $compHeld -ge 1)
+        Assert "F: the slide was declared to the compositor (log)" ($slides -ge 1)
+        # The captures are pictures of tiles: some of each covered, never
+        # all of it solid (an empty matte, or one that kept its background).
+        $caps = @(Get-LogLines $logF 'pane sidebar reorder comp (held|row) key=\w+ size=(\d+)x(\d+) any=(\d+) solid=(\d+)' | ForEach-Object {
+            if ($_ -match 'size=(\d+)x(\d+) any=(\d+) solid=(\d+)') { [pscustomobject]@{ N = [int]$Matches[1] * [int]$Matches[2]; Any = [int]$Matches[3]; Solid = [int]$Matches[4] } }
+        })
+        "  (captures: $(($caps | ForEach-Object { '{0}/{1}/{2}' -f $_.Any, $_.Solid, $_.N }) -join ' '))"
+        Assert "F: every capture holds a tile - partly covered, never a solid block (log)" ($caps.Count -ge 2 -and @($caps | Where-Object { $_.Any -eq 0 -or $_.Solid -ge $_.N }).Count -eq 0)
+        Assert "F: the reorder clock never stepped the slide (log)" ($clock.Count -eq 0)
+    }
     Assert "F: release delivered" (Move-Drag $top $s2Tile.X $fy 'up')
     Start-Sleep -Milliseconds 700
     Assert "F: the drop placed P in the list at 0 (log)" (@(Get-LogLines $logF 'pane drop placed in list index=0 restored=false').Count -ge 1)
+    if (-not $ReorderStepped) {
+        Assert "F: let go, the drag came off the tree (log)" (@(Get-LogLines $logF 'pane sidebar reorder comp off slides=[1-9]').Count -ge 1)
+    }
     $orderF = Get-ListOrder
     "  (list: $($orderF -join ', '))"
     if ($NegativeControl) {
@@ -551,7 +590,7 @@ Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 
 Complete-TestBody  # T1039: the run reached the end of its body
 
-if ($script:failures -eq 0 -and -not $NegativeControl) {
+if ($script:failures -eq 0 -and -not $NegativeControl -and -not $ReorderStepped) {
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard pane-sidebar-drag -Repo $repo 2>&1 | ForEach-Object { "  $_" }

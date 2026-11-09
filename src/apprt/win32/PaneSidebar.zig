@@ -56,6 +56,7 @@ const scroll_mod = @import("pane_sidebar_scroll.zig");
 const motion = @import("pane_sidebar_motion.zig");
 const child_comp = @import("child_comp.zig");
 const sheen_comp = @import("pane_sidebar_sheen_comp.zig");
+const reorder_comp = @import("pane_sidebar_reorder_comp.zig");
 const comp_overlay = @import("../../renderer/comp_overlay.zig");
 const reorder = @import("pane_sidebar_reorder.zig");
 const pane_sidebar_order = @import("pane_sidebar_order.zig");
@@ -490,6 +491,17 @@ comp_fill: comp_overlay.Layer = .{},
 /// The busy pills' sheens on that tree (T2801): placed by the paint, played
 /// by the compositor, so a stall on this thread no longer stutters them.
 sheens: sheen_comp.SheenComp = .{},
+/// A pane drag's sliding rows and its held row on that tree (T2803): each
+/// slide declared once, the held row moved per pointer input.
+reorders: reorder_comp.ReorderComp = .{},
+/// The rows this paint left to the tree, and whether the held row is too.
+paint_comp_rows: std.StaticBitSet(pane_sidebar.max_items) = .initEmpty(),
+paint_held_comp: bool = false,
+/// Every moving row of the drag is the tree's: the reorder clock need not
+/// repaint for them (T2803).
+reorder_comp_all: bool = false,
+/// Frames the reorder clock ticked since it armed, for the log (T2803).
+reorder_frames: u32 = 0,
 /// The paint running is the window's own (WM_PAINT), not a picture taken
 /// for a transition or a probe: only it may move the sheens on the tree,
 /// and only its tally drives the motion clock (T2801).
@@ -858,6 +870,7 @@ pub fn destroy(self: *PaneSidebar) void {
     // The composition tree goes while its window is still there (T2765):
     // layers first, then the target and the devices.
     self.sheens.dropAll();
+    self.reorders.dropAll();
     self.comp_fill.deinit();
     self.comp.deinit();
     // Clear the back-pointer FIRST: DestroyWindow delivers messages
@@ -2400,6 +2413,11 @@ fn paintFrame(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
     const laid = l;
     self.paint_lifted = self.applyDragMotion(&l, self.paint_ms);
     defer self.paint_lifted = null;
+    self.composeDrag(&laid, width, height, t);
+    defer {
+        self.paint_comp_rows = .initEmpty();
+        self.paint_held_comp = false;
+    }
     self.applyItemMotion(&l, self.paint_ms);
     defer {
         self.lifted_heads = .initEmpty();
@@ -2619,6 +2637,11 @@ fn paintHeld(self: *PaneSidebar, hdc: w32.HDC, laid: *const pane_sidebar.Layout,
     h.drawn_top = top;
     const lift: f64 = if (h.settle) |s| 1 - transition.progress(self.paint_ms -| s.start_ms, reorder.settle_ms) else 1;
     const at: pane_sidebar.Rect = .{ .left = r.left, .top = top, .right = r.right, .bottom = top + r.height() };
+    // T2803: the tree carries it; the pointer only moves it.
+    if (self.paint_held_comp) {
+        self.reorders.moveHeld(at.left, at.top);
+        return;
+    }
     const saved = w32.SaveDC(hdc);
     defer _ = w32.RestoreDC(hdc, saved);
     if (clip) _ = w32.IntersectClipRect(hdc, laid.viewport.left, laid.viewport.top, laid.viewport.right, laid.viewport.bottom);
@@ -2709,17 +2732,147 @@ fn roundRectDistance(x: i32, y: i32, w: i32, h: i32, radius: i32) f64 {
     return @max(@sqrt(dx * dx + dy * dy) - rr, 0);
 }
 
+/// `GHOZTTY_DEBUG_SIDEBAR_REORDER_STEPPED`: a drag's rows stay on the reorder
+/// clock the way they were before T2803 - the oracle's control arm.
+fn reorderStepSeam() bool {
+    if (comptime !(builtin.mode == .Debug or builtin.mode == .ReleaseSafe)) return false;
+    return std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DEBUG_SIDEBAR_REORDER_STEPPED");
+}
+
+/// Hand this drag's sliding rows, and its held row, to the tree (T2803):
+/// a row is captured the first time it has somewhere to slide and declared
+/// once per retarget after that; the held row is captured once and moved by
+/// `paintHeld`. Anything that cannot go on the tree - motion off, a
+/// transition, a held row let go (its settle stays stepped, T2848), a window
+/// or group drag (T2849) - leaves the whole drag to the paint, as before.
+fn composeDrag(self: *PaneSidebar, laid: *const pane_sidebar.Layout, width: i32, height: i32, t: Theme) void {
+    self.paint_comp_rows = .initEmpty();
+    self.paint_held_comp = false;
+    if (!self.paint_live) return;
+    const d = if (self.drag) |*x| x else {
+        self.reorders.dropAll();
+        self.reorder_comp_all = false;
+        return;
+    };
+    const settling = if (d.held) |h| h.settle != null else false;
+    const eligible = self.paint_motion and !reorderStepSeam() and self.column == null and self.xfade == null and
+        self.item_drag == null and !settling and laid.mode != .hidden and !(laid.mode == .mini and laid.windowTiles());
+    const view: pane_sidebar.Rect = if (laid.viewport.height() > 0) laid.viewport else .{ .right = width, .bottom = height };
+    if (!eligible or !self.reorders.begin(&self.comp, view, self.paint_ms)) return self.stepDrag();
+    const emphasized = self.isEmphasized();
+    const count = @min(laid.count, self.entries.items.len);
+    // The held row first: were it the paint's, every composed row would
+    // pass over it.
+    if (d.held != null) {
+        const key = @intFromPtr(d.pane);
+        if (!self.reorders.holds(key)) {
+            const i = for (0..count) |k| {
+                if (self.entries.items[k].pane == d.pane) break k;
+            } else return self.stepDrag();
+            const c = self.captureDrag(laid, i, true, emphasized, t) orelse return self.stepDrag();
+            defer self.alloc.free(c.px);
+            if (!self.reorders.setHeld(&self.comp, key, c.px, c.w, c.h, c.pad, self.paint_ms)) return self.stepDrag();
+        }
+        self.paint_held_comp = true;
+    }
+    var all = true;
+    for (0..count) |i| {
+        if (!laid.shown(i)) continue;
+        const pane = self.entries.items[i].pane;
+        if (pane == d.pane) continue;
+        const tw = for (d.shifts[0..d.shift_count]) |sh| {
+            if (sh.pane == pane) break sh.tween;
+        } else continue;
+        const key = @intFromPtr(pane);
+        const r = laid.items[i];
+        if (self.reorders.has(key)) {
+            self.reorders.follow(key, r, tw, self.paint_ms);
+        } else {
+            if (tw.to == 0 and tw.done(self.paint_ms)) continue;
+            const c = self.captureDrag(laid, i, false, emphasized, t) orelse {
+                all = false;
+                continue;
+            };
+            defer self.alloc.free(c.px);
+            if (!self.reorders.addRow(&self.comp, key, c.px, r, tw, self.paint_ms)) {
+                all = false;
+                continue;
+            }
+        }
+        self.paint_comp_rows.set(i);
+    }
+    self.reorder_comp_all = all;
+    if (!all) self.armReorderClock();
+}
+
+/// The drag is the paint's this time: nothing of it on the tree, and the
+/// reorder clock steps whatever moves.
+fn stepDrag(self: *PaneSidebar) void {
+    self.reorders.dropAll();
+    self.paint_comp_rows = .initEmpty();
+    self.paint_held_comp = false;
+    if (self.reorder_comp_all) {
+        self.reorder_comp_all = false;
+        self.armReorderClock();
+    }
+}
+
+const DragCapture = struct { px: []u32, w: i32, h: i32, pad: [2]i32 };
+
+/// Row `i` as `paintRows` (or `paintMini`) draws it at its laid-out place,
+/// as premultiplied pixels (T2803) - `held`, lifted on its glass with its
+/// shadow, padded by `pad` around the row for them. The caller frees `px`.
+fn captureDrag(self: *PaneSidebar, laid: *const pane_sidebar.Layout, i: usize, held: bool, emphasized: bool, t: Theme) ?DragCapture {
+    const r = laid.items[i];
+    if (r.width() <= 0 or r.height() <= 0) return null;
+    const g = reorder.liftInset(r.width(), r.height());
+    const blur = pane_sidebar.px(reorder.shadow_radius_dip, self.scale);
+    const sdy = pane_sidebar.px(reorder.shadow_y_dip, self.scale);
+    const pad: [2]i32 = if (held) .{ g.x + blur, g.y + blur } else .{ 0, 0 };
+    const pad_bottom: i32 = if (held) g.y + blur + sdy else 0;
+    const w = r.width() + 2 * pad[0];
+    const h = r.height() + pad[1] + pad_bottom;
+    const screen = w32.GetDC(self.hwnd) orelse return null;
+    defer _ = w32.ReleaseDC(self.hwnd, screen);
+    const black = Dib32.create(screen, w, h) orelse return null;
+    defer black.destroy();
+    const white = Dib32.create(screen, w, h) orelse return null;
+    defer white.destroy();
+    @memset(black.pixels, 0);
+    @memset(white.pixels, 0x00ffffff);
+    for ([_]Dib32{ black, white }) |dib| {
+        _ = w32.SetBkMode(dib.dc, w32.TRANSPARENT);
+        _ = w32.SetViewportOrgEx(dib.dc, pad[0] - r.left, pad[1] - r.top, null);
+        if (held) self.paintLiftBacking(dib.dc, .{
+            .left = r.left - g.x,
+            .top = r.top - g.y,
+            .right = r.right + g.x,
+            .bottom = r.bottom + g.y,
+        }, 1, t);
+        if (laid.mode == .mini)
+            self.paintTile(dib.dc, i, r, false, emphasized, t)
+        else
+            self.paintRow(dib.dc, laid, i, r, false, emphasized, t);
+    }
+    _ = w32.GdiFlush();
+    const px = self.alloc.alloc(u32, black.pixels.len) catch return null;
+    reorder_comp.matte(black.pixels, white.pixels, px);
+    return .{ .px = px, .w = w, .h = h, .pad = pad };
+}
+
 fn armReorderClock(self: *PaneSidebar) void {
     if (self.reorder_armed) return;
     if (!self.reorderMoving(w32.GetTickCount64())) return;
     if (!FrameClock.arm(self.hwnd, TIMER_REORDER, reorder.frame_ms)) return;
     self.reorder_armed = true;
+    self.reorder_frames = 0;
 }
 
 fn stopReorderClock(self: *PaneSidebar) void {
     if (!self.reorder_armed) return;
     FrameClock.disarm(self.hwnd, TIMER_REORDER);
     self.reorder_armed = false;
+    log.info("pane sidebar reorder clock off frames={d}", .{self.reorder_frames});
 }
 
 /// Whether anything of the drag's motion is still on its way at `now`.
@@ -2735,6 +2888,8 @@ fn reorderMoving(self: *PaneSidebar, now: u64) bool {
     const d = self.drag orelse return false;
     if (d.held) |h| if (h.settle) |s| return s.moving(now) or now -| s.start_ms < reorder.settle_ms;
     if (!d.header.done(now)) return true;
+    // T2803: the tree plays the rows' slides; the clock is not theirs.
+    if (self.reorder_comp_all) return false;
     for (d.shifts[0..d.shift_count]) |s| if (!s.tween.done(now)) return true;
     return false;
 }
@@ -2742,6 +2897,7 @@ fn reorderMoving(self: *PaneSidebar, now: u64) bool {
 /// A frame of the reorder motion: repaint, and stop the clock - and let a
 /// settled row back into the list - once nothing moves.
 fn onReorderTick(self: *PaneSidebar) void {
+    self.reorder_frames +|= 1;
     _ = w32.InvalidateRect(self.hwnd, null, 0);
     if (self.reorderMoving(w32.GetTickCount64())) return;
     self.stopReorderClock();
@@ -4201,7 +4357,7 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     const emphasized = self.isEmphasized();
     const clip = clipOf(hdc);
     for (0..l.count) |i| {
-        if (!l.shown(i) or self.paint_lifted == i or self.lifted_items.isSet(i)) continue;
+        if (!l.shown(i) or self.paint_lifted == i or self.lifted_items.isSet(i) or self.paint_comp_rows.isSet(i)) continue;
         const hovered = self.rowHovered(i);
         if (clip) |c| if (!motion.overlaps(c, l.items[i])) {
             const e = self.entries.items[i];
@@ -4734,7 +4890,7 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     const emphasized = self.isEmphasized();
     const clip = clipOf(hdc);
     for (0..l.count) |i| {
-        if (self.paint_lifted == i) continue;
+        if (self.paint_lifted == i or self.paint_comp_rows.isSet(i)) continue;
         // On the rail of windows a window's other panes have no tile; its
         // own tile carries their busy (T2447).
         if (l.windowTiles() and !l.windowTile(i)) continue;

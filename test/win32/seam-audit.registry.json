@@ -307,6 +307,12 @@
             "unsetArm": "test\\win32\\sidebar-comp.ps1::[sheen] the busy pill was the compositor's when the clock started",
             "note": "T2801: keeps a busy pill's sheen stepped on the frame clock (the pre-T2801 path); unset, the sheen goes on the sidebar's composition tree, which sidebar-comp.ps1's sheen arm asserts. Set by the harnesses that photograph or cost the stepped sheen (pane-sidebar-activity, -motion-cost, -all-windows)."
         },
+        "GHOZTTY_DEBUG_SIDEBAR_REORDER_STEPPED": {
+            "class": "non-default",
+            "unset": "armed",
+            "unsetArm": "test\\win32\\pane-sidebar-drag.ps1::F: the drag went on the tree - its box and the held tile (log)",
+            "note": "T2803: keeps a pane drag's sliding sidebar rows and the held row stepped on the reorder clock (the pre-T2803 path); unset, the drag goes on the sidebar's composition tree, which pane-sidebar-drag.ps1 section F asserts. Set only by that script's -ReorderStepped control arm."
+        },
         "GHOZTTY_KEEP_VACATED_GUTTERS": {
             "class": "non-default",
             "unset": "shipped-elsewhere",
