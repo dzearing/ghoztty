@@ -38,9 +38,16 @@
 # What the film cannot see: a card coming out of (or going into) its strip is
 # drawn during the glide by its FACE (StripFace.zig, T2458), a layered popup
 # owned by the pane - its own top-level window, which a capture of the main
-# window never contains (the bell-fade-onscreen.ps1 caveat). So that card reads
-# as an empty card until it lands live, on BOTH paths, and it is reported but
-# never scored; .6 scores the cards that are live at both ends of the glide.
+# window never contains (the bell-fade-onscreen.ps1 caveat). So on the ON and
+# OFF arms that card reads as an empty card until it lands live, and it is
+# reported but never scored; .6 scores the cards that are live at both ends of
+# the glide. In the composition pane tree the face is a picture of the
+# window's own tree (T2777), and the TREE arm scores both faces (T2818): .18
+# the folding card is on film until its left edge has gone half its width
+# toward the strip, .19 the opening card is on film at 2+ places before it
+# settles.
+#   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms tree -NoFaceComp   # tree.18 and tree.19 must go red
+# -NoFaceComp sets GHOZTTY_FACE_COMP=0: the faces stay on their popups.
 #
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms on
@@ -107,7 +114,11 @@ param(
     # desk compose (GHOZTTY_COMP_SHADOWS_NOBODY=1): the stall arm's .17
     # must then go red.
     [switch]$Solid,
-    [switch]$NoBody
+    [switch]$NoBody,
+    # T2818: GHOZTTY_FACE_COMP=0 keeps a folding or opening card's face on its
+    # layered popup, which a window capture never contains - the tree arm's
+    # .18/.19 must then go red.
+    [switch]$NoFaceComp
 )
 
 $ErrorActionPreference = 'Continue'
@@ -136,7 +147,7 @@ if ($NegativeControl) { $SlideMs = 0; "NEGATIVE CONTROL: the slide is 0 ms (an i
 if (-not $OutDir) { $OutDir = Join-Path $env:TEMP "ghoztty-comp-glide-$PID" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_GLIDE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS', 'GHOZTTY_DEBUG_GLIDE_STALL_MS', 'GHOZTTY_GLIDE_DECLARE', 'GHOZTTY_DEBUG_GLIDE_STALL_AT'
+$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_GLIDE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS', 'GHOZTTY_DEBUG_GLIDE_STALL_MS', 'GHOZTTY_GLIDE_DECLARE', 'GHOZTTY_DEBUG_GLIDE_STALL_AT', 'GHOZTTY_FACE_COMP'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
@@ -328,6 +339,9 @@ function Score-Film($arm, $fdir) {
         $lo = $null; $hi = $null
         if ($on0 -and $on1) { $lo = [Math]::Min($a.RightMax, $z.RightMax); $hi = [Math]::Max($a.RightMax, $z.RightMax) }
         $seen = 0; $missing = 0
+        $seenAt = @($rows | Where-Object { $_.B[$k].Rows -gt 0 } | ForEach-Object { $_.I })
+        $firstSeen = if ($on0) { -1 } else { $seenAt[0] }
+        $lastSeen = if ($on1) { -1 } else { $seenAt[-1] }
         foreach ($f in $rows) {
             $b = $f.B[$k]
             if ($b.Rows -eq 0) { if ($on0 -and $on1) { $missing++ }; continue }
@@ -342,8 +356,14 @@ function Score-Film($arm, $fdir) {
             # fades the block in over the glass band, whose gradient puts a
             # half-strength block across the pure-colour threshold row by row
             # (T2779: green 113 at its top, 109 at its foot), and a block
-            # caught there is partly detected, not torn.
-            $judged = ($on0 -and $on1) -or $b.Rows -ge [Math]::Floor(0.9 * $restH)
+            # caught there is partly detected, not torn. Its faintest frame -
+            # the first an opening card is seen in, the last a folding one is
+            # - is never judged either: in the tree its face is on film from
+            # content_alpha's first step (T2818), and that step's block sits
+            # on the threshold along its edge too (green f14 right 159..168,
+            # one run in three).
+            $faint = (-not ($on0 -and $on1)) -and ($f.I -eq $firstSeen -or $f.I -eq $lastSeen)
+            $judged = (($on0 -and $on1) -or $b.Rows -ge [Math]::Floor(0.9 * $restH)) -and -not $faint
             if ($judged -and (($b.LeftMax - $b.LeftMin) -gt 2 -or ($b.RightMax - $b.RightMin) -gt 2)) {
                 $tornBad += "$($colourNames[$k]) f$($f.I) left $($b.LeftMin)..$($b.LeftMax) right $($b.RightMin)..$($b.RightMax)"
             }
@@ -367,6 +387,7 @@ function Score-Film($arm, $fdir) {
     Assert "$arm.6 whole: every card on show at both ends is on screen in every frame$(if ($wholeBad) { ': ' + ($wholeBad -join '; ') })" ($wholeBad.Count -eq 0)
     Assert "$arm.7 held: no card's picture is ever larger than its rest size (clipped, never stretched)$(if ($heldBad) { ': ' + (($heldBad | Select-Object -First 4) -join '; ') + " ($($heldBad.Count))" })" ($heldBad.Count -eq 0)
     Assert "$arm.8 untorn: every card's rows share one left and one right edge in every frame$(if ($tornBad) { ': ' + (($tornBad | Select-Object -First 4) -join '; ') + " ($($tornBad.Count))" })" ($tornBad.Count -eq 0)
+    if ($arm -eq 'tree') { Score-TreeFaces $arm $rows }
     if ($arm -eq 'stall') { Score-Stall $arm $rows }
     if ($arm -eq 'unfold') { Score-StallUnfold $arm $rows ($StallMs / 4.0) }
 }
@@ -440,6 +461,48 @@ function Score-StallFace($arm, $rows, $limit) {
     Assert "$arm.13 through the stall the folding card's face keeps folding: longest still stretch $([Math]::Round($gap)) ms (need < $limit)" ($moves -ge 2 -and $gap -lt $limit)
 }
 
+# T2818: the folding and the opening card in the composition pane tree,
+# with no stall. Their faces are pictures in the window's own tree (T2777),
+# so the film sees them - a face left on its layered popup is never in a
+# window capture (T2561), and its card reads empty (opening) or gone
+# (folding) for the whole glide. Each card's block is counted at the
+# distinct places it is seen strictly on the way: the folding one between
+# its rest place and leaving the film, the opening one between first showing
+# and where it settles. Two or more is a face the film saw travel.
+function Score-TreeFaces($arm, $rows) {
+    $first = $rows[0]; $last = $rows[$rows.Count - 1]
+    $fk = -1; $uk = -1
+    for ($k = 0; $k -lt 4; $k++) {
+        if ($first.B[$k].Rows -gt 0 -and $last.B[$k].Rows -eq 0 -and $fk -lt 0) { $fk = $k }
+        if ($first.B[$k].Rows -eq 0 -and $last.B[$k].Rows -gt 0 -and $uk -lt 0) { $uk = $k }
+    }
+    $t0 = $first.T
+    foreach ($pair in @(@($fk, 'fold', '.18', 'the folding card''s face is on film as it folds'), @($uk, 'unfold', '.19', 'the opening card''s face is on film as it opens'))) {
+        $k = $pair[0]; $what = $pair[1]; $id = $pair[2]; $claim = $pair[3]
+        if ($k -lt 0) { Assert "$arm$id a card ${what}s on film (none found)" $false; continue }
+        $rest = if ($what -eq 'fold') { $first.B[$k] } else { $last.B[$k] }
+        $places = @{}
+        $far = 0
+        foreach ($f in $rows) {
+            $b = $f.B[$k]
+            if ($b.Rows -eq 0) { continue }
+            if ($b.LeftMin -eq $rest.LeftMin -and $b.RightMax -eq $rest.RightMax) { continue }
+            $places["$($b.LeftMin)-$($b.RightMax)"] = $true
+            $far = [Math]::Max($far, [Math]::Abs($b.LeftMin - $rest.LeftMin))
+        }
+        $restW = $rest.RightMax - $rest.LeftMin + 1
+        "    $what trace ($($colourNames[$k]) ms:left-right): " + (($rows | ForEach-Object { $b = $_.B[$k]; if ($b.Rows -gt 0) { "$([Math]::Round($_.T - $t0)):$($b.LeftMin)-$($b.RightMax)" } else { "$([Math]::Round($_.T - $t0)):-" } }) -join ' ')
+        if ($what -eq 'fold') {
+            # The pane's own picture moves a frame or two before its face
+            # takes over: under a popup face it leaves the film after 18 of 192
+            # px, a face in the tree folds on to the strip (171 of 192).
+            Assert "$arm$id ${claim}: seen at $($places.Count) place(s), its left edge $far of $restW px on the way to the strip ($($colourNames[$k]); need 2+ places and half its width)" ($places.Count -ge 2 -and 2 * $far -ge $restW)
+        } else {
+            Assert "$arm$id ${claim}: seen at $($places.Count) place(s) on the way ($($colourNames[$k]); need 2+)" ($places.Count -ge 2)
+        }
+    }
+}
+
 # T2779: the card opening out of its strip, through a stall that lands once
 # its content is well in (GHOZTTY_DEBUG_GLIDE_STALL_AT=unfold). Its block is
 # not on show at the start and is at the end; every change of its edges is a
@@ -506,6 +569,7 @@ try {
         if ($stalls) { $env:GHOZTTY_DEBUG_GLIDE_STALL_MS = "$StallMs" } else { Remove-Item env:GHOZTTY_DEBUG_GLIDE_STALL_MS -ErrorAction SilentlyContinue }
         if ($arm -eq 'unfold') { $env:GHOZTTY_DEBUG_GLIDE_STALL_AT = 'unfold' } else { Remove-Item env:GHOZTTY_DEBUG_GLIDE_STALL_AT -ErrorAction SilentlyContinue }
         if ($NoDeclare) { $env:GHOZTTY_GLIDE_DECLARE = '0' } else { Remove-Item env:GHOZTTY_GLIDE_DECLARE -ErrorAction SilentlyContinue }
+        if ($NoFaceComp) { $env:GHOZTTY_FACE_COMP = '0' } else { Remove-Item env:GHOZTTY_FACE_COMP -ErrorAction SilentlyContinue }
         if ($NoBody) { $env:GHOZTTY_COMP_SHADOWS_NOBODY = '1' } else { Remove-Item env:GHOZTTY_COMP_SHADOWS_NOBODY -ErrorAction SilentlyContinue }
         $err = Join-Path $dir 'stderr.txt'
         $app = Start-OnTestDesktop -Exe $Exe -Arguments @(
