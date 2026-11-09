@@ -671,3 +671,11 @@ as the digest that showed them.
 - The taskbar preview shows your panes (new angle on taskbar badges: the hover preview maps each window's panes, names and busy/waiting state; click a pane to jump)
 - Share a selection the Windows way (right-click Share sends selected text, with its command, through the Windows share panel)
 - Many saved sessions never slow the first window (restore brings up the opened window's prompt first, the rest behind it without stalling typing)
+
+## 2026-11-09
+
+- Back in a second after a crash (new angle on crash restore: automatic relaunch re-attaches every live session, no prompt)
+- The mouse's side buttons step back (back/forward mouse buttons move between earlier commands in a terminal pane and pages in a viewer pane)
+- Status you can read without colour (busy/done/failed distinguished by shape as well as colour in the sidebar)
+- Scroll two panes together (new angle on comparing panes: link two live panes so they scroll as one)
+- A graphics driver fault costs one window, not all of them (the faulting window falls back to safe drawing; others carry on)
