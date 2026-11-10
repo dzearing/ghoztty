@@ -71,6 +71,10 @@ param(
     # The ghoztty the pane probe reads through. Same default as the watchdog's,
     # so both supervisors question the same binary.
     [string]$GhozttyExe = "$env:LOCALAPPDATA\Programs\Ghoztty\ghoztty.exe",
+    # A file holding the pane tail to classify INSTEAD of reading the live pane
+    # (T1379). A harness seam: what the line says about a working, idle or
+    # wedged pane is only testable if the pane can be a fixture.
+    [string]$PaneTailFile = '',
     # The instant the daily-digest window is judged against. Defaults to now;
     # the harness passes an explicit one so "before 05:00" and "after 05:00"
     # are both reachable without waiting for a particular hour of the day.
@@ -440,12 +444,60 @@ if ($alive -and $ageMin -gt $StaleMinutes) { $notes += "no activity for $([math]
 # clock it was reading. A turn counter that has not advanced is the number that
 # describes the thing being supervised, and it is the one that must decide.
 $turnStalled = $false
+# WHAT WAS THE PANE DOING (T1379). The note below used to end "read it with
+# `ghoztty +read`" - the watchdog read and logged the pane (T1370) while this
+# line, the one a human actually reads, decided on turn_age alone and sent them
+# to do the reading by hand. So the pane is read ONCE here, for every quiet turn
+# past the suspect bar (the backstop included), and its answer goes on the line
+# (`pane_state=`) and into the note. A probe that throws is a note of its own,
+# never a quiet pass (the 2026-09-06 lesson, kept below).
+$paneProbed = $false
+$paneState = $null
+if ($alive -and -not $NoPaneProbe -and $pane -and $turnAgeMin -gt $TurnSuspectMinutes) {
+    $paneProbed = $true
+    try {
+        . (Join-Path $PSScriptRoot 'go-loop-pane-probe.ps1')
+        $paneState = if ($PaneTailFile) {
+            ConvertTo-PaneState -Tail ([string](Get-Content -LiteralPath $PaneTailFile -Raw -Encoding UTF8))
+        } else {
+            Read-PaneState -PaneId $pane -GhozttyExe (Resolve-GhozttyCliExe -Exe $GhozttyExe)
+        }
+    } catch {
+        $notes += ("the pane probe failed after $(Format-Age $turnAgeMin) of quiet turn, " +
+            "so the composer and idle arms could not be asked: $($_.Exception.Message)")
+    }
+}
+$paneWorking = if (-not $paneProbed) { 'not-asked' }
+               elseif ($paneState -and $paneState.Working) { [string]$paneState.Working }
+               else { 'unknown' }
+$paneComposer = if ($paneState) { [string]$paneState.Composer } else { '' }
+$paneLast = if ($paneState) { [string]$paneState.LastOutput } else { '' }
 if ($alive -and $turnAgeMin -gt $TurnStaleMinutes) {
     $turnStalled = $true
-    $notes += ("no turn has completed for $(Format-Age $turnAgeMin) (turn $turn started " +
-        "$(if ($turnStarted) { $turnStarted } else { 'before this field existed' })) - the pane may be " +
-        'moving without the loop working; read it with `ghoztty +read --name=<pane>` before theorising ' +
-        '(an API 529 sits there looking exactly like a live session)')
+    $head = ("no turn has completed for $(Format-Age $turnAgeMin) (turn $turn started " +
+        "$(if ($turnStarted) { $turnStarted } else { 'before this field existed' }))")
+    $said = if ($paneLast) { "; its last output was '$paneLast'" } else { '' }
+    $notes += switch ($paneWorking) {
+        'working' {
+            "$head - the pane shows the session WORKING$said, so this is a very long turn rather than a dead one"
+        }
+        'idle' {
+            if ($paneComposer) {
+                "$head - the pane is IDLE with unsent text in its composer ('$paneComposer')${said}: the turn " +
+                'typed its continuation and never submitted it (go.md step 7)'
+            } else {
+                "$head - the pane is IDLE at an empty composer${said}: the turn ended without its continuation"
+            }
+        }
+        'unknown' {
+            "$head - and the pane could not be read, so what it is doing is unknown; read it with " +
+            '`ghoztty +read --name=<pane>` before theorising (an API 529 sits there looking exactly like a live session)'
+        }
+        default {
+            "$head - the pane may be moving without the loop working; read it with " +
+            '`ghoztty +read --name=<pane>` before theorising (an API 529 sits there looking exactly like a live session)'
+        }
+    }
 }
 # AND SAY WHY, WHEN THE SESSION ITSELF SAYS WHY (T1483).
 #
@@ -494,23 +546,13 @@ if ($blocker.Blocked -and $blocker.NeedsUser) {
 # than growing a second opinion here. `Resolve-LoopStallVerdict` carries all
 # three arms (180m backstop, suspect+composer, suspect+idle) and is unit
 # tested; only the backstop is re-stated above, with its own richer note.
-if (-not $turnStalled -and $alive -and -not $NoPaneProbe -and $pane -and
-    $turnAgeMin -gt $TurnSuspectMinutes) {
+if (-not $turnStalled -and $paneProbed) {
     # A probe that THROWS must not read as a quiet pass. The first cut called
     # Resolve-GhozttyCliExe with no -Exe; PowerShell wrote two red blocks to
     # stderr, the arm was skipped, and the line still printed HEALTHY - a
     # broken supervisor reporting health, which is the failure this whole block
-    # exists to end. So the probe is wrapped, and being unable to look is
-    # itself a note.
-    $paneState = $null
-    try {
-        . (Join-Path $PSScriptRoot 'go-loop-pane-probe.ps1')
-        $paneState = Read-PaneState -PaneId $pane `
-            -GhozttyExe (Resolve-GhozttyCliExe -Exe $GhozttyExe)
-    } catch {
-        $notes += ("the pane probe failed after $(Format-Age $turnAgeMin) of quiet turn, " +
-            "so the composer and idle arms could not be asked: $($_.Exception.Message)")
-    }
+    # exists to end. So the probe (read once, above the backstop) is wrapped,
+    # and being unable to look is itself a note.
     $verdict = if ($paneState) {
         Resolve-LoopStallVerdict -TurnAgeMinutes $turnAgeMin `
             -StaleMinutes $TurnStaleMinutes -SuspectMinutes $TurnSuspectMinutes `
@@ -531,7 +573,8 @@ if (-not $turnStalled -and $alive -and -not $NoPaneProbe -and $pane -and
     }
     if ($verdict.Stalled) {
         $turnStalled = $true
-        $notes += ("stalled(by=$($verdict.Clock)): $($verdict.Why) - the watchdog " +
+        $notes += ("stalled(by=$($verdict.Clock)): $($verdict.Why)" +
+            $(if ($paneLast) { " (last output: '$paneLast')" } else { '' }) + ' - the watchdog ' +
             'sees this too and will nudge; if it keeps recurring, the turn is ending ' +
             'without submitting its own continuation, which is a go.md step 7 failure')
     }
@@ -608,6 +651,9 @@ if ($Json) {
         turn_started     = $turnStarted
         turn_age_minutes = if ([double]::IsInfinity($turnAgeMin)) { $null } else { $turnAgeMin }
         turn_stalled     = $turnStalled
+        pane_state       = $paneWorking
+        pane_composer    = $paneComposer
+        pane_last_output = $paneLast
         blocked          = [bool]$blocker.Blocked
         blocked_kind     = [string]$blocker.Kind
         blocked_why      = [string]$blocker.Why
@@ -638,7 +684,7 @@ if ($Json) {
     } | ConvertTo-Json -Depth 4
 } else {
     $task = if ($inProgress.Count) { $inProgress -join ',' } else { 'none' }
-    "$(Now-Iso) $($verdict.ToUpper()) uptime=$uptime turn=$turn turn_age=$(Format-Age $turnAgeMin) state=$state pane=$pane pid=$loopPid " +
+    "$(Now-Iso) $($verdict.ToUpper()) uptime=$uptime turn=$turn turn_age=$(Format-Age $turnAgeMin) pane_state=$paneWorking state=$state pane=$pane pid=$loopPid " +
     "task=$task decisions_open=$openDecisions digest=$digestState publish=$publishState deliver=$(if ($deliverState -eq 'wrong') { "wrong($deliverProblems)" } else { $deliverState }) blocked=$(if ($blocker.Blocked) { $blocker.Kind + $(if ($blocker.NeedsUser) { '(needs-you)' } else { '' }) } else { 'no' }) windows=$marked watchdog=$watchdog dashboard=$dashboard lane=$laneId lanes=$lanesText"
     foreach ($n in $notes) { "  - $n" }
 }

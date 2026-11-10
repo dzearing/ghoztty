@@ -306,17 +306,57 @@ function Get-PaneWorkingState {
 function Read-PaneState {
     param([string]$PaneId, [string]$GhozttyExe, [int]$Lines = 20)
 
-    $blind = @{ Composer = ''; Working = 'unknown'; Shape = 'blind'; Tail = '' }
+    $blind = @{ Composer = ''; Working = 'unknown'; Shape = 'blind'; Tail = ''; LastOutput = '' }
     if (-not $PaneId) { return $blind }
     $out = ''
     # T663: the console twin, and `2>$null` rather than `2>&1` - a merged stderr
     # line becomes part of the text this classifies.
     try { $out = (& (Resolve-GhozttyCliExe $GhozttyExe) +read "--name=$PaneId" "--lines=$Lines" 2>$null | Out-String) } catch { return $blind }
     if ($LASTEXITCODE -ne 0) { return $blind }
-    return @{ Composer = (Get-PaneComposerText -Tail $out)
-              Working  = (Get-PaneWorkingState -Tail $out)
-              Shape    = (Get-PaneComposerShape -Tail $out)
-              Tail     = $out }
+    return (ConvertTo-PaneState -Tail $out)
+}
+
+# Pure: every answer Read-PaneState gives, from a tail already in hand. The
+# health line's harness feeds it a fixture through this (T1379).
+function ConvertTo-PaneState {
+    param([AllowEmptyString()][string]$Tail)
+
+    return @{ Composer   = (Get-PaneComposerText -Tail $Tail)
+              Working    = (Get-PaneWorkingState -Tail $Tail)
+              Shape      = (Get-PaneComposerShape -Tail $Tail)
+              LastOutput = (Get-PaneLastOutput -Tail $Tail)
+              Tail       = $Tail }
+}
+
+# --- what was the session last SAYING? (T1379) ------------------------------
+#
+# Working/idle says whether a turn is in flight; it does not say why one
+# stopped. On 2026-09-04 that reason was `API Error: 529 Overloaded`, sitting on
+# the last line above the composer while three stalls were theorised about from
+# the ledger. So the health line quotes it: the last non-blank line ABOVE the
+# composer, chrome stripped. Pure. '' when there is no composer to anchor on -
+# without the anchor, the status bar and footer below the composer would be
+# quoted as if the session had said them.
+function Get-PaneLastOutput {
+    param([AllowEmptyString()][string]$Tail, [int]$MaxLength = 140)
+
+    if ([string]::IsNullOrWhiteSpace($Tail)) { return '' }
+    $flat = ($Tail -replace '[^\x20-\x7E\r\n]', ' ')
+    $lines = @($flat -split "`r?`n")
+    $composer = -1
+    for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+        if ($lines[$i].TrimEnd() -match '^\s+>\s*(\S.*)?$') { $composer = $i; break }
+    }
+    if ($composer -lt 1) { return '' }
+    for ($i = $composer - 1; $i -ge 0; $i--) {
+        $t = ($lines[$i] -replace '\s+', ' ').Trim()
+        if (-not $t) { continue }
+        # The TUI's own hint line under the spinner is chrome, not output.
+        if ($t -match '^Tip:') { continue }
+        if ($t.Length -gt $MaxLength) { $t = $t.Substring(0, $MaxLength - 3) + '...' }
+        return $t
+    }
+    return ''
 }
 
 # The composer alone, for callers that want nothing else.

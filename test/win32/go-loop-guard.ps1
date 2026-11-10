@@ -2950,6 +2950,84 @@ $afHealthSrc = Get-Content $aaHealth -Raw
 Assert 'AF6 health calls the same verdict function the watchdog does' `
     ($afHealthSrc -match 'Resolve-LoopStallVerdict')
 
+# --- AJ. the health line says what the pane was DOING (T1379) ---------------
+# WHY: the watchdog read the pane and logged working/idle (T1370), while this
+# line - the one a human reads - decided on turn_age alone and ended its
+# DEGRADED note with "read it with ghoztty +read". On 2026-09-04 the reason for
+# the stall (`API Error: 529 Overloaded`) was sitting on the last line above the
+# composer the whole time. The pane is a FIXTURE here (-PaneTailFile), because
+# what the line says about a working, idle or wedged session is the subject.
+""
+"AJ. the health line reports the pane's state, not an instruction to go read it"
+
+$agRule = ([string][char]0x2500) * 40
+function AGPane([string[]]$Body, [string]$Composer = '') {
+    return ((@('* Read(go.md)', '') + $Body + @(
+        "$agRule> $Composer",
+        "$agRule  ctx: 117k/1000k (12%) | files: 1 changed | v2.1.251",
+        '  users/dzearing/windows-amd64 | D:\git\ghoztty',
+        '  ' + ([string][char]0x23F5) + ' bypass permissions on - 7 shells'
+    )) -join "`r`n")
+}
+$agSpin = '  ' + ([string][char]0x2733) + ' Whirlpooling' + ([string][char]0x2026) +
+          ' (3m 1s ' + ([string][char]0x00B7) + ' thought for 25s)'
+$agTail = Join-Path $aaRoot 'pane-tail.txt'
+function AGHealth([string]$Tail, [switch]$AsJson, [switch]$NoProbe, [int]$Suspect = 0) {
+    [System.IO.File]::WriteAllText($agTail, $Tail, (New-Object System.Text.UTF8Encoding $false))
+    $a = @('-Repo', $aaRepo, '-LockPath', $aaLock, '-DigestAsOf', $aaNow.ToString('o'),
+           '-PublishAsOf', $aaNow.ToString('o'), '-PublishWatermark', $aaWatermark,
+           '-PaneTailFile', $agTail)
+    if ($AsJson) { $a += '-Json' }
+    if ($NoProbe) { $a += '-NoPaneProbe' }
+    if ($Suspect -gt 0) { $a += @('-TurnSuspectMinutes', "$Suspect") }
+    return (& powershell -NoProfile -ExecutionPolicy Bypass -File $aaHealth @a 2>&1 |
+        ForEach-Object { $_.ToString() } | Out-String)
+}
+$agIdle529 = AGPane @('  API Error: 529 Overloaded', '')
+
+# The pure reader first.
+Assert 'AJ1 the last output is the last line above the composer, chrome stripped' `
+    ((Get-PaneLastOutput -Tail $agIdle529) -eq 'API Error: 529 Overloaded')
+Assert 'AJ2 a pane with no composer quotes nothing (status bars are not output)' `
+    ((Get-PaneLastOutput -Tail "D:\git\ghoztty>`r`nsome shell text") -eq '')
+Assert 'AJ3 the TUI''s Tip line is chrome, not output' `
+    ((Get-PaneLastOutput -Tail (AGPane @('  real output', '  Tip: Use /btw to ask a quick side question'))) -eq 'real output')
+
+# Past the 180m backstop - the case whose note used to send a human to the pane.
+AAWriteLock $aaNow.AddHours(-14.5) $aaNow.AddHours(-14.5)
+$ag = AGHealth $agIdle529
+Assert 'AJ4 an idle pane past the backstop reads pane_state=idle on the line' ($ag -match 'pane_state=idle\b')
+Assert 'AJ5 and the note says it is idle at an empty composer and quotes the 529' `
+    ($ag -match 'IDLE at an empty composer' -and $ag -match "last output was 'API Error: 529 Overloaded'")
+Assert 'AJ6 and no longer tells the reader to go and read the pane' ($ag -notmatch '\+read --name')
+$ag = AGHealth (AGPane @('  Committed and pushed.', '') '/reset-context read go.md and go')
+Assert 'AJ7 an unsent continuation is named as one, with the text' `
+    ($ag -match 'unsent text in its composer' -and $ag -match '/reset-context read go\.md and go' -and $ag -match 'step 7')
+$ag = AGHealth (AGPane @($agSpin))
+Assert 'AJ8 a working pane past the backstop reads as a long turn, not a dead one' `
+    ($ag -match 'pane_state=working\b' -and $ag -match 'WORKING' -and $ag -match 'very long turn')
+$agJ = $null; try { $agJ = (AGHealth $agIdle529 -AsJson) | ConvertFrom-Json } catch { }
+Assert 'AJ9 -Json carries pane_state, pane_composer and pane_last_output' `
+    ($null -ne $agJ -and $agJ.pane_state -eq 'idle' -and $agJ.pane_composer -eq '' -and
+     $agJ.pane_last_output -eq 'API Error: 529 Overloaded')
+# Negative controls: without the probe the line must say it never asked - not
+# idle, not working - and keep the old instruction, the only honest note left.
+$ag = AGHealth $agIdle529 -NoProbe
+Assert 'AJ10 -NoPaneProbe reads pane_state=not-asked and keeps the +read advice' `
+    ($ag -match 'pane_state=not-asked\b' -and $ag -match '\+read --name' -and $ag -notmatch 'IDLE at')
+$ag = AGHealth ''
+Assert 'AJ11 an empty read is unknown, never idle, and says so' `
+    ($ag -match 'pane_state=unknown\b' -and $ag -match 'could not be read' -and $ag -notmatch 'IDLE at')
+# Under the suspect bar the pane is not asked at all (a healthy loop is not
+# probed every tick), even with a fixture standing by.
+AAWriteLock $aaNow.AddMinutes(-4) $aaNow.AddMinutes(-4)
+Assert 'AJ12 a fresh turn is not probed' ((AGHealth $agIdle529) -match 'pane_state=not-asked\b')
+# Inside the suspect window the stall arm's note quotes the output too.
+AAWriteLock $aaNow.AddHours(-2) $aaNow.AddHours(-2)
+$ag = AGHealth $agIdle529
+Assert 'AJ13 a 2h quiet turn at an idle pane reports idle and quotes the last output' `
+    ($ag -match 'pane_state=idle\b' -and $ag -match "last output: 'API Error: 529 Overloaded'")
+
 Remove-Item -LiteralPath $aaRoot -Recurse -Force -ErrorAction SilentlyContinue
 
 # --- BB. the WATCHDOG decides by the same clock (T1319) --------------------
