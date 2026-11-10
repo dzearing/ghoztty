@@ -247,12 +247,18 @@ pub fn signIn(alloc: Allocator, opts: Options) Error!Outcome {
     //
     // Blocking and network-bound, which is fine here: `signIn` is already the
     // long, off-thread call this whole module is documented as.
-    _ = relay_suspend.restoreFor(
+    const restored = relay_suspend.restoreFor(
         alloc,
         session.value.email,
         session.value.session_token,
         relay_base,
     );
+    // T1428: a restore the relay could not answer is not left for the next
+    // launch. Signing in while the relay is unreachable is exactly when it
+    // fails, and quitting and reopening the app is not a remedy anybody
+    // reaches for - so the background loop keeps asking on the revocation
+    // retry's capped cadence until the machine is back.
+    if (relay_suspend.retryOwed(restored)) relay_suspend.retryLaterAsync(alloc);
 
     // T2049: signing in as somebody other than the account that enrolled this
     // machine makes the app a guest here, so the agent must stop serving it

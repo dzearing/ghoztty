@@ -1,11 +1,11 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-11-10T15:15:48-08:00",
-    "commit":  "0cd05b4a4",
+    "generated":  "2026-11-10T15:43:35-08:00",
+    "commit":  "66e7250e9",
     "uncommitted":  [
-                        "src/apprt/win32/activity_machines.zig",
-                        "src/apprt/win32/Window.zig"
+                        "src/remote/relay_signin.zig",
+                        "src/remote/relay_suspend.zig"
                     ],
     "files":  {
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
@@ -90,7 +90,7 @@
                   "src/apprt/win32/activity_hover.zig":  "524b85c7a6a3de870d2434b15058e555b3b26b433b46e5cf4fe08f3d31ec6895",
                   "src/apprt/win32/activity_input.zig":  "faaf5e514ce74cc74e801d1b045c5dcd2b4bbb1557dfac5e07db3ef94965661e",
                   "src/apprt/win32/activity_layout.zig":  "708bc1330b883123ced380b38171e19c63b95d5d7484a112e8b2ea30370a74a7",
-                  "src/apprt/win32/activity_machines.zig":  "8680b5e4e0c90d8be0eaa835b2deed32f2723a8a06b23e5a4efadda75dc202f7",
+                  "src/apprt/win32/activity_machines.zig":  "373b9038954b8276fd9681ab6b956a01867329216fa5d6c5474c7926de5bfc9e",
                   "src/apprt/win32/activity_paint.zig":  "2e68d5f9654284ce68fcf84f2ce64f76364b7c928d889c5cc449a4d64c598f63",
                   "src/apprt/win32/activity_panes.zig":  "165fa3bae018b2609be70d38cccc6d5dc2e9c696081dfd4376ddf85194944e7a",
                   "src/apprt/win32/activity_probe.zig":  "dcbc1f2ea24d2603f16258cb77dd04d11ddded12bde8049dc70baa70a867a101",
@@ -476,7 +476,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "0c702da8c16da658a55e6ae84c5315250658f56bc881edcbc12d6c7ba5aa78a3",
-                  "src/apprt/win32/Window.zig":  "0cfa9043db0b99bac41a6d0e72ed83a88b3244595e1b5a0acb743e3b38b2492c",
+                  "src/apprt/win32/Window.zig":  "6d1e6ca7d8ae223046e45658a53685d942a3cbc1506a4ca572c7d2b133f4fd9c",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
                   "src/apprt/win32/window_broadcast.zig":  "9aaf66d945d0899628ede661e9e40f04f55551342659448b62aee06b979b1e4e",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
@@ -861,8 +861,8 @@
                   "src/remote/relay_revoke.zig":  "e9764bbd76227c72232a403cf0bcda01f44ad5cedd2c1a4de421dbe89e16cb77",
                   "src/remote/relay_revoke_pending.zig":  "88a1775a2e15839362fce40b0f952c762f9df1db18c2680b0af58e9eafa31d61",
                   "src/remote/relay_session.zig":  "649829165a7914805d21fb58008b42a41c16e3a2a9c3e797c986215717f77eb0",
-                  "src/remote/relay_signin.zig":  "144d0cfc2f894dc8670e73bf1e00b3efa1c0c26e0148e62a637cbc51ab36b8f2",
-                  "src/remote/relay_suspend.zig":  "c744f10a9bf9b77af917eb8d2b0ecea5bba183fc9fa53846d21b9a8103069a16",
+                  "src/remote/relay_signin.zig":  "78a186c739f8b0fa572a212c6983f48438f3a5af72ef84b201623bec6562877c",
+                  "src/remote/relay_suspend.zig":  "7833c1263e679e8c13086397bfd57e8c229a52a478beb35024f99bf48d128bb9",
                   "src/remote/remote_backend_e2e.zig":  "cbab22948bbd48f6ca83b1b3e1eb93a4f4df1ea77b93204aeb101a4c00ea4981",
                   "src/remote/socket_rw.zig":  "f60123e19771e6a9f902e3bc5abef5ad126ac14cde267f2571611697472122ef",
                   "src/remote/socket_stream.zig":  "83d8e9457f303c6109e4c03297de57aa700411c9ad69449791cc9baccb5bc01e",

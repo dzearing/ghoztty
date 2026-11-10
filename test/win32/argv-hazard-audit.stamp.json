@@ -1,10 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-10T14:29:52-08:00",
-    "commit":  "311c0d52e",
+    "generated":  "2026-11-10T15:39:04-08:00",
+    "commit":  "66e7250e9",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -43,7 +43,7 @@
                   "scripts/fork-identity.ps1":  "3a6d62da446fa39923b07b6c4c36852016acb8db2d0cd4b4fd4e992c36bb4866",
                   "scripts/ghoztty-agent-watcher.ps1":  "51f93a125f8c81543a365acc9a990175f3b1b599184c19e2a87748b417559db4",
                   "scripts/ghoztty-cleanup.ps1":  "0535db22311b9640e47102124f856a2690dd446d9b87461ba2749f9418d29ffc",
-                  "scripts/git-commit-guard.ps1":  "4f504cf2ab19df9027dcf0663ed83a64906949cb838314e3bcc03d6870e5099a",
+                  "scripts/git-commit-guard.ps1":  "ef74c1d216b49535101e62c59662edcea59d7b4f714e364eed624816359f986c",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
                   "scripts/go-loop-exec.ps1":  "b31b728d90cb1e9fbdd605e0fcd7e257da797eae52567467953279b78fae42d8",
                   "scripts/go-loop-health.ps1":  "895f9cef3791a9f81fd8b975c1d17c127f9595688a4f446bf6a1221f7a2e6a65",

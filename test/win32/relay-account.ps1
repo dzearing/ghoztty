@@ -1495,6 +1495,75 @@ try {
         Start-Sleep -Milliseconds 800
     }
 
+    "  -- 10e: the SAME app restores the machine once the relay answers (T1428)"
+    # 10b's relaunch is the backstop; this is the path a user actually walks.
+    # They sign back in while the relay is unreachable, the restore fails, and
+    # nobody thinks to quit and reopen Ghoztty to get their machine back. The
+    # relay is DEAD when the app's first pass runs and is started only after
+    # that pass has failed, so a single-pass restore cannot satisfy this - only
+    # a retry inside the same process can.
+    $LatePort = Get-FreePort
+    $LateBase = "http://127.0.0.1:$LatePort"
+    $HitsL = "$tmp\hits-restore-late.log"
+    Assert "the late relay's port $LatePort is free (it must be DEAD at launch)" (
+        Test-PortFree $LatePort)
+    Remove-Item $RelayEnvPath -ErrorAction SilentlyContinue
+    Set-Content -Path $SuspendRec -Encoding ascii -Value (
+        '{"relay_base":"' + $LateBase + '","machine_name":"E2E-Box",' +
+        '"owner_email":"e2e@example.com","suspended_at":1}')
+    Write-AccountStore $SessTok 3600 $LateBase
+
+    $errlog10e = "$tmp\gui-restore-late.stderr.log"
+    $g10e = Launch-Gui $LateBase $errlog10e
+    if (-not $g10e) {
+        Write-Host 'SETUP FAIL: GUI did not come up for the in-process retry'; $script:failures++
+    } else {
+        # The first pass must have run and failed before the relay exists.
+        Assert "the first restore pass failed against the dead relay" (
+            Wait-Stderr $errlog10e 'could not restore this machine.s enrollment')
+        Assert "and left the suspension armed" (Test-Path $SuspendRec)
+
+        $null = Start-FakeRelay $LatePort $SessTok 3600 $RenewedTok $HitsL $ProbeNonce
+        $upL = Wait-FakeRelay $LatePort $ProbeNonce
+        if (-not $upL.Ok) { "  (late relay never answered: $($upL.Why))" }
+        Assert "the late relay is up now (the network came back)" $upL.Ok
+
+        # Backoff is 5s then 15s, so the second or third pass lands well
+        # inside this window; the 10b relaunch path is not in play.
+        $lateIn = $false
+        foreach ($i in 1..90) {
+            Start-Sleep -Milliseconds 500
+            if ((Get-Hits $HitsL) -match [regex]::Escape(
+                    "POST /v1/client/devices HTTP/1.1|auth=$SessTok")) {
+                $lateIn = $true; break
+            }
+        }
+        Assert "the running app restored the machine WITHOUT a relaunch (T1428)" $lateIn
+        $backL = $false
+        foreach ($i in 1..40) {
+            Start-Sleep -Milliseconds 250
+            if ((Test-Path $RelayEnvPath) -and
+                ((Get-Content $RelayEnvPath -Raw) -match 'dev-tok-restored')) {
+                $backL = $true; break
+            }
+        }
+        Assert "and wrote the fresh credential (in-process retry)" $backL
+        $clearedL = $false
+        foreach ($i in 1..20) {
+            Start-Sleep -Milliseconds 250
+            if (-not (Test-Path $SuspendRec)) { $clearedL = $true; break }
+        }
+        Assert "and spent the record (in-process retry)" $clearedL
+        Assert "the retry said it was retrying, not silently waiting" (
+            (Get-Content $errlog10e -Raw) -match 'enrollment restore still owed outcome=enroll_failed')
+        Assert "app survived the in-process retry" (
+            -not ($g10e.App.Process -and $g10e.App.Process.HasExited))
+        if ($g10e.App.Process -and -not $g10e.App.Process.HasExited) {
+            Stop-Process -Id $g10e.Pid -Force -ErrorAction SilentlyContinue
+        }
+        Start-Sleep -Milliseconds 800
+    }
+
     "  -- 10c: a DIFFERENT account never inherits the machine"
     # The record names its owner, and anybody else signing in drops it unread
     # rather than silently taking over the host.

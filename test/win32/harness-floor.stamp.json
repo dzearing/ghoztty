@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-10T15:42:08-08:00",
-    "commit":  "0cd05b4a4",
+    "generated":  "2026-11-10T15:49:10-08:00",
+    "commit":  "66e7250e9",
     "uncommitted":  [
-
+                        "test/win32/relay-account.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -365,7 +365,7 @@
                   "test/win32/opacity-reload.ps1":  "b79367eddf623fd7c5907d0eafccc471acae34b4d0bd1eede04277cdb400eeef",
                   "test/win32/orphan-endpoint.ps1":  "e9a11e77194463cb49f7a34ee7fdcc52f81c26f37728aa23003be8565c8a760b",
                   "test/win32/orphan-notify.ps1":  "a8c7962850f4bdf5c8c5f8c09b20930b57e88264dedfa13a3bd47e69aaf2bf55",
-                  "test/win32/overlay-zorder.ps1":  "74efd0670d18c50db7fb860e61377686d0194ac3c5d858cfa8393d3a20e85be3",
+                  "test/win32/overlay-zorder.ps1":  "76c45c89ee49d5e8b2ad2548a974932237dcdbb5bb3089fc89f6d2c15b8c7da6",
                   "test/win32/palette-close-crash.ps1":  "a22d78896b8a333e0dec14c230101606f0c13b48dbf1bb7ff7b79a44e2e63707",
                   "test/win32/palette-grid-size.ps1":  "503b63cbcb1bc6763c2d2800245923385ce4a4b5bb5a8e1649e5ddfe48f265b1",
                   "test/win32/palette-jump.ps1":  "ee11e403b39036691fbaf1f12aab1820f9a98ca96fc0d9a04f94e50200c1d7a7",
@@ -443,7 +443,7 @@
                   "test/win32/rearrange-window-drop.ps1":  "233039d655e86f5b3db3e415a22b07989fcccb9461014124fe32c1e320665baa",
                   "test/win32/registration-sites.ps1":  "3ca28bc31d56cf01408b6f0afe10f66a47e239ed08bb78e924b0e203c5c463ee",
                   "test/win32/relaunch-guard.ps1":  "57d4631599209336af68e48649fb30ad1da5246958c47a42a1604648586b9af9",
-                  "test/win32/relay-account.ps1":  "e2c8ca01022c00c5abd022db7c96966cb8e421f928ede841aa98b1d2510043be",
+                  "test/win32/relay-account.ps1":  "c216b60c10aa37150bcfa292630ed4468f996ea5ed5145057c7628b08d96b6e5",
                   "test/win32/relay-signin-live.ps1":  "f35a640bd8f1bd3dfb8eec671e051d3c5d061026fd7609c62326d3cff96a02fe",
                   "test/win32/release-artifacts.ps1":  "a831b85c806498c3b0b1c69a0d0affb104d7b790ea631f7ae3e19c0790c1d46f",
                   "test/win32/release-parity.ps1":  "92babe2c0e154c766dd02f9578073f6a04ec281ee706aa8a8dc83c505d579f9f",

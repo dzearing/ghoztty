@@ -346,8 +346,8 @@ pub const Outcome = enum {
     /// This machine is enrolled again and relay.env carries the fresh
     /// credential.
     restored,
-    /// The re-enroll was attempted and failed. The record stays for the next
-    /// launch.
+    /// The re-enroll was attempted and failed. The record stays, and the
+    /// restore loop asks again on its backoff (T1428).
     enroll_failed,
 };
 
@@ -356,7 +356,8 @@ pub const Outcome = enum {
 /// the GUI thread (`restoreAsync` is the app's entry point).
 ///
 /// Best-effort in the safe direction: every failure leaves the machine
-/// unenrolled and the record in place, so the next launch tries again.
+/// unenrolled and the record in place, so the restore loop tries again
+/// (`retryOwed`) - and failing that, the next launch.
 pub fn restoreOnce(alloc: Allocator) Outcome {
     const path = relay_account.accountPath(alloc) catch return .idle;
     var account = relay_account.load(alloc, path) catch return .idle;
@@ -418,8 +419,9 @@ fn settlePending(alloc: Allocator, account_email: []const u8) PendingStep {
             // machine they are sitting at - and nothing would restore it until
             // the next launch. Signing back in is the strongest evidence there
             // is that this machine is still theirs; the record survives, and
-            // the next launch asks the question again with the relay reachable
-            // (`launchAsync`: signed out, it retries; signed in, it probes).
+            // the restore loop's next pass asks the question again - a probe,
+            // never a de-enroll - once the relay is reachable (T1428).
+            // Signed out, `launchAsync` hands the record to the T1424 retry.
             log.info("a pending revocation could not be settled at sign-in; leaving it armed", .{});
             return .stop;
         },
@@ -521,7 +523,7 @@ fn redeem(
 
     var enrolled = relay_directory.enrollDevice(alloc, base, session_token, name) catch |err| {
         // Deliberately kept: a 5xx, a device-limit refusal or a moment offline
-        // must not cost the user their machine. The next launch retries.
+        // must not cost the user their machine. The restore loop retries.
         log.warn("could not restore this machine's enrollment err={}", .{err});
         return .enroll_failed;
     };
@@ -543,22 +545,58 @@ fn redeem(
 // The driver
 // -----------------------------------------------------------------------------
 
-/// One restore at a time, however many times the app asks.
+/// Whether a pass that ended this way owes another one (T1428), pure.
+///
+/// The two "the relay could not be asked" outcomes retry: a re-enroll that
+/// failed (offline, 5xx, a quota refusal the user may clear on another
+/// device), and a pending revocation that could not be settled because the
+/// credential's relay did not answer. Everything else is final - the machine is
+/// back, it never left, the record was dropped, or nothing is owed (which is
+/// also what a pass reads once the user has signed out, so a sign-out ends the
+/// loop on its next tick rather than racing the T1424 revocation retry).
+pub fn retryOwed(outcome: Outcome) bool {
+    return switch (outcome) {
+        .enroll_failed, .still_armed => true,
+        .idle, .kept, .dropped, .restored => false,
+    };
+}
+
+/// The cadence between passes: the pending revocation's, on purpose. Both
+/// loops are waiting on the same thing - the relay becoming reachable, which no
+/// local event reports - so they ask on the same schedule, and the cap bounds
+/// "signed back in while offline, machine still missing" to minutes rather
+/// than until the next relaunch.
+pub const backoffMs = pending_revoke.backoffMs;
+
+/// One restore loop at a time, however many times the app asks (launch, then
+/// a sign-in in the same session).
 var running: std.atomic.Value(bool) = .init(false);
 
-/// True while a restore is in flight.
+/// True while a restore loop is in flight.
 pub fn isRestoring() bool {
     return running.load(.acquire);
 }
 
-/// Run `restoreOnce` on a detached thread. Safe to call from the GUI thread:
-/// it asks two small local questions first and spawns nothing when the answer
-/// to both is "nothing to do", which is every launch of a machine that has
-/// never been signed out of.
+/// Run the restore loop on a detached thread, first pass immediately. Safe to
+/// call from the GUI thread: it asks two small local questions first and
+/// spawns nothing when the answer to both is "nothing to do", which is every
+/// launch of a machine that has never been signed out of.
 pub fn restoreAsync(alloc: Allocator) void {
+    startLoop(alloc, 0);
+}
+
+/// The restore loop for a caller that has ALREADY made the first pass and
+/// watched it fail - `signIn`, which restores inline on the session it just
+/// minted. Starts at the first backoff step, so the relay that just refused is
+/// not asked again in the same breath.
+pub fn retryLaterAsync(alloc: Allocator) void {
+    startLoop(alloc, 1);
+}
+
+fn startLoop(alloc: Allocator, first_attempt: u32) void {
     if (!isRecorded(alloc) and !pending_revoke.isArmed(alloc)) return;
     if (running.swap(true, .acq_rel)) return;
-    const thread = std.Thread.spawn(.{}, restoreThread, .{}) catch |err| {
+    const thread = std.Thread.spawn(.{}, restoreLoop, .{first_attempt}) catch |err| {
         running.store(false, .release);
         log.warn("could not start the enrollment restore err={}", .{err});
         return;
@@ -566,10 +604,26 @@ pub fn restoreAsync(alloc: Allocator) void {
     thread.detach();
 }
 
-fn restoreThread() void {
-    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_state.deinit();
-    _ = restoreOnce(arena_state.allocator());
+/// Restore until a pass is final, on `backoffMs`'s cadence (T1428). Before
+/// this a single pass ran per launch, so signing back in while the relay was
+/// unreachable left the user's own machine off their account until they quit
+/// and reopened Ghoztty - a remedy nobody thinks of. Each pass re-reads the
+/// account and both records, so a sign-out, a different account, or a record
+/// redeemed elsewhere ends the loop on its next tick.
+fn restoreLoop(first_attempt: u32) void {
+    var attempt: u32 = first_attempt;
+    while (true) : (attempt +|= 1) {
+        const wait = backoffMs(attempt);
+        if (wait > 0) std.Thread.sleep(wait * std.time.ns_per_ms);
+
+        var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena_state.deinit();
+        const outcome = restoreOnce(arena_state.allocator());
+        if (!retryOwed(outcome)) break;
+        log.info("enrollment restore still owed outcome={s}; retrying (attempt {d})", .{
+            @tagName(outcome), attempt +| 1,
+        });
+    }
     running.store(false, .release);
 }
 
@@ -715,6 +769,29 @@ test "enrollName: the relay's name wins, the hostname is the fallback" {
     try testing.expectEqualStrings("winbox", enrollName(unnamed, "winbox").?);
     try testing.expect(enrollName(unnamed, null) == null);
     try testing.expect(enrollName(unnamed, "") == null);
+}
+
+test "retryOwed: only an unanswered relay is asked again (T1428)" {
+    // The offline cases: a re-enroll that failed and a revocation nobody could
+    // settle. Retrying either is how a machine signed back in while offline
+    // comes back without a relaunch.
+    try testing.expect(retryOwed(.enroll_failed));
+    try testing.expect(retryOwed(.still_armed));
+    // Final answers end the loop. `.idle` is the signed-out case, and it MUST
+    // end it: a restore loop still running after a sign-out would race the
+    // T1424 revocation retry for the same machine.
+    for ([_]Outcome{ .idle, .kept, .dropped, .restored }) |o| {
+        try testing.expect(!retryOwed(o));
+    }
+}
+
+test "backoffMs: the restore asks on the revocation retry's capped cadence" {
+    // Attempt 1 is what `retryLaterAsync` starts at: never immediate, because
+    // the inline pass it follows just failed.
+    try testing.expectEqual(@as(u64, 0), backoffMs(0));
+    try testing.expect(backoffMs(1) > 0);
+    try testing.expect(backoffMs(1000) <= 15 * std.time.ms_per_min);
+    try testing.expectEqual(pending_revoke.backoffMs(7), backoffMs(7));
 }
 
 test "the record round-trips through disk" {
