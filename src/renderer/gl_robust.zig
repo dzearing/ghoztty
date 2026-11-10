@@ -94,9 +94,40 @@ pub const ResetStatus = enum {
     }
 };
 
+/// Whether a rebuild may start, given what the DEAD context's
+/// `glGetGraphicsResetStatus` answers now (T2891).
+///
+/// THE DEFECT: on 2026-11-10 the driver blamed a pane's context for a GPU
+/// hang (`guilty`), the renderer built a new context 14ms later, the driver -
+/// still in the middle of its timeout-detection-and-recovery, which Windows
+/// only finished logging six seconds after - answered the first buffer
+/// allocation with GL_OUT_OF_MEMORY, and the next draw took an access
+/// violation inside nvoglv64.dll that killed the installed release.
+///
+/// THE CONTRACT that was skipped (KHR_robustness, `GetGraphicsResetStatus`):
+/// a status other than NO_ERROR that is returned REPEATEDLY means the reset is
+/// still in progress; once the dead context answers NO_ERROR again the reset
+/// has completed, and only then is a new context safe to make. So the rebuild
+/// waits for that - but never forever: a driver being replaced may never
+/// answer for the old context at all, and the ceiling hands that case to the
+/// ordinary retry backoff below, exactly as before this existed.
+pub const Settle = enum { wait, rebuild };
+
+/// The longest a rebuild waits for the reset to report itself complete.
+pub const reset_settle_cap_ms: i64 = 10_000;
+
+/// How often the dead context is asked again while it settles.
+pub const reset_settle_poll_ms: u32 = 100;
+
+pub fn settle(status: ResetStatus, waited_ms: i64) Settle {
+    if (!status.lost()) return .rebuild;
+    if (waited_ms >= reset_settle_cap_ms) return .rebuild;
+    return .wait;
+}
+
 /// How long to wait before rebuild attempt number `attempt` (0-based). The
-/// first try is immediate — an ordinary reset (a TDR, Win+Ctrl+Shift+B) is
-/// over by the time it is reported — and the rest back off to a five second
+/// first try is immediate once the reset reports itself complete (`settle`)
+/// — the rest back off to a five second
 /// ceiling that is kept for as long as it takes: a driver being REPLACED can
 /// leave the machine on the basic display adapter for a minute or more, and
 /// giving up would leave a blank window over a live shell.
@@ -248,6 +279,22 @@ test "ResetStatus: only GL_NO_ERROR means the context is alive" {
     try testing.expectEqual(ResetStatus.unknown, ResetStatus.fromGl(GL_UNKNOWN_CONTEXT_RESET));
     try testing.expect(ResetStatus.fromGl(GL_UNKNOWN_CONTEXT_RESET).lost());
     try testing.expect(ResetStatus.fromGl(0x1234).lost());
+}
+
+test "settle: a reset still reporting itself is waited out, up to the cap (T2891)" {
+    const testing = std.testing;
+    // Completed reset (or a loss the driver never reported, e.g. the window
+    // presenter rebuilt): rebuild now.
+    try testing.expectEqual(Settle.rebuild, settle(.none, 0));
+    // Still resetting: wait, whichever way the driver assigned blame.
+    try testing.expectEqual(Settle.wait, settle(.guilty, 0));
+    try testing.expectEqual(Settle.wait, settle(.innocent, 14));
+    try testing.expectEqual(Settle.wait, settle(.unknown, reset_settle_cap_ms - 1));
+    // A driver that never answers for the old context: hand over to the
+    // retry backoff at the cap rather than leave the pane blank.
+    try testing.expectEqual(Settle.rebuild, settle(.guilty, reset_settle_cap_ms));
+    try testing.expectEqual(Settle.rebuild, settle(.unknown, reset_settle_cap_ms * 6));
+    try testing.expect(reset_settle_poll_ms > 0 and reset_settle_poll_ms < reset_settle_cap_ms);
 }
 
 test "retryDelayMs: immediate first, then backs off to a ceiling it keeps" {

@@ -1,10 +1,10 @@
 {
     "guard":  "type-ramp",
     "script":  "test/win32/type-ramp-audit.ps1",
-    "generated":  "2026-11-10T08:34:53-08:00",
-    "commit":  "cd7438d5b",
+    "generated":  "2026-11-10T09:50:41-08:00",
+    "commit":  "e1daa8ed5",
     "uncommitted":  [
-                        "src/apprt/win32/paint_probe.zig"
+                        "src/apprt/win32/WindowPresenter.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -192,7 +192,7 @@
                   "src/apprt/win32/opacity_mode.zig":  "15862807a7578171d1b1c2b45c81f0de2951af89133c4d40cd1a5fd03d3ac07f",
                   "src/apprt/win32/orphan_notify.zig":  "f6318aae186b5750286309fedef655d818e4e19c520112cccbbf6db2698ad952",
                   "src/apprt/win32/overlay_zorder.zig":  "c327196680367c0fd4044c69f5efbdf7e79b4ffad5248f91d8b87ca187cca80a",
-                  "src/apprt/win32/paint_probe.zig":  "d1d25dfda8847b729b95d0d406f87f32727f714ce894aa7575fcca4241a438c9",
+                  "src/apprt/win32/paint_probe.zig":  "57034a948df080fec4abbddf1b0333e2ce5debdf1e61edef5c33a8ab63a5d3a2",
                   "src/apprt/win32/palette_jump.zig":  "90d5a80ab69b1b8a81f676c5eaa6949d73f1a3997168b1b66cf586ff9fd95c37",
                   "src/apprt/win32/palette_order.zig":  "05259b9c6e5c8ce55d12f782cae5056fad8d585e8b425ad194744487f8ae5c4c",
                   "src/apprt/win32/pane_capture.zig":  "345aa8d50e1e619cde0dec2ccecf118ae2467d364ad6e6d9b45197b041bed77c",
@@ -408,7 +408,7 @@
                   "src/apprt/win32/window_memory.zig":  "5525d3e747fd7a5e272f8de1c82754c9139652ccefa7a51f71efbe30a9452d3a",
                   "src/apprt/win32/window_placement.zig":  "bacb6516f8f2367c869bd63f85d2722fc0145907560f5dab4deac07554a2cb6e",
                   "src/apprt/win32/window_title_owner.zig":  "def309e4b6aed806940e2aceea5f14105f3db5f6334dc78ce34ef20ed254025f",
-                  "src/apprt/win32/WindowPresenter.zig":  "8e0056c2db70066b50f52ed76f96d0e41116b108f0d66a047b43b58f4bac44d4",
+                  "src/apprt/win32/WindowPresenter.zig":  "3d44f97a1358a2ddbb0c067dfd239e5ad25b5e17a8cef2175b8d24eb483b730c",
                   "src/apprt/win32/winrt_comp.zig":  "dd700de7f7ffba1de068560c8cabeb545a46eb0de0adb6c5d011df051d3fb4e7",
                   "src/apprt/win32/worker_pool.zig":  "f1ee62197c73dbbd6c21143089ffbce3768f4f2434a1997b5ec5a1b471d44c65",
                   "test/win32/lib/TypeRampAudit.ps1":  "73d6ed707cf50c96c71e3d3f2e4e61e9bb0b5b86d355aee62bfcc87034006a0d",

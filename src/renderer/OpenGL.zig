@@ -179,6 +179,17 @@ const DeviceState = struct {
 
     /// Successful rebuilds, for the log line a harness reads.
     rebuilds: u32 = 0,
+
+    /// When the loss was seen (`std.time.milliTimestamp`), for how long the
+    /// rebuild has waited on the driver's reset to complete (T2891).
+    lost_at_ms: i64 = 0,
+
+    /// The reset has reported itself complete (or the wait hit its cap), so
+    /// rebuild attempts may run. `gl_robust.settle`.
+    settled: bool = false,
+
+    /// The "still resetting" line was written for this loss.
+    settle_logged: bool = false,
 };
 
 /// NOTE: This is an error{}!OpenGL instead of just OpenGL for parity with
@@ -814,10 +825,20 @@ fn resetStatusFn() ?*const fn () callconv(.winapi) u32 {
 ///   swap that leaves the machine without usable OpenGL for a while. Per pane
 ///   rather than per process so the outcome is deterministic however many
 ///   panes are open.
+/// - `GHOZTTY_GL_SIMULATE_RESET_SETTLE_MS=<ms>` (T2891): after a simulated
+///   loss, the dead context keeps reporting `guilty` for that long, the shape
+///   of a driver still in its timeout-detection-and-recovery. The rebuild
+///   must wait it out (or hit `gl_robust.reset_settle_cap_ms`).
+/// - `GHOZTTY_GL_SIMULATE_REBUILD_OOM=<k>` (T2891): the first k rebuilds in
+///   the process come up "out of memory", which must discard the new context
+///   and retry rather than draw into it.
 const sim = struct {
     var loaded: bool = false;
     var reset_after: ?u64 = null;
     var rebuild_failures: u32 = 0;
+    var settle_ms: ?u64 = null;
+    /// Process-wide (not per pane): rebuilds still to report GL_OUT_OF_MEMORY.
+    var rebuild_oom: u32 = 0;
     var lock: std.Thread.Mutex = .{};
 
     fn load() void {
@@ -829,6 +850,9 @@ const sim = struct {
         reset_after = envInt("GHOZTTY_GL_SIMULATE_RESET_AFTER");
         if (envInt("GHOZTTY_GL_SIMULATE_REBUILD_FAILURES")) |k|
             rebuild_failures = @intCast(@min(k, 1000));
+        settle_ms = envInt("GHOZTTY_GL_SIMULATE_RESET_SETTLE_MS");
+        if (envInt("GHOZTTY_GL_SIMULATE_REBUILD_OOM")) |k|
+            rebuild_oom = @intCast(@min(k, 1000));
     }
 
     fn envInt(name: []const u8) ?u64 {
@@ -875,6 +899,9 @@ fn markLost(self: *OpenGL, why: []const u8, report: bool) void {
     self.device.lost = true;
     self.device.attempts = 0;
     self.device.next_attempt_ms = null;
+    self.device.lost_at_ms = std.time.milliTimestamp();
+    self.device.settled = false;
+    self.device.settle_logged = false;
 
     // Everything below names objects in the dead context. They are dropped,
     // never deleted: once a new context exists those names can belong to ITS
@@ -919,6 +946,57 @@ pub fn markRebuildIncomplete(self: *OpenGL) void {
         gl_robust.retryDelayMs(self.device.attempts);
 }
 
+/// What the dead context's reset status says now (T2891), with the debug-only
+/// `GHOZTTY_GL_SIMULATE_RESET_SETTLE_MS` standing in for a reset that is still
+/// running for that long after the loss. A context with no reset-status entry
+/// point (not robust) has nothing to wait on.
+fn deadContextStatus(self: *const OpenGL, waited_ms: i64) gl_robust.ResetStatus {
+    if (comptime build_config.is_debug) {
+        if (self.device.simulated) if (sim.settle_ms) |ms| {
+            if (waited_ms < @as(i64, @intCast(@min(ms, std.math.maxInt(i32))))) return .guilty;
+        };
+    }
+    if (self.rt_surface.hglrc == null) return .none;
+    const get = resetStatusFn() orelse return .none;
+    return gl_robust.ResetStatus.fromGl(get());
+}
+
+/// A rebuilt context that is not usable yet (T2891): the driver answered the
+/// rebuild's allocations with GL_OUT_OF_MEMORY, or the new context is itself
+/// reporting a reset. Drains the GL error queue. Drawing on into such a
+/// context is what took an access violation inside the driver; the caller
+/// discards it and retries on the backoff instead.
+pub fn rebuildFault(self: *const OpenGL) ?[]const u8 {
+    _ = self;
+    if (comptime apprt.runtime != apprt.win32) return null;
+    if (comptime build_config.is_debug) {
+        sim.load();
+        if (sim.rebuild_oom > 0) {
+            sim.lock.lock();
+            defer sim.lock.unlock();
+            if (sim.rebuild_oom > 0) {
+                sim.rebuild_oom -= 1;
+                return "GL_OUT_OF_MEMORY (simulated)";
+            }
+        }
+    }
+    var oom = false;
+    var i: usize = 0;
+    while (i < 32) : (i += 1) {
+        gl.errors.getError() catch |err| {
+            if (err == error.OutOfMemory) oom = true;
+            continue;
+        };
+        break;
+    }
+    if (oom) return "GL_OUT_OF_MEMORY";
+    if (resetStatusFn()) |get| {
+        const status = gl_robust.ResetStatus.fromGl(get());
+        if (status.lost()) return "the new context reports a reset";
+    }
+    return null;
+}
+
 /// Whether the context was lost and has not been rebuilt yet.
 pub fn contextLost(self: *const OpenGL) bool {
     return self.device.lost;
@@ -951,6 +1029,35 @@ pub fn rebuildContext(self: *OpenGL) !void {
         self.device.next_attempt_ms = std.time.milliTimestamp() + pres_rebuild_poll_ms;
         return error.WaitingForWindowPresenter;
     };
+
+    // T2891: not while the driver is still resetting. The dead context is
+    // still current here (the caller released its resources in it), which is
+    // the one place its reset status can be asked. Waiting spends no attempt.
+    if (!self.device.settled) {
+        const now = std.time.milliTimestamp();
+        const waited = now - self.device.lost_at_ms;
+        const status = self.deadContextStatus(waited);
+        switch (gl_robust.settle(status, waited)) {
+            .wait => {
+                if (!self.device.settle_logged) {
+                    self.device.settle_logged = true;
+                    log.warn(
+                        "graphics device is still resetting ({s}); waiting for the driver to finish before rebuilding",
+                        .{@tagName(status)},
+                    );
+                }
+                self.device.next_attempt_ms = now + gl_robust.reset_settle_poll_ms;
+                return error.WaitingForDeviceReset;
+            },
+            .rebuild => {
+                self.device.settled = true;
+                if (self.device.settle_logged) log.warn(
+                    "graphics device reset {s} after {d}ms; rebuilding",
+                    .{ if (status.lost()) "never reported completion" else "completed", waited },
+                );
+            },
+        }
+    }
 
     const attempt = self.device.attempts;
     self.device.attempts +|= 1;

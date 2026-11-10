@@ -1114,6 +1114,17 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 self.api.markRebuildIncomplete();
                 return .{ .pending = self.api.rebuildDelayMs() orelse 0 };
             };
+            // T2891: a context the driver is not ready to back (its buffers
+            // came back GL_OUT_OF_MEMORY) is discarded and retried on the
+            // backoff, never drawn into. The next pass releases the shaders
+            // and frames just made, in this context, before replacing it.
+            if (comptime @hasDecl(GraphicsAPI, "rebuildFault")) {
+                if (self.api.rebuildFault()) |why| {
+                    log.warn("the rebuilt graphics device is not usable yet ({s}); discarding it and retrying", .{why});
+                    self.api.markRebuildIncomplete();
+                    return .{ .pending = self.api.rebuildDelayMs() orelse 0 };
+                }
+            }
             self.reinitialize_shaders = false;
             self.target_config_modified +%= 1;
 

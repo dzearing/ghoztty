@@ -854,12 +854,20 @@ const Device = struct {
     /// The simulation has fired (once per presenter).
     simulated: bool = false,
     rebuilds: u32 = 0,
+    /// When the loss was seen, and whether the driver's reset has since
+    /// reported itself complete (T2891, `gl_robust.settle`).
+    lost_at_ms: i64 = 0,
+    settled: bool = false,
+    settle_logged: bool = false,
 
     fn markLost(self: *Device, why: []const u8) void {
         if (self.lost) return;
         self.lost = true;
         self.attempts = 0;
         self.next_ms = null;
+        self.lost_at_ms = std.time.milliTimestamp();
+        self.settled = false;
+        self.settle_logged = false;
         log.warn("window presenter: graphics device lost ({s}); rebuilding the window's context first", .{why});
     }
 
@@ -961,6 +969,36 @@ fn threadMain(self: *WindowPresenter) void {
 /// retries.
 fn rebuild(self: *WindowPresenter, hdc: w32.HDC, live: *?Live, dev: *Device) void {
     const api = gl_loader.active();
+
+    // T2891: not while the driver is still resetting. Asked of the dead
+    // context, which is still current on this thread; waiting spends no
+    // attempt. Same contract as the pane renderer's `rebuildContext`.
+    if (!dev.settled) {
+        const now = std.time.milliTimestamp();
+        const waited = now - dev.lost_at_ms;
+        const status: gl_robust.ResetStatus = status: {
+            const l = live.* orelse break :status .none;
+            const get = l.gl.resetStatus orelse break :status .none;
+            break :status gl_robust.ResetStatus.fromGl(get());
+        };
+        switch (gl_robust.settle(status, waited)) {
+            .wait => {
+                if (!dev.settle_logged) {
+                    dev.settle_logged = true;
+                    log.warn("window presenter: graphics device is still resetting ({s}); waiting for the driver to finish before rebuilding", .{@tagName(status)});
+                }
+                dev.next_ms = now + gl_robust.reset_settle_poll_ms;
+                return;
+            },
+            .rebuild => {
+                dev.settled = true;
+                if (dev.settle_logged) log.warn("window presenter: graphics device reset {s} after {d}ms; rebuilding", .{
+                    if (status.lost()) "never reported completion" else "completed", waited,
+                });
+            },
+        }
+    }
+
     _ = api.makeCurrent(null, null);
     // Its names (the read framebuffer) are dropped with it.
     if (live.*) |l| _ = api.deleteContext(l.created.hglrc);

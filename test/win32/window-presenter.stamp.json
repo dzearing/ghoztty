@@ -1,13 +1,13 @@
 {
     "guard":  "window-presenter",
     "script":  "test/win32/window-presenter.ps1",
-    "generated":  "2026-11-06T16:38:45-08:00",
-    "commit":  "910a71f05",
+    "generated":  "2026-11-10T09:45:02-08:00",
+    "commit":  "e1daa8ed5",
     "uncommitted":  [
-                        "test/win32/window-presenter.ps1"
+                        "src/apprt/win32/WindowPresenter.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/WindowPresenter.zig":  "8e0056c2db70066b50f52ed76f96d0e41116b108f0d66a047b43b58f4bac44d4",
+                  "src/apprt/win32/WindowPresenter.zig":  "3d44f97a1358a2ddbb0c067dfd239e5ad25b5e17a8cef2175b8d24eb483b730c",
                   "src/renderer/gl_window_presenter.zig":  "018f01a92d2787d8f1363009f1eeba7e891ad997e3a63234a781250ff1f190da",
                   "test/win32/window-presenter.ps1":  "5cd3cb6d7813cb05c9748387abbaf915060bfe81ea2758c33d844b00ea4f2493"
               }

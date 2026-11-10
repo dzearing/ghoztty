@@ -393,6 +393,16 @@
             "unset": "shipped-elsewhere",
             "note": "unset = a lost-device rebuild succeeds or fails on its own merits; gl-device-lost.ps1 arm A and every real reset run it that way."
         },
+        "GHOZTTY_GL_SIMULATE_RESET_SETTLE_MS": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "T2891. unset = the dead context's real reset status decides when the rebuild may start (gl_robust.settle); gl-device-lost.ps1 arms A-E and C4 run it that way, and C4 asserts nothing waits on a healthy device."
+        },
+        "GHOZTTY_GL_SIMULATE_REBUILD_OOM": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "T2891. unset = a rebuild is discarded only on a real GL_OUT_OF_MEMORY or a reset reported by the new context (OpenGL.rebuildFault); gl-device-lost.ps1 arms A-E run it that way, and C4 asserts no healthy rebuild is discarded."
+        },
         "GHOZTTY_LOW_POWER": {
             "class": "non-default",
             "unset": "armed",

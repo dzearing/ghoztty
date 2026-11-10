@@ -29,6 +29,10 @@
 # (never compiled into a release build):
 #   GHOZTTY_GL_SIMULATE_RESET_AFTER=<n>       report the context lost after n frames
 #   GHOZTTY_GL_SIMULATE_REBUILD_FAILURES=<k>  the first k rebuild attempts fail
+#   GHOZTTY_GL_SIMULATE_RESET_SETTLE_MS=<ms>  the dead context reports the reset
+#                                             for that long (T2891, arm F)
+#   GHOZTTY_GL_SIMULATE_REBUILD_OOM=<k>       the first k rebuilds come up out of
+#                                             memory (T2891, arm F)
 # Only the DETECTION is simulated. The rebuild is the shipping one: the live
 # context is really deleted and a new one really created, so what the capture
 # proves is that a pane draws from a brand-new context.
@@ -73,6 +77,13 @@ $savedRebuildFailures = $env:GHOZTTY_GL_SIMULATE_REBUILD_FAILURES
 # or the presenter they test is never made.
 $presenterKnobs = 'GHOZTTY_WINDOW_PRESENTER', 'GHOZTTY_PRESENTER_PROBE', 'GHOZTTY_GL_SIMULATE_PRESENTER_RESET_AFTER', 'GHOZTTY_COMP_PRESENT'
 $savedPresenterKnobs = @{}
+# Arm F's knobs (T2891): unset everywhere but F.
+$t2891Knobs = 'GHOZTTY_GL_SIMULATE_RESET_SETTLE_MS', 'GHOZTTY_GL_SIMULATE_REBUILD_OOM'
+$savedT2891Knobs = @{}
+foreach ($k in $t2891Knobs) {
+    $savedT2891Knobs[$k] = [Environment]::GetEnvironmentVariable($k, 'Process')
+    [Environment]::SetEnvironmentVariable($k, $null, 'Process')
+}
 foreach ($k in $presenterKnobs) {
     $savedPresenterKnobs[$k] = [Environment]::GetEnvironmentVariable($k, 'Process')
     [Environment]::SetEnvironmentVariable($k, $null, 'Process')
@@ -299,6 +310,57 @@ try {
     Assert "C2 contexts are robust here too" ($textC -match 'GL context created robust=true')
     Assert "C3 and with every frame checked, nothing was ever reported lost" `
         ($textC -notmatch 'graphics device lost')
+    Assert "C4 and nothing waited on a reset that never happened" `
+        ($textC -notmatch 'still resetting' -and $textC -notmatch 'not usable yet')
+
+    # ========================================================================
+    "== F: a reset still in progress is waited out; an out-of-memory rebuild is discarded (T2891)"
+    # ========================================================================
+    # The 2026-11-10 crash: the driver blamed our context (guilty), the pane
+    # rebuilt 14ms later while the driver was still recovering, the rebuild's
+    # buffers came back GL_OUT_OF_MEMORY, and the next draw died inside the
+    # driver. Here the dead context keeps reporting the reset for 1.5s, and the
+    # first rebuild after it comes up out of memory.
+    $env:GHOZTTY_GL_SIMULATE_RESET_AFTER = '3'
+    $env:GHOZTTY_GL_SIMULATE_RESET_SETTLE_MS = '1500'
+    $env:GHOZTTY_GL_SIMULATE_REBUILD_OOM = '1'
+    Remove-Item env:GHOZTTY_GL_SIMULATE_REBUILD_FAILURES -ErrorAction SilentlyContinue
+    $f = Start-Arm 'f' '#406020'
+    Assert "F0 the arm's window came up" ($f.Top -ne [IntPtr]::Zero -and $null -ne $f.Win)
+    Assert "F1 the loss was detected" (Wait-Log $f.Err 'graphics device lost \(simulated' 20000)
+    Assert "F2 the rebuild waited while the driver still reported the reset" `
+        (Wait-Log $f.Err 'graphics device is still resetting \(guilty\); waiting for the driver' 20000)
+    $rebuiltF = Wait-Log $f.Err 'graphics device rebuilt after 2 attempt\(s\) robust=true rebuilds=2' 30000
+    $textF = Read-Text $f.Err
+    $settled = [regex]::Match($textF, 'graphics device reset completed after (\d+)ms; rebuilding')
+    $settledMs = if ($settled.Success) { [int]$settled.Groups[1].Value } else { -1 }
+    Assert "F3 and rebuilt only once the reset reported itself complete ($settledMs ms, >= 1400)" ($settledMs -ge 1400)
+    $iWait = $textF.IndexOf('still resetting')
+    $iSettle = if ($settled.Success) { $settled.Index } else { -1 }
+    $iFirstRebuild = $textF.IndexOf('graphics device rebuilt after')
+    Assert "F4 no context was made before the reset completed" `
+        ($iWait -ge 0 -and $iSettle -gt $iWait -and $iFirstRebuild -gt $iSettle)
+    Assert "F5 the out-of-memory rebuild was discarded, not drawn into" `
+        ($textF -match 'the rebuilt graphics device is not usable yet \(GL_OUT_OF_MEMORY \(simulated\)\); discarding it and retrying')
+    Assert "F6 and the retry rebuilt it" $rebuiltF
+    Assert "F7 the app stayed up throughout" ($f.App.Process -and -not $f.App.Process.HasExited)
+    & $Exe +send-keys "--target=$($f.Target)" 'echo rebuilt-t2891' Enter 2>$null | Out-Null
+    $shotF = Wait-Capture $f.Target
+    Assert "F8 the pane draws again ($(Get-LastPaneCaptureError))" ($null -ne $shotF)
+    if ($shotF) {
+        $domF = Get-TestPaneDominantColor -Shot $shotF
+        Assert "F9 with its own tint #406020 (dominant $domF)" `
+            (Test-PaneColorNear -Color $domF -R 0x40 -G 0x60 -B 0x20)
+        Close-TestPaneCapture $shotF
+    }
+    # The arm has two panes (the launch window and the target), and each
+    # loses its own device: one wait line per lost pane, not one per 100ms poll.
+    $waitsF = ([regex]::Matches($textF, 'still resetting')).Count
+    $lostF = ([regex]::Matches($textF, 'graphics device lost \(simulated')).Count
+    Assert "F10 the wait was logged once per lost pane, not once per poll ($waitsF waits, $lostF losses)" `
+        ($lostF -gt 0 -and $waitsF -eq $lostF)
+    Remove-Item env:GHOZTTY_GL_SIMULATE_RESET_SETTLE_MS -ErrorAction SilentlyContinue
+    Remove-Item env:GHOZTTY_GL_SIMULATE_REBUILD_OOM -ErrorAction SilentlyContinue
 
     # ========================================================================
     # The window presenter path (T2616). A reset is lost for the whole share
@@ -342,6 +404,7 @@ try {
     else { Remove-Item env:GHOZTTY_GL_SIMULATE_RESET_AFTER -ErrorAction SilentlyContinue }
     if ($savedRebuildFailures) { $env:GHOZTTY_GL_SIMULATE_REBUILD_FAILURES = $savedRebuildFailures }
     else { Remove-Item env:GHOZTTY_GL_SIMULATE_REBUILD_FAILURES -ErrorAction SilentlyContinue }
+    foreach ($k in $t2891Knobs) { [Environment]::SetEnvironmentVariable($k, $savedT2891Knobs[$k], 'Process') }
     foreach ($k in $presenterKnobs) { [Environment]::SetEnvironmentVariable($k, $savedPresenterKnobs[$k], 'Process') }
     $env:LOCALAPPDATA = $savedLocalAppData
     Remove-TestDesktop
@@ -357,4 +420,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'gl-device-lost' -MinPass 51
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'gl-device-lost' -MinPass 63
