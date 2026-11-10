@@ -466,3 +466,93 @@ fn fallBack(self: *FrameClock, r: u32) void {
     // An occluded desktop fails every retry: say so once, then quietly.
     if (first) log.warn(fmt, args) else log.debug(fmt, args);
 }
+
+// -------------------------------------------------------------------------
+// Tests
+// -------------------------------------------------------------------------
+
+/// Counts the `WM_TIMER`s a test window is sent for `test_tick_id`.
+const TestSink = struct {
+    const test_tick_id: usize = 0x7E57;
+    var ticks: u32 = 0;
+    fn proc(hwnd: w32.HWND, msg: u32, wp: usize, lp: isize) callconv(.winapi) isize {
+        if (msg == w32.WM_TIMER and wp == test_tick_id) ticks += 1;
+        return w32.DefWindowProcW(hwnd, msg, wp, lp);
+    }
+};
+
+test "T2475: a window freed mid-animation is dropped at the next frame, never ticked again, and stops the clock" {
+    // Mac 1bc34a8d7: a 120Hz glide timer outlived the pane that owned it. On
+    // this side an animation steps on `(hwnd, id)`, so the owner going away
+    // without a `disarm` - a pane closed mid-glide - leaves a subscription
+    // naming a dead window. The dispatch must drop it rather than send to it,
+    // and the clock must stop once nothing live is left.
+    const testing = std.testing;
+    const hinstance = w32.GetModuleHandleW(null) orelse return error.SkipZigTest;
+    const class = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyFrameClockT2475Test");
+    const wc = w32.WNDCLASSEXW{
+        .cbSize = @sizeOf(w32.WNDCLASSEXW),
+        .style = 0,
+        .lpfnWndProc = &TestSink.proc,
+        .cbClsExtra = 0,
+        .cbWndExtra = 0,
+        .hInstance = hinstance,
+        .hIcon = null,
+        .hCursor = null,
+        .hbrBackground = null,
+        .lpszMenuName = null,
+        .lpszClassName = class,
+        .hIconSm = null,
+    };
+    _ = w32.RegisterClassExW(&wc);
+    defer _ = w32.UnregisterClassW(class, hinstance);
+    const title = std.unicode.utf8ToUtf16LeStringLiteral("frame clock test");
+    const msg = w32.CreateWindowExW(0, class, title, w32.WS_POPUP, 0, 0, 10, 10, null, null, hinstance, null) orelse return error.SkipZigTest;
+    defer _ = w32.DestroyWindow(msg);
+    const pane = w32.CreateWindowExW(0, class, title, w32.WS_POPUP, 0, 0, 10, 10, null, null, hinstance, null) orelse return error.SkipZigTest;
+    const other = w32.CreateWindowExW(0, class, title, w32.WS_POPUP, 0, 0, 10, 10, null, null, hinstance, null) orelse return error.SkipZigTest;
+
+    // A clock with no worker: `.settimer` steps from `msg`'s WM_TIMER, which
+    // this test stands in for by calling `onFrame` itself.
+    var clock: FrameClock = .{
+        .alloc = testing.allocator,
+        .msg_hwnd = msg,
+        .ui_thread = w32.GetCurrentThreadId(),
+        .source = .settimer,
+        .base = try std.time.Instant.now(),
+        .perf = false,
+    };
+    const prev = current;
+    current = &clock;
+    defer current = prev;
+    TestSink.ticks = 0;
+
+    try testing.expect(arm(pane, TestSink.test_tick_id, 16));
+    try testing.expect(isArmed(pane, TestSink.test_tick_id));
+    try testing.expectEqual(@as(usize, 1), clock.live.load(.acquire));
+
+    // Positive control: a live subscriber IS ticked by a frame, so "not
+    // ticked" below is the drop and not a dispatch that never sends.
+    onFrame();
+    try testing.expectEqual(@as(u32, 1), TestSink.ticks);
+
+    // The owner goes mid-animation and never disarms.
+    _ = w32.DestroyWindow(pane);
+    onFrame();
+    try testing.expectEqual(@as(u32, 1), TestSink.ticks);
+    try testing.expectEqual(@as(usize, 0), clock.set.len);
+    try testing.expectEqual(@as(usize, 0), clock.live.load(.acquire));
+    // ...and the cadence timer the first arm started is gone with it.
+    try testing.expectEqual(@as(i32, 0), w32.KillTimer(msg, msg_timer.frame_clock_settimer));
+
+    // An owner that disarms AFTER its window is already gone (the order a
+    // struct teardown that destroys its window first produces) is just as
+    // clean: no tick, no subscription left behind.
+    try testing.expect(arm(other, TestSink.test_tick_id, 16));
+    _ = w32.DestroyWindow(other);
+    disarm(other, TestSink.test_tick_id);
+    try testing.expectEqual(@as(usize, 0), clock.set.len);
+    try testing.expectEqual(@as(usize, 0), clock.live.load(.acquire));
+    onFrame();
+    try testing.expectEqual(@as(u32, 1), TestSink.ticks);
+}
