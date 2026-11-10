@@ -1263,6 +1263,12 @@ flat_live: bool = false,
 /// splits never set it, so they focus the new pane as they always have.
 split_background: bool = false,
 
+/// When this window was last brought to the front (ms since the epoch; 0 =
+/// never). Recorded into the session layout so a launch restores the
+/// last-focused window first and the rest behind it (T1163, D102). A restored
+/// window starts from its saved stamp (`restore_pacing.carriedStamp`).
+last_activated_ms: i64 = 0,
+
 /// IPC surface-config overrides consumed by the NEXT Surface.init in this
 /// window (see Surface.Overrides). Set immediately before addTab/newSplit
 /// by the IPC server; creation is synchronous so borrowed strings are fine.
@@ -22035,6 +22041,13 @@ pub fn windowWndProc(
             // The sidebar every window shares: take what changed while
             // another window was in use (T2336).
             if (activated != w32.WA_INACTIVE) window.paneSidebarCatchUp();
+            // T1163: the restore brings the last-focused window back first,
+            // so the layout has to learn which one that is. The sync is
+            // debounced, so alt-tabbing costs one capture, not one per switch.
+            if (activated != w32.WA_INACTIVE and !window.is_quick_terminal) {
+                window.last_activated_ms = std.time.milliTimestamp();
+                window.app.markLayoutDirty();
+            }
             // Either direction: a window brought forward over this one sends
             // the column no leave, so its hover is asked again (T2341).
             if (window.sidebar) |sb| sb.queueHoverResync(activated != w32.WA_INACTIVE);

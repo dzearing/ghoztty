@@ -1,13 +1,13 @@
 {
     "guard":  "session-layout-preserve",
     "script":  "test/win32/session-layout-preserve.ps1",
-    "generated":  "2026-11-09T07:36:26-08:00",
-    "commit":  "1e0b4c0d7",
+    "generated":  "2026-11-09T20:59:43-08:00",
+    "commit":  "df172a4b1",
     "uncommitted":  [
                         "src/apprt/win32/session_layout.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/session_layout.zig":  "0834f9acec57919c6016e011d36a4bae3cb9756f6987c4c1a7986a259144bedf",
+                  "src/apprt/win32/session_layout.zig":  "e9aa49a4a2191f69cdec078a4eb502349ecea49f90bf62262ce971f39224e0ee",
                   "test/win32/session-layout-preserve.ps1":  "1de2134ef826dae99e7214756a5a1bb3a2c81b895044105cc7cc48b81a320408"
               }
 }

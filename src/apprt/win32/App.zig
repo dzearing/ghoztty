@@ -108,6 +108,7 @@ const restore_frame = @import("restore_frame.zig");
 const window_placement = @import("window_placement.zig");
 const agent_recovery = @import("agent_recovery.zig");
 const restore_retry = @import("restore_retry.zig");
+const restore_pacing = @import("restore_pacing.zig");
 const resolve_defer = @import("resolve_defer.zig");
 const persistence_notice = @import("persistence_notice.zig");
 const restore_placeholder = @import("restore_placeholder.zig");
@@ -302,6 +303,7 @@ const ORPHAN_CHECK_TIMER_ID: usize = msg_timer.orphan_check;
 /// moment the carried set is empty or the schedule in `restore_retry.zig` runs
 /// out. (Timer 10 is the layout refresh, defined above.)
 const RESTORE_RETRY_TIMER_ID: usize = msg_timer.restore_retry;
+const PACED_RESTORE_TIMER_ID: usize = msg_timer.paced_restore;
 
 /// Timer ID 12: the periodic "am I still the build that is on disk?" check
 /// (T1205). Repeating. Windows cannot replace a running image, so an upgrade
@@ -458,6 +460,11 @@ pushed_layouts: std.StringHashMapUnmanaged(u64) = .empty,
 /// window the agent answered about and disowned: those stay dropped, which is
 /// what keeps the manifest from becoming immortal.
 carried_layout_windows: std.StringHashMapUnmanaged(void) = .empty,
+
+/// The windows a launch restore has still to build, one per
+/// `PACED_RESTORE_TIMER_ID` tick (T1163, D102). Null when no paced restore
+/// is running.
+paced_restore: ?*PacedRestore = null,
 
 /// One-pane-per-session bookkeeping for the current restore pass (T1684).
 restore_claims: SessionClaims = .{},
@@ -2684,6 +2691,9 @@ pub fn terminate(self: *App) void {
     self.pushed_layouts.deinit(alloc);
     self.pushed_layouts_conn = null;
 
+    // T1163: a paced restore still building windows owns its copy and probe.
+    self.cancelPacedRestore();
+
     // T590: the carried-window keys are gpa-owned dupes of manifest keys.
     self.clearCarriedLayouts();
     self.carried_layout_windows.deinit(alloc);
@@ -2921,6 +2931,7 @@ pub fn syncSessionLayout(self: *App, screens: ScreenCapture) void {
         // Turning persistence off is the user asking to FORGET — the carried
         // unrestored windows (T590) included, or they would resurrect if it
         // came back on.
+        self.cancelPacedRestore();
         self.clearCarriedLayouts();
         // Persistence just went off (or was never on): the agent must not keep
         // offering this machine's windows for restore either.
@@ -3764,6 +3775,8 @@ fn captureWindow(
         .pane_sidebar_pinned = win.pane_sidebar_expanded,
         .pane_sidebar_hidden = win.pane_sidebar_hidden,
         .pane_sidebar_order = try captureSidebarOrder(arena, win),
+        // T1163: which window the next launch brings back first.
+        .last_focused_ms = restore_pacing.recordedStamp(win.last_activated_ms),
     };
 }
 
@@ -4678,10 +4691,26 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
     // the same session under two window keys, and replaying both would take the
     // shell from the pane that just got it.
     self.beginRestoreClaims();
-    defer self.endRestoreClaims();
+    // A paced restore (T1163) keeps the claims for the windows it has still
+    // to build; `finishPacedRestore` ends them.
+    defer if (self.paced_restore == null) self.endRestoreClaims();
+
+    // T1163 (D102): the last-focused window first. An allocation failure
+    // costs the order, never the restore.
+    const order_buf: ?[]usize = gpa.alloc(usize, pass_windows.len) catch null;
+    defer if (order_buf) |b| gpa.free(b);
+    if (order_buf) |ob| orderRestoreWindows(gpa, pass_windows, ob);
+
+    // The launch pass builds its first window here and hands every later one
+    // to the pacer, which shows them one at a time behind it. The deferred
+    // pass stays one burst: it is finishing a restore, not starting one.
+    var paced: std.ArrayList(session_layout.Window) = .empty;
+    defer paced.deinit(gpa);
+    var lead: ?*Window = null;
 
     var restored: usize = 0;
-    for (pass_windows) |win| {
+    for (0..pass_windows.len) |pos| {
+        const win = pass_windows[if (order_buf) |ob| ob[pos] else pos];
         // T188: a window boundary is the natural yield point — nothing of this
         // one is half-built, and each window costs an ATTACH per pane. A caller
         // that lands mid-restore sees the windows built so far, which is a
@@ -4725,8 +4754,11 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
                 ),
             }
         }
+        if (!deferred and restored > 0) {
+            if (paced.append(gpa, win)) |_| continue else |_| {}
+        }
         const tr: RestoreTransport = if (conn) |c| .local(c) else .agentless();
-        self.restoreWindow(win, tr, attach_ptr) catch |err| {
+        const built = self.restoreWindowShown(win, tr, attach_ptr, false) catch |err| {
             log.warn("session-restore: window '{s}' failed err={}", .{ win.id, err });
             // A build failure is never an adjudication: keep the entry so the
             // next launch can try again (Mac keeps entries on any non-dead
@@ -4734,10 +4766,39 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
             if (carryable) self.carryUnrestoredWindow(win);
             continue;
         };
+        if (lead == null) lead = built;
         restored += 1;
         collectAttachedLeaves(win, attach_ptr, &attached_ids, &attached_panes);
     }
     if (!deferred) self.armDeferredRestore(union_set.windows, positively_adjudicated);
+
+    // T1163: the rest follow one at a time - or, when they cannot be paced
+    // (no live agent to attach them over later, the deferred pass waiting on
+    // one, the copy failing), right now, exactly as before.
+    if (paced.items.len > 0) {
+        const pace_ok = conn != null and
+            restore_pacing.shouldPace(paced.items.len, self.restore_retry_armed) and
+            self.startPacedRestore(paced.items, &probe, conn.?, lead, restored, attached_panes);
+        if (pace_ok) {
+            log.info(
+                "session-restore: restored the last-focused window '{s}'; {d} more follow one every {d}ms",
+                .{ if (lead) |w| (w.ipc_name orelse "?") else "?", paced.items.len, restore_pacing.interval_ms },
+            );
+            if (union_set.adopted > 0) self.markLayoutDirty();
+            return true;
+        }
+        for (paced.items) |win| {
+            gui_pump.pump();
+            const tr: RestoreTransport = if (conn) |c| .local(c) else .agentless();
+            self.restoreWindow(win, tr, attach_ptr) catch |err| {
+                log.warn("session-restore: window '{s}' failed err={}", .{ win.id, err });
+                self.carryUnrestoredWindow(win);
+                continue;
+            };
+            restored += 1;
+            collectAttachedLeaves(win, attach_ptr, &attached_ids, &attached_panes);
+        }
+    }
     if (restored == 0) return false;
     log.info("session-restore: restored {d} window(s)", .{restored});
 
@@ -4781,6 +4842,220 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
     // IS the adopt; the message loop `run` is about to enter fires it.
     if (union_set.adopted > 0) self.markLayoutDirty();
     return true;
+}
+
+/// Fill `out` with the restore order of `windows` (T1163): most recently
+/// focused first, per `restore_pacing.order`. On an allocation failure `out`
+/// is the listed order.
+fn orderRestoreWindows(gpa: Allocator, windows: []const session_layout.Window, out: []usize) void {
+    const stamps = gpa.alloc(?i64, windows.len) catch {
+        for (out, 0..) |*o, i| o.* = i;
+        return;
+    };
+    defer gpa.free(stamps);
+    for (windows, stamps) |w, *s| s.* = w.last_focused_ms;
+    restore_pacing.order(stamps, out);
+}
+
+/// A launch restore's windows still to build (T1163, D102). Owns a deep copy
+/// of them (the pass's manifest and agent arenas are gone by the first tick)
+/// and the roster probe they attach against.
+const PacedRestore = struct {
+    copy: session_layout.Parsed,
+    next: usize = 0,
+    probe: AttachProbe,
+    /// The connection the probe was taken on. A tick that finds a different
+    /// one (or none) stops: the probe would describe an agent that is gone.
+    conn: *remote_connection.Connection,
+    /// The window the launch built first; kept in front while the rest arrive.
+    lead: ?w32.HWND,
+    restored: usize,
+    attached_panes: usize,
+    /// When pacing started, for the per-window log line's offset.
+    started_ms: i64,
+
+    fn windows(self: *const PacedRestore) []const session_layout.Window {
+        return self.copy.value.windows;
+    }
+
+    fn destroy(self: *PacedRestore, gpa: Allocator) void {
+        self.probe.deinit();
+        self.copy.deinit();
+        gpa.destroy(self);
+    }
+};
+
+/// Hand `pending` to the pacer. On success the probe is MOVED into it (the
+/// caller's is left empty) and every pending window is carried, so a layout
+/// sync while they wait cannot erase their manifest entries. False ⇒ nothing
+/// changed and the caller builds them now.
+fn startPacedRestore(
+    self: *App,
+    pending: []const session_layout.Window,
+    probe: *AttachProbe,
+    conn: *remote_connection.Connection,
+    lead: ?*Window,
+    restored: usize,
+    attached_panes: usize,
+) bool {
+    const gpa = self.core_app.alloc;
+    const hwnd = self.msg_hwnd orelse return false;
+    // The deep copy: the windows borrow arenas that die with the pass, and a
+    // serialize/parse round trip through the manifest's own codec is the one
+    // copy that cannot miss a field added later.
+    const bytes = session_layout.serialize(gpa, .{ .windows = pending }) catch return false;
+    defer gpa.free(bytes);
+    var copy = session_layout.parse(gpa, bytes) catch return false;
+    if (copy.value.windows.len != pending.len) {
+        copy.deinit();
+        return false;
+    }
+    const p = gpa.create(PacedRestore) catch {
+        copy.deinit();
+        return false;
+    };
+    p.* = .{
+        .copy = copy,
+        .probe = probe.*,
+        .conn = conn,
+        .lead = if (lead) |w| w.hwnd else null,
+        .restored = restored,
+        .attached_panes = attached_panes,
+        .started_ms = std.time.milliTimestamp(),
+    };
+    probe.* = .{};
+    for (p.windows()) |win| self.carryUnrestoredWindow(win);
+    self.paced_restore = p;
+    _ = w32.SetTimer(hwnd, PACED_RESTORE_TIMER_ID, restore_pacing.interval_ms, null);
+    return true;
+}
+
+/// One pacer tick (T1163): build the next window behind the first, then arm
+/// the next tick or finish. One-shot per tick, so a slow build never queues a
+/// second tick behind itself. GUI thread.
+fn tickPacedRestore(self: *App) void {
+    if (self.msg_hwnd) |hwnd| _ = w32.KillTimer(hwnd, PACED_RESTORE_TIMER_ID);
+    const p = self.paced_restore orelse return;
+    const gpa = self.core_app.alloc;
+
+    // Never attach over a link the probe was not taken on, and never dial or
+    // spawn from a timer: a gone or replaced agent ends the pacing, and what
+    // it had left stays carried for the next launch.
+    const live_conn = self.local_agent.sharedConnectionIfLive();
+    if (live_conn == null or live_conn.? != p.conn) {
+        log.warn(
+            "session-restore: the local agent went away mid-restore; keeping {d} window(s) for the next launch",
+            .{p.windows().len - p.next},
+        );
+        self.finishPacedRestore();
+        return;
+    }
+
+    var live: LiveSets = .{};
+    defer live.deinit(gpa);
+    self.collectLiveSets(&live);
+
+    while (p.next < p.windows().len) {
+        const win = p.windows()[p.next];
+        p.next += 1;
+        // Something opened THIS window meanwhile (the chooser's Restore All):
+        // it is on screen, and rebuilding it would duplicate it. By key only -
+        // a window that merely names a session another pane already shows is
+        // still rebuilt, and the restore claims (T1684, still active) give
+        // that pane a fresh shell, exactly as the one-burst restore does.
+        if (live.keys.contains(session_layout.windowKey(win))) {
+            self.uncarryWindow(win);
+            continue;
+        }
+        const built = self.restoreWindowShown(win, .local(p.conn), p.probe.attachSet(), true) catch |err| {
+            // Stays carried: a build failure is never an adjudication.
+            log.warn("session-restore: window '{s}' failed err={}", .{ win.id, err });
+            continue;
+        };
+        self.uncarryWindow(win);
+        p.restored += 1;
+        log.info("session-restore: paced window '{s}' {d}/{d} at +{d}ms", .{
+            win.id,
+            p.next,
+            p.windows().len,
+            std.time.milliTimestamp() - p.started_ms,
+        });
+        var ids = std.StringHashMap(void).init(gpa);
+        defer ids.deinit();
+        collectAttachedLeaves(win, p.probe.attachSet(), &ids, &p.attached_panes);
+        // Some show paths activate (a maximized placement, a later tab's
+        // focus). If this one did, hand the front back to the window the user
+        // was working in - but only from ourselves, never from another app.
+        // foreground-audit: the question IS the system foreground - did the
+        // window just built take it from the lead - so the lead is re-raised
+        // only when we own the front, never pulled over another app.
+        if (p.lead) |lead_hwnd| {
+            if (built.hwnd) |h| {
+                if (w32.GetForegroundWindow() == h and w32.IsWindow(lead_hwnd) != 0)
+                    _ = w32.SetForegroundWindow(lead_hwnd);
+            }
+        }
+        self.markLayoutDirty();
+        break;
+    }
+
+    if (p.next >= p.windows().len) {
+        self.finishPacedRestore();
+        return;
+    }
+    if (self.msg_hwnd) |hwnd|
+        _ = w32.SetTimer(hwnd, PACED_RESTORE_TIMER_ID, restore_pacing.interval_ms, null);
+}
+
+/// The paced restore is over (every window built, or the agent went away):
+/// say what came back, as the one-burst restore does, and release the copy.
+fn finishPacedRestore(self: *App) void {
+    const p = self.paced_restore orelse return;
+    self.paced_restore = null;
+    if (self.msg_hwnd) |hwnd| _ = w32.KillTimer(hwnd, PACED_RESTORE_TIMER_ID);
+    self.endRestoreClaims();
+    const gpa = self.core_app.alloc;
+    log.info("session-restore: restored {d} window(s)", .{p.restored});
+    // T411's gap report, against what is on screen now.
+    if (p.probe.roster) |roster| {
+        var live: LiveSets = .{};
+        defer live.deinit(gpa);
+        self.collectLiveSets(&live);
+        var shown = std.StringHashMap(void).init(gpa);
+        defer shown.deinit();
+        var it = live.sessions.keyIterator();
+        while (it.next()) |k| shown.put(k.*, {}) catch {};
+        const unattached = countUnattachedLive(roster.sessions, &shown);
+        if (unattached > 0) log.warn(
+            "session-restore: attached {d} pane(s); {d} live agent session(s) unattached",
+            .{ p.attached_panes, unattached },
+        ) else log.info(
+            "session-restore: attached {d} pane(s); 0 live agent session(s) unattached",
+            .{p.attached_panes},
+        );
+    } else log.info(
+        "session-restore: attached {d} pane(s); unattached live session count unknown (probe failed)",
+        .{p.attached_panes},
+    );
+    p.destroy(gpa);
+    self.markLayoutDirty();
+}
+
+/// Drop a paced restore without building the rest (teardown, persistence
+/// turned off). Its windows stay carried until the caller clears them.
+fn cancelPacedRestore(self: *App) void {
+    const p = self.paced_restore orelse return;
+    self.paced_restore = null;
+    if (self.msg_hwnd) |hwnd| _ = w32.KillTimer(hwnd, PACED_RESTORE_TIMER_ID);
+    self.endRestoreClaims();
+    p.destroy(self.core_app.alloc);
+}
+
+/// Stop carrying `win` (T1163): it is on screen now, so the live capture
+/// records it.
+fn uncarryWindow(self: *App, win: session_layout.Window) void {
+    const kv = self.carried_layout_windows.fetchRemove(session_layout.windowKey(win)) orelse return;
+    self.core_app.alloc.free(kv.key);
 }
 
 /// Decide, at the end of the LAUNCH pass, whether the restore is finished or
@@ -5500,6 +5775,20 @@ fn restoreWindow(
     tr: RestoreTransport,
     attach: ?*const std.StringHashMap(void),
 ) !void {
+    _ = try self.restoreWindowShown(win, tr, attach, false);
+}
+
+/// `restoreWindow`, plus HOW it is shown and the window it built. A
+/// `background` window (T1163: every window after the first in a paced launch
+/// restore) is shown behind Ghoztty's frontmost window without activating, the
+/// way `+new-window` without `--focus` opens one (T1797).
+fn restoreWindowShown(
+    self: *App,
+    win: session_layout.Window,
+    tr: RestoreTransport,
+    attach: ?*const std.StringHashMap(void),
+    background: bool,
+) !*Window {
     if (win.tabs.len == 0) {
         if (tr.dialed) |d| d.deinitDestroy(self.core_app.alloc);
         return error.CorruptLayout;
@@ -5537,6 +5826,7 @@ fn restoreWindow(
             (if (seed != 0) desk_palette.Variant{ .seed = seed } else null)
         else
             null,
+        .background = background,
     }) catch |err| {
         // Ownership transfers to the window, so a window that was never created
         // leaves the dial to us — the same contract `openDialedWindow` keeps,
@@ -5584,6 +5874,11 @@ fn restoreWindow(
         window.selectTabIndex(active);
     }
     applyRestoreFrame(window, win.frame, win.frame_dpi, win.maximized, tr.reanchor);
+    // T1163: keep the saved focus stamp, so a launch nobody touches restores
+    // in the same order next time; a window activated while being rebuilt
+    // keeps that newer moment.
+    window.last_activated_ms = restore_pacing.carriedStamp(window.last_activated_ms, win.last_focused_ms);
+    return window;
 }
 
 /// Rebuild one tab: replay the split tree onto its (already-created) first
@@ -13795,6 +14090,12 @@ fn msgWndProc(
     // one-shot per attempt.
     if (msg == w32.WM_TIMER and wparam == RESTORE_RETRY_TIMER_ID) {
         app.tickRestoreRetry();
+        return 0;
+    }
+
+    // Timer ID 28: the next window of a paced launch restore (T1163).
+    if (msg == w32.WM_TIMER and wparam == PACED_RESTORE_TIMER_ID) {
+        app.tickPacedRestore();
         return 0;
     }
 

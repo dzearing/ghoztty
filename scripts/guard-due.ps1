@@ -1461,6 +1461,19 @@ $GuardTable = @(
             'src\apprt\win32\session_layout.zig'
         )
     },
+    # A big launch restore: the last-focused window first, the rest paced one
+    # at a time behind it (T1163, D102). `App.zig` is left off for the reason
+    # the rows around this one give; the order and pace live in
+    # `restore_pacing.zig`.
+    @{
+        Name   = 'restore-paced'
+        Script = 'test\win32\restore-paced.ps1'
+        Stamp  = 'test\win32\restore-paced.stamp.json'
+        Covers = @(
+            'test\win32\restore-paced.ps1',
+            'src\apprt\win32\restore_pacing.zig'
+        )
+    },
     # Viewer panes survive a restore, with the agent and without it (T2015).
     # The harness had no row, so it sat red for weeks: a T1797 contract change
     # stale in its fixture, and every agentless-restored viewer dead on a

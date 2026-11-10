@@ -329,6 +329,12 @@ pub const Window = struct {
     /// reorder, and an older build ignores it. Mac's spelling is
     /// `paneSidebarOrder`.
     pane_sidebar_order: ?[]const []const u8 = null,
+    /// When this window was last brought to the front, in ms since the epoch
+    /// (T1163, D102): a launch restores the most recent one first and the
+    /// rest one at a time behind it (`restore_pacing.order`). Additive:
+    /// absent in an older manifest or a Mac blob, and such a window keeps its
+    /// listed position after every stamped one.
+    last_focused_ms: ?i64 = null,
 };
 
 /// The whole file. `windows` is a present (possibly empty) array so a reader

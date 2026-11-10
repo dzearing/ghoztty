@@ -112,6 +112,10 @@ pub const frame_clock_settimer: usize = 25;
 pub const frame_clock_probe_start: usize = 26;
 pub const frame_clock_probe: usize = 27;
 
+/// One-shot per tick: build the next window of a paced launch restore (T1163,
+/// `restore_pacing.zig`). Armed only while windows remain to build.
+pub const paced_restore: usize = 28;
+
 // Fail the build if two ids above are equal. Every `pub const … : usize` in
 // this file is a timer id and is compared against every other one, so a new
 // entry is covered by adding it — there is no second list to keep in step.

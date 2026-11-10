@@ -1,0 +1,14 @@
+{
+    "guard":  "restore-paced",
+    "script":  "test/win32/restore-paced.ps1",
+    "generated":  "2026-11-09T22:40:35-08:00",
+    "commit":  "df172a4b1",
+    "uncommitted":  [
+                        "src/apprt/win32/restore_pacing.zig",
+                        "test/win32/restore-paced.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/restore_pacing.zig":  "45112f189ddff49eaef23ff2819924a4adf44dbb8597451a730c1bf3ff21d876",
+                  "test/win32/restore-paced.ps1":  "37d2e979a71ec09a1d7e9ce1ed2c648779e232da1435f91092af94b260bbe5b8"
+              }
+}

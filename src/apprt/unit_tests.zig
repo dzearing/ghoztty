@@ -881,6 +881,10 @@ test {
     // after a late session restore (T1003). Pure std.
     _ = @import("win32/restore_placeholder.zig");
 
+    // Pure win32 rule for the order and pace of a big launch restore (T1163,
+    // D102: the last-focused window first, the rest one at a time). Pure std.
+    _ = @import("win32/restore_pacing.zig");
+
     // Pure win32 rule for whether a launch opens its blank startup window now,
     // later, or never (`initial-window`, T2162). Pure std.
     _ = @import("win32/startup_window.zig");
