@@ -364,6 +364,14 @@ pub const Slide = struct {
         return s.drawn.round();
     }
 
+    /// Whether some card of this glide is still on its way to its slot (T2870):
+    /// in the composition tree its child window stays where the glide found
+    /// it until the glide lands, over the desk. Strips have no window shown.
+    pub fn cardSliding(self: *const Slide) bool {
+        for (self.items()) |c| if (!c.drawn.eql(c.to)) return true;
+        return false;
+    }
+
     /// How long strip `id` is held at along its stack, or null when it is
     /// shown as the layout has it.
     pub fn heldLength(self: *const Slide, id: Id) ?i32 {
@@ -1041,6 +1049,39 @@ test "caughtUp: counts the cards and strips at their targets, and moves only whe
     }
     try testing.expect(landed_alone);
     try testing.expectEqual(@as(u32, 2), s.caughtUp());
+}
+
+test "cardSliding: true while any card is on its way, false once every card has landed or with none (T2870)" {
+    // A short move (1) and a long one (2), as above.
+    const before = [_]Placed{
+        .{ .id = 1, .rect = r(0, 0, 400, 600), .tucked = false },
+        .{ .id = 2, .rect = r(400, 0, 400, 600), .tucked = false },
+    };
+    const after = [_]Placed{
+        .{ .id = 1, .rect = r(10, 0, 400, 600), .tucked = false },
+        .{ .id = 2, .rect = r(900, 0, 400, 600), .tucked = false },
+    };
+    var s = plan(&before, &after, null, glide_ms, false);
+    try testing.expect(s.cardSliding());
+    // Card 1 has landed and card 2 has not: still sliding.
+    var seen_one_landed = false;
+    var done = false;
+    for (0..200) |_| {
+        if (s.step(16)) {
+            done = true;
+            break;
+        }
+        if (s.rect(1) == null and s.rect(2) != null) {
+            seen_one_landed = true;
+            try testing.expect(s.cardSliding());
+        }
+    }
+    try testing.expect(done);
+    try testing.expect(seen_one_landed);
+    try testing.expect(!s.cardSliding());
+    // A glide with no cards at all (strips only) slides no card.
+    const empty: Slide = .{};
+    try testing.expect(!empty.cardSliding());
 }
 
 test "plan: the sidebar expanding glides every card over from where it was, each resized once at the end (T2291)" {

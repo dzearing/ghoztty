@@ -134,8 +134,12 @@
 #   .23  the log names the face's declaration
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms strip
 #   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms strip -NoDeclare   # strip.22b and strip.23 must go red
-# As of 2026-11-09 (T2855) the declared arm is red on .22c alone (T2870: the
-# leading blade missing for a few frames after its landing). The .22 frozen
+#   powershell -NoProfile -File scripts\comp-glide-hold-onscreen.ps1 -Arms strip -NoFaceHold  # strip.22c must go red
+# .22c was red until T2870: the blade's face was dropped the moment the
+# window's (late) model caught up, while the folding card's child window still
+# stood where the glide found it - over the desk's freshly painted strip - so
+# the slot showed that window's background until the landing moved it. The
+# face is now held at its landing until every card has landed. The .22 frozen
 # copy (T2869) was the debug stall's own doing: it landed mid-tick, between
 # the grid's commit and the sidebar column's declaration, which no real hitch
 # can do. It lands at the end of the tick now, and .22 is green.
@@ -194,7 +198,11 @@ param(
     # T2855: GHOZTTY_SIDEBAR_COLUMN_DECLARE=0 steps the sidebar column while
     # the grid beside it stays declared (the T2827 regression) - the sidebar
     # arm's .24 must then go red.
-    [switch]$NoColumnDeclare
+    [switch]$NoColumnDeclare,
+    # T2870: GHOZTTY_STRIP_FACE_HOLD=0 drops the moving strip's face the
+    # moment it catches up, though the glide's cards are still on their way -
+    # the strip arm's .22c must then go red.
+    [switch]$NoFaceHold
 )
 
 $ErrorActionPreference = 'Continue'
@@ -223,7 +231,7 @@ if ($NegativeControl) { $SlideMs = 0; "NEGATIVE CONTROL: the slide is 0 ms (an i
 if (-not $OutDir) { $OutDir = Join-Path $env:TEMP "ghoztty-comp-glide-$PID" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_GLIDE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS', 'GHOZTTY_DEBUG_GLIDE_STALL_MS', 'GHOZTTY_GLIDE_DECLARE', 'GHOZTTY_DEBUG_GLIDE_STALL_AT', 'GHOZTTY_FACE_COMP', 'GHOZTTY_DEBUG_GLIDE_LIVE_FACE', 'GHOZTTY_GLIDE_REGION_CUT', 'GHOZTTY_GLIDE_LANDING_TIMER', 'GHOZTTY_SIDEBAR_COLUMN_DECLARE', 'GHOZTTY_SIDEBAR_COLUMN_MS'
+$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_CHROME', 'GHOZTTY_COMP_PANE_TREE', 'GHOZTTY_GLIDE_TREE', 'GHOZTTY_DEBUG_GHOST', 'GHOZTTY_TEST_NO_OCCLUSION', 'GHOZTTY_STACK_SLIDE_MS', 'GHOZTTY_DEBUG_GLIDE_STALL_MS', 'GHOZTTY_GLIDE_DECLARE', 'GHOZTTY_DEBUG_GLIDE_STALL_AT', 'GHOZTTY_FACE_COMP', 'GHOZTTY_DEBUG_GLIDE_LIVE_FACE', 'GHOZTTY_GLIDE_REGION_CUT', 'GHOZTTY_GLIDE_LANDING_TIMER', 'GHOZTTY_SIDEBAR_COLUMN_DECLARE', 'GHOZTTY_SIDEBAR_COLUMN_MS', 'GHOZTTY_STRIP_FACE_HOLD'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
@@ -1074,6 +1082,7 @@ try {
         if ($NoBody) { $env:GHOZTTY_COMP_SHADOWS_NOBODY = '1' } else { Remove-Item env:GHOZTTY_COMP_SHADOWS_NOBODY -ErrorAction SilentlyContinue }
         $err = Join-Path $dir 'stderr.txt'
         if ($NoColumnDeclare) { $env:GHOZTTY_SIDEBAR_COLUMN_DECLARE = '0' } else { Remove-Item env:GHOZTTY_SIDEBAR_COLUMN_DECLARE -ErrorAction SilentlyContinue }
+        if ($NoFaceHold) { $env:GHOZTTY_STRIP_FACE_HOLD = '0' } else { Remove-Item env:GHOZTTY_STRIP_FACE_HOLD -ErrorAction SilentlyContinue }
         if ($arm -eq 'sidebar') { $env:GHOZTTY_SIDEBAR_COLUMN_MS = "$SlideMs" } else { Remove-Item env:GHOZTTY_SIDEBAR_COLUMN_MS -ErrorAction SilentlyContinue }
         if ($arm -eq 'strip') { Invoke-StripArm $arm $dir $err; continue }
         if ($arm -eq 'sidebar') { Invoke-SidebarArm $arm $dir $err; continue }

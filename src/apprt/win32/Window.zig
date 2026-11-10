@@ -9596,6 +9596,22 @@ fn faceOrderLegacy() bool {
     return v;
 }
 
+/// `GHOZTTY_STRIP_FACE_HOLD=0` (T2870 A/B): drop a moving strip's face the
+/// moment it catches up, even while the glide's cards are still on their way
+/// - the leading blade then goes missing after a hitch until the landing.
+fn stripFaceHoldOn() bool {
+    const S = struct {
+        var v: ?bool = null;
+    };
+    if (S.v) |v| return v;
+    const v = if (std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_STRIP_FACE_HOLD")) |s| blk: {
+        defer std.heap.page_allocator.free(s);
+        break :blk !std.mem.eql(u8, s, "0");
+    } else |_| true;
+    S.v = v;
+    return v;
+}
+
 /// `GHOZTTY_CUT_ORDER=legacy` (T2732 A/B): cut the card regions after the
 /// held resize work and the strip faces, as before.
 fn cutOrderLegacy() bool {
@@ -10101,15 +10117,26 @@ fn declareStripFace(
 /// Declared again only when the landing moves, from where the compositor
 /// has got to. False - the strip is stepped as before - off the
 /// composition tree, under `-NoDeclare`, under a test's forced slow frames,
-/// or once the strip has caught up.
+/// or once the strip has caught up and no card is still gliding.
 fn declareMovingStrip(self: *Window, view: *PaneView) bool {
     if (!faceCompWanted() or !glideDeclareOn() or self.stack_slide_dt_ms != null) return false;
     if (self.chrome_host == null) return false;
     const slide = if (self.stack_slide) |*s| s else return false;
     const id = pane_stack_grid.viewId(view);
     const sg = slide.findStrip(id) orelse return false;
-    // Caught up: the strip the desk paints stands for it.
-    if (slide.movingStrip(id) == null) return false;
+    // Caught up: the strip the desk paints stands for it - once the glide's
+    // cards have landed too (T2870). Until then their child windows stay
+    // where the glide found them (T2571), over the desk and under the face
+    // layer: a card folding past this strip's landing still has its window
+    // there, so the strip the desk paints is not seen until the landing moves
+    // it, and with the face gone the landing showed that window's background
+    // - after a hitch, a third of a second with no blade. The face stands
+    // held at its landing until then, over the same band the desk paints.
+    if (slide.movingStrip(id) == null) {
+        if (!stripFaceHoldOn() or !slide.cardSliding()) return false;
+        const f = view.strip_face orelse return false;
+        return f.decl != null and f.still != null and f.on_visual;
+    }
     const parent = self.hwnd orelse return false;
     const h = view.hwnd() orelse return false;
     var grid = self.stackGrid() orelse return false;
