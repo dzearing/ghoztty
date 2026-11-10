@@ -1922,17 +1922,20 @@ public class GhozttyTestDesktop {
         });
     }
 
-    public bool SendControlKey(IntPtr ctl, ushort vk, ushort[] mods) {
+    // A BARE key, deliberately (T1380): there is no modifier argument, because
+    // faking one here with SetKeyboardState on this worker thread never reached
+    // the app - its GetKeyState reads its own, unattached input queue - so a
+    // chord silently arrived as the plain key. Chords go through SendKeys,
+    // which attaches the two queues first.
+    public bool SendControlKey(IntPtr ctl, ushort vk) {
         return (bool)Run(delegate() {
             var ks = new byte[256];
             GetKeyboardState(ks);
             ClearMods(ks);
-            if (mods != null && mods.Length > 0) ApplyMods(ks, mods, true);
             SetKeyboardState(ks);
             PostMessageW(ctl, WM_KEYDOWN, (IntPtr)vk, KeyLParam(vk, false));
             Thread.Sleep(30);
             PostMessageW(ctl, WM_KEYUP, (IntPtr)vk, KeyLParam(vk, true));
-            if (mods != null && mods.Length > 0) { ApplyMods(ks, mods, false); SetKeyboardState(ks); }
             Thread.Sleep(60);
             return true;
         });
@@ -3830,32 +3833,32 @@ function Send-TestControlText {
     return (Resolve-TestDesktop $Desktop).SendControlText($Control, $Text, $PerKeyMs)
 }
 
-# A navigation key (Enter / Escape / arrows / Tab) for a standard control.
-# NOTE: -Modifiers does NOT reach a standard control from here, and the reason
-# is one line of this function rather than anything about controls: it fakes the
-# modifier with SetKeyboardState on the WORKER thread and never attaches that
-# thread's input queue to the app's, so the app's own GetKeyState answers for a
-# queue where nothing is held down. Translation is the second half of the same
-# story - the app runs TranslateMessage over dialog messages and translation
-# reads the queue state too, so e.g. ctrl+a arrives as a literal 'a'.
+# A BARE navigation key (Enter / Escape / arrows / Tab) for a standard control.
 #
-# WHAT TO USE INSTEAD, measured 2026-09-05 (T569): Send-TestKeys carries a
+# There is NO -Modifiers parameter, on purpose (T1380). It used to take one and
+# drop it without a word: it faked the modifier with SetKeyboardState on the
+# WORKER thread and never attached that thread's input queue to the app's, so
+# the app's own GetKeyState answered for a queue where nothing was held down and
+# the chord landed as the plain key (and TranslateMessage, which reads the same
+# state, turned ctrl+a into a literal 'a'). Removing it means a caller that asks
+# for a chord here now fails at parameter binding instead of quietly asserting
+# about the unmodified key.
+#
+# WHAT TO USE FOR A CHORD, measured 2026-09-05 (T569): Send-TestKeys carries a
 # modifier to a dialog/panel CHILD control perfectly well - it attaches the two
 # input queues first, which is the whole difference. Shift+Tab through the
 # Activity Monitor's focus ring (activity-monitor.ps1 section L2b) walks
-# backwards through it and lands on the FORWARD neighbour through this helper.
+# backwards through Send-TestKeys and forwards through the old -Modifiers here.
 # So: plain keys and text here; anything with a modifier goes through
 # Send-TestKeys, whether the target is a terminal surface or a control.
 function Send-TestControlKey {
     param(
         [Parameter(Mandatory = $true)][IntPtr]$Control,
         [Parameter(Mandatory = $true)][string]$Key,
-        [string[]]$Modifiers = @(),
         $Desktop
     )
     $td = Resolve-TestDesktop $Desktop
-    $mods = @($Modifiers | ForEach-Object { ConvertTo-TestVk $_ })
-    return $td.SendControlKey($Control, (ConvertTo-TestVk $Key), [uint16[]]$mods)
+    return $td.SendControlKey($Control, (ConvertTo-TestVk $Key))
 }
 
 <#

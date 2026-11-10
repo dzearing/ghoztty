@@ -212,6 +212,36 @@ $capThrew = $false
 try { $null = Get-TestDesktopCapability -Name 'not-a-capability' } catch { $capThrew = $true }
 Assert $capThrew 'an unknown capability name throws instead of reading available'
 
+# ---------------------------------------------------------------------
+# Z2. Send-TestControlKey cannot be asked for a chord (T1380).
+#
+# It used to take -Modifiers and drop them silently: the modifier was faked
+# with SetKeyboardState on the harness worker thread, whose input queue is not
+# attached to the app's, so the app's GetKeyState read nothing held and the
+# chord landed as the bare key (measured in T569: Shift+Tab walked FORWARD).
+# The parameter is gone, so the trap is a loud binding error rather than an
+# assertion that quietly means something else. Pure signature checks - no
+# desktop needed, which is why they sit up here with section Z.
+# ---------------------------------------------------------------------
+Write-Host ''
+Write-Host '-- Z2. Send-TestControlKey refuses a chord (T1380)'
+$sckParams = (Get-Command Send-TestControlKey).Parameters
+Assert ($sckParams.ContainsKey('Control') -and $sckParams.ContainsKey('Key')) `
+    'Send-TestControlKey still takes -Control and -Key (the control check below is not vacuous)'
+Assert (-not $sckParams.ContainsKey('Modifiers')) `
+    'Send-TestControlKey has no -Modifiers parameter for a chord to vanish into'
+# The caller's side of the same fact: asking for a chord FAILS, and fails at
+# binding - before the body could post anything at a control.
+$sckErr = $null
+try { $null = Send-TestControlKey -Control ([IntPtr]::Zero) -Key Tab -Modifiers shift } catch { $sckErr = $_ }
+Assert ($null -ne $sckErr -and $sckErr.Exception -is [System.Management.Automation.ParameterBindingException]) `
+    "a call passing -Modifiers is refused at parameter binding (got: $(if ($sckErr) { $sckErr.Exception.GetType().Name } else { 'no error - the chord was accepted' }))"
+# And the C# worker method underneath has no modifier argument either, so the
+# trap cannot come back by a caller reaching past the PowerShell wrapper.
+$sckOverloads = @([GhozttyTestDesktop].GetMethods() | Where-Object { $_.Name -eq 'SendControlKey' })
+Assert ($sckOverloads.Count -eq 1 -and $sckOverloads[0].GetParameters().Count -eq 2) `
+    "GhozttyTestDesktop.SendControlKey takes exactly (ctl, vk) ($($sckOverloads.Count) overload(s), $(if ($sckOverloads.Count) { $sckOverloads[0].GetParameters().Count } else { 0 }) params)"
+
 # THE DEMONSTRATION THAT THE SKIP PATH FIRES. A capability check that has only
 # ever said 'available' is indistinguishable from one that cannot say anything
 # else, so the missing case is CONSTRUCTED and the whole exit path is driven in

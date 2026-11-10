@@ -1239,16 +1239,17 @@ try {
     # modifier state with SetKeyboardState, a mechanism this repo has already
     # recorded as unreliable for a GetKeyState read in another process.
     #
-    # Send-TestControlKey is the helper that cannot carry it, and says so in its
-    # own doc comment: it pokes the worker thread's key-state table and nothing
-    # shares that table with the app. So the chord goes through Send-TestKeys,
+    # Send-TestControlKey is the helper that cannot carry it - it used to take
+    # -Modifiers and poke the worker thread's key-state table, which nothing
+    # shares with the app, and since T1380 it has no -Modifiers at all, so the
+    # mistake cannot be made by accident. So the chord goes through Send-TestKeys,
     # which ATTACHES the two input queues first (AttachThreadInput) and is the
     # same path every terminal chord in this suite already takes.
     #
     # BOTH halves of that were measured on the box, 2026-09-05, and this is the
     # evidence T569 asked for rather than a preference: through Send-TestKeys
     # all four steps below land on the backwards neighbour, and the same four
-    # steps re-run through Send-TestControlKey -Modifiers shift land on the
+    # steps re-run through the old Send-TestControlKey -Modifiers shift land on the
     # FORWARD one ("focus landed on Show all - the Shift never reached the app").
     # So the mechanism is the attachment, and the product's backwards walk is
     # not in question.
