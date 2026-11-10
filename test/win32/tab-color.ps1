@@ -164,10 +164,17 @@ try {
     # hides the strip at one tab, so the single-tab positive control below
     # would otherwise be measuring the caption band. This script is about tab
     # COLORS, not about the autohide rule - tab-strip-autohide.ps1 owns that.
+    #
+    # --macos-pane-style=flat (T1394): the positive control measures the strip
+    # as the pane's offset under the strip top, and the raised-card style (the
+    # default since T1831) pads the grid by its margin plus a rim inset - 14 px
+    # at 1.25x that is not strip. It read barH=64 against 50 for exactly that
+    # reason; tab-strip-autohide.ps1 pinned flat for the same one in T2014, and
+    # pane-elevation.ps1 is what scores the margin.
     # -----------------------------------------------------------------------
     $app = Start-OnTestDesktop -Exe $exe -Arguments @(
         '--config-default-files=false', '--background=#000000', '--session-persistence=false',
-        '--window-show-tab-bar=always'
+        '--window-show-tab-bar=always', '--macos-pane-style=flat'
     )
     Start-Sleep -Seconds 3
     if ($app.Process -and $app.Process.HasExited) { Write-Host 'SETUP FAIL: GUI died at launch'; exit 1 }
