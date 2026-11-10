@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-10T10:26:58-08:00",
-    "commit":  "e1daa8ed5",
+    "generated":  "2026-11-10T10:57:07-08:00",
+    "commit":  "bb873e3ea",
     "uncommitted":  [
-                        "test/win32/gl-device-lost.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -416,7 +416,7 @@
                   "test/win32/pixel-oracle-audit.ps1":  "1af4585a75c0eba82c2b7dcb88ab4a8c4f1cd1e75db5624afd0bbb2bb51ab163",
                   "test/win32/pixel-scan.ps1":  "ed2e640f16766b9a4cd8048505c14c050e5d9bbb8e0bb8b908e53783ab411846",
                   "test/win32/pr-health.ps1":  "90d12cddbdc5252db6def47f05eb54527c74c9da86af4528a6f687af5db1997f",
-                  "test/win32/printclient-audit.ps1":  "eb1c88e072c1e3808c5132b59815e3ae205212edd3e39c6a0d1eac0216e3da6f",
+                  "test/win32/printclient-audit.ps1":  "e56ed09ebfd069c592d3a3ac4b39141eecdd2ab02a8b46a6b21964b4d72b9dde",
                   "test/win32/probe-topmost-restore.ps1":  "b2e3afe3d1e5db7cd3555160771e966e8e7c7d5260e1ca4f9fe2c304fd53540a",
                   "test/win32/process-family.ps1":  "d66e2ac7f288c8ace90f538a8fe7796160d8e605850814041893d7918055e0c2",
                   "test/win32/profile-latency.ps1":  "ef85fd712546fc90183fbf176b36ab613d0f96c437e8439f6270744f00edbec6",
