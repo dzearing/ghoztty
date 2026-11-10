@@ -1,15 +1,10 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-10T06:56:15-08:00",
-    "commit":  "10d8f223f",
+    "generated":  "2026-11-10T07:26:30-08:00",
+    "commit":  "846a19edf",
     "uncommitted":  [
-                        "src/apprt/win32/App.zig",
-                        "src/apprt/win32/crash_reopen.zig",
-                        "src/apprt/win32/exit_reason.zig",
-                        "src/apprt/win32/msg_timer.zig",
-                        "src/apprt/win32/tray_notify.zig",
-                        "src/os/exit_ledger.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -473,7 +468,7 @@
                   "src/os/hostname.zig":  "b402e461f30d22a5f8227af8591f505c0e76ccaaaf816c7b81b8ce6c7468823b",
                   "src/os/i18n.zig":  "133cfac2158e97441381ec012d76dba5f2ff3f4c09793da129d75e2299c462c4",
                   "src/os/i18n_locales.zig":  "90f6fcf72fc67cfa0223d7786f18467fd58529807a5b00ffd557d11ad447afc2",
-                  "src/os/ipc_client.zig":  "950a270012b47cda30bb8a5681df26104818748b8f178322a501ce9ba30c7ab9",
+                  "src/os/ipc_client.zig":  "f9080d2b87a9b1856449e98475e8dd2e8f4ea0f4fd87d439536cfac21019339f",
                   "src/os/ipc_handoff.zig":  "83ed1a0b6464bff5ff9364c56c5c796afe0c821cb8c9220372436dd7b821ffc3",
                   "src/os/ipc_timeout.zig":  "f42ab6296917c0c8de044e00c43bca6ab8b6725f88655a9350757a5f15fdf259",
                   "src/os/kernel_info.zig":  "af3e484e231296b27ef7c2a76f4608c61a37bf5af01b968d3dbbf565d18de0e4",

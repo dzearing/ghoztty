@@ -1,16 +1,10 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-11-10T06:58:17-08:00",
-    "commit":  "10d8f223f",
+    "generated":  "2026-11-10T07:38:47-08:00",
+    "commit":  "846a19edf",
     "uncommitted":  [
-                        "src/apprt/unit_tests.zig",
-                        "src/apprt/win32/App.zig",
-                        "src/apprt/win32/crash_reopen.zig",
-                        "src/apprt/win32/exit_reason.zig",
-                        "src/apprt/win32/msg_timer.zig",
-                        "src/apprt/win32/tray_notify.zig",
-                        "src/os/exit_ledger.zig"
+
                     ],
     "files":  {
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
@@ -71,7 +65,7 @@
                   "src/apprt/gtk/winproto/wayland.zig":  "4d4cf0fef0f736bea033f890cee991c94be6fe6bbfea61b9e2f9dbdda0283787",
                   "src/apprt/gtk/winproto/wayland/Globals.zig":  "f93c2e65cdd9f3a04c364e6aabcc290867f551134413c95b27d9eb8c8889b885",
                   "src/apprt/gtk/winproto/x11.zig":  "31a8499677b2d9200a202ee1a6781fc022e8f66afaa4fec827526f3a68903811",
-                  "src/apprt/ipc.zig":  "b178ba16390967fa9302ad0f6038eda5a07fd6c9cfd5d142d6329d62331bd779",
+                  "src/apprt/ipc.zig":  "2de6a9bf62a12c9cd312c1b0f59df46cd1c7965a1703398a530eb34a4934a8e5",
                   "src/apprt/ipc/args.zig":  "84da3fcd115cf2d9d72e130a8712ccb3eb7ed5c3c8afdab7350b2027385c28a9",
                   "src/apprt/ipc/list.zig":  "2e213fafa984e8eff65b6bde243069cacdfded75c83610ff570d1f82eee6315c",
                   "src/apprt/ipc/read_tail.zig":  "43e8b7a2c10d1a73990cec6b09a6ddd1b857065f39cd855d9c83bf289fbb2ee4",
@@ -770,7 +764,7 @@
                   "src/os/hostname.zig":  "b402e461f30d22a5f8227af8591f505c0e76ccaaaf816c7b81b8ce6c7468823b",
                   "src/os/i18n.zig":  "133cfac2158e97441381ec012d76dba5f2ff3f4c09793da129d75e2299c462c4",
                   "src/os/i18n_locales.zig":  "90f6fcf72fc67cfa0223d7786f18467fd58529807a5b00ffd557d11ad447afc2",
-                  "src/os/ipc_client.zig":  "950a270012b47cda30bb8a5681df26104818748b8f178322a501ce9ba30c7ab9",
+                  "src/os/ipc_client.zig":  "f9080d2b87a9b1856449e98475e8dd2e8f4ea0f4fd87d439536cfac21019339f",
                   "src/os/ipc_handoff.zig":  "83ed1a0b6464bff5ff9364c56c5c796afe0c821cb8c9220372436dd7b821ffc3",
                   "src/os/ipc_timeout.zig":  "f42ab6296917c0c8de044e00c43bca6ab8b6725f88655a9350757a5f15fdf259",
                   "src/os/kernel_info.zig":  "af3e484e231296b27ef7c2a76f4608c61a37bf5af01b968d3dbbf565d18de0e4",
