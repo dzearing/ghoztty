@@ -6738,6 +6738,21 @@ $GuardTable = @(
         )
     }
 
+    # T1389 - the type-ramp sweep. It reads every `.zig` file in the win32
+    # frontend, because the case the rule exists for is a NEW hand-written font
+    # size (T583's FONT_H was the eighth copy a one-time grep missed), and that
+    # can land in any of them.
+    [pscustomobject]@{
+        Name   = 'type-ramp'
+        Script = 'test\win32\type-ramp-audit.ps1'
+        Stamp  = 'test\win32\type-ramp-audit.stamp.json'
+        Covers = @(
+            'test\win32\type-ramp-audit.ps1',
+            'test\win32\lib\TypeRampAudit.ps1',
+            'src\apprt\win32\*.zig'
+        )
+    }
+
     # T831 - the counted-wait sweep. It covers the two files that rediscovered
     # the wall-clock deadline independently, the shared helper they now share,
     # and the directories whose waits are cross-thread: the case the rule exists

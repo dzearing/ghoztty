@@ -245,6 +245,19 @@ banner editor over a banner and the editor's text and the banner's text were
 different sizes. The banner's body, its line box and its face now come from the
 ramp like everything else (`banner_layout.zig`'s type section).
 
+**The count is a check now, not a grep** (T1389). The lesson of the eighth was
+not that the count was wrong; it was that the count ran once.
+`test\win32\type-ramp-audit.ps1` reads every `.zig` file in the win32
+frontend and fails on a font height the ramp does not name — a literal
+`CreateFontW` height, or a font-named constant (`FONT_H`, `font_px`,
+`title_font_dip`, …) holding a literal — unless the site is declared in the
+script's `$Allow` list with its reason. The ramp's sizes are read out of
+`type_ramp.zig` itself, and the guard row re-runs it on any edit to the
+frontend. A legitimate exception (a face-presence probe that is never drawn, a
+size that deliberately matches the Mac) gets an entry; a known defect gets an
+entry naming the task that removes it, and an entry whose site has gone fails
+the run, so fixing a site obliges deleting its excuse.
+
 **The tab strip is body, and CHROME is not an exemption** (T584). The tab
 labels and the in-strip window title were set at a bare `16.0 * scale`, written
 out twice in `Window.zig` — not a retired ramp size like the banner's 15, but a
