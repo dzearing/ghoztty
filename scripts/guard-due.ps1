@@ -1265,6 +1265,9 @@ $GuardTable = @(
             'test\win32\viewer-toc-emphasis.ps1',
             'src\apprt\win32\ViewerTOCPanel.zig',
             'src\apprt\win32\window_active.zig',
+            # T1407: B0/C0 read the card's own WM_PAINT count - the only
+            # oracle here a capture cannot satisfy by itself.
+            'src\apprt\win32\paint_probe.zig',
             # T1015: Find-SaturatedBar IS the emphasis assertion here - a helper
             # that stopped finding the bar would read a correct panel as broken,
             # or one that matched anything saturated would read a broken one as

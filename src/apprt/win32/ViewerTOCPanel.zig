@@ -2129,6 +2129,17 @@ fn isEmphasized(self: *const ViewerTOCPanel) bool {
     return w32.windowIsActive(w32.GetAncestor(self.hwnd, w32.GA_ROOT));
 }
 
+/// The top-level window gained or lost activation, which flips
+/// `isEmphasized` - but `isEmphasized` is only read at paint time, and a
+/// child HWND never receives `WM_ACTIVATE`, so without this the selected row
+/// kept the old weight until something unrelated repainted the card (T1407).
+/// Measured with the paint probe: activation moved both ways and the card
+/// painted zero times; every pixel test passed anyway because the capture
+/// itself is a paint.
+pub fn onActivationChanged(self: *ViewerTOCPanel) void {
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+}
+
 // -------------------------------------------------------------------------
 // Window procedure
 // -------------------------------------------------------------------------

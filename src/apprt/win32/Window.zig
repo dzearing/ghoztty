@@ -10476,6 +10476,22 @@ pub fn updateReadonlyBadges(self: *Window) void {
     }
 }
 
+/// Tell every viewer's contents card that this window's activation moved
+/// (T1407). The card weights its selected row by `windowIsActive` of its root,
+/// read at paint time, and a child HWND never receives `WM_ACTIVATE` - so
+/// without this the row kept the old weight until something unrelated
+/// repainted it. Every tab, not just the active one: a hidden card that is
+/// invalidated costs nothing and paints right when it is shown.
+pub fn repaintViewerCardsForActivation(self: *Window) void {
+    for (0..self.tab_count) |tab| {
+        var it = self.tab_trees[tab].iterator();
+        while (it.next()) |entry| {
+            const viewer = entry.view.viewer() orelse continue;
+            if (viewer.toc) |panel| panel.onActivationChanged();
+        }
+    }
+}
+
 /// Re-check the z-order of every layered popup this window owns — each
 /// pane's banner/dim/scrollbar plus the window's own resize overlay — and
 /// heal a stray `WS_EX_TOPMOST` (T142). Cheap and idempotent: a window with
@@ -22080,6 +22096,9 @@ pub fn windowWndProc(
             // Either direction: a window brought forward over this one sends
             // the column no leave, so its hover is asked again (T2341).
             if (window.sidebar) |sb| sb.queueHoverResync(activated != w32.WA_INACTIVE);
+            // Either direction: a viewer's contents card weights its selected
+            // row by this window's activation and cannot hear it itself.
+            window.repaintViewerCardsForActivation();
             // Either direction: this is the event at which a stray topmost
             // overlay becomes visible as "the background window's banner is
             // over the foreground", so it is the event that must heal it

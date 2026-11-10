@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-10T12:42:55-08:00",
-    "commit":  "ec46a585a",
+    "generated":  "2026-11-10T13:01:41-08:00",
+    "commit":  "d533afe52",
     "uncommitted":  [
-                        "test/win32/chooser-link-hover.ps1"
+                        "test/win32/viewer-toc-emphasis.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -71,7 +71,7 @@
                   "test/win32/chooser-controls.ps1":  "24fefe9c62de66b7ed9f04b0f9b8b5b28df29e0079fc8a421c7b15ebbce62e64",
                   "test/win32/chooser-help-tooltips.ps1":  "8beec224463672893c89c41236ff0713e1987978b8697e256aa79bad391bad92",
                   "test/win32/chooser-kill-hover.ps1":  "da7e531e4fc7ec0c45655d9987cd5060b3ead61d4cc41edb1ca837b9dd8b8766",
-                  "test/win32/chooser-link-hover.ps1":  "ec621631330e2317cff5d52b9d5c2edfb9a45eb2c0f5425be26d70fafff76251",
+                  "test/win32/chooser-link-hover.ps1":  "48e4e10db2db05a12a32a073d57bd60e7e7b3f3297a4f1c58a5c897497dd5f48",
                   "test/win32/chooser-menu.ps1":  "7763974dd2be6ebfa57f035b5999c860c6a02c0b92b434a56800eb221e226af6",
                   "test/win32/chooser-modeless.ps1":  "663f862c81b149ae25e40cea0a05aff318dd82219924f9e8540d7ea9f9cbd2cf",
                   "test/win32/chooser-open-chord.ps1":  "fbf6f3281efd358cdd41d49c2bf630e95b559861f0776ea3eb93167adeb7c028",
@@ -363,7 +363,6 @@
                   "test/win32/notification-click-real.ps1":  "f656c41eba944964fef9920dd64f078380023105e3d05a066571f97f9c9526ba",
                   "test/win32/one-installer.ps1":  "e8f2855cab4c267362f75fe7d78b810375ebc6fd253a31ab70c43579b3cea76e",
                   "test/win32/opacity-reload.ps1":  "b79367eddf623fd7c5907d0eafccc471acae34b4d0bd1eede04277cdb400eeef",
-                  "test/win32/orphan-endpoint.ps1":  "e9a11e77194463cb49f7a34ee7fdcc52f81c26f37728aa23003be8565c8a760b",
                   "test/win32/orphan-notify.ps1":  "a8c7962850f4bdf5c8c5f8c09b20930b57e88264dedfa13a3bd47e69aaf2bf55",
                   "test/win32/overlay-zorder.ps1":  "74efd0670d18c50db7fb860e61377686d0194ac3c5d858cfa8393d3a20e85be3",
                   "test/win32/palette-close-crash.ps1":  "a22d78896b8a333e0dec14c230101606f0c13b48dbf1bb7ff7b79a44e2e63707",
@@ -584,7 +583,7 @@
                   "test/win32/viewer-panes.ps1":  "f483995862ca20b10fff8f76f8c5ff34661f5edbea82716fd12ad7c3aa5d8d95",
                   "test/win32/viewer-popup.ps1":  "026091bd991f9e035761626527cdc873d5af02d5376f941b003448bb6faa7f6d",
                   "test/win32/viewer-restore.ps1":  "25317e0bc91348dd4a2794f73083f1da5c08f46b1a3896cac22536a7faf7e28c",
-                  "test/win32/viewer-toc-emphasis.ps1":  "337dbba50bb5b54ae0a3d67f9a4db9a43e483cda7068abfb5f3f130c09e6fb77",
+                  "test/win32/viewer-toc-emphasis.ps1":  "4111f265f10e605dbe667242d2ae6907b115a834782af1b1d171645aeb45ffe0",
                   "test/win32/viewer-toc-handle.ps1":  "c03d9bea47d45df56e8df941ddc0e2156e4af4b5474a2ecf2ec4e1672b97ab9d",
                   "test/win32/viewer-window-chords.ps1":  "98a12374e5503edcbc5fbdefde9cd8d82bd5bcf59089e0775e18b3787a3c02e7",
                   "test/win32/viewer-worktree.ps1":  "b4e4b244e68d07d4525b768afdab49cd7273c46b95f7b99bee68b58303fbfcbb",

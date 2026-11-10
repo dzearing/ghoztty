@@ -152,6 +152,34 @@ function Test-AccentHue([int[]]$c) {
     return ($c[0] -gt $c[2] -and $c[2] -gt $c[1] -and ($c[0] - $c[1]) -ge 48)
 }
 
+# T1407: the card's own count of WM_PAINT cycles (`paint_probe.zig`), read out
+# of the app's stderr. Every capture below is itself a repaint (WM_PRINTCLIENT),
+# so B and C's pixels show the new emphasis whether or not anything ever
+# invalidated the card - this counter is the half the camera cannot advance.
+# $null when the probe never printed, which the assertions refuse to read as 0.
+function Get-PaintCount([string]$Surface) {
+    if (-not $errlog -or -not (Test-Path $errlog)) { return $null }
+    $n = $null
+    foreach ($l in @(Get-Content $errlog -ErrorAction SilentlyContinue)) {
+        $m = [regex]::Match($l, "paint-probe surface=$Surface n=(\d+)")
+        if ($m.Success) { $n = [int]$m.Groups[1].Value }
+    }
+    return $n
+}
+
+# Did moving activation make the card repaint ON ITS OWN? Measures a quiet
+# interval first (a counter that ticks by itself scores nothing), then the
+# activation, with no capture anywhere inside the window.
+function Measure-ActivationRepaint([IntPtr]$To) {
+    $p0 = Get-PaintCount 'viewer_toc'
+    Start-Sleep -Milliseconds 1200
+    $pq = Get-PaintCount 'viewer_toc'
+    Set-TestActiveWindow -Window $To | Out-Null
+    Start-Sleep -Milliseconds 1200
+    $p1 = Get-PaintCount 'viewer_toc'
+    return [pscustomobject]@{ Before = $p0; Quiet = $pq; After = $p1 }
+}
+
 function Invoke-Verb([string[]]$VerbArgs) {
     $out = (& $exe @VerbArgs 2>&1 | ForEach-Object { $_.ToString() } | Out-String)
     return [pscustomobject]@{ Code = $LASTEXITCODE; Out = $out }
@@ -184,6 +212,8 @@ try {
     $td = New-TestDesktop -Interactive:$Interactive
     $errlog = Join-Path $env:TEMP "ghoztty-viewer-toc-emphasis-stderr-$PID.log"
     Remove-Item $errlog -ErrorAction SilentlyContinue
+    # T1407: the card prints its own paint count, which is what B0/C0 read.
+    $env:GHOZTTY_PAINT_PROBE = '1'
     $app = Start-OnTestDesktop -Exe $exe -StdErr $errlog -Arguments @('--session-persistence=false')
     Start-Sleep -Seconds 3
     if ($app.Process -and $app.Process.HasExited) { Write-Host 'SETUP FAIL: GUI died at launch'; exit 1 }
@@ -289,8 +319,11 @@ try {
     # =======================================================================
     Write-Host ''
     Write-Host 'B. with activation on another window, the row drops to the lighter wash and no accent is left'
-    Set-TestActiveWindow -Window $other | Out-Null
-    Start-Sleep -Milliseconds 1200
+    $rpB = Measure-ActivationRepaint $other
+    Assert ($null -ne $rpB.Before -and $rpB.Quiet -eq $rpB.Before) `
+        "B0 the card's paint probe is live and quiet before the switch (n=$($rpB.Before), then $($rpB.Quiet) after 1.2s idle)"
+    Assert ($null -ne $rpB.Quiet -and $null -ne $rpB.After -and $rpB.After -gt $rpB.Quiet) `
+        "B0 moving activation away REPAINTED the card by itself ($($rpB.Quiet) -> $($rpB.After)) - nothing photographed it"
     Assert ((Get-TestActiveWindow -Window $vtop) -eq $other) `
         'B activation moved to the other window (the state this section measures)'
 
@@ -335,8 +368,9 @@ try {
             "C the wash is a visible step off the card fill ($(Format-Rgb $wash) vs $(Format-Rgb $cardFill))"
     }
 
-    Set-TestActiveWindow -Window $vtop | Out-Null
-    Start-Sleep -Milliseconds 1200
+    $rpC = Measure-ActivationRepaint $vtop
+    Assert ($null -ne $rpC.Quiet -and $null -ne $rpC.After -and $rpC.After -gt $rpC.Quiet) `
+        "C0 bringing activation back REPAINTED the card by itself ($($rpC.Quiet) -> $($rpC.After)) - nothing photographed it"
     Assert ((Get-TestActiveWindow -Window $vtop) -eq $vtop) 'C activation came back to the viewer window'
     $shotC = Get-TestWindowPixels -Window $toc -Sync
     try {
