@@ -391,6 +391,13 @@ fn formatTerminal(stdout: *std.Io.Writer, terminal_val: std.json.Value) !void {
         try stdout.writeAll("  [minimized]");
     }
 
+    // Read-only mode drops every keystroke, so a pane in it looks wedged from
+    // the outside; say so here the way `--json` says `"readonly": true` (T574,
+    // T1385). Both servers omit the field when the mode is off.
+    if (jsonBool(term.get("readonly"))) {
+        try stdout.writeAll("  [read-only]");
+    }
+
     // Activity state, only when it is worth a glance. Printed with the same
     // human label the window title uses (`needs_input` reads as "question");
     // `--json` carries the machine token.
@@ -461,4 +468,54 @@ fn jsonInt(val: ?std.json.Value) i64 {
         .integer => |i| i,
         else => 0,
     };
+}
+
+fn formatTerminalForTest(alloc: Allocator, json_text: []const u8) ![]u8 {
+    const parsed = try std.json.parseFromSlice(std.json.Value, alloc, json_text, .{});
+    defer parsed.deinit();
+    var aw: std.Io.Writer.Allocating = .init(alloc);
+    defer aw.deinit();
+    try formatTerminal(&aw.writer, parsed.value);
+    return try alloc.dupe(u8, aw.written());
+}
+
+test "formatTerminal: a read-only pane is tagged [read-only] (T1385)" {
+    const alloc = std.testing.allocator;
+    const out = try formatTerminalForTest(alloc,
+        \\{"title":"pwsh","working_directory":"/w","pid":42,"tty":"",
+        \\ "exit_code":null,"readonly":true,"focused":true}
+    );
+    defer alloc.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "  [read-only]") != null);
+    // The tag sits before the focus star, with the other per-pane tags.
+    try std.testing.expect(std.mem.endsWith(u8, out, "[read-only] *"));
+}
+
+test "formatTerminal: no [read-only] tag when the field is absent or false" {
+    const alloc = std.testing.allocator;
+    // Both servers omit the field when the mode is off (T574).
+    const absent = try formatTerminalForTest(alloc,
+        \\{"title":"pwsh","working_directory":"/w","pid":42,"tty":"","exit_code":null}
+    );
+    defer alloc.free(absent);
+    try std.testing.expect(std.mem.indexOf(u8, absent, "read-only") == null);
+
+    const off = try formatTerminalForTest(alloc,
+        \\{"title":"pwsh","working_directory":"/w","pid":42,"tty":"","readonly":false}
+    );
+    defer alloc.free(off);
+    try std.testing.expect(std.mem.indexOf(u8, off, "read-only") == null);
+}
+
+test "formatTerminal: [read-only] composes with the other tags" {
+    const alloc = std.testing.allocator;
+    const out = try formatTerminalForTest(alloc,
+        \\{"title":"t","working_directory":"/w","pid":1,"tty":"/dev/ttys001",
+        \\ "name":"build","exit_code":null,"stashed":true,"readonly":true,"state":"busy"}
+    );
+    defer alloc.free(out);
+    try std.testing.expectEqualStrings(
+        "t  /w  pid:1  /dev/ttys001  [name: build]  running  [stashed]  [read-only]  [busy]",
+        out,
+    );
 }

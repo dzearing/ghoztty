@@ -25,4 +25,7 @@ test {
 
     // Finishing a verb's stdout/stderr without truncating it (T2009).
     _ = @import("cli/stdio.zig");
+
+    // +list's human formatter: the per-pane tags a person reads (T1385).
+    _ = @import("cli/list.zig");
 }

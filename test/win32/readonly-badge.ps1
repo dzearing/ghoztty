@@ -116,6 +116,14 @@ function Wait-BadgeCount([int]$procId, [int]$want) {
     return (Get-VisibleBadges $procId)
 }
 
+# T1385: the human half of that field. The lines of plain `+list` (no --json)
+# that carry the `[read-only]` tag - what a person reading the listing to work
+# out why their keystrokes vanish actually sees.
+function Get-ReadonlyTextLines {
+    $text = @(& $exe +list 2>$null)
+    return @($text | Where-Object { $_ -match '\[read-only\]' })
+}
+
 # T574: the machine-readable half of the badge. Every terminal leaf `+list
 # --json` reports, as objects with `.name` and `.readonly` — the field is
 # ADDITIVE, so a pane that is not read-only has no `readonly` key at all and
@@ -260,6 +268,8 @@ try {
     Assert ($leaves.Count -eq 1) "A: +list --json reports one pane ($($leaves.Count))"
     Assert (@($leaves | Where-Object { $_.Present }).Count -eq 0) `
         'A: +list --json omits `readonly` entirely while the mode is off'
+    $tagged = @(Get-ReadonlyTextLines)
+    Assert ($tagged.Count -eq 0) "A: plain +list tags no pane [read-only] ($($tagged.Count))"
 
     # -----------------------------------------------------------------------
     # B. Toggling read-only marks the pane, immediately.
@@ -278,6 +288,13 @@ try {
     Assert ($on.Count -eq 1) "B: +list --json reports exactly one read-only pane ($($on.Count))"
     if ($on.Count -eq 1) {
         Assert ($on[0].Focused) 'B: the pane reported read-only is the one that was toggled'
+    }
+    # T1385: and a person reading plain +list sees it too, on the focused line.
+    $tagged = @(Get-ReadonlyTextLines)
+    Assert ($tagged.Count -eq 1) "B: plain +list tags exactly one pane [read-only] ($($tagged.Count))"
+    if ($tagged.Count -eq 1) {
+        Assert ($tagged[0] -match '\[read-only\].* \*$') `
+            "B: the [read-only] line is the focused pane's (got '$($tagged[0])')"
     }
 
     # -----------------------------------------------------------------------
@@ -380,6 +397,8 @@ try {
     $leaves = @(Wait-ReadonlyCount 0)
     Assert ((@($leaves | Where-Object { $_.Present })).Count -eq 0) `
         'H: +list --json omits `readonly` on every pane once the mode is off'
+    $tagged = @(Get-ReadonlyTextLines)
+    Assert ($tagged.Count -eq 0) "H: plain +list tags no pane [read-only] once the mode is off ($($tagged.Count))"
 
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash'
 } catch {

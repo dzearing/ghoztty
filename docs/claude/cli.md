@@ -308,7 +308,10 @@ nothing happened: read-only drops every keystroke on the floor, so a read-only
 pane and a wedged pane look identical from the outside unless the wire says
 which one it is. The field is **additive** — absent, not `false`, when the mode
 is off, and absent from viewer panes — so an older client sees exactly the
-shape it always saw. (Both servers since T574.)
+shape it always saw. (Both servers since T574.) Plain `+list` tags the same
+pane **`[read-only]`**, after `[stashed]`/`[minimized]` and before the activity
+tag, so a person reading the listing gets the same answer (T1385; the
+formatter is the shared Zig CLI, so both platforms print it).
 
 `--json` terminal panes carry a `session_id` field when the pane is bound to a
 session-persistence agent session — the join key against `+sessions --json`,

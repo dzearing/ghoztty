@@ -3682,7 +3682,9 @@ $GuardTable = @(
         Covers = @(
             'src\apprt\win32\ReadonlyBadge.zig',
             'src\apprt\win32\readonly_badge.zig',
-            'test\win32\readonly-badge.ps1'
+            'test\win32\readonly-badge.ps1',
+            # The [read-only] tag on plain +list (T1385).
+            'src\cli\list.zig'
         )
     },
     # The way out of full screen (T2011): the entry notice, the top-edge
