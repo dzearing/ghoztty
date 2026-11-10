@@ -313,18 +313,20 @@ try {
     "  $groups"
     Assert "four groups, every pane" ($groups -match 'groups=4 panes=6 ')
     Assert "name order, the lone windows first (T2421), then the project: Build logs | zeta | ghoztty/feature-2 | ghoztty/main" ($groups -match 'order=Build logs\|zeta\|ghoztty/feature-2\|ghoztty/main$')
-    # T1924 (Mac 321e61d7c): the caption counts the windows, and every window
-    # but this one opens folded.
+    # T1924 (Mac 321e61d7c): the caption counts the windows. T2408 (Mac
+    # 7e2d0a9da): EVERY window opens folded, this one included - one row per
+    # window, the overview the scope is for.
     Assert "the ALL WINDOWS caption counts four windows" ($groups -match ' windows=4 ')
-    Assert "every other window opens folded, this one open (folded=3)" ($groups -match ' folded=3 ')
+    Assert "every window opens folded, this one included (folded=4, T2408)" ($groups -match ' folded=4 ')
     $o0 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
-    Assert "folded by default: only zeta's two rows show, under four window heads" ($null -ne $o0 -and $o0.Items.Count -eq 2 -and @($o0.Items | Where-Object Group -ne 1).Count -eq 0 -and @($o0.Heads | Where-Object Kind -eq 'W').Count -eq 4)
-    # A chevron unfolds another window without raising it.
+    Assert "folded by default: no pane rows at all, just four window heads (T2408)" ($null -ne $o0 -and $o0.Items.Count -eq 0 -and @($o0.Heads | Where-Object Kind -eq 'W').Count -eq 4)
+    Assert "...zeta's header takes the accent, its focused pane being inside the fold (hsel=$($o0.HSel), T2446)" ((HeadSel $o0 'W' 1) -eq '1')
+    # A chevron unfolds a window - this one too - without raising it.
     $chevLine = Wait-Log 'pane sidebar outline mode=expanded' $mark
     $chev = @()
     if ($chevLine -match ' chev=(\S*)') { $chev = @($Matches[1] -split ';' | Where-Object { $_ } | ForEach-Object { $xy = $_ -split ','; @{ X = [int]$xy[0]; Y = [int]$xy[1] } }) }
     Assert "each head logs its chevron ($($chev.Count) for $($o0.Heads.Count))" ($null -ne $o0 -and $chev.Count -eq $o0.Heads.Count)
-    foreach ($gi in 0, 2, 3) {
+    foreach ($gi in 0, 1, 2, 3) {
         $o0 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' 0 1000)
         $chevLine = Wait-Log 'pane sidebar outline mode=expanded' 0 1000
         $chev = @()
@@ -725,7 +727,7 @@ try {
     $g = Wait-Log 'pane sidebar all-windows groups=' $mark
     "  $g"
     Assert "the scope came back with no filter" ($null -ne $g -and $g -match 'groups=3 .*search=0 ')
-    Assert "...and the flipped folds forgotten: the other two windows fold again (T1924)" ($null -ne $g -and $g -match ' windows=3 folded=2 ')
+    Assert "...and the flipped folds forgotten: every window folds again, this one too (T1924, T2408)" ($null -ne $g -and $g -match ' windows=3 folded=3 ')
 
     "== 9: with animations off, the switch and the folds just land (T1880)"
     Start-Sleep -Milliseconds 500

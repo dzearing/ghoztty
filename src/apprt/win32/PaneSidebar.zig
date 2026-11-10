@@ -5969,11 +5969,11 @@ fn toggleScope(self: *PaneSidebar) void {
     self.startTransition(self.snapshot(.{ .scope = !self.all_windows }));
     // The list the field sat in is going: what was typed is kept (T2339).
     if (self.rename != null) self.endRename(true, "scope");
-    // One switch for every window (T2336). On opens this window's group and
-    // folds every other; off, the search belongs to the scope (Mac clears
+    // One switch for every window (T2336). On folds every window to its row,
+    // this one included (T2408, Mac 7e2d0a9da); off, the search belongs to the scope (Mac clears
     // the filter with it): the field is gone, so its query and its caret go
     // too - and so do the window folds the user flipped.
-    _ = shared.setAllWindows(self.alloc, !self.all_windows, tabKey(self.window, self.window.active_tab));
+    _ = shared.setAllWindows(!self.all_windows);
     remembered.all_windows = shared.all_windows;
     saveRemembered(self.alloc);
     self.published();

@@ -14,8 +14,9 @@
 #   1. Expand: A's panel at 240 DIP; B still the rail; activated, B's panel.
 #   2. Width: an edge drag widens A's panel to 300; B still 240; activated,
 #      300.
-#   3. Scope + an absolute fold: A turns all windows on (A open, B folded) and
-#      unfolds B. Activated, B lists every window with NOTHING folded - the
+#   3. Scope + an absolute fold: A turns all windows on (every window folded,
+#      A's own included - T2408, Mac 7e2d0a9da) and unfolds B, then A.
+#      Activated, B lists every window with NOTHING folded - the
 #      folds are by window, not relative to the window looking (before T2336
 #      B would open with its own group open and A folded).
 #   4. Search: typed in A; activated, B's list is filtered by the same query.
@@ -205,8 +206,9 @@ try {
     Assert "scope click delivered" (ClickAt $topA $sb (Get-ScopeCenter $sb))
     Assert "A's scope is on (log)" ($null -ne (Wait-Log 'pane sidebar scope all_windows=true' $mark))
     $g = Wait-Log 'pane sidebar all-windows groups=2 ' $mark
-    Assert "A lists two windows, beta folded ($g)" ($g -match ' folded=1 ')
-    # Unfold beta through its chevron (groups sort by name: alpha 0, beta 1).
+    Assert "A lists two windows, both folded - A's own too (T2408) ($g)" ($g -match ' folded=2 ')
+    # Unfold beta, then alpha, through their chevrons (groups sort by name:
+    # alpha 0, beta 1; beta first, so alpha's rows never move beta's chevron).
     $line = Read-OutlineLine $mark
     $chev = @()
     if ($line -match ' chev=(\S*)') { $chev = @($Matches[1] -split ';' | Where-Object { $_ } | ForEach-Object { $xy = $_ -split ','; @{ X = [int]$xy[0]; Y = [int]$xy[1] } }) }
@@ -215,6 +217,10 @@ try {
         $mark = Get-LogCount
         [void](ClickAt $topA $sb $chev[1])
         Assert "the chevron unfolded beta in A (log)" ($null -ne (Wait-Log 'pane sidebar unfold' $mark 2000))
+        Assert "A's list: only alpha folded" ($null -ne (Wait-Log 'pane sidebar all-windows groups=2 .* folded=1 ' $mark))
+        $mark = Get-LogCount
+        [void](ClickAt $topA $sb $chev[0])
+        Assert "the chevron unfolded alpha in A (log)" ($null -ne (Wait-Log 'pane sidebar unfold' $mark 2000))
         Assert "A's list: nothing folded" ($null -ne (Wait-Log 'pane sidebar all-windows groups=2 .* folded=0 ' $mark))
     }
     Activate $topB 'B'; $mark = $script:mark

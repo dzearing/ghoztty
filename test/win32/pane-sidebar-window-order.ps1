@@ -216,6 +216,25 @@ function Open-AllWindows($top) {
     [void](ClickAt $top $sb (Get-ScopeCenter $sb))
     [void](Wait-Log 'pane sidebar scope all_windows=true' $mark)
     Start-Sleep -Milliseconds 400
+    # T2408 (Mac 7e2d0a9da): the scope opens with EVERY window folded, this
+    # one too. The drags below are laid out over this window open, so unfold
+    # it: its head is the one in the accent (hsel 1 - its focused pane is
+    # inside the fold), and a click on this window's own head unfolds it.
+    $line = Wait-Log 'pane sidebar outline mode=expanded' $mark 3000
+    $own = $null
+    if ($line -and $line -match ' heads=(\S*)') {
+        $all = @($Matches[1] -split ';' | Where-Object { $_ })
+        $hsel = if ($line -match ' hsel=(\d+)') { $Matches[1] } else { '' }
+        for ($k = 0; $k -lt $all.Count -and $k -lt $hsel.Length; $k++) {
+            if ($hsel[$k] -eq '1' -and $all[$k] -match '^W\d+@(-?\d+),(-?\d+)$') { $own = @{ X = [int]$Matches[1]; Y = [int]$Matches[2] } }
+        }
+    }
+    if ($own) {
+        $mark = Get-LogCount
+        [void](ClickAt $top $sb $own)
+        [void](Wait-Log 'pane sidebar unfold' $mark 2000)
+        Start-Sleep -Milliseconds 400
+    } else { Write-Host "  (Open-AllWindows: no folded own head in the accent - $line)" }
     return (Get-Sidebar $top)
 }
 

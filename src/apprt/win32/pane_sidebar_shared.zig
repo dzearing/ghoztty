@@ -18,8 +18,9 @@
 //!
 //! Folds are ABSOLUTE, keyed by a window group's (a tab's) stable key, not
 //! relative to the window looking: `unfolded` lists the groups whose panes
-//! show in the all-windows list - turning the scope on opens the window it
-//! was turned on from and leaves every other folded - and `folded_this` the
+//! show in the all-windows list - turning the scope on folds every window to
+//! its row, the one it was turned on from included (T2408, Mac 7e2d0a9da) -
+//! and `folded_this` the
 //! groups folded in their own "this window" list, which starts open. Turning
 //! the scope off forgets the search and the window folds; project folds
 //! outlive it (Mac `setShowsAllWindows`).
@@ -157,16 +158,15 @@ pub const Shared = struct {
         self.gen +%= 1;
     }
 
-    /// The all-windows toggle, from the window whose group is `from_key`.
-    /// On opens that window and folds every other; off forgets the search,
-    /// the window folds and the list's scroll (each look starts from the
-    /// default). True when anything changed.
-    pub fn setAllWindows(self: *Shared, alloc: Allocator, on: bool, from_key: u64) bool {
+    /// The all-windows toggle. On folds every window to its row - the one it
+    /// was turned on from too, the overview that scope is for (T2408, Mac
+    /// 7e2d0a9da `setShowsAllWindows`); off forgets the search, the window
+    /// folds and the list's scroll (each look starts from the default). True
+    /// when anything changed.
+    pub fn setAllWindows(self: *Shared, on: bool) bool {
         if (on == self.all_windows) return false;
         self.unfolded.clearRetainingCapacity();
-        if (on) {
-            self.unfolded.put(alloc, from_key, {}) catch {};
-        } else {
+        if (!on) {
             _ = self.search.clear();
             self.scroll = .{ null, null };
         }
@@ -287,7 +287,8 @@ test "T2337: a drag's folds come back as they were" {
     try testing.expectEqual(@as(u32, 1), s.folded_projects.count());
     try testing.expect(s.folded_projects.contains(1));
 
-    _ = s.setAllWindows(testing.allocator, true, 7);
+    _ = s.setAllWindows(true);
+    s.toggleGroup(testing.allocator, true, 7);
     s.toggleGroup(testing.allocator, true, 8);
     var open = s.foldWindows(testing.allocator);
     try testing.expectEqual(@as(u32, 0), s.unfolded.count());
@@ -295,21 +296,25 @@ test "T2337: a drag's folds come back as they were" {
     try testing.expect(s.unfolded.contains(7) and s.unfolded.contains(8));
 }
 
-test "T2336: the scope opens the window it was turned on from and folds every other" {
+test "T2408: the scope folds every window, the one it was turned on from included" {
     var s: Shared = .{};
     defer s.deinit(testing.allocator);
-    try testing.expect(s.setAllWindows(testing.allocator, true, 7));
-    try testing.expect(!s.groupFolded(true, 7, false));
+    try testing.expect(s.setAllWindows(true));
+    // One row per window - the overview the scope is for (Mac 7e2d0a9da).
+    try testing.expect(s.groupFolded(true, 7, false));
     try testing.expect(s.groupFolded(true, 8, false));
+    try testing.expectEqual(@as(u32, 0), s.unfolded.count());
     // Absolute: every window's list folds alike, whichever window looks.
     s.toggleGroup(testing.allocator, true, 8);
     try testing.expect(!s.groupFolded(true, 8, false));
-    s.toggleGroup(testing.allocator, true, 7);
-    try testing.expect(s.groupFolded(true, 7, false));
+    s.toggleGroup(testing.allocator, true, 8);
+    try testing.expect(s.groupFolded(true, 8, false));
     // A search opens everything.
     try testing.expect(!s.groupFolded(true, 7, true));
-    // Turning it on again is no change.
-    try testing.expect(!s.setAllWindows(testing.allocator, true, 9));
+    // Turning it on again is no change, and keeps a hand-made unfold.
+    s.toggleGroup(testing.allocator, true, 7);
+    try testing.expect(!s.setAllWindows(true));
+    try testing.expect(!s.groupFolded(true, 7, false));
 }
 
 test "T2564: the app launches in the remembered scope, every window folded and no search" {
@@ -323,28 +328,28 @@ test "T2564: the app launches in the remembered scope, every window folded and n
     try testing.expect(s.groupFolded(true, 7, false) and s.groupFolded(true, 8, false));
     try testing.expect(s.search.isEmpty());
     // Toggling off from there behaves as ever; a scope left off launches off.
-    try testing.expect(s.setAllWindows(testing.allocator, false, 7));
+    try testing.expect(s.setAllWindows(false));
     s.launchScope(false);
     try testing.expect(!s.all_windows);
-    try testing.expect(!s.setAllWindows(testing.allocator, false, 7));
+    try testing.expect(!s.setAllWindows(false));
 }
 
 test "T2336: turning the scope off forgets the search, window folds and scroll; project folds stay" {
     var s: Shared = .{};
     defer s.deinit(testing.allocator);
-    _ = s.setAllWindows(testing.allocator, true, 1);
+    _ = s.setAllWindows(true);
     _ = s.search.insert(&.{ 'z', 's' });
     s.toggleGroup(testing.allocator, true, 2);
     s.toggleProject(testing.allocator, 50);
     s.recordScroll(.panel, 120);
-    try testing.expect(s.setAllWindows(testing.allocator, false, 1));
+    try testing.expect(s.setAllWindows(false));
     try testing.expect(s.search.isEmpty());
     try testing.expectEqual(@as(?i32, null), s.scrollFor(.panel));
     try testing.expect(s.folded_projects.contains(50));
-    // Back on from another window: that one opens, the earlier flip is gone.
-    _ = s.setAllWindows(testing.allocator, true, 3);
+    // Back on: the earlier unfold is gone, every window folded again.
+    _ = s.setAllWindows(true);
     try testing.expect(s.groupFolded(true, 2, false));
-    try testing.expect(!s.groupFolded(true, 3, false));
+    try testing.expect(s.groupFolded(true, 3, false));
 }
 
 test "T2336: the this-window list starts open and keeps its folds apart from the overview's" {
@@ -353,11 +358,13 @@ test "T2336: the this-window list starts open and keeps its folds apart from the
     try testing.expect(!s.groupFolded(false, 4, false));
     s.toggleGroup(testing.allocator, false, 4);
     try testing.expect(s.groupFolded(false, 4, false));
-    // The overview's folds are their own: 4 folded here says nothing there.
-    _ = s.setAllWindows(testing.allocator, true, 4);
+    // The overview's folds are their own: 4 unfolded there says nothing here.
+    _ = s.setAllWindows(true);
+    s.toggleGroup(testing.allocator, true, 4);
     try testing.expect(!s.groupFolded(true, 4, false));
+    try testing.expect(s.groupFolded(false, 4, false));
     // ...and leaving the scope does not forget a this-window fold.
-    _ = s.setAllWindows(testing.allocator, false, 4);
+    _ = s.setAllWindows(false);
     try testing.expect(s.groupFolded(false, 4, false));
 }
 
@@ -366,7 +373,7 @@ test "T2336: every shared change is one a background sidebar catches up on" {
     defer s.deinit(testing.allocator);
     const seen = s.gen;
     try testing.expect(!needsCatchUp(seen, &s));
-    _ = s.setAllWindows(testing.allocator, true, 1);
+    _ = s.setAllWindows(true);
     try testing.expect(needsCatchUp(seen, &s));
     for ([_]*const fn (*Shared) void{
         struct {

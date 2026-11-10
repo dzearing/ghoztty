@@ -297,6 +297,16 @@ try {
     Assert "the all-windows scope is on (log)" ($null -ne (Wait-Log 'pane sidebar scope all_windows=true' $mark 2000))
     $g = Wait-Log 'pane sidebar all-windows groups=' $mark
     "  $g"
+    # T2408 (Mac 7e2d0a9da): the scope opens with every window folded, this
+    # one too. Unfold this window ('proj: alpha', the project's first window
+    # head - a click on this window's own head folds/unfolds, never raises)
+    # so its rows overflow the panel.
+    $o6 = Read-Geometry (Wait-Log 'pane sidebar outline mode=expanded' $mark)
+    $own = if ($o6) { $o6.Heads | Where-Object Kind -eq 'W' | Select-Object -First 1 } else { $null }
+    $mark = Get-LogCount
+    if ($own) { [void](ClickAt $top $sb @{ X = $own.X; Y = $own.Y }) }
+    Assert "setup: this window's head unfolded it (log)" ($null -ne (Wait-Log 'pane sidebar unfold' $mark 2000))
+    Start-Sleep -Milliseconds 400
     $o7 = Read-Geometry (Wait-Log 'pane sidebar outline mode=expanded' $mark)
     $proj = if ($o7) { $o7.Heads | Where-Object Kind -eq 'P' | Select-Object -First 1 } else { $null }
     Assert "the outline has a project head first" ($null -ne $proj -and $o7.Heads[0].Kind -eq 'P')

@@ -199,7 +199,13 @@ try {
     Assert "alpha's fold chevron press activates A (it folds, raises nothing): $r" ($r -eq $MA_ACTIVATE)
 
     "== 3: rows - another window's leaves this one behind, this window's activates"
-    $own = $o.Items | Where-Object { $_.Group -eq 1 } | Select-Object -First 1
+    # T2408 (Mac 7e2d0a9da): the scope opens with every window folded, this
+    # one too - unfold zeta first (alpha sorts above it, so its chevron stays).
+    $mark = Get-LogCount
+    [void](ClickAt $top $sb $o.Chev[$kA])
+    Assert "setup: zeta's chevron unfolded it (log)" ($null -ne (Wait-Log 'pane sidebar unfold' $mark 2000))
+    $o = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
+    $own = if ($o) { $o.Items | Where-Object { $_.Group -eq 1 } | Select-Object -First 1 } else { $null }
     Assert "setup: zeta's row is listed" ($null -ne $own)
     if ($own) {
         $r = Probe $sb $own
