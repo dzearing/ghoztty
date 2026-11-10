@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-09T23:35:04-08:00",
-    "commit":  "d3a9bcc4c",
+    "generated":  "2026-11-10T00:31:44-08:00",
+    "commit":  "995e59aa6",
     "uncommitted":  [
-                        "test/win32/activity-selection.ps1",
-                        "test/win32/quick-terminal-slide.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -460,6 +459,7 @@
                   "test/win32/restore-dead-sessions.ps1":  "95e0b3b6d0e2c2c6cd9c02e0823c715a4eff72e8ac7d12a70a50976d5baf25ce",
                   "test/win32/restore-dpi-frame.ps1":  "d108aa2a21aa785326a2f845906c3d9a7f252f1dd5711cb9d33f28a7fb6fdcbe",
                   "test/win32/restore-late-agent.ps1":  "ff641c3eea23c1f66215805145b3b262c388b459c8d4f069fd345587cc888b80",
+                  "test/win32/restore-paced.ps1":  "37d2e979a71ec09a1d7e9ce1ed2c648779e232da1435f91092af94b260bbe5b8",
                   "test/win32/restore-session-dup.ps1":  "08129486438d22cf77147ef39338b257f503f9d3f379764160e5c3f1dd719ecf",
                   "test/win32/scrollback-narrow.ps1":  "213e10d81e04ba6a098ccf8d5891f8f05f43edc9c098d7b201c5ae9c77e17662",
                   "test/win32/seam-audit.ps1":  "e7ef6b8614ad022f48f0cfa94c7183270545ba2d3f29fc2e0b14669429e6c586",
