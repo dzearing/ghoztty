@@ -603,7 +603,9 @@ try {
     Assert ($h3 -gt $h1) "three lines make the composer taller ($h1 -> $h3)"
 
     $contentTall = Get-ContentTop $view.Pane
-    Assert ($null -ne $contentTall -and $contentTall -gt $contentOpen) `
+    # Both sides guarded (T1401): `<int> -gt $null` is TRUE, so a $contentOpen
+    # that arm C failed to read would make this pass for free.
+    Assert ($null -ne $contentOpen -and $null -ne $contentTall -and $contentTall -gt $contentOpen) `
         "...and the page followed it down ($contentOpen -> $contentTall)"
 
     # Backspace the last line away: the band must give the space BACK, which is
@@ -615,7 +617,7 @@ try {
     $h2 = Wait-BandHeight $fb { param($h) $h -lt $h3 }
     Assert ($h2 -lt $h3) "deleting a line gives the space back ($h3 -> $h2)"
     $contentTwoLine = Get-ContentTop $view.Pane
-    Assert ($null -ne $contentTwoLine -and $contentTwoLine -lt $contentTall) `
+    Assert ($null -ne $contentTall -and $null -ne $contentTwoLine -and $contentTwoLine -lt $contentTall) `
         "...and the page came back up with it ($contentTall -> $contentTwoLine)"
 
     # --- E/F. Escape closes; the text survives the round trip ----------------

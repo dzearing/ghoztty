@@ -1139,7 +1139,10 @@ try {
         Send-TestRawMessage -Window $vtop -Message $WM_DWMCOLORIZATIONCOLORCHANGED -WParam 0 -LParam 0 | Out-Null
         Start-Sleep -Milliseconds 1500
         $gAfter = Get-PaintCount 'viewer_toc'
-        Assert ($gAfter -gt $gIdle) `
+        # $gIdle guarded (T1401): Get-PaintCount returns $null when the log
+        # has no probe line, and `<n> -gt $null` is TRUE - G2 would pass for
+        # free on exactly the run where G1 could not read the counter.
+        Assert ($null -ne $gIdle -and $null -ne $gAfter -and $gAfter -gt $gIdle) `
             "G2 the accent change REPAINTED the card ($gIdle -> $gAfter), though only its owner was notified and nothing photographed it"
     } finally {
         Kill-RepoInstances

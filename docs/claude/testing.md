@@ -798,6 +798,35 @@ T1617); a file above its baseline fails, and so does one below it. Acceptance:
 `test\win32\unroll-count-audit.ps1`, whose section B measures the trap on this
 interpreter before it scores anybody and whose `-TeethCheck` re-plants it.
 
+**And a COMPARISON cannot lean on a value an earlier assertion may not have
+produced** (T1401). PowerShell's relational operators coerce `$null` rather than
+throw: `5 -gt $null`, `5 -ge $null`, `$null -lt 5` and `$null -le 5` are all
+`$true`. So when assertion A (`Assert ($null -ne $before) ...`) fails and the
+harness carries on, assertion B (`Assert ($after -gt $before) ...`) passes for
+free, and the run reports one red instead of two — the interesting half,
+silently disarmed by the boring half. That is what T1392 found in
+`viewer-feedback.ps1`. The rule:
+
+- **An assertion that reads a value an earlier step may not have produced guards
+  it in its own expression** — `Assert ($null -ne $before -and $null -ne $after
+  -and $after -gt $before)` — or the harness stops at the step that failed
+  (`throw`, `Write-TestAssertedNothing`). Guard BOTH sides even when only one
+  direction is vacuous: the next edit flips `-gt` to `-lt`.
+- **A window, control or child that the app creates asynchronously is looked up
+  in a bounded poll, never one sample** — WebView2's `Chrome_WidgetWin_*` arrives
+  after the host it hangs off. The sibling lookups in the same file are the
+  pattern to copy.
+- `-eq $null` / `-ne $null` with the variable on the LEFT filters an array
+  instead of testing it; write `$null -ne $x`.
+
+The 2026-11-10 sweep (T1401) over all 503 scripts found three vacuous comparisons
+(`viewer-feedback.ps1` arms D, `chrome-theme.ps1` G2) and no unpolled async
+window lookup; `dpi-change.ps1` B3/B4 read a guarded value but are safe because
+the script throws at the baseline. A full check is not mechanical (whether a
+helper can return `$null` is data flow), but the two precise shapes — a variable
+an earlier assertion null-tested, and a helper with an explicit `return $null`
+— are T2886, as a new kind in `UnrollCountAudit.ps1`.
+
 **A DIP length is converted to pixels with `Get-TestChromeDip`** (T1020). The
 layout modules round with Zig's `@round` (half away from zero); PowerShell's
 bare `[Math]::Round(x)` and an `[int]` cast both round half to even, so a
