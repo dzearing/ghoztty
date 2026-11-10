@@ -350,7 +350,7 @@ pub fn create(
         hinstance,
         null,
     )) |btn| {
-        _ = w32.SetWindowTheme(btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+        system_colors.applyControlTheme(btn, self.pal());
         if (fonts.button) |f| _ = w32.SendMessageW(btn, w32.WM_SETFONT, @intFromPtr(f), 1);
         self.cancel_btn = btn;
     } else {

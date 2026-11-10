@@ -443,7 +443,7 @@ pub fn open(app: *App, owner: ?w32.HWND, scale: f32, refocus: ?w32.HWND) void {
         return destroyEarly(hwnd);
     };
     if (!created) return destroyEarly(hwnd);
-    _ = w32.SetWindowTheme(self.done_btn, L("DarkMode_Explorer"), null);
+    system_colors.applyControlTheme(self.done_btn, self.pal());
 
     if (body_font) |f| {
         if (self.subtitle) |h| _ = w32.SendMessageW(h, w32.WM_SETFONT, @intFromPtr(f), 1);
@@ -821,7 +821,7 @@ fn createButton(
         app.hinstance,
         null,
     ) orelse return null;
-    _ = w32.SetWindowTheme(h, L("DarkMode_Explorer"), null);
+    system_colors.applyControlTheme(h, system_colors.panelFor(app));
     if (font) |f| _ = w32.SendMessageW(h, w32.WM_SETFONT, @intFromPtr(f), 1);
     return h;
 }
@@ -1022,6 +1022,10 @@ fn dialogWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callcon
         // repaints (T307).
         w32.WM_SETTINGCHANGE, w32.WM_DWMCOLORIZATIONCOLORCHANGED => {
             if (msg != w32.WM_SETTINGCHANGE or system_colors.isColorSettingChange(lparam)) {
+                // The frame and the common controls were themed once, at creation;
+                // a light/dark flip has to move them with the surface (T1374).
+                system_colors.applyPanelChrome(hwnd, self.pal());
+                system_colors.rethemeControls(hwnd, self.pal());
                 system_colors.repaintForColorChange(hwnd);
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);

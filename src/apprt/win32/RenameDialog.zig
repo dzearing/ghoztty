@@ -276,11 +276,7 @@ pub fn open(window: *Window, level: Level, target: ?*Surface) void {
         alloc.destroy(self);
         return;
     };
-    _ = w32.SetWindowTheme(
-        edit,
-        std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"),
-        null,
-    );
+    system_colors.applyControlTheme(edit, system_colors.panelFor(window.app));
 
     const ok_btn = w32.CreateWindowExW(
         0,
@@ -318,8 +314,8 @@ pub fn open(window: *Window, level: Level, target: ?*Surface) void {
         alloc.destroy(self);
         return;
     };
-    _ = w32.SetWindowTheme(ok_btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
-    _ = w32.SetWindowTheme(cancel_btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+    system_colors.applyControlTheme(ok_btn, system_colors.panelFor(window.app));
+    system_colors.applyControlTheme(cancel_btn, system_colors.panelFor(window.app));
 
     self.* = .{
         .window = window,
@@ -453,6 +449,10 @@ fn dialogWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callcon
         // only sent when it repaints (T307).
         w32.WM_SETTINGCHANGE, w32.WM_DWMCOLORIZATIONCOLORCHANGED => {
             if (msg != w32.WM_SETTINGCHANGE or system_colors.isColorSettingChange(lparam)) {
+                // The frame and the common controls were themed once, at creation;
+                // a light/dark flip has to move them with the surface (T1374).
+                system_colors.applyPanelChrome(hwnd, self.pal());
+                system_colors.rethemeControls(hwnd, self.pal());
                 system_colors.repaintForColorChange(hwnd);
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);

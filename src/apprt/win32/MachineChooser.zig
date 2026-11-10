@@ -582,7 +582,7 @@ pub fn open(window: *Window) void {
         self.destroyState();
         return;
     };
-    _ = w32.SetWindowTheme(self.account_btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+    system_colors.applyControlTheme(self.account_btn, self.pal());
     // The link is a BUTTON so it keeps the tab stop, the focus rect and
     // BN_CLICKED that a clickable STATIC would throw away; only its PAINT is
     // ours (`drawAccountLink`).
@@ -639,7 +639,7 @@ pub fn open(window: *Window) void {
         self.destroyState();
         return;
     };
-    _ = w32.SetWindowTheme(self.share_btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+    system_colors.applyControlTheme(self.share_btn, self.pal());
 
     self.filter = w32.CreateWindowExW(
         0,
@@ -659,7 +659,7 @@ pub fn open(window: *Window) void {
         self.destroyState();
         return;
     };
-    _ = w32.SetWindowTheme(self.filter, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+    system_colors.applyControlTheme(self.filter, self.pal());
     // The empty edit read as an unlabeled mystery box in the T140 screenshot.
     _ = w32.SendMessageW(
         self.filter,
@@ -697,7 +697,7 @@ pub fn open(window: *Window) void {
         self.destroyState();
         return;
     };
-    _ = w32.SetWindowTheme(self.list, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+    system_colors.applyControlTheme(self.list, self.pal());
     // Authoritative row height for the owner-drawn list. Set explicitly rather
     // than answered from WM_MEASUREITEM, which the listbox sends DURING
     // CreateWindowExW — before `self` is reachable from the dialog's userdata.
@@ -784,7 +784,7 @@ pub fn open(window: *Window) void {
         self.destroyState();
         return;
     };
-    _ = w32.SetWindowTheme(self.restore_all_btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+    system_colors.applyControlTheme(self.restore_all_btn, self.pal());
     // "Open Activity Monitor for <machine>" (`seeActivityButton`). Created
     // hidden: nothing is selected until the list is filled, and
     // `refreshDetail` is what decides.
@@ -806,7 +806,7 @@ pub fn open(window: *Window) void {
         self.destroyState();
         return;
     };
-    _ = w32.SetWindowTheme(self.activity_btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+    system_colors.applyControlTheme(self.activity_btn, self.pal());
     // Mac's per-row management menu (`ellipsis.circle`) lives in the same
     // action row (456-492). Labeled with the ellipsis CHARACTER rather than
     // three periods so it reads as one glyph at any DPI.
@@ -828,7 +828,7 @@ pub fn open(window: *Window) void {
         self.destroyState();
         return;
     };
-    _ = w32.SetWindowTheme(self.menu_btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+    system_colors.applyControlTheme(self.menu_btn, self.pal());
 
     self.cancel_btn = w32.CreateWindowExW(
         0,
@@ -848,8 +848,8 @@ pub fn open(window: *Window) void {
         self.destroyState();
         return;
     };
-    _ = w32.SetWindowTheme(self.primary_btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
-    _ = w32.SetWindowTheme(self.cancel_btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+    system_colors.applyControlTheme(self.primary_btn, self.pal());
+    system_colors.applyControlTheme(self.cancel_btn, self.pal());
 
     // DPI-scaled dialog font for all controls.
     self.font = w32.CreateFontW(
@@ -3663,6 +3663,10 @@ fn dialogWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callcon
         // `WM_CTLCOLOR*` reply, which is only sent when the child repaints.
         w32.WM_SETTINGCHANGE, w32.WM_DWMCOLORIZATIONCOLORCHANGED => {
             if (msg != w32.WM_SETTINGCHANGE or system_colors.isColorSettingChange(lparam)) {
+                // The frame and the common controls were themed once, at creation;
+                // a light/dark flip has to move them with the surface (T1374).
+                system_colors.applyPanelChrome(hwnd, self.pal());
+                system_colors.rethemeControls(hwnd, self.pal());
                 system_colors.repaintForColorChange(hwnd);
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);

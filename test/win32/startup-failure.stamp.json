@@ -1,13 +1,13 @@
 {
     "guard":  "startup-failure",
     "script":  "test/win32/startup-failure.ps1",
-    "generated":  "2026-11-09T20:03:52-08:00",
-    "commit":  "762f407d9",
+    "generated":  "2026-11-09T21:43:20-08:00",
+    "commit":  "b99af7bb3",
     "uncommitted":  [
-                        "src/main_ghostty.zig"
+                        "src/apprt/win32/ConfirmDialog.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/ConfirmDialog.zig":  "95510760083ebc76bae01822600f55b72819aedf6afe389adae090dc343fbbf8",
+                  "src/apprt/win32/ConfirmDialog.zig":  "70bb972c7d5819a676375586db55cc3f0bdcb2a22db9072f5cabf6f6c5d8a723",
                   "src/apprt/win32/startup_error.zig":  "74fd9ffbe6b68742c2566085f84327a3fdd570e4e8544509adb1651d5f3fb9cf",
                   "src/main_ghostty.zig":  "17bb1bde6da6549c4c4d3d574a1c0259c0e632e07be93be05e3e41482c8c5b0e",
                   "src/renderer/gl_loader.zig":  "5e48c65d81df3cf24ab97ecd9e2d29f658aade47867fa4687af3efdaf84f8992",

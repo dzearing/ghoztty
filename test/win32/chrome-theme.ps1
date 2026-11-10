@@ -489,6 +489,41 @@ $probeHits = @(Get-RetiredRgbHits $probe 'RGB(30, 30, 30)')
 Assert (($probeHits -join ',') -eq '2,8') `
     "E the sweep skips only test blocks and comments: non-test hits still fail (hit lines: $($probeHits -join ','), want 2,8)"
 
+# E2. NO SURFACE PINS ITS COMMON CONTROLS DARK (T1374). T563 re-themed what
+# every panel PAINTS; the scrollbars, buttons, edits and combos on it were
+# still handed a literal `DarkMode_Explorer` / `DarkMode_CFD` uxtheme sub-app
+# at 38 sites, so a light dialog wore dark controls. Since T1374 the sub-app
+# is chosen in exactly one place - `system_colors.controlSubApp`, reached
+# through `applyControlTheme(hwnd, palette)` / `applyControlThemeDark` - so the
+# literal itself is the oracle: no other file may spell it.
+$darkSubApp = 'DarkMode_(Explorer|CFD)'
+$subAppHits = @(foreach ($f in $zigFiles) {
+        if ($f.Name -eq 'system_colors.zig') { continue }
+        $lines = @(Get-Content -LiteralPath $f.FullName)
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^\s*//') { continue }
+            if ($lines[$i] -match $darkSubApp) { "$($f.Name):$($i + 1)" }
+        }
+    })
+Assert ($subAppHits.Count -eq 0) `
+    ("E2 no surface names a dark control theme itself - it goes through system_colors.applyControlTheme" +
+     $(if ($subAppHits.Count) { " (found in $($subAppHits -join ', '))" } else { '' }))
+# Negative control: the one file allowed to name it still does, so a sweep
+# that finds nothing because it is reading nothing cannot pass.
+$subAppControl = @(Select-String -Path (Join-Path $src 'system_colors.zig') -Pattern $darkSubApp)
+Assert ($subAppControl.Count -gt 0) 'E2 the sweep can find the sub-app literal at all (system_colors.zig names it)'
+# And every panel that re-themes its controls on a flip does it from the same
+# palette it paints from: each WM_SETTINGCHANGE color branch that repaints a
+# dialog also calls rethemeControls first.
+$flipFiles = @('ActivityMonitor.zig', 'AgentIntegrationsDialog.zig', 'BannerDialog.zig', 'ConfirmDialog.zig',
+    'HostSettingsDialog.zig', 'MachineChooser.zig', 'NewProcessDialog.zig', 'RenameDialog.zig')
+$noRetheme = @($flipFiles | Where-Object {
+        -not (Select-String -Path (Join-Path $src $_) -SimpleMatch -Pattern 'system_colors.rethemeControls(hwnd')
+    })
+Assert ($noRetheme.Count -eq 0) `
+    ("E2 every dialog re-themes its controls on a light/dark flip" +
+     $(if ($noRetheme.Count) { " (missing in $($noRetheme -join ', '))" } else { '' }))
+
 Kill-RepoInstances
 Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
@@ -901,6 +936,30 @@ try {
                     Assert ($ratio -ge $TEXT_FLOOR) `
                         ("D/$($case.Name)/$($panel.Label) that text clears $TEXT_FLOOR" + ':1 on the measured surface (' +
                          ('{0:n2}' -f $ratio) + ':1)')
+
+                    # T1374: the panel's common controls are on the SAME side
+                    # as its surface. They were handed a literal dark uxtheme
+                    # sub-app, so a light dialog wore dark push buttons. The
+                    # first BUTTON child is measured inside its own rect (inset
+                    # past the border) and its fill must read light on the
+                    # light case and dark on the dark one. The palette has no
+                    # button and is not asked.
+                    $btn = Find-TestWindowEx -Parent $h -Class 'Button'
+                    if (-not $panel.Palette) {
+                        Assert ($btn -ne [IntPtr]::Zero) "D/$($case.Name)/$($panel.Label) T1374 the panel has a push button to measure"
+                    }
+                    if ($btn -ne [IntPtr]::Zero) {
+                        $br = Get-TestWindowRect -Window $btn
+                        $bb = Measure-Box $shot ($br.Left + 4) ($br.Top + 4) ($br.Right - 4) ($br.Bottom - 4) 1
+                        Assert ($null -ne $bb) "D/$($case.Name)/$($panel.Label) T1374 the button captured"
+                        if ($null -ne $bb) {
+                            $panelLight = Test-IsLight $bg[0] $bg[1] $bg[2]
+                            $btnLight = Test-IsLight $bb.Mode[0] $bb.Mode[1] $bb.Mode[2]
+                            Assert ($btnLight -eq $panelLight) `
+                                ("D/$($case.Name)/$($panel.Label) T1374 its button is on the panel's side " +
+                                 "(panel $(if ($panelLight) { 'light' } else { 'dark' }), button fill $(Format-Rgb $bb.Mode))")
+                        }
+                    }
                 } finally {
                     Close-TestWindowPixels -Shot $shot
                 }

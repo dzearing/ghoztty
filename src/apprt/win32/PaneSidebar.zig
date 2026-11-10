@@ -5664,9 +5664,7 @@ fn tipEnsure(self: *PaneSidebar) ?w32.HWND {
     // A tile's tip is two lines (the title, then the hint): a max width is
     // what makes the control honor the line break at all.
     _ = w32.SendMessageW(tip, w32.TTM_SETMAXTIPWIDTH, 0, pane_sidebar.px(320, self.scale));
-    if (self.theme().dark) {
-        _ = w32.SetWindowTheme(tip, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
-    }
+    system_colors.applyControlThemeDark(tip, self.theme().dark);
     self.tip = tip;
     return tip;
 }

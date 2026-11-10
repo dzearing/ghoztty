@@ -29,6 +29,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const w32 = @import("win32.zig");
+const system_colors = @import("system_colors.zig");
 const class_redraw = @import("class_redraw.zig");
 const chrome_reposition = @import("chrome_reposition.zig");
 const color_math = @import("color_math.zig");
@@ -288,14 +289,7 @@ pub fn applyTheme(self: *ViewerFindBar) void {
         self.field_rgb.g,
         self.field_rgb.b,
     ));
-    _ = w32.SetWindowTheme(
-        self.edit,
-        if (self.dark)
-            std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer")
-        else
-            std.unicode.utf8ToUtf16LeStringLiteral("Explorer"),
-        null,
-    );
+    system_colors.applyControlThemeDark(self.edit, self.dark);
     self.releaseCardSurface();
     _ = w32.InvalidateRect(self.hwnd, null, 1);
 }

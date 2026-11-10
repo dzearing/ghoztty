@@ -785,7 +785,7 @@ fn openInner(window: *Window, src: Source, borrow: ?*remote_connection.Connectio
         alloc.destroy(self);
         return;
     };
-    _ = w32.SetWindowTheme(self.filter, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+    system_colors.applyControlTheme(self.filter, self.pal());
     _ = w32.SendMessageW(
         self.filter,
         w32.EM_SETCUEBANNER,
@@ -811,7 +811,7 @@ fn openInner(window: *Window, src: Source, borrow: ?*remote_connection.Connectio
         alloc.destroy(self);
         return;
     };
-    _ = w32.SetWindowTheme(self.show_all_btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+    system_colors.applyControlTheme(self.show_all_btn, self.pal());
 
     self.new_proc_btn = w32.CreateWindowExW(
         0,
@@ -831,7 +831,7 @@ fn openInner(window: *Window, src: Source, borrow: ?*remote_connection.Connectio
         alloc.destroy(self);
         return;
     };
-    _ = w32.SetWindowTheme(self.new_proc_btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+    system_colors.applyControlTheme(self.new_proc_btn, self.pal());
 
     // Kill: created HIDDEN, since nothing is selected yet. Mac omits the button
     // entirely while the selection is empty; a win32 child is created once and
@@ -855,7 +855,7 @@ fn openInner(window: *Window, src: Source, borrow: ?*remote_connection.Connectio
         alloc.destroy(self);
         return;
     };
-    _ = w32.SetWindowTheme(self.kill_btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+    system_colors.applyControlTheme(self.kill_btn, self.pal());
 
     self.createFonts(l);
 
@@ -1302,6 +1302,10 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
         // field painted in the old palette.
         w32.WM_SETTINGCHANGE, w32.WM_DWMCOLORIZATIONCOLORCHANGED => {
             if (msg != w32.WM_SETTINGCHANGE or system_colors.isColorSettingChange(lparam)) {
+                // The frame and the common controls were themed once, at creation;
+                // a light/dark flip has to move them with the surface (T1374).
+                system_colors.applyPanelChrome(hwnd, self.pal());
+                system_colors.rethemeControls(hwnd, self.pal());
                 system_colors.repaintForColorChange(hwnd);
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);

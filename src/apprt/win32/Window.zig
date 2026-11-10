@@ -1605,6 +1605,10 @@ fn applyChromeTheme(hwnd: w32.HWND, theme: anytype, bg: anytype) void {
         @ptrCast(&dark_mode),
         @sizeOf(u32),
     );
+    // The window's own common controls take the same side as its caption
+    // (T1374). This ran once at creation as a literal dark theme, so a light
+    // theme - or a live flip, which re-enters here - left them dark.
+    system_colors.applyControlThemeDark(hwnd, dark);
 
     const tint_caption = switch (theme) {
         .auto, .ghostty => true,
@@ -2268,13 +2272,6 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         0,
         w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_NOZORDER |
             w32.SWP_NOACTIVATE | w32.SWP_FRAMECHANGED,
-    );
-
-    // Apply dark theme to common controls (scrollbar, etc.).
-    _ = w32.SetWindowTheme(
-        hwnd,
-        std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"),
-        null,
     );
 
     // If background opacity is less than 1.0, make the window transparent.
@@ -20296,13 +20293,7 @@ fn tabTipEnsure(self: *Window) ?w32.HWND {
         .{ .r = tip_bg.r, .g = tip_bg.g, .b = tip_bg.b },
         systemUsesLightTheme(),
     );
-    if (dark) {
-        _ = w32.SetWindowTheme(
-            tip,
-            std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"),
-            null,
-        );
-    }
+    system_colors.applyControlThemeDark(tip, dark);
 
     self.tab_tip_text[0] = 0;
     var ti = self.tabTipToolInfo();
@@ -20647,19 +20638,14 @@ pub fn startTabRename(self: *Window, tab_idx: usize) void {
     // A GDI child of a per-pixel-alpha window (T1787).
     if (self.gdiChildrenLayered()) composeOpaqueLayer(edit, "tab rename box");
 
-    // Apply dark theme
-    const dark_mode: u32 = 1;
-    _ = w32.DwmSetWindowAttribute(
-        edit,
-        w32.DWMWA_USE_IMMERSIVE_DARK_MODE,
-        @ptrCast(&dark_mode),
-        @sizeOf(u32),
-    );
-    _ = w32.SetWindowTheme(
-        edit,
-        std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"),
-        null,
-    );
+    // The box takes the same side as the tab strip it sits on (T1374) - it was
+    // pinned dark, with a DWM dark-mode attribute that does nothing on a child.
+    const rename_bg = self.app.config.background;
+    system_colors.applyControlThemeDark(edit, chrome_theme.isDark(
+        self.app.config.@"window-theme",
+        .{ .r = rename_bg.r, .g = rename_bg.g, .b = rename_bg.b },
+        systemUsesLightTheme(),
+    ));
 
     // Set font — stored for cleanup
     self.rename_font = w32.CreateFontW(

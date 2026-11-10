@@ -862,7 +862,7 @@ fn run(
             hinstance,
             null,
         ) orelse continue;
-        _ = w32.SetWindowTheme(btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+        system_colors.applyControlTheme(btn, self.pal());
         _ = w32.SendMessageW(btn, w32.BM_SETCHECK, if (check.checked) w32.BST_CHECKED else 0, 0);
         // Indexed like opts.checks (a failed create leaves a null hole), so
         // the readback below can never write one row's state into another.
@@ -966,7 +966,7 @@ fn run(
             null,
         );
         if (self.edit) |e| {
-            _ = w32.SetWindowTheme(e, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+            system_colors.applyControlTheme(e, self.pal());
         }
     }
 
@@ -988,7 +988,7 @@ fn run(
         _ = w32.DestroyWindow(hwnd);
         return fallback(owner, opts);
     };
-    _ = w32.SetWindowTheme(self.ok_btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+    system_colors.applyControlTheme(self.ok_btn, self.pal());
 
     if (has_cancel) {
         const cancel_btn = w32.CreateWindowExW(
@@ -1009,7 +1009,7 @@ fn run(
             _ = w32.DestroyWindow(hwnd);
             return fallback(owner, opts);
         };
-        _ = w32.SetWindowTheme(cancel_btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+        system_colors.applyControlTheme(cancel_btn, self.pal());
         self.cancel_btn = cancel_btn;
     }
 
@@ -1032,7 +1032,7 @@ fn run(
             hinstance,
             null,
         )) |alt_btn| {
-            _ = w32.SetWindowTheme(alt_btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+            system_colors.applyControlTheme(alt_btn, self.pal());
             self.alt_btn = alt_btn;
         } else {
             // Nothing can answer `.alt` any more, so the Enter default must go
@@ -1529,6 +1529,10 @@ fn dialogWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callcon
         // repaints (T307).
         w32.WM_SETTINGCHANGE, w32.WM_DWMCOLORIZATIONCOLORCHANGED => {
             if (msg != w32.WM_SETTINGCHANGE or system_colors.isColorSettingChange(lparam)) {
+                // The frame and the common controls were themed once, at creation;
+                // a light/dark flip has to move them with the surface (T1374).
+                system_colors.applyPanelChrome(hwnd, self.pal());
+                system_colors.rethemeControls(hwnd, self.pal());
                 system_colors.repaintForColorChange(hwnd);
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);

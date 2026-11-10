@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-09T20:45:00-08:00",
-    "commit":  "762f407d9",
+    "generated":  "2026-11-09T22:38:20-08:00",
+    "commit":  "b99af7bb3",
     "uncommitted":  [
-                        "test/win32/clipboard-paste.ps1"
+                        "test/win32/chrome-theme.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -90,7 +90,7 @@
                   "test/win32/chooser-sessions-remote.ps1":  "6d4bef6c7bf6703dba1ddc0d8a8ce43b7fb78a9e2019bc63d49d8c2fc782f7ef",
                   "test/win32/chooser-warm-list.ps1":  "c615a0de86c2debc15e196b56f97cc2021594a6548058fa4f9a48e991fca28f2",
                   "test/win32/chrome-merged-row.ps1":  "54a72f9a33d3a97306fa46cbdb4f641b2cb08097b0539cd2fcd4be7b5d60abe2",
-                  "test/win32/chrome-theme.ps1":  "d910d0060d4131b191be9c1567276f7c98747981c8f430b77cd543586dd4d051",
+                  "test/win32/chrome-theme.ps1":  "eb07901f0d5a8e49062196af9a19ea899edc91217e5d460ce01cf2f700c8777b",
                   "test/win32/claude-fullscreen-env.ps1":  "af09ed9e96b5d9eda02e54f9cdbcd59e08b0ed9d3bd20143b9813da59059c0ac",
                   "test/win32/claude-integration.ps1":  "1565ee1d5cc2e43059e677c48bd4f83b7e7fa5339f58ac132cb567510ac13b7f",
                   "test/win32/cleanslate-audit.ps1":  "9fd0a37fb42e576128937107ed4ce706e773e205432e66124509df9fa43ef479",
@@ -455,7 +455,7 @@
                   "test/win32/reset-window-size.ps1":  "28e18f6472e20ae4a5e0f9b5d93ec392c6a81e67c8b519785e1b433b18ada3ba",
                   "test/win32/resize-debounce.ps1":  "2e44a1b8cfe58c0ef286df245380afc6abbb1e11d691ef4ac3820d1d683a531d",
                   "test/win32/resize-flicker.ps1":  "7b682dc5d09fc02288831203000c419002a200594a6e37f1ac0e195df87c47b0",
-                  "test/win32/resolve-window-persist.ps1":  "56769f3e10f912f800abb2ffb03a46adf580d32ca0187014e1a96f59583e5ade",
+                  "test/win32/resolve-window-persist.ps1":  "1e4386ee3b89a7e8ebb39eb53263a8c596ca2d405c2ccc9ed8716e013fad5958",
                   "test/win32/restore-dead-sessions.ps1":  "95e0b3b6d0e2c2c6cd9c02e0823c715a4eff72e8ac7d12a70a50976d5baf25ce",
                   "test/win32/restore-dpi-frame.ps1":  "d108aa2a21aa785326a2f845906c3d9a7f252f1dd5711cb9d33f28a7fb6fdcbe",
                   "test/win32/restore-late-agent.ps1":  "ff641c3eea23c1f66215805145b3b262c388b459c8d4f069fd345587cc888b80",

@@ -21,6 +21,7 @@
 
 const std = @import("std");
 const w32 = @import("win32.zig");
+const system_colors = @import("system_colors.zig");
 
 /// commctrl.h's values, from the one place that states them (T1744 corrected
 /// `win32.zig`'s `TTF_SUBCLASS`, which this file used to work around).
@@ -83,13 +84,7 @@ pub fn HelpTip(comptime Control: type, comptime max_text: usize) type {
                 null,
             ) orelse return null;
 
-            if (dark) {
-                _ = w32.SetWindowTheme(
-                    tip,
-                    std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"),
-                    null,
-                );
-            }
+            system_colors.applyControlThemeDark(tip, dark);
 
             self.track_text[0] = 0;
             var ti = self.trackToolInfo(owner);

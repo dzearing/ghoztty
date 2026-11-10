@@ -3684,11 +3684,7 @@ fn ensureSearchBar(self: *Surface) void {
     // (T563) - it was pinned dark, so a light theme got a black hairline
     // border around a light bar.
     system_colors.applyPanelChrome(popup, self.panelPalette());
-    _ = w32.SetWindowTheme(
-        popup,
-        std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"),
-        null,
-    );
+    system_colors.applyControlTheme(popup, self.panelPalette());
 
     // Create the Edit control inside the popup, leaving room on the right
     // for the match-count label ("3/17").
@@ -4117,11 +4113,7 @@ fn ensureCommandPalette(self: *Surface) void {
     // (T563) - it was pinned dark, so a light theme got a black hairline
     // border around a light bar.
     system_colors.applyPanelChrome(popup, self.panelPalette());
-    _ = w32.SetWindowTheme(
-        popup,
-        std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"),
-        null,
-    );
+    system_colors.applyControlTheme(popup, self.panelPalette());
 
     // Create the search edit at the top (DPI-scaled)
     const edit = w32.CreateWindowExW(

@@ -376,7 +376,7 @@ pub fn prompt(
         _ = w32.DestroyWindow(hwnd);
         return null;
     };
-    _ = w32.SetWindowTheme(self.wd_edit, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+    system_colors.applyControlTheme(self.wd_edit, self.pal());
     // "Remote default" while empty, so the meaning of an empty field is visible
     // (Mac's `placeholderString`).
     _ = w32.SendMessageW(self.wd_edit, w32.EM_SETCUEBANNER, 1, @bitCast(@intFromPtr(PLACEHOLDER.ptr)));
@@ -405,7 +405,7 @@ pub fn prompt(
         _ = w32.DestroyWindow(hwnd);
         return null;
     };
-    _ = w32.SetWindowTheme(self.shell_combo, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_CFD"), null);
+    system_colors.applyControlTheme(self.shell_combo, self.pal());
 
     if (font) |f| {
         if (self.body) |h| _ = w32.SendMessageW(h, w32.WM_SETFONT, @intFromPtr(f), 1);
@@ -552,7 +552,7 @@ fn createButton(
         app.hinstance,
         null,
     ) orelse return null;
-    _ = w32.SetWindowTheme(h, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+    system_colors.applyControlTheme(h, system_colors.panelFor(app));
     if (font) |f| _ = w32.SendMessageW(h, w32.WM_SETFONT, @intFromPtr(f), 1);
     return h;
 }
@@ -761,6 +761,10 @@ fn dialogWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callcon
         // repaints (T307).
         w32.WM_SETTINGCHANGE, w32.WM_DWMCOLORIZATIONCOLORCHANGED => {
             if (msg != w32.WM_SETTINGCHANGE or system_colors.isColorSettingChange(lparam)) {
+                // The frame and the common controls were themed once, at creation;
+                // a light/dark flip has to move them with the surface (T1374).
+                system_colors.applyPanelChrome(hwnd, self.pal());
+                system_colors.rethemeControls(hwnd, self.pal());
                 system_colors.repaintForColorChange(hwnd);
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);

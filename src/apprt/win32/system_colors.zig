@@ -238,9 +238,117 @@ pub fn applyPanelChrome(hwnd: w32.HWND, p: panel_theme.Panel) void {
     );
 }
 
+/// The uxtheme sub-app a common control (scrollbar, button, edit, list, combo)
+/// is themed with, for a surface that is dark or light (T1374).
+///
+/// Pure, so the decision table is a unit test. A combo box takes the `CFD`
+/// pair, which is the only sub-app whose drop-down list follows the theme;
+/// every other control takes the `Explorer` pair. The light half is a NAMED
+/// theme rather than "no theme" so the same call flips a control both ways -
+/// a null sub-app would leave the dark one in force on a dark->light flip.
+pub fn controlSubApp(dark: bool, combo: bool) [*:0]const u16 {
+    const L = std.unicode.utf8ToUtf16LeStringLiteral;
+    if (combo) return if (dark) L("DarkMode_CFD") else L("CFD");
+    return if (dark) L("DarkMode_Explorer") else L("Explorer");
+}
+
+/// Is this window a combo box? Read off its class so every call site takes
+/// the same answer without having to say which kind of control it made.
+fn isComboBox(hwnd: w32.HWND) bool {
+    var buf: [32]u16 = undefined;
+    const n = w32.GetClassNameW(hwnd, &buf, buf.len);
+    if (n <= 0) return false;
+    const want = std.unicode.utf8ToUtf16LeStringLiteral("ComboBox");
+    if (@as(usize, @intCast(n)) != want.len) return false;
+    for (buf[0..want.len], want) |a, b| {
+        if (std.ascii.toLower(@intCast(a & 0x7F)) != std.ascii.toLower(@intCast(b))) return false;
+    }
+    return true;
+}
+
+/// Theme one common control for a dark or light surface (T1374). Every
+/// `SetWindowTheme` in the win32 frontend goes through here, so no surface can
+/// pin its controls to a side the surface itself is not on.
+pub fn applyControlThemeDark(hwnd: w32.HWND, dark: bool) void {
+    _ = w32.SetWindowTheme(hwnd, controlSubApp(dark, isComboBox(hwnd)), null);
+}
+
+/// Theme one common control from the panel palette it sits on (T1374) — the
+/// same light/dark reading `applyPanelChrome` takes for the frame, so the
+/// caption, the surface and the controls on it cannot disagree.
+pub fn applyControlTheme(hwnd: w32.HWND, p: panel_theme.Panel) void {
+    applyControlThemeDark(hwnd, !color_math.isLight(p.bg));
+}
+
+/// The window classes whose look comes from a uxtheme sub-app. Only these are
+/// re-themed on a flip: a static is painted from `WM_CTLCOLORSTATIC`, and a
+/// custom class (a WebView host, our own painted controls) is not ours to
+/// re-theme from a parent.
+fn isThemedControlClass(hwnd: w32.HWND) bool {
+    var buf: [32]u16 = undefined;
+    const n = w32.GetClassNameW(hwnd, &buf, buf.len);
+    if (n <= 0) return false;
+    var name: [32]u8 = undefined;
+    for (buf[0..@intCast(n)], 0..) |c, i| name[i] = std.ascii.toLower(@intCast(c & 0x7F));
+    return isThemedControlName(name[0..@intCast(n)]);
+}
+
+fn isThemedControlName(lower: []const u8) bool {
+    const names = [_][]const u8{
+        "button",        "edit",           "combobox", "listbox", "scrollbar",
+        "syslistview32", "systreeview32", "msctls_trackbar32", "msctls_updown32",
+    };
+    for (names) |want| if (std.mem.eql(u8, lower, want)) return true;
+    return false;
+}
+
+/// Re-theme every direct child control of `parent` for palette `p` (T1374).
+///
+/// The theme is applied once at creation, so without this an OS apps-theme
+/// flip repaints the surface and its text in the new palette while every
+/// scrollbar, button and combo keeps the old side - the half-themed look this
+/// task exists to remove. Called from each panel's color-change handler,
+/// before its repaint.
+pub fn rethemeControls(parent: w32.HWND, p: panel_theme.Panel) void {
+    const dark = !color_math.isLight(p.bg);
+    var child = w32.GetWindow(parent, w32.GW_CHILD);
+    while (child) |c| : (child = w32.GetWindow(c, w32.GW_HWNDNEXT)) {
+        if (isThemedControlClass(c)) applyControlThemeDark(c, dark);
+    }
+}
+
 /// A `panel_theme` color as the COLORREF every GDI call wants.
 pub fn cr(c: panel_theme.Rgb) u32 {
     return w32.RGB(c.r, c.g, c.b);
+}
+
+test "controlSubApp: dark and light, combo and not (T1374)" {
+    const testing = std.testing;
+    const L = std.unicode.utf8ToUtf16LeStringLiteral;
+    const span = std.mem.span;
+    try testing.expectEqualSlices(u16, L("DarkMode_Explorer"), span(controlSubApp(true, false)));
+    try testing.expectEqualSlices(u16, L("Explorer"), span(controlSubApp(false, false)));
+    try testing.expectEqualSlices(u16, L("DarkMode_CFD"), span(controlSubApp(true, true)));
+    try testing.expectEqualSlices(u16, L("CFD"), span(controlSubApp(false, true)));
+}
+
+test "isThemedControlName: common controls in, statics and custom classes out (T1374)" {
+    const testing = std.testing;
+    try testing.expect(isThemedControlName("button"));
+    try testing.expect(isThemedControlName("combobox"));
+    try testing.expect(isThemedControlName("syslistview32"));
+    try testing.expect(!isThemedControlName("static"));
+    try testing.expect(!isThemedControlName("chrome_widgetwin_0"));
+    try testing.expect(!isThemedControlName(""));
+}
+
+test "the control theme takes the same side as the panel it sits on (T1374)" {
+    const testing = std.testing;
+    const dark_p = panel_theme.resolve(chrome_theme.surface_dark, chrome_theme.default_accent);
+    try testing.expect(!color_math.isLight(dark_p.bg));
+    const light_base: Rgb = .{ .r = 0xF3, .g = 0xF3, .b = 0xF3 };
+    const light_p = panel_theme.resolve(light_base, chrome_theme.default_accent);
+    try testing.expect(color_math.isLight(light_p.bg));
 }
 
 test "panelPalette: memoized on its inputs, and it follows them" {

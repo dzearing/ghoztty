@@ -25,6 +25,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const w32 = @import("win32.zig");
+const system_colors = @import("system_colors.zig");
 // Test-only (T467): the class-level resize/redraw probe. Imported at file
 // scope so its own positive and negative controls are queued into the win32
 // test lane along with the class test below.
@@ -428,14 +429,7 @@ pub fn applyTheme(self: *ViewerNavBar) void {
         self.field_rgb.g,
         self.field_rgb.b,
     ));
-    _ = w32.SetWindowTheme(
-        self.edit,
-        if (self.dark)
-            std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer")
-        else
-            std.unicode.utf8ToUtf16LeStringLiteral("Explorer"),
-        null,
-    );
+    system_colors.applyControlThemeDark(self.edit, self.dark);
     self.cache_dirty = true;
     _ = w32.InvalidateRect(self.hwnd, null, 1);
 }
@@ -849,13 +843,7 @@ fn tipEnsure(self: *ViewerNavBar) ?w32.HWND {
 
     // The bar's own theme decides the tip's, the way the dialogs decide theirs
     // — the bar is already dark or light for this pane's background.
-    if (self.dark) {
-        _ = w32.SetWindowTheme(
-            tip,
-            std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"),
-            null,
-        );
-    }
+    system_colors.applyControlThemeDark(tip, self.dark);
     self.tip = tip;
     return tip;
 }

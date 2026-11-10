@@ -45,6 +45,7 @@
 
 const std = @import("std");
 const w32 = @import("win32.zig");
+const system_colors = @import("system_colors.zig");
 const pane_clip = @import("pane_clip.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
 const pill = @import("key_state_pill.zig");
@@ -426,13 +427,7 @@ pub const KeyStateIndicator = struct {
             null,
         ) orelse return null;
 
-        if (dark) {
-            _ = w32.SetWindowTheme(
-                tip,
-                std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"),
-                null,
-            );
-        }
+        system_colors.applyControlThemeDark(tip, dark);
 
         const body = std.unicode.utf8ToUtf16Le(
             self.tip_text[0 .. self.tip_text.len - 1],

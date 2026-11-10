@@ -1545,13 +1545,7 @@ fn tipEnsure(self: *ViewerFeedbackBar) ?w32.HWND {
     // The composer's own theme decides the tip's: this band is already dark or
     // light for the page it sits over, and a light tip over a dark composer is
     // the seam the nav bar's tips do not have.
-    if (self.dark) {
-        _ = w32.SetWindowTheme(
-            tip,
-            std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"),
-            null,
-        );
-    }
+    system_colors.applyControlThemeDark(tip, self.dark);
     self.tip = tip;
     return tip;
 }

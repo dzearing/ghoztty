@@ -734,14 +734,7 @@ pub fn applyTheme(self: *ViewerTOCPanel) void {
     if (self.edit_brush) |b| _ = w32.DeleteObject(@ptrCast(b));
     self.edit_brush = w32.CreateSolidBrush(w32.RGB(self.field_rgb.r, self.field_rgb.g, self.field_rgb.b));
     if (self.filter_edit) |edit| {
-        _ = w32.SetWindowTheme(
-            edit,
-            if (self.dark)
-                std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer")
-            else
-                std.unicode.utf8ToUtf16LeStringLiteral("Explorer"),
-            null,
-        );
+        system_colors.applyControlThemeDark(edit, self.dark);
         _ = w32.InvalidateRect(edit, null, 1);
     }
     self.releaseCardSurface();
