@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-10T01:43:16-08:00",
-    "commit":  "303eaf96c",
+    "generated":  "2026-11-10T02:02:55-08:00",
+    "commit":  "35dac039c",
     "uncommitted":  [
 
                     ],
@@ -1082,7 +1082,7 @@
                   "src/unicode/symbols_uucode.zig":  "cb6ae86fe8549c435e11a2e038960aa9cae907aa89aa14598f8b6416c51b61ce",
                   "test/win32/acceptance-parallel.ps1":  "112add92412ef2d5e520a37bb79e1d88d7df0b1dbd876596fc80479275d55107",
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
-                  "test/win32/activity-monitor.ps1":  "af20f4d3bfb61cc694ff06a6c7f7a60849d64f898640892731d8f4bfe8bedf7c",
+                  "test/win32/activity-monitor.ps1":  "8afd262e94e894adfc429d335a1481b3923337aff794547944e119bbfce87f9c",
                   "test/win32/activity-monitor-dialed.ps1":  "e8d248a8d5507c68b3a67fd0f15692a98868d2542cbc6f0cdb714c9ee98ade99",
                   "test/win32/activity-monitor-probe-fail.ps1":  "bab527a3bfb7ceb8428cf31a3c382b7e2ab6ea001228140e9234c350142dbd15",
                   "test/win32/activity-monitor-remote.ps1":  "011a75488fceba22d318ca3a97b2bf727439d22da6b1d8000b52fee091216c30",
@@ -1506,7 +1506,7 @@
                   "test/win32/terminal-link-paths.ps1":  "6fd5a42894831216f8371205fb6ab089201ddbdfda7aace1ee4cf2b42eec67f3",
                   "test/win32/test-binary-soak.ps1":  "96c647eb2fcbdef023f99868ab73bec7341befc23f0a14f2a9eacd4aefa64f3c",
                   "test/win32/test-client-build.ps1":  "57d43fa496cfb634e8b4bf3a96fd6f57c9dcf860009cf6e901bcd702093ceb0f",
-                  "test/win32/test-desktop-harness.ps1":  "3d56f78e812962e00c2803368884e7e7f7fb9e489bfa35e94684d287b619b765",
+                  "test/win32/test-desktop-harness.ps1":  "6fda657453ca4bb3b5cba97e7f726517834c1c355ec93095ede53f08958b9c55",
                   "test/win32/test-desktop-spike.ps1":  "cfa0cf0ad43a56a151cdb010d10d016d5734af34f3dd0e89cc415a02f0524d06",
                   "test/win32/test-filter-guard.ps1":  "8804ee177e925a2cdfbc14a75f80ec01b217378a80025b55c80d7831c2beec00",
                   "test/win32/test-reach-audit.ps1":  "d562023bb072125237aafc17961b81b82356c130003acc64ede75fd73186bf51",
