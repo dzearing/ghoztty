@@ -1,10 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-09T15:57:37-08:00",
-    "commit":  "9d85e29f0",
+    "generated":  "2026-11-09T17:00:11-08:00",
+    "commit":  "c80423e0f",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -21,7 +21,7 @@
                   "scripts/comp-desk-onscreen.ps1":  "aaab26f3dd26297f681e4736416e43a73636231adf51a7f048f772762d749c38",
                   "scripts/comp-flat-onscreen.ps1":  "f4e677d04745196654ca641c7ffe5053b84320318a24f6c4621371136ca4bebc",
                   "scripts/comp-gl-baseline.ps1":  "b7f792f81e8cd6e6ad7b62ac7329665ec70edbf3a8bde0b37ff3157ec48e05ae",
-                  "scripts/comp-glide-hold-onscreen.ps1":  "f4bcdc27136af947ce34fed6386d4ec3b4ca50c2ba8ca4db99275d950eb6bb79",
+                  "scripts/comp-glide-hold-onscreen.ps1":  "4f61a5f23235348a8c62a3a24107812ecf09f14da3eb2c577b39413c636b6bb7",
                   "scripts/comp-overlay-onscreen.ps1":  "caad81c2f4ba9863f6e436a26e8ae5b564a8e20da35b893cf5bced8175d8d06a",
                   "scripts/comp-present-glide.ps1":  "70bb4876a8a90a82052cc33848ba70c02f6a81d15dc6e379fab01fa03598b81f",
                   "scripts/comp-present-onscreen.ps1":  "8e30e7b69d5d7628e2a2cf3c76590a12a20644b942a6a8c71c365b89a131c1fa",
