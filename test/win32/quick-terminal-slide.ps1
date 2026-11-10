@@ -9,7 +9,7 @@
 # thumbnail once per composition. The slide's numbers are unit-tested in
 # src\apprt\win32\quick_terminal_slide.zig.
 #
-# Three arms, each a fresh app:
+# Five arms, each a fresh app:
 #
 #   DWM (GHOZTTY_DEBUG_QT_SLIDE_STALL_MS=900, a 0.3 s slide): the UI thread
 #   is blocked for 900 ms the moment each slide starts. The slider still
@@ -25,6 +25,12 @@
 #   STEPPED (GHOZTTY_DEBUG_QT_SLIDE_STEPPED=1): the A/B control - no slide is
 #   handed to the slider, no host window is ever made, and the quick terminal
 #   still lands shown at the same place.
+#   AUTOHIDE (T1378, --quick-terminal-autohide=true): once it has landed,
+#   activation is handed to the main window (Set-TestActiveWindow, T568 - the
+#   move posted input cannot make off the input desktop) and the quick
+#   terminal slides out and hides on its own. AUTOHIDE-OFF is its control:
+#   the same activation move with the setting off leaves it shown, so the hide
+#   is the setting's doing and not the harness's.
 #
 # NOT covered here: what the slide LOOKS like on screen. A background desktop
 # is not composed by DWM for the screen (CopyFromScreen is dead there), so the
@@ -119,7 +125,7 @@ $stallMs = 900
 try {
     Assert-GhozttyPrivateEndpoint -Exe $Exe
     $work = Get-TestWorkArea
-    foreach ($arm in @('dwm', 'reverse', 'stepped')) {
+    foreach ($arm in @('dwm', 'reverse', 'stepped', 'autohide', 'autohide-off')) {
     "==== arm: $arm"
     [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
     Remove-Item ($seams | ForEach-Object { "env:$_" }) -ErrorAction SilentlyContinue
@@ -130,7 +136,7 @@ try {
     $app = Start-OnTestDesktop -Exe $Exe -StdErr $script:errlog -Arguments @(
         '--session-persistence=false',
         "--quick-terminal-animation-duration=$duration",
-        '--quick-terminal-autohide=false',
+        "--quick-terminal-autohide=$(if ($arm -eq 'autohide') { 'true' } else { 'false' })",
         '--keybind=ctrl+shift+f10=toggle_quick_terminal')
     Start-Sleep -Seconds 3
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
@@ -201,6 +207,39 @@ try {
         Assert "[reverse] the host is down" (-not (Test-AnyHostShown $app.Pid))
         Assert "[reverse] no in slide ever landed" (@(Get-LogLines 'quick terminal slide landed dir=in').Count -eq 0)
         Assert "[reverse] no slide fell back to the frame clock" (@(Get-LogLines 'quick terminal slide could not|slider unavailable').Count -eq 0)
+    } elseif ($arm -like 'autohide*') {
+        # T1378: "the quick terminal goes away when you click elsewhere" is a
+        # claim about losing ACTIVATION, which posted input cannot take away
+        # off the input desktop - so until T568 nothing asserted it, and every
+        # other arm here runs with autohide off. Set-TestActiveWindow hands
+        # activation to the main window, which is what a click on it does:
+        # the quick terminal gets WM_ACTIVATE(WA_INACTIVE).
+        $landed = Wait-Log 'quick terminal slide landed dir=in'
+        Assert "[$arm] the in slide landed (log: $landed)" ($null -ne $landed)
+        Start-Sleep -Milliseconds 300
+        Assert "[$arm] setup: the quick terminal is shown" (Test-TestWindowVisible $qt)
+        $qtActive = (Get-TestActiveWindow -Window $qt) -eq [int64]$qt
+        Assert "[$arm] setup: ... and is the active window, so there is activation to lose" $qtActive
+        $moved = Set-TestActiveWindow -Window $top
+        Assert "[$arm] activation moved to the main window (active=$(Get-TestActiveWindow -Window $top))" $moved
+        if ($arm -eq 'autohide') {
+            $out = Wait-Log 'quick terminal slide (on dwm )?(reversed )?dir=out|quick terminal slide landed dir=out'
+            Assert "[autohide] losing activation started the out slide (log: $out)" ($null -ne $out)
+            $hidden = $false
+            for ($t = 0; $t -lt 30 -and -not $hidden; $t++) {
+                Start-Sleep -Milliseconds 100
+                $hidden = -not (Test-TestWindowVisible $qt)
+            }
+            $expectHidden = if ($NegativeControl) { -not $hidden } else { $hidden }
+            Assert "[autohide] the quick terminal hid itself when another window took activation (hidden=$hidden)" $expectHidden
+        } else {
+            # The control: the same activation move with autohide off leaves it
+            # where it is, so "it hid" above is the setting's doing and not a
+            # side effect of the harness's activation write.
+            Start-Sleep -Milliseconds 1500
+            Assert "[autohide-off] no out slide started ($(@(Get-LogLines 'dir=out').Count) lines)" (@(Get-LogLines 'dir=out').Count -eq 0)
+            Assert "[autohide-off] the quick terminal is still shown" (Test-TestWindowVisible $qt)
+        }
     } else {
         Start-Sleep -Milliseconds 1200
         Assert "[stepped] no slide went to the slider ($(@(Get-LogLines 'quick terminal slide on dwm').Count))" (@(Get-LogLines 'quick terminal slide on dwm').Count -eq 0)

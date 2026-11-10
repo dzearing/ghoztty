@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-09T23:04:40-08:00",
-    "commit":  "f27ba2ba9",
+    "generated":  "2026-11-09T23:37:31-08:00",
+    "commit":  "d3a9bcc4c",
     "uncommitted":  [
 
                     ],
@@ -1086,7 +1086,7 @@
                   "test/win32/activity-monitor-probe-fail.ps1":  "bab527a3bfb7ceb8428cf31a3c382b7e2ab6ea001228140e9234c350142dbd15",
                   "test/win32/activity-monitor-remote.ps1":  "011a75488fceba22d318ca3a97b2bf727439d22da6b1d8000b52fee091216c30",
                   "test/win32/activity-pane-column.ps1":  "0048768f928d269a2141a5206ad3b7c63771478f7aa46de7d4f424e64b8be4ea",
-                  "test/win32/activity-selection.ps1":  "a27f74847a7a23e94e99219694dc194a47d653dd8f7e25558d1adc1b1b349be1",
+                  "test/win32/activity-selection.ps1":  "80d1bdbea38ea68c6d260a45e1f02237cc27c3742f9109ff697de6e9ccdbcca1",
                   "test/win32/activity-state.ps1":  "0b3669240e2083d6e3b8ba56b430a2f85c9e7ee52f6822650dd4243aefa36155",
                   "test/win32/activity-truncated.ps1":  "c8cd7bf4650037d2e2d4369d4b89d9faf0ab8e85c9e03a7ccc7fe26d7028098c",
                   "test/win32/agent-adopt.ps1":  "b3580813b668d36f3ffd7c5f06d750c7d0e97cb9533d2287b357e93c7faf99e5",
@@ -1400,7 +1400,7 @@
                   "test/win32/prompt-reflow.ps1":  "566e5e362676f4fe06e2364f1be7255015dc2d9f9c83acef163a2167e6f4aedf",
                   "test/win32/pty-holder.ps1":  "ac9811305a50f2a86dca0af16b2725c8414ed78ebe26c84572ca6599326af88e",
                   "test/win32/pty-host.ps1":  "466be0c285d0654ebf15bb7e7e545b38b5e1b9e12d3328ed49f9b009b469b2d5",
-                  "test/win32/quick-terminal-slide.ps1":  "ac8e12adcfce3621ad347f4b9b957e0b4e986599894cb43734fb7ba64d735609",
+                  "test/win32/quick-terminal-slide.ps1":  "86e609fdd30fe537e48d5ef68c3be7c6e8432c3c0f7513985f56604757233deb",
                   "test/win32/rdp-perf-probe.ps1":  "d9a2438358328f459c637242375193fb1651d6b4ee3ba98358617290aa0bb183",
                   "test/win32/rdp-session.ps1":  "26fa35ab178060d0a6ff53c6e00ff3149c78bd04f041c1a953a37d575aac82df",
                   "test/win32/readonly-badge.ps1":  "be8e9c5793795ff3502b077f674c531a510b2755819fbe989237897e6076ae61",

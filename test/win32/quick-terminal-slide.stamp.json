@@ -1,18 +1,15 @@
 {
     "guard":  "quick-terminal-slide",
     "script":  "test/win32/quick-terminal-slide.ps1",
-    "generated":  "2026-11-07T15:31:18-08:00",
-    "commit":  "faa5e7cb3",
+    "generated":  "2026-11-09T23:25:52-08:00",
+    "commit":  "d3a9bcc4c",
     "uncommitted":  [
-                        "src/apprt/win32/quick_terminal_slide.zig",
-                        "src/apprt/win32/QuickTerminal.zig",
-                        "src/apprt/win32/QuickTerminalSlider.zig",
                         "test/win32/quick-terminal-slide.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/quick_terminal_slide.zig":  "3a760da32f8b7c4705c10f8ee33a4d08cd7ad251e176289ebaf50187e8f97aa9",
                   "src/apprt/win32/QuickTerminal.zig":  "a3ccde78efb633abc7b6b3841babadadab1baf6fc0ef9d9684f691774b4cc847",
                   "src/apprt/win32/QuickTerminalSlider.zig":  "d6ef0e729efcddf2dec1acc90338c23484e1e7bf8a816ee6b14b73f1466ef4ac",
-                  "test/win32/quick-terminal-slide.ps1":  "ac8e12adcfce3621ad347f4b9b957e0b4e986599894cb43734fb7ba64d735609"
+                  "test/win32/quick-terminal-slide.ps1":  "86e609fdd30fe537e48d5ef68c3be7c6e8432c3c0f7513985f56604757233deb"
               }
 }

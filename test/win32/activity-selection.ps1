@@ -515,6 +515,47 @@ try {
         $null = Measure-Row $shotE3 'E3 keyboard' $SELECTION_WASH_FOCUSED $true $true
     } finally { Close-TestWindowPixels -Shot $shotE3 }
 
+    # F. The OTHER way the table stops holding the keyboard (T1378): the panel
+    # itself is deactivated, not merely tabbed away from. B pins "unemphasized"
+    # by putting the caret in the filter field - focus moving WITHIN the panel -
+    # because until T568 the harness could not take activation away from a
+    # window off the input desktop. A row that stayed emphasized and rimmed
+    # after the user clicked another app would pass B, so it is asserted here
+    # both ways a window loses the keyboard, and asserted BACK in between:
+    #
+    #   F1. nobody holds it (Clear) - the panel's thread reads back focus 0;
+    #   F2. it returns with the keyboard (Set on the panel) - the control, so F1
+    #       is a measurement of focus and not a one-way repaint;
+    #   F3. a SIBLING window holds it (Set on the terminal window) - the shape a
+    #       user makes by clicking the terminal behind the panel.
+    Write-Host ''
+    Write-Host 'F. a deactivated panel unemphasizes its selection, and re-emphasizes it with the keyboard'
+    Assert (Clear-TestActiveWindow -Window $panel) 'F1 the harness can take the keyboard off the panel'
+    Start-Sleep -Milliseconds 400
+    Assert ((Get-TestFocusedWindow -Window $panel) -eq 0) `
+        "F1 positive control: the panel's thread holds NO focus (got $(Get-TestFocusedWindow -Window $panel))"
+    $shotF1 = Get-TestWindowPixels -Window $panel -Sync
+    try {
+        $null = Measure-Row $shotF1 'F1 deactivated' $SELECTION_WASH_UNFOCUSED $false $false
+    } finally { Close-TestWindowPixels -Shot $shotF1 }
+
+    Assert (Set-TestActiveWindow -Window $panel) 'F2 the harness can give the keyboard back'
+    Start-Sleep -Milliseconds 400
+    Assert ((Get-TestFocusedWindow -Window $panel) -eq $panel) "F2 the table holds the keyboard again (got $(Get-TestFocusedWindow -Window $panel))"
+    $shotF2 = Get-TestWindowPixels -Window $panel -Sync
+    try {
+        $null = Measure-Row $shotF2 'F2 reactivated' $SELECTION_WASH_FOCUSED $true $true
+    } finally { Close-TestWindowPixels -Shot $shotF2 }
+
+    Assert (Set-TestActiveWindow -Window $top) 'F3 the terminal window can be activated instead'
+    Start-Sleep -Milliseconds 400
+    Assert ((Get-TestActiveWindow -Window $panel) -eq [int64]$top) `
+        "F3 the ACTIVE window of the shared GUI thread is now the terminal (got $(Get-TestActiveWindow -Window $panel))"
+    $shotF3 = Get-TestWindowPixels -Window $panel -Sync
+    try {
+        $null = Measure-Row $shotF3 'F3 sibling active' $SELECTION_WASH_UNFOCUSED $false $false
+    } finally { Close-TestWindowPixels -Shot $shotF3 }
+
     Assert (-not (Test-TestDesktopLeak -ProcessId $app.Pid)) 'the run never took the interactive desktop'
 } catch {
     Write-Host "FAIL  harness error: $_" -ForegroundColor Red
