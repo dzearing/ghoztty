@@ -2045,6 +2045,7 @@ $GuardTable = @(
         Covers = @(
             'src\apprt\win32\Surface.zig',
             'src\apprt\win32\clipboard_open.zig',
+            'src\apprt\win32\claude_image_paste.zig',
             'src\config\Config.zig',
             'test\win32\clipboard-paste.ps1'
         )

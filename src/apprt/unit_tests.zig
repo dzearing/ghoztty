@@ -217,6 +217,10 @@ test {
     _ = @import("win32/HookComponent.zig");
     _ = @import("win32/ClaudeKeybinding.zig");
 
+    // Pure win32 image-vs-text paste rule for a Claude Code pane (T2721),
+    // same no-OS-imports deal.
+    _ = @import("win32/claude_image_paste.zig");
+
     // Runtime registry + aggregate install flow (T869): the binary probe,
     // the external-plugin manifest gate, the rollback/refcount integration
     // and the UI-facing service. std.fs tempdir tests, every lane.

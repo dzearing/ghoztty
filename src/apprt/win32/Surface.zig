@@ -77,6 +77,9 @@ const panel_theme = @import("panel_theme.zig");
 const system_colors = @import("system_colors.zig");
 const IpcHandlers = @import("IpcHandlers.zig");
 const ProcessTree = @import("ProcessTree.zig");
+const clipboard_image = @import("clipboard_image.zig");
+const claude_image_paste = @import("claude_image_paste.zig");
+const ClaudeKeybinding = @import("ClaudeKeybinding.zig");
 const session_disconnect = @import("session_disconnect.zig");
 const provenance = @import("provenance.zig");
 const about_links = @import("about_links.zig");
@@ -2929,6 +2932,36 @@ pub fn shellIsIdle(self: *Surface, map: *const ProcessTree.PidMap) bool {
     };
 }
 
+/// Whether a Ctrl+V over an image-with-its-address clipboard should go to
+/// Claude Code instead of pasting the address (T2721; the rule and why it
+/// is this narrow are in `claude_image_paste.zig`). Asked only for that rare
+/// clipboard shape, so the process snapshot and the keybindings read never
+/// run on an ordinary paste. Anything it cannot establish answers false,
+/// which pastes the text exactly as before.
+fn pasteImageToClaude(self: *Surface) bool {
+    const alloc = self.app.core_app.alloc;
+    const claude_running = ProcessTree.claudeRunsUnder(alloc, self.shellPid());
+    const bound = bound: {
+        if (!claude_running) break :bound false;
+        const home_path = std.process.getEnvVarOwned(alloc, "USERPROFILE") catch break :bound false;
+        defer alloc.free(home_path);
+        var home = std.fs.openDirAbsolute(home_path, .{}) catch break :bound false;
+        defer home.close();
+        const kb: ClaudeKeybinding = .{ .home = home };
+        break :bound kb.imagePasteBound(alloc);
+    };
+    if (claude_running and !bound) {
+        log.info("paste: Claude Code pane, but Chat ctrl+v is not chat:imagePaste; pasting the text (T2721)", .{});
+    }
+    return claude_image_paste.passToClaude(.{
+        .user_paste = true,
+        .image = true,
+        .companion_text = true,
+        .claude_running = claude_running,
+        .image_paste_bound = bound,
+    });
+}
+
 /// `shellIsIdle` against a snapshot taken here. A failed snapshot answers
 /// "not idle", same as an unknown shell.
 pub fn shellIsIdleNow(self: *Surface) bool {
@@ -3143,6 +3176,11 @@ pub fn clipboardRequest(
 
     const alloc = self.app.core_app.alloc;
 
+    // A picture beside nothing but its own web address (a browser's "Copy
+    // image") - see `pasteImageToClaude` below. Decided while the clipboard
+    // is open, acted on after it is closed.
+    var image_with_companion = false;
+
     // Read the clipboard into an owned UTF-8 string in a tight scope so the
     // system clipboard is CLOSED before any modal confirmation dialog — the
     // dialog can be up for an unbounded time and would otherwise block every
@@ -3173,9 +3211,17 @@ pub fn clipboardRequest(
             return false;
         };
         defer alloc.free(utf8);
+        image_with_companion = state == .paste and clipboard_image.available() and
+            claude_image_paste.textIsImageCompanion(utf8);
         break :blk try alloc.dupeZ(u8, utf8);
     };
     defer alloc.free(utf8z);
+
+    // Returning false is what hands ^V to the program (T154).
+    if (image_with_companion and self.pasteImageToClaude()) {
+        log.info("paste: image + its address on the clipboard in a Claude Code pane; ^V goes to Claude (T2721)", .{});
+        return false;
+    }
 
     // The confirmation prompt below runs a modal message loop that can tick
     // the core (child-exited → surface close → this Surface freed). Capture

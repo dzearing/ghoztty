@@ -173,6 +173,75 @@ function Get-AnyLeaf($node) {
     return (Get-AnyLeaf $node.left)
 }
 
+# --- T2721 fixtures: a fake Claude Code and a private home --------------------
+# Sections I-L ask whether a clipboard holding a picture AND its web address
+# (a browser's "Copy image") hands ctrl+v to Claude Code. The app decides
+# "this pane runs Claude" from a claude.exe under the pane's shell, and
+# "Claude's ctrl+v attaches images" from %USERPROFILE%\.claude\keybindings.json.
+# So the probe runs from a COPY of powershell.exe named claude.exe, and the app
+# is launched with USERPROFILE pointed at a throwaway home - the user's real
+# ~/.claude is never read or written.
+$script:fakeRoot = Join-Path $env:TEMP "ghoztty-t2721-$PID"
+$script:fakeHome = Join-Path $script:fakeRoot 'home'
+$script:fakeClaude = Join-Path $script:fakeRoot 'bin\claude.exe'
+New-Item -ItemType Directory -Force -Path (Join-Path $script:fakeHome '.claude') | Out-Null
+New-Item -ItemType Directory -Force -Path (Split-Path $script:fakeClaude -Parent) | Out-Null
+Copy-Item (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') $script:fakeClaude -Force
+$script:keybindings = Join-Path $script:fakeHome '.claude\keybindings.json'
+function Set-ClaudeImagePasteBinding([bool]$bound) {
+    if ($bound) {
+        $json = '{"bindings":[{"context":"Chat","bindings":{"ctrl+v":"chat:imagePaste"}}]}'
+        [IO.File]::WriteAllText($script:keybindings, $json)
+    } else {
+        Remove-Item $script:keybindings -ErrorAction SilentlyContinue
+    }
+}
+Set-ClaudeImagePasteBinding $true
+
+# A picture with a text format beside it: the browser "Copy image" shape when
+# the text is an address, the Excel/Word shape when it is real content.
+function Set-ImageAndTextClipboard([string]$text) {
+    $bmp = New-Object System.Drawing.Bitmap 32, 32
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.Clear([System.Drawing.Color]::Blue)
+    $g.Dispose()
+    try {
+        for ($t = 0; $t -lt 10; $t++) {
+            try {
+                $do = New-Object System.Windows.Forms.DataObject
+                $do.SetData([System.Windows.Forms.DataFormats]::Bitmap, $bmp)
+                $do.SetData([System.Windows.Forms.DataFormats]::UnicodeText, $text)
+                [System.Windows.Forms.Clipboard]::SetDataObject($do, $true)
+                return $true
+            } catch { Start-Sleep -Milliseconds 200 }
+        }
+    } finally { $bmp.Dispose() }
+    return $false
+}
+
+# The probe, run as the fake claude.exe so the app sees Claude under the shell.
+function Start-ClaudeProbe([string]$tag) {
+    & $Exe +send-keys --target=$script:pane 'cls' Enter | Out-Null
+    Start-Sleep -Milliseconds 600
+    # Bare and unquoted, like Start-Probe's line, so it runs the same in cmd
+    # and in PowerShell; TEMP paths on this box carry no spaces.
+    # argv-audit: both paths are TEMP paths built with Join-Path; $tag is a one-letter literal at every caller.
+    & $Exe +send-keys --target=$script:pane "$script:fakeClaude -NoProfile -File $probe -Tag $tag" Enter | Out-Null
+    $seen = Wait-Text "PROBE_READY_$tag"
+    if ($null -eq $seen) { return $false }
+    Start-Sleep -Milliseconds 500
+    return $true
+}
+
+# One ctrl+v into a running probe; the character code it read, or -1.
+function Invoke-ProbeCtrlV([string]$tag) {
+    $sent = Send-TestKeys -Window $top -Target $surface -Modifiers ctrl -Key V
+    Assert $sent "${tag}: ctrl+v injected"
+    $tail = Wait-Text "PROBE_${tag}_CHAR=(\d+)" 10
+    if ($tail -match "PROBE_${tag}_CHAR=(\d+)") { return [int]$Matches[1] }
+    return -1
+}
+
 # --- Setup: fresh debug instance on the test desktop -------------------------
 # --session-persistence=false so a restore cannot hand back a previous run's
 # window (the T131 lesson), and so the surviving agent cannot replay a layout
@@ -184,7 +253,11 @@ $app = $null
 
 try {
 
-$app = Start-OnTestDesktop -Exe $Exe -Arguments @('--session-persistence=false') -StdErr $errlog
+$script:realProfile = $env:USERPROFILE
+$env:USERPROFILE = $script:fakeHome
+try {
+    $app = Start-OnTestDesktop -Exe $Exe -Arguments @('--session-persistence=false') -StdErr $errlog
+} finally { $env:USERPROFILE = $script:realProfile }
 Start-Sleep -Seconds 3
 if ($app.Process -and $app.Process.HasExited) { Write-Host 'SETUP FAIL: GUI died at launch'; exit 1 }
 $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
@@ -374,6 +447,63 @@ for ($t = 0; $t -lt 25; $t++) {
 }
 Assert ($copied -match 'ZQ_COPY_TOKEN') "H: ctrl+insert with a selection copies it to the clipboard (clipboard=$($copied.Length) chars)"
 
+# --- I: image + its address, Claude Code running -> ^V reaches Claude (T2721) -
+# THE T2721 CASE. Pre-fix the probe reads 104 ('h' of the pasted URL): Ghoztty
+# found text on the clipboard and pasted it, so Claude never saw the key.
+$url = 'https://example.com/cat.png'
+Assert (Set-ImageAndTextClipboard $url) 'I: harness: image + address clipboard set'
+Assert ([System.Windows.Forms.Clipboard]::ContainsImage() -and
+    [System.Windows.Forms.Clipboard]::ContainsText()) 'I: harness: the clipboard reports BOTH an image and text'
+if (-not (Start-ClaudeProbe 'I')) {
+    Assert $false 'I: claude probe became ready'
+} else {
+    $code = Invoke-ProbeCtrlV 'I'
+    if ($NegativeControl) {
+        Write-Host 'NEGATIVE CONTROL: asserting the address is PASTED into Claude - this run MUST fail'
+        Assert ($code -eq 104) "I (inverted): ctrl+v pastes the address into Claude (probe char=$code, want 104)"
+    } else {
+        Assert ($code -eq 22) "I: image + address, Claude running: ctrl+v reaches Claude as ^V (probe char=$code, want 22)"
+    }
+    Stop-Probe
+}
+
+# --- J: the same clipboard at a plain shell probe -> the address pastes -------
+# Every program other than Claude owns its own ^V (the T2694 constraint).
+Set-ImageAndTextClipboard $url | Out-Null
+if (-not (Start-Probe 'J')) {
+    Assert $false 'J: probe became ready'
+} else {
+    $code = Invoke-ProbeCtrlV 'J'
+    Assert ($code -eq 104) "J: image + address, no Claude: ctrl+v pastes the address (probe char=$code, want 104 'h')"
+    Stop-Probe
+}
+
+# --- K: image + REAL text (an Excel copy), Claude running -> the text pastes ---
+# Office publishes a rendered picture beside the cells; the user wants cells.
+# One row only: a newline would raise the unsafe-paste confirmation, which is
+# not what this section is about (the rule treats a tab like a newline).
+Set-ImageAndTextClipboard "Qty`tPrice`t3`t4.50" | Out-Null
+if (-not (Start-ClaudeProbe 'K')) {
+    Assert $false 'K: claude probe became ready'
+} else {
+    $code = Invoke-ProbeCtrlV 'K'
+    Assert ($code -eq 81) "K: image + spreadsheet text, Claude running: ctrl+v pastes the text (probe char=$code, want 81 'Q')"
+    Stop-Probe
+}
+
+# --- L: Claude running but its ctrl+v is NOT image paste -> the address pastes -
+# A ^V Claude has nothing bound to would swallow the paste the user has today.
+Set-ClaudeImagePasteBinding $false
+Set-ImageAndTextClipboard $url | Out-Null
+if (-not (Start-ClaudeProbe 'L')) {
+    Assert $false 'L: claude probe became ready'
+} else {
+    $code = Invoke-ProbeCtrlV 'L'
+    Assert ($code -eq 104) "L: no chat:imagePaste binding: ctrl+v pastes the address (probe char=$code, want 104 'h')"
+    Stop-Probe
+}
+Set-ClaudeImagePasteBinding $true
+
 Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash at end of run'
 
 # The last statement of the body (T993): the stamp below is written only for a
@@ -389,6 +519,7 @@ $script:bodyDone = $true
     Remove-TestDesktop
     [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 800)
     Remove-Item $probe -ErrorAction SilentlyContinue
+    Remove-Item $script:fakeRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 $fgSeen = @(Stop-TestForegroundWatch)

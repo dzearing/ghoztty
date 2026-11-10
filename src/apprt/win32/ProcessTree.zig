@@ -5,6 +5,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const windows = std.os.windows;
+const claude_image_paste = @import("claude_image_paste.zig");
 
 const TH32CS_SNAPPROCESS: windows.DWORD = 0x00000002;
 
@@ -53,6 +54,36 @@ pub fn snapshot(alloc: Allocator) Allocator.Error!PidMap {
         if (Process32NextW(snap, &entry) == 0) break;
     }
     return map;
+}
+
+/// Whether `claude.exe` runs at or below `root` right now (T2721). One
+/// Toolhelp32 snapshot; the walk is `claude_image_paste.claudeUnder`. Answers
+/// false when the snapshot cannot be taken, which keeps today's behaviour.
+pub fn claudeRunsUnder(alloc: Allocator, root: u32) bool {
+    if (root == 0) return false;
+    const snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == windows.INVALID_HANDLE_VALUE) return false;
+    defer windows.CloseHandle(snap);
+
+    var procs: std.ArrayListUnmanaged(claude_image_paste.Proc) = .empty;
+    defer procs.deinit(alloc);
+    var any_claude = false;
+
+    var entry: PROCESSENTRY32W = undefined;
+    entry.dwSize = @sizeOf(PROCESSENTRY32W);
+    if (Process32FirstW(snap, &entry) == 0) return false;
+    while (true) {
+        const claude = claude_image_paste.isClaudeExe(&entry.szExeFile);
+        any_claude = any_claude or claude;
+        procs.append(alloc, .{
+            .pid = entry.th32ProcessID,
+            .ppid = entry.th32ParentProcessID,
+            .claude = claude,
+        }) catch return false;
+        if (Process32NextW(snap, &entry) == 0) break;
+    }
+    if (!any_claude) return false;
+    return claude_image_paste.claudeUnder(procs.items, root);
 }
 
 /// Whether `ancestor` appears in `descendant`'s parent chain (inclusive:

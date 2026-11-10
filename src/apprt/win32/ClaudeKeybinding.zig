@@ -204,6 +204,24 @@ fn read(self: ClaudeKeybinding, arena: Allocator) Allocator.Error!Read {
     return .{ .parsed = root };
 }
 
+/// Whether Chat's Ctrl+V attaches an image right now - bound to exactly
+/// `chat:imagePaste`, whoever wrote it. This is the question the paste path
+/// asks before it hands ^V to Claude (T2721): `state` answers "is there
+/// anything for us to install", which counts a user's own unbind as
+/// installed, and an unbound ^V would swallow the paste.
+pub fn imagePasteBound(self: ClaudeKeybinding, alloc: Allocator) bool {
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const r = self.read(arena_state.allocator()) catch return false;
+    return switch (r) {
+        .unmergeable, .fresh => false,
+        .parsed => |root| switch (binding(root)) {
+            .action => |a| std.mem.eql(u8, a, action),
+            else => false,
+        },
+    };
+}
+
 /// Installed when Chat's Ctrl+V is bound to anything (the user's choice
 /// stands) or the file is one we must not touch; not_installed only when we
 /// could and would add the binding.
@@ -397,4 +415,37 @@ test "only a Chat-context block counts" {
     const merged = try merge(arena, root);
     try testing.expectEqualStrings(action, binding(merged).action);
     try testing.expectEqual(@as(usize, 2), merged.object.get("bindings").?.array.items.len);
+}
+
+test "imagePasteBound is true only while Chat Ctrl+V really attaches an image (T2721)" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const c: ClaudeKeybinding = .{ .home = tmp.dir };
+
+    // No file at all: Ctrl+V does nothing in Claude on Windows.
+    try testing.expect(!c.imagePasteBound(arena));
+    try c.install(arena);
+    try testing.expect(c.imagePasteBound(arena));
+
+    // The user's own choices read as "installed" but do not attach an image.
+    try tmp.dir.writeFile(.{ .sub_path = keybindings_sub_path, .data =
+        \\{"bindings":[{"context":"Chat","bindings":{"ctrl+v":null}}]}
+    });
+    try testing.expectEqual(InstallState.installed, c.state(arena));
+    try testing.expect(!c.imagePasteBound(arena));
+    try tmp.dir.writeFile(.{ .sub_path = keybindings_sub_path, .data =
+        \\{"bindings":[{"context":"Chat","bindings":{"ctrl+v":"chat:externalEditor"}}]}
+    });
+    try testing.expect(!c.imagePasteBound(arena));
+    try tmp.dir.writeFile(.{ .sub_path = keybindings_sub_path, .data = "not json" });
+    try testing.expect(!c.imagePasteBound(arena));
+
+    // The user wrote the same binding themselves: it attaches, so it counts.
+    try tmp.dir.writeFile(.{ .sub_path = keybindings_sub_path, .data =
+        \\{"bindings":[{"context":"Chat","bindings":{"ctrl+v":"chat:imagePaste"}}]}
+    });
+    try testing.expect(c.imagePasteBound(arena));
 }

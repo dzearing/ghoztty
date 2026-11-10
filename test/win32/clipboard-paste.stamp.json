@@ -1,15 +1,18 @@
 {
     "guard":  "clipboard-paste",
     "script":  "test/win32/clipboard-paste.ps1",
-    "generated":  "2026-11-08T14:23:56-08:00",
-    "commit":  "e961d2e97",
+    "generated":  "2026-11-09T20:42:24-08:00",
+    "commit":  "762f407d9",
     "uncommitted":  [
-
+                        "src/apprt/win32/claude_image_paste.zig",
+                        "src/apprt/win32/Surface.zig",
+                        "test/win32/clipboard-paste.ps1"
                     ],
     "files":  {
+                  "src/apprt/win32/claude_image_paste.zig":  "2c4474cb1c939c8fdf812cde93db44f98a7ae014abddc898b15bf8857e7db595",
                   "src/apprt/win32/clipboard_open.zig":  "2c4245d76adba7068a5a1c6a498d32bbfe811d48b29446ef25091842d5d90b4d",
-                  "src/apprt/win32/Surface.zig":  "7a9ff01de64379e17d95ef2c8350a0ef58cc59dd81ce39edca583b85e201a44e",
+                  "src/apprt/win32/Surface.zig":  "85718c77d906194fa18dff0f4ea2537585cfd36593e5f9ef99123101c943c20a",
                   "src/config/Config.zig":  "56a5d6897f27a43d735affe8533be6a5fb60d9e50a9cf97781d1ff588202c5df",
-                  "test/win32/clipboard-paste.ps1":  "b931eeb01938913c1b2d91fdbe7819c2a5b67c7de99db9712bd475226fd8c5fd"
+                  "test/win32/clipboard-paste.ps1":  "90c785bc8d665e57d5d15023b38ccb30ec1da1b6e0d09fce011e835d0ada586e"
               }
 }
