@@ -679,3 +679,12 @@ as the digest that showed them.
 - Status you can read without colour (busy/done/failed distinguished by shape as well as colour in the sidebar)
 - Scroll two panes together (new angle on comparing panes: link two live panes so they scroll as one)
 - A graphics driver fault costs one window, not all of them (the faulting window falls back to safe drawing; others carry on)
+
+## 2026-11-10
+
+- Tell me when it says this (watch a pane for a chosen phrase such as "listening on"; toast plus a lit sidebar row when it prints)
+- Click an error, land on the line (new angle on clickable file paths: path:line:col in compiler output opens the editor at that line and column)
+- A long line you can read (a very long single line shows folded with a character-count chip; unfold in place or open formatted in a side pane)
+- Fold any command's output by hand (new angle on folding enormous output: a click beside any command folds its output to one line)
+- A full disk cannot cost you your layout (saves are whole-or-nothing; a full disk keeps the last good layout and shows a saving-paused banner)
+- A giant log opens at once (a multi-gigabyte log in a side pane shows its first screen immediately and is searchable while it loads)
