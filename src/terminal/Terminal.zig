@@ -1371,6 +1371,17 @@ pub fn cursorIsAtPrompt(self: *Terminal) bool {
     };
 }
 
+/// `cursorIsAtPrompt`, overruled by a frontend that can SEE a command running
+/// under the shell (T1403). On Windows the prompt marks arrive from ConPTY,
+/// which brackets a cmd.exe prompt with `133;B` and never sends `133;C` when a
+/// command starts, so the marks alone still read "at the prompt" all through a
+/// build. A frontend that knows better (the process table) says so here; one
+/// that does not passes false and the marks decide, exactly as before.
+pub fn cursorIsAtPromptUnless(self: *Terminal, command_running: bool) bool {
+    if (command_running) return false;
+    return self.cursorIsAtPrompt();
+}
+
 /// Horizontal tab moves the cursor to the next tabstop, clearing
 /// the screen to the left the tabstop.
 pub fn horizontalTab(self: *Terminal) void {
@@ -12502,6 +12513,36 @@ test "Terminal: cursorIsAtPrompt" {
     try t.linefeed();
     try t.semanticPrompt(.init(.prompt_start));
     try testing.expect(t.cursorIsAtPrompt());
+}
+
+test "Terminal: cursorIsAtPromptUnless - ConPTY's B-without-C overruled by a running command (T1403)" {
+    const alloc = testing.allocator;
+    var t = try init(alloc, .{ .cols = 20, .rows = 4 });
+    defer t.deinit(alloc);
+
+    // The ConPTY shape for cmd.exe: 133;B at the prompt, the user types a
+    // command and presses enter, output follows - and 133;C never arrives.
+    for ("C:\\>") |c| try t.print(c);
+    try t.semanticPrompt(.init(.end_prompt_start_input));
+    for ("ping x") |c| try t.print(c);
+    t.carriageReturn();
+    try t.linefeed();
+    for ("Pinging") |c| try t.print(c);
+    t.carriageReturn();
+    try t.linefeed();
+
+    // The marks alone still say "at the prompt" mid-command: the defect.
+    try testing.expect(t.cursorIsAtPrompt());
+    // A frontend that sees the command running overrules them.
+    try testing.expect(!t.cursorIsAtPromptUnless(true));
+    // A frontend that sees nothing (or cannot tell) leaves the marks in charge.
+    try testing.expect(t.cursorIsAtPromptUnless(false));
+
+    // And it never invents a prompt the marks did not report.
+    try t.semanticPrompt(.init(.end_input_start_output));
+    try t.linefeed();
+    try testing.expect(!t.cursorIsAtPromptUnless(false));
+    try testing.expect(!t.cursorIsAtPromptUnless(true));
 }
 
 test "Terminal: cursorIsAtPrompt alternate screen" {

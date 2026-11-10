@@ -990,7 +990,12 @@ pub fn pollSyncHold(self: *Termio) ?u64 {
 }
 
 /// Clear the screen.
-pub fn clearScreen(self: *Termio, td: *ThreadData, history: bool) !void {
+pub fn clearScreen(
+    self: *Termio,
+    td: *ThreadData,
+    history: bool,
+    command_running: bool,
+) !void {
     {
         self.renderer_state.mutex.lock();
         defer self.renderer_state.mutex.unlock();
@@ -1007,8 +1012,16 @@ pub fn clearScreen(self: *Termio, td: *ThreadData, history: bool) !void {
         // Clear our scrollback
         if (history) self.terminal.eraseDisplay(.scrollback, false);
 
-        // If we're not at a prompt, we just delete above the cursor.
-        if (!self.terminal.cursorIsAtPrompt()) {
+        // If we're not at a prompt, we just delete above the cursor. A
+        // command the frontend can see running is "not at a prompt" whatever
+        // the marks say (T1403): otherwise the form-feed below lands in the
+        // running program (Ctrl+L into Claude Code, a build's stdin).
+        const marks_say_prompt = self.terminal.cursorIsAtPrompt();
+        log.info(
+            "clear_screen marks_say_prompt={} command_running={}",
+            .{ marks_say_prompt, command_running },
+        );
+        if (!self.terminal.cursorIsAtPromptUnless(command_running)) {
             if (self.terminal.screens.active.cursor.y > 0) {
                 self.terminal.screens.active.eraseActive(
                     self.terminal.screens.active.cursor.y - 1,

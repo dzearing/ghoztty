@@ -2932,6 +2932,33 @@ pub fn shellIsIdle(self: *Surface, map: *const ProcessTree.PidMap) bool {
     };
 }
 
+/// True when this pane's shell is visibly RUNNING a command - it has a live
+/// descendant (T1403). The core asks this before acting on its prompt marks
+/// (`Surface.frontendSeesCommandRunning`): clear-screen would otherwise send a
+/// form-feed into the running program, and cursor-click-to-move would send it
+/// arrow keys, because ConPTY's marks read "at the prompt" all through a
+/// cmd.exe command.
+///
+/// Unlike `shellIsIdle` this is not a close question, so the confirm setting
+/// and read-only play no part, and "cannot tell" answers FALSE - the marks
+/// then decide exactly as they did before. Only a command positively seen
+/// running overrules them.
+pub fn commandRunning(self: *Surface) bool {
+    if (!self.core_surface_ready) return false;
+    const pid = self.shellPid();
+    if (pid != 0) {
+        const alloc = self.app.core_app.alloc;
+        var map = ProcessTree.snapshot(alloc) catch return false;
+        defer map.deinit(alloc);
+        return ProcessTree.contains(&map, pid) and
+            ProcessTree.hasDescendants(&map, pid);
+    }
+    return switch (self.core_surface.io.backend) {
+        .exec => false,
+        .remote => |*r| r.shellHasDescendants() orelse false,
+    };
+}
+
 /// Whether a Ctrl+V over an image-with-its-address clipboard should go to
 /// Claude Code instead of pasting the address (T2721; the rule and why it
 /// is this narrow are in `claude_image_paste.zig`). Asked only for that rare

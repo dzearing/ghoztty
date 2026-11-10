@@ -395,7 +395,7 @@ fn drainMailbox(
             .resize => |v| self.handleResize(cb, v),
             .resize_flush => self.flushResize(cb),
             .size_report => |v| try io.sizeReport(data, v),
-            .clear_screen => |v| try io.clearScreen(data, v.history),
+            .clear_screen => |v| try io.clearScreen(data, v.history, v.command_running),
             .scroll_viewport => |v| io.scrollViewport(v),
             .selection_scroll => |v| {
                 if (v) {

@@ -52,6 +52,11 @@ pub const Message = union(enum) {
     clear_screen: struct {
         /// Include clearing the history
         history: bool,
+
+        /// The frontend can SEE a command running under the shell, so the
+        /// prompt marks are not to be trusted (T1403; see
+        /// `Terminal.cursorIsAtPromptUnless`). False defers to the marks.
+        command_running: bool = false,
     },
 
     /// Scroll the viewport

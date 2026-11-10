@@ -5433,7 +5433,32 @@ pub fn mouseButtonCallback(
     return false;
 }
 
+/// Whether the apprt can SEE a command running under this surface's shell
+/// (T1403). The prompt marks are the portable answer, and on macOS they are
+/// the right one; on Windows they arrive from ConPTY, which never sends
+/// `133;C` for cmd.exe, so the marks read "at the prompt" all through a
+/// running command. A runtime that can answer from the process table declares
+/// `commandRunning`; every other runtime answers false and the marks decide.
+/// Only ever asked on the apprt thread, outside the renderer lock.
+fn frontendSeesCommandRunning(self: *Surface) bool {
+    if (comptime !@hasDecl(apprt.runtime.Surface, "commandRunning")) return false;
+    return self.rt_surface.commandRunning();
+}
+
 fn maybePromptClick(self: *Surface) !bool {
+    // Cheap gates first, under a short lock, so the frontend's process-table
+    // question (T1403) is only asked for a click that would otherwise move the
+    // cursor - never on an ordinary mouse release - and never under the lock.
+    {
+        self.renderer_state.mutex.lock();
+        defer self.renderer_state.mutex.unlock();
+        const t: *terminal.Terminal = self.renderer_state.terminal;
+        if (t.screens.active.semantic_prompt.click == .none) return false;
+        if (!self.config.cursor_click_to_move) return false;
+        if (!t.cursorIsAtPrompt()) return false;
+    }
+    if (self.frontendSeesCommandRunning()) return false;
+
     self.renderer_state.mutex.lock();
     defer self.renderer_state.mutex.unlock();
     const t: *terminal.Terminal = self.renderer_state.terminal;
@@ -6735,7 +6760,10 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
             }
 
             self.queueIo(.{
-                .clear_screen = .{ .history = true },
+                .clear_screen = .{
+                    .history = true,
+                    .command_running = self.frontendSeesCommandRunning(),
+                },
             }, .unlocked);
         },
 

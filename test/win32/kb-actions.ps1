@@ -227,6 +227,55 @@ if ($before -match 'KBFILL_MARKER') {
     Assert ($afterLines -lt 100 -and $afterLines -lt ($beforeLines / 4)) "T47 primary screen cleared ($beforeLines -> $afterLines lines)"
     Assert (Select-String -Path $errlog -Pattern 'mailbox message=clear_screen' -Quiet) 'T47 clear_screen io message logged'
 
+    # --- T1403: ctrl+k while a COMMAND IS RUNNING sends it nothing ----------
+    # At a prompt, clear_screen sends a form-feed (^L) so the shell repaints.
+    # ConPTY's prompt marks say "at the prompt" all through a cmd.exe command
+    # (133;B, never 133;C), so before T1403 the ^L went into whatever was
+    # running - Claude Code, a build's stdin. The oracle is a program that
+    # reads exactly ONE key and prints its code: a ^L arriving reads 12; the
+    # fixed app sends nothing, so the first key it sees is our own `x` (120).
+    # The echo of the command line cannot satisfy the oracle: it carries
+    # 'T1403_GOT_'+[int], never the digits.
+    #
+    # The reader writes the LIE itself - a bare 133;B (input starts) after its
+    # READY line - because whether ConPTY lies depends on the Windows build:
+    # T1398 measured it on 2026-09-06, and on build 26300 (2026-11-10) the
+    # marks read correctly mid-command, so a test relying on ConPTY's own
+    # marks passed with the fix switched off. With the B written by the child,
+    # the marks say "at the prompt" on every build, and only the process table
+    # can tell the app a command is running. The app logs both verdicts
+    # (`clear_screen marks_say_prompt=... command_running=...`).
+    $null = Invoke-NativeExact -FilePath $Exe -Arguments @(
+        '+send-keys', "--target=$win",
+        "powershell -nop -c `"'T1403_'+'READY'; [console]::Write([char]27+']133;B'+[char]7); `$k=[console]::ReadKey(`$true); 'T1403_GOT_'+[int]`$k.KeyChar`"", 'Enter')
+    $ready = $false
+    for ($i = 0; $i -lt 40 -and -not $ready; $i++) {
+        Start-Sleep -Milliseconds 250
+        $ready = ((& $Exe +read --name=$pane --lines=60 | Out-String) -match 'T1403_READY')
+    }
+    Assert $ready 'T1403 key-reader is running under the shell'
+    if ($ready) {
+        Assert (Send-TestKeys -Window $script:top -Target $script:surface -Modifiers ctrl -Key K) 'T1403 ctrl+k injected mid-command'
+        Start-Sleep -Milliseconds 800
+        Assert (Send-TestKeys -Window $script:top -Target $script:surface -Key X) 'T1403 sentinel x injected'
+        $got = $null
+        for ($i = 0; $i -lt 40 -and -not $got; $i++) {
+            Start-Sleep -Milliseconds 250
+            $m = [regex]::Match((& $Exe +read --name=$pane --lines=60 | Out-String), 'T1403_GOT_(\d+)')
+            if ($m.Success) { $got = [int]$m.Groups[1].Value }
+        }
+        Assert ($null -ne $got) "T1403 key-reader reported the first key it saw (got '$got')"
+        Assert ($got -ne 12) "T1403 ctrl+k sent NO form-feed into the running command (first key code $got; 12 = ^L leaked)"
+        Assert ($got -eq 120) "T1403 the running command's first key was the sentinel x (code $got)"
+        Assert (-not ($app.Process -and $app.Process.HasExited)) 'T1403 no crash after mid-command ctrl+k'
+        # Prove the scenario was the one under test: the marks DID claim a
+        # prompt (the lie landed) and the process table overruled them.
+        $verdict = Select-String -Path $errlog -Pattern 'clear_screen marks_say_prompt=(\w+) command_running=(\w+)' |
+            Select-Object -Last 1
+        Assert ($null -ne $verdict -and $verdict.Matches[0].Groups[1].Value -eq 'true') "T1403 the marks claimed a prompt mid-command (the lie under test): '$($verdict.Line)'"
+        Assert ($null -ne $verdict -and $verdict.Matches[0].Groups[2].Value -eq 'true') "T1403 the process table saw the command running: '$($verdict.Line)'"
+    }
+
     # Alternate screen: the performable binding must be unconsumed.
     # T782: NOT `& $Exe ... "$text" ...` - this payload carries two `"`,
     # and PowerShell 5.1 copies an embedded quote through unescaped, so the
