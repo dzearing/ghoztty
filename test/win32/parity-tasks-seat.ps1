@@ -938,6 +938,8 @@ $qtasks = Join-Path $qrepo 'docs\design\windows-parity-tasks'
 if (Test-Path $qrepo) { Remove-Item -Recurse -Force $qrepo }
 New-Item -ItemType Directory -Force $qtasks | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $qrepo 'src\sub') | Out-Null
+New-Item -ItemType Directory -Force (Join-Path $qrepo 'scripts') | Out-Null
+New-Item -ItemType Directory -Force (Join-Path $qrepo 'test') | Out-Null
 
 function Q-Git { param([string[]]$GitArgs) & git -C $qrepo @GitArgs 2>&1 | Out-Null }
 function Q-Write {
@@ -960,6 +962,10 @@ Q-Git @('config', 'commit.gpgsign', 'false')
 Q-Write 'src/foo.zig' "// foo`n"
 Q-Write 'src/bar.zig' "// bar`n"
 Q-Write 'src/sub/deep.zig' "// deep`n"
+# T1382: one script with a unique basename, two that share one.
+Q-Write 'scripts/lonely-one.ps1' "# lonely`n"
+Q-Write 'scripts/twin.ps1' "# twin a`n"
+Q-Write 'test/twin.ps1' "# twin b`n"
 Q-Git @('add', '-A'); Q-Git @('commit', '-m', 'seed', '--quiet')
 
 # The three shapes, filed together so they share a filing date:
@@ -974,6 +980,13 @@ Q-Task 'T4' 'Everything under `src/sub` is suspect.'
 #   line that says it is already fixed (T1308: citing is not dealing with it).
 Q-Task 'T5' 'A prose-only card that later commits only cite.'
 Q-Task 'T6' 'A prose-only card a later commit body says is fixed.'
+#   T7 names a script by BARE filename, the way prose does (T1382: T571 read
+#   zero touches that way); T8 names a basename two tracked files share, which
+#   must resolve to nothing; T10 names a sibling task file bare, which is the
+#   tracker's own churn and must not count either.
+Q-Task 'T7' 'The defect is in lonely-one.ps1, near its top.'
+Q-Task 'T8' 'The defect is somewhere in twin.ps1.'
+Q-Task 'T10' 'See T2.md for the background.'
 Q-Git @('add', '-A'); Q-Git @('commit', '-m', 'file six fixture tasks', '--quiet')
 
 # Backdate is not needed: the signal only requires the touching commit to be
@@ -981,6 +994,10 @@ Q-Git @('add', '-A'); Q-Git @('commit', '-m', 'file six fixture tasks', '--quiet
 # sleep past the boundary rather than rewriting history.
 Start-Sleep -Seconds 2
 Q-Write 'src/foo.zig' "// foo, fixed`n"
+Q-Write 'scripts/lonely-one.ps1' "# lonely, rewritten`n"
+Q-Write 'scripts/twin.ps1' "# twin a, rewritten`n"
+Q-Write 'test/twin.ps1' "# twin b, rewritten`n"
+Q-Write 'docs/design/windows-parity-tasks/T2.md' ([System.IO.File]::ReadAllText((Join-Path $qtasks 'T2.md')) + "`nA progress note.`n")
 Q-Git @('add', '-A')
 Q-Git @('commit', '-m', 'repair the foo path while here (T3)', '--quiet')
 Q-Git @('commit', '--allow-empty', '--quiet', '-m', 'chore(tracker): T9 filed',
@@ -1018,6 +1035,12 @@ Assert 'Q4 a task whose files nobody touched is not listed' ($r.Out -notmatch '(
 # count, seventeen tasks naming `test\win32` sat at the top with 300+ touches
 # each, which measures how busy the repo is and says nothing about any task.
 Assert 'Q4b a task naming only a DIRECTORY is not listed (the hub-file trap)' ($r.Out -notmatch '(?m)^T4\s')
+# T1382. Red before the fix: the bare name matched no pattern, so T7 was
+# "touched=0" and left off the report exactly like T2.
+Assert 'Q6 a task naming a script by BARE filename counts the commit that rewrote it' (
+    $r.Out -match '(?m)^T7\s+P2\s+age=\s*\d+d\s+named=\s*0\s+cited=\s*0\s+touched=\s*1')
+Assert 'Q6b a basename two tracked files share resolves to nothing (silent, not a guess)' ($r.Out -notmatch '(?m)^T8\s')
+Assert 'Q6c a bare sibling TASK file is the tracker''s own churn and does not count' ($r.Out -notmatch '(?m)^T10\s')
 Assert 'Q4c the header says the report is a prompt, not a verdict' ($r.Out -match 'PROMPT TO VERIFY')
 
 # Outside a repo there is no history to ask, and the answer is that sentence -

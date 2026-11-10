@@ -778,6 +778,42 @@ function Get-DepCycles {
 # counting the tracker's own churn would make every task look busy.
 $StalePathPattern = '(?<![\w./\\-])((?:src|scripts|test|macos|dist|include|images)[\\/][\w.\\/-]*[\w])'
 
+# T1382. A file named the way people actually write it in prose - bare,
+# `pane-banner.ps1`, no directory - matched nothing above, so a card whose only
+# mentions were bare reported "0 commit(s) since touched its files": T571 was
+# handed out that way while its subject had been rewritten twice. A bare token
+# resolves to the ONE tracked file carrying that basename, and to nothing when
+# two or more do: a wrong path buys a confident wrong CHECK FIRST, which is
+# worse than silence. The lookbehind keeps it from re-matching the tail of a
+# path the pattern above already took.
+$StaleBareNamePattern = '(?<![\w./\\-])(\w[\w.-]*\.(?:ps1|zig|swift|md|json))(?![\w-]|\.\w)'
+
+# The tracker's own files never count, for the same reason the path pattern
+# above leaves the task dir out: every card names sibling cards and the index,
+# and their churn would make every task look busy.
+$StaleBareNameExcluded = '^docs/design/windows-parity-(?:tasks|digests)(?:/|[^/]*\.md$)'
+
+# basename (case-insensitive) -> repo-relative path, or $null when ambiguous.
+# One `git ls-files` per repo root per run: stale-scan asks for every task.
+$script:BareNameIndex = @{}
+function Get-BareNameIndex {
+    param([string]$Root)
+    if ($script:BareNameIndex.ContainsKey($Root)) { return $script:BareNameIndex[$Root] }
+    $index = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([StringComparer]::OrdinalIgnoreCase)
+    try {
+        $files = @(& git -C $Root ls-files 2>$null)
+        if ($LASTEXITCODE -ne 0) { $files = @() }
+    } catch { $files = @() }
+    foreach ($f in $files) {
+        if (-not $f) { continue }
+        if ($f -match $StaleBareNameExcluded) { continue }
+        $name = $f.Substring($f.LastIndexOf('/') + 1)
+        if ($index.ContainsKey($name)) { $index[$name] = $null } else { $index[$name] = $f }
+    }
+    $script:BareNameIndex[$Root] = $index
+    return $index
+}
+
 function Get-RepoRootFor {
     param([string]$Path)
     # Resolved from the TASK DIR, not from $PSScriptRoot, so a fixture task dir
@@ -811,6 +847,18 @@ function Get-TaskCodePaths {
         # restatement of how busy the repo is, not a signal about the task.
         if (-not (Test-Path -LiteralPath (Join-Path $Root $p) -PathType Leaf)) { continue }
         $seen[$p] = $true
+    }
+    $bare = [regex]::Matches($text, $StaleBareNamePattern)
+    if ($bare.Count -gt 0) {
+        $index = Get-BareNameIndex -Root $Root
+        foreach ($m in $bare) {
+            $hit = $null
+            if (-not $index.TryGetValue($m.Groups[1].Value, [ref]$hit)) { continue }
+            if (-not $hit) { continue }   # ambiguous basename: stay silent
+            if ($seen.Contains($hit)) { continue }
+            if (-not (Test-Path -LiteralPath (Join-Path $Root $hit) -PathType Leaf)) { continue }
+            $seen[$hit] = $true
+        }
     }
     return @($seen.Keys)
 }
