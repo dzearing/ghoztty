@@ -794,6 +794,51 @@ pub fn adoptableName(persisted: ?[]const u8, local: bool) ?[]const u8 {
     return if (n.len == 0) null else n;
 }
 
+/// The IPC name worth recording for a pane (T1410): null when the only name it
+/// holds is its OWN pane id. `+list` registers every unnamed pane under its id
+/// so the value it prints is immediately a usable target, and that fallback is
+/// not a name anybody gave the pane: persisted, a restore registered the OLD id
+/// as a name on whatever pane came back in that slot - so a pane that had to
+/// take a fresh id (a viewer before T591, a terminal whose session went to
+/// another pane under T1687) still answered to the dead one, and `--target=` a
+/// pane that no longer exists reported success. The id needs no name to be
+/// addressed anyway: the registry falls back to matching pane ids.
+pub fn paneNameToRecord(name: ?[]const u8, pane_id: ?[]const u8) ?[]const u8 {
+    const n = name orelse return null;
+    if (n.len == 0) return null;
+    if (pane_id) |id| if (std.mem.eql(u8, n, id)) return null;
+    return n;
+}
+
+/// The pane name a restored LEAF may re-adopt: `adoptableName`, minus the
+/// `+list` fallback a manifest written before T1410 recorded as a name.
+pub fn leafAdoptableName(leaf: Leaf, local: bool) ?[]const u8 {
+    return paneNameToRecord(adoptableName(leaf.ipc_name, local), leaf.pane_id);
+}
+
+test "T1410: a pane's own id is not a name worth recording" {
+    const id = "5B5CE0A5-EB57-4D62-9CD5-DFC398166CFF";
+    try std.testing.expect(paneNameToRecord(id, id) == null);
+    try std.testing.expectEqualStrings("docs", paneNameToRecord("docs", id).?);
+    // Another pane's id is not this pane's fallback; it is kept as given.
+    try std.testing.expectEqualStrings(
+        "80882750-1A76-4A37-AB49-190F9B7D43BD",
+        paneNameToRecord("80882750-1A76-4A37-AB49-190F9B7D43BD", id).?,
+    );
+    try std.testing.expect(paneNameToRecord(null, id) == null);
+    try std.testing.expect(paneNameToRecord("", id) == null);
+    try std.testing.expectEqualStrings("docs", paneNameToRecord("docs", null).?);
+}
+
+test "T1410: a restore never re-adopts a recorded fallback id as a name" {
+    const id = "5B5CE0A5-EB57-4D62-9CD5-DFC398166CFF";
+    // A pre-T1410 manifest: the fallback was persisted as the name.
+    try std.testing.expect(leafAdoptableName(.{ .pane_id = id, .ipc_name = id }, true) == null);
+    // A real name still comes back, locally only (T1883).
+    try std.testing.expectEqualStrings("docs", leafAdoptableName(.{ .pane_id = id, .ipc_name = "docs" }, true).?);
+    try std.testing.expect(leafAdoptableName(.{ .pane_id = id, .ipc_name = "docs" }, false) == null);
+}
+
 test "T1883: only a local restore re-adopts a persisted name" {
     try std.testing.expectEqualStrings("dev", adoptableName("dev", true).?);
     try std.testing.expect(adoptableName("dev", false) == null);

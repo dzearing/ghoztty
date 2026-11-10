@@ -438,6 +438,18 @@ try {
     Assert ($beforeIds.Count -ge 1) "at least one agent session is alive pre-quit (got $($beforeIds.Count))"
     $vrTermSid = $termLeaves[0].session_id
     Stop-AppOnly
+    # M5 (T1410): the manifest the restore reads never records a pane's OWN id
+    # as its IPC name. `+list` (which the M0 read above just ran) registers
+    # every unnamed pane under its id as a fallback; persisted, the restore
+    # re-registered that dead id as a NAME on whatever pane came back, so with
+    # T591 reverted M3 stayed green on a pane that no longer had that id.
+    $mFinal = Read-Manifest $tmp
+    $allLeaves = @()
+    if ($mFinal) { foreach ($w in @($mFinal.windows)) { $allLeaves += @(Manifest-Leaves $w) } }
+    $idLeaves = @($allLeaves | Where-Object { $_.pane_id })
+    $selfNamed = @($idLeaves | Where-Object { $_.ipc_name -and $_.ipc_name -eq $_.pane_id })
+    Assert ($idLeaves.Count -ge 5 -and $selfNamed.Count -eq 0) `
+        "M5 no leaf records its own pane id as its IPC name ($($selfNamed.Count) of $($idLeaves.Count) id-bearing leaves did)"
     $keptIds = @(Alive-Ids)
     Assert ($keptIds -contains $vrTermSid) 'the agent kept the terminal session alive after the app died'
 
@@ -479,7 +491,16 @@ try {
 
     # ---- M (T591): every restored viewer kept its pane id -------------------
     Say '== M: the restored viewers kept their pane ids'
+    # Waited for (T1410): D-G wait for 'vr' and 'vrmiss' only, and the 'vrweb'
+    # window can still be restoring here - M1 then read its viewer as missing
+    # ("<id> -> ") on a build that kept every id.
     $postViewerIds = Viewer-IdsByUrl
+    $mDeadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $mDeadline -and
+        @($preViewerIds.Keys | Where-Object { -not $postViewerIds[$_] }).Count -gt 0) {
+        Start-Sleep -Milliseconds 500
+        $postViewerIds = Viewer-IdsByUrl
+    }
     $kept = @()
     $changed = @()
     foreach ($u in @($preViewerIds.Keys)) {

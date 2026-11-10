@@ -3466,7 +3466,11 @@ fn captureLeaf(
         surface.core_surface.remoteSessionId()
     else
         null;
-    const ipc_name = if (surface.pane_view) |pv| self.ipcNameOf(.{ .pane = pv }) else null;
+    // T1410: the `+list` fallback (the pane's own id) is not a name.
+    const ipc_name = session_layout.paneNameToRecord(
+        if (surface.pane_view) |pv| self.ipcNameOf(.{ .pane = pv }) else null,
+        surface.paneId(),
+    );
     const snap = try self.captureLeafSnapshot(arena, surface, budget, screens);
     return .{
         .session_id = if (sid) |s| try arena.dupe(u8, s) else null,
@@ -3675,7 +3679,8 @@ fn captureViewerLeaf(
     pane: *PaneView,
 ) !session_layout.Leaf {
     const view = pane.viewer().?;
-    const ipc_name = self.ipcNameOf(.{ .pane = pane });
+    // T1410: the `+list` fallback (the pane's own id) is not a name.
+    const ipc_name = session_layout.paneNameToRecord(self.ipcNameOf(.{ .pane = pane }), pane.paneId());
     return .{
         .kind = session_layout.kind_viewer,
         .pane_id = try arena.dupe(u8, pane.paneId()),
@@ -5998,7 +6003,7 @@ fn restoreBuildSubtree(
     if (depth > nodes.len or idx >= nodes.len) return error.CorruptLayout;
     const node = nodes[idx];
     if (node.leaf) |lf| {
-        if (session_layout.adoptableName(lf.ipc_name, tr.local_agent)) |n|
+        if (session_layout.leafAdoptableName(lf, tr.local_agent)) |n|
             self.ipcRegister(n, .{ .pane = anchor }) catch |err|
                 log.warn("session-restore: pane IPC register '{s}' failed err={}", .{ n, err });
         restoreLeafPresentation(anchor, lf);
@@ -7265,7 +7270,8 @@ fn rebuildTabLeavesInPlace(
         // launch-restore path. The IPC name went with the departing surface's
         // teardown (it forgets its own registry entry), and the title and
         // banner live nowhere but the manifest.
-        if (lf.ipc_name) |n|
+        // T1410: never the `+list` fallback (the pane's own id) as a name.
+        if (session_layout.paneNameToRecord(lf.ipc_name, lf.pane_id)) |n|
             self.ipcRegister(n, .{ .pane = fresh }) catch |err|
                 log.warn("in-place recovery: pane IPC register '{s}' failed err={}", .{ n, err });
         restoreLeafPresentation(fresh, lf);
