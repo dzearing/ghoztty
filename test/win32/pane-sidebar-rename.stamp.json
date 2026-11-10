@@ -1,8 +1,8 @@
 {
     "guard":  "pane-sidebar-rename",
     "script":  "test/win32/pane-sidebar-rename.ps1",
-    "generated":  "2026-11-09T16:17:54-08:00",
-    "commit":  "2016ffe09",
+    "generated":  "2026-11-09T18:43:28-08:00",
+    "commit":  "3101e2a80",
     "uncommitted":  [
                         "src/apprt/win32/PaneSidebar.zig"
                     ],
@@ -10,7 +10,7 @@
                   "src/apprt/win32/pane_sidebar.zig":  "c242e812dbf0e42956f4898a597f935f77a2a44d69a98dc8bf7978842ad3265b",
                   "src/apprt/win32/pane_sidebar_rename.zig":  "d0d22115220460b3b3af4cc4e62301afa33a757e8d717c7f68d7498c1af38166",
                   "src/apprt/win32/pane_sidebar_search.zig":  "b1e440d96beac4c2d50a3db3e0846b56e9d9327528f79099d193ae34635ada6b",
-                  "src/apprt/win32/PaneSidebar.zig":  "389c03638da40cb3947ba82c24c4453ef56b7bbabc9a5fccb199f6bec8b46522",
+                  "src/apprt/win32/PaneSidebar.zig":  "2552dbc3b7015cb97cd3b8ee40af5515de39e6520041ed3cbd49bb27b188039d",
                   "src/apprt/win32/PaneView.zig":  "3f63cca46c37110e3dbcd5128ba8c27138824a2bdb2ff50164fbf9b88c05d877",
                   "test/win32/pane-sidebar-rename.ps1":  "59ae17ddcee0857665100f6091041c1a789e7bb60c23fd5f11a4c81d1fd55bdf"
               }

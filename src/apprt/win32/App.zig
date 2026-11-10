@@ -7359,6 +7359,17 @@ pub fn hasWindow(self: *const App, window: *const Window) bool {
     return false;
 }
 
+/// The live window a pane drop's `WindowRef` (its HWND) names, or null once
+/// it has gone (T2449: a rail tile's window need not be a drop candidate).
+pub fn windowByDropRef(self: *const App, ref: u64) ?*Window {
+    if (ref == 0) return null;
+    for (self.windows.items) |w| {
+        const h = w.hwnd orelse continue;
+        if (@intFromPtr(h) == ref) return w;
+    }
+    return null;
+}
+
 /// Cancel whichever window's pane drag is live (T1844). One drag at a time
 /// exists - it holds the mouse capture - so the first one found is it.
 fn cancelPaneDrag(self: *App) bool {

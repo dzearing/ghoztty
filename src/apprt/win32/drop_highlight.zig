@@ -215,6 +215,10 @@ pub fn forTarget(target: ?Target, ctx: Context) ?Highlight {
             .rect = listCaret(ctx.list_rows, ctx.dragged, s.index, ctx.scale) orelse return null,
             .kind = .sidebar_order,
         },
+        // A rail tile joined (T2449) lights ITSELF with an accent ring (Mac
+        // `PaneSidebarWindowTile.isDropTarget`), as the empty tray does: no
+        // preview covers it.
+        .join_window => null,
         // Answered above, before the per-window arms are reached.
         .new_window, .tile => unreachable,
     };
@@ -723,6 +727,11 @@ test "T2303: a list with no other row previews nothing" {
     var c = listCtx(list_a);
     c.list_rows = t_list[0..1];
     try testing.expectEqual(@as(?Highlight, null), forTarget(.{ .sidebar_order = .{ .window = win, .index = 0 } }, c));
+}
+
+test "T2449: a joined rail tile previews nothing - the tile lights itself" {
+    const t: Target = .{ .join_window = .{ .window = win, .tab = 7, .host = 99, .rect = .{ .left = 0, .top = 0, .right = 52, .bottom = 32 } } };
+    try testing.expectEqual(@as(?Highlight, null), forTarget(t, listCtx(list_a)));
 }
 
 test "T2128: a strip's row slot previews as its caret, in its own window only" {

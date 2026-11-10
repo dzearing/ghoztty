@@ -4941,6 +4941,11 @@ pub const RearrangeDrag = struct {
         /// Released on the pane sidebar's list: that place in the list
         /// (T2303), out of the tray first if it was stashed.
         sidebar_order: struct { index: usize },
+        /// Released on a collapsed all-windows rail's tile (T2449, Mac
+        /// `.joinWindow`): into the grid of the window tab whose key is
+        /// `tab`, at its top level on the right. `host` is the window whose
+        /// sidebar shows the tile, which rings it while it is the target.
+        join_window: struct { tab: u64, host: pane_drop.WindowRef },
         /// A strip released in a slot of its own row (T2120): beside the
         /// row's item made of exactly the panes `beside[0..n]`, on `side`.
         reorder: struct { beside: [MAX_BESIDE]pane_id.Buf, n: usize, side: pane_drop.Side },
@@ -5111,6 +5116,7 @@ fn ownedDrop(
         .new_window => null,
         .stash => |sp| if (honoured) .{ .stash = .{ .index = sp.index } } else null,
         .sidebar_order => |sp| .{ .sidebar_order = .{ .index = sp.index } },
+        .join_window => |sp| if (honoured) .{ .join_window = .{ .tab = sp.tab, .host = sp.host } } else null,
         // A strip's own targets (T2128): only `pane_drop.resolveBlade` makes
         // them, for a drag started on a strip (T2120).
         .reorder => |sp| blk: {
@@ -5344,6 +5350,11 @@ fn noteSidebarsDrag(self: *Window, d: *const RearrangeDrag, pointer_y: i32) void
     for (self.app.windows.items) |win| {
         const sb = win.sidebar orelse continue;
         var at: PaneSidebar.DragAt = .{ .pane = d.view };
+        // A rail tile joined (T2449) rings in the sidebar that shows it,
+        // which is not the window it joins.
+        if (d.drop) |drop| if (drop == .join_window and drop.join_window.host == win.dropWindowRef()) {
+            at.join = drop.join_window.tab;
+        };
         if (win == dest) if (d.drop) |drop| switch (drop) {
             .sidebar_order => |o| at.list = o.index,
             .stash => |o| at.stash = o.index,
@@ -5465,6 +5476,7 @@ fn dropCandidateFor(
     tabs: []pane_drop.Rect,
     stash_rows: []pane_drop.Rect,
     list_rows: []pane_drop.PaneRect,
+    tiles: []pane_drop.WindowTile,
     gap: GapBuffers,
 ) ?pane_drop.Candidate {
     if (win.hwnd == null) return null;
@@ -5495,7 +5507,7 @@ fn dropCandidateFor(
         };
     }
     // The pane sidebar (T1844). The quick terminal has none.
-    const sidebar: ?PaneSidebar.DropGeometry = if (win.sidebar) |sb| sb.dropGeometry(stash_rows, list_rows) else null;
+    const sidebar: ?PaneSidebar.DropGeometry = if (win.sidebar) |sb| sb.dropGeometry(stash_rows, list_rows, tiles) else null;
     return .{
         .window = win.dropWindowRef(),
         .z_order = z,
@@ -5508,6 +5520,7 @@ fn dropCandidateFor(
         .stash_row_rects = if (sidebar) |g| g.rows else &.{},
         .pane_row_rects = if (sidebar) |g| g.list else &.{},
         .tray_top = if (sidebar) |g| g.tray_top else null,
+        .window_tiles = if (sidebar) |g| g.tiles else &.{},
         .dividers = gap.dividers[0..nd],
     };
 }
@@ -5673,6 +5686,8 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
     var other_tabs: [MAX_DROP_WINDOWS][MAX_DROP_TABS]pane_drop.Rect = undefined;
     var other_stash: [MAX_DROP_WINDOWS][pane_sidebar.max_items]pane_drop.Rect = undefined;
     var other_list: [MAX_DROP_WINDOWS][pane_sidebar.max_items]pane_drop.PaneRect = undefined;
+    var own_tiles: [pane_sidebar.max_items]pane_drop.WindowTile = undefined;
+    var other_tiles: [MAX_DROP_WINDOWS][pane_sidebar.max_items]pane_drop.WindowTile = undefined;
     var own_gap_ids: [MAX_DRAG_NODES][]const u8 = undefined;
     var own_dividers: [MAX_DRAG_NODES]pane_drop.Divider = undefined;
     var other_gap_ids: [MAX_DROP_WINDOWS][MAX_DROP_PANES][]const u8 = undefined;
@@ -5682,7 +5697,7 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
     var cand_windows: [MAX_DROP_WINDOWS + 1]*Window = undefined;
     var n: usize = 0;
 
-    if (dropCandidateFor(self, d.self_depth, &own_slots, &own_rects, &own_tabs, &own_stash, &own_list, .{
+    if (dropCandidateFor(self, d.self_depth, &own_slots, &own_rects, &own_tabs, &own_stash, &own_list, &own_tiles, .{
         .ids = &own_gap_ids,
         .dividers = &own_dividers,
     })) |c| {
@@ -5705,6 +5720,7 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
             &other_tabs[i],
             &other_stash[i],
             &other_list[i],
+            &other_tiles[i],
             .{ .ids = &other_gap_ids[i], .dividers = &other_dividers[i] },
         )) |c| {
             cands[n] = c;
@@ -5753,6 +5769,19 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
             d.drop = ownedDrop(t, true);
             d.highlight = drop_highlight.forTarget(t, .{ .window = 0, .content_rect = t.tile, .scale = self.scale });
             over_other_window = true;
+        } else if (t == .join_window) {
+            // A collapsed all-windows rail's tile (T2449): into that window
+            // tab's grid. Looked up among every window, not the candidates -
+            // the tile's window may be minimized or off screen. Joining the
+            // tab the pane is already in is no move (Mac `allows`), so it
+            // neither lights nor commits. The tile rings itself.
+            const j = t.join_window;
+            const dest = self.app.windowByDropRef(j.window) orelse break :resolved;
+            if (dest.closing or dest.tab_count == 0) break :resolved;
+            const tab = dest.tabIndexByKey(j.tab) orelse break :resolved;
+            if (dest == self and tab == d.source_tab) break :resolved;
+            d.drop = ownedDrop(t, true);
+            d.dest = if (dest == self) null else dest;
         } else if (t.window()) |ref| {
             // A drop into a window — this one or another. Both the commit and
             // the preview are answered against THAT window's geometry.
@@ -5790,7 +5819,8 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
             const slot: ?pane_drop.Rect = if (t == .stash) blk: {
                 const sb = dest.sidebar orelse break :blk null;
                 var slot_list: [pane_sidebar.max_items]pane_drop.PaneRect = undefined;
-                const g = sb.dropGeometry(&slot_rows, &slot_list) orelse break :blk null;
+                var slot_tiles: [pane_sidebar.max_items]pane_drop.WindowTile = undefined;
+                const g = sb.dropGeometry(&slot_rows, &slot_list, &slot_tiles) orelse break :blk null;
                 break :blk g.slot;
             } else null;
             tray_lit = slot != null;
@@ -6150,6 +6180,12 @@ fn commitRearrangeDrop(
         return;
     }
 
+    // A collapsed all-windows rail's tile (T2449): that window tab's grid.
+    if (drop == .join_window) {
+        self.commitJoinDrop(view, source_tab, at, drop.join_window.tab, dest_window);
+        return;
+    }
+
     // A strip's own drops (T2120): a window over half a screen, and a move
     // along the row it is folded into.
     if (drop == .tile) {
@@ -6255,7 +6291,7 @@ fn commitRearrangeDrop(
             break :blk insertIntoGap(alloc, &removed, view, ins) orelse return;
         },
         // All handled above, before the same-tab path is even chosen.
-        .new_tab, .new_window, .stash, .sidebar_order, .reorder, .tile => unreachable,
+        .new_tab, .new_window, .stash, .sidebar_order, .join_window, .reorder, .tile => unreachable,
     };
 
     // Swap-then-release (T1356), the rule every other tree mutation follows.
@@ -6650,7 +6686,7 @@ fn commitCrossTabDrop(
             };
         },
         // All handled by the caller, which never reaches this path with one.
-        .new_tab, .new_window, .stash, .sidebar_order, .reorder, .tile => unreachable,
+        .new_tab, .new_window, .stash, .sidebar_order, .join_window, .reorder, .tile => unreachable,
     }
 
     var old_src = self.tab_trees[source_tab];
@@ -6694,6 +6730,44 @@ fn commitCrossTabDrop(
     } else {
         self.finishRearrangeDrop(view);
     }
+}
+
+/// The tab whose sidebar key (`PaneSidebar.tabKey`) is `key`, or null.
+fn tabIndexByKey(self: *const Window, key: u64) ?usize {
+    for (0..self.tab_count) |t| if (PaneSidebar.tabKey(self, t) == key) return t;
+    return null;
+}
+
+/// A pane released on a collapsed all-windows rail's tile (T2449, Mac
+/// `PaneMoveCoordinator` `.joinWindow`): into that window tab's grid at the
+/// top level, on the right - the move a drop on that window's right edge band
+/// makes. The tab is brought up first, which is where the pane is going and
+/// what the cross-tab and cross-window moves lay out. Re-validated here: the
+/// window or the tab may have gone while the button was down.
+fn commitJoinDrop(
+    self: *Window,
+    view: *PaneView,
+    source_tab: usize,
+    at: SplitTree(PaneView).Node.Handle,
+    tab_key: u64,
+    dest_window: ?*Window,
+) void {
+    const right: RearrangeDrag.Drop = .{ .top_level = .{ .side = .right } };
+    const dest = dest_window orelse self;
+    if (dest != self) {
+        if (!self.app.hasWindow(dest)) return;
+        if (dest.closing or dest.hwnd == null or dest.tab_count == 0) return;
+    }
+    const tab = dest.tabIndexByKey(tab_key) orelse return;
+    log.info("pane drop join window other={} tab={d}", .{ dest != self, tab });
+    if (dest == self) {
+        if (tab == source_tab) return;
+        if (tab != self.active_tab) self.selectTabIndex(tab);
+        self.commitCrossTabDrop(view, source_tab, at, self.active_tab, right, null);
+        return;
+    }
+    if (tab != dest.active_tab) dest.selectTabIndex(tab);
+    self.commitCrossWindowDrop(view, source_tab, at, dest, right, null);
 }
 
 /// Move a live pane into ANOTHER top-level window (T1538).
@@ -6809,7 +6883,7 @@ fn commitCrossWindowDrop(
                 return;
             };
         },
-        .new_tab, .new_window, .stash, .sidebar_order, .reorder, .tile => unreachable,
+        .new_tab, .new_window, .stash, .sidebar_order, .join_window, .reorder, .tile => unreachable,
     }
 
     var old_src = self.tab_trees[source_tab];

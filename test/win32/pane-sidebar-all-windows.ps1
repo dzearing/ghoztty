@@ -32,6 +32,11 @@
 #   7. Collapsed, the rail is one tile per WINDOW (T2445) with no divider between
 #      windows and no header rows. A stashed pane busy in wB sheens wB's
 #      tile (T2447, `wbusy=`) and the rail moves; idle, the clock stops.
+#   7c. A grid pane dragged (by its rearrange header) onto ANOTHER window's
+#      tile JOINS that window (T2449, Mac `.joinWindow`): the tile rings
+#      (`pane sidebar join tile=on`) with no preview window over it, and the
+#      release moves s1 - the same HWND - into that window's grid. Onto THIS
+#      window's own tile it is the tray's, as before: no ring, s1 stashes.
 #   8. The toggle switches back to this window's panes only, and clears a
 #      query: back on, every window is listed (T1877).
 #   9. Motion (T1880): sections 1, 4, 5 and 8 also assert that the switch
@@ -214,6 +219,19 @@ function Get-DistinctFrames($sb, [int]$Count = 10, [int]$GapMs = 175) {
     }
     return $seen.Count
 }
+# The pixels across a rail tile's middle row (T2449: the row crosses both
+# sides of a join ring), as a string, from a synchronous capture of the
+# sidebar; $null on failure. Wide enough to take in the whole tile.
+function Get-TileEdge($sb, $tile) {
+    try {
+        $shot = Get-TestWindowPixels -Window ([IntPtr]$sb.Hwnd) -Sync
+        $px = @()
+        $from = [math]::Max(0, $tile.X - (Px 34)); $to = [math]::Min($shot.Bitmap.Width - 1, $tile.X + (Px 34))
+        for ($x = $from; $x -le $to; $x++) { $px += $shot.Bitmap.GetPixel($x, $tile.Y + (Px 6)).ToArgb() }
+        Close-TestWindowPixels -Shot $shot
+        return ($px -join ',')
+    } catch { "  edge capture failed: $($_.Exception.Message)" | Out-Host; return $null }
+}
 function Head($o, [string]$Kind, [int]$Group) { $o.Heads | Where-Object { $_.Kind -eq $Kind -and $_.Group -eq $Group } | Select-Object -First 1 }
 # A head's `hsel` digit (T2446), or '?' when it is not in the outline.
 function HeadSel($o, [string]$Kind, [int]$Group) {
@@ -264,7 +282,8 @@ try {
     Set-Content -Path $script:seam -Value '0' -NoNewline -Encoding ascii
     $env:GHOZTTY_TEST_REMOTE_SESSION_FILE = $script:seam
     $script:errlog = Join-Path $tmp 'app-stderr.log'
-    $app = Start-OnTestDesktop -Exe $Exe -StdErr $script:errlog -Arguments @('--session-persistence=false', '--macos-pane-style=flat')
+    # Section 7c drags a grid pane by its rearrange header (T2449).
+    $app = Start-OnTestDesktop -Exe $Exe -StdErr $script:errlog -Arguments @('--session-persistence=false', '--macos-pane-style=flat', '--keybind=ctrl+shift+f9=toggle_rearrange_mode')
     Start-Sleep -Seconds 3
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
     if ($top -eq [IntPtr]::Zero) { "  SETUP FAIL: top window not found"; $script:failures++; return }
@@ -698,6 +717,95 @@ try {
         $mark = Get-LogCount
         [void][SidebarSessionPost]::PostMessageW($topN, [uint32]0x0010, [IntPtr]0, [IntPtr]::Zero)
         Assert "setup: the new window closed again (log)" ($null -ne (Wait-Log 'pane sidebar all-windows groups=3 .*windows=3 ' $mark 6000))
+    }
+    Assert "setup: window A is the active window again" (Set-TestActiveWindow -Window $top)
+    Start-Sleep -Milliseconds 400
+    $sb = Get-Sidebar $top
+
+    "== 7c: a grid pane dropped on another window's tile joins that window (T2449, Mac 9e2e2902a .joinWindow)"
+    # A real pane drag, by its rearrange header, as rearrange-window-drop.ps1
+    # drives one: POSTED to window A in its client space (A holds the capture),
+    # with every point given in screen coordinates.
+    # Every window's sidebar logs its outline: read window A's (`win=`).
+    $railLine = Wait-Log "pane sidebar outline mode=mini .* win=$([int64]$top)$" 0 1000
+    $o7 = Read-Outline $railLine
+    # `wown` names this window's own tile (the selection follows a clicked
+    # window, so `wsel` cannot).
+    $wown7 = if ($railLine -match ' wown=(\S+)') { $Matches[1] } else { $null }
+    $ownTile = if ($o7 -and $wown7) { $o7.Items | Where-Object { "g$($_.Group)" -eq $wown7 } | Select-Object -First 1 } else { $null }
+    $joinTile = if ($o7 -and $wown7) { $o7.Items | Where-Object { "g$($_.Group)" -ne $wown7 } | Select-Object -First 1 } else { $null }
+    Assert "setup: the rail shows this window's tile and another's (wown=$wown7)" ($null -ne $ownTile -and $null -ne $joinTile)
+    $focused = [IntPtr](Get-TestFocusedWindow -Window $top)
+    Assert "setup: ctrl+shift+f9 (toggle_rearrange_mode) delivered" (Send-TestKeys -Window $top -Target $focused -Modifiers ctrl, shift -Key F9)
+    Start-Sleep -Milliseconds 1200
+    $sb = Get-Sidebar $top
+    # Measured with the headers up. s1 was split off P to the RIGHT.
+    $boxes = @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal' | Where-Object Visible | Sort-Object Left)
+    Assert "setup: window A shows P and s1 side by side ($($boxes.Count))" ($boxes.Count -eq 2)
+    $s1 = if ($boxes.Count -eq 2) { $boxes[1] } else { $null }
+    if ($boxes.Count -eq 2 -and $s1 -and $ownTile -and $joinTile -and $sb) {
+        $grabX = $s1.Left + (Px 60); $grabY = $s1.Top - [int]((Px 24) / 2)
+        function DragTo($x, $y, $action) { Send-TestMouse -Window $top -Target $top -X $x -Y $y -Action $action -Client }
+
+        # Over THIS window's own tile: the tray, as before (Mac: only another
+        # window's group joins) - no ring, and the release stashes s1.
+        $mark = Get-LogCount
+        Assert "own tile: press on s1's header delivered" (DragTo $grabX $grabY 'down')
+        [void](DragTo ($grabX + (Px 40)) ($grabY + (Px 40)) 'move')
+        Start-Sleep -Milliseconds 200
+        Assert "own tile: move onto this window's tile delivered" (DragTo ($sb.Left + $ownTile.X) ($sb.Top + $ownTile.Y) 'move')
+        Start-Sleep -Milliseconds 400
+        Assert "own tile: the tile does not ring as a join target (log)" ($null -eq (Wait-Log 'pane sidebar join tile=on' $mark 300))
+        [void](DragTo ($sb.Left + $ownTile.X) ($sb.Top + $ownTile.Y) 'up')
+        Assert "own tile: the release stashes s1 in this window, as the tray does" (Wait-Stashed 's1' $true)
+        Assert "setup: s1 restored ($(Get-CliErr))" ((Invoke-Cli "+restore --target=s1") -eq 0)
+        Assert "setup: s1 back on the grid" (Wait-Stashed 's1' $false)
+        Start-Sleep -Milliseconds 700
+        $boxes = @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal' | Where-Object Visible)
+        $s1 = $boxes | Where-Object { [int64]$_.Hwnd -eq [int64]$s1.Hwnd } | Select-Object -First 1
+        Assert "setup: s1 is the same pane, back in A" ($null -ne $s1)
+
+        # Over ANOTHER window's tile: it rings, no preview window covers it,
+        # and the release moves s1 - the same HWND - into that window.
+        if ($s1) {
+            $grabX = $s1.Left + (Px 60); $grabY = $s1.Top - [int]((Px 24) / 2)
+            $mark = Get-LogCount
+            Assert "join: press on s1's header delivered" (DragTo $grabX $grabY 'down')
+            [void](DragTo ($grabX + (Px 40)) ($grabY + (Px 40)) 'move')
+            Start-Sleep -Milliseconds 200
+            Assert "join: move onto the other window's tile delivered" (DragTo ($sb.Left + $joinTile.X) ($sb.Top + $joinTile.Y) 'move')
+            Assert "join: the tile rings as the join target (log)" ($null -ne (Wait-Log 'pane sidebar join tile=on' $mark 2000))
+            $hl = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyDropHighlight' | Where-Object Visible)
+            Assert "join: no preview window covers the tile ($($hl.Count))" ($hl.Count -eq 0)
+            # The ring is painted, not only logged: the tile's left edge reads
+            # differently ringed and, after the release, not.
+            $ringed = Get-TileEdge $sb $joinTile
+            $mark2 = Get-LogCount
+            [void](DragTo ($sb.Left + $joinTile.X) ($sb.Top + $joinTile.Y) 'up')
+            Assert "join: the release joins the other window (log)" ($null -ne (Wait-Log 'pane drop join window other=true' $mark2 3000))
+            Assert "join: the ring comes off with the drag (log)" ($null -ne (Wait-Log 'pane sidebar join tile=off' $mark2 2000))
+            Start-Sleep -Milliseconds 1200
+            $bare = Get-TileEdge $sb $joinTile
+            "  tile edge ringed=$ringed bare=$bare"
+            Assert "join: the ring is on screen while targeted, gone after (pixels)" ($null -ne $ringed -and $null -ne $bare -and $ringed -ne $bare)
+            $inA = @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal' | Where-Object { [int64]$_.Hwnd -eq [int64]$s1.Hwnd })
+            $host7 = $null
+            foreach ($w in @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow')) {
+                if ([int64]$w.Hwnd -eq [int64]$top) { continue }
+                if (@(Get-TestChildWindows -Window ([IntPtr]$w.Hwnd) -Class 'GhozttyTerminal' | Where-Object { [int64]$_.Hwnd -eq [int64]$s1.Hwnd }).Count -gt 0) { $host7 = $w }
+            }
+            if ($NegativeControl) {
+                Assert "NEGATIVE: s1 never left window A" ($inA.Count -gt 0)
+            } else {
+                Assert "join: s1 left window A" ($inA.Count -eq 0)
+                Assert "join: ...and is the same HWND inside another window, so its shell came with it" ($null -ne $host7)
+                Assert "join: ...on that window's grid, not its stash" (Wait-Stashed 's1' $false 500)
+            }
+        }
+        # Rearrange mode off again, so the sections below click as before.
+        $focused = [IntPtr](Get-TestFocusedWindow -Window $top)
+        [void](Send-TestKeys -Window $top -Target $focused -Modifiers ctrl, shift -Key F9)
+        Start-Sleep -Milliseconds 600
     }
     Assert "setup: window A is the active window again" (Set-TestActiveWindow -Window $top)
     Start-Sleep -Milliseconds 400

@@ -638,6 +638,10 @@ drag_active: bool = false,
 /// from `tray_hot_ms`.
 tray_hot: bool = false,
 tray_hot_ms: u64 = 0,
+/// The rail tile a release now would join (T2449, Mac
+/// `PaneSidebarWindowTile.isDropTarget`): its group key. The tile wears an
+/// accent ring while it is.
+join_tile: ?u64 = null,
 /// What the rows do for a pane dragged over this sidebar (T2304): slide to
 /// make room, and - a row dragged from here - follow the pointer.
 drag: ?DragMotion = null,
@@ -1178,11 +1182,14 @@ fn logOutline(self: *PaneSidebar) void {
     // tiles, and which of them is drawn selected.
     var wt: usize = 0;
     var wsel: ?u16 = null;
+    var wown: ?u16 = null;
     var wbusy: usize = 0;
     for (0..@min(l.count, self.entries.items.len)) |i| if (l.windowTile(i)) {
         wt += 1;
         if (self.tileGroup(i)) |g| {
             if (self.windowTileSelected(g)) wsel = self.entries.items[i].group;
+            // T2449: this window's own tile, the one a drop never joins.
+            if (g.own) wown = self.entries.items[i].group;
             // T2447: tiles sheening with their window's busy rolled up.
             if (g.busy) wbusy += 1;
         }
@@ -1190,6 +1197,7 @@ fn logOutline(self: *PaneSidebar) void {
     if (wsel) |g| {
         w.print(" wtiles={d} wsel=g{d}", .{ wt, g }) catch {};
     } else w.print(" wtiles={d} wsel=-", .{wt}) catch {};
+    if (wown) |g| w.print(" wown=g{d}", .{g}) catch {};
     w.print(" wbusy={d}", .{wbusy}) catch {};
     self.logToggle(w, &l);
     // The search field (T1877): where to click it, and whether the "No
@@ -1232,6 +1240,9 @@ fn logOutline(self: *PaneSidebar) void {
     if (l.drop_slot) |sl| {
         w.print(" tray={d},{d}", .{ sl.centerX(), sl.centerY() }) catch {};
     } else w.writeAll(" tray=-") catch {};
+    // Whose sidebar this is (T2449): every window's logs this line, and the
+    // rail's tiles are told apart per window.
+    w.print(" win={d}", .{if (self.window.hwnd) |h| @intFromPtr(h) else 0}) catch {};
     log.debug("pane sidebar outline {s}", .{fbs.getWritten()});
 }
 
@@ -1757,7 +1768,7 @@ fn projectWindowCount(app: *App, project: []const u8) usize {
     return n;
 }
 
-fn tabKey(w: *const Window, t: usize) u64 {
+pub fn tabKey(w: *const Window, t: usize) u64 {
     return std.hash.Wyhash.hash(0x746162, &w.tab_uuid[t]);
 }
 
@@ -2065,13 +2076,21 @@ pub const DropGeometry = struct {
     /// (T2303) - and where the tray begins below them (`pane_drop.sidebarHit`).
     list: []const pane_drop.PaneRect = &.{},
     tray_top: ?i32 = null,
+    /// The collapsed all-windows rail's tiles for OTHER window tabs (T2449):
+    /// a drop on one joins that tab (`pane_drop.sidebarHit`).
+    tiles: []const pane_drop.WindowTile = &.{},
 };
 
 /// The drop target this sidebar presents right now, or null while it is
 /// hidden (Mac: a sidebar hidden outright is not a target; the rail always
-/// is). Rows are written into `rows_out` (and the list's into `list_out`) and
-/// borrowed by the answer.
-pub fn dropGeometry(self: *PaneSidebar, rows_out: []pane_drop.Rect, list_out: []pane_drop.PaneRect) ?DropGeometry {
+/// is). Rows are written into `rows_out` (the list's into `list_out`, a rail
+/// of windows' tiles into `tiles_out`) and borrowed by the answer.
+pub fn dropGeometry(
+    self: *PaneSidebar,
+    rows_out: []pane_drop.Rect,
+    list_out: []pane_drop.PaneRect,
+    tiles_out: []pane_drop.WindowTile,
+) ?DropGeometry {
     if (self.mode == .hidden) return null;
     if (w32.IsWindowVisible(self.hwnd) == 0) return null;
     var col: w32.RECT = undefined;
@@ -2081,8 +2100,23 @@ pub fn dropGeometry(self: *PaneSidebar, rows_out: []pane_drop.Rect, list_out: []
     const l = self.currentLayout();
     const area: pane_drop.Rect = .{ .left = col.left, .top = col.top, .right = col.right, .bottom = col.bottom };
     // A rail of windows has no pane rows to place among (T2445): the column
-    // is the tray, as a rail with no list is.
-    if (l.windowTiles()) return .{ .sidebar = area, .rows = rows_out[0..0], .slot = null };
+    // is the tray, as a rail with no list is - but a tile standing for
+    // another window tab takes the drop into that tab (T2449, Mac
+    // `windowGroups`). This window's own tile stays the tray's.
+    if (l.windowTiles()) {
+        var nt: usize = 0;
+        for (0..@min(l.count, self.entries.items.len)) |i| {
+            if (nt == tiles_out.len) break;
+            const g = self.tileGroup(i) orelse continue;
+            if (g.own or !l.shown(i)) continue;
+            const v = scroll_mod.visible(&l, l.items[i]);
+            if (v.height() <= 0) continue;
+            const hwnd = g.window.hwnd orelse continue;
+            tiles_out[nt] = .{ .window = @intFromPtr(hwnd), .tab = g.key, .rect = toScreen(v, origin) };
+            nt += 1;
+        }
+        return .{ .sidebar = area, .rows = rows_out[0..0], .slot = null, .tiles = tiles_out[0..nt] };
+    }
     var n: usize = 0;
     var i = l.first_stashed;
     const end = if (l.outline) l.stash_end else l.count;
@@ -2152,6 +2186,7 @@ pub fn setDragActive(self: *PaneSidebar, on: bool) void {
     if (!on) {
         self.endDragMotion();
         self.setTrayHot(false, false);
+        self.setJoinTile(null);
     }
     // The tint follows `App.hover_held` (T2424): off with the drag, and
     // given again from where the pointer is once it lands.
@@ -2475,6 +2510,8 @@ pub const DragAt = struct {
     list: ?usize = null,
     stash: ?usize = null,
     pointer_y: ?i32 = null,
+    /// The rail tile (its group key) a release now would join (T2449).
+    join: ?u64 = null,
 };
 
 /// A pane drag moved (T2304): slide the rows to make room for it, and move
@@ -2494,6 +2531,8 @@ pub fn noteDrag(self: *PaneSidebar, at: DragAt) void {
         _ = w32.ScreenToClient(self.hwnd, &pt);
         h.dy = pt.y - h.press_y;
     };
+
+    self.setJoinTile(at.join);
 
     // The sequence: this window's list rows, the tray's header, its tray.
     const l = self.currentLayout();
@@ -3329,6 +3368,14 @@ fn joinAlpha(d: *const ItemDrag, row: usize, now: u64) f64 {
 /// Light or dim the empty tray (T2358). A change restarts the fade - from
 /// where the last one had got to, so a pointer flicking across the tray's
 /// edge never jumps - and is logged for the acceptance script.
+/// Ring the rail tile a release would join, or none (T2449).
+fn setJoinTile(self: *PaneSidebar, key: ?u64) void {
+    if (std.meta.eql(self.join_tile, key)) return;
+    self.join_tile = key;
+    log.info("pane sidebar join tile={s}", .{if (key != null) "on" else "off"});
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+}
+
 fn setTrayHot(self: *PaneSidebar, hot: bool, animate: bool) void {
     if (self.tray_hot == hot) return;
     const now = w32.GetTickCount64();
@@ -5247,7 +5294,15 @@ fn paintWindowTile(self: *PaneSidebar, hdc: w32.HDC, i: usize, r: pane_sidebar.R
     // secondary otherwise.
     const strong = hovered or (e.selected and emphasized);
     glyph(hdc, self.scale, icon_r, glyph_app_window, 12, if (strong) t.text else t.secondary);
+    // A pane dragged over it would join this window (T2449, Mac
+    // `isDropTarget`): a 2pt accent ring round the pill.
+    if (self.join_tile) |k| if (k == g.key) {
+        strokeRound(hdc, r, radius, rgb(t.accent), @max(pane_sidebar.px(join_ring_dip, self.scale), 1));
+    };
 }
+
+/// The join target's ring (T2449), Mac's `lineWidth: 2`.
+const join_ring_dip: i32 = 2;
 
 /// The window group item `i`'s rail tile stands for, when it carries one
 /// (`Layout.windowTile`, read from the roster so it needs no layout).

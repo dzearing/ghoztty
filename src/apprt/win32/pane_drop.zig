@@ -103,6 +103,13 @@ pub const Target = union(enum) {
     /// the tray first; another tab's or window's joins this one.
     sidebar_order: struct { window: WindowRef, index: usize },
 
+    /// Send the pane into the grid of the window tab a rail tile stands for
+    /// (T2449, Mac `.joinWindow`): a cross-window move without dragging across
+    /// the screen. `tab` is that tab's key, since a Windows window holds tabs
+    /// where Mac's tab IS a window; `host` is the window whose sidebar shows
+    /// the tile, and `rect` the tile, which lights itself as the target.
+    join_window: struct { window: WindowRef, tab: u64, host: WindowRef, rect: Rect },
+
     /// A strip dragged along its own row (T2128, Mac `.reorder`): move the
     /// pane to `side` of the row's item made of the panes `beside`. `caret`
     /// is the insertion line to draw, in screen coordinates.
@@ -135,6 +142,7 @@ pub const Target = union(enum) {
             .new_window => null,
             .stash => |s| s.window,
             .sidebar_order => |s| s.window,
+            .join_window => |s| s.window,
             .reorder => |s| s.window,
             .tile => null,
         };
@@ -201,8 +209,20 @@ pub const Candidate = struct {
     /// sidebar the tray, as before the list had an order of its own.
     tray_top: ?i32 = null,
 
+    /// The collapsed all-windows rail's tiles that stand for OTHER window
+    /// tabs (T2449, Mac `windowGroups`): a drop on one joins that tab. This
+    /// window's own tile is left out, so a drop there is the tray's.
+    window_tiles: []const WindowTile = &.{},
+
     /// The dividers between its panes (T2704), from `dividerFor`.
     dividers: []const Divider = &.{},
+};
+
+/// A rail tile standing for another window tab (T2449), in screen coordinates.
+pub const WindowTile = struct {
+    window: WindowRef,
+    tab: u64,
+    rect: Rect,
 };
 
 /// How much of a divider's split a pane dropped on it takes (T2704, Mac
@@ -863,8 +883,16 @@ fn sidebarContains(c: Candidate, p: Point) bool {
 /// What a point on `c`'s sidebar means (T2303, Mac `sidebarHit`): the sidebar
 /// is two lists split at the tray's hairline. Above it, the window's panes - a
 /// drop places the pane in the list; at or below it, the tray - a drop
-/// stashes. With no tray geometry the whole sidebar is the tray.
+/// stashes. With no tray geometry the whole sidebar is the tray. On a tile
+/// that stands for another window tab (T2449, Mac `joinWindow`), the drop
+/// joins that tab instead.
 pub fn sidebarHit(c: Candidate, point: Point, dragged: []const u8) Target {
+    for (c.window_tiles) |t| if (t.rect.contains(point)) return .{ .join_window = .{
+        .window = t.window,
+        .tab = t.tab,
+        .host = c.window,
+        .rect = t.rect,
+    } };
     if (c.tray_top) |top| if (point.y < top) return .{ .sidebar_order = .{
         .window = c.window,
         .index = listIndexAt(c.pane_row_rects, dragged, point),
@@ -1616,6 +1644,40 @@ test "a point on another window's sidebar stashes THERE" {
     const cands = [_]Candidate{ own, other };
     const t = resolve(.{ .x = 2100, .y = 300 }, &cands, dragged_id, m1).?;
     try testing.expectEqual(@as(WindowRef, 2), t.stash.window);
+}
+
+test "T2449: a drop on another window's rail tile joins that window's tab" {
+    // Mac PaneDropResolverSidebarTests `joinWindow`: the rail of window 1
+    // shows tiles for windows 2 and 3 (its own is left out of the list).
+    const tiles = [_]WindowTile{
+        .{ .window = 2, .tab = 0xB, .rect = .{ .left = 0, .top = 100, .right = 52, .bottom = 132 } },
+        .{ .window = 3, .tab = 0xC, .rect = .{ .left = 0, .top = 140, .right = 52, .bottom = 172 } },
+    };
+    var c = sidebarCandidate(&.{}, &.{});
+    c.window_tiles = &tiles;
+    const cands = [_]Candidate{c};
+    const on_b = resolve(.{ .x = 20, .y = 110 }, &cands, dragged_id, m1).?;
+    try testing.expectEqual(@as(WindowRef, 2), on_b.join_window.window);
+    try testing.expectEqual(@as(u64, 0xB), on_b.join_window.tab);
+    try testing.expectEqual(c.window, on_b.join_window.host);
+    try testing.expectEqual(@as(i32, 100), on_b.join_window.rect.top);
+    try testing.expectEqual(@as(?WindowRef, 2), on_b.window());
+    const on_c = resolve(.{ .x = 20, .y = 171 }, &cands, dragged_id, m1).?;
+    try testing.expectEqual(@as(u64, 0xC), on_c.join_window.tab);
+    // Between the tiles, and on this window's own (unlisted) tile: the tray.
+    try testing.expect(resolve(.{ .x = 20, .y = 135 }, &cands, dragged_id, m1).? == .stash);
+    try testing.expect(resolve(.{ .x = 20, .y = 40 }, &cands, dragged_id, m1).? == .stash);
+}
+
+test "T2449: tiles only count on the sidebar that shows them" {
+    // A tile rect that lies outside the sidebar is never reached: the point
+    // has to be on the sidebar first.
+    const tiles = [_]WindowTile{.{ .window = 2, .tab = 1, .rect = .{ .left = 5000, .top = 0, .right = 5052, .bottom = 32 } }};
+    var c = sidebarCandidate(&.{}, &.{});
+    c.window_tiles = &tiles;
+    const cands = [_]Candidate{c};
+    const t = resolve(.{ .x = 5010, .y = 10 }, &cands, dragged_id, m1);
+    try testing.expect(t == null or t.? != .join_window);
 }
 
 test "Target.window answers for a stash" {
