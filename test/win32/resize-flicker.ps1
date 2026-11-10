@@ -67,6 +67,11 @@
 #      Aero-snap and a title-bar double-click each resized every visible pane
 #      with the anti-flicker path switched off, and section C2 above could not
 #      tell, because `Set-TestWindowPos` never opens a size loop either.
+#      D6 (T1397) adds the other two whole-window paths: a DPI change in
+#      place, and a frame drag onto the second monitor and back with the
+#      scale flipping mid-drag, then maximize on that monitor. The DPI flip
+#      is the debug build's stand-in for WM_DPICHANGED; what that cannot
+#      reach is written at D6.
 #
 #   E. The frame the wait CAME BACK ON, added by T1476 - the same mechanism 4,
 #      one layer down. Waiting was never the whole guarantee: the wait ended on
@@ -589,6 +594,107 @@ try {
     [void](Send-TestKeys -Window ([IntPtr]$top) -Target ([IntPtr]$wide[0].Hwnd) -Key F8)
     Start-Sleep -Milliseconds 900
 
+    # D6. A DPI change and a monitor move (T1397). Both resize every pane
+    # through the same layout pass, and nothing above reaches either one.
+    #
+    # WHAT THIS CANNOT DO, said plainly. Windows will not deliver a
+    # WM_DPICHANGED sent from another process, and this box's monitors share
+    # one scale, so a real move never produces one either. The DPI flip is
+    # therefore the debug build's WM_APP_TEST_DPICHANGED (T1579), which runs
+    # the app's own WM_DPICHANGED handler - and since T1397 can carry the
+    # size Windows would suggest, so the handler's own SetWindowPos runs too,
+    # the way it does for a real crossing. What stays out of reach: WHEN
+    # Windows decides to send it (the majority-area crossing mid-drag), and
+    # the non-client re-measure it does first. A box with two monitors at
+    # different scales is the only place those can be watched (T1256's kind
+    # of run, by a person).
+    $WM_APP_TEST_DPICHANGED = 0x8000 + 38
+    $dpi0 = [int](Get-TestWindowDpi -Window ([IntPtr]$top))
+    if ($dpi0 -le 0) { $dpi0 = 96 }
+    # 200% (192 dpi), the scale the task names; 1.5x the box's own when the
+    # box already runs at 200% or above.
+    $dpiHigh = $(if ($dpi0 -lt 192) { 192 } else { [int][math]::Round($dpi0 * 1.5, [MidpointRounding]::AwayFromZero) })
+    $ratio = $dpiHigh / $dpi0
+    $bigW = [int][math]::Round(1180 * $ratio, [MidpointRounding]::AwayFromZero)
+    $bigH = [int][math]::Round(820 * $ratio, [MidpointRounding]::AwayFromZero)
+    $dpiChangedBefore = @(Select-String -Path $errlog -Pattern 'window dpi changed dpi=' -ErrorAction SilentlyContinue).Count
+    function Send-TestDpi([int]$dpi, [int]$w = 0, [int]$h = 0) {
+        $lp = [IntPtr](([int64]$h -shl 16) -bor ($w -band 0xFFFF))
+        [void](Send-TestRawMessage -Window ([IntPtr]$top) -Message $WM_APP_TEST_DPICHANGED `
+            -WParam ([IntPtr]$dpi) -LParam $lp)
+    }
+
+    # D6a. In place, keeping the size (lparam 0, the T1579 shape): the chrome
+    # band is scaled, so the panes still change size under it.
+    [void](Set-TestWindowPos -Window ([IntPtr]$top) -X 40 -Y 40 -Width 1180 -Height 820)
+    Start-Sleep -Milliseconds 600
+    Send-TestDpi $dpiHigh
+    Start-Sleep -Milliseconds 900
+    Send-TestDpi $dpi0
+    Start-Sleep -Milliseconds 900
+
+    # D6b. A frame drag from one monitor onto another and back, the scale
+    # flipping mid-drag with the suggested size each way - the user's
+    # "drag the window to the other screen", inside its modal size loop.
+    $screens = @()
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        $screens = @([System.Windows.Forms.Screen]::AllScreens | Sort-Object { $_.Bounds.X })
+    } catch { $screens = @() }
+    $second = $null
+    if ($screens.Count -ge 2) {
+        $second = $screens | Where-Object { -not $_.Primary } | Select-Object -First 1
+    }
+    $onSecond = $false
+    if ($second) {
+        $wa = $second.WorkingArea
+        [void](Send-TestRawMessage -Window ([IntPtr]$top) -Message $WM_ENTERSIZEMOVE)
+        Start-Sleep -Milliseconds 150
+        [void](Set-TestWindowPos -Window ([IntPtr]$top) -X ($wa.X - 400) -Y 40 -Width 1180 -Height 820)
+        Start-Sleep -Milliseconds 250
+        [void](Set-TestWindowPos -Window ([IntPtr]$top) -X ($wa.X + 40) -Y 40 -Width 1180 -Height 820)
+        Start-Sleep -Milliseconds 250
+        Send-TestDpi $dpiHigh $bigW $bigH
+        Start-Sleep -Milliseconds 700
+        $r = Get-TestWindowRect -Window ([IntPtr]$top)
+        $onSecond = ($r.Left -ge $wa.X -and [math]::Abs($r.Width - $bigW) -le 2 -and [math]::Abs($r.Height - $bigH) -le 2)
+        Send-TestDpi $dpi0 1180 820
+        Start-Sleep -Milliseconds 700
+        [void](Set-TestWindowPos -Window ([IntPtr]$top) -X 40 -Y 40 -Width 1180 -Height 820)
+        Start-Sleep -Milliseconds 250
+        [void](Send-TestRawMessage -Window ([IntPtr]$top) -Message $WM_EXITSIZEMOVE)
+        Start-Sleep -Milliseconds 300
+
+        # D6c. Maximize and restore on the OTHER monitor: the maximized frame
+        # is that monitor's work area, not the primary's.
+        [void](Set-TestWindowPos -Window ([IntPtr]$top) -X ($wa.X + 60) -Y 60 -Width 1100 -Height 760)
+        Start-Sleep -Milliseconds 400
+        [void](Send-TestRawMessage -Window ([IntPtr]$top) -Message $WM_SYSCOMMAND `
+            -WParam ([IntPtr]$SC_MAXIMIZE))
+        Start-Sleep -Milliseconds 900
+        $rm = Get-TestWindowRect -Window ([IntPtr]$top)
+        $maxOnSecond = ($rm.Left -ge ($wa.X - 16) -and $rm.Left -lt ($wa.X + 16) -and $rm.Width -ge ($wa.Width - 32))
+        [void](Send-TestRawMessage -Window ([IntPtr]$top) -Message $WM_SYSCOMMAND `
+            -WParam ([IntPtr]$SC_RESTORE))
+        Start-Sleep -Milliseconds 900
+        [void](Set-TestWindowPos -Window ([IntPtr]$top) -X 40 -Y 40 -Width 1180 -Height 820)
+        Start-Sleep -Milliseconds 600
+    }
+
+    $dpiChanged = @(Select-String -Path $errlog -Pattern 'window dpi changed dpi=' -ErrorAction SilentlyContinue).Count - $dpiChangedBefore
+    $dpiExpected = $(if ($second) { 4 } else { 2 })
+    Assert ($dpiChanged -eq $dpiExpected) `
+        "the DPI handler ran for every scale flip ($dpiChanged of $dpiExpected, $dpi0 <-> $dpiHigh dpi)"
+    if ($second) {
+        Assert $onSecond ("the drag landed on the other monitor at the suggested size " +
+            "(left=$($r.Left) $($r.Width)x$($r.Height), suggested ${bigW}x${bigH}, monitor from x=$($wa.X))")
+        Assert $maxOnSecond ("maximize filled the other monitor's work area " +
+            "(left=$($rm.Left) width=$($rm.Width), work area x=$($wa.X) width=$($wa.Width))")
+    } else {
+        $script:skipped++
+        Write-Host "SKIP  one monitor on this box: the cross-monitor drag and maximize (D6b/D6c) were not run" -ForegroundColor Yellow
+    }
+
     $passes = @(Get-ResizePasses $errlog)
     $newPasses = @($passes | Select-Object -Skip $winresizeBefore)
     $withPanes = @($newPasses | Where-Object { $_.Panes -gt 0 })
@@ -607,6 +713,10 @@ try {
             ("the non-modal paths were reached (causes: $($causes -join ', '))")
         Assert ($causes -contains 'tabswitch') `
             ("a background tab was switched to (causes: $($causes -join ', '))")
+        # T1397: a DPI change resized panes through its own pass, so the
+        # guarantee below covers it rather than holding vacuously.
+        Assert ($causes -contains 'dpi') `
+            ("a DPI change resized the panes (causes: $($causes -join ', '))")
     }
 
     # THE DEFECT: a pass that resized panes the user can see must have put

@@ -271,6 +271,25 @@ pub const WM_APP_OPEN_MENU: u32 = w32.WM_APP + 10;
 /// release build ignores it.
 pub const WM_APP_TEST_DPICHANGED: u32 = w32.WM_APP + 38;
 
+/// The suggested size a `WM_APP_TEST_DPICHANGED` lparam carries (T1397):
+/// `width | height << 16`, or null for 0 ("keep the size", the T1579 shape).
+/// A half that is zero is no size at all, so it is null too.
+pub fn testSuggestedSize(lparam: isize) ?struct { w: i32, h: i32 } {
+    const v: usize = @bitCast(lparam);
+    const w: i32 = @intCast(v & 0xFFFF);
+    const h: i32 = @intCast((v >> 16) & 0xFFFF);
+    if (w == 0 or h == 0) return null;
+    return .{ .w = w, .h = h };
+}
+
+test "testSuggestedSize unpacks width and height and treats zero as keep" {
+    try std.testing.expect(testSuggestedSize(0) == null);
+    try std.testing.expect(testSuggestedSize(1200) == null); // no height
+    const s = testSuggestedSize(1200 | (900 << 16)).?;
+    try std.testing.expectEqual(@as(i32, 1200), s.w);
+    try std.testing.expectEqual(@as(i32, 900), s.h);
+}
+
 /// DEBUG BUILDS ONLY: where the full-screen reveal should believe the pointer
 /// is (T2011), as screen x/y in wparam/lparam. The background test desktop has
 /// no cursor to move, so without it no acceptance script could push the
@@ -21262,7 +21281,17 @@ pub fn windowWndProc(
         WM_APP_TEST_DPICHANGED => {
             if (comptime builtin.mode != .Debug) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             const dpi = window_broadcast.dpiFromWparam(wparam) orelse return 0;
-            window.handleDpiChanged(hwnd, dpi, null);
+            // lparam 0 keeps the size; otherwise it is the size Windows would
+            // suggest, packed width | height << 16, at the window's current
+            // origin (T1397) - a RECT pointer cannot cross a process.
+            var rect: w32.RECT = undefined;
+            const suggested: ?*const w32.RECT = if (testSuggestedSize(lparam)) |sz| blk: {
+                if (w32.GetWindowRect(hwnd, &rect) == 0) break :blk null;
+                rect.right = rect.left + sz.w;
+                rect.bottom = rect.top + sz.h;
+                break :blk &rect;
+            } else null;
+            window.handleDpiChanged(hwnd, dpi, suggested);
             return 0;
         },
         WM_APP_TEST_FULLSCREEN_POINTER => {
