@@ -813,7 +813,9 @@ if ($NegativeControl -and -not $script:negReached) {
 # A clean green run stamps the covered files (T783/T721), so guard-due can
 # answer "has this harness been run against the code as it now stands?" for
 # `overlay_zorder.zig` - the module that decides what a stray topmost is, what
-# counts as seated, and (T721) which popups are in the set at all. Nothing tied
+# counts as seated, and (T721) which popups are in the set at all - and
+# `chrome_fanout.zig`, whose `healScope` decides how much of the heal a resize's
+# reposition runs (T1415; the resize sections below are what drive it). Nothing tied
 # the policy to its only on-box demonstration before, which is how the two
 # activatable popups sat unchecked for a month.
 #

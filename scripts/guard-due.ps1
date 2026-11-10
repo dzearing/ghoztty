@@ -3883,12 +3883,20 @@ $GuardTable = @(
     # reasons that have nothing to do with z-order, and a guard that is due
     # every turn teaches people to reach for the hatch. The policy file is the
     # narrow thing an intentional change to this behavior has to touch.
+    #
+    # T1415: `chrome_fanout.zig` too. It decides HOW MUCH of the heal a
+    # reposition runs (`healScope`), and that is the decision T1345 got wrong -
+    # it dropped the stray-topmost half along with the walk, and nothing flagged
+    # it until T1413 found it by hand a week later. Unlike `win32.zig` it is a
+    # cold file (one edit in the two months after T721), so covering it costs a
+    # run only when somebody actually changes the heal policy.
     [pscustomobject]@{
         Name   = 'overlay-zorder'
         Script = 'test\win32\overlay-zorder.ps1'
         Stamp  = 'test\win32\overlay-zorder.stamp.json'
         Covers = @(
             'src\apprt\win32\overlay_zorder.zig',
+            'src\apprt\win32\chrome_fanout.zig',
             'test\win32\overlay-zorder.ps1'
         )
     },
