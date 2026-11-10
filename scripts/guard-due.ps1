@@ -1992,6 +1992,24 @@ $GuardTable = @(
             'src\apprt\win32\session_layout.zig'
         )
     },
+    # T2876: in-place local-agent crash recovery on a single window - the kill
+    # (C/E), the blip that must change nothing (G) and its negative control (H),
+    # and the aborted re-dial a retry has to save (I/J), plus the pane opened
+    # while the agent is wedged (K). It had no row, so T2597's pane-window pool
+    # broke its rebuild oracle and nothing obliged anyone to re-run it for eight
+    # days. `pane_pool.zig` is here for exactly that reason: the pool decides
+    # what a rebuilt pane's window is, which is what the oracle used to read.
+    [pscustomobject]@{
+        Name   = 'agent-recovery'
+        Script = 'test\win32\agent-recovery.ps1'
+        Stamp  = 'test\win32\agent-recovery.stamp.json'
+        Covers = @(
+            'test\win32\agent-recovery.ps1',
+            'src\apprt\win32\agent_recovery.zig',
+            'src\apprt\win32\LocalAgent.zig',
+            'src\apprt\win32\pane_pool.zig'
+        )
+    },
     # The clipboard is a machine-wide resource with a give-up-at-once API, so
     # its regressions are INTERMITTENT by construction: a copy that vanishes one
     # time in ten reads to a user as flakiness in their own hands, and to every

@@ -1,10 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-09T15:36:46-08:00",
-    "commit":  "e18cfcca9",
+    "generated":  "2026-11-09T15:57:46-08:00",
+    "commit":  "9d85e29f0",
     "uncommitted":  [
-                        "scripts/comp-glide-hold-onscreen.ps1"
+                        "scripts/guard-due.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -21,7 +21,7 @@
                   "scripts/comp-desk-onscreen.ps1":  "aaab26f3dd26297f681e4736416e43a73636231adf51a7f048f772762d749c38",
                   "scripts/comp-flat-onscreen.ps1":  "f4e677d04745196654ca641c7ffe5053b84320318a24f6c4621371136ca4bebc",
                   "scripts/comp-gl-baseline.ps1":  "b7f792f81e8cd6e6ad7b62ac7329665ec70edbf3a8bde0b37ff3157ec48e05ae",
-                  "scripts/comp-glide-hold-onscreen.ps1":  "4f61a5f23235348a8c62a3a24107812ecf09f14da3eb2c577b39413c636b6bb7",
+                  "scripts/comp-glide-hold-onscreen.ps1":  "f4bcdc27136af947ce34fed6386d4ec3b4ca50c2ba8ca4db99275d950eb6bb79",
                   "scripts/comp-overlay-onscreen.ps1":  "caad81c2f4ba9863f6e436a26e8ae5b564a8e20da35b893cf5bced8175d8d06a",
                   "scripts/comp-present-glide.ps1":  "70bb4876a8a90a82052cc33848ba70c02f6a81d15dc6e379fab01fa03598b81f",
                   "scripts/comp-present-onscreen.ps1":  "8e30e7b69d5d7628e2a2cf3c76590a12a20644b942a6a8c71c365b89a131c1fa",
@@ -50,7 +50,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8bc76326d576230a4aaf9b046c9f12cb7c3d59d25d3ed65672c628ddd64b5ac0",
                   "scripts/go-loop-watchdog.ps1":  "c9e028f6040e12199efab1bc31a4b2b6d647ecb9c90461682af314330034fc23",
-                  "scripts/guard-due.ps1":  "c60a6ef25f59cba8d564f067202475568bd9201de34775d55c7ec679adf75e2d",
+                  "scripts/guard-due.ps1":  "75a3537aa8deb4d2e102a62100e08f38f216d70a42c29de2b2af97ee4f8130d7",
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
                   "scripts/hero-glide-onscreen.ps1":  "46d211f7ec7843d13506f4e3bd13933630339adb8aff13b5c97d69ae3fd248a7",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",

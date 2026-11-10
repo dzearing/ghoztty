@@ -21,8 +21,8 @@
 #      them (T906) instead of relaunching. Until then the same assertion read
 #      the other way round — new pids, because the shells died with the agent —
 #      and the flip is the whole user-visible point of T705. What separates a
-#      real rebuild from a pane that merely still exists is the SURFACE set
-#      (E7), never the pids.
+#      real rebuild from a pane that merely still exists is the surfaces the
+#      rebuild closed (E7), never the pids.
 #   D: the e65cfa4d5 lesson — recovery must not KILL the sessions it recovers.
 #      The alive-session count is 2 after recovery AND still 2 after the
 #      departing surfaces have had time to finish tearing down (their DETACH
@@ -50,12 +50,15 @@
 #      shared connection and opening frozen, and the window must still open
 #      promptly rather than blocking on a handshake that never completes.
 #
-# The oracle for "did a rebuild run" is the set of GhozttyTerminal child windows,
-# not the child pids. Recovery keeps the window HWND and replaces the SURFACES
-# inside it, so a fresh set is positive proof a rebuild ran and an unchanged set
-# is positive proof none did. Sections E7 and H6 take that same measurement where
-# a rebuild IS expected, which is what makes G's "nothing changed" a claim rather
-# than a tautology.
+# The oracle for "did a rebuild run" is the number of terminal SURFACES the app
+# closed inside the rebuild (its `surface closed` lines between `in-place
+# recovery: re-dialed` and `in-place recovery: rebuilt`), not the child pids and
+# - since T2876 - not the HWND set either: T2597's pane-window pool hands a
+# departing pane's window to the next pane, so window identity no longer says
+# whether a surface is fresh. Two closes is positive proof a rebuild ran; none in
+# G's blip window is positive proof none did. Sections E7, H6 and I6 take that
+# same measurement where a rebuild IS expected, which is what makes G's "nothing
+# changed" a claim rather than a tautology.
 #
 # Fully hermetic: a per-run $env:LOCALAPPDATA and GHOSTTY_LOCAL_AGENT_BIN, and
 # it ONLY ever kills ghoztty / ghoztty-agent processes launched from the repo
@@ -309,34 +312,81 @@ function Wait-ProcGone($procId, $timeoutSec = 20) {
 # and would return an EMPTY set once the app launches onto the test desktop -
 # and an empty set compares equal to another empty set, so every "the surfaces
 # were replaced" assertion would have passed without measuring anything.
+#
+# VISIBLE windows only (T2876). Since T2597 (`pane_pool.zig`) a departing pane's
+# window is parked HIDDEN in its top-level and handed to the next pane built
+# there, so after the first rebuild the hidden spares are still enumerable and a
+# raw count read 4 where the tab holds 2 terminals. The parked spares are not
+# panes; the visible set is.
 function Get-TerminalSurfaces($procId) {
     $acc = @()
     foreach ($top in @(Get-TestWindows -ProcessId ([int]$procId) -Class '*' -AllowHidden)) {
-        if ($top.Class -eq 'GhozttyTerminal') { $acc += [int64]$top.Hwnd }
+        if ($top.Class -eq 'GhozttyTerminal' -and $top.Visible) { $acc += [int64]$top.Hwnd }
         foreach ($c in @(Get-TestChildWindows -Window ([IntPtr]$top.Hwnd) -Class 'GhozttyTerminal')) {
-            $acc += [int64]$c.Hwnd
+            if ($c.Visible) { $acc += [int64]$c.Hwnd }
         }
     }
     return , @($acc | Sort-Object)
 }
 
-# The settled surface set after a rebuild. The departing surfaces are destroyed
-# ASYNCHRONOUSLY (the same teardown window section D waits out), so a sample
-# taken the instant the rebuild finishes legitimately shows FOUR terminal
-# surfaces - the two fresh ones and the two on their way out. Asserting on the
-# first sample read that as "recovery reused a surface", the exact opposite of
-# what had happened, and did so on 2 runs in 5. Waiting for the set to settle is
-# what makes the instrument measure the rebuild instead of the teardown's clock.
-function Wait-SurfacesReplaced($procId, $before, $want, $timeoutSec = 25) {
+# The visible surface count once a rebuild has settled. A sample taken the
+# instant the rebuild finishes can still see the departing windows on their way
+# out, so this polls for the count rather than reading it once.
+function Wait-SurfaceCount($procId, $want, $timeoutSec = 25) {
     $deadline = (Get-Date).AddSeconds($timeoutSec)
     $now = Get-TerminalSurfaces $procId
     while ((Get-Date) -lt $deadline) {
         $now = Get-TerminalSurfaces $procId
-        $reused = @($now | Where-Object { $before -contains $_ })
-        if ($now.Count -eq $want -and $reused.Count -eq 0) { return , $now }
+        if ($now.Count -eq $want) { return , $now }
         Start-Sleep -Milliseconds 500
     }
     return , $now
+}
+
+# THE rebuild oracle (T2876, the same one T2865 gave agent-recovery-tabs.ps1).
+# It used to be "the HWND set after is disjoint from the set before", which held
+# only while a departing surface destroyed its window. Since T2597 the pool
+# reuses that window for the next pane, so a CORRECT rebuild can land its fresh
+# surfaces in the very HWNDs it just vacated and read as "nothing was rebuilt".
+#
+# Each departing surface logs `surface closed` from `Surface.deinit`, and the
+# rebuild frees the old tree synchronously between `reconnectForRecovery`'s
+# `in-place recovery: re-dialed` line and `in-place recovery: rebuilt`. So the
+# count of `surface closed` lines inside that window is the number of terminal
+# surfaces the rebuild replaced - 2 here (the viewer is no Surface, and section F
+# shows it is spared). An ABORTED attempt never logs `re-dialed` (the line is
+# written only once a dial succeeds), so the first window after the mark is the
+# attempt that actually rebuilt.
+#
+# Returns -1 while there is no complete re-dialed..rebuilt window after $from.
+function Get-RebuildCloses($from) {
+    $t = Read-AppLog $from
+    $iDial = $t.IndexOf('in-place recovery: re-dialed')
+    if ($iDial -lt 0) { return -1 }
+    $iDone = $t.IndexOf('in-place recovery: rebuilt', $iDial)
+    if ($iDone -lt 0) { return -1 }
+    return ([regex]::Matches($t.Substring($iDial, $iDone - $iDial), 'surface closed')).Count
+}
+function Wait-RebuildCloses($from, $timeoutSec = 45) {
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $n = Get-RebuildCloses $from
+        if ($n -ge 0) { return $n }
+        Start-Sleep -Milliseconds 250
+    }
+    return (Get-RebuildCloses $from)
+}
+# Printed beside a failed rebuild assertion: every surface the app owns (hidden
+# pool spares included), and the log lines the oracle reads.
+function Show-RebuildEvidence($procId, $from, $tag) {
+    foreach ($top in @(Get-TestWindows -ProcessId ([int]$procId) -Class '*' -AllowHidden)) {
+        foreach ($c in @(Get-TestChildWindows -Window ([IntPtr]$top.Hwnd) -Class 'GhozttyTerminal')) {
+            "    [$tag] hwnd=$($c.Hwnd) visible=$($c.Visible)"
+        }
+    }
+    foreach ($ln in ((Read-AppLog $from) -split "`r?`n")) {
+        if ($ln -match 'recovery|surface closed') { "    [$tag] log: $ln" }
+    }
 }
 
 # The app's stderr. A Debug build links the CONSOLE subsystem, so std.log lands
@@ -483,6 +533,8 @@ $agents = Get-RunAgents $tmp
 if ($agents.Count -ne 1) { Show-Agents $tmp 'B' }
 Assert "B1 exactly one agent belongs to this run" ($agents.Count -eq 1)
 $agentPid = if ($agents.Count -ge 1) { [int]$agents[0].ProcessId } else { 0 }
+# E7 reads the rebuild out of log text written from here on (T2876).
+$logMarkB = Get-AppLogLength
 foreach ($a in $agents) { Stop-Process -Id $a.ProcessId -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Milliseconds 800
 
@@ -564,15 +616,16 @@ Assert "E5 the pane's IPC name still resolves after the rebuild" ($rcE -eq 0)
 $paneE = (Terminal-Leaves $treeE)[0]
 Assert "E6 the rebuilt pane kept its stable pane id" ($paneE.id -eq $paneA.id)
 
-# The CONTROL for section G, taken with G's own instrument. A rebuild keeps the
-# window HWND and replaces the surfaces inside it, so nothing here may be one of
-# the surfaces from A - and that is what makes "the surfaces are unchanged" a
-# measurement of no-rebuild rather than of a blunt instrument.
-$surfE = Wait-SurfacesReplaced $appPid $surfA 2
-$reusedE = @($surfE | Where-Object { $surfA -contains $_ })
-if ($reusedE.Count -ne 0) { "    [E7] before=$($surfA -join ',') after=$($surfE -join ',')" }
-Assert "E7 recovery REPLACED every terminal surface (the control for G)" (
-    $surfE.Count -eq 2 -and $reusedE.Count -eq 0)
+# The CONTROL for section G, taken with G's own instrument: the rebuild closed
+# both terminal surfaces (Get-RebuildCloses, T2876), which is what makes G's
+# "no surface closed" a measurement of no-rebuild rather than of a blunt
+# instrument.
+$closedE = Wait-RebuildCloses $logMarkB 30
+if ($closedE -ne 2) { Show-RebuildEvidence $appPid $logMarkB 'E7' }
+Assert "E7 recovery REPLACED both terminal surfaces (closed inside the rebuild: $closedE, want 2; the control for G)" (
+    $closedE -eq 2)
+$surfE = Wait-SurfaceCount $appPid 2
+Assert "E8 the rebuilt tab shows exactly 2 terminal surfaces (count=$($surfE.Count))" ($surfE.Count -eq 2)
 
 # ============================================================================
 "== F: T399 - the viewer pane was never touched by the recovery"
@@ -665,14 +718,16 @@ Assert "G7 the link healed on its own - the app says no recovery was needed" (
 Assert "G8 no in-place recovery was triggered by the blip" (
     $tailG -notmatch 'recovering local windows in place')
 
-# The outcome, and the one that would still be true if every log line were
-# missing: recovery replaces surfaces (E7), so surfaces that are still the same
-# objects were never rebuilt.
+# The outcome: a rebuild closes every terminal surface (E7 reads 2), so a blip
+# window in which NO surface closed rebuilt nothing. This used to compare HWND
+# sets, which T2597's pane-window pool made blind - a rebuild can now hand its
+# fresh surfaces the very windows it vacated (T2876).
+$closedG = ([regex]::Matches((Read-AppLog $logMark), 'surface closed')).Count
+if ($closedG -ne 0) { Show-RebuildEvidence $appPid $logMark 'G9' }
+Assert "G9 every terminal SURFACE survived the blip - nothing was rebuilt (surfaces closed: $closedG)" (
+    $closedG -eq 0)
 $surfG1 = Get-TerminalSurfaces $appPid
-$sameG = ($surfG1.Count -eq $surfG0.Count) -and
-    (@($surfG1 | Where-Object { $surfG0 -notcontains $_ }).Count -eq 0)
-if (-not $sameG) { "    [G9] before=$($surfG0 -join ',') after=$($surfG1 -join ',')" }
-Assert "G9 every terminal SURFACE survived the blip - nothing was rebuilt" $sameG
+Assert "G9b the tab still shows 2 terminal surfaces (count=$($surfG1.Count))" ($surfG1.Count -eq 2)
 
 $rowsG1 = Wait-AliveCount $tmp 'g1' 2 25
 $pidsG1 = Alive-Pids $rowsG1
@@ -738,11 +793,12 @@ Assert "H4 a drop held past the window DID trigger in-place recovery" $recoverSe
 $rowsH = Wait-AliveCount $tmp 'h' 2 45
 Assert "H5 two sessions are alive after the rebuild" ((Alive-Rows $rowsH).Count -eq 2)
 
-$surfH1 = Wait-SurfacesReplaced $appPid $surfH0 2
-$reusedH = @($surfH1 | Where-Object { $surfH0 -contains $_ })
-if ($reusedH.Count -ne 0) { "    [H6] before=$($surfH0 -join ',') after=$($surfH1 -join ',')" }
-Assert "H6 every terminal surface was REPLACED - G's instrument reads both ways" (
-    $surfH1.Count -eq 2 -and $reusedH.Count -eq 0)
+$closedH = Wait-RebuildCloses $logMarkH 30
+if ($closedH -ne 2) { Show-RebuildEvidence $appPid $logMarkH 'H6' }
+Assert "H6 every terminal surface was REPLACED - G's instrument reads both ways (closed: $closedH, want 2)" (
+    $closedH -eq 2)
+$surfH1 = Wait-SurfaceCount $appPid 2
+Assert "H6b the rebuilt tab shows exactly 2 terminal surfaces (count=$($surfH1.Count))" ($surfH1.Count -eq 2)
 
 # The documented negative result, asserted so it cannot quietly stop being true:
 # pids are blind to this rebuild.
@@ -791,7 +847,6 @@ Assert "H9 the topology survived: one window, 2 terminals, the viewer intact" (
 # why the kill arm runs FIRST and hands J a brand-new agent, rather than J
 # inheriting one this section has already frozen.
 $logMarkI = Get-AppLogLength
-$surfI0 = Get-TerminalSurfaces $appPid
 $agentsI = Get-RunAgents $tmp
 if ($agentsI.Count -ne 1) { Show-Agents $tmp 'I' }
 Assert "I1 exactly one agent belongs to this run before the wedge" ($agentsI.Count -eq 1)
@@ -840,11 +895,10 @@ Assert "I5 the wedged agent is gone" (Wait-ProcGone $agentPidI 20)
 # The retry schedule is 2s/4s/8s/15s/30s/30s, and a spawn+dial+rebuild is
 # seconds more, so this waits generously - but not so long that the schedule
 # could have run out, or a pass would say nothing about the retry.
-$surfI1 = Wait-SurfacesReplaced $appPid $surfI0 2 90
-$reusedI = @($surfI1 | Where-Object { $surfI0 -contains $_ })
-if ($reusedI.Count -ne 0) { "    [I6] before=$($surfI0 -join ',') after=$($surfI1 -join ',')" }
-Assert "I6 a retry rebuilt every terminal surface with no app relaunch" (
-    $surfI1.Count -eq 2 -and $reusedI.Count -eq 0)
+$closedI = Wait-RebuildCloses $logMarkI 90
+if ($closedI -ne 2) { Show-RebuildEvidence $appPid $logMarkI 'I6' }
+Assert "I6 a retry rebuilt every terminal surface with no app relaunch (closed: $closedI, want 2)" (
+    $closedI -eq 2)
 Assert "I7 the app pid never changed - this was recovery, not a relaunch" (
     $null -ne (Get-Process -Id $appPid -ErrorAction SilentlyContinue))
 
@@ -1012,6 +1066,13 @@ $env:LOCALAPPDATA = $savedLocalAppData
 if ($null -ne $savedAgentBin) { $env:GHOSTTY_LOCAL_AGENT_BIN = $savedAgentBin }
 else { Remove-Item env:GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue }
 Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+
+# A green run stamps the covered files (T783/T2876). Red leaves the stamp alone.
+if ($script:failures -eq 0) {
+    $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard agent-recovery -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+}
 
 if ($script:failures -eq 0) { "AGENT-RECOVERY: ALL PASS ($script:passes)"; exit 0 }
 "AGENT-RECOVERY: $script:failures FAILURE(S) / $script:passes passed"
