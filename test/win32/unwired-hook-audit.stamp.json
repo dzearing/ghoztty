@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-09T17:27:45-08:00",
-    "commit":  "538b62701",
+    "generated":  "2026-11-09T17:55:37-08:00",
+    "commit":  "3101e2a80",
     "uncommitted":  [
 
                     ],
@@ -1334,7 +1334,7 @@
                   "test/win32/msi-upgrade.ps1":  "26087b57e939d39c1b52f7295ea6339341bd83d53b05d9ffe42f83a41a893513",
                   "test/win32/neuter-audit.ps1":  "b2057597d46fad5597ff832b399d8ee9a585f9131fbfe7244b7cea9bf44bd928",
                   "test/win32/new-window-cwd.ps1":  "6d46901d6dedcdf6782c64109f0026f7bcdf5e9153afefe1192924b7b1220208",
-                  "test/win32/new-window-maximized.ps1":  "659eb0fdfd571d6122bbfb8b4fcd8690e0b4a0752f7ffd8622e5ba3a8d38ea43",
+                  "test/win32/new-window-maximized.ps1":  "0dc39e2e86ded8c83a1c87948d9046644cd74ab1fa0f33cb8e5a022631da5f64",
                   "test/win32/notification-click-focus.ps1":  "43777bc3c6728b1874037f9e0917084ab8f8e51aff04bde05d86c991f0612edf",
                   "test/win32/notification-click-real.ps1":  "f656c41eba944964fef9920dd64f078380023105e3d05a066571f97f9c9526ba",
                   "test/win32/one-installer.ps1":  "e8f2855cab4c267362f75fe7d78b810375ebc6fd253a31ab70c43579b3cea76e",
@@ -1360,7 +1360,7 @@
                   "test/win32/pane-sidebar-actions.ps1":  "a9198ff447cc50f3d61e94b0ef27a1637656293818a7b6b35a3c0141c6c60ac3",
                   "test/win32/pane-sidebar-activity.ps1":  "3068457a1ef0d8ae984c2df7d30e7244df8fcd72ad32d78d9a9b450c8ac05b93",
                   "test/win32/pane-sidebar-add.ps1":  "c7ed6fc37ac65afb363beeedcb5b6c8c230d9223528d3e097e01d6e7f082090a",
-                  "test/win32/pane-sidebar-all-windows.ps1":  "d0f74040c297f812a040b81220b9d1006af43239e67655bf032f3003f610951b",
+                  "test/win32/pane-sidebar-all-windows.ps1":  "ce5dac1768f078adbe50a88c5fe7a8cef4cdd8a69842701a4eb141eb82dabeb8",
                   "test/win32/pane-sidebar-close.ps1":  "a7c8945f88ead7c8d79aa9feec72ed7980d15ae76d8c6536c0bc8dc6dff0c107",
                   "test/win32/pane-sidebar-drag.ps1":  "9c3f9e0658af48d491737cba1cd5f6cfabc8b399e5a43808129f26b7bcddccd9",
                   "test/win32/pane-sidebar-elevated.ps1":  "d837bc24765f37ec4253475dc3b1efa0889ebddaad9cc5ec2ac0c6cf8e5731f4",

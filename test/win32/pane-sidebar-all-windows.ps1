@@ -40,6 +40,9 @@
 #      With the effects off (the remote-session seam, never the user's
 #      machine-wide "Animation effects"), the switch and a fold land with no
 #      transition at all.
+#   10. A window titled `<project>: <name>` lists EVERY tab under that project,
+#      tabs opened after the title included, and folding the project hides
+#      them all (T2422, Mac 6bd2962eb foldingAGroupHidesEveryTabOfItsWindow).
 #
 # Geometry comes from the `pane sidebar outline` log line (heads, items,
 # rules, the toggle, in the column's client coordinates): a background
@@ -750,6 +753,42 @@ try {
     Assert "...and none of it animated: no transition started" ($null -eq (Wait-Log 'pane sidebar transition' $mark 500))
     Set-Content -Path $script:seam -Value '0' -NoNewline -Encoding ascii
     [void][SidebarSessionPost]::PostMessageW($top, [uint32]0x02B1, [IntPtr]0, [IntPtr]::Zero)
+
+    "== 10: every tab of a '<project>: <name>' window is in that project (T2422, Mac 6bd2962eb)"
+    # Mac's window title lives on one tab of a native tab group, and its other
+    # tabs used to stand outside the group; here the title is the WINDOW's,
+    # so every tab - one made after the title too - must list under it and
+    # fold away with it (Mac foldingAGroupHidesEveryTabOfItsWindow).
+    Assert "+rename window A 'projects: manager' ($(Get-CliErr))" ((Invoke-Cli "+rename --target=window-1 --title=`"projects: manager`"") -eq 0)
+    Start-Sleep -Milliseconds 700
+    for ($i = 0; $i -lt 2; $i++) {
+        $panes = @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal')
+        $focusTarget = if ($panes.Count -gt 0) { [IntPtr]$panes[0].Hwnd } else { [IntPtr]::Zero }
+        $mark = Get-LogCount
+        if (-not $NegativeControl) { [void](Send-TestKeys -Window $top -Target $focusTarget -Modifiers ctrl -Key T) }
+        [void](Wait-Log 'pane sidebar all-windows groups=' $mark 3000)
+        Start-Sleep -Milliseconds 500
+    }
+    $groups = Wait-Log 'pane sidebar all-windows groups=' 0 2000
+    "  $groups"
+    $names = @()
+    if ($groups -match ' order=(.*)$') { $names = @($Matches[1] -split '\|') }
+    $at = @(for ($k = 0; $k -lt $names.Count; $k++) { if ($names[$k] -eq 'projects/manager') { $k } })
+    Assert "all three tabs of window A list under projects ($($at.Count) of 3)" ($at.Count -eq 3)
+    Assert "...side by side, one group (at $($at -join ','))" ($at.Count -eq 3 -and ($at[2] - $at[0]) -eq 2)
+    $o = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded .* hsel=' 0 2000)
+    $p = if ($at.Count -gt 0 -and $o) { Head $o 'P' $at[0] } else { $null }
+    Assert "the projects group has its header (group $($at[0]))" ($null -ne $p)
+    if ($p -and $o) {
+        $shown = @($at | Where-Object { $null -ne (Head $o 'W' $_) }).Count
+        Assert "open, each of the three tabs has its window row ($shown of 3)" ($shown -eq 3)
+        $mark = Get-LogCount
+        [void](ClickAt $top $sb $p)
+        $o2 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark 2000)
+        $left = if ($o2) { @($at | Where-Object { $null -ne (Head $o2 'W' $_) }).Count } else { -1 }
+        Assert "folding projects hides all three tabs' rows, not only the titled one ($left left)" ($left -eq 0)
+        Assert "...and keeps the projects header" ($null -ne $o2 -and $null -ne (Head $o2 'P' $at[0]))
+    }
 
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids

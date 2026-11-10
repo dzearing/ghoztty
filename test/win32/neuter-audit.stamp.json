@@ -1,8 +1,8 @@
 {
     "guard":  "neuter-audit",
     "script":  "test/win32/neuter-audit.ps1",
-    "generated":  "2026-11-09T17:04:56-08:00",
-    "commit":  "c80423e0f",
+    "generated":  "2026-11-09T17:52:24-08:00",
+    "commit":  "3101e2a80",
     "uncommitted":  [
 
                     ],
@@ -222,7 +222,7 @@
                   "src/apprt/win32/pane_sidebar_reorder_comp.zig":  "7ddd3b55c2b6f41c514fbd22adf697f2afd8ea4447062b059df481e4b5d93061",
                   "src/apprt/win32/pane_sidebar_scroll.zig":  "5c845159a13afeb92cecfa951f78b87c8e409e2a24265a589695b9b1e195b2bd",
                   "src/apprt/win32/pane_sidebar_search.zig":  "b1e440d96beac4c2d50a3db3e0846b56e9d9327528f79099d193ae34635ada6b",
-                  "src/apprt/win32/pane_sidebar_shared.zig":  "e9e8dfa20ca765488f989b4e358a6dd6e536bba8e3397fc6a124fd987c2b03e0",
+                  "src/apprt/win32/pane_sidebar_shared.zig":  "f106faf563752850316c617b55ddde09f8321aa8f20befa823bc597f40676896",
                   "src/apprt/win32/pane_sidebar_sheen_comp.zig":  "f06165afea46db99c6820b31940085308e61d07da1b02803659b0e218ba68ad4",
                   "src/apprt/win32/pane_sidebar_sheen_layers.zig":  "28b536177be237a04c713120610c9498af69ff4aacb1322c0925b99c3084adfd",
                   "src/apprt/win32/pane_sidebar_tips.zig":  "16509f0c3803ddc9c3744e2c7fd35846e8dff12d869452dfb8056e59dd41205e",
@@ -241,7 +241,7 @@
                   "src/apprt/win32/PaneDragGhost.zig":  "75cb6d32f4313912ab7ddcd73a624140ca91ae60ca583fccd5f5f1d69658fea2",
                   "src/apprt/win32/PaneGrabHandle.zig":  "959df18a9af052cb606f2e4b5d9e5aa196a1e5a83c53e238103bcb407907ab4e",
                   "src/apprt/win32/panel_theme.zig":  "caf0cd7e30f705d17e3590985e3fa51a7a3a32f90b619fd38e51b932a6c7a134",
-                  "src/apprt/win32/PaneSidebar.zig":  "a6890cd39f3e2653fdcdbad30848b43cb7b8384df5cc3de2b390d37b16a5a1e5",
+                  "src/apprt/win32/PaneSidebar.zig":  "389c03638da40cb3947ba82c24c4453ef56b7bbabc9a5fccb199f6bec8b46522",
                   "src/apprt/win32/PaneView.zig":  "3f63cca46c37110e3dbcd5128ba8c27138824a2bdb2ff50164fbf9b88c05d877",
                   "src/apprt/win32/PathInstaller.zig":  "77ee61d5ba639eb627756e917077c3de09b6f77c1fd2440fb707b1a7a9e5d2e5",
                   "src/apprt/win32/persistence_notice.zig":  "65baba4beff952a6d9d9f9753a3bf254bc8f050a6d7430978339ebf9ec848840",
