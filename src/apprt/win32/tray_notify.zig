@@ -49,6 +49,10 @@ pub const app_outdated_uid: u32 = 5;
 /// Its own icon because it reports something that already HAPPENED, where every
 /// other update balloon offers an act.
 pub const update_reopened_uid: u32 = 6;
+/// The "Ghoztty closed unexpectedly and was reopened" balloon, T2862. Its own
+/// icon for the same reason as the one above: it reports something that
+/// already happened, and its click opens the crash reports, not What's New.
+pub const crash_reopened_uid: u32 = 7;
 
 /// What the app should do about a callback message. `null` from `classify`
 /// means "nothing" — the overwhelmingly common case, since the shell also
@@ -74,6 +78,9 @@ pub const Action = enum {
     /// An updated-and-reopened balloon (T1208) was dismissed by a click: open
     /// What's New, which splits on the version the user had before.
     open_whats_new,
+    /// A closed-unexpectedly balloon (T2862) was dismissed by a click: open
+    /// the folder holding the crash report.
+    open_crash_reports,
 };
 
 /// Decode one `WM_APP_TRAY` (`uCallbackMessage`) delivery under
@@ -95,6 +102,7 @@ pub fn classify(wparam: usize, lparam: isize) ?Action {
         stale_build_uid => .restart_into_new_build,
         app_outdated_uid => .check_for_app_update,
         update_reopened_uid => .open_whats_new,
+        crash_reopened_uid => .open_crash_reports,
         else => null,
     };
 }
@@ -126,6 +134,10 @@ test "classify: a balloon click routes by icon id" {
         Action.open_whats_new,
         classify(update_reopened_uid, click).?,
     );
+    try testing.expectEqual(
+        Action.open_crash_reports,
+        classify(crash_reopened_uid, click).?,
+    );
 }
 
 test "the notification icon ids are all distinct" {
@@ -133,7 +145,7 @@ test "the notification icon ids are all distinct" {
     // other's icon, and a click on either would route to whichever `classify`
     // matched first. Same failure shape the timer-id registry guards against.
     const testing = std.testing;
-    const ids = [_]u32{ desktop_uid, update_uid, orphan_uid, stale_build_uid, app_outdated_uid, update_reopened_uid };
+    const ids = [_]u32{ desktop_uid, update_uid, orphan_uid, stale_build_uid, app_outdated_uid, update_reopened_uid, crash_reopened_uid };
     for (ids, 0..) |a, i| {
         for (ids[i + 1 ..]) |b| try testing.expect(a != b);
     }

@@ -116,6 +116,9 @@ pub const frame_clock_probe: usize = 27;
 /// `restore_pacing.zig`). Armed only while windows remain to build.
 pub const paced_restore: usize = 28;
 
+/// Icon cleanup for the "closed unexpectedly and reopened" balloon (T2862).
+pub const notif_crash_reopened: usize = 29;
+
 // Fail the build if two ids above are equal. Every `pub const … : usize` in
 // this file is a timer id and is compared against every other one, so a new
 // entry is covered by adding it — there is no second list to keep in step.

@@ -76,7 +76,34 @@ function Stop-RepoInstances { [void](Stop-RepoGhoztty -Exe $exe -SettleMs 800) }
 # 0x80000003 written as a decimal: PS5.1 reads a hex literal with the high bit
 # set as a NEGATIVE Int32, which then never equals the uint32 exit code.
 $breakpoint = [uint32]2147483651
+# A private LOCALAPPDATA as well (T2862): sections G and H read the exit
+# ledger to decide whether a launch follows a crash, and the shared debug
+# ledger is appended to by every other debug launch on the box (the other loop
+# lane, a parallel sweep). One of those landing between the crash and the
+# relaunch would clear the crash and turn G red for a reason that is not ours.
+$savedLocalAppData = $env:LOCALAPPDATA
+$env:LOCALAPPDATA = Join-Path $stateRoot 'localappdata'
+New-Item -ItemType Directory -Force (Join-Path $env:LOCALAPPDATA 'ghoztty') | Out-Null
 $ledgerPath = Join-Path $env:LOCALAPPDATA 'ghoztty\exit-log-debug.txt'
+
+# Launch the app with its log captured, wait for its window and then for the
+# crash-reopen verdict line (T2862), which is logged right after the first
+# window exists. Returns the line, or '' when none came.
+function Start-ReopenProbe([string]$Tag) {
+    $errFile = Join-Path $stateRoot "reopen-$Tag.err"
+    $h = Start-OnTestDesktop -Exe $exe -Arguments @('--background=#101014', '--session-persistence=false') -StdErr $errFile
+    if ($h.Process) { $null = $h.Process.Handle }
+    $w = Wait-TestWindow -ProcessId $h.Pid -Class 'GhozttyWindow' -TimeoutMs 30000
+    $line = ''
+    for ($i = 0; $i -lt 60 -and -not $line; $i++) {
+        if (Test-Path -LiteralPath $errFile) {
+            $hit = Select-String -LiteralPath $errFile -Pattern 'crash-reopen: ' | Select-Object -Last 1
+            if ($hit) { $line = $hit.Line }
+        }
+        if (-not $line) { Start-Sleep -Milliseconds 250 }
+    }
+    return [pscustomobject]@{ Pid = $h.Pid; Window = $w; Line = $line }
+}
 
 Stop-RepoInstances
 Start-TestForegroundWatch
@@ -182,12 +209,42 @@ try {
     Assert ($listing -match [regex]::Escape("-$appPid.txt") -and $listing -match [regex]::Escape("-$appPid.dmp")) `
         "F: ghoztty +crash-report lists the report and the dump"
 
+    # -------------------------------------------------------------------
+    # G. The first launch after the crash says so (T2862).
+    # -------------------------------------------------------------------
+    # Windows' own crash relaunch (T2839) is off in a Debug build, so this
+    # launch stands in for it: it is the first one since the crash, which is
+    # exactly what the app keys on.
+    $g = Start-ReopenProbe 'after-crash'
+    Assert ($g.Window -ne [IntPtr]::Zero) "G: the app relaunched after the crash (pid $($g.Pid))"
+    Assert ($g.Line -match 'crash-reopen: notice shown=') "G: the relaunch decided to tell the user ($($g.Line))"
+    Assert ($g.Line -match "prev_pid=$appPid\b") "G: the notice is about the run that crashed (pid $appPid)"
+    Assert ($g.Line -match 'code=0x80000003') 'G: it carries the crash the ledger recorded'
+    Assert ($g.Line -match 'body="It crashed a moment ago and was reopened\. Click to see the crash report\."') `
+        'G: the sentence names the crash, how long ago, and what a click does'
+    Assert (-not (Test-TestDesktopLeak -ProcessId $g.Pid)) 'G: the relaunched app stayed on the test desktop'
+    Stop-RepoInstances
+
+    # -------------------------------------------------------------------
+    # H. ...and only that launch: the next one stays quiet.
+    # -------------------------------------------------------------------
+    # G's `start` now sits past the crash in the ledger. The "nothing to say"
+    # line is the positive control: it proves this launch reached the
+    # decision, so a missing notice is a verdict and not a launch that died
+    # early.
+    $h2 = Start-ReopenProbe 'second'
+    Assert ($h2.Window -ne [IntPtr]::Zero) "H: a second launch came up (pid $($h2.Pid))"
+    Assert ($h2.Line -match 'crash-reopen: the previous run did not crash') "H: it reached the decision and said nothing ($($h2.Line))"
+    Assert ($h2.Line -notmatch 'notice shown=') 'H: the crash is not announced a second time'
+    Stop-RepoInstances
+
     Assert (-not (Test-TestDesktopLeak -ProcessId $appPid)) 'GUI never became visible on the interactive desktop'
     Complete-TestBody
 } finally {
     Remove-TestDesktop
     Stop-RepoInstances
     [void][T1355.Native]::SetErrorMode($prevErrorMode)
+    $env:LOCALAPPDATA = $savedLocalAppData
     Remove-Item -Recurse -Force $stateRoot -ErrorAction SilentlyContinue
 }
 
@@ -199,4 +256,4 @@ if ($script:fail -eq 0 -and (Test-TestBodyComplete)) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'crash-report' -MinPass 18
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'crash-report' -MinPass 27

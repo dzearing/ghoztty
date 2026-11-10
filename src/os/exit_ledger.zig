@@ -189,6 +189,64 @@ pub fn danglingStarts(text: []const u8, self_pid: u32, out: []Dangling) []Dangli
     return out[0..n];
 }
 
+/// The crash that ended the run before this launch, if nothing has started
+/// since it (T2862).
+///
+/// Read BEFORE this launch appends its own `start`, so "nothing has started
+/// since" means this launch is the first one after the crash: Windows' crash
+/// relaunch (T2839), or the user opening the app again by hand. Either way it
+/// is the one launch that should say the previous run crashed, and the
+/// launch after it will find its own `start` past the crash and stay quiet,
+/// so the news is told once without a marker file to consume.
+///
+/// Only a `start` clears a crash. Another instance's `exit` after it does not:
+/// with two instances open, one can crash and the other be closed normally
+/// before anything is reopened, and the crash is still unannounced.
+/// `unrecorded-exit` lines are a later launch's audit of an EARLIER run, so
+/// they never clear one either. `self_pid` is skipped like everywhere else.
+pub fn crashBeforeLaunch(text: []const u8, self_pid: u32) ?Record {
+    var last: ?Record = null;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        const r = parseLine(line) orelse continue;
+        if (r.pid == self_pid) continue;
+        switch (r.event) {
+            .crash => last = r,
+            .start => last = null,
+            .exit, .@"unrecorded-exit" => {},
+        }
+    }
+    return last;
+}
+
+/// A ledger timestamp (`2026-09-20T17:29:51.725Z`, always UTC) as Unix
+/// milliseconds, or null if it is not one. Pure civil-date arithmetic, so the
+/// age of a crash can be stated without a time-zone database.
+pub fn parseTimestampMs(ts: []const u8) ?i64 {
+    // YYYY-MM-DDTHH:MM:SS.mmmZ
+    if (ts.len != 24 or ts[4] != '-' or ts[7] != '-' or ts[10] != 'T' or
+        ts[13] != ':' or ts[16] != ':' or ts[19] != '.' or ts[23] != 'Z') return null;
+    const y = std.fmt.parseInt(i64, ts[0..4], 10) catch return null;
+    const mo = std.fmt.parseInt(i64, ts[5..7], 10) catch return null;
+    const d = std.fmt.parseInt(i64, ts[8..10], 10) catch return null;
+    const h = std.fmt.parseInt(i64, ts[11..13], 10) catch return null;
+    const mi = std.fmt.parseInt(i64, ts[14..16], 10) catch return null;
+    const s = std.fmt.parseInt(i64, ts[17..19], 10) catch return null;
+    const ms = std.fmt.parseInt(i64, ts[20..23], 10) catch return null;
+    if (mo < 1 or mo > 12 or d < 1 or d > 31 or h > 23 or mi > 59 or s > 60) return null;
+
+    // Days from 1970-01-01 to y-mo-d (Hinnant's days_from_civil).
+    const yy = if (mo <= 2) y - 1 else y;
+    const era = @divFloor(yy, 400);
+    const yoe = yy - era * 400;
+    const mp = @mod(mo + 9, 12);
+    const doy = @divFloor(153 * mp + 2, 5) + d - 1;
+    const doe = yoe * 365 + @divFloor(yoe, 4) - @divFloor(yoe, 100) + doy;
+    const days = era * 146097 + doe - 719468;
+
+    return ((days * 24 + h) * 60 + mi) * 60_000 + s * 1000 + ms;
+}
+
 /// Keep only the last `keep` lines of `text`, returning the slice to rewrite.
 ///
 /// The ledger is append-only and shared, so nothing trims it as it goes; a
@@ -367,4 +425,79 @@ test "trimmed keeps the last N lines and leaves a short file alone" {
 test "trimmed handles a file with no trailing newline" {
     const testing = std.testing;
     try testing.expectEqualStrings("c\nd", trimmed("a\nb\nc\nd", 2));
+}
+
+test "crashBeforeLaunch: the first launch after a crash sees it (T2862)" {
+    const testing = std.testing;
+    // The 2026-11-08 shape: a release crashed and Windows relaunched it.
+    const text =
+        \\2026-11-08T15:09:20.429Z pid=48348 event=start build=1.54.4 mode=ReleaseFast
+        \\2026-11-08T21:54:17.603Z pid=48348 event=crash code=0xC0000005 addr=0x7FFE6FEE1735
+        \\
+    ;
+    const c = crashBeforeLaunch(text, 69172).?;
+    try testing.expectEqual(@as(u32, 48348), c.pid);
+    try testing.expectEqualStrings("2026-11-08T21:54:17.603Z", c.ts);
+    try testing.expectEqualStrings("code=0xC0000005 addr=0x7FFE6FEE1735", c.detail);
+}
+
+test "crashBeforeLaunch: a launch after the relaunch stays quiet" {
+    const testing = std.testing;
+    const text =
+        \\2026-11-08T15:09:20.429Z pid=48348 event=start
+        \\2026-11-08T21:54:17.603Z pid=48348 event=crash code=0xC0000005
+        \\2026-11-08T22:22:07.236Z pid=69172 event=start
+        \\2026-11-09T18:22:12.801Z pid=69172 event=exit reason=user-quit
+        \\
+    ;
+    try testing.expectEqual(@as(?Record, null), crashBeforeLaunch(text, 70824));
+}
+
+test "crashBeforeLaunch: another instance's exit does not hide the crash" {
+    const testing = std.testing;
+    const text =
+        \\t1 pid=1 event=start
+        \\t2 pid=2 event=start
+        \\t3 pid=1 event=crash code=0xC0000005
+        \\t4 pid=2 event=exit reason=user-quit
+        \\t5 pid=3 event=unrecorded-exit prev_pid=9
+        \\
+    ;
+    try testing.expectEqual(@as(u32, 1), crashBeforeLaunch(text, 4).?.pid);
+}
+
+test "crashBeforeLaunch: a clean history, and our own pid, say nothing" {
+    const testing = std.testing;
+    const clean =
+        \\t1 pid=1 event=start
+        \\t2 pid=1 event=exit reason=user-quit
+        \\
+    ;
+    try testing.expectEqual(@as(?Record, null), crashBeforeLaunch(clean, 2));
+    try testing.expectEqual(@as(?Record, null), crashBeforeLaunch("", 2));
+    // A crash line carrying our own pid is a reused pid's old record, not
+    // something this launch can be told about.
+    try testing.expectEqual(@as(?Record, null), crashBeforeLaunch("t1 pid=7 event=crash\n", 7));
+}
+
+test "crashBeforeLaunch: the newest crash wins" {
+    const testing = std.testing;
+    const text =
+        \\t1 pid=1 event=crash code=0x1
+        \\t2 pid=2 event=crash code=0x2
+        \\
+    ;
+    try testing.expectEqualStrings("code=0x2", crashBeforeLaunch(text, 3).?.detail);
+}
+
+test "parseTimestampMs reads a ledger stamp as Unix milliseconds" {
+    const testing = std.testing;
+    try testing.expectEqual(@as(?i64, 0), parseTimestampMs("1970-01-01T00:00:00.000Z"));
+    // 2026-11-08T21:54:17.603Z, cross-checked with: date -u -d 2026-11-08T21:54:17Z +%s
+    try testing.expectEqual(@as(?i64, 1794174857603), parseTimestampMs("2026-11-08T21:54:17.603Z"));
+    // A leap day.
+    try testing.expectEqual(@as(?i64, 951782400000), parseTimestampMs("2000-02-29T00:00:00.000Z"));
+    try testing.expectEqual(@as(?i64, null), parseTimestampMs("t1"));
+    try testing.expectEqual(@as(?i64, null), parseTimestampMs("2026-13-08T21:54:17.603Z"));
+    try testing.expectEqual(@as(?i64, null), parseTimestampMs("2026-11-08 21:54:17.603Z"));
 }

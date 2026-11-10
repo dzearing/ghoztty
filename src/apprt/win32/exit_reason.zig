@@ -171,7 +171,8 @@ pub fn install(alloc: Allocator) void {
 
     // The audit reads what previous runs left, so it also has to happen
     // before we add our own `start` - otherwise the newest entry in the file
-    // is always ours and nothing looks dangling.
+    // is always ours and nothing looks dangling. The crash check (T2862) is
+    // the same read for the same reason.
     const report = auditPrevious(alloc, path);
 
     if (std.fs.path.dirname(path)) |dir| std.fs.makeDirAbsolute(dir) catch {};
@@ -230,6 +231,34 @@ pub fn recordExit(reason: []const u8) void {
     append(.exit, detail);
 }
 
+/// The crash that ended the run before this launch (T2862), copied out of the
+/// file buffer. Set by `install` when this is the first launch since it.
+pub const PrevCrash = struct {
+    pid: u32,
+    ts_buf: [32]u8,
+    ts_len: usize,
+    detail_buf: [96]u8,
+    detail_len: usize,
+
+    pub fn ts(self: *const PrevCrash) []const u8 {
+        return self.ts_buf[0..self.ts_len];
+    }
+
+    pub fn detail(self: *const PrevCrash) []const u8 {
+        return self.detail_buf[0..self.detail_len];
+    }
+};
+
+var prev_crash: ?PrevCrash = null;
+
+/// Did the run before this launch crash, with nothing launched since? Read
+/// once by the app after its first window exists, to say so (T2862). Null
+/// before `install`, on every later launch, and off Windows.
+pub fn previousCrash() ?*const PrevCrash {
+    if (prev_crash) |*c| return c;
+    return null;
+}
+
 /// A dangling start, with its timestamp copied out of the file buffer so the
 /// caller can free that buffer before writing the record.
 const PrevReport = struct {
@@ -243,6 +272,15 @@ fn auditPrevious(alloc: Allocator, path: []const u8) ?PrevReport {
     defer f.close();
     const text = f.readToEndAlloc(alloc, max_bytes * 2) catch return null;
     defer alloc.free(text);
+
+    if (ledger.crashBeforeLaunch(text, w32.GetCurrentProcessId())) |c| {
+        var pc: PrevCrash = .{ .pid = c.pid, .ts_buf = undefined, .ts_len = 0, .detail_buf = undefined, .detail_len = 0 };
+        pc.ts_len = @min(c.ts.len, pc.ts_buf.len);
+        @memcpy(pc.ts_buf[0..pc.ts_len], c.ts[0..pc.ts_len]);
+        pc.detail_len = @min(c.detail.len, pc.detail_buf.len);
+        @memcpy(pc.detail_buf[0..pc.detail_len], c.detail[0..pc.detail_len]);
+        prev_crash = pc;
+    }
 
     var slots: [16]ledger.Dangling = undefined;
     const open = ledger.danglingStarts(text, w32.GetCurrentProcessId(), &slots);

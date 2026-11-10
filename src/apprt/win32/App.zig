@@ -98,6 +98,9 @@ const remote_effects = configpkg.remote_effects;
 const msg_timer = @import("msg_timer.zig");
 const orphan_notify = @import("orphan_notify.zig");
 const exit_reason = @import("exit_reason.zig");
+const exit_ledger = @import("../../os/exit_ledger.zig");
+const crash_reopen = @import("crash_reopen.zig");
+const crash = @import("../../crash/main.zig");
 const palette_order = @import("palette_order.zig");
 const session_layout = @import("session_layout.zig");
 const pane_stash = @import("pane_stash.zig");
@@ -2210,6 +2213,10 @@ pub fn run(self: *App) !void {
     // After the first window exists, so the notice lands beside the terminal
     // it is about rather than before anything is on screen.
     self.announceUpdateReopen();
+
+    // T2862: if the process before this one crashed, say so - Windows'
+    // crash relaunch (T2839) brings the windows back silently otherwise.
+    self.announceCrashReopen();
 
     // T2344: an update msiexec refused is told HERE, by the app the applier
     // reopened, rather than by the windowless applier whose modal opened
@@ -10479,6 +10486,8 @@ const NOTIF_STALE_TIMER_ID: usize = msg_timer.notif_stale;
 const NOTIF_APP_OLDER_TIMER_ID: usize = msg_timer.notif_app_outdated;
 const NOTIF_REOPENED_UID: u32 = tray_notify.update_reopened_uid;
 const NOTIF_REOPENED_TIMER_ID: usize = msg_timer.notif_update_reopened;
+const NOTIF_CRASHED_UID: u32 = tray_notify.crash_reopened_uid;
+const NOTIF_CRASHED_TIMER_ID: usize = msg_timer.notif_crash_reopened;
 
 /// Register a notification-area icon's behavior version, which is what turns
 /// the `NIN_*` balloon notifications on. Without it the icon keeps the
@@ -11968,6 +11977,54 @@ fn announceUpdateReopen(self: *App) void {
         WhatsNewWindow.currentVersion(),
         notice.title,
     });
+}
+
+/// Tell the user the run before this one crashed (T2862), when this is the
+/// first launch since. The exit ledger decided that at `exit_reason.install`,
+/// before this launch's own `start` was written, so the next launch finds that
+/// `start` past the crash and says nothing: told once, no marker to consume.
+fn announceCrashReopen(self: *App) void {
+    const prev = exit_reason.previousCrash() orelse {
+        // Logged so a test can tell "decided there was nothing to say" from
+        // "never got this far" (crash-report.ps1 section H).
+        log.info("crash-reopen: the previous run did not crash, nothing to say", .{});
+        return;
+    };
+    var body_buf: [256]u8 = undefined;
+    const n = crash_reopen.notice(
+        &body_buf,
+        exit_ledger.parseTimestampMs(prev.ts()),
+        std.time.milliTimestamp(),
+    );
+    const shown = self.showTrayBalloon(NOTIF_CRASHED_UID, NOTIF_CRASHED_TIMER_ID, n.title, n.body);
+    // The line the acceptance script reads back, as for the update notice.
+    log.warn("crash-reopen: notice shown={} prev_pid={d} crashed_at={s} {s} body=\"{s}\"", .{
+        shown,
+        prev.pid,
+        prev.ts(),
+        prev.detail(),
+        n.body,
+    });
+}
+
+/// Open the folder that holds the crash reports (T2862's balloon click), with
+/// Explorer. Falls back to the folder above it when no crash report was ever
+/// written there (the crash outran the report writer).
+fn openCrashReports(self: *App) void {
+    const alloc = self.core_app.alloc;
+    const d = crash.defaultDir(alloc) catch |err| {
+        log.warn("crash-reopen: no crash report folder err={}", .{err});
+        return;
+    };
+    defer alloc.free(d.path);
+    const target: []const u8 = if (std.fs.accessAbsolute(d.path, .{})) |_|
+        d.path
+    else |_|
+        std.fs.path.dirname(d.path) orelse d.path;
+    const wide = std.unicode.utf8ToUtf16LeAllocZ(alloc, target) catch return;
+    defer alloc.free(wide);
+    _ = w32.ShellExecuteW(null, std.unicode.utf8ToUtf16LeStringLiteral("open"), wide.ptr, null, null, w32.SW_SHOW);
+    log.info("crash-reopen: notice clicked, opened {s}", .{target});
 }
 
 /// Consume the applier's failure marker, if any (T2344), and tell the user in
@@ -13926,6 +13983,11 @@ fn msgWndProc(
                 log.info("app-older notice clicked: looking for an update", .{});
                 app.startUpdateCheck(.manual);
             },
+            .open_crash_reports => {
+                // T2862: the user was told the terminal crashed and was
+                // reopened; the click asks to see what happened.
+                app.openCrashReports();
+            },
             .open_whats_new => {
                 // T1208: the user was just told their terminal was closed and
                 // reopened for an update; the click asks what that update
@@ -14125,7 +14187,8 @@ fn msgWndProc(
     if (msg == w32.WM_TIMER and
         (wparam == NOTIF_DESKTOP_TIMER_ID or wparam == NOTIF_UPDATE_TIMER_ID or
             wparam == NOTIF_ORPHAN_TIMER_ID or wparam == NOTIF_STALE_TIMER_ID or
-            wparam == NOTIF_APP_OLDER_TIMER_ID or wparam == NOTIF_REOPENED_TIMER_ID))
+            wparam == NOTIF_APP_OLDER_TIMER_ID or wparam == NOTIF_REOPENED_TIMER_ID or
+            wparam == NOTIF_CRASHED_TIMER_ID))
     {
         const uid: u32 = switch (wparam) {
             NOTIF_DESKTOP_TIMER_ID => NOTIF_DESKTOP_UID,
@@ -14133,6 +14196,7 @@ fn msgWndProc(
             NOTIF_STALE_TIMER_ID => NOTIF_STALE_UID,
             NOTIF_APP_OLDER_TIMER_ID => NOTIF_APP_OLDER_UID,
             NOTIF_REOPENED_TIMER_ID => NOTIF_REOPENED_UID,
+            NOTIF_CRASHED_TIMER_ID => NOTIF_CRASHED_UID,
             else => NOTIF_ORPHAN_UID,
         };
         _ = w32.KillTimer(hwnd, wparam);

@@ -1,14 +1,15 @@
 {
     "guard":  "exit-reason",
     "script":  "test/win32/exit-reason.ps1",
-    "generated":  "2026-10-25T00:14:43-07:00",
-    "commit":  "037aa8dce",
+    "generated":  "2026-11-10T06:49:31-08:00",
+    "commit":  "10d8f223f",
     "uncommitted":  [
-                        "src/apprt/win32/exit_reason.zig"
+                        "src/apprt/win32/exit_reason.zig",
+                        "src/os/exit_ledger.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/exit_reason.zig":  "7128f74e756ec74c70b8fd18da05c09d95572de079bcab98e8cf321530cfc79c",
-                  "src/os/exit_ledger.zig":  "ba7e57d8efcf4790f0408b1add104f6c47699e3592b855a37dbca3a18bb60947",
+                  "src/apprt/win32/exit_reason.zig":  "d4876857be1e32a009a58fd3cb9e1120d47c270422e80a455ae802f09a790f7d",
+                  "src/os/exit_ledger.zig":  "2f58dc0ffeb27df73903893c378659a7cb4b76f580995a7155c309aae14948df",
                   "test/win32/exit-reason.ps1":  "0ca75a25399950b555b7ba59118f8dab9a0313d5a4189296e88d4910e66e98ff"
               }
 }

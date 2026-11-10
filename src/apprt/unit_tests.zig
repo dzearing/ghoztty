@@ -286,6 +286,10 @@ test {
     // no-OS-imports deal.
     _ = @import("win32/update_reopen.zig");
 
+    // Pure win32 "Ghoztty closed unexpectedly" notice (T2862): how a crash's
+    // age is worded and what the balloon a crash relaunch shows says.
+    _ = @import("win32/crash_reopen.zig");
+
     // Pure win32 user-invoked restart policy (T1804): what "Restart Ghoztty"
     // and "Restart Ghoztty and Background Sessions" ask before they act, and in
     // which words. Every lane, same no-OS-imports deal.
