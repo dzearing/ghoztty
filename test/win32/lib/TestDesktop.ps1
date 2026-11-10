@@ -2413,6 +2413,23 @@ public class GhozttyTestDesktop {
         });
     }
 
+    // A WS_CHILD of a paint fixture, same class, filling its own client with
+    // `color` (T1404). It is the shape the child-read warning exists for: a
+    // capture of the PARENT whose rect also holds pixels another window
+    // paints. Destroyed with its parent.
+    public long PaintFixtureChild(long parent, uint color, int x, int y, int w, int ht) {
+        return (long)Run(delegate() {
+            IntPtr inst = GetModuleHandleW(IntPtr.Zero);
+            IntPtr h = CreateWindowExW(0, PaintFixtureClass, "ghoztty-test-paint-child",
+                                       0x50000000, x, y, w, ht,
+                                       new IntPtr(parent), IntPtr.Zero, inst, IntPtr.Zero);
+            if (h == IntPtr.Zero) { LastError = "CreateWindowExW (child) failed: " + Marshal.GetLastWin32Error(); return 0L; }
+            paintFixtureColor[h.ToInt64()] = color;
+            UpdateWindow(h);
+            return h.ToInt64();
+        });
+    }
+
     // ================= capture =================
     // PrintWindow(PW_RENDERFULLCONTENT) is the ONLY capture that works on a
     // background desktop: DWM composes the input desktop only, so BitBlt off
@@ -4589,7 +4606,12 @@ function Get-TestWindowPixels {
             Left = [int]$r[3]; Top = [int]$r[4]
         }
         $attempts++
-        if ($AllowUniform -or -not (Test-TestCaptureUniform -Shot $shot)) { return $shot }
+        if ($AllowUniform -or -not (Test-TestCaptureUniform -Shot $shot)) {
+            # T1404: what else is in this rect that the capture does not own.
+            $shot | Add-Member -NotePropertyName Children -NotePropertyValue @(Get-TestCaptureChildren -Window $Window -Desktop $Desktop)
+            $shot | Add-Member -NotePropertyName ChildWarned -NotePropertyValue @{}
+            return $shot
+        }
         $bmp.Dispose()
         if ([datetime]::UtcNow -ge $deadline) {
             throw ("Get-TestWindowPixels: the capture is UNIFORM - $($shot.Width)x$($shot.Height), one " +
@@ -4618,13 +4640,82 @@ function Close-TestWindowPixels {
     if ($Shot -and $Shot.Bitmap) { $Shot.Bitmap.Dispose() }
 }
 
+<#
+A capture's CHILD WINDOWS, and why every shot carries them (T1404).
+
+What a window paints itself is deterministic under -Sync; a WS_CHILD control
+inside it is not. Measured on the viewer find card (a GhozttyViewerFind window
+with a child Edit holding "needle"), 30-40 back-to-back -Sync captures per row:
+
+    as shipped (no WS_CLIPCHILDREN)   field missing in 4-10 of 30 (card's own paint shows)
+    WS_CLIPCHILDREN set on the card   field missing in 8 of 30 (a BLACK hole instead)
+    capture gap 0 / 265 / 530 ms      missing in 4/40, 7/30, 3/30
+    field not focused (no caret)      missing in 4 of 40
+
+So it is not the parent painting over the child (clipping the parent turns the
+omission into a hole instead of removing it), not the caret, and not capture
+spacing. The CHILD's own paint is simply absent from the surface PrintWindow
+hands back, in roughly one capture in four to ten, while the parent's paint is
+byte-identical every time. PrintWindow on the child Edit itself fails outright
+("PrintWindow failed"), so the child cannot be photographed on its own either.
+
+The shot therefore records every visible descendant as {Hwnd, Class, Left, Top,
+Right, Bottom} in SCREEN coordinates, and the point readers below warn when a
+read lands inside one. Measure a child through its RECT (GetWindowRect is
+synchronous), and bound an ink scan at its edge - docs/claude/testing.md.
+#>
+function Get-TestCaptureChildren {
+    param([Parameter(Mandatory = $true)][IntPtr]$Window, $Desktop)
+    return @(Get-TestChildWindows -Window $Window -Class '*' -Desktop $Desktop |
+        Where-Object { $_.Visible -and $_.Width -gt 0 -and $_.Height -gt 0 } |
+        ForEach-Object {
+            [pscustomobject]@{
+                Hwnd = $_.Hwnd; Class = $_.Class
+                Left = $_.Left; Top = $_.Top; Right = $_.Right; Bottom = $_.Bottom
+            }
+        })
+}
+
+# The child window of a capture that covers SCREEN point (X, Y), or $null when
+# the point is the captured window's own paint (T1404). A scan that wants only
+# what the window painted itself stops where this answers non-null.
+function Get-TestCaptureChild {
+    param([Parameter(Mandatory = $true)]$Shot, [Parameter(Mandatory = $true)][int]$X, [Parameter(Mandatory = $true)][int]$Y)
+    foreach ($c in @($Shot.Children)) {
+        if ($null -eq $c) { continue }
+        if ($X -ge $c.Left -and $X -lt $c.Right -and $Y -ge $c.Top -and $Y -lt $c.Bottom) { return $c }
+    }
+    return $null
+}
+
+# Warn, once per child per shot, that a read landed on a child's pixels.
+function Write-TestChildReadWarning {
+    param($Shot, $Child, [string]$Reader, [string]$Where)
+    if ($null -eq $Shot.ChildWarned) { return }
+    $key = [string]$Child.Hwnd
+    if ($Shot.ChildWarned.ContainsKey($key)) { return }
+    $Shot.ChildWarned[$key] = $true
+    Write-Warning ("$Reader read $Where inside CHILD window $($Child.Class) " +
+        "[$($Child.Left),$($Child.Top),$($Child.Right),$($Child.Bottom)] of this capture. A child " +
+        "control's pixels are not reliably part of its parent's capture - measured missing from " +
+        "about one -Sync capture in four to ten (T1404). Measure the child through its rect " +
+        "(Get-TestWindowRect), bound the scan at its edge (Get-TestCaptureChild), or pass " +
+        "-ChildOk if this read is deliberate.")
+}
+
 # One pixel from a capture, addressed in SCREEN coordinates so migrated probes
 # keep their existing math. Returns $null when the point is off the capture.
+# Warns when the point is inside a child window (T1404); -ChildOk says the
+# caller knows.
 function Get-TestPixel {
-    param([Parameter(Mandatory = $true)]$Shot, [Parameter(Mandatory = $true)][int]$X, [Parameter(Mandatory = $true)][int]$Y)
+    param([Parameter(Mandatory = $true)]$Shot, [Parameter(Mandatory = $true)][int]$X, [Parameter(Mandatory = $true)][int]$Y, [switch]$ChildOk)
     $lx = $X - $Shot.Left
     $ly = $Y - $Shot.Top
     if ($lx -lt 0 -or $ly -lt 0 -or $lx -ge $Shot.Width -or $ly -ge $Shot.Height) { return $null }
+    if (-not $ChildOk -and $Shot.Children) {
+        $child = Get-TestCaptureChild -Shot $Shot -X $X -Y $Y
+        if ($child) { Write-TestChildReadWarning -Shot $Shot -Child $child -Reader 'Get-TestPixel' -Where "($X,$Y)" }
+    }
     return $Shot.Bitmap.GetPixel($lx, $ly)
 }
 
@@ -4635,13 +4726,29 @@ function Get-TestBrightness {
         [Parameter(Mandatory = $true)]$Shot,
         [int[]]$Rect,
         [int]$Inset = 8,
-        [int]$Step = 4
+        [int]$Step = 4,
+        [switch]$ChildOk
     )
     # Parenthesised on purpose: in a PowerShell array literal the comma binds
     # tighter than `+`, so `@($a, $b, $c + $d)` concatenates arrays instead of
     # adding - it silently yields a 4-element list and every probe reads -1.
     if (-not $Rect) {
         $Rect = @($Shot.Left, $Shot.Top, ($Shot.Left + $Shot.Width), ($Shot.Top + $Shot.Height))
+    } elseif (-not $ChildOk -and $Shot.Children) {
+        # An explicit rect is a claim about one region, so one that a child
+        # covers a real share of is measuring pixels the capture does not
+        # reliably hold (T1404). A quarter is the line: a dialog's whole-client
+        # average with a few buttons in it, or a caption band a sidebar clips
+        # the end of, is still an average of the window's own paint. The
+        # whole-shot default is a deliberate average and is not warned.
+        $area = [double][math]::Max(1, ($Rect[2] - $Rect[0]) * ($Rect[3] - $Rect[1]))
+        foreach ($c in @($Shot.Children)) {
+            $ow = [math]::Min($Rect[2], $c.Right) - [math]::Max($Rect[0], $c.Left)
+            $oh = [math]::Min($Rect[3], $c.Bottom) - [math]::Max($Rect[1], $c.Top)
+            if ($ow -gt 0 -and $oh -gt 0 -and ($ow * $oh) / $area -ge 0.25) {
+                Write-TestChildReadWarning -Shot $Shot -Child $c -Reader 'Get-TestBrightness' -Where "rect [$($Rect -join ',')]"
+            }
+        }
     }
     $x0 = $Rect[0] + $Inset - $Shot.Left
     $y0 = $Rect[1] + $Inset - $Shot.Top

@@ -1877,6 +1877,22 @@ What to do about it:
   geometry.** Print the per-region measurement, not just the total: the ink map
   named the mechanism in one run after four whole-script runs had only
   established that the total moved.
+- **The library now says so when you read one** (T1404). Every
+  `Get-TestWindowPixels` shot carries `.Children` — each visible descendant's
+  class and SCREEN rect — and `Get-TestPixel` warns (once per child per shot)
+  when the point is inside one; `Get-TestBrightness` warns when a child covers
+  a quarter or more of the rect. `Get-TestCaptureChild -Shot -X -Y` is the
+  bound for a hand-rolled scan: stop where it answers non-null. `-ChildOk`
+  marks a deliberate read. A `WARNING: ... inside CHILD window` line in a run
+  log is this defect pointed at your probe, not noise.
+- **What the omission is, measured** (T1404, viewer find card, 30–40 `-Sync`
+  captures per row): the field went missing in 4–10 of 30 as shipped (the
+  card's own paint shows through), in 8 of 30 with `WS_CLIPCHILDREN` forced on
+  the card (a BLACK hole instead), at the same rate with a 0, 265 or 530 ms gap
+  between captures, and in 4 of 40 with the field unfocused (no caret). So it
+  is the child's OWN paint missing from PrintWindow's surface — not the parent
+  overpainting it, not the caret, not timing between captures. `PrintWindow`
+  on the child Edit itself fails outright, so it cannot be photographed alone.
 - **`-AllowUniform` hides the loud version of it.** A capture that came back
   blank is normally an error; that switch accepts it, and a probe carrying it
   is a probe with nothing left to notice a capture that drew less than it

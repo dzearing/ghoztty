@@ -147,6 +147,12 @@ function Measure-TitlebarLuminance([IntPtr]$Window) {
         # Parenthesised: in a PowerShell array literal the comma binds tighter
         # than `+`, so unbracketed arithmetic concatenates arrays instead.
         $r = @(($shot.Left + 6), ($shot.Top + 6), ($shot.Left + $shot.Width - 6), ($shot.Top + 34))
+        # Start the band past any child window at its leading edge (T1404):
+        # the pane sidebar is a child that reaches up into the caption band,
+        # and a child's pixels are not reliably part of the parent's capture.
+        foreach ($c in @($shot.Children)) {
+            if ($c.Left -le ($r[0] + 16) -and $c.Right -gt $r[0] -and $c.Top -lt $r[3] -and $c.Bottom -gt $r[1]) { $r[0] = $c.Right }
+        }
         return Get-TestBrightness -Shot $shot -Rect $r -Inset 0 -Step 2
     } finally { Close-TestWindowPixels $shot }
 }
@@ -765,6 +771,73 @@ try {
     } finally {
         if ($redH -ne [IntPtr]::Zero) { [void]$td.CloseForeignWindow([long]$redH) }
         if ($blankH -ne [IntPtr]::Zero) { [void]$td.CloseForeignWindow([long]$blankH) }
+    }
+
+    # --- P2. a read of a CHILD window's pixels is told so (T1404). A child
+    #     control's paint is missing from about one -Sync capture of its parent
+    #     in four to ten (measured on the viewer find card; the numbers are in
+    #     Get-TestCaptureChildren's header), and the capture is a valid bitmap
+    #     either way. So every shot records its visible children, and a point
+    #     or rect read that lands on one WARNS. Fixture: a red parent with a
+    #     green WS_CHILD over its right half. Each warning assertion has its
+    #     control beside it - a read of the parent's own paint stays silent - so
+    #     a reader that warned on everything would fail here too.
+    $parentH = [IntPtr]$td.PaintFixture($true, [uint32]0x0000FF)   # red
+    $childH = [IntPtr]::Zero
+    try {
+        if ($parentH -ne [IntPtr]::Zero) { $childH = [IntPtr]$td.PaintFixtureChild([long]$parentH, [uint32]0x00FF00, 120, 40, 100, 80) }
+        Assert ($parentH -ne [IntPtr]::Zero -and $childH -ne [IntPtr]::Zero) "the parent+child paint fixture exists ($($td.LastError))"
+        $ps = Get-TestWindowPixels -Window $parentH -Sync
+        try {
+            $kids = @($ps.Children)
+            $kid = if ($kids.Count -ge 1) { $kids[0] } else { $null }
+            $cr = Get-TestWindowRect -Window $childH
+            Assert ($kids.Count -eq 1 -and $kid.Hwnd -eq [int64]$childH -and $kid.Left -eq $cr.Left -and $kid.Right -eq $cr.Right) `
+                "the capture records its one child, at the child's SCREEN rect (children=$($kids.Count))"
+
+            $inX = [int](($cr.Left + $cr.Right) / 2); $inY = [int](($cr.Top + $cr.Bottom) / 2)
+            $outX = $ps.Left + 30; $outY = $ps.Top + 30
+
+            $w = $null
+            [void](Get-TestPixel -Shot $ps -X $outX -Y $outY -WarningVariable w -WarningAction SilentlyContinue)
+            $quietOwn = (@($w).Count -eq 0)
+            if ($NegativeControl) { $quietOwn = -not $quietOwn }
+            Assert $quietOwn 'a read of the window''s OWN paint does not warn'
+
+            $w = $null
+            [void](Get-TestPixel -Shot $ps -X $inX -Y $inY -WarningVariable w -WarningAction SilentlyContinue)
+            $warned = (@($w).Count -eq 1) -and ("$($w[0])" -match 'CHILD window') -and ("$($w[0])" -match 'T1404')
+            if ($w) { Write-Host "capture: child read warned - $("$($w[0])".Substring(0, [math]::Min(110, "$($w[0])".Length)))..." }
+            if ($NegativeControl) { $warned = -not $warned }
+            Assert $warned 'a Get-TestPixel read inside a child window WARNS, naming the child and T1404'
+
+            $w = $null
+            [void](Get-TestPixel -Shot $ps -X $inX -Y $inY -WarningVariable w -WarningAction SilentlyContinue)
+            Assert (@($w).Count -eq 0) 'the warning is once per child per shot, not once per pixel'
+
+            $ps.ChildWarned.Clear()
+            $w = $null
+            [void](Get-TestPixel -Shot $ps -X $inX -Y $inY -ChildOk -WarningVariable w -WarningAction SilentlyContinue)
+            Assert (@($w).Count -eq 0) '-ChildOk silences a deliberate child read'
+
+            $w = $null
+            [void](Get-TestBrightness -Shot $ps -Rect @($cr.Left, $cr.Top, $cr.Right, $cr.Bottom) -Inset 0 -WarningVariable w -WarningAction SilentlyContinue)
+            $bWarned = (@($w).Count -eq 1)
+            if ($NegativeControl) { $bWarned = -not $bWarned }
+            Assert $bWarned 'a Get-TestBrightness rect over a child window WARNS'
+
+            $ps.ChildWarned.Clear()
+            $w = $null
+            [void](Get-TestBrightness -Shot $ps -WarningVariable w -WarningAction SilentlyContinue)
+            Assert (@($w).Count -eq 0) 'the whole-shot brightness average is not warned'
+
+            $hit = Get-TestCaptureChild -Shot $ps -X $inX -Y $inY
+            $miss = Get-TestCaptureChild -Shot $ps -X $outX -Y $outY
+            Assert ($null -ne $hit -and $hit.Hwnd -eq [int64]$childH -and $null -eq $miss) `
+                'Get-TestCaptureChild names the child at a point inside it and nothing over the parent''s paint'
+        } finally { Close-TestWindowPixels $ps }
+    } finally {
+        if ($parentH -ne [IntPtr]::Zero) { [void]$td.CloseForeignWindow([long]$parentH) }
     }
 
     $shot = Get-TestWindowPixels -Window $pane -AllowTerminalSurface -AllowUniform -TornReason $surfaceLimit
