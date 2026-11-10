@@ -33,6 +33,12 @@
 #   6. neither does the AlreadyRunning FORWARD: instance C, launched with B's
 #      suffix (so its bind fails) and A's pipe in its env, must forward its
 #      new-window to B - the instance it collided with - and leave A alone.
+#   7. a DEBUG CLI declines the installed release's endpoint (T1402) and says
+#      so on stderr; the release name is aimed at A's live pipe by a private
+#      USERNAME, so the user's terminal is never dialed. Its control, with the
+#      real USERNAME, proves the bake is otherwise still honoured. The other
+#      direction (release CLI in a debug pane - the one the bake exists for)
+#      needs a release build and is held by the `honouredBaked` unit tests.
 #
 # T248: the repo's app AND agent are killed and the debug layout manifest is
 # dropped at setup, so `--target` idempotency cannot focus a previous run's
@@ -297,6 +303,37 @@ try {
     Start-Sleep -Seconds 6
     Assert ((Get-WindowCount $sfxB) -eq ($countB + 1)) 'C forwarded its window to B'
     Assert ((Get-WindowCount $sfxA) -eq $countA) 'and A gained nothing'
+
+    Write-Host ''
+    Write-Host '7. a debug CLI never honours the INSTALLED RELEASE''s endpoint (T1402)'
+    # The release endpoint is `\\.\pipe\ghoztty-<USERNAME>`. Giving the CLI child
+    # USERNAME = "t118a<PID>-<user>" makes A's live pipe read as exactly that
+    # name, so the rule is exercised against a real listener without ever
+    # dialing the user's own terminal.
+    $realUser = $env:USERNAME
+    $fakeUser = "t118a$PID-$user"
+    try {
+        Remove-Item Env:GHOZTTY_PIPE_SUFFIX -ErrorAction SilentlyContinue
+        $env:GHOZTTY_IPC_SOCKET = $pipeA
+        $env:USERNAME = $fakeUser
+        $out7 = (& $Exe +list 2>&1 | ForEach-Object { $_.ToString() } | Out-String)
+        $rc7 = $LASTEXITCODE
+        Assert ($out7 -notmatch $winA) 'a debug +list does not answer about the release-named instance'
+        Assert ($rc7 -ne 0) 'it dialed its own (absent) debug endpoint instead, and failed'
+        Assert ($out7 -match 'note: this is a debug build, so it ignores GHOZTTY_IPC_SOCKET') 'and it SAYS it ignored the pane''s endpoint'
+        Assert ($out7 -match [regex]::Escape("ghoztty-debug-$fakeUser")) 'naming the endpoint it dialed instead'
+
+        # NEGATIVE CONTROL: the same command with the real USERNAME (so A's pipe
+        # is NOT the release name) honours the bake and reaches A. Without this,
+        # the failure above could be any broken +list.
+        $env:USERNAME = $realUser
+        $out7n = (& $Exe +list 2>&1 | ForEach-Object { $_.ToString() } | Out-String)
+        Assert ($LASTEXITCODE -eq 0 -and $out7n -match $winA) 'CONTROL: a non-release bake is still honoured'
+        Assert ($out7n -notmatch 'note: this is a debug build') 'CONTROL: and says nothing'
+    } finally {
+        $env:USERNAME = $realUser
+        Remove-Item Env:GHOZTTY_IPC_SOCKET -ErrorAction SilentlyContinue
+    }
 } catch {
     # An escaping exception must SCORE, not print a green summary on its way out.
     Assert $false "unexpected error: $_"

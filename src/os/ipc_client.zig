@@ -272,7 +272,85 @@ pub fn clientEndpointPath(alloc: Allocator) Allocator.Error![:0]u8 {
     };
     defer if (suffix) |s| alloc.free(s);
 
-    return clientEndpointPathFrom(alloc, baked, suffix != null);
+    // T1402: a debug build never honours the installed release's endpoint.
+    var honoured: ?[]const u8 = baked;
+    if (suffix == null and build_config.is_debug) {
+        if (baked) |b| if (b.len > 0) {
+            const release = try releaseEndpointBasename(alloc);
+            defer alloc.free(release);
+            honoured = honouredBaked(b, true, release);
+        };
+    }
+
+    const path = try clientEndpointPathFrom(alloc, honoured, suffix != null);
+    if (baked != null and honoured == null) noteDeclined(baked.?, path);
+    return path;
+}
+
+/// The name the INSTALLED RELEASE's endpoint carries for this user, with no
+/// directory: `ghoztty-<USERNAME>` (the pipe) on Windows,
+/// `ghostty-<uid>.sock` on POSIX. Compared by name rather than full path so a
+/// different `$TMPDIR` spelling on the Mac side cannot hide a match.
+pub fn releaseEndpointBasename(alloc: Allocator) Allocator.Error![]u8 {
+    if (comptime is_windows) {
+        const user: ?[]u8 = std.process.getEnvVarOwned(alloc, "USERNAME") catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => null,
+        };
+        defer if (user) |u| alloc.free(u);
+        return std.fmt.allocPrint(alloc, "ghoztty-{s}", .{user orelse "default"});
+    }
+    return std.fmt.allocPrint(alloc, "ghostty-{d}.sock", .{std.c.getuid()});
+}
+
+/// The part of an endpoint after its last `/` or `\`.
+fn endpointBasename(endpoint: []const u8) []const u8 {
+    const cut = std.mem.lastIndexOfAny(u8, endpoint, "/\\") orelse return endpoint;
+    return endpoint[cut + 1 ..];
+}
+
+/// The LINEAGE rule (T1402): which baked endpoint a client honours.
+///
+/// The baked `$GHOZTTY_IPC_SOCKET` exists so the RELEASE `ghoztty` on `$PATH`,
+/// run from a pane of a debug app, drives that debug app — the direction this
+/// override was built for, and it stays honoured. The reverse is never what
+/// anybody meant: a repo-built debug CLI run from a pane of the installed
+/// release would otherwise dial the user's own terminal (every loop turn runs
+/// in one), silently defeating the debug/release endpoint isolation (T350).
+/// So a debug client declines exactly one endpoint — the installed release's
+/// own, `release_basename` — and derives its own instead. Any other baked
+/// value (another debug instance, a suffixed test sandbox) is honoured.
+///
+/// Returns the baked value to honour, or null to derive.
+pub fn honouredBaked(
+    baked: []const u8,
+    client_is_debug: bool,
+    release_basename: []const u8,
+) ?[]const u8 {
+    if (!client_is_debug) return baked;
+    const base = endpointBasename(baked);
+    // Windows pipe names are case-insensitive, and `%USERNAME%` is not always
+    // spelled the way the pipe was created; POSIX paths are exact.
+    const same = if (comptime is_windows)
+        std.ascii.eqlIgnoreCase(base, release_basename)
+    else
+        std.mem.eql(u8, base, release_basename);
+    return if (same) null else baked;
+}
+
+/// Say so when the lineage rule declined the pane's endpoint, so the answer
+/// that follows can never be mistaken for one about the pane's own app.
+/// Stderr only: stdout stays the command's (often JSON) answer.
+pub fn noteDeclined(baked: []const u8, dialing: []const u8) void {
+    var buf: [1024]u8 = undefined;
+    var w = std.fs.File.stderr().writerStreaming(&buf);
+    w.interface.print(
+        "note: this is a debug build, so it ignores {s}={s} (the installed " ++
+            "release's endpoint) and dials its own, {s}. To drive the installed " ++
+            "release, run the installed ghoztty instead.\n",
+        .{ endpoint_env, baked, dialing },
+    ) catch {};
+    w.interface.flush() catch {};
 }
 
 /// `clientEndpointPath` with the environment injected, so the preference rule
@@ -1034,6 +1112,69 @@ test "clientEndpointPath: an explicit suffix outranks the baked endpoint" {
     defer testing.allocator.free(aimed);
 
     try testing.expectEqualStrings(derived, aimed);
+}
+
+test "honouredBaked: a debug client declines the installed release's endpoint (T1402)" {
+    const testing = std.testing;
+    const release_name = if (comptime is_windows) "ghoztty-David" else "ghostty-501.sock";
+    const release_ep = if (comptime is_windows)
+        "\\\\.\\pipe\\ghoztty-David"
+    else
+        "/var/folders/xy/T/ghostty-501.sock";
+
+    // debug client -> release endpoint: declined, so the client derives its own.
+    try testing.expect(honouredBaked(release_ep, true, release_name) == null);
+    if (comptime is_windows) {
+        // Pipe names are case-insensitive; a differently cased USERNAME still matches.
+        try testing.expect(honouredBaked("\\\\.\\pipe\\GHOZTTY-david", true, release_name) == null);
+    }
+}
+
+test "honouredBaked: every other pairing keeps the pane's endpoint (T1402)" {
+    const testing = std.testing;
+    const release_name = if (comptime is_windows) "ghoztty-David" else "ghostty-501.sock";
+    const release_ep = if (comptime is_windows)
+        "\\\\.\\pipe\\ghoztty-David"
+    else
+        "/tmp/ghostty-501.sock";
+    const debug_ep = if (comptime is_windows)
+        "\\\\.\\pipe\\ghoztty-debug-David"
+    else
+        "/tmp/ghostty-debug-501.sock";
+    const sandbox_ep = if (comptime is_windows)
+        "\\\\.\\pipe\\ghoztty-t1402-David"
+    else
+        "/tmp/ghostty-t1402-501.sock";
+
+    // release client -> debug endpoint: the direction the override exists for.
+    try testing.expectEqualStrings(debug_ep, honouredBaked(debug_ep, false, release_name).?);
+    // release client -> release endpoint, debug -> debug: same lineage.
+    try testing.expectEqualStrings(release_ep, honouredBaked(release_ep, false, release_name).?);
+    try testing.expectEqualStrings(debug_ep, honouredBaked(debug_ep, true, release_name).?);
+    // A suffixed sandbox is somebody aiming on purpose, never the user's app.
+    try testing.expectEqualStrings(sandbox_ep, honouredBaked(sandbox_ep, true, release_name).?);
+}
+
+test "releaseEndpointBasename: names what a release build derives (T1402)" {
+    // The release derivation is `endpointPath` with an empty suffix; the name
+    // the lineage rule compares against must be exactly its last component.
+    const testing = std.testing;
+    const name = try releaseEndpointBasename(testing.allocator);
+    defer testing.allocator.free(name);
+    if (comptime is_windows) {
+        try testing.expect(std.mem.startsWith(u8, name, "ghoztty-"));
+        try testing.expect(!std.mem.startsWith(u8, name, "ghoztty-debug-"));
+    } else {
+        try testing.expect(std.mem.startsWith(u8, name, "ghostty-"));
+        try testing.expect(std.mem.endsWith(u8, name, ".sock"));
+    }
+    // A debug build's own derived endpoint is never the release name, so a
+    // debug client can never decline its own app.
+    if (build_config.is_debug and std.process.hasEnvVarConstant(suffix_env) == false) {
+        const own = try endpointPath(testing.allocator);
+        defer testing.allocator.free(own);
+        try testing.expect(honouredBaked(own, true, name) != null);
+    }
 }
 
 test "buildRequest: action only omits arguments" {

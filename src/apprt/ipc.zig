@@ -47,7 +47,20 @@ pub fn socketPath(alloc: Allocator) Allocator.Error![:0]u8 {
         return internal_os.ipc_client.clientEndpointPath(alloc);
     }
 
-    return socketPathFrom(alloc, std.posix.getenv(socket_env));
+    // T1402: the same lineage rule `ipc_client.clientEndpointPath` applies on
+    // Windows - a debug CLI never honours the installed release's socket.
+    const baked = std.posix.getenv(socket_env);
+    var honoured: ?[]const u8 = baked;
+    if (build_config.is_debug) {
+        if (baked) |b| if (b.len > 0) {
+            const release = try internal_os.ipc_client.releaseEndpointBasename(alloc);
+            defer alloc.free(release);
+            honoured = internal_os.ipc_client.honouredBaked(b, true, release);
+        };
+    }
+    const path = try socketPathFrom(alloc, honoured);
+    if (baked != null and honoured == null) internal_os.ipc_client.noteDeclined(baked.?, path);
+    return path;
 }
 
 /// `socketPath` with the baked value injected, so the resolution rule is

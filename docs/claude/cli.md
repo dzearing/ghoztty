@@ -892,6 +892,17 @@ the release binary (before this, it silently drove the release app).
   script inherits the environment of the pane it was started from — without
   this rule every `test\win32\*.ps1` run from one of the user's panes would
   drive the user's terminal. Precedence: suffix → baked → derivation.
+- **A debug CLI never honours the installed release's endpoint** (T1402), on
+  both platforms. The bake exists for the release `ghoztty` on `$PATH` run from
+  a debug app's pane, and that direction stays honoured; the reverse — a
+  repo-built debug CLI run from a pane of the installed release — used to drive
+  the user's own terminal. A debug client now declines exactly the release's
+  own endpoint (`ghoztty-<user>` pipe / `ghostty-<uid>.sock`), dials its own
+  derivation, and prints a `note:` on stderr naming both. Any other baked value
+  (another debug instance, a suffixed sandbox) is honoured. To drive the
+  installed release, run the installed `ghoztty`. Rule:
+  `ipc_client.honouredBaked`; acceptance: section 7 of
+  `test/win32/ipc-instance-addressability.ps1`.
 - **Only clients read it.** The IPC *server* binds `ipc_client.endpointPath()`,
   the pure derivation, and the win32 App drops any inherited
   `$GHOZTTY_IPC_SOCKET` from its own environment at startup — otherwise a dev
