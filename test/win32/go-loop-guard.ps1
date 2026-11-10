@@ -1850,7 +1850,41 @@ $headBefore = WHead
 $r = CG @('commit', '-Paths', 'fresh-lock.txt', '-Message', 'beside a lock written just now')
 Assert 'W17c a freshly written index.lock is left alone (the commit fails, HEAD stays)' `
     ($r.Code -ne 0 -and (Test-Path -LiteralPath $wIndexLock) -and (WHead) -eq $headBefore)
+# T1412: the refusal says WHY it kept the lock, with its age, instead of
+# passing git's "remove the file manually" advice through bare.
+Assert 'W17c2 the refusal names the lock age and why it was kept' `
+    ($r.Out -match 'index\.lock: 0 bytes, written .*\(\d+s ago\) - younger than \d+s')
 Remove-Item -LiteralPath $wIndexLock -Force -ErrorAction SilentlyContinue
+
+# A lock that a git which is STILL RUNNING may own is never debris, however old
+# it is: that git started before the lock was written. `cat-file --batch` waits
+# on stdin, so it stays alive for as long as this test keeps the pipe open.
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = 'git'
+$psi.Arguments = "-C `"$wRepo`" cat-file --batch"
+$psi.UseShellExecute = $false
+$psi.RedirectStandardInput = $true
+$psi.RedirectStandardOutput = $true
+$psi.CreateNoWindow = $true
+$liveGit = [System.Diagnostics.Process]::Start($psi)
+Start-Sleep -Milliseconds 500
+[System.IO.File]::WriteAllBytes($wIndexLock, [byte[]]@())
+Start-Sleep -Seconds 11   # past the guard's 10s floor, so only the live git keeps it
+Set-Content -Path (Join-Path $wRepo 'live-git-lock.txt') -Value 'x'
+$headBefore = WHead
+$r = CG @('commit', '-Paths', 'live-git-lock.txt', '-Message', 'beside a lock a running git may own')
+Assert 'W17d an old empty index.lock whose git is still running is left alone and named' `
+    ($r.Code -ne 0 -and (Test-Path -LiteralPath $wIndexLock) -and (WHead) -eq $headBefore -and
+     $r.Out -match 'a git that started before it is still running \(pid \d+ started')
+$liveGit.StandardInput.Close()
+if (-not $liveGit.WaitForExit(5000)) { $liveGit.Kill() }
+Remove-Item -LiteralPath $wIndexLock -Force -ErrorAction SilentlyContinue
+# Negative control for W17d: the same lock with that git gone is cleared.
+[System.IO.File]::WriteAllBytes($wIndexLock, [byte[]]@())
+(Get-Item -LiteralPath $wIndexLock).LastWriteTime = (Get-Date).AddMinutes(-5)
+$r = CG @('commit', '-Paths', 'live-git-lock.txt', '-Message', 'after the running git exited')
+Assert 'W17e the same old lock is cleared once no git from its time is running' `
+    ($r.Code -eq 0 -and $r.Out -match 'cleared a stale index\.lock' -and -not (Test-Path -LiteralPath $wIndexLock))
 
 # -Push is the shape go.md step 6 uses, and it was unexercised until it failed
 # on a real turn: `$push = ...` inside the script assigned a hashtable to the

@@ -154,22 +154,58 @@ function Get-GitDir {
 # live while the git that wrote it is: one that started no later than the lock
 # was written. With none of those alive, an empty lock at least 10s old is
 # debris, and the guard clears it rather than stopping the loop to ask.
-function Clear-StaleIndexLock {
+$StaleIndexLockSeconds = 10
+
+# The one verdict on .git/index.lock, shared by the clearer and by the refusal
+# text (T1412): $null when there is no lock, else Stale (safe to clear) plus a
+# Why that names the size, the age and any git that may still own it.
+function Get-IndexLockState {
     $gd = Get-GitDir
-    if (-not $gd) { return }
+    if (-not $gd) { return $null }
     $il = Join-Path $gd 'index.lock'
     $item = Get-Item -LiteralPath $il -ErrorAction SilentlyContinue
-    if (-not $item) { return }
-    if ($item.Length -ne 0) { return }
+    if (-not $item) { return $null }
     $written = $item.LastWriteTime
-    if (((Get-Date) - $written).TotalSeconds -lt 10) { return }
+    $age = [int][Math]::Floor(((Get-Date) - $written).TotalSeconds)
+    $desc = "$($item.Length) bytes, written $($written.ToString('yyyy-MM-dd HH:mm:ss')) ($($age)s ago)"
+    $s = @{ Path = $il; Stale = $false; Written = $written; Age = $age; Why = '' }
+    if ($item.Length -ne 0) {
+        $s.Why = "$desc - not empty, so a git may be mid-write; left alone"
+        return $s
+    }
+    if ($age -lt $StaleIndexLockSeconds) {
+        $s.Why = "$desc - younger than $($StaleIndexLockSeconds)s, so its git may still be running; left alone"
+        return $s
+    }
     $owners = @(Get-CimInstance Win32_Process -Filter "Name='git.exe'" -ErrorAction SilentlyContinue |
         Where-Object { $_.CreationDate -and $_.CreationDate -le $written.AddSeconds(1) })
-    if ($owners.Count -gt 0) { return }
-    Remove-Item -LiteralPath $il -Force -ErrorAction SilentlyContinue
-    if (-not (Test-Path -LiteralPath $il)) {
-        "note: cleared a stale index.lock (empty, written $($written.ToString('yyyy-MM-dd HH:mm:ss')), no git from then still running)"
+    if ($owners.Count -gt 0) {
+        $who = ($owners | Select-Object -First 3 | ForEach-Object {
+            "pid $($_.ProcessId) started $($_.CreationDate.ToString('HH:mm:ss'))" }) -join ', '
+        $s.Why = "$desc - a git that started before it is still running ($who); left alone"
+        return $s
     }
+    $s.Stale = $true
+    $s.Why = "$desc - empty, and no git from then still running"
+    return $s
+}
+
+function Clear-StaleIndexLock {
+    $s = Get-IndexLockState
+    if (-not $s -or -not $s.Stale) { return }
+    Remove-Item -LiteralPath $s.Path -Force -ErrorAction SilentlyContinue
+    if (-not (Test-Path -LiteralPath $s.Path)) {
+        "note: cleared a stale index.lock (empty, written $($s.Written.ToString('yyyy-MM-dd HH:mm:ss')), no git from then still running)"
+    }
+}
+
+# Printed under a failed git step: git's own advice ("another git process seems
+# to be running... remove the file manually") names neither the age nor a
+# holder, and two turns each deleted the file by hand on that text alone.
+function Show-IndexLockDiagnosis {
+    $s = Get-IndexLockState
+    if (-not $s) { return }
+    "  index.lock: $($s.Why)"
 }
 
 function Get-LockPath {
@@ -830,7 +866,7 @@ switch ($Action) {
             # Stage first so a NEW file is known to the index - a pathspec
             # commit only matches paths git already knows.
             $add = Git-Run (@('add', '--') + $want)
-            if ($add.Code -ne 0) { "ERROR git add failed:"; $add.Out; exit 6 }
+            if ($add.Code -ne 0) { "ERROR git add failed:"; $add.Out; Show-IndexLockDiagnosis; exit 6 }
 
             # What else is somebody else holding in the index right now? Not an
             # error - the pathspec excludes it - but the one moment where the
@@ -844,7 +880,7 @@ switch ($Action) {
 
             $commit = Git-Run (@('commit', '-F', $msgFile, '--cleanup=whitespace', '--') + $want)
             if ($commit.Code -ne 0) {
-                "ERROR git commit failed:"; $commit.Out; exit 6
+                "ERROR git commit failed:"; $commit.Out; Show-IndexLockDiagnosis; exit 6
             }
         } finally {
             Remove-Item Env:GHOZTTY_COMMIT_LOCK_KEY -ErrorAction SilentlyContinue
