@@ -1623,6 +1623,14 @@ fixture wearing our leaf name, a `node` server). Enumerator: the same
 including the live proof that the helper's default really lands on disk:
 `test/win32/stderr-launch-capture.ps1`.
 
+One launch neither of those can reach: the instance a cold `+new-window`
+**auto-launches**. The CLI spawns it detached with no inherited handles, so its
+log goes nowhere. Set `GHOZTTY_TEST_STDERR_FILE=<path>` (debug builds only,
+T2781) on the CLI call and both the CLI and the app it starts append their
+stderr to that file. It survives the CLI-launch probe's console attach, which
+otherwise points a detached debug app's stderr at the caller's console halfway
+through startup.
+
 **A restore test must prove the pane is LIVE, not painted** (T532, T652). A
 pane that came back as a frozen picture is byte-identical to a working one for
 every assertion that reads the screen or `+list --json` — a replayed marker is

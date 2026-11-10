@@ -14,8 +14,11 @@
 # Sections:
 #   A. Deterministic: the resolve is held open 2.5s by the debug hook
 #      GHOZTTY_AGENT_RESOLVE_DELAY_MS, so the `+new-window` is GUARANTEED to
-#      land inside it. The window must come up with a session, and so must the
-#      launch window.
+#      land inside it. The window must come up with a session, and it must be
+#      the ONLY window (T2781): the request is served inside the launch
+#      restore, whose pull then offers that same window back as a "crash
+#      orphan", and rebuilding it put a stray `window-1` beside it until T2842
+#      taught the launch pass to leave windows already on screen alone.
 #   B. Natural: three cold launches with no hook at all, each asking for a
 #      window straight away - the shape that found the bug. Every one must be
 #      persisted.
@@ -177,7 +180,11 @@ function Show-Panes($panes) {
 # starts the app and then sends the request, which is the launch-time race),
 # wait for the panes to settle, report them, and tear the app AND its agent
 # down so the next launch is cold again.
-function Invoke-ColdLaunch([string]$Tag, [string]$Name) {
+#
+# `$HoldSec` lists the panes again that long after they settled, so a window
+# that turns up late - the deferred startup window's 5s grace (T2162) - is in
+# the report too (T2781).
+function Invoke-ColdLaunch([string]$Tag, [string]$Name, [int]$HoldSec = 0) {
     $sandbox = Join-Path $env:TEMP "ghoztty-t1688-$Tag-$PID"
     $script:sandboxes += $sandbox
     [void](Set-GhozttyTestIsolation -Tag $Tag -ReleaseSandbox -SandboxRoot $sandbox -Quiet)
@@ -188,6 +195,10 @@ function Invoke-ColdLaunch([string]$Tag, [string]$Name) {
     [void](Ghoz @('+new-window', "--target=$Name"))
     $ms = $sw.ElapsedMilliseconds
     $panes = Wait-Settled -Name $Name
+    if ($HoldSec -gt 0) {
+        Start-Sleep -Seconds $HoldSec
+        $panes = @(Get-Panes)
+    }
     $log += @(Assert-GhozttyIsolated -Exe $Exe)
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 900)
     return [pscustomobject]@{ panes = $panes; ms = $ms; log = $log }
@@ -199,7 +210,7 @@ try {
     "== A: a window asked for while the resolve is held open"
     $env:GHOZTTY_AGENT_RESOLVE_DELAY_MS = '2500'
     if ($NegativeControl) { $env:GHOZTTY_IPC_NO_RESOLVE_DEFER = '1' }
-    $r = Invoke-ColdLaunch -Tag 'rdA' -Name 'rdA'
+    $r = Invoke-ColdLaunch -Tag 'rdA' -Name 'rdA' -HoldSec 6
     Remove-Item Env:GHOZTTY_AGENT_RESOLVE_DELAY_MS -ErrorAction SilentlyContinue
     Remove-Item Env:GHOZTTY_IPC_NO_RESOLVE_DEFER -ErrorAction SilentlyContinue
     $r.log
@@ -208,8 +219,10 @@ try {
     $mine = @($r.panes | Where-Object { $_.window -eq 'rdA' })
     Assert "A1 the requested window opened" ($mine.Count -ge 1)
     Assert "A2 the window asked for mid-resolve is persisted (has a session)" (@($mine | Where-Object { $_.sid }).Count -ge 1 -and @($mine | Where-Object { -not $_.sid }).Count -eq 0)
-    $launch = @($r.panes | Where-Object { $_.window -ne 'rdA' })
-    Assert "A3 the launch window is persisted too" ($launch.Count -ge 1 -and @($launch | Where-Object { -not $_.sid }).Count -eq 0)
+    # T2781: the auto-launch opens only the window asked for. A second window
+    # here is the restore rebuilding rdA from its own mirrored layout.
+    $others = @($r.panes | Where-Object { $_.window -ne 'rdA' })
+    Assert "A3 no stray window beside the one asked for (others: $(Show-Panes $others))" ($others.Count -eq 0)
     Assert "A4 control: a persisted window carries no not-persisted notice" `
         (@($r.panes | Where-Object { $_.banner -and $_.banner -match 'Not persisted' }).Count -eq 0)
 

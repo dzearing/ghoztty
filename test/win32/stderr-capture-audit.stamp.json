@@ -1,13 +1,13 @@
 {
     "guard":  "stderr-capture",
     "script":  "test/win32/stderr-capture-audit.ps1",
-    "generated":  "2026-10-29T19:06:27-07:00",
-    "commit":  "b2fe1644f",
+    "generated":  "2026-11-09T19:56:02-08:00",
+    "commit":  "762f407d9",
     "uncommitted":  [
                         "docs/claude/testing.md"
                     ],
     "files":  {
-                  "docs/claude/testing.md":  "0701acc6a116fe844c56610707f1dbb762e833bb09fac2a3214baba5922fd0cb",
+                  "docs/claude/testing.md":  "b40b0992753c7ab9fd4c79d43ef9429ce65f530e450879e7c7264603e2bdcb49",
                   "test/win32/lib/StderrCaptureAudit.ps1":  "69d0a25615d35acc06bf6c1471016186163ae1881ae70a12461425546ac4b7d8",
                   "test/win32/stderr-capture-audit.ps1":  "928dd559d8e1df45f9fce6baa0071a920d997aca8977790161b1c41c34368efe"
               }

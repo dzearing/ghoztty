@@ -28,7 +28,41 @@ const MainReturn = switch (build_config.artifact) {
     else => void,
 };
 
+/// Test hook (DEBUG BUILDS ON WINDOWS ONLY, T2781): `GHOZTTY_TEST_STDERR_FILE`
+/// names a file this process appends its stderr to. A `+new-window` with no
+/// running instance auto-launches the app DETACHED with no inherited handles,
+/// so its log - the one record of what that instance did - otherwise goes
+/// nowhere. The CLI that launched it inherits the variable too and appends to
+/// the same file, which puts both sides of the launch in one timeline.
+fn redirectStderrForTest() void {
+    if (comptime builtin.os.tag != .windows or builtin.mode != .Debug) return;
+    const windows = std.os.windows;
+    const path = std.process.getenvW(std.unicode.utf8ToUtf16LeStringLiteral("GHOZTTY_TEST_STDERR_FILE")) orelse return;
+    if (path.len == 0) return;
+    const h = windows.kernel32.CreateFileW(
+        path.ptr,
+        windows.FILE_APPEND_DATA | windows.SYNCHRONIZE,
+        windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE,
+        null,
+        windows.OPEN_ALWAYS,
+        windows.FILE_ATTRIBUTE_NORMAL,
+        null,
+    );
+    if (h == windows.INVALID_HANDLE_VALUE) return;
+    test_stderr = h;
+    _ = SetStdHandle(windows.STD_ERROR_HANDLE, h);
+}
+
+/// The file `redirectStderrForTest` opened. Re-installed before every stderr
+/// log line, because the CLI-launch probe's AttachConsole/FreeConsole round
+/// trip resets the standard handles to the caller's console (`cli_launch.zig`).
+var test_stderr: ?std.os.windows.HANDLE = null;
+
+extern "kernel32" fn SetStdHandle(nStdHandle: std.os.windows.DWORD, hHandle: std.os.windows.HANDLE) callconv(.winapi) std.os.windows.BOOL;
+
 pub fn main() !MainReturn {
+    redirectStderrForTest();
+
     // We first start by initializing our global state. This will setup
     // process-level state we need to run the terminal. The reason we use
     // a global is because the C API needs to be able to access this state;
@@ -449,6 +483,10 @@ fn logFn(
 
         // skip if we are not logging to stderr
         if (!state.logging.stderr) break :stderr;
+
+        if (comptime builtin.os.tag == .windows and builtin.mode == .Debug) {
+            if (test_stderr) |h| _ = SetStdHandle(std.os.windows.STD_ERROR_HANDLE, h);
+        }
 
         // Lock so we are thread-safe
         var buf: [64]u8 = undefined;

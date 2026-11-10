@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-09T19:14:19-08:00",
-    "commit":  "3101e2a80",
+    "generated":  "2026-11-09T19:59:28-08:00",
+    "commit":  "762f407d9",
     "uncommitted":  [
-                        "test/win32/pane-sidebar-all-windows.ps1"
+                        "test/win32/resolve-window-persist.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -382,7 +382,7 @@
                   "test/win32/pane-sidebar-actions.ps1":  "a9198ff447cc50f3d61e94b0ef27a1637656293818a7b6b35a3c0141c6c60ac3",
                   "test/win32/pane-sidebar-activity.ps1":  "3068457a1ef0d8ae984c2df7d30e7244df8fcd72ad32d78d9a9b450c8ac05b93",
                   "test/win32/pane-sidebar-add.ps1":  "c7ed6fc37ac65afb363beeedcb5b6c8c230d9223528d3e097e01d6e7f082090a",
-                  "test/win32/pane-sidebar-all-windows.ps1":  "8e7434c06081504b5d40517dac523b2fb853795b0531dd080b7df0e06f3f4a31",
+                  "test/win32/pane-sidebar-all-windows.ps1":  "8933c552d6ec5f0acf2a9aee2fac9ced39faa177c5be738f3bedf08d319e674d",
                   "test/win32/pane-sidebar-close.ps1":  "a7c8945f88ead7c8d79aa9feec72ed7980d15ae76d8c6536c0bc8dc6dff0c107",
                   "test/win32/pane-sidebar-drag.ps1":  "9c3f9e0658af48d491737cba1cd5f6cfabc8b399e5a43808129f26b7bcddccd9",
                   "test/win32/pane-sidebar-elevated.ps1":  "d837bc24765f37ec4253475dc3b1efa0889ebddaad9cc5ec2ac0c6cf8e5731f4",
@@ -455,7 +455,7 @@
                   "test/win32/reset-window-size.ps1":  "28e18f6472e20ae4a5e0f9b5d93ec392c6a81e67c8b519785e1b433b18ada3ba",
                   "test/win32/resize-debounce.ps1":  "2e44a1b8cfe58c0ef286df245380afc6abbb1e11d691ef4ac3820d1d683a531d",
                   "test/win32/resize-flicker.ps1":  "7b682dc5d09fc02288831203000c419002a200594a6e37f1ac0e195df87c47b0",
-                  "test/win32/resolve-window-persist.ps1":  "56769f3e10f912f800abb2ffb03a46adf580d32ca0187014e1a96f59583e5ade",
+                  "test/win32/resolve-window-persist.ps1":  "1e4386ee3b89a7e8ebb39eb53263a8c596ca2d405c2ccc9ed8716e013fad5958",
                   "test/win32/restore-dead-sessions.ps1":  "95e0b3b6d0e2c2c6cd9c02e0823c715a4eff72e8ac7d12a70a50976d5baf25ce",
                   "test/win32/restore-dpi-frame.ps1":  "d108aa2a21aa785326a2f845906c3d9a7f252f1dd5711cb9d33f28a7fb6fdcbe",
                   "test/win32/restore-late-agent.ps1":  "ff641c3eea23c1f66215805145b3b262c388b459c8d4f069fd345587cc888b80",
