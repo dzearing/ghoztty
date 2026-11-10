@@ -3608,8 +3608,12 @@ $GuardTable = @(
         Name   = 'printclient-audit'
         Script = 'test\win32\printclient-audit.ps1'
         Stamp  = 'test\win32\printclient-audit.stamp.json'
+        # paint_probe.zig is named on its own (T1406) although the glob already
+        # takes it: section D defends the probe's WM_PAINT-only asymmetry, and
+        # the row must keep watching the probe if the glob is ever narrowed.
         Covers = @(
             'src\apprt\win32\*.zig',
+            'src\apprt\win32\paint_probe.zig',
             'test\win32\printclient-audit.ps1'
         )
     },

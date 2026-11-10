@@ -19,7 +19,9 @@
 //! camera cannot contaminate: `WM_PRINTCLIENT` deliberately does NOT record,
 //! because a paint the harness asked for is exactly the thing that must not
 //! count as the app repainting on its own. That asymmetry is the whole oracle
-//! — leave it alone.
+//! — leave it alone. `test/win32/printclient-audit.ps1` section D enforces it
+//! (T1406): no `WM_PRINTCLIENT` arm may reach `record`, directly or through a
+//! helper, and every `Surface` must be recorded from a `WM_PAINT` arm.
 //!
 //! The counters are UI-thread only, like `system_colors`' accent cache, and
 //! for the same reason: every `WM_PAINT` is delivered on the thread that owns

@@ -30,6 +30,8 @@
 # Section A gives the analyzer teeth against fixtures; section B is the sweep
 # that must stay at zero. Section C (T944) is the call-site half: no probe in
 # test\win32 takes the torn capture without `-Sync` or a stated `-TornReason`.
+# Section D (T1406) defends the paint probe: no WM_PRINTCLIENT path may count a
+# paint, and every probe surface must be counted from a WM_PAINT arm.
 param(
     [string]$Repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 )
@@ -240,6 +242,296 @@ Assert "C7 the sweep found the probes ($calls call sites)" ($calls -ge 50) "$cal
 Assert 'C8 every torn capture names its reason at the call site' ($tornBare.Count -eq 0) `
     ($tornBare -join ' | ')
 "  NOTE torn by declaration: $($torn.Count) call site(s) in $((@($torn | Sort-Object -Unique)) -join ', ')"
+
+# ============================================================================
+"== D: the paint probe counts the app's own paints, never the camera's (T1406)"
+# ============================================================================
+# `src\apprt\win32\paint_probe.zig` counts a repaint from `WM_PAINT` and
+# deliberately NOT from `WM_PRINTCLIENT`. That asymmetry is the whole oracle
+# behind chrome-theme.ps1 section G (T1405): a paint the harness asked for must
+# not read as the app repainting itself. Put `paint_probe.record` on a
+# `WM_PRINTCLIENT` path - directly, or through a helper both arms share - and
+# every G assertion goes permanently green with no symptom anywhere.
+#
+# So two halves, judged over the source text of the whole frontend:
+#   NEGATIVE - no WM_PRINTCLIENT arm reaches a record call, at any depth.
+#   POSITIVE - every declared `Surface` is recorded from a WM_PAINT arm, so a
+#              probe that quietly stops counting is caught here and not only by
+#              a red G1/G2 that nobody is looking at.
+#
+# "Reaches" is by function NAME, transitively, across every file: a function
+# records if its body calls `<alias>.record(` or calls (by name) a function that
+# records. Name-based reach over-approximates - two files' `paint` would be
+# conflated - which can only produce a false finding, never a missed one; a
+# finding is read, not obeyed. Comments and string literals are stripped first,
+# because the very arms this judges carry prose about `paint_probe.record`.
+# Arms are matched as switch arms, including the combined form
+# `w32.WM_PAINT, w32.WM_PRINTCLIENT => {`, which is the likeliest way the
+# asymmetry would be lost in a tidy-up.
+
+# One regex pass: strings become "", char literals ' ', comments and Zig
+# multiline-string lines vanish. Braces inside any of them would otherwise
+# unbalance the body matcher (format strings are full of `{d}`).
+$script:zigStrip = [regex]'"(?:\\.|[^"\\\n])*"|''(?:\\.|[^''\\\n])+''|//[^\n]*|\\\\[^\n]*'
+function Get-ZigStripped([string]$Text) {
+    return $script:zigStrip.Replace($Text, {
+        param($m)
+        $v = $m.Value
+        if ($v.StartsWith('"')) { return '""' }
+        if ($v.StartsWith("'")) { return "' '" }
+        return ''
+    })
+}
+
+# A balanced `{...}` starting exactly at an index (.NET balancing groups, so
+# a 20k-line file is matched at regex speed rather than char by char in PS).
+$script:braceBlock = [regex]'\G\{(?>[^{}]+|\{(?<d>)|\}(?<-d>))*(?(d)(?!))\}'
+
+function Get-BlockAt([string]$Text, [int]$Open) {
+    $m = $script:braceBlock.Match($Text, $Open)
+    if ($m.Success) { return $m.Value }
+    return $null
+}
+
+# Every `fn name(...) ... {body}` in stripped text. Declarations with no body
+# (`extern fn ...;`) end at a `;` before any `{` and are skipped.
+function Get-ZigFunctions([string]$Clean) {
+    $out = @()
+    foreach ($m in [regex]::Matches($Clean, '(?m)^[ \t]*(?:pub[ \t]+)?(?:export[ \t]+|inline[ \t]+)?fn[ \t]+(\w+)[ \t]*\(')) {
+        $i = $m.Index + $m.Length
+        $depth = 1
+        while ($i -lt $Clean.Length -and $depth -gt 0) {
+            $c = $Clean[$i]
+            if ($c -eq '(') { $depth++ } elseif ($c -eq ')') { $depth-- }
+            $i++
+        }
+        $brace = $Clean.IndexOf('{', $i)
+        $semi = $Clean.IndexOf(';', $i)
+        if ($brace -lt 0 -or ($semi -ge 0 -and $semi -lt $brace)) { continue }
+        $body = Get-BlockAt $Clean $brace
+        if ($null -ne $body) { $out += [pscustomobject]@{ Name = $m.Groups[1].Value; Body = $body } }
+    }
+    return , $out
+}
+
+# Every switch arm whose label list names `w32.<Msg>`. The body is a balanced
+# block, or the rest of the line for a single-expression arm.
+function Get-MessageArms([string]$Clean, [string]$Msg) {
+    $out = @()
+    foreach ($m in [regex]::Matches($Clean, '(?m)^[ \t]*((?:w32\.WM_\w+[ \t]*,[ \t]*)*w32\.WM_\w+)[ \t]*=>[ \t]*')) {
+        $labels = $m.Groups[1].Value -split '[ \t]*,[ \t]*'
+        if ($labels -notcontains "w32.$Msg") { continue }
+        $at = $m.Index + $m.Length
+        if ($at -lt $Clean.Length -and $Clean[$at] -eq '{') {
+            $body = Get-BlockAt $Clean $at
+        } else {
+            $eol = $Clean.IndexOf("`n", $at)
+            if ($eol -lt 0) { $eol = $Clean.Length }
+            $body = $Clean.Substring($at, $eol - $at)
+        }
+        if ($null -ne $body) { $out += [pscustomobject]@{ Labels = ($labels -join ', '); Body = $body } }
+    }
+    return , $out
+}
+
+# The judgement. $Files: @(@{ Name; Text }). $Surfaces: the enum members the
+# probe declares. Returns finding strings; empty means the asymmetry holds.
+function Get-PaintProbeFindings {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Files,
+        [Parameter(Mandatory = $true)][string[]]$Surfaces
+    )
+    $findings = @()
+    $units = @()
+    foreach ($f in $Files) {
+        $aliases = @([regex]::Matches($f.Text, 'const\s+(\w+)\s*=\s*@import\(\s*"paint_probe\.zig"\s*\)') |
+            ForEach-Object { $_.Groups[1].Value })
+        $clean = Get-ZigStripped $f.Text
+        $units += [pscustomobject]@{
+            Name      = $f.Name
+            Aliases   = $aliases
+            Functions = (Get-ZigFunctions $clean)
+            Paint     = (Get-MessageArms $clean 'WM_PAINT')
+            Print     = (Get-MessageArms $clean 'WM_PRINTCLIENT')
+        }
+    }
+
+    # Names of functions that transitively reach a record call whose argument
+    # matches $ArgPattern ('[^)]*' = any surface).
+    function Get-Reachers([string]$ArgPattern) {
+        $set = @{}
+        $changed = $true
+        while ($changed) {
+            $changed = $false
+            $callRe = $null
+            if ($set.Count -gt 0) {
+                $callRe = [regex]('\b(?:' + (($set.Keys | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')\s*\(')
+            }
+            foreach ($u in $units) {
+                $seedRe = $null
+                if ($u.Aliases.Count -gt 0) {
+                    $seedRe = [regex]('\b(?:' + (($u.Aliases | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')\.record\s*\(\s*' + $ArgPattern + '\)')
+                }
+                foreach ($fn in $u.Functions) {
+                    if ($set.ContainsKey($fn.Name)) { continue }
+                    if (($seedRe -and $seedRe.IsMatch($fn.Body)) -or ($callRe -and $callRe.IsMatch($fn.Body))) {
+                        $set[$fn.Name] = $u.Name
+                        $changed = $true
+                    }
+                }
+            }
+        }
+        return $set
+    }
+
+    function Test-ArmReaches($Unit, [string]$Body, [hashtable]$Reach, [string]$ArgPattern) {
+        if ($Unit.Aliases.Count -gt 0) {
+            $seedRe = '\b(?:' + (($Unit.Aliases | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')\.record\s*\(\s*' + $ArgPattern + '\)'
+            if ($Body -match $seedRe) { return 'a direct record call' }
+        }
+        foreach ($name in $Reach.Keys) {
+            if ($Body -match ('\b' + [regex]::Escape($name) + '\s*\(')) { return "$name() in $($Reach[$name])" }
+        }
+        return $null
+    }
+
+    $any = Get-Reachers '[^)]*'
+    foreach ($u in $units) {
+        foreach ($arm in $u.Print) {
+            $via = Test-ArmReaches $u $arm.Body $any '[^)]*'
+            if ($via) { $findings += "$($u.Name): the ``$($arm.Labels)`` arm counts a paint through $via - the camera would read as a repaint" }
+        }
+    }
+    foreach ($s in $Surfaces) {
+        $arg = '\.' + [regex]::Escape($s) + '\s*'
+        $reach = Get-Reachers $arg
+        $fromPaint = $false
+        foreach ($u in $units) {
+            foreach ($arm in $u.Paint) {
+                if (Test-ArmReaches $u $arm.Body $reach $arg) { $fromPaint = $true; break }
+            }
+            if ($fromPaint) { break }
+        }
+        if (-not $fromPaint) { $findings += "surface .$s is never recorded from a WM_PAINT arm - its counter cannot advance" }
+    }
+    return , $findings
+}
+
+# --- D fixtures: the analyzer has teeth (T1133) ----------------------------
+$probeImport = 'const paint_probe = @import("paint_probe.zig");'
+function New-ProcFixture([string]$PaintArm, [string]$PrintArm, [string]$Extra = '') {
+    return (@(
+            $probeImport,
+            $Extra,
+            'fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) isize {',
+            '    switch (msg) {',
+            $PaintArm,
+            $PrintArm,
+            '        else => return w32.DefWindowProcW(hwnd, msg, wparam, lparam),',
+            '    }',
+            '}'
+        ) -join "`n")
+}
+$paintOk = @(
+    '        w32.WM_PAINT => {',
+    '            // counted here, never in WM_PRINTCLIENT: paint_probe.record(.window) is the rule',
+    '            paint_probe.record(.window);',
+    '            self.paint(hdc);',
+    '            return 0;',
+    '        },'
+) -join "`n"
+$printOk = @(
+    '        w32.WM_PRINTCLIENT => {',
+    '            // deliberately NOT paint_probe.record(.window) - this is the camera',
+    '            log.debug("printing {d} {s}", .{ 1, "}" });',
+    '            self.paint(@ptrFromInt(wparam));',
+    '            return 0;',
+    '        },'
+) -join "`n"
+$printDirect = $printOk -replace 'self\.paint\(@ptrFromInt', 'paint_probe.record(.window);
+            self.paint(@ptrFromInt'
+$helper = @(
+    'fn paintShared(self: *Self, dc: w32.HDC) void {',
+    '    paint_probe.record(.window);',
+    '    self.paint(dc);',
+    '}'
+) -join "`n"
+$printViaHelper = $printOk -replace 'self\.paint\(', 'self.paintShared('
+$combined = @(
+    '        w32.WM_PAINT, w32.WM_PRINTCLIENT => {',
+    '            paint_probe.record(.window);',
+    '            return 0;',
+    '        },'
+) -join "`n"
+
+$fxGood = New-ProcFixture $paintOk $printOk
+$fxD1 = Get-PaintProbeFindings -Files @(@{ Name = 'good.zig'; Text = $fxGood }) -Surfaces @('window')
+Assert 'D1 the shape as it stands is clean (comments and a "}" in a string do not count)' ($fxD1.Count -eq 0) ($fxD1 -join ' | ')
+
+$fxD2 = Get-PaintProbeFindings -Files @(@{ Name = 'bad.zig'; Text = (New-ProcFixture $paintOk $printDirect) }) -Surfaces @('window')
+Assert 'D2 a WM_PRINTCLIENT arm that records directly is a finding' `
+(@($fxD2 | Where-Object { $_ -match 'WM_PRINTCLIENT. arm counts a paint through a direct record call' }).Count -eq 1) ($fxD2 -join ' | ')
+
+$fxD3 = Get-PaintProbeFindings -Files @(@{ Name = 'bad.zig'; Text = (New-ProcFixture $paintOk $printViaHelper $helper) }) -Surfaces @('window')
+Assert 'D3 ...and so is one that reaches it through a shared helper' `
+(@($fxD3 | Where-Object { $_ -match 'paintShared\(\)' }).Count -eq 1) ($fxD3 -join ' | ')
+
+# The helper in one file, the arm in another: reach is across the frontend.
+$fxD4 = Get-PaintProbeFindings -Files @(
+    @{ Name = 'helper.zig'; Text = ($probeImport + "`n" + $helper) },
+    @{ Name = 'proc.zig'; Text = (New-ProcFixture '        w32.WM_PAINT => { self.paintShared(dc); return 0; },' ($printOk -replace 'self\.paint\(', 'other.paintShared(')) }
+) -Surfaces @('window')
+Assert 'D4 ...and so is one that reaches it through another file' `
+(@($fxD4 | Where-Object { $_ -match 'paintShared\(\) in helper\.zig' }).Count -eq 1) ($fxD4 -join ' | ')
+
+$fxD5 = Get-PaintProbeFindings -Files @(@{ Name = 'bad.zig'; Text = (New-ProcFixture $combined '') }) -Surfaces @('window')
+Assert 'D5 a combined WM_PAINT, WM_PRINTCLIENT arm is a finding' `
+(@($fxD5 | Where-Object { $_ -match 'WM_PAINT, w32\.WM_PRINTCLIENT' }).Count -eq 1) ($fxD5 -join ' | ')
+
+$fxD6 = Get-PaintProbeFindings -Files @(@{ Name = 'good.zig'; Text = $fxGood }) -Surfaces @('window', 'viewer_toc')
+Assert 'D6 POSITIVE: a declared surface nobody records is a finding' `
+(@($fxD6 | Where-Object { $_ -match '\.viewer_toc is never recorded' }).Count -eq 1 -and $fxD6.Count -eq 1) ($fxD6 -join ' | ')
+
+# Recorded, but only by the camera: both halves must speak.
+$fxD7 = Get-PaintProbeFindings -Files @(@{ Name = 'bad.zig'; Text = (New-ProcFixture '        w32.WM_PAINT => { return 0; },' $printDirect) }) -Surfaces @('window')
+Assert 'D7 POSITIVE: a surface recorded only from WM_PRINTCLIENT is not counted as recorded' `
+(@($fxD7 | Where-Object { $_ -match '\.window is never recorded' }).Count -eq 1) ($fxD7 -join ' | ')
+
+# A record that names the wrong file's alias is not a record of the probe.
+$fxD8 = Get-PaintProbeFindings -Files @(@{ Name = 'noimport.zig'; Text = ((New-ProcFixture $paintOk $printDirect) -replace [regex]::Escape($probeImport), '') }) -Surfaces @('window')
+Assert 'D8 a file that does not import the probe cannot record it' `
+(@($fxD8 | Where-Object { $_ -match 'counts a paint' }).Count -eq 0) ($fxD8 -join ' | ')
+
+# --- D sweep: the real frontend --------------------------------------------
+$probePath = Join-Path $srcDir 'paint_probe.zig'
+Assert 'D9 paint_probe.zig is where this expects it' (Test-Path -LiteralPath $probePath) $probePath
+$surfaces = @()
+if (Test-Path -LiteralPath $probePath) {
+    $probeClean = Get-ZigStripped (Get-Content -LiteralPath $probePath -Raw)
+    $enumAt = $probeClean.IndexOf('pub const Surface = enum')
+    if ($enumAt -ge 0) {
+        $enumBody = Get-BlockAt $probeClean ($probeClean.IndexOf('{', $enumAt))
+        if ($enumBody) {
+            $surfaces = @([regex]::Matches($enumBody, '(?m)^\s*(\w+)\s*,') | ForEach-Object { $_.Groups[1].Value })
+        }
+    }
+}
+Assert "D10 the probe's surfaces were read ($($surfaces -join ', '))" ($surfaces.Count -ge 2) "$($surfaces.Count)"
+
+$realFiles = @()
+if (Test-Path -LiteralPath $srcDir) {
+    foreach ($f in (Get-ChildItem -LiteralPath $srcDir -Filter '*.zig' -Recurse)) {
+        $t = Get-Content -LiteralPath $f.FullName -Raw
+        if ($t) { $realFiles += @{ Name = $f.Name; Text = $t } }
+    }
+}
+$importers = @($realFiles | Where-Object { $_.Text -match '@import\(\s*"paint_probe\.zig"\s*\)' } | ForEach-Object { $_.Name })
+Assert "D11 the sweep found the probe's callers ($($importers -join ', '))" ($importers.Count -ge 2) "$($importers.Count)"
+if ($surfaces.Count -gt 0 -and $realFiles.Count -gt 0) {
+    $realD = Get-PaintProbeFindings -Files $realFiles -Surfaces $surfaces
+    Assert 'D12 no WM_PRINTCLIENT path counts a paint, and every surface is counted from WM_PAINT' `
+    ($realD.Count -eq 0) ($realD -join ' | ')
+}
 
 # --- stamp (T783 / T478) ---------------------------------------------------
 # Only a CLEAN run stamps; a red one must stay due.
