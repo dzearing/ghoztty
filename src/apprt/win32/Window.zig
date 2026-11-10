@@ -17,6 +17,7 @@ const CoreApp = @import("../../App.zig");
 const MachineChooser = @import("MachineChooser.zig");
 const ActivityMonitor = @import("ActivityMonitor.zig");
 const activity_borrow = @import("activity_borrow.zig");
+const activity_machines = @import("activity_machines.zig");
 const ConfirmDialog = @import("ConfirmDialog.zig");
 const RenameDialog = @import("RenameDialog.zig");
 const BannerDialog = @import("BannerDialog.zig");
@@ -2841,6 +2842,13 @@ pub fn openActivityMonitor(self: *Window) void {
 /// purpose: what they answer is "which box did I type", and that is a different
 /// question.
 ///
+/// A RELAY machine is the exception (T1420): its id is a device id nobody
+/// chose, and the window now knows the friendly name the directory gave it
+/// (T1418), which is what the carousel's directory card is labeled with. So a
+/// relay panel is titled by that name when the window has one — the same name
+/// whichever entry point opened it — and by the device id only until a
+/// listing names it (`activity_machines.adoptSourceNames` retitles it then).
+///
 /// Null when the identity does not fit `buf`, which the caller answers by
 /// opening the Local panel rather than a mislabeled one.
 pub fn activityPanelSource(buf: []u8, machine: RemoteMachine) ?ActivityMonitor.Remote {
@@ -2848,7 +2856,10 @@ pub fn activityPanelSource(buf: []u8, machine: RemoteMachine) ?ActivityMonitor.R
         .relay => |r| .{ .relay = r.device },
         .tcp => |t| .{ .tcp = .{ .host = t.host, .port = t.port } },
     }) orelse return null;
-    return .{ .id = id, .name = id };
+    return .{ .id = id, .name = switch (machine) {
+        .relay => activity_machines.relayLabel(machine.displayName(), id),
+        .tcp => id,
+    } };
 }
 
 /// The pill's size for the caption's layout: zero when there is no pill, or
@@ -3672,6 +3683,11 @@ pub fn adoptRelayNames(app: *App, entries: []const machine_cache.Entry) void {
         log.info("remote machine renamed from directory device={s} name={s}", .{ relay.device, owned });
         win.refreshRemotePill();
     }
+    // And every open Activity panel titled by a machine this listing names
+    // (T1420) — outside the window loop, because a panel opened before any
+    // window learned the name is titled by the device id even when no window
+    // needs renaming.
+    activity_machines.adoptSourceNames(entries);
 }
 
 /// Remote inheritance for one new tab/split in a REMOTE window (T68, Mac
@@ -22205,8 +22221,9 @@ test "T1419: an Activity panel names a machine by its identity, both entry point
         src.id,
     );
 
-    // A relay machine is its device id under both derivations, which is what
-    // the chooser opens with.
+    // A relay machine is KEYED by its device id under both derivations, which
+    // is what the chooser opens with. With nothing naming it yet, the id is
+    // also its name.
     const relay: RemoteMachine = .{ .relay = .{ .base = "https://relay", .device = "dev-abc" } };
     const rsrc = activityPanelSource(&buf, relay).?;
     try std.testing.expectEqualStrings("dev-abc", rsrc.id);
@@ -22216,4 +22233,76 @@ test "T1419: an Activity panel names a machine by its identity, both entry point
     // caller opens the Local panel instead of a mislabeled remote one.
     var small: [4]u8 = undefined;
     try std.testing.expect(activityPanelSource(&small, tcp) == null);
+}
+
+test "T1420: a relay window's Activity panel is titled by the machine's friendly name" {
+    var buf: [activity_borrow.max_id]u8 = undefined;
+
+    // The window knows the name the directory gave the machine (T1418): the
+    // panel takes it, so the palette entry and the carousel's directory card
+    // (labeled by that same name) title the panel alike.
+    const named: RemoteMachine = .{ .relay = .{
+        .base = "https://relay",
+        .device = "dev-abc",
+        .name = "Studio PC",
+    } };
+    const src = activityPanelSource(&buf, named).?;
+    try std.testing.expectEqualStrings("dev-abc", src.id);
+    try std.testing.expectEqualStrings("Studio PC", src.name);
+    const as_source: ActivityMonitor.Source = .{ .remote = src };
+    try std.testing.expectEqualStrings("Studio PC", as_source.label());
+
+    // A name too long for the panel's buffer is not clipped: the id stands in.
+    const long = "x" ** (ActivityMonitor.max_source_label + 1);
+    const too_long: RemoteMachine = .{ .relay = .{
+        .base = "https://relay",
+        .device = "dev-abc",
+        .name = long,
+    } };
+    try std.testing.expectEqualStrings("dev-abc", activityPanelSource(&buf, too_long).?.name);
+
+    // A direct host is untouched: still its host:port identity (T1419).
+    const tcp: RemoteMachine = .{ .tcp = .{ .host = "box", .port = 7 } };
+    try std.testing.expectEqualStrings("box:7", activityPanelSource(&buf, tcp).?.name);
+}
+
+test "T1420: a panel titled by a device id adopts the name a listing gives it" {
+    const entries = [_]machine_cache.Entry{
+        .{ .id = "dev-abc", .name = "Studio PC" },
+        .{ .id = "dev-host", .name = "", .hostname = "studio-host" },
+        .{ .id = "dev-blank", .name = "" },
+    };
+
+    // Opened from the window before anything named the machine: renamed.
+    const by_id: ActivityMonitor.Source = .{ .remote = .{ .id = "dev-abc", .name = "dev-abc" } };
+    try std.testing.expectEqualStrings("Studio PC", activity_machines.sourceRename(by_id, &entries).?);
+
+    // The directory's hostname fallback names it too, the way the window's
+    // pill is named (`machine_cache.nameFor`).
+    const host: ActivityMonitor.Source = .{ .remote = .{ .id = "dev-host", .name = "dev-host" } };
+    try std.testing.expectEqualStrings("studio-host", activity_machines.sourceRename(host, &entries).?);
+
+    // Already showing that name: nothing to do (no retitle churn per listing).
+    const done: ActivityMonitor.Source = .{ .remote = .{ .id = "dev-abc", .name = "Studio PC" } };
+    try std.testing.expect(activity_machines.sourceRename(done, &entries) == null);
+
+    // A listing that names it with nothing, or does not list it, is not
+    // evidence the current name is wrong.
+    const blank: ActivityMonitor.Source = .{ .remote = .{ .id = "dev-blank", .name = "Old" } };
+    try std.testing.expect(activity_machines.sourceRename(blank, &entries) == null);
+    const absent: ActivityMonitor.Source = .{ .remote = .{ .id = "127.0.0.1:47913", .name = "127.0.0.1:47913" } };
+    try std.testing.expect(activity_machines.sourceRename(absent, &entries) == null);
+
+    // Local is never renamed.
+    try std.testing.expect(activity_machines.sourceRename(.local, &entries) == null);
+
+    // A name too long to hold whole keeps the old title rather than clipping.
+    const long = "y" ** (ActivityMonitor.max_source_label + 1);
+    const long_entries = [_]machine_cache.Entry{.{ .id = "dev-abc", .name = long }};
+    try std.testing.expect(activity_machines.sourceRename(by_id, &long_entries) == null);
+
+    // relayLabel: the id stands in for an empty or oversized name.
+    try std.testing.expectEqualStrings("dev-abc", activity_machines.relayLabel("", "dev-abc"));
+    try std.testing.expectEqualStrings("dev-abc", activity_machines.relayLabel(long, "dev-abc"));
+    try std.testing.expectEqualStrings("Studio PC", activity_machines.relayLabel("Studio PC", "dev-abc"));
 }

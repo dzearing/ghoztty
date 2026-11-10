@@ -1,10 +1,10 @@
 {
     "guard":  "rearrange-window-drop",
     "script":  "test/win32/rearrange-window-drop.ps1",
-    "generated":  "2026-11-10T14:28:24-08:00",
-    "commit":  "311c0d52e",
+    "generated":  "2026-11-10T15:13:40-08:00",
+    "commit":  "0cd05b4a4",
     "uncommitted":  [
-
+                        "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/apprt/win32/App.zig":  "a8cadae45befb238ee226222d13a4947d939769f46fe8a2baeb7c34f898ffaf9",
@@ -13,7 +13,7 @@
                   "src/apprt/win32/pane_drop.zig":  "2aeae6ba7faebfea92aeae7d0e02523b81836ebb215a18d4d8644d5dd40d56db",
                   "src/apprt/win32/pane_relocate.zig":  "142dafc0a932792f9f994d3f6bb2563040fefba8c9e0fac3dddfb9d291f00045",
                   "src/apprt/win32/PaneView.zig":  "3f63cca46c37110e3dbcd5128ba8c27138824a2bdb2ff50164fbf9b88c05d877",
-                  "src/apprt/win32/Window.zig":  "6d1e6ca7d8ae223046e45658a53685d942a3cbc1506a4ca572c7d2b133f4fd9c",
+                  "src/apprt/win32/Window.zig":  "0cfa9043db0b99bac41a6d0e72ed83a88b3244595e1b5a0acb743e3b38b2492c",
                   "test/win32/rearrange-window-drop.ps1":  "233039d655e86f5b3db3e415a22b07989fcccb9461014124fe32c1e320665baa"
               }
 }

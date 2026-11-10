@@ -304,6 +304,58 @@ fn adoptNames(app: *App, entries: []const MachineEntry) void {
     Window.adoptRelayNames(app, buf[0..n]);
 }
 
+/// What a relay machine's panel and card are labeled with (T1420): the friendly
+/// name when there is one that fits a panel's name buffer whole, else the device
+/// id. A name that would not fit is not cut — a clipped name is worse than the
+/// id, the same rule `adoptNames` applies.
+pub fn relayLabel(name: []const u8, id: []const u8) []const u8 {
+    if (name.len == 0 or name.len > max_source_label) return id;
+    return name;
+}
+
+/// The name a panel showing `src` should adopt from a landed listing (T1420),
+/// or null when it should keep the one it has: Local, a machine the listing
+/// does not name, a name too long to hold whole, or the name it already shows.
+///
+/// This is how a relay panel opened before anything named its machine —
+/// titled by the raw device id — reaches the friendly name the carousel's
+/// directory card carries, without the user having to switch cards to see it.
+/// Only the NAME moves: the id is the registry key, and a rename must never
+/// make one machine two panels.
+pub fn sourceRename(src: Source, entries: []const machine_cache.Entry) ?[]const u8 {
+    const r = switch (src) {
+        .local => return null,
+        .remote => |r| r,
+    };
+    const name = machine_cache.nameFor(entries, r.id) orelse return null;
+    if (name.len > max_source_label) return null;
+    if (std.mem.eql(u8, name, r.name)) return null;
+    return name;
+}
+
+/// Retitle every open panel whose machine `entries` names (T1420). Called by
+/// `Window.adoptRelayNames`, so it runs for the panel's own directory fetch
+/// and for the chooser's listings alike.
+pub fn adoptSourceNames(entries: []const machine_cache.Entry) void {
+    for (ActivityMonitor.open_wins) |maybe| {
+        const self = maybe orelse continue;
+        if (self.closing) continue;
+        const name = sourceRename(self.source, entries) orelse continue;
+        // `name` points into `entries`, never at `name_buf`, so this copy
+        // cannot overlap itself.
+        @memcpy(self.name_buf[0..name.len], name);
+        self.source.remote.name = self.name_buf[0..name.len];
+        ActivityMonitor.open_keys[self.slot] = self.source;
+        log.info("activity monitor: source renamed from directory id={s} name={s}", .{
+            self.source.remote.id,
+            self.source.remote.name,
+        });
+        self.setTitle();
+        rebuildCards(self);
+        _ = w32.InvalidateRect(self.hwnd, null, 0);
+    }
+}
+
 /// The summary a card paints. The ACTIVE card prefers what the panel actually
 /// knows (Mac's `summary(for:)`, :266); every other card prefers its PROBE
 /// (T298), and falls back to the directory's flag when no probe has reached it
@@ -466,7 +518,12 @@ pub fn refreshWindowMachines(self: *ActivityMonitor) void {
         // do not have to ask anybody about.
         self.win_machines[n].setKind(
             id,
-            id,
+            // A relay window knows its machine's friendly name now (T1418), so
+            // its card says it too (T1420); a direct host stays its id (T1419).
+            switch (machine) {
+                .relay => relayLabel(machine.displayName(), id),
+                .tcp => id,
+            },
             win.reconnect.ladder == .connected,
             // The kind a PROBE would dial this machine over (T298). A window is
             // the only place that answer exists for a `127.0.0.1:PORT` box: the
