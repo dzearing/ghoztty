@@ -78,7 +78,10 @@ param(
     # prefix - legacy free-text detail. NOT commas: under -File, PowerShell
     # hands an array parameter over as one string, and labels contain commas.
     #   "Do X (Recommended)::Pros: fast | safe::Cons: complex::Mitigation: design pass first;;Do Y::Pros: simple::Cons: does not scale"
-    # Exactly one label should end in "(Recommended)" - see the DESCRIPTION.
+    # Exactly one label must end in "(Recommended)" - see the DESCRIPTION.
+    # `new` REFUSES (exit 2, nothing written) without -Task naming a real task,
+    # at least two options, exactly one recommendation, and Pros AND Cons on
+    # every option - the same rules validate enforces (T1376).
     [string]$Options,
     [string]$Why,
     [string]$Status,
@@ -244,10 +247,37 @@ switch ($Command) {
             # assigned after the sort so o1 is always the recommendation.
             $optList = @($optList | Sort-Object { if ($_.label -match '(?i)\(recommended\)\s*$') { 0 } else { 1 } })
             for ($i = 0; $i -lt $optList.Count; $i++) { $optList[$i].key = "o$($i + 1)" }
-            $recCount = @($optList | Where-Object { $_.label -match '(?i)\(recommended\)\s*$' }).Count
-            if ($optList.Count -gt 1 -and $recCount -ne 1) {
-                Write-Host "warning: $recCount options are flagged (Recommended) - exactly one should be (see go.md step 5b)"
-            }
+        }
+
+        # Refuse what `validate` would reject (T1376). Before this, `new -Title`
+        # alone wrote task: null and options: [], so the loop could file a
+        # decision at go.md step 5b and then be stopped by its own gate at step
+        # 6 - the shape that teaches people to reach for a hatch. Every rule
+        # below is one validate enforces on a non-legacy open decision; nothing
+        # is written when any of them fails.
+        $refusals = @()
+        if (-not $Task) {
+            $refusals += 'NO TASK LINK: -Task is required - resolve folds the answer into that task, so a decision naming none reaches nobody'
+        } elseif (-not (Test-Path -LiteralPath (Join-Path $TaskDir ("$Task.md")))) {
+            $refusals += ("DANGLING TASK: -Task {0} names no task file in {1}" -f $Task, $TaskDir)
+        }
+        if ($optList.Count -lt 2) {
+            $refusals += ("NO OPTIONS: -Options gives {0} option(s) - a decision needs at least two to choose between" -f $optList.Count)
+        }
+        $recCount = @($optList | Where-Object { $_.label -match '(?i)\(recommended\)\s*$' }).Count
+        if ($optList.Count -ge 2 -and $recCount -ne 1) {
+            $refusals += ("REC COUNT: {0} option(s) flagged (Recommended) - exactly one must be (go.md step 5b)" -f $recCount)
+        }
+        foreach ($o in $optList) {
+            if (-not $o.label) { $refusals += ("NO OPTION LABEL: option {0} has no label" -f $o.key) }
+            if (@($o.pros).Count -eq 0) { $refusals += ("NO PROS: option {0} lists no 'Pros:' - an option without both is a quiz, not a choice" -f $o.key) }
+            if (@($o.cons).Count -eq 0) { $refusals += ("NO CONS: option {0} lists no 'Cons:' - an option without both is a quiz, not a choice" -f $o.key) }
+        }
+        if ($refusals.Count -gt 0) {
+            Write-Host ("REFUSED: new would mint a decision that validate rejects ({0} problem(s)); nothing written" -f $refusals.Count)
+            foreach ($line in $refusals) { Write-Host ("  " + $line) }
+            Write-Host '  shape: -Task T123 -Options "Do X (Recommended)::Pros: a | b::Cons: c;;Do Y::Pros: d::Cons: e"'
+            exit 2
         }
 
         $max = 0

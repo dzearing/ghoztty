@@ -1,10 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-09T20:41:28-08:00",
-    "commit":  "762f407d9",
+    "generated":  "2026-11-09T23:06:49-08:00",
+    "commit":  "f27ba2ba9",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+                        "scripts/parity-decisions.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -93,7 +93,7 @@
                   "scripts/main-intake.ps1":  "16e52bcca79577cdfaf9eb2ca8485d3969001c6e2225ed33cc9140fe9ef2c00d",
                   "scripts/morning-owner.ps1":  "3ce353184a905647f855f15bcc8e2206d7772a22c4af7501488a0a556267faf0",
                   "scripts/msi-test-identity.ps1":  "f4114e015c29fa884abebff8fb7e057aab52582cf89584351f7b9b0c08ecce63",
-                  "scripts/parity-decisions.ps1":  "2475b9be8aa438a4f5b0cbe1f977253e14a669de074547c869246b83b44d5030",
+                  "scripts/parity-decisions.ps1":  "b015b8a70ced5c02206665da242777565107d12832421122bc800ce59d516e70",
                   "scripts/parity-sweep.ps1":  "2558a090ed2db1add4c101c99b74c469c6c4904ed1646f1dd4138c5bc0ca5046",
                   "scripts/parity-tasks.ps1":  "b8226d78587eba0403d5c5ccf003211e00cf15f96d0a47db2bae91dd5a4acca1",
                   "scripts/pr-health.ps1":  "a37d7a44dda98ec8650d3c0f65015f255956c3c2e5c1f1535a767aaa7a65184a",

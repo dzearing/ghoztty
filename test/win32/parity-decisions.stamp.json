@@ -1,14 +1,14 @@
 {
     "guard":  "parity-decisions",
     "script":  "test/win32/parity-decisions.ps1",
-    "generated":  "2026-09-05T14:28:37-07:00",
-    "commit":  "0cc730f7f",
+    "generated":  "2026-11-09T22:51:36-08:00",
+    "commit":  "f27ba2ba9",
     "uncommitted":  [
                         "scripts/parity-decisions.ps1",
                         "test/win32/parity-decisions.ps1"
                     ],
     "files":  {
-                  "scripts/parity-decisions.ps1":  "2475b9be8aa438a4f5b0cbe1f977253e14a669de074547c869246b83b44d5030",
-                  "test/win32/parity-decisions.ps1":  "05039eff3fcb43d262e34894717a2fc200e98d6e165e29a9eb17618ba54bd397"
+                  "scripts/parity-decisions.ps1":  "b015b8a70ced5c02206665da242777565107d12832421122bc800ce59d516e70",
+                  "test/win32/parity-decisions.ps1":  "6f371c66bd381d734ac8a5408671d8695e48d7a6215004c299a2ccb1a92ace88"
               }
 }

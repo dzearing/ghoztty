@@ -30,7 +30,11 @@
          the record.
       D. Round trip through the real minting path: what `new` writes validates
          green, and so does what `resolve` leaves behind. A gate the tool's own
-         output cannot pass is a gate that will be switched off.
+         output cannot pass is a gate that will be switched off. And the other
+         direction (T1376): `new` REFUSES, exit 2 with nothing written, every
+         call whose output validate would reject - no task link, a dangling
+         one, fewer than two options, a recommendation count other than one,
+         an option missing Pros or Cons.
       E. The RELAY. `parity-tasks.ps1 validate` reports DECISION PROBLEMS and
          exits 1 on a malformed decision directory, and stays green on a good
          one - this is what makes the check the loop's gate rather than a verb
@@ -410,6 +414,41 @@ try {
     $r = Invoke-DecValidate $mint
     Check 'D4 ...and the resolved file validates green' ($r.Code -eq 0 -and $r.Text -match 'ALL PASS') `
         "exit=$($r.Code): $($r.Text)"
+
+    # T1376: the other half of the round trip. `new` must REFUSE what validate
+    # would reject, rather than mint it and let step 6's gate stop the loop.
+    # Each case breaks one rule; the refusal must name it, exit 2, and leave
+    # the directory empty.
+    $goodOpts = 'Keep it (Recommended)::Pros: a::Cons: b;;Drop it::Pros: c::Cons: d'
+    $refuseCases = @(
+        @{ N = 'D5'; What = 'no -Task'; Rule = 'NO TASK LINK'; Args = @('-Options', $goodOpts) }
+        @{ N = 'D6'; What = 'a -Task with no task file'; Rule = 'DANGLING TASK'; Args = @('-Task', 'T999', '-Options', $goodOpts) }
+        @{ N = 'D7'; What = 'no -Options'; Rule = 'NO OPTIONS'; Args = @('-Task', 'T1') }
+        @{ N = 'D8'; What = 'a single option'; Rule = 'NO OPTIONS'; Args = @('-Task', 'T1', '-Options', 'Keep it (Recommended)::Pros: a::Cons: b') }
+        @{ N = 'D9'; What = 'no (Recommended)'; Rule = 'REC COUNT'; Args = @('-Task', 'T1', '-Options', 'Keep it::Pros: a::Cons: b;;Drop it::Pros: c::Cons: d') }
+        @{ N = 'D10'; What = 'two (Recommended)'; Rule = 'REC COUNT'; Args = @('-Task', 'T1', '-Options', 'Keep it (Recommended)::Pros: a::Cons: b;;Drop it (Recommended)::Pros: c::Cons: d') }
+        @{ N = 'D11'; What = 'an option with no Pros'; Rule = 'NO PROS'; Args = @('-Task', 'T1', '-Options', 'Keep it (Recommended)::Pros: a::Cons: b;;Drop it::Cons: d') }
+        @{ N = 'D12'; What = 'an option with no Cons'; Rule = 'NO CONS'; Args = @('-Task', 'T1', '-Options', 'Keep it (Recommended)::Pros: a;;Drop it::Pros: c::Cons: d') }
+    )
+    foreach ($c in $refuseCases) {
+        $dir = New-CaseDir ("refuse-" + $c.N)
+        $r = Invoke-Ps (@('-File', $DecScript, 'new', '-DecisionDir', $dir, '-TaskDir', $TaskDir,
+                '-Title', 'Should it?') + $c.Args)
+        $written = @(Get-ChildItem -LiteralPath $dir -Filter 'D*.md' -File -ErrorAction SilentlyContinue).Count
+        Check ("{0} new refuses {1} ({2})" -f $c.N, $c.What, $c.Rule) `
+            ($r.Code -eq 2 -and $r.Text -match 'REFUSED' -and $r.Text -match [regex]::Escape($c.Rule) -and $written -eq 0) `
+            "exit=$($r.Code) written=${written}: $($r.Text)"
+    }
+
+    # And the recommendation is still sorted first wherever it was given, so a
+    # well-formed call is never refused for its argument order.
+    $order = New-CaseDir 'mint-order'
+    $r = Invoke-Ps @('-File', $DecScript, 'new', '-DecisionDir', $order, '-TaskDir', $TaskDir,
+        '-Title', 'Should it?', '-Task', 'T1',
+        '-Options', 'Drop it::Pros: c::Cons: d;;Keep it (Recommended)::Pros: a::Cons: b')
+    $v = Invoke-DecValidate $order
+    Check 'D13 recommendation given second is minted first and validates green' `
+        ($r.Code -eq 0 -and $v.Code -eq 0 -and $v.Text -match 'ALL PASS') "new exit=$($r.Code); validate exit=$($v.Code): $($v.Text)"
 
     # =======================================================================
     Say ''

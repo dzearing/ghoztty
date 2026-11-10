@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-09T22:38:20-08:00",
-    "commit":  "b99af7bb3",
+    "generated":  "2026-11-09T22:57:35-08:00",
+    "commit":  "f27ba2ba9",
     "uncommitted":  [
-                        "test/win32/chrome-theme.ps1"
+                        "test/win32/parity-decisions.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -403,7 +403,7 @@
                   "test/win32/pane-stack-slide.ps1":  "351858c008d828e2881ab7ddc1b02d519366d32bdf9ad20fa0ea0189c9d072c9",
                   "test/win32/pane-stack-strip.ps1":  "0e4164508a5d3057ad6865bed612de0ce5b26327e5ca12d821cf326ad06300f6",
                   "test/win32/pane-stack-unfold.ps1":  "527b7fa6941bce96cbc3f6b6aa3ad910f3266b83a3fcdb70d37d31aa855ff9ac",
-                  "test/win32/parity-decisions.ps1":  "05039eff3fcb43d262e34894717a2fc200e98d6e165e29a9eb17618ba54bd397",
+                  "test/win32/parity-decisions.ps1":  "6f371c66bd381d734ac8a5408671d8695e48d7a6215004c299a2ccb1a92ace88",
                   "test/win32/parity-sweep.ps1":  "2251497104f8df5a8b1146441bd2b5e3ebb38a495c7d7fe16a9f64a05c801044",
                   "test/win32/parity-tasks-lanes.ps1":  "0ea40fdd89dbf37e287727eb97d5153afa3e9f656e120df2b18302f31c49fff1",
                   "test/win32/parity-tasks-seat.ps1":  "29fedabc4f17a76a947e5cbf7ac6aac565fbff59a48f201b4463911dda0ea337",
