@@ -1,14 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-09T17:01:15-08:00",
-    "commit":  "2016ffe09",
+    "generated":  "2026-11-09T17:35:10-08:00",
+    "commit":  "538b62701",
     "uncommitted":  [
-                        "test/win32/pane-sidebar-all-windows.ps1",
-                        "test/win32/pane-sidebar-press-activate.ps1",
-                        "test/win32/pane-sidebar-scroll.ps1",
-                        "test/win32/pane-sidebar-shared.ps1",
-                        "test/win32/pane-sidebar-window-order.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -36,7 +32,7 @@
                   "test/win32/agent-lineage-suites.ps1":  "589bd4707698f2254f3e0fc30d5f2ebe99aaf78fe6edaf973d87d3fc713a932f",
                   "test/win32/agent-open-refused.ps1":  "2476ce555f7caed75a5d50cbd3dc68d5f6170a075d60a08e12885e8835ccd6fd",
                   "test/win32/agent-pipe.ps1":  "e3639b007ce04d5adb73e34631d3629f3847ccc3f38775885a2b4f8a5dea53c4",
-                  "test/win32/agent-recovery.ps1":  "5f00541dca27be87ff7fcb60f220ef0c340d83343efbf65193bd4ba6ec9b8ce2",
+                  "test/win32/agent-recovery.ps1":  "869e32c6882b64f52c43945373009c603a653011844ec9ebec38b9dcf71bfa96",
                   "test/win32/agent-recovery-tabs.ps1":  "ca7c7093ad03a5bec83c10cb76a477b25a97133700075fb0d402c1b106bad176",
                   "test/win32/agent-relay-session-e2e.ps1":  "39c63feadeb2ba2f0bee62bd551e142c74c5597df842e5bfb0727bca51df7cba",
                   "test/win32/agent-role-guard.ps1":  "9aaed2aa420495a1dab9f9d77231b6c09f6b187ac6b2ab1262cdc33a89ad0826",
