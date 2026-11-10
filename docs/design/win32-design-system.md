@@ -338,15 +338,29 @@ one script that owns the marker.
 
 ### 3.1 Corner radius
 
-| Radius | Applies to |
-|---|---|
-| **4 DIP** | Icon-button hover fills, small chips, input fields |
-| **6 DIP** | Tab chiclet top corners (bottom stays square: it merges into the pane) |
-| **8 DIP** | Cards and overlays — banner card, TOC card, popovers |
-| **0** | Full-bleed surfaces: the strip background, pane content, dividers |
+| Radius | Applies to | Source |
+|---|---|---|
+| **4 DIP** | Icon-button hover fills, small chips, input fields; the floor a card nested in a rounded pane never rounds below | `settings_window_layout.radius` `shortcut_guide_layout.radius_button` `key_state_pill.CAP_RADIUS` `ViewerFeedbackBar.chip_radius_dip` `banner_card.NESTED_RADIUS_FLOOR` |
+| **6 DIP** | List-row highlights (the TOC and sidebar rows) | `viewer_toc_layout.row_corner_dip` |
+| **7 DIP** | Tab chiclet: top corners, and the bottom flare that carries the tab into the strip baseline | `tab_shape.CORNER_TOP` `tab_shape.CORNER_BOTTOM` |
+| **8 DIP** | Small cards: the read-only and key-state badges, the drag ghost, the viewer error card, the region-select hint, the Pane style preview tiles | `readonly_badge.RADIUS` `key_state_pill.RADIUS` `pane_drag_ghost.radius_dip` `viewer_error_card.RADIUS_DIP` `region_select.hint_radius_dip` `settings_window_layout.card_radius` |
+| **10 DIP** | Settings' large preview card and its toast | `settings_preview.card_radius_dip` `settings_advanced_view.toast_radius` |
+| **11 DIP** | An elevated pane (Mac `PaneElevation.cornerRadius`), and the raised terminal inside the settings preview | `pane_elevation.CORNER_RADIUS_DIP` `settings_preview.terminal_radius_dip` |
+| **14 DIP** | Glass cards: the banner card, the viewer TOC card, the find card (Mac `GlassCard.cornerRadius`) | `banner_card.RADIUS` |
+| **0** | Full-bleed surfaces: the strip background, pane content, dividers | |
 
 Nothing else. A radius is a size signal — bigger surface, bigger radius — so a
-4 DIP card or an 8 DIP button both read as mistakes.
+4 DIP card or a 14 DIP button both read as mistakes.
+
+**The Source column is checked, both ways** (T1399).
+`test\win32\radius-table-audit.ps1` reads this table, finds every named
+constant in `src\apprt\win32\` and fails when its value is not the row's; and
+it fails on a corner-radius constant in that tree that no row names. Until
+then this table said 8 DIP for the banner and TOC cards for two months while
+every card on screen drew at 14 — which is what Mac's `GlassCard` uses and
+what the Windows card was built to match, so the table was the stale side.
+A card nested in a rounded pane takes `banner_card.nestedRadius`, derived
+from the pane's 11 rather than picked, so it has no row of its own.
 
 **One named exception: a STATUS CHIP is a capsule** — radius exactly half its
 own height, so its ends are semicircles at every scale rather than a rounded

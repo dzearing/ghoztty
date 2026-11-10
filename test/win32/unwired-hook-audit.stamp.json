@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-10T04:03:20-08:00",
-    "commit":  "3d789adf2",
+    "generated":  "2026-11-10T04:33:45-08:00",
+    "commit":  "49446473f",
     "uncommitted":  [
 
                     ],
@@ -1402,6 +1402,7 @@
                   "test/win32/pty-holder.ps1":  "ac9811305a50f2a86dca0af16b2725c8414ed78ebe26c84572ca6599326af88e",
                   "test/win32/pty-host.ps1":  "466be0c285d0654ebf15bb7e7e545b38b5e1b9e12d3328ed49f9b009b469b2d5",
                   "test/win32/quick-terminal-slide.ps1":  "86e609fdd30fe537e48d5ef68c3be7c6e8432c3c0f7513985f56604757233deb",
+                  "test/win32/radius-table-audit.ps1":  "0813582a3dc8636ffef2f12b0e85e78be1db342eb23e90af04fb46328ba3ca66",
                   "test/win32/rdp-perf-probe.ps1":  "d9a2438358328f459c637242375193fb1651d6b4ee3ba98358617290aa0bb183",
                   "test/win32/rdp-session.ps1":  "26fa35ab178060d0a6ff53c6e00ff3149c78bd04f041c1a953a37d575aac82df",
                   "test/win32/readonly-badge.ps1":  "515216ddf39828bc788ea09f8a3f056c7540493096a022b96a0ee7f4fdc9f653",
@@ -1519,6 +1520,7 @@
                   "test/win32/translucent-window.ps1":  "eba06c72df9125b51d640a2be2beb4000ab627b5fed0b935bf5f65ac28af5406",
                   "test/win32/tree-swap-audit.ps1":  "c03ecc3fc2003732cc2ff532cd53d211f53c9d9545bd760c33092ab833f6a3ab",
                   "test/win32/tui-copy-reflow.ps1":  "27aaf25b87bf115d160981b2a3cb856190ea4891ed0cd5abb2796247249d98ea",
+                  "test/win32/type-ramp-audit.ps1":  "a1e4a503e657613677cfe2c2832cde43008c6ba364321391117326ba9341dd19",
                   "test/win32/unroll-count-audit.ps1":  "9dcfec7cb85733af607909d2f62e59631473868dfcf64b6fb4e0cfbf706680e2",
                   "test/win32/unwired-hook-audit.ps1":  "a487661c2174d465a284ba42129a62996a3f14d84634962601136cc5c8a36c67",
                   "test/win32/update-apply.ps1":  "a3529be88058645f186aa3466b225ecc953a9e92659cdbfb5f38727d7edb49de",

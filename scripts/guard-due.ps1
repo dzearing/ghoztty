@@ -6753,6 +6753,24 @@ $GuardTable = @(
         )
     }
 
+    # T1399 - the corner-radius table. Section 3.1 of the design system names
+    # the constants each radius row governs; this sweep holds the table and
+    # every corner-radius constant in the win32 frontend together, so it covers
+    # the document as well as the whole flat tree (a NEW card with its own
+    # radius can land in any file). It borrows TypeRampAudit's noise stripper.
+    [pscustomobject]@{
+        Name   = 'radius-table'
+        Script = 'test\win32\radius-table-audit.ps1'
+        Stamp  = 'test\win32\radius-table-audit.stamp.json'
+        Covers = @(
+            'test\win32\radius-table-audit.ps1',
+            'test\win32\lib\RadiusTableAudit.ps1',
+            'test\win32\lib\TypeRampAudit.ps1',
+            'docs\design\win32-design-system.md',
+            'src\apprt\win32\*.zig'
+        )
+    }
+
     # T831 - the counted-wait sweep. It covers the two files that rediscovered
     # the wall-clock deadline independently, the shared helper they now share,
     # and the directories whose waits are cross-thread: the case the rule exists

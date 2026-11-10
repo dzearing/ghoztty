@@ -1,11 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-10T04:09:59-08:00",
-    "commit":  "b1eb733d9",
+    "generated":  "2026-11-10T05:22:25-08:00",
+    "commit":  "49446473f",
     "uncommitted":  [
-                        "test/win32/lib/TypeRampAudit.ps1",
-                        "test/win32/type-ramp-audit.ps1"
+                        "test/win32/lib/RadiusTableAudit.ps1",
+                        "test/win32/radius-table-audit.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -316,6 +316,7 @@
                   "test/win32/lib/PixelOracleAudit.ps1":  "7b18849da492030e15f819601e3fbde28f4042cd6e9c3ab6b11063b22071937b",
                   "test/win32/lib/PixelScan.ps1":  "41c312f9a9db8bd3b6402118af61aa445e6f25f2dfa15f2bd45d1fe5731bb73d",
                   "test/win32/lib/ProcessMemory.ps1":  "d742e9813857e5dff6e8c1a9559ebb392c4826bcf61d10c4e768760edc38b5b1",
+                  "test/win32/lib/RadiusTableAudit.ps1":  "5318bf1f2556edcdafd90f5c7da8680d271f1012e597c612a59c56b91cf4f5fb",
                   "test/win32/lib/RebootShape.ps1":  "6f38d632f286dc5514f3e7973f82bcb7481953e17a20aa8215f631b8521a5c45",
                   "test/win32/lib/RetiredClaims.ps1":  "3fbaacd49f9341d0c4cf7c4a03ed0487a1d371cf6b395e9984cf2ea12f5876bb",
                   "test/win32/lib/RingSnapshot.ps1":  "fd4d7b91f60409df62a3a90461e03783dbf2b655aea98487152368ea4386912e",
@@ -424,9 +425,10 @@
                   "test/win32/pty-holder.ps1":  "ac9811305a50f2a86dca0af16b2725c8414ed78ebe26c84572ca6599326af88e",
                   "test/win32/pty-host.ps1":  "466be0c285d0654ebf15bb7e7e545b38b5e1b9e12d3328ed49f9b009b469b2d5",
                   "test/win32/quick-terminal-slide.ps1":  "86e609fdd30fe537e48d5ef68c3be7c6e8432c3c0f7513985f56604757233deb",
+                  "test/win32/radius-table-audit.ps1":  "0813582a3dc8636ffef2f12b0e85e78be1db342eb23e90af04fb46328ba3ca66",
                   "test/win32/rdp-perf-probe.ps1":  "d9a2438358328f459c637242375193fb1651d6b4ee3ba98358617290aa0bb183",
                   "test/win32/rdp-session.ps1":  "26fa35ab178060d0a6ff53c6e00ff3149c78bd04f041c1a953a37d575aac82df",
-                  "test/win32/readonly-badge.ps1":  "be8e9c5793795ff3502b077f674c531a510b2755819fbe989237897e6076ae61",
+                  "test/win32/readonly-badge.ps1":  "515216ddf39828bc788ea09f8a3f056c7540493096a022b96a0ee7f4fdc9f653",
                   "test/win32/rearrange-desktop-drop.ps1":  "02c96318e720d96211eb8cfe6292dade96025422b49a287cd61753d3152d4f0c",
                   "test/win32/rearrange-divider-drop.ps1":  "f7f24573ad7a883bdc415151fe5b15813df048425eb73081e647d0576d33f547",
                   "test/win32/rearrange-drag.ps1":  "1200a8bc0fe8f00e7db1c1aa00ae0aa1c433c9e7f7530fa49679940905774fef",
@@ -518,7 +520,7 @@
                   "test/win32/stderr-capture-audit.ps1":  "928dd559d8e1df45f9fce6baa0071a920d997aca8977790161b1c41c34368efe",
                   "test/win32/stderr-launch-capture.ps1":  "7c95a6330bbc5d8e441a55cd8a63ef764d4a6a6fefad6b91f0726db02985746b",
                   "test/win32/suite-run.ps1":  "eb659bbb368bac2bc8e1ed8c3384c389aa191b64636d4264c1b4242485eb261a",
-                  "test/win32/tab-color.ps1":  "af75bcd47eeb68cf93ee056b7aa4e14e147314ab8b4adc3a9c0eb27dfb43f967",
+                  "test/win32/tab-color.ps1":  "a33d08bbb04287a1420a369355f933d646e25aa1a7948fc0ec9d9325abb2f637",
                   "test/win32/tab-overview-action.ps1":  "e20977448b9d6f5a30acf7e71cfa6cae58389f9e719eab6884dcab83f5de8938",
                   "test/win32/tab-strip.ps1":  "fb806bccc6858acb4d5fdc3a8e295cadfda71a71b36ea4e72de2cb188909fb84",
                   "test/win32/tab-strip-autohide.ps1":  "c92b1ef02c00bfd41c313f35185f35f2116e93b13a9d260e421e57c6469a65cc",
