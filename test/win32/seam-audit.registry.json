@@ -464,6 +464,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the shipped notify delay."
         },
+        "GHOZTTY_ORPHAN_WAIT_MS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "T2892: unset = the shipped 120s wait for an unanswering endpoint owner to exit; orphan-endpoint.ps1 O1 runs with it unset, only O2 (hung owner) shortens it."
+        },
         "GHOZTTY_ORPHAN_RENOTIFY_MS": {
             "class": "tuning",
             "unset": "shipped-elsewhere",

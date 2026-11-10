@@ -124,6 +124,7 @@ const job_escape = @import("job_escape.zig");
 const relaunch_guard = @import("relaunch_guard.zig");
 const job_spawn = @import("job_spawn.zig");
 const restart_manager = @import("restart_manager.zig");
+const orphan_endpoint = @import("orphan_endpoint.zig");
 const url_scheme = @import("url_scheme.zig");
 const provenance = @import("provenance.zig");
 const about_links = @import("about_links.zig");
@@ -1829,17 +1830,84 @@ fn handOffOrTakeOver(self: *App, app_alloc: Allocator) void {
         },
         .join => {},
     }
-    const ok = internal_os.ipc_client.sendActionWithHandoff(
+    const sent = internal_os.ipc_client.sendActionWithHandoff(
         alloc,
         "new-window",
         fwd_args,
         id,
-    ) catch false;
+    );
     // This launch opened a ledger entry in init and is about to end by design;
     // closing it here is what keeps the next launch from reporting every
     // forwarded second click as a vanished app (T1686).
-    exit_reason.recordExit(if (ok) "forwarded" else "forward-failed");
-    std.process.exit(if (ok) 0 else 1);
+    switch (orphan_endpoint.classify(sent)) {
+        .delivered => {
+            exit_reason.recordExit("forwarded");
+            std.process.exit(0);
+        },
+        .refused => {
+            exit_reason.recordExit("forward-failed");
+            std.process.exit(1);
+        },
+        // T2892: nobody answered. The live case is Windows' own crash relaunch
+        // (T2839), which starts this process while the crashed instance is
+        // still alive under Windows Error Reporting writing its dump: the pipe
+        // name is still taken, and nothing on the other end will ever open a
+        // window. Exiting here left the user with no terminal at all for 42
+        // minutes on 2026-11-10. Wait for that endpoint to come free and start
+        // as the app instead.
+        .unanswered => {
+            if (self.takeOverOrphanedEndpoint(alloc)) return;
+            exit_reason.recordExit("forward-unanswered");
+            std.process.exit(1);
+        },
+    }
+}
+
+/// DEBUG-ONLY test seam: `GHOZTTY_ORPHAN_WAIT_MS` shortens the T2892 wait, so
+/// `test\win32\orphan-endpoint.ps1` can show a HUNG owner (one that never
+/// exits) ending in a give-up without sitting out two minutes. A release build
+/// has no such lever (`envOverride` is debug-gated).
+fn orphanWaitMs(alloc: Allocator) i64 {
+    return orphan_endpoint.parseWaitMs(envOverride(alloc, orphan_endpoint.wait_env));
+}
+
+/// Become the app once the instance that holds the endpoint without answering
+/// on it is gone (T2892). True when this process now owns the endpoint (or runs
+/// without one) and `init` should carry on; false when it never came free.
+fn takeOverOrphanedEndpoint(self: *App, alloc: Allocator) bool {
+    const owner_pid = internal_os.ipc_client.endpointServerPid(alloc) orelse 0;
+    const wait_ms = orphanWaitMs(alloc);
+    log.warn("forward unanswered: the endpoint's owner (pid={d}) is not answering; waiting up to {d}ms for it to exit, then starting as the app", .{ owner_pid, wait_ms });
+    const deadline = std.time.milliTimestamp() + wait_ms;
+    if (self.bindBefore(deadline)) {
+        log.warn("forward unanswered: the endpoint came free; this launch is now the app", .{});
+        return true;
+    }
+    log.warn("forward unanswered: the endpoint never came free (owner pid={d}); giving up", .{owner_pid});
+    return false;
+}
+
+/// Retry binding the IPC endpoint until it succeeds or `deadline` (a
+/// `milliTimestamp`) passes. True when this process now owns it, or runs
+/// without one because the pipe could not be created at all - either way it
+/// should carry on as THE app.
+fn bindBefore(self: *App, deadline: i64) bool {
+    while (true) {
+        self.ipc_server.?.init(self) catch |err| switch (err) {
+            error.AlreadyRunning => {
+                if (std.time.milliTimestamp() >= deadline) return false;
+                std.Thread.sleep(orphan_endpoint.poll_ms * std.time.ns_per_ms);
+                continue;
+            },
+            error.OutOfMemory => return false,
+            error.BindFailed => {
+                self.ipc_server = null;
+                log.warn("took over without an IPC endpoint (bind failed)", .{});
+                return true;
+            },
+        };
+        return true;
+    }
 }
 
 const HandoffChoice = union(enum) {
@@ -1996,26 +2064,12 @@ fn takeOverEndpoint(
     }
 
     const deadline = std.time.milliTimestamp() + @as(i64, @intCast(handoff_bind_retry_ms));
-    while (true) {
-        self.ipc_server.?.init(self) catch |err| switch (err) {
-            error.AlreadyRunning => {
-                if (std.time.milliTimestamp() >= deadline) {
-                    log.warn("handoff: the endpoint never came free; handing the window over", .{});
-                    return false;
-                }
-                std.Thread.sleep(100 * std.time.ns_per_ms);
-                continue;
-            },
-            error.OutOfMemory => return false,
-            error.BindFailed => {
-                self.ipc_server = null;
-                log.warn("handoff: took over without an IPC endpoint (bind failed)", .{});
-                return true;
-            },
-        };
-        log.warn("handoff: this launch is now the app ({s})", .{id.version});
-        return true;
+    if (!self.bindBefore(deadline)) {
+        log.warn("handoff: the endpoint never came free; handing the window over", .{});
+        return false;
     }
+    log.warn("handoff: this launch is now the app ({s})", .{id.version});
+    return true;
 }
 
 fn forwardedNewWindowArgs(

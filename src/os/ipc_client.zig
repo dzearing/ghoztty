@@ -39,6 +39,27 @@ extern "kernel32" fn WaitNamedPipeW(
     nTimeOut: u32,
 ) callconv(.winapi) windows.BOOL;
 
+extern "kernel32" fn GetNamedPipeServerProcessId(
+    Pipe: windows.HANDLE,
+    ServerProcessId: *u32,
+) callconv(.winapi) windows.BOOL;
+
+/// The pid of the process serving the IPC endpoint, or null when it cannot be
+/// reached or will not say (T2892). It reads the pipe's own record of its
+/// server, so it answers even when that server never replies - which is the
+/// case it exists for: a launch whose forward went unanswered names the
+/// instance it is waiting on. Windows only; null elsewhere.
+pub fn endpointServerPid(alloc: Allocator) ?u32 {
+    if (comptime !is_windows) return null;
+    const path = clientEndpointPath(alloc) catch return null;
+    defer alloc.free(path);
+    const conn = connectPath(alloc, path) catch return null;
+    defer conn.close();
+    var pid: u32 = 0;
+    if (GetNamedPipeServerProcessId(conn.handle, &pid) == 0 or pid == 0) return null;
+    return pid;
+}
+
 /// One request/response connection to the running instance.
 pub const Conn = struct {
     handle: Handle,

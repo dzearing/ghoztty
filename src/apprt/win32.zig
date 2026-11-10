@@ -99,6 +99,10 @@ test {
     // and telling an installer's close from a logoff — is decided by constants
     // that a lane can check and a running install cannot be asked to repeat.
     _ = @import("win32/restart_manager.zig");
+    // The unanswered-forward takeover (T2892): the line between a refusal and
+    // no answer at all is what decides whether a crash relaunch brings a window
+    // back or exits behind a dying instance, and nothing else reaches it here.
+    _ = @import("win32/orphan_endpoint.zig");
     // The installer prepare step (T1207). Its command-line parser decides
     // whether a normal `ghoztty.exe` start is quietly turned into a
     // non-terminal, and its image list is what stands between an MSI and the

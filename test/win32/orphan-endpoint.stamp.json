@@ -1,0 +1,14 @@
+{
+    "guard":  "orphan-endpoint",
+    "script":  "test/win32/orphan-endpoint.ps1",
+    "generated":  "2026-11-10T09:36:50-08:00",
+    "commit":  "9fcacde9e",
+    "uncommitted":  [
+                        "src/apprt/win32/orphan_endpoint.zig",
+                        "test/win32/orphan-endpoint.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/orphan_endpoint.zig":  "6bf7a8ca0fc24d9b2ab1b23b7bdeb0bacfd3b424870877a52ff15d1a2ce926fa",
+                  "test/win32/orphan-endpoint.ps1":  "e9a11e77194463cb49f7a34ee7fdcc52f81c26f37728aa23003be8565c8a760b"
+              }
+}

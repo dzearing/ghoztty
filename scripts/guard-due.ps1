@@ -4848,6 +4848,19 @@ $GuardTable = @(
             'test\win32\soak.ps1'
         )
     },
+    # A launch whose forward goes unanswered takes the endpoint over once its
+    # owner is gone (T2892) - the crash-relaunch case. The refusal/no-answer
+    # line is pure (orphan_endpoint.zig, win32 lane); this harness is what
+    # proves a launch behind a dying owner ends up as the app with a window.
+    [pscustomobject]@{
+        Name   = 'orphan-endpoint'
+        Script = 'test\win32\orphan-endpoint.ps1'
+        Stamp  = 'test\win32\orphan-endpoint.stamp.json'
+        Covers = @(
+            'test\win32\orphan-endpoint.ps1',
+            'src\apprt\win32\orphan_endpoint.zig'
+        )
+    },
     # The palette's "Restart Ghoztty" / "...and Background Sessions" (T1804).
     # The question policy and its wording are pure (app_restart.zig, none lane);
     # this harness is the only thing that proves the relaunch actually comes
