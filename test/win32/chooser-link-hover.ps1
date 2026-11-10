@@ -142,7 +142,10 @@ function Measure-Ink($shot, $rect) {
     for ($y = 0; $y -lt $h; $y++) {
         for ($x = 0; $x -lt $w; $x++) {
             $c = $shot.Bitmap.GetPixel($x0 + $x, $y0 + $y)
-            $key = ($c.R -shl 16) -bor ($c.G -shl 8) -bor $c.B
+            # [int] casts are load-bearing (T1409): $c.R is a [byte], and PS
+            # keeps a byte left operand's TYPE through -shl, so `$c.R -shl 16`
+            # truncates to 0 and every key collapses to its blue channel.
+            $key = ([int]$c.R -shl 16) -bor ([int]$c.G -shl 8) -bor [int]$c.B
             $px[($y * $w) + $x] = $key
             if ($counts.ContainsKey($key)) { $counts[$key]++ } else { $counts[$key] = 1 }
         }

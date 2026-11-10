@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-10T12:27:41-08:00",
-    "commit":  "94404f7fa",
+    "generated":  "2026-11-10T12:42:55-08:00",
+    "commit":  "ec46a585a",
     "uncommitted":  [
-
+                        "test/win32/chooser-link-hover.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -71,7 +71,7 @@
                   "test/win32/chooser-controls.ps1":  "24fefe9c62de66b7ed9f04b0f9b8b5b28df29e0079fc8a421c7b15ebbce62e64",
                   "test/win32/chooser-help-tooltips.ps1":  "8beec224463672893c89c41236ff0713e1987978b8697e256aa79bad391bad92",
                   "test/win32/chooser-kill-hover.ps1":  "da7e531e4fc7ec0c45655d9987cd5060b3ead61d4cc41edb1ca837b9dd8b8766",
-                  "test/win32/chooser-link-hover.ps1":  "48e4e10db2db05a12a32a073d57bd60e7e7b3f3297a4f1c58a5c897497dd5f48",
+                  "test/win32/chooser-link-hover.ps1":  "ec621631330e2317cff5d52b9d5c2edfb9a45eb2c0f5425be26d70fafff76251",
                   "test/win32/chooser-menu.ps1":  "7763974dd2be6ebfa57f035b5999c860c6a02c0b92b434a56800eb221e226af6",
                   "test/win32/chooser-modeless.ps1":  "663f862c81b149ae25e40cea0a05aff318dd82219924f9e8540d7ea9f9cbd2cf",
                   "test/win32/chooser-open-chord.ps1":  "fbf6f3281efd358cdd41d49c2bf630e95b559861f0776ea3eb93167adeb7c028",
