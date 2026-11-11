@@ -8,22 +8,25 @@ release.
 
 ## What the automated suite already proves
 
-`test\win32\viewer-feedback.ps1` section K posts the real message sequence an
-IME delivers a settled composition with — `WM_IME_STARTCOMPOSITION`, the
-composed characters as `WM_IME_CHAR`, then `WM_IME_ENDCOMPOSITION` — at the
-composer's text control, and asserts:
+The composer is a WebView2 page since T934/T1704 (the RichEdit fallback is
+gone), so its IME is Chromium's. `test\win32\viewer-feedback.ps1` section K
+drives a real composition through the engine over the DevTools protocol —
+`Input.imeSetComposition` with the intermediate reading, then with the
+converted string, then `Input.insertText` as the commit — and asserts:
 
-- the composed string lands in the control,
-- ordinary typing still inserts afterwards (the composition ended cleanly),
+- the composed string lands in the composer,
+- ordinary typing continues **at the caret the commit left** (the composition
+  ended cleanly and did not leave the caret at its start),
 - the pane's mirrored buffer is **byte-exact** for the composed text once the
-  composition has ended, compared against the UTF-8 encoding of what the
-  control holds. `EN_CHANGE` fires while a composition is still open, so the
-  buffer does see partial text on the way through; what has to be true, and is
-  asserted, is that it is right at the end.
+  composition has ended, compared against the UTF-8 encoding of what the page
+  holds. The page reports during a composition too, so the buffer sees
+  intermediate text on the way through; what has to be true, and is asserted,
+  is that it is right at the end.
 
-That works with no IME installed because RichEdit inserts a `WM_IME_CHAR`
-character itself, inside a composition bracket or outside one, without reading
-any input context. It was measured on this box before the section was written.
+The commit arrives by an insertion path, not a keystroke, which is the shape a
+keystroke-only test cannot see (T1450). It needs no IME installed. Until T1706
+this section posted `WM_IME_*` messages at the RichEdit fallback instead; those
+mean nothing to a Chromium window.
 
 ## What it cannot prove, and why
 
@@ -32,10 +35,9 @@ through the message:
 
 | Check | Why it needs a real IME |
 |---|---|
-| The candidate window appears, and over the caret | Drawn by the IME, positioned from `ImmSetCompositionWindow`; nothing to observe without one |
-| The intermediate (underlined) composition string | RichEdit reads `GCS_COMPSTR` from the IMC with `ImmGetCompositionString`; a synthesised `WM_IME_COMPOSITION` finds an empty context and inserts nothing |
-| Where the caret rests once a composition commits | A real end-of-composition carries a result string RichEdit reads from the context and replaces the composition span with, leaving the caret after it. A synthesised one finds an empty context and collapses back to the composition's start, so the harness moves the caret itself before its continuation arm |
-| Reconversion, and cancelling a composition with Escape | Same: driven by the IME through the context |
+| The candidate window appears, and over the caret | Drawn by the IME, positioned from the caret rectangle Chromium reports to it; nothing to observe without one |
+| The intermediate composition is shown underlined | The engine holds the intermediate string (section K drives it), but its rendering is the IME/Chromium's and is only judged by eye |
+| Reconversion, and cancelling a composition with Escape | Driven by the IME through the input context, which the DevTools protocol does not reach |
 | The composition following the caret as the pill grows | Needs the IME's own window to observe |
 
 The box this loop runs on has exactly one input method installed
