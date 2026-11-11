@@ -745,6 +745,19 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # A side pane split off a strip the user minimized leaves the strips
+    # minimized (T2925, Mac 251a1a1dc): `Window.backgroundSplitAnchor` anchors a
+    # background split beside the pane on show nearest a minimized anchor.
+    [pscustomobject]@{
+        Name   = 'side-pane-from-strip'
+        Script = 'test\win32\side-pane-from-strip.ps1'
+        Stamp  = 'test\win32\side-pane-from-strip.stamp.json'
+        Covers = @(
+            'test\win32\side-pane-from-strip.ps1',
+            'src\apprt\win32\pane_stack_state.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # The carousel slide (T2102): a run change glides the cards on show to
     # their slots and resizes no terminal mid-slide. `pane_stack_grid.zig` is
     # named because the slide's from/to rects are its placements.

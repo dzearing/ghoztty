@@ -11310,6 +11310,31 @@ pub fn adoptsFocus(self: *Window, tab: usize, pane: *PaneView) bool {
     return true;
 }
 
+/// Where a split that leaves the caret where it is goes in (an agent's
+/// `+split`, a side pane; T2925, Mac `backgroundSplitAnchor` 251a1a1dc):
+/// beside `anchor`, unless the user minimized `anchor` in a collapsed row.
+/// Then it goes beside the pane on show nearest it instead. The new pane has
+/// to come on show (`PaneStackState.feature`) and a row's run is contiguous,
+/// so beside a strip it pulled that strip, and every strip between it and the
+/// run, back out with it. Only the user brings a minimized pane back out; a
+/// split that takes focus keeps its anchor (the caller does not ask here).
+fn backgroundSplitAnchor(self: *Window, tab: usize, anchor: SplitTree(PaneView).Node.Handle) SplitTree(PaneView).Node.Handle {
+    var view: ?*PaneView = null;
+    var it = self.tab_trees[tab].iterator();
+    while (it.next()) |entry| if (entry.handle == anchor) {
+        view = entry.view;
+        break;
+    };
+    const pane = view orelse return anchor;
+    var arena = std.heap.ArenaAllocator.init(self.app.core_app.alloc);
+    defer arena.deinit();
+    const rows = self.stackRowsOf(arena.allocator(), tab) catch return anchor;
+    const on_show = self.paneOnShowAfter(tab, pane, rows, arena.allocator()) orelse return anchor;
+    if (on_show == pane) return anchor;
+    log.info("background split off a minimized strip goes in beside the pane on show", .{});
+    return self.findHandle(tab, on_show) orelse anchor;
+}
+
 /// The pane of tab `tab` the caret goes to instead of `candidate` now that
 /// its rows changed from `before` (`PaneStackState.paneOnShow`). Null when
 /// the answer is no pane of the tab.
@@ -16350,10 +16375,11 @@ fn insertPaneAsSplit(
     };
     defer insert_tree.deinit();
 
-    // Split the current tree at the target pane.
+    // Split the current tree at the target pane - or, for a split that leaves
+    // the caret where it is, beside the pane on show nearest it (T2925).
     const new_tree = try self.tab_trees[tab].split(
         alloc,
-        handle,
+        if (self.split_background) self.backgroundSplitAnchor(tab, handle) else handle,
         direction,
         ratio,
         &insert_tree,
