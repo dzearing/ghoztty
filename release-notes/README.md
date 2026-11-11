@@ -56,6 +56,18 @@ Author `client/<version>.json` before tagging a release (see
 `.claude/commands/release.md`, Step 2). Exclude agent/session items — those live
 under `agent/`.
 
+## Windows releases write their own (`scripts/release-notes-author.ps1`)
+
+A Windows release is `win-v<mac line>.<patch>` (e.g. `win-v1.54.11`) and is cut
+by the loop's daily publish, with nobody at a release command. So
+`scripts/publish-windows-tag.ps1` runs `scripts/release-notes-author.ps1`
+before it tags: it writes `client/<version>.json` (and `agent/<version>.json`
+when a commit touched `src/remote/`) from the task-closing commits since the
+previous `win-v` tag whose task is tagged feature/fix/polish/perf/security,
+commits them through the commit guard, and tags that pushed commit. A file
+that already exists is left alone, so hand-written notes for a version win.
+A range with nothing user-facing still gets a file that says so (T1444).
+
 ## `scripts/backfill-release-notes.py`
 
 Fetches historical GitHub release bodies as **general drafts** to curate from —

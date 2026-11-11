@@ -854,10 +854,25 @@ if (-not (Test-Path -LiteralPath $PublishScript -PathType Leaf)) {
 }
 
 Log "running $PublishScript -Version $($v.Version)$(if ($DryRun) { ' -DryRun' })"
-if ($DryRun) { & $PublishScript -Version $v.Version -DryRun } else { & $PublishScript -Version $v.Version }
+# Write-Host lines are captured (6>&1) so the release-notes verdict (T1444) can
+# go into the publish log: a release that shipped without notes of its own has
+# to say so in the place a skipped publish names its reason.
+$pubOut = if ($DryRun) { & $PublishScript -Version $v.Version -DryRun 6>&1 2>&1 } else { & $PublishScript -Version $v.Version 6>&1 2>&1 }
 $code = $LASTEXITCODE
+foreach ($l in @($pubOut)) {
+    $s = "$l"
+    if ($s -match '^NOTES ') { Log $s } else { Write-Host $s }
+}
 
 if ($code -eq 0) {
+    # The publisher commits the release notes before it tags (T1444), so the
+    # tagged commit can be one past the HEAD this run started from. Record the
+    # one that was tagged, or the stranded count would carry the notes commit.
+    # Read from the publisher's own report rather than HEAD: a notes commit
+    # whose push failed is HEAD and is NOT what the tag went on.
+    foreach ($l in @($pubOut)) {
+        if ("$l" -match '^== pushed win-v\S+ \(([0-9a-f]{7,})\)') { $hash = $Matches[1] }
+    }
     # 'tagged' rather than 'published' in tag mode: the release exists once CI
     # finishes, and the confirmation pass at the top of the next run is what
     # turns this into 'published' or 'failed'. Claiming 'published' here is the

@@ -1,13 +1,14 @@
 {
     "guard":  "loop-lanes",
     "script":  "test/win32/loop-lanes.ps1",
-    "generated":  "2026-11-10T00:21:05-08:00",
-    "commit":  "6614178f7",
+    "generated":  "2026-11-10T18:41:29-08:00",
+    "commit":  "fa2726019",
     "uncommitted":  [
-                        "scripts/go-loop-health.ps1"
+                        "scripts/daily-publish.ps1",
+                        "scripts/publish-windows-tag.ps1"
                     ],
     "files":  {
-                  "scripts/daily-publish.ps1":  "5cdd372ff60963341abcaf375926aaff49f635f34cae74e938cb4afdb4923f6a",
+                  "scripts/daily-publish.ps1":  "b2c28d3b29fe1c0e50e1a1d890d7c8cfcbf780769807b72f66e4bf2ce6a9917d",
                   "scripts/deliver-windows-build.ps1":  "7246739997be71d01b58307c789f90a4277b6b38dad68c094663fd1b9d1db3c5",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
                   "scripts/go-loop-exec.ps1":  "b31b728d90cb1e9fbdd605e0fcd7e257da797eae52567467953279b78fae42d8",
@@ -16,7 +17,7 @@
                   "scripts/launch-upgrade.ps1":  "cdac13e044f5b31ec2346cbd23556ea45ddf937972e033f56f7a6451ffbaaaa1",
                   "scripts/lib/LoopLane.ps1":  "5a323edad01338d2719fcb162c838a68f80b66a01616d9abf8d44daf9e1b51a8",
                   "scripts/morning-owner.ps1":  "3ce353184a905647f855f15bcc8e2206d7772a22c4af7501488a0a556267faf0",
-                  "scripts/publish-windows-tag.ps1":  "8f55c46c6de05261d252468afd35246dfa18b97aea63f079a6f7d235f6b7e055",
+                  "scripts/publish-windows-tag.ps1":  "28b1b5a25a0216a2305278b0bb48d7255813eae8f608b6f333536fee1b0d3b05",
                   "scripts/task-dashboard.js":  "5a7b6166a9b96da4ee7a1dd59a1fafcef5bcca3b8c443f2157c10000a516fe40",
                   "scripts/upgrade-ghoztty-windows.ps1":  "75256af8f048f5ea44892ec200b601e7acc1900972a284e2095ae486138a68c5",
                   "test/win32/loop-lanes.ps1":  "41606233b8e2bf5f95a1bc0cc894c69ff76ae56c6ea12d99971b09a156d716bb"

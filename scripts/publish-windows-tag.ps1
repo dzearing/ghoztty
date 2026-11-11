@@ -44,7 +44,12 @@ param(
     [switch]$DryRun,
     [string]$Remote = 'origin',
     # Test seam. Empty = the repo this script lives in.
-    [string]$Repo = ''
+    [string]$Repo = '',
+    # Test seam (T1444). Empty = release-notes-author.ps1 beside this script.
+    [string]$NotesAuthor = '',
+    # Tag without authoring notes; says so (NOTES NOT SHIPPED) rather than
+    # skipping silently.
+    [switch]$NoNotes
 )
 
 $ErrorActionPreference = 'Continue'
@@ -92,6 +97,56 @@ if ((Invoke-Probe { git rev-parse -q --verify "refs/tags/$tag" }) -eq 0) {
 $remoteTag = @(git ls-remote --tags $Remote "refs/tags/$tag" 2>$null) | Where-Object { $_ }
 if ($remoteTag.Count) {
     Fail "$tag already exists on $Remote -- pick a higher version"
+}
+
+# The release notes for THIS version (T1444). They are embedded in the exe at
+# build time, so they have to be on the commit CI builds -- which means written,
+# committed and pushed before the tag goes on. Without this every win-v release
+# shipped whatever notes the Mac line last left behind, and What's New described
+# older work as the update the user had just taken.
+#
+# Late notes beat no release: if the author or the commit fails, the gap is
+# named (NOTES NOT SHIPPED) and the tag still goes on the commit that was
+# already pushed. A new HEAD is only adopted once the remote has it, so a commit
+# whose push failed can never be what a release tag points at.
+$author = Join-Path $PSScriptRoot 'release-notes-author.ps1'
+if (-not $NotesAuthor) { $NotesAuthor = $author }
+if ($NoNotes) {
+    Write-Host "NOTES NOT SHIPPED: -NoNotes was passed; $tag carries no notes of its own"
+} elseif (-not (Test-Path -LiteralPath $NotesAuthor -PathType Leaf)) {
+    Write-Host "NOTES NOT SHIPPED: $NotesAuthor is missing"
+} else {
+    $authorArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $NotesAuthor,
+        '-Version', $Version, '-Repo', $Repo)
+    if ($DryRun) { $authorArgs += '-DryRun' }
+    $authorOut = @(& powershell @authorArgs 2>&1 | ForEach-Object { "$_" })
+    $authorCode = $LASTEXITCODE
+    foreach ($l in $authorOut) { if ($l -notmatch '^NOTES-PATH ') { Write-Host $l } }
+    $written = @($authorOut | Where-Object { $_ -match '^NOTES-PATH ' } | ForEach-Object { ($_ -replace '^NOTES-PATH ', '').Trim() })
+    if ($authorCode -ne 0) {
+        Write-Host "NOTES NOT SHIPPED: the notes author failed (exit $authorCode)"
+    } elseif ($written.Count -and -not $DryRun) {
+        $msgFile = Join-Path $env:TEMP "T1444-notes-msg-$PID.txt"
+        $msg = "Release notes for Ghoztty for Windows $Version`n`nWhat's New for $tag, written from the user-facing work that landed since the previous Windows release.`n"
+        [IO.File]::WriteAllText($msgFile, $msg, (New-Object Text.UTF8Encoding($false)))
+        $guard = Join-Path $PSScriptRoot 'git-commit-guard.ps1'
+        $guardOut = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $guard commit -Repo $Repo `
+                -Paths ($written -join ',') -MessageFile $msgFile 2>&1 | ForEach-Object { "$_" })
+        $guardCode = $LASTEXITCODE
+        $newHash = (git rev-parse HEAD 2>$null)
+        $newOnRemote = $false
+        if ($guardCode -eq 0 -and $newHash -and $newHash.Trim() -ne $hash) {
+            $newOnRemote = [bool](@(git branch -r --contains HEAD 2>$null).Count)
+        }
+        if ($newOnRemote) {
+            $hash = $newHash.Trim()
+            $short = (git rev-parse --short HEAD).Trim()
+            Write-Host "NOTES COMMITTED: $($written -join ', ') at $short, pushed"
+        } else {
+            Write-Host "NOTES NOT SHIPPED: the notes commit did not reach $Remote (guard exit $guardCode); tagging the already-pushed $short without them"
+            foreach ($l in ($guardOut | Select-Object -Last 5)) { Write-Host "  $l" }
+        }
+    }
 }
 
 Write-Host "== publish $tag by tag push (commit $short, remote $Remote) =="

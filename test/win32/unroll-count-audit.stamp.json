@@ -1,10 +1,13 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-10T17:31:18-08:00",
-    "commit":  "369254e00",
+    "generated":  "2026-11-10T18:43:03-08:00",
+    "commit":  "fa2726019",
     "uncommitted":  [
-
+                        "scripts/daily-publish.ps1",
+                        "scripts/guard-due.ps1",
+                        "scripts/publish-windows-tag.ps1",
+                        "scripts/release-notes-author.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -30,7 +33,7 @@
                   "scripts/control-char-scan.ps1":  "a05f37ebf02bb8fb5bfdf123e54ee2a25488a7c25a6d46be7f29730ac8c2753f",
                   "scripts/crash-catch.ps1":  "c8515ad0ae67ec2fc457f54a7477f5afb5fc28281906f261d631ad0a640ca4aa",
                   "scripts/crash-databreak.ps1":  "ec45063075848cb962ca00262960aec8380bd5de3f0d9f9bc9f1d25c109e3b0d",
-                  "scripts/daily-publish.ps1":  "5cdd372ff60963341abcaf375926aaff49f635f34cae74e938cb4afdb4923f6a",
+                  "scripts/daily-publish.ps1":  "b2c28d3b29fe1c0e50e1a1d890d7c8cfcbf780769807b72f66e4bf2ce6a9917d",
                   "scripts/deliver-audit.ps1":  "5598626fd46a8b8da014508f9d26c8f423cebddb4c741aec4e5fbe6d882149ce",
                   "scripts/deliver-windows-build.ps1":  "7246739997be71d01b58307c789f90a4277b6b38dad68c094663fd1b9d1db3c5",
                   "scripts/delivery-manifest.ps1":  "e1d865b58a35c5d226f2078a8e0d4e274d75fbbb5adc2f5aa2639382ae71de60",
@@ -50,7 +53,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "416ef5cd4b94da58fc8181731530e30a6bca49e38144c47e4f71e3a489a76f8a",
                   "scripts/go-loop-watchdog.ps1":  "c9e028f6040e12199efab1bc31a4b2b6d647ecb9c90461682af314330034fc23",
-                  "scripts/guard-due.ps1":  "b89183964d6dea37a1f1f9255aa098dc40757452cb9c1e927a52782e90f4eb43",
+                  "scripts/guard-due.ps1":  "125e3f0f41a40ed57df71a9c7b08fb978c15d95ce77d4e6b198a99074864e8f1",
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
                   "scripts/hero-glide-onscreen.ps1":  "46d211f7ec7843d13506f4e3bd13933630339adb8aff13b5c97d69ae3fd248a7",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
@@ -98,8 +101,9 @@
                   "scripts/parity-tasks.ps1":  "58b7579f99cc329f1003194b08e73443a5c93069c2266b437f876b76e7573598",
                   "scripts/pr-health.ps1":  "a37d7a44dda98ec8650d3c0f65015f255956c3c2e5c1f1535a767aaa7a65184a",
                   "scripts/pr-review.ps1":  "8c817f2422323eb57ba9a7bb52a9fc72fd2a731fa4388f2f3d8116985003078c",
-                  "scripts/publish-windows-tag.ps1":  "8f55c46c6de05261d252468afd35246dfa18b97aea63f079a6f7d235f6b7e055",
+                  "scripts/publish-windows-tag.ps1":  "28b1b5a25a0216a2305278b0bb48d7255813eae8f608b6f333536fee1b0d3b05",
                   "scripts/rdp-perf-probe.ps1":  "b5e70fb1c4b8eb1ae74033ad8131b48e9aa20a3aacc7b4291d355d81c33b866a",
+                  "scripts/release-notes-author.ps1":  "9e5293ccde4efefa2e2371b297321db8b644f9061689d194beedd800f4d9caf3",
                   "scripts/report-false-positive.ps1":  "67875bcfc4d235afa9a8810294a7ea9d48fc7cb57f69e74c9617970b65d68534",
                   "scripts/resize-sync-onscreen.ps1":  "1877412836c7a5b9505712a9ce5529b08d60b050cbe2a58594aa7c13d42f69f7",
                   "scripts/scrollbar-fade-onscreen.ps1":  "36c30979affd7da2f29934b686a78fa78d1dfdcb15b04ceee8ec0828732bb9fc",

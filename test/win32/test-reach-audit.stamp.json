@@ -1,10 +1,10 @@
 {
     "guard":  "test-reach",
     "script":  "test/win32/test-reach-audit.ps1",
-    "generated":  "2026-11-10T17:51:49-08:00",
-    "commit":  "83f4c4e3c",
+    "generated":  "2026-11-10T19:06:29-08:00",
+    "commit":  "fa2726019",
     "uncommitted":  [
-
+                        "src/apprt/win32/release_notes.zig"
                     ],
     "files":  {
                   "src/apprt/win32.zig":  "f3e60aa2b0dbeff84f46ff29aba3429307ec83f5d1cb44bed8e7026feb584bc4",
@@ -264,7 +264,7 @@
                   "src/apprt/win32/relaunch_guard.zig":  "3cc0c7d3961eb984559da32e7e6ab36db57795d1e0165bc5fe9fe71104c2b847",
                   "src/apprt/win32/relay_signout.zig":  "994dc25858584da4db9520c7933cb40ddff6b1b9ed803117bf7a7867689114ed",
                   "src/apprt/win32/RelayAccountRow.zig":  "44a858c3aa0b29f6930601593ed836dc569164d6bafd3be6117f5980628daac0",
-                  "src/apprt/win32/release_notes.zig":  "4e5a94cbf63564b30188a51688ff7c0151984aca13bf719ed9be07f811164081",
+                  "src/apprt/win32/release_notes.zig":  "54904539dc626e7f1d32c10b2c55177fd2bccb7634bd15789e0e6f2b15536f3d",
                   "src/apprt/win32/release_notes_bundle.zig":  "726d7ab4b5a19c6fdd840ae9af57452d287f1dce30c9d3737111425b4c2920ce",
                   "src/apprt/win32/remote_pill.zig":  "6997259de405ee7fecb4e29c179ba56380c4ce423cf48e09bba95f0a249e6286",
                   "src/apprt/win32/remote_reconnect.zig":  "9d6a394fad06de85157f2c3615fce271ce7841c6b9c8ea82c47c6385d03538a4",

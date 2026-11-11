@@ -334,3 +334,55 @@ test "partition: newest-first ordering is numeric" {
     try testing.expectEqualStrings("1.10.0", split.fresh[0].version);
     try testing.expectEqualStrings("1.9.0", split.fresh[1].version);
 }
+
+// T1444: the shapes scripts/release-notes-author.ps1 writes for a Windows
+// daily publish. Its version walks the PATCH of the Mac line (win-v1.54.11
+// after the Mac's 1.54.1), so the generated file must read as NEW to a user
+// coming from the previous Windows release, and the Mac file it sits beside
+// as already installed. The "nothing to say" document is a real release too.
+test "partition: a generated Windows patch release is new, the Mac line installed" {
+    const entries = [_]Entry{
+        testEntry("1.54.1",
+            \\{"version":"1.54.1","sections":[{"title":"Mac","items":[{"text":"x"}]}]}
+        ),
+        testEntry("1.54.10",
+            \\{
+            \\  "version": "1.54.10",
+            \\  "sections": [
+            \\    { "title": "New",
+            \\      "items": [
+            \\        { "text": "The machine chooser shows how busy each machine is." }
+            \\      ] },
+            \\    { "title": "Fixes",
+            \\      "items": [
+            \\        { "text": "A \"quoted\" fix\\path." }
+            \\      ] }
+            \\  ]
+            \\}
+        ),
+        testEntry("1.54.11",
+            \\{
+            \\  "version": "1.54.11",
+            \\  "sections": [
+            \\    { "title": "This release",
+            \\      "items": [
+            \\        { "text": "No user-visible changes in this release: it carries reliability, test and tooling work behind the scenes." }
+            \\      ] }
+            \\  ]
+            \\}
+        ),
+    };
+    var store = try Store.parse(testing.allocator, &entries);
+    defer store.deinit();
+    try testing.expectEqual(@as(usize, 3), store.all.len);
+
+    var split = try store.partition(testing.allocator, "1.54.9", "1.54.11");
+    defer split.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 2), split.fresh.len);
+    try testing.expectEqualStrings("1.54.11", split.fresh[0].version);
+    try testing.expectEqualStrings("1.54.10", split.fresh[1].version);
+    try testing.expectEqual(@as(usize, 1), split.fresh[0].sections.len);
+    try testing.expectEqualStrings("A \"quoted\" fix\\path.", split.fresh[1].sections[1].items[0].text);
+    try testing.expectEqual(@as(usize, 1), split.installed.len);
+    try testing.expectEqualStrings("1.54.1", split.installed[0].version);
+}

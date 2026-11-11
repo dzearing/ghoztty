@@ -1,6 +1,6 @@
 {
     "guard":  "test-desktop",
     "task":  "T2884",
-    "reason":  "4 reds all from the terminal pane no longer capturing flat through PrintWindow; T1380\u0027s own Z2 section is green (4/4)",
-    "at":  "2026-11-10T00:45:02-08:00"
+    "reason":  "",
+    "at":  "2026-11-10T18:38:04-08:00"
 }

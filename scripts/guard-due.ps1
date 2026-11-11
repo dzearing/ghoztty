@@ -1863,6 +1863,8 @@ $GuardTable = @(
         Covers = @(
             'scripts\daily-publish.ps1',
             'scripts\publish-windows-tag.ps1',
+            # T1444: the release notes the publisher authors before it tags.
+            'scripts\release-notes-author.ps1',
             'test\win32\daily-publish.ps1'
         )
     },

@@ -535,6 +535,11 @@ try {
     Assert 'I4 and no tag was created by a dry run' (
         -not (@(git -C $Repo tag --list 'win-v99.99.99')).Count
     )
+    # T1444: the publisher authors the version's release notes before it tags,
+    # and a dry run says what it would write without writing it.
+    AssertMatch 'I5 a dry run reports the notes it would author' 'NOTES (DRY RUN|EXIST|RANGE)' $i3.Text
+    Assert 'I5 and writes no notes file into the repo' (
+        -not (Test-Path -LiteralPath (Join-Path $Repo 'release-notes\client\99.99.99.json')))
 
     "== L. the 2026-09-03 shape, end to end =="
     # Publish at T; a fix the user is waiting on lands at T+90m; it must be able
@@ -717,6 +722,97 @@ try {
     $r2 = Invoke-Decider -Extra @() -DockerCode 0 -GhCode 0 -At '2026-09-25T10:00:00'
     AssertMatch 'R2 up to date, the same request reads nothing landed' 'nothing has landed' $r2.Text
     Remove-Item -LiteralPath $requestFile -Force -ErrorAction SilentlyContinue
+
+    "== S. release notes for the version being published (T1444) =="
+    # What's New reads release-notes\{client,agent}\<version>.json, embedded at
+    # build time. Nothing wrote one for a win-v version, so every release showed
+    # the notes the Mac line last left. The author writes them from the
+    # user-facing task commits since the previous win-v tag.
+    $authorScript = Join-Path $Repo 'scripts\release-notes-author.ps1'
+    Assert 'S0 the notes author exists' (Test-Path -LiteralPath $authorScript -PathType Leaf)
+    $env:GHOZTTY_RELEASE_NOTES_DOTSOURCE = '1'
+    try { . $authorScript -Version '0.0.0' } finally { Remove-Item Env:\GHOZTTY_RELEASE_NOTES_DOTSOURCE -ErrorAction SilentlyContinue; $Repo = $harnessRepo }
+    $tagsOf = Get-TaskFileTags "---`nid: T1`ntags: [`"Fix`", `"polish`"]`n---"
+    AssertEq 'S1 task tags are read from the frontmatter' 'fix,polish' ($tagsOf -join ',')
+    AssertEq 'S2 a feature outranks a fix for its section' 'feature' (Get-ReleaseNoteKind @('fix', 'feature'))
+    AssertEq 'S2 test/infra/docs work is not user-facing' '' (Get-ReleaseNoteKind @('test', 'infra', 'docs'))
+    AssertEq 'S3 a subject loses its task reference and gains a full stop' 'Signing back in works offline.' (ConvertTo-ReleaseNoteText 'Signing back in works offline (T1428, part 1)')
+    $fakeTags = { param($t) switch ($t) { 'T1' { @('fix') } 'T2' { @('test') } 'T3' { @('feature') } default { @() } } }
+    $sItems = @(Select-ReleaseNoteItems -TagLookup $fakeTags -Commits @(
+            [pscustomobject]@{ Subject = 'The pill says offline when it is (T1)'; Files = @('src/apprt/win32/Pill.zig') },
+            [pscustomobject]@{ Subject = 'chore(tracker): record T1''s commit'; Files = @('docs/x.md') },
+            [pscustomobject]@{ Subject = 'A harness proves the pill (T2)'; Files = @('test/win32/pill.ps1') },
+            [pscustomobject]@{ Subject = 'Sessions survive an agent upgrade (T3)'; Files = @('src/remote/agent/main.zig') },
+            [pscustomobject]@{ Subject = 'No task reference here'; Files = @('src/a.zig') }))
+    AssertEq 'S4 only user-facing task commits become items' 2 $sItems.Count
+    AssertEq 'S4 a client change is client-scoped' 'client' $sItems[0].Scope
+    AssertEq 'S4 a src\remote change is agent-scoped' 'agent' $sItems[1].Scope
+    $doc = ConvertTo-ReleaseNotesJson -Version '1.2.3' -Items @([pscustomobject]@{ Scope = 'client'; Kind = 'fix'; Text = 'A "quoted" fix\path.'; Task = 'T1' })
+    $parsed = $doc | ConvertFrom-Json
+    AssertEq 'S5 the document is JSON keyed by its version' '1.2.3' $parsed.version
+    AssertEq 'S5 with the item under its section, escaped intact' 'Fixes|A "quoted" fix\path.' "$($parsed.sections[0].title)|$($parsed.sections[0].items[0].text)"
+    $empty = (ConvertTo-ReleaseNotesJson -Version '1.2.4' -Items @()) | ConvertFrom-Json
+    AssertMatch 'S6 nothing to say is a stated line, not an empty document' 'No user-visible changes' $empty.sections[0].items[0].text
+
+    # Live, in a scratch repo: a tag, then one fix, one test task, one chore.
+    $nr = Join-Path $sandbox 'notes-repo'
+    New-Item -ItemType Directory -Path (Join-Path $nr 'docs\design\windows-parity-tasks') -Force | Out-Null
+    function NGit { & git -C $nr -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false @args 2>&1 | Out-Null }
+    NGit init -q
+    [IO.File]::WriteAllText((Join-Path $nr 'docs\design\windows-parity-tasks\T7.md'), "---`nid: T7`ntags: [`"fix`"]`n---`n")
+    [IO.File]::WriteAllText((Join-Path $nr 'docs\design\windows-parity-tasks\T8.md'), "---`nid: T8`ntags: [`"test`"]`n---`n")
+    NGit add -A; NGit commit -q -m 'base'
+    NGit tag win-v1.0.0
+    [IO.File]::WriteAllText((Join-Path $nr 'a.txt'), 'a'); NGit add -A; NGit commit -q -m 'The tab strip no longer flickers on resize (T7)'
+    [IO.File]::WriteAllText((Join-Path $nr 'b.txt'), 'b'); NGit add -A; NGit commit -q -m 'A harness measures the flicker (T8)'
+    [IO.File]::WriteAllText((Join-Path $nr 'c.txt'), 'c'); NGit add -A; NGit commit -q -m 'chore(tracker): record T7''s commit'
+    function Invoke-Author([string[]]$A) {
+        $o = Join-Path $sandbox 'author-out.txt'
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $authorScript -Repo $nr @A > $o 2>&1
+        return [pscustomobject]@{ Exit = $LASTEXITCODE; Text = (Get-Content -Raw -LiteralPath $o) }
+    }
+    $s7 = Invoke-Author @('-Version', '1.0.1', '-DryRun')
+    AssertEq 'S7 a dry run exits 0' 0 $s7.Exit
+    Assert 'S7 and writes nothing' (-not (Test-Path -LiteralPath (Join-Path $nr 'release-notes\client\1.0.1.json')))
+    $s8 = Invoke-Author @('-Version', '1.0.1')
+    AssertEq 'S8 a run over closed work exits 0' 0 $s8.Exit
+    AssertMatch 'S8 measuring from the previous win-v tag' 'NOTES RANGE: win-v1\.0\.0\.\.HEAD - 3 commit' $s8.Text
+    AssertMatch 'S8 and names the file it wrote for the caller to commit' 'NOTES-PATH release-notes/client/1\.0\.1\.json' $s8.Text
+    $n1 = [IO.File]::ReadAllText((Join-Path $nr 'release-notes\client\1.0.1.json')) | ConvertFrom-Json
+    AssertEq 'S8 keyed by the version being tagged' '1.0.1' $n1.version
+    AssertEq 'S8 carrying the fix and nothing else' 'The tab strip no longer flickers on resize.' (@($n1.sections | ForEach-Object { $_.items } | ForEach-Object { $_.text }) -join '|')
+    Assert 'S8 and no agent file when the agent did not change' (-not (Test-Path -LiteralPath (Join-Path $nr 'release-notes\agent\1.0.1.json')))
+    $s9 = Invoke-Author @('-Version', '1.0.1')
+    AssertMatch 'S9 an existing file is left alone (hand-written notes win)' 'NOTES EXIST' $s9.Text
+    Assert 'S9 and names nothing to commit' ($s9.Text -notmatch 'NOTES-PATH')
+    NGit tag win-v1.0.1
+    [IO.File]::WriteAllText((Join-Path $nr 'd.txt'), 'd'); NGit add -A; NGit commit -q -m 'A harness measures more (T8)'
+    $s10 = Invoke-Author @('-Version', '1.0.2')
+    AssertMatch 'S10 a range with nothing user-facing is a stated outcome' 'NOTES NOTHING TO SAY: release-notes/client/1\.0\.2\.json' $s10.Text
+    $n2 = [IO.File]::ReadAllText((Join-Path $nr 'release-notes\client\1.0.2.json')) | ConvertFrom-Json
+    AssertMatch 'S10 and the file exists, saying so' 'No user-visible changes' $n2.sections[0].items[0].text
+    $s11 = Invoke-Author @('-Version', '1.0')
+    AssertEq 'S11 a malformed version is refused' 1 $s11.Exit
+
+    "== T. a publish without its notes says so in the publish log (T1444) =="
+    Remove-Item -LiteralPath $watermark, $ranMarker, $requestFile -Force -ErrorAction SilentlyContinue
+    $savedFake = [IO.File]::ReadAllText($fakePublish)
+    try {
+        Set-Content -LiteralPath $fakePublish -Encoding ASCII -Value @"
+param([string]`$Version = '', [switch]`$DryRun)
+Set-Content -LiteralPath '$ranMarker' -Value `$Version
+Write-Host 'NOTES NOT SHIPPED: the notes commit did not reach origin'
+Write-Host "== pushed win-v`$Version (abcdef1) to origin =="
+exit 0
+"@
+        $t1 = Invoke-Decider -Extra @() -DockerCode 1 -GhCode 0 -At '2026-09-26T18:00:00'
+        AssertEq 'T1 the publish still goes out without notes' 10 $t1.Exit
+        AssertMatch 'T1 and the publish log names the gap' '\d{2}:\d{2}:\d{2} NOTES NOT SHIPPED' $t1.Text
+        $tMark = Read-PublishWatermark -Text ([IO.File]::ReadAllText($watermark))
+        AssertEq 'T2 the watermark records the commit that was TAGGED, not HEAD' 'abcdef1' $tMark.Commit
+    } finally {
+        [IO.File]::WriteAllText($fakePublish, $savedFake)
+    }
     Complete-TestBody
 } finally {
     Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
