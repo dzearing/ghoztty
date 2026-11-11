@@ -33,6 +33,13 @@
 # The claim is proved when those last two name the same session id, and that id
 # is in the `sessions.json` the local store persists to.
 #
+# Section 7 (T1430) reuses the same fake relay for the explicit daemon mode,
+# `ghoztty-agent --relay=<base>`: a pending revocation armed beside relay.env
+# parks the control link, the agent POSTs the de-enroll itself, and clearing
+# the record brings the link back with nothing but the agent's own revocation
+# watcher to resume it (its owns_resume branch, which the --listen-pipe
+# harness in agent-sharing-uplink.ps1 section 5 never takes).
+#
 # Hermetic: GHOZTTY_AGENT_INSTANCE forks the single-instance guard AND the
 # lineage the CLI derives its port.json path from, LOCALAPPDATA is private, the
 # pipe name is test-unique, GHOSTTY_RELAY_ENV points the credential lookup at a
@@ -111,6 +118,8 @@ $savedInst = Get-GhozttyAgentLineage
 $savedRelayEnv = $env:GHOSTTY_RELAY_ENV
 $savedLad = $env:LOCALAPPDATA
 $savedPipeSuffix = $env:GHOZTTY_PIPE_SUFFIX
+$savedDeviceToken = $env:GHOSTTY_DEVICE_TOKEN
+$script:relayAgentPid = $null
 
 # The only CLI verb here is `+sessions`, which resolves the AGENT endpoint (the
 # GHOZTTY_AGENT_INSTANCE lineage and private LOCALAPPDATA set below are what
@@ -152,7 +161,19 @@ function Get-TestAgents {
 }
 function Stop-TestAgents {
     foreach ($p in (Get-TestAgents)) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+    # Section 7's `--relay` daemon carries no test-unique argument (relay mode
+    # takes none), so it is tracked by the pid this run started it with.
+    if ($script:relayAgentPid) {
+        Stop-Process -Id $script:relayAgentPid -Force -ErrorAction SilentlyContinue
+        $script:relayAgentPid = $null
+    }
     Start-Sleep -Milliseconds 400
+}
+
+# How many relay.log lines match $pattern (a regex): the log is append-only, so
+# a count that grows is a new event and never an old line read twice.
+function Get-RelayLogCount($pattern) {
+    return @((Read-Shared $relayLog) -split "`n" | Where-Object { $_ -match $pattern }).Count
 }
 
 # `+sessions --json` against THIS lineage's agent, over the local pipe. Returns
@@ -268,6 +289,62 @@ try {
     $idsNeg = @($neg.Rows | ForEach-Object { $_.id })
     Assert "no second session appeared (roster is $($idsNeg.Count))" ($idsNeg.Count -eq 1 -and $idsNeg -contains $relaySession)
     Assert 'the agent survived the whole run' (-not $agent.HasExited)
+
+    Say '== 7: a --relay daemon parks for a pending revocation and RESUMES ITSELF (T1430)'
+    # agent-sharing-uplink.ps1 section 5 proves the revocation park under the
+    # SharingUplink reconciler (--listen-pipe, how the app runs the agent).
+    # The explicit daemon mode, `--relay=<base>`, constructs the same watcher
+    # with owns_resume = true: nothing else writes the desired link state
+    # there, so when the record clears it is the WATCHER's own
+    # LinkControl.reconnect that brings the machine back. No harness had ever
+    # executed that branch; the failure it would hide is a machine that comes
+    # back from a sign-out and then never comes back online.
+    Stop-TestAgents
+    # The token must come from relay.env (the hot-reload source), never an
+    # inherited GHOSTTY_DEVICE_TOKEN.
+    Remove-Item env:GHOSTTY_DEVICE_TOKEN -ErrorAction SilentlyContinue
+    $relayBase = "http://127.0.0.1:$($ports.Relay)"
+    $upBefore = Get-RelayLogCount "CONTROL up auth=Bearer $token"
+    $rOut = Join-Path $root 'relay-agent.out'
+    $rErr = Join-Path $root 'relay-agent.err'
+    Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
+    $relayAgent = Start-Process -FilePath $AgentExe -PassThru -WindowStyle Hidden `
+        -RedirectStandardOutput $rOut -RedirectStandardError $rErr `
+        -ArgumentList "--relay=$relayBase", '--headless'
+    $null = $relayAgent.Handle
+    $script:relayAgentPid = $relayAgent.Id
+    Assert 'the --relay daemon started in relay mode' (Wait-ForText $rOut 'relay mode, control=' 20)
+    # Section 1's dial already logged a CONTROL up; wait for a NEW one, from
+    # this process (section 6 parked the --listen-pipe agent, which is stopped).
+    $deadline = (Get-Date).AddSeconds(25)
+    while ((Get-Date) -lt $deadline -and (Get-RelayLogCount "CONTROL up auth=Bearer $token") -le $upBefore) { Start-Sleep -Milliseconds 250 }
+    Assert 'the --relay daemon raised its control link with the relay.env token' ((Get-RelayLogCount "CONTROL up auth=Bearer $token") -gt $upBefore)
+
+    # Arm exactly what a forced sign-out writes, beside relay.env.
+    $pendingFile = Join-Path $root 'pending-revoke.json'
+    $rec = '{"relay_base":"' + $relayBase + '","device_token":"' + $token + '","account_email":"t1430@example.com","armed_at":1}'
+    $downBefore = Get-RelayLogCount 'CONTROL down'
+    Set-Content -Path $pendingFile -Value $rec -Encoding ascii
+    Assert 'the --relay daemon announces the park' (Wait-ForText $rErr 'taking the relay uplink down' 15)
+    $deadline = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $deadline -and (Get-RelayLogCount 'CONTROL down') -le $downBefore) { Start-Sleep -Milliseconds 250 }
+    Assert 'the relay saw the control link go down' ((Get-RelayLogCount 'CONTROL down') -gt $downBefore)
+    # The completion is attempted by THIS agent, with no app running. The fake
+    # relay answers 404 - no definite answer - so the record stays armed.
+    Assert 'the --relay daemon attempted the de-enroll itself' (Wait-ForText $relayLog 'REQ POST /v1/agent/deenroll' 25)
+    Assert 'the pending record survives a relay that gave no answer' (Test-Path $pendingFile)
+    $heldUps = Get-RelayLogCount 'CONTROL up auth='
+    Start-Sleep -Seconds 10   # two watcher ticks and well past the 3s base backoff
+    Assert 'no control link comes back while the revocation is owed' ((Get-RelayLogCount 'CONTROL up auth=') -eq $heldUps)
+
+    # Sign back in on this machine: the record clears and relay.env stays.
+    # Nothing but the watcher can resume the link in --relay mode.
+    Remove-Item $pendingFile -ErrorAction SilentlyContinue
+    Assert 'the --relay daemon announces the release' (Wait-ForText $rErr 'may come back up' 15)
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline -and (Get-RelayLogCount 'CONTROL up auth=') -le $heldUps) { Start-Sleep -Milliseconds 250 }
+    Assert 'the control link comes back up with no other process reconciling it' ((Get-RelayLogCount 'CONTROL up auth=') -gt $heldUps)
+    Assert 'the --relay daemon survived the park and the release' (-not $relayAgent.HasExited)
     Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     if ($null -ne $client -and -not $client.HasExited) {
@@ -280,13 +357,14 @@ try {
     else { $env:GHOSTTY_RELAY_ENV = $savedRelayEnv }
     if ($null -eq $savedPipeSuffix) { Remove-Item env:GHOZTTY_PIPE_SUFFIX -ErrorAction SilentlyContinue }
     else { $env:GHOZTTY_PIPE_SUFFIX = $savedPipeSuffix }
+    if ($null -ne $savedDeviceToken) { $env:GHOSTTY_DEVICE_TOKEN = $savedDeviceToken }
     $env:LOCALAPPDATA = $savedLad
 }
 
 # A clean green run stamps the files this harness covers (T783) so
 # `scripts\guard-due.ps1` can answer "has anybody run this against the code as it
 # now stands?" for the uplink/control/worker path.
-if ($script:failures -eq 0 -and $script:passes -ge 18) {
+if ($script:failures -eq 0 -and $script:passes -ge 28) {
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard agent-relay-session -Repo $repo 2>&1 | ForEach-Object { "  $_" }
@@ -294,4 +372,4 @@ if ($script:failures -eq 0 -and $script:passes -ge 18) {
 
 # MinPass = the full-run assertion count: an exception past section N jumps to
 # the finally block, and a truncated run must never score as ALL PASS.
-Write-TestVerdict -Label 'T887 RELAY SESSION E2E' -Pass $script:passes -Fail $script:failures -MinPass 18
+Write-TestVerdict -Label 'T887 RELAY SESSION E2E' -Pass $script:passes -Fail $script:failures -MinPass 28

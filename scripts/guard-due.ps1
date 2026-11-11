@@ -2931,6 +2931,11 @@ $GuardTable = @(
             # these two files and left no relay harness due.
             'src\remote\connection.zig',
             'src\remote\protocol.zig',
+            # Section 7 (T1430): the revocation park in `--relay` daemon mode,
+            # where the watcher owns the RESUME as well as the park. That
+            # branch is exercised nowhere else on the box.
+            'src\remote\agent\revoke_watch.zig',
+            'src\remote\relay_revoke_pending.zig',
             'test\win32\lib\FakeAgentRelay.ps1',
             'test\win32\agent-relay-session-e2e.ps1'
         )
