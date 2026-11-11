@@ -90,6 +90,17 @@ class BaseTerminalController: NSWindowController,
         return tree.first { $0.id == id } ?? pane
     }
 
+    /// Where a split that leaves the caret where it is goes in (an agent's
+    /// `+split`, a side pane): beside `anchor`, unless the user minimized
+    /// `anchor` in a collapsed row. Then it goes beside the pane on show
+    /// nearest it instead. The new pane has to come on show
+    /// (`PaneStackState.featured`) and a row's run is contiguous, so beside
+    /// a strip it pulled that strip, and every strip between it and the run,
+    /// back out with it. Only the user brings a minimized pane back out.
+    func backgroundSplitAnchor(_ anchor: PaneView) -> PaneView {
+        paneOnShow(anchor)
+    }
+
     /// Where the caret goes when `node` leaves the tree, which becomes
     /// `newTree`: the neighbour a close picks, never a strip.
     func focusTargetAfterRemoving(_ node: SplitTree<PaneView>.Node, leaving newTree: SplitTree<PaneView>) -> PaneView? {
@@ -899,7 +910,7 @@ class BaseTerminalController: NSWindowController,
         do {
             newTree = try surfaceTree.inserting(
                 view: pane,
-                at: oldPane,
+                at: backgroundSplitAnchor(oldPane),
                 direction: direction,
                 ratio: ratio)
         } catch {
@@ -948,7 +959,7 @@ class BaseTerminalController: NSWindowController,
         do {
             newTree = try surfaceTree.inserting(
                 view: PaneView(surface: newView),
-                at: oldPane,
+                at: focus ? oldPane : backgroundSplitAnchor(oldPane),
                 direction: direction,
                 ratio: ratio)
         } catch {
@@ -984,7 +995,7 @@ class BaseTerminalController: NSWindowController,
     ) -> Ghostty.SurfaceView? {
         // The parent may have been removed from the tree while we were resolving
         // the remote cwd off the main thread.
-        guard surfaceTree.root?.node(view: oldView) != nil else { return nil }
+        guard let oldPane = surfaceTree.pane(for: oldView) else { return nil }
 
         // Create a new surface view
         guard let ghostty_app = ghostty.app else { return nil }
@@ -994,8 +1005,8 @@ class BaseTerminalController: NSWindowController,
         let newTree: SplitTree<PaneView>
         do {
             newTree = try surfaceTree.inserting(
-                view: newView,
-                at: oldView,
+                view: PaneView(surface: newView),
+                at: focus ? oldPane : backgroundSplitAnchor(oldPane),
                 direction: direction,
                 ratio: ratio)
         } catch {
