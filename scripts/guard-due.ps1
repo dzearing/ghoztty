@@ -1368,6 +1368,68 @@ $GuardTable = @(
             'src\apprt\win32\ViewerFeedbackBar.zig'
         )
     },
+    # The composer's OFFSET suites (T1472). Three harnesses pin where a chip,
+    # a caret and a selection land in the composer's text, and each has a row
+    # of its own so each is only as fresh as its own last green run - one
+    # shared row would read current after the first of three. Before this none
+    # of them was in any row, so the T673 teeth (GHOZTTY_TEST_BREAK_UTF16)
+    # were a check nobody was ever told to run.
+    #
+    # Non-ASCII text (T648): the byte <-> UTF-16 conversion the host does
+    # between the page's caret and its UTF-8 buffer, and the chip spans it
+    # seeds back. ViewerFeedbackBar is where the conversion is applied.
+    [pscustomobject]@{
+        Name   = 'viewer-feedback-utf16'
+        Script = 'test\win32\viewer-feedback-utf16.ps1'
+        Stamp  = 'test\win32\viewer-feedback-utf16.stamp.json'
+        Covers = @(
+            'test\win32\viewer-feedback-utf16.ps1',
+            'src\apprt\win32\utf16_offset.zig',
+            'src\apprt\win32\viewer_feedback_images.zig',
+            'src\apprt\win32\ViewerFeedbackBar.zig',
+            'src\apprt\win32\viewer_feedback_page.zig',
+            'src\viewer\composer.js',
+            'test\win32\lib\ComposerSurface.ps1',
+            'test\win32\lib\WebViewCdp.ps1'
+        )
+    },
+    # Pasted pictures (T637): the chip a picture becomes, whole-chip delete,
+    # stable numbering, the non-PNG re-encode and the files the send writes.
+    [pscustomobject]@{
+        Name   = 'viewer-feedback-images'
+        Script = 'test\win32\viewer-feedback-images.ps1'
+        Stamp  = 'test\win32\viewer-feedback-images.stamp.json'
+        Covers = @(
+            'test\win32\viewer-feedback-images.ps1',
+            'src\apprt\win32\viewer_feedback_images.zig',
+            'src\apprt\win32\utf16_offset.zig',
+            'src\apprt\win32\viewer_feedback_report.zig',
+            'src\apprt\win32\ViewerFeedbackSend.zig',
+            'src\apprt\win32\ViewerFeedbackBar.zig',
+            'src\viewer\composer.js',
+            'test\win32\lib\ComposerSurface.ps1',
+            'test\win32\lib\WebViewCdp.ps1'
+        )
+    },
+    # The thumbnail carousel (T646/T668): a click or Enter on a tile selects
+    # its chip's character range, deleting a chip drops its tile, and the
+    # strip's overflow cues and keyboard walk. The geometry is pure and runs in
+    # the `none` lane; only this harness sees the strip on a live band.
+    [pscustomobject]@{
+        Name   = 'viewer-feedback-carousel'
+        Script = 'test\win32\viewer-feedback-carousel.ps1'
+        Stamp  = 'test\win32\viewer-feedback-carousel.stamp.json'
+        Covers = @(
+            'test\win32\viewer-feedback-carousel.ps1',
+            'src\apprt\win32\viewer_feedback_layout.zig',
+            'src\apprt\win32\viewer_feedback_images.zig',
+            'src\apprt\win32\utf16_offset.zig',
+            'src\apprt\win32\ViewerFeedbackBar.zig',
+            'src\viewer\composer.js',
+            'test\win32\lib\ComposerSurface.ps1',
+            'test\win32\lib\WebViewCdp.ps1'
+        )
+    },
     # The composer's WEB surface (T934): the second WebView2 controller that
     # replaced the RichEdit, its page, and the two-way message channel between
     # them. Separate from `viewer-feedback` above because the two prove

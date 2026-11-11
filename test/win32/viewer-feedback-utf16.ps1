@@ -490,6 +490,14 @@ $fgSeen = @(Stop-TestForegroundWatch)
 $leaked = @(Get-TestLaunchedPids | Where-Object { $fgSeen -contains $_ })
 Assert ($leaked.Count -eq 0) "no test-desktop app ever became foreground on the interactive desktop (saw $($leaked -join ','))"
 
+# A clean green run stamps the covered files (T1472) so scripts\guard-due.ps1
+# can answer "has this harness been run against the composer's offset code as
+# it now stands?". Red leaves the stamp alone - red stays due.
+if ($script:fail -eq 0) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard viewer-feedback-utf16 -Repo $repo 2>&1 | ForEach-Object { Write-Host "  $_" }
+}
+
 Write-Host ''
 if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass)" }
 else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)"; exit 1 }

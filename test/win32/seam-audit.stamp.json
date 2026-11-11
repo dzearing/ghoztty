@@ -1,10 +1,10 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-10T23:49:14-08:00",
-    "commit":  "6c6700832",
+    "generated":  "2026-11-11T01:12:37-08:00",
+    "commit":  "f21e0360e",
     "uncommitted":  [
-                        "src/renderer/Thread.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -364,6 +364,8 @@
                   "src/apprt/win32/viewer_content.zig":  "a221b7d62a68561c5f126a95994446a462f0e2b465edcb7815ee15ec6635c9e1",
                   "src/apprt/win32/viewer_diff.zig":  "abde53dd9a1f89ae85b584c6385f6b4bf8f2f56b40457e12fa1b50136d16945a",
                   "src/apprt/win32/viewer_error_card.zig":  "ad6f9ccddb002f4cd7cda4c185370ae0d2b41102a528dccd327135383a2bad0e",
+                  "src/apprt/win32/viewer_feedback_a11y.zig":  "360db1218337b04b0bcf80438dfb19c6017603617e5c880ea3e0486661e4ca0f",
+                  "src/apprt/win32/viewer_feedback_acc.zig":  "3fd6d388b4084a066d62c774113ca2de51aaddee99ab8263c4fd9bbbdcbed328",
                   "src/apprt/win32/viewer_feedback_doc.zig":  "f5c871e6e68e437dcb170794201619d59664e9e60077ef3453910b65f3e004e9",
                   "src/apprt/win32/viewer_feedback_images.zig":  "6a0f71807506bce40a00a8444c7d4ca3d93c6aec343cac2e97c1344363d4c67e",
                   "src/apprt/win32/viewer_feedback_layout.zig":  "4c122964fe02ff1b4931bca9c2f5d9cd2e28160b3855565490b9793f08e233ee",
@@ -384,7 +386,7 @@
                   "src/apprt/win32/viewer_watcher.zig":  "83c16feb387f38f51f21f2888a6f990e58b498cac1f5ca1bdeb6bfa87cfe2d88",
                   "src/apprt/win32/viewer_worktree.zig":  "216b7a5e71476cf126698487b2999fea3b861b04220dd7a184ed646e0172deae",
                   "src/apprt/win32/ViewerDiffProbe.zig":  "b3d68493f3e4dedfe7088d5f0e48823d1a052cce1ec459176828782b0caa9fea",
-                  "src/apprt/win32/ViewerFeedbackBar.zig":  "70c3b3ce2e48c4f682be76e0e70e3bb6555dc223bf741c8c03e52c644d5e1214",
+                  "src/apprt/win32/ViewerFeedbackBar.zig":  "b965a782a266a2864ee30aff300b241fa57b89421f28da9c8342f63ba60a3569",
                   "src/apprt/win32/ViewerFeedbackSend.zig":  "7dba3ed6d08408ee14fdb93604ef7a7351c902483511e227694a12d7b3b6ff49",
                   "src/apprt/win32/ViewerFeedbackWeb.zig":  "8848202d5b02faf5ecbb68a9dba13ca53731b3e96d58612046d9b0a49175eed6",
                   "src/apprt/win32/ViewerFindBar.zig":  "23a3950472ae29064f27aad2e545f4abf44ba41408d4512ceb2d24381f4a5625",
