@@ -11423,6 +11423,7 @@ fn tracedMove(self: *Window, h: w32.HWND, x: i32, y: i32, cx: i32, cy: i32, flag
     self.held_resizes_on = true;
     defer self.held_resizes_on = was_held;
     const own0 = batch_cost.size_qpc;
+    const viewer0 = ViewerPane.handler_cost;
     const before = present_stamps.table.read(key);
     const others = pane_move_trace.othersBusy(key);
     var t0: i64 = 0;
@@ -11437,10 +11438,16 @@ fn tracedMove(self: *Window, h: w32.HWND, x: i32, y: i32, cx: i32, cy: i32, flag
     if (!moved) _ = w32.SetWindowPos(h, null, x, y, cx, cy, flags);
     var t1: i64 = 0;
     _ = w32.QueryPerformanceCounter(&t1);
+    // A viewer's own WM_SIZE / WM_MOVE run inside its move (T2866): nothing
+    // holds them, so they are the pane's own time too, and named apart.
+    const viewer_size = ViewerPane.handler_cost.size_qpc -% viewer0.size_qpc;
+    const viewer_move = ViewerPane.handler_cost.move_qpc -% viewer0.move_qpc;
     pane_move_trace.record(key, .{
         .begin = t0,
         .end = t1,
-        .own = batch_cost.size_qpc - own0,
+        .own = (batch_cost.size_qpc - own0) + viewer_size + viewer_move,
+        .viewer_size = viewer_size,
+        .viewer_move = viewer_move,
         .before = before,
         .after = present_stamps.table.read(key),
         .others_busy = others,

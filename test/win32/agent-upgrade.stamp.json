@@ -1,8 +1,8 @@
 {
     "guard":  "agent-upgrade",
     "script":  "test/win32/agent-upgrade.ps1",
-    "generated":  "2026-11-11T10:02:19-08:00",
-    "commit":  "da01e43f9",
+    "generated":  "2026-11-11T10:15:10-08:00",
+    "commit":  "f32d9b82d",
     "uncommitted":  [
 
                     ],

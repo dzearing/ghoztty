@@ -34,8 +34,12 @@ pub fn on() bool {
 pub const Move = struct {
     begin: i64,
     end: i64,
-    /// The pane's own WM_SIZE handling inside the move.
+    /// The pane's own WM_SIZE handling inside the move, a viewer's included.
     own: i64,
+    /// Of `own`, a viewer's bounds sync (`WM_SIZE`) and WebView2
+    /// parent-position refresh (`WM_MOVE`) (T2866). Zero for a terminal.
+    viewer_size: i64 = 0,
+    viewer_move: i64 = 0,
     /// The pane's renderer clock just before the move, null if never stamped
     /// (a viewer, or a pane on SwapBuffers).
     before: ?present_stamps.Snapshot,
@@ -47,6 +51,9 @@ pub const Move = struct {
 
 pub const Verdict = struct {
     os_us: i64,
+    /// A viewer's own handlers inside the move (T2866): unlike a terminal's
+    /// held resize, they are the move's cost, so they count toward `slow`.
+    viewer_us: i64,
     slow: bool,
     /// The pane's renderer was mid-call when the move began.
     busy_at_begin: bool,
@@ -66,7 +73,8 @@ fn overlaps(span_before: present_stamps.Span, span_after: present_stamps.Span, b
 pub fn judge(m: Move) Verdict {
     const os = @max(0, (m.end - m.begin) - m.own);
     const os_us = @divTrunc(os, ticks_per_us);
-    var v: Verdict = .{ .os_us = os_us, .slow = os_us > slow_us, .busy_at_begin = false, .overlapped = false, .kind = null };
+    const viewer_us = @divTrunc(m.viewer_size + m.viewer_move, ticks_per_us);
+    var v: Verdict = .{ .os_us = os_us, .viewer_us = viewer_us, .slow = os_us + viewer_us > slow_us, .busy_at_begin = false, .overlapped = false, .kind = null };
     const b = m.before orelse return v;
     const a = m.after orelse b;
     v.busy_at_begin = b.busy();
@@ -91,10 +99,19 @@ pub const Stats = struct {
     fast_overlapped: u32 = 0,
     slow_others_busy: u32 = 0,
     max_os_us: i64 = 0,
+    /// A viewer's own handlers over every move (T2866), slow or not, in us:
+    /// what deferring one of them could save a glide at most.
+    viewer_size_us: i64 = 0,
+    viewer_move_us: i64 = 0,
+
+    pub fn addViewer(self: *Stats, m: Move) void {
+        self.viewer_size_us +|= @divTrunc(m.viewer_size, ticks_per_us);
+        self.viewer_move_us +|= @divTrunc(m.viewer_move, ticks_per_us);
+    }
 
     pub fn add(self: *Stats, v: Verdict, others_busy: u32) void {
         self.moves +|= 1;
-        self.max_os_us = @max(self.max_os_us, v.os_us);
+        self.max_os_us = @max(self.max_os_us, v.os_us + v.viewer_us);
         if (v.slow) {
             self.slow +|= 1;
             if (v.overlapped) self.slow_overlapped +|= 1;
@@ -121,14 +138,16 @@ pub fn othersBusy(self_key: usize) u32 {
 pub fn record(hwnd: usize, m: Move) void {
     const v = judge(m);
     stats.add(v, m.others_busy);
+    stats.addViewer(m);
     if (!v.slow) return;
     const b = m.before orelse present_stamps.Snapshot{};
     const since_present_us = if (b.present.end > 0) @divTrunc(m.begin - b.present.end, ticks_per_us) else -1;
     log.info(
-        "pane move slow hwnd={x} os_us={d} own_us={d} stamped={} busy_at_begin={} overlapped={} kind={s} since_present_us={d} others_busy={d} presents={d} | moves={d} slow={d} slow_overlapped={d} fast_overlapped={d} slow_others_busy={d} max_os_us={d}",
+        "pane move slow hwnd={x} os_us={d} own_us={d} viewer_size_us={d} viewer_move_us={d} stamped={} busy_at_begin={} overlapped={} kind={s} since_present_us={d} others_busy={d} presents={d} | moves={d} slow={d} slow_overlapped={d} fast_overlapped={d} slow_others_busy={d} max_os_us={d}",
         .{
             hwnd,                                   v.os_us,
-            @divTrunc(m.own, ticks_per_us),         m.before != null,
+            @divTrunc(m.own, ticks_per_us),         @divTrunc(m.viewer_size, ticks_per_us),
+            @divTrunc(m.viewer_move, ticks_per_us), m.before != null,
             v.busy_at_begin,                        v.overlapped,
             if (v.kind) |k| @tagName(k) else "none", since_present_us,
             m.others_busy,                          b.presents,
@@ -142,8 +161,9 @@ pub fn record(hwnd: usize, m: Move) void {
 /// The contrast so far, once per glide end.
 pub fn summary() void {
     if (stats.moves == 0) return;
-    log.info("pane move trace moves={d} slow={d} slow_overlapped={d} fast_overlapped={d} slow_others_busy={d} max_os_us={d}", .{
-        stats.moves, stats.slow, stats.slow_overlapped, stats.fast_overlapped, stats.slow_others_busy, stats.max_os_us,
+    log.info("pane move trace moves={d} slow={d} slow_overlapped={d} fast_overlapped={d} slow_others_busy={d} max_os_us={d} viewer_size_us={d} viewer_move_us={d}", .{
+        stats.moves,       stats.slow,       stats.slow_overlapped, stats.fast_overlapped, stats.slow_others_busy, stats.max_os_us,
+        stats.viewer_size_us, stats.viewer_move_us,
     });
     stats = .{};
 }
@@ -159,6 +179,23 @@ test "the pane's own WM_SIZE is taken out of the move's time" {
     try testing.expectEqual(@as(i64, 7000), v.os_us);
     try testing.expect(!v.slow);
     try testing.expect(!v.overlapped);
+}
+
+test "a viewer's own handlers count toward slow and are named apart from the OS time" {
+    // 3 ms of OS time and a 7 ms parent-position refresh: over a 120 Hz period.
+    const v = judge(.{ .begin = 0, .end = 100_000, .own = 70_000, .viewer_move = 70_000, .before = null, .after = null, .others_busy = 0 });
+    try testing.expectEqual(@as(i64, 3000), v.os_us);
+    try testing.expectEqual(@as(i64, 7000), v.viewer_us);
+    try testing.expect(v.slow);
+    var st: Stats = .{};
+    st.add(v, 0);
+    try testing.expectEqual(@as(i64, 10_000), st.max_os_us);
+    st.addViewer(.{ .begin = 0, .end = 100_000, .own = 70_000, .viewer_move = 70_000, .before = null, .after = null, .others_busy = 0 });
+    try testing.expectEqual(@as(i64, 7000), st.viewer_move_us);
+    try testing.expectEqual(@as(i64, 0), st.viewer_size_us);
+    // A terminal's held WM_SIZE stays out of it.
+    const t = judge(.{ .begin = 0, .end = 100_000, .own = 70_000, .before = null, .after = null, .others_busy = 0 });
+    try testing.expect(!t.slow);
 }
 
 test "a present in flight at the move's start is an overlap" {
@@ -188,9 +225,9 @@ test "a resize in flight is named as a resize" {
 
 test "stats keep the slow and fast overlap counts apart" {
     var st: Stats = .{};
-    st.add(.{ .os_us = 20_000, .slow = true, .busy_at_begin = true, .overlapped = true, .kind = .present }, 2);
-    st.add(.{ .os_us = 100, .slow = false, .busy_at_begin = true, .overlapped = true, .kind = .present }, 0);
-    st.add(.{ .os_us = 100, .slow = false, .busy_at_begin = false, .overlapped = false, .kind = null }, 0);
+    st.add(.{ .os_us = 20_000, .viewer_us = 0, .slow = true, .busy_at_begin = true, .overlapped = true, .kind = .present }, 2);
+    st.add(.{ .os_us = 100, .viewer_us = 0, .slow = false, .busy_at_begin = true, .overlapped = true, .kind = .present }, 0);
+    st.add(.{ .os_us = 100, .viewer_us = 0, .slow = false, .busy_at_begin = false, .overlapped = false, .kind = null }, 0);
     try testing.expectEqual(@as(u32, 3), st.moves);
     try testing.expectEqual(@as(u32, 1), st.slow);
     try testing.expectEqual(@as(u32, 1), st.slow_overlapped);

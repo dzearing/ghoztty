@@ -5623,6 +5623,18 @@ pub fn settleMove(self: *ViewerPane) void {
     if (self.controller) |c| c.notifyParentWindowPositionChanged();
 }
 
+/// What the viewers' own `WM_SIZE` and `WM_MOVE` handlers cost (T2866), in QPC
+/// ticks, while `Window.batchCostOn()`: the per-pane move trace takes it out
+/// of the move it ran inside, so a slow viewer move says whether it was the
+/// OS or the bounds sync / parent-position refresh. UI thread only.
+pub var handler_cost: struct { size_qpc: i64 = 0, move_qpc: i64 = 0 } = .{};
+
+fn qpcSince(t0: i64) i64 {
+    var t1: i64 = 0;
+    _ = w32.QueryPerformanceCounter(&t1);
+    return t1 - t0;
+}
+
 // -------------------------------------------------------------------------
 // The creation chain
 // -------------------------------------------------------------------------
@@ -7312,7 +7324,13 @@ pub fn wndProc(
             // work has woken their renderers (T2838). Routed through
             // `pane_view`: a bare test pane has no window and syncs here.
             if (self.pane_view) |pv| if (pv.parentWindow().holdViewerSync(self)) return 0;
+            // An unheld sync runs inside the move; the pane-move trace names
+            // it apart from the OS time (T2866).
+            var t0: i64 = 0;
+            const timed = Window.batchCostOn();
+            if (timed) _ = w32.QueryPerformanceCounter(&t0);
             self.syncBounds();
+            if (timed) handler_cost.size_qpc +%= qpcSince(t0);
             Window.traceRenderStage("viewer-synced", self.hwnd);
             return 0;
         },
@@ -7324,12 +7342,19 @@ pub fn wndProc(
             // Not on every step of a window-edge drag (T2577): ~0.4 ms of the
             // layout batch each time, for hit-testing and IME placement that
             // nothing uses while the size loop holds the mouse.
+            // A fold glide pays it on every frame, deliberately (T2866): the
+            // release trace measured it at ~2.6 ms over a whole glide's ~7k
+            // pane moves, so deferring it would buy nothing a frame can show.
             if (self.in_size_loop and !resize_paint.liveViewerMoves()) {
                 self.move_owed = true;
                 return 0;
             }
             Window.traceRenderStage("viewer-move", self.hwnd);
+            var t0: i64 = 0;
+            const timed = Window.batchCostOn();
+            if (timed) _ = w32.QueryPerformanceCounter(&t0);
             if (self.controller) |c| c.notifyParentWindowPositionChanged();
+            if (timed) handler_cost.move_qpc +%= qpcSince(t0);
             Window.traceRenderStage("viewer-moved", self.hwnd);
             return 0;
         },
