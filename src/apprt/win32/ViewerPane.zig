@@ -87,6 +87,7 @@ const git_run = @import("git_run.zig");
 const ViewerWorktreeProbe = @import("ViewerWorktreeProbe.zig");
 const ViewerDiffProbe = @import("ViewerDiffProbe.zig");
 const viewer_diff = @import("viewer_diff.zig");
+const hidden_poll = @import("hidden_poll.zig");
 const viewer_image = @import("viewer_image.zig");
 const build_config = @import("../../build_config.zig");
 const ViewerTOCPanel = @import("ViewerTOCPanel.zig");
@@ -628,6 +629,12 @@ worktree_logged: ?u64 = null,
 /// worker that asks off the UI thread (T463). Null on the same terms as
 /// `worktree` — a pane with no allocator and no host window runs no git.
 diff_probe: ?ViewerDiffProbe = null,
+
+/// The working-tree poll's pause while the pane is hidden (T2913, Mac
+/// 68a8344f0): a tick that lands on a minimized or covered window, or a tab
+/// nobody is looking at, runs no git and is remembered; `setVisible(true)`
+/// pays it with one listing straight away.
+diff_poll_gate: hidden_poll.Gate = .{},
 
 /// Which file of the current diff the page is showing, as an index into the
 /// probe's list. Null before the first patch has been asked for.
@@ -1823,6 +1830,16 @@ pub fn setVisible(self: *ViewerPane, visible: bool) void {
     if (self.hwnd) |h| {
         _ = w32.ShowWindow(h, if (visible) w32.SW_SHOW else w32.SW_HIDE);
     }
+    // The controller's `IsVisible` is what pauses the PAGE (T2913): a hidden
+    // WebView2 produces no frames, so an animated image holds its frame and
+    // goes on from there when shown - Mac's `ViewerImageView.advanceFrame`.
+    log.debug("viewer pane {s}: page {s}", .{ self.paneId(), if (visible) "shown" else "paused (hidden)" });
+    // A `git-status:` poll skipped while hidden is paid now, once, so a change
+    // made meanwhile is on screen as the pane is - not one interval later.
+    if (visible and self.diff_poll_gate.reveal()) {
+        log.debug("viewer pane {s}: diff poll catch-up on show", .{self.paneId()});
+        self.refreshDiff();
+    }
 }
 
 /// Give the pane keyboard focus. Called from the host window's `WM_SETFOCUS`,
@@ -2117,6 +2134,8 @@ fn diffSpec(self: *const ViewerPane) ?viewer_diff.Spec {
 fn syncDiffPoll(self: *ViewerPane) void {
     const hwnd = self.hwnd orelse return;
     _ = w32.KillTimer(hwnd, diff_timer_id);
+    // A tick skipped at the old location is not owed by the new one.
+    self.diff_poll_gate.reset();
     const spec = self.diffSpec() orelse return;
     if (!spec.tracksWorkingTree()) return;
     _ = w32.SetTimer(hwnd, diff_timer_id, diff_poll_ms, null);
@@ -7461,6 +7480,11 @@ pub fn wndProc(
                 // a busy one is DROPPED (T1654) — so a slow `git diff` can
                 // neither stack spawns behind itself nor chain them
                 // back-to-back for the life of the pane.
+                //
+                // Hidden (T2913): the window is minimized or covered, or the
+                // pane's tab is not showing. Nobody can read the answer, so
+                // the tick runs no git and `setVisible(true)` catches up once.
+                if (!self.diff_poll_gate.tick(self.visible)) return 0;
                 self.pollDiff();
                 return 0;
             }

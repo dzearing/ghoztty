@@ -4152,6 +4152,17 @@ $GuardTable = @(
             'test\win32\hidden-title.ps1'
         )
     },
+    # T2913: a git-status viewer in a minimized or covered window runs no git
+    # and catches up once on show; a hidden page draws no frames (GIFs hold).
+    [pscustomobject]@{
+        Name   = 'hidden-viewer'
+        Script = 'test\win32\hidden-viewer.ps1'
+        Stamp  = 'test\win32\hidden-viewer.stamp.json'
+        Covers = @(
+            'src\apprt\win32\hidden_poll.zig',
+            'test\win32\hidden-viewer.ps1'
+        )
+    },
     # T1832: a window's own gradient - `+new-window --color=random`, the New
     # Window action, and the seed surviving a restart. The unit tests own the
     # palette maths; this row owns the claim that the right windows get one, the

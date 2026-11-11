@@ -1,0 +1,14 @@
+{
+    "guard":  "hidden-viewer",
+    "script":  "test/win32/hidden-viewer.ps1",
+    "generated":  "2026-11-11T06:38:59-08:00",
+    "commit":  "65d8555a6",
+    "uncommitted":  [
+                        "src/apprt/win32/hidden_poll.zig",
+                        "test/win32/hidden-viewer.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/hidden_poll.zig":  "a991df6af8dcb5c9c79f64fb50a37f02989d03124b172d55b14831cce4c2e03c",
+                  "test/win32/hidden-viewer.ps1":  "5dbbb7a7b0f89b916bfac49250d8878eae3ee8c14cf368419cfcbccb25153ff6"
+              }
+}
