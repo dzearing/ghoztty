@@ -276,6 +276,14 @@ Concretely, in order, with no stops in between:
      something else already fixed in passing. Verify before closing; the report
      is a prompt, not a verdict. Anything closed this way names the commit that
      actually fixed it and lands the validation the card was owed.
+   - **Duplicate sweep** (T1454): run
+     `scripts\parity-tasks.ps1 similar -All -Top 10` — every open task scored
+     against every other, duplicate clusters biggest first. `new` only warns
+     at filing time; this is how the duplicates already in the queue get
+     worked down. Where two members ARE one defect, fold the newer card's new
+     facts into the older with `note` and close the newer as
+     `skipped(duplicate of <older>)` — moving any guard-ack it owns first.
+     Split children look alike on purpose; leave them.
    - **Guard coverage** (T996): run
      `scripts\guard-due.ps1 uncovered` and put its `GUARD COVERAGE <n> of
      <total>` number in `## Task triage`, with the delta since yesterday. It

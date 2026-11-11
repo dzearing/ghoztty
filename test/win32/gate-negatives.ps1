@@ -324,6 +324,11 @@ $Registry = @(
     # actually held to (S2: the warning fires AND the file is created).
     [pscustomobject]@{ Label = 'SIMILAR'; Kind = 'status' }
     [pscustomobject]@{ Label = 'NO SIMILAR'; Kind = 'status' }
+    # T1454's backlog-wide version (`similar -All`): a triage report, never a
+    # refusal - it closes nothing and blocks nothing. Held to in S11-S16b of
+    # test\win32\parity-tasks-seat.ps1.
+    [pscustomobject]@{ Label = 'SIMILAR CLUSTERS'; Kind = 'status' }
+    [pscustomobject]@{ Label = 'NO SIMILAR CLUSTERS'; Kind = 'status' }
     [pscustomobject]@{ Label = 'SPLIT DEP'; Kind = 'status' }
     [pscustomobject]@{ Label = 'REDIRECT DEP'; Kind = 'status' }
     [pscustomobject]@{ Label = 'STRANDED WORK ACKNOWLEDGED'; Kind = 'status' }

@@ -174,6 +174,7 @@ scripts\parity-tasks.ps1 set-status T144 -Status done -Commit abc1234
 scripts\parity-tasks.ps1 new -Title "Short title" -Phase K -Deps T73,T94
 scripts\parity-tasks.ps1 stale-scan -Top 40   # which todos may already be fixed
 scripts\parity-tasks.ps1 similar -Title "..." # is this defect already filed?
+scripts\parity-tasks.ps1 similar -All -Top 10 # duplicate clusters across the open backlog
 scripts\parity-tasks.ps1 validate             # ids, titles, statuses, dangling deps
 ```
 
@@ -201,6 +202,18 @@ to file would lose work, which is strictly worse than a duplicate.
 `-NoSimilarCheck` silences it for a deliberate near-twin (a split's children, a
 mac/win pair); `-MinScore` moves the line, and exists so the acceptance script
 can probe both sides of it (section S of `test\win32\parity-tasks-seat.ps1`).
+
+**And the duplicates already in the queue** (T1454). The check above only holds
+the line at filing time; T1453 found one defect filed eight times before it
+existed. `similar -All` scores every OPEN task against every other with the same
+cosine and groups the pairs that clear the line into clusters, biggest first
+(`-Top` caps how many print, `-Seat` narrows the open set, `-MinScore` moves the
+line). Closed tasks are never clustered, and a mac/win pair never is either -
+that is the symmetry rule, not a duplicate. Its first run closed five
+duplicates (four filings of one overlay-zorder red, two of one
+activity-monitor-remote flake, two of one cleanup-guard stamp). Daily triage
+runs it (go.md step 0.6). A cluster is a prompt, not a verdict: a split's
+children look alike on purpose.
 
 **A todo is a claim about the code, made on the day it was filed, and nothing
 re-checks it** (T404). T98 was handed out fourteen days after T41 had already

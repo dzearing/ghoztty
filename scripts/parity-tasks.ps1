@@ -85,6 +85,7 @@
   scripts\parity-tasks.ps1 set-tags T503 -Tags polish -Add
   scripts\parity-tasks.ps1 guard-ack T1164 -Guard suite-run   # T1165: one red guard, owned
   scripts\parity-tasks.ps1 similar -Title "the viewer pane flakes on a cold cache"
+  scripts\parity-tasks.ps1 similar -All -Top 10   # T1454: duplicate clusters across the open backlog
 #>
 [CmdletBinding()]
 param(
@@ -220,6 +221,11 @@ param(
     # want the noise - it never blocks either way.
     [Nullable[double]]$MinScore,
     [switch]$NoSimilarCheck,
+
+    # `similar -All` (T1454) scores every OPEN task against every other and
+    # reports the duplicate clusters, biggest first - the backlog-wide version
+    # of the filing-time check. `-Top` caps how many clusters print.
+    [switch]$All,
 
     # `stale-scan` prints the N most-suspect todos (T404). The whole queue is
     # 400+ files, and a sweep that dumps all of them is a re-derivation rather
@@ -1071,6 +1077,177 @@ function Write-SimilarWarning {
     Write-Host "  If one of these is the same defect, close the duplicate rather than working it twice."
 }
 
+# T1454. Get-SimilarTasks answers "does anything look like THIS title?", which
+# only holds the line at filing time - it says nothing about the duplicates
+# already sitting in the queue, and the first probe found one defect filed eight
+# times (T1453). This scores every OPEN task against every other with the same
+# idf-weighted cosine and groups the pairs at or above the threshold into
+# clusters (single linkage: two tasks are in one cluster when a chain of
+# above-threshold pairs joins them), biggest first, so daily triage can work the
+# backlog DOWN instead of only refusing to let it grow.
+#
+# Same scoring as Get-SimilarTasks on purpose: idf over EVERY title in the
+# tracker (closed ones are what make a word common), cosine over binary vectors.
+# A cluster here and a SIMILAR line from `new` must be the same judgement, or
+# triage would argue with the filing-time check.
+#
+# Cost: pairs are only scored when they share a token (an inverted index over
+# the open titles), so the work is the sum over tokens of postings^2 rather
+# than open^2 - a few seconds over ~450 open titles at PowerShell speed.
+function Get-SimilarClusters {
+    param(
+        [object[]]$Tasks,
+        [double]$MinScore = 0.42,
+        # Restrict which open tasks are clustered (`similar -All -Seat win`).
+        # The idf corpus stays the whole tracker either way.
+        [string]$WantSeat = 'all'
+    )
+
+    $df = @{}
+    $open = New-Object System.Collections.Generic.List[object]
+    foreach ($t in $Tasks) {
+        $toks = @(Get-TitleTokens $t.Title)
+        if ($toks.Count -eq 0) { continue }
+        foreach ($tok in $toks) { $df[$tok] = 1 + [int]$df[$tok] }
+        if (Test-Done $t.Status) { continue }
+        if (-not (Test-SeatMatch $t.Seat $WantSeat)) { continue }
+        $open.Add([pscustomobject]@{ Task = $t; Tokens = $toks })
+    }
+    $n = 0
+    foreach ($t in $Tasks) { if (@(Get-TitleTokens $t.Title).Count -gt 0) { $n++ } }
+
+    $result = [pscustomobject]@{ OpenCount = $open.Count; Clusters = @() }
+    if ($open.Count -lt 2) { return $result }
+
+    # Per-document weights and norms, and the inverted index, built once.
+    $idf = @{}
+    foreach ($k in $df.Keys) { $idf[$k] = [math]::Log(($n + 1) / (1.0 + [int]$df[$k])) }
+    $norm = New-Object double[] $open.Count
+    $post = @{}
+    for ($i = 0; $i -lt $open.Count; $i++) {
+        $s = 0.0
+        foreach ($tok in $open[$i].Tokens) {
+            $w = [double]$idf[$tok]; $s += $w * $w
+            if (-not $post.ContainsKey($tok)) { $post[$tok] = New-Object System.Collections.Generic.List[int] }
+            $post[$tok].Add($i)
+        }
+        $norm[$i] = [math]::Sqrt($s)
+    }
+
+    # Accumulate dot products only for pairs that share a token. Key i*N+j
+    # (i<j) as a long, base = the open count, so the table is not a pile of formatted strings.
+    $dots = New-Object 'System.Collections.Generic.Dictionary[long,double]'
+    $pairBase = [long]$open.Count
+    foreach ($tok in $post.Keys) {
+        $list = $post[$tok]
+        if ($list.Count -lt 2) { continue }
+        $w = [double]$idf[$tok]; $w2 = $w * $w
+        if ($w2 -le 0) { continue }
+        for ($a = 0; $a -lt $list.Count; $a++) {
+            for ($b = $a + 1; $b -lt $list.Count; $b++) {
+                $key = [long]$list[$a] * $pairBase + [long]$list[$b]
+                $cur = 0.0
+                [void]$dots.TryGetValue($key, [ref]$cur)
+                $dots[$key] = $cur + $w2
+            }
+        }
+    }
+
+    # Union-find over the pairs that clear the threshold.
+    $parent = New-Object int[] $open.Count
+    for ($i = 0; $i -lt $open.Count; $i++) { $parent[$i] = $i }
+    $find = {
+        param($x)
+        while ($parent[$x] -ne $x) { $parent[$x] = $parent[$parent[$x]]; $x = $parent[$x] }
+        return $x
+    }
+    $edges = New-Object System.Collections.Generic.List[object]
+    foreach ($kv in $dots.GetEnumerator()) {
+        $i = [int]([math]::Floor($kv.Key / $pairBase)); $j = [int]($kv.Key % $pairBase)
+        if ($norm[$i] -le 0 -or $norm[$j] -le 0) { continue }
+        # A mac task and a win task with the same title are the platform-
+        # symmetry rule working (one card per seat), never a duplicate - on the
+        # first real run they were three of the top eight clusters.
+        $si = "$($open[$i].Task.Seat)"; $sj = "$($open[$j].Task.Seat)"
+        if (-not $si) { $si = 'win' }; if (-not $sj) { $sj = 'win' }
+        if ($si -ne $sj -and $si -ne 'any' -and $sj -ne 'any') { continue }
+        $score = $kv.Value / ($norm[$i] * $norm[$j])
+        if ($score -lt $MinScore) { continue }
+        $edges.Add([pscustomobject]@{ I = $i; J = $j; Score = $score })
+        $ri = & $find $i; $rj = & $find $j
+        if ($ri -ne $rj) { $parent[$ri] = $rj }
+    }
+    if ($edges.Count -eq 0) { return $result }
+
+    $idNum = { param($t) [int]([regex]::Match($t.Id, '\d+').Value) }
+    $groups = @{}
+    foreach ($e in $edges) {
+        $r = & $find $e.I
+        if (-not $groups.ContainsKey($r)) {
+            $groups[$r] = [pscustomobject]@{ Members = @{}; Edges = New-Object System.Collections.Generic.List[object] }
+        }
+        $groups[$r].Members[$e.I] = $true
+        $groups[$r].Members[$e.J] = $true
+        $shared = @($open[$e.I].Tokens | Where-Object { $open[$e.J].Tokens -contains $_ } |
+            Sort-Object -Property @{ Expression = { - [double]$idf[$_] } }, @{ Expression = { $_ } } |
+            Select-Object -First 4)
+        $groups[$r].Edges.Add([pscustomobject]@{
+                A = $open[$e.I].Task; B = $open[$e.J].Task; Score = $e.Score; Shared = $shared
+            })
+    }
+
+    $clusters = foreach ($g in $groups.Values) {
+        $members = @($g.Members.Keys | ForEach-Object { $open[$_].Task } |
+            Sort-Object -Property @{ Expression = { & $idNum $_ } }, @{ Expression = { $_.Id } })
+        # Strongest evidence first; the oldest-id tiebreak keeps the report
+        # reproducible run to run.
+        $ev = @($g.Edges | Sort-Object -Property @{ Expression = { - $_.Score } },
+            @{ Expression = { & $idNum $_.A } }, @{ Expression = { & $idNum $_.B } })
+        [pscustomobject]@{ Members = $members; Edges = $ev; Top = $ev[0].Score }
+    }
+    # Biggest cluster first (the T1453 shape - one defect filed eight times - is
+    # the most backlog to recover), then the strongest match, then oldest id.
+    $result.Clusters = @($clusters | Sort-Object -Property @{ Expression = { - $_.Members.Count } },
+        @{ Expression = { - $_.Top } }, @{ Expression = { & $idNum $_.Members[0] } })
+    return $result
+}
+
+function Write-SimilarClusters {
+    param([object]$Report, [double]$MinScore, [int]$Limit)
+    $cs = @($Report.Clusters)
+    if ($cs.Count -eq 0) {
+        Write-Host ("NO SIMILAR CLUSTERS: none of the {0} open task(s) look like another at >= {1:N2}." -f $Report.OpenCount, $MinScore)
+        return
+    }
+    $inClusters = 0
+    foreach ($c in $cs) { $inClusters += $c.Members.Count }
+    Write-Host ("SIMILAR CLUSTERS: {0} cluster(s) covering {1} of {2} open task(s) at >= {3:N2}, biggest first:" -f `
+            $cs.Count, $inClusters, $Report.OpenCount, $MinScore)
+    $k = 0
+    foreach ($c in ($cs | Select-Object -First $Limit)) {
+        $k++
+        Write-Host ""
+        Write-Host ("cluster {0}: {1} task(s), best match {2:N2}" -f $k, $c.Members.Count, $c.Top)
+        foreach ($t in $c.Members) {
+            $status = if ($t.Status) { $t.Status } else { 'todo' }
+            if ($status.Length -gt 32) { $status = $status.Substring(0, 29) + '...' }
+            $seatTag = if ($t.Seat -and $t.Seat -ne 'win') { " seat=$($t.Seat)" } else { '' }
+            Write-Host ("  {0}  {1}  [{2}{3}]" -f $t.Id, $t.Title, $status, $seatTag)
+        }
+        foreach ($e in ($c.Edges | Select-Object -First 5)) {
+            Write-Host ("      {0} ~ {1}  {2:N2} on: {3}" -f $e.A.Id, $e.B.Id, $e.Score, ($e.Shared -join ', '))
+        }
+        if ($c.Edges.Count -gt 5) { Write-Host ("      ... {0} more pair(s)" -f ($c.Edges.Count - 5)) }
+    }
+    if ($cs.Count -gt $Limit) {
+        Write-Host ""
+        Write-Host ("... {0} more cluster(s); -Top {1} to see them all." -f ($cs.Count - $Limit), $cs.Count)
+    }
+    Write-Host ""
+    Write-Host "  A cluster is a prompt, not a verdict: a split's children look alike on purpose (mac/win pairs are never paired)."
+    Write-Host "  Where two members ARE one defect, close the newer as skipped(duplicate of <older>)."
+}
+
 # --------------------------------------------------------------- commands ---
 
 switch ($Command) {
@@ -1456,8 +1633,8 @@ switch ($Command) {
         $new = [regex]::Replace($text, '(?m)^status:\s*.*$', "status: $json", 1)
         if ($Commit) {
             $existing = if ($before) { $before.Commits } else { @() }
-            $all = @($existing) + @($Commit)
-            $listJson = '[' + (($all | ForEach-Object { ConvertTo-Json $_ -Compress }) -join ', ') + ']'
+            $allCommits = @($existing) + @($Commit)
+            $listJson = '[' + (($allCommits | ForEach-Object { ConvertTo-Json $_ -Compress }) -join ', ') + ']'
             $new = [regex]::Replace($new, '(?m)^commits:\s*.*$', "commits: $listJson", 1)
         }
         Write-TaskFileText -Path $path -Text $new
@@ -1885,8 +2062,17 @@ switch ($Command) {
     # before it writes a title - and so the heuristic is testable without
     # creating a file every time.
     'similar' {
+        # T1454: `-All` asks the backlog-wide question instead - every open task
+        # against every other, grouped into clusters.
+        if ($All) {
+            $ms = if ($null -ne $MinScore) { [double]$MinScore } else { 0.42 }
+            $wantSeat = if ($Seat) { $Seat } else { 'all' }
+            $report = Get-SimilarClusters -Tasks @(Get-AllTasks) -MinScore $ms -WantSeat $wantSeat
+            Write-SimilarClusters -Report $report -MinScore $ms -Limit $Top
+            break
+        }
         $wanted = if ($Title) { $Title } elseif ($Summary) { $Summary } else { '' }
-        if (-not $wanted) { throw 'similar requires -Title.' }
+        if (-not $wanted) { throw 'similar requires -Title (or -All for the whole backlog).' }
         $simArgs = @{ Title = $wanted; Tasks = @(Get-AllTasks) }
         if ($null -ne $MinScore) { $simArgs['MinScore'] = [double]$MinScore }
         # Default to the same short list `new` prints; -Top widens it when a

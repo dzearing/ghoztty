@@ -1188,6 +1188,49 @@ $sample = 'parity-tasks.ps1 new should warn when a similar task already exists'
 $r = Task-Run @('similar', '-Title', $sample) -Dir $realDir
 Assert 'S10 the real tracker finds its own T651' ($r.Out -match '(?m)^\s+T651\s')
 
+# S11-S16 (T1454): the backlog-wide question. `new` only holds the line on
+# fresh intake; the duplicates already in the queue (T1453: one defect filed
+# eight times) need `similar -All`, which clusters every OPEN task against
+# every other. The fixture is the T1453 shape at small scale: a three-way
+# duplicate, a two-way one, unrelated titles that share only common words, a
+# CLOSED twin that must not be clustered, and a mac/win pair that must not be.
+Reset-Fixture
+New-FixtureTask -Id 'T1' -Title "overlay-zorder section B is red: the topmost injection no longer takes on the banner overlay"
+New-FixtureTask -Id 'T2' -Title "The tab strip loses its close button when the window is narrow"
+New-FixtureTask -Id 'T3' -Title "overlay-zorder B red: the topmost injection no longer takes"
+New-FixtureTask -Id 'T4' -Title "The machine chooser has no keyboard focus ring"
+New-FixtureTask -Id 'T5' -Title "activity-monitor-remote fails beside other scripts and passes alone"
+New-FixtureTask -Id 'T6' -Title "overlay-zorder section B: topmost injection never takes on the overlay"
+New-FixtureTask -Id 'T7' -Title "activity-monitor-remote is parallel-sensitive: fails beside other scripts, passes alone"
+New-FixtureTask -Id 'T8' -Title "Session restore reopens remote panes in the wrong order"
+New-FixtureTask -Id 'T9' -Status 'done' -Title "The tab strip loses its close button when the window is narrow (again)"
+New-FixtureTask -Id 'T10' -SeatLine 'seat: "mac"' -Title "Mac: tunnelled viewer origin chip and title suffix"
+New-FixtureTask -Id 'T11' -Title "Tunnelled viewer origin chip and title suffix (Windows)"
+New-FixtureTask -Id 'T12' -Title "The find bar highlights the wrong occurrence after scrolling"
+
+$r = Task-Run @('similar', '-All')
+$c1 = [regex]::Match($r.Out, '(?s)cluster 1:.*?(?=cluster 2:|\z)').Value
+$c2 = [regex]::Match($r.Out, '(?s)cluster 2:.*?(?=cluster 3:|\z)').Value
+Assert 'S11 similar -All reports clusters among the open tasks' (
+    $r.Code -eq 0 -and $r.Out -match 'SIMILAR CLUSTERS: 2 cluster\(s\) covering 5 of 11 open')
+# Biggest first: the three-way overlay-zorder duplicate leads, the pair follows.
+Assert 'S12 the biggest cluster is listed first, with all of its members' (
+    $c1 -match 'cluster 1: 3 task' -and $c1 -match '(?m)^\s+T1\s' -and $c1 -match '(?m)^\s+T3\s' -and $c1 -match '(?m)^\s+T6\s')
+Assert 'S13 the second cluster is the activity-monitor pair, with its evidence' (
+    $c2 -match 'cluster 2: 2 task' -and $c2 -match 'T5 ~ T7\s+0\.\d+ on: .*activity')
+# A closed twin is history, not backlog; a mac/win pair is the symmetry rule.
+Assert 'S14 a closed task is never clustered' ($r.Out -notmatch '(?m)^\s+T9\s' -and $r.Out -notmatch '(?m)^\s+T2\s')
+Assert 'S15 a mac/win pair is never clustered' ($r.Out -notmatch '(?m)^\s+T1[01]\s')
+# Negative side: a threshold above every pair reports nothing - so the green
+# above is a measurement, not a printer that always prints clusters.
+$r = Task-Run @('similar', '-All', '-MinScore', '0.999')
+Assert 'S16 a threshold no pair clears reports NO SIMILAR CLUSTERS' ($r.Out -match 'NO SIMILAR CLUSTERS: none of the 11 open')
+$r = Task-Run @('similar', '-All', '-Top', '1')
+Assert 'S16b -Top caps the clusters printed and says how many were held back' (
+    $r.Out -match 'cluster 1:' -and $r.Out -notmatch 'cluster 2:' -and $r.Out -match '1 more cluster')
+
+Reset-Fixture
+
 # --- T. every field a task file carries is in the README table (T1049) -------
 'T. the README field table lists every frontmatter field in use (T1049)'
 
