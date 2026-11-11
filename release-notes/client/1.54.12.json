@@ -1,0 +1,21 @@
+{
+  "version": "1.54.12",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "Narrator now names the feedback composer's buttons and pictures." },
+        { "text": "Only the window in use animates a busy pane's light and the sidebar's busy sheen; background windows hold them still." },
+        { "text": "A minimized or covered window holds its title until it shows, while +list reads the newest title at once." },
+        { "text": "A git-status viewer in a minimized or covered window runs no git and catches up the moment it shows; a hidden page draws no frames." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "The Windows skill no longer tells an agent that +set-state drives macOS accessibility APIs." },
+        { "text": "A test that stops its own app no longer needs to tell the crash reporter by hand." },
+        { "text": "A frame cap for output bursts was measured and backed out: it halved a scrolling pane's frame rate." },
+        { "text": "The 500-to-4,000-frames-a-second output burst no longer reproduces, so its task is closed without a change." },
+        { "text": "The hero carousel's tile test is now watched, and the terminal tile's missing border no longer reproduces." },
+        { "text": "A window opened the moment the session agent dies now comes up persistent, and the agent is back in under a second." }
+      ] }
+  ]
+}
