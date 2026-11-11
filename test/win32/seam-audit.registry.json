@@ -151,6 +151,11 @@
             "unset": "unreachable",
             "note": "unset is the default lineage - the endpoints the user's live agent owns. A dev build must never join them."
         },
+        "GHOZTTY_RUN_KEY": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "T2917: unset is the REAL HKCU Run key - a test run writing there plants a startup program pointed at a throwaway copy, which Defender quarantines as malware persistence. lib\\Isolation.ps1 sets it for every isolated run."
+        },
         "GHOZTTY_AGENT_NO_HANDOFF": {
             "class": "non-default",
             "unset": "shipped-elsewhere",

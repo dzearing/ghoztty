@@ -71,6 +71,7 @@ const Allocator = std.mem.Allocator;
 const sharing = @import("sharing.zig");
 const atomic_write = @import("atomic_write.zig");
 const internal_os = @import("../../os/main.zig");
+const run_key = @import("../run_key.zig");
 
 /// File name, beside `sessions.json`/`sharing.json` in the agent state dir.
 pub const file_name = "adoption.json";
@@ -635,9 +636,8 @@ const win = if (builtin.os.tag == .windows) struct {
     const TRUSTEE_IS_SID: c_int = 0;
     const TRUSTEE_IS_WELL_KNOWN_GROUP: c_int = 5;
 
-    const run_subkey = std.unicode.utf8ToUtf16LeStringLiteral(
-        "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-    );
+    // T2917: the Run key is resolved per call through run_key.zig, so a test
+    // run's GHOZTTY_RUN_KEY redirect reaches the agent's adopt bookkeeping too.
     const HKEY_CURRENT_USER: ?*anyopaque = @ptrFromInt(0x80000001);
     const KEY_QUERY_VALUE: DWORD = 0x0001;
     const KEY_SET_VALUE: DWORD = 0x0002;
@@ -722,7 +722,9 @@ const win = if (builtin.os.tag == .windows) struct {
     /// Read `HKCU\...\Run\<name>` (REG_SZ/REG_EXPAND_SZ) as UTF-8, or null.
     fn readRunValue(alloc: Allocator, name: []const u8) ?[]u8 {
         var key: ?*anyopaque = null;
-        if (RegOpenKeyExW(HKEY_CURRENT_USER, run_subkey, 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS) return null;
+        const subkey = run_key.subkeyFromEnvW(alloc) catch return null;
+        defer alloc.free(subkey);
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, subkey, 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS) return null;
         defer _ = RegCloseKey(key);
         const name_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, name) catch return null;
         defer alloc.free(name_w);
@@ -738,7 +740,9 @@ const win = if (builtin.os.tag == .windows) struct {
 
     fn writeRunValue(alloc: Allocator, name: []const u8, data: []const u8) bool {
         var key: ?*anyopaque = null;
-        if (RegOpenKeyExW(HKEY_CURRENT_USER, run_subkey, 0, KEY_SET_VALUE, &key) != ERROR_SUCCESS) return false;
+        const subkey = run_key.subkeyFromEnvW(alloc) catch return false;
+        defer alloc.free(subkey);
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, subkey, 0, KEY_SET_VALUE, &key) != ERROR_SUCCESS) return false;
         defer _ = RegCloseKey(key);
         const name_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, name) catch return false;
         defer alloc.free(name_w);

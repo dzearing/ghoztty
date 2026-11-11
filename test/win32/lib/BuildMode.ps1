@@ -141,6 +141,12 @@ function Get-GhozttyBuildMode {
     }
 
     $mode = $null
+    # T2917: a caller running under $ErrorActionPreference = 'Stop'
+    # (registration-sites.ps1) turned the exe's stderr NOTE - a debug build
+    # announcing it ignores the pane's GHOZTTY_IPC_SOCKET - into a terminating
+    # error via 2>&1, so the mode read $null and a debug build was refused as
+    # '<could not read +version>'. Stderr lines are data here, never failures.
+    $ErrorActionPreference = 'Continue'
     try {
         # Piped capture, never `> file` from PowerShell: that writes 0 bytes for
         # a native ghoztty command (T245). Never `Select-Object -First` either -

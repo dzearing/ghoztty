@@ -297,6 +297,13 @@ if ($NoLaunch) {
     # the single-instance lock), which on a two-lane box is the other lane's.
     $env:GHOZTTY_PIPE_SUFFIX = "-regsites$PID"
 
+    # T2917: and any autostart write goes to a private test key, never the real
+    # Run key the snapshot below reads (Defender quarantines a test that plants
+    # real startup programs).
+    . (Join-Path $PSScriptRoot 'lib\HarnessLeak.ps1')
+    [void](Set-GhozttyTestRunKey -Token "regsites$PID")
+    Assert-RunKeyRedirected
+
     # T1240: the two probe launches land ON THE TEST DESKTOP. A window arrives
     # on the desktop of whoever started the process, so section D used to throw
     # two across whatever the user was reading. What is measured here is the

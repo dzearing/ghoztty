@@ -1840,6 +1840,10 @@ $clobbered = @($runValuesBefore.Keys | Where-Object {
 })
 Assert "P2 the user's autostart Run values are untouched (changed: $($clobbered -join ' '))" `
     ($clobbered.Count -eq 0)
+# T2917: Set-GhozttyTestIsolation redirected every autostart write to a private
+# test key, so the real key must have gained nothing at all.
+$addedRealRun = @($runValuesAfter.Keys | Where-Object { -not $runValuesBefore.ContainsKey($_) })
+Assert "P3b nothing was added to the REAL Run key (redirect held; added: $($addedRealRun -join ' '))" ($addedRealRun.Count -eq 0)
 foreach ($name in @($runValuesAfter.Keys | Where-Object { -not $runValuesBefore.ContainsKey($_) })) {
     Say "  this run added Run value '$name' -> removing it"
     Assert "P3 added Run value '$name' names a lineage of ours, not the user's" `

@@ -1,17 +1,18 @@
 {
     "guard":  "agent-autostart",
     "script":  "test/win32/agent-autostart.ps1",
-    "generated":  "2026-11-11T03:44:19-08:00",
-    "commit":  "3a601b0b8",
+    "generated":  "2026-11-11T05:04:22-08:00",
+    "commit":  "551e21176",
     "uncommitted":  [
-                        "src/apprt/win32/LocalAgent.zig"
+                        "src/apprt/win32/LocalAgent.zig",
+                        "test/win32/agent-autostart.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/LocalAgent.zig":  "60314830871571b1f39567b1700ba2cbbd208f3f471feacdc28bc698a1443344",
+                  "src/apprt/win32/LocalAgent.zig":  "e42cdcaa438d37476992cf2abb20ddc6ab6e3602612d0615f6405afeadf096e6",
                   "src/apprt/win32/source_checkout.zig":  "f7a91595696674da68899cbdf06a056d2f9f365b13a3d7d4cab69797ec49b4da",
                   "src/os/source_checkout.zig":  "63291415bd09a9c53edbbe6fe55533f749abfbf35894df04a1448dd8e64f14e7",
                   "src/remote/agent/session_meta.zig":  "e49d5f38c06cea3ca899917c134b8ff70aa39cb8123083450c4852d2e6b39891",
-                  "test/win32/agent-autostart.ps1":  "4afaaba65feefc03ca22f1b6aab72344dd3039077cbc6518204e6e21af2a17a2",
+                  "test/win32/agent-autostart.ps1":  "bff12ecf95f2c4aaa14fc390a967c1dd1f61749fb4c1a98f8f4490b0f4757d16",
                   "test/win32/lib/RebootShape.ps1":  "6f38d632f286dc5514f3e7973f82bcb7481953e17a20aa8215f631b8521a5c45"
               }
 }

@@ -1,13 +1,14 @@
 {
     "guard":  "agent-adopt",
     "script":  "test/win32/agent-adopt.ps1",
-    "generated":  "2026-10-17T14:23:34-07:00",
-    "commit":  "919e78d25",
+    "generated":  "2026-11-11T05:14:23-08:00",
+    "commit":  "551e21176",
     "uncommitted":  [
+                        "src/remote/agent/adopt.zig",
                         "test/win32/agent-adopt.ps1"
                     ],
     "files":  {
-                  "src/remote/agent/adopt.zig":  "4c168a5c270f708e5e3d1dbde9fa03cb0d96f47ee6f55fb5c499a4b5fc80d984",
-                  "test/win32/agent-adopt.ps1":  "b3580813b668d36f3ffd7c5f06d750c7d0e97cb9533d2287b357e93c7faf99e5"
+                  "src/remote/agent/adopt.zig":  "9e661265a9a327b210ba011e9b1011d24f1a64eb8c959def0f7b20229549fb20",
+                  "test/win32/agent-adopt.ps1":  "ad4c265f486a204233a6a3ae02d75b63429b1e22f5d61a654189ee77185ce643"
               }
 }

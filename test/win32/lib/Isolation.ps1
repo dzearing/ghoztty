@@ -90,6 +90,14 @@ function Set-GhozttyTestIsolation {
     $script:GhozttyIsolationTag = $suffix
     if (-not $Quiet) { "  [isolation] GHOZTTY_PIPE_SUFFIX=$suffix" }
 
+    # T2917: every isolated run's autostart writes go to a private registry key,
+    # never the real HKCU Run key - a test planting real startup programs that
+    # launch exes out of %TEMP% got the build output quarantined by Defender's
+    # persistence model. Debug and release lineages alike: a debug run under
+    # GHOZTTY_AGENT_AUTOSTART=force writes one too. See HarnessLeak.ps1.
+    $runKeyPath = Set-GhozttyTestRunKey -Token "$Tag$PID"
+    if (-not $Quiet) { "  [isolation] GHOZTTY_RUN_KEY=$($env:GHOZTTY_RUN_KEY) ($runKeyPath)" }
+
     # T1158. The other two thirds, for a script that legitimately drives a
     # RELEASE-lineage build. The app pipe alone is the state BuildMode.ps1's
     # header calls "the dangerous state, not a partial win": a release build

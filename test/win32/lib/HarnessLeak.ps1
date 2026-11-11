@@ -506,6 +506,94 @@ function Register-AgentRunKeyTeardown {
 }
 
 # ---------------------------------------------------------------------------
+# THE RUN KEY ITSELF IS REDIRECTED FOR A TEST RUN (T2917)
+#
+# Writing a real HKCU Run value that launches an unsigned exe out of %TEMP% is
+# the textbook shape of malware persistence, and Defender's behaviour model
+# agrees: `Behavior:Win32/Persistence.A!ml` quarantined the sandbox agent copies
+# from 2026-11-05 and, on 2026-11-11, the zig-out build itself - after which
+# `zig build` could not install ghoztty-agent.exe at all (AntivirusInterference)
+# and every agent-backed harness was red. `GHOZTTY_RUN_KEY=<token>` moves every
+# Run read and write the app and the agent make to
+# `HKCU\Software\Ghoztty-test\Run-<token>` (src/remote/run_key.zig), a key
+# nothing watches and nothing executes at sign-in. lib\Isolation.ps1 sets it for
+# every isolated run; a script that does not use Isolation calls
+# Set-GhozttyTestRunKey itself. The run then reads and seeds values through
+# Get-GhozttyRunKeyPath, never the literal real path.
+
+$script:HarnessTestRunParent = 'Software\Ghoztty-test'
+
+function ConvertTo-GhozttyRunKeyToken {
+    # Same whitelist and cap as run_key.zig `subkeyFor`, so the path the script
+    # reads is byte-for-byte the key the binaries write.
+    param([Parameter(Mandatory = $true)][string]$Token)
+    $t = $Token.Trim()
+    if ($t.Length -gt 40) { $t = $t.Substring($t.Length - 40) }
+    return ($t -replace '[^A-Za-z0-9._-]', '_')
+}
+
+function Get-GhozttyRunKeyPath {
+    <#
+    .SYNOPSIS
+    The HKCU: provider path of the Run key THIS process's binaries will use: the
+    redirected test key when GHOZTTY_RUN_KEY is set, else the real Run key.
+    -Subkey returns the bare subkey (for [Microsoft.Win32.Registry] / reg.exe).
+    #>
+    param([switch]$Subkey)
+    $sub = $script:HarnessAgentRunSubkey
+    if ($env:GHOZTTY_RUN_KEY -and $env:GHOZTTY_RUN_KEY.Trim().Length -gt 0 -and $env:GHOZTTY_RUN_KEY.Trim().Length -le 40) {
+        $sub = "$script:HarnessTestRunParent\Run-" + (ConvertTo-GhozttyRunKeyToken $env:GHOZTTY_RUN_KEY)
+    }
+    if ($Subkey) { return $sub }
+    return "HKCU:\$sub"
+}
+
+function Assert-RunKeyRedirected {
+    <#
+    .SYNOPSIS
+    THROW unless this process's Run key is the private test key. Called by a
+    script that is about to make a binary write an autostart value, so a broken
+    redirect dies before it plants a real startup program.
+    #>
+    if ((Get-GhozttyRunKeyPath -Subkey) -eq $script:HarnessAgentRunSubkey) {
+        throw ('T2917: GHOZTTY_RUN_KEY is not set - this run would write the REAL HKCU Run key. ' +
+               'Call Set-GhozttyTestIsolation (or Set-GhozttyTestRunKey) first.')
+    }
+}
+
+function Set-GhozttyTestRunKey {
+    <#
+    .SYNOPSIS
+    Point this process's (and its children's) Run key at a private test key,
+    create it, and arm its deletion at exit. Returns the HKCU: path. A caller
+    that already set GHOZTTY_RUN_KEY keeps its value. Idempotent.
+    #>
+    param([Parameter(Mandatory = $true)][string]$Token)
+    if (-not $env:GHOZTTY_RUN_KEY) { $env:GHOZTTY_RUN_KEY = ConvertTo-GhozttyRunKeyToken $Token }
+    $sub = Get-GhozttyRunKeyPath -Subkey
+    if ($sub -eq $script:HarnessAgentRunSubkey) { return "HKCU:\$sub" }
+    $k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($sub)
+    if ($null -ne $k) { $k.Close() }
+
+    if (-not $global:GhozttyHarnessTestRunKeys) {
+        $global:GhozttyHarnessTestRunKeys = New-Object System.Collections.ArrayList
+    }
+    if (@($global:GhozttyHarnessTestRunKeys | Where-Object { $_ -eq $sub }).Count -eq 0) {
+        [void]$global:GhozttyHarnessTestRunKeys.Add($sub)
+        $lit = $sub.Replace("'", "''")
+        $parent = $script:HarnessTestRunParent.Replace("'", "''")
+        $block = [scriptblock]::Create((@(
+            "try { [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree('$lit', `$false) } catch {}"
+            "try { `$p = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('$parent', `$true)"
+            "  if (`$null -ne `$p) { `$empty = (`$p.SubKeyCount -eq 0 -and `$p.ValueCount -eq 0); `$p.Close()"
+            "    if (`$empty) { [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKey('$parent', `$false) } } } catch {}"
+        ) -join "`n"))
+        Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action $block | Out-Null
+    }
+    return "HKCU:\$sub"
+}
+
+# ---------------------------------------------------------------------------
 # THE FILESYSTEM HALF OF THE SAME LEAK (T1229)
 #
 # `-ReleaseSandbox` gives a run a private LOCALAPPDATA - a whole terminal state

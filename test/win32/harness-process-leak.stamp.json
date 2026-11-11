@@ -1,15 +1,16 @@
 {
     "guard":  "harness-leak",
     "script":  "test/win32/harness-process-leak.ps1",
-    "generated":  "2026-11-05T15:47:55-08:00",
-    "commit":  "b44661537",
+    "generated":  "2026-11-11T07:03:50-08:00",
+    "commit":  "551e21176",
     "uncommitted":  [
+                        "test/win32/lib/HarnessLeak.ps1",
                         "test/win32/lib/Isolation.ps1"
                     ],
     "files":  {
                   "test/win32/harness-process-leak.ps1":  "05e37207bcb0ccea6c80bb1e48e79737a5afd59a172deeb624d7942975c39d25",
                   "test/win32/lib/CleanSlate.ps1":  "8802aadbd87990b0553c46fdf167ec938e740f110e517eee4d811218b83d1534",
-                  "test/win32/lib/HarnessLeak.ps1":  "7d78131136a0986cc41b13d24f273112f0d61098c4d9bd030b81b41db55c4b48",
-                  "test/win32/lib/Isolation.ps1":  "aa11f02993aa99c9b7206076243bcedc33cb8fad83972201f59d3459132c9df1"
+                  "test/win32/lib/HarnessLeak.ps1":  "a004e6a27e5e6698181aa7c4696831bc8cd7268768d1ad31deecd8bac31feb3c",
+                  "test/win32/lib/Isolation.ps1":  "c154ff88298f28e8af527e4bcbee3bd3c191b28af329866e1333e9d28126b8da"
               }
 }

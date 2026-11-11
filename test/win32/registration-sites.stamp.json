@@ -1,22 +1,23 @@
 {
     "guard":  "registration-sites",
     "script":  "test/win32/registration-sites.ps1",
-    "generated":  "2026-11-07T17:05:42-08:00",
-    "commit":  "69b552290",
+    "generated":  "2026-11-11T05:21:37-08:00",
+    "commit":  "551e21176",
     "uncommitted":  [
-                        "docs/design/windows-registration-sites.md",
-                        "src/apprt/win32/AgentIntegration.zig"
+                        "src/apprt/win32/LocalAgent.zig",
+                        "src/remote/agent/adopt.zig",
+                        "test/win32/registration-sites.ps1"
                     ],
     "files":  {
                   "docs/design/windows-registration-sites.md":  "3d9679dbe0a31af34f5ae48050c05b2055249f78dcad007f375bf78b144591c3",
                   "src/apprt/win32/AgentIntegration.zig":  "9f992ebc89a7728c0c1689eb36ce662562a7e2e29d9aa8a2d1019852e0d8222e",
                   "src/apprt/win32/install_location.zig":  "724fa228ee06cc60787c0710347a1002cf4d2bfcfe83e584259f36897eaf5717",
-                  "src/apprt/win32/LocalAgent.zig":  "9c116178296552aa605d6a323db75d4cdea89b76aafcbaeb85e22fdf3c38ed37",
+                  "src/apprt/win32/LocalAgent.zig":  "e42cdcaa438d37476992cf2abb20ddc6ab6e3602612d0615f6405afeadf096e6",
                   "src/apprt/win32/PathInstaller.zig":  "77ee61d5ba639eb627756e917077c3de09b6f77c1fd2440fb707b1a7a9e5d2e5",
                   "src/apprt/win32/source_checkout.zig":  "f7a91595696674da68899cbdf06a056d2f9f365b13a3d7d4cab69797ec49b4da",
                   "src/apprt/win32/url_scheme.zig":  "0f98f577b470ea849aac5b5a026b302c302ab727feea131676b8b959922ec964",
                   "src/os/source_checkout.zig":  "63291415bd09a9c53edbbe6fe55533f749abfbf35894df04a1448dd8e64f14e7",
-                  "src/remote/agent/adopt.zig":  "4c168a5c270f708e5e3d1dbde9fa03cb0d96f47ee6f55fb5c499a4b5fc80d984",
-                  "test/win32/registration-sites.ps1":  "3ca28bc31d56cf01408b6f0afe10f66a47e239ed08bb78e924b0e203c5c463ee"
+                  "src/remote/agent/adopt.zig":  "9e661265a9a327b210ba011e9b1011d24f1a64eb8c959def0f7b20229549fb20",
+                  "test/win32/registration-sites.ps1":  "fc3d44c177c819f57a22fa300bd57eb68d88c88288e7d7c893a7bdba622ac660"
               }
 }

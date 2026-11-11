@@ -245,6 +245,12 @@ function Get-BystanderAgentPids {
         Where-Object { $script:mine -notcontains [int]$_.ProcessId } |
         ForEach-Object { [int]$_.ProcessId })
 }
+# T2917: every binary this run launches writes its autostart to a private test
+# key (GHOZTTY_RUN_KEY), so the REAL key below should come out unchanged AND
+# with nothing added - Defender quarantines a test that plants real startup
+# programs pointed at throwaway copies.
+[void](Set-GhozttyTestRunKey -Token "lineage$PID")
+Assert-RunKeyRedirected
 $RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 function Get-GhozttyRunValues {
     $props = (Get-ItemProperty $RunKey -ErrorAction SilentlyContinue)
@@ -491,6 +497,7 @@ Complete-TestBody  # T1039: the run reached the end of its body
     Assert "the user's autostart Run values are untouched (changed: $($clobbered -join ' '))" `
         ($clobbered.Count -eq 0)
     $addedRun = @($runValuesAfter.Keys | Where-Object { -not $runValuesBefore.ContainsKey($_) })
+    Assert "nothing was added to the REAL Run key (T2917 redirect held; added: $($addedRun -join ' '))" ($addedRun.Count -eq 0)
     foreach ($name in $addedRun) {
         Say "  this run added Run value '$name' -> removing it"
         Assert "added Run value '$name' names a lineage of ours, not the user's" `

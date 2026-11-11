@@ -41,6 +41,7 @@ const Allocator = std.mem.Allocator;
 const tcp_dial = @import("../../remote/tcp_dial.zig");
 const connection = @import("../../remote/connection.zig");
 const agent_lineage = @import("../../remote/agent_lineage.zig");
+const run_key = @import("../../remote/run_key.zig");
 const internal_os = @import("../../os/main.zig");
 const build_config = @import("../../build_config.zig");
 const protocol = @import("../../remote/protocol.zig");
@@ -1059,9 +1060,25 @@ fn writeAutostart(self: *LocalAgent, arena: Allocator) !void {
     const cmd = try self.agentCommandLine(arena);
 
     var key: w32.HKEY = undefined;
-    const subkey = std.unicode.utf8ToUtf16LeStringLiteral(
-        "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-    );
+    // T2917: the real Run key unless a test run redirected it (run_key.zig).
+    var subkey_buf: [run_key.max_subkey_len]u8 = undefined;
+    const subkey_utf8 = run_key.subkeyFromEnv(&subkey_buf);
+    const subkey = try std.unicode.utf8ToUtf16LeAllocZ(arena, subkey_utf8);
+    if (!std.mem.eql(u8, subkey_utf8, run_key.real_subkey)) {
+        // A redirected key does not exist until something creates it.
+        var created: w32.HKEY = undefined;
+        if (w32.RegCreateKeyExW(
+            w32.HKEY_CURRENT_USER,
+            subkey,
+            0,
+            null,
+            0,
+            w32.KEY_SET_VALUE,
+            null,
+            &created,
+            null,
+        ) == w32.ERROR_SUCCESS) _ = w32.RegCloseKey(created);
+    }
     if (w32.RegOpenKeyExW(
         w32.HKEY_CURRENT_USER,
         subkey,

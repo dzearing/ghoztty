@@ -3280,6 +3280,7 @@ test {
     _ = @import("startup_error.zig");
     _ = @import("single_instance.zig");
     _ = @import("../agent_lineage.zig");
+    _ = @import("../run_key.zig");
     _ = @import("descendants.zig");
     _ = @import("proc.zig");
     // The shared test-wait helpers. Their own tests ran in NO lane until T436:

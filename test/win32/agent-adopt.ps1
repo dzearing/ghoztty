@@ -39,6 +39,7 @@ param(
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')  # T1036: Assert-GhozttyIsolatedAgent
+. (Join-Path $PSScriptRoot 'lib\HarnessLeak.ps1')  # T2917: Set-GhozttyTestRunKey
 $script:passes = 0
 $script:failures = 0
 $script:blocked = 0
@@ -154,7 +155,13 @@ $adoptFile = Join-Path $stateDir 'adoption.json'
 $uninstLog = Join-Path $tmp 'uninstall.log'
 $fakeUninstall = Join-Path $tmp 'fake-uninstall.cmd'
 $pipe = "\\.\pipe\ghoztty-agent-t549-$PID"
-$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+# T2917: the agent's Run reads/writes go to a private test key for this run,
+# never the real HKCU Run key (Defender quarantines a test that plants real
+# startup programs). Section R above reads the REAL key: it inspects the box's
+# own completed adoption, which no test wrote.
+$runKey = Set-GhozttyTestRunKey -Token "adopt$PID"
+Assert-RunKeyRedirected
+$runSubkey = Get-GhozttyRunKeyPath -Subkey
 $runValueName = "GhozttyAgentT549-$PID"
 $preRunValue = '"C:\app\ghoztty-agent.exe" "--listen-pipe=app-t549"'
 
@@ -259,7 +266,7 @@ try {
         '@echo off',
         "echo ran >> $uninstLog",
         "powershell -NoProfile -Command `"try { Stop-Process -Id $($a2.Id) -Force -ErrorAction Stop; 'kill-ok' } catch { 'kill-denied' }`" >> $uninstLog",
-        "reg delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v $runValueName /f > nul 2>&1",
+        "reg delete ""HKCU\$runSubkey"" /v $runValueName /f > nul 2>&1",
         "rmdir /s /q $fakeDir",
         'exit /b 0'
     ) | Set-Content -Path $fakeUninstall -Encoding ascii

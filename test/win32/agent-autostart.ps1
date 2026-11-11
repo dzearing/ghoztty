@@ -68,7 +68,12 @@ $ErrorActionPreference = 'Continue'
 $script:failures = 0
 $script:passes = 0
 $root = Join-Path $env:TEMP "ghoztty-agent-autostart-$PID"
-$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+# T2917: Set-GhozttyTestIsolation redirected every Run read/write to a private
+# test key (GHOZTTY_RUN_KEY), so this run plants no real startup program for
+# Defender's persistence model to quarantine. $realRunKey is only ever READ.
+$runKey = Get-GhozttyRunKeyPath
+$realRunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+Assert-RunKeyRedirected
 # T2005: every app here inherits this process's agent lineage (a second loop
 # lane's runner sets one), and the app suffixes the value name with it
 # (LocalAgent.autostartValueName) - so the name the run looks for does too.
@@ -151,6 +156,8 @@ $savedLocalAppData = $env:LOCALAPPDATA
 $savedAgentBin = $env:GHOSTTY_LOCAL_AGENT_BIN
 $savedAutostart = $env:GHOZTTY_AGENT_AUTOSTART
 $savedRunValue = Get-RunValue
+$savedRealRunValue = $null
+try { $savedRealRunValue = (Get-ItemProperty -Path $realRunKey -Name $valueName -ErrorAction Stop).$valueName } catch {}
 Remove-ItemProperty -Path $runKey -Name $valueName -ErrorAction SilentlyContinue
 
 Assert "ghoztty exe exists in zig-out" (Test-Path $Exe)
@@ -187,6 +194,9 @@ while ((Get-Date) -lt $deadline) {
 Assert "A2 Run value '$valueName' written" ($null -ne $runCmd)
 "  run command: $runCmd"
 Assert "A3 command starts with the quoted agent exe" ($runCmd -like "`"$AgentExe`"*")
+$realVal = $null
+try { $realVal = (Get-ItemProperty -Path $realRunKey -Name $valueName -ErrorAction Stop).$valueName } catch {}
+Assert "A2b the REAL Run key was not written (T2917 redirect held)" ($null -eq $realVal -or $realVal -eq $savedRealRunValue)
 Assert "A4 command pins the debug-lineage pipe" ($runCmd -like '*--listen-pipe=\\.\pipe\ghoztty-agent-debug-*')
 # The app's agent runs under the ambient lineage (inherited from this process),
 # so its state dir is the lineage's: `local-agent-debug[-<inst>]`.
@@ -302,7 +312,7 @@ Assert "D3 no Run value written from inside the checkout" ($null -eq (Get-RunVal
 # And the release value name is untouched too - the hazard is the user's own
 # `GhozttyAgent` entry, which no debug lineage should ever be able to reach.
 $releaseVal = $null
-try { $releaseVal = (Get-ItemProperty -Path $runKey -Name 'GhozttyAgent' -ErrorAction Stop).'GhozttyAgent' } catch {}
+try { $releaseVal = (Get-ItemProperty -Path $realRunKey -Name 'GhozttyAgent' -ErrorAction Stop).'GhozttyAgent' } catch {}
 Assert "D4 the release value name names no zig-out path" ($null -eq $releaseVal -or $releaseVal -notlike '*zig-out*')
 
 # ============================================================================
