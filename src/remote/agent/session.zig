@@ -510,6 +510,15 @@ pub const OutputRing = struct {
         return self.len;
     }
 
+    /// The retained bytes, oldest→newest, as at most two views into `buf` (the
+    /// second is empty unless the ring has wrapped). Lets a reader stream the
+    /// ring without materializing a copy of up to `capacity` bytes (T1443).
+    pub fn segments(self: *const OutputRing) [2][]const u8 {
+        if (self.len == 0) return .{ &.{}, &.{} };
+        const first = @min(self.len, self.buf.len - self.start);
+        return .{ self.buf[self.start..][0..first], self.buf[0 .. self.len - first] };
+    }
+
     /// Whether the newest retained bytes are exactly `suffix` (T1264). The one
     /// question the RELAUNCH path needs answered before it appends the restart
     /// divider: has somebody already put it there? Reads backwards through the
@@ -908,6 +917,11 @@ pub const Session = struct {
     /// Caller (the Server) frames it if `streaming` is true.
     pub fn recordOutput(self: *Session, bytes: []const u8, now_ms: i64) u64 {
         const at = self.out_offset.advance(bytes.len);
+        // A ring restored from disk (an adopted holder, T906) holds output this
+        // process never parsed. Seed the emulator from it BEFORE these bytes,
+        // or it would be built from the new output alone — and a fresh attach
+        // then sends that history-less snapshot in place of the ring (T1443).
+        if (self.emulator == null) self.seedEmulatorFromRing();
         self.ring.append(at, bytes);
         self.feedEmulator(bytes);
         self.last_activity_ms = now_ms;
@@ -938,17 +952,47 @@ pub const Session = struct {
         emu.feed(bytes);
     }
 
+    /// Build the emulator from what the ring ALREADY holds (T1443), when there is
+    /// no emulator yet. The emulator is only ever fed bytes this process records,
+    /// but the ring is restored from disk (T13): after an agent restart a session
+    /// can hold a full ring and no emulator, so its fresh attach got no
+    /// scrollback-bearing repaint and `gridOnAltScreen` answered `false`
+    /// whatever the program was showing.
+    ///
+    /// Deferred to the first moment the emulator is NEEDED — the first attach's
+    /// snapshot, or the first new output (which must land on top of the restored
+    /// screen, not on a blank one) — rather than done at restore time: an agent
+    /// holding many sessions would otherwise parse every ring at startup, and a
+    /// session nobody re-opens (every tombstone) would pay for nothing. The cost is
+    /// one VT parse bounded by the ring's capacity, paid once per session.
+    ///
+    /// Fed at the geometry the bytes were drawn at when the restore recorded one
+    /// (`replay_cols/rows`), then reflowed to the live size by the caller's
+    /// `ensureSize`. Best-effort like `feedEmulator`: on OOM the emulator stays
+    /// absent and the ring replay stands.
+    fn seedEmulatorFromRing(self: *Session) void {
+        if (self.emulator != null or self.ring.len == 0) return;
+        const rows = if (self.replay_rows != 0) self.replay_rows else self.rows;
+        const cols = if (self.replay_cols != 0) self.replay_cols else self.cols;
+        if (rows == 0 or cols == 0) return;
+        const emu = grid_snapshot.GridEmulator.create(self.alloc, rows, cols) catch return;
+        self.emulator = emu;
+        for (self.ring.segments()) |seg| emu.feed(seg);
+    }
+
     /// Serialize the current screen as a self-contained VT repaint owned by `gpa`
     /// (caller frees), sized to the session's current geometry — plus, when
     /// `opts.scrollback` is set, the emulator's retained history above it (T621).
-    /// Returns null when there is no emulator yet (a session that produced no
-    /// output) — the caller then falls back to ring-only replay. See
-    /// `grid_snapshot.zig`.
+    /// A session whose ring was restored from disk is seeded from it here, on its
+    /// first attach (T1443, `seedEmulatorFromRing`). Returns null when there is
+    /// still no emulator (a session that produced no output, or OOM) — the caller
+    /// then falls back to ring-only replay. See `grid_snapshot.zig`.
     pub fn gridSnapshotAlloc(
         self: *Session,
         gpa: Allocator,
         opts: grid_snapshot.SnapshotOptions,
     ) ?[]u8 {
+        self.seedEmulatorFromRing();
         const emu = self.emulator orelse return null;
         // Reflow to the geometry the ATTACHING client asked for BEFORE
         // serializing: this is the property a stored, app-side snapshot can never
@@ -969,7 +1013,9 @@ pub const Session = struct {
 
     /// True when the emulator shows the child is on the ALTERNATE screen. False
     /// when there is no emulator. The Server uses this to skip the raw ring replay
-    /// for alt-screen sessions (see `gridSnapshotAlloc`).
+    /// for alt-screen sessions (see `gridSnapshotAlloc`), and asks only after
+    /// `gridSnapshotAlloc` has run, so a restored session has been seeded by then
+    /// and answers from its restored screen (T1443).
     pub fn gridOnAltScreen(self: *const Session) bool {
         const emu = self.emulator orelse return false;
         return emu.onAlternateScreen();
@@ -3957,6 +4003,116 @@ test "SessionStore.loadPersisted: an over-full file keeps the NEWEST sessions (T
         const present = store.table.getByIdStr(&ids[i]) != null;
         try testing.expectEqual(i >= over, present);
     }
+}
+
+/// What `preloadRingSnapshot` leaves behind for a holder-backed record (T906):
+/// the ring holds the restored stream, and no emulator has seen any of it.
+fn restoreRingForTest(s: *Session, bytes: []const u8) void {
+    s.ring.preload(0, bytes);
+    s.out_offset.value = s.ring.tailOffset();
+    s.last_snapshot_offset = s.out_offset.value;
+}
+
+fn restoredHistoryForTest(buf: []u8) []const u8 {
+    var w: std.Io.Writer = .fixed(buf);
+    var i: usize = 0;
+    while (i < 60) : (i += 1) w.print("restored-{d:0>2}\r\n", .{i}) catch unreachable;
+    return w.buffered();
+}
+
+test "Session: a ring restored from disk serves a scrollback-bearing snapshot on first attach (T1443)" {
+    const alloc = testing.allocator;
+    var prng = std.Random.DefaultPrng.init(1443);
+    var fake: FakeChild = .{ .alloc = alloc };
+    defer fake.deinit();
+    var table = SessionTable.init(alloc, prng.random());
+    defer table.deinit();
+    const s = try table.create(fake.child(), 7, 24, 80, 1 << 14, 0);
+
+    var hbuf: [2048]u8 = undefined;
+    restoreRingForTest(s, restoredHistoryForTest(&hbuf));
+    try testing.expect(s.emulator == null);
+
+    // The first attach seeds the emulator from the ring, so the repaint carries
+    // the 36 lines that scrolled above a 24-row screen — not just the screen.
+    const snap = s.gridSnapshotAlloc(alloc, .{ .scrollback = true }) orelse
+        return error.TestExpectedSnapshot;
+    defer alloc.free(snap);
+    try testing.expect(std.mem.indexOf(u8, snap, "restored-00") != null);
+    try testing.expect(std.mem.indexOf(u8, snap, "restored-59") != null);
+    try testing.expect(!s.gridOnAltScreen());
+}
+
+test "Session: a restored ring reports the alternate screen it left off on (T1443)" {
+    const alloc = testing.allocator;
+    var prng = std.Random.DefaultPrng.init(14431);
+    var fake: FakeChild = .{ .alloc = alloc };
+    defer fake.deinit();
+    var table = SessionTable.init(alloc, prng.random());
+    defer table.deinit();
+    const s = try table.create(fake.child(), 7, 24, 80, 1 << 14, 0);
+
+    restoreRingForTest(s, "shell$ vim\r\n\x1b[?1049h\x1b[Hfull-screen frame");
+    // Without seeding this answered false, and the attach would replay the raw
+    // ring onto the client's primary screen.
+    const snap = s.gridSnapshotAlloc(alloc, .{}) orelse return error.TestExpectedSnapshot;
+    defer alloc.free(snap);
+    try testing.expect(s.gridOnAltScreen());
+    try testing.expect(std.mem.indexOf(u8, snap, "full-screen frame") != null);
+}
+
+test "Session: output after a restore lands on top of the restored history, not instead of it (T1443)" {
+    const alloc = testing.allocator;
+    var prng = std.Random.DefaultPrng.init(14432);
+    var fake: FakeChild = .{ .alloc = alloc };
+    defer fake.deinit();
+    var table = SessionTable.init(alloc, prng.random());
+    defer table.deinit();
+    const s = try table.create(fake.child(), 7, 24, 80, 1 << 14, 0);
+
+    var hbuf: [2048]u8 = undefined;
+    restoreRingForTest(s, restoredHistoryForTest(&hbuf));
+    // The adopted holder's shell prints before anybody attaches. Before T1443
+    // this built the emulator from these bytes alone, and the fresh attach then
+    // sent that history-less snapshot INSTEAD of the ring.
+    _ = s.recordOutput("after-restart$ ", 1);
+    const snap = s.gridSnapshotAlloc(alloc, .{ .scrollback = true }) orelse
+        return error.TestExpectedSnapshot;
+    defer alloc.free(snap);
+    try testing.expect(std.mem.indexOf(u8, snap, "restored-00") != null);
+    try testing.expect(std.mem.indexOf(u8, snap, "after-restart$") != null);
+    // ...and only once: the seed is the ring BEFORE the new bytes.
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, snap, "after-restart$"));
+}
+
+test "Session: an empty restored ring builds no emulator (T1443)" {
+    const alloc = testing.allocator;
+    var prng = std.Random.DefaultPrng.init(14433);
+    var fake: FakeChild = .{ .alloc = alloc };
+    defer fake.deinit();
+    var table = SessionTable.init(alloc, prng.random());
+    defer table.deinit();
+    const s = try table.create(fake.child(), 7, 24, 80, 1 << 14, 0);
+    s.markExited(0, 1);
+    // A tombstone with nothing restored allocates no terminal on attach.
+    try testing.expect(s.gridSnapshotAlloc(alloc, .{}) == null);
+    try testing.expect(s.emulator == null);
+}
+
+test "OutputRing: segments yields the retained bytes in order across the wrap (T1443)" {
+    const alloc = testing.allocator;
+    var ring = try OutputRing.init(alloc, 8);
+    defer ring.deinit();
+    const empty = ring.segments();
+    try testing.expectEqual(@as(usize, 0), empty[0].len + empty[1].len);
+    ring.append(0, "abcdef");
+    ring.append(6, "ghij"); // wraps: retained "cdefghij"
+    const segs = ring.segments();
+    var joined: [8]u8 = undefined;
+    @memcpy(joined[0..segs[0].len], segs[0]);
+    @memcpy(joined[segs[0].len..][0..segs[1].len], segs[1]);
+    try testing.expectEqualSlices(u8, "cdefghij", joined[0 .. segs[0].len + segs[1].len]);
+    try testing.expect(segs[1].len > 0); // it really did wrap
 }
 
 test "Session: recordOutput advances offset and feeds ring; tombstone retains exit" {

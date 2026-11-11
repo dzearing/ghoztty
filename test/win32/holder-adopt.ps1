@@ -31,6 +31,10 @@
 #      the session is alive again with the SAME shell pid and the SAME holder,
 #      the marker from section A is still in the scrollback, no "session
 #      restarted" divider was drawn, and the pane answers fresh input.
+#      C8-C10 (T1443): then a FRESH viewer - the app relaunched with no saved
+#      layout - re-attaches the adopted session and still shows the marker,
+#      which reached the on-disk ring before the restart (premise A9). That
+#      is the manager's restored history, served as its scrollback repaint.
 #   D. ORPHAN REAP. A holder that no session record names can never be reached
 #      again by anybody, so a starting agent shuts it down. Forced rather than
 #      waited for: stop the app and agent (leaving the holder alive), delete
@@ -352,6 +356,56 @@ try {
     }
     Assert 'A8 the pane is LIVE and the marker is in its scrollback' $sawMarker
 
+    # T1443: scroll the marker OFF the visible screen. While it is on screen the
+    # console host repaints it as live output whenever a viewer resizes the
+    # session, so C10 would pass without the manager's restored history ever
+    # being read - measured: the arm stayed green against an agent with the
+    # T1443 fix disabled. Off screen, restored history is the ONLY source of it.
+    # `cmd /c "..."` reads the same in PowerShell and in cmd.
+    $fillFile = Join-Path $tmp 'fill-keys.txt'
+    [System.IO.File]::WriteAllText($fillFile, 'cmd /c "for /L %i in (1,1,60) do @echo fill%i"')
+    Run-CliArgs @('+send-keys', "--target=$pane", "--keys-file=$fillFile") "$tmp\keys-fill.txt" 12 | Out-Null
+    Run-CliArgs @('+send-keys', "--target=$pane", 'Enter') "$tmp\keys-fill2.txt" 12 | Out-Null
+    $sawFill = $false
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        if ((Read-PaneText $tmp $pane 'fill') -match 'fill60') { $sawFill = $true; break }
+        Start-Sleep -Milliseconds 700
+    }
+    Assert 'A8b premise: 60 lines of output pushed the marker above the visible screen (T1443)' $sawFill
+
+    # T1443 premise: the marker is in the ring snapshot ON DISK, i.e. BEFORE the
+    # offset the replacement manager will ack the holder at. Only then is it
+    # history the new manager restores rather than output the holder re-sends -
+    # and only restored history is what section C's fresh attach (C8-C10) can
+    # lose. Found, not derived: the session's `.ring` (snapshot) or `.ringlog`
+    # (the durable append log the holder is acked against, T911) under this
+    # run's state dir, named by the session id's 32 hex digits.
+    $ringHasMarker = $false
+    $ringStem = ($sessionId -replace '[^0-9A-Fa-f]', '').ToLowerInvariant()
+    $ringFilesSeen = @()
+    $deadline = (Get-Date).AddSeconds(45)
+    while ((Get-Date) -lt $deadline -and $ringStem) {
+        $ringFilesSeen = @(Get-ChildItem -Path $tmp -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '\.(ring|ringlog)$' })
+        foreach ($rf in $ringFilesSeen) {
+            if ($rf.BaseName.ToLowerInvariant() -ne $ringStem) { continue }
+            $raw = $null
+            try { $raw = [System.IO.File]::ReadAllBytes($rf.FullName) } catch { $raw = $null }
+            # The echoed command line is pre-restart output exactly like the command's own.
+            # echo-marker: a presence check on disk - either copy proves it was restored
+            if ($null -ne $raw -and [System.Text.Encoding]::ASCII.GetString($raw).Contains($marker)) {
+                $ringHasMarker = $true
+            }
+        }
+        if ($ringHasMarker) { break }
+        Start-Sleep -Milliseconds 700
+    }
+    if (-not $ringHasMarker) {
+        Say "    diagnostic: session '$sessionId'; ring files seen -> $(@($ringFilesSeen | ForEach-Object { "$($_.Name)($($_.Length))" }) -join ', ')"
+    }
+    Assert 'A9 premise: the marker reached the on-disk ring snapshot (T1443)' $ringHasMarker
+
     # ========================================================================
     Say "== B: kill ONLY the session manager - app, holder and shell live on"
     # ========================================================================
@@ -410,6 +464,60 @@ try {
     # And it still works: fresh input reaches the child and output comes back.
     Assert 'C7 the pane is LIVE again (fresh input round-trips)' (
         Test-PaneLive -Exe $Exe -Target $pane -Tmp $tmp -Tag 'C' -TimeoutSec 40)
+
+    # ------------------------------------------------------------------------
+    # C8-C10 (T1443): a FRESH viewer of the adopted session still gets the
+    # history from before the manager restart. C5 cannot see this: the app in
+    # C never restarted, so it was showing its own copy. A viewer that brings
+    # no resume point (here: the app relaunched with no saved layout) gets the
+    # manager's scrollback-bearing repaint INSTEAD of its raw ring - and the
+    # adopted session's emulator used to be built from what the shell printed
+    # after adoption (C7's round trip) alone, so that repaint, sent in place
+    # of the ring, dropped everything from before the restart.
+    # ------------------------------------------------------------------------
+    foreach ($p in (Get-TestApps)) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Milliseconds 900
+    foreach ($f in @(Get-ChildItem -Path $tmp -Filter 'session-layout*.json' -Recurse -File -ErrorAction SilentlyContinue)) {
+        Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue
+    }
+    Assert 'C8 premise: the app is gone, the adopted manager is not, and no saved layout is left' (
+        (Get-TestApps).Count -eq 0 -and (Test-Alive $newAgentPid) -and
+        @(Get-ChildItem -Path $tmp -Filter 'session-layout*.json' -Recurse -File -ErrorAction SilentlyContinue).Count -eq 0)
+
+    # persistence: on (default) - launch recovery re-attaching the orphaned
+    # session from scratch IS the fresh viewer under test.
+    [void](Start-OnTestDesktop -Exe $Exe -Arguments @(
+        '--title=t1443-fresh', '--window-width=100', '--window-height=30'))
+    $freshLeaf = $null
+    $deadline = (Get-Date).AddSeconds(60)
+    while ((Get-Date) -lt $deadline) {
+        $lv = @((All-Leaves (Get-Tree $tmp 'c9')) | Where-Object { [string]$_.session_id -eq $sessionId })
+        if ($lv.Count -ge 1) { $freshLeaf = $lv[0]; break }
+        Start-Sleep -Milliseconds 700
+    }
+    Assert 'C9 the relaunched app re-attached the adopted session (no saved layout to resume from)' (
+        $null -ne $freshLeaf)
+
+    $txtFresh = ''
+    if ($freshLeaf) {
+        $freshTarget = if ($freshLeaf.name) { [string]$freshLeaf.name } else { [string]$freshLeaf.id }
+        $deadline = (Get-Date).AddSeconds(30)
+        while ((Get-Date) -lt $deadline) {
+            $txtFresh = Read-PaneText $tmp $freshTarget 'c10'
+            # The echoed line scrolled off with its output (A8b): neither copy is repaintable.
+            # echo-marker: history survival, not "the command ran"
+            if ($txtFresh -match [regex]::Escape($marker)) { break }
+            Start-Sleep -Milliseconds 700
+        }
+        # echo-marker: same presence check as C10 below, for the diagnostic only
+        if ($txtFresh -notmatch [regex]::Escape($marker)) {
+            Say "    diagnostic: fresh pane '$freshTarget' read $($txtFresh.Length) non-space char(s)"
+        }
+    }
+    # echo-marker: history survival (see the wait above); A8b pushed both copies off screen
+    $freshKept = ($txtFresh -match [regex]::Escape($marker))
+    if ($NegativeControl) { $freshKept = -not $freshKept }
+    Assert 'C10 the fresh attach shows the history from before the manager restart (T1443)' $freshKept
 
     # ========================================================================
     Say "== D: orphan reap - a holder no record names is shut down at startup"
