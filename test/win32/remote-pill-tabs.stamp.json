@@ -1,0 +1,14 @@
+{
+    "guard":  "remote-pill-tabs",
+    "script":  "test/win32/remote-pill-tabs.ps1",
+    "generated":  "2026-11-10T16:28:38-08:00",
+    "commit":  "a6f512509",
+    "uncommitted":  [
+                        "test/win32/remote-pill-tabs.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/caption_layout.zig":  "787f2a9f6747b245d2eef7d3b5b089b5accd0ba43d61e319bb8885622f6beb44",
+                  "src/apprt/win32/remote_pill.zig":  "6997259de405ee7fecb4e29c179ba56380c4ce423cf48e09bba95f0a249e6286",
+                  "test/win32/remote-pill-tabs.ps1":  "9cb6a4f8879279060911b0523716a772ea29aa0b68c483709d17cf72d818c424"
+              }
+}

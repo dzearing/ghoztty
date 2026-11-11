@@ -3844,6 +3844,21 @@ $GuardTable = @(
             'test\win32\remote-pill.ps1'
         )
     },
+    # The pill's width IS the tab strip's seam on a merged row (T1435): the
+    # band stops one group gap left of the pill, so a degraded pill that grows
+    # by the machine's name takes that width out of the tab run. Only
+    # `remote-pill-tabs.ps1` stands up a remote window WITH tabs and reads the
+    # strip's published regions across a drop and a recovery.
+    [pscustomobject]@{
+        Name   = 'remote-pill-tabs'
+        Script = 'test\win32\remote-pill-tabs.ps1'
+        Stamp  = 'test\win32\remote-pill-tabs.stamp.json'
+        Covers = @(
+            'src\apprt\win32\remote_pill.zig',
+            'src\apprt\win32\caption_layout.zig',
+            'test\win32\remote-pill-tabs.ps1'
+        )
+    },
     [pscustomobject]@{
         Name   = 'key-state-pill'
         Script = 'test\win32\key-state-pill.ps1'
