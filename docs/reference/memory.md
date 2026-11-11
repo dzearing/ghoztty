@@ -65,7 +65,9 @@ the audit worktree; methodology there).
 ## Hidden windows drop their render targets
 
 An occluded surface (window covered, minimized, on another Space, app hidden)
-draws nothing (`renderer.Thread.drawFrame` returns early), so on occlusion the
+draws nothing and builds no frames (`renderer.Thread`; "covered" is
+`WindowCoverage`'s answer, not just AppKit's — see
+[background-windows.md](background-windows.md)), so on occlusion the
 renderer shrinks every swap-chain target to 1×1
 (`generic.Renderer.releaseHiddenTargets`). The picture survives: the layer
 retains the IOSurface it displays (`Metal.presented_target_outlives_frame`),

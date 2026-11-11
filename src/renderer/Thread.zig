@@ -132,6 +132,11 @@ flags: packed struct {
     /// if we should be rendering or not.
     visible: bool = true,
 
+    /// True when the terminal changed while the view was hidden, so its
+    /// frame data is out of date: the next time it shows, rebuild it once
+    /// before drawing (see `renderCallback`).
+    frame_stale: bool = false,
+
     /// This is true when the view is focused. This defaults to true
     /// and it is up to the apprt to set the correct value.
     focused: bool = true,
@@ -416,6 +421,12 @@ fn drainMailbox(self: *Thread) !void {
                 // this message: a tab shown after a window resize put one
                 // frame at its OLD size on screen first, and the resize
                 // wait was answered late by the real one.
+                //
+                // That same post-drain render is also what catches the frame
+                // data up when `frame_stale` says the pane changed while
+                // hidden (`renderCallback` skips building while hidden; Mac
+                // 68a8344f0 rebuilt here instead, which would reintroduce the
+                // T2046 old-size frame).
 
                 // Notify the renderer so it can update any state.
                 self.renderer.setVisible(v);
@@ -755,6 +766,20 @@ fn renderCallback(
         log.warn("render callback fired without data set", .{});
         return .disarm;
     };
+
+    // Hidden (window covered, minimized, on another Space, app hidden):
+    // nothing draws, so building frame data nobody sees — cells, the link
+    // scan of the whole screen — is wasted, and a busy program in a hidden
+    // pane would pay it for every burst of output. Remember the frame is
+    // out of date and catch up once, when the view shows (`.visible`).
+    // The terminal itself (the IO thread) is unaffected. Checked before
+    // `last_build` so a skipped build does not count as one for the
+    // low-power cap (T1951).
+    if (!t.flags.visible) {
+        t.flags.frame_stale = true;
+        return .disarm;
+    }
+    t.flags.frame_stale = false;
 
     t.last_build = std.time.Instant.now() catch null;
 
