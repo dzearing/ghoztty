@@ -1349,6 +1349,25 @@ $GuardTable = @(
             'src\apprt\win32\screen_capture.zig'
         )
     },
+    # What a screen reader is told about the composer's PAINTED parts (T1468):
+    # the band's IAccessible, read cross-process through the same vtable
+    # Narrator's MSAA proxy uses. The pure child/name/state model runs in the
+    # `none` lane every floor run; only this harness sees the marshalled
+    # object, its focus answers and events, hit testing, and the reader's
+    # actions reaching the band. ViewerFeedbackBar is here because the focus
+    # walk and the tile strip the object describes live in it.
+    [pscustomobject]@{
+        Name   = 'viewer-feedback-a11y'
+        Script = 'test\win32\viewer-feedback-a11y.ps1'
+        Stamp  = 'test\win32\viewer-feedback-a11y.stamp.json'
+        Covers = @(
+            'test\win32\viewer-feedback-a11y.ps1',
+            'test\win32\lib\AccProbe.ps1',
+            'src\apprt\win32\viewer_feedback_acc.zig',
+            'src\apprt\win32\viewer_feedback_a11y.zig',
+            'src\apprt\win32\ViewerFeedbackBar.zig'
+        )
+    },
     # The composer's WEB surface (T934): the second WebView2 controller that
     # replaced the RichEdit, its page, and the two-way message channel between
     # them. Separate from `viewer-feedback` above because the two prove

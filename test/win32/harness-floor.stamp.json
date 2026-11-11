@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-10T23:11:24-08:00",
-    "commit":  "4a7af493d",
+    "generated":  "2026-11-11T00:31:16-08:00",
+    "commit":  "f2aac9901",
     "uncommitted":  [
-                        "test/win32/hero-viewer-tile.ps1"
+                        "test/win32/lib/AccProbe.ps1",
+                        "test/win32/viewer-feedback-a11y.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -201,7 +202,7 @@
                   "test/win32/hero-carousel-ratio.ps1":  "1750cc1a200026335785618bc07b08fd18240ce9ed2cca7a6b021852b2be1818",
                   "test/win32/hero-mode.ps1":  "960240b8d7a164bd56b57424cde848217542a11ddda1b0556cba07aac28468aa",
                   "test/win32/hero-nav.ps1":  "77fbfdd2679c7db44743b69d3a1b7e961ef56c057ee39933b4e90d5b754010f4",
-                  "test/win32/hero-viewer-tile.ps1":  "6e31374403ef78b0d5baa816c3074aa92cc53208f708ea487d0dfdafb23b381d",
+                  "test/win32/hero-viewer-tile.ps1":  "8c4c0f82ad898502a7169e2248deb7dda1662b0c5dd3063aa86955d8f33f00fe",
                   "test/win32/hidden-window-memory.ps1":  "31e7f5d91bc68265640003f052f623e12ab11a7c7eb87d0f17fa4c136e13330d",
                   "test/win32/history-guard-flavor.ps1":  "1d9bdcea796adecd76f31f1920d575ffcf59d4b800e8328aaaf18ce47efe46d2",
                   "test/win32/holder-adopt.ps1":  "d6ebeef6546da97b65e42cf578f8dd02f195bbb9063bef04bea75c0a5c2cd2f2",
@@ -250,6 +251,7 @@
                   "test/win32/layout-blobs.ps1":  "c4f8e6450046624eb2cff3a62643d2091ab71fc7d045cb710e2b79fe9a619091",
                   "test/win32/layout-capture-cost.ps1":  "1fb2a39a3d332f836f465d15974d2cb26d26fc8496ee69ffbf91bfa3142f23c8",
                   "test/win32/ledger-dupes.ps1":  "f693ddaeeb788720bcec7d91a74af3342bc299cea6746c4fecfc7e3930d65635",
+                  "test/win32/lib/AccProbe.ps1":  "d9eb8fa032c9254a0e7581a48cab4ccf1f42f459bf92152978e4c8bc1de54c32",
                   "test/win32/lib/AgentLineage.ps1":  "44fd40c6b34712aba13c84ef5257e392195ca475396909bc8052a3e7fd845dc3",
                   "test/win32/lib/ApplierSandbox.ps1":  "82870ff2c01dd3d3e36b1b1f8ff7ed7359059245db8e5d88ac9e30838e177bd8",
                   "test/win32/lib/ArgvHazardAudit.ps1":  "b5158017c82268ea108deb78d6233f98b9864b3ff31439a93a2c0c10fd4de518",
@@ -571,6 +573,7 @@
                   "test/win32/viewer-diff-tree.ps1":  "88025654dcd8819678596bfcd043f45a0e14dbb3ef2057abb99eed9a09474f82",
                   "test/win32/viewer-error-card.ps1":  "f8015c9f4ae53bf6ed0daa8f079cc1c8618b8841ca7da22dc40832e65f01a3c9",
                   "test/win32/viewer-feedback.ps1":  "a27afcc98a135b5f5e6ae9259d6ee57b11ea3a86d01175b8ebac9edb3e5469cd",
+                  "test/win32/viewer-feedback-a11y.ps1":  "5fac54144f172e562b4139426c421f0a083bb19294815e3095af62b8201e4411",
                   "test/win32/viewer-feedback-alpha.ps1":  "7e3ed8de4c1caf1382b53ab1fa99ce89b4a3d9239263be65c7bbf80de97f34c1",
                   "test/win32/viewer-feedback-capture.ps1":  "b4cb455788298726f5b0bdf98020e5176430ebcaa451b3d56172c3975821d1c8",
                   "test/win32/viewer-feedback-carousel.ps1":  "548d97334711993fbf274fb6284f7799b79cc1842aa1d51bcbdc2207364bea9c",

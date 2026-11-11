@@ -76,6 +76,8 @@ const gdiplus_decode = @import("gdiplus_decode.zig");
 const RegionSelector = @import("RegionSelector.zig");
 const system_colors = @import("system_colors.zig");
 const viewer_accel = @import("viewer_accel.zig");
+const Accessible = @import("viewer_feedback_acc.zig");
+const a11y = @import("viewer_feedback_a11y.zig");
 const ViewerPane = @import("ViewerPane.zig");
 const viewer_worktree = @import("viewer_worktree.zig");
 const input = @import("../../input.zig");
@@ -89,6 +91,12 @@ pub const CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral(class_name_utf8);
 /// "The wrapped line count moved while I was being laid out; ask the pane to
 /// lay me out again." Posted, never sent — see `place`.
 const WM_APP_RELAYOUT: u32 = w32.WM_APP + 1;
+
+/// "A screen reader asked a painted part to do something" (T1468): wParam is
+/// the `AccAction`, lParam the child id. Posted by `viewer_feedback_acc.zig`
+/// from inside a COM call, so the action runs from the message loop the way a
+/// click's does. `WM_APP + 2` is the web surface's chord post.
+const WM_APP_ACC_ACTION: u32 = w32.WM_APP + 3;
 
 /// The placeholder an empty composer shows, Mac's accessibility label turned
 /// into the cue an empty field needs. The page draws it (a CSS `::before` on
@@ -221,6 +229,11 @@ thumbs: std.ArrayListUnmanaged(Thumb) = .empty,
 /// capture is in flight, which is what makes `+` and Ctrl+Shift+S idempotent
 /// rather than a way to stack full-desktop overlays.
 selector: ?*RegionSelector = null,
+
+/// The band's accessible object (T1468), created on the first `WM_GETOBJECT`
+/// and detached in `destroy`. Null until a screen reader (or anything else
+/// reading MSAA) has asked.
+acc: ?*Accessible = null,
 
 /// The scale the fonts were last built for; rebuilt when the pane's monitor
 /// changes.
@@ -359,6 +372,12 @@ pub fn destroy(self: *ViewerFeedbackBar) void {
     // Clear the back-pointer FIRST: DestroyWindow delivers messages
     // synchronously, and they must not find a half-dead object.
     _ = w32.SetWindowLongPtrW(self.hwnd, w32.GWLP_USERDATA, 0);
+    // A screen reader may hold the accessible object past this point; from
+    // here on it answers "disconnected" rather than reading a freed band.
+    if (self.acc) |a| {
+        self.acc = null;
+        a.detach();
+    }
     _ = w32.DestroyWindow(self.hwnd);
     if (self.caption_font) |f| _ = w32.DeleteObject(@ptrCast(f));
     self.dropThumbs();
@@ -871,6 +890,8 @@ fn syncImages(self: *ViewerFeedbackBar) bool {
         if (i >= n) self.carousel_focus = n - 1;
     }
     self.logCarousel("tiles");
+    // The band's children just changed: a reader re-reads them.
+    Accessible.notify(Accessible.EVENT_OBJECT_REORDER, self.hwnd, 0);
     return true;
 }
 
@@ -1405,6 +1426,7 @@ fn walkTiles(self: *ViewerFeedbackBar, move: layout_mod.TileMove) void {
     self.carousel_scroll = scroll;
     _ = w32.InvalidateRect(self.hwnd, null, 1);
     self.logCarousel("walk");
+    self.notifyAccFocus();
 }
 
 /// Enter or Space on the focused tile — the same thing a click on it does.
@@ -1497,7 +1519,7 @@ fn textChanged(self: *ViewerFeedbackBar) void {
     self.pane.syncBounds();
 }
 
-fn currentLayout(self: *ViewerFeedbackBar) layout_mod.Layout {
+pub fn currentLayout(self: *ViewerFeedbackBar) layout_mod.Layout {
     var r: w32.RECT = undefined;
     const w = if (w32.GetClientRect(self.hwnd, &r) != 0) r.right - r.left else 0;
     return layout_mod.Layout.init(self.layoutInput(w, self.scale));
@@ -1692,6 +1714,7 @@ fn focusStop(self: *ViewerFeedbackBar, stop: layout_mod.Stop) void {
     // chrome on a desktop nothing can screenshot, so where focus LANDED is
     // stated rather than looked at.
     log.info("viewer feedback focus pane={s} stop={s}", .{ self.pane.paneId(), @tagName(stop) });
+    self.notifyAccFocus();
 }
 
 /// Tab / shift+Tab.
@@ -1720,6 +1743,75 @@ fn activateFocused(self: *ViewerFeedbackBar) bool {
 }
 
 // -------------------------------------------------------------------------
+// Screen readers (T1468)
+// -------------------------------------------------------------------------
+
+/// The image number tile `index` shows - what its accessible name says, so a
+/// reader names the picture the way the report's chip does.
+pub fn accTileNumber(self: *ViewerFeedbackBar, index: usize) ?u32 {
+    const spans = self.pane.feedbackImageSpans(self.alloc) orelse return null;
+    defer self.alloc.free(spans);
+    if (index >= spans.len) return null;
+    return self.pane.feedbackImageEntry(spans[index]).number;
+}
+
+pub const AccAction = enum(u1) { press, focus };
+
+/// Queue what a screen reader asked of a painted part; see `WM_APP_ACC_ACTION`.
+pub fn postAccAction(self: *ViewerFeedbackBar, action: AccAction, child: i32) void {
+    _ = w32.PostMessageW(
+        self.hwnd,
+        WM_APP_ACC_ACTION,
+        @intFromEnum(action),
+        @as(isize, child),
+    );
+}
+
+/// Run a queued screen-reader request, resolving the child id against the
+/// band as it is NOW - a part that went away in between is simply not there.
+fn runAccAction(self: *ViewerFeedbackBar, action: AccAction, child: i32) void {
+    const it = Accessible.itemFor(self, child) orelse return;
+    log.info("viewer feedback acc pane={s} action={s} child={d}", .{
+        self.pane.paneId(),
+        @tagName(action),
+        child,
+    });
+    switch (action) {
+        .press => switch (it) {
+            .button => |b| if (self.buttonEnabled(b)) self.activate(b),
+            .tile => |i| self.activateThumb(i),
+            else => {},
+        },
+        .focus => switch (it) {
+            .button => |b| if (self.buttonEnabled(b)) self.focusStop(layout_mod.stopOf(b)),
+            .tile => |i| {
+                // Arrive on the strip, then put the ring on the asked-for tile.
+                self.focusStop(.carousel);
+                if (i < self.images and self.carousel_focus != i) {
+                    self.carousel_focus = i;
+                    self.carousel_scroll = self.currentLayout().scrollToShow(i, self.carousel_scroll);
+                    _ = w32.InvalidateRect(self.hwnd, null, 1);
+                    self.logCarousel("focus");
+                    self.notifyAccFocus();
+                }
+            },
+            else => {},
+        },
+    }
+}
+
+/// Tell a listening screen reader which painted part now has focus. Only when
+/// the band itself holds the Win32 focus: on the text stop the web surface
+/// has it, and Chromium announces its own.
+fn notifyAccFocus(self: *ViewerFeedbackBar) void {
+    if (w32.GetFocus() != self.hwnd) return;
+    const it = a11y.focusedItem(true, self.key_focus, self.carousel_focus) orelse return;
+    const id = Accessible.idFor(self, it);
+    Accessible.notify(Accessible.EVENT_OBJECT_FOCUS, self.hwnd, id);
+    log.info("viewer feedback acc focus pane={s} child={d}", .{ self.pane.paneId(), id });
+}
+
+// -------------------------------------------------------------------------
 // Painting
 // -------------------------------------------------------------------------
 
@@ -1732,7 +1824,7 @@ fn buttonGlyph(b: layout_mod.Button) icon_button.Glyph {
 
 /// The send button is dead while there is nothing to send (Mac disables it on
 /// `model.isEmpty`); the snapshot button never is.
-fn buttonEnabled(self: *const ViewerFeedbackBar, b: layout_mod.Button) bool {
+pub fn buttonEnabled(self: *const ViewerFeedbackBar, b: layout_mod.Button) bool {
     return switch (b) {
         .snapshot => true,
         .send => self.pane.feedbackText().len > 0,
@@ -2452,6 +2544,7 @@ fn wndProc(
                 self.takeFocus();
             } else {
                 _ = w32.InvalidateRect(hwnd, null, 1);
+                self.notifyAccFocus();
             }
             return 0;
         },
@@ -2583,6 +2676,23 @@ fn wndProc(
 
         WM_APP_RELAYOUT => {
             self.textChanged();
+            return 0;
+        },
+
+        // T1468: the painted parts' accessible object. Only OBJID_CLIENT is
+        // ours; the window frame and everything else stay the system's. The
+        // id is compared as the 32-bit value it is - on x64 the LPARAM can
+        // arrive zero- rather than sign-extended.
+        w32.WM_GETOBJECT => {
+            if (@as(i32, @truncate(lparam)) == Accessible.OBJID_CLIENT) {
+                if (self.acc == null) self.acc = Accessible.create(self.alloc, self) catch null;
+                if (self.acc) |a| return a.lresult(wparam);
+            }
+            return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+
+        WM_APP_ACC_ACTION => {
+            self.runAccAction(@enumFromInt(@as(u1, @truncate(wparam))), @truncate(lparam));
             return 0;
         },
 

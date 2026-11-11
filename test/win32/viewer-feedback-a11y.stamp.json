@@ -1,0 +1,20 @@
+{
+    "guard":  "viewer-feedback-a11y",
+    "script":  "test/win32/viewer-feedback-a11y.ps1",
+    "generated":  "2026-11-11T00:25:58-08:00",
+    "commit":  "f2aac9901",
+    "uncommitted":  [
+                        "src/apprt/win32/viewer_feedback_a11y.zig",
+                        "src/apprt/win32/viewer_feedback_acc.zig",
+                        "src/apprt/win32/ViewerFeedbackBar.zig",
+                        "test/win32/lib/AccProbe.ps1",
+                        "test/win32/viewer-feedback-a11y.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/viewer_feedback_a11y.zig":  "360db1218337b04b0bcf80438dfb19c6017603617e5c880ea3e0486661e4ca0f",
+                  "src/apprt/win32/viewer_feedback_acc.zig":  "3fd6d388b4084a066d62c774113ca2de51aaddee99ab8263c4fd9bbbdcbed328",
+                  "src/apprt/win32/ViewerFeedbackBar.zig":  "b965a782a266a2864ee30aff300b241fa57b89421f28da9c8342f63ba60a3569",
+                  "test/win32/lib/AccProbe.ps1":  "d9eb8fa032c9254a0e7581a48cab4ccf1f42f459bf92152978e4c8bc1de54c32",
+                  "test/win32/viewer-feedback-a11y.ps1":  "5fac54144f172e562b4139426c421f0a083bb19294815e3095af62b8201e4411"
+              }
+}

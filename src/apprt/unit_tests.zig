@@ -571,6 +571,11 @@ test {
     // no-OS-imports deal.
     _ = @import("win32/viewer_feedback_layout.zig");
 
+    // Pure win32 viewer feedback-composer ACCESSIBILITY — which child id names
+    // which painted part, and the name, role and state a screen reader is
+    // told for each (T1468), same no-OS-imports deal.
+    _ = @import("win32/viewer_feedback_a11y.zig");
+
     // Pure win32 viewer feedback-composer DOCUMENT — where a quoted passage
     // is inserted and which quotes are still in the report (T641), same
     // no-OS-imports deal.
