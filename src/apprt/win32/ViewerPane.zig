@@ -587,6 +587,11 @@ scale: f32 = 1.0,
 in_size_loop: bool = false,
 move_owed: bool = false,
 
+/// True only while the window drains this pane's held bounds sync after a
+/// live layout batch (a divider drag or a fold glide, T2838). The nav bar
+/// reads it to leave its tooltip rects until the motion settles.
+live_layout: bool = false,
+
 /// The pane background the host window paints before/instead of content.
 /// Copied from the window's config at construction.
 bg: color_math.Rgb = .{ .r = 0x28, .g = 0x2C, .b = 0x34 },
@@ -5597,6 +5602,16 @@ pub fn syncBounds(self: *ViewerPane) void {
     }
 }
 
+/// The bounds sync a live layout batch held (T2838), run by the window once
+/// the batch has landed and the terminals' renderers are awake.
+pub fn syncBoundsLive(self: *ViewerPane) void {
+    const was = self.live_layout;
+    self.live_layout = true;
+    defer self.live_layout = was;
+    Window.traceRenderStage("viewer-held-sync", self.hwnd);
+    self.syncBounds();
+}
+
 /// Pay the parent-position refresh a move inside the size loop owed. The
 /// window calls this at `WM_EXITSIZEMOVE`.
 pub fn settleMove(self: *ViewerPane) void {
@@ -7292,6 +7307,11 @@ pub fn wndProc(
     switch (msg) {
         w32.WM_SIZE => {
             Window.traceRenderStage("viewer-size", self.hwnd);
+            // Inside a live batch's `EndDeferWindowPos` the bounds sync (nav
+            // bar, put_Bounds: ~2.5 ms) waits until the terminals' held resize
+            // work has woken their renderers (T2838). Routed through
+            // `pane_view`: a bare test pane has no window and syncs here.
+            if (self.pane_view) |pv| if (pv.parentWindow().holdViewerSync(self)) return 0;
             self.syncBounds();
             Window.traceRenderStage("viewer-synced", self.hwnd);
             return 0;
@@ -8341,6 +8361,21 @@ test "host floor: a real controller on a real window, on this box" {
             if (w32.GetClientRect(nav.hwnd, &nr) == 0) return error.Win32Error;
             try testing.expectEqual(hw, nr.right - nr.left);
             try testing.expectEqual(bh, nr.bottom - nr.top);
+
+            // T2838: the bounds sync a live layout batch held (a divider
+            // drag, a fold glide) keeps the bar on screen and in place, but
+            // leaves its tooltip rects to the settle timer; settling pays
+            // them. An ordinary sync owes nothing.
+            try testing.expect(!pane.in_size_loop);
+            pane.syncBounds();
+            try testing.expect(!nav.tip_owed);
+            pane.syncBoundsLive();
+            try testing.expect(!pane.live_layout);
+            try testing.expect(nav.tip_owed);
+            try testing.expect(!nav.deferred);
+            try testing.expect(shownBit(nav.hwnd));
+            nav.settle();
+            try testing.expect(!nav.tip_owed);
         }
 
         // The feedback composer is the same material one band down (T1926):

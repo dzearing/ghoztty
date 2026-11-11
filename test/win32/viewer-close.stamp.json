@@ -1,16 +1,16 @@
 {
     "guard":  "viewer-close",
     "script":  "test/win32/viewer-close.ps1",
-    "generated":  "2026-11-11T07:42:34-08:00",
-    "commit":  "d537789e2",
+    "generated":  "2026-11-11T08:40:33-08:00",
+    "commit":  "50fe85790",
     "uncommitted":  [
-                        "src/apprt/win32/PaneView.zig",
+                        "src/apprt/win32/ViewerPane.zig",
                         "src/apprt/win32/Window.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/PaneView.zig":  "06ca3a9e43fa0b3ed1c5ac400de2d1bbfe851d2b5fc30b434820aaa172ac0889",
-                  "src/apprt/win32/ViewerPane.zig":  "4fafeeaec478fb78a042851991f9950dedd38a3b22531f02c54cfa76cd57f6bd",
-                  "src/apprt/win32/Window.zig":  "147ff941fe4d26b9b8abf013b03733f501d607da9878eda35cd84b1bcb851085",
+                  "src/apprt/win32/PaneView.zig":  "3f63cca46c37110e3dbcd5128ba8c27138824a2bdb2ff50164fbf9b88c05d877",
+                  "src/apprt/win32/ViewerPane.zig":  "c2b586bc12a00ac2ace8144abbea1f43189680ddecad0ef10e9b2595e340bb67",
+                  "src/apprt/win32/Window.zig":  "7faec5238a6490f1fd043342da27c23f7c325ec734469644e2be56dfe68e58d0",
                   "test/win32/viewer-close.ps1":  "db3dc1453f6d49be9669b5cd739d9a765b2c53c21826ec41352b70cbe25d8e3b"
               }
 }

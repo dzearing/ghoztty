@@ -211,6 +211,11 @@ edit_stale: bool = false,
 deferred: bool = false,
 deferred_w: i32 = 0,
 deferred_h: i32 = 0,
+/// A live layout pass (divider drag, fold glide) left the tooltip rects for
+/// the settle timer (T2838): ~0.4 ms a pass for tips nobody can hover while
+/// the mouse is dragging. `tip_w` is the width they are owed at.
+tip_owed: bool = false,
+tip_w: i32 = 0,
 
 /// The idle field's pixels (T2538): the EDIT printed once, `cache_w` wide -
 /// wide enough for all of its text - and re-printed only when its text,
@@ -548,7 +553,15 @@ pub fn deferWhileSizing(in_size_loop: bool, editing: bool) bool {
 /// not hidden, so the pane can call it at every `WM_EXITSIZEMOVE`.
 pub fn settle(self: *ViewerNavBar) void {
     _ = w32.KillTimer(self.hwnd, bar_settle_timer);
-    if (!self.deferred) return;
+    if (!self.deferred) {
+        // A live pass's owed tooltips (T2838), the bar itself never hidden.
+        if (self.tip_owed) {
+            self.tip_owed = false;
+            self.syncTip(layout_mod.Layout.init(self.scale, self.tip_w, self.shown()));
+        }
+        return;
+    }
+    self.tip_owed = false;
     self.deferred = false;
     const l = layout_mod.Layout.init(self.scale, self.deferred_w, self.shown());
     const flags = w32.SWP_NOACTIVATE | w32.SWP_NOZORDER | w32.SWP_NOREDRAW | w32.SWP_NOCOPYBITS | w32.SWP_SHOWWINDOW;
@@ -664,8 +677,22 @@ pub fn place(self: *ViewerNavBar, width: i32, scale: f32) void {
     if (changed) _ = w32.RedrawWindow(self.hwnd, null, null, redrawFlags(self.editing));
     place_cost.paint_ns +|= tsince(t);
     t = tnow();
-    self.syncTip(l);
+    if (deferTipWhileLive(self.pane.live_layout)) {
+        self.tip_owed = true;
+        self.tip_w = width;
+        _ = w32.SetTimer(self.hwnd, bar_settle_timer, edit_sync_ms, null);
+    } else {
+        self.tip_owed = false;
+        self.syncTip(l);
+    }
     place_cost.tip_ns +|= tsince(t);
+}
+
+/// Whether `place` leaves the tooltip rects to the settle timer (T2838):
+/// inside a live layout pass, where the mouse is busy dragging and nobody
+/// can hover a button. Pure, so the rule is testable without a window.
+pub fn deferTipWhileLive(live_layout: bool) bool {
+    return live_layout;
 }
 
 fn applyScaleFont(self: *ViewerNavBar, scale: f32) void {

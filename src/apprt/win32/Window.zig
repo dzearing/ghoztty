@@ -949,6 +949,10 @@ frame_wait_panes: [MAX_FRAME_WAITS]*Surface = undefined,
 /// `EndDeferWindowPos`.
 held_resizes: resize_paint.Pending(*Surface, MAX_FRAME_WAITS) = .{},
 held_resizes_on: bool = false,
+/// Viewer panes whose bounds sync the same batch held (T2838): drained after
+/// the terminals' held resizes, so the ~2.5 ms of nav bar and WebView2 bounds
+/// work runs while their renderers draw instead of inside the batch.
+held_viewers: resize_paint.Pending(*ViewerPane, MAX_FRAME_WAITS) = .{},
 /// A live grid pass cuts the card regions inside `endPaneBatchFilled`, after
 /// the batch and BEFORE the held resize work wakes the panes' renderers
 /// (T2732): cut after it, each `SetWindowRgn` on a resized GL pane waited on
@@ -11107,6 +11111,10 @@ fn endPaneBatchFilled(self: *Window, hdwp: ?w32.HDWP) void {
         if (e.pane.hwnd) |h| traceRenderStage("held-apply", h);
         e.pane.applyResize(e.width, e.height);
     }
+    // T2838: the viewers last - their bounds sync is UI-thread work that the
+    // woken renderers above can overlap, and nothing in the batch waits on it.
+    var viewers = self.held_viewers.take();
+    for (viewers.entries[0..viewers.len]) |e| e.pane.syncBoundsLive();
 }
 
 /// Hold a pane's resize work for `endPaneBatchFilled`, which runs it after
@@ -11115,6 +11123,24 @@ fn endPaneBatchFilled(self: *Window, hdwp: ?w32.HDWP) void {
 pub fn holdResize(self: *Window, surface: *Surface, width: u32, height: u32) bool {
     if (!self.held_resizes_on) return false;
     return self.held_resizes.add(surface, width, height);
+}
+
+/// `holdResize` for a viewer pane's bounds sync (T2838): held inside a live
+/// batch, run by `endPaneBatchFilled` after the terminals. False outside that
+/// batch or when the list is full, and the viewer syncs at once.
+pub fn holdViewerSync(self: *Window, viewer: *ViewerPane) bool {
+    if (!self.held_resizes_on or viewerSyncInline()) return false;
+    return self.held_viewers.add(viewer, 0, 0);
+}
+
+/// `GHOZTTY_VIEWER_SYNC_INLINE=1` syncs a viewer inside the batch as before
+/// T2838 (tooltips included), the A/B for the glide probe's batch split.
+var viewer_sync_inline: ?bool = null;
+fn viewerSyncInline() bool {
+    if (viewer_sync_inline) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_VIEWER_SYNC_INLINE");
+    viewer_sync_inline = v;
+    return v;
 }
 
 /// The active tab's grid as the stacked-panes layout lays it out (T2108,
