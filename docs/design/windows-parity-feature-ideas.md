@@ -688,3 +688,12 @@ as the digest that showed them.
 - Fold any command's output by hand (new angle on folding enormous output: a click beside any command folds its output to one line)
 - A full disk cannot cost you your layout (saves are whole-or-nothing; a full disk keeps the last good layout and shows a saving-paused banner)
 - A giant log opens at once (a multi-gigabyte log in a side pane shows its first screen immediately and is searchable while it loads)
+
+## 2026-11-11
+
+- Run it again after a restart (new angle on reboot-aware restore: the restored pane names the command it was running, one click re-runs it in the same folder)
+- Stop a program that ignores Ctrl+C (a second Ctrl+C within a second offers to end the program and its children, keeping the shell)
+- Undo a clear (one key brings back what a clear-screen wiped, in place)
+- Select a column (Alt+drag rectangular selection for copying one column of tabular output)
+- A table you can sort (table-shaped output or a CSV opens in a side pane as a sortable, filterable grid)
+- Paste a path that fits this pane (new angle on WSL path translation: Windows and WSL paths translate and quote at paste time for the pane's shell)
