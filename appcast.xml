@@ -1284,5 +1284,24 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.54.1/Ghoztty-1.54.1-arm64.dmg" type="application/octet-stream" sparkle:edSignature="CshNiANftzyVyr6tqC3Ua+shw9Txuv1kkS7tghrHH2/zCv42uniIlHelSIfJhJ2f1jtc8xr7dBj9OGmWCCd4CQ==" length="27695683" />
         </item>
+        <item>
+            <title>Version 1.54.2</title>
+            <sparkle:version>1.54.2</sparkle:version>
+            <sparkle:shortVersionString>1.54.2</sparkle:shortVersionString>
+            <pubDate>Wed, 11 Nov 2026 06:51:51 +0000</pubDate>
+            <description>{
+  "version": "1.54.2",
+  "sections": [
+    { "title": "Background windows",
+      "items": [
+        { "title": "Windows behind the one you're using go quiet", "text": "Busy borders and the sidebar's busy shimmer now animate only in the window you're working in, terminals you can't see stop redrawing, and a hidden window's title waits until you look at it. With lots of windows open, Ghoztty and the system's window compositor spend far less CPU on windows you can't see, and every window shows its current state the moment it comes forward." },
+        { "title": "Stacked full-screen windows count as hidden", "text": "Windows sitting exactly behind another window are now recognized as out of sight, so they get the savings too." },
+        { "title": "Diff and GIF panes pause out of sight", "text": "Working-tree diffs and animated images pause while hidden and catch up instantly when shown." }
+      ] }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.54.2/Ghoztty-1.54.2-arm64.dmg" type="application/octet-stream" sparkle:edSignature="oTUHHTaVKnhGss9pHuRvIGvslv5x5TsxZIW96gEApn+JeOfJaPkqc+oUkXnZ09ImKb9Zcnw6bv8EQOEQQf1BCA==" length="27705797" />
+        </item>
     </channel>
 </rss>
