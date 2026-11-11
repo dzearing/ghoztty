@@ -1,14 +1,14 @@
 {
     "guard":  "lane-solo-confirm",
     "script":  "test/win32/floor-lane-solo-confirm.ps1",
-    "generated":  "2026-08-31T21:10:54-07:00",
-    "commit":  "8055c330d",
+    "generated":  "2026-11-10T19:39:33-08:00",
+    "commit":  "119cc90b3",
     "uncommitted":  [
                         "scripts/lib/LaneSolo.ps1",
                         "test/win32/floor-lane-solo-confirm.ps1"
                     ],
     "files":  {
-                  "scripts/lib/LaneSolo.ps1":  "10feea32628e97345f5aaa156128261e5b597cea97d462590d75b6420d3401d4",
-                  "test/win32/floor-lane-solo-confirm.ps1":  "2e7b8705867fd366ef614013d2cdd8e9e213136a4f8e9347ac049215944c0a50"
+                  "scripts/lib/LaneSolo.ps1":  "3774871845d542b517f11f423a4ab8a4ce1fa4df14ed29c6b9b670381461bbf4",
+                  "test/win32/floor-lane-solo-confirm.ps1":  "a222a0c597b6f6e265690cbebb3e9d621db1ba6a53217ab62148231a5a9dab9c"
               }
 }

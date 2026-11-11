@@ -18,6 +18,12 @@
   the wiring: the switch exists, red stays red, and the narrowed re-run really
   does reach zig with one -Dtest-filter per named test.
 
+  The T1448 arms cover the narrowed re-run that matched NO test: since T631
+  that run fails on the filter guard without executing anything, and it must
+  read "could not narrow", never "reproduced". The detector is checked against
+  a planted guard log AND against zig's real output from the matched-nothing
+  lane run above.
+
   Prints a single ALL PASS / N FAILURE(S) line, like every other script here.
 
   ASCII-only by design (PS 5.1 on this box mangles non-ASCII on rewrite).
@@ -96,6 +102,32 @@ try {
     Check 'a stalled solo run keeps its own verdict word' `
         ((Get-SoloVerdictNote -SoloResult 'STALL') -match '^STALL') ''
 
+    # ---- T1448: a narrowed run the T631 guard refused reproduced nothing ----
+
+    # The guard's own wording, as zig's build runner prints a failed step.
+    $logGuard = Join-Path $Sandbox 'guard.log'
+    @(
+        "test",
+        "+- test-filter guard (test) failure",
+        "error: -Dtest-filter matched no tests, so ``zig build test`` proved nothing.",
+        "  filters: host floor: a real controller on a real window, on this box",
+        "  1 test binary ran, and not one named test in them matched.",
+        "error: the following build command failed with exit code 1:"
+    ) | Set-Content -LiteralPath $logGuard -Encoding ascii
+    Check 'T1448: a guard-refused narrowed log is recognised' `
+        (Test-FilterMatchedNothing -LogPath $logGuard) ''
+    Check 'T1448: a real test failure is NOT mistaken for the guard' `
+        (-not (Test-FilterMatchedNothing -LogPath $log1)) ''
+    Check 'T1448: a missing log is not the guard' `
+        (-not (Test-FilterMatchedNothing -LogPath (Join-Path $Sandbox 'nope.log'))) ''
+    $narrowFail = Get-SoloVerdictNote -SoloResult 'FAIL' -FilterMatchedNothing
+    Check 'T1448: a guard-refused re-run says "could not narrow"' `
+        ($narrowFail -match 'could not narrow') $narrowFail
+    Check 'T1448: ...and never says "reproduced"' `
+        ($narrowFail -notmatch 'reproduced') $narrowFail
+    Check 'T1448: the switch cannot turn a green re-run into "could not narrow"' `
+        ((Get-SoloVerdictNote -SoloResult 'PASS' -FilterMatchedNothing) -match 'NOT reproduced') ''
+
     # ---- arms 7-9: the wiring in floor-lane.ps1 -----------------------------
 
     $floor = Join-Path $RepoRoot 'scripts\floor-lane.ps1'
@@ -122,6 +154,29 @@ try {
         ($out -match '-Dtest-filter="GhozttyLaneSoloNoSuchTest"') $out
     Check 'a filtered run does not trigger the confirm pass' `
         ($out -notmatch 'solo confirm') $out
+
+    # T1448 wiring: the guard check sits between the green branch and the
+    # REPRODUCED line, so a guard refusal can never reach "REPRODUCED".
+    $confirm = $src.Substring($src.IndexOf('function Invoke-SoloConfirm'))
+    $iGuard = $confirm.IndexOf('Test-FilterMatchedNothing -LogPath $soloLog')
+    $iRepro = $confirm.IndexOf('REPRODUCED')
+    Check 'T1448: Invoke-SoloConfirm asks the guard question before saying REPRODUCED' `
+        ($iGuard -ge 0 -and $iRepro -gt $iGuard) "guard@$iGuard repro@$iRepro"
+
+    # T1448 end to end: the real lane log of the matched-nothing run above is
+    # exactly what a narrowed solo re-run produces, so the detector must fire
+    # on zig's own output, not only on the planted copy.
+    $realLog = $null
+    foreach ($m in [regex]::Matches($out, '[A-Za-z]:\\[^\s"'']+\.log')) {
+        if ((Test-Path -LiteralPath $m.Value) -and (Select-String -LiteralPath $m.Value -Pattern 'GhozttyLaneSoloNoSuchTest' -SimpleMatch -Quiet)) {
+            $realLog = $m.Value; break
+        }
+    }
+    Check 'T1448: the matched-nothing lane names its log' ($null -ne $realLog) $out
+    if ($realLog) {
+        Check 'T1448: zig''s real guard output is recognised as matched-nothing' `
+            (Test-FilterMatchedNothing -LogPath $realLog) $realLog
+    }
 
     Complete-TestBody  # T1039: the run reached the end of its body
 }

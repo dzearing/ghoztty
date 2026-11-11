@@ -1167,6 +1167,12 @@ function Invoke-SoloConfirm {
         Write-Host "  a diagnosis, not a pass. File it as a harness defect, not as broken code."
         return (Get-SoloVerdictNote -SoloResult $r)
     }
+    # T1448: a narrowed run that matched no test fails on the T631 guard without
+    # running anything. That is "could not narrow", never "reproduced".
+    if (Test-FilterMatchedNothing -LogPath $soloLog) {
+        Write-Host "  solo confirm: could not narrow - -Dtest-filter matched none of the named tests, so nothing re-ran and nothing was reproduced. The loaded run's verdict stands undiagnosed. ($soloLog)"
+        return (Get-SoloVerdictNote -SoloResult $r -FilterMatchedNothing)
+    }
     Write-Host "  solo confirm: $r alone - REPRODUCED. This is the code, not the box. ($soloLog)"
     return (Get-SoloVerdictNote -SoloResult $r)
 }

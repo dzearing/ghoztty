@@ -44,6 +44,25 @@ function Get-FailedTestName {
 
 <#
 .SYNOPSIS
+Says whether a narrowed lane log failed on the T631 filter guard (T1448).
+
+.DESCRIPTION
+Since T631 a `-Dtest-filter` run that matches no test FAILS, so a solo re-run
+narrowed to a name zig cannot match (a renamed test, a truncated log line, a
+title the compiler filters differently - T733) goes red without running a single
+test. That red is the guard refusing, not the test reproducing, and reading it as
+"reproduced" is the opposite of what happened. The guard's own message
+(src\build\TestFilterGuard.zig) is the one line that tells the two apart.
+#>
+function Test-FilterMatchedNothing {
+    param([string]$LogPath)
+    if (-not $LogPath -or -not (Test-Path -LiteralPath $LogPath)) { return $false }
+    $hit = Select-String -LiteralPath $LogPath -Pattern '-Dtest-filter matched no tests' -SimpleMatch -Quiet
+    return [bool]$hit
+}
+
+<#
+.SYNOPSIS
 The one-line annotation a solo re-run's verdict earns, for the run summary.
 
 .DESCRIPTION
@@ -55,7 +74,15 @@ an annotation that quietly greened a lane would hide exactly the regressions
 the floor exists to catch.
 #>
 function Get-SoloVerdictNote {
-    param([Parameter(Mandatory)][string]$SoloResult)
+    param(
+        [Parameter(Mandatory)][string]$SoloResult,
+        # The narrowed re-run went red on the T631 filter guard, not on a test
+        # (T1448). That run never executed a test, so it reproduced nothing.
+        [switch]$FilterMatchedNothing
+    )
+    if ($FilterMatchedNothing -and $SoloResult -ne 'PASS') {
+        return 'unknown: could not narrow - -Dtest-filter matched none of the named tests, so nothing re-ran'
+    }
     if ($SoloResult -eq 'PASS') {
         return 'PASS alone - NOT reproduced -> harness/timing, not the product'
     }
