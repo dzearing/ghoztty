@@ -1,0 +1,9 @@
+{
+  "version": "1.54.3",
+  "sections": [
+    { "title": "Stacked panes",
+      "items": [
+        { "title": "Panes you minimize stay minimized", "text": "When an agent opened a side pane next to a pane you'd minimized, that pane popped back out on its own. The new pane now opens beside the panes on screen, and only you bring a minimized pane back." }
+      ] }
+  ]
+}

@@ -105,6 +105,15 @@ change. Set by `newViewerSplit`, and by `newTerminalSplit` / `newSplit` when
 `aSidePaneInARowWithRoomForOneTakesItAndTheCallerKeepsTheCaret`,
 `aSidePaneOpenedWhileTheWindowIsCoveredIsThereWhenUncovered`.
 
+**Only the user brings a minimized pane back out.** A side pane split off a
+pane the user minimized in a collapsed row (an agent running in a strip opens
+one beside itself) goes in beside the pane on show nearest it instead
+(`BaseTerminalController.backgroundSplitAnchor`, i.e. `paneOnShow`). A run is
+contiguous, so a featured pane landing beyond a strip used to pull that strip,
+and every strip between, back out with it. A split that takes focus keeps its
+anchor: that is the user asking for it. Test:
+`aSidePaneFromAMinimizedPaneLeavesTheStripsMinimized`.
+
 ## Elevation and paint order
 
 The run is highest, and strips sit lower the farther they are from it, on both
