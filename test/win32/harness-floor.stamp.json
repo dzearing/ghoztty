@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-10T19:54:05-08:00",
-    "commit":  "119cc90b3",
+    "generated":  "2026-11-10T20:13:50-08:00",
+    "commit":  "be4f70c0c",
     "uncommitted":  [
-                        "test/win32/floor-lane-solo-confirm.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -204,7 +204,7 @@
                   "test/win32/hero-viewer-tile.ps1":  "8c4c0f82ad898502a7169e2248deb7dda1662b0c5dd3063aa86955d8f33f00fe",
                   "test/win32/hidden-window-memory.ps1":  "31e7f5d91bc68265640003f052f623e12ab11a7c7eb87d0f17fa4c136e13330d",
                   "test/win32/history-guard-flavor.ps1":  "1d9bdcea796adecd76f31f1920d575ffcf59d4b800e8328aaaf18ce47efe46d2",
-                  "test/win32/holder-adopt.ps1":  "a469a3e70dc374175943fa4eac8c673ed2edbe96ef3a5997bc7bf71e60de9ce6",
+                  "test/win32/holder-adopt.ps1":  "d6ebeef6546da97b65e42cf578f8dd02f195bbb9063bef04bea75c0a5c2cd2f2",
                   "test/win32/holder-durable.ps1":  "7d42ae987bd4754e5cb9d4a041064eee0aa22f35d6cbc21313b2b1a9eda81be4",
                   "test/win32/holder-soak.ps1":  "a8c7eaa00a75aeb97f8436055214b4afc913f9af0f6f9c552f672cd42f4f30f6",
                   "test/win32/holder-volume.ps1":  "9eff753b32372341d23edc406af363757896fabdf4a8a8bb37b8f16ef6f1ea63",

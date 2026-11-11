@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-10T19:37:15-08:00",
-    "commit":  "119cc90b3",
+    "generated":  "2026-11-10T20:08:35-08:00",
+    "commit":  "be4f70c0c",
     "uncommitted":  [
 
                     ],
@@ -837,7 +837,7 @@
                   "src/remote/agent/revoked_credential.zig":  "779f0bd15e7be3efe614e8152c253add3b6c6e3a9f365c69974da626f86f3b68",
                   "src/remote/agent/ring_snapshot.zig":  "43d927ca2996eeecafac57a50952fc4de4c0fb5b07bf1368d10eecd4a05f4234",
                   "src/remote/agent/server.zig":  "c6b19fd4d20b529a5dc207de0129c15283a5aca973903467c4be085ce3075dde",
-                  "src/remote/agent/session.zig":  "226b8672fea7ad3d0d291e0e9989cd747af1854b790d11fa5bfc1fe8c5a5b49c",
+                  "src/remote/agent/session.zig":  "704415ac92c4930fda62b09be8d4dbe0fa6db0c3343174dac4501c46b8a21a4a",
                   "src/remote/agent/session_meta.zig":  "e49d5f38c06cea3ca899917c134b8ff70aa39cb8123083450c4852d2e6b39891",
                   "src/remote/agent/sharing.zig":  "4ecfaef4c8e7cf9428531f82beee5b28bdb604ce3385507ddc858edf781ff29a",
                   "src/remote/agent/single_instance.zig":  "17b1519d6fc3a881da850f2b8d8ddc61c455bf1271f97d25936c907114f71dd6",
@@ -1278,7 +1278,7 @@
                   "test/win32/hero-viewer-tile.ps1":  "8c4c0f82ad898502a7169e2248deb7dda1662b0c5dd3063aa86955d8f33f00fe",
                   "test/win32/hidden-window-memory.ps1":  "31e7f5d91bc68265640003f052f623e12ab11a7c7eb87d0f17fa4c136e13330d",
                   "test/win32/history-guard-flavor.ps1":  "1d9bdcea796adecd76f31f1920d575ffcf59d4b800e8328aaaf18ce47efe46d2",
-                  "test/win32/holder-adopt.ps1":  "a469a3e70dc374175943fa4eac8c673ed2edbe96ef3a5997bc7bf71e60de9ce6",
+                  "test/win32/holder-adopt.ps1":  "d6ebeef6546da97b65e42cf578f8dd02f195bbb9063bef04bea75c0a5c2cd2f2",
                   "test/win32/holder-durable.ps1":  "7d42ae987bd4754e5cb9d4a041064eee0aa22f35d6cbc21313b2b1a9eda81be4",
                   "test/win32/holder-soak.ps1":  "a8c7eaa00a75aeb97f8436055214b4afc913f9af0f6f9c552f672cd42f4f30f6",
                   "test/win32/holder-volume.ps1":  "9eff753b32372341d23edc406af363757896fabdf4a8a8bb37b8f16ef6f1ea63",
