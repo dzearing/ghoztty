@@ -56,12 +56,10 @@ foreach ($f in @($Exe, $AgentExe)) {
 Assert-GhozttyIsolatedBuild -Exe $Exe | Out-Null
 
 function Stop-TestProcs {
-    # Our kill, not a crash: mark the live launches so the test desktop's
-    # postmortem does not report a deliberate TerminateProcess as CRASHED. One
-    # that is ALREADY gone died on its own and stays unmarked, so it still reports.
-    foreach ($r in @($script:GhozttyTestDesktopLaunches)) {
-        if (Get-Process -Id $r.Pid -ErrorAction SilentlyContinue) { $r.Killed = $true }
-    }
+    # Our kill, not a crash: Stop-RepoGhoztty marks every launch it actually
+    # stops as Killed (T2058), so the test desktop's postmortem stays quiet for
+    # it, while one that was ALREADY gone died on its own and still reports.
+    # This used to mark the records itself as a local workaround (T1467).
     [void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -SettleMs 800)
 }
 
