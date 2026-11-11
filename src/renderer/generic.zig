@@ -1817,6 +1817,19 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 }, .instant) > 0) self.scrollbar_dirty = false;
             };
 
+            // Win32 thumbnails (hero mode T59a, a fold's carried frame T2457,
+            // an opening card's exact frame T2458): when the GUI thread asked
+            // for one, read this frame's target back. Registered BEFORE the
+            // drawFrameEnd defer below so it runs AFTER it (LIFO): after the
+            // swap and after `signalFrameDrawn`. The readback is a synchronous
+            // GPU sync of 4-8 ms, and taken before the swap it held the frame
+            // a layout pass was blocked waiting for (T2873: the unfold's
+            // exact-size request, once per size, landed a whole 120 Hz vblank
+            // on every glide tick that carried one). It reads the renderer's
+            // own target, never the back buffer, so after the swap it still
+            // reads exactly the frame just drawn. One atomic load when idle.
+            defer if (comptime apprt.runtime == apprt.win32) self.heroSnapshot();
+
             // Let our graphics API do any bookkeeping, etc.
             // that it needs to do before / after `drawFrame`.
             self.api.drawFrameStart();
@@ -1831,7 +1844,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 // `signalFrameDrawn` existed and was documented as "called by
                 // the renderer thread after SwapBuffers" but had NO caller, so
                 // the wait it feeds was a 16ms sleep on an event nobody ever
-                // set. Same comptime shape as `heroSnapshot` below, and for
+                // set. Same comptime shape as `heroSnapshot` above, and for
                 // the same reason: the concept is win32's, the hook is here
                 // because here is where the swap happens.
                 //
@@ -1846,13 +1859,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     self.size.screen.height,
                 );
             }
-
-            // Win32 hero mode (T59a): registered after the drawFrameEnd
-            // defer so it runs BEFORE it (LIFO) — i.e. after the frame is
-            // fully presented to the target but before SwapBuffers. Captures
-            // a thumbnail of the last presented target when the GUI thread
-            // requested one. One atomic load when idle.
-            defer if (comptime apprt.runtime == apprt.win32) self.heroSnapshot();
 
             // Retrieve the most up-to-date surface size from the Graphics API
             const surface_size = try self.api.surfaceSize();

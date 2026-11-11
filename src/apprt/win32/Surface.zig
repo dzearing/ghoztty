@@ -2641,9 +2641,10 @@ fn snapRequest(self: *Surface, w: u32, h: u32, exact: bool) void {
 
 /// GUI thread, the carousel heartbeat (T1423): ask for a thumbnail only when
 /// `sched` says one is due. The capture itself is a synchronous GL readback on
-/// this pane's renderer thread, taken between drawing a frame and presenting
-/// it, so a request that lands while the user is typing into the hero pane
-/// holds back the very frame they are waiting for. True when it asked.
+/// this pane's renderer thread, taken right after a frame is presented (T2873;
+/// it used to sit between drawing and presenting), so a request that lands
+/// while the user is typing into the hero pane still delays the NEXT frame
+/// they are waiting for. True when it asked.
 pub fn heroSnapTick(
     self: *Surface,
     w: u32,
