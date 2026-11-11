@@ -1,11 +1,10 @@
 {
     "guard":  "radius-table",
     "script":  "test/win32/radius-table-audit.ps1",
-    "generated":  "2026-11-10T15:13:51-08:00",
-    "commit":  "0cd05b4a4",
+    "generated":  "2026-11-10T17:26:31-08:00",
+    "commit":  "83f4c4e3c",
     "uncommitted":  [
-                        "src/apprt/win32/activity_machines.zig",
-                        "src/apprt/win32/Window.zig"
+
                     ],
     "files":  {
                   "docs/design/win32-design-system.md":  "bb9f5610c7500ffc1240c8144cc3a2f73339a596d90418799ce29872c1962974",
@@ -65,6 +64,7 @@
                   "src/apprt/win32/chooser_cpu.zig":  "8aecf1253b878bcb951b7928f7244718e59f9ac10ae626dfb9ffddee6e7d06bd",
                   "src/apprt/win32/chooser_help.zig":  "b886379f026f9de00a4411270464122322200e2eebc1385961bc821408c6bfe9",
                   "src/apprt/win32/chooser_layout.zig":  "a76bcd60ab3371f126e7873989c7b2a1f9060fe4b72d1a12d7ef89490d19639e",
+                  "src/apprt/win32/chooser_load.zig":  "72ff85195accb7e98e26a8ba8c3695fa0e7a4bc172b12acf9542ba5630b7d090",
                   "src/apprt/win32/chooser_menu.zig":  "9bf2b649e019b931e31deefc684e09cdec2a49ba7f54d2adecb7edc3fd474cc1",
                   "src/apprt/win32/chooser_refresh.zig":  "d3e12f7c3193379910b5f1e0184652edd17615b78f2a27f30939ca9e5905d2da",
                   "src/apprt/win32/chooser_row_counts.zig":  "de6c43c061611dfbf3baeb77ceb14ec45150e7bc1cd5866bc7efd164db82778c",
