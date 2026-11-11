@@ -32,6 +32,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const w32 = @import("win32.zig");
+const occlusion = @import("occlusion.zig");
 const RefCount = @import("pane_refcount.zig").RefCount;
 const Surface = @import("Surface.zig");
 const ViewerPane = @import("ViewerPane.zig");
@@ -284,10 +285,19 @@ pub fn userTitled(self: *const PaneView) bool {
 }
 
 /// Occlusion. Terminals park their renderer; viewers just hide.
+///
+/// A pane whose WINDOW nobody can see stays hidden whatever the caller asks
+/// (T2914): every layout pass marks its panes visible, and in a covered or
+/// minimized window that used to undo the occlusion until the next poll. The
+/// window's reveal (`Window.applyOcclusion`) clears `occluded` before it
+/// shows the panes, so it is never held here.
 pub fn setVisible(self: *PaneView, visible: bool) void {
+    const shows = occlusion.paneShows(visible, self.parentWindow().occluded);
+    // Held because the window is hidden: give back its render targets too.
+    if (visible and !shows) self.setWindowHidden(true);
     switch (self.kind) {
-        .terminal => |s| s.setVisible(visible),
-        .viewer => |v| v.setVisible(visible),
+        .terminal => |s| s.setVisible(shows),
+        .viewer => |v| v.setVisible(shows),
     }
 }
 

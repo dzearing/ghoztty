@@ -1086,6 +1086,21 @@ $GuardTable = @(
             'src\apprt\win32\occlusion.zig'
         )
     },
+    # T2914: a pane added to a hidden window starts hidden, and a layout pass
+    # in a hidden window redraws nothing until it shows. Covers the gate in
+    # the pane's visibility, the window's occlusion re-ask on restore,
+    # activation and close-undo, and the coverage test it leans on.
+    [pscustomobject]@{
+        Name   = 'hidden-new-pane'
+        Script = 'test\win32\hidden-new-pane.ps1'
+        Stamp  = 'test\win32\hidden-new-pane.stamp.json'
+        Covers = @(
+            'test\win32\hidden-new-pane.ps1',
+            'src\apprt\win32\PaneView.zig',
+            'src\apprt\win32\CloseUndo.zig',
+            'src\apprt\win32\occlusion.zig'
+        )
+    },
     # T827: `+rearrange` over a window that holds a VIEWER pane. Main fixed a
     # Mac defect where a layout naming a preview pane failed with 'pane is no
     # longer alive' - win32 resolves names to *PaneView and cannot have it by

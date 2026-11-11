@@ -12,6 +12,7 @@ const apprt = @import("../../apprt.zig");
 const input = @import("../../input.zig");
 
 const App = @import("App.zig");
+const occlusion = @import("occlusion.zig");
 const remote_session = @import("remote_session.zig");
 const CoreApp = @import("../../App.zig");
 const MachineChooser = @import("MachineChooser.zig");
@@ -4675,6 +4676,21 @@ pub fn applyOcclusion(self: *Window, hidden: bool) void {
     self.landHeldTitle();
     self.setActiveTabVisible(true);
     self.layoutSplits();
+}
+
+/// The window was just shown by something other than the visibility poll -
+/// restored from minimized, brought back by a close-undo, activated - so ask
+/// Windows now whether anybody can see it, instead of keeping the poll's last
+/// answer for up to a quarter second (T2914). Since layout passes hold a
+/// hidden window's panes (`PaneView.setVisible`), a stale `occluded` would
+/// otherwise leave the panes of a window the user just raised unpainted
+/// until the poll caught up.
+pub fn refreshOcclusion(self: *Window) void {
+    const h = self.hwnd orelse return;
+    const hidden = !occlusion.disabled() and
+        (self.app.session_hidden or occlusion.windowHidden(h) != .visible);
+    if (hidden or self.occluded) return self.applyOcclusion(hidden);
+    self.setActiveTabVisible(true);
 }
 
 pub fn selectTabIndex(self: *Window, idx: usize) void {
@@ -21589,11 +21605,13 @@ pub fn windowWndProc(
             // both re-mark the surfaces visible (undoing the occlusion) and
             // collapse the grid, and the resize overlay would flash offscreen.
             if (wparam == w32.SIZE_MINIMIZED) {
-                window.setActiveTabVisible(false);
+                // Hidden at once, not at the next poll, so a layout pass
+                // meanwhile (a +split into it) holds its panes (T2914).
+                window.applyOcclusion(true);
                 return 0;
             }
             if (wparam == w32.SIZE_RESTORED or wparam == w32.SIZE_MAXIMIZED) {
-                window.setActiveTabVisible(true);
+                window.refreshOcclusion();
                 // Back from minimized: a title held meanwhile lands now
                 // (T2912), unless the poll still has the window covered.
                 if (!window.occluded) window.landHeldTitle();
@@ -22226,6 +22244,9 @@ pub fn windowWndProc(
                 window.activated = now_active;
                 window.inUseChanged();
             }
+            // Raised over what covered it: present now, not at the next
+            // visibility poll (T2914). Free when it was not hidden.
+            if (now_active and window.occluded) window.refreshOcclusion();
             // T1163: the restore brings the last-focused window back first,
             // so the layout has to learn which one that is. The sync is
             // debounced, so alt-tabbing costs one capture, not one per switch.

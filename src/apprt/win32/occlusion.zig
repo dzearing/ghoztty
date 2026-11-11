@@ -97,6 +97,17 @@ pub fn disabled() bool {
     return d;
 }
 
+/// May a pane a layout pass wants shown actually present (T2914)? Not while
+/// its window is hidden: a pane added to a covered or minimized window, or a
+/// layout pass run there (a split, a tab switch, a resize), used to mark every
+/// pane visible again until the next visibility poll - up to a quarter second
+/// of frames nobody sees, and a fresh pane's render targets allocated for
+/// them. Mac's counterpart is a terminal added to a hidden window starting
+/// hidden (surfaceTreeDidChange -> updateSeen).
+pub fn paneShows(wanted: bool, window_hidden: bool) bool {
+    return wanted and !window_hidden;
+}
+
 /// Why a window is hidden, or `.visible`.
 pub const State = enum { visible, minimized, cloaked, covered };
 
@@ -199,4 +210,17 @@ test "occlusion: too fragmented to track reads as visible" {
         c.* = r(x, 0, x + 2, 100);
     }
     try testing.expect(!fullyCovered(r(0, 0, 320, 100), &covers));
+}
+
+test "occlusion: a window behind one of exactly its frame is covered" {
+    // AppKit's pitfall on Mac (68a8344f0): an identical frame above did not
+    // count. Ours unions the cover rects, so an equal one covers.
+    try testing.expect(fullyCovered(r(100, 100, 900, 700), &.{r(100, 100, 900, 700)}));
+}
+
+test "occlusion: a layout pass shows a pane only in a window someone can see" {
+    try testing.expect(paneShows(true, false));
+    try testing.expect(!paneShows(true, true));
+    try testing.expect(!paneShows(false, false));
+    try testing.expect(!paneShows(false, true));
 }

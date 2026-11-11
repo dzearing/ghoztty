@@ -561,7 +561,9 @@ fn restoreWindow(self: *CloseUndo, parked: ParkedWindow) ?Reclose {
     // back restored - undo is asking to see it.
     _ = w32.ShowWindow(hwnd, if (w32.IsIconic(hwnd) != 0) w32.SW_RESTORE else w32.SW_SHOW);
     _ = w32.SetForegroundWindow(hwnd);
-    window.setActiveTabVisible(true);
+    // Shown again: re-ask whether anybody can see it (T2914) - the layout
+    // below holds a hidden window's panes, and the poll last saw it parked.
+    window.refreshOcclusion();
     window.layoutSplits();
     window.invalidateTabBar();
     if (window.tab_count > 0) {
