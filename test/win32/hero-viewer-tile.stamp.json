@@ -1,0 +1,15 @@
+{
+    "guard":  "hero-viewer-tile",
+    "script":  "test/win32/hero-viewer-tile.ps1",
+    "generated":  "2026-11-10T22:42:35-08:00",
+    "commit":  "4a7af493d",
+    "uncommitted":  [
+                        "test/win32/hero-viewer-tile.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/hero_math.zig":  "a4a73783e51e9f5b676d7b2cfe8eebda198924822c90b639484ea199d109b8d6",
+                  "src/apprt/win32/hero_snap_schedule.zig":  "c1eb3f178e825a6f7003d0e4cb92bc32492fe91aab289390f970e5b15ac4883f",
+                  "src/apprt/win32/HeroCarousel.zig":  "0487283f4c93218bb2034a3b59ca6a154dc31c212a300a29fe250130db987c2b",
+                  "test/win32/hero-viewer-tile.ps1":  "6e31374403ef78b0d5baa816c3074aa92cc53208f708ea487d0dfdafb23b381d"
+              }
+}

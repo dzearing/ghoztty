@@ -419,6 +419,23 @@ $GuardTable = @(
             'src\apprt\win32\hero_math.zig'
         )
     },
+    # The hero carousel's tiles (T397, T1469): the only run that proves every
+    # tile - terminal AND viewer - is painted with its border ring, and that
+    # a viewer tile shows the decoded page. It went red on the terminal tile's
+    # border in 2026-09 and nothing said so, because no row covered it. Covers
+    # the harness, the carousel that paints the tiles, the geometry its oracle
+    # mirrors, and the capture pacing that decides when a tile has a picture.
+    [pscustomobject]@{
+        Name   = 'hero-viewer-tile'
+        Script = 'test\win32\hero-viewer-tile.ps1'
+        Stamp  = 'test\win32\hero-viewer-tile.stamp.json'
+        Covers = @(
+            'test\win32\hero-viewer-tile.ps1',
+            'src\apprt\win32\HeroCarousel.zig',
+            'src\apprt\win32\hero_math.zig',
+            'src\apprt\win32\hero_snap_schedule.zig'
+        )
+    },
     # The rearrange-mode action (T1524): the only thing that proves a bound
     # `toggle_rearrange_mode` puts the window in the mode and raises the tab
     # strip it needs as a drop target, from a terminal AND from a focused

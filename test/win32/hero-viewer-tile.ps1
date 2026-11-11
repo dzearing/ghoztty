@@ -359,6 +359,14 @@ try {
     Remove-Item $md -Force -ErrorAction SilentlyContinue
 }
 
+# A clean green run stamps the covered files (T783, T1469) so
+# scripts\guard-due.ps1 can answer "has this been checked against the code as
+# it now stands?". Never under -NegativeControl: that run is red on purpose.
+if ($script:fail -eq 0 -and $script:pass -gt 0 -and -not $NegativeControl) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard hero-viewer-tile -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+}
+
 Write-Host ''
 if ($script:fail -eq 0) { Write-Host "ALL PASS ($($script:pass) checks)"; exit 0 }
 Write-Host "$($script:fail) FAILURE(S) of $($script:pass + $script:fail) checks" -ForegroundColor Red
