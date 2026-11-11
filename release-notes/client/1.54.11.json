@@ -1,0 +1,19 @@
+{
+  "version": "1.54.11",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "The machine chooser has a model for showing how busy each machine is." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "A pane id no pane carries any more is refused after a restart instead of answering to whatever came back in its place." },
+        { "text": "A machine reached through your account is named the same in its Activity panel whichever way you open it." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The agent's --relay daemon mode now has on-box proof that it parks and resumes around a pending revocation." },
+        { "text": "A dropped remote link is now checked against the tabs beside its pill, not just the pill." }
+      ] }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "version": "1.54.11",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "Signing back in while offline brings the machine back without restarting the app." },
+        { "text": "A re-opened pane now shows a restored session's history after the session manager restarts." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The scrollback-bearing attach repaint is now measured at the retention ceiling, and asserted smaller than the ring it replaces." }
+      ] }
+  ]
+}
