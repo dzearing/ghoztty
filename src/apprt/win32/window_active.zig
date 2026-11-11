@@ -91,6 +91,35 @@ pub fn shouldForwardFocus(a: Activation, window: usize) bool {
     return a.active == window;
 }
 
+/// Whether a window is the one IN USE (T2909, Mac `WindowInUse.animates`,
+/// main 68a8344f0): the window activation sits on, and one that can be seen.
+/// Work that only matters to the eye - the busy light circling a working
+/// pane, the sidebar's busy sheen - runs there and nowhere else; every other
+/// window holds that motion still (the light at the top, the sheen off), so
+/// every window of ours holds still while another app is in use. State never
+/// pauses: activity, the sidebar's busy marks and the taskbar progress are
+/// tracked for every window as always, and a window brought forward shows
+/// them at once.
+///
+/// `activated` is the window's own WM_ACTIVATE answer rather than a query of
+/// `isActive`: the message arrives mid-transition, while the foreground and
+/// active-window queries can still name the window that is losing it, and it
+/// is exact on a background desktop as well. `hidden` is the visibility poll's
+/// verdict (`occlusion.zig`: covered, cloaked, minimized, session locked) or a
+/// minimized window.
+pub fn inUse(activated: bool, hidden: bool) bool {
+    return activated and !hidden;
+}
+
+test "T2909: only the activated window that can be seen is in use" {
+    try testing.expect(inUse(true, false));
+    // Active but covered or minimized: nobody sees it turn.
+    try testing.expect(!inUse(true, true));
+    // On screen but another window (or another app) is in use.
+    try testing.expect(!inUse(false, false));
+    try testing.expect(!inUse(false, true));
+}
+
 const root: usize = 0x1000;
 const other: usize = 0x2000;
 

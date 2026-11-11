@@ -1,12 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-11T01:50:56-08:00",
-    "commit":  "f21e0360e",
+    "generated":  "2026-11-11T02:08:02-08:00",
+    "commit":  "4d1bce708",
     "uncommitted":  [
-                        "test/win32/viewer-feedback-carousel.ps1",
-                        "test/win32/viewer-feedback-images.ps1",
-                        "test/win32/viewer-feedback-utf16.ps1"
+                        "test/win32/window-in-use.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -252,7 +250,6 @@
                   "test/win32/layout-blobs.ps1":  "c4f8e6450046624eb2cff3a62643d2091ab71fc7d045cb710e2b79fe9a619091",
                   "test/win32/layout-capture-cost.ps1":  "1fb2a39a3d332f836f465d15974d2cb26d26fc8496ee69ffbf91bfa3142f23c8",
                   "test/win32/ledger-dupes.ps1":  "f693ddaeeb788720bcec7d91a74af3342bc299cea6746c4fecfc7e3930d65635",
-                  "test/win32/lib/AccProbe.ps1":  "d9eb8fa032c9254a0e7581a48cab4ccf1f42f459bf92152978e4c8bc1de54c32",
                   "test/win32/lib/AgentLineage.ps1":  "44fd40c6b34712aba13c84ef5257e392195ca475396909bc8052a3e7fd845dc3",
                   "test/win32/lib/ApplierSandbox.ps1":  "82870ff2c01dd3d3e36b1b1f8ff7ed7359059245db8e5d88ac9e30838e177bd8",
                   "test/win32/lib/ArgvHazardAudit.ps1":  "b5158017c82268ea108deb78d6233f98b9864b3ff31439a93a2c0c10fd4de518",
@@ -574,12 +571,11 @@
                   "test/win32/viewer-diff-tree.ps1":  "88025654dcd8819678596bfcd043f45a0e14dbb3ef2057abb99eed9a09474f82",
                   "test/win32/viewer-error-card.ps1":  "f8015c9f4ae53bf6ed0daa8f079cc1c8618b8841ca7da22dc40832e65f01a3c9",
                   "test/win32/viewer-feedback.ps1":  "a27afcc98a135b5f5e6ae9259d6ee57b11ea3a86d01175b8ebac9edb3e5469cd",
-                  "test/win32/viewer-feedback-a11y.ps1":  "5fac54144f172e562b4139426c421f0a083bb19294815e3095af62b8201e4411",
                   "test/win32/viewer-feedback-alpha.ps1":  "7e3ed8de4c1caf1382b53ab1fa99ce89b4a3d9239263be65c7bbf80de97f34c1",
                   "test/win32/viewer-feedback-capture.ps1":  "b4cb455788298726f5b0bdf98020e5176430ebcaa451b3d56172c3975821d1c8",
-                  "test/win32/viewer-feedback-carousel.ps1":  "537ae75c2a2f895677872fa5ff3b67a7fbdc4df72366664922ba04c6107e6fe3",
-                  "test/win32/viewer-feedback-images.ps1":  "2049ca9b56d70012c00026bce0a8131a2624d48fb352ab9438cc1f7f5709d5cf",
-                  "test/win32/viewer-feedback-utf16.ps1":  "0aaa020198a8ec6d1e17e651ee29e7540b3f9f1afc1b501718898ddbe8b8582d",
+                  "test/win32/viewer-feedback-carousel.ps1":  "548d97334711993fbf274fb6284f7799b79cc1842aa1d51bcbdc2207364bea9c",
+                  "test/win32/viewer-feedback-images.ps1":  "036999898e778c5fcf05eebb4111ed21e647ca362f351f8c9ce93538d7e206c0",
+                  "test/win32/viewer-feedback-utf16.ps1":  "72ed5d9eb1904b5a150bca33040a823eb702d6b69a4f0f9dc75845ad7851465b",
                   "test/win32/viewer-find.ps1":  "1c91b74ae75373354a59c2c35607ba444781de367929bc0fbe758f95d7260c75",
                   "test/win32/viewer-fold-carried.ps1":  "5def07799d4133cc584b6cb6b966271a43971f91864d0242834acfb05399edb4",
                   "test/win32/viewer-html.ps1":  "ca16fd4e3837cb63a78fa4763c7e78399ac3b97bcab9872a62741e414e147929",
@@ -604,6 +600,7 @@
                   "test/win32/window-close-memory.ps1":  "a24fa4cb28aaa758edf3461dbf39726a0bba52e620c40004a10c9c0746eb6481",
                   "test/win32/window-color.ps1":  "ee0cd62d72645ee63415938b2ca77b3b29b5cd7deb1b4ff3ee0fd11053465f93",
                   "test/win32/window-composite.ps1":  "baabce20f85c453dc926c93f8cf784c12686905152b4ef0dc264b82257b36f8d",
+                  "test/win32/window-in-use.ps1":  "c79a51ec377224dfcdd808af977d1cfee3b5e07863b88339caa653a5180d28ff",
                   "test/win32/window-modal-block.ps1":  "5a2962e9dd1d3c9a39d35c3aa82bae16be5f62d4067e2b68145cb954ae45dfd5",
                   "test/win32/window-name-env.ps1":  "b8e63bc0ba6c5d1914962c3ab97fe83bcfac811f185f3873a09ffa8cd6744a44",
                   "test/win32/window-name-restore.ps1":  "6ed6b2d1c48dda4f6038f410ad260a94efc52d458d8b4d5a6ae6b3ad24579bfe",

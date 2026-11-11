@@ -1,0 +1,14 @@
+{
+    "guard":  "window-in-use",
+    "script":  "test/win32/window-in-use.ps1",
+    "generated":  "2026-11-11T00:16:38-08:00",
+    "commit":  "4d1bce708",
+    "uncommitted":  [
+                        "src/apprt/win32/window_active.zig",
+                        "test/win32/window-in-use.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/window_active.zig":  "4076ebbfce81f4505a33e20f6e6da8f95cc82ec11130b6b3b35544d899efe535",
+                  "test/win32/window-in-use.ps1":  "c79a51ec377224dfcdd808af977d1cfee3b5e07863b88339caa653a5180d28ff"
+              }
+}

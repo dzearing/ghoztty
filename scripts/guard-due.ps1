@@ -4129,6 +4129,18 @@ $GuardTable = @(
             'test\win32\pane-busy-light.ps1'
         )
     },
+    # T2909: the busy light and the sidebar sheen move only in the window in
+    # use (Mac `WindowInUse.animates`); another window brought forward stills
+    # them, and bringing it back starts them again.
+    [pscustomobject]@{
+        Name   = 'window-in-use'
+        Script = 'test\win32\window-in-use.ps1'
+        Stamp  = 'test\win32\window-in-use.stamp.json'
+        Covers = @(
+            'src\apprt\win32\window_active.zig',
+            'test\win32\window-in-use.ps1'
+        )
+    },
     # T1832: a window's own gradient - `+new-window --color=random`, the New
     # Window action, and the seed surviving a restart. The unit tests own the
     # palette maths; this row owns the claim that the right windows get one, the

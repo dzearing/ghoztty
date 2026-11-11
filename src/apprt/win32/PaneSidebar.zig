@@ -688,6 +688,10 @@ metrics: pane_sidebar.TextMetrics = .{ .title_h = 19, .caption_h = 16 },
 paint_marks: motion.Marks = .{},
 paint_ms: u64 = 0,
 paint_motion: bool = true,
+/// The busy sheen moves (T2909): `paint_motion` in the window in use only.
+/// Every other window draws its busy pills still - the glint off, drift and
+/// rim still - as with Animation effects off.
+paint_sheen: bool = true,
 marks: motion.Marks = .{},
 anim_armed: bool = false,
 /// Where the moving pills were drawn (T1925): the paint fills `paint_dirty`
@@ -2463,6 +2467,7 @@ fn paintFrame(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
     self.paint_dirty = .{};
     self.paint_ms = w32.GetTickCount64();
     self.paint_motion = App.clientAreaAnimationsEnabled();
+    self.paint_sheen = self.paint_motion and self.window.inUse();
     self.paint_stepped = false;
     self.beginSheenComp(&l);
     // A drag over the column: the rows as they slide, the dragged one lifted
@@ -2494,7 +2499,7 @@ fn paintFrame(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
     if (self.paint_full) self.sheens.endFullPaint();
     self.marks = self.paint_marks;
     self.dirty = self.paint_dirty;
-    if (self.paint_marks.moving(self.paint_motion)) self.armMotion(self.paint_stepped);
+    if (self.paint_marks.moving(self.paint_sheen)) self.armMotion(self.paint_stepped);
 }
 
 // -------------------------------------------------------------------------
@@ -3716,7 +3721,7 @@ const comp_tick_ms: u32 = 250;
 fn beginSheenComp(self: *PaneSidebar, l: *const pane_sidebar.Layout) void {
     if (!self.paint_live) return;
     self.sheens.beginPaint();
-    self.paint_comp_ok = self.paint_motion and !sheenStepSeam() and self.column == null and self.xfade == null and self.drag == null and self.item_drag == null;
+    self.paint_comp_ok = self.paint_sheen and !sheenStepSeam() and self.column == null and self.xfade == null and self.drag == null and self.item_drag == null;
     if (!self.paint_comp_ok) self.sheens.dropAll();
     self.paint_view = l.viewport;
     self.paint_sticky = if (l.sticky) |k| l.heads[k].rect else null;
@@ -3758,7 +3763,7 @@ fn onMotionTick(self: *PaneSidebar) void {
     const hwnd = self.hwnd;
     const root = w32.GetAncestor(hwnd, w32.GA_ROOT);
     const seen = w32.IsWindowVisible(hwnd) != 0 and !(root != null and w32.IsIconic(root.?) != 0);
-    if (seen and self.marks.moving(App.clientAreaAnimationsEnabled())) {
+    if (seen and self.marks.moving(App.clientAreaAnimationsEnabled() and self.window.inUse())) {
         // A progress report that lapses without a "done" stops being work
         // by the clock alone (T2279: busy includes the report lighting the
         // border), so re-read the roster now and then while a row sheens.
@@ -4338,7 +4343,7 @@ fn sheenFor(self: *PaneSidebar, key: u64, busy: bool, r: pane_sidebar.Rect) f64 
     const before = self.paint_marks;
     const level = self.sheenLevel(key, busy);
     const after = self.paint_marks;
-    if (!(self.paint_motion and (after.busy != before.busy or after.fading != before.fading))) return level;
+    if (!(self.paint_sheen and (after.busy != before.busy or after.fading != before.fading))) return level;
     // T2801: a pill wholly on show is the compositor's, and the paint draws
     // no sheen on it; any other is stepped here, as before.
     if (self.paint_live) {
@@ -4425,7 +4430,7 @@ fn paintOverlay(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, radius: 
         motion.rim_dip * @as(f64, self.scale),
         t.dark,
     );
-    if (self.paint_motion and level > 0) o.busyAt(level, self.paint_ms);
+    if (self.paint_sheen and level > 0) o.busyAt(level, self.paint_ms);
     o.tile_rim = tile;
     if (!o.visible()) return;
     const dib = Dib32.create(hdc, w, h) orelse return;

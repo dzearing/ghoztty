@@ -183,6 +183,7 @@ const drag_hold = @import("drag_hold.zig");
 const StripFace = @import("StripFace.zig").StripFace;
 const pane_stack_state = @import("pane_stack_state.zig");
 const busy_light = @import("busy_light.zig");
+const window_active = @import("window_active.zig");
 const PaneDesk = @import("PaneDesk.zig");
 const comp_overlay = @import("../../renderer/comp_overlay.zig");
 const desk_palette = @import("desk_palette.zig");
@@ -755,6 +756,8 @@ glow_fade_mark: u32 = 0,
 busy_timer_ms: u32 = 0,
 busy_sig: u64 = 0,
 busy_t0_ms: i64 = 0,
+/// This window's last WM_ACTIVATE answer (T2909): half of `inUse`.
+activated: bool = false,
 
 /// Split divider drag state.
 dragging_split: bool = false,
@@ -4653,10 +4656,12 @@ pub fn applyOcclusion(self: *Window, hidden: bool) void {
     if (hidden) {
         if (!was) log.debug("window hidden: panes stop presenting", .{});
         self.setActiveTabVisible(false);
+        if (!was) self.inUseChanged();
         return;
     }
     if (!was) return;
     log.debug("window revealed: panes present again", .{});
+    self.inUseChanged();
     if (self.hwnd) |h| if (w32.IsIconic(h) != 0) return;
     self.setActiveTabVisible(true);
     self.layoutSplits();
@@ -9465,27 +9470,51 @@ pub fn syncBusyLights(self: *Window) void {
         }
         if (lit > 0) sig = h.final() | 1;
     }
+    // T2909: the light circles only in the window in use; anywhere else it
+    // holds still at the top, the way it does with Animation effects off,
+    // and its clock only watches for an expiry.
     const want: u32 = if (lit == 0)
         0
-    else if (App.clientAreaAnimationsEnabled())
+    else if (App.clientAreaAnimationsEnabled() and self.inUse())
         busy_light.FRAME_MS
     else
         busy_light.IDLE_TICK_MS;
+    var restill = false;
     if (want != self.busy_timer_ms) {
         if (want == 0) {
             _ = w32.KillTimer(hwnd, BUSY_LIGHT_TIMER_ID);
         } else {
             if (self.busy_timer_ms == 0) self.busy_t0_ms = now;
             _ = w32.SetTimer(hwnd, BUSY_LIGHT_TIMER_ID, want, null);
+            log.info("busy light clock={s} lit={d}", .{ if (want == busy_light.FRAME_MS) "turning" else "still", lit });
         }
+        // Turning <-> still with the same lights: the head moves to (or
+        // from) the top, which only a full paint of the rings draws.
+        restill = self.busy_timer_ms != 0 and want != 0;
         self.busy_timer_ms = want;
     }
+    if (restill and sig == self.busy_sig) self.repaintPaneDesk();
     if (sig != self.busy_sig) {
         if ((sig == 0) != (self.busy_sig == 0))
             log.info("busy light {s} lit={d}", .{ if (sig == 0) "off" else "on", lit });
         self.busy_sig = sig;
         self.repaintPaneDesk();
     }
+}
+
+/// Whether this window is the one in use (T2909, `window_active.inUse`):
+/// activated, and seen - not covered, cloaked or minimized.
+pub fn inUse(self: *const Window) bool {
+    const hwnd = self.hwnd orelse return false;
+    return window_active.inUse(self.activated, self.occluded or w32.IsIconic(hwnd) != 0);
+}
+
+/// Activation or visibility moved (T2909): the motion only the window in use
+/// runs starts or holds still here. Cheap and idempotent.
+fn inUseChanged(self: *Window) void {
+    if (self.closing) return;
+    self.syncBusyLights();
+    if (self.sidebar) |sb| sb.repaint();
 }
 
 /// Where every light's head is right now.
@@ -22102,6 +22131,13 @@ pub fn windowWndProc(
             // The sidebar every window shares: take what changed while
             // another window was in use (T2336).
             if (activated != w32.WA_INACTIVE) window.paneSidebarCatchUp();
+            // T2909: the busy light and the sidebar sheen move only in the
+            // window in use, so both directions start or still them.
+            const now_active = activated != w32.WA_INACTIVE;
+            if (now_active != window.activated) {
+                window.activated = now_active;
+                window.inUseChanged();
+            }
             // T1163: the restore brings the last-focused window back first,
             // so the layout has to learn which one that is. The sync is
             // debounced, so alt-tabbing costs one capture, not one per switch.
