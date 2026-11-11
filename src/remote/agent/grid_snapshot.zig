@@ -110,6 +110,12 @@ fn clampDim(v: u16) u16 {
 /// skip the whole raw ring precisely because this scrollback is reflowed to the
 /// ATTACHING client's geometry, which the ring (a concatenation of segments drawn
 /// at different sizes) can never be.
+///
+/// Measured at this ceiling (T1442, `grid_snapshot_budget.zig`, which asserts
+/// both): a build log holds 1,932 rows in 3,996 KiB of pages and repaints in
+/// 158 KiB; a styled agent transcript holds 1,736 rows in 4,220 KiB (both
+/// screens) and repaints in 368 KiB - 7% and 18% of the 2 MiB ring replay a
+/// fresh attach no longer sends. Per session that is ~6 MiB with the ring.
 pub const max_scrollback_bytes: usize = 4 * 1024 * 1024;
 
 /// What a snapshot should cover.

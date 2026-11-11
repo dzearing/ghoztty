@@ -1,11 +1,12 @@
 {
     "guard":  "thread-join",
     "script":  "test/win32/thread-join-audit.ps1",
-    "generated":  "2026-11-10T15:36:42-08:00",
-    "commit":  "66e7250e9",
+    "generated":  "2026-11-10T17:29:18-08:00",
+    "commit":  "369254e00",
     "uncommitted":  [
-                        "src/remote/relay_signin.zig",
-                        "src/remote/relay_suspend.zig"
+                        "src/remote/agent/grid_snapshot.zig",
+                        "src/remote/agent/grid_snapshot_budget.zig",
+                        "src/remote/agent/main.zig"
                     ],
     "files":  {
                   "src/datastruct/array_list_collection.zig":  "f14f6cc26a11eabdd35a36976dce1b3702a2c7f4771b60e339afd1015d4e58dd",
@@ -25,13 +26,14 @@
                   "src/remote/agent/descendants.zig":  "bbd319ec821cb683fbaddfd9b76f4bc20c32d44b6efb5369aa25e6341142319b",
                   "src/remote/agent/enroll.zig":  "ebec2f4106c8aef3fd7fe9457bdb334cbb5a650bc9a0947365971e7472942919",
                   "src/remote/agent/foreground.zig":  "82275d0b6662ba646b4df91534b666f21eaaee6de7f111b85545f96391597388",
-                  "src/remote/agent/grid_snapshot.zig":  "e7caba791587deea23d070e0584a4be830edcd27f0b3bbb36f6abba6e32351f5",
+                  "src/remote/agent/grid_snapshot.zig":  "ba2fbd6616f5e5cd117bfef0fd9b97e11e5feaccf7e2ed1ec6ffbea47a6fb197",
+                  "src/remote/agent/grid_snapshot_budget.zig":  "a5b7511700bc74a6127d46f0dff6148ecb14e459df1602770ba0e6c1743413bb",
                   "src/remote/agent/handoff.zig":  "cc825bbd604abab575e3d2a0d1589e43b3de2b38ce96848563d773b2c0057716",
                   "src/remote/agent/holder_adopt.zig":  "364d11b359dad4497047e51922c728a816e34c9aa24e15e198927ab4acba261b",
                   "src/remote/agent/keepalive.zig":  "178584c3f9dfd67a8b00076c2ef4147631495461fec17fad8cd0a45d6cb9cb4e",
                   "src/remote/agent/layout_meta.zig":  "7541949239eed45aec6cd00297fa95e56239239e8aab33600439f258f81a00be",
                   "src/remote/agent/link_control.zig":  "e3138c9c1326081092f25b9c090388fe58a3561c17734a83778df474ededd40a",
-                  "src/remote/agent/main.zig":  "272f1cd366d477bf6fb13713ebace7a0a3db735374feb055bfcc07dd7c77f292",
+                  "src/remote/agent/main.zig":  "21a02e3c70a84d93bdd79f4a08e6d75784cd89ac5f1210695ee3ac2797a2d251",
                   "src/remote/agent/metrics.zig":  "c4f0863d8706b9b7d24057cff5b388f72cc606a30df05105b19a19f97a68a4d6",
                   "src/remote/agent/msi_ca.zig":  "fa0ef30b29983b3edf5995afbe9ac5d4c5909361ac76b33e0c43651787eb17fb",
                   "src/remote/agent/mux.zig":  "bb91f11b8e95720f71e322fe788d2b7fbeba605e99132ec0ce0f317003f49867",
