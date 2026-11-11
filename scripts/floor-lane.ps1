@@ -244,6 +244,12 @@ param(
     # condition that had already passed. -MinCommitFreeGB 0 disables the gate.
     [double]$MinCommitFreeGB = 8,
     [double]$WarnCommitFreeGB = 24,
+    # How long a reading under -MinCommitFreeGB is WAITED out before it is a
+    # refusal (T1459): another process moves free commit by tens of GB in
+    # minutes, so the first low reading is a reason to wait, not to give up.
+    # Polled every -CommitPollSeconds. 0 restores the immediate refusal.
+    [int]$CommitWaitSeconds = 600,
+    [int]$CommitPollSeconds = 15,
     # Skip the solo confirm pass a red lane triggers (T1170). It costs one
     # narrowed re-run of an already-red lane, and it is on by default for the
     # same reason -NoCatch is: "remember to pass a flag next time" means the
@@ -1644,10 +1650,21 @@ if ($MinFreeGB -gt 0) {
 # first compile -- so the refusal is set where a lane cannot complete at all
 # rather than where it is merely tight.
 if ($MinCommitFreeGB -gt 0 -or $WarnCommitFreeGB -gt 0) {
-    $commit = Get-SystemCommit
-    $state = Get-CommitHeadroomState -CommittedGB $(if ($commit) { $commit.CommittedGB } else { $null }) `
-        -LimitGB $(if ($commit) { $commit.LimitGB } else { $null }) `
-        -FailFreeGB $MinCommitFreeGB -WarnFreeGB $WarnCommitFreeGB
+    # A reading under the floor is waited out, bounded, before it refuses
+    # (T1459): on 2026-09-08 the gate gave up at 1.6 GB free and two minutes
+    # later 29 GB was free. The wait names the largest committers and never
+    # closes one -- those are the user's applications.
+    $script:lastCommit = $null
+    $readCommit = {
+        $c = Get-SystemCommit
+        $script:lastCommit = $c
+        Get-CommitHeadroomState -CommittedGB $(if ($c) { $c.CommittedGB } else { $null }) `
+            -LimitGB $(if ($c) { $c.LimitGB } else { $null }) `
+            -FailFreeGB $MinCommitFreeGB -WarnFreeGB $WarnCommitFreeGB
+    }
+    $wait = Wait-CommitHeadroom -Read $readCommit -MaxWaitSeconds $CommitWaitSeconds -PollSeconds $CommitPollSeconds
+    $state = $wait.State
+    $commit = $script:lastCommit
     if ($state.Verdict -ne 'ok') {
         $pageFile = Get-PageFileGB
         Write-Host ''
@@ -1658,7 +1675,8 @@ if ($MinCommitFreeGB -gt 0 -or $WarnCommitFreeGB -gt 0) {
         }
     }
     if ($state.Verdict -eq 'fail') {
-        Write-Host "FLOOR PREFLIGHT FAIL: less than $MinCommitFreeGB GB of system commit free."
+        $waitedText = if ($wait.WaitedSeconds -gt 0) { " after waiting $($wait.WaitedSeconds) s for it to come back" } else { '' }
+        Write-Host "FLOOR PREFLIGHT FAIL: less than $MinCommitFreeGB GB of system commit free$waitedText."
         Write-Host '  (no lane was launched; a lane that starts here dies mid-compile in a fault that reads as broken code)'
         Write-Host ''
         Write-Host 'FLOOR SUMMARY: preflight=FAIL'

@@ -133,6 +133,81 @@ function Get-CommitHeadroomState {
     }
 }
 
+function Get-TopCommitters {
+    <#
+        The processes holding the most commit (private bytes), largest first,
+        as "name pid N.N GB" strings. Named, never acted on: the committers are
+        the user's applications, and closing one is their call (T1459).
+    #>
+    param([int]$Top = 3)
+    try {
+        return @(Get-Process -ErrorAction Stop |
+            Sort-Object PrivateMemorySize64 -Descending |
+            Select-Object -First $Top |
+            ForEach-Object { '{0} (pid {1}) {2:N1} GB' -f $_.ProcessName, $_.Id, ($_.PrivateMemorySize64 / 1GB) })
+    }
+    catch { return @() }
+}
+
+function Wait-CommitHeadroom {
+    <#
+        Bounded wait for commit headroom to come back (T1459).
+
+        Free commit is a whole-machine number another process moves by tens of
+        GB: on 2026-09-08 the preflight refused at 1.6 GB free while a user
+        application held 88 GB, and two minutes later 29 GB was free and every
+        lane passed. So a 'fail' reading is a reason to WAIT, saying what is
+        held and by whom, and only an expired wait is a refusal.
+
+        -Read   scriptblock returning the state object Get-CommitHeadroomState
+                returns (the floor passes the live reading; the harness passes
+                a scripted sequence).
+        -Sleep  scriptblock taking seconds (the harness passes a no-op).
+        -Note   scriptblock taking one line to print.
+
+        Returns { Verdict = 'ok'|'warn'|'unknown'|'fail'; State; WaitedSeconds;
+        Polls }. 'fail' only when the budget ran out with the reading still
+        under the floor. A reading that turns 'unknown' mid-wait ends the wait
+        as 'unknown' -- an unreadable number never refuses (T1133).
+    #>
+    param(
+        [Parameter(Mandatory)][scriptblock]$Read,
+        [int]$MaxWaitSeconds = 600,
+        [int]$PollSeconds = 15,
+        [scriptblock]$Sleep = { param($s) Start-Sleep -Seconds $s },
+        [scriptblock]$Note = { param($l) Write-Host $l },
+        [scriptblock]$Committers = { Get-TopCommitters }
+    )
+    if ($PollSeconds -lt 1) { $PollSeconds = 1 }
+    $state = & $Read
+    $waited = 0
+    $polls = 1
+    if ($state.Verdict -ne 'fail' -or $MaxWaitSeconds -le 0) {
+        return [pscustomobject]@{ Verdict = $state.Verdict; State = $state; WaitedSeconds = 0; Polls = $polls }
+    }
+    $held = @(& $Committers)
+    & $Note "COMMIT WAIT: $($state.Reason)"
+    & $Note "  waiting up to $MaxWaitSeconds s for the headroom to come back (polling every $PollSeconds s); nothing will be closed"
+    if ($held.Count) { & $Note "  largest committers: $($held -join ', ')" }
+    $lastReport = 0
+    while ($waited -lt $MaxWaitSeconds) {
+        $step = [math]::Min($PollSeconds, $MaxWaitSeconds - $waited)
+        & $Sleep $step
+        $waited += $step
+        $state = & $Read
+        $polls++
+        if ($state.Verdict -ne 'fail') {
+            & $Note "COMMIT WAIT OVER after $waited s: $($state.Reason)"
+            return [pscustomobject]@{ Verdict = $state.Verdict; State = $state; WaitedSeconds = $waited; Polls = $polls }
+        }
+        if ($waited - $lastReport -ge 60) {
+            $lastReport = $waited
+            & $Note "  still waiting ($waited of $MaxWaitSeconds s): $($state.FreeGB) GB free"
+        }
+    }
+    return [pscustomobject]@{ Verdict = 'fail'; State = $state; WaitedSeconds = $waited; Polls = $polls }
+}
+
 function Get-CommitHeadroomAdvice {
     <#
         The remedy lines printed under a warn or a fail. Kept beside the

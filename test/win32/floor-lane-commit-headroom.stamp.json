@@ -1,14 +1,14 @@
 {
     "guard":  "lane-commit-headroom",
     "script":  "test/win32/floor-lane-commit-headroom.ps1",
-    "generated":  "2026-09-04T09:50:34-07:00",
-    "commit":  "091fc5c82",
+    "generated":  "2026-11-10T21:03:07-08:00",
+    "commit":  "00273b23a",
     "uncommitted":  [
                         "scripts/lib/CommitHeadroom.ps1",
                         "test/win32/floor-lane-commit-headroom.ps1"
                     ],
     "files":  {
-                  "scripts/lib/CommitHeadroom.ps1":  "d0b9c51ed47e8c8fb890aaf75789ef824d5f6f4b4f906b942a6e9d0ad1873223",
-                  "test/win32/floor-lane-commit-headroom.ps1":  "63aed36ba60ecbd7af05f2349f050a390eccfa1f6768b52b416d9d27b60837ec"
+                  "scripts/lib/CommitHeadroom.ps1":  "3c16f8cb0a673b12c868410786971d9f6f7a838b2eecd5bd5fea2b7e84a93e4b",
+                  "test/win32/floor-lane-commit-headroom.ps1":  "081cc99dbb34e21565193d9e242af531ce49fd6e9343106b017cb4a754e96bac"
               }
 }
