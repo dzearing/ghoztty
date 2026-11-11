@@ -485,12 +485,32 @@ struct ViewerDiffPaneTests {
         #expect(UserDefaults.standard.string(forKey: "ViewerDiffViewStyle") == "split")
     }
 
+    /// A working-tree pane in a window no one can see skips its polls, and
+    /// brings the listing up to date once, the moment the window shows.
+    @Test func aHiddenWorkingTreeDiffCatchesUpWhenShown() async throws {
+        let repo = try makeRepo()
+        let (window, viewer) = makeViewer(location: "git-status:", repo: repo)
+        defer { window.contentView?.subviews.forEach { $0.removeFromSuperview() } }
+        #expect(!WindowInUse.isOnScreen(window), "never ordered in")
+        #expect(await wait { viewer.diffFiles.count >= 3 })
+
+        repo.write("fresh.txt", "new\n")
+        try? await Task.sleep(nanoseconds: 5_000_000_000)
+        #expect(!viewer.diffFiles.contains { $0.path == "fresh.txt" }, "polled while hidden")
+
+        WindowInUse.setInUseForTesting(window, true)
+        #expect(await wait(upTo: 5) { viewer.diffFiles.contains { $0.path == "fresh.txt" } },
+                "did not catch up as it showed")
+    }
+
     /// A working-tree pane picks up an edit made behind its back — a status
     /// diff that goes stale the moment you save is worse than no diff.
     @Test func theWorkingTreeDiffRefreshesItself() async throws {
         let repo = try makeRepo()
         let (window, viewer) = makeViewer(location: "git-status:", repo: repo)
         defer { window.contentView?.subviews.forEach { $0.removeFromSuperview() } }
+        // A pane no one can see does not poll (below); this one is seen.
+        WindowInUse.setInUseForTesting(window, true)
 
         #expect(await wait { viewer.diffFiles.count >= 3 })
         #expect(!viewer.diffFiles.contains { $0.path == "fresh.txt" })
