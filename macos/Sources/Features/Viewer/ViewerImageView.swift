@@ -545,6 +545,10 @@ private final class ViewerImageDocumentView: NSView {
     private var animatedRep: NSBitmapImageRep?
     private var frameIndex = 0
 
+    /// A GIF plays only while its window can be seen: a hidden one stops on
+    /// its frame and goes on from there when the window shows.
+    private lazy var inUse = WindowInUseObserver { [weak self] in self?.resumeIfShown() }
+
     private func startAnimatingIfNeeded() {
         guard let image,
               let rep = image.representations
@@ -572,6 +576,9 @@ private final class ViewerImageDocumentView: NSView {
     }
 
     private func advanceFrame() {
+        animationTimer = nil
+        // Hidden: hold this frame; `resumeIfShown` picks it up again.
+        guard let window, WindowInUse.isOnScreen(window) else { return }
         guard let rep = animatedRep,
               let count = (rep.value(forProperty: .frameCount) as? NSNumber)?.intValue,
               count > 1
@@ -579,6 +586,13 @@ private final class ViewerImageDocumentView: NSView {
         frameIndex = (frameIndex + 1) % count
         rep.setProperty(.currentFrame, withValue: NSNumber(value: frameIndex))
         needsDisplay = true
+        scheduleNextFrame()
+    }
+
+    private func resumeIfShown() {
+        guard animatedRep != nil, animationTimer == nil,
+              let window, WindowInUse.isOnScreen(window)
+        else { return }
         scheduleNextFrame()
     }
 
@@ -592,6 +606,7 @@ private final class ViewerImageDocumentView: NSView {
     /// stop ticking; nothing is on screen to animate.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        inUse.window = window
         if window == nil {
             stopAnimating()
         } else if animationTimer == nil {

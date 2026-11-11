@@ -489,6 +489,27 @@ class BaseTerminalController: NSWindowController,
     /// The last computed title from the focused surface (without the override).
     private var lastComputedTitle: String = "👻"
 
+    /// A title held back while no part of the window (or its tab group) can
+    /// be seen: the titlebar and tab label it is meant for (`applyTitleToWindow`).
+    private var pendingWindowTitle: (title: String, tab: String)?
+    private var pendingWindowTitleTimer: Timer?
+
+    /// How often a window no one can see takes its latest title. Setting a
+    /// window title is a WindowServer transaction plus a titlebar layout:
+    /// measured, a dozen covered windows each retitled ten times a second (a
+    /// spinner in the title) cost the app ~35% of a core and WindowServer
+    /// ~8%. Held back, the title is still current to the eye — it lands the
+    /// moment the window shows — and readers that bypass the screen (`+list`,
+    /// AppleScript) get it from `currentWindowTitle`; this bounds how stale
+    /// the rest (Accessibility, the Window menu) can be.
+    static let hiddenWindowTitleInterval: TimeInterval = 5
+
+    /// The window's title as of now, including one held back while the
+    /// window is hidden. What `+list` and AppleScript report.
+    var currentWindowTitle: String {
+        pendingWindowTitle?.title ?? window?.title ?? ""
+    }
+
     /// The time that undo/redo operations that contain running ptys are valid for.
     var undoExpiration: Duration {
         ghostty.config.undoTimeout
@@ -581,6 +602,15 @@ class BaseTerminalController: NSWindowController,
             self,
             selector: #selector(didChangeScreenParametersNotification),
             name: NSApplication.didChangeScreenParametersNotification,
+            object: nil)
+        // Covered or uncovered by the windows in front (`WindowCoverage`),
+        // which AppKit's occlusion state does not report. Any window's: a
+        // tab group's selected window decides whether its other tabs' labels
+        // are seen.
+        center.addObserver(
+            self,
+            selector: #selector(windowInUseDidChange(_:)),
+            name: WindowInUse.didChangeNotification,
             object: nil)
         center.addObserver(
             self,
@@ -1187,6 +1217,9 @@ class BaseTerminalController: NSWindowController,
         if to.isEmpty {
             focusedSurface = nil
         }
+        // A terminal new to the window starts out drawing; if no one can see
+        // the window, tell it so.
+        updateSeen()
         // A viewer pane leaving the tree (or stashed) changes `focusedPane`
         // without touching the first responder or `focusedSurface`.
         publishFocusedPane()
@@ -2202,12 +2235,48 @@ class BaseTerminalController: NSWindowController,
         // TerminalWindow.machinePillAccessory / MachinePillView) rather than a
         // plain title suffix, so it is intentionally not appended here.
 
-        window.title = title
-
         // When a window title pins the titlebar, keep the tab bar labels
         // showing each tab's own title. An empty tab title restores the
         // default behavior of following `window.title`.
-        window.tab.title = windowOverride != nil ? tabTitle : ""
+        let tab = windowOverride != nil ? tabTitle : ""
+
+        // No one can see this window: hold the title back (see
+        // `hiddenWindowTitleInterval`). A window's first title always lands.
+        if !window.title.isEmpty, !Self.titleIsSeen(window) {
+            pendingWindowTitle = (title, tab)
+            if pendingWindowTitleTimer == nil {
+                pendingWindowTitleTimer = Timer.scheduledTimer(
+                    withTimeInterval: Self.hiddenWindowTitleInterval,
+                    repeats: false
+                ) { [weak self] _ in
+                    self?.pendingWindowTitleTimer = nil
+                    self?.applyPendingWindowTitle()
+                }
+            }
+            return
+        }
+
+        pendingWindowTitle = nil
+        pendingWindowTitleTimer?.invalidate()
+        pendingWindowTitleTimer = nil
+        window.title = title
+        window.tab.title = tab
+    }
+
+    /// Whether some part of the window's title can be seen: the window, or
+    /// another tab of its group showing this one's label in its tab bar.
+    private static func titleIsSeen(_ window: NSWindow) -> Bool {
+        (window.tabGroup?.windows ?? [window]).contains(where: WindowInUse.isOnScreen)
+    }
+
+    /// Land a title held back while the window was hidden.
+    func applyPendingWindowTitle() {
+        pendingWindowTitleTimer?.invalidate()
+        pendingWindowTitleTimer = nil
+        guard let pending = pendingWindowTitle, let window else { return }
+        pendingWindowTitle = nil
+        window.title = pending.title
+        window.tab.title = pending.tab
     }
 
     func pwdDidChange(to: URL?) {
@@ -2887,10 +2956,32 @@ class BaseTerminalController: NSWindowController,
     }
 
     func windowDidChangeOcclusionState(_ notification: Notification) {
-        let visible = self.window?.occlusionState.contains(.visible) ?? false
+        updateSeen()
+    }
+
+    @objc private func windowInUseDidChange(_ notification: Notification) {
+        guard let changed = notification.object as? NSWindow, let window else { return }
+        if changed === window || (window.tabGroup?.windows.contains(changed) ?? false) {
+            updateSeen()
+        }
+    }
+
+    /// Tell the window's terminals whether they can be seen — a hidden one
+    /// neither builds nor draws frames (`renderer.Thread`) — and land a title
+    /// held back while hidden: this window's, and its tab group's, whose
+    /// labels are in its tab bar.
+    private func updateSeen() {
+        guard let window else { return }
+        let visible = WindowInUse.isOnScreen(window)
         for view in surfaceTree {
             if let surface = view.surface {
                 ghostty_surface_set_occlusion(surface, visible)
+            }
+        }
+
+        if Self.titleIsSeen(window) {
+            for member in window.tabGroup?.windows ?? [window] {
+                (member.windowController as? BaseTerminalController)?.applyPendingWindowTitle()
             }
         }
     }

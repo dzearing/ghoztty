@@ -1293,6 +1293,9 @@ struct PaneSidebarWindowTests {
         controller.paneSidebarState.isExpanded = true
         _ = await poll(timeout: 10) { controller.window?.isVisible == true }
         let window = try #require(controller.window)
+        // The sheen moves only in the window in use; the test host is never
+        // the active app, so say this one is.
+        WindowInUse.setInUseForTesting(window, true)
         window.setContentSize(NSSize(width: 1000, height: 600))
         await settle(0.8)
 

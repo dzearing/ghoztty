@@ -58,6 +58,8 @@ struct PaneStackWindowTests {
         controller.paneSidebarState.isHidden = true
         for _ in 0..<100 where controller.window?.isVisible != true { await settle(0.1) }
         let window = try #require(controller.window)
+        // Drawing, though the test host's windows sit behind other apps'.
+        WindowInUse.setInUseForTesting(window, true)
         window.setContentSize(NSSize(width: width, height: 600))
         window.makeFirstResponder(panes[count - 1].surfaceView)
         await settle(1.2)

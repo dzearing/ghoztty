@@ -202,6 +202,11 @@ struct PaneTeardownTests {
         _ = await poll(timeout: 10) { controller.window?.isVisible == true }
         let window = try #require(controller.window)
         window.setContentSize(NSSize(width: 700, height: 500))
+        // In front of every other app's windows: a terminal no one can see
+        // draws nothing (`WindowInUse.isOnScreen`), and the test host is
+        // not the active app.
+        window.orderFrontRegardless()
+        #expect(await poll(timeout: 5) { WindowInUse.isOnScreen(window) })
         await settle(1.5)
         let surface = try #require(pane.surface)
         let shown = try await capture(window)
@@ -218,6 +223,37 @@ struct PaneTeardownTests {
         await settle(0.8)
         let redrawn = try await capture(window)
         #expect(changed(back, redrawn) > 0, "nothing drew after the terminal came back")
+    }
+
+    /// A hidden terminal builds no frames (`renderer.Thread.renderCallback`),
+    /// but what its program printed meanwhile is on screen the moment it
+    /// shows — one rebuild, not a stale frame until the next output.
+    @Test func aHiddenTerminalShowsWhatChangedWhileHiddenAsItComesBack() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = "/bin/sh -c 'cat'"
+        let pane = PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config))
+        let controller = TerminalController.newWindow(ghostty, tree: SplitTree<PaneView>(view: pane))
+        defer { controller.close() }
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 700, height: 500))
+        window.orderFrontRegardless()
+        #expect(await poll(timeout: 5) { WindowInUse.isOnScreen(window) })
+        await settle(1.5)
+        let surface = try #require(pane.surface)
+        let before = try await capture(window)
+
+        ghostty_surface_set_occlusion(surface, false)
+        await settle(0.3)
+        let text = String(repeating: "printed while hidden ", count: 40)
+        try #require(pane.surfaceView).surfaceModel?.sendText(text)
+        await settle(0.5)
+        ghostty_surface_set_occlusion(surface, true)
+        await settle(0.5)
+        let after = try await capture(window)
+        #expect(changed(before, after) > 0.01, "the terminal came back without what it printed while hidden")
     }
 
     /// This process's physical footprint (what Activity Monitor shows), MB.
@@ -255,6 +291,10 @@ struct PaneTeardownTests {
         await settle(2)
         let surfaces = panes.compactMap { $0.surface }
         #expect(surfaces.count == 4)
+        // The windows overlap, so all but the front one are covered and
+        // draw nothing (`WindowCoverage`); show them all by hand, as each
+        // cycle does.
+        surfaces.forEach { ghostty_surface_set_occlusion($0, true) }
         // Three cycles of occlude / show + redraw: the drop each time, and no
         // growth from cycle to cycle (targets re-created, the old ones freed).
         var log: [String] = []

@@ -2482,6 +2482,10 @@ final class ViewerView: NSView, Codable, ObservableObject {
     private var diffRefreshTimer: Timer?
     /// How often a `git-status:` pane re-checks the working tree.
     private static let diffRefreshInterval: TimeInterval = 2.0
+    /// A poll skipped because the window was hidden: nobody can see the
+    /// listing, so it is brought up to date once, when the window shows.
+    private var diffRefreshMissed = false
+    private lazy var inUse = WindowInUseObserver { [weak self] in self?.catchUpDiffIfShown() }
 
     /// True while the panel is showing filter results rather than the tree.
     var isDiffFiltered: Bool { !diffFilter.isEmpty }
@@ -2786,13 +2790,31 @@ final class ViewerView: NSView, Codable, ObservableObject {
             // than waking every two seconds to discover it has nothing to do.
             // The run loop owns the timer, so a pane that only ever returns
             // early here would keep it alive for the life of the process.
-            guard let self, self.isDiffMode, self.window != nil else {
+            guard let self, self.isDiffMode, let window = self.window else {
                 timer.invalidate()
                 self?.diffRefreshTimer = nil
                 return
             }
+            guard WindowInUse.isOnScreen(window) else {
+                self.diffRefreshMissed = true
+                return
+            }
+            self.diffRefreshMissed = false
             self.refreshDiff(preservingSelection: true)
         }
+    }
+
+    private func catchUpDiffIfShown() {
+        guard diffRefreshMissed, diffRefreshTimer != nil, isDiffMode,
+              let window, WindowInUse.isOnScreen(window)
+        else { return }
+        diffRefreshMissed = false
+        refreshDiff(preservingSelection: true)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        inUse.window = window
     }
 
     private func stopWatchingDiff() {
