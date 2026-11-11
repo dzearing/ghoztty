@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-10T16:29:28-08:00",
-    "commit":  "a6f512509",
+    "generated":  "2026-11-10T17:02:31-08:00",
+    "commit":  "7c4676fc5",
     "uncommitted":  [
-                        "test/win32/remote-pill-tabs.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -34,7 +34,7 @@
                   "test/win32/agent-pipe.ps1":  "e3639b007ce04d5adb73e34631d3629f3847ccc3f38775885a2b4f8a5dea53c4",
                   "test/win32/agent-recovery.ps1":  "869e32c6882b64f52c43945373009c603a653011844ec9ebec38b9dcf71bfa96",
                   "test/win32/agent-recovery-tabs.ps1":  "ca7c7093ad03a5bec83c10cb76a477b25a97133700075fb0d402c1b106bad176",
-                  "test/win32/agent-relay-session-e2e.ps1":  "39c63feadeb2ba2f0bee62bd551e142c74c5597df842e5bfb0727bca51df7cba",
+                  "test/win32/agent-relay-session-e2e.ps1":  "3453c9cb296d20986b43bc379ec6094eacb27c64be84db06cb90703b8032a06e",
                   "test/win32/agent-role-guard.ps1":  "9aaed2aa420495a1dab9f9d77231b6c09f6b187ac6b2ab1262cdc33a89ad0826",
                   "test/win32/agent-session-cap.ps1":  "608a52326bccbddebbcd2a7e5824a6f461a834e64bf4209c9de0dc284fd84813",
                   "test/win32/agent-setup.ps1":  "bf09830ce3bf86d493b74f95370921e2f82d1936b5af0846ebae25a13849c8dd",
@@ -453,7 +453,6 @@
                   "test/win32/remote-inherit.ps1":  "51c3fd032cd9d40bd1318c0fe69c670dab65756103b4cf02cffe836c9009089a",
                   "test/win32/remote-pill.ps1":  "f5c2447debb4dc2867a0ae2b54f77acc20f8b4f8e562c3cb7cb305d60268e015",
                   "test/win32/remote-pill-relay-name.ps1":  "44a6e2888de14d59caa5e071c1910c3c5389930958860026d06e55cb0e5690c6",
-                  "test/win32/remote-pill-tabs.ps1":  "9cb6a4f8879279060911b0523716a772ea29aa0b68c483709d17cf72d818c424",
                   "test/win32/remote-reconnect-fresh.ps1":  "11e07c5c68e6d0ba0aa69d829f121d9967424d216d17533ec6ba3162b8eb6094",
                   "test/win32/remote-reconnect-relay.ps1":  "fe3f924c5d98e6d35d9a48983ffc163a52a6156cfd40e7e555119ba3c272497a",
                   "test/win32/reset-context.ps1":  "54e0f328f37b3dc7694d1ae00013569ce64b504094ce00138baf2ad71ea0d0dd",

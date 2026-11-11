@@ -710,6 +710,11 @@ test {
     // store one pushed frame lands in (T462), same no-OS-imports deal.
     _ = @import("win32/chooser_cpu.zig");
 
+    // Pure win32 machine-chooser per-ROW machine load (T1440) — the subline's
+    // `CPU 12% · 3.2 GB / 16.0 GB` suffix, which rows get a probe, and the
+    // per-machine backoff that survives filter churn. No OS imports.
+    _ = @import("win32/chooser_load.zig");
+
     // Pure win32 machine-chooser hover help — which surface is under the
     // pointer and the sentence each one answers with, Mac's `.help()` text
     // word for word (T1633), same no-OS-imports deal.
