@@ -2324,12 +2324,10 @@ fn handleList(ctx: Context, request: Request) Allocator.Error!?[]u8 {
             });
         }
 
+        // The title as of now, one held while the window is hidden included
+        // (T2912): a covered window's caption lags, `+list` never does.
         var title_buf: [512]u16 = undefined;
-        const title_len = w32.GetWindowTextW(hwnd, &title_buf, title_buf.len);
-        const win_title = try utf16ToUtf8Arena(
-            arena,
-            title_buf[0..@intCast(@max(title_len, 0))],
-        );
+        const win_title = try utf16ToUtf8Arena(arena, window.currentTitle(&title_buf));
 
         try window_list.append(arena, .{
             .id = try std.fmt.allocPrint(arena, "{d}", .{@intFromPtr(hwnd)}),

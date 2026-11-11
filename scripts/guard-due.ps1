@@ -4141,6 +4141,17 @@ $GuardTable = @(
             'test\win32\window-in-use.ps1'
         )
     },
+    # T2912: a minimized or covered window holds its title (lands on show or
+    # every 5 s), while `+list` reports the held title at once.
+    [pscustomobject]@{
+        Name   = 'hidden-title'
+        Script = 'test\win32\hidden-title.ps1'
+        Stamp  = 'test\win32\hidden-title.stamp.json'
+        Covers = @(
+            'src\apprt\win32\held_title.zig',
+            'test\win32\hidden-title.ps1'
+        )
+    },
     # T1832: a window's own gradient - `+new-window --color=random`, the New
     # Window action, and the seed surviving a restart. The unit tests own the
     # palette maths; this row owns the claim that the right windows get one, the

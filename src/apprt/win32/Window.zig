@@ -49,6 +49,7 @@ const sidebar_order = @import("pane_sidebar_order.zig");
 const sidebar_shared = @import("pane_sidebar_shared.zig");
 const PaneSidebar = @import("PaneSidebar.zig");
 const window_title_owner = @import("window_title_owner.zig");
+const held_title = @import("held_title.zig");
 const PaneGrabHandle = @import("PaneGrabHandle.zig");
 const pane_grab_handle = @import("pane_grab_handle.zig");
 const terminal = @import("../../terminal/main.zig");
@@ -381,6 +382,9 @@ const DRAG_QUIET_TIMER_ID: usize = 0x4451; // 'DQ'
 const COMP_DRAG_TIMER_ID: usize = 0x4344; // 'CD'
 /// Writes the resize trace's ring out once a resize goes quiet (T2600).
 const RESIZE_TRACE_FLUSH_TIMER_ID: usize = 0x5254; // 'RT'
+/// Lands a title held while nobody can see the window (T2912):
+/// `held_title.interval_ms` after the first hold.
+const HELD_TITLE_TIMER_ID: usize = 0x4854; // 'HT'
 
 pub const SIDEBAR_SYNC_MS: u32 = 250;
 pub const HERO_SLIDE_MS: f32 = 350.0;
@@ -689,6 +693,10 @@ sidebar: ?*PaneSidebar = null,
 
 /// Set by `applyOcclusion` while nobody can see this window (T1951).
 occluded: bool = false,
+/// The title (and tab-strip repaint) held while nobody can see this window
+/// (T2912, `held_title`); `title_landed` says a first title has been set.
+title_hold: held_title.Held = .{},
+title_landed: bool = false,
 /// The hover grab handle (T1830): one popup that sits on whichever pane's
 /// top band holds the pointer. Created on the first mouse move; null on the
 /// Quick Terminal, which has no other window or tab to drag a pane to.
@@ -4663,6 +4671,8 @@ pub fn applyOcclusion(self: *Window, hidden: bool) void {
     log.debug("window revealed: panes present again", .{});
     self.inUseChanged();
     if (self.hwnd) |h| if (w32.IsIconic(h) != 0) return;
+    // A title held while hidden lands the moment it shows (T2912).
+    self.landHeldTitle();
     self.setActiveTabVisible(true);
     self.layoutSplits();
 }
@@ -17179,7 +17189,30 @@ pub fn updateWindowTitle(self: *Window) void {
     }
 
     buf[len] = 0;
-    _ = w32.SetWindowTextW(hwnd, @ptrCast(&buf));
+
+    // Nobody can see this window: hold the title (T2912, Mac 68a8344f0). It
+    // lands when the window shows, or `held_title.interval_ms` after the
+    // first hold, so the taskbar and screen readers are never far behind.
+    // `+list` reads the held title at once (`currentTitle`).
+    switch (held_title.decide(self.titleHidden(hwnd), self.title_landed)) {
+        .hold => {
+            if (self.title_hold.hold(buf[0..len])) self.armHeldTitleTimer(hwnd);
+            return;
+        },
+        .apply => {},
+    }
+    // Seen: whatever was held is replaced by this title, and an owed strip
+    // repaint is paid now.
+    const owed = self.title_hold.take();
+    if (owed.disarm) _ = w32.KillTimer(hwnd, HELD_TITLE_TIMER_ID);
+    if (owed.tab_bar) self.invalidateTabBar();
+    self.setWindowTextNow(hwnd, buf[0..len :0]);
+}
+
+/// Set the window text and dirty what is painted from it.
+fn setWindowTextNow(self: *Window, hwnd: w32.HWND, text: [:0]const u16) void {
+    _ = w32.SetWindowTextW(hwnd, text.ptr);
+    self.title_landed = true;
 
     // T265: merged, a PINNED title is painted in the row's drag band by
     // `paintTabBar`, from this window text — so any change to it (the pin
@@ -17187,6 +17220,43 @@ pub fn updateWindowTitle(self: *Window) void {
     // Unpinned nothing is painted there, and the transitions are
     // `setTitleOverride`'s to invalidate.
     if (self.mergedChrome() and self.title_override != null) self.invalidateTabBar();
+}
+
+/// Nobody can see this window's caption or tab strip: the visibility poll
+/// says it is covered, cloaked or the session is locked (`occluded`), or it is
+/// minimized - which WM_SIZE knows before the next poll does.
+fn titleHidden(self: *const Window, hwnd: w32.HWND) bool {
+    return self.occluded or w32.IsIconic(hwnd) != 0;
+}
+
+fn armHeldTitleTimer(self: *Window, hwnd: w32.HWND) void {
+    if (w32.SetTimer(hwnd, HELD_TITLE_TIMER_ID, held_title.interval_ms, null) == 0) {
+        // No timer: never leave a title stranded - land it now.
+        self.landHeldTitle();
+        return;
+    }
+    log.debug("title held: window hidden", .{});
+}
+
+/// Land a title (and tab-strip repaint) held while the window was hidden:
+/// on reveal, on restore from minimized, and when the interval runs out.
+pub fn landHeldTitle(self: *Window) void {
+    const hwnd = self.hwnd orelse return;
+    const owed = self.title_hold.take();
+    if (owed.disarm) _ = w32.KillTimer(hwnd, HELD_TITLE_TIMER_ID);
+    if (owed.title) |t| self.setWindowTextNow(hwnd, t);
+    if (owed.tab_bar) self.invalidateTabBar();
+    if (owed.title != null or owed.tab_bar) log.debug("title landed title={} tab_bar={}", .{ owed.title != null, owed.tab_bar });
+}
+
+/// The window's title as of now, a held one included (T2912): what `+list`
+/// and copy-title report, so a reader that bypasses the screen is never
+/// behind. Returns a slice of `out` or of the held buffer.
+pub fn currentTitle(self: *const Window, out: []u16) []const u16 {
+    const hwnd = self.hwnd orelse return out[0..0];
+    const n = w32.GetWindowTextW(hwnd, out.ptr, @intCast(out.len));
+    const held = self.title_hold.current(out[0..@intCast(@max(n, 0))]);
+    return held[0..@min(held.len, out.len)];
 }
 
 /// Set (or clear, with null) the window title pin. Owned copy; wins over
@@ -17254,7 +17324,7 @@ pub fn onPaneTitleChanged(self: *Window, pane: *PaneView, title: [:0]const u8) v
     @memcpy(self.tab_titles[tab_idx][0..len], wbuf[0..len]);
     self.tab_title_lens[tab_idx] = len;
     if (tab_idx == self.active_tab) self.updateWindowTitle();
-    self.invalidateTabBar();
+    self.invalidateTabLabel();
 }
 
 /// Re-derive a tab's title from its focused pane (no-op while the tab
@@ -17273,6 +17343,17 @@ pub fn refreshTabTitle(self: *Window, tab_idx: usize) void {
     @memcpy(self.tab_titles[tab_idx][0..len], wbuf[0..len]);
     self.tab_title_lens[tab_idx] = len;
     if (tab_idx == self.active_tab) self.updateWindowTitle();
+    self.invalidateTabLabel();
+}
+
+/// A tab's label text changed. The text (`tab_titles`) is already current
+/// for `+list`; the strip's repaint waits while nobody can see the window
+/// (T2912) and is paid when the held title lands.
+fn invalidateTabLabel(self: *Window) void {
+    if (self.hwnd) |wh| if (self.title_landed and self.titleHidden(wh)) {
+        if (self.title_hold.oweTabBar()) self.armHeldTitleTimer(wh);
+        return;
+    };
     self.invalidateTabBar();
 }
 
@@ -21415,6 +21496,10 @@ pub fn windowWndProc(
                 window.sidebarSyncTimerFire();
                 return 0;
             }
+            if (wparam == HELD_TITLE_TIMER_ID) {
+                window.landHeldTitle();
+                return 0;
+            }
             if (wparam == HERO_ANIM_TIMER_ID) {
                 window.heroAnimTick();
                 return 0;
@@ -21509,6 +21594,9 @@ pub fn windowWndProc(
             }
             if (wparam == w32.SIZE_RESTORED or wparam == w32.SIZE_MAXIMIZED) {
                 window.setActiveTabVisible(true);
+                // Back from minimized: a title held meanwhile lands now
+                // (T2912), unless the poll still has the window covered.
+                if (!window.occluded) window.landHeldTitle();
             }
             // T85: persist maximize/restore TRANSITIONS only —
             // SIZE_RESTORED also fires for every programmatic resize

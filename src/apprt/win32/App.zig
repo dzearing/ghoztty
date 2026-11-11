@@ -9529,16 +9529,18 @@ pub fn performAction(
             switch (target) {
                 .app => {},
                 .surface => |core_surface| {
-                    if (core_surface.rt_surface.parent_window.hwnd) |h| {
-                        // Get the window title and put it on the clipboard
+                    if (core_surface.rt_surface.parent_window.hwnd) |_| {
+                        // Get the window title and put it on the clipboard -
+                        // the current one, held or shown (T2912).
                         var wbuf: [512]u16 = undefined;
-                        const wlen: usize = @intCast(w32.GetWindowTextW(h, &wbuf, @intCast(wbuf.len)));
+                        const wtitle = core_surface.rt_surface.parent_window.currentTitle(&wbuf);
+                        const wlen = wtitle.len;
                         if (wlen > 0) {
                             // 512 units can need 1536 bytes, so a long CJK
                             // title used to panic here — copying a title is
                             // the last thing that should end the app (T990).
                             var utf8_buf: [1024]u8 = undefined;
-                            const utf8_len = utf16_text.toUtf8Truncating(&utf8_buf, wbuf[0..wlen]);
+                            const utf8_len = utf16_text.toUtf8Truncating(&utf8_buf, wtitle);
                             if (utf8_len > 0) {
                                 // Copy to clipboard via the core surface
                                 const alloc = self.core_app.alloc;

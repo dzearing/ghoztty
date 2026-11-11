@@ -153,6 +153,10 @@ test {
     // script's `+rename`.
     _ = @import("win32/window_title_owner.zig");
 
+    // Pure win32 hidden-window title hold (T2912): a covered or minimized
+    // window's title lands on show or every 5s. Imports only std. Every lane.
+    _ = @import("win32/held_title.zig");
+
     // Pure win32 pane sidebar search field (T1877): the one-line editing
     // model, Escape's two verbs, and which surfaces filter. Imports only std.
     // Every lane.

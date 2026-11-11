@@ -1,0 +1,14 @@
+{
+    "guard":  "hidden-title",
+    "script":  "test/win32/hidden-title.ps1",
+    "generated":  "2026-11-11T03:23:32-08:00",
+    "commit":  "b7f66e2f7",
+    "uncommitted":  [
+                        "src/apprt/win32/held_title.zig",
+                        "test/win32/hidden-title.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/held_title.zig":  "4f983eaa6c37d9e93eb33e6e9cfb15ea837b41e7d719a9ba300ff235a1ab7f5c",
+                  "test/win32/hidden-title.ps1":  "ba19c0ded6b798a6fe069c2e9ce5ce9845a94f0c994bd29356d56977955cabcb"
+              }
+}
