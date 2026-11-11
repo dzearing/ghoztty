@@ -1,0 +1,12 @@
+{
+  "version": "1.54.13",
+  "sections": [
+    { "title": "Improvements",
+      "items": [
+        { "text": "A pane added to a covered or minimized window on Windows starts hidden and nothing in that window draws until it shows." },
+        { "text": "A divider drag or fold glide beside a viewer pane no longer stalls the terminals while the viewer resizes." },
+        { "text": "The pane-move trace names a viewer's own bounds sync apart from the OS move, and shows it is the glide's one slow pane move." },
+        { "text": "A stack strip's name is drawn once and laid from its picture, so a fold glide no longer puts out GDI text every frame." }
+      ] }
+  ]
+}
