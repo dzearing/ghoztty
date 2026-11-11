@@ -1303,5 +1303,22 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.54.2/Ghoztty-1.54.2-arm64.dmg" type="application/octet-stream" sparkle:edSignature="oTUHHTaVKnhGss9pHuRvIGvslv5x5TsxZIW96gEApn+JeOfJaPkqc+oUkXnZ09ImKb9Zcnw6bv8EQOEQQf1BCA==" length="27705797" />
         </item>
+        <item>
+            <title>Version 1.54.3</title>
+            <sparkle:version>1.54.3</sparkle:version>
+            <sparkle:shortVersionString>1.54.3</sparkle:shortVersionString>
+            <pubDate>Wed, 11 Nov 2026 21:15:33 +0000</pubDate>
+            <description>{
+  "version": "1.54.3",
+  "sections": [
+    { "title": "Stacked panes",
+      "items": [
+        { "title": "Panes you minimize stay minimized", "text": "When an agent opened a side pane next to a pane you'd minimized, that pane popped back out on its own. The new pane now opens beside the panes on screen, and only you bring a minimized pane back." }
+      ] }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.54.3/Ghoztty-1.54.3-arm64.dmg" type="application/octet-stream" sparkle:edSignature="WcESqdoi6sGUBmEU4RY+mNQaAhrHRjzjcLqhUAatX+7sl8d591j8XFMrMoQNNZCyaK3Iu+rMtp+xMKVwzAPYAQ==" length="27704270" />
+        </item>
     </channel>
 </rss>
