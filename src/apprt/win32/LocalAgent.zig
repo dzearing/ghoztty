@@ -131,6 +131,14 @@ teardowns: std.ArrayList(std.Thread) = .empty,
 state_ctx: ?*anyopaque = null,
 state_handler: ?connection.StateHandler = null,
 
+/// Run in-place recovery NOW, on the GUI thread (T1473). `sharedConnection`
+/// calls it when a new surface asks for the link and the agent it was dialed
+/// against is confirmed dead: the App owns recovery (it rebuilds windows), so
+/// this manager can only ask for it. Null ⇒ nobody can recover (unit tests,
+/// persistence off) and the new surface falls back to a plain exec pane.
+recover_ctx: ?*anyopaque = null,
+recover_now: ?*const fn (ctx: *anyopaque) void = null,
+
 /// Timestamp (ms) of the last find-or-spawn failure, or null. Guards the
 /// cooldown so a broken agent falls back to exec immediately.
 last_failure_ms: ?i64 = null,
@@ -285,6 +293,26 @@ pub fn sharedPid(self: *const LocalAgent) i64 {
     return if (self.shared == null) 0 else self.shared_pid;
 }
 
+/// Whether the agent the shared connection was dialed against is still a
+/// running process (T1473). True when there is no known pid — "unknown" must
+/// never read as a confirmed death, because a confirmed death skips the settle
+/// window. One OpenProcess; no file read, no dial.
+pub fn sharedAgentAlive(self: *const LocalAgent) bool {
+    const pid = self.sharedPid();
+    if (pid <= 0) return true;
+    return processAlive(pid);
+}
+
+/// Register the App's recovery entry point (T1473); see `recover_now`.
+pub fn setRecoverHook(
+    self: *LocalAgent,
+    ctx: *anyopaque,
+    hook: *const fn (ctx: *anyopaque) void,
+) void {
+    self.recover_ctx = ctx;
+    self.recover_now = hook;
+}
+
 /// The pid of a LIVE agent process as recorded in the info file, or null when
 /// there is no info file, no pid, or that pid is not a running process.
 ///
@@ -406,7 +434,37 @@ pub fn sharedConnection(self: *LocalAgent) ?*connection.Connection {
     // Fast path: a warm, healthy cached connection — no dial, no wait.
     if (self.shared) |d| {
         const state = d.conn.state();
-        if (agent_recovery.handsToNewSurface(state)) return d.conn;
+        const verdict = agent_recovery.newSurfaceVerdict(
+            state,
+            self.shared_pid,
+            self.sharedAgentAlive(),
+        );
+        if (verdict == .hand_over) return d.conn;
+
+        // T1473: the agent PROCESS is gone. Not a wedge, so there is no hang to
+        // protect window creation from, and nothing will heal this link - so do
+        // not hand a fresh pane a plain, silently non-persistent shell while the
+        // settle watch counts down. Recover now (fresh agent, the windows that
+        // rode the dead one rebuilt), and give this surface the new link.
+        if (verdict == .recover_first) {
+            log.warn(
+                "local agent pid {d} is gone (link {s}); recovering before opening this surface",
+                .{ self.shared_pid, @tagName(state) },
+            );
+            if (!self.resolving) {
+                if (self.recover_now) |hook| hook(self.recover_ctx.?);
+            }
+            if (self.shared) |fresh| {
+                if (fresh.conn != d.conn and
+                    agent_recovery.handsToNewSurface(fresh.conn.state()))
+                    return fresh.conn;
+            }
+            log.warn(
+                "no fresh local agent after recovery; opening this surface WITHOUT session persistence",
+                .{},
+            );
+            return null;
+        }
 
         // T764: down, but not necessarily dead. A WEDGED agent (alive, not
         // answering) parks the link in `reconnecting` indefinitely — `dead` is

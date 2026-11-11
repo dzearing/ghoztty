@@ -241,12 +241,17 @@ try {
     # inside the settle window below; asserting "zero agents" there failed on a
     # recovery that is exactly the spawn this test wants to measure.
     $before = @((Get-TestAgents) | ForEach-Object { [int]$_.ProcessId })
+    $beforeProcs = @($before | ForEach-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue } |
+        Where-Object { $null -ne $_ })
     foreach ($p in $before) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }
-    # 5s, not 800ms: the app must have NOTICED the death before B asks it for
-    # anything. A request that lands inside that gap degrades the pane to a
-    # plain local shell and the app then never spawns an agent at all (T1473),
-    # which reds B and C about a defect neither one is measuring.
-    Start-Sleep -Seconds 5
+    # Wait for the deaths themselves and nothing more. This used to be a 5s
+    # settle so that the app had NOTICED the death before B asked it for
+    # anything: a request landing in that gap degraded the pane to a plain
+    # local shell and the app then never spawned an agent at all. T1473 closed
+    # the gap in the app - a request that finds the agent's process gone now
+    # recovers first - so B asking at once is the shape a user has, and the one
+    # that has to work.
+    foreach ($bp in $beforeProcs) { [void]$bp.WaitForExit(10000) }
     $survivors = @((Get-TestAgents) | Where-Object { $before -contains [int]$_.ProcessId })
     Assert "A3 premise: every pre-jail agent is dead, so B can only see one spawned from inside the job" `
         ($survivors.Count -eq 0)
@@ -258,9 +263,9 @@ try {
     # app resolve (and, with no agent alive, spawn) its local agent.
     # Retrying this is NOT the answer if it ever goes quiet again: a second
     # window with the same name is focused rather than created (named targets
-    # are idempotent - docs/claude/cli.md), and once the app has fallen into
-    # T1473 no number of fresh names brings the agent back either. The settle
-    # above is what keeps this arm deterministic.
+    # are idempotent - docs/claude/cli.md). Since T1473 this asks the moment the
+    # old agent is dead, with no settle: that is a request inside the window
+    # the app has not yet noticed, and it must still produce an agent.
     & $Exe +new-window --target=t426win 2>$null | Out-Null
     $agentPid = Wait-NewAgent $before 40
     Assert "B1 premise: the app spawned a local agent" ($agentPid -ne 0)

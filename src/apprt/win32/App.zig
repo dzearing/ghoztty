@@ -6665,6 +6665,27 @@ fn showAgentRefreshFailed(self: *App) void {
 pub fn installLocalAgentWatch(self: *App) void {
     if (!self.config.@"session-persistence") return;
     self.local_agent.setStateObserver(self, onLocalAgentLinkChange);
+    self.local_agent.setRecoverHook(self, recoverForNewSurface);
+}
+
+/// `LocalAgent.sharedConnection` found the agent PROCESS dead while a new
+/// surface was asking for it (T1473). GUI thread, called from inside window /
+/// split creation — before the new window is appended to `self.windows`, so the
+/// capture below never sees it and the rebuild leaves it alone.
+///
+/// The death is already confirmed, so there is no settle window to wait out:
+/// end any running one and recover now, exactly as its deciding tick would.
+fn recoverForNewSurface(ctx: *anyopaque) void {
+    const self: *App = @ptrCast(@alignCast(ctx));
+    if (self.agent_recovering) return;
+    self.endAgentSettleWatch();
+    log.warn(
+        "local agent pid {d} is gone; recovering local windows before the new surface opens",
+        .{self.local_agent.sharedPid()},
+    );
+    self.beginAgentRefresh();
+    _ = self.recoverLocalAgentInPlace();
+    self.endAgentRefresh();
 }
 
 /// Link-state observer. Runs on the CONNECTION'S READER THREAD, under its
@@ -6876,7 +6897,7 @@ const agent_unreachable_notice =
 /// means, and act. GUI thread.
 fn tickAgentSettleWatch(self: *App) void {
     const deadline = self.agent_settle_deadline_ms orelse return;
-    const remaining = deadline - std.time.milliTimestamp();
+    var remaining = deadline - std.time.milliTimestamp();
 
     // No shared connection at all ⇒ a racing re-dial (or teardown) already
     // replaced what we were watching.
@@ -6885,6 +6906,21 @@ fn tickAgentSettleWatch(self: *App) void {
         log.info("local-agent link watch ended: no shared connection to judge", .{});
         return;
     };
+
+    // T1473: a link whose agent PROCESS has exited cannot heal, so the settle
+    // window has nothing left to wait for. Decide on this tick rather than
+    // spend up to 5s in which every new window opens without persistence.
+    if (remaining > 0 and agent_recovery.settleWaived(
+        state,
+        self.local_agent.sharedPid(),
+        self.local_agent.sharedAgentAlive(),
+    )) {
+        log.info(
+            "local agent pid {d} has exited; skipping the remaining {d}ms of the settle window",
+            .{ self.local_agent.sharedPid(), remaining },
+        );
+        remaining = 0;
+    }
 
     // Only touch the filesystem on the deciding tick — the pid read is the one
     // expensive part of the policy's inputs.

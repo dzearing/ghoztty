@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-11T04:34:05-08:00",
-    "commit":  "b7f66e2f7",
+    "generated":  "2026-11-11T04:45:52-08:00",
+    "commit":  "3a601b0b8",
     "uncommitted":  [
-                        "test/win32/hidden-title.ps1"
+                        "test/win32/agent-job-escape.ps1",
+                        "test/win32/agent-recovery.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -27,12 +28,12 @@
                   "test/win32/agent-handoff.ps1":  "6ccd1314241e48120a71319b2782aec34e4ba29cbb8dcef144d4253fae43aa1f",
                   "test/win32/agent-instance-lineage.ps1":  "5a4c8c30c32b132c81d5317991cbf0874f41a9cb2d340854dce8c96fd078e6b9",
                   "test/win32/agent-integrations.ps1":  "2b8083f671e2e50fc51f87896710960a8bfb61a737f256676a43f6c191fa83bd",
-                  "test/win32/agent-job-escape.ps1":  "a6865bdcc2ab5d0c98c316fc436599c5e325220d45290dbedab91bc18b1e03fc",
+                  "test/win32/agent-job-escape.ps1":  "948ab51135538139eb3b3395ee633bf2e698b26a19d39c6578474b981ae825d2",
                   "test/win32/agent-job-report.ps1":  "944358e04c91ee0e6427fc03336e2139e8f08ba210e23724cf8bdf1fd19ae296",
                   "test/win32/agent-lineage-suites.ps1":  "589bd4707698f2254f3e0fc30d5f2ebe99aaf78fe6edaf973d87d3fc713a932f",
                   "test/win32/agent-open-refused.ps1":  "2476ce555f7caed75a5d50cbd3dc68d5f6170a075d60a08e12885e8835ccd6fd",
                   "test/win32/agent-pipe.ps1":  "e3639b007ce04d5adb73e34631d3629f3847ccc3f38775885a2b4f8a5dea53c4",
-                  "test/win32/agent-recovery.ps1":  "869e32c6882b64f52c43945373009c603a653011844ec9ebec38b9dcf71bfa96",
+                  "test/win32/agent-recovery.ps1":  "1934b8da2e60af06c1c539311d399936de2e460c4815f27e6e71ed67fbb125d6",
                   "test/win32/agent-recovery-tabs.ps1":  "ca7c7093ad03a5bec83c10cb76a477b25a97133700075fb0d402c1b106bad176",
                   "test/win32/agent-relay-session-e2e.ps1":  "3453c9cb296d20986b43bc379ec6094eacb27c64be84db06cb90703b8032a06e",
                   "test/win32/agent-role-guard.ps1":  "9aaed2aa420495a1dab9f9d77231b6c09f6b187ac6b2ab1262cdc33a89ad0826",
@@ -202,7 +203,6 @@
                   "test/win32/hero-mode.ps1":  "960240b8d7a164bd56b57424cde848217542a11ddda1b0556cba07aac28468aa",
                   "test/win32/hero-nav.ps1":  "77fbfdd2679c7db44743b69d3a1b7e961ef56c057ee39933b4e90d5b754010f4",
                   "test/win32/hero-viewer-tile.ps1":  "6e31374403ef78b0d5baa816c3074aa92cc53208f708ea487d0dfdafb23b381d",
-                  "test/win32/hidden-title.ps1":  "ba19c0ded6b798a6fe069c2e9ce5ce9845a94f0c994bd29356d56977955cabcb",
                   "test/win32/hidden-window-memory.ps1":  "31e7f5d91bc68265640003f052f623e12ab11a7c7eb87d0f17fa4c136e13330d",
                   "test/win32/history-guard-flavor.ps1":  "1d9bdcea796adecd76f31f1920d575ffcf59d4b800e8328aaaf18ce47efe46d2",
                   "test/win32/holder-adopt.ps1":  "d6ebeef6546da97b65e42cf578f8dd02f195bbb9063bef04bea75c0a5c2cd2f2",
@@ -603,7 +603,6 @@
                   "test/win32/window-close-memory.ps1":  "a24fa4cb28aaa758edf3461dbf39726a0bba52e620c40004a10c9c0746eb6481",
                   "test/win32/window-color.ps1":  "ee0cd62d72645ee63415938b2ca77b3b29b5cd7deb1b4ff3ee0fd11053465f93",
                   "test/win32/window-composite.ps1":  "baabce20f85c453dc926c93f8cf784c12686905152b4ef0dc264b82257b36f8d",
-                  "test/win32/window-in-use.ps1":  "c79a51ec377224dfcdd808af977d1cfee3b5e07863b88339caa653a5180d28ff",
                   "test/win32/window-modal-block.ps1":  "5a2962e9dd1d3c9a39d35c3aa82bae16be5f62d4067e2b68145cb954ae45dfd5",
                   "test/win32/window-name-env.ps1":  "b8e63bc0ba6c5d1914962c3ab97fe83bcfac811f185f3873a09ffa8cd6744a44",
                   "test/win32/window-name-restore.ps1":  "6ed6b2d1c48dda4f6038f410ad260a94efc52d458d8b4d5a6ae6b3ad24579bfe",

@@ -435,6 +435,7 @@ New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-
 $env:LOCALAPPDATA = $tmp
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 
+
 # T441: a private IPC endpoint, and it is NOT covered by the LOCALAPPDATA
 # redirect above. The endpoint a CLI dials comes from the pane's baked
 # `$GHOZTTY_IPC_SOCKET` unless a suffix outranks it, so without this every
@@ -544,10 +545,33 @@ Assert "B2 the agent process is gone" (
 $stillHere = Get-Process -Id $appPid -ErrorAction SilentlyContinue
 Assert "B3 the APP is still alive with the same pid (in place, not a relaunch)" ($null -ne $stillHere)
 
-# The trap must be ARMED: with the agent dead the panes are genuinely broken.
-# If this passes, the section-C assertions would be vacuous.
-Assert "B4 the panes are BROKEN before recovery (trap armed)" (
-    -not (Test-PaneResponsive $tmp 't145b' 'b' 4))
+# The trap must be ARMED: with the agent dead the panes' link is genuinely
+# broken. If it were not, the section-C assertions would be vacuous.
+#
+# Measured from the app's own drop notice, no longer by typing into the pane
+# (T1473): a dead agent now skips the 5s settle window, so recovery has
+# usually finished inside the 4s a "pane does not answer" probe needed, and
+# the probe read a recovered pane as an unarmed trap. The notice is the app
+# saying the link went down; E7 (two surfaces closed by the rebuild) is the
+# independent proof the panes were replaced rather than left alone.
+$downB = $false
+$deadline = (Get-Date).AddSeconds(15)
+while ((Get-Date) -lt $deadline) {
+    if ((Read-AppLog $logMarkB) -match 'shared local-agent link went down') { $downB = $true; break }
+    Start-Sleep -Milliseconds 200
+}
+Assert "B4 the panes' link is BROKEN by the kill (trap armed)" $downB
+
+# T1473: a dead process cannot heal its link, so the app must not sit out the
+# settle window before recovering.
+$waivedB = $false
+$deadline = (Get-Date).AddSeconds(10)
+while ((Get-Date) -lt $deadline) {
+    if ((Read-AppLog $logMarkB) -match 'has exited; skipping the remaining') { $waivedB = $true; break }
+    Start-Sleep -Milliseconds 200
+}
+if (-not $waivedB) { Dump-AppLog $logMarkB 'B5' }
+Assert "B5 the app skipped the settle window for an agent that has EXITED" $waivedB
 
 # ============================================================================
 "== C: recovery - the panes come back on the SAME children, with no relaunch"
@@ -851,6 +875,30 @@ $agentsI = Get-RunAgents $tmp
 if ($agentsI.Count -ne 1) { Show-Agents $tmp 'I' }
 Assert "I1 exactly one agent belongs to this run before the wedge" ($agentsI.Count -eq 1)
 $agentPidI = if ($agentsI.Count -ge 1) { [int]$agentsI[0].ProcessId } else { 0 }
+
+# Start the wedge on a FRESHLY WRITTEN heartbeat (T1473). The abort below needs
+# recovery's challenger to YIELD, and it yields only while the wedged agent's
+# heartbeat is younger than the 45s takeover age. Arriving here straight from
+# H, that file is routinely ~20s old already (measured 17-22s), and the path
+# to the challenger is ~9s down-detection + 5s settle + a 1.2s handshake + up
+# to a 10s PIPE_BUSY wait whenever a background probe dial (the orphan check,
+# the session roster) holds the suspended agent's only pipe instance. That sum
+# crosses 45s, the challenger replaces the agent, and recovery SUCCEEDS - a red
+# I3 that says nothing about T723 and that moves with how long A..H took. A
+# beat written within the last ~2s keeps the whole path under the takeover age.
+$hbFileI = Get-ChildItem (Join-Path $tmp 'ghoztty') -Filter '*.heartbeat' -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+$hbFreshI = $false
+if ($null -ne $hbFileI) {
+    $hbStartI = $hbFileI.LastWriteTimeUtc
+    $deadline = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $deadline) {
+        $hbNowI = (Get-Item $hbFileI.FullName -ErrorAction SilentlyContinue).LastWriteTimeUtc
+        if ($null -ne $hbNowI -and $hbNowI -gt $hbStartI) { $hbFreshI = $true; break }
+        Start-Sleep -Milliseconds 100
+    }
+}
+Assert "I1b premise: the agent wrote a fresh heartbeat just before the wedge" $hbFreshI
 Assert "I2 the agent was suspended" (
     $agentPidI -gt 0 -and (Set-AgentSuspended $agentPidI $true) -eq 0)
 
@@ -1060,12 +1108,83 @@ Assert "K9 the pre-existing panes are responsive again after the wedge ended" (
     Test-PaneResponsive $tmp 't145b' 'k2' 60)
 
 # ============================================================================
+"== L: T1473 - a window asked for the moment the agent DIES is persistent, and the agent comes back at once"
+# ============================================================================
+# K's mirror image. K's agent is WEDGED (alive, not answering), so a fresh pane
+# must fall back to exec rather than block on it. L's agent is DEAD - the
+# process is gone - and there the same fallback is the defect: before T1473 the
+# window opened in the gap between the death and the end of the 5s settle
+# window came up as a plain, silently non-persistent shell (in-place recovery
+# only rebuilds windows that rode the agent, so it stayed that way for good),
+# and on the unlucky timing no agent was spawned at all. A dead process cannot
+# heal its link, so there is nothing to wait for: the app now recovers first
+# and hands the new window the fresh agent.
+#
+# Teeth: L3's 4s bound is under the 5s settle window, so the pre-fix app - which
+# spawned the replacement only on the settle's deciding tick - cannot meet it;
+# and L4 is red on the pre-fix app every time, since the pane it opened carried
+# no session id.
+$logMarkL = Get-AppLogLength
+$agentsL = Get-RunAgents $tmp
+if ($agentsL.Count -ne 1) { Show-Agents $tmp 'L' }
+Assert "L1 one agent belongs to this run before the kill" ($agentsL.Count -eq 1)
+$agentPidL = if ($agentsL.Count -ge 1) { [int]$agentsL[0].ProcessId } else { 0 }
+# Same settle K waited on is NOT waited on here: the request lands inside the
+# gap on purpose.
+$killedL = $false
+if ($agentPidL -gt 0) {
+    # WaitForExit on a handle taken BEFORE the kill, not Wait-ProcGone's 250ms
+    # poll: every millisecond spent confirming the death is a millisecond the
+    # app gets to notice it first, and L is about the request that beats it.
+    $procL = Get-Process -Id $agentPidL -ErrorAction SilentlyContinue
+    Stop-Process -Id $agentPidL -Force -ErrorAction SilentlyContinue
+    $killedL = ($null -eq $procL) -or $procL.WaitForExit(10000)
+}
+Assert "L2 premise: the agent process is dead" $killedL
+$swL = [System.Diagnostics.Stopwatch]::StartNew()
+$rcL = Run-CliArgs @('+new-window', '--target=t1473w', '--no-activate') "$tmp\newwin-l.txt" 30
+
+$freshL = 0
+$deadline = (Get-Date).AddSeconds(4)
+while ((Get-Date) -lt $deadline) {
+    $f = @((Get-RunAgents $tmp) | Where-Object { [int]$_.ProcessId -ne $agentPidL })
+    if ($f.Count -gt 0) { $freshL = [int]$f[0].ProcessId; break }
+    Start-Sleep -Milliseconds 200
+}
+$swL.Stop()
+"    [L3] +new-window rc=$rcL; fresh agent pid=$freshL at $([int]$swL.Elapsed.TotalMilliseconds)ms"
+Assert "L3 a fresh agent is up within 4s of the death (inside the old 5s settle window)" ($freshL -gt 0)
+
+$winL = $null
+$deadline = (Get-Date).AddSeconds(20)
+while ((Get-Date) -lt $deadline) {
+    $treeL = Get-List $tmp 'l' 12
+    # Assign first, then filter: piping `Windows-Of` straight into Where-Object
+    # unrolls only its unary-comma wrapper (the trap the Terminal-Leaves comment
+    # above describes) and `.target` then member-enumerates over every window.
+    $allL = Windows-Of $treeL
+    $winL = @($allL | Where-Object { $_.target -eq 't1473w' }) | Select-Object -First 1
+    if ($null -ne $winL) { break }
+    Start-Sleep -Milliseconds 500
+}
+$leavesL = @()
+if ($null -ne $winL) { foreach ($t in @($winL.tabs)) { $leavesL += @(Leaves-Of $t.splits) } }
+$sidL = @($leavesL | Where-Object { $_.session_id }).Count
+"    [L4] t1473w leaves=$($leavesL.Count) with a session id=$sidL"
+Assert "L4 the window opened in the gap is agent-backed (its pane has a session id)" (
+    $leavesL.Count -ge 1 -and $sidL -eq $leavesL.Count)
+if ($sidL -ne $leavesL.Count) { Dump-AppLog $logMarkL 'L4' }
+Assert "L5 the window opened in the gap is a WORKING pane" (
+    Test-PaneResponsive $tmp 't1473w' 'l' 60)
+Assert "L6 the pre-existing panes came back on the fresh agent too" (
+    Test-PaneResponsive $tmp 't145b' 'l2' 60)
+
+# ============================================================================
 Stop-TestProcs
 Remove-TestDesktop | Out-Null
 $env:LOCALAPPDATA = $savedLocalAppData
 if ($null -ne $savedAgentBin) { $env:GHOSTTY_LOCAL_AGENT_BIN = $savedAgentBin }
-else { Remove-Item env:GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue }
-Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+else { Remove-Item env:GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue }Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 
 # A green run stamps the covered files (T783/T2876). Red leaves the stamp alone.
 if ($script:failures -eq 0) {

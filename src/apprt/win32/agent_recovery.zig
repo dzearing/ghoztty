@@ -176,6 +176,58 @@ pub fn carriesRequests(state: connection.LinkState.State) bool {
     };
 }
 
+/// Whether a down link's settle window may be skipped because the agent it was
+/// dialed against is confirmed DEAD (T1473).
+///
+/// The settle window exists for a link that might heal: the 2026-07-21 incident
+/// (`e65cfa4d5`) was a live agent whose link came back 27ms after it dropped. A
+/// process that has exited cannot heal anything, so waiting the full window
+/// only widens the gap in which a new window degrades to a non-persistent
+/// shell. "Confirmed dead" is deliberately narrow: a known pid (`> 0`) whose
+/// process is gone. An unknown pid, or one that reads as alive (including a pid
+/// the OS has already reused), keeps the full window — the safe direction.
+pub fn settleWaived(
+    state: connection.LinkState.State,
+    previous_agent_pid: i64,
+    previous_agent_alive: bool,
+) bool {
+    return isDown(state) and previous_agent_pid > 0 and !previous_agent_alive;
+}
+
+/// What `LocalAgent.sharedConnection` does for a NEW surface, given the cached
+/// shared link (T1473).
+pub const NewSurfaceVerdict = enum {
+    /// The link is live and its agent is too: hand it over.
+    hand_over,
+    /// Down, but the agent process is (or may be) alive: a WEDGE (T764). Open
+    /// a plain exec pane now rather than block window creation on a dial the
+    /// wedged agent will never complete.
+    exec_fallback,
+    /// The agent process is confirmed dead, whatever the link says yet (it can
+    /// still read `connected` in the moment before the reader thread sees the
+    /// pipe close). Nothing can heal this link and no dial can wedge, so run
+    /// in-place recovery NOW — which re-dials (spawning a fresh agent) and
+    /// rebuilds the windows that rode the dead one — and give the new surface
+    /// the fresh connection. Before T1473 this case was answered
+    /// `exec_fallback` (or handed the dead link outright): the window opened as
+    /// an ordinary, silently non-persistent shell.
+    recover_first,
+    /// The link was closed by the agent (`dead` is only reached on a DETACHED
+    /// frame): retire it and resolve a fresh connection.
+    re_resolve,
+};
+
+pub fn newSurfaceVerdict(
+    state: connection.LinkState.State,
+    agent_pid: i64,
+    agent_alive: bool,
+) NewSurfaceVerdict {
+    if (state == .dead) return .re_resolve;
+    if (agent_pid > 0 and !agent_alive) return .recover_first;
+    if (handsToNewSurface(state)) return .hand_over;
+    return .exec_fallback;
+}
+
 /// What a down shared link means once re-checked.
 pub const Verdict = union(enum) {
     /// The link came back on its own. Do nothing at all.
@@ -333,6 +385,39 @@ test "isDown: only a live link is up" {
     try testing.expect(isDown(.reconnecting));
     try testing.expect(isDown(.reattaching));
     try testing.expect(isDown(.dead));
+}
+
+test "T1473 settleWaived: only a confirmed-dead agent skips the settle window" {
+    // Dead process, down link: nothing can heal it, decide now.
+    try testing.expect(settleWaived(.reconnecting, 4242, false));
+    try testing.expect(settleWaived(.reattaching, 4242, false));
+    // The 2026-07-21 shape: the agent is alive, so the link may heal - wait.
+    try testing.expect(!settleWaived(.reconnecting, 4242, true));
+    // Unknown pid: not a confirmation of anything - wait.
+    try testing.expect(!settleWaived(.reconnecting, 0, false));
+    // A live link is not waiting on a settle at all.
+    try testing.expect(!settleWaived(.connected, 4242, false));
+    try testing.expect(!settleWaived(.degraded, 4242, false));
+}
+
+test "T1473 newSurfaceVerdict: a dead agent is recovered before the pane opens, a wedged one is not" {
+    // Healthy.
+    try testing.expectEqual(NewSurfaceVerdict.hand_over, newSurfaceVerdict(.connected, 7, true));
+    try testing.expectEqual(NewSurfaceVerdict.hand_over, newSurfaceVerdict(.degraded, 7, true));
+    // The T1473 window: agent killed, link already noticed.
+    try testing.expectEqual(NewSurfaceVerdict.recover_first, newSurfaceVerdict(.reconnecting, 7, false));
+    try testing.expectEqual(NewSurfaceVerdict.recover_first, newSurfaceVerdict(.reattaching, 7, false));
+    // ...and the narrower one: agent killed, link has NOT noticed yet. Handing
+    // this over is what produced `error.ConnectionClosed` on a fresh pane.
+    try testing.expectEqual(NewSurfaceVerdict.recover_first, newSurfaceVerdict(.connected, 7, false));
+    // T764 is untouched: a down link over a LIVE (wedged) agent still falls back.
+    try testing.expectEqual(NewSurfaceVerdict.exec_fallback, newSurfaceVerdict(.reconnecting, 7, true));
+    // Unknown pid never claims a death.
+    try testing.expectEqual(NewSurfaceVerdict.exec_fallback, newSurfaceVerdict(.reconnecting, 0, false));
+    try testing.expectEqual(NewSurfaceVerdict.hand_over, newSurfaceVerdict(.connected, 0, false));
+    // A DETACHED close is re-resolved, whatever the pid says.
+    try testing.expectEqual(NewSurfaceVerdict.re_resolve, newSurfaceVerdict(.dead, 7, false));
+    try testing.expectEqual(NewSurfaceVerdict.re_resolve, newSurfaceVerdict(.dead, 7, true));
 }
 
 test "T764 handsToNewSurface: a wedged link is not handed to a pane that does not exist yet" {
