@@ -1865,6 +1865,9 @@ $GuardTable = @(
             'scripts\publish-windows-tag.ps1',
             # T1444: the release notes the publisher authors before it tags.
             'scripts\release-notes-author.ps1',
+            # T1451: the manual pre-release checks the publish names (section U).
+            'scripts\lib\ManualChecks.ps1',
+            'scripts\manual-check.ps1',
             'test\win32\daily-publish.ps1'
         )
     },

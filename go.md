@@ -211,6 +211,13 @@ Concretely, in order, with no stops in between:
 
        — and a stranded list holding a fix somebody is waiting on is exactly what
        this tab exists to surface. The remedy is a request, per step 6.5.
+
+       **And name any `MANUAL CHECK OWED` line it prints** (T1451) under
+       **Decisions**, in one plain sentence: a check only a person can run
+       (today, the IME checklist, which needs a Microsoft IME this box does not
+       have) has no recorded pass for the release line the user is running.
+       It never blocks a publish, so the digest is the only place it gets
+       asked for. `scripts\manual-check.ps1` records a run.
      - **Open pull requests** (T1059) — paste the block this prints, verbatim,
        as an H3 inside `## Commentary`:
 

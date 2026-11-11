@@ -231,7 +231,12 @@ param(
     [switch]$NoScanCheck,
     # T1076. Skip the readback of the release's MSI and ZIP that runs beside the
     # scan. Advisory either way; this is for a run that must not download.
-    [switch]$NoAssetCheck
+    [switch]$NoAssetCheck,
+    # T1451. The record of manual pre-release checks (the IME checklist needs a
+    # box this loop does not have). Empty = the repo's
+    # docs\design\windows-parity-manual-checks.json. What it says is OWED is
+    # named in the publish log and in -Status; it never blocks a publish.
+    [string]$ManualChecksPath = ''
 )
 
 $ErrorActionPreference = 'Continue'
@@ -537,6 +542,17 @@ if (-not $Repo) { $Repo = Split-Path -Parent $PSScriptRoot }
 Set-Location $Repo
 # Assert-LoopLaneOwnsDelivery (T1984). Functions only.
 . (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
+# Get-ManualCheckLines (T1451). Functions only.
+. (Join-Path $PSScriptRoot 'lib\ManualChecks.ps1')
+if (-not $ManualChecksPath) { $ManualChecksPath = Get-ManualCheckDefaultPath $Repo }
+
+# The manual checks a release line still owes (T1451), one log line each. Named
+# at the two moments a person reads this log - a release being cut, and -Status
+# (the morning digest's source) - and never a refusal: the check needs a box
+# this loop does not have, so all it can do is be impossible to miss.
+function Write-ManualCheckLog([string]$Version) {
+    foreach ($l in (Get-ManualCheckLines -Runs @(Read-ManualCheckFile $ManualChecksPath) -Version $Version)) { Log $l }
+}
 
 if (-not $RequestPath) { $RequestPath = "$WatermarkPath-request" }
 function Read-RequestFile {
@@ -620,6 +636,7 @@ if ($Status) {
         foreach ($line in $strandedLines) { Log "  $line" }
     }
     if ($req.Requested) { Log "REQUEST PENDING: $($req.Reason) (recorded $($req.At))" }
+    if ($mark.Tag) { Write-ManualCheckLog $mark.Tag }
     exit 0
 }
 
@@ -793,6 +810,7 @@ if (-not $v.Version) {
 }
 $hash = (git rev-parse --short HEAD).Trim()
 Log "DUE: $($d.Why); publishing win-v$($v.Version) at $hash ($($v.Why))"
+Write-ManualCheckLog $v.Version
 
 if ($Check) {
     Log 'CHECK ONLY: not stamping, not publishing'

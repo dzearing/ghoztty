@@ -69,5 +69,24 @@ with "Basic typing" selected):
    (`Surface.zig` handles `WM_IME_COMPOSITION` itself rather than letting a
    control do it).
 
-Record the result in the release's task or log entry. A failure here is a task,
-filed the ordinary way.
+## Recording it, and what asks for it (T1451)
+
+Record every run, pass or fail, against the release line it was run on:
+
+```
+powershell -NoProfile -File scripts\manual-check.ps1 record -Check ime -Result pass -Note "<what you saw>"
+powershell -NoProfile -File scripts\manual-check.ps1 record -Check ime -Result fail -Note "T<id>: <what broke>"
+```
+
+and commit `docs\design\windows-parity-manual-checks.json`. A failure is also a
+task, filed the ordinary way; `record` refuses a fail whose note does not name
+one.
+
+Until a pass is recorded for the current line (Major.Minor, e.g. `1.37`), the
+check is **owed**, and it says so in two places a person reads: the publish log
+(`%TEMP%\ghoztty-daily-publish.log`) every time `scripts\daily-publish.ps1` cuts
+a release, and `daily-publish.ps1 -Status`, which the morning digest reads. The
+line is `MANUAL CHECK OWED: ime ...`. It never holds a release back: this box
+cannot run the check, so it is a reminder, not a gate. A new line (the Mac
+version moving to the next minor) owes it again. Ask directly with
+`scripts\manual-check.ps1 status`.

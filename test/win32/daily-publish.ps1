@@ -46,6 +46,8 @@
 #   P  the stranded threshold (T1588), both sides of it, pure.
 #   Q  the stranded threshold end to end: under it nothing moves; at it the
 #      request is filed and honoured through the ordinary request path.
+#   U  manual pre-release checks (T1451): an owed check is named in the publish
+#      log and in -Status, never stops a publish, and a recorded pass clears it.
 #
 # Hermetic: a sandbox watermark under %TEMP%, a fake `docker`/`gh` on PATH, and
 # a sentinel publish script that records if it was ever run. No Docker, no
@@ -813,6 +815,65 @@ exit 0
     } finally {
         [IO.File]::WriteAllText($fakePublish, $savedFake)
     }
+
+    "== U. manual pre-release checks are named, never a gate (T1451) =="
+    # The IME checklist needs a Microsoft IME, which this box deliberately does
+    # not have, and nothing asked anyone to run it. Now a release line OWES it
+    # until a pass is recorded, and the owed line is printed where a person
+    # reads: the publish log as a release is cut, and -Status (the digest's
+    # source). It must never hold a publish back.
+    . (Join-Path $Repo 'scripts\lib\ManualChecks.ps1')
+    AssertEq 'U1 a win-v tag maps to its release line' '1.37' (Get-ReleaseLine 'win-v1.37.12')
+    AssertEq 'U1 a Mac tag maps to the same line' '1.37' (Get-ReleaseLine 'v1.37.0')
+    AssertEq 'U1 anything else is no line' '' (Get-ReleaseLine 'nightly')
+    $uRuns = @(ConvertFrom-ManualCheckText '{"runs":[{"check":"ime","line":"1.37","date":"2026-11-01","result":"fail","note":"T9"},{"check":"ime","line":"1.36","date":"2026-10-01","result":"pass","note":""}]}')
+    AssertEq 'U2 the record reads every run' 2 $uRuns.Count
+    Assert 'U3 a FAIL does not discharge its line, and an older line''s pass does not carry forward' (Get-ManualCheckVerdict -Runs $uRuns -Check 'ime' -Line '1.37').Owed
+    Assert 'U4 a pass on the line discharges it' (-not (Get-ManualCheckVerdict -Runs $uRuns -Check 'ime' -Line '1.36').Owed)
+    AssertEq 'U5 an unreadable record is no runs - owed, the safe direction' 0 @(ConvertFrom-ManualCheckText '{not json').Count
+    foreach ($c in (Get-ManualCheckCatalog)) {
+        Assert "U6 the $($c.Name) checklist the reminder points at exists" (Test-Path -LiteralPath (Join-Path $Repo $c.Doc) -PathType Leaf)
+    }
+    $repoRecord = Get-ManualCheckDefaultPath $Repo
+    $repoRecordOk = $false
+    try { $null = [IO.File]::ReadAllText($repoRecord) | ConvertFrom-Json; $repoRecordOk = $true } catch { }
+    Assert 'U6 the committed record file exists and parses' $repoRecordOk
+
+    $mc = Join-Path $sandbox 'manual-checks.json'
+    $manualCli = Join-Path $Repo 'scripts\manual-check.ps1'
+    Remove-Item -LiteralPath $watermark, $ranMarker, $requestFile, $mc -Force -ErrorAction SilentlyContinue
+    $u7 = Invoke-Decider -Extra @('-Check', '-ManualChecksPath', $mc) -DockerCode 0 -GhCode 0
+    AssertEq 'U7 a due -Check with the check owed still says it would publish' 10 $u7.Exit
+    AssertMatch 'U7 and the publish log names the checklist and that it is deferred' 'MANUAL CHECK OWED: ime .*windows-parity-ime-manual\.md.*Deferred - it never blocks a publish' $u7.Text
+    $uLine = if ($u7.Text -match 'recorded for the (\d+\.\d+) line') { $Matches[1] } else { '' }
+    AssertMatch "U7 for the line of the version being published ($uLine)" ('win-v' + [regex]::Escape($uLine) + '\.\d+') $u7.Text
+
+    # The real run, not a check: owed, and the publisher still runs.
+    $u8 = Invoke-Decider -Extra @('-ManualChecksPath', $mc) -DockerCode 1 -GhCode 0
+    AssertEq 'U8 an owed check does not stop a real publish' 10 $u8.Exit
+    Assert 'U8 the publisher ran' (Test-Path -LiteralPath $ranMarker)
+    AssertMatch 'U8 and its log carried the reminder' 'MANUAL CHECK OWED: ime' $u8.Text
+    Remove-Item -LiteralPath $ranMarker -Force -ErrorAction SilentlyContinue
+
+    # -Status is what the morning digest pastes from.
+    $u9 = Invoke-Decider -Extra @('-Status', '-ManualChecksPath', $mc) -DockerCode 0 -GhCode 0
+    AssertEq 'U9 -Status exits 0' 0 $u9.Exit
+    AssertMatch 'U9 and names the owed check for the release it reports' "MANUAL CHECK OWED: ime .*the $([regex]::Escape($uLine)) line" $u9.Text
+
+    # Refusals write nothing.
+    $u10 = & powershell -NoProfile -ExecutionPolicy Bypass -File $manualCli record -Check ime -Result fail -Version $uLine -Path $mc
+    AssertEq 'U10 a FAIL with no -Note naming its task is refused' 1 $LASTEXITCODE
+    $u10b = & powershell -NoProfile -ExecutionPolicy Bypass -File $manualCli record -Check nope -Result pass -Version $uLine -Path $mc
+    AssertEq 'U10 an unknown check is refused' 1 $LASTEXITCODE
+    Assert 'U10 and neither refusal wrote the record' (-not (Test-Path -LiteralPath $mc))
+
+    # Recording a pass for the line discharges it, in both places.
+    $u11 = & powershell -NoProfile -ExecutionPolicy Bypass -File $manualCli record -Check ime -Result pass -Version $uLine -Path $mc -Date '2026-09-01' -Note 'harness'
+    AssertEq 'U11 record exits 0' 0 $LASTEXITCODE
+    AssertMatch 'U11 and says what it recorded' "RECORDED: ime PASS for the $([regex]::Escape($uLine)) line" ($u11 -join "`n")
+    $u12 = Invoke-Decider -Extra @('-Status', '-ManualChecksPath', $mc) -DockerCode 0 -GhCode 0
+    AssertMatch 'U12 -Status now reads the line as passed' "MANUAL CHECK OK: ime passed for the $([regex]::Escape($uLine)) line on 2026-09-01" $u12.Text
+    Assert 'U12 and owes nothing' ($u12.Text -notmatch 'MANUAL CHECK OWED')
     Complete-TestBody
 } finally {
     Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
