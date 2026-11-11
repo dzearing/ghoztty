@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-10T22:07:47-08:00",
-    "commit":  "18de3f5eb",
+    "generated":  "2026-11-10T22:29:27-08:00",
+    "commit":  "c7885fcf6",
     "uncommitted":  [
 
                     ],
@@ -1102,7 +1102,7 @@
                   "test/win32/agent-instance-lineage.ps1":  "5a4c8c30c32b132c81d5317991cbf0874f41a9cb2d340854dce8c96fd078e6b9",
                   "test/win32/agent-integrations.ps1":  "2b8083f671e2e50fc51f87896710960a8bfb61a737f256676a43f6c191fa83bd",
                   "test/win32/agent-job-escape.ps1":  "a6865bdcc2ab5d0c98c316fc436599c5e325220d45290dbedab91bc18b1e03fc",
-                  "test/win32/agent-job-report.ps1":  "cb2d781c08f461ada4719405be41efa795c3393c98ca7dcd0612b146cf9ebfef",
+                  "test/win32/agent-job-report.ps1":  "944358e04c91ee0e6427fc03336e2139e8f08ba210e23724cf8bdf1fd19ae296",
                   "test/win32/agent-lineage-suites.ps1":  "589bd4707698f2254f3e0fc30d5f2ebe99aaf78fe6edaf973d87d3fc713a932f",
                   "test/win32/agent-open-refused.ps1":  "2476ce555f7caed75a5d50cbd3dc68d5f6170a075d60a08e12885e8835ccd6fd",
                   "test/win32/agent-pipe.ps1":  "e3639b007ce04d5adb73e34631d3629f3847ccc3f38775885a2b4f8a5dea53c4",
