@@ -1,10 +1,10 @@
 {
     "guard":  "test-reach",
     "script":  "test/win32/test-reach-audit.ps1",
-    "generated":  "2026-11-10T19:06:29-08:00",
-    "commit":  "fa2726019",
+    "generated":  "2026-11-10T21:37:58-08:00",
+    "commit":  "e6f3ce136",
     "uncommitted":  [
-                        "src/apprt/win32/release_notes.zig"
+                        "src/apprt/win32/skill_rewrite.zig"
                     ],
     "files":  {
                   "src/apprt/win32.zig":  "f3e60aa2b0dbeff84f46ff29aba3429307ec83f5d1cb44bed8e7026feb584bc4",
@@ -319,7 +319,7 @@
                   "src/apprt/win32/ShortcutGuideWindow.zig":  "fa34210c8821c5a57f0c9fd6068951b7aae86d805948f8ed2d5374b48a5ad3da",
                   "src/apprt/win32/sidebar_symbol.zig":  "f153264518aacc2fdcebe28a85f23c94a5be576cb2784ee094f3a519b1836986",
                   "src/apprt/win32/sidebar_symbol_dc.zig":  "447c24a1d03d14aa36f129d54be56fa3766d97a50935ba022f67f1910671a89a",
-                  "src/apprt/win32/skill_rewrite.zig":  "6bc6af76e8f138fcf0e0e3ae603574ce52b13116a52bce2886d11ed623730882",
+                  "src/apprt/win32/skill_rewrite.zig":  "65e23ee0a8f2a69f87a70f5016a46a381e4e5db5c0f58c758c4c0db25cfa955c",
                   "src/apprt/win32/SkillComponent.zig":  "657179d3f21d03b23e2c3f5c2663550ea753d0d8b612e460e5c4067a73c45983",
                   "src/apprt/win32/source_checkout.zig":  "f7a91595696674da68899cbdf06a056d2f9f365b13a3d7d4cab69797ec49b4da",
                   "src/apprt/win32/split_geometry.zig":  "89ed9cf26dd83d946f1fd48fa73cf2dedde6de7b3e3920ac907e3d509d3d5e17",

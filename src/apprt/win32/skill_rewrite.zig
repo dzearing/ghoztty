@@ -97,6 +97,14 @@ pub const windows_rewrites = [_]Rewrite{
         .mac = "`+new-window` launches Ghoztty.app if no instance is running.",
         .win = "`+new-window` launches Ghoztty if no instance is running.",
     },
+    // `+set-state` (T1457): the Mac sentence names AppKit API; Windows shows
+    // only the title suffix (`Window.updateWindowTitle`, " (question)" per
+    // `displayLabel`). The taskbar flash Mac's attention request maps to is
+    // T2907 - update this row when it lands.
+    .{
+        .mac = "and shown as a title suffix and custom `AXWindowActivityState` accessibility attribute. Transition to `needs_input` triggers `requestUserAttention`.",
+        .win = "and shown as a window-title suffix: ` (busy)`, or ` (question)` for `needs_input`; idle shows none.",
+    },
     // Examples.
     .{ .mac = "--split-command=\"exec zsh -l\"", .win = "--split-command=pwsh" },
     .{ .mac = "--command=zsh", .win = "--command=pwsh" },
@@ -111,6 +119,7 @@ pub const windows_rewrites = [_]Rewrite{
 pub const mac_only_phrases = [_][]const u8{
     "Cmd-",    "Cmd+",         "Cmd /",          "trackpad",
     "two-finger", "zsh",       "Ghoztty.app",    "LaunchServices",
+    "AXWindow",   "requestUserAttention",
 };
 
 /// `text` with every `windows_rewrites` row applied (all occurrences).
