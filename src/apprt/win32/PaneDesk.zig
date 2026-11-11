@@ -249,6 +249,18 @@ pub const Names = struct {
     rects: []const busy_light.Rect,
     /// Draws the names into `hdc` in window client coordinates.
     draw: *const fn (ctx: *anyopaque, hdc: w32.HDC) void,
+    /// Lays the names straight into a picture's pixels (T2871): `px` is
+    /// `w` x `h`, whose (0, 0) is window client point (`origin_x`,
+    /// `origin_y`), touched only inside `rects`. False when it could not, and
+    /// `draw` then puts them out with GDI.
+    lay: ?*const fn (ctx: *anyopaque, px: []u32, w: i32, h: i32, origin_x: i32, origin_y: i32, rects: []const busy_light.Rect) bool = null,
+
+    fn layInto(n: Names, d: Dib, origin_x: i32, origin_y: i32) bool {
+        const f = n.lay orelse return false;
+        // GDI's own work on the picture lands before its pixels are read.
+        _ = w32.GdiFlush();
+        return f(n.ctx, d.pixels(), d.w, d.h, origin_x, origin_y, n.rects);
+    }
 };
 
 /// The caller's hook for taking the composed desk somewhere other than the
@@ -1182,6 +1194,8 @@ fn layNamesOut(self: *PaneDesk, out: Dib, origin_x: i32, origin_y: i32) void {
     const n = self.names orelse return;
     self.names_saved.clearRetainingCapacity();
     saveUnder(out.pixels(), out.w, out.h, n.rects, &self.names_saved) catch return;
+    // Laid at the alpha under them already: nothing to take back.
+    if (n.layInto(out, origin_x, origin_y)) return;
     const rgn = w32.CreateRectRgn(0, 0, 0, 0) orelse return;
     defer _ = w32.DeleteObject(rgn);
     for (n.rects) |r| {
@@ -1247,6 +1261,11 @@ fn layNames(self: *PaneDesk, comp: Dib, origin_x: i32, origin_y: i32, opacity: ?
     }
     self.names_saved.clearRetainingCapacity();
     saveUnder(comp.pixels(), comp.w, comp.h, n.rects, &self.names_saved) catch return false;
+    if (n.layInto(comp, origin_x, origin_y)) {
+        _ = w32.QueryPerformanceCounter(&self.last_stamps.drawn);
+        self.names_laid = true;
+        return true;
+    }
     const rgn = w32.CreateRectRgn(0, 0, 0, 0) orelse return false;
     defer _ = w32.DeleteObject(rgn);
     for (n.rects) |r| {

@@ -185,6 +185,7 @@ const drag_hold = @import("drag_hold.zig");
 const StripFace = @import("StripFace.zig").StripFace;
 const pane_stack_state = @import("pane_stack_state.zig");
 const busy_light = @import("busy_light.zig");
+const strip_label = @import("strip_label.zig");
 const window_active = @import("window_active.zig");
 const PaneDesk = @import("PaneDesk.zig");
 const comp_overlay = @import("../../renderer/comp_overlay.zig");
@@ -1078,6 +1079,15 @@ pane_stacks: ?pane_stack_state.PaneStackState = null,
 /// The tucked pane whose strip the pointer is over (T2109): its label takes
 /// Mac's stronger hover ink. Compared, never dereferenced.
 strip_hover: ?*PaneView = null,
+
+/// The strips' names as drawn once (T2871, `strip_label`), laid into the
+/// desk's pixels on every paint after, and what draws and measures them: a
+/// memory DC and the two turns of the face at `strip_label_height` pixels.
+strip_labels: strip_label.Cache = .{},
+strip_label_dc: ?w32.HDC = null,
+strip_label_height: i32 = 0,
+strip_label_across: ?*anyopaque = null,
+strip_label_down: ?*anyopaque = null,
 
 /// The carousel slide under way (T2102): the cards gliding to their new slots
 /// after a stack's run changed. Null at rest.
@@ -2530,6 +2540,10 @@ fn releaseOwnedResources(self: *Window) void {
     if (self.pane_stacks) |*st| st.deinit();
     self.pane_stacks = null;
     self.pane_desk.deinit();
+    self.dropStripLabelFonts();
+    if (self.strip_label_dc) |dc| _ = w32.DeleteDC(dc);
+    self.strip_label_dc = null;
+    self.strip_labels.deinit(self.app.core_app.alloc);
     if (self.drop_preview) |dp| {
         dp.destroy();
         self.drop_preview = null;
@@ -13109,11 +13123,11 @@ fn clearVacatedPaneStrips(self: *Window, hwnd: w32.HWND, old: []const w32.RECT) 
                     return if (t == 0) 0 else t - t0;
                 }
             }.f;
-            stackTrace("stack trace vacated in={d} dc={d} desk_in={d} ready={d} composed={d} iters={d} extent={d} textout={d} drawn={d} named={d} desk_out={d} bands_desk={d} headers={d} out={d} hit={}", .{
-                t_in,                 at(t_in, t_dc),    at(t_in, s.enter), at(t_in, s.ready),
-                at(t_in, s.composed), label_cost.iters,  label_cost.extent, label_cost.out,
-                at(t_in, s.drawn),    at(t_in, s.named), at(t_in, s.done),  at(t_in, b.desk),
-                at(t_in, b.headers),  at(t_in, t_out),   s.hit,
+            stackTrace("stack trace vacated in={d} dc={d} desk_in={d} ready={d} composed={d} iters={d} extent={d} textout={d} misses={d} drawn={d} named={d} desk_out={d} bands_desk={d} headers={d} out={d} hit={}", .{
+                t_in,                 at(t_in, t_dc),    at(t_in, s.enter),  at(t_in, s.ready),
+                at(t_in, s.composed), label_cost.iters,  label_cost.extent,  label_cost.out,
+                label_cost.misses,    at(t_in, s.drawn), at(t_in, s.named),  at(t_in, s.done),
+                at(t_in, b.desk),     at(t_in, b.headers), at(t_in, t_out), s.hit,
             });
         }
         lap.report("vacated");
@@ -13482,7 +13496,190 @@ fn paintStripLabel(
 
 /// What `paintStripLabel` spent since the vacated paint's stack trace last
 /// reset it (T2732): measuring the cut, and putting the text out. UI thread.
-var label_cost: struct { iters: u32 = 0, extent: i64 = 0, out: i64 = 0 } = .{};
+/// `misses` counts the names drawn into the cache (T2871) rather than laid
+/// from it.
+var label_cost: struct { iters: u32 = 0, extent: i64 = 0, out: i64 = 0, misses: u32 = 0 } = .{};
+
+/// `GHOZTTY_STRIP_LABEL_GDI=1` puts the desk's strip names out with GDI text
+/// every paint as before T2871, the A/B for the glide probe's `textout=`.
+var strip_label_gdi: ?bool = null;
+fn stripLabelGdi() bool {
+    if (strip_label_gdi) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_STRIP_LABEL_GDI");
+    strip_label_gdi = v;
+    return v;
+}
+
+/// The desk's `PaneDesk.Names.lay` hook (T2871): the names alone, laid into
+/// its picture from each name's coverage as drawn once, rather than put out
+/// with GDI text on every paint - which stalled 2-6 ms about once in 170
+/// glide paints. The same names `drawDeskStripNames` would draw, at the same
+/// place, in the same ink; false (and GDI draws them) when the drawing DC or
+/// its face cannot be had.
+fn layDeskStripNames(
+    ctx: *anyopaque,
+    px: []u32,
+    w: i32,
+    h: i32,
+    origin_x: i32,
+    origin_y: i32,
+    rects: []const busy_light.Rect,
+) bool {
+    const self: *Window = @ptrCast(@alignCast(ctx));
+    if (stripLabelGdi()) return false;
+    const dc = self.stripLabelDc() orelse return false;
+    var clip: [MAX_DRAG_NODES]strip_label.Rect = undefined;
+    const nc = @min(rects.len, clip.len);
+    for (rects[0..nc], clip[0..nc]) |r, *c| c.* = .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
+
+    var strips: [MAX_DRAG_NODES]TuckedStrip = undefined;
+    const n = self.tuckedStrips(&strips);
+    const bg = self.stripBackground();
+    const light = color_math.isLight(bg);
+    const strip_rgb = pane_stack_strip.stripRgb(bg, false);
+    const hover_rgb = pane_stack_strip.stripRgb(bg, true);
+    for (strips[0..n]) |s| {
+        // As `paintStripBandsAndNames`: a gliding card's face carries its
+        // name (T2288), and so does a strip moving on a declared face (T2825).
+        if (s.glide != null or s.faced) continue;
+        const hovered = if (self.strip_hover) |hv| hv == s.view else false;
+        const ink = pane_stack_strip.inkRgb(if (hovered) hover_rgb else strip_rgb, light, hovered);
+        const placed = self.stripLabelPic(dc, s.view, s.label, s.axis) orelse continue;
+        var tq0: i64 = 0;
+        if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq0);
+        strip_label.blend(px, w, h, placed.pic.px, placed.pic.box.w, placed.pic.box.h, placed.x - origin_x, placed.y - origin_y, clip[0..nc], ink);
+        if (stackTraceOn()) {
+            var tq1: i64 = 0;
+            _ = w32.QueryPerformanceCounter(&tq1);
+            label_cost.out += tq1 - tq0;
+        }
+    }
+    return true;
+}
+
+/// A strip's name as `paintStripLabel` would put it out, from the cache:
+/// its picture and where the picture's top-left goes, in window pixels. The
+/// cut is measured every paint (cheap, and the strip's room changes as it
+/// glides); only a cut not drawn before is drawn now.
+fn stripLabelPic(
+    self: *Window,
+    dc: w32.HDC,
+    view: *PaneView,
+    tab: pane_stack_strip.Rect,
+    axis: pane_stack_layout.Direction,
+) ?struct { pic: *strip_label.Pic, x: i32, y: i32 } {
+    const room = pane_stack_strip.labelRoom(tab, axis, self.scale);
+    if (room <= 0) return null;
+    var label_buf: [512]u8 = undefined;
+    const label8 = self.paneStripLabel(view, &label_buf);
+    var wide: [256]u16 = undefined;
+    const wlen = std.unicode.utf8ToUtf16Le(&wide, label8[0..@min(label8.len, wide.len)]) catch return null;
+    if (wlen == 0) return null;
+    const rotated = axis == .horizontal;
+    const font = (if (rotated) self.strip_label_down else self.strip_label_across) orelse return null;
+    const old_font = w32.SelectObject(dc, font);
+    defer _ = w32.SelectObject(dc, old_font);
+    var cut_buf: [257]u16 = undefined;
+    var keep: usize = wlen;
+    var text: []const u16 = wide[0..wlen];
+    var size: w32.SIZE = .{ .cx = 0, .cy = 0 };
+    var tq0: i64 = 0;
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq0);
+    while (true) {
+        text = pane_stack_strip.middleCut(wide[0..wlen], keep, &cut_buf);
+        _ = w32.GetTextExtentPoint32W(dc, text.ptr, @intCast(text.len), &size);
+        label_cost.iters +%= 1;
+        if (size.cx <= room or keep == 0) break;
+        keep -= 1;
+    }
+    var tq1: i64 = 0;
+    if (stackTraceOn()) {
+        _ = w32.QueryPerformanceCounter(&tq1);
+        label_cost.extent += tq1 - tq0;
+    }
+    if (size.cx > room or size.cx <= 0 or size.cy <= 0) return null;
+    const height = self.strip_label_height;
+    const pic = self.strip_labels.find(text, height, rotated) orelse miss: {
+        label_cost.misses +%= 1;
+        break :miss self.drawStripLabelPic(dc, text, height, rotated, size) orelse return null;
+    };
+    // A miss's drawing is the name's put-out cost, as `TextOutW` was.
+    if (stackTraceOn()) {
+        var tq2: i64 = 0;
+        _ = w32.QueryPerformanceCounter(&tq2);
+        label_cost.out += tq2 - tq1;
+    }
+    const o = pane_stack_strip.labelOrigin(tab, axis, size.cx, size.cy, self.scale);
+    return .{ .pic = pic, .x = o.x - pic.box.origin_x, .y = o.y - pic.box.origin_y };
+}
+
+/// Draw a name not in the cache: white on black into a DIB, the way a
+/// declared face's name is drawn (`declareStripFace`), kept as its coverage.
+/// `dc` has the name's face selected.
+fn drawStripLabelPic(
+    self: *Window,
+    dc: w32.HDC,
+    text: []const u16,
+    height: i32,
+    rotated: bool,
+    size: w32.SIZE,
+) ?*strip_label.Pic {
+    const alloc = self.app.core_app.alloc;
+    const b = strip_label.box(rotated, size.cx, size.cy);
+    const pic = self.strip_labels.claim(alloc, text, height, rotated, b) orelse return null;
+    var bits: ?*anyopaque = null;
+    const bmi = w32.BITMAPINFO{ .bmiHeader = .{
+        .biWidth = b.w,
+        .biHeight = -b.h, // top-down
+        .biPlanes = 1,
+        .biBitCount = 32,
+        .biCompression = w32.BI_RGB,
+    } };
+    const bmp = w32.CreateDIBSection(dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse {
+        self.strip_labels.drop(alloc, pic);
+        return null;
+    };
+    defer _ = w32.DeleteObject(bmp);
+    const raw = bits orelse {
+        self.strip_labels.drop(alloc, pic);
+        return null;
+    };
+    const src: [*]u32 = @ptrCast(@alignCast(raw));
+    const old_bmp = w32.SelectObject(dc, bmp);
+    defer _ = w32.SelectObject(dc, old_bmp);
+    @memset(src[0..pic.px.len], 0);
+    _ = w32.TextOutW(dc, b.origin_x, b.origin_y, text.ptr, @intCast(text.len));
+    _ = w32.GdiFlush();
+    for (pic.px, src[0..pic.px.len]) |*d, s| d.* = s & 0xFFFFFF;
+    return pic;
+}
+
+/// The cache's memory DC, with the strip face at this window's scale
+/// selected-ready in both turns; null when either cannot be had.
+fn stripLabelDc(self: *Window) ?w32.HDC {
+    if (self.strip_label_dc == null) {
+        const dc = w32.CreateCompatibleDC(null) orelse return null;
+        _ = w32.SetBkMode(dc, w32.TRANSPARENT);
+        _ = w32.SetTextColor(dc, w32.RGB(255, 255, 255));
+        self.strip_label_dc = dc;
+    }
+    const height: i32 = @intFromFloat(@round(pane_stack_strip.label_dip * self.scale));
+    if (height != self.strip_label_height or self.strip_label_across == null or self.strip_label_down == null) {
+        self.dropStripLabelFonts();
+        self.strip_label_across = self.stripFont(0);
+        self.strip_label_down = self.stripFont(2700);
+        self.strip_label_height = height;
+        if (self.strip_label_across == null or self.strip_label_down == null) return null;
+    }
+    return self.strip_label_dc;
+}
+
+fn dropStripLabelFonts(self: *Window) void {
+    if (self.strip_label_across) |f| _ = w32.DeleteObject(f);
+    if (self.strip_label_down) |f| _ = w32.DeleteObject(f);
+    self.strip_label_across = null;
+    self.strip_label_down = null;
+}
 
 /// What a pane's strip calls it: the banner's title when it has one, else the
 /// pane's own (the pane sidebar's name for it, T2085).
@@ -13752,7 +13949,7 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         name_rects[nn] = .{ .left = s.tab.left - area.left, .top = s.tab.top - area.top, .right = s.tab.right - area.left, .bottom = s.tab.bottom - area.top };
         nn += 1;
     }
-    self.pane_desk.names = if (nn > 0) .{ .ctx = self, .rects = name_rects[0..nn], .draw = drawDeskStripNames } else null;
+    self.pane_desk.names = if (nn > 0) .{ .ctx = self, .rects = name_rects[0..nn], .draw = drawDeskStripNames, .lay = layDeskStripNames } else null;
     defer self.pane_desk.names = null;
     // The desk as the chrome host's bottom visual (T2509): the paint then
     // uploads what changed instead of blitting. What GDI draws over it goes

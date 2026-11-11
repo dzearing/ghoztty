@@ -1,8 +1,8 @@
 {
     "guard":  "agent-recovery",
     "script":  "test/win32/agent-recovery.ps1",
-    "generated":  "2026-11-11T09:47:06-08:00",
-    "commit":  "f32d9b82d",
+    "generated":  "2026-11-11T10:32:12-08:00",
+    "commit":  "1aa892f9d",
     "uncommitted":  [
 
                     ],
