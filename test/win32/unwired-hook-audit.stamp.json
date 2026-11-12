@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-11T22:03:06-08:00",
-    "commit":  "2434fae6d",
+    "generated":  "2026-11-11T22:47:09-08:00",
+    "commit":  "c30ab0063",
     "uncommitted":  [
 
                     ],
@@ -1245,7 +1245,7 @@
                   "test/win32/floor-lane-solo-confirm.ps1":  "a222a0c597b6f6e265690cbebb3e9d621db1ba6a53217ab62148231a5a9dab9c",
                   "test/win32/floor-lane-stall-sampling.ps1":  "1ffd9b4a466850f44fd49712ad9c82cf8a8e89ead999cea40903eb3ce0306418",
                   "test/win32/floor-lane-verdict-detail.ps1":  "a4553943b43928fed9dee5abbac068f64d8adef4c5feff05dbf8e761093faaa5",
-                  "test/win32/floor-lane-webview-settle.ps1":  "d5cf22c7342c16a5bebc1a27d1f7d62e1c4dbe297fe2538e9542a7b3cfe8122b",
+                  "test/win32/floor-lane-webview-settle.ps1":  "c45d516f0afb72aeaf60e6ff3389619b722763144eebdfa53e1e5fc523787aec",
                   "test/win32/focus-defer.ps1":  "3d0ccc2eaef8a0e04a7865d00135a64f7c5429817234e76cc2a39314599a4e58",
                   "test/win32/focus-follows-mouse.ps1":  "09c5f9884b9c51bdb0d91321a12c0e8b8c554552434fd78f7b6267826caaa4e1",
                   "test/win32/focus-glow-comp.ps1":  "2c73ede71171b8ebc8bfafa802d4af2fb8ee11d76201f0b81485b59a42f616f9",

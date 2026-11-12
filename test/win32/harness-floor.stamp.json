@@ -1,13 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-11T20:47:58-08:00",
-    "commit":  "b3f32e18a",
+    "generated":  "2026-11-11T23:15:56-08:00",
+    "commit":  "c30ab0063",
     "uncommitted":  [
-                        "test/win32/fail-transcript.ps1",
-                        "test/win32/ipc-floor-setup.ps1",
-                        "test/win32/lib/FloorFixture.ps1",
-                        "test/win32/lib/Transcript.ps1"
+                        "test/win32/lib/CommandResolveAudit.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -167,7 +164,7 @@
                   "test/win32/floor-lane-solo-confirm.ps1":  "a222a0c597b6f6e265690cbebb3e9d621db1ba6a53217ab62148231a5a9dab9c",
                   "test/win32/floor-lane-stall-sampling.ps1":  "1ffd9b4a466850f44fd49712ad9c82cf8a8e89ead999cea40903eb3ce0306418",
                   "test/win32/floor-lane-verdict-detail.ps1":  "a4553943b43928fed9dee5abbac068f64d8adef4c5feff05dbf8e761093faaa5",
-                  "test/win32/floor-lane-webview-settle.ps1":  "d5cf22c7342c16a5bebc1a27d1f7d62e1c4dbe297fe2538e9542a7b3cfe8122b",
+                  "test/win32/floor-lane-webview-settle.ps1":  "c45d516f0afb72aeaf60e6ff3389619b722763144eebdfa53e1e5fc523787aec",
                   "test/win32/focus-defer.ps1":  "3d0ccc2eaef8a0e04a7865d00135a64f7c5429817234e76cc2a39314599a4e58",
                   "test/win32/focus-follows-mouse.ps1":  "09c5f9884b9c51bdb0d91321a12c0e8b8c554552434fd78f7b6267826caaa4e1",
                   "test/win32/focus-glow-comp.ps1":  "2c73ede71171b8ebc8bfafa802d4af2fb8ee11d76201f0b81485b59a42f616f9",
@@ -274,7 +271,7 @@
                   "test/win32/lib/CleanSlateAudit.ps1":  "e70b73f92c5a1102cdf0ce47a5fade709030b1cb4dda438e0a64155668f5b445",
                   "test/win32/lib/ClickCoordAudit.ps1":  "3f404a1cd9e3ff05c0daec8735a9d5c163d02b3a1beae8161ee2885d5026e36f",
                   "test/win32/lib/ColorMath.ps1":  "e0b7cb256aa2322eed4d2d75d88c3557598eacf8ffcc825f659a071f36b3c0f7",
-                  "test/win32/lib/CommandResolveAudit.ps1":  "9ed2f0925dfee89eb032a932ef0d0b046f5d5ed38a7e1a5c4cef19cb2109e424",
+                  "test/win32/lib/CommandResolveAudit.ps1":  "abcff9cb789047189bd1e9060ba0c4f8523eee95f9b8d84e7789c05f395826d1",
                   "test/win32/lib/ComposerSurface.ps1":  "7edd6dccc01fa8654f186ad97e64fb13bd9199305aa0424aebfbe7537e39d287",
                   "test/win32/lib/CountOrZero.ps1":  "becbcdc2dabc0728175ea276fc082a3e270df5637b659c434d93f3e407a9fa9c",
                   "test/win32/lib/count-resizes.ps1":  "bd9031b210198942ee1b7e9060d8bf46beebe35d217dd0f1abec75715802ce0e",
@@ -334,7 +331,7 @@
                   "test/win32/lib/SkipAudit.ps1":  "ad7596801d9becbd3869a0ad315d01302cf6e80a339644d911d74b31b3f577ba",
                   "test/win32/lib/StderrCaptureAudit.ps1":  "69d0a25615d35acc06bf6c1471016186163ae1881ae70a12461425546ac4b7d8",
                   "test/win32/lib/TestClient.ps1":  "2540c6af1c32c497f17c0e4fe04fc49480072ef7b54d464b12d0bd252897a3c5",
-                  "test/win32/lib/TestDesktop.ps1":  "30033d5c8b91a45d86084920b59e96f500f6c8dcf1717a098d93c94a39fcc83a",
+                  "test/win32/lib/TestDesktop.ps1":  "9c47a6668ad045aa0c61ac8d6c51320ead3ea54a3c6e10d5e0f77fe912c3c596",
                   "test/win32/lib/TestReachAudit.ps1":  "5e0e10352742575af26220c992790da3e9a74ae6d40281f2fecdf7d6a1cf52c0",
                   "test/win32/lib/TestScore.ps1":  "4a094c7b669e3891573f90ac78abdb342f1bf989cb14fce5a6a072addb4df7cd",
                   "test/win32/lib/TestWaitAudit.ps1":  "632b1d2adad0400247dd7d51c7f9ebad0e2c47ca9a7afe5cbdca2cd09318be3d",

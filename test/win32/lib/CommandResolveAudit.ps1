@@ -98,6 +98,7 @@ $script:ResolveAuditAstCache = @{}
 function Reset-ResolveAuditCache {
     $script:ResolveAuditAstCache = @{}
     $script:ResolveAuditFactCache = @{}
+    $script:ResolveAuditClosureCache = @{}
 }
 
 function Get-ResolveAuditAst {
@@ -184,10 +185,19 @@ $script:ResolveAuditFactCache = @{}
 function Get-ResolveAuditFileFacts {
     param([string]$Path, [string]$Repo)
 
+    # Look the path up AS GIVEN before resolving it (T2936): the closure walk
+    # asks for the same few hundred files thousands of times, and a
+    # `Resolve-Path` per ask was a large share of the sweep's cost. The facts
+    # are stored under both spellings below.
+    $askKey = $Path.ToLowerInvariant()
+    if ($script:ResolveAuditFactCache.ContainsKey($askKey)) {
+        return $script:ResolveAuditFactCache[$askKey]
+    }
     $full = $Path
     try { $full = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path } catch { }
     $key = $full.ToLowerInvariant()
     if ($script:ResolveAuditFactCache.ContainsKey($key)) {
+        $script:ResolveAuditFactCache[$askKey] = $script:ResolveAuditFactCache[$key]
         return $script:ResolveAuditFactCache[$key]
     }
 
@@ -198,6 +208,7 @@ function Get-ResolveAuditFileFacts {
     }
     if (-not (Test-Path -LiteralPath $full)) {
         $script:ResolveAuditFactCache[$key] = $facts
+        $script:ResolveAuditFactCache[$askKey] = $facts
         return $facts
     }
 
@@ -210,6 +221,11 @@ function Get-ResolveAuditFileFacts {
     $tryPaths = {
         param([string]$p)
         $out = @()
+        # A '*.ps1' string holding a wildcard or '<' is a pattern or a message,
+        # not a path, and IsPathRooted throws on it (T2936).
+        if ($p.IndexOfAny([IO.Path]::GetInvalidPathChars()) -ge 0 -or $p -match '[*?]') {
+            return $out
+        }
         if ([IO.Path]::IsPathRooted($p)) {
             if (Test-Path -LiteralPath $p) { $out += $p }
         } else {
@@ -248,8 +264,16 @@ function Get-ResolveAuditFileFacts {
     $facts.Names = @($names)
     $facts.Includes = @($includes)
     $script:ResolveAuditFactCache[$key] = $facts
+    $script:ResolveAuditFactCache[$askKey] = $facts
     $facts
 }
+
+# One root's transitive closure, walked once per process (T2936). The sweep asks
+# for it twice per root (B2's findings, B3's reachability), and the widening
+# rule makes a typical closure several hundred files deep, so re-walking it -
+# with an O(n^2) `$names +=` on top - is what pushed the sweep past its 900s
+# harness-floor budget.
+$script:ResolveAuditClosureCache = @{}
 
 # Every function name a file defines, plus every one it inherits by
 # dot-sourcing, transitively. $Seen collects the files walked (a cycle
@@ -262,18 +286,31 @@ function Get-ResolveAuditDefinitions {
         [hashtable]$Seen = @{}
     )
 
-    $names = @()
-    $queue = New-Object System.Collections.Queue
-    $queue.Enqueue($Path)
-    while ($queue.Count -gt 0) {
-        $facts = Get-ResolveAuditFileFacts -Path $queue.Dequeue() -Repo $Repo
-        $key = $facts.Path.ToLowerInvariant()
-        if ($Seen.ContainsKey($key)) { continue }
-        $Seen[$key] = $true
-        $names += $facts.Names
-        foreach ($inc in $facts.Includes) { $queue.Enqueue($inc) }
+    $rootKey = "$($Path.ToLowerInvariant())|$($Repo.ToLowerInvariant())"
+    $hit = $script:ResolveAuditClosureCache[$rootKey]
+    if (-not $hit) {
+        $names = New-Object 'System.Collections.Generic.List[string]'
+        $walked = New-Object 'System.Collections.Generic.HashSet[string]'
+        $asked = New-Object 'System.Collections.Generic.HashSet[string]'
+        $queue = New-Object 'System.Collections.Generic.Queue[string]'
+        $queue.Enqueue($Path)
+        while ($queue.Count -gt 0) {
+            $next = $queue.Dequeue()
+            # The same include is named by many files; ask for each spelling once.
+            if (-not $asked.Add($next.ToLowerInvariant())) { continue }
+            $facts = Get-ResolveAuditFileFacts -Path $next -Repo $Repo
+            if (-not $walked.Add($facts.Path.ToLowerInvariant())) { continue }
+            foreach ($n in $facts.Names) { $names.Add([string]$n) }
+            foreach ($inc in $facts.Includes) { $queue.Enqueue([string]$inc) }
+        }
+        $set = New-Object 'System.Collections.Generic.HashSet[string]' (
+            [System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($n in $names) { [void]$set.Add($n) }
+        $hit = [pscustomobject]@{ Names = $names.ToArray(); Walked = @($walked); Set = $set }
+        $script:ResolveAuditClosureCache[$rootKey] = $hit
     }
-    @($names)
+    foreach ($k in $hit.Walked) { $Seen[$k] = $true }
+    @($hit.Names)
 }
 
 # Which libraries no root script dot-sources - i.e. which ones this audit never
@@ -284,7 +321,7 @@ function Get-UnreachableAuditLibraries {
     $reached = @{}
     foreach ($r in $Roots) {
         $seen = @{}
-        Get-ResolveAuditDefinitions -Path $r -Repo $Repo -Seen $seen | Out-Null
+        $null = Get-ResolveAuditDefinitions -Path $r -Repo $Repo -Seen $seen
         foreach ($k in $seen.Keys) { $reached[$k] = $true }
     }
     $libDir = Join-Path $Repo 'test\win32\lib'
@@ -315,10 +352,9 @@ function Get-CommandResolveFindings {
         $ast = Get-ResolveAuditAst -Path $path
         if ($ast.Extent.Text -match '(?m)^\s*#\s*resolve-audit:') { continue }
 
-        $defs = @{}
-        foreach ($n in (Get-ResolveAuditDefinitions -Path $path -Repo $Repo -Seen @{})) {
-            $defs[$n.ToLowerInvariant()] = $true
-        }
+        $null = Get-ResolveAuditDefinitions -Path $path -Repo $Repo -Seen @{}
+        $defs = $script:ResolveAuditClosureCache[
+            "$($path.ToLowerInvariant())|$($Repo.ToLowerInvariant())"].Set
 
         $rel = $path
         if ($path.ToLowerInvariant().StartsWith($Repo.ToLowerInvariant())) {
@@ -336,7 +372,7 @@ function Get-CommandResolveFindings {
             # audit's question.
             if ($name -match '[\$\\/:]') { continue }
             $lower = $name.ToLowerInvariant()
-            if ($defs.ContainsKey($lower)) { continue }
+            if ($defs.Contains($lower)) { continue }
             if ($known.ContainsKey($lower)) { continue }
 
             if (-not $SessionCache.ContainsKey($lower)) {
