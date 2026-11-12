@@ -1320,5 +1320,23 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.54.3/Ghoztty-1.54.3-arm64.dmg" type="application/octet-stream" sparkle:edSignature="WcESqdoi6sGUBmEU4RY+mNQaAhrHRjzjcLqhUAatX+7sl8d591j8XFMrMoQNNZCyaK3Iu+rMtp+xMKVwzAPYAQ==" length="27704270" />
         </item>
+        <item>
+            <title>Version 1.54.4</title>
+            <sparkle:version>1.54.4</sparkle:version>
+            <sparkle:shortVersionString>1.54.4</sparkle:shortVersionString>
+            <pubDate>Thu, 12 Nov 2026 16:47:17 +0000</pubDate>
+            <description>{
+  "version": "1.54.4",
+  "sections": [
+    { "title": "Command line",
+      "items": [
+        { "title": "Scripts can close a window for good", "text": "`ghoztty +close --force` closes a pane or window without asking, skips the undo window, and ends its process right away. Scripts that clean up finished task windows no longer leave them behind." },
+        { "title": "No more silent no-op closes", "text": "When a window is waiting on its \"Close Terminal?\" question, `+close` now says so and fails instead of reporting success while the window stays open." }
+      ] }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.54.4/Ghoztty-1.54.4-arm64.dmg" type="application/octet-stream" sparkle:edSignature="mlT+p5gvfJftJYwOQX07THnuO1tBMQXWuiTgHgsPwIx91jFHJQM3lt2LTxa8zp5np30KM/UOMbbZ5g1RN7PBAg==" length="27703476" />
+        </item>
     </channel>
 </rss>
