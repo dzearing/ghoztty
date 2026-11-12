@@ -428,6 +428,28 @@ pub fn dragRegionHold(p: DragRegionPane) DragRegionHold {
     return .cut;
 }
 
+/// Whether a layout pass is still inside the divider drag's region hold
+/// (T2874): while the hand drags, and after it lets go for as long as the
+/// glide the drag started is still easing the cards to their slots. Releasing
+/// at the mouse-up re-cut every pane there and then again on every settling
+/// tick, and those settle cuts held the stalls the hold exists to remove. A
+/// glide the drag did not leave held (`held` false) cuts as it always has.
+pub fn dragRegionGesture(dragging: bool, held: bool, gliding: bool) bool {
+    return dragging or (held and gliding);
+}
+
+test "T2874: the drag's region hold lasts through the glide it leaves settling, and no further" {
+    try std.testing.expect(dragRegionGesture(true, false, false));
+    try std.testing.expect(dragRegionGesture(true, true, true));
+    // Let go with the glide still easing: the hold carries on.
+    try std.testing.expect(dragRegionGesture(false, true, true));
+    // The glide landed: the hold is over and the end pass cuts.
+    try std.testing.expect(!dragRegionGesture(false, true, false));
+    // A glide no drag held (a split opening, a sidebar collapse) never holds.
+    try std.testing.expect(!dragRegionGesture(false, false, true));
+    try std.testing.expect(!dragRegionGesture(false, false, false));
+}
+
 test "T2933: a default-path pane clips its own visual during a drag only when asked, and never once it ends" {
     const own: DragRegionPane = .{ .dragging = true, .in_tree = false, .desk_on_visual = false, .desk_printing = false, .card_shape = true, .own_visual_clip = true };
     try std.testing.expectEqual(DragRegionHold.own_visual, dragRegionHold(own));

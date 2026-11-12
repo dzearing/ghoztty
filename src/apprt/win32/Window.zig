@@ -778,6 +778,9 @@ drag_region_held: bool = false,
 /// Some pane's own visual carries the card shape for this drag (T2933,
 /// `holdOnOwnVisual`); the end of the drag takes it off again.
 drag_card_clips: bool = false,
+/// `endDividerDrag` is under way (T2874): a glide landing inside it leaves
+/// the held regions to its own end pass.
+divider_drag_ending: bool = false,
 
 /// A relayout the user is watching happen frame by frame — a divider drag or
 /// a banner expand/collapse (T1031).
@@ -11132,7 +11135,8 @@ fn dragRegionHold(self: *Window, view: *PaneView, card_shape: bool) resize_paint
     if (dragRegionCutForced()) return .cut;
     const s = view.surface();
     const p: resize_paint.DragRegionPane = .{
-        .dragging = self.dragging_split,
+        // The glide the drag leaves settling stays held too (T2874).
+        .dragging = resize_paint.dragRegionGesture(self.dragging_split, self.drag_region_held, self.stack_slide != null),
         .in_tree = if (s) |sf| sf.tree_visual != null else false,
         .desk_on_visual = if (self.chrome_host) |*hh| hh.deskLive() else false,
         .desk_printing = self.desk_printing,
@@ -11212,6 +11216,21 @@ fn paintDragCardCorners(self: *Window, area: w32.RECT) void {
 
 /// Take the drag's clip off every pane's own visual (T2933), once their
 /// window regions are cut again.
+/// Cut the card regions a divider drag held (T2932), once, at the size the
+/// drag - or the glide it left settling (T2874) - left them. A tree pane's
+/// visual carried the shape throughout and the desk is a visual, so those
+/// regions owe no redraw. A default-path pane's region came off for the drag
+/// (T2933): the corners it gives back are the window's again, so they are
+/// redrawn, and only then does the visual's clip come off.
+fn releaseDragRegions(self: *Window) void {
+    if (!self.drag_region_held) return;
+    self.drag_region_held = false;
+    log.debug("pane drag region cut at end", .{});
+    const own = self.drag_card_clips;
+    self.applyCardRegions(self.applied_pane_style == .elevated, if (own) .redraw else .desk_paints_next);
+    if (own) self.clearDragCardClips();
+}
+
 fn clearDragCardClips(self: *Window) void {
     self.drag_card_clips = false;
     for (0..self.tab_count) |tab| {
@@ -12567,6 +12586,9 @@ fn endStackSlide(self: *Window) void {
         self.stack_slide_column = false;
         if (self.sidebar) |sb| sb.gridStepped();
     }
+    // The glide a divider drag left settling has landed: the regions the
+    // drag held are cut now (T2874), not on each settling tick.
+    if (!self.dragging_split and !self.divider_drag_ending) self.releaseDragRegions();
 }
 
 /// How far the grid's leading edge is drawn from its place while it glides
@@ -16315,6 +16337,9 @@ fn preplaceDragVisuals(self: *Window) bool {
 fn endDividerDrag(self: *Window) void {
     if (!self.dragging_split) return;
     self.dragging_split = false;
+    // A glide that lands inside `stackDragEnded` leaves the cut to the end
+    // of this function, after the composition thread has let go.
+    self.divider_drag_ending = true;
     self.drag_node_len = 0;
     self.endRowDrag();
     self.stackDragEnded();
@@ -16325,19 +16350,10 @@ fn endDividerDrag(self: *Window) void {
     // and so is one the compositor coalescer left to its timer (T2769).
     if (self.drag_layout_pending and self.stack_slide_last == null) self.layoutSplitsLive();
     self.drag_layout_pending = false;
-    // The card regions the drag held are cut once, at the size it left them
-    // (T2932). The panes' visuals carried the shape throughout and the desk
-    // is a visual, so the window regions owe no redraw.
-    if (self.drag_region_held) {
-        self.drag_region_held = false;
-        log.debug("pane drag region cut at end", .{});
-        // A default-path pane's region came off for the drag (T2933): the
-        // corners it gives back are the window's again, so they are redrawn,
-        // and only then does the visual's clip come off.
-        const own = self.drag_card_clips;
-        self.applyCardRegions(self.applied_pane_style == .elevated, if (own) .redraw else .desk_paints_next);
-        if (own) self.clearDragCardClips();
-    }
+    // The held regions are cut here unless the glide is still settling, whose
+    // landing cuts them instead (T2874).
+    self.divider_drag_ending = false;
+    if (self.stack_slide == null) self.releaseDragRegions();
     self.compDragEnd("divider");
     // Nothing left moving: the terminals take their size (T2459).
     self.syncDragHolds(false);

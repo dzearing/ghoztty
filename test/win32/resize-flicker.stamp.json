@@ -1,13 +1,13 @@
 {
     "guard":  "resize-flicker",
     "script":  "test/win32/resize-flicker.ps1",
-    "generated":  "2026-11-11T21:47:47-08:00",
-    "commit":  "7f1eab807",
+    "generated":  "2026-11-11T23:49:03-08:00",
+    "commit":  "0fe93461a",
     "uncommitted":  [
                         "src/apprt/win32/resize_paint.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/resize_paint.zig":  "3531493162f3f5735d4f56978f7ab87e8480410d44f0cb9c73156531f4164fda",
+                  "src/apprt/win32/resize_paint.zig":  "799d52805b76380bd7befc31e1f7080d34a5d0e5f0161186544656f88cfdeb82",
                   "test/win32/resize-flicker.ps1":  "82224b840c8598a4d8ee56b078138c9357ef0a0b3d7a67ec660faf2e273b69fd"
               }
 }
