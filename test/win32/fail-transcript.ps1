@@ -283,6 +283,61 @@ exit (Complete-TestTranscript -Name 'throwaway' -Path `$transcript ``
             (-not (Test-Path -LiteralPath $legacy) -and -not (Test-Path -LiteralPath $staleRun)) ''
     } finally { $held.Dispose() }
 
+    # --- H. the cause rides in the verdict; an expected red is not evidence --
+    ''
+    '-- H. T1475: setup cause in the verdict line; expected reds are not filed'
+
+    # The 2026-09-09 shape: one setup failure, zero passes, read through -Last 2.
+    $liveH = New-TestTranscript -Name 'unit-h' -Dir $root
+    Set-Content -LiteralPath $liveH -Value '  FAIL SETUP: the fixture window'
+    Reset-TestBody; Complete-TestBody
+    $hRed = Complete-TestTranscript -Name 'unit-h' -Path $liveH -Dir $root `
+        -Label 'UNIT H' -Pass 0 -Fail 1 -Cause 'the fixture window (exit 1 after 30522ms)'
+    # (No CLI verb in the canned cause: isolation-meta reads one as this script
+    # driving the CLI. ipc-floor-setup B8 asserts the verb half for real.)
+    Assert 'H1 a red verdict line carries the setup cause' `
+        ($hRed.Line -match '^UNIT H: 1 FAILURE\(S\) \(0 assertions passed\) - setup failed: the fixture window \(exit 1 after 30522ms\) - evidence: ') "said '$($hRed.Line)'"
+    Assert 'H2 and so does the preserved transcript' `
+        ($hRed.Evidence -and ((Get-Content -LiteralPath $hRed.Evidence -Raw) -match 'setup failed: the fixture window')) ''
+
+    # The cause is read from FloorFixture when the caller does not pass one.
+    function Get-FloorSetupCause { 'fixture-said-so' }
+    $liveH2 = New-TestTranscript -Name 'unit-h2' -Dir $root
+    Set-Content -LiteralPath $liveH2 -Value '  FAIL x'
+    $hAuto = Complete-TestTranscript -Name 'unit-h2' -Path $liveH2 -Dir $root -Label 'UNIT H2' -Pass 0 -Fail 1
+    Assert 'H3 the cause defaults to what FloorFixture recorded' `
+        ($hAuto.Line -match ' - setup failed: fixture-said-so - evidence: ') "said '$($hAuto.Line)'"
+    $liveH3 = New-TestTranscript -Name 'unit-h3' -Dir $root
+    Set-Content -LiteralPath $liveH3 -Value '  PASS x'
+    $hGreen = Complete-TestTranscript -Name 'unit-h3' -Path $liveH3 -Dir $root -Label 'UNIT H3' -Pass 1 -Fail 0
+    Assert 'H4 a GREEN line never carries a cause, even when one is set' `
+        ($hGreen.Line -eq 'UNIT H3: ALL PASS (1 assertions)') "said '$($hGreen.Line)'"
+    Remove-Item Function:\Get-FloorSetupCause
+
+    # The 2026-10-17 shape: a negative control's deliberate red, filed as real.
+    $prevER = $env:GHOZTTY_TRANSCRIPT_EXPECTED_RED
+    $env:GHOZTTY_TRANSCRIPT_EXPECTED_RED = 'unit negative control'
+    try {
+        $liveH4 = New-TestTranscript -Name 'unit-h4' -Dir $root
+        Set-Content -LiteralPath $liveH4 -Value '  FAIL on purpose'
+        $hExp = Complete-TestTranscript -Name 'unit-h4' -Path $liveH4 -Dir $root -Label 'UNIT H4' -Pass 0 -Fail 1
+    } finally {
+        if ($null -eq $prevER) { Remove-Item Env:GHOZTTY_TRANSCRIPT_EXPECTED_RED -ErrorAction SilentlyContinue }
+        else { $env:GHOZTTY_TRANSCRIPT_EXPECTED_RED = $prevER }
+    }
+    Assert 'H5 an expected red still exits nonzero' ($hExp.Code -ne 0) "code $($hExp.Code)"
+    Assert 'H6 but files no evidence' `
+        (($null -eq $hExp.Evidence) -and (@(Get-PreservedTranscripts -Name 'unit-h4' -Dir $root).Count -eq 0)) "evidence '$($hExp.Evidence)'"
+    Assert 'H7 and says why, in the verdict line' `
+        ($hExp.Line -match ' - not preserved: expected red \(unit negative control\)$') "said '$($hExp.Line)'"
+    # Negative control for H6: the same red WITHOUT the marker is preserved, so
+    # H6 is the marker's doing and not a store that never writes.
+    $liveH5 = New-TestTranscript -Name 'unit-h4' -Dir $root
+    Set-Content -LiteralPath $liveH5 -Value '  FAIL on purpose'
+    $hCtl = Complete-TestTranscript -Name 'unit-h4' -Path $liveH5 -Dir $root -Label 'UNIT H4' -Pass 0 -Fail 1
+    Assert 'H8 control: without the marker the same red IS preserved' `
+        ($hCtl.Evidence -and (Test-Path -LiteralPath $hCtl.Evidence)) "evidence '$($hCtl.Evidence)'"
+
     Complete-TestBody
 }
 finally {

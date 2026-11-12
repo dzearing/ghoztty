@@ -80,6 +80,13 @@ Reset-GhozttyTestState -Exe $Exe -SettleMs 800 | Out-Null
 $log = Join-Path $env:TEMP "ghoztty-floor-setup-negative-$PID.log"
 $prev = $env:GHOZTTY_IPC_TIMEOUT_MS
 $env:GHOZTTY_IPC_TIMEOUT_MS = '1'
+# T1475: this red is ours, on purpose - so the child must not file it as an
+# ipc-p2 failure. On 2026-10-17 it did, and the deliberate run sat in %TEMP%
+# looking exactly like the flake T1475 was hunting.
+$prevExpected = $env:GHOZTTY_TRANSCRIPT_EXPECTED_RED
+$env:GHOZTTY_TRANSCRIPT_EXPECTED_RED = 'ipc-floor-setup negative control'
+$preservedBefore = @(Get-ChildItem $env:TEMP -Filter 'ghoztty-ipc-p2-fail-*.log' -ErrorAction SilentlyContinue |
+    ForEach-Object { $_.Name })
 try {
     # Streams apart, not `*>` (T883): the run under test tees its whole body to
     # STDOUT, which is the half this section reads back, and a merged redirect is
@@ -91,8 +98,13 @@ try {
 } finally {
     if ($null -eq $prev) { Remove-Item Env:GHOZTTY_IPC_TIMEOUT_MS -ErrorAction SilentlyContinue }
     else { $env:GHOZTTY_IPC_TIMEOUT_MS = $prev }
+    if ($null -eq $prevExpected) { Remove-Item Env:GHOZTTY_TRANSCRIPT_EXPECTED_RED -ErrorAction SilentlyContinue }
+    else { $env:GHOZTTY_TRANSCRIPT_EXPECTED_RED = $prevExpected }
 }
+$preservedNew = @(Get-ChildItem $env:TEMP -Filter 'ghoztty-ipc-p2-fail-*.log' -ErrorAction SilentlyContinue |
+    Where-Object { $preservedBefore -notcontains $_.Name } | ForEach-Object { $_.Name })
 $body = if (Test-Path $log) { Get-Content $log -Raw } else { '' }
+$verdict = @(($body -split "`r?`n") | Where-Object { $_ -match 'P2 ACCEPTANCE:' }) | Select-Object -Last 1
 $setupLines = @([regex]::Matches($body, '(?m)^\s*FAIL SETUP:'))
 $failLines = @([regex]::Matches($body, '(?m)^\s*FAIL '))
 Assert "B1 the run is red" ($code -ne 0)
@@ -103,6 +115,12 @@ Assert "B5 the failure carries the CLI's own words" (
     $body -match 'Timed out after' -or $body -match 'Waiting for Ghoztty to answer')
 Assert "B6 the run says why it stopped early" ($body -match 'run stopped after the setup failure')
 Assert "B7 a give-up is what it named, not a still-waiting notice" ($body -match 'Timed out after')
+# T1475: the one line a `-Last 1` reader keeps names the fixture and the verb.
+Assert "B8 the verdict line itself names the setup failure" (
+    "$verdict" -match 'FAILURE\(S\) \(0 assertions passed\) - setup failed: the p2ide fixture window .*\(ghoztty \+new-window --target=p2ide: exit')
+"    verdict was: $verdict"
+Assert "B9 an expected red says so instead of filing evidence" ("$verdict" -match 'not preserved: expected red \(ipc-floor-setup negative control\)')
+Assert "B10 and no ipc-p2 failure transcript was preserved for it" ($preservedNew.Count -eq 0)
 Remove-Item $log -Force -ErrorAction SilentlyContinue
 
 "== C: a SLOW call is a pass with a note; a GAVE-UP call is still a failure"

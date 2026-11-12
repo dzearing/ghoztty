@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-11T19:32:44-08:00",
-    "commit":  "5c0b40264",
+    "generated":  "2026-11-11T20:50:49-08:00",
+    "commit":  "b3f32e18a",
     "uncommitted":  [
 
                     ],
@@ -1230,7 +1230,7 @@
                   "test/win32/edge-drag-rate.ps1":  "2fca304221d50b9ef944602b898f1b74374622f0c940916889130dc0acd4a32c",
                   "test/win32/exec-user-env.ps1":  "2320afd696e761ea6c0c3850cd3df9b0a893aedb1da9e9863df4014d35ee2ea1",
                   "test/win32/exit-reason.ps1":  "0ca75a25399950b555b7ba59118f8dab9a0313d5a4189296e88d4910e66e98ff",
-                  "test/win32/fail-transcript.ps1":  "157fc0591c860c14fa34aea3ca3447fbb86528ff5690929a0a2bfd03a5177ffe",
+                  "test/win32/fail-transcript.ps1":  "707a88600b425647c186a194594404490be96e76acc20ee4de2dd0f04f3306c7",
                   "test/win32/false-positive-report.ps1":  "3e4c34e6b40b6b99969d38afbd1c055899802cfa119529c06f84c6ad24a4e981",
                   "test/win32/feedback-user-report.ps1":  "cfda91deffac1fe7971ef8c37c1cb1d4d275ee34ea7c83c87460d740508917fd",
                   "test/win32/fixed-ports.ps1":  "fcc484417429118fdba46e3e3c66023ddde55c80dee258c689fc0a1213a8d03e",
@@ -1304,7 +1304,7 @@
                   "test/win32/ipc-child-exited.ps1":  "d976a5172b4773f582972eedc3fa1b00bb1c03f5c33eeb5efc06e5d52542112b",
                   "test/win32/ipc-command-keepalive.ps1":  "323e4bf749e4088eb5b1e82337f75ec0f87bc4c0cc9ccdad00679e416a7dc786",
                   "test/win32/ipc-fake-server.ps1":  "9d8e13d29c266916b1f65168c58d3b9b93b8a172ad32b6d5174fbcfeee78cfeb",
-                  "test/win32/ipc-floor-setup.ps1":  "36d11272495b125cd6bb2131ec1de28d185c8e5086994a8a929528bae2020ba1",
+                  "test/win32/ipc-floor-setup.ps1":  "5287ba0442d4e1af3172cb30aa32a77face42e7197dd83679339c8724ebfcc8e",
                   "test/win32/ipc-instance-addressability.ps1":  "4ae9906b094f84fc39a83c8da85e704e1e73704311fc4b1ccb3e5e76d1318663",
                   "test/win32/ipc-list-session-id.ps1":  "191cea290a106a5b0610c258bc70a09453001d70108c243d991d42c69ac915c2",
                   "test/win32/ipc-machine-chooser.ps1":  "2e6dd394fd0f5445f60c36dacfb31a352d2b8ddebd2fbfb4e0212a5036dca97a",

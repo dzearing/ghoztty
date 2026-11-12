@@ -177,24 +177,47 @@ function Complete-TestTranscript {
         [string]$Unit = 'assertions',
         [int]$MinPass = 1,
         [string]$Dir = $env:TEMP,
-        [int]$Keep = 0
+        [int]$Keep = 0,
+        # T1475: why the run stopped before asserting anything, in one line.
+        # Defaults to what lib\FloorFixture.ps1 recorded, so every floor-fixture
+        # harness gets it without passing it.
+        [string]$Cause = ''
     )
 
     $v = Get-TestVerdictLine -Pass $Pass -Fail $Fail -Skipped $Skipped `
         -Label $Label -Unit $Unit -MinPass $MinPass `
         -Incomplete:(-not (Test-TestBodyComplete))
 
+    # T1475: on 2026-09-09 ipc-p2 scored `1 FAILURE(S) (0 assertions passed)`
+    # through a `-Last 2` summary and the FAIL SETUP block naming the verb was
+    # lost - the one line a reader keeps said nothing about WHY. The cause now
+    # rides in that line.
+    if (-not $Cause -and (Get-Command Get-FloorSetupCause -ErrorAction SilentlyContinue)) {
+        $Cause = Get-FloorSetupCause
+    }
+
+    # T1475: a run its CALLER made red on purpose (a negative control driving
+    # this harness as a child) is not evidence of anything. Preserving it filed
+    # ipc-floor-setup's deliberate 1ms-bound run as an `ipc-p2` failure on
+    # 2026-10-17 - indistinguishable from a real flake, and it counted against
+    # the keep-limit that prunes the real ones.
+    $expectedRed = "$env:GHOZTTY_TRANSCRIPT_EXPECTED_RED".Trim()
+
+    $verdictLine = $v.Line
+    if ($v.Code -ne 0 -and $Cause) { $verdictLine = "$verdictLine - setup failed: $Cause" }
+
     $evidence = $null
-    if ($v.Code -ne 0) {
+    if ($v.Code -ne 0 -and -not $expectedRed) {
         # The verdict lands in the transcript BEFORE the copy, so the preserved
         # file is self-contained: every assertion line and the verdict they add
         # up to, in one file, with nothing to cross-reference.
-        if (Test-Path -LiteralPath $Path) { Add-Content -LiteralPath $Path -Value $v.Line }
+        if (Test-Path -LiteralPath $Path) { Add-Content -LiteralPath $Path -Value $verdictLine }
         $evidence = Save-FailedTranscript -Name $Name -Path $Path -Dir $Dir -Keep $Keep
     }
 
-    $line = $v.Line
+    $line = $verdictLine
     if ($evidence) { $line = "$line - evidence: $evidence" }
+    elseif ($v.Code -ne 0 -and $expectedRed) { $line = "$line - not preserved: expected red ($expectedRed)" }
     $color = if ($v.Kind -eq 'pass') { 'Green' } else { 'Red' }
     Write-Host $line -ForegroundColor $color
 

@@ -82,6 +82,15 @@ $script:FloorSetupEvidence = @()
 # and the next box that is slow for a REAL reason looks exactly like a fast one.
 $script:FloorSetupNotes = @()
 
+# T1475: the same failure as ONE line, for the verdict. The evidence block above
+# is printed mid-transcript, and the floor is habitually read through
+# `Select-Object -Last 1/2` - which on 2026-09-09 kept `1 FAILURE(S) (0
+# assertions passed)` and nothing saying which fixture never came up.
+# `Complete-TestTranscript` appends this to a red verdict line on its own.
+$script:FloorSetupCause = ''
+
+function Get-FloorSetupCause { return "$script:FloorSetupCause" }
+
 function Add-FloorSlowNote {
     param(
         [Parameter(Mandatory = $true)][string]$What,
@@ -114,6 +123,7 @@ function Add-FloorCallEvidence {
         if ($text) { $lines += "    ${name}: $text" }
     }
     $script:FloorSetupEvidence = $lines
+    $script:FloorSetupCause = "$What (ghoztty $($GhozArgs -join ' '): exit $($Result.ExitCode)$timedOut after ${Ms}ms)"
 }
 
 <#
@@ -190,6 +200,7 @@ function Need-Listed {
         "    waited for: $Pattern"
         "    +list said: $(if ($seen) { $seen } else { '(nothing)' })"
     )
+    $script:FloorSetupCause = "$What never appeared in +list"
     $script:failures++
     throw $script:FloorSetupFail
 }
