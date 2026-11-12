@@ -10858,7 +10858,7 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
             entry.view.card_region_cut = cut;
             entry.view.card_region_shown = if (key == 0) null else cut orelse plan.shown;
             if (key == 0) {
-                _ = w32.SetWindowRgn(h, null, @intFromBool(redraw == .redraw));
+                _ = setPaneRgnTraced(h, null, redraw == .redraw, .clear);
                 continue;
             }
             if (cut) |c| {
@@ -10876,14 +10876,78 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
                 const repaint = redraw == .redraw and visible and pane_stack_slide.cutNeedsRedraw(prev_cut, c);
                 // The acceptance oracle (stack-fold-slide.ps1 F14).
                 log.debug("stack cut redraw={d} width={d}", .{ @intFromBool(repaint), c.width() });
-                if (w32.SetWindowRgn(h, rect_rgn, @intFromBool(repaint)) == 0) _ = w32.DeleteObject(rect_rgn);
+                if (setPaneRgnTraced(h, rect_rgn, repaint, .rect) == 0) _ = w32.DeleteObject(rect_rgn);
                 continue;
             }
             const rgn = createCardRegion(plan, d) orelse continue;
             // The system owns the region from here; it is never deleted.
-            if (w32.SetWindowRgn(h, rgn, @intFromBool(redraw == .redraw)) == 0) _ = w32.DeleteObject(rgn);
+            if (setPaneRgnTraced(h, rgn, redraw == .redraw, .card) == 0) _ = w32.DeleteObject(rgn);
         }
     }
+}
+
+/// What a traced region cut was (T2874), for the `stack trace rgn` line.
+const RgnCutKind = enum { clear, rect, card, glide };
+
+/// `SetWindowRgn` on a pane child, stamped into the stack trace (T2874): the
+/// pane, the shape, and the QPC span of the call, so a tick whose `cards_us`
+/// stalls names the pane and lines up against that pane's renderer presents
+/// (`stack trace present ... began=`) on the same clock. Returns what
+/// `SetWindowRgn` returned; on 0 the caller still owns `rgn`.
+fn setPaneRgnTraced(h: w32.HWND, rgn: ?*anyopaque, redraw: bool, kind: RgnCutKind) i32 {
+    if (!stackTraceOn()) return w32.SetWindowRgn(h, rgn, @intFromBool(redraw));
+    var t0: i64 = 0;
+    var t1: i64 = 0;
+    var c0: u64 = 0;
+    var c1: u64 = 0;
+    rgn_probe = .{ .active = true };
+    _ = w32.QueryThreadCycleTime(w32.GetCurrentThread(), &c0);
+    _ = w32.QueryPerformanceCounter(&t0);
+    const r = w32.SetWindowRgn(h, rgn, @intFromBool(redraw));
+    _ = w32.QueryPerformanceCounter(&t1);
+    _ = w32.QueryThreadCycleTime(w32.GetCurrentThread(), &c1);
+    rgn_probe.active = false;
+    // `cycles` is what the UI thread itself ran (user + kernel): a stall with
+    // few cycles was spent blocked or descheduled, not computing.
+    stackTrace("stack trace rgn hwnd={x} kind={s} redraw={d} qpc={d} end={d} proc_qpc={d} msgs={d} max_msg={x} max_qpc={d} cycles={d}", .{
+        @intFromPtr(h),       @tagName(kind),     @intFromBool(redraw), t0,                  t1,
+        rgn_probe.proc_ticks, rgn_probe.messages, rgn_probe.max_msg,    rgn_probe.max_ticks, c1 -% c0,
+    });
+    return r;
+}
+
+/// What the pane's window procedure did inside one traced `SetWindowRgn`
+/// (T2874): set by `setPaneRgnTraced`, fed by `App.surfaceWndProc`. Tells a
+/// stall spent in our own message handling from one spent in the system.
+/// UI thread only.
+pub var rgn_probe: struct {
+    active: bool = false,
+    proc_ticks: i64 = 0,
+    messages: u32 = 0,
+    max_msg: u32 = 0,
+    max_ticks: i64 = 0,
+
+    pub fn note(self: *@This(), msg: u32, ticks: i64) void {
+        self.proc_ticks += ticks;
+        self.messages += 1;
+        if (ticks > self.max_ticks) {
+            self.max_ticks = ticks;
+            self.max_msg = msg;
+        }
+    }
+} = .{};
+
+test "T2874: the region-cut probe sums the pane's messages and keeps the slowest" {
+    const saved = rgn_probe;
+    defer rgn_probe = saved;
+    rgn_probe = .{ .active = true };
+    rgn_probe.note(0x46, 5);
+    rgn_probe.note(0x83, 40);
+    rgn_probe.note(0x47, 7);
+    try std.testing.expectEqual(@as(i64, 52), rgn_probe.proc_ticks);
+    try std.testing.expectEqual(@as(u32, 3), rgn_probe.messages);
+    try std.testing.expectEqual(@as(u32, 0x83), rgn_probe.max_msg);
+    try std.testing.expectEqual(@as(i64, 40), rgn_probe.max_ticks);
 }
 
 /// The region `applyCardRegions` gives one pane, worked out without applying
@@ -11013,7 +11077,7 @@ fn cutGlideTreeRegion(
     _ = w32.OffsetRgn(rgn, dx, dy);
     // The acceptance oracle counts these (T2826).
     log.debug("pane glide region cut hwnd={x}", .{@intFromPtr(h)});
-    if (w32.SetWindowRgn(h, rgn, 0) == 0) _ = w32.DeleteObject(rgn);
+    if (setPaneRgnTraced(h, rgn, false, .glide) == 0) _ = w32.DeleteObject(rgn);
 }
 
 /// `PaneView.card_region_key` for a gliding pane whose window kept its region

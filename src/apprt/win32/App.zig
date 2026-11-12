@@ -13024,6 +13024,23 @@ fn surfaceWndProc(
     wparam: usize,
     lparam: isize,
 ) callconv(.winapi) isize {
+    // A traced region cut (T2874) times what `SetWindowRgn` sends the pane.
+    if (!Window.rgn_probe.active) return surfaceWndProcImpl(hwnd, msg, wparam, lparam);
+    var t0: i64 = 0;
+    var t1: i64 = 0;
+    _ = w32.QueryPerformanceCounter(&t0);
+    const r = surfaceWndProcImpl(hwnd, msg, wparam, lparam);
+    _ = w32.QueryPerformanceCounter(&t1);
+    Window.rgn_probe.note(msg, t1 - t0);
+    return r;
+}
+
+fn surfaceWndProcImpl(
+    hwnd: w32.HWND,
+    msg: u32,
+    wparam: usize,
+    lparam: isize,
+) isize {
     const userdata = w32.GetWindowLongPtrW(hwnd, w32.GWLP_USERDATA);
     const surface: *Surface = if (userdata != 0)
         @ptrFromInt(@as(usize, @bitCast(userdata)))
