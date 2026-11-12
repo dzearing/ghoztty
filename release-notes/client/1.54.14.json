@@ -1,0 +1,18 @@
+{
+  "version": "1.54.14",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "A side pane opened off a pane minimized in a collapsed row leaves the strips minimized." },
+        { "text": "A background window flashes its taskbar button when a pane starts waiting on the user." },
+        { "text": "The minimized-strip drag-out test aims at the strip it means to drag." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "A pane opening out of the fold strip no longer holds up the glide's frame." },
+        { "text": "The fold-glide region-cut stall is traced to the UI thread blocking inside the window manager, and its fix is filed." },
+        { "text": "A divider drag on the composition path cuts each pane's rounded region once, at the drag's end, instead of every frame." },
+        { "text": "A divider drag on the default drawing path can keep each pane's rounded corners on the pane's own visual instead of re-cutting its window region every frame, behind GHOZTTY_DRAG_CARD_CLIP=1." }
+      ] }
+  ]
+}
