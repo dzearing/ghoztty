@@ -1306,6 +1306,18 @@ pub fn forget(self: *PaneDesk) void {
     self.memo.valid = false;
 }
 
+/// Copy the composed desk's `rects` (its own pixels) into `hdc`, whose
+/// origin sits at `origin_x, origin_y` in the desk - every rect, whatever the
+/// last paint changed (T2933: a dragged pane's corners move every frame, so
+/// the picture under them is new even where the desk is not).
+pub fn blitRects(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, rects: []const busy_light.Rect) void {
+    const comp = self.comp orelse return;
+    for (rects) |r| {
+        const c = clipTo(r, comp.w, comp.h) orelse continue;
+        _ = w32.BitBlt(hdc, origin_x + c.left, origin_y + c.top, c.right - c.left, c.bottom - c.top, comp.dc, c.left, c.top, w32.SRCCOPY);
+    }
+}
+
 /// Lay the composed desk under the panes (T2485 A2): `rects` in the desk's
 /// own pixels, through a DC that does not clip them away. A layered pane is
 /// composed over the window, so nothing here shows while it stands there;

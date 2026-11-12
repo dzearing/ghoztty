@@ -775,6 +775,9 @@ dragging_split: bool = false,
 /// A pass during this divider drag left a pane's card region uncut (T2932);
 /// `endDividerDrag` makes the one cut that owes.
 drag_region_held: bool = false,
+/// Some pane's own visual carries the card shape for this drag (T2933,
+/// `holdOnOwnVisual`); the end of the drag takes it off again.
+drag_card_clips: bool = false,
 
 /// A relayout the user is watching happen frame by frame — a divider drag or
 /// a banner expand/collapse (T1031).
@@ -10864,7 +10867,9 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
                 continue;
             };
             if (entry.view.card_region_key == key) continue;
-            if (self.dragRegionHeld(entry.view, cut == null and key != 0)) {
+            const hold = self.dragRegionHold(entry.view, cut == null and key != 0);
+            if (hold == .own_visual and self.holdOnOwnVisual(entry.view, h, plan, d)) continue;
+            if (hold == .tree) {
                 // The visual already has this shape (setTreeShape above); the
                 // window keeps its old region and the stale key makes the
                 // end-of-drag pass cut it (T2932). The bookkeeping the banner
@@ -11123,8 +11128,8 @@ fn glideRegionIdle(self: *Window, view: *PaneView) bool {
 /// Whether a divider drag leaves `view`'s window region alone this pass
 /// (T2932; `resize_paint.holdDragRegion`). `GHOZTTY_DRAG_REGION_CUT=1` cuts
 /// it every frame as before, the A/B for the drag line's `cards` term.
-fn dragRegionHeld(self: *Window, view: *PaneView, card_shape: bool) bool {
-    if (dragRegionCutForced()) return false;
+fn dragRegionHold(self: *Window, view: *PaneView, card_shape: bool) resize_paint.DragRegionHold {
+    if (dragRegionCutForced()) return .cut;
     const s = view.surface();
     const p: resize_paint.DragRegionPane = .{
         .dragging = self.dragging_split,
@@ -11132,14 +11137,99 @@ fn dragRegionHeld(self: *Window, view: *PaneView, card_shape: bool) bool {
         .desk_on_visual = if (self.chrome_host) |*hh| hh.deskLive() else false,
         .desk_printing = self.desk_printing,
         .card_shape = card_shape,
+        // Whether the visual can take the clip is `setDragCardClip`'s answer
+        // (no published swap-chain visual: the region is cut as before).
+        .own_visual_clip = dragCardClipOn(),
     };
-    const held = resize_paint.holdDragRegion(p);
+    const hold = resize_paint.dragRegionHold(p);
     // Why a drag frame still cut (T2932): the oracle for the hold.
-    if (!held and p.dragging and stackTraceOn())
-        stackTrace("stack trace rgn-cut-in-drag tree={d} desk_visual={d} printing={d} card={d}", .{
-            @intFromBool(p.in_tree), @intFromBool(p.desk_on_visual), @intFromBool(p.desk_printing), @intFromBool(p.card_shape),
+    if (hold == .cut and p.dragging and stackTraceOn())
+        stackTrace("stack trace rgn-cut-in-drag tree={d} desk_visual={d} printing={d} card={d} own_clip={d}", .{
+            @intFromBool(p.in_tree),    @intFromBool(p.desk_on_visual), @intFromBool(p.desk_printing),
+            @intFromBool(p.card_shape), @intFromBool(p.own_visual_clip),
         });
-    return held;
+    return hold;
+}
+
+/// The default path's drag hold (T2933): the pane's own swap-chain visual
+/// takes the card shape, and its window gives up its region once for the
+/// rest of the drag - a held region would clip a growing pane's new edge. The
+/// desk goes under the visual's corners after the desk paint
+/// (`paintDragCardCorners`). False: the visual could not take the clip, and
+/// the caller cuts the region as before.
+fn holdOnOwnVisual(self: *Window, view: *PaneView, h: w32.HWND, plan: CardRegionPlan, d: i32) bool {
+    const s = view.surface() orelse return false;
+    // The clip goes on before the region comes off, so no frame shows the
+    // swap chain's square corners.
+    if (!s.setDragCardClip(plan.treeShape(d))) return false;
+    if (view.card_region_key != glide_region_pending) {
+        // A key no real cut ever has, so the end-of-drag pass cuts again.
+        view.card_region_key = glide_region_pending;
+        _ = setPaneRgnTraced(h, null, false, .clear);
+        // The acceptance oracle counts these: one per pane per drag.
+        log.debug("pane drag region onto its visual hwnd={x}", .{@intFromPtr(h)});
+    }
+    view.card_region_cut = null;
+    view.card_region_shown = plan.shown;
+    self.drag_region_held = true;
+    self.drag_card_clips = true;
+    return true;
+}
+
+/// Lay the desk under the cut-away corners of every pane whose drag clip is
+/// on (T2933), through the pane's own DC: the swap-chain visual is composed
+/// over the pane window's own pixels, so those are what show where the clip
+/// cut it away - and with `WS_CLIPCHILDREN` no window paint reaches them.
+/// `area` is where the desk's picture sits in the window.
+fn paintDragCardCorners(self: *Window, area: w32.RECT) void {
+    if (!self.drag_card_clips or self.tab_count == 0) return;
+    const parent = self.hwnd orelse return;
+    const r = pane_elevation.childRadiusPx(self.scale);
+    var it = self.tab_trees[self.active_tab].iterator();
+    var n: usize = 0;
+    while (it.next()) |entry| {
+        const s = entry.view.surface() orelse continue;
+        if (!s.drag_card_clip.on) continue;
+        const h = entry.view.hwnd() orelse continue;
+        const shown = entry.view.card_region_shown orelse continue;
+        const at = childClientRect(parent, h) orelse continue;
+        var sq: [4][4]i32 = undefined;
+        const k = resize_paint.cardCornerSquares(shown.width(), shown.height(), r, s.drag_card_clip.last_square_top, &sq);
+        var rects: [4]busy_light.Rect = undefined;
+        for (sq[0..k], 0..) |q, i| {
+            // Pane pixels -> the desk's own pixels.
+            const ox = at.left + shown.left - area.left;
+            const oy = at.top + shown.top - area.top;
+            rects[i] = .{ .left = q[0] + ox, .top = q[1] + oy, .right = q[2] + ox, .bottom = q[3] + oy };
+        }
+        const dc = w32.GetDC(h) orelse continue;
+        defer _ = w32.ReleaseDC(h, dc);
+        self.pane_desk.blitRects(dc, area.left - at.left, area.top - at.top, rects[0..k]);
+        n += 1;
+    }
+    if (stackTraceOn()) stackTrace("stack trace drag card corners n={d}", .{n});
+}
+
+/// Take the drag's clip off every pane's own visual (T2933), once their
+/// window regions are cut again.
+fn clearDragCardClips(self: *Window) void {
+    self.drag_card_clips = false;
+    for (0..self.tab_count) |tab| {
+        var it = self.tab_trees[tab].iterator();
+        while (it.next()) |entry| if (entry.view.surface()) |s| s.clearDragCardClip();
+    }
+}
+
+/// `GHOZTTY_DRAG_CARD_CLIP=1` turns the default path's drag hold on (T2933).
+/// Off by default until a mid-drag frame has been seen on the real desktop:
+/// the clip is a composition commit and the corner fill a GDI blit, and
+/// neither is in the window manager's transaction with the move.
+var drag_card_clip_on: ?bool = null;
+fn dragCardClipOn() bool {
+    if (drag_card_clip_on) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DRAG_CARD_CLIP");
+    drag_card_clip_on = v;
+    return v;
 }
 
 var drag_region_cut_forced: ?bool = null;
@@ -14167,6 +14257,9 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     if (self.hwnd) |hw| resizeTrace("desk-glow", hw);
     // On the compositor the visual already lies under every pane.
     if (hero_split == null and self.deskOpacity() == null and !on_visual) self.paintDeskUnderPanes(slots[0..n], area, name_rects[0..nn]);
+    // The corners a drag's visual clip cut away show the pane's own surface
+    // (T2933); the desk goes there too.
+    if (!on_visual) self.paintDragCardCorners(area);
     if (self.hwnd) |hw| resizeTrace("desk-under", hw);
     self.syncGlassBackdrops(slots[0..n], area, glass, color_math.isLight(fill));
     if (self.hwnd) |hw| resizeTrace("desk-glass", hw);
@@ -16238,7 +16331,12 @@ fn endDividerDrag(self: *Window) void {
     if (self.drag_region_held) {
         self.drag_region_held = false;
         log.debug("pane drag region cut at end", .{});
-        self.applyCardRegions(self.applied_pane_style == .elevated, .desk_paints_next);
+        // A default-path pane's region came off for the drag (T2933): the
+        // corners it gives back are the window's again, so they are redrawn,
+        // and only then does the visual's clip come off.
+        const own = self.drag_card_clips;
+        self.applyCardRegions(self.applied_pane_style == .elevated, if (own) .redraw else .desk_paints_next);
+        if (own) self.clearDragCardClips();
     }
     self.compDragEnd("divider");
     // Nothing left moving: the terminals take their size (T2459).

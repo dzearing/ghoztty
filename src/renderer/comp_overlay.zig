@@ -891,6 +891,93 @@ pub const Layer = struct {
     }
 };
 
+/// A rounded-rectangle clip on the slot's ROOT visual - the one carrying the
+/// pane's own swap chain (T2933). While a divider drag holds a default-path
+/// pane's window region off, this is what gives the pane its card corners: it
+/// clips the swap chain and every overlay hung under it, the way the region
+/// did. Window thread only.
+pub const RootClip = struct {
+    generation: u64 = 0,
+    dev: ?Shared = null,
+    clip: ?Obj = null,
+    /// The clip is on the root visual (`apply`), not yet taken off (`clear`).
+    on: bool = false,
+    /// What was last set, so an unchanged frame commits nothing.
+    last: [5]f32 = .{ 0, 0, 0, 0, -1 },
+    last_square_top: bool = false,
+
+    /// Clip the root visual to `left,top,right,bottom` (its own pixels) with
+    /// every corner rounded to `radius`, or only the bottom two when
+    /// `square_top`. False: nothing is published (the pane presents with
+    /// SwapBuffers) or DirectComposition refused, and the caller keeps the
+    /// window region instead.
+    pub fn apply(self: *RootClip, s: *Slot, left: f32, top: f32, right: f32, bottom: f32, radius: f32, square_top: bool) bool {
+        if (comptime builtin.os.tag != .windows) return false;
+        const b = s.borrow(self.generation, RefOps.com);
+        if (b.generation != self.generation) {
+            self.drop();
+            self.generation = b.generation;
+            self.dev = b.shared;
+        }
+        const d = self.dev orelse return false;
+        const want: [5]f32 = .{ left, top, right, bottom, radius };
+        if (self.on and std.mem.eql(f32, &self.last, &want) and self.last_square_top == square_top) return true;
+        if (self.clip == null) {
+            var made: ?Obj = null;
+            if (!ok(slot(*const fn (Obj, *?Obj) callconv(.winapi) HRESULT, d.dcomp, slot_dcomp_create_rectangle_clip)(d.dcomp, &made))) return false;
+            self.clip = made orelse return false;
+        }
+        const c = self.clip.?;
+        const Set = *const fn (Obj, f32) callconv(.winapi) HRESULT;
+        if (!ok(slot(Set, c, slot_clip_set_left_float)(c, left))) return false;
+        if (!ok(slot(Set, c, slot_clip_set_top_float)(c, top))) return false;
+        if (!ok(slot(Set, c, slot_clip_set_right_float)(c, right))) return false;
+        if (!ok(slot(Set, c, slot_clip_set_bottom_float)(c, bottom))) return false;
+        // The radii run top-left x/y, top-right x/y, bottom-left x/y,
+        // bottom-right x/y.
+        var k: usize = 0;
+        while (k < 8) : (k += 1) {
+            const r: f32 = if (square_top and k < 4) 0 else radius;
+            if (!ok(slot(Set, c, slot_clip_first_radius_float + 2 * k)(c, r))) return false;
+        }
+        if (!self.on) {
+            if (!ok(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, d.root, slot_visual_set_clip_obj)(d.root, c))) return false;
+            _ = slot(*const fn (Obj, u32) callconv(.winapi) HRESULT, d.root, slot_visual_set_border_mode)(d.root, DCOMPOSITION_BORDER_MODE_SOFT);
+            self.on = true;
+        }
+        self.last = want;
+        self.last_square_top = square_top;
+        _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, d.dcomp, slot_dcomp_commit)(d.dcomp);
+        return true;
+    }
+
+    /// Take the clip off the root visual again (the window region is back).
+    pub fn clear(self: *RootClip) void {
+        if (comptime builtin.os.tag != .windows) return;
+        if (!self.on) return;
+        self.on = false;
+        const d = self.dev orelse return;
+        _ = slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, d.root, slot_visual_set_clip_obj)(d.root, null);
+        // DCOMPOSITION_BORDER_MODE_INHERIT, the visual's default.
+        _ = slot(*const fn (Obj, u32) callconv(.winapi) HRESULT, d.root, slot_visual_set_border_mode)(d.root, 0xffff_ffff);
+        _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, d.dcomp, slot_dcomp_commit)(d.dcomp);
+    }
+
+    /// Let go of the borrowed tree. A clip left on a root is dropped with it.
+    pub fn drop(self: *RootClip) void {
+        if (comptime builtin.os.tag != .windows) return;
+        self.clear();
+        if (self.clip) |o| comRelease(o);
+        if (self.dev) |d| releaseShared(d, RefOps.com);
+        self.* = .{ .generation = self.generation };
+    }
+
+    pub fn deinit(self: *RootClip) void {
+        self.drop();
+        self.generation = 0;
+    }
+};
+
 /// `AddVisual`'s insertAbove for a placement with no reference visual. The
 /// flag reads backwards there: TRUE is "above no sibling", i.e. at the back.
 pub fn addVisualInsertAbove(place: Layer.Place) i32 {

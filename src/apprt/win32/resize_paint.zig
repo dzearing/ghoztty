@@ -398,7 +398,98 @@ pub const DragRegionPane = struct {
     desk_printing: bool,
     /// The pass wants the rounded card shape (no slide cut, a real region).
     card_shape: bool,
+    /// The default path (T2933): the pane presents through a swap chain on
+    /// its own child window, whose root visual can carry the card's shape
+    /// (`comp_overlay.RootClip`), and the drag clip is switched on
+    /// (`GHOZTTY_DRAG_CARD_CLIP=1`).
+    own_visual_clip: bool = false,
 };
+
+/// How a divider-drag pass treats one pane's card region (T2932/T2933).
+pub const DragRegionHold = enum {
+    /// Cut the window region as the pass always has.
+    cut,
+    /// Leave it: the pane's tree visual already has the shape and the desk is
+    /// a visual, so the region clips nothing on screen (T2932).
+    tree,
+    /// Give the window no region for the rest of the drag, and the card shape
+    /// to the pane's own root visual instead, with the desk laid under its
+    /// corners through the pane's own DC (T2933). A stale region would clip a
+    /// growing pane's new edge, so this one is cleared, not held.
+    own_visual,
+};
+
+pub fn dragRegionHold(p: DragRegionPane) DragRegionHold {
+    if (!p.dragging or !p.card_shape or p.desk_printing) return .cut;
+    if (p.in_tree) return if (p.desk_on_visual) .tree else .cut;
+    // Only with the desk painted through the window's DC: the corner fill
+    // copies the desk's cached picture, which a visual desk does not keep.
+    if (p.own_visual_clip and !p.desk_on_visual) return .own_visual;
+    return .cut;
+}
+
+test "T2933: a default-path pane clips its own visual during a drag only when asked, and never once it ends" {
+    const own: DragRegionPane = .{ .dragging = true, .in_tree = false, .desk_on_visual = false, .desk_printing = false, .card_shape = true, .own_visual_clip = true };
+    try std.testing.expectEqual(DragRegionHold.own_visual, dragRegionHold(own));
+    var p = own;
+    p.own_visual_clip = false;
+    try std.testing.expectEqual(DragRegionHold.cut, dragRegionHold(p));
+    p = own;
+    p.dragging = false;
+    try std.testing.expectEqual(DragRegionHold.cut, dragRegionHold(p));
+    // A slide cut, a printed desk and a desk on a visual all still cut.
+    p = own;
+    p.card_shape = false;
+    try std.testing.expectEqual(DragRegionHold.cut, dragRegionHold(p));
+    p = own;
+    p.desk_printing = true;
+    try std.testing.expectEqual(DragRegionHold.cut, dragRegionHold(p));
+    p = own;
+    p.desk_on_visual = true;
+    try std.testing.expectEqual(DragRegionHold.cut, dragRegionHold(p));
+    // A tree pane keeps T2932's hold whatever the knob says.
+    p = own;
+    p.in_tree = true;
+    p.desk_on_visual = true;
+    try std.testing.expectEqual(DragRegionHold.tree, dragRegionHold(p));
+}
+
+/// The four corner squares of a `w` x `h` card with corner radius `r`, in its
+/// own pixels (T2933): what the desk is laid under while the pane's visual,
+/// not its window region, cuts the curve. `square_top` keeps only the bottom
+/// two. Returns how many it wrote.
+pub fn cardCornerSquares(w: i32, h: i32, r: i32, square_top: bool, out: *[4][4]i32) usize {
+    if (r <= 0 or w <= 0 or h <= 0) return 0;
+    const s = @min(r, @min(@divFloor(w, 2), @divFloor(h, 2)));
+    if (s <= 0) return 0;
+    var n: usize = 0;
+    if (!square_top) {
+        out[n] = .{ 0, 0, s, s };
+        n += 1;
+        out[n] = .{ w - s, 0, w, s };
+        n += 1;
+    }
+    out[n] = .{ 0, h - s, s, h };
+    n += 1;
+    out[n] = .{ w - s, h - s, w, h };
+    n += 1;
+    return n;
+}
+
+test "T2933: the corner squares sit in the card's corners, bottom two only under a header" {
+    var q: [4][4]i32 = undefined;
+    try std.testing.expectEqual(@as(usize, 4), cardCornerSquares(100, 50, 8, false, &q));
+    try std.testing.expectEqual([4]i32{ 0, 0, 8, 8 }, q[0]);
+    try std.testing.expectEqual([4]i32{ 92, 0, 100, 8 }, q[1]);
+    try std.testing.expectEqual([4]i32{ 0, 42, 8, 50 }, q[2]);
+    try std.testing.expectEqual([4]i32{ 92, 42, 100, 50 }, q[3]);
+    try std.testing.expectEqual(@as(usize, 2), cardCornerSquares(100, 50, 8, true, &q));
+    try std.testing.expectEqual([4]i32{ 0, 42, 8, 50 }, q[0]);
+    // A sliver of a pane never gets squares bigger than half of it.
+    try std.testing.expectEqual(@as(usize, 4), cardCornerSquares(6, 50, 8, false, &q));
+    try std.testing.expectEqual([4]i32{ 3, 0, 6, 3 }, q[1]);
+    try std.testing.expectEqual(@as(usize, 0), cardCornerSquares(100, 50, 0, false, &q));
+}
 
 /// Whether a divider-drag pass leaves a pane's card region as it was until
 /// the drag ends (T2932). Each `SetWindowRgn` (and the GDI region build
@@ -409,7 +500,7 @@ pub const DragRegionPane = struct {
 /// held region (T2826). A slide cut (`card_shape` false) still cuts: the
 /// stack-fold oracle reads those.
 pub fn holdDragRegion(p: DragRegionPane) bool {
-    return p.dragging and p.in_tree and p.desk_on_visual and !p.desk_printing and p.card_shape;
+    return dragRegionHold(p) == .tree;
 }
 
 test "T2932: a divider drag holds only a tree pane's card region, and only while the desk is a visual" {

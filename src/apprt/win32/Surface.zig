@@ -336,6 +336,10 @@ bell_border: ?*BellBorder = null,
 /// visuals of the pane instead of popups. Empty on the SwapBuffers path.
 comp_overlay_slot: comp_overlay.Slot = .{},
 
+/// The card shape on this pane's own root visual while a divider drag holds
+/// its window region off (T2933, `Window.applyCardRegions`). Window thread.
+drag_card_clip: comp_overlay.RootClip = .{},
+
 /// Where this pane's renderer hands its composition surface handle to the
 /// window thread when it presents into the WINDOW's tree (T2553,
 /// `comp_tree.zig`), and the visual the window wrapped it in. The visual is
@@ -1368,6 +1372,8 @@ pub fn deinit(self: *Surface) void {
     // The renderer thread is joined and has retracted its handle; the
     // window's tree lets go of the visual here (T2553).
     self.dropTreeVisual();
+    // And of the drag's clip on the pane's own visual (T2933).
+    self.drag_card_clip.deinit();
 
     // Snapshot buffer: freed only after core_surface.deinit so the
     // renderer thread (the only other toucher) is already joined.
@@ -2389,6 +2395,31 @@ pub fn setTreeShape(self: *Surface, shape: comp_tree.Shape) void {
         log.debug("pane visual shape {d},{d}-{d},{d} radius={d:.1} square_top={}", .{ r.left, r.top, r.right, r.bottom, shape.radius, shape.square_top });
     } else log.debug("pane visual shape none", .{});
     if (self.tree_visual != null) self.syncTreeVisual();
+}
+
+/// Window thread: give this pane's own swap-chain visual the card `shape`
+/// (window pixels) while a divider drag holds its window region off (T2933).
+/// The visual sits `band` px down the window (`Presenter.setBand`), and its
+/// clip is in its own pixels. False: there is no visual to clip (a SwapBuffers
+/// pane), and the caller keeps cutting the region.
+pub fn setDragCardClip(self: *Surface, shape: comp_tree.Shape) bool {
+    if (self.tree_visual != null) return false;
+    const r = shape.rect orelse return false;
+    const band: f32 = @floatFromInt(self.gridBand());
+    return self.drag_card_clip.apply(
+        &self.comp_overlay_slot,
+        @floatFromInt(r.left),
+        @as(f32, @floatFromInt(r.top)) - band,
+        @floatFromInt(r.right),
+        @as(f32, @floatFromInt(r.bottom)) - band,
+        shape.radius,
+        shape.square_top,
+    );
+}
+
+/// Window thread: the drag is over and the window region is back (T2933).
+pub fn clearDragCardClip(self: *Surface) void {
+    self.drag_card_clip.clear();
 }
 
 /// Window thread: take this pane's visual out of the window's tree. A host
