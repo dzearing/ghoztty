@@ -327,6 +327,13 @@ Remove-Item Env:GHOZTTY_IPC_SOCKET -ErrorAction SilentlyContinue
 # reason as the endpoint drop above.
 . (Join-Path $PSScriptRoot 'BuildMode.ps1')
 
+# T1477: the viewer-profile settle Start-OnTestDesktop runs before a ghoztty GUI
+# launch. One rule for lanes and acceptance scripts, so it lives beside the
+# lanes' (scripts\lib\WebViewLane.ps1). Nothing in it runs at load.
+. (Join-Path (Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Parent) 'scripts\lib\WebViewLane.ps1')
+# Bounded like the lane's: a launch that waits this long goes ahead and says so.
+$script:GhozttyWebViewSettleSeconds = 15
+
 Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
 
 if (-not ('GhozttyTestDesktop' -as [type])) {
@@ -2847,6 +2854,19 @@ function Start-OnTestDesktop {
     $td = Resolve-TestDesktop $Desktop
     if (-not $KeepWindowPlacement -and (Split-Path -Leaf $Exe) -ieq 'ghoztty.exe') {
         Clear-TestWindowPlacement | Out-Null
+    }
+    # T1477: a GUI launch (never a +verb client) waits for the PREVIOUS run's
+    # viewer browser tree on this run's own debug profile - the acceptance-
+    # script twin of floor-lane's pre-lane settle (T592/T678). Silent when the
+    # profile is clear; bounded, and says so, when it is not.
+    if ((Split-Path -Leaf $Exe) -ieq 'ghoztty.exe' -and
+        -not ($Arguments.Count -gt 0 -and "$($Arguments[0])".StartsWith('+'))) {
+        $wvRoot = Get-WebViewAppProfileRoot
+        if ($wvRoot) {
+            $wvSettle = Wait-WebViewProfileSettle -ProfileRoot $wvRoot -TimeoutSeconds $script:GhozttyWebViewSettleSeconds
+            $wvLine = Format-WebViewProfileSettle -Settle $wvSettle
+            if ($wvLine) { Write-Host $wvLine }
+        }
     }
     $argLine = ($Arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
     # T689: a launch that named no log gets one anyway. See the block above

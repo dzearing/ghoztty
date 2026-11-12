@@ -275,6 +275,156 @@ function Wait-WebViewLaneSettle {
     }
 }
 
+function Get-WebViewAppProfileRoot {
+    <#
+    .SYNOPSIS
+        The DEBUG viewer-pane profile a ghoztty launched under the given
+        LOCALAPPDATA will use: `<LOCALAPPDATA>\ghoztty\EBWebView-debug` (T1477).
+    .DESCRIPTION
+        Mirrors `webview2_paths.zig`'s userDataFolder for a debug build. Only the
+        `-debug` form is ever returned: the release form is the user's own
+        terminal and nothing in a test harness waits on it.
+    #>
+    param([string]$LocalAppData = $env:LOCALAPPDATA)
+    if (-not $LocalAppData) { return $null }
+    return (Join-Path ($LocalAppData.TrimEnd('\')) 'ghoztty\EBWebView-debug')
+}
+
+function Select-WebViewProfileOrphan {
+    <#
+    .SYNOPSIS
+        Pure: from a process list, the msedgewebview2 processes on ONE debug
+        profile whose owning app is gone -- a viewer tree still tearing down
+        after its app died (T1477).
+    .DESCRIPTION
+        The acceptance-script half of T592/T678. Each viewer script stands up a
+        debug Ghoztty and kills it; the next script's app asks for the SAME
+        profile, and a browser tree still unwinding on it is the hr=0x80004005
+        shape. Three rules, each one a reason this is not just
+        `Get-WebViewAppDebugHost`:
+
+        * PROFILE-EXACT. A parallel acceptance worker has its own LOCALAPPDATA
+          and therefore its own profile, so another worker's live viewer panes
+          are never this script's to wait for. The marker-only match would
+          hold every launch in a parallel sweep at the gate for the deadline.
+        * ORPHANS ONLY. A tree whose app is alive is not a teardown: it is a
+          script's own first window while it opens a second, or a dev Ghoztty
+          somebody left open -- and WebView2 shares one browser among apps on
+          the same profile, which is not the failure. The owner is the parent
+          of the topmost process of the tree (the loader launches the browser
+          from the embedder); an owner pid that is alive but STARTED AFTER the
+          host is a reused pid, and counts as gone.
+        * DEBUG ONLY. A root that is not `...\EBWebView-debug` is refused, so
+          the user's release profile cannot be passed in by mistake.
+    .PARAMETER Processes
+        Win32_Process-shaped objects (ProcessId, ParentProcessId, CommandLine,
+        CreationDate) -- every process, so owners can be looked up.
+    .OUTPUTS
+        The orphaned hosts. Wrap the call in @().
+    #>
+    param(
+        [AllowNull()][AllowEmptyCollection()]$Processes,
+        [Parameter(Mandatory)][string]$ProfileRoot
+    )
+    if ((Split-Path -Leaf $ProfileRoot.TrimEnd('\')) -ine 'EBWebView-debug') {
+        throw "Select-WebViewProfileOrphan: '$ProfileRoot' is not a debug viewer profile - the release profile is the user's terminal (T1477)"
+    }
+    $needle = $ProfileRoot.TrimEnd('\') + '\'
+    $all = @(@($Processes) | Where-Object { $null -ne $_ })
+    $byPid = @{}
+    foreach ($p in $all) { $byPid[[int]$p.ProcessId] = $p }
+
+    $hosts = @($all | Where-Object {
+            $_.CommandLine -and
+            ([string]$_.CommandLine).IndexOf($needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+        })
+    $hostPids = @{}
+    foreach ($h in $hosts) { $hostPids[[int]$h.ProcessId] = $true }
+
+    $orphans = @()
+    foreach ($h in $hosts) {
+        # Climb to the top of the tree: children are parented by the browser.
+        $top = $h
+        for ($i = 0; $i -lt 16; $i++) {
+            $pp = [int]$top.ParentProcessId
+            if ($hostPids.ContainsKey($pp) -and $pp -ne [int]$top.ProcessId) { $top = $byPid[$pp] } else { break }
+        }
+        $ownerPid = [int]$top.ParentProcessId
+        $owner = if ($ownerPid -gt 0) { $byPid[$ownerPid] } else { $null }
+        $alive = $null -ne $owner
+        if ($alive -and $owner.CreationDate -and $top.CreationDate -and
+            ([datetime]$owner.CreationDate) -gt ([datetime]$top.CreationDate)) {
+            $alive = $false   # pid reused since the browser was launched
+        }
+        if (-not $alive) { $orphans += $h }
+    }
+    return $orphans
+}
+
+function Wait-WebViewProfileSettle {
+    <#
+    .SYNOPSIS
+        Block until no orphaned browser process remains on this run's debug
+        viewer profile, or the deadline (T1477). Returns, never throws, on the
+        deadline -- the launch goes ahead and the caller SAYS so.
+    .OUTPUTS
+        [pscustomobject] Settled, WaitedMs, Remaining, ProfileRoot.
+    #>
+    param(
+        [string]$ProfileRoot = (Get-WebViewAppProfileRoot),
+        [int]$TimeoutSeconds = 15,
+        [int]$PollMs = 250
+    )
+    $needle = $ProfileRoot.TrimEnd('\') + '\'
+    $count = {
+        # Cheap first: this runs before every GUI launch, and the normal answer
+        # is "no browser on this profile at all", which one name-filtered query
+        # settles. Only a hit pays for the full process list owners live in.
+        $wv = @(Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" -ErrorAction SilentlyContinue |
+                Where-Object { $_.CommandLine -and
+                    ([string]$_.CommandLine).IndexOf($needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 })
+        if ($wv.Count -eq 0) { return 0 }
+        $procs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+        @(Select-WebViewProfileOrphan -Processes $procs -ProfileRoot $ProfileRoot |
+            Where-Object { $_.Name -ieq 'msedgewebview2.exe' }).Count
+    }
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $deadlineMs = [math]::Max(0, $TimeoutSeconds) * 1000
+    $remaining = & $count
+    $initial = $remaining
+    while ($remaining -gt 0 -and $sw.ElapsedMilliseconds -lt $deadlineMs) {
+        Start-Sleep -Milliseconds ([math]::Max(10, $PollMs))
+        $remaining = & $count
+    }
+    $sw.Stop()
+    return [pscustomobject]@{
+        Settled     = ($remaining -eq 0)
+        WaitedMs    = [int]$sw.ElapsedMilliseconds
+        Remaining   = [int]$remaining
+        ProfileRoot = $ProfileRoot
+        # Whether there was anything to wait for at all: the first sample.
+        Waited      = ($initial -gt 0)
+    }
+}
+
+function Format-WebViewProfileSettle {
+    <#
+    .SYNOPSIS
+        The one line a launch prints about its profile settle, or '' when the
+        profile was already clear (T1477). Silent in the normal case.
+    #>
+    param([Parameter(Mandatory)]$Settle)
+    if (-not $Settle.Settled) {
+        return ("[webview] PROFILE NOT SETTLED: $($Settle.Remaining) orphaned browser process(es) still on " +
+            "$($Settle.ProfileRoot) after $([int]($Settle.WaitedMs / 1000))s - a viewer failure in this script " +
+            "may be the previous script's teardown, not this code (T1477)")
+    }
+    if ($Settle.Waited) {
+        return "[webview] waited $($Settle.WaitedMs)ms for the previous run's viewer browser tree to exit (T1477)"
+    }
+    return ''
+}
+
 function Remove-WebViewLaneProfile {
     <#
     .SYNOPSIS

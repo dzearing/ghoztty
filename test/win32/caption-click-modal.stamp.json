@@ -1,14 +1,14 @@
 {
     "guard":  "caption-click-modal",
     "script":  "test/win32/caption-click-modal.ps1",
-    "generated":  "2026-11-10T08:15:07-08:00",
-    "commit":  "bcb7bafe2",
+    "generated":  "2026-11-11T21:09:49-08:00",
+    "commit":  "196961b6f",
     "uncommitted":  [
                         "test/win32/lib/TestDesktop.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/caption_layout.zig":  "787f2a9f6747b245d2eef7d3b5b089b5accd0ba43d61e319bb8885622f6beb44",
                   "test/win32/caption-click-modal.ps1":  "f3e87c81c7fdf55c7c8a6886ccf7a82d202d04f3ab1393eefcdd251a697f585d",
-                  "test/win32/lib/TestDesktop.ps1":  "30033d5c8b91a45d86084920b59e96f500f6c8dcf1717a098d93c94a39fcc83a"
+                  "test/win32/lib/TestDesktop.ps1":  "9c47a6668ad045aa0c61ac8d6c51320ead3ea54a3c6e10d5e0f77fe912c3c596"
               }
 }

@@ -50,6 +50,12 @@
   new code is quiet. Arm 22 runs the real sweep over that staging and requires
   the other run's host to be alive afterwards.
 
+  Arms 25-31 are the acceptance-script half (T1477): Start-OnTestDesktop waits,
+  before every ghoztty GUI launch, for an ORPHANED browser tree on this run's
+  own debug profile -- the previous script's viewer panes still tearing down.
+  Live owners and other workers' profiles never hold it; the release profile is
+  refused outright; the wait is bounded and says so.
+
   Prints a single ALL PASS / N FAILURE(S) line, like every other script here.
 
   ASCII-only by design (PS 5.1 on this box mangles non-ASCII on rewrite).
@@ -400,6 +406,129 @@ try {
         ($src -match 'Invoke-WebViewLaneSweep -ExeNames \$TEST_EXE_NAMES[^\r\n]*-Roots \$Roots') $null
     Check 'and the lane names the host it left to its owner' `
         ($src -match 'WEBVIEW HOST IGNORED') $null
+
+    # -- 25-31: the ACCEPTANCE-SCRIPT half (T1477). A viewer script's app dies
+    # at the end of the script and the next script's app asks for the same
+    # debug profile. Start-OnTestDesktop now waits for an ORPHANED browser tree
+    # on THIS run's profile -- not a live one (a script's own first window, or
+    # WebView2 legitimately sharing a browser), and not another worker's.
+
+    # -- 25: the pure rule, over a synthetic process table.
+    $t0 = Get-Date '2026-11-11T10:00:00'
+    $R = 'C:\w1\ghoztty\EBWebView-debug'
+    $tbl = @(
+        [pscustomobject]@{ ProcessId = 60;  ParentProcessId = 1;   CreationDate = $t0;              CommandLine = 'ghoztty.exe' }
+        [pscustomobject]@{ ProcessId = 70;  ParentProcessId = 1;   CreationDate = $t0.AddMinutes(9); CommandLine = 'reused.exe' }
+        # orphaned tree: owner 50 is gone; the child is parented by the browser
+        [pscustomobject]@{ ProcessId = 100; ParentProcessId = 50;  CreationDate = $t0.AddMinutes(1); CommandLine = "msedgewebview2.exe --user-data-dir=`"$R\EBWebView`"" }
+        [pscustomobject]@{ ProcessId = 101; ParentProcessId = 100; CreationDate = $t0.AddMinutes(1); CommandLine = "msedgewebview2.exe --type=renderer --user-data-dir=`"$R\EBWebView`"" }
+        # live owner 60, started before its browser
+        [pscustomobject]@{ ProcessId = 200; ParentProcessId = 60;  CreationDate = $t0.AddMinutes(2); CommandLine = "msedgewebview2.exe --user-data-dir=`"$R\EBWebView`"" }
+        # owner pid 70 is alive but started AFTER the browser: a reused pid
+        [pscustomobject]@{ ProcessId = 300; ParentProcessId = 70;  CreationDate = $t0.AddMinutes(3); CommandLine = "msedgewebview2.exe --user-data-dir=`"$R\EBWebView`"" }
+        # another worker's profile, orphaned: never this run's to wait for
+        [pscustomobject]@{ ProcessId = 400; ParentProcessId = 51;  CreationDate = $t0.AddMinutes(1); CommandLine = 'msedgewebview2.exe --user-data-dir="C:\w2\ghoztty\EBWebView-debug\EBWebView"' }
+    )
+    $orph = @(Select-WebViewProfileOrphan -Processes $tbl -ProfileRoot $R | ForEach-Object { $_.ProcessId } | Sort-Object)
+    Check 'an orphaned viewer tree on this profile is selected, children included' `
+        (($orph -contains 100) -and ($orph -contains 101)) "selected: $($orph -join ',')"
+    Check 'a tree whose app is still alive is not (a live window is not a teardown)' `
+        ($orph -notcontains 200) "selected: $($orph -join ',')"
+    Check 'an owner pid reused since the browser started counts as gone' `
+        ($orph -contains 300) "selected: $($orph -join ',')"
+    Check 'another worker''s profile is never this run''s to wait for' `
+        ($orph -notcontains 400) "selected: $($orph -join ',')"
+    $threw = $false
+    try { $null = Select-WebViewProfileOrphan -Processes $tbl -ProfileRoot 'C:\w1\ghoztty\EBWebView' } catch { $threw = $true }
+    Check 'THE RULE: the release profile (the user''s terminal) is refused outright' $threw ''
+    Check 'the profile root is the debug one under the given LOCALAPPDATA' `
+        ((Get-WebViewAppProfileRoot -LocalAppData 'C:\w1\') -eq $R) (Get-WebViewAppProfileRoot -LocalAppData 'C:\w1\')
+
+    # Live: an orphan is a fixture whose launcher has exited. The launcher is a
+    # throwaway powershell that starts the fixture and returns.
+    $Lad = Join-Path $Sandbox 'lad'
+    $ProfRoot = Get-WebViewAppProfileRoot -LocalAppData $Lad
+    $OtherRoot = Get-WebViewAppProfileRoot -LocalAppData (Join-Path $Sandbox 'lad-other')
+    $launcher = Join-Path $Sandbox 'orphan-launcher.ps1'
+    Set-Content -LiteralPath $launcher -Encoding ASCII -Value @'
+param([string]$Fixture, [string]$Signal, [string]$Marker)
+$null = Start-Process -FilePath $Fixture -ArgumentList '/c', "waitfor /t 600 $Signal > nul & rem $Marker" -WindowStyle Hidden -PassThru
+'@
+    function Start-OrphanFixture {
+        param([string]$Marker)
+        $script:FixtureSeq++
+        $signal = "GhozttyWv2SettleFixture$($script:FixtureSeq)"
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $launcher -Fixture $Fixture -Signal $signal -Marker $Marker | Out-Null
+        for ($i = 0; $i -lt 50; $i++) {
+            $seen = @(Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" -ErrorAction SilentlyContinue |
+                    Where-Object { $_.CommandLine -and $_.CommandLine -like "*$signal *" })
+            if ($seen.Count -gt 0) {
+                $o = [pscustomobject]@{ Id = [int]$seen[0].ProcessId }
+                $script:Started += $o
+                return $o
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        throw "orphan fixture $signal never appeared"
+    }
+
+    # -- 26: a clear profile costs nothing and prints nothing.
+    $clear = Wait-WebViewProfileSettle -ProfileRoot $ProfRoot -TimeoutSeconds 5
+    Check 'a launch onto a clear profile does not wait' `
+        ($clear.Settled -and -not $clear.Waited -and $clear.WaitedMs -lt 1500) "settled=$($clear.Settled) waited=$($clear.WaitedMs)ms"
+    Check 'and says nothing' ((Format-WebViewProfileSettle -Settle $clear) -eq '') (Format-WebViewProfileSettle -Settle $clear)
+
+    # -- 27: a LIVE owner on this profile (this harness is its parent) is not
+    # waited for, and neither is an orphan on another worker's profile.
+    $live = Start-Fixture -Marker "--user-data-dir=$ProfRoot\EBWebView"
+    $foreignOrphan = Start-OrphanFixture -Marker "--user-data-dir=$OtherRoot\EBWebView"
+    $notMine = Wait-WebViewProfileSettle -ProfileRoot $ProfRoot -TimeoutSeconds 5
+    Check 'a live app''s browser and another worker''s orphan do not hold the launch' `
+        ($notMine.Settled -and -not $notMine.Waited) "settled=$($notMine.Settled) remaining=$($notMine.Remaining)"
+    Stop-Fixture $live
+    Stop-Fixture $foreignOrphan
+
+    # -- 28: the give-up. An orphan that never exits is waited for, bounded,
+    # and the line names it.
+    $stuck = Start-OrphanFixture -Marker "--user-data-dir=$ProfRoot\EBWebView"
+    $gaveUp = Wait-WebViewProfileSettle -ProfileRoot $ProfRoot -TimeoutSeconds 1
+    Check 'an orphan on this profile is waited for, and the wait is bounded' `
+        ((-not $gaveUp.Settled) -and $gaveUp.Remaining -ge 1 -and $gaveUp.WaitedMs -lt 5000) `
+        "settled=$($gaveUp.Settled) remaining=$($gaveUp.Remaining) waited=$($gaveUp.WaitedMs)ms"
+    $gaveLine = Format-WebViewProfileSettle -Settle $gaveUp
+    Check 'a give-up SAYS so, naming the profile and T1477' `
+        ($gaveLine -match 'PROFILE NOT SETTLED' -and $gaveLine -match 'T1477' -and
+            $gaveLine.Contains($ProfRoot)) $gaveLine
+
+    # -- 29: it really WAITS: the orphan exits a moment from now.
+    $killer3 = Start-Job -ScriptBlock {
+        param($TargetPid)
+        Start-Sleep -Milliseconds 1500
+        Start-Process -FilePath 'taskkill.exe' -ArgumentList '/T', '/F', '/PID', $TargetPid -Wait -WindowStyle Hidden -ErrorAction SilentlyContinue
+    } -ArgumentList $stuck.Id
+    $waited = Wait-WebViewProfileSettle -ProfileRoot $ProfRoot -TimeoutSeconds 30
+    Receive-Job $killer3 -Wait -AutoRemoveJob -ErrorAction SilentlyContinue | Out-Null
+    Check 'a launch blocks until the previous tree is really gone' `
+        ($waited.Settled -and $waited.Waited -and $waited.WaitedMs -ge 1000) `
+        "settled=$($waited.Settled) waited=$($waited.WaitedMs)ms"
+    $waitLine = Format-WebViewProfileSettle -Settle $waited
+    Check 'and the wait is visible in the launching script''s output' `
+        ($waitLine -match 'waited \d+ms' -and $waitLine -match 'T1477') $waitLine
+
+    # -- 30-31: the wiring. Start-OnTestDesktop is the one launcher every GUI
+    # script goes through; the settle is only a fix if it is called there,
+    # and only for an app launch (a +verb client hosts no viewer).
+    $tdSrc = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1') -Raw
+    $startFn = [regex]::Match($tdSrc, '(?s)function Start-OnTestDesktop \{.*?\n\}').Value
+    Check 'Start-OnTestDesktop runs the profile settle and prints its line' `
+        ($startFn -match 'Wait-WebViewProfileSettle -ProfileRoot' -and $startFn -match 'Format-WebViewProfileSettle') $null
+    Check 'the settle runs BEFORE the process is started' `
+        ($startFn.IndexOf('Wait-WebViewProfileSettle') -ge 0 -and
+            $startFn.IndexOf('Wait-WebViewProfileSettle') -lt $startFn.IndexOf('.StartProcess(')) $null
+    Check 'a +verb client launch is exempt' `
+        ($startFn -match "(?s)StartsWith\('\+'\).{0,200}Get-WebViewAppProfileRoot") $null
+    Check 'TestDesktop loads the shared library rather than a copy' `
+        ($tdSrc -match 'scripts\\lib\\WebViewLane\.ps1') $null
 
     Complete-TestBody  # T1039: the run reached the end of its body
 }
