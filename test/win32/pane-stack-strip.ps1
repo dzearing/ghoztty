@@ -290,6 +290,16 @@ function Get-StripRow([IntPtr]$top, $nameOf) {
                 StripW = $w; Lead = $p.Left; Trail = $p.Left + $w
             }
         }
+        # T2918: two tucked strips side by side are one run of strip colour,
+        # so the walk above reads them as ONE strip twice as wide, and a press
+        # at its middle lands on the NEXT strip's leading edge (D6 dragged s3
+        # while it meant s2). An item ends where the next one begins.
+        for ($i = 0; $i -lt $out.Count - 1; $i++) {
+            if ($out[$i].Trail -gt $out[$i + 1].Lead) {
+                $out[$i].StripW = $out[$i + 1].Lead - $out[$i].Lead
+                $out[$i].Trail = $out[$i + 1].Lead
+            }
+        }
         return $out
     } finally { Close-TestWindowPixels -Shot $shot }
 }
@@ -680,6 +690,8 @@ try {
     if ($null -eq $d) { Write-TestAssertedNothing -Reason 'no pane was tucked after D5' }
     $wa = Get-TestWorkArea
     $midY = $d.Top + [int](($d.Bottom - $d.Top) / 2)
+    $before6 = @(Get-Panes $top | ForEach-Object { $_.Hwnd })
+    Say ("      row: {0}; dragging {1}'s strip; tree {2}" -f (($rows | ForEach-Object { "$($_.Name)[$($_.Lead)-$($_.Trail)$(if (-not $_.Visible) { ' tucked' })]" }) -join ' '), $d.Name, ((Get-LeafOrder) -join ','))
     Drag-Strip $top ($d.Left + [int]($d.StripW / 2)) $midY ($wa.Right - 3) $midY
     $deadline = (Get-Date).AddSeconds(8)
     do {
@@ -695,7 +707,14 @@ try {
         $tol = Get-TestChromeDip -Dip 12 -Scale $script:scale
         Assert ([math]::Abs($new.Left - $half) -le $tol -and [math]::Abs($new.Right - $wa.Right) -le $tol) "D6: it covers the right half of the screen ($($new.Left)-$($new.Right) vs $half-$($wa.Right))"
         $moved = @(Get-TestChildWindows -Window ([IntPtr]$new.Hwnd) -Class 'GhozttyTerminal')
-        Assert ($moved.Count -eq 1 -and $moved[0].Hwnd -eq $d.Hwnd) "D6: it holds the dragged pane $($d.Name), the same window ($($moved.Count))"
+        # Name what DID arrive: a pane that was already there (the wrong strip
+        # was taken) reads differently from a terminal nobody had before (the
+        # drop re-created the pane instead of moving it).
+        $got = @($moved | ForEach-Object {
+            $h = $_.Hwnd
+            if ($nameOf.ContainsKey($h)) { $nameOf[$h] } elseif ($before6 -contains $h) { "unnamed $h" } else { "NEW $h" }
+        }) -join ','
+        Assert ($moved.Count -eq 1 -and $moved[0].Hwnd -eq $d.Hwnd) "D6: it holds the dragged pane $($d.Name), the same window ($($moved.Count): $got)"
         Assert (@(Get-Panes $top).Count -eq 3) "D6: three panes stay behind ($(@(Get-Panes $top).Count))"
     }
 
