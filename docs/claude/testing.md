@@ -1495,6 +1495,21 @@ coordinates on purpose and is exempt by name. Exemption:
 `# click-coord: <reason>`; a point parsed from the app's log is declared
 screen-space in the audit's `$Declared` list instead.
 
+**A posted gesture proves it landed** (T1479). A raw `Send-TestRawMessage`
+mouse post sits outside that audit, and the trap it invites is the one
+T1476 and T1479 found twice: `pane - GetWindowRect` treats the WINDOW origin
+as the CLIENT origin, so on a captioned, bordered window the press lands off
+its target, nothing is grabbed, and every assertion after it checks a state
+nothing changed. Drive a gesture with `Send-TestMouse` in screen coordinates
+(a divider is the midpoint of the gap between two pane rects, as
+`drag-perf.ps1` and `banner-resize-repaint.ps1` aim it); keep raw posts for
+the cases that must be raw - a hover on a painted dialog, aimed in client
+space from `Get-TestWindowRect -Client` or the app's own client-space geometry.
+Either way the gesture asserts an observable effect of itself before the
+script believes anything measured during it: the pane width moved, the focus
+or the dim overlay moved, the window minimised. An invariant that "held at
+every step" of a drag that never grabbed is not a pass.
+
 **A marker you type is on screen before the command runs** (T1143). The shell
 echoes the command line, so `+send-keys "echo $m"` followed by a wait for `$m`
 is satisfied by the echo the instant the keys land - T1116's flood wait scored

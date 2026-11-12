@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-11T23:15:56-08:00",
-    "commit":  "c30ab0063",
+    "generated":  "2026-11-11T23:52:17-08:00",
+    "commit":  "bd57f3bd1",
     "uncommitted":  [
-                        "test/win32/lib/CommandResolveAudit.ps1"
+                        "test/win32/banner-resize-repaint.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -52,7 +52,7 @@
                   "test/win32/auto-launch-cwd.ps1":  "89143d743d16d05c3dd1d07e0b53f11ddf9c5b0088aaf3ffb333c37ba5c44471",
                   "test/win32/background-blur.ps1":  "dffab046e7560e606416751d4441733b0b9acd8630dcf61d3da36389b04edc9a",
                   "test/win32/background-window-frame.ps1":  "558f33f7cd12663f4fba03479038e7cc924b5fb119da50efc006958b278f7791",
-                  "test/win32/banner-resize-repaint.ps1":  "499fac53076f7641063f8ce3dab59a859ee9a947ce44ca6f2b05b08767c677f8",
+                  "test/win32/banner-resize-repaint.ps1":  "72fcba6f7a5e8e77ddfec7528121eac975fa5e11463250478ac87d91ab936848",
                   "test/win32/bell-border.ps1":  "9fd6e642cbecf863a82c0488e78c162f4c54f232139c7974920da095d24e765e",
                   "test/win32/bell-features.ps1":  "8e4282148bae932f6cf792520c381559de087a3527901e48111a334e2fae7990",
                   "test/win32/blade-shadow.ps1":  "a324592e11e92841a183b026f3b38c397bc340c9205fbc3f583040f913de7b7c",

@@ -67,14 +67,19 @@ if ($ExePath) { $exe = $ExePath }
 $env:GHOZTTY_PIPE_SUFFIX = "-bannerrepaint$PID"
 $errlog = Join-Path $env:TEMP 'ghoztty-banner-repaint-stderr.log'
 
+# T1479 (the T2747 pin pane-banner.ps1 carries): every section here measures
+# the banner POPUP - its class style, its window rect. On the composition
+# present (the default since T2514) the card is a child visual of the pane and
+# the popup stays hidden, so the first assertion read "no banner overlay" and
+# nothing after it ran. The popup is still a shipped path (the fallback with
+# no GL/D3D interop: WARP, Mesa, Remote Desktop), so pin it; comp-present.ps1
+# covers the composition card's geometry.
+$env:GHOZTTY_COMP_PRESENT = '0'
+
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
 $CS_VREDRAW = 0x0001
 $CS_HREDRAW = 0x0002
-$WM_LBUTTONDOWN = 0x0201
-$WM_LBUTTONUP = 0x0202
-$WM_MOUSEMOVE = 0x0200
-$MK_LBUTTON = [IntPtr]1
 
 $script:pass = 0
 $script:fail = 0
@@ -88,11 +93,6 @@ function Kill-RepoInstances {
     # copy - the filter this replaced also matched a detached instance running from
     # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
     [void](Stop-RepoGhoztty -Exe $exe -AppOnly -SettleMs 500)
-}
-
-# Pack a client-coordinate point into an LPARAM the way the OS does.
-function New-LParam([int]$x, [int]$y) {
-    return [IntPtr](([int64]$y -shl 16) -bor ($x -band 0xFFFF))
 }
 
 # The band above $pane must be exactly covered by $banner. Returns a list of
@@ -184,31 +184,59 @@ try {
     $dpi = Get-TestWindowDpi -Window ([IntPtr]$top)
     Write-Host "  window dpi=$dpi (scale $([math]::Round($dpi/96.0,2)))"
 
-    $tr = Get-Rect $top
-    $or = Get-Rect $owner.Hwnd
-    $startX = $or.Left - $tr.Left            # divider, in client coords
-    $startY = [int](($or.Top + $or.Bottom) / 2) - $tr.Top
+    # SCREEN coordinates, handed to Send-TestMouse, which converts per target
+    # (T1479). This used to do the arithmetic itself as `pane - GetWindowRect`,
+    # which treats the WINDOW origin as the CLIENT origin: on a captioned,
+    # bordered window the press landed off the divider, nothing was grabbed,
+    # and the tiling check below then passed over two panes that never moved.
+    # It also aimed at the owner pane's LEFT edge, which is the window edge
+    # whenever the banner sits on the left pane. The divider is the gap
+    # between the two panes, whichever of them owns the banner.
+    $sorted = @($panes | Sort-Object Left)
+    $startX = [int](($sorted[0].Right + $sorted[1].Left) / 2)
+    $startY = [int](($sorted[0].Top + $sorted[0].Bottom) / 2)
+    # Moving the divider right shrinks the right pane, so which way "shrink"
+    # is depends on which side the banner's owner is on.
+    $shrinkDir = if ($owner.Left -gt $sorted[0].Left) { 1 } else { -1 }
+    $ownerW0 = (Get-Rect $owner.Hwnd).Width
 
     $allViolations = @()
-    foreach ($dir in @(1, -1)) {
-        $label = if ($dir -gt 0) { 'shrink' } else { 'grow' }
-        [void](Send-TestRawMessage -Window ([IntPtr]$top) -Message $WM_LBUTTONDOWN `
-            -WParam $MK_LBUTTON -LParam (New-LParam $startX $startY))
+    $dragMoved = @{}
+    foreach ($dir in @($shrinkDir, -$shrinkDir)) {
+        $label = if ($dir -eq $shrinkDir) { 'shrink' } else { 'grow' }
+        $wStart = (Get-Rect $owner.Hwnd).Width
+        $maxDelta = 0
+        [void](Send-TestMouse -Window ([IntPtr]$top) -Target ([IntPtr]$top) `
+            -X $startX -Y $startY -Action down -HoldMs 0)
         Start-Sleep -Milliseconds 150
         for ($i = 1; $i -le 12; $i++) {
             $nx = $startX + ($dir * $i * 20)
-            [void](Send-TestRawMessage -Window ([IntPtr]$top) -Message $WM_MOUSEMOVE `
-                -WParam $MK_LBUTTON -LParam (New-LParam $nx $startY))
+            [void](Send-TestMouse -Window ([IntPtr]$top) -Target ([IntPtr]$top) `
+                -X $nx -Y $startY -Action move)
             Start-Sleep -Milliseconds 60
             $bb = Get-Banner $appPid
             $pp = Get-Rect $owner.Hwnd
+            $maxDelta = [math]::Max($maxDelta, [math]::Abs($pp.Width - $wStart))
             if ($bb) {
                 $allViolations += Get-TilingViolations $bb $pp "drag-$label-$i"
             }
         }
-        [void](Send-TestRawMessage -Window ([IntPtr]$top) -Message $WM_LBUTTONUP `
-            -WParam ([IntPtr]::Zero) -LParam (New-LParam ($startX + $dir * 12 * 20) $startY))
+        [void](Send-TestMouse -Window ([IntPtr]$top) -Target ([IntPtr]$top) `
+            -X ($startX + $dir * 12 * 20) -Y $startY -Action up)
         Start-Sleep -Milliseconds 400
+        $dragMoved[$label] = $maxDelta
+        # The next direction starts from where this one left the divider.
+        $panes = @(Get-TestChildWindows -Window ([IntPtr]$top) -Class 'GhozttyTerminal' |
+            Where-Object Visible)
+        $sorted = @($panes | Sort-Object Left)
+        if ($sorted.Count -ge 2) { $startX = [int](($sorted[0].Right + $sorted[1].Left) / 2) }
+    }
+    # Positive control: the posted drag actually grabbed the divider. Without
+    # it a press that missed reads as "the band tiled at every step" - of a
+    # pane that never changed size.
+    foreach ($label in @('shrink', 'grow')) {
+        Assert ($dragMoved[$label] -ge 100) `
+            "the posted $label drag actually moved the divider (owner width changed by up to $($dragMoved[$label]) px, from $ownerW0)"
     }
     $dragOk = ($allViolations.Count -eq 0)
     if ($NegativeControl) { $dragOk = -not $dragOk }
