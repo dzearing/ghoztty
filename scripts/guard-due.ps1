@@ -6344,6 +6344,18 @@ $GuardTable = @(
             'test\win32\bell-features.ps1'
         )
     },
+    # A pane going needs_input flashes its background window's taskbar button
+    # (T2907, Mac's Dock bounce). The once-per-transition rule is unit-tested
+    # in activity_attention.zig; this proves +set-state and OSC 7777 reach it.
+    [pscustomobject]@{
+        Name   = 'set-state-attention'
+        Script = 'test\win32\set-state-attention.ps1'
+        Stamp  = 'test\win32\set-state-attention.stamp.json'
+        Covers = @(
+            'src\apprt\win32\activity_attention.zig',
+            'test\win32\set-state-attention.ps1'
+        )
+    },
     # The `border` bell feature (T1919): the frame popup's placement, width,
     # fade and teardown. Its pixels and curve are unit-tested in bell_math.zig;
     # this proves which pane gets the frame and that it follows the pane.

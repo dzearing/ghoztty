@@ -492,6 +492,8 @@ Single-kind calls — `"text"` on its own, `Enter` on its own, `C-c` on its own 
 
 Set the activity state of a named window or pane. The state is aggregated across all panes in a window (priority: `needs_input` > `busy` > `idle`) and shown as a title suffix and custom `AXWindowActivityState` accessibility attribute.
 
+When a window's aggregate moves INTO `needs_input` while the window is not the active one, it asks for the user's attention: on macOS the Dock icon bounces (`requestUserAttention(.informationalRequest)`), on Windows the taskbar button flashes (`FlashWindowEx`, the same flash the bell's `attention` feature uses; T2907). Once per transition - a repeat `needs_input` asks nothing, and a window the user is already looking at is never flashed. The rule is `src/apprt/win32/activity_attention.zig`; acceptance is `test/win32/set-state-attention.ps1`.
+
 `idle`/`busy`/`needs_input` are the **machine tokens** — the vocabulary of this flag, of the OSC 7777 payload, and of `AXWindowActivityState`. They are a public API (hooks call the CLI, external tools like ztabby read the attribute) and do not change for readability. The **title suffix** shows a human label instead, and the two differ for one state: `needs_input` renders as `(question)`. Consumers must read the accessibility attribute rather than parsing the title.
 
 ```

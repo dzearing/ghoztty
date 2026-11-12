@@ -69,6 +69,9 @@ test {
     _ = @import("win32/bell_math.zig");
     _ = @import("win32/pane_hue.zig");
 
+    // Pure win32 needs_input attention rule (T2907), same deal.
+    _ = @import("win32/activity_attention.zig");
+
     // Pure win32 alpha-correct chrome rule for per-pixel-alpha windows
     // (T1787), same no-OS-imports deal.
     _ = @import("win32/chrome_alpha.zig");

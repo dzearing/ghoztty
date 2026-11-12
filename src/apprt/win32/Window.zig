@@ -164,6 +164,7 @@ const hero_math = @import("hero_math.zig");
 const hero_snap_schedule = @import("hero_snap_schedule.zig");
 const dim_math = @import("dim_math.zig");
 const bell_math = @import("bell_math.zig");
+const activity_attention_rule = @import("activity_attention.zig");
 const chrome_alpha = @import("chrome_alpha.zig");
 const opacity_mode = @import("opacity_mode.zig");
 const blur_backdrop = @import("blur_backdrop.zig");
@@ -1363,6 +1364,13 @@ pending_persistence_notice: ?[]const u8 = null,
 /// pin → active tab title → active pane title (T92). Owned. Tab labels
 /// still track their own (possibly pinned) tab titles.
 title_override: ?[:0]u8 = null,
+
+/// The window's last-seen activity aggregate, as far as the attention rule
+/// cares: whether it was `needs_input` (T2907). `updateWindowTitle` - where
+/// every activity change, from the CLI or OSC 7777, and every pane close
+/// lands - moves it, and flashes the taskbar button on a transition into
+/// `needs_input` while the window is in the background (Mac's Dock bounce).
+activity_attention: activity_attention_rule.Tracker = .{},
 
 /// `title_override` was typed by the user - Change Window Title, the pane
 /// sidebar - not set by a script (`+rename`, `+new-window --title`). A user's
@@ -17471,12 +17479,43 @@ pub fn onPaneBellChanged(self: *Window) void {
     self.invalidateTabBar();
 }
 
+/// Feed the window's activity aggregate to the attention rule (T2907) and
+/// flash the taskbar button when it says so - the Windows translation of Mac's
+/// `requestUserAttention(.informationalRequest)` Dock bounce, with the same
+/// flash the bell's `attention` feature uses. Logs every move into or out of
+/// `needs_input` (a repeat set logs nothing), which is the oracle for
+/// set-state-attention.ps1.
+fn noteActivityAggregate(
+    self: *Window,
+    hwnd: w32.HWND,
+    aggregate: terminal.osc.Command.ActivityState,
+) void {
+    const needs_input = aggregate == .needs_input;
+    if (needs_input == self.activity_attention.needs_input) return;
+    const active = w32.windowIsActive(hwnd);
+    const flash = self.activity_attention.observe(needs_input, active);
+    if (flash) {
+        var fwi: w32.FLASHWINFO = .{
+            .cbSize = @sizeOf(w32.FLASHWINFO),
+            .hwnd = hwnd,
+            .dwFlags = w32.FLASHW_ALL | w32.FLASHW_TIMERNOFG,
+            .uCount = 2,
+            .dwTimeout = 0,
+        };
+        _ = w32.FlashWindowEx(&fwi);
+    }
+    log.info("activity attention needs_input={} active={} flash={}", .{ needs_input, active, flash });
+}
+
 pub fn updateWindowTitle(self: *Window) void {
     const hwnd = self.hwnd orelse return;
     // An activity change lands here from both the OSC and the CLI paths; the
     // sidebar shows it per pane (T1828). Coalesced (T1935): this runs on every
     // title change, and a spinner title changes ten times a second.
     defer self.scheduleSidebarSync();
+
+    const aggregate = self.activityAggregate();
+    self.noteActivityAggregate(hwnd, aggregate);
 
     // A rung pane's bell glyph leads the title (`bell-features = title`,
     // T1890) - over a pinned title too, as Mac's computeTitle does.
@@ -17503,7 +17542,7 @@ pub fn updateWindowTitle(self: *Window) void {
     // HUMAN name (`displayLabel`), never its machine token — `needs_input`
     // reads " (question)" here while the CLI flag, the OSC payload and the
     // accessibility attribute keep saying `needs_input` (T465).
-    const suffix: ?[]const u16 = switch (self.activityAggregate()) {
+    const suffix: ?[]const u16 = switch (aggregate) {
         .idle => null,
         inline else => |state| comptime std.unicode.utf8ToUtf16LeStringLiteral(
             " (" ++ state.displayLabel() ++ ")",

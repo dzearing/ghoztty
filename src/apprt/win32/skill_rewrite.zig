@@ -98,12 +98,12 @@ pub const windows_rewrites = [_]Rewrite{
         .win = "`+new-window` launches Ghoztty if no instance is running.",
     },
     // `+set-state` (T1457): the Mac sentence names AppKit API; Windows shows
-    // only the title suffix (`Window.updateWindowTitle`, " (question)" per
-    // `displayLabel`). The taskbar flash Mac's attention request maps to is
-    // T2907 - update this row when it lands.
+    // the title suffix (`Window.updateWindowTitle`, " (question)" per
+    // `displayLabel`), and Mac's attention request (the Dock bounce) is the
+    // taskbar-button flash (T2907, `Window.noteActivityAggregate`).
     .{
         .mac = "and shown as a title suffix and custom `AXWindowActivityState` accessibility attribute. Transition to `needs_input` triggers `requestUserAttention`.",
-        .win = "and shown as a window-title suffix: ` (busy)`, or ` (question)` for `needs_input`; idle shows none.",
+        .win = "and shown as a window-title suffix: ` (busy)`, or ` (question)` for `needs_input`; idle shows none. When a window moves into `needs_input` while it is in the background, its taskbar button flashes - once per transition, not on every set.",
     },
     // Examples.
     .{ .mac = "--split-command=\"exec zsh -l\"", .win = "--split-command=pwsh" },

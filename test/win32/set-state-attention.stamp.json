@@ -1,0 +1,14 @@
+{
+    "guard":  "set-state-attention",
+    "script":  "test/win32/set-state-attention.ps1",
+    "generated":  "2026-11-11T15:59:56-08:00",
+    "commit":  "305acfa58",
+    "uncommitted":  [
+                        "src/apprt/win32/activity_attention.zig",
+                        "test/win32/set-state-attention.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/activity_attention.zig":  "9afc72401f17143565538654a44af16d426ece333d67656e842409f774165075",
+                  "test/win32/set-state-attention.ps1":  "01020c4f6ba69601bccf89de8576541028072066b5c0445a44772166ecf9c732"
+              }
+}
