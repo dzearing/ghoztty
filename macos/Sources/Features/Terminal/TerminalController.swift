@@ -1081,6 +1081,33 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         }
     }
 
+    /// `+close --force` on a window: every window of its tab group closes with
+    /// no confirmation (one already up is dismissed) and no undo, its agent
+    /// sessions END, and every pane's core is freed at once — so its process
+    /// exits now, not when the undo window expires.
+    func forceCloseWindow() {
+        guard let window else { return }
+        let windows = window.tabGroup?.windows ?? [window]
+        let controllers = windows.compactMap { $0.windowController as? TerminalController }
+        for controller in controllers.isEmpty ? [self] : controllers {
+            controller.forceCloseOwnWindow()
+        }
+    }
+
+    private func forceCloseOwnWindow() {
+        guard let window else { return }
+        dismissCloseConfirmation()
+        cancelPendingInitialPresentation()
+        let panes = Array(surfaceTree)
+        for pane in panes { pane.surfaceView?.setSessionCloseIntent(true) }
+        if let undoManager {
+            undoManager.disableUndoRegistration { window.close() }
+        } else {
+            window.close()
+        }
+        for pane in panes { pane.surfaceView?.releaseClosedSurface() }
+    }
+
     /// Registers undo for closing window(s), handling both single windows and tab groups.
     private func registerUndoForCloseWindow() {
         guard let undoManager, undoManager.isUndoRegistrationEnabled else { return }
