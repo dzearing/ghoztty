@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-11T17:58:10-08:00",
-    "commit":  "6ca50e0a8",
+    "generated":  "2026-11-11T19:06:02-08:00",
+    "commit":  "325b906af",
     "uncommitted":  [
 
                     ],
@@ -349,7 +349,7 @@
                   "src/apprt/win32/RenameDialog.zig":  "b35f3a9aa5d0f37015c997aa10a494b31cc4aa4c6e5fe956e0cd54f0bc7735dc",
                   "src/apprt/win32/resize_burst.zig":  "4ab23b837dc82c7752351d652c0c7d95867211acb6597020e1e0269773e04f7f",
                   "src/apprt/win32/resize_content.zig":  "90ff8c05d90384c8d62b79b4b029679be1a658d8439dcfe5cfb210f269cca29c",
-                  "src/apprt/win32/resize_paint.zig":  "098835318620ebedf22dc020fc42575c20d5c818aa2262310abc5143d0f2ac56",
+                  "src/apprt/win32/resize_paint.zig":  "c74fb9fa48a12404ba6218b84402a253a2f80d38e6d4bfd5d36b68ad77ee7d1d",
                   "src/apprt/win32/resize_prelayout.zig":  "b472713ad9adaad68c88f6ac02426a0518d9b210b29e921e59d25c163abade15",
                   "src/apprt/win32/resize_trace.zig":  "b29f2e829fd9eb00ecbe4e5d685a6d94b76cee33ee857c22b5c05d5d3d5b8a7d",
                   "src/apprt/win32/resolve_defer.zig":  "267a538d490ece3f25763b40bb3b88b1ea1b9f7e0d026bdb126f510d06f07f80",
@@ -483,7 +483,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "0c702da8c16da658a55e6ae84c5315250658f56bc881edcbc12d6c7ba5aa78a3",
-                  "src/apprt/win32/Window.zig":  "dac96740ae1e519badbae37f850aa05ff84ae06dd88644a2fcfcc2574f7f5eb5",
+                  "src/apprt/win32/Window.zig":  "5512d1a227f70d327c4a79b25c1a36c94695b52ea360005af30882e84d4e2352",
                   "src/apprt/win32/window_active.zig":  "4076ebbfce81f4505a33e20f6e6da8f95cc82ec11130b6b3b35544d899efe535",
                   "src/apprt/win32/window_broadcast.zig":  "9aaf66d945d0899628ede661e9e40f04f55551342659448b62aee06b979b1e4e",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
@@ -1396,7 +1396,7 @@
                   "test/win32/pane-stack-focus.ps1":  "186fe0cb2691714d5b2d23ec1ef558249464e24e6109a3ce54964892b7bcfa6b",
                   "test/win32/pane-stack-grid.ps1":  "dfcd236f29b165da5e00b13e3eedbbbf466c2d647f4e258f3cf35d108d7d2cdb",
                   "test/win32/pane-stack-slide.ps1":  "351858c008d828e2881ab7ddc1b02d519366d32bdf9ad20fa0ea0189c9d072c9",
-                  "test/win32/pane-stack-strip.ps1":  "248f70482e48081b4cdd0e68e090d9f707c6396317f706db9945d80c7bbccfc6",
+                  "test/win32/pane-stack-strip.ps1":  "0e4164508a5d3057ad6865bed612de0ce5b26327e5ca12d821cf326ad06300f6",
                   "test/win32/pane-stack-unfold.ps1":  "527b7fa6941bce96cbc3f6b6aa3ad910f3266b83a3fcdb70d37d31aa855ff9ac",
                   "test/win32/parity-decisions.ps1":  "6f371c66bd381d734ac8a5408671d8695e48d7a6215004c299a2ccb1a92ace88",
                   "test/win32/parity-sweep.ps1":  "2251497104f8df5a8b1146441bd2b5e3ebb38a495c7d7fe16a9f64a05c801044",
