@@ -8,9 +8,12 @@ Close a named pane or window. **Closing a nonexistent target succeeds silently**
 
 ```
 ghoztty +close --target=<name>
+ghoztty +close --target=<name> --force   # no confirmation, no undo window
 ```
 
 **This ends the pane's session — it does not hide it.** Session persistence is on by default, so a terminal pane's shell runs under the `ghoztty-agent` and normally survives an app quit, crash, or upgrade. `+close` is not that: it kills the process once the close's undo window expires, exactly like closing the pane in the GUI. Only an app quit preserves a session for re-attach. Viewer panes have no session, and `+close` never prompts for them.
+
+If the window is waiting on a "Close Terminal?" confirmation (one a close raised, or one already up), plain `+close` closes nothing and **fails**, saying so: nothing on the CLI can answer that dialog. **`--force`** is the unattended close: it dismisses any confirmation, skips the undo window, and ends the pane's process and its agent session right away, then closes the pane or window. Use it when a script must know the window is gone (closing a finished task's window); the close cannot be undone.
 
 ## `ghoztty +sessions`
 
