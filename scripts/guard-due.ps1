@@ -4548,6 +4548,8 @@ $GuardTable = @(
         Stamp  = 'test\win32\parity-tasks-seat.stamp.json'
         Covers = @(
             'scripts\parity-tasks.ps1',
+            # T1474: `next`'s ROT: lines and `rot-scan` (section W).
+            'scripts\lib\CardRot.ps1',
             'test\win32\parity-tasks-seat.ps1'
         )
     },

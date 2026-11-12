@@ -173,6 +173,7 @@ scripts\parity-tasks.ps1 show T144
 scripts\parity-tasks.ps1 set-status T144 -Status done -Commit abc1234
 scripts\parity-tasks.ps1 new -Title "Short title" -Phase K -Deps T73,T94
 scripts\parity-tasks.ps1 stale-scan -Top 40   # which todos may already be fixed
+scripts\parity-tasks.ps1 rot-scan             # which cards quote lines/counts that have moved (T1474)
 scripts\parity-tasks.ps1 similar -Title "..." # is this defect already filed?
 scripts\parity-tasks.ps1 similar -All -Top 10 # duplicate clusters across the open backlog
 scripts\parity-tasks.ps1 validate             # ids, titles, statuses, dangling deps
@@ -232,6 +233,29 @@ was already fixed by a main intake, one was partly fixed, and two were entirely
 real. Only exact FILE paths count — a card naming `test\win32\` names an area,
 and ranked by raw hit count every such card sat on top with 300+ "touches",
 which measures how busy the repo is and says nothing about the task.
+
+**And a card can be right about the defect and wrong about the job** (T1474).
+T676 swept seven cards for phantoms and found none; what it found in three was
+rotted evidence: `hero-nav.ps1:464-465` had moved to `:488-489`, "the one other
+file under `src/build/`" was one of three, "roughly twenty sites" was 55 across
+21 files. Each would have handed a turn a job planned at the wrong size. So
+`next` also prints a `ROT:` line, then `CHECK SCOPE`, for the card it hands out
+when:
+
+- a quoted `path:N[-M]` or `path lines N-M` no longer reads what it read when
+  the card first quoted it — `MOVED` (with where those lines went) or `CHANGED`;
+  a line past the end of the file is `PAST END`, which needs no history;
+- a count or uniqueness claim ("the only remaining instance", "the one other",
+  "roughly twenty sites", "39 scripts in") sits in a paragraph naming a
+  DIRECTORY that has changed since the sentence was written. A claim about one
+  named file is left to the line check: flagging those too marked accurate cards.
+
+`rot-scan` sweeps the open queue the same way (about 35 s; daily triage runs
+it), `rot-scan T1047,T736` asks about named cards whatever their status, and
+`-At <rev>` reads the cards and the code as they stood then. Reports, never
+gates, and never an auto-edit: the corrections T676 made by hand each carried a
+judgement no script has. Logic: `scripts\lib\CardRot.ps1`; acceptance: section W
+of `test\win32\parity-tasks-seat.ps1`.
 
 `validate` is the gate: run it before committing a task change. It prints
 `ALL PASS (<n> tasks)` or the specific problems, and exits non-zero on

@@ -1,17 +1,16 @@
 {
     "guard":  "gate-negatives",
     "script":  "test/win32/gate-negatives.ps1",
-    "generated":  "2026-11-10T20:37:37-08:00",
-    "commit":  "124e2ef85",
+    "generated":  "2026-11-11T19:11:05-08:00",
+    "commit":  "5c0b40264",
     "uncommitted":  [
-                        "scripts/parity-tasks.ps1",
-                        "test/win32/gate-negatives.ps1"
+                        "scripts/parity-tasks.ps1"
                     ],
     "files":  {
                   "scripts/ci-status.ps1":  "e71f5180b132afed86eebc918efd289b1b2e9e35ffc1d46a28881cfe573eca5a",
                   "scripts/go-loop-exec.ps1":  "b31b728d90cb1e9fbdd605e0fcd7e257da797eae52567467953279b78fae42d8",
                   "scripts/lib/DigestState.ps1":  "3b0d48ec0c53dfeace8df7d1d9fd675b3541f1f9205a0af31987bdf60be00d0e",
-                  "scripts/parity-tasks.ps1":  "c070a7414f222ad8e51937ffde8afe6ff9ee5ea12e1ef9be4010c072ec11e9d4",
+                  "scripts/parity-tasks.ps1":  "1a2e38fa1b009ec277b25860f48a3d802e8c7a4c0147025eca94086b2572aba3",
                   "test/win32/gate-negatives.ps1":  "91c25e0f5dae1267f17fd1b210f1646aa604f2e21bb75408fdcc0feeeefd8ade"
               }
 }

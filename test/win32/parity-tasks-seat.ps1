@@ -99,6 +99,14 @@
 #      T<n>.md and no temp file is left, and `new` names the id it burned;
 #      `validate` calls a zero-byte task file a failed `new`; four concurrent
 #      callers still get four distinct ids.
+#   W. Card rot (T1474), in a throwaway repo: a quoted `file:line` whose lines
+#      moved is MOVED (with where they went), one whose text is gone is
+#      CHANGED, a count/uniqueness claim over a directory that changed since is
+#      a CLAIM, a claim about one file or "the only thing" prose is not, and a
+#      deliberately false ref is PAST END (the negative control). `next` prints
+#      ROT: for the card it hands out and still hands it out; `-At` reads the
+#      past. Then the real cards T676 swept, at c03cb4913^: the three rotted
+#      ones found, the four accurate ones fresh.
 #
 # Hermetic: sections A-H run against a fixture task dir under $env:TEMP via
 # `-TaskDir`; docs\design\windows-parity-tasks\ is only ever READ (section I).
@@ -1360,6 +1368,104 @@ Assert 'V3 the injected fault really failed the edit (negative control)' ($r.Cod
 Assert 'V4 a failed edit leaves the previous file byte for byte' ($faulted -ceq $after)
 Assert 'V5 and cleans up its temp file' (@(Get-ChildItem $fixture -Filter '*.tmp').Count -eq 0)
 Reset-Fixture
+
+# --- W. a card's quoted evidence is re-checked (T1474) -----------------------
+# T676 found three of seven swept cards right about the defect and wrong about
+# its size: a quoted `file:line` that had moved, "the one other file" that was
+# one of three, "roughly twenty sites" that was 55. Like Q this needs a real
+# history, because the question is "do the lines read now what they read when
+# the card quoted them?".
+""
+'W. card rot: moved/changed line refs, area-wide counts, PAST END'
+$wrepo = Join-Path $env:TEMP "ghoztty-parity-rot-$PID"
+$qrepo = $wrepo   # the Q-* helpers write into $qrepo
+$wtasks = Join-Path $wrepo 'docs\design\windows-parity-tasks'
+if (Test-Path $wrepo) { Remove-Item -Recurse -Force $wrepo }
+New-Item -ItemType Directory -Force $wtasks | Out-Null
+New-Item -ItemType Directory -Force (Join-Path $wrepo 'src') | Out-Null
+New-Item -ItemType Directory -Force (Join-Path $wrepo 'test\area') | Out-Null
+Q-Git @('init', '--quiet')
+Q-Git @('config', 'user.email', 'seat@example.com')
+Q-Git @('config', 'user.name', 'Seat Harness')
+Q-Git @('config', 'commit.gpgsign', 'false')
+$long = (1..30 | ForEach-Object { "const line_$_ = $_;" }) -join "`n"
+Q-Write 'src/long.zig' ($long + "`n")
+Q-Write 'src/other.zig' "// other`nconst stays = 1;`n"
+Q-Write 'test/area/a.ps1' "# a`n"
+Q-Git @('add', '-A'); Q-Git @('commit', '-m', 'seed', '--quiet')
+# T1 quotes lines that will MOVE; T2 a line that will be REWRITTEN; T3 a line
+# nobody touches; T4 counts across a DIRECTORY that will grow; T5 makes the
+# same claim about one FILE (the line check's job, not this one); T6 is prose
+# ("the only thing"), not a count; T7 is the negative control - a deliberately
+# false reference past the end of the file, flagged with no history at all.
+Q-Task 'T1' 'The defect is at `src/long.zig:10-11`.'
+Q-Task 'T2' 'The bad constant is `src/long.zig:20`.'
+Q-Task 'T3' 'The other site is `src/other.zig:2`.'
+Q-Task 'T4' 'This is the only remaining instance under `test/area`, so it is one line.'
+Q-Task 'T5' 'This is the only remaining instance in `src/other.zig`.'
+Q-Task 'T6' 'It is the only thing that matters under `test/area` today.'
+Q-Task 'T7' 'See `src/long.zig:900` for the defect.'
+Q-Git @('add', '-A'); Q-Git @('commit', '-m', 'file rot fixture tasks', '--quiet')
+$wFiled = (& git -C $wrepo rev-parse HEAD).Trim()
+Start-Sleep -Seconds 2   # `next` counts touches strictly after the filing second (Q's rule)
+$moved = @('// a', '// b', '// c', '// d', '// e') + @(1..30 | ForEach-Object {
+        if ($_ -eq 20) { 'const line_20 = 2000; // rewritten' } else { "const line_$_ = $_;" } })
+Q-Write 'src/long.zig' (($moved -join "`n") + "`n")
+Q-Write 'test/area/b.ps1' "# b, a second instance`n"
+Q-Git @('add', '-A'); Q-Git @('commit', '-m', 'move the code under the cards', '--quiet')
+
+$r = Task-Run -CmdArgs @('rot-scan') -Dir $wtasks
+Assert 'W1 a quoted line range that moved is MOVED, with where it went' (
+    $r.Out -match '(?m)^\s+MOVED src/long\.zig:10-11 - .*now at :15-16')
+Assert 'W2 a quoted line whose text is gone is CHANGED' ($r.Out -match '(?m)^\s+CHANGED src/long\.zig:20 ')
+Assert 'W3 a quoted line nobody touched is not listed' ($r.Out -notmatch '(?m)^T3\s')
+Assert 'W4 a count/uniqueness claim over a directory that grew is a CLAIM' (
+    $r.Out -match '(?m)^T4\s+rot=1' -and $r.Out -match 'CLAIM "the only remaining instance" - .*about test/area; 1 commit')
+Assert 'W5 the same claim about one named FILE is not (the line check owns files)' ($r.Out -notmatch '(?m)^T5\s')
+Assert 'W6 "the only thing" is prose, not a count' ($r.Out -notmatch '(?m)^T6\s')
+Assert 'W7 negative control: a deliberately false path:line is flagged PAST END' (
+    $r.Out -match '(?m)^\s+PAST END src/long\.zig:900 - the file has 35 lines now')
+Assert 'W8 it is a report: exit 0 with findings, and the summary says re-measure' (
+    $r.Code -eq 0 -and $r.Out -match 'rot-scan: 7 card\(s\) read; 4 carry evidence that has moved' -and $r.Out -match 'RE-MEASURE')
+if ($r.Out -notmatch 'rot-scan: 7 card') { "      (W saw: " + ($r.Out -replace "`r?`n", ' / ') + ')' }
+
+# -At reads the cards AND the code as they stood: at the filing commit nothing
+# had moved yet, so only the reference that was false from birth is flagged.
+$r = Task-Run -CmdArgs @('rot-scan', '-At', $wFiled) -Dir $wtasks
+Assert 'W9 -At the filing commit: nothing had moved, only the false ref is flagged' (
+    $r.Code -eq 0 -and $r.Out -match '1 carry evidence' -and $r.Out -match '(?m)^T7\s' -and $r.Out -notmatch '(?m)^T1\s')
+$r = Task-Run -CmdArgs @('rot-scan', 'T3,T1,T99') -Dir $wtasks
+Assert 'W10 named cards: a fresh one says fresh, a missing one says so' (
+    $r.Out -match '(?m)^T3\s+fresh' -and $r.Out -match '(?m)^T1\s+rot=1' -and $r.Out -match '(?m)^T99\s+\(no such card\)')
+
+# `next` is where a turn actually reads it: the card it hands out names its rot
+# before the turn plans, and still hands it out (a report, never a gate).
+$r = Task-Run -CmdArgs @('next') -Dir $wtasks
+Assert 'W11 next prints the ROT line for the card it hands out' (
+    $r.Out -match 'NEXT: T1\b' -and $r.Out -match 'ROT: MOVED src/long\.zig:10-11')
+Assert 'W11b ...and says to re-measure before planning' ($r.Out -match 'CHECK SCOPE')
+Assert 'W11c ...and the pick still succeeds' ($r.Code -eq 0)
+if (Test-Path $wrepo) { Remove-Item -Recurse -Force $wrepo -ErrorAction SilentlyContinue }
+
+# The cards it was built from, as they stood the day before T676 corrected
+# them by hand (c03cb4913): the three rotted ones are found, the four T676
+# judged accurate are not.
+$t676 = 'c03cb4913'
+& git -C $Repo cat-file -e "$t676^{commit}" 2>$null
+if ($LASTEXITCODE -eq 0) {
+    $r = Task-Run -CmdArgs @('rot-scan', 'T1047,T736,T1437,T1030,T1136,T1409,T767', '-At', "$t676^") -Dir $realDir
+    Assert 'W12 the T676 cards: T1047 hero-nav.ps1:464-465 is MOVED to :488-489' (
+        $r.Out -match 'MOVED test/win32/hero-nav\.ps1:464-465 - .*now at :488-489')
+    Assert 'W12b T736 "the one other file under src/build/" is a CLAIM' ($r.Out -match '(?m)^T736\s+rot=1' -and $r.Out -match 'CLAIM "the one other" - .*about src/build')
+    Assert 'W12c T1437 "roughly twenty more sites" is a CLAIM' ($r.Out -match '(?m)^T1437\s+rot=1' -and $r.Out -match 'CLAIM "roughly twenty more sites"')
+    Assert 'W12d the four cards T676 found accurate read fresh' (
+        $r.Out -match '(?m)^T1030\s+fresh' -and $r.Out -match '(?m)^T1136\s+fresh' -and
+        $r.Out -match '(?m)^T1409\s+fresh' -and $r.Out -match '(?m)^T767\s+fresh')
+    if ($r.Out -notmatch '(?m)^T767\s+fresh') { "      (W12 saw: " + ($r.Out -replace "`r?`n", ' / ') + ')' }
+} else {
+    Assert "SKIP: W12 cannot run, $t676 is not in this checkout's history" $true
+    $script:skipped = $true
+}
 
 # --- teardown ---------------------------------------------------------------
 if (Test-Path $fixture) { Remove-Item -Recurse -Force $fixture }

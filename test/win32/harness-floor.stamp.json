@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-11T17:44:29-08:00",
-    "commit":  "6ca50e0a8",
+    "generated":  "2026-11-11T19:25:54-08:00",
+    "commit":  "5c0b40264",
     "uncommitted":  [
-                        "test/win32/pane-stack-strip.ps1"
+                        "test/win32/parity-tasks-seat.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -413,7 +413,7 @@
                   "test/win32/parity-decisions.ps1":  "6f371c66bd381d734ac8a5408671d8695e48d7a6215004c299a2ccb1a92ace88",
                   "test/win32/parity-sweep.ps1":  "2251497104f8df5a8b1146441bd2b5e3ebb38a495c7d7fe16a9f64a05c801044",
                   "test/win32/parity-tasks-lanes.ps1":  "0ea40fdd89dbf37e287727eb97d5153afa3e9f656e120df2b18302f31c49fff1",
-                  "test/win32/parity-tasks-seat.ps1":  "708dfa66c704e052a93424fa0d8b6d48ba131976e89c1ac32b65d33e4027f7a1",
+                  "test/win32/parity-tasks-seat.ps1":  "526f70abd68e48dfd621741e24eb75433fef2a4fda2dc9835deba2f37c7a33ed",
                   "test/win32/parity-tasks-split-deps.ps1":  "4cae00c40c97f85c7a4b6871ff32a8276cb752fe7c6c8a5120844dd614e71a78",
                   "test/win32/path-selfheal.ps1":  "fcf69db5534ad019cfdd035ded0ffb29e62cd51cc0c08488ef345c7e2134e367",
                   "test/win32/persistence-flag.ps1":  "c8d93f1a71d3d4f19304d948c1e00bedfd6a1cd6abda7382c62c81504b224920",

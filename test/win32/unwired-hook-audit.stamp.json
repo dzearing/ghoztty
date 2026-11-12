@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-11T19:06:02-08:00",
-    "commit":  "325b906af",
+    "generated":  "2026-11-11T19:32:44-08:00",
+    "commit":  "5c0b40264",
     "uncommitted":  [
 
                     ],
@@ -1396,12 +1396,12 @@
                   "test/win32/pane-stack-focus.ps1":  "186fe0cb2691714d5b2d23ec1ef558249464e24e6109a3ce54964892b7bcfa6b",
                   "test/win32/pane-stack-grid.ps1":  "dfcd236f29b165da5e00b13e3eedbbbf466c2d647f4e258f3cf35d108d7d2cdb",
                   "test/win32/pane-stack-slide.ps1":  "351858c008d828e2881ab7ddc1b02d519366d32bdf9ad20fa0ea0189c9d072c9",
-                  "test/win32/pane-stack-strip.ps1":  "0e4164508a5d3057ad6865bed612de0ce5b26327e5ca12d821cf326ad06300f6",
+                  "test/win32/pane-stack-strip.ps1":  "248f70482e48081b4cdd0e68e090d9f707c6396317f706db9945d80c7bbccfc6",
                   "test/win32/pane-stack-unfold.ps1":  "527b7fa6941bce96cbc3f6b6aa3ad910f3266b83a3fcdb70d37d31aa855ff9ac",
                   "test/win32/parity-decisions.ps1":  "6f371c66bd381d734ac8a5408671d8695e48d7a6215004c299a2ccb1a92ace88",
                   "test/win32/parity-sweep.ps1":  "2251497104f8df5a8b1146441bd2b5e3ebb38a495c7d7fe16a9f64a05c801044",
                   "test/win32/parity-tasks-lanes.ps1":  "0ea40fdd89dbf37e287727eb97d5153afa3e9f656e120df2b18302f31c49fff1",
-                  "test/win32/parity-tasks-seat.ps1":  "708dfa66c704e052a93424fa0d8b6d48ba131976e89c1ac32b65d33e4027f7a1",
+                  "test/win32/parity-tasks-seat.ps1":  "526f70abd68e48dfd621741e24eb75433fef2a4fda2dc9835deba2f37c7a33ed",
                   "test/win32/parity-tasks-split-deps.ps1":  "4cae00c40c97f85c7a4b6871ff32a8276cb752fe7c6c8a5120844dd614e71a78",
                   "test/win32/path-selfheal.ps1":  "fcf69db5534ad019cfdd035ded0ffb29e62cd51cc0c08488ef345c7e2134e367",
                   "test/win32/persistence-flag.ps1":  "c8d93f1a71d3d4f19304d948c1e00bedfd6a1cd6abda7382c62c81504b224920",

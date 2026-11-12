@@ -59,6 +59,15 @@
   positive that refused to file would lose a mid-turn report, which is worse
   than a duplicate.
 
+  AND IS IT STILL THE SIZE IT SAYS? (T1474). A card can be right about the
+  defect and wrong about the job: T676 found `hero-nav.ps1:464-465` moved to
+  `:488-489`, "the one other file" become one of three, and "roughly twenty
+  sites" grown to 55. `next` now prints a ROT: line for every quoted
+  `path:line` whose lines moved or changed since the card quoted them, and for
+  every count/uniqueness claim over a directory that has changed since it was
+  written; `rot-scan` sweeps the queue for the daily triage. Reports, never
+  gates (scripts\lib\CardRot.ps1).
+
   TWO LANES, ONE QUEUE (T1981). A second loop LANE runs in its own worktree,
   and both used to decide from their own copy of the task files - so both
   claimed the head of the queue and both minted the same next id. The facts
@@ -86,11 +95,13 @@
   scripts\parity-tasks.ps1 guard-ack T1164 -Guard suite-run   # T1165: one red guard, owned
   scripts\parity-tasks.ps1 similar -Title "the viewer pane flakes on a cold cache"
   scripts\parity-tasks.ps1 similar -All -Top 10   # T1454: duplicate clusters across the open backlog
+  scripts\parity-tasks.ps1 rot-scan               # T1474: open cards whose quoted lines/counts rotted
+  scripts\parity-tasks.ps1 rot-scan T1047,T736 -At c03cb4913^   # what it would have said then
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('list', 'next', 'show', 'new', 'set-status', 'set-priority', 'set-order', 'set-tags', 'note', 'ack-stranded', 'guard-ack', 'stale-scan', 'similar', 'validate', 'ledger')]
+    [ValidateSet('list', 'next', 'show', 'new', 'set-status', 'set-priority', 'set-order', 'set-tags', 'note', 'ack-stranded', 'guard-ack', 'stale-scan', 'rot-scan', 'similar', 'validate', 'ledger')]
     [string]$Command,
 
     [Parameter(Position = 1)]
@@ -230,7 +241,12 @@ param(
     # `stale-scan` prints the N most-suspect todos (T404). The whole queue is
     # 400+ files, and a sweep that dumps all of them is a re-derivation rather
     # than a report.
-    [int]$Top = 25
+    [int]$Top = 25,
+
+    # `rot-scan -At <rev>` (T1474) reads every card, and the code it quotes, as
+    # they stood at that revision: "what would this have said the day T676
+    # swept?" is how the check is proved against the cards it was built from.
+    [string]$At
 )
 
 $ErrorActionPreference = 'Stop'
@@ -256,6 +272,8 @@ $LedgerOn = [bool](Get-LedgerPath) -and -not ($TaskDirGiven -and -not $env:GHOZT
 # The worktree's lane LETTER (a, b, ...), which a task's `lane:` field names.
 # Not Get-ThisLane: the ledger's lane name can be a full worktree path.
 . (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
+# Card rot (T1474): quoted line refs and counts re-checked against the code.
+. (Join-Path $PSScriptRoot 'lib\CardRot.ps1')
 $script:ThisLaneId = $null
 function Get-ThisLaneId {
     if (-not $script:ThisLaneId) { $script:ThisLaneId = Get-LoopLaneId -Repo $RepoRoot }
@@ -1537,6 +1555,23 @@ switch ($Command) {
                         Write-Host "      CHECK FIRST: confirm the defect still reproduces - it may already be fixed."
                     }
                 }
+                # "Is it still the SIZE it says?" (T1474). Only asked when the
+                # card's files moved or it is old enough to have rotted - the
+                # same silence rule as above - and never allowed to stop a pick.
+                if ($stale) {
+                    $rot = @()
+                    try {
+                        $rotRoot = Get-RepoRootFor $TaskDir
+                        if ($rotRoot) {
+                            $rotRel = $t.Path.Substring($rotRoot.Length).TrimStart([char[]]@('\', '/'))
+                            $rot = @(Get-CardRot -Root $rotRoot -CardRel $rotRel -Text ([System.IO.File]::ReadAllText($t.Path)))
+                        }
+                    } catch { $rot = @() }
+                    foreach ($f in $rot) { Write-Host ("      ROT: {0} {1} - {2}" -f $f.Kind, $f.Ref, $f.Detail) }
+                    if ($rot.Count -gt 0) {
+                        Write-Host "      CHECK SCOPE: the card's quoted evidence has moved - re-measure before you plan the size of the job."
+                    }
+                }
                 if ($Claim) {
                     $claimText = [System.IO.File]::ReadAllText($t.Path, [System.Text.Encoding]::UTF8)
                     $claimed = [regex]::Replace($claimText, '(?m)^status:\s*.*$', 'status: "in-progress"', 1)
@@ -2061,6 +2096,92 @@ switch ($Command) {
     # T651. The duplicate question asked on its own, so a turn can check
     # before it writes a title - and so the heuristic is testable without
     # creating a file every time.
+    'rot-scan' {
+        # T1474. The sweep version of the ROT: lines `next` prints: every open
+        # card (this seat) whose quoted `path:line` has moved or changed since
+        # the card quoted it, or whose count/uniqueness claim is about a
+        # directory that has changed since. A REPORT for the daily triage -
+        # exit 0 whatever it finds, because a card whose evidence moved is a
+        # prompt to re-measure, never proof that it is wrong.
+        #
+        # `rot-scan T1047,T736` asks about named cards whatever their status;
+        # `-At <rev>` reads the cards and the code as they stood at that
+        # revision, which is how the check is proved against the cards T676
+        # found by hand.
+        $root = Get-RepoRootFor $TaskDir
+        if (-not $root) {
+            Write-Host "rot-scan: $TaskDir is not inside a git repository, so there is no history to ask."
+            exit 1
+        }
+        $rootFull = [System.IO.Path]::GetFullPath($root)
+        $dirFull = [System.IO.Path]::GetFullPath($TaskDir)
+        $taskRel = ($dirFull.Substring($rootFull.TrimEnd('\', '/').Length).TrimStart([char[]]@('\', '/'))) -replace '\\', '/'
+        $rev = $null
+        if ($At) {
+            $rev = (& git -C $root rev-parse --verify --quiet ($At + '^{commit}') 2>$null | Select-Object -Last 1)
+            if (-not $rev) { Write-Host "rot-scan: -At '$At' is not a commit."; exit 2 }
+            $rev = $rev.Trim()
+        }
+        $wantSeat = if ($Seat) { $Seat } else { $DefaultSeat }
+        $named = @()
+        if ($Id) { $named = @($Id -split '[,\s]+' | Where-Object { $_ }) }
+
+        # Card id -> its text, at $rev or on disk.
+        $cards = [ordered]@{}
+        if ($named.Count -gt 0) {
+            foreach ($n in $named) { $cards[$n] = $null }
+        } elseif ($rev) {
+            foreach ($f in @(& git -C $root ls-tree --name-only $rev ($taskRel + '/') 2>$null)) {
+                $leaf = $f.Substring($f.LastIndexOf('/') + 1)
+                if ($leaf -match '^(T\w+)\.md$') { $cards[$Matches[1]] = $null }
+            }
+        } else {
+            foreach ($f in @(Get-ChildItem -LiteralPath $TaskDir -Filter 'T*.md' -File)) { $cards[$f.BaseName] = $null }
+        }
+
+        $scanned = 0; $flagged = 0; $total = 0
+        foreach ($cid in @($cards.Keys)) {
+            $rel = "$taskRel/$cid.md"
+            $cardText = $null
+            if ($rev) {
+                # A card that did not exist at $rev is a git error, and git's
+                # stderr under ErrorAction Stop would end the whole sweep.
+                try {
+                    $lines = @(& git -C $root show ($rev + ':' + $rel) 2>$null)
+                    if ($LASTEXITCODE -eq 0) { $cardText = $lines -join "`n" }
+                } catch { $cardText = $null }
+            } else {
+                $p = Join-Path $TaskDir "$cid.md"
+                if (Test-Path -LiteralPath $p) { $cardText = [System.IO.File]::ReadAllText($p) }
+            }
+            if ($null -eq $cardText) {
+                if ($named.Count -gt 0) { Write-Host ("{0,-7} (no such card{1})" -f $cid, $(if ($rev) { " at $At" } else { '' })) }
+                continue
+            }
+            if ($named.Count -eq 0) {
+                $st = if ($cardText -match '(?m)^status:\s*"?([^"\r\n]*)') { $Matches[1].Trim() } else { '' }
+                if ($st -notmatch '^(todo|in-progress)') { continue }
+                $se = if ($cardText -match '(?m)^seat:\s*"?(\w+)') { $Matches[1] } else { 'win' }
+                if (-not (Test-SeatMatch $se $wantSeat)) { continue }
+            }
+            $scanned++
+            $found = @(Get-CardRot -Root $root -CardRel $rel -Text $cardText -Rev $rev)
+            if ($found.Count -eq 0) {
+                if ($named.Count -gt 0) { Write-Host ("{0,-7} fresh" -f $cid) }
+                continue
+            }
+            $flagged++; $total += $found.Count
+            # Frontmatter titles are JSON-escaped (' for an apostrophe).
+            $title = if ($cardText -match '(?m)^title:\s*"?(.*?)"?\s*$') { try { [regex]::Unescape($Matches[1]) } catch { $Matches[1] } } else { '' }
+            Write-Host ("{0,-7} rot={1}  {2}" -f $cid, $found.Count, $title)
+            foreach ($f in $found) { Write-Host ("     {0} {1} - {2}" -f $f.Kind, $f.Ref, $f.Detail) }
+        }
+        $where = if ($rev) { " at $At" } else { '' }
+        Write-Host ("rot-scan: {0} card(s) read{1}; {2} carry evidence that has moved ({3} finding(s)). Each is a prompt to RE-MEASURE the card's scope, not a verdict." -f `
+                $scanned, $where, $flagged, $total)
+        exit 0
+    }
+
     'similar' {
         # T1454: `-All` asks the backlog-wide question instead - every open task
         # against every other, grouped into clusters.

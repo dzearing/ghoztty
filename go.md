@@ -276,6 +276,14 @@ Concretely, in order, with no stops in between:
      something else already fixed in passing. Verify before closing; the report
      is a prompt, not a verdict. Anything closed this way names the commit that
      actually fixed it and lands the validation the card was owed.
+   - **Rotted-evidence sweep** (T1474): run
+     `scripts\parity-tasks.ps1 rot-scan` — open cards whose quoted `path:line`
+     moved or changed since they quoted it, or whose count ("the only
+     remaining", "roughly twenty sites") is over a directory that has changed
+     since. A card still real but mis-sized gets its Summary re-measured by
+     hand (a P0/P1 first); the scan never edits a card. `next` prints the same
+     `ROT:` lines for the card it hands out, so a turn re-measures before it
+     plans the job's size.
    - **Duplicate sweep** (T1454): run
      `scripts\parity-tasks.ps1 similar -All -Top 10` — every open task scored
      against every other, duplicate clusters biggest first. `new` only warns
