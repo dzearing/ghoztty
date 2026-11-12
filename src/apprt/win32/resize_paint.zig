@@ -382,6 +382,60 @@ test "T2593: only a tree pane inside an edge drag's live pass keeps its old regi
     try std.testing.expect(!deferRegionCut(true, true, false, true));
 }
 
+/// The pane a divider-drag pass is placing, as `holdDragRegion` weighs it
+/// (T2932).
+pub const DragRegionPane = struct {
+    /// The divider drag is still running (`Window.dragging_split`).
+    dragging: bool,
+    /// The pane draws into a visual in the window's composition tree, which
+    /// takes the card's shape itself (T2570), so its child window is there
+    /// for input alone.
+    in_tree: bool,
+    /// The desk is on the chrome host's visual, not painted through the
+    /// window's DC - so no paint is clipped by the child's region either.
+    desk_on_visual: bool,
+    /// The desk is being printed through the DC this pass (`desk_printing`).
+    desk_printing: bool,
+    /// The pass wants the rounded card shape (no slide cut, a real region).
+    card_shape: bool,
+};
+
+/// Whether a divider-drag pass leaves a pane's card region as it was until
+/// the drag ends (T2932). Each `SetWindowRgn` (and the GDI region build
+/// before it) is a system call that now and then blocks the UI thread for
+/// milliseconds on a session-wide lock (T2874); a drag made about two a
+/// frame for a shape nothing on screen reads while the pointer is captured.
+/// The same reasoning as a window-edge drag's `deferRegionCut` and a glide's
+/// held region (T2826). A slide cut (`card_shape` false) still cuts: the
+/// stack-fold oracle reads those.
+pub fn holdDragRegion(p: DragRegionPane) bool {
+    return p.dragging and p.in_tree and p.desk_on_visual and !p.desk_printing and p.card_shape;
+}
+
+test "T2932: a divider drag holds only a tree pane's card region, and only while the desk is a visual" {
+    const held: DragRegionPane = .{ .dragging = true, .in_tree = true, .desk_on_visual = true, .desk_printing = false, .card_shape = true };
+    try std.testing.expect(holdDragRegion(held));
+    // The drag over: the end-of-drag pass cuts.
+    var p = held;
+    p.dragging = false;
+    try std.testing.expect(!holdDragRegion(p));
+    // A pane presenting into its own child (a viewer) is clipped by its region.
+    p = held;
+    p.in_tree = false;
+    try std.testing.expect(!holdDragRegion(p));
+    // A desk painted through the window's DC is clipped by every region.
+    p = held;
+    p.desk_on_visual = false;
+    try std.testing.expect(!holdDragRegion(p));
+    p = held;
+    p.desk_printing = true;
+    try std.testing.expect(!holdDragRegion(p));
+    // A slide cut is made every frame, as before.
+    p = held;
+    p.card_shape = false;
+    try std.testing.expect(!holdDragRegion(p));
+}
+
 test "a full batch says so, and taking it leaves it empty for the next" {
     var p: Pending(u8, 2) = .{};
     try std.testing.expect(p.add(1, 10, 10));

@@ -772,6 +772,9 @@ activated: bool = false,
 
 /// Split divider drag state.
 dragging_split: bool = false,
+/// A pass during this divider drag left a pane's card region uncut (T2932);
+/// `endDividerDrag` makes the one cut that owes.
+drag_region_held: bool = false,
 
 /// A relayout the user is watching happen frame by frame — a divider drag or
 /// a banner expand/collapse (T1031).
@@ -10861,6 +10864,17 @@ fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
                 continue;
             };
             if (entry.view.card_region_key == key) continue;
+            if (self.dragRegionHeld(entry.view, cut == null and key != 0)) {
+                // The visual already has this shape (setTreeShape above); the
+                // window keeps its old region and the stale key makes the
+                // end-of-drag pass cut it (T2932). The bookkeeping the banner
+                // strip reads follows every frame, as a glide's does.
+                entry.view.card_region_cut = null;
+                entry.view.card_region_shown = plan.shown;
+                if (!self.drag_region_held) log.debug("pane drag region held", .{});
+                self.drag_region_held = true;
+                continue;
+            }
             entry.view.card_region_key = key;
             const prev_cut = entry.view.card_region_cut;
             entry.view.card_region_cut = cut;
@@ -11104,6 +11118,36 @@ fn glideRegionIdle(self: *Window, view: *PaneView) bool {
     if (self.desk_printing) return false;
     const host = if (self.chrome_host) |*hh| hh else return false;
     return host.deskLive();
+}
+
+/// Whether a divider drag leaves `view`'s window region alone this pass
+/// (T2932; `resize_paint.holdDragRegion`). `GHOZTTY_DRAG_REGION_CUT=1` cuts
+/// it every frame as before, the A/B for the drag line's `cards` term.
+fn dragRegionHeld(self: *Window, view: *PaneView, card_shape: bool) bool {
+    if (dragRegionCutForced()) return false;
+    const s = view.surface();
+    const p: resize_paint.DragRegionPane = .{
+        .dragging = self.dragging_split,
+        .in_tree = if (s) |sf| sf.tree_visual != null else false,
+        .desk_on_visual = if (self.chrome_host) |*hh| hh.deskLive() else false,
+        .desk_printing = self.desk_printing,
+        .card_shape = card_shape,
+    };
+    const held = resize_paint.holdDragRegion(p);
+    // Why a drag frame still cut (T2932): the oracle for the hold.
+    if (!held and p.dragging and stackTraceOn())
+        stackTrace("stack trace rgn-cut-in-drag tree={d} desk_visual={d} printing={d} card={d}", .{
+            @intFromBool(p.in_tree), @intFromBool(p.desk_on_visual), @intFromBool(p.desk_printing), @intFromBool(p.card_shape),
+        });
+    return held;
+}
+
+var drag_region_cut_forced: ?bool = null;
+fn dragRegionCutForced() bool {
+    if (drag_region_cut_forced) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DRAG_REGION_CUT");
+    drag_region_cut_forced = v;
+    return v;
 }
 
 var glide_region_cut_forced: ?bool = null;
@@ -16188,6 +16232,14 @@ fn endDividerDrag(self: *Window) void {
     // and so is one the compositor coalescer left to its timer (T2769).
     if (self.drag_layout_pending and self.stack_slide_last == null) self.layoutSplitsLive();
     self.drag_layout_pending = false;
+    // The card regions the drag held are cut once, at the size it left them
+    // (T2932). The panes' visuals carried the shape throughout and the desk
+    // is a visual, so the window regions owe no redraw.
+    if (self.drag_region_held) {
+        self.drag_region_held = false;
+        log.debug("pane drag region cut at end", .{});
+        self.applyCardRegions(self.applied_pane_style == .elevated, .desk_paints_next);
+    }
     self.compDragEnd("divider");
     // Nothing left moving: the terminals take their size (T2459).
     self.syncDragHolds(false);
