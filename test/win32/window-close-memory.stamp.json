@@ -1,8 +1,8 @@
 {
     "guard":  "window-close-memory",
     "script":  "test/win32/window-close-memory.ps1",
-    "generated":  "2026-11-12T21:14:19-08:00",
-    "commit":  "fefc87cee",
+    "generated":  "2026-11-12T21:33:43-08:00",
+    "commit":  "1d985bc84",
     "uncommitted":  [
 
                     ],
