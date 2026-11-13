@@ -237,6 +237,9 @@ struct PaneTeardownTests {
         let window = try #require(controller.window)
         window.setContentSize(NSSize(width: 700, height: 500))
         let surface = try #require(pane.surface)
+        // A focused terminal blinks its cursor, which is drawing: it keeps
+        // its frames. Idle is a terminal with nothing to draw.
+        ghostty_surface_set_focus(surface, false)
 
         // Drawing: the frames hold real targets and the atlases.
         _ = await poll(timeout: 5) { ghostty_surface_frame_memory(surface).target_bytes > 4 * 100 * 100 }
@@ -285,6 +288,7 @@ struct PaneTeardownTests {
         let window = try #require(controller.window)
         window.setContentSize(NSSize(width: 700, height: 500))
         let surface = try #require(pane.surface)
+        ghostty_surface_set_focus(surface, false)
         await settle(1.5)
         let shown = try await capture(window)
         let idle = await poll(timeout: 10) { ghostty_surface_frame_memory(surface).released }

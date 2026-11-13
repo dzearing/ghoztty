@@ -386,13 +386,15 @@ fn drainMailbox(self: *Thread) !void {
                 // Visibility affects our QoS class
                 self.setQosClass();
 
+                // Notify the renderer so it can update any state. First,
+                // because the renderer itself draws nothing while it
+                // believes it is hidden.
+                self.renderer.setVisible(v);
+
                 // If we became visible then we immediately trigger a draw.
                 // We don't need to update frame data because that should
                 // still be happening.
                 if (v) self.drawFrame(false);
-
-                // Notify the renderer so it can update any state.
-                self.renderer.setVisible(v);
 
                 // Note that we're explicitly today not stopping any
                 // cursor timers, draw timers, etc. These things have very

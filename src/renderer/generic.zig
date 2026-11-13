@@ -200,6 +200,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         last_draw_time: ?std.time.Instant = null,
         frames_released: bool = true,
 
+        /// False while the surface is hidden (`setVisible`): nothing draws,
+        /// whoever asks. The render thread already skips its own draws, but
+        /// the layer's display callback draws from the main thread on any
+        /// layout, and a hidden surface that drew there took back the
+        /// targets it had just given up. Guarded by `draw_mutex`.
+        visible: bool = true,
+
         /// Wakes the render thread to start its idle-release timer. Frames
         /// are drawn from several threads (the render thread, the vsync
         /// callback, the main thread on layout), so the frame that first
@@ -1172,6 +1179,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 }
             }
 
+            {
+                self.draw_mutex.lock();
+                defer self.draw_mutex.unlock();
+                self.visible = visible;
+            }
+
             if (!visible) self.releaseFrameResources(.hidden);
         }
 
@@ -1750,6 +1763,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .scrollbar = self.scrollbar,
                 }, .instant) > 0) self.scrollbar_dirty = false;
             };
+
+            // A hidden surface draws nothing: what it would draw is seen by
+            // no one, and it has given its targets back. It is drawn afresh
+            // when it is shown (the apprt queues a render with the change).
+            if (comptime @hasDecl(GraphicsAPI, "presented_target_outlives_frame")) {
+                if (!self.visible) return;
+            }
 
             // Let our graphics API do any bookkeeping, etc.
             // that it needs to do before / after `drawFrame`.
