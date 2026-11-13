@@ -16,7 +16,57 @@ class IPCServer {
     private var acceptSource: DispatchSourceRead?
     private var sentinelSource: DispatchSourceFileSystemObject?
     private var sentinelDirFd: Int32 = -1
+    /// The listener's queue: accepting connections and the reset sentinel.
+    /// Nothing on it reads from a client or waits on the main thread, so it
+    /// is always free to accept — and `stop()` can wait on it from main.
     private let queue = DispatchQueue(label: "com.dzearing.ghoztty.ipc", qos: .utility)
+
+    /// Where each client is served: its request read, its command run, its
+    /// response written. Concurrent, so a client that says nothing, or a
+    /// command that waits (a `+split` for its pane, a remote dial for its
+    /// host), holds up only itself. Every command used to run on `queue`,
+    /// where one silent client hung every later `ghoztty +…` and every
+    /// status and banner hook in every pane.
+    private let clientQueue = DispatchQueue(
+        label: "com.dzearing.ghoztty.ipc.clients", qos: .utility, attributes: .concurrent)
+
+    /// Commands that change what exists — windows, panes, names, layout —
+    /// run one at a time, as they did when one queue ran everything: a
+    /// `+split --name` checks the name and takes it in two steps. Commands
+    /// that read or address one pane (`+list`, `+read`, `+send-keys`,
+    /// `+set-state`, `+set-banner`) do not wait for them.
+    private let structureLock = NSLock()
+
+    /// Clients being served now. Each holds a thread while it waits, so past
+    /// `maxClients` a new one is told the app is busy instead of queued.
+    private let clientCount = ClientCount()
+    static let maxClients = 48
+
+    private final class ClientCount {
+        private let lock = NSLock()
+        private var count = 0
+
+        /// Take a place if there is one.
+        func enter(limit: Int) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            guard count < limit else { return false }
+            count += 1
+            return true
+        }
+
+        func leave() {
+            lock.lock()
+            defer { lock.unlock() }
+            count -= 1
+        }
+    }
+
+    /// The socket file this server bound, by inode: `stop()` removes the
+    /// path only if it is still ours. A second instance of the same build
+    /// takes the path over, and quitting the first must not delete the
+    /// second's socket. Listener queue only.
+    private var boundSocketID: (dev: dev_t, ino: ino_t)?
     /// Names → what they name. A window name is global (one window holds
     /// it); a pane name belongs to its window, so one name can list a pane in
     /// each of several windows (`TargetLookup`). Main thread only.
@@ -101,13 +151,18 @@ class IPCServer {
         init(_ value: T) { self.value = value }
     }
 
-    init(ghostty: Ghostty.App) {
+    /// `socketPath` is this build's socket address unless a test serves on
+    /// its own: `IPCSocket.path` is the single source of truth — the same
+    /// value every pane's env advertises as GHOZTTY_IPC_SOCKET, so a CLI run
+    /// inside a pane dials the app that owns it.
+    init(ghostty: Ghostty.App, socketPath: String = IPCSocket.path) {
         self.ghostty = ghostty
-        // Single source of truth for this build's socket address — the same
-        // value every pane's env advertises as GHOZTTY_IPC_SOCKET, so a CLI
-        // run inside a pane dials the app that owns it.
-        self.socketPath = IPCSocket.path
+        self.socketPath = socketPath
     }
+
+    /// How long a connected client has to send its request, and to take its
+    /// response, before the server lets go of it.
+    static let clientIOTimeout: TimeInterval = 5
 
     private var sentinelPath: String {
         socketPath + ".reset"
@@ -120,6 +175,11 @@ class IPCServer {
         }
     }
 
+    /// Stop listening. Safe from the main thread while commands are in
+    /// flight: this waits only on the listener queue, which never waits on
+    /// main. (It used to wait on the queue the commands ran on, and a
+    /// command waiting on main at quit — any status hook — deadlocked it.)
+    /// Commands still being served finish or are abandoned with the process.
     func stop() {
         queue.sync {
             acceptSource?.cancel()
@@ -131,9 +191,23 @@ class IPCServer {
                 Darwin.close(listenSocket)
                 listenSocket = -1
             }
+            removeSocketFileIfOurs()
         }
-        unlink(socketPath)
         Self.logger.info("IPC server stopped")
+    }
+
+    /// The (device, inode) of the file at `socketPath`, if there is one.
+    private func socketFileID() -> (dev: dev_t, ino: ino_t)? {
+        var info = stat()
+        guard lstat(socketPath, &info) == 0 else { return nil }
+        return (info.st_dev, info.st_ino)
+    }
+
+    private func removeSocketFileIfOurs() {
+        defer { boundSocketID = nil }
+        guard let ours = boundSocketID, let current = socketFileID(),
+              ours.dev == current.dev, ours.ino == current.ino else { return }
+        unlink(socketPath)
     }
 
     private func bindAndListen() {
@@ -181,8 +255,12 @@ class IPCServer {
         }
 
         chmod(socketPath, 0o600)
+        boundSocketID = socketFileID()
 
-        guard listen(listenSocket, 5) == 0 else {
+        // Hooks in every pane fire at once (a prompt submitted in each of a
+        // dozen agents); a short backlog refused them, which the CLI
+        // reports as no running instance.
+        guard listen(listenSocket, 64) == 0 else {
             let err = errno
             Self.logger.error("Failed to listen on IPC socket: \(String(cString: strerror(err))) (\(err))")
             Darwin.close(listenSocket)
@@ -204,9 +282,32 @@ class IPCServer {
         let clientFd = Darwin.accept(listenSocket, nil, nil)
         guard clientFd >= 0 else { return }
 
-        queue.async { [weak self] in
-            self?.handleClient(fd: clientFd)
+        fcntl(clientFd, F_SETFD, FD_CLOEXEC)
+
+        // A client gets this long to send its request and to take its
+        // response; one that stalls is dropped, not waited on forever. And
+        // one that hangs up early must not raise SIGPIPE on our write.
+        var timeout = timeval(tv_sec: Int(Self.clientIOTimeout), tv_usec: 0)
+        let timeoutSize = socklen_t(MemoryLayout<timeval>.size)
+        setsockopt(clientFd, SOL_SOCKET, SO_RCVTIMEO, &timeout, timeoutSize)
+        setsockopt(clientFd, SOL_SOCKET, SO_SNDTIMEO, &timeout, timeoutSize)
+        var on: Int32 = 1
+        setsockopt(clientFd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+
+        guard clientCount.enter(limit: Self.maxClients) else {
+            Self.logger.warning("IPC: \(Self.maxClients) clients already being served, refusing one")
+            sendResponse(fd: clientFd, response: IPCResponse(
+                success: false, error: "Ghoztty is busy: too many commands in flight, try again"))
             Darwin.close(clientFd)
+            return
+        }
+
+        clientQueue.async { [weak self, clientCount] in
+            defer {
+                Darwin.close(clientFd)
+                clientCount.leave()
+            }
+            self?.handleClient(fd: clientFd)
         }
     }
 
@@ -345,13 +446,33 @@ class IPCServer {
         }
 
         Self.logger.info("IPC: processing pending action '\(request.action)'")
-        // On the IPC queue, like a socket request: handlers wait on work they
-        // hand to the main thread (`+split` waits for its pane), so running
-        // one ON main would wait on itself.
-        queue.async { [weak self] in _ = self?.dispatch(request) }
+        // Off main, like a socket request: handlers wait on work they hand
+        // to the main thread (`+split` waits for its pane), so running one
+        // ON main would wait on itself.
+        clientQueue.async { [weak self] in _ = self?.dispatch(request) }
+    }
+
+    /// Whether `action` changes what exists (windows, panes, names, layout)
+    /// and so runs under `structureLock`. `new-remote-window` is left out on
+    /// purpose: it waits on a network dial, and on an alert if the dial
+    /// fails, and must not hold up every other command while it does.
+    static func isStructural(_ action: String) -> Bool {
+        switch action {
+        case "new-window", "split", "close", "rename", "rearrange", "reload", "stash", "restore":
+            return true
+        default:
+            return false
+        }
     }
 
     func dispatch(_ request: IPCRequest) -> IPCResponse {
+        guard Self.isStructural(request.action) else { return run(request) }
+        structureLock.lock()
+        defer { structureLock.unlock() }
+        return run(request)
+    }
+
+    private func run(_ request: IPCRequest) -> IPCResponse {
         let request = IPCRequest(action: request.action, arguments: request.resolvedArguments)
         switch request.action {
         case "new-window":
