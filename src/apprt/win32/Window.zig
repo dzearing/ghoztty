@@ -10028,13 +10028,15 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     const strip_rgb = pane_stack_strip.stripRgb(bg, false);
     if (self.glassDesk()) |g| {
         const lut = pane_stack_strip.GlassLut.init(.{ .bg = bg, .sheet = .{} });
-        strip_face.fillGlass(frame, .{
+        // Rows shared among the sheet workers (T2946): a 4K fold's widest
+        // face is ~1.4M px of band on its heaviest ticks.
+        strip_face.fillGlassShared(frame, .{
             .pixels = g.desk.pixels,
             .w = g.desk.w,
             .h = g.desk.h,
             .x = vis.left - g.area.left,
             .y = vis.top - g.area.top,
-        }, &lut, hole);
+        }, &lut, hole, .auto);
     } else strip_face.fillSolid(frame, strip_rgb, hole);
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tp[1]);
 
@@ -10052,7 +10054,7 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tp[2]);
     // The carried frame over the band and its name - the name shows through
     // at what the content has lost - and every pixel opaque, in one pass.
-    strip_face.finish(frame, pinned, content_alpha);
+    strip_face.finishShared(frame, pinned, content_alpha, .auto);
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tp[3]);
 
     // Cut to the pane's own region - its card's rounded shape, or its slide

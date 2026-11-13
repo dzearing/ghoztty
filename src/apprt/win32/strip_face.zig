@@ -19,6 +19,7 @@ const color_math = @import("color_math.zig");
 const pane_stack_slide = @import("pane_stack_slide.zig");
 const pane_stack_strip = @import("pane_stack_strip.zig");
 const Direction = @import("pane_stack_layout.zig").Direction;
+const sheet_workers = @import("sheet_workers.zig");
 
 const PxRect = grid.PxRect;
 const Rgb = color_math.Rgb;
@@ -147,7 +148,24 @@ pub fn holeOf(content: ?Content, alpha: u8) ?Hole {
 /// the opaque pass is not optional; the fade is the content's, never the
 /// window's.
 pub fn finish(f: Frame, content: ?Content, alpha: u8) void {
-    for (0..f.h) |y| {
+    finishRows(.{ .f = f, .content = content, .alpha = alpha }, 0, f.h);
+}
+
+/// `finish` with the face's rows shared among `workers` (T2946): on a 4K
+/// fold's heaviest ticks the face is ~700 x 2000 px and this pass ran
+/// 0.4-0.7 ms on the UI thread alone. Every row is its own pure function, so
+/// the pixels are `finish`'s.
+pub fn finishShared(f: Frame, content: ?Content, alpha: u8, workers: Workers) void {
+    shareRows(f, workers, FinishCtx{ .f = f, .content = content, .alpha = alpha }, finishRows);
+}
+
+const FinishCtx = struct { f: Frame, content: ?Content, alpha: u8 };
+
+fn finishRows(ctx: FinishCtx, y0: usize, y1: usize) void {
+    const f = ctx.f;
+    const content = ctx.content;
+    const alpha = ctx.alpha;
+    for (y0..y1) |y| {
         const dst = f.row(y);
         const r = if (content) |c| contentRow(c, f.w, y) else null;
         const covered: Span = if (alpha > 0 and r != null) r.?.span else .{ .x0 = f.w, .x1 = f.w };
@@ -211,6 +229,44 @@ pub fn maskOutside(f: Frame, comptime R: type, rects: []const R) usize {
     }
     while (y < f.h) : (y += 1) cut += clear(f.row(y));
     return cut;
+}
+
+/// Who paints a face's rows beside the caller (T2946; `PaneDesk`'s partial
+/// compose has the same three).
+pub const Workers = union(enum) {
+    /// The caller alone: the serial path.
+    none,
+    /// The process's shared pool (`sheet_workers.shared`), for a face big
+    /// enough to be worth the hand-off.
+    auto,
+    /// A given pool and its worker count (the tests'), shared whatever the
+    /// face's size.
+    pool: struct { pool: *std.Thread.Pool, workers: usize },
+};
+
+/// Run `run(ctx, y0, y1)` over `f`'s rows, cut into bands among `workers`
+/// and the caller, and return once every band is painted. Each band writes
+/// only its own rows of the face and reads only what `ctx` holds, which no
+/// band writes.
+fn shareRows(f: Frame, workers: Workers, ctx: anytype, comptime run: fn (@TypeOf(ctx), usize, usize) void) void {
+    const pool: *std.Thread.Pool, const bands: usize = switch (workers) {
+        .none => return run(ctx, 0, f.h),
+        .auto => s: {
+            if (f.w * f.h < sheet_workers.min_parallel_px) return run(ctx, 0, f.h);
+            const sh = sheet_workers.shared() orelse return run(ctx, 0, f.h);
+            break :s .{ sh.pool, sheet_workers.bandCount(f.w, f.h, sh.workers) };
+        },
+        .pool => |p| .{ p.pool, @min((p.workers + 1) * sheet_workers.bands_per_thread, f.h) },
+    };
+    if (bands <= 1) return run(ctx, 0, f.h);
+    var wg: std.Thread.WaitGroup = .{};
+    for (1..bands) |i| {
+        const b = sheet_workers.bandRows(f.h, bands, i);
+        pool.spawnWg(&wg, run, .{ ctx, b.start, b.end });
+    }
+    const first = sheet_workers.bandRows(f.h, bands, 0);
+    run(ctx, first.start, first.end);
+    pool.waitAndWork(&wg);
 }
 
 /// `dst` = `alpha` of `src` over `dst`, opaque. Red and blue ride one u32 in
@@ -335,8 +391,24 @@ pub const Desk = struct {
 /// band once the card is in. A face pixel off the desk takes the nearest
 /// edge's.
 pub fn fillGlass(f: Frame, desk: Desk, lut: *const pane_stack_strip.GlassLut, hole: ?Hole) void {
+    fillGlassRows(.{ .f = f, .desk = desk, .lut = lut, .hole = hole }, 0, f.h);
+}
+
+/// `fillGlass` with the face's rows shared among `workers` (T2946), the
+/// same pixels: a 4K fold's widest faces ran 0.3-0.5 ms of band here.
+pub fn fillGlassShared(f: Frame, desk: Desk, lut: *const pane_stack_strip.GlassLut, hole: ?Hole, workers: Workers) void {
+    shareRows(f, workers, GlassCtx{ .f = f, .desk = desk, .lut = lut, .hole = hole }, fillGlassRows);
+}
+
+const GlassCtx = struct { f: Frame, desk: Desk, lut: *const pane_stack_strip.GlassLut, hole: ?Hole };
+
+fn fillGlassRows(ctx: GlassCtx, y0: usize, y1: usize) void {
+    const f = ctx.f;
+    const desk = ctx.desk;
+    const lut = ctx.lut;
+    const hole = ctx.hole;
     if (desk.w <= 0 or desk.h <= 0) return;
-    for (0..f.h) |y| {
+    for (y0..y1) |y| {
         const dy = std.math.clamp(desk.y + @as(i32, @intCast(y)), 0, desk.h - 1);
         const src = desk.pixels[@as(usize, @intCast(dy * desk.w))..][0..@intCast(desk.w)];
         const dst = f.row(y);
@@ -669,6 +741,62 @@ test "fillGlass: each pixel the strip over the desk under it, clamped at the des
     try testing.expectEqual(@as(u32, 7), holed[2]);
     try testing.expectEqual(pack(lut.at(0xFFFFFF)), holed[3]);
     try testing.expectEqual(pack(lut.at(0xFFFFFF)), holed[4]);
+}
+
+test "fillGlassShared/finishShared: the serial face, byte for byte, on 1 and 3 workers (T2946)" {
+    if (@import("builtin").single_threaded) return error.SkipZigTest;
+    const alloc = testing.allocator;
+    const lut = pane_stack_strip.GlassLut.init(.{ .bg = .{ .r = 30, .g = 30, .b = 40 }, .sheet = .{} });
+    // A desk with a gradient, so neighbouring rows and columns differ.
+    const dw = 97;
+    const dh = 61;
+    const desk = try alloc.alloc(u32, dw * dh);
+    defer alloc.free(desk);
+    for (desk, 0..) |*p, i| p.* = @intCast((i * 2654435761) & 0xFF_FFFF);
+    // A carried frame smaller than the face, pinned inside it (bottom-up).
+    const cw = 40;
+    const ch = 33;
+    const content_px = try alloc.alloc(u32, cw * ch);
+    defer alloc.free(content_px);
+    for (content_px, 0..) |*p, i| p.* = @intCast((i * 40503 + 7) & 0xFF_FFFF);
+    // A 53 x 47 face on a 60-wide stride: uneven bands, a spare column.
+    const w = 53;
+    const h = 47;
+    const stride = 60;
+    for ([_]usize{ 1, 3 }) |nw| {
+        var pool: std.Thread.Pool = undefined;
+        try pool.init(.{ .allocator = testing.allocator, .n_jobs = nw });
+        defer pool.deinit();
+        for ([_]u8{ 255, 128, 0 }) |alpha| {
+            const content: Content = .{ .pixels = content_px, .w = cw, .h = ch, .x = 5, .y = 9 };
+            const hole = holeOf(content, alpha);
+            const d: Desk = .{ .pixels = desk, .w = dw, .h = dh, .x = -3, .y = 20 };
+            const serial = try alloc.alloc(u32, stride * h);
+            defer alloc.free(serial);
+            const shared = try alloc.alloc(u32, stride * h);
+            defer alloc.free(shared);
+            @memset(serial, 0x0012_3456);
+            @memset(shared, 0x0012_3456);
+            const fs: Frame = .{ .pixels = serial, .stride = stride, .w = w, .h = h };
+            const fp: Frame = .{ .pixels = shared, .stride = stride, .w = w, .h = h };
+            fillGlass(fs, d, &lut, hole);
+            finish(fs, content, alpha);
+            const par: Workers = .{ .pool = .{ .pool = &pool, .workers = nw } };
+            fillGlassShared(fp, d, &lut, hole, par);
+            finishShared(fp, content, alpha, par);
+            try testing.expectEqualSlices(u32, serial, shared);
+        }
+    }
+    // `.none` and a small face under `.auto` are the serial path itself.
+    var a = [_]u32{0} ** 12;
+    var b = [_]u32{0} ** 12;
+    const d: Desk = .{ .pixels = desk, .w = dw, .h = dh, .x = 0, .y = 0 };
+    fillGlass(frameOf(&a, 4, 3), d, &lut, null);
+    fillGlassShared(frameOf(&b, 4, 3), d, &lut, null, .auto);
+    try testing.expectEqualSlices(u32, &a, &b);
+    finishShared(frameOf(&b, 4, 3), null, 255, .none);
+    finish(frameOf(&a, 4, 3), null, 255);
+    try testing.expectEqualSlices(u32, &a, &b);
 }
 
 /// A face visual's clip box (T2777): the card region's box `box` cut to the
