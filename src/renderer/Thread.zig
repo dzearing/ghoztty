@@ -71,6 +71,17 @@ draw_active: bool = false,
 draw_now: xev.Async,
 draw_now_c: xev.Completion = .{},
 
+/// The timer that releases what the swap-chain frames hold once the
+/// surface has stopped drawing (`Renderer.releaseIdleFrames`). Armed by
+/// rendering, so a surface that is sitting still has no timer running.
+idle_h: xev.Timer,
+idle_c: xev.Completion = .{},
+
+/// Notified by the renderer when a frame takes resources back after a
+/// release, from whichever thread drew it, to start `idle_h`.
+idle_arm: xev.Async,
+idle_arm_c: xev.Completion = .{},
+
 /// The timer used for cursor blinking
 cursor_h: xev.Timer,
 cursor_c: xev.Completion = .{},
@@ -162,6 +173,12 @@ pub fn init(
     var cursor_timer = try xev.Timer.init();
     errdefer cursor_timer.deinit();
 
+    // Timer for releasing idle frame resources, see comments.
+    var idle_h = try xev.Timer.init();
+    errdefer idle_h.deinit();
+    var idle_arm = try xev.Async.init();
+    errdefer idle_arm.deinit();
+
     // The mailbox for messaging this thread
     var mailbox = try Mailbox.create(alloc);
     errdefer mailbox.destroy(alloc);
@@ -176,6 +193,8 @@ pub fn init(
         .draw_h = draw_h,
         .draw_now = draw_now,
         .cursor_h = cursor_timer,
+        .idle_h = idle_h,
+        .idle_arm = idle_arm,
         .surface = surface,
         .renderer = renderer_impl,
         .state = state,
@@ -193,6 +212,8 @@ pub fn deinit(self: *Thread) void {
     self.draw_h.deinit();
     self.draw_now.deinit();
     self.cursor_h.deinit();
+    self.idle_h.deinit();
+    self.idle_arm.deinit();
     self.loop.deinit();
 
     // Nothing can possibly access the mailbox anymore, destroy it.
@@ -243,6 +264,7 @@ fn threadMain_(self: *Thread) !void {
     self.wakeup.wait(&self.loop, &self.wakeup_c, Thread, self, wakeupCallback);
     self.stop.wait(&self.loop, &self.stop_c, Thread, self, stopCallback);
     self.draw_now.wait(&self.loop, &self.draw_now_c, Thread, self, drawNowCallback);
+    self.idle_arm.wait(&self.loop, &self.idle_arm_c, Thread, self, idleArmCallback);
 
     // Send an initial wakeup message so that we render right away.
     try self.wakeup.notify();
@@ -634,6 +656,61 @@ fn renderCallback(
 
     // Draw
     t.drawFrame(false);
+
+    return .disarm;
+}
+
+fn idleArmCallback(
+    self_: ?*Thread,
+    _: *xev.Loop,
+    _: *xev.Completion,
+    r: xev.Async.WaitError!void,
+) xev.CallbackAction {
+    _ = r catch |err| {
+        log.err("error in idle arm err={}", .{err});
+        return .rearm;
+    };
+
+    self_.?.armIdleTimer(rendererpkg.Renderer.idle_release_ns);
+    return .rearm;
+}
+
+/// Start the idle-release timer if it is not already counting down.
+fn armIdleTimer(self: *Thread, delay_ns: u64) void {
+    if (self.idle_c.state() == .active) return;
+    self.idle_h.run(
+        &self.loop,
+        &self.idle_c,
+        // Round up so the check never lands just short of the deadline.
+        delay_ns / std.time.ns_per_ms + 1,
+        Thread,
+        self,
+        idleCallback,
+    );
+}
+
+fn idleCallback(
+    self_: ?*Thread,
+    _: *xev.Loop,
+    _: *xev.Completion,
+    r: xev.Timer.RunError!void,
+) xev.CallbackAction {
+    _ = r catch return .disarm;
+    const t: *Thread = self_ orelse return .disarm;
+
+    // Still drawing: look again when the remaining quiet time is up.
+    // Otherwise the frames are released (or there is nothing to release)
+    // and the next render re-arms us.
+    if (t.renderer.releaseIdleFrames()) |remaining| {
+        t.idle_h.run(
+            &t.loop,
+            &t.idle_c,
+            remaining / std.time.ns_per_ms + 1,
+            Thread,
+            t,
+            idleCallback,
+        );
+    }
 
     return .disarm;
 }

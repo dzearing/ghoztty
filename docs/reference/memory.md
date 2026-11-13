@@ -8,10 +8,20 @@ the audit worktree; methodology there).
 ## Where memory goes
 
 - **GPU memory dominates.** Each terminal pane's renderer keeps a swap chain of
-  three frames (`GraphicsAPI.swap_chain_count`), each with a render target the
-  size of the pane in pixels — an IOSurface. A default-size window on a Retina
-  display: ~70 MB of IOSurface per window, ~80 MB of GPU memory, ~100 MB of
-  physical footprint in all. Font atlases and cell buffers are small next to it.
+  three frames (`GraphicsAPI.swap_chain_count`). While the pane is drawing,
+  each frame holds a render target the size of the pane in pixels — an
+  IOSurface — and its own copy of both font atlases (1–4 MB each). A
+  default-size window on a Retina display that is drawing: ~70 MB of
+  IOSurface, ~100 MB of physical footprint in all. A pane that has stopped
+  drawing gives all of that back but the one frame on screen (below).
+- **The GPU driver keeps a working pool per process**: about 225 MB (28
+  objects of 8 MB, "Owned physical footprint (unmapped) (graphics)" in
+  `footprint`) from the first Metal render pass in the process, whatever the
+  size of what is drawn — a bare Metal program drawing one 64x64 frame gets
+  the same. It turns reclaimable within ~2 s of the last render pass in the
+  process and is gone after ~10 s, and comes back with the next one. Nothing
+  in the app sizes it; it is dirty for as long as any pane (or SwiftUI effect)
+  keeps drawing. Do not chase it as a leak.
 - Splitting a window does not multiply this: panes share the window's pixels,
   so a pane's targets shrink as it does.
 - Terminal state (grid, scrollback pages) is heap; scrollback is capped per
@@ -62,13 +72,43 @@ the audit worktree; methodology there).
   process, threads or render targets. Viewer panes are NOT covered by that
   release: a held closed viewer keeps its WebContent process.
 
-## Hidden windows drop their render targets
+## Panes that are not drawing give back their frames
 
-An occluded surface (window covered, minimized, on another Space, app hidden)
-draws nothing (`renderer.Thread.drawFrame` returns early), so on occlusion the
-renderer shrinks every swap-chain target to 1×1
-(`generic.Renderer.releaseHiddenTargets`). The picture survives: the layer
-retains the IOSurface it displays (`Metal.presented_target_outlives_frame`),
-and un-occluding presents nothing new until something changes, when each frame
-re-creates its target as after a resize. Metal only — OpenGL re-presents its
-last target. Test: `PaneTeardownTests.anOccludedTerminalComesBackShowingItsLastFrame`.
+A surface's swap-chain frames give back their render targets (shrunk to 1x1)
+and their font atlas copies (`generic.Renderer.releaseFrameResources`) in two
+cases. The next real draw finds each frame's target the wrong size and
+re-creates it, as after a resize, and uploads the atlases again (~1 ms).
+
+- **Idle**: on screen, but nothing drawn for `idle_release_ns` (3 s). The
+  renderer wakes its thread on the first frame drawn after a release
+  (`idle_arm`, from whichever thread drew it), the thread runs a one-shot
+  timer, and `releaseIdleFrames` releases or asks to be called again; a
+  surface sitting still has no timer running. The picture stays: the layer
+  retains the IOSurface it shows (`Metal.presented_target_outlives_frame`),
+  and the frames let go of their targets **without purging them**
+  (`Target.deinitKeepingContents`). `Target.deinit` marks its IOSurface
+  purgeable-empty, which blanks a layer still showing it — never use it for a
+  target that may be on screen.
+- **Hidden**: occluded (window covered, minimized, on another Space, app
+  hidden), where `renderer.Thread.drawFrame` returns early. The frame on
+  screen is purged too — by the frames if they still hold it, else through the
+  layer (`IOSurfaceLayer.purgeContents`, on the main thread, skipped if a
+  newer frame has been presented) — and the surface draws again when shown.
+
+A blinking cursor (600 ms) or anything that draws more often than every 3 s
+keeps its frames. Metal only — OpenGL re-presents its last target.
+
+`ghostty_surface_frame_memory` reports what a surface's frames hold (target
+bytes, atlas bytes, released). Measured on 21 panes in 10 windows, all idle:
+IOSurface 337 → 143 MB, IOAccelerator 87 → 20 MB.
+
+Tests: `PaneTeardownTests.anIdleTerminalGivesBackItsFramesAndKeepsItsPicture`,
+`anOccludedTerminalComesBackShowingItsLastFrame`,
+`occludedTerminalsGiveBackTheirRenderTargets`.
+
+## Cell buffers
+
+A frame's Metal cell buffers grow to double what a frame needs
+(`metal/buffer.zig` `grownByteLen`). Until v1.54 they grew to double that
+times the element size (64x for text cells); Metal commits buffer pages on
+first write, so that cost address space, not footprint.

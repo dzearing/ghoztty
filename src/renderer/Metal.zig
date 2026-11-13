@@ -270,6 +270,13 @@ pub inline fn present(self: *Metal, target: Target, sync: bool, seq: u64) !void 
     }
 }
 
+/// Throw away the pixels of the frame on screen, unless a frame newer
+/// than the last one begun has been presented by the time this lands.
+/// For a hidden surface whose frames have already let go of their targets.
+pub fn purgePresented(self: *Metal) void {
+    self.layer.purgeContents(self.frame_seq);
+}
+
 /// Present the last presented target again. (noop for Metal)
 pub inline fn presentLastTarget(self: *Metal) !void {
     _ = self;

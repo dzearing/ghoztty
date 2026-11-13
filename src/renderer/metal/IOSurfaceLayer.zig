@@ -149,6 +149,48 @@ fn setSurfaceCallback(
     layer.setProperty("contents", surface);
 }
 
+/// Throw away the pixels of the surface the layer is showing, if it is
+/// still showing frame `seq` or older — a hidden layer has no use for
+/// them, and they are as large as the pane. Runs on the main thread, where
+/// the layer's contents are set, so the surface cannot be swapped out from
+/// under it; a frame presented since then is left alone.
+pub fn purgeContents(self: *IOSurfaceLayer, seq: u64) void {
+    var block = PurgeContentsBlock.init(.{
+        .layer = self.layer.value,
+        .seq = seq,
+    }, &purgeContentsCallback);
+
+    const NSThread = objc.getClass("NSThread").?;
+    if (NSThread.msgSend(bool, "isMainThread", .{})) {
+        purgeContentsCallback(&block);
+    } else {
+        macos.dispatch.dispatch_async(
+            @ptrCast(macos.dispatch.queue.getMain()),
+            @ptrCast(&block),
+        );
+    }
+}
+
+const PurgeContentsBlock = objc.Block(struct {
+    layer: objc.c.id,
+    seq: u64,
+}, .{}, void);
+
+fn purgeContentsCallback(
+    block: *const PurgeContentsBlock.Context,
+) callconv(.c) void {
+    const layer = objc.Object.fromId(block.layer);
+
+    const scale = @alignOf(objc.c.objc_object);
+    const last: u64 = @intFromPtr(layer.getInstanceVariable("last_seq").value) / scale;
+    if (last > block.seq) return;
+
+    const contents = layer.getProperty(objc.c.id, "contents");
+    if (contents == null) return;
+    const surface: *IOSurface = @ptrCast(@alignCast(contents));
+    surface.purge();
+}
+
 pub const DisplayCallback = ?*align(8) const fn (?*anyopaque) void;
 
 pub fn setDisplayCallback(

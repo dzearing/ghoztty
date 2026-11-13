@@ -220,6 +220,56 @@ struct PaneTeardownTests {
         #expect(changed(back, redrawn) > 0, "nothing drew after the terminal came back")
     }
 
+    /// A terminal that stops drawing gives back what its swap chain holds —
+    /// three window-sized render targets and three copies of the font
+    /// atlases — while staying on screen, and keeps showing what it showed:
+    /// the layer keeps the surface on screen. The next output draws into
+    /// fresh targets, and going quiet again gives them back again.
+    @Test func anIdleTerminalGivesBackItsFramesAndKeepsItsPicture() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = "/bin/sh -c 'ls -la /; cat'"
+        let pane = PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config))
+        let controller = TerminalController.newWindow(ghostty, tree: SplitTree<PaneView>(view: pane))
+        defer { controller.close() }
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 700, height: 500))
+        let surface = try #require(pane.surface)
+
+        // Drawing: the frames hold real targets and the atlases.
+        _ = await poll(timeout: 5) { ghostty_surface_frame_memory(surface).target_bytes > 4 * 100 * 100 }
+        let drawing = ghostty_surface_frame_memory(surface)
+        #expect(!drawing.released)
+        #expect(drawing.atlas_bytes > 3 * 2, "a drawn frame has no atlas copy")
+        await settle(1.5)
+        let shown = try await capture(window)
+
+        // Quiet: everything is given back, and the picture has not moved.
+        let released = await poll(timeout: 10) { ghostty_surface_frame_memory(surface).released }
+        #expect(released, "an idle terminal kept its frames")
+        let idle = ghostty_surface_frame_memory(surface)
+        #expect(idle.target_bytes <= 3 * 4, "idle frames still hold \(idle.target_bytes) bytes of targets")
+        #expect(idle.atlas_bytes <= 3 * 5, "idle frames still hold \(idle.atlas_bytes) bytes of atlas")
+        let stillShown = try await capture(window)
+        #expect(changed(shown, stillShown) < 0.01, "the idle terminal shows something else")
+
+        // New output draws again, with the glyphs it needs.
+        try #require(pane.surfaceView).surfaceModel?.sendText("redrawn after idling\r")
+        _ = await poll(timeout: 5) { !ghostty_surface_frame_memory(surface).released }
+        await settle(0.8)
+        let redrawn = try await capture(window)
+        #expect(changed(stillShown, redrawn) > 0, "nothing drew after the terminal idled")
+        #expect(ghostty_surface_frame_memory(surface).atlas_bytes > 3 * 2)
+
+        // And going quiet again releases again.
+        let again = await poll(timeout: 10) { ghostty_surface_frame_memory(surface).released }
+        #expect(again, "the terminal did not release a second time")
+        let settled = try await capture(window)
+        #expect(changed(redrawn, settled) < 0.01, "releasing changed what the terminal shows")
+    }
+
     /// This process's physical footprint (what Activity Monitor shows), MB.
     private func footprintMB() -> Double {
         var info = task_vm_info_data_t()

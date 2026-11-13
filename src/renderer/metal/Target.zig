@@ -106,3 +106,12 @@ pub fn deinit(self: *Self) void {
     self.surface.deinit();
     self.texture.release();
 }
+
+/// Let go of the target without throwing its pixels away, for a target
+/// that may be the one on screen: `deinit` purges the surface, which blanks
+/// a layer still showing it. The surface is freed once nothing holds it,
+/// and that is at once unless the layer does.
+pub fn deinitKeepingContents(self: *Self) void {
+    self.surface.release();
+    self.texture.release();
+}
