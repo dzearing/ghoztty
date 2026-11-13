@@ -13465,6 +13465,9 @@ fn clearVacatedPaneStrips(self: *Window, hwnd: w32.HWND, old: []const w32.RECT) 
             stackTrace("stack trace vacated tail glow={d} under={d} glass={d} bands={d}", .{
                 at(s.done, b.glow), at(s.done, b.under), at(s.done, b.glass), at(s.done, b.desk),
             });
+            if (self.pane_desk.last_rects) |lr| for (lr.slice()) |r| {
+                stackTrace("stack trace vacated rect l={d} t={d} r={d} b={d}", .{ r.left, r.top, r.right, r.bottom });
+            };
         }
         lap.report("vacated");
         resizeTrace("vacated-painted", hwnd);

@@ -45,6 +45,16 @@ fn initPool() void {
     pool_workers = want;
 }
 
+/// The shared pool for other pure per-pixel work (T2946: a desk's partial
+/// compose), and how many workers it has beside the caller; null on a box with
+/// one CPU or where the pool could not be made. The same pool as the sheets':
+/// a drag runs one or the other on a tick, never both at once.
+pub fn shared() ?struct { pool: *std.Thread.Pool, workers: usize } {
+    pool_once.call();
+    if (pool_workers == 0) return null;
+    return .{ .pool = &pool, .workers = pool_workers };
+}
+
 /// Bands per thread (the workers and the caller). One band each left the whole
 /// sheet waiting on whichever worker woke last: in a Debug viewer edge drag the
 /// render read ~0.85 ms on most steps and 1.4-2.0 ms on a third of them, one

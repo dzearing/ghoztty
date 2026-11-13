@@ -46,6 +46,7 @@ const color_math = @import("color_math.zig");
 const pane_stack_strip = @import("pane_stack_strip.zig");
 const blade_shadow = @import("blade_shadow.zig");
 const gutter_bar = @import("gutter_bar.zig");
+const sheet_workers = @import("sheet_workers.zig");
 
 const log = std.log.scoped(.pane_desk);
 
@@ -346,6 +347,9 @@ blit_ns: u64 = 0,
 /// ready, composed (or the memo hit), the names drawn and laid, returned. Zero where the
 /// paint left before that phase.
 last_stamps: struct { enter: i64 = 0, ready: i64 = 0, composed: i64 = 0, named: i64 = 0, done: i64 = 0, hit: bool = false, drawn: i64 = 0, area: i64 = 0, rects: u32 = 0 } = .{},
+/// T2946: the rects the last partial compose covered, for the vacated
+/// trace line; null after a whole compose or a memo hit.
+last_rects: ?Memo.Rects = null,
 /// What the partial composes covered, in thousandths of the buffer, summed.
 partial_permille: u64 = 0,
 /// `composePartial`'s buffers, kept between paints: the rectangle being
@@ -1123,6 +1127,7 @@ pub fn paint(
     var tq0: i64 = 0;
     _ = w32.QueryPerformanceCounter(&tq0);
     self.last_stamps = .{ .enter = tq0 };
+    self.last_rects = null;
     defer _ = w32.QueryPerformanceCounter(&self.last_stamps.done);
     const desk = self.ensureDesk(w, h, style.is_light, variant) orelse return;
     var tq1: i64 = 0;
@@ -1221,6 +1226,7 @@ pub fn paint(
     // T2946: what this compose covered, for the vacated trace line.
     self.last_stamps.area = if (done) partial.rects.area() else @as(i64, w) * h;
     self.last_stamps.rects = if (done) @intCast(partial.rects.len) else 0;
+    self.last_rects = if (done) partial.rects else null;
     self.composed_permille +%= if (done) @intCast(@divFloor(partial.rects.area() * 1000, @as(i64, w) * h)) else 1000;
     if (done) self.memo_partial +|= 1 else compose(comp.pixels(), desk.pixels(), @intCast(w), @intCast(h), cards, strips, style, bar, prep);
     _ = w32.QueryPerformanceCounter(&tq_compose);
@@ -1764,6 +1770,7 @@ fn composePartial(
         comp.w,
         comp.h,
         prep,
+        .auto,
     );
 }
 
@@ -1785,12 +1792,16 @@ fn composeRects(
     lw: i32,
     lh: i32,
     prep: ?*const pane_elevation.Prepared,
+    /// Who shares the work (T2946): `.auto` the process's sheet workers,
+    /// `.none` the caller alone, or a pool a test made.
+    par_workers: Workers,
 ) bool {
+    for (lights) |*c| if (c.w == lw and c.h == lh) busy_light.restore(comp, c.px.items);
+    if (composeRectsShared(scratch, scratch_desk, comp, desk, stride, rects, cards, strips, style, bar, prep, par_workers)) |ok| return ok;
     var most: usize = 0;
     for (rects) |r| most = @max(most, @as(usize, @intCast(r.right - r.left)) * @as(usize, @intCast(r.bottom - r.top)));
     scratch.resize(light_alloc, most) catch return false;
     if (scratch_desk) |d| d.resize(light_alloc, most) catch return false;
-    for (lights) |*c| if (c.w == lw and c.h == lh) busy_light.restore(comp, c.px.items);
     // Each rect less what the ones before it already laid (T2732): they may
     // overlap, and where they do is often a shadow's corner - the costliest
     // pixels a compose works out - so lay each pixel once. A compose is the
@@ -1806,6 +1817,157 @@ fn composeRects(
         };
         for (pieces.slice()) |p| composeRect(scratch.items, if (scratch_desk) |d| d.items else null, comp, desk, stride, p, cards, strips, style, bar, prep);
     }
+    return true;
+}
+
+/// Who composes a partial compose's pieces beside the caller (T2946).
+const Workers = union(enum) {
+    /// The caller alone: the serial path.
+    none,
+    /// The process's shared pool (`sheet_workers.shared`).
+    auto,
+    /// A given pool and its worker count (the tests').
+    pool: struct { pool: *std.Thread.Pool, workers: usize },
+};
+
+/// At most this many disjoint pieces, and this many bands of them, go to the
+/// workers; a compose cut finer than that runs on the caller.
+const MAX_SHARED_PIECES = 128;
+const MAX_SHARED_JOBS = 96;
+
+/// One band of a shared partial compose (T2946), and where its scratch lies.
+const SharedJob = struct { rect: busy_light.Rect, at: usize };
+
+/// What every band of a shared partial compose reads; only `comp` (each band's
+/// own rows of it) and the scratch (each band's own slice) are written.
+const SharedCtx = struct {
+    scratch: []u32,
+    scratch_desk: ?[]u32,
+    comp: []u32,
+    desk: []const u32,
+    stride: usize,
+    jobs: []const SharedJob,
+    cards: []const pane_elevation.Card,
+    strips: []const pane_stack_strip.Band,
+    style: pane_elevation.CardStyle,
+    bar: ?Bar,
+    prep: ?*const pane_elevation.Prepared,
+
+    fn run(ctx: *const SharedCtx, i: usize) void {
+        const j = ctx.jobs[i];
+        const n: usize = @intCast((j.rect.right - j.rect.left) * (j.rect.bottom - j.rect.top));
+        composeRect(
+            ctx.scratch[j.at..][0..n],
+            if (ctx.scratch_desk) |d| d[j.at..][0..n] else null,
+            ctx.comp,
+            ctx.desk,
+            ctx.stride,
+            j.rect,
+            ctx.cards,
+            ctx.strips,
+            ctx.style,
+            ctx.bar,
+            ctx.prep,
+        );
+    }
+};
+
+/// `composeRects`' pieces shared among the workers (T2946): a 4K fold-glide
+/// tick re-lays four full-height columns, ~600-800k px and 2.5-3.9 ms on the
+/// caller alone - the largest single piece of the tick. The rects are cut into
+/// disjoint pieces (as the serial path lays them), the pieces into row bands,
+/// and every band composed into its own slice of the scratch and copied into
+/// its own rows of `comp`. A compose is the same function of a pixel's place
+/// whichever rect lays it, so the pixels are the serial path's. Null when this
+/// compose is the serial path's to do - too small to share, no workers, or
+/// pieces that cannot be cut disjoint - and the caller then does it.
+fn composeRectsShared(
+    scratch: *std.ArrayListUnmanaged(u32),
+    scratch_desk: ?*std.ArrayListUnmanaged(u32),
+    comp: []u32,
+    desk: []const u32,
+    stride: usize,
+    rects: []const busy_light.Rect,
+    cards: []const pane_elevation.Card,
+    strips: []const pane_stack_strip.Band,
+    style: pane_elevation.CardStyle,
+    bar: ?Bar,
+    prep: ?*const pane_elevation.Prepared,
+    par_workers: Workers,
+) ?bool {
+    var area: usize = 0;
+    for (rects) |r| area += @as(usize, @intCast(r.right - r.left)) * @as(usize, @intCast(r.bottom - r.top));
+    // A test's own pool shares whatever it is given, so small cases reach
+    // this path too.
+    const pool: *std.Thread.Pool, const workers: usize = switch (par_workers) {
+        .none => return null,
+        .auto => if (area < sheet_workers.min_parallel_px)
+            return null
+        else if (sheet_workers.shared()) |sh| .{ sh.pool, sh.workers } else return null,
+        .pool => |p| .{ p.pool, p.workers },
+    };
+    if (workers == 0) return null;
+    // The disjoint pieces, exactly as the serial path cuts them.
+    var pieces: [MAX_SHARED_PIECES]busy_light.Rect = undefined;
+    var n_pieces: usize = 0;
+    var total: usize = 0;
+    for (rects, 0..) |r, i| {
+        var p: Pieces = .{};
+        p.items[0] = r;
+        p.len = 1;
+        for (rects[0..i]) |o| if (!p.subtract(o)) return null;
+        for (p.slice()) |q| {
+            if (q.right <= q.left or q.bottom <= q.top) continue;
+            if (n_pieces == pieces.len) return null;
+            pieces[n_pieces] = q;
+            n_pieces += 1;
+            total += @as(usize, @intCast(q.right - q.left)) * @as(usize, @intCast(q.bottom - q.top));
+        }
+    }
+    if (total == 0) return true;
+    // Bands of about one size, several a thread, so a thread that wakes late
+    // costs at most a small one (`sheet_workers.bands_per_thread`).
+    const threads = workers + 1;
+    const want = @max(@min(threads * sheet_workers.bands_per_thread, total / sheet_workers.min_band_px), threads);
+    const band_px = @max(total / want, 1);
+    var jobs: [MAX_SHARED_JOBS]SharedJob = undefined;
+    var n_jobs: usize = 0;
+    var at: usize = 0;
+    for (pieces[0..n_pieces]) |q| {
+        const qw: usize = @intCast(q.right - q.left);
+        const qh: usize = @intCast(q.bottom - q.top);
+        const bands = std.math.clamp((qw * qh + band_px / 2) / band_px, 1, qh);
+        for (0..bands) |b| {
+            const r0 = sheet_workers.bandRows(qh, bands, b);
+            if (r0.end <= r0.start) continue;
+            if (n_jobs == jobs.len) return null;
+            jobs[n_jobs] = .{
+                .rect = .{ .left = q.left, .right = q.right, .top = q.top + @as(i32, @intCast(r0.start)), .bottom = q.top + @as(i32, @intCast(r0.end)) },
+                .at = at,
+            };
+            n_jobs += 1;
+            at += qw * (r0.end - r0.start);
+        }
+    }
+    scratch.resize(light_alloc, at) catch return false;
+    if (scratch_desk) |d| d.resize(light_alloc, at) catch return false;
+    const ctx: SharedCtx = .{
+        .scratch = scratch.items,
+        .scratch_desk = if (scratch_desk) |d| d.items else null,
+        .comp = comp,
+        .desk = desk,
+        .stride = stride,
+        .jobs = jobs[0..n_jobs],
+        .cards = cards,
+        .strips = strips,
+        .style = style,
+        .bar = bar,
+        .prep = prep,
+    };
+    var wg: std.Thread.WaitGroup = .{};
+    for (1..n_jobs) |i| pool.spawnWg(&wg, SharedCtx.run, .{ &ctx, i });
+    ctx.run(0);
+    pool.waitAndWork(&wg);
     return true;
 }
 
@@ -2445,7 +2607,7 @@ test "T2454: composing only the rectangle that changed paints exactly what a who
                 // pixels as the whole compose that built its own.
                 var prep = pane_elevation.prepare(style1);
                 defer prep.deinit();
-                try testing.expect(composeRects(&scratch, &scratch_desk, comp, desk, w, r.slice(), &cards1, &strips1, style1, bar1, &.{}, w, h, &prep));
+                try testing.expect(composeRects(&scratch, &scratch_desk, comp, desk, w, r.slice(), &cards1, &strips1, style1, bar1, &.{}, w, h, &prep, .auto));
             },
         }
         for (full, comp, 0..) |a, b, i| if (a != b) {
@@ -2556,7 +2718,7 @@ test "T2941: a fold that re-lays the whole row patches the bands round the edges
         }
         var prep = pane_elevation.prepare(style);
         defer prep.deinit();
-        try testing.expect(composeRects(&scratch, &scratch_desk, comp, desk, w, r.slice(), cs.cards1, cs.strips1, style, null, &.{}, w, h, &prep));
+        try testing.expect(composeRects(&scratch, &scratch_desk, comp, desk, w, r.slice(), cs.cards1, cs.strips1, style, null, &.{}, w, h, &prep, .auto));
         for (full, comp, 0..) |a, b, i| if (a != b) {
             std.debug.print("{s} glass={} scale={d}: first difference at ({d},{d}): {x} vs {x}\n", .{ cs.name, glass, scale, i % w, i / w, a, b });
             return error.TestExpectedEqual;
@@ -2645,7 +2807,7 @@ test "T2732: a card or strip that comes or goes is composed over its own reach, 
         try testing.expect(r.area() * 4 <= @as(i64, w) * h * 3);
         var prep = pane_elevation.prepare(style1);
         defer prep.deinit();
-        try testing.expect(composeRects(&scratch, &scratch_desk, comp, desk, w, r.slice(), cs.cards1, cs.strips1, style1, null, &.{}, w, h, &prep));
+        try testing.expect(composeRects(&scratch, &scratch_desk, comp, desk, w, r.slice(), cs.cards1, cs.strips1, style1, null, &.{}, w, h, &prep, .auto));
         for (full, comp, 0..) |a, b, i| if (a != b) {
             std.debug.print("{s} glass={} scale={d}: first difference at ({d},{d}): {x} vs {x}\n", .{ cs.name, glass, scale, i % w, i / w, a, b });
             return error.TestExpectedEqual;
@@ -2704,8 +2866,18 @@ test "T2732: overlapping rects are each laid once, and every pixel of their unio
         for (rects) |r| for (@intCast(r.top)..@intCast(r.bottom)) |y| @memset(comp[y * w + @as(usize, @intCast(r.left)) ..][0..@intCast(r.right - r.left)], 0xDEAD_BEEF);
         var prep = pane_elevation.prepare(style);
         defer prep.deinit();
-        try testing.expect(composeRects(&scratch, &scratch_desk, comp, desk, w, &rects, &cards, &strips, style, null, &.{}, w, h, &prep));
+        try testing.expect(composeRects(&scratch, &scratch_desk, comp, desk, w, &rects, &cards, &strips, style, null, &.{}, w, h, &prep, .none));
         try testing.expectEqualSlices(u32, full, comp);
+        // T2946: the same rects shared among workers, banded by rows - one
+        // worker and three, so a band per thread and several.
+        if (!@import("builtin").single_threaded) for ([_]usize{ 1, 3 }) |nw| {
+            var pool: std.Thread.Pool = undefined;
+            try pool.init(.{ .allocator = testing.allocator, .n_jobs = nw });
+            defer pool.deinit();
+            for (rects) |r| for (@intCast(r.top)..@intCast(r.bottom)) |y| @memset(comp[y * w + @as(usize, @intCast(r.left)) ..][0..@intCast(r.right - r.left)], 0xDEAD_BEEF);
+            try testing.expect(composeRects(&scratch, &scratch_desk, comp, desk, w, &rects, &cards, &strips, style, null, &.{}, w, h, &prep, .{ .pool = .{ .pool = &pool, .workers = nw } }));
+            try testing.expectEqualSlices(u32, full, comp);
+        };
     };
 
     // The pieces of one rect less another are disjoint, inside it, clear of
@@ -2787,7 +2959,7 @@ test "T2454: a partial compose lifts the lights off first, so their rings rebase
     m.store(w, h, 1, &cards0, &.{}, style, null, &.{});
     const r = m.dirty(w, h, 1, &cards1, &.{}, style, null).rects;
     try testing.expect(r.len > 0 and r.items[0].right > cards0[1].left);
-    try testing.expect(composeRects(&scratch, null, &comp, &desk, w, r.slice(), &cards1, &.{}, style, null, &lights, w, h, null));
+    try testing.expect(composeRects(&scratch, null, &comp, &desk, w, r.slice(), &cards1, &.{}, style, null, &lights, w, h, null, .auto));
     compose(&full, &desk, w, h, &cards1, &.{}, style, null, null);
     try testing.expectEqualSlices(u32, &full, &comp);
 }
@@ -2822,7 +2994,8 @@ test "T2454: bench - a divider-drag frame's compose, whole and partial" {
     // The fourth card gliding into its strip: its blade shadow, cast from
     // the card's own rect (T2307), changes with every frame of the glide.
     const glide = [_]pane_stack_strip.Band{.{ .tab = .{ .left = cards[3].left, .top = cards[3].top, .right = cards[3].right, .bottom = cards[3].bottom }, .axis = .horizontal, .rgb = .{ .r = 60, .g = 60, .b = 70 }, .leads = false, .collapse = 0.5, .band = false }};
-    for ([_]bool{ false, true }) |glass| for ([_]bool{ false, true }) |gliding| {
+    // T2946: the caller alone, then shared among the sheet workers.
+    for ([_]Workers{ .none, .auto }) |bench_workers| for ([_]bool{ false, true }) |glass| for ([_]bool{ false, true }) |gliding| {
         const style: pane_elevation.CardStyle = .{ .fill = .{ .r = 29, .g = 31, .b = 33 }, .is_light = false, .scale = scale, .glass = glass };
         const strips0: []const pane_stack_strip.Band = if (gliding) &glide else &.{};
         var glide1 = glide;
@@ -2833,6 +3006,9 @@ test "T2454: bench - a divider-drag frame's compose, whole and partial" {
         var moved = cards;
         moved[0].right += 12;
         moved[1].left += 12;
+        // And a second divider, as a 4K fold-glide tick moves (T2946).
+        moved[2].right += 8;
+        moved[3].left += 8;
         var whole: u64 = std.math.maxInt(u64);
         var part: u64 = std.math.maxInt(u64);
         var area: i64 = 0;
@@ -2846,12 +3022,13 @@ test "T2454: bench - a divider-drag frame's compose, whole and partial" {
             m.store(@intCast(w), @intCast(h), 1, &cards, strips0, style, null, &.{});
             timer.reset();
             const r = m.dirty(@intCast(w), @intCast(h), 1, &moved, strips1, style, null).rects;
-            try testing.expect(composeRects(&scratch, null, comp, desk, w, r.slice(), &moved, strips1, style, null, &.{}, @intCast(w), @intCast(h), &prep));
+            try testing.expect(composeRects(&scratch, null, comp, desk, w, r.slice(), &moved, strips1, style, null, &.{}, @intCast(w), @intCast(h), &prep, bench_workers));
             part = @min(part, timer.read());
             area = r.area();
             n = r.len;
         }
-        std.debug.print("{d}x{d} @{d}x glass={} gliding={}, first divider +12px: whole {d:.2} ms, partial {d:.2} ms ({d}% of the window, {d} rects)\n", .{
+        std.debug.print("{s} {d}x{d} @{d}x glass={} gliding={}, two dividers: whole {d:.2} ms, partial {d:.2} ms ({d}% of the window, {d} rects)\n", .{
+            @tagName(bench_workers),
             w,
             h,
             scale,
