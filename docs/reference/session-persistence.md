@@ -203,6 +203,30 @@ Cross-machine session *move* (browse another machine's live sessions from the
 Cmd-Shift-N chooser and resume them locally over the relay) is **scoped but not
 yet built** — see tasks T16–T18 in `docs/design/session-persistence-tasks.json`.
 
+## The layout manifest: syncing and writing
+
+`SessionLayoutManifest` (`session-layout.json` in Application Support) holds
+one entry per persistent window: frame, tab group, names, the split tree and,
+per terminal leaf, its session id and a screen snapshot with its byte offset.
+
+- A change in a window (tree, frame, sidebar, a pane banner) schedules a sync
+  of its entry, debounced 250 ms (`scheduleSync`); at quit every window is
+  synced afresh (`syncAllTrackedNow`), which is what keeps the snapshots
+  current when only output changed.
+- **The file is written off the main thread.** A save encodes every window's
+  entry, snapshots included, and rewrites the file atomically; the app's
+  shared manifest hands that to a background queue where the latest state
+  wins (`writesInBackground`, `pendingWrite`), so a burst of changes is one
+  write. `flushWrites()` waits for it and is called when a quit begins and in
+  `applicationWillTerminate`. Anything that must read the file right after a
+  change (a test, a script) must allow for that or flush. Measured in a debug
+  build with 22 panes: 3.6 ms → 0.6 ms on the main thread per banner change.
+- **One session-id retry loop per entry.** A leaf's session id arrives after
+  its OPEN completes, so a sync that finds one missing looks again every
+  0.5 s for up to 30 s (`syncAndCaptureSessionIDs`,
+  `capturingSessionIDs`). A sync triggered while a loop is running does not
+  start another.
+
 ## Agent contract & upgrade compatibility
 
 (The short form is a hard rule in the root `CLAUDE.md`; this is the full text.)
