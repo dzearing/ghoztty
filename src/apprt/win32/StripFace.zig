@@ -65,9 +65,18 @@ pub const StripFace = struct {
 
     /// QPC stamps of the last popup `commit` (T2732), taken only while
     /// `stamp_commits` is set (the window's `GHOZTTY_STACK_TRACE`): entry,
-    /// after `SetWindowRgn`, after `UpdateLayeredWindow`, and the end (show +
+    /// after the card's cut (`maskToRegion`, T2942; a `SetWindowRgn` before
+    /// it), after `UpdateLayeredWindow`, and the end (show +
     /// z heal). Zero when off.
     commit_stamps: [4]i64 = .{ 0, 0, 0, 0 },
+
+    /// The card cuts of this glide (T2942), for the receipt `hide` logs:
+    /// frames cut in their pixels, how many of those lost any (a rounded
+    /// card's corners; a slide cut can be a plain rect), and the most any
+    /// one frame lost, per mille of the frame.
+    cut_frames: u32 = 0,
+    cut_cornered: u32 = 0,
+    cut_max_permille: usize = 0,
 
     /// The size of the frame on screen, which WM_PRINT paints from the DIB.
     px_w: i32 = 0,
@@ -173,7 +182,7 @@ pub const StripFace = struct {
 
     /// Put the frame `begin` handed out on screen at `left`/`top` (screen
     /// pixels), blended at `alpha`, cut to `region` (in the face's own
-    /// coordinates; null for none - the system owns it once set).
+    /// coordinates; null for none). The face takes `region` and deletes it.
     pub fn commit(self: *StripFace, left: i32, top: i32, alpha: u8, region: ?*anyopaque) void {
         if (!self.painting or self.mem_dc == null) {
             if (region) |r| _ = w32.DeleteObject(r);
@@ -186,20 +195,29 @@ pub const StripFace = struct {
         self.px_w = self.w;
         self.px_h = self.h;
         chrome_fanout.noteMove(.dim);
-        if (w32.SetWindowRgn(self.hwnd, region, 0) == 0) if (region) |r| {
-            _ = w32.DeleteObject(r);
-        };
+        // The card's shape goes into the face's own pixels rather than onto
+        // its popup as a window region (T2942): a `SetWindowRgn` per stepped
+        // tick is a window-manager transaction, and on a 4K fold's heaviest
+        // ticks it ran 1-4.5 ms - the largest and least predictable part of
+        // the face's cost. Cut pixels are 0, which a per-pixel-alpha
+        // UpdateLayeredWindow shows as nothing, exactly as the region did.
+        const masked = if (region) |r| m: {
+            defer _ = w32.DeleteObject(r);
+            break :m self.maskToRegion(r);
+        } else false;
         if (stamping) self.commit_stamps[1] = stamp();
         // Pixels, place and alpha in one UpdateLayeredWindow, which DWM takes
         // whole at its next composition (T2485 D7). Painting the redirection
         // surface through WM_PAINT after a SetLayeredWindowAttributes reached
         // the screen 1-3 frames after the pane under it was hidden, so a
-        // fold's first frames showed neither. The source alpha is not read
-        // (AlphaFormat 0): the face is uniform, as the dim wash is.
+        // fold's first frames showed neither. The face is uniform, as the dim
+        // wash is: `finish` left every pixel opaque, so the source alpha is
+        // read only when the card's cut zeroed some (premultiplied: a cut
+        // pixel is 0 in every channel, a kept one is unchanged).
         const dst_pt = w32.POINT{ .x = left, .y = top };
         const dst_size = w32.SIZE{ .cx = self.w, .cy = self.h };
         const src_pt = w32.POINT{ .x = 0, .y = 0 };
-        const blend = w32.BLENDFUNCTION{ .SourceConstantAlpha = alpha, .AlphaFormat = 0 };
+        const blend = w32.BLENDFUNCTION{ .SourceConstantAlpha = alpha, .AlphaFormat = if (masked) w32.AC_SRC_ALPHA else 0 };
         if (w32.UpdateLayeredWindow(self.hwnd, null, &dst_pt, &dst_size, self.mem_dc, &src_pt, 0, &blend, w32.ULW_ALPHA) == 0)
             log.warn("strip face UpdateLayeredWindow failed err={d}", .{w32.GetLastError()});
         if (stamping) self.commit_stamps[2] = stamp();
@@ -222,6 +240,36 @@ pub const StripFace = struct {
             self.dropVisual();
             log.info("strip face moved to its popup", .{});
         }
+    }
+
+    /// Zero the pixels of the frame being committed that fall outside
+    /// `region` (the face's own coordinates), from its rectangles (T2942).
+    /// False when the region could not be read; the frame is then shown
+    /// uncut, which beats showing nothing.
+    fn maskToRegion(self: *StripFace, region: *anyopaque) bool {
+        const size = w32.GetRegionData(region, 0, null);
+        if (size < @sizeOf(w32.RGNDATAHEADER)) return false;
+        // Rects are 4-aligned like the header; a rounded card is ~2 rects
+        // per corner row, so this is a few hundred bytes a tick.
+        const buf = self.alloc.alignedAlloc(u8, .of(w32.RECT), size) catch return false;
+        defer self.alloc.free(buf);
+        if (w32.GetRegionData(region, size, buf.ptr) == 0) return false;
+        const hdr: *const w32.RGNDATAHEADER = @ptrCast(@alignCast(buf.ptr));
+        const n: usize = hdr.nCount;
+        if (@sizeOf(w32.RGNDATAHEADER) + n * @sizeOf(w32.RECT) > buf.len) return false;
+        const rects: [*]const w32.RECT = @ptrCast(@alignCast(buf.ptr + @sizeOf(w32.RGNDATAHEADER)));
+        const stride: usize = @intCast(self.cap_w);
+        const frame: strip_face.Frame = .{
+            .pixels = self.bits.?[0 .. stride * @as(usize, @intCast(self.h))],
+            .stride = stride,
+            .w = @intCast(self.w),
+            .h = @intCast(self.h),
+        };
+        const cut = strip_face.maskOutside(frame, w32.RECT, rects[0..n]);
+        self.cut_frames +|= 1;
+        if (cut > 0) self.cut_cornered +|= 1;
+        self.cut_max_permille = @max(self.cut_max_permille, cut * 1000 / @max(1, frame.w * frame.h));
+        return true;
     }
 
     /// Put the frame `begin` handed out up as a picture in the window's
@@ -340,6 +388,13 @@ pub const StripFace = struct {
     /// The uniform name every pane popup answers (T2012).
     pub fn hide(self: *StripFace) void {
         self.carrying = false;
+        // The glide's card cuts (T2942; stack-fold-slide.ps1 F10 reads it):
+        // a rounded card loses its corners on some frames and only a sliver
+        // of any one.
+        if (self.cut_frames > 0) log.info("strip face cuts frames={d} cornered={d} max_cut_permille={d}", .{ self.cut_frames, self.cut_cornered, self.cut_max_permille });
+        self.cut_frames = 0;
+        self.cut_cornered = 0;
+        self.cut_max_permille = 0;
         // The glide is over: the DIB goes with it, so a 4K card's 30 MB is
         // not held between glides.
         self.releaseDib();

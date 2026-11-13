@@ -335,6 +335,19 @@ function Get-FaceVisual([int]$from, [int]$to) {
     }
     return $o
 }
+# The `strip face cuts frames=F cornered=C max_cut_permille=P` receipts
+# (T2942) from line $from to line $to: each popup face's glide, cut to its
+# card in its own pixels.
+function Get-FaceCuts([int]$from, [int]$to) {
+    $lines = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue)
+    $out = @()
+    for ($i = $from; $i -lt [math]::Min($to, $lines.Count); $i++) {
+        if ($lines[$i] -match 'strip face cuts frames=(\d+) cornered=(\d+) max_cut_permille=(\d+)') {
+            $out += [pscustomobject]@{ Frames = [int]$Matches[1]; Cornered = [int]$Matches[2]; MaxPermille = [int]$Matches[3] }
+        }
+    }
+    return $out
+}
 # The `strip face alpha=N band=RRGGBB` oracle lines (T2288) from line $from
 # to line $to of the app's stderr: each as its alpha and band.
 function Get-FaceAlphas([int]$from, [int]$to) {
@@ -716,6 +729,19 @@ try {
             Assert ($fv.Shown -ge 1 -and $faceSeen -eq 0) "F10: folding, the strip's face goes up in the window's tree ($($fv.Shown) times), never on its popup ($faceSeen samples)"
         } else {
             Assert ($faceSeen -ge 1) "F10: folding, the strip's face is seen on show over s2's card ($faceSeen samples)"
+            # T2942: the popup face carries its card's shape in its own
+            # pixels, not a window region - so the glide's receipt shows its
+            # frames went through the cut and none lost more than a sliver
+            # (a rounded card's corners at most). A mask that blanked the face
+            # fails here; the background desktop cannot be photographed. In
+            # this scene the card's region covers the whole face (cornered=0,
+            # as the window region it replaces cut nothing either); the
+            # corner shapes themselves are strip_face.maskOutside's unit tests.
+            $cuts = @(Get-FaceCuts $logFold $logBack)
+            Say ("      face cuts folding: {0}" -f (($cuts | ForEach-Object { "frames=$($_.Frames) cornered=$($_.Cornered) max_cut_permille=$($_.MaxPermille)" }) -join '; '))
+            $cutFrames = ($cuts | Measure-Object Frames -Sum).Sum
+            $overCut = @($cuts | Where-Object { $_.MaxPermille -gt 50 }).Count
+            Assert ($cuts.Count -ge 1 -and $cutFrames -ge 2 -and $overCut -eq 0) "F10: folding, the face is cut to its card in its own pixels and never blanked ($($cuts.Count) glides, $cutFrames frames cut, $overCut that cut over 5% of a frame)"
         }
         # T2457: the card carries its content, so the fade is the CONTENT's
         # strength, falling over the tween - never rising, which is the flash.

@@ -10115,7 +10115,8 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     });
     // Where a stepped face's time went (T2732): a face paint's 3-10 ms tail
     // sits between a glide tick's batch and its cut. `rgn`/`ulw`/`show` are
-    // the popup commit's SetWindowRgn, UpdateLayeredWindow and show + z heal
+    // the popup commit's card cut (into its pixels since T2942; a
+    // SetWindowRgn before), UpdateLayeredWindow and show + z heal
     // (all 0 on the composition tree, `tree=1`).
     if (stackTraceOn()) {
         const cs = f.commit_stamps;

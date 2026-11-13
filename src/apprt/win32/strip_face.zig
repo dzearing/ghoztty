@@ -158,6 +158,61 @@ pub fn finish(f: Frame, content: ?Content, alpha: u8) void {
     }
 }
 
+/// Cut the face to `rects` in its own pixels (T2942): every pixel outside
+/// them becomes 0 - transparent, and premultiplied-correct, under a
+/// per-pixel-alpha UpdateLayeredWindow - and every pixel inside is left as
+/// `finish` made it. This replaces a `SetWindowRgn` on the face's popup on
+/// every stepped tick, a window-manager transaction that ran 1-4.5 ms on a
+/// 4K fold's heaviest ticks. `rects` is a region's rectangles as
+/// `GetRegionData` returns them: y-x banded, so a band is a run of rects
+/// sharing one top and bottom, bands top to bottom and rects left to right.
+/// Rects past the face are clipped to it. Only the cut-away pixels are
+/// written: a rounded card loses its corners and nothing else. `R` is any
+/// rect with i32 `left`/`top`/`right`/`bottom` (a win32 RECT read straight
+/// out of the region data, or a `PxRect`).
+/// Returns how many pixels it cut, which costs nothing extra: it is the sum
+/// of what it cleared.
+pub fn maskOutside(f: Frame, comptime R: type, rects: []const R) usize {
+    const clampTo = struct {
+        fn c(v: i32, hi: usize) usize {
+            return @intCast(std.math.clamp(v, 0, @as(i32, @intCast(hi))));
+        }
+    }.c;
+    const clear = struct {
+        fn c(px: []u32) usize {
+            @memset(px, 0);
+            return px.len;
+        }
+    }.c;
+    var cut: usize = 0;
+    var y: usize = 0;
+    var i: usize = 0;
+    while (i < rects.len) {
+        const top = rects[i].top;
+        const bottom = rects[i].bottom;
+        var j = i;
+        while (j < rects.len and rects[j].top == top and rects[j].bottom == bottom) j += 1;
+        const band = rects[i..j];
+        i = j;
+        const b0 = clampTo(top, f.h);
+        const b1 = clampTo(bottom, f.h);
+        while (y < b0) : (y += 1) cut += clear(f.row(y));
+        while (y < b1) : (y += 1) {
+            const row = f.row(y);
+            var x: usize = 0;
+            for (band) |r| {
+                const x0 = clampTo(r.left, f.w);
+                const x1 = clampTo(r.right, f.w);
+                if (x0 > x) cut += clear(row[x..x0]);
+                x = @max(x, x1);
+            }
+            if (x < f.w) cut += clear(row[x..]);
+        }
+    }
+    while (y < f.h) : (y += 1) cut += clear(f.row(y));
+    return cut;
+}
+
 /// `dst` = `alpha` of `src` over `dst`, opaque. Red and blue ride one u32 in
 /// 16-bit lanes and green another; `(t + (t >> 8)) >> 8` with `t = x + 128`
 /// is `x / 255` rounded, exactly, for every `x` a lane can hold here.
@@ -369,6 +424,56 @@ test "tweenCollapse: the fade runs over the whole tween, monotonic in the drawn 
 
 fn frameOf(buf: []u32, w: usize, h: usize) Frame {
     return .{ .pixels = buf, .stride = w, .w = w, .h = h };
+}
+
+test "maskOutside: a rounded card keeps its body and loses only its corners (T2942)" {
+    const o: u32 = 0xFF11_2233;
+    // A 4x4 face (stride 5: the DIB is wider than the frame) cut to a
+    // GetRegionData-shaped rounded rect: row 0 is [1,3), rows 1-2 whole,
+    // row 3 is [1,3).
+    var buf = [_]u32{o} ** 20;
+    const f: Frame = .{ .pixels = &buf, .stride = 5, .w = 4, .h = 4 };
+    try testing.expectEqual(@as(usize, 4), maskOutside(f, PxRect, &.{
+        .{ .left = 1, .top = 0, .right = 3, .bottom = 1 },
+        .{ .left = 0, .top = 1, .right = 4, .bottom = 3 },
+        .{ .left = 1, .top = 3, .right = 3, .bottom = 4 },
+    }));
+    const want = [4][4]u32{
+        .{ 0, o, o, 0 },
+        .{ o, o, o, o },
+        .{ o, o, o, o },
+        .{ 0, o, o, 0 },
+    };
+    for (0..4) |y| for (0..4) |x| try testing.expectEqual(want[y][x], buf[y * 5 + x]);
+    // The column past the frame (the DIB's slack) is never touched.
+    for (0..4) |y| try testing.expectEqual(o, buf[y * 5 + 4]);
+}
+
+test "maskOutside: rows outside every band, gaps inside one, and rects past the face (T2942)" {
+    const o: u32 = 0xFFAB_CDEF;
+    var buf = [_]u32{o} ** 24; // 6x4
+    const f = frameOf(&buf, 6, 4);
+    // Row 0 is in no band; rows 1-2 are one band of two rects with a gap
+    // at [2,4) and the second running past the right edge; row 3 is past
+    // the last band. A rect above the face is clipped away entirely.
+    // 6 + 2 + 2 + 6 cut.
+    try testing.expectEqual(@as(usize, 16), maskOutside(f, PxRect, &.{
+        .{ .left = 0, .top = -5, .right = 6, .bottom = -1 },
+        .{ .left = -3, .top = 1, .right = 2, .bottom = 3 },
+        .{ .left = 4, .top = 1, .right = 99, .bottom = 3 },
+    }));
+    for (0..6) |x| try testing.expectEqual(@as(u32, 0), buf[x]);
+    for (1..3) |y| {
+        const row = buf[y * 6 ..][0..6];
+        try testing.expectEqualSlices(u32, &.{ o, o, 0, 0, o, o }, row);
+    }
+    for (0..6) |x| try testing.expectEqual(@as(u32, 0), buf[18 + x]);
+}
+
+test "maskOutside: no rects is an empty region, which cuts everything (T2942)" {
+    var buf = [_]u32{0xFFFF_FFFF} ** 6;
+    try testing.expectEqual(@as(usize, 6), maskOutside(frameOf(&buf, 3, 2), PxRect, &.{}));
+    for (buf) |p| try testing.expectEqual(@as(u32, 0), p);
 }
 
 test "finish: the content over the band at alpha, pinned, bottom-up, opaque (T2457)" {

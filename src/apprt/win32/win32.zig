@@ -2203,6 +2203,19 @@ pub extern "gdi32" fn OffsetRgn(hrgn: *anyopaque, x: i32, y: i32) callconv(.wina
 /// A region's bounding box; 0 (`ERROR`) when it is not a region. A strip
 /// face in the composition tree takes its card's region as a clip (T2777).
 pub extern "gdi32" fn GetRgnBox(hrgn: *anyopaque, rect: *RECT) callconv(.winapi) i32;
+/// The header `GetRegionData` writes ahead of a region's rectangles
+/// (`nCount` RECTs, y-x banded). A strip face bakes its card's region into
+/// its own pixels from them (T2942).
+pub const RGNDATAHEADER = extern struct {
+    dwSize: u32 = @sizeOf(RGNDATAHEADER),
+    iType: u32 = 1, // RDH_RECTANGLES
+    nCount: u32 = 0,
+    nRgnSize: u32 = 0,
+    rcBound: RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+};
+/// A region's header and rectangles into `data` (`size` bytes); with a null
+/// `data`, the bytes it needs. 0 on failure.
+pub extern "gdi32" fn GetRegionData(hrgn: *anyopaque, size: u32, data: ?*anyopaque) callconv(.winapi) u32;
 /// `dst = src1 <mode> src2`; `dst` must already exist (any region). Returns
 /// the result's complexity, or `ERROR` (0). The pane sidebar's open card is
 /// the rail column OR its rounded card (T1842).
