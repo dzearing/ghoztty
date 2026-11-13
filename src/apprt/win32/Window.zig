@@ -11420,6 +11420,12 @@ fn endPaneBatchFilled(self: *Window, hdwp: ?w32.HDWP) void {
         if (e.pane.hwnd) |h| traceRenderStage("held-apply", h);
         e.pane.applyResize(e.width, e.height);
     }
+    // T2946: the held terminal resizes' share of the batch, apart from the viewers'.
+    if (stackTraceOn()) {
+        var qpc: i64 = 0;
+        _ = w32.QueryPerformanceCounter(&qpc);
+        stackTrace("stack trace applied qpc={d}", .{qpc});
+    }
     // T2838: the viewers last - their bounds sync is UI-thread work that the
     // woken renderers above can overlap, and nothing in the batch waits on it.
     var viewers = self.held_viewers.take();
@@ -11895,7 +11901,7 @@ var stack_ring: trace_ring.Ring(16384, 256) = .{};
 
 /// `paintMovedBands`' phase ends on the QPC clock (T2732), read by the
 /// vacated-strip paint's stack trace line. UI thread only.
-var moved_band_stamps: struct { desk: i64 = 0, headers: i64 = 0 } = .{};
+var moved_band_stamps: struct { desk: i64 = 0, headers: i64 = 0, glow: i64 = 0, under: i64 = 0, glass: i64 = 0 } = .{};
 
 fn stackTrace(comptime fmt: []const u8, args: anytype) void {
     switch (stackTraceMode()) {
@@ -13446,12 +13452,18 @@ fn clearVacatedPaneStrips(self: *Window, hwnd: w32.HWND, old: []const w32.RECT) 
                     return if (t == 0) 0 else t - t0;
                 }
             }.f;
-            stackTrace("stack trace vacated in={d} dc={d} desk_in={d} ready={d} composed={d} iters={d} extent={d} textout={d} misses={d} drawn={d} named={d} desk_out={d} bands_desk={d} headers={d} out={d} hit={} why={s} cover={d}", .{
+            stackTrace("stack trace vacated in={d} dc={d} desk_in={d} ready={d} composed={d} iters={d} extent={d} textout={d} misses={d} drawn={d} named={d} desk_out={d} bands_desk={d} headers={d} out={d} hit={} why={s} cover={d} area={d} rects={d}", .{
                 t_in,                 at(t_in, t_dc),    at(t_in, s.enter),  at(t_in, s.ready),
                 at(t_in, s.composed), label_cost.iters,  label_cost.extent,  label_cost.out,
                 label_cost.misses,    at(t_in, s.drawn), at(t_in, s.named),  at(t_in, s.done),
                 at(t_in, b.desk),     at(t_in, b.headers), at(t_in, t_out), s.hit,
                 @tagName(PaneDesk.full_why), PaneDesk.full_permille,
+                s.area,               s.rects,
+            });
+            // T2946: the desk paint's tail on its own line (a ring slot cuts
+            // the line above short): each stamp as ticks after the desk paint.
+            stackTrace("stack trace vacated tail glow={d} under={d} glass={d} bands={d}", .{
+                at(s.done, b.glow), at(s.done, b.under), at(s.done, b.glass), at(s.done, b.desk),
             });
         }
         lap.report("vacated");
@@ -14348,13 +14360,16 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     if (self.hwnd) |hw| resizeTrace("desk-paint", hw);
     if (glow_layers) self.syncGlowLayers(slots[0..n], glow_cards[0..nc], bands[0..nt], style, bar) else self.dropGlowLayers();
     if (self.hwnd) |hw| resizeTrace("desk-glow", hw);
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&moved_band_stamps.glow);
     // On the compositor the visual already lies under every pane.
     if (hero_split == null and self.deskOpacity() == null and !on_visual) self.paintDeskUnderPanes(slots[0..n], area, name_rects[0..nn]);
     // The corners a drag's visual clip cut away show the pane's own surface
     // (T2933); the desk goes there too.
     if (!on_visual) self.paintDragCardCorners(area);
     if (self.hwnd) |hw| resizeTrace("desk-under", hw);
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&moved_band_stamps.under);
     self.syncGlassBackdrops(slots[0..n], area, glass, color_math.isLight(fill));
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&moved_band_stamps.glass);
     if (self.hwnd) |hw| resizeTrace("desk-glass", hw);
     if (self.sidebar) |sb| sb.deskPainted(self.pane_desk.desk_gen);
 }

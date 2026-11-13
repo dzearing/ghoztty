@@ -744,15 +744,50 @@ pub fn cropDeskRegionRgba(
     for (0..h) |row| {
         const sy = srcIndex(ry + (@as(f32, @floatFromInt(row)) + 0.5) * fy, src_h);
         const line = src[sy * src_w ..][0..src_w];
-        for (0..w) |col| {
-            const sx = if (cols) |c| c[col] else srcIndex(rx + (@as(f32, @floatFromInt(col)) + 0.5) * fx, src_w);
-            const p = line[sx];
-            const i = (row * w + col) * 4;
-            out[i] = @intCast((p >> 16) & 0xFF);
-            out[i + 1] = @intCast((p >> 8) & 0xFF);
-            out[i + 2] = @intCast(p & 0xFF);
-            out[i + 3] = 255;
+        const dst = out[row * w * 4 ..][0 .. w * 4];
+        // A whole texel per store (T2946): a glide hands every moved pane a
+        // new slice, and at 4K the widest one's byte-at-a-time crop was
+        // ~0.45 ms of a frame.
+        if (cols) |c| {
+            for (c, 0..) |sx, col| std.mem.writeInt(u32, dst[col * 4 ..][0..4], rgbaOf(line[sx]), .little);
+        } else for (0..w) |col| {
+            const sx = srcIndex(rx + (@as(f32, @floatFromInt(col)) + 0.5) * fx, src_w);
+            std.mem.writeInt(u32, dst[col * 4 ..][0..4], rgbaOf(line[sx]), .little);
         }
+    }
+}
+
+/// A desk pixel (0xAARRGGBB) as the R, G, B, 255 bytes of an RGBA texel, read
+/// as a little-endian u32.
+inline fn rgbaOf(p: u32) u32 {
+    return 0xFF00_0000 | ((p & 0xFF) << 16) | (p & 0xFF00) | ((p >> 16) & 0xFF);
+}
+
+test "T2946: the whole-texel crop writes the bytes the byte-at-a-time one did" {
+    var desk: [37 * 23]u32 = undefined;
+    var prng = std.Random.DefaultPrng.init(2946);
+    for (&desk) |*p| p.* = prng.random().int(u32);
+    // Both column paths: the cached columns, and past the cache's width.
+    inline for (.{ .{ 9, 7 }, .{ 1100, 3 } }) |wh| {
+        const w: usize = wh[0];
+        const h: usize = wh[1];
+        var out: [w * h * 4]u8 = undefined;
+        var want: [w * h * 4]u8 = undefined;
+        cropDeskRegionRgba(&out, w, h, &desk, 37, 23, 3.5, 2.25, 30, 18);
+        const fx: f32 = 30.0 / @as(f32, @floatFromInt(w));
+        const fy: f32 = 18.0 / @as(f32, @floatFromInt(h));
+        for (0..h) |row| {
+            const sy = srcIndex(2.25 + (@as(f32, @floatFromInt(row)) + 0.5) * fy, 23);
+            for (0..w) |col| {
+                const p = desk[sy * 37 + srcIndex(3.5 + (@as(f32, @floatFromInt(col)) + 0.5) * fx, 37)];
+                const i = (row * w + col) * 4;
+                want[i] = @intCast((p >> 16) & 0xFF);
+                want[i + 1] = @intCast((p >> 8) & 0xFF);
+                want[i + 2] = @intCast(p & 0xFF);
+                want[i + 3] = 255;
+            }
+        }
+        try testing.expectEqualSlices(u8, &want, &out);
     }
 }
 

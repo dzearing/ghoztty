@@ -345,7 +345,7 @@ blit_ns: u64 = 0,
 /// window's stack trace to split a slow desk paint with: entered, the canvas
 /// ready, composed (or the memo hit), the names drawn and laid, returned. Zero where the
 /// paint left before that phase.
-last_stamps: struct { enter: i64 = 0, ready: i64 = 0, composed: i64 = 0, named: i64 = 0, done: i64 = 0, hit: bool = false, drawn: i64 = 0 } = .{},
+last_stamps: struct { enter: i64 = 0, ready: i64 = 0, composed: i64 = 0, named: i64 = 0, done: i64 = 0, hit: bool = false, drawn: i64 = 0, area: i64 = 0, rects: u32 = 0 } = .{},
 /// What the partial composes covered, in thousandths of the buffer, summed.
 partial_permille: u64 = 0,
 /// `composePartial`'s buffers, kept between paints: the rectangle being
@@ -1218,6 +1218,9 @@ pub fn paint(
         .rects => |r| self.composePartial(comp, desk, r.slice(), cards, strips, style, bar, prep),
     };
     if (done) self.partial_permille +|= @intCast(@divFloor(partial.rects.area() * 1000, @as(i64, w) * h));
+    // T2946: what this compose covered, for the vacated trace line.
+    self.last_stamps.area = if (done) partial.rects.area() else @as(i64, w) * h;
+    self.last_stamps.rects = if (done) @intCast(partial.rects.len) else 0;
     self.composed_permille +%= if (done) @intCast(@divFloor(partial.rects.area() * 1000, @as(i64, w) * h)) else 1000;
     if (done) self.memo_partial +|= 1 else compose(comp.pixels(), desk.pixels(), @intCast(w), @intCast(h), cards, strips, style, bar, prep);
     _ = w32.QueryPerformanceCounter(&tq_compose);

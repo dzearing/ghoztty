@@ -412,6 +412,7 @@ test {
     _ = @import("win32/drag_hold.zig");
     // The strip face a card fades to as it narrows into its strip (T2288).
     _ = @import("win32/strip_face.zig");
+    _ = @import("win32/backdrop_pool.zig");
     // The shadow each strip casts on the next one out (T2307).
     _ = @import("win32/blade_shadow.zig");
     // One card's drop shadow as its own premultiplied layer, for the

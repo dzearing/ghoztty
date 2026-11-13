@@ -14,6 +14,7 @@ const termio = @import("../../termio.zig");
 const CoreSurface = @import("../../Surface.zig");
 const rendererpkg = @import("../../renderer.zig");
 const desk_palette = @import("desk_palette.zig");
+const backdrop_pool = @import("backdrop_pool.zig");
 const kitty_key_bridge = @import("kitty_key_bridge.zig");
 const pane_elevation = @import("pane_elevation.zig");
 const shadow_layer = @import("shadow_layer.zig");
@@ -6250,7 +6251,9 @@ pub const GlassBackdrop = pane_elevation.GlassBackdrop;
 /// is not up yet - nothing was sent.
 pub fn setPaneBackdrop(self: *Surface, spec: ?GlassBackdrop, desk: ?PaneDesk.Backdrop) bool {
     if (!self.core_surface_ready) return false;
-    const alloc = self.app.core_app.alloc;
+    // Recycled buffers (T2946): a glide sends every moved pane a new slice
+    // each tick, and fresh memory cost ~1.6 us a page in faults on this thread.
+    const alloc = backdrop_pool.allocator();
     const msg: ?rendererpkg.Message.PaneBackdrop = if (spec) |b| blk: {
         const rw = b.rect[2] - b.rect[0];
         const rh = b.rect[3] - b.rect[1];

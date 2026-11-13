@@ -270,6 +270,23 @@ pub const Edges = struct {
         };
     }
 
+    /// Rounded by its leading edges and its size (T2946): the size is the
+    /// drawn size rounded, so a card whose edges move together keeps its
+    /// pixel size on every frame. Rounding each edge on its own turns an
+    /// edge that sits near a half pixel into a size that flips 281 <-> 282
+    /// as the card slides - a WM_SIZE, a viewer's bounds sync (1.5-2.3 ms at
+    /// 4K) and a region cut on a tick that only moved it.
+    pub fn roundSized(e: Edges) PxRect {
+        const l: i32 = @intFromFloat(@round(e.left));
+        const t: i32 = @intFromFloat(@round(e.top));
+        return .{
+            .left = l,
+            .top = t,
+            .right = l + @as(i32, @intFromFloat(@round(e.right - e.left))),
+            .bottom = t + @as(i32, @intFromFloat(@round(e.bottom - e.top))),
+        };
+    }
+
     fn eql(e: Edges, px: PxRect) bool {
         return std.meta.eql(e, of(px));
     }
@@ -638,7 +655,10 @@ pub fn rectOf(c: Card, resize: bool) PxRect {
             .bottom_left => .{ .left = d.left, .top = d.bottom - size.h, .right = d.left + size.w, .bottom = d.bottom },
         };
     }
-    if (resize) return d;
+    // A card that keeps its size across the glide holds it on every frame
+    // (T2946); one that really resizes rounds edge by edge, so its shared
+    // edges stay flush with its neighbours' and no gutter wobbles a pixel.
+    if (resize) return if (c.from.width() == c.to.width() and c.from.height() == c.to.height()) c.drawn.roundSized() else d;
     return .{
         .left = d.left,
         .top = d.top,
@@ -1932,4 +1952,31 @@ test "leadingLag: an edge drag mid-glide moves the target, never the card's edge
     const w2 = sidebar_transition.followWidth(78, 258, s.leadingLag().?);
     try testing.expectEqual(w1, w2);
     try testing.expectEqual(s.placed(1).?.left - 2, w2);
+}
+
+test "rectOf: a drag's glide keeps a card's pixel size while its edges move together (T2946)" {
+    // From 2609+281 to 2198+281: every step eases both edges alike, so the
+    // drawn width stays 281 to within float error - but an edge near a half
+    // pixel rounded on its own made it 282 on some frames (the 4K trace).
+    const before = [_]Placed{.{ .id = 1, .rect = r(2609, 53, 281, 2025), .tucked = false }};
+    const after = [_]Placed{.{ .id = 1, .rect = r(2198, 53, 281, 2025), .tucked = false }};
+    var s = plan(&before, &after, null, glide_ms, true);
+    var frames: usize = 0;
+    while (!s.step(16.7)) : (frames += 1) {
+        const p = rectOf(s.cards[0], true);
+        try testing.expectEqual(@as(i32, 281), p.width());
+        try testing.expectEqual(@as(i32, 2025), p.height());
+        try testing.expect(frames < 200);
+    }
+    // A half-pixel edge, the case per-edge rounding got wrong.
+    const c: Card = .{ .id = 1, .from = r(0, 0, 281, 10), .to = r(10, 0, 281, 10), .drawn = .{ .left = 2226.4999999, .top = 53, .right = 2507.5, .bottom = 63 } };
+    try testing.expectEqual(@as(i32, 281), rectOf(c, true).width());
+    try testing.expectEqual(@as(i32, 282), c.drawn.round().width());
+    // A size that really changes still passes through each width.
+    const g: Card = .{ .id = 1, .from = r(0, 0, 100, 10), .to = r(0, 0, 200, 10), .drawn = .{ .left = 0.4, .top = 0, .right = 150.2, .bottom = 10 } };
+    try testing.expectEqual(@as(i32, 150), rectOf(g, true).width());
+    // ... and its edges round on their own, so the far edge stays flush with
+    // a neighbour whose near edge sits at the same float position.
+    const h: Card = .{ .id = 1, .from = r(0, 0, 100, 10), .to = r(0, 0, 200, 10), .drawn = .{ .left = 0.4, .top = 0, .right = 150.6, .bottom = 10 } };
+    try testing.expectEqual(@as(i32, 151), rectOf(h, true).right);
 }
