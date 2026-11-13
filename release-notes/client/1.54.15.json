@@ -1,0 +1,14 @@
+{
+  "version": "1.54.15",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "A divider drag whose panes keep showing the previous size now says verdict=stale instead of smooth." },
+        { "text": "A fold glide at 120 Hz now misses 7-9 frames of ~987, and the strip face's paint is broken down per phase in the stack trace; what is left of the fold's cost is filed as T2940 and T2941." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "A divider drag's region hold now lasts through the glide it leaves settling, so the panes' shapes are re-cut once when it lands instead of on every settling frame." }
+      ] }
+  ]
+}
