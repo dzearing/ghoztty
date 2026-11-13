@@ -95,6 +95,16 @@ re-creates it, as after a resize, and uploads the atlases again (~1 ms).
   layer (`IOSurfaceLayer.purgeContents`, on the main thread, skipped if a
   newer frame has been presented) — and the surface draws again when shown.
 
+**Hidden is more than the window.** `BaseTerminalController
+.syncOcclusionToSurfaceTree` tells each terminal it is visible only if its
+window is on show, the pane is not stashed, and no other pane is zoomed over
+it (`SurfaceView.setRendererVisible`, which passes on changes only). It runs
+on window occlusion changes and on every tree change, so a pane stashed,
+brought back, moved between windows, or created while the window is covered
+starts out right. A stashed pane stays mounted at full size at zero opacity;
+before this it drew every frame of its output. Viewer panes have no such
+hook: a stashed viewer keeps its watchers and its WebContent process busy.
+
 A blinking cursor (600 ms) or anything that draws more often than every 3 s
 keeps its frames. Metal only — OpenGL re-presents its last target.
 
@@ -103,6 +113,8 @@ bytes, atlas bytes, released). Measured on 21 panes in 10 windows, all idle:
 IOSurface 337 → 143 MB, IOAccelerator 87 → 20 MB.
 
 Tests: `PaneTeardownTests.anIdleTerminalGivesBackItsFramesAndKeepsItsPicture`,
+`anIdleTerminalHiddenAndShownAgainIsDrawn`,
+`aStashedOrZoomedOverTerminalDoesNotDraw`,
 `anOccludedTerminalComesBackShowingItsLastFrame`,
 `occludedTerminalsGiveBackTheirRenderTargets`.
 

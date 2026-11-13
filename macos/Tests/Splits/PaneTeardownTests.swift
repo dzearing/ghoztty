@@ -270,6 +270,78 @@ struct PaneTeardownTests {
         #expect(changed(redrawn, settled) < 0.01, "releasing changed what the terminal shows")
     }
 
+    /// A terminal that went idle and then had its window hidden comes back
+    /// drawn: hiding purges the frame the layer was left holding, and
+    /// showing the terminal again draws a new one.
+    @Test func anIdleTerminalHiddenAndShownAgainIsDrawn() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = "/bin/sh -c 'ls -la /; cat'"
+        let pane = PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config))
+        let controller = TerminalController.newWindow(ghostty, tree: SplitTree<PaneView>(view: pane))
+        defer { controller.close() }
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 700, height: 500))
+        let surface = try #require(pane.surface)
+        await settle(1.5)
+        let shown = try await capture(window)
+        let idle = await poll(timeout: 10) { ghostty_surface_frame_memory(surface).released }
+        try #require(idle, "the terminal never went idle")
+
+        ghostty_surface_set_occlusion(surface, false)
+        await settle(0.5)
+        ghostty_surface_set_occlusion(surface, true)
+        await settle(0.8)
+        let back = try await capture(window)
+        #expect(changed(shown, back) < 0.01, "the terminal came back showing something else")
+    }
+
+    /// A stashed pane is mounted but nobody can see it: it gives back its
+    /// frames at once and draws nothing however much it prints, and draws
+    /// again when it is brought back. A pane hidden behind a zoomed one is
+    /// the same.
+    @Test func aStashedOrZoomedOverTerminalDoesNotDraw() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        let kept = terminalPane(app), other = terminalPane(app)
+        let tree = try SplitTree<PaneView>(view: kept).inserting(view: other, at: kept, direction: .right)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        defer { controller.close() }
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        controller.window?.setContentSize(NSSize(width: 900, height: 500))
+        let surface = try #require(other.surface)
+        let drew = await poll(timeout: 5) { !ghostty_surface_frame_memory(surface).released }
+        try #require(drew, "the pane never drew")
+
+        // Stashed: released well inside the idle time, and output does not
+        // bring the frames back.
+        controller.surfaceTree = try controller.surfaceTree.stashing(other)
+        let hidden = await poll(timeout: 1.5) { ghostty_surface_frame_memory(surface).released }
+        #expect(hidden, "a stashed terminal kept its frames")
+        other.surfaceView?.surfaceModel?.sendText("printed while stashed\r")
+        await settle(1)
+        #expect(ghostty_surface_frame_memory(surface).released, "a stashed terminal drew")
+
+        // Brought back: it draws what it printed.
+        controller.surfaceTree = controller.surfaceTree.restoring(other)
+        let back = await poll(timeout: 5) { !ghostty_surface_frame_memory(surface).released }
+        #expect(back, "a restored terminal did not draw")
+
+        // Zoomed over: the same, and un-zooming draws it again.
+        let keptNode = try #require(controller.surfaceTree.root?.node(view: kept))
+        controller.surfaceTree = controller.surfaceTree.settingZoomed(keptNode)
+        let covered = await poll(timeout: 1.5) { ghostty_surface_frame_memory(surface).released }
+        #expect(covered, "a terminal behind a zoomed pane kept its frames")
+        other.surfaceView?.surfaceModel?.sendText("printed while zoomed over\r")
+        await settle(1)
+        #expect(ghostty_surface_frame_memory(surface).released, "a terminal behind a zoomed pane drew")
+        controller.surfaceTree = controller.surfaceTree.settingZoomed(nil)
+        let uncovered = await poll(timeout: 5) { !ghostty_surface_frame_memory(surface).released }
+        #expect(uncovered, "an un-zoomed terminal did not draw")
+    }
+
     /// This process's physical footprint (what Activity Monitor shows), MB.
     private func footprintMB() -> Double {
         var info = task_vm_info_data_t()

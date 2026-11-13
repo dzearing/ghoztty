@@ -1191,6 +1191,10 @@ class BaseTerminalController: NSWindowController,
         // without touching the first responder or `focusedSurface`.
         publishFocusedPane()
 
+        // A pane stashed, brought back or new to this window draws only if
+        // it can be seen.
+        syncOcclusionToSurfaceTree()
+
         // A collapsed row a pane left (closed, stashed, moved away) stays
         // collapsed: the panes on show take its space.
         paneStackState.rowsDidChange(
@@ -2887,11 +2891,26 @@ class BaseTerminalController: NSWindowController,
     }
 
     func windowDidChangeOcclusionState(_ notification: Notification) {
-        let visible = self.window?.occlusionState.contains(.visible) ?? false
-        for view in surfaceTree {
-            if let surface = view.surface {
-                ghostty_surface_set_occlusion(surface, visible)
-            }
+        syncOcclusionToSurfaceTree()
+    }
+
+    /// Tell each terminal whether anyone can see it: its window is on show,
+    /// the pane is not stashed, and no other pane is zoomed over it. A
+    /// terminal nobody can see stops drawing and gives back its render
+    /// targets (see docs/reference/memory.md) — a stashed pane stays mounted
+    /// at full size at zero opacity, so without this it draws every frame of
+    /// its output into targets no one looks at.
+    ///
+    /// Run on every tree change as well as on occlusion changes, so a pane
+    /// that is stashed or brought back, moved in from another window, or
+    /// created while the window is covered starts out right.
+    func syncOcclusionToSurfaceTree() {
+        let windowVisible = self.window?.occlusionState.contains(.visible) ?? false
+        let stashed = Set(surfaceTree.stashed)
+        let zoomed = surfaceTree.zoomed.map { Set($0.leaves().map(\.id)) }
+        for pane in surfaceTree {
+            let shown = !stashed.contains(pane.id) && (zoomed?.contains(pane.id) ?? true)
+            pane.surfaceView?.setRendererVisible(windowVisible && shown)
         }
     }
 

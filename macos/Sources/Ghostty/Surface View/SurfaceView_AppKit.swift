@@ -279,6 +279,20 @@ extension Ghostty {
         override var surface: ghostty_surface_t? {
             surfaceModel?.unsafeCValue
         }
+        /// What the renderer was last told about whether this terminal can
+        /// be seen (the core starts out visible). See `setRendererVisible`.
+        private var rendererVisible = true
+
+        /// Tell the renderer whether anyone can see this terminal. Hidden, it
+        /// stops drawing and gives back its render targets; shown, it draws
+        /// again. Only a change is passed on, so callers can state the answer
+        /// as often as they like.
+        func setRendererVisible(_ visible: Bool) {
+            guard visible != rendererVisible, let surface else { return }
+            rendererVisible = visible
+            ghostty_surface_set_occlusion(surface, visible)
+        }
+
         /// Current scrollbar state, cached here for persistence across rebuilds
         /// of the SwiftUI view hierarchy, for example when changing splits
         var scrollbar: Ghostty.Action.Scrollbar?
