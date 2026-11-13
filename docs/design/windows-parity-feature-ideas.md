@@ -706,3 +706,11 @@ as the digest that showed them.
 - Mark where the PC slept (a faint "PC asleep 2h 10m" line in the scrollback where the machine slept)
 - A pane waiting on you reaches your phone (a waiting pane on a locked PC shows its question through Windows Phone Link)
 - Paste into a slow remote never drops a character (new angle on the huge-paste idea: a long paste into SSH/serial is paced to what the far end accepts)
+
+## 2026-11-13
+
+- Type before the shell is ready, and lose nothing (keys typed in a new pane's first second are held and delivered to the prompt in order)
+- Bring your Windows Terminal setup with you (first-run import of Windows Terminal profiles: shells, starting folders, colour scheme, font)
+- A link opens in the browser profile it belongs to (new angle on choosing where a link opens: a per-folder rule picks the Edge work or personal profile)
+- Typing stays first in line when the PC is busy (input handling runs ahead of background work while every core is pinned)
+- The first window reuses yesterday's glyphs (the glyph cache for your font size persisted to disk, so the first frame after a restart is sharp at once)
