@@ -487,23 +487,49 @@ const Memo = struct {
         style: pane_elevation.CardStyle,
         bar: ?Bar,
     ) Partial {
-        if (!m.valid or m.w != w or m.h != h or m.desk_gen != desk_gen) return .full;
+        full_why = .none;
+        full_permille = 0;
+        if (!m.valid or m.w != w or m.h != h or m.desk_gen != desk_gen) {
+            full_why = .canvas;
+            return .full;
+        }
         if (!std.meta.eql(m.fill, style.fill) or m.is_light != style.is_light or
-            m.scale != style.scale or m.glass != style.glass) return .full;
+            m.scale != style.scale or m.glass != style.glass)
+        {
+            full_why = .style;
+            return .full;
+        }
         const old = m.cards[0..m.cards_len];
         const old_strips = m.strips[0..m.strips_len];
         // A card or a strip that came or went (T2732): a fold's first glide
         // frame adds the folding card's strip, its last takes the card away.
         // More than one at once is a different grid, and composed whole.
-        const card_extra = Extra.find(pane_elevation.Card, old, cards) orelse return .full;
-        const strip_extra = Extra.find(pane_stack_strip.Band, old_strips, strips) orelse return .full;
+        const card_extra = Extra.find(pane_elevation.Card, old, cards) orelse {
+            full_why = .cards;
+            return .full;
+        };
+        const strip_extra = Extra.find(pane_stack_strip.Band, old_strips, strips) orelse {
+            full_why = .strips;
+            return .full;
+        };
         var out: Rects = .{ .w = w, .h = h };
         const reach = reachPx(style.scale);
         const ri = pane_elevation.radiusPx(style.scale);
         const inner = pane_elevation.edgeInnerPx(style.scale);
+        const scene: Scene = .{
+            .old_cards = old,
+            .new_cards = cards,
+            .old_strips = old_strips,
+            .new_strips = strips,
+            .old_bar = m.bar,
+            .new_bar = bar,
+            .pad = @max(reach, inner),
+            .reach = reach,
+            .glass = style.glass,
+        };
         var ci = card_extra.pairs(old.len, cards.len);
         while (ci.next()) |p| switch (p) {
-            .pair => |ab| if (!std.meta.eql(old[ab[0]], cards[ab[1]])) out.addCard(old[ab[0]], cards[ab[1]], ri, inner, reach),
+            .pair => |ab| if (!std.meta.eql(old[ab[0]], cards[ab[1]])) out.addCard(old[ab[0]], cards[ab[1]], ri, inner, reach, &scene),
             .old => |i| out.addAround(old[i].left, old[i].top, old[i].right, old[i].bottom, reach),
             .new => |i| out.addAround(cards[i].left, cards[i].top, cards[i].right, cards[i].bottom, reach),
         };
@@ -539,7 +565,11 @@ const Memo = struct {
         }
         // Past three quarters of the window, the scratch's two copies cost
         // more than composing in place saves.
-        if (out.area() * 4 > @as(i64, w) * h * 3) return .full;
+        if (out.area() * 4 > @as(i64, w) * h * 3) {
+            full_why = .area;
+            full_permille = @intCast(@min(@divFloor(out.area() * 1000, @as(i64, w) * h), 65535));
+            return .full;
+        }
         return .{ .rects = out };
     }
 
@@ -566,14 +596,24 @@ const Memo = struct {
             if (long.len != short.len + 1) return null;
             var best: usize = 0;
             var best_eq: usize = 0;
+            var best_look: usize = 0;
             for (0..long.len) |k| {
                 var eq: usize = 0;
+                // Then the pairs that only moved (T2941): a fold re-lays the
+                // whole row on the tick a card goes, so no pair is equal, and
+                // pairing a viewer's card with a terminal's makes both whole.
+                var look: usize = 0;
                 for (short, 0..) |s, j| {
-                    if (std.meta.eql(s, long[if (j < k) j else j + 1])) eq += 1;
+                    const l = long[if (j < k) j else j + 1];
+                    if (std.meta.eql(s, l)) eq += 1;
+                    if (T == pane_elevation.Card) {
+                        if (sameLook(s, l)) look += 1;
+                    }
                 }
-                if (k == 0 or eq > best_eq) {
+                if (k == 0 or eq > best_eq or (eq == best_eq and look > best_look)) {
                     best = k;
                     best_eq = eq;
+                    best_look = look;
                 }
             }
             return .{ .side = side, .at = best };
@@ -614,7 +654,9 @@ const Memo = struct {
     /// both times - and two are merged only where their union costs little
     /// more than the pair.
     pub const Rects = struct {
-        const MAX = 24;
+        /// An edge that jumped is kept as up to six rects (T2941), and a fold
+        /// re-lays a row of five cards in one tick.
+        const MAX = 48;
         w: i32,
         h: i32,
         items: [MAX]busy_light.Rect = undefined,
@@ -675,13 +717,18 @@ const Memo = struct {
         /// only such a band round all four, since the shadow lies outside the
         /// card or under its fill. Anything else - a smaller card, a colour, a
         /// head band, a sheet - is the whole card, both places.
-        fn addCard(self: *Rects, a: pane_elevation.Card, b: pane_elevation.Card, ri: i32, inner: i32, reach: i32) void {
+        fn addCard(self: *Rects, a: pane_elevation.Card, b: pane_elevation.Card, ri: i32, inner: i32, reach: i32, scene: ?*const Scene) void {
             var same = a;
             same.left = b.left;
             same.top = b.top;
             same.right = b.right;
             same.bottom = b.bottom;
             same.shadow = b.shadow;
+            // A sheet is only read on glass (`Card.sheet`, T2941): off it, a
+            // pane losing focus thins a sheet nothing draws.
+            if (scene) |sc| if (!sc.glass) {
+                same.sheet = b.sheet;
+            };
             const ok = std.meta.eql(same, b) and big(a.left, a.top, a.right, a.bottom, ri, reach) and
                 big(b.left, b.top, b.right, b.bottom, ri, reach);
             if (!ok) {
@@ -689,7 +736,7 @@ const Memo = struct {
                 self.addAround(b.left, b.top, b.right, b.bottom, reach);
                 return;
             }
-            self.addEdges(.{ a.left, a.top, a.right, a.bottom }, .{ b.left, b.top, b.right, b.bottom }, a.shadow != b.shadow, inner, reach);
+            self.addEdges(.{ a.left, a.top, a.right, a.bottom }, .{ b.left, b.top, b.right, b.bottom }, a.shadow != b.shadow, inner, reach, scene);
         }
 
         /// What a change of card `c`'s glow level changed (T2370): its glow,
@@ -737,7 +784,7 @@ const Memo = struct {
                 self.addAround(tb.left, tb.top, tb.right, tb.bottom, reach);
                 return;
             }
-            self.addEdges(.{ ta.left, ta.top, ta.right, ta.bottom }, .{ tb.left, tb.top, tb.right, tb.bottom }, a.collapse != b.collapse or a.leads != b.leads, inner, reach);
+            self.addEdges(.{ ta.left, ta.top, ta.right, ta.bottom }, .{ tb.left, tb.top, tb.right, tb.bottom }, a.collapse != b.collapse or a.leads != b.leads, inner, reach, null);
         }
 
         /// Big enough that its corners and its shadow's corner patch are the
@@ -751,15 +798,55 @@ const Memo = struct {
         /// moved to `b`'s, or round all four when `all`: each from `inner`
         /// inside the edge (`pane_elevation.edgeInnerPx`) to `reach` outside
         /// it, either place.
-        fn addEdges(self: *Rects, a: [4]i32, b: [4]i32, all: bool, inner: i32, reach: i32) void {
+        fn addEdges(self: *Rects, a: [4]i32, b: [4]i32, all: bool, inner: i32, reach: i32, scene: ?*const Scene) void {
             const l = @min(a[0], b[0]) - reach;
             const t = @min(a[1], b[1]) - reach;
             const rt = @max(a[2], b[2]) + reach;
             const bt = @max(a[3], b[3]) + reach;
-            if (all or a[0] != b[0]) self.add(l, t, @max(a[0], b[0]) + inner, bt);
-            if (all or a[2] != b[2]) self.add(@min(a[2], b[2]) - inner, t, rt, bt);
-            if (all or a[1] != b[1]) self.add(l, t, rt, @max(a[1], b[1]) + inner);
-            if (all or a[3] != b[3]) self.add(l, @min(a[3], b[3]) - inner, rt, bt);
+            const keep = reach + inner;
+            if (all or a[0] != b[0]) self.addBand(true, l, @max(a[0], b[0]) + inner, t, bt, keep, scene);
+            if (all or a[2] != b[2]) self.addBand(true, @min(a[2], b[2]) - inner, rt, t, bt, keep, scene);
+            if (all or a[1] != b[1]) self.addBand(false, t, @max(a[1], b[1]) + inner, l, rt, keep, scene);
+            if (all or a[3] != b[3]) self.addBand(false, @min(a[3], b[3]) - inner, bt, l, rt, keep, scene);
+        }
+
+        /// One edge's band (T2941): `s0`..`s1` across the edge - along x for
+        /// a left or right edge (`across_x`), along y otherwise - and `c0`..`c1`
+        /// along it. A band is everything an edge moving from one end of it to
+        /// the other could change, and that is only near where the edge WAS
+        /// and where it IS (`keep` either side): the span it swept between
+        /// changed only where it is not deep inside a card in both pictures.
+        /// When a pane folds, the row re-lays at once and every card's edges
+        /// jump hundreds of pixels; the swept spans then covered ~97% of a 4K
+        /// desk, and the fold's tick composed it whole (4-5 ms of a 16.7 ms
+        /// frame) to change the bands round the edges.
+        fn addBand(self: *Rects, across_x: bool, s0: i32, s1: i32, c0: i32, c1: i32, keep: i32, scene: ?*const Scene) void {
+            const rect = struct {
+                fn f(ax: bool, a0: i32, a1: i32, b0: i32, b1: i32) busy_light.Rect {
+                    return if (ax)
+                        .{ .left = a0, .right = a1, .top = b0, .bottom = b1 }
+                    else
+                        .{ .left = b0, .right = b1, .top = a0, .bottom = a1 };
+                }
+            }.f;
+            if (scene) |sc| if (s1 - s0 > 2 * keep) {
+                const mid = rect(across_x, s0 + keep, s1 - keep, c0, c1);
+                if (sc.stableCore(mid)) |core| {
+                    const lo = rect(across_x, s0, s0 + keep, c0, c1);
+                    const hi = rect(across_x, s1 - keep, s1, c0, c1);
+                    self.add(lo.left, lo.top, lo.right, lo.bottom);
+                    self.add(hi.left, hi.top, hi.right, hi.bottom);
+                    // What is left of the middle round the core: above and
+                    // below it the middle's full width, beside it its rows.
+                    self.add(mid.left, mid.top, mid.right, core.top);
+                    self.add(mid.left, core.bottom, mid.right, mid.bottom);
+                    self.add(mid.left, core.top, core.left, core.bottom);
+                    self.add(core.right, core.top, mid.right, core.bottom);
+                    return;
+                }
+            };
+            const r = rect(across_x, s0, s1, c0, c1);
+            self.add(r.left, r.top, r.right, r.bottom);
         }
 
         fn unite(a: busy_light.Rect, b: busy_light.Rect) busy_light.Rect {
@@ -771,6 +858,92 @@ const Memo = struct {
             };
         }
     };
+
+    /// Both pictures a partial compose goes between (T2941), for asking
+    /// which pixels of an edge's swept span are the same in each.
+    const Scene = struct {
+        old_cards: []const pane_elevation.Card,
+        new_cards: []const pane_elevation.Card,
+        old_strips: []const pane_stack_strip.Band,
+        new_strips: []const pane_stack_strip.Band,
+        old_bar: ?Bar,
+        new_bar: ?Bar,
+        /// How deep inside a card a pixel is plain card: past its rim, its
+        /// corners, and anything of its own or a neighbour's shadow or glow.
+        pad: i32,
+        reach: i32,
+        glass: bool,
+
+        /// The part of `m` that is the same in both pictures, or null when
+        /// none can be shown to be. Such a pixel lies `pad` inside one card in
+        /// each picture, the two cards look alike (everything but where they
+        /// are), and nothing else - another card, a strip, the bar - reaches
+        /// it in either. A compose then lays the same pixel there twice: the
+        /// desk under it, and the card's fill or sheet over it, depend only on
+        /// the pixel's place and the card's look.
+        fn stableCore(sc: *const Scene, m: busy_light.Rect) ?busy_light.Rect {
+            if (m.right <= m.left or m.bottom <= m.top) return null;
+            const cx = m.left + @divFloor(m.right - m.left, 2);
+            const cy = m.top + @divFloor(m.bottom - m.top, 2);
+            const io = holder(sc.old_cards, cx, cy) orelse return null;
+            const in = holder(sc.new_cards, cx, cy) orelse return null;
+            const a = sc.old_cards[io];
+            const b = sc.new_cards[in];
+            // A sheet is only read on glass (`Card.sheet`).
+            var a_look = a;
+            if (!sc.glass) a_look.sheet = b.sheet;
+            if (!sameLook(a_look, b)) return null;
+            var core = m;
+            shrinkTo(&core, a.left + sc.pad, a.top + sc.pad, a.right - sc.pad, a.bottom - sc.pad);
+            shrinkTo(&core, b.left + sc.pad, b.top + sc.pad, b.right - sc.pad, b.bottom - sc.pad);
+            if (core.right <= core.left or core.bottom <= core.top) return null;
+            for (sc.old_cards, 0..) |c, i| if (i != io and sc.near(core, c.left, c.top, c.right, c.bottom)) return null;
+            for (sc.new_cards, 0..) |c, i| if (i != in and sc.near(core, c.left, c.top, c.right, c.bottom)) return null;
+            for (sc.old_strips) |s| if (sc.near(core, s.tab.left, s.tab.top, s.tab.right, s.tab.bottom)) return null;
+            for (sc.new_strips) |s| if (sc.near(core, s.tab.left, s.tab.top, s.tab.right, s.tab.bottom)) return null;
+            if (sc.old_bar) |br| if (sc.near(core, br.core.left, br.core.top, br.core.right, br.core.bottom)) return null;
+            if (sc.new_bar) |br| if (sc.near(core, br.core.left, br.core.top, br.core.right, br.core.bottom)) return null;
+            return core;
+        }
+
+        /// The one card holding pixel (`x`, `y`); null for none, or for more
+        /// than one, whose overlap is no plain card.
+        fn holder(cards: []const pane_elevation.Card, x: i32, y: i32) ?usize {
+            var found: ?usize = null;
+            for (cards, 0..) |c, i| {
+                if (x < c.left or x >= c.right or y < c.top or y >= c.bottom) continue;
+                if (found != null) return null;
+                found = i;
+            }
+            return found;
+        }
+
+        /// Whether anything laid for an element with rect `l, t, rt, bt` can
+        /// reach `core`.
+        fn near(sc: *const Scene, core: busy_light.Rect, l: i32, t: i32, rt: i32, bt: i32) bool {
+            if (rt <= l or bt <= t) return false;
+            return l - sc.reach < core.right and rt + sc.reach > core.left and
+                t - sc.reach < core.bottom and bt + sc.reach > core.top;
+        }
+
+        fn shrinkTo(r: *busy_light.Rect, l: i32, t: i32, rt: i32, bt: i32) void {
+            r.left = @max(r.left, l);
+            r.top = @max(r.top, t);
+            r.right = @min(r.right, rt);
+            r.bottom = @min(r.bottom, bt);
+        }
+    };
+
+    /// Whether two cards look the same wherever they are (T2941): every field
+    /// but the rect.
+    fn sameLook(a: pane_elevation.Card, b: pane_elevation.Card) bool {
+        var same = a;
+        same.left = b.left;
+        same.top = b.top;
+        same.right = b.right;
+        same.bottom = b.bottom;
+        return std.meta.eql(same, b);
+    }
 
     /// Remember a compose's inputs; one that does not fit leaves the memo
     /// invalid, so an oversized grid composes every time as it always did.
@@ -911,6 +1084,13 @@ fn qpcFreq() i64 {
     return @max(f, 1);
 }
 
+/// Why the last `Memo.dirty` answered `.full` (T2941), for the stack trace:
+/// which input forced a whole compose, and for `.area` how much of the desk
+/// the rects covered, in thousandths.
+pub const FullWhy = enum(u8) { none, canvas, style, cards, strips, area };
+pub var full_why: FullWhy = .none;
+pub var full_permille: u16 = 0;
+
 pub fn paint(
     self: *PaneDesk,
     hdc: w32.HDC,
@@ -1030,6 +1210,7 @@ pub fn paint(
     // their reach is the picture `comp` already holds, so the desk is copied
     // and the cards laid again over just that rectangle. A divider glide moves
     // the two cards beside it, not the whole row.
+    if (fresh) full_why = .canvas;
     const partial = if (!fresh) self.memo.dirty(w, h, self.desk_gen, cards, strips, style, bar) else .full;
     const prep = self.preparedFor(style);
     const done = switch (partial) {
@@ -2284,6 +2465,100 @@ test "T2454: composing only the rectangle that changed paints exactly what a who
     // Nothing composed changed (a light moved, say): no rectangle at all.
     const same = m.dirty(w, h, 1, &base_cards, &base_strips, style, null);
     try testing.expect(same == .rects and same.rects.len == 0);
+}
+
+test "T2941: a fold that re-lays the whole row patches the bands round the edges, the same as a whole compose" {
+    const testing = std.testing;
+    // A 4K row's widths, in a short buffer so the test stays quick.
+    const w = 3000;
+    const h = 320;
+    const desk = try testing.allocator.alloc(u32, w * h);
+    defer testing.allocator.free(desk);
+    for (0..h) |y| for (0..w) |x| {
+        desk[y * w + x] = @as(u32, @intCast(x % 256)) << 16 | @as(u32, @intCast(y % 256)) << 8 | @as(u32, @intCast((x * 3 + y * 7) % 256));
+    };
+    const full = try testing.allocator.alloc(u32, w * h);
+    defer testing.allocator.free(full);
+    const comp = try testing.allocator.alloc(u32, w * h);
+    defer testing.allocator.free(comp);
+    var scratch: std.ArrayListUnmanaged(u32) = .empty;
+    defer scratch.deinit(light_alloc);
+    var scratch_desk: std.ArrayListUnmanaged(u32) = .empty;
+    defer scratch_desk.deinit(light_alloc);
+
+    const page: color_math.Rgb = .{ .r = 240, .g = 240, .b = 236 };
+    const nav: color_math.Rgb = .{ .r = 200, .g = 200, .b = 205 };
+    // terminal | viewer | terminal | terminal | terminal, 15 px gutters.
+    const row = [_]pane_elevation.Card{
+        .{ .left = 10, .top = 10, .right = 580, .bottom = 310 },
+        .{ .left = 595, .top = 10, .right = 1165, .bottom = 310, .fill = page, .head = nav, .head_bottom = 40 },
+        .{ .left = 1180, .top = 10, .right = 1750, .bottom = 310 },
+        .{ .left = 1765, .top = 10, .right = 2335, .bottom = 310 },
+        .{ .left = 2350, .top = 10, .right = 2920, .bottom = 310 },
+    };
+    // The tick the third card folds: it leaves the row, its blade appears at
+    // the far end, and the four left re-lay over the room at once - every
+    // edge jumps, the shape that composed a 4K desk whole.
+    const relaid = [_]pane_elevation.Card{
+        .{ .left = 10, .top = 10, .right = 715, .bottom = 310 },
+        .{ .left = 730, .top = 10, .right = 1435, .bottom = 310, .fill = page, .head = nav, .head_bottom = 40 },
+        .{ .left = 1450, .top = 10, .right = 2155, .bottom = 310 },
+        .{ .left = 2170, .top = 10, .right = 2875, .bottom = 310 },
+    };
+    const rgb: color_math.Rgb = .{ .r = 60, .g = 60, .b = 70 };
+    const blade: pane_stack_strip.Band = .{ .tab = .{ .left = 2885, .top = 10, .right = 2920, .bottom = 310 }, .axis = .horizontal, .rgb = rgb, .leads = false, .collapse = 0.2, .band = false };
+    // And a glass sheet that thins on the card that lost focus: that pair is
+    // not alike, so its span stays whole - still the same picture.
+    var unfocused = relaid;
+    unfocused[3].sheet = .{ .t = 0.15 };
+
+    const Case = struct {
+        name: []const u8,
+        cards1: []const pane_elevation.Card,
+        strips1: []const pane_stack_strip.Band,
+        /// Off glass, at least: patched over well under half the desk.
+        small: bool = true,
+        /// On glass too.
+        small_on_glass: bool = true,
+    };
+    const cases = [_]Case{
+        .{ .name = "fold re-lays the row", .cards1 = &relaid, .strips1 = &.{blade} },
+        // The last card narrowing past its corners is that card whole, both
+        // places; the rest is still bands.
+        .{ .name = "row re-lays, the last card narrows", .cards1 = &[_]pane_elevation.Card{ relaid[0], relaid[1], relaid[2], relaid[3], .{ .left = 2885, .top = 10, .right = 2990, .bottom = 310 } }, .strips1 = &.{}, .small = false, .small_on_glass = false },
+        .{ .name = "a sheet thins as the row re-lays", .cards1 = &unfocused, .strips1 = &.{blade}, .small_on_glass = false },
+    };
+    for ([_]bool{ false, true }) |glass| for ([_]f32{ 1, 1.5 }) |scale| for (cases) |cs| {
+        const glow = [_]pane_elevation.Glow{.{ .card = 0, .level = 1 }};
+        const style: pane_elevation.CardStyle = .{ .fill = .{ .r = 24, .g = 26, .b = 30 }, .is_light = false, .scale = scale, .glass = glass, .glows = &glow };
+        var m: Memo = .{};
+        compose(comp, desk, w, h, &row, &.{}, style, null, null);
+        m.store(w, h, 1, &row, &.{}, style, null, &.{});
+        compose(full, desk, w, h, cs.cards1, cs.strips1, style, null, null);
+        const small = if (glass) cs.small_on_glass else cs.small;
+        const r = switch (m.dirty(w, h, 1, cs.cards1, cs.strips1, style, null)) {
+            // Whole is still the right picture where a pair changed its look.
+            .full => if (small) {
+                std.debug.print("{s} glass={} scale={d}: composed whole ({s}, {d}/1000)\n", .{ cs.name, glass, scale, @tagName(full_why), full_permille });
+                return error.TestExpectedEqual;
+            } else continue,
+            .rects => |r| r,
+        };
+        // Well under half the desk, where the swept spans were nearly all of it.
+        if (small) {
+            if (r.area() * 2 >= @as(i64, w) * h) {
+                std.debug.print("{s} glass={} scale={d}: patched {d} of {d} px\n", .{ cs.name, glass, scale, r.area(), w * h });
+                return error.TestExpectedEqual;
+            }
+        }
+        var prep = pane_elevation.prepare(style);
+        defer prep.deinit();
+        try testing.expect(composeRects(&scratch, &scratch_desk, comp, desk, w, r.slice(), cs.cards1, cs.strips1, style, null, &.{}, w, h, &prep));
+        for (full, comp, 0..) |a, b, i| if (a != b) {
+            std.debug.print("{s} glass={} scale={d}: first difference at ({d},{d}): {x} vs {x}\n", .{ cs.name, glass, scale, i % w, i / w, a, b });
+            return error.TestExpectedEqual;
+        };
+    };
 }
 
 test "T2732: a card or strip that comes or goes is composed over its own reach, the same as a whole compose" {

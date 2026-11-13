@@ -1,17 +1,17 @@
 {
     "guard":  "stack-fold-slide",
     "script":  "test/win32/stack-fold-slide.ps1",
-    "generated":  "2026-11-12T21:10:30-08:00",
-    "commit":  "fefc87cee",
+    "generated":  "2026-11-12T22:36:56-08:00",
+    "commit":  "048ef8f36",
     "uncommitted":  [
-
+                        "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/apprt/win32/pane_stack_slide.zig":  "5fb46dfc76f9c77ad6a41d02f9c1611487df8eccf3678f405e5b57e1d7d356b2",
                   "src/apprt/win32/stack_drag.zig":  "11184594f13f671148007dd1f454382d7ce449b0affaad37effcdbbe70e330b2",
                   "src/apprt/win32/strip_face.zig":  "050126f4ccd37da72bfd7d500d2bb21ce237db880e744a5b0dedaec38583da99",
                   "src/apprt/win32/StripFace.zig":  "157c1c5a62f6afa883064c8859c4b77f91d11e38400778f40d216805b60f24a7",
-                  "src/apprt/win32/Window.zig":  "8ed416c917e3e7062dcc6bb6386019583398b3278514be81c113e1dee33ff6cd",
+                  "src/apprt/win32/Window.zig":  "15cb099c7a3455919df88c8be99729a641133e84b43cb1372f200700a0a300ca",
                   "test/win32/stack-fold-slide.ps1":  "eff6b90c64d01a1873d15ce48b2f8ab0c4d13a3770f1df40595675db8f991d4f"
               }
 }

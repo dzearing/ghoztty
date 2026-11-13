@@ -13418,11 +13418,12 @@ fn clearVacatedPaneStrips(self: *Window, hwnd: w32.HWND, old: []const w32.RECT) 
                     return if (t == 0) 0 else t - t0;
                 }
             }.f;
-            stackTrace("stack trace vacated in={d} dc={d} desk_in={d} ready={d} composed={d} iters={d} extent={d} textout={d} misses={d} drawn={d} named={d} desk_out={d} bands_desk={d} headers={d} out={d} hit={}", .{
+            stackTrace("stack trace vacated in={d} dc={d} desk_in={d} ready={d} composed={d} iters={d} extent={d} textout={d} misses={d} drawn={d} named={d} desk_out={d} bands_desk={d} headers={d} out={d} hit={} why={s} cover={d}", .{
                 t_in,                 at(t_in, t_dc),    at(t_in, s.enter),  at(t_in, s.ready),
                 at(t_in, s.composed), label_cost.iters,  label_cost.extent,  label_cost.out,
                 label_cost.misses,    at(t_in, s.drawn), at(t_in, s.named),  at(t_in, s.done),
                 at(t_in, b.desk),     at(t_in, b.headers), at(t_in, t_out), s.hit,
+                @tagName(PaneDesk.full_why), PaneDesk.full_permille,
             });
         }
         lap.report("vacated");
