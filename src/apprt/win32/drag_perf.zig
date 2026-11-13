@@ -326,15 +326,70 @@ pub const Stats = struct {
         return std.time.us_per_s / mean;
     }
 
+    /// How many stale presents this drag can absorb before it stops reading
+    /// smooth: `staleTolerance` below, applied to `stale_total`.
+    pub fn staleTolerance(self: Stats) u64 {
+        return @max(stale_tolerated_min, self.ticks / stale_ticks_per_tolerated);
+    }
+
     /// The verdict a harness can assert on. `smooth` means the average tick
-    /// fits in a frame; `steppy` means the drag is visibly behind the mouse.
+    /// fits in a frame AND the panes kept up with it; `steppy` means the drag
+    /// is visibly behind the mouse; `stale` means the ticks were on time but
+    /// panes showed the previous size more often than `staleTolerance` allows
+    /// (T1480) - the blink T1476 was filed for, which tick timing alone calls
+    /// clean. Timing wins when both are true: a drag behind the mouse is the
+    /// larger defect, and the `stale=` count on the same line still says the
+    /// rest.
     pub fn verdict(self: Stats) Verdict {
         if (self.ticks == 0) return .no_data;
-        return if (self.meanUs() <= frame_budget_us) .smooth else .steppy;
+        if (self.meanUs() > frame_budget_us) return .steppy;
+        if (self.stale_total > self.staleTolerance()) return .stale;
+        return .smooth;
     }
 };
 
-pub const Verdict = enum { no_data, smooth, steppy };
+/// The stale-present threshold (T1480). A stale present is one pane showing
+/// the previous size for one frame. One in a drag is a blink the user may
+/// never see; five in a 40-tick drag was the original T1476 complaint. So a
+/// drag tolerates one stale present per `stale_ticks_per_tolerated` ticks,
+/// and never fewer than `stale_tolerated_min` - which puts a 40-tick drag's
+/// line at two: three stale presents read `stale`, two still read `smooth`.
+pub const stale_ticks_per_tolerated: u64 = 20;
+pub const stale_tolerated_min: u64 = 1;
+
+pub const Verdict = enum { no_data, smooth, steppy, stale };
+
+test "stale presents past the tolerance turn a smooth drag stale (T1480)" {
+    // A 40-tick drag whose every tick fits the frame budget.
+    var st: Stats = .{};
+    for (0..40) |_| st.record(.{ .tick_us = 4_000, .panes = 2, .waits = 1, .resizes = 2 });
+    try testing.expectEqual(@as(u64, 2), st.staleTolerance());
+    try testing.expectEqual(Verdict.smooth, st.verdict());
+
+    // At the line: still smooth.
+    st.stale_total = 2;
+    try testing.expectEqual(Verdict.smooth, st.verdict());
+    // One past it: the blink is reported, not called clean.
+    st.stale_total = 3;
+    try testing.expectEqual(Verdict.stale, st.verdict());
+    // The original T1476 complaint.
+    st.stale_total = 5;
+    try testing.expectEqual(Verdict.stale, st.verdict());
+
+    // A short drag still tolerates one, and no more.
+    var short: Stats = .{};
+    for (0..8) |_| short.record(.{ .tick_us = 4_000, .panes = 2, .stale = 0 });
+    try testing.expectEqual(@as(u64, 1), short.staleTolerance());
+    short.record(.{ .tick_us = 4_000, .panes = 2, .stale = 1 });
+    try testing.expectEqual(Verdict.smooth, short.verdict());
+    short.record(.{ .tick_us = 4_000, .panes = 2, .stale = 1 });
+    try testing.expectEqual(Verdict.stale, short.verdict());
+
+    // Timing wins when both are true: behind the mouse is the larger defect.
+    var slow: Stats = .{};
+    slow.record(.{ .tick_us = 30_000, .panes = 2, .stale = 5 });
+    try testing.expectEqual(Verdict.steppy, slow.verdict());
+}
 
 test "a discrete relayout's wait outlasts a full present lag plus a frame (T2738)" {
     // The motion budget leaves a lagged present no time to draw in; the

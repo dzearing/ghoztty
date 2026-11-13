@@ -8254,8 +8254,10 @@ pub fn layoutSplitsLive(self: *Window) void {
 }
 
 /// What the drag that just ended cost, in one line a harness can parse and a
-/// human can read (T1343). Emitted at `info` when the average tick missed the
-/// frame budget, because that is the state the user called "janky".
+/// human can read (T1343). `verdict=` is `drag_perf.Stats.verdict()`, which
+/// owns the thresholds: `steppy` for ticks that missed the frame budget (the
+/// state the user called "janky"), `stale` for panes that showed the previous
+/// size past the stale-present tolerance (T1480).
 fn reportDragCost(self: *Window, comptime what: []const u8) void {
     const st = self.drag_stats;
     defer self.drag_stats.reset();
