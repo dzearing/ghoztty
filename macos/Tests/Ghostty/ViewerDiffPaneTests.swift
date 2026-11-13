@@ -490,7 +490,16 @@ struct ViewerDiffPaneTests {
     @Test func theWorkingTreeDiffRefreshesItself() async throws {
         let repo = try makeRepo()
         let (window, viewer) = makeViewer(location: "git-status:", repo: repo)
-        defer { window.contentView?.subviews.forEach { $0.removeFromSuperview() } }
+        defer {
+            window.contentView?.subviews.forEach { $0.removeFromSuperview() }
+            window.orderOut(nil)
+        }
+        // The poll runs only while someone can see the pane, so this one
+        // window is put on screen (the others in this suite never are).
+        window.orderFront(nil)
+        try #require(
+            await wait { window.occlusionState.contains(.visible) },
+            "the window is not on show (a locked screen occludes every window)")
 
         #expect(await wait { viewer.diffFiles.count >= 3 })
         #expect(!viewer.diffFiles.contains { $0.path == "fresh.txt" })

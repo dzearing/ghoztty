@@ -172,10 +172,7 @@ extension Ghostty {
             if handleVisible {
                 PaneGrabHandle(
                     pane: pane,
-                    pointerInBand: Self.pointerInBand(
-                        pointerOverBanner: surfaceView.pointerOverBanner,
-                        mouseLocation: surfaceView.mouseLocationInSurface,
-                        surfaceBounds: surfaceView.bounds),
+                    pointerInBand: surfaceView.pointerOverBanner || surfaceView.pointerInTopBand,
                     cursorVisible: surfaceView.cursorVisible)
             }
         }

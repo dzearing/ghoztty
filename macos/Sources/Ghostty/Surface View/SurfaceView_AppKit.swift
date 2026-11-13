@@ -82,9 +82,22 @@ extension Ghostty {
         // Whether the mouse is currently over this surface
         @Published private(set) var mouseOverSurface: Bool = false
 
-        // The last known mouse location in the surface's local coordinate space,
-        // used by overlays such as the split drag handle reveal region.
-        @Published private(set) var mouseLocationInSurface: CGPoint?
+        // The last known mouse location in the surface's local coordinate
+        // space. Not published: it changes on every mouse move, and everything
+        // observing the surface (the pane's whole SwiftUI tree, its sidebar
+        // row) re-rendered each time for the one fact below.
+        private(set) var mouseLocationInSurface: CGPoint? {
+            didSet {
+                let inBand = mouseLocationInSurface.map {
+                    PaneGrabHandle.isInHoverRegion($0, in: bounds)
+                } ?? false
+                if inBand != pointerInTopBand { pointerInTopBand = inBand }
+            }
+        }
+
+        // Whether the pointer is in the band at the top of the surface where
+        // the grab handle reveals itself. Published on change only.
+        @Published private(set) var pointerInTopBand: Bool = false
 
         // Whether the pointer is over this pane's sticky banner. The terminal
         // is inset BELOW the banner, so a pointer on the banner has left this

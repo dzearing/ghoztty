@@ -384,3 +384,16 @@ ghoztty +close --target=doc
   would put Ghoztty in the Open With menu for every screenshot on the machine,
   which is a system-wide claim about what this app IS rather than a
   consequence of being able to display one.
+
+## A dead content process
+
+WebKit kills a page's content process under memory pressure, and a page can
+run one into the ground. `webViewWebContentProcessDidTerminate` loads the
+pane's content again, at most `contentProcessRestartLimit` (3) times in
+`contentProcessRestartWindow` (60 s) so a page that kills its process on every
+load does not respawn one forever. Before this the pane stayed blank with
+`pageLoaded` still true, and every later render went to a dead page. Test:
+`ViewerContentProcessTests` (WebKit never calls the completion of an
+evaluation whose process dies under it — bound any `evaluateJavaScript` a
+test awaits across a kill).
+

@@ -203,6 +203,15 @@ Cross-machine session *move* (browse another machine's live sessions from the
 Cmd-Shift-N chooser and resume them locally over the relay) is **scoped but not
 yet built** — see tasks T16–T18 in `docs/design/session-persistence-tasks.json`.
 
+## The agent's accept loop does not exit on a passing error
+
+`acceptLoop` (`src/remote/agent/main.zig`) ends the process if it returns, and
+every session with it. It retries at once on a connection that died in the
+backlog, and after 100 ms on running out of file descriptors or kernel memory
+(`acceptRetryDelayMs`); only an error that says the socket is no longer a
+listening socket ends it. The agent does not raise its own descriptor limit:
+child shells would inherit it.
+
 ## The layout manifest: syncing and writing
 
 `SessionLayoutManifest` (`session-layout.json` in Application Support) holds
