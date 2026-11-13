@@ -100,6 +100,10 @@ test {
     // tree. Every lane.
     _ = @import("win32/close_undo.zig");
 
+    // Pure win32 open-dialog registry (T2938): which modal dialogs sit over a
+    // window, so `+close` can refuse and `+close --force` can dismiss them.
+    _ = @import("win32/open_dialogs.zig");
+
     // Pure win32 `+rearrange` undo (T2234): which tree an undo puts back, and
     // the by-identity layout a redo rebuilds. Every lane.
     _ = @import("win32/layout_undo.zig");

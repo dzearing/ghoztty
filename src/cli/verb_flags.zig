@@ -239,7 +239,7 @@ pub const Checker = struct {
 
 pub const close: Spec = .{
     .verb = "+close",
-    .flags = &.{"target="},
+    .flags = &.{ "target=", "force" },
 };
 
 pub const rename: Spec = .{
@@ -355,6 +355,9 @@ test "checkFlag: an accepted flag in its own shape passes" {
     try testing.expect(checkFlag(split, "--target=dev") == null);
     try testing.expect(checkFlag(split, "--from-focused") == null);
     try testing.expect(checkFlag(close, "--target=dev") == null);
+    // T2938: `--force` is a switch, so a value is the shape error.
+    try testing.expect(checkFlag(close, "--force") == null);
+    try testing.expectEqual(Problem.Kind.value_not_allowed, checkFlag(close, "--force=1").?.kind);
 
     // An `=` inside the value is still the value (`--env=A=1`).
     try testing.expect(checkFlag(new_window, "--env=A=1") == null);
@@ -593,7 +596,7 @@ test "specs: flag entries are well formed and fit the suggestion buffer" {
 test "specs: the switches are exactly the server's whole-argument flags" {
     // `focus` is the one switch the server also reads with `=true|false`
     // (see `bool_switches`); its bare spelling is still a whole-argument match.
-    const switches = [_][]const u8{ "no-activate", "focus", "from-focused", "cwd-implicit", "config", "clear" };
+    const switches = [_][]const u8{ "no-activate", "focus", "from-focused", "cwd-implicit", "config", "clear", "force" };
     for (all_specs) |spec| {
         for (spec.flags) |entry| {
             const is_switch = !std.mem.endsWith(u8, entry, "=");

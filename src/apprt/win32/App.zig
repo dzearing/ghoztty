@@ -207,6 +207,11 @@ const WM_APP_ORPHAN_ROSTER: u32 = w32.WM_APP + 33;
 /// next-runloop-turn close does. (+34..+41 are taken, see above and Window.)
 const WM_APP_QUIET_CLOSE: u32 = w32.WM_APP + 42;
 
+/// Posted to `msg_hwnd` by `forceCloseDeferred` (T2938): run the `+close
+/// --force` closes that had to wait for the dialogs they dismissed to unwind.
+/// (+43 is FrameClock's, +44 QuickTerminalSlider's.)
+const WM_APP_FORCE_CLOSE: u32 = w32.WM_APP + 45;
+
 /// Ceiling on agent restarts spent chasing the bundled build in one app run
 /// (T147). Two: one for the ordinary "the binary was swapped under us" case,
 /// one spare for a restart that raced something, and no third because a third
@@ -529,6 +534,13 @@ hover_held: bool = false,
 /// `WM_APP_QUIET_CLOSE`. Windows are compared against `windows` before use.
 quiet_closes: [@import("pane_sidebar.zig").max_heads]QuietClose = undefined,
 quiet_close_count: usize = 0,
+
+/// `+close --force` targets waiting for `WM_APP_FORCE_CLOSE` (T2938): their
+/// window had a dialog up, which the force dismissed, and the close runs once
+/// that dialog's modal loop has unwound. Pointers are re-checked, never
+/// dereferenced, before use.
+force_closes: [8]ForceClose = undefined,
+force_close_count: usize = 0,
 
 /// The HINSTANCE for this module.
 hinstance: w32.HINSTANCE,
@@ -1307,6 +1319,63 @@ pub fn closeTabsQuietly(self: *App, targets: []const QuietClose) void {
     if (!was_empty or n == 0) return;
     const msg = self.msg_hwnd orelse return self.performQuietCloses();
     _ = w32.PostMessageW(msg, WM_APP_QUIET_CLOSE, 0, 0);
+}
+
+pub const ForceClose = struct {
+    window: *Window,
+    /// Null for a window target.
+    pane: ?*PaneView,
+};
+
+/// Run `target`'s `+close --force` on the next loop turn (T2938). Used only
+/// when the force had to dismiss a dialog over the window: that dialog's modal
+/// loop is still on the stack below this IPC dispatch, and tearing the window
+/// down from inside it would free what its caller is about to return to. The
+/// posted message is handled only after that loop has seen its answer and
+/// unwound. False when the queue is full (the caller then fails the request).
+pub fn forceCloseDeferred(self: *App, target: ForceClose) bool {
+    if (self.force_close_count == self.force_closes.len) return false;
+    self.force_closes[self.force_close_count] = target;
+    self.force_close_count += 1;
+    if (self.force_close_count > 1) return true; // already posted
+    const msg = self.msg_hwnd orelse {
+        self.performForceCloses();
+        return true;
+    };
+    _ = w32.PostMessageW(msg, WM_APP_FORCE_CLOSE, 0, 0);
+    return true;
+}
+
+fn performForceCloses(self: *App) void {
+    const n = self.force_close_count;
+    var batch: [8]ForceClose = undefined;
+    @memcpy(batch[0..n], self.force_closes[0..n]);
+    self.force_close_count = 0;
+    var waiting = false;
+    for (batch[0..n]) |c| {
+        // Asked again: an earlier close may have taken the window, or the
+        // pane, already.
+        if (!self.hasWindow(c.window) or c.window.closing) continue;
+        // The dismissed dialog is still unwinding: the message was dispatched
+        // by ANOTHER window's dialog nested inside it. Try again shortly.
+        if (c.window.hwnd) |h| if (ConfirmDialog.openOver(h) > 0) {
+            self.force_closes[self.force_close_count] = c;
+            self.force_close_count += 1;
+            waiting = true;
+            continue;
+        };
+        if (c.pane) |pane| {
+            if (c.window.findTabIndex(pane) == null) continue;
+            log.info("IPC: +close --force (deferred past a dismissed dialog): pane", .{});
+            c.window.forceCloseSplitPane(pane);
+        } else {
+            log.info("IPC: +close --force (deferred past a dismissed dialog): window", .{});
+            c.window.forceClose();
+        }
+    }
+    if (waiting) if (self.msg_hwnd) |msg| {
+        _ = w32.SetTimer(msg, msg_timer.force_close_retry, 50, null);
+    };
 }
 
 fn performQuietCloses(self: *App) void {
@@ -13788,6 +13857,10 @@ fn msgWndProc(
         app.performQuietCloses();
         return 0;
     }
+    if (msg == WM_APP_FORCE_CLOSE) {
+        app.performForceCloses();
+        return 0;
+    }
 
     if (msg == WM_APP_REAP_SURFACE) {
         // wparam = the closed pane's HWND, already unhooked from its Surface.
@@ -14152,6 +14225,12 @@ fn msgWndProc(
     // A parked close's `undo-timeout` ran out (T1825): end it for good.
     if (msg == w32.WM_TIMER and wparam == CloseUndo.TIMER_ID) {
         app.close_undo.onTimer();
+        return 0;
+    }
+
+    if (msg == w32.WM_TIMER and wparam == msg_timer.force_close_retry) {
+        _ = w32.KillTimer(hwnd, msg_timer.force_close_retry);
+        app.performForceCloses();
         return 0;
     }
 

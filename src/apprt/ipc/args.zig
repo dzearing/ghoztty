@@ -72,6 +72,11 @@ pub const VerbArgs = struct {
     /// keyboard "New Window"/split action on the focused window so the new
     /// frame inherits its remote host (T68, Mac §WP4 parity).
     from_focused: bool = false,
+    /// `+close --force` (T2938, Mac 4b558ab8f): close with no confirmation
+    /// and no undo window - a confirmation already up over the target's
+    /// window is dismissed, every pane's session ENDS and its core is freed
+    /// at once. An older server ignores it (a plain close).
+    force: bool = false,
     /// `--caller-pane=<id>` (T1079): the pane the command was invoked FROM,
     /// forwarded from `$GHOZTTY_PANE_ID` by `apprt.ipc.seedCallerPane`. A
     /// DEFAULT anchor only — see `callerAnchorPane` below for the whole rule.
@@ -110,6 +115,8 @@ pub fn parseVerbArgs(
             result.cwd_implicit = true;
         } else if (std.mem.eql(u8, arg, "--config")) {
             result.config = true;
+        } else if (std.mem.eql(u8, arg, "--force")) {
+            result.force = true;
         } else if (dropPrefix(arg, "--working-directory=")) |v| {
             result.working_directory = v;
         } else if (dropPrefix(arg, "--command=")) |v| {
@@ -1108,6 +1115,9 @@ test "parseVerbArgs: --focus opts in; background is the default" {
 
     // A no-op cannot override an explicit request, in either order.
     try testing.expect((try parseVerbArgs(a, &[_][]const u8{ "--focus", "--no-activate" })).focus);
+    // T2938: `+close --force` is a switch; absent means a plain close.
+    try testing.expect((try parseVerbArgs(a, &[_][]const u8{ "--target=x", "--force" })).force);
+    try testing.expect(!(try parseVerbArgs(a, &[_][]const u8{"--target=x"})).force);
     try testing.expect((try parseVerbArgs(a, &[_][]const u8{ "--no-activate", "--focus" })).focus);
 
     // After `-e` everything is the command being run.

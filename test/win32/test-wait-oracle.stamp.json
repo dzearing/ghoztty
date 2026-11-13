@@ -1,17 +1,18 @@
 {
     "guard":  "test-wait-oracle",
     "script":  "test/win32/test-wait-oracle.ps1",
-    "generated":  "2026-11-10T02:09:28-08:00",
-    "commit":  "dc29c703c",
+    "generated":  "2026-11-12T22:45:25-08:00",
+    "commit":  "048ef8f36",
     "uncommitted":  [
-                        "src/cli/list.zig"
+                        "src/cli/close.zig",
+                        "src/cli/verb_flags.zig"
                     ],
     "files":  {
                   "src/cli/action.zig":  "dedb0dfe145e8d39dfb53af30225e6c8a170a02e1d79a9c224de1779f0efb654",
                   "src/cli/agent_setup.zig":  "92b5628b4538055bfd3ae1765632ccfda5a670a71bef1742597ac4b6b6ee9c1b",
                   "src/cli/args.zig":  "76cc8b648aa605674b588665c9a45b2b1f489027e5945ab41aa411f88b13cb8c",
                   "src/cli/boo.zig":  "6c202d7e2fa8f0f42dbfc1e9b200a500ab7fa1d66418757ef3cc96317f1294a3",
-                  "src/cli/close.zig":  "5bddac491f1aa7a60b7b8f934914fb1df8e903f77fbea1401cbf6fd3006701a2",
+                  "src/cli/close.zig":  "bee3f9f9c91df726676f24a8be2279a2dd9f7704ae51664041c33f3e3b5016cc",
                   "src/cli/com_shim.zig":  "7c582f13252b1267effa949eb48e92bb6088a2d8403991b972cb5660c0c496ed",
                   "src/cli/CommaSplitter.zig":  "656dc9562dd81cb638234082c53b1b3b709153ab47271648321bdf6e1f861891",
                   "src/cli/crash_report.zig":  "26e7efaaab1276009ff47d6e42a842f2743443ccb6e74390fe0f905f3e3689c5",
@@ -47,7 +48,7 @@
                   "src/cli/stdio.zig":  "8069587b67bc632e80b562c741c9b426de224b3e135c965a22546077a482e7e3",
                   "src/cli/tui.zig":  "21a3e0dd4ea549586350837e1ea35073de0c8dcc9008d1f5fb4b8afe8591e6f8",
                   "src/cli/validate_config.zig":  "9bc2710f4ba08b2aec3eee4a3a636266e8eb60bf2a91aad86f9c666f3d8561bf",
-                  "src/cli/verb_flags.zig":  "bda869e6c325347ca64c0ce8008cde3054c1f9821be670e377d48670c6ac46a1",
+                  "src/cli/verb_flags.zig":  "c69bc8244c20ef85e5251f960267614d577a1391609ee20bbbcbdc1365703dcc",
                   "src/cli/version.zig":  "6b2bc632a3f4096373189da3b0ca71103dac63ceaeb15d24cb3b9eafe2693303",
                   "src/cli/view_arg.zig":  "e743f118fc97e7c676b7fc40e2448b0285439e956a8131bdb03bc5faa0697cbf",
                   "src/remote/agent/pty_child.zig":  "2318511e2383b4c38811c7dc43c2f55dda4ee491a1ca6fa171102ada353ed01b",

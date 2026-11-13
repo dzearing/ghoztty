@@ -4558,6 +4558,33 @@ pub fn closeSplitPane(self: *Window, pane: *PaneView) void {
     self.closeSplitPaneOpts(pane, .{});
 }
 
+/// `+close --force` on a pane (T2938, Mac `forceCloseSurface`): no undo. The
+/// pane is not parked, so its session is marked to END and its core is freed
+/// with the tree rather than when an undo would expire. The window's last pane
+/// takes its window with it, unparked the same way. The caller has already
+/// dismissed any dialog over this window (`ConfirmDialog.dismissOver`) and let
+/// it unwind. May free `pane`, and the window, before returning.
+pub fn forceCloseSplitPane(self: *Window, pane: *PaneView) void {
+    const undo = &self.app.close_undo;
+    const was = undo.bypass;
+    undo.bypass = true;
+    defer undo.bypass = was;
+    self.closeSplitPane(pane);
+}
+
+/// `+close --force` on a window (T2938, Mac `forceCloseWindow`): every tab
+/// closes with no undo - the window is not parked, and closes already parked
+/// inside it end now - so every session ENDS and every core is freed at once.
+pub fn forceClose(self: *Window) void {
+    if (self.closing) return;
+    const undo = &self.app.close_undo;
+    const was = undo.bypass;
+    undo.bypass = true;
+    defer undo.bypass = was;
+    if (self.parked_for_undo) undo.forgetParkedWindow(self);
+    self.closeNow();
+}
+
 pub const CloseSplitOpts = struct {
     /// The sidebar's close (T2298): closing a pane that is not the tab's
     /// focused one leaves the focus where it is, rather than handing it to

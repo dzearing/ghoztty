@@ -199,8 +199,28 @@ killed once the close's undo window expires) — same as closing the pane in the
 GUI. Only an app quit keeps sessions alive for re-attach.
 
 ```
-ghoztty +close --target=<name>
+ghoztty +close --target=<name> [--force]
 ```
+
+**A close that would land under an unanswered dialog fails** (T2938, Mac
+4b558ab8f). If the target's window has a confirmation up — the "Processes are
+still running in this window. Close anyway?" a title-bar X raised, or any other
+`ConfirmDialog` owned by that window — plain `+close` closes nothing and exits
+non-zero with `'<name>' is waiting on a close confirmation in its window ...`.
+Nothing on the IPC path can answer that dialog, and before this the close went
+ahead underneath it and answered success. On win32 the check is the open-dialog
+registry (`open_dialogs.zig`, read through `ConfirmDialog.openOver`) — the
+counterpart of the Mac's `attachedSheet`.
+
+**`--force`** is the unattended close: it answers any such dialog with its
+dismissive button (Cancel, so the user's own pending close does NOT proceed),
+skips the undo window (`CloseUndo.bypass`: nothing is parked), marks every
+pane's agent session to END, and frees each pane's core at once — the process
+exits now and a window's HWND is destroyed rather than hidden. When a dialog
+had to be dismissed, the close itself runs on the next loop turn
+(`App.forceCloseDeferred`), because that dialog's modal loop is still on the
+stack below the IPC dispatch; the reply is success either way. An older app
+ignores the flag (plain close). Acceptance: `test\win32\close-force.ps1`.
 
 ### `ghoztty +rearrange`
 

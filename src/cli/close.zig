@@ -64,6 +64,11 @@ pub const Options = struct {
 ///     Required. The target must have been created with
 ///     `+new-window --target=<name>` or `+split --name=<name>`.
 ///
+///   * `--force`: Close with no confirmation and no undo window: any
+///     "Close Terminal?" confirmation up on the window is dismissed, and
+///     the pane's process (and its persistent session) ends at once.
+///     Without it, a close left waiting on a confirmation fails and says so.
+///
 /// Any other argument starting with `--` is an error, so a misspelled
 /// flag is rejected instead of being dropped by the server.
 ///

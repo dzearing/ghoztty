@@ -119,6 +119,10 @@ pub const paced_restore: usize = 28;
 /// Icon cleanup for the "closed unexpectedly and reopened" balloon (T2862).
 pub const notif_crash_reopened: usize = 29;
 
+/// One-shot retry of a deferred `+close --force` (T2938) whose window still had
+/// a dialog's modal loop on the stack when the posted close came round.
+pub const force_close_retry: usize = 30;
+
 // Fail the build if two ids above are equal. Every `pub const … : usize` in
 // this file is a timer id and is compared against every other one, so a new
 // entry is covered by adding it — there is no second list to keep in step.

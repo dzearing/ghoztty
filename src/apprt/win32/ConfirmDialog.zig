@@ -29,6 +29,7 @@ const system_colors = @import("system_colors.zig");
 const release_notes = @import("release_notes.zig");
 const whats_new_layout = @import("whats_new_layout.zig");
 const WhatsNewNotesView = @import("WhatsNewNotesView.zig");
+const open_dialogs = @import("open_dialogs.zig");
 
 const log = std.log.scoped(.win32);
 
@@ -179,6 +180,37 @@ fn pal(self: *const ConfirmDialog) panel_theme.Panel {
 /// Keyed on the color they were made for: a GDI brush is immutable, so a theme
 /// flip has to mean a new object rather than a handle stuck on the old palette.
 var class_registered: bool = false;
+
+/// Every dialog whose modal loop is running right now, innermost on top
+/// (T2938). GUI thread only, like the dialogs themselves.
+var open_stack: open_dialogs.Stack = .{};
+
+fn rootOf(owner: usize) usize {
+    const h: w32.HWND = @ptrFromInt(owner);
+    const root = w32.GetAncestor(h, w32.GA_ROOT) orelse return owner;
+    return @intFromPtr(root);
+}
+
+/// How many dialogs are open over the top-level window `window` - the win32
+/// `attachedSheet` (T2938). A `+close` of that window, or of a pane in it,
+/// would be closing it out from under a question the user has not answered.
+pub fn openOver(window: w32.HWND) usize {
+    return open_stack.countOver(@intFromPtr(window), rootOf);
+}
+
+/// Answer every dialog open over `window` with its dismissive result (Cancel,
+/// or OK for an OK-only notice) - `+close --force`. Each modal loop sees the
+/// answer and unwinds when control returns to it, so the caller must not tear
+/// the window down until then (see `App.forceCloseDeferred`). Returns how many.
+pub fn dismissOver(window: w32.HWND) usize {
+    return open_stack.dismissOver(@intFromPtr(window), rootOf);
+}
+
+fn dismissFromRegistry(ctx: *anyopaque) void {
+    const self: *ConfirmDialog = @ptrCast(@alignCast(ctx));
+    // The Escape answer: Cancel, or "ok" for an OK-only notice (MB_OK parity).
+    self.finish(if (self.cancel_btn == null) .ok else .cancel);
+}
 var bg_brush: brush_cache.CachedBrush = .{};
 var field_brush: brush_cache.CachedBrush = .{};
 
@@ -1076,7 +1108,14 @@ fn run(
         _ = w32.SetFocus(self.defaultButton());
     }
 
+    var registered: open_dialogs.Node = .{
+        .owner = if (owner) |o| @intFromPtr(o) else 0,
+        .ctx = &self,
+        .dismiss = dismissFromRegistry,
+    };
+    open_stack.push(&registered);
     self.runModal();
+    open_stack.remove(&registered);
 
     // Read the field and checkbox states BEFORE the window is destroyed.
     if (out) |o| if (self.edit) |e| {

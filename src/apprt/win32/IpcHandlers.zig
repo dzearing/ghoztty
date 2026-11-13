@@ -30,6 +30,7 @@ const CoreSurface = @import("../../Surface.zig");
 const PaneView = @import("PaneView.zig");
 const ViewerPane = @import("ViewerPane.zig");
 const Window = @import("Window.zig");
+const ConfirmDialog = @import("ConfirmDialog.zig");
 const pane_stash = @import("pane_stash.zig");
 const pane_stack_grid = @import("pane_stack_grid.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree(PaneView);
@@ -2104,13 +2105,52 @@ fn handleClose(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         return try ctx.alloc.dupe(u8, "{\"success\":true}");
     };
 
+    const window: *Window = switch (entry) {
+        .pane => |pane| pane.parentWindow(),
+        .window => |w| w,
+    };
+
+    // A dialog is up over the window (T2938, Mac 4b558ab8f's `attachedSheet`):
+    // its modal loop is on the stack below this dispatch, waiting for an
+    // answer nothing on the IPC path can give. A plain close would tear the
+    // window out from under that question and report success over it, so it
+    // closes nothing and says so. `--force` answers the dialog (Cancel) and
+    // closes once its loop has unwound - see `App.forceCloseDeferred`.
+    const dialogs = if (window.hwnd) |h| ConfirmDialog.openOver(h) else 0;
+    if (dialogs > 0) {
+        if (!args.force) {
+            log.info("IPC: +close '{s}' is waiting on a confirmation in its window", .{target});
+            return try errorResponse(
+                ctx.alloc,
+                "'{s}' is waiting on a close confirmation in its window, so nothing closed yet; answer it there, or run +close --force (no confirmation, no undo)",
+                .{target},
+            );
+        }
+        _ = ConfirmDialog.dismissOver(window.hwnd.?);
+        const queued = app.forceCloseDeferred(.{
+            .window = window,
+            .pane = switch (entry) {
+                .pane => |pane| pane,
+                .window => null,
+            },
+        });
+        if (!queued) return try errorResponse(
+            ctx.alloc,
+            "'{s}': the confirmation was dismissed but too many forced closes are already waiting; run +close --force again",
+            .{target},
+        );
+        log.info("IPC: +close --force '{s}': dismissed {d} dialog(s); closing once they unwind", .{ target, dialogs });
+        return try ctx.alloc.dupe(u8, "{\"success\":true}");
+    }
+
     switch (entry) {
         // Both paths close without confirmation (the CLI drives teardown;
         // matching the Mac server's withConfirmation:false /
         // closeWindowImmediately). Registry entries drop via ipcForget in
-        // the destroy paths.
-        .pane => |pane| pane.parentWindow().closeSplitPane(pane),
-        .window => |window| window.close(),
+        // the destroy paths. `--force` (T2938) also skips the undo window:
+        // nothing is parked, every session ENDS and every core is freed now.
+        .pane => |pane| if (args.force) window.forceCloseSplitPane(pane) else window.closeSplitPane(pane),
+        .window => if (args.force) window.forceClose() else window.close(),
     }
 
     return try ctx.alloc.dupe(u8, "{\"success\":true}");

@@ -1,0 +1,16 @@
+{
+    "guard":  "close-force",
+    "script":  "test/win32/close-force.ps1",
+    "generated":  "2026-11-12T21:47:22-08:00",
+    "commit":  "048ef8f36",
+    "uncommitted":  [
+                        "src/apprt/win32/ConfirmDialog.zig",
+                        "src/apprt/win32/open_dialogs.zig",
+                        "test/win32/close-force.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/ConfirmDialog.zig":  "923df73794844ce2c3441d0643b400ed13573da6552a57cd6d7112951005e451",
+                  "src/apprt/win32/open_dialogs.zig":  "9dfcc06d0ebcd6f4f3535e549345ffde319268a9d8cd5f48f7c8942df3735203",
+                  "test/win32/close-force.ps1":  "2c5f8304f16e7909d94b2950e29c27cab593ccfecfc53a4d4ba3f6b34eb7ce04"
+              }
+}

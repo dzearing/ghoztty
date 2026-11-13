@@ -6127,6 +6127,22 @@ $GuardTable = @(
             'test\win32\close-undo.ps1'
         )
     },
+    # `+close --force` and the refusal of a plain +close over a close
+    # confirmation (T2938, Mac 4b558ab8f): the open-dialog registry is
+    # unit-tested, but whether the dialog is really answered, the window really
+    # survives a Cancel, and the forced close really skips the undo (shell
+    # exits, HWND destroyed, agent session ended) is only answered on the box.
+    # Window.zig and App.zig are left out for the ipc-stash row's reason.
+    [pscustomobject]@{
+        Name   = 'close-force'
+        Script = 'test\win32\close-force.ps1'
+        Stamp  = 'test\win32\close-force.stamp.json'
+        Covers = @(
+            'src\apprt\win32\open_dialogs.zig',
+            'src\apprt\win32\ConfirmDialog.zig',
+            'test\win32\close-force.ps1'
+        )
+    },
     # `+rearrange` can be undone (T2234, Mac "Rearrange Layout"): the previous
     # layout is parked on the close-undo stack, panes it left out alive and
     # hidden until the undo expires. Covers the pure shape/reconcile module,
