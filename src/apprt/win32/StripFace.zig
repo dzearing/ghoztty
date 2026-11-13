@@ -25,6 +25,16 @@ const log = std.log.scoped(.win32_strip_face);
 
 pub const WINDOW_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyStripFace");
 
+/// Stamp each popup `commit`'s phases into `commit_stamps` (T2732). Set by the
+/// window when its stack trace is on; a QPC read per phase otherwise skipped.
+pub var stamp_commits: bool = false;
+
+fn stamp() i64 {
+    var t: i64 = 0;
+    _ = w32.QueryPerformanceCounter(&t);
+    return t;
+}
+
 pub const StripFace = struct {
     alloc: std.mem.Allocator,
     /// The pane child HWND this face covers (popup owner).
@@ -52,6 +62,12 @@ pub const StripFace = struct {
     w: i32 = 0,
     h: i32 = 0,
     painting: bool = false,
+
+    /// QPC stamps of the last popup `commit` (T2732), taken only while
+    /// `stamp_commits` is set (the window's `GHOZTTY_STACK_TRACE`): entry,
+    /// after `SetWindowRgn`, after `UpdateLayeredWindow`, and the end (show +
+    /// z heal). Zero when off.
+    commit_stamps: [4]i64 = .{ 0, 0, 0, 0 },
 
     /// The size of the frame on screen, which WM_PRINT paints from the DIB.
     px_w: i32 = 0,
@@ -164,6 +180,8 @@ pub const StripFace = struct {
             return;
         }
         self.painting = false;
+        const stamping = stamp_commits;
+        if (stamping) self.commit_stamps[0] = stamp();
         _ = w32.GdiFlush();
         self.px_w = self.w;
         self.px_h = self.h;
@@ -171,6 +189,7 @@ pub const StripFace = struct {
         if (w32.SetWindowRgn(self.hwnd, region, 0) == 0) if (region) |r| {
             _ = w32.DeleteObject(r);
         };
+        if (stamping) self.commit_stamps[1] = stamp();
         // Pixels, place and alpha in one UpdateLayeredWindow, which DWM takes
         // whole at its next composition (T2485 D7). Painting the redirection
         // surface through WM_PAINT after a SetLayeredWindowAttributes reached
@@ -183,6 +202,10 @@ pub const StripFace = struct {
         const blend = w32.BLENDFUNCTION{ .SourceConstantAlpha = alpha, .AlphaFormat = 0 };
         if (w32.UpdateLayeredWindow(self.hwnd, null, &dst_pt, &dst_size, self.mem_dc, &src_pt, 0, &blend, w32.ULW_ALPHA) == 0)
             log.warn("strip face UpdateLayeredWindow failed err={d}", .{w32.GetLastError()});
+        if (stamping) self.commit_stamps[2] = stamp();
+        defer {
+            if (stamping) self.commit_stamps[3] = stamp();
+        }
         self.alpha = alpha;
         if (!self.shown)
             _ = w32.SetWindowPos(self.hwnd, null, 0, 0, 0, 0, w32.SWP_NOACTIVATE | w32.SWP_NOZORDER | w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_SHOWWINDOW);

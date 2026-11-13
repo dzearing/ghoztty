@@ -184,6 +184,7 @@ const trace_ring = @import("trace_ring.zig");
 const resize_trace = @import("resize_trace.zig");
 const drag_hold = @import("drag_hold.zig");
 const StripFace = @import("StripFace.zig").StripFace;
+const strip_face_popup = @import("StripFace.zig");
 const pane_stack_state = @import("pane_stack_state.zig");
 const busy_light = @import("busy_light.zig");
 const strip_label = @import("strip_label.zig");
@@ -9979,6 +9980,10 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     // it (T2461).
     const painting = f.begin(w, ht, at.width(), at.height()) orelse return f.shown;
     const frame = painting.frame;
+    // Each stepped face's phases (T2732): begin, the band fill, the name, the
+    // finish and the region, for the `stack trace face cost` line below.
+    var tp: [5]i64 = .{ 0, 0, 0, 0, 0 };
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tp[0]);
     // The carried frame pinned where the glide has the pane.
     const pinned: ?strip_face.Content = if (carried) |c| p: {
         var p = c;
@@ -10004,6 +10009,7 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
             .y = vis.top - g.area.top,
         }, &lut, hole);
     } else strip_face.fillSolid(frame, strip_rgb, hole);
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tp[1]);
 
     // The name along it, laid out over the face as the strip lays it out
     // over itself.
@@ -10016,9 +10022,11 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
         self.paintStripLabel(painting.dc, view, .{ .left = 0, .top = 0, .right = w, .bottom = ht }, axis, font, ink);
     }
     _ = w32.GdiFlush();
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tp[2]);
     // The carried frame over the band and its name - the name shows through
     // at what the content has lost - and every pixel opaque, in one pass.
     strip_face.finish(frame, pinned, content_alpha);
+    if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tp[3]);
 
     // Cut to the pane's own region - its card's rounded shape, or its slide
     // cut - from where the face sits inside the pane window. Committed ahead
@@ -10045,6 +10053,9 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
     log.debug("strip face alpha={d} band={x:0>6} size={d}x{d}", .{ alpha, frame.pixels[0] & 0xFF_FFFF, w, ht });
     var tq: [2]i64 = .{ 0, 0 };
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&tq[0]);
+    tp[4] = tq[0];
+    strip_face_popup.stamp_commits = stackTraceOn();
+    f.commit_stamps = .{ 0, 0, 0, 0 };
     // In the composition pane tree the face is a picture in this window's
     // own tree, over the pane visuals (T2777): a window capture contains it
     // (the T2561 blind spot), and the compositor carries it with the panes.
@@ -10075,6 +10086,35 @@ fn paintStripFace(self: *Window, view: *PaneView) bool {
         carried != null,
         live,
     });
+    // Where a stepped face's time went (T2732): a face paint's 3-10 ms tail
+    // sits between a glide tick's batch and its cut. `rgn`/`ulw`/`show` are
+    // the popup commit's SetWindowRgn, UpdateLayeredWindow and show + z heal
+    // (all 0 on the composition tree, `tree=1`).
+    if (stackTraceOn()) {
+        const cs = f.commit_stamps;
+        const us = struct {
+            fn d(a: i64, b: i64) i64 {
+                return if (a == 0 or b == 0) 0 else @divTrunc(b - a, 10);
+            }
+        }.d;
+        stackTrace("stack trace face cost hwnd={x} total_us={d} begin_us={d} fill_us={d} label_us={d} finish_us={d} region_us={d} commit_us={d} rgn_us={d} ulw_us={d} show_us={d} tree={d} w={d} h={d} carried={}", .{
+            @intFromPtr(h),
+            us(tb, tq[1]),
+            us(tb, tp[0]),
+            us(tp[0], tp[1]),
+            us(tp[1], tp[2]),
+            us(tp[2], tp[3]),
+            us(tp[3], tp[4]),
+            us(tq[0], tq[1]),
+            us(cs[0], cs[1]),
+            us(cs[1], cs[2]),
+            us(cs[2], cs[3]),
+            @intFromBool(on_tree),
+            w,
+            ht,
+            carried != null,
+        });
+    }
     // The trace's cost of a fold's first face (T2485 D10): its paint and the
     // commit, in microseconds.
     if (stackTraceOn() and carried != null and !face_was_up and f.shown) {
