@@ -5609,7 +5609,16 @@ pub fn syncBoundsLive(self: *ViewerPane) void {
     self.live_layout = true;
     defer self.live_layout = was;
     Window.traceRenderStage("viewer-held-sync", self.hwnd);
+    const before = sync_cost;
     self.syncBounds();
+    // T2946: this one sync's parts, so a heavy glide tick's viewer share names
+    // which of the bar, the web view's bounds and the contents card it was.
+    if (Window.stackTraceOn()) Window.stackTrace("stack trace viewer sync total_us={d} nav_us={d} bounds_us={d} toc_us={d}", .{
+        (sync_cost.total_ns -| before.total_ns) / 1000,
+        (sync_cost.nav_ns -| before.nav_ns) / 1000,
+        (sync_cost.bounds_ns -| before.bounds_ns) / 1000,
+        (sync_cost.toc_ns -| before.toc_ns) / 1000,
+    });
 }
 
 /// Pay the parent-position refresh a move inside the size loop owed. The

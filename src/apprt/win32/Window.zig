@@ -11891,7 +11891,7 @@ fn stackTraceMode() trace_ring.Mode {
     return v;
 }
 
-fn stackTraceOn() bool {
+pub fn stackTraceOn() bool {
     return stackTraceMode() != .off;
 }
 
@@ -11905,7 +11905,7 @@ var stack_ring: trace_ring.Ring(16384, 256) = .{};
 /// vacated-strip paint's stack trace line. UI thread only.
 var moved_band_stamps: struct { desk: i64 = 0, headers: i64 = 0, glow: i64 = 0, under: i64 = 0, glass: i64 = 0 } = .{};
 
-fn stackTrace(comptime fmt: []const u8, args: anytype) void {
+pub fn stackTrace(comptime fmt: []const u8, args: anytype) void {
     switch (stackTraceMode()) {
         .off => {},
         .log => log.info(fmt, args),

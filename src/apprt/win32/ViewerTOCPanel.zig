@@ -227,6 +227,16 @@ comp_failures: u32 = 0,
 /// and a card sliding out from under a window someone is dragging narrower
 /// reads as a glitch rather than as an animation.
 last_mode: toc.Mode = .hidden,
+/// The window region `place()` last applied (T2946), so a bounds sync that
+/// leaves the card's shape alone - every tick of a divider drag or fold glide
+/// past a narrow viewer - does not rebuild it. `SetWindowRgn` is synchronous
+/// with the window manager and cost 0.4-1.6 ms a sync at 4K; the repaint it
+/// used to imply is the class's CS_HREDRAW|CS_VREDRAW (T467).
+applied_rgn: ?RgnKey = null,
+/// The rect (x, y, w, h, client coordinates of the pane) the card's window
+/// was last left resting at by a full `place()`, or null when a slide was
+/// still running then (T2946).
+placed_rect: ?[4]i32 = null,
 
 /// The card box last reported by `logCardMetrics`, so the line is emitted once
 /// per change rather than once per bounds sync.
@@ -952,6 +962,24 @@ pub fn place(
     self.slide_w = @max(l.window.width(), 1);
     self.slide_h = @max(l.window.height(), 1);
 
+    // A compact card that is closed, stays closed, is not mid-slide, and
+    // whose window is already at this rect with this shape (T2946): moving,
+    // re-shaping and re-hiding it on every bounds sync cost a divider drag or
+    // fold glide past a narrow viewer ~0.3 ms a tick at 4K, for a hidden
+    // window that ends up exactly where it was. A sync that DOES move or size
+    // it takes the full path, so even a hidden card's window never sits
+    // outside the pane (viewer-narrow-pane.ps1 measures hidden ones too).
+    const want_rect: [4]i32 = .{ self.slide_x, self.slide_y, self.slide_w, self.slide_h };
+    const key = rgnKey(which, l.window.width(), l.window.height(), self.px(banner_card.RADIUS));
+    if (parkedHidden(which, self.last_mode, visible, self.slide_timer, self.comp_slide, w32.IsWindowVisible(self.hwnd) != 0) and
+        self.placed_rect != null and std.mem.eql(i32, &self.placed_rect.?, &want_rect) and
+        RgnKey.same(self.applied_rgn, key))
+    {
+        self.logCardMetrics();
+        return .{ .which = which, .card_w_dip = l.card_w_dip };
+    }
+    self.placed_rect = null;
+
     // Resize-aware, in-frame reposition (T1392) — see `chrome_reposition`.
     // The gutter card is as wide as the pane's reserved column, so a divider
     // drag resizes it on every mouse-move.
@@ -968,21 +996,18 @@ pub fn place(
     // clipped to the card's rounded shape — its corners show the page, not a
     // squared-off patch of card fill. The gutter window sits over the page's
     // reserved padding and needs no region.
-    if (which == .compact) {
-        const r = self.px(banner_card.RADIUS);
-        const rgn = w32.CreateRoundRectRgn(
-            0,
-            0,
-            l.window.width() + 1,
-            l.window.height() + 1,
-            2 * r,
-            2 * r,
-        );
-        // The system owns the region on success; on failure the window just
-        // keeps square corners.
-        _ = w32.SetWindowRgn(self.hwnd, rgn, 1);
-    } else {
-        _ = w32.SetWindowRgn(self.hwnd, null, 1);
+    if (!RgnKey.same(self.applied_rgn, key)) {
+        if (key.round) {
+            const rgn = w32.CreateRoundRectRgn(0, 0, key.w + 1, key.h + 1, 2 * key.r, 2 * key.r);
+            // The system owns the region on success; on failure the window
+            // just keeps square corners (and the next placement tries again).
+            self.applied_rgn = if (w32.SetWindowRgn(self.hwnd, rgn, 1) != 0) key else null;
+            if (self.applied_rgn == null) {
+                if (rgn) |owned| _ = w32.DeleteObject(owned);
+            }
+        } else {
+            self.applied_rgn = if (w32.SetWindowRgn(self.hwnd, null, 1) != 0) key else null;
+        }
     }
 
     // The gutter card is part of the layout and the compact card is an
@@ -994,6 +1019,9 @@ pub fn place(
     self.setVisible(visible, animate);
     _ = w32.InvalidateRect(self.hwnd, null, 0);
     self.logCardMetrics();
+    // Where the window now RESTS, for the parked fast path above: only a
+    // placement that left no slide running put it exactly there.
+    if (!self.slide_timer and !self.comp_slide) self.placed_rect = want_rect;
 
     return .{ .which = which, .card_w_dip = l.card_w_dip };
 }
@@ -2365,6 +2393,62 @@ fn wndProc(
 
         else => return w32.DefWindowProcW(hwnd, msg, wparam, lparam),
     }
+}
+
+/// The shape `place()` gives the card's window (T2946): a rounded clip of
+/// `w` x `h` with corner radius `r` for the compact overlay, no region for
+/// the gutter card (which ignores the size, since nothing is clipped).
+const RgnKey = struct {
+    round: bool,
+    w: i32 = 0,
+    h: i32 = 0,
+    r: i32 = 0,
+
+    fn same(applied: ?RgnKey, want: RgnKey) bool {
+        const a = applied orelse return false;
+        return std.meta.eql(a, want);
+    }
+};
+
+fn rgnKey(which: toc.Mode, w: i32, h: i32, r: i32) RgnKey {
+    return if (which == .compact) .{ .round = true, .w = w, .h = h, .r = r } else .{ .round = false };
+}
+
+/// Whether `place()` may leave the card's window alone (T2946): a compact
+/// card that was compact last time too, stays closed, has no slide running
+/// on either path, and whose window is already hidden.
+fn parkedHidden(which: toc.Mode, last: toc.Mode, visible: bool, slide_timer: bool, comp_slide: bool, shown: bool) bool {
+    return which == .compact and last == .compact and !visible and !slide_timer and !comp_slide and !shown;
+}
+
+test "T2946: only a closed, still, hidden compact card skips its window work" {
+    try std.testing.expect(parkedHidden(.compact, .compact, false, false, false, false));
+    // Opening it, or a slide (stepped or on the compositor) still running.
+    try std.testing.expect(!parkedHidden(.compact, .compact, true, false, false, false));
+    try std.testing.expect(!parkedHidden(.compact, .compact, false, true, false, false));
+    try std.testing.expect(!parkedHidden(.compact, .compact, false, false, true, false));
+    // Its window still on screen (a slide-out that has not hidden it yet).
+    try std.testing.expect(!parkedHidden(.compact, .compact, false, false, false, true));
+    // A layout switch is placed in full either way.
+    try std.testing.expect(!parkedHidden(.compact, .gutter, false, false, false, false));
+    try std.testing.expect(!parkedHidden(.compact, .hidden, false, false, false, false));
+    try std.testing.expect(!parkedHidden(.gutter, .gutter, false, false, false, false));
+}
+
+test "T2946: an unchanged card shape is not re-applied, a changed one is" {
+    const k = rgnKey(.compact, 300, 143, 12);
+    // Nothing applied yet (or the last apply failed): apply.
+    try std.testing.expect(!RgnKey.same(null, k));
+    // A sync that moved nothing about the card: skip.
+    try std.testing.expect(RgnKey.same(k, rgnKey(.compact, 300, 143, 12)));
+    // Any of the size, the radius (a scale change), or the mode: apply.
+    try std.testing.expect(!RgnKey.same(k, rgnKey(.compact, 301, 143, 12)));
+    try std.testing.expect(!RgnKey.same(k, rgnKey(.compact, 300, 150, 12)));
+    try std.testing.expect(!RgnKey.same(k, rgnKey(.compact, 300, 143, 18)));
+    try std.testing.expect(!RgnKey.same(k, rgnKey(.gutter, 300, 143, 12)));
+    // The gutter card has no region, so its width moving on every drag tick
+    // never re-applies the null one.
+    try std.testing.expect(RgnKey.same(rgnKey(.gutter, 280, 900, 12), rgnKey(.gutter, 310, 700, 18)));
 }
 
 // T467: the panel is a rounded card drawn against its own bounds — the rim and
