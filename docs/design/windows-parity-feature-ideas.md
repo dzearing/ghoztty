@@ -697,3 +697,12 @@ as the digest that showed them.
 - Select a column (Alt+drag rectangular selection for copying one column of tabular output)
 - A table you can sort (table-shaped output or a CSV opens in a side pane as a sortable, filterable grid)
 - Paste a path that fits this pane (new angle on WSL path translation: Windows and WSL paths translate and quote at paste time for the pane's shell)
+
+## 2026-11-12
+
+- Double-click picks the whole thing (double-click selects a whole path, URL, GUID or IP address instead of stopping at a slash or dash)
+- A folder that is gone never holds up a new pane (a split whose folder is on an unreachable network drive opens at once in home with one line naming the folder)
+- Keep my splits when Windows snaps the window (divider positions come back exactly after a Snap and unsnap)
+- Mark where the PC slept (a faint "PC asleep 2h 10m" line in the scrollback where the machine slept)
+- A pane waiting on you reaches your phone (a waiting pane on a locked PC shows its question through Windows Phone Link)
+- Paste into a slow remote never drops a character (new angle on the huge-paste idea: a long paste into SSH/serial is paced to what the far end accepts)
