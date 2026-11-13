@@ -1594,6 +1594,32 @@ class BaseTerminalController: NSWindowController,
         }
     }
 
+    /// `+close --force` on a pane: no confirmation and no undo. A confirmation
+    /// already up on the window is dismissed (answered Cancel), the panes'
+    /// agent sessions are marked to END, and their cores — process, session,
+    /// threads — are freed at once rather than when the undo window expires.
+    /// Closing the window's last pane closes the window.
+    func forceCloseSurface(_ node: SplitTree<PaneView>.Node) {
+        guard surfaceTree.contains(node) else { return }
+        dismissCloseConfirmation()
+        let panes = node.leaves()
+        for pane in panes { pane.surfaceView?.setSessionCloseIntent(true) }
+        if let undoManager {
+            undoManager.disableUndoRegistration { removeSurfaceNode(node) }
+        } else {
+            removeSurfaceNode(node)
+        }
+        for pane in panes { pane.surfaceView?.releaseClosedSurface() }
+    }
+
+    /// Take down a close confirmation sheet left on the window (nothing on the
+    /// IPC path can answer one). Its completion sees a non-proceed response.
+    func dismissCloseConfirmation() {
+        guard let window, let sheet = window.attachedSheet else { return }
+        window.endSheet(sheet)
+        alert = nil
+    }
+
     // MARK: Split Tree Management
 
     /// Find the next surface to focus when a node is being closed.

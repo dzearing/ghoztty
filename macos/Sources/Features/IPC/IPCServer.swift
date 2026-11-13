@@ -417,6 +417,8 @@ class IPCServer {
         // REMOTE host + command + cwd (§WP4). Lets the inheriting path be driven
         // headlessly (the normal IPC path has no parent and never inherits).
         var fromFocused: Bool = false
+        /// `+close --force`: no confirmation, no undo window.
+        var force: Bool = false
     }
 
     private func handleNewWindow(_ request: IPCRequest) -> IPCResponse {
@@ -1119,24 +1121,52 @@ class IPCServer {
         case .ambiguous(let error): return IPCResponse(success: false, error: error)
         }
 
-        DispatchQueue.main.async { [weak self] in
+        // On main, synchronously, so the reply can say what happened: a close
+        // that leaves a confirmation up on the window closed nothing, and
+        // nothing on the IPC path can answer it.
+        let force = parsed.force
+        let waiting: Bool = Self.onMain {
             switch entry {
             case .pane(let controllerRef, let surfaceRef):
-                if let controller = controllerRef.value, let surface = surfaceRef.value {
-                    controller.closeSurface(surface, withConfirmation: false)
+                if let controller = controllerRef.value, let surface = surfaceRef.value,
+                   let node = controller.surfaceTree.root?.node(view: surface) {
+                    if force {
+                        controller.forceCloseSurface(node)
+                    } else {
+                        controller.closeSurface(node, withConfirmation: false)
+                    }
                 }
             case .viewerPane(let controllerRef, let paneRef):
                 if let controller = controllerRef.value, let pane = paneRef.value,
                    let node = controller.surfaceTree.root?.node(view: pane) {
                     // Viewers never have a running process; close silently.
-                    controller.closeSurface(node, withConfirmation: false)
+                    if force {
+                        controller.forceCloseSurface(node)
+                    } else {
+                        controller.closeSurface(node, withConfirmation: false)
+                    }
                 }
             case .window(let controllerRef):
-                controllerRef.value?.closeWindowImmediately()
+                if force {
+                    controllerRef.value?.forceCloseWindow()
+                } else {
+                    controllerRef.value?.closeWindowImmediately()
+                }
             }
-            self?.unregister(target, entry)
+            let controller = entry.controller
+            let pending = controller?.window?.attachedSheet != nil
+                && controller.map { c in TerminalController.all.contains { $0 === c } } == true
+            if !pending { unregister(target, entry) }
+            return pending
         }
 
+        if waiting {
+            Self.logger.notice("IPC: +close '\(target, privacy: .public)' is waiting on a confirmation in its window")
+            return IPCResponse(success: false, error: """
+                '\(target)' is waiting on a close confirmation in its window, so nothing \
+                closed yet; answer it there, or run +close --force (no confirmation, no undo)
+                """)
+        }
         return .ok
     }
 
@@ -2772,6 +2802,11 @@ class IPCServer {
 
             if arg == "--from-focused" {
                 result.fromFocused = true
+                continue
+            }
+
+            if arg == "--force" {
+                result.force = true
                 continue
             }
         }
