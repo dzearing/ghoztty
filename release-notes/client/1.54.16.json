@@ -1,0 +1,13 @@
+{
+  "version": "1.54.16",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "The 4K fold glide on the published release now runs at about 100 frames a second instead of 40; the only frames still over budget are the 4 fold ticks a drag, so the T2457 close waits on T2941." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The frame a pane folds into its strip no longer redraws the whole desk, so a 4K fold glide has no frame over 16.7 ms on a release build." }
+      ] }
+  ]
+}
