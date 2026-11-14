@@ -38,6 +38,7 @@
 const CompDragThread = @This();
 
 const std = @import("std");
+const thread_stack = @import("../../os/thread_stack.zig");
 const builtin = @import("builtin");
 const w32 = @import("win32.zig");
 const comp_tree = @import("../../renderer/comp_tree.zig");
@@ -143,7 +144,7 @@ pub fn start(alloc: std.mem.Allocator, dcomp: chrome_comp.Obj) ?*CompDragThread 
     if (builtin.mode == .Debug) {
         self.cursor_file = std.process.getEnvVarOwned(alloc, "GHOZTTY_DEBUG_DRAG_CURSOR_FILE") catch null;
     }
-    self.thread = std.Thread.spawn(.{}, run, .{self}) catch {
+    self.thread = std.Thread.spawn(thread_stack.config, run, .{self}) catch {
         self.destroy();
         return null;
     };

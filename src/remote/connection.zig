@@ -47,6 +47,7 @@
 //! transport over an in-memory loopback (no real ssh) with a mock agent thread.
 
 const std = @import("std");
+const thread_stack = @import("../os/thread_stack.zig");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
@@ -1360,20 +1361,20 @@ pub const Connection = struct {
         try self.enqueue(.control, .hello, protocol.control_channel, hello_json);
 
         // Spawn the writer first so the HELLO can flush even if a reader races.
-        self.writer_thread = try std.Thread.spawn(.{}, writerLoop, .{self});
+        self.writer_thread = try std.Thread.spawn(thread_stack.config, writerLoop, .{self});
         errdefer {
             // If a later spawn fails, tear the writer down cleanly.
             self.signalClose();
             if (self.writer_thread) |t| t.join();
             self.writer_thread = null;
         }
-        self.control_thread = try std.Thread.spawn(.{}, controlReaderLoop, .{self});
+        self.control_thread = try std.Thread.spawn(thread_stack.config, controlReaderLoop, .{self});
         errdefer {
             self.control.close();
             if (self.control_thread) |t| t.join();
             self.control_thread = null;
         }
-        self.data_thread = try std.Thread.spawn(.{}, dataReaderLoop, .{self});
+        self.data_thread = try std.Thread.spawn(thread_stack.config, dataReaderLoop, .{self});
         errdefer {
             self.data.close();
             if (self.data_thread) |t| t.join();
@@ -1383,7 +1384,7 @@ pub const Connection = struct {
         // The heartbeat driver (increment 2). It waits for the handshake itself, so
         // it can be spawned now; it ticks only once the link is up. Shutdown wakes it
         // via `hb_wake` and joins it in the same safe (claim-then-join-unlocked) path.
-        self.heartbeat_thread = try std.Thread.spawn(.{}, heartbeatLoop, .{self});
+        self.heartbeat_thread = try std.Thread.spawn(thread_stack.config, heartbeatLoop, .{self});
 
         self.started = true;
     }

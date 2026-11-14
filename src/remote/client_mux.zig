@@ -56,6 +56,7 @@
 //! land on the right lanes without the two lanes corrupting each other.
 
 const std = @import("std");
+const thread_stack = @import("../os/thread_stack.zig");
 const Allocator = std.mem.Allocator;
 
 const protocol = @import("protocol.zig");
@@ -229,7 +230,7 @@ pub const ClientMux = struct {
     /// (which closes the lane streams → the transport → unblocks the pump's read).
     pub fn startPump(self: *ClientMux) !std.Thread {
         std.debug.assert(self.pump_thread == null);
-        const t = try std.Thread.spawn(.{}, pumpThreadMain, .{self});
+        const t = try std.Thread.spawn(thread_stack.config, pumpThreadMain, .{self});
         self.pump_thread = t;
         return t;
     }

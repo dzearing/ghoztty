@@ -1,12 +1,11 @@
 {
     "guard":  "thread-join",
     "script":  "test/win32/thread-join-audit.ps1",
-    "generated":  "2026-11-11T05:47:23-08:00",
-    "commit":  "551e21176",
+    "generated":  "2026-11-14T12:35:28-08:00",
+    "commit":  "1a6637683",
     "uncommitted":  [
-                        "src/remote/agent/adopt.zig",
-                        "src/remote/agent/main.zig",
-                        "src/remote/run_key.zig"
+                        "src/remote/client_mux.zig",
+                        "src/remote/connection.zig"
                     ],
     "files":  {
                   "src/datastruct/array_list_collection.zig":  "f14f6cc26a11eabdd35a36976dce1b3702a2c7f4771b60e339afd1015d4e58dd",
@@ -62,8 +61,8 @@
                   "src/remote/agent_build.zig":  "a5c429e91c7eed2a6995e2fbf8459962a16e0dc519c96f6c479fa3ad2d744d2f",
                   "src/remote/agent_lineage.zig":  "277bca4d33eb667f06fc7676e7c933d74b7a50911fadf6266fae5f8cc69f40d7",
                   "src/remote/agent_smoke.zig":  "d3e386356c7201fba0edf48eab76d88205556e8ec8c855bfc23c049affd3a052",
-                  "src/remote/client_mux.zig":  "a305dd55d995c4b1da6a42071f4f4525c2b001c4dac8bb4a2e14e2d4011f435b",
-                  "src/remote/connection.zig":  "050791affe74732f2e85de48383ddf0fee6e6fa2496ebd7f09a4203aa340c5ab",
+                  "src/remote/client_mux.zig":  "6b9e4301afdced2a062fda31a526ce4b9488023647e15a3cabb3498ea4075431",
+                  "src/remote/connection.zig":  "a2259e7d2d9f28d563417d7c9bb7246accbf3dd348c38d6136fd99dba8c4d822",
                   "src/remote/google_oauth.zig":  "40138a3e0293322de8ee722b7aa0e5688eb4ac68332971c5d624f1d8471c5510",
                   "src/remote/http_client.zig":  "aa3dc49d2baa17240a59b1b51c1fc7d08b81fe8652ab7650bbdbcd59c3dff225",
                   "src/remote/inbound_ring.zig":  "b2b795f8f37a748a8e741080aa972d6c8a9b6a8e72beb9328575515ec560b2b1",

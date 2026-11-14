@@ -24,6 +24,7 @@
 const IpcServer = @This();
 
 const std = @import("std");
+const thread_stack = @import("../../os/thread_stack.zig");
 const Allocator = std.mem.Allocator;
 const windows = std.os.windows;
 
@@ -265,7 +266,7 @@ pub fn init(self: *IpcServer, app: *App) BindError!void {
     for (&self.pipes, 0..) |pipe, i| {
         if (pipe == windows.INVALID_HANDLE_VALUE) continue;
         _ = self.listeners_live.fetchAdd(1, .acq_rel);
-        self.threads[i] = std.Thread.spawn(.{}, listen, .{ self, i }) catch |err| {
+        self.threads[i] = std.Thread.spawn(thread_stack.config, listen, .{ self, i }) catch |err| {
             _ = self.listeners_live.fetchSub(1, .acq_rel);
             log.warn("IPC listener thread {d} spawn failed err={}", .{ i, err });
             continue;

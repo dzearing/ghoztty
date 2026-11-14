@@ -1,16 +1,14 @@
 {
     "guard":  "drag-stall",
     "script":  "test/win32/drag-stall.ps1",
-    "generated":  "2026-11-08T00:08:24-08:00",
-    "commit":  "bdf08f664",
+    "generated":  "2026-11-14T12:15:35-08:00",
+    "commit":  "1a6637683",
     "uncommitted":  [
-                        "src/apprt/win32/comp_drag.zig",
-                        "src/apprt/win32/CompDragThread.zig",
-                        "test/win32/drag-stall.ps1"
+                        "src/apprt/win32/CompDragThread.zig"
                     ],
     "files":  {
                   "src/apprt/win32/comp_drag.zig":  "4c8fb8bb906cdd1c77955a29c941162b9e1a6a10fd20f52f765db9f95bb402f6",
-                  "src/apprt/win32/CompDragThread.zig":  "068077a100988884dc17cb27704b8b148bc53b409176f389d0451d888743403c",
+                  "src/apprt/win32/CompDragThread.zig":  "63542ff8c391807a533c2c70c158f5e36f6bf94a144622782a531bf025e26a33",
                   "test/win32/drag-stall.ps1":  "4e44e4d0d58e32aec2e41699007c34b9d4029c6a5f090cec060dfcd17b0708ee"
               }
 }

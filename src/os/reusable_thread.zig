@@ -27,6 +27,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const thread_stack = @import("thread_stack.zig");
+
 const log = std.log.scoped(.reusable_thread);
 
 /// Whether per-pane threads are pooled on this target. Only Windows needs it
@@ -54,7 +56,9 @@ pub const Pool = struct {
     /// Parked threads kept beyond this many exit instead. Bounds the idle
     /// footprint after a burst; the exit costs what the old shape cost.
     max_idle: u32 = 16,
-    spawn_config: std.Thread.SpawnConfig = .{},
+    /// Small commit on Windows, same reserve (T2985): a parked thread used to
+    /// hold a fully committed 16 MB stack for the life of the process.
+    spawn_config: std.Thread.SpawnConfig = thread_stack.config,
 
     mutex: std.Thread.Mutex = .{},
     idle: ?*Worker = null,

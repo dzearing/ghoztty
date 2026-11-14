@@ -33,6 +33,7 @@
 const Slider = @This();
 
 const std = @import("std");
+const thread_stack = @import("../../os/thread_stack.zig");
 const Allocator = std.mem.Allocator;
 const w32 = @import("win32.zig");
 const slide = @import("quick_terminal_slide.zig");
@@ -112,7 +113,7 @@ pub fn create(alloc: Allocator, qt_hwnd: w32.HWND, notify_hwnd: w32.HWND) !*Slid
         .perf_freq = if (freq > 0) freq else 1,
         .event = ev,
     };
-    self.thread = try std.Thread.spawn(.{}, run, .{self});
+    self.thread = try std.Thread.spawn(thread_stack.config, run, .{self});
     return self;
 }
 

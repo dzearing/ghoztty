@@ -28,6 +28,7 @@
 //! freeing anything it could still be writing to.
 
 const std = @import("std");
+const thread_stack = @import("../../os/thread_stack.zig");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
@@ -148,7 +149,7 @@ pub fn kickSample(self: *ActivityMonitor) void {
     self.sampling = true;
     // The generation is captured HERE, on the GUI thread, so a switch that
     // happens while this worker runs can retire its result without racing it.
-    self.worker = std.Thread.spawn(.{}, sampleWorker, .{ self, self.source_gen }) catch |err| {
+    self.worker = std.Thread.spawn(thread_stack.config, sampleWorker, .{ self, self.source_gen }) catch |err| {
         log.warn("activity monitor: sample thread spawn failed err={}", .{err});
         self.sampling = false;
         return;

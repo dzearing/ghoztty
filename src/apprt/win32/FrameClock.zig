@@ -32,6 +32,7 @@
 const FrameClock = @This();
 
 const std = @import("std");
+const thread_stack = @import("../../os/thread_stack.zig");
 const w32 = @import("win32.zig");
 const frame_clock = @import("frame_clock.zig");
 const msg_timer = @import("msg_timer.zig");
@@ -119,7 +120,7 @@ pub fn start(alloc: std.mem.Allocator, msg_hwnd: w32.HWND) void {
             if (self.timer == null) return self.destroy();
             self.timer_period_ns = displayPeriodNs() orelse frame_clock.default_period_ns;
         }
-        self.thread = std.Thread.spawn(.{}, run, .{self}) catch return self.destroy();
+        self.thread = std.Thread.spawn(thread_stack.config, run, .{self}) catch return self.destroy();
     }
     current = self;
     log.debug("frame clock started source={s} timer_period_us={d}", .{

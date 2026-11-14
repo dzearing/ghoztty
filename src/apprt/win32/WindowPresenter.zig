@@ -39,6 +39,7 @@
 const WindowPresenter = @This();
 
 const std = @import("std");
+const thread_stack = @import("../../os/thread_stack.zig");
 const builtin = @import("builtin");
 const w32 = @import("win32.zig");
 const gl_loader = @import("../../renderer/gl_loader.zig");
@@ -224,7 +225,7 @@ pub fn create(
     if (comptime builtin.mode == .Debug) self.probe = probeEnabled();
     _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
 
-    self.thread = std.Thread.spawn(.{}, threadMain, .{self}) catch |err| {
+    self.thread = std.Thread.spawn(thread_stack.config, threadMain, .{self}) catch |err| {
         log.warn("window presenter: thread spawn failed: {}", .{err});
         self.destroyHandles(alloc);
         return null;
