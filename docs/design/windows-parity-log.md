@@ -38671,3 +38671,13 @@ Three Fable 5.2 auditors (claude-fable-5-2) read `src/apprt/win32/` read-only: i
 
 Rejected: dropping the io and io-reader thread pools (A4). `Exec.zig:33-35` records that any exiting thread strands NVIDIA memory while a GL context lives.
   - Validation: every PA id's cited lines were re-read this turn. No code changed, so no lanes are owed.
+
+## 2026-11-14 08:40 - T2961: memory and leak audit (audit-1, area M)
+
+Three Fable 5.2 auditors (claude-fable-5-2) read the code read-only: close-path ownership, the per-pane and idle footprint with scrollback and caches, and app-lifetime collections. Every claim was then checked by reading the code. The findings are in `docs/design/perf-audit/audit-1/M-findings.md`: 12 findings, PA-M01..M12, filed as T3001-T3012, with Mac halves T3013 and T3014. The headlines:
+  - No close path leaks Zig-owned memory, and there is no P0. The 29 MB second-cycle growth fits T2782's GPU write-combined fill: `gpu_shared_mb` at close rises 14-22 MB in the same step in all four baseline-1 runs. PA-M05 (T3005) teaches the baseline to settle first and split heap from driver memory.
+  - We keep big pixel buffers at their largest size: two full-size snapshots per pane that ever glided (T3001, up to 66 MB at 4K), and the window desk and overlay buffers (T3002, up to ~265 MB at 4K).
+  - Scrollback: on Windows the page pool commits ~7 MB more than the limit (T3003), and clearing the scrollback gives nothing back (T3004).
+
+Dropped: a lower kitty image-storage cap (bounded, an upstream default). Rejected: the "495 D3D threads x 64 KB" explanation, which T2671 refutes.
+  - Validation: every PA id's cited lines were re-read this turn. No code changed, so no lanes are owed.
