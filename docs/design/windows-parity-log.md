@@ -38652,3 +38652,12 @@ T2957 (the user's P0 ask to make the Windows port as light as possible on memory
 
 `scripts/perf-baseline.ps1` now measures what Ghoztty costs on Windows, all on the hidden test desktop with each build fully sandboxed (private app pipe, agent lineage and LOCALAPPDATA, for Debug as well as ReleaseFast). It covers idle and busy CPU with the wakeup rate, memory, handles, GDI/USER objects and threads across two open/close cycles of 10 panes over 3 tabs, GPU memory and engine time, and the agent's per-session cost and detach/attach growth. The result is JSON with a method for every number, and `-Compare a,b` diffs two runs against stated tolerances. The first baseline and a repeat run are committed under `docs/design/perf-audit/`. The headline numbers went into the area audits that have to explain them: ~323 MB idle, ~54 threads per pane, ~825 MB left behind by the first pane cycle, ~2 MB/s output throughput.
   - Validation: two full runs on both builds, exit 0, error-free; `-Compare` WITHIN TOLERANCE on 198 metrics.
+
+## 2026-11-14 07:50 - T2959: renderer and GPU performance audit (audit-1, area R)
+
+Two Fable 5.2 auditors (claude-fable-5-2) read the renderer core and the Windows present path, read-only. Every claim was then checked by reading the code, and the findings are in `docs/design/perf-audit/audit-1/R-findings.md`. They came to 17 findings, PA-R01..R17, filed as T2967-T2983, with the Mac half of the shared-code fixes as T2984. The two P0s:
+  - PA-R01 (T2967): the render-state reset counter is never zeroed. Upstream Ghostty already fixed this; our main still has it. After 100k frames a pane rebuilds its whole frame on every wakeup.
+  - PA-R02 (T2968): every pane creates its own D3D11 and DComp device. The repo's own note puts that at ~55 driver threads per device, and baseline-1 measured ~54 threads per pane.
+
+Process fix: the brief said each finding's task should list T2957 in its deps. But T2957 is an open umbrella, and an open dep hides a task from `next`. The new tasks dep on T2959 instead, and the brief wording is corrected in T2957 and T2960-T2964.
+  - Validation: every PA id's cited lines were re-read this turn. No code changed, so no lanes are owed.
