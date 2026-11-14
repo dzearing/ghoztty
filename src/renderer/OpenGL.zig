@@ -1482,7 +1482,7 @@ fn compInit(self: *OpenGL, width: usize, height: usize) void {
     };
     p.hwnd = hwnd;
     self.comp = p;
-    log.info("pane presents through a composition swap chain warp={} tree={} premultiplied={}", .{ p.warp, in_tree, premultiplied });
+    log.info("pane presents through a composition swap chain warp={} tree={} premultiplied={} shared={} waitable={}", .{ p.warp, in_tree, premultiplied, p.shared_device, p.latency_wait != null });
     if (p.surface_handle) |h| {
         self.rt_surface.comp_tree_slot.publish(h);
         comp_overlay.notify(hwnd);

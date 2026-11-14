@@ -107,7 +107,7 @@ if (-not (Test-Path $Exe)) { "SETUP FAIL: $Exe not found - build it first"; exit
 
 $root = Join-Path $env:TEMP "ghoztty-comp-present-$PID"
 $savedLocalAppData = $env:LOCALAPPDATA
-$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_PRESENT_FAIL_AFTER', 'GHOZTTY_GL_SIMULATE_RESET_AFTER', 'GHOZTTY_COMP_PRESENT_SIMULATE_NO_INTEROP', 'GHOZTTY_PANE_GL_HELPER'
+$knobs = 'GHOZTTY_COMP_PRESENT', 'GHOZTTY_COMP_PRESENT_FAIL_AFTER', 'GHOZTTY_GL_SIMULATE_RESET_AFTER', 'GHOZTTY_COMP_PRESENT_SIMULATE_NO_INTEROP', 'GHOZTTY_PANE_GL_HELPER', 'GHOZTTY_COMP_SHARED_DEVICE'
 $saved = @{}
 foreach ($k in $knobs) { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 
@@ -250,6 +250,23 @@ try {
     $nh = Count-Log $a.Err $helperLine
     Assert "A9 every pane's GL context is on a hidden helper, not its window (T2788: $nh of $(Count-Log $a.Err $onLine))" `
         ($nh -ge 2 -and $nh -eq (Count-Log $a.Err $onLine))
+    # T2968: every pane's chain is on the one process-wide D3D11 device, and
+    # waitable, so no pane's Present holds that device's lock while it waits.
+    $ns = Count-Log $a.Err "$onLine.*shared=true waitable=true"
+    Assert "A10 every pane presents on the one shared, waitable device (T2968: $ns of $(Count-Log $a.Err $onLine))" `
+        ($ns -ge 2 -and $ns -eq (Count-Log $a.Err $onLine))
+
+    # ========================================================================
+    "== S: the opt-out control - GHOZTTY_COMP_SHARED_DEVICE=0 gives every pane its own device (T2968)"
+    # ========================================================================
+    $env:GHOZTTY_COMP_SHARED_DEVICE = '0'
+    try {
+        $s = Start-Arm 's'
+        Assert "S0 the arm's window came up" ($s.Top -ne [IntPtr]::Zero -and $null -ne $s.Win)
+        Assert "S1 the pane built its chain" (Wait-Log $s.Err $onLine 15000)
+        Assert "S2 on a device of its own, not waitable" ((Count-Log $s.Err "$onLine.*shared=false waitable=false") -ge 1 -and (Count-Log $s.Err 'shared=true') -eq 0)
+        Assert "S3 the pane draws text" (Test-DrawsText $s.Target)
+    } finally { Remove-Item env:GHOZTTY_COMP_SHARED_DEVICE -ErrorAction SilentlyContinue }
 
     # ========================================================================
     "== B: a failed present falls back to SwapBuffers and the pane keeps drawing"

@@ -109,6 +109,20 @@ fn exactBuffers() bool {
     return knobOn(raw);
 }
 
+/// `GHOZTTY_COMP_SHARED_DEVICE=0` (T2968 A/B): every pane creates its own
+/// D3D11 device again, as before. On by default - anything but an explicit
+/// off shares one device across the process.
+pub fn sharedDeviceWanted(value: ?[]const u8) bool {
+    return !knobOff(value);
+}
+
+fn sharedDeviceEnabled() bool {
+    if (comptime builtin.os.tag != .windows) return false;
+    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_COMP_SHARED_DEVICE") catch return sharedDeviceWanted(null);
+    defer std.heap.page_allocator.free(raw);
+    return sharedDeviceWanted(raw);
+}
+
 fn debugFailAfter() ?u64 {
     if (comptime builtin.mode != .Debug) return null;
     const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_COMP_PRESENT_FAIL_AFTER") catch return null;
@@ -311,6 +325,123 @@ fn release(obj: Obj) void {
     _ = slot(F, obj, 2)(obj);
 }
 
+fn addRef(obj: Obj) void {
+    const F = *const fn (Obj) callconv(.winapi) u32;
+    _ = slot(F, obj, 1)(obj);
+}
+
+/// ID3D11Device::GetDeviceRemovedReason (d3d11.h): S_OK while usable.
+const slot_d3d11_device_get_removed_reason = 39;
+/// IDXGISwapChain2::GetFrameLatencyWaitableObject (dxgi1_3.h).
+const slot_swapchain2_get_waitable = 33;
+const DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT: u32 = 0x40;
+/// How long `begin` waits for the chain to take another frame before it
+/// draws anyway. A vblank is at most ~33 ms; this only bounds a stuck chain.
+const latency_wait_ms: u32 = 100;
+const WAIT_OBJECT_0: u32 = 0;
+extern "kernel32" fn WaitForSingleObject(HANDLE, u32) callconv(.winapi) u32;
+
+/// A D3D11 device and its immediate context, each holding one reference
+/// for the caller. `shared`: it is the process-wide device (T2968).
+pub const Device = struct {
+    device: Obj,
+    context: Obj,
+    warp: bool,
+    shared: bool,
+};
+
+/// Create a device: hardware first, WARP when there is none.
+fn createDevice(create: D3D11CreateDeviceFn) Error!Device {
+    var device: ?Obj = null;
+    var context: ?Obj = null;
+    var warp = false;
+    if (create(null, D3D_DRIVER_TYPE_HARDWARE, null, D3D11_CREATE_DEVICE_BGRA_SUPPORT, null, 0, D3D11_SDK_VERSION, &device, null, &context) < 0) {
+        warp = true;
+        device = null;
+        context = null;
+        try check(create(null, D3D_DRIVER_TYPE_WARP, null, D3D11_CREATE_DEVICE_BGRA_SUPPORT, null, 0, D3D11_SDK_VERSION, &device, null, &context));
+    }
+    const dev = device orelse return error.ComFailed;
+    const ctx = context orelse {
+        release(dev);
+        return error.ComFailed;
+    };
+    return .{ .device = dev, .context = ctx, .warp = warp, .shared = false };
+}
+
+/// Whether a cached device whose GetDeviceRemovedReason said `hr` can be
+/// handed out again. Anything but S_OK is a removed or reset device, and
+/// every pane built on it is already failing over (T2968).
+pub fn cacheReusable(hr: HRESULT) bool {
+    return hr == 0;
+}
+
+/// One D3D11 device for every pane in the process (T2968, audit PA-R02).
+///
+/// A device per pane cost about fifty driver threads, tens of MB of private
+/// memory and its own GPU memory each: 10 panes took the app from 76 threads
+/// to 611 (baseline-1). Every pane's swap chain, interop registration and
+/// overlay upload now goes through this one device instead; each GL context
+/// still opens it with its own `wglDXOpenDeviceNV`.
+///
+/// Many renderer threads and the window threads use its immediate context,
+/// so it is shared only once ID3D10Multithread protection is on; a device
+/// that cannot be protected goes to its one caller unshared, as before. A
+/// removed device is never handed out again: the next `acquire` builds a
+/// fresh one, and panes still holding the old one drop it as they fail over.
+/// The cache keeps one reference for the life of the process.
+pub const DeviceCache = struct {
+    mutex: std.Thread.Mutex = .{},
+    device: ?Obj = null,
+    context: ?Obj = null,
+    warp: bool = false,
+
+    pub fn acquire(self: *DeviceCache, create: D3D11CreateDeviceFn) Error!Device {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.device) |dev| {
+            const reason = slot(*const fn (Obj) callconv(.winapi) HRESULT, dev, slot_d3d11_device_get_removed_reason)(dev);
+            if (cacheReusable(reason)) {
+                addRef(dev);
+                addRef(self.context.?);
+                return .{ .device = dev, .context = self.context.?, .warp = self.warp, .shared = true };
+            }
+            log.warn("shared D3D11 device was removed (hr=0x{x}); building a fresh one", .{@as(u32, @bitCast(reason))});
+            self.dropLocked();
+        }
+        const fresh = try createDevice(create);
+        const mt = query(fresh.device, &comp_overlay.IID_ID3D10Multithread) catch {
+            log.warn("ID3D10Multithread unavailable; this pane keeps a device of its own", .{});
+            return fresh;
+        };
+        _ = slot(*const fn (Obj, i32) callconv(.winapi) i32, mt, comp_overlay.slot_multithread_set_protected)(mt, 1);
+        release(mt);
+        self.device = fresh.device;
+        self.context = fresh.context;
+        self.warp = fresh.warp;
+        addRef(fresh.device);
+        addRef(fresh.context);
+        return .{ .device = fresh.device, .context = fresh.context, .warp = fresh.warp, .shared = true };
+    }
+
+    /// Let go of the cache's own references (tests; the process cache is
+    /// never dropped except for a removed device).
+    pub fn deinit(self: *DeviceCache) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.dropLocked();
+    }
+
+    fn dropLocked(self: *DeviceCache) void {
+        if (self.context) |c| release(c);
+        if (self.device) |d| release(d);
+        self.context = null;
+        self.device = null;
+    }
+};
+
+var device_cache: DeviceCache = .{};
+
 extern "kernel32" fn LoadLibraryW([*:0]const u16) callconv(.winapi) ?*anyopaque;
 extern "kernel32" fn GetProcAddress(*anyopaque, [*:0]const u8) callconv(.winapi) ?*anyopaque;
 
@@ -452,6 +583,16 @@ pub const Presenter = struct {
 
     locked: bool = false,
     warp: bool = false,
+    /// The flags the swap chain was created with; ResizeBuffers must pass
+    /// the same ones.
+    swap_flags: u32 = 0,
+    /// The chain's frame-latency waitable object (T2968), when it has one.
+    latency_wait: HANDLE = null,
+    /// `begin` already took the chain's next-frame signal and no Present has
+    /// spent it yet (a dropped frame), so the next `begin` must not wait.
+    latency_token: bool = false,
+    /// The device is the process-wide one (`DeviceCache`).
+    shared_device: bool = false,
     /// The swap chain composes by alpha (`init`'s `premultiplied`, T2515).
     premultiplied: bool = false,
     /// The px the visual sits below its window's top: the banner band the
@@ -493,17 +634,15 @@ pub const Presenter = struct {
             return error.Unavailable);
 
         stage = "d3d11-device";
-        var device: ?Obj = null;
-        var context: ?Obj = null;
-        var warp = false;
-        if (d3d11_create(null, D3D_DRIVER_TYPE_HARDWARE, null, D3D11_CREATE_DEVICE_BGRA_SUPPORT, null, 0, D3D11_SDK_VERSION, &device, null, &context) < 0) {
-            warp = true;
-            try check(d3d11_create(null, D3D_DRIVER_TYPE_WARP, null, D3D11_CREATE_DEVICE_BGRA_SUPPORT, null, 0, D3D11_SDK_VERSION, &device, null, &context));
-        }
-        const dev = device orelse return error.ComFailed;
+        const got = if (sharedDeviceEnabled())
+            try device_cache.acquire(d3d11_create)
+        else
+            try createDevice(d3d11_create);
+        const dev = got.device;
         errdefer release(dev);
-        const ctx = context orelse return error.ComFailed;
+        const ctx = got.context;
         errdefer release(ctx);
+        const warp = got.warp;
 
         stage = "dxgi-factory";
         const dxgi_device = try query(dev, &IID_IDXGIDevice);
@@ -518,7 +657,11 @@ pub const Presenter = struct {
         defer release(fac);
 
         stage = "swap-chain";
-        const desc: DXGI_SWAP_CHAIN_DESC1 = .{
+        // T2968: on the shared device a Present that blocks for the frame
+        // queue would hold the device's lock and stall every other pane, so
+        // the chain is waitable and `begin` does that wait before the frame,
+        // outside the lock. A chain that refuses the flag is made without it.
+        var desc: DXGI_SWAP_CHAIN_DESC1 = .{
             .width = @max(width, 1),
             .height = @max(height, 1),
             .format = DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -530,7 +673,7 @@ pub const Presenter = struct {
             .scaling = DXGI_SCALING_STRETCH,
             .swap_effect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
             .alpha_mode = alphaMode(premultiplied),
-            .flags = 0,
+            .flags = if (got.shared) DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT else 0,
         };
         var swap: ?Obj = null;
         var surface_handle: HANDLE = null;
@@ -546,12 +689,30 @@ pub const Presenter = struct {
             stage = "swap-chain-for-handle";
             const media = try query(fac, &IID_IDXGIFactoryMedia);
             defer release(media);
-            try check(slot(*const fn (Obj, Obj, HANDLE, *const DXGI_SWAP_CHAIN_DESC1, ?Obj, *?Obj) callconv(.winapi) HRESULT, media, slot_factory_media_create_for_handle)(media, dev, surface_handle, &desc, null, &swap));
+            const create_for_handle = slot(*const fn (Obj, Obj, HANDLE, *const DXGI_SWAP_CHAIN_DESC1, ?Obj, *?Obj) callconv(.winapi) HRESULT, media, slot_factory_media_create_for_handle);
+            var hr = create_for_handle(media, dev, surface_handle, &desc, null, &swap);
+            if (hr < 0 and desc.flags != 0) {
+                desc.flags = 0;
+                swap = null;
+                hr = create_for_handle(media, dev, surface_handle, &desc, null, &swap);
+            }
+            try check(hr);
         } else {
-            try check(slot(*const fn (Obj, Obj, *const DXGI_SWAP_CHAIN_DESC1, ?Obj, *?Obj) callconv(.winapi) HRESULT, fac, slot_factory2_create_for_composition)(fac, dev, &desc, null, &swap));
+            const create_for_comp = slot(*const fn (Obj, Obj, *const DXGI_SWAP_CHAIN_DESC1, ?Obj, *?Obj) callconv(.winapi) HRESULT, fac, slot_factory2_create_for_composition);
+            var hr = create_for_comp(fac, dev, &desc, null, &swap);
+            if (hr < 0 and desc.flags != 0) {
+                desc.flags = 0;
+                swap = null;
+                hr = create_for_comp(fac, dev, &desc, null, &swap);
+            }
+            try check(hr);
         }
         const sc = swap orelse return error.ComFailed;
         errdefer release(sc);
+        const latency_wait: HANDLE = if (desc.flags != 0) waitableOf(sc) else null;
+        errdefer if (latency_wait) |h| {
+            _ = CloseHandle(h);
+        };
 
         if (tree) {
             stage = "wgl-open-device";
@@ -568,6 +729,9 @@ pub const Presenter = struct {
                 .interop_device = tree_interop,
                 .width = desc.width,
                 .height = desc.height,
+                .swap_flags = desc.flags,
+                .latency_wait = latency_wait,
+                .shared_device = got.shared,
                 .warp = warp,
                 .premultiplied = premultiplied,
                 .fail_after = debugFailAfter(),
@@ -621,17 +785,35 @@ pub const Presenter = struct {
             .interop_device = interop_device,
             .width = desc.width,
             .height = desc.height,
+            .swap_flags = desc.flags,
+            .latency_wait = latency_wait,
+            .shared_device = got.shared,
             .warp = warp,
             .premultiplied = premultiplied,
             .fail_after = debugFailAfter(),
         };
-        errdefer self.deinit();
+        // Only what `createShared` made and the interop handle: the errdefers
+        // above own the COM objects. `deinit` here released them a second
+        // time, which on the shared device (T2968) would free the cache's own
+        // reference out from under every other pane.
+        errdefer {
+            self.destroyShared();
+            _ = interop.close(interop_device);
+        }
 
         stage = "shared-texture";
         try self.createShared(desc.width, desc.height);
         self.adoptSwap2();
         stage = "";
         return self;
+    }
+
+    /// The frame-latency waitable object of a chain made with
+    /// DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT, or null.
+    fn waitableOf(sc: Obj) HANDLE {
+        const s2 = query(sc, &IID_IDXGISwapChain2) catch return null;
+        defer release(s2);
+        return slot(*const fn (Obj) callconv(.winapi) HANDLE, s2, slot_swapchain2_get_waitable)(s2);
     }
 
     /// Take the swap chain's IDXGISwapChain2 for source-size resizes (T2598).
@@ -662,7 +844,7 @@ pub const Presenter = struct {
             const cap = sharedCapacity(self.swap_w, self.swap_h, w, h);
             if (cap[0] != self.swap_w or cap[1] != self.swap_h) {
                 stage = "resize-buffers";
-                try check(resize(self.swap, 0, cap[0], cap[1], 0, 0));
+                try check(resize(self.swap, 0, cap[0], cap[1], 0, self.swap_flags));
                 self.swap_w = cap[0];
                 self.swap_h = cap[1];
             }
@@ -684,7 +866,7 @@ pub const Presenter = struct {
             self.swap2 = null;
         }
         stage = "resize-buffers";
-        try check(resize(self.swap, 0, w, h, 0, 0));
+        try check(resize(self.swap, 0, w, h, 0, self.swap_flags));
         self.swap_w = w;
         self.swap_h = h;
     }
@@ -768,6 +950,12 @@ pub const Presenter = struct {
     /// texture for GL and return the GL framebuffer to blit the frame into.
     pub fn begin(self: *Presenter, w: u32, h: u32) Error!gl.Framebuffer {
         if (w == 0 or h == 0) return error.GLFailed;
+        // T2968: wait for the chain to take another frame here, holding no
+        // device lock, rather than inside a Present that holds the shared
+        // device's. A timeout draws anyway; Present then waits as before.
+        if (self.latency_wait) |h_wait| if (!self.latency_token) {
+            self.latency_token = WaitForSingleObject(h_wait, latency_wait_ms) == WAIT_OBJECT_0;
+        };
         if (w != self.width or h != self.height or self.texture == null) {
             try self.resizeSwap(w, h);
             const cap = sharedCapacity(self.tex_w, self.tex_h, w, h);
@@ -848,6 +1036,7 @@ pub const Presenter = struct {
         // Sync interval 1: one frame per vblank, the same pacing SwapBuffers had.
         const stamped = present_stamps.stampBegin(self.hwnd, .present);
         defer if (stamped) present_stamps.stampEnd(self.hwnd, .present);
+        self.latency_token = false;
         try check(slot(*const fn (Obj, u32, u32) callconv(.winapi) HRESULT, self.swap, slot_swapchain_present)(self.swap, 1, 0));
     }
 
@@ -914,6 +1103,8 @@ pub const Presenter = struct {
         release(self.swap);
         if (self.surface_handle) |h| _ = CloseHandle(h);
         self.surface_handle = null;
+        if (self.latency_wait) |h| _ = CloseHandle(h);
+        self.latency_wait = null;
         release(self.context);
         release(self.device);
     }
@@ -1015,4 +1206,168 @@ test "T2515: an opaque chain is rebuilt only once its window turns translucent" 
     try std.testing.expect(!needsAlphaRebuild(false, false));
     try std.testing.expect(!needsAlphaRebuild(true, true));
     try std.testing.expect(!needsAlphaRebuild(true, false));
+}
+
+test "T2968: the shared device knob is on unless explicitly off" {
+    try std.testing.expect(sharedDeviceWanted(null));
+    try std.testing.expect(sharedDeviceWanted("1"));
+    try std.testing.expect(sharedDeviceWanted("anything"));
+    try std.testing.expect(!sharedDeviceWanted("0"));
+    try std.testing.expect(!sharedDeviceWanted("off"));
+}
+
+test "T2968: only a device that reports S_OK is handed out again" {
+    try std.testing.expect(cacheReusable(0));
+    try std.testing.expect(!cacheReusable(@bitCast(@as(u32, 0x887A0005)))); // DEVICE_REMOVED
+    try std.testing.expect(!cacheReusable(@bitCast(@as(u32, 0x887A0007)))); // DEVICE_RESET
+}
+
+/// A fake COM object for the `DeviceCache` tests: one vtable that answers
+/// QueryInterface (itself, or E_NOINTERFACE), AddRef/Release (counted),
+/// slot 5 (SetMultithreadProtected) and slot 39 (GetDeviceRemovedReason).
+const FakeCom = struct {
+    vtbl: *const [40]*const anyopaque,
+    refs: u32 = 1,
+    removed: HRESULT = 0,
+    protected: bool = false,
+    no_multithread: bool = false,
+
+    fn of(o: Obj) *FakeCom {
+        return @ptrCast(@alignCast(o));
+    }
+    fn qi(o: Obj, _: *const GUID, out: *?Obj) callconv(.winapi) HRESULT {
+        const f = of(o);
+        if (f.no_multithread) {
+            out.* = null;
+            return @bitCast(@as(u32, 0x80004002));
+        }
+        f.refs += 1;
+        out.* = o;
+        return 0;
+    }
+    fn add(o: Obj) callconv(.winapi) u32 {
+        of(o).refs += 1;
+        return of(o).refs;
+    }
+    fn rel(o: Obj) callconv(.winapi) u32 {
+        of(o).refs -= 1;
+        return of(o).refs;
+    }
+    fn protect(o: Obj, on: i32) callconv(.winapi) i32 {
+        of(o).protected = on != 0;
+        return 0;
+    }
+    fn reason(o: Obj) callconv(.winapi) HRESULT {
+        return of(o).removed;
+    }
+    fn unused() callconv(.winapi) void {}
+
+    const vtable: [40]*const anyopaque = blk: {
+        var v: [40]*const anyopaque = .{@as(*const anyopaque, @ptrCast(&unused))} ** 40;
+        v[0] = @ptrCast(&qi);
+        v[1] = @ptrCast(&add);
+        v[2] = @ptrCast(&rel);
+        v[5] = @ptrCast(&protect);
+        v[39] = @ptrCast(&reason);
+        break :blk v;
+    };
+};
+
+const FakeFactory = struct {
+    var pool: [8]FakeCom = undefined;
+    var used: usize = 0;
+    var creates: usize = 0;
+    var fail_hardware = false;
+    var no_multithread = false;
+    var last_driver: u32 = 0;
+
+    fn reset() void {
+        used = 0;
+        creates = 0;
+        fail_hardware = false;
+        no_multithread = false;
+    }
+    fn make() Obj {
+        pool[used] = .{ .vtbl = &FakeCom.vtable, .no_multithread = no_multithread };
+        used += 1;
+        return @ptrCast(&pool[used - 1]);
+    }
+    fn create(_: ?Obj, driver: u32, _: ?*anyopaque, _: u32, _: ?*const u32, _: u32, _: u32, dev: *?Obj, _: ?*u32, ctx: *?Obj) callconv(.winapi) HRESULT {
+        last_driver = driver;
+        if (fail_hardware and driver == D3D_DRIVER_TYPE_HARDWARE) return @bitCast(@as(u32, 0x887A0004));
+        creates += 1;
+        dev.* = make();
+        ctx.* = make();
+        return 0;
+    }
+};
+
+test "T2968: every pane gets the one protected device, each holding its own reference" {
+    FakeFactory.reset();
+    var cache: DeviceCache = .{};
+    const a = try cache.acquire(FakeFactory.create);
+    const b = try cache.acquire(FakeFactory.create);
+    try std.testing.expectEqual(@as(usize, 1), FakeFactory.creates);
+    try std.testing.expect(a.shared and b.shared);
+    try std.testing.expectEqual(a.device, b.device);
+    try std.testing.expectEqual(a.context, b.context);
+    const dev = FakeCom.of(a.device);
+    try std.testing.expect(dev.protected);
+    // The cache's one + one per pane.
+    try std.testing.expectEqual(@as(u32, 3), dev.refs);
+    try std.testing.expectEqual(@as(u32, 3), FakeCom.of(a.context).refs);
+    release(a.device);
+    release(a.context);
+    release(b.device);
+    release(b.context);
+    try std.testing.expectEqual(@as(u32, 1), dev.refs);
+    cache.deinit();
+    try std.testing.expectEqual(@as(u32, 0), dev.refs);
+}
+
+test "T2968: a removed device is never handed out again" {
+    FakeFactory.reset();
+    var cache: DeviceCache = .{};
+    const a = try cache.acquire(FakeFactory.create);
+    const old = FakeCom.of(a.device);
+    old.removed = @bitCast(@as(u32, 0x887A0005));
+    const b = try cache.acquire(FakeFactory.create);
+    try std.testing.expectEqual(@as(usize, 2), FakeFactory.creates);
+    try std.testing.expect(a.device != b.device);
+    // The cache let go of the removed one; only the pane still holds it.
+    try std.testing.expectEqual(@as(u32, 1), old.refs);
+    release(a.device);
+    release(a.context);
+    release(b.device);
+    release(b.context);
+    cache.deinit();
+    try std.testing.expectEqual(@as(u32, 0), FakeCom.of(b.device).refs);
+}
+
+test "T2968: a device that cannot be protected stays its one pane's" {
+    FakeFactory.reset();
+    FakeFactory.no_multithread = true;
+    var cache: DeviceCache = .{};
+    const a = try cache.acquire(FakeFactory.create);
+    const b = try cache.acquire(FakeFactory.create);
+    try std.testing.expect(!a.shared and !b.shared);
+    try std.testing.expectEqual(@as(usize, 2), FakeFactory.creates);
+    try std.testing.expectEqual(@as(u32, 1), FakeCom.of(a.device).refs);
+    release(a.device);
+    release(a.context);
+    release(b.device);
+    release(b.context);
+    cache.deinit();
+}
+
+test "T2968: no hardware adapter falls back to one shared WARP device" {
+    FakeFactory.reset();
+    FakeFactory.fail_hardware = true;
+    var cache: DeviceCache = .{};
+    const a = try cache.acquire(FakeFactory.create);
+    try std.testing.expect(a.warp and a.shared);
+    try std.testing.expectEqual(D3D_DRIVER_TYPE_WARP, FakeFactory.last_driver);
+    release(a.device);
+    release(a.context);
+    cache.deinit();
 }

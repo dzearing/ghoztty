@@ -255,6 +255,11 @@
             "unset": "shipped-elsewhere",
             "note": "T2514/T2747: explicit 0 or 1 picks the WGL or composition present; unset is the build's default (default_on in gl_comp_present.zig), which every harness that does not set it runs. Harnesses whose subject is the popup path pin 0; pane-banner section 13 and comp-present pin 1."
         },
+        "GHOZTTY_COMP_SHARED_DEVICE": {
+            "class": "enable",
+            "unset": "shipped-elsewhere",
+            "note": "T2968: 0 gives every pane its own D3D11 device again (the pre-T2968 path); unset is the shipped default, one process-wide device, which every harness that does not set it runs. comp-present.ps1 section S pins 0 as the knob-off control."
+        },
         "GHOZTTY_COMP_PRESENT_SIMULATE_NO_INTEROP": {
             "class": "fault",
             "unset": "shipped-elsewhere",

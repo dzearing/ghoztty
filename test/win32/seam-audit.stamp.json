@@ -1,10 +1,12 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-14T09:59:53-08:00",
-    "commit":  "9f024fc45",
+    "generated":  "2026-11-14T11:13:40-08:00",
+    "commit":  "82357606f",
     "uncommitted":  [
-                        "src/renderer/generic.zig"
+                        "src/renderer/gl_comp_present.zig",
+                        "src/renderer/OpenGL.zig",
+                        "test/win32/seam-audit.registry.json"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -590,7 +592,7 @@
                   "src/renderer/comp_tree.zig":  "796b0cb57c6c43a027e070605dcd3c2d1ca2bfa37be914b5fbbceda43dc02876",
                   "src/renderer/cursor.zig":  "1a37e555c743fe01ea9033da827af9656371799ecb1df7869044a48311f00395",
                   "src/renderer/generic.zig":  "f6f139afaa37d58fe9b3d1b2222ef9b71ac7d231622c32ae724e9deb1054207c",
-                  "src/renderer/gl_comp_present.zig":  "96c55675cb0d75262716ee1394f09cbc8d6b6d652e8674bd4459575dae07ee8a",
+                  "src/renderer/gl_comp_present.zig":  "3e01f487281f59244f1fd1ca810ca84627a727b3045ef4ad594b502c0d214d51",
                   "src/renderer/gl_loader.zig":  "5e48c65d81df3cf24ab97ecd9e2d29f658aade47867fa4687af3efdaf84f8992",
                   "src/renderer/gl_report.zig":  "cab949c5e9d9586daef1261de0090f4cd58a53dee78ef01022aa478d1ce3f51e",
                   "src/renderer/gl_robust.zig":  "e025250fd1194337a3f5cf33c7dbeca409f3f644129cad2e7a3aee7b892e00f4",
@@ -600,7 +602,7 @@
                   "src/renderer/low_power.zig":  "561c61649c3385011078e4c7646604e1f28b70e3cd6889967b8d997e8788e8cb",
                   "src/renderer/message.zig":  "ea7a01ec29b0fc5ba99beccb00b090a6d910dbcc23575796c2a840d5a32d11e7",
                   "src/renderer/Metal.zig":  "805d79782476bdfd4946d578134becc2483d73dcee7af7a495cdbdd8e428d6f4",
-                  "src/renderer/OpenGL.zig":  "0dc53e2e83b6ecc309e54b6755d5491c814d9080e766215979b0da819bb910cc",
+                  "src/renderer/OpenGL.zig":  "4305d71ef096d9ddbaa52574a5c7443bde95cfb391208dfc9bc7fd48d161e445",
                   "src/renderer/Options.zig":  "884d0510167fbc720bde36b502c75ff9ed4b5fcce47a07c8c3b74cbc490ed6fd",
                   "src/renderer/Overlay.zig":  "7cbdcee4452a18989936b19ad73484a64182d9660bd25dc95997ec18edec109e",
                   "src/renderer/present_stamps.zig":  "f670a3172195b42b3f3620f043ba9ecae4e6fa4aab76a9997bc16ca441d18c5f",
@@ -632,6 +634,6 @@
                   "src/termio/title_pace.zig":  "914afed249d211b9f119a1f551b1012008c75c2d4f9f1373639d40435eddf32d",
                   "test/win32/lib/SeamAudit.ps1":  "209b551bd95a6e77fbd4c47f40dd4cd8401b81b6c43503acd9ca77534c171b82",
                   "test/win32/seam-audit.ps1":  "e7ef6b8614ad022f48f0cfa94c7183270545ba2d3f29fc2e0b14669429e6c586",
-                  "test/win32/seam-audit.registry.json":  "267d2346f235569a8a807726cb139057ba67d6e429a3e7801d145d454ef3da7e"
+                  "test/win32/seam-audit.registry.json":  "7534a0746e82f676ba641895dc861b715a35b7acdf95d38bac9d79e6b0e5b8c9"
               }
 }
