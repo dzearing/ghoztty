@@ -994,7 +994,37 @@ function Invoke-Tick {
     }
     if ($quota.Mode -eq 'hold' -and -not $Force) {
         $script:QuotaWakeAt = $quota.Until
-        Update-State @{ recovery_hold_until = $quota.Until.ToString('o') }
+        # T1486: a hold is a blocker the user should be able to SEE. Stamp it
+        # where the dashboard's bar reads it (T1484 keys on recovery_turn_key
+        # matching the lock's turn) - a hold is not an ineffective re-entry, so
+        # the count is carried, not bumped - and say so once on the loop's own
+        # pane, the first place anyone looks. The next turn's own banner
+        # replaces it, so nothing needs clearing.
+        Update-State @{
+            recovery_hold_until        = $quota.Until.ToString('o')
+            recovery_turn_key          = $turnKey
+            recovery_ineffective       = $ineffective
+            recovery_blocked           = $true
+            recovery_blocked_kind      = [string]$blocker.Kind
+            recovery_blocked_why       = [string]$blocker.Why
+            recovery_blocked_resets_at = [string]$blocker.ResetsAt
+            recovery_needs_user        = $false
+            recovery_remedy            = ''
+        }
+        $holdKey = "$turnKey|$($blocker.Kind)|$($quota.Until.ToString('o'))"
+        $stHold = Read-State
+        if ([string]$stHold.pane_notice_key -ne $holdKey) {
+            $resume = $quota.Until.ToString('ddd HH:mm')
+            if ($DryRun) {
+                Log "  would banner the loop pane: paused until about $resume (dry run)"
+            } else {
+                $banner = Send-LoopPaneBanner -GhozttyExe $GhozttyExe -PaneId ([string]$lock.pane_id) `
+                    -Text ("**The loop is paused:** $($blocker.Why) - it picks up on its own at about $resume. " +
+                           'Nothing needs doing.')
+                Update-State @{ pane_notice_key = $holdKey; pane_notice_at = (Get-Date).ToString('o'); pane_notice_result = $banner }
+                Log "  BANNERED the loop pane: paused until about $resume (banner=$banner)"
+            }
+        }
         Log ("QUOTA HOLD: $($quota.Why); not re-entering until $($quota.Until.ToString('yyyy-MM-dd HH:mm')) " +
              "(typing cannot clear a quota; the ${QuotaFloorHours}h floor still retries if the message is wrong)")
         return 'hold'

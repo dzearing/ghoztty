@@ -4055,6 +4055,58 @@ $r = Dog-Run @('-DryRun', '-Force')
 Assert 'CC66 -Force still re-enters over a quota hold' `
     ($r.Out -match $qhReentry -and $r.Out -notmatch 'ACTION hold')
 
+# --- CC67-CC73. a quota hold is SAID: on the loop pane and the dashboard (T1486) --
+#
+# WHY. T1485 made a quota with a known reset a silent hold: no typing, and also
+# no recovery_blocked* stamp - so the dashboard's T1484 bar (which keys on
+# recovery_turn_key equal to the lock's turn) went dark for exactly the state
+# it exists to show, and the loop's own pane said nothing at all.
+""
+"CC67. a quota hold says so on the loop's own pane and where the dashboard reads"
+$qhPrevSink = $env:GHOZTTY_LOOP_ALERT_SINK
+$qhSink = Join-Path $ccRoot 'hold-alerts.jsonl'
+$env:GHOZTTY_LOOP_ALERT_SINK = $qhSink
+Remove-Item $qhSink -Force -ErrorAction SilentlyContinue
+$L = Read-LockFile
+$L.transcript = $qhFuture
+Write-LockFile $L
+QHSeed 60
+$r = Dog-Run @()
+$qhLines = @(if (Test-Path $qhSink) { Get-Content $qhSink })
+$qhObjs = @($qhLines | ForEach-Object { $_ | ConvertFrom-Json })
+$qhBanners = @($qhObjs | Where-Object { $_.banner })
+Assert 'CC67 a real hold tick banners the loop pane exactly once, and still does not type' `
+    ($r.Out -match 'ACTION hold' -and $r.Out -notmatch $qhReentry -and $qhBanners.Count -eq 1 -and
+     $qhBanners[0].banner -eq 'PANE-CC' -and $r.Out -match 'BANNERED the loop pane')
+Assert 'CC68 the banner names the pause and that it resumes on its own' `
+    ($qhBanners.Count -eq 1 -and $qhBanners[0].body -match 'paused' -and $qhBanners[0].body -match 'picks up on its own')
+Assert 'CC69 a quota lifts by itself, so no toast is raised for it' `
+    (@($qhObjs | Where-Object { $_.title }).Count -eq 0)
+$qhSt = Get-Content $state -Raw | ConvertFrom-Json
+Assert 'CC70 the state the dashboard reads carries the hold, keyed to the live turn' `
+    ($qhSt.recovery_blocked -eq $true -and $qhSt.recovery_blocked_kind -eq 'usage-limit' -and
+     [string]$qhSt.recovery_blocked_resets_at -ne '' -and $qhSt.recovery_needs_user -eq $false -and
+     $qhSt.recovery_turn_key -eq (Get-LoopTurnKey (Read-LockFile)))
+$r = Dog-Run @()
+$qhLines = @(if (Test-Path $qhSink) { Get-Content $qhSink })
+Assert 'CC71 the next tick over the same hold does not banner again' `
+    ($r.Out -match 'ACTION hold' -and $qhLines.Count -eq 1 -and $r.Out -notmatch 'BANNERED')
+# A NEW hold (a later reset) is told anew - dry run, so it only says it would.
+$L.transcript = QHTranscript 'quota-future2.jsonl' ([int][DateTimeOffset]::UtcNow.AddHours(3).ToUnixTimeSeconds())
+Write-LockFile $L
+$r = Dog-Run @('-DryRun')
+Assert 'CC72 a different hold is told again' ($r.Out -match 'ACTION hold' -and $r.Out -match 'would banner the loop pane')
+# Negative control: a transport error is not a hold and gets no banner, so
+# CC67's banner is the hold branch and not a watchdog bannering every blocker.
+$L.transcript = $ccApi
+Write-LockFile $L
+QHSeed 60
+$r = Dog-Run @('-DryRun')
+$qhLines = @(if (Test-Path $qhSink) { Get-Content $qhSink })
+Assert 'CC73 an api-error re-enters on the cadence and banners nothing' `
+    ($r.Out -match $qhReentry -and $r.Out -notmatch 'banner the loop pane|BANNERED' -and $qhLines.Count -eq 1)
+$env:GHOZTTY_LOOP_ALERT_SINK = $qhPrevSink
+
 Remove-Item $lock, $state -Force -ErrorAction SilentlyContinue
 
 # --- MK: claim marks the RIGHT window, or says it did not (T2842) ----------
