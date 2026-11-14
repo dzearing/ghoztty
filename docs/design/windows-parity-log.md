@@ -38702,3 +38702,14 @@ Three Fable 5.2 auditors (claude-fable-5-2) read the viewer code read-only: the 
 
 Rejected (6, with reasons in the findings file): among them, one browser tree per viewer, and a polling file watcher.
   - Validation: every PA id's cited lines were re-read this turn. No code changed, so no lanes are owed.
+
+## 2026-11-14 09:25 - T2964: shared-core audit (audit-1, area C)
+
+Three Fable 5.2 auditors (claude-fable-5-2) read the shared Zig core read-only: the output path from ConPTY to the terminal, parse and state, and input plus fonts. Every surviving claim was checked by reading the cited lines, including libxev's pinned IOCP backend. The findings are in `docs/design/perf-audit/audit-1/C-findings.md`: 16 findings, PA-C01..C16, filed as T3058-T3069, plus a font-style correctness bug (T3070) and the Mac half of the shared fixes (T3071). The headlines:
+  - P0 (T3058): with NumLock or CapsLock on, which is most desktop keyboards, every mouse move and keystroke over a pane forces a full screen rebuild. `modsChanged` compares raw mods against stored `binding()` mods.
+  - Parsing is not the busy bottleneck. SIMD and the release asserts are right on Windows, and no fork edit adds per-byte cost. The 2 MB/s ceiling is conhost's. What the app adds is per-batch overhead: three syscalls, a lock and a redundant IOCP renderer post per ~60-110 bytes (T3060, T3061), behind a 4 KB pipe (T3062). T3059 records the existing `GHOZTTY_PERF` counters in the busy phase so this is measured rather than inferred.
+  - Fonts: the Windows discovery has no index, so each uncovered codepoint rescans every font file under the grid's exclusive lock, and each zoom step rescans on the GUI thread (T3063).
+  - Link hover stringifies an unbounded soft-wrapped line under the renderer mutex on every cell crossed (T3064).
+
+Not filed (reasons in the findings file): an uncapped frame per wakeup, which T1462 measured and closed as not reproducible; OSC 133 messages; the baseline x86_64 target.
+  - Validation: every PA id's cited lines were re-read this turn. No code changed, so no lanes are owed.
