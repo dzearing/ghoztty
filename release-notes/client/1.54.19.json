@@ -1,0 +1,25 @@
+{
+  "version": "1.54.19",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "The loop's watchdog no longer types into a window the user has taken over for their own Claude session; it opens a window of its own instead." },
+        { "text": "The loop's watchdog waits for a quota's known reset time and retries the moment it clears, instead of nudging every 20 minutes." },
+        { "text": "When a usage limit pauses the loop, its own window now says so and when it resumes, and the dashboard's blocked bar shows it again." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The rare 4K drag hitch is traced to Windows making the app wait 15-54 ms to take one small picture for the window; parked for an admin trace." },
+        { "text": "The rare late 4K drag frame is traced to Windows idling inside the one call that moves all the panes; parked on the same admin trace as T2952." },
+        { "text": "A fold glide no longer stops to wait for a pane that is still hidden behind its strip, so the slowest 120 Hz glide frames are about a third shorter." },
+        { "text": "Glass panes' backdrop slices are cut from a quarter-size copy of the desk, so a 4K glide's glass step is about a third of what it was." },
+        { "text": "A one-command performance baseline now measures what Ghoztty costs on Windows, and the first one is committed." },
+        { "text": "The renderer and GPU audit is done: 17 verified findings are queued, led by a counter that makes panes redraw everything after ~100k frames." },
+        { "text": "The win32 frontend performance audit is done: 16 verified findings are queued, led by every thread pinning a 16 MB stack." },
+        { "text": "The memory and leak audit is done: no close path leaks, and 12 verified findings are queued, led by pixel buffers kept at their largest size." },
+        { "text": "The IPC and agent performance audit is done: 17 verified findings are queued, led by agent and holder threads committing 16 MB stacks each." },
+        { "text": "The viewer-pane performance audit is done: 24 verified findings are queued, led by the browser processes that outlive the last viewer and hidden viewers that are never suspended." },
+        { "text": "The shared-core performance audit is done: 16 verified findings are queued, led by NumLock making every mouse move redraw the whole pane." }
+      ] }
+  ]
+}
