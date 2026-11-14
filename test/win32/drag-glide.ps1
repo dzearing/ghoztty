@@ -58,9 +58,13 @@
 #      60 Hz frame). A face paints its whole card every frame, so this is the
 #      cost that grows with the window: `-Width 3800 -Height 2100` is the 4K
 #      run, and on a debug build that number is a ceiling, not the release's.
+#   F. The over-budget count sees every tick (T2951): the glide's `max_tick`
+#      line printed, describes the tick `max_us` names, and its over_frame
+#      count is non-zero exactly when max_us is over one 60 Hz frame. The
+#      count itself is the box's clock and is reported only.
 #   Numbers go to $env:TEMP\ghoztty-drag-glide\<stamp>\report.txt.
 #
-# -NegativeControl inverts B and C and MUST fail.
+# -NegativeControl inverts B, C and F's agreement and MUST fail.
 #
 # Only touches ghoztty processes running from this repo's zig-out*.
 #   powershell -NoProfile -File test\win32\drag-glide.ps1
@@ -159,6 +163,18 @@ function Get-GlideSample([string]$log) {
         WmPaintUs = [int]$m[13]; DeskComposed = [int]$m[14]; DeskReused = [int]$m[15]
         DeskPartial = [int]$m[16]; FacePaints = [int]$m[17]; FaceMeanUs = [int]$m[18]
         FaceMaxUs = [int]$m[19]; Verdict = $m[20]
+    }
+}
+
+function Get-MaxTickSample([string]$log) {
+    $m = Get-LastMatch $log ('divider glide max_tick cost_us=(\d+) over_frame=(\d+) over_period=(\d+) ' +
+        'frame_budget_us=(\d+) viewer_us=(\d+) desk_full=(\w+) step_us=(\d+) layout_us=(\d+) resize_us=(\d+) ' +
+        'waits=(\d+) wait_us=(\d+) place_us=(\d+) paint_us=(\d+) cards_us=(\d+) overlay_us=(\d+) flush_us=(\d+)')
+    if ($null -eq $m) { return $null }
+    return [pscustomobject]@{
+        CostUs = [int]$m[1]; OverFrame = [int]$m[2]; OverPeriod = [int]$m[3]; BudgetUs = [int]$m[4]
+        ViewerUs = [int]$m[5]; DeskFull = $m[6]; LayoutUs = [int]$m[8]; PlaceUs = [int]$m[12]
+        PaintUs = [int]$m[13]; CardsUs = [int]$m[14]
     }
 }
 
@@ -270,6 +286,7 @@ try {
         Start-Sleep -Milliseconds 250
         $glide = Get-GlideSample $log; $viewer = Get-ViewerSample $log; $drag = Get-DragSample $log
     }
+    $maxTick = Get-MaxTickSample $log
     Rep ''
     if ($drag) { Rep ("  drag:   ticks=$($drag.Ticks) mean=$($drag.MeanUs)us max=$($drag.MaxUs)us paint=$($drag.PaintUs)us verdict=$($drag.Verdict)") }
     if ($viewer) { Rep ("  viewer: resized by $($viewer.Viewers) pass(es) max, $($viewer.ViewerUs)us/pass (nav $($viewer.NavUs), bounds $($viewer.BoundsUs), toc $($viewer.TocUs))") }
@@ -279,6 +296,11 @@ try {
         Rep "  faces:  paints=$($glide.FacePaints) mean=$($glide.FaceMeanUs)us max=$($glide.FaceMaxUs)us (window ${Width}x${Height})"
         Rep ("          viewer_ticks=$($glide.ViewerTicks) viewer_us=$($glide.ViewerUs) deferred_moves=$($glide.Deferred) wm_paints=$($glide.WmPaints) " +
             "($($glide.WmPaintUs)us each) desk composed=$($glide.DeskComposed) reused=$($glide.DeskReused) partial=$($glide.DeskPartial)")
+    }
+    if ($maxTick) {
+        Rep ("  over:   $($maxTick.OverFrame) tick(s) over $($maxTick.BudgetUs)us, $($maxTick.OverPeriod) over the period, of every glide tick (T2951)")
+        Rep ("  worst:  cost=$($maxTick.CostUs)us place=$($maxTick.PlaceUs) paint=$($maxTick.PaintUs) layout=$($maxTick.LayoutUs) " +
+            "cards=$($maxTick.CardsUs) viewer=$($maxTick.ViewerUs) desk_full=$($maxTick.DeskFull)")
     }
     Rep "  panes+viewers visible at the far end of the drag: $foldedMid of 5 (fewer = folded into strips)"
     Rep ''
@@ -307,6 +329,21 @@ try {
     Assert ($glide.FacePaints -gt 0) "E: the folding cards painted strip faces (face_paints=$($glide.FacePaints))"
     Assert ($glide.FaceMaxUs -le $FaceBudgetUs) ("E: every strip face painted inside a frame at ${Width}x${Height} " +
         "(face_max_us=$($glide.FaceMaxUs) mean=$($glide.FaceMeanUs) budget=$FaceBudgetUs)")
+
+    # ---- F. the over-budget count sees every tick (T2951) ------------------
+    # Read from the glide line's own counters, not the stack trace ring (which
+    # at 4K kept ~57% of the tick lines). How MANY ticks are over is the box's
+    # clock and only reported; that the count and the max agree is the code's.
+    Assert ($null -ne $maxTick) "F: the glide printed its max_tick line (over-budget counts and the costliest tick's parts)"
+    if ($maxTick) {
+        Assert ($maxTick.CostUs -eq $glide.MaxUs) "F: the max_tick line describes the glide's costliest tick (cost_us=$($maxTick.CostUs), max_us=$($glide.MaxUs))"
+        $agree = (($maxTick.OverFrame -gt 0) -eq ($glide.MaxUs -gt $maxTick.BudgetUs)) -and
+            ($maxTick.OverFrame -le $maxTick.OverPeriod -or $glide.PeriodUs -gt $maxTick.BudgetUs) -and
+            ($maxTick.OverPeriod -le $glide.Ticks)
+        if ($NegativeControl) { $agree = -not $agree }
+        Assert $agree ("F: the over-budget count agrees with the max it prints (over_frame=$($maxTick.OverFrame) " +
+            "over_period=$($maxTick.OverPeriod) max_us=$($glide.MaxUs) budget=$($maxTick.BudgetUs) period=$($glide.PeriodUs) ticks=$($glide.Ticks))")
+    }
 
     Rep ''
     Rep "report: $report"

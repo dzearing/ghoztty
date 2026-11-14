@@ -1,8 +1,8 @@
 {
     "guard":  "pane-stack-strip",
     "script":  "test/win32/pane-stack-strip.ps1",
-    "generated":  "2026-11-13T15:03:52-08:00",
-    "commit":  "3e84f2916",
+    "generated":  "2026-11-13T17:01:52-08:00",
+    "commit":  "0101ebf12",
     "uncommitted":  [
                         "src/apprt/win32/Window.zig"
                     ],
@@ -10,7 +10,7 @@
                   "src/apprt/win32/pane_sidebar.zig":  "c242e812dbf0e42956f4898a597f935f77a2a44d69a98dc8bf7978842ad3265b",
                   "src/apprt/win32/pane_stack_grid.zig":  "1f70314d649e7dca5bbcb924a3484cb22a511255601210e8ccebfd25a5bb3e31",
                   "src/apprt/win32/pane_stack_strip.zig":  "959ede11d874857790114246aaeb3be01e7b8d67d95d9a0ec352c6cae22640f5",
-                  "src/apprt/win32/Window.zig":  "1b05029003f813041db547f2ab48a0b3c4ffcb03b7c13282ea7b5a969f6a0ff1",
+                  "src/apprt/win32/Window.zig":  "bc03a9331846fa12a3e98c8445b8d69f6b4aed5a9fa91d7db0c5ae07959536a0",
                   "test/win32/pane-stack-strip.ps1":  "248f70482e48081b4cdd0e68e090d9f707c6396317f706db9945d80c7bbccfc6"
               }
 }

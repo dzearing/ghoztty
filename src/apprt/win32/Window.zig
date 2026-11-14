@@ -8452,6 +8452,22 @@ fn reportGlideCost(self: *Window, comptime what: []const u8) void {
             "place_us={d} paint_us={d} cards_us={d} overlay_us={d} flush_us={d}",
         .{ p.step_us, p.layout_us, p.resize_us, p.waits, p.wait_us, p.place_us, p.paint_us, p.cards_us, p.overlay_us, p.flush_us },
     );
+    // T2951: how many ticks overran a 60 Hz frame and the period, counted on
+    // every tick rather than read back from the trace ring, and where the
+    // costliest one's time went (it need not be the widest gap's tick above).
+    const m = g.max_tick;
+    const mp = m.parts;
+    log.info(
+        what ++ " glide max_tick cost_us={d} over_frame={d} over_period={d} frame_budget_us={d} " ++
+            "viewer_us={d} desk_full={} step_us={d} layout_us={d} resize_us={d} waits={d} wait_us={d} " ++
+            "place_us={d} paint_us={d} cards_us={d} overlay_us={d} flush_us={d}",
+        .{
+            m.cost_us,                        g.over_frame, g.over_period, drag_perf.frame_budget_us,
+            m.viewer_us orelse 0,             m.desk_full,  mp.step_us,    mp.layout_us,
+            mp.resize_us,                     mp.waits,     mp.wait_us,    mp.place_us,
+            mp.paint_us,                      mp.cards_us,  mp.overlay_us, mp.flush_us,
+        },
+    );
     // T2845: the per-pane move attribution for the same glide.
     if (pane_move_trace.on()) pane_move_trace.summary();
 }
@@ -11897,9 +11913,11 @@ pub fn stackTraceOn() bool {
 
 /// `GHOZTTY_STACK_TRACE=ring` (T2485 D17): the trace's lines, kept in memory
 /// while a drag runs and written out when it ends (`flushStackTrace`), so the
-/// trace no longer slows the glide it is recording. 16384 lines of 256 bytes,
-/// zeroed, so the pages stay untouched unless the knob is set.
-var stack_ring: trace_ring.Ring(16384, 256) = .{};
+/// trace no longer slows the glide it is recording. 65536 lines of 256 bytes,
+/// zeroed, so the pages stay untouched unless the knob is set. A 4K drag
+/// glide writes about 30k lines (T2951): at 16384 the ring dropped 13.8k of
+/// them, so the per-tick lines a script read back were ~57% of the ticks.
+var stack_ring: trace_ring.Ring(65536, 256) = .{};
 
 /// `paintMovedBands`' phase ends on the QPC clock (T2732), read by the
 /// vacated-strip paint's stack trace line. UI thread only.

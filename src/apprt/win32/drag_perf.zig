@@ -584,6 +584,16 @@ pub const GlideStats = struct {
     /// glide line used to carry only means and maxima, so a late frame's cause
     /// had to be inferred from which maximum looked big enough.
     worst: Worst = .{},
+    /// Ticks whose own cost overran a 60 Hz frame (`frame_budget_us`) and the
+    /// display's period (T2951). These see every tick, where the stack trace
+    /// ring keeps only the newest lines it has room for: at 4K a drag's trace
+    /// overflowed the ring and a count built from its `tick` lines missed the
+    /// 17 ms ticks the `max_us` above had seen.
+    over_frame: u64 = 0,
+    over_period: u64 = 0,
+    /// The costliest tick's own shape (T2951), which need not be the tick
+    /// before the widest gap that `worst` carries.
+    max_tick: Shape = .{},
 
     /// One tick, as `record` is handed it.
     pub const Shape = struct {
@@ -656,7 +666,12 @@ pub const GlideStats = struct {
         defer self.prev = shape;
         self.ticks += 1;
         self.total_us += shape.cost_us;
-        if (shape.cost_us > self.max_us) self.max_us = shape.cost_us;
+        if (shape.cost_us > self.max_us or self.ticks == 1) {
+            self.max_us = shape.cost_us;
+            self.max_tick = shape;
+        }
+        if (shape.cost_us > frame_budget_us) self.over_frame += 1;
+        if (period_us > 0 and shape.cost_us > period_us) self.over_period += 1;
         if (shape.viewer_us) |v| {
             self.viewer_ticks += 1;
             self.viewer_us += v;
@@ -725,6 +740,31 @@ test "a gap past two periods is a late frame, and one makes the glide steppy" {
     g.reset();
     try testing.expectEqual(Verdict.no_data, g.verdict());
     try testing.expectEqual(GlideStats.Owner.none, g.worst.owner());
+}
+
+test "T2951: every tick over a frame or a period is counted, and the costliest tick is kept whole" {
+    var g: GlideStats = .{};
+    // 120 Hz: an 8.3 ms period, a 16.7 ms frame budget.
+    g.record(.{ .cost_us = 4_000 }, null, 8_333, .{});
+    g.record(.{ .cost_us = 9_000, .parts = .{ .place_us = 7_000 } }, 8_333, 8_333, .{});
+    g.record(.{ .cost_us = 17_074, .parts = .{ .place_us = 10_631, .paint_us = 6_430 } }, 8_333, 8_333, .{});
+    g.record(.{ .cost_us = 16_667 }, 8_333, 8_333, .{});
+    // The widest gap follows a cheap tick, so `worst` and `max_tick` differ.
+    g.record(.{ .cost_us = 3_000 }, 30_000, 8_333, .{});
+    try testing.expectEqual(@as(u64, 1), g.over_frame); // 16_667 is on the bar, not over it
+    try testing.expectEqual(@as(u64, 3), g.over_period);
+    try testing.expectEqual(@as(u64, 17_074), g.max_us);
+    try testing.expectEqual(g.max_us, g.max_tick.cost_us);
+    try testing.expectEqual(@as(u64, 10_631), g.max_tick.parts.place_us);
+    try testing.expectEqual(@as(u64, 6_430), g.max_tick.parts.paint_us);
+    try testing.expectEqual(@as(u64, 16_667), g.worst.before.cost_us);
+    // The agreement drag-glide.ps1 gates on: a count over the bar iff the max is.
+    try testing.expectEqual(g.max_us > frame_budget_us, g.over_frame > 0);
+    // An unknown period counts nothing over it rather than everything.
+    g.reset();
+    g.record(.{ .cost_us = 5_000 }, null, 0, .{});
+    try testing.expectEqual(@as(u64, 0), g.over_period);
+    try testing.expectEqual(@as(u64, 5_000), g.max_tick.cost_us);
 }
 
 test "T2455: the widest gap is owned by the tick before it, or by what ran between" {
