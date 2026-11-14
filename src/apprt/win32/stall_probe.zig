@@ -19,6 +19,7 @@
 const std = @import("std");
 const w32 = @import("win32.zig");
 const compose_gap = @import("compose_gap.zig");
+const place_laps = @import("place_laps.zig");
 
 /// Set for the length of a traced glide tick; blits outside one are not
 /// counted.
@@ -97,9 +98,50 @@ pub fn blitBegin(kind: Kind, w: i32, h: i32) Lap {
     return l;
 }
 
+pub const Phase = place_laps.Phase;
+pub const PhaseCost = place_laps.PhaseCost;
+const phase_count = place_laps.phase_count;
+pub const worstOffCpu = place_laps.worstOffCpu;
+
+var lap_qpc: i64 = 0;
+var lap_cycles: u64 = 0;
+var phase_qpc: [phase_count]i64 = @splat(0);
+var phase_cycles: [phase_count]u64 = @splat(0);
+
+/// Where the placement pass's laps start counting from.
+pub fn placeBegin() void {
+    if (!armed) return;
+    _ = w32.QueryThreadCycleTime(w32.GetCurrentThread(), &lap_cycles);
+    _ = w32.QueryPerformanceCounter(&lap_qpc);
+}
+
+/// Charge the time since the last lap (or `placeBegin`) to `p`.
+pub fn placeLap(p: Phase) void {
+    if (!armed or lap_qpc == 0) return;
+    var q: i64 = 0;
+    var c: u64 = 0;
+    _ = w32.QueryPerformanceCounter(&q);
+    _ = w32.QueryThreadCycleTime(w32.GetCurrentThread(), &c);
+    const i = @intFromEnum(p);
+    phase_qpc[i] +|= q - lap_qpc;
+    phase_cycles[i] +%= c -% lap_cycles;
+    lap_qpc = q;
+    lap_cycles = c;
+}
+
+/// Every phase's cost over the tick so far.
+pub fn phases() [phase_count]PhaseCost {
+    var out: [phase_count]PhaseCost = undefined;
+    for (&out, 0..) |*o, i| o.* = .{ .wall_us = qpcUs(phase_qpc[i]), .cpu_us = cyclesUs(phase_cycles[i]) };
+    return out;
+}
+
 /// The start of a traced tick.
 pub fn tickBegin() void {
     if (cycles_per_us == null) calibrate();
+    lap_qpc = 0;
+    phase_qpc = @splat(0);
+    phase_cycles = @splat(0);
     blits = 0;
     blit_sum = 0;
     blit_max = 0;

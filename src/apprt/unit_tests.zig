@@ -861,6 +861,10 @@ test {
     // `stall_probe.zig` reads - arithmetic, no OS imports.
     _ = @import("win32/compose_gap.zig");
 
+    // Which stretch of a glide tick's placement pass waited off the CPU
+    // (T2953) - arithmetic over per-phase wall and cycles, no OS imports.
+    _ = @import("win32/place_laps.zig");
+
     // A drag move on the composition tree (T2769): whether its layout pass
     // runs now or coalesces behind the compositor write, and how a pane
     // visual's card shape follows a size its window does not have yet. Same

@@ -8797,6 +8797,8 @@ pub fn layoutSplits(self: *Window) void {
         return;
     }
     var place_timer = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
+    // T2953: each stretch of this pass, wall against the UI thread's CPU.
+    stall_probe.placeBegin();
     // Where the panes are before the batch moves them (T2418): what they
     // leave behind is filled straight after it, below.
     var old_panes: [MAX_FRAME_WAITS]w32.RECT = undefined;
@@ -8838,6 +8840,7 @@ pub fn layoutSplits(self: *Window) void {
         defer grid.deinit();
         self.planStackSlide(tree, &grid);
         if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&plan_t1);
+        stall_probe.placeLap(.plan);
         self.placeGrid(tree, &grid, &hdwp);
         // The runs on show stick to the next layout (`stickyRun`).
         self.stackState().noteStacks(grid.result.stacks.items) catch {};
@@ -8846,6 +8849,7 @@ pub fn layoutSplits(self: *Window) void {
     if (split) move_split = null;
     // Every pane of this pass lands in ONE frame here, before the divider
     // bands are painted below (T1031).
+    stall_probe.placeLap(.defer_pos);
     var batch_t0: i64 = 0;
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&batch_t0);
     if (self.hwnd) |h| resizeTrace("batch-begin", h);
@@ -8860,6 +8864,7 @@ pub fn layoutSplits(self: *Window) void {
         self.cut_in_batch_done = false;
     }
     self.endPaneBatchFilled(hdwp);
+    stall_probe.placeLap(.end_defer);
     self.cut_in_batch = false;
     if (self.hwnd) |h| resizeTrace("batch-end", h);
     if (resizeTraceOn()) {
@@ -8879,12 +8884,14 @@ pub fn layoutSplits(self: *Window) void {
     // the cut too, unless the live batch already made it (T2732).
     defer self.strip_faces_placed = false;
     self.commitStripFacesEarly();
+    stall_probe.placeLap(.faces);
     if (self.hwnd) |h| resizeTrace("faces-end", h);
     // The regions first, when the desk fills what the panes left (T2516):
     // that paint clips to the children as they now stand, so the corners a
     // new cut gives back to the window are its to paint (`desk_paints_next`).
     // A live batch cut them already, ahead of its held resizes.
     if (desk_fill and !self.cut_in_batch_done) self.cutCardRegions();
+    stall_probe.placeLap(.cut);
     if (stackTraceOn()) {
         var cut_t1: i64 = 0;
         _ = w32.QueryPerformanceCounter(&cut_t1);
@@ -8904,6 +8911,7 @@ pub fn layoutSplits(self: *Window) void {
         _ = w32.QueryPerformanceCounter(&clear_t1);
         stackTrace("stack trace cleared qpc={d}", .{clear_t1});
     }
+    stall_probe.placeLap(.clear);
     if (place_timer) |*t| self.frame_place_us +|= t.read() / std.time.ns_per_us;
     if (!desk_fill) self.cutCardRegions();
     if (self.hwnd) |h| resizeTrace("regions-end", h);
@@ -11456,6 +11464,7 @@ fn endPaneBatchFilled(self: *Window, hdwp: ?w32.HDWP) void {
     self.held_resizes_on = true;
     batch_cost = .{};
     endPaneBatch(hdwp);
+    stall_probe.placeLap(.end_defer);
     self.held_resizes_on = false;
     var defer_end: i64 = 0;
     if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&defer_end);
@@ -11464,6 +11473,7 @@ fn endPaneBatchFilled(self: *Window, hdwp: ?w32.HDWP) void {
         self.cutCardRegions();
         self.cut_in_batch_done = true;
     }
+    stall_probe.placeLap(.cut_in_batch);
     var held = self.held_resizes.take();
     if (stackTraceOn()) {
         var qpc: i64 = 0;
@@ -11479,6 +11489,7 @@ fn endPaneBatchFilled(self: *Window, hdwp: ?w32.HDWP) void {
         if (e.pane.hwnd) |h| traceRenderStage("held-apply", h);
         e.pane.applyResize(e.width, e.height);
     }
+    stall_probe.placeLap(.apply);
     // T2946: the held terminal resizes' share of the batch, apart from the viewers'.
     if (stackTraceOn()) {
         var qpc: i64 = 0;
@@ -11489,6 +11500,7 @@ fn endPaneBatchFilled(self: *Window, hdwp: ?w32.HDWP) void {
     // woken renderers above can overlap, and nothing in the batch waits on it.
     var viewers = self.held_viewers.take();
     for (viewers.entries[0..viewers.len]) |e| e.pane.syncBoundsLive();
+    stall_probe.placeLap(.viewers);
 }
 
 /// Hold a pane's resize work for `endPaneBatchFilled`, which runs it after
@@ -13140,6 +13152,22 @@ fn stackSlideTick(self: *Window) void {
             cost_us,            st.cpu_us,                    st.blits,         st.blit_sum_us, st.blit_max_us,
             st.blit_max_cpu_us, @tagName(st.blit_max_kind), st.blit_max_area, st.dwm_frames,  st.dwm_gap_us,
             st.dwm_ids,         st.dwm_age_us,
+        });
+        // T2953: the placement pass stretch by stretch, wall/cpu in us,
+        // and the stretch that spent the most of it off the CPU.
+        const ph = stall_probe.phases();
+        const worst = stall_probe.worstOffCpu(&ph);
+        stackTrace("stack trace place worst={s} off_us={d} plan={d}/{d} defer={d}/{d} end_defer={d}/{d} cut_batch={d}/{d} apply={d}/{d} viewers={d}/{d} faces={d}/{d} cut={d}/{d} clear={d}/{d}", .{
+            @tagName(worst.phase), worst.off_us,
+            ph[0].wall_us,         ph[0].cpu_us,
+            ph[1].wall_us,         ph[1].cpu_us,
+            ph[2].wall_us,         ph[2].cpu_us,
+            ph[3].wall_us,         ph[3].cpu_us,
+            ph[4].wall_us,         ph[4].cpu_us,
+            ph[5].wall_us,         ph[5].cpu_us,
+            ph[6].wall_us,         ph[6].cpu_us,
+            ph[7].wall_us,         ph[7].cpu_us,
+            ph[8].wall_us,         ph[8].cpu_us,
         });
     }
     // The sidebar's card follows the grid's edge in the same frame (T2406;

@@ -1,8 +1,8 @@
 {
     "guard":  "rearrange-desktop-drop",
     "script":  "test/win32/rearrange-desktop-drop.ps1",
-    "generated":  "2026-11-13T21:26:29-08:00",
-    "commit":  "318818f24",
+    "generated":  "2026-11-13T23:27:36-08:00",
+    "commit":  "fc1b6802a",
     "uncommitted":  [
                         "src/apprt/win32/Window.zig"
                     ],
@@ -10,7 +10,7 @@
                   "src/apprt/win32/drop_highlight.zig":  "37c731db58d85417f767681947573b2e22febfd4563b2b0792716d876ddbb8c3",
                   "src/apprt/win32/pane_drop.zig":  "2aeae6ba7faebfea92aeae7d0e02523b81836ebb215a18d4d8644d5dd40d56db",
                   "src/apprt/win32/pane_relocate.zig":  "142dafc0a932792f9f994d3f6bb2563040fefba8c9e0fac3dddfb9d291f00045",
-                  "src/apprt/win32/Window.zig":  "a64fa94d4706b2d5b9ed492bac0e325dfb0f4f85ec716fd901545fb08ea1543a",
+                  "src/apprt/win32/Window.zig":  "f2f0cfeba5bb0d5e3b8502999ca11dd82a07ba044b3efbc07b0f02a3d19446ad",
                   "test/win32/rearrange-desktop-drop.ps1":  "02c96318e720d96211eb8cfe6292dade96025422b49a287cd61753d3152d4f0c"
               }
 }
