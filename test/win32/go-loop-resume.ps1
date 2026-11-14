@@ -30,6 +30,12 @@
 # Section C is the negative control: the same staging with the ledger lookup
 # switched off is exactly today's watchdog, and it must go red.
 #
+# Section F (T1482) is the other side of finding that pane: the WINDOW is the
+# user's, so before typing the watchdog reads whose session is in it (Claude
+# Code's per-pid session record -> that session's transcript) and refuses a
+# pane whose last typed prompt is not the loop's, with the loop's own session
+# and an unreadable one as its negative controls.
+#
 # Hermetic: its own lock, ledger, stop flag, watchdog state and task fixtures
 # under a per-run temp dir, driving an isolated debug ghoztty. The repo's real
 # temp\go-loop.lock.json and the user's windows are never touched.
@@ -196,6 +202,116 @@ Assert 'B4 and the log names it as closed rather than absent' `
     ($r.Out -match 'last pane=PANE-STAGE \(closed\)')
 Assert 'B5 the old unconditional "no live loop pane" wording is gone' `
     ($r.Out -notmatch 'no live loop pane, opening')
+
+""
+"F. a pane the user has taken over is never typed into (T1482)"
+# The pane is the loop's by RECORD (lock or ledger); the session in it may not
+# be. The verdict reads Claude Code's own records - the pid's session file and
+# that session's transcript - so these arms stage both as fixtures.
+. (Join-Path $Repo 'scripts\lib\LoopPaneSession.ps1')
+$loopPrompt = 'Before starting any task, run /reset-context read go.md and go'
+$v = Get-LoopSessionVerdict -Prompts @($loopPrompt, 'help me write a cover letter') -Claimed $true
+Assert "F1 the user's own prompt last reads foreign, claim or no claim ($($v.Verdict))" ($v.Verdict -eq 'foreign')
+$v = Get-LoopSessionVerdict -Prompts @($loopPrompt) -Claimed $true
+Assert "F2 a claimed session whose last prompt is the loop's reads loop ($($v.Verdict))" ($v.Verdict -eq 'loop')
+$v = Get-LoopSessionVerdict -Prompts @('read go.md and go') -Claimed $false
+Assert "F3 a turn that died before its claim still reads loop ($($v.Verdict))" ($v.Verdict -eq 'loop')
+$v = Get-LoopSessionVerdict -Prompts @() -Claimed $false
+Assert "F4 no prompt at all reads unknown ($($v.Verdict))" ($v.Verdict -eq 'unknown')
+$v = Get-LoopSessionVerdict -Prompts @('<command-name>/clear</command-name>', '[Request interrupted by user]', '<system-reminder>x</system-reminder>') -Claimed $true
+Assert "F5 slash commands, reminders and interrupt markers are not typed prompts ($($v.Verdict))" ($v.Verdict -eq 'unknown')
+$v = Get-LoopSessionVerdict -Prompts @($loopPrompt, '<bash-input>git status</bash-input>') -Claimed $true
+Assert "F6 a !command typed at the composer is a person ($($v.Verdict))" ($v.Verdict -eq 'foreign')
+$contLoop = Join-Path $root 'reset-context-cont-111.txt'
+$contUser = Join-Path $root 'reset-context-cont-222.txt'
+'read go.md and go' | Out-File -FilePath $contLoop -Encoding ascii
+'now refactor the parser' | Out-File -FilePath $contUser -Encoding ascii
+$ptr = { param($p) "Read $p - it contains your instructions for this session. Follow them." }
+$v = Get-LoopSessionVerdict -Prompts @((& $ptr $contLoop)) -Claimed $false
+Assert "F7 a continuation pointer whose file says go.md is the loop's ($($v.Verdict))" ($v.Verdict -eq 'loop')
+$v = Get-LoopSessionVerdict -Prompts @((& $ptr $contUser)) -Claimed $true
+Assert "F8 a continuation pointer to the user's own text is foreign ($($v.Verdict))" ($v.Verdict -eq 'foreign')
+$gone = Join-Path $root 'reset-context-cont-333.txt'
+$v1 = Get-LoopSessionVerdict -Prompts @((& $ptr $gone)) -Claimed $false
+$v2 = Get-LoopSessionVerdict -Prompts @((& $ptr $gone)) -Claimed $true
+Assert "F9 a pointer whose file is gone decides on the claim ($($v1.Verdict)/$($v2.Verdict))" `
+    ($v1.Verdict -eq 'unknown' -and $v2.Verdict -eq 'loop')
+
+# Transcript fixtures, in the shape Claude Code writes them.
+$fxSessions = Join-Path $root 'claude-sessions'
+$fxProjects = Join-Path $root 'claude-projects'
+$fxProjDir = Join-Path $fxProjects 'D--fx'
+New-Item -ItemType Directory -Force $fxSessions, $fxProjDir | Out-Null
+function FxLine($content) {
+    return (@{ type = 'user'; message = @{ role = 'user'; content = $content } } | ConvertTo-Json -Depth 8 -Compress)
+}
+$fxClear = FxLine '<command-name>/clear</command-name>'
+$fxNudge = FxLine $loopPrompt
+$fxClaim = FxLine @(@{ tool_use_id = 'toolu_1'; type = 'tool_result'; content = 'PRIMARY 2026-11-14T03:45:50 ACQUIRED pane=0D5B924D-9CC2-4F21-9EA2-0200782DDCEA pid=1 turn=2' })
+$fxMine = FxLine 'help me write a cover letter'
+# A session that merely READ the lock script's source carries the claim's
+# wording with no GUID; that is not a claim.
+$fxReadSrc = FxLine @(@{ tool_use_id = 'toolu_2'; type = 'tool_result'; content = 'Emit $check ("ACQUIRED pane=$($new.pane_id) pid=..." STOPPED by request at $($stop.requested_at)' })
+$fxCmd = '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"PowerShell","input":{"command":"powershell -NoProfile -File scripts\\go-loop-exec.ps1 claim *> $env:TEMP\\c.txt"}}]}}'
+@($fxClear, $fxNudge, $fxClaim, $fxMine) | Out-File -FilePath (Join-Path $fxProjDir 'fx-foreign.jsonl') -Encoding utf8
+@($fxClear, $fxNudge, $fxClaim) | Out-File -FilePath (Join-Path $fxProjDir 'fx-loop.jsonl') -Encoding utf8
+@($fxClear, (FxLine 'what does go.md say about digests?'), $fxReadSrc) | Out-File -FilePath (Join-Path $fxProjDir 'fx-readsrc.jsonl') -Encoding utf8
+@($fxNudge, $fxCmd, $fxMine) | Out-File -FilePath (Join-Path $fxProjDir 'fx-cmd.jsonl') -Encoding utf8
+$t = Read-LoopTranscriptPrompts -Path (Join-Path $fxProjDir 'fx-foreign.jsonl')
+Assert "F10 tool results are not prompts, and the claim's output is seen ($($t.Prompts.Count) prompts, claimed=$($t.Claimed))" `
+    ($t.Ok -and $t.Prompts.Count -eq 3 -and $t.Claimed)
+$t = Read-LoopTranscriptPrompts -Path (Join-Path $fxProjDir 'fx-readsrc.jsonl')
+Assert "F11 reading the claim's SOURCE is not a claim (claimed=$($t.Claimed))" ($t.Ok -and -not $t.Claimed)
+$t = Read-LoopTranscriptPrompts -Path (Join-Path $fxProjDir 'fx-cmd.jsonl')
+Assert "F12 a claim whose output went to a file is seen by its command (claimed=$($t.Claimed))" ($t.Ok -and $t.Claimed)
+
+# The pid record: a session file for a pid now held by a DIFFERENT process
+# describes somebody else.
+$fxOwner = Start-Sleeper; $sleepers += $fxOwner
+function Set-FxSession($sid, [string]$procStart) {
+    $rec = [ordered]@{ pid = $fxOwner.Id; sessionId = $sid; cwd = 'D:\fx' }
+    if ($procStart) { $rec.procStart = $procStart }
+    ($rec | ConvertTo-Json -Compress) | Out-File -FilePath (Join-Path $fxSessions "$($fxOwner.Id).json") -Encoding ascii
+}
+Set-FxSession 'fx-foreign' '1'
+$v = Get-LoopPidSessionVerdict -ClaudePid $fxOwner.Id -SessionsDir $fxSessions -ProjectsRoot $fxProjects
+Assert "F13 a session record from an earlier process with this pid is not believed ($($v.Verdict))" `
+    ($v.Verdict -eq 'unknown' -and $v.Why -match 'earlier process')
+$born = (Get-Process -Id $fxOwner.Id).StartTime.ToFileTimeUtc()
+Set-FxSession 'fx-foreign' ([string]$born)
+$v = Get-LoopPidSessionVerdict -ClaudePid $fxOwner.Id -SessionsDir $fxSessions -ProjectsRoot $fxProjects
+Assert "F14 the live process's own record leads to its transcript ($($v.Verdict))" ($v.Verdict -eq 'foreign')
+
+# The watchdog acts on it. A stand-in app that lists the lock's pane (shell pid
+# unknown, so the lock's claude pid is the one asked about), a stale lock owned
+# by a live process, and the session record pointing at each fixture in turn.
+$fakeAppPane = Join-Path $root 'fake-ghoztty-pane.cmd'
+@('@echo off',
+  'echo {"data":{"windows":[{"id":1,"target":"window-1","title":"[go-loop] fx","tabs":[{"splits":{"type":"leaf","terminal":{"id":"PANE-FX","name":"PANE-FX","pid":0}}}]}]}}',
+  'exit /b 0') -join "`r`n" | Out-File -FilePath $fakeAppPane -Encoding ascii
+Remove-Item $lock, $state -Force -ErrorAction SilentlyContinue
+Lock-Run @('acquire', '-PaneId', 'PANE-FX', '-ClaudePid', $fxOwner.Id) | Out-Null
+$fxDog = @('-DryRun', '-Force', '-RearmMinutes', '0', '-ProbeGapSeconds', '1',
+    '-ClaudeSessionsDir', $fxSessions, '-ClaudeProjectsRoot', $fxProjects)
+Set-FxSession 'fx-foreign'
+$r = Dog-Run $fxDog $fakeAppPane
+Assert 'F15 a taken-over pane is not nudged: the watchdog opens a window instead' `
+    ($r.Out -match 'ACTION new-window' -and $r.Out -notmatch 'ACTION nudge')
+Assert 'F16 and says whose session it found there' `
+    ($r.Out -match "NOT THE LOOP'S: pane PANE-FX" -and $r.Out -match 'cover letter')
+Assert "F17 the re-entry line names the pane as no longer the loop's, not as closed" `
+    ($r.Out -match "lock pane=PANE-FX \(no longer the loop's\)")
+# Negative controls: the same staging with the LOOP's session in the pane, and
+# with no session record at all, must still nudge - or F15 measured nothing.
+Set-FxSession 'fx-loop'
+$r = Dog-Run $fxDog $fakeAppPane
+Assert 'F18 control: the loop''s own session in the pane is still nudged' `
+    ($r.Out -match 'ACTION nudge' -and $r.Out -match 'session=loop')
+Remove-Item (Join-Path $fxSessions "$($fxOwner.Id).json") -Force
+$r = Dog-Run $fxDog $fakeAppPane
+Assert 'F19 control: a session that cannot be read keeps the old behaviour (nudge)' `
+    ($r.Out -match 'ACTION nudge' -and $r.Out -match 'session=unknown')
+Remove-Item $lock, $state -Force -ErrorAction SilentlyContinue
 
 ""
 "C/D. against a live GUI"

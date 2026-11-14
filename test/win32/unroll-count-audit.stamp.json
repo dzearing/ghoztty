@@ -1,10 +1,12 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-12T22:47:41-08:00",
-    "commit":  "048ef8f36",
+    "generated":  "2026-11-14T04:19:27-08:00",
+    "commit":  "d9f7a52c1",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+                        "scripts/go-loop-watchdog.ps1",
+                        "scripts/guard-due.ps1",
+                        "scripts/lib/LoopPaneSession.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -49,8 +51,8 @@
                   "scripts/go-loop-health.ps1":  "895f9cef3791a9f81fd8b975c1d17c127f9595688a4f446bf6a1221f7a2e6a65",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "416ef5cd4b94da58fc8181731530e30a6bca49e38144c47e4f71e3a489a76f8a",
-                  "scripts/go-loop-watchdog.ps1":  "c9e028f6040e12199efab1bc31a4b2b6d647ecb9c90461682af314330034fc23",
-                  "scripts/guard-due.ps1":  "7a37a54593b68ac98112997c1d62f8baa8e8e5d8adf63d505f9fed0cca3c59fb",
+                  "scripts/go-loop-watchdog.ps1":  "5ac2552c2af0192e299feb36f547c02ed5c7d900d99a08ae0c27083fa8a84424",
+                  "scripts/guard-due.ps1":  "e70f3f78040cab928ea16e81154dcfa8eb98754c2246c5d5e5440d738826fc29",
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
                   "scripts/hero-glide-onscreen.ps1":  "46d211f7ec7843d13506f4e3bd13933630339adb8aff13b5c97d69ae3fd248a7",
                   "scripts/hidden-windows-cpu.ps1":  "61551ac8760570d16a46ab2ef235c9792a2e29fb9e9d116ebbc23a5ce9051876",
@@ -83,6 +85,7 @@
                   "scripts/lib/LoopLane.ps1":  "5a323edad01338d2719fcb162c838a68f80b66a01616d9abf8d44daf9e1b51a8",
                   "scripts/lib/LoopLedger.ps1":  "925856ccac93bf14d6d9edfcf34bbc99ab044de1b496d30c2e31c437df83819a",
                   "scripts/lib/LoopMark.ps1":  "70dc66b05d61c7dc9cf1ccb4f3e05f155f7e8665b61b520f28427b4b1eb8ab08",
+                  "scripts/lib/LoopPaneSession.ps1":  "90a19ef1a37b5b5990c1f1f53ff2d69115ed61e125cddd9e04e3ac8646e4964b",
                   "scripts/lib/MachineLock.ps1":  "f9e8529b949b37f2f85c50dd87f551556454e85a7425de4899594fd07c828cd7",
                   "scripts/lib/ManualChecks.ps1":  "c13b824504fd874e258e5042e3eb33ed0ebdcdfb56e2671aa911160d2aeabfd4",
                   "scripts/lib/NativeArgv.ps1":  "49faad6cbe0907079281ac45a3e96f140fd6162f4c1729e82b145105137933b5",

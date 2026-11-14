@@ -182,6 +182,11 @@ param(
     # a parked-but-idle loop pane once the lock is gone; this switch turns it
     # off so a test can prove the old behavior goes red.
     [switch]$NoPaneHistory,
+    # Where Claude Code keeps its per-process session records and transcripts
+    # (T1482). Test seams: the defaults are the real ~/.claude locations, and the
+    # acceptance points them at fixtures to stage a pane the user has taken over.
+    [string]$ClaudeSessionsDir = (Join-Path $env:USERPROFILE '.claude\sessions'),
+    [string]$ClaudeProjectsRoot = (Join-Path $env:USERPROFILE '.claude\projects'),
     # Re-enter even though the lock looks healthy (T439). The two gates this
     # skips - "state is held" and the rearm hold-off - both exist to keep the
     # watchdog from interrupting a session that is working. A caller that KNOWS
@@ -237,6 +242,8 @@ $probeScript = Join-Path $PSScriptRoot 'go-loop-pane-probe.ps1'
 . (Join-Path $PSScriptRoot 'loop-session.ps1')
 # Send-LoopUserAlert (T2097): the toast for a blocker only the user can clear.
 . (Join-Path $PSScriptRoot 'lib\UserAlert.ps1')
+# Get-LoopPidSessionVerdict (T1482): is the session in that pane still the loop's?
+. (Join-Path $PSScriptRoot 'lib\LoopPaneSession.ps1')
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $runValue = Get-LoopLaneTaskName $Lane
 
@@ -1000,6 +1007,52 @@ function Invoke-Tick {
         Log "pane $paneId occupant=$occupant (lock owner_alive=$ownerAlive)"
     }
 
+    # T1482: the pane is the loop's by record (the lock, or the ledger) - but
+    # the WINDOW is the user's, and they may have taken it over for their own
+    # session. The nudge below is reset-first, so typing it there would clear
+    # their context and start the loop in their work. Ask the session itself:
+    # only a positive 'foreign' stops the typing; 'unknown' keeps the old
+    # behaviour (see scripts\lib\LoopPaneSession.ps1 for why).
+    $foreignPane = ''
+    if ($paneAlive -and ($ownerAlive -or $occupant -eq 'claude')) {
+        $claudePid = 0
+        try {
+            $shellPid = Get-PaneShellPid -PaneId $paneId -GhozttyExe $GhozttyExe
+            if ($shellPid -gt 0) {
+                $procs = @(Get-CimInstance Win32_Process -ErrorAction Stop |
+                    Select-Object ProcessId, ParentProcessId, Name, CommandLine, CreationDate)
+                $claudePid = Find-ClaudeDescendant -ShellPid $shellPid -Procs $procs
+            }
+        } catch { $claudePid = 0 }
+        $pidFrom = 'pane'
+        if ($claudePid -le 0 -and $ownerAlive -and $lock -and $lock.pane_id -eq $paneId) {
+            $claudePid = [int]$lock.claude_pid
+            $pidFrom = 'lock'
+        }
+        $ident = Get-LoopPidSessionVerdict -ClaudePid $claudePid `
+            -SessionsDir $ClaudeSessionsDir -ProjectsRoot $ClaudeProjectsRoot
+        Log "pane $paneId session=$($ident.Verdict) (claude pid=$claudePid from $pidFrom): $($ident.Why)"
+        if ($ident.Verdict -eq 'foreign') {
+            Log ("NOT THE LOOP'S: pane $paneId now holds somebody else's session ($($ident.Why)) - " +
+                 'typing nothing into it; re-entering in a window of its own instead (T1482)')
+            $foreignPane = $paneId
+            $paneAlive = $false
+            # Unmark it, so the next claim's duplicate sweep - which closes every
+            # OTHER window carrying this lane's marker - never closes the user's.
+            if (-not $DryRun) {
+                $lm = Get-LoopLaneMarker $Lane
+                $lj = $null
+                try { $lj = (Invoke-Ghoztty @('+list', '--json')).Out | ConvertFrom-Json } catch { $lj = $null }
+                foreach ($w in @($lj.data.windows | ForEach-Object { $_ })) {
+                    if (-not ([string]$w.title).StartsWith($lm, [StringComparison]::Ordinal)) { continue }
+                    if ((ConvertTo-Json $w -Depth 12 -Compress) -notmatch [regex]::Escape($paneId)) { continue }
+                    $r = Invoke-Ghoztty @('+rename', "--target=$paneId", '--title=')
+                    Log "  unmarked that window (it carried '$lm') exit=$($r.Code)"
+                }
+            }
+        }
+    }
+
     if ($paneAlive -and ($ownerAlive -or $occupant -eq 'claude')) {
         if (Test-PaneProducing $paneId) {
             Log "stale heartbeat but pane $paneId is still producing output; not nudging"
@@ -1106,8 +1159,14 @@ function Invoke-Tick {
     # call that works either way, and the probe below only decides which line
     # goes in the log.
     $appAlive = Test-AppRunning
-    Log ("re-entering: no live loop pane anywhere (lock pane=$(if ($lock -and $lock.pane_id) { $lock.pane_id } else { 'none' }), " +
-         "last pane=$(if ($NoPaneHistory) { 'not looked up' } else { $(if (Get-HistoryPane) { (Get-HistoryPane) + ' (closed)' } else { 'none' }) }), " +
+    $histLabel = if ($NoPaneHistory) { 'not looked up' } else {
+        $hp = Get-HistoryPane
+        if (-not $hp) { 'none' } elseif ($hp -eq $foreignPane) { "$hp (no longer the loop's)" } else { "$hp (closed)" }
+    }
+    $lockLabel = if ($lock -and $lock.pane_id) { $lock.pane_id } else { 'none' }
+    if ($foreignPane -and $lockLabel -eq $foreignPane) { $lockLabel = "$foreignPane (no longer the loop's)" }
+    Log ("re-entering: no live loop pane anywhere (lock pane=$lockLabel, " +
+         "last pane=$histLabel, " +
          "app=$(if ($appAlive) { 'running' } else { 'gone' })) - " +
          "$(if ($appAlive) { 'opening a new window' } else { 'no app is running, so LAUNCHING one with the resume shim' }) " +
          "(state=$state, remaining=$remaining)")

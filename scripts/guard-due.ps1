@@ -204,6 +204,8 @@ $GuardTable = @(
             'scripts\go-loop-watchdog.ps1',
             'scripts\go-loop-exec.ps1',
             'scripts\go-loop-lock.ps1',
+            # T1482: whose session is in the pane - section F.
+            'scripts\lib\LoopPaneSession.ps1',
             'test\win32\go-loop-resume.ps1'
         )
     },
