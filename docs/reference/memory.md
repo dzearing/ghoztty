@@ -28,7 +28,10 @@ the audit worktree; methodology there).
   surface (`scrollback-limit`, 10 MB by default).
 - Viewer panes run WebKit out of process: ~20–35 MB per WebContent process,
   plus a shared GPU and Networking process.
-- The agent keeps a 2 MB output ring per session (`--ring-bytes`).
+- The agent keeps, per session, a 2 MB output ring (`--ring-bytes`) and a
+  terminal emulator with up to 4 MiB of scrollback (`grid_snapshot.zig`
+  `history_scrollback_bytes`) for repainting a re-attached pane; and per
+  connection, at most 4 MiB of queued output (`data_queue_high_water`).
 
 ## Teardown invariants
 

@@ -212,6 +212,36 @@ backlog, and after 100 ms on running out of file descriptors or kernel memory
 listening socket ends it. The agent does not raise its own descriptor limit:
 child shells would inherit it.
 
+## The agent's outbound queue is bounded
+
+Each connection's writer thread drains one queue of frames. Child output is
+copied into it as it is printed, so a viewer that stops reading — the app
+suspended or at a breakpoint, a slow relay link — used to grow that queue at
+the speed its panes print, with no limit, until the agent ran out of memory
+and every session died.
+
+- `queued_data_bytes` counts data-stream bytes queued **or being written**;
+  past `data_queue_high_water` (4 MiB) `bridgeData` refuses the chunk. It is
+  already in the session's ring; `sent_offset` stays where it was.
+- **A session that is behind sends nothing live.** `onChildOutput` hands a
+  chunk to the bridge only when `sent_offset` is exactly where the chunk
+  starts; otherwise it tells the bridge it is behind (a zero-length call).
+  Sending live output past a gap would skip what the viewer is missing.
+- **The writer catches sessions up as it makes room.** A refusal marks the
+  connection `backlogged`; after writing a batch the writer runs
+  `catchUpBacklog`, which sends each behind-and-streaming session its gap
+  from the ring (`catchUpLocked`), in `catch_up_chunk` (64 KiB) pieces and
+  only while the queue has room. `FLOW{resume}` goes through the same code,
+  so a resume no longer sends the whole gap as one frame.
+- Lock order is store, then write, on every path; the writer holds neither
+  while it writes to the socket.
+- What is NOT bounded this way: the pty is still read as fast as the child
+  writes, so a viewer that stays away longer than the ring holds (2 MiB)
+  loses the oldest output, announced by the "bytes of output lost while
+  paused" marker, exactly as with a client pause.
+- Test: `a full outbound queue holds output in the ring and delivers it in
+  order when there is room` (`server.zig`).
+
 ## The layout manifest: syncing and writing
 
 `SessionLayoutManifest` (`session-layout.json` in Application Support) holds
