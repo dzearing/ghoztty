@@ -1,0 +1,14 @@
+{
+  "version": "1.54.18",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "The fold-glide fixes are now in a published release, and at 4K one frame in about one drag of five still misses the 16.7 ms bar." },
+        { "text": "On a 4K screen each fold-glide frame no longer copies the same column of the window to the screen twice, so its paint is about a quarter cheaper and clean release drags have no frame over 16.7 ms." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The fold-glide test now counts every frame that runs past 16.7 ms and says where the slowest one went, instead of reading a trace that at 4K kept only about half the frames." }
+      ] }
+  ]
+}
