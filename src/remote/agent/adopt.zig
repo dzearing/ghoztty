@@ -66,6 +66,7 @@
 //! lane on any host; the Win32 externs live behind a comptime OS gate.
 
 const std = @import("std");
+const thread_stack = @import("../../os/thread_stack.zig");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const sharing = @import("sharing.zig");
@@ -397,7 +398,7 @@ pub fn maybeStart(alloc: Allocator, sessions_file: ?[]const u8) void {
     }
     cmd_override = null;
 
-    if (std.Thread.spawn(.{}, run, .{ctx})) |t| {
+    if (std.Thread.spawn(thread_stack.config, run, .{ctx})) |t| {
         t.detach();
     } else |err| {
         say("thread spawn failed ({s}); will retry at the next agent start", .{@errorName(err)});

@@ -39,6 +39,7 @@
 //! the simplest robust ConPTY paths (see `spike/FINDINGS.md` §5).
 
 const std = @import("std");
+const thread_stack = @import("../../os/thread_stack.zig");
 const builtin = @import("builtin");
 const posix = std.posix;
 const Allocator = std.mem.Allocator;
@@ -362,7 +363,7 @@ pub const PtyChild = struct {
         self.attached.set();
         // Start the reader exactly once.
         if (self.reader == null) {
-            self.reader = std.Thread.spawn(.{}, readerLoop, .{self}) catch |err| blk: {
+            self.reader = std.Thread.spawn(thread_stack.config, readerLoop, .{self}) catch |err| blk: {
                 log.warn("failed to spawn pty reader thread: {}", .{err});
                 break :blk null;
             };
@@ -498,7 +499,7 @@ pub const PtyChild = struct {
         defer self.input_mutex.unlock();
         if (self.input_stop) return error.BrokenPipe;
         if (self.writer == null) {
-            self.writer = std.Thread.spawn(.{}, writerLoop, .{self}) catch |err| {
+            self.writer = std.Thread.spawn(thread_stack.config, writerLoop, .{self}) catch |err| {
                 // No thread: fall back to the old direct (blocking) write rather
                 // than losing the keystroke.
                 log.warn("failed to spawn pty writer thread: {}; writing inline", .{err});

@@ -38,6 +38,7 @@
 //!     instead of hanging alive around a shell that no longer exists.
 
 const std = @import("std");
+const thread_stack = @import("../../os/thread_stack.zig");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
@@ -448,7 +449,7 @@ const win = struct {
             self.mutex.unlock();
             self.attached.set();
             if (self.reader == null) {
-                self.reader = std.Thread.spawn(.{}, readerLoop, .{self}) catch |err| blk: {
+                self.reader = std.Thread.spawn(thread_stack.config, readerLoop, .{self}) catch |err| blk: {
                     log.warn("failed to spawn holder reader thread: {}", .{err});
                     break :blk null;
                 };

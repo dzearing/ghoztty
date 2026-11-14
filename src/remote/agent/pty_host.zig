@@ -34,6 +34,7 @@
 //! breaks the pipe — the shell lives on for the next owner.
 
 const std = @import("std");
+const thread_stack = @import("../../os/thread_stack.zig");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
@@ -263,7 +264,7 @@ const win = struct {
         // is dropped here; exit is observed by the poller's `tryWait`.
         child.attach(&state, sinkFn, 1);
 
-        const poller = try std.Thread.spawn(.{}, exitPoller, .{ &state, child, opts.exit_linger_ms });
+        const poller = try std.Thread.spawn(thread_stack.config, exitPoller, .{ &state, child, opts.exit_linger_ms });
         poller.detach();
 
         log.info(
@@ -421,7 +422,7 @@ const win = struct {
                         state.mutex.lock();
                         const from = proto.replayStart(at.ack, state.replay.start, state.replay.end);
                         state.mutex.unlock();
-                        writer = std.Thread.spawn(.{}, writerLoop, .{ state, &conn, from }) catch |err| {
+                        writer = std.Thread.spawn(thread_stack.config, writerLoop, .{ state, &conn, from }) catch |err| {
                             log.warn("writer spawn failed: {}", .{err});
                             return;
                         };

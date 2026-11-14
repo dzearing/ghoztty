@@ -17,6 +17,7 @@
 //! doesn't linger as a zombie in the long-lived agent.
 
 const std = @import("std");
+const thread_stack = @import("../../os/thread_stack.zig");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const posix = std.posix;
@@ -85,7 +86,7 @@ fn spawnPosix(alloc: Allocator, cmd: []const u8, cwd: ?[]const u8) SpawnOutcome 
             _ = posix.waitpid(p, 0);
         }
     };
-    if (std.Thread.spawn(.{}, Reaper.run, .{pid})) |t| {
+    if (std.Thread.spawn(thread_stack.config, Reaper.run, .{pid})) |t| {
         t.detach();
     } else |_| {}
 

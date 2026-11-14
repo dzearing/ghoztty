@@ -153,6 +153,7 @@
 //! safety net.)
 
 const std = @import("std");
+const thread_stack = @import("../../os/thread_stack.zig");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const agent_lineage = @import("../agent_lineage.zig");
@@ -1036,7 +1037,7 @@ pub const Heartbeat = struct {
             alloc.destroy(self);
             return null;
         };
-        self.thread = std.Thread.spawn(.{}, Heartbeat.run, .{self}) catch |err| blk: {
+        self.thread = std.Thread.spawn(thread_stack.config, Heartbeat.run, .{self}) catch |err| blk: {
             std.debug.print("ghoztty-agent: heartbeat thread spawn failed ({s}); heartbeat will go stale\n", .{@errorName(err)});
             break :blk null; // first beat exists; keep the daemon anyway
         };

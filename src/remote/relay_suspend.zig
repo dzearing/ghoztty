@@ -64,6 +64,7 @@
 //! test's sandbox, so the two can never end up in different ones.
 
 const std = @import("std");
+const thread_stack = @import("../os/thread_stack.zig");
 const Allocator = std.mem.Allocator;
 const enroll = @import("agent/enroll.zig");
 const relay_account = @import("relay_account.zig");
@@ -596,7 +597,7 @@ pub fn retryLaterAsync(alloc: Allocator) void {
 fn startLoop(alloc: Allocator, first_attempt: u32) void {
     if (!isRecorded(alloc) and !pending_revoke.isArmed(alloc)) return;
     if (running.swap(true, .acq_rel)) return;
-    const thread = std.Thread.spawn(.{}, restoreLoop, .{first_attempt}) catch |err| {
+    const thread = std.Thread.spawn(thread_stack.config, restoreLoop, .{first_attempt}) catch |err| {
         running.store(false, .release);
         log.warn("could not start the enrollment restore err={}", .{err});
         return;

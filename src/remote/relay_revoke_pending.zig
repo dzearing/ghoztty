@@ -57,6 +57,7 @@
 //!      because a laptop was closed at the wrong moment.
 
 const std = @import("std");
+const thread_stack = @import("../os/thread_stack.zig");
 const Allocator = std.mem.Allocator;
 const enroll = @import("agent/enroll.zig");
 const relay_revoke = @import("relay_revoke.zig");
@@ -342,7 +343,7 @@ pub fn isRetrying() bool {
 pub fn retryAsync(alloc: Allocator) void {
     if (!isArmed(alloc)) return;
     if (running.swap(true, .acq_rel)) return;
-    const thread = std.Thread.spawn(.{}, retryLoop, .{}) catch |err| {
+    const thread = std.Thread.spawn(thread_stack.config, retryLoop, .{}) catch |err| {
         running.store(false, .release);
         log.warn("could not start the revocation retry loop err={}", .{err});
         return;

@@ -112,6 +112,7 @@
 //!   - RPC, tunnels, multi-client fan-out to one session (§5.3 steal).
 
 const std = @import("std");
+const thread_stack = @import("../../os/thread_stack.zig");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const posix = std.posix;
@@ -1847,7 +1848,7 @@ fn runListenPipe(
             std.os.windows.CloseHandle(handle);
             continue;
         };
-        const t = std.Thread.spawn(.{}, PipeConnWorker.run, .{worker}) catch |err| {
+        const t = std.Thread.spawn(thread_stack.config, PipeConnWorker.run, .{worker}) catch |err| {
             std.debug.print("ghoztty-agent: failed to spawn pipe worker thread: {s}\n", .{@errorName(err)});
             std.os.windows.CloseHandle(handle);
             worker.destroy();
@@ -2205,7 +2206,7 @@ fn acceptLoop(
             std.posix.close(conn.stream.handle);
             continue;
         };
-        const t = std.Thread.spawn(.{}, ConnWorker.run, .{worker}) catch |err| {
+        const t = std.Thread.spawn(thread_stack.config, ConnWorker.run, .{worker}) catch |err| {
             std.debug.print("ghoztty-agent: failed to spawn worker thread: {s}\n", .{@errorName(err)});
             worker.destroy();
             continue;
@@ -2265,7 +2266,7 @@ fn blockSigterm() void {
 /// on-stop snapshot — the daemon serves regardless.
 fn startSigtermWatcher(store: *session.SessionStore) void {
     if (builtin.os.tag == .windows) return;
-    const t = std.Thread.spawn(.{}, sigtermWatcherLoop, .{store}) catch |err| {
+    const t = std.Thread.spawn(thread_stack.config, sigtermWatcherLoop, .{store}) catch |err| {
         std.debug.print("ghoztty-agent: SIGTERM watcher spawn failed ({s}); on-stop ring snapshot disabled\n", .{@errorName(err)});
         return;
     };
@@ -2530,7 +2531,7 @@ fn runRelay(
     var creds_watch: relay_creds.Watcher = undefined;
     if (enroll.relayEnvPath(alloc)) |env_path| {
         creds_watch = relay_creds.Watcher.init(alloc, env_path, &creds, &link, ws_base);
-        if (std.Thread.spawn(.{}, relay_creds.Watcher.run, .{&creds_watch})) |t| {
+        if (std.Thread.spawn(thread_stack.config, relay_creds.Watcher.run, .{&creds_watch})) |t| {
             t.detach(); // daemon-lifetime thread; nothing ever joins it
         } else |err| {
             std.debug.print("ghoztty-agent: relay.env watch disabled ({s}); a re-enroll needs an agent restart\n", .{@errorName(err)});
@@ -2548,7 +2549,7 @@ fn runRelay(
     // with this box", is never. Nothing else writes the desired link state in
     // relay mode, so this watcher owns the resume as well as the park.
     var revoke_w = revoke_watch.Watcher.init(alloc, &link, true);
-    if (std.Thread.spawn(.{}, revoke_watch.Watcher.run, .{&revoke_w})) |t| {
+    if (std.Thread.spawn(thread_stack.config, revoke_watch.Watcher.run, .{&revoke_w})) |t| {
         t.detach(); // daemon-lifetime thread; nothing ever joins it
     } else |err| {
         // Availability-first, like the creds watcher: losing this costs the
@@ -2839,7 +2840,7 @@ const SharingUplink = struct {
         if (alloc.create(relay_creds.Watcher)) |watch| {
             watch.* = relay_creds.Watcher.init(alloc, env_path, creds, &self.link, ws_base);
             env_path_owned = false; // watcher owns it now
-            if (std.Thread.spawn(.{}, relay_creds.Watcher.run, .{watch})) |t| {
+            if (std.Thread.spawn(thread_stack.config, relay_creds.Watcher.run, .{watch})) |t| {
                 t.detach();
                 self.creds_watch = watch;
             } else |err| {
@@ -2864,7 +2865,7 @@ const SharingUplink = struct {
             .exit_on_revoke = false,
             .on_revoked = .{ .ctx = self, .func = onRevoked },
         };
-        if (std.Thread.spawn(.{}, relayLoopThread, .{args})) |t| {
+        if (std.Thread.spawn(thread_stack.config, relayLoopThread, .{args})) |t| {
             t.detach();
             self.raised = true;
             self.said_unavailable = false;
@@ -2953,7 +2954,7 @@ fn maybeStartSharingUplink(
     // `owns_resume = false`.
     if (alloc.create(revoke_watch.Watcher)) |w| {
         w.* = revoke_watch.Watcher.init(alloc, &self.link, false);
-        if (std.Thread.spawn(.{}, revoke_watch.Watcher.run, .{w})) |t| {
+        if (std.Thread.spawn(thread_stack.config, revoke_watch.Watcher.run, .{w})) |t| {
             t.detach(); // daemon-lifetime thread; nothing ever joins it
             self.revoke = w;
             // One synchronous tick before the reconcile below, so the veto is
@@ -2968,7 +2969,7 @@ fn maybeStartSharingUplink(
     } else |_| {}
 
     self.reconcile();
-    if (std.Thread.spawn(.{}, SharingUplink.run, .{self})) |t| {
+    if (std.Thread.spawn(thread_stack.config, SharingUplink.run, .{self})) |t| {
         t.detach(); // daemon-lifetime thread; nothing ever joins it
     } else |err| {
         // The initial reconcile already ran: a startup-enabled uplink is up,
@@ -3113,7 +3114,7 @@ const RelayTransport = struct {
         // EOF so the loop redials. Without it, a connection whose peer died
         // while this machine slept blocks in `readMessage` forever. See
         // `keepalive.zig` for the full design rationale.
-        conn.ka_thread = std.Thread.spawn(.{}, keepalive.Keepalive.run, .{&conn.ka}) catch |err| blk: {
+        conn.ka_thread = std.Thread.spawn(thread_stack.config, keepalive.Keepalive.run, .{&conn.ka}) catch |err| blk: {
             std.debug.print("ghoztty-agent: relay keepalive spawn failed ({s}); dead-link detection disabled for this connection\n", .{@errorName(err)});
             break :blk null;
         };
@@ -3187,7 +3188,7 @@ fn serveControl(
             alloc.free(session_id);
             continue;
         };
-        const t = std.Thread.spawn(.{}, RelayWorker.run, .{worker}) catch |err| {
+        const t = std.Thread.spawn(thread_stack.config, RelayWorker.run, .{worker}) catch |err| {
             std.debug.print("ghoztty-agent: relay: failed to spawn session worker: {s}\n", .{@errorName(err)});
             worker.destroy();
             continue;

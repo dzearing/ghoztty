@@ -57,6 +57,7 @@
 //! existing explicit confirmation the app offers.
 
 const std = @import("std");
+const thread_stack = @import("../../os/thread_stack.zig");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
@@ -419,7 +420,7 @@ const win = struct {
                 .interval_ms = intervalMs(alloc),
                 .force = force,
             };
-            const t = std.Thread.spawn(.{}, run, .{self}) catch {
+            const t = std.Thread.spawn(thread_stack.config, run, .{self}) catch {
                 alloc.destroy(self);
                 return;
             };
@@ -695,7 +696,7 @@ const win = struct {
         // — so the deadline is a thread that ends the process. Safe by
         // construction: until GO lands we hold no guard and no public pipe, so
         // there is nothing for an abrupt exit to leave behind.
-        const watchdog = std.Thread.spawn(.{}, deadlineWatchdog, .{}) catch null;
+        const watchdog = std.Thread.spawn(thread_stack.config, deadlineWatchdog, .{}) catch null;
         if (watchdog) |t| t.detach();
 
         const handle = try listener.accept();

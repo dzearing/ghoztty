@@ -18,6 +18,7 @@
 //! unreachable relay changes nothing).
 
 const std = @import("std");
+const thread_stack = @import("../os/thread_stack.zig");
 const Allocator = std.mem.Allocator;
 const enroll = @import("agent/enroll.zig");
 const owner_veto = @import("agent/owner_veto.zig");
@@ -169,7 +170,7 @@ pub fn reconcileAsync(alloc: Allocator) void {
         if (!owner_veto.existsAt(vp)) return;
     }
     if (running.swap(true, .acq_rel)) return;
-    const thread = std.Thread.spawn(.{}, reconcileThread, .{}) catch |err| {
+    const thread = std.Thread.spawn(thread_stack.config, reconcileThread, .{}) catch |err| {
         running.store(false, .release);
         log.warn("could not start the hosting reconcile err={}", .{err});
         return;

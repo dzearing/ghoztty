@@ -31,6 +31,7 @@
 //!     snapshot at `S` (§7.3), so eviction is invisible, is future work.
 
 const std = @import("std");
+const thread_stack = @import("../../os/thread_stack.zig");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 // `protocol` is the shared wire contract (`src/remote/protocol.zig`), imported
@@ -1721,7 +1722,7 @@ pub const SessionStore = struct {
     /// (tests), idle reaping happens only via explicit `reapIdle` calls.
     pub fn startReaper(self: *SessionStore) !void {
         if (self.reaper != null) return;
-        self.reaper = try std.Thread.spawn(.{}, reaperLoop, .{self});
+        self.reaper = try std.Thread.spawn(thread_stack.config, reaperLoop, .{self});
     }
 
     /// Ring-snapshot cadence: flush dirty rings to disk every this-many reaper

@@ -57,6 +57,7 @@
 //! The real build wires the agent exe via `build.zig` (`zig build agent`).
 
 const std = @import("std");
+const thread_stack = @import("../../os/thread_stack.zig");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
@@ -659,19 +660,19 @@ pub const Server = struct {
         defer self.alloc.free(hello_json);
         try self.enqueue(.control, .hello, protocol.control_channel, hello_json);
 
-        self.writer_thread = try std.Thread.spawn(.{}, writerLoop, .{self});
+        self.writer_thread = try std.Thread.spawn(thread_stack.config, writerLoop, .{self});
         errdefer {
             self.signalClose();
             if (self.writer_thread) |t| t.join();
             self.writer_thread = null;
         }
-        self.control_thread = try std.Thread.spawn(.{}, controlReaderLoop, .{self});
+        self.control_thread = try std.Thread.spawn(thread_stack.config, controlReaderLoop, .{self});
         errdefer {
             self.control.close();
             if (self.control_thread) |t| t.join();
             self.control_thread = null;
         }
-        self.data_thread = try std.Thread.spawn(.{}, dataReaderLoop, .{self});
+        self.data_thread = try std.Thread.spawn(thread_stack.config, dataReaderLoop, .{self});
         errdefer {
             self.data.close();
             if (self.data_thread) |t| t.join();
@@ -1925,7 +1926,7 @@ pub const Server = struct {
             defer self.roster_mutex.unlock();
             if (self.roster_thread == null and !self.pumps_closed.load(.acquire)) {
                 self.roster_stop = false;
-                self.roster_thread = std.Thread.spawn(.{}, rosterPumpLoop, .{self}) catch null;
+                self.roster_thread = std.Thread.spawn(thread_stack.config, rosterPumpLoop, .{self}) catch null;
             }
         }
         // Hear about EVERY roster change, not only the ones this connection
@@ -2522,7 +2523,7 @@ pub const Server = struct {
         if (self.metrics_thread != null) return;
         if (self.pumps_closed.load(.acquire)) return;
         self.metrics_stop = false;
-        self.metrics_thread = std.Thread.spawn(.{}, metricsPumpLoop, .{self}) catch null;
+        self.metrics_thread = std.Thread.spawn(thread_stack.config, metricsPumpLoop, .{self}) catch null;
     }
 
     /// `METRICS_UNSUB`: stop + join the pump (idempotent).
@@ -2634,7 +2635,7 @@ pub const Server = struct {
         self.session_cpu_generation +%= 1;
         self.session_cpu_stop = false;
         self.session_cpu_thread = std.Thread.spawn(
-            .{},
+            thread_stack.config,
             sessionCpuPumpLoop,
             .{ self, self.session_cpu_generation },
         ) catch null;
