@@ -1,13 +1,10 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-14T03:05:34-08:00",
-    "commit":  "5c7434790",
+    "generated":  "2026-11-14T09:59:53-08:00",
+    "commit":  "9f024fc45",
     "uncommitted":  [
-                        "src/apprt/win32/desk_palette.zig",
-                        "src/apprt/win32/PaneDesk.zig",
-                        "src/apprt/win32/Surface.zig",
-                        "src/apprt/win32/Window.zig"
+                        "src/renderer/generic.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -592,7 +589,7 @@
                   "src/renderer/comp_overlay.zig":  "feea0d34376e378897888e0cfd4addeb89faa87f417a3236fd6fe121539a0937",
                   "src/renderer/comp_tree.zig":  "796b0cb57c6c43a027e070605dcd3c2d1ca2bfa37be914b5fbbceda43dc02876",
                   "src/renderer/cursor.zig":  "1a37e555c743fe01ea9033da827af9656371799ecb1df7869044a48311f00395",
-                  "src/renderer/generic.zig":  "371f697d3d20b0dcc47da161e15ebc8cca28e08016f4ec6744a2e1cee9215195",
+                  "src/renderer/generic.zig":  "f6f139afaa37d58fe9b3d1b2222ef9b71ac7d231622c32ae724e9deb1054207c",
                   "src/renderer/gl_comp_present.zig":  "96c55675cb0d75262716ee1394f09cbc8d6b6d652e8674bd4459575dae07ee8a",
                   "src/renderer/gl_loader.zig":  "5e48c65d81df3cf24ab97ecd9e2d29f658aade47867fa4687af3efdaf84f8992",
                   "src/renderer/gl_report.zig":  "cab949c5e9d9586daef1261de0090f4cd58a53dee78ef01022aa478d1ce3f51e",

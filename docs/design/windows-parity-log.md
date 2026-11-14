@@ -38721,3 +38721,8 @@ The six area audits (T2959-T2964) are now one index: `docs/design/perf-audit/aud
   - Audit-2 is T3072 (P0): rerun the baseline and a Fable 5.2 re-audit, give every PA id a verdict, file regressions as P0, and file audit-3. It is parked until 2026-11-21 or 10 PA closes. The tracker cannot re-queue on a date or a count yet, so T3073 adds that.
   - T2957's deps now name every audit-1 task and T3072 (113 ids).
   - Validation: the six area tables and the roll-up rows were extracted and diffed: 102 = 102, and the only differences are the fold. Docs and tracker only, so no lanes are owed.
+
+## 2026-11-14 10:05 - T2967: renderer stops rebuilding every frame after ~100k frames (PA-R01)
+
+A pane's renderer drops its retained frame state every 100,000 frames to bound memory, but the counter that times this was never reset. So from about 15-30 minutes of streaming output onward, every update rebuilt the whole frame and re-shaped every row under the terminal lock, which also defeated the unchanged-frame skip. The counter now restarts at the teardown, through a small `terminalStateRecycleDue()` helper in `src/renderer/generic.zig` with the same semantics as upstream/main. The Mac half is T2984.
+  - Validation: a new unit test drives three full windows plus a partial one and asserts exactly three teardowns, with the frame after a teardown ordinary again. `-Dtest-filter=terminalStateRecycleDue` passes, and a bogus filter fails, so the test is compiled in. floor-lane `-Lane all`: lib, none, win32 and agent all PASS.

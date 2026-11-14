@@ -58,6 +58,7 @@ test {
     // Our comptime-chosen renderer
     _ = Renderer;
 
+    _ = @import("renderer/generic.zig");
     _ = @import("renderer/gl_report.zig");
     _ = @import("renderer/low_power.zig");
     _ = @import("renderer/gl_loader.zig");

@@ -64,6 +64,46 @@ fn cursorLineHasVisibleText(cursor_pin: terminal.Pin) bool {
     }
 }
 
+/// Frames between full teardowns of a renderer's retained `RenderState`
+/// (~12 minutes at 120Hz), so a particularly large terminal state is not
+/// held onto forever.
+const max_terminal_state_frame_count = 100_000;
+
+/// Counts one frame against `count` and answers whether this frame must
+/// tear the retained state down first. The counter restarts at the
+/// teardown (T2967): without that, every frame after the first 100,000
+/// rebuilt the whole state and re-shaped every row under the terminal lock.
+fn terminalStateRecycleDue(count: *usize) bool {
+    const due = count.* >= max_terminal_state_frame_count;
+    if (due) count.* = 0;
+    count.* += 1;
+    return due;
+}
+
+test "terminalStateRecycleDue: one teardown per window, not every frame after (T2967)" {
+    const testing = std.testing;
+    var count: usize = 0;
+    var teardowns: usize = 0;
+    // Three full windows plus a partial one.
+    const frames = 3 * max_terminal_state_frame_count + 17;
+    var i: usize = 0;
+    while (i < frames) : (i += 1) {
+        if (terminalStateRecycleDue(&count)) teardowns += 1;
+    }
+    try testing.expectEqual(@as(usize, 3), teardowns);
+
+    // The teardown lands on frame 100,001, and the frame right after it
+    // is an ordinary one again.
+    count = 0;
+    i = 0;
+    while (i < max_terminal_state_frame_count) : (i += 1) {
+        try testing.expect(!terminalStateRecycleDue(&count));
+    }
+    try testing.expect(terminalStateRecycleDue(&count));
+    try testing.expect(!terminalStateRecycleDue(&count));
+    try testing.expectEqual(@as(usize, 2), count);
+}
+
 /// How long the shell's output must go quiet before a prompt it is
 /// redrawing after a resize is shown (`Terminal.flags.awaiting_prompt_redraw`).
 pub const prompt_redraw_quiet_ns = 15 * std.time.ns_per_ms;
@@ -1360,14 +1400,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // We fully deinit and reset the terminal state every so often
             // so that a particularly large terminal state doesn't cause
             // the renderer to hold on to retained memory.
-            //
-            // Frame count is ~12 minutes at 120Hz.
-            const max_terminal_state_frame_count = 100_000;
-            if (self.terminal_state_frame_count >= max_terminal_state_frame_count) {
+            if (terminalStateRecycleDue(&self.terminal_state_frame_count)) {
                 self.terminal_state.deinit(self.alloc);
                 self.terminal_state = .empty;
             }
-            self.terminal_state_frame_count += 1;
             // T2788: a resized pane's frame by phase, on the resize trace.
             if (comptime @hasDecl(GraphicsAPI, "traceStage")) self.api.traceStage("update-begin");
 

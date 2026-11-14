@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-14T06:03:57-08:00",
-    "commit":  "7dc7a7379",
+    "generated":  "2026-11-14T10:00:02-08:00",
+    "commit":  "9f024fc45",
     "uncommitted":  [
 
                     ],
@@ -889,13 +889,13 @@
                   "src/remote/ws_client.zig":  "e5ebe28e8a2e5442c596a12fcaa6468d9646d9aaeaa08c40e5f1dce1e71370c2",
                   "src/remote_backend_e2e_main.zig":  "29314a78b9ebea17d0e23e539fd689d74bb37b31128f31653a40c3fa05727699",
                   "src/remote_test_client_main.zig":  "61984e801459beaec019afd7d56f2c141b8c04165726ba7213e033544c740855",
-                  "src/renderer.zig":  "8622de56e1cd737db0c239fbabdbc8c4971e66765cf854e0bdc8396979c7bae9",
+                  "src/renderer.zig":  "64468ea79f3d80ee1b5c84fad2da747ca923b644aae953a84d85053f7bbfd506",
                   "src/renderer/backend.zig":  "6c17bdd1d4eeb9eda89fc7259147fd4e28b207a684dece941104c6e1e6cf5b79",
                   "src/renderer/cell.zig":  "e7b1395f5740944729142bdb88371003d61839c05f0baef19ccd64a6642663f5",
                   "src/renderer/comp_overlay.zig":  "feea0d34376e378897888e0cfd4addeb89faa87f417a3236fd6fe121539a0937",
                   "src/renderer/comp_tree.zig":  "796b0cb57c6c43a027e070605dcd3c2d1ca2bfa37be914b5fbbceda43dc02876",
                   "src/renderer/cursor.zig":  "1a37e555c743fe01ea9033da827af9656371799ecb1df7869044a48311f00395",
-                  "src/renderer/generic.zig":  "371f697d3d20b0dcc47da161e15ebc8cca28e08016f4ec6744a2e1cee9215195",
+                  "src/renderer/generic.zig":  "f6f139afaa37d58fe9b3d1b2222ef9b71ac7d231622c32ae724e9deb1054207c",
                   "src/renderer/gl_comp_present.zig":  "96c55675cb0d75262716ee1394f09cbc8d6b6d652e8674bd4459575dae07ee8a",
                   "src/renderer/gl_loader.zig":  "5e48c65d81df3cf24ab97ecd9e2d29f658aade47867fa4687af3efdaf84f8992",
                   "src/renderer/gl_report.zig":  "cab949c5e9d9586daef1261de0090f4cd58a53dee78ef01022aa478d1ce3f51e",
