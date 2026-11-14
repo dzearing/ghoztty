@@ -92,6 +92,14 @@ pub const Mods = packed struct(Mods.Backing) {
         return self.int() == other.int();
     }
 
+    /// Returns true if the binding-relevant mods (shift, ctrl, alt, super)
+    /// are equal, ignoring caps/num lock and sides. Use this when comparing
+    /// against mods that were stored via `binding()`: a raw `equal` against
+    /// such a value never matches while NumLock or CapsLock is on.
+    pub fn bindingEqual(self: Mods, other: Mods) bool {
+        return self.binding().equal(other.binding());
+    }
+
     /// Returns only the keys.
     ///
     /// In the future I want to remove `binding` for this. I didn't want
@@ -551,6 +559,25 @@ pub const RemapSet = struct {
         }
     };
 };
+
+test "Mods: bindingEqual ignores lock and side state (T3058)" {
+    const testing = std.testing;
+    const stored = (Mods{ .ctrl = true }).binding();
+
+    // NumLock/CapsLock on with the same binding mods: equal, so the mouse
+    // path does not force a full-screen rebuild on every event.
+    try testing.expect(stored.bindingEqual(.{ .ctrl = true, .num_lock = true }));
+    try testing.expect(stored.bindingEqual(.{ .ctrl = true, .caps_lock = true, .num_lock = true }));
+    try testing.expect(stored.bindingEqual(.{ .ctrl = true, .sides = .{ .ctrl = .right } }));
+
+    // The raw comparison is exactly the defect: it never matches.
+    try testing.expect(!stored.equal(.{ .ctrl = true, .num_lock = true }));
+
+    // A real binding-mod change is still seen.
+    try testing.expect(!stored.bindingEqual(.{ .num_lock = true }));
+    try testing.expect(!stored.bindingEqual(.{ .ctrl = true, .shift = true }));
+    try testing.expect((Mods{}).bindingEqual(.{ .caps_lock = true, .num_lock = true }));
+}
 
 test "RemapSet: unsided remap creates both left and right mappings" {
     const testing = std.testing;
