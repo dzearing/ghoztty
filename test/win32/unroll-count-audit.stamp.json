@@ -1,10 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-14T06:05:14-08:00",
-    "commit":  "7dc7a7379",
+    "generated":  "2026-11-14T07:07:44-08:00",
+    "commit":  "107cfa871",
     "uncommitted":  [
-                        "scripts/go-loop-watchdog.ps1"
+                        "scripts/perf-baseline.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -101,6 +101,7 @@
                   "scripts/parity-decisions.ps1":  "b015b8a70ced5c02206665da242777565107d12832421122bc800ce59d516e70",
                   "scripts/parity-sweep.ps1":  "2558a090ed2db1add4c101c99b74c469c6c4904ed1646f1dd4138c5bc0ca5046",
                   "scripts/parity-tasks.ps1":  "1a2e38fa1b009ec277b25860f48a3d802e8c7a4c0147025eca94086b2572aba3",
+                  "scripts/perf-baseline.ps1":  "c9408e8cc5f4e1e574655393b14b7ce6c7c20f64e79b52af55e7fd98ebdcdcd5",
                   "scripts/pr-health.ps1":  "a37d7a44dda98ec8650d3c0f65015f255956c3c2e5c1f1535a767aaa7a65184a",
                   "scripts/pr-review.ps1":  "8c817f2422323eb57ba9a7bb52a9fc72fd2a731fa4388f2f3d8116985003078c",
                   "scripts/publish-windows-tag.ps1":  "28b1b5a25a0216a2305278b0bb48d7255813eae8f608b6f333536fee1b0d3b05",
