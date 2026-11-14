@@ -208,6 +208,7 @@ const split_resize = @import("split_resize.zig");
 const split_ratio_shadow = @import("split_ratio_shadow.zig");
 const stack_drag = @import("stack_drag.zig");
 const drag_perf = @import("drag_perf.zig");
+const stall_probe = @import("stall_probe.zig");
 const comp_drag = @import("comp_drag.zig");
 const CompDragThread = @import("CompDragThread.zig");
 
@@ -12992,6 +12993,10 @@ fn stackSlideTick(self: *Window) void {
         dt = frame_clock.firstFrame(dt, period_ms);
     }
     self.stack_slide_last = now;
+    // T2952: the tick's own CPU, its window blits and DWM's composes, for
+    // the `stack trace stall` line below.
+    if (stackTraceOn()) stall_probe.tickBegin();
+    defer stall_probe.armed = false;
     // A test's slow frames (T2442, stack-fold-slide.ps1 -SlowFrames): the
     // frame time the user's window had under a drag, on a box whose own
     // frames are quick.
@@ -13127,6 +13132,14 @@ fn stackSlideTick(self: *Window) void {
             self.frame_paint_us,
             self.frame_cards_us,
             self.frame_overlay_us,
+        });
+        // T2952: whether a slow tick ran or waited, which window blit it
+        // waited in, and whether DWM was composing meanwhile.
+        const st = stall_probe.tickEnd();
+        stackTrace("stack trace stall cost_us={d} cpu_us={d} blits={d} blit_sum_us={d} blit_max_us={d} blit_max_cpu_us={d} kind={s} area={d} dwm_frames={d} dwm_gap_us={d} dwm_ids={d} dwm_age_us={d}", .{
+            cost_us,            st.cpu_us,                    st.blits,         st.blit_sum_us, st.blit_max_us,
+            st.blit_max_cpu_us, @tagName(st.blit_max_kind), st.blit_max_area, st.dwm_frames,  st.dwm_gap_us,
+            st.dwm_ids,         st.dwm_age_us,
         });
     }
     // The sidebar's card follows the grid's edge in the same frame (T2406;

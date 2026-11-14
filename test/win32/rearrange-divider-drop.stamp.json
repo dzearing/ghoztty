@@ -1,8 +1,8 @@
 {
     "guard":  "rearrange-divider-drop",
     "script":  "test/win32/rearrange-divider-drop.ps1",
-    "generated":  "2026-11-13T19:04:42-08:00",
-    "commit":  "39735506a",
+    "generated":  "2026-11-13T21:29:07-08:00",
+    "commit":  "318818f24",
     "uncommitted":  [
                         "src/apprt/win32/Window.zig"
                     ],
@@ -11,7 +11,7 @@
                   "src/apprt/win32/DropHighlight.zig":  "b8fc223144b4c3aae404684db9f27d12839ff11451dcca6a19aaf8b88687f9d8",
                   "src/apprt/win32/pane_drop.zig":  "2aeae6ba7faebfea92aeae7d0e02523b81836ebb215a18d4d8644d5dd40d56db",
                   "src/apprt/win32/pane_gap.zig":  "2863e80b271647f817383b8fd320d58612a17fcbce5d4b46fa7fe117e812c3e0",
-                  "src/apprt/win32/Window.zig":  "5b1a6dd1592eebdb93a2440c2e75e6a50c27e90bcbb58019e62fc52a0c83b5a4",
+                  "src/apprt/win32/Window.zig":  "a64fa94d4706b2d5b9ed492bac0e325dfb0f4f85ec716fd901545fb08ea1543a",
                   "src/datastruct/split_tree.zig":  "56259e5796675b7a557d561659b42c3e47e79dc5d56024c15ef0c9ffa5e79cf3",
                   "test/win32/rearrange-divider-drop.ps1":  "f7f24573ad7a883bdc415151fe5b15813df048425eb73081e647d0576d33f547"
               }

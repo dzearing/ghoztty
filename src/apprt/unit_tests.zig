@@ -856,6 +856,11 @@ test {
     // box.
     _ = @import("win32/drag_perf.zig");
 
+    // What DWM did while a stalled glide tick waited (T2952): frames it
+    // composed and the longest stretch it went without one, over the targets
+    // `stall_probe.zig` reads - arithmetic, no OS imports.
+    _ = @import("win32/compose_gap.zig");
+
     // A drag move on the composition tree (T2769): whether its layout pass
     // runs now or coalesces behind the compositor write, and how a pane
     // visual's card shape follows a size its window does not have yet. Same

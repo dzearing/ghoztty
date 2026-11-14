@@ -47,6 +47,7 @@ const pane_stack_strip = @import("pane_stack_strip.zig");
 const blade_shadow = @import("blade_shadow.zig");
 const gutter_bar = @import("gutter_bar.zig");
 const sheet_workers = @import("sheet_workers.zig");
+const stall_probe = @import("stall_probe.zig");
 
 const log = std.log.scoped(.pane_desk);
 
@@ -1363,6 +1364,8 @@ fn blitRect(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, comp: D
             const b: usize = a + @as(usize, @intCast(r.right - r.left));
             desk_palette.translucentSpan(out.pixels()[a..b], comp.pixels()[a..b], desk.pixels()[a..b], o);
         }
+        const lap = stall_probe.blitBegin(.bitblt, r.right - r.left, r.bottom - r.top);
+        defer lap.end();
         _ = w32.BitBlt(hdc, origin_x + r.left, origin_y + r.top, r.right - r.left, r.bottom - r.top, out.dc, r.left, r.top, w32.SRCCOPY);
         return;
     }
@@ -1510,7 +1513,12 @@ fn liftNames(self: *PaneDesk, comp: Dib) void {
         self.names_in_out = null;
         return;
     }
-    _ = w32.GdiFlush();
+    {
+        // The flush puts out any window blit GDI batched (T2952).
+        const lap = stall_probe.blitBegin(.flush, 0, 0);
+        defer lap.end();
+        _ = w32.GdiFlush();
+    }
     const n = self.names orelse return;
     restoreUnder(comp.pixels(), comp.w, comp.h, n.rects, self.names_saved.items);
 }
@@ -1530,6 +1538,8 @@ pub fn blitRects(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, re
     const comp = self.comp orelse return;
     for (rects) |r| {
         const c = clipTo(r, comp.w, comp.h) orelse continue;
+        const lap = stall_probe.blitBegin(.bitblt, c.right - c.left, c.bottom - c.top);
+        defer lap.end();
         _ = w32.BitBlt(hdc, origin_x + c.left, origin_y + c.top, c.right - c.left, c.bottom - c.top, comp.dc, c.left, c.top, w32.SRCCOPY);
     }
 }
@@ -1553,10 +1563,16 @@ pub fn blitUnder(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, re
                 const t = @max(c.top, s.top);
                 const rt = @min(c.right, s.right);
                 const b = @min(c.bottom, s.bottom);
-                if (rt > l and b > t) _ = w32.BitBlt(hdc, origin_x + l, origin_y + t, rt - l, b - t, comp.dc, l, t, w32.SRCCOPY);
+                if (rt > l and b > t) {
+                    const lap = stall_probe.blitBegin(.bitblt, rt - l, b - t);
+                    defer lap.end();
+                    _ = w32.BitBlt(hdc, origin_x + l, origin_y + t, rt - l, b - t, comp.dc, l, t, w32.SRCCOPY);
+                }
             }
             continue;
         }
+        const lap = stall_probe.blitBegin(.bitblt, c.right - c.left, c.bottom - c.top);
+        defer lap.end();
         _ = w32.BitBlt(hdc, origin_x + c.left, origin_y + c.top, c.right - c.left, c.bottom - c.top, comp.dc, c.left, c.top, w32.SRCCOPY);
     }
     if (timer) |*t| self.blit_ns +|= t.read();
@@ -2262,6 +2278,9 @@ fn blitPixels(hdc: w32.HDC, origin_x: i32, origin_y: i32, dib: Dib, r: busy_ligh
         .biCompression = w32.BI_RGB,
     } };
     const rows = dib.pixels()[@as(usize, @intCast(c.top * dib.w))..];
+    // Each window blit on its own clock under the trace (T2952).
+    const lap = stall_probe.blitBegin(.stretch, c.right - c.left, h);
+    defer lap.end();
     _ = w32.StretchDIBits(
         hdc,
         origin_x + c.left,
