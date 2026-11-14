@@ -212,6 +212,29 @@ backlog, and after 100 ms on running out of file descriptors or kernel memory
 listening socket ends it. The agent does not raise its own descriptor limit:
 child shells would inherit it.
 
+## An agent-backed pane cannot stall on its own mailbox
+
+The remote backend parses output on the IO thread (`termio/Remote.zig`
+`drainRing`), and that thread also drains the termio mailbox. The parse sends
+to it: a reply to every query, a timer for every synchronized-output start.
+Local panes are immune — their read thread parses while the IO thread drains.
+
+- `drainRing` works in 1 KiB slices and yields when the mailbox is half full
+  (`Mailbox.underPressure`), so a long replay cannot fill it between slices.
+- **Within one slice the IO thread can no longer fill it either.** The
+  thread that drains a mailbox `claim`s it; what that thread sends to itself
+  once the 64-slot queue is full goes on an overflow list (`mailbox.zig`
+  `Overflow`) instead of waiting 50 ms for a drain only it can perform and
+  then being dropped. `Mailbox.next` hands out the queue, then the overflow,
+  so order holds. Before this, a kilobyte of queries (`ESC [ c` is three
+  bytes) froze the pane for seconds with its replies lost and its input
+  unread.
+- Other threads sending to a full mailbox behave as before: bounded waits,
+  then a logged drop, never a wait forever.
+- Tests: `the consumer sending to its own full mailbox neither waits nor
+  drops`, `another thread sending to a full mailbox still gives up rather
+  than block forever` (`mailbox.zig`).
+
 ## The agent's outbound queue is bounded
 
 Each connection's writer thread drains one queue of frames. Child output is
