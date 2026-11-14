@@ -1,8 +1,8 @@
 {
     "guard":  "loop-lanes",
     "script":  "test/win32/loop-lanes.ps1",
-    "generated":  "2026-11-14T04:17:29-08:00",
-    "commit":  "d9f7a52c1",
+    "generated":  "2026-11-14T05:10:46-08:00",
+    "commit":  "4f0575d1a",
     "uncommitted":  [
                         "scripts/go-loop-watchdog.ps1"
                     ],
@@ -12,7 +12,7 @@
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
                   "scripts/go-loop-exec.ps1":  "b31b728d90cb1e9fbdd605e0fcd7e257da797eae52567467953279b78fae42d8",
                   "scripts/go-loop-health.ps1":  "895f9cef3791a9f81fd8b975c1d17c127f9595688a4f446bf6a1221f7a2e6a65",
-                  "scripts/go-loop-watchdog.ps1":  "5ac2552c2af0192e299feb36f547c02ed5c7d900d99a08ae0c27083fa8a84424",
+                  "scripts/go-loop-watchdog.ps1":  "17b93c8582eafaf5e68c0340e7a840a4047c69c9b7509b7da7f14efe1ed1c443",
                   "scripts/launch-upgrade.ps1":  "cdac13e044f5b31ec2346cbd23556ea45ddf937972e033f56f7a6451ffbaaaa1",
                   "scripts/lib/LoopLane.ps1":  "5a323edad01338d2719fcb162c838a68f80b66a01616d9abf8d44daf9e1b51a8",
                   "scripts/morning-owner.ps1":  "3ce353184a905647f855f15bcc8e2206d7772a22c4af7501488a0a556267faf0",

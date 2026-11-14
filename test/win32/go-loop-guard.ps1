@@ -3960,6 +3960,101 @@ Assert 'CC51 a usage limit is still reported as lifting on its own' `
     ($ccH -match 'blocked=usage-limit ' -and $ccH -match 'resumes on its own' -and $ccH -notmatch 'needs-you')
 $env:GHOZTTY_LOOP_ALERT_SINK = $ccPrevSink
 
+# --- CC52-CC66. a quota with a known reset is waited for, not polled (T1485) --
+#
+# WHY. 2026-09-09..12: the transcript said the quota cleared 2026-09-12 01:00
+# (quotaLimits.resetsAt), and the watchdog nudged every 20 minutes for 63 hours
+# regardless - 180 typings that could only fail - then recovered at 01:11
+# because that is where the next 20-minute slot fell. Now: hold until the
+# reset, retry at once when it passes, and send anything uncertain back to the
+# ordinary cadence.
+""
+"CC52. a quota with a known reset is waited for, not polled"
+
+$qhNow = Get-Date
+$qhBlock = @{ Blocked = $true; Kind = 'usage-limit'; Why = 'limit'; ResetsAt = $qhNow.AddHours(2).ToString('yyyy-MM-dd HH:mm') }
+$qhV = Resolve-LoopQuotaHold -Blocker $qhBlock -LastActionAt $qhNow.AddHours(-1) -Now $qhNow
+Assert "CC52 a future reset holds, until the reset plus the margin (got $($qhV.Mode))" `
+    ($qhV.Mode -eq 'hold' -and $qhV.Until -is [datetime] -and
+     $qhV.Until.ToString('yyyy-MM-dd HH:mm') -eq ([datetime]::ParseExact($qhBlock.ResetsAt, 'yyyy-MM-dd HH:mm', $null)).AddMinutes(2).ToString('yyyy-MM-dd HH:mm'))
+$qhV = Resolve-LoopQuotaHold -Blocker $qhBlock -LastActionAt $qhNow.AddHours(-1) -Now $qhNow.AddHours(2).AddMinutes(3)
+Assert "CC53 once it has passed with nothing tried since, it is retry - not cadence (got $($qhV.Mode))" ($qhV.Mode -eq 'retry')
+$qhV = Resolve-LoopQuotaHold -Blocker $qhBlock -LastActionAt $qhNow.AddHours(2).AddMinutes(3) -Now $qhNow.AddHours(2).AddMinutes(10)
+Assert "CC54 and once something has been tried after it, back to the cadence (got $($qhV.Mode))" ($qhV.Mode -eq 'cadence')
+# The negative controls the task names: past, missing, unparseable -> cadence.
+$qhPast = @{ Blocked = $true; Kind = 'usage-limit'; Why = 'limit'; ResetsAt = $qhNow.AddHours(-3).ToString('yyyy-MM-dd HH:mm') }
+$qhV = Resolve-LoopQuotaHold -Blocker $qhPast -LastActionAt $qhNow.AddMinutes(-30) -Now $qhNow
+Assert "CC55 a reset in the past (with a try since) falls back to the cadence (got $($qhV.Mode))" ($qhV.Mode -eq 'cadence')
+$qhV = Resolve-LoopQuotaHold -Blocker @{ Blocked = $true; Kind = 'usage-limit'; Why = 'limit'; ResetsAt = '' } -LastActionAt $qhNow.AddMinutes(-5) -Now $qhNow
+Assert "CC56 a quota with no reset falls back to the cadence (got $($qhV.Mode))" ($qhV.Mode -eq 'cadence')
+$qhV = Resolve-LoopQuotaHold -Blocker @{ Blocked = $true; Kind = 'usage-limit'; Why = 'limit'; ResetsAt = 'Sep 12, 1am (America/Los_Angeles)' } -LastActionAt $qhNow.AddMinutes(-5) -Now $qhNow
+Assert "CC57 the prose reset is for humans: unparseable falls back to the cadence (got $($qhV.Mode))" ($qhV.Mode -eq 'cadence')
+$qhV = Resolve-LoopQuotaHold -Blocker @{ Blocked = $true; Kind = 'api-error'; Why = '529'; ResetsAt = $qhBlock.ResetsAt } -LastActionAt $qhNow.AddMinutes(-5) -Now $qhNow
+Assert "CC58 an api-error is never held - retrying IS its remedy (got $($qhV.Mode))" ($qhV.Mode -eq 'cadence')
+$qhV = Resolve-LoopQuotaHold -Blocker $qhBlock -LastActionAt $qhNow.AddHours(-7) -Now $qhNow -FloorHours 6
+Assert "CC59 the floor: a hold never outlasts -FloorHours since the last re-entry (got $($qhV.Mode))" ($qhV.Mode -eq 'cadence')
+$qhV = Resolve-LoopQuotaHold -Blocker $qhBlock -LastActionAt $qhNow.AddHours(-1).ToUniversalTime().ToString('o') -Now $qhNow
+Assert "CC60 the state file's round-trip timestamp is read as the instant it names (got $($qhV.Mode))" ($qhV.Mode -eq 'hold')
+
+# --- the watchdog obeys it -----------------------------------------------------
+function QHTranscript([string]$name, [int]$epoch) {
+    $p = Join-Path $ccRoot $name
+    Set-Content -LiteralPath $p -Encoding utf8 -Value ((@(
+        (CCEntry 'user' $ccNudge), (CCEntry 'assistant' $ccLimitText -ApiError -Resets $epoch)) -join "`n"))
+    return $p
+}
+function QHSeed([double]$minutesAgo) {
+    Set-Content -LiteralPath $state -Encoding utf8 -Value (@{
+        last_action = 'nudge'
+        last_action_at = (Get-Date).AddMinutes(-$minutesAgo).ToString('o')
+    } | ConvertTo-Json -Depth 4)
+}
+$qhReentry = 'ACTION (nudge|new-window|launch-app|restart-in-pane)'
+$qhFuture = QHTranscript 'quota-future.jsonl' ([int][DateTimeOffset]::UtcNow.AddHours(2).ToUnixTimeSeconds())
+$L = Read-LockFile
+$L.turn_started = (Get-Date).AddMinutes(-3800).ToString('o')
+$L.transcript = $qhFuture
+Write-LockFile $L
+QHSeed 60
+$r = Dog-Run @('-DryRun')
+Assert 'CC61 a future reset produces no re-entry: the decision is hold' `
+    ($r.Out -match 'ACTION hold' -and $r.Out -notmatch $qhReentry -and $r.Out -match 'QUOTA HOLD: the quota clears')
+Assert 'CC62 and the state records when the hold ends' `
+    ([string]((Get-Content $state -Raw | ConvertFrom-Json).recovery_hold_until) -ne '')
+# Negative control for CC61, the same seed: a reset already past re-enters on
+# the cadence, so CC61's hold is the reset time and not a watchdog that has
+# stopped re-entering over every quota.
+$L.transcript = QHTranscript 'quota-past.jsonl' ([int][DateTimeOffset]::UtcNow.AddHours(-3).ToUnixTimeSeconds())
+Write-LockFile $L
+QHSeed 60
+$r = Dog-Run @('-DryRun')
+Assert 'CC63 a reset in the past re-enters on the cadence, as before' `
+    ($r.Out -match $qhReentry -and $r.Out -notmatch 'QUOTA HOLD')
+# Promptly after: the reset passed 10 minutes ago, the last nudge was 15
+# minutes ago (before it). The 20m rearm alone would wait; the cleared quota
+# must not.
+$L.transcript = QHTranscript 'quota-cleared.jsonl' ([int][DateTimeOffset]::UtcNow.AddMinutes(-10).ToUnixTimeSeconds())
+Write-LockFile $L
+QHSeed 15
+$r = Dog-Run @('-DryRun')
+Assert 'CC64 the moment the quota clears the retry goes, without waiting out the rearm' `
+    ($r.Out -match 'QUOTA CLEARED' -and $r.Out -match $qhReentry -and $r.Out -notmatch 'rearm not elapsed')
+# An api-error under the same 15-minute seed is untouched: the rearm still
+# governs, and nothing about quotas is said.
+$L.transcript = $ccApi
+Write-LockFile $L
+QHSeed 15
+$r = Dog-Run @('-DryRun')
+Assert 'CC65 an api-error keeps the ordinary cadence' `
+    ($r.Out -match 'rearm not elapsed' -and $r.Out -notmatch 'QUOTA (HOLD|CLEARED)')
+# -Force is the caller distrusting the evidence: it re-enters over a hold.
+$L.transcript = $qhFuture
+Write-LockFile $L
+QHSeed 60
+$r = Dog-Run @('-DryRun', '-Force')
+Assert 'CC66 -Force still re-enters over a quota hold' `
+    ($r.Out -match $qhReentry -and $r.Out -notmatch 'ACTION hold')
+
 Remove-Item $lock, $state -Force -ErrorAction SilentlyContinue
 
 # --- MK: claim marks the RIGHT window, or says it did not (T2842) ----------

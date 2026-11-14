@@ -451,6 +451,69 @@ function Test-LoopUserAlertDue {
     return (($Now - $at).TotalHours -ge $RepeatHours)
 }
 
+# WHEN to retry a quota, rather than whether (T1485). A usage limit names the
+# instant it clears (`quotaLimits.resetsAt`, rendered by the resolver above as
+# 'yyyy-MM-dd HH:mm' local), and on 2026-09-09..12 the watchdog typed into the
+# pane every 20 minutes for 63 hours anyway - 180 nudges that could only fail -
+# and then came back eleven minutes AFTER the reset, because the next 20-minute
+# slot happened to fall there. This turns the known instant into the schedule.
+#
+# Pure, so the decision is testable without a clock or a session. Returns
+# @{ Mode; Until; Why }:
+#   'hold'    - the quota clears in the future: do not re-enter yet. Until is
+#               the reset instant plus -MarginMinutes, the moment to try.
+#   'retry'   - the reset instant has passed and nothing has been tried since:
+#               re-enter NOW, without waiting out -RearmMinutes.
+#   'cadence' - none of that applies; the ordinary -RearmMinutes rule decides.
+#
+# Everything uncertain lands on 'cadence', which is the behaviour before this
+# function existed: not a quota (an api-error has no reset and retrying IS the
+# remedy), a reset that is missing, unparseable (the prose fallback, "Sep 12,
+# 1am", is for humans and is not parsed here) or already past with a try since.
+# And a hold is never absolute: once -FloorHours have passed since the last
+# re-entry, the cadence runs anyway, because a quota message can be wrong and
+# a supervisor that trusts it forever is one that can be parked forever.
+function Resolve-LoopQuotaHold {
+    param(
+        $Blocker,
+        $LastActionAt = $null,
+        [datetime]$Now = (Get-Date),
+        [double]$MarginMinutes = 2,
+        [double]$FloorHours = 6
+    )
+    $cadence = { param($why) @{ Mode = 'cadence'; Until = $null; Why = $why } }
+    if (-not $Blocker -or -not $Blocker.Blocked) { return (& $cadence 'not blocked') }
+    if ([string]$Blocker.Kind -ne 'usage-limit') { return (& $cadence "not a quota ($($Blocker.Kind))") }
+    $raw = [string]$Blocker.ResetsAt
+    if (-not $raw) { return (& $cadence 'the quota names no reset instant') }
+    $reset = [datetime]::MinValue
+    if (-not [datetime]::TryParseExact($raw, 'yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::AssumeLocal, [ref]$reset)) {
+        return (& $cadence "the reset '$raw' is not a machine-readable instant")
+    }
+    $until = $reset.AddMinutes($MarginMinutes)
+    $last = $null
+    if ($LastActionAt -is [datetime]) { $last = $LastActionAt }
+    elseif ($LastActionAt) {
+        try {
+            $last = [datetime]::Parse([string]$LastActionAt, [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::RoundtripKind)
+            if ($last.Kind -eq [DateTimeKind]::Utc) { $last = $last.ToLocalTime() }
+        } catch { $last = $null }
+    }
+    if ($Now -lt $until) {
+        if ($last -and ($Now - $last).TotalHours -lt $FloorHours) {
+            return @{ Mode = 'hold'; Until = $until; Why = "the quota clears $raw" }
+        }
+        return (& $cadence ("the quota says it clears $raw, but ${FloorHours}h have passed since the last " +
+                            're-entry - retrying anyway in case the message is wrong'))
+    }
+    if (-not $last -or $last -lt $until) {
+        return @{ Mode = 'retry'; Until = $until; Why = "the quota cleared at $raw and nothing has been tried since" }
+    }
+    return (& $cadence "the quota cleared at $raw and a re-entry has already been made since")
+}
+
 # The text of a transcript entry, whichever shape its content takes. Claude Code
 # writes `message.content` as a string for some entries and an array of typed
 # blocks for others; an error message is the array shape.

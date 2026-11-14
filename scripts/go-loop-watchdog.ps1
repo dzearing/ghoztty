@@ -140,6 +140,12 @@ param(
     # same unmoved turn is toasted once, then again after this many hours - a
     # toast dismissed at 3am is not a toast read.
     [double]$AlertRepeatHours = 12,
+    # A quota that names when it clears is held until then rather than nudged
+    # every -RearmMinutes (T1485): the retry lands this long after the reset,
+    # and a hold never outlasts -QuotaFloorHours since the last re-entry, in
+    # case the quota message is wrong.
+    [double]$QuotaMarginMinutes = 2,
+    [double]$QuotaFloorHours = 6,
     # The PROGRESS clock, beside the liveness one above (T1319). -StaleMinutes
     # asks "has anything touched this session lately"; these two ask "has the
     # loop finished a turn lately", which is the question a supervisor is for.
@@ -782,6 +788,9 @@ if ($Status) {
 # --- one tick -------------------------------------------------------------
 
 function Invoke-Tick {
+    # Only the tick that decides a quota hold sets the early wake (T1485); every
+    # other path - healthy, stopped, a re-entry - sleeps the ordinary poll.
+    $script:QuotaWakeAt = $null
     # A deliberate stop outranks everything below, including open tasks -
     # "tasks remain" is the watchdog's whole trigger, so without this check a
     # requested stop is precisely the condition that makes it re-enter. Checked
@@ -972,8 +981,34 @@ function Invoke-Tick {
         return 'notify'
     }
 
+    # A QUOTA WITH A KNOWN RESET (T1485). Waiting it out in -RearmMinutes slots
+    # typed 180 nudges that could only fail on 2026-09-09..12 and still came
+    # back eleven minutes late. Hold until the instant it clears, then retry at
+    # once; Resolve-LoopQuotaHold sends anything uncertain back to the cadence.
+    $quota = @{ Mode = 'cadence'; Until = $null; Why = '' }
+    if ($blocker.Blocked) {
+        $lastAt = $null
+        try { $lastAt = (Read-State).last_action_at } catch { $lastAt = $null }
+        $quota = Resolve-LoopQuotaHold -Blocker $blocker -LastActionAt $lastAt `
+            -MarginMinutes $QuotaMarginMinutes -FloorHours $QuotaFloorHours
+    }
+    if ($quota.Mode -eq 'hold' -and -not $Force) {
+        $script:QuotaWakeAt = $quota.Until
+        Update-State @{ recovery_hold_until = $quota.Until.ToString('o') }
+        Log ("QUOTA HOLD: $($quota.Why); not re-entering until $($quota.Until.ToString('yyyy-MM-dd HH:mm')) " +
+             "(typing cannot clear a quota; the ${QuotaFloorHours}h floor still retries if the message is wrong)")
+        return 'hold'
+    }
+    $rearmWaived = $false
+    if ($quota.Mode -eq 'retry') {
+        $rearmWaived = $true
+        Log "QUOTA CLEARED: $($quota.Why) - retrying now rather than waiting out the ${RearmMinutes}m rearm"
+    } elseif ($blocker.Blocked -and $quota.Why) {
+        Log "  quota schedule: $($quota.Why)"
+    }
+
     $since = Get-MinutesSinceAction
-    if ($since -lt $RearmMinutes -and -not $Force) {
+    if ($since -lt $RearmMinutes -and -not $Force -and -not $rearmWaived) {
         Log ("stale ($state) but rearm not elapsed ({0:N1}m < {1}m); waiting" -f $since, $RearmMinutes)
         return 'none'
     }
@@ -1331,5 +1366,16 @@ while ($true) {
     # After the tick, not before: the beacon should mean "a tick completed",
     # so a watchdog wedged inside one goes stale exactly like a dead one.
     try { Write-Health $action } catch { Log "health write failed: $_" }
-    Start-Sleep -Seconds $PollSeconds
+    # A quota hold knows the instant it ends (T1485); wake for it rather than
+    # at the next poll, so the retry is minutes after the reset, not up to a
+    # whole -PollSeconds later.
+    $sleep = $PollSeconds
+    if ($script:QuotaWakeAt -is [datetime]) {
+        $toWake = [int][math]::Ceiling(($script:QuotaWakeAt - (Get-Date)).TotalSeconds) + 1
+        if ($toWake -ge 1 -and $toWake -lt $sleep) {
+            $sleep = $toWake
+            Log "  waking at the quota reset in ${sleep}s instead of the ${PollSeconds}s poll"
+        }
+    }
+    Start-Sleep -Seconds $sleep
 }
