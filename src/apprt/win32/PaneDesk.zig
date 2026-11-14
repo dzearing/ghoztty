@@ -361,6 +361,14 @@ scratch_desk: std.ArrayListUnmanaged(u32) = .empty,
 /// quarter of the size, then the upscale's two widened rows and column taps.
 /// A window-edge drag builds a desk on every step.
 scratch_grad: std.ArrayListUnmanaged(u32) = .empty,
+/// The size of the small gradient at the head of `scratch_grad`, which stays
+/// valid until the next `ensureDesk` renders (and bumps `desk_gen`).
+small_w: usize = 0,
+small_h: usize = 0,
+/// The desk at a quarter of its size (T2947), what glass panes' slices are
+/// cropped from; built on first ask for each desk (`quarter_gen`).
+quarter_buf: std.ArrayListUnmanaged(u32) = .empty,
+quarter_gen: ?u32 = null,
 /// Set by the window around a paint whose caller repaints only what moved
 /// (a layout pass's or an animation's `GetDC` paint, T2454): a partial
 /// compose then blits only what it composed, and the lights. Never set for
@@ -1020,6 +1028,13 @@ pub const Backdrop = struct {
     w: i32,
     h: i32,
     gen: u32,
+    /// The same desk at a quarter of its size (T2947), when asked for
+    /// (`glassBackdrop`): it spans the whole of `w` x `h`, so desk pixel x
+    /// sits at x * quarter.w / w in it. RGBA texels, not desk pixels
+    /// (`desk_palette.deskToRgba`).
+    quarter: ?Quarter = null,
+
+    pub const Quarter = struct { pixels: []const u32, w: usize, h: usize };
 
     /// The same desk from row `rows` down: the content area's slice when
     /// the desk also runs up under a glass title bar (T1886).
@@ -1029,6 +1044,9 @@ pub const Backdrop = struct {
         var out = self;
         out.pixels = self.pixels[@as(usize, @intCast(rows * self.w))..];
         out.h = self.h - rows;
+        // Its rows no longer line up with the cut desk's; nobody below a
+        // cut crops glass slices.
+        out.quarter = null;
         return out;
     }
 };
@@ -1040,6 +1058,42 @@ pub fn backdrop(self: *PaneDesk, area_w: i32, area_h: i32, is_light: bool, varia
     const w, const h = self.canvas(area_w, area_h);
     const d = self.ensureDesk(w, h, is_light, variant) orelse return null;
     return .{ .pixels = d.pixels(), .w = d.w, .h = d.h, .gen = self.desk_gen };
+}
+
+/// `backdrop` with its quarter-size copy (T2947), for the glass panes'
+/// slices: a 4K glide re-crops every moved pane's slice each tick, and read
+/// out of the full desk that was ~0.35 ms - every slice row walking a whole
+/// 4K desk row for one pixel in four. The copy is stretched from the same
+/// small gradient the full desk is, once per desk, and kept as RGBA texels,
+/// so a slice is row copies (`desk_palette.cropQuarterRgba`) within a level
+/// of the full desk's.
+pub fn glassBackdrop(self: *PaneDesk, area_w: i32, area_h: i32, is_light: bool, variant: ?desk_palette.Variant) ?Backdrop {
+    var d = self.backdrop(area_w, area_h, is_light, variant) orelse return null;
+    d.quarter = self.ensureQuarter(d);
+    return d;
+}
+
+fn ensureQuarter(self: *PaneDesk, d: Backdrop) ?Backdrop.Quarter {
+    const uw: usize = @intCast(d.w);
+    const uh: usize = @intCast(d.h);
+    const qw = desk_palette.quarterSize(uw);
+    const qh = desk_palette.quarterSize(uh);
+    if (self.quarter_gen == self.desk_gen and self.quarter_buf.items.len == qw * qh)
+        return .{ .pixels = self.quarter_buf.items, .w = qw, .h = qh };
+    self.quarter_gen = null;
+    const sw = self.small_w;
+    const sh = self.small_h;
+    // `ensureDesk` left the small gradient at the head of the scratch and
+    // room for a desk-wide upscale behind it, which a quarter-wide one fits.
+    if (sw < 2 or sh < 2 or self.scratch_grad.items.len < sw * sh + 3 * qw) return null;
+    self.quarter_buf.resize(light_alloc, qw * qh) catch return null;
+    const small = self.scratch_grad.items[0 .. sw * sh];
+    const rest = self.scratch_grad.items[sw * sh ..];
+    desk_palette.upscaleDesk(self.quarter_buf.items, qw, qh, small, sw, sh, rest[0 .. 2 * qw], rest[2 * qw ..][0..qw]);
+    // Kept as the slices' own texels, so a slice is a row copy.
+    desk_palette.deskToRgba(self.quarter_buf.items);
+    self.quarter_gen = self.desk_gen;
+    return .{ .pixels = self.quarter_buf.items, .w = qw, .h = qh };
 }
 
 /// A window-edge drag starts (`on`) or ends (T2577). In between, the desk is
@@ -1088,6 +1142,7 @@ pub fn deinit(self: *PaneDesk) void {
     self.scratch.deinit(light_alloc);
     self.scratch_desk.deinit(light_alloc);
     self.scratch_grad.deinit(light_alloc);
+    self.quarter_buf.deinit(light_alloc);
     self.names_saved.deinit(light_alloc);
     self.glow_px.deinit(light_alloc);
     if (self.prepared) |*p| p.deinit();
@@ -2463,6 +2518,8 @@ fn ensureDesk(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_pa
     const sh: usize = @max(uh / ds, 1) + 1;
     self.scratch_grad.resize(light_alloc, sw * sh + 3 * uw) catch return null;
     const small = self.scratch_grad.items[0 .. sw * sh];
+    self.small_w = sw;
+    self.small_h = sh;
     desk_palette.renderDesk(
         small,
         sw,

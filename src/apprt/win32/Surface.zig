@@ -6276,7 +6276,24 @@ pub fn setPaneBackdrop(self: *Surface, spec: ?GlassBackdrop, desk: ?PaneDesk.Bac
             (if (desk_palette.deskCoversRegion(d.w, d.h, b.rect)) d else null)
         else
             null;
-        if (rendered) |d| desk_palette.cropDeskRegionRgba(
+        if (rendered) |d| if (d.quarter) |q| {
+            // The quarter-size desk (T2947), the slice's own size: a row
+            // copy per slice row, not a 4K desk row read per texel.
+            const sx = @as(f32, @floatFromInt(q.w)) / @as(f32, @floatFromInt(d.w));
+            const sy = @as(f32, @floatFromInt(q.h)) / @as(f32, @floatFromInt(d.h));
+            desk_palette.cropQuarterRgba(
+                data,
+                bw,
+                bh,
+                q.pixels,
+                q.w,
+                q.h,
+                @as(f32, @floatFromInt(b.rect[0])) * sx,
+                @as(f32, @floatFromInt(b.rect[1])) * sy,
+                @as(f32, @floatFromInt(rw)) * sx,
+                @as(f32, @floatFromInt(rh)) * sy,
+            );
+        } else desk_palette.cropDeskRegionRgba(
             data,
             bw,
             bh,

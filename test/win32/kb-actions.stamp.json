@@ -1,14 +1,14 @@
 {
     "guard":  "kb-actions",
     "script":  "test/win32/kb-actions.ps1",
-    "generated":  "2026-11-14T01:10:25-08:00",
-    "commit":  "041619913",
+    "generated":  "2026-11-14T03:01:12-08:00",
+    "commit":  "5c7434790",
     "uncommitted":  [
                         "src/apprt/win32/Surface.zig"
                     ],
     "files":  {
                   "src/apprt/win32/RenameDialog.zig":  "b35f3a9aa5d0f37015c997aa10a494b31cc4aa4c6e5fe956e0cd54f0bc7735dc",
-                  "src/apprt/win32/Surface.zig":  "397899cbebb009988e8f56192f7519a0e757019965ebb3670fa0b67ab37d4990",
+                  "src/apprt/win32/Surface.zig":  "7cb51ee1bf2ae0c1cab604884ee5fcb43cec16501023d5942ff1f9eb82e4bdb8",
                   "src/termio/Termio.zig":  "3d32777f1847e7b830766848d84156ee242d3abf25f388b22d5db362d291769c",
                   "test/win32/kb-actions.ps1":  "2700093d88c742647694a270e95c55ea652aead2fe093211ae2531ce44d52718"
               }

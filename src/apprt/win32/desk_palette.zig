@@ -757,6 +757,118 @@ pub fn cropDeskRegionRgba(
     }
 }
 
+/// The side of a desk's quarter-size copy (T2947), which glass slices are
+/// cropped from: every desk pixel lies under one of its texels.
+pub fn quarterSize(n: usize) usize {
+    return @max((n + 3) / 4, 1);
+}
+
+/// Turn desk pixels (0x00RRGGBB) into RGBA texels in place (T2947), each
+/// read as a little-endian u32 - what a glass slice is made of, so a slice
+/// out of a desk kept this way is a row copy.
+pub fn deskToRgba(px: []u32) void {
+    for (px) |*p| p.* = rgbaOf(p.*);
+}
+
+/// A glass slice (`w` x `h` RGBA texels) out of the desk's quarter-size copy
+/// (T2947), `src` held as RGBA (`deskToRgba`) and `src_w` x `src_h`; the
+/// rect is in the copy's own texels. The slice is a quarter of the pane's
+/// size too, so it is the copy one to one: each row is the run of texels
+/// from the one under its first texel's centre - at most a texel off a
+/// stretch of the exact rect, which on the desk's gradient is under a level
+/// (the test below) - copied whole. A run past the copy's edge holds its
+/// last texel. The per-texel gather of `cropDeskRegionRgba` cost ~190 us for
+/// a 4K window's widest slice on every glide tick it moved.
+pub fn cropQuarterRgba(
+    out: []u8,
+    w: usize,
+    h: usize,
+    src: []const u32,
+    src_w: usize,
+    src_h: usize,
+    rx: f32,
+    ry: f32,
+    rw: f32,
+    rh: f32,
+) void {
+    std.debug.assert(out.len >= w * h * 4);
+    std.debug.assert(src.len >= src_w * src_h);
+    if (w == 0 or h == 0 or src_w == 0 or src_h == 0) return;
+    const fx = rw / @as(f32, @floatFromInt(w));
+    const fy = rh / @as(f32, @floatFromInt(h));
+    const x0 = srcIndex(rx + 0.5 * fx, src_w);
+    const n = @min(w, src_w - x0);
+    for (0..h) |row| {
+        const sy = srcIndex(ry + (@as(f32, @floatFromInt(row)) + 0.5) * fy, src_h);
+        const line = src[sy * src_w ..][0..src_w];
+        const dst = out[row * w * 4 ..][0 .. w * 4];
+        @memcpy(dst[0 .. n * 4], std.mem.sliceAsBytes(line[x0..][0..n]));
+        if (n < w) {
+            var last: [4]u8 = undefined;
+            std.mem.writeInt(u32, &last, line[src_w - 1], .little);
+            for (n..w) |col| @memcpy(dst[col * 4 ..][0..4], &last);
+        }
+    }
+}
+
+test "T2947: cropQuarterRgba holds the copy's last texel past its edge" {
+    // Little-endian RGBA texels 1..6 in a 3x2 copy.
+    const src = [_]u32{ 1, 2, 3, 4, 5, 6 };
+    var out: [4 * 2 * 4]u8 = undefined;
+    // Four texels from column 1: 2, 3, then 3 held twice; row 0 then row 1.
+    cropQuarterRgba(&out, 4, 2, &src, 3, 2, 1, 0, 4, 2);
+    const want = [_]u32{ 2, 3, 3, 3, 5, 6, 6, 6 };
+    for (want, 0..) |v, i| try testing.expectEqual(v, std.mem.readInt(u32, out[i * 4 ..][0..4], .little));
+}
+
+test "T2947: a slice cropped from the quarter-size desk is within a level of the full desk's" {
+    // A 4K-ish window and a second size that does not divide by four, over
+    // every palette the window can take.
+    inline for (.{ .{ 1919, 1077 }, .{ 3840, 2160 } }) |wh| {
+        const w: usize = wh[0];
+        const h: usize = wh[1];
+        const ds = deskDownscale(w, h);
+        const sw = w / ds + 1;
+        const sh = h / ds + 1;
+        const small = try testing.allocator.alloc(u32, sw * sh);
+        defer testing.allocator.free(small);
+        const full = try testing.allocator.alloc(u32, w * h);
+        defer testing.allocator.free(full);
+        const qw = quarterSize(w);
+        const qh = quarterSize(h);
+        const quarter = try testing.allocator.alloc(u32, qw * qh);
+        defer testing.allocator.free(quarter);
+        const scratch = try testing.allocator.alloc(u32, 3 * w);
+        defer testing.allocator.free(scratch);
+        for ([_]bool{ false, true }) |light| {
+            renderDesk(small, sw, sh, @floatFromInt(w), @floatFromInt(h), Palette.forWindow(null, light));
+            upscaleDesk(full, w, h, small, sw, sh, scratch[0 .. 2 * w], scratch[2 * w ..][0..w]);
+            upscaleDesk(quarter, qw, qh, small, sw, sh, scratch[0 .. 2 * qw], scratch[2 * qw ..][0..qw]);
+            deskToRgba(quarter);
+            // A wide pane, a narrow one, and one in the far corner.
+            const rects = [_][4]f32{ .{ 10, 40, 2600, 1000 }, .{ 1500, 300, 281, 700 }, .{ @as(f32, @floatFromInt(w)) - 400, @as(f32, @floatFromInt(h)) - 300, 400, 300 } };
+            for (rects) |r| {
+                const bw: usize = @intFromFloat(@ceil(r[2] / 4));
+                const bh: usize = @intFromFloat(@ceil(r[3] / 4));
+                const a = try testing.allocator.alloc(u8, bw * bh * 4);
+                defer testing.allocator.free(a);
+                const b = try testing.allocator.alloc(u8, bw * bh * 4);
+                defer testing.allocator.free(b);
+                cropDeskRegionRgba(a, bw, bh, full, w, h, r[0], r[1], r[2], r[3]);
+                const sx = @as(f32, @floatFromInt(qw)) / @as(f32, @floatFromInt(w));
+                const sy = @as(f32, @floatFromInt(qh)) / @as(f32, @floatFromInt(h));
+                cropQuarterRgba(b, bw, bh, quarter, qw, qh, r[0] * sx, r[1] * sy, r[2] * sx, r[3] * sy);
+                var worst: u8 = 0;
+                for (a, b) |x, y| worst = @max(worst, if (x > y) x - y else y - x);
+                testing.expect(worst <= 1) catch |e| {
+                    std.debug.print("{d}x{d} light={} rect={any}: worst {d}\n", .{ w, h, light, r, worst });
+                    return e;
+                };
+            }
+        }
+    }
+}
+
 /// A desk pixel (0xAARRGGBB) as the R, G, B, 255 bytes of an RGBA texel, read
 /// as a little-endian u32.
 inline fn rgbaOf(p: u32) u32 {

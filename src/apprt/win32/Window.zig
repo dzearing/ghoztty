@@ -11982,6 +11982,9 @@ var stack_ring: trace_ring.Ring(65536, 256) = .{};
 /// `paintMovedBands`' phase ends on the QPC clock (T2732), read by the
 /// vacated-strip paint's stack trace line. UI thread only.
 var moved_band_stamps: struct { desk: i64 = 0, headers: i64 = 0, glow: i64 = 0, under: i64 = 0, glass: i64 = 0 } = .{};
+/// T2947: the glass slices `syncGlassBackdrops` sent during the stamps above,
+/// and what sending them cost (QPC ticks), terminals and viewers apart.
+var glass_send_stats: struct { terms: u32 = 0, term_ticks: i64 = 0, viewers: u32 = 0, viewer_ticks: i64 = 0 } = .{};
 
 pub fn stackTrace(comptime fmt: []const u8, args: anytype) void {
     switch (stackTraceMode()) {
@@ -13567,6 +13570,7 @@ fn clearVacatedPaneStrips(self: *Window, hwnd: w32.HWND, old: []const w32.RECT) 
         if (stackTraceOn()) {
             _ = w32.QueryPerformanceCounter(&t_dc);
             moved_band_stamps = .{};
+            glass_send_stats = .{};
             label_cost = .{};
         }
         self.pane_desk.last_stamps = .{};
@@ -13597,8 +13601,10 @@ fn clearVacatedPaneStrips(self: *Window, hwnd: w32.HWND, old: []const w32.RECT) 
             });
             // T2946: the desk paint's tail on its own line (a ring slot cuts
             // the line above short): each stamp as ticks after the desk paint.
-            stackTrace("stack trace vacated tail glow={d} under={d} glass={d} bands={d}", .{
+            const g = glass_send_stats;
+            stackTrace("stack trace vacated tail glow={d} under={d} glass={d} bands={d} terms={d} term_ticks={d} viewers={d} viewer_ticks={d}", .{
                 at(s.done, b.glow), at(s.done, b.under), at(s.done, b.glass), at(s.done, b.desk),
+                g.terms,            g.term_ticks,       g.viewers,          g.viewer_ticks,
             });
             if (self.pane_desk.last_rects) |lr| for (lr.slice()) |r| {
                 stackTrace("stack trace vacated rect l={d} t={d} r={d} b={d}", .{ r.left, r.top, r.right, r.bottom });
@@ -14958,7 +14964,8 @@ fn syncGlassBackdrops(self: *Window, slots: []const PaneSlot, area: w32.RECT, gl
     // The desk the paint just blitted (T1907): a terminal's slice is cropped
     // out of it instead of evaluating the gradient again for every pane on
     // every divider-drag move. Cached, so this renders nothing.
-    const desk = if (glass) self.pane_desk.backdrop(fw, fh, is_light, self.desk_variant) else null;
+    // With its quarter-size copy (T2947), which the slices are cropped from.
+    const desk = if (glass) self.pane_desk.glassBackdrop(fw, fh, is_light, self.desk_variant) else null;
     for (0..self.tab_count) |tab| {
         var it = self.tab_trees[tab].iterator();
         while (it.next()) |entry| {
@@ -15023,12 +15030,26 @@ fn syncGlassBackdrops(self: *Window, slots: []const PaneSlot, area: w32.RECT, gl
                 .palette = desk_palette.Palette.forWindow(self.desk_variant, is_light),
                 .sheet = sheet,
             };
+            var t0: i64 = 0;
+            if (stackTraceOn()) _ = w32.QueryPerformanceCounter(&t0);
             if (s) |sf| {
                 // A terminal still starting up has no renderer to tell; its
                 // key stays stale so the next paint tries again.
                 if (!sf.setPaneBackdrop(spec, desk)) continue;
             } else vw.?.setGlassBackdrop(spec);
             entry.view.glass_backdrop_key = key;
+            if (stackTraceOn()) {
+                // T2947: what each slice cost to send, terminals and viewers apart.
+                var t1: i64 = 0;
+                _ = w32.QueryPerformanceCounter(&t1);
+                if (s != null) {
+                    glass_send_stats.terms += 1;
+                    glass_send_stats.term_ticks += t1 - t0;
+                } else {
+                    glass_send_stats.viewers += 1;
+                    glass_send_stats.viewer_ticks += t1 - t0;
+                }
+            }
         }
     }
 }
