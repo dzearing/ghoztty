@@ -276,6 +276,12 @@ grid_band_dirty: bool = false,
 /// meaningful on the UI thread, which is the only thread that touches it.
 awaited_size: u64 = 0,
 
+/// The pane is opening out of its strip, hidden while its card carries the
+/// frame it draws (T2458), so a resize does not wait for that frame (T2940,
+/// `resize_paint.Present.carried_hidden`). Set by the window's placement pass
+/// before it moves the pane; UI thread only.
+carried_hidden: bool = false,
+
 /// Manual-reset event signaled by the renderer thread after presenting
 /// a frame. The main thread waits on this during live resize to
 /// synchronize rendering with the DWM compositor.
@@ -5295,6 +5301,7 @@ pub fn applyResize(self: *Surface, width: u32, client_height: u32) void {
         .in_live_layout = self.parent_window.in_live_layout,
         .has_presented_frame = presented,
         .grid_held = self.resize_held,
+        .carried_hidden = self.carried_hidden,
     })) {
         self.parent_window.notePresentSync();
         self.awaited_size = resize_paint.packSize(width, height);
@@ -5336,6 +5343,9 @@ pub fn applyResize(self: *Surface, width: u32, client_height: u32) void {
     } else {
         // Outside live resize (programmatic resize, initial layout),
         // just wake the renderer asynchronously.
+        // T2940: a hidden opening pane still names the size it must show at,
+        // so its reveal can tell a frame that is behind (`awaitRevealFrame`).
+        if (self.carried_hidden and presented) self.awaited_size = resize_paint.packSize(width, height);
         self.core_surface.renderer_thread.force_frame.store(true, .release);
         self.core_surface.renderer_thread.wakeup.notify() catch {};
     }
@@ -6836,6 +6846,19 @@ fn writeWin32InputSequence(
 /// exists for the same reason: a signalled event only says a frame landed, and
 /// the frame that lands first after a resize is routinely the one the renderer
 /// had already started at the OLD size.
+/// The reveal of a pane that opened out of its strip hidden (T2940): it is
+/// about to be shown at the size it was last resized to without a wait, so if
+/// its renderer has not presented that size yet, wait for it here - once, at
+/// the one moment it matters - instead of on every hidden resize. Recorded as
+/// a frame wait. Returns whether it had to wait.
+pub fn awaitRevealFrame(self: *Surface) bool {
+    if (!resize_paint.presentIsStale(self.awaited_size, self.presented_size.load(.acquire))) return false;
+    var timer = if (self.parent_window.drag_perf_on) std.time.Timer.start() catch null else null;
+    const outcome = self.waitForAwaitedFrame();
+    self.parent_window.addFrameWait(if (timer) |*t| t.read() / std.time.ns_per_us else 0, outcome);
+    return true;
+}
+
 fn waitForAwaitedFrame(self: *Surface) drag_perf.WaitOutcome {
     const event = self.frame_event orelse return .{};
     var budget = std.time.Timer.start() catch null;

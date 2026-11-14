@@ -8589,6 +8589,13 @@ pub fn deferFrameWait(self: *Window, surface: *Surface) bool {
     if (self.frame_wait_depth == 0) return false;
     if (self.frame_wait_len >= MAX_FRAME_WAITS) return false;
     if (surface.frame_event == null) return false;
+    // T2940: which pane a glide tick's frame wait is for, and whether any of
+    // it is on screen - every fold-glide wait used to be a hidden pane's.
+    if (stackTraceOn()) stackTrace("stack trace waitpane hwnd={x} visible={} held={}", .{
+        if (surface.hwnd) |h| @intFromPtr(h) else 0,
+        if (surface.hwnd) |h| w32.IsWindowVisible(h) != 0 else false,
+        surface.resize_held,
+    });
     self.frame_wait_panes[self.frame_wait_len] = surface;
     self.frame_wait_len += 1;
     return true;
@@ -12122,6 +12129,12 @@ fn placeGrid(self: *Window, tree: SplitTree(PaneView), grid: *const pane_stack_g
             view.glide_unfold = false;
             view.glide_snap = .none;
             view.glide_snap_want = null;
+            // Shown from here: its hidden resizes did not wait (T2940), so
+            // this is where a frame still behind its size is waited for.
+            if (view.surface()) |s| {
+                s.carried_hidden = false;
+                _ = s.awaitRevealFrame();
+            }
         }
         // A fold carrying its frame (T2457) is drawn by its face alone; the
         // live pane stays where the glide has it, hidden, so the face can
@@ -12133,6 +12146,9 @@ fn placeGrid(self: *Window, tree: SplitTree(PaneView), grid: *const pane_stack_g
         // carries; the live window is shown once the card is out, at the size
         // it already has.
         const opening = sliding != null and view.glide_unfold and view.glide_snap != .none;
+        // Hidden under the card that carries its frame, its resizes this pass
+        // do not wait for that frame (T2940).
+        if (view.surface()) |s| s.carried_hidden = opening;
         const shown = (!p.is_tucked or sliding != null) and !carried and !opening;
         view.setVisible(shown or opening);
         var rect = sliding orelse if (!p.is_tucked)
@@ -12546,6 +12562,7 @@ fn armGlideSnaps(self: *Window, tree: SplitTree(PaneView)) void {
         }
         if (view.glide_unfold) {
             // An opening turned back: its frame is the wrong size for a fold.
+            if (view.surface()) |s| s.carried_hidden = false;
             view.glide_unfold = false;
             view.glide_snap_want = null;
             view.glide_snap = .none;
@@ -12725,6 +12742,7 @@ fn endStackSlide(self: *Window) void {
         while (it.next()) |entry| {
             const v = entry.view;
             if (v.glide_unfold and v.glide_snap_want != null) v.glide_landed = true;
+            if (v.surface()) |s| s.carried_hidden = false;
             v.glide_snap = .none;
             v.glide_unfold = false;
             v.glide_snap_want = null;

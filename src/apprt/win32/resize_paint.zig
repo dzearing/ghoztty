@@ -93,6 +93,15 @@ pub const Present = struct {
     /// wait would buy shows the same text. Waiting is a third of a drag step
     /// (T2609) for nothing.
     grid_held: bool = false,
+
+    /// The pane is opening out of its strip (T2458) and is hidden while its
+    /// card carries the frame it draws (T2940): no pixel of it is on screen
+    /// for a stale frame to show in, and the card takes that frame by itself,
+    /// only at the size it asked for. The wait here held a fold glide's UI
+    /// thread 4-26 ms on every resize of the opening pane. The pane's reveal,
+    /// when the card is out, is where its frame at the new size matters, and
+    /// `Window.revealOpeningPane` waits there when the frame is still behind.
+    carried_hidden: bool = false,
 };
 
 /// A presented client size, packed into one word so it can cross the
@@ -216,7 +225,25 @@ pub fn shouldPresentSynchronously(p: Present) bool {
     // startup path a frame per pane.
     if (!p.has_presented_frame) return false;
     if (p.grid_held) return false;
+    if (p.carried_hidden) return false;
     return p.in_live_resize or p.in_live_layout;
+}
+
+test "T2940: a pane hidden under the card that carries its frame never waits" {
+    for ([_][2]bool{ .{ true, false }, .{ false, true }, .{ true, true } }) |live| {
+        try std.testing.expect(!shouldPresentSynchronously(.{
+            .in_live_resize = live[0],
+            .in_live_layout = live[1],
+            .has_presented_frame = true,
+            .carried_hidden = true,
+        }));
+        // The same pane shown waits as before.
+        try std.testing.expect(shouldPresentSynchronously(.{
+            .in_live_resize = live[0],
+            .in_live_layout = live[1],
+            .has_presented_frame = true,
+        }));
+    }
 }
 
 test "T2623: a held grid never waits for a frame, in a size loop or a live pass" {
