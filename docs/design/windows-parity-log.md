@@ -38681,3 +38681,13 @@ Three Fable 5.2 auditors (claude-fable-5-2) read the code read-only: close-path 
 
 Dropped: a lower kitty image-storage cap (bounded, an upstream default). Rejected: the "495 D3D threads x 64 KB" explanation, which T2671 refutes.
   - Validation: every PA id's cited lines were re-read this turn. No code changed, so no lanes are owed.
+
+## 2026-11-14 08:50 - T2962: IPC and agent audit (audit-1, area I)
+
+Three Fable 5.2 auditors (claude-fable-5-2) read the code read-only: the app's IPC server and agent client, the agent's server and session core, and the agent's ConPTY holder, process and handle lifetimes. Every claim was then checked by reading the code. The findings are in `docs/design/perf-audit/audit-1/I-findings.md`: 17 findings, PA-I01..I17, filed as T3015-T3031, with the Mac half as T3032. The headlines:
+  - Thread stacks are nearly all of the agent's memory. Every agent thread commits 16 MB (PA-W01's mechanism), and a thread model reproduces baseline-1 to 0.1 MB (167.5 MB with one session, +64 MB per app connection, 16 of the 19 MB per session). The per-session pty holder pays 48-64 MB of the 60-76 MB "descendant" cost the same way. T2985 did not name the agent image, so this is T3015 (P0).
+  - Output-path waste: the app parses every agent frame twice (T3016), release agents use the debug allocator (T3017), the ring copies a byte at a time (T3018), one lock covers all sessions (T3019), and whole histories are rewritten with fsync every 30 s (T3020).
+  - Wakeups and responsiveness: each holder polls for exit at 5 Hz (T3021), and `+new-remote-window` dials on the GUI thread with no connect timeout (T3022).
+
+Rejected (10, with reasons in the findings file): among them, that the holder costs a whole agent image, and that per-session readers should move to IOCP.
+  - Validation: every PA id's cited lines were re-read this turn. No code changed, so no lanes are owed.
