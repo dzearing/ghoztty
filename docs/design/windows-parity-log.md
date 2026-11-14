@@ -38691,3 +38691,14 @@ Three Fable 5.2 auditors (claude-fable-5-2) read the code read-only: the app's I
 
 Rejected (10, with reasons in the findings file): among them, that the holder costs a whole agent image, and that per-session readers should move to IOCP.
   - Validation: every PA id's cited lines were re-read this turn. No code changed, so no lanes are owed.
+
+## 2026-11-14 09:05 - T2963: viewer-pane audit (audit-1, area V)
+
+Three Fable 5.2 auditors (claude-fable-5-2) read the viewer code read-only: the WebView2 lifetime, the content pipeline, and the viewer chrome. Every surviving claim was checked by reading the cited lines. The findings are in `docs/design/perf-audit/audit-1/V-findings.md`: 24 findings, PA-V01..V24, filed as T3033-T3056, with the Mac half of the shared page template as T3057. No P0: baseline-1 has no viewer phase, so every cost is an estimate, and PA-V01 (T3033) adds that phase first. The headlines:
+  - The process model and the close path are right: one shared WebView2 environment, and a viewer's close releases everything it holds.
+  - What is not right is the time between: the browser process tree stays up after the last viewer closes (T3034), hidden viewers are never suspended or trimmed (T3035), viewers born hidden still start (T3036), and a hidden viewer re-renders on every save (T3037).
+  - A visible `git-status:` pane runs about six git processes every 2 s (T3038). Big copies: diff patches (T3039), HEIC/TIFF transcode (T3043), whole-file resource reads on the GUI thread (T3044), snapshot bitmaps kept until close (T3046).
+  - GPU and GDI: a per-viewer D3D11 device kept after a card slide (T3040), a full-window bitmap per glass paint (T3041), and a likely bitmap leak in the find card (T3042).
+
+Rejected (6, with reasons in the findings file): among them, one browser tree per viewer, and a polling file watcher.
+  - Validation: every PA id's cited lines were re-read this turn. No code changed, so no lanes are owed.
