@@ -1,0 +1,22 @@
+{
+  "version": "1.54.17",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "ghoztty +close on Windows fails instead of claiming success over an unanswered close confirmation, and +close --force closes with no confirmation and no undo." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "The published 1.54.16 build no longer hitches each time a pane folds at 4K; a rarer one-frame stall in 2 of 5 drags is now filed as T2943." },
+        { "text": "The rare 4K fold-glide slow frame is the heaviest frame meeting a window-manager delay; its fix moves to T2942." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "A folding card's strip label no longer re-cuts its window shape every frame at 4K; the shape now lives in its pixels." },
+        { "text": "A card that only slides at 4K no longer flickers a pixel in size each frame, and glass panes stop paying for fresh memory every glide tick." },
+        { "text": "At 4K the desk behind a fold glide is now redrawn across several cores, so the heaviest glide frames no longer reach 12 ms." },
+        { "text": "At 4K the strip face over a folding card is now painted across several cores, so the heaviest glide frames reach 10 ms a third as often." },
+        { "text": "At 4K a narrow viewer beside a fold glide no longer re-shapes its hidden contents card every frame, so the heaviest glide frame is now about 10 ms." }
+      ] }
+  ]
+}
