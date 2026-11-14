@@ -283,5 +283,8 @@ ignores bold and italic.
 
 - **Windows:** T3058-T3070, with deps on T2964. T3060 and T3061 also depend
   on T3059 (measurement first).
+- **Roll-up (T2965):** T3063 (PA-C06/C07) was the same defect as area M's
+  T3011 (PA-M11). It is folded into T3011 and closed as a duplicate; see
+  `../audit-1.md`.
 - **Mac half:** T3071 (`seat: mac`), depending on T3058, T3064, T3065, T3068
   and T3069.

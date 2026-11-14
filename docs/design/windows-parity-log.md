@@ -38713,3 +38713,11 @@ Three Fable 5.2 auditors (claude-fable-5-2) read the shared Zig core read-only: 
 
 Not filed (reasons in the findings file): an uncapped frame per wakeup, which T1462 measured and closed as not reproducible; OSC 133 messages; the baseline x86_64 target.
   - Validation: every PA id's cited lines were re-read this turn. No code changed, so no lanes are owed.
+
+## 2026-11-14 09:50 - T2965: perf audit-1 rolled up, audit-2 scheduled
+
+The six area audits (T2959-T2964) are now one index: `docs/design/perf-audit/audit-1.md`. It lists all 102 PA ids (5 P0, 45 P1, 52 P2), each with file:line, cost, fix, priority and task, plus which findings explain each baseline-1 number. Every id maps to a task, and none was dropped at roll-up.
+  - One cross-area duplicate: PA-C06/C07 (T3063) and PA-M11 (T3011) are both the Windows font discovery with no index. T3063 is folded into T3011, which moves to P1. Related pairs that are fixed separately are cross-linked (T3010/T2978, and T2990/T3008 against T2669).
+  - Audit-2 is T3072 (P0): rerun the baseline and a Fable 5.2 re-audit, give every PA id a verdict, file regressions as P0, and file audit-3. It is parked until 2026-11-21 or 10 PA closes. The tracker cannot re-queue on a date or a count yet, so T3073 adds that.
+  - T2957's deps now name every audit-1 task and T3072 (113 ids).
+  - Validation: the six area tables and the roll-up rows were extracted and diffed: 102 = 102, and the only differences are the fold. Docs and tracker only, so no lanes are owed.
