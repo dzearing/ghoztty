@@ -375,13 +375,18 @@ last_blit: ?Memo.Rects = null,
 /// that blits only what changed (T2732): the paint that composed it may have
 /// been clipped short of it - a layout pass's vacated-strip paint is clipped
 /// to the box the panes left - so the band paint after it, a memo hit, puts
-/// these out again rather than the whole desk. `carry_full` is the same debt
+/// these out again rather than the whole desk - only what lies outside the
+/// clip box when the paint names one (`clip_box`, T2950). `carry_full` is the same debt
 /// for a whole-desk blit, which may have been clipped too.
 carry: ?Memo.Rects = null,
 carry_full: bool = false,
 /// Set by the window around a paint whose DC it clipped short of the desk
 /// (T2732: the vacated-strip paint), so what it blits stays owed.
 clip_short: bool = false,
+/// The box such a paint's DC was clipped to, in content-area pixels (T2950):
+/// what it blitted inside the box reached the window, so only the rest stays
+/// owed. Null keeps the whole blit owed, as before.
+clip_box: ?busy_light.Rect = null,
 /// The tucked strips' names, laid into `comp` for the blit and lifted off it
 /// after (T2485), so a band and its name reach the window in the same
 /// `BitBlt`. Drawn after it, as their own GDI pass, the window could be
@@ -705,6 +710,27 @@ const Memo = struct {
             }
             self.items[self.len] = r;
             self.len += 1;
+        }
+
+        /// These rects less `box` (T2950): each one cut into the up to four
+        /// pieces that lie outside it - what a paint clipped to `box` kept off.
+        fn minus(self: *const Rects, box: busy_light.Rect) Rects {
+            var out: Rects = .{ .w = self.w, .h = self.h };
+            for (self.slice()) |r| {
+                const il = @max(r.left, box.left);
+                const it = @max(r.top, box.top);
+                const ir = @min(r.right, box.right);
+                const ib = @min(r.bottom, box.bottom);
+                if (ir <= il or ib <= it) {
+                    out.add(r.left, r.top, r.right, r.bottom);
+                    continue;
+                }
+                out.add(r.left, r.top, r.right, it); // above
+                out.add(r.left, ib, r.right, r.bottom); // below
+                out.add(r.left, it, il, ib); // left
+                out.add(ir, it, r.right, ib); // right
+            }
+            return out;
         }
 
         fn addAround(self: *Rects, l: i32, t: i32, rt: i32, bt: i32, reach: i32) void {
@@ -1304,7 +1330,7 @@ fn settleDebt(self: *PaneDesk, composed: bool, blitted: ?*const Memo.Rects) void
         return;
     }
     if (self.blit_changed_only) {
-        if (blitted) |b| self.carry = b.* else {
+        if (blitted) |b| self.carry = if (self.clip_box) |cb| b.minus(cb) else b.* else {
             self.carry = null;
             self.carry_full = true;
         }
@@ -1621,6 +1647,44 @@ test "T2732: a clipped vacated-strip paint owes what it blitted, and the unclipp
     try std.testing.expectEqual(@as(usize, 0), d.owedRects(100, 50).?.len);
     d.settleDebt(true, null);
     try std.testing.expect(d.owedRects(100, 50) == null);
+}
+
+test "T2950: a paint clipped to a box owes only what it blitted outside that box" {
+    var d: PaneDesk = .{};
+    var shown: Memo.Rects = .{ .w = 100, .h = 50 };
+    // One rect wholly inside the box, one straddling its right edge, one
+    // wholly outside it.
+    shown.add(12, 5, 18, 45);
+    shown.add(35, 10, 50, 20);
+    shown.add(80, 0, 90, 10);
+    d.blit_changed_only = true;
+    d.clip_short = true;
+    d.clip_box = .{ .left = 10, .top = 0, .right = 40, .bottom = 50 };
+    d.settleDebt(true, &shown);
+    const owed = d.owedRects(100, 50).?;
+    var area: i64 = 0;
+    for (owed.slice()) |r| {
+        // Nothing owed lies inside the box.
+        const inside = r.left >= 10 and r.right <= 40 and r.top >= 0 and r.bottom <= 50;
+        try std.testing.expect(!inside);
+        area += Memo.Rects.areaOf(r);
+    }
+    // 40..50 x 10..20 of the straddler, and the outside rect whole.
+    try std.testing.expectEqual(@as(i64, 10 * 10 + 10 * 10), area);
+
+    // Without a box the whole blit stays owed, as before (T2732).
+    d.clip_box = null;
+    d.settleDebt(true, &shown);
+    try std.testing.expectEqual(shown.area(), d.owedRects(100, 50).?.area());
+}
+
+test "T2950: Rects.minus cuts a rect round a box inside it into the four pieces outside it" {
+    var r: Memo.Rects = .{ .w = 100, .h = 100 };
+    r.add(0, 0, 100, 100);
+    const m = r.minus(.{ .left = 20, .top = 30, .right = 60, .bottom = 70 });
+    try std.testing.expectEqual(@as(i64, 100 * 100 - 40 * 40), m.area());
+    // A box covering the rect leaves nothing.
+    try std.testing.expectEqual(@as(usize, 0), r.minus(.{ .left = -5, .top = -5, .right = 200, .bottom = 200 }).len);
 }
 
 test "a name laid for the blit is lifted off the cached picture, overlaps and edges included" {

@@ -8956,9 +8956,38 @@ pub fn layoutSplits(self: *Window) void {
             // (T2732, `PaneDesk.carry`) - before it, the whole desk (T2516:
             // otherwise nothing read as changed and the rest never went out).
             self.pane_desk.blit_changed_only = !self.vacated_desk_painted or !vacatedChangedOnlyOff();
+            const after_vacated = self.vacated_desk_painted;
             self.vacated_desk_painted = false;
+            // T2950: where a slow band paint goes - the window's pending
+            // invalid box going in, the desk paint's phases, and what it blit.
+            var bp_in: i64 = 0;
+            var upd: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+            if (stackTraceOn()) {
+                _ = w32.GetUpdateRect(hwnd, &upd, 0);
+                _ = w32.QueryPerformanceCounter(&bp_in);
+                moved_band_stamps = .{};
+            }
+            self.pane_desk.last_stamps = .{};
             self.paintAlphaCorrect(dc, paintMovedBands);
             self.pane_desk.blit_changed_only = false;
+            if (stackTraceOn()) {
+                var bp_out: i64 = 0;
+                _ = w32.QueryPerformanceCounter(&bp_out);
+                const s = self.pane_desk.last_stamps;
+                const b = moved_band_stamps;
+                const at = struct {
+                    fn f(t0: i64, t: i64) i64 {
+                        return if (t == 0) 0 else t - t0;
+                    }
+                }.f;
+                stackTrace("stack trace bandpaint in={d} after_vacated={} upd={d},{d},{d},{d} desk_in={d} composed={d} drawn={d} desk_out={d} glass={d} bands_desk={d} out={d} hit={} why={s} area={d} rects={d}", .{
+                    bp_in,                 after_vacated,     upd.left,           upd.top,
+                    upd.right,             upd.bottom,        at(bp_in, s.enter), at(bp_in, s.composed),
+                    at(bp_in, s.drawn),    at(bp_in, s.done), at(bp_in, b.glass), at(bp_in, b.desk),
+                    at(bp_in, bp_out),     s.hit,             @tagName(PaneDesk.full_why), s.area,
+                    s.rects,
+                });
+            }
             _ = w32.ReleaseDC(hwnd, dc);
             resizeTrace("paint-end", hwnd);
             resizeTraceGrid();
@@ -8981,6 +9010,17 @@ fn vacatedChangedOnlyOff() bool {
     if (vacated_whole_state == null)
         vacated_whole_state = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_VACATED_WHOLE");
     return vacated_whole_state.?;
+}
+
+var vacated_box_owed_state: ?bool = null;
+
+/// `GHOZTTY_VACATED_BOX_OWED=1` puts the band paint back to blitting
+/// everything the vacated-strip paint blitted, and the column the moved panes
+/// left invalid, a second time (T2950), for an A/B run.
+fn vacatedBoxOwedOff() bool {
+    if (vacated_box_owed_state == null)
+        vacated_box_owed_state = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_VACATED_BOX_OWED");
+    return vacated_box_owed_state.?;
 }
 
 /// Whether a layout pass's vacated-strip desk paint is its last band paint
@@ -13444,10 +13484,26 @@ fn clearVacatedPaneStrips(self: *Window, hwnd: w32.HWND, old: []const w32.RECT) 
         // desk out twice on every glide tick. A desk on the compositor keeps
         // its whole-paint semantics (its overlay erase and under-desk clear).
         const gdi_desk = if (self.chrome_host) |*ch| !ch.deskLive() else true;
-        if (gdi_desk and !vacatedChangedOnlyOff()) {
+        const changed_only = gdi_desk and !vacatedChangedOnlyOff();
+        // T2950: what this paint blits inside `box` reaches the window, so
+        // only what the clip kept off stays owed to the band paint - before
+        // it, the band paint blitted everything this one had (a ~600 px wide
+        // column of a 4K desk, a second time, on every fold tick).
+        const box_owed = changed_only and !vacatedBoxOwedOff();
+        if (changed_only) {
             self.pane_desk.blit_changed_only = true;
             self.pane_desk.clip_short = true;
+            if (box_owed) {
+                const area = self.deskRect();
+                self.pane_desk.clip_box = .{
+                    .left = box.left - area.left,
+                    .top = box.top - area.top,
+                    .right = box.right - area.left,
+                    .bottom = box.bottom - area.top,
+                };
+            }
         }
+        defer self.pane_desk.clip_box = null;
         var t_dc: i64 = 0;
         if (stackTraceOn()) {
             _ = w32.QueryPerformanceCounter(&t_dc);
@@ -13491,6 +13547,11 @@ fn clearVacatedPaneStrips(self: *Window, hwnd: w32.HWND, old: []const w32.RECT) 
         }
         lap.report("vacated");
         resizeTrace("vacated-painted", hwnd);
+        // The box is current now: this paint put out everything in it that
+        // changed or that the window held invalid (`also_blit`). So the band
+        // paint's invalid box is what lies outside it (T2950), not the column
+        // the moved panes exposed, which it used to blit again.
+        if (box_owed) _ = w32.ValidateRect(hwnd, &box);
         // No band paint follows to clear from the old record (T2577): this
         // paint's is the one the next pass has to clear.
         if (!self.vacatedPaintIsFinal()) {
