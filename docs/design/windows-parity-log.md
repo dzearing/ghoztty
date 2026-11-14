@@ -38661,3 +38661,13 @@ Two Fable 5.2 auditors (claude-fable-5-2) read the renderer core and the Windows
 
 Process fix: the brief said each finding's task should list T2957 in its deps. But T2957 is an open umbrella, and an open dep hides a task from `next`. The new tasks dep on T2959 instead, and the brief wording is corrected in T2957 and T2960-T2964.
   - Validation: every PA id's cited lines were re-read this turn. No code changed, so no lanes are owed.
+
+## 2026-11-14 08:05 - T2960: win32 frontend performance audit (audit-1, area W)
+
+Three Fable 5.2 auditors (claude-fable-5-2) read `src/apprt/win32/` read-only: idle wakeups and threads, chrome and overlay paint, and resource lifetimes. Every claim was then checked by reading the code (and Zig's own `lib/std/Thread.zig` for the P0), and the findings are in `docs/design/perf-audit/audit-1/W-findings.md`. They came to 16 findings, PA-W01..W16, filed as T2985-T3000. None needs a Mac half. The headlines:
+  - PA-W01 (T2985, P0): Zig on Windows commits each thread's whole 16 MB stack up front. With three pooled threads per pane, that is about 432 MB of the 825 MB the first baseline cycle leaves behind.
+  - The frontend explains only ~6 of the 164-213 idle context switches a second, and creates no per-pane threads. PA-W05 (T2989) teaches the baseline to attribute the rest per thread.
+  - Resize and chrome paint: non-modal resizes rebuild the desk every step (T2986), chrome paints ignore the clip (T2987), and a tucked pane's spinner title repaints the whole window (T2988).
+
+Rejected: dropping the io and io-reader thread pools (A4). `Exec.zig:33-35` records that any exiting thread strands NVIDIA memory while a GL context lives.
+  - Validation: every PA id's cited lines were re-read this turn. No code changed, so no lanes are owed.
