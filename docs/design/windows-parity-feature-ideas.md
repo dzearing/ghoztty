@@ -714,3 +714,12 @@ as the digest that showed them.
 - A link opens in the browser profile it belongs to (new angle on choosing where a link opens: a per-folder rule picks the Edge work or personal profile)
 - Typing stays first in line when the PC is busy (input handling runs ahead of background work while every core is pinned)
 - The first window reuses yesterday's glyphs (the glyph cache for your font size persisted to disk, so the first frame after a restart is sharp at once)
+
+## 2026-11-14
+
+- Windows Magnifier follows your typing (the zoomed view tracks the terminal cursor as you type, as it does in Notepad)
+- A secret you copy stays off your other PCs (a copied key, token or password is kept out of Windows clipboard history and cloud sync)
+- The touch keyboard comes up on a tablet (tapping a pane on a touch screen opens the docked Windows touch keyboard without covering the prompt)
+- The terminal warms with Night light (text and bright viewer pages ease warmer when Windows Night light turns on)
+- A private pane that opens with Windows Hello (a pane marked private blurs when the PC locks or you step away; face or fingerprint brings it back)
+- A font you just installed shows up at once (the font list picks up newly installed fonts without a restart)
