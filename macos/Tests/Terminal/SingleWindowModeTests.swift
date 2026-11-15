@@ -18,16 +18,16 @@ final class SingleWindowModeTests {
 
     deinit {
         MainActor.assumeIsolated {
+            // Forced: no undo, sessions ended now, session-layout entries
+            // (a `+new-window` here is agent-backed) removed — and written
+            // before the host can exit, or the debug app restores them.
             for controller in opened.reversed() where !controller.windowHasClosed {
-                if controller.isParked {
-                    controller.forceCloseWindow()
-                } else {
-                    controller.heldWindow?.close()
-                }
+                controller.forceCloseWindow()
             }
             for controller in opened {
                 for pane in controller.surfaceTree { pane.surfaceView?.releaseClosedSurface() }
             }
+            SessionLayoutManifest.shared.flushWrites()
             WorkspaceHost.shared.resetForTesting()
             WindowMode.overrideForTesting = nil
         }
@@ -139,6 +139,14 @@ final class SingleWindowModeTests {
         #expect(terminalWindows().count == 1, "still one window")
         #expect(host.active === b)
         #expect(host.workspaces.first === b, "most recently shown first")
+
+        // A parked workspace keeps its title for `+list` and AppleScript.
+        a.setWindowTitle("parked title")
+        #expect(a.currentWindowTitle == "parked title")
+        b.setWindowTitle("shown title")
+        host.show(a)
+        #expect(b.currentWindowTitle == "shown title", "the title it showed as it parked")
+        host.show(b)
 
         // And back.
         #expect(host.show(a))

@@ -83,6 +83,8 @@ extension TerminalController {
         let style = takeFullscreenStyle()
         setParked(true)
         self.window = nil
+        // Keeps the title it showed, for `+list` and AppleScript.
+        applyTitleToWindow()
         return style
     }
 
