@@ -723,3 +723,12 @@ as the digest that showed them.
 - The terminal warms with Night light (text and bright viewer pages ease warmer when Windows Night light turns on)
 - A private pane that opens with Windows Hello (a pane marked private blurs when the PC locks or you step away; face or fingerprint brings it back)
 - A font you just installed shows up at once (the font list picks up newly installed fonts without a restart)
+
+## 2026-11-15
+
+- Ghoztty steps back when your PC runs short of memory (on the Windows low-memory signal, hidden/stashed panes and background viewers drop their caches first)
+- Ghoztty reads as one app in Task Manager (one group, each pane's shell named by its pane title)
+- A tab you come back to is there on the first frame (a background tab that gave its memory back shows its last picture at once, then catches up)
+- A long path in the output still opens (clicking a path past the 260-character limit opens like any other)
+- Each release says what it costs (What's New shows the release's measured memory and thread numbers against the last one)
+- A slow week cannot creep in unnoticed (the app compares idle CPU and memory with its own past numbers after an update and offers a short report)
