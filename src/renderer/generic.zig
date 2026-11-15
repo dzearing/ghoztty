@@ -225,6 +225,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// target is what a no-op frame re-presents (OpenGL on Win32, T2474),
         /// so the first frame back must draw in full.
         redraw_after_release: bool = false,
+        /// Why the last such release happened, for the redraw's log line.
+        release_reason: ReleaseReason = .hidden,
 
         /// The current GPU uniform values.
         uniforms: shaderpkg.Uniforms,
@@ -1415,7 +1417,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         ///
         /// Must be called on the render thread.
         pub fn releaseIdleFrames(self: *Self) ?u64 {
-            if (comptime !@hasDecl(GraphicsAPI, "presented_target_outlives_frame")) return null;
+            if (comptime !@hasDecl(GraphicsAPI, "presented_target_outlives_frame") and
+                !@hasDecl(GraphicsAPI, "releaseIdleTargetsNow")) return null;
 
             idle: {
                 self.draw_mutex.lock();
@@ -1461,33 +1464,48 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         ///
         /// For APIs that keep the presented image independent of the frame
         /// (Metal), for either reason. OpenGL re-presents its last target on a
-        /// no-op draw, so it opts in another way and only when hidden (T2474):
-        /// `releaseHiddenTargetsNow` says when a release is safe (Win32: the
-        /// WINDOW is hidden or the pane's tab went behind, not a zoom or a
-        /// stash - hero mode reads background tabs' targets), the API forgets
-        /// its last target, and the first frame back draws in full instead of
-        /// re-presenting one that is gone. An idle release there is T3103.
+        /// no-op draw, so it opts in another way (T2474): `releaseHiddenTargetsNow`
+        /// and `releaseIdleTargetsNow` say when a release is safe (Win32;
+        /// hidden means the WINDOW is hidden or the pane's tab went behind,
+        /// not a zoom or a stash), the API forgets its last target, and the
+        /// first frame back - even one with nothing new to show - draws in
+        /// full instead of re-presenting one that is gone. Idle (T3103), the
+        /// picture stays because nothing presents: the window's swap chain,
+        /// default framebuffer or presenter slot keeps showing the last frame
+        /// until the next one, which is drawn in full. A hero-mode or
+        /// capture-pane snapshot reads a frame drawn for it the same way.
         fn releaseFrameResources(self: *Self, reason: ReleaseReason) void {
             const outlives = comptime @hasDecl(GraphicsAPI, "presented_target_outlives_frame");
             const redraws = comptime @hasDecl(GraphicsAPI, "releaseHiddenTargetsNow");
             if (comptime !outlives and !redraws) return;
             if (comptime !outlives) {
-                if (reason != .hidden) return;
-                if (!self.api.releaseHiddenTargetsNow()) return;
+                const ok = switch (reason) {
+                    .hidden => self.api.releaseHiddenTargetsNow(),
+                    .idle => self.api.releaseIdleTargetsNow(),
+                };
+                if (!ok) return;
             }
 
             self.draw_mutex.lock();
             defer self.draw_mutex.unlock();
             if (self.swap_chain.defunct) return;
 
-            if (comptime outlives) {
-                if (self.frames_released) {
-                    // The frames went idle first and kept the picture.
+            if (self.frames_released) {
+                // The frames went idle first and kept the picture.
+                if (comptime outlives) {
                     if (reason == .hidden) self.api.purgePresented();
-                    return;
                 }
+                return;
             }
             self.frames_released = true;
+
+            // What is given back, for the log (T3103's readout on Win32).
+            var held: FrameMemory = .{};
+            if (comptime redraws) for (&self.swap_chain.frames) |*frame| {
+                held.target_bytes += frame.target.width * frame.target.height * 4;
+                held.atlas_bytes += frame.grayscale.width * frame.grayscale.height;
+                held.atlas_bytes += frame.color.width * frame.color.height * 4;
+            };
 
             // Wait out frames still on the GPU so none renders into a target
             // as it is freed (same order as drawFrame: mutex, then frames).
@@ -1496,11 +1514,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             defer for (0..n) |_| self.swap_chain.frame_sema.post();
 
             for (&self.swap_chain.frames) |*frame| {
-                if (comptime outlives) {
-                    frame.releaseAtlases(self.api) catch |err| {
-                        log.warn("could not release frame atlas textures err={}", .{err});
-                    };
-                }
+                // The next frame finds them out of date and uploads them
+                // again (OpenGL's first frame back draws in full anyway).
+                frame.releaseAtlases(self.api) catch |err| {
+                    log.warn("could not release frame atlas textures err={}", .{err});
+                };
                 if (frame.target.width <= 1 and frame.target.height <= 1) continue;
                 if (comptime outlives) {
                     frame.releaseTarget(self.api, reason == .hidden) catch |err| {
@@ -1515,9 +1533,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             if (comptime redraws) {
                 self.api.hiddenTargetsReleased();
                 self.redraw_after_release = true;
-                log.info("released hidden render targets ({}x{})", .{
+                self.release_reason = reason;
+                log.info("released {s} render targets ({}x{}) targets={}KB atlases={}KB", .{
+                    @tagName(reason),
                     self.size.screen.width,
                     self.size.screen.height,
+                    held.target_bytes / 1024,
+                    held.atlas_bytes / 1024,
                 });
             }
         }
@@ -2153,7 +2175,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             if (self.redraw_after_release) {
                 self.redraw_after_release = false;
-                log.info("redrawing after a hidden release", .{});
+                log.info("redrawing after a{s} {s} release", .{
+                    if (self.release_reason == .idle) "n" else "",
+                    @tagName(self.release_reason),
+                });
             }
 
             if (!needs_redraw) {

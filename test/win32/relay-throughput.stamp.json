@@ -1,18 +1,16 @@
 {
     "guard":  "relay-throughput",
     "script":  "test/win32/pane-ingest-ab.ps1",
-    "generated":  "2026-11-14T13:33:38-08:00",
-    "commit":  "c82d9fe49",
+    "generated":  "2026-11-15T03:07:46-08:00",
+    "commit":  "d2778c62e",
     "uncommitted":  [
-                        "src/remote/agent/pty_holder_child.zig",
-                        "src/remote/agent/pty_host.zig",
-                        "src/remote/agent/server.zig"
+
                     ],
     "files":  {
                   "src/remote/agent/pty_holder_child.zig":  "2deed144637aa491c839266f6c72b4b08673e73d90369442533523a208a77cae",
                   "src/remote/agent/pty_host.zig":  "482f6e93ff3c7f8a59af60244a0269adf5ca904114003493f8178ffe4cc8b469",
                   "src/remote/agent/relay_perf.zig":  "b74d79c5fa170240818c28504aeac97e85b194fc24042d225a073a23573a2ca7",
-                  "src/remote/agent/server.zig":  "895c80a1e7ea24a3c02be72b48e789b0e8c5665439d4df7122bc1302006f694f",
+                  "src/remote/agent/server.zig":  "d1a4f211b81a90faee82162dada49e720674a8c12f94c24c46891e1e8092335c",
                   "src/remote/pipe_stream.zig":  "6e75c5df447ba72acc87d0ae4110b86b9a1a782e382e10afb93ef44bb6c196f0",
                   "test/win32/pane-ingest-ab.ps1":  "8a1c931c42ef7e346459a13bbd3c4a8e31a581ca00247520423b3d2bca6e984b"
               }

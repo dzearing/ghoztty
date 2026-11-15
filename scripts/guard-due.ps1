@@ -1118,6 +1118,20 @@ $GuardTable = @(
             'src\apprt\win32\occlusion.zig'
         )
     },
+    # T3103 (Mac 8b0de569b): a pane on screen that stops drawing gives back its
+    # target and atlas copies after 3 s and redraws in full on the next frame.
+    [pscustomobject]@{
+        Name   = 'idle-frame-release'
+        Script = 'test\win32\idle-frame-release.ps1'
+        Stamp  = 'test\win32\idle-frame-release.stamp.json'
+        Covers = @(
+            'test\win32\idle-frame-release.ps1',
+            'test\win32\lib\ProcessMemory.ps1',
+            'src\renderer\generic.zig',
+            'src\renderer\OpenGL.zig',
+            'src\renderer\Thread.zig'
+        )
+    },
     # T2914: a pane added to a hidden window starts hidden, and a layout pass
     # in a hidden window redraws nothing until it shows. Covers the gate in
     # the pane's visibility, the window's occlusion re-ask on restore,

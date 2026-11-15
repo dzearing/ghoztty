@@ -1591,6 +1591,54 @@ pub fn releaseHiddenTargetsNow(self: *const OpenGL) bool {
     return self.rt_surface.windowHidden();
 }
 
+/// May the renderer free this pane's targets and atlas copies now that it has
+/// drawn nothing for `idle_release_ns` (T3103, Mac 8b0de569b)? Win32 only,
+/// never while the device is lost, and not under `GHOZTTY_IDLE_FRAME_RELEASE=0`
+/// (the harnesses that measure the hidden release alone, and a way back if
+/// a driver ever shows the release on screen). Nothing is presented by the
+/// release, so the window keeps showing the last frame; the next frame draws
+/// in full (`hiddenTargetsReleased` forgot the target a re-present would use).
+pub fn releaseIdleTargetsNow(self: *const OpenGL) bool {
+    if (comptime apprt.runtime != apprt.win32) return false;
+    if (self.device.lost) return false;
+    return idleReleaseEnabled();
+}
+
+pub const idle_release_knob = "GHOZTTY_IDLE_FRAME_RELEASE";
+
+/// Read once per process: on unless the knob says off.
+fn idleReleaseEnabled() bool {
+    const S = struct {
+        var once = std.once(read);
+        var on: bool = true;
+        fn read() void {
+            const raw = std.process.getEnvVarOwned(std.heap.page_allocator, idle_release_knob) catch return;
+            defer std.heap.page_allocator.free(raw);
+            on = idleReleaseKnobOn(raw);
+        }
+    };
+    S.once.call();
+    return S.on;
+}
+
+/// The knob's value: off only for an explicit "0", "false" or "off".
+pub fn idleReleaseKnobOn(raw: []const u8) bool {
+    const v = std.mem.trim(u8, raw, " \t\r\n");
+    return !(std.mem.eql(u8, v, "0") or
+        std.ascii.eqlIgnoreCase(v, "false") or
+        std.ascii.eqlIgnoreCase(v, "off"));
+}
+
+test "idleReleaseKnobOn: only an explicit off turns the idle release off" {
+    const testing = std.testing;
+    try testing.expect(idleReleaseKnobOn(""));
+    try testing.expect(idleReleaseKnobOn("1"));
+    try testing.expect(idleReleaseKnobOn("on"));
+    try testing.expect(!idleReleaseKnobOn("0"));
+    try testing.expect(!idleReleaseKnobOn(" off "));
+    try testing.expect(!idleReleaseKnobOn("FALSE"));
+}
+
 /// The renderer freed the targets (`releaseFrameResources`): the one recorded
 /// here is gone, so nothing may present or capture it again. The next frame
 /// draws in full and records a new one.

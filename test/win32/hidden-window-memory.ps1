@@ -61,6 +61,10 @@ if (-not (Test-Path $exe)) { $exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe' }
 if ($ExePath) { $exe = $ExePath }
 
 $env:GHOZTTY_PIPE_SUFFIX = "-hidwinmem$PID"
+# The idle release (T3103) would free every still pane's targets before the
+# minimize, leaving the hidden release nothing to measure; it has its own
+# harness (idle-frame-release.ps1, whose section H covers idle-then-hidden).
+$env:GHOZTTY_IDLE_FRAME_RELEASE = '0'
 $errlog = Join-Path $env:TEMP "ghoztty-hidden-window-memory-$PID.log"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')

@@ -393,6 +393,11 @@
             "unset": "shipped-elsewhere",
             "note": "T2615. Debug-only readback of each pane's center from the window presenter's back buffer, set by window-presenter.ps1 and gl-device-lost.ps1 arms D/E; it only reads, and unset is what every other run and the user's build use."
         },
+        "GHOZTTY_IDLE_FRAME_RELEASE": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "T3103. =0 turns OFF the idle release of a still pane's render target and atlas copies; unset (on) is the shipped default. hidden-window-memory.ps1 sets it so the minimize has targets left to free, and idle-frame-release.ps1 sets it only under -NegativeControl; every other run, and its own positive run, use the default."
+        },
         "GHOZTTY_WINDOW_PRESENTER": {
             "class": "non-default",
             "unset": "shipped-elsewhere",
