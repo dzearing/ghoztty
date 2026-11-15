@@ -1,0 +1,10 @@
+{
+  "version": "1.54.20",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "Threads reserve their stack instead of committing 16 MB up front, so closing ten panes leaves 547 MB less behind." },
+        { "text": "The session agent reserves thread stacks instead of committing 16 MB each, so it idles at 12 MB instead of 167 MB." }
+      ] }
+  ]
+}

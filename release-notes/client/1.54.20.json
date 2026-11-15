@@ -1,0 +1,23 @@
+{
+  "version": "1.54.20",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "Panes no longer redraw their whole frame on every update after about 100,000 frames." },
+        { "text": "With NumLock or CapsLock on, moving the mouse or typing over a pane no longer redraws the whole screen on every event." },
+        { "text": "A loop window the user renames is still recognised as the loop." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The Windows performance audit now has one index of all 102 findings, each tied to a task, and the first re-audit is scheduled." },
+        { "text": "Terminal panes share one GPU device instead of each creating their own, so ten panes use 116 threads instead of 611." },
+        { "text": "A pane whose cursor cannot blink no longer redraws itself every 600 ms." },
+        { "text": "Frames where no link can light up no longer scan the whole screen for links." },
+        { "text": "Each frame uploads only the cell bytes that changed, in one call, instead of the whole screen row by row." },
+        { "text": "A new glyph no longer re-uploads the whole font atlas to every pane." },
+        { "text": "A pane gives back its graphics memory a second after its size settles, so a once-maximized window no longer holds maximized-size memory for life." },
+        { "text": "A pane on a background tab now gives back its GPU render targets, and every hidden release also frees the compositor's staging texture." },
+        { "text": "The first performance re-audit is in: this week's fixes cut memory and threads roughly in half, and nothing got worse." }
+      ] }
+  ]
+}
