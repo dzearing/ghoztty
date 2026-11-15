@@ -188,7 +188,13 @@ answers "what changed in abc123". Use `a..b` when you mean a comparison.
 - **Live**: a `git-status:` pane re-checks the working tree every 2s and
   updates only when the file list actually moved, so an edit or a `git add` in
   another pane shows up without a reload and without a flicker. A commit or a
-  range is a fixed pair of trees and is not polled.
+  range is a fixed pair of trees and is not polled. The poll skips its turn
+  while nobody can see the pane (window covered or minimized, pane stashed —
+  `ViewerView.isOnShow`) and while the previous listing is still running
+  (`ViewerDiffLoader.isListing`): a listing spawns git six times, and on a
+  repository where that takes longer than the interval, asking again only
+  queued work. A listing superseded before its turn is not run, and patches
+  load on their own queue so a click does not wait behind a listing.
 - The nav bar carries a diff pane's change and layout controls, and shows its
   revspec. It is pinned open, but so is every other viewer pane's (see
   Navigation chrome) — a diff pane was once one of the modes that had to

@@ -219,6 +219,17 @@ const StreamId = enum { control, data };
 
 /// One queued outbound frame; the writer owns `payload` (a private heap copy) and
 /// frees it after emit.
+/// The most child output a connection queues for its viewer. Past this,
+/// output stays in each session's ring (which has its own bound) until the
+/// writer has drained some. Sized to a couple of rings: enough that a
+/// viewer keeping up never notices, small next to the memory of a pane.
+pub const data_queue_high_water: usize = 4 * 1024 * 1024;
+
+/// Catch-up is sent in pieces this size, not as one frame the size of the
+/// gap: the viewer applies and acknowledges flow between frames, and a
+/// single multi-megabyte frame overran its inbound ring in one go.
+pub const catch_up_chunk: usize = 64 * 1024;
+
 const OutFrame = struct {
     stream: StreamId,
     ftype: protocol.FrameType,
@@ -328,6 +339,19 @@ pub const Server = struct {
     write_cond: std.Thread.Condition = .{},
     write_queue: std.ArrayList(OutFrame) = .empty,
     frame_seq: protocol.FrameSeq = .{},
+
+    /// Bytes of child output (data-stream frames) queued or being written.
+    /// Guarded by `write_mutex`. Live output and catch-up stop adding to the
+    /// queue past `data_queue_high_water`: a viewer that is not reading (the
+    /// app suspended, at a breakpoint, or behind a slow relay link) used to
+    /// have every chunk its panes printed copied into this queue without
+    /// limit, until the agent ran out of memory and every session died.
+    queued_data_bytes: usize = 0,
+
+    /// Some session bound to this connection is behind (`sent_offset` short
+    /// of `out_offset`) and wants catching up from its ring. Guarded by
+    /// `write_mutex`; the writer thread acts on it once it has made room.
+    backlogged: bool = false,
 
     /// Handshake completion gate + result.
     handshake_done: std.Thread.ResetEvent = .{},
@@ -826,6 +850,26 @@ pub const Server = struct {
             .channel = channel,
             .payload = owned,
         });
+        if (stream == .data) self.queued_data_bytes += owned.len;
+        self.write_cond.signal();
+    }
+
+    /// Whether `len` more bytes of child output fit in the queue. An empty
+    /// queue always has room, so one chunk larger than the limit still goes.
+    fn dataQueueHasRoom(self: *Server, len: usize) bool {
+        self.write_mutex.lock();
+        defer self.write_mutex.unlock();
+        return self.queued_data_bytes == 0 or
+            self.queued_data_bytes + len <= data_queue_high_water;
+    }
+
+    /// Record that a bound session is behind, and wake the writer to catch
+    /// it up once there is room.
+    fn noteBacklog(self: *Server) void {
+        self.write_mutex.lock();
+        defer self.write_mutex.unlock();
+        if (self.closed) return;
+        self.backlogged = true;
         self.write_cond.signal();
     }
 
@@ -884,9 +928,19 @@ pub const Server = struct {
     /// Bridge: frame a live child-output chunk as DATA on `channel`. Installed on a
     /// session (`bridge_data`) when this connection binds it; called by
     /// `store.onChildOutput` under the store lock.
-    fn bridgeData(ctx: *anyopaque, channel: u128, byte_offset: u64, bytes: []const u8) void {
+    ///
+    /// Returns whether the chunk was queued. It is refused when the queue is
+    /// full (the viewer is not reading) or the frame could not be allocated;
+    /// either way the bytes are in the session's ring and are delivered from
+    /// there, in order, once the writer has room (`catchUpBacklog`). A
+    /// zero-length call is the session saying it is behind.
+    fn bridgeData(ctx: *anyopaque, channel: u128, byte_offset: u64, bytes: []const u8) bool {
         const self: *Server = @ptrCast(@alignCast(ctx));
-        self.sendData(channel, byte_offset, bytes) catch {};
+        if (bytes.len > 0 and self.dataQueueHasRoom(bytes.len)) {
+            if (self.sendData(channel, byte_offset, bytes)) |_| return true else |_| {}
+        }
+        self.noteBacklog();
+        return false;
     }
 
     /// Bridge: frame EXIT on `channel` (ordered after the final DATA). Installed as
@@ -986,7 +1040,7 @@ pub const Server = struct {
         while (true) {
             meter.report();
             self.write_mutex.lock();
-            while (self.write_queue.items.len == 0 and !self.closed) {
+            while (self.write_queue.items.len == 0 and !self.closed and !self.backlogged) {
                 self.write_cond.wait(&self.write_mutex);
             }
             // Swap the whole pending queue out so we hold the lock minimally.
@@ -994,6 +1048,8 @@ pub const Server = struct {
             self.write_queue = batch;
             batch = pending;
             const done = self.closed and batch.items.len == 0;
+            const backlogged = self.backlogged and !self.closed;
+            self.backlogged = false;
             self.write_mutex.unlock();
 
             meter.wake();
@@ -1006,12 +1062,15 @@ pub const Server = struct {
             // when the queue is ALREADY deep, i.e. when the writer is behind,
             // that frames merge, and then merging is what lets it catch up.
             var lane: ?StreamId = null;
+            var wire_held: usize = 0;
             wire.clearRetainingCapacity();
             var i: usize = 0;
             while (i < batch.items.len) {
                 const f = batch.items[i];
                 if (lane != null and lane.? != f.stream) {
                     self.flushWire(lane.?, wire.items, &meter);
+                    self.releaseQueued(wire_held);
+                    wire_held = 0;
                     wire.clearRetainingCapacity();
                 }
                 lane = f.stream;
@@ -1023,18 +1082,49 @@ pub const Server = struct {
                     .seq = self.frame_seq.next(), // single writer ⇒ seq == wire order
                     .payload = run.payload,
                 };
-                protocol.writeFrame(self.alloc, self.encoding, frame, &wire) catch {};
+                // The payload bytes these frames held in the bounded DATA queue
+                // (d5f83c3d4): released only once they are WRITTEN, because a
+                // writer blocked on a viewer that is not reading is exactly
+                // when the queue must stay closed to more.
+                var held: usize = 0;
+                for (batch.items[i..][0..run.count]) |m| {
+                    if (m.stream == .data) held += m.payload.len;
+                }
+                protocol.writeFrame(self.alloc, self.encoding, frame, &wire) catch {
+                    // Not allocated, so not sent and not counted as sent; its
+                    // bytes are still in the session's ring.
+                    for (batch.items[i..][0..run.count]) |m| self.alloc.free(m.payload);
+                    self.releaseQueued(held);
+                    i += run.count;
+                    continue;
+                };
                 meter.frame(run.payload.len);
+                wire_held += held;
                 for (batch.items[i..][0..run.count]) |m| self.alloc.free(m.payload);
                 i += run.count;
             }
             if (lane) |l| {
                 if (wire.items.len > 0) self.flushWire(l, wire.items, &meter);
+                self.releaseQueued(wire_held);
+                wire_held = 0;
             }
             batch.clearRetainingCapacity();
 
             if (done) break;
+
+            // What was just written made room: deliver what sessions held
+            // back in their rings while the queue was full.
+            if (backlogged) self.catchUpBacklog();
         }
+    }
+
+    /// Give back `bytes` of the bounded DATA queue (`queued_data_bytes`) once
+    /// what held them has been written or dropped.
+    fn releaseQueued(self: *Server, bytes: usize) void {
+        if (bytes == 0) return;
+        self.write_mutex.lock();
+        defer self.write_mutex.unlock();
+        self.queued_data_bytes -|= bytes;
     }
 
     /// Write one lane's accumulated wire bytes, timed for `perf relay_out`.
@@ -2478,27 +2568,59 @@ pub const Server = struct {
     /// If the ring already evicted part of the gap (more than its capacity was
     /// printed during the pause), say so with the same marker an attach gap-fill
     /// uses, then send what is left.
+    ///
+    /// The gap goes out in `catch_up_chunk` pieces and only while the queue
+    /// has room (`data_queue_high_water`). If it runs out of room the session
+    /// stays behind and the connection is marked backlogged; the writer
+    /// calls back in (`catchUpBacklog`) when it has written some of the
+    /// queue. `sent_offset` advances with each piece, so the next call
+    /// carries on where this one stopped.
     fn catchUpLocked(self: *Server, s: *session.Session) void {
         const end = s.out_offset.value;
         if (s.sent_offset >= end) return;
-        var from = s.sent_offset;
         const base = s.ring.base_offset;
-        if (from < base) {
+        if (s.sent_offset < base) {
             var marker_buf: [96]u8 = undefined;
             const marker = std.fmt.bufPrint(
                 &marker_buf,
                 "\r\n[ghoztty: {d} bytes of output lost while paused]\r\n",
-                .{base - from},
+                .{base - s.sent_offset},
             ) catch "";
-            if (marker.len > 0) self.sendData(s.channel, from, marker) catch {};
-            from = base;
+            if (marker.len > 0) self.sendData(s.channel, s.sent_offset, marker) catch {};
+            // Said once: the rest of the gap is in the ring.
+            s.sent_offset = base;
         }
-        const want: usize = @intCast(end - from);
-        const tmp = self.alloc.alloc(u8, want) catch return; // retried on the next resume
+
+        const tmp = self.alloc.alloc(u8, catch_up_chunk) catch return; // retried on the next resume or output
         defer self.alloc.free(tmp);
-        const n = s.ring.slice(from, end, tmp) orelse return;
-        self.sendData(s.channel, from, tmp[0..n]) catch return;
-        s.sent_offset = end;
+        while (s.sent_offset < end) {
+            const from = s.sent_offset;
+            const want: usize = @intCast(@min(end - from, catch_up_chunk));
+            if (!self.dataQueueHasRoom(want)) {
+                self.noteBacklog();
+                return;
+            }
+            const n = s.ring.slice(from, from + want, tmp[0..want]) orelse return;
+            if (n == 0) return;
+            self.sendData(s.channel, from, tmp[0..n]) catch return;
+            s.sent_offset = from + n;
+        }
+    }
+
+    /// Catch up every session bound to this connection that is behind and
+    /// streaming. Called by the writer thread after it has written a batch,
+    /// when some session was refused room (`bridgeData`) or a catch-up ran
+    /// out of it. Takes the store lock, then (in `sendData`) the write lock
+    /// — the same order as the live path.
+    fn catchUpBacklog(self: *Server) void {
+        self.store.mutex.lock();
+        defer self.store.mutex.unlock();
+        for (self.bound_channels.items) |ch| {
+            const s = self.store.table.getByChannel(ch) orelse continue;
+            if (s.bridge_ctx != @as(?*anyopaque, self)) continue;
+            if (!s.bound or !s.streaming) continue;
+            self.catchUpLocked(s);
+        }
     }
 
     // --- Host metrics push (§9.3) --------------------------------------------
@@ -6694,6 +6816,92 @@ test "FLOW pause halts streaming; resume continues from buffered offset" {
     var got = try drainLiveData(&h.client, alloc, o.channel, 0, "PAUSEDLIVE".len);
     defer got.deinit(alloc);
     try testing.expectEqualSlices(u8, "PAUSEDLIVE", got.items);
+}
+
+test "a full outbound queue holds output in the ring and delivers it in order when there is room" {
+    const alloc = testing.allocator;
+    var clock: TestClock = .{};
+    var fc: FakeChild = .{ .alloc = alloc };
+    defer fc.deinit();
+    var kids = [_]*FakeChild{&fc};
+    var sp: FakeSpawner = .{ .children = &kids };
+    var prng = std.Random.DefaultPrng.init(11);
+
+    // A ring big enough to hold the whole backlog.
+    var h = try Harness.init(alloc, .raw, &clock, &sp, 1024 * 1024, prng.random());
+    defer h.deinit();
+    try h.server.start();
+    try h.client.handshake();
+    _ = try h.server.waitHandshake();
+
+    const o = try doOpen(&h, .{ .rows = 24, .cols = 80 });
+
+    // The viewer has stopped reading: the queue is at its limit. (Stood in
+    // for directly — the loopback stream never blocks the writer.)
+    h.server.write_mutex.lock();
+    h.server.queued_data_bytes = data_queue_high_water;
+    h.server.write_mutex.unlock();
+
+    // The child prints more than three catch-up chunks' worth, in pieces.
+    const total = catch_up_chunk * 3 + 1000;
+    const printed = try alloc.alloc(u8, total);
+    defer alloc.free(printed);
+    for (printed, 0..) |*b, i| b.* = @intCast('a' + (i % 26));
+    var fed: usize = 0;
+    while (fed < total) {
+        const n = @min(4096, total - fed);
+        h.server.onChildOutput(o.channel, printed[fed .. fed + n]);
+        fed += n;
+    }
+
+    // Nothing was queued for it, and the session knows the viewer is behind.
+    {
+        h.server.store.mutex.lock();
+        defer h.server.store.mutex.unlock();
+        const s = h.server.store.table.getByChannel(o.channel).?;
+        try testing.expectEqual(@as(u64, 0), s.sent_offset);
+        try testing.expectEqual(@as(u64, total), s.out_offset.value);
+    }
+    {
+        h.server.write_mutex.lock();
+        defer h.server.write_mutex.unlock();
+        try testing.expectEqual(data_queue_high_water, h.server.queued_data_bytes);
+        for (h.server.write_queue.items) |f| try testing.expect(f.stream != .data);
+    }
+
+    // The viewer reads again: the queue empties, and the next output finds
+    // the session behind and has the writer catch it up.
+    h.server.write_mutex.lock();
+    h.server.queued_data_bytes = 0;
+    h.server.write_mutex.unlock();
+    h.server.onChildOutput(o.channel, "TAIL");
+
+    // Everything arrives, in order, with no gap and no repeat, in bounded
+    // pieces. The writer catches up in `catch_up_chunk`
+    // pieces, and this branch's writer then merges contiguous DATA already
+    // queued (T1464, `coalesceRun`), so a piece on the wire is bounded by
+    // the larger of the two rather than by the chunk alone (T3102).
+    const max_piece = @max(catch_up_chunk, max_coalesced_payload);
+    const got = try alloc.alloc(u8, total + 4);
+    defer alloc.free(got);
+    var at: usize = 0;
+    while (at < total + 4) {
+        const d = (try h.client.nextData()).?;
+        const dp = try protocol.DataPayload.decode(d.payload);
+        try testing.expectEqual(@as(u64, at), dp.byte_offset);
+        try testing.expect(dp.bytes.len <= max_piece);
+        @memcpy(got[at .. at + dp.bytes.len], dp.bytes);
+        at += dp.bytes.len;
+    }
+    try testing.expectEqualSlices(u8, printed, got[0..total]);
+    try testing.expectEqualSlices(u8, "TAIL", got[total..]);
+
+    // And the session is level again, so output streams live.
+    h.server.onChildOutput(o.channel, "LIVE");
+    const d = (try h.client.nextData()).?;
+    const dp = try protocol.DataPayload.decode(d.payload);
+    try testing.expectEqual(@as(u64, total + 4), dp.byte_offset);
+    try testing.expectEqualSlices(u8, "LIVE", dp.bytes);
 }
 
 test "PING is answered with PONG echoing the payload" {

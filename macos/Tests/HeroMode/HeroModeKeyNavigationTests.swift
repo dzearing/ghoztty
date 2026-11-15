@@ -51,13 +51,13 @@ struct HeroModeKeyNavigationTests {
     private func mount(
         _ tree: SplitTree<PaneView>,
         _ state: HeroModeState
-    ) -> (NSWindow, NSHostingView<HeroModeView>) {
+    ) -> (NSWindow, NSHostingView<HeroTestRoot>) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
             styleMask: [.titled],
             backing: .buffered,
             defer: false)
-        let host = NSHostingView(rootView: HeroModeView(tree: tree, state: state))
+        let host = NSHostingView(rootView: HeroTestRoot(tree: tree, state: state))
         host.frame = window.contentView!.bounds
         host.autoresizingMask = [.width, .height]
         window.contentView!.addSubview(host)
@@ -68,7 +68,7 @@ struct HeroModeKeyNavigationTests {
 
     /// Unmount so `onDisappear` removes the key monitor; a leaked monitor would
     /// keep answering keystrokes for every later test.
-    private func unmount(_ window: NSWindow, _ host: NSHostingView<HeroModeView>) {
+    private func unmount(_ window: NSWindow, _ host: NSHostingView<HeroTestRoot>) {
         host.removeFromSuperview()
         window.contentView = nil
         settle()
@@ -120,7 +120,7 @@ struct HeroModeKeyNavigationTests {
 
         // A third pane appears (a `+split`, say). SwiftUI re-renders hero mode
         // with the new tree.
-        host.rootView = HeroModeView(tree: try makeTree(panes), state: state)
+        host.rootView = HeroTestRoot(tree: try makeTree(panes), state: state)
         settle()
 
         press(.downArrow, in: window)
@@ -142,7 +142,7 @@ struct HeroModeKeyNavigationTests {
         defer { unmount(window, host) }
 
         // The last pane closes while its slot is selected.
-        host.rootView = HeroModeView(tree: try makeTree(Array(panes.prefix(2))), state: state)
+        host.rootView = HeroTestRoot(tree: try makeTree(Array(panes.prefix(2))), state: state)
         settle()
 
         press(.downArrow, in: window)

@@ -1591,7 +1591,7 @@ pub fn releaseHiddenTargetsNow(self: *const OpenGL) bool {
     return self.rt_surface.windowHidden();
 }
 
-/// The renderer freed the targets (`releaseHiddenTargets`): the one recorded
+/// The renderer freed the targets (`releaseFrameResources`): the one recorded
 /// here is gone, so nothing may present or capture it again. The next frame
 /// draws in full and records a new one.
 pub fn hiddenTargetsReleased(self: *OpenGL) void {

@@ -577,6 +577,15 @@ typedef struct {
   uint32_t cell_height_px;
 } ghostty_surface_size_s;
 
+// What a surface's swap-chain frames hold on the GPU, in bytes: its render
+// targets and its copies of the font atlases. A surface that has stopped
+// drawing gives these back (`released`).
+typedef struct {
+  uint64_t target_bytes;
+  uint64_t atlas_bytes;
+  bool released;
+} ghostty_surface_frame_memory_s;
+
 // Config types
 
 // config.Path
@@ -1319,6 +1328,7 @@ GHOSTTY_API void ghostty_surface_set_focus(ghostty_surface_t, bool);
 GHOSTTY_API void ghostty_surface_set_occlusion(ghostty_surface_t, bool);
 GHOSTTY_API void ghostty_surface_set_size(ghostty_surface_t, uint32_t, uint32_t);
 GHOSTTY_API ghostty_surface_size_s ghostty_surface_size(ghostty_surface_t);
+GHOSTTY_API ghostty_surface_frame_memory_s ghostty_surface_frame_memory(ghostty_surface_t);
 GHOSTTY_API int32_t ghostty_surface_predict_resize_shift(ghostty_surface_t, uint32_t);
 GHOSTTY_API void ghostty_surface_flush_resize(ghostty_surface_t);
 GHOSTTY_API uint64_t ghostty_surface_foreground_pid(ghostty_surface_t);

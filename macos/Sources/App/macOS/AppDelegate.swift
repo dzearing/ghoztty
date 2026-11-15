@@ -567,6 +567,7 @@ class AppDelegate: NSObject,
         // sync above). This is what keeps the agent's delta replay tiny on the
         // next relaunch/upgrade — the fast, non-smeary restore path.
         SessionLayoutManifest.shared.syncAllTrackedNow()
+        SessionLayoutManifest.shared.flushWrites()
 
         let windows = NSApplication.shared.windows
         if windows.isEmpty { return .terminateNow }
@@ -655,6 +656,10 @@ class AppDelegate: NSObject,
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
 
         ipcServer.stop()
+
+        // The session layout is written in the background; whatever changed
+        // while the windows closed must be on disk before the process goes.
+        SessionLayoutManifest.shared.flushWrites()
     }
 
     /// This is called when the application is already open and someone double-clicks the icon

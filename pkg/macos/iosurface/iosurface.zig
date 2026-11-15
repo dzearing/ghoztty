@@ -54,12 +54,18 @@ pub const IOSurface = opaque {
     pub fn deinit(self: *IOSurface) void {
         // We mark it purgeable so that it is immediately unloaded, so that we
         // don't have to wait for CoreFoundation garbage collection to trigger.
+        self.purge();
+        foundation.CFRelease(self);
+    }
+
+    /// Throw away the surface's pixels now, whoever else still holds it.
+    /// Anything showing the surface (a layer) shows nothing from here on.
+    pub fn purge(self: *IOSurface) void {
         _ = c.IOSurfaceSetPurgeable(
             @ptrCast(self),
             c.kIOSurfacePurgeableEmpty,
             null,
         );
-        foundation.CFRelease(self);
     }
 
     pub fn retain(self: *IOSurface) void {

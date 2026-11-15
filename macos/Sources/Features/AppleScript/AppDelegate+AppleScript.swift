@@ -347,13 +347,23 @@ extension NSApplication {
     }
 
     /// All terminal controllers in undefined order.
+    ///
+    /// A window that has closed is left out: `NSApp.windows` and
+    /// `orderedWindows` hold a closed window for as long as anything keeps
+    /// the object alive, and `ghoztty +list` (and AppleScript) went on
+    /// reporting it, panes and all.
     fileprivate var allTerminalControllers: [BaseTerminalController] {
-        NSApp.windows.compactMap { $0.windowController as? BaseTerminalController }
+        NSApp.windows
+            .compactMap { $0.windowController as? BaseTerminalController }
+            .filter { !$0.windowHasClosed }
     }
 
-    /// All terminal controllers in front-to-back order.
+    /// All terminal controllers in front-to-back order, closed windows left
+    /// out as above.
     fileprivate var orderedTerminalControllers: [BaseTerminalController] {
-        NSApp.orderedWindows.compactMap { $0.windowController as? BaseTerminalController }
+        NSApp.orderedWindows
+            .compactMap { $0.windowController as? BaseTerminalController }
+            .filter { !$0.windowHasClosed }
     }
 
     /// Identifies the primary tab controller for a window's tab group.

@@ -24,6 +24,11 @@ struct ViewerUnhandledKeyBeepTests {
         var beeps: [Selector] = []
         var windowKeyDowns: [UInt16] = []
         override func noResponder(for eventSelector: Selector) {
+            // AppKit beeps only for an unhandled key down. Everything else
+            // that falls off the end of the chain is silent — and a pointer
+            // that happens to be resting over the test window sends
+            // `mouseEntered:` here, which is not a beep.
+            guard eventSelector == #selector(NSResponder.keyDown(with:)) else { return }
             beeps.append(eventSelector)
         }
         override func keyDown(with event: NSEvent) {

@@ -18,6 +18,29 @@ pub const Options = struct {
 /// Metal data storage for a certain set of equal types. This is usually
 /// used for vertex buffers, etc. This helpful wrapper makes it easy to
 /// prealloc, shrink, grow, sync, buffers with Metal.
+/// The byte length to allocate for a buffer that must hold `req_bytes`
+/// and has outgrown its storage: double what is required, so a buffer
+/// that grows a little at a time is not reallocated on every frame.
+///
+/// `req_bytes` is already a byte count. It must not be scaled by the
+/// element size again: doing so made every cell buffer `@sizeOf(T)`
+/// times too large (32x for text cells), three times over per surface.
+pub fn grownByteLen(req_bytes: usize) usize {
+    return req_bytes * 2;
+}
+
+test grownByteLen {
+    const testing = std.testing;
+    const shaderpkg = @import("shaders.zig");
+
+    // A full 4K pane of glyphs asks for under a megabyte of text cells
+    // and must be given about two, not sixty.
+    const cells: usize = 30_000;
+    const req = cells * @sizeOf(shaderpkg.CellText);
+    try testing.expectEqual(req * 2, grownByteLen(req));
+    try testing.expect(grownByteLen(req) < 2 * 1024 * 1024);
+}
+
 pub fn Buffer(comptime T: type) type {
     return struct {
         const Self = @This();
@@ -81,12 +104,11 @@ pub fn Buffer(comptime T: type) type {
                 self.buffer.msgSend(void, objc.sel("release"), .{});
 
                 // Allocate a new buffer with enough to hold double what we require.
-                const size = req_bytes * 2;
                 self.buffer = self.opts.device.msgSend(
                     objc.Object,
                     objc.sel("newBufferWithLength:options:"),
                     .{
-                        @as(c_ulong, @intCast(size * @sizeOf(T))),
+                        @as(c_ulong, @intCast(grownByteLen(req_bytes))),
                         self.opts.resource_options,
                     },
                 );
@@ -138,12 +160,11 @@ pub fn Buffer(comptime T: type) type {
                 self.buffer.msgSend(void, objc.sel("release"), .{});
 
                 // Allocate a new buffer with enough to hold double what we require.
-                const size = req_bytes * 2;
                 self.buffer = self.opts.device.msgSend(
                     objc.Object,
                     objc.sel("newBufferWithLength:options:"),
                     .{
-                        @as(c_ulong, @intCast(size * @sizeOf(T))),
+                        @as(c_ulong, @intCast(grownByteLen(req_bytes))),
                         self.opts.resource_options,
                     },
                 );

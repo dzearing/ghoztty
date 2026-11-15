@@ -73,7 +73,7 @@ unaffected — the terminal's state, scrollback and activity are always
 current. A terminal added to a hidden window starts hidden
 (`BaseTerminalController.surfaceTreeDidChange` → `updateSeen`), so it never
 allocates render targets it would not draw into (see
-[memory.md](memory.md#hidden-windows-drop-their-render-targets)).
+[memory.md](memory.md#panes-that-are-not-drawing-give-back-their-frames)).
 
 ## Measured
 

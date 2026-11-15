@@ -787,7 +787,14 @@ pub const Session = struct {
     /// the session's channel. Kept opaque so `session.zig` needn't import
     /// `server.zig` (avoids an import cycle).
     bridge_ctx: ?*anyopaque = null,
-    bridge_data: ?*const fn (ctx: *anyopaque, channel: u128, byte_offset: u64, bytes: []const u8) void = null,
+    ///
+    /// Returns whether the chunk was taken. A bridge refuses when its
+    /// connection already has too much queued for a viewer that is not
+    /// reading; the chunk stays in the ring, `sent_offset` stays put, and the
+    /// bridge delivers it later from the ring (`Server.catchUpLocked`). A
+    /// zero-length call tells the bridge this session is behind and has
+    /// nothing new to offer in order.
+    bridge_data: ?*const fn (ctx: *anyopaque, channel: u128, byte_offset: u64, bytes: []const u8) bool = null,
     /// Frames EXIT on the session's channel (ordered after final DATA). Same
     /// lifetime/locking rules as `bridge_data`.
     bridge_exit: ?*const fn (ctx: *anyopaque, channel: u128, code: i64, runtime_ms: u64) void = null,
@@ -1674,8 +1681,17 @@ pub const SessionStore = struct {
             if (s.child.deliveredOffset()) |off| s.holder_offset = off;
             if (s.streaming and s.bound) {
                 if (s.bridge_data) |f| {
-                    f(s.bridge_ctx.?, s.channel, at, bytes);
-                    s.sent_offset = at + bytes.len;
+                    // Live output goes out only to a viewer that has every
+                    // byte before it. One that is behind (the bridge refused
+                    // an earlier chunk) is caught up from the ring, in order;
+                    // sending this chunk now would skip what it is missing.
+                    if (s.sent_offset == at) {
+                        if (f(s.bridge_ctx.?, s.channel, at, bytes)) {
+                            s.sent_offset = at + bytes.len;
+                        }
+                    } else {
+                        _ = f(s.bridge_ctx.?, s.channel, at, &.{});
+                    }
                 }
             }
         }

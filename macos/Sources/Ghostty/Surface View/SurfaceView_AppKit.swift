@@ -82,9 +82,22 @@ extension Ghostty {
         // Whether the mouse is currently over this surface
         @Published private(set) var mouseOverSurface: Bool = false
 
-        // The last known mouse location in the surface's local coordinate space,
-        // used by overlays such as the split drag handle reveal region.
-        @Published private(set) var mouseLocationInSurface: CGPoint?
+        // The last known mouse location in the surface's local coordinate
+        // space. Not published: it changes on every mouse move, and everything
+        // observing the surface (the pane's whole SwiftUI tree, its sidebar
+        // row) re-rendered each time for the one fact below.
+        private(set) var mouseLocationInSurface: CGPoint? {
+            didSet {
+                let inBand = mouseLocationInSurface.map {
+                    PaneGrabHandle.isInHoverRegion($0, in: bounds)
+                } ?? false
+                if inBand != pointerInTopBand { pointerInTopBand = inBand }
+            }
+        }
+
+        // Whether the pointer is in the band at the top of the surface where
+        // the grab handle reveals itself. Published on change only.
+        @Published private(set) var pointerInTopBand: Bool = false
 
         // Whether the pointer is over this pane's sticky banner. The terminal
         // is inset BELOW the banner, so a pointer on the banner has left this
@@ -279,6 +292,20 @@ extension Ghostty {
         override var surface: ghostty_surface_t? {
             surfaceModel?.unsafeCValue
         }
+        /// What the renderer was last told about whether this terminal can
+        /// be seen (the core starts out visible). See `setRendererVisible`.
+        private var rendererVisible = true
+
+        /// Tell the renderer whether anyone can see this terminal. Hidden, it
+        /// stops drawing and gives back its render targets; shown, it draws
+        /// again. Only a change is passed on, so callers can state the answer
+        /// as often as they like.
+        func setRendererVisible(_ visible: Bool) {
+            guard visible != rendererVisible, let surface else { return }
+            rendererVisible = visible
+            ghostty_surface_set_occlusion(surface, visible)
+        }
+
         /// Current scrollbar state, cached here for persistence across rebuilds
         /// of the SwiftUI view hierarchy, for example when changing splits
         var scrollbar: Ghostty.Action.Scrollbar?

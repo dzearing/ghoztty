@@ -315,6 +315,12 @@ fn threadMain_(self: *Thread, io: *termio.Termio) !void {
     // ourselves and the thread data so we can thread that through (pun intended).
     var cb: CallbackData = .{ .self = self, .io = io };
 
+    // This thread drains the mailbox: what it sends to itself (a remote
+    // backend parses output here, and the parse sends replies) must never
+    // wait on a full queue only it can empty. Before `threadEnter`, which
+    // may already parse.
+    io.mailbox.claim();
+
     // Run our thread start/end callbacks. This allows the implementation
     // to hook into the event loop as needed. The thread data is created
     // on the stack here so that it has a stable pointer throughout the
@@ -345,14 +351,12 @@ fn drainMailbox(
     self: *Thread,
     cb: *CallbackData,
 ) !void {
-    // We assert when starting the thread that this is the state
-    const mailbox = cb.io.mailbox.spsc.queue;
     const io = cb.io;
     const data = &cb.data;
 
     // If we're draining, we just drain the mailbox and return.
     if (self.flags.drain) {
-        while (mailbox.pop()) |_| {}
+        while (io.mailbox.next()) |_| {}
         return;
     }
 
@@ -379,7 +383,8 @@ fn drainMailbox(
         try io.focusGained(data, v);
     }
 
-    while (mailbox.pop()) |message| {
+    // The queue, then anything this thread sent itself while it was full.
+    while (io.mailbox.next()) |message| {
         // If we have a message we always redraw
         redraw = true;
 

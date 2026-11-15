@@ -2825,14 +2825,70 @@ class BaseTerminalController: NSWindowController,
     private func isAliveInAnotherWindow(_ pane: PaneView) -> Bool {
         for window in NSApp.windows {
             guard let controller = window.windowController as? BaseTerminalController,
-                  controller !== self else { continue }
+                  controller !== self, !controller.windowHasClosed else { continue }
             if controller.surfaceTree.contains(where: { $0 === pane }) { return true }
         }
         return false
     }
 
+    /// True once this controller's window has closed. A closed window is
+    /// supposed to be freed, but whatever still references it (an undo
+    /// registration for the length of the undo window; sometimes something
+    /// the memory tools cannot name, see docs/reference/memory.md) keeps the
+    /// controller, its tree and its panes alive and in `NSApp.windows`. So
+    /// the close itself is what counts: a closed window is not listed or
+    /// found by name, its tree does not keep a pane "in a window", and its
+    /// terminals are released on the close's clock (`windowWillClose`).
+    private(set) var windowHasClosed = false
+
+    /// The window was closed by a path that knows it is gone whatever
+    /// `windowWillClose` saw — a forced close, which takes a confirmation
+    /// sheet down on its way and so closes while one is still attached.
+    func noteWindowClosed() {
+        windowHasClosed = true
+    }
+
+    /// How long past the undo's expiry a closed window is given to be freed
+    /// before its terminals are released from under it.
+    static let heldClosedWindowGrace: TimeInterval = 2
+
+    /// See `windowWillClose`: this controller's window closed, the close can
+    /// no longer be undone, and the controller is still here.
+    private func releaseTerminalsOfHeldClosedWindow() {
+        guard windowHasClosed else { return }
+        for pane in surfaceTree where !isAliveInAnotherWindow(pane) {
+            pane.surfaceView?.releaseClosedSurface()
+        }
+    }
+
     func windowWillClose(_ notification: Notification) {
         guard let window else { return }
+        // Not while a confirmation sheet is up: AppKit announces the close
+        // even then, but the sheet holds the window open, still waiting to
+        // be answered (`+close` reports it, `+close --force` takes it down).
+        // Calling that window closed hid it from the very commands that can
+        // deal with it.
+        windowHasClosed = window.attachedSheet == nil
+
+        // A closed window is freed once its close can no longer be undone,
+        // and its terminals with it. If something still holds the window by
+        // then, free the terminals anyway — their processes or agent
+        // sessions — rather than leave every shell in it running for as long
+        // as the object lives. Only then: a window freed on time must take
+        // the ordinary path untouched, so this looks a little after the undo
+        // has expired, and finds nothing to do unless the controller is
+        // still alive. An undone close has put the panes in a new window's
+        // tree, which is checked. Not at quit or sign-out, where the
+        // sessions are kept for restore and the process is going away.
+        do {
+            let delegate = NSApp.delegate as? AppDelegate
+            if delegate?.isQuitting != true && delegate?.isSigningOut != true {
+                let delay = undoExpiration.timeInterval + Self.heldClosedWindowGrace
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.releaseTerminalsOfHeldClosedWindow()
+                }
+            }
+        }
 
         // User-initiated window/tab close (NOT app quit, NOT sign-out): the
         // agent sessions of every pane in this window must actually END —
@@ -3004,16 +3060,26 @@ class BaseTerminalController: NSWindowController,
     }
 
     /// Tell the window's terminals whether they can be seen — a hidden one
-    /// neither builds nor draws frames (`renderer.Thread`) — and land a title
-    /// held back while hidden: this window's, and its tab group's, whose
-    /// labels are in its tab bar.
+    /// neither builds nor draws frames (`renderer.Thread`) and gives back its
+    /// render targets (docs/reference/memory.md) — and land a title held
+    /// back while hidden: this window's, and its tab group's, whose labels
+    /// are in its tab bar.
+    ///
+    /// Seen is the window being on screen AND the pane being on show in it:
+    /// a stashed pane stays mounted at full size at zero opacity, and a pane
+    /// behind a zoomed one is out of the view tree, so without the second
+    /// half each drew every frame of its output into targets no one looks
+    /// at. Runs on every tree change too (`surfaceTreeDidChange`), so a pane
+    /// stashed, brought back or moved in starts out right.
     private func updateSeen() {
         guard let window else { return }
         let visible = WindowInUse.isOnScreen(window)
+        let stashed = Set(surfaceTree.stashed)
+        let zoomed = surfaceTree.zoomed.map { Set($0.leaves().map(\.id)) }
         for view in surfaceTree {
-            if let surface = view.surface {
-                ghostty_surface_set_occlusion(surface, visible)
-            }
+            let shown = !stashed.contains(view.id) && (zoomed?.contains(view.id) ?? true)
+            // Passes on changes only: this runs on every tree change.
+            view.surfaceView?.setRendererVisible(visible && shown)
         }
 
         if Self.titleIsSeen(window) {

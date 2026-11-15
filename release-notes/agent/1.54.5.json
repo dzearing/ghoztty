@@ -1,0 +1,12 @@
+{
+  "version": "1.54.5",
+  "sections": [
+    { "title": "Session persistence",
+      "items": [
+        { "title": "Restored panes pick up where the program left off", "text": "After re-attaching, a pane's cursor could be left near the right edge, so the next line of output started in the wrong column and a later restore could repeat a line. The cursor now lands exactly where the program left it." },
+        { "title": "The background process no longer grows without limit", "text": "If the app stopped reading for a while (suspended, or behind a slow connection), the background process kept queueing every byte your panes printed until it could run out of memory and take every session with it. It now holds a bounded amount and catches the app up, in order, once it is reading again." },
+        { "title": "No more frozen panes on bursts of terminal queries", "text": "A program sending many terminal queries at once could freeze its pane for seconds and lose the replies. Those bursts are now answered immediately." },
+        { "title": "Survives running out of file handles", "text": "The background process keeps running and retries when the system is briefly out of file handles, instead of exiting and ending your sessions." }
+      ] }
+  ]
+}

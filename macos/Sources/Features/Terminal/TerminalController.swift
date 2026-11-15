@@ -255,9 +255,12 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
     /// Returns all the available terminal controllers present in the app currently.
     static var all: [TerminalController] {
+        // A window that has closed can outlive its close (see
+        // `BaseTerminalController.windowHasClosed`); it is not a window any
+        // more, and nothing should find it by name or list it.
         return NSApplication.shared.windows.compactMap {
             $0.windowController as? TerminalController
-        }
+        }.filter { !$0.windowHasClosed }
     }
 
     // Keep track of the last point that our window was launched at so that new
@@ -1064,20 +1067,26 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
         registerUndoForCloseWindow()
 
-        if let tabGroup = window.tabGroup, tabGroup.windows.count > 1 {
-            tabGroup.windows.forEach { window in
-                // Clear out the surfacetree to ensure there is no undo state.
-                // This prevents unnecessary undos registered since AppKit may
-                // process them on later ticks so we can't just disable undo registration.
-                if let controller = window.windowController as? TerminalController {
-                    controller.cancelPendingInitialPresentation()
-                    controller.surfaceTree = .init()
-                }
+        // In a pool of its own: closing autoreleases the window, and the
+        // pool that would otherwise catch it is not always drained soon —
+        // windows closed close together were found alive, panes and all,
+        // long after their undo had expired (docs/reference/memory.md).
+        autoreleasepool {
+            if let tabGroup = window.tabGroup, tabGroup.windows.count > 1 {
+                tabGroup.windows.forEach { window in
+                    // Clear out the surfacetree to ensure there is no undo state.
+                    // This prevents unnecessary undos registered since AppKit may
+                    // process them on later ticks so we can't just disable undo registration.
+                    if let controller = window.windowController as? TerminalController {
+                        controller.cancelPendingInitialPresentation()
+                        controller.surfaceTree = .init()
+                    }
 
+                    window.close()
+                }
+            } else {
                 window.close()
             }
-        } else {
-            window.close()
         }
     }
 
@@ -1105,6 +1114,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         } else {
             window.close()
         }
+        noteWindowClosed()
         for pane in panes { pane.surfaceView?.releaseClosedSurface() }
     }
 

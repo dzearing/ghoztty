@@ -39,7 +39,7 @@ pub const swap_chain_count = 3;
 /// The layer retains the IOSurface it displays (`contents`), independent of
 /// the swap-chain frame that rendered it, and `presentLastTarget` is a no-op.
 /// So the renderer may free every frame's target while the surface is hidden
-/// without the window going blank: see `releaseHiddenTargets` in generic.zig.
+/// without the window going blank: see `releaseFrameResources` in generic.zig.
 pub const presented_target_outlives_frame = true;
 
 const log = std.log.scoped(.metal);
@@ -268,6 +268,13 @@ pub inline fn present(self: *Metal, target: Target, sync: bool, seq: u64) !void 
     } else {
         try self.layer.setSurface(target.surface, seq);
     }
+}
+
+/// Throw away the pixels of the frame on screen, unless a frame newer
+/// than the last one begun has been presented by the time this lands.
+/// For a hidden surface whose frames have already let go of their targets.
+pub fn purgePresented(self: *Metal) void {
+    self.layer.purgeContents(self.frame_seq);
 }
 
 /// Present the last presented target again. (noop for Metal)

@@ -203,6 +203,110 @@ Cross-machine session *move* (browse another machine's live sessions from the
 Cmd-Shift-N chooser and resume them locally over the relay) is **scoped but not
 yet built** — see tasks T16–T18 in `docs/design/session-persistence-tasks.json`.
 
+## The agent's accept loop does not exit on a passing error
+
+`acceptLoop` (`src/remote/agent/main.zig`) ends the process if it returns, and
+every session with it. It retries at once on a connection that died in the
+backlog, and after 100 ms on running out of file descriptors or kernel memory
+(`acceptRetryDelayMs`); only an error that says the socket is no longer a
+listening socket ends it. The agent does not raise its own descriptor limit:
+child shells would inherit it.
+
+## A restored screen leaves the cursor where the program left it
+
+Both restore paints — the app's own snapshot (`Surface.formatSessionSnapshot`)
+and the agent's repaint (`GridEmulator.snapshotAlloc`) — are
+`terminal.formatter.TerminalFormatter` output: the screen, the cursor
+position, then terminal state. Two pieces of that state move the cursor when
+replayed: DECSTBM/DECSLRM home it, and each tabstop is set by moving to its
+column. `formatTrailingExtras` puts the cursor back afterwards whenever the
+cursor is part of what is restored.
+
+Before this a re-attached pane's cursor sat at the last tabstop (the right
+row, column 113 of 116), so whatever the program printed next started there
+until it sent a carriage return; the following snapshot recorded that as a
+row of spaces soft-wrapped onto the text, and the restore after that
+duplicated a line. Caught by the E2E's `--quit=graceful` mode from the second
+cycle on. Test: `Terminal vt restores the cursor after tabstops and a
+scrolling region` (`formatter.zig`).
+
+## An agent-backed pane cannot stall on its own mailbox
+
+The remote backend parses output on the IO thread (`termio/Remote.zig`
+`drainRing`), and that thread also drains the termio mailbox. The parse sends
+to it: a reply to every query, a timer for every synchronized-output start.
+Local panes are immune — their read thread parses while the IO thread drains.
+
+- `drainRing` works in 1 KiB slices and yields when the mailbox is half full
+  (`Mailbox.underPressure`), so a long replay cannot fill it between slices.
+- **Within one slice the IO thread can no longer fill it either.** The
+  thread that drains a mailbox `claim`s it; what that thread sends to itself
+  once the 64-slot queue is full goes on an overflow list (`mailbox.zig`
+  `Overflow`) instead of waiting 50 ms for a drain only it can perform and
+  then being dropped. `Mailbox.next` hands out the queue, then the overflow,
+  so order holds. Before this, a kilobyte of queries (`ESC [ c` is three
+  bytes) froze the pane for seconds with its replies lost and its input
+  unread.
+- Other threads sending to a full mailbox behave as before: bounded waits,
+  then a logged drop, never a wait forever.
+- Tests: `the consumer sending to its own full mailbox neither waits nor
+  drops`, `another thread sending to a full mailbox still gives up rather
+  than block forever` (`mailbox.zig`).
+
+## The agent's outbound queue is bounded
+
+Each connection's writer thread drains one queue of frames. Child output is
+copied into it as it is printed, so a viewer that stops reading — the app
+suspended or at a breakpoint, a slow relay link — used to grow that queue at
+the speed its panes print, with no limit, until the agent ran out of memory
+and every session died.
+
+- `queued_data_bytes` counts data-stream bytes queued **or being written**;
+  past `data_queue_high_water` (4 MiB) `bridgeData` refuses the chunk. It is
+  already in the session's ring; `sent_offset` stays where it was.
+- **A session that is behind sends nothing live.** `onChildOutput` hands a
+  chunk to the bridge only when `sent_offset` is exactly where the chunk
+  starts; otherwise it tells the bridge it is behind (a zero-length call).
+  Sending live output past a gap would skip what the viewer is missing.
+- **The writer catches sessions up as it makes room.** A refusal marks the
+  connection `backlogged`; after writing a batch the writer runs
+  `catchUpBacklog`, which sends each behind-and-streaming session its gap
+  from the ring (`catchUpLocked`), in `catch_up_chunk` (64 KiB) pieces and
+  only while the queue has room. `FLOW{resume}` goes through the same code,
+  so a resume no longer sends the whole gap as one frame.
+- Lock order is store, then write, on every path; the writer holds neither
+  while it writes to the socket.
+- What is NOT bounded this way: the pty is still read as fast as the child
+  writes, so a viewer that stays away longer than the ring holds (2 MiB)
+  loses the oldest output, announced by the "bytes of output lost while
+  paused" marker, exactly as with a client pause.
+- Test: `a full outbound queue holds output in the ring and delivers it in
+  order when there is room` (`server.zig`).
+
+## The layout manifest: syncing and writing
+
+`SessionLayoutManifest` (`session-layout.json` in Application Support) holds
+one entry per persistent window: frame, tab group, names, the split tree and,
+per terminal leaf, its session id and a screen snapshot with its byte offset.
+
+- A change in a window (tree, frame, sidebar, a pane banner) schedules a sync
+  of its entry, debounced 250 ms (`scheduleSync`); at quit every window is
+  synced afresh (`syncAllTrackedNow`), which is what keeps the snapshots
+  current when only output changed.
+- **The file is written off the main thread.** A save encodes every window's
+  entry, snapshots included, and rewrites the file atomically; the app's
+  shared manifest hands that to a background queue where the latest state
+  wins (`writesInBackground`, `pendingWrite`), so a burst of changes is one
+  write. `flushWrites()` waits for it and is called when a quit begins and in
+  `applicationWillTerminate`. Anything that must read the file right after a
+  change (a test, a script) must allow for that or flush. Measured in a debug
+  build with 22 panes: 3.6 ms → 0.6 ms on the main thread per banner change.
+- **One session-id retry loop per entry.** A leaf's session id arrives after
+  its OPEN completes, so a sync that finds one missing looks again every
+  0.5 s for up to 30 s (`syncAndCaptureSessionIDs`,
+  `capturingSessionIDs`). A sync triggered while a loop is running does not
+  start another.
+
 ## Agent contract & upgrade compatibility
 
 (The short form is a hard rule in the root `CLAUDE.md`; this is the full text.)

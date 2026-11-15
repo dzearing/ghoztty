@@ -221,7 +221,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// cells for the draw call.
         cells_rebuilt: bool = false,
 
-        /// `releaseHiddenTargets` freed the targets of an API whose last
+        /// `releaseFrameResources` freed the targets of an API whose last
         /// target is what a no-op frame re-presents (OpenGL on Win32, T2474),
         /// so the first frame back must draw in full.
         redraw_after_release: bool = false,
@@ -241,6 +241,27 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         ///
         /// This is used when updating custom shader uniforms.
         last_frame_time: ?std.time.Instant = null,
+
+        /// When the last frame that actually rendered (not a no-op
+        /// re-present) began, and whether the swap-chain frames have given
+        /// back their targets and atlas textures since. Both are guarded by
+        /// `draw_mutex`. See `releaseIdleFrames`.
+        last_draw_time: ?std.time.Instant = null,
+        frames_released: bool = true,
+
+        /// False while the surface is hidden (`setVisible`): nothing draws,
+        /// whoever asks. The render thread already skips its own draws, but
+        /// the layer's display callback draws from the main thread on any
+        /// layout, and a hidden surface that drew there took back the
+        /// targets it had just given up. Guarded by `draw_mutex`.
+        visible: bool = true,
+
+        /// Wakes the render thread to start its idle-release timer. Frames
+        /// are drawn from several threads (the render thread, the vsync
+        /// callback, the main thread on layout), so the frame that first
+        /// takes resources back says so here. Set while the render
+        /// thread's loop runs; guarded by `draw_mutex`.
+        idle_arm: ?*xev.Async = null,
 
         /// The font structures.
         font_grid: *font.SharedGrid,
@@ -533,6 +554,48 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 const target = try api.initTarget(width, height);
                 self.target.deinit();
                 self.target = target;
+            }
+
+            /// Give back this frame's render target, leaving a 1x1 one in
+            /// its place. With `purge` its pixels go at once even if the
+            /// layer is showing them (right for a hidden surface); without,
+            /// a target that is on screen stays on screen, held by the
+            /// layer alone.
+            pub fn releaseTarget(self: *FrameState, api: GraphicsAPI, purge: bool) !void {
+                if (self.custom_shader_state) |*state| {
+                    try state.resize(api, 1, 1);
+                }
+                const target = try api.initTarget(1, 1);
+                if (purge) self.target.deinit() else self.target.deinitKeepingContents();
+                self.target = target;
+            }
+
+            /// Give back this frame's copies of the font atlas, which are
+            /// as large as the atlas itself (megabytes each, and every
+            /// frame of every surface has its own pair). The next draw
+            /// finds them out of date and uploads them again, exactly as
+            /// it does for a frame that has never been drawn.
+            pub fn releaseAtlases(self: *FrameState, api: GraphicsAPI) !void {
+                if (self.grayscale.width > 1) {
+                    const tex = try api.initAtlasTexture(&.{
+                        .data = undefined,
+                        .size = 1,
+                        .format = .grayscale,
+                    });
+                    self.grayscale.deinit();
+                    self.grayscale = tex;
+                    self.grayscale_modified = 0;
+                }
+                if (self.color.width > 1) {
+                    const tex = try api.initAtlasTexture(&.{
+                        .data = undefined,
+                        .size = 1,
+                        .format = .bgra,
+                    });
+                    self.color.deinit();
+                    self.color = tex;
+                    self.color_modified = 0;
+                }
             }
         };
 
@@ -1009,6 +1072,20 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
         /// Called by renderer.Thread when it starts the main loop.
         pub fn loopEnter(self: *Self, thr: *renderer.Thread) !void {
+            // From here the render thread can be asked to start its
+            // idle-release timer (see `drawFrame`).
+            {
+                self.draw_mutex.lock();
+                defer self.draw_mutex.unlock();
+                self.idle_arm = &thr.idle_arm;
+
+                // A frame drawn before the loop started (the main thread
+                // lays out early) had nobody to tell.
+                if (!self.frames_released) thr.idle_arm.notify() catch |err| {
+                    log.warn("error arming idle release err={}", .{err});
+                };
+            }
+
             // If our API has to do things on loop enter, let it.
             if (@hasDecl(GraphicsAPI, "loopEnter")) {
                 self.api.loopEnter();
@@ -1031,6 +1108,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
         /// Called by renderer.Thread when it exits the main loop.
         pub fn loopExit(self: *Self) void {
+            // The thread's loop is going away, and its asyncs with it.
+            {
+                self.draw_mutex.lock();
+                defer self.draw_mutex.unlock();
+                self.idle_arm = null;
+            }
+
             // If our API has to do things on loop exit, let it.
             if (@hasDecl(GraphicsAPI, "loopExit")) {
                 self.api.loopExit();
@@ -1274,37 +1358,136 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 }
             }
 
-            if (!visible) self.releaseHiddenTargets();
+            {
+                self.draw_mutex.lock();
+                defer self.draw_mutex.unlock();
+                self.visible = visible;
+            }
+
+            if (!visible) self.releaseFrameResources(.hidden);
         }
 
-        /// The surface is fully occluded (its window is covered, minimized,
-        /// on another Space, or the app is hidden): nothing draws until it is
-        /// visible again (`Thread.drawFrame` returns early), yet every
-        /// swap-chain frame still holds a full-size render target — three
-        /// window-sized IOSurfaces per pane. Shrink them to 1x1. The picture
-        /// on screen survives, because the layer retains the surface it shows
-        /// (`presented_target_outlives_frame`); the next real draw finds each
-        /// frame's target the wrong size and re-creates it, as it does after
-        /// any resize.
+        /// What the swap-chain frames hold on the GPU right now, in bytes.
+        /// This is the part of a surface's graphics memory the renderer
+        /// can give back (`releaseFrameResources`); the surface the layer
+        /// is showing is not counted, it belongs to the layer.
+        pub const FrameMemory = extern struct {
+            /// The frames' render targets (4 bytes per pixel each).
+            target_bytes: u64 = 0,
+            /// The frames' copies of the grayscale and color font atlases.
+            atlas_bytes: u64 = 0,
+            /// True when the frames have been released and nothing has
+            /// drawn since.
+            released: bool = false,
+        };
+
+        /// Safe to call from any thread.
+        pub fn frameMemory(self: *Self) FrameMemory {
+            self.draw_mutex.lock();
+            defer self.draw_mutex.unlock();
+
+            var result: FrameMemory = .{ .released = self.frames_released };
+            if (self.swap_chain.defunct) return result;
+            for (&self.swap_chain.frames) |*frame| {
+                result.target_bytes += frame.target.width * frame.target.height * 4;
+                result.atlas_bytes += frame.grayscale.width * frame.grayscale.height;
+                result.atlas_bytes += frame.color.width * frame.color.height * 4;
+            }
+            return result;
+        }
+
+        /// How long a surface goes without drawing before its swap-chain
+        /// frames give back what they hold (`releaseIdleFrames`). Long
+        /// enough that a blinking cursor or a status line that ticks once
+        /// a second keeps its frames, short enough that a pane left alone
+        /// stops costing three window-sized render targets.
+        pub const idle_release_ns: u64 = 3 * std.time.ns_per_s;
+
+        /// Release what the swap-chain frames hold if nothing has been
+        /// drawn for `idle_release_ns`: most panes on screen are sitting
+        /// still, and each one otherwise keeps three full-size render
+        /// targets and three copies of the font atlas for frames it is not
+        /// drawing. The picture on screen is unaffected (see
+        /// `releaseFrameResources`).
+        ///
+        /// Returns how long to wait before asking again, or null if there
+        /// is nothing to release until the surface next draws.
+        ///
+        /// Must be called on the render thread.
+        pub fn releaseIdleFrames(self: *Self) ?u64 {
+            if (comptime !@hasDecl(GraphicsAPI, "presented_target_outlives_frame")) return null;
+
+            idle: {
+                self.draw_mutex.lock();
+                defer self.draw_mutex.unlock();
+                if (self.frames_released) return null;
+                // No reading of the clock: release rather than hold on.
+                const last = self.last_draw_time orelse break :idle;
+                const now = std.time.Instant.now() catch break :idle;
+                const idle = now.since(last);
+                if (idle < idle_release_ns) return idle_release_ns - idle;
+            }
+
+            self.releaseFrameResources(.idle);
+            return null;
+        }
+
+        /// Why a surface's frames are being released.
+        const ReleaseReason = enum {
+            /// Fully occluded (its window is covered, minimized, on another
+            /// Space, or the app is hidden): `Thread.drawFrame` returns
+            /// early, nothing is on screen, and the frame it last showed
+            /// can go too.
+            hidden,
+
+            /// On screen but with nothing new to show for a while
+            /// (`releaseIdleFrames`): the frame it shows must stay.
+            idle,
+        };
+
+        /// The surface is not drawing, yet every swap-chain frame still
+        /// holds a full-size render target — three window-sized IOSurfaces
+        /// per pane — and its own copy of both font atlases. Shrink the
+        /// targets to 1x1 and drop the atlas copies. The next real draw
+        /// finds each frame's target the wrong size and re-creates it, as
+        /// it does after any resize, and uploads the atlases again.
+        ///
+        /// What is on screen depends on the reason. Idle, the picture
+        /// stays: the layer retains the surface it shows
+        /// (`presented_target_outlives_frame`), and the frames let go of
+        /// their targets without purging them. Hidden, the shown surface
+        /// is purged as well, whether the frames still held it or had let
+        /// go of it while idle; the surface draws again when it is shown.
         ///
         /// For APIs that keep the presented image independent of the frame
-        /// (Metal). OpenGL re-presents its last target on a no-op draw, so it
-        /// opts in another way (T2474): `releaseHiddenTargetsNow` says when a
-        /// release is safe (Win32: the WINDOW is hidden, not just the pane -
-        /// hero mode reads background tabs' targets), the API forgets its
-        /// last target, and the first frame back draws in full instead of
-        /// re-presenting one that is gone.
-        fn releaseHiddenTargets(self: *Self) void {
+        /// (Metal), for either reason. OpenGL re-presents its last target on a
+        /// no-op draw, so it opts in another way and only when hidden (T2474):
+        /// `releaseHiddenTargetsNow` says when a release is safe (Win32: the
+        /// WINDOW is hidden or the pane's tab went behind, not a zoom or a
+        /// stash - hero mode reads background tabs' targets), the API forgets
+        /// its last target, and the first frame back draws in full instead of
+        /// re-presenting one that is gone. An idle release there is T3103.
+        fn releaseFrameResources(self: *Self, reason: ReleaseReason) void {
             const outlives = comptime @hasDecl(GraphicsAPI, "presented_target_outlives_frame");
             const redraws = comptime @hasDecl(GraphicsAPI, "releaseHiddenTargetsNow");
             if (comptime !outlives and !redraws) return;
-            if (comptime redraws) {
+            if (comptime !outlives) {
+                if (reason != .hidden) return;
                 if (!self.api.releaseHiddenTargetsNow()) return;
             }
 
             self.draw_mutex.lock();
             defer self.draw_mutex.unlock();
             if (self.swap_chain.defunct) return;
+
+            if (comptime outlives) {
+                if (self.frames_released) {
+                    // The frames went idle first and kept the picture.
+                    if (reason == .hidden) self.api.purgePresented();
+                    return;
+                }
+            }
+            self.frames_released = true;
 
             // Wait out frames still on the GPU so none renders into a target
             // as it is freed (same order as drawFrame: mutex, then frames).
@@ -1313,10 +1496,21 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             defer for (0..n) |_| self.swap_chain.frame_sema.post();
 
             for (&self.swap_chain.frames) |*frame| {
+                if (comptime outlives) {
+                    frame.releaseAtlases(self.api) catch |err| {
+                        log.warn("could not release frame atlas textures err={}", .{err});
+                    };
+                }
                 if (frame.target.width <= 1 and frame.target.height <= 1) continue;
-                frame.resize(self.api, 1, 1) catch |err| {
-                    log.warn("could not release hidden render target err={}", .{err});
-                };
+                if (comptime outlives) {
+                    frame.releaseTarget(self.api, reason == .hidden) catch |err| {
+                        log.warn("could not release frame render target err={}", .{err});
+                    };
+                } else {
+                    frame.resize(self.api, 1, 1) catch |err| {
+                        log.warn("could not release hidden render target err={}", .{err});
+                    };
+                }
             }
             if (comptime redraws) {
                 self.api.hiddenTargetsReleased();
@@ -1872,6 +2066,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 }, .instant) > 0) self.scrollbar_dirty = false;
             };
 
+            // A hidden surface draws nothing: what it would draw is seen by
+            // no one, and it has given its targets back. It is drawn afresh
+            // when it is shown (the apprt queues a render with the change).
+            if (comptime @hasDecl(GraphicsAPI, "presented_target_outlives_frame")) {
+                if (!self.visible) return;
+            }
+
             // Win32 thumbnails (hero mode T59a, a fold's carried frame T2457,
             // an opening card's exact frame T2458): when the GUI thread asked
             // for one, read this frame's target back. Registered BEFORE the
@@ -1963,6 +2164,16 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 return;
             }
             self.cells_rebuilt = false;
+
+            // This frame renders, so the frames hold real targets again
+            // and the idle clock restarts (`releaseIdleFrames`).
+            self.last_draw_time = std.time.Instant.now() catch null;
+            if (self.frames_released) {
+                self.frames_released = false;
+                if (self.idle_arm) |arm| arm.notify() catch |err| {
+                    log.warn("error arming idle release err={}", .{err});
+                };
+            }
 
             // Wait for a frame to be available.
             const frame = try self.swap_chain.nextFrame();

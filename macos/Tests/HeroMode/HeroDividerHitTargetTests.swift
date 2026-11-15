@@ -55,7 +55,7 @@ struct HeroDividerHitTargetTests {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: width, height: height),
             styleMask: [.titled], backing: .buffered, defer: false)
-        let host = NSHostingView(rootView: HeroModeView(tree: try makeTree(panes), state: state))
+        let host = NSHostingView(rootView: HeroTestRoot(tree: try makeTree(panes), state: state))
         host.frame = window.contentView!.bounds
         host.autoresizingMask = [.width, .height]
         window.contentView!.addSubview(host)

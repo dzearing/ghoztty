@@ -434,4 +434,32 @@ struct SessionLayoutManifestTests {
         let merged = AppDelegate.reconcileLayoutEntries(local: [], agent: agent)
         #expect(merged.map(\.id) == agent.map(\.id))
     }
+
+    // MARK: Background writes
+
+    /// The app's manifest writes off the calling thread: a flush puts every
+    /// change made so far on disk, and a later reader sees the latest state.
+    @Test func backgroundWritesReachDiskOnFlush() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gz-layout-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let manifest = SessionLayoutManifest(fileURL: url, writesInBackground: true)
+        let first = manifest.register()
+        var ids = [first]
+        for index in 0..<50 {
+            ids.append(manifest.register())
+            manifest.updateWindowTitle(first, windowTitle: "title \(index)")
+        }
+        manifest.flushWrites()
+
+        let reloaded = SessionLayoutManifest(fileURL: url)
+        #expect(reloaded.allEntries().map(\.id) == ids)
+        #expect(reloaded.allEntries().first?.titleOverride == "title 49")
+
+        // Removing the last entry removes the file, as in place.
+        ids.forEach { manifest.remove($0) }
+        manifest.flushWrites()
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
 }

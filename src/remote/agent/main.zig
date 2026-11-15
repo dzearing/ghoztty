@@ -2162,6 +2162,43 @@ fn acceptLoopThread(args: AcceptArgs) void {
     };
 }
 
+/// How long to wait before accepting again after `err`, or null if the
+/// listener itself is gone and the loop must end.
+///
+/// A connection that died in the backlog is retried at once. Running out of
+/// file descriptors or kernel memory passes — a session closes, a client
+/// hangs up — so those wait and retry: the agent used to exit on them, and
+/// every live session died with it. Only an error that says the socket is
+/// no longer a listening socket is fatal.
+fn acceptRetryDelayMs(err: anyerror) ?u64 {
+    return switch (err) {
+        error.ConnectionAborted,
+        error.ConnectionResetByPeer,
+        => 0,
+
+        error.ProcessFdQuotaExceeded,
+        error.SystemFdQuotaExceeded,
+        error.SystemResources,
+        error.ProtocolFailure,
+        error.BlockedByFirewall,
+        error.NetworkSubsystemFailed,
+        error.WouldBlock,
+        => 100,
+
+        else => null,
+    };
+}
+
+test acceptRetryDelayMs {
+    const testing = std.testing;
+    try testing.expectEqual(@as(?u64, 0), acceptRetryDelayMs(error.ConnectionAborted));
+    try testing.expectEqual(@as(?u64, 100), acceptRetryDelayMs(error.ProcessFdQuotaExceeded));
+    try testing.expectEqual(@as(?u64, 100), acceptRetryDelayMs(error.SystemFdQuotaExceeded));
+    try testing.expectEqual(@as(?u64, 100), acceptRetryDelayMs(error.SystemResources));
+    try testing.expectEqual(@as(?u64, null), acceptRetryDelayMs(error.SocketNotListening));
+    try testing.expectEqual(@as(?u64, null), acceptRetryDelayMs(error.FileDescriptorNotASocket));
+}
+
 /// THE DAEMON: accept connections forever, serving each on its own detached
 /// thread. This is the loop that was previously inlined in `runListen`; it was
 /// extracted verbatim so it can run on EITHER the main thread (every daemon
@@ -2179,10 +2216,18 @@ fn acceptLoop(
     enforce_same_uid: bool,
 ) !void {
     while (true) {
-        const conn = listener.accept() catch |err| switch (err) {
-            // Transient accept errors: keep the daemon alive.
-            error.ConnectionAborted, error.ConnectionResetByPeer => continue,
-            else => return err,
+        const conn = listener.accept() catch |err| {
+            // Keep the daemon alive through anything that can pass: it owns
+            // every session, and returning here ends the process.
+            const wait_ms = acceptRetryDelayMs(err) orelse return err;
+            if (wait_ms > 0) {
+                std.debug.print(
+                    "ghoztty-agent: accept failed ({s}), retrying in {d}ms\n",
+                    .{ @errorName(err), wait_ms },
+                );
+                std.Thread.sleep(wait_ms * std.time.ns_per_ms);
+            }
+            continue;
         };
         // Same-uid gate (unix socket): reject — and immediately close — any peer
         // that is not this user, or whose credentials can't be read. A shell is

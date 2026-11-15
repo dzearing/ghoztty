@@ -8,17 +8,30 @@ the audit worktree; methodology there).
 ## Where memory goes
 
 - **GPU memory dominates.** Each terminal pane's renderer keeps a swap chain of
-  three frames (`GraphicsAPI.swap_chain_count`), each with a render target the
-  size of the pane in pixels — an IOSurface. A default-size window on a Retina
-  display: ~70 MB of IOSurface per window, ~80 MB of GPU memory, ~100 MB of
-  physical footprint in all. Font atlases and cell buffers are small next to it.
+  three frames (`GraphicsAPI.swap_chain_count`). While the pane is drawing,
+  each frame holds a render target the size of the pane in pixels — an
+  IOSurface — and its own copy of both font atlases (1–4 MB each). A
+  default-size window on a Retina display that is drawing: ~70 MB of
+  IOSurface, ~100 MB of physical footprint in all. A pane that has stopped
+  drawing gives all of that back but the one frame on screen (below).
+- **The GPU driver keeps a working pool per process**: about 225 MB (28
+  objects of 8 MB, "Owned physical footprint (unmapped) (graphics)" in
+  `footprint`) from the first Metal render pass in the process, whatever the
+  size of what is drawn — a bare Metal program drawing one 64x64 frame gets
+  the same. It turns reclaimable within ~2 s of the last render pass in the
+  process and is gone after ~10 s, and comes back with the next one. Nothing
+  in the app sizes it; it is dirty for as long as any pane (or SwiftUI effect)
+  keeps drawing. Do not chase it as a leak.
 - Splitting a window does not multiply this: panes share the window's pixels,
   so a pane's targets shrink as it does.
 - Terminal state (grid, scrollback pages) is heap; scrollback is capped per
   surface (`scrollback-limit`, 10 MB by default).
 - Viewer panes run WebKit out of process: ~20–35 MB per WebContent process,
   plus a shared GPU and Networking process.
-- The agent keeps a 2 MB output ring per session (`--ring-bytes`).
+- The agent keeps, per session, a 2 MB output ring (`--ring-bytes`) and a
+  terminal emulator with up to 4 MiB of scrollback (`grid_snapshot.zig`
+  `history_scrollback_bytes`) for repainting a re-attached pane; and per
+  connection, at most 4 MiB of queued output (`data_queue_high_water`).
 
 ## Teardown invariants
 
@@ -26,6 +39,25 @@ the audit worktree; methodology there).
   `Ghostty.Surface` (which frees the core surface: renderer + IO threads, GPU
   targets) and, for agent-backed panes, the session CLOSE that only happens on
   free. Anything that outlives the close holds all of that.
+- **A closed window does not wait to be freed.** Something can hold a closed
+  window's controller — the undo registration does for the undo window, and
+  the app's first window has been seen held for the life of the process by
+  an owner `leaks` cannot name. `NSApp.windows` and `orderedWindows` keep
+  listing such a window, and its tree keeps naming its panes. So
+  `windowWillClose` sets `windowHasClosed` and, `heldClosedWindowGrace`
+  (2 s) after the undo expires, looks again (not at quit or sign-out): if
+  the controller is still alive it releases the window's terminals
+  (`releaseTerminalsOfHeldClosedWindow`), so their shells or agent sessions
+  end. A window freed on time never reaches that — releasing a surface under
+  a tree that is about to be freed anyway was seen to delay the free. `TerminalController.all`, the AppleScript/`+list` controller lists
+  and `ClosedPaneRelease.isInAnyWindow` all leave closed windows out. Before
+  this a held closed window kept every shell in it running and stayed in
+  `ghoztty +list`. Covered by the session-persistence E2E's setup, which
+  closes the app's first window and waits for the list to drop it.
+- **`closeWindowImmediately` closes inside its own autorelease pool**, so a
+  window it closes is not left waiting on a pool that is drained later.
+  Cheap and correct, but not shown to be what frees a lingering window (see
+  "Known, not fixed").
 - **A closure stored on window-owned state must not capture that state
   strongly**, nor the tree for longer than the state lives. `PaneStackState`
   stores the grid's layout closure (`noteGrid` → `layoutGrid`); capturing the
@@ -52,6 +84,27 @@ the audit worktree; methodology there).
 
 ### Known, not fixed
 
+- **The first window a process closes can outlive its close.** Seen two
+  ways. In the app: its first window, closed while the app is in the
+  background, was still alive 15 s later (`heap` counts two
+  `TerminalController`s, one window on show). In the test host: when the
+  first window closed in the process is closed through
+  `closeWindowImmediately`, it is
+  either freed in under half a second or still alive 15 s later — and in the
+  runs where it lingers, the next window closed (`closingAWindowFreesItsPanes`)
+  is still alive 12 s after its close too. Which of the two a run gets
+  alternated run by run, so something one run leaves behind decides the
+  next. The holder is not known (`leaks` shows only AppKit's per-view block;
+  it is not the undo registration, which was ruled out). The costs are dealt
+  with at the close (above): the window is not listed or found by name, and
+  its terminals are released after the undo window. What stays is the
+  controller and its views. `closingAWindowFreesItsPanes` — the first test
+  of its suite, so the first window its process closes — fails for the same
+  reason in roughly one run in four on a machine where the debug agent has
+  recently been reset (2 of 8 with the `windowWillClose` changes above, 3 of
+  10 without them: they are not the cause). Suspected, not shown: the first
+  pane's agent start-up holding its window. A Swift test that closes a
+  window first in the process raises that to about half.
 - **Closing a split leaves up to ~2 of that window's closed pane views
   alive until the window's tree next changes shape** (or the window closes).
   Present at least since v1.30.0. The chain runs pane ← its leaf node ← an
@@ -62,15 +115,57 @@ the audit worktree; methodology there).
   process, threads or render targets. Viewer panes are NOT covered by that
   release: a held closed viewer keeps its WebContent process.
 
-## Hidden windows drop their render targets
+## Panes that are not drawing give back their frames
 
-An occluded surface (window covered, minimized, on another Space, app hidden)
-draws nothing and builds no frames (`renderer.Thread`; "covered" is
-`WindowCoverage`'s answer, not just AppKit's — see
-[background-windows.md](background-windows.md)), so on occlusion the
-renderer shrinks every swap-chain target to 1×1
-(`generic.Renderer.releaseHiddenTargets`). The picture survives: the layer
-retains the IOSurface it displays (`Metal.presented_target_outlives_frame`),
-and un-occluding presents nothing new until something changes, when each frame
-re-creates its target as after a resize. Metal only — OpenGL re-presents its
-last target. Test: `PaneTeardownTests.anOccludedTerminalComesBackShowingItsLastFrame`.
+A surface's swap-chain frames give back their render targets (shrunk to 1x1)
+and their font atlas copies (`generic.Renderer.releaseFrameResources`) in two
+cases. The next real draw finds each frame's target the wrong size and
+re-creates it, as after a resize, and uploads the atlases again (~1 ms).
+
+- **Idle**: on screen, but nothing drawn for `idle_release_ns` (3 s). The
+  renderer wakes its thread on the first frame drawn after a release
+  (`idle_arm`, from whichever thread drew it), the thread runs a one-shot
+  timer, and `releaseIdleFrames` releases or asks to be called again; a
+  surface sitting still has no timer running. The picture stays: the layer
+  retains the IOSurface it shows (`Metal.presented_target_outlives_frame`),
+  and the frames let go of their targets **without purging them**
+  (`Target.deinitKeepingContents`). `Target.deinit` marks its IOSurface
+  purgeable-empty, which blanks a layer still showing it — never use it for a
+  target that may be on screen.
+- **Hidden**: occluded (window covered, minimized, on another Space, app
+  hidden — "covered" is `WindowCoverage`'s answer, not just AppKit's, see
+  [background-windows.md](background-windows.md)), where the render thread
+  neither builds nor draws frames. The frame on
+  screen is purged too — by the frames if they still hold it, else through the
+  layer (`IOSurfaceLayer.purgeContents`, on the main thread, skipped if a
+  newer frame has been presented) — and the surface draws again when shown.
+
+**Hidden is more than the window.** `BaseTerminalController.updateSeen`
+tells each terminal it is visible only if its window is on screen
+(`WindowInUse.isOnScreen`), the pane is not stashed, and no other pane is
+zoomed over it (`SurfaceView.setRendererVisible`, which passes on changes
+only). It runs on window visibility changes and on every tree change, so a
+pane stashed, brought back, moved between windows, or created while the
+window is covered starts out right. A stashed pane stays mounted at full size at zero opacity;
+before this it drew every frame of its output. Viewer panes have no such
+hook: a stashed viewer keeps its watchers and its WebContent process busy.
+
+A blinking cursor (600 ms) or anything that draws more often than every 3 s
+keeps its frames. Metal only — OpenGL re-presents its last target.
+
+`ghostty_surface_frame_memory` reports what a surface's frames hold (target
+bytes, atlas bytes, released). Measured on 21 panes in 10 windows, all idle:
+IOSurface 337 → 143 MB, IOAccelerator 87 → 20 MB.
+
+Tests: `PaneTeardownTests.anIdleTerminalGivesBackItsFramesAndKeepsItsPicture`,
+`anIdleTerminalHiddenAndShownAgainIsDrawn`,
+`aStashedOrZoomedOverTerminalDoesNotDraw`,
+`anOccludedTerminalComesBackShowingItsLastFrame`,
+`occludedTerminalsGiveBackTheirRenderTargets`.
+
+## Cell buffers
+
+A frame's Metal cell buffers grow to double what a frame needs
+(`metal/buffer.zig` `grownByteLen`). Until v1.54 they grew to double that
+times the element size (64x for text cells); Metal commits buffer pages on
+first write, so that cost address space, not footprint.
