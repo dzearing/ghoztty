@@ -42,6 +42,8 @@ struct BannerCollapseWindowTests {
         controller.paneSidebarState.isHidden = true
         _ = await poll(timeout: 10) { controller.window?.isVisible == true }
         let window = try #require(controller.window)
+        // Drawing, though the test host's windows sit behind other apps'.
+        WindowInUse.setInUseForTesting(window, true)
         window.setContentSize(NSSize(width: 900, height: 600))
         await settle(1.5)
         let view = try #require(pane.surfaceView)
@@ -130,6 +132,8 @@ struct BannerCollapseWindowTests {
         controller.paneSidebarState.isHidden = true
         _ = await poll(timeout: 10) { controller.window?.isVisible == true }
         let window = try #require(controller.window)
+        // Drawing, though the test host's windows sit behind other apps'.
+        WindowInUse.setInUseForTesting(window, true)
         window.setContentSize(NSSize(width: 900, height: 601))
         await settle(1.5)
         let view = try #require(pane.surfaceView)
@@ -208,6 +212,8 @@ struct BannerCollapseWindowTests {
         controller.paneSidebarState.isHidden = true
         _ = await poll(timeout: 10) { controller.window?.isVisible == true }
         let window = try #require(controller.window)
+        // Drawing, though the test host's windows sit behind other apps'.
+        WindowInUse.setInUseForTesting(window, true)
         window.setContentSize(NSSize(width: 500, height: 600))
         await settle(3)
         let view = try #require(controller.surfaceTree.root?.leaves().first?.surfaceView)
@@ -301,6 +307,8 @@ struct BannerCollapseWindowTests {
         controller.paneSidebarState.isHidden = true
         _ = await poll(timeout: 10) { controller.window?.isVisible == true }
         let window = try #require(controller.window)
+        // Drawing, though the test host's windows sit behind other apps'.
+        WindowInUse.setInUseForTesting(window, true)
         window.setContentSize(NSSize(width: 500, height: 600))
         await settle(3)
         let view = try #require(controller.surfaceTree.root?.leaves().first?.surfaceView)
@@ -390,6 +398,8 @@ struct BannerCollapseWindowTests {
         controller.paneSidebarState.isHidden = true
         _ = await poll(timeout: 10) { controller.window?.isVisible == true }
         let window = try #require(controller.window)
+        // Drawing, though the test host's windows sit behind other apps'.
+        WindowInUse.setInUseForTesting(window, true)
         window.setContentSize(NSSize(width: 900, height: 400))
         await settle(3)
         let view = try #require(controller.surfaceTree.root?.leaves().first?.surfaceView)

@@ -58,6 +58,8 @@ struct PaneStackWindowTests {
         controller.paneSidebarState.isHidden = true
         for _ in 0..<100 where controller.window?.isVisible != true { await settle(0.1) }
         let window = try #require(controller.window)
+        // Drawing, though the test host's windows sit behind other apps'.
+        WindowInUse.setInUseForTesting(window, true)
         window.setContentSize(NSSize(width: width, height: 600))
         window.makeFirstResponder(panes[count - 1].surfaceView)
         await settle(1.2)
@@ -729,6 +731,39 @@ struct PaneStackWindowTests {
         #expect(card.width > 300, "the side pane is on show: \(card)")
         #expect(added.contentView.window === window)
         #expect(added.contentView.frame.width > 300, "its content is laid out: \(added.contentView.frame)")
+    }
+
+    /// The user's repro: a pane they minimized at the edge of a collapsed
+    /// row (the manager, minimized on the right) opens a side pane of its
+    /// own, an agent's `+split --view`, beyond it. The side pane comes on show
+    /// beside the run instead, and the strips the user minimized stay
+    /// minimized. It used to land beyond the strip, and the run, which is
+    /// contiguous, grew to take it in and brought the strip back out.
+    @Test(arguments: [(5, false), (5, true), (0, false), (0, true)])
+    func aSidePaneFromAMinimizedPaneLeavesTheStripsMinimized(strip: Int, terminal: Bool) async throws {
+        let (controller, window, panes) = try await collapsedRow(.right)
+        defer { controller.close() }
+        let minimized = [panes[0], panes[1], panes[4], panes[5]].map(\.id)
+        #expect(strips(window) == minimized)
+
+        let anchor = panes[strip]
+        let direction: SplitTree<PaneView>.NewDirection = strip == 0 ? .left : .right
+        let added: PaneView
+        if terminal {
+            // An agent's `+split` from a terminal: `newSplit` without focus.
+            let at = try #require(anchor.surfaceView)
+            let surface = try #require(controller.newSplit(at: at, direction: direction, focus: false))
+            added = try #require(controller.surfaceTree.pane(for: surface))
+        } else {
+            added = try #require(controller.newViewerSplit(
+                atPane: anchor, direction: direction, viewer: ViewerView(location: "about:blank")))
+        }
+        await settle(1.2)
+        try await capture(window, "side-pane-from-strip-\(strip)-\(terminal ? "terminal" : "viewer")")
+
+        #expect(!strips(window).contains(added.id), "the side pane is on show")
+        #expect(strips(window) == minimized, "the strips stay minimized: \(strips(window))")
+        #expect(panes[3].isFocusedPane, "the caret stays where it was")
     }
 
     // MARK: - A drag that goes on squeezing

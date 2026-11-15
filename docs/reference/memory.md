@@ -52,7 +52,8 @@ the audit worktree; methodology there).
   a tree that is about to be freed anyway was seen to delay the free. `TerminalController.all`, the AppleScript/`+list` controller lists
   and `ClosedPaneRelease.isInAnyWindow` all leave closed windows out. Before
   this a held closed window kept every shell in it running and stayed in
-  `ghoztty +list`. Covered by the session-persistence E2E's setup.
+  `ghoztty +list`. Covered by the session-persistence E2E's setup, which
+  closes the app's first window and waits for the list to drop it.
 - **`closeWindowImmediately` closes inside its own autorelease pool**, so a
   window it closes is not left waiting on a pool that is drained later.
   Cheap and correct, but not shown to be what frees a lingering window (see
@@ -88,7 +89,7 @@ the audit worktree; methodology there).
   background, was still alive 15 s later (`heap` counts two
   `TerminalController`s, one window on show). In the test host: when the
   first window closed in the process is closed through
-  `closeSurface(withConfirmation: false)` / `closeWindowImmediately`, it is
+  `closeWindowImmediately`, it is
   either freed in under half a second or still alive 15 s later — and in the
   runs where it lingers, the next window closed (`closingAWindowFreesItsPanes`)
   is still alive 12 s after its close too. Which of the two a run gets
@@ -103,9 +104,7 @@ the audit worktree; methodology there).
   recently been reset (2 of 8 with the `windowWillClose` changes above, 3 of
   10 without them: they are not the cause). Suspected, not shown: the first
   pane's agent start-up holding its window. A Swift test that closes a
-  window first in the process raises that to about half, which is why the
-  close-without-confirmation behaviour is covered by the E2E and not by a
-  unit test.
+  window first in the process raises that to about half.
 - **Closing a split leaves up to ~2 of that window's closed pane views
   alive until the window's tree next changes shape** (or the window closes).
   Present at least since v1.30.0. The chain runs pane ← its leaf node ← an
@@ -134,18 +133,20 @@ re-creates it, as after a resize, and uploads the atlases again (~1 ms).
   purgeable-empty, which blanks a layer still showing it — never use it for a
   target that may be on screen.
 - **Hidden**: occluded (window covered, minimized, on another Space, app
-  hidden), where `renderer.Thread.drawFrame` returns early. The frame on
+  hidden — "covered" is `WindowCoverage`'s answer, not just AppKit's, see
+  [background-windows.md](background-windows.md)), where the render thread
+  neither builds nor draws frames. The frame on
   screen is purged too — by the frames if they still hold it, else through the
   layer (`IOSurfaceLayer.purgeContents`, on the main thread, skipped if a
   newer frame has been presented) — and the surface draws again when shown.
 
-**Hidden is more than the window.** `BaseTerminalController
-.syncOcclusionToSurfaceTree` tells each terminal it is visible only if its
-window is on show, the pane is not stashed, and no other pane is zoomed over
-it (`SurfaceView.setRendererVisible`, which passes on changes only). It runs
-on window occlusion changes and on every tree change, so a pane stashed,
-brought back, moved between windows, or created while the window is covered
-starts out right. A stashed pane stays mounted at full size at zero opacity;
+**Hidden is more than the window.** `BaseTerminalController.updateSeen`
+tells each terminal it is visible only if its window is on screen
+(`WindowInUse.isOnScreen`), the pane is not stashed, and no other pane is
+zoomed over it (`SurfaceView.setRendererVisible`, which passes on changes
+only). It runs on window visibility changes and on every tree change, so a
+pane stashed, brought back, moved between windows, or created while the
+window is covered starts out right. A stashed pane stays mounted at full size at zero opacity;
 before this it drew every frame of its output. Viewer panes have no such
 hook: a stashed viewer keeps its watchers and its WebContent process busy.
 

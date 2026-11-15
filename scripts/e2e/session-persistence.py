@@ -640,7 +640,11 @@ def build_scenario():
         if len(all_windows()) == 1:
             break
         for nm in initial_leaves:
-            cli_ok(["+close", f"--target={nm}"])
+            # --force, here and wherever this harness closes its own
+            # scaffolding: a plain +close of a window's last pane stops at
+            # the app's "Close Window?" confirmation, which nothing here can
+            # answer (and +close then fails, saying so).
+            cli_ok(["+close", "--force", f"--target={nm}"])
         time.sleep(0.6)
     wait_window_count(1)  # only winA remains
 
@@ -1076,7 +1080,7 @@ def reboot_teardown(args):
         return
     log("[teardown] closing test windows + unloading LaunchAgent + clearing state")
     for nm in ("A1", "A2", "B1"):
-        cli_ok(["+close", f"--target={nm}"])
+        cli_ok(["+close", "--force", f"--target={nm}"])
     full_reset()  # bootouts the LaunchAgent + clears manifest/agent state
 
 # ---------------------------------------------------------------------------
@@ -1428,7 +1432,7 @@ def close_leaves(names):
     deadline = time.time() + 12
     while time.time() < deadline and any(n in all_leaf_names() for n in names):
         for nm in names:
-            cli_ok(["+close", f"--target={nm}"])
+            cli_ok(["+close", "--force", f"--target={nm}"])
         time.sleep(0.5)
 
 def make_shell_window(target, known):
@@ -1658,7 +1662,7 @@ def run_winsize_check(args):
     deadline = time.time() + 15
     while time.time() < deadline and len(all_windows()) > 1:
         for nm in initial_leaves:
-            cli_ok(["+close", f"--target={nm}"])
+            cli_ok(["+close", "--force", f"--target={nm}"])
         time.sleep(0.6)
     wait_window_count(1)
     retry_cli(["+split", "--target=wsW", "--direction=right", "--name=wsR"], "split wsR")
@@ -2127,7 +2131,7 @@ def run_restore_resize_check(args):
         initial = all_leaf_names()
         retry_cli(["+new-window", "--target=rr", f"--working-directory={ROOT}"], "new-window rr")
         for nm in initial:
-            cli_ok(["+close", f"--target={nm}"])
+            cli_ok(["+close", "--force", f"--target={nm}"])
         time.sleep(1.5)
         retry_cli(["+split", "--target=rr", "--direction=right", "--name=rrs"], "split")
         time.sleep(1.5)
@@ -2232,7 +2236,7 @@ def run_reboot_tui_check(args):
     deadline = time.time() + 15
     while time.time() < deadline and any(nm in all_leaf_names() for nm in initial):
         for nm in initial:
-            cli_ok(["+close", f"--target={nm}"])
+            cli_ok(["+close", "--force", f"--target={nm}"])
         time.sleep(0.5)
 
     names = {t: window_leaf(t) for t in ("tuiA", "tuiB", "bare")}
@@ -2661,7 +2665,7 @@ def main():
     else:
         log("[teardown] closing test windows + clearing state")
         for nm in ("A1", "A2", "B1"):
-            cli_ok(["+close", f"--target={nm}"])
+            cli_ok(["+close", "--force", f"--target={nm}"])
         full_reset()
         if args.upgrade:
             # If a crash ever left the installed bundle mid-swap, restore it from

@@ -41,6 +41,13 @@ struct PaneSidebarTileSheenLayer: NSViewRepresentable {
         private let band = CAGradientLayer()
         private let drift = CAGradientLayer()
 
+        /// The sheen moves only in the window in use (`WindowInUse`). Every
+        /// window's sidebar can list every busy pane, so a sheen per busy pane
+        /// per window kept WindowServer animating them all. Elsewhere it holds
+        /// still: the drift and rim stay on the pill, the glint rests off it.
+        /// Back in use, both pick up in phase with the wall clock (`inPhase`).
+        private lazy var inUse = WindowInUseObserver { [weak self] in self?.animate() }
+
         /// A sweep every `period`, taking `sweep` of it: an occasional glint,
         /// not a strobe (the shimmer's 1.4s was too busy on a whole tile).
         static let period: CFTimeInterval = 2.0
@@ -74,6 +81,7 @@ struct PaneSidebarTileSheenLayer: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            inUse.window = window
             // CA drops a layer's animations when it leaves the window.
             if window != nil { needsLayout = true; animate() }
         }
@@ -125,9 +133,19 @@ struct PaneSidebarTileSheenLayer: NSViewRepresentable {
             return (dark ? NSColor.white : NSColor.black).withAlphaComponent(dark ? onDark : onLight).cgColor
         }
 
+        /// Whether the sheen is moving now, for tests.
+        var isAnimating: Bool {
+            band.animation(forKey: "sweep") != nil || drift.animation(forKey: "drift") != nil
+        }
+
         private func animate() {
+            guard WindowInUse.animates(window) else {
+                band.removeAnimation(forKey: "sweep")
+                drift.removeAnimation(forKey: "drift")
+                return
+            }
             let width = bounds.width
-            guard width > 0, window != nil else { return }
+            guard width > 0 else { return }
             animateBand(width: width)
             animateDrift(PaneSidebarSheen.Drift(width: width, height: bounds.height))
         }

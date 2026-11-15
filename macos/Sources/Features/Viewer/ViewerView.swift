@@ -2488,6 +2488,10 @@ final class ViewerView: NSView, Codable, ObservableObject {
     private var diffRefreshTimer: Timer?
     /// How often a `git-status:` pane re-checks the working tree.
     private static let diffRefreshInterval: TimeInterval = 2.0
+    /// A poll skipped because the window was hidden: nobody can see the
+    /// listing, so it is brought up to date once, when the window shows.
+    private var diffRefreshMissed = false
+    private lazy var inUse = WindowInUseObserver { [weak self] in self?.catchUpDiffIfShown() }
 
     /// True while the panel is showing filter results rather than the tree.
     var isDiffFiltered: Bool { !diffFilter.isEmpty }
@@ -2792,28 +2796,35 @@ final class ViewerView: NSView, Codable, ObservableObject {
             // than waking every two seconds to discover it has nothing to do.
             // The run loop owns the timer, so a pane that only ever returns
             // early here would keep it alive for the life of the process.
-            guard let self, self.isDiffMode, self.window != nil else {
+            guard let self, self.isDiffMode, let window = self.window else {
                 timer.invalidate()
                 self?.diffRefreshTimer = nil
                 return
             }
-            // Nobody is looking (window covered or minimized, pane stashed),
-            // or the last listing has not come back yet: skip this turn. The
-            // poll spawns git half a dozen times; the next turn after the
-            // pane is back on show catches up.
-            guard self.isOnShow, !self.diffLoader.isListing else { return }
+            guard WindowInUse.isOnScreen(window) else {
+                self.diffRefreshMissed = true
+                return
+            }
+            self.diffRefreshMissed = false
+            // The last listing has not come back yet: skip this turn. A
+            // listing spawns git half a dozen times, and asking again while
+            // one runs only queues work behind it.
+            guard !self.diffLoader.isListing else { return }
             self.refreshDiff(preservingSelection: true)
         }
     }
 
-    /// Whether anyone can see this pane: its window is on show and the pane
-    /// is not stashed.
-    private var isOnShow: Bool {
-        guard let window, window.occlusionState.contains(.visible) else { return false }
-        guard let tree = (window.windowController as? BaseTerminalController)?.surfaceTree,
-              let pane = tree.first(where: { $0.viewerView === self })
-        else { return true }
-        return !tree.stashed.contains(pane.id)
+    private func catchUpDiffIfShown() {
+        guard diffRefreshMissed, diffRefreshTimer != nil, isDiffMode,
+              let window, WindowInUse.isOnScreen(window)
+        else { return }
+        diffRefreshMissed = false
+        refreshDiff(preservingSelection: true)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        inUse.window = window
     }
 
     private func stopWatchingDiff() {

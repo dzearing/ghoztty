@@ -1,0 +1,10 @@
+{
+  "version": "1.54.4",
+  "sections": [
+    { "title": "Command line",
+      "items": [
+        { "title": "Scripts can close a window for good", "text": "`ghoztty +close --force` closes a pane or window without asking, skips the undo window, and ends its process right away. Scripts that clean up finished task windows no longer leave them behind." },
+        { "title": "No more silent no-op closes", "text": "When a window is waiting on its \"Close Terminal?\" question, `+close` now says so and fails instead of reporting success while the window stays open." }
+      ] }
+  ]
+}

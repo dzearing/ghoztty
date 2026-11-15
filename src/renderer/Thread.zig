@@ -119,6 +119,11 @@ flags: packed struct {
     /// if we should be rendering or not.
     visible: bool = true,
 
+    /// True when the terminal changed while the view was hidden, so its
+    /// frame data is out of date: the next time it shows, rebuild it once
+    /// before drawing (see `renderCallback`).
+    frame_stale: bool = false,
+
     /// This is true when the view is focused. This defaults to true
     /// and it is up to the apprt to set the correct value.
     focused: bool = true,
@@ -391,10 +396,16 @@ fn drainMailbox(self: *Thread) !void {
                 // believes it is hidden.
                 self.renderer.setVisible(v);
 
-                // If we became visible then we immediately trigger a draw.
-                // We don't need to update frame data because that should
-                // still be happening.
-                if (v) self.drawFrame(false);
+                // If we became visible then we immediately trigger a draw,
+                // first catching the frame data up with whatever changed
+                // while we were hidden (`renderCallback` skips that work).
+                if (v) {
+                    if (self.flags.frame_stale) {
+                        _ = renderCallback(self, undefined, undefined, {});
+                    } else {
+                        self.drawFrame(false);
+                    }
+                }
 
                 // Note that we're explicitly today not stopping any
                 // cursor timers, draw timers, etc. These things have very
@@ -635,6 +646,18 @@ fn renderCallback(
         log.warn("render callback fired without data set", .{});
         return .disarm;
     };
+
+    // Hidden (window covered, minimized, on another Space, app hidden):
+    // nothing draws, so building frame data nobody sees — cells, the link
+    // scan of the whole screen — is wasted, and a busy program in a hidden
+    // pane would pay it for every burst of output. Remember the frame is
+    // out of date and catch up once, when the view shows (`.visible`).
+    // The terminal itself (the IO thread) is unaffected.
+    if (!t.flags.visible) {
+        t.flags.frame_stale = true;
+        return .disarm;
+    }
+    t.flags.frame_stale = false;
 
     // Update our frame data
     t.renderer.updateFrame(

@@ -925,19 +925,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             return
         }
 
-        // Closing the window's only pane closes its tab or window. A caller
-        // that asked for no confirmation gets none here either: `closeTab`
-        // and `closeWindow` are the menu actions and confirm on their own
-        // terms, so a `ghoztty +close` of a window's last pane used to put
-        // up "Close Window?" and wait for someone to answer it.
-        let isTab = window?.tabGroup?.windows.count ?? 0 > 1
-        guard withConfirmation else {
-            if isTab { closeTabImmediately() } else { closeWindowImmediately() }
-            return
-        }
-
         // More than 1 window means we have tabs and we're closing a tab
-        if isTab {
+        if window?.tabGroup?.windows.count ?? 0 > 1 {
             closeTab(nil)
             return
         }
@@ -1099,6 +1088,34 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
                 window.close()
             }
         }
+    }
+
+    /// `+close --force` on a window: every window of its tab group closes with
+    /// no confirmation (one already up is dismissed) and no undo, its agent
+    /// sessions END, and every pane's core is freed at once — so its process
+    /// exits now, not when the undo window expires.
+    func forceCloseWindow() {
+        guard let window else { return }
+        let windows = window.tabGroup?.windows ?? [window]
+        let controllers = windows.compactMap { $0.windowController as? TerminalController }
+        for controller in controllers.isEmpty ? [self] : controllers {
+            controller.forceCloseOwnWindow()
+        }
+    }
+
+    private func forceCloseOwnWindow() {
+        guard let window else { return }
+        dismissCloseConfirmation()
+        cancelPendingInitialPresentation()
+        let panes = Array(surfaceTree)
+        for pane in panes { pane.surfaceView?.setSessionCloseIntent(true) }
+        if let undoManager {
+            undoManager.disableUndoRegistration { window.close() }
+        } else {
+            window.close()
+        }
+        noteWindowClosed()
+        for pane in panes { pane.surfaceView?.releaseClosedSurface() }
     }
 
     /// Registers undo for closing window(s), handling both single windows and tab groups.

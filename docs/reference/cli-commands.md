@@ -146,7 +146,7 @@ lookups are logged the same way. Read them with `/usr/bin/log show --last 1h
 ## `ghoztty +close`
 
 ```
-ghoztty +close --target=<name>
+ghoztty +close --target=<name> [--force]
 ```
 
 Close a named pane or window. Closing a nonexistent target succeeds silently.
@@ -158,14 +158,19 @@ GUI; only an app quit keeps sessions alive. For a pane on a REMOTE machine
 the IPC path would wedge every later `ghoztty +…` command. `+close` never
 prompts for viewer panes.
 
-`+close` never prompts at all, including for a window's **last pane**, where
-the close becomes a window (or tab) close: `TerminalController.closeSurface`
-with `withConfirmation: false` goes straight to `closeWindowImmediately` /
-`closeTabImmediately`. It used to fall through to the menu actions
-`closeWindow`/`closeTab`, which confirm on their own terms, so closing a
-window's only pane from the CLI put up "Close Window?" and left the window
-standing. Covered by `scripts/e2e/session-persistence.py`, whose setup closes
-the app's initial window this way and fails at that step without it.
+The close runs on main before the reply, so the reply says what happened. If
+the window is left with a close confirmation up (`attachedSheet`) the close
+did nothing — the sheet blocks it and nothing on the IPC path can answer it —
+and `+close` **fails** with "waiting on a close confirmation" rather than
+reporting success. Such windows used to pile up (`window-…` ids in
+`+list --json`, since a window waiting this way can be off screen).
+
+`--force` (`forceCloseWindow` / `forceCloseSurface`): dismisses any
+confirmation sheet, closes with undo registration disabled, marks every pane's
+agent session to END, and frees each pane's core at once
+(`releaseClosedSurface`) instead of after the undo window — the process exits
+now. A window target closes its whole tab group, like the plain close. An
+older app ignores the flag (plain close). Tests: `CloseWindowTests`.
 
 A closed window is gone from `+list` and from name lookup the moment it
 closes (`BaseTerminalController.windowHasClosed`), whether or not the window

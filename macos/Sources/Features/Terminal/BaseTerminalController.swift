@@ -90,6 +90,17 @@ class BaseTerminalController: NSWindowController,
         return tree.first { $0.id == id } ?? pane
     }
 
+    /// Where a split that leaves the caret where it is goes in (an agent's
+    /// `+split`, a side pane): beside `anchor`, unless the user minimized
+    /// `anchor` in a collapsed row. Then it goes beside the pane on show
+    /// nearest it instead. The new pane has to come on show
+    /// (`PaneStackState.featured`) and a row's run is contiguous, so beside
+    /// a strip it pulled that strip, and every strip between it and the run,
+    /// back out with it. Only the user brings a minimized pane back out.
+    func backgroundSplitAnchor(_ anchor: PaneView) -> PaneView {
+        paneOnShow(anchor)
+    }
+
     /// Where the caret goes when `node` leaves the tree, which becomes
     /// `newTree`: the neighbour a close picks, never a strip.
     func focusTargetAfterRemoving(_ node: SplitTree<PaneView>.Node, leaving newTree: SplitTree<PaneView>) -> PaneView? {
@@ -489,6 +500,27 @@ class BaseTerminalController: NSWindowController,
     /// The last computed title from the focused surface (without the override).
     private var lastComputedTitle: String = "👻"
 
+    /// A title held back while no part of the window (or its tab group) can
+    /// be seen: the titlebar and tab label it is meant for (`applyTitleToWindow`).
+    private var pendingWindowTitle: (title: String, tab: String)?
+    private var pendingWindowTitleTimer: Timer?
+
+    /// How often a window no one can see takes its latest title. Setting a
+    /// window title is a WindowServer transaction plus a titlebar layout:
+    /// measured, a dozen covered windows each retitled ten times a second (a
+    /// spinner in the title) cost the app ~35% of a core and WindowServer
+    /// ~8%. Held back, the title is still current to the eye — it lands the
+    /// moment the window shows — and readers that bypass the screen (`+list`,
+    /// AppleScript) get it from `currentWindowTitle`; this bounds how stale
+    /// the rest (Accessibility, the Window menu) can be.
+    static let hiddenWindowTitleInterval: TimeInterval = 5
+
+    /// The window's title as of now, including one held back while the
+    /// window is hidden. What `+list` and AppleScript report.
+    var currentWindowTitle: String {
+        pendingWindowTitle?.title ?? window?.title ?? ""
+    }
+
     /// The time that undo/redo operations that contain running ptys are valid for.
     var undoExpiration: Duration {
         ghostty.config.undoTimeout
@@ -581,6 +613,15 @@ class BaseTerminalController: NSWindowController,
             self,
             selector: #selector(didChangeScreenParametersNotification),
             name: NSApplication.didChangeScreenParametersNotification,
+            object: nil)
+        // Covered or uncovered by the windows in front (`WindowCoverage`),
+        // which AppKit's occlusion state does not report. Any window's: a
+        // tab group's selected window decides whether its other tabs' labels
+        // are seen.
+        center.addObserver(
+            self,
+            selector: #selector(windowInUseDidChange(_:)),
+            name: WindowInUse.didChangeNotification,
             object: nil)
         center.addObserver(
             self,
@@ -869,7 +910,7 @@ class BaseTerminalController: NSWindowController,
         do {
             newTree = try surfaceTree.inserting(
                 view: pane,
-                at: oldPane,
+                at: backgroundSplitAnchor(oldPane),
                 direction: direction,
                 ratio: ratio)
         } catch {
@@ -918,7 +959,7 @@ class BaseTerminalController: NSWindowController,
         do {
             newTree = try surfaceTree.inserting(
                 view: PaneView(surface: newView),
-                at: oldPane,
+                at: focus ? oldPane : backgroundSplitAnchor(oldPane),
                 direction: direction,
                 ratio: ratio)
         } catch {
@@ -954,7 +995,7 @@ class BaseTerminalController: NSWindowController,
     ) -> Ghostty.SurfaceView? {
         // The parent may have been removed from the tree while we were resolving
         // the remote cwd off the main thread.
-        guard surfaceTree.root?.node(view: oldView) != nil else { return nil }
+        guard let oldPane = surfaceTree.pane(for: oldView) else { return nil }
 
         // Create a new surface view
         guard let ghostty_app = ghostty.app else { return nil }
@@ -964,8 +1005,8 @@ class BaseTerminalController: NSWindowController,
         let newTree: SplitTree<PaneView>
         do {
             newTree = try surfaceTree.inserting(
-                view: newView,
-                at: oldView,
+                view: PaneView(surface: newView),
+                at: focus ? oldPane : backgroundSplitAnchor(oldPane),
                 direction: direction,
                 ratio: ratio)
         } catch {
@@ -1187,13 +1228,12 @@ class BaseTerminalController: NSWindowController,
         if to.isEmpty {
             focusedSurface = nil
         }
+        // A terminal new to the window starts out drawing; if no one can see
+        // the window, tell it so.
+        updateSeen()
         // A viewer pane leaving the tree (or stashed) changes `focusedPane`
         // without touching the first responder or `focusedSurface`.
         publishFocusedPane()
-
-        // A pane stashed, brought back or new to this window draws only if
-        // it can be seen.
-        syncOcclusionToSurfaceTree()
 
         // A collapsed row a pane left (closed, stashed, moved away) stays
         // collapsed: the panes on show take its space.
@@ -1552,6 +1592,32 @@ class BaseTerminalController: NSWindowController,
                 self.removeSurfaceNode(node)
             }
         }
+    }
+
+    /// `+close --force` on a pane: no confirmation and no undo. A confirmation
+    /// already up on the window is dismissed (answered Cancel), the panes'
+    /// agent sessions are marked to END, and their cores — process, session,
+    /// threads — are freed at once rather than when the undo window expires.
+    /// Closing the window's last pane closes the window.
+    func forceCloseSurface(_ node: SplitTree<PaneView>.Node) {
+        guard surfaceTree.contains(node) else { return }
+        dismissCloseConfirmation()
+        let panes = node.leaves()
+        for pane in panes { pane.surfaceView?.setSessionCloseIntent(true) }
+        if let undoManager {
+            undoManager.disableUndoRegistration { removeSurfaceNode(node) }
+        } else {
+            removeSurfaceNode(node)
+        }
+        for pane in panes { pane.surfaceView?.releaseClosedSurface() }
+    }
+
+    /// Take down a close confirmation sheet left on the window (nothing on the
+    /// IPC path can answer one). Its completion sees a non-proceed response.
+    func dismissCloseConfirmation() {
+        guard let window, let sheet = window.attachedSheet else { return }
+        window.endSheet(sheet)
+        alert = nil
     }
 
     // MARK: Split Tree Management
@@ -2206,12 +2272,48 @@ class BaseTerminalController: NSWindowController,
         // TerminalWindow.machinePillAccessory / MachinePillView) rather than a
         // plain title suffix, so it is intentionally not appended here.
 
-        window.title = title
-
         // When a window title pins the titlebar, keep the tab bar labels
         // showing each tab's own title. An empty tab title restores the
         // default behavior of following `window.title`.
-        window.tab.title = windowOverride != nil ? tabTitle : ""
+        let tab = windowOverride != nil ? tabTitle : ""
+
+        // No one can see this window: hold the title back (see
+        // `hiddenWindowTitleInterval`). A window's first title always lands.
+        if !window.title.isEmpty, !Self.titleIsSeen(window) {
+            pendingWindowTitle = (title, tab)
+            if pendingWindowTitleTimer == nil {
+                pendingWindowTitleTimer = Timer.scheduledTimer(
+                    withTimeInterval: Self.hiddenWindowTitleInterval,
+                    repeats: false
+                ) { [weak self] _ in
+                    self?.pendingWindowTitleTimer = nil
+                    self?.applyPendingWindowTitle()
+                }
+            }
+            return
+        }
+
+        pendingWindowTitle = nil
+        pendingWindowTitleTimer?.invalidate()
+        pendingWindowTitleTimer = nil
+        window.title = title
+        window.tab.title = tab
+    }
+
+    /// Whether some part of the window's title can be seen: the window, or
+    /// another tab of its group showing this one's label in its tab bar.
+    private static func titleIsSeen(_ window: NSWindow) -> Bool {
+        (window.tabGroup?.windows ?? [window]).contains(where: WindowInUse.isOnScreen)
+    }
+
+    /// Land a title held back while the window was hidden.
+    func applyPendingWindowTitle() {
+        pendingWindowTitleTimer?.invalidate()
+        pendingWindowTitleTimer = nil
+        guard let pending = pendingWindowTitle, let window else { return }
+        pendingWindowTitle = nil
+        window.title = pending.title
+        window.tab.title = pending.tab
     }
 
     func pwdDidChange(to: URL?) {
@@ -2739,6 +2841,13 @@ class BaseTerminalController: NSWindowController,
     /// terminals are released on the close's clock (`windowWillClose`).
     private(set) var windowHasClosed = false
 
+    /// The window was closed by a path that knows it is gone whatever
+    /// `windowWillClose` saw — a forced close, which takes a confirmation
+    /// sheet down on its way and so closes while one is still attached.
+    func noteWindowClosed() {
+        windowHasClosed = true
+    }
+
     /// How long past the undo's expiry a closed window is given to be freed
     /// before its terminals are released from under it.
     static let heldClosedWindowGrace: TimeInterval = 2
@@ -2754,7 +2863,12 @@ class BaseTerminalController: NSWindowController,
 
     func windowWillClose(_ notification: Notification) {
         guard let window else { return }
-        windowHasClosed = true
+        // Not while a confirmation sheet is up: AppKit announces the close
+        // even then, but the sheet holds the window open, still waiting to
+        // be answered (`+close` reports it, `+close --force` takes it down).
+        // Calling that window closed hid it from the very commands that can
+        // deal with it.
+        windowHasClosed = window.attachedSheet == nil
 
         // A closed window is freed once its close can no longer be undone,
         // and its terminals with it. If something still holds the window by
@@ -2935,26 +3049,43 @@ class BaseTerminalController: NSWindowController,
     }
 
     func windowDidChangeOcclusionState(_ notification: Notification) {
-        syncOcclusionToSurfaceTree()
+        updateSeen()
     }
 
-    /// Tell each terminal whether anyone can see it: its window is on show,
-    /// the pane is not stashed, and no other pane is zoomed over it. A
-    /// terminal nobody can see stops drawing and gives back its render
-    /// targets (see docs/reference/memory.md) — a stashed pane stays mounted
-    /// at full size at zero opacity, so without this it draws every frame of
-    /// its output into targets no one looks at.
+    @objc private func windowInUseDidChange(_ notification: Notification) {
+        guard let changed = notification.object as? NSWindow, let window else { return }
+        if changed === window || (window.tabGroup?.windows.contains(changed) ?? false) {
+            updateSeen()
+        }
+    }
+
+    /// Tell the window's terminals whether they can be seen — a hidden one
+    /// neither builds nor draws frames (`renderer.Thread`) and gives back its
+    /// render targets (docs/reference/memory.md) — and land a title held
+    /// back while hidden: this window's, and its tab group's, whose labels
+    /// are in its tab bar.
     ///
-    /// Run on every tree change as well as on occlusion changes, so a pane
-    /// that is stashed or brought back, moved in from another window, or
-    /// created while the window is covered starts out right.
-    func syncOcclusionToSurfaceTree() {
-        let windowVisible = self.window?.occlusionState.contains(.visible) ?? false
+    /// Seen is the window being on screen AND the pane being on show in it:
+    /// a stashed pane stays mounted at full size at zero opacity, and a pane
+    /// behind a zoomed one is out of the view tree, so without the second
+    /// half each drew every frame of its output into targets no one looks
+    /// at. Runs on every tree change too (`surfaceTreeDidChange`), so a pane
+    /// stashed, brought back or moved in starts out right.
+    private func updateSeen() {
+        guard let window else { return }
+        let visible = WindowInUse.isOnScreen(window)
         let stashed = Set(surfaceTree.stashed)
         let zoomed = surfaceTree.zoomed.map { Set($0.leaves().map(\.id)) }
-        for pane in surfaceTree {
-            let shown = !stashed.contains(pane.id) && (zoomed?.contains(pane.id) ?? true)
-            pane.surfaceView?.setRendererVisible(windowVisible && shown)
+        for view in surfaceTree {
+            let shown = !stashed.contains(view.id) && (zoomed?.contains(view.id) ?? true)
+            // Passes on changes only: this runs on every tree change.
+            view.surfaceView?.setRendererVisible(visible && shown)
+        }
+
+        if Self.titleIsSeen(window) {
+            for member in window.tabGroup?.windows ?? [window] {
+                (member.windowController as? BaseTerminalController)?.applyPendingWindowTitle()
+            }
         }
     }
 

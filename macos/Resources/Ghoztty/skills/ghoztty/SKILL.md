@@ -54,9 +54,10 @@ Don't use `cat`/`less`/`open` to show a file, and don't dump `git diff` into the
 ghoztty +new-window --target=api --working-directory=~/src/api --command="npm run dev"
 ghoztty +split --direction=down --command="tail -f app.log"   # a terminal beside you
 ghoztty +close --target=api            # a window, a pane name, or a pane id
+ghoztty +close --target=api --force    # unattended: no confirmation, no undo, ends the process now
 ```
 
-`--command` runs in the user's login shell (aliases and PATH work). A split inherits your cwd, so don't pass `--working-directory` to it. `+close` **ends** the pane's process; it is not "hide" (`+stash` hides). Closing something already gone succeeds.
+`--command` runs in the user's login shell (aliases and PATH work). A split inherits your cwd, so don't pass `--working-directory` to it. `+close` **ends** the pane's process; it is not "hide" (`+stash` hides). Closing something already gone succeeds. A close stuck on the window's "Close Terminal?" confirmation fails and says so; `--force` closes anyway.
 
 ## Read and type into a pane
 

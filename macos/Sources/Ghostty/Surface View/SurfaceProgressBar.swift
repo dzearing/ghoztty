@@ -193,6 +193,11 @@ final class BusyBorderView: NSView {
     private let sweep = CAGradientLayer()
     private let mask = CAShapeLayer()
 
+    /// The light circles only in the window in use (`WindowInUse`); anywhere
+    /// else it holds still at the top. Measured: a dozen covered windows each
+    /// with a circling border kept WindowServer ~8% of a core busier.
+    private lazy var inUse = WindowInUseObserver { [weak self] in self?.updateSpinning() }
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -253,12 +258,13 @@ final class BusyBorderView: NSView {
         sweep.bounds = CGRect(x: 0, y: 0, width: side, height: side)
         sweep.position = CGPoint(x: bounds.midX, y: bounds.midY)
         CATransaction.commit()
-        startSpinning()
+        updateSpinning()
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        startSpinning()
+        inUse.window = window
+        updateSpinning()
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -266,8 +272,15 @@ final class BusyBorderView: NSView {
         applyColors()
     }
 
-    private func startSpinning() {
-        guard window != nil, sweep.animation(forKey: "spin") == nil else { return }
+    /// Whether the light is circling now, for tests.
+    var isSpinning: Bool { sweep.animation(forKey: "spin") != nil }
+
+    private func updateSpinning() {
+        guard WindowInUse.animates(window) else {
+            sweep.removeAnimation(forKey: "spin")
+            return
+        }
+        guard !isSpinning else { return }
         let spin = CABasicAnimation(keyPath: "transform.rotation.z")
         // Clockwise on screen (layers are y-up).
         spin.fromValue = 0
