@@ -186,6 +186,9 @@ $GuardTable = @(
             'scripts\lib\StampMerge.ps1',
             'scripts\lib\UserAlert.ps1',
             'scripts\lib\DigestState.ps1',
+            # T2842/T2966: sections MK and MR - which window the claim marks,
+            # and which window is the loop's when the user renamed it.
+            'scripts\lib\LoopMark.ps1',
             'scripts\githooks\*',
             'test\win32\go-loop-guard.ps1'
         )

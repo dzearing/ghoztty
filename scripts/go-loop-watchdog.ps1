@@ -230,6 +230,7 @@ $BoundArgs = @{} + $PSBoundParameters
 # target - is lane-qualified here, and lane A's are the historical names.
 . (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
 . (Join-Path $PSScriptRoot 'lib\LoopLedger.ps1')
+. (Join-Path $PSScriptRoot 'lib\LoopMark.ps1')   # Get-LoopLockOwnerPane (T2966)
 if (-not $Repo) { $Repo = Split-Path -Parent $PSScriptRoot }
 $Lane = Get-LoopLaneId -Repo $Repo
 if (-not $MutexName) { $MutexName = Get-LoopLaneWatchdogMutex $Lane }
@@ -544,6 +545,13 @@ function Resolve-ReentryTarget {
         if ([string]$w.target -ne $WindowTarget) { continue }
         $title = [string]$w.title
         if ($title.StartsWith($marker, [StringComparison]::Ordinal)) { return $WindowTarget }
+        # T2966: a window the USER renamed is still the loop's when it holds the
+        # pane the lock names - re-enter it rather than open a second window.
+        $ownerPane = Get-LoopLockOwnerPane -LockPath $LockPath
+        if ($ownerPane -and (ConvertTo-Json $w -Depth 12 -Compress) -match [regex]::Escape($ownerPane)) {
+            Log "  re-entry target '$WindowTarget' was renamed by the user ('$title'); it holds the lock's pane $ownerPane, so it is still the loop's (T2966)"
+            return $WindowTarget
+        }
         $alt = "$WindowTarget-loop"
         Log ("  re-entry target '$WindowTarget' is held by a window that is not this lane's loop " +
              "(title '$title', no '$marker' marker) - opening as '$alt' instead, so the re-entry " +

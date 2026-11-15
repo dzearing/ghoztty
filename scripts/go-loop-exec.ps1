@@ -163,6 +163,15 @@ function Set-MarkChecked($paneId) {
     $r = Set-Mark $paneId
     if ($r.Code -eq 0) { return @{ Ok = $true; Line = "  marked this window `"$Marker $Label`"" } }
     $first = "$($r.Out) $($r.Err)".Trim()
+    # T2966: the user named this window, and +rename keeps a user's name. That
+    # is not a failure to fix - the lock's pane id identifies the loop window
+    # (list, health and the watchdog's re-entry all read it), so keep their
+    # title and say so, rather than retry by target and print MARK FAILED.
+    if (Test-UserRenamedRefusal $first) {
+        $named = ''
+        if ($first -match "renamed by the user \('([^']*)'\)") { $named = " '$($Matches[1])'" }
+        return @{ Ok = $true; Line = "  kept the user's window title$named (no $Marker marker); this window is the loop by the pane id on the lock (T2966)" }
+    }
     $pick = Select-LoopMarkTarget -Windows (Get-Windows) -PaneId $paneId -Ancestors (Get-SelfAncestorPids)
     if ($pick.Target) {
         $r2 = Ghoz @('+rename', "--target=$($pick.Target)", "--title=$Marker $Label")
@@ -212,10 +221,16 @@ $mine = Get-MyWindow $windows
 switch ($Action) {
 
     'list' {
+        # T2966: the lock's pane id is the identity, the title is a label. A
+        # window the user renamed is still the loop when it holds the lock
+        # owner's pane, and reads EXEC with a note saying why.
+        $ownerPane = Get-LoopLockOwnerPane -LockPath $LockPath
         $rows = foreach ($w in $windows) {
+            $role = Get-LoopWindowRole -Window $w -Marker $Marker -OwnerPane $ownerPane
             [pscustomobject]@{
                 target = $w.Target
-                marked = (Test-Marked $w)
+                marked = ($role -ne '')
+                role   = $role
                 self   = ($null -ne $mine -and $w.Id -eq $mine.Id)
                 title  = $w.Title
                 pane   = @($w.Panes)[0]
@@ -228,7 +243,9 @@ switch ($Action) {
                 if ($r.marked) { $flag = 'EXEC ' }
                 $me = ''
                 if ($r.self) { $me = '  <- this session' }
-                "$flag$($r.target)  $($r.title)$me"
+                $why = ''
+                if ($r.role -eq 'lock-owner') { $why = '  (renamed by the user; holds the lock owner''s pane)' }
+                "$flag$($r.target)  $($r.title)$me$why"
             }
         }
         exit 0

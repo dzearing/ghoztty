@@ -4140,6 +4140,36 @@ Assert 'MK5 the ancestor walk starts at this process''s parent' ($mkAnc.Count -g
 $mkSrc = Get-Content (Join-Path $repo 'scripts\go-loop-exec.ps1') -Raw
 Assert 'MK6 claim does not discard the rename result' (-not ($mkSrc -match 'Set-Mark \$PaneId \| Out-Null'))
 
+# --- MR: a window the USER renamed is still the loop's (T2966) ---------------
+# 2026-11-14: the user retitled both loop windows; +rename keeps a user's title,
+# so the marker could not come back and health read windows=0 over a healthy
+# loop. The lock's pane id is the identity; the title is a label. Pure.
+$mrOwner = '0D5B924D-9CC2-4F21-9EA2-0200782DDCEA'
+$mrMarked = [pscustomobject]@{ Title = '[go-loop] ghoztty parity'; Panes = @('11111111-0000-0000-0000-000000000000') }
+$mrRenamed = [pscustomobject]@{ Title = 'go loop: ghoztty 1'; Panes = @('22222222-0000-0000-0000-000000000000', $mrOwner) }
+$mrRenamedLeaves = [pscustomobject]@{ Title = 'go loop: ghoztty 1'; Leaves = @((MkLeaf $mrOwner.ToLowerInvariant() 5)) }
+$mrUsers = [pscustomobject]@{ Title = 'ghoztty: manager'; Panes = @('33333333-0000-0000-0000-000000000000') }
+$mrLaneB = [pscustomobject]@{ Title = '[go-loop b] ghoztty parity'; Panes = @('44444444-0000-0000-0000-000000000000') }
+Assert 'MR1 a marked title is the loop' ((Get-LoopWindowRole -Window $mrMarked -Marker '[go-loop]' -OwnerPane $mrOwner) -eq 'marked')
+Assert 'MR2 a renamed window holding the lock owner''s pane is the loop' ((Get-LoopWindowRole -Window $mrRenamed -Marker '[go-loop]' -OwnerPane $mrOwner) -eq 'lock-owner')
+Assert 'MR3 same through Leaves, pane id compared case-insensitively' ((Get-LoopWindowRole -Window $mrRenamedLeaves -Marker '[go-loop]' -OwnerPane $mrOwner) -eq 'lock-owner')
+Assert 'MR4 the user''s other renamed window is NOT the loop' ((Get-LoopWindowRole -Window $mrUsers -Marker '[go-loop]' -OwnerPane $mrOwner) -eq '')
+Assert 'MR5 no lock owner: a renamed window is not the loop' ((Get-LoopWindowRole -Window $mrRenamed -Marker '[go-loop]' -OwnerPane '') -eq '')
+Assert 'MR6 lane b''s marked window is not lane a''s loop' ((Get-LoopWindowRole -Window $mrLaneB -Marker '[go-loop]' -OwnerPane $mrOwner) -eq '')
+# The exact refusal +rename gave on 2026-11-14, and the T2842 refusal it must not be confused with.
+Assert 'MR7 the user-rename refusal is recognised' (Test-UserRenamedRefusal "window '0D5B924D' was renamed by the user ('go loop: ghoztty 1'); +rename leaves a user's title alone until they clear it")
+Assert 'MR8 an ambiguous-id refusal is NOT a user rename' (-not (Test-UserRenamedRefusal "pane id '0D5B924D' is ambiguous: 2 windows hold it"))
+$mrLock = Join-Path $env:TEMP "t2966-lock-$PID.json"
+'{ "pane_id": "' + $mrOwner + '", "state": "held" }' | Out-File -FilePath $mrLock -Encoding utf8
+Assert 'MR9 the lock owner''s pane is read from the lock file' ((Get-LoopLockOwnerPane -LockPath $mrLock) -eq $mrOwner)
+Remove-Item $mrLock -Force -ErrorAction SilentlyContinue
+Assert 'MR10 no lock file: no owner pane' ((Get-LoopLockOwnerPane -LockPath $mrLock) -eq '')
+# Wiring: every reader that asked the title now asks the lock too.
+$mrDog = Get-Content (Join-Path $repo 'scripts\go-loop-watchdog.ps1') -Raw
+Assert 'MR11 list classifies windows by Get-LoopWindowRole' ($mkSrc -match 'Get-LoopWindowRole -Window \$w')
+Assert 'MR12 claim keeps a user''s title instead of reading MARK FAILED' ($mkSrc -match 'Test-UserRenamedRefusal \$first')
+Assert 'MR13 watchdog re-entry accepts the window holding the lock''s pane' ($mrDog -match 'Get-LoopLockOwnerPane -LockPath \$LockPath' -and $mrDog -match "lib\\LoopMark\.ps1")
+
 # --- cleanup --------------------------------------------------------------
 Kill-Sleepers
 Stop-DebugGhoztty
