@@ -12,12 +12,14 @@
 # 1400x900 window split four ways holds four ~768x512 targets, ~6 MB, and a
 # maximized 4K pane alone ~35 MB.
 #
-# The Windows translation frees the targets only when the WINDOW is hidden
+# The Windows translation frees the targets when the WINDOW is hidden
 # (minimized, cloaked, covered - `Window.applyOcclusion` and WM_SIZE
-# SIZE_MINIMIZED), never when a pane is merely behind another tab: hero mode
-# reads background tabs' targets for its carousel. And a released renderer
-# redraws in full on its first frame back, instead of re-presenting a target
-# that is gone.
+# SIZE_MINIMIZED) and, since T2975, when the pane's TAB goes behind another:
+# hero mode's carousel only reads its own tab, whose leaves it keeps
+# renderer-visible. A pane hidden by zoom or a stash keeps its target. On the
+# composition path the GL->D3D staging texture goes too. And a released
+# renderer redraws in full on its first frame back, instead of re-presenting
+# a target that is gone.
 #
 # HOW. One window, four terminal panes, each showing text. Sample GPU memory
 # shown, minimized and restored, -Cycles times, and capture every pane through
@@ -33,6 +35,9 @@
 #       coincidence of the driver trimming memory)
 #   C1  a window fully covered by another releases its pane's targets too
 #   C2  and redraws in full once uncovered
+#   T1  a tab sent behind another releases every one of its panes (T2975)
+#   T3  brought back, every pane redraws in full
+#   T4  and captures with text at its width (the tab strip shortens it)
 #
 # Memory is DEDICATED GPU memory, where the driver keeps a renderbuffer; the
 # bar is a third of the computed storage, because the driver does not hand a
@@ -113,7 +118,8 @@ Start-TestForegroundWatch
 [void](New-TestDesktop -Interactive:$Interactive)
 
 try {
-    $launchArgs = @('--config-default-files=false', '--session-persistence=false', '--confirm-close-surface=false')
+    $launchArgs = @('--config-default-files=false', '--session-persistence=false', '--confirm-close-surface=false',
+        '--keybind=f9=new_tab', '--keybind=f8=previous_tab')
     $app = Start-OnTestDesktop -Exe $exe -StdErr $errlog -Arguments $launchArgs
     $appPid = $app.Pid
     Assert (-not (Test-TestDesktopLeak -ProcessId $appPid)) 'GUI is NOT enumerable on the interactive desktop'
@@ -241,6 +247,47 @@ try {
         Start-Sleep -Seconds 3
         $drwC2 = Get-LogCount 'redrawing after a hidden release'
         Assert ($drwC2 -gt $drwC) "C2 uncovered, it redraws in full ($($drwC2 - $drwC) log lines)"
+    }
+
+    # ---- T: a tab sent behind another gives its targets back (T2975) ------
+    # Nothing reads a background tab's targets (hero mode captures only the
+    # active tab, whose leaves it keeps renderer-visible), so opening a second
+    # tab releases the four panes the way a minimize does, and switching back
+    # redraws each in full. Driven by posted keybinds (no CLI verb opens a
+    # tab), which work on the background desktop.
+    if (-not $NegativeControl) {
+        $visible = @(Get-TestChildWindows -Window ([IntPtr]$top) -Class 'GhozttyTerminal' | Where-Object Visible)
+        if ($visible.Count -lt 1) { throw 'T: no visible pane to send the tab keys to' }
+        $relT = Get-LogCount 'released hidden render targets'
+        $drwT = Get-LogCount 'redrawing after a hidden release'
+        $front = Wait-Settled $appPid 'tab 1 in front'
+        [void](Send-TestKeys -Window ([IntPtr]$top) -Target ([IntPtr]$visible[0].Hwnd) -Key F9)
+        Start-Sleep -Seconds 4
+        $behind = Wait-Settled $appPid 'tab 1 behind'
+        $relT2 = Get-LogCount 'released hidden render targets'
+        Assert (($relT2 - $relT) -ge $panes.Count) "T1 opening a second tab releases every pane of the first ($($relT2 - $relT) of $($panes.Count) log lines)"
+        # Reported, not scored: the new tab's own pane takes a full-window
+        # target, staging texture and swap chain in the same step, so the
+        # delta mixes what was given back with what was taken. The release
+        # is scored by T1 here and its size by A1, which runs the same path.
+        Write-Host ("  dedicated GPU, tab 1 in front -> behind a new tab: {0} -> {1} MB" -f $front.GpuDedMB, $behind.GpuDedMB)
+        $visible2 = @(Get-TestChildWindows -Window ([IntPtr]$top) -Class 'GhozttyTerminal' | Where-Object Visible)
+        $keyTarget = $(if ($visible2.Count -gt 0) { [IntPtr]$visible2[0].Hwnd } else { [IntPtr]$visible[0].Hwnd })
+        [void](Send-TestKeys -Window ([IntPtr]$top) -Target $keyTarget -Key F8)
+        Start-Sleep -Seconds 4
+        $drwT2 = Get-LogCount 'redrawing after a hidden release'
+        Assert (($drwT2 - $drwT) -ge $panes.Count) "T3 back in front, every pane redraws in full ($($drwT2 - $drwT) of $($panes.Count) log lines)"
+        # The second tab brings the tab strip, which takes a few rows of
+        # pixels off every pane's height; the width stays.
+        $tabOk = $true; $tabWhy = ''
+        foreach ($s in (Get-PaneShots)) {
+            $want = $before | Where-Object { $_.Pane -eq $s.Pane }
+            if (-not $s.Ok -or $s.Colors -le 2 -or $s.W -ne $want.W -or [math]::Abs($s.H - $want.H) -gt 64) {
+                $tabOk = $false
+                $tabWhy = "pane $($s.Pane): ok=$($s.Ok) $($s.W)x$($s.H) colours=$($s.Colors) $($s.Why)"
+            }
+        }
+        Assert $tabOk "T4 every pane captures at its own size with text after the tab comes back $tabWhy"
     }
 
     $crashed = (Test-Path $errlog) -and (Select-String -Path $errlog -Pattern 'Segmentation fault|panic' -Quiet)

@@ -4429,6 +4429,8 @@ pub fn setTabSurfacesVisible(self: *Window, tab: usize, visible: bool) void {
     if (tab >= self.tab_count) return;
     var it = self.tab_trees[tab].iterator();
     while (it.next()) |entry| {
+        // A background tab's panes give back their targets (T2975).
+        if (!visible) entry.view.setWindowHidden(true);
         entry.view.setVisible(visible);
         if (entry.view.hwnd()) |h|
             _ = w32.ShowWindow(h, if (visible) w32.SW_SHOW else w32.SW_HIDE);
@@ -4705,7 +4707,8 @@ fn closeSplitPaneOpts(self: *Window, pane: *PaneView, opts: CloseSplitOpts) void
 ///
 /// Every caller hides or shows the WINDOW (minimize, the visibility poll, a
 /// close-undo park), so the panes are told that first: a pane hidden this way
-/// gives back its render targets (T2474), one behind another tab does not.
+/// gives back its render targets (T2474), as one behind another tab does
+/// (T2975, `showTabIndex`). A pane hidden by zoom or a stash keeps them.
 pub fn setActiveTabVisible(self: *Window, visible: bool) void {
     if (self.active_tab >= self.tab_count) return;
     var it = self.tab_trees[self.active_tab].iterator();
@@ -4786,6 +4789,11 @@ fn showTabIndex(self: *Window, idx: usize, focus: bool) void {
     if (self.active_tab < self.tab_count) {
         var it = self.tab_trees[self.active_tab].iterator();
         while (it.next()) |entry| {
+            // T2975: nothing reads a background tab's render targets - hero
+            // mode's carousel keeps its own tab's panes renderer-visible and
+            // only ever captures the active tab - so the tab going behind
+            // gives them back, exactly as a hidden window's panes do (T2474).
+            entry.view.setWindowHidden(true);
             entry.view.setVisible(false);
             if (entry.view.hwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
         }

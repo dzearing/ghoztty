@@ -135,12 +135,14 @@ core_surface_ready: bool = false,
 /// the first one. The renderer starts out visible.
 reported_visible: ?bool = null,
 
-/// The pane's WINDOW is hidden - minimized, cloaked, covered, or parked by a
-/// close-undo - as opposed to the pane alone being out of view (another tab,
-/// a stashed pane). Set by `Window.setActiveTabVisible` before the visibility
-/// it forwards, read on the renderer thread when that visibility arrives: only
-/// a window-hidden pane gives back its render targets (T2474), since hero
-/// mode reads a background tab's.
+/// The pane is hidden in a way nothing reads its render targets through: its
+/// WINDOW is hidden - minimized, cloaked, covered, or parked by a close-undo
+/// (T2474) - or its TAB went behind another (T2975, `Window.showTabIndex`).
+/// A pane hidden by zoom or a stash is not. Set before the visibility it
+/// forwards, read on the renderer thread when that visibility arrives: only
+/// such a pane gives back its render targets. Hero mode's carousel never
+/// needs this left clear - it keeps every leaf of its own tab renderer-visible
+/// (`Window` hero layout) and captures only the active tab.
 window_hidden: std.atomic.Value(bool) = .init(false),
 
 /// The user answered **Disconnect** for this pane (T1390): the window closes

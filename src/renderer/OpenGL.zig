@@ -1581,9 +1581,10 @@ fn compLeaveHelper(self: *OpenGL) void {
 
 /// May the renderer free this pane's targets now that it is hidden (T2474)?
 /// Only on Win32, and only when the WINDOW is hidden (minimized, cloaked,
-/// covered, parked by a close-undo): a pane that is merely behind another tab
-/// keeps its target, because hero mode's carousel reads it. Never while the
-/// device is lost - the targets are dead with it and the rebuild owns them.
+/// covered, parked by a close-undo) or the pane's tab went behind another
+/// (T2975): see `Surface.window_hidden`. A pane hidden by zoom or a stash
+/// keeps its target. Never while the device is lost - the targets are dead
+/// with it and the rebuild owns them.
 pub fn releaseHiddenTargetsNow(self: *const OpenGL) bool {
     if (comptime apprt.runtime != apprt.win32) return false;
     if (self.device.lost) return false;
@@ -1595,6 +1596,12 @@ pub fn releaseHiddenTargetsNow(self: *const OpenGL) bool {
 /// draws in full and records a new one.
 pub fn hiddenTargetsReleased(self: *OpenGL) void {
     self.last_target = null;
+    // T2975: the composition path's GL->D3D staging texture is window-sized
+    // too, and nothing reads it between frames. The swap chain stays: it
+    // holds the picture the visual (and a DWM thumbnail) still shows, so a
+    // reveal shows the old frame until the redraw lands rather than nothing.
+    // `begin` rebuilds the texture on the first frame back.
+    if (self.comp) |p| p.releaseShared();
     // The deletes sit in the command stream until something submits it, and
     // a hidden pane draws nothing that would: without this the driver keeps
     // the storage until the window is shown again.

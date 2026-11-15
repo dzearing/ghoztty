@@ -932,6 +932,16 @@ pub const Presenter = struct {
         self.tex_h = cap[1];
     }
 
+    /// The pane is hidden and gave back its render targets (T2975): free the
+    /// shared texture as well. `begin` sees `texture == null` and makes it
+    /// again at the frame's size. GL context current, as for every call here.
+    pub fn releaseShared(self: *Presenter) void {
+        if (self.texture == null) return;
+        self.destroyShared();
+        self.tex_w = 0;
+        self.tex_h = 0;
+    }
+
     fn destroyShared(self: *Presenter) void {
         if (self.locked) {
             var objs = [_]HANDLE{self.registered};
