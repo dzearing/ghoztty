@@ -87,6 +87,25 @@ pub fn ExactPool(comptime size: usize, comptime alignment: Alignment) type {
             pool.free.appendAssumeCapacity(ptr);
         }
 
+        /// Items sitting on the free list, ready for `create`.
+        pub fn freeCount(pool: *const Pool) usize {
+            return pool.free.items.len;
+        }
+
+        /// Give a live item straight back to the child allocator instead
+        /// of keeping it on the free list (T3004). The item must have come
+        /// from `create` and not been destroyed. Nothing is written into
+        /// it first, so a released page never re-enters the working set.
+        pub fn release(pool: *Pool, ptr: ItemPtr) void {
+            for (pool.all.items, 0..) |item, i| {
+                if (item != ptr) continue;
+                _ = pool.all.swapRemove(i);
+                pool.child_allocator.free(ptr);
+                return;
+            }
+            unreachable; // not an item of this pool
+        }
+
         /// Bytes this pool holds from the child allocator, live and free.
         pub fn committedBytes(pool: *const Pool) usize {
             return pool.all.items.len * item_size;
@@ -171,6 +190,30 @@ test "ExactPool reuses destroyed items and never writes into them" {
     try testing.expectEqual(a, b);
     try testing.expectEqual(TestPool.item_size, pool.committedBytes());
     for (b) |byte| try testing.expectEqual(@as(u8, 0), byte);
+}
+
+test "ExactPool release returns the item to the child allocator (T3004)" {
+    var pool = TestPool.init(testing.allocator, testing.allocator);
+    defer pool.deinit();
+    const a = try pool.create();
+    const b = try pool.create();
+    const c = try pool.create();
+    try testing.expectEqual(3 * TestPool.item_size, pool.committedBytes());
+
+    pool.release(b);
+    try testing.expectEqual(2 * TestPool.item_size, pool.committedBytes());
+    try testing.expectEqual(@as(usize, 0), pool.freeCount());
+
+    // The survivors still destroy and reuse normally, and a later create
+    // allocates fresh rather than handing back the released item.
+    pool.destroy(a);
+    try testing.expectEqual(@as(usize, 1), pool.freeCount());
+    try testing.expectEqual(a, try pool.create());
+    _ = try pool.create();
+    try testing.expectEqual(3 * TestPool.item_size, pool.committedBytes());
+    pool.release(c);
+    try testing.expectEqual(2 * TestPool.item_size, pool.committedBytes());
+    // deinit frees what is left; testing.allocator catches a double free.
 }
 
 test "ExactPool alignment" {

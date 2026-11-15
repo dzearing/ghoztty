@@ -1,0 +1,17 @@
+{
+    "guard":  "scrollback-clear-memory",
+    "script":  "test/win32/scrollback-clear-memory.ps1",
+    "generated":  "2026-11-15T15:45:32-08:00",
+    "commit":  "14561397e",
+    "uncommitted":  [
+                        "src/terminal/page_pool.zig",
+                        "src/terminal/PageList.zig",
+                        "test/win32/scrollback-clear-memory.ps1"
+                    ],
+    "files":  {
+                  "src/terminal/page_pool.zig":  "af51da0cb5a255915a0af68d5ae0cc75b176c045e05b77106df4d7e0cc66f555",
+                  "src/terminal/PageList.zig":  "e42a0f3067b95b70e3a0f622c0e32014f24aa09029a3154882dff34b05d7a282",
+                  "test/win32/lib/ProcessMemory.ps1":  "d742e9813857e5dff6e8c1a9559ebb392c4826bcf61d10c4e768760edc38b5b1",
+                  "test/win32/scrollback-clear-memory.ps1":  "d3852d7fe2ae6adf0a1c276bc05389b2387f7ba152e38d0ee41756d06643174b"
+              }
+}

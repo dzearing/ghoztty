@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-15T15:31:22-08:00",
-    "commit":  "7d248baf2",
+    "generated":  "2026-11-15T15:47:15-08:00",
+    "commit":  "14561397e",
     "uncommitted":  [
-
+                        "test/win32/scrollback-clear-memory.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -477,12 +477,12 @@
                   "test/win32/restore-late-agent.ps1":  "ff641c3eea23c1f66215805145b3b262c388b459c8d4f069fd345587cc888b80",
                   "test/win32/restore-paced.ps1":  "37d2e979a71ec09a1d7e9ce1ed2c648779e232da1435f91092af94b260bbe5b8",
                   "test/win32/restore-session-dup.ps1":  "08129486438d22cf77147ef39338b257f503f9d3f379764160e5c3f1dd719ecf",
+                  "test/win32/scrollback-clear-memory.ps1":  "d3852d7fe2ae6adf0a1c276bc05389b2387f7ba152e38d0ee41756d06643174b",
                   "test/win32/scrollback-narrow.ps1":  "213e10d81e04ba6a098ccf8d5891f8f05f43edc9c098d7b201c5ae9c77e17662",
                   "test/win32/seam-audit.ps1":  "e7ef6b8614ad022f48f0cfa94c7183270545ba2d3f29fc2e0b14669429e6c586",
                   "test/win32/self-spawn-audit.ps1":  "a4f014933c7929f28febc9bc55b9603180ce17c9827bc1f5a50ab6d0d4dc1dc7",
                   "test/win32/send-keys-bracketed.ps1":  "3f04c907b40d40409069ee8fe9369820cd96c2c6644567ddfd70d8fdb41bec10",
                   "test/win32/send-keys-soak.ps1":  "6e4525ec0b24fb88c38af8b42a0206d37c6dea2e458613f7c6e0bc9881aec5b9",
-                  "test/win32/session-blades.ps1":  "290fb04e0e31809befdc90aa4c7286002c72469407ba93ab73dd92b47c581de0",
                   "test/win32/session-close.ps1":  "bc90db94c85a72b761db89dbde0baf409845d5df67f23997b425b6d922455ed1",
                   "test/win32/session-crash-recover.ps1":  "bd9d751e4413b22f27cf7a4cbac0f63290367e8c7e262e9d1dbdfdef1573ff24",
                   "test/win32/session-layout-geometry-race.ps1":  "cccb50a65d08201453c84af1cf2cc3dcdac8bf90b87871a29d7dfc0a1ee9a161",

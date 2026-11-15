@@ -46,6 +46,12 @@ const page_preheat = if (exact_page_pool) 1 else 4;
 /// whose page allocator maps lazily keep the upstream pool.
 const exact_page_pool = builtin.os.tag == .windows;
 
+/// With `exact_page_pool`, how many destroyed standard pages stay on the
+/// free list for quick reuse; any page destroyed beyond that is released
+/// to the OS (T3004). One covers the common destroy-then-create churn
+/// (resize, reflow) without a VirtualAlloc round trip.
+const page_free_retain = 1;
+
 /// The list of pages in the screen. These are expected to be in order
 /// where the first page is the topmost page (scrollback) and the last is
 /// the bottommost page (the current active page).
@@ -3500,6 +3506,19 @@ fn destroyNodeExt(
     if (total_size) |v| v.* -= page.memory.len;
 
     if (page.memory.len <= std_size) {
+        if (comptime exact_page_pool) {
+            // Windows commits every pooled page (T3003), so a page kept on
+            // the free list costs its full size for the life of the pane.
+            // Past a small reserve, hand it back to the OS instead (T3004):
+            // clearing a full scrollback then returns its memory rather
+            // than zeroing megabytes nothing will reuse soon.
+            if (pool.pages.freeCount() >= page_free_retain) {
+                pool.pages.release(@ptrCast(page.memory.ptr));
+                pool.nodes.destroy(node);
+                return;
+            }
+        }
+
         // Reset the memory to zero so it can be reused
         @memset(page.memory, 0);
         pool.pages.destroy(@ptrCast(page.memory.ptr));
@@ -14806,4 +14825,39 @@ test "PageList windows: reset keeps the viewport page and zeroes it (T3003)" {
     s.reset();
     try testing.expectEqual(PagePool.item_size, s.pool.pages.committedBytes());
     try testing.expect(s.pages.first == s.pages.last);
+}
+
+test "PageList windows: erasing history returns its pages to the OS (T3004)" {
+    if (comptime !exact_page_pool) return error.SkipZigTest;
+    const testing = std.testing;
+
+    var s = try init(testing.allocator, 80, 24, null);
+    defer s.deinit();
+    const rows_per_page = s.pages.first.?.data.capacity.rows;
+    for (0..rows_per_page * 10) |_| _ = try s.grow();
+    try testing.expect(s.pool.pages.committedBytes() >= 10 * PagePool.item_size);
+
+    // Clearing scrollback (cls / ctrl+shift+k) erases all history.
+    s.eraseHistory(null);
+
+    var pages: usize = 0;
+    var it = s.pages.first;
+    while (it) |node| : (it = node.next) pages += 1;
+
+    // What stays committed is the live pages plus the small free reserve,
+    // not the ten pages the history used to hold.
+    try testing.expectEqual(page_free_retain, s.pool.pages.freeCount());
+    try testing.expectEqual(
+        (pages + page_free_retain) * PagePool.item_size,
+        s.pool.pages.committedBytes(),
+    );
+
+    // The list grows back normally: the reserve page first (zeroed), then
+    // fresh allocations.
+    for (0..rows_per_page * 3) |_| _ = try s.grow();
+    try testing.expectEqual(@as(usize, 0), s.pool.pages.freeCount());
+    var after: usize = 0;
+    it = s.pages.first;
+    while (it) |node| : (it = node.next) after += 1;
+    try testing.expectEqual(after * PagePool.item_size, s.pool.pages.committedBytes());
 }

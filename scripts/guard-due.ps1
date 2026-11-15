@@ -1099,6 +1099,20 @@ $GuardTable = @(
             'src\renderer\gl_comp_present.zig'
         )
     },
+    # T3004: clearing a full scrollback gives its pages back to the OS. The
+    # page pool and the PageList destroy path decide whether a freed page is
+    # kept or released, so an edit to either can quietly bring back PA-M04.
+    [pscustomobject]@{
+        Name   = 'scrollback-clear-memory'
+        Script = 'test\win32\scrollback-clear-memory.ps1'
+        Stamp  = 'test\win32\scrollback-clear-memory.stamp.json'
+        Covers = @(
+            'test\win32\scrollback-clear-memory.ps1',
+            'test\win32\lib\ProcessMemory.ps1',
+            'src\terminal\page_pool.zig',
+            'src\terminal\PageList.zig'
+        )
+    },
     # T2494: the PANE half of the same question - what a split, a viewer, a
     # viewer closed before its WebView2 controller arrived, a split closed
     # mid-layout, and a tab give back while their window stays open. Covers
