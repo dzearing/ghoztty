@@ -16,15 +16,20 @@
 #   idle    1 window, 1 pane at a cmd prompt, 10 s settle, then -IdleSeconds:
 #           app CPU (% of one core), context switches/s (the wakeup rate,
 #           summed over the app's threads from SystemProcessInformation), and
-#           GPU engine utilisation.
-#   busy    a pane that `type`s a generated -BusyMB file: wall time, app CPU
+#           GPU engine utilisation. The wakeups are then split by thread
+#           (T2989): the top 10 threads and every switch grouped by the
+#           module the thread started in plus its name, and a census of the
+#           kernel handle types, window classes and thread groups it holds.
+#   busy   a pane that `type`s a generated -BusyMB file: wall time, app CPU
 #           seconds and % of one core, GPU engine %; then -ResizeSeconds of
 #           window resizes, same counters.
 #   cycle   private bytes, working set, kernel/GDI/USER handles, threads, GPU
 #           dedicated+shared memory and descendant processes: at start, after
 #           10 panes over 3 tabs, after closing them all - twice, so the
 #           first-cycle one-time costs (atlases, arenas) are separated from
-#           what each cycle leaves behind.
+#           what each cycle leaves behind. The residue is broken down by
+#           kind (T2989): kernel handles by type, windows by class, threads
+#           by group, and the USER objects that are not windows.
 #   agent   session persistence on: ghoztty-agent.exe idle CPU and wakeups,
 #           private bytes per hosted session, and its handles/threads across
 #           -AttachCycles app kill (detach) / relaunch (re-attach) cycles.
@@ -252,6 +257,137 @@ public static class PerfSnap {
         }
         return null;
     }
+
+    // T2989: the same snapshot, per thread - flattened [tid, contextSwitches]
+    // pairs - so a wakeup rate can be split by the thread that woke. Thread id
+    // is CLIENT_ID.UniqueThread at 0x30 of each 0x50-byte thread record.
+    public static long[] Threads(int pid) {
+        int len = 4 << 20;
+        for (int tries = 0; tries < 6; tries++) {
+            IntPtr buf = Marshal.AllocHGlobal(len);
+            try {
+                int ret;
+                int st = NtQuerySystemInformation(5, buf, len, out ret);
+                if ((uint)st == 0xC0000004u) { len *= 2; continue; }
+                if (st != 0) return null;
+                long p = buf.ToInt64();
+                while (true) {
+                    int next = Marshal.ReadInt32(new IntPtr(p));
+                    long id = Marshal.ReadIntPtr(new IntPtr(p + 0x50)).ToInt64();
+                    if (id == pid) {
+                        int n = Marshal.ReadInt32(new IntPtr(p + 4));
+                        var o = new long[n * 2];
+                        for (int i = 0; i < n; i++) {
+                            long t = p + 0x100 + i * 0x50;
+                            o[i * 2] = Marshal.ReadIntPtr(new IntPtr(t + 0x30)).ToInt64();
+                            o[i * 2 + 1] = (uint)Marshal.ReadInt32(new IntPtr(t + 0x40));
+                        }
+                        return o;
+                    }
+                    if (next == 0) return null;
+                    p += next;
+                }
+            } finally { Marshal.FreeHGlobal(buf); }
+        }
+        return null;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenThread(uint access, bool inherit, uint tid);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32.dll")] static extern int GetThreadDescription(IntPtr h, out IntPtr desc);
+    [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr p);
+    [DllImport("ntdll.dll")] static extern int NtQueryInformationThread(IntPtr h, int cls, out IntPtr info, int len, IntPtr ret);
+    // A live thread's name (SetThreadDescription; "" when it has none) and
+    // its Win32 start address (ThreadQuerySetWin32StartAddress, class 9) -
+    // the function the creator passed, not RtlUserThreadStart. Null when the
+    // thread has already exited.
+    public static object[] Describe(uint tid) {
+        IntPtr h = OpenThread(0x0040 | 0x0800, false, tid); // QUERY_INFORMATION | QUERY_LIMITED_INFORMATION
+        if (h == IntPtr.Zero) return null;
+        try {
+            string name = "";
+            IntPtr d;
+            if (GetThreadDescription(h, out d) >= 0 && d != IntPtr.Zero) {
+                name = Marshal.PtrToStringUni(d) ?? "";
+                LocalFree(d);
+            }
+            IntPtr start;
+            long addr = NtQueryInformationThread(h, 9, out start, IntPtr.Size, IntPtr.Zero) == 0 ? start.ToInt64() : 0;
+            return new object[] { name, addr };
+        } finally { CloseHandle(h); }
+    }
+}
+'@
+}
+
+# T2989: every window a process owns on the test desktop - top-levels (hidden
+# included), their children, and message-only windows - counted by class and
+# kind. Windows are the one USER object type that can be enumerated, so a USER
+# count that moves while this census does not is menus, icons, cursors, hooks
+# or accelerator tables. Runs on a fresh thread bound to the desktop: window
+# enumeration is scoped to the calling thread's desktop, and SetThreadDesktop
+# refuses a thread that already owns windows (the PowerShell host's does).
+if (-not ('PerfWindows' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+public static class PerfWindows {
+    delegate bool EnumProc(IntPtr h, IntPtr l);
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern IntPtr OpenDesktopW(string name, uint flags, bool inherit, uint access);
+    [DllImport("user32.dll")] static extern bool CloseDesktop(IntPtr h);
+    [DllImport("user32.dll", SetLastError = true)] static extern bool SetThreadDesktop(IntPtr h);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
+    [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, EnumProc f, IntPtr l);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowExW(IntPtr parent, IntPtr after, string cls, string title);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassNameW(IntPtr h, StringBuilder sb, int max);
+
+    static string Cls(IntPtr h) { var sb = new StringBuilder(256); GetClassNameW(h, sb, 256); return sb.ToString(); }
+    static void Add(Dictionary<string, int> d, string k) { int c; d.TryGetValue(k, out c); d[k] = c + 1; }
+
+    // "kind:class" -> count, kind one of top / child / msg. Null on failure,
+    // with the reason in Error.
+    public static string Error = "";
+    public static Dictionary<string, int> Census(string desktop, uint pid) {
+        Dictionary<string, int> result = null;
+        string err = "";
+        var t = new Thread(delegate() {
+            IntPtr hd = IntPtr.Zero;
+            if (!string.IsNullOrEmpty(desktop)) {
+                hd = OpenDesktopW(desktop, 0, false, 0x0001 | 0x0040); // READOBJECTS | ENUMERATE
+                if (hd == IntPtr.Zero) { err = "OpenDesktop(" + desktop + ") failed: " + Marshal.GetLastWin32Error(); return; }
+                if (!SetThreadDesktop(hd)) { err = "SetThreadDesktop failed: " + Marshal.GetLastWin32Error(); CloseDesktop(hd); return; }
+            }
+            try {
+                var d = new Dictionary<string, int>();
+                var tops = new List<IntPtr>();
+                EnumWindows(delegate(IntPtr h, IntPtr l) {
+                    uint p; GetWindowThreadProcessId(h, out p);
+                    if (p == pid) tops.Add(h);
+                    return true;
+                }, IntPtr.Zero);
+                foreach (var h in tops) {
+                    Add(d, "top:" + Cls(h));
+                    EnumChildWindows(h, delegate(IntPtr c, IntPtr l) { Add(d, "child:" + Cls(c)); return true; }, IntPtr.Zero);
+                }
+                IntPtr m = IntPtr.Zero;
+                for (int guard = 0; guard < 100000; guard++) {
+                    m = FindWindowExW(new IntPtr(-3), m, null, null);
+                    if (m == IntPtr.Zero) break;
+                    uint p; GetWindowThreadProcessId(m, out p);
+                    if (p == pid) Add(d, "msg:" + Cls(m));
+                }
+                result = d;
+            } finally { if (hd != IntPtr.Zero) CloseDesktop(hd); }
+        });
+        t.Start();
+        if (!t.Join(15000)) { Error = "window census timed out"; return null; }
+        Error = err;
+        return result;
+    }
 }
 '@
 }
@@ -272,6 +408,152 @@ function Get-Rate($A, $B) {
         cpu_s   = [math]::Round($cpu, 3)
         cpu_pct = [math]::Round(100.0 * $cpu / $sec, 2)
         wakeups_per_s = [math]::Round(($B.Ctx - $A.Ctx) / $sec, 1)
+    }
+}
+
+# ---------------------------------------------------------------- attribution (T2989)
+# tid -> context switches, from one snapshot. $null when unreadable.
+function Get-ThreadCtx([int]$ProcessId) {
+    $r = [PerfSnap]::Threads($ProcessId)
+    if ($null -eq $r) { return $null }
+    $h = @{}
+    for ($i = 0; $i -lt $r.Length; $i += 2) { $h[[long]$r[$i]] = [long]$r[$i + 1] }
+    return $h
+}
+
+# "module+0xoffset" for an address in $ProcessId, from its loaded-module list.
+# The exe's entry point rides along as $script:mainEntry: the main (UI)
+# thread is the one whose Win32 start address is it, and it carries no name.
+function Get-ModuleMap([int]$ProcessId) {
+    try {
+        $p = Get-Process -Id $ProcessId -ErrorAction Stop
+        $script:mainEntry = $p.MainModule.EntryPointAddress.ToInt64()
+        return @($p.Modules | ForEach-Object {
+                [pscustomobject]@{ Base = $_.BaseAddress.ToInt64(); End = $_.BaseAddress.ToInt64() + $_.ModuleMemorySize; Name = $_.ModuleName }
+            })
+    } catch { return @() }
+}
+function Resolve-Address([long]$Addr, $Map) {
+    if ($Addr -eq 0) { return $null }
+    foreach ($m in $Map) { if ($Addr -ge $m.Base -and $Addr -lt $m.End) { return ('{0}+0x{1:x}' -f $m.Name, ($Addr - $m.Base)) } }
+    return ('0x{0:x}' -f $Addr)
+}
+
+# One thread's identity: its name when it has one, else where it started.
+# Name and start are both read while the thread is alive, so call this while
+# the app still runs.
+function Get-ThreadIdentity([long]$Tid, $Map) {
+    $d = [PerfSnap]::Describe([uint32]$Tid)
+    if ($null -eq $d) { return [pscustomobject]@{ Name = ''; Start = $null; Module = '(exited)' } }
+    $start = Resolve-Address ([long]$d[1]) $Map
+    $mod = if ($start) { ($start -split '\+')[0] } else { '(unknown)' }
+    $name = [string]$d[0]
+    if (-not $name -and $script:mainEntry -and [long]$d[1] -eq $script:mainEntry) { $name = 'main' }
+    return [pscustomobject]@{ Name = $name; Start = $start; Module = $mod }
+}
+
+# Which threads the context switches between two Get-ThreadCtx snapshots
+# belong to: the top $Top threads, and every switch grouped by the module the
+# thread started in (named threads keep their own name as the group, since
+# the apprt's renderer/io threads all start inside ghoztty.exe).
+function Get-WakeupAttribution([int]$ProcessId, [hashtable]$Before, [hashtable]$After, [double]$Seconds, [int]$Top = 10) {
+    if ($null -eq $Before -or $null -eq $After -or $Seconds -le 0) { return $null }
+    $map = Get-ModuleMap $ProcessId
+    $rows = foreach ($tid in $After.Keys) {
+        $was = if ($Before.ContainsKey($tid)) { $Before[$tid] } else { 0 }
+        $d = $After[$tid] - $was
+        if ($d -le 0) { continue }
+        $id = Get-ThreadIdentity $tid $map
+        [pscustomobject]@{
+            tid = [long]$tid
+            name = $id.Name
+            start = $id.Start
+            group = $(if ($id.Name) { "$($id.Module) [$($id.Name)]" } else { $id.Module })
+            new = -not $Before.ContainsKey($tid)
+            wakeups_per_s = [math]::Round($d / $Seconds, 2)
+        }
+    }
+    $rows = @($rows | Sort-Object wakeups_per_s -Descending)
+    $total = ($rows | Measure-Object -Property wakeups_per_s -Sum).Sum
+    $groups = @($rows | Group-Object group | ForEach-Object {
+            [pscustomobject]@{
+                group = $_.Name
+                threads = $_.Count
+                wakeups_per_s = [math]::Round((($_.Group | Measure-Object -Property wakeups_per_s -Sum).Sum), 2)
+            }
+        } | Sort-Object wakeups_per_s -Descending)
+    return [ordered]@{
+        method = "per-thread ContextSwitches (SystemProcessInformation) at both ends of the span; a thread's group is its start module (NtQueryInformationThread Win32StartAddress against the process's module list) plus its SetThreadDescription name; threads that exited inside the span are not counted"
+        threads_seen = $After.Count
+        threads_exited = @($Before.Keys | Where-Object { -not $After.ContainsKey($_) }).Count
+        attributed_wakeups_per_s = [math]::Round([double]$total, 1)
+        top_threads = @($rows | Select-Object -First $Top)
+        by_group = $groups
+    }
+}
+
+# Everything census-able a process holds: kernel handles by type (WcmHandles,
+# lib\ProcessMemory.ps1), windows by kind and class (PerfWindows), threads by
+# group (name or start module). A hashtable of three hashtables.
+function Get-ObjectCensus([int]$ProcessId) {
+    $win = [PerfWindows]::Census($script:testDesktopName, [uint32]$ProcessId)
+    $w = @{}
+    if ($win) { foreach ($kv in $win.GetEnumerator()) { $w[$kv.Key] = $kv.Value } }
+    $map = Get-ModuleMap $ProcessId
+    $t = @{}
+    $ctx = Get-ThreadCtx $ProcessId
+    if ($ctx) {
+        foreach ($tid in $ctx.Keys) {
+            $id = Get-ThreadIdentity $tid $map
+            $k = if ($id.Name) { "$($id.Module) [$($id.Name)]" } else { $id.Module }
+            $t[$k] = 1 + [int]$t[$k]
+        }
+    }
+    $p = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    $user = if ($p) { [int][WcmDrv]::GetGuiResources($p.Handle, 1) } else { $null }
+    $gdi = if ($p) { [int][WcmDrv]::GetGuiResources($p.Handle, 0) } else { $null }
+    return @{ handles = (Get-HandleTypes $ProcessId); windows = $w; threads = $t; user = $user; gdi = $gdi; windowError = [PerfWindows]::Error }
+}
+
+# [{ name, delta }] for every key whose count moved, biggest move first.
+function Get-CountDelta([hashtable]$Before, [hashtable]$After) {
+    $keys = @(@($Before.Keys) + @($After.Keys) | Sort-Object -Unique)
+    return @(foreach ($k in $keys) {
+            $d = [int]$After[$k] - [int]$Before[$k]
+            if ($d -ne 0) { [pscustomobject]@{ name = $k; delta = $d } }
+        }) | Sort-Object { -[math]::Abs($_.delta) }, name
+}
+
+# What moved between two Get-ObjectCensus results, for the JSON.
+function Format-CensusDelta($A, $B) {
+    if ($null -eq $A -or $null -eq $B) { return $null }
+    $wa = 0; foreach ($v in $A.windows.Values) { $wa += $v }
+    $wb = 0; foreach ($v in $B.windows.Values) { $wb += $v }
+    $o = [ordered]@{
+        handle_types = @(Get-CountDelta $A.handles $B.handles)
+        windows = @(Get-CountDelta $A.windows $B.windows)
+        threads = @(Get-CountDelta $A.threads $B.threads)
+        window_count_delta = $wb - $wa
+        user_object_delta = $(if ($null -ne $A.user -and $null -ne $B.user) { $B.user - $A.user } else { $null })
+        gdi_object_delta = $(if ($null -ne $A.gdi -and $null -ne $B.gdi) { $B.gdi - $A.gdi } else { $null })
+    }
+    # USER objects that are not windows: menus, icons, cursors, hooks,
+    # accelerator tables, DWP structures - not enumerable from outside.
+    if ($null -ne $o.user_object_delta) { $o.user_non_window_delta = $o.user_object_delta - $o.window_count_delta }
+    if ($B.windowError) { $o.window_reason = $B.windowError }
+    return $o
+}
+
+# Totals of one census, for a reader who wants the composition not the delta.
+function Format-CensusTotals($C) {
+    if ($null -eq $C) { return $null }
+    $wc = 0; foreach ($v in $C.windows.Values) { $wc += $v }
+    return [ordered]@{
+        user = $C.user
+        windows = $wc
+        window_classes = @($C.windows.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { [pscustomobject]@{ name = $_.Key; count = $_.Value } })
+        handle_types = @($C.handles.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { [pscustomobject]@{ name = $_.Key; count = $_.Value } })
+        thread_groups = @($C.threads.GetEnumerator() | Sort-Object Value -Descending | ForEach-Object { [pscustomobject]@{ name = $_.Key; count = $_.Value } })
     }
 }
 
@@ -387,7 +669,8 @@ $failed = $false
 
 [void](Stop-RepoGhoztty -Exe $exe -SettleMs 500 -ScopeToLineage)
 Start-TestForegroundWatch
-[void](New-TestDesktop)
+$td = New-TestDesktop
+$script:testDesktopName = if ($td.Interactive) { '' } else { $td.Name }
 try {
     # ------------------------------------------------------------ idle
     if ($want -contains 'idle') {
@@ -396,9 +679,11 @@ try {
             $a = Start-App $false
             Start-Sleep -Seconds 10
             $job = Start-GpuSampler $a.Pid ([math]::Min($IdleSeconds, 30))
+            $t0 = Get-ThreadCtx $a.Pid
             $s0 = Get-Snap $a.Pid
             Start-Sleep -Seconds $IdleSeconds
             $s1 = Get-Snap $a.Pid
+            $t1 = Get-ThreadCtx $a.Pid
             $gpu = Stop-GpuSampler $job
             $r = Get-Rate $s0 $s1
             $result.idle = [ordered]@{
@@ -410,7 +695,9 @@ try {
                 gpu_engine_peak_pct = $gpu.gpu_engine_peak_pct
             }
             if ($gpu.reason) { $result.idle.gpu_reason = $gpu.reason }
+            $result.idle.wakeup_attribution = Get-WakeupAttribution $a.Pid $t0 $t1 $r.wall_s
             $result.idle.memory = Format-Sample (Get-FullSample $a.Pid 'idle')
+            $result.idle.objects = Format-CensusTotals (Get-ObjectCensus $a.Pid)
         } catch { $failed = $true; $result.idle = [ordered]@{ error = "$_" } }
         finally { Stop-App }
     }
@@ -506,6 +793,7 @@ try {
             Start-Sleep -Seconds 5
             $orig = @(Get-PaneLeaves)[0].id
             $start = Get-FullSample $a.Pid 'start' -Settle
+            $census = @(Get-ObjectCensus $a.Pid)
             $cycles = @()
             foreach ($c in 1, 2) {
                 $made = New-Object System.Collections.ArrayList
@@ -549,7 +837,8 @@ try {
                 if (-not (Wait-PaneCount 1 30)) { throw "panes did not close back to 1 ($(@(Get-PaneLeaves).Count) left)" }
                 Start-Sleep -Seconds 3
                 $closed = Get-FullSample $a.Pid "closed $c" -Settle
-                $cycles += [ordered]@{ open = (Format-Sample $open); closed = (Format-Sample $closed) }
+                $census += Get-ObjectCensus $a.Pid
+                $cycles +=[ordered]@{ open = (Format-Sample $open); closed = (Format-Sample $closed) }
             }
             $first = Format-Sample $start
             $result.cycle = [ordered]@{
@@ -568,6 +857,15 @@ try {
                     second_cycle_threads = $cycles[1].closed.threads - $cycles[0].closed.threads
                     second_cycle_gpu_dedicated_mb = $(if ($null -ne $first.gpu_dedicated_mb) { [math]::Round($cycles[1].closed.gpu_dedicated_mb - $cycles[0].closed.gpu_dedicated_mb, 1) } else { $null })
                 }
+            }
+            # T2989: what each cycle left, by kind - kernel handle type,
+            # window class, thread group - and the USER objects that are not
+            # windows at all.
+            $result.cycle.residue = [ordered]@{
+                method = 'object census (handle types: SystemExtendedHandleInformation + ObjectTypesInformation; windows: top-level, child and message-only windows of the pid on the test desktop, by class; threads: by start module and name) at start and after each cycle closed; user_non_window_delta = GetGuiResources(USER) delta minus window-count delta'
+                first_cycle = Format-CensusDelta $census[0] $census[1]
+                second_cycle = Format-CensusDelta $census[1] $census[2]
+                at_start = Format-CensusTotals $census[0]
             }
             if ($null -eq $first.gpu_dedicated_mb) { $result.cycle.gpu_reason = 'GPU Process Memory counters unreadable on this box' }
         } catch { $failed = $true; $result.cycle = [ordered]@{ error = "$_" } }
