@@ -239,6 +239,12 @@ ghoztty +close --target=doc
   — including its answer for a file deleted under the pane: the nearest
   folder that still exists opens instead of a dead click. Clicking into the address field selects the whole
   address; clicking again inside it just moves the caret.
+- **A page in a blade can't take the caret.** The web view is a
+  `ViewerWebView`; while its pane is minimized into a blade, a page focusing an
+  element (`autofocus`, `focus()`) leaves the caret where it is rather than
+  bringing the blade out. The app's own focusing of the pane goes through
+  `ViewerView.focusContent`. See [stacked-panes.md](stacked-panes.md) → Focus
+  brings a pane forward.
 - **Keyboard** (pane-scoped: live only while keyboard focus is inside a
   viewer pane — its page, its nav bar, its find bar, or its feedback composer
   — in any viewer mode):

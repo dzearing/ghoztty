@@ -231,6 +231,7 @@
 				Features/Viewer/ViewerCommands.swift,
 				Features/Viewer/ViewerSplitLeaf.swift,
 				Features/Viewer/ViewerView.swift,
+				Features/Viewer/ViewerWebView.swift,
 				"Ghostty/FullscreenMode+Extension.swift",
 				Ghostty/Ghostty.Error.swift,
 				Ghostty/Ghostty.Event.swift,

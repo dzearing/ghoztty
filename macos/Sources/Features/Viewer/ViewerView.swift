@@ -185,6 +185,10 @@ final class ViewerView: NSView, Codable, ObservableObject {
     static let blankPage = "about:blank"
 
     private(set) var webView: WKWebView!
+
+    /// The viewer is handing its own content the caret (`focusContent`), so
+    /// the web view may take it even while the pane is a blade.
+    private var grantingContentFocus = false
     private var schemeHandler: ViewerSchemeHandler?
     private var titleObservation: NSKeyValueObservation?
     private var pageLoaded = false
@@ -743,8 +747,9 @@ final class ViewerView: NSView, Codable, ObservableObject {
                 config.userContentController.addUserScript(script)
             }
 
-            webView = WKWebView(frame: .zero, configuration: config)
+            webView = ViewerWebView(frame: .zero, configuration: config)
         }
+        (webView as? ViewerWebView)?.mayTakeFocus = { [weak self] in self?.contentMayTakeFocus ?? true }
 
         webView.translatesAutoresizingMaskIntoConstraints = false
         webView.navigationDelegate = self
@@ -960,7 +965,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
         // reliably move the AppKit first responder off the field editor here (a
         // recurring NSHostingView limitation elsewhere in this file), so move it
         // explicitly.
-        window?.makeFirstResponder(contentFocusView)
+        focusContent()
     }
 
     /// Return to the location this pane was opened with (the home button).
@@ -1135,7 +1140,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
     func cancelAddressEditing() {
         // Focus first: resigning the field editor commits whatever was typed
         // into the bar's text binding, so the revert has to land after it.
-        window?.makeFirstResponder(contentFocusView)
+        focusContent()
         addressRevertRequest += 1
         reclaimPageFocus()
     }
@@ -1152,7 +1157,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self, let window = self.window else { return }
             if window.firstResponder === window {
-                window.makeFirstResponder(self.contentFocusView)
+                self.focusContent()
             }
             self.reclaimPageFocus(attempt: attempt + 1)
         }
@@ -1195,7 +1200,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
             // the diff — the same "throw the edit away" contract the address
             // field has.
             setDiffFilter("")
-            window?.makeFirstResponder(contentFocusView)
+            focusContent()
         case .closeFind:
             closeFind()
         case .findNext:
@@ -1390,7 +1395,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
            responder === webView || responder.isDescendant(of: self) {
             return // already ours
         }
-        window.makeFirstResponder(contentFocusView)
+        focusContent()
     }
 
     /// Whether a left-click at `point` (in this view's coordinates) should
@@ -1641,7 +1646,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
             // Hand focus back to the content so the pane is usable again.
             if let responder = window?.firstResponder as? NSView,
                let feedbackHost, responder.isDescendant(of: feedbackHost) {
-                window?.makeFirstResponder(contentFocusView)
+                focusContent()
             }
         }
     }
@@ -2931,7 +2936,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
         // thing the feedback composer does when it closes.
         if let responder = window?.firstResponder as? NSView,
            responder === self || responder.isDescendant(of: self) {
-            window?.makeFirstResponder(contentFocusView)
+            focusContent()
         }
     }
 
@@ -3325,8 +3330,39 @@ final class ViewerView: NSView, Codable, ObservableObject {
 
     override func becomeFirstResponder() -> Bool {
         // Hand focus straight to the content view so scrolling/keyboard work.
-        window?.makeFirstResponder(contentFocusView)
+        focusContent()
         return true
+    }
+
+    /// Give the pane's content the caret. Every focus the APP gives this pane
+    /// comes through here — a click in it, a strip clicked, the pane sidebar,
+    /// `goto_split`, `ghoztty://focus` (`Ghostty.moveFocus` makes the viewer
+    /// first responder, and `becomeFirstResponder` lands here) — so it is
+    /// the one thing that may focus a blade's web view (`contentMayTakeFocus`).
+    func focusContent() {
+        let granting = grantingContentFocus
+        grantingContentFocus = true
+        defer { grantingContentFocus = granting }
+        window?.makeFirstResponder(contentFocusView)
+    }
+
+    /// Whether the web view may take the caret now. Not on its own while the
+    /// pane is minimized into a blade: a page that focuses an element — an
+    /// `autofocus` field after a live reload or a navigation, a script's
+    /// `focus()` — makes WebKit put its web view first responder, and focus
+    /// brings a blade back out (`PaneStackState.noteFocus`). Only the user
+    /// brings a blade out. Anything the app does to focus the pane goes
+    /// through `focusContent`, which may.
+    private var contentMayTakeFocus: Bool {
+        grantingContentFocus || !isMinimizedInBlade
+    }
+
+    /// This pane is drawn as a strip of a stacked row, as last laid out.
+    private var isMinimizedInBlade: Bool {
+        guard let controller = window?.windowController as? BaseTerminalController,
+              let pane = controller.surfaceTree.first(where: { $0.viewerView === self })
+        else { return false }
+        return controller.paneStackState.stackMinimizing(pane.id) != nil
     }
 
     /// End the responder-chain walk of a key the pane's content handed back
@@ -4124,7 +4160,7 @@ extension ViewerView: WKUIDelegate {
 
         // Build the popup's web view from WebKit's configuration and hand it to
         // a new viewer that adopts (never reloads) it.
-        let popupWebView = WKWebView(frame: .zero, configuration: configuration)
+        let popupWebView = ViewerWebView(frame: .zero, configuration: configuration)
         let popup = ViewerView(
             adopting: popupWebView,
             url: navigationAction.request.url,
