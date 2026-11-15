@@ -1,0 +1,16 @@
+{
+  "version": "1.54.21",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "One IPC client that connects and says nothing can no longer hold up every other ghoztty command, or quit." },
+        { "text": "A viewer pane on Windows whose page process crashes now loads its page again instead of staying blank." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The 50 MB of GPU memory left after closing panes is the graphics driver's reuse pool, not something Ghoztty keeps." },
+        { "text": "A pane that sits still on Windows now gives back its GPU render target and font-atlas copies after 3 s." },
+        { "text": "Panes behind a zoom and stashed panes give their GPU memory back on Windows." }
+      ] }
+  ]
+}
