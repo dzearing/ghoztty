@@ -127,8 +127,10 @@ workspace's title from `currentWindowTitle` (kept while it has no window).
   agent. Test: `newWindowIsOnShowInTheKeysTurn`.
 - **A new tab is a new workspace** (`TerminalController.newTab`): there are no
   native tabs (`tabbingMode = .disallowed`). `goto_tab` (previous/next/last/N)
-  and `goto_window` walk the workspaces in the sidebar's order
-  (`TerminalController.sidebarOrder`).
+  and `goto_window` (Cmd-Shift-Up/Down outside hero mode) walk the
+  workspaces in the sidebar's order (`TerminalController.sidebarOrder`,
+  `BaseTerminalController.gotoWindow`; separate mode walks the windows in
+  the same order).
 - **Focus policy is unchanged**: a manual open (Cmd-N, +) puts the new
   workspace on show; a programmatic one (`+new-window` without `--focus`)
   leaves it parked and the workspace on show keeps the window and the caret.
