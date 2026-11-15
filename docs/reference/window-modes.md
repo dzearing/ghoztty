@@ -62,6 +62,12 @@ No view is rebuilt, no process touched, no second `NSWindow` created:
    machine pill, zoom, title (landed at once, never held back),
    `representedURL`, appearance. Then it draws again, takes focus back where it
    was (never into a minimized strip), and its sidebar catches up.
+   The pane that had focus is made first responder **in the same turn**,
+   before the content's first layout in the window: with no first responder
+   there, SwiftUI's focused value reported the last terminal, which became the
+   focused surface and brought its stacked run out — then the restore put the
+   first run back, every blade gliding out and in
+   (`switchingBackDoesNotReplayTheStack`).
 4. The window's shade fades from the old workspace's gradient to the new one's
    (`deskEntrance`, `PaneDeskFade`, 0.35s) — the old desk drawn over the new
    and faded out. Nothing fades in the flat style, which has no desk.
@@ -135,6 +141,13 @@ workspace's title from `currentWindowTitle` (kept while it has no window).
   a window close). A close that needs confirming puts a parked workspace on
   show first, so the sheet has a window and the person sees what closes.
   Undo of a close brings the workspace back on show.
+- **Cmd-N then Cmd-W at once never asks** (either mode): a surface running
+  its own default shell that has had no input (`Surface.fresh_default_shell`,
+  `user_input_sent`: keys, typed/pasted text, `+send-keys`) needs no
+  confirmation, even before its first prompt, when `cursorIsAtPrompt` would
+  still say busy. An explicit command, a re-attached session, or
+  `confirm-close-surface = always` still asks
+  (`aShellClosedBeforeAnyInputDoesNotAsk`).
 - If the window itself closes with workspaces left (not at quit), the next one
   loads a window of its own (`windowDidClose`).
 

@@ -2588,6 +2588,11 @@ keybind: Keybinds = .{},
 /// any confirmation. This can also be set to `always`, which will always
 /// confirm closing a surface, even if shell integration says a process isn't
 /// running.
+///
+/// With `true`, a surface running its default shell (no explicit command, not
+/// re-attached to an earlier session) that has had no input yet closes
+/// without asking — even before the shell has shown its first prompt — so a
+/// window opened by mistake can be closed at once.
 @"confirm-close-surface": ConfirmCloseSurface = .true,
 
 /// Whether or not to quit after the last surface is closed.

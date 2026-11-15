@@ -288,6 +288,104 @@ final class SingleWindowModeTests {
         }
     }
 
+    /// Cmd-N then Cmd-W at once, before the new shell has drawn its first
+    /// prompt: it closes with no "are you sure?" — nothing the user started
+    /// can be running in a shell they have sent nothing to. Once they run
+    /// something in it, closing asks again; an explicit command always asks.
+    @Test func aShellClosedBeforeAnyInputDoesNotAsk() async throws {
+        let ghostty = try self.ghostty
+        let first = TerminalController.newWindow(ghostty, withBaseConfig: nil, activate: true)
+        opened.append(first)
+        _ = await poll(timeout: 10) { first.window?.isVisible == true }
+        let window = try #require(first.window)
+        _ = await poll(timeout: 15) {
+            first.focusedSurface.map { BaseTerminalController.remoteInheritance(of: $0).sessionId != nil } ?? false
+        }
+
+        // Cmd-N, and Cmd-W as soon as the new workspace is on show.
+        ghostty.newWindow(surface: try #require(first.focusedSurface?.surface))
+        #expect(await poll(timeout: 5) { self.host.active !== first })
+        let fresh = try #require(host.active)
+        opened.append(fresh)
+        let pane = try #require(fresh.surfaceTree.first)
+        #expect(!pane.needsConfirmQuit, "a shell that has had no input asks to be confirmed")
+        fresh.closeWindow(nil)
+        #expect(window.attachedSheet == nil, "closing it put up a confirmation")
+        #expect(fresh.windowHasClosed)
+        #expect(host.active === first)
+
+        // Run something in a shell: now its close is confirmed.
+        ghostty.newWindow(surface: try #require(first.focusedSurface?.surface))
+        #expect(await poll(timeout: 5) { self.host.active !== first })
+        let used = try #require(host.active)
+        opened.append(used)
+        let usedPane = try #require(used.surfaceTree.first)
+        _ = await poll(timeout: 10) { usedPane.surfaceView?.surface != nil }
+        await settle(1.5)
+        let typed = try await run("send-keys", ["--target=\(usedPane.id.uuidString)", "--keys=sleep 30\n"])
+        #expect(typed.success, "\(typed.error ?? "")")
+        #expect(await poll(timeout: 10) { usedPane.needsConfirmQuit }, "a shell running a command closed without asking")
+
+        // An explicit command asks from the start.
+        let commanded = try await run("new-window", ["--target=explicit-cmd", "--command=/bin/cat"])
+        #expect(commanded.success)
+        var withCommand: TerminalController?
+        _ = await poll(timeout: 5) {
+            withCommand = TerminalController.all.first { $0.windowName == "explicit-cmd" }
+            return withCommand?.surfaceTree.first?.surfaceView?.surface != nil
+        }
+        let explicit = try #require(withCommand)
+        opened.append(explicit)
+        #expect(await poll(timeout: 5) { explicit.surfaceTree.first?.needsConfirmQuit == true })
+    }
+
+    /// A workspace whose row has stacked panes (blades) comes back on show
+    /// exactly as it was left: no glide, the same panes on show.
+    @Test func switchingBackDoesNotReplayTheStack() async throws {
+        let (a, first) = try await workspace(activate: true)
+        var tree = a.surfaceTree
+        var last = first
+        for _ in 0..<5 {
+            let pane = try terminal()
+            tree = try tree.inserting(view: pane, at: last, direction: .right)
+            last = pane
+        }
+        a.surfaceTree = tree
+        let window = try #require(a.window)
+        window.setContentSize(NSSize(width: 1000, height: 600))
+        await settle(1.5)
+
+        func stage(_ c: TerminalController) -> PaneStageView? {
+            func find(_ v: NSView) -> PaneStageView? {
+                if let s = v as? PaneStageView { return s }
+                for sub in v.subviews { if let s = find(sub) { return s } }
+                return nil
+            }
+            return c.contentContainer.flatMap(find)
+        }
+        let stageA = try #require(stage(a))
+        #expect(await poll(timeout: 5) { !stageA.isGlidingForTesting })
+        let before = stageA.runsForTesting
+        try #require(before?.count ?? 0 > 0)
+
+        let (b, _) = try await workspace()
+        host.show(b)
+        await settle(0.5)
+        var glided = false
+        var runs: [String] = []
+        host.show(a)
+        let deadline = Date().addingTimeInterval(1)
+        while Date() < deadline {
+            if stageA.isGlidingForTesting { glided = true }
+            let r = String(describing: stageA.runsForTesting)
+            if runs.last != r { runs.append(r) }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        #expect(runs.count == 1, "the stack changed on the way back: \(runs)")
+        #expect(!glided, "coming back on show replayed a glide")
+        #expect(stageA.runsForTesting == before)
+    }
+
     /// Tab navigation walks the workspaces in the sidebar's order.
     @Test func nextAndPreviousTabWalkTheWorkspaces() async throws {
         let (a, _) = try await workspace()

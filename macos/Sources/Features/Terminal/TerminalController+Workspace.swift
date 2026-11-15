@@ -153,8 +153,20 @@ extension TerminalController {
         let focus = parkedFocus.flatMap { pane in surfaceTree.contains(where: { $0 === pane }) ? pane : nil }
             ?? focusedPane
         parkedFocus = nil
-        if key, let focus {
-            Ghostty.moveFocus(to: paneOnShow(focus))
+        if let focus {
+            let target = paneOnShow(focus)
+            let responder: NSView? = target.surfaceView ?? target.viewerView
+            if let window, let responder, responder.window === window {
+                // Now, before the content's first layout in the window: with
+                // no first responder there, SwiftUI's focused value reports
+                // the LAST terminal, which became the focused surface and
+                // brought its stacked run out — then the restore put the
+                // first run back, every blade gliding out and back in.
+                window.makeFirstResponder(responder)
+            } else if key {
+                // Not laid out yet (a workspace shown as it opens).
+                Ghostty.moveFocus(to: target)
+            }
         }
         DispatchQueue.main.async { [weak self] in
             self?.syncFocusToSurfaceTree()
