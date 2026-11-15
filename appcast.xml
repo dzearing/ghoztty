@@ -1338,5 +1338,38 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.54.4/Ghoztty-1.54.4-arm64.dmg" type="application/octet-stream" sparkle:edSignature="mlT+p5gvfJftJYwOQX07THnuO1tBMQXWuiTgHgsPwIx91jFHJQM3lt2LTxa8zp5np30KM/UOMbbZ5g1RN7PBAg==" length="27703476" />
         </item>
+        <item>
+            <title>Version 1.54.5</title>
+            <sparkle:version>1.54.5</sparkle:version>
+            <sparkle:shortVersionString>1.54.5</sparkle:shortVersionString>
+            <pubDate>Sun, 15 Nov 2026 13:42:36 +0000</pubDate>
+            <description>{
+  "version": "1.54.5",
+  "sections": [
+    { "title": "Memory",
+      "items": [
+        { "title": "Idle panes give back their graphics memory", "text": "A terminal that has not drawn anything for a few seconds now releases its spare render targets and font-atlas copies, and picks them up again the moment it draws. With many panes open and most of them sitting still, graphics memory drops by more than half." },
+        { "title": "Stashed and zoomed-over panes stop drawing", "text": "A pane you stashed, or one hidden behind a zoomed pane, no longer renders every frame of its output into memory nobody is looking at." }
+      ] },
+    { "title": "Command line",
+      "items": [
+        { "title": "One stuck command no longer blocks the rest", "text": "A `ghoztty +…` command that connects and goes quiet, or one that is waiting on a slow split, used to hold up every other command and every status and banner hook in every pane. Each command is now served on its own." },
+        { "title": "Quitting can't hang on a command in flight", "text": "Quitting while a command or hook was mid-flight could beachball the app. It now quits cleanly." },
+        { "title": "Closed windows leave the list at once", "text": "`ghoztty +list` no longer shows a window that has already been closed." }
+      ] },
+    { "title": "Viewer panes",
+      "items": [
+        { "title": "A crashed page comes back", "text": "If a viewer pane's web process dies, the pane reloads its content instead of staying blank until you reload it by hand." },
+        { "title": "Lighter `git-status:` panes", "text": "The live diff no longer queues up work on large repositories when one refresh takes longer than the next is due, and clicking a file no longer waits behind a refresh." }
+      ] },
+    { "title": "Responsiveness",
+      "items": [
+        { "text": "Saving the window layout no longer runs on the main thread every time a pane's banner changes, and moving the mouse over a terminal no longer redraws its whole pane." }
+      ] }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.54.5/Ghoztty-1.54.5-arm64.dmg" type="application/octet-stream" sparkle:edSignature="ug66uDUDjKBSo8B0yIQwsvLJwE+ZWBjTZFeYeYfIUIBkl8m+Ax7WcINK+ejpxQ48YPAJnaLYxW3K3vwlC/N/Aw==" length="27718680" />
+        </item>
     </channel>
 </rss>
