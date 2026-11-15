@@ -1594,15 +1594,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 // to happen here, while they match the render state.
                 const seams: ?[]const ?terminal.hard_wrap.Seam = seams: {
                     // Skip the work when no regex link can highlight this
-                    // frame, by the same conditions renderCellMap applies.
-                    const mouse = state.mouse;
-                    const needed = for (self.config.links.links) |entry| switch (entry.highlight) {
-                        .always => break true,
-                        .always_mods => |v| if (mouse.mods.equal(v)) break true,
-                        .hover => if (mouse.point != null) break true,
-                        .hover_mods => |v| if (mouse.point != null and mouse.mods.equal(v)) break true,
-                    } else false;
-                    if (!needed) break :seams null;
+                    // frame, by the same predicate renderCellMap applies.
+                    if (!self.config.links.canHighlight(
+                        state.mouse.point,
+                        state.mouse.mods,
+                    )) break :seams null;
                     const pins = self.terminal_state.row_data.items(.pin);
                     if (pins.len == 0) break :seams null;
                     const out = arena_alloc.alloc(?terminal.hard_wrap.Seam, pins.len) catch break :seams null;

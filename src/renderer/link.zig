@@ -54,6 +54,26 @@ pub const Set = struct {
         alloc.free(self.links);
     }
 
+    /// True when at least one link's highlight conditions can be met for
+    /// this mouse state, i.e. when `renderCellMap` could produce a match.
+    /// With the default links (hover + Ctrl/Cmd) this is false on every
+    /// frame where the modifier is not held, so the caller (and
+    /// `renderCellMap` itself) can skip building the viewport string and
+    /// its per-byte coordinate map entirely (T2971).
+    pub fn canHighlight(
+        self: *const Set,
+        mouse_viewport: ?point.Coordinate,
+        mouse_mods: inputpkg.Mods,
+    ) bool {
+        for (self.links) |link| switch (link.highlight) {
+            .always => return true,
+            .always_mods => |v| if (mouse_mods.equal(v)) return true,
+            .hover => if (mouse_viewport != null) return true,
+            .hover_mods => |v| if (mouse_viewport != null and mouse_mods.equal(v)) return true,
+        };
+        return false;
+    }
+
     /// Fills matches with the matches from regex link matches.
     ///
     /// `seams`, if set, are the TUI hard wraps of the render state's rows
@@ -69,8 +89,11 @@ pub const Set = struct {
         mouse_viewport: ?point.Coordinate,
         mouse_mods: inputpkg.Mods,
     ) !void {
-        // Fast path, not very likely since we have default links.
-        if (self.links.len == 0) return;
+        // Fast path: no link can highlight this frame (no links at all, or
+        // the default hover+mods links with the modifier not held). The
+        // viewport string and byte map below cost cols x rows of
+        // allocation per frame, so never build them for nothing (T2971).
+        if (!self.canHighlight(mouse_viewport, mouse_mods)) return;
 
         // Convert our render state to a string + byte map.
         var builder: std.Io.Writer.Allocating = .init(alloc);
@@ -329,6 +352,98 @@ test "renderCellMap mods no match" {
     try testing.expect(!result.contains(.{ .x = 3, .y = 0 }));
     try testing.expect(!result.contains(.{ .x = 1, .y = 1 }));
     try testing.expect(!result.contains(.{ .x = 1, .y = 2 }));
+}
+
+test "canHighlight: each highlight kind against mouse state" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const ctrl: inputpkg.Mods = .{ .ctrl = true };
+    const vp: point.Coordinate = .{ .x = 1, .y = 0 };
+
+    var empty = try Set.fromConfig(alloc, &.{});
+    defer empty.deinit(alloc);
+    try testing.expect(!empty.canHighlight(vp, ctrl));
+
+    var always = try Set.fromConfig(alloc, &.{
+        .{ .regex = "AB", .action = .{ .open = {} }, .highlight = .{ .always = {} } },
+    });
+    defer always.deinit(alloc);
+    try testing.expect(always.canHighlight(null, .{}));
+
+    var always_mods = try Set.fromConfig(alloc, &.{
+        .{ .regex = "AB", .action = .{ .open = {} }, .highlight = .{ .always_mods = ctrl } },
+    });
+    defer always_mods.deinit(alloc);
+    try testing.expect(!always_mods.canHighlight(vp, .{}));
+    try testing.expect(always_mods.canHighlight(null, ctrl));
+
+    var hover = try Set.fromConfig(alloc, &.{
+        .{ .regex = "AB", .action = .{ .open = {} }, .highlight = .{ .hover = {} } },
+    });
+    defer hover.deinit(alloc);
+    try testing.expect(!hover.canHighlight(null, ctrl));
+    try testing.expect(hover.canHighlight(vp, .{}));
+
+    var hover_mods = try Set.fromConfig(alloc, &.{
+        .{ .regex = "AB", .action = .{ .open = {} }, .highlight = .{ .hover_mods = ctrl } },
+    });
+    defer hover_mods.deinit(alloc);
+    try testing.expect(!hover_mods.canHighlight(null, ctrl));
+    try testing.expect(!hover_mods.canHighlight(vp, .{}));
+    try testing.expect(hover_mods.canHighlight(vp, ctrl));
+}
+
+test "renderCellMap builds nothing when no link can highlight (T2971)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var t: terminal.Terminal = try .init(alloc, .{
+        .cols = 5,
+        .rows = 3,
+    });
+    defer t.deinit(alloc);
+
+    var s = t.vtStream();
+    defer s.deinit();
+    s.nextSlice("1ABCD2EFGH\r\n3IJKL");
+
+    var state: terminal.RenderState = .empty;
+    defer state.deinit(alloc);
+    try state.update(alloc, &t);
+
+    // The default link shape: highlight on hover with a modifier held.
+    var set = try Set.fromConfig(alloc, &.{
+        .{
+            .regex = "AB",
+            .action = .{ .open = {} },
+            .highlight = .{ .hover_mods = .{ .ctrl = true } },
+        },
+    });
+    defer set.deinit(alloc);
+
+    // An allocator that fails its first request: building the viewport
+    // string or its byte map would surface error.OutOfMemory.
+    var failing: std.testing.FailingAllocator = .init(alloc, .{ .fail_index = 0 });
+    const fa = failing.allocator();
+
+    var result: terminal.RenderState.CellSet = .empty;
+    defer result.deinit(alloc);
+
+    // Hovering without the modifier, and the modifier without hovering:
+    // nothing may be allocated for either frame.
+    try set.renderCellMap(fa, &result, &state, null, .{ .x = 1, .y = 0 }, .{});
+    try set.renderCellMap(fa, &result, &state, null, null, .{ .ctrl = true });
+    try testing.expectEqual(@as(usize, 0), failing.allocations);
+    try testing.expectEqual(@as(usize, 0), result.count());
+
+    // Positive control: with the modifier held over the link, the same
+    // failing allocator is reached (the string writer reports it as its
+    // own error), so the skip above was real.
+    try testing.expect(!failing.has_induced_failure);
+    if (set.renderCellMap(fa, &result, &state, null, .{ .x = 1, .y = 0 }, .{ .ctrl = true })) |_| {
+        return error.TestExpectedError;
+    } else |_| {}
+    try testing.expect(failing.has_induced_failure);
 }
 
 test "renderCellMap URL across a TUI hard wrap" {
