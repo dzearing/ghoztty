@@ -2739,22 +2739,39 @@ class BaseTerminalController: NSWindowController,
     /// terminals are released on the close's clock (`windowWillClose`).
     private(set) var windowHasClosed = false
 
+    /// How long past the undo's expiry a closed window is given to be freed
+    /// before its terminals are released from under it.
+    static let heldClosedWindowGrace: TimeInterval = 2
+
+    /// See `windowWillClose`: this controller's window closed, the close can
+    /// no longer be undone, and the controller is still here.
+    private func releaseTerminalsOfHeldClosedWindow() {
+        guard windowHasClosed else { return }
+        for pane in surfaceTree where !isAliveInAnotherWindow(pane) {
+            pane.surfaceView?.releaseClosedSurface()
+        }
+    }
+
     func windowWillClose(_ notification: Notification) {
         guard let window else { return }
         windowHasClosed = true
 
-        // Free this window's terminals — their processes or agent sessions —
-        // once the close can no longer be undone, without waiting for the
-        // window to be deallocated: a closed window that something still held
-        // kept every shell in it running for the life of the app. An undone
-        // close puts the panes in a new window's tree, which the release
-        // finds and leaves alone. Not at quit or sign-out, where the sessions
-        // are kept for restore and the process is going away regardless.
+        // A closed window is freed once its close can no longer be undone,
+        // and its terminals with it. If something still holds the window by
+        // then, free the terminals anyway — their processes or agent
+        // sessions — rather than leave every shell in it running for as long
+        // as the object lives. Only then: a window freed on time must take
+        // the ordinary path untouched, so this looks a little after the undo
+        // has expired, and finds nothing to do unless the controller is
+        // still alive. An undone close has put the panes in a new window's
+        // tree, which is checked. Not at quit or sign-out, where the
+        // sessions are kept for restore and the process is going away.
         do {
             let delegate = NSApp.delegate as? AppDelegate
             if delegate?.isQuitting != true && delegate?.isSigningOut != true {
-                for view in surfaceTree where !isAliveInAnotherWindow(view) {
-                    ClosedPaneRelease.schedule(view, undoWindow: undoExpiration)
+                let delay = undoExpiration.timeInterval + Self.heldClosedWindowGrace
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.releaseTerminalsOfHeldClosedWindow()
                 }
             }
         }

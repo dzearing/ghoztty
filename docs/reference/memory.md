@@ -44,13 +44,19 @@ the audit worktree; methodology there).
   the app's first window has been seen held for the life of the process by
   an owner `leaks` cannot name. `NSApp.windows` and `orderedWindows` keep
   listing such a window, and its tree keeps naming its panes. So
-  `windowWillClose` sets `windowHasClosed` and schedules
-  `ClosedPaneRelease` for every terminal in the window (not at quit or
-  sign-out): its shell or agent session ends when the close can no longer be
-  undone. `TerminalController.all`, the AppleScript/`+list` controller lists
+  `windowWillClose` sets `windowHasClosed` and, `heldClosedWindowGrace`
+  (2 s) after the undo expires, looks again (not at quit or sign-out): if
+  the controller is still alive it releases the window's terminals
+  (`releaseTerminalsOfHeldClosedWindow`), so their shells or agent sessions
+  end. A window freed on time never reaches that — releasing a surface under
+  a tree that is about to be freed anyway was seen to delay the free. `TerminalController.all`, the AppleScript/`+list` controller lists
   and `ClosedPaneRelease.isInAnyWindow` all leave closed windows out. Before
   this a held closed window kept every shell in it running and stayed in
-  `ghoztty +list`. Test: `CloseWithoutConfirmationTests`.
+  `ghoztty +list`. Covered by the session-persistence E2E's setup.
+- **`closeWindowImmediately` closes inside its own autorelease pool**, so a
+  window it closes is not left waiting on a pool that is drained later.
+  Cheap and correct, but not shown to be what frees a lingering window (see
+  "Known, not fixed").
 - **A closure stored on window-owned state must not capture that state
   strongly**, nor the tree for longer than the state lives. `PaneStackState`
   stores the grid's layout closure (`noteGrid` → `layoutGrid`); capturing the
@@ -77,6 +83,29 @@ the audit worktree; methodology there).
 
 ### Known, not fixed
 
+- **The first window a process closes can outlive its close.** Seen two
+  ways. In the app: its first window, closed while the app is in the
+  background, was still alive 15 s later (`heap` counts two
+  `TerminalController`s, one window on show). In the test host: when the
+  first window closed in the process is closed through
+  `closeSurface(withConfirmation: false)` / `closeWindowImmediately`, it is
+  either freed in under half a second or still alive 15 s later — and in the
+  runs where it lingers, the next window closed (`closingAWindowFreesItsPanes`)
+  is still alive 12 s after its close too. Which of the two a run gets
+  alternated run by run, so something one run leaves behind decides the
+  next. The holder is not known (`leaks` shows only AppKit's per-view block;
+  it is not the undo registration, which was ruled out). The costs are dealt
+  with at the close (above): the window is not listed or found by name, and
+  its terminals are released after the undo window. What stays is the
+  controller and its views. `closingAWindowFreesItsPanes` — the first test
+  of its suite, so the first window its process closes — fails for the same
+  reason in roughly one run in four on a machine where the debug agent has
+  recently been reset (2 of 8 with the `windowWillClose` changes above, 3 of
+  10 without them: they are not the cause). Suspected, not shown: the first
+  pane's agent start-up holding its window. A Swift test that closes a
+  window first in the process raises that to about half, which is why the
+  close-without-confirmation behaviour is covered by the E2E and not by a
+  unit test.
 - **Closing a split leaves up to ~2 of that window's closed pane views
   alive until the window's tree next changes shape** (or the window closes).
   Present at least since v1.30.0. The chain runs pane ← its leaf node ← an

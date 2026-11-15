@@ -359,9 +359,17 @@ struct PaneTeardownTests {
     }
 
     /// What occlusion gives back: every terminal of four large windows frees
-    /// its three render targets while occluded, so the footprint drops by
-    /// most of what the windows' targets cost (~3 x width x height x 4 bytes
-    /// each). Writes the numbers to /tmp/ghoztty-occlusion-footprint.txt.
+    /// its render targets while occluded and holds them again once it draws,
+    /// cycle after cycle, without growing.
+    ///
+    /// Measured on what the renderer's frames hold
+    /// (`ghostty_surface_frame_memory`), not on the process footprint: the
+    /// footprint also carries the GPU driver's own pool (~225 MB, dirty for a
+    /// few seconds after any draw anywhere in the process, then reclaimed —
+    /// docs/reference/memory.md), which moved the number by more than the
+    /// targets do and failed this test on runs where the pool happened to be
+    /// warm or cold at the wrong moment. The footprint is still written to
+    /// /tmp/ghoztty-occlusion-footprint.txt, for reading.
     @Test func occludedTerminalsGiveBackTheirRenderTargets() async throws {
         let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
         let app = try #require(ghostty.app)
@@ -381,35 +389,41 @@ struct PaneTeardownTests {
         await settle(2)
         let surfaces = panes.compactMap { $0.surface }
         #expect(surfaces.count == 4)
-        // Three cycles of occlude / show + redraw: the drop each time, and no
-        // growth from cycle to cycle (targets re-created, the old ones freed).
-        var log: [String] = []
-        var drops: [Double] = []
-        var shownAt: [Double] = []
-        for cycle in 0..<3 {
-            // Each terminal draws something new, so it is on fresh targets.
-            panes.forEach { $0.surfaceView?.surfaceModel?.sendText("cycle \(cycle)\r") }
-            await settle(1.5)
-            let shown = footprintMB()
-            surfaces.forEach { ghostty_surface_set_occlusion($0, false) }
-            await settle(1.5)
-            let hidden = footprintMB()
-            surfaces.forEach { ghostty_surface_set_occlusion($0, true) }
-            drops.append(shown - hidden)
-            shownAt.append(shown)
-            log.append("cycle \(cycle): shown \(Int(shown)) MB, occluded \(Int(hidden)) MB")
-        }
-        // Three 1200x800-point targets per terminal; the layer keeps the one
-        // on screen alive, so at least two are given back.
+
+        // One render target of a pane this size, give or take its chrome.
         let scale = controllers.first?.window?.backingScaleFactor ?? 1
-        let perTarget = 1200 * 800 * scale * scale * 4 / 1_048_576
-        log.append("scale \(scale), ~\(Int(perTarget)) MB per target")
+        let perTarget = UInt64(1200 * 800 * scale * scale * 4)
+        func held() -> [UInt64] { surfaces.map { ghostty_surface_frame_memory($0).target_bytes } }
+
+        // Three cycles of draw / occlude / show.
+        var log: [String] = []
+        var shownAt: [UInt64] = []
+        for cycle in 0..<3 {
+            // Each terminal draws something new, so its frames hold targets.
+            panes.forEach { $0.surfaceView?.surfaceModel?.sendText("cycle \(cycle)\r") }
+            let drew = await poll(timeout: 5) { held().allSatisfy { $0 > perTarget / 2 } }
+            #expect(drew, "cycle \(cycle): a shown terminal holds no render target: \(held())")
+            let shown = held().reduce(0, +)
+            let shownFootprint = footprintMB()
+
+            surfaces.forEach { ghostty_surface_set_occlusion($0, false) }
+            let gaveBack = await poll(timeout: 5) { held().allSatisfy { $0 <= 3 * 4 } }
+            #expect(gaveBack, "cycle \(cycle): an occluded terminal kept its targets: \(held())")
+            let hiddenFootprint = footprintMB()
+            surfaces.forEach { ghostty_surface_set_occlusion($0, true) }
+
+            shownAt.append(shown)
+            log.append("cycle \(cycle): targets held shown \(shown / 1_048_576) MB; "
+                + "footprint shown \(Int(shownFootprint)) MB, occluded \(Int(hiddenFootprint)) MB")
+        }
+        log.append("scale \(scale), ~\(perTarget / 1_048_576) MB per target")
         try? (log.joined(separator: "\n") + "\n")
             .write(toFile: "/tmp/ghoztty-occlusion-footprint.txt", atomically: true, encoding: .utf8)
-        for drop in drops {
-            #expect(drop > 4 * 2 * perTarget * 0.66, "occluding 4 terminals gave back only \(drop) MB")
+
+        // Showing again re-creates targets; it does not pile new ones on the
+        // old: never more than the swap chain's three per terminal.
+        for shown in shownAt {
+            #expect(shown <= 4 * 3 * perTarget, "terminals hold more than their swap chains: \(shownAt)")
         }
-        #expect(shownAt[2] - shownAt[0] < 4 * perTarget,
-                "showing again grew the footprint: \(shownAt)")
     }
 }
