@@ -1,8 +1,8 @@
 {
     "guard":  "title-churn-redraw",
     "script":  "test/win32/title-churn-redraw.ps1",
-    "generated":  "2026-11-14T23:16:59-08:00",
-    "commit":  "19581323a",
+    "generated":  "2026-11-14T23:28:02-08:00",
+    "commit":  "879fba35a",
     "uncommitted":  [
 
                     ],

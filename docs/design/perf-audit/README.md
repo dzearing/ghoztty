@@ -49,6 +49,11 @@ absolute floor. Memory has ±15%. Handle and object counts have ±10%.
   needed their own family (`delta_mb`), because the two runs read 27.3 MB and
   36.1 MB for the same delta. The script carries that family; the JSON
   files' own tolerance block predates it.
+- `baseline-2.json` is the audit-2 baseline (T3072, commit 879fba35a, both
+  builds). Against baseline-1, 42 of 198 metrics are out of tolerance, all of
+  them better. See `audit-2.md`.
+- `audit-1.md` and `audit-2.md` are the audit write-ups; `audit-N/` holds each
+  area's detail.
 
 What baseline-1 already shows. These numbers are measured, not explained;
 explaining them is the area audits' job:

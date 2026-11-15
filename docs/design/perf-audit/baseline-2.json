@@ -1,0 +1,452 @@
+{
+    "schema":  "ghoztty-perf-baseline/1",
+    "task":  "T2958",
+    "generated":  "2026-11-14T23:04:52.4225655-08:00",
+    "commit":  "879fba35a",
+    "machine":  {
+                    "cpu":  "13th Gen Intel(R) Core(TM) i9-13900K",
+                    "cores":  32,
+                    "ram_gb":  63.7,
+                    "gpu":  "Virtual Desktop Monitor; Parsec Virtual Display Adapter; NVIDIA GeForce RTX 4090",
+                    "os":  "10.0.26300"
+                },
+    "parameters":  {
+                       "idle_seconds":  60,
+                       "busy_mb":  64,
+                       "busy_text":  "ascii",
+                       "resize_seconds":  8,
+                       "agent_sessions":  4,
+                       "attach_cycles":  3
+                   },
+    "tolerance":  {
+                      "cpu_pct":  {
+                                      "abs":  0.5,
+                                      "note":  "percent of one core",
+                                      "rel":  0.5
+                                  },
+                      "wakeups":  {
+                                      "abs":  20,
+                                      "note":  "context switches per second",
+                                      "rel":  0.35
+                                  },
+                      "seconds":  {
+                                      "abs":  0.5,
+                                      "note":  "wall or CPU seconds",
+                                      "rel":  0.3
+                                  },
+                      "mb":  {
+                                 "abs":  5,
+                                 "note":  "megabytes",
+                                 "rel":  0.15
+                             },
+                      "delta_mb":  {
+                                       "abs":  15,
+                                       "note":  "megabytes left behind by an open/close cycle: a difference of two readings, so it carries the noise of both (run1 27.3 vs run2 36.1 MB on 2026-11-14)",
+                                       "rel":  0.5
+                                   },
+                      "gpu_mb":  {
+                                     "abs":  5,
+                                     "note":  "GPU megabytes",
+                                     "rel":  0.2
+                                 },
+                      "gpu_pct":  {
+                                      "abs":  3,
+                                      "note":  "GPU engine percent",
+                                      "rel":  0.75
+                                  },
+                      "handles":  {
+                                      "abs":  30,
+                                      "note":  "kernel handles",
+                                      "rel":  0.1
+                                  },
+                      "objects":  {
+                                      "abs":  10,
+                                      "note":  "GDI or USER objects",
+                                      "rel":  0.1
+                                  },
+                      "threads":  {
+                                      "abs":  3,
+                                      "note":  "threads",
+                                      "rel":  0.15
+                                  },
+                      "count":  {
+                                    "abs":  1,
+                                    "note":  "process or session counts",
+                                    "rel":  0
+                                }
+                  },
+    "builds":  {
+                   "debug":  {
+                                 "exe":  "D:\\git\\ghoztty\\zig-out\\bin\\ghoztty.exe",
+                                 "build":  "Debug",
+                                 "version":  "Ghostty 1.4.0-users-dzearing-windows-amd64-+879fba35a  Version (this binary)   - version: 1.4.0-users-dzearing-windows-amd64-+879fba35a   - commit: 879fba35a (this binary)   - channel: tip   - update check: off (not the installed release) Build Config   - Zig version   : 0.15.2   - build mode    : .Debug   - app runtime   : .win32   - font engine   : .freetype_windows   - renderer      : renderer.generic.Renderer(renderer.OpenGL)   - libxev        : iocp   - relay sign-in : configured (309808407086-4nd7gro7ms2md6ods0gun5jc5s9li3ia.apps.googleusercontent.com) Running Instance (the app running now, not this binary)   - none detected",
+                                 "idle":  {
+                                              "method":  "1 window 1400x900, 1 cmd pane at its prompt, persistence off; 10 s settle, then CPU time and summed thread context switches (NtQuerySystemInformation class 5) over 60 s; GPU Engine(pid_*) utilisation summed over engines, 1 s samples, first 30 s",
+                                              "cpu_pct":  0.23,
+                                              "wakeups_per_s":  150.8,
+                                              "threads":  71,
+                                              "gpu_engine_pct":  0.03,
+                                              "gpu_engine_peak_pct":  0.04,
+                                              "memory":  {
+                                                             "private_mb":  197.5,
+                                                             "working_set_mb":  142.2,
+                                                             "handles":  787,
+                                                             "gdi":  35,
+                                                             "user":  42,
+                                                             "threads":  71,
+                                                             "gpu_dedicated_mb":  57.6,
+                                                             "gpu_shared_mb":  14.3,
+                                                             "child_procs":  3,
+                                                             "child_private_mb":  6.6
+                                                         }
+                                          },
+                                 "busy":  {
+                                              "method":  "+split a cmd pane running `type` of a 64 MB file (108-char ASCII lines) then writing a marker; wall time from the split to the marker, app CPU over the same span; GPU Engine(pid_*) summed, 1 s samples",
+                                              "output_mb":  64,
+                                              "wall_s":  34.5,
+                                              "cpu_s":  16.016,
+                                              "cpu_pct":  46.42,
+                                              "wakeups_per_s":  25936.8,
+                                              "gpu_engine_pct":  1.07,
+                                              "gpu_engine_peak_pct":  1.43
+                                          },
+                                 "resize":  {
+                                                "method":  "SetWindowPos to a new size every 50 ms for 8 s (2 panes open, one holding the busy output); app CPU and GPU Engine over the span",
+                                                "resizes":  105,
+                                                "cpu_pct":  32.17,
+                                                "wakeups_per_s":  4155.8,
+                                                "gpu_engine_pct":  0.78,
+                                                "gpu_engine_peak_pct":  0.96
+                                            },
+                                 "cycle":  {
+                                               "method":  "one window, persistence off, cmd panes: settled sample (lib\\ProcessMemory.ps1 Get-Sample + working set) at start, with 10 panes open over 3 tabs (ctrl+shift+t x2, then +split 3/2/2), and after +close of every added pane plus the 1 s undo window; the cycle runs twice. GPU memory is the GPU Process Memory counter set summed over adapters.",
+                                               "start":  {
+                                                             "private_mb":  197.3,
+                                                             "working_set_mb":  141,
+                                                             "handles":  794,
+                                                             "gdi":  35,
+                                                             "user":  42,
+                                                             "threads":  75,
+                                                             "gpu_dedicated_mb":  52.6,
+                                                             "gpu_shared_mb":  13.5,
+                                                             "child_procs":  3,
+                                                             "child_private_mb":  9.7
+                                                         },
+                                               "cycle1":  {
+                                                              "open":  {
+                                                                           "private_mb":  673.6,
+                                                                           "working_set_mb":  413.6,
+                                                                           "handles":  1402,
+                                                                           "gdi":  71,
+                                                                           "user":  123,
+                                                                           "threads":  115,
+                                                                           "gpu_dedicated_mb":  228.3,
+                                                                           "gpu_shared_mb":  74.8,
+                                                                           "child_procs":  21,
+                                                                           "child_private_mb":  86.3
+                                                                       },
+                                                              "closed":  {
+                                                                             "private_mb":  568.3,
+                                                                             "working_set_mb":  358,
+                                                                             "handles":  1142,
+                                                                             "gdi":  58,
+                                                                             "user":  100,
+                                                                             "threads":  113,
+                                                                             "gpu_dedicated_mb":  107.3,
+                                                                             "gpu_shared_mb":  66.9,
+                                                                             "child_procs":  3,
+                                                                             "child_private_mb":  6.6
+                                                                         }
+                                                          },
+                                               "cycle2":  {
+                                                              "open":  {
+                                                                           "private_mb":  695.2,
+                                                                           "working_set_mb":  438.6,
+                                                                           "handles":  1408,
+                                                                           "gdi":  71,
+                                                                           "user":  129,
+                                                                           "threads":  113,
+                                                                           "gpu_dedicated_mb":  228.2,
+                                                                           "gpu_shared_mb":  81.8,
+                                                                           "child_procs":  21,
+                                                                           "child_private_mb":  81.3
+                                                                       },
+                                                              "closed":  {
+                                                                             "private_mb":  602.5,
+                                                                             "working_set_mb":  390.4,
+                                                                             "handles":  1157,
+                                                                             "gdi":  58,
+                                                                             "user":  107,
+                                                                             "threads":  113,
+                                                                             "gpu_dedicated_mb":  107.3,
+                                                                             "gpu_shared_mb":  86.9,
+                                                                             "child_procs":  3,
+                                                                             "child_private_mb":  6.6
+                                                                         }
+                                                          },
+                                               "leak":  {
+                                                            "first_cycle_private_mb":  371,
+                                                            "second_cycle_private_mb":  34.2,
+                                                            "second_cycle_handles":  15,
+                                                            "second_cycle_gdi":  0,
+                                                            "second_cycle_user":  7,
+                                                            "second_cycle_threads":  0,
+                                                            "second_cycle_gpu_dedicated_mb":  0
+                                                        }
+                                           },
+                                 "agent":  {
+                                               "method":  "persistence on; agent started by a throwaway app, then measured: idle = 30 s CPU and context switches with 1 attached session; per-session = (private bytes, and its ConPTY/shell descendants\u0027 private bytes) delta after 4 +split panes divided by the +sessions --json delta; attach/detach = app killed (sessions stay pinned) then relaunched (restore re-attaches), 3 times, settled agent sample after each",
+                                               "idle_cpu_pct":  0.1,
+                                               "idle_wakeups_per_s":  4.7,
+                                               "base":  {
+                                                            "private_mb":  11.7,
+                                                            "working_set_mb":  20.1,
+                                                            "handles":  143,
+                                                            "gdi":  0,
+                                                            "user":  1,
+                                                            "threads":  14,
+                                                            "gpu_dedicated_mb":  0,
+                                                            "gpu_shared_mb":  0,
+                                                            "child_procs":  3,
+                                                            "child_private_mb":  13.5
+                                                        },
+                                               "sessions_base":  1,
+                                               "sessions_after":  5,
+                                               "per_session_private_mb":  3.2,
+                                               "per_session_child_private_mb":  12.5,
+                                               "attach_cycles":  [
+                                                                     {
+                                                                         "detached":  {
+                                                                                          "handles":  155,
+                                                                                          "threads":  13,
+                                                                                          "private_mb":  24,
+                                                                                          "attached_sessions":  0
+                                                                                      },
+                                                                         "attached":  {
+                                                                                          "handles":  160,
+                                                                                          "threads":  17,
+                                                                                          "private_mb":  25.8,
+                                                                                          "attached_sessions":  5
+                                                                                      }
+                                                                     },
+                                                                     {
+                                                                         "detached":  {
+                                                                                          "handles":  155,
+                                                                                          "threads":  13,
+                                                                                          "private_mb":  24.1,
+                                                                                          "attached_sessions":  0
+                                                                                      },
+                                                                         "attached":  {
+                                                                                          "handles":  160,
+                                                                                          "threads":  17,
+                                                                                          "private_mb":  26.9,
+                                                                                          "attached_sessions":  5
+                                                                                      }
+                                                                     },
+                                                                     {
+                                                                         "detached":  {
+                                                                                          "handles":  155,
+                                                                                          "threads":  13,
+                                                                                          "private_mb":  25.2,
+                                                                                          "attached_sessions":  0
+                                                                                      },
+                                                                         "attached":  {
+                                                                                          "handles":  160,
+                                                                                          "threads":  17,
+                                                                                          "private_mb":  26.9,
+                                                                                          "attached_sessions":  5
+                                                                                      }
+                                                                     }
+                                                                 ],
+                                               "attach_cycle_handle_growth":  0,
+                                               "attach_cycle_thread_growth":  0
+                                           }
+                             },
+                   "release":  {
+                                   "exe":  "D:\\git\\ghoztty\\zig-out-release\\bin\\ghoztty.exe",
+                                   "build":  "Release",
+                                   "version":  "Ghostty 1.4.0-users-dzearing-windows-amd64-+879fba35a  Version (this binary)   - version: 1.4.0-users-dzearing-windows-amd64-+879fba35a   - commit: 879fba35a (this binary)   - channel: tip   - update check: off (not the installed release) Build Config   - Zig version   : 0.15.2   - build mode    : .ReleaseFast   - app runtime   : .win32   - font engine   : .freetype_windows   - renderer      : renderer.generic.Renderer(renderer.OpenGL)   - libxev        : iocp   - relay sign-in : configured (309808407086-4nd7gro7ms2md6ods0gun5jc5s9li3ia.apps.googleusercontent.com) Running Instance (the app running now, not this binary)   - none detected",
+                                   "idle":  {
+                                                "method":  "1 window 1400x900, 1 cmd pane at its prompt, persistence off; 10 s settle, then CPU time and summed thread context switches (NtQuerySystemInformation class 5) over 60 s; GPU Engine(pid_*) utilisation summed over engines, 1 s samples, first 30 s",
+                                                "cpu_pct":  0.21,
+                                                "wakeups_per_s":  147.7,
+                                                "threads":  71,
+                                                "gpu_engine_pct":  0.03,
+                                                "gpu_engine_peak_pct":  0.04,
+                                                "memory":  {
+                                                               "private_mb":  202.3,
+                                                               "working_set_mb":  138.3,
+                                                               "handles":  787,
+                                                               "gdi":  36,
+                                                               "user":  42,
+                                                               "threads":  71,
+                                                               "gpu_dedicated_mb":  57.6,
+                                                               "gpu_shared_mb":  14.3,
+                                                               "child_procs":  2,
+                                                               "child_private_mb":  5.9
+                                                           }
+                                            },
+                                   "busy":  {
+                                                "method":  "+split a cmd pane running `type` of a 64 MB file (108-char ASCII lines) then writing a marker; wall time from the split to the marker, app CPU over the same span; GPU Engine(pid_*) summed, 1 s samples",
+                                                "output_mb":  64,
+                                                "wall_s":  33.46,
+                                                "cpu_s":  7.656,
+                                                "cpu_pct":  22.88,
+                                                "wakeups_per_s":  28035.8,
+                                                "gpu_engine_pct":  1.03,
+                                                "gpu_engine_peak_pct":  1.53
+                                            },
+                                   "resize":  {
+                                                  "method":  "SetWindowPos to a new size every 50 ms for 8 s (2 panes open, one holding the busy output); app CPU and GPU Engine over the span",
+                                                  "resizes":  108,
+                                                  "cpu_pct":  14.92,
+                                                  "wakeups_per_s":  3990.4,
+                                                  "gpu_engine_pct":  1.98,
+                                                  "gpu_engine_peak_pct":  2.44
+                                              },
+                                   "cycle":  {
+                                                 "method":  "one window, persistence off, cmd panes: settled sample (lib\\ProcessMemory.ps1 Get-Sample + working set) at start, with 10 panes open over 3 tabs (ctrl+shift+t x2, then +split 3/2/2), and after +close of every added pane plus the 1 s undo window; the cycle runs twice. GPU memory is the GPU Process Memory counter set summed over adapters.",
+                                                 "start":  {
+                                                               "private_mb":  201.2,
+                                                               "working_set_mb":  136.8,
+                                                               "handles":  792,
+                                                               "gdi":  36,
+                                                               "user":  42,
+                                                               "threads":  75,
+                                                               "gpu_dedicated_mb":  52.6,
+                                                               "gpu_shared_mb":  13.5,
+                                                               "child_procs":  2,
+                                                               "child_private_mb":  9
+                                                           },
+                                                 "cycle1":  {
+                                                                "open":  {
+                                                                             "private_mb":  695.2,
+                                                                             "working_set_mb":  423.7,
+                                                                             "handles":  1406,
+                                                                             "gdi":  71,
+                                                                             "user":  126,
+                                                                             "threads":  115,
+                                                                             "gpu_dedicated_mb":  209.1,
+                                                                             "gpu_shared_mb":  77,
+                                                                             "child_procs":  20,
+                                                                             "child_private_mb":  88.7
+                                                                         },
+                                                                "closed":  {
+                                                                               "private_mb":  607.2,
+                                                                               "working_set_mb":  382.4,
+                                                                               "handles":  1146,
+                                                                               "gdi":  58,
+                                                                               "user":  103,
+                                                                               "threads":  113,
+                                                                               "gpu_dedicated_mb":  107.3,
+                                                                               "gpu_shared_mb":  68.9,
+                                                                               "child_procs":  2,
+                                                                               "child_private_mb":  5.9
+                                                                           }
+                                                            },
+                                                 "cycle2":  {
+                                                                "open":  {
+                                                                             "private_mb":  723.1,
+                                                                             "working_set_mb":  443.2,
+                                                                             "handles":  1409,
+                                                                             "gdi":  71,
+                                                                             "user":  130,
+                                                                             "threads":  113,
+                                                                             "gpu_dedicated_mb":  230.6,
+                                                                             "gpu_shared_mb":  82,
+                                                                             "child_procs":  20,
+                                                                             "child_private_mb":  84.5
+                                                                         },
+                                                                "closed":  {
+                                                                               "private_mb":  637.5,
+                                                                               "working_set_mb":  412.8,
+                                                                               "handles":  1157,
+                                                                               "gdi":  58,
+                                                                               "user":  108,
+                                                                               "threads":  113,
+                                                                               "gpu_dedicated_mb":  107.3,
+                                                                               "gpu_shared_mb":  88.9,
+                                                                               "child_procs":  2,
+                                                                               "child_private_mb":  5.9
+                                                                           }
+                                                            },
+                                                 "leak":  {
+                                                              "first_cycle_private_mb":  406,
+                                                              "second_cycle_private_mb":  30.3,
+                                                              "second_cycle_handles":  11,
+                                                              "second_cycle_gdi":  0,
+                                                              "second_cycle_user":  5,
+                                                              "second_cycle_threads":  0,
+                                                              "second_cycle_gpu_dedicated_mb":  0
+                                                          }
+                                             },
+                                   "agent":  {
+                                                 "method":  "persistence on; agent started by a throwaway app, then measured: idle = 30 s CPU and context switches with 1 attached session; per-session = (private bytes, and its ConPTY/shell descendants\u0027 private bytes) delta after 4 +split panes divided by the +sessions --json delta; attach/detach = app killed (sessions stay pinned) then relaunched (restore re-attaches), 3 times, settled agent sample after each",
+                                                 "idle_cpu_pct":  0,
+                                                 "idle_wakeups_per_s":  4.5,
+                                                 "base":  {
+                                                              "private_mb":  10.6,
+                                                              "working_set_mb":  18.6,
+                                                              "handles":  143,
+                                                              "gdi":  0,
+                                                              "user":  1,
+                                                              "threads":  14,
+                                                              "gpu_dedicated_mb":  0,
+                                                              "gpu_shared_mb":  0,
+                                                              "child_procs":  3,
+                                                              "child_private_mb":  13.6
+                                                          },
+                                                 "sessions_base":  1,
+                                                 "sessions_after":  5,
+                                                 "per_session_private_mb":  3.32,
+                                                 "per_session_child_private_mb":  12.62,
+                                                 "attach_cycles":  [
+                                                                       {
+                                                                           "detached":  {
+                                                                                            "handles":  155,
+                                                                                            "threads":  13,
+                                                                                            "private_mb":  22.7,
+                                                                                            "attached_sessions":  0
+                                                                                        },
+                                                                           "attached":  {
+                                                                                            "handles":  160,
+                                                                                            "threads":  17,
+                                                                                            "private_mb":  25.6,
+                                                                                            "attached_sessions":  5
+                                                                                        }
+                                                                       },
+                                                                       {
+                                                                           "detached":  {
+                                                                                            "handles":  155,
+                                                                                            "threads":  13,
+                                                                                            "private_mb":  23.9,
+                                                                                            "attached_sessions":  0
+                                                                                        },
+                                                                           "attached":  {
+                                                                                            "handles":  160,
+                                                                                            "threads":  17,
+                                                                                            "private_mb":  25.6,
+                                                                                            "attached_sessions":  5
+                                                                                        }
+                                                                       },
+                                                                       {
+                                                                           "detached":  {
+                                                                                            "handles":  155,
+                                                                                            "threads":  13,
+                                                                                            "private_mb":  23.9,
+                                                                                            "attached_sessions":  0
+                                                                                        },
+                                                                           "attached":  {
+                                                                                            "handles":  160,
+                                                                                            "threads":  17,
+                                                                                            "private_mb":  25.6,
+                                                                                            "attached_sessions":  5
+                                                                                        }
+                                                                       }
+                                                                   ],
+                                                 "attach_cycle_handle_growth":  0,
+                                                 "attach_cycle_thread_growth":  0
+                                             }
+                               }
+               }
+}
