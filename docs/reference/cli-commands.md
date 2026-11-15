@@ -158,6 +158,18 @@ GUI; only an app quit keeps sessions alive. For a pane on a REMOTE machine
 the IPC path would wedge every later `ghoztty +…` command. `+close` never
 prompts for viewer panes.
 
+`+close` never prompts at all, including for a window's **last pane**, where
+the close becomes a window (or tab) close: `TerminalController.closeSurface`
+with `withConfirmation: false` goes straight to `closeWindowImmediately` /
+`closeTabImmediately`. It used to fall through to the menu actions
+`closeWindow`/`closeTab`, which confirm on their own terms, so closing a
+window's only pane from the CLI put up "Close Window?" and left the window
+standing. Test: `CloseWithoutConfirmationTests`.
+
+A closed window is gone from `+list` and from name lookup the moment it
+closes (`BaseTerminalController.windowHasClosed`), whether or not the window
+object has been freed yet — see [memory.md](memory.md).
+
 ## `ghoztty +read`
 
 ```

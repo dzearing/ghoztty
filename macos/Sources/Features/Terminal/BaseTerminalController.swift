@@ -2723,14 +2723,41 @@ class BaseTerminalController: NSWindowController,
     private func isAliveInAnotherWindow(_ pane: PaneView) -> Bool {
         for window in NSApp.windows {
             guard let controller = window.windowController as? BaseTerminalController,
-                  controller !== self else { continue }
+                  controller !== self, !controller.windowHasClosed else { continue }
             if controller.surfaceTree.contains(where: { $0 === pane }) { return true }
         }
         return false
     }
 
+    /// True once this controller's window has closed. A closed window is
+    /// supposed to be freed, but whatever still references it (an undo
+    /// registration for the length of the undo window; sometimes something
+    /// the memory tools cannot name, see docs/reference/memory.md) keeps the
+    /// controller, its tree and its panes alive and in `NSApp.windows`. So
+    /// the close itself is what counts: a closed window is not listed or
+    /// found by name, its tree does not keep a pane "in a window", and its
+    /// terminals are released on the close's clock (`windowWillClose`).
+    private(set) var windowHasClosed = false
+
     func windowWillClose(_ notification: Notification) {
         guard let window else { return }
+        windowHasClosed = true
+
+        // Free this window's terminals — their processes or agent sessions —
+        // once the close can no longer be undone, without waiting for the
+        // window to be deallocated: a closed window that something still held
+        // kept every shell in it running for the life of the app. An undone
+        // close puts the panes in a new window's tree, which the release
+        // finds and leaves alone. Not at quit or sign-out, where the sessions
+        // are kept for restore and the process is going away regardless.
+        do {
+            let delegate = NSApp.delegate as? AppDelegate
+            if delegate?.isQuitting != true && delegate?.isSigningOut != true {
+                for view in surfaceTree where !isAliveInAnotherWindow(view) {
+                    ClosedPaneRelease.schedule(view, undoWindow: undoExpiration)
+                }
+            }
+        }
 
         // User-initiated window/tab close (NOT app quit, NOT sign-out): the
         // agent sessions of every pane in this window must actually END —

@@ -39,6 +39,18 @@ the audit worktree; methodology there).
   `Ghostty.Surface` (which frees the core surface: renderer + IO threads, GPU
   targets) and, for agent-backed panes, the session CLOSE that only happens on
   free. Anything that outlives the close holds all of that.
+- **A closed window does not wait to be freed.** Something can hold a closed
+  window's controller — the undo registration does for the undo window, and
+  the app's first window has been seen held for the life of the process by
+  an owner `leaks` cannot name. `NSApp.windows` and `orderedWindows` keep
+  listing such a window, and its tree keeps naming its panes. So
+  `windowWillClose` sets `windowHasClosed` and schedules
+  `ClosedPaneRelease` for every terminal in the window (not at quit or
+  sign-out): its shell or agent session ends when the close can no longer be
+  undone. `TerminalController.all`, the AppleScript/`+list` controller lists
+  and `ClosedPaneRelease.isInAnyWindow` all leave closed windows out. Before
+  this a held closed window kept every shell in it running and stayed in
+  `ghoztty +list`. Test: `CloseWithoutConfirmationTests`.
 - **A closure stored on window-owned state must not capture that state
   strongly**, nor the tree for longer than the state lives. `PaneStackState`
   stores the grid's layout closure (`noteGrid` → `layoutGrid`); capturing the

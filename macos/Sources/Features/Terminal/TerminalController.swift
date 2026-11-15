@@ -255,9 +255,12 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
     /// Returns all the available terminal controllers present in the app currently.
     static var all: [TerminalController] {
+        // A window that has closed can outlive its close (see
+        // `BaseTerminalController.windowHasClosed`); it is not a window any
+        // more, and nothing should find it by name or list it.
         return NSApplication.shared.windows.compactMap {
             $0.windowController as? TerminalController
-        }
+        }.filter { !$0.windowHasClosed }
     }
 
     // Keep track of the last point that our window was launched at so that new
@@ -922,8 +925,19 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             return
         }
 
+        // Closing the window's only pane closes its tab or window. A caller
+        // that asked for no confirmation gets none here either: `closeTab`
+        // and `closeWindow` are the menu actions and confirm on their own
+        // terms, so a `ghoztty +close` of a window's last pane used to put
+        // up "Close Window?" and wait for someone to answer it.
+        let isTab = window?.tabGroup?.windows.count ?? 0 > 1
+        guard withConfirmation else {
+            if isTab { closeTabImmediately() } else { closeWindowImmediately() }
+            return
+        }
+
         // More than 1 window means we have tabs and we're closing a tab
-        if window?.tabGroup?.windows.count ?? 0 > 1 {
+        if isTab {
             closeTab(nil)
             return
         }

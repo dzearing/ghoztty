@@ -34,7 +34,10 @@ enum ClosedPaneRelease {
 
     private static func isInAnyWindow(_ pane: PaneView) -> Bool {
         NSApp.windows.contains { window in
-            guard let controller = window.windowController as? BaseTerminalController else { return false }
+            // A closed window's tree still names its panes, for as long as
+            // the window object lives; that is not being in a window.
+            guard let controller = window.windowController as? BaseTerminalController,
+                  !controller.windowHasClosed else { return false }
             return controller.surfaceTree.root?.node(view: pane) != nil
         }
     }
