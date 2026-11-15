@@ -84,6 +84,13 @@ recover_h: xev.Timer,
 recover_c: xev.Completion = .{},
 recover_armed: bool = false,
 
+/// Comes back once a pane's size has held still to draw the frame that gives
+/// back GPU storage a larger size left behind (T2974): an idle pane draws
+/// nothing on its own, so without it a pane once maximized kept that memory
+/// until its next output.
+trim_h: xev.Timer,
+trim_c: xev.Completion = .{},
+
 /// The surface we're rendering to.
 surface: *apprt.Surface,
 
@@ -195,6 +202,10 @@ pub fn init(
     var recover_h = try xev.Timer.init();
     errdefer recover_h.deinit();
 
+    // Grow-only storage trims (T2974).
+    var trim_h = try xev.Timer.init();
+    errdefer trim_h.deinit();
+
     // The mailbox for messaging this thread
     var mailbox = try Mailbox.create(alloc);
     errdefer mailbox.destroy(alloc);
@@ -210,6 +221,7 @@ pub fn init(
         .draw_now = draw_now,
         .cursor_h = cursor_timer,
         .recover_h = recover_h,
+        .trim_h = trim_h,
         .surface = surface,
         .renderer = renderer_impl,
         .state = state,
@@ -228,6 +240,7 @@ pub fn deinit(self: *Thread) void {
     self.draw_now.deinit();
     self.cursor_h.deinit();
     self.recover_h.deinit();
+    self.trim_h.deinit();
     self.loop.deinit();
 
     // Nothing can possibly access the mailbox anymore, destroy it.
@@ -577,7 +590,34 @@ fn drawFrame(self: *Thread, now: bool) void {
         self.renderer.drawFrame(false) catch |err|
             log.warn("error drawing err={}", .{err});
         self.recoverLostContext();
+        self.armStorageTrim();
     }
+}
+
+/// After a frame, come back once the size has settled if the renderer says
+/// some grow-only storage is bigger than the pane needs (T2974). One timer at
+/// a time: a frame drawn before it fires changes nothing it depends on, and
+/// the frame it forces re-arms it when a try is still owed.
+fn armStorageTrim(self: *Thread) void {
+    if (comptime !@hasDecl(rendererpkg.Renderer, "storageTrimInMs")) return;
+    if (self.trim_c.state() == .active) return;
+    const ms = self.renderer.storageTrimInMs() orelse return;
+    self.trim_h.run(&self.loop, &self.trim_c, ms, Thread, self, trimCallback);
+}
+
+fn trimCallback(
+    self_: ?*Thread,
+    _: *xev.Loop,
+    _: *xev.Completion,
+    r: xev.Timer.RunError!void,
+) xev.CallbackAction {
+    _ = r catch return .disarm;
+    const t = self_ orelse return .disarm;
+    // A forced frame: nothing in the render state changed, and the trim is
+    // the reason to present. `wakeup` so the frame is built first.
+    t.force_frame.store(true, .release);
+    t.wakeup.notify() catch {};
+    return .disarm;
 }
 
 /// If the frame just drawn found the graphics device gone (T1690), rebuild

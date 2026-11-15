@@ -1121,6 +1121,14 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             pending: u64,
         };
 
+        /// Milliseconds until this pane should draw once more to give back
+        /// GPU storage a larger size left behind, or null when nothing is
+        /// owed (T2974). The renderer thread arms a timer on it.
+        pub fn storageTrimInMs(self: *const Self) ?u64 {
+            if (comptime !@hasDecl(GraphicsAPI, "storageTrimInMs")) return null;
+            return self.api.storageTrimInMs();
+        }
+
         pub fn recoverLostContext(self: *Self) Recovery {
             if (comptime !@hasDecl(GraphicsAPI, "contextLost")) return .none;
             if (!self.api.contextLost()) return .none;
@@ -2006,14 +2014,21 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // remove it and replace it with a new one with the right values.
             const size_only = frame.target_config_modified == self.target_config_modified and
                 frame.custom_shader_state == null;
+            // T2974: once the size has settled, a grow-only target still
+            // holding what a larger size grew it to is rebuilt at this one.
+            const trim_target = if (comptime @hasDecl(GraphicsAPI, "storageTrimDue"))
+                self.api.storageTrimDue(&frame.target)
+            else
+                false;
             if (frame.target.width != self.size.screen.width or
                 frame.target.height != self.size.screen.height or
-                frame.target_config_modified != self.target_config_modified)
+                frame.target_config_modified != self.target_config_modified or
+                trim_target)
             resize: {
                 // A target that can take the new size as it stands (OpenGL on
                 // Win32, T2577) keeps its storage.
                 if (comptime @hasDecl(@TypeOf(frame.target), "resizeInPlace")) {
-                    if (size_only and frame.target.resizeInPlace(
+                    if (size_only and !trim_target and frame.target.resizeInPlace(
                         self.size.screen.width,
                         self.size.screen.height,
                     )) break :resize;

@@ -63,6 +63,7 @@ test {
     _ = @import("renderer/gl_report.zig");
     _ = @import("renderer/upload_diff.zig");
     _ = @import("renderer/low_power.zig");
+    _ = @import("renderer/storage_trim.zig");
     _ = @import("renderer/gl_loader.zig");
     _ = @import("renderer/gl_robust.zig");
     _ = @import("renderer/gl_comp_present.zig");

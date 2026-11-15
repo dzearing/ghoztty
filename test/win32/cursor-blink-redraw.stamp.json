@@ -1,15 +1,16 @@
 {
     "guard":  "cursor-blink-redraw",
     "script":  "test/win32/cursor-blink-redraw.ps1",
-    "generated":  "2026-11-14T21:16:34-08:00",
-    "commit":  "848fd0b43",
+    "generated":  "2026-11-14T21:57:53-08:00",
+    "commit":  "a23965e5b",
     "uncommitted":  [
-                        "src/renderer/generic.zig"
+                        "src/renderer/generic.zig",
+                        "src/renderer/Thread.zig"
                     ],
     "files":  {
                   "src/renderer/cursor.zig":  "1cec4ef3e7be9cdd649c7e121052ee3e77e645c4f8093b73c97e3d8fe5ed1c3f",
-                  "src/renderer/generic.zig":  "e796bd6f0953af106940477fa201137466feaadd96563f4edb41997c52f04e78",
-                  "src/renderer/Thread.zig":  "8441dd5ca9ca0fbf55650c3a16a53afea57cac56998100513ca1440fb19f0845",
+                  "src/renderer/generic.zig":  "bd9eaddf38142bc509971756a38b568935ccbc770ae5567a47dcc11984c9c423",
+                  "src/renderer/Thread.zig":  "92fdf78194c049f4e404896657afee7fc504d7b82ad460eb6232f6d0fdd54fb3",
                   "test/win32/cursor-blink-redraw.ps1":  "5c7725e905ad660031583cb9a2058be442b6df96c4c7b18f24f4a0be372f4e34"
               }
 }

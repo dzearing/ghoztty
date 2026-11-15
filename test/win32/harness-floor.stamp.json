@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-14T17:26:34-08:00",
-    "commit":  "874216a7f",
+    "generated":  "2026-11-14T22:36:02-08:00",
+    "commit":  "a23965e5b",
     "uncommitted":  [
-                        "test/win32/cursor-blink-redraw.ps1"
+                        "test/win32/storage-trim-memory.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -528,6 +528,7 @@
                   "test/win32/stash-restore.ps1":  "872e2e0c8b6b8ce06145cc783a37ddffc32b24e7e2bfb5cb9a624f037a2f6809",
                   "test/win32/stderr-capture-audit.ps1":  "928dd559d8e1df45f9fce6baa0071a920d997aca8977790161b1c41c34368efe",
                   "test/win32/stderr-launch-capture.ps1":  "7c95a6330bbc5d8e441a55cd8a63ef764d4a6a6fefad6b91f0726db02985746b",
+                  "test/win32/storage-trim-memory.ps1":  "013edf25e4692fcfdd704c3a7127fd4ee8ab33065939042702d4105c28af612d",
                   "test/win32/suite-run.ps1":  "eb659bbb368bac2bc8e1ed8c3384c389aa191b64636d4264c1b4242485eb261a",
                   "test/win32/tab-color.ps1":  "a33d08bbb04287a1420a369355f933d646e25aa1a7948fc0ec9d9325abb2f637",
                   "test/win32/tab-overview-action.ps1":  "e20977448b9d6f5a30acf7e71cfa6cae58389f9e719eab6884dcab83f5de8938",

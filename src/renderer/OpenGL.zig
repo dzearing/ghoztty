@@ -12,6 +12,7 @@ const configpkg = @import("../config.zig");
 const rendererpkg = @import("../renderer.zig");
 const gl_report = @import("gl_report.zig");
 const low_power = @import("low_power.zig");
+const storage_trim = @import("storage_trim.zig");
 const gl_loader = @import("gl_loader.zig");
 const gl_robust = @import("gl_robust.zig");
 const gl_comp_present = @import("gl_comp_present.zig");
@@ -155,6 +156,16 @@ pres_has_frame: bool = false,
 /// a rebuild waits until the presenter's is past it, so the new context
 /// joins the presenter's NEW group rather than the dead one.
 pres_lost_gen: u32 = 0,
+
+/// When this pane's grow-only GPU storage last changed size and whether the
+/// last frame left any of it bigger than its size needs (T2974): the target,
+/// the composition path's shared texture and swap chain, the slot textures.
+/// Renderer thread only.
+storage: storage_trim.Settle = .{},
+/// The frame in progress trims: `surfaceSize` found the size settled and
+/// storage oversized, so every grow-only surface this frame touches is
+/// rebuilt at a fresh allocation's size.
+storage_trim_now: bool = false,
 
 const DeviceState = struct {
     /// The context stopped answering: a driver reset or swap. Every GPU
@@ -1295,6 +1306,10 @@ pub fn surfaceSize(self: *OpenGL) !struct { width: u32, height: u32 } {
                 // Update glViewport to match
                 gl.glad.context.Viewport.?(0, 0, @intCast(w), @intCast(h));
                 self.drawn_client = resize_paint.packSize(w, h);
+                // T2974: grow-only storage trims once the size holds still.
+                const now = std.time.Instant.now() catch null;
+                self.storage.note(w, h, now);
+                self.storage_trim_now = storage_trim.enabled() and self.storage.takeTrim(now);
                 self.resize_first_frame = self.resize_prev_client != 0 and
                     self.resize_prev_client != self.drawn_client;
                 self.resize_prev_client = self.drawn_client;
@@ -1335,8 +1350,40 @@ pub fn initTarget(self: *const OpenGL, width: usize, height: usize) !Target {
     });
 }
 
+/// The frame in progress should rebuild `target` rather than keep its
+/// storage (T2974): the size has settled and the target still holds what a
+/// larger size grew it to. `generic.zig` asks before `resizeInPlace`.
+pub fn storageTrimDue(self: *const OpenGL, target: *const Target) bool {
+    return self.storage_trim_now and target.oversized();
+}
+
+/// Milliseconds until this pane should draw once more to give back storage a
+/// larger size left behind, or null when nothing is owed (T2974). The
+/// renderer thread arms a timer on it after every frame.
+pub fn storageTrimInMs(self: *const OpenGL) ?u64 {
+    if (!storage_trim.enabled()) return null;
+    return self.storage.dueInMs(std.time.Instant.now() catch null);
+}
+
+/// Record whether the frame just presented left any grow-only storage bigger
+/// than `target`'s size needs (T2974).
+fn noteStorage(self: *OpenGL, target: Target) void {
+    if (comptime apprt.runtime != apprt.win32) return;
+    self.storage_trim_now = false;
+    const w: u32 = @intCast(target.width);
+    const h: u32 = @intCast(target.height);
+    var over = target.oversized();
+    if (self.comp) |p| over = over or p.oversized(w, h);
+    for (self.pres_cap) |cap| {
+        if (cap[0] == 0) continue;
+        over = over or storage_trim.oversized2(cap[0], cap[1], w, h, Target.grow_bucket);
+    }
+    self.storage.oversized = over;
+}
+
 /// Present the provided target.
 pub fn present(self: *OpenGL, target: Target) !void {
+    defer self.noteStorage(target);
     // In order to present a target we blit it to the default framebuffer.
 
     // We disable GL_FRAMEBUFFER_SRGB while doing this blit, otherwise the
@@ -1455,7 +1502,7 @@ fn compBegin(self: *OpenGL, width: usize, height: usize) ?gl.Framebuffer {
         self.compFail(error.TreeRefused);
         return null;
     }
-    return p.begin(@intCast(width), @intCast(height)) catch |err| {
+    return p.begin(@intCast(width), @intCast(height), self.storage_trim_now) catch |err| {
         self.compFail(err);
         return null;
     };
@@ -1623,7 +1670,10 @@ fn presToSlot(self: *OpenGL, l: anytype, target: Target) !void {
         l.tex[slot] = name;
         self.pres_cap[slot] = .{ 0, 0 };
     }
-    if (self.pres_cap[slot][0] < w or self.pres_cap[slot][1] < h) {
+    // T2974: a settled size also rebuilds a slot a larger size grew.
+    const trim_slot = self.storage_trim_now and
+        storage_trim.oversized2(self.pres_cap[slot][0], self.pres_cap[slot][1], w, h, Target.grow_bucket);
+    if (self.pres_cap[slot][0] < w or self.pres_cap[slot][1] < h or trim_slot) {
         const cw: u32 = @intCast(Target.capacityFor(w, true));
         const ch: u32 = @intCast(Target.capacityFor(h, true));
         c.BindTexture.?(gl.c.GL_TEXTURE_2D, l.tex[slot]);

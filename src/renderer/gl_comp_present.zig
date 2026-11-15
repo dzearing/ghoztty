@@ -829,19 +829,21 @@ pub const Presenter = struct {
     /// only grow, by whole buckets, and the frame is presented as a source
     /// rectangle; a source size the chain refuses drops to exact resizes for
     /// the life of the presenter.
-    fn resizeSwap(self: *Presenter, w: u32, h: u32) Error!void {
+    /// `trim` (T2974): the size has settled, so buffers grown for a larger
+    /// size shrink back to a fresh allocation's buckets.
+    fn resizeSwap(self: *Presenter, w: u32, h: u32, trim: bool) Error!void {
         // T2845: the window thread reads whether this was in flight.
         if (present_stamps.stampBegin(self.hwnd, .resize)) {
             defer present_stamps.stampEnd(self.hwnd, .resize);
-            return self.resizeSwapInner(w, h);
+            return self.resizeSwapInner(w, h, trim);
         }
-        return self.resizeSwapInner(w, h);
+        return self.resizeSwapInner(w, h, trim);
     }
 
-    fn resizeSwapInner(self: *Presenter, w: u32, h: u32) Error!void {
+    fn resizeSwapInner(self: *Presenter, w: u32, h: u32, trim: bool) Error!void {
         const resize =slot(*const fn (Obj, u32, u32, u32, u32, u32) callconv(.winapi) HRESULT, self.swap, slot_swapchain_resize_buffers);
         if (self.swap2) |s2| {
-            const cap = sharedCapacity(self.swap_w, self.swap_h, w, h);
+            const cap = if (trim) sharedCapacity(0, 0, w, h) else sharedCapacity(self.swap_w, self.swap_h, w, h);
             if (cap[0] != self.swap_w or cap[1] != self.swap_h) {
                 stage = "resize-buffers";
                 try check(resize(self.swap, 0, cap[0], cap[1], 0, self.swap_flags));
@@ -946,9 +948,22 @@ pub const Presenter = struct {
         self.texture = null;
     }
 
+    /// The shared texture or the swap chain's buffers hold more than a fresh
+    /// allocation for a `w` x `h` frame would (T2974): what a larger size
+    /// left behind. Exact-resize chains (no `swap2`) never are.
+    pub fn oversized(self: *const Presenter, w: u32, h: u32) bool {
+        const fresh = sharedCapacity(0, 0, w, h);
+        if (self.texture != null and (self.tex_w > fresh[0] or self.tex_h > fresh[1])) return true;
+        return self.swap2 != null and (self.swap_w > fresh[0] or self.swap_h > fresh[1]);
+    }
+
     /// Make the swap chain and the shared texture `w` x `h`, lock the shared
     /// texture for GL and return the GL framebuffer to blit the frame into.
-    pub fn begin(self: *Presenter, w: u32, h: u32) Error!gl.Framebuffer {
+    ///
+    /// `trim` (T2974): the pane's size has held still (`storage_trim`), so a
+    /// shared texture or swap chain still sized for a larger frame is rebuilt
+    /// at this one's buckets. One rebuild frame per settle, never mid-drag.
+    pub fn begin(self: *Presenter, w: u32, h: u32, trim: bool) Error!gl.Framebuffer {
         if (w == 0 or h == 0) return error.GLFailed;
         // T2968: wait for the chain to take another frame here, holding no
         // device lock, rather than inside a Present that holds the shared
@@ -956,9 +971,10 @@ pub const Presenter = struct {
         if (self.latency_wait) |h_wait| if (!self.latency_token) {
             self.latency_token = WaitForSingleObject(h_wait, latency_wait_ms) == WAIT_OBJECT_0;
         };
-        if (w != self.width or h != self.height or self.texture == null) {
-            try self.resizeSwap(w, h);
-            const cap = sharedCapacity(self.tex_w, self.tex_h, w, h);
+        const shrink = trim and self.oversized(w, h);
+        if (w != self.width or h != self.height or self.texture == null or shrink) {
+            try self.resizeSwap(w, h, shrink);
+            const cap = if (shrink) sharedCapacity(0, 0, w, h) else sharedCapacity(self.tex_w, self.tex_h, w, h);
             if (self.texture == null or cap[0] != self.tex_w or cap[1] != self.tex_h) {
                 self.destroyShared();
                 stage = "shared-texture";
@@ -1159,6 +1175,33 @@ test "sharedCapacity grows by whole buckets and never shrinks" {
     // Growing past one side grows only that side.
     try std.testing.expectEqual([2]u32{ 768, 768 }, sharedCapacity(512, 768, 513, 700));
     try std.testing.expectEqual([2]u32{ 512, 1024 }, sharedCapacity(512, 768, 500, 769));
+}
+
+test "T2974: Presenter.oversized names storage a larger size left behind" {
+    var dummy: u8 = 0;
+    const obj: Obj = @ptrCast(&dummy);
+    var p: Presenter = undefined;
+    p.texture = null;
+    p.swap2 = null;
+    p.tex_w = 1536;
+    p.tex_h = 1024;
+    p.swap_w = 1536;
+    p.swap_h = 1024;
+    // No texture and exact-resize buffers: nothing to trim.
+    try std.testing.expect(!p.oversized(451, 723));
+    // A texture once 1400x860 at 451x723 now: two buckets too wide.
+    p.texture = obj;
+    try std.testing.expect(p.oversized(451, 723));
+    // Within one bucket of the frame is the grow-only slack, not waste.
+    p.tex_w = 512;
+    p.tex_h = 768;
+    try std.testing.expect(!p.oversized(451, 723));
+    // The bucketed swap chain still holds the old size.
+    p.swap2 = obj;
+    try std.testing.expect(p.oversized(451, 723));
+    p.swap_w = 512;
+    p.swap_h = 768;
+    try std.testing.expect(!p.oversized(451, 723));
 }
 
 test "T2625: a source rectangle is shown 1:1, not stretched over the buffer" {

@@ -1088,6 +1088,20 @@ $GuardTable = @(
             'src\apprt\win32\Surface.zig'
         )
     },
+    # T2974: a pane's grow-only GPU storage (render target, shared texture,
+    # swap chain, slot textures) comes back down once its size settles after
+    # the window was bigger - maximize, restore, measure.
+    [pscustomobject]@{
+        Name   = 'storage-trim-memory'
+        Script = 'test\win32\storage-trim-memory.ps1'
+        Stamp  = 'test\win32\storage-trim-memory.stamp.json'
+        Covers = @(
+            'test\win32\storage-trim-memory.ps1',
+            'test\win32\lib\ProcessMemory.ps1',
+            'src\renderer\storage_trim.zig',
+            'src\renderer\opengl\Target.zig'
+        )
+    },
     # T2474: a hidden WINDOW (minimized, covered) gives back its panes' render
     # targets and every pane redraws in full when it is shown. Covers the
     # shared release hook and the OpenGL half of it, and the visibility poll

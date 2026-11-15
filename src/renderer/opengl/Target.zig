@@ -89,6 +89,15 @@ pub fn resizeInPlace(self: *Self, width: usize, height: usize) bool {
     return true;
 }
 
+/// The storage is bigger than a fresh `init` at the current size would make
+/// (T2974): what `resizeInPlace` kept from a larger size. Only a `grow_only`
+/// target can be.
+pub fn oversized(self: *const Self) bool {
+    if (!self.grow_only) return false;
+    return self.alloc_width > capacityFor(self.width, true) or
+        self.alloc_height > capacityFor(self.height, true);
+}
+
 test "a grow-only target takes any size that fits and rounds its storage up" {
     try std.testing.expectEqual(@as(usize, 512), capacityFor(469, true));
     try std.testing.expectEqual(@as(usize, 256), capacityFor(256, true));
@@ -98,7 +107,14 @@ test "a grow-only target takes any size that fits and rounds its storage up" {
     try std.testing.expectEqual(@as(usize, 451), t.width);
     try std.testing.expect(t.resizeInPlace(512, 768));
     try std.testing.expect(!t.resizeInPlace(513, 700));
+    // T2974: 512x768 storage at 451x723 is one bucket, not oversized; at
+    // 200x723 the width is a bucket too many.
+    try std.testing.expect(t.resizeInPlace(451, 723));
+    try std.testing.expect(!t.oversized());
+    try std.testing.expect(t.resizeInPlace(200, 723));
+    try std.testing.expect(t.oversized());
     t.grow_only = false;
+    try std.testing.expect(!t.oversized());
     try std.testing.expect(!t.resizeInPlace(400, 400));
 }
 
