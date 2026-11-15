@@ -189,6 +189,7 @@ const strip_face_popup = @import("StripFace.zig");
 const pane_stack_state = @import("pane_stack_state.zig");
 const busy_light = @import("busy_light.zig");
 const strip_label = @import("strip_label.zig");
+const strip_label_memo = @import("strip_label_memo.zig");
 const window_active = @import("window_active.zig");
 const PaneDesk = @import("PaneDesk.zig");
 const comp_overlay = @import("../../renderer/comp_overlay.zig");
@@ -1103,6 +1104,9 @@ strip_hover: ?*PaneView = null,
 /// desk's pixels on every paint after, and what draws and measures them: a
 /// memory DC and the two turns of the face at `strip_label_height` pixels.
 strip_labels: strip_label.Cache = .{},
+/// What each strip's name was last painted saying (T2988): a tucked pane's
+/// title change repaints its strip only when the strip would read differently.
+strip_label_painted: strip_label_memo.Memo = .{},
 strip_label_dc: ?w32.HDC = null,
 strip_label_height: i32 = 0,
 strip_label_across: ?*anyopaque = null,
@@ -13974,6 +13978,7 @@ fn paintStripLabel(
     if (room <= 0) return;
     var label_buf: [512]u8 = undefined;
     const label8 = self.paneStripLabel(view, &label_buf);
+    self.strip_label_painted.record(@intFromPtr(view), label8);
     var wide: [256]u16 = undefined;
     const wlen = std.unicode.utf8ToUtf16Le(&wide, label8[0..@min(label8.len, wide.len)]) catch return;
     if (wlen == 0) return;
@@ -14087,6 +14092,7 @@ fn stripLabelPic(
     if (room <= 0) return null;
     var label_buf: [512]u8 = undefined;
     const label8 = self.paneStripLabel(view, &label_buf);
+    self.strip_label_painted.record(@intFromPtr(view), label8);
     var wide: [256]u16 = undefined;
     const wlen = std.unicode.utf8ToUtf16Le(&wide, label8[0..@min(label8.len, wide.len)]) catch return null;
     if (wlen == 0) return null;
@@ -14204,6 +14210,27 @@ fn paneStripLabel(_: *Window, view: *PaneView, buf: []u8) []const u8 {
     const pwd: ?[]const u8 = if (surface) |s| (if (s.pwd) |p| p else null) else null;
     const banner: ?[]const u8 = if (surface) |s| (if (s.banner_text) |b| b else null) else null;
     return pane_sidebar.paneLabel(if (view.title()) |t| t else null, pwd, kind_name, banner, view.userTitled(), buf);
+}
+
+/// A hidden pane of the tab on show was retitled (T2988): repaint its strip,
+/// if it has one and the strip would now read differently - never the whole
+/// window, which an agent's spinner in a folded pane did ten times a second.
+/// A stashed pane has no strip, and neither has any pane of a hero or zoomed
+/// tab (`tuckedStrips`).
+fn invalidateTuckedStripName(self: *Window, pane: *PaneView) void {
+    const wh = self.hwnd orelse return;
+    if (pane_stash.isStashed(pane)) return;
+    var label_buf: [512]u8 = undefined;
+    const label = self.paneStripLabel(pane, &label_buf);
+    if (self.strip_label_painted.shows(@intFromPtr(pane), label)) return;
+    var strips: [MAX_DRAG_NODES]TuckedStrip = undefined;
+    const n = self.tuckedStrips(&strips);
+    for (strips[0..n]) |s| {
+        if (s.view != pane) continue;
+        var r: w32.RECT = .{ .left = s.tab.left, .top = s.tab.top, .right = s.tab.right, .bottom = s.tab.bottom };
+        _ = w32.InvalidateRect(wh, &r, 0);
+        return;
+    }
 }
 
 /// The tucked pane whose strip is under window point (x, y), if any.
@@ -18127,10 +18154,9 @@ pub fn onPaneTitleChanged(self: *Window, pane: *PaneView, title: [:0]const u8) v
     const tab_idx = self.findTabIndex(pane) orelse return;
     // A tucked pane's strip carries its name (T2109). Only a hidden pane of
     // the tab on show can have one, so a spinner in a pane on show costs
-    // nothing here.
-    if (tab_idx == self.active_tab) if (pane.hwnd()) |h| if (w32.IsWindowVisible(h) == 0) {
-        if (self.hwnd) |wh| _ = w32.InvalidateRect(wh, null, 0);
-    };
+    // nothing here - and a hidden one costs its strip alone (T2988).
+    if (tab_idx == self.active_tab) if (pane.hwnd()) |h| if (w32.IsWindowVisible(h) == 0)
+        self.invalidateTuckedStripName(pane);
     if (self.tab_title_pinned[tab_idx]) return;
     if (self.tab_active_pane[tab_idx] != pane) return;
     var wbuf: [256]u16 = undefined;

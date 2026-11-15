@@ -28,6 +28,13 @@
 #       On glass (T2505) the strip keeps its glass and only the ink changes
 #   D2) the strip's label follows the banner title: a long `## ...` title set
 #       with +set-banner runs further down the strip than a short one
+#   D9) T2988: the label follows the pane's OWN title too (banner cleared): a
+#       long title set from inside the pane (cmd `title`, an OSC 0) runs
+#       further down the strip than a short one, and back. That title change
+#       now repaints the strip's rect alone. D9 guards "the strip still
+#       follows the title"; it does NOT prove the narrowed repaint carries
+#       it - with that repaint removed D9 still passed (the busy light of the
+#       command that set the title also reaches the strip). T3118
 #   D3) a click on a tucked pane's strip brings that pane on show (its window
 #       visible), keeps two on show, and focuses it (+list --json)
 #   D4) T2120: a strip pressed and dragged over the middle of a card on show
@@ -67,7 +74,12 @@ param(
     [switch]$NegativeControl,
     [ValidateSet('flat', 'elevated')][string]$PaneStyle = 'flat',
     [switch]$Glass,
-    [switch]$Interactive
+    [switch]$Interactive,
+    # T2988, opt-in and report-only: after D9, a tucked pane retitles itself
+    # ten times a second (an agent's spinner) for this many seconds and the
+    # app's CPU over that run is printed - the A/B between two builds' -ExePath
+    # for "a spinner in a folded pane no longer repaints the whole window".
+    [int]$SpinnerCpuSeconds = 0
 )
 
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
@@ -325,6 +337,25 @@ function Add-Leaves($node, $acc) {
     }
     Add-Leaves $node.left $acc
     Add-Leaves $node.right $acc
+}
+
+# The title +list gives pane `$name`, searched through a window's tabs.
+function Find-LeafTitle($win, [string]$name) {
+    foreach ($tab in @($win.tabs | ForEach-Object { $_ })) {
+        $r = Find-LeafTitleIn $tab.splits $name
+        if ($null -ne $r) { return $r }
+    }
+    return $null
+}
+function Find-LeafTitleIn($node, [string]$name) {
+    if ($null -eq $node) { return $null }
+    if ($node.type -eq 'leaf') {
+        if ([string]$node.terminal.name -eq $name) { return [string]$node.terminal.title }
+        return $null
+    }
+    $l = Find-LeafTitleIn $node.left $name
+    if ($null -ne $l) { return $l }
+    return Find-LeafTitleIn $node.right $name
 }
 
 # Press at (x0, y0), travel in steps to (x1, y1), release there.
@@ -609,6 +640,92 @@ try {
             }
         }
         Assert $same8 ("D8: $($t.Name)'s strip is the same glass where its banner card was as 150 DIP down ({0} vs {1})" -f (Format-Rgb $a8.Got), (Format-Rgb $b8.Got))
+    }
+
+    # ---- D9: the label follows the pane's own title (T2988) --------------------
+    # The banner path re-lays the window out; a program retitling its pane does
+    # not, and since T2988 that title change repaints the strip's rect alone, and
+    # only when the strip would read differently. With the banner cleared the
+    # strip falls back to the title: a long one set from inside the pane must
+    # run further down the strip than a short one, and a re-set of the same
+    # title must leave the strip exactly as it was.
+    if (-not $NegativeControl) {
+        Say '== D9: strip label from the pane title'
+        & $exe +set-banner --target=$($t.Name) --clear 2>&1 | Out-Null
+        # The pane's shell is cmd (the Windows default; no config is read), and
+        # its `title` builtin is a console retitle ConPTY sends on as OSC 0.
+        function Set-PaneTitle([string]$title) {
+            # $title is one of this leg's own ASCII literals, with no quotes in it.
+            # argv-audit: a test-owned literal title typed into the pane as text
+            & $exe +send-keys --target=$($t.Name) "title $title`r" 2>&1 | Out-Null
+        }
+        # What the window last PAINTED, not a fresh repaint: -Sync makes the
+        # app draw itself into the photo and so reads the new title whether
+        # or not the title change ever asked for a repaint - the defect this
+        # leg exists to catch (with the T2988 invalidation removed, a -Sync
+        # D9 still passed). The strip is static between reads, so the torn
+        # capture's noise does not reach the ink length; two reads, the second
+        # kept, outlast a capture landing mid-composition.
+        function Get-ShotAsShown([IntPtr]$w) {
+            $r = 'D9 reads the pixels the window last painted: a synchronous capture repaints and would hide a missing invalidation (T2988)'
+            Close-TestWindowPixels -Shot (Get-TestWindowPixels -Window $w -TornReason $r)
+            Start-Sleep -Milliseconds 200
+            return Get-TestWindowPixels -Window $w -TornReason $r
+        }
+        Set-PaneTitle 'Ab'
+        Start-Sleep -Milliseconds 1500
+        $shot = Get-ShotAsShown $top
+        try { $shortInk9 = Measure-Ink $shot $t.Pane $sw $expected } finally { Close-TestWindowPixels -Shot $shot }
+        Set-PaneTitle 'Abcdefghijklmnopqrstuvwxyz pane title'
+        Start-Sleep -Milliseconds 1500
+        $shot = Get-ShotAsShown $top
+        try { $longInk9 = Measure-Ink $shot $t.Pane $sw $expected } finally { Close-TestWindowPixels -Shot $shot }
+        Say "      $($t.Name): ink runs $shortInk9 px for 'Ab', $longInk9 px for the long pane title"
+        Assert ($shortInk9 -gt 0) "D9: the short pane title is drawn on $($t.Name)'s strip ($shortInk9 px)"
+        Assert ($longInk9 -gt ($shortInk9 + (Get-TestChromeDip -Dip 40 -Scale $script:scale))) "D9: the long pane title runs further down the strip ($longInk9 px vs $shortInk9 px)"
+        # And back: the strip shrinks again on a title change alone.
+        Set-PaneTitle 'Ab'
+        Start-Sleep -Milliseconds 1500
+        $shot = Get-ShotAsShown $top
+        try { $backInk9 = Measure-Ink $shot $t.Pane $sw $expected } finally { Close-TestWindowPixels -Shot $shot }
+        Assert ([math]::Abs($backInk9 - $shortInk9) -le 2) "D9: back to the short title, the strip reads as it did ($backInk9 px vs $shortInk9 px)"
+    }
+
+    if ($SpinnerCpuSeconds -gt 0) {
+        Say "== SPINNER CPU: $($t.Name) retitles every 100 ms for $SpinnerCpuSeconds s"
+        # A file, not an inline -Command: cmd's and the CLI's quoting both sit
+        # between here and the pane, and an inline loop never ran.
+        $spinFile = Join-Path $root 'spinner.ps1'
+        New-Item -ItemType Directory -Force $root | Out-Null
+        Set-Content -Path $spinFile -Encoding ascii -Value @(
+            '$f = @(''|'', ''/'', ''-'', ''+''); $i = 0',
+            'while ($true) { [Console]::Title = $f[$i % 4] + '' working''; $i++; Start-Sleep -Milliseconds 100 }'
+        )
+        # Unquoted: $root is under TEMP with no spaces, and a quote inside a
+        # native argument is what PowerShell 5.1 mangles (T279).
+        $spin = "powershell -NoProfile -ExecutionPolicy Bypass -File $spinFile"
+        # argv-audit: $spin is built two lines up from a literal and a Join-Path
+        # under TEMP, with no quotes in it; typed into the pane as text.
+        & $exe +send-keys --target=$($t.Name) "$spin`r" 2>&1 | Out-Null
+        Start-Sleep -Seconds 3
+        # The premise: the pane's title really is spinning.
+        $seen = @{}
+        for ($k = 0; $k -lt 6; $k++) {
+            $seen[[string](Find-LeafTitle (List-Json).data.windows[0] $t.Name)] = 1
+            Start-Sleep -Milliseconds 230
+        }
+        Say ("      titles seen: {0}" -f (($seen.Keys | Sort-Object) -join ' ; '))
+        Assert ($seen.Count -ge 2) "SPINNER: $($t.Name)'s title changes while the CPU is sampled ($($seen.Count) distinct)"
+        $proc = Get-Process -Id $app.Pid
+        $cpu0 = $proc.TotalProcessorTime.TotalMilliseconds
+        $wall0 = [Diagnostics.Stopwatch]::StartNew()
+        Start-Sleep -Seconds $SpinnerCpuSeconds
+        $proc.Refresh()
+        $cpuMs = $proc.TotalProcessorTime.TotalMilliseconds - $cpu0
+        $pct = 100.0 * $cpuMs / $wall0.Elapsed.TotalMilliseconds
+        Say ("SPINNER CPU: {0:N0} ms of CPU in {1:N1} s = {2:N1}% of one core (exe {3})" -f $cpuMs, $wall0.Elapsed.TotalSeconds, $pct, $exe)
+        & $exe +send-keys --target=$($t.Name) C-c 2>&1 | Out-Null
+        Start-Sleep -Milliseconds 600
     }
 
     # ---- D3: a click on the strip brings the pane on show ----------------------

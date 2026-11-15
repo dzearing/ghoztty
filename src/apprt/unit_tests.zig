@@ -164,6 +164,9 @@ test {
     // window's title lands on show or every 5s. Imports only std. Every lane.
     _ = @import("win32/held_title.zig");
     _ = @import("win32/strip_label.zig");
+    // Pure win32 strip-name memo (T2988): a hidden pane's title change
+    // repaints its strip only when the strip would read differently.
+    _ = @import("win32/strip_label_memo.zig");
 
     // Pure win32 hidden-pane poll gate (T2913): a `git-status:` viewer skips
     // its poll while hidden and catches up once on show. Imports only std.
