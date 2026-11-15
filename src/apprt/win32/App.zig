@@ -3880,6 +3880,9 @@ fn captureWindow(
             else
                 null,
             .active = ti == win.active_tab,
+            // T3126: the rows the user collapsed into blades, and the focus
+            // history, so a relaunch keeps every blade a blade.
+            .pane_stack = win.stackPersisted(arena, ti),
         };
     }
 
@@ -6006,6 +6009,7 @@ fn restoreWindowShown(
     if (win.pane_sidebar_order) |order| window.setPaneSidebarOrder(order);
     if (window.tab_count > 0) {
         const active: usize = @min(@as(usize, win.active_tab), window.tab_count - 1);
+        restoreStacks(window, win.tabs, active);
         window.selectTabIndex(active);
     }
     applyRestoreFrame(window, win.frame, win.frame_dpi, win.maximized, tr.reanchor);
@@ -6014,6 +6018,26 @@ fn restoreWindowShown(
     // keeps that newer moment.
     window.last_activated_ms = restore_pacing.carriedStamp(window.last_activated_ms, win.last_focused_ms);
     return window;
+}
+
+/// Every blade stays a blade (T3126, Mac a7fe3e9f8): each tab takes back the
+/// rows the user collapsed and its focus history, once every tree is whole,
+/// and the caret goes to the pane focused last there - never a blade, which
+/// focusing would bring back out. The active tab goes last, so its focus is
+/// the window's. A tab saved without any (an older manifest) is left as it
+/// was built.
+fn restoreStacks(window: *Window, tabs: []const session_layout.Tab, active: usize) void {
+    const n = @min(tabs.len, window.tab_count);
+    for (0..n) |ti| {
+        if (ti == active) continue;
+        const saved = tabs[ti].pane_stack orelse continue;
+        window.adoptStackPersisted(ti, saved);
+        window.focusRestoredPane(ti);
+    }
+    if (active < n) if (tabs[active].pane_stack) |saved| {
+        window.adoptStackPersisted(active, saved);
+        window.focusRestoredPane(active);
+    };
 }
 
 /// Rebuild one tab: replay the split tree onto its (already-created) first

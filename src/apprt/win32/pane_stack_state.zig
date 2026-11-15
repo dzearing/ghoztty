@@ -11,8 +11,10 @@
 //! show it. A row the user is not working in keeps showing the panes they last
 //! looked at there, because those are still the most recent of its panes.
 //!
-//! Ephemeral: a relaunch starts from the focused pane, like the window does,
-//! with every row side by side again where it fits.
+//! Saved with the window (T3126, Mac a7fe3e9f8): the rows the user collapsed
+//! and the focus history ride each tab's session-layout entry (`Persisted`,
+//! by leaf position), so a relaunch keeps every blade a blade. Which panes a
+//! row stacked only for want of room is not saved: that is the layout's.
 //!
 //! A collapse is carried over every tree change (a close, a stash, a split, a
 //! drop, a move) by `rowsDidChange` (T2083, Mac 3090ac2aa, d26e51183 and
@@ -134,6 +136,36 @@ pub const Saved = struct {
         freeMap(gpa, &s.map);
         s.* = undefined;
     }
+};
+
+/// The rows the user collapsed into blades and the focus history, as they
+/// ride a tab's entry in the session layout (T3126, Mac a7fe3e9f8
+/// `PaneStackState.Persisted`), so a relaunch keeps every blade a blade.
+/// Panes are named by their POSITION among the tab's leaves in screen order
+/// (`SplitTree.leafIterator`, the stash included) - Mac's `leaves()` order -
+/// not by id: a pane's id is its address, new every run.
+///
+/// Additive: an older build ignores it and lays every row out side by side;
+/// a manifest from one has none, and restores the same way.
+pub const Persisted = struct {
+    /// Each collapsed row: its panes, and its run on show.
+    rows: []const Collapse = &.{},
+    /// Leaf positions, most recently focused first.
+    recency: []const u32 = &.{},
+
+    /// One collapsed row (Mac's `Persisted.Row`).
+    pub const Collapse = struct {
+        /// The row's panes, ascending.
+        leaves: []const u32 = &.{},
+        start: u32 = 0,
+        count: u32 = 0,
+        /// The run's slot shares, when the user sized them.
+        shares: ?[]const f64 = null,
+
+        fn lessThan(_: void, a: Collapse, b: Collapse) bool {
+            return std.mem.order(u32, a.leaves, b.leaves) == .lt;
+        }
+    };
 };
 
 pub const PaneStackState = struct {
@@ -465,6 +497,107 @@ pub const PaneStackState = struct {
         freeMap(gpa, &self.rows);
         self.rows = next;
         self.prune();
+    }
+
+    // -- saved with the window (T3126) -------------------------------------
+
+    /// One tab's collapses and focus history as they ride the session layout
+    /// (`Persisted`), for `leaves` - the tab's panes in screen order, the
+    /// stash included (`SplitTree.leafIterator`). Null when there is nothing
+    /// to keep. Allocated in `a` (an arena).
+    ///
+    /// Only rows made wholly of `leaves` are written: one state serves every
+    /// tab of the window, and a row belongs to exactly one tab.
+    pub fn persisted(self: *const PaneStackState, a: Allocator, leaves: []const Id) Allocator.Error!?Persisted {
+        var rows: std.ArrayListUnmanaged(Persisted.Collapse) = .empty;
+        var it = self.rows.iterator();
+        while (it.next()) |kv| {
+            const p = kv.value_ptr.pin orelse continue;
+            const key = kv.key_ptr.*;
+            const positions = try a.alloc(u32, key.len);
+            const complete = for (key, positions) |id, *at| {
+                const i = std.mem.indexOfScalar(Id, leaves, id) orelse break false;
+                at.* = @intCast(i);
+            } else true;
+            if (!complete) continue;
+            std.mem.sort(u32, positions, {}, std.sort.asc(u32));
+            try rows.append(a, .{
+                .leaves = positions,
+                .start = @intCast(p.start),
+                .count = @intCast(p.count),
+                .shares = if (kv.value_ptr.shares) |s| try a.dupe(f64, s) else null,
+            });
+        }
+        // A stable order, so an unchanged window writes unchanged bytes
+        // (`session_layout.writeIfChanged`): the map's order is its hash's.
+        std.mem.sort(Persisted.Collapse, rows.items, {}, Persisted.Collapse.lessThan);
+
+        var recency: std.ArrayListUnmanaged(u32) = .empty;
+        for (self.recency.items()) |id| {
+            const i = std.mem.indexOfScalar(Id, leaves, id) orelse continue;
+            try recency.append(a, @intCast(i));
+        }
+        if (rows.items.len == 0 and recency.items.len == 0) return null;
+        return .{ .rows = rows.items, .recency = recency.items };
+    }
+
+    /// A fingerprint of every collapse and run size, and nothing else: it
+    /// moves exactly when what `persisted` writes for a row moves, so the
+    /// window re-saves when a row is collapsed, widened or resized (Mac
+    /// `paneStackDidChange`) and not on every layout. Order-independent, as
+    /// the map is.
+    pub fn collapseStamp(self: *const PaneStackState) u64 {
+        var sum: u64 = 0;
+        var it = self.rows.iterator();
+        while (it.next()) |kv| {
+            const p = kv.value_ptr.pin orelse continue;
+            var h = std.hash.Wyhash.init(0x3126);
+            h.update(std.mem.sliceAsBytes(kv.key_ptr.*));
+            h.update(std.mem.asBytes(&p.start));
+            h.update(std.mem.asBytes(&p.count));
+            if (kv.value_ptr.shares) |s| h.update(std.mem.sliceAsBytes(s));
+            sum +%= h.final();
+        }
+        return sum;
+    }
+
+    /// Take back what `persisted` saved for one tab, whose panes are now
+    /// `leaves` (screen order, the stash included). A row naming a pane the
+    /// tab does not have, or with no run, is dropped: the layout lays it out
+    /// side by side. The tab's focus history goes in front of the window's;
+    /// adopt the window's active tab last, so its focus is the window's.
+    pub fn adopt(self: *PaneStackState, saved_in: Persisted, leaves: []const Id) Allocator.Error!void {
+        const gpa = self.gpa;
+        for (saved_in.rows) |row| {
+            if (row.count < 1 or row.leaves.len < 2) continue;
+            const key = try gpa.alloc(Id, row.leaves.len);
+            defer gpa.free(key);
+            const known = for (row.leaves, key) |at, *id| {
+                if (at >= leaves.len) break false;
+                id.* = leaves[at];
+            } else true;
+            if (!known) continue;
+            std.mem.sort(Id, key, {}, std.sort.asc(Id));
+            // The same pane twice is no row any layout makes.
+            if (hasDuplicate(key)) continue;
+            const shares = if (row.shares) |s| try gpa.dupe(f64, s) else null;
+            errdefer if (shares) |v| gpa.free(v);
+            const e = try self.entry(key);
+            e.pin = .{ .start = row.start, .count = row.count };
+            self.clearShares(e);
+            e.shares = shares;
+            // How the layout orders the row, and how many fit, it notes itself
+            // on its first pass (`noteStacks`).
+            self.clearItems(e);
+            e.capacity = null;
+        }
+        // Oldest first, so the first of the saved history ends up in front.
+        var i = saved_in.recency.len;
+        while (i > 0) {
+            i -= 1;
+            const at = saved_in.recency[i];
+            if (at < leaves.len) self.recency.note(leaves[at]);
+        }
     }
 
     // -- what the layout saw ------------------------------------------------
@@ -982,6 +1115,13 @@ fn intersects(a: []const Id, b: []const Id) bool {
     return false;
 }
 
+/// Whether a sorted key names a pane twice.
+fn hasDuplicate(sorted: []const Id) bool {
+    if (sorted.len < 2) return false;
+    for (sorted[1..], sorted[0 .. sorted.len - 1]) |b, a| if (a == b) return true;
+    return false;
+}
+
 fn isSubset(a: []const Id, b: []const Id) bool {
     var j: usize = 0;
     for (a) |x| {
@@ -1187,6 +1327,122 @@ test "pane_stack_state: collapsed to one by hand" {
     try testing.expect(try state.isMinimized(1, &.{&items}));
     try testing.expect(!try state.isMinimized(3, &.{&items}));
     try testing.expect(!try state.isMinimized(42, &.{&items}));
+}
+
+// -- saved with the window (T3126) -------------------------------------------
+
+test "pane_stack_state: the stack state round-trips by leaf position" {
+    // Mac `theStackStateRoundTripsByLeafPosition`: saved under one run's ids,
+    // taken back under the next run's - every pane a new address.
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+
+    var before = PaneStackState.init(testing.allocator);
+    defer before.deinit();
+    const old_ids = [_]Id{ 11, 12, 13, 14, 15 };
+    const old_items = singles(5, &old_ids);
+    try collapsedToOne(&before, &old_items);
+    try before.resize(.{ .items = &old_items, .run = .{ .lo = 2, .hi = 2 }, .sizes = &.{1} }, &.{1.0});
+    before.noteFocus(12);
+    before.noteFocus(13);
+
+    // A tab's leaves in screen order, with a pane of another tab mixed into
+    // the window's history: it is not this tab's to save.
+    before.noteFocus(99);
+    const saved = (try before.persisted(a, &old_ids)).?;
+    try testing.expectEqual(@as(usize, 1), saved.rows.len);
+    try testing.expectEqualSlices(u32, &.{ 0, 1, 2, 3, 4 }, saved.rows[0].leaves);
+    try testing.expectEqual(@as(u32, 2), saved.rows[0].start);
+    try testing.expectEqual(@as(u32, 1), saved.rows[0].count);
+    try testing.expectEqualSlices(f64, &.{1.0}, saved.rows[0].shares.?);
+    try testing.expectEqualSlices(u32, &.{ 2, 1 }, saved.recency);
+
+    // Through the bytes, as a relaunch reads it.
+    const json = try std.json.Stringify.valueAlloc(a, saved, .{});
+    const back = try std.json.parseFromSliceLeaky(Persisted, a, json, .{ .ignore_unknown_fields = true });
+
+    var after = PaneStackState.init(testing.allocator);
+    defer after.deinit();
+    const new_ids = [_]Id{ 51, 52, 53, 54, 55 };
+    const new_items = singles(5, &new_ids);
+    try after.adopt(back, &new_ids);
+    try expectPin(&after, &new_ids, .{ .start = 2, .count = 1 });
+    try testing.expectEqualSlices(f64, &.{1.0}, after.sharesFor(&new_ids).?);
+    try testing.expectEqual(@as(?Id, 53), after.recency.first());
+    try testing.expectEqual(@as(?u32, 1), after.rank(52));
+    // Every blade a blade, and the focused pane on show.
+    try testing.expect(try after.isMinimized(51, &.{&new_items}));
+    try testing.expect(try after.isMinimized(55, &.{&new_items}));
+    try testing.expect(!try after.isMinimized(53, &.{&new_items}));
+    // Same state, same fingerprint: nothing to re-save.
+    try testing.expectEqual(before.collapseStamp(), (try fingerprintUnder(&after, &new_ids, &old_ids)));
+}
+
+/// `state`'s `collapseStamp` with its ids renamed from `from` to `to`, so two
+/// runs' states compare.
+fn fingerprintUnder(state: *const PaneStackState, from: []const Id, to: []const Id) !u64 {
+    var renamed = PaneStackState.init(testing.allocator);
+    defer renamed.deinit();
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const p = (try state.persisted(arena_state.allocator(), from)).?;
+    try renamed.adopt(p, to);
+    return renamed.collapseStamp();
+}
+
+test "pane_stack_state: a row only partly in the tab, or not at all, is not saved" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    const ids = [_]Id{ 1, 2, 3, 4, 5 };
+    const items = singles(5, &ids);
+    try collapsedToOne(&state, &items);
+    // Another tab's leaves: nothing of this row, and no history either.
+    try testing.expect((try state.persisted(a, &.{ 7, 8 })) == null);
+    // Part of the row only: a row belongs to one tab, so this is corrupt.
+    const partial = (try state.persisted(a, &.{ 1, 2, 3 }));
+    try testing.expect(partial == null or partial.?.rows.len == 0);
+}
+
+test "pane_stack_state: a saved row naming a pane the tab lacks lays out side by side" {
+    // Mac `aManifestWithoutBladesStillLoads` and its corrupt cousins: out of
+    // range, no run, one pane, the same pane twice.
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    const leaves = [_]Id{ 1, 2, 3 };
+    try state.adopt(.{ .rows = &.{
+        .{ .leaves = &.{ 0, 1, 7 }, .start = 1, .count = 1 },
+        .{ .leaves = &.{ 0, 1, 2 }, .start = 1, .count = 0 },
+        .{ .leaves = &.{0}, .start = 0, .count = 1 },
+        .{ .leaves = &.{ 0, 0, 1 }, .start = 0, .count = 1 },
+    }, .recency = &.{ 9, 2 } }, &leaves);
+    try testing.expectEqual(@as(u32, 0), state.rows.count());
+    try testing.expectEqual(@as(u64, 0), state.collapseStamp());
+    // An out-of-range history entry is skipped; the rest stands.
+    try testing.expectEqual(@as(?Id, 3), state.recency.first());
+    try testing.expectEqual(@as(usize, 1), state.recency.items().len);
+    // Nothing saved at all reads back as nothing.
+    try state.adopt(.{}, &leaves);
+    try testing.expectEqual(@as(u32, 0), state.rows.count());
+}
+
+test "pane_stack_state: the fingerprint moves with a collapse and only with one" {
+    var state = PaneStackState.init(testing.allocator);
+    defer state.deinit();
+    const ids = [_]Id{ 1, 2, 3, 4, 5 };
+    const items = singles(5, &ids);
+    const empty = state.collapseStamp();
+    state.noteFocus(3); // a focus is not a collapse
+    try testing.expectEqual(empty, state.collapseStamp());
+    try collapsedToOne(&state, &items);
+    const collapsed = state.collapseStamp();
+    try testing.expect(collapsed != empty);
+    try testing.expectEqual(collapsed, state.collapseStamp());
+    try state.resize(.{ .items = &items, .run = .{ .lo = 2, .hi = 2 }, .sizes = &.{1} }, &.{0.5});
+    try testing.expect(state.collapseStamp() != collapsed);
 }
 
 test "pane_stack_state: focusing a minimized pane with no room slides the run to it" {

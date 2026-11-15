@@ -8,7 +8,8 @@
 //! cross-machine path (§5.4/T18) and is not involved here.
 //!
 //! Layering: like `layout_meta.zig`/`session_meta.zig`/`tab_color.zig`, this
-//! module depends on nothing but `std` (+ `builtin` for the debug-file split),
+//! module depends on nothing but `std` (+ `builtin` for the debug-file split,
+//! and the pure, OS-free `pane_stack_state.zig` for the `pane_stack` schema),
 //! so it compiles and unit-tests in every app-runtime lane. The topology WALK
 //! that reads live `Window`/`Surface` state lives in `App.zig`
 //! (`syncSessionLayout`); this module owns the schema and the bytes on disk.
@@ -27,7 +28,9 @@
 //!                                 "working_directory":..?,
 //!                                 "stash_index":0?}},
 //!                        {"leaf":{"session_id":"<32hex>"}}],
-//!               "color":"blue"?,"hero_ratio":..?,"title":..?,"active":true}]}]}
+//!               "color":"blue"?,"hero_ratio":..?,"title":..?,"active":true,
+//!               "pane_stack":{"rows":[{"leaves":[0,1,2],"start":1,"count":1,
+//!                                      "shares":[1.0]?}],"recency":[1,0]}?}]}]}
 //!
 //! Keys are the Zig field names verbatim (snake_case). This file is the win32
 //! app's private local-restore state and is never decoded by the macOS app
@@ -259,7 +262,17 @@ pub const Tab = struct {
     hero_ratio: ?f32 = null,
     title: ?[]const u8 = null,
     active: bool = false,
+    /// The rows the user collapsed into blades in this tab, and its focus
+    /// history (T3126, Mac a7fe3e9f8 `paneStack`), by leaf position in screen
+    /// order - see `pane_stack_state.Persisted`. Additive: absent in an older
+    /// manifest (every row lays out side by side, as it always did), and an
+    /// older build ignores it.
+    pane_stack: ?PaneStack = null,
 };
+
+/// A tab's saved stack state. Owned by the pure stacking module, which is
+/// what reads and writes it; spelled here because this file owns the bytes.
+pub const PaneStack = @import("pane_stack_state.zig").Persisted;
 
 /// One window: outer placement, the window-level title pin (T92), its IPC name
 /// (`+new-window --target`), the active tab index, and its tabs in order.
@@ -1198,6 +1211,47 @@ test "T2302: a window's pane sidebar order round-trips, and none is written unti
     try testing.expectEqualStrings(order[0], w[0].pane_sidebar_order.?[0]);
     try testing.expectEqualStrings(order[1], w[0].pane_sidebar_order.?[1]);
     try testing.expect(w[1].pane_sidebar_order == null);
+}
+
+test "T3126: a tab's blades and focus history round-trip, and none is written until there is one" {
+    const alloc = testing.allocator;
+    const nodes = [_]Node{.{ .leaf = .{ .session_id = "0123456789abcdef0123456789abcdef" } }};
+    const rows = [_]PaneStack.Collapse{.{ .leaves = &.{ 0, 1, 2 }, .start = 1, .count = 1, .shares = &.{1.0} }};
+    const tabs = [_]Tab{
+        .{ .nodes = &nodes, .active = true, .pane_stack = .{ .rows = &rows, .recency = &.{ 1, 0 } } },
+        .{ .nodes = &nodes },
+    };
+    const windows = [_]Window{.{ .id = "win-0", .tabs = &tabs }};
+    const body = try serialize(alloc, .{ .windows = &windows });
+    defer alloc.free(body);
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, body, "pane_stack"));
+
+    var parsed = try parse(alloc, body);
+    defer parsed.deinit();
+    const t = parsed.value.windows[0].tabs;
+    const ps = t[0].pane_stack.?;
+    try testing.expectEqual(@as(usize, 1), ps.rows.len);
+    try testing.expectEqualSlices(u32, &.{ 0, 1, 2 }, ps.rows[0].leaves);
+    try testing.expectEqual(@as(u32, 1), ps.rows[0].start);
+    try testing.expectEqual(@as(u32, 1), ps.rows[0].count);
+    try testing.expectEqualSlices(f64, &.{1.0}, ps.rows[0].shares.?);
+    try testing.expectEqualSlices(u32, &.{ 1, 0 }, ps.recency);
+    try testing.expect(t[1].pane_stack == null);
+}
+
+test "T3126: a manifest without blades still loads (Mac aManifestWithoutBladesStillLoads)" {
+    const alloc = testing.allocator;
+    const body =
+        \\{"version":1,"windows":[{"id":"win-0","active_tab":0,
+        \\"tabs":[{"nodes":[{"leaf":{"session_id":"aaaa"}}],"active":true,
+        \\"pane_stack":{"rows":[{"leaves":[0,1],"start":0,"count":1,"future":7}],"recency":[0]}},
+        \\{"nodes":[{"leaf":{"session_id":"bbbb"}}]}]}]}
+    ;
+    var parsed = try parse(alloc, body);
+    defer parsed.deinit();
+    // An unknown key inside the stack state is ignored like any other.
+    try testing.expectEqual(@as(u32, 1), parsed.value.windows[0].tabs[0].pane_stack.?.rows[0].count);
+    try testing.expect(parsed.value.windows[0].tabs[1].pane_stack == null);
 }
 
 test "T422: a pre-banner manifest still loads, with a null banner" {

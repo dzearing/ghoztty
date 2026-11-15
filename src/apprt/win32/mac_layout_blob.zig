@@ -105,6 +105,11 @@ pub const Entry = struct {
     /// `Entry.paneSidebarOrder` (T2302): that controller's sidebar list order,
     /// by stable pane id. Empty when the blob predates it or it was never set.
     pane_sidebar_order: []const []const u8 = &.{},
+    /// `Entry.paneStack` (T3126, Mac a7fe3e9f8): the rows collapsed into
+    /// blades and the focus history, by leaf position - the same keys and the
+    /// same leaf order (`leaves()`, left before right) as win32's own
+    /// `Tab.pane_stack`. Null when the blob predates it or is unreadable.
+    pane_stack: ?session_layout.PaneStack = null,
     /// The tree, flattened to win32's `nodes[0] = root` representation.
     nodes: []const session_layout.Node = &.{},
 };
@@ -158,6 +163,7 @@ pub fn parseEntry(arena: Allocator, v: std.json.Value) !Entry {
         .pane_sidebar_pinned = boolean(obj.get("paneSidebarPinned")),
         .pane_sidebar_hidden = boolean(obj.get("paneSidebarHidden")),
         .pane_sidebar_order = try strings(arena, obj.get("paneSidebarOrder")),
+        .pane_stack = paneStack(arena, obj.get("paneStack")),
         .nodes = try nodes.toOwnedSlice(arena),
     };
 }
@@ -219,6 +225,7 @@ pub fn groupIntoWindows(arena: Allocator, entries: []const Entry) ![]session_lay
                 .nodes = entry.nodes,
                 .title = entry.tab_title,
                 .active = ti == 0,
+                .pane_stack = entry.pane_stack,
             };
             // A tab sibling inherits the group's frame, so the first entry that
             // has one wins (Mac stores it on the group's window, not per tab).
@@ -263,6 +270,17 @@ pub fn groupIntoWindows(arena: Allocator, entries: []const Entry) ![]session_lay
         });
     }
     return out.toOwnedSlice(arena);
+}
+
+/// `Entry.paneStack`, or null when absent or not the shape this build reads:
+/// half a stack state is not worth a window, and without it every row lays
+/// out side by side, as it did before.
+fn paneStack(arena: Allocator, v: ?std.json.Value) ?session_layout.PaneStack {
+    const value = v orelse return null;
+    if (value != .object) return null;
+    return std.json.parseFromValueLeaky(session_layout.PaneStack, arena, value, .{
+        .ignore_unknown_fields = true,
+    }) catch null;
 }
 
 fn lessByTabIndex(_: void, a: Entry, b: Entry) bool {
@@ -660,6 +678,35 @@ test "T1847: a Mac window's pane sidebar pin and hidden flags come across" {
         try testing.expectEqual(@as(?bool, null), old.pane_sidebar_pinned);
         try testing.expectEqual(@as(?bool, null), old.pane_sidebar_hidden);
     }
+}
+
+test "T3126: a Mac window's blades and focus history come across onto its tab" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const blob =
+        \\{"id":"e","paneStack":{"rows":[{"leaves":[0,1,2],"start":2,"count":1,"shares":[1]}],
+        \\"recency":[2,0]},"tree":{"leaf":{"_0":{"sessionID":"aaaa"}}}}
+    ;
+    const e = try translate(arena, blob);
+    const ps = e.pane_stack.?;
+    try testing.expectEqualSlices(u32, &.{ 0, 1, 2 }, ps.rows[0].leaves);
+    try testing.expectEqual(@as(u32, 2), ps.rows[0].start);
+    try testing.expectEqualSlices(f64, &.{1.0}, ps.rows[0].shares.?);
+    try testing.expectEqualSlices(u32, &.{ 2, 0 }, ps.recency);
+    const windows = try groupIntoWindows(arena, &.{e});
+    try testing.expectEqual(@as(u32, 1), windows[0].tabs[0].pane_stack.?.rows[0].count);
+
+    // A blob from before the field, or a garbled one, keeps every row side
+    // by side - and the window.
+    for ([_][]const u8{
+        \\{"id":"e","tree":{"leaf":{"_0":{"sessionID":"aaaa"}}}}
+        ,
+        \\{"id":"e","paneStack":"blades","tree":{"leaf":{"_0":{"sessionID":"aaaa"}}}}
+        ,
+        \\{"id":"e","paneStack":{"rows":[{"leaves":[-1],"start":0,"count":1}]},"tree":{"leaf":{"_0":{"sessionID":"aaaa"}}}}
+        ,
+    }) |text| try testing.expect((try translate(arena, text)).pane_stack == null);
 }
 
 test "T1832: a Mac window's deskVariant seed comes across, whatever its size" {

@@ -1095,6 +1095,9 @@ gutter_bar_at_logged: ?w32.RECT = null,
 /// history and the rows the user collapsed, read by `stackGrid` as the
 /// layout's provider. Made on first use; ephemeral, like Mac's.
 pane_stacks: ?pane_stack_state.PaneStackState = null,
+/// `pane_stacks.collapseStamp()` as the session layout last saw it (T3126):
+/// a layout pass that moves it re-saves the window.
+stack_persisted_stamp: u64 = 0,
 
 /// The tucked pane whose strip the pointer is over (T2109): its label takes
 /// Mac's stronger hover ink. Compared, never dereferenced.
@@ -8890,6 +8893,7 @@ pub fn layoutSplits(self: *Window) void {
         // The runs on show stick to the next layout (`stickyRun`).
         self.stackState().noteStacks(grid.result.stacks.items) catch {};
     }
+    self.noteStackPersistChange();
     if (pane_stash.stashedCount(tree) > 0) self.placeStashed(tree, rect, &hdwp);
     if (split) move_split = null;
     // Every pane of this pass lands in ONE frame here, before the divider
@@ -11680,6 +11684,79 @@ pub fn restoreStackRows(self: *Window, tab: usize, saved: *const pane_stack_stat
     const rows = self.stackRowsOf(a, null) catch return;
     self.stackState().restoreScoped(saved, scope.items, rows) catch |err|
         log.warn("stacked rows not restored by undo: {}", .{err});
+}
+
+/// Tab `tab`'s collapses and focus history as the session layout saves them
+/// (T3126, Mac a7fe3e9f8 `persistedPaneStack`), by leaf position in screen
+/// order. Null when there is nothing to keep, or no state yet. Allocated in
+/// `a` (the capture's arena).
+pub fn stackPersisted(self: *Window, a: Allocator, tab: usize) ?pane_stack_state.Persisted {
+    if (tab >= self.tab_count) return null;
+    const state = if (self.pane_stacks) |*s| s else return null;
+    const leaves = self.stackLeavesOf(a, tab) catch return null;
+    return state.persisted(a, leaves) catch null;
+}
+
+/// Take back a saved tab's collapses and focus history, once its tree is
+/// whole and before it is shown (T3126, Mac `adoptPersistedPaneStack`).
+/// Adopt the window's active tab last: its focus is then the window's.
+pub fn adoptStackPersisted(self: *Window, tab: usize, saved: pane_stack_state.Persisted) void {
+    if (tab >= self.tab_count) return;
+    var arena = std.heap.ArenaAllocator.init(self.app.core_app.alloc);
+    defer arena.deinit();
+    const leaves = self.stackLeavesOf(arena.allocator(), tab) catch return;
+    self.stackState().adopt(saved, leaves) catch |err| {
+        log.warn("stacked rows not restored: {}", .{err});
+        return;
+    };
+    // What is saved is what was written: a fingerprint taken now keeps the
+    // first layout from re-saving an unchanged window.
+    self.stack_persisted_stamp = self.stackState().collapseStamp();
+}
+
+/// Where the caret goes in a restored tab (T3126, Mac `restoredFocusTarget`):
+/// the pane focused last there, unless it is stashed, and never a strip of a
+/// collapsed row - focusing one would bring it back out - when it is the pane
+/// on show nearest it. Sets the tab's focused pane; the tab's selection moves
+/// the keyboard there.
+pub fn focusRestoredPane(self: *Window, tab: usize) void {
+    if (tab >= self.tab_count) return;
+    const state = if (self.pane_stacks) |*s| s else return;
+    var preferred: ?*PaneView = null;
+    for (state.recency.items()) |id| {
+        var it = self.tab_trees[tab].iterator();
+        while (it.next()) |entry| {
+            if (pane_stack_grid.viewId(entry.view) != id) continue;
+            if (!pane_stash.isStashed(entry.view)) preferred = entry.view;
+            break;
+        }
+        if (preferred != null) break;
+    }
+    if (preferred) |p| self.tab_active_pane[tab] = p;
+    const on_show = self.caretPaneOnShow(tab);
+    if (on_show != self.tab_active_pane[tab]) log.info("restored focus goes to the pane on show, not a blade", .{});
+    self.tab_active_pane[tab] = on_show;
+}
+
+/// The collapses or run sizes changed since the session layout last saw them
+/// (T3126, Mac `paneStackDidChange`): re-save the window, so a relaunch - a
+/// crash's too - puts every blade back. Called after every layout pass; the
+/// fingerprint keeps it to the passes that changed something.
+fn noteStackPersistChange(self: *Window) void {
+    const state = if (self.pane_stacks) |*s| s else return;
+    const stamp = state.collapseStamp();
+    if (stamp == self.stack_persisted_stamp) return;
+    self.stack_persisted_stamp = stamp;
+    self.app.markLayoutDirty();
+}
+
+/// Tab `tab`'s panes in screen order, the stash included: the positions
+/// `pane_stack_state.Persisted` names panes by (Mac's `leaves()`).
+fn stackLeavesOf(self: *Window, a: Allocator, tab: usize) Allocator.Error![]const pane_stack_grid.Id {
+    var out: std.ArrayListUnmanaged(pane_stack_grid.Id) = .empty;
+    var it = self.tab_trees[tab].leafIterator();
+    while (it.next()) |entry| try out.append(a, pane_stack_grid.viewId(entry.view));
+    return out.items;
 }
 
 /// Whether `pane` of tab `tab` is a strip of a collapsed row: focusing it

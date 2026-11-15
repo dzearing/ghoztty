@@ -693,6 +693,22 @@ $GuardTable = @(
             'src\cli\list.zig'
         )
     },
+    # T3126: a blade is still a blade after a relaunch - each tab's collapses
+    # and focus history ride the session layout (`Tab.pane_stack`), the
+    # capture and restore are App.zig's, and the window adopts them and puts
+    # the caret on a pane on show.
+    [pscustomobject]@{
+        Name   = 'session-blades'
+        Script = 'test\win32\session-blades.ps1'
+        Stamp  = 'test\win32\session-blades.stamp.json'
+        Covers = @(
+            'test\win32\session-blades.ps1',
+            'src\apprt\win32\pane_stack_state.zig',
+            'src\apprt\win32\session_layout.zig',
+            'src\apprt\win32\App.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # A tucked pane's strip (T2109): painted in the strip colour, named by the
     # banner title live on +set-banner, and a click on it brings the pane on
     # show. `pane_sidebar.zig` is named because the label is its `paneLabel`.
