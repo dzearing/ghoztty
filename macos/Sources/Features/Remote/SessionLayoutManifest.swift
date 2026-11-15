@@ -34,7 +34,7 @@ import GhosttyKit
 /// controller, so a "window with tabs" persists as N entries sharing a
 /// `tabGroupID` with ascending `tabIndex`. Restore groups them back together.
 final class SessionLayoutManifest {
-    static let shared = SessionLayoutManifest()
+    static let shared = SessionLayoutManifest(writesInBackground: true)
 
     // MARK: Model
 
@@ -239,8 +239,13 @@ final class SessionLayoutManifest {
             .appendingPathComponent("session-layout.json")
     }
 
-    init(fileURL: URL = SessionLayoutManifest.defaultFileURL) {
+    /// With `writesInBackground` (the app's shared manifest) a change is
+    /// encoded and written on a background queue, latest state wins, and
+    /// `flushWrites()` waits for it; without, it is written before the
+    /// mutating call returns.
+    init(fileURL: URL = SessionLayoutManifest.defaultFileURL, writesInBackground: Bool = false) {
         self.fileURL = fileURL
+        self.writesInBackground = writesInBackground
         if let data = try? Data(contentsOf: fileURL),
            let decoded = try? JSONDecoder().decode([Entry].self, from: data) {
             self.entries = decoded
@@ -249,7 +254,43 @@ final class SessionLayoutManifest {
         }
     }
 
+    /// Whether saves leave the calling thread. Every mutation comes from the
+    /// main thread, and a save encodes EVERY window's entry — each pane's
+    /// screen snapshot included, a few hundred KB — and rewrites the file;
+    /// a pane banner changing is enough to trigger one, and agents change
+    /// their banners all the time.
+    private let writesInBackground: Bool
+    private let writeQueue = DispatchQueue(
+        label: "com.dzearing.ghoztty.session-layout.write", qos: .utility)
+
+    /// The state waiting to be written, if a write is queued. Guarded by
+    /// `lock`. A newer state replaces it, so a burst of changes is one write.
+    private var pendingWrite: [Entry]?
+
     private func saveLocked() {
+        guard writesInBackground else {
+            write(entries)
+            return
+        }
+        let queued = pendingWrite != nil
+        pendingWrite = entries
+        guard !queued else { return }
+        writeQueue.async { [self] in
+            lock.lock()
+            let latest = pendingWrite
+            pendingWrite = nil
+            lock.unlock()
+            if let latest { write(latest) }
+        }
+    }
+
+    /// Wait until every change made so far is on disk. Called as the app
+    /// quits; a no-op for a manifest that writes in place.
+    func flushWrites() {
+        writeQueue.sync {}
+    }
+
+    private func write(_ entries: [Entry]) {
         if entries.isEmpty {
             try? FileManager.default.removeItem(at: fileURL)
             return
@@ -577,16 +618,35 @@ final class SessionLayoutManifest {
         attempt: Int = 0
     ) {
         // The window was closed (entry removed) or re-tracked; stop.
-        guard controller.sessionLayoutEntryID == entryID else { return }
+        guard controller.sessionLayoutEntryID == entryID else {
+            if attempt > 0 { shared.capturingSessionIDs.remove(entryID) }
+            return
+        }
 
         shared.sync(controller)
 
-        guard attempt < 60, shared.entryHasMissingSessionIDs(entryID) else { return }
+        // One retry loop per entry: a sync triggered while one is running
+        // has synced above, and the running loop keeps looking for the ids.
+        // Each trigger used to start its own 30 s loop of full syncs.
+        if attempt == 0 {
+            guard !shared.capturingSessionIDs.contains(entryID) else { return }
+        }
+        guard attempt < 60, shared.entryHasMissingSessionIDs(entryID) else {
+            shared.capturingSessionIDs.remove(entryID)
+            return
+        }
+        shared.capturingSessionIDs.insert(entryID)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak controller] in
-            guard let controller else { return }
+            guard let controller else {
+                shared.capturingSessionIDs.remove(entryID)
+                return
+            }
             syncAndCaptureSessionIDs(of: controller, entryID: entryID, attempt: attempt + 1)
         }
     }
+
+    /// Entries with a session-id retry loop running. Main-thread only.
+    private var capturingSessionIDs: Set<UUID> = []
 
     /// Snapshot the controller's live state into its entry, then refresh
     /// every sibling entry in the same native tab group. The sibling pass is

@@ -391,65 +391,12 @@ pub const TerminalFormatter = struct {
         // Extra terminal state to emit after the screen contents so that
         // it doesn't impact the emitted contents.
         if (self.opts.emit == .vt) {
-            // Emit scrolling region using DECSTBM and DECSLRM
-            if (self.extra.scrolling_region) {
-                const region = &self.terminal.scrolling_region;
-
-                // DECSTBM: top and bottom margins (1-indexed)
-                // Only emit if not the full screen
-                if (region.top != 0 or region.bottom != self.terminal.rows - 1) {
-                    try writer.print("\x1b[{d};{d}r", .{ region.top + 1, region.bottom + 1 });
-                }
-
-                // DECSLRM: left and right margins (1-indexed)
-                // Only emit if not the full width
-                if (region.left != 0 or region.right != self.terminal.cols - 1) {
-                    try writer.print("\x1b[{d};{d}s", .{ region.left + 1, region.right + 1 });
-                }
-            }
-
-            // Emit tabstop positions
-            if (self.extra.tabstops) {
-                // Clear all tabs (CSI 3 g)
-                try writer.print("\x1b[3g", .{});
-
-                // Set each configured tabstop by moving cursor and using HTS
-                for (0..self.terminal.cols) |col| {
-                    if (self.terminal.tabstops.get(col)) {
-                        // Move cursor to the column (1-indexed)
-                        try writer.print("\x1b[{d}G", .{col + 1});
-                        // Set tab (HTS)
-                        try writer.print("\x1bH", .{});
-                    }
-                }
-            }
-
-            // Emit keyboard modes such as ModifyOtherKeys
-            if (self.extra.keyboard) {
-                // Only emit if modify_other_keys_2 is true
-                if (self.terminal.flags.modify_other_keys_2) {
-                    try writer.print("\x1b[>4;2m", .{});
-                }
-            }
-
-            // Emit present working directory using OSC 7
-            if (self.extra.pwd) {
-                const pwd = self.terminal.pwd.items;
-                if (pwd.len > 0) try writer.print("\x1b]7;{s}\x1b\\", .{pwd});
-            }
+            try self.formatTrailingExtras(writer);
 
             // If we have a pin_map, add the bytes we wrote to map.
             if (self.pin_map) |*m| {
                 var discarding: std.Io.Writer.Discarding = .init(&.{});
-                var extra_formatter: TerminalFormatter = self;
-                extra_formatter.content = .none;
-                extra_formatter.pin_map = null;
-                extra_formatter.extra = .none;
-                extra_formatter.extra.scrolling_region = self.extra.scrolling_region;
-                extra_formatter.extra.tabstops = self.extra.tabstops;
-                extra_formatter.extra.keyboard = self.extra.keyboard;
-                extra_formatter.extra.pwd = self.extra.pwd;
-                try extra_formatter.format(&discarding.writer);
+                try self.formatTrailingExtras(&discarding.writer);
 
                 m.map.appendNTimes(
                     m.alloc,
@@ -464,6 +411,79 @@ pub const TerminalFormatter = struct {
                     std.math.cast(usize, discarding.count) orelse return error.WriteFailed,
                 ) catch return error.WriteFailed;
             }
+        }
+    }
+
+    /// The terminal state emitted after the screen contents (`emit == .vt`):
+    /// scrolling region, tabstops, keyboard modes, pwd.
+    ///
+    /// Two of these move the cursor the screen formatter has just placed:
+    /// DECSTBM/DECSLRM home it, and each tabstop is set by moving to its
+    /// column. So when the cursor is part of what is being restored
+    /// (`extra.screen.cursor`), it is put back afterwards. Without that a
+    /// restored terminal was left with its cursor at the last tabstop — on
+    /// the right row, in column 113 of 116 — and whatever the program printed
+    /// next started there, until it sent a carriage return.
+    fn formatTrailingExtras(
+        self: TerminalFormatter,
+        writer: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
+        var moved_cursor = false;
+
+        // Emit scrolling region using DECSTBM and DECSLRM
+        if (self.extra.scrolling_region) {
+            const region = &self.terminal.scrolling_region;
+
+            // DECSTBM: top and bottom margins (1-indexed)
+            // Only emit if not the full screen
+            if (region.top != 0 or region.bottom != self.terminal.rows - 1) {
+                try writer.print("\x1b[{d};{d}r", .{ region.top + 1, region.bottom + 1 });
+                moved_cursor = true;
+            }
+
+            // DECSLRM: left and right margins (1-indexed)
+            // Only emit if not the full width
+            if (region.left != 0 or region.right != self.terminal.cols - 1) {
+                try writer.print("\x1b[{d};{d}s", .{ region.left + 1, region.right + 1 });
+                moved_cursor = true;
+            }
+        }
+
+        // Emit tabstop positions
+        if (self.extra.tabstops) {
+            // Clear all tabs (CSI 3 g)
+            try writer.print("\x1b[3g", .{});
+
+            // Set each configured tabstop by moving cursor and using HTS
+            for (0..self.terminal.cols) |col| {
+                if (self.terminal.tabstops.get(col)) {
+                    // Move cursor to the column (1-indexed)
+                    try writer.print("\x1b[{d}G", .{col + 1});
+                    // Set tab (HTS)
+                    try writer.print("\x1bH", .{});
+                    moved_cursor = true;
+                }
+            }
+        }
+
+        // Put the cursor back where the screen formatter left it.
+        if (moved_cursor and self.extra.screen.cursor) {
+            const cursor = &self.terminal.screens.active.cursor;
+            try writer.print("\x1b[{d};{d}H", .{ cursor.y + 1, cursor.x + 1 });
+        }
+
+        // Emit keyboard modes such as ModifyOtherKeys
+        if (self.extra.keyboard) {
+            // Only emit if modify_other_keys_2 is true
+            if (self.terminal.flags.modify_other_keys_2) {
+                try writer.print("\x1b[>4;2m", .{});
+            }
+        }
+
+        // Emit present working directory using OSC 7
+        if (self.extra.pwd) {
+            const pwd = self.terminal.pwd.items;
+            if (pwd.len > 0) try writer.print("\x1b]7;{s}\x1b\\", .{pwd});
         }
     }
 };
@@ -5332,6 +5352,49 @@ test "Terminal vt without input modes keeps the picture, drops the reports" {
     );
     try testing.expectEqual(t.modes.get(.wraparound), t2.modes.get(.wraparound));
     try testing.expectEqual(t.modes.get(.cursor_visible), t2.modes.get(.cursor_visible));
+}
+
+test "Terminal vt restores the cursor after tabstops and a scrolling region" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var builder: std.Io.Writer.Allocating = .init(alloc);
+    defer builder.deinit();
+
+    var t = try Terminal.init(alloc, .{ .cols = 80, .rows = 24 });
+    defer t.deinit(alloc);
+
+    var s = t.vtStream();
+    defer s.deinit();
+
+    // A scrolling region, the default tabstops, and a program that has
+    // printed two lines and sits at the start of the third.
+    s.nextSlice("\x1b[2;20r\x1b[H");
+    s.nextSlice("first\r\nsecond\r\n");
+    try testing.expectEqual(@as(usize, 0), t.screens.active.cursor.x);
+    try testing.expectEqual(@as(usize, 2), t.screens.active.cursor.y);
+
+    var formatter: TerminalFormatter = .init(&t, .vt);
+    formatter.extra = .all;
+    try formatter.format(&builder.writer);
+
+    var t2 = try Terminal.init(alloc, .{ .cols = 80, .rows = 24 });
+    defer t2.deinit(alloc);
+    var s2 = t2.vtStream();
+    defer s2.deinit();
+    s2.nextSlice(builder.writer.buffered());
+
+    // Setting the region homes the cursor and setting each tabstop moves it
+    // to that column; the restored terminal must end up where the source is,
+    // not at the last tabstop.
+    try testing.expectEqual(t.screens.active.cursor.x, t2.screens.active.cursor.x);
+    try testing.expectEqual(t.screens.active.cursor.y, t2.screens.active.cursor.y);
+
+    // So what the program prints next lands where it would have.
+    s2.nextSlice("third");
+    const text = try t2.plainString(alloc);
+    defer alloc.free(text);
+    try testing.expectEqualStrings("first\nsecond\nthird", text);
 }
 
 test "Terminal vt with tabstops" {

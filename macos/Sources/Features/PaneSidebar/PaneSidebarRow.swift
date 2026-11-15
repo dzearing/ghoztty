@@ -385,8 +385,8 @@ struct PaneSidebarIcon: View {
     }
 }
 
-/// The row's second line. A separate view so it can observe the terminal
-/// (for its working directory) or the viewer (for its location) directly.
+/// The row's second line. A separate view so it can observe the pane (for
+/// its working directory and banner) or the viewer (for its location).
 private struct PaneSidebarSubtitle: View {
     @ObservedObject var pane: PaneView
     /// The row's title: a subtitle that only repeats it (a shell titled
@@ -396,16 +396,19 @@ private struct PaneSidebarSubtitle: View {
 
     var body: some View {
         Group {
-            if let surface = pane.surfaceView {
-                TerminalSubtitle(surface: surface, banner: pane.paneBanner, title: title, onAccent: onAccent)
+            if pane.surfaceView != nil {
+                TerminalSubtitle(pwd: pane.pwd, banner: pane.paneBanner, title: title, onAccent: onAccent)
             } else if let viewer = pane.viewerView {
                 ViewerSubtitle(viewer: viewer, title: title, onAccent: onAccent)
             }
         }
     }
 
+    /// Takes the working directory as a value (the pane mirrors it) rather
+    /// than observing the terminal: a terminal publishes for its title, its
+    /// cursor, a hovered link, and each row re-rendered for all of them.
     private struct TerminalSubtitle: View {
-        @ObservedObject var surface: Ghostty.SurfaceView
+        let pwd: String?
         let banner: String?
         let title: String
         let onAccent: Bool
@@ -414,7 +417,7 @@ private struct PaneSidebarSubtitle: View {
             // A banner line is prose — cut its tail. A path keeps both ends.
             let isBanner = PaneSidebarText.bannerTitle(banner) == nil && PaneSidebarText.bannerLine(banner) != nil
             line(PaneSidebarText.distinct(
-                    PaneSidebarText.subtitle(banner: banner, pwd: surface.pwd, viewerLocation: nil),
+                    PaneSidebarText.subtitle(banner: banner, pwd: pwd, viewerLocation: nil),
                     from: title),
                  onAccent, truncation: isBanner ? .tail : .middle)
         }

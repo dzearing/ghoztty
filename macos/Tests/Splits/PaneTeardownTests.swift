@@ -225,6 +225,145 @@ struct PaneTeardownTests {
         #expect(changed(back, redrawn) > 0, "nothing drew after the terminal came back")
     }
 
+    /// A terminal that stops drawing gives back what its swap chain holds —
+    /// three window-sized render targets and three copies of the font
+    /// atlases — while staying on screen, and keeps showing what it showed:
+    /// the layer keeps the surface on screen. The next output draws into
+    /// fresh targets, and going quiet again gives them back again.
+    @Test func anIdleTerminalGivesBackItsFramesAndKeepsItsPicture() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = "/bin/sh -c 'ls -la /; cat'"
+        let pane = PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config))
+        let controller = TerminalController.newWindow(ghostty, tree: SplitTree<PaneView>(view: pane))
+        defer { controller.close() }
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 700, height: 500))
+        // In front of every other app's windows: a terminal no one can see
+        // draws nothing (`WindowInUse.isOnScreen`), and the test host is
+        // not the active app.
+        window.orderFrontRegardless()
+        #expect(await poll(timeout: 5) { WindowInUse.isOnScreen(window) })
+        let surface = try #require(pane.surface)
+        // A focused terminal blinks its cursor, which is drawing: it keeps
+        // its frames. Idle is a terminal with nothing to draw.
+        ghostty_surface_set_focus(surface, false)
+
+        // Drawing: the frames hold real targets and the atlases.
+        _ = await poll(timeout: 5) { ghostty_surface_frame_memory(surface).target_bytes > 4 * 100 * 100 }
+        let drawing = ghostty_surface_frame_memory(surface)
+        #expect(!drawing.released)
+        #expect(drawing.atlas_bytes > 3 * 2, "a drawn frame has no atlas copy")
+        await settle(1.5)
+        let shown = try await capture(window)
+
+        // Quiet: everything is given back, and the picture has not moved.
+        let released = await poll(timeout: 10) { ghostty_surface_frame_memory(surface).released }
+        #expect(released, "an idle terminal kept its frames")
+        let idle = ghostty_surface_frame_memory(surface)
+        #expect(idle.target_bytes <= 3 * 4, "idle frames still hold \(idle.target_bytes) bytes of targets")
+        #expect(idle.atlas_bytes <= 3 * 5, "idle frames still hold \(idle.atlas_bytes) bytes of atlas")
+        let stillShown = try await capture(window)
+        #expect(changed(shown, stillShown) < 0.01, "the idle terminal shows something else")
+
+        // New output draws again, with the glyphs it needs.
+        try #require(pane.surfaceView).surfaceModel?.sendText("redrawn after idling\r")
+        _ = await poll(timeout: 5) { !ghostty_surface_frame_memory(surface).released }
+        await settle(0.8)
+        let redrawn = try await capture(window)
+        #expect(changed(stillShown, redrawn) > 0, "nothing drew after the terminal idled")
+        #expect(ghostty_surface_frame_memory(surface).atlas_bytes > 3 * 2)
+
+        // And going quiet again releases again.
+        let again = await poll(timeout: 10) { ghostty_surface_frame_memory(surface).released }
+        #expect(again, "the terminal did not release a second time")
+        let settled = try await capture(window)
+        #expect(changed(redrawn, settled) < 0.01, "releasing changed what the terminal shows")
+    }
+
+    /// A terminal that went idle and then had its window hidden comes back
+    /// drawn: hiding purges the frame the layer was left holding, and
+    /// showing the terminal again draws a new one.
+    @Test func anIdleTerminalHiddenAndShownAgainIsDrawn() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = "/bin/sh -c 'ls -la /; cat'"
+        let pane = PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config))
+        let controller = TerminalController.newWindow(ghostty, tree: SplitTree<PaneView>(view: pane))
+        defer { controller.close() }
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 700, height: 500))
+        // In front of every other app's windows: a terminal no one can see
+        // draws nothing (`WindowInUse.isOnScreen`), and the test host is
+        // not the active app.
+        window.orderFrontRegardless()
+        #expect(await poll(timeout: 5) { WindowInUse.isOnScreen(window) })
+        let surface = try #require(pane.surface)
+        ghostty_surface_set_focus(surface, false)
+        await settle(1.5)
+        let shown = try await capture(window)
+        let idle = await poll(timeout: 10) { ghostty_surface_frame_memory(surface).released }
+        try #require(idle, "the terminal never went idle")
+
+        ghostty_surface_set_occlusion(surface, false)
+        await settle(0.5)
+        ghostty_surface_set_occlusion(surface, true)
+        await settle(0.8)
+        let back = try await capture(window)
+        #expect(changed(shown, back) < 0.01, "the terminal came back showing something else")
+    }
+
+    /// A stashed pane is mounted but nobody can see it: it gives back its
+    /// frames at once and draws nothing however much it prints, and draws
+    /// again when it is brought back. A pane hidden behind a zoomed one is
+    /// the same.
+    @Test func aStashedOrZoomedOverTerminalDoesNotDraw() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        let kept = terminalPane(app), other = terminalPane(app)
+        let tree = try SplitTree<PaneView>(view: kept).inserting(view: other, at: kept, direction: .right)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        defer { controller.close() }
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 900, height: 500))
+        window.orderFrontRegardless()
+        #expect(await poll(timeout: 5) { WindowInUse.isOnScreen(window) })
+        let surface = try #require(other.surface)
+        let drew = await poll(timeout: 5) { !ghostty_surface_frame_memory(surface).released }
+        try #require(drew, "the pane never drew")
+
+        // Stashed: released well inside the idle time, and output does not
+        // bring the frames back.
+        controller.surfaceTree = try controller.surfaceTree.stashing(other)
+        let hidden = await poll(timeout: 1.5) { ghostty_surface_frame_memory(surface).released }
+        #expect(hidden, "a stashed terminal kept its frames")
+        other.surfaceView?.surfaceModel?.sendText("printed while stashed\r")
+        await settle(1)
+        #expect(ghostty_surface_frame_memory(surface).released, "a stashed terminal drew")
+
+        // Brought back: it draws what it printed.
+        controller.surfaceTree = controller.surfaceTree.restoring(other)
+        let back = await poll(timeout: 5) { !ghostty_surface_frame_memory(surface).released }
+        #expect(back, "a restored terminal did not draw")
+
+        // Zoomed over: the same, and un-zooming draws it again.
+        let keptNode = try #require(controller.surfaceTree.root?.node(view: kept))
+        controller.surfaceTree = controller.surfaceTree.settingZoomed(keptNode)
+        let covered = await poll(timeout: 1.5) { ghostty_surface_frame_memory(surface).released }
+        #expect(covered, "a terminal behind a zoomed pane kept its frames")
+        other.surfaceView?.surfaceModel?.sendText("printed while zoomed over\r")
+        await settle(1)
+        #expect(ghostty_surface_frame_memory(surface).released, "a terminal behind a zoomed pane drew")
+        controller.surfaceTree = controller.surfaceTree.settingZoomed(nil)
+        let uncovered = await poll(timeout: 5) { !ghostty_surface_frame_memory(surface).released }
+        #expect(uncovered, "an un-zoomed terminal did not draw")
+    }
+
     /// A hidden terminal builds no frames (`renderer.Thread.renderCallback`),
     /// but what its program printed meanwhile is on screen the moment it
     /// shows — one rebuild, not a stale frame until the next output.
@@ -269,9 +408,17 @@ struct PaneTeardownTests {
     }
 
     /// What occlusion gives back: every terminal of four large windows frees
-    /// its three render targets while occluded, so the footprint drops by
-    /// most of what the windows' targets cost (~3 x width x height x 4 bytes
-    /// each). Writes the numbers to /tmp/ghoztty-occlusion-footprint.txt.
+    /// its render targets while occluded and holds them again once it draws,
+    /// cycle after cycle, without growing.
+    ///
+    /// Measured on what the renderer's frames hold
+    /// (`ghostty_surface_frame_memory`), not on the process footprint: the
+    /// footprint also carries the GPU driver's own pool (~225 MB, dirty for a
+    /// few seconds after any draw anywhere in the process, then reclaimed —
+    /// docs/reference/memory.md), which moved the number by more than the
+    /// targets do and failed this test on runs where the pool happened to be
+    /// warm or cold at the wrong moment. The footprint is still written to
+    /// /tmp/ghoztty-occlusion-footprint.txt, for reading.
     @Test func occludedTerminalsGiveBackTheirRenderTargets() async throws {
         let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
         let app = try #require(ghostty.app)
@@ -295,35 +442,41 @@ struct PaneTeardownTests {
         // draw nothing (`WindowCoverage`); show them all by hand, as each
         // cycle does.
         surfaces.forEach { ghostty_surface_set_occlusion($0, true) }
-        // Three cycles of occlude / show + redraw: the drop each time, and no
-        // growth from cycle to cycle (targets re-created, the old ones freed).
-        var log: [String] = []
-        var drops: [Double] = []
-        var shownAt: [Double] = []
-        for cycle in 0..<3 {
-            // Each terminal draws something new, so it is on fresh targets.
-            panes.forEach { $0.surfaceView?.surfaceModel?.sendText("cycle \(cycle)\r") }
-            await settle(1.5)
-            let shown = footprintMB()
-            surfaces.forEach { ghostty_surface_set_occlusion($0, false) }
-            await settle(1.5)
-            let hidden = footprintMB()
-            surfaces.forEach { ghostty_surface_set_occlusion($0, true) }
-            drops.append(shown - hidden)
-            shownAt.append(shown)
-            log.append("cycle \(cycle): shown \(Int(shown)) MB, occluded \(Int(hidden)) MB")
-        }
-        // Three 1200x800-point targets per terminal; the layer keeps the one
-        // on screen alive, so at least two are given back.
+
+        // One render target of a pane this size, give or take its chrome.
         let scale = controllers.first?.window?.backingScaleFactor ?? 1
-        let perTarget = 1200 * 800 * scale * scale * 4 / 1_048_576
-        log.append("scale \(scale), ~\(Int(perTarget)) MB per target")
+        let perTarget = UInt64(1200 * 800 * scale * scale * 4)
+        func held() -> [UInt64] { surfaces.map { ghostty_surface_frame_memory($0).target_bytes } }
+
+        // Three cycles of draw / occlude / show.
+        var log: [String] = []
+        var shownAt: [UInt64] = []
+        for cycle in 0..<3 {
+            // Each terminal draws something new, so its frames hold targets.
+            panes.forEach { $0.surfaceView?.surfaceModel?.sendText("cycle \(cycle)\r") }
+            let drew = await poll(timeout: 5) { held().allSatisfy { $0 > perTarget / 2 } }
+            #expect(drew, "cycle \(cycle): a shown terminal holds no render target: \(held())")
+            let shown = held().reduce(0, +)
+            let shownFootprint = footprintMB()
+
+            surfaces.forEach { ghostty_surface_set_occlusion($0, false) }
+            let gaveBack = await poll(timeout: 5) { held().allSatisfy { $0 <= 3 * 4 } }
+            #expect(gaveBack, "cycle \(cycle): an occluded terminal kept its targets: \(held())")
+            let hiddenFootprint = footprintMB()
+            surfaces.forEach { ghostty_surface_set_occlusion($0, true) }
+
+            shownAt.append(shown)
+            log.append("cycle \(cycle): targets held shown \(shown / 1_048_576) MB; "
+                + "footprint shown \(Int(shownFootprint)) MB, occluded \(Int(hiddenFootprint)) MB")
+        }
+        log.append("scale \(scale), ~\(perTarget / 1_048_576) MB per target")
         try? (log.joined(separator: "\n") + "\n")
             .write(toFile: "/tmp/ghoztty-occlusion-footprint.txt", atomically: true, encoding: .utf8)
-        for drop in drops {
-            #expect(drop > 4 * 2 * perTarget * 0.66, "occluding 4 terminals gave back only \(drop) MB")
+
+        // Showing again re-creates targets; it does not pile new ones on the
+        // old: never more than the swap chain's three per terminal.
+        for shown in shownAt {
+            #expect(shown <= 4 * 3 * perTarget, "terminals hold more than their swap chains: \(shownAt)")
         }
-        #expect(shownAt[2] - shownAt[0] < 4 * perTarget,
-                "showing again grew the footprint: \(shownAt)")
     }
 }

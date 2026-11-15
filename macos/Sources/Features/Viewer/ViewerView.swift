@@ -188,6 +188,12 @@ final class ViewerView: NSView, Codable, ObservableObject {
     private var schemeHandler: ViewerSchemeHandler?
     private var titleObservation: NSKeyValueObservation?
     private var pageLoaded = false
+
+    /// When the page's process was last restarted after dying
+    /// (`webViewWebContentProcessDidTerminate`), to cap the restarts.
+    private var contentProcessRestarts: [Date] = []
+    static let contentProcessRestartLimit = 3
+    static let contentProcessRestartWindow: TimeInterval = 60
     private var fileMonitor: DispatchSourceFileSystemObject?
     private var reloadDebounce: DispatchWorkItem?
     private var reloadNeedsRearm = false
@@ -2800,6 +2806,10 @@ final class ViewerView: NSView, Codable, ObservableObject {
                 return
             }
             self.diffRefreshMissed = false
+            // The last listing has not come back yet: skip this turn. A
+            // listing spawns git half a dozen times, and asking again while
+            // one runs only queues work behind it.
+            guard !self.diffLoader.isListing else { return }
             self.refreshDiff(preservingSelection: true)
         }
     }
@@ -3728,6 +3738,21 @@ extension ViewerView.Mode {
 // MARK: - WKNavigationDelegate
 
 extension ViewerView: WKNavigationDelegate {
+    /// WebKit killed the page's process (memory pressure, a render that ran
+    /// away). The web view is left blank with nothing to say so, and
+    /// `pageLoaded` still true, so every later render went to a dead page
+    /// until the user reloaded by hand. Load the pane's content again — a
+    /// few times at most, so a page that kills its process on every load
+    /// does not respawn one forever.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        pageLoaded = false
+        let now = Date()
+        contentProcessRestarts.removeAll { now.timeIntervalSince($0) > Self.contentProcessRestartWindow }
+        guard contentProcessRestarts.count < Self.contentProcessRestartLimit else { return }
+        contentProcessRestarts.append(now)
+        load()
+    }
+
     /// Reconcile the pane's mode with whatever the web view actually
     /// committed. This is what makes Back/Forward work across a mode switch:
     /// a user who types a URL into a file viewer and then presses Back lands

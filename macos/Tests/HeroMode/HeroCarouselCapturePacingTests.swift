@@ -61,13 +61,13 @@ struct HeroCarouselCapturePacingTests {
     private func mount(
         _ tree: SplitTree<PaneView>,
         _ state: HeroModeState
-    ) -> (NSWindow, NSHostingView<HeroModeView>) {
+    ) -> (NSWindow, NSHostingView<HeroTestRoot>) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
             styleMask: [.titled],
             backing: .buffered,
             defer: false)
-        let host = NSHostingView(rootView: HeroModeView(tree: tree, state: state))
+        let host = NSHostingView(rootView: HeroTestRoot(tree: tree, state: state))
         host.frame = window.contentView!.bounds
         host.autoresizingMask = [.width, .height]
         window.contentView!.addSubview(host)
@@ -78,7 +78,7 @@ struct HeroCarouselCapturePacingTests {
 
     /// Unmount so the carousel drops its event monitor; a leaked monitor would
     /// keep marking every later test's events as interaction.
-    private func unmount(_ window: NSWindow, _ host: NSHostingView<HeroModeView>) {
+    private func unmount(_ window: NSWindow, _ host: NSHostingView<HeroTestRoot>) {
         host.removeFromSuperview()
         window.contentView = nil
         settle()

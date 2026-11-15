@@ -331,9 +331,44 @@ final class ViewerDiffLoader {
     private let queue = DispatchQueue(
         label: "com.dzearing.ghoztty.viewer-diff", qos: .userInitiated)
 
+    /// Patches have their own queue: a click on a file must not wait behind
+    /// a listing, which on a large repository takes a while.
+    private let patchQueue = DispatchQueue(
+        label: "com.dzearing.ghoztty.viewer-diff.patch", qos: .userInitiated)
+
     /// Bumped on every new request so a stale completion can be dropped.
+    /// Main thread only.
     private var listGeneration = 0
     private var patchGeneration = 0
+
+    /// The newest listing asked for, readable from the work queue: a listing
+    /// that has been superseded by the time its turn comes is not run at
+    /// all — it used to run all six git commands and drop the answer.
+    private let newestListing = NewestRequest()
+
+    private final class NewestRequest {
+        private let lock = NSLock()
+        private var generation = 0
+
+        func set(_ value: Int) {
+            lock.lock()
+            defer { lock.unlock() }
+            generation = value
+        }
+
+        func isNewest(_ value: Int) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return generation == value
+        }
+    }
+
+    /// Listings asked for and not yet answered or abandoned. Main thread
+    /// only. The working-tree poll skips its turn while one is running:
+    /// when a listing takes longer than the poll interval, asking again
+    /// only queues work behind it.
+    private(set) var listingsInFlight = 0
+    var isListing: Bool { listingsInFlight > 0 }
 
     /// Resolve the repo, resolve a bare `git-diff:` to a real range, and list
     /// the files. `directory` is the pane's origin directory.
@@ -344,10 +379,16 @@ final class ViewerDiffLoader {
     ) {
         listGeneration += 1
         let generation = listGeneration
-        queue.async { [weak self] in
-            let result = Self.listingSync(spec: spec, directory: directory)
+        newestListing.set(generation)
+        listingsInFlight += 1
+        queue.async { [weak self, newestListing] in
+            let result = newestListing.isNewest(generation)
+                ? Self.listingSync(spec: spec, directory: directory)
+                : nil
             DispatchQueue.main.async {
-                guard let self, self.listGeneration == generation else { return }
+                guard let self else { return }
+                self.listingsInFlight -= 1
+                guard let result, self.listGeneration == generation else { return }
                 completion(result)
             }
         }
@@ -364,7 +405,7 @@ final class ViewerDiffLoader {
     ) {
         patchGeneration += 1
         let generation = patchGeneration
-        queue.async { [weak self] in
+        patchQueue.async { [weak self] in
             let patch = ViewerGit.patch(for: file, spec: spec, repo: repo)
             DispatchQueue.main.async {
                 guard let self, self.patchGeneration == generation else { return }

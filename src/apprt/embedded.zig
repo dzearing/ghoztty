@@ -3791,6 +3791,15 @@ pub const CAPI = struct {
         };
     }
 
+    /// What the surface's swap-chain frames hold on the GPU right now:
+    /// render targets and font atlas copies, which a surface that has
+    /// stopped drawing gives back. For measuring and tests.
+    export fn ghostty_surface_frame_memory(
+        surface: *Surface,
+    ) @import("../renderer.zig").Renderer.FrameMemory {
+        return surface.core_surface.renderer.frameMemory();
+    }
+
     /// Returns the PID of the foreground process for the surface PTY.
     export fn ghostty_surface_foreground_pid(surface: *Surface) u64 {
         return surface.core_surface.getProcessInfo(.foreground_pid) orelse 0;

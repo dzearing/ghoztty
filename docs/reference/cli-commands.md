@@ -10,6 +10,38 @@ step when a flag changes. Commands documented elsewhere:
 [remote-machines.md](remote-machines.md), `+sessions` internals →
 [session-persistence.md](session-persistence.md).
 
+## The socket: one client never holds up another
+
+`IPCServer` serves each connection on a concurrent queue (`clientQueue`); the
+listener's own queue only accepts and watches the reset sentinel.
+
+- **A client has `clientIOTimeout` (5 s) to send its request and to take its
+  response** (`SO_RCVTIMEO`/`SO_SNDTIMEO` on the accepted socket), then it is
+  dropped. Until v1.54 every command ran on one serial queue with an untimed
+  read, so a client that connected and said nothing — a suspended CLI, a
+  stray `nc -U` — hung every later command and every status and banner hook
+  in every pane.
+- **At most `maxClients` (48) are served at once**; one more is answered
+  "Ghoztty is busy" at once rather than queued, since each waiting client
+  holds a thread.
+- **Commands that change what exists run one at a time**
+  (`IPCServer.isStructural`: `new-window`, `split`, `close`, `rename`,
+  `rearrange`, `reload`, `stash`, `restore`, under `structureLock`) — a
+  `+split --name` checks the name and takes it in two steps. `list`, `read`,
+  `send-keys`, `set-state` and `set-banner` do not wait for them, so a
+  `+split` waiting on its pane no longer delays every hook.
+  `new-remote-window` is deliberately not structural: it waits on a dial, and
+  on an alert if the dial fails, and must not hold the lock while it does.
+- **`stop()` waits only on the listener queue**, which never waits on the
+  main thread, so quitting while a command is waiting on main cannot
+  deadlock. It removes the socket file only if it is still the one this
+  server bound (by inode): a second instance of the same build takes the path
+  over, and quitting the first must not delete the second's socket.
+- Handlers still wait on the main thread without a deadline; a hung main
+  thread hangs the commands in flight (up to `maxClients` of them) until it
+  recovers.
+- Tests: `IPCServerTransportTests`.
+
 ## `ghoztty +new-window`
 
 Create or focus a terminal window. Auto-launches Ghoztty if no instance is running.
@@ -139,6 +171,10 @@ agent session to END, and frees each pane's core at once
 (`releaseClosedSurface`) instead of after the undo window — the process exits
 now. A window target closes its whole tab group, like the plain close. An
 older app ignores the flag (plain close). Tests: `CloseWindowTests`.
+
+A closed window is gone from `+list` and from name lookup the moment it
+closes (`BaseTerminalController.windowHasClosed`), whether or not the window
+object has been freed yet — see [memory.md](memory.md).
 
 ## `ghoztty +read`
 
