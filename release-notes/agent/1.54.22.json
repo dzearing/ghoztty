@@ -1,0 +1,9 @@
+{
+  "version": "1.54.22",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "The Windows agent's capped outbound queue is now proven over a real named pipe: a viewer that stops reading cannot run the agent out of memory." }
+      ] }
+  ]
+}

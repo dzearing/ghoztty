@@ -1,0 +1,19 @@
+{
+  "version": "1.54.22",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "A CLI close of a window's last pane is proven never to ask and never to leave a ghost window on Windows." },
+        { "text": "A burst of window resizes outside an edge drag no longer redraws the whole pane background on every step." },
+        { "text": "The title bar and tab strip repaint only when a paint reaches them, and keep their buffers between paints." },
+        { "text": "The perf baseline now names which threads wake the idle app and what each pane open-close cycle leaves behind." },
+        { "text": "A spinner title in a folded pane no longer repaints the whole window, only its strip." },
+        { "text": "The Activity Monitor refreshes on one parked thread instead of starting a new one every 1.5 seconds." },
+        { "text": "A pane gives back its full-size snapshot once the fold, drag or hero carousel that needed it is over." },
+        { "text": "Each Windows terminal pane commits about 2 MB less memory: pages come one at a time instead of in 1.5x-grown arena blocks." },
+        { "text": "A window restored from maximized gives back the memory its maximized size took." },
+        { "text": "A minimized viewer pane stays minimized when its page grabs focus - now proven on Windows." },
+        { "text": "Panes minimized into blades on Windows stay minimized after a relaunch, as on the Mac." }
+      ] }
+  ]
+}
