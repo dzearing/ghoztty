@@ -883,6 +883,19 @@ $GuardTable = @(
             'src\apprt\win32\ViewerPane.zig'
         )
     },
+    # A viewer folded into a strip stays folded when its page focuses itself
+    # (T3125, Mac a7fe3e9f8): WebView2's GotFocus -> Window.adoptsFocus.
+    [pscustomobject]@{
+        Name   = 'blade-page-focus'
+        Script = 'test\win32\blade-page-focus.ps1'
+        Stamp  = 'test\win32\blade-page-focus.stamp.json'
+        Covers = @(
+            'test\win32\blade-page-focus.ps1',
+            'src\apprt\win32\pane_stack_state.zig',
+            'src\apprt\win32\Window.zig',
+            'src\apprt\win32\ViewerPane.zig'
+        )
+    },
     # Where a split starts (T760). The answer is assembled in `newSplitAt`
     # from three sources - a viewer parent's file directory, the agent's
     # GET_CWD, and the local process read - and the defect this guards was
