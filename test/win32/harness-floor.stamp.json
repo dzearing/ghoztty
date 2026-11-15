@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-14T11:13:46-08:00",
-    "commit":  "82357606f",
+    "generated":  "2026-11-14T17:26:34-08:00",
+    "commit":  "874216a7f",
     "uncommitted":  [
-                        "test/win32/comp-present.ps1"
+                        "test/win32/cursor-blink-redraw.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -126,6 +126,7 @@
                   "test/win32/crash-first-chance.ps1":  "87ef370d66a61a2689c51f3d677589eab39e4ac1def7230cc320d4d72ef50a7e",
                   "test/win32/crash-report.ps1":  "53703d4a6b3570c999587542a1c88a977f626ebb603e356de7cb56d6d52e999d",
                   "test/win32/crash-stacks.ps1":  "d5bc3c0802b16f15d9c80804b0aa9dac36f533d542d6cad5c9daa86a42fbc5d0",
+                  "test/win32/cursor-blink-redraw.ps1":  "5c7725e905ad660031583cb9a2058be442b6df96c4c7b18f24f4a0be372f4e34",
                   "test/win32/daily-publish.ps1":  "4f3c1da3c57ee97406d56c612e897a71db089664c936b017f7f5ff36c8dba324",
                   "test/win32/dark-menus.ps1":  "944b48c2b49d5d2ca8148572da1dcc70a9628871b27246187b9a3982e2a34491",
                   "test/win32/dashboard-dom.ps1":  "5c8bec2cd488707972cd1b71ae0c4e0bdbc61d2f7d7a844d8c24aa50b0cc3b62",
@@ -189,7 +190,7 @@
                   "test/win32/ghoztty-cleanup.ps1":  "443de2b0fdefdd38c064d1245b3ccb9ce653ac68a37f664590ade379dd93d7ee",
                   "test/win32/glass-frame-origin.ps1":  "0a0dfeed8dff3e6ba20ec9402905ac5490ab37b43d85d9316be106de72e26b56",
                   "test/win32/gl-device-lost.ps1":  "3a87a2acf4ebca9c19323687ecd65919747f3691aa09eb9eb245f19246d30711",
-                  "test/win32/go-loop-guard.ps1":  "8e7deb880db12b208a4a378eac71ee096185c5b43b9d49dea6ce80f9e3e880a7",
+                  "test/win32/go-loop-guard.ps1":  "03d504bdec67146a33999234c5e435a7d8a33f184d44f756df750b20bb199cf3",
                   "test/win32/go-loop-resume.ps1":  "14325d8a66784b9f3efd653504c67d9434b27a5d2a98adba2e1d4a54d55b6350",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/guard-due.ps1":  "281420e26fbca13e3dfdd2707d8ef2294e277a3c0171aff3e53e5d0f87b939d6",

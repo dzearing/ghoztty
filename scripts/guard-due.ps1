@@ -2766,6 +2766,21 @@ $GuardTable = @(
             'test\win32\title-churn-redraw.ps1'
         )
     },
+    # Whether a focused pane whose cursor cannot blink stays silent (T2970).
+    # The title-churn row above asks about output that changes no cell; this
+    # one asks about the blink timer itself, which wakes a frame with no
+    # output at all, and its positive control is a cursor that still blinks.
+    [pscustomobject]@{
+        Name   = 'cursor-blink-redraw'
+        Script = 'test\win32\cursor-blink-redraw.ps1'
+        Stamp  = 'test\win32\cursor-blink-redraw.stamp.json'
+        Covers = @(
+            'src\renderer\Thread.zig',
+            'src\renderer\generic.zig',
+            'src\renderer\cursor.zig',
+            'test\win32\cursor-blink-redraw.ps1'
+        )
+    },
     # Whether a failed update SAYS anything (T1206). The update-apply row above
     # covers the same two files for a different question - did the applier get
     # to msiexec and back - and neither row can answer the other's. A change

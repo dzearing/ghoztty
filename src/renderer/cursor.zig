@@ -67,6 +67,73 @@ pub fn style(
     return .fromTerminal(state.cursor.visual_style);
 }
 
+/// Whether the blink phase can change what `style` returns for this state
+/// (T2970). It mirrors `style`'s priority order: a cursor that is off
+/// screen, under preedit, a password lock, hidden by the program, unfocused
+/// (the hollow box) or simply not blinking draws the same in both phases, so
+/// toggling the phase for it is a frame of identical pixels. The renderer
+/// hashes the phase only when this is true, and the blink timer stops while
+/// it is false.
+pub fn blinkMatters(
+    state: *const terminal.RenderState,
+    opts: StyleOptions,
+) bool {
+    if (state.cursor.viewport == null) return false;
+    if (opts.preedit) return false;
+    if (state.cursor.password_input) return false;
+    if (!state.cursor.visible) return false;
+    if (!opts.focused) return false;
+    return state.cursor.blinking;
+}
+
+test "cursor: blinkMatters is false exactly when the phase cannot change the style" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var term: terminal.Terminal = try .init(alloc, .{ .cols = 10, .rows = 10 });
+    defer term.deinit(alloc);
+
+    var state: terminal.RenderState = .empty;
+    defer state.deinit(alloc);
+
+    // Every combination of the inputs `style` reads.
+    for ([_]bool{ false, true }) |blinking| {
+        for ([_]bool{ false, true }) |visible| {
+            for ([_]bool{ false, true }) |password| {
+                for ([_]bool{ false, true }) |focused| {
+                    for ([_]bool{ false, true }) |preedit| {
+                        term.modes.set(.cursor_blinking, blinking);
+                        term.modes.set(.cursor_visible, visible);
+                        try state.update(alloc, &term);
+                        state.cursor.password_input = password;
+
+                        const base: StyleOptions = .{ .preedit = preedit, .focused = focused };
+                        var on = base;
+                        on.blink_visible = true;
+                        const differs = style(&state, on) != style(&state, base);
+                        try testing.expectEqual(differs, blinkMatters(&state, base));
+                    }
+                }
+            }
+        }
+    }
+
+    // A steady (non-blinking) focused cursor: the phase is irrelevant.
+    term.modes.set(.cursor_blinking, false);
+    term.modes.set(.cursor_visible, true);
+    try state.update(alloc, &term);
+    state.cursor.password_input = false;
+    try testing.expect(!blinkMatters(&state, .{ .focused = true }));
+    // A blinking one that the program hid (most TUIs): irrelevant too.
+    term.modes.set(.cursor_blinking, true);
+    term.modes.set(.cursor_visible, false);
+    try state.update(alloc, &term);
+    try testing.expect(!blinkMatters(&state, .{ .focused = true }));
+    // Visible, blinking, focused: the only case the phase shows.
+    term.modes.set(.cursor_visible, true);
+    try state.update(alloc, &term);
+    try testing.expect(blinkMatters(&state, .{ .focused = true }));
+}
+
 test "cursor: default uses configured style" {
     const testing = std.testing;
     const alloc = testing.allocator;

@@ -315,6 +315,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// of it moved (T1935).
         frame_key: u64 = 0,
 
+        /// Whether the last `updateFrame` found a cursor whose blink phase
+        /// shows (`renderer.cursorBlinkMatters`, T2970). The render thread's
+        /// blink timer stops while this is false and restarts when a frame
+        /// sets it, so a steady or hidden cursor costs no wakeups at all.
+        cursor_blink_matters: bool = true,
+
         /// Our shader pipelines.
         shaders: Shaders,
 
@@ -1697,7 +1703,16 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 std.hash.autoHash(&h, cur.visual_style);
                 std.hash.autoHash(&h, cur.password_input);
                 std.hash.autoHash(&h, self.terminal_state.colors.cursor);
-                std.hash.autoHash(&h, cursor_blink_visible);
+                // The blink phase only when it can change the pixels
+                // (T2970): a steady, hidden or unfocused cursor draws the
+                // same in both phases, and hashing the raw phase made every
+                // blink tick a full frame of identical pixels.
+                const blink_matters = renderer.cursorBlinkMatters(&self.terminal_state, .{
+                    .preedit = critical.preedit != null,
+                    .focused = self.focused,
+                });
+                self.cursor_blink_matters = blink_matters;
+                std.hash.autoHash(&h, blink_matters and cursor_blink_visible);
                 std.hash.autoHash(&h, self.focused);
                 std.hash.autoHash(&h, critical.mouse.point);
                 std.hash.autoHash(&h, @as(

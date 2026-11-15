@@ -790,6 +790,11 @@ fn renderCallback(
     ) catch |err|
         log.warn("error rendering err={}", .{err});
 
+    // The blink timer stops while the cursor cannot blink (T2970); this
+    // frame may be the one where a program turned blinking (or the cursor)
+    // back on.
+    if (cursorBlinkWanted(blinkMattersOf(t), t.flags.focused)) t.startCursorBlink();
+
     // A prompt redraw held back until the shell's output goes quiet
     // (`Terminal.flags.awaiting_prompt_redraw`) needs another look once it
     // has, whether or not more output wakes us.
@@ -877,6 +882,43 @@ test "presentDecision: an unchanged frame is skipped, within the bound" {
     try testing.expect(presentDecision(false, true, null, t0, false));
 }
 
+/// What the renderer's last frame said about the blink phase showing
+/// (T2970). A renderer without the field keeps the old always-blink timer.
+fn blinkMattersOf(t: *const Thread) bool {
+    if (comptime !@hasField(rendererpkg.Renderer, "cursor_blink_matters")) return true;
+    return t.renderer.cursor_blink_matters;
+}
+
+/// Whether the blink timer should be running (T2970): only for a focused
+/// pane whose cursor's phase can change the pixels.
+fn cursorBlinkWanted(matters: bool, focused: bool) bool {
+    return matters and focused;
+}
+
+test "cursorBlinkWanted: the timer runs only for a focused, blinking cursor" {
+    const testing = std.testing;
+    try testing.expect(cursorBlinkWanted(true, true));
+    try testing.expect(!cursorBlinkWanted(false, true));
+    try testing.expect(!cursorBlinkWanted(true, false));
+    try testing.expect(!cursorBlinkWanted(false, false));
+}
+
+/// Start the blink timer if it is not already running or being canceled,
+/// showing the cursor first, the way a focus gain does.
+fn startCursorBlink(self: *Thread) void {
+    if (self.cursor_c.state() == .active) return;
+    if (self.cursor_c_cancel.state() != .dead) return;
+    self.flags.cursor_blink_visible = true;
+    self.cursor_h.run(
+        &self.loop,
+        &self.cursor_c,
+        cursorBlinkInterval(),
+        Thread,
+        self,
+        cursorTimerCallback,
+    );
+}
+
 fn cursorTimerCallback(
     self_: ?*Thread,
     _: *xev.Loop,
@@ -898,6 +940,16 @@ fn cursorTimerCallback(
         log.warn("render callback fired without data set", .{});
         return .disarm;
     };
+
+    // A cursor whose phase cannot show (steady, hidden by the program, off
+    // screen) needs no blink: stop the timer instead of waking a frame of
+    // identical pixels 1.67 times a second (T2970). `renderCallback` restarts
+    // it the moment a frame finds a blinking cursor again. The phase is left
+    // visible so the restart begins on the "on" half, as a focus gain does.
+    if (!cursorBlinkWanted(blinkMattersOf(t), t.flags.focused)) {
+        t.flags.cursor_blink_visible = true;
+        return .disarm;
+    }
 
     t.flags.cursor_blink_visible = !t.flags.cursor_blink_visible;
     t.wakeup.notify() catch {};
