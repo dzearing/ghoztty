@@ -1466,8 +1466,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// (Metal), for either reason. OpenGL re-presents its last target on a
         /// no-op draw, so it opts in another way (T2474): `releaseHiddenTargetsNow`
         /// and `releaseIdleTargetsNow` say when a release is safe (Win32;
-        /// hidden means the WINDOW is hidden or the pane's tab went behind,
-        /// not a zoom or a stash), the API forgets its last target, and the
+        /// hidden means the WINDOW is hidden, the pane's tab went behind, a
+        /// zoom is over it or it is stashed - not a stack card its strip face
+        /// carries, T3104), the API forgets its last target, and the
         /// first frame back - even one with nothing new to show - draws in
         /// full instead of re-presenting one that is gone. Idle (T3103), the
         /// picture stays because nothing presents: the window's swap chain,

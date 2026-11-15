@@ -4708,7 +4708,8 @@ fn closeSplitPaneOpts(self: *Window, pane: *PaneView, opts: CloseSplitOpts) void
 /// Every caller hides or shows the WINDOW (minimize, the visibility poll, a
 /// close-undo park), so the panes are told that first: a pane hidden this way
 /// gives back its render targets (T2474), as one behind another tab does
-/// (T2975, `showTabIndex`). A pane hidden by zoom or a stash keeps them.
+/// (T2975, `showTabIndex`) and one behind a zoom or in the stash (T3104,
+/// `PaneView.hideReleasing`).
 pub fn setActiveTabVisible(self: *Window, visible: bool) void {
     if (self.active_tab >= self.tab_count) return;
     var it = self.tab_trees[self.active_tab].iterator();
@@ -8200,8 +8201,9 @@ fn layoutHero(self: *Window, rect: w32.RECT) void {
         if (pane_stash.isStashed(entry.view)) {
             // Stashed (T1827): no tile, never shown, but kept at the size
             // it would take on screen so its program never re-renders at a
-            // placeholder size (main c6826b79a).
-            entry.view.setVisible(false);
+            // placeholder size (main c6826b79a). Nothing reads its frame
+            // (no tile, no hero slot), so it gives back its targets (T3104).
+            entry.view.hideReleasing();
             if (entry.view.hwnd()) |h| {
                 const off = entry.view.bannerWindowOffset(entry.view.bannerLayoutInset(@intCast(hero_w), hero_h));
                 placePane(&hdwp, h, hero.left, hero.top + off, @intCast(hero_w), @intCast(@max(hero_h - off, 1)), false);
@@ -8784,7 +8786,10 @@ pub fn layoutSplits(self: *Window) void {
                     self.placeLeaf(&hdwp, entry.view, h, rect, true);
                 }
             } else {
-                entry.view.setVisible(false);
+                // Behind the zoom nothing reads its frame, so it gives back
+                // its render targets and redraws in full on unzoom (T3104,
+                // Mac e15077861).
+                entry.view.hideReleasing();
                 if (entry.view.hwnd()) |h| {
                     // Hidden through the same batch so the zoom swap is one
                     // frame: hiding the old pane and showing the zoomed one in
@@ -13224,7 +13229,9 @@ fn placeStashed(self: *Window, tree: SplitTree(PaneView), rect: w32.RECT, hdwp: 
             (if (g.placement(pane_stack_grid.viewId(view))) |p| winRect(p.rect) else rect)
         else
             rect;
-        view.setVisible(false);
+        // Nothing reads a stashed pane's frame: it gives back its render
+        // targets (T3104, Mac e15077861).
+        view.hideReleasing();
         if (view.hwnd()) |h| self.placeLeaf(hdwp, view, h, slot, false);
     }
 }

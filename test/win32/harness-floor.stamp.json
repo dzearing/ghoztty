@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-15T03:08:12-08:00",
-    "commit":  "d2778c62e",
+    "generated":  "2026-11-15T03:39:15-08:00",
+    "commit":  "19105cda5",
     "uncommitted":  [
-                        "test/win32/hidden-window-memory.ps1",
-                        "test/win32/idle-frame-release.ps1"
+                        "test/win32/hidden-window-memory.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -208,7 +207,7 @@
                   "test/win32/hidden-new-pane.ps1":  "8f8daeafd78bf5f03b3508eaf63714537940442ae0f60dc44e97bdaf271b9b6a",
                   "test/win32/hidden-title.ps1":  "ba19c0ded6b798a6fe069c2e9ce5ce9845a94f0c994bd29356d56977955cabcb",
                   "test/win32/hidden-viewer.ps1":  "5dbbb7a7b0f89b916bfac49250d8878eae3ee8c14cf368419cfcbccb25153ff6",
-                  "test/win32/hidden-window-memory.ps1":  "b170d3ed20fd985b1c7b8ae8832fc0268e091f77a9082fc711f6ca08c448c20f",
+                  "test/win32/hidden-window-memory.ps1":  "a5a40e741617ccb64008a53080b715548cdf2279e7cbcd4c90f49429ab802a3f",
                   "test/win32/history-guard-flavor.ps1":  "1d9bdcea796adecd76f31f1920d575ffcf59d4b800e8328aaaf18ce47efe46d2",
                   "test/win32/holder-adopt.ps1":  "d6ebeef6546da97b65e42cf578f8dd02f195bbb9063bef04bea75c0a5c2cd2f2",
                   "test/win32/holder-durable.ps1":  "7d42ae987bd4754e5cb9d4a041064eee0aa22f35d6cbc21313b2b1a9eda81be4",
@@ -217,7 +216,6 @@
                   "test/win32/hook-json.ps1":  "638b1806b246ae288d9fdac0070f56e6ce0ed4e50e0dcd4eeb29d9ada4e292d6",
                   "test/win32/host-settings.ps1":  "a54460f1bbe14f7a92420905621e83ba4d158d4d07cc9b5ca2c633fdc7023d2f",
                   "test/win32/hover-capture.ps1":  "1669eb987b930c30f4e4462a1c0dbfe5a04bbdbf42af530248437c66164bb5fb",
-                  "test/win32/idle-frame-release.ps1":  "1c423825c3c645a6870391cd14876f1ad1c68656e85c93913c3e6cc35bf5954c",
                   "test/win32/install-launch.ps1":  "df8a8917d448d735d327ae87bcfde00f09a665dcbe0737ae56c4c0487d8225ca",
                   "test/win32/install-maintenance.ps1":  "bfd4f065d52cebcac54c03366eecbe1f5749b82aeab9b38d0b6d990b6fbe2839",
                   "test/win32/install-ownership.ps1":  "d6827b12d6ca61c014375f689c60247ff0e9810c84568c9fd397fb0b420bbc08",
@@ -238,6 +236,7 @@
                   "test/win32/ipc-relay.ps1":  "2b9f2ae9b3a7b4e58e9c69f79549b8381eed36938621e59ae5dd840461a1425a",
                   "test/win32/ipc-remote.ps1":  "56de2b6e167963374f909cd83250630f8a92221dd2593893e4b94294b9c60175",
                   "test/win32/ipc-send-keys-fidelity.ps1":  "ecd1a63052e0a9c52fdb10003f817026c4b95acd8fe76b4e2cff8a57a1ff2fd8",
+                  "test/win32/ipc-silent-client.ps1":  "541aacd085ecd592bae59d2cd7809474dc3f096f9bf440c302261207248febd6",
                   "test/win32/ipc-startup-latency.ps1":  "1746a051fae9196d18c356f5bbdb2401df1370382ab44391c7bcbeee59adb22f",
                   "test/win32/ipc-stash.ps1":  "37005cbaa7a7cb0155914f3575d25749e2f1077801db42640d79d00312b6ca59",
                   "test/win32/ipc-target-exists-note.ps1":  "5d92714c75607c77a5882b5935bde14dbe26dbba54226b3a003648a3e9318dfc",

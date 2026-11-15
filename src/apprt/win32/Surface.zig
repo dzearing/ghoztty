@@ -137,8 +137,9 @@ reported_visible: ?bool = null,
 
 /// The pane is hidden in a way nothing reads its render targets through: its
 /// WINDOW is hidden - minimized, cloaked, covered, or parked by a close-undo
-/// (T2474) - or its TAB went behind another (T2975, `Window.showTabIndex`).
-/// A pane hidden by zoom or a stash is not. Set before the visibility it
+/// (T2474) - its TAB went behind another (T2975, `Window.showTabIndex`), or a
+/// zoom is drawn over it or it is stashed (T3104, `PaneView.hideReleasing`).
+/// A stack card its strip face carries is not. Set before the visibility it
 /// forwards, read on the renderer thread when that visibility arrives: only
 /// such a pane gives back its render targets. Hero mode's carousel never
 /// needs this left clear - it keeps every leaf of its own tab renderer-visible

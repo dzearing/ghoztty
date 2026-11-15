@@ -301,6 +301,16 @@ pub fn setVisible(self: *PaneView, visible: bool) void {
     }
 }
 
+/// Hide a pane nothing will read the pixels of while it is hidden - one a
+/// zoom is drawn over, or one in the stash (T3104, Mac e15077861) - and give
+/// back its render targets, as a hidden window's or background tab's panes do.
+/// It redraws in full when it is shown again. Not for a pane whose frame is
+/// still read while hidden: a stack card its strip face carries (T2457).
+pub fn hideReleasing(self: *PaneView) void {
+    self.setWindowHidden(true);
+    self.setVisible(false);
+}
+
 /// The pane's window was hidden or shown (T2474, `Surface.window_hidden`).
 /// Call before `setVisible`. Viewers keep nothing window-sized to give back.
 pub fn setWindowHidden(self: *PaneView, hidden: bool) void {

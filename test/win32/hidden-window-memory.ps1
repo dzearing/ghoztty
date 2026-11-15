@@ -16,7 +16,8 @@
 # (minimized, cloaked, covered - `Window.applyOcclusion` and WM_SIZE
 # SIZE_MINIMIZED) and, since T2975, when the pane's TAB goes behind another:
 # hero mode's carousel only reads its own tab, whose leaves it keeps
-# renderer-visible. A pane hidden by zoom or a stash keeps its target. On the
+# renderer-visible; and since T3104 (Mac e15077861) when a zoom is drawn over
+# it or it is stashed, since nothing reads either one's frame. On the
 # composition path the GL->D3D staging texture goes too. And a released
 # renderer redraws in full on its first frame back, instead of re-presenting
 # a target that is gone.
@@ -35,6 +36,12 @@
 #       coincidence of the driver trimming memory)
 #   C1  a window fully covered by another releases its pane's targets too
 #   C2  and redraws in full once uncovered
+#   Z1  zooming one pane releases the three behind it (T3104)
+#   Z2  unzoomed, they redraw in full
+#   Z3  and every pane captures at its own size with text
+#   S1  stashing a pane releases its targets (T3104)
+#   S2  restored, it redraws in full
+#   S3  and every pane captures with text
 #   T1  a tab sent behind another releases every one of its panes (T2975)
 #   T3  brought back, every pane redraws in full
 #   T4  and captures with text at its width (the tab strip shortens it)
@@ -123,7 +130,7 @@ Start-TestForegroundWatch
 
 try {
     $launchArgs = @('--config-default-files=false', '--session-persistence=false', '--confirm-close-surface=false',
-        '--keybind=f9=new_tab', '--keybind=f8=previous_tab')
+        '--keybind=f9=new_tab', '--keybind=f8=previous_tab', '--keybind=f7=toggle_split_zoom')
     $app = Start-OnTestDesktop -Exe $exe -StdErr $errlog -Arguments $launchArgs
     $appPid = $app.Pid
     Assert (-not (Test-TestDesktopLeak -ProcessId $appPid)) 'GUI is NOT enumerable on the interactive desktop'
@@ -251,6 +258,65 @@ try {
         Start-Sleep -Seconds 3
         $drwC2 = Get-LogCount 'redrawing after a hidden release'
         Assert ($drwC2 -gt $drwC) "C2 uncovered, it redraws in full ($($drwC2 - $drwC) log lines)"
+    }
+
+    # ---- Z: panes a zoom is drawn over give their targets back (T3104) ----
+    # Mac e15077861: nothing reads a zoomed-over pane's frame, so it is
+    # hidden the way an occluded one is. Zoom one pane (posted keybind, which
+    # works on the background desktop): the other three release; unzoom: the
+    # three redraw in full and every pane captures with text again.
+    if (-not $NegativeControl) {
+        $visZ = @(Get-TestChildWindows -Window ([IntPtr]$top) -Class 'GhozttyTerminal' | Where-Object Visible)
+        if ($visZ.Count -lt 1) { throw 'Z: no visible pane to send the zoom key to' }
+        $relZ = Get-LogCount 'released hidden render targets'
+        $drwZ = Get-LogCount 'redrawing after a hidden release'
+        [void](Send-TestKeys -Window ([IntPtr]$top) -Target ([IntPtr]$visZ[0].Hwnd) -Key F7)
+        Start-Sleep -Seconds 3
+        $visZ2 = @(Get-TestChildWindows -Window ([IntPtr]$top) -Class 'GhozttyTerminal' | Where-Object Visible)
+        $relZ2 = Get-LogCount 'released hidden render targets'
+        Write-Host "  zoomed: $($visZ2.Count) pane(s) on screen"
+        Assert (($relZ2 - $relZ) -ge ($panes.Count - 1)) "Z1 zooming one pane releases the $($panes.Count - 1) behind it ($($relZ2 - $relZ) log lines)"
+        [void](Send-TestKeys -Window ([IntPtr]$top) -Target ([IntPtr]$visZ[0].Hwnd) -Key F7)
+        Start-Sleep -Seconds 3
+        $drwZ2 = Get-LogCount 'redrawing after a hidden release'
+        Assert (($drwZ2 - $drwZ) -ge ($panes.Count - 1)) "Z2 unzoomed, the $($panes.Count - 1) redraw in full ($($drwZ2 - $drwZ) log lines)"
+        $zOk = $true; $zWhy = ''
+        foreach ($s in (Get-PaneShots)) {
+            $want = $before | Where-Object { $_.Pane -eq $s.Pane }
+            if (-not $s.Ok -or $s.Colors -le 2 -or $s.W -ne $want.W -or $s.H -ne $want.H) {
+                $zOk = $false
+                $zWhy = "pane $($s.Pane): ok=$($s.Ok) $($s.W)x$($s.H) colours=$($s.Colors) $($s.Why)"
+            }
+        }
+        Assert $zOk "Z3 every pane captures at its own size with text after the unzoom $zWhy"
+    }
+
+    # ---- S: a stashed pane gives its targets back (T3104) -----------------
+    # A stashed pane is kept at its on-screen size and never shown; nothing
+    # reads its frame. Stash one: it releases; restore it: it redraws in full
+    # and captures with text.
+    if (-not $NegativeControl) {
+        $stashed = $panes[3]
+        $relS = Get-LogCount 'released hidden render targets'
+        $drwS = Get-LogCount 'redrawing after a hidden release'
+        $r = Invoke-Verb @('+stash', "--target=$stashed")
+        if ($r.Code -ne 0) { throw "+stash failed: $($r.Text)" }
+        Start-Sleep -Seconds 3
+        $relS2 = Get-LogCount 'released hidden render targets'
+        Assert (($relS2 - $relS) -ge 1) "S1 stashing a pane releases its targets ($($relS2 - $relS) log lines)"
+        $r = Invoke-Verb @('+restore', "--target=$stashed")
+        if ($r.Code -ne 0) { throw "+restore failed: $($r.Text)" }
+        Start-Sleep -Seconds 3
+        $drwS2 = Get-LogCount 'redrawing after a hidden release'
+        Assert (($drwS2 - $drwS) -ge 1) "S2 restored, it redraws in full ($($drwS2 - $drwS) log lines)"
+        $sOk = $true; $sWhy = ''
+        foreach ($s in (Get-PaneShots)) {
+            if (-not $s.Ok -or $s.Colors -le 2) {
+                $sOk = $false
+                $sWhy = "pane $($s.Pane): ok=$($s.Ok) $($s.W)x$($s.H) colours=$($s.Colors) $($s.Why)"
+            }
+        }
+        Assert $sOk "S3 every pane, the restored one included, captures with text $sWhy"
     }
 
     # ---- T: a tab sent behind another gives its targets back (T2975) ------

@@ -1582,7 +1582,8 @@ fn compLeaveHelper(self: *OpenGL) void {
 /// May the renderer free this pane's targets now that it is hidden (T2474)?
 /// Only on Win32, and only when the WINDOW is hidden (minimized, cloaked,
 /// covered, parked by a close-undo) or the pane's tab went behind another
-/// (T2975): see `Surface.window_hidden`. A pane hidden by zoom or a stash
+/// (T2975), or a zoom is drawn over it or it is stashed (T3104): see
+/// `Surface.window_hidden`. A stack card whose strip face carries its frame
 /// keeps its target. Never while the device is lost - the targets are dead
 /// with it and the rebuild owns them.
 pub fn releaseHiddenTargetsNow(self: *const OpenGL) bool {
