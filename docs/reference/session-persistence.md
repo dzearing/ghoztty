@@ -212,6 +212,24 @@ backlog, and after 100 ms on running out of file descriptors or kernel memory
 listening socket ends it. The agent does not raise its own descriptor limit:
 child shells would inherit it.
 
+## A restored screen leaves the cursor where the program left it
+
+Both restore paints — the app's own snapshot (`Surface.formatSessionSnapshot`)
+and the agent's repaint (`GridEmulator.snapshotAlloc`) — are
+`terminal.formatter.TerminalFormatter` output: the screen, the cursor
+position, then terminal state. Two pieces of that state move the cursor when
+replayed: DECSTBM/DECSLRM home it, and each tabstop is set by moving to its
+column. `formatTrailingExtras` puts the cursor back afterwards whenever the
+cursor is part of what is restored.
+
+Before this a re-attached pane's cursor sat at the last tabstop (the right
+row, column 113 of 116), so whatever the program printed next started there
+until it sent a carriage return; the following snapshot recorded that as a
+row of spaces soft-wrapped onto the text, and the restore after that
+duplicated a line. Caught by the E2E's `--quit=graceful` mode from the second
+cycle on. Test: `Terminal vt restores the cursor after tabstops and a
+scrolling region` (`formatter.zig`).
+
 ## An agent-backed pane cannot stall on its own mailbox
 
 The remote backend parses output on the IO thread (`termio/Remote.zig`
