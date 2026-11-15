@@ -1228,7 +1228,7 @@ extension Ghostty {
                 case GHOSTTY_TARGET_SURFACE:
                     guard let surface = target.target.surface else { return false }
                     guard let surfaceView = self.surfaceView(from: surface) else { return false }
-                    guard let controller = surfaceView.window?.windowController as? BaseTerminalController else { return false }
+                    guard let controller = BaseTerminalController.owner(of: surfaceView) else { return false }
 
                     // Convert the C API direction to our Swift type
                     guard let splitDirection = SplitFocusDirection.from(direction: direction) else { return false }
@@ -1292,7 +1292,7 @@ extension Ghostty {
                 case GHOSTTY_TARGET_SURFACE:
                     guard let surface = target.target.surface else { return false }
                     guard let surfaceView = self.surfaceView(from: surface) else { return false }
-                    guard let controller = surfaceView.window?.windowController as? BaseTerminalController else { return false }
+                    guard let controller = BaseTerminalController.owner(of: surfaceView) else { return false }
 
                     let visible = controller.surfaceTree.visibleTree
                     guard visible.isSplit else { return false }
@@ -1327,6 +1327,20 @@ extension Ghostty {
             target: ghostty_target_s,
             direction: ghostty_action_goto_window_e
         ) -> Bool {
+            // Single-window mode: the workspaces are the windows, in the
+            // sidebar's order.
+            // (Actions are performed on the main thread.)
+            let single: Bool? = MainActor.assumeIsolated {
+                guard WindowMode.isSingle else { return nil }
+                let host = WorkspaceHost.shared
+                let order = TerminalController.sidebarOrder(host.workspaces)
+                let step = direction == GHOSTTY_GOTO_WINDOW_PREVIOUS ? -1 : 1
+                guard direction == GHOSTTY_GOTO_WINDOW_NEXT || direction == GHOSTTY_GOTO_WINDOW_PREVIOUS,
+                      let target = host.neighbor(offset: step, in: order) else { return false }
+                return host.show(target)
+            }
+            if let single { return single }
+
             // Collect candidate windows: visible terminal windows that are either
             // standalone or the currently selected tab in their tab group. This
             // treats each native tab group as a single "window" for navigation
@@ -1392,7 +1406,7 @@ extension Ghostty {
                 case GHOSTTY_TARGET_SURFACE:
                     guard let surface = target.target.surface else { return false }
                     guard let surfaceView = self.surfaceView(from: surface) else { return false }
-                    guard let controller = surfaceView.window?.windowController as? BaseTerminalController else { return false }
+                    guard let controller = BaseTerminalController.owner(of: surfaceView) else { return false }
 
                     // If the window has no splits ON SCREEN, the action is not performable
                     guard controller.surfaceTree.isVisiblySplit else { return false }
@@ -1446,7 +1460,7 @@ extension Ghostty {
             case GHOSTTY_TARGET_SURFACE:
                 guard let surface = target.target.surface else { return false }
                 guard let surfaceView = self.surfaceView(from: surface) else { return false }
-                guard let controller = surfaceView.window?.windowController as? BaseTerminalController else { return false }
+                guard let controller = BaseTerminalController.owner(of: surfaceView) else { return false }
 
                 // If the window has no splits ON SCREEN, the action is not performable
                 guard controller.surfaceTree.isVisiblySplit else { return false }
@@ -1474,7 +1488,7 @@ extension Ghostty {
             case GHOSTTY_TARGET_SURFACE:
                 guard let surface = target.target.surface else { return false }
                 guard let surfaceView = self.surfaceView(from: surface) else { return false }
-                guard let controller = surfaceView.window?.windowController as? BaseTerminalController else { return false }
+                guard let controller = BaseTerminalController.owner(of: surfaceView) else { return false }
 
                 guard controller.surfaceTree.isVisiblySplit else { return false }
 
@@ -1735,7 +1749,7 @@ extension Ghostty {
             case GHOSTTY_TARGET_SURFACE:
                 guard let surface = target.target.surface,
                     let surfaceView = self.surfaceView(from: surface),
-                    let controller = surfaceView.window?.windowController as? BaseTerminalController else { return }
+                    let controller = BaseTerminalController.owner(of: surfaceView) else { return }
 
                 controller.toggleBackgroundOpacity()
 

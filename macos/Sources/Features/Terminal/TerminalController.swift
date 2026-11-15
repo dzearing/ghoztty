@@ -61,6 +61,37 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     /// The notification cancellable for focused surface property changes.
     private var surfaceAppearanceCancellables: Set<AnyCancellable> = []
 
+    // MARK: Workspace (single-window mode; see `WorkspaceHost`)
+
+    /// Parked: this workspace is not the one on show. Its `window` is nil
+    /// — the rule for a parked controller, so nothing reaches into the
+    /// window another workspace is using, and nothing loads a second one.
+    fileprivate(set) var parkedNow = false
+    override var isParked: Bool { parkedNow }
+
+    /// The content view while parked (out of the window, kept whole).
+    var parkedContainer: TerminalViewContainer?
+    /// The pane that had focus when the workspace was parked.
+    weak var parkedFocus: PaneView?
+    /// The window's tab color while this workspace had it.
+    var parkedTabColor: TerminalTabColor = .none
+
+    override var window: NSWindow? {
+        get { parkedNow ? nil : super.window }
+        set { super.window = newValue }
+    }
+
+    /// The window as `NSWindowController` holds it, parked or not, without
+    /// loading one. For the workspace hand-off only.
+    var heldWindow: NSWindow? { isWindowLoaded ? super.window : nil }
+
+    /// Set while parked/unparked by `WorkspaceHost`.
+    func setParked(_ parked: Bool) { parkedNow = parked }
+
+    /// AppKit restoration saves this window: not one running a command,
+    /// nor one the session layout manifest restores.
+    var isAppKitRestorable: Bool { restorable && sessionLayoutEntryID == nil }
+
     init(_ ghostty: Ghostty.App,
          withBaseConfig base: Ghostty.SurfaceConfiguration? = nil,
          withSurfaceTree tree: SplitTree<PaneView>? = nil,
@@ -111,7 +142,24 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             localAgent = agent
         }
 
+        // Single-window mode: every controller but the one that loads the
+        // window starts parked — decided before anything can ask for its
+        // window, which would load a second one.
+        let single = WindowMode.isSingle
+        let parked = single && WorkspaceHost.shared.startsParked()
+        self.parkedNow = parked
+
         super.init(ghostty, baseConfig: base, surfaceTree: tree)
+
+        if single {
+            WorkspaceHost.shared.admit(self, parked: parked)
+            // The window can load during `super.init`, before this joined
+            // the host: what `windowDidLoad` does for a workspace, now.
+            if !parked, let window = heldWindow {
+                window.tabbingMode = .disallowed
+                WorkspaceHost.shared.didLoadWindow(self)
+            }
+        }
 
         // Carry the strong connection owner + machine so tabs/splits inherit
         // the agent connection and the reconnect ladder watches it. The
@@ -215,17 +263,30 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         super.surfaceTreeDidChange(from: from, to: to)
 
         // Whenever our surface tree changes in any way (new split, close split, etc.)
-        // we want to invalidate our state.
+        // we want to invalidate our state — the one window's, for a workspace.
         invalidateRestorableState()
+        if workspaceHost != nil { WorkspaceHost.shared.windowStateDidChange() }
 
         // Update our zoom state
         if let window = window as? TerminalWindow {
             window.surfaceIsZoomed = to.zoomed != nil
         }
 
-        // If our surface tree is now nil then we close our window.
+        // If our surface tree is now nil then we close our window — in
+        // single-window mode, this workspace.
         if to.isEmpty {
-            self.window?.close()
+            if let host = workspaceHost {
+                host.close(self)
+            } else {
+                self.window?.close()
+            }
+            return
+        }
+
+        // A parked workspace's content has no window to lay it out: a pane
+        // added, closed or moved there is sized now, not when it is shown.
+        if isParked {
+            DispatchQueue.main.async { [weak self] in self?.layoutParkedContent() }
         }
     }
 
@@ -257,10 +318,9 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     static var all: [TerminalController] {
         // A window that has closed can outlive its close (see
         // `BaseTerminalController.windowHasClosed`); it is not a window any
-        // more, and nothing should find it by name or list it.
-        return NSApplication.shared.windows.compactMap {
-            $0.windowController as? TerminalController
-        }.filter { !$0.windowHasClosed }
+        // more, and nothing should find it by name or list it. Parked
+        // workspaces (single-window mode) are windows to everyone else.
+        everyController.compactMap { $0 as? TerminalController }
     }
 
     // Keep track of the last point that our window was launched at so that new
@@ -434,6 +494,13 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         // take effect. Our best theory is there is some next-event-loop-tick logic
         // that Cocoa is doing that we need to be after.
         c.scheduleInitialPresentation {
+            // Single-window mode: a workspace, on show only when asked.
+            if let host = c.workspaceHost {
+                host.present(c, activate: activate)
+                if activate { NSApp.activate(ignoringOtherApps: true) }
+                return
+            }
+
             if activate {
                 c.showWindow(self)
             } else {
@@ -504,6 +571,13 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         let treeSize: CGSize? = tree.root?.viewBounds()
 
         c.scheduleInitialPresentation {
+            // Single-window mode: a workspace in the one window, whose size
+            // a pane moved out of another workspace has no say in.
+            if let host = c.workspaceHost {
+                host.present(c, activate: activate)
+                return
+            }
+
             if activate {
                 c.showWindow(self)
             } else {
@@ -576,6 +650,13 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         func finish(_ controller: TerminalController?) {
             guard let completion else { return }
             DispatchQueue.main.async { completion(controller) }
+        }
+
+        // Single-window mode has no tabs: a new tab is a new workspace,
+        // opened as New Window opens one from `parent`.
+        if WindowMode.isSingle {
+            newWindowInheritingRemote(ghostty, withBaseConfig: baseConfig, from: parent) { finish($0) }
+            return nil
         }
 
         // Making sure that we're dealing with a TerminalController. If not,
@@ -936,6 +1017,10 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     }
 
     func closeTabImmediately(registerRedo: Bool = true) {
+        if workspaceHost != nil {
+            closeWorkspaceImmediately()
+            return
+        }
         guard let window = window else { return }
         guard let tabGroup = window.tabGroup,
                 tabGroup.windows.count > 1 else {
@@ -1061,6 +1146,10 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     /// Closes the current window (including any other tabs) immediately and without
     /// confirmation. This will setup proper undo state so the action can be undone.
     func closeWindowImmediately() {
+        if workspaceHost != nil {
+            closeWorkspaceImmediately()
+            return
+        }
         guard let window = window else { return }
 
         cancelPendingInitialPresentation()
@@ -1095,6 +1184,10 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     /// sessions END, and every pane's core is freed at once — so its process
     /// exits now, not when the undo window expires.
     func forceCloseWindow() {
+        if workspaceHost != nil {
+            forceCloseWorkspace()
+            return
+        }
         guard let window else { return }
         let windows = window.tabGroup?.windows ?? [window]
         let controllers = windows.compactMap { $0.windowController as? TerminalController }
@@ -1118,14 +1211,40 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         for pane in panes { pane.surfaceView?.releaseClosedSurface() }
     }
 
+    /// Single-window mode: close this workspace, with no confirmation and
+    /// with undo, as `closeWindowImmediately` closes a window. The one on
+    /// show hands the window to the workspace shown before it.
+    private func closeWorkspaceImmediately() {
+        cancelPendingInitialPresentation()
+        registerUndoForCloseWindow()
+        autoreleasepool {
+            WorkspaceHost.shared.close(self)
+        }
+    }
+
+    /// Single-window mode: `forceCloseWindow` for one workspace.
+    private func forceCloseWorkspace() {
+        if !isParked { dismissCloseConfirmation() }
+        cancelPendingInitialPresentation()
+        let panes = Array(surfaceTree)
+        for pane in panes { pane.surfaceView?.setSessionCloseIntent(true) }
+        if let undoManager {
+            undoManager.disableUndoRegistration { WorkspaceHost.shared.close(self) }
+        } else {
+            WorkspaceHost.shared.close(self)
+        }
+        noteWindowClosed()
+        for pane in panes { pane.surfaceView?.releaseClosedSurface() }
+    }
+
     /// Registers undo for closing window(s), handling both single windows and tab groups.
     private func registerUndoForCloseWindow() {
         guard let undoManager, undoManager.isUndoRegistrationEnabled else { return }
-        guard let window else { return }
 
         // If we don't have a tab group or we don't have multiple tabs, then
-        // do a normal single window close.
-        guard let tabGroup = window.tabGroup,
+        // do a normal single window close. (A workspace never has a tab
+        // group, nor — parked — a window.)
+        guard let window, let tabGroup = window.tabGroup,
               tabGroup.windows.count > 1 else {
             // No tabs, just save this window's state
             if let undoState {
@@ -1281,9 +1400,15 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     convenience init(_ ghostty: Ghostty.App, with undoState: UndoState) {
         self.init(ghostty, withSurfaceTree: undoState.surfaceTree)
 
-        // Show the window and restore its frame
+        // Show the window and restore its frame (single-window mode: put
+        // the workspace back on show, in the window as it is now).
         showWindow(nil)
-        if let window {
+        if workspaceHost != nil {
+            if let focusedUUID = undoState.focusedSurface,
+               let focusTarget = surfaceTree.first(where: { $0.id == focusedUUID }) {
+                DispatchQueue.main.async { Ghostty.moveFocus(to: focusTarget, from: nil) }
+            }
+        } else if let window {
             window.setFrame(undoState.frame, display: true)
             if let terminalWindow = window as? TerminalWindow {
                 terminalWindow.tabColor = undoState.tabColor
@@ -1323,15 +1448,15 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
     /// The current undo state for this controller
     var undoState: UndoState? {
-        guard let window else { return nil }
+        guard let frame = (window ?? WorkspaceHost.shared.window)?.frame else { return nil }
         guard !surfaceTree.isEmpty else { return nil }
         return .init(
-            frame: window.frame,
+            frame: frame,
             surfaceTree: surfaceTree,
             focusedSurface: focusedSurface?.id,
-            tabIndex: window.tabGroup?.windows.firstIndex(of: window),
-            tabGroup: window.tabGroup,
-            tabColor: (window as? TerminalWindow)?.tabColor ?? .none)
+            tabIndex: window.flatMap { w in w.tabGroup?.windows.firstIndex(of: w) },
+            tabGroup: window?.tabGroup,
+            tabColor: (window as? TerminalWindow)?.tabColor ?? parkedTabColor)
     }
 
     // MARK: - NSWindowController
@@ -1361,6 +1486,9 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         if sessionLayoutEntryID != nil { restorable = false }
 
         // Setting all three of these is required for restoration to work.
+        // Single-window mode: the window is restorable while any workspace
+        // is (`WorkspaceHost.windowStateDidChange`).
+        let restorable = workspaceHost != nil ? true : self.restorable
         window.isRestorable = restorable
         if restorable {
             window.restorationClass = TerminalWindowRestoration.self
@@ -1375,10 +1503,12 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             focusedSurface = view.surfaceView
         }
 
-        // Initialize our content view to the SwiftUI root
-        let container = TerminalViewContainer {
-            TerminalView(ghostty: ghostty, viewModel: self, delegate: self)
-        }
+        // Initialize our content view to the SwiftUI root — or, for a
+        // workspace that was parked before it had a window (single-window
+        // mode), the content it already has.
+        let container = parkedContainer ?? makeContentContainer()
+        parkedContainer = nil
+        container.additionalSafeAreaInsets = NSEdgeInsetsZero
 
         // Set the initial content size on the container so that
         // intrinsicContentSize returns the correct value immediately,
@@ -1387,6 +1517,11 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         container.initialContentSize = focusedSurface?.initialSize
 
         window.contentView = container
+
+        // One window, no tabs: everything that would be a tab is a workspace.
+        if workspaceHost != nil {
+            window.tabbingMode = .disallowed
+        }
 
         // If we have a default size, we want to apply it.
         if let defaultSize {
@@ -1424,10 +1559,17 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         // apply this based on the root config but change it later based on surface
         // config (see focused surface change callback).
         syncAppearance(.init(config))
+        // Single-window mode: this workspace has the window now.
+        workspaceHost?.didLoadWindow(self)
     }
 
     /// Setup correct window frame before showing the window
     override func showWindow(_ sender: Any?) {
+        // Single-window mode: showing a workspace is putting it on show.
+        if let host = workspaceHost {
+            host.show(self)
+            return
+        }
         guard window is TerminalWindow else { return }
         applyInitialFrame()
         super.showWindow(sender)
@@ -1444,7 +1586,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     }
 
     /// Configured position, else the last window's frame, else centered.
-    private func applyInitialFrame() {
+    func applyInitialFrame() {
         guard let terminalWindow = window as? TerminalWindow else { return }
 
         // Maximized: the screen's visible frame, set again here — the frame
@@ -1510,6 +1652,12 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         cancelPendingInitialPresentation()
         self.relabelTabs()
 
+        // Single-window mode: the window went with this workspace; the
+        // others are still open.
+        if workspaceHost != nil {
+            WorkspaceHost.shared.windowDidClose(self)
+        }
+
         // If we remove a window, we reset the cascade point to the key window so that
         // the next window cascade's from that one.
         if let focusedWindow = NSApplication.shared.keyWindow {
@@ -1562,6 +1710,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
     override func windowDidResize(_ notification: Notification) {
         super.windowDidResize(notification)
+        workspaceHost?.windowDidResize()
 
         // Whenever we resize save our last position and size for the next start.
         LastWindowPosition.shared.save(window)
@@ -1574,12 +1723,34 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         LastWindowPosition.shared.save(window)
 
         // Remember our last main
+        let previous = Self.lastMain
         Self.lastMain = self
+
+        // Which window is in front is part of the saved layout
+        // (`SessionLayoutManifest.Entry.frontmost`): this one is now, the
+        // last one no longer.
+        for controller in [previous, self].compactMap({ $0 })
+        where controller.sessionLayoutEntryID != nil {
+            SessionLayoutManifest.shared.scheduleSync(controller)
+        }
     }
 
     // Called when the window will be encoded. We handle the data encoding here in the
     // window controller.
     func window(_ window: NSWindow, willEncodeRestorableState state: NSCoder) {
+        // Single-window mode: the one window carries every workspace AppKit
+        // restoration is for — the one on show first, the rest alongside.
+        if let host = workspaceHost {
+            let saved = host.workspaces.filter(\.isAppKitRestorable)
+            guard let first = saved.first else { return }
+            TerminalRestorableState(from: first).encode(with: state)
+            let rest = saved.dropFirst().map { TerminalRestorableState(from: $0) }
+            if !rest.isEmpty {
+                state.encode(CodableBridge(rest), forKey: TerminalRestorableState.workspacesKey)
+            }
+            return
+        }
+
         // Session persistence: never encode a manifest-tracked window even
         // if AppKit asks (final backstop behind the isRestorable gates) —
         // decoding it would duplicate the window as exec-backed surfaces.
@@ -1601,6 +1772,11 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     }
 
     @IBAction func closeTab(_ sender: Any?) {
+        // A workspace is a window: closing its "tab" closes it.
+        if workspaceHost != nil {
+            closeWindow(sender)
+            return
+        }
         guard let window = window else { return }
         guard window.tabGroup?.windows.count ?? 0 > 1 else {
             closeWindow(sender)
@@ -1696,6 +1872,9 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     }
 
     @IBAction override func closeWindow(_ sender: Any?) {
+        // A parked workspace is put on show first, so a confirmation has
+        // the window to appear on and the person sees what is closing.
+        if isParked { bringForward() }
         guard let window = window else { return }
 
         // We need to check all the windows in our tab group for confirmation
@@ -1847,6 +2026,13 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         guard let tabEnumAny = notification.userInfo?[Ghostty.Notification.GotoTabKey] else { return }
         guard let tabEnum = tabEnumAny as? ghostty_action_goto_tab_e else { return }
         let tabIndex: Int32 = tabEnum.rawValue
+
+        // Single-window mode: the workspaces are the tabs, in the order the
+        // sidebar lists them.
+        if let host = workspaceHost {
+            gotoWorkspace(tabIndex, host: host)
+            return
+        }
 
         guard let windowController = window.windowController else { return }
         guard let tabGroup = windowController.window?.tabGroup else { return }

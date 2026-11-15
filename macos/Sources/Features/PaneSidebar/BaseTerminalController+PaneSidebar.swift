@@ -123,7 +123,7 @@ extension BaseTerminalController {
         if let surface = pane.surfaceView {
             focusSurface(surface)
         } else {
-            window?.makeKeyAndOrderFront(nil)
+            bringForward()
             NSApp.activate(ignoringOtherApps: true)
             DispatchQueue.main.async { Ghostty.moveFocus(to: pane) }
         }

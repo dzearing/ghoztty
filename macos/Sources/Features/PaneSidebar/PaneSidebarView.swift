@@ -496,7 +496,7 @@ struct PaneSidebarView: View {
         let raise = {
             // Selected at once, while it comes forward.
             if !isThisWindow { state.shared.clickedWindow = id }
-            owner.window?.makeKeyAndOrderFront(nil)
+            owner.bringForward()
             NSApp.activate(ignoringOtherApps: true)
         }
         return VStack(alignment: .leading, spacing: 0) {
@@ -1733,9 +1733,14 @@ final class PaneRoster: ObservableObject {
         }
     }
 
-    /// Terminal windows with a sidebar, frontmost first.
+    /// Terminal windows with a sidebar, frontmost first. In single-window
+    /// mode, the workspaces — on show first, then the parked ones, most
+    /// recently shown first: each is a window to the list.
     var controllers: [BaseTerminalController] {
-        NSApp.orderedWindows.compactMap { window in
+        if WindowMode.isSingle {
+            return WorkspaceHost.shared.workspaces.filter { $0.hasPaneSidebar && !$0.windowHasClosed }
+        }
+        return NSApp.orderedWindows.compactMap { window in
             guard let controller = window.windowController as? BaseTerminalController,
                   controller.hasPaneSidebar,
                   window.isVisible

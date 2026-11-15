@@ -615,9 +615,7 @@ class AppDelegate: NSObject,
         // (`ghostty.needsConfirmQuit`) can't make this distinction — it only
         // sees "is a command running", which is true for exactly the sessions
         // that would survive.
-        let terminatedOnQuit = NSApp.windows.compactMap { window in
-            window.windowController as? BaseTerminalController
-        }.filter { controller in
+        let terminatedOnQuit = BaseTerminalController.everyController.filter { controller in
             controller.remoteConnection == nil &&
                 controller.surfaceTree.contains(where: { $0.needsConfirmQuit })
         }
@@ -626,9 +624,7 @@ class AppDelegate: NSObject,
         // We have some visible window. Show an app-wide modal to confirm quitting.
         // Mention persistence only when it's actually in play (mixed case);
         // with no agent-backed windows the classic wording stays accurate.
-        let anyPersistent = NSApp.windows.contains { window in
-            (window.windowController as? BaseTerminalController)?.remoteConnection != nil
-        }
+        let anyPersistent = BaseTerminalController.everyController.contains { $0.remoteConnection != nil }
         let alert = NSAlert()
         alert.messageText = "Quit Ghoztty?"
         alert.informativeText = anyPersistent
@@ -1033,8 +1029,7 @@ class AppDelegate: NSObject,
     }
 
     private func setDockBadge() {
-        let bellCount = NSApp.windows
-            .compactMap { $0.windowController as? BaseTerminalController }
+        let bellCount = BaseTerminalController.everyController
             .reduce(0) { $0 + ($1.bell ? 1 : 0) }
         let wantsBadge = ghostty.config.bellFeatures.contains(.attention) && bellCount > 0
         let label = wantsBadge ? (bellCount > 99 ? "99+" : String(bellCount)) : nil
@@ -1379,7 +1374,7 @@ class AppDelegate: NSObject,
            let existing = TerminalController.all.first(where: {
                controllerHoldsLocalSession($0, sessionID: session.id)
            }) {
-            existing.window?.makeKeyAndOrderFront(self)
+            existing.bringForward()
             NSApp.activate(ignoringOtherApps: true)
             return
         }

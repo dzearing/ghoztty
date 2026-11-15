@@ -93,12 +93,39 @@ private struct PaneDeskBackground<ViewModel: TerminalViewModel>: View {
     var body: some View {
         if ghostty.config.macosPaneStyle == .elevated {
             let isLight = OSColor(ghostty.config.backgroundColor).isLightColor
-            PaneDesk(
-                palette: (viewModel as? BaseTerminalController)?.deskPalette(isLight: isLight)
-                    ?? .ocean(isLight: isLight),
-                opacity: ghostty.config.backgroundOpacity)
-                .ignoresSafeArea(.container, edges: ghostty.config.paneGlass ? .top : [])
+            let controller = viewModel as? BaseTerminalController
+            ZStack {
+                PaneDesk(
+                    palette: controller?.deskPalette(isLight: isLight) ?? .ocean(isLight: isLight),
+                    opacity: ghostty.config.backgroundOpacity)
+                // Single-window mode: the workspace that was on show, its
+                // shade fading out over this one's.
+                if let entrance = controller?.deskEntrance {
+                    PaneDeskFade(
+                        palette: entrance.from?.palette(isLight: isLight) ?? .ocean(isLight: isLight),
+                        opacity: ghostty.config.backgroundOpacity)
+                        .id(entrance.id)
+                }
+            }
+            .ignoresSafeArea(.container, edges: ghostty.config.paneGlass ? .top : [])
         }
+    }
+}
+
+/// A desk drawn over the window's own and faded out as it appears: how the
+/// window's shade goes from one workspace's to the next's.
+private struct PaneDeskFade: View {
+    let palette: PaneDeskPalette
+    let opacity: Double
+    @State private var shown = 1.0
+
+    var body: some View {
+        PaneDesk(palette: palette, opacity: opacity)
+            .opacity(shown)
+            .allowsHitTesting(false)
+            .onAppear {
+                withAnimation(.easeInOut(duration: PaneDeskEntrance.duration)) { shown = 0 }
+            }
     }
 }
 

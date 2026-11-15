@@ -9,6 +9,8 @@ Ghoztty is a terminal with a `ghoztty` CLI for windows and panes. If `command -v
 
 **Nothing takes focus unless you pass `--focus`.** New windows and panes open without raising the app or moving the caret, so the user (and you) keep typing where you were. Use `--focus` only when the user asked to be taken there.
 
+If the user runs Ghoztty with `macos-window-mode = single`, every "window" is a workspace inside one window, switched from the sidebar. Commands are unchanged: a window you open, name, split, read or close is a workspace, and `--focus` is what switches the user to it.
+
 ## Your own pane
 
 Inside a Ghoztty pane, `$GHOZTTY_PANE_ID` is this pane's id (a UUID) and `$GHOZTTY_WINDOW_NAME` names its window. Don't call `+list` to find yourself. The CLI sends your pane with every command, so:

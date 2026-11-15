@@ -94,6 +94,7 @@ enum value without a curated label, so a new value is never hidden.
 
 Appearance (live preview, theme, font, cursor, window), Panes & Windows
 (pane style, glass, dimming, `macos-window-gradient`, `macos-pane-sidebar`,
+`macos-window-mode` (takes effect at the next launch),
 `macos-pane-min-width`/`-height`, `macos-hero-carousel-ratio`, new windows),
 Terminal (shell, starting folder, scrollback, shell integration, copy &
 paste, mouse, notifications), Keyboard, Sessions & Agent, Remote Machines,

@@ -3425,6 +3425,27 @@ keybind: Keybinds = .{},
 /// The default value is `remember`.
 @"macos-pane-sidebar": MacPaneSidebar = .remember,
 
+/// Whether each terminal window is its own window on screen, or all of them
+/// share one. macOS only.
+///
+/// Valid values:
+///
+///   * `separate` - Every window is a window of its own, as always.
+///
+///   * `single` - There is one window on screen. Everything that would open
+///     a window (New Window, `ghoztty +new-window`, a new tab, a restored
+///     session) opens a workspace in it instead, and the pane sidebar's list
+///     of all windows switches between them. A workspace that is not showing
+///     keeps running and stops drawing. Scripts see no difference: each
+///     workspace is listed, named and targeted as a window.
+///
+/// The default value is `separate`.
+///
+/// This option is read when Ghoztty starts; changing it takes effect the
+/// next time Ghoztty is launched, when the windows that were open come back
+/// in the new mode.
+@"macos-window-mode": MacWindowMode = .separate,
+
 /// The smallest width, in points, a pane may be before its row of panes
 /// stacks: a row that cannot fit every pane side by side at this width keeps
 /// as many on show as fit and minimizes the rest into strips at its edge.
@@ -9350,6 +9371,12 @@ pub const MacPaneSidebar = enum {
     hidden,
 };
 
+/// See macos-window-mode
+pub const MacWindowMode = enum {
+    separate,
+    single,
+};
+
 /// See macos-titlebar-proxy-icon
 pub const MacTitlebarProxyIcon = enum {
     visible,
@@ -11302,6 +11329,7 @@ test "macos pane layout options: defaults, values and clamps" {
         try cfg.finalize();
         try testing.expectEqual(MacWindowGradient.random, cfg.@"macos-window-gradient");
         try testing.expectEqual(MacPaneSidebar.remember, cfg.@"macos-pane-sidebar");
+        try testing.expectEqual(MacWindowMode.separate, cfg.@"macos-window-mode");
         try testing.expectEqual(@as(u32, 225), cfg.@"macos-pane-min-width");
         try testing.expectEqual(@as(u32, 125), cfg.@"macos-pane-min-height");
         try testing.expectEqual(@as(f64, 0.25), cfg.@"macos-hero-carousel-ratio");
@@ -11313,6 +11341,7 @@ test "macos pane layout options: defaults, values and clamps" {
         var it: TestIterator = .{ .data = &.{
             "--macos-window-gradient=ocean",
             "--macos-pane-sidebar=collapsed",
+            "--macos-window-mode=single",
             "--macos-pane-min-width=300",
             "--macos-pane-min-height=200",
             "--macos-hero-carousel-ratio=0.4",
@@ -11321,6 +11350,7 @@ test "macos pane layout options: defaults, values and clamps" {
         try cfg.finalize();
         try testing.expectEqual(MacWindowGradient.ocean, cfg.@"macos-window-gradient");
         try testing.expectEqual(MacPaneSidebar.collapsed, cfg.@"macos-pane-sidebar");
+        try testing.expectEqual(MacWindowMode.single, cfg.@"macos-window-mode");
         try testing.expectEqual(@as(u32, 300), cfg.@"macos-pane-min-width");
         try testing.expectEqual(@as(u32, 200), cfg.@"macos-pane-min-height");
         try testing.expectEqual(@as(f64, 0.4), cfg.@"macos-hero-carousel-ratio");

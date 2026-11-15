@@ -147,8 +147,12 @@ zoomed over it (`SurfaceView.setRendererVisible`, which passes on changes
 only). It runs on window visibility changes and on every tree change, so a
 pane stashed, brought back, moved between windows, or created while the
 window is covered starts out right. A stashed pane stays mounted at full size at zero opacity;
-before this it drew every frame of its output. Viewer panes have no such
-hook: a stashed viewer keeps its watchers and its WebContent process busy.
+before this it drew every frame of its output. A parked workspace
+(single-window mode, [window-modes.md](window-modes.md)) is hidden whole:
+`updateSeen` answers false for every terminal in it. Viewer panes have no
+such hook of their own: a stashed viewer keeps its watchers and its
+WebContent process busy. A parked one is out of the window, which WebKit
+treats as hidden, and its diff poll and GIF stop until it is shown.
 
 A blinking cursor (600 ms) or anything that draws more often than every 3 s
 keeps its frames. Metal only — OpenGL re-presents its last target.

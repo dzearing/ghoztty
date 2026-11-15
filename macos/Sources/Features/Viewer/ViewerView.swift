@@ -2825,6 +2825,17 @@ final class ViewerView: NSView, Codable, ObservableObject {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         inUse.window = window
+        // Out of its window while still in its tree — a parked workspace in
+        // single-window mode — a working-tree diff stops polling at once;
+        // back in it, it catches up and polls again. (Its timer stops itself
+        // with no window and nothing else restarts it.)
+        if window == nil {
+            stopWatchingDiff()
+        } else if !isDetached, isDiffMode, diffRefreshTimer == nil,
+                  (resolvedDiffSpec ?? diffSpec)?.tracksWorkingTree == true,
+                  !diffLoader.isListing {
+            refreshDiff(preservingSelection: true)
+        }
     }
 
     private func stopWatchingDiff() {

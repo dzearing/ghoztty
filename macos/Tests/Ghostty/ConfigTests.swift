@@ -139,6 +139,20 @@ struct ConfigTests {
         #expect(config.macosPaneSidebar == expected)
     }
 
+    @Test func macosWindowModeDefaultsToSeparate() throws {
+        let config = try TemporaryConfig("")
+        #expect(config.macosWindowMode == .separate)
+    }
+
+    @Test(arguments: [
+        ("separate", Ghostty.Config.MacOSWindowMode.separate),
+        ("single", Ghostty.Config.MacOSWindowMode.single),
+    ])
+    func macosWindowModeValues(raw: String, expected: Ghostty.Config.MacOSWindowMode) throws {
+        let config = try TemporaryConfig("macos-window-mode = \(raw)")
+        #expect(config.macosWindowMode == expected)
+    }
+
     @Test func paneMinimumSizeDefaultsToTheBuiltInFloor() throws {
         let config = try TemporaryConfig("")
         #expect(config.paneMinimumSize == CGSize(width: 225, height: 125))

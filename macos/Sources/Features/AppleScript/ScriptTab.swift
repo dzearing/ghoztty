@@ -121,6 +121,11 @@ final class ScriptTab: NSObject {
     func handleSelectTab(_ command: NSScriptCommand) -> Any? {
         guard NSApp.validateScript(command: command) else { return nil }
 
+        if let workspace = parentController, workspace.workspaceHost != nil {
+            workspace.bringForward()
+            return nil
+        }
+
         guard let tabContainerWindow = parentWindow else {
             command.scriptErrorNumber = errAEEventFailed
             command.scriptErrorString = "Tab is no longer available."

@@ -84,7 +84,8 @@ extension TerminalRestorableState.InternalState where ViewType == PaneView {
             focusedSurface: controller.focusedSurface?.id.uuidString,
             surfaceTree: controller.surfaceTree,
             effectiveFullscreenMode: controller.fullscreenStyle?.fullscreenMode,
-            tabColor: (controller.window as? TerminalWindow)?.tabColor,
+            tabColor: (controller.window as? TerminalWindow)?.tabColor
+                ?? (controller.isParked ? controller.parkedTabColor : nil),
             titleOverride: controller.titleOverride,
             windowTitleOverride: controller.windowTitleOverride,
             windowTitleSetByUser: controller.windowTitleIsUsers ? true : nil,

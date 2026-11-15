@@ -420,6 +420,19 @@ shows the same view of it (see *Shared across windows*). Read before touching
   group); a project's (or Ungrouped's) closes every window under it — while
   searching, the matching windows it shows and counts.
 
+## Single-window mode
+
+With `macos-window-mode = single` ([window-modes.md](window-modes.md)) every
+row of the all-windows list (and every rail tile) is a **workspace** of the one
+window, and clicking one puts it on show in place — its layout, stash, focus
+and gradient, with the window's shade fading to its own — instead of raising
+another window (`bringForward`). `PaneRoster.controllers` is the workspaces
+(on show first, then most recently shown). Each workspace keeps its own
+sidebar state; a parked one's sidebar holds still and catches up as it comes
+on show (`windowDidUnpark`), and a clicked row's selection clears then, since
+the window never stops being key. Everything else here — folds, groups,
+order, +, ×, rename, drags — is the same, with "window" read as "workspace".
+
 ## Reordering windows and groups
 
 - In the expanded all-windows list, a **window row** drags up and down among
