@@ -258,6 +258,11 @@ extension AppDelegate {
 
         // The window that was in front comes back last, so it is in front
         // again — or, in single-window mode, on show (`Entry.frontmost`).
+        // Their place in the opened order is the saved layout's, whatever
+        // order they are restored in (`openedOrder`).
+        let savedPlace = Dictionary(
+            groups.joined().enumerated().map { ($1.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let firstPlace = BaseTerminalController.reserveOpenedOrders(savedPlace.count)
         groups = SessionLayoutManifest.frontmostLast(groups)
 
         var restoredCount = 0
@@ -294,6 +299,7 @@ extension AppDelegate {
                     tabParent: tabParent
                 ) {
                     restoredCount += 1
+                    controller.openedOrder = firstPlace + (savedPlace[entry.id] ?? 0)
                     lastRestored = (controller, entry)
                     // One window, no tabs, in single-window mode: tab
                     // siblings come back as workspaces of their own.

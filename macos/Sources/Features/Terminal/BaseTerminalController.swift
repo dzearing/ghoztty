@@ -496,6 +496,25 @@ class BaseTerminalController: NSWindowController,
 
     private static var _nextWindowId: Int = 0
 
+    /// Where this window comes in the order windows were opened: how the
+    /// all-windows list orders windows that share a name
+    /// (`PaneSidebarWindowGrouping.sections`). A restore sets it from the
+    /// saved layout's order, so a relaunch keeps it.
+    var openedOrder: Int = BaseTerminalController.reserveOpenedOrders(1)
+
+    private static var nextOpenedOrder = 0
+
+    /// `count` consecutive places in the opened order; returns the first.
+    static func reserveOpenedOrders(_ count: Int) -> Int {
+        defer { nextOpenedOrder += count }
+        return nextOpenedOrder
+    }
+
+    /// `openedOrder` by sidebar window id, for the all-windows list.
+    static func openedOrders(_ controllers: [BaseTerminalController]) -> [UUID: Int] {
+        Dictionary(controllers.map { ($0.paneSidebarState.windowID, $0.openedOrder) }, uniquingKeysWith: min)
+    }
+
     /// Mint the next auto window name ("window-1", "window-2", …).
     static func mintWindowName() -> String {
         _nextWindowId += 1

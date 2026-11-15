@@ -219,7 +219,8 @@ extension TerminalController {
             (id: $0.paneSidebarState.windowID, title: PaneSidebarText.windowTitle(of: $0))
         }
         return PaneSidebarWindowGrouping
-            .sections(titled, order: PaneSidebarSharedState.shared.windowOrder)
+            .sections(titled, order: PaneSidebarSharedState.shared.windowOrder,
+                      opened: openedOrders(controllers))
             .flatMap { $0.windows.compactMap { byID[$0.id] } }
     }
 }

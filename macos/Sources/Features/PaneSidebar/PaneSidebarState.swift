@@ -737,14 +737,32 @@ enum PaneSidebarWindowGrouping {
 
     /// Sections in name order: ungrouped windows by title, then projects by
     /// name (their windows by worktree).
-    static func sections<ID: Hashable>(_ windows: [(id: ID, title: String)]) -> [Section<ID>] {
+    ///
+    /// `opened`: each window's place in the order windows were opened
+    /// (`BaseTerminalController.openedOrder`). Windows that share a name (two
+    /// shells both called `~`) are listed in it, so a new one goes at the end
+    /// of its namesakes; a window with none ties by its id.
+    static func sections<ID: Hashable>(
+        _ windows: [(id: ID, title: String)],
+        opened: [ID: Int] = [:]
+    ) -> [Section<ID>] {
         var projects: [String: [Entry<ID>]] = [:]
         var sections: [Section<ID>] = []
         // Windows come in frontmost first. Put them in one fixed order before
-        // anything else, so windows that share a name (two shells both
-        // called `~`) tie-break the same way in every window's list — not
-        // with whichever window you are in on top.
-        let windows = windows.sorted { "\($0.id)" < "\($1.id)" }
+        // anything else, so windows that share a name tie-break the same way
+        // in every window's list — not with whichever window you are in on
+        // top. That order is the order they opened in: by their random ids,
+        // every new `~` landed at a random place among the others, and the
+        // selection jumped there.
+        let windows = windows.sorted {
+            let a = opened[$0.id] ?? .max, b = opened[$1.id] ?? .max
+            return a != b ? a < b : "\($0.id)" < "\($1.id)"
+        }
+        let rank = Dictionary(windows.enumerated().map { ("\($1.id)", $0) }, uniquingKeysWith: { a, _ in a })
+        let tie: (String) -> String = { key in
+            let id = key.hasPrefix("window:") ? String(key.dropFirst("window:".count)) : key
+            return String(format: "%010d", rank[id] ?? Int(Int32.max))
+        }
         for window in windows {
             if let parts = split(window.title) {
                 projects[parts.project, default: []].append(
@@ -755,10 +773,14 @@ enum PaneSidebarWindowGrouping {
             }
         }
         for (project, entries) in projects {
-            sections.append(.init(project: project, windows: entries.sorted { before($0.label, $1.label, $0.key, $1.key) }))
+            sections.append(.init(project: project, windows: entries.sorted {
+                before($0.label, $1.label, tie($0.key), tie($1.key))
+            }))
         }
         return lonesFirst(sections.sorted {
-            before($0.project ?? $0.windows[0].title, $1.project ?? $1.windows[0].title, $0.id, $1.id)
+            before($0.project ?? $0.windows[0].title, $1.project ?? $1.windows[0].title,
+                   $0.project == nil ? tie($0.windows[0].key) : $0.id,
+                   $1.project == nil ? tie($1.windows[0].key) : $1.id)
         })
     }
 
@@ -776,8 +798,12 @@ enum PaneSidebarWindowGrouping {
     /// it has seen (else before the next one, else at the end), so a new
     /// `ghoztty: wt-3` lands right after `ghoztty: wt-2` wherever that was
     /// dragged. Closed windows are simply not there.
-    static func sections<ID: Hashable>(_ windows: [(id: ID, title: String)], order: [String]) -> [Section<ID>] {
-        let byName = sections(windows)
+    static func sections<ID: Hashable>(
+        _ windows: [(id: ID, title: String)],
+        order: [String],
+        opened: [ID: Int] = [:]
+    ) -> [Section<ID>] {
+        let byName = sections(windows, opened: opened)
         guard !order.isEmpty else { return byName }
         let byKey = Dictionary(byName.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         return lonesFirst(PaneSidebarOrder.arranged(byName.map(\.id), by: order).compactMap { key in

@@ -329,7 +329,11 @@ shows the same view of it (see *Shared across windows*). Read before touching
   forgets them and the search.
 - Windows are in **the list's own order** — by name (Finder order; stable as
   focus moves) until a window or group is dragged or renamed (*Reordering
-  windows and groups* below) — and a
+  windows and groups* below). **Windows that share a name** (every new shell
+  is `~`) are in the order they were opened (`openedOrder`; a restore keeps
+  the saved layout's), so a new one lands at the end of its namesakes — by
+  their random ids it landed anywhere among them and the selection jumped
+  there (`SingleWindowModeTests.sameNamedWorkspacesKeepTheOrderTheyOpenedIn`) — and a
   window titled **`<project>: <worktree>`** is grouped under a collapsible,
   **32pt**
   **sticky** project header (a clear 6pt gap above and below its band —

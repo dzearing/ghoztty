@@ -166,6 +166,81 @@ final class SingleWindowModeTests {
         #expect(await poll(timeout: 2) { b.deskEntrance == nil }, "the fade is cleared when done")
     }
 
+    /// Cmd-N pressed fast, as the key does it: the core's `new_window`
+    /// from whichever terminal is on show at each press. Every press opens a
+    /// workspace, they come on show in the order pressed, and the last one
+    /// pressed ends on show — however the agent's replies interleave.
+    @Test func rapidNewWindowKeepsUpInOrder() async throws {
+        let ghostty = try self.ghostty
+        // As a window opened by hand is: on the local agent (session
+        // persistence), so a new window inherits its working directory
+        // through an agent round trip.
+        let first = TerminalController.newWindow(ghostty, withBaseConfig: nil, activate: true)
+        opened.append(first)
+        _ = await poll(timeout: 10) { first.window?.isVisible == true }
+        _ = await poll(timeout: 10) { first.focusedSurface?.surface != nil }
+        // Its agent session is up, as in a window someone has been using:
+        // a new window from it asks the agent for its directory.
+        let attached = await poll(timeout: 15) {
+            first.focusedSurface.map { BaseTerminalController.remoteInheritance(of: $0).sessionId != nil } ?? false
+        }
+        try #require(attached, "the first window never got an agent session")
+        let before = Set(host.workspaces.map(ObjectIdentifier.init))
+
+        var shown: [ObjectIdentifier] = []
+        var shownNames: [String] = []
+        let observer = NotificationCenter.default.addObserver(
+            forName: WorkspaceHost.didSwitchNotification, object: nil, queue: nil
+        ) { note in
+            if let c = note.object as? TerminalController {
+                shown.append(ObjectIdentifier(c))
+                shownNames.append(c.windowName)
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        let presses = 8
+        let started = Date()
+        for _ in 0..<presses {
+            let surface = try #require(host.active?.focusedSurface?.surface)
+            ghostty.newWindow(surface: surface)
+            await settle(0.04)
+        }
+        let made = await poll(timeout: 15) { self.host.workspaces.count - before.count == presses }
+        let created = host.workspaces.filter { !before.contains(ObjectIdentifier($0)) }
+        self.opened.append(contentsOf: created)
+        #expect(made, "\(created.count) of \(presses) presses opened a workspace")
+        await settle(0.5)
+        let elapsed = Date().timeIntervalSince(started)
+
+        // Created order: by window name (minted in creation order).
+        let byName = created.sorted {
+            (Int($0.windowName.dropFirst("window-".count)) ?? 0) < (Int($1.windowName.dropFirst("window-".count)) ?? 0)
+        }
+        let switches = shown.filter { id in created.contains { ObjectIdentifier($0) == id } }
+        print("RAPID: \(created.count) workspaces in \(String(format: "%.2f", elapsed))s; created \(byName.map(\.windowName)); shown \(shownNames); active \(host.active?.windowName ?? "nil")")
+        #expect(switches == byName.map(ObjectIdentifier.init), "workspaces came on show out of order")
+        #expect(host.active === byName.last, "the last one pressed is not the one on show")
+    }
+
+    /// Workspaces with the same name (every new shell is `~`) stay in the
+    /// order they were opened in the all-windows list, so a new one lands
+    /// at the end of its namesakes and the selection follows it there —
+    /// not at a random place among them.
+    @Test func sameNamedWorkspacesKeepTheOrderTheyOpenedIn() async throws {
+        var made: [TerminalController] = []
+        for _ in 0..<6 {
+            let (c, _) = try await workspace()
+            c.setWindowTitle("same")
+            made.append(c)
+        }
+        let listed = TerminalController.sidebarOrder(host.workspaces)
+        #expect(listed.map(\.windowName) == made.map(\.windowName))
+        // Showing one never reorders them.
+        host.show(made[3])
+        #expect(TerminalController.sidebarOrder(host.workspaces).map(\.windowName) == made.map(\.windowName))
+    }
+
     /// Tab navigation walks the workspaces in the sidebar's order.
     @Test func nextAndPreviousTabWalkTheWorkspaces() async throws {
         let (a, _) = try await workspace()
