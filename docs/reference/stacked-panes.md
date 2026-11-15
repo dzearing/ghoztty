@@ -35,9 +35,28 @@ keeps its own collapse. Zoom and hero show one pane, so nothing stacks.
 **Flat style** stacks the same way, with square strips and a 1px line on its
 grips.
 
-**Ephemeral**: which panes are minimized and how a run's slots are sized are
-not persisted. A relaunch starts from the focused pane with every row side by
-side again where it fits.
+**A blade stays a blade until the user brings it out** — through a page
+reloading or navigating, a live reload, a sibling closing, splitting, being
+stashed or moved away, the window resizing or losing key, and a relaunch.
+Tests: `BladeStaysMinimizedTests` (one HTML viewer minimized, each of those
+done to it).
+
+**Saved with the window**: the rows the user collapsed (pin and slot shares)
+and the focus history ride the window's saved state
+(`PaneStackState.Persisted`) — the session layout manifest's `paneStack`, and
+AppKit restoration's `paneStack` — naming panes by their position among the
+tree's leaves (stash included), since a restored viewer's id is new. A change
+to a collapse re-saves the window (`paneStackDidChange`), so a crash keeps it
+too; the focus history rides along with every save. A restored window puts
+the caret in the pane focused last, never in a blade
+(`restoredFocusTarget`, through `paneOnShow`) — it used to focus the first
+leaf, which brought a blade there out. Additive: an older app ignores it, and
+state from one lays every row out side by side. A row stacked only for want
+of room is not a pin: restored with its focus history, it shows the same
+panes where the window still has the same room, and unfolds when it has more
+(the window growing is the user making room). Tests:
+`aRestoredWindowKeepsItsBlades`, `theStackStateRoundTripsByLeafPosition`,
+`aManifestWithoutBladesStillLoads`.
 
 ## Strip labels
 
@@ -85,6 +104,19 @@ pane sidebar, `ghoztty://focus/…` all just focus the pane, and the row follows
   pane on show nearest the candidate (`paneOnShow`,
   `focusTargetAfterRemoving`): a close, Cmd-W in a viewer, a stash, the
   close from the sidebar, the window becoming key with nothing focused.
+- **A page never pulls the caret into a blade.** WebKit makes its web view
+  first responder whenever the page focuses an element — an `autofocus` field
+  after a live reload or a navigation, a script's `focus()` — and that focus
+  brought the blade out. The window refuses it (`TerminalWindow` /
+  `QuickTerminalWindow.makeFirstResponder` → `ViewerWebView.mayTakeFocus`):
+  the caret stays where it was. Gated at the window, not in the web view's
+  `becomeFirstResponder`: AppKit publishes the new first responder before it
+  asks the view, so the window's observer had already brought the blade out,
+  and the refusal left the window holding the caret. Every focus the app
+  gives a viewer goes through `ViewerView.focusContent`, which may — a strip
+  click, the sidebar, `goto_split`. A page on show is not held back. Tests:
+  `aPageFocusingAnElementInABladeLeavesTheCaretWhereItWas`,
+  `theUserStillBringsABladeOut`.
 - Only a pane that **really has the caret** counts as focused to a stack
   (`PaneView.holdsKeyboardFocus`): `focusedPane` falls back to the last focused
   terminal while the caret is elsewhere, and that terminal may have been

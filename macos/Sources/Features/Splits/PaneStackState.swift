@@ -492,4 +492,65 @@ final class PaneStackState: ObservableObject {
     static func noting(_ id: UUID, in recency: [UUID]) -> [UUID] {
         Array(([id] + recency.filter { $0 != id }).prefix(capacity))
     }
+
+    // MARK: - Persisted with the window
+
+    /// The rows the user collapsed and the window's focus history, as they
+    /// ride a window's saved state (the session layout manifest, AppKit
+    /// restoration) — so a relaunch puts every blade back. Panes are named by
+    /// their position among the tree's leaves (`SplitTree.Node.leaves()`, the
+    /// stash included), not by id: a viewer pane's id is minted afresh on
+    /// restore.
+    ///
+    /// Additive: an older app ignores it and lays every row out side by side;
+    /// state saved by an older app has none, and restores the same way.
+    struct Persisted: Codable, Equatable {
+        /// Each collapsed row: its panes, and its run on show.
+        var rows: [Row]
+        /// Leaf positions, most recently focused first.
+        var recency: [Int]
+
+        struct Row: Codable, Equatable {
+            var leaves: [Int]
+            var start: Int
+            var count: Int
+            /// The run's slot shares, when the user sized them.
+            var shares: [Double]?
+        }
+    }
+
+    /// This window's collapses and focus history, for `leaves` (the tree's
+    /// leaves, in order). Nil when there is nothing to keep.
+    func persisted(leaves: [UUID]) -> Persisted? {
+        let position = Dictionary(leaves.enumerated().map { ($1, $0) }, uniquingKeysWith: { a, _ in a })
+        let rows: [Persisted.Row] = pins.compactMap { key, pin in
+            let indices = key.compactMap { position[$0] }
+            guard indices.count == key.count else { return nil }
+            return Persisted.Row(
+                leaves: indices.sorted(), start: pin.start, count: pin.count,
+                shares: shares[key].map { $0.map(Double.init) })
+        }
+        .sorted { $0.leaves.lexicographicallyPrecedes($1.leaves) }
+        let recency = recency.compactMap { position[$0] }
+        guard !rows.isEmpty || !recency.isEmpty else { return nil }
+        return Persisted(rows: rows, recency: recency)
+    }
+
+    /// Take back what `persisted(leaves:)` saved, for a restored tree whose
+    /// leaves are `leaves`. A row naming a leaf the tree does not have is
+    /// dropped (the layout lays it out side by side).
+    func adopt(_ persisted: Persisted, leaves: [UUID]) {
+        func id(_ index: Int) -> UUID? { leaves.indices.contains(index) ? leaves[index] : nil }
+        for row in persisted.rows {
+            let ids = row.leaves.compactMap(id)
+            guard ids.count == row.leaves.count, row.count >= 1, row.start >= 0 else { continue }
+            let key = Set(ids)
+            pins[key] = PaneLayout.Pin(start: row.start, count: row.count)
+            shares[key] = row.shares.map { $0.map { CGFloat($0) } }
+        }
+        let restored = persisted.recency.compactMap(id)
+        if !restored.isEmpty {
+            recency = Array((restored + recency.filter { !restored.contains($0) }).prefix(Self.capacity))
+        }
+    }
 }

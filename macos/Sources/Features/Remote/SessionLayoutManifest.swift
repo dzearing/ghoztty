@@ -195,6 +195,12 @@ final class SessionLayoutManifest {
         /// The window's own gradient (`--color=random` in the elevated pane
         /// style), as its seed. Optional/additive: nil is the default desk.
         var deskVariant: PaneDeskVariant? = nil
+        /// The rows the user collapsed into blades and the focus history
+        /// (`PaneStackState.Persisted`, panes by leaf position), so a relaunch
+        /// keeps every blade a blade. Optional/additive: older manifests
+        /// decode with nil (every row side by side where it fits) and an
+        /// older app ignores it.
+        var paneStack: PaneStackState.Persisted? = nil
     }
 
     // MARK: Storage
@@ -343,7 +349,8 @@ final class SessionLayoutManifest {
         paneSidebarHidden: Bool? = nil,
         paneSidebarOrder: [UUID]? = nil,
         paneSidebarWindowID: UUID? = nil,
-        deskVariant: PaneDeskVariant?? = nil
+        deskVariant: PaneDeskVariant?? = nil,
+        paneStack: PaneStackState.Persisted?? = nil
     ) {
         lock.lock()
         defer { lock.unlock() }
@@ -354,6 +361,7 @@ final class SessionLayoutManifest {
         if let paneSidebarOrder { entry.paneSidebarOrder = paneSidebarOrder }
         if let paneSidebarWindowID { entry.paneSidebarWindowID = paneSidebarWindowID }
         if let deskVariant { entry.deskVariant = deskVariant }
+        if let paneStack { entry.paneStack = paneStack }
         if let frame { entry.frame = frame }
         entry.titleOverride = titleOverride
         entry.windowTitleOverride = windowTitleOverride
@@ -749,7 +757,8 @@ final class SessionLayoutManifest {
             paneSidebarHidden: controller.paneSidebarState.isHidden,
             paneSidebarOrder: controller.paneSidebarPersistedOrder,
             paneSidebarWindowID: controller.paneSidebarState.windowID,
-            deskVariant: .some(controller.deskVariant))
+            deskVariant: .some(controller.deskVariant),
+            paneStack: .some(controller.persistedPaneStack))
     }
 
     /// WP-D3: capture the surface's structured VT screen snapshot (base64) and

@@ -97,6 +97,9 @@ final class TerminalRestorableState: TerminalRestorable {
     var deskVariant: PaneDeskVariant? {
         internalState.deskVariant
     }
+    var paneStack: PaneStackState.Persisted? {
+        internalState.paneStack
+    }
 
     /// Internal State we use to perform unit tests
     ///
@@ -188,6 +191,8 @@ class TerminalWindowRestoration: NSObject, NSWindowRestoration {
         if let order = state.paneSidebarOrder { c.paneSidebarState.order = order }
         if let id = state.paneSidebarWindowID { c.paneSidebarState.windowID = id }
         c.deskVariant = state.deskVariant
+        // Every blade stays a blade (`PaneStackState.Persisted`).
+        c.adoptPersistedPaneStack(state.paneStack)
 
         guard let window = c.window else {
             completionHandler(nil, TerminalRestoreError.windowDidNotLoad)
@@ -217,9 +222,15 @@ class TerminalWindowRestoration: NSObject, NSWindowRestoration {
                 break
             }
 
-            if let view = foundView {
-                c.focusedSurface = view
-                restoreFocus(to: view, inWindow: window)
+            // Never into a blade: focusing one would bring it back out.
+            if let view = foundView,
+               let target = c.surfaceTree.pane(for: view).flatMap({ c.restoredFocusTarget(preferring: $0) }) {
+                if let surface = target.surfaceView {
+                    c.focusedSurface = surface
+                    restoreFocus(to: surface, inWindow: window)
+                } else {
+                    Ghostty.moveFocus(to: target)
+                }
             }
         }
 
