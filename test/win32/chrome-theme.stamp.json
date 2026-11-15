@@ -1,15 +1,15 @@
 {
     "guard":  "chrome-theme",
     "script":  "test/win32/chrome-theme.ps1",
-    "generated":  "2026-11-10T08:58:24-08:00",
-    "commit":  "cd7438d5b",
+    "generated":  "2026-11-15T07:37:13-08:00",
+    "commit":  "48a4ea1b4",
     "uncommitted":  [
                         "src/apprt/win32/paint_probe.zig"
                     ],
     "files":  {
                   "src/apprt/win32/chrome_theme.zig":  "e9922111d945b6279e8fc42adda3469ee52117b8682e4cb8297b997b91f068b1",
                   "src/apprt/win32/color_math.zig":  "c876c6551fd55dc02606b05d65665ef55e8d2bd4197d28a4c86ba32eaedb8b7f",
-                  "src/apprt/win32/paint_probe.zig":  "d1d25dfda8847b729b95d0d406f87f32727f714ce894aa7575fcca4241a438c9",
+                  "src/apprt/win32/paint_probe.zig":  "175e7a520cb57253034c5af53866945b9da6e1b2e232f6de579615130941564e",
                   "src/apprt/win32/panel_theme.zig":  "caf0cd7e30f705d17e3590985e3fa51a7a3a32f90b619fd38e51b932a6c7a134",
                   "src/apprt/win32/system_colors.zig":  "39d61848829e6f516f5c35902a99b978fa2cdaee3a23bae35fe6d09d76aefe33",
                   "test/win32/chrome-theme.ps1":  "90e9ae0a84d052ccd8d9cfbb915954acdf3fed4e1b4b376e65e815728aec9850",

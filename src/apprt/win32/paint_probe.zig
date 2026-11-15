@@ -88,10 +88,51 @@ pub fn record(surface: Surface) void {
     log.info("paint-probe surface={s} n={d}", .{ @tagName(surface), n });
 }
 
+/// The chrome's two band painters (T2987). Not `Surface`s: a surface is a
+/// WM_PAINT the window received, and these run inside one - under
+/// `WM_PRINTCLIENT` too, so they are not part of the camera-proof oracle
+/// above. What they answer is narrower: did THIS paint redraw the caption or
+/// the strip, and how many buffers has that painter ever built? A paint whose
+/// clip misses a band must not advance its count, and `builds` must hold still
+/// across paints at one size.
+pub const Painter = enum { caption, strip };
+
+const painter_count = @typeInfo(Painter).@"enum".fields.len;
+
+var painter_runs = [_]u64{0} ** painter_count;
+
+/// Count one run of `p` and return the new total.
+pub fn bumpPainter(p: Painter) u64 {
+    const i = @intFromEnum(p);
+    painter_runs[i] += 1;
+    return painter_runs[i];
+}
+
+/// Called by a band painter once it has committed to drawing. `builds` is its
+/// buffer's lifetime build count, printed alongside so one line carries both
+/// halves of T2987's claim.
+pub fn painter(p: Painter, builds: u32) void {
+    const n = bumpPainter(p);
+    if (!enabled()) return;
+    log.info("chrome-painter name={s} n={d} builds={d}", .{ @tagName(p), n, builds });
+}
+
 /// Test-only: the counters are module state, so a test that asserts on them
 /// has to start from a known point.
 fn resetForTest() void {
     counts = [_]u64{0} ** surface_count;
+    painter_runs = [_]u64{0} ** painter_count;
+}
+
+test "painter runs are counted apart from window paints" {
+    resetForTest();
+    defer resetForTest();
+
+    try std.testing.expectEqual(@as(u64, 1), bumpPainter(.caption));
+    try std.testing.expectEqual(@as(u64, 1), bumpPainter(.strip));
+    painter(.strip, 1);
+    try std.testing.expectEqual(@as(u64, 3), bumpPainter(.strip));
+    try std.testing.expectEqual(@as(u64, 0), count(.window));
 }
 
 test "bump counts each surface independently" {

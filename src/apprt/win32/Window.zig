@@ -1296,6 +1296,12 @@ desk_printing: bool = false,
 /// caption and tab bar paint here, and the band goes from here to the
 /// host's caption visual (desk up) or to the window (desk on GDI).
 caption_mirror: chrome_comp.Mirror = .{},
+/// The caption's and the tab strip's own double buffers (T2987): kept across
+/// paints and rebuilt only when the band's size changes. Each painter used to
+/// create and destroy a full-width DC + DIB on every paint, which under a
+/// spinner title is ten pairs a second for pixels nobody changed.
+caption_buf: chrome_comp.Mirror = .{},
+strip_buf: chrome_comp.Mirror = .{},
 /// What the painters over the desk drew while the desk is on the compositor
 /// (T2544): the rearrange headers, a hero tab's carousel and slide. They
 /// paint `overlay_scratch` (the desk's size, prefilled with what is on
@@ -2560,6 +2566,8 @@ fn releaseOwnedResources(self: *Window) void {
     if (self.chrome_host) |*cc| cc.deinit();
     self.chrome_host = null;
     self.caption_mirror.deinit();
+    self.caption_buf.deinit();
+    self.strip_buf.deinit();
     self.desk_overlay.deinit();
     self.overlay_scratch.deinit();
     self.flat_desk.deinit();
@@ -18638,30 +18646,12 @@ fn paintCaption(self: *Window, hdc_screen: w32.HDC) void {
     const m = self.captionMetrics();
     const l = caption_layout.layout(m, client_w, self.captionPill());
 
-    const mem_dc = w32.CreateCompatibleDC(hdc_screen) orelse return;
-    defer _ = w32.DeleteDC(mem_dc);
     // A DIB section, so a glass band (T1886) can be written as pixels; GDI
-    // draws the title and the buttons on top of the same memory.
-    var bits: ?*anyopaque = null;
-    const bmi = w32.BITMAPINFO{
-        .bmiHeader = .{
-            .biWidth = client_w,
-            .biHeight = -cap_h, // top-down
-            .biPlanes = 1,
-            .biBitCount = 32,
-            .biCompression = w32.BI_RGB,
-        },
-    };
-    const mem_bmp = w32.CreateDIBSection(mem_dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse return;
-    const old_bmp = w32.SelectObject(mem_dc, mem_bmp);
-    defer {
-        _ = w32.SelectObject(mem_dc, old_bmp);
-        _ = w32.DeleteObject(mem_bmp);
-    }
-    const pixels: []u32 = if (bits) |p|
-        @as([*]u32, @ptrCast(@alignCast(p)))[0..@intCast(client_w * cap_h)]
-    else
-        return;
+    // draws the title and the buttons on top of the same memory. Kept across
+    // paints (T2987): every pixel is rewritten below, so nothing stale shows.
+    const mem_dc = self.caption_buf.ensure(hdc_screen, client_w, cap_h) orelse return;
+    const pixels: []u32 = self.caption_buf.px;
+    paint_probe.painter(.caption, self.caption_buf.builds);
 
     // Same source as the strip's band: `chromePalette().bar`. Not a second
     // constant and no longer a second derivation — a caption that shaded from
@@ -18997,8 +18987,17 @@ fn paintChromeRaw(self: *Window, hdc_screen: w32.HDC) void {
     const band_dc = self.captionBandTarget(hdc_screen);
     const cap_was_live = if (self.chrome_host) |*h| h.capLive() else false;
     if (band_dc != null) self.chrome_host.?.beginBatch();
-    self.paintCaption(band_dc orelse hdc_screen);
-    self.paintTabBar(band_dc orelse hdc_screen);
+    // T2987: each band painter runs only when this paint's clip reaches the
+    // band it blits. A pane-area or divider invalidation used to rebuild the
+    // whole caption and re-lay out every tab for pixels the clip then threw
+    // away. Into the mirror, a skip leaves the band as the mirror last held
+    // it, so it is only allowed while the mirror holds the last paint.
+    const reach = self.chromeBandReach(hdc_screen);
+    const may_skip = band_dc == null or self.caption_mirror.valid;
+    if (!may_skip or reach.caption) self.paintCaption(band_dc orelse hdc_screen);
+    if (!may_skip or reach.strip) self.paintTabBar(band_dc orelse hdc_screen);
+    // Painted straight to the window, the mirror missed this paint's pixels.
+    self.caption_mirror.valid = band_dc != null;
     defer if (band_dc != null) self.captionBandFinish(hdc_screen, cap_was_live);
     // Dividers are part of the paint cycle (T155). BeginPaint clips to the
     // invalid region, so this covers an exposed band; the post-layout
@@ -19030,6 +19029,46 @@ fn paintChromeRaw(self: *Window, hdc_screen: w32.HDC) void {
         // hero region is owner-painted (outgoing/incoming snapshots).
         if (self.heroSlidePainted()) HeroCarousel.paintSlide(self, hdc_screen);
     }
+}
+
+/// Which of the two band painters this paint's clip reaches (T2987). The bands
+/// are the painters' own BLIT rects, derived the way each painter derives them
+/// - merged (T205), the caption owns `[band_left, client_w)` of the row and
+/// the strip `[0, band_left)` - so a hover on the caption cluster no longer
+/// re-lays out the tab run, and a skip can never hide pixels a painter would
+/// have put on screen.
+fn chromeBandReach(self: *Window, hdc: w32.HDC) struct { caption: bool, strip: bool } {
+    const hwnd = self.hwnd orelse return .{ .caption = true, .strip = true };
+    var client: w32.RECT = undefined;
+    if (w32.GetClientRect(hwnd, &client) == 0) return .{ .caption = true, .strip = true };
+    const client_w = client.right - client.left;
+
+    var box: w32.RECT = undefined;
+    const clip: ?chrome_comp.Rect = if (w32.GetClipBox(hdc, &box) != 0)
+        .{ .left = box.left, .top = box.top, .right = box.right, .bottom = box.bottom }
+    else
+        null;
+
+    const cap_h = self.captionHeight();
+    const caption = cap_h > 0 and client_w > 0 and chrome_comp.reaches(clip, .{
+        .left = caption_layout.layout(self.captionMetrics(), client_w, self.captionPill()).band_left,
+        .top = 0,
+        .right = client_w,
+        .bottom = cap_h,
+    });
+
+    const bar_h = self.tabBarHeight();
+    const strip_right = if (self.mergedChrome()) blk: {
+        const l = self.captionLayout() orelse break :blk client_w;
+        break :blk @min(l.band_left, client_w);
+    } else client_w;
+    const strip = bar_h > 0 and chrome_comp.reaches(clip, .{
+        .left = 0,
+        .top = self.tabBarTop(),
+        .right = strip_right,
+        .bottom = self.tabBarTop() + bar_h,
+    });
+    return .{ .caption = caption, .strip = strip };
 }
 
 /// Where this paint's caption band goes (T2543): the mirror's DC when the
@@ -19225,38 +19264,16 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
     const client_w = client_rect.right - client_rect.left;
     if (client_w <= 0) return;
 
-    // Double-buffer: create offscreen DC and bitmap.
-    const mem_dc = w32.CreateCompatibleDC(hdc_screen) orelse return;
-    defer _ = w32.DeleteDC(mem_dc);
-
-    // A DIB SECTION, not a compatible bitmap: T206 composites the tab
-    // silhouettes into these pixels directly. GDI has no antialiased shape,
-    // no gradient rim and no concave corner, so the tabs are drawn the way
-    // the banner card is — per pixel — and the GDI text/icon passes then draw
-    // on top of the same memory.
-    var bits: ?*anyopaque = null;
-    const bmi = w32.BITMAPINFO{
-        .bmiHeader = .{
-            .biWidth = client_w,
-            // Negative height = TOP-DOWN, so row 0 is the top of the strip
-            // and the pixel index arithmetic below is the obvious one.
-            .biHeight = -bar_h,
-            .biPlanes = 1,
-            .biBitCount = 32,
-            .biCompression = w32.BI_RGB,
-        },
-    };
-    const mem_bmp = w32.CreateDIBSection(mem_dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse return;
-    const old_bmp = w32.SelectObject(mem_dc, mem_bmp);
-    defer {
-        _ = w32.SelectObject(mem_dc, old_bmp);
-        _ = w32.DeleteObject(mem_bmp);
-    }
-    const px_count: usize = @intCast(client_w * bar_h);
-    const pixels: []u32 = if (bits) |p|
-        @as([*]u32, @ptrCast(@alignCast(p)))[0..px_count]
-    else
-        return;
+    // Double-buffer into a DIB SECTION, not a compatible bitmap: T206
+    // composites the tab silhouettes into these pixels directly. GDI has no
+    // antialiased shape, no gradient rim and no concave corner, so the tabs
+    // are drawn the way the banner card is — per pixel — and the GDI text/icon
+    // passes then draw on top of the same memory. Top-down, so row 0 is the
+    // top of the strip. Kept across paints and rebuilt only on a new size
+    // (T2987); the band fill below rewrites every pixel first.
+    const mem_dc = self.strip_buf.ensure(hdc_screen, client_w, bar_h) orelse return;
+    const pixels: []u32 = self.strip_buf.px;
+    paint_probe.painter(.strip, self.strip_buf.builds);
 
     // --- Colors ---
     //

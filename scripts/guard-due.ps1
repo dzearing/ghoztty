@@ -1353,6 +1353,20 @@ $GuardTable = @(
             'test\win32\lib\SelectionBar.ps1'
         )
     },
+    # The chrome's band painters run only when a paint's clip reaches their
+    # band, and keep their buffers across paints (T2987, PA-W03). Scored from
+    # the painters' own probe lines, so it covers the probe and the clip /
+    # buffer helpers rather than Window.zig, whose every edit would keep it due.
+    [pscustomobject]@{
+        Name   = 'chrome-paint-clip'
+        Script = 'test\win32\chrome-paint-clip.ps1'
+        Stamp  = 'test\win32\chrome-paint-clip.stamp.json'
+        Covers = @(
+            'test\win32\chrome-paint-clip.ps1',
+            'src\apprt\win32\chrome_comp.zig',
+            'src\apprt\win32\paint_probe.zig'
+        )
+    },
     # The contents card's RESIZE HANDLE and its accent gutter bar (T2265, Mac
     # 5e4f30144): hover lights it, a drag widens the card with the bar at full
     # strength, the release leaves none lit. The bar is laid over the panel's

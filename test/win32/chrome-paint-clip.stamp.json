@@ -1,0 +1,16 @@
+{
+    "guard":  "chrome-paint-clip",
+    "script":  "test/win32/chrome-paint-clip.ps1",
+    "generated":  "2026-11-15T06:34:48-08:00",
+    "commit":  "48a4ea1b4",
+    "uncommitted":  [
+                        "src/apprt/win32/chrome_comp.zig",
+                        "src/apprt/win32/paint_probe.zig",
+                        "test/win32/chrome-paint-clip.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/chrome_comp.zig":  "e3b6ae0db85f888ec8790a06ad7a80d0ff9388687872415043c865aaa7f4a9c1",
+                  "src/apprt/win32/paint_probe.zig":  "175e7a520cb57253034c5af53866945b9da6e1b2e232f6de579615130941564e",
+                  "test/win32/chrome-paint-clip.ps1":  "a15cab3fc7c466e5169a9c5fa548687c0af50d2ef9cf19f75bcf090fad777496"
+              }
+}

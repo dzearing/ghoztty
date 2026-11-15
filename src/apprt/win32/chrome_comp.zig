@@ -248,6 +248,15 @@ pub const Mirror = struct {
     px: []u32 = &.{},
     w: i32 = 0,
     h: i32 = 0,
+    /// How many times a DC + DIB pair was built (T2987): once per size, never
+    /// once per paint. The paint probe prints it, which is the oracle for a
+    /// painter that went back to allocating on every paint.
+    builds: u32 = 0,
+    /// Holds what the painters last drew (T2987). False from a fresh build
+    /// until a painter fills it, and whenever the band was painted somewhere
+    /// else - a painter may skip a paint whose clip misses its band only
+    /// while this is true, because what it skips to is these pixels.
+    valid: bool = false,
 
     /// The mirror's DC at `w` x `h`, rebuilt (and so fresh) on a new size.
     /// Null when GDI refused, and the caller paints the window instead.
@@ -255,6 +264,7 @@ pub const Mirror = struct {
         if (w <= 0 or h <= 0) return null;
         if (self.dc != null and w == self.w and h == self.h) return self.dc;
         self.deinit();
+        const builds = self.builds +| 1;
         const dc = w32.CreateCompatibleDC(ref) orelse return null;
         var bits: ?*anyopaque = null;
         const bmi = w32.BITMAPINFO{
@@ -282,19 +292,30 @@ pub const Mirror = struct {
             .px = @as([*]u32, @ptrCast(@alignCast(p)))[0..@intCast(w * h)],
             .w = w,
             .h = h,
+            .builds = builds,
         };
         return dc;
     }
 
     pub fn deinit(self: *Mirror) void {
+        const builds = self.builds;
         if (self.dc) |dc| {
             if (self.old) |o| _ = w32.SelectObject(dc, o);
             if (self.bmp) |b| _ = w32.DeleteObject(b);
             _ = w32.DeleteDC(dc);
         }
-        self.* = .{};
+        self.* = .{ .builds = builds };
     }
 };
+
+/// Does a paint clipped to `clip` reach `band` at all (T2987)? Null clip means
+/// the clip could not be read, and a paint that cannot say where it is going
+/// reaches everything — skipping on an unknown clip would leave a band unpainted.
+pub fn reaches(clip: ?Rect, band: Rect) bool {
+    if (band.right <= band.left or band.bottom <= band.top) return false;
+    const c = clip orelse return true;
+    return c.left < band.right and band.left < c.right and c.top < band.bottom and band.top < c.bottom;
+}
 
 /// The smallest rectangle holding both, either of which may be absent.
 pub fn unite(a: ?Rect, b: ?Rect) ?Rect {
@@ -2445,6 +2466,21 @@ test "T2543: a paint's clip reaches the caption band only where they overlap" {
     // A desk-only paint below the band reaches none of it.
     try std.testing.expect(bandDirty(.{ .left = 0, .top = 40, .right = 800, .bottom = 600 }, 800, 40) == null);
     try std.testing.expect(bandDirty(.{ .left = 0, .top = 0, .right = 0, .bottom = 40 }, 800, 40) == null);
+}
+
+test "T2987: a painter runs only for a clip that reaches its band" {
+    const strip: Rect = .{ .left = 0, .top = 0, .right = 600, .bottom = 40 };
+    // A pane-area invalidation below the chrome reaches neither band.
+    try std.testing.expect(!reaches(.{ .left = 0, .top = 40, .right = 800, .bottom = 600 }, strip));
+    // invalidateTabBar's right = 10000 still reaches it.
+    try std.testing.expect(reaches(.{ .left = 0, .top = 0, .right = 10000, .bottom = 40 }, strip));
+    // Merged chrome: a caption-cluster hover right of the seam misses the run.
+    try std.testing.expect(!reaches(.{ .left = 600, .top = 0, .right = 800, .bottom = 40 }, strip));
+    // One pixel of overlap is a reach.
+    try std.testing.expect(reaches(.{ .left = 599, .top = 39, .right = 700, .bottom = 90 }, strip));
+    // An unreadable clip reaches everything; an empty band nothing.
+    try std.testing.expect(reaches(null, strip));
+    try std.testing.expect(!reaches(null, .{ .left = 0, .top = 0, .right = 0, .bottom = 40 }));
 }
 
 test "T2544: the overlay keeps what the painters drew over the desk, and a desk upload erases it" {
