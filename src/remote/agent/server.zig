@@ -348,6 +348,12 @@ pub const Server = struct {
     /// limit, until the agent ran out of memory and every session died.
     queued_data_bytes: usize = 0,
 
+    /// The limit `queued_data_bytes` is held to. Always
+    /// `data_queue_high_water` in production; a field only so a test over a
+    /// real transport can engage the bound with a flood its Debug-build
+    /// emulator parses in seconds rather than minutes (T3108).
+    data_queue_limit: usize = data_queue_high_water,
+
     /// Some session bound to this connection is behind (`sent_offset` short
     /// of `out_offset`) and wants catching up from its ring. Guarded by
     /// `write_mutex`; the writer thread acts on it once it has made room.
@@ -860,7 +866,7 @@ pub const Server = struct {
         self.write_mutex.lock();
         defer self.write_mutex.unlock();
         return self.queued_data_bytes == 0 or
-            self.queued_data_bytes + len <= data_queue_high_water;
+            self.queued_data_bytes + len <= self.data_queue_limit;
     }
 
     /// Record that a bound session is behind, and wake the writer to catch
@@ -3737,6 +3743,22 @@ const Harness = struct {
         ring_bytes: usize,
         rng: std.Random,
     ) !Harness {
+        return initData(alloc, enc, clock, spawner, ring_bytes, rng, null);
+    }
+
+    /// `init`, with the DATA stream replaced by a caller-owned pair (`agent`
+    /// end for the server, `client` end for the mock client) — a real
+    /// transport whose writes can block, which the loopback never does
+    /// (T3108). The caller closes the client end; the server closes its own.
+    fn initData(
+        alloc: Allocator,
+        enc: protocol.TransferEncoding,
+        clock: *TestClock,
+        spawner: *FakeSpawner,
+        ring_bytes: usize,
+        rng: std.Random,
+        data: ?struct { agent: Stream, client: Stream },
+    ) !Harness {
         const ctrl_lb = try alloc.create(Loopback);
         ctrl_lb.* = Loopback.init(alloc);
         const data_lb = try alloc.create(Loopback);
@@ -3751,7 +3773,7 @@ const Harness = struct {
         const server = try Server.create(
             alloc,
             ctrl_lb.agentStream(),
-            data_lb.agentStream(),
+            if (data) |d| d.agent else data_lb.agentStream(),
             spawner.spawner(),
             store,
             .{
@@ -3760,7 +3782,12 @@ const Harness = struct {
                 .clock = clock.clock(),
             },
         );
-        const client = MockClient.init(alloc, ctrl_lb.clientStream(), data_lb.clientStream(), enc);
+        const client = MockClient.init(
+            alloc,
+            ctrl_lb.clientStream(),
+            if (data) |d| d.client else data_lb.clientStream(),
+            enc,
+        );
         return .{
             .alloc = alloc,
             .ctrl_lb = ctrl_lb,
@@ -6901,6 +6928,111 @@ test "a full outbound queue holds output in the ring and delivers it in order wh
     const d = (try h.client.nextData()).?;
     const dp = try protocol.DataPayload.decode(d.payload);
     try testing.expectEqual(@as(u64, total + 4), dp.byte_offset);
+    try testing.expectEqualSlices(u8, "LIVE", dp.bytes);
+}
+
+test "named pipe: a viewer that stops reading while a pane floods keeps the queue bounded and catches up with no gap" {
+    // T3108: the test above stands in for a viewer that stopped reading by
+    // setting the queue counter by hand, because the loopback never blocks
+    // its writer. The Windows agent's real transport does: a named pipe has
+    // a 64 KiB buffer, and once the viewer stops reading, the writer thread
+    // blocks inside WriteFile. This is that state for real — the queue must
+    // stop growing at its limit while the pane goes on printing, and once
+    // the viewer reads again every byte must arrive, in order, from the ring.
+    if (builtin.os.tag != .windows) return error.SkipZigTest;
+    const pipe_stream = @import("../pipe_stream.zig");
+    const alloc = testing.allocator;
+
+    var nbuf: [128]u8 = undefined;
+    const name = try std.fmt.bufPrint(&nbuf, "\\\\.\\pipe\\gztt-t3108-flood-{d}", .{std.os.windows.GetCurrentProcessId()});
+    var listener = try pipe_stream.PipeListener.bind(alloc, name);
+    defer listener.deinit();
+    // Dial first, then accept on this thread: the bound instance takes the
+    // client before ConnectNamedPipe runs, and accept() reads that as
+    // PIPE_CONNECTED - so no accepter thread is needed (or can leak).
+    const client_h = try pipe_stream.dialHandle(alloc, name);
+    var client_end = pipe_stream.PipeStream.init(client_h);
+    defer client_end.serverStream().close();
+    var agent_end = pipe_stream.PipeStream.init(try listener.accept());
+
+    var clock: TestClock = .{};
+    var fc: FakeChild = .{ .alloc = alloc };
+    defer fc.deinit();
+    var kids = [_]*FakeChild{&fc};
+    var sp: FakeSpawner = .{ .children = &kids };
+    var prng = std.Random.DefaultPrng.init(3108);
+
+    // The agent parses every byte a pane prints into its headless emulator,
+    // which a Debug build does at roughly 120 KB/s; flooding six times the
+    // production 4 MiB limit took four minutes. So this connection's limit
+    // is lowered to 256 KiB (still four times the pipe's 64 KiB buffer, so
+    // it is the queue bound that stops the flood, not the pipe), and the
+    // flood is six times that, into a ring that holds all of it - the only
+    // way a byte can go missing is the bridge losing it.
+    const limit: usize = 256 * 1024;
+    const total: usize = limit * 6;
+    var h = try Harness.initData(alloc, .raw, &clock, &sp, total + 4096, prng.random(), .{
+        .agent = agent_end.serverStream(),
+        .client = client_end.serverStream(),
+    });
+    defer h.deinit();
+    h.server.data_queue_limit = limit;
+    try h.server.start();
+    try h.client.handshake();
+    _ = try h.server.waitHandshake();
+    const o = try doOpen(&h, .{ .rows = 24, .cols = 80 });
+
+    // The viewer reads nothing on the data pipe while the pane prints.
+    const printed = try alloc.alloc(u8, total);
+    defer alloc.free(printed);
+    for (printed, 0..) |*b, i| b.* = switch (i % 80) {
+        78 => '\r',
+        79 => '\n',
+        else => @intCast('a' + (i * 7 + i / 4096) % 26),
+    };
+    var peak_queued: usize = 0;
+    var fed: usize = 0;
+    while (fed < total) {
+        const n = @min(16 * 1024, total - fed);
+        h.server.onChildOutput(o.channel, printed[fed .. fed + n]);
+        fed += n;
+        h.server.write_mutex.lock();
+        peak_queued = @max(peak_queued, h.server.queued_data_bytes);
+        h.server.write_mutex.unlock();
+    }
+
+    // Bounded: the queue never went past its limit, however much was printed.
+    try testing.expect(peak_queued <= limit);
+    // And the bound actually engaged: with nobody reading, most of the
+    // output is still only in the ring (otherwise this test proved nothing).
+    {
+        h.server.store.mutex.lock();
+        defer h.server.store.mutex.unlock();
+        const s = h.server.store.table.getByChannel(o.channel).?;
+        try testing.expectEqual(@as(u64, total), s.out_offset.value);
+        try testing.expect(s.sent_offset < total - 2 * limit);
+    }
+
+    // The viewer reads again: everything arrives, in order, with no gap and
+    // no repeat — and with no further output needed to set it moving.
+    var at: usize = 0;
+    while (at < total) {
+        const d = (try h.client.nextData()) orelse return error.EndOfStream;
+        const dp = try protocol.DataPayload.decode(d.payload);
+        try testing.expectEqual(@as(u64, at), dp.byte_offset);
+        // The writer coalesces contiguous pieces it finds queued together
+        // (T1464), so a frame is bounded by the larger of the two caps —
+        // never by the size of the gap.
+        try testing.expect(dp.bytes.len <= @max(catch_up_chunk, max_coalesced_payload));
+        try testing.expectEqualSlices(u8, printed[at .. at + dp.bytes.len], dp.bytes);
+        at += dp.bytes.len;
+    }
+
+    // Level again, so output streams live.
+    h.server.onChildOutput(o.channel, "LIVE");
+    const d = (try h.client.nextData()).?;
+    const dp = try protocol.DataPayload.decode(d.payload);
+    try testing.expectEqual(@as(u64, total), dp.byte_offset);
     try testing.expectEqualSlices(u8, "LIVE", dp.bytes);
 }
 
