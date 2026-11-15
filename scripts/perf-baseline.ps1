@@ -54,6 +54,11 @@ param(
     [int]$AttachCycles = 3,
     # all | idle | busy | cycle | agent, comma-separated or as an array
     [string[]]$Phase = @('all'),
+    # The cycle phase's panes: mixed (3 tabs holding 4+3+3, the baseline
+    # shape), tabs (10 tabs of one pane), splits (one tab of 10) or one (a
+    # single split, 2 panes). An A/B knob for a residue that may follow tabs,
+    # panes, or only the first pane ever opened (T2976).
+    [ValidateSet('mixed', 'tabs', 'splits', 'one')][string]$CycleShape = 'mixed',
     [string[]]$Compare
 )
 
@@ -493,7 +498,9 @@ try {
 
     # ------------------------------------------------------------ cycle
     if ($want -contains 'cycle') {
-        Write-Host "[$Build] cycle: 10 panes over 3 tabs, closed, twice"
+        $shape = @(switch ($CycleShape) { 'tabs' { @(0) * 10 } 'splits' { @(9) } 'one' { @(1) } default { @(3, 2, 2) } })
+        $paneTotal = $shape.Count + ($shape | Measure-Object -Sum).Sum
+        Write-Host "[$Build] cycle: $paneTotal panes over $($shape.Count) tab(s) ($CycleShape), closed, twice"
         try {
             $a = Start-App $false
             Start-Sleep -Seconds 5
@@ -502,10 +509,10 @@ try {
             $cycles = @()
             foreach ($c in 1, 2) {
                 $made = New-Object System.Collections.ArrayList
-                # Two more tabs (ctrl+shift+t on the live pane), then splits so the
-                # tabs hold 4 + 3 + 3 panes.
+                # More tabs (ctrl+shift+t on the live pane), then splits; the
+                # mixed shape's tabs hold 4 + 3 + 3 panes.
                 $tabAnchors = @($orig)
-                foreach ($t in 1, 2) {
+                for ($t = 1; $t -lt $shape.Count; $t++) {
                     $ids = @(Get-PaneLeaves | ForEach-Object { $_.id })
                     $panes = @(Get-TestChildWindows -Window $a.Top -Class 'GhozttyTerminal' | Where-Object { $_.Visible -and $_.Width -gt 0 })
                     if ($panes.Count -lt 1) { throw 'no visible terminal pane to open a tab from' }
@@ -520,8 +527,8 @@ try {
                     [void]$made.Add($new.id)
                     $tabAnchors += $new.id
                 }
-                $plan = @(3, 2, 2)
-                for ($ti = 0; $ti -lt 3; $ti++) {
+                $plan = $shape
+                for ($ti = 0; $ti -lt $plan.Count; $ti++) {
                     $target = $tabAnchors[$ti]
                     for ($j = 0; $j -lt $plan[$ti]; $j++) {
                         $nm = "pb$c$ti$j"
@@ -532,7 +539,7 @@ try {
                         $target = $nm
                     }
                 }
-                if (-not (Wait-PaneCount 10 30)) { throw "expected 10 panes, +list shows $(@(Get-PaneLeaves).Count)" }
+                if (-not (Wait-PaneCount $paneTotal 30)) { throw "expected $paneTotal panes, +list shows $(@(Get-PaneLeaves).Count)" }
                 Start-Sleep -Seconds 4
                 $open = Get-FullSample $a.Pid "open $c" -Settle
                 for ($m = $made.Count - 1; $m -ge 0; $m--) {
@@ -547,6 +554,8 @@ try {
             $first = Format-Sample $start
             $result.cycle = [ordered]@{
                 method = 'one window, persistence off, cmd panes: settled sample (lib\ProcessMemory.ps1 Get-Sample + working set) at start, with 10 panes open over 3 tabs (ctrl+shift+t x2, then +split 3/2/2), and after +close of every added pane plus the 1 s undo window; the cycle runs twice. GPU memory is the GPU Process Memory counter set summed over adapters.'
+                shape = $CycleShape
+                panes = $paneTotal
                 start = $first
                 cycle1 = $cycles[0]
                 cycle2 = $cycles[1]
