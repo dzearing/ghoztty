@@ -169,6 +169,9 @@ test {
     // its poll while hidden and catches up once on show. Imports only std.
     // Every lane.
     _ = @import("win32/hidden_poll.zig");
+    // Pure win32 viewer dead-renderer policy (T3107): reload, capped. Imports
+    // only std. Every lane.
+    _ = @import("win32/viewer_process.zig");
 
     // Pure win32 pane sidebar search field (T1877): the one-line editing
     // model, Escape's two verbs, and which surfaces filter. Imports only std.

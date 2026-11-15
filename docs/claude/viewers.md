@@ -521,6 +521,12 @@ answers "what changed in abc123". Use `a..b` when you mean a comparison.
   than a file watcher because the thing being watched is a whole REPOSITORY: a
   watcher would have to cover every tracked file, the index and HEAD, and would
   still miss a `git add` made in another checkout of the same repo.
+  The poll **skips its turn** while nobody can see the pane (window covered or
+  minimized, tab not showing, pane stashed) and catches up once when shown
+  (T2913), and a tick that lands while a listing is still running is dropped
+  rather than queued (T1654) - the same two gates Mac 6c854957d added. Mac also
+  moved patches onto their own queue; the win32 probe still has one worker
+  slot, so a click on a file waits behind a running listing (T3114).
 - The nav bar **stays pinned open** in a diff pane (it carries the change and
   layout controls, and shows the revspec). macOS only — the win32 nav bar has
   no diff controls to pin it open FOR yet (T817).
@@ -904,3 +910,14 @@ ship, in `GhosttyAssets.zig`'s none-lane tests and
   `paneID` with a capital D and `headingId` with a small one, which disagree
   with each other and stay that way, because the watcher reading them is shared.
 
+### A dead renderer
+
+A page's renderer can die (memory pressure, a page that runs itself into the
+ground) - both platforms load the pane's page again instead of leaving it blank
+(Mac `webViewWebContentProcessDidTerminate`, win32 `ProcessFailed`, T3107), at
+most 3 times a minute so a page that kills its renderer on every load is not
+respawned forever. Past that cap the win32 pane closes the controller and shows
+its error card ("This page keeps crashing"); the browser process itself exiting
+shows the same card with "The viewer's browser process stopped" (re-creating the
+controller in place is T3115). The policy is `viewer_process.zig`; the live
+test kills the renderer with DevTools `Page.crash`.

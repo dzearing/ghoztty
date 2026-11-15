@@ -286,6 +286,17 @@ pub const IID_SourceChangedHandler: GUID = .{
     .Data4 = .{ 0x8B, 0x48, 0x79, 0xF7, 0xEF, 0x1A, 0xB3, 0x7C },
 };
 
+// {79E0AEA4-990B-42D9-AA1D-0FCC2E5BC7F1}
+// `ICoreWebView2ProcessFailedEventHandler` (T3107). Its args are
+// `ICoreWebView2ProcessFailedEventArgs`. Proven by the live test the same way
+// as every handler IID here: a wrong GUID is an event that never fires.
+pub const IID_ProcessFailedHandler: GUID = .{
+    .Data1 = 0x79E0AEA4,
+    .Data2 = 0x990B,
+    .Data3 = 0x42D9,
+    .Data4 = .{ 0xAA, 0x1D, 0x0F, 0xCC, 0x2E, 0x5B, 0xC7, 0xF1 },
+};
+
 // {C79A420C-EFD9-4058-9295-3E8B4BCAB645}
 // `ICoreWebView2HistoryChangedEventHandler`. Args are a bare `IUnknown` — the
 // event carries no payload; CanGoBack/CanGoForward are read off the sender.
@@ -917,6 +928,28 @@ pub const ICoreWebView2NavigationCompletedEventArgs = extern struct {
     }
 };
 
+/// `ICoreWebView2ProcessFailedEventArgs` (T3107). Only the kind is read: it is
+/// what decides between reloading the page (a renderer died or hung) and
+/// giving up on the controller (the browser process died under it).
+pub const ICoreWebView2ProcessFailedEventArgs = extern struct {
+    vtable: *const Vtbl,
+
+    pub const Vtbl = extern struct {
+        QueryInterface: *const fn (*ICoreWebView2ProcessFailedEventArgs, *const GUID, *?*anyopaque) callconv(.winapi) HRESULT,
+        AddRef: *const fn (*ICoreWebView2ProcessFailedEventArgs) callconv(.winapi) u32,
+        Release: *const fn (*ICoreWebView2ProcessFailedEventArgs) callconv(.winapi) u32,
+        get_ProcessFailedKind: *const fn (*ICoreWebView2ProcessFailedEventArgs, *u32) callconv(.winapi) HRESULT,
+    };
+
+    /// `COREWEBVIEW2_PROCESS_FAILED_KIND` as its raw ordinal, or null when
+    /// the runtime would not say.
+    pub fn kind(self: *ICoreWebView2ProcessFailedEventArgs) ?u32 {
+        var out: u32 = 0;
+        if (com.failed(self.vtable.get_ProcessFailedKind(self, &out))) return null;
+        return out;
+    }
+};
+
 // ------------------------------------------------------- ICoreWebView2Profile
 
 /// The per-profile settings object. We reach it only for
@@ -991,9 +1024,11 @@ pub const ICoreWebView2 = extern struct {
     pub const remove_source_slots = 1;
     /// Slot 14: `remove_HistoryChanged`.
     pub const remove_history_slots = 1;
-    /// Slots 16..26: `remove_NavigationCompleted` through
-    /// `remove_ProcessFailed`.
-    pub const post_nav_slots = 11;
+    /// Slots 16..24: `remove_NavigationCompleted` through
+    /// `remove_PermissionRequested`.
+    pub const post_nav_slots = 9;
+    /// Slot 26: `remove_ProcessFailed`.
+    pub const remove_process_failed_slots = 1;
     /// Slot 28: `RemoveScriptToExecuteOnDocumentCreated`.
     pub const remove_script_slots = 1;
     /// `COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT`.
@@ -1036,6 +1071,11 @@ pub const ICoreWebView2 = extern struct {
         remove_history: [remove_history_slots]*const anyopaque,
         add_NavigationCompleted: *const fn (*ICoreWebView2, *anyopaque, *EventRegistrationToken) callconv(.winapi) HRESULT,
         post_nav: [post_nav_slots]*const anyopaque,
+        /// Slot 25 (T3107). A process the page depends on died or hung: the
+        /// renderer (the pane goes blank), or the browser process itself (the
+        /// controller is gone).
+        add_ProcessFailed: *const fn (*ICoreWebView2, *anyopaque, *EventRegistrationToken) callconv(.winapi) HRESULT,
+        remove_process_failed: [remove_process_failed_slots]*const anyopaque,
         AddScriptToExecuteOnDocumentCreated: *const fn (*ICoreWebView2, [*:0]const u16, *anyopaque) callconv(.winapi) HRESULT,
         remove_script: [remove_script_slots]*const anyopaque,
         ExecuteScript: *const fn (*ICoreWebView2, [*:0]const u16, ?*anyopaque) callconv(.winapi) HRESULT,
@@ -1238,6 +1278,11 @@ pub const ICoreWebView2 = extern struct {
     /// Subscribe to "a navigation finished". File mode injects the viewed
     /// file's content from here: the page's `window.__viewer` API does not
     /// exist until its own script has run.
+    pub fn addProcessFailed(self: *ICoreWebView2, handler: *anyopaque) bool {
+        var token: EventRegistrationToken = .{};
+        return !com.failed(self.vtable.add_ProcessFailed(self, handler, &token));
+    }
+
     pub fn addNavigationCompleted(self: *ICoreWebView2, handler: *anyopaque) bool {
         var token: EventRegistrationToken = .{};
         return !com.failed(self.vtable.add_NavigationCompleted(self, handler, &token));
@@ -1760,6 +1805,9 @@ test "the slots we actually call sit where the header puts them" {
     try testing.expectEqual(11 * ptr, @offsetOf(ICoreWebView2.Vtbl, "add_SourceChanged"));
     try testing.expectEqual(13 * ptr, @offsetOf(ICoreWebView2.Vtbl, "add_HistoryChanged"));
     try testing.expectEqual(15 * ptr, @offsetOf(ICoreWebView2.Vtbl, "add_NavigationCompleted"));
+    // T3107: `remove_PermissionRequested` (a token-taking remove) sits at 24,
+    // one slot before - the same off-by-one hazard as HistoryChanged above.
+    try testing.expectEqual(25 * ptr, @offsetOf(ICoreWebView2.Vtbl, "add_ProcessFailed"));
     try testing.expectEqual(27 * ptr, @offsetOf(ICoreWebView2.Vtbl, "AddScriptToExecuteOnDocumentCreated"));
     try testing.expectEqual(29 * ptr, @offsetOf(ICoreWebView2.Vtbl, "ExecuteScript"));
     // T397's hero thumbnail source, between them. It used to be the one-slot

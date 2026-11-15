@@ -88,6 +88,7 @@ const ViewerWorktreeProbe = @import("ViewerWorktreeProbe.zig");
 const ViewerDiffProbe = @import("ViewerDiffProbe.zig");
 const viewer_diff = @import("viewer_diff.zig");
 const hidden_poll = @import("hidden_poll.zig");
+const viewer_process = @import("viewer_process.zig");
 const viewer_image = @import("viewer_image.zig");
 const build_config = @import("../../build_config.zig");
 const ViewerTOCPanel = @import("ViewerTOCPanel.zig");
@@ -186,6 +187,12 @@ pub const WM_APP_VIEWER_LINK_MENU: u32 = w32.WM_APP + 27;
 /// every overlay the window owns, and the browser is blocked on our return.
 /// +39: every lower WM_APP slot is taken somewhere in the app.
 pub const WM_APP_VIEWER_GOT_FOCUS: u32 = w32.WM_APP + 39;
+
+/// A process the page runs in died or hung (T3107): WebView2's
+/// `ProcessFailed`, with the `viewer_process.Action` in `wparam`. Posted for
+/// the reason `WM_APP_VIEWER_GOT_FOCUS` is - giving up on the page closes the
+/// controller, which must not happen under the controller's own `Invoke`.
+pub const WM_APP_VIEWER_PROCESS_FAILED: u32 = w32.WM_APP + 46;
 
 /// How long the "Filed …" confirmation stays up before the composer closes
 /// itself, matching Mac's 1.8s: long enough to read, short enough that the
@@ -434,6 +441,17 @@ link_menu_kind: banner_link.Kind = .web,
 
 /// Our reference on the `DocumentTitleChanged` handler (T383), same rule.
 title_handler: ?*DocumentTitleChangedHandler = null,
+
+/// Our reference on the `ProcessFailed` handler (T3107), same rule.
+process_failed_handler: ?*ProcessFailedHandler = null,
+
+/// The dead-renderer reloads spent in the last minute (T3107), so a page that
+/// kills its renderer on every load is not respawned forever.
+process_restarts: viewer_process.Budget = .{},
+
+/// How many times a dead renderer was reloaded, for the live test and the
+/// `+list` diagnostics (T3107).
+process_reloads: u32 = 0,
 
 /// Our reference on the `AcceleratorKeyPressed` handler (T394), same rule.
 accel_handler: ?*AcceleratorKeyPressedHandler = null,
@@ -946,6 +964,10 @@ pub fn deinit(self: *ViewerPane, alloc: Allocator) void {
     if (self.title_handler) |h| {
         h.release();
         self.title_handler = null;
+    }
+    if (self.process_failed_handler) |h| {
+        h.release();
+        self.process_failed_handler = null;
     }
     if (self.accel_handler) |h| {
         h.release();
@@ -5829,6 +5851,7 @@ fn adoptController(self: *ViewerPane, c: *iface.ICoreWebView2Controller) void {
     self.subscribeAcceleratorKey();
     self.subscribeGotFocus();
     self.subscribeDocumentTitle();
+    self.subscribeProcessFailed();
     // Before the navigation below, and that ordering is the contract: a script
     // registered after a page has started loading does not reach that page, so
     // the very first document a pane shows would be the one without a toolbar.
@@ -6438,6 +6461,84 @@ fn onAcceleratorKeyPressed(
     const lparam: isize = @as(u16, @bitCast(mods));
     _ = w32.PostMessageW(hwnd, WM_APP_VIEWER_ACCEL, wparam, lparam);
     return com.S_OK;
+}
+
+/// `ICoreWebView2ProcessFailedEventHandler` (T3107): a process the page
+/// depends on died or hung. Mac's `webViewWebContentProcessDidTerminate`.
+const ProcessFailedHandler = com.CallbackOwning(
+    iface.IID_ProcessFailedHandler,
+    onProcessFailed,
+    releasePendingToken,
+);
+
+/// Subscribe to `ProcessFailed`. Non-fatal like every subscription: a pane
+/// that fails here still shows its page and only loses the recovery (the
+/// pre-T3107 blank pane).
+fn subscribeProcessFailed(self: *ViewerPane) void {
+    std.debug.assert(self.process_failed_handler == null);
+    const c = self.controller orelse return;
+    const p = self.pending orelse return;
+    const web = c.coreWebView() orelse return;
+    defer web.release();
+
+    const handler = ProcessFailedHandler.create(p.alloc, p) catch return;
+    p.refs += 1;
+    if (!web.addProcessFailed(@ptrCast(handler))) {
+        log.warn("add_ProcessFailed failed; a crashed page will stay blank", .{});
+        handler.release(); // takes the borrowed token reference with it
+        return;
+    }
+    self.process_failed_handler = handler;
+}
+
+fn onProcessFailed(
+    p: *Pending,
+    sender: ?*iface.ICoreWebView2,
+    args: ?*iface.ICoreWebView2ProcessFailedEventArgs,
+) com.HRESULT {
+    _ = sender;
+    const self = p.pane orelse return com.S_OK;
+    const raw: ?u32 = if (args) |a| a.kind() else null;
+    const action = self.process_restarts.decide(viewer_process.kindFrom(raw), std.time.milliTimestamp());
+    log.warn("viewer pane {s}: process failed (kind={?d}) -> {s}", .{ self.paneId(), raw, @tagName(action) });
+    if (action == .ignore) return com.S_OK;
+    // Every later render must go through a full load, not into a dead page.
+    self.page_loaded = false;
+    const hwnd = self.hwnd orelse return com.S_OK;
+    _ = w32.PostMessageW(hwnd, WM_APP_VIEWER_PROCESS_FAILED, @intFromEnum(action), 0);
+    return com.S_OK;
+}
+
+/// Act on a `ProcessFailed` from the message loop (T3107).
+fn handleProcessFailed(self: *ViewerPane, action: viewer_process.Action) void {
+    switch (action) {
+        .ignore => {},
+        .reload => {
+            const c = self.controller orelse return;
+            const web = c.coreWebView() orelse return;
+            defer web.release();
+            // `Reload` rather than `applyNavigation`: it reloads the document
+            // the pane is actually on (a website the user navigated to, not
+            // the one it opened with), and a template's `NavigationCompleted`
+            // re-renders the file into it exactly as the reload button does.
+            self.process_reloads +|= 1;
+            if (!web.reload()) log.warn("Reload after a dead renderer failed for this pane", .{});
+        },
+        // A page past its restart cap, or a controller whose browser is gone:
+        // close the controller (its view is dead or a crash loop) so the
+        // pane's error card shows instead of a blank.
+        .capped => self.dropController(.page_keeps_crashing),
+        .browser_gone => self.dropController(.browser_process_exited),
+    }
+}
+
+fn dropController(self: *ViewerPane, reason: webview2.Failure) void {
+    if (self.controller) |c| {
+        c.close();
+        c.release();
+        self.controller = null;
+    }
+    self.fail(reason);
 }
 
 /// `ICoreWebView2DocumentTitleChangedEventHandler`: a website naming itself.
@@ -7471,6 +7572,13 @@ pub fn wndProc(
                 _ = probe.complete();
                 self.pushWorktree();
             }
+            return 0;
+        },
+
+        // A process the page runs in died (T3107).
+        WM_APP_VIEWER_PROCESS_FAILED => {
+            const action = std.meta.intToEnum(viewer_process.Action, wparam) catch return 0;
+            self.handleProcessFailed(action);
             return 0;
         },
 
@@ -13083,4 +13191,130 @@ test "T927: a harness press is a real click, and an ExecuteScript click is not" 
     try waitFor(&msg, 30, aLinkWasRouted, &pane);
     try testing.expectEqual(@as(usize, 1), links.entries.items.len);
     try testing.expectEqualStrings("browser:https://t927.invalid/away", links.entries.items[0]);
+}
+
+/// Kill the pane's renderer the way memory pressure would (T3107): DevTools'
+/// `Page.crash`. No completion handler - the process that would answer it is
+/// the one being killed.
+fn testCrashRenderer(pane: *ViewerPane) !void {
+    const c = pane.controller orelse return error.NoController;
+    const web = c.coreWebView() orelse return error.NoWebView;
+    defer web.release();
+    if (!web.callDevToolsProtocolMethod(
+        std.unicode.utf8ToUtf16LeStringLiteral("Page.crash"),
+        std.unicode.utf8ToUtf16LeStringLiteral("{}"),
+        null,
+    )) return error.CrashRefused;
+}
+
+test "T3107: a pane whose renderer dies loads its page again, and gives up with a card past the cap" {
+    // Live: the claim is about what WebView2 reports when its renderer dies,
+    // which nothing short of the runtime can answer.
+    const alloc = testing.allocator;
+
+    var test_profile = try webview2.TestProfile.begin(alloc);
+    defer test_profile.end();
+    _ = w32.CoInitializeEx(null, w32.COINIT_APARTMENTTHREADED);
+
+    const hinstance = w32.GetModuleHandleW(null);
+    _ = registerClass(hinstance);
+    defer _ = w32.UnregisterClassW(CLASS_NAME, hinstance);
+
+    const parent_class = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyCrashTestParent");
+    const pc = w32.WNDCLASSEXW{
+        .cbSize = @sizeOf(w32.WNDCLASSEXW),
+        .style = 0,
+        .lpfnWndProc = &w32.DefWindowProcW,
+        .cbClsExtra = 0,
+        .cbWndExtra = 0,
+        .hInstance = hinstance,
+        .hIcon = null,
+        .hCursor = null,
+        .hbrBackground = null,
+        .lpszMenuName = null,
+        .lpszClassName = parent_class,
+        .hIconSm = null,
+    };
+    _ = w32.RegisterClassExW(&pc);
+    defer _ = w32.UnregisterClassW(parent_class, hinstance);
+    const parent = w32.CreateWindowExW(
+        0,
+        parent_class,
+        std.unicode.utf8ToUtf16LeStringLiteral("crash test"),
+        w32.WS_OVERLAPPEDWINDOW,
+        0,
+        0,
+        800,
+        600,
+        null,
+        null,
+        hinstance,
+        null,
+    ) orelse return error.Win32Error;
+    defer _ = w32.DestroyWindow(parent);
+
+    var host = webview2.Host.init(alloc);
+    defer host.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+    try tmp.dir.writeFile(.{ .sub_path = "doc.md", .data = "# One\n\ntext\n\n## Two\n" });
+    const doc_path = try std.fs.path.join(alloc, &.{ dir_path, "doc.md" });
+    defer alloc.free(doc_path);
+
+    var pane: ViewerPane = .{};
+    defer pane.deinit(alloc);
+    {
+        var id_bytes: [16]u8 = undefined;
+        std.crypto.random.bytes(&id_bytes);
+        _ = pane_id_mod.format(&pane.pane_id, id_bytes);
+    }
+    try pane.createHostWindow(hinstance, parent, .{ .left = 0, .top = 0, .right = 640, .bottom = 480 });
+    try pane.navigate(alloc, doc_path);
+    pane.start(alloc, &host);
+
+    var msg: w32.MSG = undefined;
+    const settled = webview2.pumpUntil(&pane, struct {
+        fn f(ctx: *const anyopaque) bool {
+            const p: *const ViewerPane = @ptrCast(@alignCast(ctx));
+            return p.state != .waiting_env and p.state != .creating;
+        }
+    }.f);
+    if (!settled) return error.WebView2ControllerTimeout;
+    if (pane.state == .failed) {
+        log.warn("SKIPPED live renderer-crash test, no usable runtime: {s}", .{@tagName(pane.failure.?)});
+        return;
+    }
+    const Ready = struct {
+        fn rendered(p: *ViewerPane) bool {
+            return p.page_loaded and p.mode == .markdown and p.headings.len == 2;
+        }
+    };
+    try waitFor(&msg, 30, Ready.rendered, &pane);
+
+    // THE CLAIM, three times over: the renderer dies, the pane notices, and the
+    // document is on screen again - its headings re-rendered into a new page.
+    inline for (1..viewer_process.restart_limit + 1) |n| {
+        try testCrashRenderer(&pane);
+        try waitFor(&msg, 30, struct {
+            fn reloaded(p: *ViewerPane) bool {
+                return p.process_reloads >= n and Ready.rendered(p);
+            }
+        }.reloaded, &pane);
+        try testing.expectEqual(State.ready, pane.state);
+    }
+
+    // Past the cap inside the minute: no fourth respawn. The controller is
+    // closed and the pane says why rather than staying blank.
+    try testCrashRenderer(&pane);
+    try waitFor(&msg, 30, struct {
+        fn gaveUp(p: *ViewerPane) bool {
+            return p.state == .failed;
+        }
+    }.gaveUp, &pane);
+    try testing.expectEqual(webview2.Failure.page_keeps_crashing, pane.failure.?);
+    try testing.expect(pane.controller == null);
+    try testing.expectEqual(@as(u32, viewer_process.restart_limit), pane.process_reloads);
 }

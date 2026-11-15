@@ -92,6 +92,12 @@ pub const Failure = enum {
     /// We could not work out where the user-data folder goes
     /// (`%LOCALAPPDATA%` unset) or ran out of memory building a path.
     environment_unavailable,
+    /// The pane's page crashed (or hung) again and again: it was reloaded
+    /// `viewer_process.restart_limit` times inside a minute (T3107).
+    page_keeps_crashing,
+    /// The WebView2 browser process exited under a live pane, taking the
+    /// controller with it (T3107).
+    browser_process_exited,
 
     /// A short line for the error card. Deliberately plain: the user is being
     /// told why a pane is blank, not read a stack trace.
@@ -102,6 +108,8 @@ pub const Failure = enum {
             .entry_point_missing => "This WebView2 Runtime is not compatible with Ghoztty viewers",
             .create_call_failed, .create_callback_failed => "The WebView2 Runtime failed to start",
             .environment_unavailable => "Ghoztty could not prepare the WebView2 data folder",
+            .page_keeps_crashing => "This page keeps crashing",
+            .browser_process_exited => "The viewer's browser process stopped",
         };
     }
 
@@ -112,6 +120,11 @@ pub const Failure = enum {
             .client_dll_unloadable, .entry_point_missing => "Updating the WebView2 Runtime usually fixes this.",
             .create_call_failed, .create_callback_failed => "Reopen this pane to try again.",
             .environment_unavailable => "Check that %LOCALAPPDATA% is set and writable.",
+            .page_keeps_crashing => std.fmt.comptimePrint(
+                "It was reloaded {d} times in a minute. Reopen this pane to try again.",
+                .{@import("viewer_process.zig").restart_limit},
+            ),
+            .browser_process_exited => "Reopen this pane to try again.",
         };
     }
 
@@ -138,6 +151,8 @@ pub const Failure = enum {
             .create_call_failed,
             .create_callback_failed,
             .environment_unavailable,
+            .page_keeps_crashing,
+            .browser_process_exited,
             => true,
         };
     }
