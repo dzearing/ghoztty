@@ -31,7 +31,20 @@ const log = std.log.scoped(.page_list);
 /// too small will cause the pool to have to allocate more memory later.
 /// This should be set to some reasonable minimum that we expect a terminal
 /// window to scroll into quickly.
-const page_preheat = 4;
+///
+/// Windows preheats 1 (T3003): its page pool commits every page it holds
+/// (see `exact_page_pool`), so each preheated page beyond the one holding
+/// the viewport is ~0.4 MB of commit per screen - paid twice per pane,
+/// since the alternate screen has its own list - and a page created on
+/// demand there costs one VirtualAlloc, not an arena chunk.
+const page_preheat = if (exact_page_pool) 1 else 4;
+
+/// Whether standard pages come from `ExactPool` (one child allocation per
+/// page) instead of the arena-backed `std.heap.MemoryPool`. The arena grows
+/// each chunk by 1.5x and the Windows page allocator commits a chunk whole,
+/// which left megabytes of never-touched commit per pane (T3003). Platforms
+/// whose page allocator maps lazily keep the upstream pool.
+const exact_page_pool = builtin.os.tag == .windows;
 
 /// The list of pages in the screen. These are expected to be in order
 /// where the first page is the topmost page (scrollback) and the last is
@@ -62,7 +75,10 @@ const std_size = Page.layout(std_capacity).total_size;
 /// The memory pool we use for page memory buffers. We use a separate pool
 /// so we can allocate these with a page allocator. We have to use a page
 /// allocator because we need memory that is zero-initialized and page-aligned.
-const PagePool = std.heap.MemoryPoolAligned(
+const PagePool = if (exact_page_pool) @import("page_pool.zig").ExactPool(
+    std_size,
+    .fromByteUnits(std.heap.page_size_min),
+) else std.heap.MemoryPoolAligned(
     [std_size]u8,
     .fromByteUnits(std.heap.page_size_min),
 );
@@ -89,7 +105,10 @@ pub const MemoryPool = struct {
     ) Allocator.Error!MemoryPool {
         var node_pool = try NodePool.initPreheated(gen_alloc, preheat);
         errdefer node_pool.deinit();
-        var page_pool = try PagePool.initPreheated(page_alloc, preheat);
+        var page_pool = try if (exact_page_pool)
+            PagePool.initPreheated(page_alloc, gen_alloc, preheat)
+        else
+            PagePool.initPreheated(page_alloc, preheat);
         errdefer page_pool.deinit();
         var pin_pool = try PinPool.initPreheated(gen_alloc, 8);
         errdefer pin_pool.deinit();
@@ -111,6 +130,15 @@ pub const MemoryPool = struct {
         _ = self.pages.reset(mode);
         _ = self.nodes.reset(mode);
         _ = self.pins.reset(mode);
+    }
+
+    /// The allocator standard pages come from, and that non-standard
+    /// (oversized) pages are allocated from and freed back to directly.
+    pub inline fn pageAlloc(self: *const MemoryPool) Allocator {
+        return if (exact_page_pool)
+            self.pages.child_allocator
+        else
+            self.pages.arena.child_allocator;
     }
 };
 
@@ -438,7 +466,7 @@ fn initPages(
     const cap = initialCapacity(cols);
     const layout = Page.layout(cap);
     const pooled = layout.total_size <= std_size;
-    const page_alloc = pool.pages.arena.child_allocator;
+    const page_alloc = pool.pageAlloc();
 
     // Guaranteed by comptime checks in initialCapacity but
     // redundant here for safety.
@@ -663,7 +691,7 @@ pub fn deinit(self: *PageList) void {
 
     // Go through our linked list and deallocate all pages that are
     // not standard size.
-    const page_alloc = self.pool.pages.arena.child_allocator;
+    const page_alloc = self.pool.pageAlloc();
     var it = self.pages.first;
     while (it) |node| : (it = node.next) {
         if (node.data.memory.len > std_size) {
@@ -704,7 +732,7 @@ pub fn reset(self: *PageList) void {
     // are non-standard size since those were allocated outside
     // the pool.
     {
-        const page_alloc = self.pool.pages.arena.child_allocator;
+        const page_alloc = self.pool.pageAlloc();
         var it = self.pages.first;
         while (it) |node| : (it = node.next) {
             if (node.data.memory.len > std_size) {
@@ -727,7 +755,8 @@ pub fn reset(self: *PageList) void {
     // Our page pool relies on mmap to zero our page memory. Since we're
     // retaining a certain amount of memory, it won't use mmap and won't
     // be zeroed. This block zeroes out all the memory in the pool arena.
-    {
+    // (ExactPool has no arena; its reset zeroes what it retains itself.)
+    if (comptime !exact_page_pool) {
         // Note: we only have to do this for the page pool because the
         // nodes are always fully overwritten on each allocation.
         const page_arena = &self.pool.pages.arena;
@@ -845,7 +874,7 @@ pub fn clone(
     // Our list of pages
     var page_list: List = .{};
     errdefer {
-        const page_alloc = pool.pages.arena.child_allocator;
+        const page_alloc = pool.pageAlloc();
         var page_it = page_list.first;
         while (page_it) |node| : (page_it = node.next) {
             if (node.data.memory.len > std_size) {
@@ -3404,7 +3433,7 @@ inline fn createPageExt(
 
     const layout = Page.layout(cap);
     const pooled = layout.total_size <= std_size;
-    const page_alloc = pool.pages.arena.child_allocator;
+    const page_alloc = pool.pageAlloc();
 
     // It would be better to encode this into the Zig error handling
     // system but that is a big undertaking and we only have a few
@@ -3475,7 +3504,7 @@ fn destroyNodeExt(
         @memset(page.memory, 0);
         pool.pages.destroy(@ptrCast(page.memory.ptr));
     } else {
-        const page_alloc = pool.pages.arena.child_allocator;
+        const page_alloc = pool.pageAlloc();
         page_alloc.free(page.memory);
     }
 
@@ -13848,8 +13877,13 @@ test "PageList grow reuses non-standard page without leak" {
     try testing.expect(s.pages.first.? != first_page_ptr);
 
     // If the non-standard page was properly destroyed and not reused,
-    // the last page should not have the same memory pointer
-    try testing.expect(s.pages.last.?.data.memory.ptr != first_page_mem_ptr);
+    // the last page should not have the same memory pointer. With
+    // ExactPool (T3003) every standard page is its own allocation, so the
+    // allocator may legitimately hand the freed non-standard address back
+    // for the new standard page; there the proof is its standard size.
+    try testing.expectEqual(std_size, s.pages.last.?.data.memory.len);
+    if (comptime !exact_page_pool)
+        try testing.expect(s.pages.last.?.data.memory.ptr != first_page_mem_ptr);
 
     // The tracked pin should have been moved to the new first page and marked as garbage
     try testing.expectEqual(s.pages.first.?, tracked_pin.node);
@@ -14716,4 +14750,60 @@ test "PageList split preserves hyperlinks" {
         const link = second_page.hyperlink_set.get(second_page.memory, link_id);
         try testing.expectEqualStrings("https://example.com", link.uri.slice(second_page.memory));
     }
+}
+
+test {
+    _ = @import("page_pool.zig");
+}
+
+test "PageList windows: a fresh list commits only the viewport page (T3003)" {
+    if (comptime !exact_page_pool) return error.SkipZigTest;
+    const testing = std.testing;
+
+    var s = try init(testing.allocator, 80, 24, null);
+    defer s.deinit();
+
+    // One standard page holds an 80x24 viewport, and preheat is 1, so the
+    // pool holds exactly that page. The arena pool committed ~2.1 MB here.
+    try testing.expect(s.pages.first == s.pages.last);
+    try testing.expectEqual(PagePool.item_size, s.pool.pages.committedBytes());
+}
+
+test "PageList windows: a list grown to its scrollback limit commits only its pages (T3003)" {
+    if (comptime !exact_page_pool) return error.SkipZigTest;
+    const testing = std.testing;
+
+    // A limit of a few standard pages, so the test grows into pruning.
+    const limit = 6 * PagePool.item_size;
+    var s = try init(testing.allocator, 80, 24, limit);
+    defer s.deinit();
+
+    // Grow well past the limit; the oldest pages are reused from then on.
+    const rows_per_page = s.pages.first.?.data.capacity.rows;
+    for (0..rows_per_page * 12) |_| _ = try s.grow();
+
+    var pages: usize = 0;
+    var it = s.pages.first;
+    while (it) |node| : (it = node.next) pages += 1;
+
+    // Every committed page is a live page (nothing preheated or grown
+    // ahead sits idle), and the total is within one page of the limit.
+    const committed = s.pool.pages.committedBytes();
+    try testing.expectEqual(pages * PagePool.item_size, committed);
+    try testing.expect(committed <= s.maxSize() + PagePool.item_size);
+}
+
+test "PageList windows: reset keeps the viewport page and zeroes it (T3003)" {
+    if (comptime !exact_page_pool) return error.SkipZigTest;
+    const testing = std.testing;
+
+    var s = try init(testing.allocator, 80, 24, null);
+    defer s.deinit();
+    const rows_per_page = s.pages.first.?.data.capacity.rows;
+    for (0..rows_per_page * 3) |_| _ = try s.grow();
+    try testing.expect(s.pool.pages.committedBytes() >= 3 * PagePool.item_size);
+
+    s.reset();
+    try testing.expectEqual(PagePool.item_size, s.pool.pages.committedBytes());
+    try testing.expect(s.pages.first == s.pages.last);
 }
