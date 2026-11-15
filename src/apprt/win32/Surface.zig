@@ -2824,6 +2824,7 @@ pub fn heroSnapPublish(self: *Surface) bool {
     if (self.snap_seq == self.snap_dib_seq) return false;
     const w: i32 = @intCast(self.snap_req_w);
     const h: i32 = @intCast(self.snap_req_h);
+    if (w <= 0 or h <= 0) return false;
     if (self.snap_buffer.len != @as(usize, @intCast(w)) * @as(usize, @intCast(h)) * 4) return false;
     if (self.snap_dib == null or self.snap_dib_w != w or self.snap_dib_h != h) {
         if (self.snap_dib) |dib| _ = w32.DeleteObject(dib);
@@ -2845,7 +2846,47 @@ pub fn heroSnapPublish(self: *Surface) bool {
     }
     @memcpy(self.snap_dib_bits.?[0..self.snap_buffer.len], self.snap_buffer);
     self.snap_dib_seq = self.snap_seq;
+    // The pixels live in the DIB now (T3001): the buffer is only the
+    // renderer's landing zone, and a pane-sized one is 4 bytes a pixel kept
+    // for nothing. A request already pending keeps it - the renderer is
+    // about to write into it.
+    if (!self.snap_requested.load(.acquire)) self.freeSnapBufferLocked();
     return true;
+}
+
+/// GUI thread: give back this pane's snapshot pixels - the renderer's
+/// landing buffer and the published DIB - and cancel any capture still
+/// pending (T3001). After a glide lands, a drag ghost goes, or hero mode
+/// ends, nothing reads them, and at pane size they are two full copies of
+/// the pane (10 MB at 1400x900, 66 MB at 4K) held until the pane closed.
+/// The next request allocates afresh.
+pub fn releaseSnapshot(self: *Surface) void {
+    self.snap_mutex.lock();
+    defer self.snap_mutex.unlock();
+    const dib_bytes: usize = if (self.snap_dib != null)
+        @as(usize, @intCast(self.snap_dib_w)) * @as(usize, @intCast(self.snap_dib_h)) * 4
+    else
+        0;
+    // The acceptance oracle (stack-fold-slide.ps1): what a landing gave back.
+    if (dib_bytes + self.snap_buffer.len > 0) log.debug("pane snapshot released hwnd={?} buffer={d} dib={d}", .{ self.hwnd, self.snap_buffer.len, dib_bytes });
+    self.snap_requested.store(false, .release);
+    self.snap_req_w = 0;
+    self.snap_req_h = 0;
+    self.snap_req_exact = false;
+    self.freeSnapBufferLocked();
+    // A WM_APP_HERO_SNAP still in the queue finds nothing new to publish.
+    self.snap_dib_seq = self.snap_seq;
+    if (self.snap_dib) |dib| _ = w32.DeleteObject(dib);
+    self.snap_dib = null;
+    self.snap_dib_bits = null;
+    self.snap_dib_w = 0;
+    self.snap_dib_h = 0;
+}
+
+fn freeSnapBufferLocked(self: *Surface) void {
+    if (self.snap_buffer.len == 0) return;
+    self.app.core_app.alloc.free(self.snap_buffer);
+    self.snap_buffer = &.{};
 }
 
 /// The LOCAL pid of this pane's shell, or 0 when there is none to name.

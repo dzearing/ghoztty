@@ -529,6 +529,16 @@ pub fn glideFrame(self: *const PaneView) ?struct { pixels: []const u32, w: i32, 
     }
 }
 
+/// Give back the pane's snapshot pixels (T3001): called when the glide, drag
+/// ghost or hero carousel that asked for them is over. The next request
+/// captures afresh.
+pub fn releaseSnapshot(self: *PaneView) void {
+    switch (self.kind) {
+        .terminal => |s| s.releaseSnapshot(),
+        .viewer => |v| v.releaseSnapshot(),
+    }
+}
+
 /// GUI thread, on `WM_APP_HERO_SNAP`: fold whatever the pane captured into its
 /// DIB cache. True when the cache actually changed, i.e. the tile needs a
 /// repaint.

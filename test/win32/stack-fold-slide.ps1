@@ -914,6 +914,21 @@ try {
         [void](Send-TestMouse -Window $top -Target $top -X $x0 -Y $y -Action up -HoldMs 0)
         Start-Sleep -Milliseconds 400
 
+        # F20 (T3001): a carried frame is a full-size copy of its pane, twice
+        # over (the renderer's landing buffer and the DIB); once the glide that
+        # carried it has landed, the pane gives both back rather than holding
+        # them until it closes.
+        $allLines = @(Get-Content -Path $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $logFold)
+        $carriedFrames = @($allLines | Where-Object { $_ -match 'stack (fold|unfold) carries its frame' }).Count
+        $releaseLines = @($allLines | Where-Object { $_ -match 'pane snapshot released hwnd=\S+ buffer=\d+ dib=(\d+)' -and [int64]$Matches[1] -gt 0 })
+        $released = $releaseLines.Count
+        $freedKb = 0
+        foreach ($l in $releaseLines) { if ($l -match 'buffer=(\d+) dib=(\d+)') { $freedKb += ([int64]$Matches[1] + [int64]$Matches[2]) / 1KB } }
+        Say ("      carried frames: {0}; snapshots given back after landing: {1} ({2:n0} KB)" -f $carriedFrames, $released, $freedKb)
+        if ($carriedFrames -gt 0 -and -not $NegativeControl) {
+            Assert ($released -ge 1) "F20: the frame the glide carried is given back once it lands ($released releases for $carriedFrames carried frames)"
+        }
+
     }
     Complete-TestBody
 } catch {

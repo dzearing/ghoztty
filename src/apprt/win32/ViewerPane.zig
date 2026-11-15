@@ -5516,6 +5516,20 @@ fn releaseSnapStream(self: *ViewerPane) void {
     self.snap_stream = null;
 }
 
+/// Give back the decoded picture once nothing reads it (T3001): a fold's
+/// pane-sized frame, a drag ghost's, or the hero tile after hero mode ends.
+/// A capture still in flight is left to land; it is one picture, and its
+/// own answer replaces nothing but this.
+pub fn releaseSnapshot(self: *ViewerPane) void {
+    if (self.snap_in_flight_since_ms != null) return;
+    if (self.snap_dib) |dib| _ = w32.DeleteObject(dib);
+    self.snap_dib = null;
+    self.snap_dib_bits = null;
+    self.snap_dib_w = 0;
+    self.snap_dib_h = 0;
+    self.snap_dirty = false;
+}
+
 /// Drop this pane's thumbnail state. Called from `deinit`, and the reason the
 /// stream is owned by the pane rather than by the in-flight handler.
 fn deinitHeroSnap(self: *ViewerPane) void {

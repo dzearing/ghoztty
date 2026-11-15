@@ -693,6 +693,7 @@ if ($visCS.Count -eq 1) {
 # --- Toggle hero mode off: exact tree geometry restored -----------------------
 $curHero = Get-HeroHwnd $top
 if ($curHero -eq [IntPtr]::Zero) { $curHero = $leaf0Hwnd }
+$relBase = @(Get-Content -Path $errlog -ErrorAction SilentlyContinue).Count
 $r = Send-HeroChord $top $curHero @('ctrl', 'shift') 'Space'
 Assert $r 'hero un-toggle chord delivered'
 Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash after hero un-toggle'
@@ -704,6 +705,14 @@ if ($NegativeControl) {
     Assert (-not $restored) 'tree geometry restored exactly after toggle-off'
 } else {
     Assert $restored 'tree geometry restored exactly after toggle-off'
+}
+# T3001: the carousel's thumbnails are given back when hero mode ends, rather
+# than held by every pane until it closes.
+if ($haveLog) {
+    Start-Sleep -Milliseconds 300
+    $relLines = @(Get-Content -Path $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $relBase |
+            Where-Object { $_ -match 'pane snapshot released hwnd=\S+ buffer=\d+ dib=(\d+)' -and [int64]$Matches[1] -gt 0 })
+    Assert ($relLines.Count -ge 1) "hero off: the carousel thumbnails are given back ($($relLines.Count) panes released theirs)"
 }
 
 # --- Palette path: ctrl+shift+p, type "hero", Enter toggles hero mode --------

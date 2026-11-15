@@ -6281,6 +6281,10 @@ fn endRearrangeDrag(self: *Window, commit: bool) void {
     self.rearrange_drag = null;
     self.hideDropPreview();
     if (self.drag_ghost) |g| g.hide();
+    // The ghost card copied the picture it showed; the pane gives it back
+    // (T3001) unless a glide or the hero carousel is still reading it.
+    if (d.view.glide_snap == .none and !(d.source_tab < self.tab_count and self.tab_hero_active[d.source_tab]))
+        d.view.releaseSnapshot();
     if (d.active) self.setSidebarsDragActive(false);
     if (self.hwnd) |h| {
         _ = w32.KillTimer(h, TAB_DWELL_TIMER_ID);
@@ -8022,7 +8026,7 @@ fn heroEndDividerDrag(self: *Window) void {
 /// quiet tick is the trailing refresh.
 fn heroSnapTick(self: *Window) void {
     if (self.tab_count == 0 or !self.tab_hero_active[self.active_tab]) {
-        if (self.hwnd) |h| _ = w32.KillTimer(h, HERO_SNAP_TIMER_ID);
+        if (self.hwnd) |h| if (w32.KillTimer(h, HERO_SNAP_TIMER_ID) != 0) self.releaseIdleSnapshots(self.active_tab);
         return;
     }
     // Minimized: panes are occluded and produce no frames — don't wake
@@ -8789,8 +8793,10 @@ pub fn layoutSplits(self: *Window) void {
     self.applied_pane_minimum = self.paneMinimum();
     const rect = self.gridRect();
     // Not in hero mode: stop the thumbnail heartbeat (harmless if it was
-    // never started) and repaint the area the carousel used to own.
-    if (self.hwnd) |h| _ = w32.KillTimer(h, HERO_SNAP_TIMER_ID);
+    // never started) and repaint the area the carousel used to own. A
+    // heartbeat that WAS running means hero mode just ended here, and the
+    // thumbnails it kept are given back (T3001).
+    if (self.hwnd) |h| if (w32.KillTimer(h, HERO_SNAP_TIMER_ID) != 0) self.releaseIdleSnapshots(self.active_tab);
     if (tree.zoomed) |zoomed_handle| {
         var hdwp = beginPaneBatch(self.leafCount(self.active_tab));
         var it = tree.iterator();
@@ -12763,6 +12769,23 @@ fn markGlideDesk(self: *Window) void {
     self.glide_desk_mark = .{ .misses = self.pane_desk.memo_misses, .card_misses = self.pane_desk.memo_card_misses, .permille = self.pane_desk.composed_permille, .full_moves = self.desk_full_moves };
 }
 
+/// Give back the snapshot pixels of every pane in `tab` that nothing reads
+/// any more (T3001): not while the tab is in hero mode (its carousel paints
+/// them), not a pane whose glide still carries its frame, not the pane a
+/// drag is carrying (its ghost may be waiting on one). At pane size the
+/// landing buffer and the DIB are two full copies of the pane, kept until the
+/// pane closed before this.
+fn releaseIdleSnapshots(self: *Window, tab: usize) void {
+    if (tab >= self.tab_count or self.tab_hero_active[tab]) return;
+    var it = self.tab_trees[tab].iterator();
+    while (it.next()) |entry| {
+        const v = entry.view;
+        if (v.glide_snap != .none) continue;
+        if (self.rearrange_drag) |d| if (d.view == v) continue;
+        v.releaseSnapshot();
+    }
+}
+
 fn endStackSlide(self: *Window) void {
     self.restStackSlide();
     // The pass that lands it reports what the glide moved (T2571).
@@ -12782,6 +12805,8 @@ fn endStackSlide(self: *Window) void {
             v.glide_unfold = false;
             v.glide_snap_want = null;
         }
+        // The frames the glide carried are drawn for the last time (T3001).
+        self.releaseIdleSnapshots(tab);
     }
     // A sidebar card following this glide lands with it (T2406).
     if (self.stack_slide_column) {
