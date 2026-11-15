@@ -115,6 +115,11 @@ const Backing = struct {
     section: ?w32.HANDLE = null,
     view: ?[*]u32 = null,
     bytes: usize = 0,
+    /// Set outside a window-edge drag (T3002): the section is then given
+    /// back as soon as it is twice the bitmap, so a maximize and a restore
+    /// do not leave the maximized size mapped until the window closes. Under
+    /// a drag the quarter rule holds, as before.
+    tight: bool = false,
 
     /// Room for `bytes`, keeping what is there when it fits. Grown with
     /// headroom, so a drag that widens the window does not need a new
@@ -122,7 +127,7 @@ const Backing = struct {
     /// quarter of it, so one maximize does not pin its memory for good. A
     /// bitmap over the old section must be gone first.
     fn ensure(self: *Backing, bytes: usize) bool {
-        if (self.section != null and keeps(self.bytes, bytes)) return true;
+        if (self.section != null and (if (self.tight) keepsTight(self.bytes, bytes) else keeps(self.bytes, bytes))) return true;
         self.deinit();
         const want = sizeFor(bytes);
         const s = w32.CreateFileMappingW(
@@ -144,6 +149,13 @@ const Backing = struct {
     /// Whether a section of `have` bytes serves a bitmap of `bytes`.
     fn keeps(have: usize, bytes: usize) bool {
         return bytes <= have and bytes * 4 > have;
+    }
+
+    /// Whether a section of `have` bytes serves a bitmap of `bytes` outside
+    /// a drag (T3002): no more than twice it, which a fresh section's
+    /// half-again headroom always is.
+    fn keepsTight(have: usize, bytes: usize) bool {
+        return bytes <= have and have <= 2 * bytes;
     }
 
     /// The section a bitmap of `bytes` gets: half as much again, whole
@@ -174,6 +186,19 @@ test "a resize step's bitmap reuses the section until it outgrows it or shrinks 
     try std.testing.expect(B.keeps(have, 700 * 770 * 4));
     try std.testing.expect(!B.keeps(have, have / 4));
     try std.testing.expect(!B.keeps(have, have + 1));
+}
+
+test "T3002: outside a drag a section is given back once it is twice the bitmap" {
+    const B = Backing;
+    // Maximized at 1920x1080, then restored to 1400x900: the drag rule
+    // keeps the maximized section, the tight one does not.
+    const have = B.sizeFor(1920 * 1080 * 4);
+    try std.testing.expect(B.keeps(have, 1400 * 900 * 4));
+    try std.testing.expect(!B.keepsTight(have, 1400 * 900 * 4));
+    // A fresh section always keeps its own bitmap, and a small shrink.
+    try std.testing.expect(B.keepsTight(have, 1920 * 1080 * 4));
+    try std.testing.expect(B.keepsTight(have, 1800 * 1000 * 4));
+    try std.testing.expect(!B.keepsTight(have, have + 1));
 }
 
 test "a bitmap over a kept section shows what was written through the kept view, at every size" {
@@ -294,6 +319,46 @@ const LightCache = struct {
 };
 
 const light_alloc = std.heap.page_allocator;
+
+/// `list` resized to `len`, and its slack given back when it holds more than
+/// twice that and at least a quarter MB besides (T3002): one maximize used to
+/// pin every buffer at the maximized size until the window closed. The page
+/// allocator decommits a shrink's tail in place. Moves `list.items`, so take
+/// slices of it only after.
+fn fitList(list: *std.ArrayListUnmanaged(u32), len: usize) error{OutOfMemory}!void {
+    try list.resize(light_alloc, len);
+    if (list.capacity <= 2 * len or list.capacity - len < slack_floor) return;
+    // A fresh allocation and the old region released, never
+    // `shrinkAndFree`: zig 0.15's page allocator shrinks in place with
+    // MEM_RESET, which leaves every page committed, and the commit is
+    // what the window is charged.
+    if (len == 0) return list.clearAndFree(light_alloc);
+    const fresh = light_alloc.alloc(u32, len) catch return;
+    @memcpy(fresh, list.items[0..len]);
+    list.deinit(light_alloc);
+    list.* = .{ .items = fresh, .capacity = len };
+}
+
+/// Slack below this many pixels is not worth a page-table round trip.
+const slack_floor = 64 * 1024;
+
+test "T3002: fitList gives back a maximized buffer's slack and keeps a small one's" {
+    var l: std.ArrayListUnmanaged(u32) = .empty;
+    defer l.deinit(light_alloc);
+    try fitList(&l, 1920 * 1080);
+    for (l.items, 0..) |*p, i| p.* = @truncate(i);
+    try fitList(&l, 1400 * 900);
+    try std.testing.expectEqual(@as(usize, 1400 * 900), l.items.len);
+    try std.testing.expect(l.capacity < 2 * 1400 * 900);
+    // What stayed is what was there.
+    try std.testing.expectEqual(@as(u32, 1234), l.items[1234]);
+    // A small shrink keeps the room.
+    try fitList(&l, 1000 * 1000);
+    try fitList(&l, 999 * 1000);
+    try std.testing.expect(l.capacity >= 1000 * 1000);
+    try fitList(&l, 0);
+    try std.testing.expectEqual(@as(usize, 0), l.capacity);
+}
 
 lights: [MAX_LIGHTS]LightCache = [_]LightCache{.{}} ** MAX_LIGHTS,
 light_n: usize = 0,
@@ -1086,7 +1151,7 @@ fn ensureQuarter(self: *PaneDesk, d: Backdrop) ?Backdrop.Quarter {
     // `ensureDesk` left the small gradient at the head of the scratch and
     // room for a desk-wide upscale behind it, which a quarter-wide one fits.
     if (sw < 2 or sh < 2 or self.scratch_grad.items.len < sw * sh + 3 * qw) return null;
-    self.quarter_buf.resize(light_alloc, qw * qh) catch return null;
+    fitList(&self.quarter_buf, qw * qh) catch return null;
     const small = self.scratch_grad.items[0 .. sw * sh];
     const rest = self.scratch_grad.items[sw * sh ..];
     desk_palette.upscaleDesk(self.quarter_buf.items, qw, qh, small, sw, sh, rest[0 .. 2 * qw], rest[2 * qw ..][0..qw]);
@@ -1120,6 +1185,17 @@ fn noCanvas() bool {
     return v;
 }
 var no_canvas_state: ?bool = null;
+
+/// `GHOZTTY_DESK_KEEP_BUFFERS`: the desk's buffers and bitmaps keep their
+/// largest size until the window closes, as before T3002 - the negative
+/// control of `test\win32\maximize-restore-memory.ps1`.
+pub fn keepBuffers() bool {
+    if (keep_buffers_state) |v| return v;
+    const v = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DESK_KEEP_BUFFERS");
+    keep_buffers_state = v;
+    return v;
+}
+var keep_buffers_state: ?bool = null;
 
 /// The size the desk and `comp` take for a `w` x `h` content area: the area
 /// itself, or under a window-edge drag the canvas (`liveResize`).
@@ -2257,7 +2333,7 @@ pub fn glowLayer(
     if (card >= cards.len or cards.len > Memo.MAX_CARDS or strips.len > Memo.MAX_STRIPS) return null;
     const r = glowRect(cards[card], style.scale, desk.w, desk.h) orelse return null;
     const n: usize = @intCast((r.right - r.left) * (r.bottom - r.top));
-    self.glow_px.resize(light_alloc, 2 * n) catch return null;
+    fitList(&self.glow_px, 2 * n) catch return null;
     const glass_band = for (strips) |s| {
         if (s.band and s.glass != null) break true;
     } else false;
@@ -2480,6 +2556,7 @@ fn ensureComp(self: *PaneDesk, w: i32, h: i32) ?Dib {
         c.destroy();
         self.comp = null;
     }
+    self.comp_backing.tight = self.live == null and !noCanvas() and !keepBuffers();
     self.comp = Dib.create(w, h, &self.comp_backing);
     return self.comp;
 }
@@ -2491,6 +2568,7 @@ fn ensureOut(self: *PaneDesk, w: i32, h: i32) ?Dib {
         self.out = null;
     }
     self.out_synced = null;
+    self.out_backing.tight = self.live == null and !noCanvas() and !keepBuffers();
     self.out = Dib.create(w, h, &self.out_backing);
     return self.out;
 }
@@ -2505,9 +2583,20 @@ fn ensureDesk(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_pa
     _ = w32.QueryPerformanceCounter(&tq[0]);
     const uw: usize = @intCast(w);
     const uh: usize = @intCast(h);
-    // Grown, never shrunk: the next step of a drag reuses what this one
-    // touched.
-    self.desk_buf.resize(light_alloc, uw * uh) catch return null;
+    // Grown, never shrunk, under a drag: the next step reuses what this one
+    // touched. Outside one the buffers fit the window again (T3002), so a
+    // maximize does not pin its size until the window closes.
+    const fit = self.live == null and !noCanvas() and !keepBuffers();
+    if (resizeTraceOn()) resize_trace.line("desk buffers fit={} live={} desk_cap={d} scratch_cap={d} ({d}x{d})", .{
+        fit, self.live != null, self.desk_buf.capacity, self.scratch.capacity, w, h,
+    });
+    if (fit) {
+        fitList(&self.desk_buf, uw * uh) catch return null;
+        // `composePartial`'s rectangles and the glow's desk band are built
+        // afresh each call and grow back to what the next one needs.
+        if (self.scratch.capacity >= slack_floor) self.scratch.clearAndFree(light_alloc);
+        if (self.scratch_desk.capacity >= slack_floor) self.scratch_desk.clearAndFree(light_alloc);
+    } else self.desk_buf.resize(light_alloc, uw * uh) catch return null;
     const full: Desk = .{ .px = self.desk_buf.items, .w = w, .h = h };
     _ = w32.QueryPerformanceCounter(&tq[1]);
 
@@ -2516,7 +2605,7 @@ fn ensureDesk(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_pa
     const ds = desk_palette.deskDownscale(uw, uh);
     const sw: usize = @max(uw / ds, 1) + 1;
     const sh: usize = @max(uh / ds, 1) + 1;
-    self.scratch_grad.resize(light_alloc, sw * sh + 3 * uw) catch return null;
+    if (fit) fitList(&self.scratch_grad, sw * sh + 3 * uw) catch return null else self.scratch_grad.resize(light_alloc, sw * sh + 3 * uw) catch return null;
     const small = self.scratch_grad.items[0 .. sw * sh];
     self.small_w = sw;
     self.small_h = sh;

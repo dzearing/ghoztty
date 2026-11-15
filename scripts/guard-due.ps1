@@ -1118,6 +1118,19 @@ $GuardTable = @(
             'src\apprt\win32\occlusion.zig'
         )
     },
+    # T3002: a window restored from maximized gives its desk and overlay
+    # buffers back; GHOZTTY_DESK_KEEP_BUFFERS is its negative control.
+    [pscustomobject]@{
+        Name   = 'maximize-restore-memory'
+        Script = 'test\win32\maximize-restore-memory.ps1'
+        Stamp  = 'test\win32\maximize-restore-memory.stamp.json'
+        Covers = @(
+            'test\win32\maximize-restore-memory.ps1',
+            'test\win32\lib\ProcessMemory.ps1',
+            'src\apprt\win32\PaneDesk.zig',
+            'src\apprt\win32\chrome_comp.zig'
+        )
+    },
     # T3103 (Mac 8b0de569b): a pane on screen that stops drawing gives back its
     # target and atlas copies after 3 s and redraws in full on the next frame.
     [pscustomobject]@{

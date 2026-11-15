@@ -379,8 +379,8 @@ pub const Overlay = struct {
         var whole = rects == null;
         if (w != self.w or h != self.h) {
             const n: usize = @intCast(w * h);
-            try self.desk.resize(alloc, n);
-            try self.px.resize(alloc, n);
+            try fit(&self.desk, n);
+            try fit(&self.px, n);
             @memset(self.px.items, 0);
             self.w = w;
             self.h = h;
@@ -393,6 +393,28 @@ pub const Overlay = struct {
             self.copyDesk(src, r);
             if (clears) self.erase(r, keep);
         }
+    }
+
+    /// `list` at `n`, its slack given back once it holds more than twice
+    /// that (T3002): a new size is a window that was resized, and a maximize
+    /// used to pin both buffers at the maximized size until the window
+    /// closed. The desk visual holds still under an edge drag (T2577), so
+    /// this does not run on its steps.
+    fn fit(list: *std.ArrayListUnmanaged(u32), n: usize) error{OutOfMemory}!void {
+        try list.resize(alloc, n);
+        if (list.capacity <= 2 * n or list.capacity - n < 64 * 1024) return;
+        // `GHOZTTY_DESK_KEEP_BUFFERS`, as `PaneDesk.keepBuffers`: the harness's
+        // negative control keeps them at their largest.
+        if (std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DESK_KEEP_BUFFERS")) return;
+        // A fresh allocation and the old region released, never
+        // `shrinkAndFree`: zig 0.15's page allocator shrinks in place with
+        // MEM_RESET, which leaves every page committed, and the commit is
+        // what the window is charged.
+        if (n == 0) return list.clearAndFree(alloc);
+        const fresh = alloc.alloc(u32, n) catch return;
+        @memcpy(fresh, list.items[0..n]);
+        list.deinit(alloc);
+        list.* = .{ .items = fresh, .capacity = n };
     }
 
     fn copyDesk(self: *Overlay, src: []const u32, r: Rect) void {
@@ -2619,4 +2641,17 @@ test "T2545: what the flat desk sent is what its shadow holds" {
 test "loss labels name the cause" {
     try std.testing.expectEqualStrings("simulated (debug test hook)", Loss.simulated.label());
     try std.testing.expect(std.mem.indexOf(u8, Loss.d3d_removed.label(), "removed") != null);
+}
+
+test "T3002: the overlay's buffers fit a window that shrank" {
+    var o: Overlay = .{};
+    defer o.deinit();
+    const big = try std.testing.allocator.alloc(u32, 1920 * 1080);
+    defer std.testing.allocator.free(big);
+    @memset(big, 0xFF20_3040);
+    try o.deskUploaded(big, 1920, 1080, null, true, &.{});
+    try o.deskUploaded(big[0 .. 1400 * 900], 1400, 900, null, true, &.{});
+    try std.testing.expect(o.desk.capacity < 2 * 1400 * 900);
+    try std.testing.expect(o.px.capacity < 2 * 1400 * 900);
+    try std.testing.expectEqual(@as(u32, 0xFF20_3040), o.desk.items[1400 * 900 - 1]);
 }

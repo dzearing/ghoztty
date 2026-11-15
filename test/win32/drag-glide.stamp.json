@@ -1,14 +1,14 @@
 {
     "guard":  "drag-glide",
     "script":  "test/win32/drag-glide.ps1",
-    "generated":  "2026-11-14T02:26:26-08:00",
-    "commit":  "5c7434790",
+    "generated":  "2026-11-15T12:22:21-08:00",
+    "commit":  "c9360e9e4",
     "uncommitted":  [
                         "src/apprt/win32/PaneDesk.zig"
                     ],
     "files":  {
                   "src/apprt/win32/drag_perf.zig":  "7a0a6315fca20bcd41664bde044f483de98be9141a71732d236d02fb2be98f8e",
-                  "src/apprt/win32/PaneDesk.zig":  "45f81ce67580558b86670bf7b265c3fce4ff6556fc6580fb7aa7adf8d1496a20",
+                  "src/apprt/win32/PaneDesk.zig":  "6758c56803e4fac7043780b46fa84a9dc71b7e3d9362731dd247dd4f8578699c",
                   "test/win32/drag-glide.ps1":  "53d8362ebe045fd7f03a7551bb595f7f1ba67ff6ef60ea1a7d48b787f933f829"
               }
 }
