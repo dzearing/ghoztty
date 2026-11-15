@@ -8,6 +8,13 @@ class TerminalWindow: NSWindow {
     /// Posted when a terminal window awakes from nib.
     static let terminalDidAwake = Notification.Name("TerminalWindowDidAwake")
 
+    /// A page never pulls the caret into a pane minimized into a blade
+    /// (`ViewerWebView`): the caret stays where it is.
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        guard ViewerWebView.mayBecomeFirstResponder(responder) else { return false }
+        return super.makeFirstResponder(responder)
+    }
+
     /// Posted when a terminal window will close
     static let terminalWillCloseNotification = Notification.Name("TerminalWindowWillClose")
 
