@@ -20,6 +20,12 @@
 #      not parked hidden) with the first window untouched.
 #   6. --force on a window with no dialog: destroyed at once, not parked; a
 #      plain +close of a third window is the control (parked: hidden, alive).
+#   8. T3109 (Mac 4bcf59873/be50bda8b): a plain +close of a window's LAST pane,
+#      by pane id, while that pane runs a long command: no confirmation, the
+#      pane and its name leave +list and name lookup at once, the window hides,
+#      and once the undo runs out the command, its shell and the HWND end.
+#   9. The same on the LAST window, which is not parked: no confirmation, the
+#      window is destroyed and its shell ends.
 # Phase B (session-persistence on, private agent lineage, --undo-timeout=30s):
 #   7. --force on an agent-backed window ENDS its session right away, where a
 #      plain close holds it for the whole undo window.
@@ -261,7 +267,85 @@ try {
         Assert "+close --force w2 exit 0 ($(Get-CliErr))" ($code -eq 0)
         Assert "w2's HWND is destroyed at once" (Wait-Until { -not (Test-TestWindowExists -Window ([IntPtr]$w2)) } 5)
     }
+
+    "== 8: +close on a window's LAST pane, with a command running, never asks (T3109, Mac 4bcf59873)"
+    # Mac's +close of a last pane fell through to the menu close, which
+    # confirmed on its own terms, so the CLI put up "Close Window?" with nobody
+    # to answer it; and the closed window stayed listed with its shells alive.
+    # Here --confirm-close-surface=always makes every interactive close ask,
+    # so a dialog on this path would show.
+    $before = @(Get-Tops $app.Pid | ForEach-Object { $_.Hwnd })
+    Assert "+new-window w4 running a long command exit 0 ($(Get-CliErr))" ((Invoke-Cli "+new-window --target=w4 --name=w4p `"--command=ping -n 600 127.0.0.1`"") -eq 0)
+    $w4 = Get-NewTop $app.Pid $before
+    Assert "setup: w4's window found" ($w4 -ne 0)
+    [void](Wait-Until { $script:w4l = Get-LeafByName 'w4p'; $null -ne $script:w4l } 8)
+    $w4Shell = if ($null -ne $script:w4l) { [int]$script:w4l.pid } else { 0 }
+    $w4Id = if ($null -ne $script:w4l) { [string]$script:w4l.id } else { '' }
+    # The ping anywhere under the pane's process (or the pane's process itself:
+    # which pid +list reports depends on the shell flavor). Only processes
+    # started after the window was made count, so a reused pid cannot match.
+    $script:w4Child = 0
+    $w4Since = (Get-Date).AddSeconds(-30)
+    [void](Wait-Until {
+            $all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+            $tree = @{ $w4Shell = $true }
+            for ($pass = 0; $pass -lt 6; $pass++) {
+                foreach ($p in $all) {
+                    if ($tree.ContainsKey([int]$p.ParentProcessId) -and $p.CreationDate -ge $w4Since) { $tree[[int]$p.ProcessId] = $true }
+                }
+            }
+            foreach ($p in $all) {
+                if ($tree.ContainsKey([int]$p.ProcessId) -and $p.Name -like 'ping*') { $script:w4Child = [int]$p.ProcessId; return $true }
+            }
+            return $false
+        } 10)
+    $w4Child = $script:w4Child
+    if ($w4Child -eq 0) {
+        "  diag: processes under $w4Shell :"
+        Get-CimInstance Win32_Process -Filter "ParentProcessId=$w4Shell" -ErrorAction SilentlyContinue | ForEach-Object { "    $($_.ProcessId) $($_.Name)" }
+        Get-CimInstance Win32_Process -Filter "ProcessId=$w4Shell" -ErrorAction SilentlyContinue | ForEach-Object { "    self: $($_.Name) parent $($_.ParentProcessId) cmd $($_.CommandLine)" }
+    }
+    Assert "setup: w4p's shell (pid $w4Shell) is running ping (pid $w4Child)" ($w4Shell -gt 0 -and $w4Child -gt 0)
+    if ($w4 -ne 0 -and $w4Id -ne '') {
+        # By pane id: the LAST pane of the window, not the window itself.
+        $code = Invoke-Cli "+close --target=$w4Id"
+        Assert "plain +close of w4's last pane exit 0 ($(Get-CliErr))" ($code -eq 0)
+        Start-Sleep -Milliseconds 1500
+        Assert "no close confirmation was put up" ((Get-Dialog $app.Pid) -eq [IntPtr]::Zero)
+        Assert "w4p left +list at once" ($null -eq (Get-LeafByName 'w4p'))
+        Assert "w4p's pane id left +list at once" ($null -eq (Get-LeafById $w4Id))
+        Assert "w4 is hidden (parked for the undo)" (-not (Test-TestWindowVisible -Window ([IntPtr]$w4)))
+        $code = Invoke-Cli "+send-keys --target=w4p x"
+        Assert "the name w4p no longer resolves (+send-keys exit $code)" ($code -ne 0)
+        Assert "the first window is untouched" (Test-TestWindowVisible -Window $top)
+        Assert "the window takes input (nothing modal over it)" (Test-TestWindowEnabled -Window $top)
+        # The undo here is 30s: once it runs out, the shell and its child end.
+        Assert "w4p's running ping ends once the 30s undo runs out" ($w4Child -gt 0 -and (Wait-Until { -not (Test-ProcAlive $w4Child) } 40))
+        Assert "w4p's shell ends with it" (Wait-Until { -not (Test-ProcAlive $w4Shell) } 5)
+        Assert "w4's HWND is destroyed after the undo" (Wait-Until { -not (Test-TestWindowExists -Window ([IntPtr]$w4)) } 5)
+    }
     Assert "no crash (phase A)" (-not ($app.Process -and $app.Process.HasExited))
+
+    "== 9: +close on the LAST window's last pane never asks either"
+    # Nothing is parked for the last window (there is nowhere to press undo),
+    # so its close is immediate - and with --confirm-close-surface=always even
+    # an idle shell would be asked about on an interactive close.
+    $lastLeaves = Get-Leaves
+    $lastId = if ($lastLeaves.Count -ge 1) { [string]$lastLeaves[0].id } else { '' }
+    $lastShell = if ($lastLeaves.Count -ge 1) { [int]$lastLeaves[0].pid } else { 0 }
+    Assert "setup: the first window's one remaining pane is listed ($lastId)" ($lastId -ne '' -and $lastLeaves.Count -eq 1)
+    if ($lastId -ne '') {
+        $code = Invoke-Cli "+close --target=$lastId"
+        Assert "plain +close of the last window's last pane exit 0 ($(Get-CliErr))" ($code -eq 0)
+        $script:sawDialog = $false
+        $gone = Wait-Until {
+            if ((Get-Dialog $app.Pid) -ne [IntPtr]::Zero) { $script:sawDialog = $true }
+            -not (Test-TestWindowExists -Window $top)
+        } 8
+        Assert "no close confirmation was put up" (-not $script:sawDialog)
+        Assert "the last window is destroyed" $gone
+        Assert "its shell ends with it" (Wait-Until { -not (Test-ProcAlive $lastShell) } 10)
+    }
     $launched += $script:GhozttyTestDesktopPids
     [void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -SettleMs 700)
 
