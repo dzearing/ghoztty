@@ -44,6 +44,11 @@ param(
     [string]$Out,
     [int]$IdleSeconds = 60,
     [int]$BusyMB = 64,
+    # ascii: 108-char ASCII lines (a handful of glyphs, warm atlas after the
+    # first screen). cjk: every CJK unified ideograph in turn, so nearly every
+    # cell is a glyph the atlas has not seen - the font-atlas upload load
+    # (T2973). The cjk file is written UTF-8 and typed under `chcp 65001`.
+    [ValidateSet('ascii', 'cjk')][string]$BusyText = 'ascii',
     [int]$ResizeSeconds = 8,
     [int]$AgentSessions = 4,
     [int]$AttachCycles = 3,
@@ -152,7 +157,7 @@ if ($Build -eq 'Both') {
     foreach ($b in @('Debug', 'Release')) {
         $part = Join-Path $env:TEMP "perf-baseline-$b-$PID.json"
         $childArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-Build', $b, '-Out', $part,
-            '-IdleSeconds', $IdleSeconds, '-BusyMB', $BusyMB, '-ResizeSeconds', $ResizeSeconds,
+            '-IdleSeconds', $IdleSeconds, '-BusyMB', $BusyMB, '-BusyText', $BusyText, '-ResizeSeconds', $ResizeSeconds,
             '-AgentSessions', $AgentSessions, '-AttachCycles', $AttachCycles, '-Phase', ($Phase -join ','))
         Write-Host "== $b build"
         & powershell @childArgs
@@ -176,7 +181,7 @@ if ($Build -eq 'Both') {
             gpu   = ((Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }) -join '; ')
             os    = (Get-CimInstance Win32_OperatingSystem).Version
         }
-        parameters = [ordered]@{ idle_seconds = $IdleSeconds; busy_mb = $BusyMB; resize_seconds = $ResizeSeconds; agent_sessions = $AgentSessions; attach_cycles = $AttachCycles }
+        parameters = [ordered]@{ idle_seconds = $IdleSeconds; busy_mb = $BusyMB; busy_text = $BusyText; resize_seconds = $ResizeSeconds; agent_sessions = $AgentSessions; attach_cycles = $AttachCycles }
         tolerance = $script:Tolerance
         builds    = $parts
     }
@@ -409,13 +414,28 @@ try {
     if ($want -contains 'busy') {
         Write-Host "[$Build] busy: type a $BusyMB MB file, then $ResizeSeconds s of resizes"
         try {
-            $big = Join-Path $work 'big.txt'
+            $big = Join-Path $work "big-$BusyText.txt"
             if (-not (Test-Path $big)) {
-                $line = ('0123456789abcdefghijklmnopqrstuvwxyz' * 3) + "`r`n"
-                $chunk = [Text.Encoding]::ASCII.GetBytes(($line * 4096))
+                if ($BusyText -eq 'cjk') {
+                    # U+4E00..U+9FFF, 40 ideographs (80 columns) per line, the
+                    # whole block once per chunk, so each pass walks every glyph.
+                    $sb = New-Object Text.StringBuilder
+                    $col = 0
+                    for ($cp = 0x4E00; $cp -le 0x9FFF; $cp++) {
+                        [void]$sb.Append([char]$cp)
+                        $col++
+                        if ($col -eq 40) { [void]$sb.Append("`r`n"); $col = 0 }
+                    }
+                    [void]$sb.Append("`r`n")
+                    $chunk = (New-Object Text.UTF8Encoding($false)).GetBytes($sb.ToString())
+                } else {
+                    $line = ('0123456789abcdefghijklmnopqrstuvwxyz' * 3) + "`r`n"
+                    $chunk = [Text.Encoding]::ASCII.GetBytes(($line * 4096))
+                }
                 $fs = [IO.File]::Create($big)
                 try { while ($fs.Length -lt $BusyMB * 1MB) { $fs.Write($chunk, 0, $chunk.Length) } } finally { $fs.Close() }
             }
+            $typeCmd = if ($BusyText -eq 'cjk') { "chcp 65001 >nul & type `"$big`"" } else { "type `"$big`"" }
             $marker = Join-Path $work 'busy.done'
             Remove-Item $marker -ErrorAction SilentlyContinue
             $a = Start-App $false
@@ -423,7 +443,7 @@ try {
             $anchor = @(Get-PaneLeaves)[0].id
             $job = Start-GpuSampler $a.Pid 120
             $s0 = Get-Snap $a.Pid
-            $r = Invoke-Verb @('+split', "--target=$anchor", '--name=perfbusy', '--direction=right', "--command=type `"$big`" & echo done> `"$marker`"")
+            $r = Invoke-Verb @('+split', "--target=$anchor", '--name=perfbusy', '--direction=right', "--command=$typeCmd & echo done> `"$marker`"")
             if ($r.Code -ne 0) { throw "+split for the busy pane failed: $($r.Text)" }
             $deadline = (Get-Date).AddSeconds(600)
             while (-not (Test-Path $marker) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 100 }
@@ -433,7 +453,7 @@ try {
             if (-not (Test-Path $marker)) { throw 'the busy pane never finished its output within 600 s' }
             $rb = Get-Rate $s0 $s1
             $result.busy = [ordered]@{
-                method = "+split a cmd pane running ``type`` of a $BusyMB MB file (108-char ASCII lines) then writing a marker; wall time from the split to the marker, app CPU over the same span; GPU Engine(pid_*) summed, 1 s samples"
+                method = "+split a cmd pane running ``type`` of a $BusyMB MB file ($(if ($BusyText -eq 'cjk') { '40-ideograph UTF-8 lines walking U+4E00..U+9FFF' } else { '108-char ASCII lines' })) then writing a marker; wall time from the split to the marker, app CPU over the same span; GPU Engine(pid_*) summed, 1 s samples"
                 output_mb = $BusyMB
                 wall_s = $rb.wall_s
                 cpu_s = $rb.cpu_s

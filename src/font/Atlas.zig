@@ -50,6 +50,15 @@ modified: std.atomic.Value(usize) = .{ .raw = 0 },
 /// a resize operation.
 resized: std.atomic.Value(usize) = .{ .raw = 0 },
 
+/// The rows each recent modification touched, keyed by the `modified` value
+/// it produced (T2973). A consumer that last uploaded the atlas when
+/// `modified` read S asks `dirtyRowsSince(S)` for the band of rows that
+/// changed since, and uploads only that band instead of the whole texture -
+/// one new glyph used to re-send all of it (256 KB grayscale / 1 MB color at
+/// 512x512) to every pane sharing the font. Writers hold the owning grid's
+/// exclusive lock and readers its shared lock, same as `data`.
+dirty: DirtyLog = .{},
+
 pub const Format = enum(u8) {
     /// 1 byte per pixel grayscale.
     grayscale = 0,
@@ -64,6 +73,36 @@ pub const Format = enum(u8) {
             .bgr => 3,
             .bgra => 4,
         };
+    }
+};
+
+/// A contiguous band of atlas rows, `[y, y + height)`, full texture width.
+pub const DirtyRows = struct {
+    y: u32,
+    height: u32,
+};
+
+/// A small ring of the most recent modifications. Each `modified` bump
+/// records exactly one entry, so a consumer whose gap is wider than the ring
+/// (or who has never synced) is told to upload everything.
+pub const DirtyLog = struct {
+    pub const capacity = 32;
+
+    const Entry = struct {
+        seq: usize,
+        y0: u32,
+        y1: u32,
+    };
+
+    entries: [capacity]Entry = undefined,
+    /// Next slot to write; with `count` the ring's extent.
+    head: usize = 0,
+    count: usize = 0,
+
+    fn record(self: *DirtyLog, seq: usize, y0: u32, y1: u32) void {
+        self.entries[self.head] = .{ .seq = seq, .y0 = y0, .y1 = y1 };
+        self.head = (self.head + 1) % capacity;
+        if (self.count < capacity) self.count += 1;
     }
 };
 
@@ -271,7 +310,7 @@ pub fn set(self: *Atlas, reg: Region, data: []const u8) void {
         );
     }
 
-    _ = self.modified.fetchAdd(1, .monotonic);
+    self.markModified(reg.y, reg.y + reg.height);
 }
 
 /// Like `set` but allows specifying a width for the source data and an
@@ -302,7 +341,45 @@ pub fn setFromLarger(
         );
     }
 
-    _ = self.modified.fetchAdd(1, .monotonic);
+    self.markModified(reg.y, reg.y + reg.height);
+}
+
+/// Bump `modified` and remember which rows that modification touched.
+fn markModified(self: *Atlas, y0: u32, y1: u32) void {
+    const seq = self.modified.fetchAdd(1, .monotonic) +% 1;
+    self.dirty.record(seq, y0, y1);
+}
+
+/// The band of rows modified after `modified` read `since`, or null when the
+/// whole atlas must be uploaded: the consumer has never synced (`since == 0`;
+/// `init` leaves `modified` at 1 or more), or more modifications happened
+/// than the log remembers. A zero-height band means nothing changed. Call
+/// under the same lock that guards `data`.
+pub fn dirtyRowsSince(self: *const Atlas, since: usize) ?DirtyRows {
+    if (since == 0) return null;
+    const now = self.modified.load(.monotonic);
+    if (now <= since) return .{ .y = 0, .height = 0 };
+    const gap = now - since;
+    if (gap > self.dirty.count) return null;
+
+    var y0: u32 = std.math.maxInt(u32);
+    var y1: u32 = 0;
+    var seen: usize = 0;
+    var i: usize = 0;
+    while (i < self.dirty.count) : (i += 1) {
+        const e = self.dirty.entries[i];
+        if (e.seq <= since or e.seq > now) continue;
+        seen += 1;
+        y0 = @min(y0, e.y0);
+        y1 = @max(y1, e.y1);
+    }
+    // Every bump in (since, now] records one entry; a missing one means a
+    // modification the log never saw, so do not trust a partial union.
+    if (seen != gap) return null;
+
+    y1 = @min(y1, self.size);
+    if (y0 >= y1) return .{ .y = 0, .height = 0 };
+    return .{ .y = y0, .height = y1 - y0 };
 }
 
 pub const grow_tw = tripwire.module(enum {
@@ -359,13 +436,13 @@ pub fn grow(self: *Atlas, alloc: Allocator, size_new: u32) Allocator.Error!void 
     });
 
     // We are both modified and resized
-    _ = self.modified.fetchAdd(1, .monotonic);
+    self.markModified(0, self.size);
     _ = self.resized.fetchAdd(1, .monotonic);
 }
 
 // Empty the atlas. This doesn't reclaim any previously allocated memory.
 pub fn clear(self: *Atlas) void {
-    _ = self.modified.fetchAdd(1, .monotonic);
+    self.markModified(0, self.size);
     @memset(self.data, 0);
     self.nodes.clearRetainingCapacity();
 
@@ -624,6 +701,93 @@ test "writing data" {
     try testing.expectEqual(@as(u8, 2), atlas.data[34]);
     try testing.expectEqual(@as(u8, 3), atlas.data[65]);
     try testing.expectEqual(@as(u8, 4), atlas.data[66]);
+}
+
+test "dirty rows: a set reports only the rows it touched (T2973)" {
+    const alloc = testing.allocator;
+    var atlas = try init(alloc, 64, .grayscale);
+    defer atlas.deinit(alloc);
+
+    // Never synced: upload everything.
+    try testing.expect(atlas.dirtyRowsSince(0) == null);
+
+    const synced = atlas.modified.load(.monotonic);
+    try testing.expectEqual(@as(u32, 0), atlas.dirtyRowsSince(synced).?.height);
+
+    const reg = try atlas.reserve(alloc, 2, 3);
+    atlas.set(reg, &[_]u8{ 1, 2, 3, 4, 5, 6 });
+    const rows = atlas.dirtyRowsSince(synced).?;
+    try testing.expectEqual(reg.y, rows.y);
+    try testing.expectEqual(@as(u32, 3), rows.height);
+    try testing.expect(rows.height < atlas.size);
+
+    // A consumer that synced after the set sees nothing new.
+    try testing.expectEqual(
+        @as(u32, 0),
+        atlas.dirtyRowsSince(atlas.modified.load(.monotonic)).?.height,
+    );
+}
+
+test "dirty rows: several sets union into one band (T2973)" {
+    const alloc = testing.allocator;
+    var atlas = try init(alloc, 64, .grayscale);
+    defer atlas.deinit(alloc);
+
+    const synced = atlas.modified.load(.monotonic);
+    const a = try atlas.reserve(alloc, 30, 4);
+    atlas.set(a, &([_]u8{7} ** (30 * 4)));
+    const b = try atlas.reserve(alloc, 30, 4);
+    atlas.set(b, &([_]u8{8} ** (30 * 4)));
+    const c = try atlas.reserve(alloc, 30, 4);
+    atlas.set(c, &([_]u8{9} ** (30 * 4)));
+
+    const lo = @min(a.y, @min(b.y, c.y));
+    const hi = @max(a.y + a.height, @max(b.y + b.height, c.y + c.height));
+    const rows = atlas.dirtyRowsSince(synced).?;
+    try testing.expectEqual(lo, rows.y);
+    try testing.expectEqual(hi - lo, rows.height);
+
+    // A consumer that synced between the sets gets only the later rows.
+    const mid = synced + 2; // after a and b
+    const later = atlas.dirtyRowsSince(mid).?;
+    try testing.expectEqual(c.y, later.y);
+    try testing.expectEqual(c.height, later.height);
+}
+
+test "dirty rows: a gap wider than the log uploads everything (T2973)" {
+    const alloc = testing.allocator;
+    var atlas = try init(alloc, 128, .grayscale);
+    defer atlas.deinit(alloc);
+
+    const synced = atlas.modified.load(.monotonic);
+    var i: usize = 0;
+    while (i < DirtyLog.capacity + 1) : (i += 1) {
+        const reg = try atlas.reserve(alloc, 1, 1);
+        atlas.set(reg, &[_]u8{1});
+    }
+    try testing.expect(atlas.dirtyRowsSince(synced) == null);
+
+    // A recent consumer is still inside the log.
+    const recent = atlas.modified.load(.monotonic) - 1;
+    try testing.expectEqual(@as(u32, 1), atlas.dirtyRowsSince(recent).?.height);
+}
+
+test "dirty rows: grow and clear dirty the whole atlas (T2973)" {
+    const alloc = testing.allocator;
+    var atlas = try init(alloc, 32, .grayscale);
+    defer atlas.deinit(alloc);
+
+    var synced = atlas.modified.load(.monotonic);
+    try atlas.grow(alloc, 64);
+    var rows = atlas.dirtyRowsSince(synced).?;
+    try testing.expectEqual(@as(u32, 0), rows.y);
+    try testing.expectEqual(@as(u32, 64), rows.height);
+
+    synced = atlas.modified.load(.monotonic);
+    atlas.clear();
+    rows = atlas.dirtyRowsSince(synced).?;
+    try testing.expectEqual(@as(u32, 0), rows.y);
+    try testing.expectEqual(@as(u32, 64), rows.height);
 }
 
 test "writing data from a larger source" {

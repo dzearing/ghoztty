@@ -2054,16 +2054,18 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 if (modified <= frame.grayscale_modified) break :texture;
                 self.font_grid.lock.lockShared();
                 defer self.font_grid.lock.unlockShared();
+                const since = frame.grayscale_modified;
                 frame.grayscale_modified = self.font_grid.atlas_grayscale.modified.load(.monotonic);
-                try self.syncAtlasTexture(&self.font_grid.atlas_grayscale, &frame.grayscale);
+                try self.syncAtlasTexture(&self.font_grid.atlas_grayscale, &frame.grayscale, since);
             }
             texture: {
                 const modified = self.font_grid.atlas_color.modified.load(.monotonic);
                 if (modified <= frame.color_modified) break :texture;
                 self.font_grid.lock.lockShared();
                 defer self.font_grid.lock.unlockShared();
+                const since = frame.color_modified;
                 frame.color_modified = self.font_grid.atlas_color.modified.load(.monotonic);
-                try self.syncAtlasTexture(&self.font_grid.atlas_color, &frame.color);
+                try self.syncAtlasTexture(&self.font_grid.atlas_color, &frame.color, since);
             }
 
             // The lab's planted magenta frame (T2383): the frame is drawn as
@@ -3937,20 +3939,41 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// Sync the atlas data to the given texture. This copies the bytes
         /// associated with the atlas to the given texture. If the atlas no
         /// longer fits into the texture, the texture will be resized.
+        ///
+        /// `since` is the atlas `modified` value this texture was last synced
+        /// at. Only the rows changed after it are uploaded (T2973): a new
+        /// glyph used to re-send the whole atlas to every frame of every pane.
         fn syncAtlasTexture(
             self: *const Self,
             atlas: *const font.Atlas,
             texture: *Texture,
+            since: usize,
         ) !void {
-            if (atlas.size > texture.width) {
-                // Free our old texture
-                texture.*.deinit();
+            const rows: font.Atlas.DirtyRows = rows: {
+                if (atlas.size > texture.width) {
+                    // Free our old texture
+                    texture.*.deinit();
 
-                // Reallocate
-                texture.* = try self.api.initAtlasTexture(atlas);
-            }
+                    // Reallocate; the new texture holds nothing yet.
+                    texture.* = try self.api.initAtlasTexture(atlas);
+                    break :rows .{ .y = 0, .height = atlas.size };
+                }
+                break :rows atlas.dirtyRowsSince(since) orelse
+                    .{ .y = 0, .height = atlas.size };
+            };
+            if (rows.height == 0) return;
 
-            try texture.replaceRegion(0, 0, atlas.size, atlas.size, atlas.data);
+            // Full-width row bands are contiguous in `atlas.data`, so the
+            // upload needs no row stride from either backend.
+            const stride: usize = @as(usize, atlas.size) * atlas.format.depth();
+            const start: usize = @as(usize, rows.y) * stride;
+            try texture.replaceRegion(
+                0,
+                rows.y,
+                atlas.size,
+                rows.height,
+                atlas.data[start..][0 .. @as(usize, rows.height) * stride],
+            );
         }
     };
 }
