@@ -240,6 +240,9 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// torn down through any layout passes that follow.
     private var isDetached = false
 
+    /// The offset `reloadKeepingScroll` reapplies when its reload lands.
+    private var scrollToRestore: CGPoint?
+
     /// The native image surface, mounted only while `mode` is `.image`.
     private var imageSurface: ViewerImageSurface?
     /// Set when the current image mode could not decode its file, so the
@@ -3272,7 +3275,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
         if showingTemplatePage || !pageLoaded {
             load()
         } else {
-            webView.reload()
+            reloadKeepingScroll()
         }
     }
 
@@ -3851,7 +3854,26 @@ extension ViewerView: WKNavigationDelegate {
             == rhs.resolvingSymlinksInPath().standardizedFileURL
     }
 
+    /// Re-fetch an HTML file and put the reader back where they were. WebKit
+    /// used to restore the scroll offset across `reload()` on its own; it no
+    /// longer does for a local file, and every save threw the page back to
+    /// the top. The offset is read first and reapplied when the reload lands
+    /// (`didFinish`), on top of whatever WebKit does.
+    private func reloadKeepingScroll() {
+        webView.evaluateJavaScript("[window.scrollX, window.scrollY]") { [weak self] value, _ in
+            guard let self else { return }
+            if let offset = value as? [NSNumber], offset.count == 2 {
+                self.scrollToRestore = CGPoint(x: offset[0].doubleValue, y: offset[1].doubleValue)
+            }
+            self.webView.reload()
+        }
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if let offset = scrollToRestore {
+            scrollToRestore = nil
+            webView.evaluateJavaScript("window.scrollTo(\(offset.x), \(offset.y))", completionHandler: nil)
+        }
         // A fresh navigation can drop pageZoom; reapply so keyboard zoom sticks
         // as the user follows links / types addresses within the pane (all
         // modes). Cheap no-op at 100%.

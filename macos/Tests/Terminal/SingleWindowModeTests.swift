@@ -434,6 +434,18 @@ final class SingleWindowModeTests {
         #expect(host.active === order[2], "it does not wrap")
     }
 
+    /// A parked workspace's row × in the sidebar closes it, with no window
+    /// of its own to close; the workspace on show is left alone.
+    @Test func theSidebarsCloseButtonClosesAParkedWorkspace() async throws {
+        let (a, _) = try await workspace()
+        let (b, _) = try await workspace()
+        #expect(b.isParked)
+        b.closeWindowFromSidebar()
+        #expect(await poll(timeout: 2) { b.windowHasClosed })
+        #expect(!host.manages(b))
+        #expect(host.active === a)
+    }
+
     /// Tab navigation walks the workspaces in the sidebar's order.
     @Test func nextAndPreviousTabWalkTheWorkspaces() async throws {
         let (a, _) = try await workspace()
@@ -510,8 +522,13 @@ final class SingleWindowModeTests {
         let targets = windows.compactMap(\.target)
         #expect(targets.contains("parked-bee"))
         #expect(targets.contains(a.windowName))
-        #expect(windows.filter(\.focused).count == 1)
-        #expect(windows.first { $0.target == a.windowName }?.focused == true)
+        // The workspace on show is listed ahead of the parked one, which is
+        // not the focused window. (Other suites' windows can be in this
+        // process too, so not "a is focused".)
+        let aIndex = try #require(windows.firstIndex { $0.target == a.windowName })
+        let beeIndex = try #require(windows.firstIndex { $0.target == "parked-bee" })
+        #expect(aIndex < beeIndex)
+        #expect(windows[beeIndex].focused == false)
         let beeRow = try #require(windows.first { $0.target == "parked-bee" })
         // The same id on show or parked.
         #expect(beeRow.id == ScriptWindow.stableID(primaryController: b))

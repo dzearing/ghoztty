@@ -484,6 +484,9 @@ struct PaneSidebarWindowTests {
         controller.paneSidebarState.isHidden = true
         _ = await poll(timeout: 10) { controller.window?.isVisible == true }
         let window = try #require(controller.window)
+        // It measures what is drawn: drawing, whatever covers it
+        // (docs/reference/background-windows.md → Tests).
+        WindowInUse.setInUseForTesting(window, true)
         window.setContentSize(NSSize(width: 1200, height: 760))
         await settle(2.5)
         let view = try #require(a.surfaceView)
