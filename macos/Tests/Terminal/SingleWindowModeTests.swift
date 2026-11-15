@@ -241,6 +241,53 @@ final class SingleWindowModeTests {
         #expect(TerminalController.sidebarOrder(host.workspaces).map(\.windowName) == made.map(\.windowName))
     }
 
+    /// Cmd-N puts the new workspace on show in the key's own turn — no
+    /// agent round trip for a local window, no deferred presentation — so
+    /// the next frame already shows it selected. Prints the time to drawn.
+    @Test func newWindowIsOnShowInTheKeysTurn() async throws {
+        let ghostty = try self.ghostty
+        let first = TerminalController.newWindow(ghostty, withBaseConfig: nil, activate: true)
+        opened.append(first)
+        _ = await poll(timeout: 10) { first.window?.isVisible == true }
+        let window = try #require(first.window)
+        window.setContentSize(NSSize(width: 1400, height: 900))
+        WindowInUse.setInUseForTesting(window, true)
+        first.paneSidebarState.isHidden = false
+        _ = await poll(timeout: 15) {
+            first.focusedSurface.map { BaseTerminalController.remoteInheritance(of: $0).sessionId != nil } ?? false
+        }
+        await settle(1)
+
+        for round in 0..<4 {
+            var marks: [(String, TimeInterval)] = []
+            let t0 = CACurrentMediaTime()
+            let mark = { (name: String) in marks.append((name, (CACurrentMediaTime() - t0) * 1000)) }
+            let n1 = NotificationCenter.default.addObserver(
+                forName: Ghostty.Notification.ghosttyNewWindow, object: nil, queue: nil) { _ in mark("action") }
+            let n2 = NotificationCenter.default.addObserver(
+                forName: WorkspaceHost.didSwitchNotification, object: nil, queue: nil) { _ in mark("switched") }
+            let count = host.workspaces.count
+            let surface = try #require(host.active?.focusedSurface?.surface)
+            let previous = host.active
+            ghostty.newWindow(surface: surface)
+            #expect(host.workspaces.count == count + 1, "the workspace was not made in the key's turn")
+            #expect(host.active !== previous, "the new workspace was not on show in the key's turn")
+            var created = false
+            let deadline = Date().addingTimeInterval(5)
+            while Date() < deadline && !marks.contains(where: { $0.0 == "switched" }) {
+                if !created && host.workspaces.count > count { created = true; mark("created") }
+                try? await Task.sleep(nanoseconds: 500_000)
+            }
+            window.displayIfNeeded()
+            mark("drawn")
+            NotificationCenter.default.removeObserver(n1)
+            NotificationCenter.default.removeObserver(n2)
+            print("LATENCY round \(round): " + marks.map { "\($0.0) \(String(format: "%.1f", $0.1))ms" }.joined(separator: ", "))
+            if let made = host.active { opened.append(made) }
+            await settle(0.5)
+        }
+    }
+
     /// Tab navigation walks the workspaces in the sidebar's order.
     @Test func nextAndPreviousTabWalkTheWorkspaces() async throws {
         let (a, _) = try await workspace()

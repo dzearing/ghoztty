@@ -395,10 +395,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             return
         }
 
-        BaseTerminalController.resolveRemoteInheritance(
-            from: parentSurface,
-            on: parentRemote.handle
-        ) { command, cwd in
+        let build: @MainActor (String?, String?) -> Void = { command, cwd in
             var cfg = baseConfig ?? Ghostty.SurfaceConfiguration()
             cfg.remoteMachine = parentRemote.machine
             cfg.remoteConnection = parentRemote.handle
@@ -430,6 +427,24 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             controller.remoteMachine = parentRemote.machine
             onCreate?(controller)
         }
+
+        // The local session-persistence agent runs on this Mac: the parent
+        // pane's own working directory (its shell's OSC 7, or the one the
+        // core already inherited) is the answer, with no agent round trip —
+        // which cost a background hop and a main-queue turn before the
+        // window could even be built (Cmd-N lagged behind the key). Only a
+        // pane that never reported one asks the agent.
+        if parentRemote.machine.isLocalMachine,
+           let cwd = baseConfig?.remoteWorkingDirectory ?? baseConfig?.workingDirectory ?? parentSurface.pwd,
+           !cwd.isEmpty {
+            build(nil, cwd)
+            return
+        }
+
+        BaseTerminalController.resolveRemoteInheritance(
+            from: parentSurface,
+            on: parentRemote.handle,
+            build: build)
     }
 
     /// Show a new window WITHOUT taking focus: it is not made key, and it is
@@ -490,6 +505,13 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             }
         }
 
+        // Single-window mode, the window already up: a workspace, on show
+        // at once when asked — in this turn, so Cmd-N's new workspace is
+        // what the next frame shows (no cascade to wait a turn for).
+        if let host = c.workspaceHost, host.window != nil {
+            host.present(c, activate: activate)
+            if activate { NSApp.activate(ignoringOtherApps: true) }
+        } else {
         // We're dispatching this async because otherwise the lastCascadePoint doesn't
         // take effect. Our best theory is there is some next-event-loop-tick logic
         // that Cocoa is doing that we need to be after.
@@ -518,6 +540,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             if activate {
                 NSApp.activate(ignoringOtherApps: true)
             }
+        }
         }
 
         // Setup our undo

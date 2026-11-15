@@ -109,6 +109,16 @@ workspace's title from `currentWindowTitle` (kept while it has no window).
   controller made while no workspace has the window loads it
   (`WorkspaceHost.startsParked`, decided before `super.init`, since the window
   can load during init); every other one starts parked.
+- **Cmd-N is on show in the key's own turn**: a new workspace from a local
+  window takes the parent pane's working directory as it is known here (its
+  shell's OSC 7, or the core's inherited one) instead of asking the local
+  agent on a background queue, is presented at once rather than a turn later
+  (`TerminalController.newWindow`), and is laid out once, in the window, as
+  it comes on show (`WorkspaceHost.show` lays out off screen only a workspace
+  that was already parked). Measured in the debug build: key → drawn 57–88 ms
+  before, 40–63 ms after; what is left is creating the terminal and building
+  the workspace's view. A pane that never reported a directory still asks the
+  agent. Test: `newWindowIsOnShowInTheKeysTurn`.
 - **A new tab is a new workspace** (`TerminalController.newTab`): there are no
   native tabs (`tabbingMode = .disallowed`). `goto_tab` (previous/next/last/N)
   and `goto_window` walk the workspaces in the sidebar's order

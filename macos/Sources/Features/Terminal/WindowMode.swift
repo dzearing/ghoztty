@@ -210,7 +210,12 @@ final class WorkspaceHost {
         }
 
         let wasKey = window.isKeyWindow
-        prepareParked(controller)
+        // A workspace laid out before (parked a while) is brought to the
+        // window's size; one never laid out (Cmd-N's) is laid out once, in
+        // the window — laying it out off screen first doubled its cost.
+        if controller.parkedContainer != nil {
+            prepareParked(controller)
+        }
 
         // Out with the old: it keeps its content view, focus and state.
         let leavingShade = from.deskVariant

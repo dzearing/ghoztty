@@ -95,7 +95,17 @@ extension TerminalController {
         self.window = window
         window.delegate = self
 
-        let container = parkedContainer ?? makeContentContainer()
+        let container: TerminalViewContainer
+        if let parkedContainer {
+            container = parkedContainer
+        } else {
+            // Never laid out (shown as it opens): what a fresh window does.
+            container = makeContentContainer()
+            container.initialContentSize = focusedSurface?.initialSize
+            if focusedSurface == nil, case let .leaf(view) = surfaceTree.root {
+                focusedSurface = view.surfaceView
+            }
+        }
         parkedContainer = nil
         container.additionalSafeAreaInsets = NSEdgeInsetsZero
         window.contentView = container
