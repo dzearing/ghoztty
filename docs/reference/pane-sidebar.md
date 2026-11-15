@@ -424,6 +424,13 @@ shows the same view of it (see *Shared across windows*). Read before touching
   group); a project's (or Ungrouped's) closes every window under it — while
   searching, the matching windows it shows and counts.
 
+## Hero mode
+
+A window in hero mode has no sidebar: hero gives it to the hero pane and its
+carousel (`PaneSidebarState.isSuppressed`, folded into `mode(windowWidth:)`
+as hidden — this window only, the shared hide/show flag untouched). It comes
+back as hero turns off. See [pane-style.md](pane-style.md).
+
 ## Single-window mode
 
 With `macos-window-mode = single` ([window-modes.md](window-modes.md)) every

@@ -203,6 +203,7 @@ class BaseTerminalController: NSWindowController,
     /// not be collapsed then. It is, once the window is alone again.
     private var collapseForcedTabBarWhenAlone = false
     private var heroSelectionCancellable: AnyCancellable?
+    private var heroActiveCancellable: AnyCancellable?
 
     /// This can be set to show/hide the command palette.
     @Published var commandPaletteIsShowing: Bool = false
@@ -744,6 +745,12 @@ class BaseTerminalController: NSWindowController,
             .receive(on: DispatchQueue.main)
             .sink { [weak self] newIndex in
                 self?.heroSelectionDidChange(to: newIndex)
+            }
+        // Hero mode has the window to itself: no pane sidebar beside it.
+        heroActiveCancellable = heroModeState.$isActive
+            .removeDuplicates()
+            .sink { [weak self] active in
+                self?.paneSidebarState.isSuppressed = active
             }
 
         center.addObserver(
@@ -1355,7 +1362,7 @@ class BaseTerminalController: NSWindowController,
         if heroModeState.isActive {
             let oldLeaves = from.visibleLeaves
             let newLeaves = to.visibleLeaves
-            if newLeaves.count <= 1 {
+            if newLeaves.isEmpty {
                 heroModeState.deactivate()
             } else {
                 let oldSet = Set(oldLeaves.map { ObjectIdentifier($0) })
@@ -2050,12 +2057,13 @@ class BaseTerminalController: NSWindowController,
             // Hero mode is over the panes on screen; stashed ones were put
             // away on purpose.
             let leaves = surfaceTree.visibleLeaves
-            guard leaves.count > 1 else { return }
+            guard !leaves.isEmpty else { return }
 
             let focusedIndex = leaves.firstIndex(of: pane) ?? 0
             heroModeState.activate(
                 focusedIndex: focusedIndex, leafCount: leaves.count,
-                carouselRatio: ghostty.config.macosHeroCarouselRatio)
+                carouselRatio: ghostty.config.macosHeroCarouselRatio,
+                carouselWidth: ghostty.config.macosHeroCarouselWidth)
         }
 
         bringForward()

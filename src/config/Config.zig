@@ -3471,15 +3471,25 @@ keybind: Keybinds = .{},
 /// Changing this option at runtime applies to every window.
 @"macos-pane-min-height": u32 = 125,
 
-/// The share of the window's width the pane carousel takes when hero mode
-/// (`toggle_hero_mode`) is turned on, as a fraction from 0 to 1. The hero
-/// pane takes the rest. macOS only.
+/// The width, in points, of the pane carousel when hero mode
+/// (`toggle_hero_mode`) is turned on. The hero pane takes the rest of the
+/// window. macOS only.
 ///
 /// Dragging the divider between the hero pane and the carousel still resizes
 /// it, per window; that size is kept until the window closes.
 ///
-/// The value is clamped to 0.1 through 0.6. The default value is 0.25.
-@"macos-hero-carousel-ratio": f64 = 0.25,
+/// `macos-hero-carousel-ratio`, when set, takes precedence.
+///
+/// The value is clamped to 80 through 600. The default value is 130.
+@"macos-hero-carousel-width": u32 = 130,
+
+/// The share of the window's width the pane carousel takes when hero mode is
+/// turned on, as a fraction from 0 to 1, in place of
+/// `macos-hero-carousel-width`. macOS only.
+///
+/// The value is clamped to 0.1 through 0.6. Unset by default, which uses
+/// `macos-hero-carousel-width`.
+@"macos-hero-carousel-ratio": ?f64 = null,
 
 /// Whether the proxy icon in the macOS titlebar is visible. The proxy icon
 /// is the icon that represents the folder of the current working directory.
@@ -4907,7 +4917,10 @@ pub fn finalize(self: *Config) !void {
     // option's docs for the range).
     self.@"macos-pane-min-width" = std.math.clamp(self.@"macos-pane-min-width", 120, 800);
     self.@"macos-pane-min-height" = std.math.clamp(self.@"macos-pane-min-height", 80, 600);
-    self.@"macos-hero-carousel-ratio" = std.math.clamp(self.@"macos-hero-carousel-ratio", 0.1, 0.6);
+    self.@"macos-hero-carousel-width" = std.math.clamp(self.@"macos-hero-carousel-width", 80, 600);
+    if (self.@"macos-hero-carousel-ratio") |ratio| {
+        self.@"macos-hero-carousel-ratio" = if (std.math.isNan(ratio)) null else std.math.clamp(ratio, 0.1, 0.6);
+    }
 
     // Minimum window size
     if (self.@"window-width" > 0) self.@"window-width" = @max(10, self.@"window-width");
@@ -7318,16 +7331,18 @@ pub const Keybinds = struct {
                 .{ .performable = true },
             );
 
-            // Semantic prompts
+            // The previous/next window in the pane sidebar's all-windows
+            // list (in hero mode, the previous/next pane: hero mode takes
+            // the chord first). Upstream binds these to `jump_to_prompt`.
             try self.set.put(
                 alloc,
                 .{ .key = .{ .physical = .arrow_up }, .mods = .{ .super = true, .shift = true } },
-                .{ .jump_to_prompt = -1 },
+                .{ .goto_window = .previous },
             );
             try self.set.put(
                 alloc,
                 .{ .key = .{ .physical = .arrow_down }, .mods = .{ .super = true, .shift = true } },
-                .{ .jump_to_prompt = 1 },
+                .{ .goto_window = .next },
             );
 
             // Mac windowing
@@ -11337,7 +11352,8 @@ test "macos pane layout options: defaults, values and clamps" {
         try testing.expectEqual(MacWindowMode.separate, cfg.@"macos-window-mode");
         try testing.expectEqual(@as(u32, 225), cfg.@"macos-pane-min-width");
         try testing.expectEqual(@as(u32, 125), cfg.@"macos-pane-min-height");
-        try testing.expectEqual(@as(f64, 0.25), cfg.@"macos-hero-carousel-ratio");
+        try testing.expectEqual(@as(?f64, null), cfg.@"macos-hero-carousel-ratio");
+        try testing.expectEqual(@as(u32, 130), cfg.@"macos-hero-carousel-width");
     }
 
     {
@@ -11350,6 +11366,7 @@ test "macos pane layout options: defaults, values and clamps" {
             "--macos-pane-min-width=300",
             "--macos-pane-min-height=200",
             "--macos-hero-carousel-ratio=0.4",
+            "--macos-hero-carousel-width=200",
         } };
         try cfg.loadIter(alloc, &it);
         try cfg.finalize();
@@ -11358,7 +11375,8 @@ test "macos pane layout options: defaults, values and clamps" {
         try testing.expectEqual(MacWindowMode.single, cfg.@"macos-window-mode");
         try testing.expectEqual(@as(u32, 300), cfg.@"macos-pane-min-width");
         try testing.expectEqual(@as(u32, 200), cfg.@"macos-pane-min-height");
-        try testing.expectEqual(@as(f64, 0.4), cfg.@"macos-hero-carousel-ratio");
+        try testing.expectEqual(@as(?f64, 0.4), cfg.@"macos-hero-carousel-ratio");
+        try testing.expectEqual(@as(u32, 200), cfg.@"macos-hero-carousel-width");
     }
 
     {
@@ -11368,11 +11386,13 @@ test "macos pane layout options: defaults, values and clamps" {
             "--macos-pane-min-width=10",
             "--macos-pane-min-height=5000",
             "--macos-hero-carousel-ratio=0.9",
+            "--macos-hero-carousel-width=20",
         } };
         try cfg.loadIter(alloc, &it);
         try cfg.finalize();
         try testing.expectEqual(@as(u32, 120), cfg.@"macos-pane-min-width");
         try testing.expectEqual(@as(u32, 600), cfg.@"macos-pane-min-height");
-        try testing.expectEqual(@as(f64, 0.6), cfg.@"macos-hero-carousel-ratio");
+        try testing.expectEqual(@as(?f64, 0.6), cfg.@"macos-hero-carousel-ratio");
+        try testing.expectEqual(@as(u32, 80), cfg.@"macos-hero-carousel-width");
     }
 }

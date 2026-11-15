@@ -238,7 +238,7 @@ enum SettingsPages {
                 SettingRow("macos-pane-min-height", "Stack panes shorter than", .stepper(min: 80, max: 600, step: 5, unit: "pt")),
             ]),
             SettingsSection("Hero layout", [
-                SettingRow("macos-hero-carousel-ratio", "Carousel width", .slider(min: 0.1, max: 0.6, step: 0.05)),
+                SettingRow("macos-hero-carousel-width", "Carousel width", .stepper(min: 80, max: 600, step: 10, unit: "pt")),
             ]),
             SettingsSection("New windows", [
                 SettingRow("maximize", "Open windows filling the screen", .toggle),

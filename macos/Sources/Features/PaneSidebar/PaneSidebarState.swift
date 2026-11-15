@@ -235,6 +235,11 @@ final class PaneSidebarState: ObservableObject {
         set { change { shared.isExpanded = newValue } }
     }
 
+    /// Kept out of this window alone, whatever the shared flag says: hero
+    /// mode, which gives the window to the hero pane and its carousel.
+    /// Per window, never persisted.
+    @Published var isSuppressed = false
+
     /// Hidden outright (Ctrl+Cmd+S). Not a drop target while hidden. Shared.
     var isHidden: Bool {
         get { shared.isHidden }
@@ -493,7 +498,7 @@ final class PaneSidebarState: ObservableObject {
     }
 
     func mode(windowWidth: CGFloat) -> Mode {
-        Self.mode(isExpanded: isExpanded, isHidden: isHidden, windowWidth: windowWidth)
+        Self.mode(isExpanded: isExpanded, isHidden: isHidden || isSuppressed, windowWidth: windowWidth)
     }
 
     /// The width of the sidebar's COLUMN — what the grid is laid out beside.

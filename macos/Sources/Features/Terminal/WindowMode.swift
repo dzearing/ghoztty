@@ -421,6 +421,36 @@ extension BaseTerminalController {
         return everyController.first { $0.surfaceTree.contains(where: { $0 === pane }) }
     }
 
+    /// `owner(of:)` for a viewer.
+    static func owner(of viewer: ViewerView) -> BaseTerminalController? {
+        everyController.first { $0.surfaceTree.contains(where: { $0.viewerView === viewer }) }
+    }
+
+    /// `goto_window` (Cmd-Shift-Up/Down outside hero mode): the window
+    /// `offset` places from the one in use, in the order the pane sidebar's
+    /// all-windows list draws them, wrapping — the workspaces in
+    /// single-window mode, the visible windows otherwise. Whether it moved.
+    @discardableResult
+    static func gotoWindow(offset: Int) -> Bool {
+        let single = WindowMode.isSingle
+        let windows: [TerminalController] = single
+            ? WorkspaceHost.shared.workspaces
+            : TerminalController.all.filter {
+                guard let window = $0.window else { return false }
+                return window.isVisible && !window.isMiniaturized
+            }
+        let order = TerminalController.sidebarOrder(windows)
+        guard order.count > 1 else { return false }
+        let current: TerminalController? = single ? WorkspaceHost.shared.active : TerminalController.preferredParent
+        let index = current.flatMap { c in order.firstIndex { $0 === c } }
+        let target = index.map { order[(($0 + offset) % order.count + order.count) % order.count] } ?? order[0]
+        target.bringForward()
+        if !single, let surface = target.focusedSurface {
+            Ghostty.moveFocus(to: surface)
+        }
+        return true
+    }
+
     /// `owner(of:)` for a terminal.
     static func owner(of surface: Ghostty.SurfaceView) -> BaseTerminalController? {
         if let controller = surface.window?.windowController as? BaseTerminalController,

@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import GhosttyKit
 import Testing
 @testable import Ghostty
@@ -256,6 +257,9 @@ final class SingleWindowModeTests {
         _ = await poll(timeout: 15) {
             first.focusedSurface.map { BaseTerminalController.remoteInheritance(of: $0).sessionId != nil } ?? false
         }
+        // Its shell has reported its directory: what lets a new window
+        // inherit it with no agent round trip.
+        _ = await poll(timeout: 15) { first.focusedSurface?.pwd != nil }
         await settle(1)
 
         for round in 0..<4 {
@@ -384,6 +388,50 @@ final class SingleWindowModeTests {
         #expect(runs.count == 1, "the stack changed on the way back: \(runs)")
         #expect(!glided, "coming back on show replayed a glide")
         #expect(stageA.runsForTesting == before)
+    }
+
+    /// Hero mode over one pane, with the pane sidebar out of the window
+    /// meanwhile (that window only; the shared flag is untouched).
+    @Test func heroModeTurnsOnOverOnePaneWithoutTheSidebar() async throws {
+        let (a, pane) = try await workspace(activate: true)
+        a.paneSidebarState.isHidden = false
+        let surface = try #require(pane.surfaceView)
+        let wide = (width: CGFloat(1400), ())
+        #expect(a.paneSidebarState.mode(windowWidth: wide.width) != .hidden)
+
+        NotificationCenter.default.post(name: Ghostty.Notification.didToggleHeroMode, object: surface)
+        #expect(await poll(timeout: 2) { a.heroModeState.isActive }, "hero mode refused a single pane")
+        #expect(a.paneSidebarState.mode(windowWidth: wide.width) == .hidden)
+        #expect(!a.paneSidebarState.isHidden, "hero mode hid every window's sidebar")
+        #expect(a.heroModeState.carouselWidth(in: wide.width) == 130)
+
+        NotificationCenter.default.post(name: Ghostty.Notification.didToggleHeroMode, object: surface)
+        #expect(await poll(timeout: 2) { !a.heroModeState.isActive })
+        #expect(a.paneSidebarState.mode(windowWidth: wide.width) != .hidden, "the sidebar did not come back")
+    }
+
+    /// Cmd-Shift-Up/Down is `goto_window`, which walks the windows in the
+    /// sidebar's all-windows order, wrapping.
+    @Test func cmdShiftArrowsWalkTheSidebarsWindows() async throws {
+        let ghostty = try self.ghostty
+        let up = try #require(ghostty.config.keyboardShortcut(for: "goto_window:previous"))
+        let down = try #require(ghostty.config.keyboardShortcut(for: "goto_window:next"))
+        let upKey: KeyEquivalent = .upArrow, downKey: KeyEquivalent = .downArrow
+        #expect(up.modifiers == [.command, .shift])
+        #expect(up.key.character == upKey.character)
+        #expect(down.modifiers == [.command, .shift])
+        #expect(down.key.character == downKey.character)
+
+        _ = try await workspace()
+        _ = try await workspace()
+        _ = try await workspace()
+        let order = TerminalController.sidebarOrder(host.workspaces)
+        host.show(order[0])
+        BaseTerminalController.gotoWindow(offset: 1)
+        #expect(host.active === order[1])
+        BaseTerminalController.gotoWindow(offset: -1)
+        BaseTerminalController.gotoWindow(offset: -1)
+        #expect(host.active === order[2], "it does not wrap")
     }
 
     /// Tab navigation walks the workspaces in the sidebar's order.

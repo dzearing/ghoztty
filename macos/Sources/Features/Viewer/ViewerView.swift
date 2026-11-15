@@ -3398,7 +3398,19 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// handled so WebKit never sees it — no beep, no re-injection. The monitor
     /// still performs the actual navigation.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if Self.isHeroNavChord(event) { return true }
+        if Self.isHeroNavChord(event) {
+            // Hero mode navigates with it (`HeroKeyNavigator`): swallow it so
+            // WebKit never sees it. Otherwise it is `goto_window`, which a
+            // terminal reaches through its keybind and a focused viewer has
+            // no way to: switch windows here. Unfocused, leave it alone —
+            // this is offered to every view in the window, and swallowing
+            // it here took the chord from the focused terminal.
+            let controller = BaseTerminalController.owner(of: self)
+            if controller?.heroModeState.isActive == true { return true }
+            guard paneHoldsFocus else { return super.performKeyEquivalent(with: event) }
+            BaseTerminalController.gotoWindow(offset: event.specialKey == .upArrow ? -1 : 1)
+            return true
+        }
         // Whatever is focused INSIDE this viewer pane — the address field or the
         // web page itself — must get the standard editing chords (Cmd-C/V/X/A)
         // so the pane behaves like a browser. They otherwise don't: Ghoztty
