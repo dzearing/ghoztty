@@ -348,6 +348,11 @@
             "unset": "shipped-elsewhere",
             "note": "T2516 diagnostic: QPC stamps on resize messages, logging only. unset ships; edge-drag-rate.ps1 -Burst sets it in BOTH arms so the trace cost is the same on each side, and every other edge-drag-rate run leaves it unset."
         },
+        "GHOZTTY_DESK_NO_CANVAS": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the pane desk paints on T2577's canvas under an edge drag and, since T2986, under a burst of size changes, which is what ships; set only by size-burst-canvas.ps1's `nocanvas` control arm (the oracle-live proof), whose `canvas` arm runs it unset."
+        },
         "GHOZTTY_RESIZE_NOPRELAYOUT": {
             "class": "non-default",
             "unset": "shipped-elsewhere",

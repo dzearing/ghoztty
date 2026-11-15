@@ -6827,6 +6827,18 @@ $GuardTable = @(
             'test\win32\drag-glide.ps1'
         )
     },
+    # T2986: a burst of size changes outside the modal size loop paints the
+    # desk on the edge drag's canvas. The burst rule decides when it arms and
+    # settles, so an edit there is an edit to what is measured.
+    [pscustomobject]@{
+        Name   = 'size-burst-canvas'
+        Script = 'test\win32\size-burst-canvas.ps1'
+        Stamp  = 'test\win32\size-burst-canvas.stamp.json'
+        Covers = @(
+            'src\apprt\win32\size_burst.zig',
+            'test\win32\size-burst-canvas.ps1'
+        )
+    },
     # T2603: what a window-edge drag step costs, with and without T2578's
     # pre-layout. The rule that decides which steps are laid out ahead is the
     # pre-layout's budget, so an edit there is an edit to what is measured.

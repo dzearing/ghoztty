@@ -25,6 +25,7 @@ const BannerDialog = @import("BannerDialog.zig");
 const BannerOverlay = @import("BannerOverlay.zig").BannerOverlay;
 const resize_paint = @import("resize_paint.zig");
 const resize_prelayout = @import("resize_prelayout.zig");
+const size_burst = @import("size_burst.zig");
 const resize_burst = @import("resize_burst.zig");
 const resize_content = @import("resize_content.zig");
 const Surface = @import("Surface.zig");
@@ -387,6 +388,9 @@ const DRAG_QUIET_TIMER_ID: usize = 0x4451; // 'DQ'
 const COMP_DRAG_TIMER_ID: usize = 0x4344; // 'CD'
 /// Writes the resize trace's ring out once a resize goes quiet (T2600).
 const RESIZE_TRACE_FLUSH_TIMER_ID: usize = 0x5254; // 'RT'
+/// A burst of size changes outside the modal size loop has gone quiet
+/// (T2986): the desk's canvas goes and the desk is laid out for the window.
+const SIZE_BURST_TIMER_ID: usize = 0x5342; // 'SB'
 /// Lands a title held while nobody can see the window (T2912):
 /// `held_title.interval_ms` after the first hold.
 const HELD_TITLE_TIMER_ID: usize = 0x4854; // 'HT'
@@ -803,6 +807,9 @@ burst_len: usize = 0,
 /// Inside a modal size loop (`WM_ENTERSIZEMOVE` .. `WM_EXITSIZEMOVE`), for the
 /// window as a whole (T2578); the panes keep their own `in_live_resize`.
 in_size_loop: bool = false,
+/// Size changes outside that loop (T2986): a burst of them paints the desk on
+/// the edge drag's canvas too (`noteSizeStep`).
+desk_burst: size_burst.State = .{},
 /// The client rect the layout should use instead of the window's current one
 /// (T2578). Set only while `WM_WINDOWPOSCHANGING` lays the panes out at the
 /// size the frame is about to take, so they are presented before it changes;
@@ -20272,6 +20279,63 @@ fn edgeStepEnd(self: *Window, size_us: u64) void {
 /// `WM_EXITSIZEMOVE` (T2603): what the edge drag cost, in the divider drag's
 /// line plus one of its own saying how a step split between T2578's
 /// pre-layout and the `WM_SIZE` pass.
+/// The desk's canvas goes - an edge drag ended, or a size burst went quiet -
+/// and the desk is laid out for the window again on the next paint (T2577).
+/// A canvas that already matches the window owes nothing.
+fn dropDeskCanvas(self: *Window, hwnd: w32.HWND) void {
+    const canvas = self.pane_desk.live;
+    self.pane_desk.liveResize(false);
+    if (canvas) |c| if (self.paneStyle() == .elevated) {
+        const area = self.deskRect();
+        if (c[0] != area.right - area.left or c[1] != area.bottom - area.top)
+            _ = w32.InvalidateRect(hwnd, &area, 0);
+    };
+}
+
+/// A `WM_SIZE` (T2986): a second size change close behind the first, outside
+/// the modal size loop, arms the edge drag's desk canvas for the burst, and
+/// every change re-arms the quiet timer that drops it (`size_burst`).
+fn noteSizeStep(self: *Window, hwnd: w32.HWND) void {
+    var cr: w32.RECT = undefined;
+    if (w32.GetClientRect(hwnd, &cr) == 0) return;
+    const now: i64 = @intCast(w32.GetTickCount64());
+    switch (self.desk_burst.step(now, cr.right - cr.left, cr.bottom - cr.top, self.in_size_loop)) {
+        .none => return,
+        .arm => {
+            self.desk_burst.gen_at_arm = self.pane_desk.desk_gen;
+            self.pane_desk.liveResize(true);
+        },
+        .extend => {},
+    }
+    if (w32.SetTimer(hwnd, SIZE_BURST_TIMER_ID, size_burst.quiet_ms, null) == 0) {
+        // No timer, no settle: never leave the canvas up without one.
+        _ = self.desk_burst.settle();
+        self.dropDeskCanvas(hwnd);
+    }
+}
+
+/// `WM_TIMER` for `SIZE_BURST_TIMER_ID` (T2986): the burst went quiet.
+fn settleSizeBurst(self: *Window, hwnd: w32.HWND) void {
+    _ = w32.KillTimer(hwnd, SIZE_BURST_TIMER_ID);
+    const steps = self.desk_burst.steps;
+    if (!self.desk_burst.settle() or self.in_size_loop) return;
+    const renders = self.pane_desk.desk_gen -% self.desk_burst.gen_at_arm;
+    self.dropDeskCanvas(hwnd);
+    if (!self.drag_perf_on) return;
+    // Paint the settle now, so the report can say what it laid out.
+    _ = w32.UpdateWindow(hwnd);
+    const area = self.deskRect();
+    const d = self.pane_desk.desk;
+    log.info("size burst steps={d} desk_renders={d} settled_desk={d}x{d} area={d}x{d}", .{
+        steps,
+        renders,
+        if (d) |x| x.w else 0,
+        if (d) |x| x.h else 0,
+        area.right - area.left,
+        area.bottom - area.top,
+    });
+}
+
 fn edgeDragEnded(self: *Window) void {
     self.edge_step = null;
     const e = self.edge_stats;
@@ -22289,6 +22353,10 @@ pub fn windowWndProc(
                 window.resizeTraceFlushTick(hwnd);
                 return 0;
             }
+            if (wparam == SIZE_BURST_TIMER_ID) {
+                window.settleSizeBurst(hwnd);
+                return 0;
+            }
             if (wparam == RESIZE_OVERLAY_TIMER_ID) {
                 if (window.resize_overlay_hwnd) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
                 _ = w32.KillTimer(hwnd, RESIZE_OVERLAY_TIMER_ID);
@@ -22421,6 +22489,7 @@ pub fn windowWndProc(
             // to "restore", so both a resize and a maximize/restore change
             // what it should be showing (T254).
             window.invalidateCaption();
+            window.noteSizeStep(hwnd);
             resizeTrace("size-begin", hwnd);
             var st = if (window.edge_step != null) std.time.Timer.start() catch null else null;
             window.handleResize(switch (wparam) {
@@ -22485,6 +22554,9 @@ pub fn windowWndProc(
                 }
             }
             // The desk paints on a canvas that holds still under the drag (T2577).
+            // A size burst that was holding one hands it to the drag (T2986).
+            _ = w32.KillTimer(hwnd, SIZE_BURST_TIMER_ID);
+            _ = window.desk_burst.settle();
             window.pane_desk.liveResize(true);
             return 0;
         },
@@ -22509,13 +22581,7 @@ pub fn windowWndProc(
             // The drag's canvas goes, and the desk is laid out for the window
             // again on the next paint (T2577). A move never left the window's
             // own size, and has nothing to lay out again.
-            const canvas = window.pane_desk.live;
-            window.pane_desk.liveResize(false);
-            if (canvas) |c| if (window.paneStyle() == .elevated) {
-                const area = window.deskRect();
-                if (c[0] != area.right - area.left or c[1] != area.bottom - area.top)
-                    _ = w32.InvalidateRect(hwnd, &area, 0);
-            };
+            window.dropDeskCanvas(hwnd);
             // T85: the user finished an interactive resize/move — remember
             // the outer size. Drag-to-top ("aero snap" maximize) can zoom
             // the window before this arrives, so read the live state and

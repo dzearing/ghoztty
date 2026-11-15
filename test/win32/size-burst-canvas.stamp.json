@@ -1,0 +1,14 @@
+{
+    "guard":  "size-burst-canvas",
+    "script":  "test/win32/size-burst-canvas.ps1",
+    "generated":  "2026-11-15T05:36:32-08:00",
+    "commit":  "9922d1f6c",
+    "uncommitted":  [
+                        "src/apprt/win32/size_burst.zig",
+                        "test/win32/size-burst-canvas.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/size_burst.zig":  "e58c0f2ade5e86beb81de8cb3715887c4c8d045253dc46d75415679341267f07",
+                  "test/win32/size-burst-canvas.ps1":  "c64c1f92290f8d5478d7e2d6a11e928d804f58088c05ed4bcfdf0f28c6e05ba0"
+              }
+}
