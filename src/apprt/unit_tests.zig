@@ -833,6 +833,11 @@ test {
     // before answering (T1612), same no-OS-imports deal.
     _ = @import("win32/ipc_session_await.zig");
 
+    // win32 IPC server per-connection pipe I/O: bounded reads/writes, the
+    // bounded hang-up wait and cancel-on-shutdown (T3105). Its tests drive a
+    // real named pipe and skip off Windows.
+    _ = @import("win32/ipc_pipe_io.zig");
+
     // Pure win32 session-layout manifest schema + JSON I/O (T89f1), same
     // no-OS-imports deal (LOCALAPPDATA path resolution degrades cleanly off
     // Windows / in the none lane).

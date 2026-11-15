@@ -75,8 +75,9 @@ pub const Conn = struct {
     /// `ReadFile` is documented as unpredictable — which is exactly what one
     /// combined field produced: the opt-out wedged on a read that neither
     /// completed nor timed out. The default `false` is what keeps a Conn built
-    /// around somebody else's handle — the win32 IPC SERVER wraps each
-    /// accepted pipe instance this way — on the blocking path it always had.
+    /// around somebody else's (synchronous) handle on the blocking path it
+    /// always had. The win32 IPC server opens its instances overlapped since
+    /// T3105 and builds owned Conns (`apprt/win32/ipc_pipe_io.zig`).
     owned: bool = false,
 
     /// Bound on a single read or write, in milliseconds; 0 means wait forever.
@@ -142,9 +143,8 @@ pub const Conn = struct {
 
     fn readSlice(self: Conn, buffer: []u8, wait_ms: ?u32) !usize {
         if (comptime is_windows) {
-            // A Conn wrapping a handle we did not open (the win32 IPC server
-            // wraps each accepted pipe instance) is synchronous and cannot do
-            // overlapped I/O; it keeps the blocking path it always had.
+            // A Conn wrapping a handle we did not open is synchronous and
+            // cannot do overlapped I/O; it keeps the blocking path it always had.
             if (!self.owned) return windows.ReadFile(self.handle, buffer, null);
             return self.overlappedIo(.read, buffer, wait_ms);
         }

@@ -997,11 +997,41 @@ Two things that look like details and are not:
   says how long. Folding them into one field made `GHOZTTY_IPC_TIMEOUT_MS=0`
   hand an overlapped handle to a synchronous `ReadFile` — documented as
   unpredictable, and measured here as a read that neither completed nor timed
-  out. The win32 IPC **server** wraps each accepted pipe instance in a `Conn`
-  it did not open, which is exactly what the `owned: false` default protects.
+  out. The win32 IPC **server** opens its own pipe instances overlapped since
+  T3105 and wraps each in an owned `Conn` (`ipc_pipe_io.conn`); a `Conn` built
+  around a handle somebody else opened still takes the `owned: false` default.
 - **A typo must not reinstate the hang.** An unparseable
   `GHOZTTY_IPC_TIMEOUT_MS` falls back to the 30s default, never to forever;
   only a literal `0` opts out.
+
+### One client never holds up another (server side)
+
+**A client has 5 s to send its request and to take its response, then it is
+dropped** (T3105; Mac 1956f5f55, `clientIOTimeout`). Until then the win32
+server read each request with a synchronous, untimed `ReadFile`, one listener
+per pipe instance and four instances, so four clients that connected and said
+nothing — a hook killed mid-write, a script that opened the pipe and blocked on
+something else — made every later `ghoztty +verb`, status hook and banner hook
+in every pane answer "No running Ghoztty instance found.", and ONE of them hung
+quit, because shutdown waits for every listener. Now
+(`src/apprt/win32/ipc_pipe_io.zig`):
+
+- The instances are `FILE_FLAG_OVERLAPPED`; every server read and write is
+  bounded at `io_timeout_ms` (5 s). A client that goes silent mid-request gets
+  no answer — it is not reading one.
+- `FlushFileBuffers` is gone: it blocks until the client has read everything,
+  so a client that sends and never reads held the instance forever the same
+  way. The server waits (bounded) for the client to hang up instead, which
+  every client does straight after reading its framed response.
+- **16 instances** (Mac serves at most 48 at once). Past that a client waits
+  in its PIPE_BUSY retries (~10 s), which a squatter frees within the bound.
+- Shutdown `CancelIoEx`es every instance, so quit waits on no client at all.
+
+What Mac also changed and Windows already had: the verbs EXECUTE one at a time
+on the GUI thread, which owns every window they touch, and a `+split` waiting
+on its new pane's session waits on the listener thread (`awaitSessions`), not
+the GUI thread, so it delays nobody else's hook. Acceptance:
+`test/win32/ipc-silent-client.ps1`.
 
 The auto-launch wait `+new-window` performs is a different question and has its
 own budget (`ipc_timeout.auto_launch_ms`, 30s): there the peer is a process we

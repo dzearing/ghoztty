@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-14T23:40:56-08:00",
-    "commit":  "19581323a",
+    "generated":  "2026-11-15T01:42:39-08:00",
+    "commit":  "9c9768969",
     "uncommitted":  [
-
+                        "test/win32/ipc-silent-client.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -236,6 +236,7 @@
                   "test/win32/ipc-relay.ps1":  "2b9f2ae9b3a7b4e58e9c69f79549b8381eed36938621e59ae5dd840461a1425a",
                   "test/win32/ipc-remote.ps1":  "56de2b6e167963374f909cd83250630f8a92221dd2593893e4b94294b9c60175",
                   "test/win32/ipc-send-keys-fidelity.ps1":  "ecd1a63052e0a9c52fdb10003f817026c4b95acd8fe76b4e2cff8a57a1ff2fd8",
+                  "test/win32/ipc-silent-client.ps1":  "541aacd085ecd592bae59d2cd7809474dc3f096f9bf440c302261207248febd6",
                   "test/win32/ipc-startup-latency.ps1":  "1746a051fae9196d18c356f5bbdb2401df1370382ab44391c7bcbeee59adb22f",
                   "test/win32/ipc-stash.ps1":  "37005cbaa7a7cb0155914f3575d25749e2f1077801db42640d79d00312b6ca59",
                   "test/win32/ipc-target-exists-note.ps1":  "5d92714c75607c77a5882b5935bde14dbe26dbba54226b3a003648a3e9318dfc",

@@ -6131,6 +6131,20 @@ $GuardTable = @(
             'test\win32\ipc-target-exists-note.ps1'
         )
     },
+    # A silent IPC client (T3105, Mac 1956f5f55): the bounded pipe I/O is
+    # unit-tested over a real pipe, but whether other clients still get in
+    # with the pool squatted, the silent ones are dropped, and quit is not
+    # held up is only answered against the running app.
+    [pscustomobject]@{
+        Name   = 'ipc-silent-client'
+        Script = 'test\win32\ipc-silent-client.ps1'
+        Stamp  = 'test\win32\ipc-silent-client.stamp.json'
+        Covers = @(
+            'src\apprt\win32\IpcServer.zig',
+            'src\apprt\win32\ipc_pipe_io.zig',
+            'test\win32\ipc-silent-client.ps1'
+        )
+    },
     # The pane stash (T1827): the model's invariants are unit-tested in every
     # lane, but whether the window actually hides, sizes, refuses and restores
     # a stashed pane is only answered by the acceptance script. Covers the pure

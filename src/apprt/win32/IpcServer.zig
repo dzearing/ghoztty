@@ -31,6 +31,7 @@ const windows = std.os.windows;
 const App = @import("App.zig");
 const IpcHandlers = @import("IpcHandlers.zig");
 const IpcSessionAwait = @import("ipc_session_await.zig");
+const pipe_io = @import("ipc_pipe_io.zig");
 const w32 = @import("win32.zig");
 const internal_os = @import("../../os/main.zig");
 const ipc_client = internal_os.ipc_client;
@@ -44,14 +45,19 @@ const max_request_len: u32 = 1_048_576;
 /// Handlers still run one at a time on the GUI thread, so this buys no
 /// throughput — it buys the ability to ACCEPT a client while another request
 /// is in flight, which is the difference between a slow answer and "No
-/// running Ghoztty instance found." Kept small deliberately: the real cure
-/// for a slow handler is a fast handler, and a deep pool would only hide it.
-const instance_count = 4;
+/// running Ghoztty instance found."
+///
+/// T3105 (Mac 1956f5f55, which serves at most 48 clients at once): 4 meant
+/// four clients that connected and said nothing took the whole server. Every
+/// read is bounded now (`ipc_pipe_io`), so a silent client costs one instance
+/// for at most `io_timeout_ms`; 16 is how many of those can sit on the server
+/// while every other pane's status and banner hooks still get straight in.
+/// The listeners are idle threads with reservation-only stacks, so the pool's
+/// cost is the threads, not memory.
+const instance_count = 16;
 
 // --- Win32 declarations missing from std / win32.zig -----------------------
 
-const FILE_FLAG_FIRST_PIPE_INSTANCE: windows.DWORD = 0x00080000;
-const PIPE_REJECT_REMOTE_CLIENTS: windows.DWORD = 0x00000008;
 const TOKEN_QUERY: windows.DWORD = 0x0008;
 const TokenUser: c_int = 1;
 const SDDL_REVISION_1: windows.DWORD = 1;
@@ -64,10 +70,6 @@ const TOKEN_USER = extern struct {
     User: SID_AND_ATTRIBUTES,
 };
 
-extern "kernel32" fn ConnectNamedPipe(
-    hNamedPipe: windows.HANDLE,
-    lpOverlapped: ?*anyopaque,
-) callconv(.winapi) windows.BOOL;
 extern "kernel32" fn DisconnectNamedPipe(
     hNamedPipe: windows.HANDLE,
 ) callconv(.winapi) windows.BOOL;
@@ -206,17 +208,9 @@ pub fn init(self: *IpcServer, app: *App) BindError!void {
     // Instance 0 carries FIRST_PIPE_INSTANCE: creating it IS the
     // single-instance lock, so it must be the one whose failure means
     // "another Ghoztty owns this name".
-    const first = windows.kernel32.CreateNamedPipeW(
-        path_w.ptr,
-        windows.PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE,
-        windows.PIPE_TYPE_BYTE | windows.PIPE_READMODE_BYTE |
-            windows.PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-        instance_count,
-        64 * 1024,
-        64 * 1024,
-        0,
-        if (sd != null) &sa else null,
-    );
+    // Overlapped (T3105), so no client can park a listener in an
+    // uninterruptible read: see ipc_pipe_io.zig.
+    const first = pipe_io.createInstance(path_w.ptr, true, instance_count, if (sd != null) &sa else null);
     if (first == windows.INVALID_HANDLE_VALUE) {
         return switch (windows.GetLastError()) {
             // With FIRST_PIPE_INSTANCE, a taken name comes back as
@@ -244,17 +238,7 @@ pub fn init(self: *IpcServer, app: *App) BindError!void {
     // costs concurrency only, so log and serve with what we got rather than
     // refusing to start an app over it.
     for (1..instance_count) |i| {
-        const extra = windows.kernel32.CreateNamedPipeW(
-            path_w.ptr,
-            windows.PIPE_ACCESS_DUPLEX,
-            windows.PIPE_TYPE_BYTE | windows.PIPE_READMODE_BYTE |
-                windows.PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-            instance_count,
-            64 * 1024,
-            64 * 1024,
-            0,
-            if (sd != null) &sa else null,
-        );
+        const extra = pipe_io.createInstance(path_w.ptr, false, instance_count, if (sd != null) &sa else null);
         if (extra == windows.INVALID_HANDLE_VALUE) {
             log.warn("extra IPC pipe instance {d} failed err={}", .{ i, windows.GetLastError() });
             break;
@@ -297,6 +281,13 @@ pub fn deinit(self: *IpcServer) void {
     // whose WM_APP_IPC is sitting in our no-longer-pumped queue, so drain
     // those in the same loop or the join below deadlocks.
     while (self.listeners_live.load(.acquire) > 0) {
+        // T3105: abort whatever each listener is waiting on — an accept, or a
+        // client that is slow to send, read or hang up — so quit waits on
+        // none of them. Repeated every pass because a listener between two
+        // operations is not waiting on anything yet.
+        for (self.pipes) |pipe| {
+            if (pipe != windows.INVALID_HANDLE_VALUE) pipe_io.cancel(pipe);
+        }
         const dummy = windows.kernel32.CreateFileW(
             self.path_w.ptr,
             windows.GENERIC_READ | windows.GENERIC_WRITE,
@@ -348,37 +339,40 @@ fn listen(self: *IpcServer, idx: usize) void {
         // which is the difference between "GUI slow" and "server serial".
         const accept_start: ?std.time.Instant =
             if (self.perf) (std.time.Instant.now() catch null) else null;
-        if (ConnectNamedPipe(pipe, null) == 0) {
-            switch (windows.GetLastError()) {
-                // Client connected between CreateNamedPipe/Disconnect and
-                // ConnectNamedPipe: the connection is fine, serve it.
-                .PIPE_CONNECTED => {},
-                else => |err| {
-                    if (self.shutdown.load(.acquire)) return;
-                    // A failed accept used to END this thread, which meant one
-                    // transient error retired the instance for the life of the
-                    // app — indistinguishable, from a client, from "Ghoztty is
-                    // not running". Reset the instance and keep accepting;
-                    // only a stuck-failing instance (which would otherwise hot
-                    // spin) gives up.
-                    log.warn("ConnectNamedPipe instance {d} failed err={}", .{ idx, err });
-                    consecutive_failures += 1;
-                    if (consecutive_failures >= max_accept_failures) {
-                        log.err("IPC instance {d} retiring after {d} failed accepts", .{
-                            idx, consecutive_failures,
-                        });
-                        return;
-                    }
-                    _ = DisconnectNamedPipe(pipe);
-                    std.Thread.sleep(10 * std.time.ns_per_ms);
-                    continue;
-                },
-            }
+        switch (pipe_io.accept(pipe)) {
+            .connected => {},
+            .cancelled => {
+                if (self.shutdown.load(.acquire)) return;
+                _ = DisconnectNamedPipe(pipe);
+                continue;
+            },
+            .failed => |err| {
+                if (self.shutdown.load(.acquire)) return;
+                // A failed accept used to END this thread, which meant one
+                // transient error retired the instance for the life of the
+                // app — indistinguishable, from a client, from "Ghoztty is
+                // not running". Reset the instance and keep accepting;
+                // only a stuck-failing instance (which would otherwise hot
+                // spin) gives up.
+                log.warn("ConnectNamedPipe instance {d} failed err={}", .{ idx, err });
+                consecutive_failures += 1;
+                if (consecutive_failures >= max_accept_failures) {
+                    log.err("IPC instance {d} retiring after {d} failed accepts", .{
+                        idx, consecutive_failures,
+                    });
+                    return;
+                }
+                _ = DisconnectNamedPipe(pipe);
+                std.Thread.sleep(10 * std.time.ns_per_ms);
+                continue;
+            },
         }
         consecutive_failures = 0;
         if (self.shutdown.load(.acquire)) return;
-        self.serveOne(pipe, accept_start);
-        _ = FlushAndDisconnect(pipe);
+        const answered = self.serveOne(pipe, accept_start);
+        // Bounded wait for the client to read its answer and hang up, then
+        // free the instance (T3105: replaces an unbounded FlushFileBuffers).
+        pipe_io.finish(pipe, answered and !self.shutdown.load(.acquire));
     }
 }
 
@@ -411,55 +405,50 @@ fn awaitSessions(self: *IpcServer, list: *const IpcSessionAwait) void {
     }
 }
 
-fn FlushAndDisconnect(pipe: windows.HANDLE) bool {
-    _ = windows.kernel32.FlushFileBuffers(pipe);
-    return DisconnectNamedPipe(pipe) != 0;
-}
-
 /// Read one framed request from the connected client, marshal it to the GUI
 /// thread, write the framed response. All failures are answered on the wire
-/// when possible (matching the Mac server's error strings).
-fn serveOne(self: *IpcServer, pipe: windows.HANDLE, accept_start: ?std.time.Instant) void {
-    const conn: ipc_client.Conn = .{ .handle = pipe };
+/// when possible (matching the Mac server's error strings). Returns whether a
+/// response was written, i.e. whether there is an answer the client may still
+/// be reading.
+///
+/// Every read and write is bounded by `pipe_io.io_timeout_ms` (T3105). A
+/// client that goes silent mid-request is dropped without an answer: it is not
+/// reading one, and writing it would only cost the instance another bound.
+fn serveOne(self: *IpcServer, pipe: windows.HANDLE, accept_start: ?std.time.Instant) bool {
+    const conn = pipe_io.conn(pipe);
     const connected: ?std.time.Instant =
         if (self.perf) (std.time.Instant.now() catch null) else null;
 
     var len_bytes: [4]u8 = undefined;
-    conn.readFull(&len_bytes) catch {
-        self.respondError(conn, "invalid message");
-        return;
-    };
+    conn.readFull(&len_bytes) catch |err| return self.readFailed(conn, err, "invalid message");
     const len = std.mem.bigToNative(u32, std.mem.bytesAsValue(u32, &len_bytes).*);
     if (len == 0 or len >= max_request_len) {
         self.respondError(conn, "invalid length");
-        return;
+        return true;
     }
 
     const body = self.alloc.alloc(u8, len) catch {
         self.respondError(conn, "out of memory");
-        return;
+        return true;
     };
     defer self.alloc.free(body);
-    conn.readFull(body) catch {
-        self.respondError(conn, "incomplete message");
-        return;
-    };
+    conn.readFull(body) catch |err| return self.readFailed(conn, err, "incomplete message");
 
-    // Marshal to the GUI thread and wait. No timeout: request/response is
-    // serial and the GUI thread owns every operation the verbs need (the Mac
-    // server behaves the same way).
+    // Marshal to the GUI thread and wait. No timeout on this wait: the GUI
+    // thread owns every operation the verbs need and runs them one at a
+    // time, and a handler that has started must be allowed to finish.
     var pending: Pending = .{ .server = self, .request_json = body };
     if (w32.PostMessageW(
         self.app.msg_hwnd orelse {
             self.respondError(conn, "server not ready");
-            return;
+            return true;
         },
         App.WM_APP_IPC,
         @intFromPtr(&pending),
         0,
     ) == 0) {
         self.respondError(conn, "server not ready");
-        return;
+        return true;
     }
     const posted: ?std.time.Instant =
         if (self.perf) (std.time.Instant.now() catch null) else null;
@@ -470,10 +459,29 @@ fn serveOne(self: *IpcServer, pipe: windows.HANDLE, accept_start: ?std.time.Inst
 
     const response = pending.response orelse {
         self.respondError(conn, "internal error");
-        return;
+        return true;
     };
     defer self.alloc.free(response);
     self.writeFramed(conn, response);
+    return true;
+}
+
+/// A request read that did not complete. A timeout (silent client) or a
+/// hang-up gets no answer, since nobody is reading one; anything else is
+/// answered with `msg`, as it always was.
+fn readFailed(self: *IpcServer, conn: ipc_client.Conn, err: anyerror, msg: []const u8) bool {
+    switch (err) {
+        error.Timeout => {
+            if (!self.shutdown.load(.acquire))
+                log.info("IPC client sent no complete request within {d} ms; dropped", .{pipe_io.io_timeout_ms});
+            return false;
+        },
+        error.EndOfStream => return false,
+        else => {
+            self.respondError(conn, msg);
+            return true;
+        },
+    }
 }
 
 /// GHOZTTY_PERF: one line per served request, splitting the wall clock the
