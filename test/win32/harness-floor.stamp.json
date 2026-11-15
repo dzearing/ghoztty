@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-15T09:29:41-08:00",
-    "commit":  "a1e8f90e8",
+    "generated":  "2026-11-15T10:45:06-08:00",
+    "commit":  "f51045ceb",
     "uncommitted":  [
-                        "test/win32/pane-stack-strip.ps1"
+                        "test/win32/activity-monitor.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -12,7 +12,7 @@
                   "scripts/vt-escape-scan.ps1":  "a23758e33821d194e040b24ac5e9811b705f53c5fc0313633aa1478f11567ced",
                   "test/win32/acceptance-parallel.ps1":  "112add92412ef2d5e520a37bb79e1d88d7df0b1dbd876596fc80479275d55107",
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
-                  "test/win32/activity-monitor.ps1":  "8afd262e94e894adfc429d335a1481b3923337aff794547944e119bbfce87f9c",
+                  "test/win32/activity-monitor.ps1":  "efbc5f4de0acf3b53ddce473468ef49684ed2df863bc79f47c7ee946ac93759c",
                   "test/win32/activity-monitor-dialed.ps1":  "e8d248a8d5507c68b3a67fd0f15692a98868d2542cbc6f0cdb714c9ee98ade99",
                   "test/win32/activity-monitor-probe-fail.ps1":  "bab527a3bfb7ceb8428cf31a3c382b7e2ab6ea001228140e9234c350142dbd15",
                   "test/win32/activity-monitor-remote.ps1":  "011a75488fceba22d318ca3a97b2bf727439d22da6b1d8000b52fee091216c30",
@@ -90,6 +90,7 @@
                   "test/win32/chooser-sessions-remote.ps1":  "6d4bef6c7bf6703dba1ddc0d8a8ce43b7fb78a9e2019bc63d49d8c2fc782f7ef",
                   "test/win32/chooser-warm-list.ps1":  "c615a0de86c2debc15e196b56f97cc2021594a6548058fa4f9a48e991fca28f2",
                   "test/win32/chrome-merged-row.ps1":  "54a72f9a33d3a97306fa46cbdb4f641b2cb08097b0539cd2fcd4be7b5d60abe2",
+                  "test/win32/chrome-paint-clip.ps1":  "a15cab3fc7c466e5169a9c5fa548687c0af50d2ef9cf19f75bcf090fad777496",
                   "test/win32/chrome-theme.ps1":  "90e9ae0a84d052ccd8d9cfbb915954acdf3fed4e1b4b376e65e815728aec9850",
                   "test/win32/claude-fullscreen-env.ps1":  "af09ed9e96b5d9eda02e54f9cdbcd59e08b0ed9d3bd20143b9813da59059c0ac",
                   "test/win32/claude-integration.ps1":  "1565ee1d5cc2e43059e677c48bd4f83b7e7fa5339f58ac132cb567510ac13b7f",

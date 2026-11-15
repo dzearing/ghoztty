@@ -537,8 +537,11 @@ pending_gen: u32 = 0,
 /// failed sample posts with no snapshot, so this is the only way the GUI thread
 /// learns the difference between "nothing new" and "the source is unreachable".
 pending_failed: bool = false,
-worker: ?std.Thread = null,
+worker: ?@import("../../os/main.zig").reusable_thread.PaneThread = null,
 sampling: bool = false,
+/// Samples this panel started. The close line reports it beside the sampler
+/// pool's thread count, which must not grow with it (T2990).
+samples_started: u32 = 0,
 
 /// The last sample failed (Mac's `lastRefreshFailed`). Drives the "Refresh
 /// failed" badge over a stale table and the "Couldn't connect" overlay over an
@@ -984,7 +987,11 @@ pub fn close(self: *ActivityMonitor) void {
     if (self.snap) |s| s.destroy(alloc);
     if (self.proc_sampler) |*p| p.deinit();
 
-    log.info("activity monitor: closed source={s}", .{self.source.label()});
+    log.info("activity monitor: closed source={s} samples={d} sampler_threads={d}", .{
+        self.source.label(),
+        self.samples_started,
+        sample_mod.samplerThreadsCreated(),
+    });
     alloc.destroy(self);
 }
 

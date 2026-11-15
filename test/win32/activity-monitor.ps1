@@ -2001,6 +2001,18 @@ try {
     Assert ((@(Get-Panels)).Count -eq 0) 'F Escape closes the panel'
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'F the app survives the panel closing'
     Assert (Select-String -Path $errlog -Pattern 'activity monitor: closed source=' -Quiet) 'F the panel tore itself down (sampler joined, registry slot freed)'
+    # T2990: the sampler runs on a parked thread. A fresh OS thread per 1.5 s
+    # sample stranded ~64 KB each in the NVIDIA driver, so the close line's
+    # thread count must stay put while its sample count climbs.
+    $closeLine = Select-String -Path $errlog -Pattern 'activity monitor: closed source=\S+ samples=(\d+) sampler_threads=(\d+)' |
+        Select-Object -Last 1
+    Assert ($null -ne $closeLine) 'F2 the close line reports samples and sampler threads'
+    if ($closeLine) {
+        $nSamples = [int]$closeLine.Matches[0].Groups[1].Value
+        $nThreads = [int]$closeLine.Matches[0].Groups[2].Value
+        Assert ($nSamples -ge 5) "F2 the panel sampled repeatedly while open (samples=$nSamples)"
+        Assert ($nThreads -ge 1 -and $nThreads -le 2) "F2 the sampler reused its parked thread (sampler_threads=$nThreads over $nSamples samples)"
+    }
 } catch {
     # T1511: the foreground-leak checks below are part of this run too, so this
     # try cannot END in `Complete-TestBody`. It SCORES its own throw instead -

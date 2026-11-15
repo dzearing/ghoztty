@@ -28,7 +28,7 @@
 //! freeing anything it could still be writing to.
 
 const std = @import("std");
-const thread_stack = @import("../../os/thread_stack.zig");
+const reusable_thread = @import("../../os/main.zig").reusable_thread;
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
@@ -149,11 +149,29 @@ pub fn kickSample(self: *ActivityMonitor) void {
     self.sampling = true;
     // The generation is captured HERE, on the GUI thread, so a switch that
     // happens while this worker runs can retire its result without racing it.
-    self.worker = std.Thread.spawn(thread_stack.config, sampleWorker, .{ self, self.source_gen }) catch |err| {
+    //
+    // On a parked thread, not a fresh one (T2990): this runs every 1.5 s for as
+    // long as the panel is open, and every thread the process creates while a
+    // GL context is alive strands ~64 KB in the NVIDIA driver (T2644) - a fresh
+    // thread per sample was ~150 MB an hour. `join` waits for the job only.
+    self.worker = reusable_thread.spawnPane(&sample_pool, sampleWorker, .{ self, self.source_gen }) catch |err| {
         log.warn("activity monitor: sample thread spawn failed err={}", .{err});
         self.sampling = false;
         return;
     };
+    self.samples_started +|= 1;
+}
+
+/// The sampler's parked thread. One sample is in flight per panel, so the pool
+/// grows to the number of panels ever sampling at once and then stops.
+var sample_pool: reusable_thread.Pool = .{ .name = "activity-sampler", .max_idle = 4 };
+
+/// OS threads the sampler pool has ever created. The acceptance census and
+/// tests read it: it must stay flat while a panel samples.
+pub fn samplerThreadsCreated() u32 {
+    sample_pool.mutex.lock();
+    defer sample_pool.mutex.unlock();
+    return sample_pool.created;
 }
 
 pub fn sampleWorker(self: *ActivityMonitor, gen: u32) void {

@@ -1,15 +1,15 @@
 {
     "guard":  "viewer-close",
     "script":  "test/win32/viewer-close.ps1",
-    "generated":  "2026-11-15T08:24:46-08:00",
-    "commit":  "a1e8f90e8",
+    "generated":  "2026-11-15T10:08:52-08:00",
+    "commit":  "f51045ceb",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/PaneView.zig":  "2f86b18aacb75e85c4889aee301a881c672238f9ecebe1a78b23a449e6327c53",
                   "src/apprt/win32/ViewerPane.zig":  "d64cf4ea620b7363052907c7904c1cd33476d04aab488b2b7d0b629ce5584c8f",
-                  "src/apprt/win32/Window.zig":  "40a4ee6d144d94aca5717036ef5953312281a03d137797fc8273f369141a98d2",
+                  "src/apprt/win32/Window.zig":  "e7d1e50155baec72b06e607e3488180577c3983fa01d916e2ddb334e75abc024",
                   "test/win32/viewer-close.ps1":  "db3dc1453f6d49be9669b5cd739d9a765b2c53c21826ec41352b70cbe25d8e3b"
               }
 }
