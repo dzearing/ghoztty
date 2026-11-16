@@ -62,6 +62,8 @@ const Window = @import("Window.zig");
 const PaneSidebar = @import("PaneSidebar.zig");
 const desk_palette = @import("desk_palette.zig");
 const pane_sidebar_order = @import("pane_sidebar_order.zig");
+const pane_sidebar = @import("pane_sidebar.zig");
+const pane_sidebar_window_order = @import("pane_sidebar_window_order.zig");
 const pane_sidebar_add = @import("pane_sidebar_add.zig");
 const dial_failure = @import("dial_failure.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
@@ -9634,10 +9636,12 @@ pub fn performAction(
             return true;
         },
 
-        .goto_window => {
-            // With no tab bar, each "tab" is a window — goto_window
-            // and goto_tab behave the same. Just acknowledge.
-            return true;
+        .goto_window => switch (target) {
+            .app => return false,
+            .surface => |core_surface| {
+                self.gotoWindow(core_surface.rt_surface.parent_window, value);
+                return true;
+            },
         },
 
         .reset_window_size => {
@@ -10345,6 +10349,35 @@ pub fn performAction(
             },
         },
     }
+}
+
+/// The previous/next window in the pane sidebar's all-windows list from
+/// `window`'s active tab, wrapping (T3132; Mac 997b26535 `gotoWindow`). A
+/// Windows tab is the Mac window's counterpart, so the list's stops are every
+/// tab of every window, and "going to" one is the sidebar's own row click
+/// (`PaneSidebar.raiseGroup`): raise its window, select its tab. In hero mode
+/// the chord is hero's - the previous/next pane - first, as on the Mac. The
+/// core action and a focused viewer's chord (`Window.performViewerBindingAction`)
+/// both land here.
+pub fn gotoWindow(self: *App, window: *Window, step: apprt.action.GotoWindow) void {
+    const dir: pane_sidebar_window_order.Step = switch (step) {
+        .previous => .previous,
+        .next => .next,
+    };
+    if (window.heroStep(dir == .next)) return;
+    var order: [pane_sidebar.max_heads]PaneSidebar.TabRef = undefined;
+    const n = PaneSidebar.allWindowsOrder(self, &order);
+    const at: ?usize = for (order[0..n], 0..) |r, i| {
+        if (r.window == window and r.tab == window.active_tab) break i;
+    } else null;
+    const to = pane_sidebar_window_order.stepped(n, at, dir) orelse {
+        log.info("goto_window {s}: nowhere else to go ({d} listed)", .{ @tagName(dir), n });
+        return;
+    };
+    const r = order[to];
+    log.info("goto_window {s}: {d} -> {d} of {d}", .{ @tagName(dir), at orelse n, to, n });
+    IpcHandlers.focusTarget(.{ .window = r.window });
+    if (r.tab != r.window.active_tab) r.window.selectTabIndex(r.tab);
 }
 
 /// Returns the open "Rename Window" dialog owning the given HWND (the

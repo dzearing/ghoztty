@@ -7564,8 +7564,21 @@ pub const Keybinds = struct {
             .{ .key = .{ .physical = .page_down }, .mods = .{ .ctrl = true, .alt = true } }
         else
             .{ .key = .{ .physical = .arrow_down }, .mods = .{ .super = true, .shift = true } };
-        try self.set.put(alloc, hero_nav_prev, .{ .goto_split = .previous });
-        try self.set.put(alloc, hero_nav_next, .{ .goto_split = .next });
+        //
+        // On Windows the chord is the previous/next WINDOW (T3132): Mac
+        // 997b26535 made its Cmd-Shift-Up/Down `goto_window`, walking the
+        // pane sidebar's all-windows list, with hero mode still taking it for
+        // its panes - and ctrl+alt+page_up/page_down is that chord's Windows
+        // mirror (T1725). The win32 apprt's `goto_window` steps the carousel
+        // first in hero mode, so hero navigation is unchanged; outside hero,
+        // previous/next pane keeps ctrl+super+[ and ].
+        if (comptime builtin.target.os.tag == .windows) {
+            try self.set.put(alloc, hero_nav_prev, .{ .goto_window = .previous });
+            try self.set.put(alloc, hero_nav_next, .{ .goto_window = .next });
+        } else {
+            try self.set.put(alloc, hero_nav_prev, .{ .goto_split = .previous });
+            try self.set.put(alloc, hero_nav_next, .{ .goto_split = .next });
+        }
 
         // Toggle hero mode
         try self.set.put(
@@ -11289,9 +11302,12 @@ test "default keybinds: windows ctrl clipboard mirrors are performable" {
 
 // T1725: the shell owns win+shift+up/down (stretch/restore the window
 // vertically), so a default there is a shortcut nobody can press. Windows
-// binds previous/next pane to ctrl+alt+page_up/page_down, and that is the
+// binds the Mac chord's mirror to ctrl+alt+page_up/page_down, and that is the
 // chord the reverse lookup - which the palette and menus display - returns.
-test "default keybinds: windows previous/next pane avoids the shell's win+shift+arrows" {
+// T3132: since Mac 997b26535 that chord is the previous/next window (hero
+// mode takes it for its panes in the apprt), and previous/next pane keeps
+// ctrl+super+[ and ].
+test "default keybinds: windows previous/next window avoids the shell's win+shift+arrows" {
     if (comptime builtin.target.os.tag != .windows) return error.SkipZigTest;
 
     const testing = std.testing;
@@ -11301,8 +11317,8 @@ test "default keybinds: windows previous/next pane avoids the shell's win+shift+
     defer cfg.deinit();
 
     const cases = .{
-        .{ inputpkg.Key.page_up, inputpkg.Key.arrow_up, inputpkg.Binding.Action{ .goto_split = .previous } },
-        .{ inputpkg.Key.page_down, inputpkg.Key.arrow_down, inputpkg.Binding.Action{ .goto_split = .next } },
+        .{ inputpkg.Key.page_up, inputpkg.Key.arrow_up, inputpkg.Binding.Action{ .goto_window = .previous } },
+        .{ inputpkg.Key.page_down, inputpkg.Key.arrow_down, inputpkg.Binding.Action{ .goto_window = .next } },
     };
     inline for (cases) |case| {
         const trigger: inputpkg.Binding.Trigger = .{
@@ -11319,6 +11335,21 @@ test "default keybinds: windows previous/next pane avoids the shell's win+shift+
 
         const shown = cfg.keybind.set.getTrigger(case[2]) orelse return error.TestExpectedBinding;
         try testing.expect(shown.equal(trigger));
+    }
+
+    // Previous/next pane did not lose its last chord with it: ctrl+super+[
+    // and ]. They are performable, which keeps them out of the reverse map,
+    // so they are looked up by trigger.
+    const pane_cases = .{
+        .{ '[', inputpkg.Binding.Action{ .goto_split = .previous } },
+        .{ ']', inputpkg.Binding.Action{ .goto_split = .next } },
+    };
+    inline for (pane_cases) |case| {
+        const entry = cfg.keybind.set.get(.{
+            .key = .{ .unicode = case[0] },
+            .mods = .{ .ctrl = true, .super = true },
+        }) orelse return error.TestExpectedBinding;
+        try testing.expectEqual(case[1], entry.value_ptr.leaf.action);
     }
 }
 

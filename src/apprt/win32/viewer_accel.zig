@@ -401,6 +401,11 @@ pub fn nativeTag(tag: std.meta.Tag(input.Binding.Action)) bool {
         // ctrl+shift+space into the page and the user could not leave hero
         // mode without first navigating to a terminal tile (T126).
         .toggle_hero_mode,
+        // The previous/next window (T3132): in hero mode it is hero's
+        // previous/next pane, so it has to answer from a focused viewer for
+        // the same reason as the toggle above - and a viewer-only window has
+        // no terminal to forward it through at all.
+        .goto_window,
         // Same ground as hero mode: the mode belongs to the window, and a
         // viewer pane is one of the panes rearrange mode exists to move, so
         // a focused viewer must not swallow the chord (T1524).
@@ -941,7 +946,8 @@ test "T1803: every action the core can perform from a viewer is routed" {
     }
 
     // The ones the old allowlist missed, named.
-    try testing.expectEqual(Route.core, routeOf(.{ .goto_window = .next }, true));
+    try testing.expectEqual(Route.native, routeOf(.{ .goto_window = .next }, true));
+    try testing.expectEqual(Route.native, routeOf(.{ .goto_window = .previous }, false));
     try testing.expectEqual(Route.core, routeOf(.toggle_window_float_on_top, true));
     try testing.expectEqual(Route.core, routeOf(.toggle_quick_terminal, false));
     try testing.expectEqual(Route.core, routeOf(.check_for_updates, false));

@@ -1414,8 +1414,27 @@ fn logText(self: *PaneSidebar) void {
     log.debug("pane sidebar text{s}", .{line});
 }
 
-const TabRef = struct { window: *Window, tab: usize };
+pub const TabRef = struct { window: *Window, tab: usize };
 const name_cap = 768; // a 256-unit tab title as UTF-8
+
+/// Every tab of every window in the all-windows list's order - names, then
+/// the user's drag order (`arrangeAll`) - whether or not a sidebar is showing.
+/// What `goto_window` walks (T3132; Mac 997b26535 walks "the windows in the
+/// pane sidebar's all-windows order"). A Windows tab is the Mac window's
+/// counterpart, so each tab is one stop. Returns how many.
+pub fn allWindowsOrder(app: *App, out: *[pane_sidebar.max_heads]TabRef) usize {
+    const max_heads = pane_sidebar.max_heads;
+    var refs: [max_heads]TabRef = undefined;
+    var names_buf: [max_heads][name_cap]u8 = undefined;
+    var names: [max_heads][]const u8 = undefined;
+    var wkey_bufs: [max_heads]window_order.Key = undefined;
+    var wkeys: [max_heads][]const u8 = undefined;
+    const nref = gatherAll(app, &refs, &names_buf, &names, &wkey_bufs, &wkeys);
+    var placed: [max_heads]outline.Placed = undefined;
+    const n = arrangeAll(names[0..nref], wkeys[0..nref], &placed);
+    for (placed[0..n], 0..) |p, i| out[i] = refs[p.index];
+    return n;
+}
 
 /// Every tab of every window the all-windows list gathers, with its name
 /// and its order key, indexed alike. Returns how many.

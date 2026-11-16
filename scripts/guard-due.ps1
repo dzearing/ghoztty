@@ -899,6 +899,26 @@ $GuardTable = @(
             'src\apprt\win32\ViewerPane.zig'
         )
     },
+    # The previous/next window chord (T3132; Mac 997b26535): ctrl+alt+page_up/
+    # page_down is `goto_window` on Windows, walking the pane sidebar's
+    # all-windows order (PaneSidebar.allWindowsOrder over
+    # pane_sidebar_outline + pane_sidebar_window_order) and wrapping, with
+    # hero mode taking it first (Window.heroStep). Config.zig holds the
+    # binding; viewer_accel admits it from a focused viewer.
+    [pscustomobject]@{
+        Name   = 'goto-window'
+        Script = 'test\win32\goto-window.ps1'
+        Stamp  = 'test\win32\goto-window.stamp.json'
+        Covers = @(
+            'test\win32\goto-window.ps1',
+            'src\apprt\win32\App.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'src\apprt\win32\pane_sidebar_window_order.zig',
+            'src\apprt\win32\pane_sidebar_outline.zig',
+            'src\apprt\win32\viewer_accel.zig',
+            'src\config\Config.zig'
+        )
+    },
     # A viewer folded into a strip stays folded when its page focuses itself
     # (T3125, Mac a7fe3e9f8): WebView2's GotFocus -> Window.adoptsFocus.
     [pscustomobject]@{

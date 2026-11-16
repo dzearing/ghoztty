@@ -17152,6 +17152,19 @@ fn gotoVisible(
     };
 }
 
+/// Hero mode's previous/next pane, for a chord hero takes first
+/// (`goto_window`, T3132: Mac 997b26535 "hero mode still takes the chord for
+/// its panes"). False when hero is off in the active tab: the chord is the
+/// caller's.
+pub fn heroStep(self: *Window, forward: bool) bool {
+    if (self.tab_count == 0) return false;
+    const tab = self.active_tab;
+    if (!self.tab_hero_active[tab]) return false;
+    const at: isize = @intCast(self.tab_hero_index[tab]);
+    self.heroSelect(if (forward) at + 1 else at - 1);
+    return true;
+}
+
 /// Navigate to a split in the given direction.
 pub fn gotoSplit(self: *Window, goto_target: apprt.action.GotoSplit) void {
     if (self.tab_count == 0) return;
@@ -17564,6 +17577,7 @@ pub const viewer_dispatch_tags = [_]std.meta.Tag(input.Binding.Action){
     .equalize_splits,
     .toggle_split_zoom,
     .toggle_hero_mode,
+    .goto_window,
     .toggle_rearrange_mode,
     .toggle_pane_sidebar,
     .stash_pane,
@@ -17725,6 +17739,10 @@ pub fn performViewerBindingAction(
         // viewer already gets a carousel tile (T397) and already answers the
         // hero nav chords, so the toggle belongs here too (T126).
         .toggle_hero_mode => self.toggleHeroMode(),
+        .goto_window => |step| self.app.gotoWindow(self, switch (step) {
+            .previous => .previous,
+            .next => .next,
+        }),
         // Rearrange mode is window-scoped for the same reason, and a viewer
         // pane is one of the panes you would want to move (T1524).
         .toggle_rearrange_mode => self.toggleRearrangeMode(),

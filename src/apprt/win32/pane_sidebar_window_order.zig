@@ -438,7 +438,48 @@ pub fn save(alloc: Allocator, keys: []const []const u8) void {
 }
 
 // ---------------------------------------------------------------------------
+// goto_window (T3132; Mac 997b26535 `BaseTerminalController.gotoWindow`)
+
+pub const Step = enum { previous, next };
+
+/// Where `goto_window` lands from `at` in a list of `count` windows in the
+/// all-windows list's order: one along, wrapping at both ends. `at` null
+/// (the window asking is not in the list) starts from the edge the step
+/// enters by - the first for next, the last for previous. Null when the list
+/// is empty, or holds only the window already there.
+pub fn stepped(count: usize, at: ?usize, step: Step) ?usize {
+    if (count == 0) return null;
+    const from = at orelse return switch (step) {
+        .next => 0,
+        .previous => count - 1,
+    };
+    if (count == 1) return null;
+    return switch (step) {
+        .next => (from + 1) % count,
+        .previous => (from + count - 1) % count,
+    };
+}
+
+// ---------------------------------------------------------------------------
 // Tests (Mac `PaneSidebarWindowOrderTests`, `PaneSidebarItemReorderTests`)
+
+test "T3132: goto_window steps one along the list and wraps at both ends" {
+    try testing.expectEqual(@as(?usize, 1), stepped(3, 0, .next));
+    try testing.expectEqual(@as(?usize, 0), stepped(3, 2, .next));
+    try testing.expectEqual(@as(?usize, 2), stepped(3, 0, .previous));
+    try testing.expectEqual(@as(?usize, 1), stepped(3, 2, .previous));
+}
+
+test "T3132: goto_window with nowhere else to go goes nowhere" {
+    try testing.expectEqual(@as(?usize, null), stepped(0, null, .next));
+    try testing.expectEqual(@as(?usize, null), stepped(1, 0, .next));
+    try testing.expectEqual(@as(?usize, null), stepped(1, 0, .previous));
+}
+
+test "T3132: goto_window from outside the list enters at the edge it steps in by" {
+    try testing.expectEqual(@as(?usize, 0), stepped(4, null, .next));
+    try testing.expectEqual(@as(?usize, 3), stepped(4, null, .previous));
+}
 
 const testing = std.testing;
 
