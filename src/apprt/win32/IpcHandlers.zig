@@ -2018,6 +2018,9 @@ fn handleSendKeys(ctx: Context, request: Request) Allocator.Error!?[]u8 {
 
     const write_req = termio.Message.WriteReq.init(ctx.alloc, normalized) catch
         return try errorResponse(ctx.alloc, "failed to queue input", .{});
+    // `+send-keys` is input sent to the pane (T3133), as the segmented path's
+    // `writePtyRaw`/`writePtyBracketed` record; this one writes past them.
+    if (normalized.len > 0) surface.core_surface.user_input_sent = true;
     surface.core_surface.io.queueMessage(switch (write_req) {
         .small => |v| .{ .write_small = v },
         .stable => |v| .{ .write_stable = v },

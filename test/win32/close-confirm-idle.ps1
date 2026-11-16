@@ -39,6 +39,10 @@
 #   Section E - a READ-ONLY surface (T357). Same shape, different forced
 #     branch: a pane the user has marked read-only confirms whatever the
 #     process table says.
+#   Sections F/G - a FRESH default shell nobody has typed into (T3133), on the
+#     exec and agent backends: closes with no dialog even while the process
+#     table reads it busy, and asks again after one typed or +send-keys
+#     character. See the comment above `Invoke-FreshSection`.
 #
 # Sections A-C prove a dialog can be ABSENT; D and E prove it is still there
 # where it was never the shell's call. That pairing is the point: until T41
@@ -757,6 +761,227 @@ function Invoke-ReadonlySection([string]$Label) {
     }
 }
 
+# Section F: a FRESH default shell (T3133, the Mac's 8c6987575 rule).
+#
+# A pane running its own default shell that the user has sent nothing to is
+# running nothing they started, so closing it does not ask - even when the
+# process table says "busy", which is what a shell whose startup (a profile
+# helper, an AutoRun) still has a child running looks like. Before T3133 the
+# Windows close decided on the process table alone and asked.
+#
+# The busy-but-fresh state is staged WITHOUT sending the pane any input: a
+# `ping` is started with the pane's shell as its PARENT
+# (PROC_THREAD_ATTRIBUTE_PARENT_PROCESS), so Win32_Process - and the app's own
+# ProcessTree - reads the shell as having a descendant. No registry AutoRun or
+# shell profile is touched; those are user state.
+#
+#   untouched  fresh + busy, nothing typed -> ctrl+w closes with NO dialog.
+#              The discriminator: without the rule this exact state confirms.
+#   typed      fresh + busy, ONE character typed (no Enter) -> the dialog is
+#              back. Proves a keystroke through the Win32-input-mode path (which
+#              bypasses the core's keyCallback) counts as input, and is the
+#              positive control that the chord reaches this window.
+#   send-keys  fresh + busy, `+send-keys` one character -> the dialog is back.
+#
+# -NegativeControl inverts the `untouched` verdict.
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class T3133ParentSpawn {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct STARTUPINFO {
+        public int cb; public string lpReserved; public string lpDesktop; public string lpTitle;
+        public int dwX; public int dwY; public int dwXSize; public int dwYSize;
+        public int dwXCountChars; public int dwYCountChars; public int dwFillAttribute;
+        public int dwFlags; public short wShowWindow; public short cbReserved2;
+        public IntPtr lpReserved2; public IntPtr hStdInput; public IntPtr hStdOutput; public IntPtr hStdError;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct STARTUPINFOEX { public STARTUPINFO StartupInfo; public IntPtr lpAttributeList; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct PROCESS_INFORMATION { public IntPtr hProcess; public IntPtr hThread; public int dwProcessId; public int dwThreadId; }
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool InitializeProcThreadAttributeList(IntPtr list, int count, int flags, ref IntPtr size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool UpdateProcThreadAttribute(IntPtr list, uint flags, IntPtr attr, IntPtr value, IntPtr size, IntPtr prev, IntPtr retSize);
+    [DllImport("kernel32.dll")]
+    static extern void DeleteProcThreadAttributeList(IntPtr list);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern bool CreateProcessW(string app, StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit,
+        uint flags, IntPtr env, string cwd, ref STARTUPINFOEX si, out PROCESS_INFORMATION pi);
+
+    // Start `cmdLine` with `parentPid` as its parent; returns the new pid, or
+    // a negative Win32 error code.
+    public static int Spawn(int parentPid, string cmdLine) {
+        IntPtr parent = OpenProcess(0x0080 /* PROCESS_CREATE_PROCESS */, false, parentPid);
+        if (parent == IntPtr.Zero) return -Marshal.GetLastWin32Error();
+        IntPtr size = IntPtr.Zero;
+        InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
+        IntPtr list = Marshal.AllocHGlobal(size);
+        IntPtr val = Marshal.AllocHGlobal(IntPtr.Size);
+        try {
+            if (!InitializeProcThreadAttributeList(list, 1, 0, ref size)) return -Marshal.GetLastWin32Error();
+            Marshal.WriteIntPtr(val, parent);
+            if (!UpdateProcThreadAttribute(list, 0, (IntPtr)0x00020000 /* PARENT_PROCESS */, val,
+                    (IntPtr)IntPtr.Size, IntPtr.Zero, IntPtr.Zero)) return -Marshal.GetLastWin32Error();
+            STARTUPINFOEX si = new STARTUPINFOEX();
+            si.StartupInfo.cb = Marshal.SizeOf(typeof(STARTUPINFOEX));
+            si.lpAttributeList = list;
+            PROCESS_INFORMATION pi;
+            // EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW
+            if (!CreateProcessW(null, new StringBuilder(cmdLine), IntPtr.Zero, IntPtr.Zero, false,
+                    0x00080000 | 0x08000000, IntPtr.Zero, null, ref si, out pi)) return -Marshal.GetLastWin32Error();
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            DeleteProcThreadAttributeList(list);
+            return pi.dwProcessId;
+        } finally {
+            Marshal.FreeHGlobal(val);
+            Marshal.FreeHGlobal(list);
+            CloseHandle(parent);
+        }
+    }
+}
+'@
+
+# The first pane's id from `+list --json`, for `+send-keys --target=`.
+function Get-PaneId {
+    $json = & $Exe +list --json 2>$null | Out-String
+    if (-not $json) { return '' }
+    try { $tree = $json | ConvertFrom-Json } catch { return '' }
+    $root = if ($tree.PSObject.Properties.Name -contains 'data') { $tree.data } else { $tree }
+    foreach ($w in @($root.windows)) {
+        foreach ($t in @($w.tabs)) {
+            $stack = New-Object System.Collections.Stack
+            $stack.Push($t.splits)
+            while ($stack.Count -gt 0) {
+                $n = $stack.Pop()
+                if ($null -eq $n) { continue }
+                if ($n.type -eq 'leaf') {
+                    if ($n.terminal -and $n.terminal.id) { return [string]$n.terminal.id }
+                } else {
+                    if ($n.right) { $stack.Push($n.right) }
+                    if ($n.left) { $stack.Push($n.left) }
+                }
+            }
+        }
+    }
+    return ''
+}
+
+# Launch a window and make its fresh shell look busy without typing into it.
+# Returns the GUI record with .Shell and .Foreign set, or $null (SETUP FAIL).
+function Start-FreshBusyWindow([string]$Label, [string[]]$ExtraArgs) {
+    $g = Launch-Gui $ExtraArgs
+    if (-not $g) { Write-Host "SETUP FAIL: $Label GUI did not come up"; $script:fail++; return $null }
+    Assert (-not (Test-TestDesktopLeak -ProcessId $g.Pid)) "$Label window is NOT on the interactive desktop"
+    $shell = 0
+    for ($t = 0; $t -lt 20 -and $shell -le 0; $t++) {
+        $shell = Get-PaneShellPid
+        if ($shell -le 0) { Start-Sleep -Milliseconds 300 }
+    }
+    if ($shell -le 0) {
+        Write-Host "SETUP FAIL: $Label +list reported no shell pid for the pane"
+        $script:fail++
+        Stop-Process -Id $g.Pid -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+    $foreign = [T3133ParentSpawn]::Spawn($shell, "$env:SystemRoot\System32\PING.EXE -n 120 127.0.0.1")
+    if ($foreign -le 0) {
+        Write-Host "SETUP FAIL: $Label could not start a child under shell $shell (error $(-$foreign))"
+        $script:fail++
+        Stop-Process -Id $g.Pid -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+    $g.Shell = $shell
+    $g.Foreign = $foreign
+    # The independent oracle that the shell now reads BUSY: its descendants,
+    # straight from Win32_Process. Without this the `untouched` verdict could
+    # be an idle shell closing silently under the older T41 rule.
+    $busy = @(Wait-Descendants $shell $true 8000)
+    $named = @($busy | Where-Object { [int]$_.ProcessId -eq $foreign })
+    Assert ($named.Count -eq 1) "$Label the staged child $foreign is a descendant of the fresh shell $shell ($($busy.Count) descendants)"
+    Start-Sleep -Milliseconds 500
+    return $g
+}
+
+function Stop-FreshBusyWindow($g) {
+    if (-not $g) { return }
+    if ($g.Foreign -gt 0) { Stop-Process -Id $g.Foreign -Force -ErrorAction SilentlyContinue }
+    Stop-Process -Id $g.Pid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+}
+
+# Fire ctrl+w and report @{ Dialog; Closed }. Escapes any dialog it opened.
+function Invoke-CloseChord($g) {
+    Send-TestKeys -Window $g.Top -Target $g.Surface -Modifiers ctrl -Key W | Out-Null
+    $dlg = Wait-Dialog $g.Pid $true 3000
+    $closed = $false
+    if ($dlg -eq [IntPtr]::Zero) {
+        for ($t = 0; $t -lt 40 -and -not $closed; $t++) {
+            Start-Sleep -Milliseconds 100
+            $closed = (-not (Test-TestWindowExists -Window $g.Top)) -or (-not (Test-TestWindowVisible -Window $g.Top))
+        }
+    } else {
+        Send-TestControlKey -Control $dlg -Key Escape | Out-Null
+        [void](Wait-Dialog $g.Pid $false)
+    }
+    return @{ Dialog = ($dlg -ne [IntPtr]::Zero); Closed = $closed }
+}
+
+function Invoke-FreshSection([string]$Label, [string[]]$ExtraArgs, [switch]$SendKeys) {
+    Write-Host ""
+    Write-Host "== $Label =="
+
+    # untouched: the discriminator.
+    $g = Start-FreshBusyWindow "$Label/untouched" $ExtraArgs
+    if ($g) {
+        try {
+            $r = Invoke-CloseChord $g
+            if ($NegativeControl) {
+                Write-Host "NEGATIVE CONTROL: asserting the untouched fresh close DOES confirm - this run MUST fail"
+                Assert $r.Dialog "$Label/untouched fresh busy shell: ctrl+w opens the confirm dialog (inverted)"
+            } else {
+                Assert (-not $r.Dialog) "$Label/untouched fresh busy shell: ctrl+w opens NO confirm dialog"
+            }
+            # No dialog plus an open window is a swallowed chord, not a skip.
+            Assert ($r.Dialog -or $r.Closed) "$Label/untouched the chord acted: the pane closed or asked"
+        } finally { Stop-FreshBusyWindow $g }
+    }
+
+    # typed: one character, no Enter.
+    $g = Start-FreshBusyWindow "$Label/typed" $ExtraArgs
+    if ($g) {
+        try {
+            Send-TestText -Window $g.Top -Target $g.Surface -Text 'x' | Out-Null
+            Start-Sleep -Milliseconds 600
+            $r = Invoke-CloseChord $g
+            Assert $r.Dialog "$Label/typed one typed character: ctrl+w opens the confirm dialog"
+            Assert (-not $r.Closed) "$Label/typed the window survives the cancelled close"
+        } finally { Stop-FreshBusyWindow $g }
+    }
+
+    if (-not $SendKeys) { return }
+    # send-keys: the CLI's input path.
+    $g = Start-FreshBusyWindow "$Label/send-keys" $ExtraArgs
+    if ($g) {
+        try {
+            $pane = Get-PaneId
+            Assert ($pane -ne '') "$Label/send-keys +list names the pane ('$pane')"
+            $out = (& $Exe +send-keys "--target=$pane" 'x' 2>$null | Out-String).Trim()
+            Write-Host "       +send-keys -> $out"
+            Start-Sleep -Milliseconds 600
+            $r = Invoke-CloseChord $g
+            Assert $r.Dialog "$Label/send-keys one character over +send-keys: ctrl+w opens the confirm dialog"
+        } finally { Stop-FreshBusyWindow $g }
+    }
+}
+
 Stop-RepoProcesses @('ghoztty', 'ghoztty-agent')
 Reset-AgentState
 Start-TestForegroundWatch
@@ -776,6 +1001,12 @@ try {
     Stop-RepoProcesses @('ghoztty')
     Reset-AgentState
     Invoke-ReadonlySection 'E/readonly'
+    Stop-RepoProcesses @('ghoztty')
+    Reset-AgentState
+    Invoke-FreshSection 'F/fresh-exec' @('--session-persistence=false') -SendKeys
+    Stop-RepoProcesses @('ghoztty')
+    Reset-AgentState
+    Invoke-FreshSection 'G/fresh-agent' @('--session-persistence=true')
 
     Complete-TestBody  # T1039: the last statement of the body an unwind can skip
 } finally {

@@ -3113,7 +3113,17 @@ pub fn closeNeedsConfirm(
     return switch (self.core_surface.config.confirm_close_surface) {
         .false => false,
         .always => true,
-        .true => !self.shellIsIdle(map),
+        // A default shell the user has sent nothing to is running nothing
+        // they started (T3133, the core's `fresh_default_shell`): close it
+        // without asking even when its startup has a child running (a
+        // profile's helper) or its pid is not known yet - both of which the
+        // process table reads as "busy". The core's own verdict says the same,
+        // but it is not consulted for `.true` here, so the rule is re-stated.
+        .true => if (self.core_surface.fresh_default_shell and
+            !self.core_surface.user_input_sent)
+            false
+        else
+            !self.shellIsIdle(map),
     };
 }
 
@@ -6773,6 +6783,12 @@ fn sendWin32InputEvent(self: *Surface, vk: u16, lparam: isize, action: input.Act
     const repeat_count: u16 = @intCast(lparam & 0xFFFF);
     const key_down: u1 = if (action == .press or action == .repeat) 1 else 0;
 
+    // A key that reaches the pty is input the user sent (T3133): this path
+    // bypasses `keyCallback`, which is where the core records it. A lone
+    // modifier is not - it is how every chord starts, and counting it would
+    // make Ctrl+Shift+W on a fresh shell ask, since its Ctrl goes out here.
+    if (key_down == 1 and !isModifierVk(vk)) self.core_surface.user_input_sent = true;
+
     // Get the Unicode character for this key via ToUnicode. Skip
     // modifier-only keys: they never produce a character and calling
     // ToUnicode for them is one of the ways the per-thread kernel
@@ -6849,6 +6865,8 @@ fn sendKittyBridgedKey(self: *Surface, key: input.Key, mods: input.Mods, action:
     var buf: [64]u8 = undefined;
     const bytes = kitty_key_bridge.encode(&buf, opts, action, key, mods) orelse return false;
     if (bytes.len == 0) return true;
+    // Input the user sent (T3133); see `sendWin32InputEvent`.
+    if (action != .release) self.core_surface.user_input_sent = true;
     log.debug("kitty key bridge: key={s} bytes={d}", .{ @tagName(key), bytes.len });
     // One write for the whole sequence, so conhost queues every record before
     // the program's next read and the reader sees the sequence in one piece
@@ -6867,6 +6885,9 @@ fn sendKittyBridgedKey(self: *Surface, key: input.Key, mods: input.Mods, action:
 /// These are characters without a corresponding WM_KEYDOWN, so we send a
 /// synthetic key event with vk=0, sc=0.
 pub fn sendWin32CharEvent(self: *Surface, char_code: u16) void {
+    // An IME commit or injected character is input the user sent (T3133);
+    // like `sendWin32InputEvent`, this never passes through `keyCallback`.
+    self.core_surface.user_input_sent = true;
     // Key-down event with the Unicode character
     self.writeWin32InputSequence(0, 0, char_code, 1, 0, 1);
     // Key-up event

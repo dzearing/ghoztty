@@ -4304,6 +4304,8 @@ fn endKeySequence(
     // Run the proper action first
     switch (action) {
         .flush => for (self.keyboard.sequence_queued.items) |write_req| {
+            // Keys the user typed, held while a sequence was pending.
+            self.user_input_sent = true;
             self.queueIo(switch (write_req) {
                 .small => |v| .{ .write_small = v },
                 .stable => |v| .{ .write_stable = v },
@@ -6430,6 +6432,8 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
                 .esc => try std.fmt.bufPrint(&buf, "\x1b{s}", .{data}),
                 else => unreachable,
             };
+            // A binding's bytes are input the user sent (`user_input_sent`).
+            self.user_input_sent = true;
             self.queueIo(try termio.Message.writeReq(
                 self.alloc,
                 full_data,
@@ -6457,6 +6461,7 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
                 );
                 return true;
             };
+            if (text.len > 0) self.user_input_sent = true;
             self.queueIo(try termio.Message.writeReq(
                 self.alloc,
                 text,
@@ -6489,6 +6494,7 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
                 break :normal !self.io.terminal.modes.get(.cursor_keys);
             };
 
+            self.user_input_sent = true;
             if (normal) {
                 self.queueIo(.{ .write_stable = ck.normal }, .unlocked);
             } else {
@@ -7439,10 +7445,13 @@ fn writeScreenFile(
             },
             .url = path,
         }),
-        .paste => self.queueIo(try termio.Message.writeReq(
-            self.alloc,
-            path,
-        ), .unlocked),
+        .paste => {
+            self.user_input_sent = true;
+            self.queueIo(try termio.Message.writeReq(
+                self.alloc,
+                path,
+            ), .unlocked);
+        },
     }
 }
 
