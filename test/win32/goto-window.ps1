@@ -243,6 +243,7 @@ Write-Host ''
 if ($script:fail -gt 0) {
     Write-Host "$($script:fail) FAILURE(S) ($($script:pass) assertions passed)"
     exit 1
+} else {
+    Write-Host "ALL PASS ($($script:pass) assertions)"
+    exit 0
 }
-Write-Host "ALL PASS ($($script:pass) assertions)"
-exit 0

@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-15T18:27:31-08:00",
-    "commit":  "3d49e5294",
+    "generated":  "2026-11-15T20:31:42-08:00",
+    "commit":  "bec1ea243",
     "uncommitted":  [
-                        "test/win32/split-inherit-cwd.ps1"
+                        "test/win32/goto-window.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -195,6 +195,7 @@
                   "test/win32/go-loop-guard.ps1":  "03d504bdec67146a33999234c5e435a7d8a33f184d44f756df750b20bb199cf3",
                   "test/win32/go-loop-resume.ps1":  "14325d8a66784b9f3efd653504c67d9434b27a5d2a98adba2e1d4a54d55b6350",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
+                  "test/win32/goto-window.ps1":  "733f119470488ccde01ee21c5e94adbec36cf5933757f33ba183f0bd0e2a9ae1",
                   "test/win32/guard-due.ps1":  "281420e26fbca13e3dfdd2707d8ef2294e277a3c0171aff3e53e5d0f87b939d6",
                   "test/win32/gui-launch-command.ps1":  "fa0a4aad0300e381786ac6c0d32b7666372c22ab9351bfb6d44a6ddfdcb84de3",
                   "test/win32/gui-postmortem.ps1":  "4f9ba3bb7629a71ca32e0c793212c56dfabeb1ed8c96dc41eacddf0d0598da98",

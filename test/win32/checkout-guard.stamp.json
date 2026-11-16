@@ -1,13 +1,13 @@
 {
     "guard":  "checkout-guard",
     "script":  "test/win32/checkout-guard.ps1",
-    "generated":  "2026-11-15T16:53:09-08:00",
-    "commit":  "2d0b6b8f5",
+    "generated":  "2026-11-15T19:00:22-08:00",
+    "commit":  "92ed5a7ef",
     "uncommitted":  [
-
+                        "scripts/guard-due.ps1"
                     ],
     "files":  {
-                  "scripts/guard-due.ps1":  "8b00d529e4b21cef44f1b79546e376696917a7f96f011fc135d09b467b7fb94b",
+                  "scripts/guard-due.ps1":  "647880affcb8261d3a8d0f23ed8403170d3ebffe4211bb54a3754ba81532bee7",
                   "scripts/suite-run.ps1":  "bf2f5de835338ccd60e97faa92bcf7289853c09e7b3c1c8fd342c716adfb5d71",
                   "test/win32/checkout-guard.ps1":  "d2757d2072ad93548f99073d50cdb316e927a31ac80d2aa5b77792de9506c619",
                   "test/win32/lib/BuildMode.ps1":  "71e515e4630722195cf187d5b7229f26fe2d596661d758bafbff98a6d1bf19e1",
