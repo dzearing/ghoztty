@@ -84,6 +84,10 @@ param(
     # NAME=VALUE pairs set in the app's environment, for A/B runs
     # (GHOZTTY_COMP_PRESENT=0 and friends). Recorded in the JSON.
     [string[]]$AppEnv = @(),
+    # T3016: the busy pane goes through the session agent (persistence on), so
+    # its output crosses the app's agent connection - the path whose per-frame
+    # cost the data-lane fix removed. Off keeps the classic local-pty number.
+    [switch]$BusyPersistence,
     [string[]]$Compare,
     # T3111: measure this ghoztty.exe instead of the build's zig-out folder -
     # an A/B against an older commit built into its own prefix. Only with
@@ -927,6 +931,34 @@ function Start-App([bool]$Persist, [string[]]$Extra = @()) {
     return [pscustomobject]@{ Pid = $script:app.Pid; Top = [IntPtr]$top }
 }
 function Stop-App { [void](Stop-RepoGhoztty -Exe $exe -AppOnly -SettleMs 500) }
+function Get-AgentInfo {
+    $r = Invoke-Verb @('+sessions', '--agent', '--json')
+    try { return ($r.Text | ConvertFrom-Json) } catch { return $null }
+}
+function Get-SessionRows {
+    $r = Invoke-Verb @('+sessions', '--json')
+    if ($r.Code -ne 0 -or [string]::IsNullOrWhiteSpace($r.Text)) { return @() }
+    try { $j = $r.Text | ConvertFrom-Json } catch { return @() }
+    return @($j | ForEach-Object { $_ })
+}
+# A cold sandbox has no agent and the first app gives up on it after ~2 s, so
+# bring one app up purely to start the agent; apps started after it find it
+# running. Returns the agent pid (T3016: shared by the agent phase and
+# -BusyPersistence).
+function Start-SandboxAgent {
+    [void](Start-App $true)
+    $agentPid = $null
+    $deadline = (Get-Date).AddSeconds(40)
+    do {
+        Start-Sleep -Milliseconds 500
+        $info = Get-AgentInfo
+        if ($info -and $info.agent_pid) { $agentPid = [int]$info.agent_pid }
+    } while (-not $agentPid -and (Get-Date) -lt $deadline)
+    if (-not $agentPid) { throw 'no agent came up for the sandbox lineage' }
+    Stop-App
+    Start-Sleep -Seconds 2
+    return $agentPid
+}
 
 $result = [ordered]@{
     exe = $exe
@@ -1012,7 +1044,8 @@ try {
             $typeCmd = if ($BusyText -eq 'cjk') { "chcp 65001 >nul & type `"$big`"" } else { "type `"$big`"" }
             $marker = Join-Path $work 'busy.done'
             Remove-Item $marker -ErrorAction SilentlyContinue
-            $a = Start-App $false
+            if ($BusyPersistence) { [void](Start-SandboxAgent) }
+            $a = Start-App ([bool]$BusyPersistence)
             Start-Sleep -Seconds 6
             $anchor = @(Get-PaneLeaves)[0].id
             $job = Start-GpuSampler $a.Pid 120
@@ -1029,6 +1062,7 @@ try {
             $result.busy = [ordered]@{
                 method = "+split a cmd pane running ``type`` of a $BusyMB MB file ($(if ($BusyText -eq 'cjk') { '40-ideograph UTF-8 lines walking U+4E00..U+9FFF' } else { '108-char ASCII lines' })) then writing a marker; wall time from the split to the marker, app CPU over the same span; GPU Engine(pid_*) summed, 1 s samples"
                 output_mb = $BusyMB
+                persistence = [bool]$BusyPersistence
                 wall_s = $rb.wall_s
                 cpu_s = $rb.cpu_s
                 cpu_pct = $rb.cpu_pct
@@ -1271,30 +1305,10 @@ try {
     if ($want -contains 'agent') {
         Write-Host "[$Build] agent: $AgentSessions sessions, $AttachCycles detach/attach cycles"
         try {
-            function Get-AgentInfo {
-                $r = Invoke-Verb @('+sessions', '--agent', '--json')
-                try { return ($r.Text | ConvertFrom-Json) } catch { return $null }
-            }
-            function Get-SessionRows {
-                $r = Invoke-Verb @('+sessions', '--json')
-                if ($r.Code -ne 0 -or [string]::IsNullOrWhiteSpace($r.Text)) { return @() }
-                try { $j = $r.Text | ConvertFrom-Json } catch { return @() }
-                return @($j | ForEach-Object { $_ })
-            }
             # A cold sandbox has no agent and the first app gives up on it after
             # ~2 s, so bring one app up purely to start the agent, then measure
             # in apps that find it running.
-            [void](Start-App $true)
-            $agentPid = $null
-            $deadline = (Get-Date).AddSeconds(40)
-            do {
-                Start-Sleep -Milliseconds 500
-                $info = Get-AgentInfo
-                if ($info -and $info.agent_pid) { $agentPid = [int]$info.agent_pid }
-            } while (-not $agentPid -and (Get-Date) -lt $deadline)
-            if (-not $agentPid) { throw 'no agent came up for the sandbox lineage' }
-            Stop-App
-            Start-Sleep -Seconds 2
+            $agentPid = Start-SandboxAgent
             $a = Start-App $true
             Start-Sleep -Seconds 6
             $base = Get-FullSample $agentPid 'agent base' -Settle
@@ -1330,9 +1344,14 @@ try {
                 Start-Sleep -Seconds 8
                 $re = Get-FullSample $agentPid "attached $c" -Settle
                 $reAttached = @(Get-SessionRows | Where-Object { $_.attached }).Count
+                # The app's own side of the same re-attach (T3016): its threads
+                # (the agent connection's reader threads among them) and its
+                # private bytes once every restored pane's replay has landed.
+                $appRe = Get-FullSample $a.Pid "app attached $c" -Settle
                 $att += [ordered]@{
                     detached = [ordered]@{ handles = $det.Handles; threads = $det.Threads; private_mb = $det.PrivMB; attached_sessions = $detAttached }
                     attached = [ordered]@{ handles = $re.Handles; threads = $re.Threads; private_mb = $re.PrivMB; attached_sessions = $reAttached }
+                    app = [ordered]@{ threads = $appRe.Threads; private_mb = $appRe.PrivMB; handles = $appRe.Handles }
                 }
             }
             $result.agent = [ordered]@{
