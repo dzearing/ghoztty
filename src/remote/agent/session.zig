@@ -641,6 +641,23 @@ pub const Session = struct {
     /// app whose alt-screen enter scrolled out). See `grid_snapshot.zig`.
     emulator: ?*grid_snapshot.GridEmulator = null,
 
+    /// Guards `emulator` and the geometry it is sized to (`rows`/`cols`), so the
+    /// VT parse of a chunk runs OUTSIDE the store lock (T3019, PA-I05). Parsing
+    /// is nearly all of what ingesting output costs, and under the one store
+    /// lock N busy panes parsed one at a time on one core's worth of the agent.
+    ///
+    /// The rule that keeps it simple: it is only ever taken WHILE holding the
+    /// store `mutex` (LOCK ORDER: `mutex` -> `emu_mutex` -> the connection's
+    /// write lock), and only `SessionStore.onChildOutput` keeps it after letting
+    /// go of the store lock - hand over hand, for the parse of the chunk it just
+    /// appended to the ring. So the only thing that can be holding it without
+    /// the store lock is this session's own reader, the emulator is always fed
+    /// in ring order, and a store-lock holder that takes it (an attach snapshot,
+    /// a ring snapshot's history, a resize) sees an emulator that matches the
+    /// ring exactly, after waiting at most one chunk's parse. Writers of
+    /// `rows`/`cols` hold both locks (`setGeometry`); readers hold either.
+    emu_mutex: std.Thread.Mutex = .{},
+
     /// The per-channel outbound byte offset (§4.2/§7.3). Every child→client DATA
     /// frame's `byte_offset` comes from `out_offset.advance(n)`; the SAME counter
     /// the client uses to discard already-applied DATA after a snapshot.
@@ -937,7 +954,22 @@ pub const Session = struct {
     /// Record child output: append to the ring and return the absolute offset of
     /// its first byte (for the DATA frame). Advances `out_offset` by `bytes.len`.
     /// Caller (the Server) frames it if `streaming` is true.
+    ///
+    /// Caller holds the store lock. The live path (`SessionStore.onChildOutput`)
+    /// does not use this: it splits the two halves so the parse runs after the
+    /// store lock is released (T3019).
     pub fn recordOutput(self: *Session, bytes: []const u8, now_ms: i64) u64 {
+        self.emu_mutex.lock();
+        defer self.emu_mutex.unlock();
+        const at = self.appendOutputLocked(bytes, now_ms);
+        self.feedEmulatorLocked(bytes);
+        return at;
+    }
+
+    /// The ring half of `recordOutput`: advance the offset and append. Caller
+    /// holds the store lock AND `emu_mutex`, and owes the emulator these same
+    /// bytes (`feedEmulatorLocked`) before it releases `emu_mutex`.
+    fn appendOutputLocked(self: *Session, bytes: []const u8, now_ms: i64) u64 {
         const at = self.out_offset.advance(bytes.len);
         // A ring restored from disk (an adopted holder, T906) holds output this
         // process never parsed. Seed the emulator from it BEFORE these bytes,
@@ -945,9 +977,18 @@ pub const Session = struct {
         // then sends that history-less snapshot in place of the ring (T1443).
         if (self.emulator == null) self.seedEmulatorFromRing();
         self.ring.append(at, bytes);
-        self.feedEmulator(bytes);
         self.last_activity_ms = now_ms;
         return at;
+    }
+
+    /// Set the live geometry the emulator is sized to. Caller holds the store
+    /// lock; this takes `emu_mutex` too, so a parse running outside the store
+    /// lock never reads a half-written size.
+    pub fn setGeometry(self: *Session, rows: u16, cols: u16) void {
+        self.emu_mutex.lock();
+        defer self.emu_mutex.unlock();
+        self.rows = rows;
+        self.cols = cols;
     }
 
     /// Mirror `bytes` into the headless grid emulator (FIX 2), lazily creating it
@@ -959,8 +1000,16 @@ pub const Session = struct {
     /// Public for the bytes the AGENT puts in front of a relaunched child (the
     /// replayed history, divider and notice — `Server.handleRelaunch`): they are
     /// what the pane shows, so the emulator must hold them too, or the NEXT
-    /// restart's history would forget everything from before this one.
+    /// restart's history would forget everything from before this one. Caller
+    /// holds the store lock.
     pub fn feedEmulator(self: *Session, bytes: []const u8) void {
+        self.emu_mutex.lock();
+        defer self.emu_mutex.unlock();
+        self.feedEmulatorLocked(bytes);
+    }
+
+    /// `feedEmulator` for a caller already holding `emu_mutex`.
+    fn feedEmulatorLocked(self: *Session, bytes: []const u8) void {
         const emu = self.emulator orelse blk: {
             const created = grid_snapshot.GridEmulator.create(
                 self.alloc,
@@ -1014,6 +1063,10 @@ pub const Session = struct {
         gpa: Allocator,
         opts: grid_snapshot.SnapshotOptions,
     ) ?[]u8 {
+        // Caller holds the store lock; `emu_mutex` waits out a parse in flight,
+        // after which the emulator describes exactly what the ring holds.
+        self.emu_mutex.lock();
+        defer self.emu_mutex.unlock();
         self.seedEmulatorFromRing();
         const emu = self.emulator orelse return null;
         // Reflow to the geometry the ATTACHING client asked for BEFORE
@@ -1028,6 +1081,8 @@ pub const Session = struct {
     /// (`GridEmulator.historyAlloc`), owned by `gpa`. Null when there is no
     /// emulator (no output yet) or on OOM; the ring alone is then all there is.
     pub fn historyAlloc(self: *Session, gpa: Allocator) ?[]u8 {
+        self.emu_mutex.lock();
+        defer self.emu_mutex.unlock();
         const emu = self.emulator orelse return null;
         emu.ensureSize(self.rows, self.cols);
         return emu.historyAlloc(gpa) catch null;
@@ -1038,7 +1093,9 @@ pub const Session = struct {
     /// for alt-screen sessions (see `gridSnapshotAlloc`), and asks only after
     /// `gridSnapshotAlloc` has run, so a restored session has been seeded by then
     /// and answers from its restored screen (T1443).
-    pub fn gridOnAltScreen(self: *const Session) bool {
+    pub fn gridOnAltScreen(self: *Session) bool {
+        self.emu_mutex.lock();
+        defer self.emu_mutex.unlock();
         const emu = self.emulator orelse return false;
         return emu.onAlternateScreen();
     }
@@ -1679,14 +1736,45 @@ pub const SessionStore = struct {
     ///      tombstones the session.
     /// Takes the store lock. Unknown channel ⇒ ignored. A zero-length call is a
     /// reap nudge (the pty reader sends one on EOF).
+    ///
+    /// The VT parse of the chunk (step 1's emulator half, nearly all of the
+    /// cost) runs AFTER the store lock is released, under the session's own
+    /// `emu_mutex` taken hand over hand (T3019, PA-I05): before, every busy
+    /// pane's parse ran under the one store lock, so N panes printing at once
+    /// shared one core's worth of the agent and stalled each other's DATA.
+    ///
+    /// Holding `s` across the unlocked parse is sound because this runs on the
+    /// session's pty reader thread, and a session is only ever freed after
+    /// `child.terminate()` has joined that thread (`freeUnlinked`, `deinit`).
+    /// The zero-length nudge (the only shape another thread sends, via
+    /// `Server.reapAll`) never leaves the lock.
     pub fn onChildOutput(self: *SessionStore, channel: u128, bytes: []const u8) void {
+        if (bytes.len > 0) {
+            if (!self.ingestOutput(channel, bytes)) return;
+        }
         self.mutex.lock();
         defer self.mutex.unlock();
-        const s = self.table.getByChannel(channel) orelse return;
-        if (!s.alive) return;
+        self.reapCheckLocked(channel);
+    }
+
+    /// Steps 1 and 2 of `onChildOutput`. Returns false when the channel is
+    /// unknown or already dead (nothing to reap-check either).
+    fn ingestOutput(self: *SessionStore, channel: u128, bytes: []const u8) bool {
+        self.mutex.lock();
+        const s = self.table.getByChannel(channel) orelse {
+            self.mutex.unlock();
+            return false;
+        };
+        if (!s.alive) {
+            self.mutex.unlock();
+            return false;
+        }
         const now_ms = self.now();
-        if (bytes.len > 0) {
-            const at = s.recordOutput(bytes, now_ms);
+        // Hand over hand: take the parse lock BEFORE releasing the store lock,
+        // so the emulator is fed in exactly the order the ring was appended.
+        s.emu_mutex.lock();
+        {
+            const at = s.appendOutputLocked(bytes, now_ms);
             // Keep the holder stream offset in lockstep with the ring (T906).
             // Read HERE, not on a timer: the child's reader thread is parked in
             // this very call, so its counter and the ring describe the same
@@ -1709,6 +1797,17 @@ pub const SessionStore = struct {
                 }
             }
         }
+        self.mutex.unlock();
+        s.feedEmulatorLocked(bytes);
+        s.emu_mutex.unlock();
+        return true;
+    }
+
+    /// Step 3 of `onChildOutput`. Caller holds the store lock.
+    fn reapCheckLocked(self: *SessionStore, channel: u128) void {
+        const s = self.table.getByChannel(channel) orelse return;
+        if (!s.alive) return;
+        const now_ms = self.now();
         // Reap-check: emit EXIT (after the final DATA already bridged) on exit.
         const code = s.child.tryWait() orelse return;
         // The holder died under an UNBOUND session (T1771): no pane is watching,
@@ -6384,4 +6483,166 @@ test "SessionStore.reapExited: an exit no output ever reported still tombstones 
     // Once tombstoned it is not reported again.
     store.reapExited();
     try testing.expectEqual(@as(usize, 1), exits.count);
+}
+
+/// A worker that feeds one session's sink from its own thread, the way that
+/// session's pty reader would (T3019).
+const FeedWorker = struct {
+    store: *SessionStore,
+    channel: u128,
+    chunk: []const u8,
+    chunks: usize,
+    done: std.atomic.Value(bool) = .init(false),
+
+    fn run(self: *FeedWorker) void {
+        for (0..self.chunks) |_| self.store.onChildOutput(self.channel, self.chunk);
+        self.done.store(true, .release);
+    }
+};
+
+/// One output chunk of `lines` 80-column text lines.
+fn feedChunkAlloc(alloc: Allocator, lines: usize) ![]u8 {
+    const line = "the quick brown fox jumps over the lazy dog 0123456789 ABCDEFGHIJKLMNOPQRSTUV\r\n";
+    const buf = try alloc.alloc(u8, line.len * lines);
+    for (0..lines) |i| @memcpy(buf[i * line.len ..][0..line.len], line);
+    return buf;
+}
+
+test "SessionStore.onChildOutput: the VT parse runs with the store lock released (T3019)" {
+    // PA-I05: every session's parse used to run under the ONE store lock, so N
+    // busy panes parsed one at a time and an attach stalled behind them. Proof
+    // that it no longer does: while a chunk is mid-parse (its bytes already in
+    // the ring, the session's parse lock still held by the reader), another
+    // thread can take the store lock. Under the old code the ring advance and
+    // the parse were one lock hold, so this state was unobservable.
+    const alloc = testing.allocator;
+    var prng = std.Random.DefaultPrng.init(0x3019);
+    var clock: MutClock = .{ .ms = 1 };
+    var store = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 100000);
+    defer store.deinit();
+    var fake: FakeChild = .{ .alloc = alloc };
+    defer fake.deinit();
+    const s = try store.table.create(fake.child(), 1, 24, 80, 1 << 22, 1);
+
+    const chunk = try feedChunkAlloc(alloc, 4096); // ~330 KB: a parse long enough to catch
+    defer alloc.free(chunk);
+
+    var observed = false;
+    var attempt: usize = 0;
+    while (!observed and attempt < 5) : (attempt += 1) {
+        var w: FeedWorker = .{ .store = &store, .channel = s.channel, .chunk = chunk, .chunks = 1 };
+        const before = blk: {
+            store.mutex.lock();
+            defer store.mutex.unlock();
+            break :blk s.out_offset.value;
+        };
+        const t = try std.Thread.spawn(.{}, FeedWorker.run, .{&w});
+        defer t.join();
+        while (!w.done.load(.acquire)) {
+            store.mutex.lock();
+            const appended = s.out_offset.value == before + chunk.len;
+            const parsing = appended and !s.emu_mutex.tryLock();
+            if (appended and !parsing) s.emu_mutex.unlock();
+            store.mutex.unlock();
+            if (parsing) {
+                observed = true;
+                break;
+            }
+            std.Thread.yield() catch {};
+        }
+    }
+    try testing.expect(observed);
+
+    // And the emulator still got every byte, in order: what an attach would
+    // repaint is the last line printed.
+    const snap = s.gridSnapshotAlloc(alloc, .{}) orelse return error.TestExpectedSnapshot;
+    defer alloc.free(snap);
+    try testing.expect(std.mem.indexOf(u8, snap, "lazy dog 0123456789") != null);
+}
+
+test "SessionStore.onChildOutput: two sessions ingest in parallel (T3019 benchmark)" {
+    // Opt-in measurement, not a gate: wall time is the box's, not the code's.
+    // GHOZTTY_BENCH_T3019=<MiB per session> runs one session alone, then two at
+    // once, and prints both rates. Under one store lock held across the parse
+    // the pair's combined rate equals the single rate; with the parse off the
+    // lock it approaches twice it on a box with two idle cores. Release agents
+    // allocate from `smp_allocator` (T3017), so the bench does too in a release
+    // build: the test allocator's own global lock would serialize the pair.
+    const alloc = if (builtin.mode == .Debug) testing.allocator else std.heap.smp_allocator;
+    const mib_str = std.process.getEnvVarOwned(alloc, "GHOZTTY_BENCH_T3019") catch return error.SkipZigTest;
+    defer alloc.free(mib_str);
+    const mib = std.fmt.parseInt(usize, mib_str, 10) catch return error.SkipZigTest;
+
+    var prng = std.Random.DefaultPrng.init(0x3019b);
+    var clock: MutClock = .{ .ms = 1 };
+    var store = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 100000);
+    defer store.deinit();
+    var fa: FakeChild = .{ .alloc = alloc };
+    defer fa.deinit();
+    var fb: FakeChild = .{ .alloc = alloc };
+    defer fb.deinit();
+    var fc: FakeChild = .{ .alloc = alloc };
+    defer fc.deinit();
+    const a = try store.table.create(fa.child(), 1, 24, 80, 1 << 21, 1);
+    const b = try store.table.create(fb.child(), 2, 24, 80, 1 << 21, 1);
+    const c = try store.table.create(fc.child(), 3, 24, 80, 1 << 21, 1);
+
+    const chunk = try feedChunkAlloc(alloc, 800); // 64 KB, a pty read's worth
+    defer alloc.free(chunk);
+    const chunks = (mib << 20) / chunk.len;
+    const total: f64 = @floatFromInt(chunks * chunk.len);
+
+    var solo: FeedWorker = .{ .store = &store, .channel = c.channel, .chunk = chunk, .chunks = chunks };
+    var timer = try std.time.Timer.start();
+    {
+        const ts = try std.Thread.spawn(.{}, FeedWorker.run, .{&solo});
+        ts.join();
+    }
+    const solo_s = @as(f64, @floatFromInt(timer.read())) / std.time.ns_per_s;
+
+    var wa: FeedWorker = .{ .store = &store, .channel = a.channel, .chunk = chunk, .chunks = chunks };
+    var wb: FeedWorker = .{ .store = &store, .channel = b.channel, .chunk = chunk, .chunks = chunks };
+    timer.reset();
+    {
+        const ta = try std.Thread.spawn(.{}, FeedWorker.run, .{&wa});
+        defer ta.join();
+        const tb = try std.Thread.spawn(.{}, FeedWorker.run, .{&wb});
+        defer tb.join();
+    }
+    const pair_s = @as(f64, @floatFromInt(timer.read())) / std.time.ns_per_s;
+
+    // Control: the same pair on two separate stores, so no lock of ours is
+    // shared at all. The pair's rate on one store against this one is what the
+    // store lock still costs; this one against twice the solo rate is what
+    // the parse itself serializes on (allocator, OS), outside the agent's locks.
+    var store2 = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 100000);
+    defer store2.deinit();
+    var fd: FakeChild = .{ .alloc = alloc };
+    defer fd.deinit();
+    const d = try store2.table.create(fd.child(), 4, 24, 80, 1 << 21, 1);
+    var fe: FakeChild = .{ .alloc = alloc };
+    defer fe.deinit();
+    var store3 = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 100000);
+    defer store3.deinit();
+    const e = try store3.table.create(fe.child(), 5, 24, 80, 1 << 21, 1);
+    var wd: FeedWorker = .{ .store = &store2, .channel = d.channel, .chunk = chunk, .chunks = chunks };
+    var we: FeedWorker = .{ .store = &store3, .channel = e.channel, .chunk = chunk, .chunks = chunks };
+    timer.reset();
+    {
+        const td = try std.Thread.spawn(.{}, FeedWorker.run, .{&wd});
+        defer td.join();
+        const te = try std.Thread.spawn(.{}, FeedWorker.run, .{&we});
+        defer te.join();
+    }
+    const split_s = @as(f64, @floatFromInt(timer.read())) / std.time.ns_per_s;
+
+    const mb = 1024.0 * 1024.0;
+    std.debug.print(
+        "T3019 BENCH control: pair on two separate stores {d:.2} MiB/s combined ({d:.2}s)\n",
+        .{ 2 * total / mb / split_s, split_s },
+    );
+    std.debug.print(
+        "T3019 BENCH solo {d:.2} MiB/s ({d:.2}s for {d:.1} MiB); pair combined {d:.2} MiB/s ({d:.2}s for 2 x {d:.1} MiB); speedup {d:.2}x\n",
+        .{ total / mb / solo_s, solo_s, total / mb, 2 * total / mb / pair_s, pair_s, total / mb, (2 * total / pair_s) / (total / solo_s) },
+    );
 }

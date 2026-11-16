@@ -58,10 +58,13 @@
 //!
 //! ## Threading
 //!
-//! Not internally synchronized. The `Server` only ever touches a session's
-//! emulator under `store.mutex` — `feed`/`resize` from `onChildOutput` and
-//! `snapshotAlloc` from `handleAttach` both hold it — so access is single
-//! threaded by the store lock, exactly like the ring.
+//! Not internally synchronized. A session's emulator is touched only under
+//! that session's `Session.emu_mutex` (T3019) — `feed`/`resize` from
+//! `onChildOutput`, which parses with the store lock already released, and
+//! `snapshotAlloc` from `handleAttach`, which takes it under `store.mutex`.
+//! The live path takes it hand over hand from the store lock, so the
+//! emulator is fed in ring order and always matches the ring when a
+//! store-lock holder looks at it.
 //!
 //! ## Skew safety
 //!

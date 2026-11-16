@@ -1634,8 +1634,7 @@ pub const Server = struct {
         const now = self.clock.now();
         const replay_rows = s.rows;
         const replay_cols = s.cols;
-        s.rows = att.rows;
-        s.cols = att.cols;
+        s.setGeometry(att.rows, att.cols);
         s.last_activity_ms = now;
         // ...unless the quiet-attach seam is armed, in which case the geometry is
         // recorded and the child is left alone, so nothing repaints behind the
@@ -1813,8 +1812,7 @@ pub const Server = struct {
                 std.log.warn("RESIZE: session for ch={x} not alive", .{channel});
                 break :blk null;
             }
-            s.rows = rz.rows;
-            s.cols = rz.cols;
+            s.setGeometry(rz.rows, rz.cols);
             s.px_w = rz.px_w;
             s.px_h = rz.px_h;
             // First authoritative RESIZE after an ATTACH/RELAUNCH: deliver one
@@ -2526,8 +2524,7 @@ pub const Server = struct {
         // it is where the next checkpoint's history comes from, and a second
         // reboot must not forget everything from before the first. Fed at the
         // relaunch geometry, before the child's first byte, exactly like a viewer.
-        rs.rows = req.rows;
-        rs.cols = req.cols;
+        rs.setGeometry(req.rows, req.cols);
         if (replay_buf) |rb| rs.feedEmulator(dataPayloadBody(rb)[0..replay_n]);
         // The replay below delivers everything up to the current tail.
         rs.sent_offset = rs.out_offset.value;
