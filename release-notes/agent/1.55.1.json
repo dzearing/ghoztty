@@ -1,0 +1,9 @@
+{
+  "version": "1.55.1",
+  "sections": [
+    { "title": "Improvements",
+      "items": [
+        { "text": "Output from the session agent is parsed once and handed straight to the pane, with one fewer thread per connection." }
+      ] }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "version": "1.55.1",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "Hero mode on Windows starts with a 130 px carousel, hides the pane sidebar, and works over a single pane, as on the Mac." },
+        { "text": "A just-opened Windows shell closes without asking until you type into it, and typing on Windows now counts as input." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The perf baseline's idle CPU now counts kernel time and exact cycles; the \"7x idle regression\" was the meter." }
+      ] }
+  ]
+}
