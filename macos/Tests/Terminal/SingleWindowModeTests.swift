@@ -390,6 +390,48 @@ final class SingleWindowModeTests {
         #expect(stageA.runsForTesting == before)
     }
 
+    /// A pane's banner keeps the terminal below it across a switch away and
+    /// back: the card never comes back floating over the text.
+    @Test func aBannerStillHoldsTheTerminalBelowItAfterASwitch() async throws {
+        let (a, paneA) = try await workspace(activate: true)
+        let view = try #require(paneA.surfaceView)
+        view.paneBanner = "**Title**\nGoal: one\nStatus: two"
+        await settle(1)
+        // How far down the pane the terminal starts.
+        // How far down its pane the terminal starts: the SwiftUI host of the
+        // surface, in the pane's own hosting view.
+        func inset() -> CGFloat {
+            var host: NSView? = view
+            while let h = host, !String(describing: type(of: h)).contains("SurfaceRepresentable") {
+                host = h.superview
+            }
+            guard let host, let pane = host.superview else { return -1 }
+            return pane.isFlipped ? host.frame.minY : pane.bounds.height - host.frame.maxY
+        }
+        let before = inset()
+        try #require(before > 20, "the banner did not push the terminal down: \(before)")
+
+        let (b, _) = try await workspace()
+        host.show(b)
+        await settle(0.5)
+        host.show(a)
+        await settle(1)
+        #expect(abs(inset() - before) < 1, "after a switch the terminal starts at \(inset()), not \(before)")
+
+        // Cleared while parked: back on show with no banner, the terminal
+        // starts at the top; a banner set again pushes it down again.
+        host.show(b)
+        await settle(0.5)
+        view.paneBanner = nil
+        await settle(0.3)
+        host.show(a)
+        await settle(1)
+        #expect(inset() < 1, "a banner cleared while parked still holds the terminal down: \(inset())")
+        view.paneBanner = "**Title**\nGoal: one\nStatus: two"
+        await settle(1)
+        #expect(abs(inset() - before) < 1, "a banner set again starts the terminal at \(inset()), not \(before)")
+    }
+
     /// Hero mode over one pane, with the pane sidebar out of the window
     /// meanwhile (that window only; the shared flag is untouched).
     @Test func heroModeTurnsOnOverOnePaneWithoutTheSidebar() async throws {
