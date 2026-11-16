@@ -1,8 +1,8 @@
 {
     "guard":  "sessions-running-cmd",
     "script":  "test/win32/sessions-running-cmd.ps1",
-    "generated":  "2026-11-16T04:21:31-08:00",
-    "commit":  "7040bd7e8",
+    "generated":  "2026-11-16T05:45:26-08:00",
+    "commit":  "63f550d39",
     "uncommitted":  [
 
                     ],

@@ -1,13 +1,13 @@
 {
     "guard":  "perf-baseline-reader",
     "script":  "test/win32/perf-baseline-reader.ps1",
-    "generated":  "2026-11-16T01:35:33-08:00",
-    "commit":  "674561478",
+    "generated":  "2026-11-16T05:37:40-08:00",
+    "commit":  "63f550d39",
     "uncommitted":  [
-
+                        "scripts/perf-baseline.ps1"
                     ],
     "files":  {
-                  "scripts/perf-baseline.ps1":  "600b406b483473d3ca2dd3d2ab6feffa9aebab76bb35652e5c724de0271919cb",
+                  "scripts/perf-baseline.ps1":  "e968969e64d06701c8024bf414e6e1d7a98163e0ee12edfa5b26576740394abb",
                   "test/win32/perf-baseline-reader.ps1":  "37f53082a2016a1314b68fe59045876bc904f7c10b754125873c7e4cdf1e609c"
               }
 }

@@ -36,6 +36,15 @@
 #           (heap / GPU write-combined pool / other, VirtualQueryEx), and on
 #           Debug the DebugAllocator's leak report at a clean quit.
 #           -AppEnv NAME=VALUE sets app env for A/B runs.
+#   viewer  (T3033) one terminal plus three viewers split beside it - a
+#           markdown file, git-status: on a scratch repo, a static page from a
+#           loopback listener. open: the WebView2 tree (every msedgewebview2.exe
+#           under the app, by --type= role) process count and private bytes,
+#           app private bytes and GDI/USER growth, CPU over
+#           -ViewerVisibleSeconds shown; hidden: a new tab over them, CPU and
+#           private bytes over -ViewerHiddenSeconds; after_close: every viewer
+#           closed, the tree every 10 s for -ViewerCloseSeconds (residual) and
+#           the app's leak against before the first viewer.
 #   agent   session persistence on: ghoztty-agent.exe idle CPU and wakeups,
 #           private bytes per hosted session, and its handles/threads across
 #           -AttachCycles app kill (detach) / relaunch (re-attach) cycles.
@@ -63,7 +72,12 @@ param(
     [int]$ResizeSeconds = 8,
     [int]$AgentSessions = 4,
     [int]$AttachCycles = 3,
-    # all | idle | busy | cycle | agent, comma-separated or as an array
+    # T3033: the viewer phase's three spans - shown and idle, in a background
+    # tab, and after closing every viewer (the residual WebView2 tree).
+    [int]$ViewerVisibleSeconds = 60,
+    [int]$ViewerHiddenSeconds = 60,
+    [int]$ViewerCloseSeconds = 90,
+    # all | idle | busy | cycle | viewer | agent, comma-separated or as an array
     [string[]]$Phase = @('all'),
     # The cycle phase's panes: mixed (3 tabs holding 4+3+3, the baseline
     # shape), tabs (10 tabs of one pane), splits (one tab of 10) or one (a
@@ -99,7 +113,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $Phase = @($Phase | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-$bad = @($Phase | Where-Object { @('all', 'idle', 'busy', 'cycle', 'agent') -notcontains $_ })
+$bad = @($Phase | Where-Object { @('all', 'idle', 'busy', 'cycle', 'viewer', 'agent') -notcontains $_ })
 if ($bad.Count) { Write-Host "unknown -Phase: $($bad -join ',')"; exit 2 }
 $AppEnv = @($AppEnv | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 $appEnvMap = [ordered]@{}
@@ -214,7 +228,8 @@ if ($Build -eq 'Both' -and -not $SelfTest) {
             '-IdleSeconds', $IdleSeconds, '-BusyMB', $BusyMB, '-BusyText', $BusyText, '-ResizeSeconds', $ResizeSeconds,
             '-AgentSessions', $AgentSessions, '-AttachCycles', $AttachCycles, '-Phase', ($Phase -join ','),
             '-CycleShape', $CycleShape, '-SettledCycles', $SettledCycles, '-CycleMaxWarmup', $CycleMaxWarmup,
-            '-SettleBudgetMB', $SettleBudgetMB, '-CycleIdleSeconds', $CycleIdleSeconds)
+            '-SettleBudgetMB', $SettleBudgetMB, '-CycleIdleSeconds', $CycleIdleSeconds,
+            '-ViewerVisibleSeconds', $ViewerVisibleSeconds, '-ViewerHiddenSeconds', $ViewerHiddenSeconds, '-ViewerCloseSeconds', $ViewerCloseSeconds)
         if ($AppEnv.Count) { $childArgs += @('-AppEnv', ($AppEnv -join ',')) }
         if ($BusyPersistence) { $childArgs += '-BusyPersistence' }
         Write-Host "== $b build"
@@ -239,7 +254,7 @@ if ($Build -eq 'Both' -and -not $SelfTest) {
             gpu   = ((Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }) -join '; ')
             os    = (Get-CimInstance Win32_OperatingSystem).Version
         }
-        parameters = [ordered]@{ idle_seconds = $IdleSeconds; busy_mb = $BusyMB; busy_text = $BusyText; resize_seconds = $ResizeSeconds; agent_sessions = $AgentSessions; attach_cycles = $AttachCycles; cycle_shape = $CycleShape; settled_cycles = $SettledCycles; cycle_max_warmup = $CycleMaxWarmup; settle_budget_mb = $SettleBudgetMB; cycle_idle_seconds = $CycleIdleSeconds; app_env = $appEnvMap }
+        parameters = [ordered]@{ idle_seconds = $IdleSeconds; busy_mb = $BusyMB; busy_text = $BusyText; resize_seconds = $ResizeSeconds; agent_sessions = $AgentSessions; attach_cycles = $AttachCycles; cycle_shape = $CycleShape; settled_cycles = $SettledCycles; cycle_max_warmup = $CycleMaxWarmup; settle_budget_mb = $SettleBudgetMB; cycle_idle_seconds = $CycleIdleSeconds; viewer_visible_seconds = $ViewerVisibleSeconds; viewer_hidden_seconds = $ViewerHiddenSeconds; viewer_close_seconds = $ViewerCloseSeconds; app_env = $appEnvMap }
         tolerance = $script:Tolerance
         builds    = $parts
     }
@@ -254,6 +269,7 @@ if ($Build -eq 'Both' -and -not $SelfTest) {
 . (Join-Path $lib 'Isolation.ps1')
 . (Join-Path $lib 'TestDesktop.ps1')
 . (Join-Path $lib 'ProcessMemory.ps1')
+. (Join-Path $lib 'JobTeardown.ps1')
 
 $isRelease = $Build -eq 'Release'
 
@@ -961,12 +977,81 @@ function Start-SandboxAgent {
     return $agentPid
 }
 
+# T3033: the WebView2 tree this app spawned - every msedgewebview2.exe whose
+# parent chain reaches the app (one environment per app, so its browser is the
+# app's child and the renderer, GPU and utility processes are the browser's)
+# - with each process's role from the --type= switch on its command line (the
+# browser process has none).
+function Get-WebViewTree([int]$ProcessId) {
+    $desc = Get-Descendants $ProcessId
+    $wv = @($desc | Where-Object { "$($_.Name)" -ieq 'msedgewebview2.exe' })
+    $cmd = @{}
+    if ($wv.Count) {
+        $filter = (@($wv | ForEach-Object { "ProcessId=$([int]$_.ProcessId)" })) -join ' OR '
+        foreach ($p in @(Get-CimInstance Win32_Process -Filter $filter -Property ProcessId, CommandLine -ErrorAction SilentlyContinue)) {
+            $cmd[[int]$p.ProcessId] = "$($p.CommandLine)"
+        }
+    }
+    $rows = New-Object System.Collections.ArrayList
+    foreach ($d in $wv) {
+        $role = 'browser'
+        if ("$($cmd[[int]$d.ProcessId])" -match '--type=([A-Za-z0-9-]+)') { $role = $Matches[1] }
+        [void]$rows.Add([pscustomobject]@{ Pid = [int]$d.ProcessId; Role = $role; PrivMB = [double]$d.PrivatePageCount / 1MB })
+    }
+    return $rows.ToArray()
+}
+# CPU (100 ns) of each pid now; a pid that has exited is absent.
+function Get-PidCpu([int[]]$Pids) {
+    $o = @{}
+    # A $null from an empty tree casts to pid 0, the System Idle Process.
+    foreach ($p in $Pids) { if ($p -le 0) { continue }; $r = [PerfSnap]::Read($p); if ($null -ne $r) { $o[$p] = $r[0] } }
+    return $o
+}
+# One tree as JSON numbers: process count, renderer count, private MB, and the
+# per-role breakdown (an array, so -Compare does not score it).
+function Format-WebViewTree($Tree) {
+    # An empty tree arrives as $null (a function's empty array unrolls to
+    # nothing), and @($null) is one element - drop it.
+    $tree = @($Tree | Where-Object { $null -ne $_ })
+    $priv = 0.0; foreach ($t in $tree) { $priv += $t.PrivMB }
+    return [ordered]@{
+        procs = $tree.Count
+        renderer_procs = @($tree | Where-Object { $_.Role -eq 'renderer' }).Count
+        private_mb = [math]::Round($priv, 1)
+        roles = @($tree | Group-Object Role | Sort-Object Name | ForEach-Object {
+                $m = 0.0; foreach ($x in $_.Group) { $m += $x.PrivMB }
+                [pscustomobject]@{ role = $_.Name; procs = $_.Count; private_mb = [math]::Round($m, 1) } })
+    }
+}
+# CPU % of one core charged to a WebView2 tree between two Get-PidCpu reads:
+# a process alive at both ends counts its delta, one born inside the span its
+# whole lifetime (all of which fell inside it); one that exited inside the
+# span is lost, and the count of those is returned beside the figure.
+function Get-TreeCpuPct([hashtable]$Before, [hashtable]$After, [double]$Seconds) {
+    $cpu = 0.0
+    foreach ($p in $After.Keys) {
+        if ($Before.ContainsKey($p)) { $cpu += ($After[$p] - $Before[$p]) / 1e7 } else { $cpu += $After[$p] / 1e7 }
+    }
+    $lost = @($Before.Keys | Where-Object { -not $After.ContainsKey($_) }).Count
+    return [pscustomobject]@{ cpu_pct = [math]::Round(100.0 * $cpu / $Seconds, 2); cpu_s = [math]::Round($cpu, 3); exited_in_span = $lost }
+}
+# The app process alone (no descendants), for the viewer phase's blocks.
+function Format-AppSample($S) {
+    return [ordered]@{ private_mb = $S.PrivMB; gdi = $S.Gdi; user = $S.User; handles = $S.Handles; threads = $S.Threads }
+}
+# Viewer windows under the top window: [total, visible-with-size].
+function Get-ViewerWindowCount([IntPtr]$Top) {
+    $all = @(Get-TestChildWindows -Window $Top -Class 'GhozttyViewer')
+    $vis = @($all | Where-Object { $_.Visible -and $_.Width -gt 0 -and $_.Height -gt 0 })
+    return @($all.Count, $vis.Count)
+}
+
 $result = [ordered]@{
     exe = $exe
     build = $Build
     version = ((& $cli +version 2>$null | ForEach-Object { "$_" }) -join ' ').Trim()
 }
-$want = if ($Phase -contains 'all') { @('idle', 'busy', 'cycle', 'agent') } else { $Phase }
+$want = if ($Phase -contains 'all') { @('idle', 'busy', 'cycle', 'viewer', 'agent') } else { $Phase }
 $failed = $false
 
 [void](Stop-RepoGhoztty -Exe $exe -SettleMs 500 -ScopeToLineage)
@@ -1338,6 +1423,221 @@ try {
         finally { Stop-App }
     }
 
+    # ------------------------------------------------------------ viewer
+    # T3033 (PA-V01): until this phase nothing in the baseline opened a viewer,
+    # so every viewer cost in audit-1 (V-findings.md) was an estimate.
+    if ($want -contains 'viewer') {
+        Write-Host "[$Build] viewer: markdown + git-status: + website; ${ViewerVisibleSeconds} s shown, ${ViewerHiddenSeconds} s in a background tab, ${ViewerCloseSeconds} s after closing"
+        $srvJob = $null
+        $srvPidFile = Join-Path $work 'viewer-server.pid'
+        try {
+            $vdir = Join-Path $work 'viewer'
+            $vrepo = Join-Path $vdir 'repo'
+            New-Item -ItemType Directory -Force $vrepo | Out-Null
+            # The markdown: 60 sections with headings, emphasis, code, links
+            # and lists - a contents card's worth, about 12 KB.
+            $doc = Join-Path $vdir 'doc.md'
+            $sections = 1..60 | ForEach-Object { "## Section $_`n`nParagraph $_ with **bold**, ``code`` and a [link](https://example.invalid/$_).`n`n- item a`n- item b`n" }
+            [IO.File]::WriteAllText($doc, "# Perf viewer`n`n$($sections -join "`n")")
+            # The git-status: repository: two committed files, one modified,
+            # one untracked - a staged-free working tree with both kinds.
+            [IO.File]::WriteAllText((Join-Path $vrepo 'a.txt'), (1..200 | ForEach-Object { "line $_" }) -join "`n")
+            [IO.File]::WriteAllText((Join-Path $vrepo 'b.txt'), "b`n")
+            # git's stderr (a CRLF warning) is a terminating NativeCommandError
+            # under this script's Stop preference in PS 5.1, so Continue here.
+            $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+            try {
+                foreach ($g in @(@('init', '-q'), @('config', 'core.autocrlf', 'false'), @('config', 'user.email', 'perf@example.invalid'), @('config', 'user.name', 'perf'), @('add', '-A'), @('commit', '-q', '-m', 'base'))) {
+                    & git.exe -C $vrepo @g 2>&1 | Out-Null
+                }
+            } finally { $ErrorActionPreference = $eap }
+            if (-not (& git.exe -C $vrepo rev-parse --short HEAD 2>$null)) { throw "the git-status: scratch repository could not be created in $vrepo" }
+            [IO.File]::WriteAllText((Join-Path $vrepo 'a.txt'), (1..200 | ForEach-Object { if ($_ % 20 -eq 0) { "changed $_" } else { "line $_" } }) -join "`n")
+            [IO.File]::WriteAllText((Join-Path $vrepo 'c.txt'), "untracked`n")
+
+            # The website: a static page from a loopback listener in a
+            # background job (not a descendant of the app, so it is never in
+            # the measured tree). Pending() polling, not a blocking Accept, and
+            # its pid on disk, so teardown is bounded (lib\JobTeardown.ps1).
+            $portFile = Join-Path $vdir 'port.txt'
+            $srvJob = Start-Job -ArgumentList $srvPidFile, $portFile -ScriptBlock {
+                param($pidFile, $portFile)
+                [IO.File]::WriteAllText($pidFile, "$PID")
+                $paras = (1..120 | ForEach-Object { "<p>Paragraph $_ of a static page served for the perf baseline viewer phase.</p>" }) -join ''
+                $html = '<!doctype html><html><head><meta charset="utf-8"><title>perf viewer site</title></head><body style="font-family:sans-serif"><h1>Perf viewer site</h1>' + $paras + '</body></html>'
+                $body = [Text.Encoding]::UTF8.GetBytes($html)
+                $l = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+                $l.Start()
+                [IO.File]::WriteAllText($portFile, "$($l.LocalEndpoint.Port)")
+                while ($true) {
+                    if (-not $l.Pending()) { Start-Sleep -Milliseconds 50; continue }
+                    $c = $l.AcceptTcpClient()
+                    try {
+                        $s = $c.GetStream()
+                        $s.ReadTimeout = 2000
+                        $buf = New-Object byte[] 8192
+                        [void]$s.Read($buf, 0, $buf.Length)
+                        $hdr = [Text.Encoding]::ASCII.GetBytes("HTTP/1.1 200 OK`r`nContent-Type: text/html; charset=utf-8`r`nContent-Length: $($body.Length)`r`nCache-Control: no-store`r`nConnection: close`r`n`r`n")
+                        $s.Write($hdr, 0, $hdr.Length)
+                        $s.Write($body, 0, $body.Length)
+                        $s.Flush()
+                    } catch { } finally { $c.Close() }
+                }
+            }
+            $deadline = (Get-Date).AddSeconds(30)
+            while (-not (Test-Path $portFile) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
+            $port = "$(Get-Content $portFile -Raw -ErrorAction SilentlyContinue)".Trim()
+            if ($port -notmatch '^\d+$') { throw 'the loopback site never reported a port' }
+
+            $a = Start-App $false
+            Start-Sleep -Seconds 5
+            $orig = @(Get-PaneLeaves)[0].id
+            $baseApp = Get-FullSample $a.Pid 'viewer base' -Settle
+            $baseTree = Get-WebViewTree $a.Pid
+
+            # --- open: three viewers beside the one terminal, all in tab 1
+            $splits = @(
+                @('+split', "--target=$orig", '--name=pvmd', '--direction=right', "--view=$doc"),
+                @('+split', '--target=pvmd', '--name=pvgs', '--direction=down', "--working-directory=$vrepo", '--view=git-status:'),
+                @('+split', "--target=$orig", '--name=pvweb', '--direction=down', "--view=http://127.0.0.1:$port/")
+            )
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            foreach ($sa in $splits) {
+                $r = Invoke-Verb $sa
+                if ($r.Code -ne 0) { throw "$($sa[2]): +split --view failed: $($r.Text)" }
+            }
+            if (-not (Wait-PaneCount 4 30)) { throw "expected 4 panes (1 terminal + 3 viewers), +list shows $(@(Get-PaneLeaves).Count)" }
+            $deadline = (Get-Date).AddSeconds(30)
+            do { $vc = Get-ViewerWindowCount $a.Top; if ($vc[1] -ge 3) { break }; Start-Sleep -Milliseconds 250 } while ((Get-Date) -lt $deadline)
+            if ($vc[1] -lt 3) { throw "only $($vc[1]) of 3 viewer windows became visible ($($vc[0]) exist)" }
+            # The tree is up when its process count holds for 3 s running
+            # (renderers start after the controllers, the site one after its
+            # navigation), capped at 45 s.
+            $stable = 0; $prevN = -1; $deadline = (Get-Date).AddSeconds(45)
+            do {
+                Start-Sleep -Seconds 1
+                $n = @(Get-WebViewTree $a.Pid).Count
+                if ($n -gt 0 -and $n -eq $prevN) { $stable++ } else { $stable = 0 }
+                $prevN = $n
+            } while ($stable -lt 3 -and (Get-Date) -lt $deadline)
+            $treeUpS = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+            Start-Sleep -Seconds 5
+            $openApp = Get-FullSample $a.Pid 'viewer open' -Settle
+            $openTree = Get-WebViewTree $a.Pid
+            $wvReason = $null
+            if (@($openTree | Where-Object { $null -ne $_ }).Count -eq 0) {
+                $wvReason = 'no msedgewebview2.exe process descends from the app with 3 viewers shown - WebView2 discovery failed on this desktop, so every webview figure in this phase is empty, not zero'
+            }
+            # CPU while shown and idle - after 15 s more, so the span does not
+            # catch the pages' first layout and the first git-status: listing
+            # (the first two Debug runs read 1.87 and 3.49% app CPU without it).
+            Start-Sleep -Seconds 15
+            $c0 = Get-PidCpu @($openTree | ForEach-Object { $_.Pid })
+            $s0 = Get-Snap $a.Pid
+            Start-Sleep -Seconds $ViewerVisibleSeconds
+            $s1 = Get-Snap $a.Pid
+            $c1 = Get-PidCpu @(Get-WebViewTree $a.Pid | ForEach-Object { $_.Pid })
+            $openRate = Get-Rate $s0 $s1
+            $openWv = Get-TreeCpuPct $c0 $c1 $openRate.wall_s
+            $openWvBlock = Format-WebViewTree $openTree
+            $openWvBlock.cpu_pct = $openWv.cpu_pct
+            $openWvBlock.exited_in_span = $openWv.exited_in_span
+            $result.viewer = [ordered]@{
+                method = "one app (persistence off, 1 cmd pane); three viewers +split beside it in tab 1: a 60-section markdown file, git-status: on a scratch repo (1 modified, 1 untracked), and a static 120-paragraph page from a loopback listener. The WebView2 tree is every msedgewebview2.exe descending from the app, role from --type=; app figures are the app process alone"
+                base = [ordered]@{
+                    method = 'before any viewer: app settled, WebView2 tree (expected empty: the environment is created on the first viewer)'
+                    app = Format-AppSample $baseApp
+                    webview = Format-WebViewTree $baseTree
+                }
+                open = [ordered]@{
+                    method = "3 viewers shown: the tree counted once its process count held for 3 s (cap 45 s) plus 5 s, app settled; then 15 s more and CPU over $ViewerVisibleSeconds s shown and idle (app: user+kernel; webview: per-process user+kernel, a process born in the span counted whole). growth = app minus base"
+                    viewers = 3
+                    tree_up_s = $treeUpS
+                    app = Format-AppSample $openApp
+                    growth = [ordered]@{ private_mb = [math]::Round($openApp.PrivMB - $baseApp.PrivMB, 1); gdi = $openApp.Gdi - $baseApp.Gdi; user = $openApp.User - $baseApp.User; handles = $openApp.Handles - $baseApp.Handles; threads = $openApp.Threads - $baseApp.Threads }
+                    webview = $openWvBlock
+                }
+            }
+            $result.viewer.open.app.cpu_pct = $openRate.cpu_pct
+            $result.viewer.open.app.wakeups_per_s = $openRate.wakeups_per_s
+            if ($wvReason) { $result.viewer.webview_reason = $wvReason }
+
+            # --- hidden: a new tab over them (ctrl+shift+t on the terminal),
+            # so all three viewers sit in a background tab.
+            $ids = @(Get-PaneLeaves | ForEach-Object { $_.id })
+            $panes = @(Get-TestChildWindows -Window $a.Top -Class 'GhozttyTerminal' | Where-Object { $_.Visible -and $_.Width -gt 0 })
+            if ($panes.Count -lt 1) { throw 'no visible terminal pane to open the covering tab from' }
+            $hw = [IntPtr][int64]$panes[0].Hwnd
+            $f = Focus-TestWindow -Window $a.Top -Child $hw
+            $k = Send-TestKeys -Window $a.Top -Target $hw -Modifiers ctrl, shift -Key T
+            if (-not ($f -and $k)) { throw "ctrl+shift+t was not delivered (focus=$f keys=$k)" }
+            $tabPane = $null
+            $deadline = (Get-Date).AddSeconds(20)
+            do { Start-Sleep -Milliseconds 300; $tabPane = @(Get-PaneLeaves | Where-Object { $ids -notcontains $_.id }) | Select-Object -First 1 } while ($null -eq $tabPane -and (Get-Date) -lt $deadline)
+            if ($null -eq $tabPane) { throw 'ctrl+shift+t opened no listed pane' }
+            Start-Sleep -Seconds 5
+            $vcHidden = Get-ViewerWindowCount $a.Top
+            $hTree0 = Get-WebViewTree $a.Pid
+            $c0 = Get-PidCpu @($hTree0 | ForEach-Object { $_.Pid })
+            $s0 = Get-Snap $a.Pid
+            Start-Sleep -Seconds $ViewerHiddenSeconds
+            $s1 = Get-Snap $a.Pid
+            $hTree1 = Get-WebViewTree $a.Pid
+            $c1 = Get-PidCpu @($hTree1 | ForEach-Object { $_.Pid })
+            $hiddenApp = Get-FullSample $a.Pid 'viewer hidden'
+            $hRate = Get-Rate $s0 $s1
+            $hWv = Get-TreeCpuPct $c0 $c1 $hRate.wall_s
+            $hWvBlock = Format-WebViewTree $hTree1
+            $hWvBlock.cpu_pct = $hWv.cpu_pct
+            $hWvBlock.exited_in_span = $hWv.exited_in_span
+            $hWvBlock.private_mb_change = [math]::Round($hWvBlock.private_mb - $openWvBlock.private_mb, 1)
+            $result.viewer.hidden = [ordered]@{
+                method = "ctrl+shift+t on the terminal opens tab 2 over the viewers' tab; 5 s, then CPU over $ViewerHiddenSeconds s (as in open) and the tree and app sampled at its end. viewer_windows_visible must be 0 (the viewers really are hidden); private_mb_change = tree now minus tree when open"
+                seconds = $ViewerHiddenSeconds
+                viewer_windows_visible = $vcHidden[1]
+                app = Format-AppSample $hiddenApp
+                webview = $hWvBlock
+            }
+            $result.viewer.hidden.app.cpu_pct = $hRate.cpu_pct
+            $result.viewer.hidden.app.wakeups_per_s = $hRate.wakeups_per_s
+            if ($vcHidden[1] -gt 0) { $result.viewer.hidden.reason = "$($vcHidden[1]) viewer window(s) still visible after the covering tab opened: the hidden figures are not of hidden viewers" }
+
+            # --- after_close: close every viewer and the covering tab, then
+            # watch the tree for the residual (PA-V02: the browser tree is
+            # expected to stay up for the app's life).
+            foreach ($t in @("$($tabPane.id)", 'pvweb', 'pvgs', 'pvmd')) {
+                $r = Invoke-Verb @('+close', "--target=$t")
+                if ($r.Code -ne 0) { throw "+close $t failed: $($r.Text)" }
+            }
+            if (-not (Wait-PaneCount 1 30)) { throw "panes did not close back to 1 ($(@(Get-PaneLeaves).Count) left)" }
+            $closeSw = [Diagnostics.Stopwatch]::StartNew()
+            $series = New-Object System.Collections.ArrayList
+            $step = 10
+            for ($t = $step; $t -le $ViewerCloseSeconds; $t += $step) {
+                while ($closeSw.Elapsed.TotalSeconds -lt $t) { Start-Sleep -Milliseconds 200 }
+                $tr = Format-WebViewTree (Get-WebViewTree $a.Pid)
+                [void]$series.Add([pscustomobject]@{ t_s = $t; procs = $tr.procs; renderer_procs = $tr.renderer_procs; private_mb = $tr.private_mb })
+            }
+            $closeTree = Get-WebViewTree $a.Pid
+            $closeApp = Get-FullSample $a.Pid 'viewer closed' -Settle
+            $result.viewer.after_close = [ordered]@{
+                method = "+close the covering tab and all three viewers (to 1 pane), then the tree every 10 s for $ViewerCloseSeconds s (series) and the residual tree and settled app at the end. leak = app at the end minus base (before any viewer); it includes what the covering tab's terminal pane left behind"
+                seconds = $ViewerCloseSeconds
+                app = Format-AppSample $closeApp
+                leak = [ordered]@{ private_mb = [math]::Round($closeApp.PrivMB - $baseApp.PrivMB, 1); gdi = $closeApp.Gdi - $baseApp.Gdi; user = $closeApp.User - $baseApp.User; handles = $closeApp.Handles - $baseApp.Handles; threads = $closeApp.Threads - $baseApp.Threads }
+                webview = Format-WebViewTree $closeTree
+                series = $series.ToArray()
+            }
+            Write-Host ("  viewer: open tree {0} procs / {1} MB (app +{2} MB, +{3} GDI, +{4} USER); hidden {5}% CPU tree / {6}% app; after close {7} procs / {8} MB left" -f `
+                $openWvBlock.procs, $openWvBlock.private_mb, $result.viewer.open.growth.private_mb, $result.viewer.open.growth.gdi, $result.viewer.open.growth.user, `
+                $hWvBlock.cpu_pct, $hRate.cpu_pct, $result.viewer.after_close.webview.procs, $result.viewer.after_close.webview.private_mb)
+        } catch { $failed = $true; $result.viewer = [ordered]@{ error = "$_"; partial = $result.viewer } }
+        finally {
+            Stop-App
+            if ($srvJob) { [void](Stop-JobBounded -Job $srvJob -PidFile $srvPidFile -Label 'viewer loopback site') }
+        }
+    }
+
     # ------------------------------------------------------------ agent
     if ($want -contains 'agent') {
         Write-Host "[$Build] agent: $AgentSessions sessions, $AttachCycles detach/attach cycles"
@@ -1423,7 +1723,7 @@ $doc = [ordered]@{
     task = 'T2958'
     generated = (Get-Date).ToString('o')
     commit = $commit
-    parameters = [ordered]@{ cycle_shape = $CycleShape; settled_cycles = $SettledCycles; cycle_max_warmup = $CycleMaxWarmup; settle_budget_mb = $SettleBudgetMB; cycle_idle_seconds = $CycleIdleSeconds; app_env = $appEnvMap }
+    parameters = [ordered]@{ cycle_shape = $CycleShape; settled_cycles = $SettledCycles; cycle_max_warmup = $CycleMaxWarmup; settle_budget_mb = $SettleBudgetMB; cycle_idle_seconds = $CycleIdleSeconds; viewer_visible_seconds = $ViewerVisibleSeconds; viewer_hidden_seconds = $ViewerHiddenSeconds; viewer_close_seconds = $ViewerCloseSeconds; app_env = $appEnvMap }
     tolerance = $script:Tolerance
     builds = [ordered]@{ ($Build.ToLower()) = $result }
 }

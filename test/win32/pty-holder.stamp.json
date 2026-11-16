@@ -1,10 +1,10 @@
 {
     "guard":  "pty-holder",
     "script":  "test/win32/pty-holder.ps1",
-    "generated":  "2026-11-16T03:41:46-08:00",
-    "commit":  "aa2bf9f68",
+    "generated":  "2026-11-16T05:47:25-08:00",
+    "commit":  "63f550d39",
     "uncommitted":  [
-                        "src/remote/agent/pty_holder_child.zig"
+
                     ],
     "files":  {
                   "src/remote/agent/pty_holder_child.zig":  "07a24cb7372e1b65e5aa4fda62e668996b10e8f0f8cd57876d67795913e8c53e",

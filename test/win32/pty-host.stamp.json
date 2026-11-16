@@ -1,11 +1,10 @@
 {
     "guard":  "pty-host",
     "script":  "test/win32/pty-host.ps1",
-    "generated":  "2026-11-16T04:01:18-08:00",
-    "commit":  "aa2bf9f68",
+    "generated":  "2026-11-16T05:51:21-08:00",
+    "commit":  "63f550d39",
     "uncommitted":  [
-                        "src/remote/agent/pty_host.zig",
-                        "test/win32/pty-host.ps1"
+
                     ],
     "files":  {
                   "src/remote/agent/pty_host.zig":  "2efc65de563d1ebd9e84ae4199090aa265bbf779c6866220b7a58a8cc9c0c90a",

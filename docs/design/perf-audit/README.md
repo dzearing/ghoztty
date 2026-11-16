@@ -14,6 +14,7 @@ against an installed Ghoztty:
 | `busy` | wall time, app CPU, GPU engine % while a pane prints 64 MB | a `+split` pane running `type` of a generated file, timed to a marker file |
 | `resize` | app CPU and GPU engine % during resizes | `SetWindowPos` to a new size every 50 ms for 8 s |
 | `cycle` | private bytes, working set, handles, GDI/USER objects, threads, GPU memory, child processes | at start, with 10 panes over 3 tabs, after closing them all; twice |
+| `viewer` | the WebView2 tree (every `msedgewebview2.exe` under the app, by `--type=` role): process count, private bytes, CPU; app private bytes and GDI/USER growth; the residual tree and app leak after closing | 1 terminal plus 3 viewers split beside it (a 60-section markdown file, `git-status:` on a scratch repo, a static page from a loopback listener); `open` = 60 s shown; `hidden` = a new tab over them for 60 s; `after_close` = every viewer closed, the tree every 10 s for 90 s (T3033) |
 | `agent` | `ghoztty-agent.exe` idle CPU, memory per session, handles across detach/attach | persistence on, 4 extra sessions, 3 app kill/relaunch cycles |
 
 Each number in the JSON sits beside a `method` string. A number the box could
