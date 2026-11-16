@@ -281,6 +281,16 @@ class BaseTerminalController: NSWindowController,
     /// Cancellable for the pane-banner manifest sync (session persistence).
     private var paneBannerCancellable: AnyCancellable?
 
+    /// Re-saves the window when a row is collapsed or widened
+    /// (`paneStackDidChange`).
+    private var paneStackCancellable: AnyCancellable?
+
+    /// A row was collapsed, widened or its run resized: re-save the window.
+    func paneStackDidChange() {
+        guard sessionLayoutEntryID != nil else { return }
+        SessionLayoutManifest.shared.scheduleSync(self)
+    }
+
     /// An override title for the tab/window set by the user via prompt_tab_title.
     /// When set, this takes precedence over the computed title from the terminal.
     var titleOverride: String? {
@@ -639,6 +649,7 @@ class BaseTerminalController: NSWindowController,
 
         // Keep the session-layout manifest current with pane banner changes
         setupPaneBannerSyncPublisher()
+        setupPaneStackSyncPublisher()
 
         // Roll up the panes' busy state for the sidebar's window row/tile
         paneSidebarActivity.observe(
@@ -4406,6 +4417,43 @@ extension BaseTerminalController {
             guard let self, self.sessionLayoutEntryID != nil else { return }
             SessionLayoutManifest.shared.scheduleSync(self)
         }
+    }
+
+    /// A collapsed row is the window's layout, like a ratio: re-save the
+    /// window when one is collapsed, widened or resized, so a relaunch —
+    /// after a crash too — puts every blade back (`PaneStackState.Persisted`).
+    private func setupPaneStackSyncPublisher() {
+        paneStackCancellable = paneStackState.$pins.map { _ in () }
+            .merge(with: paneStackState.$shares.map { _ in () })
+            .dropFirst(2)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] in self?.paneStackDidChange() }
+    }
+
+    /// The window's collapses and focus history as they are saved with it
+    /// (`PaneStackState.Persisted`).
+    var persistedPaneStack: PaneStackState.Persisted? {
+        paneStackState.persisted(leaves: surfaceTree.root?.leaves().map(\.id) ?? [])
+    }
+
+    /// Take back a saved window's collapses and focus history, before it
+    /// first lays out. The caret then goes to a pane on show
+    /// (`restoredFocusTarget`).
+    func adoptPersistedPaneStack(_ persisted: PaneStackState.Persisted?) {
+        guard let persisted else { return }
+        paneStackState.adopt(persisted, leaves: surfaceTree.root?.leaves().map(\.id) ?? [])
+    }
+
+    /// Where the caret goes in a restored window: `preferred` (what the saved
+    /// state focused), else the pane focused last, else the first — and
+    /// never into a blade: focusing one would bring it back out
+    /// (`paneOnShow`).
+    func restoredFocusTarget(preferring preferred: PaneView? = nil) -> PaneView? {
+        let lastFocused = paneStackState.recency.lazy.compactMap { id in
+            self.surfaceTree.visibleLeaves.first { $0.id == id }
+        }.first
+        guard let pane = preferred ?? lastFocused ?? surfaceTree.visibleLeaves.first else { return nil }
+        return paneOnShow(pane)
     }
 
     /// Creates a publisher for values on all surfaces in this controller's tree.

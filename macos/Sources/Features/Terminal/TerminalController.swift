@@ -259,6 +259,12 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
     // MARK: Base Controller Overrides
 
+    /// A collapsed row is saved with the window (`PaneStackState.Persisted`).
+    override func paneStackDidChange() {
+        super.paneStackDidChange()
+        invalidateRestorableState()
+    }
+
     override func surfaceTreeDidChange(from: SplitTree<PaneView>, to: SplitTree<PaneView>) {
         super.surfaceTreeDidChange(from: from, to: to)
 

@@ -288,6 +288,10 @@ and every session died.
 `SessionLayoutManifest` (`session-layout.json` in Application Support) holds
 one entry per persistent window: frame, tab group, names, the split tree and,
 per terminal leaf, its session id and a screen snapshot with its byte offset.
+`paneStack` (optional/additive) holds the rows the user collapsed into blades
+and the focus history, by leaf position — see
+[stacked-panes.md](stacked-panes.md); restore adopts it before the window lays
+out and puts the caret in a pane on show.
 
 - **`frontmost`** (additive) marks the window that was in front — the main
   window, or in single-window mode the workspace on show — and restore brings
@@ -297,7 +301,7 @@ per terminal leaf, its session id and a screen snapshot with its byte offset.
   other ([window-modes.md](window-modes.md#persistence)). The blob mirrored to
   the agent is opaque to it; the wire contract is unchanged.
 
-- A change in a window (tree, frame, sidebar, a pane banner) schedules a sync
+- A change in a window (tree, frame, sidebar, a pane banner, a collapsed row) schedules a sync
   of its entry, debounced 250 ms (`scheduleSync`); at quit every window is
   synced afresh (`syncAllTrackedNow`), which is what keeps the snapshots
   current when only output changed.

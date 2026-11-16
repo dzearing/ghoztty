@@ -1,6 +1,13 @@
 import Cocoa
 
 class QuickTerminalWindow: NSPanel {
+    /// A page never pulls the caret into a pane minimized into a blade
+    /// (`ViewerWebView`): the caret stays where it is.
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        guard ViewerWebView.mayBecomeFirstResponder(responder) else { return false }
+        return super.makeFirstResponder(responder)
+    }
+
     // Both of these must be true for windows without decorations to be able to
     // still become key/main and receive events.
     override var canBecomeKey: Bool { return true }

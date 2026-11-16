@@ -201,6 +201,12 @@ final class SessionLayoutManifest {
         /// in either mode. True or absent (an older manifest: restored in
         /// manifest order, as before).
         var frontmost: Bool? = nil
+        /// The rows the user collapsed into blades and the focus history
+        /// (`PaneStackState.Persisted`, panes by leaf position), so a relaunch
+        /// keeps every blade a blade. Optional/additive: older manifests
+        /// decode with nil (every row side by side where it fits) and an
+        /// older app ignores it.
+        var paneStack: PaneStackState.Persisted? = nil
     }
 
     // MARK: Storage
@@ -350,7 +356,8 @@ final class SessionLayoutManifest {
         paneSidebarOrder: [UUID]? = nil,
         paneSidebarWindowID: UUID? = nil,
         deskVariant: PaneDeskVariant?? = nil,
-        frontmost: Bool? = nil
+        frontmost: Bool? = nil,
+        paneStack: PaneStackState.Persisted?? = nil
     ) {
         lock.lock()
         defer { lock.unlock() }
@@ -362,6 +369,7 @@ final class SessionLayoutManifest {
         if let paneSidebarWindowID { entry.paneSidebarWindowID = paneSidebarWindowID }
         if let deskVariant { entry.deskVariant = deskVariant }
         if let frontmost { entry.frontmost = frontmost ? true : nil }
+        if let paneStack { entry.paneStack = paneStack }
         if let frame { entry.frame = frame }
         entry.titleOverride = titleOverride
         entry.windowTitleOverride = windowTitleOverride
@@ -762,7 +770,8 @@ final class SessionLayoutManifest {
             paneSidebarOrder: controller.paneSidebarPersistedOrder,
             paneSidebarWindowID: controller.paneSidebarState.windowID,
             deskVariant: .some(controller.deskVariant),
-            frontmost: Self.isFrontmost(controller))
+            frontmost: Self.isFrontmost(controller),
+            paneStack: .some(controller.persistedPaneStack))
     }
 
     /// The restore order of the manifest's windows (each a tab group's

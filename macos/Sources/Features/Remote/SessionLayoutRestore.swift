@@ -366,6 +366,8 @@ extension AppDelegate {
         if let order = entry.paneSidebarOrder { controller.paneSidebarState.order = order }
         if let id = entry.paneSidebarWindowID { controller.paneSidebarState.windowID = id }
         controller.deskVariant = entry.deskVariant
+        // Every blade stays a blade (`PaneStackState.Persisted`).
+        controller.adoptPersistedPaneStack(entry.paneStack)
 
         // For a LOCAL resume/restore, adopt the manifest entry so the window is
         // itself restorable and detaches-on-close. Ordering matters: the entry id
@@ -456,12 +458,12 @@ extension AppDelegate {
             }
         }
 
-        // Focus the first pane (parity with a fresh window; AppKit's own
-        // restoration does the same when no focus record exists).
-        if let first = views.first {
-            controller.focusedSurface = first.surfaceView
+        // Focus the pane focused last (else the first, as a fresh window
+        // does) — never a blade: focusing one would bring it back out.
+        if let target = controller.restoredFocusTarget() {
+            controller.focusedSurface = target.surfaceView
             DispatchQueue.main.async {
-                Ghostty.moveFocus(to: first, from: nil)
+                Ghostty.moveFocus(to: target, from: nil)
             }
         }
 
