@@ -218,7 +218,14 @@ final class PaneView: NSView, Codable, Identifiable, ObservableObject {
         case kind
         case terminal
         case viewer
+        /// The pane's IPC target name (`+split --name`). Optional/additive.
+        case name
     }
+
+    /// The IPC target name this pane had when its window was saved (AppKit
+    /// restoration): registered again once the restored window exists
+    /// (`TerminalWindowRestoration`), so the pane stays addressable by it.
+    private(set) var restoredName: String?
 
     private enum Kind: String, Codable {
         case terminal
@@ -239,10 +246,18 @@ final class PaneView: NSView, Codable, Identifiable, ObservableObject {
             // (pwd/uuid/title keys at this level) from before viewer panes.
             self.init(.terminal(try Ghostty.SurfaceView(from: decoder)))
         }
+        restoredName = try container.decodeIfPresent(String.self, forKey: .name)
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        // Window state is only ever encoded on the main thread.
+        let name: String? = MainActor.assumeIsolated {
+            guard let ipc = (NSApp.delegate as? AppDelegate)?.ipcServer else { return nil }
+            if let surface = surfaceView { return ipc.registeredPaneName(forSurface: surface) }
+            return ipc.registeredPaneName(forViewerPane: self)
+        }
+        try container.encodeIfPresent(name, forKey: .name)
         switch content {
         case .terminal(let view):
             try container.encode(Kind.terminal, forKey: .kind)

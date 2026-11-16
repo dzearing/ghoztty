@@ -293,6 +293,43 @@ and the focus history, by leaf position — see
 [stacked-panes.md](stacked-panes.md); restore adopts it before the window lays
 out and puts the caret in a pane on show.
 
+### What a relaunch restores
+
+Each window comes back with: its frame; the split tree with exact directions
+and ratios; stashed panes (`Leaf.stashIndex`); collapsed rows and the focus
+history (`paneStack`), the caret in the pane focused last; its target name
+(`ipcName`) and titles (`titleOverride`, `windowTitleOverride` +
+`windowTitleSetByUser`); per pane its target name, title — pinned when the
+user set it (`Leaf.titleSetByUser`) — banner and tint (`Leaf.tint`, `#RRGGBB`
+sRGB, for `--color=#hex`, `random` in the flat style and the color picker);
+the window's gradient (`deskVariant`) and tab color (`tabColor`); the pane
+sidebar's order and identity (`paneSidebarOrder`, `paneSidebarWindowID`; its
+expanded/hidden flags are shared by every window and live in the defaults);
+and which window was in front (`frontmost`). `titleSetByUser`, `tint` and
+`tabColor` are additive: an older manifest restores the pane untinted, its
+title unpinned and no tab color, and an older app ignores them. A tint
+change (the picker) and a user-set title save the window at once
+(`SurfaceView.layoutStateDidChange`), like a banner; a tab color change does
+too (`TerminalWindow.tabColor`).
+
+The same restore code runs for a launch and for the tests:
+`presentRestoredSessionWindow` builds the panes over the agent connection
+(`makeSessionLayoutRoot`) and hands them to `presentRestoredWindow`; the
+single-window hand-off to the front workspace is `showRestoredFront`. An
+in-place recovery (`rebuildSessionLayoutController`) keeps the window's
+collapses by leaf position and focuses the pane focused last, never a blade.
+A machine reboot takes the same path: the app restores from the manifest and
+the agent relaunches each session's tombstone. AppKit restoration (session
+persistence off) carries the same list in the window's archive — the
+window's target name (`InternalState.windowName`), each pane's name
+(`PaneView` key `name`, registered once the window exists), banner and tint
+(`SurfaceView` keys `banner`, `tint`) — all optional keys.
+
+Tests (`SessionLayoutRelaunchTests`, both window modes):
+`aRestoredRowOfTerminalsKeepsItsBlades`, `aRelaunchRestoresEveryAttribute`
+(restored, then saved again the same), `appKitRestorationKeepsEveryAttribute`,
+`theNewFieldsAreAdditive`.
+
 - **`frontmost`** (additive) marks the window that was in front — the main
   window, or in single-window mode the workspace on show — and restore brings
   it back last (`SessionLayoutManifest.frontmostLast`), so it is in front (on
@@ -301,7 +338,8 @@ out and puts the caret in a pane on show.
   other ([window-modes.md](window-modes.md#persistence)). The blob mirrored to
   the agent is opaque to it; the wire contract is unchanged.
 
-- A change in a window (tree, frame, sidebar, a pane banner, a collapsed row) schedules a sync
+- A change in a window (tree, frame, sidebar, a pane banner, tint or user-set
+  title, a collapsed row, the tab color) schedules a sync
   of its entry, debounced 250 ms (`scheduleSync`); at quit every window is
   synced afresh (`syncAllTrackedNow`), which is what keeps the snapshots
   current when only output changed.

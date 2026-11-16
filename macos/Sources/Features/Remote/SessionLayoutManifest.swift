@@ -112,6 +112,16 @@ final class SessionLayoutManifest {
         /// with nil (nothing stashed) and an older app ignores it, showing
         /// every pane in the grid — no pane is lost either way.
         var stashIndex: Int?
+        /// `title` was set by the user (`SurfaceView.setUserTitle`), so the
+        /// terminal's own title changes never replace it — after a relaunch
+        /// too. True or absent: older manifests, and a title the terminal
+        /// set, decode as nil.
+        var titleSetByUser: Bool?
+        /// The pane's own background tint (`--color=#hex`, `random` in the
+        /// flat style, the background color picker), as `#rrggbb`.
+        /// Optional/additive: nil is the theme's background, and an older app
+        /// restores the pane untinted.
+        var tint: String?
 
         var isViewer: Bool { kind == "viewer" }
     }
@@ -207,6 +217,10 @@ final class SessionLayoutManifest {
         /// decode with nil (every row side by side where it fits) and an
         /// older app ignores it.
         var paneStack: PaneStackState.Persisted? = nil
+        /// The window's tab color (the tab's context menu), or in
+        /// single-window mode the workspace's. Optional/additive: nil is no
+        /// color, and an older app ignores it.
+        var tabColor: TerminalTabColor? = nil
     }
 
     // MARK: Storage
@@ -357,7 +371,8 @@ final class SessionLayoutManifest {
         paneSidebarWindowID: UUID? = nil,
         deskVariant: PaneDeskVariant?? = nil,
         frontmost: Bool? = nil,
-        paneStack: PaneStackState.Persisted?? = nil
+        paneStack: PaneStackState.Persisted?? = nil,
+        tabColor: TerminalTabColor?? = nil
     ) {
         lock.lock()
         defer { lock.unlock() }
@@ -370,6 +385,7 @@ final class SessionLayoutManifest {
         if let deskVariant { entry.deskVariant = deskVariant }
         if let frontmost { entry.frontmost = frontmost ? true : nil }
         if let paneStack { entry.paneStack = paneStack }
+        if let tabColor { entry.tabColor = tabColor == TerminalTabColor.none ? nil : tabColor }
         if let frame { entry.frame = frame }
         entry.titleOverride = titleOverride
         entry.windowTitleOverride = windowTitleOverride
@@ -724,7 +740,9 @@ final class SessionLayoutManifest {
                     screenSnapshot: snap?.snapshot,
                     screenSnapshotOffset: snap?.offset,
                     banner: view?.paneBanner,
-                    stashIndex: controller.surfaceTree.stashed.firstIndex(of: pane.id))
+                    stashIndex: controller.surfaceTree.stashed.firstIndex(of: pane.id),
+                    titleSetByUser: view?.isTitleUserSet == true ? true : nil,
+                    tint: view?.backgroundTintNSColor.map(Self.tintHex))
             }
         }
 
@@ -771,7 +789,16 @@ final class SessionLayoutManifest {
             paneSidebarWindowID: controller.paneSidebarState.windowID,
             deskVariant: .some(controller.deskVariant),
             frontmost: Self.isFrontmost(controller),
-            paneStack: .some(controller.persistedPaneStack))
+            paneStack: .some(controller.persistedPaneStack),
+            tabColor: .some((controller as? TerminalController)?.persistedTabColor))
+    }
+
+    /// A pane tint as `Leaf.tint` stores it: sRGB `#RRGGBB`, rounded, so
+    /// `NSColor(hex:)` (sRGB) gives the same color back.
+    static func tintHex(_ color: NSColor) -> String {
+        let c = color.resolvedSRGB
+        func byte(_ v: CGFloat) -> Int { Int((min(max(v, 0), 1) * 255).rounded()) }
+        return String(format: "#%02X%02X%02X", byte(c.redComponent), byte(c.greenComponent), byte(c.blueComponent))
     }
 
     /// The restore order of the manifest's windows (each a tab group's

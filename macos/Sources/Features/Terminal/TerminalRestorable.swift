@@ -105,6 +105,9 @@ final class TerminalRestorableState: TerminalRestorable {
     var paneStack: PaneStackState.Persisted? {
         internalState.paneStack
     }
+    var windowName: String? {
+        internalState.windowName
+    }
 
     /// Internal State we use to perform unit tests
     ///
@@ -259,6 +262,23 @@ class TerminalWindowRestoration: NSObject, NSWindowRestoration {
             }
         }
 
+        // The window's and its panes' IPC target names, so they stay
+        // addressable (a name a live window or pane holds already stays
+        // with it).
+        if let ipc = (NSApp.delegate as? AppDelegate)?.ipcServer {
+            if let name = state.windowName, !name.isEmpty {
+                ipc.registerRestoredRemoteWindow(name: name, controller: c)
+            }
+            for pane in c.surfaceTree {
+                guard let name = pane.restoredName, !name.isEmpty else { continue }
+                if let surface = pane.surfaceView {
+                    ipc.registerRestoredPane(name: name, controller: c, surface: surface)
+                } else {
+                    ipc.registerRestoredViewerPane(name: name, controller: c, pane: pane)
+                }
+            }
+        }
+
         // Restore the tab title override
         c.titleOverride = state.titleOverride
 
@@ -281,11 +301,8 @@ class TerminalWindowRestoration: NSObject, NSWindowRestoration {
             // focus itself is made once there is a window (`restoreWindow`).
             if let view = foundView,
                let target = c.surfaceTree.pane(for: view).flatMap({ c.restoredFocusTarget(preferring: $0) }) {
-                if let surface = target.surfaceView {
-                    c.focusedSurface = surface
-                } else {
-                    Ghostty.moveFocus(to: target)
-                }
+                c.focusOnFirstShow(target)
+                if target.surfaceView == nil { Ghostty.moveFocus(to: target) }
             }
         }
         return c

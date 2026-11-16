@@ -76,6 +76,22 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     /// The window's tab color while this workspace had it.
     var parkedTabColor: TerminalTabColor = .none
 
+    /// This window's tab color — the workspace's, parked or on show — as it
+    /// is saved with it (`SessionLayoutManifest.Entry.tabColor`).
+    var persistedTabColor: TerminalTabColor {
+        (window as? TerminalWindow)?.tabColor ?? (isParked ? parkedTabColor : .none)
+    }
+
+    /// Give a restored window its saved tab color: the window's, or the
+    /// workspace's while it is parked.
+    func restoreTabColor(_ color: TerminalTabColor) {
+        if let window = window as? TerminalWindow {
+            window.tabColor = color
+        } else {
+            parkedTabColor = color
+        }
+    }
+
     override var window: NSWindow? {
         get { parkedNow ? nil : super.window }
         set { super.window = newValue }
