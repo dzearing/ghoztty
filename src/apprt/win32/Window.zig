@@ -200,6 +200,7 @@ const pane_drop = @import("pane_drop.zig");
 const pane_gap = @import("pane_gap.zig");
 const pane_layout = @import("pane_layout.zig");
 const pane_relocate = @import("pane_relocate.zig");
+const inherit_cwd = @import("inherit_cwd.zig");
 const drop_highlight = @import("drop_highlight.zig");
 const DropHighlight = @import("DropHighlight.zig");
 const PaneDragGhost = @import("PaneDragGhost.zig");
@@ -3805,6 +3806,13 @@ const RemoteInherit = struct {
 /// than leaving it null and hoping the focused surface happens to be the right
 /// pane.
 ///
+/// A LOCAL session-persistence pane answers without the round trip (T3135, Mac
+/// e76f7d380): its shell runs on this box, so the process read of its cwd, or
+/// its own OSC 7 report, is already the answer, and the GET_CWD it replaces
+/// cost a blocking agent hop on the GUI thread for every tab and split. The
+/// agent is asked only when neither is known, and always for a pane on another
+/// machine. The rule is `inherit_cwd.choose`.
+///
 /// The returned slice is owned by `alloc` (the connection's own copy is freed
 /// here), so a caller may hand it an arena and forget about it.
 pub fn inheritedCwd(
@@ -3813,12 +3821,40 @@ pub fn inheritedCwd(
     parent: *Surface,
 ) ?[]const u8 {
     const sid = parent.core_surface.remoteSessionId() orelse return null;
-    const owned = conn.queryCwdTimeout(sid, RemoteInherit.cwd_timeout_ns) catch |err| {
-        log.debug("remote inherit: cwd query failed err={}", .{err});
-        return null;
+    var timer = std.time.Timer.start() catch null;
+
+    const local = parent.remote_is_local_agent;
+    const live: ?[]u8 = if (local) parent.livePwd(alloc) else null;
+    const reported: ?[]const u8 = if (local and live == null and parent.pwd_reported)
+        (parent.core_surface.pwd(alloc) catch null)
+    else
+        null;
+    const source = inherit_cwd.choose(.{
+        .local_agent = local,
+        .live = if (live) |l| l.len > 0 else false,
+        .reported = if (reported) |r| r.len > 0 else false,
+    });
+    const cwd: ?[]const u8 = switch (source) {
+        .live => live,
+        .reported => reported,
+        .agent => agent: {
+            if (live) |l| alloc.free(l);
+            if (reported) |r| alloc.free(r);
+            const owned = conn.queryCwdTimeout(sid, RemoteInherit.cwd_timeout_ns) catch |err| {
+                log.debug("remote inherit: cwd query failed err={}", .{err});
+                break :agent null;
+            };
+            defer conn.alloc.free(owned);
+            break :agent alloc.dupe(u8, owned) catch null;
+        },
     };
-    defer conn.alloc.free(owned);
-    return alloc.dupe(u8, owned) catch null;
+    // One line per tab/split, so a harness can tell which answer was used and
+    // what it cost (the before/after number on T3135).
+    const us: u64 = if (timer) |*t| t.read() / std.time.ns_per_us else 0;
+    log.info("inherit cwd: source={s} local_agent={} us={d} found={}", .{
+        @tagName(source), local, us, cwd != null,
+    });
+    return cwd;
 }
 
 /// Build the T68 remote-inheriting overrides for the NEXT surface in this

@@ -474,6 +474,11 @@ test {
     // no-OS-imports deal.
     _ = @import("win32/pane_relocate.zig");
 
+    // Pure win32 choice of where a new tab/split's cwd comes from: the parent
+    // shell's own directory for a local agent pane, the agent's GET_CWD only
+    // when nothing is known here or the pane is on another machine (T3135).
+    _ = @import("win32/inherit_cwd.zig");
+
     // Pure win32 split-divider drag SEMANTICS — which other boundaries hold
     // their pixel when one divider moves (T533), same no-OS-imports deal.
     _ = @import("win32/split_resize.zig");

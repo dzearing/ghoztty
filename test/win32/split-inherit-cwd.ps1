@@ -36,6 +36,9 @@
 #   D  the same cross-window `+split`, with session persistence ON. The agent
 #      path answered this correctly before the fix; asserting it here is what
 #      makes "the two backends agree" a measured claim rather than a comment.
+#   E  (T3135) that agent-backed split answered from the parent shell's own
+#      directory, never with a GET_CWD round trip to the agent - read from the
+#      app's `inherit cwd: source=...` log line.
 #
 # `-NegativeControl` inverts B's assertion to the pre-fix expectation (the split
 # lands in the FAR directory), so a green run is only evidence because the
@@ -302,6 +305,23 @@ try {
         if ($null -ne $onSplit) { $onCwd = Wait-LeafCwd $nearTarget $onSplit.id $near }
         Assert (Test-SameDir $onCwd $near) "the agent-backed split also opened in ITS parent's directory (got '$onCwd')"
         Assert (-not (Test-SameDir $onCwd $far)) 'and also not in the focused window (the two backends agree)'
+
+        # E (T3135): the agent-backed split took its parent's directory from the
+        # parent shell itself, with no GET_CWD round trip on the GUI thread. The
+        # app logs one `inherit cwd:` line per tab/split naming the answer it
+        # used; before the fix it read `source=agent` (measured 264 us against a
+        # healthy agent, bounded at 1.5 s against a busy one).
+        $inheritLines = @()
+        if (Test-Path $errlog) {
+            $inheritLines = @(Select-String -Path $errlog -Pattern 'inherit cwd: source=(\w+) local_agent=(\w+) us=(\d+)' |
+                ForEach-Object { $_.Line })
+        }
+        foreach ($l in $inheritLines) { Write-Host "  log: $($l.Trim())" }
+        Assert ($inheritLines.Count -ge 1) "the agent-backed split logged where its cwd came from (lines $($inheritLines.Count))"
+        $localAnswers = @($inheritLines | Where-Object { $_ -match 'source=(live|reported) local_agent=true' })
+        $agentAnswers = @($inheritLines | Where-Object { $_ -match 'source=agent' })
+        Assert ($localAnswers.Count -ge 1) 'the local agent pane answered from its own shell (source=live or reported)'
+        Assert ($agentAnswers.Count -eq 0) "and the agent was never asked for the cwd (agent answers $($agentAnswers.Count))"
     }
 
     Assert (-not (Test-TestDesktopLeak -ProcessId $app.Pid)) 'the run never took the interactive desktop'
@@ -331,4 +351,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'split-inherit-cwd' -MinPass 16
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'split-inherit-cwd' -MinPass 19
