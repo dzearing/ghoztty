@@ -1,16 +1,17 @@
 {
     "guard":  "session-blades",
     "script":  "test/win32/session-blades.ps1",
-    "generated":  "2026-11-16T13:09:49-08:00",
-    "commit":  "85f10d2a3",
+    "generated":  "2026-11-16T13:50:54-08:00",
+    "commit":  "166c9fce6",
     "uncommitted":  [
-
+                        "src/apprt/win32/App.zig",
+                        "test/win32/session-blades.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/App.zig":  "a5181926f8582f980af7ab5e9fad55f7171bd5142ef5603f0828bc5fda4b86fd",
+                  "src/apprt/win32/App.zig":  "86ac47683f6ead69305354e1d0dc1c25da7292bfffdfae969100fd6e9cbe6b78",
                   "src/apprt/win32/pane_stack_state.zig":  "e3087d45b99e3a09eb31c6022d285f91114895b601b0d60ab24b48a9a3bcff51",
-                  "src/apprt/win32/session_layout.zig":  "41559060ec08861dda2f96535dbf211fccaf8e03477f68f51edbaa0318da28d0",
+                  "src/apprt/win32/session_layout.zig":  "5a7d640a01f77f9debcc148bd22a150a3dbdf6696c669b59a515ece8a0990933",
                   "src/apprt/win32/Window.zig":  "50d1d6b1b674d8c3575f108842f7644bb5c631c62bb1543ec99d05f38b86e7c7",
-                  "test/win32/session-blades.ps1":  "290fb04e0e31809befdc90aa4c7286002c72469407ba93ab73dd92b47c581de0"
+                  "test/win32/session-blades.ps1":  "c4aa9925e177a7fb09af4223f9d2200455a75fcacd43dba3df2a220da043d731"
               }
 }

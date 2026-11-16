@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-16T13:50:00-08:00",
-    "commit":  "85f10d2a3",
+    "generated":  "2026-11-16T13:50:32-08:00",
+    "commit":  "166c9fce6",
     "uncommitted":  [
-
+                        "test/win32/session-blades.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -485,14 +485,14 @@
                   "test/win32/self-spawn-audit.ps1":  "a4f014933c7929f28febc9bc55b9603180ce17c9827bc1f5a50ab6d0d4dc1dc7",
                   "test/win32/send-keys-bracketed.ps1":  "3f04c907b40d40409069ee8fe9369820cd96c2c6644567ddfd70d8fdb41bec10",
                   "test/win32/send-keys-soak.ps1":  "6e4525ec0b24fb88c38af8b42a0206d37c6dea2e458613f7c6e0bc9881aec5b9",
-                  "test/win32/session-blades.ps1":  "290fb04e0e31809befdc90aa4c7286002c72469407ba93ab73dd92b47c581de0",
+                  "test/win32/session-blades.ps1":  "c4aa9925e177a7fb09af4223f9d2200455a75fcacd43dba3df2a220da043d731",
                   "test/win32/session-close.ps1":  "bc90db94c85a72b761db89dbde0baf409845d5df67f23997b425b6d922455ed1",
                   "test/win32/session-crash-recover.ps1":  "bd9d751e4413b22f27cf7a4cbac0f63290367e8c7e262e9d1dbdfdef1573ff24",
                   "test/win32/session-layout-geometry-race.ps1":  "cccb50a65d08201453c84af1cf2cc3dcdac8bf90b87871a29d7dfc0a1ee9a161",
                   "test/win32/session-layout-preserve.ps1":  "1de2134ef826dae99e7214756a5a1bb3a2c81b895044105cc7cc48b81a320408",
                   "test/win32/session-open.ps1":  "722f0d9f8823fe8664c2f7853dfb0bccffcb12345e4f1a560f0dd91e0377ae54",
                   "test/win32/session-persistence.ps1":  "a8081df8dd48acb0fd7cb26f2cd58557f97faeeb4113605708d9824a0531f0ed",
-                  "test/win32/session-reattach.ps1":  "0f0cf8fd36af865c1e38981ea461d77979d0a57cbb1feee50630f36c998b0c76",
+                  "test/win32/session-reattach.ps1":  "e73d5a463b113d82d9196dce29fa52efed19c5d8fd2e74f9b313df71d0e1c7fd",
                   "test/win32/session-reattach-zombie.ps1":  "ea9ea8399c40fcc7989bf7a11f5721c7227e6b607bfe29e6df56dd44773b322c",
                   "test/win32/session-reboot-tui.ps1":  "2724a7bca0bb95bc8ef5d86ed8497138c06ea82d2100429f8b9f182f6cb4cf4f",
                   "test/win32/session-relaunch.ps1":  "9576d96d4157c48be3470cc55083a18aa686acf5bd19c2d82e4178c7c5dabd09",

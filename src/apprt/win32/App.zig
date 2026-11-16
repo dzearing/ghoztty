@@ -6091,6 +6091,25 @@ fn restoreStacks(window: *Window, tabs: []const session_layout.Tab, active: usiz
     };
 }
 
+/// `restoreStacks` for in-place recovery (T3177, Mac dd77885aa: "in-place
+/// recovery keeps the window's collapses and focuses a pane on show"): each
+/// tab takes back the collapses and focus history carried across its rebuild
+/// (`saved[ti]`, panes by leaf position), and the caret goes to the pane
+/// focused last there - never a blade. The active tab goes last.
+fn adoptStacks(window: *Window, saved: []const ?session_layout.PaneStack, active: usize) void {
+    const n = @min(saved.len, window.tab_count);
+    for (0..n) |ti| {
+        if (ti == active) continue;
+        const s = saved[ti] orelse continue;
+        window.adoptStackPersisted(ti, s);
+        window.focusRestoredPane(ti);
+    }
+    if (active < n) if (saved[active]) |s| {
+        window.adoptStackPersisted(active, s);
+        window.focusRestoredPane(active);
+    };
+}
+
 /// Rebuild one tab: replay the split tree onto its (already-created) first
 /// surface, then reapply the tab's color / hero ratio / pinned title.
 fn restoreTab(
@@ -7324,14 +7343,22 @@ pub fn rebuildWindowInPlace(
     for (0..window.tab_count) |ti| live_tab_keys[ti] = window.tabUuid(ti);
     const tab_pairing = try session_layout.pairTabs(arena, captured.tabs, live_tab_keys);
 
+    // T3177 (Mac dd77885aa): every blade stays a blade through a recovery.
+    // The stack state names panes by surface, and the rebuild swaps every
+    // terminal for a fresh one, so each tab's collapses and focus history are
+    // carried across it by leaf position and taken back once every tab is
+    // whole - the launch restore's own move (`restoreStacks`).
+    const kept = try arena.alloc(?session_layout.PaneStack, window.tab_count);
+    @memset(kept, null);
     var attached: usize = 0;
     for (0..window.tab_count) |ti| {
         const ci = tab_pairing[ti] orelse continue;
-        attached += self.rebuildTabInPlace(arena, window, ti, captured.tabs[ci], tr, attach) catch |err| {
+        attached += self.rebuildTabInPlace(arena, window, ti, captured.tabs[ci], tr, attach, &kept[ti]) catch |err| {
             log.warn("in-place recovery: tab {d} failed err={}", .{ ti, err });
             continue;
         };
     }
+    if (window.tab_count > 0) adoptStacks(window, kept, @min(active_tab, window.tab_count - 1));
 
     // Fresh surfaces start visible, so every rebuilt BACKGROUND tab would paint
     // over the active one. Hide them before re-selecting the tab that was
@@ -7371,14 +7398,22 @@ fn rebuildTabInPlace(
     tab: session_layout.Tab,
     tr: RestoreTransport,
     attach: ?*const std.StringHashMap(void),
+    kept_stack: *?session_layout.PaneStack,
 ) !usize {
     if (tab.nodes.len == 0) return error.CorruptLayout;
 
     const captured_shapes = try capturedNodeShapes(arena, tab.nodes);
     const live_shapes = try liveNodeShapes(arena, &window.tab_trees[tab_index]);
     if (agent_recovery.shapesCorrespond(captured_shapes, live_shapes)) {
+        // T3177: every leaf keeps its slot, so the tab's collapses as they
+        // stand NOW (not as captured before the re-dial) carry across by
+        // position.
+        kept_stack.* = window.stackPersisted(arena, tab_index);
         return self.rebuildTabLeavesInPlace(arena, window, tab_index, tab, tr, attach);
     }
+    // T3177: the root walk rebuilds the captured tree, which is what the
+    // captured collapses name positions in.
+    kept_stack.* = tab.pane_stack;
 
     log.warn(
         "in-place recovery: tab {d}'s tree no longer matches its capture " ++

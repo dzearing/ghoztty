@@ -27,6 +27,9 @@
 #   C) relaunched from the app's OWN manifest, every blade is a blade again
 #   D) a history whose newest pane is a blade (s3) still puts the caret on a
 #      pane on show (s1): focusing the blade would have brought it back out
+#   E) T3177 (Mac dd77885aa): the agent dies under that window and the app
+#      recovers it in place - every terminal a fresh surface - and every blade
+#      is still a blade, the caret still on s1
 #
 # -NegativeControl leaves the collapse OUT of the manifest: claim A must then
 # fail (every pane on show), proving the harness can tell the difference.
@@ -71,8 +74,9 @@ function Stop-RepoInstances { [void](Stop-RepoGhoztty -Exe $exe -SettleMs 700) }
 # Persistence ON: the manifest restore path is the subject.
 $appArgs = @('--config-default-files=false', '--session-persistence=true', '--macos-pane-style=flat')
 
-function Start-App {
-    $app = Start-OnTestDesktop -Exe $exe -Arguments $appArgs -KeepWindowPlacement
+function Start-App([string]$StdErr) {
+    $app = if ($StdErr) { Start-OnTestDesktop -Exe $exe -Arguments $appArgs -KeepWindowPlacement -StdErr $StdErr }
+    else { Start-OnTestDesktop -Exe $exe -Arguments $appArgs -KeepWindowPlacement }
     $t = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
     if ($t -eq [IntPtr]::Zero) { Write-TestAssertedNothing -Reason 'the app never opened a GhozttyWindow' }
     $script:app = $app
@@ -276,6 +280,44 @@ try {
     Assert ($s3.Count -eq 1 -and $s3[0].Minimized -and -not $s3[0].Focused) 'D: s3 stays a blade, without the caret'
     Stop-App
 
+    # ---- E: an in-place recovery keeps every blade (T3177) ---------------------
+    # Mac dd77885aa: "in-place recovery keeps the window's collapses and focuses
+    # a pane on show". The recovery swaps every terminal for a fresh surface,
+    # and the stack state names panes by surface, so before T3177 the row came
+    # back side by side. Kill ONLY this run's agent (its command line names this
+    # run's state dir - never the user's, never another test's) and read the
+    # window again once the app logs the rebuild.
+    Say '== E: the agent dies under a collapsed row; the window recovers in place'
+    $appLog = Join-Path $root 'app-e.err'
+    Start-App -StdErr $appLog
+    Assert-Blades 'E setup'
+    # cleanslate-exempt: kills only THIS run's agent, matched by the run's state dir on its command line, to make the app recover in place
+    $agents = @(Get-CimInstance Win32_Process -Filter "Name='ghoztty-agent.exe'" |
+        Where-Object { $_.CommandLine -like "*$tmp*" })
+    Assert ($agents.Count -eq 1) "E setup: exactly one agent belongs to this run (got $($agents.Count))"
+    $mark = if (Test-Path $appLog) { (Get-Item $appLog).Length } else { 0 }
+    foreach ($a in $agents) { Stop-Process -Id $a.ProcessId -Force -ErrorAction SilentlyContinue }
+    # The rebuild frees the old surfaces between `re-dialed` and `rebuilt`
+    # (agent-recovery.ps1's T2876 oracle): four `surface closed` lines there are
+    # the proof the panes really were replaced, so E is not vacuous.
+    $closed = -1
+    $deadline = (Get-Date).AddSeconds(45)
+    do {
+        Start-Sleep -Milliseconds 300
+        $t = ''
+        try {
+            $fs = [System.IO.File]::Open($appLog, 'Open', 'Read', 'ReadWrite')
+            try { [void]$fs.Seek($mark, 'Begin'); $t = (New-Object System.IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
+        } catch { }
+        $iDial = $t.IndexOf('in-place recovery: re-dialed')
+        $iDone = if ($iDial -ge 0) { $t.IndexOf('in-place recovery: rebuilt', $iDial) } else { -1 }
+        if ($iDone -ge 0) { $closed = ([regex]::Matches($t.Substring($iDial, $iDone - $iDial), 'surface closed')).Count }
+    } while ($closed -lt 0 -and (Get-Date) -lt $deadline)
+    Assert ($closed -ge 4) "E: the recovery rebuilt the window in place, replacing all four terminals (surfaces closed: $closed)"
+    Start-Sleep -Milliseconds 1500
+    Assert-Blades 'E'
+    Stop-App
+
     Complete-TestBody
 } catch {
     $script:fail++
@@ -308,4 +350,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Say ''
-Write-TestVerdict -Label 'T3126 SESSION BLADES' -Pass $script:pass -Fail $script:fail -MinPass 24
+Write-TestVerdict -Label 'T3126 SESSION BLADES' -Pass $script:pass -Fail $script:fail -MinPass 33
