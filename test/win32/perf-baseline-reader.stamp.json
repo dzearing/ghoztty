@@ -1,0 +1,14 @@
+{
+    "guard":  "perf-baseline-reader",
+    "script":  "test/win32/perf-baseline-reader.ps1",
+    "generated":  "2026-11-15T22:00:23-08:00",
+    "commit":  "cbc185f67",
+    "uncommitted":  [
+                        "scripts/perf-baseline.ps1",
+                        "test/win32/perf-baseline-reader.ps1"
+                    ],
+    "files":  {
+                  "scripts/perf-baseline.ps1":  "826ee6c453a56c28ade5e687f29ce01548de68f5e0b72256e11cfb849a2115f3",
+                  "test/win32/perf-baseline-reader.ps1":  "37f53082a2016a1314b68fe59045876bc904f7c10b754125873c7e4cdf1e609c"
+              }
+}

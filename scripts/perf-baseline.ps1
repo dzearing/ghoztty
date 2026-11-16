@@ -84,7 +84,13 @@ param(
     # NAME=VALUE pairs set in the app's environment, for A/B runs
     # (GHOZTTY_COMP_PRESENT=0 and friends). Recorded in the JSON.
     [string[]]$AppEnv = @(),
-    [string[]]$Compare
+    [string[]]$Compare,
+    # T3111: measure this ghoztty.exe instead of the build's zig-out folder -
+    # an A/B against an older commit built into its own prefix. Only with
+    # -Build Debug or -Build Release, and it must be a zig-out* build tree.
+    [string]$Exe,
+    # T3111: check the CPU-time reader against Get-Process and exit.
+    [switch]$SelfTest
 )
 
 $ErrorActionPreference = 'Stop'
@@ -105,6 +111,10 @@ $lib = Join-Path $repo 'test\win32\lib'
 # and DWM noise), tight on handle and object counts.
 $script:Tolerance = [ordered]@{
     cpu_pct       = @{ rel = 0.50; abs = 0.5;  note = 'percent of one core' }
+    # T3111: an idle app runs at a few tenths of a percent, so the 0.5 floor
+    # above let 0.03% -> 0.21% (7x) pass as "within tolerance". The idle floor
+    # is two clock ticks over the 60 s span (2 x 15.6 ms / 60 s = 0.052%).
+    idle_cpu_pct  = @{ rel = 0.50; abs = 0.05; note = 'idle percent of one core: floor of two clock ticks over 60 s' }
     wakeups       = @{ rel = 0.35; abs = 20;   note = 'context switches per second' }
     seconds       = @{ rel = 0.30; abs = 0.5;  note = 'wall or CPU seconds' }
     mb            = @{ rel = 0.15; abs = 5;    note = 'megabytes' }
@@ -121,10 +131,13 @@ $script:Tolerance = [ordered]@{
 function Get-MetricFamily([string]$Path) {
     $leaf = ($Path -split '\.')[-1]
     if ($Path -match '\.leak\.' -and $leaf -match '_mb$' -and $leaf -notmatch 'gpu') { return 'delta_mb' }
+    # T3111: idle CPU (the app's idle phase, the agent's idle_cpu_pct) has its
+    # own small floor; busy and resize CPU keep the wide one.
+    if ($leaf -match '^(idle_)?cpu.*pct$' -and ($Path -match '\.idle\.' -or $leaf -like 'idle_*')) { return 'idle_cpu_pct' }
     switch -regex ($leaf) {
         'gpu.*_mb$' { return 'gpu_mb' }
         'gpu.*pct'  { return 'gpu_pct' }
-        'cpu_pct'   { return 'cpu_pct' }
+        '^cpu.*pct$' { return 'cpu_pct' }
         'wakeups'   { return 'wakeups' }
         '_s$|seconds' { return 'seconds' }
         '_mb$'      { return 'mb' }
@@ -187,7 +200,8 @@ $commit = (& git -C $repo rev-parse --short HEAD 2>$null)
 # Each build runs in its own child process: isolation is process-wide env
 # (pipe suffix, agent lineage, LOCALAPPDATA), so one process per build is the
 # only way the two cannot share anything.
-if ($Build -eq 'Both') {
+if ($Build -eq 'Both' -and $Exe) { Write-Host 'PERF BASELINE: -Exe needs -Build Debug or -Build Release'; exit 2 }
+if ($Build -eq 'Both' -and -not $SelfTest) {
     $parts = [ordered]@{}
     $exit = 0
     foreach ($b in @('Debug', 'Release')) {
@@ -237,18 +251,6 @@ if ($Build -eq 'Both') {
 . (Join-Path $lib 'ProcessMemory.ps1')
 
 $isRelease = $Build -eq 'Release'
-$exe = Join-Path $repo $(if ($isRelease) { 'zig-out-release\bin\ghoztty.exe' } else { 'zig-out\bin\ghoztty.exe' })
-if (-not (Test-Path $exe)) {
-    Write-Host "PERF BASELINE: $exe is missing. Build it with:"
-    if ($isRelease) { Write-Host '  zig build -Dapp-runtime=win32 -Doptimize=ReleaseFast -Dtarget=x86_64-windows-gnu -Dstrip=false --prefix zig-out-release' }
-    else { Write-Host '  zig build -Dapp-runtime=win32 -Doptimize=Debug' }
-    exit 2
-}
-[void](Set-GhozttyTestIsolation -Tag 'perfb' -ReleaseSandbox -Quiet)
-# Inherited by every app this run starts.
-foreach ($k in $appEnvMap.Keys) { Set-Item -Path "env:$k" -Value $appEnvMap[$k] }
-$work = Join-Path $env:TEMP "ghoztty-perfb-$PID"
-New-Item -ItemType Directory -Force $work | Out-Null
 
 if (-not ('PerfSnap' -as [type])) {
     Add-Type -TypeDefinition @'
@@ -257,9 +259,16 @@ using System.Runtime.InteropServices;
 public static class PerfSnap {
     [DllImport("ntdll.dll")] static extern int NtQuerySystemInformation(int cls, IntPtr buf, int len, out int ret);
     // SystemProcessInformation (class 5), x64 layout: the process record is
-    // 0x100 bytes (UniqueProcessId at 0x50, NumberOfThreads at 0x04, the
-    // kernel/user times at 0x28/0x20), followed by NumberOfThreads
-    // SYSTEM_THREAD_INFORMATION records of 0x50 bytes, ContextSwitches at 0x40.
+    // 0x100 bytes (NumberOfThreads at 0x04, CycleTime at 0x18, CreateTime at
+    // 0x20, UserTime at 0x28, KernelTime at 0x30, UniqueProcessId at 0x50),
+    // followed by NumberOfThreads SYSTEM_THREAD_INFORMATION records of 0x50
+    // bytes, ContextSwitches at 0x40.
+    //
+    // T3111: until 2026-11-15 this read 0x20 + 0x28 as "user + kernel". 0x20
+    // is CreateTime, a constant, so every cpu_pct in baselines 1-3 was USER
+    // time only - kernel time was never counted. Verified against
+    // Get-Process (StartTime / UserProcessorTime / PrivilegedProcessorTime).
+    // Returns { user+kernel, contextSwitches, threads, user, kernel, cycles }.
     public static long[] Read(int pid) {
         int len = 4 << 20;
         for (int tries = 0; tries < 6; tries++) {
@@ -275,11 +284,12 @@ public static class PerfSnap {
                     long id = Marshal.ReadIntPtr(new IntPtr(p + 0x50)).ToInt64();
                     if (id == pid) {
                         int n = Marshal.ReadInt32(new IntPtr(p + 4));
-                        long user = Marshal.ReadInt64(new IntPtr(p + 0x20));
-                        long kern = Marshal.ReadInt64(new IntPtr(p + 0x28));
+                        long cycles = Marshal.ReadInt64(new IntPtr(p + 0x18));
+                        long user = Marshal.ReadInt64(new IntPtr(p + 0x28));
+                        long kern = Marshal.ReadInt64(new IntPtr(p + 0x30));
                         long cs = 0;
                         for (int i = 0; i < n; i++) cs += (uint)Marshal.ReadInt32(new IntPtr(p + 0x100 + i * 0x50 + 0x40));
-                        return new long[] { user + kern, cs, n };
+                        return new long[] { user + kern, cs, n, user, kern, cycles };
                     }
                     if (next == 0) return null;
                     p += next;
@@ -328,6 +338,27 @@ public static class PerfSnap {
     [DllImport("kernel32.dll")] static extern int GetThreadDescription(IntPtr h, out IntPtr desc);
     [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr p);
     [DllImport("ntdll.dll")] static extern int NtQueryInformationThread(IntPtr h, int cls, out IntPtr info, int len, IntPtr ret);
+    [DllImport("kernel32.dll")] static extern bool QueryThreadCycleTime(IntPtr h, out ulong cycles);
+    [DllImport("ntdll.dll")] static extern int NtQueryTimerResolution(out uint min, out uint max, out uint cur);
+    // T3111: the current system clock interval in 100 ns units (156250 is
+    // the default 15.6 ms; 10000 is a 1 ms timeBeginPeriod), -1 unread.
+    public static long TimerResolution100ns() {
+        uint mn, mx, cur;
+        return NtQueryTimerResolution(out mn, out mx, out cur) == 0 ? (long)cur : -1;
+    }
+    // T3111: a live thread's exact cycle count (QueryThreadCycleTime), -1
+    // when it cannot be opened. Unlike UserTime/KernelTime, which the clock
+    // tick charges in whole 15.6 ms quanta to whatever thread it interrupts,
+    // this counts every cycle the thread ran, so a thread that wakes 60
+    // times a second for microseconds is measured, not sampled.
+    public static long Cycles(uint tid) {
+        IntPtr h = OpenThread(0x0800, false, tid); // QUERY_LIMITED_INFORMATION
+        if (h == IntPtr.Zero) return -1;
+        try {
+            ulong c;
+            return QueryThreadCycleTime(h, out c) ? (long)c : -1;
+        } finally { CloseHandle(h); }
+    }
     // A live thread's name (SetThreadDescription; "" when it has none) and
     // its Win32 start address (ThreadQuerySetWin32StartAddress, class 9) -
     // the function the creator passed, not RtlUserThreadStart. Null when the
@@ -350,6 +381,54 @@ public static class PerfSnap {
 }
 '@
 }
+
+# T3111: -SelfTest checks the SystemProcessInformation reader against
+# Get-Process for THIS process - the offsets once read CreateTime as kernel
+# time and nothing noticed for three baselines. No app, no desktop.
+if ($SelfTest) {
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $tmp = [IO.Path]::GetTempFileName()
+    while ($sw.ElapsedMilliseconds -lt 1500) { [void][IO.File]::GetAttributes($tmp); $x = 0; for ($k = 0; $k -lt 2000; $k++) { $x += $k } }
+    Remove-Item $tmp
+    $me = Get-Process -Id $PID
+    $r = [PerfSnap]::Read($PID)
+    $me.Refresh()
+    $u = $me.UserProcessorTime.Ticks; $k = $me.PrivilegedProcessorTime.Ticks
+    $tick = 156250
+    $okU = [math]::Abs($r[3] - $u) -le 2 * $tick
+    $okK = [math]::Abs($r[4] - $k) -le 2 * $tick
+    $okSum = $r[0] -eq ($r[3] + $r[4])
+    $okCy = $r[5] -gt 0
+    Write-Host ("SELFTEST user   reader={0} get-process={1} {2}" -f $r[3], $u, $(if ($okU) { 'ok' } else { 'MISMATCH' }))
+    Write-Host ("SELFTEST kernel reader={0} get-process={1} {2}" -f $r[4], $k, $(if ($okK) { 'ok' } else { 'MISMATCH' }))
+    Write-Host ("SELFTEST total  reader={0} = user+kernel {1}" -f $r[0], $(if ($okSum) { 'ok' } else { 'MISMATCH' }))
+    Write-Host ("SELFTEST cycles reader={0} {1}" -f $r[5], $(if ($okCy) { 'ok' } else { 'MISSING' }))
+    $tr = [PerfSnap]::TimerResolution100ns()
+    Write-Host ("SELFTEST timer  {0} ms" -f $(if ($tr -gt 0) { $tr / 1e4 } else { 'unread' }))
+    if ($okU -and $okK -and $okSum -and $okCy -and $k -gt 0) { Write-Host 'SELFTEST PASS'; exit 0 }
+    Write-Host 'SELFTEST FAIL'; exit 1
+}
+
+$exe = Join-Path $repo $(if ($isRelease) { 'zig-out-release\bin\ghoztty.exe' } else { 'zig-out\bin\ghoztty.exe' })
+if ($Exe) {
+    $exe = [IO.Path]::GetFullPath($Exe)
+    # Never the user's install (CLAUDE.md non-negotiable): only a build tree.
+    if ($exe -notmatch '\\zig-out[^\\]*\\bin\\ghoztty\.exe$') {
+        Write-Host "PERF BASELINE: -Exe must be a zig-out*\bin\ghoztty.exe build tree, not $exe"
+        exit 2
+    }
+}
+if (-not (Test-Path $exe)) {
+    Write-Host "PERF BASELINE: $exe is missing. Build it with:"
+    if ($isRelease) { Write-Host '  zig build -Dapp-runtime=win32 -Doptimize=ReleaseFast -Dtarget=x86_64-windows-gnu -Dstrip=false --prefix zig-out-release' }
+    else { Write-Host '  zig build -Dapp-runtime=win32 -Doptimize=Debug' }
+    exit 2
+}
+[void](Set-GhozttyTestIsolation -Tag 'perfb' -ReleaseSandbox -Quiet)
+# Inherited by every app this run starts.
+foreach ($k in $appEnvMap.Keys) { Set-Item -Path "env:$k" -Value $appEnvMap[$k] }
+$work = Join-Path $env:TEMP "ghoztty-perfb-$PID"
+New-Item -ItemType Directory -Force $work | Out-Null
 
 # T2989: every window a process owns on the test desktop - top-levels (hidden
 # included), their children, and message-only windows - counted by class and
@@ -543,19 +622,37 @@ $cores = [Environment]::ProcessorCount
 function Get-Snap([int]$ProcessId) {
     $r = [PerfSnap]::Read($ProcessId)
     if ($null -eq $r) { return $null }
-    return [pscustomobject]@{ Cpu100ns = $r[0]; Ctx = $r[1]; Threads = $r[2]; At = [Diagnostics.Stopwatch]::GetTimestamp() }
+    return [pscustomobject]@{ Cpu100ns = $r[0]; Ctx = $r[1]; Threads = $r[2]; User100ns = $r[3]; Kernel100ns = $r[4]; Cycles = $r[5]; At = [Diagnostics.Stopwatch]::GetTimestamp() }
 }
+# T3111: the cycle counter runs at the invariant TSC rate, which is the
+# processor's nominal clock; cycles / this = seconds of one core.
+$script:cycleHz = 1e6 * [double]((Get-CimInstance Win32_Processor | Select-Object -First 1).MaxClockSpeed)
 # CPU % of ONE core, CPU seconds and context switches/s between two snaps.
+# cpu_pct is user + kernel time, which Windows charges in whole clock ticks
+# (15.6 ms; one tick over a 60 s idle span is 0.026%), so a small idle number
+# is a COUNT of ticks that landed on the app, not a measurement of its work.
+# cpu_cycle_pct is the same quantity from the exact cycle counter (T3111).
 function Get-Rate($A, $B) {
     if ($null -eq $A -or $null -eq $B) { return $null }
     $sec = ($B.At - $A.At) / [double][Diagnostics.Stopwatch]::Frequency
     $cpu = ($B.Cpu100ns - $A.Cpu100ns) / 1e7
-    return [pscustomobject]@{
+    $o = [ordered]@{
         wall_s  = [math]::Round($sec, 2)
         cpu_s   = [math]::Round($cpu, 3)
         cpu_pct = [math]::Round(100.0 * $cpu / $sec, 2)
+        cpu_user_pct = [math]::Round(100.0 * (($B.User100ns - $A.User100ns) / 1e7) / $sec, 2)
+        cpu_kernel_pct = [math]::Round(100.0 * (($B.Kernel100ns - $A.Kernel100ns) / 1e7) / $sec, 2)
+        cpu_ticks = [math]::Round(($B.Cpu100ns - $A.Cpu100ns) / 156250.0, 1)
+        cpu_cycle_pct = $null
+        mcycles_per_s = $null
         wakeups_per_s = [math]::Round(($B.Ctx - $A.Ctx) / $sec, 1)
     }
+    if ($script:cycleHz -gt 0 -and $B.Cycles -ge $A.Cycles) {
+        $cy = [double]($B.Cycles - $A.Cycles)
+        $o.cpu_cycle_pct = [math]::Round(100.0 * $cy / $script:cycleHz / $sec, 3)
+        $o.mcycles_per_s = [math]::Round($cy / 1e6 / $sec, 2)
+    }
+    return [pscustomobject]$o
 }
 
 # ---------------------------------------------------------------- attribution (T2989)
@@ -565,6 +662,14 @@ function Get-ThreadCtx([int]$ProcessId) {
     if ($null -eq $r) { return $null }
     $h = @{}
     for ($i = 0; $i -lt $r.Length; $i += 2) { $h[[long]$r[$i]] = [long]$r[$i + 1] }
+    return $h
+}
+# T3111: tid -> exact cycle count for every thread in a Get-ThreadCtx table
+# (threads that cannot be opened are left out).
+function Get-ThreadCycles([hashtable]$Ctx) {
+    if ($null -eq $Ctx) { return $null }
+    $h = @{}
+    foreach ($tid in $Ctx.Keys) { $c = [PerfSnap]::Cycles([uint32]$tid); if ($c -ge 0) { $h[$tid] = $c } }
     return $h
 }
 
@@ -603,13 +708,20 @@ function Get-ThreadIdentity([long]$Tid, $Map) {
 # belong to: the top $Top threads, and every switch grouped by the module the
 # thread started in (named threads keep their own name as the group, since
 # the apprt's renderer/io threads all start inside ghoztty.exe).
-function Get-WakeupAttribution([int]$ProcessId, [hashtable]$Before, [hashtable]$After, [double]$Seconds, [int]$Top = 10) {
+function Get-WakeupAttribution([int]$ProcessId, [hashtable]$Before, [hashtable]$After, [double]$Seconds, [int]$Top = 10, [hashtable]$CyBefore = $null, [hashtable]$CyAfter = $null) {
     if ($null -eq $Before -or $null -eq $After -or $Seconds -le 0) { return $null }
     $map = Get-ModuleMap $ProcessId
+    $haveCy = $null -ne $CyBefore -and $null -ne $CyAfter
     $rows = foreach ($tid in $After.Keys) {
         $was = if ($Before.ContainsKey($tid)) { $Before[$tid] } else { 0 }
         $d = $After[$tid] - $was
-        if ($d -le 0) { continue }
+        # T3111: cycles spent by the thread over the span; $null when unread.
+        $mc = $null
+        if ($haveCy -and $CyAfter.ContainsKey($tid)) {
+            $c0 = if ($CyBefore.ContainsKey($tid)) { $CyBefore[$tid] } else { 0 }
+            $mc = [math]::Round(($CyAfter[$tid] - $c0) / 1e6 / $Seconds, 3)
+        }
+        if ($d -le 0 -and -not ($mc -gt 0)) { continue }
         $id = Get-ThreadIdentity $tid $map
         [pscustomobject]@{
             tid = [long]$tid
@@ -617,26 +729,35 @@ function Get-WakeupAttribution([int]$ProcessId, [hashtable]$Before, [hashtable]$
             start = $id.Start
             group = $(if ($id.Name) { "$($id.Module) [$($id.Name)]" } else { $id.Module })
             new = -not $Before.ContainsKey($tid)
-            wakeups_per_s = [math]::Round($d / $Seconds, 2)
+            wakeups_per_s = [math]::Round([math]::Max($d, 0) / $Seconds, 2)
+            mcycles_per_s = $mc
         }
     }
-    $rows = @($rows | Sort-Object wakeups_per_s -Descending)
+    $rows = @($rows)
     $total = ($rows | Measure-Object -Property wakeups_per_s -Sum).Sum
     $groups = @($rows | Group-Object group | ForEach-Object {
-            [pscustomobject]@{
+            $g = [ordered]@{
                 group = $_.Name
                 threads = $_.Count
                 wakeups_per_s = [math]::Round((($_.Group | Measure-Object -Property wakeups_per_s -Sum).Sum), 2)
             }
+            if ($haveCy) { $g.mcycles_per_s = [math]::Round((($_.Group | Where-Object { $null -ne $_.mcycles_per_s } | Measure-Object -Property mcycles_per_s -Sum).Sum), 3) }
+            [pscustomobject]$g
         } | Sort-Object wakeups_per_s -Descending)
-    return [ordered]@{
-        method = "per-thread ContextSwitches (SystemProcessInformation) at both ends of the span; a thread's group is its start module (NtQueryInformationThread Win32StartAddress against the process's module list) plus its SetThreadDescription name; threads that exited inside the span are not counted"
+    $o = [ordered]@{
+        method = "per-thread ContextSwitches (SystemProcessInformation) at both ends of the span; a thread's group is its start module (NtQueryInformationThread Win32StartAddress against the process's module list) plus its SetThreadDescription name; threads that exited inside the span are not counted" + $(if ($haveCy) { '; mcycles_per_s is QueryThreadCycleTime at both ends (exact, not tick-sampled; T3111)' } else { '' })
         threads_seen = $After.Count
         threads_exited = @($Before.Keys | Where-Object { -not $After.ContainsKey($_) }).Count
         attributed_wakeups_per_s = [math]::Round([double]$total, 1)
-        top_threads = @($rows | Select-Object -First $Top)
+        top_threads = @($rows | Sort-Object wakeups_per_s -Descending | Select-Object -First $Top)
         by_group = $groups
     }
+    if ($haveCy) {
+        $o.attributed_mcycles_per_s = [math]::Round([double](($rows | Where-Object { $null -ne $_.mcycles_per_s } | Measure-Object -Property mcycles_per_s -Sum).Sum), 2)
+        $o.top_threads_by_cycles = @($rows | Where-Object { $null -ne $_.mcycles_per_s } | Sort-Object mcycles_per_s -Descending | Select-Object -First $Top)
+        $o.by_group_cycles = @($groups | Sort-Object mcycles_per_s -Descending)
+    }
+    return $o
 }
 
 # Everything census-able a process holds: kernel handles by type (WcmHandles,
@@ -828,22 +949,35 @@ try {
             Start-Sleep -Seconds 10
             $job = Start-GpuSampler $a.Pid ([math]::Min($IdleSeconds, 30))
             $t0 = Get-ThreadCtx $a.Pid
+            $c0 = Get-ThreadCycles $t0
             $s0 = Get-Snap $a.Pid
+            $tr0 = [PerfSnap]::TimerResolution100ns()
             Start-Sleep -Seconds $IdleSeconds
             $s1 = Get-Snap $a.Pid
+            $tr1 = [PerfSnap]::TimerResolution100ns()
             $t1 = Get-ThreadCtx $a.Pid
+            $c1 = Get-ThreadCycles $t1
             $gpu = Stop-GpuSampler $job
             $r = Get-Rate $s0 $s1
             $result.idle = [ordered]@{
-                method = "1 window 1400x900, 1 cmd pane at its prompt, persistence off; 10 s settle, then CPU time and summed thread context switches (NtQuerySystemInformation class 5) over $IdleSeconds s; GPU Engine(pid_*) utilisation summed over engines, 1 s samples, first 30 s"
+                method = "1 window 1400x900, 1 cmd pane at its prompt, persistence off; 10 s settle, then CPU time and summed thread context switches (NtQuerySystemInformation class 5) over $IdleSeconds s; GPU Engine(pid_*) utilisation summed over engines, 1 s samples, first 30 s. cpu_pct is user+kernel tick-charged time (baselines 1-3: user only); cpu_cycle_pct is the exact cycle count at the nominal $([math]::Round($script:cycleHz / 1e6)) MHz (T3111)"
                 cpu_pct = $r.cpu_pct
+                cpu_user_pct = $r.cpu_user_pct
+                cpu_kernel_pct = $r.cpu_kernel_pct
+                cpu_ticks = $r.cpu_ticks
+                cpu_cycle_pct = $r.cpu_cycle_pct
+                mcycles_per_s = $r.mcycles_per_s
+                # The system clock interval at both ends (ms): another
+                # process's timeBeginPeriod changes how often the app's
+                # timers can fire, which no number of ours would show.
+                timer_resolution_ms = @($(if ($tr0 -gt 0) { [math]::Round($tr0 / 1e4, 3) } else { $null }), $(if ($tr1 -gt 0) { [math]::Round($tr1 / 1e4, 3) } else { $null }))
                 wakeups_per_s = $r.wakeups_per_s
                 threads = $s1.Threads
                 gpu_engine_pct = $gpu.gpu_engine_pct
                 gpu_engine_peak_pct = $gpu.gpu_engine_peak_pct
             }
             if ($gpu.reason) { $result.idle.gpu_reason = $gpu.reason }
-            $result.idle.wakeup_attribution = Get-WakeupAttribution $a.Pid $t0 $t1 $r.wall_s
+            $result.idle.wakeup_attribution = Get-WakeupAttribution $a.Pid $t0 $t1 $r.wall_s -CyBefore $c0 -CyAfter $c1
             $result.idle.memory = Format-Sample (Get-FullSample $a.Pid 'idle')
             $result.idle.objects = Format-CensusTotals (Get-ObjectCensus $a.Pid)
         } catch { $failed = $true; $result.idle = [ordered]@{ error = "$_" } }
@@ -1204,6 +1338,7 @@ try {
             $result.agent = [ordered]@{
                 method = "persistence on; agent started by a throwaway app, then measured: idle = 30 s CPU and context switches with 1 attached session; per-session = (private bytes, and its ConPTY/shell descendants' private bytes) delta after $AgentSessions +split panes divided by the +sessions --json delta; attach/detach = app killed (sessions stay pinned) then relaunched (restore re-attaches), $AttachCycles times, settled agent sample after each"
                 idle_cpu_pct = $idle.cpu_pct
+                idle_cpu_cycle_pct = $idle.cpu_cycle_pct
                 idle_wakeups_per_s = $idle.wakeups_per_s
                 base = Format-Sample $base
                 sessions_base = $sessBase

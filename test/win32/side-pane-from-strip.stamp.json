@@ -1,8 +1,8 @@
 {
     "guard":  "side-pane-from-strip",
     "script":  "test/win32/side-pane-from-strip.ps1",
-    "generated":  "2026-11-15T22:22:44-08:00",
-    "commit":  "d0972db96",
+    "generated":  "2026-11-15T22:40:36-08:00",
+    "commit":  "cbc185f67",
     "uncommitted":  [
 
                     ],

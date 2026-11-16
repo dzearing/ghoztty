@@ -39,7 +39,27 @@ is there, and the JSON records which version that was.
 
 The tolerances are in the script, and every JSON carries a copy. CPU and GPU
 engine time are noisy: their tolerance is ±50-75% relative, with a small
-absolute floor. Memory has ±15%. Handle and object counts have ±10%.
+absolute floor. Idle CPU has its own floor (`idle_cpu_pct`, ±0.05 points, two
+clock ticks over 60 s; T3111), because at a few tenths of a percent the busy
+floor of 0.5 let a 7x rise pass. Memory has ±15%. Handle and object counts
+have ±10%.
+
+### Reading idle CPU (T3111)
+
+Windows charges `cpu_pct` (user + kernel time) in whole clock ticks of
+15.625 ms to whatever thread the tick interrupts. Over the 60 s idle span one
+tick is 0.026%, so an idle `cpu_pct` of 0.03 is ONE tick and 0.21 is eight: a
+count of samples, not a measurement. `cpu_ticks` prints that count.
+`cpu_cycle_pct` (and `mcycles_per_s`, per thread in
+`wakeup_attribution.top_threads_by_cycles` / `by_group_cycles`) comes from the
+exact cycle counter and is the number to compare. `timer_resolution_ms` is the
+system clock interval at both ends of the span: another process's
+`timeBeginPeriod(1)` changes it from 15.6 to 1 ms.
+
+**Baselines 1-3 read user time only.** Until T3111 the reader took
+`CreateTime + UserTime` for `user + kernel` (offset 0x20 of the process record
+is CreateTime), so their `cpu_pct` and `cpu_s` leave kernel time out. Compare
+CPU against a T3111-or-later JSON only.
 
 ## Files
 
@@ -48,7 +68,9 @@ absolute floor. Memory has ±15%. Handle and object counts have ±10%.
   `-Compare` of the two, all 198 metrics are within tolerance. The leak deltas
   needed their own family (`delta_mb`), because the two runs read 27.3 MB and
   36.1 MB for the same delta. The script carries that family; the JSON
-  files' own tolerance block predates it.
+  files' own tolerance block predates it. Under T3111's tighter idle floor
+  the two disagree on idle CPU (release 0.03 vs 0.18, debug 0.34 vs 0.13):
+  the same code gave 1 and 7 clock ticks.
 - `baseline-2.json` is the audit-2 baseline (T3072, commit 879fba35a, both
   builds). Against baseline-1, 42 of 198 metrics are out of tolerance, all of
   them better. See `audit-2.md`.

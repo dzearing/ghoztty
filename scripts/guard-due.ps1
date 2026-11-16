@@ -4856,6 +4856,18 @@ $GuardTable = @(
     # that quietly reintroduced it would not fail anywhere loudly: the fixtures
     # using it would go on passing, and would start lying in exactly the way
     # that cost six days. Nothing in the P1-P3 floor reaches it.
+    # The perf baseline's CPU reader and idle-CPU compare (T3111). The reader
+    # read CreateTime as kernel time for three baselines and the compare let
+    # a 7x idle rise pass; both are pure and nothing else runs them.
+    [pscustomobject]@{
+        Name   = 'perf-baseline-reader'
+        Script = 'test\win32\perf-baseline-reader.ps1'
+        Stamp  = 'test\win32\perf-baseline-reader.stamp.json'
+        Covers = @(
+            'scripts\perf-baseline.ps1',
+            'test\win32\perf-baseline-reader.ps1'
+        )
+    },
     [pscustomobject]@{
         Name   = 'count-or-zero'
         Script = 'test\win32\count-or-zero.ps1'

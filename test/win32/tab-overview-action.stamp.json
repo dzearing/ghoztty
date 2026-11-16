@@ -1,8 +1,8 @@
 {
     "guard":  "tab-overview-action",
     "script":  "test/win32/tab-overview-action.ps1",
-    "generated":  "2026-11-15T22:22:50-08:00",
-    "commit":  "d0972db96",
+    "generated":  "2026-11-15T22:40:42-08:00",
+    "commit":  "cbc185f67",
     "uncommitted":  [
 
                     ],
