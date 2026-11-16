@@ -338,6 +338,48 @@ struct PaneGrabHandleWindowTests {
         await settle(0.3)
     }
 
+    /// Every sidebar lists every window's panes, so the drag reaches a
+    /// sidebar only when it has to: its own window's at the start, another's
+    /// once the pointer is over that window. Arming all of them at once was
+    /// a stall that grew with the square of the windows
+    /// (`PaneDragStartScaleTests`).
+    @Test func aSidebarJoinsTheDragWhenThePointerReachesItsWindow() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        let a = terminalPane(app), b = terminalPane(app)
+        let source = try await open(try SplitTree<PaneView>(view: a).inserting(view: b, at: a, direction: .right), ghostty)
+        let c = terminalPane(app), d = terminalPane(app)
+        let other = try await open(try SplitTree<PaneView>(view: c).inserting(view: d, at: c, direction: .right), ghostty)
+        let otherWindow = try #require(other.window)
+        let sourceWindow = try #require(source.window)
+        // Side by side, so the pointer can be over either.
+        sourceWindow.setFrameOrigin(NSPoint(x: 0, y: 100))
+        otherWindow.setFrameOrigin(NSPoint(x: sourceWindow.frame.maxX + 20, y: 100))
+        await settle(0.3)
+
+        let session = PaneDragSession.shared
+        var otherFires = 0
+        let subscription = other.paneSidebarState.objectWillChange.sink { otherFires += 1 }
+        defer { subscription.cancel() }
+
+        session.begin(pane: b, from: source)
+        #expect(source.paneSidebarState.draggedPane === b)
+        #expect(other.paneSidebarState.draggedPane == nil)
+        session.update(screenPoint: centre(of: a.contentView, sourceWindow))
+        #expect(other.paneSidebarState.draggedPane == nil)
+        #expect(otherFires == 0)
+
+        session.update(screenPoint: centre(of: c.contentView, otherWindow))
+        #expect(other.paneSidebarState.draggedPane === b)
+
+        session.end(commit: false)
+        #expect(source.paneSidebarState.draggedPane == nil)
+        #expect(other.paneSidebarState.draggedPane == nil)
+        other.close()
+        source.close()
+        await settle(0.3)
+    }
+
     private func centre(of view: NSView, _ window: NSWindow) -> CGPoint {
         screenPoint(in: view, window, at: NSPoint(x: view.bounds.midX, y: view.bounds.midY))
     }
