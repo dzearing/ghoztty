@@ -30,6 +30,12 @@
 #           what each cycle leaves behind. The residue is broken down by
 #           kind (T2989): kernel handles by type, windows by class, threads
 #           by group, and the USER objects that are not windows.
+#           Then (T3005) warm-up cycles until two in a row are quiet, a
+#           per-cycle SLOPE over -SettledCycles more (fill vs leak), a
+#           closed-and-idle sample, a committed-memory split by owner
+#           (heap / GPU write-combined pool / other, VirtualQueryEx), and on
+#           Debug the DebugAllocator's leak report at a clean quit.
+#           -AppEnv NAME=VALUE sets app env for A/B runs.
 #   agent   session persistence on: ghoztty-agent.exe idle CPU and wakeups,
 #           private bytes per hosted session, and its handles/threads across
 #           -AttachCycles app kill (detach) / relaunch (re-attach) cycles.
@@ -64,6 +70,20 @@ param(
     # single split, 2 panes). An A/B knob for a residue that may follow tabs,
     # panes, or only the first pane ever opened (T2976).
     [ValidateSet('mixed', 'tabs', 'splits', 'one')][string]$CycleShape = 'mixed',
+    # T3005: after the two classic cycles, keep cycling until two in a row
+    # each grow private bytes and GPU memory by <= -SettleBudgetMB (cap
+    # -CycleMaxWarmup), then measure -SettledCycles more and report the
+    # per-cycle SLOPE: ~0 is bounded fill, a steady climb is a leak.
+    # -SettledCycles 0 is the old two-cycle phase.
+    [int]$SettledCycles = 5,
+    [int]$CycleMaxWarmup = 8,
+    [double]$SettleBudgetMB = 2.0,
+    # A closed-and-idle sample this long after the last cycle: does what the
+    # cycles left get trimmed back while nothing happens?
+    [int]$CycleIdleSeconds = 30,
+    # NAME=VALUE pairs set in the app's environment, for A/B runs
+    # (GHOZTTY_COMP_PRESENT=0 and friends). Recorded in the JSON.
+    [string[]]$AppEnv = @(),
     [string[]]$Compare
 )
 
@@ -71,6 +91,12 @@ $ErrorActionPreference = 'Stop'
 $Phase = @($Phase | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 $bad = @($Phase | Where-Object { @('all', 'idle', 'busy', 'cycle', 'agent') -notcontains $_ })
 if ($bad.Count) { Write-Host "unknown -Phase: $($bad -join ',')"; exit 2 }
+$AppEnv = @($AppEnv | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+$appEnvMap = [ordered]@{}
+foreach ($kv in $AppEnv) {
+    if ($kv -notmatch '^([A-Za-z_][A-Za-z0-9_]*)=(.*)$') { Write-Host "bad -AppEnv entry (want NAME=VALUE): $kv"; exit 2 }
+    $appEnvMap[$Matches[1]] = $Matches[2]
+}
 $repo = Split-Path $PSScriptRoot -Parent
 $lib = Join-Path $repo 'test\win32\lib'
 
@@ -168,7 +194,10 @@ if ($Build -eq 'Both') {
         $part = Join-Path $env:TEMP "perf-baseline-$b-$PID.json"
         $childArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-Build', $b, '-Out', $part,
             '-IdleSeconds', $IdleSeconds, '-BusyMB', $BusyMB, '-BusyText', $BusyText, '-ResizeSeconds', $ResizeSeconds,
-            '-AgentSessions', $AgentSessions, '-AttachCycles', $AttachCycles, '-Phase', ($Phase -join ','))
+            '-AgentSessions', $AgentSessions, '-AttachCycles', $AttachCycles, '-Phase', ($Phase -join ','),
+            '-CycleShape', $CycleShape, '-SettledCycles', $SettledCycles, '-CycleMaxWarmup', $CycleMaxWarmup,
+            '-SettleBudgetMB', $SettleBudgetMB, '-CycleIdleSeconds', $CycleIdleSeconds)
+        if ($AppEnv.Count) { $childArgs += @('-AppEnv', ($AppEnv -join ',')) }
         Write-Host "== $b build"
         & powershell @childArgs
         if ($LASTEXITCODE -ne 0) { $exit = 1 }
@@ -191,7 +220,7 @@ if ($Build -eq 'Both') {
             gpu   = ((Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }) -join '; ')
             os    = (Get-CimInstance Win32_OperatingSystem).Version
         }
-        parameters = [ordered]@{ idle_seconds = $IdleSeconds; busy_mb = $BusyMB; busy_text = $BusyText; resize_seconds = $ResizeSeconds; agent_sessions = $AgentSessions; attach_cycles = $AttachCycles }
+        parameters = [ordered]@{ idle_seconds = $IdleSeconds; busy_mb = $BusyMB; busy_text = $BusyText; resize_seconds = $ResizeSeconds; agent_sessions = $AgentSessions; attach_cycles = $AttachCycles; cycle_shape = $CycleShape; settled_cycles = $SettledCycles; cycle_max_warmup = $CycleMaxWarmup; settle_budget_mb = $SettleBudgetMB; cycle_idle_seconds = $CycleIdleSeconds; app_env = $appEnvMap }
         tolerance = $script:Tolerance
         builds    = $parts
     }
@@ -216,6 +245,8 @@ if (-not (Test-Path $exe)) {
     exit 2
 }
 [void](Set-GhozttyTestIsolation -Tag 'perfb' -ReleaseSandbox -Quiet)
+# Inherited by every app this run starts.
+foreach ($k in $appEnvMap.Keys) { Set-Item -Path "env:$k" -Value $appEnvMap[$k] }
 $work = Join-Path $env:TEMP "ghoztty-perfb-$PID"
 New-Item -ItemType Directory -Force $work | Out-Null
 
@@ -390,6 +421,122 @@ public static class PerfWindows {
     }
 }
 '@
+}
+
+# T3005: where the app's committed memory lives, by owner, read from outside
+# with VirtualQueryEx - no debugger, no injected thread. Every committed
+# region is put in one class:
+#   heap          MEM_PRIVATE inside an allocation that starts with an NT heap
+#                 segment (0xffeeffee) or segment-heap (0xddeeddee) signature
+#                 at +0x10 - the NT heaps, LFH included. A heap's large blocks
+#                 (VirtualAlloc'd past the heap threshold) carry no signature
+#                 and land in private_rw.
+#   writecombine  MEM_PRIVATE with PAGE_WRITECOMBINE: the GPU driver's upload
+#                 pool (T2782's census).
+#   uncached      MEM_PRIVATE with PAGE_NOCACHE.
+#   stack         MEM_PRIVATE in an allocation that holds a PAGE_GUARD region.
+#   private_rw    every other MEM_PRIVATE region (Zig's page allocator - the
+#                 whole Debug DebugAllocator - driver arenas, heap large blocks).
+#   mapped        MEM_MAPPED (sections, including GPU shared allocations).
+#   image         MEM_IMAGE.
+if (-not ('PerfRegions' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public static class PerfRegions {
+    [StructLayout(LayoutKind.Sequential)]
+    struct MBI { public IntPtr BaseAddress; public IntPtr AllocationBase; public uint AllocationProtect; public ushort PartitionId; public IntPtr RegionSize; public uint State; public uint Protect; public uint Type; }
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32.dll")] static extern IntPtr VirtualQueryEx(IntPtr p, IntPtr addr, out MBI mbi, IntPtr len);
+    [DllImport("kernel32.dll")] static extern bool ReadProcessMemory(IntPtr p, IntPtr addr, byte[] buf, IntPtr len, out IntPtr read);
+
+    public static string Error = "";
+    // class -> committed bytes, plus "regions:<class>" -> region count.
+    public static Dictionary<string, long> Census(int pid) {
+        Error = "";
+        IntPtr h = OpenProcess(0x0400 | 0x0010, false, pid); // QUERY_INFORMATION | VM_READ
+        if (h == IntPtr.Zero) { Error = "OpenProcess failed: " + Marshal.GetLastWin32Error(); return null; }
+        try {
+            var regions = new List<MBI>();
+            var guarded = new HashSet<long>();
+            long addr = 0;
+            int size = Marshal.SizeOf(typeof(MBI));
+            while (true) {
+                MBI m;
+                if (VirtualQueryEx(h, new IntPtr(addr), out m, new IntPtr(size)) == IntPtr.Zero) break;
+                long rs = m.RegionSize.ToInt64();
+                if (rs <= 0) break;
+                if (m.State == 0x1000) {
+                    regions.Add(m);
+                    if ((m.Protect & 0x100) != 0) guarded.Add(m.AllocationBase.ToInt64());
+                }
+                addr = m.BaseAddress.ToInt64() + rs;
+                if (addr <= 0) break;
+            }
+            var heapBase = new Dictionary<long, bool>();
+            var d = new Dictionary<string, long>();
+            string[] all = { "heap", "writecombine", "uncached", "stack", "private_rw", "mapped", "image" };
+            foreach (var k in all) { d[k] = 0; d["regions:" + k] = 0; }
+            byte[] buf = new byte[0x18];
+            foreach (var m in regions) {
+                string cls;
+                long ab = m.AllocationBase.ToInt64();
+                if (m.Type == 0x1000000) cls = "image";
+                else if (m.Type == 0x40000) cls = "mapped";
+                else if ((m.Protect & 0x400) != 0) cls = "writecombine";
+                else if ((m.Protect & 0x200) != 0) cls = "uncached";
+                else if (guarded.Contains(ab)) cls = "stack";
+                else {
+                    bool isHeap;
+                    if (!heapBase.TryGetValue(ab, out isHeap)) {
+                        IntPtr got;
+                        isHeap = false;
+                        if (ReadProcessMemory(h, new IntPtr(ab), buf, new IntPtr(buf.Length), out got) && got.ToInt64() == buf.Length) {
+                            uint sig = BitConverter.ToUInt32(buf, 0x10);
+                            isHeap = sig == 0xffeeffeeu || sig == 0xddeeddeeu;
+                        }
+                        heapBase[ab] = isHeap;
+                    }
+                    cls = isHeap ? "heap" : "private_rw";
+                }
+                d[cls] += m.RegionSize.ToInt64();
+                d["regions:" + cls] += 1;
+            }
+            return d;
+        } finally { CloseHandle(h); }
+    }
+}
+'@
+}
+function Get-RegionCensus([int]$ProcessId) {
+    $d = [PerfRegions]::Census($ProcessId)
+    if ($null -eq $d) { return [ordered]@{ error = [PerfRegions]::Error } }
+    $o = [ordered]@{}
+    foreach ($k in 'heap', 'writecombine', 'uncached', 'stack', 'private_rw', 'mapped', 'image') {
+        $o["${k}_mb"] = [math]::Round($d[$k] / 1MB, 1)
+    }
+    $o.private_total_mb = [math]::Round(($d['heap'] + $d['writecombine'] + $d['uncached'] + $d['stack'] + $d['private_rw']) / 1MB, 1)
+    $o.regions = [ordered]@{}
+    foreach ($k in 'heap', 'writecombine', 'uncached', 'stack', 'private_rw', 'mapped', 'image') { $o.regions[$k] = $d["regions:$k"] }
+    return $o
+}
+function Get-RegionDelta($A, $B) {
+    if ($A.Contains('error') -or $B.Contains('error')) { return [ordered]@{ error = 'a region census failed' } }
+    $o = [ordered]@{}
+    foreach ($k in @($A.Keys)) { if ($k -like '*_mb') { $o[$k] = [math]::Round($B[$k] - $A[$k], 1) } }
+    return $o
+}
+# Least-squares slope of a series against its index: the per-cycle growth.
+function Get-Slope([double[]]$Y) {
+    $n = $Y.Count
+    if ($n -lt 2) { return $null }
+    $mx = ($n - 1) / 2.0
+    $my = ($Y | Measure-Object -Average).Average
+    $num = 0.0; $den = 0.0
+    for ($i = 0; $i -lt $n; $i++) { $num += ($i - $mx) * ($Y[$i] - $my); $den += ($i - $mx) * ($i - $mx) }
+    return [math]::Round($num / $den, 2)
 }
 
 $cores = [Environment]::ProcessorCount
@@ -646,10 +793,11 @@ function Get-FullSample([int]$ProcessId, [string]$Label, [switch]$Settle) {
 
 $launchBase = @('--config-default-files=false', '--confirm-close-surface=false', '--undo-timeout=1s')
 $script:app = $null
-function Start-App([bool]$Persist) {
+function Start-App([bool]$Persist, [string[]]$Extra = @()) {
     $err = Join-Path $work ("app-{0}.err" -f ([guid]::NewGuid().ToString('N').Substring(0, 6)))
-    $a = $launchBase + @("--session-persistence=$($Persist.ToString().ToLower())")
+    $a = $launchBase + @("--session-persistence=$($Persist.ToString().ToLower())") + $Extra
     $script:app = Start-OnTestDesktop -Exe $exe -StdErr $err -Arguments $a -AllowReleaseBuild:$isRelease
+    $script:appErr = $err
     $top = Wait-TestWindow -ProcessId $script:app.Pid -Class 'GhozttyWindow' -TimeoutMs 30000
     if ($top -eq [IntPtr]::Zero) { throw "the app window never appeared (stderr: $err)" }
     [void](Set-TestWindowPos -Window ([IntPtr]$top) -X 20 -Y 20 -Width 1400 -Height 900)
@@ -789,13 +937,17 @@ try {
         $paneTotal = $shape.Count + ($shape | Measure-Object -Sum).Sum
         Write-Host "[$Build] cycle: $paneTotal panes over $($shape.Count) tab(s) ($CycleShape), closed, twice"
         try {
-            $a = Start-App $false
+            # quit-after-last-window-closed only acts at the very end: Windows
+            # defaults it off, and the DebugAllocator reports at exit (T3005).
+            $a = Start-App $false @('--quit-after-last-window-closed=true')
             Start-Sleep -Seconds 5
             $orig = @(Get-PaneLeaves)[0].id
             $start = Get-FullSample $a.Pid 'start' -Settle
             $census = @(Get-ObjectCensus $a.Pid)
+            $regions = [ordered]@{ start = Get-RegionCensus $a.Pid }
             $cycles = @()
-            foreach ($c in 1, 2) {
+            # One open/close cycle; returns its open and closed samples.
+            function Invoke-PaneCycle([int]$c) {
                 $made = New-Object System.Collections.ArrayList
                 # More tabs (ctrl+shift+t on the live pane), then splits; the
                 # mixed shape's tabs hold 4 + 3 + 3 panes.
@@ -837,12 +989,76 @@ try {
                 if (-not (Wait-PaneCount 1 30)) { throw "panes did not close back to 1 ($(@(Get-PaneLeaves).Count) left)" }
                 Start-Sleep -Seconds 3
                 $closed = Get-FullSample $a.Pid "closed $c" -Settle
+                return [pscustomobject]@{ Open = $open; Closed = $closed }
+            }
+            foreach ($c in 1, 2) {
+                $cy = Invoke-PaneCycle $c
                 $census += Get-ObjectCensus $a.Pid
-                $cycles +=[ordered]@{ open = (Format-Sample $open); closed = (Format-Sample $closed) }
+                if ($c -eq 1) { $regions.cycle1_closed = Get-RegionCensus $a.Pid }
+                $cycles +=[ordered]@{ open = (Format-Sample $cy.Open); closed = (Format-Sample $cy.Closed) }
+            }
+
+            # T3005: the two cycles above sit inside the GPU driver's
+            # upload-pool fill (T2782), so their difference cannot tell fill
+            # from leak. Warm up until two cycles in a row are quiet, then
+            # take a slope over -SettledCycles more.
+            $settle = $null
+            if ($SettledCycles -gt 0) {
+                $prev = $cy.Closed
+                $quiet = 0; $warm = 0
+                $gpuSum = { param($s) if ($null -eq $s.GpuDedMB) { 0.0 } else { $s.GpuDedMB + $s.GpuShMB } }
+                $warmRows = @()
+                while ($quiet -lt 2 -and $warm -lt $CycleMaxWarmup) {
+                    $warm++
+                    $cy = Invoke-PaneCycle (2 + $warm)
+                    $dP = $cy.Closed.PrivMB - $prev.PrivMB
+                    $dG = (& $gpuSum $cy.Closed) - (& $gpuSum $prev)
+                    $warmRows += [ordered]@{ private_mb = [math]::Round($dP, 1); gpu_mb = [math]::Round($dG, 1) }
+                    if ($dP -le $SettleBudgetMB -and $dG -le $SettleBudgetMB) { $quiet++ } else { $quiet = 0 }
+                    $prev = $cy.Closed
+                }
+                $settledOk = $quiet -ge 2
+                Write-Host "[$Build] cycle: $warm warm-up cycle(s) after the first two, $(if ($settledOk) { 'settled' } else { "NEVER settled (cap $CycleMaxWarmup) - measuring anyway" }); $SettledCycles measured"
+                $series = @($prev)
+                $regions.settle_start = Get-RegionCensus $a.Pid
+                for ($m = 1; $m -le $SettledCycles; $m++) {
+                    $cy = Invoke-PaneCycle (2 + $warm + $m)
+                    $series += $cy.Closed
+                }
+                $slopeOf = { param($sel) Get-Slope ([double[]]@($series | ForEach-Object { [double](& $sel $_) })) }
+                $settle = [ordered]@{
+                    method = "after cycles 1-2, warm-up cycles until two in a row each grow private bytes and GPU dedicated+shared memory by <= $SettleBudgetMB MB (cap $CycleMaxWarmup), then $SettledCycles measured cycles; slope = least-squares growth per cycle of the settled closed samples (the last warm-up closed sample plus each measured one). ~0 after settling = bounded fill; a steady positive slope = a leak"
+                    warmup_cycles = $warm
+                    settled = $settledOk
+                    measured_cycles = $SettledCycles
+                    warmup_deltas = $warmRows
+                    closed_private_mb = @($series | ForEach-Object { $_.PrivMB })
+                    closed_gpu_shared_mb = @($series | ForEach-Object { $_.GpuShMB })
+                }
+                $settleSlopes = [ordered]@{
+                    settled_private_mb_per_cycle = & $slopeOf { param($s) $s.PrivMB }
+                    settled_working_set_mb_per_cycle = & $slopeOf { param($s) $s.WsMB }
+                    settled_handles_per_cycle = & $slopeOf { param($s) $s.Handles }
+                    settled_gdi_per_cycle = & $slopeOf { param($s) $s.Gdi }
+                    settled_user_per_cycle = & $slopeOf { param($s) $s.User }
+                    settled_threads_per_cycle = & $slopeOf { param($s) $s.Threads }
+                    settled_gpu_dedicated_mb_per_cycle = $(if ($null -ne $prev.GpuDedMB) { & $slopeOf { param($s) $s.GpuDedMB } } else { $null })
+                    settled_gpu_shared_mb_per_cycle = $(if ($null -ne $prev.GpuShMB) { & $slopeOf { param($s) $s.GpuShMB } } else { $null })
+                }
+            }
+            $regions.last_closed = Get-RegionCensus $a.Pid
+            $lastClosed = $cy.Closed
+
+            # Closed and idle: does anything the cycles left get trimmed back?
+            $idleSample = $null
+            if ($CycleIdleSeconds -gt 0) {
+                Start-Sleep -Seconds $CycleIdleSeconds
+                $idleSample = Get-FullSample $a.Pid 'closed idle' -Settle
+                $regions.closed_idle = Get-RegionCensus $a.Pid
             }
             $first = Format-Sample $start
             $result.cycle = [ordered]@{
-                method = 'one window, persistence off, cmd panes: settled sample (lib\ProcessMemory.ps1 Get-Sample + working set) at start, with 10 panes open over 3 tabs (ctrl+shift+t x2, then +split 3/2/2), and after +close of every added pane plus the 1 s undo window; the cycle runs twice. GPU memory is the GPU Process Memory counter set summed over adapters.'
+                method = 'one window, persistence off, cmd panes: settled sample (lib\ProcessMemory.ps1 Get-Sample + working set) at start, with 10 panes open over 3 tabs (ctrl+shift+t x2, then +split 3/2/2), and after +close of every added pane plus the 1 s undo window; cycles 1 and 2 as cycle1/cycle2, then the settle block (T3005) when -SettledCycles > 0. GPU memory is the GPU Process Memory counter set summed over adapters.'
                 shape = $CycleShape
                 panes = $paneTotal
                 start = $first
@@ -867,7 +1083,52 @@ try {
                 second_cycle = Format-CensusDelta $census[1] $census[2]
                 at_start = Format-CensusTotals $census[0]
             }
+            if ($settle) {
+                foreach ($k in $settleSlopes.Keys) { $result.cycle.leak[$k] = $settleSlopes[$k] }
+                $result.cycle.settle = $settle
+            }
+            $result.cycle.last_closed = Format-Sample $lastClosed
+            if ($idleSample) {
+                $result.cycle.closed_idle = Format-Sample $idleSample
+                $result.cycle.closed_idle.after_seconds = $CycleIdleSeconds
+            }
+            # T3005: the committed-memory split by owner (heap vs the GPU
+            # driver's write-combined pool vs everything else), so a residue
+            # is attributed instead of guessed at.
+            $regions.method = 'VirtualQueryEx walk of every committed region, classed: heap = MEM_PRIVATE in an allocation whose base carries the NT heap segment (0xffeeffee) or segment heap (0xddeeddee) signature at +0x10; writecombine = MEM_PRIVATE with PAGE_WRITECOMBINE (the GPU driver upload pool); uncached = PAGE_NOCACHE; stack = an allocation holding a PAGE_GUARD region; private_rw = every other MEM_PRIVATE region (Zig page allocator incl. the Debug DebugAllocator, driver arenas, heap large blocks); mapped = MEM_MAPPED; image = MEM_IMAGE. Taken at start, after cycle 1 closed, at the settle start, after the last cycle closed, and closed-and-idle'
+            $regions.first_cycle = Get-RegionDelta $regions.start $regions.cycle1_closed
+            if ($regions.Contains('settle_start')) { $regions.settled = Get-RegionDelta $regions.settle_start $regions.last_closed }
+            if ($regions.Contains('closed_idle')) { $regions.idle = Get-RegionDelta $regions.last_closed $regions.closed_idle }
+            $result.cycle.regions = $regions
             if ($null -eq $first.gpu_dedicated_mb) { $result.cycle.gpu_reason = 'GPU Process Memory counters unreadable on this box' }
+
+            # T3005: a Debug build's DebugAllocator reports every allocation
+            # still live at exit on stderr (global.zig GlobalState.deinit), so
+            # quit the app the way a user does and read what it names.
+            if (-not $isRelease) {
+                $gpa = [ordered]@{ method = 'Debug build only: WM_SYSCOMMAND SC_CLOSE to the window after the last cycle (confirm-close off, persistence off, quit-after-last-window-closed on), wait up to 30 s for the process to exit, then count DebugAllocator leak lines ("leaked") on its stderr. Allocations live at exit, not per-cycle growth; read with the slope' }
+                $errPath = $script:appErr
+                [void](Send-TestSysCommand -Window $a.Top -Command close)
+                $p = Get-Process -Id $a.Pid -ErrorAction SilentlyContinue
+                $gpa.exited = if ($p) { $p.WaitForExit(30000) } else { $true }
+                $lines = @()
+                if ($errPath -and (Test-Path $errPath)) {
+                    # Plain strings: Get-Content's carry PSProvider note
+                    # properties, which ConvertTo-Json -Depth 12 walks until it
+                    # runs out of memory.
+                    $lines = @(Get-Content $errPath -ErrorAction SilentlyContinue | Where-Object { $_ -match 'leaked' } | ForEach-Object { [string]$_ })
+                    # The work dir is removed at the end; keep the full report
+                    # (stack traces included) beside the JSON.
+                    $keep = [IO.Path]::ChangeExtension($Out, '.debug-stderr.txt')
+                    Copy-Item $errPath $keep -Force
+                    $gpa.stderr = $keep
+                }
+                else { $gpa.reason = 'no stderr capture for the app' }
+                $gpa.leak_lines = $lines.Count
+                $gpa.first_lines = @($lines | Select-Object -First 5)
+                if (-not $gpa.exited) { $gpa.reason = 'the app did not exit within 30 s of SC_CLOSE, so the allocator never reported' }
+                $result.cycle.gpa_leak_report = $gpa
+            }
         } catch { $failed = $true; $result.cycle = [ordered]@{ error = "$_" } }
         finally { Stop-App }
     }
@@ -971,6 +1232,7 @@ $doc = [ordered]@{
     task = 'T2958'
     generated = (Get-Date).ToString('o')
     commit = $commit
+    parameters = [ordered]@{ cycle_shape = $CycleShape; settled_cycles = $SettledCycles; cycle_max_warmup = $CycleMaxWarmup; settle_budget_mb = $SettleBudgetMB; cycle_idle_seconds = $CycleIdleSeconds; app_env = $appEnvMap }
     tolerance = $script:Tolerance
     builds = [ordered]@{ ($Build.ToLower()) = $result }
 }
