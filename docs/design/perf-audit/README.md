@@ -52,7 +52,13 @@ absolute floor. Memory has ±15%. Handle and object counts have ±10%.
 - `baseline-2.json` is the audit-2 baseline (T3072, commit 879fba35a, both
   builds). Against baseline-1, 42 of 198 metrics are out of tolerance, all of
   them better. See `audit-2.md`.
-- `audit-1.md` and `audit-2.md` are the audit write-ups; `audit-N/` holds each
+- `baseline-3.json` is the audit-3 baseline (T3101, commit d0d874326, both
+  builds). It is the first with the per-thread and residue census (T2989) and
+  the settled-cycle slope and Debug leak report (T3005). Against baseline-2,
+  12 of 198 metrics are out of tolerance: 9 better, 3 worse. The worse ones are
+  +12 idle threads (T3105's IPC listeners, T3152) and USER objects
+  (T3153). See `audit-3.md`.
+- `audit-1.md`, `audit-2.md` and `audit-3.md` are the audit write-ups; `audit-N/` holds each
   area's detail.
 
 What baseline-1 already shows. These numbers are measured, not explained;
