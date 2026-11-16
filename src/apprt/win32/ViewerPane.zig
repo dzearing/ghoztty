@@ -88,6 +88,7 @@ const ViewerWorktreeProbe = @import("ViewerWorktreeProbe.zig");
 const ViewerDiffProbe = @import("ViewerDiffProbe.zig");
 const viewer_diff = @import("viewer_diff.zig");
 const hidden_poll = @import("hidden_poll.zig");
+const viewer_suspend = @import("viewer_suspend.zig");
 const viewer_process = @import("viewer_process.zig");
 const viewer_image = @import("viewer_image.zig");
 const build_config = @import("../../build_config.zig");
@@ -216,6 +217,9 @@ const diff_timer_id: usize = 4;
 /// The worktree re-resolve poll's timer id, in the host window's own timer
 /// space (T650).
 const worktree_timer_id: usize = 5;
+
+/// The hidden-page suspend timer's id (T3035). One-shot.
+const suspend_timer_id: usize = 6;
 
 /// How often a pane pointed at a loopback port re-asks who is listening.
 ///
@@ -658,6 +662,11 @@ diff_probe: ?ViewerDiffProbe = null,
 /// nobody is looking at, runs no git and is remembered; `setVisible(true)`
 /// pays it with one listing straight away.
 diff_poll_gate: hidden_poll.Gate = .{},
+
+/// The hidden page's sleep (T3035, PA-V03): trimmed the moment the pane
+/// hides, suspended once it has stayed hidden for
+/// `viewer_suspend.suspend_delay_ms`, woken before any renderer-bound work.
+sleep_gate: viewer_suspend.Gate = .{},
 
 /// Which file of the current diff the page is showing, as an index into the
 /// probe's list. Null before the first patch has been asked for.
@@ -1861,12 +1870,117 @@ pub fn setVisible(self: *ViewerPane, visible: bool) void {
     // WebView2 produces no frames, so an animated image holds its frame and
     // goes on from there when shown - Mac's `ViewerImageView.advanceFrame`.
     log.debug("viewer pane {s}: page {s}", .{ self.paneId(), if (visible) "shown" else "paused (hidden)" });
+    self.applySleep(visible);
     // A `git-status:` poll skipped while hidden is paid now, once, so a change
     // made meanwhile is on screen as the pane is - not one interval later.
     if (visible and self.diff_poll_gate.reveal()) {
         log.debug("viewer pane {s}: diff poll catch-up on show", .{self.paneId()});
         self.refreshDiff();
     }
+}
+
+/// Trim, and later suspend, a hidden page; undo both when shown (T3035,
+/// PA-V03). `IsVisible = false` alone stops frames but leaves the renderer's
+/// heap and the page's timers running. Each half is optional on the runtime:
+/// one that predates `ICoreWebView2_19` or `_3` skips that half and keeps the
+/// T2913 pause, which is all it had before.
+fn applySleep(self: *ViewerPane, visible: bool) void {
+    const c = self.controller orelse return;
+    const web = c.coreWebView() orelse return;
+    defer web.release();
+    if (visible) {
+        const a = self.sleep_gate.show();
+        if (a.cancel_timer) {
+            if (self.hwnd) |h| _ = w32.KillTimer(h, suspend_timer_id);
+        }
+        if (a.@"resume") resumeWeb(web);
+        if (a.restore_level) {
+            setMemoryLevel(web, .normal);
+            log.debug("viewer pane {s}: renderer woken (shown)", .{self.paneId()});
+        }
+    } else {
+        const a = self.sleep_gate.hide();
+        if (a.trim) {
+            setMemoryLevel(web, .low);
+            log.debug("viewer pane {s}: renderer memory target low (hidden)", .{self.paneId()});
+        }
+        if (a.arm_timer) self.armSuspendTimer();
+    }
+}
+
+fn armSuspendTimer(self: *ViewerPane) void {
+    const h = self.hwnd orelse return;
+    // An id that already has a timer restarts it: work on a hidden page pushes
+    // its sleep back rather than stacking a second one.
+    _ = w32.SetTimer(h, suspend_timer_id, viewer_suspend.suspend_delay_ms, null);
+}
+
+fn setMemoryLevel(web: *iface.ICoreWebView2, level: iface.MemoryUsageTargetLevel) void {
+    const v19 = web.queryV19() orelse return;
+    defer v19.release();
+    if (!v19.setMemoryUsageTargetLevel(level)) log.debug("MemoryUsageTargetLevel={s} refused", .{@tagName(level)});
+}
+
+fn resumeWeb(web: *iface.ICoreWebView2) void {
+    const v3 = web.queryV3() orelse return;
+    defer v3.release();
+    if (!v3.@"resume"()) log.debug("viewer Resume refused", .{});
+}
+
+/// The suspend timer fired: ask the runtime to suspend the page, if the pane
+/// is still hidden and nothing woke it meanwhile.
+fn suspendIfStillHidden(self: *ViewerPane) void {
+    if (!self.sleep_gate.timerFired(self.visible)) return;
+    if (!self.startTrySuspend()) self.sleep_gate.suspendCompleted(false);
+}
+
+fn startTrySuspend(self: *ViewerPane) bool {
+    const c = self.controller orelse return false;
+    const p = self.pending orelse return false;
+    const web = c.coreWebView() orelse return false;
+    defer web.release();
+    const v3 = web.queryV3() orelse return false;
+    defer v3.release();
+    const handler = TrySuspendCompletedHandler.create(p.alloc, p) catch return false;
+    p.refs += 1;
+    defer handler.release();
+    if (!v3.trySuspend(@ptrCast(handler))) {
+        log.debug("viewer pane {s}: TrySuspend refused to start", .{self.paneId()});
+        return false;
+    }
+    return true;
+}
+
+/// `ICoreWebView2TrySuspendCompletedHandler` (T3035).
+const TrySuspendCompletedHandler = com.CallbackOwning(
+    iface.IID_TrySuspendCompletedHandler,
+    onTrySuspendCompleted,
+    releasePendingToken,
+);
+
+fn onTrySuspendCompleted(p: *Pending, result: com.HRESULT, ok: iface.BOOL) com.HRESULT {
+    const self = p.pane orelse return com.S_OK;
+    const done = !com.failed(result) and ok != 0;
+    self.sleep_gate.suspendCompleted(done);
+    log.debug("viewer pane {s}: TrySuspend {s} hr=0x{X:0>8}", .{
+        self.paneId(),
+        if (done) "suspended" else "declined",
+        @as(u32, @bitCast(result)),
+    });
+    return com.S_OK;
+}
+
+/// Renderer-bound work is about to be issued: a page put to sleep while hidden
+/// is resumed first, or the work waits on a frozen renderer until somebody
+/// shows the pane (T3035). A still-hidden pane goes back to sleep after the
+/// delay.
+fn wakeForWork(self: *ViewerPane, web: *iface.ICoreWebView2) void {
+    const a = self.sleep_gate.work(self.visible);
+    if (a.@"resume") {
+        resumeWeb(web);
+        log.debug("viewer pane {s}: renderer resumed for work while hidden", .{self.paneId()});
+    }
+    if (a.arm_timer) self.armSuspendTimer();
 }
 
 /// Give the pane keyboard focus. Called from the host window's `WM_SETFOCUS`,
@@ -2450,6 +2564,7 @@ fn applyNavigation(self: *ViewerPane) void {
     buf[len] = 0;
     const web = c.coreWebView() orelse return;
     defer web.release();
+    self.wakeForWork(web);
     // Claimed BEFORE the call, in case the runtime ever raises the event
     // inside it, and given back if no navigation was started at all (T825).
     self.self_nav_pending +|= 1;
@@ -4486,6 +4601,7 @@ fn reloadInPlace(self: *ViewerPane) void {
     const c = self.controller orelse return;
     const web = c.coreWebView() orelse return;
     defer web.release();
+    self.wakeForWork(web);
     if (!web.reload()) log.warn("Reload failed for this pane", .{});
 }
 
@@ -4500,6 +4616,7 @@ fn refetchFromOrigin(self: *ViewerPane) void {
     const c = self.controller orelse return;
     const web = c.coreWebView() orelse return;
     defer web.release();
+    self.wakeForWork(web);
 
     const method = std.unicode.utf8ToUtf16LeStringLiteral(content.devtools_reload_method);
     const params = std.unicode.utf8ToUtf16LeStringLiteral(content.devtools_reload_params);
@@ -4769,6 +4886,7 @@ fn executeScriptWide(self: *ViewerPane, alloc: Allocator, wide: [:0]const u16) v
     const p = self.pending orelse return;
     const web = c.coreWebView() orelse return;
     defer web.release();
+    self.wakeForWork(web);
 
     const handler = ExecuteScriptCompletedHandler.create(alloc, p) catch return;
     p.refs += 1;
@@ -5417,6 +5535,8 @@ fn startSnapCapture(self: *ViewerPane, now: i64) bool {
     const p = self.pending orelse return false;
     const web = c.coreWebView() orelse return false;
     defer web.release();
+    // A suspended page paints nothing, so its capture would never answer.
+    self.wakeForWork(web);
 
     // The stream outlives this call — the runtime writes into it on its own
     // schedule — so it hangs off the pane, which is the thing whose lifetime
@@ -6531,6 +6651,7 @@ fn handleProcessFailed(self: *ViewerPane, action: viewer_process.Action) void {
             const c = self.controller orelse return;
             const web = c.coreWebView() orelse return;
             defer web.release();
+            self.wakeForWork(web);
             // `Reload` rather than `applyNavigation`: it reloads the document
             // the pane is actually on (a website the user navigated to, not
             // the one it opened with), and a template's `NavigationCompleted`
@@ -7662,6 +7783,13 @@ pub fn wndProc(
                 // the tick runs no git and `setVisible(true)` catches up once.
                 if (!self.diff_poll_gate.tick(self.visible)) return 0;
                 self.pollDiff();
+                return 0;
+            }
+            if (wparam == suspend_timer_id) {
+                // One-shot (T3035): the pane has stayed hidden for the whole
+                // delay, so its page is put to sleep.
+                _ = w32.KillTimer(hwnd, suspend_timer_id);
+                self.suspendIfStillHidden();
                 return 0;
             }
             if (wparam != reload_timer_id) {

@@ -336,6 +336,33 @@ pub const IID_CapturePreviewCompletedHandler: GUID = .{
     .Data4 = .{ 0x96, 0xF4, 0x8F, 0xFE, 0x1E, 0xDE, 0xDA, 0xF5 },
 };
 
+// {A0D6DF20-3B92-416D-AA0C-437A9C727857}
+// `ICoreWebView2_3` (T3035): `TrySuspend` / `Resume` / `get_IsSuspended`.
+pub const IID_ICoreWebView2_3: GUID = .{
+    .Data1 = 0xA0D6DF20,
+    .Data2 = 0x3B92,
+    .Data3 = 0x416D,
+    .Data4 = .{ 0xAA, 0x0C, 0x43, 0x7A, 0x9C, 0x72, 0x78, 0x57 },
+};
+
+// {6921F954-79B0-437F-A997-C85811897C68}
+// `ICoreWebView2_19` (T3035): `MemoryUsageTargetLevel`.
+pub const IID_ICoreWebView2_19: GUID = .{
+    .Data1 = 0x6921F954,
+    .Data2 = 0x79B0,
+    .Data3 = 0x437F,
+    .Data4 = .{ 0xA9, 0x97, 0xC8, 0x58, 0x11, 0x89, 0x7C, 0x68 },
+};
+
+// {00F206A7-9D17-4605-91F6-4E8E4DE192E3}
+// `ICoreWebView2TrySuspendCompletedHandler` (T3035): `Invoke(HRESULT, BOOL)`.
+pub const IID_TrySuspendCompletedHandler: GUID = .{
+    .Data1 = 0x00F206A7,
+    .Data2 = 0x9D17,
+    .Data3 = 0x4605,
+    .Data4 = .{ 0x91, 0xF6, 0x4E, 0x8E, 0x4D, 0xE1, 0x92, 0xE3 },
+};
+
 // {B29C7E28-FA79-41A8-8E44-65811C76DCB2}
 // `ICoreWebView2AcceleratorKeyPressedEventHandler` (T394). Registered on the
 // CONTROLLER, not the web view — its `Invoke` sender is the controller.
@@ -1348,6 +1375,101 @@ pub const ICoreWebView2 = extern struct {
         if (com.failed(self.vtable.QueryInterface(self, &IID_ICoreWebView2_13, &out))) return null;
         return @ptrCast(@alignCast(out orelse return null));
     }
+
+    /// The `ICoreWebView2_3` view (suspend / resume), or null on a runtime
+    /// that predates it. Caller owns the reference.
+    pub fn queryV3(self: *ICoreWebView2) ?*ICoreWebView2_3 {
+        var out: ?*anyopaque = null;
+        if (com.failed(self.vtable.QueryInterface(self, &IID_ICoreWebView2_3, &out))) return null;
+        return @ptrCast(@alignCast(out orelse return null));
+    }
+
+    /// The `ICoreWebView2_19` view (memory target level), or null on a
+    /// runtime that predates it. Caller owns the reference.
+    pub fn queryV19(self: *ICoreWebView2) ?*ICoreWebView2_19 {
+        var out: ?*anyopaque = null;
+        if (com.failed(self.vtable.QueryInterface(self, &IID_ICoreWebView2_19, &out))) return null;
+        return @ptrCast(@alignCast(out orelse return null));
+    }
+};
+
+/// `ICoreWebView2_3` — revision 3 (T3035). Slots 68..70 are `TrySuspend`,
+/// `Resume` and `get_IsSuspended`; 61..67 are revision 2's seven, opaque; the
+/// virtual-host mapping pair after them (71, 72) is not declared. Counted from
+/// the `DECLSPEC_XFGVIRT` annotations of `ICoreWebView2_3Vtbl` in the SDK's
+/// `WebView2.h` (1.0.2903.40), which agree with `ICoreWebView2_13`'s 105.
+pub const ICoreWebView2_3 = extern struct {
+    vtable: *const Vtbl,
+
+    /// Slots 3..67: `ICoreWebView2`'s 58 and `ICoreWebView2_2`'s 7.
+    pub const inherited_slots = 65;
+
+    pub const Vtbl = extern struct {
+        QueryInterface: *const fn (*ICoreWebView2_3, *const GUID, *?*anyopaque) callconv(.winapi) HRESULT,
+        AddRef: *const fn (*ICoreWebView2_3) callconv(.winapi) u32,
+        Release: *const fn (*ICoreWebView2_3) callconv(.winapi) u32,
+        inherited: [inherited_slots]*const anyopaque,
+        TrySuspend: *const fn (*ICoreWebView2_3, ?*anyopaque) callconv(.winapi) HRESULT,
+        Resume: *const fn (*ICoreWebView2_3) callconv(.winapi) HRESULT,
+        get_IsSuspended: *const fn (*ICoreWebView2_3, *BOOL) callconv(.winapi) HRESULT,
+    };
+
+    pub fn release(self: *ICoreWebView2_3) void {
+        _ = self.vtable.Release(self);
+    }
+
+    /// Ask the runtime to suspend this (hidden) view. `handler` is an
+    /// `ICoreWebView2TrySuspendCompletedHandler`; the answer arrives there.
+    pub fn trySuspend(self: *ICoreWebView2_3, handler: *anyopaque) bool {
+        return !com.failed(self.vtable.TrySuspend(self, handler));
+    }
+
+    pub fn @"resume"(self: *ICoreWebView2_3) bool {
+        return !com.failed(self.vtable.Resume(self));
+    }
+
+    pub fn isSuspended(self: *ICoreWebView2_3) ?bool {
+        var out: BOOL = 0;
+        if (com.failed(self.vtable.get_IsSuspended(self, &out))) return null;
+        return out != 0;
+    }
+};
+
+/// `COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL`.
+pub const MemoryUsageTargetLevel = enum(u32) { normal = 0, low = 1 };
+
+/// `ICoreWebView2_19` — revision 19 (T3035), whose additions are the
+/// memory-target pair at slots 119 and 120, the last two. Same rule as
+/// `ICoreWebView2_13`: everything before them is one length-only block.
+pub const ICoreWebView2_19 = extern struct {
+    vtable: *const Vtbl,
+
+    /// Slots 3..118: every method from `ICoreWebView2` through
+    /// `ICoreWebView2_18`.
+    pub const inherited_slots = 116;
+
+    pub const Vtbl = extern struct {
+        QueryInterface: *const fn (*ICoreWebView2_19, *const GUID, *?*anyopaque) callconv(.winapi) HRESULT,
+        AddRef: *const fn (*ICoreWebView2_19) callconv(.winapi) u32,
+        Release: *const fn (*ICoreWebView2_19) callconv(.winapi) u32,
+        inherited: [inherited_slots]*const anyopaque,
+        get_MemoryUsageTargetLevel: *const fn (*ICoreWebView2_19, *MemoryUsageTargetLevel) callconv(.winapi) HRESULT,
+        put_MemoryUsageTargetLevel: *const fn (*ICoreWebView2_19, MemoryUsageTargetLevel) callconv(.winapi) HRESULT,
+    };
+
+    pub fn release(self: *ICoreWebView2_19) void {
+        _ = self.vtable.Release(self);
+    }
+
+    pub fn setMemoryUsageTargetLevel(self: *ICoreWebView2_19, level: MemoryUsageTargetLevel) bool {
+        return !com.failed(self.vtable.put_MemoryUsageTargetLevel(self, level));
+    }
+
+    pub fn memoryUsageTargetLevel(self: *ICoreWebView2_19) ?MemoryUsageTargetLevel {
+        var out: MemoryUsageTargetLevel = .normal;
+        if (com.failed(self.vtable.get_MemoryUsageTargetLevel(self, &out))) return null;
+        return out;
+    }
 };
 
 /// `ICoreWebView2_13` — revision 13, whose one addition is `get_Profile`.
@@ -1916,6 +2038,18 @@ test "the slots we actually call sit where the header puts them" {
 
     // The one slot in ICoreWebView2_13 that is not opaque is its last.
     try testing.expectEqual(105 * ptr, @offsetOf(ICoreWebView2_13.Vtbl, "get_Profile"));
+
+    // T3035: suspend/resume are revision 3's first three; the memory target
+    // pair is revision 19's whole addition (WebView2.h 1.0.2903.40).
+    try testing.expectEqual(68 * ptr, @offsetOf(ICoreWebView2_3.Vtbl, "TrySuspend"));
+    try testing.expectEqual(69 * ptr, @offsetOf(ICoreWebView2_3.Vtbl, "Resume"));
+    try testing.expectEqual(70 * ptr, @offsetOf(ICoreWebView2_3.Vtbl, "get_IsSuspended"));
+    try testing.expectEqual(71 * ptr, @sizeOf(ICoreWebView2_3.Vtbl));
+    try testing.expectEqual(119 * ptr, @offsetOf(ICoreWebView2_19.Vtbl, "get_MemoryUsageTargetLevel"));
+    try testing.expectEqual(120 * ptr, @offsetOf(ICoreWebView2_19.Vtbl, "put_MemoryUsageTargetLevel"));
+    try testing.expectEqual(121 * ptr, @sizeOf(ICoreWebView2_19.Vtbl));
+    try testing.expectEqual(@as(usize, 0), @offsetOf(ICoreWebView2_3, "vtable"));
+    try testing.expectEqual(@as(usize, 0), @offsetOf(ICoreWebView2_19, "vtable"));
 
     // And the environment's controller factory is slot 3, right after IUnknown.
     try testing.expectEqual(3 * ptr, @offsetOf(ICoreWebView2Environment.Vtbl, "CreateCoreWebView2Controller"));

@@ -34,6 +34,12 @@
 #   C1  covered by a newer window: no git runs in 5 s
 #   C3  covered: the page produces no frames
 #   C4  uncovered: the poll runs again
+#   D1  minimized (T3035): the website pane lowers its renderer memory target
+#       at once, and does not suspend yet
+#   D2  hidden past the 30 s delay: the page is suspended (TrySuspend)
+#   D3  +reload against the suspended pane resumes it first and the page
+#       really reloads (its title goes back to raf-0)
+#   D4  restored: the renderer is woken and draws frames again
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1); nothing takes the
 # user's foreground - asserted by the foreground watcher, not assumed.
@@ -92,6 +98,9 @@ function Get-GitRuns {
 function Get-Log {
     if (-not (Test-Path $errlog)) { return '' }
     return ((Get-Content $errlog -Raw -ErrorAction SilentlyContinue) -replace '\s+', ' ')
+}
+function Get-LogCount([string]$Pattern) {
+    return @([regex]::Matches((Get-Log), $Pattern)).Count
 }
 function Get-DiffLines([string]$PaneId) {
     return @([regex]::Matches((Get-Log), "viewer diff pane=$([regex]::Escape($PaneId)) spec=\S+ repo=\S* files=(\d+)"))
@@ -304,6 +313,39 @@ try {
         Start-Sleep -Seconds 5
         $g1 = Get-GitRuns
         Assert (($g1 - $g0) -ge 2) "C4 uncovered, the poll runs git again ($($g1 - $g0) times in 5 s)"
+
+        Write-Host '== D: hidden past the suspend delay - trimmed, then suspended; work and show wake it (T3035)'
+        $wid = [regex]::Escape($webId)
+        $trim0 = Get-LogCount "viewer pane ${wid}: renderer memory target low \(hidden\)"
+        $susp0 = Get-LogCount "viewer pane ${wid}: TrySuspend suspended"
+        $wake0 = Get-LogCount "viewer pane ${wid}: renderer resumed for work while hidden"
+        $show0 = Get-LogCount "viewer pane ${wid}: renderer woken \(shown\)"
+        [void](Send-TestSysCommand -Window $top -Command minimize)
+        Start-Sleep -Seconds 2
+        Assert ((Get-LogCount "viewer pane ${wid}: renderer memory target low \(hidden\)") -gt $trim0) 'D1 minimized, the website pane lowered its renderer memory target at once'
+        Assert ((Get-LogCount "viewer pane ${wid}: TrySuspend suspended") -eq $susp0) 'D1 ... and did not suspend yet (a quick hide pays nothing)'
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($sw.Elapsed.TotalSeconds -lt 45 -and (Get-LogCount "viewer pane ${wid}: TrySuspend suspended") -eq $susp0) { Start-Sleep -Milliseconds 500 }
+        Assert ((Get-LogCount "viewer pane ${wid}: TrySuspend suspended") -gt $susp0) "D2 hidden past the delay, the website page was suspended (after $([int]$sw.Elapsed.TotalSeconds + 2) s)"
+        # Work against the sleeping page: +reload must resume it first, or the
+        # reload waits on a frozen renderer. The page sets its title to raf-0
+        # on load and draws no frames while hidden, so raf-0 is the reload.
+        $tBefore = "$((Get-LeafByName 'hvw').title)"
+        Assert ((Invoke-Cli '+reload --target=hvw') -eq 0) "D3 +reload against the suspended pane answers ($(Get-CliErr))"
+        $deadline = (Get-Date).AddSeconds(10)
+        $tAfter = $tBefore
+        while ((Get-Date) -lt $deadline) { $tAfter = "$((Get-LeafByName 'hvw').title)"; if ($tAfter -eq 'raf-0') { break }; Start-Sleep -Milliseconds 300 }
+        Assert ((Get-LogCount "viewer pane ${wid}: renderer resumed for work while hidden") -gt $wake0) 'D3 ... and resumed the renderer before the work'
+        Assert ($tBefore -ne 'raf-0' -and $tAfter -eq 'raf-0') "D3 ... and the page really reloaded while hidden (title '$tBefore' -> '$tAfter')"
+        [void](Send-TestSysCommand -Window $top -Command restore)
+        Start-Sleep -Seconds 2
+        Assert ((Get-LogCount "viewer pane ${wid}: renderer woken \(shown\)") -gt $show0) 'D4 restored, the renderer was woken and its memory target restored'
+        if ($framesLive) {
+            $f0 = Get-FrameCount
+            Start-Sleep -Seconds 4
+            $f1 = Get-FrameCount
+            Assert (($f1 - $f0) -ge 20) "D4 restored, the page draws frames again after its suspend (raf $f0 -> $f1)"
+        }
     }
 
     $crashed = (Test-Path $errlog) -and (Select-String -Path $errlog -Pattern 'Segmentation fault|panic' -Quiet)
