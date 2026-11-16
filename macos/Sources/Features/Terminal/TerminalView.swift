@@ -20,6 +20,9 @@ protocol TerminalViewDelegate: AnyObject {
 
     /// A split tree operation
     func performSplitAction(_ action: TerminalSplitOperation)
+
+    /// The content came on screen: put the caret where it belongs.
+    func contentDidAppear()
 }
 
 /// The view model is a required implementation for TerminalView callers. This contains
@@ -143,6 +146,7 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
     @State private var lastFocusedSurface: Weak<Ghostty.SurfaceView>?
 
     // This seems like a crutch after switching from SwiftUI to AppKit lifecycle.
+    // Never set to true: see `contentDidAppear`.
     @FocusState private var focused: Bool
 
     // Various state values sent back up from the currently focused terminals.
@@ -183,7 +187,14 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
                         .environmentObject(ghostty)
                         .ghosttyLastFocusedSurface(lastFocusedSurface)
                         .focused($focused)
-                        .onAppear { self.focused = true }
+                        // The controller puts the caret in the pane meant to
+                        // have it. Focusing the content here (`focused =
+                        // true`) let SwiftUI pick a terminal of its own — the
+                        // LAST one, after the restore had focused the right
+                        // one — and when that was minimized in a collapsed
+                        // row, focusing it brought it back out: a relaunch
+                        // laid every row out side by side again.
+                        .onAppear { self.delegate?.contentDidAppear() }
                         .onChange(of: focusedSurface) { newValue in
                             // We want to keep track of our last focused surface so even if
                             // we lose focus we keep this set to the last non-nil value.

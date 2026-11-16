@@ -70,6 +70,8 @@ final class PaneDragSession: ObservableObject {
     private(set) var hoveredTab: (window: PaneDropWindowRef, index: Int)?
 
     private weak var source: BaseTerminalController?
+    /// The sidebars this drag has reached (`arm`), to let go of at its end.
+    private var armedSidebars: [PaneSidebarState] = []
     private var candidates: [PaneDropCandidate] = []
     /// The windows front to back, read once and not per move:
     /// `NSApp.orderedWindows` asks the window server, and stalls the pointer
@@ -114,6 +116,7 @@ final class PaneDragSession: ObservableObject {
         // light up under the pointer.
         HoverTrackingView.isHeld = true
         readWindowOrder()
+        arm(controller.paneSidebarState)
         refreshCandidates()
     }
 
@@ -122,6 +125,7 @@ final class PaneDragSession: ObservableObject {
 
         // Windows move, resize, and get created mid-drag (a dwell switches
         // tabs), so the geometry is re-read rather than snapshotted at begin.
+        if !isListDrag { armSidebar(at: screenPoint) }
         refreshCandidates()
 
         if isListDrag {
@@ -223,7 +227,32 @@ final class PaneDragSession: ObservableObject {
         lastResolved = nil
         targetSidebar?.dropTarget = nil
         targetSidebar = nil
+        for sidebar in armedSidebars { sidebar.draggedPane = nil }
+        armedSidebars = []
         HoverTrackingView.isHeld = false
+    }
+
+    // MARK: Sidebars
+
+    /// Bring a sidebar into the drag: it dims the dragged row, opens its
+    /// empty tray, and reports the row and window frames its targets are
+    /// read from. Only the source's sidebar starts in it, and others join as
+    /// the pointer reaches their window (`armSidebar(at:)`) — a frame before
+    /// it could be over one of their rows. Every sidebar lists every
+    /// window's panes, so arming all of them at the start redrew windows ×
+    /// panes rows in one go: the stall before the ghost appeared.
+    private func arm(_ sidebar: PaneSidebarState) {
+        guard let pane, sidebar.draggedPane !== pane else { return }
+        sidebar.draggedPane = pane
+        armedSidebars.append(sidebar)
+    }
+
+    /// Arm the sidebar of the frontmost terminal window under the pointer.
+    private func armSidebar(at screenPoint: CGPoint) {
+        guard let window = windowOrder.first(where: { $0.isVisible && $0.frame.contains(screenPoint) }),
+              let controller = window.windowController as? BaseTerminalController
+        else { return }
+        arm(controller.paneSidebarState)
     }
 
     // MARK: Feedback queries

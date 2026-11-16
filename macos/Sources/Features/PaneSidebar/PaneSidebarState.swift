@@ -208,6 +208,16 @@ final class PaneSidebarState: ObservableObject {
     /// stumble on each row it crossed.
     @Published var dropTarget: PaneDropTarget?
 
+    /// The pane being dragged, while this sidebar is in the drag: its own
+    /// window's from the start, any other's once the pointer has been over
+    /// that window (`PaneDragSession.arm`). Nil otherwise, and for every
+    /// sidebar the drag never reaches. Here and not read off the session
+    /// because every window's sidebar lists every window's panes: all of
+    /// them redrawing as a drag began was a stall that grew with the square
+    /// of the windows — measured with 19 windows at 120–430ms, and seconds
+    /// on a busy Mac, before the ghost appeared.
+    @Published var draggedPane: PaneView?
+
     let shared: PaneSidebarSharedState
     private var sharedChanges: AnyCancellable?
     private var rosterChanges: AnyCancellable?

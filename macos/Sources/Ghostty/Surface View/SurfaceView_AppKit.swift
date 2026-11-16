@@ -901,6 +901,7 @@ extension Ghostty {
                 if titleFromTerminal == nil { titleFromTerminal = title }
                 title = newTitle
             }
+            layoutStateDidChange()
         }
 
         func setTitle(_ title: String) {
@@ -2095,6 +2096,16 @@ extension Ghostty {
                 guard let self, let surface = self.surface else { return }
                 Self.adjustPaletteForContrast(surface: surface, background: srgbColor.resolvedSRGB)
             }
+            layoutStateDidChange()
+        }
+
+        /// The pane's tint or user-set title changed: both are saved with the
+        /// window's session layout (`SessionLayoutManifest.Leaf`), so save it
+        /// now rather than only at quit, which a crash skips.
+        private func layoutStateDidChange() {
+            guard let controller = window?.windowController as? BaseTerminalController,
+                  controller.sessionLayoutEntryID != nil else { return }
+            SessionLayoutManifest.shared.scheduleSync(controller)
         }
 
         /// Set the palette's background (and a legible foreground) to
@@ -2385,6 +2396,11 @@ extension Ghostty {
             case uuid
             case title
             case isUserSetTitle
+            /// The pane's banner and its own tint (`#RRGGBB`), so AppKit
+            /// restoration brings them back as the session layout manifest
+            /// does. Optional/additive.
+            case banner
+            case tint
         }
 
         required convenience init(from decoder: Decoder) throws {
@@ -2401,8 +2417,15 @@ extension Ghostty {
             config.workingDirectory = try container.decode(String?.self, forKey: .pwd)
             let savedTitle = try container.decodeIfPresent(String.self, forKey: .title)
             let isUserSetTitle = try container.decodeIfPresent(Bool.self, forKey: .isUserSetTitle) ?? false
+            if let hex = try container.decodeIfPresent(String.self, forKey: .tint),
+               let tint = NSColor(hex: hex) {
+                config.backgroundTint = Color(tint)
+                config.backgroundTintNSColor = tint
+            }
+            let banner = try container.decodeIfPresent(String.self, forKey: .banner)
 
             self.init(app, baseConfig: config, uuid: uuid)
+            if let banner, !banner.isEmpty { paneBanner = banner }
 
             // Restore the saved title after initialization
             if let title = savedTitle {
@@ -2420,6 +2443,9 @@ extension Ghostty {
             try container.encode(id.uuidString, forKey: .uuid)
             try container.encode(title, forKey: .title)
             try container.encode(titleFromTerminal != nil, forKey: .isUserSetTitle)
+            try container.encodeIfPresent(paneBanner, forKey: .banner)
+            try container.encodeIfPresent(
+                backgroundTintNSColor.map(SessionLayoutManifest.tintHex), forKey: .tint)
         }
     }
 }

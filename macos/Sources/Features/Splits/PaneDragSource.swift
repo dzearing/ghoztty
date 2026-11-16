@@ -178,11 +178,28 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard !isTracking, let pane else { return }
+        guard !isTracking, let item = prepareDrag(with: event) else { return }
+        let session = beginDraggingSession(with: [item], event: event, source: self)
+
+        // Required so `endedAt` fires immediately for a drag released outside
+        // any registered destination — which is every drop over the tab bar,
+        // and every drop into empty space.
+        session.animatesToStartingPositionsOnCancelOrFail = false
+    }
+
+    /// Everything a drag does before AppKit's session takes over: the
+    /// threshold, the refusals, the ghost, and `PaneDragSession.begin`. Nil
+    /// when this move does not start a drag. Separate from `mouseDragged`
+    /// because a real `NSDraggingSession` waits on the physical button, so
+    /// tests time this half on its own.
+    func prepareDrag(with event: NSEvent) -> NSDraggingItem? {
+        guard !isTracking, let pane else { return nil }
         if let downLocation {
             let moved = hypot(event.locationInWindow.x - downLocation.x, event.locationInWindow.y - downLocation.y)
-            guard moved >= Self.dragThreshold else { return }
+            guard moved >= Self.dragThreshold else { return nil }
         }
+        let started = ContinuousClock.now
+        Self.logger.notice("drag threshold passed, pane=\(pane.id.uuidString, privacy: .public)")
 
         // A lone pane in the only terminal window has nowhere to go: every
         // target would either be itself or a new window holding the same pane.
@@ -193,7 +210,7 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
                 ?? pane.contentView.window?.windowController as? BaseTerminalController
         else {
             Self.logger.notice("drag refused: the pane has no terminal window")
-            return
+            return nil
         }
         let otherTerminalWindows = NSApp.windows.contains { window in
             window.isVisible
@@ -202,7 +219,7 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
         }
         guard controller.surfaceTree.isSplit || otherTerminalWindows else {
             Self.logger.notice("drag refused: a lone pane in the only terminal window")
-            return
+            return nil
         }
 
         // The payload is a type marker only. The authoritative reference to
@@ -233,17 +250,20 @@ final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
                                           contents: NSImage(size: NSSize(width: 1, height: 1)))
         }
 
+        let ghostBuilt = ContinuousClock.now
         MainActor.assumeIsolated {
             PaneDragSession.shared.begin(pane: pane, from: controller, isBlade: isBlade, isListDrag: isListDrag)
         }
         onDragStateChanged?(true)
+        Self.logger.notice("""
+            drag prepared: ghost \(Self.ms(ghostBuilt - started), privacy: .public)ms, \
+            session \(Self.ms(ContinuousClock.now - ghostBuilt), privacy: .public)ms
+            """)
+        return draggingItem
+    }
 
-        let session = beginDraggingSession(with: [draggingItem], event: event, source: self)
-
-        // Required so `endedAt` fires immediately for a drag released outside
-        // any registered destination — which is every drop over the tab bar,
-        // and every drop into empty space.
-        session.animatesToStartingPositionsOnCancelOrFail = false
+    private static func ms(_ duration: Duration) -> String {
+        String(format: "%.1f", Double(duration.components.attoseconds) / 1e15 + Double(duration.components.seconds) * 1000)
     }
 
     // MARK: NSDraggingSource

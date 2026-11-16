@@ -43,7 +43,27 @@ arrow (`showsGrabCursor`).
 
 The tab bar is a target only when it is showing: with the mode off that means
 the window has at least two tabs. The drag logs its milestones and any refusal
-to the `pane-drag` category.
+to the `pane-drag` category: `mouse down on drag source`, `drag threshold
+passed`, `drag prepared: ghost Xms, session Yms` (the refusal checks plus the
+ghost, then `PaneDragSession.begin`), `drag began` (AppKit's session is up),
+`drag ended`. Read them with `/usr/bin/log show --predicate 'subsystem BEGINSWITH
+"com.dzearing.ghoztty" AND category == "pane-drag"' --info --last 10m`.
+
+**Starting a drag reaches one sidebar, not all of them.** Every window's
+sidebar lists every window's panes (the all-windows scope), so a sidebar that
+redraws for the drag's start redraws windows × panes rows; all of them doing it
+at once grew with the square of the windows: 120–430ms of main thread with 19
+windows of 2–4 panes, and seconds on a busy Mac, before the ghost could appear.
+So no sidebar observes `PaneDragSession`. The session hands the dragged pane to
+a window's `PaneSidebarState.draggedPane` (`arm`): the source window's at
+`begin`, and another window's on the first move over it — a move before the
+pointer can be over one of its rows. Only an armed sidebar dims the dragged
+row, opens its empty tray, and reports the row and group frames its targets
+are read from; every armed one is let go at the end. A window the pointer never
+visits keeps its list as it was, dragged row undimmed. Measured with 19 windows
+(and 19 single-window workspaces): 10–20ms from the threshold to an idle main
+thread, against a 150ms budget. Tests: `PaneDragStartScaleTests`,
+`aSidebarJoinsTheDragWhenThePointerReachesItsWindow`.
 
 **The pointer feed publishes nothing.** Every pane and sidebar of every window
 hangs off `PaneDragSession`, so a publish there is a redraw of all of them, and
@@ -143,5 +163,5 @@ Design: `docs/design/pane-rearrange-mode.md`. Code:
 `PaneMoveCoordinator.swift`, `PaneHeaderView.swift`.
 Tests: `PaneDropResolverTests`, `SplitTreeRearrangeTests`,
 `PaneMoveSessionSafetyTests`, `RearrangeModeStateTests`,
-`PaneGrabHandleWindowTests` (a real `NSDraggingSession` blocks on the physical
+`PaneGrabHandleWindowTests`, `PaneDragStartScaleTests` (a real `NSDraggingSession` blocks on the physical
 button, so it covers each side of one and never starts it).

@@ -11,7 +11,10 @@ struct PaneSidebarView: View {
     @ObservedObject var controller: BaseTerminalController
     @ObservedObject var state: PaneSidebarState
     @ObservedObject var geometry: PaneSidebarGeometry
-    @ObservedObject private var dragSession = PaneDragSession.shared
+    /// The pane drag as it reaches this sidebar (`PaneSidebarState.draggedPane`):
+    /// not the session itself, which every window's sidebar would redraw for.
+    private var draggedPane: PaneView? { state.draggedPane }
+    private var isPaneDragging: Bool { state.draggedPane != nil }
     @ObservedObject private var rowDrag = PaneSidebarRowDrag.shared
     /// Not observed here: its once-per-drag changes come through `state`,
     /// live windows only (`PaneSidebarState`), so starting a drag redraws
@@ -551,7 +554,7 @@ struct PaneSidebarView: View {
             // of a scroll — and each change sends SwiftUI through a rebuild
             // of the window's key-view loop. Measured as the largest cost
             // left in scrolling a fully expanded list.
-            if dragSession.isDragging && !isThisWindow {
+            if isPaneDragging && !isThisWindow {
                 GeometryReader { proxy in
                     Color.clear.preference(
                         key: PaneSidebarGroupFrames.self,
@@ -682,7 +685,7 @@ struct PaneSidebarView: View {
             slide.map { PaneSidebarOrder.shift(index: item, source: $0.source, target: $0.target) } ?? 0
         }
 
-        if !stashed.isEmpty || (isThisWindow && (dragSession.isDragging || !state.showsAllWindows)) {
+        if !stashed.isEmpty || (isThisWindow && (isPaneDragging || !state.showsAllWindows)) {
           VStack(alignment: .leading, spacing: 0) {
             // All windows: no divider and no caption — a window's stashed
             // panes follow its others in one list, the same in the rail and
@@ -740,7 +743,7 @@ struct PaneSidebarView: View {
         // it. It stays put; the rows open the gap above it.
         // In all windows it is there only while a pane is dragged: the list
         // is every window's panes and nothing else.
-        if stashed.isEmpty && isThisWindow && (!state.showsAllWindows || dragSession.isDragging) {
+        if stashed.isEmpty && isThisWindow && (!state.showsAllWindows || isPaneDragging) {
             PaneSidebarEmptyStashSlot(isRail: isRail, isHot: drag?.stashTarget != nil,
                                       isDragging: drag != nil)
         }
@@ -761,7 +764,7 @@ struct PaneSidebarView: View {
             isSelected: isSelected,
             isForeign: !isThisWindow,
             isRail: isRail,
-            isBeingDragged: dragSession.isDragging(pane),
+            isBeingDragged: draggedPane === pane,
             indent: indent)
 
     }
@@ -775,7 +778,7 @@ struct PaneSidebarView: View {
     /// the gap reported the gap's place, and the index chased it).
     @ViewBuilder
     private func rowFrameReader(_ pane: PaneView, isStashed: Bool, isThisWindow: Bool, indent: CGFloat) -> some View {
-        if (dragSession.isDragging || rowDrag.pane != nil) && isThisWindow {
+        if (isPaneDragging || rowDrag.pane != nil) && isThisWindow {
             GeometryReader { proxy in
                 Color.clear.preference(
                     key: PaneSidebarRowFrames.self,
@@ -889,7 +892,7 @@ struct PaneSidebarView: View {
     }
 
     private var dragLayout: DragLayout? {
-        guard let pane = dragSession.pane else { return nil }
+        guard let pane = draggedPane else { return nil }
         let here = PaneDropWindowRef(controller)
         var paneTarget: Int?, stashTarget: Int?
         switch state.dropTarget {

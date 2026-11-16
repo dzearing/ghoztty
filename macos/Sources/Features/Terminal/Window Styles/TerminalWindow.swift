@@ -127,6 +127,11 @@ class TerminalWindow: NSWindow {
             guard tabColor != oldValue else { return }
             tabColorIndicator.rootView = TabColorIndicatorView(tabColor: tabColor)
             invalidateRestorableState()
+            // Saved with the session layout too (`Entry.tabColor`).
+            if let controller = windowController as? BaseTerminalController,
+               controller.sessionLayoutEntryID != nil {
+                SessionLayoutManifest.shared.scheduleSync(controller)
+            }
         }
     }
 
