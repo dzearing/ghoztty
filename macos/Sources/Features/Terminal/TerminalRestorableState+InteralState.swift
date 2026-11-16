@@ -47,6 +47,10 @@ extension TerminalRestorableState {
         // Optional/additive: older archives decode nil (side by side).
         let paneStack: PaneStackState.Persisted?
 
+        // The window's IPC target name (`+new-window --target`), so it stays
+        // addressable after a relaunch. Optional/additive.
+        let windowName: String?
+
         init(
             focusedSurface: String?,
             surfaceTree: SplitTree<ViewType>,
@@ -61,6 +65,7 @@ extension TerminalRestorableState {
             paneSidebarWindowID: UUID? = nil,
             deskVariant: PaneDeskVariant? = nil,
             paneStack: PaneStackState.Persisted? = nil,
+            windowName: String? = nil,
         ) {
             self.focusedSurface = focusedSurface
             self.surfaceTree = surfaceTree
@@ -75,6 +80,7 @@ extension TerminalRestorableState {
             self.paneSidebarWindowID = paneSidebarWindowID
             self.deskVariant = deskVariant
             self.paneStack = paneStack
+            self.windowName = windowName
         }
     }
 }
@@ -85,7 +91,8 @@ extension TerminalRestorableState.InternalState where ViewType == PaneView {
         let sidebar = MainActor.assumeIsolated {
             (controller.paneSidebarState.isExpanded, controller.paneSidebarState.isHidden,
              controller.deskVariant, controller.paneSidebarPersistedOrder,
-             controller.paneSidebarState.windowID, controller.persistedPaneStack)
+             controller.paneSidebarState.windowID, controller.persistedPaneStack,
+             (NSApp.delegate as? AppDelegate)?.ipcServer.registeredWindowName(forController: controller))
         }
         self.init(
             focusedSurface: controller.focusedSurface?.id.uuidString,
@@ -102,6 +109,7 @@ extension TerminalRestorableState.InternalState where ViewType == PaneView {
             paneSidebarWindowID: sidebar.4,
             deskVariant: sidebar.2,
             paneStack: sidebar.5,
+            windowName: sidebar.6,
         )
     }
 }

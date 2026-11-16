@@ -42,7 +42,10 @@ a soft spotlight from the top center, getting darker toward the
 bottom-trailing corner on a dark theme and lighter on a light one, where a dim
 pool of the **complementary** hue subtly lights that corner) and leaves the
 terminals their theme color. An explicit `--color=#hex`, `random` on a split,
-and `random` in the `flat` style still tint the terminal background.
+and `random` in the `flat` style still tint the terminal background; that
+tint (and one picked with the background color picker) is saved with the pane
+and comes back with a relaunch (`Leaf.tint`, see
+[session-persistence.md](session-persistence.md#what-a-relaunch-restores)).
 (See also `docs/design/window-color.md`.)
 
 **Every pane in a window is the same glass.** A split inherits its parent's

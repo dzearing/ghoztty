@@ -2277,6 +2277,29 @@ class BaseTerminalController: NSWindowController,
 
     // MARK: TerminalViewDelegate
 
+    /// The content came on screen (`TerminalView`): put the caret in the pane
+    /// meant to have it — the one focused last, else the focused pane, else
+    /// the first, and never a blade (`restoredFocusTarget`) — unless a pane
+    /// of this window has it already (a restore, a workspace hand-off). It
+    /// used to set the content's SwiftUI focus and let SwiftUI choose: it
+    /// chose the last terminal, a blade more often than not, and focusing a
+    /// blade brings it out.
+    func contentDidAppear() {
+        // Only a window on screen: the content appears as the window loads,
+        // before a restore has given it its focus history, and a focus
+        // queued then lands later, wherever it lands. A window coming on
+        // screen puts the caret in its initial first responder
+        // (`focusOnFirstShow`) itself.
+        guard !isParked, let window, window.isVisible else { return }
+        // The focus history first: the focused surface can still be the
+        // first leaf the window was made with.
+        let preferred = paneStackState.recency.isEmpty ? focusedPane : nil
+        guard !surfaceTree.contains(where: { $0.holdsKeyboardFocus }),
+              let target = restoredFocusTarget(preferring: preferred)
+        else { return }
+        Ghostty.moveFocus(to: target)
+    }
+
     func focusedSurfaceDidChange(to: Ghostty.SurfaceView?) {
         let lastFocusedSurface = focusedSurface
         focusedSurface = to
@@ -4454,6 +4477,18 @@ extension BaseTerminalController {
         }.first
         guard let pane = preferred ?? lastFocused ?? surfaceTree.visibleLeaves.first else { return nil }
         return paneOnShow(pane)
+    }
+
+    /// Make `pane` the one a restored window puts the caret in when it is
+    /// first shown: its focused surface, and its window's initial first
+    /// responder. AppKit otherwise makes the first key view — the first
+    /// pane — first responder as the window comes on screen, and that is
+    /// noted as the pane focused last before the restore can focus the right
+    /// one: the caret landed in the first pane, and a blade at a row's
+    /// leading edge came back out.
+    func focusOnFirstShow(_ pane: PaneView) {
+        if let surface = pane.surfaceView { focusedSurface = surface }
+        window?.initialFirstResponder = pane.surfaceView ?? pane.viewerView
     }
 
     /// Creates a publisher for values on all surfaces in this controller's tree.

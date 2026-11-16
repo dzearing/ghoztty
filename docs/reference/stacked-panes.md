@@ -54,7 +54,22 @@ leaf, which brought a blade there out. Additive: an older app ignores it, and
 state from one lays every row out side by side. A row stacked only for want
 of room is not a pin: restored with its focus history, it shows the same
 panes where the window still has the same room, and unfolds when it has more
-(the window growing is the user making room). Tests:
+(the window growing is the user making room).
+
+**Nothing focuses a blade behind the restore's back.** Two things used to,
+and a focused blade comes out, so a relaunch laid the row out side by side
+again (in either window mode, most relaunches): `TerminalView` set its SwiftUI
+focus as its content appeared, and SwiftUI picked a terminal of its own — the
+LAST one, a trailing blade — after the restore had focused the right pane; and
+in `separate` mode AppKit made the first key view — the FIRST pane, a leading
+blade — first responder as the window came on screen, which was noted as the
+pane focused last before the restore chose its target. Now the content asks
+the controller (`contentDidAppear`: only for a window on screen, only when no
+pane of it has the caret, the pane from `restoredFocusTarget`), and a restore
+decides its target before showing the window and makes it the window's
+`initialFirstResponder` (`focusOnFirstShow`, both restore paths). A viewer
+blade never showed this: SwiftUI never picks a viewer. Tests:
+`aRestoredRowOfTerminalsKeepsItsBlades` (both modes, blades at either edge),
 `aRestoredWindowKeepsItsBlades`, `theStackStateRoundTripsByLeafPosition`,
 `aManifestWithoutBladesStillLoads`.
 

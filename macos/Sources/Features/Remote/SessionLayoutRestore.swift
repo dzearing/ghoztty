@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import GhosttyKit
 
 /// Session persistence (design doc §5, T06): the launch-time restore of
@@ -309,14 +310,8 @@ extension AppDelegate {
                 }
             }
         }
-        // Single-window mode: every restored window is a workspace, parked
-        // but the first; the last restored (the one that was in front) goes
-        // on show, at its own frame.
-        if let (front, entry) = lastRestored, let host = front.workspaceHost {
-            host.show(front, makeKey: true)
-            if let frame = entry.frame, let window = host.window {
-                window.setFrame(frame.rect, display: true)
-            }
+        if let (front, entry) = lastRestored {
+            Self.showRestoredFront(front, entry: entry)
         }
         if restoredCount > 0 {
             Self.logger.info("session restore: restored \(restoredCount) window(s)")
@@ -353,6 +348,43 @@ extension AppDelegate {
         let root = Self.makeSessionLayoutRoot(
             tree: tree, connection: connection, app: app, windowName: windowName)
 
+        return presentRestoredWindow(
+            entry: entry, tree: tree, root: root,
+            windowName: windowName, persistedName: persistedName,
+            connection: connection, tabParent: tabParent,
+            bindLocal: bindLocal, reanchorFrame: reanchorFrame)
+    }
+
+    /// Single-window mode: every restored window is a workspace, parked but
+    /// the first; the last restored (the one that was in front) goes on
+    /// show, at its own frame. Nothing to do in `separate` mode, where it
+    /// came up last and so is in front.
+    @MainActor
+    static func showRestoredFront(_ front: TerminalController, entry: SessionLayoutManifest.Entry) {
+        guard let host = front.workspaceHost else { return }
+        host.show(front, makeKey: true)
+        if let frame = entry.frame, let window = host.window {
+            window.setFrame(frame.rect, display: true)
+        }
+    }
+
+    /// Everything a restored window gets once its panes exist (`root`, built
+    /// from `tree`): the controller, its saved layout state, frame, titles,
+    /// names, focus and the manifest binding. Split from
+    /// `presentRestoredSessionWindow` so a test can restore a window through
+    /// the same code without an agent (`connection` nil: local panes).
+    @MainActor
+    func presentRestoredWindow(
+        entry: SessionLayoutManifest.Entry,
+        tree: SessionLayoutManifest.Node,
+        root: SplitTree<PaneView>.Node,
+        windowName: String,
+        persistedName: String?,
+        connection: RemoteConnection?,
+        tabParent: NSWindow?,
+        bindLocal: Bool,
+        reanchorFrame: Bool
+    ) -> TerminalController {
         let restoredTree = SplitTree<PaneView>(root: root, zoomed: nil, stashed: [])
             .withStash(SessionLayoutManifest.stashedIDs(tree: tree, panes: root.leaves()))
         let controller = TerminalController(ghostty, withSurfaceTree: restoredTree)
@@ -378,8 +410,15 @@ extension AppDelegate {
         // entry id belongs to the OTHER machine — leave it unbound; the remote
         // connection is not `isLocalMachine`, so the didSet registers nothing.
         if bindLocal { controller.sessionLayoutEntryID = entry.id }
-        controller.remoteConnection = connection
-        controller.remoteMachine = connection.machine
+        if let connection {
+            controller.remoteConnection = connection
+            controller.remoteMachine = connection.machine
+        }
+
+        // The pane focused last (else the first, as a fresh window does) —
+        // never a blade: focusing one would bring it back out. Decided
+        // before the window is shown, which notes a focus of its own.
+        let focusTarget = controller.restoredFocusTarget()
 
         // A parked workspace (single-window mode) has no window: the window's
         // frame and showing it belong to the workspace on show. Everything
@@ -410,6 +449,7 @@ extension AppDelegate {
         if let rect = persistedRect {
             window.setFrame(rect, display: true)
         }
+        if let focusTarget { controller.focusOnFirstShow(focusTarget) }
         controller.showWindow(self)
         // Tab siblings inherit the group's frame. A cross-machine resume
         // re-anchors the frame to a visible local screen (the owning machine's
@@ -422,6 +462,8 @@ extension AppDelegate {
             // will have on show.
             WorkspaceHost.shared.present(controller, activate: false)
         }
+
+        if let tabColor = entry.tabColor { controller.restoreTabColor(tabColor) }
 
         // The user-set window title, through the same property a manual
         // rename sets, so it survives later shell OSC title updates.
@@ -458,9 +500,7 @@ extension AppDelegate {
             }
         }
 
-        // Focus the pane focused last (else the first, as a fresh window
-        // does) — never a blade: focusing one would bring it back out.
-        if let target = controller.restoredFocusTarget() {
+        if let target = focusTarget {
             controller.focusedSurface = target.surfaceView
             DispatchQueue.main.async {
                 Ghostty.moveFocus(to: target, from: nil)
@@ -509,6 +549,25 @@ extension AppDelegate {
         app: ghostty_app_t,
         windowName: String
     ) -> SplitTree<PaneView>.Node {
+        makeRestoredRoot(tree: tree, app: app, windowName: windowName) { cfg in
+            cfg.remoteMachine = connection.machine
+            cfg.remoteConnection = connection.handle
+            cfg.connectionKeepAlive = connection
+        }
+    }
+
+    /// Build a restored window's panes from a manifest tree: viewers re-open
+    /// what they showed, terminals come up through `configure` (the agent
+    /// connection their session re-`ATTACH`es over; a test's local command)
+    /// and get back everything of theirs that is not the session's — the
+    /// pane's id, title, banner and tint.
+    @MainActor
+    static func makeRestoredRoot(
+        tree: SessionLayoutManifest.Node,
+        app: ghostty_app_t,
+        windowName: String,
+        configure: (inout Ghostty.SurfaceConfiguration) -> Void
+    ) -> SplitTree<PaneView>.Node {
         SessionLayoutManifest.makeTreeNode(tree) { leaf -> PaneView in
             // Viewer leaves have no agent session: restore by re-opening the
             // viewed file/URL. Missing files render an in-page error rather
@@ -522,9 +581,7 @@ extension AppDelegate {
             }
 
             var cfg = sessionLayoutLeafConfig(leaf: leaf, windowName: windowName)
-            cfg.remoteMachine = connection.machine
-            cfg.remoteConnection = connection.handle
-            cfg.connectionKeepAlive = connection
+            configure(&cfg)
             // Recreate the pane under its PERSISTED surface uuid (wp3 pane
             // identity) so `+list` ids and the shell's baked GHOZTTY_PANE_ID
             // stay valid across the relaunch. Nil (older manifest) mints fresh.
@@ -533,8 +590,15 @@ extension AppDelegate {
                 baseConfig: cfg,
                 uuid: leaf.surfaceID.flatMap { UUID(uuidString: $0) })
             // Seed the last-synced pane title; live OSC titles (if the
-            // session emits them) take over after re-attach.
-            if let title = leaf.title, !title.isEmpty { view.setTitle(title) }
+            // session emits them) take over after re-attach — unless the
+            // user set it, which pins it as it did before the relaunch.
+            if let title = leaf.title, !title.isEmpty {
+                if leaf.titleSetByUser == true {
+                    view.setUserTitle(title)
+                } else {
+                    view.setTitle(title)
+                }
+            }
             // Re-apply the persisted sticky banner: app-side overlay state,
             // not part of the agent's PTY replay, so this is its only way
             // back after a relaunch.
@@ -563,6 +627,12 @@ extension AppDelegate {
         var cfg = Ghostty.SurfaceConfiguration()
         cfg.remoteSessionId = leaf.sessionID
         cfg.environmentVariables["GHOZTTY_WINDOW_NAME"] = windowName
+        // The pane's own tint: the surface applies it once its IO is up, as
+        // it does for a split that inherits one.
+        if let hex = leaf.tint, let color = NSColor(hex: hex) {
+            cfg.backgroundTint = Color(color)
+            cfg.backgroundTintNSColor = color
+        }
         // WP-D3: seed the persisted structured screen snapshot + byte offset
         // so the pane paints instantly at the correct size and the agent
         // replays only the gap since detach. Both required together — an
@@ -696,10 +766,15 @@ extension AppDelegate {
         // Adopt the fresh connection (didSet rebinds the link observer to it;
         // the entry id is already bound so no duplicate registration) and swap
         // the rebuilt tree in.
+        // The window's blades and focus history, by leaf position: a viewer
+        // comes back with a new id, so its row would otherwise be a new row,
+        // laid out side by side.
+        let stack = controller.persistedPaneStack ?? entry.paneStack
         controller.remoteConnection = connection
         controller.remoteMachine = connection.machine
         controller.surfaceTree = SplitTree(root: root, zoomed: nil, stashed: [])
             .withStash(SessionLayoutManifest.stashedIDs(tree: tree, panes: root.leaves()))
+        controller.adoptPersistedPaneStack(stack)
 
         // Re-register pane IPC names against the NEW surfaces (the window name,
         // being controller-keyed, is unaffected — the controller is the same).
@@ -716,10 +791,12 @@ extension AppDelegate {
             }
         }
 
-        if let first = views.first {
-            controller.focusedSurface = first.surfaceView
+        // The pane focused last — never a blade: focusing one would bring
+        // it back out.
+        if let target = controller.restoredFocusTarget() {
+            controller.focusedSurface = target.surfaceView
             DispatchQueue.main.async {
-                Ghostty.moveFocus(to: first, from: nil)
+                Ghostty.moveFocus(to: target, from: nil)
             }
         }
 

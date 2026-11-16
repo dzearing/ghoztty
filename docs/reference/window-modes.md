@@ -183,6 +183,12 @@ controller's, the same on show or parked (`ScriptWindow.stableID`).
   separate-mode archive read in single mode is a workspace per window. The
   window is restorable while any workspace is
   (`WorkspaceHost.windowStateDidChange`).
+- Either way a relaunch brings every workspace back with everything listed in
+  [session-persistence.md → What a relaunch restores](session-persistence.md#what-a-relaunch-restores),
+  the front one on show (`showRestoredFront`) with its collapsed rows intact:
+  its content's first appearance in the window no longer lets SwiftUI focus a
+  terminal of its own choosing (`contentDidAppear`,
+  [stacked-panes.md](stacked-panes.md)).
 
 ## Tests
 
