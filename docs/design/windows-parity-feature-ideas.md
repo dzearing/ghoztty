@@ -732,3 +732,11 @@ as the digest that showed them.
 - A long path in the output still opens (clicking a path past the 260-character limit opens like any other)
 - Each release says what it costs (What's New shows the release's measured memory and thread numbers against the last one)
 - A slow week cannot creep in unnoticed (the app compares idle CPU and memory with its own past numbers after an update and offers a short report)
+
+## 2026-11-16
+
+- A remote window tells you when the link is slow (the connection pill reads "slow link" with the delay once round trips pass a few hundred ms)
+- Restore names what it could not bring back (one quiet line after a restart listing panes that did not return - machine offline, folder gone - with Retry)
+- Jump between your commands in PowerShell too (prompt-to-prompt chord in pwsh panes, as in fully integrated shells)
+- Give a workspace a name and a colour (single-window mode's sidebar workspaces carry a user-chosen name and colour)
+- An update never drops a live session (a release's new session agent takes over running shells without a reconnect)
