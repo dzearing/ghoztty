@@ -1,0 +1,22 @@
+{
+  "version": "1.55.2",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "Single-window mode for Windows is planned and split into eight tasks." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "The viewer's browser processes already exit on their own when the last viewer closes; a test now holds that." },
+        { "text": "A viewer left in a background tab or minimized window now sheds memory at once and sleeps after 30 seconds." },
+        { "text": "Viewers restored into a background tab wait until they are shown before loading their page." },
+        { "text": "Tabs that share a name list in the order they opened in the Windows sidebar, so dragging a tab or opening another no longer makes the selection hop." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "Opening a window on another machine no longer freezes Ghoztty while it connects." },
+        { "text": "The performance baseline now opens markdown, git-status and website viewers and measures what they cost." },
+        { "text": "Agent-held panes did not get slower with T3019: the relay-throughput red was measurement noise, and the guard is green again." }
+      ] }
+  ]
+}

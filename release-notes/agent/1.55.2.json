@@ -1,0 +1,13 @@
+{
+  "version": "1.55.2",
+  "sections": [
+    { "title": "Improvements",
+      "items": [
+        { "text": "Release agents use the fast allocator, and session output is framed once instead of copied twice." },
+        { "text": "The session agent copies pane output into its rings in two block moves instead of one byte at a time." },
+        { "text": "The session agent rewrites a pane's reboot history every 5 minutes instead of every 30 seconds, and a restore keeps an older history plus the output after it." },
+        { "text": "Busy panes no longer take turns in the session agent: each session parses its own output off the agent-wide lock." },
+        { "text": "An idle session holder sleeps until its shell exits instead of checking five times a second." }
+      ] }
+  ]
+}
