@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-16T07:31:35-08:00",
-    "commit":  "a1df66092",
+    "generated":  "2026-11-16T08:18:53-08:00",
+    "commit":  "bc818f25c",
     "uncommitted":  [
-                        "test/win32/hidden-viewer.ps1"
+                        "test/win32/viewer-restore.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -209,7 +209,7 @@
                   "test/win32/hero-viewer-tile.ps1":  "6e31374403ef78b0d5baa816c3074aa92cc53208f708ea487d0dfdafb23b381d",
                   "test/win32/hidden-new-pane.ps1":  "8f8daeafd78bf5f03b3508eaf63714537940442ae0f60dc44e97bdaf271b9b6a",
                   "test/win32/hidden-title.ps1":  "ba19c0ded6b798a6fe069c2e9ce5ce9845a94f0c994bd29356d56977955cabcb",
-                  "test/win32/hidden-viewer.ps1":  "61001286d35c53fa3941730fb87c43b72e1f117fcf0af3b66d7d793a9ac8d7a2",
+                  "test/win32/hidden-viewer.ps1":  "5dbbb7a7b0f89b916bfac49250d8878eae3ee8c14cf368419cfcbccb25153ff6",
                   "test/win32/hidden-window-memory.ps1":  "476c721f8b184c254b062be01ad5f11acfbf257499a0354cb8706c281e1c5632",
                   "test/win32/history-guard-flavor.ps1":  "1d9bdcea796adecd76f31f1920d575ffcf59d4b800e8328aaaf18ce47efe46d2",
                   "test/win32/holder-adopt.ps1":  "d6ebeef6546da97b65e42cf578f8dd02f195bbb9063bef04bea75c0a5c2cd2f2",
@@ -604,7 +604,7 @@
                   "test/win32/viewer-nav-pin.ps1":  "aa1bb25207c4638148dab8b6b8f6f9a7de78ae7ab7065d50751a17825ec64261",
                   "test/win32/viewer-panes.ps1":  "f483995862ca20b10fff8f76f8c5ff34661f5edbea82716fd12ad7c3aa5d8d95",
                   "test/win32/viewer-popup.ps1":  "026091bd991f9e035761626527cdc873d5af02d5376f941b003448bb6faa7f6d",
-                  "test/win32/viewer-restore.ps1":  "5fb6e78ed350d1feb61c8fe0d596d3f3f0330fbe6c7f6f1a1de269cededa8f06",
+                  "test/win32/viewer-restore.ps1":  "13aca3347611d5a5da9619c76cc0b2787f7c70ac3f2c3f0d485803d87c920beb",
                   "test/win32/viewer-toc-emphasis.ps1":  "4111f265f10e605dbe667242d2ae6907b115a834782af1b1d171645aeb45ffe0",
                   "test/win32/viewer-toc-handle.ps1":  "c03d9bea47d45df56e8df941ddc0e2156e4af4b5474a2ecf2ec4e1672b97ab9d",
                   "test/win32/viewer-window-chords.ps1":  "98a12374e5503edcbc5fbdefde9cd8d82bd5bcf59089e0775e18b3787a3c02e7",

@@ -36,6 +36,12 @@
 #        the positive control that this script did not simply rebuild everything
 #        from scratch, which would make D-G true for the wrong reason.
 #
+#   BACKGROUND TABS (K) - T3036. A window written into the manifest with
+#   viewers in tabs on both sides of its active one: after the restore neither
+#   page is fetched from the page server (a viewer nobody has seen costs no
+#   renderer and no page load), focusing one by name loads exactly that one,
+#   and the other stays unfetched.
+#
 #   NO AGENT (J) - T398. Kill the app AND the agent, point the agent binary
 #   override at a path that does not exist, and relaunch. Restore used to
 #   resolve the connection FIRST and give up without one - correct for a
@@ -453,6 +459,44 @@ try {
     $keptIds = @(Alive-Ids)
     Assert ($keptIds -contains $vrTermSid) 'the agent kept the terminal session alive after the app died'
 
+    # ---- K setup (T3036): a window whose viewers restore into BACKGROUND tabs -
+    # No verb opens a second tab, so the window is written into the manifest
+    # the relaunch reads: three tabs, the middle one active. Tab 0 is born shown
+    # and hidden when tab 1 is added; tab 2 is born LAST, shown, and hidden by
+    # the restore's select of tab 1 - the two ways a restored tab ends up
+    # behind. Both viewers point at the page server under their own paths, so
+    # the server's log says whether either page was ever fetched.
+    $bgPathA = "bgtab-a-$PID"
+    $bgPathB = "bgtab-b-$PID"
+    $kInjected = $false
+    $mInject = Read-Manifest $tmp
+    $webWin = Manifest-Win $mInject 'vrweb'
+    if ($null -ne $mInject -and $null -ne $webWin) {
+        function New-ViewerTab([string]$loc, [string]$name) {
+            $leaf = [pscustomobject][ordered]@{
+                kind = 'viewer'; viewer_location = $loc; viewer_home_location = $loc
+                viewer_origin_directory = $repo; ipc_name = $name; title = $name
+            }
+            return [pscustomobject][ordered]@{
+                nodes = @([pscustomobject]@{ leaf = $leaf }); uuid = [guid]::NewGuid().ToString()
+            }
+        }
+        $bgWin = [pscustomobject][ordered]@{
+            id = [guid]::NewGuid().ToString(); uuid = [guid]::NewGuid().ToString()
+            frame = $webWin.frame; frame_dpi = $webWin.frame_dpi
+            ipc_name = 'vrbg'; active_tab = 1
+            tabs = @(
+                (New-ViewerTab "$vrUrl$bgPathA" 'vrbgA'),
+                (New-ViewerTab $blank 'vrbgfront'),
+                (New-ViewerTab "$vrUrl$bgPathB" 'vrbgB'))
+        }
+        $mInject.windows = @(@($mInject.windows) + @($bgWin))
+        [IO.File]::WriteAllText((Manifest-Path $tmp), ($mInject | ConvertTo-Json -Depth 50),
+            (New-Object Text.UTF8Encoding $false))
+        $kInjected = $true
+    }
+    Assert $kInjected 'K0 setup: a three-tab viewer window was written into the manifest'
+
     $env:LOCALAPPDATA = $tmp
     $env:GHOSTTY_LOCAL_AGENT_BIN = $agent
     # persistence: on (default) - this is the restore under test.
@@ -579,6 +623,62 @@ try {
     $vrN2 = Wait-ViewerTitleNum 'vrweb' $vrN1 30
     Assert ($vrN2 -gt $vrN1) `
         "L3 the reload LANDED: the page was re-fetched and its title came back (title $vrN1 -> $vrN2)"
+
+    # ---- K (T3036): a viewer restored into a background tab costs nothing ----
+    # until it is shown. Before T3036 every restored viewer started its renderer
+    # and fetched its page at birth, seen or not. L1 above already waited for
+    # the restore to load a page, so both background viewers have had every
+    # chance to fetch theirs.
+    Say '== K: background-tab viewers wait until shown'
+    $bgTabs = @()
+    $kDeadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $kDeadline) {
+        $w = Get-Win 'vrbg'
+        if ($null -ne $w) { $bgTabs = @($w.tabs) }
+        if ($bgTabs.Count -eq 3) { break }
+        Start-Sleep -Milliseconds 400
+    }
+    Assert ($bgTabs.Count -eq 3) "K1 the three-tab window restored all three tabs (got $($bgTabs.Count))"
+    Start-Sleep -Seconds 3
+    $hitsK = @(Get-Content $vrHits -ErrorAction SilentlyContinue)
+    $gotA = @($hitsK | Where-Object { $_ -match [regex]::Escape("/$bgPathA") })
+    $gotB = @($hitsK | Where-Object { $_ -match [regex]::Escape("/$bgPathB") })
+    Assert ($gotA.Count -eq 0) `
+        "K2 the viewer restored into a tab BEFORE the active one never fetched its page ($($gotA.Count) request(s))"
+    Assert ($gotB.Count -eq 0) `
+        "K3 the viewer restored into a tab AFTER the active one never fetched its page ($($gotB.Count) request(s))"
+
+    # The reveal: focusing the pane switches to its tab, and THAT is when the
+    # page loads - the same page, at its recorded location, reporting back.
+    $r = Invoke-Verb @('+new-window', '--name=vrbgA', '--focus')
+    Assert ($r.Code -eq 0) "K4 focusing the background viewer by name exits 0 (got $($r.Code)) $($r.Out.Trim())"
+    $titleA = ''
+    $kDeadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $kDeadline) {
+        $w = Get-Win 'vrbg'
+        if ($null -ne $w) {
+            foreach ($t in @($w.tabs)) {
+                foreach ($p in @(Get-Leaves $t.splits)) { if ($p.name -eq 'vrbgA') { $titleA = [string]$p.title } }
+            }
+        }
+        if ($titleA -match '^vrlive\d+$') { break }
+        Start-Sleep -Milliseconds 500
+    }
+    $hitsK = @(Get-Content $vrHits -ErrorAction SilentlyContinue)
+    $gotA = @($hitsK | Where-Object { $_ -match [regex]::Escape("/$bgPathA") })
+    $gotB = @($hitsK | Where-Object { $_ -match [regex]::Escape("/$bgPathB") })
+    Assert ($gotA.Count -ge 1 -and $titleA -match '^vrlive\d+$') `
+        "K5 shown for the first time, it fetched its page and the page reported back (requests $($gotA.Count), title '$titleA')"
+    Assert ($gotB.Count -eq 0) `
+        "K6 control: revealing one tab started only that tab's viewer - the other is still unfetched ($($gotB.Count) request(s))"
+    # A never-shown viewer is still a pane a script can address: `+read`
+    # answers it at once (a viewer has no screen to read, and says so) rather
+    # than waiting on a web view that does not exist yet.
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $r = Invoke-Verb @('+read', '--name=vrbgB')
+    $sw.Stop()
+    Assert ($r.Out -match 'viewer pane' -and $sw.ElapsedMilliseconds -lt 10000) `
+        "K7 +read on the never-shown viewer answers ($([int]$sw.ElapsedMilliseconds) ms): $($r.Out.Trim())"
 
     # The manifest the restored app writes must say the same thing the pre-quit
     # one did: a round-trip that loses a field is a restore that works once.

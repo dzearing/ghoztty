@@ -195,6 +195,14 @@ pub const WM_APP_VIEWER_GOT_FOCUS: u32 = w32.WM_APP + 39;
 /// controller, which must not happen under the controller's own `Invoke`.
 pub const WM_APP_VIEWER_PROCESS_FAILED: u32 = w32.WM_APP + 46;
 
+/// "Start your web view now, if anyone can see you" (T3036), posted by
+/// `startWhenShown`. A pane is built visible and only hidden by whatever runs
+/// after it - session restore adds every tab in turn, activating each, so every
+/// tab but the last is born shown and hidden a moment later. One message-loop
+/// hop lets that settle: a pane still visible when this arrives starts, and a
+/// pane hidden by then waits for its first `setVisible(true)`.
+pub const WM_APP_VIEWER_START: u32 = w32.WM_APP + 47;
+
 /// How long the "Filed …" confirmation stays up before the composer closes
 /// itself, matching Mac's 1.8s: long enough to read, short enough that the
 /// pane gives its space back without being asked.
@@ -398,6 +406,13 @@ controller: ?*iface.ICoreWebView2Controller = null,
 /// first `start` until `deinit`, whether or not a hop is outstanding — the
 /// pane holds one of its two references for its whole life.
 pending: ?*Pending = null,
+
+/// A `start` owed to a pane nobody has seen yet (T3036): set by
+/// `startWhenShown`, paid by the first of `WM_APP_VIEWER_START` (while still
+/// visible) or `setVisible(true)`, and cleared by whichever pays it. A
+/// background-tab viewer that is never shown never costs a renderer process or
+/// a page load.
+deferred_start: ?DeferredStart = null,
 
 /// Our reference on the `NewWindowRequested` handler, held for the pane's life
 /// so the same object can be un-registered — and, more to the point, so there
@@ -1871,6 +1886,9 @@ pub fn setVisible(self: *ViewerPane, visible: bool) void {
     // goes on from there when shown - Mac's `ViewerImageView.advanceFrame`.
     log.debug("viewer pane {s}: page {s}", .{ self.paneId(), if (visible) "shown" else "paused (hidden)" });
     self.applySleep(visible);
+    // A pane born into a background tab starts its web view the first time it
+    // is shown (T3036); the controller then adopts this visibility.
+    if (visible) self.payDeferredStart();
     // A `git-status:` poll skipped while hidden is paid now, once, so a change
     // made meanwhile is on screen as the pane is - not one interval later.
     if (visible and self.diff_poll_gate.reveal()) {
@@ -5830,6 +5848,45 @@ const ControllerCompletedHandler = com.Callback(
     onControllerCompleted,
 );
 
+const DeferredStart = struct {
+    alloc: Allocator,
+    host: *webview2.Host,
+};
+
+/// `start`, held until somebody can see the pane (T3036, PA-V04). The chrome
+/// (nav bar and its helpers) is built now, so a pane that is shown keeps the
+/// layout it always had; only the renderer process and the page load wait.
+/// A pane still visible one message-loop hop from now starts then; a pane
+/// hidden by then - every restored background tab - starts on its first
+/// `setVisible(true)`, and one that is never shown never starts at all.
+pub fn startWhenShown(self: *ViewerPane, alloc: Allocator, host: *webview2.Host) void {
+    std.debug.assert(self.state == .idle);
+    const hwnd = self.hwnd orelse {
+        // `start` asserts a host window; keep the same contract loud.
+        std.debug.assert(false);
+        return;
+    };
+    self.ensureNav(alloc, self.hinstance, hwnd);
+    self.deferred_start = .{ .alloc = alloc, .host = host };
+    // A post that cannot be queued must not strand the pane: start now, as
+    // before this change.
+    if (w32.PostMessageW(hwnd, WM_APP_VIEWER_START, 0, 0) == 0) self.payDeferredStart();
+}
+
+/// Whether this pane's web view is still owed a `start` (T3036).
+pub fn startDeferred(self: *const ViewerPane) bool {
+    return self.deferred_start != null;
+}
+
+/// Run the `start` that `startWhenShown` held, once.
+fn payDeferredStart(self: *ViewerPane) void {
+    const d = self.deferred_start orelse return;
+    self.deferred_start = null;
+    if (self.state != .idle or self.hwnd == null) return;
+    log.debug("viewer pane {s}: starting web view", .{self.paneId()});
+    self.start(d.alloc, d.host);
+}
+
 /// Begin creating this pane's web view on the app's shared environment.
 ///
 /// Safe to call only once (the state guard asserts it): a second chain would
@@ -7696,6 +7753,18 @@ pub fn wndProc(
         // stop.
         WM_APP_VIEWER_RELOAD => {
             _ = w32.SetTimer(hwnd, reload_timer_id, reload_debounce_ms, null);
+            return 0;
+        },
+
+        // `startWhenShown`'s hop (T3036): whatever built this pane has finished
+        // arranging the window. Visible now means somebody can see it; hidden
+        // means a background tab, which starts on its first `setVisible(true)`.
+        WM_APP_VIEWER_START => {
+            if (self.visible) {
+                self.payDeferredStart();
+            } else if (self.deferred_start != null) {
+                log.debug("viewer pane {s}: hidden at birth, web view deferred until shown", .{self.paneId()});
+            }
             return 0;
         },
 
@@ -12189,6 +12258,34 @@ test "visibility is recorded even before a controller exists" {
     try testing.expect(!pane.focused);
     pane.focus();
     try testing.expect(pane.focused);
+}
+
+test "T3036: a deferred start is paid on the first show, once, and never while hidden" {
+    // The bookkeeping half of `startWhenShown`, without a window: a hidden
+    // pane keeps its start owed, the first show pays it, and nothing pays it
+    // twice. (No host window here, so paying it clears the debt without
+    // reaching `start` - the live chain is the acceptance's to prove.)
+    var host: webview2.Host = undefined;
+    var pane: ViewerPane = .{};
+    pane.deferred_start = .{ .alloc = testing.allocator, .host = &host };
+
+    pane.setVisible(false);
+    try testing.expect(pane.startDeferred());
+    pane.setVisible(false); // no change: still owed
+    try testing.expect(pane.startDeferred());
+
+    pane.setVisible(true);
+    try testing.expect(!pane.startDeferred());
+    try testing.expectEqual(State.idle, pane.state);
+
+    // A pane that already started (or failed) is never started again by a
+    // late show: the debt is dropped, not paid.
+    var started: ViewerPane = .{ .state = .failed };
+    started.deferred_start = .{ .alloc = testing.allocator, .host = &host };
+    started.setVisible(false);
+    started.setVisible(true);
+    try testing.expect(!started.startDeferred());
+    try testing.expectEqual(State.failed, started.state);
 }
 
 test "T1185: the bar's band is reserved in every viewer mode" {

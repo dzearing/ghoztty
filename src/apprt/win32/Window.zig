@@ -4061,7 +4061,10 @@ fn createViewerPane(self: *Window, open: ViewerPane.Open) !*ViewerPane {
     // After `navigate`: a restore's recorded home has to land ON TOP of the
     // home that navigation seeds from the location, not under it.
     viewer.applyOpenMetadata(alloc, open);
-    viewer.start(alloc, &self.app.webview2_host);
+    // T3036 (PA-V04): not `start`. A pane built into what becomes a background
+    // tab - every restored tab but the last - would pay a renderer process and
+    // a full page load nobody sees; this one starts when it is first shown.
+    viewer.startWhenShown(alloc, &self.app.webview2_host);
     return viewer;
 }
 
