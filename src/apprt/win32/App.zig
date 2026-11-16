@@ -3875,7 +3875,8 @@ fn captureWindow(
             .uuid = try arena.dupe(u8, win.tabUuid(ti)),
             .color = if (color == .none) null else @tagName(color),
             // T2590: only a dragged divider is recorded; an untouched tab
-            // follows `macos-hero-carousel-ratio` again after a restore.
+            // follows `macos-hero-carousel-width` / `-ratio` again after a
+            // restore (T3131).
             .hero_ratio = if (win.tab_hero_resized[ti]) win.tab_hero_ratio[ti] else null,
             .title = if (win.tab_title_pinned[ti])
                 try captureTabTitle(arena, win, ti)
@@ -6071,8 +6072,11 @@ fn restoreTab(
         if (std.meta.stringToEnum(tab_color.TabColor, c)) |tc| window.tab_colors[tab_index] = tc;
     }
     if (tab.hero_ratio) |r| {
-        window.tab_hero_ratio[tab_index] = hero_math.clampRatio(r);
+        // A recorded ratio is a dragged one: the drag floor, and no fixed
+        // width (T3131).
+        window.tab_hero_ratio[tab_index] = hero_math.clampDraggedRatio(r);
         window.tab_hero_resized[tab_index] = hero_math.restoredRatioIsResized(r);
+        if (window.tab_hero_resized[tab_index]) window.tab_hero_width[tab_index] = null;
     }
     if (tab.title) |t| window.setTabTitlePin(tab_index, t);
 }

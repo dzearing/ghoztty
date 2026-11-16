@@ -1,10 +1,12 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-15T20:31:42-08:00",
-    "commit":  "bec1ea243",
+    "generated":  "2026-11-15T21:43:15-08:00",
+    "commit":  "34d44bb3e",
     "uncommitted":  [
-                        "test/win32/goto-window.ps1"
+                        "test/win32/hero-carousel-ratio.ps1",
+                        "test/win32/hero-mode.ps1",
+                        "test/win32/settings-window.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -195,7 +197,6 @@
                   "test/win32/go-loop-guard.ps1":  "03d504bdec67146a33999234c5e435a7d8a33f184d44f756df750b20bb199cf3",
                   "test/win32/go-loop-resume.ps1":  "14325d8a66784b9f3efd653504c67d9434b27a5d2a98adba2e1d4a54d55b6350",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
-                  "test/win32/goto-window.ps1":  "733f119470488ccde01ee21c5e94adbec36cf5933757f33ba183f0bd0e2a9ae1",
                   "test/win32/guard-due.ps1":  "281420e26fbca13e3dfdd2707d8ef2294e277a3c0171aff3e53e5d0f87b939d6",
                   "test/win32/gui-launch-command.ps1":  "fa0a4aad0300e381786ac6c0d32b7666372c22ab9351bfb6d44a6ddfdcb84de3",
                   "test/win32/gui-postmortem.ps1":  "4f9ba3bb7629a71ca32e0c793212c56dfabeb1ed8c96dc41eacddf0d0598da98",
@@ -203,8 +204,8 @@
                   "test/win32/harness-floor.ps1":  "3b83bf58f86f59dbf9fc47524f5401100fd4bdfce9f9a1a550fed0c1947b5e9b",
                   "test/win32/harness-process-leak.ps1":  "05e37207bcb0ccea6c80bb1e48e79737a5afd59a172deeb624d7942975c39d25",
                   "test/win32/harness-scope.ps1":  "23c72eacc44b5ac667b1bf0755a9ca55452cb2ec4b20efc9a5b4a107e9565b7e",
-                  "test/win32/hero-carousel-ratio.ps1":  "1750cc1a200026335785618bc07b08fd18240ce9ed2cca7a6b021852b2be1818",
-                  "test/win32/hero-mode.ps1":  "69807d962f29637994208c48d7bc64136c0bb63be98e8cbf8df93fc2fffb5274",
+                  "test/win32/hero-carousel-ratio.ps1":  "fb3cb8c7948d896022470f117ca9d438156144742f4e79a6ed025182efdfde97",
+                  "test/win32/hero-mode.ps1":  "84c90dee175646466022e8c1439358df6a3a74bd0c3b8e15b680a2126d52c122",
                   "test/win32/hero-nav.ps1":  "77fbfdd2679c7db44743b69d3a1b7e961ef56c057ee39933b4e90d5b754010f4",
                   "test/win32/hero-viewer-tile.ps1":  "6e31374403ef78b0d5baa816c3074aa92cc53208f708ea487d0dfdafb23b381d",
                   "test/win32/hidden-new-pane.ps1":  "8f8daeafd78bf5f03b3508eaf63714537940442ae0f60dc44e97bdaf271b9b6a",
@@ -506,7 +507,7 @@
                   "test/win32/set-state-attention.ps1":  "01020c4f6ba69601bccf89de8576541028072066b5c0445a44772166ecf9c732",
                   "test/win32/settings-advanced.ps1":  "163e889110586bcab9f17f189fc06e6e0c16bb733e35a734c65f157a4e81ab1f",
                   "test/win32/settings-remote-machines.ps1":  "fe540e0e99a8b820d0a86c78ec4b6cde323906f687160b7c514a2e2f398dc5fb",
-                  "test/win32/settings-window.ps1":  "088057e81a434558cfcbef59ae6fc4efa1b8021085587d9497a07d3fdb796d23",
+                  "test/win32/settings-window.ps1":  "8f9b132cd08580cf6b9ccb59cea54dbfbb21688d13c5f976ac8b72b19950fbe9",
                   "test/win32/share-machine.ps1":  "3e106cee1e6a234570ae04d0480063304756afdeff62e2b5304fe2c24cb29045",
                   "test/win32/ship-workflow.ps1":  "7bf70cc43ea794bd74bf0805a941d717b21105f67302ea654794cebdd6195ac6",
                   "test/win32/shortcut-guide.ps1":  "7418a4994b37655bf3a1cef7dd47eb000ab50db63a33a090f332214d64bac502",

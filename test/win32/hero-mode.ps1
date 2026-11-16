@@ -423,9 +423,12 @@ try {
 # a distinctive orange is the only way to tell "honored the config" apart from
 # "happened to paint a gray". It clears the 3:1 chrome floor against the
 # darkened carousel band, so `dividerPaint` paints it verbatim.
+# --macos-hero-carousel-ratio=0.25 pins the share every ratio below is written
+# against: since T3131 (Mac 997b26535) the default carousel is a fixed 130 DIPs
+# instead, which hero-carousel-ratio.ps1 measures; the ratio key still wins.
 $app = Start-OnTestDesktop -Exe $exe -StdErr $errlog -Arguments @(
     '--config-default-files=false', '--session-persistence=false',
-    '--split-divider-color=c86400')
+    '--split-divider-color=c86400', '--macos-hero-carousel-ratio=0.25')
 $gpid = [int]$app.Pid
 $launched += $gpid
 Start-Sleep -Seconds 3

@@ -1,15 +1,16 @@
 {
     "guard":  "hero-viewer-tile",
     "script":  "test/win32/hero-viewer-tile.ps1",
-    "generated":  "2026-11-15T19:09:01-08:00",
-    "commit":  "7cfc6ad95",
+    "generated":  "2026-11-15T20:52:09-08:00",
+    "commit":  "34d44bb3e",
     "uncommitted":  [
-                        "src/apprt/win32/hero_math.zig"
+                        "src/apprt/win32/hero_math.zig",
+                        "src/apprt/win32/HeroCarousel.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/hero_math.zig":  "289e3cf650a6dbcc14f67249ae02b2cd688716343122b69eeb126005477acf30",
+                  "src/apprt/win32/hero_math.zig":  "8ad9c3c4d9a953d7ee37c2fdc930eaef3de769209325b18391c15f5b439ed932",
                   "src/apprt/win32/hero_snap_schedule.zig":  "c1eb3f178e825a6f7003d0e4cb92bc32492fe91aab289390f970e5b15ac4883f",
-                  "src/apprt/win32/HeroCarousel.zig":  "0487283f4c93218bb2034a3b59ca6a154dc31c212a300a29fe250130db987c2b",
+                  "src/apprt/win32/HeroCarousel.zig":  "d73d3142bef4922e7aecc1aaab90bbb45e36d340d141996c03533b18239edaba",
                   "test/win32/hero-viewer-tile.ps1":  "6e31374403ef78b0d5baa816c3074aa92cc53208f708ea487d0dfdafb23b381d"
               }
 }

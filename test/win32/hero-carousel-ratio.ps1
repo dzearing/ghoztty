@@ -15,6 +15,13 @@
 #   D. hero off, hero on: still ~40% - the reset handed the tab back to the
 #      config key.
 #
+# T3131 (Mac 997b26535) relaunches with no hero keys at all:
+#   G. hero turns on over a SINGLE pane, and the pane sidebar steps aside.
+#   E. with two panes the carousel starts at macos-hero-carousel-width's
+#      130 DIPs (not a 25% share), and the hero takes the sidebar's column.
+#   F. a divider drag narrows the carousel under the old 10% floor (5% now).
+#   E3. hero off brings the sidebar back.
+#
 # -NegativeControl launches WITHOUT the key and requires section A to read
 # 40%: it must go red (the default is 25%), proving the oracle can tell them
 # apart.
@@ -169,6 +176,107 @@ try {
     }
     }
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash through the run'
+
+    if (-not $NegativeControl) {
+    # =====================================================================
+    # T3131 (Mac 997b26535): a second launch with NO hero keys - the
+    # carousel starts at macos-hero-carousel-width (130 DIPs), hero mode
+    # turns on over one pane, the pane sidebar steps aside while it is on,
+    # and a drag may take the carousel under the old 10% floor.
+    # =====================================================================
+    Kill-RepoInstances
+    $app2 = Start-OnTestDesktop -Exe $exe -StdErr $errlog -Arguments @('--config-default-files=false', '--session-persistence=false')
+    $gpid2 = [int]$app2.Pid
+    $launched += $gpid2
+    Start-Sleep -Seconds 3
+    if ($app2.Process -and $app2.Process.HasExited) { Write-Host 'SETUP FAIL: second GUI died at launch'; exit 1 }
+    $top2 = Wait-TestWindow -ProcessId $gpid2 -Class 'GhozttyWindow'
+    if ($top2 -eq [IntPtr]::Zero) { Write-Host 'SETUP FAIL: second top window not found'; exit 1 }
+    Set-TestWindowSize -Window $top2 -Width 1400 -Height 900 | Out-Null
+    Start-Sleep -Milliseconds 500
+    $scale = (Get-TestWindowDpi -Window $top2) / 96.0
+    if ($scale -le 0) { $scale = 1.0 }
+    $cw2 = Get-ClientWidth $top2
+    function Get-SidebarVisible([IntPtr]$t) {
+        $sb = @(Get-TestChildWindows -Window $t -Class 'GhozttyPaneSidebar') | Select-Object -First 1
+        return ($null -ne $sb -and $sb.Visible -and $sb.Width -gt 0)
+    }
+    # A sidebar left hidden by an earlier run's shared prefs is shown for this
+    # section and hidden again afterwards, so the suppression is observable.
+    $one = Get-Panes $top2
+    if ($one.Count -ne 1) { Write-Host "SETUP FAIL: expected 1 pane, got $($one.Count)"; exit 1 }
+    $oneHwnd = [IntPtr]$one[0].Hwnd
+    $sbToggled = $false
+    if (-not (Get-SidebarVisible $top2)) {
+        [void](Send-TestKeys -Window $top2 -Target $oneHwnd -Modifiers @('ctrl', 'shift') -Key 'S')
+        Start-Sleep -Milliseconds 700
+        $sbToggled = $true
+    }
+    Assert (Get-SidebarVisible $top2) 'E: the pane sidebar is showing before hero mode'
+    $gridLeft2 = [int](Get-Panes $top2)[0].Left
+
+    # --- G: hero turns on over a single pane --------------------------------
+    Assert (Toggle-Hero $top2 $oneHwnd) 'G: hero toggle chord delivered over one pane'
+    $heroG = Get-Hero $top2
+    $carG = if ($heroG) { $cw2 - $heroG.Right } else { 0 }
+    Assert ($null -ne $heroG -and $carG -ge (Get-TestChromeDip -Dip 100 -Scale $scale)) `
+        "G: hero mode turns on over a single pane - the pane gives up a carousel column ($carG px)"
+    Assert (-not (Get-SidebarVisible $top2)) 'G: the pane sidebar steps aside in single-pane hero'
+    Assert (Toggle-Hero $top2 $oneHwnd) 'G: hero off chord delivered'
+    $offG = Get-Panes $top2
+    Assert ($offG.Count -eq 1 -and [math]::Abs($offG[0].Left - $gridLeft2) -le 2 -and (Get-SidebarVisible $top2)) `
+        "G: hero off gives the grid and the sidebar back (left $($offG[0].Left) vs $gridLeft2)"
+
+    # --- E: two panes, the default 130 DIP carousel, no sidebar --------------
+    & $exe +split --direction=down --name=widthb | Out-Null
+    Start-Sleep -Milliseconds 1200
+    $pair2 = Get-Panes $top2
+    if ($pair2.Count -ne 2) { Write-Host "SETUP FAIL: expected 2 panes, got $($pair2.Count)"; exit 1 }
+    $first2 = [IntPtr](($pair2 | Sort-Object Top, Left | Select-Object -First 1).Hwnd)
+    Assert (Toggle-Hero $top2 $first2) 'E: hero toggle chord delivered'
+    $heroE = Get-Hero $top2
+    if ($null -eq $heroE) { Assert $false 'E: hero mode on (exactly one visible pane)'; Write-Host 'ABORT: hero never turned on'; exit 1 }
+    # Everything right of the hero pane: the 130 DIP column, plus the divider
+    # band and the elevated margin. A 25% share would be ~350 px at 1400.
+    $carE = $cw2 - $heroE.Right
+    $lo = Get-TestChromeDip -Dip 130 -Scale $scale; $hi = Get-TestChromeDip -Dip 175 -Scale $scale
+    Assert ($carE -ge $lo -and $carE -le $hi) `
+        "E: the carousel starts at macos-hero-carousel-width's 130 DIPs ($carE px; want $lo-$hi at scale $scale)"
+    Assert (-not (Get-SidebarVisible $top2)) 'E: the pane sidebar steps aside while hero mode is on'
+    Assert ($heroE.Left -lt ($gridLeft2 - 20)) `
+        "E: the hero pane takes the sidebar's column (left $($heroE.Left) vs grid $gridLeft2)"
+
+    # --- F: a drag may take the carousel under the old 10% floor ------------
+    $midY2 = [int](($heroE.Top + $heroE.Bottom) / 2)
+    $d0 = To-Screen $top2 (Get-DividerX $heroE) $midY2
+    # 60 DIPs off a 130 DIP carousel leaves ~70: above the 5% floor (~55 at
+    # 1400 wide), well under the old 10% one, which would snap it back.
+    $d1 = To-Screen $top2 ((Get-DividerX $heroE) + (Get-TestChromeDip -Dip 60 -Scale $scale)) $midY2
+    [void](Send-TestMouse -Window $top2 -Target $top2 -X $d0[0] -Y $d0[1] -Action down)
+    Start-Sleep -Milliseconds 60
+    [void](Send-TestMouse -Window $top2 -Target $top2 -X $d1[0] -Y $d1[1] -Action move)
+    Start-Sleep -Milliseconds 150
+    [void](Send-TestMouse -Window $top2 -Target $top2 -X $d1[0] -Y $d1[1] -Action move)
+    Start-Sleep -Milliseconds 120
+    [void](Send-TestMouse -Window $top2 -Target $top2 -X $d1[0] -Y $d1[1] -Action up)
+    Start-Sleep -Milliseconds 500
+    $heroF = Get-Hero $top2
+    $carF = if ($heroF) { $cw2 - $heroF.Right } else { -1 }
+    $gridW = $cw2 - $heroE.Left
+    Assert ($heroF -and $carF -lt $carE -and $carF -lt [int](0.1 * $gridW)) `
+        "F: dragging the divider narrows the carousel under 10% of the grid, not snapped back ($carE -> $carF px, 10% = $([int](0.1 * $gridW)))"
+
+    # --- E3: hero off, the sidebar comes back --------------------------------
+    if ($heroF) {
+        Assert (Toggle-Hero $top2 ([IntPtr]$heroF.Hwnd)) 'E3: hero off chord delivered'
+        Assert ((Get-Visible (Get-Panes $top2)).Count -eq 2 -and (Get-SidebarVisible $top2)) 'E3: hero off restores both panes and the sidebar'
+    }
+    if ($sbToggled) {
+        [void](Send-TestKeys -Window $top2 -Target $first2 -Modifiers @('ctrl', 'shift') -Key 'S')
+        Start-Sleep -Milliseconds 500
+    }
+    Assert (-not ($app2.Process -and $app2.Process.HasExited)) 'no crash through the second run'
+    }
 } finally {
     Remove-TestDesktop
     Kill-RepoInstances

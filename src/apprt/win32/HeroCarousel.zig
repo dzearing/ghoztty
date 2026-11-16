@@ -78,11 +78,11 @@ fn toW32(rect: hero_math.Rect) w32.RECT {
 
 /// The hero/divider/carousel split of a content rect for the active tab.
 pub fn splitRects(win: *Window, rect: w32.RECT) hero_math.Split {
-    return hero_math.splitRects(
-        toHm(rect),
-        win.tab_hero_ratio[win.active_tab],
-        win.scale,
-    );
+    const tab = win.active_tab;
+    const content = toHm(rect);
+    // A fixed `macos-hero-carousel-width` in DIPs, or the tab's share (T3131).
+    const carousel_px = hero_math.carouselPx(content.width(), win.tab_hero_ratio[tab], win.tab_hero_width[tab], win.scale);
+    return hero_math.splitRectsPx(content, carousel_px, win.scale);
 }
 
 /// Full carousel geometry for the active tab, or null when hero mode is

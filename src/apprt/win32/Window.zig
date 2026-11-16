@@ -1444,6 +1444,11 @@ tab_hero_ratio: [MAX_TABS]f32 = [_]f32{hero_math.RATIO_DEFAULT} ** MAX_TABS,
 /// and turning hero on again keeps it instead of re-seeding from
 /// `macos-hero-carousel-ratio`. A Windows tab is the Mac window's counterpart.
 tab_hero_resized: [MAX_TABS]bool = [_]bool{false} ** MAX_TABS,
+/// A fixed carousel width in DIPs, per tab, in place of `tab_hero_ratio`
+/// (T3131, Mac 997b26535 `HeroModeState.carouselWidth`): seeded from
+/// `macos-hero-carousel-width` when hero turns on and the ratio key is unset;
+/// null once the divider has been dragged (a drag leaves a share).
+tab_hero_width: [MAX_TABS]?f32 = [_]?f32{hero_math.WIDTH_DEFAULT} ** MAX_TABS,
 /// Carousel wheel-scroll offset in px, per tab (Mac parity: clamped to
 /// half the strip overflow either way; reset on selection change). T59b.
 tab_hero_scroll: [MAX_TABS]i32 = [_]i32{0} ** MAX_TABS,
@@ -3226,7 +3231,11 @@ pub fn paneSidebarMode(self: *const Window) pane_sidebar.Mode {
     var rc: w32.RECT = undefined;
     if (!self.layoutClientRect(hwnd, &rc)) return .hidden;
     const w_dip = @as(f32, @floatFromInt(rc.right - rc.left)) / self.scale;
-    return pane_sidebar.mode(self.pane_sidebar_expanded, self.pane_sidebar_hidden, w_dip);
+    // Hero mode has the tab to itself (T3131, Mac 997b26535
+    // `PaneSidebarState.isSuppressed`): the sidebar steps aside while it is
+    // on, per tab, and the shared hide/show flag is never touched.
+    const suppressed = self.tab_hero_active[self.active_tab];
+    return pane_sidebar.mode(self.pane_sidebar_expanded, self.pane_sidebar_hidden or suppressed, w_dip);
 }
 
 /// The width the sidebar's column takes from the grid, in pixels.
@@ -4267,6 +4276,7 @@ pub fn insertPaneAsTabAt(
         self.tab_hero_index[i] = self.tab_hero_index[i - 1];
         self.tab_hero_ratio[i] = self.tab_hero_ratio[i - 1];
         self.tab_hero_resized[i] = self.tab_hero_resized[i - 1];
+        self.tab_hero_width[i] = self.tab_hero_width[i - 1];
         self.tab_hero_scroll[i] = self.tab_hero_scroll[i - 1];
     }
     self.tab_trees[pos] = tree;
@@ -4280,6 +4290,7 @@ pub fn insertPaneAsTabAt(
     self.tab_hero_index[pos] = 0;
     self.tab_hero_ratio[pos] = hero_math.RATIO_DEFAULT;
     self.tab_hero_resized[pos] = false;
+    self.tab_hero_width[pos] = hero_math.WIDTH_DEFAULT;
     self.tab_hero_scroll[pos] = 0;
     // The shift moved the ACTIVE tab along with everything else at or after
     // `pos`, so the index naming it has to move too (T1537). `insertPaneAsTab`
@@ -4564,6 +4575,7 @@ fn removeTabSlot(self: *Window, idx: usize) void {
         self.tab_hero_index[i] = self.tab_hero_index[i + 1];
         self.tab_hero_ratio[i] = self.tab_hero_ratio[i + 1];
         self.tab_hero_resized[i] = self.tab_hero_resized[i + 1];
+        self.tab_hero_width[i] = self.tab_hero_width[i + 1];
         self.tab_hero_scroll[i] = self.tab_hero_scroll[i + 1];
     }
     self.tab_count -= 1;
@@ -4924,6 +4936,21 @@ fn leafIndexOf(self: *Window, tab: usize, pane: *PaneView) ?usize {
     return null;
 }
 
+/// Seed a tab's carousel size from `macos-hero-carousel-ratio` /
+/// `macos-hero-carousel-width` (T3131), or keep the dragged share when
+/// `resized`.
+fn seedHeroCarousel(self: *Window, tab: usize, resized: bool) void {
+    const start = hero_math.activation(
+        self.tab_hero_ratio[tab],
+        self.tab_hero_width[tab],
+        self.app.config.@"macos-hero-carousel-ratio",
+        self.app.config.@"macos-hero-carousel-width",
+        resized,
+    );
+    self.tab_hero_ratio[tab] = start.ratio;
+    self.tab_hero_width[tab] = start.width;
+}
+
 /// The leaf at a screen-order index, if in range. Pub: the hero slide
 /// painter resolves its outgoing/incoming snapshots by index.
 pub fn leafAt(self: *Window, tab: usize, index: usize) ?*PaneView {
@@ -4947,30 +4974,32 @@ pub fn visibleLeafCount(self: *Window, tab: usize) usize {
 }
 
 /// Toggle hero mode for the active tab (fork feature, T19). Activation
-/// needs more than one pane, seeds the selection from the focused pane,
-/// and clears any zoom (zoom and hero are mutually exclusive).
+/// works over a single pane too (T3131, Mac 997b26535), seeds the selection
+/// from the focused pane, and clears any zoom (zoom and hero are mutually
+/// exclusive). While it is on, the tab has the window to itself: the pane
+/// sidebar steps aside (`paneSidebarMode`) without touching the shared
+/// hide/show flag.
 pub fn toggleHeroMode(self: *Window) void {
     if (self.tab_count == 0) return;
     const tab = self.active_tab;
+    const column_before = self.paneSidebarColumnPx();
     if (self.tab_hero_active[tab]) {
         self.tab_hero_active[tab] = false;
         self.resetPointerTransients();
     } else {
-        if (self.visibleLeafCount(tab) <= 1) return;
+        if (self.visibleLeafCount(tab) == 0) return;
         const focused = self.tab_active_pane[tab];
         self.tab_hero_index[tab] = @intCast(self.leafIndexOf(tab, focused) orelse 0);
         self.tab_hero_scroll[tab] = 0;
-        // T2590: the configured share each time hero turns on, until the
-        // divider has been dragged in this tab.
-        self.tab_hero_ratio[tab] = hero_math.activationRatio(
-            self.tab_hero_ratio[tab],
-            self.app.config.@"macos-hero-carousel-ratio",
-            self.tab_hero_resized[tab],
-        );
+        // T2590/T3131: the configured size each time hero turns on, until
+        // the divider has been dragged in this tab.
+        self.seedHeroCarousel(tab, self.tab_hero_resized[tab]);
         self.tab_trees[tab].zoom(null);
         self.tab_hero_active[tab] = true;
     }
+    self.noteColumnShift(column_before);
     self.layoutSplits();
+    self.syncPaneSidebar();
     // Repaint everything: entering paints the carousel, leaving clears it.
     if (self.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);
     if (self.tab_active_pane[tab].hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
@@ -7563,8 +7592,12 @@ pub fn heroOnTreeChanged(self: *Window, tab: usize) void {
     self.resetPointerTransients();
     if (!self.tab_hero_active[tab]) return;
     const n = self.visibleLeafCount(tab);
-    if (n <= 1) {
+    // Hero stays on over a single pane (T3131, Mac 997b26535): only an
+    // empty tab leaves it.
+    if (n == 0) {
+        const column_before = self.paneSidebarColumnPx();
         self.tab_hero_active[tab] = false;
+        self.noteColumnShift(column_before);
         return;
     }
     if (self.tab_hero_index[tab] >= n) self.tab_hero_index[tab] = @intCast(n - 1);
@@ -7868,7 +7901,7 @@ fn heroInvalidateCarousel(self: *Window) void {
 /// question, so the resize cursor can never promise a target that is not there.
 pub fn heroHitDivider(self: *Window, x: i32, y: i32) bool {
     if (self.tab_count == 0 or !self.tab_hero_active[self.active_tab]) return false;
-    if (self.visibleLeafCount(self.active_tab) <= 1) return false;
+    if (self.visibleLeafCount(self.active_tab) == 0) return false;
     const split = HeroCarousel.splitRects(self, self.heroRect());
     return hero_math.dividerGrab(split, split_geometry.grabHalfPx(self.scale)).contains(x, y);
 }
@@ -8016,7 +8049,8 @@ fn heroUpdateDividerDrag(self: *Window, x: i32) void {
     // carousel starts at the band's right edge.
     const center = x - self.hero_drag_grab_dx;
     const carousel_w: f32 = @as(f32, @floatFromInt(rect.right - center)) - band / 2.0;
-    self.tab_hero_ratio[tab] = hero_math.clampRatio(carousel_w / w);
+    self.tab_hero_ratio[tab] = hero_math.clampDraggedRatio(carousel_w / w);
+    self.tab_hero_width[tab] = null;
     self.tab_hero_resized[tab] = true;
 
     const now = std.time.milliTimestamp();
@@ -8227,7 +8261,7 @@ fn deskSlots(self: *Window, out: []PaneSlot) usize {
     if (self.tab_count == 0 or !self.tab_hero_active[self.active_tab]) return self.collectPaneSlots(out);
     if (!self.paneGlass() or out.len == 0) return 0;
     const tab = self.active_tab;
-    if (self.visibleLeafCount(tab) <= 1) return 0;
+    if (self.visibleLeafCount(tab) == 0) return 0;
     const view = self.leafAt(tab, self.tab_hero_index[tab]) orelse return 0;
     out[0] = .{ .view = view, .rect = heroSlot(HeroCarousel.splitRects(self, self.heroRect())) };
     return 1;
@@ -8797,7 +8831,7 @@ pub fn layoutSplits(self: *Window) void {
     defer self.endFrameWaitBatch();
     const tree = self.tab_trees[self.active_tab];
     if (self.tab_hero_active[self.active_tab]) {
-        if (self.visibleLeafCount(self.active_tab) > 1) {
+        if (self.visibleLeafCount(self.active_tab) > 0) {
             if (!self.paneGlass()) {
                 // The carousel is its own presentation: no cards, no regions.
                 // An elevated (solid) hero still sits inside the margin on the
@@ -17967,6 +18001,7 @@ pub fn moveTab(self: *Window, amount: isize) void {
     std.mem.swap(u16, &self.tab_hero_index[self.active_tab], &self.tab_hero_index[new_index]);
     std.mem.swap(f32, &self.tab_hero_ratio[self.active_tab], &self.tab_hero_ratio[new_index]);
     std.mem.swap(bool, &self.tab_hero_resized[self.active_tab], &self.tab_hero_resized[new_index]);
+    std.mem.swap(?f32, &self.tab_hero_width[self.active_tab], &self.tab_hero_width[new_index]);
     std.mem.swap(i32, &self.tab_hero_scroll[self.active_tab], &self.tab_hero_scroll[new_index]);
     self.active_tab = new_index;
     self.invalidateTabBar();
@@ -20784,6 +20819,7 @@ fn moveTabTo(self: *Window, from: usize, to: usize) void {
     const saved_hero_index = self.tab_hero_index[from];
     const saved_hero_ratio = self.tab_hero_ratio[from];
     const saved_hero_resized = self.tab_hero_resized[from];
+    const saved_hero_width = self.tab_hero_width[from];
     const saved_hero_scroll = self.tab_hero_scroll[from];
 
     if (from < to) {
@@ -20801,6 +20837,7 @@ fn moveTabTo(self: *Window, from: usize, to: usize) void {
             self.tab_hero_index[i] = self.tab_hero_index[i + 1];
             self.tab_hero_ratio[i] = self.tab_hero_ratio[i + 1];
             self.tab_hero_resized[i] = self.tab_hero_resized[i + 1];
+            self.tab_hero_width[i] = self.tab_hero_width[i + 1];
             self.tab_hero_scroll[i] = self.tab_hero_scroll[i + 1];
         }
     } else {
@@ -20818,6 +20855,7 @@ fn moveTabTo(self: *Window, from: usize, to: usize) void {
             self.tab_hero_index[i] = self.tab_hero_index[i - 1];
             self.tab_hero_ratio[i] = self.tab_hero_ratio[i - 1];
             self.tab_hero_resized[i] = self.tab_hero_resized[i - 1];
+            self.tab_hero_width[i] = self.tab_hero_width[i - 1];
             self.tab_hero_scroll[i] = self.tab_hero_scroll[i - 1];
         }
     }
@@ -20834,6 +20872,7 @@ fn moveTabTo(self: *Window, from: usize, to: usize) void {
     self.tab_hero_index[to] = saved_hero_index;
     self.tab_hero_ratio[to] = saved_hero_ratio;
     self.tab_hero_resized[to] = saved_hero_resized;
+    self.tab_hero_width[to] = saved_hero_width;
     self.tab_hero_scroll[to] = saved_hero_scroll;
 
     self.active_tab = to;
@@ -23068,11 +23107,7 @@ pub fn windowWndProc(
             // and the reset hands the tab back to it, so the next activation
             // re-seeds from config again as if the divider was never dragged.
             if (window.heroHitDivider(x, y)) {
-                window.tab_hero_ratio[window.active_tab] = hero_math.activationRatio(
-                    window.tab_hero_ratio[window.active_tab],
-                    window.app.config.@"macos-hero-carousel-ratio",
-                    false,
-                );
+                window.seedHeroCarousel(window.active_tab, false);
                 window.tab_hero_resized[window.active_tab] = false;
                 window.layoutSplits();
                 if (window.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);

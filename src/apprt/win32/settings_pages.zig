@@ -262,7 +262,8 @@ pub const panes: Page = .{
             .{ .key = "macos-pane-min-height", .label = "Stack panes shorter than", .control = .{ .stepper = .{ .min = 80, .max = 600, .step = 5, .unit = "px" } } },
         } },
         .{ .title = "Hero layout", .rows = &.{
-            .{ .key = "macos-hero-carousel-ratio", .label = "Carousel width", .control = .{ .slider = .{ .min = 0.1, .max = 0.6, .step = 0.05 } } },
+            // Mac 997b26535: a width stepper (T3131); the ratio key still wins when set by hand.
+            .{ .key = "macos-hero-carousel-width", .label = "Carousel width", .control = .{ .stepper = .{ .min = 80, .max = 600, .step = 10, .unit = "px" } } },
         } },
         .{ .title = "New windows", .rows = &.{
             .{ .key = "maximize", .label = "Open windows filling the screen", .control = .toggle },

@@ -38,19 +38,109 @@ pub fn clampRatio(ratio: f32) f32 {
     return @min(RATIO_MAX, @max(RATIO_MIN, ratio));
 }
 
-/// The carousel share hero mode turns on with (T2590, Mac 92ab0c9f1
-/// `HeroModeState.activate`): the configured `macos-hero-carousel-ratio`
-/// (clamped), unless the divider has been dragged in this tab, in which case
-/// the dragged share (`current`) stands.
-///
-/// The key is optional since Mac 997b26535 (T3138): unset means "use
-/// `macos-hero-carousel-width`", a fixed-point carousel. Until T3131 brings
-/// that width to Windows, an unset ratio seeds the historical default share.
-pub fn activationRatio(current: f32, configured: ?f64, resized: bool) f32 {
-    if (resized) return clampRatio(current);
-    const c = configured orelse return RATIO_DEFAULT;
-    if (!std.math.isFinite(c)) return RATIO_DEFAULT;
-    return clampRatio(@floatCast(c));
+/// How narrow a divider DRAG may make the carousel (Mac 997b26535
+/// `HeroModeState.minDraggedCarouselRatio`): below the configured ratios'
+/// floor, so a 130 px carousel on a wide window is not snapped wider the
+/// moment the divider is touched.
+pub const RATIO_DRAG_MIN: f32 = 0.05;
+
+/// `macos-hero-carousel-width` (T3131, Mac 997b26535): the carousel's
+/// starting width in DIPs (Mac points), default 130, clamped 80-600 like
+/// the core's finalize.
+pub const WIDTH_DEFAULT: f32 = 130;
+pub const WIDTH_MIN: f32 = 80;
+pub const WIDTH_MAX: f32 = 600;
+
+pub fn clampWidth(width: f32) f32 {
+    if (!std.math.isFinite(width)) return WIDTH_DEFAULT;
+    return @min(WIDTH_MAX, @max(WIDTH_MIN, width));
+}
+
+/// A share the divider was dragged to (Mac `resizeCarousel(to:)`): the
+/// usual ceiling, the lower drag floor.
+pub fn clampDraggedRatio(ratio: f32) f32 {
+    if (std.math.isNan(ratio)) return RATIO_DEFAULT;
+    return @min(RATIO_MAX, @max(RATIO_DRAG_MIN, ratio));
+}
+
+/// What a tab's carousel is sized by: a share of the content width, or -
+/// when `width` is set - a fixed width in DIPs (Mac `HeroModeState`'s
+/// `carouselRatio` / `carouselWidth`). A drag always leaves a share.
+pub const Start = struct {
+    ratio: f32,
+    width: ?f32,
+};
+
+/// The carousel size hero mode turns on with (T2590 / T3131, Mac 997b26535
+/// `HeroModeState.activate`): `macos-hero-carousel-ratio` (clamped) when it is
+/// set, otherwise `macos-hero-carousel-width` - unless the divider has been
+/// dragged in this tab, in which case the dragged share stands.
+pub fn activation(
+    current_ratio: f32,
+    current_width: ?f32,
+    configured_ratio: ?f64,
+    configured_width: u32,
+    resized: bool,
+) Start {
+    if (resized) return .{
+        .ratio = clampDraggedRatio(current_ratio),
+        .width = if (current_width) |w| clampWidth(w) else null,
+    };
+    if (configured_ratio) |c| {
+        const r: f32 = if (std.math.isFinite(c)) clampRatio(@floatCast(c)) else RATIO_DEFAULT;
+        return .{ .ratio = r, .width = null };
+    }
+    return .{ .ratio = current_ratio, .width = clampWidth(@floatFromInt(configured_width)) };
+}
+
+/// The carousel column's width in pixels for content `content_w` px wide
+/// (Mac `HeroModeState.carouselWidth(in:)`): a fixed width never takes more
+/// than the widest share; a share is the dragged-share clamp of it.
+pub fn carouselPx(content_w: i32, ratio: f32, width_dip: ?f32, scale: f32) i32 {
+    const w: f32 = @floatFromInt(@max(content_w, 0));
+    const px = if (width_dip) |d|
+        @min(clampWidth(d) * scale, w * RATIO_MAX)
+    else
+        clampDraggedRatio(ratio) * w;
+    return @intFromFloat(@round(px));
+}
+
+test "activation: the configured ratio wins, else the configured width (T3131)" {
+    const t = std.testing;
+    // Unset ratio (the default): a fixed 130 DIP carousel.
+    const a = activation(0.25, null, null, 130, false);
+    try t.expectEqual(@as(?f32, 130), a.width);
+    // A configured width is taken, clamped like the core's finalize.
+    try t.expectEqual(@as(?f32, 200), activation(0.25, null, null, 200, false).width);
+    try t.expectEqual(@as(?f32, WIDTH_MIN), activation(0.25, null, null, 10, false).width);
+    // A configured ratio wins over the width and clears it.
+    const r = activation(0.25, 130, 0.4, 130, false);
+    try t.expectEqual(@as(?f32, null), r.width);
+    try t.expectApproxEqAbs(@as(f32, 0.4), r.ratio, 0.0001);
+    try t.expectApproxEqAbs(RATIO_MAX, activation(0.25, null, 0.9, 130, false).ratio, 0.0001);
+    try t.expectApproxEqAbs(RATIO_DEFAULT, activation(0.3, null, std.math.nan(f64), 130, false).ratio, 0.0001);
+    // Resized: the dragged share stands, whatever the config says.
+    const d = activation(0.075, null, 0.5, 200, true);
+    try t.expectEqual(@as(?f32, null), d.width);
+    try t.expectApproxEqAbs(@as(f32, 0.075), d.ratio, 0.0001);
+}
+
+test "carouselPx: 130 DIPs, never past the widest share, scaled by DPI (T3131)" {
+    const t = std.testing;
+    try t.expectEqual(@as(i32, 130), carouselPx(1700, 0.25, 130, 1.0));
+    try t.expectEqual(@as(i32, 195), carouselPx(1700, 0.25, 130, 1.5));
+    // A narrow window: the widest share caps the fixed width.
+    try t.expectEqual(@as(i32, 120), carouselPx(200, 0.25, 130, 1.0));
+    // A share: the dragged clamp, down to 5%.
+    try t.expectEqual(@as(i32, 400), carouselPx(1000, 0.4, null, 1.0));
+    try t.expectEqual(@as(i32, 50), carouselPx(1000, 0.01, null, 1.0));
+}
+
+test "a drag need not snap a 130 DIP carousel wider (T3131)" {
+    // 130 of a 1728 px window is 0.075, under the configured 0.1 floor.
+    const share = clampDraggedRatio(130.0 / 1728.0);
+    const px = carouselPx(1728, share, null, 1.0);
+    try std.testing.expect(@abs(px - 130) <= 1);
 }
 
 /// Whether a ratio recorded in a session manifest marks a dragged divider
@@ -60,23 +150,6 @@ pub fn activationRatio(current: f32, configured: ?f64, resized: bool) f32 {
 /// restored tab against the config key.
 pub fn restoredRatioIsResized(recorded: f32) bool {
     return recorded != RATIO_DEFAULT;
-}
-
-test "activationRatio seeds from config until the divider is dragged (T2590)" {
-    const t = std.testing;
-    // Not resized: the configured share wins over whatever the tab held.
-    try t.expectApproxEqAbs(@as(f32, 0.4), activationRatio(0.25, 0.4, false), 0.0001);
-    try t.expectApproxEqAbs(@as(f32, 0.25), activationRatio(0.5, 0.25, false), 0.0001);
-    // Configured value is clamped like the core's finalize does.
-    try t.expectApproxEqAbs(RATIO_MAX, activationRatio(0.25, 0.9, false), 0.0001);
-    try t.expectApproxEqAbs(RATIO_MIN, activationRatio(0.25, 0.01, false), 0.0001);
-    try t.expectApproxEqAbs(RATIO_DEFAULT, activationRatio(0.3, std.math.nan(f64), false), 0.0001);
-    // Unset (the default since T3138): the default share, not the tab's.
-    try t.expectApproxEqAbs(RATIO_DEFAULT, activationRatio(0.4, null, false), 0.0001);
-    try t.expectApproxEqAbs(@as(f32, 0.4), activationRatio(0.4, null, true), 0.0001);
-    // Resized: the dragged share stands, whatever the config says.
-    try t.expectApproxEqAbs(@as(f32, 0.33), activationRatio(0.33, 0.5, true), 0.0001);
-    try t.expectApproxEqAbs(RATIO_MAX, activationRatio(0.8, 0.5, true), 0.0001);
 }
 
 test "restoredRatioIsResized reads a pre-T2590 default as untouched" {
@@ -94,8 +167,14 @@ pub const Split = struct {
 };
 
 pub fn splitRects(content: Rect, ratio: f32, scale: f32) Split {
+    return splitRectsPx(content, carouselPx(content.width(), ratio, null, scale), scale);
+}
+
+/// `splitRects` for a carousel column `carousel_w` px wide (T3131: a fixed
+/// `macos-hero-carousel-width` is a width, not a share).
+pub fn splitRectsPx(content: Rect, carousel_w_in: i32, scale: f32) Split {
     const w = content.width();
-    const carousel_w: i32 = @intFromFloat(@round(clampRatio(ratio) * @as(f32, @floatFromInt(w))));
+    const carousel_w = @max(@min(carousel_w_in, w), 0);
     const band_w: i32 = @max(@as(i32, @intFromFloat(@round(6.0 * scale))), 2);
     var div_left = content.right - carousel_w - band_w;
     // Degenerate content (tiny window): keep rects ordered and non-negative.
@@ -269,8 +348,9 @@ test "splitRects basic 0.25 ratio" {
 
 test "splitRects clamps ratio to Mac bounds" {
     const content: Rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 800 };
+    // The floor is the DRAG floor since T3131 (Mac 997b26535): 5%.
     const lo = splitRects(content, 0.01, 1.0);
-    try std.testing.expectEqual(@as(i32, 100), content.right - lo.carousel.left);
+    try std.testing.expectEqual(@as(i32, 50), content.right - lo.carousel.left);
     const hi = splitRects(content, 0.99, 1.0);
     try std.testing.expectEqual(@as(i32, 600), content.right - hi.carousel.left);
 }

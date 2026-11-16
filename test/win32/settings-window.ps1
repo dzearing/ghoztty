@@ -594,13 +594,19 @@ try {
     $s = Invoke-Settings @('--op=shot', "--path=$shotL")
     $sl = @($s.data.hits | Where-Object { $_.kind -eq 'slider' -and $_.key -eq 'unfocused-split-opacity' })
     Assert ($sl.Count -eq 1) "L: the page paints the slider's track ($($sl.Count))"
-    [void](Invoke-Settings @('--op=reveal', '--key=macos-hero-carousel-ratio'))
-    [void](Invoke-Settings @('--op=shot', "--path=$shotL"))
-    $s = Invoke-Settings @('--op=click', '--value=slider:macos-hero-carousel-ratio')
-    $cr = @(Get-KeyLines (Read-Config) 'macos-hero-carousel-ratio')
-    Assert ([bool]$s.data.ok -and $cr.Count -eq 1 -and $cr[0] -match '= 0\.(3|35|4)\s*$') "L: clicking the middle of Carousel width's track writes the middle of its 0.1-0.6 range ($($cr -join ' | '))"
-    [void](Invoke-Settings @('--op=reset', '--key=macos-hero-carousel-ratio'))
     [void](Invoke-Settings @('--op=reset', '--key=unfocused-split-opacity'))
+    $s = Invoke-Settings @('--op=click', '--value=slider:unfocused-split-opacity')
+    $cr = @(Get-KeyLines (Read-Config) 'unfocused-split-opacity')
+    Assert ([bool]$s.data.ok -and $cr.Count -eq 1 -and $cr[0] -match '= 0\.(5|55|6|65)\s*$') "L: clicking the middle of Dim unfocused panes' track writes the middle of its 0.15-1 range ($($cr -join ' | '))"
+    [void](Invoke-Settings @('--op=reset', '--key=unfocused-split-opacity'))
+    # Carousel width is Mac 997b26535's macos-hero-carousel-width stepper now
+    # (T3131): 130 by default, stepping by 10.
+    $s = Invoke-Settings @('--op=state', '--page=panes')
+    $hw = Find-Row $s 'macos-hero-carousel-width'
+    Assert ($hw -and [string]$hw.control -eq 'stepper' -and [double]$hw.display -eq 130) "L: Carousel width is a stepper on macos-hero-carousel-width reading 130 (control='$($hw.control)' display='$($hw.display)')"
+    $s = Invoke-Settings @('--op=step', '--key=macos-hero-carousel-width', '--value=up')
+    Assert ([bool]$s.data.ok -and (Read-Config) -match '(?m)^macos-hero-carousel-width = 140\r?$') 'L: its up arrow writes 140'
+    [void](Invoke-Settings @('--op=reset', '--key=macos-hero-carousel-width'))
 
     # Stepper: the arrows step by 5 inside 120..800; typing is range-checked.
     $s = Invoke-Settings @('--op=state', '--page=panes')
