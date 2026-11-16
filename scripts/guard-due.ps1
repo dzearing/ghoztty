@@ -1099,6 +1099,22 @@ $GuardTable = @(
             'src\apprt\win32\ViewerPane.zig'
         )
     },
+    # T3034: the WebView2 browser tree exits on its own a few seconds after the
+    # last viewer closes, with the app still holding the environment, and the
+    # next viewer gets a new browser. That is the RUNTIME's behavior, so this
+    # is the oracle that goes red if a WebView2 update (or a change to how the
+    # host or a pane holds the environment) keeps the tree alive. Covers the
+    # host and the pane that hold the environment and controllers.
+    [pscustomobject]@{
+        Name   = 'webview-browser-exit'
+        Script = 'test\win32\webview-browser-exit.ps1'
+        Stamp  = 'test\win32\webview-browser-exit.stamp.json'
+        Covers = @(
+            'test\win32\webview-browser-exit.ps1',
+            'src\apprt\win32\webview2.zig',
+            'src\apprt\win32\ViewerPane.zig'
+        )
+    },
     # T2473: what a closed window gives back - private bytes, handles, GDI/USER,
     # threads, child processes and GPU memory across repeated open/close of a
     # split window with a viewer. The only harness that measures a window's

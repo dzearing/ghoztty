@@ -97,6 +97,15 @@ viewer has opened. **Fix:** count live controllers (panes and composer); at
 zero, start a 60 s grace timer, then release the environment and reset to
 `.idle`. **Risk:** the next viewer pays a cold start (0.3-1 s, estimated).
 
+**MEASURED 2026-11-16 (T3034): does not reproduce.** With the host still
+holding the environment, all six msedgewebview2.exe processes of the app
+(walked from the app pid AND matched by its private user-data folder) exit
+about 5-6 s after the last viewer's controller closes, on runtime
+157.0.4341.46; the next viewer gets a new browser from the same environment.
+The runtime already releases the tree, so the idle-release fix was built,
+measured to change nothing, and reverted. `test\win32\webview-browser-exit.ps1`
+is the oracle that goes red if a future runtime keeps the tree alive.
+
 ### PA-V03: hidden viewers not suspended (P1)
 
 `ViewerPane.setVisible` (`ViewerPane.zig:1834-1849`) only calls
