@@ -1,0 +1,14 @@
+{
+  "version": "1.55.2",
+  "sections": [
+    { "title": "Restoring windows",
+      "items": [
+        { "title": "Collapsed panes stay collapsed after a relaunch", "text": "Quitting and reopening Ghoztty brings back panes you minimized into blades as blades, in either window mode, instead of laying every pane out side by side again. The pane you were in gets the caret back." },
+        { "title": "Colors, titles and names come back", "text": "A relaunch now also restores each pane's color and the titles you set, the window's tab color, and the window and pane names scripts address with --target." }
+      ] },
+    { "title": "Stacked panes",
+      "items": [
+        { "title": "Pane drags start at once", "text": "Dragging a pane by its grab handle shows its ghost right away even with many windows open; with 19 windows it could take seconds before." }
+      ] }
+  ]
+}
