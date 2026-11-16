@@ -1194,6 +1194,9 @@ pub const Connection = struct {
     writer_thread: ?std.Thread = null,
     control_thread: ?std.Thread = null,
     data_thread: ?std.Thread = null,
+    /// True when the data lane is fed by `deliverDataFrame` instead of read off
+    /// `data` by a thread of our own (T3016). Fixed at `create`.
+    inline_data: bool = false,
 
     /// Tunables for health/heartbeat behavior (increment 2). All have production
     /// defaults; tests inject a fake clock, a tiny interval, and a seeded PRNG to
@@ -1209,6 +1212,13 @@ pub const Connection = struct {
         /// OPEN/ATTACH RPC timeout in ns (default `rpc_open_timeout_ns`). Tests
         /// pass a tiny value to assert the no-deadlock-on-silent-agent path fast.
         rpc_open_timeout_ns: u64 = rpc_open_timeout_ns,
+        /// Do not spawn a data-lane reader thread: whoever already parses the
+        /// inbound stream hands each data-lane frame to `deliverDataFrame` (T3016).
+        /// `ClientMux.createConnection` sets this, since its pump has already
+        /// parsed every frame once; reading the data lane again would mean
+        /// re-encoding each frame into a fifo and parsing it a second time on an
+        /// extra thread. The data `Stream` is still used for writes and `close`.
+        inline_data: bool = false,
     };
 
     /// Allocate and initialize a connection over the two given channel streams.
@@ -1335,6 +1345,7 @@ pub const Connection = struct {
             .clock = opts.clock,
             .heartbeat_interval_ms = opts.heartbeat_interval_ms,
             .rpc_open_timeout_ns = opts.rpc_open_timeout_ns,
+            .inline_data = opts.inline_data,
         };
         // Seed the embedded PRNG (used only when no PRNG was injected).
         self.default_prng = std.Random.DefaultPrng.init(blk: {
@@ -1374,7 +1385,7 @@ pub const Connection = struct {
             if (self.control_thread) |t| t.join();
             self.control_thread = null;
         }
-        self.data_thread = try std.Thread.spawn(thread_stack.config, dataReaderLoop, .{self});
+        if (!self.inline_data) self.data_thread = try std.Thread.spawn(thread_stack.config, dataReaderLoop, .{self});
         errdefer {
             self.data.close();
             if (self.data_thread) |t| t.join();
@@ -4024,6 +4035,26 @@ pub const Connection = struct {
         );
     }
 
+    /// Route one inbound data-lane frame to its pane: decode the DATA payload and
+    /// hand the child bytes to `routeInboundData`. Anything that is not DATA or
+    /// DATA_REPAINT is ignored, as is a malformed payload. Never blocks: the ring
+    /// push and a FLOW{pause} enqueue are both non-blocking, which is what lets a
+    /// demux pump call this on its own thread without stalling the control lane
+    /// behind it (T3016). `frame.payload` is only borrowed for the call.
+    pub fn deliverDataFrame(self: *Connection, frame: protocol.Frame) void {
+        // `data_repaint` (0x15) carries the same payload and is rendered
+        // identically; what differs is that its bytes are the agent's own paint
+        // rather than the session's stream, so they advance no offset (T739).
+        // Only an agent that negotiated `repaint_data` ever sends it.
+        const kind: InboundKind = switch (frame.type) {
+            .data => .data,
+            .data_repaint => .repaint,
+            else => return, // ignore anything else on this lane
+        };
+        const dp = protocol.DataPayload.decode(frame.payload) catch return;
+        self.routeInboundData(frame.channel, dp.byte_offset, dp.bytes, kind);
+    }
+
     /// The data reader. Loops read → push → drain. For each DATA frame, decode the
     /// payload and route the raw child bytes via `routeInboundData` (resync discard
     /// §7.3 + FLOW{pause} §4.3). An unknown channel id is dropped (§15 M3 — never
@@ -4037,20 +4068,7 @@ pub const Connection = struct {
             while (reader.next() catch {
                 self.signalTransportError();
                 return;
-            }) |frame| {
-                // `data_repaint` (0x15) carries the same payload and is rendered
-                // identically; what differs is that its bytes are the agent's
-                // own paint rather than the session's stream, so they advance no
-                // offset (T739). Only an agent that negotiated `repaint_data`
-                // ever sends it.
-                const kind: InboundKind = switch (frame.type) {
-                    .data => .data,
-                    .data_repaint => .repaint,
-                    else => continue, // ignore anything else on this lane
-                };
-                const dp = protocol.DataPayload.decode(frame.payload) catch continue;
-                self.routeInboundData(frame.channel, dp.byte_offset, dp.bytes, kind);
-            }
+            }) |frame| self.deliverDataFrame(frame);
             const n = self.data.read(&scratch) catch {
                 self.signalTransportError();
                 return;

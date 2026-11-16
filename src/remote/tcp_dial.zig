@@ -366,7 +366,7 @@ fn dialConnected(
 
     // 3. Create the connection over the mux's two lanes with our HELLO.
     const hello: protocol.Hello = .{ .transfer_encoding = encoding };
-    const conn = connection.Connection.create(alloc, mux.streams().control, mux.streams().data, hello) catch |e| {
+    const conn = mux.createConnection(alloc, hello) catch |e| {
         return e;
     };
     errdefer conn.destroy(alloc);

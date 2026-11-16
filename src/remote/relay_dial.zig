@@ -168,7 +168,7 @@ pub fn dialUpgradeTimeout(
 
     // 5. Create the connection over the mux's two lanes with our HELLO.
     const hello: protocol.Hello = .{ .transfer_encoding = encoding };
-    const conn = try connection.Connection.create(alloc, mux.streams().control, mux.streams().data, hello);
+    const conn = try mux.createConnection(alloc, hello);
     errdefer conn.destroy(alloc);
 
     // 6. Spawn the inbound demux pump, then start the connection threads.

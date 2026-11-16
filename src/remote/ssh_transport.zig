@@ -648,14 +648,8 @@ pub fn SingleTransport(comptime CommandT: type) type {
             const mux = try client_mux.ClientMux.create(alloc, child.stream(), encoding);
             errdefer mux.destroy();
 
-            const lanes = mux.streams();
             const hello: protocol.Hello = .{ .transfer_encoding = encoding };
-            const conn = try connection.Connection.create(
-                alloc,
-                lanes.control,
-                lanes.data,
-                hello,
-            );
+            const conn = try mux.createConnection(alloc, hello);
             errdefer conn.destroy(alloc);
 
             self.* = .{

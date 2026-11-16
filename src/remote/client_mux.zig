@@ -36,8 +36,10 @@
 //!
 //! ```zig
 //! var mux = try client_mux.ClientMux.create(alloc, transport_stream, encoding);
-//! const lanes = mux.streams(); // .{ .control, .data }: two connection.Stream
-//! const conn = try connection.Connection.create(alloc, lanes.control, lanes.data, hello);
+//! // A Connection over the mux's lanes whose DATA frames the pump delivers as
+//! // parsed (T3016). `Connection.create(alloc, mux.streams()...)` still works and
+//! // routes data through the data fifo and a reader thread of its own.
+//! const conn = try mux.createConnection(alloc, hello);
 //! const pump = try mux.startPump();  // spawns the inbound demux thread
 //! try conn.start();
 //! // ... drive the connection ...
@@ -58,6 +60,7 @@
 const std = @import("std");
 const thread_stack = @import("../os/thread_stack.zig");
 const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
 
 const protocol = @import("protocol.zig");
 const connection = @import("connection.zig");
@@ -88,6 +91,21 @@ pub const ClientMux = struct {
 
     control_fifo: Fifo,
     data_fifo: Fifo,
+
+    /// Where data-lane frames go when a `Connection` was bound with
+    /// `createConnection` (T3016): straight from the pump's parse into
+    /// `Connection.deliverDataFrame`, with no re-encode, no fifo and no second
+    /// parse on a reader thread of the connection's own. Null means the caller
+    /// built its `Connection` over `streams()` itself, and data frames take the
+    /// fifo as before.
+    ///
+    /// `sink_mutex` is held across each delivery, and `unbindSink` (run by every
+    /// close) takes it before clearing the sink. That is what makes the usual
+    /// teardown order — `conn.shutdown()`, `conn.destroy()`, THEN
+    /// `mux.joinPump()` — safe: by the time `shutdown` has closed a lane, no
+    /// delivery into the connection is in flight and none can start.
+    sink_mutex: std.Thread.Mutex = .{},
+    sink: ?*connection.Connection = null,
 
     /// Set once `close` has run so closing again (or after EOF) is idempotent and
     /// we don't double-close the transport.
@@ -131,6 +149,48 @@ pub const ClientMux = struct {
     /// The two logical lane streams for `Connection.create(alloc, control, data, …)`.
     pub fn streams(self: *ClientMux) Lanes {
         return .{ .control = self.controlStream(), .data = self.dataStream() };
+    }
+
+    /// Create a `Connection` over this mux's lanes whose data lane is fed by the
+    /// pump directly (T3016) — the way every dialer should build one. Saves one
+    /// thread per connection and, per inbound DATA frame, a re-encode, a fifo
+    /// copy, a fifo read and a second parse. Call before `startPump`. The caller
+    /// owns the connection exactly as with `Connection.create`.
+    pub fn createConnection(
+        self: *ClientMux,
+        alloc: Allocator,
+        hello: protocol.Hello,
+    ) !*connection.Connection {
+        assert(self.pump_thread == null);
+        const lanes = self.streams();
+        const conn = try connection.Connection.createOpts(
+            alloc,
+            lanes.control,
+            lanes.data,
+            hello,
+            .{ .inline_data = true },
+        );
+        self.sink_mutex.lock();
+        defer self.sink_mutex.unlock();
+        self.sink = conn;
+        return conn;
+    }
+
+    fn unbindSink(self: *ClientMux) void {
+        self.sink_mutex.lock();
+        defer self.sink_mutex.unlock();
+        self.sink = null;
+    }
+
+    /// Hand one data-lane frame to the bound connection. False when none is
+    /// bound (or it has been unbound by a close), so the caller falls back to
+    /// the fifo.
+    fn deliverToSink(self: *ClientMux, frame: protocol.Frame) bool {
+        self.sink_mutex.lock();
+        defer self.sink_mutex.unlock();
+        const conn = self.sink orelse return false;
+        conn.deliverDataFrame(frame);
+        return true;
     }
 
     fn controlStream(self: *ClientMux) Stream {
@@ -185,6 +245,11 @@ pub const ClientMux = struct {
     }
 
     fn shutdownOnce(self: *ClientMux) void {
+        // Unbind on EVERY call, before the idempotence gate: a second closer
+        // (`Connection.shutdown` closing its other lane, say) must not return
+        // while a delivery into that connection could still be running on the
+        // pump, which it could if only the first closer waited for it.
+        self.unbindSink();
         if (self.closed.swap(true, .acq_rel)) return; // already closed
         self.control_fifo.close();
         self.data_fifo.close();
@@ -208,13 +273,16 @@ pub const ClientMux = struct {
         while (true) {
             // Drain any whole frames currently buffered, routing each to its lane.
             while (reader.next() catch break) |frame| {
+                const on_data = protocol.onDataLane(frame.type);
+                // A bound connection takes its data frames as parsed (T3016).
+                if (on_data and self.deliverToSink(frame)) continue;
                 wire.clearRetainingCapacity();
                 protocol.writeFrame(self.alloc, self.encoding, frame, &wire) catch continue;
-                const lane: *Fifo = if (protocol.onDataLane(frame.type))
-                    &self.data_fifo
-                else
-                    &self.control_fifo;
+                const lane: *Fifo = if (on_data) &self.data_fifo else &self.control_fifo;
                 _ = lane.write(wire.items) catch {};
+                // One outsized frame must not pin its size for the connection's
+                // life; the control lane's steady state is small.
+                if (wire.capacity > protocol.Reader.retain_capacity) wire.clearAndFree(self.alloc);
             }
             const n = self.transport.read(&scratch) catch break;
             if (n == 0) break; // EOF
@@ -292,6 +360,8 @@ const Fifo = struct {
         if (self.head == self.buf.items.len) {
             self.buf.clearRetainingCapacity();
             self.head = 0;
+            // Drained after a burst: give the burst's memory back (T3016).
+            if (self.buf.capacity > protocol.Reader.retain_capacity) self.buf.clearAndFree(self.alloc);
         }
         return n;
     }
@@ -574,71 +644,113 @@ const AgentRunner = struct {
 
 const all_encodings = [_]protocol.TransferEncoding{ .raw, .cobs, .base64 };
 
-test "loopback: two logical lanes over ONE transport ↔ StdioMux demux — HELLO + OPEN + DATA round-trip" {
+/// One HELLO + OPEN + DATA round-trip over a real `Connection` on the mux's two
+/// lanes. `bound` builds it with `createConnection` (data frames delivered from
+/// the pump as parsed, T3016); otherwise with `Connection.create` over
+/// `streams()`, which reads the data lane through the fifo on a thread of its own.
+/// `destroy_before_join` tears down in the order `ssh_transport` uses —
+/// `shutdown`, `destroy`, and only then `joinPump` — which is only safe if no
+/// delivery into the connection can outlive `shutdown`.
+fn runLoopback(enc: protocol.TransferEncoding, bound: bool, destroy_before_join: bool) !void {
     const alloc = testing.allocator;
+    var pipe = Pipe.init(alloc);
+    defer pipe.deinit();
 
-    for (all_encodings) |enc| {
-        var pipe = Pipe.init(alloc);
-        defer pipe.deinit();
+    // --- Agent side: a single-process mock over the ONE stream. ----------
+    var agent = MockAgent.init(alloc, pipe.agentStream(), enc);
+    defer agent.deinit();
+    var runner = AgentRunner{ .agent = &agent };
+    const agent_thread = try std.Thread.spawn(.{}, AgentRunner.run, .{&runner});
 
-        // --- Agent side: a single-process mock over the ONE stream. ----------
-        var agent = MockAgent.init(alloc, pipe.agentStream(), enc);
-        defer agent.deinit();
-        var runner = AgentRunner{ .agent = &agent };
-        const agent_thread = try std.Thread.spawn(.{}, AgentRunner.run, .{&runner});
-
-        // --- Client side: a real Connection over the mux's two lanes. ---------
-        const mux = try ClientMux.create(alloc, pipe.clientStream(), enc);
+    // --- Client side: a real Connection over the mux's two lanes. ---------
+    const mux = try ClientMux.create(alloc, pipe.clientStream(), enc);
+    const hello: protocol.Hello = .{ .transfer_encoding = enc };
+    const conn = if (bound)
+        try mux.createConnection(alloc, hello)
+    else blk: {
         const lanes = mux.streams();
-        const hello: protocol.Hello = .{ .transfer_encoding = enc };
-        const conn = try connection.Connection.create(alloc, lanes.control, lanes.data, hello);
+        break :blk try connection.Connection.create(alloc, lanes.control, lanes.data, hello);
+    };
 
-        // Spawn the inbound demux pump, then start the connection's threads.
-        const pump = try mux.startPump();
-        try conn.start();
+    // Spawn the inbound demux pump, then start the connection's threads.
+    const pump = try mux.startPump();
+    try conn.start();
+    // The bound connection never starts a data-lane reader of its own.
+    try testing.expectEqual(bound, conn.data_thread == null);
 
-        // 1) HELLO handshake flows over the control lane of the single transport.
-        const negotiated = try conn.waitHandshake();
-        try testing.expectEqual(enc, negotiated.transfer_encoding);
+    // 1) HELLO handshake flows over the control lane of the single transport.
+    const negotiated = try conn.waitHandshake();
+    try testing.expectEqual(enc, negotiated.transfer_encoding);
 
-        // 2) OPEN→OPENED RPC (control lane) yields a live pane.
-        const pane = try conn.openChannel(.{ .cwd = null, .rows = 24, .cols = 80 });
-        try testing.expectEqualStrings("sess-1", pane.session_id);
-        try testing.expectEqual(@as(i64, 4242), pane.pid);
+    // 2) OPEN→OPENED RPC (control lane) yields a live pane.
+    const pane = try conn.openChannel(.{ .cwd = null, .rows = 24, .cols = 80 });
+    try testing.expectEqualStrings("sess-1", pane.session_id);
+    try testing.expectEqual(@as(i64, 4242), pane.pid);
 
-        // 3) A DATA round-trip on the data lane: client input → agent → echo back
-        //    into the pane's inbound ring. Prove it lands on the DATA lane.
-        try conn.writeInput(pane, "hello-agent");
+    // 3) A DATA round-trip on the data lane: client input → agent → echo back
+    //    into the pane's inbound ring. Prove it lands on the DATA lane.
+    try conn.writeInput(pane, "hello-agent");
 
-        // Drain the pane's inbound ring until the agent's echo arrives.
-        var got: [64]u8 = undefined;
-        const total = try test_util.drainRing(pane.ring, &got, "agent-echo".len);
-        try testing.expectEqualStrings("agent-echo", got[0..total]);
+    // Drain the pane's inbound ring until the agent's echo arrives.
+    var got: [64]u8 = undefined;
+    const total = try test_util.drainRing(pane.ring, &got, "agent-echo".len);
+    try testing.expectEqualStrings("agent-echo", got[0..total]);
 
-        // The agent saw the client's input on the DATA lane verbatim.
-        try testing.expectEqualStrings("hello-agent", agent.last_input.items);
+    // The agent saw the client's input on the DATA lane verbatim.
+    try testing.expectEqualStrings("hello-agent", agent.last_input.items);
 
-        // --- Teardown: shutdown closes the lane streams → transport → pump EOF.
-        conn.closeChannel(pane);
-        conn.shutdown();
-        mux.joinPump();
-        _ = pump; // handle is owned/joined via joinPump
-        agent_thread.join();
+    // --- Teardown: shutdown closes the lane streams → transport → pump EOF.
+    conn.closeChannel(pane);
+    conn.shutdown();
+    // Whatever the pump does next, it no longer reaches the connection.
+    try testing.expect(mux.sink == null);
+    if (destroy_before_join) conn.destroy(alloc);
+    mux.joinPump();
+    _ = pump; // handle is owned/joined via joinPump
+    agent_thread.join();
 
-        try testing.expect(runner.err == null);
+    try testing.expect(runner.err == null);
 
-        // --- Demux assertions: frames landed on the CORRECT lanes (StdioMux rule).
-        try testing.expect(agent.saw_hello); // HELLO on control lane
-        try testing.expect(agent.saw_open); // OPEN on control lane
-        try testing.expect(agent.saw_input_data); // input on DATA lane
-        // Exactly one DATA frame reached the agent (the input); HELLO/OPEN/CLOSE
-        // were all classified onto the control lane, never the data lane.
-        try testing.expectEqual(@as(usize, 1), agent.data_frames);
-        try testing.expect(agent.control_frames >= 2); // at least HELLO + OPEN
+    // --- Demux assertions: frames landed on the CORRECT lanes (StdioMux rule).
+    try testing.expect(agent.saw_hello); // HELLO on control lane
+    try testing.expect(agent.saw_open); // OPEN on control lane
+    try testing.expect(agent.saw_input_data); // input on DATA lane
+    // Exactly one DATA frame reached the agent (the input); HELLO/OPEN/CLOSE
+    // were all classified onto the control lane, never the data lane.
+    try testing.expectEqual(@as(usize, 1), agent.data_frames);
+    try testing.expect(agent.control_frames >= 2); // at least HELLO + OPEN
 
-        conn.destroy(alloc);
-        mux.destroy();
-    }
+    if (!destroy_before_join) conn.destroy(alloc);
+    mux.destroy();
+}
+
+test "loopback: two logical lanes over ONE transport ↔ StdioMux demux — HELLO + OPEN + DATA round-trip" {
+    for (all_encodings) |enc| try runLoopback(enc, false, false);
+}
+
+test "loopback (T3016): createConnection delivers DATA from the pump with no data-lane thread" {
+    for (all_encodings) |enc| try runLoopback(enc, true, false);
+}
+
+test "loopback (T3016): a bound connection may be destroyed before the pump is joined" {
+    for (all_encodings) |enc| try runLoopback(enc, true, true);
+}
+
+test "Fifo (T3016): a drained burst gives its memory back" {
+    var fifo = Fifo.init(testing.allocator);
+    defer fifo.deinit();
+    const big = try testing.allocator.alloc(u8, protocol.Reader.retain_capacity * 4);
+    defer testing.allocator.free(big);
+    @memset(big, 'x');
+    _ = try fifo.write(big);
+    try testing.expect(fifo.buf.capacity >= big.len);
+    var dst: [64 * 1024]u8 = undefined;
+    var drained: usize = 0;
+    while (drained < big.len) drained += try fifo.read(&dst);
+    try testing.expect(fifo.buf.capacity <= protocol.Reader.retain_capacity);
+    // A small write afterwards still works from the freed state.
+    _ = try fifo.write("ok");
+    try testing.expectEqual(@as(usize, 2), try fifo.read(&dst));
 }
 
 test {

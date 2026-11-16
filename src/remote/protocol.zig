@@ -2289,6 +2289,13 @@ pub const Reader = struct {
     /// tests lower it to exercise the bound cheaply.
     max_frame: usize = max_frame_len,
 
+    /// The most a drained buffer on the inbound path keeps between frames
+    /// (T3016). A relaunch replay arrives as one DATA frame of up to the 2 MiB
+    /// ring (16 MiB max), and before this every buffer that frame passed through
+    /// kept that size for the life of the connection. Steady-state frames are
+    /// far smaller, so a buffer over this is freed once it empties.
+    pub const retain_capacity: usize = 256 * 1024;
+
     pub fn init(alloc: Allocator, encoding: TransferEncoding) Reader {
         return .{ .alloc = alloc, .encoding = encoding };
     }
@@ -2315,6 +2322,7 @@ pub const Reader = struct {
         if (self.head == self.buf.items.len) {
             self.buf.clearRetainingCapacity();
             self.head = 0;
+            if (self.buf.capacity > retain_capacity) self.buf.clearAndFree(self.alloc);
             return;
         }
         // Only pay the memmove once the dead prefix is sizable.
@@ -2369,9 +2377,20 @@ pub const Reader = struct {
                 block;
             if (trimmed.len == 0) continue;
 
-            try self.decoded.ensureTotalCapacity(self.alloc, self.max_frame);
+            // Size the scratch to this block, not to the 16 MiB frame cap: both
+            // encodings decode to at most their encoded length, so `need` always
+            // fits the frame, and a block over `max_frame` still fails as
+            // FrameTooLarge inside the decode exactly as it did when the scratch
+            // was the whole cap (T3016). Before, every cobs/base64 reader held a
+            // 16 MiB allocation from its first frame on. A previous outsized
+            // frame's scratch is freed rather than kept.
+            const need = @min(trimmed.len, self.max_frame);
+            if (self.decoded.capacity > retain_capacity and need <= retain_capacity)
+                self.decoded.clearAndFree(self.alloc);
+            try self.decoded.ensureTotalCapacity(self.alloc, need);
             self.decoded.clearRetainingCapacity();
-            const scratch = self.decoded.allocatedSlice();
+            const all = self.decoded.allocatedSlice();
+            const scratch = all[0..@min(all.len, self.max_frame)];
             const n = switch (self.encoding) {
                 .cobs => try cobs.decode(trimmed, scratch),
                 .base64 => try base64.decode(trimmed, scratch),
@@ -2651,6 +2670,48 @@ test "transfer-decoded length bound enforced via small max_frame" {
         reader.max_frame = 64; // decoded frame (229 bytes) exceeds this
         try reader.push(wire.items);
         try testing.expectError(error.FrameTooLarge, reader.next());
+    }
+}
+
+test "T3016: a Reader gives an outsized frame's buffers back and never reserves the 16 MiB cap" {
+    const alloc = testing.allocator;
+    const big = try alloc.alloc(u8, 2 * 1024 * 1024); // a relaunch replay's ring
+    defer alloc.free(big);
+    @memset(big, 'r');
+    const big_frame: Frame = .{ .type = .data, .channel = 1, .seq = 0, .payload = big };
+    const small_frame: Frame = .{ .type = .data, .channel = 1, .seq = 1, .payload = "tick" };
+
+    for (all_encodings) |enc| {
+        var wire: std.ArrayList(u8) = .empty;
+        defer wire.deinit(alloc);
+        var reader = Reader.init(alloc, enc);
+        defer reader.deinit();
+
+        // A small frame first: decode scratch is sized to it, not to max_frame.
+        try writeFrame(alloc, enc, small_frame, &wire);
+        try reader.push(wire.items);
+        const f0 = (try reader.next()).?;
+        try testing.expectEqualStrings("tick", f0.payload);
+        try testing.expect(reader.decoded.capacity <= Reader.retain_capacity);
+
+        // The outsized frame round-trips intact...
+        wire.clearRetainingCapacity();
+        try writeFrame(alloc, enc, big_frame, &wire);
+        try reader.push(wire.items);
+        const f1 = (try reader.next()).?;
+        try testing.expectEqual(big.len, f1.payload.len);
+        try testing.expect(std.mem.allEqual(u8, f1.payload, 'r'));
+
+        // ...and once the stream is back to small frames, neither buffer keeps
+        // its size.
+        wire.clearRetainingCapacity();
+        try writeFrame(alloc, enc, small_frame, &wire);
+        try reader.push(wire.items);
+        const f2 = (try reader.next()).?;
+        try testing.expectEqualStrings("tick", f2.payload);
+        try testing.expectEqual(@as(?Frame, null), try reader.next());
+        try testing.expect(reader.buf.capacity <= Reader.retain_capacity);
+        try testing.expect(reader.decoded.capacity <= Reader.retain_capacity);
     }
 }
 
