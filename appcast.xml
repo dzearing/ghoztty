@@ -1411,5 +1411,22 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.55.0/Ghoztty-1.55.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="56JYSdDuKs6qaotTZlaFhIQptNdAVhKgAqKuSQ+KMuT+BbxaMd3jtUWvKP4Z3PMUSw1X3WN1H+/K1JJYMP/GCA==" length="27782834" />
         </item>
+        <item>
+            <title>Version 1.55.1</title>
+            <sparkle:version>1.55.1</sparkle:version>
+            <sparkle:shortVersionString>1.55.1</sparkle:shortVersionString>
+            <pubDate>Mon, 16 Nov 2026 08:08:03 +0000</pubDate>
+            <description>{
+  "version": "1.55.1",
+  "sections": [
+    { "title": "Single-window mode",
+      "items": [
+        { "title": "Banners stay above your text", "text": "Switching back to a workspace whose pane has a banner no longer leaves the banner floating over the top of the terminal's text; the text starts below it as before. The same fix covers moving a pane with a banner to another window." }
+      ] }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.55.1/Ghoztty-1.55.1-arm64.dmg" type="application/octet-stream" sparkle:edSignature="6jtq4RKUh+g0SRvr2oE8ob7i187lfiKJQ2WJGavPlg9F1HsMqfb/DiTm9cLGbJFxgBgpg25Z/y77qkJSfOvoAg==" length="27782016" />
+        </item>
     </channel>
 </rss>
