@@ -1,0 +1,9 @@
+{
+  "version": "1.55.1",
+  "sections": [
+    { "title": "Single-window mode",
+      "items": [
+        { "title": "Banners stay above your text", "text": "Switching back to a workspace whose pane has a banner no longer leaves the banner floating over the top of the terminal's text; the text starts below it as before. The same fix covers moving a pane with a banner to another window." }
+      ] }
+  ]
+}
