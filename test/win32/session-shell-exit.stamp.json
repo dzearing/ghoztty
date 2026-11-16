@@ -1,15 +1,15 @@
 {
     "guard":  "session-shell-exit",
     "script":  "test/win32/session-shell-exit.ps1",
-    "generated":  "2026-11-16T03:59:59-08:00",
-    "commit":  "dfc32256e",
+    "generated":  "2026-11-16T04:26:10-08:00",
+    "commit":  "7040bd7e8",
     "uncommitted":  [
 
                     ],
     "files":  {
                   "src/remote/agent/pty_child.zig":  "5b009e3c3dcb273373301b5d9f1c8f04f39916e68b02522f58c9d51460433e72",
-                  "src/remote/agent/pty_holder_child.zig":  "2deed144637aa491c839266f6c72b4b08673e73d90369442533523a208a77cae",
-                  "src/remote/agent/pty_host.zig":  "482f6e93ff3c7f8a59af60244a0269adf5ca904114003493f8178ffe4cc8b469",
+                  "src/remote/agent/pty_holder_child.zig":  "07a24cb7372e1b65e5aa4fda62e668996b10e8f0f8cd57876d67795913e8c53e",
+                  "src/remote/agent/pty_host.zig":  "2efc65de563d1ebd9e84ae4199090aa265bbf779c6866220b7a58a8cc9c0c90a",
                   "src/remote/agent/session.zig":  "059f4ebe97749ca1110b60d155e17f4fa722f84a4c77af5ba6a0c6f454a066a7",
                   "test/win32/session-shell-exit.ps1":  "3d60d7703bb364ea19de403a9c101e68d7ea5a6909d185970b897e35e71fb032"
               }
