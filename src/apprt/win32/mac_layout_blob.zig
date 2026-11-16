@@ -110,6 +110,9 @@ pub const Entry = struct {
     /// same leaf order (`leaves()`, left before right) as win32's own
     /// `Tab.pane_stack`. Null when the blob predates it or is unreadable.
     pane_stack: ?session_layout.PaneStack = null,
+    /// `Entry.frontmost` (T3137, Mac 3f772a2f0): this entry's window was the
+    /// one in front. Null when the blob predates it or it was not.
+    frontmost: ?bool = null,
     /// The tree, flattened to win32's `nodes[0] = root` representation.
     nodes: []const session_layout.Node = &.{},
 };
@@ -164,6 +167,7 @@ pub fn parseEntry(arena: Allocator, v: std.json.Value) !Entry {
         .pane_sidebar_hidden = boolean(obj.get("paneSidebarHidden")),
         .pane_sidebar_order = try strings(arena, obj.get("paneSidebarOrder")),
         .pane_stack = paneStack(arena, obj.get("paneStack")),
+        .frontmost = if (boolean(obj.get("frontmost")) orelse false) true else null,
         .nodes = try nodes.toOwnedSlice(arena),
     };
 }
@@ -220,7 +224,11 @@ pub fn groupIntoWindows(arena: Allocator, entries: []const Entry) ![]session_lay
         var sidebar_pinned: ?bool = null;
         var sidebar_hidden: ?bool = null;
         var sidebar_order: std.ArrayList([]const u8) = .empty;
+        var frontmost: ?bool = null;
         for (g.items, 0..) |entry, ti| {
+            // Mac marks the window, and a tab sibling of the front tab is the
+            // same window: any entry speaks for the group.
+            if (entry.frontmost != null) frontmost = true;
             tabs[ti] = .{
                 .nodes = entry.nodes,
                 .title = entry.tab_title,
@@ -267,6 +275,7 @@ pub fn groupIntoWindows(arena: Allocator, entries: []const Entry) ![]session_lay
             .pane_sidebar_pinned = sidebar_pinned,
             .pane_sidebar_hidden = sidebar_hidden,
             .pane_sidebar_order = if (sidebar_order.items.len == 0) null else sidebar_order.items,
+            .frontmost = frontmost,
         });
     }
     return out.toOwnedSlice(arena);
@@ -1159,4 +1168,30 @@ test "T1979: a Mac window restores at its own size on a 200% display" {
     const at150 = window_placement.fitToMonitor(rect, w.frame_dpi, 144, work);
     try testing.expectEqual(@as(i32, 2160), at150.w);
     try testing.expectEqual(@as(i32, 1350), at150.h);
+}
+
+test "T3137: a Mac entry's frontmost mark comes across to its window" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const blobs = [_][]const u8{
+        "{\"id\":\"a\",\"tree\":{\"leaf\":{\"_0\":{\"sessionID\":\"aaaa\"}}}}",
+        "{\"id\":\"b\",\"tabGroupID\":\"g\",\"tabIndex\":0,\"tree\":{\"leaf\":{\"_0\":{\"sessionID\":\"bbbb\"}}}}",
+        "{\"id\":\"c\",\"tabGroupID\":\"g\",\"tabIndex\":1,\"frontmost\":true,\"tree\":{\"leaf\":{\"_0\":{\"sessionID\":\"cccc\"}}}}",
+        "{\"id\":\"d\",\"frontmost\":false,\"tree\":{\"leaf\":{\"_0\":{\"sessionID\":\"dddd\"}}}}",
+    };
+    var entries: [blobs.len]Entry = undefined;
+    for (blobs, &entries) |b, *e| e.* = try translate(arena, b);
+    // Absent and false both read as "not in front" (Mac writes true or nothing).
+    try testing.expectEqual(@as(?bool, null), entries[0].frontmost);
+    try testing.expectEqual(@as(?bool, true), entries[2].frontmost);
+    try testing.expectEqual(@as(?bool, null), entries[3].frontmost);
+
+    const windows = try groupIntoWindows(arena, &entries);
+    try testing.expectEqual(@as(usize, 3), windows.len);
+    try testing.expectEqual(@as(?bool, null), windows[0].frontmost);
+    // The group whose SECOND tab carried the mark is the front window.
+    try testing.expectEqual(@as(?bool, true), windows[1].frontmost);
+    try testing.expectEqual(@as(?bool, null), windows[2].frontmost);
 }

@@ -38870,3 +38870,7 @@ The same 16 MB-per-thread commit T2985 removed from the app was still paid by `g
 ## 2026-11-16 lane b - T3134 same-named tabs list in open order
 
 Windows port of Mac 5558742c6. Each tab now carries an app-wide open place (`Window.tab_opened`, minted when the slot fills, carried through every tab shuffle like `tab_uuid`); the all-windows list gathers tabs in that order, so its last tie-break (the index) is open order rather than strip position. goto-window.ps1 arm E proves it on box (and fails with the sort disabled). Floor + due sweep green apart from reds already acked to open tasks.
+
+## 2026-11-16 lane b - T3137 restore brings the front window back in front
+
+Windows port of the session-layout half of Mac 3f772a2f0. The manifest window gains Mac's additive `frontmost` key, marked at capture on the most recently activated window; a Mac blob's `Entry.frontmost` now survives translation (any tab of a group marks the window). Launch restore builds the frontmost window first (it is the one shown in front, the rest paced behind it); Restore All, which activates each window it builds, builds it last (Mac's `frontmostLast`). No agent wire change. restore-paced.ps1 gains section F: a manifest with no focus stamps and `frontmost` on a window that is neither listed first nor last focused restores that window first. Floor all four lanes green; restore-paced ALL PASS (59).

@@ -348,6 +348,11 @@ pub const Window = struct {
     /// absent in an older manifest or a Mac blob, and such a window keeps its
     /// listed position after every stamped one.
     last_focused_ms: ?i64 = null,
+    /// The window that was in front when this was written (T3137, Mac
+    /// 3f772a2f0 `Entry.frontmost`): a restore brings it back in front - the
+    /// first window a launch builds here, the last one Mac builds. True or
+    /// absent: an older manifest restores by `last_focused_ms`, as before.
+    frontmost: ?bool = null,
 };
 
 /// The whole file. `windows` is a present (possibly empty) array so a reader
@@ -374,6 +379,24 @@ pub const File = struct {
         return n;
     }
 };
+
+/// Set `frontmost` on the most recently activated window (T3137) - Mac's
+/// `isMainWindow || lastMain`, in the stamp win32 already keeps. Ties keep the
+/// first listed; no stamp anywhere marks nothing (no window was ever in front).
+pub fn markFrontmost(windows: []Window) void {
+    var best: ?usize = null;
+    for (windows, 0..) |*w, i| {
+        w.frontmost = null;
+        const s = w.last_focused_ms orelse continue;
+        if (best == null or s > windows[best.?].last_focused_ms.?) best = i;
+    }
+    if (best) |b| windows[b].frontmost = true;
+}
+
+/// Whether `w` was the window in front when it was written (T3137).
+pub fn isFront(w: Window) bool {
+    return w.frontmost orelse false;
+}
 
 /// A parsed file whose backing memory (including every string) is owned by the
 /// embedded arena; `deinit()` frees it all.
@@ -2351,4 +2374,33 @@ test "T691: the manifest follows the lineage, and without one is byte-for-byte w
     const empty = layoutPath(alloc) orelse return error.SkipZigTest;
     defer alloc.free(empty);
     try std.testing.expectEqualStrings(base, empty);
+}
+
+test "T3137: the most recently focused window is marked frontmost, and the mark is additive" {
+    var wins = [_]Window{
+        .{ .id = "a", .last_focused_ms = 100 },
+        .{ .id = "b", .last_focused_ms = 300, .frontmost = true },
+        .{ .id = "c" },
+        .{ .id = "d", .last_focused_ms = 200, .frontmost = true },
+    };
+    markFrontmost(&wins);
+    try testing.expect(!isFront(wins[0]));
+    try testing.expect(isFront(wins[1]));
+    try testing.expect(!isFront(wins[2]));
+    // A stale mark from an earlier capture is cleared, so there is one front.
+    try testing.expect(!isFront(wins[3]));
+
+    // Nothing ever focused: nothing is in front.
+    var none = [_]Window{ .{ .id = "x" }, .{ .id = "y" } };
+    markFrontmost(&none);
+    try testing.expect(!isFront(none[0]) and !isFront(none[1]));
+
+    // Only the front window writes the key; an older manifest reads as none.
+    const body = try serialize(testing.allocator, .{ .windows = &wins });
+    defer testing.allocator.free(body);
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, body, "frontmost"));
+    var parsed = try parse(testing.allocator, body);
+    defer parsed.deinit();
+    try testing.expect(isFront(parsed.value.windows[1]));
+    try testing.expectEqual(@as(?bool, null), parsed.value.windows[0].frontmost);
 }

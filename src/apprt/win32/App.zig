@@ -3811,6 +3811,9 @@ fn captureSessionLayout(
 
         try windows.append(arena, try self.captureWindow(arena, win, wi, &snapshot_budget, pending, screens));
     }
+    // T3137 (Mac 3f772a2f0): mark the window that was in front, so a restore
+    // in either lineage brings it back in front.
+    session_layout.markFrontmost(windows.items);
     return .{ .windows = try windows.toOwnedSlice(arena) };
 }
 
@@ -5000,8 +5003,30 @@ fn orderRestoreWindows(gpa: Allocator, windows: []const session_layout.Window, o
         return;
     };
     defer gpa.free(stamps);
-    for (windows, stamps) |w, *s| s.* = w.last_focused_ms;
-    restore_pacing.order(stamps, out);
+    const front = gpa.alloc(bool, windows.len) catch {
+        for (out, 0..) |*o, i| o.* = i;
+        return;
+    };
+    defer gpa.free(front);
+    for (windows, stamps, front) |w, *s, *f| {
+        s.* = w.last_focused_ms;
+        f.* = session_layout.isFront(w);
+    }
+    restore_pacing.order(stamps, front, out);
+}
+
+/// Fill `out` with Restore All's build order (T3137): as listed, the window
+/// that was in front LAST, since each window it builds comes up activated and
+/// the last one ends in front. On an allocation failure `out` is the listed
+/// order.
+fn frontmostLastOrder(gpa: Allocator, windows: []const session_layout.Window, out: []usize) void {
+    const front = gpa.alloc(bool, windows.len) catch {
+        for (out, 0..) |*o, i| o.* = i;
+        return;
+    };
+    defer gpa.free(front);
+    for (windows, front) |w, *f| f.* = session_layout.isFront(w);
+    restore_pacing.frontmostLast(front, out);
 }
 
 /// A launch restore's windows still to build (T1163, D102). Owns a deep copy
@@ -8181,8 +8206,15 @@ pub fn adoptRestoreAllLocal(self: *App, job: *RestoreAllLocal.Job) RestoreAllErr
     const attach_ptr = job.probe.attachSet();
     const held_ptr = job.probe.heldSet();
 
+    // T3137: the window that was in front is built last, so it ends in front.
+    const gpa = self.core_app.alloc;
+    const order_buf: ?[]usize = gpa.alloc(usize, decoded.windows.len) catch null;
+    defer if (order_buf) |b| gpa.free(b);
+    if (order_buf) |ob| frontmostLastOrder(gpa, decoded.windows, ob);
+
     var restored: usize = 0;
-    for (decoded.windows) |win| {
+    for (0..decoded.windows.len) |pos| {
+        const win = decoded.windows[if (order_buf) |ob| ob[pos] else pos];
         // Mac's double-attach guard (`SessionLayoutRestore.swift:695-699`) in the
         // identity win32 actually has: the agent rebinds a session to the NEWEST
         // attach, so rebuilding a window whose panes are already on screen would
@@ -8251,8 +8283,24 @@ pub fn adoptRestoreAll(self: *App, job: *RestoreAllRelay.Job) usize {
 
     const attach_ptr = job.probe.attachSet();
     const machine = job.machine();
+    // T3137: the window that was in front is built last, so it ends in front.
+    const gpa = self.core_app.alloc;
+    const order_buf: ?[]usize = order: {
+        const buf = gpa.alloc(usize, job.prepared.len) catch break :order null;
+        const front = gpa.alloc(bool, job.prepared.len) catch {
+            gpa.free(buf);
+            break :order null;
+        };
+        defer gpa.free(front);
+        for (job.prepared, front) |p, *f| f.* = session_layout.isFront(p.win);
+        restore_pacing.frontmostLast(front, buf);
+        break :order buf;
+    };
+    defer if (order_buf) |b| gpa.free(b);
+
     var restored: usize = 0;
-    for (job.prepared) |*p| {
+    for (0..job.prepared.len) |pos| {
+        const p = &job.prepared[if (order_buf) |ob| ob[pos] else pos];
         if (self.windowIsOpenOn(p.win, machine)) {
             log.info("restore all: '{s}' is already open here, skipping", .{p.win.id});
             continue;

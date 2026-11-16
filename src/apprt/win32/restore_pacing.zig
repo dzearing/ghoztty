@@ -42,18 +42,43 @@ pub fn shouldPace(remaining: usize, deferred_armed: bool) bool {
     return remaining > 0;
 }
 
-/// Fill `out` (len == stamps.len) with the indices 0..len in restore order:
-/// the most recently focused first, unstamped windows after every stamped one
-/// in their original order. Stable, so equal stamps keep their listed order.
-pub fn order(stamps: []const ?i64, out: []usize) void {
-    std.debug.assert(out.len == stamps.len);
+/// Fill `out` (len == stamps.len == front.len) with the indices 0..len in
+/// restore order: the window marked frontmost first (T3137, Mac 3f772a2f0 -
+/// the first window built here is the one in front, so this is Mac's
+/// `frontmostLast` for a builder that stacks the rest behind it), then the
+/// most recently focused, unstamped windows after every stamped one in their
+/// original order. Stable, so equal keys keep their listed order. The
+/// frontmost mark is what carries "in front" across lineages: a Mac blob has
+/// no stamp, only the mark.
+pub fn order(stamps: []const ?i64, front: []const bool, out: []usize) void {
+    std.debug.assert(out.len == stamps.len and front.len == stamps.len);
     for (out, 0..) |*o, i| o.* = i;
-    std.sort.insertion(usize, out, stamps, lessThan);
+    std.sort.insertion(usize, out, Keys{ .stamps = stamps, .front = front }, lessThan);
 }
 
-fn lessThan(stamps: []const ?i64, a: usize, b: usize) bool {
-    const sa = stamps[a];
-    const sb = stamps[b];
+/// Fill `out` (len == front.len) with the indices 0..len for a builder where
+/// the LAST window built ends in front (Restore All, which activates each
+/// window it builds): as listed, with the frontmost-marked window moved to the
+/// end. Mac's `SessionLayoutManifest.frontmostLast`, verbatim.
+pub fn frontmostLast(front: []const bool, out: []usize) void {
+    std.debug.assert(out.len == front.len);
+    var n: usize = 0;
+    for (front, 0..) |f, i| if (!f) {
+        out[n] = i;
+        n += 1;
+    };
+    for (front, 0..) |f, i| if (f) {
+        out[n] = i;
+        n += 1;
+    };
+}
+
+const Keys = struct { stamps: []const ?i64, front: []const bool };
+
+fn lessThan(keys: Keys, a: usize, b: usize) bool {
+    if (keys.front[a] != keys.front[b]) return keys.front[a];
+    const sa = keys.stamps[a];
+    const sb = keys.stamps[b];
     if (sa == null) return false; // unstamped never sorts ahead of anything
     if (sb == null) return true; // stamped sorts ahead of unstamped
     return sa.? > sb.?;
@@ -82,34 +107,34 @@ const testing = std.testing;
 test "T1163: the most recently focused window restores first" {
     const stamps = [_]?i64{ 100, 300, 200 };
     var out: [3]usize = undefined;
-    order(&stamps, &out);
+    order(&stamps, &noFront(stamps.len), &out);
     try testing.expectEqualSlices(usize, &.{ 1, 2, 0 }, &out);
 }
 
 test "T1163: unstamped windows keep their listed order, after every stamped one" {
     const stamps = [_]?i64{ null, 50, null, 70, null };
     var out: [5]usize = undefined;
-    order(&stamps, &out);
+    order(&stamps, &noFront(stamps.len), &out);
     try testing.expectEqualSlices(usize, &.{ 3, 1, 0, 2, 4 }, &out);
 }
 
 test "T1163: a manifest written before the stamp existed restores in listed order" {
     const stamps = [_]?i64{ null, null, null };
     var out: [3]usize = undefined;
-    order(&stamps, &out);
+    order(&stamps, &noFront(stamps.len), &out);
     try testing.expectEqualSlices(usize, &.{ 0, 1, 2 }, &out);
 }
 
 test "T1163: equal stamps keep their listed order" {
     const stamps = [_]?i64{ 5, 9, 5, 9 };
     var out: [4]usize = undefined;
-    order(&stamps, &out);
+    order(&stamps, &noFront(stamps.len), &out);
     try testing.expectEqualSlices(usize, &.{ 1, 3, 0, 2 }, &out);
 }
 
 test "T1163: an empty restore orders nothing" {
     var out: [0]usize = .{};
-    order(&.{}, &out);
+    order(&.{}, &.{}, &out);
 }
 
 test "T1163: pacing needs something left to pace, and never races the deferred pass" {
@@ -131,4 +156,33 @@ test "T1163: a rebuilt window keeps whichever stamp is newer" {
 
 test "T1163: the pacing interval is a moment, not a wait" {
     try testing.expect(interval_ms >= 100 and interval_ms <= 500);
+}
+
+fn noFront(comptime n: usize) [n]bool {
+    return [_]bool{false} ** n;
+}
+
+test "T3137: the window that was in front restores first, ahead of every stamp" {
+    const stamps = [_]?i64{ 100, 300, null };
+    const front = [_]bool{ false, false, true };
+    var out: [3]usize = undefined;
+    order(&stamps, &front, &out);
+    try testing.expectEqualSlices(usize, &.{ 2, 1, 0 }, &out);
+}
+
+test "T3137: a Mac blob (no stamps) restores its frontmost window first, the rest as listed" {
+    const stamps = [_]?i64{ null, null, null, null };
+    const front = [_]bool{ false, true, false, false };
+    var out: [4]usize = undefined;
+    order(&stamps, &front, &out);
+    try testing.expectEqualSlices(usize, &.{ 1, 0, 2, 3 }, &out);
+}
+
+test "T3137: frontmostLast moves the front window to the end and keeps the rest as listed" {
+    var out: [3]usize = undefined;
+    frontmostLast(&.{ true, false, false }, &out);
+    try testing.expectEqualSlices(usize, &.{ 1, 2, 0 }, &out);
+    // Mac's withNoFrontmostTheOrderIsAsWritten.
+    frontmostLast(&.{ false, false, false }, &out);
+    try testing.expectEqualSlices(usize, &.{ 0, 1, 2 }, &out);
 }

@@ -17,6 +17,12 @@
 #      listed order.
 #   E. Crash recovery (T194): delete the manifest, relaunch - the windows come
 #      back from the agent's own layouts, still paced.
+#   F. T3137 (Mac 3f772a2f0): A and D also check the manifest marks exactly
+#      the focused window `frontmost`. Then the manifest is rewritten into the
+#      shape a Mac layout has - no `last_focused_ms` stamps at all, the
+#      `frontmost` mark on t1163c, a window nobody focused last - and a
+#      relaunch must restore t1163c first. Without the mark that manifest
+#      restores in listed order, whose first window is not t1163c.
 #
 # Isolation: a private LOCALAPPDATA, IPC pipe suffix and agent lineage
 # (lib\AgentLineage.ps1). Runs on a BACKGROUND desktop (lib\TestDesktop.ps1).
@@ -69,6 +75,11 @@ function Wait-Manifest([scriptblock]$Pred, [int]$TimeoutSec = 15) {
         Start-Sleep -Milliseconds 300
     }
     return $m
+}
+
+# The ipc_names of the manifest windows marked frontmost (T3137).
+function Frontmost-Names($m) {
+    return @(@($m.windows) | Where-Object { $_.frontmost -eq $true } | ForEach-Object { [string]$_.ipc_name })
 }
 
 # The manifest window whose stamp is newest, by ipc_name ('' when none is stamped).
@@ -237,6 +248,8 @@ try {
     Assert ($newest -eq 't1163b') "A: the manifest stamps t1163b as the last-focused window (got '$newest')"
     $distinct = if ($mA) { @($mA.windows | ForEach-Object { "$($_.frame.x),$($_.frame.y)" } | Select-Object -Unique).Count } else { 0 }
     Assert ($distinct -eq 4) "A: the 4 windows are saved at distinct frames (got $distinct)"
+    $frontA = @(if ($mA) { Frontmost-Names $mA })
+    Assert ($frontA.Count -eq 1 -and $frontA[0] -eq 't1163b') "A: the manifest marks t1163b, and only it, frontmost (got '$($frontA -join ',')')"
     $savedA = Read-Manifest
 
     # ---------------------------------------------------------------- B/C
@@ -253,6 +266,8 @@ try {
     $mD = Wait-Manifest { param($m) @($m.windows).Count -eq 4 -and (Newest-Focused $m) -eq 't1163d' }
     $newestD = if ($mD) { Newest-Focused $mD } else { '' }
     Assert ($newestD -eq 't1163d') "D: the manifest now stamps t1163d (got '$newestD')"
+    $frontD = @(if ($mD) { Frontmost-Names $mD })
+    Assert ($frontD.Count -eq 1 -and $frontD[0] -eq 't1163d') "D: the frontmost mark moved to t1163d, and only it (got '$($frontD -join ',')')"
     $savedD = Read-Manifest
     Kill-All
     Check-Paced 'flip' 't1163d' $savedD 'D'
@@ -266,6 +281,29 @@ try {
     Assert (-not (Test-Path $manifest)) 'E: the manifest is gone'
     Check-Paced 'crash' 't1163d' $savedE 'E'
     Assert (Wait-LogLine $errLog 'recovered 4 crash-orphaned window' 5) 'E: the windows came from the agent''s own layouts'
+
+    # ---------------------------------------------------------------- F
+    Write-Host ''
+    Write-Host '--- F: T3137 - no stamps, frontmost on t1163c: it leads ---'
+    [void](Wait-Manifest { param($m) @($m.windows).Count -eq 4 } 10)
+    Kill-All
+    $mF = Read-Manifest
+    Assert ($null -ne $mF -and @($mF.windows).Count -eq 4) 'F: the manifest holds 4 windows to rewrite'
+    if ($null -eq $mF) { throw 'no manifest to rewrite' }
+    $listedFirst = [string]@($mF.windows)[0].ipc_name
+    Assert ($listedFirst -ne 't1163c') "F: t1163c is not the listed-first window, so listed order alone cannot pass (listed first '$listedFirst')"
+    # A TEXT edit, not a ConvertTo-Json round trip: PS 5.1 turns a u64
+    # desk_variant seed into a double, which the app then refuses to parse.
+    $text = Read-Text $manifest
+    $text = [regex]::Replace($text, ',"(last_focused_ms|frontmost)":(-?\d+|true|false)', '')
+    $text = [regex]::Replace($text, '"(last_focused_ms|frontmost)":(-?\d+|true|false),', '')
+    $text = $text.Replace('{"id":"t1163c",', '{"id":"t1163c","frontmost":true,')
+    [IO.File]::WriteAllText($manifest, $text, (New-Object Text.UTF8Encoding $false))
+    $mF1 = Read-Manifest
+    $stamped = @(@($mF1.windows) | Where-Object { $null -ne $_.last_focused_ms }).Count
+    $frontF = @(Frontmost-Names $mF1)
+    Assert ($stamped -eq 0 -and $frontF.Count -eq 1 -and $frontF[0] -eq 't1163c') "F: the rewritten manifest has no stamps and marks only t1163c (stamped $stamped, front '$($frontF -join ',')')"
+    Check-Paced 'front' 't1163c' $mF1 'F'
     Complete-TestBody
 } finally {
     Remove-TestDesktop
@@ -290,4 +328,4 @@ if ($script:fail -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Label 'T1163 RESTORE-PACED' -Pass $script:pass -Fail $script:fail -MinPass 30
+Write-TestVerdict -Label 'T1163 RESTORE-PACED' -Pass $script:pass -Fail $script:fail -MinPass 45
