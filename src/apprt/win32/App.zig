@@ -48,6 +48,7 @@ const BannerDialog = @import("BannerDialog.zig");
 const QuickTerminal = @import("QuickTerminal.zig");
 const FrameClock = @import("FrameClock.zig");
 const lab_plant = @import("lab_plant.zig");
+const window_mode = @import("window_mode.zig");
 const PaneView = @import("PaneView.zig");
 const CloseUndo = @import("CloseUndo.zig");
 const Surface = @import("Surface.zig");
@@ -894,6 +895,13 @@ pub fn init(
         break :err def;
     };
     errdefer config.deinit();
+
+    // Single-window mode is decided here, once (T3180, Mac `WindowMode`):
+    // a window is built for one mode or the other, so a later reload - or
+    // the Settings row - only takes effect at the next launch.
+    log.info("window mode: {s} (latched at launch)", .{
+        @tagName(window_mode.latch(config.@"macos-window-mode")),
+    });
 
     // Over Remote Desktop, start with the expensive effects off and the
     // renderers in low-power mode (T1951). A software renderer is only known

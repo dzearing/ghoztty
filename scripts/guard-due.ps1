@@ -4074,6 +4074,18 @@ $GuardTable = @(
             'test\win32\settings-window.ps1'
         )
     },
+    # Single-window mode (T3136, children T3180-T3187).
+    # `single-window-mode.ps1` is the only harness that launches the app in
+    # each mode and reads the launch latch back; one section per child.
+    [pscustomobject]@{
+        Name   = 'single-window-mode'
+        Script = 'test\win32\single-window-mode.ps1'
+        Stamp  = 'test\win32\single-window-mode.stamp.json'
+        Covers = @(
+            'src\apprt\win32\window_mode.zig',
+            'test\win32\single-window-mode.ps1'
+        )
+    },
     # Settings > Remote Machines (T2686). `settings-remote-machines.ps1` is
     # the only harness that seeds the page from the device cache with the
     # relay held, lands presence, and saves Host Settings... from the page.

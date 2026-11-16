@@ -257,6 +257,16 @@ pub const panes: Page = .{
                 .{ .value = "hidden", .label = "Hidden" },
             } } },
         } },
+        // Mac 3f772a2f0. Mac says "Takes effect the next time Ghoztty
+        // starts." as the section's footer; the win32 form draws no section
+        // footers, so it is the row's hint (which also stands in for the
+        // schema summary's "macOS only").
+        .{ .title = "Windows", .footer = "Takes effect the next time Ghoztty starts.", .rows = &.{
+            .{ .key = "macos-window-mode", .label = "Open windows", .control = .{ .segmented = &.{
+                .{ .value = "separate", .label = "Each in its own window" },
+                .{ .value = "single", .label = "All in one window" },
+            } }, .hint = "Takes effect the next time Ghoztty starts." },
+        } },
         .{ .title = "Stacked panes", .rows = &.{
             .{ .key = "macos-pane-min-width", .label = "Stack panes narrower than", .control = .{ .stepper = .{ .min = 120, .max = 800, .step = 5, .unit = "px" } } },
             .{ .key = "macos-pane-min-height", .label = "Stack panes shorter than", .control = .{ .stepper = .{ .min = 80, .max = 600, .step = 5, .unit = "px" } } },
@@ -572,6 +582,14 @@ test "settings_pages: lookups, labels and conditions" {
     const onoff = try choices(testing.allocator, rowFor("maximize").?, null);
     defer testing.allocator.free(onoff);
     try testing.expectEqual(@as(usize, 2), onoff.len);
+    // Single-window mode (T3180): Mac's row, wording and next-launch note.
+    const wm = rowFor("macos-window-mode").?;
+    try testing.expectEqual(PageId.panes, pageFor("macos-window-mode").?);
+    try testing.expectEqualStrings("Open windows", wm.label);
+    try testing.expectEqualStrings("Each in its own window", wm.labelFor("separate"));
+    try testing.expectEqualStrings("All in one window", wm.labelFor("single"));
+    try testing.expect(rowMatchesText(wm, "next time"));
+    try testing.expect(rowMatchesText(wm, "one window"));
     try testing.expectEqual(@as(usize, 8), all.len);
     try testing.expectEqual(PageId.appearance, all[0].id);
     try testing.expectEqual(PageId.advanced, all[all.len - 1].id);

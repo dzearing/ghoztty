@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-16T11:12:13-08:00",
-    "commit":  "8ccdbe024",
+    "generated":  "2026-11-16T12:37:49-08:00",
+    "commit":  "dfb591cfd",
     "uncommitted":  [
-                        "test/win32/rearrange-window-drop.ps1"
+                        "test/win32/single-window-mode.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -477,7 +477,7 @@
                   "test/win32/restore-dead-sessions.ps1":  "95e0b3b6d0e2c2c6cd9c02e0823c715a4eff72e8ac7d12a70a50976d5baf25ce",
                   "test/win32/restore-dpi-frame.ps1":  "d108aa2a21aa785326a2f845906c3d9a7f252f1dd5711cb9d33f28a7fb6fdcbe",
                   "test/win32/restore-late-agent.ps1":  "ff641c3eea23c1f66215805145b3b262c388b459c8d4f069fd345587cc888b80",
-                  "test/win32/restore-paced.ps1":  "37d2e979a71ec09a1d7e9ce1ed2c648779e232da1435f91092af94b260bbe5b8",
+                  "test/win32/restore-paced.ps1":  "5474dd0dd6f76009b7c695b65958ee7b9e6039359d42cb312e4b87e96f5b48af",
                   "test/win32/restore-session-dup.ps1":  "08129486438d22cf77147ef39338b257f503f9d3f379764160e5c3f1dd719ecf",
                   "test/win32/scrollback-clear-memory.ps1":  "d3852d7fe2ae6adf0a1c276bc05389b2387f7ba152e38d0ee41756d06643174b",
                   "test/win32/scrollback-narrow.ps1":  "213e10d81e04ba6a098ccf8d5891f8f05f43edc9c098d7b201c5ae9c77e17662",
@@ -517,6 +517,7 @@
                   "test/win32/side-pane-featured.ps1":  "5184c74dd94e1001b5f3e6b3636ca64f72f374ee1c932ceb981352ba3e9ffcfa",
                   "test/win32/side-pane-from-strip.ps1":  "905582220dc8d3f0acce9496331db4c4cf5dcaf3f12c74be698987538b3957b3",
                   "test/win32/single-instance-join.ps1":  "5b182fa1d110e5a2eb1cba34f90e80e4ff8dd811838b6d5c4c69de85c2f648f0",
+                  "test/win32/single-window-mode.ps1":  "c4924f78f5947b4d6267f46103ba9dd475100fc0af2d8fe7deabb3a8e928d0a7",
                   "test/win32/size-burst-canvas.ps1":  "c64c1f92290f8d5478d7e2d6a11e928d804f58088c05ed4bcfdf0f28c6e05ba0",
                   "test/win32/skip-visibility.ps1":  "370852bd35fe86b242983fd53ff181891c4666c64ba15a397effc415190aa11c",
                   "test/win32/soak.ps1":  "70115de02426d4dc47fe1b0c021ed89c7a8bf4a58487ded16f353f878a7c9787",

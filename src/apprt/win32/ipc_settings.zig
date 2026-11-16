@@ -595,6 +595,10 @@ fn writeState(jws: *std.json.Stringify, alloc: Allocator, w_opt: ?*SettingsWindo
     try jws.beginObject();
     try jws.objectField("open");
     try jws.write(w_opt != null);
+    // The mode this launch runs in (T3180) - latched at startup, so a
+    // write to `macos-window-mode` moves the row and not this.
+    try jws.objectField("window_mode");
+    try jws.write(@tagName(@import("window_mode.zig").current()));
     if (ok) |o| {
         try jws.objectField("ok");
         try jws.write(o);
@@ -752,6 +756,8 @@ fn writeState(jws: *std.json.Stringify, alloc: Allocator, w_opt: ?*SettingsWindo
             if (!w.searching() and w.page == .advanced) {} else if (settings_pages.rowFor(key)) |row| {
                 try jws.objectField("label");
                 try jws.write(row.label);
+                try jws.objectField("hint");
+                try jws.write(row.hint);
                 try jws.objectField("control");
                 try jws.write(@tagName(row.control));
                 try jws.objectField("shown");

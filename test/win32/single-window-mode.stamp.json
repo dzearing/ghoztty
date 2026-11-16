@@ -1,0 +1,14 @@
+{
+    "guard":  "single-window-mode",
+    "script":  "test/win32/single-window-mode.ps1",
+    "generated":  "2026-11-16T11:24:44-08:00",
+    "commit":  "dfb591cfd",
+    "uncommitted":  [
+                        "src/apprt/win32/window_mode.zig",
+                        "test/win32/single-window-mode.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/window_mode.zig":  "356194dfc0575ca0e33144ec8d4a05f07657bd9706eaf9bef5f36eced47942a9",
+                  "test/win32/single-window-mode.ps1":  "c4924f78f5947b4d6267f46103ba9dd475100fc0af2d8fe7deabb3a8e928d0a7"
+              }
+}
