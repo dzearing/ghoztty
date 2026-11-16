@@ -117,9 +117,7 @@ struct TerminalQuery: EntityStringQuery, EnumerableEntityQuery {
     var all: [Ghostty.SurfaceView] {
         // Find all of our terminal windows. This will include the quick terminal
         // but only if it was previously opened.
-        let controllers = NSApp.windows.compactMap {
-            $0.windowController as? BaseTerminalController
-        }
+        let controllers = BaseTerminalController.everyController
 
         // Get all our surfaces
         return controllers.flatMap {

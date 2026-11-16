@@ -328,7 +328,9 @@ struct PaneSidebarView: View {
         let matches = searchMatches(controllers, titles: Dictionary(titled.map { ($0.id, $0.title) }, uniquingKeysWith: { a, _ in a }))
         // Searching: only windows with a matching pane, and nothing folded
         // away — a hit hidden inside a folded group would read as no hit.
-        let sections = PaneSidebarWindowGrouping.sections(titled, order: state.shared.windowOrder).compactMap { section in
+        let sections = PaneSidebarWindowGrouping.sections(
+            titled, order: state.shared.windowOrder,
+            opened: BaseTerminalController.openedOrders(controllers)).compactMap { section in
             guard let matches else { return section }
             let windows = section.windows.filter { !(matches[$0.id]?.isEmpty ?? true) }
             return windows.isEmpty
@@ -496,7 +498,7 @@ struct PaneSidebarView: View {
         let raise = {
             // Selected at once, while it comes forward.
             if !isThisWindow { state.shared.clickedWindow = id }
-            owner.window?.makeKeyAndOrderFront(nil)
+            owner.bringForward()
             NSApp.activate(ignoringOtherApps: true)
         }
         return VStack(alignment: .leading, spacing: 0) {
@@ -813,7 +815,9 @@ struct PaneSidebarView: View {
             controllers, titles: Dictionary(titled.map { ($0.id, $0.title) }, uniquingKeysWith: { a, _ in a }))
         else { return }
         let byID = Dictionary(controllers.map { ($0.paneSidebarState.windowID, $0) }, uniquingKeysWith: { a, _ in a })
-        for section in PaneSidebarWindowGrouping.sections(titled, order: state.shared.windowOrder) {
+        for section in PaneSidebarWindowGrouping.sections(
+            titled, order: state.shared.windowOrder,
+            opened: BaseTerminalController.openedOrders(controllers)) {
             for entry in section.windows {
                 guard let owner = byID[entry.id], let hits = matches[entry.id] else { continue }
                 let tree = owner.surfaceTree
@@ -1733,9 +1737,14 @@ final class PaneRoster: ObservableObject {
         }
     }
 
-    /// Terminal windows with a sidebar, frontmost first.
+    /// Terminal windows with a sidebar, frontmost first. In single-window
+    /// mode, the workspaces — on show first, then the parked ones, most
+    /// recently shown first: each is a window to the list.
     var controllers: [BaseTerminalController] {
-        NSApp.orderedWindows.compactMap { window in
+        if WindowMode.isSingle {
+            return WorkspaceHost.shared.workspaces.filter { $0.hasPaneSidebar && !$0.windowHasClosed }
+        }
+        return NSApp.orderedWindows.compactMap { window in
             guard let controller = window.windowController as? BaseTerminalController,
                   controller.hasPaneSidebar,
                   window.isVisible

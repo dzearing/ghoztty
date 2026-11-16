@@ -307,6 +307,10 @@ final class PaneStageView: NSView {
     private var glide: Glide?
     private var glideTimer: Timer?
 
+    /// Tests: whether the cards are gliding, and the runs last laid out.
+    var isGlidingForTesting: Bool { glide != nil }
+    var runsForTesting: [ClosedRange<Int>]? { lastRuns }
+
     /// How quickly a glide closes on its target: about 90% in 0.1s.
     static let glideTime: CFTimeInterval = 0.045
 

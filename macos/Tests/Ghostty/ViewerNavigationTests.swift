@@ -458,7 +458,8 @@ struct ViewerNavigationTests {
 
         let probed = await pollDOM(Self.probe, in: viewer) { $0.hasPrefix("edited|") }
         #expect(probed == "edited|rgb(1, 2, 3)|ran|1")
-        #expect(await evaluate("String(Math.round(window.scrollY))", in: viewer) == "500")
+        let scrolled = await pollDOM("String(Math.round(window.scrollY))", in: viewer) { $0 == "500" }
+        #expect(scrolled == "500")
     }
 
     /// `+reload` / Cmd+R re-fetches the file, the same way it re-fetches a

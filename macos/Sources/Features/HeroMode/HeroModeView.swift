@@ -26,7 +26,7 @@ struct HeroModeView: View {
         let _ = navigator.update(state: state, leaves: leaves)
 
         GeometryReader { geo in
-            let carouselWidth = geo.size.width * state.carouselRatio
+            let carouselWidth = state.carouselWidth(in: geo.size.width)
             let heroWidth = geo.size.width - carouselWidth - dividerWidth
             let heroAspectRatio = heroWidth / geo.size.height
 
@@ -70,7 +70,7 @@ struct HeroModeView: View {
                     onDragEnded: { isDividerDragging = false },
                     onDoubleClick: nil,
                     onHoverChanged: { isDividerHovering = $0 },
-                    currentSplit: { state.carouselRatio }
+                    currentSplit: { state.carouselWidth(in: geo.size.width) / max(geo.size.width, 1) }
                 )
                 .frame(width: dividerGrabWidth, height: geo.size.height)
                 .position(x: heroWidth + dividerWidth / 2, y: geo.size.height / 2)

@@ -139,6 +139,20 @@ struct ConfigTests {
         #expect(config.macosPaneSidebar == expected)
     }
 
+    @Test func macosWindowModeDefaultsToSeparate() throws {
+        let config = try TemporaryConfig("")
+        #expect(config.macosWindowMode == .separate)
+    }
+
+    @Test(arguments: [
+        ("separate", Ghostty.Config.MacOSWindowMode.separate),
+        ("single", Ghostty.Config.MacOSWindowMode.single),
+    ])
+    func macosWindowModeValues(raw: String, expected: Ghostty.Config.MacOSWindowMode) throws {
+        let config = try TemporaryConfig("macos-window-mode = \(raw)")
+        #expect(config.macosWindowMode == expected)
+    }
+
     @Test func paneMinimumSizeDefaultsToTheBuiltInFloor() throws {
         let config = try TemporaryConfig("")
         #expect(config.paneMinimumSize == CGSize(width: 225, height: 125))
@@ -165,15 +179,23 @@ struct ConfigTests {
         #expect(config.paneMinimumSize == expected)
     }
 
-    @Test func macosHeroCarouselRatioDefaultsToAQuarter() throws {
+    @Test func theHeroCarouselDefaultsTo130PointsAndNoRatio() throws {
         let config = try TemporaryConfig("")
-        #expect(config.macosHeroCarouselRatio == 0.25)
+        #expect(config.macosHeroCarouselRatio == nil)
+        #expect(config.macosHeroCarouselWidth == 130)
     }
 
     @Test(arguments: [("0.4", 0.4), ("0.01", 0.1), ("0.9", 0.6)])
     func macosHeroCarouselRatioValues(raw: String, expected: Double) throws {
         let config = try TemporaryConfig("macos-hero-carousel-ratio = \(raw)")
-        #expect(abs(config.macosHeroCarouselRatio - CGFloat(expected)) < 0.000_001)
+        let ratio = try #require(config.macosHeroCarouselRatio)
+        #expect(abs(ratio - CGFloat(expected)) < 0.000_001)
+    }
+
+    @Test(arguments: [("200", 200.0), ("10", 80.0), ("5000", 600.0)])
+    func macosHeroCarouselWidthValues(raw: String, expected: Double) throws {
+        let config = try TemporaryConfig("macos-hero-carousel-width = \(raw)")
+        #expect(config.macosHeroCarouselWidth == CGFloat(expected))
     }
 
     /// This fork's default: no dimensions popup over every pane on each

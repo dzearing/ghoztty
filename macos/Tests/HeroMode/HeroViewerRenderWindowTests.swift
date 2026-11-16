@@ -170,6 +170,10 @@ struct HeroViewerRenderWindowTests {
         }
         let controller = TerminalController.newWindow(ghostty, tree: tree)
         defer { controller.close() }
+        // Shared by every window: put back as found, or every later test
+        // that needs a sidebar finds none.
+        let sidebarWasHidden = controller.paneSidebarState.isHidden
+        defer { controller.paneSidebarState.isHidden = sidebarWasHidden }
         controller.paneSidebarState.isHidden = true
         _ = await poll(timeout: 10) { controller.window?.isVisible == true }
         let window = try #require(controller.window)
@@ -245,6 +249,10 @@ struct HeroViewerRenderWindowTests {
         let tree = try SplitTree<PaneView>(view: a).inserting(view: PaneView(viewer: viewer), at: a, direction: .right)
         let controller = TerminalController.newWindow(ghostty, tree: tree)
         defer { controller.close() }
+        // Shared by every window: put back as found, or every later test
+        // that needs a sidebar finds none.
+        let sidebarWasHidden = controller.paneSidebarState.isHidden
+        defer { controller.paneSidebarState.isHidden = sidebarWasHidden }
         controller.paneSidebarState.isHidden = true
         _ = await poll(timeout: 10) { controller.window?.isVisible == true }
         let window = try #require(controller.window)

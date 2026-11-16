@@ -293,6 +293,14 @@ and the focus history, by leaf position — see
 [stacked-panes.md](stacked-panes.md); restore adopts it before the window lays
 out and puts the caret in a pane on show.
 
+- **`frontmost`** (additive) marks the window that was in front — the main
+  window, or in single-window mode the workspace on show — and restore brings
+  it back last (`SessionLayoutManifest.frontmostLast`), so it is in front (on
+  show) again. That, and a parked workspace's frame being the window's, is
+  what lets a manifest written in either `macos-window-mode` restore in the
+  other ([window-modes.md](window-modes.md#persistence)). The blob mirrored to
+  the agent is opaque to it; the wire contract is unchanged.
+
 - A change in a window (tree, frame, sidebar, a pane banner, a collapsed row) schedules a sync
   of its entry, debounced 250 ms (`scheduleSync`); at quit every window is
   synced afresh (`syncAllTrackedNow`), which is what keeps the snapshots

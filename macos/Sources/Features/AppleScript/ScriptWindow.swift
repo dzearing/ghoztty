@@ -181,6 +181,12 @@ final class ScriptWindow: NSObject {
     func handleActivateWindow(_ command: NSScriptCommand) -> Any? {
         guard NSApp.validateScript(command: command) else { return nil }
 
+        if let workspace = preferredController, workspace.workspaceHost != nil {
+            workspace.bringForward()
+            NSApp.activate(ignoringOtherApps: true)
+            return nil
+        }
+
         guard let windowContainer = preferredParentWindow else {
             command.scriptErrorNumber = errAEEventFailed
             command.scriptErrorString = "Window is no longer available."
@@ -239,7 +245,10 @@ extension ScriptWindow {
     /// - Standalone windows are keyed by window identity.
     /// - Detached controllers fall back to controller identity.
     static func stableID(primaryController: BaseTerminalController) -> String {
-        guard let window = primaryController.window else {
+        // Single-window mode: every workspace shares the window (or has
+        // none, parked), so a workspace is known by its controller — the
+        // same id whether it is on show or not.
+        guard !WindowMode.isSingle, let window = primaryController.window else {
             return "controller-\(ObjectIdentifier(primaryController).hexString)"
         }
 

@@ -37,6 +37,9 @@ struct PaneGrabHandleWindowTests {
 
     private func open(_ tree: SplitTree<PaneView>, _ ghostty: Ghostty.App) async throws -> TerminalController {
         let controller = TerminalController.newWindow(ghostty, tree: tree)
+        // These drop onto the sidebar, whose hidden flag every window shares:
+        // shown here, whatever a test before left it as.
+        controller.paneSidebarState.isHidden = false
         _ = await poll(timeout: 10) { controller.window?.isVisible == true }
         let window = try #require(controller.window)
         window.setContentSize(NSSize(width: 1100, height: 700))

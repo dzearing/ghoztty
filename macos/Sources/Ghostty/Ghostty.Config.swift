@@ -439,6 +439,18 @@ extension Ghostty {
             return MacOSPaneSidebar(rawValue: String(cString: ptr)) ?? defaultValue
         }
 
+        /// `macos-window-mode`: every window its own, or all of them
+        /// workspaces of one (`WindowMode`).
+        var macosWindowMode: MacOSWindowMode {
+            let defaultValue = MacOSWindowMode.default
+            guard let config = self.config else { return defaultValue }
+            var v: UnsafePointer<Int8>?
+            let key = "macos-window-mode"
+            guard ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8))) else { return defaultValue }
+            guard let ptr = v else { return defaultValue }
+            return MacOSWindowMode(rawValue: String(cString: ptr)) ?? defaultValue
+        }
+
         /// `macos-pane-min-width` × `macos-pane-min-height`: the smallest a
         /// pane may be before its row stacks (`PaneLayout.Metrics`). The core
         /// clamps both on load; clamped again here so a value from any
@@ -465,13 +477,24 @@ extension Ghostty {
 
         /// `macos-hero-carousel-ratio`: the carousel's share of the window
         /// when hero mode turns on, clamped to `HeroModeState`'s range.
-        var macosHeroCarouselRatio: CGFloat {
-            let fallback = HeroModeState.defaultCarouselRatio
-            guard let config = self.config else { return fallback }
-            var v = Double(fallback)
+        /// Nil when unset: `macosHeroCarouselWidth` applies.
+        var macosHeroCarouselRatio: CGFloat? {
+            guard let config = self.config else { return nil }
+            var v = 0.0
             let key = "macos-hero-carousel-ratio"
-            _ = ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8)))
+            guard ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8))) else { return nil }
             return HeroModeState.clampedCarouselRatio(CGFloat(v))
+        }
+
+        /// `macos-hero-carousel-width`: the carousel's starting width in
+        /// points, unless `macos-hero-carousel-ratio` is set.
+        var macosHeroCarouselWidth: CGFloat {
+            let fallback = HeroModeState.defaultCarouselWidth
+            guard let config = self.config else { return fallback }
+            var v = CUnsignedInt(fallback)
+            let key = "macos-hero-carousel-width"
+            _ = ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8)))
+            return HeroModeState.clampedCarouselWidth(CGFloat(v))
         }
 
         var macosWindowShadow: Bool {
@@ -1052,5 +1075,11 @@ extension Ghostty.Config {
     enum MacOSPaneSidebar: String {
         static let `default` = MacOSPaneSidebar.remember
         case remember, expanded, collapsed, hidden
+    }
+
+    /// See `macos-window-mode`.
+    enum MacOSWindowMode: String {
+        static let `default` = MacOSWindowMode.separate
+        case separate, single
     }
 }
