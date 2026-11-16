@@ -1,14 +1,14 @@
 {
     "guard":  "desk-variant",
     "script":  "test/win32/desk-variant.ps1",
-    "generated":  "2026-11-15T14:26:12-08:00",
-    "commit":  "abcab0c81",
+    "generated":  "2026-11-16T10:10:36-08:00",
+    "commit":  "e3c118e33",
     "uncommitted":  [
                         "src/apprt/win32/mac_layout_blob.zig"
                     ],
     "files":  {
                   "src/apprt/win32/desk_palette.zig":  "13190bd018cffccd508a18477657637c711f383c8ebfff255574525d16efaa3c",
-                  "src/apprt/win32/mac_layout_blob.zig":  "84d6c84c72341ae58427c819a53771853d5f2216d34ef1c0b34720b2cf8e6bc1",
+                  "src/apprt/win32/mac_layout_blob.zig":  "baada6f5cac65359dfba1153f96dccaafee1b3cdd721671f318e3020c0dc4b6c",
                   "src/apprt/win32/PaneDesk.zig":  "6758c56803e4fac7043780b46fa84a9dc71b7e3d9362731dd247dd4f8578699c",
                   "test/win32/desk-variant.ps1":  "7c119c32b230bc259617070c20518cfcd522d2fc1877e310056cbd5c33bc8776"
               }

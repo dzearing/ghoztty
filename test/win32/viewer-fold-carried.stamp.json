@@ -1,8 +1,8 @@
 {
     "guard":  "viewer-fold-carried",
     "script":  "test/win32/viewer-fold-carried.ps1",
-    "generated":  "2026-11-16T09:17:19-08:00",
-    "commit":  "7fc6ffa91",
+    "generated":  "2026-11-16T10:23:12-08:00",
+    "commit":  "e3c118e33",
     "uncommitted":  [
 
                     ],

@@ -1,8 +1,8 @@
 {
     "guard":  "pane-banner",
     "script":  "test/win32/pane-banner.ps1",
-    "generated":  "2026-11-16T09:23:36-08:00",
-    "commit":  "7fc6ffa91",
+    "generated":  "2026-11-16T10:42:01-08:00",
+    "commit":  "e3c118e33",
     "uncommitted":  [
 
                     ],
