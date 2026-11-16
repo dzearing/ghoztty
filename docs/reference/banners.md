@@ -91,6 +91,13 @@ never sees the terminal resize:**
   leave an idle pane showing the wrong rows.
 - The collapsed state lives on the surface (`paneBannerCollapsed`, ephemeral;
   a cleared banner comes back expanded).
+- The card's layout state (height, inset, reveal) resets only when the banner
+  is **cleared** (`onChange` of `paneBanner == nil`), never when the card
+  leaves the hierarchy. A pane leaves its window and comes back (a parked
+  workspace in single-window mode, a pane moved) with the same banner height,
+  which does not re-fire the height preference: a reset on `onDisappear` left
+  the terminal laid out under the card with no strip behind it (v1.55.0).
+  Test: `SingleWindowModeTests.aBannerStillHoldsTheTerminalBelowItAfterASwitch`.
 
 The terminal starts on a whole row under the card (`rowAligned`), never part of
 one, so a row of blank terminal background can show below the card. The grid

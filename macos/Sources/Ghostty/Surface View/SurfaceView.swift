@@ -327,12 +327,14 @@ extension Ghostty {
                                 .onHover { surfaceView.pointerOverBanner = $0 }
                                 .onDisappear {
                                     surfaceView.pointerOverBanner = false
-                                    // A banner set again later starts fresh.
-                                    bannerHeight = 0
-                                    bannerReveal = 0
-                                    terminalInset = 0
-                                    bannerCollapsedSeen = false
-                                    bannerFrozen = nil
+                                    // Not a reset: the card also disappears
+                                    // when its pane leaves the window (a
+                                    // parked workspace, a pane moved) and
+                                    // comes back at the same height, which
+                                    // never re-fires the height preference —
+                                    // a reset here left the terminal under
+                                    // the card. A cleared banner resets
+                                    // (`bannerCleared`).
                                 }
                             #endif
                                 .onPreferenceChange(BannerTargetHeightKey.self) { target in
@@ -467,6 +469,17 @@ extension Ghostty {
                 // This is disabled except on macOS because it uses AppKit drag/drop APIs.
                 SurfaceGrabHandle(surfaceView: surfaceView)
                 #endif
+            }
+            // A cleared banner: one set again later starts fresh. Keyed to
+            // the clear itself, not to the card leaving the hierarchy (see
+            // its `onDisappear`).
+            .onChange(of: surfaceView.paneBanner == nil) { cleared in
+                guard cleared else { return }
+                bannerHeight = 0
+                bannerReveal = 0
+                terminalInset = 0
+                bannerCollapsedSeen = false
+                bannerFrozen = nil
             }
         }
 
