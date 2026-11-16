@@ -1,10 +1,10 @@
 {
     "guard":  "radius-table",
     "script":  "test/win32/radius-table-audit.ps1",
-    "generated":  "2026-11-16T14:07:26-08:00",
-    "commit":  "16d193cae",
+    "generated":  "2026-11-16T14:37:56-08:00",
+    "commit":  "2ebcf125c",
     "uncommitted":  [
-
+                        "src/apprt/win32/workspace_host.zig"
                     ],
     "files":  {
                   "docs/design/win32-design-system.md":  "bb9f5610c7500ffc1240c8144cc3a2f73339a596d90418799ce29872c1962974",
@@ -433,6 +433,7 @@
                   "src/apprt/win32/WindowPresenter.zig":  "a870489b12b1401f20c50398d123393d10187f6a50ce0dde446923734fa50b27",
                   "src/apprt/win32/winrt_comp.zig":  "dd700de7f7ffba1de068560c8cabeb545a46eb0de0adb6c5d011df051d3fb4e7",
                   "src/apprt/win32/worker_pool.zig":  "f1ee62197c73dbbd6c21143089ffbce3768f4f2434a1997b5ec5a1b471d44c65",
+                  "src/apprt/win32/workspace_host.zig":  "b0fa84a3988d7814f26b012fe55a514ef356688ca6143817e78fe982e6328278",
                   "test/win32/lib/RadiusTableAudit.ps1":  "5318bf1f2556edcdafd90f5c7da8680d271f1012e597c612a59c56b91cf4f5fb",
                   "test/win32/lib/TypeRampAudit.ps1":  "73d6ed707cf50c96c71e3d3f2e4e61e9bb0b5b86d355aee62bfcc87034006a0d",
                   "test/win32/radius-table-audit.ps1":  "0813582a3dc8636ffef2f12b0e85e78be1db342eb23e90af04fb46328ba3ca66"

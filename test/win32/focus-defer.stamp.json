@@ -1,8 +1,8 @@
 {
     "guard":  "focus-defer",
     "script":  "test/win32/focus-defer.ps1",
-    "generated":  "2026-11-16T14:06:55-08:00",
-    "commit":  "16d193cae",
+    "generated":  "2026-11-16T14:31:53-08:00",
+    "commit":  "2ebcf125c",
     "uncommitted":  [
 
                     ],

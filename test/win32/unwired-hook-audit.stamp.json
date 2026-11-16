@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-16T14:08:42-08:00",
-    "commit":  "16d193cae",
+    "generated":  "2026-11-16T14:26:47-08:00",
+    "commit":  "2ebcf125c",
     "uncommitted":  [
 
                     ],
@@ -79,7 +79,7 @@
                   "src/apprt/runtime.zig":  "0814accb262d8fdd4ed3e675dbcd9076177a9ac848e6a637c1505e8e22c30480",
                   "src/apprt/structs.zig":  "5690ddd03492459eb0416624b5a11ccba92e1f840a6b6c338e6983f08b4f5d61",
                   "src/apprt/surface.zig":  "bd93ba8529aafd9d372c5afbfba1662c33c0340ad441e64c3248cea7491eed7f",
-                  "src/apprt/unit_tests.zig":  "7c49f14669d0720b75df4f93859792bf5954a85bb4227da0e12df6e4d41ecd39",
+                  "src/apprt/unit_tests.zig":  "305a9028d4888c2f4bca95e3ec01c8e8d413140d64a76766f3216f3eb0fcaebb",
                   "src/apprt/win32.zig":  "f3e60aa2b0dbeff84f46ff29aba3429307ec83f5d1cb44bed8e7026feb584bc4",
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
                   "src/apprt/win32/activity_actions.zig":  "5f80de2b9778b8617c118db67fe75795b2296ca01d3b879845c73ca5b8d14981",
@@ -506,6 +506,7 @@
                   "src/apprt/win32/WindowPresenter.zig":  "a870489b12b1401f20c50398d123393d10187f6a50ce0dde446923734fa50b27",
                   "src/apprt/win32/winrt_comp.zig":  "dd700de7f7ffba1de068560c8cabeb545a46eb0de0adb6c5d011df051d3fb4e7",
                   "src/apprt/win32/worker_pool.zig":  "f1ee62197c73dbbd6c21143089ffbce3768f4f2434a1997b5ec5a1b471d44c65",
+                  "src/apprt/win32/workspace_host.zig":  "b0fa84a3988d7814f26b012fe55a514ef356688ca6143817e78fe982e6328278",
                   "src/benchmark/Benchmark.zig":  "e6106d83186e70cf1955d1db4d32d58f0b8dc5d35c50bd66852d01a59204ef4a",
                   "src/benchmark/CApi.zig":  "55c6801096a7beeb41bbb45df3a33ea26b39e7b7363cde1d835999cb96976683",
                   "src/benchmark/cli.zig":  "86cf1fdded5c6dde7e3aa099837776fb181ae0c6e9d60d799804cf3a3c3464ef",

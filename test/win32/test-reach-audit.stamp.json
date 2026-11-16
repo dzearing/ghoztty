@@ -1,10 +1,10 @@
 {
     "guard":  "test-reach",
     "script":  "test/win32/test-reach-audit.ps1",
-    "generated":  "2026-11-16T14:28:57-08:00",
-    "commit":  "16d193cae",
+    "generated":  "2026-11-16T14:49:33-08:00",
+    "commit":  "2ebcf125c",
     "uncommitted":  [
-
+                        "src/apprt/win32/workspace_host.zig"
                     ],
     "files":  {
                   "src/apprt/win32.zig":  "f3e60aa2b0dbeff84f46ff29aba3429307ec83f5d1cb44bed8e7026feb584bc4",
@@ -433,6 +433,7 @@
                   "src/apprt/win32/WindowPresenter.zig":  "a870489b12b1401f20c50398d123393d10187f6a50ce0dde446923734fa50b27",
                   "src/apprt/win32/winrt_comp.zig":  "dd700de7f7ffba1de068560c8cabeb545a46eb0de0adb6c5d011df051d3fb4e7",
                   "src/apprt/win32/worker_pool.zig":  "f1ee62197c73dbbd6c21143089ffbce3768f4f2434a1997b5ec5a1b471d44c65",
+                  "src/apprt/win32/workspace_host.zig":  "b0fa84a3988d7814f26b012fe55a514ef356688ca6143817e78fe982e6328278",
                   "test/win32/lib/TestReachAudit.ps1":  "5e0e10352742575af26220c992790da3e9a74ae6d40281f2fecdf7d6a1cf52c0",
                   "test/win32/test-reach-audit.ps1":  "d562023bb072125237aafc17961b81b82356c130003acc64ede75fd73186bf51"
               }
