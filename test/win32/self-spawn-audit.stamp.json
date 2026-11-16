@@ -1,8 +1,8 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-11-15T16:46:12-08:00",
-    "commit":  "a7554f932",
+    "generated":  "2026-11-15T16:52:40-08:00",
+    "commit":  "2d0b6b8f5",
     "uncommitted":  [
 
                     ],
@@ -674,7 +674,7 @@
                   "src/font/CodepointResolver.zig":  "e48bbb3cf4af22e6fd19e0a91d0349c6ba56990f2549994ee4fc43b325eaa628",
                   "src/font/Collection.zig":  "aa6614eca66b634a9a3879780883b185fc5115e558c02acd68a823c088f8c023",
                   "src/font/DeferredFace.zig":  "c81b3503a29e47ba0256450159189bb437978c1c00530f6284d58eaa9c8cf7b7",
-                  "src/font/discovery.zig":  "5e1b7f7fbac72ac982920f60094173063c01c5562fa2c599efd5e88acaf67ca1",
+                  "src/font/discovery.zig":  "8a0a5461963f59dfc45d60d8ef81087213cc115d0084f894af1270b41cec50bb",
                   "src/font/embedded.zig":  "9525dea377ddc2b9d4ada72846c046dc86d42eb6ab0580202349f3cc1ac9bc33",
                   "src/font/face.zig":  "5fc5a7a39947e3cdd65844a12f04f9a476a539e71a10121a50ff155240259ed8",
                   "src/font/face/coretext.zig":  "2e26c101c1434db69df6061aafac1652b5677c8edc26edcca3c2003bb67ecc1d",
@@ -716,6 +716,7 @@
                   "src/font/sprite/draw/symbols_for_legacy_computing.zig":  "b5fe209b19ca1f95d46e9d2b1ad45cc121aebea9dabaa30ed90c6d7f860381f1",
                   "src/font/sprite/draw/symbols_for_legacy_computing_supplement.zig":  "0581e69175fb1ed9e9ec611846b6ae07518a87fd2d1b0c7477cfa5c6b12edd17",
                   "src/font/sprite/Face.zig":  "c5a1e3d94f83fe2becb2d1c49fec724365962bf78e201ed3b3ca672ae5b4422c",
+                  "src/font/WindowsFontIndex.zig":  "7d6944a330e2edbd3157f77df8a4ab0c56af10075ae8d24647a43f7cca5f4a37",
                   "src/global.zig":  "8a0f9490ebc2dc44bebd358b9d24195c12da2246d5612b35fa43efc5b50a5694",
                   "src/helpgen.zig":  "222188e275aff76a869e6a3d35f0c4ec01fd960389e2cc524533aa3a493a2cc5",
                   "src/input.zig":  "3d81fcafc44d2d1378983e692392899c621083f90b711582f4adf9d76c0d8860",
