@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-15T15:23:30-08:00",
-    "commit":  "7d248baf2",
+    "generated":  "2026-11-15T16:44:51-08:00",
+    "commit":  "a7554f932",
     "uncommitted":  [
 
                     ],
@@ -1037,8 +1037,8 @@
                   "src/terminal/osc/parsers/rxvt_extension.zig":  "b9948779c0813a636ae409ad24189a463eb8c7aa974a829de0d9fd563c1fef95",
                   "src/terminal/osc/parsers/semantic_prompt.zig":  "520dea0412b4e5b30672b862cfdc141c420e735af30dafbf6f1ed60d5d416291",
                   "src/terminal/page.zig":  "0df58b9c1b94c224dc94b84619df673bac2b959dc589add38bb65d95a8d1cd13",
-                  "src/terminal/page_pool.zig":  "fffee78f2e968007ed594e4835fee36e7c21d7cdd48b4b89a8dcd3cc7c2723d3",
-                  "src/terminal/PageList.zig":  "977c44203552f272c10942eb2ce78c1173b41ac59538cc759648d8f57ab53f09",
+                  "src/terminal/page_pool.zig":  "af51da0cb5a255915a0af68d5ae0cc75b176c045e05b77106df4d7e0cc66f555",
+                  "src/terminal/PageList.zig":  "e42a0f3067b95b70e3a0f622c0e32014f24aa09029a3154882dff34b05d7a282",
                   "src/terminal/parse_table.zig":  "bf14cefb8f8790039fa21bd98846048d2854d8d95c11922a75fe9680f27bf2b6",
                   "src/terminal/Parser.zig":  "88aff6165df8a0852d79edc421f1ed8163adda9c553949b65ae9e62125163902",
                   "src/terminal/point.zig":  "d6ff3edfdcaa5a39126e050d8e7ef67daec98f6c4120636b0926bcb4221ea8c8",
@@ -1478,6 +1478,7 @@
                   "test/win32/restore-late-agent.ps1":  "ff641c3eea23c1f66215805145b3b262c388b459c8d4f069fd345587cc888b80",
                   "test/win32/restore-paced.ps1":  "37d2e979a71ec09a1d7e9ce1ed2c648779e232da1435f91092af94b260bbe5b8",
                   "test/win32/restore-session-dup.ps1":  "08129486438d22cf77147ef39338b257f503f9d3f379764160e5c3f1dd719ecf",
+                  "test/win32/scrollback-clear-memory.ps1":  "d3852d7fe2ae6adf0a1c276bc05389b2387f7ba152e38d0ee41756d06643174b",
                   "test/win32/scrollback-narrow.ps1":  "213e10d81e04ba6a098ccf8d5891f8f05f43edc9c098d7b201c5ae9c77e17662",
                   "test/win32/seam-audit.ps1":  "e7ef6b8614ad022f48f0cfa94c7183270545ba2d3f29fc2e0b14669429e6c586",
                   "test/win32/self-spawn-audit.ps1":  "a4f014933c7929f28febc9bc55b9603180ce17c9827bc1f5a50ab6d0d4dc1dc7",
