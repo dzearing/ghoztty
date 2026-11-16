@@ -1446,17 +1446,29 @@ fn gatherAll(
     wkey_bufs: *[pane_sidebar.max_heads]window_order.Key,
     wkeys: *[pane_sidebar.max_heads][]const u8,
 ) usize {
-    var n: usize = 0;
+    // In the order the tabs opened (T3134; Mac 5558742c6), so a name tie
+    // in the outline - its last tie-break is this index - goes by it rather
+    // than by window and strip position, which a tab drag reorders.
+    var found: [pane_sidebar.max_heads]TabRef = undefined;
+    var opened: [pane_sidebar.max_heads]u64 = undefined;
+    var nf: usize = 0;
     gather: for (app.windows.items) |w| {
         if (w.closing or w.is_quick_terminal) continue;
         for (0..w.tab_count) |t| {
-            if (n == pane_sidebar.max_heads) break :gather;
-            refs[n] = .{ .window = w, .tab = t };
-            names[n] = groupName(w, t, &names_buf[n]);
-            wkey_bufs[n] = window_order.windowKey(&w.tab_uuid[t]);
-            wkeys[n] = wkey_bufs[n].slice();
-            n += 1;
+            if (nf == pane_sidebar.max_heads) break :gather;
+            found[nf] = .{ .window = w, .tab = t };
+            opened[nf] = w.tab_opened[t];
+            nf += 1;
         }
+    }
+    var perm: [pane_sidebar.max_heads]usize = undefined;
+    const n = outline.openedOrder(opened[0..nf], &perm);
+    for (perm[0..n], 0..) |src, i| {
+        const r = found[src];
+        refs[i] = r;
+        names[i] = groupName(r.window, r.tab, &names_buf[i]);
+        wkey_bufs[i] = window_order.windowKey(&r.window.tab_uuid[r.tab]);
+        wkeys[i] = wkey_bufs[i].slice();
     }
     return n;
 }

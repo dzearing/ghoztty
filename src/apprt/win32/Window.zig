@@ -463,6 +463,15 @@ tab_active_pane: [64]*PaneView = undefined,
 /// and there is no failure path.
 tab_uuid: [MAX_TABS]pane_id.Buf = [_]pane_id.Buf{[_]u8{'0'} ** pane_id.len} ** MAX_TABS,
 
+/// Each tab's place in the order tabs were opened, app-wide (T3134; Mac
+/// 5558742c6 `openedOrder`). The all-windows list orders tabs that share a
+/// name (every new shell is `~`) by it, so a new one lands at the end of its
+/// namesakes. Minted when the slot is filled (`mintTabOpened`) and, like
+/// `tab_uuid`, travels with the tab through every insert/close/reorder
+/// shuffle - a tab dragged along the strip keeps its place in the list. A
+/// restore opens tabs in the saved layout's order, so a relaunch keeps it.
+tab_opened: [MAX_TABS]u64 = [_]u64{0} ** MAX_TABS,
+
 /// Index of the currently active (visible) tab.
 active_tab: usize = 0,
 
@@ -2474,6 +2483,15 @@ pub fn tabUuid(self: *const Window, index: usize) []const u8 {
     return &self.tab_uuid[index];
 }
 
+/// The next place in the order tabs open (T3134, `tab_opened`). Main
+/// thread only, like every tab-slot write.
+var next_tab_opened: u64 = 0;
+
+pub fn mintTabOpened() u64 {
+    next_tab_opened += 1;
+    return next_tab_opened;
+}
+
 /// Re-adopt a tab identity recorded by a previous run (T1048), so a restored
 /// tab keeps pairing under the key its predecessor used instead of a fresh one.
 /// A value of the wrong length is ignored and the generated id stands: the
@@ -4271,6 +4289,7 @@ pub fn insertPaneAsTabAt(
         self.tab_trees[i] = self.tab_trees[i - 1];
         self.tab_active_pane[i] = self.tab_active_pane[i - 1];
         self.tab_uuid[i] = self.tab_uuid[i - 1];
+        self.tab_opened[i] = self.tab_opened[i - 1];
         self.tab_titles[i] = self.tab_titles[i - 1];
         self.tab_title_lens[i] = self.tab_title_lens[i - 1];
         self.tab_title_pinned[i] = self.tab_title_pinned[i - 1];
@@ -4287,6 +4306,7 @@ pub fn insertPaneAsTabAt(
     // A fresh slot gets a fresh identity (T1048). A restore overwrites it with
     // the recorded one right after, via `adoptTabUuid`.
     _ = pane_id.generate(&self.tab_uuid[pos]);
+    self.tab_opened[pos] = mintTabOpened();
     self.tab_title_pinned[pos] = false;
     self.tab_colors[pos] = .none;
     self.tab_hero_active[pos] = false;
@@ -4570,6 +4590,7 @@ fn removeTabSlot(self: *Window, idx: usize) void {
         self.tab_trees[i] = self.tab_trees[i + 1];
         self.tab_active_pane[i] = self.tab_active_pane[i + 1];
         self.tab_uuid[i] = self.tab_uuid[i + 1];
+        self.tab_opened[i] = self.tab_opened[i + 1];
         self.tab_titles[i] = self.tab_titles[i + 1];
         self.tab_title_lens[i] = self.tab_title_lens[i + 1];
         self.tab_title_pinned[i] = self.tab_title_pinned[i + 1];
@@ -17994,6 +18015,7 @@ pub fn moveTab(self: *Window, amount: isize) void {
     std.mem.swap(SplitTree(PaneView), &self.tab_trees[self.active_tab], &self.tab_trees[new_index]);
     std.mem.swap(*PaneView, &self.tab_active_pane[self.active_tab], &self.tab_active_pane[new_index]);
     std.mem.swap(pane_id.Buf, &self.tab_uuid[self.active_tab], &self.tab_uuid[new_index]);
+    std.mem.swap(u64, &self.tab_opened[self.active_tab], &self.tab_opened[new_index]);
     std.mem.swap([256]u16, &self.tab_titles[self.active_tab], &self.tab_titles[new_index]);
     std.mem.swap(u16, &self.tab_title_lens[self.active_tab], &self.tab_title_lens[new_index]);
     std.mem.swap(bool, &self.tab_title_pinned[self.active_tab], &self.tab_title_pinned[new_index]);
@@ -20814,6 +20836,7 @@ fn moveTabTo(self: *Window, from: usize, to: usize) void {
     const saved_tree = self.tab_trees[from];
     const saved_surface = self.tab_active_pane[from];
     const saved_uuid = self.tab_uuid[from];
+    const saved_opened = self.tab_opened[from];
     const saved_title = self.tab_titles[from];
     const saved_title_len = self.tab_title_lens[from];
     const saved_title_pinned = self.tab_title_pinned[from];
@@ -20832,6 +20855,7 @@ fn moveTabTo(self: *Window, from: usize, to: usize) void {
             self.tab_trees[i] = self.tab_trees[i + 1];
             self.tab_active_pane[i] = self.tab_active_pane[i + 1];
             self.tab_uuid[i] = self.tab_uuid[i + 1];
+            self.tab_opened[i] = self.tab_opened[i + 1];
             self.tab_titles[i] = self.tab_titles[i + 1];
             self.tab_title_lens[i] = self.tab_title_lens[i + 1];
             self.tab_title_pinned[i] = self.tab_title_pinned[i + 1];
@@ -20850,6 +20874,7 @@ fn moveTabTo(self: *Window, from: usize, to: usize) void {
             self.tab_trees[i] = self.tab_trees[i - 1];
             self.tab_active_pane[i] = self.tab_active_pane[i - 1];
             self.tab_uuid[i] = self.tab_uuid[i - 1];
+            self.tab_opened[i] = self.tab_opened[i - 1];
             self.tab_titles[i] = self.tab_titles[i - 1];
             self.tab_title_lens[i] = self.tab_title_lens[i - 1];
             self.tab_title_pinned[i] = self.tab_title_pinned[i - 1];
@@ -20867,6 +20892,7 @@ fn moveTabTo(self: *Window, from: usize, to: usize) void {
     self.tab_trees[to] = saved_tree;
     self.tab_active_pane[to] = saved_surface;
     self.tab_uuid[to] = saved_uuid;
+    self.tab_opened[to] = saved_opened;
     self.tab_titles[to] = saved_title;
     self.tab_title_lens[to] = saved_title_len;
     self.tab_title_pinned[to] = saved_title_pinned;

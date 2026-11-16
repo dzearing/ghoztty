@@ -155,6 +155,24 @@ fn placedLess(_: void, a: Placed, b: Placed) bool {
     return a.index < b.index;
 }
 
+/// The positions of `opened` in the order they opened (T3134; Mac 5558742c6
+/// `openedOrder`): what `outlineOrder`'s last tie-break, the title index,
+/// must follow, so windows that share a name (every new shell is `~`) list
+/// in the order they opened and a new one lands at the end of its
+/// namesakes - not wherever its tab sits in the strip, which a drag moves.
+/// Equal places keep their given order. `out` must hold `opened.len`;
+/// returns how many.
+pub fn openedOrder(opened: []const u64, out: []usize) usize {
+    const n = @min(opened.len, out.len);
+    for (out[0..n], 0..) |*o, i| o.* = i;
+    std.sort.insertion(usize, out[0..n], opened, struct {
+        fn less(o: []const u64, a: usize, b: usize) bool {
+            return o[a] < o[b];
+        }
+    }.less);
+    return n;
+}
+
 /// Whether `placed[i]` opens a new project group.
 pub fn opensProject(placed: []const Placed, i: usize) bool {
     const p = placed[i].project orelse return false;
@@ -390,6 +408,26 @@ test "natural order folds case and compares numbers by value" {
     try testing.expectEqual(std.math.Order.eq, naturalOrder("ABC", "abc"));
     try testing.expect(naturalLess("x007", "x8"));
     try testing.expect(naturalLess("a", "ab"));
+}
+
+test "windows that share a name list in the order they opened, not their strip position (T3134)" {
+    // Five `~` tabs opened 1..5, then the strip reordered so they sit
+    // 3,1,5,2,4; a sixth opens and is appended to the strip.
+    const opened = [_]u64{ 3, 1, 5, 2, 4, 6 };
+    var perm: [6]usize = undefined;
+    const n = openedOrder(&opened, &perm);
+    try testing.expectEqualSlices(usize, &.{ 1, 3, 0, 4, 2, 5 }, perm[0..n]);
+    // Titles gathered in that order: ties now break by opened place, so the
+    // newest `~` is last among its namesakes and nothing else moved.
+    const titles = [_][]const u8{ "~", "~", "~", "~", "~", "~" };
+    var buf: [6]Placed = undefined;
+    const p = orderOf(&titles, &buf);
+    for (p, 0..) |e, i| try testing.expectEqual(i, e.index);
+    // Equal places keep their given order (unminted tabs are all 0).
+    const zeros = [_]u64{ 0, 0, 0 };
+    var zp: [3]usize = undefined;
+    _ = openedOrder(&zeros, &zp);
+    try testing.expectEqualSlices(usize, &.{ 0, 1, 2 }, &zp);
 }
 
 fn orderOf(titles: []const []const u8, buf: []Placed) []const Placed {

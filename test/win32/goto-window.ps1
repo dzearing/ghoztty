@@ -28,6 +28,11 @@
 #   C  a second tab is one more stop: the list grows to 4.
 #   D  hero mode: the chord steps the carousel (a heroSelect line), logs no
 #      goto_window, and leaves the active window where it was.
+#   E  T3134 (Mac 5558742c6): tabs that share a name list in the order they
+#      OPENED. A window titled `~` gets two more tabs (three namesakes); the
+#      newest's place in the list is read from the log, then move_tab drags
+#      it to the front of the strip and its place is read again. It must not
+#      move: by strip position (the old tie-break) it jumped two places up.
 #
 # -NegativeControl inverts arm A's wrap claim to "the walk did NOT come back
 # to the first window", which must fail on a healthy build.
@@ -199,6 +204,49 @@ try {
     Assert ($cl.Count -eq 1 -and [int]$cl[0].Groups[4].Value -eq 4) `
         "C: with a second tab the list has 4 stops (line: $(if ($cl.Count) { $cl[0].Value } else { 'none' }))"
     Assert (@(Get-Tops).Count -eq 3) 'C: still three windows - the new tab is a tab, not a window'
+
+    # --- E: namesakes keep the order they opened (T3134) ---------------------
+    # Its list position is the `from` of the next goto_window line; the
+    # previous press puts the selection back. Same-window tab hops do not
+    # change the active HWND, so this waits on the log, not on activation.
+    function Get-ListPlace([int64]$win) {
+        $k0 = Get-LogCount $gwPattern
+        [void](Send-TestKeys -Window ([IntPtr]$win) -Target (Get-FocusLeaf $win) -Modifiers ctrl, alt -Key PageDown)
+        $deadline = [Environment]::TickCount + 4000
+        while ((Get-LogCount $gwPattern) -le $k0 -and [Environment]::TickCount -lt $deadline) { Start-Sleep -Milliseconds 100 }
+        $m = @(Get-LogMatches $gwPattern | Select-Object -Skip $k0)
+        Start-Sleep -Milliseconds 400
+        $back = Get-Active $anyTop
+        [void](Send-TestKeys -Window ([IntPtr]$back) -Target (Get-FocusLeaf $back) -Modifiers ctrl, alt -Key PageUp)
+        $deadline = [Environment]::TickCount + 4000
+        while ((Get-LogCount $gwPattern) -le ($k0 + 1) -and [Environment]::TickCount -lt $deadline) { Start-Sleep -Milliseconds 100 }
+        Start-Sleep -Milliseconds 400
+        if ($m.Count -lt 1) { return -1 }
+        return [int]$m[0].Groups[2].Value
+    }
+    & $exe +new-window --name=gw_e --title=~ | Out-Null
+    Start-Sleep -Milliseconds 1500
+    $eTop = @(Get-Tops | Where-Object { $all -notcontains [int64]$_.Hwnd })
+    Assert ($eTop.Count -eq 1) "E: setup - a fourth window titled ~ (got $($eTop.Count) new)"
+    if ($eTop.Count -eq 1) {
+        $eWin = [int64]$eTop[0].Hwnd
+        for ($i = 0; $i -lt 2; $i++) {
+            [void](Send-TestKeys -Window ([IntPtr]$eWin) -Target (Get-FocusLeaf $eWin) -Modifiers ctrl, shift -Key T)
+            Start-Sleep -Milliseconds 1500
+        }
+        Assert ((Get-Active $anyTop) -eq $eWin) 'E: setup - the ~ window is active with its newest tab'
+        $before = Get-ListPlace $eWin
+        for ($i = 0; $i -lt 2; $i++) {
+            [void](Send-TestKeys -Window ([IntPtr]$eWin) -Target (Get-FocusLeaf $eWin) -Modifiers ctrl, shift -Key PageUp)
+            Start-Sleep -Milliseconds 500
+        }
+        $mt = @(Select-String -Path $errlog -Pattern 'move_tab' -AllMatches).Count
+        Assert ($mt -ge 2) "E: setup - move_tab dispatched twice (log lines: $mt)"
+        $after = Get-ListPlace $eWin
+        Assert ($before -ge 2) "E: the newest of three namesakes is listed after the other two (place $before)"
+        Assert ($before -ge 0 -and $after -eq $before) `
+            "E: dragging it to the front of the strip does not move it in the list (place $before -> $after)"
+    }
 
     # --- D: hero mode keeps the chord for its panes --------------------------
     $heroWin = Get-Active $anyTop
