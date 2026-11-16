@@ -487,12 +487,9 @@ pub const OutputRing = struct {
             self.len -= overflow;
             self.base_offset += overflow;
         }
-        // Write `src` at the write index (= start + len), wrapping.
-        var widx = (self.start + self.len) % cap;
-        for (src) |b| {
-            self.buf[widx] = b;
-            widx = (widx + 1) % cap;
-        }
+        // Write `src` at the write index (= start + len), wrapping: at most two
+        // memcpy segments rather than a per-byte modulo (T3018).
+        ringWrite(self.buf, (self.start + self.len) % cap, src);
         self.len += src.len;
     }
 
@@ -501,13 +498,8 @@ pub const OutputRing = struct {
     /// disk-snapshot writer (T13) to flush the ring in stream order.
     pub fn copyRetained(self: OutputRing, out: []u8) usize {
         assert(out.len >= self.len);
-        const cap = self.buf.len;
-        var ridx = self.start;
-        var i: usize = 0;
-        while (i < self.len) : (i += 1) {
-            out[i] = self.buf[ridx];
-            ridx = (ridx + 1) % cap;
-        }
+        if (self.len == 0) return 0;
+        ringRead(self.buf, self.start, out[0..self.len]);
         return self.len;
     }
 
@@ -562,16 +554,31 @@ pub const OutputRing = struct {
         if (lo < self.base_offset) return null; // requested bytes evicted
         assert(out.len >= n);
         const off_in_ring: usize = @intCast(lo - self.base_offset);
-        const cap = self.buf.len;
-        var ridx = (self.start + off_in_ring) % cap;
-        var i: usize = 0;
-        while (i < n) : (i += 1) {
-            out[i] = self.buf[ridx];
-            ridx = (ridx + 1) % cap;
-        }
+        ringRead(self.buf, (self.start + off_in_ring) % self.buf.len, out[0..n]);
         return n;
     }
 };
+
+/// Copy `src` into the circular `buf` starting at index `at`, wrapping past
+/// the end: two memcpy segments at most (T3018 - the per-byte loop paid a
+/// runtime-divisor modulo on every output byte). `src.len <= buf.len`.
+pub fn ringWrite(buf: []u8, at: usize, src: []const u8) void {
+    assert(src.len <= buf.len and at < buf.len or src.len == 0);
+    if (src.len == 0) return;
+    const first = @min(src.len, buf.len - at);
+    @memcpy(buf[at..][0..first], src[0..first]);
+    @memcpy(buf[0 .. src.len - first], src[first..]);
+}
+
+/// Fill `out` from the circular `buf` starting at index `at`, wrapping past
+/// the end; the read twin of `ringWrite`. `out.len <= buf.len`.
+pub fn ringRead(buf: []const u8, at: usize, out: []u8) void {
+    assert(out.len <= buf.len and at < buf.len or out.len == 0);
+    if (out.len == 0) return;
+    const first = @min(out.len, buf.len - at);
+    @memcpy(out[0..first], buf[at..][0..first]);
+    @memcpy(out[first..], buf[0 .. out.len - first]);
+}
 
 // -----------------------------------------------------------------------------
 // Session (§7.1)
@@ -3724,6 +3731,54 @@ test "OutputRing: copyRetained returns bytes oldest→newest, incl. after wrap" 
     try testing.expectEqual(@as(u64, 2), ring.base_offset);
     const n = ring.copyRetained(&out);
     try testing.expectEqualSlices(u8, "cdef", out[0..n]);
+}
+
+test "OutputRing: memcpy append/read matches a byte-by-byte model across every wrap point (T3018)" {
+    // The old per-byte loop's contract, restated as a model: the ring holds
+    // the last `cap` bytes of everything ever appended. Drive a 7-byte ring
+    // (odd, so chunk boundaries land on every index) with chunk sizes 0..9,
+    // and after each append check copyRetained and every slice sub-range.
+    const alloc = testing.allocator;
+    const cap = 7;
+    var ring = try OutputRing.init(alloc, cap);
+    defer ring.deinit();
+    var stream: [512]u8 = undefined;
+    var total: usize = 0;
+    var size: usize = 0;
+    while (total + 10 <= stream.len) : (size = (size + 3) % 10) {
+        const chunk = stream[total..][0..size];
+        for (chunk, 0..) |*b, i| b.* = @truncate(total + i);
+        ring.append(total, chunk);
+        total += size;
+        const kept = stream[total -| cap .. total];
+        var out: [cap]u8 = undefined;
+        try testing.expectEqual(kept.len, ring.copyRetained(&out));
+        try testing.expectEqualSlices(u8, kept, out[0..kept.len]);
+        const base = total - kept.len;
+        var lo = base;
+        while (lo <= total) : (lo += 1) {
+            const got = ring.slice(lo, total, &out).?;
+            try testing.expectEqualSlices(u8, stream[lo..total], out[0..got]);
+        }
+    }
+}
+
+test "ringWrite/ringRead: two segments at every start index, including an exact fit (T3018)" {
+    var buf: [5]u8 = undefined;
+    var at: usize = 0;
+    while (at < buf.len) : (at += 1) {
+        var n: usize = 0;
+        while (n <= buf.len) : (n += 1) {
+            @memset(&buf, 0);
+            const src = "ABCDE"[0..n];
+            ringWrite(&buf, at, src);
+            var i: usize = 0;
+            while (i < n) : (i += 1) try testing.expectEqual(src[i], buf[(at + i) % buf.len]);
+            var out: [5]u8 = undefined;
+            ringRead(&buf, at, out[0..n]);
+            try testing.expectEqualSlices(u8, src, out[0..n]);
+        }
+    }
 }
 
 test "OutputRing: preload resets to bytes at a base offset (tail kept if oversized)" {

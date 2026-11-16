@@ -378,10 +378,13 @@ pub const ReplayBuffer = struct {
             src = src[src.len - cap ..];
             self.start = self.end;
         }
-        var pos: usize = @intCast(self.end % cap);
-        for (src) |b| {
-            self.data[pos] = b;
-            pos = if (pos + 1 == cap) 0 else pos + 1;
+        // Two memcpy segments (to the end, then wrapped) rather than a byte
+        // loop under the holder mutex (T3018, audit-2 PA-I18).
+        if (src.len > 0) {
+            const pos: usize = @intCast(self.end % cap);
+            const first = @min(src.len, cap - pos);
+            @memcpy(self.data[pos..][0..first], src[0..first]);
+            @memcpy(self.data[0 .. src.len - first], src[first..]);
         }
         self.end += src.len;
         if (self.end - self.start > cap) self.start = self.end - cap;
@@ -750,6 +753,28 @@ test "replay buffer: an append larger than the ring keeps only the tail" {
     @memcpy(out[0..s.first.len], s.first);
     @memcpy(out[s.first.len..][0..s.second.len], s.second);
     try testing.expectEqualStrings("6789", out[0..s.total()]);
+}
+
+test "replay buffer: memcpy append matches a byte-by-byte model across every wrap point (T3018)" {
+    // A 7-byte ring fed chunks of 0..9 bytes: after each append, the retained
+    // window read through `from` must equal the last 7 bytes of the stream.
+    var rb = try ReplayBuffer.init(testing.allocator, 7);
+    defer rb.deinit(testing.allocator);
+    var stream: [512]u8 = undefined;
+    var total: usize = 0;
+    var size: usize = 0;
+    while (total + 10 <= stream.len) : (size = (size + 3) % 10) {
+        const chunk = stream[total..][0..size];
+        for (chunk, 0..) |*b, i| b.* = @truncate(total + i);
+        rb.append(chunk);
+        total += size;
+        const kept = stream[total -| 7 .. total];
+        const s = rb.from(0);
+        var out: [7]u8 = undefined;
+        @memcpy(out[0..s.first.len], s.first);
+        @memcpy(out[s.first.len..][0..s.second.len], s.second);
+        try testing.expectEqualSlices(u8, kept, out[0..s.total()]);
+    }
 }
 
 test "replayStart: clamps into the retained window" {
