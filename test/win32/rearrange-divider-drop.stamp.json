@@ -1,8 +1,8 @@
 {
     "guard":  "rearrange-divider-drop",
     "script":  "test/win32/rearrange-divider-drop.ps1",
-    "generated":  "2026-11-16T10:15:25-08:00",
-    "commit":  "e3c118e33",
+    "generated":  "2026-11-16T10:28:21-08:00",
+    "commit":  "0b1373c31",
     "uncommitted":  [
 
                     ],

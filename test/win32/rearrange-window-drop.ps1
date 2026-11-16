@@ -37,7 +37,13 @@
 #   C) a window whose LAST pane is dragged into another window CLOSES, without
 #      taking the pane (or its session) with it
 #   D) the pop-out button on a pane header opens a NEW window holding that
-#      pane - again the same HWND
+#      pane - again the same HWND. That pane carries a sticky banner, and in
+#      the new window it still reserves the banner's band at the same height,
+#      so the terminal starts below the card rather than under it (T3163, Mac
+#      199403483, whose banner reset its inset when the pane left the view
+#      hierarchy). The band is read from the popup's rect, or - on the
+#      composition path, where the card is a visual inside the pane - from the
+#      app's own `pane grid last row hwnd= band=` line written after the move
 #   E) resting the dragged pane on ANOTHER window's background tab button for
 #      the dwell brings that tab up there, leaves the source tab alone, and the
 #      drop lands in the tab it opened (T1543)
@@ -46,8 +52,9 @@
 # injection failure aborts instead of reading as a T1538 regression.
 #
 # -NegativeControl inverts claim A to "the pane does not move" - the pre-T1538
-# behavior - and claim E to "the other window's tab never changes" (pre-T1543),
-# and MUST fail; it is how a run proves the oracle discriminates.
+# behavior - claim D's banner to "the band was given up on the move" (the Mac
+# 199403483 shape), and claim E to "the other window's tab never changes"
+# (pre-T1543), and MUST fail; it is how a run proves the oracle discriminates.
 #
 # Runs on the BACKGROUND test desktop, so it never takes the user's
 # foreground - asserted at the end, not assumed. Only touches ghoztty
@@ -97,6 +104,33 @@ function Get-PaneBoxes([IntPtr]$top) {
             }
         })
     return , @($all | Sort-Object Top, Left)
+}
+
+function Get-LeafIds($node) {
+    if ($node.type -eq 'leaf') { return @([string]$node.terminal.id) }
+    return @(Get-LeafIds $node.left) + @(Get-LeafIds $node.right)
+}
+
+# The band pane box $p reserves for its banner (T3163), on whichever path draws
+# it: the popup glued ABOVE the pane (pane-banner.ps1's Get-Overlay match), or -
+# on the composition path, where the pane's window spans the band and the card
+# is a visual inside it - the `band=` of the app's own last-row line for that
+# pane HWND (Surface.applyResize; banner-row-align.ps1's oracle). Log lines
+# before $FromLine are ignored. $null when there is no log to read.
+function Get-BannerInset([int]$AppPid, $p, [int]$FromLine) {
+    foreach ($o in @(Get-TestWindows -ProcessId $AppPid -Class 'GhozttyBannerOverlay' | Where-Object Visible)) {
+        if ([math]::Abs($o.Left - $p.Left) -le 2 -and [math]::Abs(($o.Top + $o.Height) - $p.Top) -le 2) {
+            return [pscustomobject]@{ Path = 'popup'; Inset = [int]$o.Height }
+        }
+    }
+    if (-not (Test-Path $errlog)) { return $null }
+    $band = 0
+    foreach ($l in @(Get-Content $errlog | Select-Object -Skip $FromLine)) {
+        if ($l -match 'pane grid last row hwnd=(\d+) .*band=(\d+)' -and [int64]$Matches[1] -eq [int64]$p.Hwnd) {
+            $band = [int]$Matches[2]
+        }
+    }
+    return [pscustomobject]@{ Path = 'visual'; Inset = $band }
 }
 
 function Show-Boxes([string]$label, $boxes) {
@@ -423,13 +457,36 @@ try {
     if ($before.Count -ne 2) { Write-TestAssertedNothing -Reason 'the split never produced two panes' }
     $popped = $before[1]
 
+    # T3163 (Mac 199403483): the pane carries a BANNER across the move. Mac
+    # reset the banner's height when the pane left the view hierarchy, so a
+    # pane arriving in another window laid its terminal out UNDER the card.
+    # Set it now, before the button is measured: the band can move the pane.
+    $leafIds = @()
+    $wj = (& $exe +list --json 2>$null | Out-String | ConvertFrom-Json).data.windows |
+        Where-Object { [string]$_.id -eq ([string][int64]$a) } | Select-Object -First 1
+    if ($wj) { $leafIds = @(Get-LeafIds $wj.tabs[0].splits) }
+    Assert ($leafIds.Count -eq 2) "D: setup: +list names the two leaves (got $($leafIds.Count))"
+    if ($leafIds.Count -ne 2) { Write-TestAssertedNothing -Reason 'no leaf ids to put the banner on' }
+    & $exe +set-banner "--target=$($leafIds[1])" '**T3163** banner rides along' | Out-Null
+    Start-Sleep -Milliseconds 1200
+    $before = Get-PaneBoxes $a
+    $popped = @($before | Where-Object { $_.Hwnd -eq $popped.Hwnd })[0]
+    $insetBefore = Get-BannerInset $session.Pid $popped 0
+    if ($null -eq $insetBefore) {
+        Write-Host '      NOT RUN T3163: no debug log to read the band from (release build) - the pop-out claims still run'
+    } else {
+        Write-Host ("      banner before: path={0} inset={1} px; pane top {2}" -f $insetBefore.Path, $insetBefore.Inset, $popped.Top)
+        Assert ($insetBefore.Inset -gt 0) "D: setup: the pane to be popped reserves a band for its banner ($($insetBefore.Path), $($insetBefore.Inset) px)"
+        if ($insetBefore.Inset -le 0) { Write-TestAssertedNothing -Reason 'the banner never reserved its band over the pane to be popped' }
+    }
+    $logMark = if (Test-Path $errlog) { @(Get-Content $errlog).Count } else { 0 }
+
     # The pop-out button sits at the right end of the header band, one pad in
     # (8dip) with a 20dip hit box - `rearrange_header.layout`. Re-derived here
     # for the same reason the band is: the product publishes no rect for it.
     $btnX = $popped.Right - [int][math]::Round(18.0 * $scale)
     $btnY = $popped.Top - [int]($band / 2)
     $winsBefore = (Get-AppWindows $session.Pid).Count
-
 
     Assert (Move-Drag $a $btnX $btnY 'down') 'D: press on the pop-out button delivered'
     Assert (Move-Drag $a $btnX $btnY 'up') 'D: release delivered'
@@ -445,6 +502,22 @@ try {
         Assert (Test-HasPane $new $popped.Hwnd) `
             'D: and it holds the pane that was popped out - the same handle, so the shell came with it'
         Assert (-not (Test-HasPane $a $popped.Hwnd)) 'D: which has left the window it came from'
+
+        # T3163: in the new window the band is still reserved, so the terminal
+        # starts below the card. Only log lines written AFTER the pop-out
+        # count, so a band measured in the old window cannot pass for it.
+        $arrived = @((Get-PaneBoxes $new) | Where-Object { $_.Hwnd -eq $popped.Hwnd })[0]
+        if ($null -ne $insetBefore -and $arrived) {
+            $insetAfter = Get-BannerInset $session.Pid $arrived $logMark
+            $got = if ($insetAfter) { $insetAfter.Inset } else { 0 }
+            Write-Host ("      banner after:  path={0} inset={1} px; pane top {2}" -f $(if ($insetAfter) { $insetAfter.Path } else { 'none' }), $got, $arrived.Top)
+            if ($NegativeControl) {
+                Assert ($got -eq 0) "NEGATIVE: the band was given up on the move and the terminal sits under the card (Mac 199403483 shape; inset $got px)"
+            } else {
+                Assert ($got -gt 0) "T3163: the moved pane still reserves its banner band in the new window ($got px), so the terminal is not under the card"
+                Assert ($got -eq $insetBefore.Inset) "T3163: and the band kept its height across the move ($($insetBefore.Inset) -> $got px)"
+            }
+        }
     }
     $left = Get-PaneBoxes $a
     Assert ($left.Count -eq 1) "D: the original window kept its other pane (got $($left.Count))"

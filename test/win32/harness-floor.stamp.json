@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-16T10:57:24-08:00",
-    "commit":  "e3c118e33",
+    "generated":  "2026-11-16T11:12:13-08:00",
+    "commit":  "8ccdbe024",
     "uncommitted":  [
-                        "test/win32/restore-paced.ps1"
+                        "test/win32/rearrange-window-drop.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -453,7 +453,7 @@
                   "test/win32/rearrange-tab-drop.ps1":  "80e105f9602c48519bc13fc86cbeef5db1ce492d81e9c200ba06ae3bd018f9fd",
                   "test/win32/rearrange-undo.ps1":  "359bdc46a1a8c8c4f103b2052df020d8ba4edac5f5ca5db1ace0878ff4be341b",
                   "test/win32/rearrange-viewer.ps1":  "ee522f1930125af3207f34809aaf274f7d85e981e312a7cf575e1580d4c6a9ff",
-                  "test/win32/rearrange-window-drop.ps1":  "233039d655e86f5b3db3e415a22b07989fcccb9461014124fe32c1e320665baa",
+                  "test/win32/rearrange-window-drop.ps1":  "da2ffee9476f91f2f1bc66a13633b3b24a718859365d4f67b3d3701de2337cdb",
                   "test/win32/registration-sites.ps1":  "fc3d44c177c819f57a22fa300bd57eb68d88c88288e7d7c893a7bdba622ac660",
                   "test/win32/relaunch-guard.ps1":  "57d4631599209336af68e48649fb30ad1da5246958c47a42a1604648586b9af9",
                   "test/win32/relay-account.ps1":  "c216b60c10aa37150bcfa292630ed4468f996ea5ed5145057c7628b08d96b6e5",
@@ -477,7 +477,7 @@
                   "test/win32/restore-dead-sessions.ps1":  "95e0b3b6d0e2c2c6cd9c02e0823c715a4eff72e8ac7d12a70a50976d5baf25ce",
                   "test/win32/restore-dpi-frame.ps1":  "d108aa2a21aa785326a2f845906c3d9a7f252f1dd5711cb9d33f28a7fb6fdcbe",
                   "test/win32/restore-late-agent.ps1":  "ff641c3eea23c1f66215805145b3b262c388b459c8d4f069fd345587cc888b80",
-                  "test/win32/restore-paced.ps1":  "5474dd0dd6f76009b7c695b65958ee7b9e6039359d42cb312e4b87e96f5b48af",
+                  "test/win32/restore-paced.ps1":  "37d2e979a71ec09a1d7e9ce1ed2c648779e232da1435f91092af94b260bbe5b8",
                   "test/win32/restore-session-dup.ps1":  "08129486438d22cf77147ef39338b257f503f9d3f379764160e5c3f1dd719ecf",
                   "test/win32/scrollback-clear-memory.ps1":  "d3852d7fe2ae6adf0a1c276bc05389b2387f7ba152e38d0ee41756d06643174b",
                   "test/win32/scrollback-narrow.ps1":  "213e10d81e04ba6a098ccf8d5891f8f05f43edc9c098d7b201c5ae9c77e17662",
