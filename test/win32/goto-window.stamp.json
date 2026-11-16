@@ -1,13 +1,13 @@
 {
     "guard":  "goto-window",
     "script":  "test/win32/goto-window.ps1",
-    "generated":  "2026-11-15T22:48:09-08:00",
-    "commit":  "cbc185f67",
+    "generated":  "2026-11-16T03:49:42-08:00",
+    "commit":  "dfc32256e",
     "uncommitted":  [
-
+                        "src/apprt/win32/App.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/App.zig":  "9d66eb6c2ee9d530ff87e935b212733027f97638076b73b7b0da48ad183de36d",
+                  "src/apprt/win32/App.zig":  "4daf7667687d9ecfb9f0955f8b3139fe1f1e73b24ad55018ec774dbb4fd83734",
                   "src/apprt/win32/pane_sidebar_outline.zig":  "af516c7438747449d02a5706b15f3f8f7ee6025c5448f3130dc35ec2ac955ec3",
                   "src/apprt/win32/pane_sidebar_window_order.zig":  "f600941729e3e041e7f1400324e0368fdbb3d1346011ef7a8aca2f87532d12b3",
                   "src/apprt/win32/PaneSidebar.zig":  "96cc3036978f533c92375355fd710b99d52d5e645dcd816204e0d674a60200e4",

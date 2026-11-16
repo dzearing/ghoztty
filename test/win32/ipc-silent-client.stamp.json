@@ -1,16 +1,14 @@
 {
     "guard":  "ipc-silent-client",
     "script":  "test/win32/ipc-silent-client.ps1",
-    "generated":  "2026-11-15T01:42:16-08:00",
-    "commit":  "9c9768969",
+    "generated":  "2026-11-16T03:45:13-08:00",
+    "commit":  "dfc32256e",
     "uncommitted":  [
-                        "src/apprt/win32/ipc_pipe_io.zig",
-                        "src/apprt/win32/IpcServer.zig",
-                        "test/win32/ipc-silent-client.ps1"
+                        "src/apprt/win32/IpcServer.zig"
                     ],
     "files":  {
                   "src/apprt/win32/ipc_pipe_io.zig":  "413b22076f0481ab03697b2cc0d68a2830f77216fc7f3f7fc3033185c32739ae",
-                  "src/apprt/win32/IpcServer.zig":  "642af309f1aabe9607e2f31701a540489f8bab6781aeacd2aaa3736b1ede6a1e",
+                  "src/apprt/win32/IpcServer.zig":  "d52089f909a9bad6600892d1cc80030a3dccfa7b251a5215fb1b16bc0d4b6570",
                   "test/win32/ipc-silent-client.ps1":  "541aacd085ecd592bae59d2cd7809474dc3f096f9bf440c302261207248febd6"
               }
 }

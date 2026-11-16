@@ -9,6 +9,8 @@ const windows = std.os.windows;
 
 const App = @import("App.zig");
 const IpcSessionAwait = @import("ipc_session_await.zig");
+const ipc_remote_dial = @import("ipc_remote_dial.zig");
+const relay_dial = @import("../../remote/relay_dial.zig");
 const window_title_owner = @import("window_title_owner.zig");
 const LayoutUndo = @import("LayoutUndo.zig");
 const ProcessTree = @import("ProcessTree.zig");
@@ -716,10 +718,16 @@ fn handoffNote(ctx: Context, arena: Allocator, request: Request) Allocator.Error
 /// over TCP (T20 / Phase G) or through a rendezvous relay at
 /// `--relay=<base> --device=<id> [--token=<tok>]` (T21b). Semantics mirror
 /// the Mac server's handleNewRemoteWindow: validation error strings
-/// byte-match; the relay path takes precedence when both are present; the
-/// dial is synchronous ON THE GUI THREAD (bounded by the 10s HELLO handshake
-/// deadline), exactly like the Mac menu/IPC path; `--name` registers the
-/// window for later targeting.
+/// byte-match; the relay path takes precedence when both are present;
+/// `--name` registers the window for later targeting.
+///
+/// The DIAL does not run here (T3022). This handler validates and resolves the
+/// token — every refusal it can make, it makes before any dial, as before — and
+/// leaves a `RemoteDialJob` in `app.ipc_remote_dial`. The IPC listener dials it
+/// on a worker while the GUI thread keeps pumping, then hands it back to
+/// `finishRemoteWindow`, which opens the window and writes the reply. A dial to
+/// a black-holed host used to freeze every window for the OS connect timeout
+/// plus the 10 s HELLO deadline.
 ///
 /// Relay token tiers (T21a/T21b/T93): explicit `--token` wins (the CLI
 /// already forwards its own GHOSTTY_RELAY_TOKEN env as `--token`), then the
@@ -764,21 +772,18 @@ fn handleNewRemoteWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         }
     }
 
-    // Dial the agent (TCP or relay) and open the window through the shared
-    // open path (App.openRelayWindow / openDialedWindow — T22c decision 6, the
-    // same path the machine chooser uses). The dial blocks on the GUI thread
-    // until connected (≤10s HELLO deadline). Empty string ⇒ absent (the Mac
-    // treats `--shell=` as nil so an empty value can never forward "").
-    const opts: App.RemoteOpenOptions = .{
+    // Empty string => absent (the Mac treats `--shell=` as nil so an empty
+    // value can never forward "").
+    const options: ipc_remote_dial.Options = .{
         .working_directory = nonEmpty(args.working_directory),
         .shell = nonEmpty(args.shell),
         .command = nonEmpty(args.command),
-        .ipc_name = args.name,
+        .name = args.name,
         .title = args.title,
         .activate = args.focus, // T1797: background unless `--focus`
     };
 
-    if (use_relay) {
+    const target: ipc_remote_dial.Target = if (use_relay) target: {
         // Token tiers: explicit --token, then the signed-in account (relay
         // session token), then the GUI's env. A tokenless relay dial is a
         // guaranteed 401 — refuse BEFORE dialing (Mac rule).
@@ -789,49 +794,87 @@ fn handleNewRemoteWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
                 .{},
             );
         };
-        _ = app.openRelayWindow(relay.?, device.?, token, opts) catch |err| switch (err) {
-            error.DialFailed => return try errorResponse(
-                ctx.alloc,
-                "failed to reach {s} via relay {s}: the agent is not running or not reachable",
-                .{ device.?, relay.? },
-            ),
-            error.IncompatibleVersion => return try errorResponse(
-                ctx.alloc,
-                "incompatible Ghoztty version on {s} (via relay {s}): update one side",
-                .{ device.?, relay.? },
-            ),
-            error.CreateFailed => return try errorResponse(ctx.alloc, "failed to create window", .{}),
-            error.OutOfMemory => return error.OutOfMemory,
-        };
-    } else {
-        const alloc = app.core_app.alloc;
-        const host = args.host.?;
-        const dialed = try alloc.create(tcp_dial.Dialed);
-        dialed.* = tcp_dial.dial(alloc, host, args.port, .raw) catch |err| {
-            log.warn(
-                "IPC new-remote-window: dial failed host={s} port={d} err={}",
-                .{ host, args.port, err },
-            );
-            alloc.destroy(dialed);
-            if (dial_failure.classify(err) == .incompatible) return try errorResponse(
-                ctx.alloc,
-                "incompatible Ghoztty version on {s}:{d}: update one side",
-                .{ host, args.port },
-            );
-            return try errorResponse(
-                ctx.alloc,
-                "failed to reach {s}:{d}: the agent is not running or not reachable",
-                .{ host, args.port },
-            );
-        };
-        var tcp_opts = opts;
-        tcp_opts.machine = .{ .tcp = .{ .host = host, .port = args.port } };
-        _ = app.openDialedWindow(.{ .tcp = dialed }, tcp_opts) catch |err| switch (err) {
-            error.CreateFailed => return try errorResponse(ctx.alloc, "failed to create window", .{}),
-            error.OutOfMemory => return error.OutOfMemory,
-        };
-    }
+        break :target .{ .relay = .{ .base = relay.?, .device = device.?, .token = token } };
+    } else .{ .tcp = .{ .host = args.host.?, .port = args.port } };
 
+    // Hand the dial to the listener (T3022). A handler that already left a job
+    // (it cannot: one verb per dispatch) would leak it, so the slot is checked.
+    std.debug.assert(app.ipc_remote_dial == null);
+    app.ipc_remote_dial = try RemoteDialJob.create(app.core_app.alloc, target, options);
+
+    // A placeholder: the listener answers with `finishRemoteWindow`'s reply.
+    return try ctx.alloc.dupe(u8, "{\"success\":true}");
+}
+
+/// The dial job `+new-remote-window` leaves for the IPC listener (T3022).
+pub const RemoteDialJob = ipc_remote_dial.Job(Window.RemoteDialed);
+
+/// Worker-thread body: dial `job`'s target and record the outcome. Touches no
+/// GUI state — the same dials `MachineConnectionPool.dialWorker` runs off the
+/// GUI thread. Drops the worker's reference on the way out.
+pub fn runRemoteDial(job: *RemoteDialJob) void {
+    defer job.release();
+    const alloc = job.alloc;
+    switch (job.target) {
+        .tcp => |t| {
+            const d = alloc.create(tcp_dial.Dialed) catch return job.finish(error.OutOfMemory);
+            if (tcp_dial.dial(alloc, t.host, t.port, .raw)) |ok| {
+                d.* = ok;
+                job.finish(Window.RemoteDialed{ .tcp = d });
+            } else |err| {
+                alloc.destroy(d);
+                log.warn(
+                    "IPC new-remote-window: dial failed host={s} port={d} err={}",
+                    .{ t.host, t.port, err },
+                );
+                job.finish(err);
+            }
+        },
+        .relay => |r| {
+            const d = alloc.create(relay_dial.Dialed) catch return job.finish(error.OutOfMemory);
+            if (relay_dial.dial(alloc, r.base, r.device, r.token, .raw)) |ok| {
+                d.* = ok;
+                job.finish(Window.RemoteDialed{ .relay = d });
+            } else |err| {
+                alloc.destroy(d);
+                log.warn(
+                    "remote window: relay dial failed relay={s} device={s} err={}",
+                    .{ r.base, r.device, err },
+                );
+                job.finish(err);
+            }
+        },
+    }
+}
+
+/// GUI-thread tail of `+new-remote-window` (T3022): open the window on the
+/// connection the worker dialed, or answer the failure in the same words the
+/// handler always used. Called once the job's dial is done. Does not release
+/// the job; the listener does.
+pub fn finishRemoteWindow(ctx: Context, job: *RemoteDialJob) Allocator.Error![]u8 {
+    const app = ctx.app;
+    const dialed = job.adopt() orelse {
+        var buf: [1024]u8 = undefined;
+        const msg = ipc_remote_dial.failureMessage(&buf, job.target, job.outcome) catch
+            "failed to reach the machine: the agent is not running or not reachable";
+        return try errorResponse(ctx.alloc, "{s}", .{msg});
+    };
+    var opts: App.RemoteOpenOptions = .{
+        .working_directory = job.options.working_directory,
+        .shell = job.options.shell,
+        .command = job.options.command,
+        .ipc_name = job.options.name,
+        .title = job.options.title,
+        .activate = job.options.activate,
+    };
+    opts.machine = switch (job.target) {
+        .tcp => |t| .{ .tcp = .{ .host = t.host, .port = t.port } },
+        .relay => |r| .{ .relay = .{ .base = r.base, .device = r.device, .token = r.token } },
+    };
+    _ = app.openDialedWindow(dialed, opts) catch |err| switch (err) {
+        error.CreateFailed => return try errorResponse(ctx.alloc, "failed to create window", .{}),
+        error.OutOfMemory => return error.OutOfMemory,
+    };
     return try ctx.alloc.dupe(u8, "{\"success\":true}");
 }
 

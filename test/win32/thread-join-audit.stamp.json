@@ -1,12 +1,10 @@
 {
     "guard":  "thread-join",
     "script":  "test/win32/thread-join-audit.ps1",
-    "generated":  "2026-11-16T02:51:02-08:00",
-    "commit":  "96c617249",
+    "generated":  "2026-11-16T03:50:25-08:00",
+    "commit":  "dfc32256e",
     "uncommitted":  [
-                        "src/remote/agent/grid_snapshot.zig",
-                        "src/remote/agent/server.zig",
-                        "src/remote/agent/session.zig"
+
                     ],
     "files":  {
                   "src/datastruct/array_list_collection.zig":  "f14f6cc26a11eabdd35a36976dce1b3702a2c7f4771b60e339afd1015d4e58dd",
@@ -44,7 +42,7 @@
                   "src/remote/agent/pty_child.zig":  "5b009e3c3dcb273373301b5d9f1c8f04f39916e68b02522f58c9d51460433e72",
                   "src/remote/agent/pty_holder_child.zig":  "2deed144637aa491c839266f6c72b4b08673e73d90369442533523a208a77cae",
                   "src/remote/agent/pty_host.zig":  "482f6e93ff3c7f8a59af60244a0269adf5ca904114003493f8178ffe4cc8b469",
-                  "src/remote/agent/pty_host_proto.zig":  "a8ef76003f78d212f41503343106f5bbe6ec1ce38fbf4c661c545e8a4d6babd3",
+                  "src/remote/agent/pty_host_proto.zig":  "8c89f7b5b300eeb8070ac6b2f9c6df1ecf7ed14b936c92cf68af6e2bdbfad6ba",
                   "src/remote/agent/pty_host_smoke.zig":  "2c4491f7d4711c83c10ada943f1997a4453af86034d1e0f349022e8ebde0c8bf",
                   "src/remote/agent/pty_host_spec.zig":  "8f7154a95aeb18b04a70a979080c4fa37deaf304b0156ff86c746206cda10c67",
                   "src/remote/agent/relay_creds.zig":  "906cf1f4bd95c0c1e28f73298abbea8a657c4860e7a215cced15245a13db230d",
@@ -53,7 +51,7 @@
                   "src/remote/agent/revoked_credential.zig":  "779f0bd15e7be3efe614e8152c253add3b6c6e3a9f365c69974da626f86f3b68",
                   "src/remote/agent/ring_snapshot.zig":  "43d927ca2996eeecafac57a50952fc4de4c0fb5b07bf1368d10eecd4a05f4234",
                   "src/remote/agent/server.zig":  "ea0a6af894b4973081dff7b146b3c26a0bc6946ac71d124b2af71bea019ef48b",
-                  "src/remote/agent/session.zig":  "5a6c0963185db3c73685afa2973ec596a5e5331d31460ba490c69bdcd6c0f1d9",
+                  "src/remote/agent/session.zig":  "059f4ebe97749ca1110b60d155e17f4fa722f84a4c77af5ba6a0c6f454a066a7",
                   "src/remote/agent/session_meta.zig":  "e49d5f38c06cea3ca899917c134b8ff70aa39cb8123083450c4852d2e6b39891",
                   "src/remote/agent/sharing.zig":  "4ecfaef4c8e7cf9428531f82beee5b28bdb604ce3385507ddc858edf781ff29a",
                   "src/remote/agent/single_instance.zig":  "4a6ff886d1b8516b8b0e32b68c8865d07774319571be5130785c4346bb7041e4",

@@ -845,6 +845,10 @@ test {
     // before answering (T1612), same no-OS-imports deal.
     _ = @import("win32/ipc_session_await.zig");
 
+    // The dial behind `+new-remote-window`, carried off the GUI thread
+    // (T3022): job lifetime across listener and worker, and the CLI sentences.
+    _ = @import("win32/ipc_remote_dial.zig");
+
     // win32 IPC server per-connection pipe I/O: bounded reads/writes, the
     // bounded hang-up wait and cancel-on-shutdown (T3105). Its tests drive a
     // real named pipe and skip off Windows.

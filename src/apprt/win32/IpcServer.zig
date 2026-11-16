@@ -157,6 +157,14 @@ pub const Pending = struct {
     /// local-agent resolve pump) already serves it, and never leaves a
     /// listener parked on `done`.
     session_check: ?*SessionCheck = null,
+    /// T3022: the dial a `+new-remote-window` handler deferred. Filled by the
+    /// GUI thread; the listener runs it off the GUI thread (`runRemoteDial`)
+    /// and its reply replaces `response`.
+    remote_dial: ?*IpcHandlers.RemoteDialJob = null,
+    /// Non-null makes this the SECOND hop of a deferred `+new-remote-window`:
+    /// the GUI thread opens the window on the finished dial (or answers its
+    /// failure) instead of dispatching a request.
+    remote_open: ?*IpcHandlers.RemoteDialJob = null,
 };
 
 /// One readiness poll for `awaitSessions`.
@@ -405,6 +413,44 @@ fn awaitSessions(self: *IpcServer, list: *const IpcSessionAwait) void {
     }
 }
 
+/// Poll interval while the listener waits for a deferred dial: how quickly a
+/// quit is noticed. The dial itself is bounded only by the OS connect timeout
+/// plus the HELLO deadline.
+const remote_dial_poll_ns: u64 = 100 * std.time.ns_per_ms;
+
+/// Run a deferred `+new-remote-window` dial (T3022) and return the verb's
+/// reply. Runs on the LISTENER thread: the dial goes to a detached worker, so
+/// the GUI thread keeps pumping and every other IPC verb keeps answering while
+/// the remote machine is dialed. When it is done the job goes back to the GUI
+/// thread to open the window. Consumes the listener's reference on `job`.
+///
+/// A quit while the dial is in flight does not wait for it: the listener gives
+/// up its reference and returns, and the worker's release frees the job and
+/// closes the connection whenever the dial returns.
+fn runRemoteDial(self: *IpcServer, job: *IpcHandlers.RemoteDialJob) ?[]u8 {
+    defer job.release();
+    if (std.Thread.spawn(thread_stack.config, IpcHandlers.runRemoteDial, .{job})) |thread| {
+        thread.detach();
+    } else |err| {
+        // No worker: dial here instead. This listener is blocked for the dial,
+        // but the GUI thread and the other instances are not.
+        log.warn("IPC remote dial worker spawn failed err={}; dialing on the listener", .{err});
+        IpcHandlers.runRemoteDial(job);
+    }
+
+    while (true) {
+        if (self.shutdown.load(.acquire)) return null;
+        job.done.timedWait(remote_dial_poll_ns) catch continue;
+        break;
+    }
+
+    const hwnd = self.app.msg_hwnd orelse return null;
+    var open: Pending = .{ .server = self, .request_json = "", .remote_open = job };
+    if (w32.PostMessageW(hwnd, App.WM_APP_IPC, @intFromPtr(&open), 0) == 0) return null;
+    open.done.wait();
+    return open.response;
+}
+
 /// Read one framed request from the connected client, marshal it to the GUI
 /// thread, write the framed response. All failures are answered on the wire
 /// when possible (matching the Mac server's error strings). Returns whether a
@@ -453,6 +499,10 @@ fn serveOne(self: *IpcServer, pipe: windows.HANDLE, accept_start: ?std.time.Inst
     const posted: ?std.time.Instant =
         if (self.perf) (std.time.Instant.now() catch null) else null;
     pending.done.wait();
+    if (pending.remote_dial) |job| {
+        if (pending.response) |placeholder| self.alloc.free(placeholder);
+        pending.response = self.runRemoteDial(job);
+    }
     if (pending.response != null and !pending.session_await.isEmpty())
         self.awaitSessions(&pending.session_await);
     if (self.perf) self.logPerf(body, accept_start, connected, posted, pending.gui_start);
@@ -563,6 +613,18 @@ pub fn serveOnGuiThread(pending: *Pending) void {
         check.ready = IpcHandlers.sessionsSettled(self.app, check.list);
         return;
     }
+    if (pending.remote_open) |job| {
+        // A quit drains the queue through here too; open no window into it.
+        if (self.shutdown.load(.acquire)) return;
+        pending.response = IpcHandlers.finishRemoteWindow(
+            .{ .app = self.app, .alloc = self.alloc },
+            job,
+        ) catch |err| response: {
+            log.warn("IPC remote window open failed err={}", .{err});
+            break :response null;
+        };
+        return;
+    }
     if (self.perf) pending.gui_start = std.time.Instant.now() catch null;
     // Saved and restored rather than cleared: a handler can pump WM_APP_IPC
     // (the local-agent resolve does) and serve a second request inside its
@@ -570,6 +632,8 @@ pub fn serveOnGuiThread(pending: *Pending) void {
     const outer = self.app.ipc_session_await;
     self.app.ipc_session_await.clear();
     defer self.app.ipc_session_await = outer;
+    const outer_dial = self.app.ipc_remote_dial;
+    self.app.ipc_remote_dial = null;
     pending.response = IpcHandlers.dispatch(
         .{ .app = self.app, .alloc = self.alloc },
         pending.request_json,
@@ -578,6 +642,10 @@ pub fn serveOnGuiThread(pending: *Pending) void {
         break :response null;
     };
     pending.session_await = self.app.ipc_session_await;
+    // T3022: a deferred dial moves to the listener with the reply, and the
+    // slot goes back to whatever an outer dispatch had in it.
+    pending.remote_dial = self.app.ipc_remote_dial;
+    self.app.ipc_remote_dial = outer_dial;
 }
 
 /// Build an owner-only security descriptor via SDDL: protected DACL with a

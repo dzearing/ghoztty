@@ -158,6 +158,56 @@ Assert "exit nonzero" ($r.ExitCode -ne 0)
 $err = $r.Output
 Assert "error names the endpoint" ($err -match "failed to reach 127.0.0.1:$deadPort")
 
+"== 4c: a dial that hangs does not freeze the app (T3022)"
+# The dial used to run inside the GUI-thread handler: every window froze and
+# every other verb queued behind it until DNS + the OS connect timeout (~21 s on
+# a black-holed host) + the 10 s HELLO deadline had run out. A listener that
+# accepts and never says a word is the deterministic stand-in for that host:
+# the OS completes the TCP handshake from its backlog, so the dial connects and
+# then waits out the whole HELLO deadline. (10.255.255.1 is the literal case,
+# but whether it black-holes or fails fast depends on the box's routing.)
+$silentPort = Get-FreePort
+$silent = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $silentPort)
+$silent.Start()
+try {
+    $hungErr = Join-Path $tmp 'silent-dial.txt'
+    # persistence: a CLI invocation - it opens no window of its own, so there is nothing to restore.
+    $hung =Start-OnTestDesktop -Exe $Exe -StdErr $hungErr `
+        -Arguments @('+new-remote-window', '--host=127.0.0.1', "--port=$silentPort", '--name=remsilent')
+    # Let the request reach the app and the dial start.
+    Start-Sleep -Milliseconds 1500
+    Assert "the silent dial is still in flight (setup)" (-not $hung.Process.HasExited)
+
+    # First, before anything else can wait the dial out: a window's own message
+    # loop. (Measured after the +list it would only see the dial already over.)
+    $tops = @(Get-TestWindows -ProcessId 0 -Class 'GhozttyWindow')
+    if ($tops.Count -gt 0) {
+        Assert "a window's message loop answers during the dial" (Test-TestWindowResponsive -Window ([IntPtr]$tops[0].Hwnd) -TimeoutMs 1000)
+    } else {
+        Assert "found an app window to probe (setup)" $false
+    }
+
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $concurrent = Ghoz @('+list')
+    $sw.Stop()
+    $listMs = $sw.ElapsedMilliseconds
+    "  DIAG +list during the dial answered in $listMs ms"
+    Assert "+list answers while the dial is in flight" ($concurrent.ExitCode -eq 0 -and $concurrent.Output -match '\[target: rembase\]')
+    # The dial holds for ~10 s; a frozen GUI thread makes this wait for it.
+    Assert "+list answered in under 3 s, not after the dial" ($listMs -lt 3000)
+    Assert "the dial was still in flight when +list answered" (-not $hung.Process.HasExited)
+
+    [void]$hung.Process.WaitForExit(40000)
+    Assert "the hung dial ends on its own" $hung.Process.HasExited
+    $hungText = (Get-Content -LiteralPath $hungErr -Raw -ErrorAction SilentlyContinue)
+    Assert "the hung dial exits nonzero" ($hung.Process.HasExited -and $hung.Process.ExitCode -ne 0)
+    Assert "and says the same sentence as before" ($hungText -match "failed to reach 127\.0\.0\.1:${silentPort}: the agent is not running or not reachable")
+    if ($hungText -notmatch 'failed to reach') { "    silent dial said: $hungText" }
+    Assert "no window was opened for the silent machine" (-not ((Get-List) -match '\[target: remsilent\]'))
+} finally {
+    $silent.Stop()
+}
+
 "== 4b: a PROTOCOL SKEW says so, instead of reading as unreachable (T628)"
 # The machine is awake, its agent is running and the network is fine - the two
 # builds simply no longer speak. Until T628 that came out as "failed to reach",

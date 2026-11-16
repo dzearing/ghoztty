@@ -1033,6 +1033,17 @@ on its new pane's session waits on the listener thread (`awaitSessions`), not
 the GUI thread, so it delays nobody else's hook. Acceptance:
 `test/win32/ipc-silent-client.ps1`.
 
+**`+new-remote-window` dials off the GUI thread** (T3022). Its handler
+validates the flags and resolves the relay token on the GUI thread (every
+refusal it can make still comes before any dial), then leaves a dial job for
+the listener; a worker dials, and the job goes back to the GUI thread to open
+the window or answer the failure in the unchanged sentences. The reply still
+waits for the window, but every other window and verb stays live meanwhile —
+before this, one dial to an unreachable host froze the app for the OS connect
+timeout plus the 10 s HELLO deadline. A quit does not wait for an in-flight
+dial. Job lifetime: `src/apprt/win32/ipc_remote_dial.zig`. Acceptance:
+section 4c of `test/win32/ipc-remote.ps1`.
+
 The auto-launch wait `+new-window` performs is a different question and has its
 own budget (`ipc_timeout.auto_launch_ms`, 30s): there the peer is a process we
 just started, and its cold start includes the loader, Defender scanning a

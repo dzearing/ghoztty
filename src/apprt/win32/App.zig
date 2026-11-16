@@ -734,6 +734,12 @@ close_undo: CloseUndo = undefined,
 /// readable. GUI-thread only, like the dispatch itself.
 ipc_session_await: IpcSessionAwait = .{},
 
+/// The dial a `+new-remote-window` handler left for the IPC listener to run
+/// off the GUI thread (T3022). Same save/move discipline as
+/// `ipc_session_await`: set by the handler, moved into the request's `Pending`
+/// right after dispatch. GUI-thread only.
+ipc_remote_dial: ?*IpcHandlers.RemoteDialJob = null,
+
 /// What a relay SIGN-OUT closed, waiting for the sign-in that replays it
 /// (T713). Empty in every ordinary moment of the app's life — it fills for as
 /// long as somebody is signed out and is consumed by the next sign-in.
