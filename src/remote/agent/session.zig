@@ -671,6 +671,13 @@ pub const Session = struct {
     /// Length of the journal file that `snap_disk_end` describes, i.e. where the
     /// next record goes (T997).
     snap_journal_len: u64 = 0,
+    /// Store-clock time this process last wrote the session's HISTORY file
+    /// (`<id>.hist`), 0 = never (T3020). The reaper's timer pass rewrites a
+    /// history only once `history_every_ms` has passed since, so a pane whose
+    /// screen changes every second (a clock, a spinner) no longer re-serialises
+    /// and fsyncs its whole scrollback every 30 s. Only `snapshotRingsWith`
+    /// touches it (under `snapshot_mutex` and the store lock).
+    hist_written_ms: i64 = 0,
 
     /// Streaming gate. When false (client sent `FLOW{pause}` or `DETACH`), child
     /// output is buffered in the ring but NOT framed onto the wire until resumed
@@ -1752,6 +1759,35 @@ pub const SessionStore = struct {
     /// ticks (§5.4 "every 30 s"). The reaper wakes once a second, so 30 ticks.
     const snapshot_every_ticks: u32 = 30;
 
+    /// How often the timer pass may rewrite a session's HISTORY (T3020). The
+    /// ring journal still lands every 30 s, so nothing recent is lost: a reboot
+    /// that finds a history older than the ring restores that history plus the
+    /// ring bytes written after it (`preloadRingSnapshot`). A viewer disconnect
+    /// and the agent's shutdown (`checkpoint`) always write it.
+    pub const history_every_ms: i64 = 5 * std.time.ms_per_min;
+
+    /// Which passes write the history next to the ring (T3020).
+    pub const HistoryMode = enum {
+        /// Ring only: the volume-triggered pass (T969), which can fire every
+        /// second on a busy pane.
+        none,
+        /// The 30 s timer: only sessions whose history is `history_every_ms`
+        /// old (or never written by this process).
+        when_due,
+        /// A checkpoint: every dirty session.
+        always,
+    };
+
+    /// Whether a pass in `mode` rewrites a history last written at
+    /// `written_ms` (0 = never), at `now_ms`. Pure, for the unit test.
+    pub fn historyDue(mode: HistoryMode, written_ms: i64, now_ms: i64) bool {
+        return switch (mode) {
+            .none => false,
+            .always => true,
+            .when_due => written_ms == 0 or now_ms -| written_ms >= history_every_ms,
+        };
+    }
+
     /// Recorded-cwd refresh cadence, in reaper ticks (T425). Ten seconds: the
     /// value is only ever READ when the agent restarts, so the cost of being a
     /// few seconds stale is nil, while the cost of each sample is a `cd`-sized
@@ -1836,7 +1872,7 @@ pub const SessionStore = struct {
             if (timer_due or self.volumeSnapshotDue()) {
                 ticks = 0;
                 self.last_snapshot_ms = self.now();
-                self.snapshotRingsWith(timer_due);
+                self.snapshotRingsWith(if (timer_due) .when_due else .none);
             }
         }
     }
@@ -2629,18 +2665,35 @@ pub const SessionStore = struct {
         };
         defer if (hist) |*h| h.free(alloc);
 
-        // A history only stands for the ring it was written WITH. If the ring was
-        // rewritten later and the history write failed, the ring is newer.
+        var converted: ?[]u8 = null;
+        defer if (converted) |c| alloc.free(c);
+
+        // A history stands for the stream up to its `end_offset`. Since T3020
+        // the ring is journalled every 30 s but the history only every few
+        // minutes, so the usual reboot finds a history OLDER than the ring. When
+        // the ring still holds every byte since that history, restore both: the
+        // history, then those later bytes converted to content the same way a
+        // whole ring would be. Anything else (the ring moved past it, or the
+        // offsets are from another run) falls back to converting the ring.
         if (hist) |h| if (ring) |r| {
+            const ring_end = r.base_offset + r.bytes.len;
+            if (h.end_offset < ring_end and h.end_offset >= r.base_offset) splice: {
+                const tail_raw = r.bytes[@intCast(h.end_offset - r.base_offset)..];
+                const tail = grid_snapshot.historyFromRaw(alloc, tail_raw, r.cols, r.rows) catch break :splice;
+                defer alloc.free(tail);
+                const joined = std.mem.concat(alloc, u8, &.{ h.bytes, tail }) catch break :splice;
+                converted = joined;
+                std.log.info("ring_snapshot: history for {s} ends at {d}; restoring it plus the {d} ring bytes after it", .{ sess.idStr(), h.end_offset, tail_raw.len });
+            }
+        };
+
+        if (converted == null) if (hist) |h| if (ring) |r| {
             if (h.end_offset != r.base_offset + r.bytes.len) {
                 std.log.info("ring_snapshot: history for {s} is stale (end {d} vs ring end {d}); converting the ring instead", .{ sess.idStr(), h.end_offset, r.base_offset + r.bytes.len });
                 hist = null;
                 h.free(alloc);
             }
         };
-
-        var converted: ?[]u8 = null;
-        defer if (converted) |c| alloc.free(c);
 
         // The capture geometry the viewer must replay at, 0 = "replay at your own
         // width". A history is soft-wrap-free content, so it re-wraps correctly
@@ -2652,7 +2705,9 @@ pub const SessionStore = struct {
         // at, still reports one.
         var cols: u16 = 0;
         var rows: u16 = 0;
-        const bytes: []const u8 = if (hist) |h|
+        const bytes: []const u8 = if (converted) |spliced|
+            spliced
+        else if (hist) |h|
             h.bytes
         else if (ring) |r| bytes: {
             if (r.bytes.len == 0) return; // nothing to replay
@@ -3010,17 +3065,18 @@ pub const SessionStore = struct {
     /// Each pass also writes the session's HISTORY (`<id>.hist`, main 7e78aacf4)
     /// beside the ring — see `snapshotRingsWith` for the one pass that does not.
     pub fn snapshotRings(self: *SessionStore) void {
-        self.snapshotRingsWith(true);
+        self.snapshotRingsWith(.always);
     }
 
     /// `snapshotRings`, with the history optional. Serializing a history walks
-    /// the emulator's whole scrollback UNDER the store lock, which is fine at the
-    /// 30-second timer and at a checkpoint but not on a volume-triggered pass
-    /// (T969), which a busy pane can fire every second. Those pass `false`: the
-    /// ring still lands, and a reboot before the next timer pass finds a history
-    /// whose end no longer matches the ring and converts the ring instead — the
-    /// same content, built at load time.
-    pub fn snapshotRingsWith(self: *SessionStore, with_history: bool) void {
+    /// the emulator's whole scrollback UNDER the store lock (the output path
+    /// feeds the emulator under that same lock), and writing it is a full-file
+    /// rewrite with fsync — fine at a checkpoint, not every 30 s for every pane
+    /// whose screen moved (T3020), and never on a volume-triggered pass (T969),
+    /// which a busy pane can fire every second. A pass that skips it still lands
+    /// the ring, and a reboot before the next history write restores the older
+    /// history plus the ring bytes written after it (`preloadRingSnapshot`).
+    pub fn snapshotRingsWith(self: *SessionStore, mode: HistoryMode) void {
         const dir = self.rings_dir orelse return;
         const alloc = self.table.alloc;
         self.snapshot_mutex.lock();
@@ -3085,8 +3141,10 @@ pub const SessionStore = struct {
             // The history the reboot will actually restore, serialized from the
             // emulator at the SAME instant as the ring copy (both under this lock
             // hold), so `end_offset` pairs them exactly.
-            const hist: ?[]u8 = if (with_history) s.historyAlloc(alloc) else null;
+            const pass_ms = self.now();
+            const hist: ?[]u8 = if (historyDue(mode, s.hist_written_ms, pass_ms)) s.historyAlloc(alloc) else null;
             defer if (hist) |h| alloc.free(h);
+            var hist_ok = false;
             var id_str_buf: [32]u8 = s.id_str;
             self.mutex.unlock();
 
@@ -3098,7 +3156,17 @@ pub const SessionStore = struct {
                 defer alloc.free(hpath);
                 ring_snapshot.writeHistoryAtomic(alloc, hpath, at, cap_cols, cap_rows, h) catch |err| {
                     std.log.warn("ring_snapshot: write {s} failed: {s}", .{ hpath, @errorName(err) });
+                    break :hist;
                 };
+                hist_ok = true;
+            }
+            // Recorded at once, not with the ring below: the history is on disk
+            // whether or not the ring write that follows succeeds, and a failed
+            // ring write leaves the bytes dirty for the next pass anyway.
+            if (hist_ok) {
+                self.mutex.lock();
+                if (self.table.getById(id)) |s2| s2.hist_written_ms = pass_ms;
+                self.mutex.unlock();
             }
             const path = ring_snapshot.pathFor(alloc, dir, id_str_buf[0..]) catch continue;
             defer alloc.free(path);
@@ -6011,6 +6079,128 @@ test "SessionStore reboot preload: a matching history wins; a stale one falls ba
         try testing.expect(std.mem.indexOf(u8, replay, "from the RING") != null);
         try testing.expect(std.mem.indexOf(u8, replay, "HISTORY") == null);
     }
+
+    // An OLDER history whose end the ring still covers (T3020: the history is
+    // written every few minutes, the ring every 30 s): the history is kept and
+    // the ring bytes written after it follow it, converted to content.
+    try ring_snapshot.writeHistoryAtomic(alloc, hp, 7777 + "from ".len, 120, 40, "from the HISTORY\r\n");
+    {
+        var prng = std.Random.DefaultPrng.init(3);
+        var clock: MutClock = .{ .ms = 1000 };
+        var store = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 100000);
+        store.meta_path = meta;
+        store.rings_dir = rings;
+        defer store.deinit();
+        _ = store.loadPersisted(1 << 16);
+        const replay = try preloadedReplay(alloc, &store, id);
+        defer alloc.free(replay);
+        try testing.expect(std.mem.startsWith(u8, replay, "from the HISTORY\r\n"));
+        const tail_at = std.mem.indexOf(u8, replay, "the RING") orelse return error.TestExpectedTail;
+        try testing.expect(tail_at > "from the HISTORY\r\n".len - 1);
+        // Only the bytes AFTER the history's end: the ring's "from " is not repeated.
+        try testing.expect(std.mem.indexOf(u8, replay, "from the RING") == null);
+        try testing.expect(std.mem.endsWith(u8, replay, reboot_divider));
+        // Content, so the viewer replays it at its own width.
+        const s = store.table.getByIdStr(id).?;
+        try testing.expectEqual(@as(u16, 0), s.replay_cols);
+    }
+}
+
+test "historyDue: the timer pass rewrites a history only every history_every_ms (T3020)" {
+    const every = SessionStore.history_every_ms;
+    try testing.expect(!SessionStore.historyDue(.none, 0, 1_000_000));
+    try testing.expect(SessionStore.historyDue(.always, 999, 1000));
+    // Never written by this process: due at once.
+    try testing.expect(SessionStore.historyDue(.when_due, 0, 5));
+    try testing.expect(!SessionStore.historyDue(.when_due, 1000, 1000 + 30_000));
+    try testing.expect(!SessionStore.historyDue(.when_due, 1000, 1000 + every - 1));
+    try testing.expect(SessionStore.historyDue(.when_due, 1000, 1000 + every));
+    // A clock that went backwards is not "due forever".
+    try testing.expect(!SessionStore.historyDue(.when_due, 1000, 10));
+}
+
+test "snapshotRingsWith: a pane redrawing every second writes its history once per interval, its ring every pass (T3020)" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+    const rings = try std.fs.path.join(alloc, &.{ dir_path, "rings" });
+    defer alloc.free(rings);
+
+    var prng = std.Random.DefaultPrng.init(0x3020);
+    var clock: MutClock = .{ .ms = 1000 };
+    var store = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 100000);
+    store.rings_dir = rings;
+    defer store.deinit();
+
+    var fake: FakeChild = .{ .alloc = alloc };
+    defer fake.deinit();
+    const s = try store.table.create(fake.child(), 4242, 24, 80, 1 << 16, 1000);
+
+    const hp = try ring_snapshot.historyPathFor(alloc, rings, s.id_str[0..]);
+    defer alloc.free(hp);
+    const bp = try ring_snapshot.pathFor(alloc, rings, s.id_str[0..]);
+    defer alloc.free(bp);
+    const histEnd = struct {
+        fn of(a: Allocator, p: []const u8) !u64 {
+            var h = (try ring_snapshot.loadHistory(a, p)).?;
+            defer h.free(a);
+            return h.end_offset;
+        }
+    }.of;
+    const ringEnd = struct {
+        fn of(a: Allocator, p: []const u8) !u64 {
+            var l = (try ring_snapshot.load(a, p)).?;
+            defer l.free(a);
+            return l.base_offset + l.bytes.len;
+        }
+    }.of;
+
+    // A clock: one redraw of the same line per second.
+    var tick: u32 = 0;
+    const redraw = struct {
+        fn f(st: *SessionStore, sess: *Session, n: *u32) void {
+            var b: [32]u8 = undefined;
+            const line = std.fmt.bufPrint(&b, "\r12:00:{d:0>2}", .{n.* % 60}) catch unreachable;
+            n.* += 1;
+            st.onChildOutput(sess.channel, line);
+        }
+    }.f;
+
+    // First timer pass: nothing written by this process yet, so it lands.
+    redraw(&store, s, &tick);
+    store.snapshotRingsWith(.when_due);
+    const first = try histEnd(alloc, hp);
+    try testing.expectEqual(s.out_offset.value, first);
+
+    // Nine more 30 s passes inside the interval: the ring follows every one,
+    // the history is left alone.
+    var pass: usize = 0;
+    while (pass < 9) : (pass += 1) {
+        clock.ms += 30 * std.time.ms_per_s;
+        redraw(&store, s, &tick);
+        store.snapshotRingsWith(.when_due);
+        try testing.expectEqual(s.out_offset.value, try ringEnd(alloc, bp));
+        if (clock.ms - 1000 < SessionStore.history_every_ms) {
+            try testing.expectEqual(first, try histEnd(alloc, hp));
+        }
+    }
+    // 270 s in: still the first history. At 300 s it is due again.
+    try testing.expectEqual(first, try histEnd(alloc, hp));
+    clock.ms += 30 * std.time.ms_per_s;
+    redraw(&store, s, &tick);
+    store.snapshotRingsWith(.when_due);
+    try testing.expectEqual(s.out_offset.value, try histEnd(alloc, hp));
+
+    // A volume pass never writes it; a checkpoint always does.
+    const second = try histEnd(alloc, hp);
+    redraw(&store, s, &tick);
+    store.snapshotRingsWith(.none);
+    try testing.expectEqual(second, try histEnd(alloc, hp));
+    redraw(&store, s, &tick);
+    store.snapshotRings();
+    try testing.expectEqual(s.out_offset.value, try histEnd(alloc, hp));
 }
 
 test "SessionStore reboot preload: an oversized history keeps the newest WHOLE lines" {

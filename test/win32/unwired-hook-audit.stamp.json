@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-16T02:00:45-08:00",
-    "commit":  "d02c90a1e",
+    "generated":  "2026-11-16T02:50:36-08:00",
+    "commit":  "103a97529",
     "uncommitted":  [
 
                     ],
@@ -855,7 +855,7 @@
                   "src/remote/agent/revoked_credential.zig":  "779f0bd15e7be3efe614e8152c253add3b6c6e3a9f365c69974da626f86f3b68",
                   "src/remote/agent/ring_snapshot.zig":  "43d927ca2996eeecafac57a50952fc4de4c0fb5b07bf1368d10eecd4a05f4234",
                   "src/remote/agent/server.zig":  "fd831ab74eb8425fb3987f108fda47502ccffeb042e31e07f0e5ffdcc07567e6",
-                  "src/remote/agent/session.zig":  "7bbe0c1e13bbcc26b65f7007c97232b7efdd69f3a3a077c80fea4e28314aa4b4",
+                  "src/remote/agent/session.zig":  "70920515aaacebc4ceb82e594229403517cd53383b824a13d49ffafc6eaf1775",
                   "src/remote/agent/session_meta.zig":  "e49d5f38c06cea3ca899917c134b8ff70aa39cb8123083450c4852d2e6b39891",
                   "src/remote/agent/sharing.zig":  "4ecfaef4c8e7cf9428531f82beee5b28bdb604ce3385507ddc858edf781ff29a",
                   "src/remote/agent/single_instance.zig":  "4a6ff886d1b8516b8b0e32b68c8865d07774319571be5130785c4346bb7041e4",
