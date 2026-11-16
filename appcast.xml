@@ -1428,5 +1428,27 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.55.1/Ghoztty-1.55.1-arm64.dmg" type="application/octet-stream" sparkle:edSignature="6jtq4RKUh+g0SRvr2oE8ob7i187lfiKJQ2WJGavPlg9F1HsMqfb/DiTm9cLGbJFxgBgpg25Z/y77qkJSfOvoAg==" length="27782016" />
         </item>
+        <item>
+            <title>Version 1.55.2</title>
+            <sparkle:version>1.55.2</sparkle:version>
+            <sparkle:shortVersionString>1.55.2</sparkle:shortVersionString>
+            <pubDate>Mon, 16 Nov 2026 16:42:48 +0000</pubDate>
+            <description>{
+  "version": "1.55.2",
+  "sections": [
+    { "title": "Restoring windows",
+      "items": [
+        { "title": "Collapsed panes stay collapsed after a relaunch", "text": "Quitting and reopening Ghoztty brings back panes you minimized into blades as blades, in either window mode, instead of laying every pane out side by side again. The pane you were in gets the caret back." },
+        { "title": "Colors, titles and names come back", "text": "A relaunch now also restores each pane's color and the titles you set, the window's tab color, and the window and pane names scripts address with --target." }
+      ] },
+    { "title": "Stacked panes",
+      "items": [
+        { "title": "Pane drags start at once", "text": "Dragging a pane by its grab handle shows its ghost right away even with many windows open; with 19 windows it could take seconds before." }
+      ] }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.55.2/Ghoztty-1.55.2-arm64.dmg" type="application/octet-stream" sparkle:edSignature="amlo1mdMv0Xr6RAWy9s1gHneG4IeYBLgsH12SQKewDjHWdrp5Ool2rAqXIhLPk1OPty+ohneaS3CK3WsuBGRCw==" length="27793038" />
+        </item>
     </channel>
 </rss>
