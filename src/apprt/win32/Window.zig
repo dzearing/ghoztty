@@ -5627,10 +5627,40 @@ fn setSidebarsDragActive(self: *Window, on: bool) void {
     self.app.hover_held = on;
     if (on) self.app.sidebar_hover_pane = null;
     log.info("pane hover held={}", .{on});
-    for (self.app.windows.items) |win| {
-        if (win.sidebar) |sb| sb.setDragActive(on);
+    if (on) {
+        // Only this window's sidebar joins the drag at its start (T3178, Mac
+        // 343b000e8). In all-windows mode every sidebar lists every window's
+        // panes, so arming all of them here relaid and repainted windows x
+        // panes rows before the drag could move; another window's sidebar
+        // joins on the first move over that window (`armSidebarUnder`).
+        if (self.sidebar) |sb| sb.setDragActive(true);
+        var armed: usize = 0;
+        for (self.app.windows.items) |win| {
+            if (win.sidebar) |sb| armed += @intFromBool(sb.drag_active);
+        }
+        log.info("pane drag sidebars armed={d} windows={d}", .{ armed, self.app.windows.items.len });
+    } else {
+        // Let go of every one the drag reached. An unarmed sidebar returns
+        // at once (`setDragActive` ignores a no-op), so this costs nothing
+        // for the windows the pointer never visited.
+        for (self.app.windows.items) |win| {
+            if (win.sidebar) |sb| sb.setDragActive(false);
+        }
     }
     for (self.app.windows.items) |win| win.updateHoverTints();
+}
+
+/// Bring the sidebar of the window under the pointer into the drag, the first
+/// time the pointer is over it (T3178, Mac `PaneDragSession.armSidebar(at:)`).
+/// True when a sidebar joined on this move: its drop well opened, so the
+/// caller re-reads that window's geometry before resolving against it.
+fn armSidebarUnder(win: *Window) bool {
+    const sb = win.sidebar orelse return false;
+    if (sb.drag_active) return false;
+    sb.setDragActive(true);
+    const h: usize = if (win.hwnd) |hw| @intFromPtr(hw) else 0;
+    log.info("pane drag sidebar joined hwnd={d}", .{h});
+    return true;
 }
 
 /// Will a stash drop into `dest` be HONOURED (T1844)? Stashing the last pane
@@ -5948,6 +5978,9 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
 
     var cands: [MAX_DROP_WINDOWS + 1]pane_drop.Candidate = undefined;
     var cand_windows: [MAX_DROP_WINDOWS + 1]*Window = undefined;
+    // Which `others` slot built each candidate (null: this window's own), so
+    // a sidebar that joins mid-move can have its window re-read (T3178).
+    var cand_other: [MAX_DROP_WINDOWS + 1]?usize = undefined;
     var n: usize = 0;
 
     if (dropCandidateFor(self, d.self_depth, &own_slots, &own_rects, &own_tabs, &own_stash, &own_list, &own_tiles, .{
@@ -5956,6 +5989,7 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
     })) |c| {
         cands[n] = c;
         cand_windows[n] = self;
+        cand_other[n] = null;
         n += 1;
     }
     // A list drag has one candidate, its own window (T2303).
@@ -5978,12 +6012,38 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
         )) |c| {
             cands[n] = c;
             cand_windows[n] = win;
+            cand_other[n] = i;
             n += 1;
         }
     }
 
     const origin = self.clientOrigin();
     const point: pane_drop.Point = .{ .x = x + origin.x, .y = y + origin.y };
+
+    // The window under the pointer joins the drag on the first move over it
+    // (T3178, Mac 343b000e8): its sidebar opens its drop well now, a move
+    // before the pointer can reach one of its rows, and its geometry is read
+    // again so this same move resolves against the opened well.
+    if (!d.list) {
+        if (pane_drop.windowUnder(point, cands[0..n])) |ci| {
+            if (cand_other[ci]) |i| {
+                const win = cand_windows[ci];
+                if (armSidebarUnder(win)) {
+                    if (dropCandidateFor(
+                        win,
+                        d.other_depth[i],
+                        &other_slots[i],
+                        &other_rects[i],
+                        &other_tabs[i],
+                        &other_stash[i],
+                        &other_list[i],
+                        &other_tiles[i],
+                        .{ .ids = &other_gap_ids[i], .dividers = &other_dividers[i] },
+                    )) |c| cands[ci] = c;
+                }
+            }
+        }
+    }
     // A strip has targets of its own (T2120): the slots of the row it is
     // folded into, and the screens' edges. Mac falls back to a pane's targets
     // when the row cannot be read, and so does this.

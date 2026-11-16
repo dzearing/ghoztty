@@ -1,10 +1,11 @@
 {
     "guard":  "radius-table",
     "script":  "test/win32/radius-table-audit.ps1",
-    "generated":  "2026-11-16T14:37:56-08:00",
-    "commit":  "2ebcf125c",
+    "generated":  "2026-11-16T15:20:56-08:00",
+    "commit":  "7ac23d04f",
     "uncommitted":  [
-                        "src/apprt/win32/workspace_host.zig"
+                        "src/apprt/win32/pane_drop.zig",
+                        "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "docs/design/win32-design-system.md":  "bb9f5610c7500ffc1240c8144cc3a2f73339a596d90418799ce29872c1962974",
@@ -211,7 +212,7 @@
                   "src/apprt/win32/pane_clip.zig":  "3ecfb24d06627fd4829de84ff030bb0b085cdd615757ea492624bdddcc92148f",
                   "src/apprt/win32/pane_clip_math.zig":  "5edf5126af539d7593f26ba7946774538268c4a9df21b4305db5c5e5dee26453",
                   "src/apprt/win32/pane_drag_ghost.zig":  "76b8876884de6afdb26c2d0b2866d22480f70fe793ca02dac18ff4f3aeef63fc",
-                  "src/apprt/win32/pane_drop.zig":  "2aeae6ba7faebfea92aeae7d0e02523b81836ebb215a18d4d8644d5dd40d56db",
+                  "src/apprt/win32/pane_drop.zig":  "0f1f597d7dbbd93bfd8808a15567a58eb228d19e3598b3a287f1c5bd6f4df2e7",
                   "src/apprt/win32/pane_elevation.zig":  "cb2ecde48d5d8dc4ede3f9ede5b5445a3b5709c46ab4abc686c8ebcc78459e08",
                   "src/apprt/win32/pane_gap.zig":  "2863e80b271647f817383b8fd320d58612a17fcbce5d4b46fa7fe117e812c3e0",
                   "src/apprt/win32/pane_grab_handle.zig":  "c88d26a4c72cb14f51081890cb915598da1115058c14df06bd0707c8989e1f95",
@@ -422,7 +423,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "00acba3849a025d6b16d07a8bc07142b4b662b50b70b7bfefd31c8c72673ef31",
-                  "src/apprt/win32/Window.zig":  "50d1d6b1b674d8c3575f108842f7644bb5c631c62bb1543ec99d05f38b86e7c7",
+                  "src/apprt/win32/Window.zig":  "754b086ca58ce7faed38f257654f648d85d1f98481d52e6360856844b55b4bd1",
                   "src/apprt/win32/window_active.zig":  "4076ebbfce81f4505a33e20f6e6da8f95cc82ec11130b6b3b35544d899efe535",
                   "src/apprt/win32/window_broadcast.zig":  "9aaf66d945d0899628ede661e9e40f04f55551342659448b62aee06b979b1e4e",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
@@ -433,7 +434,6 @@
                   "src/apprt/win32/WindowPresenter.zig":  "a870489b12b1401f20c50398d123393d10187f6a50ce0dde446923734fa50b27",
                   "src/apprt/win32/winrt_comp.zig":  "dd700de7f7ffba1de068560c8cabeb545a46eb0de0adb6c5d011df051d3fb4e7",
                   "src/apprt/win32/worker_pool.zig":  "f1ee62197c73dbbd6c21143089ffbce3768f4f2434a1997b5ec5a1b471d44c65",
-                  "src/apprt/win32/workspace_host.zig":  "b0fa84a3988d7814f26b012fe55a514ef356688ca6143817e78fe982e6328278",
                   "test/win32/lib/RadiusTableAudit.ps1":  "5318bf1f2556edcdafd90f5c7da8680d271f1012e597c612a59c56b91cf4f5fb",
                   "test/win32/lib/TypeRampAudit.ps1":  "73d6ed707cf50c96c71e3d3f2e4e61e9bb0b5b86d355aee62bfcc87034006a0d",
                   "test/win32/radius-table-audit.ps1":  "0813582a3dc8636ffef2f12b0e85e78be1db342eb23e90af04fb46328ba3ca66"

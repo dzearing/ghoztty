@@ -529,6 +529,24 @@ pub const TabHit = struct {
     index: usize,
 };
 
+/// Which candidate OWNS the point - the frontmost window that covers it at
+/// all, by the same rule `resolve` uses - as an index into `candidates`.
+///
+/// A pane drag brings a window's sidebar into the drag the first time the
+/// pointer is over that window (T3178, Mac 343b000e8): every sidebar lists
+/// every window's panes in all-windows mode, so arming them all at the
+/// drag's start redrew windows x panes rows before the drag could move. This
+/// is the "which window is the pointer over" half of that, kept here so it is
+/// the resolver's own ownership answer and not a second one.
+pub fn windowUnder(point: Point, candidates: []const Candidate) ?usize {
+    var best: ?usize = null;
+    for (candidates, 0..) |c, i| {
+        if (!windowHit(c, point)) continue;
+        if (best == null or c.z_order < candidates[best.?].z_order) best = i;
+    }
+    return best;
+}
+
 /// The swap rectangle inscribed in a pane.
 pub fn swapRect(rect: Rect, metrics: Metrics) Rect {
     const w = swapExtent(rect.width(), metrics);
@@ -1009,6 +1027,35 @@ test "Metrics.forScale scales Mac's point constants into pixels" {
     try testing.expectEqual(@as(i32, 35), Metrics.forScale(1.25).edge_band);
     try testing.expectEqual(@as(i32, 56), Metrics.forScale(2.0).edge_band);
     try testing.expectEqual(@as(i32, 88), Metrics.forScale(2.0).swap_minimum);
+}
+
+test "windowUnder names the frontmost window covering the point, or none (T3178)" {
+    const none = [_]PaneRect{};
+    const back: Candidate = .{
+        .window = 1,
+        .z_order = 2,
+        .content_rect = .{ .left = 0, .top = 40, .right = 1000, .bottom = 800 },
+        .frame_rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 800 },
+        .pane_rects = &none,
+    };
+    const front: Candidate = .{
+        .window = 2,
+        .z_order = 0,
+        .content_rect = .{ .left = 600, .top = 340, .right = 1400, .bottom = 900 },
+        .frame_rect = .{ .left = 600, .top = 300, .right = 1400, .bottom = 900 },
+        .pane_rects = &none,
+    };
+    // Listed back-first, so the answer must come from z_order, not position.
+    const cands = [_]Candidate{ back, front };
+    // Only the back window there.
+    try testing.expectEqual(@as(?usize, 0), windowUnder(.{ .x = 100, .y = 100 }, &cands));
+    // Both cover it: the front one owns it.
+    try testing.expectEqual(@as(?usize, 1), windowUnder(.{ .x = 700, .y = 500 }, &cands));
+    // A caption counts: the frame, not only the split area.
+    try testing.expectEqual(@as(?usize, 1), windowUnder(.{ .x = 1200, .y = 310 }, &cands));
+    // Over neither: no sidebar joins the drag.
+    try testing.expectEqual(@as(?usize, null), windowUnder(.{ .x = 5000, .y = 5000 }, &cands));
+    try testing.expectEqual(@as(?usize, null), windowUnder(.{ .x = 10, .y = 10 }, &.{}));
 }
 
 test "a point over no window at all makes a new window there" {

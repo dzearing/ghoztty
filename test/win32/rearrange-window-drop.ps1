@@ -29,7 +29,7 @@
 # point over another window is simply out of range. That out-of-range client
 # point is the whole mechanism under test, not a way around one.
 #
-# Five claims, over four app runs (each starts from a known pair of windows,
+# Six claims, over four app runs (each starts from a known pair of windows,
 # so no claim inherits the previous one's layout):
 #   A) dragging a pane onto another window's pane PREVIEWS the drop over that
 #      window, and releasing moves the pane there - same HWND, still running
@@ -47,6 +47,10 @@
 #   E) resting the dragged pane on ANOTHER window's background tab button for
 #      the dwell brings that tab up there, leaves the source tab alone, and the
 #      drop lands in the tab it opened (T1543)
+#   F) the drag's start arms only the SOURCE window's sidebar; the other
+#      window's sidebar joins on the first move over that window, once
+#      (T3178, Mac 343b000e8 - arming every sidebar at once relaid windows x
+#      panes rows before the drag could move). Read from the app's log.
 #
 # A positive control (ctrl+k clear_screen, the T55 pattern) runs first, so an
 # injection failure aborts instead of reading as a T1538 regression.
@@ -138,6 +142,16 @@ function Show-Boxes([string]$label, $boxes) {
         Write-Host ("      {0}: hwnd={1} x={2} y={3} w={4} h={5}" -f `
             $label, $b.Hwnd, $b.Left, $b.Top, $b.Width, $b.Height)
     }
+}
+
+# The app's stderr log, as a line count and as the lines after a count (T3178).
+function Get-ErrLogCount {
+    if (-not (Test-Path $errlog)) { return 0 }
+    return @(Get-Content $errlog).Count
+}
+function Get-ErrLogSince([int]$FromLine) {
+    if (-not (Test-Path $errlog)) { return @() }
+    return @(Get-Content $errlog | Select-Object -Skip $FromLine)
 }
 
 # NEVER wrap a unary-comma return in @(): the wrapper enumerates ONE level and
@@ -363,9 +377,27 @@ try {
     $dropX = $target.Right - ($edge + 40)
     $dropY = [int](($target.Top + $target.Bottom) / 2)
 
+    $markF = Get-ErrLogCount
     Assert (Move-Drag $a $grabX $grabY 'down') 'A: press on the source pane header delivered'
+    # Claim F (T3178, Mac 343b000e8): the drag's start brings only the SOURCE
+    # window's sidebar into it. A first move that stays inside the source
+    # window starts the drag; the other window's sidebar must not have joined.
+    Assert (Move-Drag $a ($grabX + 40) ($grabY + 60) 'move') 'F: a first move inside the source window delivered'
+    Start-Sleep -Milliseconds 500
+    if ($haveLog) {
+        $startLines = @(Get-ErrLogSince $markF)
+        $armedLine = @($startLines | Where-Object { $_ -match 'pane drag sidebars armed=(\d+) windows=(\d+)' }) | Select-Object -First 1
+        Write-Host "      drag start: $armedLine"
+        Assert ($armedLine -match 'armed=1 windows=2') 'F: the drag starts with one sidebar armed of two windows - the source window''s alone'
+        $earlyJoin = @($startLines | Where-Object { $_ -match "pane drag sidebar joined hwnd=$([int64]$b)(\D|$)" })
+        Assert ($earlyJoin.Count -eq 0) 'F: the other window''s sidebar has not joined while the pointer is still in the source window'
+    }
     Assert (Move-Drag $a $dropX $dropY 'move') 'A: move onto the other window delivered'
     Start-Sleep -Milliseconds 500
+    if ($haveLog) {
+        $joined = @(Get-ErrLogSince $markF | Where-Object { $_ -match "pane drag sidebar joined hwnd=$([int64]$b)(\D|$)" })
+        Assert ($joined.Count -eq 1) "F: the other window's sidebar joins the drag on the first move over that window, once (got $($joined.Count))"
+    }
     $preview = Get-PreviewRect $session.Pid
     Assert ($null -ne $preview) 'A: the drop into the other window is previewed'
     if ($preview) {
