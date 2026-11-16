@@ -329,7 +329,11 @@ shows the same view of it (see *Shared across windows*). Read before touching
   forgets them and the search.
 - Windows are in **the list's own order** — by name (Finder order; stable as
   focus moves) until a window or group is dragged or renamed (*Reordering
-  windows and groups* below) — and a
+  windows and groups* below). **Windows that share a name** (every new shell
+  is `~`) are in the order they were opened (`openedOrder`; a restore keeps
+  the saved layout's), so a new one lands at the end of its namesakes — by
+  their random ids it landed anywhere among them and the selection jumped
+  there (`SingleWindowModeTests.sameNamedWorkspacesKeepTheOrderTheyOpenedIn`) — and a
   window titled **`<project>: <worktree>`** is grouped under a collapsible,
   **32pt**
   **sticky** project header (a clear 6pt gap above and below its band —
@@ -419,6 +423,26 @@ shows the same view of it (see *Shared across windows*). Read before touching
   sidebar*). A window's × closes that window (that tab, in a tab
   group); a project's (or Ungrouped's) closes every window under it — while
   searching, the matching windows it shows and counts.
+
+## Hero mode
+
+A window in hero mode has no sidebar: hero gives it to the hero pane and its
+carousel (`PaneSidebarState.isSuppressed`, folded into `mode(windowWidth:)`
+as hidden — this window only, the shared hide/show flag untouched). It comes
+back as hero turns off. See [pane-style.md](pane-style.md).
+
+## Single-window mode
+
+With `macos-window-mode = single` ([window-modes.md](window-modes.md)) every
+row of the all-windows list (and every rail tile) is a **workspace** of the one
+window, and clicking one puts it on show in place — its layout, stash, focus
+and gradient, with the window's shade fading to its own — instead of raising
+another window (`bringForward`). `PaneRoster.controllers` is the workspaces
+(on show first, then most recently shown). Each workspace keeps its own
+sidebar state; a parked one's sidebar holds still and catches up as it comes
+on show (`windowDidUnpark`), and a clicked row's selection clears then, since
+the window never stops being key. Everything else here — folds, groups,
+order, +, ×, rename, drags — is the same, with "window" read as "workspace".
 
 ## Reordering windows and groups
 

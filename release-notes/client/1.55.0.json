@@ -1,0 +1,32 @@
+{
+  "version": "1.55.0",
+  "sections": [
+    { "title": "Single-window mode",
+      "items": [
+        { "title": "All your windows in one", "text": "Set `macos-window-mode = single` (Settings → Panes & Windows → Windows) and every window becomes a workspace inside one window. Click a window in the sidebar's all-windows list to switch to it in place — its layout, stashed panes and focus come back exactly as you left them, and the background fades to its color. Takes effect the next time Ghoztty starts." },
+        { "title": "Hidden workspaces rest", "text": "A workspace you are not looking at keeps running but stops drawing and gives back its graphics memory, and catches up the moment you switch to it." },
+        { "title": "Scripts see no difference", "text": "`ghoztty +list`, `--target`, `+split`, `+read`, `+send-keys`, `+stash` and `+close` treat each workspace as a window, and reach one you are not looking at without switching to it. `--focus` is what switches." },
+        { "title": "Sessions come back in either mode", "text": "Restored sessions return as workspaces in single-window mode and as windows otherwise, with the one you had in front back in front." }
+      ] },
+    { "title": "Windows",
+      "items": [
+        { "title": "Cmd-Shift-Up/Down walks your windows", "text": "Outside hero mode, Cmd-Shift-Up and Cmd-Shift-Down go to the previous and next window in the sidebar's list. (They used to jump between shell prompts; `jump_to_prompt` can still be bound to another key.)" },
+        { "title": "Snappier New Window", "text": "Cmd-N shows the new window right away instead of a beat later." },
+        { "title": "Close a window you just opened without a prompt", "text": "Cmd-N then Cmd-W no longer asks \"are you sure?\" — a shell you have not typed into yet closes straight away, even before its prompt appears." },
+        { "title": "New windows stay in order", "text": "Windows with the same name (every new shell is `~`) now stay in the order you opened them in the sidebar, so the selection no longer jumps around." }
+      ] },
+    { "title": "Hero mode",
+      "items": [
+        { "title": "More room for the hero", "text": "Hero mode hides the pane sidebar while it is on, and works with a single pane too." },
+        { "title": "A slimmer carousel", "text": "The carousel now starts 130 points wide. Change it with the new `macos-hero-carousel-width`, or keep sizing it by share of the window with `macos-hero-carousel-ratio`." }
+      ] },
+    { "title": "Stacked panes",
+      "items": [
+        { "title": "Minimized blades stay minimized", "text": "A pane you minimized into a blade no longer pops back out when a page in it grabs focus, or when Ghoztty relaunches." }
+      ] },
+    { "title": "Viewer panes",
+      "items": [
+        { "title": "Live reload keeps your place", "text": "Saving an HTML file you are viewing re-renders it without throwing you back to the top of the page." }
+      ] }
+  ]
+}

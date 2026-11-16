@@ -29,6 +29,11 @@ forward shows its current state at once — one catch-up, not a replay.
   not covered (`WindowCoverage`).
 - Live web pages in viewer panes need nothing from us: WebKit throttles a
   page's timers and animation frames in an occluded window itself.
+- **A parked workspace** (`macos-window-mode = single`) can never be seen: it
+  has no window. Its terminals are hidden, its viewers are out of the window
+  (page hidden, GIFs stopped, diff poll stopped), its sidebar holds still; on
+  show it catches up once. The window's activity is every workspace's. See
+  [window-modes.md](window-modes.md#parked-counts-as-hidden).
 
 ## Why AppKit's occlusion is not enough
 

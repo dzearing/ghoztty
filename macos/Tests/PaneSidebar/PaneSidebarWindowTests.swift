@@ -380,6 +380,9 @@ struct PaneSidebarWindowTests {
         controller.paneSidebarState.isHidden = true
         _ = await poll(timeout: 10) { controller.window?.isVisible == true }
         let window = try #require(controller.window)
+        // It measures drawn terminal text: drawing, whatever covers it
+        // (docs/reference/background-windows.md → Tests).
+        WindowInUse.setInUseForTesting(window, true)
         window.setContentSize(NSSize(width: 1200, height: 760))
         await settle(2.5)
         let views: [NSView] = [try #require(a.surfaceView), try #require(b.surfaceView), try #require(viewer.viewerView)]

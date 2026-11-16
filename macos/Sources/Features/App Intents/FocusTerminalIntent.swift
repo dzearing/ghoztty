@@ -27,7 +27,7 @@ struct FocusTerminalIntent: AppIntent {
             throw GhosttyIntentError.surfaceNotFound
         }
 
-        guard let controller = surfaceView.window?.windowController as? BaseTerminalController else {
+        guard let controller = BaseTerminalController.owner(of: surfaceView) else {
             return .result()
         }
 

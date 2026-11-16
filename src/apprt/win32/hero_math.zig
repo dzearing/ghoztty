@@ -42,10 +42,15 @@ pub fn clampRatio(ratio: f32) f32 {
 /// `HeroModeState.activate`): the configured `macos-hero-carousel-ratio`
 /// (clamped), unless the divider has been dragged in this tab, in which case
 /// the dragged share (`current`) stands.
-pub fn activationRatio(current: f32, configured: f64, resized: bool) f32 {
+///
+/// The key is optional since Mac 997b26535 (T3138): unset means "use
+/// `macos-hero-carousel-width`", a fixed-point carousel. Until T3131 brings
+/// that width to Windows, an unset ratio seeds the historical default share.
+pub fn activationRatio(current: f32, configured: ?f64, resized: bool) f32 {
     if (resized) return clampRatio(current);
-    if (!std.math.isFinite(configured)) return RATIO_DEFAULT;
-    return clampRatio(@floatCast(configured));
+    const c = configured orelse return RATIO_DEFAULT;
+    if (!std.math.isFinite(c)) return RATIO_DEFAULT;
+    return clampRatio(@floatCast(c));
 }
 
 /// Whether a ratio recorded in a session manifest marks a dragged divider
@@ -66,6 +71,9 @@ test "activationRatio seeds from config until the divider is dragged (T2590)" {
     try t.expectApproxEqAbs(RATIO_MAX, activationRatio(0.25, 0.9, false), 0.0001);
     try t.expectApproxEqAbs(RATIO_MIN, activationRatio(0.25, 0.01, false), 0.0001);
     try t.expectApproxEqAbs(RATIO_DEFAULT, activationRatio(0.3, std.math.nan(f64), false), 0.0001);
+    // Unset (the default since T3138): the default share, not the tab's.
+    try t.expectApproxEqAbs(RATIO_DEFAULT, activationRatio(0.4, null, false), 0.0001);
+    try t.expectApproxEqAbs(@as(f32, 0.4), activationRatio(0.4, null, true), 0.0001);
     // Resized: the dragged share stands, whatever the config says.
     try t.expectApproxEqAbs(@as(f32, 0.33), activationRatio(0.33, 0.5, true), 0.0001);
     try t.expectApproxEqAbs(RATIO_MAX, activationRatio(0.8, 0.5, true), 0.0001);

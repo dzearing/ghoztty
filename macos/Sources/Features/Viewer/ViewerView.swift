@@ -244,6 +244,9 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// torn down through any layout passes that follow.
     private var isDetached = false
 
+    /// The offset `reloadKeepingScroll` reapplies when its reload lands.
+    private var scrollToRestore: CGPoint?
+
     /// The native image surface, mounted only while `mode` is `.image`.
     private var imageSurface: ViewerImageSurface?
     /// Set when the current image mode could not decode its file, so the
@@ -2834,6 +2837,17 @@ final class ViewerView: NSView, Codable, ObservableObject {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         inUse.window = window
+        // Out of its window while still in its tree — a parked workspace in
+        // single-window mode — a working-tree diff stops polling at once;
+        // back in it, it catches up and polls again. (Its timer stops itself
+        // with no window and nothing else restarts it.)
+        if window == nil {
+            stopWatchingDiff()
+        } else if !isDetached, isDiffMode, diffRefreshTimer == nil,
+                  (resolvedDiffSpec ?? diffSpec)?.tracksWorkingTree == true,
+                  !diffLoader.isListing {
+            refreshDiff(preservingSelection: true)
+        }
     }
 
     private func stopWatchingDiff() {
@@ -3270,7 +3284,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
         if showingTemplatePage || !pageLoaded {
             load()
         } else {
-            webView.reload()
+            reloadKeepingScroll()
         }
     }
 
@@ -3427,7 +3441,19 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// handled so WebKit never sees it — no beep, no re-injection. The monitor
     /// still performs the actual navigation.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if Self.isHeroNavChord(event) { return true }
+        if Self.isHeroNavChord(event) {
+            // Hero mode navigates with it (`HeroKeyNavigator`): swallow it so
+            // WebKit never sees it. Otherwise it is `goto_window`, which a
+            // terminal reaches through its keybind and a focused viewer has
+            // no way to: switch windows here. Unfocused, leave it alone —
+            // this is offered to every view in the window, and swallowing
+            // it here took the chord from the focused terminal.
+            let controller = BaseTerminalController.owner(of: self)
+            if controller?.heroModeState.isActive == true { return true }
+            guard paneHoldsFocus else { return super.performKeyEquivalent(with: event) }
+            BaseTerminalController.gotoWindow(offset: event.specialKey == .upArrow ? -1 : 1)
+            return true
+        }
         // Whatever is focused INSIDE this viewer pane — the address field or the
         // web page itself — must get the standard editing chords (Cmd-C/V/X/A)
         // so the pane behaves like a browser. They otherwise don't: Ghoztty
@@ -3868,7 +3894,26 @@ extension ViewerView: WKNavigationDelegate {
             == rhs.resolvingSymlinksInPath().standardizedFileURL
     }
 
+    /// Re-fetch an HTML file and put the reader back where they were. WebKit
+    /// used to restore the scroll offset across `reload()` on its own; it no
+    /// longer does for a local file, and every save threw the page back to
+    /// the top. The offset is read first and reapplied when the reload lands
+    /// (`didFinish`), on top of whatever WebKit does.
+    private func reloadKeepingScroll() {
+        webView.evaluateJavaScript("[window.scrollX, window.scrollY]") { [weak self] value, _ in
+            guard let self else { return }
+            if let offset = value as? [NSNumber], offset.count == 2 {
+                self.scrollToRestore = CGPoint(x: offset[0].doubleValue, y: offset[1].doubleValue)
+            }
+            self.webView.reload()
+        }
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if let offset = scrollToRestore {
+            scrollToRestore = nil
+            webView.evaluateJavaScript("window.scrollTo(\(offset.x), \(offset.y))", completionHandler: nil)
+        }
         // A fresh navigation can drop pageZoom; reapply so keyboard zoom sticks
         // as the user follows links / types addresses within the pane (all
         // modes). Cheap no-op at 100%.

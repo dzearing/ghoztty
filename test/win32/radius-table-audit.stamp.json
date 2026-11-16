@@ -1,11 +1,10 @@
 {
     "guard":  "radius-table",
     "script":  "test/win32/radius-table-audit.ps1",
-    "generated":  "2026-11-15T17:57:50-08:00",
-    "commit":  "3d49e5294",
+    "generated":  "2026-11-15T19:17:35-08:00",
+    "commit":  "7cfc6ad95",
     "uncommitted":  [
-                        "src/apprt/win32/inherit_cwd.zig",
-                        "src/apprt/win32/Window.zig"
+                        "src/apprt/win32/hero_math.zig"
                     ],
     "files":  {
                   "docs/design/win32-design-system.md":  "bb9f5610c7500ffc1240c8144cc3a2f73339a596d90418799ce29872c1962974",
@@ -137,7 +136,7 @@
                   "src/apprt/win32/gutter_bar_dc.zig":  "01173ddfd1b088710c95a3ac53ef549e3d944b0fb35df79c7760174c8b87ec4d",
                   "src/apprt/win32/held_title.zig":  "4f983eaa6c37d9e93eb33e6e9cfb15ea837b41e7d719a9ba300ff235a1ab7f5c",
                   "src/apprt/win32/help_tooltip.zig":  "ccdce010f5eaf4ac4bec702bc2e8eb33210978f3ac2c09e7dba2047816afc855",
-                  "src/apprt/win32/hero_math.zig":  "a4a73783e51e9f5b676d7b2cfe8eebda198924822c90b639484ea199d109b8d6",
+                  "src/apprt/win32/hero_math.zig":  "289e3cf650a6dbcc14f67249ae02b2cd688716343122b69eeb126005477acf30",
                   "src/apprt/win32/hero_snap_schedule.zig":  "c1eb3f178e825a6f7003d0e4cb92bc32492fe91aab289390f970e5b15ac4883f",
                   "src/apprt/win32/HeroCarousel.zig":  "0487283f4c93218bb2034a3b59ca6a154dc31c212a300a29fe250130db987c2b",
                   "src/apprt/win32/hidden_poll.zig":  "a991df6af8dcb5c9c79f64fb50a37f02989d03124b172d55b14831cce4c2e03c",

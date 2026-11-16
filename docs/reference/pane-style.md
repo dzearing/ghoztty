@@ -86,13 +86,25 @@ banner card `PaneGlass.bannerTint` 25%.
   the mock's icon set drawn natively (`PaneSidebarSymbol`), not SF Symbols.
   Folding a window or project group animates.
 - **Hero mode** shows its pane as the same glass card — the hero container
-  paints no fill of its own on glass (`HeroPaneContainer.isGlass`). The
-  carousel beside it starts at **`macos-hero-carousel-ratio`** of the window
-  (default 0.25, clamped 0.1–0.6 — `HeroModeState.clampedCarouselRatio`;
-  config read as `Ghostty.Config.macosHeroCarouselRatio`) each time hero
-  turns on, until its divider is dragged in that window: from then on the
-  window keeps the dragged share (`HeroModeState.isCarouselResized`). Tests:
-  `HeroCarouselRatioTests`.
+  paints no fill of its own on glass (`HeroPaneContainer.isGlass`). It
+  turns on over a single pane too, and the window's pane sidebar is out of
+  the window while it is on (`PaneSidebarState.isSuppressed` — that window
+  only; the shared hide/show flag is untouched). The carousel beside it
+  starts **`macos-hero-carousel-width`** wide (points, default 130, clamped
+  80–600, never more than 0.6 of the window — `HeroModeState.carouselWidth(in:)`),
+  or at **`macos-hero-carousel-ratio`** of the window when that is set
+  (unset by default; clamped 0.1–0.6), each time hero turns on, until its
+  divider is dragged in that window: from then on the window keeps the
+  dragged share (`HeroModeState.isCarouselResized`; a drag may go down to
+  0.05, so a 130pt carousel is not snapped wider). Tests:
+  `HeroCarouselRatioTests`, `SingleWindowModeTests.heroModeTurnsOnOverOnePaneWithoutTheSidebar`.
+- **Cmd-Shift-Up/Down**: in hero mode, the previous/next pane
+  (`HeroKeyNavigator`, which takes the chord first, while there are two or
+  more); otherwise `goto_window` previous/next — the default macOS binding
+  here (upstream's is `jump_to_prompt`) — which walks the windows in the
+  pane sidebar's all-windows order, wrapping
+  (`BaseTerminalController.gotoWindow`; workspaces in single-window mode). A
+  viewer pane handles the chord only when it has focus (`ViewerView.performKeyEquivalent`).
 - **A stacked row has no solid cards**: a tucked card is a card of the
   strip's size, so nothing lies under a card on show and every card and strip
   is glass (see [stacked-panes.md](stacked-panes.md)).

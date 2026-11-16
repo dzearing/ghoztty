@@ -260,6 +260,20 @@ config_conditional_state: configpkg.ConditionalState,
 /// This is used to determine if we need to confirm, hold open, etc.
 child_exited: bool = false,
 
+/// This surface started its own default shell: no explicit command, and no
+/// existing session re-attached (a restored agent session can be mid-work).
+/// Until the user sends it input (`user_input_sent`) nothing they started
+/// can be running in it, so closing it needs no confirmation
+/// (`needsConfirmQuit`) — even before the shell has drawn its first prompt,
+/// which is when `cursorIsAtPrompt` would still say "busy". Opening a window
+/// and closing it at once must not ask "are you sure?".
+fresh_default_shell: bool = false,
+
+/// Input the user sent this surface: a key that reached the pty, typed or
+/// pasted text, or `+send-keys` (raw or bracketed writes). Terminal replies to
+/// queries the program makes are not input.
+user_input_sent: bool = false,
+
 /// We maintain our focus state and assume we're focused by default.
 /// If we're not initially focused then apprts can call focusCallback
 /// to let us know.
@@ -956,6 +970,20 @@ pub fn init(
         break :explicit config.@"_command-explicit";
     };
 
+    // A fresh default shell (see `fresh_default_shell`). `command` alone
+    // cannot say so here: `Config.finalize` fills the default shell into it
+    // when nothing asked (Windows always does), so `command == null` would
+    // never hold. `command_explicit` is the answer to "did anybody ask".
+    // A remote/agent backend forwards a command only when it was explicitly
+    // requested (`wait-after-command`, or a local-agent explicit command,
+    // below) and a re-attached session can be mid-work.
+    self.fresh_default_shell = if (rt_surface.remoteBackend()) |rb|
+        rb.session_id == null and !(command != null and
+            (config.@"wait-after-command" or
+                (rb.local_shell_integration and command_explicit)))
+    else
+        command == null or (!command_explicit and !config.@"wait-after-command");
+
     // Start our IO implementation
     // This separate block ({}) is important because our errdefers must
     // be scoped here to be valid.
@@ -1618,6 +1646,12 @@ pub fn needsConfirmQuit(self: *Surface) bool {
     // If the child has exited, then our process is certainly not alive.
     // We check this first to avoid the locking overhead below.
     if (self.child_exited) return false;
+
+    // A default shell the user has sent nothing to is running nothing they
+    // started: close it without asking, even before its first prompt
+    // (`fresh_default_shell`). `always` still asks.
+    if (self.fresh_default_shell and !self.user_input_sent and
+        self.config.confirm_close_surface != .always) return false;
 
     // Check the configuration for confirming close behavior.
     return switch (self.config.confirm_close_surface) {
@@ -3918,6 +3952,7 @@ pub fn keyCallback(
         }
 
         errdefer write_req.deinit();
+        if (event.action != .release) self.user_input_sent = true;
         self.queueIo(switch (write_req) {
             .small => |v| .{ .write_small = v },
             .stable => |v| .{ .write_stable = v },
@@ -4407,6 +4442,7 @@ fn encodeKeyOpts(self: *const Surface) input.key_encode.Options {
 /// control character stripping. Used by +send-keys.
 pub fn writePtyRaw(self: *Surface, data: []const u8) !void {
     if (data.len == 0) return;
+    self.user_input_sent = true;
 
     self.queueIo(try termio.Message.writeReq(
         self.alloc,
@@ -4452,6 +4488,7 @@ pub fn pasteIsBracketed(self: *Surface) bool {
 
 pub fn writePtyBracketed(self: *Surface, data: []const u8) !void {
     if (data.len == 0) return;
+    self.user_input_sent = true;
 
     const bracketed = self.pasteIsBracketed();
 
@@ -7480,6 +7517,7 @@ fn completeClipboardPaste(
     allow_unsafe: bool,
 ) !void {
     if (data.len == 0) return;
+    self.user_input_sent = true;
 
     const encode_opts: input.paste.Options = encode_opts: {
         self.renderer_state.mutex.lock();

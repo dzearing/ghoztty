@@ -172,6 +172,11 @@ class BaseTerminalController: NSWindowController,
         }
     }
 
+    /// Single-window mode: the shade of the workspace that was on show
+    /// before this one, fading out over this one's (`PaneDeskBackground`).
+    /// Set as the workspace comes on show, cleared once the fade is done.
+    @Published var deskEntrance: PaneDeskEntrance?
+
     /// The desk palette to draw, for the current terminal theme.
     func deskPalette(isLight: Bool) -> PaneDeskPalette {
         deskVariant?.palette(isLight: isLight) ?? .ocean(isLight: isLight)
@@ -198,6 +203,7 @@ class BaseTerminalController: NSWindowController,
     /// not be collapsed then. It is, once the window is alone again.
     private var collapseForcedTabBarWhenAlone = false
     private var heroSelectionCancellable: AnyCancellable?
+    private var heroActiveCancellable: AnyCancellable?
 
     /// This can be set to show/hide the command palette.
     @Published var commandPaletteIsShowing: Bool = false
@@ -216,6 +222,23 @@ class BaseTerminalController: NSWindowController,
 
     /// True when any surface in this controller currently has an active bell.
     @Published private(set) var bell: Bool = false
+
+    /// The most urgent activity of this window's panes (`needs_input` >
+    /// `busy` > `idle`). Kept here as well as on the window: a parked
+    /// workspace (single-window mode) has no window, and the one window
+    /// reports every workspace's (`WorkspaceHost.refreshWindowActivity`).
+    @Published private(set) var activityState: Ghostty.ActivityState = .idle
+
+    /// A workspace that is not on show in single-window mode: it has no
+    /// window (`window` is nil), its content is kept off screen, and its
+    /// terminals do not draw. Never true in `separate` mode, nor for the
+    /// Quick Terminal. See `WorkspaceHost`.
+    var isParked: Bool { false }
+
+    /// The title this window would show now, kept while it has no window to
+    /// show it in (a parked workspace) so `+list` and AppleScript still read
+    /// it (`currentWindowTitle`).
+    private var titleWithoutWindow: String?
 
     /// Whether the terminal surface should focus when the mouse is over it.
     var focusFollowsMouse: Bool {
@@ -484,6 +507,25 @@ class BaseTerminalController: NSWindowController,
 
     private static var _nextWindowId: Int = 0
 
+    /// Where this window comes in the order windows were opened: how the
+    /// all-windows list orders windows that share a name
+    /// (`PaneSidebarWindowGrouping.sections`). A restore sets it from the
+    /// saved layout's order, so a relaunch keeps it.
+    var openedOrder: Int = BaseTerminalController.reserveOpenedOrders(1)
+
+    private static var nextOpenedOrder = 0
+
+    /// `count` consecutive places in the opened order; returns the first.
+    static func reserveOpenedOrders(_ count: Int) -> Int {
+        defer { nextOpenedOrder += count }
+        return nextOpenedOrder
+    }
+
+    /// `openedOrder` by sidebar window id, for the all-windows list.
+    static func openedOrders(_ controllers: [BaseTerminalController]) -> [UUID: Int] {
+        Dictionary(controllers.map { ($0.paneSidebarState.windowID, $0.openedOrder) }, uniquingKeysWith: min)
+    }
+
     /// Mint the next auto window name ("window-1", "window-2", …).
     static func mintWindowName() -> String {
         _nextWindowId += 1
@@ -528,7 +570,8 @@ class BaseTerminalController: NSWindowController,
     /// The window's title as of now, including one held back while the
     /// window is hidden. What `+list` and AppleScript report.
     var currentWindowTitle: String {
-        pendingWindowTitle?.title ?? window?.title ?? ""
+        if isParked { return titleWithoutWindow ?? "" }
+        return pendingWindowTitle?.title ?? window?.title ?? ""
     }
 
     /// The time that undo/redo operations that contain running ptys are valid for.
@@ -714,6 +757,12 @@ class BaseTerminalController: NSWindowController,
             .sink { [weak self] newIndex in
                 self?.heroSelectionDidChange(to: newIndex)
             }
+        // Hero mode has the window to itself: no pane sidebar beside it.
+        heroActiveCancellable = heroModeState.$isActive
+            .removeDuplicates()
+            .sink { [weak self] active in
+                self?.paneSidebarState.isSuppressed = active
+            }
 
         center.addObserver(
             self,
@@ -725,6 +774,16 @@ class BaseTerminalController: NSWindowController,
             selector: #selector(ghosttyDidPresentTerminal(_:)),
             name: Ghostty.Notification.ghosttyPresentTerminal,
             object: nil)
+
+        // The pane sidebar redraws for another window's change only while
+        // this one is in use (`PaneSidebarState.isLive`): key — or, with
+        // the app in the background, frontmost. A parked workspace never is.
+        paneSidebarState.isLive = { [weak self] in
+            guard let self else { return true }
+            if self.isParked { return false }
+            guard self.isWindowLoaded, let window = self.window else { return true }
+            return window.isKeyWindow || (!NSApp.isActive && NSApp.orderedWindows.first === window)
+        }
 
         // Listen for local events that we need to know of outside of
         // single surface handlers.
@@ -1221,8 +1280,11 @@ class BaseTerminalController: NSWindowController,
         // Check if target surface is in our tree
         guard surfaceTree.contains(view) else { return }
 
-        // Move focus to the target surface and activate the window/app
+        // Move focus to the target surface and activate the window/app. A
+        // parked workspace is put on show first: its pane has no window to
+        // take focus in until then.
         DispatchQueue.main.async {
+            if self.isParked { self.bringForward() }
             Ghostty.moveFocus(to: view)
             view.window?.makeKeyAndOrderFront(nil)
             if !NSApp.isActive {
@@ -1311,7 +1373,7 @@ class BaseTerminalController: NSWindowController,
         if heroModeState.isActive {
             let oldLeaves = from.visibleLeaves
             let newLeaves = to.visibleLeaves
-            if newLeaves.count <= 1 {
+            if newLeaves.isEmpty {
                 heroModeState.deactivate()
             } else {
                 let oldSet = Set(oldLeaves.map { ObjectIdentifier($0) })
@@ -1965,7 +2027,7 @@ class BaseTerminalController: NSWindowController,
 
         // Move focus to our window. Importantly this ensures that if we click the
         // reset zoom button in a tab bar of an unfocused tab that we become focused.
-        window?.makeKeyAndOrderFront(nil)
+        bringForward()
 
         // Ensure focus stays on the target surface. We lose focus when we do
         // this so we need to grab it again.
@@ -2006,15 +2068,16 @@ class BaseTerminalController: NSWindowController,
             // Hero mode is over the panes on screen; stashed ones were put
             // away on purpose.
             let leaves = surfaceTree.visibleLeaves
-            guard leaves.count > 1 else { return }
+            guard !leaves.isEmpty else { return }
 
             let focusedIndex = leaves.firstIndex(of: pane) ?? 0
             heroModeState.activate(
                 focusedIndex: focusedIndex, leafCount: leaves.count,
-                carouselRatio: ghostty.config.macosHeroCarouselRatio)
+                carouselRatio: ghostty.config.macosHeroCarouselRatio,
+                carouselWidth: ghostty.config.macosHeroCarouselWidth)
         }
 
-        window?.makeKeyAndOrderFront(nil)
+        bringForward()
     }
 
     // MARK: Rearrange Mode
@@ -2026,7 +2089,7 @@ class BaseTerminalController: NSWindowController,
         } else {
             enterRearrangeModeIfNeeded()
         }
-        window?.makeKeyAndOrderFront(nil)
+        bringForward()
     }
 
     /// Enter rearrange mode, if it is not already on.
@@ -2172,7 +2235,7 @@ class BaseTerminalController: NSWindowController,
         guard surfaceTree.contains(target) else { return }
 
         // Bring the window to front and focus the surface.
-        window?.makeKeyAndOrderFront(nil)
+        bringForward()
 
         // We use a small delay to ensure this runs after any UI cleanup
         // (e.g., command palette restoring focus to its original surface).
@@ -2254,8 +2317,6 @@ class BaseTerminalController: NSWindowController,
     }
 
     func applyTitleToWindow() {
-        guard let window else { return }
-
         // The tab-level title: the user's tab rename if set, else the
         // focused pane's computed title.
         var tabTitle: String
@@ -2272,9 +2333,10 @@ class BaseTerminalController: NSWindowController,
         let windowOverride = effectiveWindowTitleOverride
         var title = windowOverride ?? tabTitle
 
-        if let termWindow = window as? TerminalWindow,
-           termWindow.activityState != .idle {
-            let suffix = " (\(termWindow.activityState.displayLabel))"
+        // This window's own panes' activity — not the window's, which in
+        // single-window mode is every workspace's.
+        if activityState != .idle {
+            let suffix = " (\(activityState.displayLabel))"
             title += suffix
             tabTitle += suffix
         }
@@ -2287,6 +2349,13 @@ class BaseTerminalController: NSWindowController,
         // showing each tab's own title. An empty tab title restores the
         // default behavior of following `window.title`.
         let tab = windowOverride != nil ? tabTitle : ""
+
+        guard !isParked else {
+            titleWithoutWindow = title
+            return
+        }
+        titleWithoutWindow = nil
+        guard let window else { return }
 
         // No one can see this window: hold the title back (see
         // `hiddenWindowTitleInterval`). A window's first title always lands.
@@ -2647,6 +2716,20 @@ class BaseTerminalController: NSWindowController,
         }
     }
 
+    /// Single-window mode: the fullscreen handler belongs to the window, so
+    /// it goes with the window from workspace to workspace.
+    func takeFullscreenStyle() -> FullscreenStyle? {
+        let style = fullscreenStyle
+        fullscreenStyle = nil
+        return style
+    }
+
+    func giveFullscreenStyle(_ style: FullscreenStyle?) {
+        var style: FullscreenStyle? = style ?? window.flatMap { NativeFullscreen($0) }
+        style?.delegate = self
+        fullscreenStyle = style
+    }
+
     func fullscreenDidChange() {
         guard let fullscreenStyle else { return }
 
@@ -2731,22 +2814,10 @@ class BaseTerminalController: NSWindowController,
     override func windowDidLoad() {
         super.windowDidLoad()
 
-        // The pane sidebar redraws for another window's change only while
-        // this one is in use (`PaneSidebarState.isLive`): key — or, with
-        // the app in the background, frontmost.
-        paneSidebarState.isLive = { [weak self] in
-            guard let window = self?.window else { return true }
-            return window.isKeyWindow || (!NSApp.isActive && NSApp.orderedWindows.first === window)
-        }
-
-        // Setup our undo manager.
-
         // Everything beyond here is setting up the window
         guard let window else { return }
 
-        firstResponderObservation = window.observe(\.firstResponder) { [weak self] _, _ in
-            MainActor.assumeIsolated { self?.publishFocusedPane() }
-        }
+        observeFirstResponder(of: window)
 
         // We always initialize our fullscreen style to native if we can because
         // initialization sets up some state (i.e. observers). If its set already
@@ -2763,6 +2834,14 @@ class BaseTerminalController: NSWindowController,
         // case it was set on the controller before the window finished loading.
         if let remoteMachine, let termWindow = window as? TerminalWindow {
             termWindow.remoteMachine = remoteMachine
+        }
+    }
+
+    /// Follow `window`'s first responder (nil: stop). A workspace hands the
+    /// window on in single-window mode, and takes it back.
+    func observeFirstResponder(of window: NSWindow?) {
+        firstResponderObservation = window?.observe(\.firstResponder) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.publishFocusedPane() }
         }
     }
 
@@ -2834,12 +2913,9 @@ class BaseTerminalController: NSWindowController,
     /// so what is iterated above is the tree as it was before the last pane
     /// left.
     private func isAliveInAnotherWindow(_ pane: PaneView) -> Bool {
-        for window in NSApp.windows {
-            guard let controller = window.windowController as? BaseTerminalController,
-                  controller !== self, !controller.windowHasClosed else { continue }
-            if controller.surfaceTree.contains(where: { $0 === pane }) { return true }
+        Self.everyController.contains { controller in
+            controller !== self && controller.surfaceTree.contains(where: { $0 === pane })
         }
-        return false
     }
 
     /// True once this controller's window has closed. A closed window is
@@ -2874,12 +2950,19 @@ class BaseTerminalController: NSWindowController,
 
     func windowWillClose(_ notification: Notification) {
         guard let window else { return }
+        didClose(window: window)
+    }
+
+    /// Everything a window's close means for what it holds, whether it had
+    /// a window of its own (`windowWillClose`) or was a parked workspace
+    /// closed with none (`window` nil; single-window mode).
+    func didClose(window: NSWindow?) {
         // Not while a confirmation sheet is up: AppKit announces the close
         // even then, but the sheet holds the window open, still waiting to
         // be answered (`+close` reports it, `+close --force` takes it down).
         // Calling that window closed hid it from the very commands that can
         // deal with it.
-        windowHasClosed = window.attachedSheet == nil
+        windowHasClosed = window?.attachedSheet == nil
 
         // A closed window is freed once its close can no longer be undone,
         // and its terminals with it. If something still holds the window by
@@ -2965,13 +3048,9 @@ class BaseTerminalController: NSWindowController,
                 // window), so the siblings can't be found through it.
                 // Refresh every other persistent window instead; the sync
                 // is a no-op for entries whose snapshot didn't change.
-                for other in NSApp.windows {
-                    if let otherController =
-                        other.windowController as? BaseTerminalController,
-                        otherController !== self,
-                        otherController.sessionLayoutEntryID != nil {
-                        SessionLayoutManifest.shared.scheduleSync(otherController)
-                    }
+                for otherController in Self.everyController
+                where otherController !== self && otherController.sessionLayoutEntryID != nil {
+                    SessionLayoutManifest.shared.scheduleSync(otherController)
                 }
 
                 // Non-destructive agent upgrade (idle trigger): closing the last
@@ -3008,10 +3087,10 @@ class BaseTerminalController: NSWindowController,
         // I don't know if this is required anymore. We previously had a ref cycle between
         // the view and the window so we had to nil this out to break it but I think this
         // may now be resolved. We should verify that no memory leaks and we can remove this.
-        window.contentView = nil
+        window?.contentView = nil
 
         // Make sure we clean up all our undos
-        window.undoManager?.removeAllActions(withTarget: self)
+        (window?.undoManager ?? undoManager)?.removeAllActions(withTarget: self)
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
@@ -3082,7 +3161,11 @@ class BaseTerminalController: NSWindowController,
     /// half each drew every frame of its output into targets no one looks
     /// at. Runs on every tree change too (`surfaceTreeDidChange`), so a pane
     /// stashed, brought back or moved in starts out right.
-    private func updateSeen() {
+    func updateSeen() {
+        guard !isParked else {
+            for view in surfaceTree { view.surfaceView?.setRendererVisible(false) }
+            return
+        }
         guard let window else { return }
         let visible = WindowInUse.isOnScreen(window)
         let stashed = Set(surfaceTree.stashed)
@@ -4299,9 +4382,12 @@ extension BaseTerminalController {
         .sink { [weak self] newState in
             guard let self else { return }
 
-            let previousState = (self.window as? TerminalWindow)?.activityState ?? .idle
+            let previousState = self.activityState
+            self.activityState = newState
 
-            if let termWindow = self.window as? TerminalWindow {
+            if let host = self.workspaceHost {
+                host.refreshWindowActivity()
+            } else if let termWindow = self.window as? TerminalWindow {
                 termWindow.activityState = newState
             }
 

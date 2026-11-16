@@ -230,12 +230,15 @@ enum SettingsPages {
                     ("remember", "Same as the last window"), ("expanded", "Expanded"), ("collapsed", "Collapsed to a rail"), ("hidden", "Hidden"),
                 ])),
             ]),
+            SettingsSection("Windows", footer: "Takes effect the next time Ghoztty starts.", [
+                SettingRow("macos-window-mode", "Open windows", .segmented([("separate", "Each in its own window"), ("single", "All in one window")])),
+            ]),
             SettingsSection("Stacked panes", [
                 SettingRow("macos-pane-min-width", "Stack panes narrower than", .stepper(min: 120, max: 800, step: 5, unit: "pt")),
                 SettingRow("macos-pane-min-height", "Stack panes shorter than", .stepper(min: 80, max: 600, step: 5, unit: "pt")),
             ]),
             SettingsSection("Hero layout", [
-                SettingRow("macos-hero-carousel-ratio", "Carousel width", .slider(min: 0.1, max: 0.6, step: 0.05)),
+                SettingRow("macos-hero-carousel-width", "Carousel width", .stepper(min: 80, max: 600, step: 10, unit: "pt")),
             ]),
             SettingsSection("New windows", [
                 SettingRow("maximize", "Open windows filling the screen", .toggle),

@@ -195,6 +195,12 @@ final class SessionLayoutManifest {
         /// The window's own gradient (`--color=random` in the elevated pane
         /// style), as its seed. Optional/additive: nil is the default desk.
         var deskVariant: PaneDeskVariant? = nil
+        /// The window in front when this was written: the main window in
+        /// `separate` mode, the workspace on show in single-window mode.
+        /// Restore brings it back last, so it is in front again (on show)
+        /// in either mode. True or absent (an older manifest: restored in
+        /// manifest order, as before).
+        var frontmost: Bool? = nil
         /// The rows the user collapsed into blades and the focus history
         /// (`PaneStackState.Persisted`, panes by leaf position), so a relaunch
         /// keeps every blade a blade. Optional/additive: older manifests
@@ -350,6 +356,7 @@ final class SessionLayoutManifest {
         paneSidebarOrder: [UUID]? = nil,
         paneSidebarWindowID: UUID? = nil,
         deskVariant: PaneDeskVariant?? = nil,
+        frontmost: Bool? = nil,
         paneStack: PaneStackState.Persisted?? = nil
     ) {
         lock.lock()
@@ -361,6 +368,7 @@ final class SessionLayoutManifest {
         if let paneSidebarOrder { entry.paneSidebarOrder = paneSidebarOrder }
         if let paneSidebarWindowID { entry.paneSidebarWindowID = paneSidebarWindowID }
         if let deskVariant { entry.deskVariant = deskVariant }
+        if let frontmost { entry.frontmost = frontmost ? true : nil }
         if let paneStack { entry.paneStack = paneStack }
         if let frame { entry.frame = frame }
         entry.titleOverride = titleOverride
@@ -606,9 +614,8 @@ final class SessionLayoutManifest {
     @MainActor
     func syncAllTrackedNow() {
         var synced = Set<UUID>()
-        for window in NSApplication.shared.windows {
-            guard let controller = window.windowController as? BaseTerminalController,
-                  let entryID = controller.sessionLayoutEntryID,
+        for controller in BaseTerminalController.everyController {
+            guard let entryID = controller.sessionLayoutEntryID,
                   synced.insert(entryID).inserted
             else { continue }
             syncEntry(controller)
@@ -724,6 +731,11 @@ final class SessionLayoutManifest {
         var frame: Frame?
         var tabGroupID: UUID?
         var tabIndex = 0
+        // A parked workspace (single-window mode) is the size of the one
+        // window, which it will have when shown.
+        if controller.isParked, let window = WorkspaceHost.shared.window {
+            frame = Frame(window.frame)
+        }
         if let window = controller.window {
             frame = Frame(window.frame)
             // A closed tab can linger in `tabGroup.windows` until AppKit
@@ -758,7 +770,26 @@ final class SessionLayoutManifest {
             paneSidebarOrder: controller.paneSidebarPersistedOrder,
             paneSidebarWindowID: controller.paneSidebarState.windowID,
             deskVariant: .some(controller.deskVariant),
+            frontmost: Self.isFrontmost(controller),
             paneStack: .some(controller.persistedPaneStack))
+    }
+
+    /// The restore order of the manifest's windows (each a tab group's
+    /// entries, or one): as written, but the one that was in front last, so
+    /// it ends in front — on show in single-window mode. Pure.
+    static func frontmostLast(_ groups: [[Entry]]) -> [[Entry]] {
+        let isFront: ([Entry]) -> Bool = { $0.contains { $0.frontmost == true } }
+        return groups.filter { !isFront($0) } + groups.filter(isFront)
+    }
+
+    /// Whether `controller` is the window in front (`Entry.frontmost`).
+    @MainActor
+    static func isFrontmost(_ controller: BaseTerminalController) -> Bool {
+        if controller.workspaceHost != nil {
+            return WorkspaceHost.shared.active === controller
+        }
+        guard let window = controller.window else { return false }
+        return window.isMainWindow || TerminalController.lastMain === controller
     }
 
     /// WP-D3: capture the surface's structured VT screen snapshot (base64) and

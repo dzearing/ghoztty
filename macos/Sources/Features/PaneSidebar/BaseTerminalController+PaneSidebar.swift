@@ -123,7 +123,7 @@ extension BaseTerminalController {
         if let surface = pane.surfaceView {
             focusSurface(surface)
         } else {
-            window?.makeKeyAndOrderFront(nil)
+            bringForward()
             NSApp.activate(ignoringOtherApps: true)
             DispatchQueue.main.async { Ghostty.moveFocus(to: pane) }
         }
@@ -254,7 +254,9 @@ extension BaseTerminalController {
     /// from its own sidebar without tearing down the button mid-action.
     func closeWindowFromSidebar() {
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.window != nil else { return }
+            // A parked workspace (single-window mode) has no window and is
+            // still open: its row's × closes it.
+            guard let self, self.window != nil || self.isParked else { return }
             if let terminal = self as? TerminalController {
                 terminal.closeTabImmediately()
             } else {

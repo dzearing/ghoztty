@@ -43,8 +43,7 @@ extension BaseTerminalController {
         project: String,
         from first: BaseTerminalController?
     ) {
-        let titles = NSApp.windows
-            .compactMap { $0.windowController as? BaseTerminalController }
+        let titles = BaseTerminalController.everyController
             .map { PaneSidebarText.windowTitle(of: $0) }
         newWindowFromSidebar(
             ghostty, from: first,
@@ -55,7 +54,7 @@ extension BaseTerminalController {
     /// last split one by hand (`PaneSplitMemory`), as Cmd-D would — raising
     /// the window first, so the new pane is focused where the user sees it.
     func addPaneFromSidebar() {
-        window?.makeKeyAndOrderFront(nil)
+        bringForward()
         NSApp.activate(ignoringOtherApps: true)
         splitFocusedPane(PaneSplitMemory.lastManual)
     }

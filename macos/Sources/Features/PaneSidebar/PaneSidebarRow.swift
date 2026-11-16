@@ -282,7 +282,7 @@ struct PaneSidebarRow: View {
                 owner.restorePane(pane)
             }
         } else {
-            owner.window?.makeKeyAndOrderFront(nil)
+            owner.bringForward()
             Ghostty.moveFocus(to: pane)
         }
     }

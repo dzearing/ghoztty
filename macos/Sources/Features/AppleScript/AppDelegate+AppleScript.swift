@@ -353,17 +353,14 @@ extension NSApplication {
     /// the object alive, and `ghoztty +list` (and AppleScript) went on
     /// reporting it, panes and all.
     fileprivate var allTerminalControllers: [BaseTerminalController] {
-        NSApp.windows
-            .compactMap { $0.windowController as? BaseTerminalController }
-            .filter { !$0.windowHasClosed }
+        BaseTerminalController.everyController
     }
 
     /// All terminal controllers in front-to-back order, closed windows left
     /// out as above.
     fileprivate var orderedTerminalControllers: [BaseTerminalController] {
-        NSApp.orderedWindows
-            .compactMap { $0.windowController as? BaseTerminalController }
-            .filter { !$0.windowHasClosed }
+        // Parked workspaces (single-window mode) after the window on show.
+        BaseTerminalController.everyControllerFrontToBack
     }
 
     /// Identifies the primary tab controller for a window's tab group.
@@ -375,7 +372,8 @@ extension NSApplication {
     /// For tabbed windows, "primary" is currently the first controller in the
     /// tab group's ordered windows list.
     fileprivate func primaryTerminalController(for controller: BaseTerminalController) -> BaseTerminalController? {
-        guard let window = controller.window else { return nil }
+        // A parked workspace has no window, and no tab group: it is its own.
+        guard let window = controller.window else { return controller }
         guard let tabGroup = window.tabGroup else { return controller }
 
         return tabGroup.windows

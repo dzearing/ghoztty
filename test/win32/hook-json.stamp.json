@@ -1,25 +1,24 @@
 {
     "guard":  "hook-json",
     "script":  "test/win32/hook-json.ps1",
-    "generated":  "2026-11-13T00:37:26-08:00",
-    "commit":  "7bc31b8c7",
+    "generated":  "2026-11-15T19:09:41-08:00",
+    "commit":  "7cfc6ad95",
     "uncommitted":  [
-                        "src/apprt/win32/assets/ghoztty/skills/ghoztty/sessions-and-remote.md",
+                        "macos/Resources/Ghoztty/skills/ghoztty/SKILL.md",
                         "src/apprt/win32/assets/ghoztty/skills/ghoztty/SKILL.md",
-                        "src/apprt/win32/assets/ghoztty/upstream/skills/ghoztty/sessions-and-remote.md",
                         "src/apprt/win32/assets/ghoztty/upstream/skills/ghoztty/SKILL.md"
                     ],
     "upstream":  {
                      "origin/main:macos/Resources/Ghoztty/hooks/ghoztty-banner.sh":  "cb1f08a942eba4a032fcd84fa9b6c6aba8449b1f",
                      "origin/main:macos/Resources/Ghoztty/hooks/ghoztty-activity-state.sh":  "5a3d1f676f170cd301f9f0388707f9ee1e4b6a4c",
-                     "origin/main:macos/Resources/Ghoztty/skills/ghoztty":  "753f4479280132d587f2cce552c2a8b79e9d2dd2",
+                     "origin/main:macos/Resources/Ghoztty/skills/ghoztty":  "a8baa6d94c20a9721c62ffd6122f62342a900dda",
                      "origin/main:macos/Resources/Ghoztty/skills/process-feedback/SKILL.md":  "a66c021f95a0b65e3e477b883df252878528dee6"
                  },
     "files":  {
                   "macos/Resources/Ghoztty/skills/ghoztty/banners-and-links.md":  "71b9453e422b492f6bb962649adb639a6e671c3fe0971f3071924ec7b742936c",
                   "macos/Resources/Ghoztty/skills/ghoztty/layout.md":  "1b20fa8ebe696ed5f5f3b88b42caa259caf3b5d4765745444d6e4882adc88fd8",
                   "macos/Resources/Ghoztty/skills/ghoztty/sessions-and-remote.md":  "e31530f1e49acc725c4558fa268293a0ed15d66d82bd66a03d25c795d68e3224",
-                  "macos/Resources/Ghoztty/skills/ghoztty/SKILL.md":  "0e4f6b244870a3ca917f2887854d86213bb0097a829956d92ce971ad4948f5d0",
+                  "macos/Resources/Ghoztty/skills/ghoztty/SKILL.md":  "4eec6ec17ea1b2842070b0ff9ccba1e0aab774fd44320703fb32ce7f563e5014",
                   "macos/Resources/Ghoztty/skills/ghoztty/terminal-io.md":  "885730c400bb40661552cc986314d4d3128e8f20fc3bb9499812cf011964b106",
                   "macos/Resources/Ghoztty/skills/ghoztty/viewers.md":  "03d46e472973417aec06167f0106742ccaf8e9fc3495a1c8a1ad12231a69f506",
                   "macos/Resources/Ghoztty/skills/process-feedback/SKILL.md":  "5b479555638407868bee2353ecbcb989b7647a58da57ea83f2fef8c6296b8393",
@@ -28,7 +27,7 @@
                   "src/apprt/win32/assets/ghoztty/skills/ghoztty/banners-and-links.md":  "71b9453e422b492f6bb962649adb639a6e671c3fe0971f3071924ec7b742936c",
                   "src/apprt/win32/assets/ghoztty/skills/ghoztty/layout.md":  "1b20fa8ebe696ed5f5f3b88b42caa259caf3b5d4765745444d6e4882adc88fd8",
                   "src/apprt/win32/assets/ghoztty/skills/ghoztty/sessions-and-remote.md":  "e31530f1e49acc725c4558fa268293a0ed15d66d82bd66a03d25c795d68e3224",
-                  "src/apprt/win32/assets/ghoztty/skills/ghoztty/SKILL.md":  "0e4f6b244870a3ca917f2887854d86213bb0097a829956d92ce971ad4948f5d0",
+                  "src/apprt/win32/assets/ghoztty/skills/ghoztty/SKILL.md":  "4eec6ec17ea1b2842070b0ff9ccba1e0aab774fd44320703fb32ce7f563e5014",
                   "src/apprt/win32/assets/ghoztty/skills/ghoztty/terminal-io.md":  "885730c400bb40661552cc986314d4d3128e8f20fc3bb9499812cf011964b106",
                   "src/apprt/win32/assets/ghoztty/skills/ghoztty/viewers.md":  "03d46e472973417aec06167f0106742ccaf8e9fc3495a1c8a1ad12231a69f506",
                   "src/apprt/win32/assets/ghoztty/skills/process-feedback/SKILL.md":  "5b479555638407868bee2353ecbcb989b7647a58da57ea83f2fef8c6296b8393",
@@ -37,7 +36,7 @@
                   "src/apprt/win32/assets/ghoztty/upstream/skills/ghoztty/banners-and-links.md":  "71b9453e422b492f6bb962649adb639a6e671c3fe0971f3071924ec7b742936c",
                   "src/apprt/win32/assets/ghoztty/upstream/skills/ghoztty/layout.md":  "d35e6243fca11157d0cd36e62fc04e5be71d4633cc978093d0bfa03c73f05df3",
                   "src/apprt/win32/assets/ghoztty/upstream/skills/ghoztty/sessions-and-remote.md":  "e31530f1e49acc725c4558fa268293a0ed15d66d82bd66a03d25c795d68e3224",
-                  "src/apprt/win32/assets/ghoztty/upstream/skills/ghoztty/SKILL.md":  "0e4f6b244870a3ca917f2887854d86213bb0097a829956d92ce971ad4948f5d0",
+                  "src/apprt/win32/assets/ghoztty/upstream/skills/ghoztty/SKILL.md":  "4eec6ec17ea1b2842070b0ff9ccba1e0aab774fd44320703fb32ce7f563e5014",
                   "src/apprt/win32/assets/ghoztty/upstream/skills/ghoztty/terminal-io.md":  "add3c95193ae69e394a234e58a49fdf56aa8a2a87df66a0699fad157021b4f53",
                   "src/apprt/win32/assets/ghoztty/upstream/skills/ghoztty/viewers.md":  "e41d76b7d5c6b04d73babb1e6c708447b2dba61b47cecf4daf1f91d64de189eb",
                   "src/apprt/win32/assets/ghoztty/upstream/skills/process-feedback/SKILL.md":  "184251491fcaa94a4c723ffe8c513cf0780d7d8746d7b82df9350c8754fb15b0",

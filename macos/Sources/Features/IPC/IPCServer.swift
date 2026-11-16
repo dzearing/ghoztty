@@ -1566,8 +1566,7 @@ class IPCServer {
     /// at registration, which a pane moved between windows has left.
     @MainActor
     private static func paneAndController(for entry: TargetEntry) -> (BaseTerminalController, PaneView)? {
-        for window in NSApp.windows {
-            guard let controller = window.windowController as? BaseTerminalController else { continue }
+        for controller in BaseTerminalController.everyController {
             if let pane = controller.surfaceTree.first(where: { entry.names($0) }) {
                 return (controller, pane)
             }
@@ -2585,11 +2584,12 @@ class IPCServer {
         if let surface = entry.surfaceView, let controller = entry.controller {
             controller.focusSurface(surface)
         } else if let pane = entry.viewerPaneView {
+            (BaseTerminalController.owner(of: pane) ?? entry.controller)?.bringForward()
             Ghostty.moveFocus(to: pane)
             pane.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         } else if let controller = entry.controller {
-            controller.window?.makeKeyAndOrderFront(nil)
+            controller.bringForward()
             NSApp.activate(ignoringOtherApps: true)
         } else {
             return false
@@ -2609,7 +2609,7 @@ class IPCServer {
     ) {
         guard let pane else { return }
         if focus.raisesWindow {
-            controller.window?.makeKeyAndOrderFront(nil)
+            controller.bringForward()
         }
         if focus.activatesApp {
             NSApp.activate(ignoringOtherApps: true)

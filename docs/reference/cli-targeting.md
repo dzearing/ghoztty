@@ -54,6 +54,14 @@ the default is "background", and no skill or hook has to opt out.
 - A failed `+new-remote-window` dial still shows its modal alert either way.
 - One decision point: `IPCFocusPolicy` (`.background` / `.foreground`), parsed
   into `ParsedArguments.focus`. Tests: `IPCFocusPolicyTests`.
+- **Single-window mode** (`macos-window-mode = single`): a window is a
+  workspace, and "raise" is "put on show" (`bringForward`). Without `--focus`
+  a new workspace stays parked and the one on show keeps the window and the
+  caret; every command (`--target` lookup, `+split`, `+close`, `+read`,
+  `+send-keys`, `+stash`/`+restore`, …) reaches a parked workspace without
+  showing it. `+list` lists each workspace as a window. See
+  [window-modes.md](window-modes.md#cli-and-scripting). Tests:
+  `SingleWindowModeTests.focusPolicy`, `.theCLIAddressesAParkedWorkspace`.
 
 ## Naming
 

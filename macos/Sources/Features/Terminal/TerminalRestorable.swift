@@ -59,6 +59,11 @@ extension TerminalRestorable {
 /// The state stored for terminal window restoration.
 final class TerminalRestorableState: TerminalRestorable {
     static var version: Int { 7 }
+
+    /// Single-window mode: the window's archive also holds every other
+    /// workspace's state, as an array, under this key. Additive: a build
+    /// without it restores the one in `state` and ignores the rest.
+    static let workspacesKey = "workspaces"
     static var minimumVersion: Int { 5 }
 
     var focusedSurface: String? {
@@ -169,18 +174,69 @@ class TerminalWindowRestoration: NSObject, NSWindowRestoration {
             return
         }
 
+        // Single-window mode saves every workspace with the one window: the
+        // others ride along (`workspacesKey`). Decoded whatever the mode now
+        // is — as workspaces, or as windows of their own.
+        let others = state.decodeObject(
+            of: CodableBridge<[TerminalRestorableState]>.self,
+            forKey: TerminalRestorableState.workspacesKey)?.value ?? []
+
         // Decode the state. If we can't decode the state, then we can't restore.
         guard let state = TerminalRestorableState(coder: state) else {
             completionHandler(nil, TerminalRestoreError.stateDecodeFailed)
             return
         }
 
+        let c = makeController(appDelegate.ghostty, from: state)
+        for other in others {
+            let extra = makeController(appDelegate.ghostty, from: other)
+            if extra.workspaceHost != nil {
+                // Parked behind the one on show: sized once it has a window.
+                DispatchQueue.main.async { WorkspaceHost.shared.present(extra, activate: false) }
+            } else {
+                extra.showWindow(nil)
+            }
+        }
+
+        guard let window = c.window else {
+            // Single-window mode: a workspace parked behind one restored
+            // before it. Restored all the same; AppKit has no window of it.
+            if c.isParked {
+                DispatchQueue.main.async { WorkspaceHost.shared.present(c, activate: false) }
+                completionHandler(nil, nil)
+            } else {
+                completionHandler(nil, TerminalRestoreError.windowDidNotLoad)
+            }
+            return
+        }
+
+        if let focused = c.focusedSurface {
+            restoreFocus(to: focused, inWindow: window)
+        }
+
+        completionHandler(window, nil)
+        guard let mode = state.effectiveFullscreenMode, mode != .native else {
+            // We let AppKit handle native fullscreen
+            return
+        }
+        // Give the window to AppKit first, then adjust its frame and style
+        // to minimise any visible frame changes.
+        c.toggleFullscreen(mode: mode)
+    }
+
+    /// A controller restored from `state`: its tree, sidebar layout,
+    /// gradient, titles, tab color and focused pane.
+    @MainActor
+    private static func makeController(
+        _ ghostty: Ghostty.App,
+        from state: TerminalRestorableState
+    ) -> TerminalController {
         // The window creation has to go through our terminalManager so that it
         // can be found for events from libghostty. This uses the low-level
         // createWindow so that AppKit can place the window wherever it should
         // be.
         let c = TerminalController.init(
-            appDelegate.ghostty,
+            ghostty,
             withSurfaceTree: state.surfaceTree)
 
         // The pane sidebar's own layout before the window lays out its
@@ -194,14 +250,13 @@ class TerminalWindowRestoration: NSObject, NSWindowRestoration {
         // Every blade stays a blade (`PaneStackState.Persisted`).
         c.adoptPersistedPaneStack(state.paneStack)
 
-        guard let window = c.window else {
-            completionHandler(nil, TerminalRestoreError.windowDidNotLoad)
-            return
-        }
-
         // Restore our tab color and avoid unnecessary `invalidateRestorableState` calls
         if let tabColor = state.tabColor {
-            (window as? TerminalWindow)?.tabColor = tabColor
+            if let window = c.window as? TerminalWindow {
+                window.tabColor = tabColor
+            } else {
+                c.parkedTabColor = tabColor
+            }
         }
 
         // Restore the tab title override
@@ -222,26 +277,18 @@ class TerminalWindowRestoration: NSObject, NSWindowRestoration {
                 break
             }
 
-            // Never into a blade: focusing one would bring it back out.
+            // Never into a blade: focusing one would bring it back out. The
+            // focus itself is made once there is a window (`restoreWindow`).
             if let view = foundView,
                let target = c.surfaceTree.pane(for: view).flatMap({ c.restoredFocusTarget(preferring: $0) }) {
                 if let surface = target.surfaceView {
                     c.focusedSurface = surface
-                    restoreFocus(to: surface, inWindow: window)
                 } else {
                     Ghostty.moveFocus(to: target)
                 }
             }
         }
-
-        completionHandler(window, nil)
-        guard let mode = state.effectiveFullscreenMode, mode != .native else {
-            // We let AppKit handle native fullscreen
-            return
-        }
-        // Give the window to AppKit first, then adjust its frame and style
-        // to minimise any visible frame changes.
-        c.toggleFullscreen(mode: mode)
+        return c
     }
 
     /// This restores the focus state of the surfaceview within the given window. When restoring,

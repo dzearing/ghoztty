@@ -256,7 +256,17 @@ extension AppDelegate {
             }
         }
 
+        // The window that was in front comes back last, so it is in front
+        // again — or, in single-window mode, on show (`Entry.frontmost`).
+        // Their place in the opened order is the saved layout's, whatever
+        // order they are restored in (`openedOrder`).
+        let savedPlace = Dictionary(
+            groups.joined().enumerated().map { ($1.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let firstPlace = BaseTerminalController.reserveOpenedOrders(savedPlace.count)
+        groups = SessionLayoutManifest.frontmostLast(groups)
+
         var restoredCount = 0
+        var lastRestored: (controller: TerminalController, entry: SessionLayoutManifest.Entry)?
         for group in groups {
             var tabParent: NSWindow?
             for entry in group.sorted(by: { $0.tabIndex < $1.tabIndex }) {
@@ -289,8 +299,23 @@ extension AppDelegate {
                     tabParent: tabParent
                 ) {
                     restoredCount += 1
-                    tabParent = controller.window ?? tabParent
+                    controller.openedOrder = firstPlace + (savedPlace[entry.id] ?? 0)
+                    lastRestored = (controller, entry)
+                    // One window, no tabs, in single-window mode: tab
+                    // siblings come back as workspaces of their own.
+                    if !WindowMode.isSingle {
+                        tabParent = controller.window ?? tabParent
+                    }
                 }
+            }
+        }
+        // Single-window mode: every restored window is a workspace, parked
+        // but the first; the last restored (the one that was in front) goes
+        // on show, at its own frame.
+        if let (front, entry) = lastRestored, let host = front.workspaceHost {
+            host.show(front, makeKey: true)
+            if let frame = entry.frame, let window = host.window {
+                window.setFrame(frame.rect, display: true)
             }
         }
         if restoredCount > 0 {
@@ -356,7 +381,10 @@ extension AppDelegate {
         controller.remoteConnection = connection
         controller.remoteMachine = connection.machine
 
-        guard let window = controller.window else { return controller }
+        // A parked workspace (single-window mode) has no window: the window's
+        // frame and showing it belong to the workspace on show. Everything
+        // else below — titles, names, focus, the manifest — is its own.
+        if let window = controller.window {
         if bindLocal {
             // The window usually loaded during init, BEFORE the entry id above
             // bound — re-apply the AppKit-restoration gate now that it has.
@@ -388,6 +416,11 @@ extension AppDelegate {
         // coordinates may be off every display here).
         if let rect = persistedRect {
             window.setFrame(rect, display: true)
+        }
+        } else {
+            // Sized to the window, so its panes ATTACH at the grid they
+            // will have on show.
+            WorkspaceHost.shared.present(controller, activate: false)
         }
 
         // The user-set window title, through the same property a manual

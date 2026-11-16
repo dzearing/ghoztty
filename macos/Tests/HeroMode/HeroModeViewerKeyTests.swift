@@ -68,11 +68,42 @@ struct HeroModeViewerKeyTests {
 
     // MARK: - performKeyEquivalent
 
-    /// The chord is swallowed (returns true) so WebKit never processes it —
-    /// this is what stops the beep and the double-step on a viewer pane.
-    @Test func swallowsHeroNavChord() throws {
+    /// In hero mode the chord is swallowed (returns true) so WebKit never
+    /// processes it — what stops the beep and the double-step on a viewer
+    /// pane. Outside hero mode it is `goto_window`: a focused viewer handles
+    /// it (switches windows) so WebKit still never sees it, and an unfocused
+    /// one leaves it to the focused terminal — this is offered to every view
+    /// in the window, and swallowing it there took the chord from the
+    /// terminal.
+    @Test func swallowsHeroNavChordOnlyWhereItIsTheViewers() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = "/bin/cat"
+        let terminal = PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config))
         let viewer = try makeViewer()
-        #expect(viewer.performKeyEquivalent(with: keyEvent(.upArrow, keyCode: 126, [.command, .shift])))
-        #expect(viewer.performKeyEquivalent(with: keyEvent(.downArrow, keyCode: 125, [.command, .shift])))
+        let viewerPane = PaneView(viewer: viewer)
+        let tree = try SplitTree<PaneView>(view: terminal).inserting(view: viewerPane, at: terminal, direction: .right)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        defer { controller.close() }
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true && viewer.window != nil }
+        let window = try #require(controller.window)
+        let up = keyEvent(.upArrow, keyCode: 126, [.command, .shift])
+        let down = keyEvent(.downArrow, keyCode: 125, [.command, .shift])
+
+        // A terminal has focus: the viewer leaves the chord alone.
+        window.makeFirstResponder(terminal.surfaceView)
+        #expect(!viewer.performKeyEquivalent(with: up))
+
+        // The viewer has focus: it takes the chord (goto_window).
+        window.makeFirstResponder(viewer)
+        #expect(viewer.performKeyEquivalent(with: down))
+
+        // Hero mode: swallowed whoever has focus.
+        controller.heroModeState.activate(focusedIndex: 0, leafCount: 2)
+        window.makeFirstResponder(terminal.surfaceView)
+        #expect(viewer.performKeyEquivalent(with: up))
+        #expect(viewer.performKeyEquivalent(with: down))
+        controller.heroModeState.deactivate()
     }
 }

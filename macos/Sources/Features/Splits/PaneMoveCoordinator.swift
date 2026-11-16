@@ -560,11 +560,7 @@ enum PaneMoveCoordinator {
 
     /// Map a resolved window reference back to its controller.
     static func controller(for ref: PaneDropWindowRef) -> BaseTerminalController? {
-        for window in NSApp.windows {
-            guard let controller = window.windowController as? BaseTerminalController else { continue }
-            if PaneDropWindowRef(controller) == ref { return controller }
-        }
-        return nil
+        BaseTerminalController.everyController.first { PaneDropWindowRef($0) == ref }
     }
 }
 

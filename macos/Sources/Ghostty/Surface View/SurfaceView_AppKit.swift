@@ -691,12 +691,29 @@ extension Ghostty {
         private var flushNextResize = false
         private var settle: (timer: Timer, height: Int?)?
 
+        /// The backing scale of the last window this terminal was in.
+        private var lastWindowBackingScale: CGFloat?
+
+        /// `size` in pixels. Out of a window — a parked workspace in
+        /// single-window mode, still laid out — at the scale of the window
+        /// it was last in, not the main screen's that AppKit falls back to:
+        /// on a second display of another scale the grid would change while
+        /// parked and change back when shown.
+        private func backingSize(_ size: CGSize) -> CGSize {
+            if let window {
+                lastWindowBackingScale = window.backingScaleFactor
+                return convertToBacking(size)
+            }
+            guard let scale = lastWindowBackingScale else { return convertToBacking(size) }
+            return CGSize(width: size.width * scale, height: size.height * scale)
+        }
+
         override func sizeDidChange(_ size: CGSize) {
             // Ghostty wants to know the actual framebuffer size... It is very important
             // here that we use "size" and NOT the view frame. If we're in the middle of
             // an animation (i.e. a fullscreen animation), the frame will not yet be updated.
             // The size represents our final size we're going for.
-            let scaledSize = self.convertToBacking(size)
+            let scaledSize = backingSize(size)
             setSurfaceSize(width: UInt32(scaledSize.width), height: UInt32(scaledSize.height))
             // Store this size so we can reuse it when backing properties change
             contentSize = size
@@ -1119,6 +1136,9 @@ extension Ghostty {
 
         override func viewDidChangeBackingProperties() {
             super.viewDidChangeBackingProperties()
+
+            // Out of a window (a parked workspace) it keeps the scale it had.
+            guard window != nil else { return }
 
             // The Core Animation compositing engine uses the layer's contentsScale property
             // to determine whether to scale its contents during compositing. When the window
@@ -2317,7 +2337,13 @@ extension Ghostty {
             let id = notification.request.identifier
             guard self.notificationIdentifiers.remove(id) != nil else { return }
             if focus {
-                self.window?.makeKeyAndOrderFront(self)
+                // A parked workspace's terminal (single-window mode) has no
+                // window until its workspace is put on show.
+                if self.window == nil, let owner = BaseTerminalController.owner(of: self) {
+                    owner.bringForward()
+                } else {
+                    self.window?.makeKeyAndOrderFront(self)
+                }
                 Ghostty.moveFocus(to: self)
             }
         }

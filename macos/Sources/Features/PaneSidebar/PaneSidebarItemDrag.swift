@@ -592,10 +592,13 @@ extension BaseTerminalController {
 
     /// The all-windows list's sections, in its order, unfiltered.
     var paneSidebarSections: [PaneSidebarWindowGrouping.Section<UUID>] {
-        let titled = paneSidebarAllControllers.map {
+        let controllers = paneSidebarAllControllers
+        let titled = controllers.map {
             (id: $0.paneSidebarState.windowID, title: PaneSidebarText.windowTitle(of: $0))
         }
-        return PaneSidebarWindowGrouping.sections(titled, order: paneSidebarState.shared.windowOrder)
+        return PaneSidebarWindowGrouping.sections(
+            titled, order: paneSidebarState.shared.windowOrder,
+            opened: BaseTerminalController.openedOrders(controllers))
     }
 
     /// Put the window or group `key` at `index` of `siblings` (the list it
