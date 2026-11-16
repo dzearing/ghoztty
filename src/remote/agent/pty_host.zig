@@ -264,7 +264,7 @@ const win = struct {
         // is dropped here; exit is observed by the poller's `tryWait`.
         child.attach(&state, sinkFn, 1);
 
-        const poller = try std.Thread.spawn(thread_stack.config, exitPoller, .{ &state, child, opts.exit_linger_ms });
+        const poller = try std.Thread.spawn(thread_stack.config, exitPoller, .{ &state, child, waitHandleFor(pc.pid), opts.exit_linger_ms });
         poller.detach();
 
         log.info(
@@ -287,6 +287,8 @@ const win = struct {
             state.owner_connected = false;
             state.replay.resetDelivered();
             state.last_disconnect_ms = std.time.milliTimestamp();
+            // Wake the exit poller: an ownerless linger starts now (T3021).
+            state.cond.broadcast();
             state.mutex.unlock();
             if (finished) {
                 log.info("exit delivered; holder done", .{});
@@ -325,9 +327,52 @@ const win = struct {
         );
     }
 
+    extern "kernel32" fn DuplicateHandle(
+        hSourceProcessHandle: windows.HANDLE,
+        hSourceHandle: windows.HANDLE,
+        hTargetProcessHandle: windows.HANDLE,
+        lpTargetHandle: *windows.HANDLE,
+        dwDesiredAccess: windows.DWORD,
+        bInheritHandle: windows.BOOL,
+        dwOptions: windows.DWORD,
+    ) callconv(.winapi) windows.BOOL;
+    const DUPLICATE_SAME_ACCESS: windows.DWORD = 0x2;
+
+    /// A handle to the shell process that belongs to the exit poller alone
+    /// (T3021). The poller blocks on it for the shell's whole life, and the
+    /// `PtyChild`'s own handle is closed by `terminate` on SHUTDOWN - a wait on
+    /// a handle another thread closes is a wait on whatever the number is
+    /// reused for. Null when the duplicate fails; the poller then falls back
+    /// to the old timed poll rather than giving up on reaping.
+    fn waitHandleFor(proc: windows.HANDLE) ?windows.HANDLE {
+        const self_proc = windows.GetCurrentProcess();
+        var dup: windows.HANDLE = undefined;
+        if (DuplicateHandle(self_proc, proc, self_proc, &dup, 0, 0, DUPLICATE_SAME_ACCESS) == 0) {
+            log.warn("cannot duplicate the shell handle (error {d}); exit falls back to a timed poll", .{@intFromEnum(windows.GetLastError())});
+            return null;
+        }
+        return dup;
+    }
+
     /// Reap the shell, then enforce the no-owner linger.
-    fn exitPoller(state: *State, child: session.Child, linger_ms: i64) void {
+    ///
+    /// Event-driven since T3021: the poller used to wake five times a second
+    /// for the shell's whole life (`tryWait` + a 200 ms sleep) and twice a
+    /// second through the linger - per session, in every holder process, so
+    /// twenty idle panes cost the box a hundred wakeups a second doing nothing.
+    /// It now sleeps in the kernel on the shell's process handle until the
+    /// shell exits, and the linger is a timed condition wait that the main loop
+    /// wakes when an owner disconnects.
+    fn exitPoller(state: *State, child: session.Child, shell: ?windows.HANDLE, linger_ms: i64) void {
+        defer if (shell) |h| windows.CloseHandle(h);
         while (true) {
+            if (shell) |h| {
+                // INFINITE: the only thing that ends this wait is the shell
+                // exiting (or the whole process exiting around it). WAIT_FAILED
+                // would spin, so it drops to the timed poll below for that turn.
+                if (windows.kernel32.WaitForSingleObject(h, windows.INFINITE) != windows.WAIT_OBJECT_0)
+                    std.Thread.sleep(200 * std.time.ns_per_ms);
+            }
             if (child.tryWait()) |code| {
                 state.mutex.lock();
                 state.exited = true;
@@ -338,21 +383,30 @@ const win = struct {
                 log.info("shell exited with code {d}", .{code});
                 break;
             }
-            std.Thread.sleep(200 * std.time.ns_per_ms);
+            if (shell == null) std.Thread.sleep(200 * std.time.ns_per_ms);
         }
         // Linger: give a (re)connecting owner time to collect the exit; an
         // abandoned holder must not idle forever. Delivered exits are ended
         // by the main loop, so only the ownerless timeout acts here.
+        state.mutex.lock();
         while (true) {
-            state.mutex.lock();
-            const connected = state.owner_connected;
-            const since: i64 = @max(state.exited_at_ms, state.last_disconnect_ms);
-            state.mutex.unlock();
-            if (!connected and std.time.milliTimestamp() - since > linger_ms) {
-                log.info("shell exited and no owner within linger; holder done", .{});
-                std.process.exit(0);
+            const now = std.time.milliTimestamp();
+            if (!state.owner_connected) {
+                const since: i64 = @max(state.exited_at_ms, state.last_disconnect_ms);
+                const left = since + linger_ms - now;
+                if (left < 0) {
+                    state.mutex.unlock();
+                    log.info("shell exited and no owner within linger; holder done", .{});
+                    std.process.exit(0);
+                }
+                // +1 ms so the re-check lands past the deadline, not on it.
+                const ns: u64 = @as(u64, @intCast(left + 1)) * std.time.ns_per_ms;
+                state.cond.timedWait(&state.mutex, ns) catch {};
+            } else {
+                // An owner is attached: nothing to time until it leaves, and
+                // the main loop broadcasts when it does.
+                state.cond.wait(&state.mutex);
             }
-            std.Thread.sleep(500 * std.time.ns_per_ms);
         }
     }
 

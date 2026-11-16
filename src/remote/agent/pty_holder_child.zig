@@ -602,8 +602,9 @@ const win = struct {
 
             var waited: u64 = 0;
             while (waited < redial_budget_ms) : (waited += 200) {
-                if (!processAlive(self.holder_proc)) break;
-                std.Thread.sleep(200 * std.time.ns_per_ms);
+                // The pause IS the liveness check (T3021): a holder that dies
+                // mid-redial ends it at once rather than at the next tick.
+                if (!processAlive(self.holder_proc) or waitProcessExit(self.holder_proc, 200)) break;
                 self.mutex.lock();
                 const abort = self.closed;
                 self.mutex.unlock();
@@ -836,13 +837,18 @@ const win = struct {
         return code == still_active;
     }
 
+    /// Wait up to `ms` for the process behind `h` to exit. One kernel wait
+    /// (T3021): it used to re-check every 50 ms, which added up to 50 ms to
+    /// every `+close` of a holder-backed pane. `h` carries SYNCHRONIZE (see the
+    /// `OpenProcess` in `adopt`, and a spawned holder's handle is full-access);
+    /// a handle that cannot be waited on falls back to the exit-code check.
     fn waitProcessExit(h: windows.HANDLE, ms: u64) bool {
-        var waited: u64 = 0;
-        while (waited < ms) : (waited += 50) {
-            if (!processAlive(h)) return true;
-            std.Thread.sleep(50 * std.time.ns_per_ms);
-        }
-        return !processAlive(h);
+        const t: windows.DWORD = @intCast(@min(ms, std.math.maxInt(windows.DWORD) - 1));
+        return switch (windows.kernel32.WaitForSingleObject(h, t)) {
+            windows.WAIT_OBJECT_0 => true,
+            windows.WAIT_TIMEOUT => false,
+            else => !processAlive(h),
+        };
     }
 
     /// Read the holder's HELLO and answer with ATTACH. Returns the HELLO with
@@ -1187,8 +1193,9 @@ const win = struct {
         var waited: u64 = 0;
         while (waited < timeout_ms) : (waited += 50) {
             if (pipe_stream.dialHandle(alloc, pipe_name)) |h| return h else |_| {}
-            if (!processAlive(holder)) return error.HolderExited;
-            std.Thread.sleep(50 * std.time.ns_per_ms);
+            // Pace the retry ON the holder's handle (T3021): a holder that dies
+            // during startup ends the wait at once instead of at the next tick.
+            if (waitProcessExit(holder, 50)) return error.HolderExited;
         }
         return error.HolderDialTimeout;
     }
