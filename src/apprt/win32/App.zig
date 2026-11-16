@@ -75,6 +75,7 @@ const MachineConnectionPool = @import("MachineConnectionPool.zig");
 const remote_connection = @import("../../remote/connection.zig");
 const protocol = @import("../../remote/protocol.zig");
 const tab_color = @import("tab_color.zig");
+const color_math = @import("color_math.zig");
 const clipboard_open = @import("clipboard_open.zig");
 const IpcHandlers = @import("IpcHandlers.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
@@ -3579,6 +3580,14 @@ fn captureLeaf(
         .pane_id = try arena.dupe(u8, surface.paneId()),
         .screen_snapshot = snap.data,
         .screen_snapshot_offset = snap.offset,
+        // T3176: a title the user typed stays pinned across a relaunch, and
+        // the pane keeps its tint (Mac dd77885aa). `title_from_terminal` is
+        // non-null exactly while a manual title is held (`setUserTitle`).
+        .title_set_by_user = if (surface.title_from_terminal != null) true else null,
+        .tint = if (surface.background_tint) |rgb| tint: {
+            var buf: [7]u8 = undefined;
+            break :tint try arena.dupe(u8, color_math.hexString(rgb, &buf));
+        } else null,
     };
 }
 
@@ -6217,7 +6226,8 @@ const RestoredStash = struct {
 /// Terminal leaves only: `+set-banner` rejects viewers, and a viewer's title
 /// comes from the content it re-opens. The title goes in on the
 /// terminal-reported path, so the first OSC title the restored shell emits
-/// takes over normally (Mac `SessionLayoutRestore` does the same).
+/// takes over normally (Mac `SessionLayoutRestore` does the same) - unless the
+/// user typed it, which pins it again; and the pane's tint comes back (T3176).
 fn restoreLeafPresentation(pane: *PaneView, lf: session_layout.Leaf) void {
     const surface = switch (pane.kind) {
         .terminal => |s| s,
@@ -6227,15 +6237,27 @@ fn restoreLeafPresentation(pane: *PaneView, lf: session_layout.Leaf) void {
 
     if (lf.title) |t| {
         if (t.len > 0) {
-            // `setTitle` wants a sentinel-terminated slice and dupes it itself,
-            // so this copy is scratch: freed as soon as the call returns.
-            if (alloc.dupeZ(u8, t)) |z| {
+            if (lf.title_set_by_user orelse false) {
+                // T3176: the user typed it, so it is pinned again - the
+                // shell's OSC titles are remembered behind it, as before the
+                // relaunch (Mac `setUserTitle`).
+                surface.setUserTitle(t);
+            } else if (alloc.dupeZ(u8, t)) |z| {
+                // `setTitle` wants a sentinel-terminated slice and dupes it
+                // itself, so this copy is scratch: freed when the call returns.
                 defer alloc.free(z);
                 surface.setTitle(z);
             } else |err| {
                 log.warn("session-restore: pane title restore failed err={}", .{err});
             }
         }
+    }
+
+    // T3176: the pane's own tint, applied the way `--color` applies one
+    // (background, contrast foreground, adjusted palette). An unreadable value
+    // leaves the pane on the theme background, as an older manifest does.
+    if (lf.tint) |hex| {
+        if (color_math.parseHex(hex)) |rgb| surface.applyBackgroundTint(rgb, true);
     }
 
     if (lf.banner) |b| {

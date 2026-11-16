@@ -59,6 +59,7 @@ const Allocator = std.mem.Allocator;
 
 const restore_frame = @import("restore_frame.zig");
 const session_layout = @import("session_layout.zig");
+const tab_color = @import("tab_color.zig");
 const window_placement = @import("window_placement.zig");
 
 /// The DPI a macOS frame is measured at (T1979). Cocoa window frames are in
@@ -113,6 +114,9 @@ pub const Entry = struct {
     /// `Entry.frontmost` (T3137, Mac 3f772a2f0): this entry's window was the
     /// one in front. Null when the blob predates it or it was not.
     frontmost: ?bool = null,
+    /// `Entry.tabColor` (T3176, Mac dd77885aa) as a `tab_color.TabColor` name.
+    /// Null when absent, `none`, or out of range.
+    tab_color: ?[]const u8 = null,
     /// The tree, flattened to win32's `nodes[0] = root` representation.
     nodes: []const session_layout.Node = &.{},
 };
@@ -168,6 +172,7 @@ pub fn parseEntry(arena: Allocator, v: std.json.Value) !Entry {
         .pane_sidebar_order = try strings(arena, obj.get("paneSidebarOrder")),
         .pane_stack = paneStack(arena, obj.get("paneStack")),
         .frontmost = if (boolean(obj.get("frontmost")) orelse false) true else null,
+        .tab_color = tabColorName(obj.get("tabColor")),
         .nodes = try nodes.toOwnedSlice(arena),
     };
 }
@@ -232,6 +237,7 @@ pub fn groupIntoWindows(arena: Allocator, entries: []const Entry) ![]session_lay
             tabs[ti] = .{
                 .nodes = entry.nodes,
                 .title = entry.tab_title,
+                .color = entry.tab_color,
                 .active = ti == 0,
                 .pane_stack = entry.pane_stack,
             };
@@ -404,7 +410,22 @@ fn leafFrom(v: std.json.Value) session_layout.Leaf {
         // T1838: the pane's place in its window's stash (0 = top). A stash is
         // layout, so it follows the layout across machines like the banner.
         .stash_index = if (int(obj.get("stashIndex"))) |i| std.math.cast(u32, i) else null,
+        // T3176 (Mac dd77885aa): a title the user typed comes back pinned, and
+        // the pane keeps its tint. Mac writes the tint `#RRGGBB`, which the
+        // restore parses case-blind; `true` is the only value of the flag.
+        .title_set_by_user = if (boolean(obj.get("titleSetByUser")) orelse false) true else null,
+        .tint = str(obj.get("tint")),
     };
+}
+
+/// Mac's `Entry.tabColor` (T3176, dd77885aa) as win32's tab color name. Mac
+/// encodes `TerminalTabColor` by raw value, and `tab_color.TabColor` mirrors
+/// that enum in the same order; 0 (`none`) and anything out of range are no
+/// color.
+fn tabColorName(v: ?std.json.Value) ?[]const u8 {
+    const raw = int(v) orelse return null;
+    if (raw <= 0 or raw >= tab_color.count) return null;
+    return @tagName(@as(tab_color.TabColor, @enumFromInt(raw)));
 }
 
 // =============================================================================
@@ -1194,4 +1215,41 @@ test "T3137: a Mac entry's frontmost mark comes across to its window" {
     // The group whose SECOND tab carried the mark is the front window.
     try testing.expectEqual(@as(?bool, true), windows[1].frontmost);
     try testing.expectEqual(@as(?bool, null), windows[2].frontmost);
+}
+
+test "T3176: a Mac leaf's tint and user-set title, and its entry's tab color, come across" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const entry = try translate(arena,
+        \\{"id":"e","tabColor":4,"tree":{"split":{"_0":{"direction":"horizontal","ratio":0.5,
+        \\ "left":{"leaf":{"_0":{"sessionID":"a","title":"build","titleSetByUser":true,"tint":"#1A2B3C"}}},
+        \\ "right":{"leaf":{"_0":{"sessionID":"b","title":"zsh"}}}}}}}
+    );
+    const left = entry.nodes[1].leaf.?;
+    try testing.expectEqual(@as(?bool, true), left.title_set_by_user);
+    try testing.expectEqualStrings("#1A2B3C", left.tint.?);
+    // Absent is the terminal's own title, untinted.
+    const right = entry.nodes[2].leaf.?;
+    try testing.expect(right.title_set_by_user == null);
+    try testing.expect(right.tint == null);
+    // TerminalTabColor raw value 4 is red, in both enums.
+    try testing.expectEqualStrings("red", entry.tab_color.?);
+
+    const windows = try groupIntoWindows(arena, &.{entry});
+    try testing.expectEqualStrings("red", windows[0].tabs[0].color.?);
+
+    // `none` (0), out of range, false, and a non-number all read as absent.
+    const blobs = [_][]const u8{
+        "{\"id\":\"n\",\"tabColor\":0,\"tree\":{\"leaf\":{\"_0\":{\"sessionID\":\"a\",\"titleSetByUser\":false}}}}",
+        "{\"id\":\"o\",\"tabColor\":99,\"tree\":{\"leaf\":{\"_0\":{\"sessionID\":\"a\"}}}}",
+        "{\"id\":\"s\",\"tabColor\":\"red\",\"tree\":{\"leaf\":{\"_0\":{\"sessionID\":\"a\",\"tint\":\"\"}}}}",
+    };
+    for (blobs) |b| {
+        const e = try translate(arena, b);
+        try testing.expect(e.tab_color == null);
+        try testing.expect(e.nodes[0].leaf.?.title_set_by_user == null);
+        try testing.expect(e.nodes[0].leaf.?.tint == null);
+    }
 }

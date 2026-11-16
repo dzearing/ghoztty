@@ -206,6 +206,17 @@ pub const Leaf = struct {
     screen_snapshot: ?[]const u8 = null,
     screen_snapshot_offset: ?u64 = null,
     stash_index: ?u32 = null,
+    /// `title` was typed by the user ("Change Pane Title…", the sidebar's
+    /// rename; T3176, Mac dd77885aa `Leaf.titleSetByUser`), so a restore pins
+    /// it again and the shell's own OSC titles do not replace it. True or
+    /// absent: a terminal-reported title, and every older manifest, decode as
+    /// null and come back on the terminal-reported path, as before.
+    title_set_by_user: ?bool = null,
+    /// The pane's own background tint (`--color`, `--split-color`, the color
+    /// picker, or a split's inherited tint) as `#rrggbb` (T3176, Mac
+    /// `Leaf.tint`). Absent is the theme background; an older build ignores it
+    /// and restores the pane untinted.
+    tint: ?[]const u8 = null,
 
     /// Whether this leaf describes a VIEWER pane. Absent `kind` ⇒ terminal, so
     /// this is also the compatibility rule for a pre-viewer manifest. One
@@ -1636,6 +1647,32 @@ test "T1838: stash_index round-trips, and an on-screen leaf writes none" {
     const back = parsed.value.windows[0].tabs[0].nodes;
     try testing.expect(back[1].leaf.?.stash_index == null);
     try testing.expectEqual(@as(?u32, 0), back[2].leaf.?.stash_index);
+}
+
+test "T3176: a pane's tint and user-set title round-trip, and a plain pane writes neither" {
+    const alloc = testing.allocator;
+    var nodes = [_]Node{
+        .{ .split = .{ .layout = "horizontal", .ratio = 0.5, .left = 1, .right = 2 } },
+        .{ .leaf = .{ .session_id = "a", .title = "zsh" } },
+        .{ .leaf = .{ .session_id = "b", .title = "build", .title_set_by_user = true, .tint = "#1a2b3c" } },
+    };
+    var tabs = [_]Tab{.{ .nodes = &nodes, .active = true }};
+    var wins = [_]Window{.{ .id = "w", .tabs = &tabs }};
+    const bytes = try serialize(alloc, .{ .windows = &wins });
+    defer alloc.free(bytes);
+    // Additive: only the pane that has them writes them, so an older reader
+    // sees nothing new on an ordinary leaf.
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, bytes, "\"tint\""));
+    // Window.title_set_by_user shares the key; this file has one leaf's worth.
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, bytes, "\"title_set_by_user\""));
+
+    var parsed = try parse(alloc, bytes);
+    defer parsed.deinit();
+    const back = parsed.value.windows[0].tabs[0].nodes;
+    try testing.expect(back[1].leaf.?.title_set_by_user == null);
+    try testing.expect(back[1].leaf.?.tint == null);
+    try testing.expectEqual(@as(?bool, true), back[2].leaf.?.title_set_by_user);
+    try testing.expectEqualStrings("#1a2b3c", back[2].leaf.?.tint.?);
 }
 
 // -- reconcile (T194) ---------------------------------------------------------

@@ -3554,6 +3554,9 @@ pub fn setUserTitle(self: *Surface, title: ?[]const u8) void {
         if (self.title) |old| alloc.free(old);
         self.title = remembered;
     }
+    // T3176: a user title is persisted pinned (`Leaf.title_set_by_user`);
+    // save at once rather than waiting on an unrelated layout write.
+    self.app.markLayoutDirty();
     if (self.title) |t| {
         if (self.pane_view) |pv| self.parent_window.onPaneTitleChanged(pv, t);
     }
@@ -6234,6 +6237,9 @@ pub fn applyBackgroundTint(
 ) void {
     if (!self.core_surface_ready) return;
     self.background_tint = rgb;
+    // T3176: the tint is persisted per pane (`Leaf.tint`), and a tint change
+    // touches nothing else the manifest watches - save it now, as Mac does.
+    self.app.markLayoutDirty();
 
     {
         // Terminal color state is shared with the IO thread — mutate under

@@ -22,6 +22,9 @@
 #      PTY), relaunch, and assert restore rebuilt exactly 2 windows / 3 panes,
 #      re-ATTACHed the SAME 3 sessions (no new OPENs), and brought back the
 #      pane's IPC name + scrollback and the window title pin.
+#      T3176 (F1c/F1d, F4b, F9g-F9j): the split pane's tint is captured, and it
+#      and a user-set pane title (planted while the app is down) come back on
+#      the live pane, the title still pinned in the manifest the restore writes.
 #
 # Non-interactive; asserts and exits nonzero on any failure. Fully hermetic: a
 # per-run $env:LOCALAPPDATA, a per-run GHOSTTY_LOCAL_AGENT_BIN, a private IPC
@@ -397,7 +400,10 @@ Assert "A5 manifest declares schema version 1" ($null -ne $mA -and $mA.version -
 # ============================================================================
 Say "== B: +split grows the captured tree to a split + two leaves"
 # ============================================================================
-Run-Cli '+split --direction=right --name=f89sib' "$tmp\split.txt" 15 | Out-Null
+# T3176: the split is tinted, so section F can prove the tint survives a relaunch.
+# The startup pane stays untinted - the arm's negative half.
+$tintHex = '#1a2b3c'
+Run-Cli "+split --direction=right --name=f89sib --color=$tintHex" "$tmp\split.txt" 15 | Out-Null
 $rowsB = Wait-AliveCount $tmp 'b' 2 15
 Assert "B1 +split opened a second agent-backed session (2 alive)" ((Count-Alive $rowsB) -eq 2)
 $aliveB = @(Alive-Ids $rowsB)
@@ -498,6 +504,42 @@ while ((Get-Date) -lt $deadline) {
 }
 Assert "F1b the banner is set on the split pane before quit (positive control)" $banPre
 
+# T3176: the leaf the manifest records under an IPC name, or $null.
+function Get-NamedLeaf($m, [string]$Name) {
+    if ($null -eq $m) { return $null }
+    foreach ($w in @($m.windows)) {
+        foreach ($t in @($w.tabs)) {
+            foreach ($n in @($t.nodes)) {
+                if ($n.leaf -and $n.leaf.ipc_name -eq $Name) { return $n.leaf }
+            }
+        }
+    }
+    return $null
+}
+# Every leaf that carries the field, by IPC name or session id (for the
+# "only the tinted pane writes it" half).
+function Get-LeavesWith($m, [string]$Field) {
+    # Plain return, counted with @() at the call site: `return ,$out` reads as
+    # one element under @() even when empty (PS5.1).
+    $out = @()
+    if ($null -eq $m) { return $out }
+    foreach ($w in @($m.windows)) {
+        foreach ($t in @($w.tabs)) {
+            foreach ($n in @($t.nodes)) {
+                if ($n.leaf -and $null -ne $n.leaf.$Field) { $out += $n.leaf }
+            }
+        }
+    }
+    return $out
+}
+
+# T3176 capture: the split's tint is in the manifest, on that leaf alone.
+$mTint = Wait-Manifest $tmp { param($m) (Get-NamedLeaf $m 'f89sib').tint -eq $tintHex } 10
+$tintLeaf = Get-NamedLeaf $mTint 'f89sib'
+Assert "F1c the manifest records the split pane's tint (capture)" (
+    $null -ne $tintLeaf -and $tintLeaf.tint -eq $tintHex)
+Assert "F1d no untinted pane writes a tint" (@(Get-LeavesWith $mTint 'tint').Count -eq 1)
+
 # The live session ids the agent is keeping (must all come back on re-attach).
 $beforeIds = @(Alive-Ids (Wait-AliveCount $tmp 'f-before' 3 15))
 Assert "F2 three agent sessions are alive before quit" ($beforeIds.Count -eq 3)
@@ -516,6 +558,40 @@ Stop-AppOnly
 $agentIds = @(Alive-Ids (Wait-AliveCount $tmp 'f-agent' 3 15))
 Assert "F4 the agent kept all 3 sessions alive after the app died" (
     $agentIds.Count -eq 3 -and ($beforeIds | Where-Object { $agentIds -contains $_ }).Count -eq 3)
+
+# T3176: a title the USER typed comes back pinned. No CLI verb sets a pane's
+# user title (`+rename` is window-level; the pane's is the rename dialog and the
+# sidebar), so it is planted in the manifest while the app is down - the bytes a
+# capture writes for one (`title` + `title_set_by_user`). The oracle is F9i: the
+# restored app rewrites the manifest from the LIVE pane, and capture writes the
+# flag only while the pane holds a manual title, so the flag surviving that
+# rewrite means restore really re-pinned it rather than passing bytes through.
+# Edited as text (the app is dead, nothing else writes this file): replace the
+# f89sib leaf's own `title`, or insert one, so no key is duplicated.
+$pinTitle = "T3176PIN$($PID)XYZ"
+$planted = $false
+$mPath = Manifest-Path $tmp
+$raw = Out-Text $mPath
+$at = $raw.IndexOf('"ipc_name":"f89sib"')
+if ($at -ge 0) {
+    $start = $raw.LastIndexOf('{"leaf":{', $at)
+    if ($start -ge 0) {
+        $head = $raw.Substring(0, $start + 9)
+        $seg = $raw.Substring($start + 9, $at - ($start + 9))
+        $tail = $raw.Substring($at)
+        $pin = '"title":"' + $pinTitle + '","title_set_by_user":true'
+        $titleRx = '"title":"(?:[^"\\]|\\.)*"'
+        if ($seg -match $titleRx) {
+            $seg = [regex]::Replace($seg, $titleRx, $pin, 1)
+        } else {
+            $seg = $pin + ',' + $seg
+        }
+        [System.IO.File]::WriteAllText($mPath, $head + $seg + $tail, (New-Object System.Text.UTF8Encoding $false))
+        $leafP = Get-NamedLeaf (Read-Manifest $tmp) 'f89sib'
+        $planted = ($null -ne $leafP -and $leafP.title -eq $pinTitle -and $leafP.title_set_by_user -eq $true)
+    }
+}
+Assert "F4b a user-set title is planted on the split pane's leaf (positive control)" $planted
 
 # Relaunch (same LOCALAPPDATA + agent bin). Restore must suppress the blank
 # startup window and rebuild both windows by re-ATTACHing. The relaunch is
@@ -619,6 +695,37 @@ while ((Get-Date) -lt $deadline) {
     Start-Sleep -Milliseconds 700
 }
 Assert "F9b the restored pane's sticky banner came back" $f9b
+
+# T3176: the tint and the pinned title are back on the LIVE pane. `+list --json`
+# reports `background_tint` from the surface and `title` from its cache, so this
+# reads what the restored pane is showing, not the manifest.
+$f9tint = $false; $f9title = $false
+$deadline = (Get-Date).AddSeconds(25)
+while ((Get-Date) -lt $deadline) {
+    if ((Run-Cli '+list --json' "$tmp\tint-post.json" 10) -eq 0) {
+        $txt = Out-Text "$tmp\tint-post.json"
+        $f9tint = $txt -match ('"background_tint":"' + [regex]::Escape($tintHex) + '"')
+        $f9title = $txt -match [regex]::Escape($pinTitle)
+        if ($f9tint -and $f9title) { break }
+    }
+    Start-Sleep -Milliseconds 700
+}
+Assert "F9g the restored split pane is tinted again" $f9tint
+Assert "F9h the restored split pane shows the user's title" $f9title
+
+# F9i: the manifest the restored app writes still says the title is the user's -
+# capture only writes that while the pane holds a manual title, so a restore that
+# put it back on the terminal-reported path drops it here. Only that leaf has it.
+$mPin = Wait-Manifest $tmp {
+    param($m)
+    $l = Get-NamedLeaf $m 'f89sib'
+    $null -ne $l -and $l.title_set_by_user -eq $true -and $l.title -eq $pinTitle -and $l.tint -eq $tintHex
+} 20
+$lPin = Get-NamedLeaf $mPin 'f89sib'
+Assert "F9i the rewritten manifest keeps the pane's title pinned and its tint" (
+    $null -ne $lPin -and $lPin.title_set_by_user -eq $true -and $lPin.title -eq $pinTitle -and $lPin.tint -eq $tintHex)
+Assert "F9j no other pane is recorded with a user title or a tint" (
+    @(Get-LeavesWith $mPin 'title_set_by_user').Count -eq 1 -and @(Get-LeavesWith $mPin 'tint').Count -eq 1)
 
 # ============================================================================
 Say "== F9c-F9e: T411 - the restore log counts live sessions nothing attached"
