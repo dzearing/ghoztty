@@ -842,7 +842,21 @@ pub const Server = struct {
         channel: u128,
         payload: []const u8,
     ) Allocator.Error!void {
-        const owned = try self.alloc.dupe(u8, payload);
+        try self.enqueueOwned(stream, ftype, channel, try self.alloc.dupe(u8, payload));
+    }
+
+    /// `enqueue` for a payload the caller allocated with `self.alloc` and hands
+    /// over: the queue owns `owned` from this call on, error or not. The DATA
+    /// path builds its payload straight into the buffer the writer will send, so
+    /// each output chunk costs one allocation and one copy rather than an
+    /// encode buffer plus a dupe of it (T3017, PA-I03).
+    fn enqueueOwned(
+        self: *Server,
+        stream: StreamId,
+        ftype: protocol.FrameType,
+        channel: u128,
+        owned: []u8,
+    ) Allocator.Error!void {
         errdefer self.alloc.free(owned);
         self.write_mutex.lock();
         defer self.write_mutex.unlock();
@@ -881,9 +895,7 @@ pub const Server = struct {
 
     /// Enqueue a JSON control frame (OPENED/ATTACHED/EXIT/META/...).
     fn sendJson(self: *Server, ftype: protocol.FrameType, channel: u128, value: anytype) !void {
-        const json = try protocol.encodeJson(self.alloc, value);
-        defer self.alloc.free(json);
-        try self.enqueue(.control, ftype, channel, json);
+        try self.enqueueOwned(.control, ftype, channel, try protocol.encodeJson(self.alloc, value));
     }
 
     /// Enqueue a DATA frame on the data channel (the §4.2 binary payload header).
@@ -917,10 +929,44 @@ pub const Server = struct {
         bytes: []const u8,
     ) !void {
         const payload = try self.alloc.alloc(u8, protocol.DataPayload.encodedLen(bytes.len));
-        defer self.alloc.free(payload);
         const dp: protocol.DataPayload = .{ .byte_offset = byte_offset, .bytes = bytes };
         _ = dp.encodeInto(payload);
-        try self.enqueue(.data, ftype, channel, payload);
+        // Ownership passes to the queue (freed there on every path).
+        try self.enqueueOwned(.data, ftype, channel, payload);
+    }
+
+    /// A DATA payload buffer for `body_len` bytes of output that the caller
+    /// writes into `body(buf)` itself, so ring bytes go straight into the frame
+    /// the writer sends instead of through a scratch buffer and a second copy
+    /// (T3017, PA-I20). Hand it to `enqueueDataPayload`, or free it.
+    fn allocDataPayload(self: *Server, body_len: usize) Allocator.Error![]u8 {
+        return self.alloc.alloc(u8, protocol.DataPayload.encodedLen(body_len));
+    }
+
+    fn dataPayloadBody(buf: []u8) []u8 {
+        return buf[protocol.DataPayload.header..];
+    }
+
+    /// Queue a buffer from `allocDataPayload` whose body holds `body_n` bytes
+    /// starting at stream offset `byte_offset`. Ownership passes on every path.
+    fn enqueueDataPayload(
+        self: *Server,
+        ftype: protocol.FrameType,
+        channel: u128,
+        byte_offset: u64,
+        buf: []u8,
+        body_n: usize,
+    ) Allocator.Error!void {
+        const used = protocol.DataPayload.encodedLen(body_n);
+        assert(used <= buf.len);
+        protocol.DataPayload.encodeHeaderInto(buf, byte_offset);
+        // A short slice (the ring gave fewer bytes than asked) must not send
+        // the unwritten tail; shrinking in place is the normal case.
+        const owned = if (used == buf.len) buf else self.alloc.realloc(buf, used) catch {
+            self.alloc.free(buf);
+            return error.OutOfMemory;
+        };
+        try self.enqueueOwned(.data, ftype, channel, owned);
     }
 
     // --- Child output delivery ------------------------------------------------
@@ -1703,11 +1749,10 @@ pub const Server = struct {
             if (!skip_replay) {
                 const want: usize = @intCast(snapshot_at - replay_from);
                 if (want > 0) {
-                    const tmp = self.alloc.alloc(u8, want) catch return;
-                    defer self.alloc.free(tmp);
-                    if (s.ring.slice(replay_from, snapshot_at, tmp)) |n| {
-                        self.sendData(s.channel, replay_from, tmp[0..n]) catch {};
-                    }
+                    const buf = self.allocDataPayload(want) catch return;
+                    if (s.ring.slice(replay_from, snapshot_at, dataPayloadBody(buf))) |n| {
+                        self.enqueueDataPayload(.data, s.channel, replay_from, buf, n) catch {};
+                    } else self.alloc.free(buf);
                 }
             }
         }
@@ -2470,9 +2515,10 @@ pub const Server = struct {
         var replay_buf: ?[]u8 = null;
         var replay_n: usize = 0;
         if (replay_len > 0) {
-            if (self.alloc.alloc(u8, replay_len)) |rb| {
+            // Sliced straight into the DATA frame it goes out in (T3017).
+            if (self.allocDataPayload(replay_len)) |rb| {
                 replay_buf = rb;
-                replay_n = rs.ring.slice(replay_lo, tail, rb) orelse 0;
+                replay_n = rs.ring.slice(replay_lo, tail, dataPayloadBody(rb)) orelse 0;
             } else |_| {}
         }
         // The replay (restored history + divider + notice) is what this pane now
@@ -2482,7 +2528,7 @@ pub const Server = struct {
         // relaunch geometry, before the child's first byte, exactly like a viewer.
         rs.rows = req.rows;
         rs.cols = req.cols;
-        if (replay_buf) |rb| rs.feedEmulator(rb[0..replay_n]);
+        if (replay_buf) |rb| rs.feedEmulator(dataPayloadBody(rb)[0..replay_n]);
         // The replay below delivers everything up to the current tail.
         rs.sent_offset = rs.out_offset.value;
         self.store.mutex.unlock();
@@ -2490,8 +2536,10 @@ pub const Server = struct {
         // Replay the preloaded scrollback + divider first (outside the lock), so
         // its DATA frames are queued ahead of any live child output.
         if (replay_buf) |rb| {
-            defer self.alloc.free(rb);
-            if (replay_n > 0) self.sendData(channel, replay_lo, rb[0..replay_n]) catch {};
+            if (replay_n > 0)
+                self.enqueueDataPayload(.data, channel, replay_lo, rb, replay_n) catch {}
+            else
+                self.alloc.free(rb);
         }
 
         // Arm the durability gate before the reader exists, exactly as the OPEN
@@ -2597,8 +2645,6 @@ pub const Server = struct {
             s.sent_offset = base;
         }
 
-        const tmp = self.alloc.alloc(u8, catch_up_chunk) catch return; // retried on the next resume or output
-        defer self.alloc.free(tmp);
         while (s.sent_offset < end) {
             const from = s.sent_offset;
             const want: usize = @intCast(@min(end - from, catch_up_chunk));
@@ -2606,9 +2652,15 @@ pub const Server = struct {
                 self.noteBacklog();
                 return;
             }
-            const n = s.ring.slice(from, from + want, tmp[0..want]) orelse return;
-            if (n == 0) return;
-            self.sendData(s.channel, from, tmp[0..n]) catch return;
+            // Each piece is sliced straight into the frame it goes out in
+            // (T3017). A failed allocation is retried on the next resume or output.
+            const buf = self.allocDataPayload(want) catch return;
+            const n = s.ring.slice(from, from + want, dataPayloadBody(buf)) orelse 0;
+            if (n == 0) {
+                self.alloc.free(buf);
+                return;
+            }
+            self.enqueueDataPayload(.data, s.channel, from, buf, n) catch return;
             s.sent_offset = from + n;
         }
     }

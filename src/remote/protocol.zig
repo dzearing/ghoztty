@@ -523,9 +523,15 @@ pub const DataPayload = struct {
     pub fn encodeInto(self: DataPayload, dst: []u8) []u8 {
         const total = header + self.bytes.len;
         assert(dst.len >= total);
-        std.mem.writeInt(u64, dst[0..8], self.byte_offset, .big);
+        encodeHeaderInto(dst, self.byte_offset);
         @memcpy(dst[header..][0..self.bytes.len], self.bytes);
         return dst[0..total];
+    }
+
+    /// Write only the header, for a caller that fills `dst[header..]` itself
+    /// (the agent slices its ring straight into the frame it sends, T3017).
+    pub fn encodeHeaderInto(dst: []u8, byte_offset: u64) void {
+        std.mem.writeInt(u64, dst[0..header], byte_offset, .big);
     }
 
     /// Parse from a `DATA` frame's payload. `bytes` borrows `payload`.

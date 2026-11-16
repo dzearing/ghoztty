@@ -1,8 +1,8 @@
 {
     "guard":  "neuter-audit",
     "script":  "test/win32/neuter-audit.ps1",
-    "generated":  "2026-11-16T00:21:53-08:00",
-    "commit":  "302824c05",
+    "generated":  "2026-11-16T00:39:09-08:00",
+    "commit":  "3b05e4e16",
     "uncommitted":  [
 
                     ],

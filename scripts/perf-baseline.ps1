@@ -216,6 +216,7 @@ if ($Build -eq 'Both' -and -not $SelfTest) {
             '-CycleShape', $CycleShape, '-SettledCycles', $SettledCycles, '-CycleMaxWarmup', $CycleMaxWarmup,
             '-SettleBudgetMB', $SettleBudgetMB, '-CycleIdleSeconds', $CycleIdleSeconds)
         if ($AppEnv.Count) { $childArgs += @('-AppEnv', ($AppEnv -join ',')) }
+        if ($BusyPersistence) { $childArgs += '-BusyPersistence' }
         Write-Host "== $b build"
         & powershell @childArgs
         if ($LASTEXITCODE -ne 0) { $exit = 1 }
@@ -1044,21 +1045,56 @@ try {
             $typeCmd = if ($BusyText -eq 'cjk') { "chcp 65001 >nul & type `"$big`"" } else { "type `"$big`"" }
             $marker = Join-Path $work 'busy.done'
             Remove-Item $marker -ErrorAction SilentlyContinue
+            $agentExe = Join-Path (Split-Path $exe) 'ghoztty-agent.exe'
+            # Every ghoztty-agent.exe of THIS build (the daemon and its
+            # per-session holders): pid -> snap.
+            function Get-AgentFamilySnaps {
+                $m = @{}
+                foreach ($p in @(Get-CimInstance Win32_Process -Filter "Name='ghoztty-agent.exe'" -ErrorAction SilentlyContinue)) {
+                    if ($p.ExecutablePath -and ([IO.Path]::GetFullPath($p.ExecutablePath) -ieq [IO.Path]::GetFullPath($agentExe))) {
+                        $sn = Get-Snap ([int]$p.ProcessId)
+                        if ($sn) { $m[[int]$p.ProcessId] = $sn }
+                    }
+                }
+                return $m
+            }
             if ($BusyPersistence) { [void](Start-SandboxAgent) }
             $a = Start-App ([bool]$BusyPersistence)
             Start-Sleep -Seconds 6
             $anchor = @(Get-PaneLeaves)[0].id
             $job = Start-GpuSampler $a.Pid 120
+            $f0 = if ($BusyPersistence) { Get-AgentFamilySnaps } else { @{} }
             $s0 = Get-Snap $a.Pid
             $r = Invoke-Verb @('+split', "--target=$anchor", '--name=perfbusy', '--direction=right', "--command=$typeCmd & echo done> `"$marker`"")
             if ($r.Code -ne 0) { throw "+split for the busy pane failed: $($r.Text)" }
             $deadline = (Get-Date).AddSeconds(600)
             while (-not (Test-Path $marker) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 100 }
             $s1 = Get-Snap $a.Pid
+            $f1 = if ($BusyPersistence) { Get-AgentFamilySnaps } else { @{} }
             Stop-Job $job -ErrorAction SilentlyContinue
             $gpu = Stop-GpuSampler $job
             if (-not (Test-Path $marker)) { throw 'the busy pane never finished its output within 600 s' }
             $rb = Get-Rate $s0 $s1
+            $agentBusy = $null
+            if ($BusyPersistence) {
+                # A process alive at both ends counts its delta; one born during
+                # the span (the busy pane's holder) counts its whole lifetime,
+                # all of which fell inside the span.
+                $daemonS = 0.0; $holderS = 0.0; $n = 0
+                foreach ($procId in $f1.Keys) {
+                    $end = $f1[$procId]
+                    $cpu = if ($f0.ContainsKey($procId)) { ($end.Cpu100ns - $f0[$procId].Cpu100ns) / 1e7 } else { $end.Cpu100ns / 1e7 }
+                    if ($f0.ContainsKey($procId)) { $daemonS += $cpu } else { $holderS += $cpu }
+                    $n++
+                }
+                $agentBusy = [ordered]@{
+                    method = 'every ghoztty-agent.exe of this build (daemon + per-session holders): CPU delta over the busy span for a process alive at both ends, whole-lifetime CPU for one born inside it (the busy pane''s holder)'
+                    processes = $n
+                    agent_cpu_s = [math]::Round($daemonS + $holderS, 3)
+                    existing_cpu_s = [math]::Round($daemonS, 3)
+                    new_holder_cpu_s = [math]::Round($holderS, 3)
+                }
+            }
             $result.busy = [ordered]@{
                 method = "+split a cmd pane running ``type`` of a $BusyMB MB file ($(if ($BusyText -eq 'cjk') { '40-ideograph UTF-8 lines walking U+4E00..U+9FFF' } else { '108-char ASCII lines' })) then writing a marker; wall time from the split to the marker, app CPU over the same span; GPU Engine(pid_*) summed, 1 s samples"
                 output_mb = $BusyMB
@@ -1071,6 +1107,7 @@ try {
                 gpu_engine_peak_pct = $gpu.gpu_engine_peak_pct
             }
             if ($gpu.reason) { $result.busy.gpu_reason = $gpu.reason }
+            if ($agentBusy) { $result.busy.agent = $agentBusy }
             Start-Sleep -Seconds 3
 
             $job = Start-GpuSampler $a.Pid $ResizeSeconds

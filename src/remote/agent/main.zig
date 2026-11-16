@@ -165,10 +165,22 @@ fn handoffSuccessorPipe() ?[]const u8 {
     return if (handoff_pipe_len == 0) null else handoff_pipe_buf[0..handoff_pipe_len];
 }
 
+/// Whether the process allocator is the leak-checking DebugAllocator (Debug
+/// builds) rather than `std.heap.smp_allocator` (every release mode). T3017.
+const use_debug_allocator = builtin.mode == .Debug;
+
 pub fn main() !void {
+    // Debug keeps the leak-checking DebugAllocator (what `GeneralPurposeAllocator`
+    // is in every mode under Zig 0.15). Release builds must not: it takes one
+    // process-wide mutex per call and turns anything over its 16 KB largest
+    // bucket into a VirtualAlloc/VirtualFree pair plus a locked hashmap insert,
+    // and the agent and every holder relay each session's output through it
+    // (T3017, PA-I03). SmpAllocator keeps a per-thread freelist instead.
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
-    defer _ = gpa.deinit();
-    const alloc = gpa.allocator();
+    defer if (comptime use_debug_allocator) {
+        _ = gpa.deinit();
+    };
+    const alloc = if (comptime use_debug_allocator) gpa.allocator() else std.heap.smp_allocator;
 
     // Clear the inherited ignore-Ctrl-C flag (T84 / T89d). The Windows local
     // agent is spawned DETACHED with CREATE_NEW_PROCESS_GROUP, which disables
