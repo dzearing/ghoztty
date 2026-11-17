@@ -1,8 +1,8 @@
 {
     "guard":  "rearrange-mode-action",
     "script":  "test/win32/rearrange-mode-action.ps1",
-    "generated":  "2026-11-17T13:31:20-08:00",
-    "commit":  "4ed857744",
+    "generated":  "2026-11-17T14:05:27-08:00",
+    "commit":  "fe889674e",
     "uncommitted":  [
 
                     ],

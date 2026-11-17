@@ -1,8 +1,8 @@
 {
     "guard":  "session-blades",
     "script":  "test/win32/session-blades.ps1",
-    "generated":  "2026-11-17T13:32:39-08:00",
-    "commit":  "4ed857744",
+    "generated":  "2026-11-17T14:08:30-08:00",
+    "commit":  "fe889674e",
     "uncommitted":  [
 
                     ],
