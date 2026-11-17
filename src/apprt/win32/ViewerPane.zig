@@ -646,6 +646,26 @@ color_scheme: iface.PreferredColorScheme = .auto,
 /// the sheet is their background, as it is a terminal's.
 glass: ?pane_elevation.GlassBackdrop = null,
 
+/// The glass sheet's pixels, kept between paints and grown only when a paint
+/// needs more (T3041) - before it, every `WM_PAINT` on glass made and freed a
+/// whole-client DIB (5 MB at 1400x900, 33 MB at 4K) on every resize step.
+/// Given back when the pane leaves glass, in `releaseSnapshot`, and in `deinit`.
+glass_buf: []u32 = &.{},
+
+/// The web view's rect in host coordinates, as `syncBounds` last placed it
+/// (T3041): under a ready, opaque page the sheet there is never seen, so the
+/// glass paint skips it. Null until the controller has been placed.
+page_rect: ?w32.RECT = null,
+
+/// The next glass paint lays the whole client, whatever was invalidated
+/// (T3041). Set when the sheet itself changes - a new slice of the desk, a
+/// resize, the page turning opaque or see-through - so the part under the
+/// web view, which only an update region can name, is never left holding an
+/// old sheet. Every other paint lays only its dirty rect.
+glass_full_due: bool = true,
+/// Whether the last glass paint skipped the sheet under an opaque page.
+glass_skipped_page: bool = false,
+
 /// Live reload (T391): watches `file_path`'s directory and posts
 /// `WM_APP_VIEWER_RELOAD` at this pane's host window when the document
 /// changes. Idle in web mode, and idle for a pane that has no host window yet
@@ -952,6 +972,7 @@ pub fn deinit(self: *ViewerPane, alloc: Allocator) void {
     // host window, and `stop` joins it. Every teardown below — the host window,
     // `file_path` — is something that thread's message would arrive at.
     self.watcher.stop();
+    self.releaseGlassBuf();
     // The hero thumbnail's stream and DIB, before the token below goes dead:
     // an in-flight capture's completion handler reads them THROUGH the token,
     // so clearing them first is what makes the null-pane check sufficient.
@@ -5442,6 +5463,10 @@ pub fn setGlassBackdrop(self: *ViewerPane, spec: ?pane_elevation.GlassBackdrop) 
         self.applyGlass();
         self.refreshScheme();
     }
+    // Off glass nothing paints the sheet, so its pixels go (T3041); on it,
+    // a new slice is a new sheet everywhere.
+    if (spec == null) self.releaseGlassBuf();
+    self.glass_full_due = true;
     if (self.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);
     // The nav bar is a material over the same slice (T1916), and a child is
     // not repainted by its parent's invalidation.
@@ -5476,6 +5501,7 @@ fn applyGlass(self: *ViewerPane) void {
         }
     }
     self.pushGlassToPage();
+    self.glass_full_due = true;
     if (self.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);
 }
 
@@ -5731,6 +5757,10 @@ fn releaseSnapStream(self: *ViewerPane) void {
 /// A capture still in flight is left to land; it is one picture, and its
 /// own answer replaces nothing but this.
 pub fn releaseSnapshot(self: *ViewerPane) void {
+    // The glass sheet's buffer is the same kind of thing: a pane-sized
+    // picture nothing needs between paints of a pane nobody is looking at
+    // (T3041). The next paint grows it back.
+    self.releaseGlassBuf();
     if (self.snap_in_flight_since_ms != null) return;
     if (self.snap_dib) |dib| _ = w32.DeleteObject(dib);
     self.snap_dib = null;
@@ -5819,12 +5849,16 @@ pub fn syncBounds(self: *ViewerPane) void {
 
     if (self.controller) |c| {
         const tb = std.time.Instant.now() catch null;
-        _ = c.setBounds(.{
+        const page: w32.RECT = .{
             .left = 0,
             .top = top,
             .right = width,
             .bottom = height,
-        });
+        };
+        _ = c.setBounds(.{ .left = page.left, .top = page.top, .right = page.right, .bottom = page.bottom });
+        // A page that moved uncovers sheet the last paint skipped (T3041).
+        if (self.page_rect == null or !std.meta.eql(self.page_rect.?, page)) self.glass_full_due = true;
+        self.page_rect = page;
         sync_cost.bounds_ns +|= sinceNs(tb);
     }
 
@@ -7459,7 +7493,14 @@ pub fn cardColors(self: *const ViewerPane) CardColors {
 /// will be no content. Split out from `WM_PAINT` so it can be driven against
 /// any DC.
 pub fn paint(self: *ViewerPane, hdc: w32.HDC, width: i32, height: i32) void {
-    if (!self.paintGlass(hdc, width, height)) {
+    self.paintRect(hdc, width, height, .{ .left = 0, .top = 0, .right = width, .bottom = height });
+}
+
+/// `paint`, with the glass sheet laid only over `sheet` (T3041) - the part
+/// of the client that is dirty and not under an opaque page. An empty rect
+/// lays none of it; off glass the whole client is filled as before.
+fn paintRect(self: *ViewerPane, hdc: w32.HDC, width: i32, height: i32, sheet: w32.RECT) void {
+    if (!self.paintGlass(hdc, width, height, sheet)) {
         const bg_brush = w32.CreateSolidBrush(w32.RGB(self.bg.r, self.bg.g, self.bg.b));
         defer if (bg_brush) |b| {
             _ = w32.DeleteObject(b);
@@ -7477,24 +7518,84 @@ pub fn paint(self: *ViewerPane, hdc: w32.HDC, width: i32, height: i32) void {
 /// desk (T1885) - what a see-through page shows, and what is on screen
 /// before a page or around the error card, as it is under a terminal. False
 /// off glass, or when no buffer could be made: the caller fills `bg`.
-fn paintGlass(self: *const ViewerPane, hdc: w32.HDC, width: i32, height: i32) bool {
+fn paintGlass(self: *ViewerPane, hdc: w32.HDC, width: i32, height: i32, sheet: w32.RECT) bool {
     const g = self.glass orelse return false;
-    if (width <= 0 or height <= 0) return true;
+    const r = clipToClient(sheet, width, height) orelse return true;
+    const rw = r.right - r.left;
+    const rh = r.bottom - r.top;
     const t0 = std.time.Instant.now() catch null;
     defer {
         glass_cost.paints +|= 1;
-        glass_cost.pixels +|= @intCast(width * height);
+        glass_cost.pixels +|= @intCast(rw * rh);
         glass_cost.ns +|= sinceNs(t0);
     }
-    const dib = Dib32.create(hdc, width, height) orelse return false;
-    defer dib.destroy();
-    // The whole client, every step of an edge drag: shared among the
-    // sheet workers (T2702), same pixels.
+    const n: usize = @intCast(rw * rh);
+    const had = self.glass_buf.len;
+    const px = self.glassPixels(n) orelse return false;
+    if (self.glass_buf.len != had) glass_cost.allocs +|= 1;
+    // Shared among the sheet workers (T2702), from the region's own origin
+    // in the desk, so a part of the client gets the same pixels a whole
+    // paint would put there.
     const tr = std.time.Instant.now() catch null;
-    sheet_workers.glassSheetRegion(dib.pixels, @intCast(width), @intCast(height), g.rect[0], g.rect[1], g.full_w, g.full_h, g.palette, self.bg, g.sheet);
+    sheet_workers.glassSheetRegion(px, @intCast(rw), @intCast(rh), g.rect[0] + r.left, g.rect[1] + r.top, g.full_w, g.full_h, g.palette, self.bg, g.sheet);
     glass_cost.render_ns +|= sinceNs(tr);
-    _ = w32.BitBlt(hdc, 0, 0, width, height, dib.dc, 0, 0, w32.SRCCOPY);
+    var bmi = std.mem.zeroes(w32.BITMAPINFO);
+    bmi.bmiHeader.biSize = @sizeOf(w32.BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = rw;
+    bmi.bmiHeader.biHeight = -rh; // top-down
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    _ = w32.StretchDIBits(hdc, r.left, r.top, rw, rh, 0, 0, rw, rh, px.ptr, &bmi, w32.DIB_RGB_COLORS, w32.SRCCOPY);
     return true;
+}
+
+/// At least `n` pixels of the kept glass buffer (T3041), grown with a
+/// quarter's headroom so a widening drag reallocates a handful of times
+/// rather than on every step. Null when the memory is not there; the caller
+/// then fills `bg` as it does off glass.
+fn glassPixels(self: *ViewerPane, n: usize) ?[]u32 {
+    if (self.glass_buf.len < n) {
+        const grown = std.heap.page_allocator.alloc(u32, n + n / 4) catch return null;
+        self.releaseGlassBuf();
+        self.glass_buf = grown;
+    }
+    return self.glass_buf[0..n];
+}
+
+fn releaseGlassBuf(self: *ViewerPane) void {
+    if (self.glass_buf.len != 0) std.heap.page_allocator.free(self.glass_buf);
+    self.glass_buf = &.{};
+}
+
+/// `r` cut to a `width` x `height` client; null when nothing is left.
+fn clipToClient(r: w32.RECT, width: i32, height: i32) ?w32.RECT {
+    const c: w32.RECT = .{
+        .left = @max(r.left, 0),
+        .top = @max(r.top, 0),
+        .right = @min(r.right, width),
+        .bottom = @min(r.bottom, height),
+    };
+    if (c.right <= c.left or c.bottom <= c.top) return null;
+    return c;
+}
+
+/// The part of `dirty` the glass sheet must be laid over (T3041): all of
+/// it, less `page` - the rect an opaque page covers, whose sheet nobody can
+/// see. Only an edge is trimmed (the page always spans the host's width, from
+/// the nav band down), so a page inside the rect leaves it whole. Empty
+/// (`bottom <= top` or `right <= left`) when the page covers all of it.
+pub fn glassSheetRect(dirty: w32.RECT, page: ?w32.RECT) w32.RECT {
+    var r = dirty;
+    const p = page orelse return r;
+    if (p.left <= r.left and p.right >= r.right) {
+        if (p.top <= r.top and p.bottom > r.top) r.top = @min(p.bottom, r.bottom);
+        if (p.bottom >= r.bottom and p.top < r.bottom) r.bottom = @max(p.top, r.top);
+    }
+    if (p.top <= r.top and p.bottom >= r.bottom) {
+        if (p.left <= r.left and p.right > r.left) r.left = @min(p.right, r.right);
+        if (p.right >= r.right and p.left < r.right) r.right = @max(p.left, r.left);
+    }
+    return r;
 }
 
 /// What the hosts' glass sheets cost (T2695), summed until the window reads
@@ -7507,6 +7608,9 @@ pub const GlassCost = struct {
     /// The part of `ns` spent rendering the sheet's pixels (T2702); the rest
     /// is the buffer and the blit.
     render_ns: u64 = 0,
+    /// Paints that had to grow the kept buffer (T3041); a resize sweep that
+    /// reads one per paint has lost the reuse.
+    allocs: u32 = 0,
 };
 pub var glass_cost: GlassCost = .{};
 
@@ -7519,13 +7623,25 @@ pub var glass_cost: GlassCost = .{};
 /// and nothing would tell them they had been painted over. They are told
 /// apart by class (`isOwnChrome`): the browser's window is in this process
 /// too, so the process cannot say which is which.
-fn paintUnderPage(self: *ViewerPane) void {
+fn paintUnderPage(self: *ViewerPane, dirty: ?w32.RECT) void {
     if (self.glass == null) return;
     const h = self.hwnd orelse return;
     var r: w32.RECT = undefined;
     if (w32.GetClientRect(h, &r) == 0) return;
+    const width = r.right - r.left;
+    const height = r.bottom - r.top;
+    // A ready live page is opaque, so the sheet under it is never seen.
+    // Before it is ready the sheet is what shows (T1885), so it goes there
+    // too - and the paint that stops skipping lays the whole client.
+    const opaque_page: ?w32.RECT = if (self.state == .ready and !self.drawsOnGlass()) self.page_rect else null;
+    if ((opaque_page != null) != self.glass_skipped_page) self.glass_full_due = true;
+    // Only what was invalidated (T3041): one card's repaint no longer
+    // re-lays the sheet under the whole client. Unless the sheet changed.
+    const full = self.glass_full_due or dirty == null;
+    const area = if (full) r else (clipToClient(dirty.?, width, height) orelse return);
     const dc = w32.GetDCEx(h, null, w32.DCX_CACHE | w32.DCX_CLIPSIBLINGS) orelse return;
     defer _ = w32.ReleaseDC(h, dc);
+    _ = w32.IntersectClipRect(dc, area.left, area.top, area.right, area.bottom);
     var child = w32.GetWindow(h, w32.GW_CHILD);
     while (child) |c| : (child = w32.GetWindow(c, w32.GW_HWNDNEXT)) {
         if (w32.IsWindowVisible(c) == 0 or !isOwnChrome(c)) continue;
@@ -7536,7 +7652,9 @@ fn paintUnderPage(self: *ViewerPane) void {
         _ = w32.ScreenToClient(h, &pts[1]);
         _ = w32.ExcludeClipRect(dc, pts[0].x, pts[0].y, pts[1].x, pts[1].y);
     }
-    self.paint(dc, r.right - r.left, r.bottom - r.top);
+    self.paintRect(dc, width, height, glassSheetRect(area, opaque_page));
+    self.glass_full_due = false;
+    self.glass_skipped_page = opaque_page != null;
     // A drag-hidden nav bar's band (T2767), over the sheet just laid there.
     if (self.nav) |nav| _ = nav.paintDeferred(dc);
 }
@@ -7706,6 +7824,8 @@ pub fn wndProc(
             var t0: i64 = 0;
             const timed = Window.batchCostOn();
             if (timed) _ = w32.QueryPerformanceCounter(&t0);
+            // A new size is a new sheet under every pixel (T3041).
+            self.glass_full_due = true;
             self.syncBounds();
             if (timed) handler_cost.size_qpc +%= qpcSince(t0);
             Window.traceRenderStage("viewer-synced", self.hwnd);
@@ -7955,6 +8075,12 @@ pub fn wndProc(
         w32.WM_ERASEBKGND => return 1,
 
         w32.WM_PAINT => {
+            // The update region's bounds, read before BeginPaint validates
+            // it (T3041). A change to the sheet itself repaints the whole
+            // client anyway (`glass_full_due`), so this only ever trims an
+            // ordinary partial repaint.
+            var dirty: w32.RECT = undefined;
+            const has_dirty = w32.GetUpdateRect(hwnd, &dirty, 0) != 0;
             var ps: w32.PAINTSTRUCT = undefined;
             const hdc = w32.BeginPaint(hwnd, &ps) orelse return 0;
             // On glass the whole client is painted once, under the web view
@@ -7968,7 +8094,7 @@ pub fn wndProc(
                 if (self.nav) |nav| _ = nav.paintDeferred(hdc);
             }
             _ = w32.EndPaint(hwnd, &ps);
-            self.paintUnderPage();
+            self.paintUnderPage(if (has_dirty) dirty else null);
             return 0;
         },
         // The same page into a caller's DC, so a pixel probe can photograph
@@ -7996,6 +8122,39 @@ const testing = std.testing;
 /// Test-only: the loopback page server below. See `TestPage.serve` for why
 /// `std.net.Stream`'s own read/write cannot be used on Windows.
 const socket_rw = @import("../../remote/socket_rw.zig");
+
+test "T3041: the glass sheet is laid over the dirty rect, less an opaque page" {
+    const R = w32.RECT;
+    const eq = struct {
+        fn f(want: R, got: R) !void {
+            try testing.expectEqual(want.left, got.left);
+            try testing.expectEqual(want.top, got.top);
+            try testing.expectEqual(want.right, got.right);
+            try testing.expectEqual(want.bottom, got.bottom);
+        }
+    }.f;
+    const client: R = .{ .left = 0, .top = 0, .right = 800, .bottom = 600 };
+    const page: R = .{ .left = 0, .top = 40, .right = 800, .bottom = 600 };
+    // No page: the dirty rect, whole.
+    try eq(client, glassSheetRect(client, null));
+    // A page under everything but the nav band: only the band is laid.
+    try eq(.{ .left = 0, .top = 0, .right = 800, .bottom = 40 }, glassSheetRect(client, page));
+    // A dirty rect wholly under the page: nothing.
+    const under = glassSheetRect(.{ .left = 10, .top = 100, .right = 200, .bottom = 300 }, page);
+    try testing.expect(under.bottom <= under.top);
+    try testing.expect(clipToClient(under, 800, 600) == null);
+    // Straddling the page's top edge: the part above it.
+    try eq(.{ .left = 10, .top = 20, .right = 200, .bottom = 40 }, glassSheetRect(.{ .left = 10, .top = 20, .right = 200, .bottom = 90 }, page));
+    // A page that does not span the rect leaves it whole, rather than
+    // guessing at an L-shape.
+    const narrow: R = .{ .left = 100, .top = 0, .right = 300, .bottom = 600 };
+    try eq(client, glassSheetRect(client, narrow));
+    // A page covering the rect's full height trims from the side.
+    try eq(.{ .left = 300, .top = 0, .right = 800, .bottom = 600 }, glassSheetRect(.{ .left = 200, .top = 0, .right = 800, .bottom = 600 }, .{ .left = 0, .top = 0, .right = 300, .bottom = 600 }));
+    // Clipping to the client.
+    try eq(.{ .left = 0, .top = 0, .right = 800, .bottom = 600 }, clipToClient(.{ .left = -5, .top = -5, .right = 900, .bottom = 700 }, 800, 600).?);
+    try testing.expect(clipToClient(.{ .left = 800, .top = 0, .right = 900, .bottom = 10 }, 800, 600) == null);
+}
 
 test "viewer pane id is a valid pane id" {
     // Constructing needs a Window, which needs an app runtime; the id
@@ -8703,6 +8862,31 @@ test "host floor: a real controller on a real window, on this box" {
             try testing.expectEqual(thin_want[mid], dib.pixels[mid] & 0x00FFFFFF);
             try testing.expect(thin_want[mid] != want[mid]);
             pane.setGlassBackdrop(spec);
+
+            // T3041: the buffer is kept - a second whole paint grows nothing
+            // - and a part of the client is laid with the same pixels a
+            // whole paint puts there, and nothing outside it is touched.
+            pane.paint(dib.dc, sw, sh);
+            const before = glass_cost;
+            pane.paint(dib.dc, sw, sh);
+            try testing.expectEqual(before.allocs, glass_cost.allocs);
+            try testing.expectEqual(before.pixels + @as(u64, @intCast(sw * sh)), glass_cost.pixels);
+            @memset(dib.pixels, 0x00123456);
+            const part: w32.RECT = .{ .left = 50, .top = 40, .right = 170, .bottom = 120 };
+            pane.paintRect(dib.dc, sw, sh, part);
+            try testing.expectEqual(before.allocs, glass_cost.allocs);
+            for ([_][2]i32{ .{ 50, 40 }, .{ 169, 119 }, .{ 100, 80 } }) |xy| {
+                const i: usize = @intCast(xy[1] * sw + xy[0]);
+                try testing.expectEqual(want[i], dib.pixels[i] & 0x00FFFFFF);
+            }
+            for ([_][2]i32{ .{ 49, 40 }, .{ 170, 80 }, .{ 100, 39 }, .{ 100, 120 }, .{ 0, 0 } }) |xy| {
+                const i: usize = @intCast(xy[1] * sw + xy[0]);
+                try testing.expectEqual(@as(u32, 0x00123456), dib.pixels[i] & 0x00FFFFFF);
+            }
+            // Off glass the sheet's pixels go.
+            pane.setGlassBackdrop(null);
+            try testing.expectEqual(@as(usize, 0), pane.glass_buf.len);
+            pane.setGlassBackdrop(spec);
         }
 
         // The nav bar is the chrome colour as a material over that same
@@ -8887,7 +9071,7 @@ test "host floor: a real controller on a real window, on this box" {
             // read back here: this parent is never shown, so its surface
             // holds nothing (measured: a paint and a read through one DC
             // came back black) - the on-screen check is a follow-up.
-            pane.paintUnderPage();
+            pane.paintUnderPage(null);
         }
 
         // Off glass again: the class goes, the page is opaque again, and the
