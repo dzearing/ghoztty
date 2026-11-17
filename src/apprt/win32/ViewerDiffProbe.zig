@@ -309,6 +309,14 @@ fn clearListing(self: *Probe) void {
     self.fingerprint = null;
 }
 
+/// Drop the patch's bytes once the page has them, keeping `patch_path` (which
+/// file the last patch was for). The pane is the patch's only reader, so the
+/// bytes have no use after the push (T3039).
+pub fn releasePatchBytes(self: *Probe) void {
+    if (self.patch) |p| self.alloc.free(p);
+    self.patch = null;
+}
+
 fn clearPatch(self: *Probe) void {
     if (self.patch) |p| self.alloc.free(p);
     if (self.patch_path) |p| self.alloc.free(p);

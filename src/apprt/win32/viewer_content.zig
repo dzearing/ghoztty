@@ -844,7 +844,10 @@ pub fn appendJsStringUtf16(
     return try appendJsStringTo(u16, alloc, out, s);
 }
 
-fn appendJsStringTo(
+/// Either sink; `appendJsString` / `appendJsStringUtf16` are the two
+/// instantiations, and a caller that builds a whole call generically (the diff
+/// viewer's `setDiffFile`, T3039) uses this directly.
+pub fn appendJsStringTo(
     comptime T: type,
     alloc: Allocator,
     out: *std.ArrayList(T),
@@ -900,7 +903,7 @@ fn appendJsStringTo(
 /// code units for a UTF-16 one. A UTF-16 unit is never produced per byte of
 /// input — 1-, 2- and 3-byte sequences each make one unit and a 4-byte one
 /// makes two — so `s.len` units is always enough room.
-fn appendChunk(
+pub fn appendChunk(
     comptime T: type,
     alloc: Allocator,
     out: *std.ArrayList(T),

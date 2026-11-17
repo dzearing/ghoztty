@@ -687,26 +687,97 @@ pub const FilePayload = struct {
     scroll_to: ?[]const u8 = null,
 };
 
-/// `window.__viewer.setDiffFile({…})`. Caller owns the result.
+/// `window.__viewer.setDiffFile({…})`, as UTF-8. Caller owns the result. The
+/// pane injects `setDiffFileCallUtf16`; this twin is the readable form the
+/// none lane asserts the shape against, and the two are asserted equal.
 pub fn setDiffFileCall(alloc: Allocator, f: FilePayload) Allocator.Error![]u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(alloc);
-    try out.appendSlice(alloc, "window.__viewer.setDiffFile({");
-    try appendString(alloc, &out, "path", f.path, true);
-    if (f.old_path) |o| try appendString(alloc, &out, "oldPath", o, false);
-    try appendString(alloc, &out, "status", f.status.name(), false);
-    try appendString(alloc, &out, "statusLetter", f.status.letter(), false);
-    try appendString(alloc, &out, "origin", f.origin.name(), false);
-    if (f.origin.sectionTitle()) |s| try appendString(alloc, &out, "section", s, false);
-    try appendNumber(alloc, &out, "additions", f.additions);
-    try appendNumber(alloc, &out, "deletions", f.deletions);
-    try out.appendSlice(alloc, ", \"binary\": ");
-    try out.appendSlice(alloc, if (f.binary) "true" else "false");
-    try appendString(alloc, &out, "language", f.language, false);
-    try appendString(alloc, &out, "patch", f.patch, false);
-    if (f.scroll_to) |s| try appendString(alloc, &out, "scrollTo", s, false);
-    try out.appendSlice(alloc, "})");
+    writeDiffFileCall(u8, alloc, &out, f) catch |err| switch (err) {
+        error.InvalidUtf8 => unreachable, // a UTF-8 sink never decodes
+        error.OutOfMemory => return error.OutOfMemory,
+    };
     return try out.toOwnedSlice(alloc);
+}
+
+/// `window.__viewer.setDiffFile({…})`, built straight into the UTF-16 that
+/// WebView2's `ExecuteScript` takes (T3039). A patch can be 8 MB; building it
+/// as UTF-8 and then widening held the patch, a regrown UTF-8 list, its final
+/// copy and the UTF-16 copy all at once on the GUI thread. Here the buffer is
+/// asked for once, at its final size bar escapes, so the peak is the patch
+/// plus one wide copy. `error.InvalidUtf8` is a patch that is not UTF-8 (a
+/// Latin-1 file) — the same input the old widening refused.
+pub fn setDiffFileCallUtf16(alloc: Allocator, f: FilePayload) content.ScriptError![:0]u16 {
+    var out: std.ArrayList(u16) = .empty;
+    errdefer out.deinit(alloc);
+    try out.ensureTotalCapacity(alloc, diffFileCallEstimate(f));
+    try writeDiffFileCall(u16, alloc, &out, f);
+    return try out.toOwnedSliceSentinel(alloc, 0);
+}
+
+/// Code units the call needs when nothing escapes: every value's bytes plus a
+/// fixed allowance for the keys and punctuation. UTF-8 never decodes to MORE
+/// UTF-16 units than it has bytes, so this is an upper bound for unescaped
+/// text and a regrow only ever happens for an escape-heavy patch.
+fn diffFileCallEstimate(f: FilePayload) usize {
+    var n: usize = 256; // keys, quotes, separators, numbers, the sentinel
+    n += f.path.len + f.status.name().len + f.status.letter().len;
+    n += f.origin.name().len + f.language.len + f.patch.len;
+    if (f.old_path) |o| n += o.len;
+    if (f.origin.sectionTitle()) |s| n += s.len;
+    if (f.scroll_to) |s| n += s.len;
+    return n;
+}
+
+fn writeDiffFileCall(
+    comptime T: type,
+    alloc: Allocator,
+    out: *std.ArrayList(T),
+    f: FilePayload,
+) content.ScriptError!void {
+    try content.appendChunk(T, alloc, out, "window.__viewer.setDiffFile({");
+    try appendStringTo(T, alloc, out, "path", f.path, true);
+    if (f.old_path) |o| try appendStringTo(T, alloc, out, "oldPath", o, false);
+    try appendStringTo(T, alloc, out, "status", f.status.name(), false);
+    try appendStringTo(T, alloc, out, "statusLetter", f.status.letter(), false);
+    try appendStringTo(T, alloc, out, "origin", f.origin.name(), false);
+    if (f.origin.sectionTitle()) |s| try appendStringTo(T, alloc, out, "section", s, false);
+    try appendNumberTo(T, alloc, out, "additions", f.additions);
+    try appendNumberTo(T, alloc, out, "deletions", f.deletions);
+    try content.appendChunk(T, alloc, out, ", \"binary\": ");
+    try content.appendChunk(T, alloc, out, if (f.binary) "true" else "false");
+    try appendStringTo(T, alloc, out, "language", f.language, false);
+    try appendStringTo(T, alloc, out, "patch", f.patch, false);
+    if (f.scroll_to) |s| try appendStringTo(T, alloc, out, "scrollTo", s, false);
+    try content.appendChunk(T, alloc, out, "})");
+}
+
+fn appendStringTo(
+    comptime T: type,
+    alloc: Allocator,
+    out: *std.ArrayList(T),
+    key: []const u8,
+    value: []const u8,
+    first: bool,
+) content.ScriptError!void {
+    if (!first) try content.appendChunk(T, alloc, out, ", ");
+    try content.appendJsStringTo(T, alloc, out, key);
+    try content.appendChunk(T, alloc, out, ": ");
+    try content.appendJsStringTo(T, alloc, out, value);
+}
+
+fn appendNumberTo(
+    comptime T: type,
+    alloc: Allocator,
+    out: *std.ArrayList(T),
+    key: []const u8,
+    value: u64,
+) content.ScriptError!void {
+    try content.appendChunk(T, alloc, out, ", ");
+    try content.appendJsStringTo(T, alloc, out, key);
+    var buf: [32]u8 = undefined;
+    const text = std.fmt.bufPrint(&buf, ": {d}", .{value}) catch unreachable;
+    try content.appendChunk(T, alloc, out, text);
 }
 
 fn appendString(
@@ -1068,6 +1139,54 @@ test "the page calls are the shape diff.js reads" {
         try testing.expect(std.mem.indexOf(u8, js, "\"section\"") == null);
         try testing.expect(std.mem.indexOf(u8, js, "\"binary\": true") != null);
     }
+}
+
+test "the UTF-16 diff file call is the UTF-8 one widened, in one allocation (T3039)" {
+    const alloc = testing.allocator;
+    // Escapes, non-ASCII (a 2-, 3- and 4-byte sequence) and a line separator,
+    // so every branch of the shared escape table crosses the wide sink.
+    const payloads = [_]FilePayload{
+        .{
+            .path = "src/caf\u{e9}.zig",
+            .old_path = "src/old \"name\".zig",
+            .status = .renamed,
+            .origin = .staged,
+            .additions = 12345,
+            .deletions = 0,
+            .language = "zig",
+            .patch = "@@ -1 +1 @@\n-a\t\\\n+\u{2028}\u{20ac}\u{1f600}\r\n",
+            .scroll_to = "first",
+        },
+        .{ .path = "a", .status = .added, .origin = .committed, .binary = true },
+    };
+    for (payloads) |f| {
+        const narrow = try setDiffFileCall(alloc, f);
+        defer alloc.free(narrow);
+        const expect = try std.unicode.utf8ToUtf16LeAllocZ(alloc, narrow);
+        defer alloc.free(expect);
+        const wide = try setDiffFileCallUtf16(alloc, f);
+        defer alloc.free(wide);
+        try testing.expectEqualSlices(u16, expect, wide);
+    }
+
+    // A large plain patch: the presize covers it, so the builder never regrows
+    // (a regrow is a second live copy of everything written so far).
+    const big = try alloc.alloc(u8, 256 * 1024);
+    defer alloc.free(big);
+    @memset(big, 'x');
+    const f: FilePayload = .{ .path = "big.txt", .status = .modified, .origin = .unstaged, .patch = big };
+    const wide = try setDiffFileCallUtf16(alloc, f);
+    defer alloc.free(wide);
+    try testing.expect(wide.len + 1 <= diffFileCallEstimate(f));
+    try testing.expect(wide.len > big.len);
+
+    // A patch that is not UTF-8 is refused, as the old widening refused it.
+    try testing.expectError(error.InvalidUtf8, setDiffFileCallUtf16(alloc, .{
+        .path = "latin1.txt",
+        .status = .modified,
+        .origin = .unstaged,
+        .patch = "+caf\xe9\n",
+    }));
 }
 
 test "the subtitle and the empty message name what the pane is showing" {

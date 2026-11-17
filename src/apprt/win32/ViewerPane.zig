@@ -2475,6 +2475,11 @@ fn openDiffFile(self: *ViewerPane, alloc: Allocator, index: usize, scroll_to: ?[
 fn applyDiffPatch(self: *ViewerPane, alloc: Allocator) void {
     const probe = if (self.diff_probe) |*p| p else return;
     const path = probe.patch_path orelse return;
+    // The patch has exactly one reader, this push, so its bytes (up to 8 MB)
+    // go once the page has them rather than sitting until the next patch or
+    // the pane closes (T3039). `patch_path` stays: it is what says a patch
+    // arrived for this file.
+    defer probe.releasePatchBytes();
     for (probe.files.items) |entry| {
         if (!std.mem.eql(u8, entry.path, path)) continue;
         self.pushDiffFile(alloc, entry, probe.patch, null);
@@ -2495,7 +2500,9 @@ fn pushDiffFile(
         entry.status.letter(),
         (patch orelse "").len,
     });
-    const js = viewer_diff.setDiffFileCall(alloc, .{
+    // Straight into UTF-16 with one presized buffer: the patch can be 8 MB,
+    // and building UTF-8 then widening held four copies of it (T3039).
+    const js = viewer_diff.setDiffFileCallUtf16(alloc, .{
         .path = entry.path,
         .old_path = entry.old_path,
         .status = entry.status,
@@ -2506,9 +2513,12 @@ fn pushDiffFile(
         .language = content.highlightLanguage(content.extension(entry.path)) orelse "",
         .patch = patch orelse "",
         .scroll_to = scroll_to,
-    }) catch return;
+    }) catch |err| {
+        log.warn("could not build the viewer diff script for {s}: {s}", .{ entry.path, @errorName(err) });
+        return;
+    };
     defer alloc.free(js);
-    self.executeScript(alloc, js);
+    self.executeScriptWide(alloc, js);
 }
 
 /// The diff worker landed. The ONLY place its answer is read, and it runs on
@@ -11126,6 +11136,11 @@ test "host floor: a real controller on a real window, on this box" {
 
             const probe = &pane.diff_probe.?;
             try testing.expectEqualStrings(diff_dir, probe.repo.?);
+            // The patch's one reader has run, so its bytes are gone (T3039):
+            // retained, a large patch held up to 8 MB per pane until the next
+            // one. Which file it was for is still known.
+            try testing.expect(probe.patch == null);
+            try testing.expect(probe.patch_path != null);
             // Sections, and which side each file came from.
             var saw_unstaged = false;
             var saw_untracked = false;
