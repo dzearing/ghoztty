@@ -61,6 +61,10 @@
 #   another parked workspace's PANE row (its chevron unfolds it first) does
 #   the same. Every click lands on a point the sidebar's own `pane sidebar
 #   outline` line names (toggle=, scope=, heads, chev=, items).
+# L (T3200): undo of a workspace close - the closed one waits (seam
+#   `closed_for_undo`) while the window goes on to the next, Ctrl+Shift+Z
+#   puts it back ON SHOW in the same window with the same shell, a parked
+#   one's close undoes onto show too, and an undo that runs out closes it.
 #
 # THE ORACLE IS THE LATCH AND THE FILE. The mode the app runs in is a decision
 # invisible in pixels (until T3181 gives it a window to act on), so it is read
@@ -1049,6 +1053,84 @@ try {
     }
     $ws = Wait-Ws { param($s) $s -and @($s.data.workspaces).Count -eq 1 }
     Assert (@($ws.data.workspaces).Count -eq 1) "J: back to one workspace for C4 ($(@($ws.data.workspaces).Count))"
+
+    # =====================================================================
+    # L (T3200): undo of a workspace close brings it back ON SHOW, in the
+    # same window, with the same shell (its scrollback still holds what was
+    # typed before the close). Closing the one on show hands the window on
+    # at once, as C3; the closed one waits out undo-timeout (5s default)
+    # off the list, counted by the seam's `closed_for_undo`; Ctrl+Shift+Z in
+    # the shared window brings it back; a parked one's close undoes onto show
+    # too; and when the undo runs out it closes for real.
+    # =====================================================================
+    function L-Undo {
+        [void](Set-TestActiveWindow -Window ([IntPtr]$shared))
+        Start-Sleep -Milliseconds 250
+        return (Send-TestKeys -Window ([IntPtr]$shared) -Target ([IntPtr](Focused-Pane)) -Modifiers @('ctrl', 'shift') -Key 'Z')
+    }
+    function L-Read([string]$name) { return ([string](Invoke-SwmCli "+read --name=$name --lines=60").Text -replace '\r?\n', '') }
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    $kHome = [string]$ws.data.active
+    $r = Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-k1', '--focus')
+    Assert ($r -and $r.success) 'L: setup: +new-window --target=swm-k1 --focus'
+    $ws = Wait-Ws { param($s) $s -and [string]$s.data.active -eq 'swm-k1' }
+    Assert ([string]$ws.data.active -eq 'swm-k1' -and [int64](Ws-Row $ws 'swm-k1').hwnd -eq $shared) "L: setup: swm-k1 on show in the shared window (active='$($ws.data.active)')"
+    Start-Sleep -Milliseconds 1500
+    [void](Invoke-SwmCli '+send-keys --target=swm-k1 "echo K1-MARK-3200" Enter')
+    $deadline = (Get-Date).AddSeconds(6)
+    do { Start-Sleep -Milliseconds 300; $k1Text = L-Read 'swm-k1' } while ((Get-Date) -lt $deadline -and $k1Text -notmatch 'K1-MARK-3200')
+    Assert ($k1Text -match 'K1-MARK-3200') 'L: setup: swm-k1''s shell echoed its mark'
+
+    # L1: close the one on show - the window goes to the one shown before it.
+    $r = Invoke-GhozttyIpc -Action 'close' -Arguments @('--target=swm-k1')
+    Assert ($r -and $r.success) 'L1: +close --target=swm-k1 (on show) succeeds'
+    $ws = Wait-Ws { param($s) $s -and -not (Ws-Row $s 'swm-k1') -and [string]$s.data.active -eq $kHome }
+    Assert ([string]$ws.data.active -eq $kHome -and [int64](Ws-Row $ws $kHome).hwnd -eq $shared) "L1: $kHome took the same window back (active='$($ws.data.active)')"
+    Assert ([int]$ws.data.closed_for_undo -eq 1) "L1: swm-k1 waits out its undo (closed_for_undo=$($ws.data.closed_for_undo))"
+    $tops = @(Visible-Tops)
+    Assert ($tops.Count -eq 1 -and $tops[0].Hwnd -eq $shared) "L1: one window, the shared one, still on screen ($($tops.Count))"
+
+    # L2: Ctrl+Shift+Z puts it back on show, same window, same shell.
+    Assert (L-Undo) 'L2: Ctrl+Shift+Z delivered'
+    $ws = Wait-Ws { param($s) $s -and [string]$s.data.active -eq 'swm-k1' }
+    $k1 = Ws-Row $ws 'swm-k1'
+    Assert ($k1 -and [string]$ws.data.active -eq 'swm-k1' -and [int64]$k1.hwnd -eq $shared) "L2: undo brought swm-k1 back on show in the shared window (active='$($ws.data.active)' hwnd=$(if ($k1) { $k1.hwnd }))"
+    Assert ([int]$ws.data.closed_for_undo -eq 0 -and @($ws.data.workspaces).Count -eq 2) "L2: listed again, nothing waiting (closed_for_undo=$($ws.data.closed_for_undo), $(@($ws.data.workspaces).Count) workspaces)"
+    Assert ((L-Read 'swm-k1') -match 'K1-MARK-3200') 'L2: the same shell - its scrollback still holds the mark, and +read reaches it by name'
+    $kp = Ws-Row $ws $kHome
+    Assert ($kp -and $kp.parked -and [int]$kp.presenting -eq 0) "L2: $kHome is parked again and draws nothing (parked=$($kp.parked) presenting=$($kp.presenting))"
+    $tops = @(Visible-Tops)
+    Assert ($tops.Count -eq 1 -and $tops[0].Hwnd -eq $shared) "L2: still the one window ($($tops.Count))"
+
+    # L3: a PARKED workspace's close undoes onto show as well (Mac: undo
+    # brings the workspace back on show).
+    [void](Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=show', '--target=' + $kHome))
+    $ws = Wait-Ws { param($s) $s -and [string]$s.data.active -eq $kHome }
+    $r = Invoke-GhozttyIpc -Action 'close' -Arguments @('--target=swm-k1')
+    Assert ($r -and $r.success) 'L3: +close --target=swm-k1 (parked) succeeds'
+    $ws = Wait-Ws { param($s) $s -and -not (Ws-Row $s 'swm-k1') }
+    Assert ([string]$ws.data.active -eq $kHome -and [int]$ws.data.closed_for_undo -eq 1) "L3: $kHome kept the window, swm-k1 waits (active='$($ws.data.active)' closed_for_undo=$($ws.data.closed_for_undo))"
+    Assert (L-Undo) 'L3: Ctrl+Shift+Z delivered'
+    $ws = Wait-Ws { param($s) $s -and [string]$s.data.active -eq 'swm-k1' }
+    Assert ([string]$ws.data.active -eq 'swm-k1' -and [int64](Ws-Row $ws 'swm-k1').hwnd -eq $shared) "L3: undo put the parked one's close back ON SHOW (active='$($ws.data.active)')"
+
+    # L4: left alone, the undo runs out and the close is real: the workspace
+    # is gone for good, and its shell with it (+read finds no such target).
+    $r = Invoke-GhozttyIpc -Action 'close' -Arguments @('--target=swm-k1')
+    Assert ($r -and $r.success) 'L4: +close --target=swm-k1 again'
+    $ws = Wait-Ws { param($s) $s -and [int]$s.data.closed_for_undo -eq 1 }
+    Assert ([int]$ws.data.closed_for_undo -eq 1) "L4: waiting out the undo (closed_for_undo=$($ws.data.closed_for_undo))"
+    $ws = Wait-Ws { param($s) $s -and [int]$s.data.closed_for_undo -eq 0 } 14
+    Assert ([int]$ws.data.closed_for_undo -eq 0 -and @($ws.data.workspaces).Count -eq 1 -and [string]$ws.data.active -eq $kHome) "L4: the undo ran out - nothing waiting, $kHome alone on show (closed_for_undo=$($ws.data.closed_for_undo), active='$($ws.data.active)')"
+    $gone = Invoke-SwmCli '+read --name=swm-k1 --lines=60'
+    Assert ($gone.Code -ne 0 -and ($gone.Text -replace '\r?\n', '') -notmatch 'K1-MARK-3200') "L4: swm-k1 is gone for real (+read no longer reaches it: exit $($gone.Code))"
+    Assert (L-Undo) 'L4: Ctrl+Shift+Z delivered after the expiry'
+    Start-Sleep -Milliseconds 1200
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    Assert (@($ws.data.workspaces).Count -eq 1 -and [string]$ws.data.active -eq $kHome) "L4: an undo after the expiry brings nothing back ($(@($ws.data.workspaces).Count) workspaces)"
+    $tops = @(Visible-Tops)
+    Assert ($tops.Count -eq 1 -and $tops[0].Hwnd -eq $shared) "L4: the shared window never moved ($($tops.Count))"
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'L: no crash'
 
     # C4: the last workspace's close closes the window.
     [void](Send-TestSysCommand -Window ([IntPtr]$shared) -Command 'close')

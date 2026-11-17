@@ -70,7 +70,9 @@ pub const Parked = union(enum) {
 };
 
 const ParkedWindow = struct {
-    /// Hidden, out of `App.windows`, otherwise untouched.
+    /// Hidden, out of `App.windows`, otherwise untouched. A single-window-mode
+    /// workspace (T3200, `Window.closed_workspace`) has no HWND at all: its
+    /// panes wait under the park host, and an undo puts it back on show.
     window: *Window,
     /// Every IPC name that pointed at the window or one of its panes: the
     /// registry prunes them while the window is out of the live set, and an
@@ -339,6 +341,123 @@ pub fn parkWindow(self: *CloseUndo, window: *Window) bool {
     return true;
 }
 
+/// The close of `window` as the user made it: a single-window-mode workspace
+/// parks as a workspace (`parkWorkspace`), anything else as a window
+/// (`parkWindow`). Same contract as both: true means it is parked and the
+/// caller must NOT run the close.
+pub fn parkWindowOrWorkspace(self: *CloseUndo, window: *Window) bool {
+    if (self.app.workspaces.manages(window)) return self.parkWorkspace(window);
+    return self.parkWindow(window);
+}
+
+/// Park a single-window-mode workspace the user just closed (T3200; Mac
+/// window-modes.md "Undo of a close brings the workspace back on show").
+/// The shared window is never hidden: the close first runs exactly as an
+/// immediate one would (`App.closeWorkspace` - the one on show hands the
+/// window to the workspace shown before it; a parked one closes in place),
+/// and the controller then waits with no window, its panes hidden under the
+/// park host and every session in them still running, out of the
+/// workspaces and `App.windows` alike. Undo admits it again and puts it on
+/// show; the expiry runs the rest of the close.
+///
+/// Refused - the close is the immediate one - on the same terms as
+/// `parkWindow`: undo off, nothing still running, and the LAST workspace,
+/// whose close closes the window and leaves nowhere to press undo.
+pub fn parkWorkspace(self: *CloseUndo, window: *Window) bool {
+    if (!self.parkable(window)) return false;
+    if (window.is_quick_terminal or window.parked_for_undo) return false;
+    if (!self.app.hasWindow(window)) return false;
+    if (self.app.workspaces.count() < 2) return false;
+    if (!anyLive(window)) return false;
+
+    const alloc = self.app.core_app.alloc;
+    const names = self.app.ipc_registry.save(alloc, window, ownsTarget) catch return false;
+    self.pushOwned(shared_owner, .{ .window = .{ .window = window, .names = names } }) catch {
+        IpcRegistry.freeSaved(alloc, names);
+        return false;
+    };
+
+    if (window.rename_dialog) |dlg| dlg.cancel();
+    if (window.banner_dialog) |dlg| dlg.cancel();
+    if (window.machine_chooser) |ch| ch.cancel();
+    window.cancelTabRename();
+
+    // The window goes on to the next workspace now, as on any close; this
+    // controller is left with none. A refusal here (no park host) leaves it
+    // holding the window, which the close below then cannot hide - so the
+    // park is backed out and the close runs as an immediate one.
+    switch (self.app.closeWorkspace(window)) {
+        .in_place => {},
+        .as_window => {
+            if (self.undo_stack.takeMatching(window, isWindowEntry)) |item|
+                IpcRegistry.freeSaved(alloc, item.payload.window.names);
+            self.arm();
+            return false;
+        },
+    }
+    if (window.hwnd != null) {
+        // `closeWorkspace` could not take the window off it (no park host):
+        // the workspace has already left the host, so it closes for real.
+        if (self.undo_stack.takeMatching(window, isWindowEntry)) |item|
+            IpcRegistry.freeSaved(alloc, item.payload.window.names);
+        self.arm();
+        return false;
+    }
+
+    window.parked_for_undo = true;
+    window.closed_workspace = true;
+    window.closing = true;
+    // Its panes are already hidden under the park host: surrendering the
+    // window hid them, and a workspace parked all along never showed them
+    // (T3192 holds a parked workspace's new panes from their first frame).
+    self.removeFromApp(window);
+    log.info("parked closed workspace for undo name={s}", .{window.ipc_name orelse "?"});
+    return true;
+}
+
+fn isWindowEntry(target: *Window, p: *const Parked) bool {
+    return switch (p.*) {
+        .window => |w| w.window == target,
+        else => false,
+    };
+}
+
+fn anyLive(window: *Window) bool {
+    for (window.tab_trees[0..window.tab_count]) |*tree| {
+        var it = tree.iterator();
+        while (it.next()) |entry| {
+            if (!exited(entry.view)) return true;
+        }
+    }
+    return false;
+}
+
+/// How many closed workspaces are waiting out their undo (T3200) - the
+/// `workspaces` seam's `closed_for_undo`.
+pub fn closedWorkspaceCount(self: *const CloseUndo) usize {
+    var n: usize = 0;
+    for (self.undo_stack.items.items) |it| switch (it.payload) {
+        .window => |w| if (w.window.closed_workspace) {
+            n += 1;
+        },
+        else => {},
+    };
+    return n;
+}
+
+/// A closed workspace's last shell exited while it waited (T3200): there is
+/// nothing left to bring back, so its undo runs out on the next timer turn -
+/// never from inside the tree edit that emptied it.
+pub fn expireParkedWindow(self: *CloseUndo, window: *Window) void {
+    for (self.undo_stack.items.items) |*it| switch (it.payload) {
+        .window => |w| if (w.window == window) {
+            it.deadline = 0;
+        },
+        else => {},
+    };
+    self.arm();
+}
+
 /// Whether an IPC registration points at `window` or at a pane inside it.
 fn ownsTarget(window: *Window, target: IpcRegistry.Target) bool {
     return switch (target) {
@@ -538,7 +657,54 @@ fn restore(self: *CloseUndo, parked: Parked) ?Reclose {
     }
 }
 
+/// Undo of a single-window-mode workspace close (T3200): it joins the
+/// workspaces again and goes on show in the shared window - the one on show
+/// hands it over, exactly as a switch does. With nothing on show any more
+/// (the rest closed while it waited) it loads a window of its own.
+fn restoreWorkspace(self: *CloseUndo, parked: ParkedWindow) ?Reclose {
+    const app = self.app;
+    const alloc = app.core_app.alloc;
+    const window = parked.window;
+    defer IpcRegistry.freeSaved(alloc, parked.names);
+
+    app.windows.append(alloc, window) catch |err| {
+        log.warn("undo: workspace restore failed: {}", .{err});
+        window.parked_for_undo = false;
+        window.closeNow();
+        return null;
+    };
+    app.workspaces.admit(alloc, window, true) catch |err| {
+        log.warn("undo: workspace restore failed: {}", .{err});
+        _ = app.windows.pop();
+        window.parked_for_undo = false;
+        window.closeNow();
+        return null;
+    };
+    window.parked_for_undo = false;
+    window.closed_workspace = false;
+    window.closing = false;
+    for (parked.names) |n| app.ipcRegister(n.name, n.target) catch {};
+
+    const shown = app.showWorkspace(window);
+    if (!shown and window.hwnd == null) {
+        // Nothing had the window to hand over.
+        window.promoteToOwnWindow() catch |err| log.warn("undo: workspace promotion failed: {}", .{err});
+        app.workspaces.didLoadWindow(window);
+    }
+    PaneSidebar.refreshScopes(app.windows.items, null);
+    app.refreshWindowActivity();
+    app.stopQuitTimer();
+    app.markLayoutDirty();
+    log.info("undo: workspace restored on show name={s} hwnd={}", .{ window.ipc_name orelse "?", window.hwnd != null });
+
+    if (window.tab_count == 0) return null;
+    var again: Reclose = .{ .window = .{ .ptr = owner(window), .tab0 = undefined } };
+    @memcpy(&again.window.tab0, window.tabUuid(0)[0..pane_id.len]);
+    return again;
+}
+
 fn restoreWindow(self: *CloseUndo, parked: ParkedWindow) ?Reclose {
+    if (parked.window.closed_workspace) return self.restoreWorkspace(parked);
     const app = self.app;
     const alloc = app.core_app.alloc;
     const window = parked.window;

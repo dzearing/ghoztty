@@ -23,6 +23,9 @@
 //! `presenting` / `holding_targets` / `overlays_shown` (T3192) say what the
 //! workspace draws: a parked one reports 0 for all three.
 //!
+//! `closed_for_undo` (T3200) counts closed workspaces still waiting out
+//! their undo: they are out of `workspaces`, and an undo puts one on show.
+//!
 //! `popups_misowned` (T3202) counts pane popups owned by a top-level window
 //! the pane is not in: 0 always, or a window closing would destroy them.
 //!
@@ -160,6 +163,10 @@ fn stateResponse(app: *App, alloc: Allocator, shown: ?bool) Allocator.Error![]u8
         }
         jws.objectField("windows_with_hwnd") catch break :write;
         jws.write(with_hwnd) catch break :write;
+        // Closed workspaces waiting out their undo (T3200): out of the list
+        // below, their panes hidden under the park host, still running.
+        jws.objectField("closed_for_undo") catch break :write;
+        jws.write(app.close_undo.closedWorkspaceCount()) catch break :write;
         // The shared window's activity: the most urgent of every
         // workspace's (T3186, `App.refreshWindowActivity`).
         jws.objectField("activity") catch break :write;

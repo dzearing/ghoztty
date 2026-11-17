@@ -1,8 +1,8 @@
 {
     "guard":  "restore-dead-sessions",
     "script":  "test/win32/restore-dead-sessions.ps1",
-    "generated":  "2026-11-17T06:15:37-08:00",
-    "commit":  "03dfd60a6",
+    "generated":  "2026-11-17T06:25:36-08:00",
+    "commit":  "9f1260ff1",
     "uncommitted":  [
 
                     ],

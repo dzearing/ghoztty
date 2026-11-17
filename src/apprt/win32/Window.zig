@@ -1242,6 +1242,13 @@ closing: bool = false,
 /// `CloseUndo` raises or lowers it.
 parked_for_undo: bool = false,
 
+/// Single-window mode (T3200): this workspace was closed and waits out its
+/// undo with NO window - its panes are hidden under the park host, it has
+/// left the workspaces and `App.windows`. Up only alongside `parked_for_undo`
+/// (and kept through the expiry's `closeNow`, which has no HWND to send
+/// WM_DESTROY to and so runs `onDestroy` itself). Only `CloseUndo` sets it.
+closed_workspace: bool = false,
+
 /// Set by `WM_APP_SHIFT_CLOSE` for exactly the SC_CLOSE it sends, and consumed
 /// by the WM_CLOSE that SC_CLOSE produces (T1806): that close takes Disconnect
 /// instead of asking. Never left set — WM_CLOSE clears it before anything else.
@@ -4643,9 +4650,9 @@ fn closeTabByIndex(self: *Window, idx: usize) void {
     self.cancelTabRename();
     // T1874: the LAST tab closing closes its window, so it is the window
     // that waits for the undo - whole, with this tab still in it.
-    // Not a single-window-mode workspace (T3184): see `close`.
-    if (self.tab_count == 1 and !self.app.workspaces.manages(self) and
-        self.app.close_undo.parkWindow(self)) return;
+    // A single-window-mode workspace (T3200) parks without the shared
+    // window: see `close`.
+    if (self.tab_count == 1 and self.app.close_undo.parkWindowOrWorkspace(self)) return;
     // T1825: with `undo-timeout` the tab is PARKED, not ended - its tree (and
     // every session in it) waits, hidden, for an undo, and is ended when the
     // undo expires. The entry owns the tree from here; only the slot goes.
@@ -4709,6 +4716,9 @@ fn removeTabSlot(self: *Window, idx: usize) void {
         // A parked workspace (T3184) has no HWND to post to: it closes on the
         // next loop turn instead. `closing` stays down for that close.
         if (self.hwnd == null and self.isParked()) return self.app.closeParkedWorkspaceLater(self);
+        // A closed workspace waiting out its undo (T3200) whose last shell
+        // exited: nothing is left to bring back, so its undo runs out now.
+        if (self.hwnd == null and self.closed_workspace) return self.app.close_undo.expireParkedWindow(self);
         self.closing = true;
         if (self.hwnd) |hwnd| _ = w32.PostMessageW(hwnd, w32.WM_CLOSE, 0, 0);
         return;
@@ -22731,12 +22741,13 @@ pub fn close(self: *Window) void {
     // A window that is already parked and is closed again (its last shell
     // exited while it waited) drops its undo and closes for real.
     //
-    // Not a single-window-mode workspace (T3184): its undo would hide the
-    // shared window. It closes now and hands the window on (T3200 tracks
-    // bringing undo back to it, on show).
+    // A single-window-mode workspace (T3200) parks WITHOUT the shared
+    // window: it hands the window on as a plain close would (T3184) and
+    // waits, hidden under the park host, for an undo that puts it back on
+    // show (Mac window-modes.md Closing).
     if (self.parked_for_undo) {
         self.app.close_undo.forgetParkedWindow(self);
-    } else if (!self.app.workspaces.manages(self) and self.app.close_undo.parkWindow(self)) {
+    } else if (self.app.close_undo.parkWindowOrWorkspace(self)) {
         return;
     }
     self.closeNow();
@@ -22775,9 +22786,10 @@ pub fn closeNow(self: *Window) void {
     // Now safe to destroy the parent HWND (children already cleaned up).
     if (self.hwnd) |hwnd| {
         _ = w32.DestroyWindow(hwnd);
-    } else if (in_place) {
+    } else if (in_place or self.closed_workspace) {
         // No HWND to send WM_DESTROY: the same teardown, run directly (the
-        // manifest drops it, its names go, the controller is freed).
+        // manifest drops it, its names go, the controller is freed). A
+        // closed workspace whose undo ran out (T3200) is one too.
         self.onDestroy();
     }
 }

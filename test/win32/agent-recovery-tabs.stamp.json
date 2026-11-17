@@ -1,8 +1,8 @@
 {
     "guard":  "agent-recovery-tabs",
     "script":  "test/win32/agent-recovery-tabs.ps1",
-    "generated":  "2026-11-17T06:15:45-08:00",
-    "commit":  "03dfd60a6",
+    "generated":  "2026-11-17T06:25:41-08:00",
+    "commit":  "9f1260ff1",
     "uncommitted":  [
 
                     ],
