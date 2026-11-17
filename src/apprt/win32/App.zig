@@ -572,6 +572,14 @@ windows: std.ArrayList(*Window) = .empty,
 /// in. Empty in `separate` mode, where nothing is ever admitted.
 workspaces: workspace_host.Host(*Window) = .{},
 
+/// The shared window's activity in single-window mode (T3186; Mac the
+/// window's `AXWindowActivityState`): the most urgent of EVERY workspace's,
+/// parked ones included, so a parked workspace waiting on a question is the
+/// window waiting on one. Moved only by `refreshWindowActivity`; reported by
+/// the debug `workspaces` seam. The title suffix stays the on-show
+/// workspace's own (`Window.updateWindowTitle`).
+window_activity: workspace_host.Activity = .idle,
+
 /// The hidden top-level a parked workspace's panes live under (T3191), so
 /// they survive the shared window changing hands or closing. Never shown;
 /// made the first time a workspace parks.
@@ -7959,10 +7967,30 @@ pub fn showWorkspace(self: *App, target: *Window) bool {
             };
             ho.to.adoptWindow(given.hwnd, given.bound);
             PaneSidebar.refreshScopes(self.windows.items, null);
+            self.refreshWindowActivity();
             self.markLayoutDirty();
             return true;
         },
     }
+}
+
+/// Roll every workspace's activity up into the shared window's (Mac
+/// `WorkspaceHost.refreshWindowActivity`, T3186). Called on every activity
+/// change of a workspace, parked or not, and whenever membership or the one on
+/// show changes. Logs a move, the oracle for single-window-mode.ps1.
+pub fn refreshWindowActivity(self: *App) void {
+    const rolled = self.workspaces.rolledUpActivity(self, workspaceActivity);
+    if (rolled == self.window_activity) return;
+    self.window_activity = rolled;
+    log.info("window activity rolled up state={s} workspaces={d}", .{ @tagName(rolled), self.workspaces.count() });
+}
+
+fn workspaceActivity(_: *App, w: *Window) workspace_host.Activity {
+    return switch (w.activityAggregate()) {
+        .idle => .idle,
+        .busy => .busy,
+        .needs_input => .needs_input,
+    };
 }
 
 /// What closing a workspace does to the shared window (T3184).
@@ -7987,6 +8015,7 @@ pub fn closeWorkspace(self: *App, window: *Window) WorkspaceClose {
         .not_managed, .close_window => return .as_window,
         .in_place => {
             log.info("workspace closed in place name={s}", .{window.ipc_name orelse "?"});
+            self.refreshWindowActivity();
             return .in_place;
         },
         .hand_to => |next| {
@@ -8000,6 +8029,7 @@ pub fn closeWorkspace(self: *App, window: *Window) WorkspaceClose {
                 // its own rather than staying parked under nothing.
                 next.promoteToOwnWindow() catch |err| log.warn("workspace promotion failed err={}", .{err});
             }
+            self.refreshWindowActivity();
             return .in_place;
         },
     }
@@ -8019,6 +8049,7 @@ pub fn closeParkedWorkspaceLater(self: *App, window: *Window) void {
 /// sits with workspaces and nothing on screen.
 pub fn forgetWorkspace(self: *App, window: *Window) void {
     if (!self.workspaces.manages(window)) return;
+    defer self.refreshWindowActivity();
     const next = self.workspaces.windowDidClose(window, false) orelse return;
     if (next.hwnd != null) return;
     next.promoteToOwnWindow() catch |err| {
@@ -9480,7 +9511,9 @@ pub fn performAction(
                     // looked at (Mac SurfaceView.bell).
                     core_surface.rt_surface.setBell(true);
                     if (!features.attention) return true;
-                    if (core_surface.rt_surface.parent_window.hwnd) |win_hwnd| {
+                    // A parked workspace's bell flashes the shared window
+                    // (T3186): a bell never pauses while parked.
+                    if (core_surface.rt_surface.parent_window.attentionHwnd()) |win_hwnd| {
                         if (!w32.windowIsActive(win_hwnd)) {
                             var fwi: w32.FLASHWINFO = .{
                                 .cbSize = @sizeOf(w32.FLASHWINFO),
@@ -10387,8 +10420,9 @@ pub fn performAction(
                     if (act.bell) {
                         _ = w32.MessageBeep(0xFFFFFFFF);
                         // Flash the taskbar button when backgrounded so the
-                        // bell is visible too.
-                        if (core_surface.rt_surface.parent_window.hwnd) |win_hwnd| {
+                        // bell is visible too - the shared window's, for a
+                        // parked workspace (T3186).
+                        if (core_surface.rt_surface.parent_window.attentionHwnd()) |win_hwnd| {
                             if (!w32.windowIsActive(win_hwnd)) {
                                 var fwi: w32.FLASHWINFO = .{
                                     .cbSize = @sizeOf(w32.FLASHWINFO),
@@ -10453,6 +10487,13 @@ pub fn performAction(
                 .app => {},
                 .surface => |core_surface| {
                     const win = core_surface.rt_surface.parent_window;
+                    // A pane in a parked workspace (T3186: a notification
+                    // click, Mac `bringForward`) puts that workspace on show
+                    // first - it has no window to raise until it does.
+                    if (self.workspaces.isParked(win)) {
+                        const shown = self.showWorkspace(win);
+                        log.info("present_terminal put a parked workspace on show name={s} shown={}", .{ win.ipc_name orelse "?", shown });
+                    }
                     if (win.hwnd) |hwnd| {
                         // ShowWindow(SW_RESTORE) brings back from minimize.
                         _ = w32.ShowWindow(hwnd, w32.SW_RESTORE);

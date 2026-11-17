@@ -18457,37 +18457,57 @@ pub fn onPaneBellChanged(self: *Window) void {
 /// flash the bell's `attention` feature uses. Logs every move into or out of
 /// `needs_input` (a repeat set logs nothing), which is the oracle for
 /// set-state-attention.ps1.
+///
+/// A parked workspace (T3186) moves its tracker exactly the same - its state
+/// never pauses - and asks on the shared window on show (`attentionHwnd`):
+/// on Mac its `window` is nil, so never key, so a parked workspace that starts
+/// waiting on a question always requests attention for the app's one window.
 fn noteActivityAggregate(
     self: *Window,
-    hwnd: w32.HWND,
     aggregate: terminal.osc.Command.ActivityState,
 ) void {
     const needs_input = aggregate == .needs_input;
     if (needs_input == self.activity_attention.needs_input) return;
-    const active = w32.windowIsActive(hwnd);
-    const flash = self.activity_attention.observe(needs_input, active);
+    const target = self.attentionHwnd();
+    const active = if (target) |h| w32.windowIsActive(h) else false;
+    const flash = self.activity_attention.observe(needs_input, active) and target != null;
     if (flash) {
         var fwi: w32.FLASHWINFO = .{
             .cbSize = @sizeOf(w32.FLASHWINFO),
-            .hwnd = hwnd,
+            .hwnd = target.?,
             .dwFlags = w32.FLASHW_ALL | w32.FLASHW_TIMERNOFG,
             .uCount = 2,
             .dwTimeout = 0,
         };
         _ = w32.FlashWindowEx(&fwi);
     }
-    log.info("activity attention needs_input={} active={} flash={}", .{ needs_input, active, flash });
+    log.info("activity attention needs_input={} active={} flash={} parked={} target={d}", .{
+        needs_input, active, flash, self.hwnd == null, if (target) |h| @intFromPtr(h) else 0,
+    });
+}
+
+/// The top-level an attention request from this window flashes (T3186): its
+/// own, or - a parked workspace has none - the shared window, which belongs
+/// to the workspace on show. Null when nothing has a window yet.
+pub fn attentionHwnd(self: *Window) ?w32.HWND {
+    if (self.hwnd) |h| return h;
+    const target = self.app.workspaces.attentionTarget(self) orelse return null;
+    return target.hwnd;
 }
 
 pub fn updateWindowTitle(self: *Window) void {
+    // Activity first, window or not: a parked workspace has no title to set,
+    // but its state never pauses (T3186) - it can still ask for attention,
+    // and the shared window reports the most urgent of every workspace.
+    const aggregate = self.activityAggregate();
+    self.noteActivityAggregate(aggregate);
+    if (self.app.workspaces.manages(self)) self.app.refreshWindowActivity();
+
     const hwnd = self.hwnd orelse return;
     // An activity change lands here from both the OSC and the CLI paths; the
     // sidebar shows it per pane (T1828). Coalesced (T1935): this runs on every
     // title change, and a spinner title changes ten times a second.
     defer self.scheduleSidebarSync();
-
-    const aggregate = self.activityAggregate();
-    self.noteActivityAggregate(hwnd, aggregate);
 
     var buf: [title_buf_len]u16 = undefined;
     const title = self.composeTitle(&buf, aggregate) orelse return;

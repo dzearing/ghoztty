@@ -19,6 +19,11 @@
 #   +send-keys, +read, +set-state, +set-banner, +stash/+restore reach a parked
 #   workspace without showing it; ghoztty://focus and --focus switch.
 #
+# E (T3186): activity never pauses while parked - the window reports the
+#   most urgent of every workspace (seam `activity`), the title suffix is the
+#   one on show's own, a parked needs_input asks on the SHARED window, and a
+#   notification click from a parked pane puts that workspace on show.
+#
 # THE ORACLE IS THE LATCH AND THE FILE. The mode the app runs in is a decision
 # invisible in pixels (until T3181 gives it a window to act on), so it is read
 # through the debug-only `settings` IPC action's `window_mode` field, which
@@ -47,6 +52,7 @@ $env:GHOZTTY_PIPE_SUFFIX = "-swm$PID"
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 . (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
+. (Join-Path $repo 'scripts\lib\NativeArgv.ps1')   # Invoke-NativeExact (D5)
 
 [void](Assert-GhozttyIsolatedBuild -Exe $exe)
 
@@ -465,6 +471,120 @@ try {
     $tops = @(Visible-Tops)
     Assert ($tops.Count -eq 1 -and $tops[0].Hwnd -eq $shared) "C3: one window, the shared one ($($tops.Count))"
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'C3: no crash'
+
+    # =====================================================================
+    # E (T3186): activity never pauses while parked. The window reports the
+    # most urgent activity of EVERY workspace (the seam's `activity`, Mac
+    # AXWindowActivityState); the title suffix stays the one on show's own; a
+    # parked workspace going needs_input asks for attention on the SHARED
+    # window (the attention log names its HWND); and a notification click
+    # from a parked pane puts that workspace on show.
+    # =====================================================================
+    function Log-Count { return @(Get-Content $errlog -ErrorAction SilentlyContinue).Count }
+    function Wait-LogLine([int]$From, [string]$Pattern, [int]$Ms = 5000) {
+        $deadline = (Get-Date).AddMilliseconds($Ms)
+        do {
+            $hit = @(Get-Content $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $From |
+                Where-Object { $_ -match $Pattern }) | Select-Object -First 1
+            if ($hit) { return [string]$hit }
+            Start-Sleep -Milliseconds 250
+        } while ((Get-Date) -lt $deadline)
+        return $null
+    }
+    function Wait-Title([scriptblock]$until, [int]$seconds = 6) {
+        $deadline = (Get-Date).AddSeconds($seconds)
+        do {
+            $t = [string](Get-TestWindowText -Window ([IntPtr]$shared))
+            if (& $until $t) { return $t }
+            Start-Sleep -Milliseconds 300
+        } while ((Get-Date) -lt $deadline)
+        return $t
+    }
+
+    if ($ExePath) {
+        # The attention oracle is the app's stderr log, which only a launch
+        # this script made captures.
+        $script:skipped++
+        Write-Host 'SKIP  E: -ExePath launches without a captured log; section E needs it'
+    } else {
+        $r = Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-f')
+        Assert ($r -and $r.success) 'E1: +new-window --target=swm-f (parked) succeeds'
+        $ws = Wait-Ws { param($s) $s -and (Ws-Row $s 'swm-f') }
+        $f = Ws-Row $ws 'swm-f'
+        Assert ($f -and $f.parked -and [string]$ws.data.active -eq 'swm-e') "E1: swm-f is parked behind swm-e (parked=$($f.parked) active='$($ws.data.active)')"
+        Assert ([string]$ws.data.activity -eq 'idle') "E1: the window reads idle with every workspace idle (activity='$($ws.data.activity)')"
+
+        # E2: a PARKED workspace starts waiting on a question.
+        $mark = Log-Count
+        $r = Invoke-GhozttyIpc -Action 'set-state' -Arguments @('--target=swm-f', '--state=needs_input')
+        Assert ($r -and $r.success) 'E2: +set-state --target=swm-f (parked) needs_input succeeds'
+        $ws = Wait-Ws { param($s) $s -and [string]$s.data.activity -eq 'needs_input' } 5
+        Assert ([string]$ws.data.activity -eq 'needs_input') "E2: the window reports the parked workspace's question (activity='$($ws.data.activity)')"
+        Assert ([string](Ws-Row $ws 'swm-f').activity -eq 'needs_input' -and [string](Ws-Row $ws 'swm-e').activity -eq 'idle') "E2: swm-f's own state moved while parked; swm-e's did not (f=$((Ws-Row $ws 'swm-f').activity) e=$((Ws-Row $ws 'swm-e').activity))"
+        $att = Wait-LogLine $mark 'activity attention needs_input=true .*parked=true'
+        Assert ($null -ne $att) "E2: the parked workspace's move into needs_input reached the attention rule (log: $att)"
+        if ($att) {
+            $m = [regex]::Match($att, 'active=(\w+) flash=(\w+) parked=true target=(\d+)')
+            Assert ($m.Success -and [int64]$m.Groups[3].Value -eq $shared) "E2: it asks on the SHARED window (target=$($m.Groups[3].Value) shared=$shared)"
+            Assert ($m.Success -and ($m.Groups[2].Value -eq 'true') -eq ($m.Groups[1].Value -eq 'false')) "E2: it flashes exactly when the shared window is in the background (active=$($m.Groups[1].Value) flash=$($m.Groups[2].Value))"
+        }
+        $rolled = Wait-LogLine $mark 'window activity rolled up state=needs_input'
+        Assert ($null -ne $rolled) "E2: the roll-up is logged (log: $rolled)"
+        $t = Wait-Title { param($x) $x -and $x -notmatch '\(question\)' } 2
+        Assert ($t -notmatch '\(question\)') "E2: the title suffix is the workspace on show's own - no (question) for a parked one (title='$t')"
+
+        # E3: the one on show goes busy - its suffix shows, the window stays
+        # at the more urgent parked question.
+        $r = Invoke-GhozttyIpc -Action 'set-state' -Arguments @('--target=swm-e', '--state=busy')
+        Assert ($r -and $r.success) 'E3: +set-state --target=swm-e busy succeeds'
+        $t = Wait-Title { param($x) $x -match '\(busy\)' }
+        Assert ($t -match '\(busy\)') "E3: the title carries the on-show workspace's (busy) (title='$t')"
+        $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+        Assert ([string]$ws.data.activity -eq 'needs_input') "E3: the window still reports the parked question, the most urgent (activity='$($ws.data.activity)')"
+
+        # E4: the question answered while parked - the window drops to busy.
+        $r = Invoke-GhozttyIpc -Action 'set-state' -Arguments @('--target=swm-f', '--state=idle')
+        $ws = Wait-Ws { param($s) $s -and [string]$s.data.activity -eq 'busy' } 5
+        Assert ([string]$ws.data.activity -eq 'busy') "E4: answering the parked question leaves the window busy (activity='$($ws.data.activity)')"
+
+        # E5: a desktop notification from a parked pane; its click puts that
+        # workspace on show (Mac bringForward). The click is the tray callback
+        # posted into OUR message window, as notification-click-focus.ps1 does.
+        $msgWnd = Find-TestMessageWindow -ProcessId $app.Pid
+        if ($msgWnd -eq [IntPtr]::Zero) {
+            Assert $false 'E5: found our app''s message-only window (pid-filtered)'
+        } else {
+            $cmd = "powershell -NoProfile -Command `"[console]::Write([char]27+']777;notify;Ghoztty;swm-d5'+[char]7)`""
+            $nr = Invoke-NativeExact -FilePath $exe -Arguments @('+send-keys', '--target=swm-f', $cmd, 'Enter')
+            Assert ($nr.Code -eq 0) "E5: +send-keys delivered the OSC 777 notify to parked swm-f (exit $($nr.Code))"
+            Start-Sleep -Seconds 4
+            $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+            Assert ([string]$ws.data.active -eq 'swm-e') "E5: raising a notification did not itself switch (active='$($ws.data.active)')"
+            $mark = Log-Count
+            # WM_APP_TRAY (WM_APP+3), wparam = the desktop icon's uID (1),
+            # lparam = NIN_BALLOONUSERCLICK.
+            [void](Send-TestRawMessage -Window $msgWnd -Message ([uint32]0x8003) -WParam ([IntPtr]1) -LParam ([IntPtr]0x0405))
+            $ws = Wait-Ws { param($s) $s -and [string]$s.data.active -eq 'swm-f' } 5
+            $f = Ws-Row $ws 'swm-f'
+            Assert ([string]$ws.data.active -eq 'swm-f' -and $f -and [int64]$f.hwnd -eq $shared) "E5: the click put swm-f on show in the shared window (active='$($ws.data.active)' hwnd=$($f.hwnd))"
+            $tops = @(Visible-Tops)
+            Assert ($tops.Count -eq 1 -and $tops[0].Hwnd -eq $shared) "E5: still one window ($($tops.Count))"
+            $sw = Wait-LogLine $mark 'present_terminal put a parked workspace on show name=swm-f shown=true'
+            Assert ($null -ne $sw) "E5: the present path logged the switch (log: $sw)"
+        }
+
+        # E6: swm-e, now parked, keeps its own state and still counts.
+        $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+        Assert ([string](Ws-Row $ws 'swm-e').activity -eq 'busy' -and [string]$ws.data.activity -eq 'busy') "E6: the now-parked swm-e's busy still rolls up (e=$((Ws-Row $ws 'swm-e').activity) window=$($ws.data.activity))"
+        $t = Wait-Title { param($x) $x -and $x -notmatch '\(busy\)' }
+        Assert ($t -notmatch '\(busy\)') "E6: the title follows swm-f, idle, on show (title='$t')"
+
+        # Leave one workspace for C4.
+        $r = Invoke-GhozttyIpc -Action 'close' -Arguments @('--target=swm-e')
+        $ws = Wait-Ws { param($s) $s -and @($s.data.workspaces).Count -eq 1 }
+        Assert (@($ws.data.workspaces).Count -eq 1 -and [string]$ws.data.activity -eq 'idle') "E7: closing the busy parked workspace drops it from the roll-up (activity='$($ws.data.activity)')"
+        Assert (-not ($app.Process -and $app.Process.HasExited)) 'E: no crash'
+    }
 
     # C4: the last workspace's close closes the window.
     [void](Send-TestSysCommand -Window ([IntPtr]$shared) -Command 'close')

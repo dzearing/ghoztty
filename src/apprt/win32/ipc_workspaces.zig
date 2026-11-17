@@ -13,9 +13,9 @@
 //! {"action":"workspaces","arguments":["--op=state"]}
 //! {"action":"workspaces","arguments":["--op=show","--target=window-2"]}
 //!   -> {"success":true,"data":{"mode":"single","active":"window-1",
-//!        "shown":true,"windows_with_hwnd":1,
+//!        "shown":true,"windows_with_hwnd":1,"activity":"idle",
 //!        "workspaces":[{"name":"window-1","parked":false,"hwnd":1234,
-//!                       "tabs":1,"panes":1}, ...]}}
+//!                       "tabs":1,"panes":1,"activity":"idle"}, ...]}}
 //! ```
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -108,6 +108,10 @@ fn stateResponse(app: *App, alloc: Allocator, shown: ?bool) Allocator.Error![]u8
         }
         jws.objectField("windows_with_hwnd") catch break :write;
         jws.write(with_hwnd) catch break :write;
+        // The shared window's activity: the most urgent of every
+        // workspace's (T3186, `App.refreshWindowActivity`).
+        jws.objectField("activity") catch break :write;
+        jws.write(@tagName(app.window_activity)) catch break :write;
         jws.objectField("workspaces") catch break :write;
         jws.beginArray() catch break :write;
         // The host's order: on show first, then most recently shown.
@@ -123,6 +127,9 @@ fn stateResponse(app: *App, alloc: Allocator, shown: ?bool) Allocator.Error![]u8
             jws.write(w.tab_count) catch break :write;
             jws.objectField("panes") catch break :write;
             jws.write(paneCount(w)) catch break :write;
+            // Its own activity, which never pauses while parked (T3186).
+            jws.objectField("activity") catch break :write;
+            jws.write(@tagName(w.activityAggregate())) catch break :write;
             jws.endObject() catch break :write;
         }
         jws.endArray() catch break :write;

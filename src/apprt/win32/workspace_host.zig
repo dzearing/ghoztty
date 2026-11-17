@@ -237,6 +237,16 @@ pub fn Host(comptime Handle: type) type {
 
         // ---- Activity ------------------------------------------------------
 
+        /// The workspace whose window an attention request from `h` goes to
+        /// (T3186): `h` itself when it is not a workspace or is not parked,
+        /// else the one on show - the shared window is the only one there is
+        /// (Mac: a parked workspace's `requestUserAttention` is the app's).
+        /// Null when `h` is parked and nothing has the window.
+        pub fn attentionTarget(self: *const Self, h: Handle) ?Handle {
+            if (!self.isParked(h)) return h;
+            return self.active;
+        }
+
         /// The most urgent activity of every workspace (Mac
         /// `refreshWindowActivity`): `state(h)` is each one's own.
         pub fn rolledUpActivity(self: *const Self, ctx: anytype, comptime state: fn (@TypeOf(ctx), Handle) Activity) Activity {
@@ -462,4 +472,25 @@ test "workspace_host: the window reports the most urgent activity of every works
     st.s[2] = .needs_input;
     try testing.expect(host.isParked(2));
     try testing.expectEqual(Activity.needs_input, host.rolledUpActivity(&st, States.get));
+}
+
+test "workspace_host: a parked workspace asks for attention on the window on show" {
+    var host: H = .{};
+    defer host.deinit(testing.allocator);
+    // Not a workspace (separate mode, the quick terminal): its own window.
+    try testing.expectEqual(@as(?u32, 9), host.attentionTarget(9));
+    // Parked before anything loaded the window: nowhere to ask yet.
+    try host.admit(testing.allocator, 5, true);
+    try testing.expectEqual(@as(?u32, null), host.attentionTarget(5));
+    var host2: H = .{};
+    defer host2.deinit(testing.allocator);
+    try openAndLoad(&host2, 1);
+    try openAndLoad(&host2, 2);
+    // On show: its own window. Parked: the one on show's.
+    try testing.expectEqual(@as(?u32, 1), host2.attentionTarget(1));
+    try testing.expectEqual(@as(?u32, 1), host2.attentionTarget(2));
+    // After a switch the roles swap with the window.
+    _ = host2.show(2);
+    try testing.expectEqual(@as(?u32, 2), host2.attentionTarget(1));
+    try testing.expectEqual(@as(?u32, 2), host2.attentionTarget(2));
 }
