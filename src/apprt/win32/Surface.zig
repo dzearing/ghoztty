@@ -2037,6 +2037,30 @@ const overlay_fields = .{
     "scrollbar",
 };
 
+/// How many of this pane's popups are on screen (T3192): what the debug
+/// `workspaces` seam reports, so a test can see a parked workspace left
+/// nothing floating over the one that took the window. The same list
+/// `hideOverlays` walks, plus its plain-HWND popups.
+pub fn overlaysShown(self: *const Surface) usize {
+    var n: usize = 0;
+    inline for (overlay_fields) |name| {
+        if (@field(self, name)) |o| {
+            if (w32.IsWindowVisible(o.hwnd) != 0) n += 1;
+        }
+    }
+    // A banner on the composition path (T2559) is a layer in the pane's own
+    // visual, its popup hidden: it is on screen when its pane is.
+    if (self.banner_overlay) |b| {
+        if (b.on_visual and w32.IsWindowVisible(b.hwnd) == 0 and w32.IsWindowVisible(b.owner) != 0) n += 1;
+    }
+    inline for (.{ "link_preview_hwnd", "search_hwnd", "palette_hwnd" }) |name| {
+        if (@field(self, name)) |h| {
+            if (w32.IsWindowVisible(h) != 0) n += 1;
+        }
+    }
+    return n;
+}
+
 /// Take every popup this pane owns off screen NOW (T2012). For a pane that
 /// left the layout while staying alive - a close parked for `undo-timeout`
 /// (T1825) - nothing else will: the overlay passes walk the tab trees, and

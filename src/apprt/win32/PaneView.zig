@@ -291,14 +291,57 @@ pub fn userTitled(self: *const PaneView) bool {
 /// minimized window that used to undo the occlusion until the next poll. The
 /// window's reveal (`Window.applyOcclusion`) clears `occluded` before it
 /// shows the panes, so it is never held here.
+///
+/// A PARKED workspace's panes (single-window mode, T3192) are held the same
+/// way: the workspace has no window, so nobody can see them, and a layout
+/// pass or a `+split` made while it waits must not wake them. Its adoption of
+/// the shared window is what shows them again.
 pub fn setVisible(self: *PaneView, visible: bool) void {
-    const shows = occlusion.paneShows(visible, self.parentWindow().occluded);
+    const win = self.parentWindow();
+    const shows = occlusion.paneShows(visible, win.occluded or win.isParked());
     // Held because the window is hidden: give back its render targets too.
     if (visible and !shows) self.setWindowHidden(true);
     switch (self.kind) {
         .terminal => |s| s.setVisible(shows),
         .viewer => |v| v.setVisible(shows),
     }
+}
+
+/// Whether the pane is presenting right now - a terminal whose renderer was
+/// last told it is visible (a fresh one, never told, is), or a viewer on
+/// show - and whether a terminal has given its render targets back. Read by
+/// the debug `workspaces` seam (T3192) so a test can see that a parked
+/// workspace draws nothing.
+pub fn presenting(self: *const PaneView) bool {
+    return switch (self.kind) {
+        .terminal => |s| s.reported_visible orelse true,
+        .viewer => |v| v.visible,
+    };
+}
+
+pub fn targetsReleased(self: *const PaneView) bool {
+    return switch (self.kind) {
+        .terminal => |s| s.window_hidden.load(.acquire),
+        .viewer => true,
+    };
+}
+
+/// How many of this pane's popups are on screen (seam, T3192).
+pub fn overlaysShown(self: *const PaneView) usize {
+    var n: usize = 0;
+    if (self.hover_tint) |t| {
+        if (w32.IsWindowVisible(t.hwnd) != 0) n += 1;
+    }
+    if (self.strip_face) |f| {
+        if (w32.IsWindowVisible(f.hwnd) != 0) n += 1;
+    }
+    switch (self.kind) {
+        .terminal => |s| n += s.overlaysShown(),
+        .viewer => |v| if (v.dim_overlay) |d| {
+            if (w32.IsWindowVisible(d.hwnd) != 0) n += 1;
+        },
+    }
+    return n;
 }
 
 /// Hide a pane nothing will read the pixels of while it is hidden - one a

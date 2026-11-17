@@ -1,8 +1,8 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-16T21:01:27-08:00",
-    "commit":  "eb2abec47",
+    "generated":  "2026-11-16T21:26:51-08:00",
+    "commit":  "3aa90f5c1",
     "uncommitted":  [
                         "test/win32/single-window-mode.ps1"
                     ],
@@ -517,7 +517,7 @@
                   "test/win32/side-pane-featured.ps1":  "5184c74dd94e1001b5f3e6b3636ca64f72f374ee1c932ceb981352ba3e9ffcfa",
                   "test/win32/side-pane-from-strip.ps1":  "905582220dc8d3f0acce9496331db4c4cf5dcaf3f12c74be698987538b3957b3",
                   "test/win32/single-instance-join.ps1":  "5b182fa1d110e5a2eb1cba34f90e80e4ff8dd811838b6d5c4c69de85c2f648f0",
-                  "test/win32/single-window-mode.ps1":  "8c3d6df2cdca21e0a1c16ddbaeee451a0eb08966d416eddbb2b04de6cb509efd",
+                  "test/win32/single-window-mode.ps1":  "cdfb6702a5322d4a1074aa8e31a0af8d054281582f9163f5b42b4267e2679275",
                   "test/win32/size-burst-canvas.ps1":  "c64c1f92290f8d5478d7e2d6a11e928d804f58088c05ed4bcfdf0f28c6e05ba0",
                   "test/win32/skip-visibility.ps1":  "370852bd35fe86b242983fd53ff181891c4666c64ba15a397effc415190aa11c",
                   "test/win32/soak.ps1":  "70115de02426d4dc47fe1b0c021ed89c7a8bf4a58487ded16f353f878a7c9787",

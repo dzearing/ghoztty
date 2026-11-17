@@ -7445,6 +7445,10 @@ pub const WindowBound = struct {
     translucent: bool,
     noredir: bool,
     start_maximized: bool,
+    /// The visibility poll's last answer for the window (T3192): covered,
+    /// minimized or cloaked belongs to the window, so the adopter's panes
+    /// start held exactly when the surrendering one's were.
+    occluded: bool,
 };
 
 /// Is this workspace parked - a controller with no window (single-window
@@ -7472,6 +7476,21 @@ fn parkPaneHidden(_: void, view: *PaneView) void {
     view.setWindowHidden(true);
     view.setVisible(false);
     if (view.hwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
+    // Its popups (dim wash, banner strip, badges, an open search bar) are
+    // owned windows, which hiding the pane does not hide: left up, they
+    // would float over the workspace that adopts the window (T3192).
+    view.hideOverlays();
+}
+
+/// A parked workspace counts as hidden (T3192; Mac `updateSeen` on
+/// surrender, window-modes.md "Parked counts as hidden"): every pane of every
+/// tab stops presenting and gives back its render targets, and its popups go.
+/// Run on surrender and on a workspace that stays parked from birth, whose
+/// fresh surfaces would otherwise start out drawing. Layout passes made while
+/// parked are held by `PaneView.setVisible`.
+pub fn holdParkedPanes(self: *Window) void {
+    if (!self.isParked()) return;
+    self.eachPane({}, parkPaneHidden);
 }
 
 fn refreshPaneDpi(_: void, view: *PaneView) void {
@@ -7502,6 +7521,7 @@ pub fn surrenderWindow(self: *Window, park: w32.HWND) ?struct { hwnd: w32.HWND, 
         .translucent = self.translucent,
         .noredir = self.noredir,
         .start_maximized = self.start_maximized,
+        .occluded = self.occluded,
     };
 
     // The owned chrome children: the adopter makes its own.
@@ -7530,6 +7550,9 @@ pub fn surrenderWindow(self: *Window, park: w32.HWND) ?struct { hwnd: w32.HWND, 
     self.hwnd = null;
     self.is_fullscreen = false;
     self.saved_placement = null;
+    // Parked is hidden whatever the window was (`PaneView.setVisible` holds
+    // it); the adopter takes the window's own answer from `bound`.
+    self.occluded = false;
     log.info("workspace surrendered the window name={s}", .{self.ipc_name orelse "?"});
     return .{ .hwnd = hwnd, .bound = bound };
 }
@@ -7546,6 +7569,7 @@ pub fn adoptWindow(self: *Window, hwnd: w32.HWND, bound: WindowBound) void {
     self.translucent = bound.translucent;
     self.noredir = bound.noredir;
     self.start_maximized = bound.start_maximized;
+    self.occluded = bound.occluded;
     _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
 
     if (chrome_comp.enabled()) {
@@ -7568,6 +7592,12 @@ pub fn adoptWindow(self: *Window, hwnd: w32.HWND, bound: WindowBound) void {
     _ = w32.SetWindowPos(hwnd, null, 0, 0, 0, 0, w32.SWP_NOMOVE | w32.SWP_NOSIZE |
         w32.SWP_NOZORDER | w32.SWP_NOACTIVATE | w32.SWP_FRAMECHANGED);
     self.updateTabBarVisibility();
+    // Shown again (T3192): ask Windows now whether anybody can see the
+    // window, so the panes come back on show - or stay held behind a window
+    // that is covered or minimized - without waiting for the poll. Before the
+    // tab is laid out, which then re-derives which panes really show (a zoom,
+    // the stash) and catches each one up with a frame at the window's size.
+    self.refreshOcclusion();
     self.showTabIndex(self.active_tab, w32.windowIsActive(hwnd));
     self.refreshRemotePill();
     self.syncPaneSidebar();
@@ -9111,7 +9141,11 @@ fn endFrameWaitBatch(self: *Window) void {
 }
 
 pub fn layoutSplits(self: *Window) void {
-    // Last of all (defers run in reverse): the presenter follows the panes
+    // After everything: a PARKED workspace's pass (a `+split` or a new tab
+    // made while it waits, a resize of the shared window) sizes its panes
+    // and leaves every one of them hidden, fresh ones included (T3192).
+    defer self.holdParkedPanes();
+    // Then (defers run in reverse): the presenter follows the panes
     // wherever this pass put them (T2610).
     defer self.syncPresenter();
     defer self.syncLandedTreePanes();

@@ -18,6 +18,11 @@
 #   show first, a parked one with its title and a stable id); +split,
 #   +send-keys, +read, +set-state, +set-banner, +stash/+restore reach a parked
 #   workspace without showing it; ghoztty://focus and --focus switch.
+# E (T3192): parked counts as hidden - a parked workspace's terminals present
+#   nothing and give back their render targets, its popups (a banner) go off
+#   screen, a viewer in it is paused, panes made in it while parked start
+#   held, and all of it comes back on show. Read from the seam's
+#   presenting / holding_targets / overlays_shown counts.
 #
 # E (T3186): activity never pauses while parked - the window reports the
 #   most urgent of every workspace (seam `activity`), the title suffix is the
@@ -418,6 +423,82 @@ try {
     Assert ($nf.Code -eq 0 -and (Active-Name) -eq 'swm-b') "D6: --focus on a parked workspace puts it on show (exit $($nf.Code), active='$(Active-Name)')"
     Assert (@(List-Windows).Count -eq 2) "D6: and opened nothing new ($(@(List-Windows).Count) workspaces)"
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'D: no crash'
+
+    # =====================================================================
+    # E (T3192): a parked workspace counts as hidden. Its terminals stop
+    # presenting and give their render targets back, its popups (swm-c-right
+    # carries D3's banner) go off screen, and a viewer in it is paused - and
+    # all of it comes back when it is shown. Read from the `workspaces`
+    # seam's per-workspace `presenting` / `holding_targets` /
+    # `overlays_shown`, which walk every pane of every tab. Starts where D
+    # left it (swm-b on show, swm-c parked with 2 panes); leaves the same.
+    # =====================================================================
+    function Wait-Drawing([string]$name, [scriptblock]$until, [int]$seconds = 6) {
+        $deadline = (Get-Date).AddSeconds($seconds)
+        do {
+            $s = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+            $row = Ws-Row $s $name
+            if ($row -and (& $until $row)) { return $row }
+            Start-Sleep -Milliseconds 300
+        } while ((Get-Date) -lt $deadline)
+        return $row
+    }
+    function Row-Text($r) { if (-not $r) { return 'no row' }; return "parked=$($r.parked) panes=$($r.panes) presenting=$($r.presenting) holding=$($r.holding_targets) overlays=$($r.overlays_shown)" }
+    $quiet = { param($r) [int]$r.presenting -eq 0 -and [int]$r.holding_targets -eq 0 -and [int]$r.overlays_shown -eq 0 }
+
+    # E1: the parked one draws nothing; the one on show does.
+    $c = Wait-Drawing 'swm-c' $quiet
+    Assert ($c -and $c.parked -and (& $quiet $c)) "E1: parked swm-c presents nothing, holds no render targets, shows no popup ($(Row-Text $c))"
+    $b = Wait-Drawing 'swm-b' { param($r) [int]$r.presenting -ge 1 }
+    Assert ($b -and -not $b.parked -and [int]$b.presenting -eq [int]$b.panes) "E1: swm-b on show presents every pane ($(Row-Text $b))"
+
+    # E2: show swm-c - its panes present again and its banner is back up;
+    # swm-b, now parked, goes quiet (popups included).
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=show', '--target=swm-c')
+    Assert ($ws -and [string]$ws.data.active -eq 'swm-c') "E2: swm-c goes on show (active='$($ws.data.active)')"
+    $c = Wait-Drawing 'swm-c' { param($r) [int]$r.presenting -eq [int]$r.panes -and [int]$r.overlays_shown -ge 1 }
+    Assert ($c -and [int]$c.presenting -eq 2 -and [int]$c.holding_targets -eq 2) "E2: shown, both of swm-c's terminals present and hold targets again ($(Row-Text $c))"
+    Assert ($c -and [int]$c.overlays_shown -ge 1) "E2: swm-c-right's banner is back on screen ($(Row-Text $c))"
+    $b = Wait-Drawing 'swm-b' $quiet
+    if ($NegativeControl) {
+        $script:negReached = $true
+        Assert (-not ($b -and (& $quiet $b))) "NEGATIVE CONTROL: swm-b, parked, still draws ($(Row-Text $b))"
+    } else {
+        Assert ($b -and $b.parked -and (& $quiet $b)) "E2: swm-b, now parked, goes quiet ($(Row-Text $b))"
+    }
+
+    # E3: a terminal and a viewer made in the PARKED workspace start held -
+    # a fresh surface starts out drawing, and nobody can see this one.
+    $doc = Join-Path $work 'parked-view.md'
+    [System.IO.File]::WriteAllText($doc, "# parked viewer T3192`n`nfirst`n")
+    $r1 = Invoke-SwmCli '+split --target=swm-b --direction=right --name=swm-b-right'
+    $r2 = Invoke-SwmCli "+split --target=swm-b --direction=down --name=swm-b-view --view=`"$doc`""
+    Start-Sleep -Milliseconds 1500
+    $b = Wait-Drawing 'swm-b' { param($r) [int]$r.panes -eq 3 -and (& $quiet $r) }
+    Assert ($r1.Code -eq 0 -and $r2.Code -eq 0) "E3: +split and +split --view into parked swm-b succeed (exit $($r1.Code)/$($r2.Code): $(($r1.Text + ' ' + $r2.Text).Trim()))"
+    Assert ($b -and $b.parked -and [int]$b.panes -eq 3 -and (& $quiet $b)) "E3: the new terminal and viewer stay quiet while parked ($(Row-Text $b))"
+    Assert ((Active-Name) -eq 'swm-c') 'E3: neither split put swm-b on show'
+
+    # E4: back to swm-b: everything in it presents, the viewer included;
+    # swm-c goes quiet and takes its banner with it.
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=show', '--target=swm-b')
+    $b = Wait-Drawing 'swm-b' { param($r) [int]$r.presenting -eq [int]$r.panes }
+    Assert ($b -and [int]$b.panes -eq 3 -and [int]$b.presenting -eq 3) "E4: shown, all three of swm-b's panes present, the viewer too ($(Row-Text $b))"
+    Assert ($b -and [int]$b.holding_targets -eq 2) "E4: and its two terminals hold render targets again ($(Row-Text $b))"
+    $c = Wait-Drawing 'swm-c' $quiet
+    Assert ($c -and $c.parked -and (& $quiet $c)) "E4: swm-c, parked again, is quiet - banner off screen ($(Row-Text $c))"
+
+    # E5: a workspace parked from birth is quiet from its first frame.
+    $r = Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-f')
+    Assert ($r -and $r.success) 'E5: +new-window --target=swm-f (parked) succeeds'
+    $f = Wait-Drawing 'swm-f' { param($r) [int]$r.panes -ge 1 -and (& $quiet $r) }
+    Assert ($f -and $f.parked -and [int]$f.panes -eq 1 -and (& $quiet $f)) "E5: swm-f, parked from birth, never draws ($(Row-Text $f))"
+    $r = Invoke-GhozttyIpc -Action 'close' -Arguments @('--target=swm-f')
+    $deadline = (Get-Date).AddSeconds(8)
+    do { Start-Sleep -Milliseconds 400; $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state') } while ((Get-Date) -lt $deadline -and (Ws-Row $ws 'swm-f'))
+    Assert ($r -and $r.success -and -not (Ws-Row $ws 'swm-f')) 'E5: and closes again (fixture cleanup for C)'
+    Assert ((Active-Name) -eq 'swm-b') 'E: swm-b is on show, swm-c parked, as D left them'
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'E: no crash'
 
 
     # =====================================================================

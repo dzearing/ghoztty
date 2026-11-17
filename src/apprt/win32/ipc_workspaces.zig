@@ -15,8 +15,13 @@
 //!   -> {"success":true,"data":{"mode":"single","active":"window-1",
 //!        "shown":true,"windows_with_hwnd":1,"activity":"idle",
 //!        "workspaces":[{"name":"window-1","parked":false,"hwnd":1234,
-//!                       "tabs":1,"panes":1,"activity":"idle"}, ...]}}
+//!                       "tabs":1,"panes":1,"activity":"idle",
+//!                       "presenting":1,"holding_targets":1,
+//!                       "overlays_shown":0}, ...]}}
 //! ```
+//!
+//! `presenting` / `holding_targets` / `overlays_shown` (T3192) say what the
+//! workspace draws: a parked one reports 0 for all three.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -84,6 +89,24 @@ fn paneCount(w: *Window) usize {
     return n;
 }
 
+/// What a workspace is drawing (T3192): panes presenting, terminal panes
+/// still holding render targets, and pane popups on screen - all three zero
+/// for a parked one ("Parked counts as hidden").
+const Drawing = struct { presenting: usize = 0, holding_targets: usize = 0, overlays_shown: usize = 0 };
+
+fn drawing(w: *Window) Drawing {
+    var d: Drawing = .{};
+    for (0..w.tab_count) |t| {
+        var it = w.tab_trees[t].iterator();
+        while (it.next()) |entry| {
+            if (entry.view.presenting()) d.presenting += 1;
+            if (!entry.view.targetsReleased()) d.holding_targets += 1;
+            d.overlays_shown += entry.view.overlaysShown();
+        }
+    }
+    return d;
+}
+
 fn stateResponse(app: *App, alloc: Allocator, shown: ?bool) Allocator.Error![]u8 {
     var out: std.Io.Writer.Allocating = .init(alloc);
     errdefer out.deinit();
@@ -130,6 +153,13 @@ fn stateResponse(app: *App, alloc: Allocator, shown: ?bool) Allocator.Error![]u8
             // Its own activity, which never pauses while parked (T3186).
             jws.objectField("activity") catch break :write;
             jws.write(@tagName(w.activityAggregate())) catch break :write;
+            const d = drawing(w);
+            jws.objectField("presenting") catch break :write;
+            jws.write(d.presenting) catch break :write;
+            jws.objectField("holding_targets") catch break :write;
+            jws.write(d.holding_targets) catch break :write;
+            jws.objectField("overlays_shown") catch break :write;
+            jws.write(d.overlays_shown) catch break :write;
             jws.endObject() catch break :write;
         }
         jws.endArray() catch break :write;

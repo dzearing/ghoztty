@@ -7945,7 +7945,10 @@ pub fn workspaceStartsParked(self: *App, opts: Window.InitOptions) bool {
 /// programmatic open leaves it parked behind the one on show.
 pub fn presentWorkspace(self: *App, window: *Window, activate: bool) void {
     switch (self.workspaces.present(window, activate)) {
-        .not_managed, .own_window_background, .promote_background, .stay_parked => {},
+        .not_managed, .own_window_background, .promote_background => {},
+        // Parked from birth (T3192): its fresh surfaces start out drawing,
+        // and nobody can see them.
+        .stay_parked => window.holdParkedPanes(),
         .show => _ = self.showWorkspace(window),
     }
 }
