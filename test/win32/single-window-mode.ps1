@@ -33,6 +33,10 @@
 #   birth (the seam's per-workspace `cols`/`rows`), 0.3s after a resize of
 #   the shared window settles, and at once on a tree change while parked.
 #
+# G (T3194): opening a window by hand opens a workspace on show in the
+#   shared window - Ctrl+N and a pane popped out of its window - and the
+#   adopter puts the caret on its own focused pane before its first layout.
+#
 # THE ORACLE IS THE LATCH AND THE FILE. The mode the app runs in is a decision
 # invisible in pixels (until T3181 gives it a window to act on), so it is read
 # through the debug-only `settings` IPC action's `window_mode` field, which
@@ -59,6 +63,7 @@ $env:GHOZTTY_PIPE_SUFFIX = "-swm$PID"
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\PaneCapture.ps1')   # Invoke-GhozttyIpc
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\ChromeGeometry.ps1')   # Get-TestChromeDip
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 . (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
 . (Join-Path $repo 'scripts\lib\NativeArgv.ps1')   # Invoke-NativeExact (D5)
@@ -115,7 +120,9 @@ function Start-App([string]$label) {
     try {
         $sp = @{
             Exe       = $exe
-            Arguments = @('--session-persistence=false', '--background=#101014')
+            # Rearrange mode on a chord for section F's pop-out (T3194).
+            Arguments = @('--session-persistence=false', '--background=#101014',
+                '--keybind=ctrl+shift+f9=toggle_rearrange_mode')
         }
         if (-not $ExePath) { $sp.StdErr = $errlog }
         $a = Start-OnTestDesktop @sp
@@ -736,6 +743,121 @@ try {
         Assert (@($ws.data.workspaces).Count -eq 1 -and [string]$ws.data.activity -eq 'idle') "E7: closing the busy parked workspace drops it from the roll-up (activity='$($ws.data.activity)')"
         Assert (-not ($app.Process -and $app.Process.HasExited)) 'E: no crash'
     }
+
+    # =====================================================================
+    # G (T3194): every path that opens a window by hand opens a WORKSPACE on
+    # show in the shared window - Ctrl+Shift+N (the new_window binding the
+    # menus and palette also run) and a pane popped out of its window - and
+    # the adopter takes the caret on its own focused pane in the same turn.
+    # (+new-window and --focus are B1/B2; the sidebar's + is
+    # App.newWindowFromSidebar -> createWindow, the same present call.)
+    # =====================================================================
+    function Focused-Pane {
+        return [int64](Get-TestFocusedWindow -Window ([IntPtr]$shared))
+    }
+    function Wait-Focused([int64]$want, [int]$seconds = 4) {
+        $deadline = (Get-Date).AddSeconds($seconds)
+        do {
+            $f = Focused-Pane
+            if ($f -eq $want) { return $f }
+            Start-Sleep -Milliseconds 250
+        } while ((Get-Date) -lt $deadline)
+        return $f
+    }
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    $homeWs = [string]$ws.data.active
+    $countBefore = @($ws.data.workspaces).Count
+    Assert ($homeWs -and $countBefore -eq 1) "G: setup: one workspace on show ('$homeWs', $countBefore)"
+
+    # G1: Ctrl+N (Windows' new_window chord, Mac Cmd-N; Ctrl+Shift+N is the
+    # machine chooser here, whose New Window button is the same createWindow)
+    # makes a workspace and puts it on show in the key's turn.
+    Assert (Set-TestActiveWindow -Window ([IntPtr]$shared)) 'G1: setup: the keyboard is in the shared window'
+    Start-Sleep -Milliseconds 400
+    $homeWsPane = @(Shared-Panes)[0].Hwnd
+    $f = Wait-Focused ([int64]$homeWsPane)
+    Assert ($f -eq [int64]$homeWsPane) "G1: setup: the caret is on $homeWs's pane (focused=$f pane=$homeWsPane)"
+    $sent = Send-TestKeys -Window ([IntPtr]$shared) -Target ([IntPtr]$homeWsPane) -Modifiers ctrl -Key N
+    Assert $sent 'G1: Ctrl+N delivered'
+    $ws = Wait-Ws { param($s) $s -and @($s.data.workspaces).Count -eq ($countBefore + 1) }
+    $newName = [string]$ws.data.active
+    $nw = Ws-Row $ws $newName
+    Assert (@($ws.data.workspaces).Count -eq ($countBefore + 1) -and $newName -ne $homeWs) "G1: a new workspace was made and is on show (active='$newName', $(@($ws.data.workspaces).Count) workspaces)"
+    Assert ($nw -and [int64]$nw.hwnd -eq $shared) "G1: it adopted the SAME window (hwnd=$($nw.hwnd) shared=$shared)"
+    $hw = Ws-Row $ws $homeWs
+    Assert ($hw -and $hw.parked -and [int64]$hw.hwnd -eq 0) "G1: $homeWs is parked behind it (parked=$($hw.parked))"
+    $tops = @(Visible-Tops)
+    Assert ($tops.Count -eq 1 -and $tops[0].Hwnd -eq $shared) "G1: no second window appeared ($($tops.Count))"
+    $panes = @(Shared-Panes)
+    $newPane = if ($panes.Count -eq 1) { [int64]$panes[0].Hwnd } else { 0 }
+    Assert ($panes.Count -eq 1 -and $newPane -ne [int64]$homeWsPane) "G1: the window shows only the new workspace's pane ($($panes.Count))"
+    $f = Wait-Focused $newPane
+    Assert ($newPane -ne 0 -and $f -eq $newPane) "G1: the caret is on the new workspace's pane (focused=$f pane=$newPane)"
+
+    # G2: a switch back puts the caret on the adopter's own focused pane.
+    $caretMark = Log-Count
+    $ws =Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=show', "--target=$homeWs")
+    Assert ($ws -and [string]$ws.data.active -eq $homeWs) "G2: $homeWs is back on show (active='$($ws.data.active)')"
+    $f = Wait-Focused ([int64]$homeWsPane)
+    Assert ($f -eq [int64]$homeWsPane) "G2: the caret came back to $homeWs's pane, not left on the parked one (focused=$f pane=$homeWsPane)"
+    if (-not $ExePath) {
+        # The caret line comes before the adopt turn's tab layout and its
+        # 'adopted' line: set before the first layout, not after it.
+        $after = @(Get-Content $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $caretMark)
+        $ci = -1; $ai = -1; $li = -1
+        for ($k = 0; $k -lt $after.Count; $k++) {
+            if ($ci -lt 0 -and $after[$k] -match 'workspace adopt caret pane=') { $ci = $k }
+            if ($ci -ge 0 -and $li -lt 0 -and $after[$k] -match 'window resize cause=tabswitch') { $li = $k }
+            if ($ai -lt 0 -and $after[$k] -match "workspace adopted the window name=$([regex]::Escape($homeWs))") { $ai = $k }
+        }
+        Assert ($ci -ge 0 -and $ai -gt $ci -and $li -gt $ci) "G2: the adopt turn set the caret before its first layout (caret line $ci, layout $li, adopted $ai)"
+    }
+
+    # G3: a pane popped out of its window (the header's pop-out button, the
+    # same commit as a drag released over the desktop) makes a workspace on
+    # show holding THAT pane; the workspace it left is parked with the rest.
+    $r = Invoke-SwmCli "+split --target=$homeWs --direction=right"
+    $ws = Wait-Ws { param($s) $s -and [int](Ws-Row $s $homeWs).panes -eq 2 }
+    Assert ([int](Ws-Row $ws $homeWs).panes -eq 2) "G3: setup: $homeWs has two panes ($((Ws-Row $ws $homeWs).panes))"
+    Start-Sleep -Milliseconds 600
+    Assert (Set-TestActiveWindow -Window ([IntPtr]$shared)) 'G3: setup: the keyboard is in the shared window'
+    Start-Sleep -Milliseconds 300
+    [void](Send-TestKeys -Window ([IntPtr]$shared) -Target ([IntPtr](Focused-Pane)) -Modifiers ctrl, shift -Key F9)
+    Start-Sleep -Milliseconds 1200
+    $boxes = @(Get-TestChildWindows -Window ([IntPtr]$shared) -Class 'GhozttyTerminal' | Where-Object Visible | Sort-Object Left)
+    Assert ($boxes.Count -eq 2) "G3: setup: two panes on screen ($($boxes.Count))"
+    if ($boxes.Count -eq 2) {
+        $popped = $boxes[1]
+        $scale = (Get-TestWindowDpi -Window ([IntPtr]$shared)) / 96.0
+        $band = Get-TestChromeDip -Dip 24 -Scale $scale
+        $btnX = $popped.Left + $popped.Width - (Get-TestChromeDip -Dip 18 -Scale $scale)
+        $btnY = $popped.Top - [int]($band / 2)
+        $countBefore = @((Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')).data.workspaces).Count
+        [void](Send-TestMouse -Window ([IntPtr]$shared) -Target ([IntPtr]$shared) -X $btnX -Y $btnY -Action 'down' -Client)
+        [void](Send-TestMouse -Window ([IntPtr]$shared) -Target ([IntPtr]$shared) -X $btnX -Y $btnY -Action 'up' -Client)
+        $ws = Wait-Ws { param($s) $s -and @($s.data.workspaces).Count -eq ($countBefore + 1) }
+        $outName = [string]$ws.data.active
+        Assert (@($ws.data.workspaces).Count -eq ($countBefore + 1) -and $outName -ne $homeWs) "G3: the pop-out made a workspace and put it on show (active='$outName', $(@($ws.data.workspaces).Count))"
+        $o = Ws-Row $ws $outName
+        Assert ($o -and [int64]$o.hwnd -eq $shared -and [int]$o.panes -eq 1) "G3: it is in the SAME window with one pane (hwnd=$($o.hwnd) panes=$($o.panes))"
+        $hw = Ws-Row $ws $homeWs
+        Assert ($hw -and $hw.parked -and [int]$hw.panes -eq 1) "G3: $homeWs is parked with the pane it kept (parked=$($hw.parked) panes=$($hw.panes))"
+        $panes = @(Shared-Panes)
+        Assert ($panes.Count -eq 1 -and [int64]$panes[0].Hwnd -eq [int64]$popped.Hwnd) "G3: the window shows the popped pane itself - the same handle ($(@($panes | ForEach-Object Hwnd) -join ',') vs $($popped.Hwnd))"
+        $tops = @(Visible-Tops)
+        Assert ($tops.Count -eq 1 -and $tops[0].Hwnd -eq $shared) "G3: no second window appeared ($($tops.Count))"
+        $f = Wait-Focused ([int64]$popped.Hwnd)
+        Assert ($f -eq [int64]$popped.Hwnd) "G3: the caret is on the popped pane (focused=$f)"
+    }
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'G: no crash'
+
+    # Back to one workspace for C4: close every other one.
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    foreach ($n in @($ws.data.workspaces | ForEach-Object { [string]$_.name } | Select-Object -Skip 1)) {
+        [void](Invoke-GhozttyIpc -Action 'close' -Arguments @("--target=$n", '--force'))
+    }
+    $ws = Wait-Ws { param($s) $s -and @($s.data.workspaces).Count -eq 1 }
+    Assert (@($ws.data.workspaces).Count -eq 1) "G: back to one workspace for C4 ($(@($ws.data.workspaces).Count))"
 
     # C4: the last workspace's close closes the window.
     [void](Send-TestSysCommand -Window ([IntPtr]$shared) -Command 'close')

@@ -7640,6 +7640,19 @@ pub fn adoptWindow(self: *Window, hwnd: w32.HWND, bound: WindowBound) void {
     _ = w32.SetWindowPos(hwnd, null, 0, 0, 0, 0, w32.SWP_NOMOVE | w32.SWP_NOSIZE |
         w32.SWP_NOZORDER | w32.SWP_NOACTIVATE | w32.SWP_FRAMECHANGED);
     self.updateTabBarVisibility();
+    // The caret goes to this workspace's focused pane in the SAME turn,
+    // before its first layout in the window, and never into a strip of a
+    // collapsed row (T3194, Mac `adoptWindow` /
+    // `switchingBackDoesNotReplayTheStack`). Laid out with the caret still on
+    // a strip, the tab featured that strip's run and brought it out, and the
+    // next activation put the first run back: every blade replayed out and
+    // in. `showTabIndex` below lays out against this pane and focuses it.
+    if (self.active_tab < self.tab_count) {
+        const was = self.tab_active_pane[self.active_tab];
+        const caret = self.caretPaneOnShow(self.active_tab);
+        self.tab_active_pane[self.active_tab] = caret;
+        log.info("workspace adopt caret pane={s} moved_off_strip={}", .{ caret.paneId(), caret != was });
+    }
     // Shown again (T3192): ask Windows now whether anybody can see the
     // window, so the panes come back on show - or stay held behind a window
     // that is covered or minimized - without waiting for the poll. Before the
