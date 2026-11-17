@@ -8979,6 +8979,15 @@ test "host floor: a real controller on a real window, on this box" {
             try testing.expect(toc_panel.slidingOnCompositor());
             try testing.expect(!shownByStyle(toc_panel.hwnd));
             try testing.expectEqual(@as(u32, 0), toc_panel.comp_failures);
+            // T3040: the slide's host draws on the process's D3D11 device
+            // (T2968's cache), not one of the card's own - unless the A/B
+            // knob turned sharing off.
+            const held = toc_panel.compHost() orelse return error.TestExpectedCompHost;
+            const shared_off = if (std.process.getEnvVarOwned(alloc, "GHOZTTY_COMP_SHARED_DEVICE")) |raw| blk: {
+                defer alloc.free(raw);
+                break :blk !gl_comp_present.sharedDeviceWanted(raw);
+            } else |_| false;
+            try testing.expectEqual(!shared_off, held.shared);
         } else {
             try testing.expect(shownByStyle(toc_panel.hwnd));
         }
@@ -9003,6 +9012,11 @@ test "host floor: a real controller on a real window, on this box" {
         }
         try testing.expect(!toc_panel.sliding());
         try testing.expect(shownByStyle(toc_panel.hwnd));
+        // T3040: the slide over, the card is its window again and the
+        // compositor host (DirectComposition device, target, surface, the
+        // device reference) is gone with the visual - a viewer at rest keeps
+        // nothing of the slide's.
+        try testing.expect(toc_panel.compHost() == null);
         // Each reversal was re-declared from where the card had got to, on
         // the compositor again, and none fell back to stepping. The "shut"
         // can land before the card has moved at all (same millisecond), and
@@ -9040,6 +9054,7 @@ test "host floor: a real controller on a real window, on this box" {
         }
         try testing.expect(!toc_panel.sliding());
         try testing.expect(!shownByStyle(toc_panel.hwnd));
+        try testing.expect(toc_panel.compHost() == null); // T3040, sliding out too
         var click_timer = try std.time.Timer.start();
         while (click_timer.read() < 30 * std.time.ns_per_s) {
             if (pane.active_heading) |a| {

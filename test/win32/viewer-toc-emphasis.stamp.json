@@ -1,14 +1,14 @@
 {
     "guard":  "viewer-toc-emphasis",
     "script":  "test/win32/viewer-toc-emphasis.ps1",
-    "generated":  "2026-11-15T07:23:18-08:00",
-    "commit":  "48a4ea1b4",
+    "generated":  "2026-11-17T14:10:11-08:00",
+    "commit":  "4ed857744",
     "uncommitted":  [
-                        "src/apprt/win32/paint_probe.zig"
+                        "src/apprt/win32/ViewerTOCPanel.zig"
                     ],
     "files":  {
                   "src/apprt/win32/paint_probe.zig":  "175e7a520cb57253034c5af53866945b9da6e1b2e232f6de579615130941564e",
-                  "src/apprt/win32/ViewerTOCPanel.zig":  "2ac7fa2006c498c22d8cda9b976011b6322a1e0907998200281d0a7524ca22aa",
+                  "src/apprt/win32/ViewerTOCPanel.zig":  "e93b814a495f9b25b8e6819578f5f66d26fe910557a7ac0d246a3dbe53886d91",
                   "src/apprt/win32/window_active.zig":  "4076ebbfce81f4505a33e20f6e6da8f95cc82ec11130b6b3b35544d899efe535",
                   "test/win32/lib/SelectionBar.ps1":  "72285cfd82510cadc123387caf3af34cfde31867d48f58895bef17ebf29a1c01",
                   "test/win32/viewer-toc-emphasis.ps1":  "4111f265f10e605dbe667242d2ae6907b115a834782af1b1d171645aeb45ffe0"

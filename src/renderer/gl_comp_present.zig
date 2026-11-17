@@ -442,6 +442,20 @@ pub const DeviceCache = struct {
 
 var device_cache: DeviceCache = .{};
 
+/// The process's D3D11 device (T2968) for a compositor host outside the
+/// renderer (T3040: the viewer contents card's slide), with one reference
+/// each on the device and its context for the caller to release. The same
+/// `GHOZTTY_COMP_SHARED_DEVICE=0` A/B as the panes: off, a device of its own.
+/// Its immediate context is multithread-protected whenever `shared` is set.
+pub fn processDevice() Error!Device {
+    if (comptime builtin.os.tag != .windows) return error.Unavailable;
+    const d3d11 = LoadLibraryW(std.unicode.utf8ToUtf16LeStringLiteral("d3d11.dll")) orelse
+        return error.Unavailable;
+    const d3d11_create: D3D11CreateDeviceFn = @ptrCast(GetProcAddress(d3d11, "D3D11CreateDevice") orelse
+        return error.Unavailable);
+    return if (sharedDeviceEnabled()) device_cache.acquire(d3d11_create) else createDevice(d3d11_create);
+}
+
 extern "kernel32" fn LoadLibraryW([*:0]const u16) callconv(.winapi) ?*anyopaque;
 extern "kernel32" fn GetProcAddress(*anyopaque, [*:0]const u8) callconv(.winapi) ?*anyopaque;
 

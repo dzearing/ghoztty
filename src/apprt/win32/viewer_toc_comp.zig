@@ -27,6 +27,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const w32 = @import("win32.zig");
 const toc = @import("viewer_toc_layout.zig");
+const gl_comp_present = @import("../../renderer/gl_comp_present.zig");
 
 const log = std.log.scoped(.viewer_toc_comp);
 
@@ -45,10 +46,6 @@ const IID_IDXGIDevice = guid("54ec77fa-1377-44e6-8c32-88fd5f44c84c");
 const IID_IDCompositionDevice = guid("c37ea93a-e7aa-450d-b16f-9746cb0407f3");
 const IID_ID3D11Texture2D = guid("6f15aaf2-d208-4e89-9ab4-489535d34f9c");
 
-const D3D_DRIVER_TYPE_HARDWARE: u32 = 1;
-const D3D_DRIVER_TYPE_WARP: u32 = 5;
-const D3D11_CREATE_DEVICE_BGRA_SUPPORT: u32 = 0x20;
-const D3D11_SDK_VERSION: u32 = 7;
 const DXGI_FORMAT_B8G8R8A8_UNORM: u32 = 87;
 const DXGI_ALPHA_MODE_PREMULTIPLIED: u32 = 1;
 
@@ -103,13 +100,17 @@ fn query(obj: Obj, iid: *const GUID) Error!Obj {
 extern "kernel32" fn LoadLibraryW([*:0]const u16) callconv(.winapi) ?*anyopaque;
 extern "kernel32" fn GetProcAddress(*anyopaque, [*:0]const u8) callconv(.winapi) ?*anyopaque;
 
-const D3D11CreateDeviceFn = *const fn (?Obj, u32, ?*anyopaque, u32, ?*const u32, u32, u32, *?Obj, ?*u32, *?Obj) callconv(.winapi) HRESULT;
 const DCompCreateDeviceFn = *const fn (?Obj, *const GUID, *?Obj) callconv(.winapi) HRESULT;
 
-/// One host per viewer pane, built on the pane's first slide.
+/// One host per slide (T3040): built when a slide is declared, kept across
+/// a mid-flight re-declaration, and released when the slide ends or is
+/// cancelled, so a viewer at rest holds no DirectComposition device, target
+/// or surface. Until T3040 it lived as long as the viewer.
 pub const Host = struct {
-    device: Obj, // ID3D11Device
+    device: Obj, // ID3D11Device, a reference on the process's device
     context: Obj, // ID3D11DeviceContext
+    /// `device` is the process-wide one (T2968), not the card's own.
+    shared: bool,
     dcomp: Obj, // IDCompositionDevice
     target: Obj, // IDCompositionTarget, topmost=TRUE on the viewer host
     root: Obj, // IDCompositionVisual, the target's root
@@ -124,20 +125,17 @@ pub const Host = struct {
         if (comptime builtin.os.tag != .windows) return error.Unavailable;
         last_hr = 0;
         stage = "load-libraries";
-        const d3d11 = LoadLibraryW(std.unicode.utf8ToUtf16LeStringLiteral("d3d11.dll")) orelse return error.Unavailable;
         const dcomp_lib = LoadLibraryW(std.unicode.utf8ToUtf16LeStringLiteral("dcomp.dll")) orelse return error.Unavailable;
-        const d3d_create: D3D11CreateDeviceFn = @ptrCast(GetProcAddress(d3d11, "D3D11CreateDevice") orelse return error.Unavailable);
         const dcomp_create: DCompCreateDeviceFn = @ptrCast(GetProcAddress(dcomp_lib, "DCompositionCreateDevice") orelse return error.Unavailable);
 
+        // T3040: the process's one D3D11 device (T2968), not one of the
+        // card's own - a device is ~50 driver threads and ~12 MB of GPU
+        // memory, for a picture uploaded once per 150 ms slide.
         stage = "d3d11-device";
-        var device: ?Obj = null;
-        var context: ?Obj = null;
-        if (d3d_create(null, D3D_DRIVER_TYPE_HARDWARE, null, D3D11_CREATE_DEVICE_BGRA_SUPPORT, null, 0, D3D11_SDK_VERSION, &device, null, &context) < 0) {
-            try check(d3d_create(null, D3D_DRIVER_TYPE_WARP, null, D3D11_CREATE_DEVICE_BGRA_SUPPORT, null, 0, D3D11_SDK_VERSION, &device, null, &context));
-        }
-        const dev = device orelse return error.ComFailed;
+        const got = gl_comp_present.processDevice() catch return error.ComFailed;
+        const dev = got.device;
         errdefer release(dev);
-        const ctx = context orelse return error.ComFailed;
+        const ctx = got.context;
         errdefer release(ctx);
 
         stage = "dxgi-device";
@@ -166,7 +164,7 @@ pub const Host = struct {
         try check(slot(*const fn (Obj, ?Obj) callconv(.winapi) HRESULT, tg, slot_dcomp_target_set_root)(tg, root));
         try check(slot(*const fn (Obj) callconv(.winapi) HRESULT, dc, slot_dcomp_device_commit)(dc));
         stage = "";
-        return .{ .device = dev, .context = ctx, .dcomp = dc, .target = tg, .root = root, .card = card };
+        return .{ .device = dev, .context = ctx, .shared = got.shared, .dcomp = dc, .target = tg, .root = root, .card = card };
     }
 
     pub fn deinit(self: *Host) void {
@@ -254,17 +252,6 @@ pub const Host = struct {
         _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_wait_commit)(self.dcomp);
     }
 
-    /// Take the card visual down (the slide ended, or was cancelled). Pins
-    /// the offset where `x` says first, so a later `play` never inherits a
-    /// stale animation. Commits.
-    pub fn stop(self: *Host, x: f64) void {
-        _ = slot(*const fn (Obj, f32) callconv(.winapi) HRESULT, self.card, slot_dcomp_visual_set_offset_x)(self.card, @floatCast(x));
-        if (self.shown) {
-            _ = slot(*const fn (Obj, Obj) callconv(.winapi) HRESULT, self.root, slot_dcomp_visual_remove_visual)(self.root, self.card);
-            self.shown = false;
-        }
-        _ = slot(*const fn (Obj) callconv(.winapi) HRESULT, self.dcomp, slot_dcomp_device_commit)(self.dcomp);
-    }
 };
 
 fn newVisual(dc: Obj) Error!Obj {

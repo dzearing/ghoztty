@@ -1,13 +1,13 @@
 {
     "guard":  "webview-browser-exit",
     "script":  "test/win32/webview-browser-exit.ps1",
-    "generated":  "2026-11-17T12:31:39-08:00",
-    "commit":  "8378cb41b",
+    "generated":  "2026-11-17T13:26:21-08:00",
+    "commit":  "4ed857744",
     "uncommitted":  [
                         "src/apprt/win32/ViewerPane.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/ViewerPane.zig":  "69772737ea80fdc8272e7107b3eb81a85b3af052b0e62e7699ef683e7cde485a",
+                  "src/apprt/win32/ViewerPane.zig":  "646ffa1b7c1f32c6066ffc43a45e59ec2a4ffd03d0c1b48fe93502c7f61bb0cf",
                   "src/apprt/win32/webview2.zig":  "8acac18b06c3b93c47fe1dc3008b50cf00252a07b80ff3a995ba31f0dec4edbc",
                   "test/win32/webview-browser-exit.ps1":  "fc5366b411e3c79e5be9d1a529b45e0b66c1047558d1680fb5ee2e5f4e9e9a2d"
               }

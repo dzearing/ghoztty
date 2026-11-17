@@ -207,7 +207,9 @@ slide_h: i32 = 1,
 slide_steps: u32 = 0,
 
 /// The slide on the compositor (T2764). `comp` is the viewer host's
-/// DirectComposition target, built on the first slide. While `comp_slide`
+/// DirectComposition target, built when a slide is declared and released
+/// when it ends or is cancelled (T3040: a viewer at rest holds no device of
+/// the card's, and the D3D11 device is the process's own). While `comp_slide`
 /// is set the card's window is hidden at its resting place and the visual is
 /// the card, moving from `comp_t0` toward `comp_want` since `comp_start_ms`
 /// along `comp_plan`; `comp_geom` is the resting rect the plan was made for.
@@ -1216,8 +1218,7 @@ fn compFailed(self: *ViewerTOCPanel) bool {
     const f = toc_comp.Host.lastFailure();
     log.warn("viewer toc slide could not go on the compositor at {s} hr=0x{x:0>8}; stepping it", .{ f.stage, f.hr });
     // Built again from nothing on the next slide.
-    if (self.comp) |*host| host.deinit();
-    self.comp = null;
+    self.releaseComp();
     self.comp_slide = false;
     return false;
 }
@@ -1268,7 +1269,8 @@ fn finishCompSlide(self: *ViewerTOCPanel) void {
         self.showAbove();
         _ = w32.UpdateWindow(self.hwnd);
     }
-    if (self.comp) |*host| host.stop(self.comp_plan.end_x);
+    // The window is the card again: the host goes with the visual (T3040).
+    self.releaseComp();
     log.info("viewer toc slide done pane={s} to={d:.0} ms={d} compositor=true ui_steps=0", .{
         self.pane.paneId(), self.comp_want, std.time.milliTimestamp() - self.comp_start_ms,
     });
@@ -1277,12 +1279,29 @@ fn finishCompSlide(self: *ViewerTOCPanel) void {
 /// Take a compositor slide down where it has got to, leaving `slide` there
 /// and the window hidden - for a snap, a hide, or a fall back to stepping.
 fn cancelCompSlide(self: *ViewerTOCPanel) void {
-    if (!self.comp_slide) return;
-    const el = std.time.milliTimestamp() - self.comp_start_ms;
+    // A host built for a slide that was never declared (no card picture to
+    // put on it) goes too: one exists only while a slide does (T3040).
+    if (!self.comp_slide) return self.releaseComp();
     self.slide = self.currentT();
     _ = w32.KillTimer(self.hwnd, SLIDE_END_TIMER_ID);
     self.comp_slide = false;
-    if (self.comp) |*host| host.stop(self.comp_plan.at(@as(f64, @floatFromInt(el)) / 1000.0));
+    self.releaseComp();
+}
+
+/// Take the visual down and let go of the DirectComposition device, target
+/// and surface, and this host's reference on the process's D3D11 device
+/// (T3040). The next slide builds a host again; a re-declaration mid-slide
+/// keeps the one it has.
+fn releaseComp(self: *ViewerTOCPanel) void {
+    if (self.comp) |*host| host.deinit();
+    self.comp = null;
+}
+
+/// Whether a compositor host is held right now, and whether its D3D11
+/// device is the process's shared one (the pane's own test, T3040).
+pub fn compHost(self: *const ViewerTOCPanel) ?struct { shared: bool } {
+    const host = self.comp orelse return null;
+    return .{ .shared = host.shared };
 }
 
 /// The card as its window paints it, `w` x `h`, premultiplied, with the

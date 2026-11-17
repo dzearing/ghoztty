@@ -1,14 +1,14 @@
 {
     "guard":  "viewer-diff-tree",
     "script":  "test/win32/viewer-diff-tree.ps1",
-    "generated":  "2026-11-13T14:48:31-08:00",
-    "commit":  "3e84f2916",
+    "generated":  "2026-11-17T13:27:00-08:00",
+    "commit":  "4ed857744",
     "uncommitted":  [
                         "src/apprt/win32/ViewerTOCPanel.zig"
                     ],
     "files":  {
                   "src/apprt/win32/viewer_file_tree.zig":  "cc5e6dcb205c91453a37f851b34030466b3b219baa5118c85a02be01f45d329a",
-                  "src/apprt/win32/ViewerTOCPanel.zig":  "2ac7fa2006c498c22d8cda9b976011b6322a1e0907998200281d0a7524ca22aa",
+                  "src/apprt/win32/ViewerTOCPanel.zig":  "e93b814a495f9b25b8e6819578f5f66d26fe910557a7ac0d246a3dbe53886d91",
                   "test/win32/viewer-diff-tree.ps1":  "88025654dcd8819678596bfcd043f45a0e14dbb3ef2057abb99eed9a09474f82"
               }
 }
