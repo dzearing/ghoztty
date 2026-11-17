@@ -8,6 +8,10 @@
 #   there writes the file but does NOT move the running app's mode; the next
 #   launch comes up in the new mode.
 #
+# B (T3191): one shared HWND handed between Window controllers. Read through
+#   the debug-only `workspaces` IPC seam (ipc_workspaces.zig: who is on show,
+#   who is parked with no HWND) and the test desktop's own window list.
+#
 # THE ORACLE IS THE LATCH AND THE FILE. The mode the app runs in is a decision
 # invisible in pixels (until T3181 gives it a window to act on), so it is read
 # through the debug-only `settings` IPC action's `window_mode` field, which
@@ -183,6 +187,114 @@ try {
     $s = Invoke-Settings @('--op=open')
     Assert ([string]$s.data.window_mode -eq 'separate') "A: no config line means separate (window_mode='$($s.data.window_mode)')"
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'A: no crash (launch 3)'
+
+    # =====================================================================
+    # B (T3191): one shared HWND. A programmatic open parks (no HWND of its
+    # own, nothing new on screen); a --focus open and a show hand the SAME
+    # HWND over; the shell of a parked workspace keeps running and is there
+    # when it comes back on show.
+    # =====================================================================
+    Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
+    Kill-RepoInstances
+    [System.IO.File]::WriteAllText($cfgFile, "macos-window-mode = single`n")
+    $app = Start-App 'launch 4 (single)'
+    if (-not $app) { exit 1 }
+
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    if (-not $ws -or -not $ws.success) {
+        Write-TestAssertedNothing -Reason 'the workspaces IPC action never answered' -Label 'single-window-mode'
+        exit 1
+    }
+    $first = [string]$ws.data.active
+    $shared = [int64](@($ws.data.workspaces)[0].hwnd)
+    Assert ($ws.data.mode -eq 'single' -and $first -and @($ws.data.workspaces).Count -eq 1) "B: the first window loads the shared window (active='$first', $(@($ws.data.workspaces).Count) workspace)"
+    Assert ($shared -ne 0) "B: the first workspace holds an HWND ($shared)"
+
+    function Visible-Tops { return @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow') }
+    function Ws-Row($state, [string]$name) {
+        foreach ($r in @($state.data.workspaces)) { if ([string]$r.name -eq $name) { return $r } }
+        return $null
+    }
+    function Shared-Panes {
+        return @(Get-TestChildWindows -Window ([IntPtr]$shared) -Class 'GhozttyTerminal' | Where-Object { $_.Visible })
+    }
+
+    # B1: a programmatic open stays parked behind the one on show.
+    $r = Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-b')
+    Assert ($r -and $r.success) 'B1: +new-window --target=swm-b (no --focus) succeeds'
+    Start-Sleep -Milliseconds 1500
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    $b = Ws-Row $ws 'swm-b'
+    Assert ([string]$ws.data.active -eq $first) "B1: the workspace on show keeps the window (active='$($ws.data.active)')"
+    Assert ($b -and $b.parked -and [int64]$b.hwnd -eq 0 -and [int]$b.panes -eq 1) "B1: swm-b is parked with no HWND and its one pane (parked=$($b.parked) hwnd=$($b.hwnd) panes=$($b.panes))"
+    Assert ([int]$ws.data.windows_with_hwnd -eq 1) "B1: one controller holds an HWND (windows_with_hwnd=$($ws.data.windows_with_hwnd))"
+    $tops = @(Visible-Tops)
+    Assert ($tops.Count -eq 1 -and $tops[0].Hwnd -eq $shared) "B1: still ONE window on screen, the same HWND ($($tops.Count): $(($tops | ForEach-Object Hwnd) -join ','))"
+
+    # A parked workspace's shell keeps running: type into it while parked.
+    cmd /c "`"$exe`" +send-keys --target=swm-b `"echo PARKED-B-OK`" Enter > nul 2>&1" | Out-Null
+
+    # B2: a --focus open puts the new workspace on show IN THE SAME HWND.
+    $r = Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-c', '--focus')
+    Assert ($r -and $r.success) 'B2: +new-window --target=swm-c --focus succeeds'
+    Start-Sleep -Milliseconds 1500
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    $c = Ws-Row $ws 'swm-c'
+    $one = Ws-Row $ws $first
+    Assert ([string]$ws.data.active -eq 'swm-c' -and $c -and [int64]$c.hwnd -eq $shared) "B2: swm-c adopted the shared HWND (active='$($ws.data.active)' hwnd=$($c.hwnd) shared=$shared)"
+    Assert ($one -and $one.parked -and [int64]$one.hwnd -eq 0) "B2: $first surrendered it and is parked (hwnd=$($one.hwnd))"
+    Assert ([string](@($ws.data.workspaces)[0].name) -eq 'swm-c' -and [string](@($ws.data.workspaces)[1].name) -eq $first) "B2: most recently shown first ($((@($ws.data.workspaces) | ForEach-Object name) -join ','))"
+    $tops = @(Visible-Tops)
+    Assert ($tops.Count -eq 1 -and $tops[0].Hwnd -eq $shared) "B2: no second window appeared ($($tops.Count) on screen)"
+    $panes = @(Shared-Panes)
+    Assert ($panes.Count -eq 1) "B2: the shared window shows only the adopter's pane ($($panes.Count) visible terminal children)"
+
+    # B3: a show by name hands it over again, and the parked shell's output
+    # is there.
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=show', '--target=swm-b')
+    Assert ($ws -and $ws.data.shown -eq $true -and [string]$ws.data.active -eq 'swm-b') "B3: show swm-b hands it the window (shown=$($ws.data.shown) active='$($ws.data.active)')"
+    $b = Ws-Row $ws 'swm-b'
+    Assert ($b -and [int64]$b.hwnd -eq $shared -and -not $b.parked) "B3: swm-b holds the same shared HWND (hwnd=$($b.hwnd))"
+    Start-Sleep -Milliseconds 800
+    $readOut = Join-Path $work 'read-b.txt'
+    cmd /c "`"$exe`" +read --name=swm-b --lines=60 > `"$readOut`" 2>&1" | Out-Null
+    $txt = if (Test-Path $readOut) { [string](Get-Content $readOut -Raw) } else { '' }
+    # A workspace born parked has no window to take its grid from yet, so its
+    # terminal runs one column wide until T3193 lays parked content out at
+    # the window's size; the output is there, one cell per line. Join the
+    # lines: this asserts the shell RAN while parked, not the grid.
+    $txt = $txt -replace '\r?\n', ''
+    Assert ($txt -match 'PARKED-B-OK') "B3: what was typed into swm-b while parked ran (read: $($txt -replace '\s+',' '))"
+    $panes = @(Shared-Panes)
+    Assert ($panes.Count -eq 1) "B3: the shared window shows only swm-b's pane ($($panes.Count))"
+
+    # B4: and back to the first; a show of the one on show is a no-op.
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=show', "--target=$first")
+    Assert ($ws -and [string]$ws.data.active -eq $first -and [int64](Ws-Row $ws $first).hwnd -eq $shared) "B4: $first takes the shared HWND back"
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=show', "--target=$first")
+    Assert ($ws -and $ws.data.shown -eq $true -and [int]$ws.data.windows_with_hwnd -eq 1) 'B4: showing the one on show changes nothing'
+    $tops = @(Visible-Tops)
+    Assert ($tops.Count -eq 1 -and $tops[0].Hwnd -eq $shared) "B4: one window on screen throughout ($($tops.Count))"
+
+    # B5: the shared window closing under parked workspaces never leaves the
+    # app with workspaces and nothing on screen: the most recently shown one
+    # loads a window of its own (Mac windowDidClose). (T3184 turns the close
+    # of the workspace on show into a hand-off of the SAME window.)
+    [void](Send-TestSysCommand -Window ([IntPtr]$shared) -Command 'close')
+    $deadline = (Get-Date).AddSeconds(8)
+    do {
+        Start-Sleep -Milliseconds 400
+        $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    } while ((Get-Date) -lt $deadline -and -not ($ws -and @($ws.data.workspaces).Count -eq 2 -and $ws.data.active))
+    $names = @($ws.data.workspaces | ForEach-Object { [string]$_.name })
+    Assert ($ws -and $names.Count -eq 2 -and $names -notcontains $first) "B5: closing the window ended only the workspace on show ($($names -join ','))"
+    Assert ($ws -and [string]$ws.data.active -eq 'swm-b') "B5: the most recently shown one (swm-b) took a window (active='$($ws.data.active)')"
+    $tops = @(Visible-Tops)
+    $b = Ws-Row $ws 'swm-b'
+    Assert ($tops.Count -eq 1 -and $b -and $tops[0].Hwnd -eq [int64]$b.hwnd) "B5: one window on screen, swm-b's ($($tops.Count): $(($tops | ForEach-Object Hwnd) -join ',') vs $($b.hwnd))"
+    $c = Ws-Row $ws 'swm-c'
+    Assert ($c -and $c.parked -and [int64]$c.hwnd -eq 0) "B5: swm-c stays parked (hwnd=$($c.hwnd))"
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'B: no crash'
 
     Complete-TestBody
 } catch {

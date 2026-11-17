@@ -26,6 +26,7 @@ const ipc_agent_integration = @import("ipc_agent_integration.zig");
 const ipc_whats_new = @import("ipc_whats_new.zig");
 const ipc_shortcut_guide = @import("ipc_shortcut_guide.zig");
 const ipc_settings = @import("ipc_settings.zig");
+const ipc_workspaces = @import("ipc_workspaces.zig");
 const ipc_handoff = @import("../../os/ipc_handoff.zig");
 const build_config = @import("../../build_config.zig");
 const CoreSurface = @import("../../Surface.zig");
@@ -163,6 +164,12 @@ pub fn dispatch(ctx: Context, request_json: []const u8) Allocator.Error!?[]u8 {
         // override, the parser's refusal) is a model, not pixels. Release
         // builds fall through to unknown-action.
         return try ipc_settings.handle(ctx.app, ctx.alloc, request.arguments);
+    } else if (ipc_workspaces.enabled and std.mem.eql(u8, request.action, "workspaces")) {
+        // T3191: the DEBUG-ONLY seam for single-window mode - which workspace
+        // holds the shared window, which are parked, and a hand-off by name
+        // until the sidebar switch (T3182) lands. Release builds fall through
+        // to unknown-action.
+        return try ipc_workspaces.handle(ctx.app, ctx.alloc, request.arguments);
     }
 
     return try errorResponse(ctx.alloc, "unknown action: {s}", .{request.action});

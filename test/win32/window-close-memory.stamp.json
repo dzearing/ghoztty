@@ -1,15 +1,16 @@
 {
     "guard":  "window-close-memory",
     "script":  "test/win32/window-close-memory.ps1",
-    "generated":  "2026-11-16T15:30:55-08:00",
-    "commit":  "7ac23d04f",
+    "generated":  "2026-11-16T16:28:10-08:00",
+    "commit":  "e59ac77cb",
     "uncommitted":  [
+                        "src/apprt/win32/Surface.zig",
                         "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/apprt/win32/PaneDesk.zig":  "6758c56803e4fac7043780b46fa84a9dc71b7e3d9362731dd247dd4f8578699c",
-                  "src/apprt/win32/Surface.zig":  "35d7404450d17aadf4972cb1bcc704a774dda3541055f36209665807a0f3e767",
-                  "src/apprt/win32/Window.zig":  "754b086ca58ce7faed38f257654f648d85d1f98481d52e6360856844b55b4bd1",
+                  "src/apprt/win32/Surface.zig":  "b3999a50b9b75311a4dac8d4e1c625e70dbf0372eb3f66edf4c50cc12c5d38cf",
+                  "src/apprt/win32/Window.zig":  "a975bdded5ed1d92253bea0d2f59e71425e8db40af96540f91856d69330e9f82",
                   "src/renderer/gl_comp_present.zig":  "27a012f12f6afa738178cad7ee0ceae147365d26188f7e9d304e5741f0f7f5d1",
                   "test/win32/lib/ProcessMemory.ps1":  "d742e9813857e5dff6e8c1a9559ebb392c4826bcf61d10c4e768760edc38b5b1",
                   "test/win32/window-close-memory.ps1":  "a24fa4cb28aaa758edf3461dbf39726a0bba52e620c40004a10c9c0746eb6481"

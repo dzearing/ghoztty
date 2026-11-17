@@ -4083,6 +4083,8 @@ $GuardTable = @(
         Stamp  = 'test\win32\single-window-mode.stamp.json'
         Covers = @(
             'src\apprt\win32\window_mode.zig',
+            'src\apprt\win32\workspace_host.zig',
+            'src\apprt\win32\ipc_workspaces.zig',
             'test\win32\single-window-mode.ps1'
         )
     },

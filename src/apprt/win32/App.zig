@@ -49,6 +49,7 @@ const QuickTerminal = @import("QuickTerminal.zig");
 const FrameClock = @import("FrameClock.zig");
 const lab_plant = @import("lab_plant.zig");
 const window_mode = @import("window_mode.zig");
+const workspace_host = @import("workspace_host.zig");
 const PaneView = @import("PaneView.zig");
 const CloseUndo = @import("CloseUndo.zig");
 const Surface = @import("Surface.zig");
@@ -565,6 +566,16 @@ webview2_host: webview2.Host = undefined,
 
 /// List of active Window containers (tabbed windows).
 windows: std.ArrayList(*Window) = .empty,
+
+/// Single-window mode's workspaces (T3181/T3191): which Window controller has
+/// the one shared top-level HWND, and the order the others were last shown
+/// in. Empty in `separate` mode, where nothing is ever admitted.
+workspaces: workspace_host.Host(*Window) = .{},
+
+/// The hidden top-level a parked workspace's panes live under (T3191), so
+/// they survive the shared window changing hands or closing. Never shown;
+/// made the first time a workspace parks.
+park_host: ?w32.HWND = null,
 
 /// Last mouse SCREEN position seen by any surface's WM_MOUSEMOVE (T75,
 /// focus-follows-mouse). Windows regenerates WM_MOUSEMOVE for a
@@ -2807,6 +2818,12 @@ pub fn terminate(self: *App) void {
         alloc.destroy(window);
     }
     self.windows.deinit(alloc);
+    // Parked workspaces' panes went with their windows above (T3191).
+    self.workspaces.deinit(alloc);
+    if (self.park_host) |h| {
+        _ = w32.DestroyWindow(h);
+        self.park_host = null;
+    }
 
     // Every window finalized its own parked closes on the way out (T1825);
     // this ends anything left over, while the agent link is still up to
@@ -7864,6 +7881,7 @@ pub fn newWindowFromSidebar(self: *App, parent: *Window, title: ?[]const u8) voi
 pub fn createWindow(self: *App, opts: Window.InitOptions) !*Window {
     const window = try self.createEmptyWindow(opts);
     errdefer {
+        self.forgetWorkspace(window);
         _ = self.windows.pop();
         window.deinit();
         self.core_app.alloc.destroy(window);
@@ -7876,7 +7894,90 @@ pub fn createWindow(self: *App, opts: Window.InitOptions) !*Window {
     } else {
         _ = try window.addTab();
     }
+    self.presentWorkspace(window, !opts.background);
     return window;
+}
+
+// ---- Single-window mode (T3191) ---------------------------------------------
+
+/// The hidden top-level parked workspaces' panes live under. Null only when
+/// it cannot be made, in which case nothing parks (the caller keeps or gets a
+/// window of its own).
+pub fn parkHost(self: *App) ?w32.HWND {
+    if (self.park_host) |h| return h;
+    self.park_host = w32.CreateWindowExW(
+        w32.WS_EX_TOOLWINDOW,
+        std.unicode.utf8ToUtf16LeStringLiteral("STATIC"),
+        std.unicode.utf8ToUtf16LeStringLiteral("ghoztty park host"),
+        w32.WS_POPUP | w32.WS_CLIPCHILDREN,
+        0,
+        0,
+        1,
+        1,
+        null,
+        null,
+        self.hinstance,
+        null,
+    );
+    if (self.park_host == null) log.warn("workspace park host could not be created", .{});
+    return self.park_host;
+}
+
+/// Asked before a window is built (Mac `startsParked`): in single-window mode
+/// every window but the first is a workspace that starts with no HWND. Always
+/// false in `separate` mode and for the quick terminal.
+pub fn workspaceStartsParked(self: *App, opts: Window.InitOptions) bool {
+    if (!window_mode.isSingle() or opts.is_quick_terminal) return false;
+    if (!self.workspaces.startsParked()) return false;
+    return self.parkHost() != null;
+}
+
+/// A new workspace's first presentation (Mac `present`), once its first tab
+/// is in. `activate`: a manual open or `--focus` puts it on show; a
+/// programmatic open leaves it parked behind the one on show.
+pub fn presentWorkspace(self: *App, window: *Window, activate: bool) void {
+    switch (self.workspaces.present(window, activate)) {
+        .not_managed, .own_window_background, .promote_background, .stay_parked => {},
+        .show => _ = self.showWorkspace(window),
+    }
+}
+
+/// Put a workspace on show (Mac `WorkspaceHost.show`): the one on show
+/// surrenders the shared window and `target` adopts it. In `separate` mode,
+/// or for a window that is not a workspace, it is nothing. Returns whether
+/// `target` now has the window.
+pub fn showWorkspace(self: *App, target: *Window) bool {
+    switch (self.workspaces.show(target)) {
+        .refused => return false,
+        .already, .own_window => return target.hwnd != null,
+        .load_first => return false,
+        .hand_off => |ho| {
+            const park = self.parkHost() orelse return false;
+            const given = ho.from.surrenderWindow(park) orelse {
+                log.warn("workspace hand-off: the one on show had no window", .{});
+                return false;
+            };
+            ho.to.adoptWindow(given.hwnd, given.bound);
+            PaneSidebar.refreshScopes(self.windows.items, null);
+            self.markLayoutDirty();
+            return true;
+        },
+    }
+}
+
+/// A window leaving `windows` leaves the workspaces too (T3191). When it
+/// held the shared window and others are still open, the most recently shown
+/// one loads a window of its own (Mac `windowDidClose`), so the app never
+/// sits with workspaces and nothing on screen.
+pub fn forgetWorkspace(self: *App, window: *Window) void {
+    if (!self.workspaces.manages(window)) return;
+    const next = self.workspaces.windowDidClose(window, false) orelse return;
+    if (next.hwnd != null) return;
+    next.promoteToOwnWindow() catch |err| {
+        log.warn("workspace promotion failed err={}", .{err});
+        return;
+    };
+    self.workspaces.didLoadWindow(next);
 }
 
 /// The same, STOPPING before the first tab: a tracked, empty window waiting for
@@ -7896,8 +7997,15 @@ pub fn createEmptyWindow(self: *App, opts: Window.InitOptions) !*Window {
     const alloc = self.core_app.alloc;
     const window = try alloc.create(Window);
     errdefer alloc.destroy(window);
-    try window.init(self, opts);
+    var init_opts = opts;
+    init_opts.parked = self.workspaceStartsParked(opts);
+    try window.init(self, init_opts);
     errdefer window.deinit();
+    if (window_mode.isSingle() and !opts.is_quick_terminal) {
+        try self.workspaces.admit(alloc, window, init_opts.parked);
+        if (!init_opts.parked) self.workspaces.didLoadWindow(window);
+    }
+    errdefer _ = self.workspaces.windowDidClose(window, true);
 
     // Session persistence (T89d): route a fresh LOCAL window's surfaces through
     // the local agent so their processes survive this app (quit/crash/upgrade)
@@ -7981,6 +8089,7 @@ fn cancelPaneDrag(self: *App) bool {
 /// window it came from. Nothing was ever shown, either, so there is no close
 /// animation or confirmation to run.
 pub fn discardEmptyWindow(self: *App, window: *Window) void {
+    _ = self.workspaces.windowDidClose(window, true);
     for (self.windows.items, 0..) |w, i| {
         if (w != window) continue;
         _ = self.windows.orderedRemove(i);

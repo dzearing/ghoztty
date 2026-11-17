@@ -1,14 +1,15 @@
 {
     "guard":  "focus-defer",
     "script":  "test/win32/focus-defer.ps1",
-    "generated":  "2026-11-16T14:31:53-08:00",
-    "commit":  "2ebcf125c",
+    "generated":  "2026-11-16T15:55:37-08:00",
+    "commit":  "e59ac77cb",
     "uncommitted":  [
-
+                        "src/apprt/win32/App.zig",
+                        "src/apprt/win32/Surface.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/App.zig":  "16029ad710da38a8da4708aa8b8cb166d99f56e8b6f3688f2b1e15d13f5c9177",
-                  "src/apprt/win32/Surface.zig":  "35d7404450d17aadf4972cb1bcc704a774dda3541055f36209665807a0f3e767",
+                  "src/apprt/win32/App.zig":  "32d944d816b65d4cfc8ed0edbb6d8abe9ae6d01270017c4e854f54e621cbab18",
+                  "src/apprt/win32/Surface.zig":  "b3999a50b9b75311a4dac8d4e1c625e70dbf0372eb3f66edf4c50cc12c5d38cf",
                   "test/win32/focus-defer.ps1":  "3d0ccc2eaef8a0e04a7865d00135a64f7c5429817234e76cc2a39314599a4e58"
               }
 }

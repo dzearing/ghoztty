@@ -1566,6 +1566,12 @@ pub const InitOptions = struct {
     /// new one. Borrowed for this init only (copied into the window's own
     /// buffer); ignored when malformed. Null ⇒ generate.
     layout_uuid: ?[]const u8 = null,
+
+    /// Single-window mode (T3191): this workspace starts PARKED - no HWND of
+    /// its own (`hwnd` stays null), its panes created under the app's park
+    /// host, until it adopts the shared window. Decided by
+    /// `App.workspaces.startsParked` before init, never by the caller.
+    parked: bool = false,
 };
 
 /// Is this a build that must announce itself as not-the-release (T43)?
@@ -2171,6 +2177,92 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         _ = pane_id.generate(&self.layout_uuid);
     }
 
+    // A workspace that starts PARKED in single-window mode (T3191) has no
+    // window of its own: it adopts the shared one when it is put on show.
+    // Its panes are created under the app's park host meanwhile.
+    if (!options.parked) try self.createTopLevel(app, .{
+        .is_quick_terminal = options.is_quick_terminal,
+        .initial_size = options.initial_size,
+        .force_opaque = options.force_opaque,
+    });
+
+    // Don't show the window yet — addTab() will show the child
+    // surface which triggers ShowWindow on the parent as needed.
+    // Showing the parent before the terminal is ready can cause
+    // timing issues with ConPTY.
+
+    // Every regular window is IPC-addressable under one canonical name:
+    // `+new-window --target` when given, else auto-generated `window-N`
+    // (Mac windowName semantics). Quick terminals are not listable targets.
+    if (!options.is_quick_terminal) register: {
+        const gpa = app.core_app.alloc;
+
+        // T121: an ADOPTED name — a persisted session-restore name, or an
+        // explicit `+new-window --target=` — RESERVES its number before
+        // anything is minted. The auto allocator restarts at zero every app
+        // launch while restore re-adopts names minted by a PREVIOUS run, so
+        // without this a run that restored `window-3` mints `window-3` again
+        // on its third fresh window: two live windows holding one target
+        // name, with `+close`/`+rename` routed to whichever registered first.
+        // An adopted name of "" is not a name (T896). A manifest entry can
+        // record an empty `ipc_name` — a hand-edited file, or a producer that
+        // spells "no name" as a blank string — and adopting it registers the
+        // empty string: the window then reports a blank `target` in `+list`
+        // that no `--target=` can reach, which is the same nameless-window
+        // symptom the collision fallback below exists to prevent. Treat it as
+        // absent and mint one.
+        const adopted: ?[]const u8 = if (options.ipc_name) |n|
+            (if (n.len == 0) null else n)
+        else
+            null;
+
+        if (adopted) |n| app.ipcReserveWindowName(n);
+
+        // Claim a name this window actually HOLDS. `register` keeps the
+        // incumbent when a name is already taken, so recording the string
+        // regardless would leave `+list` reporting a `target` that routes to
+        // a different window — the same duplicate, one step further along.
+        // An adopted name that is already held falls back to a minted one
+        // (the Mac's restored window likewise keeps its own name rather than
+        // becoming a second holder). Bounded, because a PANE can be named
+        // `window-N` too and the allocator does not know about pane names.
+        const claimed: []u8 = claim: for (0..8) |attempt| {
+            const name: []u8 = if (attempt == 0 and adopted != null)
+                gpa.dupe(u8, adopted.?) catch break :register
+            else
+                app.ipcNextWindowName() catch break :register;
+            const result = app.ipcRegisterChecked(name, .{ .window = self }) catch |err| {
+                log.warn("IPC window registration failed err={}", .{err});
+                gpa.free(name);
+                break :register;
+            };
+            switch (result) {
+                .registered => break :claim name,
+                .already_held => {
+                    log.warn(
+                        "IPC window name '{s}' is already held by another target; minting a fresh one",
+                        .{name},
+                    );
+                    gpa.free(name);
+                },
+            }
+        } else break :register;
+        self.ipc_name = claimed;
+    }
+}
+
+/// What `createTopLevel` needs from the options a window was built with.
+pub const TopLevelOptions = struct {
+    is_quick_terminal: bool = false,
+    initial_size: ?ViewerPane.PopupSize = null,
+    force_opaque: bool = false,
+};
+
+/// Create this controller's own top-level HWND and bind it (T3191, split out
+/// of `init`): every window's, and in single-window mode the first
+/// workspace's, or one promoted after the shared window closed under the
+/// others. A parked workspace never calls it - it adopts the shared HWND.
+fn createTopLevel(self: *Window, app: *App, options: TopLevelOptions) !void {
     // WS_CLIPCHILDREN is load-bearing, not hygiene (T1031). Without it the
     // container's own drawing — the caption, the tab strip, the divider bands,
     // and every parent-side erase Windows schedules when a child moves — is
@@ -2399,70 +2491,6 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
 
     // Create the tab bar font (window-title-font-family, scaled).
     self.createTabFont();
-
-    // Don't show the window yet — addTab() will show the child
-    // surface which triggers ShowWindow on the parent as needed.
-    // Showing the parent before the terminal is ready can cause
-    // timing issues with ConPTY.
-
-    // Every regular window is IPC-addressable under one canonical name:
-    // `+new-window --target` when given, else auto-generated `window-N`
-    // (Mac windowName semantics). Quick terminals are not listable targets.
-    if (!options.is_quick_terminal) register: {
-        const gpa = app.core_app.alloc;
-
-        // T121: an ADOPTED name — a persisted session-restore name, or an
-        // explicit `+new-window --target=` — RESERVES its number before
-        // anything is minted. The auto allocator restarts at zero every app
-        // launch while restore re-adopts names minted by a PREVIOUS run, so
-        // without this a run that restored `window-3` mints `window-3` again
-        // on its third fresh window: two live windows holding one target
-        // name, with `+close`/`+rename` routed to whichever registered first.
-        // An adopted name of "" is not a name (T896). A manifest entry can
-        // record an empty `ipc_name` — a hand-edited file, or a producer that
-        // spells "no name" as a blank string — and adopting it registers the
-        // empty string: the window then reports a blank `target` in `+list`
-        // that no `--target=` can reach, which is the same nameless-window
-        // symptom the collision fallback below exists to prevent. Treat it as
-        // absent and mint one.
-        const adopted: ?[]const u8 = if (options.ipc_name) |n|
-            (if (n.len == 0) null else n)
-        else
-            null;
-
-        if (adopted) |n| app.ipcReserveWindowName(n);
-
-        // Claim a name this window actually HOLDS. `register` keeps the
-        // incumbent when a name is already taken, so recording the string
-        // regardless would leave `+list` reporting a `target` that routes to
-        // a different window — the same duplicate, one step further along.
-        // An adopted name that is already held falls back to a minted one
-        // (the Mac's restored window likewise keeps its own name rather than
-        // becoming a second holder). Bounded, because a PANE can be named
-        // `window-N` too and the allocator does not know about pane names.
-        const claimed: []u8 = claim: for (0..8) |attempt| {
-            const name: []u8 = if (attempt == 0 and adopted != null)
-                gpa.dupe(u8, adopted.?) catch break :register
-            else
-                app.ipcNextWindowName() catch break :register;
-            const result = app.ipcRegisterChecked(name, .{ .window = self }) catch |err| {
-                log.warn("IPC window registration failed err={}", .{err});
-                gpa.free(name);
-                break :register;
-            };
-            switch (result) {
-                .registered => break :claim name,
-                .already_held => {
-                    log.warn(
-                        "IPC window name '{s}' is already held by another target; minting a fresh one",
-                        .{name},
-                    );
-                    gpa.free(name);
-                },
-            }
-        } else break :register;
-        self.ipc_name = claimed;
-    }
 }
 
 /// Deinitialize the Window: close all tabs, delete font, destroy HWND.
@@ -2587,6 +2615,16 @@ pub fn deinit(self: *Window) void {
 /// its PaneStackState, an armed row drag, the rename font and the
 /// full-screen exit button - for the life of the app.
 fn releaseOwnedResources(self: *Window) void {
+    self.releaseWindowBound();
+    if (self.pane_stacks) |*st| st.deinit();
+    self.pane_stacks = null;
+}
+
+/// The part of `releaseOwnedResources` that belongs to the HWND rather than
+/// the workspace (T3191): what a workspace surrendering the shared window in
+/// single-window mode gives up and the adopter builds its own of. The pane
+/// stacks (which rows are folded) are the workspace's and stay.
+fn releaseWindowBound(self: *Window) void {
     self.endRowDrag();
     // Before the children go: the presenter's thread has its context current
     // on the presenter window's DC until it is stopped.
@@ -2602,8 +2640,6 @@ fn releaseOwnedResources(self: *Window) void {
     self.desk_overlay.deinit();
     self.overlay_scratch.deinit();
     self.flat_desk.deinit();
-    if (self.pane_stacks) |*st| st.deinit();
-    self.pane_stacks = null;
     self.pane_desk.deinit();
     self.dropStripLabelFonts();
     if (self.strip_label_dc) |dc| _ = w32.DeleteDC(dc);
@@ -4042,7 +4078,8 @@ pub fn addViewerTab(self: *Window, open: ViewerPane.Open) !*PaneView {
 /// the tab is up.
 fn createViewerPane(self: *Window, open: ViewerPane.Open) !*ViewerPane {
     const alloc = self.app.core_app.alloc;
-    const hwnd = self.hwnd orelse return error.WindowClosing;
+    // A parked workspace (T3191) creates its panes under the park host.
+    const hwnd = self.hwnd orelse self.app.parkHost() orelse return error.WindowClosing;
     const viewer = try ViewerPane.create(alloc, self);
     // T591: before the host window, the navigation and `start` — a restored
     // viewer must never be observable under the id `create` just generated.
@@ -7344,6 +7381,9 @@ fn commitPopOutDrop(
     win_owned = false;
     win.insertPaneAsTabAt(view, leaf, 0);
     self.collapseAfterRelocation(source_tab, view);
+    // Single-window mode (T3191): the pane dragged out made a workspace, and
+    // a drag is a manual open, so it goes on show.
+    self.app.presentWorkspace(win, true);
     win.finishRearrangeDrop(view);
     win.raiseForDrop();
     self.app.markLayoutDirty();
@@ -7357,7 +7397,8 @@ fn commitPopOutDrop(
 /// read-only badge - are owned POPUPS of the pane's own HWND rather than
 /// children of the window, so they follow it across without being touched.
 fn adoptPane(view: *PaneView, dest: *Window) void {
-    const dest_hwnd = dest.hwnd orelse return;
+    // A parked workspace's panes live under the park host (T3191).
+    const dest_hwnd = dest.hwnd orelse dest.app.parkHost() orelse return;
     if (view.hwnd()) |h| {
         if (w32.SetParent(h, dest_hwnd) == null) {
             log.warn("pane re-parent failed pane={s}", .{view.paneId()});
@@ -7368,6 +7409,183 @@ fn adoptPane(view: *PaneView, dest: *Window) void {
     // window is never sent `WM_DPICHANGED` - the same reason a window dragged
     // between monitors has it forwarded (T1579) rather than waiting to be told.
     if (view.surface()) |surf| surf.handleDpiChange(null);
+}
+
+// ---- Single-window mode: the shared HWND hand-off (T3191) -----------------
+//
+// Mac `surrenderWindow` / `adoptWindow` (window-modes.md "The hand-off"). In
+// `single` mode every workspace is a Window controller and only the top-level
+// HWND is shared: the workspace on show owns it (GWLP_USERDATA, the chrome,
+// the sidebar), every other one is PARKED with `hwnd == null` and its pane
+// HWNDs under the app's hidden park host. No pane is rebuilt and no process
+// touched; the panes only change parent. The decisions (who adopts, when) are
+// `workspace_host.zig`'s; App.showWorkspace carries them out through these.
+
+/// Every timer this controller arms on its top-level HWND. A surrendered
+/// window's pending timers would otherwise fire into the adopter.
+const window_timer_ids = [_]usize{
+    HERO_SNAP_TIMER_ID,      HERO_ANIM_TIMER_ID,         TAB_TIP_TIMER_ID,
+    TAB_DWELL_TIMER_ID,      FOCUS_GLOW_TIMER_ID,        BUSY_LIGHT_TIMER_ID,
+    SIDEBAR_SYNC_TIMER_ID,   FULLSCREEN_POLL_TIMER_ID,   STACK_SLIDE_TIMER_ID,
+    DRAG_QUIET_TIMER_ID,     COMP_DRAG_TIMER_ID,         RESIZE_TRACE_FLUSH_TIMER_ID,
+    SIZE_BURST_TIMER_ID,     HELD_TITLE_TIMER_ID,        RESIZE_OVERLAY_TIMER_ID,
+};
+
+/// The state that belongs to the top-level HWND, not to the workspace on it:
+/// handed from the surrendering controller to the adopter with the window
+/// (Mac hands the fullscreen handler over the same way).
+pub const WindowBound = struct {
+    is_fullscreen: bool,
+    saved_placement: ?w32.WINDOWPLACEMENT,
+    translucent: bool,
+    noredir: bool,
+    start_maximized: bool,
+};
+
+/// Is this workspace parked - a controller with no window (single-window
+/// mode)? Only a managed workspace can be; a window between `onDestroy` and
+/// its free is not one.
+pub fn isParked(self: *const Window) bool {
+    return self.hwnd == null and self.app.workspaces.isParked(@constCast(self));
+}
+
+/// Every pane of every tab of this window, in tab order.
+fn eachPane(self: *Window, ctx: anytype, comptime f: fn (@TypeOf(ctx), *PaneView) void) void {
+    for (0..self.tab_count) |t| {
+        var it = self.tab_trees[t].iterator();
+        while (it.next()) |entry| f(ctx, entry.view);
+    }
+}
+
+fn reparentPane(parent: w32.HWND, view: *PaneView) void {
+    const h = view.hwnd() orelse return;
+    if (w32.SetParent(h, parent) == null)
+        log.warn("workspace pane re-parent failed pane={s}", .{view.paneId()});
+}
+
+fn parkPaneHidden(_: void, view: *PaneView) void {
+    view.setWindowHidden(true);
+    view.setVisible(false);
+    if (view.hwnd()) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
+}
+
+fn refreshPaneDpi(_: void, view: *PaneView) void {
+    if (view.surface()) |surf| surf.handleDpiChange(null);
+}
+
+/// Give the shared window up (Mac `surrenderWindow`): this workspace parks.
+/// Its panes go hidden under `park`, everything it built against the HWND
+/// (chrome, sidebar, timers, fonts) is released, and `hwnd` becomes null.
+/// Returns the HWND and the state that goes with it, for the adopter; null
+/// when this controller has no window.
+pub fn surrenderWindow(self: *Window, park: w32.HWND) ?struct { hwnd: w32.HWND, bound: WindowBound } {
+    const hwnd = self.hwnd orelse return null;
+    // Transient UI that lives on the window: it is the workspace's on show,
+    // and answering it later there is not possible once the window moved.
+    if (self.rename_dialog) |dlg| dlg.cancel();
+    if (self.banner_dialog) |dlg| dlg.cancel();
+    if (self.machine_chooser) |ch| ch.cancel();
+    self.cancelTabRename();
+    _ = self.cancelPaneDrag();
+    self.resetPointerTransients();
+    self.tabTipReset();
+    for (window_timer_ids) |id| _ = w32.KillTimer(hwnd, id);
+
+    const bound: WindowBound = .{
+        .is_fullscreen = self.is_fullscreen,
+        .saved_placement = self.saved_placement,
+        .translucent = self.translucent,
+        .noredir = self.noredir,
+        .start_maximized = self.start_maximized,
+    };
+
+    // The owned chrome children: the adopter makes its own.
+    if (self.sidebar) |sb| {
+        sb.destroy();
+        self.sidebar = null;
+    }
+    if (self.grab_handle) |gh| {
+        gh.destroy();
+        self.grab_handle = null;
+    }
+    if (self.resize_overlay_hwnd) |ro| {
+        _ = w32.DestroyWindow(ro);
+        self.resize_overlay_hwnd = null;
+    }
+
+    // The panes leave the window, hidden (the background-tab path: they give
+    // back their render targets and draw nothing while parked).
+    self.eachPane({}, parkPaneHidden);
+    self.eachPane(park, reparentPane);
+
+    self.releaseWindowBound();
+    // The adopter of a later hand-off decides its own presenter.
+    self.presenter_decided = false;
+    _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, 0);
+    self.hwnd = null;
+    self.is_fullscreen = false;
+    self.saved_placement = null;
+    log.info("workspace surrendered the window name={s}", .{self.ipc_name orelse "?"});
+    return .{ .hwnd = hwnd, .bound = bound };
+}
+
+/// Take the shared window (Mac `adoptWindow`): this parked workspace goes on
+/// show in `hwnd`, with the HWND-bound state `bound` carried over. Its panes
+/// come into the window, its chrome is rebuilt against it, its title lands at
+/// once, and focus goes back to its focused pane when the window is active.
+pub fn adoptWindow(self: *Window, hwnd: w32.HWND, bound: WindowBound) void {
+    std.debug.assert(self.hwnd == null);
+    self.hwnd = hwnd;
+    self.is_fullscreen = bound.is_fullscreen;
+    self.saved_placement = bound.saved_placement;
+    self.translucent = bound.translucent;
+    self.noredir = bound.noredir;
+    self.start_maximized = bound.start_maximized;
+    _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
+
+    if (chrome_comp.enabled()) {
+        const backstop: u32 = (@as(u32, self.app.config.background.r) << 16) |
+            (@as(u32, self.app.config.background.g) << 8) | self.app.config.background.b;
+        self.chrome_host = chrome_comp.create(hwnd, 0, if (self.noredir) backstop else null);
+    }
+    const dpi = w32.GetDpiForWindow(hwnd);
+    if (dpi != 0) self.scale = @as(f32, @floatFromInt(dpi)) / 96.0;
+    self.createTabFont();
+    // The window's opacity is this workspace's own toggle (Mac's
+    // `isBackgroundOpaque` is per controller).
+    self.syncTranslucency();
+
+    self.eachPane(hwnd, reparentPane);
+    // A parked pane kept the DPI of the window it was last in.
+    self.eachPane({}, refreshPaneDpi);
+
+    // The caption's height and the strip depend on this workspace's tabs.
+    _ = w32.SetWindowPos(hwnd, null, 0, 0, 0, 0, w32.SWP_NOMOVE | w32.SWP_NOSIZE |
+        w32.SWP_NOZORDER | w32.SWP_NOACTIVATE | w32.SWP_FRAMECHANGED);
+    self.updateTabBarVisibility();
+    self.showTabIndex(self.active_tab, w32.windowIsActive(hwnd));
+    self.refreshRemotePill();
+    self.syncPaneSidebar();
+    self.invalidateChrome();
+    _ = w32.RedrawWindow(hwnd, null, null, w32.RDW_INVALIDATE | w32.RDW_FRAME | w32.RDW_ALLCHILDREN);
+    log.info("workspace adopted the window name={s}", .{self.ipc_name orelse "?"});
+}
+
+/// Load a window of this parked workspace's own (T3191; Mac
+/// `windowDidClose` -> the next workspace loads a window): the shared window
+/// closed under it. Its panes come out of the park host into a new top-level.
+pub fn promoteToOwnWindow(self: *Window) !void {
+    if (self.hwnd != null) return;
+    try self.createTopLevel(self.app, .{ .force_opaque = self.toggled_opaque });
+    const hwnd = self.hwnd orelse return error.Win32Error;
+    self.eachPane(hwnd, reparentPane);
+    self.eachPane({}, refreshPaneDpi);
+    self.updateTabBarVisibility();
+    _ = w32.ShowWindow(hwnd, if (self.start_maximized) w32.SW_MAXIMIZE else w32.SW_SHOW);
+    self.showTabIndex(self.active_tab, true);
+    self.syncPaneSidebar();
+    self.updateWindowTitle();
+    log.info("workspace loaded a window of its own name={s}", .{self.ipc_name orelse "?"});
 }
 
 /// Repair the window a pane has just LEFT (T1538).
@@ -22364,6 +22582,9 @@ fn onDestroy(self: *Window) void {
             break;
         }
     }
+    // Single-window mode (T3191): the shared window closing under parked
+    // workspaces hands it on - the next one loads a window of its own.
+    app.forgetWorkspace(self);
     // Its group leaves every all-windows list now (T1829) - before anything
     // could click a row that names it.
     PaneSidebar.refreshScopes(app.windows.items, null);

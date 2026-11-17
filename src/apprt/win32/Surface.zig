@@ -914,7 +914,8 @@ fn initOnce(
     );
 
     // Create a WS_CHILD window inside the parent Window container.
-    const parent_hwnd = parent.hwnd orelse return error.Win32Error;
+    // A parked workspace (T3191) creates its panes under the park host.
+    const parent_hwnd = parent.hwnd orelse parent.app.parkHost() orelse return error.Win32Error;
     const sr = parent.surfaceRect();
     // WS_CLIPSIBLINGS is the other half of the container's WS_CLIPCHILDREN
     // (T1031): a layout pass moves several panes, and without it a pane that
@@ -3628,7 +3629,7 @@ pub fn setMouseOverLink(self: *Surface, url: []const u8) void {
             0,
             10,
             10,
-            self.parent_window.hwnd.?,
+            self.parent_window.hwnd orelse return,
             null,
             self.app.hinstance,
             null,
@@ -3797,7 +3798,7 @@ fn ensureSearchBar(self: *Surface) void {
         0,
         bar_w,
         bar_h,
-        self.parent_window.hwnd.?,
+        self.parent_window.hwnd orelse return,
         null,
         self.app.hinstance,
         null,
@@ -4226,7 +4227,7 @@ fn ensureCommandPalette(self: *Surface) void {
         0,
         pal_w,
         pal_h,
-        self.parent_window.hwnd.?,
+        self.parent_window.hwnd orelse return,
         null,
         self.app.hinstance,
         null,
