@@ -398,11 +398,39 @@ try {
         Assert ($stillQuiet -eq $quiet) `
             "an unchanged working tree is not re-pushed every poll ($quiet -> $stillQuiet)"
 
+        # T3038: an idle poll is ONE git process. Each poll that stopped at the
+        # working-tree fingerprint logs `unchanged=<polls> git=<processes>`,
+        # both cumulative for the pane, so the ratio over the quiet window is
+        # the spawns-per-tick number (a full listing is six).
+        $polls = @([regex]::Matches((Get-Log), "viewer diff poll pane=$($leaf.id) unchanged=(\d+) git=(\d+)"))
+        Assert ($polls.Count -ge 3) "the quiet window's polls stopped at the fingerprint ($($polls.Count) unchanged polls logged)"
+        if ($polls.Count -ge 3) {
+            $first = $polls[0]; $last = $polls[$polls.Count - 1]
+            $dPolls = [int]$last.Groups[1].Value - [int]$first.Groups[1].Value
+            $dGit = [int]$last.Groups[2].Value - [int]$first.Groups[2].Value
+            Assert ($dPolls -gt 0 -and $dGit -le $dPolls) `
+                "an idle git-status: pane runs at most one git process per poll ($dGit processes over $dPolls polls)"
+        }
+
         Set-Content -Path (Join-Path $work 'fresh.txt') -Value "n1" -Encoding utf8
         $line = Wait-DiffLine $leaf.id -After $stillQuiet
         Assert ($null -ne $line) 'a new file in the working tree reaches the pane on its own'
         if ($line) {
             Assert ($line -match 'files=4') "the poll picked up the fourth file (got '$line')"
+        }
+
+        # T3038: a CONTENT-ONLY edit to a file already in the list changes no
+        # sha git status prints, so the fingerprint has to see it through the
+        # file's size and mtime -- or the pane would sit on a stale count.
+        $seen = Count-DiffLines $leaf.id
+        $plusBefore = if ($line -match ' \+(\d+) ') { [int]$Matches[1] } else { -1 }
+        Add-Content -Path (Join-Path $work 'edited.txt') -Value 'delta'
+        $line2 = Wait-DiffLine $leaf.id -After $seen
+        Assert ($null -ne $line2) 'a content-only edit to an already-modified file reaches the pane on its own'
+        if ($line2) {
+            $plusAfter = if ($line2 -match ' \+(\d+) ') { [int]$Matches[1] } else { -1 }
+            Assert ($line2 -match 'files=4' -and $plusAfter -eq $plusBefore + 1) `
+                "the edit's added line is counted (+$plusBefore -> +$plusAfter, got '$line2')"
         }
     }
 

@@ -88,6 +88,11 @@ const Deadline = struct {
 /// that ran and failed returns its (usually empty) stdout, because "git said
 /// no" is an ANSWER: a directory outside a repository, a repository with no
 /// commits.
+/// git processes this THREAD has launched (T3038). Per thread so a worker can
+/// read what its own job cost by differencing it around the job, with no lock
+/// and no other worker's spawns mixed in.
+pub threadlocal var spawned_on_thread: u64 = 0;
+
 pub fn capture(alloc: Allocator, argv: []const []const u8, buf: []u8) ?[]const u8 {
     return captureDeadline(alloc, argv, buf, default_deadline_ms);
 }
@@ -111,6 +116,7 @@ pub fn captureDeadline(
     child.stderr_behavior = .Ignore;
     child.create_no_window = true;
     child.spawn() catch return null;
+    spawned_on_thread += 1;
 
     const stdout = child.stdout orelse {
         _ = child.wait() catch {};
@@ -185,6 +191,7 @@ pub fn captureAllocDeadline(
     child.env_map = &env;
 
     child.spawn() catch return null;
+    spawned_on_thread += 1;
     const stdout = child.stdout orelse {
         _ = child.wait() catch {};
         return null;

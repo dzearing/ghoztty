@@ -2530,6 +2530,13 @@ fn completeDiff(self: *ViewerPane, alloc: Allocator) void {
             }
         },
         .patch => self.applyDiffPatch(alloc),
+        // A poll whose fingerprint matched what is on screen (T3038). The
+        // line is the acceptance's spawns-per-tick oracle (viewer-diff.ps1).
+        .unchanged => log.debug("viewer diff poll pane={s} unchanged={d} git={d}", .{
+            self.paneId(),
+            probe.unchanged_polls,
+            probe.git_processes,
+        }),
     }
     probe.drainDeferred(self.location orelse "", self.origin_directory);
 }

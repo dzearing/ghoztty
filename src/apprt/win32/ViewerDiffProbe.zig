@@ -115,8 +115,27 @@ pub const Failure = struct {
     }
 };
 
-/// What a completion post is about.
-pub const Completion = enum { none, listing, patch };
+/// What a completion post is about. `unchanged` is a working-tree poll whose
+/// one-spawn fingerprint matched the listing already published (T3038): the
+/// probe's state is untouched, and there is nothing to redraw.
+pub const Completion = enum { none, listing, patch, unchanged };
+
+/// What an untracked file's line count was computed from, so the next listing
+/// can skip re-reading a file that has not changed (T3038). The count is the
+/// expensive part: up to 2 MB read per file, every listing.
+pub const UntrackedStat = struct {
+    path: []u8,
+    size: u64,
+    mtime: i128,
+    additions: u32,
+    binary: bool,
+};
+
+fn freeUntrackedStats(alloc: Allocator, list: *std.ArrayList(UntrackedStat)) void {
+    for (list.items) |u| alloc.free(u.path);
+    list.deinit(alloc);
+    list.* = .empty;
+}
 
 const Kind = enum { listing, patch };
 
@@ -139,6 +158,17 @@ const Job = struct {
     file: ?Entry = null,
     /// Where the page should land in that file: `first`, `last`, or null.
     scroll_to: ?[]const u8 = null,
+    /// A working-tree POLL rather than an explicit ask (T3038): it may answer
+    /// `unchanged` instead of re-running the listing.
+    poll: bool = false,
+    /// The repository root a previous listing already resolved for this
+    /// directory, owned, so a poll does not spawn git to ask it again.
+    known_root: ?[]u8 = null,
+    /// The fingerprint of the listing the pane is showing.
+    known_fingerprint: ?u64 = null,
+    /// The probe's untracked-file counts, BORROWED: only `complete` and
+    /// `deinit` replace that list, and both join this worker first.
+    prior_untracked: []const UntrackedStat = &.{},
 
     // --- filled by the worker -------------------------------------------
     out_repo: ?[]u8 = null,
@@ -148,6 +178,11 @@ const Job = struct {
     out_files: std.ArrayList(Entry) = .empty,
     out_failure: ?Failure = null,
     out_patch: ?[]u8 = null,
+    out_fingerprint: ?u64 = null,
+    out_unchanged: bool = false,
+    /// git processes this job launched, for `git_processes`.
+    out_git: u64 = 0,
+    out_untracked: std.ArrayList(UntrackedStat) = .empty,
 
     fn destroy(self: *Job) void {
         const alloc = self.alloc;
@@ -161,6 +196,8 @@ const Job = struct {
         self.out_files.deinit(alloc);
         if (self.out_failure) |*f| f.destroy(alloc);
         if (self.out_patch) |p| alloc.free(p);
+        if (self.known_root) |r| alloc.free(r);
+        freeUntrackedStats(alloc, &self.out_untracked);
         alloc.destroy(self);
     }
 };
@@ -187,6 +224,15 @@ failure: ?Failure = null,
 patch: ?[]u8 = null,
 patch_path: ?[]u8 = null,
 
+/// The directory `repo` was resolved FROM (T3038). A poll from the same
+/// directory reuses `repo` instead of spawning git to find it again. Owned.
+repo_dir: ?[]u8 = null,
+/// The working tree's fingerprint as of the current listing; null when the
+/// listing is not a working tree, or git could not say (T3038).
+fingerprint: ?u64 = null,
+/// Untracked files' line counts and what they were counted from (T3038). Owned.
+untracked_stats: std.ArrayList(UntrackedStat) = .empty,
+
 // --- request bookkeeping --------------------------------------------------
 
 thread: ?worker_pool.Thread = null,
@@ -208,6 +254,11 @@ want_scroll: ?[]const u8 = null,
 spawns: u64 = 0,
 completions: u64 = 0,
 deferred: u64 = 0,
+/// git PROCESSES every job so far launched, and how many polls stopped at the
+/// fingerprint (T3038): the pair the acceptance divides to prove an idle
+/// `git-status:` pane costs one process per tick.
+git_processes: u64 = 0,
+unchanged_polls: u64 = 0,
 /// When the current worker was spawned, for "out for how long".
 spawned_at_ms: i64 = 0,
 
@@ -230,6 +281,7 @@ pub fn deinit(self: *Probe) void {
     }
     self.clearListing();
     self.clearPatch();
+    freeUntrackedStats(self.alloc, &self.untracked_stats);
 }
 
 /// Where completions are posted. Called once the pane has a host window.
@@ -252,6 +304,9 @@ fn clearListing(self: *Probe) void {
     self.files = .empty;
     if (self.failure) |*f| f.destroy(self.alloc);
     self.failure = null;
+    if (self.repo_dir) |d| self.alloc.free(d);
+    self.repo_dir = null;
+    self.fingerprint = null;
 }
 
 fn clearPatch(self: *Probe) void {
@@ -311,7 +366,7 @@ pub fn disposition(busy_now: bool, reason: Reason) Disposition {
 /// the pane showing nothing.
 pub fn requestListing(self: *Probe, location: []const u8, directory: ?[]const u8) void {
     switch (disposition(self.busy(), .explicit)) {
-        .start => self.startListing(location, directory),
+        .start => self.startListing(location, directory, false),
         .queue => {
             self.want_listing = true;
             self.deferred += 1;
@@ -334,9 +389,14 @@ pub fn requestListing(self: *Probe, location: []const u8, directory: ?[]const u8
 ///
 /// What a dropped tick costs is at most one interval of latency: the next tick
 /// finds the probe free and asks again.
+///
+/// And a tick that DOES run asks the cheap question first (T3038): one
+/// `git status` fingerprint against the one the current listing was built
+/// with, and the full five-spawn listing only when it moved. An idle pane is
+/// one git process per tick instead of six.
 pub fn pollListing(self: *Probe, location: []const u8, directory: ?[]const u8) void {
     switch (disposition(self.busy(), .poll)) {
-        .start => self.startListing(location, directory),
+        .start => self.startListing(location, directory, true),
         .queue, .drop => {},
     }
 }
@@ -354,7 +414,7 @@ pub fn requestPatch(self: *Probe, location: []const u8, index: usize, scroll_to:
     self.startPatch(location, index, scroll_to);
 }
 
-fn startListing(self: *Probe, location: []const u8, directory: ?[]const u8) void {
+fn startListing(self: *Probe, location: []const u8, directory: ?[]const u8, poll: bool) void {
     // No window is no completion, and a worker whose answer nothing can collect
     // is a process spawn nobody asked for. This is also every unit test.
     if (self.hwnd == null) return;
@@ -370,7 +430,25 @@ fn startListing(self: *Probe, location: []const u8, directory: ?[]const u8) void
     if (directory) |d| {
         job.directory = self.alloc.dupe(u8, d) catch null;
     }
+    job.prior_untracked = self.untracked_stats.items;
+    if (poll) {
+        job.poll = true;
+        job.known_fingerprint = self.fingerprint;
+        job.known_root = self.reusableRoot(directory);
+    }
     self.spawn(job);
+}
+
+/// The root the current listing resolved, owned by the caller, when it was
+/// resolved from `directory` and the listing did not fail; else null, and the
+/// worker asks git.
+fn reusableRoot(self: *const Probe, directory: ?[]const u8) ?[]u8 {
+    if (self.failure != null) return null;
+    const repo = self.repo orelse return null;
+    const from = self.repo_dir orelse return null;
+    const dir = directory orelse return null;
+    if (!std.mem.eql(u8, from, dir)) return null;
+    return self.alloc.dupe(u8, repo) catch null;
 }
 
 fn startPatch(self: *Probe, location: []const u8, index: usize, scroll_to: ?[]const u8) void {
@@ -430,8 +508,12 @@ pub fn complete(self: *Probe) Completion {
     var what: Completion = .none;
     if (self.job) |job| {
         self.job = null;
+        self.git_processes += job.out_git;
         switch (job.kind) {
-            .listing => {
+            .listing => if (job.out_unchanged) {
+                self.unchanged_polls += 1;
+                what = .unchanged;
+            } else {
                 self.clearListing();
                 self.repo = job.out_repo;
                 job.out_repo = null;
@@ -443,15 +525,28 @@ pub fn complete(self: *Probe) Completion {
                 // destructor does not free strings this now owns.
                 self.files = job.out_files;
                 job.out_files = .empty;
+                if (self.repo != null) {
+                    self.repo_dir = job.directory;
+                    job.directory = null;
+                }
+                self.fingerprint = job.out_fingerprint;
+                // Only a listing that walked the untracked files replaces
+                // their counts; a range has none to offer.
+                if (job.out_fingerprint != null or job.out_untracked.items.len > 0) {
+                    freeUntrackedStats(self.alloc, &self.untracked_stats);
+                    self.untracked_stats = job.out_untracked;
+                    job.out_untracked = .empty;
+                }
+                what = .listing;
             },
             .patch => {
                 self.clearPatch();
                 self.patch = job.out_patch;
                 job.out_patch = null;
                 if (job.file) |f| self.patch_path = self.alloc.dupe(u8, f.path) catch null;
+                what = .patch;
             },
         }
-        what = if (job.kind == .listing) .listing else .patch;
         job.destroy();
     }
     return what;
@@ -464,7 +559,7 @@ pub fn drainDeferred(self: *Probe, location: []const u8, directory: ?[]const u8)
     if (self.thread != null) return;
     if (self.want_listing) {
         self.want_listing = false;
-        self.startListing(location, directory);
+        self.startListing(location, directory, false);
         return;
     }
     if (self.want_patch) |index| {
@@ -526,10 +621,12 @@ pub fn freeSnapshot(alloc: Allocator, entries: []Entry) void {
 // -------------------------------------------------------------------------
 
 fn work(self: *Probe, job: *Job) void {
+    const before = git_run.spawned_on_thread;
     switch (job.kind) {
         .listing => workListing(job),
         .patch => workPatch(job),
     }
+    job.out_git = git_run.spawned_on_thread - before;
     if (self.hwnd) |h| {
         if (w32.PostMessageW(h, self.message, 0, 0) == 0) {
             log.debug("diff completion could not be posted", .{});
@@ -549,10 +646,36 @@ fn workListing(job: *Job) void {
         return;
     };
     var root_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const repo = repositoryRoot(alloc, dir, &root_buf) orelse {
+    // A poll reuses the root the pane's listing already resolved from this
+    // directory (T3038); anything else asks git.
+    var repo: []const u8 = job.known_root orelse
+        repositoryRoot(alloc, dir, &root_buf) orelse {
         job.out_failure = .{ .kind = .not_a_repository, .arg = alloc.dupe(u8, dir) catch null };
         return;
     };
+
+    // The working tree's one-spawn fingerprint, BEFORE the listing: a change
+    // that lands between the two then reads as "moved" on the next tick, which
+    // is the safe direction. A poll whose fingerprint matches the listing on
+    // screen stops here, and that is the whole idle cost of a status pane.
+    if (spec.tracksWorkingTree()) {
+        var fp = workingTreeFingerprint(alloc, repo);
+        if (fp == null and job.known_root != null) {
+            // The remembered root no longer answers (moved, deleted): ask
+            // git where the repository is now, as an explicit listing would.
+            repo = repositoryRoot(alloc, dir, &root_buf) orelse {
+                job.out_failure = .{ .kind = .not_a_repository, .arg = alloc.dupe(u8, dir) catch null };
+                return;
+            };
+            fp = workingTreeFingerprint(alloc, repo);
+        }
+        job.out_fingerprint = fp;
+        const same = if (fp) |now| (if (job.known_fingerprint) |was| was == now else false) else false;
+        if (job.poll and same) {
+            job.out_unchanged = true;
+            return;
+        }
+    }
     job.out_repo = alloc.dupe(u8, repo) catch return;
 
     // A bare `git-diff:` names no base; ask git for one before anything else,
@@ -642,8 +765,15 @@ fn workListing(job: *Job) void {
 /// One untracked file's entry. Every line is an addition, so the count is the
 /// file's own line count — cheap to read, and capped so a stray gigabyte in the
 /// working tree cannot stall the list.
+///
+/// A file whose size and mtime match what its count was last taken from keeps
+/// that count without being read again (T3038).
 fn appendUntracked(job: *Job, repo: []const u8, listed: []const u8) void {
     const alloc = job.alloc;
+    var prior: std.StringHashMapUnmanaged(UntrackedStat) = .empty;
+    defer prior.deinit(alloc);
+    for (job.prior_untracked) |u| prior.put(alloc, u.path, u) catch break;
+
     var it = diff.fields(listed);
     while (it.next()) |path| {
         if (path.len == 0) continue;
@@ -655,7 +785,17 @@ fn appendUntracked(job: *Job, repo: []const u8, listed: []const u8) void {
             // answer for a file too big to count.
             .binary = true,
         };
-        if (readUntracked(alloc, repo, path)) |bytes| {
+        const stat = statUntracked(alloc, repo, path);
+        const kept: ?UntrackedStat = blk: {
+            const st = stat orelse break :blk null;
+            const was = prior.get(path) orelse break :blk null;
+            if (was.size != st.size or was.mtime != st.mtime) break :blk null;
+            break :blk was;
+        };
+        if (kept) |was| {
+            e.additions = was.additions;
+            e.binary = was.binary;
+        } else if (readUntracked(alloc, repo, path)) |bytes| {
             defer alloc.free(bytes);
             const head = bytes[0..@min(bytes.len, 8000)];
             if (std.mem.indexOfScalar(u8, head, 0) == null) {
@@ -669,11 +809,56 @@ fn appendUntracked(job: *Job, repo: []const u8, listed: []const u8) void {
                 e.additions = lines;
             }
         }
+        if (stat) |st| rememberUntracked(job, path, st, e);
         job.out_files.append(alloc, e) catch {
             e.destroy(alloc);
             break;
         };
     }
+}
+
+fn statUntracked(alloc: Allocator, repo: []const u8, path: []const u8) ?std.fs.File.Stat {
+    const joined = std.fs.path.join(alloc, &.{ repo, path }) catch return null;
+    defer alloc.free(joined);
+    return std.fs.cwd().statFile(joined) catch null;
+}
+
+fn rememberUntracked(job: *Job, path: []const u8, st: std.fs.File.Stat, e: Entry) void {
+    const alloc = job.alloc;
+    const owned = alloc.dupe(u8, path) catch return;
+    job.out_untracked.append(alloc, .{
+        .path = owned,
+        .size = st.size,
+        .mtime = st.mtime,
+        .additions = e.additions,
+        .binary = e.binary,
+    }) catch alloc.free(owned);
+}
+
+/// One number for "the working tree as git sees it", or null when git could not
+/// say (T3038). `git status --porcelain=v2` names every changed path with its
+/// HEAD and index shas; each named path's size and mtime are folded in on top,
+/// because a further edit to an already-modified file changes neither sha and
+/// would otherwise read as "nothing moved". BLOCKING: worker thread only.
+fn workingTreeFingerprint(alloc: Allocator, repo: []const u8) ?u64 {
+    const argv = diff.statusFingerprintArgv(git_binary, repo);
+    const out = git_run.captureAlloc(alloc, argv.slice(), listing_cap) orelse return null;
+    defer alloc.free(out.bytes);
+    if (!out.ok) return null;
+    var h = std.hash.Wyhash.init(0);
+    h.update(out.bytes);
+    var dir = std.fs.cwd().openDir(repo, .{}) catch return null;
+    defer dir.close();
+    var it = diff.porcelainPaths(out.bytes);
+    while (it.next()) |path| {
+        const st = dir.statFile(path) catch {
+            h.update("\x00gone");
+            continue;
+        };
+        h.update(std.mem.asBytes(&st.size));
+        h.update(std.mem.asBytes(&st.mtime));
+    }
+    return h.final();
 }
 
 fn readUntracked(alloc: Allocator, repo: []const u8, path: []const u8) ?[]u8 {
@@ -928,4 +1113,102 @@ test "the poll entry point cannot queue, whatever the probe's want flags say" {
     p.pollListing("git-status:", null);
     try testing.expect(!p.want_listing);
     try testing.expectEqual(@as(u64, 0), p.deferred);
+}
+
+/// A throwaway repository for the T3038 tests, or null when git is not on this
+/// machine. The caller owns the returned path and the tmp dir.
+fn scratchRepo(tmp: *std.testing.TmpDir) ?[]u8 {
+    const root = tmp.dir.realpathAlloc(testing.allocator, ".") catch return null;
+    const made = git_run.captureAlloc(testing.allocator, &.{ git_binary, "-C", root, "init", "-q" }, 4096) orelse {
+        testing.allocator.free(root);
+        return null;
+    };
+    testing.allocator.free(made.bytes);
+    if (!made.ok) {
+        testing.allocator.free(root);
+        return null;
+    }
+    return root;
+}
+
+fn statusJob(root: []const u8, poll: bool, known: ?u64) !*Job {
+    const job = try testing.allocator.create(Job);
+    job.* = .{
+        .alloc = testing.allocator,
+        .kind = .listing,
+        .location = try testing.allocator.dupe(u8, "git-status:"),
+        .directory = try testing.allocator.dupe(u8, root),
+        .poll = poll,
+        .known_fingerprint = known,
+        .known_root = if (poll) try testing.allocator.dupe(u8, root) else null,
+    };
+    return job;
+}
+
+test "an idle poll answers unchanged from one fingerprint; an edit re-lists (T3038)" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = scratchRepo(&tmp) orelse return error.SkipZigTest;
+    defer testing.allocator.free(root);
+    try tmp.dir.writeFile(.{ .sub_path = "notes.txt", .data = "one\ntwo\n" });
+
+    // The explicit listing records the fingerprint it was built from.
+    const first = try statusJob(root, false, null);
+    defer first.destroy();
+    workListing(first);
+    try testing.expect(first.out_failure == null);
+    try testing.expect(!first.out_unchanged);
+    const fp = first.out_fingerprint orelse return error.TestExpectedFingerprint;
+    try testing.expectEqual(@as(usize, 1), first.out_files.items.len);
+    try testing.expectEqual(@as(u32, 2), first.out_files.items[0].additions);
+
+    // Nothing moved: the poll stops at the fingerprint and lists nothing.
+    const idle = try statusJob(root, true, fp);
+    defer idle.destroy();
+    const before = git_run.spawned_on_thread;
+    workListing(idle);
+    try testing.expect(idle.out_unchanged);
+    // The whole point: ONE git process, where a listing is six.
+    try testing.expectEqual(@as(u64, 1), git_run.spawned_on_thread - before);
+    try testing.expectEqual(@as(usize, 0), idle.out_files.items.len);
+
+    // A content-only edit to a file already in the list still moves it.
+    try tmp.dir.writeFile(.{ .sub_path = "notes.txt", .data = "one\ntwo\nthree\n" });
+    const edited = try statusJob(root, true, fp);
+    defer edited.destroy();
+    workListing(edited);
+    try testing.expect(!edited.out_unchanged);
+    try testing.expect(edited.out_fingerprint.? != fp);
+    try testing.expectEqual(@as(usize, 1), edited.out_files.items.len);
+    try testing.expectEqual(@as(u32, 3), edited.out_files.items[0].additions);
+}
+
+test "an untracked file whose size and mtime have not moved keeps its count unread (T3038)" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = scratchRepo(&tmp) orelse return error.SkipZigTest;
+    defer testing.allocator.free(root);
+    try tmp.dir.writeFile(.{ .sub_path = "big.txt", .data = "a\nb\n" });
+    const st = try tmp.dir.statFile("big.txt");
+
+    // A remembered count no read could produce: if it survives, nothing re-read.
+    var path = "big.txt".*;
+    const prior = [_]UntrackedStat{.{ .path = &path, .size = st.size, .mtime = st.mtime, .additions = 999, .binary = false }};
+    const job = try statusJob(root, false, null);
+    defer job.destroy();
+    job.prior_untracked = &prior;
+    workListing(job);
+    try testing.expectEqual(@as(usize, 1), job.out_files.items.len);
+    try testing.expectEqual(@as(u32, 999), job.out_files.items[0].additions);
+    // And the stat is carried forward for the next listing.
+    try testing.expectEqual(@as(usize, 1), job.out_untracked.items.len);
+    try testing.expectEqual(@as(u32, 999), job.out_untracked.items[0].additions);
+
+    // A different size is a different file: counted again.
+    const moved = [_]UntrackedStat{.{ .path = &path, .size = st.size + 1, .mtime = st.mtime, .additions = 999, .binary = false }};
+    const again = try statusJob(root, false, null);
+    defer again.destroy();
+    again.prior_untracked = &moved;
+    workListing(again);
+    try testing.expectEqual(@as(u32, 2), again.out_files.items[0].additions);
 }

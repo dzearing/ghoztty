@@ -458,6 +458,57 @@ pub fn fields(out: []const u8) Fields {
     return .{ .out = out };
 }
 
+/// The ONE invocation a working-tree poll runs to ask "has anything moved?"
+/// (T3038). A full `git-status:` listing is five spawns (staged and unstaged
+/// name-status and numstat, plus ls-files); this answers the same question in
+/// one, and the listing only re-runs when its answer changes.
+///
+/// `--branch` puts HEAD's sha in the output, so a commit or a checkout moves it;
+/// porcelain v2 carries the index's blob sha per entry, so a `git add` moves it;
+/// `--untracked-files=all` lists each file the way `ls-files --others` does.
+/// What it does NOT carry is the working-tree side of an already-modified file,
+/// which is why the caller folds each named path's size and mtime in as well.
+pub fn statusFingerprintArgv(git: []const u8, repo: []const u8) Argv {
+    var a = prefix(git, repo);
+    a.pushAll(&.{ "status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all" });
+    return a;
+}
+
+/// Walk the paths `git status --porcelain=v2 -z` names, so the caller can stat
+/// each one. Header lines (`# ...`) name none. A rename's record (`2 ...`) is
+/// followed by its ORIGINAL path as a field of its own, which is consumed here
+/// rather than mistaken for a record. Paths borrow from `out`.
+pub const PorcelainPaths = struct {
+    it: Fields,
+
+    pub fn next(self: *PorcelainPaths) ?[]const u8 {
+        while (self.it.next()) |record| {
+            if (record.len < 2 or record[1] != ' ') continue;
+            // Space-separated fields before the path, by record type.
+            const before: usize = switch (record[0]) {
+                '1' => 8,
+                '2' => 9,
+                'u' => 10,
+                '?', '!' => 1,
+                else => continue,
+            };
+            if (record[0] == '2') _ = self.it.next();
+            var seen: usize = 0;
+            var i: usize = 0;
+            while (i < record.len and seen < before) : (i += 1) {
+                if (record[i] == ' ') seen += 1;
+            }
+            if (seen < before or i >= record.len) continue;
+            return record[i..];
+        }
+        return null;
+    }
+};
+
+pub fn porcelainPaths(out: []const u8) PorcelainPaths {
+    return .{ .it = fields(out) };
+}
+
 pub const NameStatus = struct {
     status: Status,
     path: []const u8,
@@ -1068,4 +1119,36 @@ test "every failure says what to do about it" {
     const said = wedged.detail(&buf);
     try testing.expect(std.mem.indexOf(u8, said, "15 seconds") != null);
     try testing.expect(std.mem.indexOf(u8, said, "Check the revision names") == null);
+}
+
+test "the working-tree fingerprint is one porcelain v2 status in the repo" {
+    const a = statusFingerprintArgv("git", "D:\repo");
+    const want = [_][]const u8{
+        "git",    "-C",            "D:\repo", "-c",       "core.quotepath=false",
+        "status", "--porcelain=v2", "-z",      "--branch", "--untracked-files=all",
+    };
+    try testing.expectEqual(want.len, a.slice().len);
+    for (want, a.slice()) |w, got| try testing.expectEqualStrings(w, got);
+}
+
+test "porcelain v2 paths: every record type, a rename's second path, spaces kept" {
+    const out =
+        "# branch.oid 0123456789abcdef\x00" ++
+        "# branch.head main\x00" ++
+        "1 .M N... 100644 100644 100644 aaaa bbbb src/a file.zig\x00" ++
+        "2 R. N... 100644 100644 100644 aaaa bbbb R100 new.zig\x00old.zig\x00" ++
+        "u UU N... 100644 100644 100644 100644 h1 h2 h3 conflict.zig\x00" ++
+        "? notes/new.md\x00";
+    var it = porcelainPaths(out);
+    try testing.expectEqualStrings("src/a file.zig", it.next().?);
+    try testing.expectEqualStrings("new.zig", it.next().?);
+    try testing.expectEqualStrings("conflict.zig", it.next().?);
+    try testing.expectEqualStrings("notes/new.md", it.next().?);
+    try testing.expect(it.next() == null);
+
+    var empty = porcelainPaths("");
+    try testing.expect(empty.next() == null);
+    // A record cut short (a capped read) names nothing rather than garbage.
+    var short = porcelainPaths("1 .M N... 100644\x00");
+    try testing.expect(short.next() == null);
 }
