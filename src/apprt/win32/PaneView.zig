@@ -420,6 +420,53 @@ pub fn hideOverlays(self: *PaneView) void {
     }
 }
 
+/// Every popup HWND this pane has made, terminal or viewer (T3202).
+fn eachPopup(self: *const PaneView, ctx: anytype, comptime f: fn (@TypeOf(ctx), w32.HWND) void) void {
+    if (self.hover_tint) |t| f(ctx, t.hwnd);
+    if (self.strip_face) |s| f(ctx, s.hwnd);
+    switch (self.kind) {
+        .terminal => |s| s.eachPopup(ctx, f),
+        .viewer => |v| {
+            if (v.dim_overlay) |d| f(ctx, d.hwnd);
+            // The toolbar tooltips are owned popups of a child of the pane.
+            if (v.nav) |n| if (n.tip) |h| f(ctx, h);
+            if (v.feedback) |fb| if (fb.tip) |h| f(ctx, h);
+        },
+    }
+}
+
+/// Hand every popup this pane owns to the top-level window the pane is in NOW
+/// (T3202). A popup is owned by the top-level its pane was in when it was made,
+/// and `SetParent` does not move that: so every path that takes a pane to
+/// another top-level - a cross-window rearrange, a single-window-mode
+/// hand-off, a park - calls this after re-parenting, or the popups stay owned
+/// by the window the pane left and die when that window is destroyed.
+pub fn reownPopups(self: *const PaneView) void {
+    const owner = self.hwnd() orelse return;
+    var moved: usize = 0;
+    const Ctx = struct { owner: w32.HWND, moved: *usize };
+    self.eachPopup(Ctx{ .owner = owner, .moved = &moved }, struct {
+        fn f(c: Ctx, h: w32.HWND) void {
+            if (w32.reownPopup(h, c.owner)) c.moved.* += 1;
+        }
+    }.f);
+    if (moved > 0) std.log.scoped(.win32_pane).debug("pane popups re-owned pane={s} n={d}", .{ self.paneId(), moved });
+}
+
+/// How many of this pane's popups are owned by a window the pane is not in
+/// (seam, T3202). Zero unless a re-parent forgot `reownPopups`.
+pub fn popupsMisowned(self: *const PaneView) usize {
+    const owner = self.hwnd() orelse return 0;
+    var n: usize = 0;
+    const Ctx = struct { owner: w32.HWND, n: *usize };
+    self.eachPopup(Ctx{ .owner = owner, .n = &n }, struct {
+        fn f(c: Ctx, h: w32.HWND) void {
+            if (w32.popupMisowned(h, c.owner)) c.n.* += 1;
+        }
+    }.f);
+    return n;
+}
+
 /// Re-check the z-order of this pane's layered popups (T142).
 pub fn healOverlayZOrders(self: *PaneView) void {
     if (self.hover_tint) |t| if (self.hwnd()) |owner| w32.healOverlayZOrder(t.hwnd, owner);

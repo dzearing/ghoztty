@@ -7447,8 +7447,10 @@ fn commitPopOutDrop(
 /// disagree (see `PaneView.setParentWindow`).
 ///
 /// The pane's overlays - the dim wash, the banner strip, the scrollbar, the
-/// read-only badge - are owned POPUPS of the pane's own HWND rather than
-/// children of the window, so they follow it across without being touched.
+/// read-only badge - are owned POPUPS, and Windows makes the pane's TOP-LEVEL
+/// window their owner, not the pane (T3202): `SetParent` does not move them,
+/// so they are handed to the destination explicitly, or they would die with
+/// the window the pane left.
 fn adoptPane(view: *PaneView, dest: *Window) void {
     // A parked workspace's panes live under the park host (T3191).
     const dest_hwnd = dest.hwnd orelse dest.app.parkHost() orelse return;
@@ -7457,6 +7459,7 @@ fn adoptPane(view: *PaneView, dest: *Window) void {
             log.warn("pane re-parent failed pane={s}", .{view.paneId()});
         }
     }
+    view.reownPopups();
     view.setParentWindow(dest);
     // The destination may be on a monitor with a different DPI, and a child
     // window is never sent `WM_DPICHANGED` - the same reason a window dragged
@@ -7518,6 +7521,10 @@ fn reparentPane(parent: w32.HWND, view: *PaneView) void {
     const h = view.hwnd() orelse return;
     if (w32.SetParent(h, parent) == null)
         log.warn("workspace pane re-parent failed pane={s}", .{view.paneId()});
+    // Its popups follow it to the new top-level (T3202): left owned by the
+    // shared window, a parked workspace's banner died when that window closed
+    // under it.
+    view.reownPopups();
 }
 
 fn parkPaneHidden(_: void, view: *PaneView) void {

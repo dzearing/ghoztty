@@ -554,6 +554,31 @@ try {
     $left = Get-PaneBoxes $a
     Assert ($left.Count -eq 1) "D: the original window kept its other pane (got $($left.Count))"
 
+    # T3202: the popped pane's banner popup moved OWNER with it. Windows owns a
+    # pane's popups by the pane's top-level window and SetParent does not move
+    # that, so before the fix the banner stayed owned by the window it left -
+    # and closing that window destroyed it under the pane. Read by HWND and
+    # GW_OWNER: the banner may draw on the composition path with its popup
+    # hidden, but the window is there either way.
+    if ($opened.Count -ge 1) {
+        $banners = @(Get-TestWindows -ProcessId $session.Pid -Class 'GhozttyBannerOverlay' -AllowHidden)
+        $ownedByNew = @($banners | Where-Object { [int64](Get-TestWindowOwner -Window ([IntPtr]$_.Hwnd)) -eq [int64]$new })
+        $ownedByOld = @($banners | Where-Object { [int64](Get-TestWindowOwner -Window ([IntPtr]$_.Hwnd)) -eq [int64]$a })
+        Write-Host ("      banner popups: {0} total, {1} owned by the new window, {2} by the old" -f $banners.Count, $ownedByNew.Count, $ownedByOld.Count)
+        Assert ($ownedByNew.Count -eq 1 -and $ownedByOld.Count -eq 0) "T3202: the popped pane's banner popup is owned by the window it moved to (new=$($ownedByNew.Count) old=$($ownedByOld.Count))"
+        if ($ownedByNew.Count -eq 1) {
+            $bannerHwnd = [int64]$ownedByNew[0].Hwnd
+            # Close the window the pane LEFT; its banner must outlive it.
+            [void](Send-TestSysCommand -Window $a -Command 'close')
+            $deadline = (Get-Date).AddSeconds(8)
+            do { Start-Sleep -Milliseconds 400; $wins = Get-AppWindows $session.Pid } while ((Get-Date) -lt $deadline -and $wins.Count -gt 1)
+            Assert ($wins.Count -eq 1 -and [int64]$wins[0].Hwnd -eq [int64]$new) "T3202: setup: the window the pane left has closed (windows now $($wins.Count))"
+            $still = @(Get-TestWindows -ProcessId $session.Pid -Class 'GhozttyBannerOverlay' -AllowHidden | Where-Object { [int64]$_.Hwnd -eq $bannerHwnd })
+            Assert ($still.Count -eq 1) "T3202: the moved pane's banner popup survived that window closing (hwnd $bannerHwnd)"
+            Assert (-not ($session.App.Process -and $session.App.Process.HasExited)) 'T3202: no crash closing the window the pane left'
+        }
+    }
+
     Close-Session $session
     $session = $null
 

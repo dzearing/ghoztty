@@ -470,6 +470,9 @@ try {
     $c = Wait-Drawing 'swm-c' { param($r) [int]$r.presenting -eq [int]$r.panes -and [int]$r.overlays_shown -ge 1 }
     Assert ($c -and [int]$c.presenting -eq 2 -and [int]$c.holding_targets -eq 2) "E2: shown, both of swm-c's terminals present and hold targets again ($(Row-Text $c))"
     Assert ($c -and [int]$c.overlays_shown -ge 1) "E2: swm-c-right's banner is back on screen ($(Row-Text $c))"
+    # T3202: its banner, made while swm-c was parked under the park host, is
+    # now owned by the shared window it came into.
+    Assert ($c -and $null -ne $c.popups_misowned -and [int]$c.popups_misowned -eq 0) "E2/T3202: swm-c's popups are owned by the shared window (misowned=$($c.popups_misowned))"
     $b = Wait-Drawing 'swm-b' $quiet
     if ($NegativeControl) {
         $script:negReached = $true
@@ -498,6 +501,14 @@ try {
     Assert ($b -and [int]$b.holding_targets -eq 2) "E4: and its two terminals hold render targets again ($(Row-Text $b))"
     $c = Wait-Drawing 'swm-c' $quiet
     Assert ($c -and $c.parked -and (& $quiet $c)) "E4: swm-c, parked again, is quiet - banner off screen ($(Row-Text $c))"
+    # T3202: every pane's popups are owned by the top-level the pane is in -
+    # the park host for parked swm-c (its banner was made while it was on
+    # show, owned by the shared window), the shared window for swm-b. Left
+    # owned by the shared window, a parked workspace's banner died when that
+    # window was destroyed under it.
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    $mis = @($ws.data.workspaces | ForEach-Object { "$($_.name)=$($_.popups_misowned)" })
+    Assert (@($ws.data.workspaces | Where-Object { $null -eq $_.popups_misowned -or [int]$_.popups_misowned -ne 0 }).Count -eq 0) "E4/T3202: no pane popup is owned by a window its pane is not in ($($mis -join ' '))"
 
     # E5: a workspace parked from birth is quiet from its first frame.
     $r = Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-f')

@@ -23,6 +23,9 @@
 //! `presenting` / `holding_targets` / `overlays_shown` (T3192) say what the
 //! workspace draws: a parked one reports 0 for all three.
 //!
+//! `popups_misowned` (T3202) counts pane popups owned by a top-level window
+//! the pane is not in: 0 always, or a window closing would destroy them.
+//!
 //! `cols` / `rows` (T3193) are the grid of the active tab's first terminal
 //! pane (0 when it has none yet): a parked workspace is laid out at the
 //! shared window's size, so it reads the grid it will have on show.
@@ -96,7 +99,9 @@ fn paneCount(w: *Window) usize {
 /// What a workspace is drawing (T3192): panes presenting, terminal panes
 /// still holding render targets, and pane popups on screen - all three zero
 /// for a parked one ("Parked counts as hidden").
-const Drawing = struct { presenting: usize = 0, holding_targets: usize = 0, overlays_shown: usize = 0 };
+/// `popups_misowned` (T3202): pane popups owned by a top-level the pane is
+/// not in - zero unless a re-parent forgot to hand them over.
+const Drawing = struct { presenting: usize = 0, holding_targets: usize = 0, overlays_shown: usize = 0, popups_misowned: usize = 0 };
 
 fn drawing(w: *Window) Drawing {
     var d: Drawing = .{};
@@ -106,6 +111,7 @@ fn drawing(w: *Window) Drawing {
             if (entry.view.presenting()) d.presenting += 1;
             if (!entry.view.targetsReleased()) d.holding_targets += 1;
             d.overlays_shown += entry.view.overlaysShown();
+            d.popups_misowned += entry.view.popupsMisowned();
         }
     }
     return d;
@@ -178,6 +184,8 @@ fn stateResponse(app: *App, alloc: Allocator, shown: ?bool) Allocator.Error![]u8
             jws.write(d.holding_targets) catch break :write;
             jws.objectField("overlays_shown") catch break :write;
             jws.write(d.overlays_shown) catch break :write;
+            jws.objectField("popups_misowned") catch break :write;
+            jws.write(d.popups_misowned) catch break :write;
             const g = firstGrid(w);
             jws.objectField("cols") catch break :write;
             jws.write(g.cols) catch break :write;

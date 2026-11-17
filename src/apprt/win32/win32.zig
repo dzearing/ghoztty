@@ -427,6 +427,9 @@ pub const DEFAULT_CHARSET: u32 = 1;
 
 // Window long pointer indices
 pub const GWLP_USERDATA: i32 = -21;
+/// On a top-level window, the OWNER (T3202) - which `SetParent` cannot change
+/// and which is the only way to move an owned popup to another owner.
+pub const GWLP_HWNDPARENT: i32 = -8;
 
 // HWND_MESSAGE for message-only windows
 pub const HWND_MESSAGE: ?HWND = @ptrFromInt(@as(usize, @bitCast(@as(isize, -3))));
@@ -2889,6 +2892,32 @@ const chrome_fanout = @import("chrome_fanout.zig");
 comptime {
     // The policy module duplicates this bit so it can be pure.
     std.debug.assert(WS_EX_TOPMOST == overlay_zorder.ex_topmost);
+}
+
+/// Hand an owned popup to `owner_hint`'s top-level window (T3202), and report
+/// whether it had to move.
+///
+/// Windows never lets a child window own a popup: a `WS_POPUP` created
+/// against one is owned by that child's TOP-LEVEL ancestor, and stays owned
+/// by it when the child is later re-parented under another window. So a pane
+/// that changes window (a cross-window rearrange, a single-window-mode
+/// hand-off, a park) leaves its popups owned by the window it LEFT - and when
+/// that window is destroyed, Windows destroys them with it and the pane is left
+/// holding dead handles. Every path that moves a pane to another top-level calls
+/// this for each popup the pane owns.
+pub fn reownPopup(popup: HWND, owner_hint: HWND) bool {
+    const root = GetAncestor(owner_hint, GA_ROOT) orelse owner_hint;
+    if (root == popup) return false;
+    if (GetWindow(popup, GW_OWNER) == root) return false;
+    _ = SetWindowLongPtrW(popup, GWLP_HWNDPARENT, @bitCast(@intFromPtr(root)));
+    return true;
+}
+
+/// Is `popup` owned by anything other than `owner_hint`'s top-level window?
+/// The read `reownPopup` answers to, for the debug seam (T3202).
+pub fn popupMisowned(popup: HWND, owner_hint: HWND) bool {
+    const root = GetAncestor(owner_hint, GA_ROOT) orelse owner_hint;
+    return GetWindow(popup, GW_OWNER) != root;
 }
 
 /// Walk down from `root` through the windows directly above it, and report

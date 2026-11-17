@@ -2494,6 +2494,21 @@ pub fn hideOverlays(self: *Surface) void {
     }
 }
 
+/// Every popup HWND this pane has made (T3202): the overlays, the banner's
+/// frozen copy, the key-state tooltip's host and the plain-HWND popups. All of
+/// them are owned by the pane's TOP-LEVEL window, not the pane
+/// (`w32.reownPopup` says why), so this is the list a pane walks when it
+/// changes window.
+pub fn eachPopup(self: *const Surface, ctx: anytype, comptime f: fn (@TypeOf(ctx), w32.HWND) void) void {
+    inline for (overlay_fields) |name| {
+        if (@field(self, name)) |o| f(ctx, o.hwnd);
+    }
+    if (self.banner_overlay) |b| if (b.freeze.hwnd) |h| f(ctx, h);
+    inline for (.{ "link_preview_hwnd", "search_hwnd", "palette_hwnd" }) |name| {
+        if (@field(self, name)) |h| f(ctx, h);
+    }
+}
+
 test "every pane overlay is listed in overlay_fields (T2012)" {
     // An overlay here is a `?*T` field whose `T` carries both an `owner` and an
     // `hwnd` HWND - the shape of every layered pane popup. One that is missing
