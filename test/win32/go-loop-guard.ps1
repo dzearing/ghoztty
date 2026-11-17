@@ -3145,6 +3145,31 @@ Assert 'BB7 a shell prompt is not a composer' `
 # an indented '>' must not resurrect as pending input.
 Assert 'BB8 an indented marker far up the scrollback is out of the window' `
     ((Get-PaneComposerText -Tail ((@("  > stale text") + (1..20 | ForEach-Object { "line $_" })) -join "`r`n")) -eq '')
+# A RECALLED prompt (Up arrow) draws `History N/M` inside the rule. Measured
+# 2026-11-17 (v2.1.326) on the loop's own pane holding a recalled `/clear`: the
+# label broke the whitespace-only run left of the marker, so the pane read as
+# no composer at all - `composer=none session=unknown` - while Enter would
+# have sent `/clear`.
+$bbHist = ([string][char]0x2500) * 3 + ' History 99/100 ' + ([string][char]0x2500) * 80
+function BBHistPane([string]$composer) {
+    return (@(
+        '* Read(go.md)',
+        '',
+        "$bbHist> $composer",
+        "$bbRule  ctx: 202k/1000k (20%)",
+        '  users/dzearing/windows-amd64 | D:\git\ghoztty'
+    ) -join "`r`n")
+}
+Assert 'BB8b a recalled prompt under a History label is pending text' `
+    ((Get-PaneComposerText -Tail (BBHistPane '/clear')) -eq '/clear')
+Assert 'BB8c a History-labelled composer is still a recognised composer' `
+    ((Get-PaneComposerShape -Tail (BBHistPane '/clear')) -eq 'recognised')
+Assert 'BB8d a working spinner above a History-labelled composer reads as working, not unknown' `
+    ((Get-PaneWorkingState -Tail ("* Whirlpooling... (3m 1s)`r`n" + (BBHistPane '/clear'))) -eq 'working')
+# The label is matched literally with rule on both sides, so an indented
+# transcript line that merely contains ` > ` is still not a composer.
+Assert 'BB8e an indented transcript line with words before a > is not a composer' `
+    ((Get-PaneComposerText -Tail "  done a > b`r`n  next") -eq '')
 
 # --- the stall verdict (pure) ---
 $bbFresh = Resolve-LoopStallVerdict -TurnAgeMinutes 4 -StaleMinutes 180 -SuspectMinutes 45 -ComposerText ''

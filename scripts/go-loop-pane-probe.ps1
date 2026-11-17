@@ -160,6 +160,17 @@ function Get-PaneOccupant {
 # again 2026-10-24 (v2.1.306, 92 columns): same rule, marker now `>` + U+00A0.
 $script:ComposerWindowLines = 12
 
+# The marker itself, shared by every reader here. The optional group is the
+# label Claude Code draws INSIDE the rule while the composer shows a recalled
+# prompt (Up arrow): `<rule> History 99/100 <rule>> /clear`. Measured
+# 2026-11-17 (v2.1.326, 312 columns) on the loop's own pane: a recalled `/clear`
+# sat in the composer for an unknown stretch and the health line read
+# `composer=none session=unknown` throughout, because the ASCII label broke the
+# whitespace-only run left of the marker. The label is matched literally and
+# must have rule on BOTH sides, so a transcript line like `  a > b` stays out.
+# A recalled prompt IS pending text - Enter would send it - so it reads as such.
+$script:ComposerMarkerPattern = '^\s+(?:History\s+\d+/\d+\s{3,})?>'
+
 # Text the TUI puts in an empty composer itself. It is not pending input and
 # must never be read as any.
 $script:ComposerPlaceholders = @(
@@ -185,7 +196,7 @@ function Get-PaneComposerText {
         $lines = @($lines | Select-Object -Last $script:ComposerWindowLines)
     }
     for ($i = $lines.Count - 1; $i -ge 0; $i--) {
-        if ($lines[$i].TrimEnd() -notmatch '^\s+>\s+(\S.*)$') { continue }
+        if ($lines[$i].TrimEnd() -notmatch ($script:ComposerMarkerPattern + '\s+(\S.*)$')) { continue }
         $text = $Matches[1].Trim()
         foreach ($p in $script:ComposerPlaceholders) { if ($text -match $p) { return '' } }
         return $text
@@ -223,7 +234,7 @@ function Get-PaneComposerShape {
     # The indent rule shared with both readers: a border sits to the marker's
     # left in every chrome measured, and an EMPTY composer still counts.
     foreach ($l in $lines) {
-        if ($l.TrimEnd() -match '^\s+>\s*(\S.*)?$') { return 'recognised' }
+        if ($l.TrimEnd() -match ($script:ComposerMarkerPattern + '\s*(\S.*)?$')) { return 'recognised' }
     }
     return 'unrecognised'
 }
@@ -345,7 +356,7 @@ function Get-PaneLastOutput {
     $lines = @($flat -split "`r?`n")
     $composer = -1
     for ($i = $lines.Count - 1; $i -ge 0; $i--) {
-        if ($lines[$i].TrimEnd() -match '^\s+>\s*(\S.*)?$') { $composer = $i; break }
+        if ($lines[$i].TrimEnd() -match ($script:ComposerMarkerPattern + '\s*(\S.*)?$')) { $composer = $i; break }
     }
     if ($composer -lt 1) { return '' }
     for ($i = $composer - 1; $i -ge 0; $i--) {
