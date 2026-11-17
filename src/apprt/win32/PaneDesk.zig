@@ -41,6 +41,7 @@ const w32 = @import("win32.zig");
 const resize_trace = @import("resize_trace.zig");
 const pane_elevation = @import("pane_elevation.zig");
 const desk_palette = @import("desk_palette.zig");
+const desk_fade_math = @import("desk_fade.zig");
 const busy_light = @import("busy_light.zig");
 const color_math = @import("color_math.zig");
 const pane_stack_strip = @import("pane_stack_strip.zig");
@@ -249,6 +250,13 @@ const Desk = struct {
 /// One pane's progress light, as the window hands it over (T1899). `key`
 /// identifies the pane across paints (its address; compared, never
 /// dereferenced); `card` is in content-area pixels.
+/// One frame of the shade crossfade (T3183): the gradient that is leaving
+/// (null: the ocean) and how much of it still shows, 255..0.
+pub const Fade = struct {
+    from: ?desk_palette.Variant,
+    keep: u8,
+};
+
 pub const Light = struct {
     key: usize,
     card: pane_elevation.Card,
@@ -368,6 +376,17 @@ desk: ?Desk = null,
 desk_buf: std.ArrayListUnmanaged(u32) = .empty,
 desk_light: bool = false,
 desk_variant: ?desk_palette.Variant = null,
+/// Single-window mode's shade crossfade (T3183), set by the window for each
+/// frame of it: the workspace that left's gradient laid over this one's at
+/// `keep`/255 (`desk_fade.zig`). Null outside a fade. `desk_fade` is what
+/// `desk` was last rendered with.
+fade: ?Fade = null,
+desk_fade: ?Fade = null,
+/// Desks rendered with a fade laid on, ever (T3183's seam): a fade that
+/// never reached the pixels reads 0 here however long its clock ran.
+fade_desks: u32 = 0,
+/// `ensureDesk`'s second small gradient, the old one, during a fade.
+scratch_fade: std.ArrayListUnmanaged(u32) = .empty,
 /// Bumped whenever `desk` is re-rendered, so a cache built from it (the
 /// pane sidebar's, T1850) can tell it is stale without comparing pixels.
 desk_gen: u32 = 0,
@@ -1218,6 +1237,7 @@ pub fn deinit(self: *PaneDesk) void {
     self.scratch.deinit(light_alloc);
     self.scratch_desk.deinit(light_alloc);
     self.scratch_grad.deinit(light_alloc);
+    self.scratch_fade.deinit(light_alloc);
     self.quarter_buf.deinit(light_alloc);
     self.names_saved.deinit(light_alloc);
     self.glow_px.deinit(light_alloc);
@@ -2576,7 +2596,8 @@ fn ensureOut(self: *PaneDesk, w: i32, h: i32) ?Dib {
 fn ensureDesk(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_palette.Variant) ?Desk {
     if (self.desk) |d| {
         if (d.w == w and d.h == h and self.desk_light == is_light and
-            std.meta.eql(self.desk_variant, variant)) return d;
+            std.meta.eql(self.desk_variant, variant) and
+            std.meta.eql(self.desk_fade, self.fade)) return d;
         self.desk = null;
     }
     var tq: [4]i64 = .{ 0, 0, 0, 0 };
@@ -2617,6 +2638,22 @@ fn ensureDesk(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_pa
         @floatFromInt(h),
         desk_palette.Palette.forWindow(variant, is_light),
     );
+    // The shade crossfade (T3183): the leaving gradient at the same small
+    // size, laid over before the stretch - the stretch is linear, so this is
+    // the full-size blend at a sixteenth of its cost.
+    if (self.fade) |f| fade: {
+        self.scratch_fade.resize(light_alloc, sw * sh) catch break :fade;
+        desk_palette.renderDesk(
+            self.scratch_fade.items,
+            sw,
+            sh,
+            @floatFromInt(w),
+            @floatFromInt(h),
+            desk_palette.Palette.forWindow(f.from, is_light),
+        );
+        desk_fade_math.blend(small, self.scratch_fade.items, f.keep);
+        self.fade_desks +%= 1;
+    } else if (self.scratch_fade.capacity != 0) self.scratch_fade.clearAndFree(light_alloc);
     _ = w32.QueryPerformanceCounter(&tq[2]);
     // Our own bilinear stretch, with the top byte clear (T2520): GDI's
     // `HALFTONE` into a fresh bitmap, and the alpha pass it needed after,
@@ -2638,6 +2675,7 @@ fn ensureDesk(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_pa
     self.desk = full;
     self.desk_light = is_light;
     self.desk_variant = variant;
+    self.desk_fade = self.fade;
     return full;
 }
 

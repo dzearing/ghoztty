@@ -26,6 +26,11 @@
 //! `popups_misowned` (T3202) counts pane popups owned by a top-level window
 //! the pane is not in: 0 always, or a window closing would destroy them.
 //!
+//! `desk_seed` / `desk_fade` (T3183) are the workspace's gradient and its
+//! shade crossfade: `on`, `from_seed`, `started`, `frames`, `last_keep`
+//! (the old desk's strength, 255..0) and `desks` (desks rendered with the
+//! fade laid on - the pixels' own count, not the clock's).
+//!
 //! `cols` / `rows` (T3193) are the grid of the active tab's first terminal
 //! pane (0 when it has none yet): a parked workspace is laid out at the
 //! shared window's size, so it reads the grid it will have on show.
@@ -194,6 +199,27 @@ fn stateResponse(app: *App, alloc: Allocator, shown: ?bool) Allocator.Error![]u8
             jws.write(g.cols) catch break :write;
             jws.objectField("rows") catch break :write;
             jws.write(g.rows) catch break :write;
+            // The shade crossfade (T3183): this workspace's gradient (0: the
+            // ocean), whether a fade is running and from what, how many it
+            // has started, its frames, the old desk's strength on the last
+            // one, and the desks rendered with a fade laid on.
+            jws.objectField("desk_seed") catch break :write;
+            jws.write(if (w.desk_variant) |v| v.seed else 0) catch break :write;
+            jws.objectField("desk_fade") catch break :write;
+            jws.beginObject() catch break :write;
+            jws.objectField("on") catch break :write;
+            jws.write(w.desk_fade_from != null) catch break :write;
+            jws.objectField("from_seed") catch break :write;
+            jws.write(if (w.desk_fade_from) |f| (if (f) |v| v.seed else 0) else 0) catch break :write;
+            jws.objectField("started") catch break :write;
+            jws.write(w.desk_fades_started) catch break :write;
+            jws.objectField("frames") catch break :write;
+            jws.write(w.desk_fade_frames) catch break :write;
+            jws.objectField("last_keep") catch break :write;
+            jws.write(w.desk_fade_last_keep) catch break :write;
+            jws.objectField("desks") catch break :write;
+            jws.write(w.pane_desk.fade_desks) catch break :write;
+            jws.endObject() catch break :write;
             jws.endObject() catch break :write;
         }
         jws.endArray() catch break :write;

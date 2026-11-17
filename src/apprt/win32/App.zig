@@ -8031,11 +8031,13 @@ pub fn showWorkspace(self: *App, target: *Window) bool {
         .load_first => return false,
         .hand_off => |ho| {
             const park = self.parkHost() orelse return false;
+            // Mac `leavingShade`: the adopter fades from it (T3183).
+            const leaving = ho.from.desk_variant;
             const given = ho.from.surrenderWindow(park) orelse {
                 log.warn("workspace hand-off: the one on show had no window", .{});
                 return false;
             };
-            ho.to.adoptWindow(given.hwnd, given.bound);
+            ho.to.adoptWindow(given.hwnd, given.bound, leaving);
             PaneSidebar.refreshScopes(self.windows.items, null);
             self.refreshWindowActivity();
             self.markLayoutDirty();
@@ -8184,7 +8186,7 @@ pub fn closeWorkspace(self: *App, window: *Window) WorkspaceClose {
         .hand_to => |next| {
             const park = self.parkHost() orelse return .in_place;
             if (window.surrenderWindow(park)) |given| {
-                next.adoptWindow(given.hwnd, given.bound);
+                next.adoptWindow(given.hwnd, given.bound, window.desk_variant);
                 PaneSidebar.refreshScopes(self.windows.items, null);
                 log.info("workspace close handed the window to name={s}", .{next.ipc_name orelse "?"});
             } else if (next.hwnd == null) {

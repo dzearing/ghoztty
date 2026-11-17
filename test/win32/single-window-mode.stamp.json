@@ -1,15 +1,16 @@
 {
     "guard":  "single-window-mode",
     "script":  "test/win32/single-window-mode.ps1",
-    "generated":  "2026-11-17T02:59:11-08:00",
-    "commit":  "383192882",
+    "generated":  "2026-11-17T04:43:53-08:00",
+    "commit":  "6f6ccff01",
     "uncommitted":  [
+                        "src/apprt/win32/ipc_workspaces.zig",
                         "test/win32/single-window-mode.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/ipc_workspaces.zig":  "2b216220cfdb847562c292fcbc1c323fd7afec1777754054cba119d60e77a1bb",
+                  "src/apprt/win32/ipc_workspaces.zig":  "437adc16e17c267a78cbe6d4583ef25950761be64526b01f03f05c9cdc390d0c",
                   "src/apprt/win32/window_mode.zig":  "356194dfc0575ca0e33144ec8d4a05f07657bd9706eaf9bef5f36eced47942a9",
                   "src/apprt/win32/workspace_host.zig":  "ce994101bfbe3de9d9119d4ceab94dc5614a536d3c377eea32065c81288cca46",
-                  "test/win32/single-window-mode.ps1":  "31a4d24c2789e79720dcea2372d3ce5e3b9df9bab48dd445ea7e290eb6627b71"
+                  "test/win32/single-window-mode.ps1":  "4cedbe4304a7149746a2bc1a321070d3f9066b725d8f018e7a3788d1651eb5fa"
               }
 }

@@ -51,6 +51,8 @@ test {
     _ = @import("win32/window_mode.zig");
     // ... and its workspace bookkeeping (T3181): who has the shared window.
     _ = @import("win32/workspace_host.zig");
+    // ... and the shade's crossfade on a switch (T3183).
+    _ = @import("win32/desk_fade.zig");
     // Advanced > Config file and the change toast's words (T2676).
     _ = @import("win32/settings_advanced.zig");
     // The light & dark theme catalog behind Appearance > Theme (T2586).

@@ -47,6 +47,11 @@
 #   window with that one on show; and the same manifest read in `separate`
 #   mode is three windows at that one frame, the frontmost on top. A window
 #   saved with two tabs comes back in single mode as a workspace per tab.
+# J (T3183): the shade crossfades on a switch - the seam's `desk_fade` starts
+#   from the leaving workspace's gradient with the old desk whole, steps and
+#   draws for 0.35s, and is over by 0.9s; switching back fades the other way;
+#   two workspaces with the same gradient switch with no fade at all. (Flat
+#   style and Animation effects off are `desk_fade.owed`'s unit tests.)
 #
 # THE ORACLE IS THE LATCH AND THE FILE. The mode the app runs in is a decision
 # invisible in pixels (until T3181 gives it a window to act on), so it is read
@@ -971,6 +976,70 @@ try {
     }
     $ws = Wait-Ws { param($s) $s -and @($s.data.workspaces).Count -eq 1 }
     Assert (@($ws.data.workspaces).Count -eq 1) "H: back to one workspace for C4 ($(@($ws.data.workspaces).Count))"
+
+    # =====================================================================
+    # J (T3183): the shade crossfades on a switch - the old workspace's
+    # gradient laid over the new one's and faded out over 0.35s - and only
+    # between two different gradients. Read from the seam's `desk_fade`
+    # (on / from_seed / started / frames / last_keep) and `desks`, the count
+    # of desks actually rendered with the fade laid on.
+    # =====================================================================
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    $j0 = [string]$ws.data.active
+    $j0Seed = [uint64](Ws-Row $ws $j0).desk_seed
+    [void](Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-j1', '--color=random'))
+    [void](Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-j2'))
+    [void](Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-j3'))
+    $ws = Wait-Ws { param($s) $s -and @($s.data.workspaces).Count -eq 4 }
+    $j1 = Ws-Row $ws 'swm-j1'
+    $j2 = Ws-Row $ws 'swm-j2'
+    $j1Seed = if ($j1) { [uint64]$j1.desk_seed } else { 0 }
+    Assert ($j1 -and $j1.parked -and $j1Seed -ne 0 -and $j1Seed -ne $j0Seed) "J0: swm-j1 (--color=random) is parked with a gradient of its own (seed=$j1Seed vs on show $j0Seed)"
+    $j3 = Ws-Row $ws 'swm-j3'
+    Assert ($j2 -and $j3 -and [uint64]$j2.desk_seed -eq [uint64]$j3.desk_seed) "J0: swm-j2 and swm-j3 (plain) share a shade, the ocean ($($j2.desk_seed) / $($j3.desk_seed))"
+    # J1: a switch to another gradient starts the fade FROM the one that
+    # left, its first frame the old desk whole. The show's own answer is the
+    # state the instant after the hand-off.
+    $s = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=show', '--target=swm-j1')
+    $f = (Ws-Row $s 'swm-j1').desk_fade
+    Assert ($s -and $s.data.shown -and $f -and $f.on -and [uint64]$f.from_seed -eq $j0Seed -and [int]$f.started -eq 1 -and [int]$f.last_keep -eq 255) "J1: the switch starts a fade from $j0's shade, old desk whole (on=$($f.on) from=$($f.from_seed) started=$($f.started) keep=$($f.last_keep))"
+    Start-Sleep -Milliseconds 900
+    $s = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    $f = (Ws-Row $s 'swm-j1').desk_fade
+    # 0.35s on the frame clock is ~20 frames at 60 Hz; 4 is a floor a loaded
+    # box clears while a fade that never stepped (0) or never reached the
+    # pixels (desks 0) cannot.
+    Assert ($f -and -not $f.on -and [int]$f.frames -ge 4 -and [int]$f.desks -ge 4) "J1: 0.9s later the fade is over, having stepped and drawn (on=$($f.on) frames=$($f.frames) desks=$($f.desks))"
+    Assert ($f -and [int]$f.last_keep -lt 128) "J1: its last frame had the old desk mostly gone (last_keep=$($f.last_keep))"
+    # J2: back the other way fades too; the one that left is parked, no fade.
+    $s = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=show', "--target=$j0")
+    $f0 = (Ws-Row $s $j0).desk_fade
+    $fl = (Ws-Row $s 'swm-j1').desk_fade
+    Assert ($f0 -and $f0.on -and [uint64]$f0.from_seed -eq $j1Seed) "J2: switching back fades from swm-j1's shade (on=$($f0.on) from=$($f0.from_seed))"
+    Assert ($fl -and -not $fl.on) "J2: the workspace that left carries no fade parked (on=$($fl.on))"
+    # J2b: a switch MID-fade - $j0's is still running - ends it there: parked,
+    # it has nothing to fade, and the adopter starts its own from $j0's shade.
+    $s = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=show', '--target=swm-j1')
+    $f0 = (Ws-Row $s $j0).desk_fade
+    $fl = (Ws-Row $s 'swm-j1').desk_fade
+    Assert ($f0 -and -not $f0.on -and $fl -and $fl.on -and [uint64]$fl.from_seed -eq $j0Seed -and [int]$fl.started -eq 2) "J2b: a switch mid-fade ends the parked one's and starts the adopter's (left on=$($f0.on); adopter on=$($fl.on) from=$($fl.from_seed) started=$($fl.started))"
+    Start-Sleep -Milliseconds 900
+    # J3: the same shade on both sides is no fade at all (Mac
+    # `leavingShade != deskVariant`): swm-j2 on show (fading in from the
+    # hand-opened gradient), then swm-j3, ocean to ocean.
+    [void](Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=show', '--target=swm-j2'))
+    Start-Sleep -Milliseconds 900
+    $s = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=show', '--target=swm-j3')
+    $f3 = (Ws-Row $s 'swm-j3').desk_fade
+    Assert ($s -and $s.data.shown -and [string]$s.data.active -eq 'swm-j3') "J3: swm-j3 is on show (active='$($s.data.active)')"
+    Assert ($f3 -and -not $f3.on -and [int]$f3.started -eq 0 -and [int]$f3.desks -eq 0) "J3: same shade to same shade starts no fade (on=$($f3.on) started=$($f3.started) desks=$($f3.desks))"
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'J: no crash'
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    foreach ($n in @($ws.data.workspaces | ForEach-Object { [string]$_.name } | Select-Object -Skip 1)) {
+        [void](Invoke-GhozttyIpc -Action 'close' -Arguments @("--target=$n", '--force'))
+    }
+    $ws = Wait-Ws { param($s) $s -and @($s.data.workspaces).Count -eq 1 }
+    Assert (@($ws.data.workspaces).Count -eq 1) "J: back to one workspace for C4 ($(@($ws.data.workspaces).Count))"
 
     # C4: the last workspace's close closes the window.
     [void](Send-TestSysCommand -Window ([IntPtr]$shared) -Command 'close')

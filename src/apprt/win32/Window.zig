@@ -194,6 +194,7 @@ const window_active = @import("window_active.zig");
 const PaneDesk = @import("PaneDesk.zig");
 const comp_overlay = @import("../../renderer/comp_overlay.zig");
 const desk_palette = @import("desk_palette.zig");
+const desk_fade = @import("desk_fade.zig");
 const chrome_glass = @import("chrome_glass.zig");
 const rearrange_header = @import("rearrange_header.zig");
 const pane_drop = @import("pane_drop.zig");
@@ -405,6 +406,11 @@ const HELD_TITLE_TIMER_ID: usize = 0x4854; // 'HT'
 /// fires to the adopter, which lays out every parked workspace the same way -
 /// the one that just surrendered included.
 const PARKED_RELAYOUT_TIMER_ID: usize = 0x5052; // 'PR'
+/// Single-window mode's shade crossfade (T3183, Mac `PaneDeskFade`): steps on
+/// the frame clock for `desk_fade.duration_ms` after a workspace adopts the
+/// window from one with another gradient. In `window_timer_ids`: the fade is
+/// the workspace on show's, and a switch mid-fade ends it.
+const DESK_FADE_TIMER_ID: usize = 0x4446; // 'DF'
 
 pub const SIDEBAR_SYNC_MS: u32 = 250;
 pub const HERO_SLIDE_MS: f32 = 350.0;
@@ -767,6 +773,14 @@ desk_hdc: ?w32.HDC = null,
 /// the window's layout, so a restore keeps it; the palette is derived per
 /// theme when the desk is painted.
 desk_variant: ?desk_palette.Variant = null,
+/// Single-window mode's shade crossfade (T3183): the gradient of the
+/// workspace that left, faded out over this one's from `desk_fade_t0_ms`.
+/// Null outside a fade. The counters are the `workspaces` seam's.
+desk_fade_from: ??desk_palette.Variant = null,
+desk_fade_t0_ms: i64 = 0,
+desk_fades_started: u32 = 0,
+desk_fade_frames: u32 = 0,
+desk_fade_last_keep: u8 = 0,
 /// The pane style the current layout was computed for, so a config reload
 /// that flips it relayouts rather than only recolouring.
 applied_pane_style: pane_elevation.Style = .elevated,
@@ -7486,6 +7500,7 @@ const window_timer_ids = [_]usize{
     SIDEBAR_SYNC_TIMER_ID,   FULLSCREEN_POLL_TIMER_ID,   STACK_SLIDE_TIMER_ID,
     DRAG_QUIET_TIMER_ID,     COMP_DRAG_TIMER_ID,         RESIZE_TRACE_FLUSH_TIMER_ID,
     SIZE_BURST_TIMER_ID,     HELD_TITLE_TIMER_ID,        RESIZE_OVERLAY_TIMER_ID,
+    DESK_FADE_TIMER_ID,
 };
 
 /// The state that belongs to the top-level HWND, not to the workspace on it:
@@ -7570,6 +7585,10 @@ pub fn surrenderWindow(self: *Window, park: w32.HWND) ?struct { hwnd: w32.HWND, 
     self.resetPointerTransients();
     self.tabTipReset();
     for (window_timer_ids) |id| _ = w32.KillTimer(hwnd, id);
+    // A fade still running is this workspace's shade going; parked, there is
+    // nothing to fade, and its frame-clock subscription goes with it.
+    FrameClock.disarm(hwnd, DESK_FADE_TIMER_ID);
+    self.endDeskFade();
 
     const bound: WindowBound = .{
         .is_fullscreen = self.is_fullscreen,
@@ -7617,8 +7636,13 @@ pub fn surrenderWindow(self: *Window, park: w32.HWND) ?struct { hwnd: w32.HWND, 
 /// show in `hwnd`, with the HWND-bound state `bound` carried over. Its panes
 /// come into the window, its chrome is rebuilt against it, its title lands at
 /// once, and focus goes back to its focused pane when the window is active.
-pub fn adoptWindow(self: *Window, hwnd: w32.HWND, bound: WindowBound) void {
+pub fn adoptWindow(self: *Window, hwnd: w32.HWND, bound: WindowBound, leaving_shade: ?desk_palette.Variant) void {
     std.debug.assert(self.hwnd == null);
+    // The shade fades from the workspace that left (T3183, Mac
+    // `windowDidUnpark(from: leavingShade)`): set before anything below paints
+    // the desk, so the first frame in the window is the OLD gradient whole and
+    // never a flash of the new one.
+    self.beginDeskFade(leaving_shade);
     self.hwnd = hwnd;
     self.is_fullscreen = bound.is_fullscreen;
     self.saved_placement = bound.saved_placement;
@@ -7672,7 +7696,8 @@ pub fn adoptWindow(self: *Window, hwnd: w32.HWND, bound: WindowBound) void {
     self.syncPaneSidebar();
     self.invalidateChrome();
     _ = w32.RedrawWindow(hwnd, null, null, w32.RDW_INVALIDATE | w32.RDW_FRAME | w32.RDW_ALLCHILDREN);
-    log.info("workspace adopted the window name={s}", .{self.ipc_name orelse "?"});
+    if (self.desk_fade_from != null) _ = FrameClock.arm(hwnd, DESK_FADE_TIMER_ID, FOCUS_GLOW_TICK_MS);
+    log.info("workspace adopted the window name={s} shade_fade={}", .{ self.ipc_name orelse "?", self.desk_fade_from != null });
 }
 
 /// Load a window of this parked workspace's own (T3191; Mac
@@ -10247,6 +10272,53 @@ fn deskOpacity(self: *const Window) ?u8 {
 
 /// Repaint the window-owned desk pixels now - the same `GetDC` pass a
 /// layout makes, for a change that moved nothing (the glow's fade).
+/// Start the shade crossfade from `leaving` (T3183), when one is owed: the
+/// elevated style, Animation effects on, and a gradient other than this
+/// workspace's own. The first frame is the old desk whole.
+fn beginDeskFade(self: *Window, leaving: ?desk_palette.Variant) void {
+    self.endDeskFade();
+    if (!desk_fade.owed(desk_palette.Variant, self.paneStyle() == .elevated, App.clientAreaAnimationsEnabled(), leaving, self.desk_variant)) return;
+    self.desk_fade_from = leaving;
+    self.desk_fade_t0_ms = std.time.milliTimestamp();
+    self.desk_fades_started +%= 1;
+    self.desk_fade_last_keep = 255;
+    self.pane_desk.fade = .{ .from = leaving, .keep = 255 };
+    log.info("workspace shade fade from={d} to={d}", .{ if (leaving) |v| v.seed else 0, if (self.desk_variant) |v| v.seed else 0 });
+}
+
+/// Drop the crossfade: the desk is this workspace's own gradient again.
+fn endDeskFade(self: *Window) void {
+    self.desk_fade_from = null;
+    self.pane_desk.fade = null;
+}
+
+/// One frame of the crossfade: the old desk at what is left of it, the desk
+/// and the sidebar's slice of it repainted. The last frame drops it and
+/// repaints the whole window, glass washes included (`setDeskVariant`'s
+/// refresh), since the panes over the desk may carry slices of it.
+fn deskFadeTick(self: *Window) void {
+    const hwnd = self.hwnd orelse return;
+    const from = self.desk_fade_from orelse {
+        FrameClock.disarm(hwnd, DESK_FADE_TIMER_ID);
+        return;
+    };
+    const k = desk_fade.keep(std.time.milliTimestamp() - self.desk_fade_t0_ms) orelse {
+        FrameClock.disarm(hwnd, DESK_FADE_TIMER_ID);
+        self.endDeskFade();
+        log.info("workspace shade fade done frames={d}", .{self.desk_fade_frames});
+        _ = w32.InvalidateRect(hwnd, null, 0);
+        if (self.sidebar) |sb| sb.repaint();
+        if (self.paneGlass()) self.updateDimOverlays();
+        return;
+    };
+    if (k == self.desk_fade_last_keep and self.pane_desk.desk_fade != null) return;
+    self.desk_fade_last_keep = k;
+    self.pane_desk.fade = .{ .from = from, .keep = k };
+    self.desk_fade_frames +%= 1;
+    self.repaintPaneDesk();
+    if (self.sidebar) |sb| sb.repaint();
+}
+
 fn repaintPaneDesk(self: *Window) void {
     if (self.closing) return;
     if (self.paneStyle() != .elevated) return;
@@ -23135,6 +23207,10 @@ pub fn windowWndProc(
             }
             if (wparam == FOCUS_GLOW_TIMER_ID) {
                 window.focusGlowTick();
+                return 0;
+            }
+            if (wparam == DESK_FADE_TIMER_ID) {
+                window.deskFadeTick();
                 return 0;
             }
             if (wparam == BUSY_LIGHT_TIMER_ID) {
