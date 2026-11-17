@@ -1,0 +1,23 @@
+{
+  "version": "1.55.4",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "Single-window mode: closing a workspace now hands the same window to the one shown before it." },
+        { "text": "Single-window mode: +list now names every workspace, and focusing a parked one switches to it." },
+        { "text": "Single-window mode: a parked workspace waiting on a question now asks for attention, and the window reports the most urgent workspace." },
+        { "text": "Single-window mode: a workspace you switched away from now draws nothing, and catches up at once when shown." },
+        { "text": "Single-window mode: a workspace you are not looking at is kept at the window's size, so it is ready the moment you switch to it." },
+        { "text": "Single-window mode: a new window opened by hand comes up inside the one window, and switching to a workspace puts the cursor in its pane before anything is drawn." },
+        { "text": "Single-window mode: a new tab opens a workspace, the go-to-tab keys walk the workspaces in sidebar order, and a workspace shows no tab strip." },
+        { "text": "Single-window mode: a relaunch brings every workspace back inside the one window, with the one you were looking at on show." },
+        { "text": "Single-window mode: a saved window with several tabs comes back as one workspace per tab." },
+        { "text": "Single-window mode: switching workspaces fades the window's gradient from the old workspace's to the new one's." },
+        { "text": "Single-window mode: a click in the sidebar's all-windows list switches workspaces, and the one switched to keeps the sidebar you set." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "A pane's banner and other popups now move with it to its new window, so closing the window it left no longer destroys them." }
+      ] }
+  ]
+}
