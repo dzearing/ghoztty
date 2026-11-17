@@ -7489,7 +7489,9 @@ fn adoptPane(view: *PaneView, dest: *Window) void {
     // The destination may be on a monitor with a different DPI, and a child
     // window is never sent `WM_DPICHANGED` - the same reason a window dragged
     // between monitors has it forwarded (T1579) rather than waiting to be told.
-    if (view.surface()) |surf| surf.handleDpiChange(null);
+    // A parked destination's panes sit under the park host on the primary
+    // monitor, so they take the workspace's scale rather than that DPI (T3203).
+    if (view.surface()) |surf| surf.handleDpiChange(window_broadcast.adoptDpi(dest.hwnd == null, dest.scale));
 }
 
 // ---- Single-window mode: the shared HWND hand-off (T3191) -----------------

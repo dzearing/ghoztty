@@ -49,6 +49,57 @@ pub fn actionFor(event: Event, kind: PaneKind) Action {
     };
 }
 
+/// The scale a new terminal pane is born at (T3203). A pane in a window reads
+/// its own HWND's DPI, which is the monitor that window is on. A pane born in
+/// a PARKED workspace (single-window mode, T3191) has no window: its HWND is a
+/// child of the app's park host, a 1x1 popup at 0,0 - the primary monitor - so
+/// its DPI answers a question nobody asked. The workspace was laid out at the
+/// shared window's size and took that window's scale (T3193), so the pane takes
+/// the workspace's scale: the one it will be shown at, which keeps its grid
+/// from reflowing when it is first shown on a monitor of another scale. Mac
+/// does the same: a parked terminal keeps the backing scale of its window.
+/// `own_dpi` of 0 means the read failed, which keeps `current`.
+pub fn initialScale(parked: bool, workspace_scale: f32, own_dpi: u32, current: f32) f32 {
+    if (parked and workspace_scale > 0) return workspace_scale;
+    if (own_dpi == 0) return current;
+    return scaleFromDpi(own_dpi);
+}
+
+/// The DPI to hand `Surface.handleDpiChange` when a pane moves into a window
+/// (T3203): null re-reads the pane's own HWND, which is right for a window on
+/// a monitor, and wrong for a PARKED workspace, whose panes sit under the park
+/// host on the primary monitor. There the workspace's scale is the answer.
+pub fn adoptDpi(parked: bool, workspace_scale: f32) ?u32 {
+    if (!parked or workspace_scale <= 0) return null;
+    return @intFromFloat(@round(workspace_scale * 96.0));
+}
+
+test "a pane moved into a parked workspace takes that workspace's DPI (T3203)" {
+    try std.testing.expectEqual(@as(?u32, 144), adoptDpi(true, 1.5));
+    try std.testing.expectEqual(@as(?u32, 120), adoptDpi(true, 1.25));
+    try std.testing.expectEqual(@as(?u32, null), adoptDpi(false, 1.5));
+    try std.testing.expectEqual(@as(?u32, null), adoptDpi(true, 0));
+    // Round-trips through the scale a forwarded WM_DPICHANGED would set.
+    try std.testing.expectEqual(@as(f32, 1.5), scaleFromDpi(adoptDpi(true, 1.5).?));
+}
+
+test "a pane born parked takes its workspace's scale, not the park host's DPI (T3203)" {
+    // Shared window on a 150% monitor, park host on the 100% primary.
+    try std.testing.expectEqual(@as(f32, 1.5), initialScale(true, 1.5, 96, 1.0));
+    // And the other way round.
+    try std.testing.expectEqual(@as(f32, 1.0), initialScale(true, 1.0, 144, 1.0));
+}
+
+test "a pane born in a window reads its own DPI (T3203)" {
+    try std.testing.expectEqual(@as(f32, 1.5), initialScale(false, 1.0, 144, 1.0));
+    try std.testing.expectEqual(@as(f32, 2.0), initialScale(false, 1.25, 192, 1.0));
+}
+
+test "a failed DPI read keeps the current scale, and a parked workspace with no scale falls back to the read (T3203)" {
+    try std.testing.expectEqual(@as(f32, 1.25), initialScale(false, 1.0, 0, 1.25));
+    try std.testing.expectEqual(@as(f32, 1.5), initialScale(true, 0, 144, 1.0));
+}
+
 /// The new DPI a `WM_DPICHANGED` carries. X and Y are always equal on Windows
 /// and the docs say to read LOWORD; a zero is not a DPI, so it is refused
 /// rather than turned into a scale of 0.

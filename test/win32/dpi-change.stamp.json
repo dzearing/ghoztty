@@ -1,14 +1,13 @@
 {
     "guard":  "dpi-change",
     "script":  "test/win32/dpi-change.ps1",
-    "generated":  "2026-09-25T10:40:21-07:00",
-    "commit":  "390336956",
+    "generated":  "2026-11-17T11:56:28-08:00",
+    "commit":  "e87393fb5",
     "uncommitted":  [
-                        "src/apprt/win32/window_broadcast.zig",
-                        "test/win32/dpi-change.ps1"
+                        "src/apprt/win32/window_broadcast.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/window_broadcast.zig":  "9aaf66d945d0899628ede661e9e40f04f55551342659448b62aee06b979b1e4e",
+                  "src/apprt/win32/window_broadcast.zig":  "fc5995714ac90f0cd549c8ab3466748b2cc43bb47593ba01e439c358a8f0b054",
                   "test/win32/dpi-change.ps1":  "ee556618b3c43764809203b4fa3d7da1cabb4135cdcba0d7e4bd8dabc4d54733"
               }
 }

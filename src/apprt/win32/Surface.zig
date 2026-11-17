@@ -1036,8 +1036,15 @@ fn initOnce(
         self.hglrc = null;
     }
 
-    // Query the initial DPI and size
-    self.updateDpiScale();
+    // Query the initial DPI and size. A pane born in a parked workspace sits
+    // under the park host on the primary monitor, so it takes the scale of the
+    // window its workspace will be shown in instead (T3203).
+    self.scale = window_broadcast.initialScale(
+        parent.hwnd == null,
+        parent.scale,
+        w32.GetDpiForWindow(hwnd),
+        self.scale,
+    );
     self.updateClientSize();
 
     log.debug("Win32 surface created: {}x{} scale={d:.2}", .{
