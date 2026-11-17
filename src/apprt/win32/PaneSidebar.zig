@@ -6976,6 +6976,9 @@ fn raiseGroup(self: *PaneSidebar, g: Group) void {
         if (tabKey(w, t) == g.key) break t;
     } else return;
     log.info("pane sidebar raise window tab={d} active={d}", .{ tab, w.active_tab });
+    // A parked workspace (single-window mode, T3182): the switch tears this
+    // sidebar down, so it waits for this click's handler to return.
+    if (w.app.workspaces.isParked(w)) return w.app.showWorkspaceLater(w, null);
     IpcHandlers.focusTarget(.{ .window = w });
     if (tab != w.active_tab) w.selectTabIndex(tab);
 }
@@ -6991,6 +6994,11 @@ fn focusForeign(self: *PaneSidebar, e: Entry) void {
     // window comes forward.
     self.clicked = e.pane;
     self.signature = 0;
+    // A parked workspace (T3182): as `raiseGroup`, the switch waits.
+    if (e.window.app.workspaces.isParked(e.window)) {
+        self.refresh();
+        return e.window.app.showWorkspaceLater(e.window, e.pane);
+    }
     IpcHandlers.focusTarget(.{ .pane = e.pane });
     self.refresh();
 }

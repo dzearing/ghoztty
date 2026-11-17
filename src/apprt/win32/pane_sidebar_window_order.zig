@@ -460,8 +460,58 @@ pub fn stepped(count: usize, at: ?usize, step: Step) ?usize {
     };
 }
 
+/// `goto_tab`'s raw values (`apprt.action.GotoTab`): negative sentinels, else
+/// a 1-indexed position.
+pub const goto_previous: c_int = -1;
+pub const goto_next: c_int = -2;
+pub const goto_last: c_int = -3;
+
+/// Where `goto_tab` lands in single-window mode (T3182; Mac
+/// `TerminalController.onGotoTab` over `sidebarOrder`): the workspaces in the
+/// all-windows list's order are the tabs. previous/next step one along and
+/// wrap; last is the last; N is the Nth, and past the end the last (the
+/// tab strip's own rule). Null when there is nowhere to go - an empty list,
+/// a position below 1, or the one already on show.
+pub fn gotoTab(count: usize, at: ?usize, raw: c_int) ?usize {
+    if (count == 0) return null;
+    const to: usize = switch (raw) {
+        goto_previous => return stepped(count, at, .previous),
+        goto_next => return stepped(count, at, .next),
+        goto_last => count - 1,
+        else => blk: {
+            if (raw < 1) return null;
+            break :blk @min(@as(usize, @intCast(raw)) - 1, count - 1);
+        },
+    };
+    if (at) |a| if (a == to) return null;
+    return to;
+}
+
 // ---------------------------------------------------------------------------
 // Tests (Mac `PaneSidebarWindowOrderTests`, `PaneSidebarItemReorderTests`)
+
+test "T3182: goto_tab walks the workspaces in the list's order" {
+    // previous/next wrap like goto_window.
+    try testing.expectEqual(@as(?usize, 1), gotoTab(3, 0, goto_next));
+    try testing.expectEqual(@as(?usize, 0), gotoTab(3, 2, goto_next));
+    try testing.expectEqual(@as(?usize, 2), gotoTab(3, 0, goto_previous));
+    // last, and N (1-indexed, clamped to the last).
+    try testing.expectEqual(@as(?usize, 2), gotoTab(3, 0, goto_last));
+    try testing.expectEqual(@as(?usize, 0), gotoTab(3, 2, 1));
+    try testing.expectEqual(@as(?usize, 1), gotoTab(3, 0, 2));
+    try testing.expectEqual(@as(?usize, 2), gotoTab(3, 0, 8));
+}
+
+test "T3182: goto_tab to where it already is, or nowhere, goes nowhere" {
+    try testing.expectEqual(@as(?usize, null), gotoTab(0, null, 1));
+    try testing.expectEqual(@as(?usize, null), gotoTab(3, 0, 1));
+    try testing.expectEqual(@as(?usize, null), gotoTab(3, 2, goto_last));
+    try testing.expectEqual(@as(?usize, null), gotoTab(1, 0, goto_next));
+    try testing.expectEqual(@as(?usize, null), gotoTab(3, 1, 0));
+    try testing.expectEqual(@as(?usize, null), gotoTab(3, 1, -7));
+    // From outside the list a position still lands.
+    try testing.expectEqual(@as(?usize, 0), gotoTab(3, null, 1));
+}
 
 test "T3132: goto_window steps one along the list and wraps at both ends" {
     try testing.expectEqual(@as(?usize, 1), stepped(3, 0, .next));

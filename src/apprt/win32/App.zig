@@ -217,6 +217,11 @@ const WM_APP_QUIET_CLOSE: u32 = w32.WM_APP + 42;
 /// (+43 is FrameClock's, +44 QuickTerminalSlider's.)
 const WM_APP_FORCE_CLOSE: u32 = w32.WM_APP + 45;
 
+/// Posted to `msg_hwnd` by `showWorkspaceLater` (T3182): put the workspace a
+/// pane-sidebar click asked for on show, once that click's handler returned.
+/// (+46/+47 are ViewerPane's.)
+const WM_APP_SHOW_WORKSPACE: u32 = w32.WM_APP + 48;
+
 /// Ceiling on agent restarts spent chasing the bundled build in one app run
 /// (T147). Two: one for the ordinary "the binary was swapped under us" case,
 /// one spare for a restart that raced something, and no third because a third
@@ -546,6 +551,10 @@ quiet_close_count: usize = 0,
 /// dereferenced, before use.
 force_closes: [8]ForceClose = undefined,
 force_close_count: usize = 0,
+
+/// The workspace a pane-sidebar click asked to put on show, waiting for
+/// `WM_APP_SHOW_WORKSPACE` (T3182). Re-checked, never dereferenced, before use.
+pending_show: ?PendingShow = null,
 
 /// The HINSTANCE for this module.
 hinstance: w32.HINSTANCE,
@@ -7979,6 +7988,87 @@ pub fn showWorkspace(self: *App, target: *Window) bool {
     }
 }
 
+/// New Window from `parent` (null: no window asked): the `new_window` action,
+/// and in single-window mode `new_tab` too (T3182, Mac `newTab`: a new tab is
+/// a new workspace). T68: from a REMOTE window it opens on the SAME machine
+/// (fresh dial, inherited command/cwd - Mac `newWindowInheritingRemote`), and
+/// a failed re-dial says so instead of silently opening a local window the
+/// user would mistake for the remote one. A forced-opaque parent's new window
+/// starts opaque too (upstream e5c31e8b3, #11583), and a window opened by
+/// hand gets its own gradient (T1832).
+pub fn newWindowFrom(self: *App, parent: ?*Window) void {
+    if (parent) |pw| if (pw.remote_machine != null) {
+        _ = self.openRemoteWindowFrom(pw, .{
+            .desk_variant = self.newWindowDeskVariant(),
+        }) catch |err| {
+            log.warn("new window on remote parent failed err={}", .{err});
+            self.showRemoteOpenFailed(pw, err);
+        };
+        return;
+    };
+    _ = self.createWindow(.{
+        .force_opaque = if (parent) |pw| pw.isForcedOpaque() else false,
+        .desk_variant = self.newWindowDeskVariant(),
+    }) catch |err| {
+        log.err("failed to create new window err={}", .{err});
+    };
+}
+
+/// `goto_tab` in single-window mode (T3182; Mac `onGotoTab` over
+/// `sidebarOrder`): there are no tabs, so previous/next/last/N walk the
+/// workspaces in the pane sidebar's all-windows order, and going to one puts
+/// it on show. `raw` is `apprt.action.GotoTab`'s value. Returns whether a
+/// workspace other than `window` was put on show.
+pub fn gotoWorkspaceTab(self: *App, window: *Window, raw: c_int) bool {
+    var order: [pane_sidebar.max_heads]PaneSidebar.TabRef = undefined;
+    const n = PaneSidebar.allWindowsOrder(self, &order);
+    const at: ?usize = for (order[0..n], 0..) |r, i| {
+        if (r.window == window) break i;
+    } else null;
+    const to = pane_sidebar_window_order.gotoTab(n, at, raw) orelse {
+        log.info("goto_tab {d} over workspaces: nowhere else to go ({d} listed)", .{ raw, n });
+        return false;
+    };
+    const dest = order[to].window;
+    log.info("goto_tab {d} over workspaces: {d} -> {d} of {d} name={s}", .{ raw, at orelse n, to, n, dest.ipc_name orelse "?" });
+    IpcHandlers.focusTarget(.{ .window = dest });
+    return true;
+}
+
+/// Put a PARKED workspace on show on the next loop turn rather than now
+/// (T3182): a click on its row in the pane sidebar's all-windows list. The
+/// hand-off destroys the sidebar of the workspace that surrenders the window
+/// - the very sidebar whose window procedure is handling the click - so the
+/// switch waits for that procedure to return. The latest request wins.
+/// Pointers are re-checked before use, never trusted.
+pub fn showWorkspaceLater(self: *App, window: *Window, pane: ?*PaneView) void {
+    const first = self.pending_show == null;
+    self.pending_show = .{ .window = window, .pane = pane };
+    if (!first) return;
+    const msg = self.msg_hwnd orelse {
+        self.performPendingShow();
+        return;
+    };
+    if (w32.PostMessageW(msg, WM_APP_SHOW_WORKSPACE, 0, 0) == 0) self.performPendingShow();
+}
+
+pub const PendingShow = struct { window: *Window, pane: ?*PaneView };
+
+fn performPendingShow(self: *App) void {
+    const req = self.pending_show orelse return;
+    self.pending_show = null;
+    // Asked again: the workspace (or the pane) may have closed meanwhile.
+    if (!self.hasWindow(req.window) or req.window.closing) return;
+    log.info("workspace switch from the sidebar name={s}", .{req.window.ipc_name orelse "?"});
+    if (req.pane) |p| {
+        if (req.window.tabIndexOfPane(p) != null) {
+            IpcHandlers.focusTarget(.{ .pane = p });
+            return;
+        }
+    }
+    IpcHandlers.focusTarget(.{ .window = req.window });
+}
+
 /// Lay every PARKED workspace out at the shared window's current size (T3193;
 /// Mac `WorkspaceHost.windowDidResize` -> `layoutParkedContent`): run once a
 /// resize of the shared window has settled, so each is ready when shown. The
@@ -9455,42 +9545,10 @@ pub fn performAction(
         },
 
         .new_window => {
-            // T68: New Window on a focused REMOTE window opens on the SAME
-            // machine (fresh dial, inherited command/cwd — the Mac
-            // newWindowInheritingRemote analog). A failed re-dial shows an
-            // error dialog instead of silently opening a local window the
-            // user would mistake for the remote one.
-            const parent_window: ?*Window = switch (target) {
+            self.newWindowFrom(switch (target) {
                 .app => null,
                 .surface => |cs| cs.rt_surface.parent_window,
-            };
-            if (parent_window) |pw| {
-                if (pw.remote_machine != null) {
-                    _ = self.openRemoteWindowFrom(pw, .{
-                        .desk_variant = self.newWindowDeskVariant(),
-                    }) catch |err| {
-                        log.warn("new window on remote parent failed err={}", .{err});
-                        self.showRemoteOpenFailed(pw, err);
-                    };
-                    return true;
-                }
-            }
-
-            // Inherit opacity-toggle state from the parent window: if the
-            // user toggled it to opaque via toggle_background_opacity, the
-            // new window should start opaque too. Mirrors macOS behavior
-            // from upstream e5c31e8b3 (#11583).
-            const force_opaque: bool = switch (target) {
-                .app => false,
-                .surface => |cs| cs.rt_surface.parent_window.isForcedOpaque(),
-            };
-
-            _ = self.createWindow(.{
-                .force_opaque = force_opaque,
-                .desk_variant = self.newWindowDeskVariant(),
-            }) catch |err| {
-                log.err("failed to create new window err={}", .{err});
-            };
+            });
             return true;
         },
 
@@ -9757,12 +9815,7 @@ pub fn performAction(
             // Add a new tab to the parent window of the focused surface.
             switch (target) {
                 .app => {},
-                .surface => |core_surface| {
-                    const parent = core_surface.rt_surface.parent_window;
-                    _ = parent.addTab() catch |err| {
-                        log.err("failed to add new tab err={}", .{err});
-                    };
-                },
+                .surface => |core_surface| core_surface.rt_surface.parent_window.newTab(),
             }
             return true;
         },
@@ -9783,7 +9836,7 @@ pub fn performAction(
             switch (target) {
                 .app => {},
                 .surface => |core_surface| {
-                    _ = core_surface.rt_surface.parent_window.selectTab(value);
+                    _ = core_surface.rt_surface.parent_window.gotoTab(value);
                 },
             }
             return true;
@@ -14254,6 +14307,10 @@ fn msgWndProc(
     }
     if (msg == WM_APP_FORCE_CLOSE) {
         app.performForceCloses();
+        return 0;
+    }
+    if (msg == WM_APP_SHOW_WORKSPACE) {
+        app.performPendingShow();
         return 0;
     }
 

@@ -15,7 +15,7 @@
 //!   -> {"success":true,"data":{"mode":"single","active":"window-1",
 //!        "shown":true,"windows_with_hwnd":1,"activity":"idle",
 //!        "workspaces":[{"name":"window-1","parked":false,"hwnd":1234,
-//!                       "tabs":1,"panes":1,"activity":"idle",
+//!                       "tabs":1,"tab_bar":false,"panes":1,"activity":"idle",
 //!                       "presenting":1,"holding_targets":1,
 //!                       "overlays_shown":0}, ...]}}
 //! ```
@@ -172,6 +172,9 @@ fn stateResponse(app: *App, alloc: Allocator, shown: ?bool) Allocator.Error![]u8
             jws.write(if (w.hwnd) |h| @intFromPtr(h) else 0) catch break :write;
             jws.objectField("tabs") catch break :write;
             jws.write(w.tab_count) catch break :write;
+            // Whether its tab strip is showing (T3182: never, for a workspace).
+            jws.objectField("tab_bar") catch break :write;
+            jws.write(w.tab_bar_visible) catch break :write;
             jws.objectField("panes") catch break :write;
             jws.write(paneCount(w)) catch break :write;
             // Its own activity, which never pauses while parked (T3186).

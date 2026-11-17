@@ -18105,9 +18105,7 @@ pub fn performViewerBindingAction(
             };
         },
 
-        .new_tab => _ = self.addTab() catch |err| {
-            log.err("viewer chord: new tab failed err={}", .{err});
-        },
+        .new_tab => self.newTab(),
 
         .close_surface => self.closeSplitPane(pane),
         .close_tab => |mode| self.closeTabMode(switch (mode) {
@@ -18125,7 +18123,7 @@ pub fn performViewerBindingAction(
         .previous_tab => _ = self.selectTab(.previous),
         .next_tab => _ = self.selectTab(.next),
         .last_tab => _ = self.selectTab(.last),
-        .goto_tab => |n| _ = self.selectTab(@enumFromInt(n)),
+        .goto_tab => |n| _ = self.gotoTab(@enumFromInt(n)),
         .move_tab => |amount| self.moveTab(amount),
 
         .new_split => |direction| {
@@ -18365,6 +18363,33 @@ fn paneCwd(source: *Surface, alloc: Allocator) ?[]const u8 {
 }
 
 /// Navigate to a tab by GotoTab target (previous, next, last, or index).
+/// Whether this window is a single-window-mode workspace (T3182): it has
+/// no tabs of its own - a new tab is a new workspace, and `goto_tab` walks
+/// the workspaces.
+pub fn isWorkspace(self: *const Window) bool {
+    return self.app.workspaces.manages(@constCast(self));
+}
+
+/// The `new_tab` action, the strip's + and its menu (T3182, Mac `newTab`):
+/// a tab of this window, or in single-window mode a new workspace, which a
+/// manual open puts on show.
+pub fn newTab(self: *Window) void {
+    if (self.isWorkspace()) {
+        log.info("new_tab opens a workspace", .{});
+        return self.app.newWindowFrom(self);
+    }
+    _ = self.addTab() catch |err| {
+        log.err("failed to create new tab: {}", .{err});
+    };
+}
+
+/// The `goto_tab` action (T3182): this window's tabs, or in single-window
+/// mode the workspaces in the all-windows list's order.
+pub fn gotoTab(self: *Window, target: apprt.action.GotoTab) bool {
+    if (self.isWorkspace()) return self.app.gotoWorkspaceTab(self, @intFromEnum(target));
+    return self.selectTab(target);
+}
+
 pub fn selectTab(self: *Window, target: apprt.action.GotoTab) bool {
     if (self.tab_count <= 1) return false;
     const idx: usize = switch (target) {
@@ -18890,11 +18915,17 @@ pub const TabBarInputs = struct {
     custom_caption: bool,
     is_quick_terminal: bool = false,
     rearrange_mode: bool = false,
+    /// A single-window-mode workspace (T3182): it has no tabs to show.
+    workspace: bool = false,
 };
 
 /// Whether the tab strip should be showing, given everything that has a say.
 pub fn tabBarShouldShow(in: TabBarInputs) bool {
     if (in.is_quick_terminal) return false;
+    // A workspace has one tab, always (Mac: no native tabs in single mode,
+    // `tabbingMode = .disallowed`), and its rearrange drop targets are the
+    // sidebar's - except where the strip is the only menu host (no caption).
+    if (in.workspace) return !in.custom_caption;
     return switch (in.show_config) {
         .always => true,
         // `auto` means "show the strip when it has something to show", which
@@ -18932,6 +18963,7 @@ fn updateTabBarVisibility(self: *Window) void {
         .custom_caption = self.customCaption(),
         .is_quick_terminal = self.is_quick_terminal,
         .rearrange_mode = self.rearrange_mode,
+        .workspace = self.isWorkspace(),
     });
     if (should_show != self.tab_bar_visible) {
         self.tab_bar_visible = should_show;
@@ -21221,10 +21253,7 @@ fn handleTabBarClick(self: *Window, x: i16, y: i16) void {
 
     // Check new-tab button.
     if (x >= self.new_tab_rect.left and x < self.new_tab_rect.right) {
-        _ = self.addTab() catch |err| {
-            log.err("failed to create new tab: {}", .{err});
-            return;
-        };
+        self.newTab();
         return;
     }
 
@@ -21826,11 +21855,7 @@ fn handleTabBarRightClick(self: *Window, x: i16, y: i16) void {
                 }
             }
         },
-        TAB_CTX_NEW_TAB => {
-            _ = self.addTab() catch |err| {
-                log.err("failed to create new tab: {}", .{err});
-            };
-        },
+        TAB_CTX_NEW_TAB => self.newTab(),
         else => |c| {
             if (c >= TAB_CTX_COLOR_BASE and c < TAB_CTX_COLOR_BASE + tab_color.count) {
                 if (clicked_tab) |tab| {
@@ -23905,6 +23930,22 @@ test "T1524: rearrange mode forces the tab strip, and only while it is on" {
         .custom_caption = true,
         .is_quick_terminal = true,
         .rearrange_mode = true,
+    }));
+
+    // T3182: a single-window-mode workspace has no tabs to show, whatever
+    // the config or the mode says - unless the strip is its only menu host.
+    try std.testing.expect(!tabBarShouldShow(.{
+        .show_config = .always,
+        .tab_count = 1,
+        .custom_caption = true,
+        .rearrange_mode = true,
+        .workspace = true,
+    }));
+    try std.testing.expect(tabBarShouldShow(.{
+        .show_config = .never,
+        .tab_count = 1,
+        .custom_caption = false,
+        .workspace = true,
     }));
 
     // And nothing about the ordinary answers moved.

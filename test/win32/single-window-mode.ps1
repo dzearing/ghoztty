@@ -36,6 +36,10 @@
 # G (T3194): opening a window by hand opens a workspace on show in the
 #   shared window - Ctrl+N and a pane popped out of its window - and the
 #   adopter puts the caret on its own focused pane before its first layout.
+# H (T3182): a workspace has no tabs - its strip stays off even with
+#   window-show-tab-bar = always, Ctrl+T (new_tab) opens a workspace on show,
+#   and goto_tab (Ctrl+1 / Ctrl+9 / next / previous) walks the workspaces in
+#   the pane sidebar's all-windows order, putting each on show.
 #
 # THE ORACLE IS THE LATCH AND THE FILE. The mode the app runs in is a decision
 # invisible in pixels (until T3181 gives it a window to act on), so it is read
@@ -122,7 +126,9 @@ function Start-App([string]$label) {
             Exe       = $exe
             # Rearrange mode on a chord for section F's pop-out (T3194).
             Arguments = @('--session-persistence=false', '--background=#101014',
-                '--keybind=ctrl+shift+f9=toggle_rearrange_mode')
+                '--keybind=ctrl+shift+f9=toggle_rearrange_mode',
+                # Section H's tab walk (T3182) on chords the test can type.
+                '--keybind=ctrl+shift+f7=next_tab', '--keybind=ctrl+shift+f8=previous_tab')
         }
         if (-not $ExePath) { $sp.StdErr = $errlog }
         $a = Start-OnTestDesktop @sp
@@ -225,7 +231,9 @@ try {
     # =====================================================================
     Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
     Kill-RepoInstances
-    [System.IO.File]::WriteAllText($cfgFile, "macos-window-mode = single`n")
+    # The strip asked for always, so section H's "a workspace shows no tab
+    # strip" (T3182) is the mode's doing and not `auto` at one tab.
+    [System.IO.File]::WriteAllText($cfgFile, "macos-window-mode = single`nwindow-show-tab-bar = always`n")
     $app = Start-App 'launch 4 (single)'
     if (-not $app) { exit 1 }
 
@@ -869,6 +877,79 @@ try {
     }
     $ws = Wait-Ws { param($s) $s -and @($s.data.workspaces).Count -eq 1 }
     Assert (@($ws.data.workspaces).Count -eq 1) "G: back to one workspace for C4 ($(@($ws.data.workspaces).Count))"
+
+    # =====================================================================
+    # H (T3182): no tabs in a workspace. new_tab is a new workspace, and
+    # goto_tab walks the workspaces in the all-windows list's order (the
+    # app's own `goto_tab ... over workspaces` line names the order index).
+    # =====================================================================
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    $h0 = [string]$ws.data.active
+    $r0 = Ws-Row $ws $h0
+    Assert ($r0 -and [int]$r0.tabs -eq 1 -and $r0.tab_bar -eq $false) "H0: the workspace on show has one tab and no strip under window-show-tab-bar=always (tabs=$($r0.tabs) tab_bar=$($r0.tab_bar))"
+    function H-Key([string[]]$mods, [string]$key) {
+        [void](Set-TestActiveWindow -Window ([IntPtr]$shared))
+        Start-Sleep -Milliseconds 250
+        return (Send-TestKeys -Window ([IntPtr]$shared) -Target ([IntPtr](Focused-Pane)) -Modifiers $mods -Key $key)
+    }
+    # H1: Ctrl+T (new_tab) twice: two workspaces, each on show as it opens.
+    $made = @($h0)
+    foreach ($k in 1..2) {
+        $before = @((Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')).data.workspaces).Count
+        Assert (H-Key @('ctrl') 'T') "H1.$($k): Ctrl+T delivered"
+        $ws = Wait-Ws { param($s) $s -and @($s.data.workspaces).Count -eq ($before + 1) }
+        $nn = [string]$ws.data.active
+        $nr = Ws-Row $ws $nn
+        Assert (@($ws.data.workspaces).Count -eq ($before + 1) -and $made -notcontains $nn) "H1.$($k): new_tab made a workspace and put it on show (active='$nn', $(@($ws.data.workspaces).Count))"
+        Assert ($nr -and [int64]$nr.hwnd -eq $shared -and [int]$nr.tabs -eq 1 -and $nr.tab_bar -eq $false) "H1.$($k): in the SAME window, one tab, no strip (hwnd=$($nr.hwnd) tabs=$($nr.tabs) tab_bar=$($nr.tab_bar))"
+        $pr = Ws-Row $ws $made[-1]
+        Assert ($pr -and $pr.parked -and [int]$pr.tabs -eq 1) "H1.$($k): the one it left is parked, still one tab - no tab was added to it (tabs=$($pr.tabs))"
+        $made += $nn
+    }
+    $tops = @(Visible-Tops)
+    Assert ($tops.Count -eq 1 -and $tops[0].Hwnd -eq $shared) "H1: one window on screen ($($tops.Count))"
+
+    # H2: goto_tab walks them. Ctrl+1 goes to the first in the list's order,
+    # Ctrl+9 (last_tab) to the last, next/previous step and wrap. Each
+    # landing is read back from the app's own line and the seam.
+    function H-Goto([string[]]$mods, [string]$key, [string]$label) {
+        $mark = Log-Count
+        Assert (H-Key $mods $key) "$($label): chord delivered"
+        $line = Wait-LogLine $mark 'goto_tab -?\d+ over workspaces: '
+        Start-Sleep -Milliseconds 400
+        $s = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+        return @{ Line = [string]$line; Active = [string]$s.data.active; State = $s }
+    }
+    if ($ExePath) {
+        Assert $true 'H2: skipped (no log under -ExePath)'
+    } else {
+        $g = H-Goto @('ctrl') '1' 'H2 Ctrl+1'
+        Assert ($g.Line -match 'goto_tab 1 over workspaces: (\d+ -> 0 of 3|nowhere else to go \(3 listed\))') "H2: Ctrl+1 is goto_tab over the workspaces, landing on the list's first ($($g.Line))"
+        $listFirst = $g.Active
+        $g = H-Goto @('ctrl') '9' 'H2 Ctrl+9'
+        $okLast = ($g.Line -match 'goto_tab -3 over workspaces: \d+ -> 2 of 3 name=(\S+)') -and $g.Active -eq $Matches[1]
+        Assert $okLast "H2: Ctrl+9 (last_tab) puts the list's last on show (active='$($g.Active)'; $($g.Line))"
+        $listLast = $g.Active
+        Assert ($listLast -ne $listFirst) "H2: first and last are different workspaces ($listFirst / $listLast)"
+        $g = H-Goto @('ctrl', 'shift') 'F7' 'H2 next'
+        Assert ($g.Line -match 'goto_tab -2 over workspaces: 2 -> 0 of 3' -and $g.Active -eq $listFirst) "H2: next from the last wraps to the first (active='$($g.Active)'; $($g.Line))"
+        $g = H-Goto @('ctrl', 'shift') 'F8' 'H2 previous'
+        Assert ($g.Line -match 'goto_tab -1 over workspaces: 0 -> 2 of 3' -and $g.Active -eq $listLast) "H2: previous from the first wraps to the last (active='$($g.Active)'; $($g.Line))"
+        $g = H-Goto @('ctrl', 'shift') 'F8' 'H2 previous again'
+        $okMid = ($g.Line -match 'goto_tab -1 over workspaces: 2 -> 1 of 3 name=(\S+)') -and $g.Active -eq $Matches[1]
+        Assert ($okMid -and $g.Active -ne $listFirst -and $g.Active -ne $listLast) "H2: previous again is the middle one (active='$($g.Active)'; $($g.Line))"
+        $sh = Ws-Row $g.State $g.Active
+        Assert ($sh -and [int64]$sh.hwnd -eq $shared -and [int]$g.State.data.windows_with_hwnd -eq 1) "H2: each landing is the SAME window, one HWND held (windows_with_hwnd=$($g.State.data.windows_with_hwnd))"
+        $panes = @(Shared-Panes)
+        Assert ($panes.Count -eq 1) "H2: the window shows only the one on show's pane ($($panes.Count))"
+    }
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'H: no crash'
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    foreach ($n in @($ws.data.workspaces | ForEach-Object { [string]$_.name } | Select-Object -Skip 1)) {
+        [void](Invoke-GhozttyIpc -Action 'close' -Arguments @("--target=$n", '--force'))
+    }
+    $ws = Wait-Ws { param($s) $s -and @($s.data.workspaces).Count -eq 1 }
+    Assert (@($ws.data.workspaces).Count -eq 1) "H: back to one workspace for C4 ($(@($ws.data.workspaces).Count))"
 
     # C4: the last workspace's close closes the window.
     [void](Send-TestSysCommand -Window ([IntPtr]$shared) -Command 'close')
