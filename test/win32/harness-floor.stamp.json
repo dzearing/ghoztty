@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-16T18:41:06-08:00",
-    "commit":  "dd8e1fda6",
+    "generated":  "2026-11-16T19:29:39-08:00",
+    "commit":  "be486585f",
     "uncommitted":  [
-                        "test/win32/single-window-mode.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -587,7 +587,7 @@
                   "test/win32/verify-release-clean.ps1":  "756fee5cbd0b8a1ad8d3d01987658087b62efb6dd8327de4cb9aef10d5107dd3",
                   "test/win32/viewer-close.ps1":  "db3dc1453f6d49be9669b5cd739d9a765b2c53c21826ec41352b70cbe25d8e3b",
                   "test/win32/viewer-composer.ps1":  "884e11cadc3a85a60b400e48522b2c7c5e7ddad28d3f8e039338c62197eded23",
-                  "test/win32/viewer-diff.ps1":  "432e3279ef54e088498f7e1fe0c9922e941f188ab83b6a8a3fd0d9f2c9172730",
+                  "test/win32/viewer-diff.ps1":  "cc23218d9edb84d62274a35372c68c73be6d17617717bd6727511a3489b5ba62",
                   "test/win32/viewer-diff-tree.ps1":  "88025654dcd8819678596bfcd043f45a0e14dbb3ef2057abb99eed9a09474f82",
                   "test/win32/viewer-error-card.ps1":  "f8015c9f4ae53bf6ed0daa8f079cc1c8618b8841ca7da22dc40832e65f01a3c9",
                   "test/win32/viewer-feedback.ps1":  "a27afcc98a135b5f5e6ae9259d6ee57b11ea3a86d01175b8ebac9edb3e5469cd",
