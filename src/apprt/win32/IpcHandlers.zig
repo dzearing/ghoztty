@@ -311,6 +311,10 @@ pub fn focusTarget(entry: App.IpcTarget) void {
         .window => |w| w,
         .pane => |p| p.parentWindow(),
     };
+    // A parked workspace (single-window mode, T3185) has no window to raise:
+    // focusing it is the switch - it comes on show in the shared window, the
+    // same as a click on it in the sidebar (Mac `bringToFront`).
+    if (window.hwnd == null) _ = window.app.showWorkspace(window);
     if (window.hwnd) |hwnd| {
         if (IsIconic(hwnd) != 0) _ = w32.ShowWindow(hwnd, w32.SW_RESTORE);
         raiseWindow(hwnd);
@@ -2387,10 +2391,10 @@ fn handleList(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     const activation = w32.activation();
 
     var window_list: std.ArrayList(apprt.ipc.List.Window) = .empty;
-    for (app.windows.items) |window| {
+    for (try listOrder(arena, app)) |window| {
         // Quick terminals are not listable/addressable targets.
         if (window.is_quick_terminal) continue;
-        const hwnd = window.hwnd orelse continue;
+        const id = listId(app, window) orelse continue;
 
         var tabs: std.ArrayList(apprt.ipc.List.Tab) = .empty;
         for (0..window.tab_count) |i| {
@@ -2423,10 +2427,14 @@ fn handleList(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         const win_title = try utf16ToUtf8Arena(arena, window.currentTitle(&title_buf));
 
         try window_list.append(arena, .{
-            .id = try std.fmt.allocPrint(arena, "{d}", .{@intFromPtr(hwnd)}),
+            .id = try std.fmt.allocPrint(arena, "{d}", .{id}),
             .title = win_title,
             .target = window.ipc_name,
-            .focused = window_active.isActive(activation, @intFromPtr(hwnd)),
+            // A parked workspace has no window to be active (T3185).
+            .focused = if (window.hwnd) |hwnd|
+                window_active.isActive(activation, @intFromPtr(hwnd))
+            else
+                false,
             .tabs = tabs.items,
             .title_set_by_user = window_title_owner.keptFromScript(window.title_override, window.title_set_by_user) != null,
             .chrome = try windowChrome(arena, window),
@@ -2458,6 +2466,32 @@ fn handleList(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     return try ctx.alloc.dupe(u8, json);
 }
 
+/// The windows `+list` reports, in its order (T3185, Mac
+/// `everyControllerFrontToBack`). In single-window mode every workspace is a
+/// window to the CLI: the one on show first, then the parked ones most
+/// recently shown first - a parked workspace has no HWND, and enumerating
+/// HWNDs is what used to drop it. Anything the workspace host does not manage
+/// (every window, in `separate` mode) follows in creation order.
+fn listOrder(arena: Allocator, app: *App) Allocator.Error![]const *Window {
+    var out: std.ArrayList(*Window) = .empty;
+    for (app.workspaces.order.items) |w| try out.append(arena, w);
+    for (app.windows.items) |w| {
+        if (!app.workspaces.manages(w)) try out.append(arena, w);
+    }
+    return out.items;
+}
+
+/// A window's `+list` id (T3185). In `separate` mode it is the HWND, which
+/// lives exactly as long as the window and is what scripts hand to win32. A
+/// workspace's is its controller's instead (Mac `ScriptWindow.stableID`): the
+/// one shared HWND changes hands, so it would name a different workspace after
+/// every switch and none at all while parked. Null for a window with no HWND
+/// that is not a workspace (one being torn down), which is not listed.
+fn listId(app: *App, window: *Window) ?usize {
+    if (app.workspaces.manages(window)) return @intFromPtr(window);
+    return if (window.hwnd) |h| @intFromPtr(h) else null;
+}
+
 /// This window's published chrome geometry (T231): the tab strip's hit
 /// regions, in client coordinates, exactly as the window's own hit tests hold
 /// them. A test asks for these instead of re-implementing `tab_strip_layout`
@@ -2469,6 +2503,8 @@ fn handleList(ctx: Context, request: Request) Allocator.Error!?[]u8 {
 /// something the window would not hit.
 fn windowChrome(arena: Allocator, window: *Window) Allocator.Error!apprt.ipc.List.Chrome {
     const dpi: i64 = @intFromFloat(@round(window.scale * 96.0));
+    // A parked workspace (T3185) has no strip on screen: nothing to hit.
+    if (window.hwnd == null) return .{ .dpi = dpi };
     const regions = window.stripRegions() orelse return .{ .dpi = dpi };
 
     // An EMPTY rect is `null` on the wire: "there is nothing here to hit" —

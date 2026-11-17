@@ -14,6 +14,10 @@
 #
 # C (T3184): closing a workspace - parked closes in place (+close, last shell
 #   exiting), on show hands the same HWND on, the last one closes the window.
+# D (T3185): the CLI sees no difference. `+list` names every workspace (on
+#   show first, a parked one with its title and a stable id); +split,
+#   +send-keys, +read, +set-state, +set-banner, +stash/+restore reach a parked
+#   workspace without showing it; ghoztty://focus and --focus switch.
 #
 # THE ORACLE IS THE LATCH AND THE FILE. The mode the app runs in is a decision
 # invisible in pixels (until T3181 gives it a window to act on), so it is read
@@ -298,6 +302,117 @@ try {
     $c = Ws-Row $ws 'swm-c'
     Assert ($c -and $c.parked -and [int64]$c.hwnd -eq 0) "B5: swm-c stays parked (hwnd=$($c.hwnd))"
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'B: no crash'
+
+    # =====================================================================
+    # D (T3185): the CLI sees no difference. +list names every workspace (on
+    # show first and focused, a parked one with its title), with an id that
+    # stays put across a switch; the verbs reach a parked workspace WITHOUT
+    # putting it on show; a focus (the ghoztty://focus wire action, or
+    # --focus) is the switch. (+close of a parked workspace is section C's.)
+    # Runs BEFORE section C, which closes every workspace; it leaves the
+    # state it found: swm-b on show (B5), swm-c parked.
+    # =====================================================================
+    function Invoke-SwmCli([string]$argLine) {
+        $outFile = Join-Path $work "cli-$([guid]::NewGuid().ToString('N')).txt"
+        cmd /c "`"$exe`" $argLine > `"$outFile`" 2>&1" | Out-Null
+        $code = $LASTEXITCODE
+        $txt = if (Test-Path $outFile) { [string](Get-Content $outFile -Raw) } else { '' }
+        return [pscustomobject]@{ Code = $code; Text = $txt }
+    }
+    function List-Windows {
+        $l = Invoke-GhozttyIpc -Action 'list'
+        if (-not $l -or -not $l.success) { return @() }
+        return @($l.data.windows)
+    }
+    function List-Row($rows, [string]$name) {
+        foreach ($w in @($rows)) { if ([string]$w.target -eq $name) { return $w } }
+        return $null
+    }
+    function Walk-Leaves($node) {
+        $acc = @()
+        if ($null -eq $node) { return $acc }
+        if ($node.type -eq 'leaf') { return @($node.terminal) }
+        if ($node.type -eq 'split') { $acc += Walk-Leaves $node.left; $acc += Walk-Leaves $node.right }
+        return $acc
+    }
+    function Window-Leaves($w) {
+        $acc = @()
+        foreach ($t in @($w.tabs)) { $acc += Walk-Leaves $t.splits }
+        return $acc
+    }
+    function Active-Name {
+        $s = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+        return [string]$s.data.active
+    }
+
+    # D1: +list lists both workspaces, on show first.
+    $rows = @(List-Windows)
+    $names = @($rows | ForEach-Object { [string]$_.target })
+    Assert ($rows.Count -eq 2 -and $names[0] -eq 'swm-b' -and $names[1] -eq 'swm-c') "D1: +list names every workspace, on show first ($($names -join ','))"
+    $lb = List-Row $rows 'swm-b'
+    $lc = List-Row $rows 'swm-c'
+    Assert ($lb -and $lb.focused -eq $true) "D1: the workspace on show reads focused (focused=$($lb.focused))"
+    Assert ($lc -and $lc.focused -ne $true) "D1: the parked workspace does not (focused=$($lc.focused))"
+    Assert ($lc -and ([string]$lc.title).Length -gt 0) "D1: the parked workspace keeps its title ('$($lc.title)')"
+    Assert ($lc -and @(Window-Leaves $lc).Count -eq 1) "D1: the parked workspace lists its pane ($(@(Window-Leaves $lc).Count))"
+    Assert ($lb -and $lc -and [string]$lb.id -ne [string]$lc.id -and [string]$lc.id -ne '0') "D1: each workspace has its own id (b=$($lb.id) c=$($lc.id))"
+    $idB = [string]$lb.id; $idC = [string]$lc.id
+
+    # D2: +split on the parked workspace lands in it and leaves it parked.
+    $r = Invoke-SwmCli '+split --target=swm-c --direction=right --name=swm-c-right'
+    Start-Sleep -Milliseconds 1200
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    $c = Ws-Row $ws 'swm-c'
+    Assert ($r.Code -eq 0) "D2: +split --target=swm-c succeeds (exit $($r.Code): $($r.Text.Trim()))"
+    Assert ($c -and $c.parked -and [int]$c.panes -eq 2) "D2: the split landed in parked swm-c and it stayed parked (parked=$($c.parked) panes=$($c.panes))"
+    Assert ([string]$ws.data.active -eq 'swm-b') "D2: the workspace on show did not change (active='$($ws.data.active)')"
+
+    # D3: send-keys / read / set-state / set-banner reach the parked pane.
+    [void](Invoke-SwmCli '+send-keys --target=swm-c-right "echo PARKED-C-OK" Enter')
+    Start-Sleep -Milliseconds 1500
+    $rd = Invoke-SwmCli '+read --name=swm-c-right --lines=60'
+    Assert (($rd.Text -replace '\r?\n', '') -match 'PARKED-C-OK') "D3: +send-keys and +read reach a pane in a parked workspace (read: $(($rd.Text -replace '\s+',' ').Trim()))"
+    $st = Invoke-SwmCli '+set-state --target=swm-c-right --state=busy'
+    $bn = Invoke-SwmCli '+set-banner --target=swm-c-right "parked banner T3185"'
+    Start-Sleep -Milliseconds 800
+    $lc = List-Row (List-Windows) 'swm-c'
+    $leaf = @(Window-Leaves $lc | Where-Object { [string]$_.name -eq 'swm-c-right' })[0]
+    Assert ($st.Code -eq 0 -and $leaf -and [string]$leaf.state -eq 'busy') "D3: +set-state reaches it (exit $($st.Code), state='$($leaf.state)')"
+    Assert ($bn.Code -eq 0 -and $leaf -and [string]$leaf.banner -match 'parked banner T3185') "D3: +set-banner reaches it (exit $($bn.Code), banner='$($leaf.banner)')"
+    Assert ((Active-Name) -eq 'swm-b') 'D3: none of them put swm-c on show'
+
+    # D4: +stash / +restore on the parked workspace's pane.
+    $sh = Invoke-SwmCli '+stash --target=swm-c-right'
+    Start-Sleep -Milliseconds 800
+    $leaf = @(Window-Leaves (List-Row (List-Windows) 'swm-c') | Where-Object { [string]$_.name -eq 'swm-c-right' })[0]
+    Assert ($sh.Code -eq 0 -and $leaf -and $leaf.stashed -eq $true) "D4: +stash reaches a parked pane (exit $($sh.Code), stashed=$($leaf.stashed))"
+    $rs = Invoke-SwmCli '+restore --target=swm-c-right'
+    Start-Sleep -Milliseconds 800
+    $leaf = @(Window-Leaves (List-Row (List-Windows) 'swm-c') | Where-Object { [string]$_.name -eq 'swm-c-right' })[0]
+    Assert ($rs.Code -eq 0 -and $leaf -and $leaf.stashed -ne $true) "D4: +restore brings it back (exit $($rs.Code), stashed=$($leaf.stashed))"
+    Assert ((Active-Name) -eq 'swm-b') 'D4: stash and restore left swm-c parked'
+
+    # D5: a focus is the switch - the ghoztty://focus wire action puts the
+    # parked workspace on show, and +list follows with the SAME ids.
+    $f = Invoke-GhozttyIpc -Action 'focus' -Arguments @('--target=swm-c')
+    Start-Sleep -Milliseconds 1000
+    Assert ($f -and $f.success -and (Active-Name) -eq 'swm-c') "D5: ghoztty://focus on a parked workspace puts it on show (active='$(Active-Name)')"
+    $rows = @(List-Windows)
+    $names = @($rows | ForEach-Object { [string]$_.target })
+    Assert ($names.Count -eq 2 -and $names[0] -eq 'swm-c') "D5: +list now leads with swm-c ($($names -join ','))"
+    Assert ([string](List-Row $rows 'swm-c').id -eq $idC -and [string](List-Row $rows 'swm-b').id -eq $idB) "D5: ids are the same parked or shown (c=$((List-Row $rows 'swm-c').id)/$idC b=$((List-Row $rows 'swm-b').id)/$idB)"
+    Assert ((List-Row $rows 'swm-b').focused -ne $true) 'D5: swm-b, now parked, no longer reads focused'
+    $tops = @(Visible-Tops)
+    Assert ($tops.Count -eq 1) "D5: still one window on screen ($($tops.Count))"
+
+    # D6: --focus switches too (+new-window --focus on the existing, now
+    # parked, swm-b focuses it rather than opening another).
+    $nf = Invoke-SwmCli '+new-window --target=swm-b --focus'
+    Start-Sleep -Milliseconds 1000
+    Assert ($nf.Code -eq 0 -and (Active-Name) -eq 'swm-b') "D6: --focus on a parked workspace puts it on show (exit $($nf.Code), active='$(Active-Name)')"
+    Assert (@(List-Windows).Count -eq 2) "D6: and opened nothing new ($(@(List-Windows).Count) workspaces)"
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'D: no crash'
+
 
     # =====================================================================
     # C (T3184): closing a workspace. A parked one closes in place (+close,

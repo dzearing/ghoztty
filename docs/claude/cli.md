@@ -298,6 +298,14 @@ ghoztty +list [--json] [--tty=<tty>]
 
 - `--tty`: Print only the registered name of the pane whose terminal matches the given tty (`ttys014` or `/dev/ttys014`; raw padded `ps -o tty=` output is accepted), then exit. Exits 1 if no match. Lets a process find its own pane: `ghoztty +list --tty="$(ps -o tty= -p $PPID)"`.
 
+**Single-window mode** (`macos-window-mode = single`, docs/reference/window-modes.md):
+every workspace is listed as a window — the one on show first and `focused`, then
+the parked ones most recently shown first, each with its own title and panes. A
+workspace's `id` is its controller's and stays the same whether it is on show or
+parked; on Windows that means it is **not** an HWND in single mode (in `separate`
+mode it still is). Every verb reaches a parked workspace without putting it on
+show; `ghoztty://focus` and `--focus` are the switch (T3185).
+
 `--json` windows carry a **`chrome`** object reporting where the tab strip's
 clickable regions ARE (T231) — `{"dpi": 120, "tab_strip": {"band", "tabs",
 "new_tab", "menu"}}`, every rect in the window's CLIENT coordinates, physical

@@ -18489,9 +18489,41 @@ pub fn updateWindowTitle(self: *Window) void {
     const aggregate = self.activityAggregate();
     self.noteActivityAggregate(hwnd, aggregate);
 
+    var buf: [title_buf_len]u16 = undefined;
+    const title = self.composeTitle(&buf, aggregate) orelse return;
+
+    // Nobody can see this window: hold the title (T2912, Mac 68a8344f0). It
+    // lands when the window shows, or `held_title.interval_ms` after the
+    // first hold, so the taskbar and screen readers are never far behind.
+    // `+list` reads the held title at once (`currentTitle`).
+    switch (held_title.decide(self.titleHidden(hwnd), self.title_landed)) {
+        .hold => {
+            if (self.title_hold.hold(title)) self.armHeldTitleTimer(hwnd);
+            return;
+        },
+        .apply => {},
+    }
+    // Seen: whatever was held is replaced by this title, and an owed strip
+    // repaint is paid now.
+    const owed = self.title_hold.take();
+    if (owed.disarm) _ = w32.KillTimer(hwnd, HELD_TITLE_TIMER_ID);
+    if (owed.tab_bar) self.invalidateTabBar();
+    self.setWindowTextNow(hwnd, title);
+}
+
+const title_buf_len = 288;
+
+/// The title this window shows, composed from its own state: the bell glyph,
+/// the pin or the active tab's title, the activity suffix, the debug mark.
+/// Null when there is nothing to show (no pin and no tabs). Needs no HWND, so
+/// a parked workspace (T3185) has a title to report while it has no window.
+fn composeTitle(
+    self: *Window,
+    buf: *[title_buf_len]u16,
+    aggregate: terminal.osc.Command.ActivityState,
+) ?[:0]const u16 {
     // A rung pane's bell glyph leads the title (`bell-features = title`,
     // T1890) - over a pinned title too, as Mac's computeTitle does.
-    var buf: [288]u16 = undefined;
     var len: usize = 0;
     if (self.tab_count > 0) {
         const prefix = self.tabBellPrefix(self.active_tab);
@@ -18503,7 +18535,7 @@ pub fn updateWindowTitle(self: *Window) void {
     if (self.title_override) |override| {
         len += std.unicode.utf8ToUtf16Le(buf[len..][0..256], override) catch 0;
     } else {
-        if (self.tab_count == 0) return;
+        if (self.tab_count == 0) return null;
         const n = self.tab_title_lens[self.active_tab];
         @memcpy(buf[len..][0..n], self.tab_titles[self.active_tab][0..n]);
         len += n;
@@ -18536,24 +18568,7 @@ pub fn updateWindowTitle(self: *Window) void {
     }
 
     buf[len] = 0;
-
-    // Nobody can see this window: hold the title (T2912, Mac 68a8344f0). It
-    // lands when the window shows, or `held_title.interval_ms` after the
-    // first hold, so the taskbar and screen readers are never far behind.
-    // `+list` reads the held title at once (`currentTitle`).
-    switch (held_title.decide(self.titleHidden(hwnd), self.title_landed)) {
-        .hold => {
-            if (self.title_hold.hold(buf[0..len])) self.armHeldTitleTimer(hwnd);
-            return;
-        },
-        .apply => {},
-    }
-    // Seen: whatever was held is replaced by this title, and an owed strip
-    // repaint is paid now.
-    const owed = self.title_hold.take();
-    if (owed.disarm) _ = w32.KillTimer(hwnd, HELD_TITLE_TIMER_ID);
-    if (owed.tab_bar) self.invalidateTabBar();
-    self.setWindowTextNow(hwnd, buf[0..len :0]);
+    return buf[0..len :0];
 }
 
 /// Set the window text and dirty what is painted from it.
@@ -18599,8 +18614,18 @@ pub fn landHeldTitle(self: *Window) void {
 /// The window's title as of now, a held one included (T2912): what `+list`
 /// and copy-title report, so a reader that bypasses the screen is never
 /// behind. Returns a slice of `out` or of the held buffer.
-pub fn currentTitle(self: *const Window, out: []u16) []const u16 {
-    const hwnd = self.hwnd orelse return out[0..0];
+///
+/// A parked workspace (T3185, Mac 9b05b54a4) has no window text to read, so
+/// its title is composed from its own state - the one it shows when it next
+/// comes on show - rather than reported empty.
+pub fn currentTitle(self: *Window, out: []u16) []const u16 {
+    const hwnd = self.hwnd orelse {
+        var buf: [title_buf_len]u16 = undefined;
+        const t = self.composeTitle(&buf, self.activityAggregate()) orelse return out[0..0];
+        const n = @min(t.len, out.len);
+        @memcpy(out[0..n], t[0..n]);
+        return out[0..n];
+    };
     const n = w32.GetWindowTextW(hwnd, out.ptr, @intCast(out.len));
     const held = self.title_hold.current(out[0..@intCast(@max(n, 0))]);
     return held[0..@min(held.len, out.len)];
