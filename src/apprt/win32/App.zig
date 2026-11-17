@@ -6009,6 +6009,18 @@ fn restoreParksBehindShown(self: *const App) bool {
     return window_mode.isSingle() and self.workspaces.active != null;
 }
 
+/// The end of a Restore All rebuild (T3206): the window that was in front,
+/// built last and parked like the rest, goes on show in ONE switch. Building
+/// each workspace on show in turn ended in the same place, through a hand-off
+/// and a shade fade per rebuilt window. Nothing in `separate` mode, where every
+/// window was built activated and the last one is already in front.
+fn showRestoredFront(self: *App, front: ?*Window) void {
+    const w = front orelse return;
+    if (!window_mode.isSingle() or !self.hasWindow(w) or !w.isParked()) return;
+    const shown = self.showWorkspace(w);
+    log.info("restore all: the frontmost workspace is on show name={s} shown={}", .{ w.ipc_name orelse "?", shown });
+}
+
 /// Rebuild ONE manifest window (its tabs, split trees, per-leaf ATTACH, and
 /// presentation state) as a live `Window`. Errors propagate so the caller skips
 /// just this window.
@@ -8631,6 +8643,8 @@ pub fn adoptRestoreAllLocal(self: *App, job: *RestoreAllLocal.Job) RestoreAllErr
     if (order_buf) |ob| frontmostLastOrder(gpa, decoded.windows, ob);
 
     var restored: usize = 0;
+    // T3206: the last window built - the frontmost - goes on show at the end.
+    var front: ?*Window = null;
     for (0..decoded.windows.len) |pos| {
         const win = decoded.windows[if (order_buf) |ob| ob[pos] else pos];
         // Mac's double-attach guard (`SessionLayoutRestore.swift:695-699`) in the
@@ -8658,12 +8672,15 @@ pub fn adoptRestoreAllLocal(self: *App, job: *RestoreAllLocal.Job) RestoreAllErr
         }
         if (!restoreWindowHasAttachableLeaf(win, attach_ptr)) continue;
         const tr: RestoreTransport = .local(conn);
-        self.restoreWindow(win, tr, attach_ptr) catch |err| {
+        // T3206: in single-window mode each is built PARKED behind the one on
+        // show, the launch restore's rule (T3187), not switched to in turn.
+        front = self.restoreWindowShown(win, tr, attach_ptr, self.restoreParksBehindShown()) catch |err| {
             log.warn("restore all: window '{s}' failed err={}", .{ win.id, err });
             continue;
         };
         restored += 1;
     }
+    self.showRestoredFront(front);
 
     if (restored > 0) {
         log.info("restore all: rebuilt {d} window(s) from the agent's layouts", .{restored});
@@ -8717,6 +8734,8 @@ pub fn adoptRestoreAll(self: *App, job: *RestoreAllRelay.Job) usize {
     defer if (order_buf) |b| gpa.free(b);
 
     var restored: usize = 0;
+    // T3206: the last window built - the frontmost - goes on show at the end.
+    var front: ?*Window = null;
     for (0..job.prepared.len) |pos| {
         const p = &job.prepared[if (order_buf) |ob| ob[pos] else pos];
         if (self.windowIsOpenOn(p.win, machine)) {
@@ -8736,12 +8755,14 @@ pub fn adoptRestoreAll(self: *App, job: *RestoreAllRelay.Job) usize {
         // window it builds and frees it itself on every failure path, so the
         // job must not free it a second time.
         p.dialed = null;
-        self.restoreWindow(p.win, tr, attach_ptr) catch |err| {
+        // T3206: parked behind the one on show in single-window mode.
+        front = self.restoreWindowShown(p.win, tr, attach_ptr, self.restoreParksBehindShown()) catch |err| {
             log.warn("restore all: window '{s}' failed err={}", .{ p.win.id, err });
             continue;
         };
         restored += 1;
     }
+    self.showRestoredFront(front);
 
     if (restored > 0) {
         log.info("restore all: rebuilt {d} window(s) from the agent's layouts", .{restored});

@@ -65,6 +65,11 @@
 #   `closed_for_undo`) while the window goes on to the next, Ctrl+Shift+Z
 #   puts it back ON SHOW in the same window with the same shell, a parked
 #   one's close undoes onto show too, and an undo that runs out closes it.
+# M (T3206): Restore All parks what it rebuilds. Two instances on one agent;
+#   A's three workspaces (swm-la on show) are orphaned by killing A, and the
+#   chooser's Restore All in B brings all three back as workspaces of B's one
+#   window with swm-la on show - through exactly ONE `workspace adopted the
+#   window` hand-off, not one per rebuilt workspace.
 #
 # THE ORACLE IS THE LATCH AND THE FILE. The mode the app runs in is a decision
 # invisible in pixels (until T3181 gives it a window to act on), so it is read
@@ -1455,6 +1460,148 @@ try {
         Assert ($adoptLine -match 'expanded=true') "K4: its sidebar came back expanded too ($adoptLine)"
         Assert (-not ($app.Process -and $app.Process.HasExited)) 'K: no crash'
         Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
+        [void](Stop-RepoGhoztty -Exe $exe -SettleMs 500)
+        $app = $null
+    }
+
+    # =====================================================================
+    # M (T3206): Restore All rebuilds orphaned workspaces PARKED and puts
+    # the one that was in front on show once - one hand-off, not one per
+    # rebuilt workspace. Fixture (chooser-restore-all-adopt.ps1's shape):
+    # two instances on ONE agent; A builds three workspaces with swm-la on
+    # show, is killed the way a crash kills it, and B - already running, so
+    # it never saw them at launch - presses Restore All in its chooser.
+    # =====================================================================
+    if ($ExePath) {
+        $script:skipped++
+        Write-Host 'SKIP  M: reads the app log, which -ExePath does not capture'
+    } else {
+        [System.IO.File]::WriteAllText($cfgFile, "macos-window-mode = single`n")
+        # A fresh LOCALAPPDATA: section I's manifest and agent store would
+        # otherwise come back at B's launch.
+        $persistLocal = Join-Path $work 'local-l'
+        New-Item -ItemType Directory -Force -Path $persistLocal | Out-Null
+        $suffixB = $env:GHOZTTY_PIPE_SUFFIX
+        $suffixA = "-swmA$PID"
+        $errlogB = $errlog
+        $errlogA = Join-Path $env:TEMP "ghoztty-swm-stderrA-$PID.log"
+        Remove-Item $errlogA -ErrorAction SilentlyContinue
+        $manifestPath = Get-GhozttySessionLayoutPath -Root $persistLocal
+        $agentDir = Get-GhozttyAgentStateDir -Root $persistLocal -Exe $exe
+        $appA = $null
+
+        # The agent's own view, dialled directly - never through either app.
+        function L-Sessions {
+            $saved = $env:LOCALAPPDATA
+            $env:LOCALAPPDATA = $persistLocal
+            try { $out = (& $exe +sessions --json 2>$null | Out-String) } finally { $env:LOCALAPPDATA = $saved }
+            if (-not $out -or $out.Trim().Length -eq 0) { return @() }
+            try { $j = $out | ConvertFrom-Json } catch { return @() }
+            if ($null -eq $j) { return @() }
+            return @($j | ForEach-Object { $_ })
+        }
+        # The agent-held blob for a workspace, once it is marked frontmost.
+        function L-FrontBlob([string]$name) {
+            $path = Join-Path $agentDir 'layouts.json'
+            if (-not (Test-Path $path)) { return $null }
+            try { $doc = (Get-Content $path -Raw) | ConvertFrom-Json } catch { return $null }
+            foreach ($rec in @($doc.layouts | ForEach-Object { $_ })) {
+                $w = $null
+                try { $w = $rec.blob | ConvertFrom-Json } catch {}
+                if ($w -and [string]$w.ipc_name -eq $name -and $w.frontmost -eq $true) { return $w }
+            }
+            return $null
+        }
+
+        try {
+            # M0: B, the survivor - one workspace, nothing to restore.
+            $env:GHOZTTY_PIPE_SUFFIX = $suffixB
+            $app = Start-App 'launch M (B, single, persisted)' -Persist
+            if (-not $app) { exit 1 }
+            $ws = Wait-Ws { param($s) $s -and $s.data.active }
+            $lb = [string]$ws.data.active
+            Assert ($lb -and @($ws.data.workspaces).Count -eq 1) "M: setup: B is one workspace ('$lb', $(@($ws.data.workspaces).Count))"
+
+            # M1: A on the SAME agent builds three workspaces, swm-la on show.
+            $env:GHOZTTY_PIPE_SUFFIX = $suffixA
+            $errlog = $errlogA
+            try { $appA = Start-App 'launch M (A, single, persisted)' -Persist } finally { $errlog = $errlogB }
+            if (-not $appA) { exit 1 }
+            $ws = Wait-Ws { param($s) $s -and $s.data.active }
+            [void](Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-la', '--title=SWM-L-A'))
+            [void](Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-lb', '--title=SWM-L-B'))
+            $ws = Wait-Ws { param($s) $s -and @($s.data.workspaces).Count -eq 3 }
+            Assert (@($ws.data.workspaces).Count -eq 3) "M: setup: A holds three workspaces ($(@($ws.data.workspaces).Count))"
+            $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=show', '--target=swm-la')
+            Assert ($ws -and [string]$ws.data.active -eq 'swm-la') "M: setup: swm-la is on show in A (active='$($ws.data.active)')"
+            $deadline = (Get-Date).AddSeconds(20)
+            do { Start-Sleep -Milliseconds 500; $fb = L-FrontBlob 'swm-la' } while ((Get-Date) -lt $deadline -and -not $fb)
+            Assert ($null -ne $fb) 'M: setup: the agent holds swm-la''s layout, marked frontmost'
+            $deadline = (Get-Date).AddSeconds(20)
+            do { Start-Sleep -Milliseconds 500; $rows = @(L-Sessions | Where-Object { $_.alive }) } while ((Get-Date) -lt $deadline -and $rows.Count -lt 4)
+            Assert ($rows.Count -ge 4) "M: setup: the agent has B's session and A's three alive ($($rows.Count))"
+
+            # M2: A dies; its sessions are orphans B never saw at launch.
+            Stop-Process -Id $appA.Pid -Force -ErrorAction SilentlyContinue
+            $appA = $null
+            Start-Sleep -Milliseconds 700
+            Remove-Item $manifestPath -ErrorAction SilentlyContinue
+            $deadline = (Get-Date).AddSeconds(25)
+            do {
+                Start-Sleep -Milliseconds 500
+                $rows = @(L-Sessions | Where-Object { $_.alive })
+                $att = @($rows | Where-Object { $_.attached })
+            } while ((Get-Date) -lt $deadline -and -not ($rows.Count -ge 4 -and $att.Count -eq 1))
+            Assert ($rows.Count -ge 4 -and $att.Count -eq 1) "M: setup: A's sessions are alive and unattached ($($rows.Count) alive, $($att.Count) attached)"
+
+            # M3: Restore All in B's chooser.
+            $env:GHOZTTY_PIPE_SUFFIX = $suffixB
+            $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+            $top = [IntPtr][int64](Ws-Row $ws $lb).hwnd
+            $pane = @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal' | Where-Object Visible | Select-Object -First 1)
+            $paneH = if ($pane.Count -eq 1) { [IntPtr]$pane[0].Hwnd } else { [IntPtr]::Zero }
+            $chooser = [IntPtr]::Zero
+            if (Send-TestKeys -Window $top -Target $paneH -Modifiers ctrl, shift -Key N) {
+                $chooser = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyMachineChooser' -TimeoutMs 5000
+            }
+            Assert ($chooser -ne [IntPtr]::Zero) 'M: ctrl+shift+n opens the chooser on B'
+            if ($chooser -eq [IntPtr]::Zero) { throw 'M: no chooser' }
+            $filter = Get-TestChildWindow -Window $chooser -Class 'Edit'
+            $deadline = (Get-Date).AddSeconds(10)
+            do { Start-Sleep -Milliseconds 250; $loaded = Select-String -Path $errlogB -Pattern 'chooser roster: loaded \d+ session' -Quiet -ErrorAction SilentlyContinue } while ((Get-Date) -lt $deadline -and -not $loaded)
+            Start-Sleep -Milliseconds 800
+            $btn = ConvertTo-TestHwnd (Get-ChooserRestoreAllButton -Chooser $chooser)
+            Assert ($btn -ne [IntPtr]::Zero -and (Test-TestWindowVisible -Window $btn)) 'M: Restore All is offered'
+            Assert (Focus-ChooserControl -Chooser $chooser -From $filter -To $btn) 'M: Tab reaches the button (the positive control)'
+            $mark = Log-Count
+            [void](Send-TestKeys -Window $chooser -Target $btn -Key Return)
+            $deadline = (Get-Date).AddSeconds(15)
+            do {
+                Start-Sleep -Milliseconds 300
+                $rebuilt = @(Get-Content $errlogB -ErrorAction SilentlyContinue | Select-Object -Skip $mark | Where-Object { $_ -match 'restore all: rebuilt (\d+) window' }) | Select-Object -Last 1
+            } while ((Get-Date) -lt $deadline -and -not $rebuilt)
+            Assert ([string]$rebuilt -match 'rebuilt 3 window') "M1: B rebuilt A's three workspaces ($rebuilt)"
+            Start-Sleep -Milliseconds 1500
+
+            # M4: the oracle - every workspace is there, the frontmost on show,
+            # in the one window, reached by exactly ONE hand-off.
+            $ws = Wait-Ws { param($s) $s -and @($s.data.workspaces).Count -ge 4 }
+            $names = @($ws.data.workspaces | ForEach-Object { [string]$_.name })
+            Assert ($names.Count -eq 4 -and $names -contains 'swm-la' -and $names -contains 'swm-lb') "M2: every rebuilt workspace is present beside B's own ($($names -join ','))"
+            Assert ([string]$ws.data.active -eq 'swm-la') "M2: the one that was in front is on show (active='$($ws.data.active)')"
+            Assert ($ws -and [int]$ws.data.windows_with_hwnd -eq 1 -and @($ws.data.workspaces | Where-Object { $_.parked }).Count -eq 3) "M2: ONE window, the other three parked (windows_with_hwnd=$($ws.data.windows_with_hwnd))"
+            $after = @(Get-Content $errlogB -ErrorAction SilentlyContinue | Select-Object -Skip $mark)
+            $adopted = @($after | Where-Object { $_ -match 'workspace adopted the window' })
+            Assert ($adopted.Count -eq 1) "M3: exactly one hand-off, not one per rebuilt workspace ($($adopted.Count): $(@($adopted | ForEach-Object { if ($_ -match 'name=(\S+)') { $Matches[1] } }) -join ','))"
+            Assert ($adopted.Count -ge 1 -and $adopted[-1] -match 'name=swm-la') 'M3: ...and it was to swm-la'
+            Assert (@($after | Where-Object { $_ -match 'restore all: the frontmost workspace is on show name=swm-la shown=true' }).Count -eq 1) 'M3: the rebuild says it put the frontmost on show once'
+            Assert (-not ($app.Process -and $app.Process.HasExited)) 'M: no crash'
+        } finally {
+            if ($appA) { Stop-Process -Id $appA.Pid -Force -ErrorAction SilentlyContinue }
+            $env:GHOZTTY_PIPE_SUFFIX = $suffixB
+            $errlog = $errlogB
+        }
+        if ($app) { Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue }
         [void](Stop-RepoGhoztty -Exe $exe -SettleMs 500)
         $app = $null
     }

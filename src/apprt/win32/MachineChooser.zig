@@ -4519,19 +4519,24 @@ fn restoreAll(self: *MachineChooser) void {
     }
 }
 
+/// The open chooser with this id, or null once it has closed. A Restore All
+/// reply holds only the id, never the pointer, because the chooser can close
+/// under it - before the reply, or during the rebuild itself (T3206).
+fn chooserById(app: *App, id: u64) ?*MachineChooser {
+    for (app.windows.items) |win| {
+        const chooser = win.machine_chooser orelse continue;
+        if (chooser.id == id) return chooser;
+    }
+    return null;
+}
+
 /// GUI thread: a LOCAL Restore All came back (T618). Same rules as the relay
 /// reply below — the rebuild happens whether or not the chooser survived, and a
 /// reply with no chooser only loses the sentence it had nowhere to say.
 pub fn onRestoreAllLocal(app: *App, job: *RestoreAllLocal.Job) void {
     defer job.destroy();
 
-    var owner: ?*MachineChooser = null;
-    for (app.windows.items) |win| {
-        const chooser = win.machine_chooser orelse continue;
-        if (chooser.id != job.chooser_id) continue;
-        owner = chooser;
-        break;
-    }
+    var owner = chooserById(app, job.chooser_id);
     if (owner) |c| c.restore_inflight = false;
 
     if (job.err) |err| {
@@ -4549,6 +4554,10 @@ pub fn onRestoreAllLocal(app: *App, job: *RestoreAllLocal.Job) void {
         );
         return;
     };
+    // T3206: the rebuild can close the chooser - in single-window mode the
+    // frontmost going on show is a hand-off, and the workspace that gives the
+    // window up cancels the chooser it owned. Ask again rather than trust it.
+    owner = chooserById(app, job.chooser_id);
     if (owner) |c| c.restoreAllFinished(n) else log.info(
         "machine chooser: restore all rebuilt {d} window(s) after its chooser closed",
         .{n},
@@ -4562,13 +4571,7 @@ pub fn onRestoreAllLocal(app: *App, job: *RestoreAllLocal.Job) void {
 pub fn onRestoreAll(app: *App, job: *RestoreAllRelay.Job) void {
     defer job.destroy();
 
-    var owner: ?*MachineChooser = null;
-    for (app.windows.items) |win| {
-        const chooser = win.machine_chooser orelse continue;
-        if (chooser.id != job.chooser_id) continue;
-        owner = chooser;
-        break;
-    }
+    var owner = chooserById(app, job.chooser_id);
     if (owner) |c| c.restore_inflight = false;
 
     if (job.err) |err| {
@@ -4580,6 +4583,8 @@ pub fn onRestoreAll(app: *App, job: *RestoreAllRelay.Job) void {
     }
 
     const n = app.adoptRestoreAll(job);
+    // T3206: the rebuild's hand-off can have closed it (see above).
+    owner = chooserById(app, job.chooser_id);
     if (owner) |c| c.restoreAllFinished(n) else log.info(
         "machine chooser: restore all rebuilt {d} window(s) after its chooser closed",
         .{n},
