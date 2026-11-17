@@ -40,6 +40,13 @@
 #   D3  +reload against the suspended pane resumes it first and the page
 #       really reloads (its title goes back to raf-0)
 #   D4  restored: the renderer is woken and draws frames again
+#   E1  (T3037) a markdown pane: a save that changes the file renders once
+#       (the positive control; the oracle is the pane's "file rendered
+#       bytes=N" line, one per read of the file)
+#   E2  identical bytes rewritten with the time put back: the watcher fires,
+#       nothing renders ("file reload skipped (unchanged)")
+#   E3  minimized while a writer saves 10x/s for 3 s: nothing renders
+#   E4  restored: exactly one render, by the catch-up, of the LAST save
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1); nothing takes the
 # user's foreground - asserted by the foreground watcher, not assumed.
@@ -346,6 +353,64 @@ try {
             $f1 = Get-FrameCount
             Assert (($f1 - $f0) -ge 20) "D4 restored, the page draws frames again after its suspend (raf $f0 -> $f1)"
         }
+
+        Write-Host '== E: a markdown viewer renders a save only when it is seen and the file changed (T3037)'
+        $md = Join-Path $tmp 'doc.md'
+        [System.IO.File]::WriteAllText($md, "# doc`n`nstart`n")
+        Assert ((Invoke-Cli "+split --target=hvd --direction=down --name=hvm `"--view=$md`"") -eq 0) "E setup: the markdown pane ($(Get-CliErr))"
+        $mdLeaf = Wait-LeafByName 'hvm'
+        if (-not $mdLeaf) { throw 'the markdown pane is not in +list' }
+        $mid = [regex]::Escape("$($mdLeaf.id)")
+        $renderPat = "viewer pane ${mid}: file rendered bytes=(\d+)"
+        $deadline = (Get-Date).AddSeconds(20)
+        while ((Get-LogCount $renderPat) -lt 1 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200 }
+        if ((Get-LogCount $renderPat) -lt 1) { throw 'the markdown pane never rendered its file' }
+        Start-Sleep -Milliseconds 800
+
+        # E1, the positive control: a save that changes the file renders.
+        $r0 = Get-LogCount $renderPat
+        [System.IO.File]::WriteAllText($md, "# doc`n`nchanged once`n")
+        $deadline = (Get-Date).AddSeconds(5)
+        while ((Get-LogCount $renderPat) -eq $r0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 100 }
+        Assert ((Get-LogCount $renderPat) -eq ($r0 + 1)) "E1 shown, a save that changed the file rendered it once ($r0 -> $(Get-LogCount $renderPat))"
+
+        # E2: identical bytes rewritten and the time put back - the watcher
+        # fires, the file is where the page saw it, nothing renders.
+        Start-Sleep -Milliseconds 800
+        $r0 = Get-LogCount $renderPat
+        $skip0 = Get-LogCount "viewer pane ${mid}: file reload skipped \(unchanged\)"
+        $mt = [System.IO.File]::GetLastWriteTimeUtc($md)
+        [System.IO.File]::WriteAllBytes($md, [System.IO.File]::ReadAllBytes($md))
+        [System.IO.File]::SetLastWriteTimeUtc($md, $mt)
+        Start-Sleep -Milliseconds 1500
+        Assert ((Get-LogCount "viewer pane ${mid}: file reload skipped \(unchanged\)") -gt $skip0) 'E2 an unchanged touch reached the pane (the watcher fired)'
+        Assert ((Get-LogCount $renderPat) -eq $r0) "E2 ... and rendered nothing ($r0 -> $(Get-LogCount $renderPat))"
+
+        # E3: minimized while a writer saves ten times a second.
+        [void](Send-TestSysCommand -Window $top -Command minimize)
+        Start-Sleep -Milliseconds 1000
+        $r0 = Get-LogCount $renderPat
+        $owed0 = Get-LogCount "viewer pane ${mid}: file reload owed \(hidden\)"
+        $text = ''
+        for ($i = 1; $i -le 30; $i++) {
+            $text = "# doc`n`n" + ('w' * (20 + $i)) + "`n"
+            [System.IO.File]::WriteAllText($md, $text)
+            Start-Sleep -Milliseconds 100
+        }
+        $finalLen = [System.Text.Encoding]::UTF8.GetByteCount($text)
+        Start-Sleep -Milliseconds 1000
+        Assert ((Get-LogCount "viewer pane ${mid}: file reload owed \(hidden\)") -gt $owed0) 'E3 minimized, the saves reached the pane and were owed'
+        Assert ((Get-LogCount $renderPat) -eq $r0) "E3 minimized, 30 saves in 3 s rendered nothing ($r0 -> $(Get-LogCount $renderPat))"
+
+        # E4: restored - one catch-up, and it read the LATEST bytes.
+        [void](Send-TestSysCommand -Window $top -Command restore)
+        $deadline = (Get-Date).AddSeconds(5)
+        while ((Get-LogCount $renderPat) -eq $r0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 100 }
+        Start-Sleep -Milliseconds 1000
+        $renders = @([regex]::Matches((Get-Log), $renderPat))
+        Assert ($renders.Count -eq ($r0 + 1)) "E4 restored, the pane rendered exactly once ($r0 -> $($renders.Count))"
+        Assert ((Get-Log) -match "viewer pane ${mid}: file reload catch-up on show") 'E4 ... by the catch-up on show'
+        Assert ($renders.Count -gt 0 -and $renders[-1].Groups[1].Value -eq "$finalLen") "E4 ... of the file's last save (bytes=$(if ($renders.Count) { $renders[-1].Groups[1].Value }), last save $finalLen)"
     }
 
     $crashed = (Test-Path $errlog) -and (Select-String -Path $errlog -Pattern 'Segmentation fault|panic' -Quiet)

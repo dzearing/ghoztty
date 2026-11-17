@@ -88,6 +88,7 @@ const ViewerWorktreeProbe = @import("ViewerWorktreeProbe.zig");
 const ViewerDiffProbe = @import("ViewerDiffProbe.zig");
 const viewer_diff = @import("viewer_diff.zig");
 const hidden_poll = @import("hidden_poll.zig");
+const reload_gate = @import("reload_gate.zig");
 const viewer_suspend = @import("viewer_suspend.zig");
 const viewer_process = @import("viewer_process.zig");
 const viewer_image = @import("viewer_image.zig");
@@ -677,6 +678,12 @@ diff_probe: ?ViewerDiffProbe = null,
 /// nobody is looking at, runs no git and is remembered; `setVisible(true)`
 /// pays it with one listing straight away.
 diff_poll_gate: hidden_poll.Gate = .{},
+
+/// The file watcher's re-render gate (T3037, PA-V05): a save that lands while
+/// the pane is hidden renders nothing and is paid once by `setVisible(true)`,
+/// and a save that left the file's size and time where the last render saw
+/// them renders nothing at all.
+file_reload_gate: reload_gate.Gate = .{},
 
 /// The hidden page's sleep (T3035, PA-V03): trimmed the moment the pane
 /// hides, suspended once it has stayed hidden for
@@ -1888,12 +1895,48 @@ pub fn setVisible(self: *ViewerPane, visible: bool) void {
     self.applySleep(visible);
     // A pane born into a background tab starts its web view the first time it
     // is shown (T3036); the controller then adopts this visibility.
-    if (visible) self.payDeferredStart();
+    const started = visible and self.payDeferredStart();
     // A `git-status:` poll skipped while hidden is paid now, once, so a change
     // made meanwhile is on screen as the pane is - not one interval later.
     if (visible and self.diff_poll_gate.reveal()) {
         log.debug("viewer pane {s}: diff poll catch-up on show", .{self.paneId()});
         self.refreshDiff();
+    }
+    // Likewise a save of the viewed file that landed while hidden (T3037) -
+    // unless the web view only started just now, whose first load reads the
+    // file as it stands and is the catch-up.
+    if (visible and self.file_reload_gate.reveal()) {
+        if (started) {
+            self.file_reload_gate.note(self.fileStamp());
+        } else {
+            log.debug("viewer pane {s}: file reload catch-up on show", .{self.paneId()});
+            self.fileSaved();
+        }
+    }
+}
+
+/// The viewed file's size and modification time, or null when there is no
+/// file or it cannot be read - which the gate answers with a render, so the
+/// page's own error card is what reports it.
+fn fileStamp(self: *const ViewerPane) ?reload_gate.Stamp {
+    const path = self.file_path orelse return null;
+    const st = std.fs.cwd().statFile(path) catch return null;
+    return .{ .size = st.size, .mtime = st.mtime };
+}
+
+/// The watcher's debounced save landed (T391), through the T3037 gate: hidden
+/// panes owe it, an unchanged file skips it, and everything else re-renders.
+fn fileSaved(self: *ViewerPane) void {
+    // A hidden pane does not even stat: a writer saving ten times a second
+    // must cost a hidden pane nothing but this branch.
+    const now = if (self.visible) self.fileStamp() else null;
+    switch (self.file_reload_gate.save(self.visible, now)) {
+        .owed => log.debug("viewer pane {s}: file reload owed (hidden)", .{self.paneId()}),
+        .unchanged => log.debug("viewer pane {s}: file reload skipped (unchanged)", .{self.paneId()}),
+        .render => {
+            log.debug("viewer pane {s}: file reload rendering", .{self.paneId()});
+            self.reloadContent(.file_changed);
+        },
     }
 }
 
@@ -2268,7 +2311,12 @@ fn syncWatcher(self: *ViewerPane, alloc: Allocator) void {
     // cancels its pending render, the way Mac's `reloadDebounce?.cancel()`
     // does.
     _ = w32.KillTimer(hwnd, reload_timer_id);
+    // Nor may a save owed by, or a stamp taken of, the old document decide
+    // anything about the new one (T3037). The baseline is the file as the
+    // navigation about to load it finds it.
+    self.file_reload_gate.reset();
     const path = self.file_path orelse return;
+    self.file_reload_gate.note(self.fileStamp());
     self.watcher.start(alloc, hwnd, WM_APP_VIEWER_RELOAD, path);
 }
 
@@ -4600,6 +4648,9 @@ pub fn reloadContent(self: *ViewerPane, reason: content.ReloadReason) void {
         self.applyNavigation();
         return;
     }
+    // An explicit reload re-reads the file as it stands: that is what is on
+    // screen next, so a later save is judged against it (T3037).
+    if (reason == .chrome) self.file_reload_gate.note(self.fileStamp());
     switch (content.reloadPlan(self.mode, self.page_loaded, reason)) {
         .full_load => self.applyNavigation(),
         .rerender => self.renderFileContent(),
@@ -4695,6 +4746,10 @@ fn renderFileContent(self: *ViewerPane) void {
         // renderer: left in place it becomes a stray glyph ahead of the first
         // heading, and Windows editors write one routinely. Dropped here rather
         // than in the page, so both platforms' renderers stay one file.
+        // One line per read, with its size: the T3037 acceptance counts
+        // renders by it and checks the catch-up read the LATEST bytes.
+        log.debug("viewer pane {s}: file rendered bytes={d}", .{ self.paneId(), bytes.len });
+
         var text = bytes;
         if (std.mem.startsWith(u8, text, "\xEF\xBB\xBF")) text = text[3..];
 
@@ -5870,7 +5925,7 @@ pub fn startWhenShown(self: *ViewerPane, alloc: Allocator, host: *webview2.Host)
     self.deferred_start = .{ .alloc = alloc, .host = host };
     // A post that cannot be queued must not strand the pane: start now, as
     // before this change.
-    if (w32.PostMessageW(hwnd, WM_APP_VIEWER_START, 0, 0) == 0) self.payDeferredStart();
+    if (w32.PostMessageW(hwnd, WM_APP_VIEWER_START, 0, 0) == 0) _ = self.payDeferredStart();
 }
 
 /// Whether this pane's web view is still owed a `start` (T3036).
@@ -5879,12 +5934,15 @@ pub fn startDeferred(self: *const ViewerPane) bool {
 }
 
 /// Run the `start` that `startWhenShown` held, once.
-fn payDeferredStart(self: *ViewerPane) void {
-    const d = self.deferred_start orelse return;
+/// True when this call started the web view (its first load is then still to
+/// come, and reads the file as it stands).
+fn payDeferredStart(self: *ViewerPane) bool {
+    const d = self.deferred_start orelse return false;
     self.deferred_start = null;
-    if (self.state != .idle or self.hwnd == null) return;
+    if (self.state != .idle or self.hwnd == null) return false;
     log.debug("viewer pane {s}: starting web view", .{self.paneId()});
     self.start(d.alloc, d.host);
+    return true;
 }
 
 /// Begin creating this pane's web view on the app's shared environment.
@@ -7761,7 +7819,7 @@ pub fn wndProc(
         // means a background tab, which starts on its first `setVisible(true)`.
         WM_APP_VIEWER_START => {
             if (self.visible) {
-                self.payDeferredStart();
+                _ = self.payDeferredStart();
             } else if (self.deferred_start != null) {
                 log.debug("viewer pane {s}: hidden at birth, web view deferred until shown", .{self.paneId()});
             }
@@ -7869,7 +7927,9 @@ pub fn wndProc(
             _ = w32.KillTimer(hwnd, reload_timer_id);
             // The watcher's reason, not the chrome's: a rendered `.html` page
             // reloads in place here so a save keeps the reader's scroll (T601).
-            self.reloadContent(.file_changed);
+            // Through the T3037 gate: a hidden pane owes it, an unchanged file
+            // skips it.
+            self.fileSaved();
             return 0;
         },
 
