@@ -52,6 +52,15 @@
 #   draws for 0.35s, and is over by 0.9s; switching back fades the other way;
 #   two workspaces with the same gradient switch with no fade at all. (Flat
 #   style and Animation effects off are `desk_fade.owed`'s unit tests.)
+# K (T3205): the pane sidebar's all-windows list switches. The sidebar on
+#   show is expanded and put in all-windows scope by clicks; a click on a
+#   parked workspace's header puts it on show (the deferred switch T3182
+#   added - `workspace switch from the sidebar`), in the SAME window, and the
+#   adopter's sidebar comes back expanded (it was parked when the toggle was
+#   clicked, and no activation tells it) in all-windows scope; then a click on
+#   another parked workspace's PANE row (its chevron unfolds it first) does
+#   the same. Every click lands on a point the sidebar's own `pane sidebar
+#   outline` line names (toggle=, scope=, heads, chev=, items).
 #
 # THE ORACLE IS THE LATCH AND THE FILE. The mode the app runs in is a decision
 # invisible in pixels (until T3181 gives it a window to act on), so it is read
@@ -131,7 +140,7 @@ $app = $null
 
 # Launches the app on the test desktop with the temp config; returns $null
 # (after recording why) when it does not come up.
-function Start-App([string]$label, [switch]$Persist) {
+function Start-App([string]$label, [switch]$Persist, [string[]]$Extra = @()) {
     $env:XDG_CONFIG_HOME = $cfgHome
     $env:GHOZTTY_SETTINGS_BACKUP_DIR = $backupDir
     $env:GHOZTTY_UPDATE_URL = 'http://127.0.0.1:9/releases'
@@ -151,7 +160,7 @@ function Start-App([string]$label, [switch]$Persist) {
             Arguments = @($persistArg, '--background=#101014',
                 '--keybind=ctrl+shift+f9=toggle_rearrange_mode',
                 # Section H's tab walk (T3182) on chords the test can type.
-                '--keybind=ctrl+shift+f7=next_tab', '--keybind=ctrl+shift+f8=previous_tab')
+                '--keybind=ctrl+shift+f7=next_tab', '--keybind=ctrl+shift+f8=previous_tab') + $Extra
         }
         if ($Persist) { $sp.KeepWindowPlacement = $true }
         if (-not $ExePath) { $sp.StdErr = $errlog }
@@ -1189,6 +1198,184 @@ try {
     Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
     [void](Stop-RepoGhoztty -Exe $exe -SettleMs 500)
     $app = $null
+
+    # =====================================================================
+    # K (T3205): the pane sidebar's all-windows list switches workspaces,
+    # and the adopter's sidebar comes back the way the shared one is.
+    # =====================================================================
+    if ($ExePath) {
+        $script:skipped++
+        Write-Host 'SKIP  K: reads the app log, which -ExePath does not capture'
+    } else {
+        [System.IO.File]::WriteAllText($cfgFile, "macos-window-mode = single`n")
+        # Collapsed at launch whatever the debug build remembers, so the
+        # parked workspaces are born with the sidebar collapsed.
+        $app = Start-App 'launch K (single, sidebar collapsed)' -Extra @('--macos-pane-sidebar=collapsed')
+        if (-not $app) { exit 1 }
+        $ws = Wait-Ws { param($s) $s -and $s.data.active }
+        $j1 = [string]$ws.data.active
+        $shared = [int64](Ws-Row $ws $j1).hwnd
+        $dpi = Get-TestWindowDpi -Window ([IntPtr]$shared)
+        $jScale = if ($dpi -gt 0) { $dpi / 96.0 } else { 1.0 }
+        function K-Px([double]$d) { return [int][math]::Floor($d * $jScale + 0.5) }
+        [void](Set-TestWindowSize -Window ([IntPtr]$shared) -Width (K-Px 1100) -Height (K-Px 900))
+        [void](Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-jb', '--title=SWM-J-B'))
+        [void](Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-jc', '--title=SWM-J-C'))
+        $ws = Wait-Ws { param($s) $s -and @($s.data.workspaces).Count -eq 3 }
+        Assert (@($ws.data.workspaces).Count -eq 3 -and [string]$ws.data.active -eq $j1) "K: setup: three workspaces, $j1 on show ($(@($ws.data.workspaces).Count), active='$($ws.data.active)')"
+        Start-Sleep -Milliseconds 800
+
+        # The LAST line matching after line $From, once one has appeared.
+        function K-Last([int]$From, [string]$Pattern, [int]$Ms = 4000) {
+            $deadline = (Get-Date).AddMilliseconds($Ms)
+            do {
+                Start-Sleep -Milliseconds 200
+                $hit = @(Get-Content $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $From | Where-Object { $_ -match $Pattern }) | Select-Object -Last 1
+            } while (-not $hit -and (Get-Date) -lt $deadline)
+            if ($hit) {
+                Start-Sleep -Milliseconds 300
+                $hit = @(Get-Content $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $From | Where-Object { $_ -match $Pattern }) | Select-Object -Last 1
+            }
+            return [string]$hit
+        }
+        # The line number just past the first line matching after $From, or -1.
+        function K-After([int]$From, [string]$Pattern) {
+            $lines = @(Get-Content $errlog -ErrorAction SilentlyContinue)
+            for ($k = $From; $k -lt $lines.Count; $k++) { if ($lines[$k] -match $Pattern) { return $k + 1 } }
+            return -1
+        }
+        function K-Sidebar { return @(Get-TestChildWindows -Window ([IntPtr]$shared) -Class 'GhozttyPaneSidebar' | Where-Object { $_.Visible }) | Select-Object -First 1 }
+        function K-Click($sb, [int]$x, [int]$y) {
+            return Send-TestMouse -Window ([IntPtr]$shared) -Target ([IntPtr]$sb.Hwnd) -X ($sb.Left + $x) -Y ($sb.Top + $y) -Action click
+        }
+        function K-Point([string]$line, [string]$field) {
+            if ($line -match (" $field=(-?\d+),(-?\d+)")) { return @{ X = [int]$Matches[1]; Y = [int]$Matches[2] } }
+            return $null
+        }
+        # Every head of an outline line, in heads order, and the rows.
+        function K-Heads([string]$line) {
+            $out = @()
+            if ($line -match ' heads=(\S*)') {
+                foreach ($h in ($Matches[1] -split ';' | Where-Object { $_ })) {
+                    if ($h -match '^([PWU])(\d+)@(-?\d+),(-?\d+)$') { $out += , @{ Kind = $Matches[1]; Group = [int]$Matches[2]; X = [int]$Matches[3]; Y = [int]$Matches[4] } }
+                }
+            }
+            return , $out
+        }
+        function K-Items([string]$line) {
+            $out = @()
+            if ($line -match ' items=(\S*)') {
+                foreach ($i in ($Matches[1] -split ';' | Where-Object { $_ })) {
+                    if ($i -match '^g(\d+)([gs])@(-?\d+),(-?\d+)$') { $out += , @{ Group = [int]$Matches[1]; X = [int]$Matches[3]; Y = [int]$Matches[4] } }
+                }
+            }
+            return , $out
+        }
+        function K-Chevrons([string]$line) {
+            $out = @()
+            if ($line -match ' chev=(\S*)') { foreach ($c in ($Matches[1] -split ';' | Where-Object { $_ })) { $xy = $c -split ','; $out += , @{ X = [int]$xy[0]; Y = [int]$xy[1] } } }
+            return , $out
+        }
+        # A workspace's group index in the all-windows list's name order.
+        function K-Group([string]$groupsLine, [string]$title) {
+            if ($groupsLine -notmatch ' order=(.*)$') { return -1 }
+            $order = @($Matches[1] -split '\|')
+            for ($k = 0; $k -lt $order.Count; $k++) { if ($order[$k] -like "*$title*") { return $k } }
+            return -1
+        }
+        $outlineRx = 'pane sidebar outline mode='
+        # This window's scope logs the same shape as `rows` (logRows).
+        $anyRx = 'pane sidebar (outline|rows) mode='
+
+        # K1: expand the sidebar on show, then put it in all-windows scope.
+        $sb0 = K-Sidebar
+        $line = K-Last 0 $anyRx
+        $tg = K-Point $line 'toggle'
+        Assert ($null -ne $sb0 -and $line -match 'mode=mini' -and $null -ne $tg) "K1: setup: the sidebar on show starts collapsed (width=$(if ($sb0) { $sb0.Width }); $(if ($line -match 'mode=(\w+)') { $Matches[0] }))"
+        $railW = if ($sb0) { $sb0.Width } else { 0 }
+        $mark = Log-Count
+        if ($sb0 -and $tg) { Assert (K-Click $sb0 $tg.X $tg.Y) 'K1: toggle click delivered' }
+        $line = K-Last $mark ($anyRx + 'expanded')
+        Start-Sleep -Milliseconds 500
+        $sb1 = K-Sidebar
+        Assert ($line -and $sb1 -and $sb1.Width -gt ($railW + (K-Px 100))) "K1: the toggle expanded it (width $railW -> $(if ($sb1) { $sb1.Width }))"
+        $launchScope = [string](K-Last 0 'pane sidebar scope at launch all_windows=' 500)
+        $scoped = K-Last 0 'pane sidebar scope all_windows=' 300
+        $allOn = if ($scoped) { $scoped -match 'all_windows=true' } else { $launchScope -match 'all_windows=true' }
+        if (-not $allOn) {
+            $sc = K-Point $line 'scope'
+            $mark = Log-Count
+            if ($sb1 -and $sc) { Assert (K-Click $sb1 $sc.X $sc.Y) 'K1: scope click delivered' }
+            Assert ([bool](K-Last $mark 'pane sidebar scope all_windows=true')) 'K1: the scope button turned all windows on'
+        }
+        $mark = Log-Count
+        [void](Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state'))
+        $line = K-Last 0 ($outlineRx + 'expanded')
+        $groups = K-Last 0 'pane sidebar all-windows groups='
+        Write-Host "  $groups"
+        $gB = K-Group $groups 'SWM-J-B'
+        $gC = K-Group $groups 'SWM-J-C'
+        Assert ($gB -ge 0 -and $gC -ge 0) "K1: every workspace - the parked two too - is on the all-windows list (SWM-J-B=g$gB SWM-J-C=g$gC)"
+
+        # K2: a click on parked SWM-J-B's header puts it on show.
+        $heads = K-Heads $line
+        $hB = @($heads | Where-Object { $_.Kind -eq 'W' -and $_.Group -eq $gB }) | Select-Object -First 1
+        $mark = Log-Count
+        if ($hB -and $sb1) { Assert (K-Click $sb1 $hB.X $hB.Y) 'K2: header click delivered' } else { Assert $false "K2: SWM-J-B has a header to click (g$gB in $($heads.Count) heads)" }
+        $sw = K-Last $mark 'workspace switch from the sidebar name='
+        Assert ($sw -match 'name=swm-jb') "K2: the click asked for the deferred switch ($sw)"
+        $ws = Wait-Ws { param($s) $s -and [string]$s.data.active -eq 'swm-jb' }
+        $rb = Ws-Row $ws 'swm-jb'
+        Assert ([string]$ws.data.active -eq 'swm-jb') "K2: SWM-J-B is on show (active='$($ws.data.active)')"
+        Assert ($rb -and [int64]$rb.hwnd -eq $shared -and [int]$ws.data.windows_with_hwnd -eq 1) "K2: in the SAME window, one HWND held (hwnd=$(if ($rb) { $rb.hwnd }) windows_with_hwnd=$($ws.data.windows_with_hwnd))"
+        $r1 = Ws-Row $ws $j1
+        Assert ($r1 -and $r1.parked) "K2: the one it left is parked ($j1 parked=$(if ($r1) { $r1.parked }))"
+        $tops = @(Visible-Tops)
+        Assert ($tops.Count -eq 1) "K2: one window on screen ($($tops.Count))"
+
+        # K3: the adopter's sidebar came back expanded, in all-windows scope -
+        # it was parked when the toggle was clicked.
+        $adoptAt = K-After $mark 'workspace adopt sidebar expanded='
+        $adoptLine = K-Last $mark 'workspace adopt sidebar expanded=' 500
+        Assert ($adoptLine -match 'expanded=true hidden=false') "K3: the adopter took the shared sidebar's flags ($adoptLine)"
+        Start-Sleep -Milliseconds 500
+        $sb2 = K-Sidebar
+        Assert ($sb2 -and $sb1 -and $sb2.Hwnd -ne $sb1.Hwnd) "K3: the sidebar is the adopter's own (hwnd $(if ($sb1) { $sb1.Hwnd }) -> $(if ($sb2) { $sb2.Hwnd }))"
+        Assert ($sb2 -and $sb1 -and [math]::Abs($sb2.Width - $sb1.Width) -le 1) "K3: expanded, the width the shared one has ($(if ($sb2) { $sb2.Width }) vs $(if ($sb1) { $sb1.Width }))"
+        $from = if ($adoptAt -ge 0) { $adoptAt } else { $mark }
+        $line2 = K-Last $from ($outlineRx + 'expanded')
+        $groups2 = K-Last $from 'pane sidebar all-windows groups='
+        Assert ($line2 -and $groups2 -match 'windows=3 ') "K3: in all-windows scope, all three listed ($groups2)"
+
+        # K4: a click on parked SWM-J-C's PANE row - its chevron unfolds it
+        # first, without raising it - puts it on show.
+        $heads = K-Heads $line2
+        $chev = K-Chevrons $line2
+        $gC = K-Group $groups2 'SWM-J-C'
+        $kC = -1
+        for ($k = 0; $k -lt $heads.Count; $k++) { if ($heads[$k].Kind -eq 'W' -and $heads[$k].Group -eq $gC) { $kC = $k } }
+        $mark = Log-Count
+        if ($kC -ge 0 -and $kC -lt $chev.Count -and $sb2) { [void](K-Click $sb2 $chev[$kC].X $chev[$kC].Y) }
+        Assert ([bool](K-Last $mark 'pane sidebar unfold' 2000)) "K4: SWM-J-C's chevron unfolded it (head $kC of $($heads.Count))"
+        $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+        Assert ([string]$ws.data.active -eq 'swm-jb') "K4: ...without switching (active='$($ws.data.active)')"
+        $line3 = K-Last $mark ($outlineRx + 'expanded')
+        $row = @(K-Items $line3 | Where-Object { $_.Group -eq $gC }) | Select-Object -First 1
+        $mark = Log-Count
+        if ($row -and $sb2) { Assert (K-Click $sb2 $row.X $row.Y) 'K4: pane row click delivered' } else { Assert $false "K4: SWM-J-C's pane has a row to click (g$gC)" }
+        Assert ([bool](K-Last $mark 'pane sidebar focus other window' 2000)) 'K4: the row click is the other-window focus (log)'
+        $sw = K-Last $mark 'workspace switch from the sidebar name='
+        Assert ($sw -match 'name=swm-jc') "K4: and asked for the deferred switch ($sw)"
+        $ws = Wait-Ws { param($s) $s -and [string]$s.data.active -eq 'swm-jc' }
+        $rc = Ws-Row $ws 'swm-jc'
+        Assert ($rc -and [string]$ws.data.active -eq 'swm-jc' -and [int64]$rc.hwnd -eq $shared -and [int]$ws.data.windows_with_hwnd -eq 1) "K4: SWM-J-C is on show in the SAME window (active='$($ws.data.active)' windows_with_hwnd=$($ws.data.windows_with_hwnd))"
+        $adoptLine = K-Last $mark 'workspace adopt sidebar expanded=' 500
+        Assert ($adoptLine -match 'expanded=true') "K4: its sidebar came back expanded too ($adoptLine)"
+        Assert (-not ($app.Process -and $app.Process.HasExited)) 'K: no crash'
+        Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
+        [void](Stop-RepoGhoztty -Exe $exe -SettleMs 500)
+        $app = $null
+    }
 
     Complete-TestBody
 } catch {

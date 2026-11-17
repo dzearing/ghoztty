@@ -7691,9 +7691,20 @@ pub fn adoptWindow(self: *Window, hwnd: w32.HWND, bound: WindowBound, leaving_sh
     // tab is laid out, which then re-derives which panes really show (a zoom,
     // the stash) and catches each one up with a frame at the window's size.
     self.refreshOcclusion();
+    // Its sidebar catches up (Mac `adoptWindow`, T3205): while parked it
+    // missed what the shared sidebar did - expanded, hidden, resized - and no
+    // WM_ACTIVATE comes to say so, the window never having stopped being
+    // active. Taken before the first layout, so the grid is laid out beside
+    // the column it will have; no glide, none of it was on show.
+    const want = PaneSidebar.remembered;
+    self.pane_sidebar_expanded = want.expanded;
+    self.pane_sidebar_hidden = want.hidden;
+    self.pane_sidebar_width_dip = want.width_dip;
+    log.info("workspace adopt sidebar expanded={} hidden={} width={d:.0}", .{ want.expanded, want.hidden, want.width_dip });
     self.showTabIndex(self.active_tab, w32.windowIsActive(hwnd));
     self.refreshRemotePill();
     self.syncPaneSidebar();
+    if (self.sidebar) |sb| sb.catchUp();
     self.invalidateChrome();
     _ = w32.RedrawWindow(hwnd, null, null, w32.RDW_INVALIDATE | w32.RDW_FRAME | w32.RDW_ALLCHILDREN);
     if (self.desk_fade_from != null) _ = FrameClock.arm(hwnd, DESK_FADE_TIMER_ID, FOCUS_GLOW_TICK_MS);
