@@ -2914,8 +2914,9 @@ fn sharedWindowWhileParked(self: *const Window) ?*const Window {
 
 /// The HWND this controller lays out against: its own, or the shared
 /// window's while parked (T3193). Never for painting or posting - only for
-/// reading what the layout depends on.
-fn layoutHwnd(self: *const Window) ?w32.HWND {
+/// reading what the layout depends on - and the frame a session capture
+/// records for a parked workspace (T3187).
+pub fn layoutHwnd(self: *const Window) ?w32.HWND {
     if (self.hwnd) |h| return h;
     const shared = self.sharedWindowWhileParked() orelse return null;
     return shared.hwnd;

@@ -404,6 +404,19 @@ pub fn markFrontmost(windows: []Window) void {
     if (best) |b| windows[b].frontmost = true;
 }
 
+/// `markFrontmost`, except that in single-window mode the window in front is
+/// the workspace ON SHOW (T3187, Mac `Entry.frontmost`: "the workspace on
+/// show, or in separate mode the main window"). A switch inside the one
+/// window activates nothing, so the focus stamps alone can name a workspace
+/// that is parked. `on_show` is its index in `windows`; null (separate mode,
+/// or it was not captured) falls back to the stamps.
+pub fn markFrontmostOnShow(windows: []Window, on_show: ?usize) void {
+    const i = on_show orelse return markFrontmost(windows);
+    if (i >= windows.len) return markFrontmost(windows);
+    for (windows) |*w| w.frontmost = null;
+    windows[i].frontmost = true;
+}
+
 /// Whether `w` was the window in front when it was written (T3137).
 pub fn isFront(w: Window) bool {
     return w.frontmost orelse false;
@@ -2411,6 +2424,25 @@ test "T691: the manifest follows the lineage, and without one is byte-for-byte w
     const empty = layoutPath(alloc) orelse return error.SkipZigTest;
     defer alloc.free(empty);
     try std.testing.expectEqualStrings(base, empty);
+}
+
+test "T3187: in single mode the workspace on show is the front, whatever the stamps say" {
+    var wins = [_]Window{
+        .{ .id = "a", .last_focused_ms = 900, .frontmost = true },
+        .{ .id = "b", .last_focused_ms = 100 },
+        .{ .id = "c" },
+    };
+    // A switch to an unstamped workspace inside the one window: it is in front.
+    markFrontmostOnShow(&wins, 2);
+    try testing.expect(!isFront(wins[0]) and !isFront(wins[1]) and isFront(wins[2]));
+    markFrontmostOnShow(&wins, 1);
+    try testing.expect(!isFront(wins[0]) and isFront(wins[1]) and !isFront(wins[2]));
+    // Separate mode (no workspace on show) and an out-of-range index fall
+    // back to the stamps.
+    markFrontmostOnShow(&wins, null);
+    try testing.expect(isFront(wins[0]) and !isFront(wins[1]) and !isFront(wins[2]));
+    markFrontmostOnShow(&wins, 7);
+    try testing.expect(isFront(wins[0]) and !isFront(wins[2]));
 }
 
 test "T3137: the most recently focused window is marked frontmost, and the mark is additive" {

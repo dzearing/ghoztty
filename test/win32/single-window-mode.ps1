@@ -40,6 +40,12 @@
 #   window-show-tab-bar = always, Ctrl+T (new_tab) opens a workspace on show,
 #   and goto_tab (Ctrl+1 / Ctrl+9 / next / previous) walks the workspaces in
 #   the pane sidebar's all-windows order, putting each on show.
+# I (T3187): session restore. Three workspaces, a parked one put on show,
+#   then a relaunch with session persistence on: the manifest holds every
+#   workspace at the shared window's frame with the one on show marked
+#   frontmost; the relaunch brings all three back as workspaces of ONE
+#   window with that one on show; and the same manifest read in `separate`
+#   mode is three windows at that one frame, the frontmost on top.
 #
 # THE ORACLE IS THE LATCH AND THE FILE. The mode the app runs in is a decision
 # invisible in pixels (until T3181 gives it a window to act on), so it is read
@@ -112,29 +118,43 @@ New-Item -ItemType Directory -Force -Path $cfgDir | Out-Null
 [System.IO.File]::WriteAllText($cfgFile, "macos-window-mode = single`n")
 
 $errlog = Join-Path $env:TEMP "ghoztty-swm-stderr-$PID.log"
+$persistLocal = Join-Path $work 'local'
+New-Item -ItemType Directory -Force -Path $persistLocal | Out-Null
 $script:launched = @()
 $app = $null
 
 # Launches the app on the test desktop with the temp config; returns $null
 # (after recording why) when it does not come up.
-function Start-App([string]$label) {
+function Start-App([string]$label, [switch]$Persist) {
     $env:XDG_CONFIG_HOME = $cfgHome
     $env:GHOZTTY_SETTINGS_BACKUP_DIR = $backupDir
     $env:GHOZTTY_UPDATE_URL = 'http://127.0.0.1:9/releases'
+    $savedLocal = $env:LOCALAPPDATA
+    $savedBin = $env:GHOSTTY_LOCAL_AGENT_BIN
+    # Section I (T3187): a private LOCALAPPDATA holds the manifest, and this
+    # build's agent hosts the sessions.
+    if ($Persist) {
+        $env:LOCALAPPDATA = $persistLocal
+        $env:GHOSTTY_LOCAL_AGENT_BIN = Join-Path (Split-Path $exe -Parent) 'ghoztty-agent.exe'
+    }
+    $persistArg = if ($Persist) { '--session-persistence=true' } else { '--session-persistence=false' }
     try {
         $sp = @{
             Exe       = $exe
             # Rearrange mode on a chord for section F's pop-out (T3194).
-            Arguments = @('--session-persistence=false', '--background=#101014',
+            Arguments = @($persistArg, '--background=#101014',
                 '--keybind=ctrl+shift+f9=toggle_rearrange_mode',
                 # Section H's tab walk (T3182) on chords the test can type.
                 '--keybind=ctrl+shift+f7=next_tab', '--keybind=ctrl+shift+f8=previous_tab')
         }
+        if ($Persist) { $sp.KeepWindowPlacement = $true }
         if (-not $ExePath) { $sp.StdErr = $errlog }
         $a = Start-OnTestDesktop @sp
     } finally {
         Remove-Item Env:XDG_CONFIG_HOME -ErrorAction SilentlyContinue
         Remove-Item Env:GHOZTTY_SETTINGS_BACKUP_DIR -ErrorAction SilentlyContinue
+        $env:LOCALAPPDATA = $savedLocal
+        $env:GHOSTTY_LOCAL_AGENT_BIN = $savedBin
     }
     Start-Sleep -Seconds 3
     if (-not $a -or ($a.Process -and $a.Process.HasExited)) {
@@ -907,7 +927,7 @@ try {
         $made += $nn
     }
     $tops = @(Visible-Tops)
-    Assert ($tops.Count -eq 1 -and $tops[0].Hwnd -eq $shared) "H1: one window on screen ($($tops.Count))"
+    Assert ($tops.Count -eq 1 -and $tops[0].Hwnd -eq $shared) "I1: one window on screen ($($tops.Count))"
 
     # H2: goto_tab walks them. Ctrl+1 goes to the first in the list's order,
     # Ctrl+9 (last_tab) to the last, next/previous step and wrap. Each
@@ -924,24 +944,24 @@ try {
         Assert $true 'H2: skipped (no log under -ExePath)'
     } else {
         $g = H-Goto @('ctrl') '1' 'H2 Ctrl+1'
-        Assert ($g.Line -match 'goto_tab 1 over workspaces: (\d+ -> 0 of 3|nowhere else to go \(3 listed\))') "H2: Ctrl+1 is goto_tab over the workspaces, landing on the list's first ($($g.Line))"
+        Assert ($g.Line -match 'goto_tab 1 over workspaces: (\d+ -> 0 of 3|nowhere else to go \(3 listed\))') "I2: Ctrl+1 is goto_tab over the workspaces, landing on the list's first ($($g.Line))"
         $listFirst = $g.Active
         $g = H-Goto @('ctrl') '9' 'H2 Ctrl+9'
         $okLast = ($g.Line -match 'goto_tab -3 over workspaces: \d+ -> 2 of 3 name=(\S+)') -and $g.Active -eq $Matches[1]
-        Assert $okLast "H2: Ctrl+9 (last_tab) puts the list's last on show (active='$($g.Active)'; $($g.Line))"
+        Assert $okLast "I2: Ctrl+9 (last_tab) puts the list's last on show (active='$($g.Active)'; $($g.Line))"
         $listLast = $g.Active
-        Assert ($listLast -ne $listFirst) "H2: first and last are different workspaces ($listFirst / $listLast)"
+        Assert ($listLast -ne $listFirst) "I2: first and last are different workspaces ($listFirst / $listLast)"
         $g = H-Goto @('ctrl', 'shift') 'F7' 'H2 next'
-        Assert ($g.Line -match 'goto_tab -2 over workspaces: 2 -> 0 of 3' -and $g.Active -eq $listFirst) "H2: next from the last wraps to the first (active='$($g.Active)'; $($g.Line))"
+        Assert ($g.Line -match 'goto_tab -2 over workspaces: 2 -> 0 of 3' -and $g.Active -eq $listFirst) "I2: next from the last wraps to the first (active='$($g.Active)'; $($g.Line))"
         $g = H-Goto @('ctrl', 'shift') 'F8' 'H2 previous'
-        Assert ($g.Line -match 'goto_tab -1 over workspaces: 0 -> 2 of 3' -and $g.Active -eq $listLast) "H2: previous from the first wraps to the last (active='$($g.Active)'; $($g.Line))"
+        Assert ($g.Line -match 'goto_tab -1 over workspaces: 0 -> 2 of 3' -and $g.Active -eq $listLast) "I2: previous from the first wraps to the last (active='$($g.Active)'; $($g.Line))"
         $g = H-Goto @('ctrl', 'shift') 'F8' 'H2 previous again'
         $okMid = ($g.Line -match 'goto_tab -1 over workspaces: 2 -> 1 of 3 name=(\S+)') -and $g.Active -eq $Matches[1]
-        Assert ($okMid -and $g.Active -ne $listFirst -and $g.Active -ne $listLast) "H2: previous again is the middle one (active='$($g.Active)'; $($g.Line))"
+        Assert ($okMid -and $g.Active -ne $listFirst -and $g.Active -ne $listLast) "I2: previous again is the middle one (active='$($g.Active)'; $($g.Line))"
         $sh = Ws-Row $g.State $g.Active
-        Assert ($sh -and [int64]$sh.hwnd -eq $shared -and [int]$g.State.data.windows_with_hwnd -eq 1) "H2: each landing is the SAME window, one HWND held (windows_with_hwnd=$($g.State.data.windows_with_hwnd))"
+        Assert ($sh -and [int64]$sh.hwnd -eq $shared -and [int]$g.State.data.windows_with_hwnd -eq 1) "I2: each landing is the SAME window, one HWND held (windows_with_hwnd=$($g.State.data.windows_with_hwnd))"
         $panes = @(Shared-Panes)
-        Assert ($panes.Count -eq 1) "H2: the window shows only the one on show's pane ($($panes.Count))"
+        Assert ($panes.Count -eq 1) "I2: the window shows only the one on show's pane ($($panes.Count))"
     }
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'H: no crash'
     $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
@@ -957,6 +977,103 @@ try {
     do { Start-Sleep -Milliseconds 400; $tops = @(Visible-Tops) } while ((Get-Date) -lt $deadline -and $tops.Count -gt 0)
     Assert ($tops.Count -eq 0) "C4: the last workspace's close closed the window ($($tops.Count) left)"
 
+    # =====================================================================
+    # I (T3187): a relaunch brings every workspace back in ONE window with
+    # the one that was on show on show again; the manifest it reads is
+    # windows at one frame, frontmost marked, which `separate` mode restores
+    # as windows at that frame with the frontmost on top.
+    # =====================================================================
+    Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
+    Kill-RepoInstances
+    [System.IO.File]::WriteAllText($cfgFile, "macos-window-mode = single`n")
+    $manifestPath = Get-GhozttySessionLayoutPath -Root $persistLocal
+    $app = Start-App 'launch I1 (single, persisted)' -Persist
+    if (-not $app) { exit 1 }
+    $ws = Wait-Ws { param($s) $s -and $s.data.active }
+    $h1 = [string]$ws.data.active
+    $shared = [int64](Ws-Row $ws $h1).hwnd
+    Assert ($h1 -and $shared -ne 0) "I: setup: the first workspace has the window ('$h1', hwnd=$shared)"
+    [void](Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-h2', '--title=SWM-H2-FRONT'))
+    [void](Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-h3'))
+    $ws = Wait-Ws { param($s) $s -and @($s.data.workspaces).Count -eq 3 }
+    Assert (@($ws.data.workspaces).Count -eq 3 -and [string]$ws.data.active -eq $h1) "I: setup: three workspaces, $h1 on show ($(@($ws.data.workspaces).Count), active='$($ws.data.active)')"
+    # A window placement the restore must carry, distinct from the default.
+    [void](Set-TestWindowPos -Window ([IntPtr]$shared) -X 120 -Y 90)
+    [void](Set-TestWindowSize -Window ([IntPtr]$shared) -Width 900 -Height 560)
+    Start-Sleep -Milliseconds 600
+    # The switch the relaunch must remember: swm-h2, never activated as a
+    # window of its own, goes on show.
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=show', '--target=swm-h2')
+    Assert ($ws -and [string]$ws.data.active -eq 'swm-h2') "I: setup: swm-h2 is on show (active='$($ws.data.active)')"
+    $tops = @(Visible-Tops)
+    $rect = if ($tops.Count -eq 1) { $tops[0] } else { $null }
+
+    # I1: the manifest - three entries, one frame, swm-h2 in front.
+    $deadline = (Get-Date).AddSeconds(15)
+    $m = $null
+    do {
+        Start-Sleep -Milliseconds 400
+        try { $m = Get-Content $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $m = $null }
+        $ok = $m -and @($m.windows).Count -eq 3 -and @(@($m.windows) | Where-Object { $_.frontmost -eq $true -and [string]$_.ipc_name -eq 'swm-h2' }).Count -eq 1
+    } while ((Get-Date) -lt $deadline -and -not $ok)
+    $mw = @(if ($m) { @($m.windows) | ForEach-Object { $_ } })
+    Assert ($mw.Count -eq 3) "I1: the manifest holds every workspace ($($mw.Count) entries)"
+    $front = @($mw | Where-Object { $_.frontmost -eq $true } | ForEach-Object { [string]$_.ipc_name })
+    Assert ($front.Count -eq 1 -and $front[0] -eq 'swm-h2') "I1: the workspace on show is the one marked frontmost (got '$($front -join ',')')"
+    $framed = @($mw | Where-Object { $null -ne $_.frame })
+    $frames = @($framed | ForEach-Object { "$($_.frame.x),$($_.frame.y),$($_.frame.w),$($_.frame.h)" } | Select-Object -Unique)
+    Assert ($framed.Count -eq 3 -and $frames.Count -eq 1) "I1: every entry - the parked ones too - carries the window's frame ($($framed.Count) framed: $($frames -join ' | '))"
+    if ($rect -and $framed.Count -gt 0) {
+        $f0 = $framed[0].frame
+        Assert ([math]::Abs([int]$f0.x - $rect.Left) -le 2 -and [math]::Abs([int]$f0.w - $rect.Width) -le 2) "I1: that frame is the shared window's ($($f0.x),$($f0.y) $($f0.w)x$($f0.h) vs $($rect.Left),$($rect.Top) $($rect.Width)x$($rect.Height))"
+    }
+
+    # I2: relaunch in single mode - one window, three workspaces, swm-h2 on
+    # show.
+    Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
+    Kill-RepoInstances
+    $app = Start-App 'launch I2 (single, restore)' -Persist
+    if (-not $app) { exit 1 }
+    $deadline = (Get-Date).AddSeconds(30)
+    do {
+        Start-Sleep -Milliseconds 500
+        $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    } while ((Get-Date) -lt $deadline -and -not ($ws -and @($ws.data.workspaces).Count -ge 3))
+    $names = @($ws.data.workspaces | ForEach-Object { [string]$_.name })
+    Assert ($names.Count -eq 3 -and $names -contains 'swm-h2' -and $names -contains 'swm-h3') "I2: every workspace came back ($($names -join ','))"
+    Assert ([string]$ws.data.active -eq 'swm-h2') "I2: the one that was on show is on show again (active='$($ws.data.active)')"
+    Assert ($ws -and [int]$ws.data.windows_with_hwnd -eq 1) "I2: they share ONE window (windows_with_hwnd=$($ws.data.windows_with_hwnd))"
+    $parked = @($ws.data.workspaces | Where-Object { $_.parked })
+    Assert ($parked.Count -eq 2) "I2: the other two are parked ($($parked.Count))"
+    Start-Sleep -Milliseconds 800
+    $tops = @(Visible-Tops)
+    Assert ($tops.Count -eq 1) "I2: one window on screen ($($tops.Count))"
+    if ($tops.Count -eq 1 -and $framed.Count -gt 0) {
+        $f0 = $framed[0].frame
+        Assert ([math]::Abs($tops[0].Left - [int]$f0.x) -le 2 -and [math]::Abs($tops[0].Width - [int]$f0.w) -le 2) "I2: at the saved frame ($($tops[0].Left),$($tops[0].Top) $($tops[0].Width)x$($tops[0].Height))"
+    }
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'I2: no crash'
+
+    # I3: the same manifest in `separate` mode - three windows at one frame,
+    # swm-h2 on top.
+    Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
+    Kill-RepoInstances
+    [System.IO.File]::WriteAllText($cfgFile, "macos-window-mode = separate`n")
+    $app = Start-App 'launch I3 (separate, restore)' -Persist
+    if (-not $app) { exit 1 }
+    $deadline = (Get-Date).AddSeconds(30)
+    do { Start-Sleep -Milliseconds 500; $tops = @(Visible-Tops) } while ((Get-Date) -lt $deadline -and $tops.Count -lt 3)
+    Start-Sleep -Milliseconds 1500
+    $tops = @(Visible-Tops)
+    Assert ($tops.Count -eq 3) "I3: separate mode restores each workspace as a window ($($tops.Count))"
+    $at = @($tops | ForEach-Object { "$($_.Left),$($_.Top),$($_.Width),$($_.Height)" } | Select-Object -Unique)
+    Assert ($tops.Count -eq 3 -and $at.Count -eq 1) "I3: all at the one frame ($($at -join ' | '))"
+    $topText = if ($tops.Count -gt 0) { [string](Get-TestWindowText -Window ([IntPtr]$tops[0].Hwnd)) } else { '' }
+    Assert ($topText -match 'SWM-H2-FRONT') "I3: the frontmost (swm-h2) is on top (top window reads '$topText')"
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'I3: no crash'
+    Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
+    [void](Stop-RepoGhoztty -Exe $exe -SettleMs 500)
+    $app = $null
 
     Complete-TestBody
 } catch {

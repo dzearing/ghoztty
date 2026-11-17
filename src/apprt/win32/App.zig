@@ -3855,16 +3855,22 @@ fn captureSessionLayout(
     defer if (budget_used) |out| {
         out.* = snapshot_budget.used;
     };
+    // T3187: in single-window mode the window in front is the workspace on
+    // show, wherever it sits in the list.
+    var on_show: ?usize = null;
     for (self.windows.items, 0..) |win, wi| {
         if (win.is_quick_terminal) continue;
         if (win.remote_dialed != null) continue;
         if (win.tab_count == 0) continue;
 
+        if (self.workspaces.active) |a| if (a == win) {
+            on_show = windows.items.len;
+        };
         try windows.append(arena, try self.captureWindow(arena, win, wi, &snapshot_budget, pending, screens));
     }
     // T3137 (Mac 3f772a2f0): mark the window that was in front, so a restore
-    // in either lineage brings it back in front.
-    session_layout.markFrontmost(windows.items);
+    // in either lineage brings it back in front - in single mode, on show.
+    session_layout.markFrontmostOnShow(windows.items, on_show);
     return .{ .windows = try windows.toOwnedSlice(arena) };
 }
 
@@ -3949,7 +3955,11 @@ fn captureWindow(
         };
     }
 
-    const frame_max = captureFrame(win.hwnd);
+    // A parked workspace has no window of its own; its frame is the shared
+    // window's (T3187, Mac "a parked workspace's `frame` is the window's"), so
+    // the manifest read in `separate` mode is windows at one frame.
+    const frame_hwnd = win.layoutHwnd();
+    const frame_max = captureFrame(frame_hwnd);
     return .{
         .id = if (win.ipc_name) |n|
             try arena.dupe(u8, n)
@@ -3964,7 +3974,7 @@ fn captureWindow(
         .primary_screen_height = if (frame_max.frame != null) primaryScreenHeight() else null,
         // T1971: the scale those pixels were measured at, so a restore onto a
         // desktop at another scale (an RDP reconnect) converts the size.
-        .frame_dpi = if (frame_max.frame != null) windowDpi(win.hwnd) else null,
+        .frame_dpi = if (frame_max.frame != null) windowDpi(frame_hwnd) else null,
         .maximized = frame_max.maximized,
         .title_override = if (win.title_override) |t| try arena.dupe(u8, t) else null,
         .title_set_by_user = window_title_owner.persisted(win.title_override, win.title_set_by_user),
@@ -4959,7 +4969,10 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
             if (paced.append(gpa, win)) |_| continue else |_| {}
         }
         const tr: RestoreTransport = if (conn) |c| .local(c) else .agentless();
-        const built = self.restoreWindowShown(win, tr, attach_ptr, false) catch |err| {
+        // T3187: in single-window mode the first window built loads the one
+        // window and is on show (the front sorts first); every later one is
+        // a workspace parked behind it, never a switch away from it.
+        const built = self.restoreWindowShown(win, tr, attach_ptr, self.restoreParksBehindShown()) catch |err| {
             log.warn("session-restore: window '{s}' failed err={}", .{ win.id, err });
             // A build failure is never an adjudication: keep the entry so the
             // next launch can try again (Mac keeps entries on any non-dead
@@ -4991,7 +5004,7 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
         for (paced.items) |win| {
             gui_pump.pump();
             const tr: RestoreTransport = if (conn) |c| .local(c) else .agentless();
-            self.restoreWindow(win, tr, attach_ptr) catch |err| {
+            _ = self.restoreWindowShown(win, tr, attach_ptr, self.restoreParksBehindShown()) catch |err| {
                 log.warn("session-restore: window '{s}' failed err={}", .{ win.id, err });
                 self.carryUnrestoredWindow(win);
                 continue;
@@ -5987,6 +6000,13 @@ fn restoreFirstLeaf(nodes: []const session_layout.Node, idx: usize) ?session_lay
         i = sp.left;
     }
     return null; // cycle guard tripped
+}
+
+/// Whether the launch restore's next window is built PARKED behind the one on
+/// show (T3187): single-window mode, once a workspace has the window. Separate
+/// mode keeps building each window activated, as it always has.
+fn restoreParksBehindShown(self: *const App) bool {
+    return window_mode.isSingle() and self.workspaces.active != null;
 }
 
 /// Rebuild ONE manifest window (its tabs, split trees, per-leaf ATTACH, and
