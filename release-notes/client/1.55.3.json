@@ -1,0 +1,24 @@
+{
+  "version": "1.55.3",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "Windows reads the one-window setting once at launch, and Settings > Panes & Windows offers it as on the Mac." },
+        { "text": "Single-window mode now has one answer to which workspace holds the window, and who takes it next." },
+        { "text": "Single-window mode now hands one window between workspaces instead of opening another." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "The window that was in front when Ghoztty quit comes back in front on Windows, including from a Mac layout." },
+        { "text": "A pane popped out to another window is now checked to keep its banner's space, so its text never slides under the card." },
+        { "text": "A relaunch keeps each pane's tint and the title you typed for it." },
+        { "text": "An agent recovery keeps every collapsed row folded on Windows." },
+        { "text": "A viewer's file save now renders only when the pane is seen and the file actually changed." },
+        { "text": "An idle git-status viewer now runs one git process per poll instead of six." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "A pane drag no longer wakes every window's sidebar at once on Windows." }
+      ] }
+  ]
+}
