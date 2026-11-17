@@ -260,12 +260,14 @@ pub const panes: Page = .{
         // Mac 3f772a2f0. Mac says "Takes effect the next time Ghoztty
         // starts." as the section's footer; the win32 form draws no section
         // footers, so it is the row's hint (which also stands in for the
-        // schema summary's "macOS only").
+        // schema summary's "macOS only"). The hint adds the Windows launch
+        // boundary (T3212): the app stays resident with no window, so closing
+        // every window is the quit and the next window re-reads the mode.
         .{ .title = "Windows", .footer = "Takes effect the next time Ghoztty starts.", .rows = &.{
             .{ .key = "macos-window-mode", .label = "Open windows", .control = .{ .segmented = &.{
                 .{ .value = "separate", .label = "Each in its own window" },
                 .{ .value = "single", .label = "All in one window" },
-            } }, .hint = "Takes effect the next time Ghoztty starts." },
+            } }, .hint = "Takes effect the next time Ghoztty starts, or once you have closed every window." },
         } },
         .{ .title = "Stacked panes", .rows = &.{
             .{ .key = "macos-pane-min-width", .label = "Stack panes narrower than", .control = .{ .stepper = .{ .min = 120, .max = 800, .step = 5, .unit = "px" } } },

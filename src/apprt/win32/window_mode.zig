@@ -7,7 +7,9 @@
 //! config file (a reload, the Settings row) takes effect at the next launch,
 //! where the windows that were open come back in the new mode. `App.init`
 //! latches the startup config's value; everything after asks `current()`,
-//! never the live config.
+//! never the live config. The one Windows addition (T3212): the app stays
+//! resident with no window open, so the first window opened while none is
+//! open counts as the next launch and reads the mode again (`relatchIdle`).
 //!
 //! Pure (no OS imports), so its tests run in every app-runtime lane.
 const std = @import("std");
@@ -27,6 +29,24 @@ pub var override_for_testing: ?Mode = null;
 pub fn latch(mode: Mode) Mode {
     if (latched == null) latched = mode;
     return latched.?;
+}
+
+/// Read the mode again because no window is open (T3212). On Windows the app
+/// stays resident when its last window closes (`quit-after-last-window-closed`
+/// is off) and nothing on screen says it is still running, so to the user
+/// closing every window IS quitting, and the next window they open is the
+/// next launch. Without this a mode chosen in Settings waited for a quit the
+/// user had no way to see they owed. The caller asks only while no terminal
+/// window exists, so no window is ever left built for the other mode.
+/// Returns the mode it replaced, or null when nothing moved.
+pub fn relatchIdle(mode: Mode) ?Mode {
+    const old = latched orelse {
+        latched = mode;
+        return null;
+    };
+    if (old == mode) return null;
+    latched = mode;
+    return old;
 }
 
 /// The mode this launch runs in: the test override, else the latched launch
@@ -65,6 +85,26 @@ test "window_mode: separate until latched, then the first latch wins" {
     try std.testing.expectEqual(Mode.separate, latch(.separate));
     try std.testing.expectEqual(Mode.separate, latch(.single));
     try std.testing.expect(!isSingle());
+}
+
+test "window_mode: with no window open the mode is read again (T3212)" {
+    resetForTesting();
+    defer resetForTesting();
+    _ = latch(.separate);
+    // A reload alone does not move it...
+    try std.testing.expectEqual(Mode.separate, latch(.single));
+    // ...the next window opened with none open does.
+    try std.testing.expectEqual(@as(?Mode, .separate), relatchIdle(.single));
+    try std.testing.expect(isSingle());
+    // Same value: nothing moved.
+    try std.testing.expectEqual(@as(?Mode, null), relatchIdle(.single));
+    // And back.
+    try std.testing.expectEqual(@as(?Mode, .single), relatchIdle(.separate));
+    try std.testing.expect(!isSingle());
+    // Nothing latched yet: it latches, and reports no move.
+    resetForTesting();
+    try std.testing.expectEqual(@as(?Mode, null), relatchIdle(.single));
+    try std.testing.expect(isSingle());
 }
 
 test "window_mode: the test override beats the latch" {

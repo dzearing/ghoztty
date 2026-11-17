@@ -70,6 +70,11 @@
 #   chooser's Restore All in B brings all three back as workspaces of B's one
 #   window with swm-la on show - through exactly ONE `workspace adopted the
 #   window` hand-off, not one per rebuilt workspace.
+# N (T3212, runs right after A): closing every window is the Windows quit.
+#   Settings sets single while a separate window is open (the mode holds);
+#   every window is closed and the app stays resident; the forwarded launch
+#   (`+new-window --focus`) then opens the one window's first workspace in
+#   the new mode, and a second launch is a second workspace in it.
 #
 # THE ORACLE IS THE LATCH AND THE FILE. The mode the app runs in is a decision
 # invisible in pixels (until T3181 gives it a window to act on), so it is read
@@ -266,6 +271,51 @@ try {
     $s = Invoke-Settings @('--op=open')
     Assert ([string]$s.data.window_mode -eq 'separate') "A: no config line means separate (window_mode='$($s.data.window_mode)')"
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'A: no crash (launch 3)'
+
+    # =====================================================================
+    # N (T3212): closing every window is the Windows quit. The app stays
+    # resident with no window (quit-after-last-window-closed is off), so the
+    # mode chosen in Settings takes effect at the next window opened with
+    # none open - the forwarded launch a Start-menu / taskbar click sends
+    # (`+new-window --focus`) - not at a quit the user cannot see they owe.
+    # =====================================================================
+    $s = Invoke-Settings @('--op=set', '--key=macos-window-mode', '--value=single')
+    Assert ($null -ne $s -and $s.success) 'N: choosing All in one window is accepted'
+    Start-Sleep -Milliseconds 1500
+    $s = Invoke-Settings @('--op=state')
+    Assert ([string]$s.data.window_mode -eq 'separate') "N: with a window open the running mode stays separate (window_mode='$($s.data.window_mode)')"
+    $row = Find-Row (Invoke-Settings @('--op=state', '--page=panes')) 'macos-window-mode'
+    Assert ($row -and [string]$row.hint -match 'closed every window') "N: the row says closing every window applies it (hint='$($row.hint)')"
+    [void](Invoke-Settings @('--op=close'))
+    Start-Sleep -Milliseconds 500
+    $nMark = @(Get-Content $errlog -ErrorAction SilentlyContinue).Count
+    foreach ($t in @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow')) {
+        [void](Send-TestWindowClose -Window ([IntPtr]$t.Hwnd))
+    }
+    $deadline = (Get-Date).AddSeconds(8)
+    do { Start-Sleep -Milliseconds 300 } while ((Get-Date) -lt $deadline -and @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow').Count -gt 0)
+    Assert (@(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow').Count -eq 0) 'N: every window is closed'
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'N: the app stays resident with no window'
+
+    # The forwarded launch: one window, the first workspace of the one window.
+    $r = Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-n1', '--focus')
+    Assert ($r -and $r.success) 'N1: +new-window --focus (the forwarded launch) succeeds with no window open'
+    Start-Sleep -Milliseconds 1500
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    Assert ($ws -and [string]$ws.data.mode -eq 'single') "N1: the window opened with none open runs the mode Settings chose (mode='$($ws.data.mode)')"
+    Assert ($ws -and [string]$ws.data.active -eq 'swm-n1' -and @($ws.data.workspaces).Count -eq 1) "N1: it is the one window's first workspace (active='$($ws.data.active)', $(@($ws.data.workspaces).Count) workspace)"
+    $relatch = @(Get-Content $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $nMark | Where-Object { $_ -match 'window mode: separate -> single \(re-read with no window open\)' })
+    Assert ($relatch.Count -eq 1) "N1: the app says it re-read the mode once ($($relatch.Count))"
+
+    # A second launch lands as a workspace in that window, not a new one.
+    $r = Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-n2', '--focus')
+    Assert ($r -and $r.success) 'N2: a second forwarded launch succeeds'
+    Start-Sleep -Milliseconds 1500
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    $tops = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyWindow' | Where-Object { $_.Visible })
+    Assert ($ws -and [string]$ws.data.active -eq 'swm-n2' -and @($ws.data.workspaces).Count -eq 2 -and [int]$ws.data.windows_with_hwnd -eq 1) "N2: it is a second workspace on show in the same window (active='$($ws.data.active)', $(@($ws.data.workspaces).Count) workspaces, windows_with_hwnd=$($ws.data.windows_with_hwnd))"
+    Assert ($tops.Count -eq 1) "N2: still ONE window on screen ($($tops.Count))"
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'N: no crash'
 
     # =====================================================================
     # B (T3191): one shared HWND. A programmatic open parks (no HWND of its

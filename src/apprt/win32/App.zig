@@ -8008,6 +8008,26 @@ pub fn parkHost(self: *App) ?w32.HWND {
     return self.park_host;
 }
 
+/// The first terminal window opened while none is open reads
+/// `macos-window-mode` again (T3212, `window_mode.relatchIdle`): the resident
+/// instance with no window looks quit to the user, so this window is their
+/// next launch, and a mode chosen in Settings takes effect here. Never while
+/// any terminal window - shown, parked, or a closed workspace waiting out its
+/// undo - is still built for the old mode, nor inside a destructive agent
+/// refresh, whose empty window list is about to be rebuilt as it was.
+fn relatchWindowModeIfIdle(self: *App) void {
+    if (self.agent_refresh_depth > 0) return;
+    for (self.windows.items) |w| {
+        if (!w.is_quick_terminal) return;
+    }
+    if (self.workspaces.count() != 0) return;
+    if (self.close_undo.closedWorkspaceCount() != 0) return;
+    const now = self.config.@"macos-window-mode";
+    if (window_mode.relatchIdle(now)) |old| {
+        log.info("window mode: {s} -> {s} (re-read with no window open)", .{ @tagName(old), @tagName(now) });
+    }
+}
+
 /// Asked before a window is built (Mac `startsParked`): in single-window mode
 /// every window but the first is a workspace that starts with no HWND. Always
 /// false in `separate` mode and for the quick terminal.
@@ -8253,6 +8273,7 @@ pub fn createEmptyWindow(self: *App, opts: Window.InitOptions) !*Window {
     const alloc = self.core_app.alloc;
     const window = try alloc.create(Window);
     errdefer alloc.destroy(window);
+    if (!opts.is_quick_terminal) self.relatchWindowModeIfIdle();
     var init_opts = opts;
     init_opts.parked = self.workspaceStartsParked(opts);
     try window.init(self, init_opts);
