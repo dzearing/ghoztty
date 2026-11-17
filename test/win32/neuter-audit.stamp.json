@@ -1,8 +1,8 @@
 {
     "guard":  "neuter-audit",
     "script":  "test/win32/neuter-audit.ps1",
-    "generated":  "2026-11-17T14:26:18-08:00",
-    "commit":  "e15858510",
+    "generated":  "2026-11-17T15:02:17-08:00",
+    "commit":  "ed8755bfc",
     "uncommitted":  [
 
                     ],
@@ -410,7 +410,7 @@
                   "src/apprt/win32/ViewerFeedbackWeb.zig":  "8848202d5b02faf5ecbb68a9dba13ca53731b3e96d58612046d9b0a49175eed6",
                   "src/apprt/win32/ViewerFindBar.zig":  "23a3950472ae29064f27aad2e545f4abf44ba41408d4512ceb2d24381f4a5625",
                   "src/apprt/win32/ViewerNavBar.zig":  "2a75d85c84c63b4be229ca1f230a111f0be5c56110069f8566560cbe11bd2c06",
-                  "src/apprt/win32/ViewerPane.zig":  "18753071eaf678de00db8123e0413cf0d5cec21be4802eb2e7f8be532c8b1bb4",
+                  "src/apprt/win32/ViewerPane.zig":  "92cbfb31cfb85324d3a49e614d5646c111e52fec293629c1541b9bceacde6930",
                   "src/apprt/win32/ViewerTOCPanel.zig":  "e93b814a495f9b25b8e6819578f5f66d26fe910557a7ac0d246a3dbe53886d91",
                   "src/apprt/win32/ViewerWorktreeProbe.zig":  "418194f6a5d00a71853c2ccedeb9bb3efd968f46706f75b7bdd2a46b59ea0131",
                   "src/apprt/win32/webview2.zig":  "8acac18b06c3b93c47fe1dc3008b50cf00252a07b80ff3a995ba31f0dec4edbc",
