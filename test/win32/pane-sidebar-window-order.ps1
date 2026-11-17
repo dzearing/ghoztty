@@ -31,7 +31,10 @@
 #   6. Persisted: the order file names both groups and the four windows.
 #   7. Relaunched with session restore, the windows come back with their ids
 #      and the list keeps the dragged order (zz before proj, wt-2 before wt-1
-#      - not the name order).
+#      - not the name order). The relaunch keeps the app's own sidebar
+#      defaults (expanded, all windows) and, with a window unfolded at the
+#      kill, opens with every restored window folded - the scope persists,
+#      its folds do not (T3209, Mac PaneSidebarSharedState).
 #   8. solo dragged into proj, between wt-2 and wt-1 (T2338): proj's header
 #      glows while it would join, and on the drop solo is retitled
 #      "proj: solo" (+list) and lands there: zz/one | proj/wt-2 | proj/solo |
@@ -190,11 +193,14 @@ function Get-ListTitles {
 function Get-TopRects([int]$AppPid) {
     return (@(Get-TestWindows -ProcessId $AppPid -Class 'GhozttyWindow' | Sort-Object Hwnd | ForEach-Object { '{0}:{1},{2},{3},{4}' -f $_.Hwnd, $_.Left, $_.Top, $_.Width, $_.Height }) -join ' ')
 }
-function Launch {
+# -KeepPrefs launches over the sidebar defaults the app itself last wrote
+# (expanded, all windows) instead of the harness's "this window" reset
+# (Clear-TestWindowPlacement), so the relaunch is the user's (T3209).
+function Launch([switch]$KeepPrefs) {
     $saved = $env:LOCALAPPDATA
     $env:LOCALAPPDATA = $fakeLocal
     try {
-        $a = Start-OnTestDesktop -Exe $Exe -StdErr $script:errlog -Arguments @('--session-persistence=true', '--macos-pane-style=flat')
+        $a = Start-OnTestDesktop -Exe $Exe -StdErr $script:errlog -Arguments @('--session-persistence=true', '--macos-pane-style=flat') -KeepWindowPlacement:$KeepPrefs
     } finally { $env:LOCALAPPDATA = $saved }
     $script:app = $a
     Start-Sleep -Seconds 3
@@ -379,6 +385,12 @@ try {
     $deadline = (Get-Date).AddSeconds(8)
     while (-not ((Test-Path $manifest) -and ((Get-Content $manifest -Raw) -match 'wt-2')) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300 }
     Assert "setup: the session layout records the windows" ((Test-Path $manifest) -and ((Get-Content $manifest -Raw) -match 'wt-2'))
+    # T3209: what the relaunch must not carry over. A window is unfolded in
+    # the all-windows list now, and the app's own defaults say "all windows".
+    $lastAll = @(Get-LogLines 0 'pane sidebar all-windows groups=') | Select-Object -Last 1
+    Assert "setup: a window is unfolded before the kill ($lastAll)" ($null -ne $lastAll -and $lastAll -match ' windows=4 folded=[0-3] ')
+    $prefs = (Get-Content (Join-Path $fakeLocal 'ghoztty\pane_sidebar-debug') -Raw -ErrorAction SilentlyContinue)
+    Assert "setup: the sidebar defaults say expanded, all windows ($prefs)" ($null -ne $prefs -and $prefs.Trim() -match '^1 0 \d+ 1$')
     Stop-Process -Id $script:app.Pid -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 1200
     if ($NegativeControl) {
@@ -386,12 +398,37 @@ try {
         Remove-Item $orderFile -Force -ErrorAction SilentlyContinue
     }
     $logBefore = Get-LogCount
-    $top = Launch
+    $top = Launch -KeepPrefs
     Assert "relaunched" ($top -ne [IntPtr]::Zero)
     Start-Sleep -Milliseconds 1500
     $tops = @(Get-TestWindows -ProcessId $script:app.Pid -Class 'GhozttyWindow')
     Assert "four windows restored ($($tops.Count))" ($tops.Count -eq 4)
+    # T3209 (Mac PaneSidebarSharedState: the scope persists, its folds do not
+    # - a launch starts every window folded, as turning the scope on does).
+    # The window unfolded before the kill comes back folded with the rest.
+    Assert "the relaunch opens in all windows" ($null -ne (Wait-Log 'pane sidebar scope at launch all_windows=true' 0 3000))
+    # The windows restore one after another, so the list is logged as each
+    # arrives: every one of those lists has all its windows folded, and the
+    # last has all four.
+    [void](Wait-Log 'pane sidebar all-windows groups=.* windows=4 ' 0 4000)
+    $launchAll = @(Get-LogLines 0 'pane sidebar all-windows groups=')
+    $openAtLaunch = @($launchAll | Where-Object { -not ($_ -match ' windows=(\d+) folded=(\d+) ' -and $Matches[1] -eq $Matches[2]) })
+    "  (launch lists: $($launchAll.Count), with a window open: $($openAtLaunch.Count))"
+    Assert "no list at launch shows a window open ($($openAtLaunch | Select-Object -First 1))" ($launchAll.Count -gt 0 -and $openAtLaunch.Count -eq 0)
+    Assert "all four restored windows are listed folded" (@($launchAll | Where-Object { $_ -match ' windows=4 folded=4 ' }).Count -gt 0)
+    Assert "...and nothing unfolded it on the way up" (@(Get-LogLines 0 'pane sidebar unfold').Count -eq 0)
     if ($top -ne [IntPtr]::Zero) {
+        # Back to "this window" so Open-AllWindows' scope click turns it on,
+        # as it does in every other section.
+        [void](Set-TestActiveWindow -Window $top)
+        Start-Sleep -Milliseconds 400
+        $sbk = Get-Sidebar $top
+        if ($sbk) {
+            $mark = Get-LogCount
+            [void](ClickAt $top $sbk (Get-ScopeCenter $sbk))
+            [void](Wait-Log 'pane sidebar scope all_windows=false' $mark)
+            Start-Sleep -Milliseconds 400
+        }
         $mark = Get-LogCount
         $sb2 = Open-AllWindows $top
         Assert "the restored window's all-windows list is up" ($null -ne $sb2)
