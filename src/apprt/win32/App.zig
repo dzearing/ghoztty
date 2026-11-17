@@ -7965,6 +7965,54 @@ pub fn showWorkspace(self: *App, target: *Window) bool {
     }
 }
 
+/// What closing a workspace does to the shared window (T3184).
+pub const WorkspaceClose = enum {
+    /// Not a single-mode workspace, or the last one: close it as a window
+    /// (its HWND is destroyed; `forgetWorkspace` then drops it).
+    as_window,
+    /// It closes without a window - it was parked, or it was on show and has
+    /// just handed the window to the one shown before it. The caller tears
+    /// the controller down without a DestroyWindow.
+    in_place,
+};
+
+/// Close a workspace (Mac `WorkspaceHost.close`, T3184). The one on show
+/// hands the window to the workspace shown before it, which adopts it at
+/// once - the same HWND, so the window never blinks; a parked one closes in
+/// place. Decided and carried out before the closing controller tears down,
+/// so the adopter is on show by the time its panes go.
+pub fn closeWorkspace(self: *App, window: *Window) WorkspaceClose {
+    if (!self.workspaces.manages(window)) return .as_window;
+    switch (self.workspaces.close(window)) {
+        .not_managed, .close_window => return .as_window,
+        .in_place => {
+            log.info("workspace closed in place name={s}", .{window.ipc_name orelse "?"});
+            return .in_place;
+        },
+        .hand_to => |next| {
+            const park = self.parkHost() orelse return .in_place;
+            if (window.surrenderWindow(park)) |given| {
+                next.adoptWindow(given.hwnd, given.bound);
+                PaneSidebar.refreshScopes(self.windows.items, null);
+                log.info("workspace close handed the window to name={s}", .{next.ipc_name orelse "?"});
+            } else if (next.hwnd == null) {
+                // The one on show had no window to give: the next one loads
+                // its own rather than staying parked under nothing.
+                next.promoteToOwnWindow() catch |err| log.warn("workspace promotion failed err={}", .{err});
+            }
+            return .in_place;
+        },
+    }
+}
+
+/// A workspace whose last pane went while it was parked (T3184): nothing can
+/// post it a WM_CLOSE, so it closes on the next loop turn - not from inside
+/// the tree edit that emptied it.
+pub fn closeParkedWorkspaceLater(self: *App, window: *Window) void {
+    if (!self.forceCloseDeferred(.{ .window = window, .pane = null }))
+        log.warn("parked workspace close could not be queued", .{});
+}
+
 /// A window leaving `windows` leaves the workspaces too (T3191). When it
 /// held the shared window and others are still open, the most recently shown
 /// one loads a window of its own (Mac `windowDidClose`), so the app never

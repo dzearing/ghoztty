@@ -12,6 +12,9 @@
 #   the debug-only `workspaces` IPC seam (ipc_workspaces.zig: who is on show,
 #   who is parked with no HWND) and the test desktop's own window list.
 #
+# C (T3184): closing a workspace - parked closes in place (+close, last shell
+#   exiting), on show hands the same HWND on, the last one closes the window.
+#
 # THE ORACLE IS THE LATCH AND THE FILE. The mode the app runs in is a decision
 # invisible in pixels (until T3181 gives it a window to act on), so it is read
 # through the debug-only `settings` IPC action's `window_mode` field, which
@@ -276,10 +279,9 @@ try {
     $tops = @(Visible-Tops)
     Assert ($tops.Count -eq 1 -and $tops[0].Hwnd -eq $shared) "B4: one window on screen throughout ($($tops.Count))"
 
-    # B5: the shared window closing under parked workspaces never leaves the
-    # app with workspaces and nothing on screen: the most recently shown one
-    # loads a window of its own (Mac windowDidClose). (T3184 turns the close
-    # of the workspace on show into a hand-off of the SAME window.)
+    # B5 (T3184): closing the window with the workspace on show hands the
+    # SAME window to the most recently shown other one - it never blinks and
+    # no new top-level appears; the rest stay parked.
     [void](Send-TestSysCommand -Window ([IntPtr]$shared) -Command 'close')
     $deadline = (Get-Date).AddSeconds(8)
     do {
@@ -288,13 +290,73 @@ try {
     } while ((Get-Date) -lt $deadline -and -not ($ws -and @($ws.data.workspaces).Count -eq 2 -and $ws.data.active))
     $names = @($ws.data.workspaces | ForEach-Object { [string]$_.name })
     Assert ($ws -and $names.Count -eq 2 -and $names -notcontains $first) "B5: closing the window ended only the workspace on show ($($names -join ','))"
-    Assert ($ws -and [string]$ws.data.active -eq 'swm-b') "B5: the most recently shown one (swm-b) took a window (active='$($ws.data.active)')"
+    Assert ($ws -and [string]$ws.data.active -eq 'swm-b') "B5: the one shown before it (swm-b) is on show (active='$($ws.data.active)')"
     $tops = @(Visible-Tops)
     $b = Ws-Row $ws 'swm-b'
-    Assert ($tops.Count -eq 1 -and $b -and $tops[0].Hwnd -eq [int64]$b.hwnd) "B5: one window on screen, swm-b's ($($tops.Count): $(($tops | ForEach-Object Hwnd) -join ',') vs $($b.hwnd))"
+    Assert ($b -and [int64]$b.hwnd -eq $shared) "B5: swm-b adopted the SAME window (hwnd=$($b.hwnd) shared=$shared)"
+    Assert ($tops.Count -eq 1 -and $tops[0].Hwnd -eq $shared) "B5: one window on screen, the shared one ($($tops.Count): $(($tops | ForEach-Object Hwnd) -join ','))"
     $c = Ws-Row $ws 'swm-c'
     Assert ($c -and $c.parked -and [int64]$c.hwnd -eq 0) "B5: swm-c stays parked (hwnd=$($c.hwnd))"
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'B: no crash'
+
+    # =====================================================================
+    # C (T3184): closing a workspace. A parked one closes in place (+close,
+    # its last shell exiting); the one on show hands the window on (+close);
+    # the last one's close closes the window.
+    # =====================================================================
+    function Wait-Ws([scriptblock]$until, [int]$seconds = 8) {
+        $deadline = (Get-Date).AddSeconds($seconds)
+        do {
+            Start-Sleep -Milliseconds 400
+            $s = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+        } while ((Get-Date) -lt $deadline -and -not (& $until $s))
+        return $s
+    }
+
+    # C1: +close on a parked workspace closes it in place.
+    $r = Invoke-GhozttyIpc -Action 'close' -Arguments @('--target=swm-c')
+    Assert ($r -and $r.success) 'C1: +close --target=swm-c (parked) succeeds'
+    $ws = Wait-Ws { param($s) $s -and @($s.data.workspaces).Count -eq 1 }
+    $names = @($ws.data.workspaces | ForEach-Object { [string]$_.name })
+    Assert ($names.Count -eq 1 -and $names[0] -eq 'swm-b') "C1: only swm-c went ($($names -join ','))"
+    Assert ([string]$ws.data.active -eq 'swm-b' -and [int64](Ws-Row $ws 'swm-b').hwnd -eq $shared) "C1: swm-b kept the window untouched (active='$($ws.data.active)')"
+    $tops = @(Visible-Tops)
+    Assert ($tops.Count -eq 1 -and $tops[0].Hwnd -eq $shared) "C1: the window never moved ($($tops.Count))"
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'C1: no crash'
+
+    # C2: a parked workspace whose last shell exits closes in place too.
+    $r = Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-d')
+    Assert ($r -and $r.success) 'C2: +new-window --target=swm-d (parked) succeeds'
+    $ws = Wait-Ws { param($s) $s -and (Ws-Row $s 'swm-d') }
+    $d = Ws-Row $ws 'swm-d'
+    Assert ($d -and $d.parked) "C2: swm-d is parked (parked=$($d.parked))"
+    Start-Sleep -Milliseconds 1500
+    cmd /c "`"$exe`" +send-keys --target=swm-d `"exit`" Enter > nul 2>&1" | Out-Null
+    $ws = Wait-Ws { param($s) $s -and -not (Ws-Row $s 'swm-d') } 12
+    Assert ($ws -and -not (Ws-Row $ws 'swm-d')) "C2: swm-d closed when its shell exited ($((@($ws.data.workspaces) | ForEach-Object name) -join ','))"
+    Assert ([string]$ws.data.active -eq 'swm-b' -and [int64](Ws-Row $ws 'swm-b').hwnd -eq $shared) "C2: swm-b kept the window (active='$($ws.data.active)')"
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'C2: no crash'
+
+    # C3: +close on the workspace on show hands the window to the one shown
+    # before it.
+    $r = Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-e')
+    Assert ($r -and $r.success) 'C3: +new-window --target=swm-e (parked) succeeds'
+    [void](Wait-Ws { param($s) $s -and (Ws-Row $s 'swm-e') })
+    $r = Invoke-GhozttyIpc -Action 'close' -Arguments @('--target=swm-b')
+    Assert ($r -and $r.success) 'C3: +close --target=swm-b (on show) succeeds'
+    $ws = Wait-Ws { param($s) $s -and [string]$s.data.active -eq 'swm-e' -and @($s.data.workspaces).Count -eq 1 }
+    $e = Ws-Row $ws 'swm-e'
+    Assert ($e -and [string]$ws.data.active -eq 'swm-e' -and [int64]$e.hwnd -eq $shared) "C3: swm-e adopted the same window (active='$($ws.data.active)' hwnd=$($e.hwnd))"
+    $tops = @(Visible-Tops)
+    Assert ($tops.Count -eq 1 -and $tops[0].Hwnd -eq $shared) "C3: one window, the shared one ($($tops.Count))"
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'C3: no crash'
+
+    # C4: the last workspace's close closes the window.
+    [void](Send-TestSysCommand -Window ([IntPtr]$shared) -Command 'close')
+    $deadline = (Get-Date).AddSeconds(8)
+    do { Start-Sleep -Milliseconds 400; $tops = @(Visible-Tops) } while ((Get-Date) -lt $deadline -and $tops.Count -gt 0)
+    Assert ($tops.Count -eq 0) "C4: the last workspace's close closed the window ($($tops.Count) left)"
+
 
     Complete-TestBody
 } catch {

@@ -4580,7 +4580,9 @@ fn closeTabByIndex(self: *Window, idx: usize) void {
     self.cancelTabRename();
     // T1874: the LAST tab closing closes its window, so it is the window
     // that waits for the undo - whole, with this tab still in it.
-    if (self.tab_count == 1 and self.app.close_undo.parkWindow(self)) return;
+    // Not a single-window-mode workspace (T3184): see `close`.
+    if (self.tab_count == 1 and !self.app.workspaces.manages(self) and
+        self.app.close_undo.parkWindow(self)) return;
     // T1825: with `undo-timeout` the tab is PARKED, not ended - its tree (and
     // every session in it) waits, hidden, for an undo, and is ended when the
     // undo expires. The entry owns the tree from here; only the slot goes.
@@ -4641,6 +4643,9 @@ fn removeTabSlot(self: *Window, idx: usize) void {
     }
     self.tab_count -= 1;
     if (self.tab_count == 0) {
+        // A parked workspace (T3184) has no HWND to post to: it closes on the
+        // next loop turn instead. `closing` stays down for that close.
+        if (self.hwnd == null and self.isParked()) return self.app.closeParkedWorkspaceLater(self);
         self.closing = true;
         if (self.hwnd) |hwnd| _ = w32.PostMessageW(hwnd, w32.WM_CLOSE, 0, 0);
         return;
@@ -22386,6 +22391,10 @@ pub fn confirmCloseIfNeededOpts(self: *Window, skip_disconnect_prompt: bool) boo
         .ask_running, .ask_disconnect => {},
     }
 
+    // A parked workspace (T3184) has no window to ask over: it goes on show
+    // first, so the dialog has an owner and the person sees what closes.
+    if (self.isParked()) _ = self.app.showWorkspace(self);
+
     const refocus: ?w32.HWND = if (self.getActiveSurface()) |s| s.hwnd else null;
 
     if (step == .ask_running) {
@@ -22465,9 +22474,13 @@ pub fn close(self: *Window) void {
     // its tabs and sessions intact - and only ended when the undo expires.
     // A window that is already parked and is closed again (its last shell
     // exited while it waited) drops its undo and closes for real.
+    //
+    // Not a single-window-mode workspace (T3184): its undo would hide the
+    // shared window. It closes now and hands the window on (T3200 tracks
+    // bringing undo back to it, on show).
     if (self.parked_for_undo) {
         self.app.close_undo.forgetParkedWindow(self);
-    } else if (self.app.close_undo.parkWindow(self)) {
+    } else if (!self.app.workspaces.manages(self) and self.app.close_undo.parkWindow(self)) {
         return;
     }
     self.closeNow();
@@ -22491,6 +22504,10 @@ pub fn closeNow(self: *Window) void {
     // (`closeTabByIndex`) ever raised it, so a title-bar X on a window that
     // still had tabs tore itself down with the flag still false.
     self.closing = true;
+    // Single-window mode (T3184): a workspace closes without the shared
+    // window - on show, it hands the window to the one shown before it
+    // first; parked, it never had one.
+    const in_place = self.app.closeWorkspace(self) == .in_place;
     // Closes parked in this window (T1825) hide under its HWND: end them while
     // it still exists, before the surfaces' GL contexts are torn down.
     self.app.close_undo.finalizeWindow(self);
@@ -22502,6 +22519,10 @@ pub fn closeNow(self: *Window) void {
     // Now safe to destroy the parent HWND (children already cleaned up).
     if (self.hwnd) |hwnd| {
         _ = w32.DestroyWindow(hwnd);
+    } else if (in_place) {
+        // No HWND to send WM_DESTROY: the same teardown, run directly (the
+        // manifest drops it, its names go, the controller is freed).
+        self.onDestroy();
     }
 }
 
