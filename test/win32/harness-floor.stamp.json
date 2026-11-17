@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-16T23:53:26-08:00",
-    "commit":  "4f3bc773a",
+    "generated":  "2026-11-17T00:53:23-08:00",
+    "commit":  "191b35250",
     "uncommitted":  [
-                        "test/win32/single-window-mode.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -517,7 +517,7 @@
                   "test/win32/side-pane-featured.ps1":  "5184c74dd94e1001b5f3e6b3636ca64f72f374ee1c932ceb981352ba3e9ffcfa",
                   "test/win32/side-pane-from-strip.ps1":  "905582220dc8d3f0acce9496331db4c4cf5dcaf3f12c74be698987538b3957b3",
                   "test/win32/single-instance-join.ps1":  "5b182fa1d110e5a2eb1cba34f90e80e4ff8dd811838b6d5c4c69de85c2f648f0",
-                  "test/win32/single-window-mode.ps1":  "d4ab51a6f949b87658a6951c440f2b83fd0044f56934b3f45604d484e3d6f893",
+                  "test/win32/single-window-mode.ps1":  "417a84002151aac589ee5e095916ca38d2c87cb3c135e3cfc624bcac2f0d63db",
                   "test/win32/size-burst-canvas.ps1":  "c64c1f92290f8d5478d7e2d6a11e928d804f58088c05ed4bcfdf0f28c6e05ba0",
                   "test/win32/skip-visibility.ps1":  "370852bd35fe86b242983fd53ff181891c4666c64ba15a397effc415190aa11c",
                   "test/win32/soak.ps1":  "70115de02426d4dc47fe1b0c021ed89c7a8bf4a58487ded16f353f878a7c9787",
