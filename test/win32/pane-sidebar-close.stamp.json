@@ -1,10 +1,10 @@
 {
     "guard":  "pane-sidebar-close",
     "script":  "test/win32/pane-sidebar-close.ps1",
-    "generated":  "2026-11-17T01:48:16-08:00",
-    "commit":  "57302f335",
+    "generated":  "2026-11-17T03:28:05-08:00",
+    "commit":  "383192882",
     "uncommitted":  [
-                        "src/apprt/win32/PaneSidebar.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/pane_sidebar.zig":  "c242e812dbf0e42956f4898a597f935f77a2a44d69a98dc8bf7978842ad3265b",

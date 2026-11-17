@@ -45,7 +45,8 @@
 #   workspace at the shared window's frame with the one on show marked
 #   frontmost; the relaunch brings all three back as workspaces of ONE
 #   window with that one on show; and the same manifest read in `separate`
-#   mode is three windows at that one frame, the frontmost on top.
+#   mode is three windows at that one frame, the frontmost on top. A window
+#   saved with two tabs comes back in single mode as a workspace per tab.
 #
 # THE ORACLE IS THE LATCH AND THE FILE. The mode the app runs in is a decision
 # invisible in pixels (until T3181 gives it a window to act on), so it is read
@@ -1071,6 +1072,51 @@ try {
     $topText = if ($tops.Count -gt 0) { [string](Get-TestWindowText -Window ([IntPtr]$tops[0].Hwnd)) } else { '' }
     Assert ($topText -match 'SWM-H2-FRONT') "I3: the frontmost (swm-h2) is on top (top window reads '$topText')"
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'I3: no crash'
+
+    # I4: a window with TWO tabs, saved in separate mode, comes back in
+    # single mode (which has no tabs, T3182) as a workspace per tab - its
+    # active tab keeping the window's name and on show.
+    if ($tops.Count -gt 0) {
+        $h2 = [IntPtr]$tops[0].Hwnd
+        $h2Pane = @(Get-TestChildWindows -Window $h2 -Class 'GhozttyTerminal' | Where-Object Visible | Select-Object -First 1)
+        $paneTarget = if ($h2Pane.Count -eq 1) { [IntPtr]$h2Pane[0].Hwnd } else { [IntPtr]::Zero }
+        [void](Set-TestActiveWindow -Window $h2)
+        Start-Sleep -Milliseconds 300
+        [void](Send-TestKeys -Window $h2 -Target $paneTarget -Modifiers ctrl -Key T)
+    }
+    # Focus it by name too, so its focus stamp is the newest and the
+    # separate-mode capture marks it frontmost.
+    [void](Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=swm-h2', '--focus'))
+    $deadline = (Get-Date).AddSeconds(15)
+    do {
+        Start-Sleep -Milliseconds 400
+        try { $m = Get-Content $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json } catch { $m = $null }
+        $e2 = if ($m) { @($m.windows) | Where-Object { [string]$_.ipc_name -eq 'swm-h2' } | Select-Object -First 1 } else { $null }
+        $ok = $e2 -and @($e2.tabs).Count -eq 2 -and $e2.frontmost -eq $true
+    } while ((Get-Date) -lt $deadline -and -not $ok)
+    Assert ($e2 -and @($e2.tabs).Count -eq 2) "I4: setup: swm-h2 is saved with two tabs ($(if ($e2) { @($e2.tabs).Count } else { 'no entry' }))"
+    Assert ($e2 -and $e2.frontmost -eq $true) "I4: setup: and in front (frontmost=$(if ($e2) { $e2.frontmost }))"
+    Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
+    Kill-RepoInstances
+    [System.IO.File]::WriteAllText($cfgFile, "macos-window-mode = single`n")
+    $app = Start-App 'launch I4 (single, a two-tab window)' -Persist
+    if (-not $app) { exit 1 }
+    $deadline = (Get-Date).AddSeconds(30)
+    do {
+        Start-Sleep -Milliseconds 500
+        $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    } while ((Get-Date) -lt $deadline -and -not ($ws -and @($ws.data.workspaces).Count -ge 4))
+    $rows = @($ws.data.workspaces)
+    Assert ($rows.Count -eq 4) "I4: three windows, one with two tabs, come back as four workspaces ($(@($rows | ForEach-Object name) -join ','))"
+    Assert ([string]$ws.data.active -eq 'swm-h2') "I4: the two-tab window's active tab keeps its name and is on show (active='$($ws.data.active)')"
+    $multi = @($rows | Where-Object { [int]$_.tabs -ne 1 })
+    Assert ($rows.Count -gt 0 -and $multi.Count -eq 0) "I4: every workspace holds exactly one tab ($(@($rows | ForEach-Object { "$($_.name)=$($_.tabs)" }) -join ','))"
+    Assert ($ws -and [int]$ws.data.windows_with_hwnd -eq 1) "I4: still ONE window (windows_with_hwnd=$($ws.data.windows_with_hwnd))"
+    if (-not $ExePath) {
+        $split = @(Select-String -Path $errlog -Pattern "had 2 tabs; single-window mode brought back 2 workspace" -ErrorAction SilentlyContinue)
+        Assert ($split.Count -ge 1) "I4: the restore says it split the window's tabs ($($split.Count) line)"
+    }
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'I4: no crash'
     Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
     [void](Stop-RepoGhoztty -Exe $exe -SettleMs 500)
     $app = $null

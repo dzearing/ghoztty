@@ -6025,7 +6025,43 @@ fn restoreWindow(
 /// `background` window (T1163: every window after the first in a paced launch
 /// restore) is shown behind Ghoztty's frontmost window without activating, the
 /// way `+new-window` without `--focus` opens one (T1797).
+///
+/// Single-window mode has no tabs (T3182), so a saved window with several
+/// comes back as a workspace per tab (T3187, Mac: tab-group siblings become
+/// workspaces of their own): its active tab first, as `background` says and
+/// keeping the window's identity, then each other tab parked behind it. The
+/// workspace returned is the active tab's. A cross-machine window (`tr.dialed`,
+/// one connection owned by one window) is built whole.
 fn restoreWindowShown(
+    self: *App,
+    win: session_layout.Window,
+    tr: RestoreTransport,
+    attach: ?*const std.StringHashMap(void),
+    background: bool,
+) !*Window {
+    if (!window_mode.isSingle() or win.tabs.len < 2 or tr.dialed != null)
+        return self.restoreWindowWhole(win, tr, attach, background);
+    const active = session_layout.activeTabIndex(win);
+    const first = try self.restoreWindowWhole(session_layout.tabAsWindow(win, active), tr, attach, background);
+    var built: usize = 1;
+    for (0..win.tabs.len) |ti| {
+        if (ti == active) continue;
+        _ = self.restoreWindowWhole(session_layout.tabAsWindow(win, ti), tr, attach, true) catch |err| {
+            log.warn("session-restore: tab {d} of '{s}' failed as a workspace err={}", .{ ti, win.id, err });
+            continue;
+        };
+        built += 1;
+    }
+    log.info(
+        "session-restore: '{s}' had {d} tabs; single-window mode brought back {d} workspace(s), tab {d} on show",
+        .{ win.id, win.tabs.len, built, active },
+    );
+    return first;
+}
+
+/// One manifest window built as ONE window, tabs and all: the body of
+/// `restoreWindowShown`.
+fn restoreWindowWhole(
     self: *App,
     win: session_layout.Window,
     tr: RestoreTransport,

@@ -1,10 +1,10 @@
 {
     "guard":  "title-churn-redraw",
     "script":  "test/win32/title-churn-redraw.ps1",
-    "generated":  "2026-11-17T02:01:27-08:00",
-    "commit":  "57302f335",
+    "generated":  "2026-11-17T03:41:11-08:00",
+    "commit":  "383192882",
     "uncommitted":  [
-                        "src/apprt/win32/PaneSidebar.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/PaneSidebar.zig":  "0768a60bd9f9568920581469196276edfe685bc0c748575b79ea51069b48bab6",

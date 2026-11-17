@@ -417,6 +417,36 @@ pub fn markFrontmostOnShow(windows: []Window, on_show: ?usize) void {
     windows[i].frontmost = true;
 }
 
+/// One tab of `win` as a window of its own (T3187): single-window mode has no
+/// tabs (T3182), so a saved window's tabs come back as workspaces of their own
+/// (Mac: "in single mode tab-group siblings come back as workspaces of their
+/// own"). `ti` must be in range. The entry's ACTIVE tab keeps the window's
+/// identity (layout key, target name, title pin, gradient, sidebar order, focus
+/// stamp and front mark); every other tab is a new workspace with only its
+/// frame and its own tab - the tab keeps its tab-level identity either way.
+pub fn tabAsWindow(win: Window, ti: usize) Window {
+    std.debug.assert(ti < win.tabs.len);
+    var out = win;
+    out.tabs = win.tabs[ti .. ti + 1];
+    out.active_tab = 0;
+    if (ti == activeTabIndex(win)) return out;
+    out.uuid = null;
+    out.ipc_name = null;
+    out.title_override = null;
+    out.title_set_by_user = null;
+    out.desk_variant = null;
+    out.pane_sidebar_order = null;
+    out.last_focused_ms = null;
+    out.frontmost = null;
+    return out;
+}
+
+/// `win.active_tab`, clamped into its tabs (0 for a window with none).
+pub fn activeTabIndex(win: Window) usize {
+    if (win.tabs.len == 0) return 0;
+    return @min(@as(usize, win.active_tab), win.tabs.len - 1);
+}
+
 /// Whether `w` was the window in front when it was written (T3137).
 pub fn isFront(w: Window) bool {
     return w.frontmost orelse false;
@@ -2424,6 +2454,48 @@ test "T691: the manifest follows the lineage, and without one is byte-for-byte w
     const empty = layoutPath(alloc) orelse return error.SkipZigTest;
     defer alloc.free(empty);
     try std.testing.expectEqualStrings(base, empty);
+}
+
+test "T3187: a saved window's tabs become windows, the active one keeping the window's identity" {
+    const tabs = [_]Tab{ .{ .uuid = "t0" }, .{ .uuid = "t1" }, .{ .uuid = "t2" } };
+    const win: Window = .{
+        .id = "w",
+        .uuid = "layout-key",
+        .ipc_name = "work",
+        .title_override = "Pinned",
+        .desk_variant = 7,
+        .last_focused_ms = 50,
+        .frontmost = true,
+        .frame = .{ .x = 10, .y = 20, .w = 300, .h = 200 },
+        .active_tab = 1,
+        .tabs = &tabs,
+    };
+    const act = tabAsWindow(win, 1);
+    try testing.expectEqual(@as(usize, 1), act.tabs.len);
+    try testing.expectEqualStrings("t1", act.tabs[0].uuid.?);
+    try testing.expectEqual(@as(u32, 0), act.active_tab);
+    try testing.expectEqualStrings("layout-key", act.uuid.?);
+    try testing.expectEqualStrings("work", act.ipc_name.?);
+    try testing.expectEqualStrings("Pinned", act.title_override.?);
+    try testing.expect(isFront(act));
+    try testing.expectEqual(@as(?i64, 50), act.last_focused_ms);
+
+    const other = tabAsWindow(win, 2);
+    try testing.expectEqualStrings("t2", other.tabs[0].uuid.?);
+    try testing.expectEqual(@as(?[]const u8, null), other.uuid);
+    try testing.expectEqual(@as(?[]const u8, null), other.ipc_name);
+    try testing.expectEqual(@as(?[]const u8, null), other.title_override);
+    try testing.expectEqual(@as(?u64, null), other.desk_variant);
+    try testing.expect(!isFront(other));
+    try testing.expectEqual(@as(?i64, null), other.last_focused_ms);
+    // Every one of them comes back at the window's frame.
+    try testing.expectEqual(@as(i32, 300), other.frame.?.w);
+
+    // An out-of-range active_tab clamps to the last tab.
+    var clamp = win;
+    clamp.active_tab = 9;
+    try testing.expectEqual(@as(usize, 2), activeTabIndex(clamp));
+    try testing.expectEqualStrings("layout-key", tabAsWindow(clamp, 2).uuid.?);
 }
 
 test "T3187: in single mode the workspace on show is the front, whatever the stamps say" {

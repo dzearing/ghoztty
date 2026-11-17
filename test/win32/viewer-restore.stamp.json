@@ -1,13 +1,13 @@
 {
     "guard":  "viewer-restore",
     "script":  "test/win32/viewer-restore.ps1",
-    "generated":  "2026-11-16T12:07:02-08:00",
-    "commit":  "ef59f66cf",
+    "generated":  "2026-11-17T03:24:27-08:00",
+    "commit":  "383192882",
     "uncommitted":  [
                         "src/apprt/win32/session_layout.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/session_layout.zig":  "41559060ec08861dda2f96535dbf211fccaf8e03477f68f51edbaa0318da28d0",
+                  "src/apprt/win32/session_layout.zig":  "23de7c84c9bda3017a52911fb9743e5f963978426160938e66f3aa079aa70e2b",
                   "src/apprt/win32/webview2.zig":  "8acac18b06c3b93c47fe1dc3008b50cf00252a07b80ff3a995ba31f0dec4edbc",
                   "test/win32/viewer-restore.ps1":  "13aca3347611d5a5da9619c76cc0b2787f7c70ac3f2c3f0d485803d87c920beb"
               }
