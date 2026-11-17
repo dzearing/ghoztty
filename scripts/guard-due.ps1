@@ -709,6 +709,21 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # T3213: blades a real divider drag made, beside a stashed pane, survive
+    # the updater's quit (the `quit` action path) and a relaunch that paces
+    # the folded window in behind another, maximized - a term|viewer row.
+    [pscustomobject]@{
+        Name   = 'session-blades-update'
+        Script = 'test\win32\session-blades-update.ps1'
+        Stamp  = 'test\win32\session-blades-update.stamp.json'
+        Covers = @(
+            'test\win32\session-blades-update.ps1',
+            'src\apprt\win32\pane_stack_state.zig',
+            'src\apprt\win32\session_layout.zig',
+            'src\apprt\win32\App.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # A tucked pane's strip (T2109): painted in the strip colour, named by the
     # banner title live on +set-banner, and a click on it brings the pane on
     # show. `pane_sidebar.zig` is named because the label is its `paneLabel`.
