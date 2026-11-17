@@ -740,3 +740,12 @@ as the digest that showed them.
 - Jump between your commands in PowerShell too (prompt-to-prompt chord in pwsh panes, as in fully integrated shells)
 - Give a workspace a name and a colour (single-window mode's sidebar workspaces carry a user-chosen name and colour)
 - An update never drops a live session (a release's new session agent takes over running shells without a reconnect)
+
+## 2026-11-17
+
+- See every workspace at once (one key lays out every single-window workspace as live tiles; click to switch)
+- Flip back to the workspace you just left (one chord toggles between the last two workspaces)
+- Turn on single-window mode without restarting (the setting folds open windows into workspaces live, and spreads them back out)
+- Send a pane to another workspace from the keyboard (new angle on the pane-drag ideas: "Move pane to workspace..." by name, for one-window mode where the target is never on screen)
+- Switching stays instant with many workspaces, and each release proves it (a release measures a switch with twenty workspaces and refuses a regression)
+- Undocking never scrambles a hidden workspace (parked workspaces are re-laid for a new screen size or scale before they are shown)
