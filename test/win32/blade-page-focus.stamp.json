@@ -1,15 +1,15 @@
 {
     "guard":  "blade-page-focus",
     "script":  "test/win32/blade-page-focus.ps1",
-    "generated":  "2026-11-17T00:36:51-08:00",
-    "commit":  "cf73fa392",
+    "generated":  "2026-11-17T02:41:20-08:00",
+    "commit":  "c26e98ba2",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/pane_stack_state.zig":  "e3087d45b99e3a09eb31c6022d285f91114895b601b0d60ab24b48a9a3bcff51",
                   "src/apprt/win32/ViewerPane.zig":  "7e931f3c429ef6aa8de0dccc30c2c31f724a39072ed41e47ca29ca21099f9f6c",
-                  "src/apprt/win32/Window.zig":  "be94d639d280c2ce837d758032726bb9339eec7ff6f6632271e71e15b1c1a135",
+                  "src/apprt/win32/Window.zig":  "6153472bae8a9ee133fec2c8596eebb454145ec39df91e0dcc63f704d13de590",
                   "test/win32/blade-page-focus.ps1":  "db01734cc1b4032201a44d03854df3b52b3a913199d5ef32f6bfbda7e37e4a29"
               }
 }

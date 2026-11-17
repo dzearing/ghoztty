@@ -1,14 +1,14 @@
 {
     "guard":  "pane-sidebar-shared",
     "script":  "test/win32/pane-sidebar-shared.ps1",
-    "generated":  "2026-11-16T08:30:35-08:00",
-    "commit":  "aa0c36f1c",
+    "generated":  "2026-11-17T01:45:09-08:00",
+    "commit":  "57302f335",
     "uncommitted":  [
                         "src/apprt/win32/PaneSidebar.zig"
                     ],
     "files":  {
                   "src/apprt/win32/pane_sidebar_shared.zig":  "f106faf563752850316c617b55ddde09f8321aa8f20befa823bc597f40676896",
-                  "src/apprt/win32/PaneSidebar.zig":  "b31c3042df907d63d5912ba74efeafd2cb190a8dd3bcd8467df755d7eac59aae",
+                  "src/apprt/win32/PaneSidebar.zig":  "0768a60bd9f9568920581469196276edfe685bc0c748575b79ea51069b48bab6",
                   "test/win32/pane-sidebar-shared.ps1":  "54b5749bf565114ee78cef10a7957d4a81780b97fedb9be077c7a49eea95eb95"
               }
 }
