@@ -28,6 +28,12 @@
 //! handles are compared by identity.
 const std = @import("std");
 
+/// How long a resize of the shared window has to be quiet before every
+/// parked workspace is laid out at the new size (T3193; Mac
+/// `WorkspaceHost.windowDidResize`, 0.3s): once, at the size the window comes
+/// to rest at, never on every drag tick.
+pub const resize_settle_ms: u32 = 300;
+
 /// The window's activity, most urgent last (Mac `Ghostty.ActivityState`).
 pub const Activity = enum(u2) { idle = 0, busy = 1, needs_input = 2 };
 
@@ -233,6 +239,23 @@ pub fn Host(comptime Handle: type) type {
             const next = self.order.items[0];
             self.loader = next;
             return next;
+        }
+
+        // ---- Layout --------------------------------------------------------
+
+        /// Every PARKED workspace, most recently shown first, into `out`
+        /// (T3193): the ones a settled resize of the shared window lays out
+        /// at its new size. The one on show and a loader lay themselves out
+        /// in their own window. Returns the filled prefix of `out`.
+        pub fn parkedInto(self: *const Self, out: []Handle) []Handle {
+            var n: usize = 0;
+            for (self.order.items) |h| {
+                if (n == out.len) break;
+                if (!self.isParked(h)) continue;
+                out[n] = h;
+                n += 1;
+            }
+            return out[0..n];
         }
 
         // ---- Activity ------------------------------------------------------
@@ -493,4 +516,28 @@ test "workspace_host: a parked workspace asks for attention on the window on sho
     _ = host2.show(2);
     try testing.expectEqual(@as(?u32, 2), host2.attentionTarget(1));
     try testing.expectEqual(@as(?u32, 2), host2.attentionTarget(2));
+}
+
+test "workspace_host: a settled resize lays out every parked workspace, never the one on show" {
+    var host: H = .{};
+    defer host.deinit(testing.allocator);
+    var buf: [8]u32 = undefined;
+    try testing.expectEqual(@as(usize, 0), host.parkedInto(&buf).len);
+    try openAndLoad(&host, 1);
+    // One workspace: nothing is parked, nothing to lay out.
+    try testing.expectEqual(@as(usize, 0), host.parkedInto(&buf).len);
+    try openAndLoad(&host, 2);
+    try openAndLoad(&host, 3);
+    try testing.expectEqualSlices(u32, &.{ 2, 3 }, host.parkedInto(&buf));
+    // After a switch the one that surrendered is parked, most recent first.
+    _ = host.show(3);
+    try testing.expectEqualSlices(u32, &.{ 1, 2 }, host.parkedInto(&buf));
+    // A short buffer takes the most recently shown.
+    var one: [1]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{1}, host.parkedInto(&one));
+    // A loader lays itself out in its own window.
+    _ = host.windowDidClose(3, false);
+    try testing.expectEqualSlices(u32, &.{2}, host.parkedInto(&buf));
+    // The settle delay is Mac's 0.3s.
+    try testing.expectEqual(@as(u32, 300), resize_settle_ms);
 }

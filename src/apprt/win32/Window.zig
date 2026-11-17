@@ -199,6 +199,7 @@ const rearrange_header = @import("rearrange_header.zig");
 const pane_drop = @import("pane_drop.zig");
 const pane_gap = @import("pane_gap.zig");
 const pane_layout = @import("pane_layout.zig");
+const workspace_host = @import("workspace_host.zig");
 const pane_relocate = @import("pane_relocate.zig");
 const inherit_cwd = @import("inherit_cwd.zig");
 const drop_highlight = @import("drop_highlight.zig");
@@ -396,6 +397,14 @@ const SIZE_BURST_TIMER_ID: usize = 0x5342; // 'SB'
 /// Lands a title held while nobody can see the window (T2912):
 /// `held_title.interval_ms` after the first hold.
 const HELD_TITLE_TIMER_ID: usize = 0x4854; // 'HT'
+/// Single-window mode (T3193, Mac `WorkspaceHost.windowDidResize`): a resize
+/// of the shared window has settled (`workspace_host.resize_settle_ms` after
+/// its last size step), and every PARKED workspace is laid out at the new
+/// size. Deliberately NOT in `window_timer_ids`: it belongs to the HWND, not
+/// the workspace on show, so a switch inside the window keeps it armed and it
+/// fires to the adopter, which lays out every parked workspace the same way -
+/// the one that just surrendered included.
+const PARKED_RELAYOUT_TIMER_ID: usize = 0x5052; // 'PR'
 
 pub const SIDEBAR_SYNC_MS: u32 = 250;
 pub const HERO_SLIDE_MS: f32 = 350.0;
@@ -2184,7 +2193,11 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         .is_quick_terminal = options.is_quick_terminal,
         .initial_size = options.initial_size,
         .force_opaque = options.force_opaque,
-    });
+    }) else if (app.workspaces.active) |shared| {
+        // Born parked (T3193): it is laid out at the shared window's size,
+        // so it takes that window's scale too - the one it will be shown at.
+        self.scale = shared.scale;
+    }
 
     // Don't show the window yet — addTab() will show the child
     // surface which triggers ShowWindow on the parent as needed.
@@ -2707,7 +2720,9 @@ fn layoutRect(r: w32.RECT) tab_strip.Rect {
 pub fn customCaption(self: *const Window) bool {
     if (self.is_quick_terminal) return false;
     if (self.app.config.@"window-decoration" == .none) return false;
-    const hwnd = self.hwnd orelse return false;
+    // Parked (T3193): the caption it will have on show is the shared
+    // window's, and its grid is laid out under it.
+    const hwnd = self.layoutHwnd() orelse return false;
     const style: u32 = @bitCast(w32.GetWindowLongW(hwnd, w32.GWL_STYLE));
     return (style & w32.WS_CAPTION) != 0;
 }
@@ -2871,6 +2886,39 @@ fn layoutClientRect(self: *const Window, hwnd: w32.HWND, out: *w32.RECT) bool {
         return true;
     };
     return w32.GetClientRect(hwnd, out) != 0;
+}
+
+/// The client area this controller lays its content out in: its own
+/// window's, or - a PARKED workspace has none (T3193, Mac
+/// `prepareParkedContent`) - the shared window's, so its terminals keep the
+/// grid they will have on show rather than the park host's 1x1. Its own
+/// chrome (caption, strip, sidebar column) is still taken off by the caller,
+/// the way Mac lays a parked container out with the titlebar's inset. False
+/// when there is no window to measure: a workspace parked before the shared
+/// window loaded.
+fn contentClientRect(self: *const Window, out: *w32.RECT) bool {
+    if (self.hwnd) |hwnd| return self.layoutClientRect(hwnd, out);
+    const shared = self.sharedWindowWhileParked() orelse return false;
+    return shared.layoutClientRect(shared.hwnd.?, out);
+}
+
+/// The workspace on show, when this one is PARKED and it has the shared
+/// window (T3193): whose HWND answers the questions a parked layout asks of
+/// "its" window - client size, caption style. Null otherwise.
+fn sharedWindowWhileParked(self: *const Window) ?*const Window {
+    if (self.hwnd != null or !self.isParked()) return null;
+    const shared = self.app.workspaces.active orelse return null;
+    if (@as(*const Window, shared) == self or shared.hwnd == null) return null;
+    return shared;
+}
+
+/// The HWND this controller lays out against: its own, or the shared
+/// window's while parked (T3193). Never for painting or posting - only for
+/// reading what the layout depends on.
+fn layoutHwnd(self: *const Window) ?w32.HWND {
+    if (self.hwnd) |h| return h;
+    const shared = self.sharedWindowWhileParked() orelse return null;
+    return shared.hwnd;
 }
 
 /// This window's client width in physical pixels, or 0 with no HWND.
@@ -3090,9 +3138,8 @@ fn captionLayout(self: *const Window) ?caption_layout.Layout {
 /// the full client area minus the caption band and the tab bar height from
 /// the top.
 pub fn surfaceRect(self: *const Window) w32.RECT {
-    const hwnd = self.hwnd orelse return .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
     var rect: w32.RECT = undefined;
-    if (!self.layoutClientRect(hwnd, &rect)) {
+    if (!self.contentClientRect(&rect)) {
         return .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
     }
     rect.top += self.chromeHeight();
@@ -3281,9 +3328,10 @@ fn cardInner(self: *const Window, slot: w32.RECT) w32.RECT {
 /// The sidebar's mode for this window as it is sized right now.
 pub fn paneSidebarMode(self: *const Window) pane_sidebar.Mode {
     if (self.is_quick_terminal or self.tab_count == 0) return .hidden;
-    const hwnd = self.hwnd orelse return .hidden;
+    // Parked (T3193): the column it will have on show, at the shared
+    // window's width, so its grid is the one it will be shown with.
     var rc: w32.RECT = undefined;
-    if (!self.layoutClientRect(hwnd, &rc)) return .hidden;
+    if (!self.contentClientRect(&rc)) return .hidden;
     const w_dip = @as(f32, @floatFromInt(rc.right - rc.left)) / self.scale;
     // Hero mode has the tab to itself (T3131, Mac 997b26535
     // `PaneSidebarState.isSuppressed`): the sidebar steps aside while it is
@@ -23005,6 +23053,11 @@ pub fn windowWndProc(
                 window.settleSizeBurst(hwnd);
                 return 0;
             }
+            if (wparam == PARKED_RELAYOUT_TIMER_ID) {
+                _ = w32.KillTimer(hwnd, PARKED_RELAYOUT_TIMER_ID);
+                window.app.layoutParkedWorkspaces("resize-settled");
+                return 0;
+            }
             if (wparam == RESIZE_OVERLAY_TIMER_ID) {
                 if (window.resize_overlay_hwnd) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
                 _ = w32.KillTimer(hwnd, RESIZE_OVERLAY_TIMER_ID);
@@ -23147,6 +23200,11 @@ pub fn windowWndProc(
             }, true);
             if (st) |*t| window.edgeStepEnd(t.read() / std.time.ns_per_us);
             resizeTrace("size-end", hwnd);
+            // Single-window mode (T3193): every size step re-arms the settle
+            // timer, so the parked workspaces are laid out once, at the size
+            // the window comes to rest at - not on every drag tick.
+            if (window.app.workspaces.count() > 1)
+                _ = w32.SetTimer(hwnd, PARKED_RELAYOUT_TIMER_ID, workspace_host.resize_settle_ms, null);
             return 0;
         },
         w32.WM_MOVE => {

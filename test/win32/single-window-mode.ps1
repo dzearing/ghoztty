@@ -29,6 +29,10 @@
 #   one on show's own, a parked needs_input asks on the SHARED window, and a
 #   notification click from a parked pane puts that workspace on show.
 #
+# F (T3193): parked content is laid out at the shared window's size - from
+#   birth (the seam's per-workspace `cols`/`rows`), 0.3s after a resize of
+#   the shared window settles, and at once on a tree change while parked.
+#
 # THE ORACLE IS THE LATCH AND THE FILE. The mode the app runs in is a decision
 # invisible in pixels (until T3181 gives it a window to act on), so it is read
 # through the debug-only `settings` IPC action's `window_mode` field, which
@@ -248,6 +252,10 @@ try {
     Assert ([int]$ws.data.windows_with_hwnd -eq 1) "B1: one controller holds an HWND (windows_with_hwnd=$($ws.data.windows_with_hwnd))"
     $tops = @(Visible-Tops)
     Assert ($tops.Count -eq 1 -and $tops[0].Hwnd -eq $shared) "B1: still ONE window on screen, the same HWND ($($tops.Count): $(($tops | ForEach-Object Hwnd) -join ','))"
+    # F1 (T3193): born parked, it is laid out at the shared window's size -
+    # the same grid as the one on show, not the park host's one column.
+    $one = Ws-Row $ws $first
+    Assert ($b -and $one -and [int]$one.cols -gt 20 -and [int]$b.cols -eq [int]$one.cols -and [int]$b.rows -eq [int]$one.rows) "F1: swm-b, born parked, has the window's grid ($($b.cols)x$($b.rows) vs on show $($one.cols)x$($one.rows))"
 
     # A parked workspace's shell keeps running: type into it while parked.
     cmd /c "`"$exe`" +send-keys --target=swm-b `"echo PARKED-B-OK`" Enter > nul 2>&1" | Out-Null
@@ -277,11 +285,7 @@ try {
     $readOut = Join-Path $work 'read-b.txt'
     cmd /c "`"$exe`" +read --name=swm-b --lines=60 > `"$readOut`" 2>&1" | Out-Null
     $txt = if (Test-Path $readOut) { [string](Get-Content $readOut -Raw) } else { '' }
-    # A workspace born parked has no window to take its grid from yet, so its
-    # terminal runs one column wide until T3193 lays parked content out at
-    # the window's size; the output is there, one cell per line. Join the
-    # lines: this asserts the shell RAN while parked, not the grid.
-    $txt = $txt -replace '\r?\n', ''
+    # Laid out at the window's size from birth (T3193), the line arrives whole.
     Assert ($txt -match 'PARKED-B-OK') "B3: what was typed into swm-b while parked ran (read: $($txt -replace '\s+',' '))"
     $panes = @(Shared-Panes)
     Assert ($panes.Count -eq 1) "B3: the shared window shows only swm-b's pane ($($panes.Count))"
@@ -499,6 +503,72 @@ try {
     Assert ($r -and $r.success -and -not (Ws-Row $ws 'swm-f')) 'E5: and closes again (fixture cleanup for C)'
     Assert ((Active-Name) -eq 'swm-b') 'E: swm-b is on show, swm-c parked, as D left them'
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'E: no crash'
+
+    # =====================================================================
+    # F (T3193): parked content is laid out at the shared window's size. F1
+    # (in B1) is the born-parked case. Here: a resize of the shared window
+    # reaches every parked workspace once it settles (0.3s), so the grid it
+    # shows with is the grid it already had; a tree change in a parked
+    # workspace lays it out at once, with no window to do it. Starts where E
+    # left it (swm-b on show, swm-c parked with 2 panes); leaves swm-b on
+    # show, swm-c parked with 1 pane, and the window at its old size.
+    # =====================================================================
+    function F-Row([string]$name) { return Ws-Row (Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')) $name }
+    function Wait-Grid([string]$name, [scriptblock]$until, [int]$seconds = 5) {
+        $deadline = (Get-Date).AddSeconds($seconds)
+        do {
+            $row = F-Row $name
+            if ($row -and (& $until $row)) { return $row }
+            Start-Sleep -Milliseconds 250
+        } while ((Get-Date) -lt $deadline)
+        return $row
+    }
+    function F-LogCount { return @(Get-Content $errlog -ErrorAction SilentlyContinue).Count }
+    function F-WaitLog([int]$From, [string]$Pattern, [int]$Ms = 5000) {
+        $deadline = (Get-Date).AddMilliseconds($Ms)
+        do {
+            $hit = @(Get-Content $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $From | Where-Object { $_ -match $Pattern })
+            if ($hit.Count -gt 0) { return $true }
+            Start-Sleep -Milliseconds 200
+        } while ((Get-Date) -lt $deadline)
+        return $false
+    }
+    $c0 = F-Row 'swm-c'
+    $c0cols = [int]$c0.cols
+    Assert ($c0 -and $c0.parked -and $c0cols -gt 10) "F2: parked swm-c starts with a real grid ($($c0.cols)x$($c0.rows))"
+
+    # F2: shrink the shared window; the parked workspace follows once the
+    # resize settles.
+    $from = F-LogCount
+    [void](Set-TestWindowSize -Window ([IntPtr]$shared) -Width -160 -Height 0 -Grow)
+    $c1 = Wait-Grid 'swm-c' { param($r) [int]$r.cols -lt $c0cols }
+    Assert ($c1 -and $c1.parked -and [int]$c1.cols -lt $c0cols) "F2: a resize of the shared window reaches parked swm-c ($c0cols -> $($c1.cols) cols)"
+    if (-not $ExePath) {
+        Assert (F-WaitLog $from 'parked workspaces laid out why=resize-settled count=1') 'F2: laid out once the resize settled, one parked workspace'
+    }
+
+    # F3: shown, it already has that grid - nothing re-lays it out.
+    $parkedCols = [int]$c1.cols; $parkedRows = [int]$c1.rows
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=show', '--target=swm-c')
+    Start-Sleep -Milliseconds 600
+    $c2 = F-Row 'swm-c'
+    Assert ($c2 -and -not $c2.parked -and [int]$c2.cols -eq $parkedCols -and [int]$c2.rows -eq $parkedRows) "F3: on show swm-c has the grid it had parked ($($c2.cols)x$($c2.rows) vs parked ${parkedCols}x$parkedRows)"
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=show', '--target=swm-b')
+    Assert ($ws -and [string]$ws.data.active -eq 'swm-b') 'F3: swm-b back on show'
+
+    # F4: a tree change in a parked workspace lays it out at once: closing
+    # swm-c-right gives its left pane the whole width, no window involved.
+    $narrow = [int](F-Row 'swm-c').cols
+    $r = Invoke-SwmCli '+close --target=swm-c-right'
+    $c3 = Wait-Grid 'swm-c' { param($r) [int]$r.panes -eq 1 -and [int]$r.cols -gt $narrow + 10 } 4
+    Assert ($r.Code -eq 0 -and $c3 -and $c3.parked -and [int]$c3.panes -eq 1 -and [int]$c3.cols -gt $narrow + 10) "F4: closing a pane in parked swm-c re-lays it at once ($narrow -> $($c3.cols) cols, panes=$($c3.panes), parked=$($c3.parked))"
+
+    # F5: and growing the window back reaches it the same way.
+    [void](Set-TestWindowSize -Window ([IntPtr]$shared) -Width 160 -Height 0 -Grow)
+    $c4 = Wait-Grid 'swm-c' { param($r) [int]$r.cols -gt [int]$c3.cols }
+    Assert ($c4 -and [int]$c4.cols -gt [int]$c3.cols) "F5: growing the window back reaches it too ($($c3.cols) -> $($c4.cols) cols)"
+    Assert ((Active-Name) -eq 'swm-b') 'F: swm-b is on show, swm-c parked, as C expects'
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'F: no crash'
 
 
     # =====================================================================

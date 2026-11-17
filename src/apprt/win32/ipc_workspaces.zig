@@ -22,6 +22,10 @@
 //!
 //! `presenting` / `holding_targets` / `overlays_shown` (T3192) say what the
 //! workspace draws: a parked one reports 0 for all three.
+//!
+//! `cols` / `rows` (T3193) are the grid of the active tab's first terminal
+//! pane (0 when it has none yet): a parked workspace is laid out at the
+//! shared window's size, so it reads the grid it will have on show.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -107,6 +111,20 @@ fn drawing(w: *Window) Drawing {
     return d;
 }
 
+/// The grid of the active tab's first terminal pane (T3193), 0x0 when there
+/// is none or its core is not up yet.
+fn firstGrid(w: *Window) struct { cols: usize = 0, rows: usize = 0 } {
+    if (w.tab_count == 0) return .{};
+    var it = w.tab_trees[w.active_tab].iterator();
+    while (it.next()) |entry| {
+        const s = entry.view.surface() orelse continue;
+        if (!s.core_surface_ready) return .{};
+        const g = s.core_surface.size.grid();
+        return .{ .cols = g.columns, .rows = g.rows };
+    }
+    return .{};
+}
+
 fn stateResponse(app: *App, alloc: Allocator, shown: ?bool) Allocator.Error![]u8 {
     var out: std.Io.Writer.Allocating = .init(alloc);
     errdefer out.deinit();
@@ -160,6 +178,11 @@ fn stateResponse(app: *App, alloc: Allocator, shown: ?bool) Allocator.Error![]u8
             jws.write(d.holding_targets) catch break :write;
             jws.objectField("overlays_shown") catch break :write;
             jws.write(d.overlays_shown) catch break :write;
+            const g = firstGrid(w);
+            jws.objectField("cols") catch break :write;
+            jws.write(g.cols) catch break :write;
+            jws.objectField("rows") catch break :write;
+            jws.write(g.rows) catch break :write;
             jws.endObject() catch break :write;
         }
         jws.endArray() catch break :write;

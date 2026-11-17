@@ -7946,9 +7946,11 @@ pub fn workspaceStartsParked(self: *App, opts: Window.InitOptions) bool {
 pub fn presentWorkspace(self: *App, window: *Window, activate: bool) void {
     switch (self.workspaces.present(window, activate)) {
         .not_managed, .own_window_background, .promote_background => {},
-        // Parked from birth (T3192): its fresh surfaces start out drawing,
-        // and nobody can see them.
-        .stay_parked => window.holdParkedPanes(),
+        // Parked from birth: laid out at the shared window's size (T3193,
+        // Mac `prepareParkedContent`), so its terminals have the grid they
+        // will have on show; the pass leaves every pane held (T3192) - its
+        // fresh surfaces start out drawing, and nobody can see them.
+        .stay_parked => window.layoutSplits(),
         .show => _ = self.showWorkspace(window),
     }
 }
@@ -7975,6 +7977,18 @@ pub fn showWorkspace(self: *App, target: *Window) bool {
             return true;
         },
     }
+}
+
+/// Lay every PARKED workspace out at the shared window's current size (T3193;
+/// Mac `WorkspaceHost.windowDidResize` -> `layoutParkedContent`): run once a
+/// resize of the shared window has settled, so each is ready when shown. The
+/// pass sizes the panes and leaves them held (`Window.layoutSplits`). Logs
+/// what it did, the oracle for single-window-mode.ps1.
+pub fn layoutParkedWorkspaces(self: *App, why: []const u8) void {
+    var buf: [64]*Window = undefined;
+    const parked = self.workspaces.parkedInto(&buf);
+    for (parked) |w| w.layoutSplits();
+    log.info("parked workspaces laid out why={s} count={d}", .{ why, parked.len });
 }
 
 /// Roll every workspace's activity up into the shared window's (Mac
