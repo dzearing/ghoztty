@@ -1,0 +1,19 @@
+{
+  "version": "1.55.5",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "Single-window mode: closing a workspace can be undone, and the undo brings it back on show." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "The pane sidebar relaunch test now opens the way the user's app does, and proves every window comes back folded." },
+        { "text": "A test now replays an update's relaunch of several windows and proves folded panes come back folded." },
+        { "text": "Single-window mode: a window mode chosen in Settings takes effect once every window is closed." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "Single-window mode: Restore All switches the window once, to the one that was in front." }
+      ] }
+  ]
+}
