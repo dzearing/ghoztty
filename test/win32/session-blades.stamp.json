@@ -1,16 +1,16 @@
 {
     "guard":  "session-blades",
     "script":  "test/win32/session-blades.ps1",
-    "generated":  "2026-11-17T06:19:32-08:00",
-    "commit":  "03dfd60a6",
+    "generated":  "2026-11-17T07:29:20-08:00",
+    "commit":  "9cd8c592e",
     "uncommitted":  [
-
+                        "test/win32/session-blades.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/App.zig":  "0cae1429eb55bd060baeab84b3820c7d43c1293e821633233e44860688ac69ff",
                   "src/apprt/win32/pane_stack_state.zig":  "e3087d45b99e3a09eb31c6022d285f91114895b601b0d60ab24b48a9a3bcff51",
                   "src/apprt/win32/session_layout.zig":  "23de7c84c9bda3017a52911fb9743e5f963978426160938e66f3aa079aa70e2b",
                   "src/apprt/win32/Window.zig":  "f4a8040e99040f0e09a4b73c33c31cba071344112010177a8764ebc25dbe70a8",
-                  "test/win32/session-blades.ps1":  "c4aa9925e177a7fb09af4223f9d2200455a75fcacd43dba3df2a220da043d731"
+                  "test/win32/session-blades.ps1":  "621d8785c63f028ceb9b9465ee6720e2725a3f26b6a9fe067e20acff617e6ce3"
               }
 }

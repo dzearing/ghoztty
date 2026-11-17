@@ -30,6 +30,11 @@
 #   E) T3177 (Mac dd77885aa): the agent dies under that window and the app
 #      recovers it in place - every terminal a fresh surface - and every blade
 #      is still a blade, the caret still on s1
+#   F) T3204 (Mac `switchingBackDoesNotReplayTheStack`): in single-window
+#      mode, with the history naming the blade s3 first, a switch to another
+#      workspace and back leaves the row exactly as it was - s1 the only pane
+#      on show in every sample of the shared window, the caret on s1, no
+#      stack glide and no blade brought out by focus in the app's log
 #
 # -NegativeControl leaves the collapse OUT of the manifest: claim A must then
 # fail (every pane on show), proving the harness can tell the difference.
@@ -62,6 +67,7 @@ $root = Join-Path $env:TEMP "ghoztty-session-blades-$PID"
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\ChromeGeometry.ps1')
+. (Join-Path $PSScriptRoot 'lib\PaneCapture.ps1')   # Invoke-GhozttyIpc (section F)
 
 function Assert([bool]$cond, [string]$label) {
     if ($cond) { $script:pass++; Write-Host "PASS  $label" }
@@ -318,6 +324,80 @@ try {
     Assert-Blades 'E'
     Stop-App
 
+    # ---- F: single-window mode - a switch away and back replays nothing (T3204)
+    # Mac `switchingBackDoesNotReplayTheStack`: a workspace whose row has
+    # blades comes back on show exactly as it was left - the same panes on
+    # show, no glide. The adopt turn (T3194, Window.adoptWindow) puts the
+    # caret on the tab's focused pane before its first layout and never on a
+    # blade (`caretPaneOnShow`); laid out with the caret on a blade, the tab
+    # featured that blade's run and the row replayed out and back in. The
+    # history is patched to name a blade (s3) first again, the shape that can
+    # leave a strip as the tab's focused pane.
+    Say '== F: single-window mode - a switch away and back keeps every blade'
+    $text = Read-Manifest
+    $patched = [regex]::Replace($text, '"recency"\s*:\s*\[[^\]]*\]', '"recency":[3,1]')
+    Assert ($patched -match '"recency":\[3,1\]') 'F setup: the history names the blade s3 first'
+    Write-Manifest $patched
+    $appLog = Join-Path $root 'app-f.err'
+    $savedArgs = $appArgs
+    $appArgs = $appArgs + @('--macos-window-mode=single')
+    try { Start-App -StdErr $appLog } finally { $appArgs = $savedArgs }
+    $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+    $homeWs = if ($ws) { [string]$ws.data.active } else { '' }
+    Assert ($ws -and $ws.data.mode -eq 'single' -and $homeWs) "F setup: the app runs in single-window mode (mode='$(if ($ws) { $ws.data.mode })', on show='$homeWs')"
+    Assert-Blades 'F setup'
+    $s1Hwnd = @(Get-VisiblePanes $top)[0].Hwnd
+
+    # Away: a second workspace takes the one window.
+    $r = Invoke-GhozttyIpc -Action 'new-window' -Arguments @('--target=blades-away', '--focus')
+    Assert ($r -and $r.success) 'F: +new-window --target=blades-away --focus succeeds'
+    $deadline = (Get-Date).AddSeconds(10)
+    do {
+        Start-Sleep -Milliseconds 300
+        $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
+        $away = @(Get-VisiblePanes $top)
+    } while ((Get-Date) -lt $deadline -and -not ($ws -and [string]$ws.data.active -eq 'blades-away' -and $away.Count -eq 1 -and $away[0].Hwnd -ne $s1Hwnd))
+    Assert ($ws -and [string]$ws.data.active -eq 'blades-away') "F: the second workspace is on show (active='$(if ($ws) { $ws.data.active })')"
+    Assert ($away.Count -eq 1 -and $away[0].Hwnd -ne $s1Hwnd) "F: the shared window shows only its pane ($($away.Count) visible)"
+    Start-Sleep -Milliseconds 800
+
+    # Back, watching the window the whole way: every sample of the shared
+    # window's visible panes, and the app log from the switch on.
+    $mark = if (Test-Path $appLog) { (Get-Item $appLog).Length } else { 0 }
+    $r = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=show', "--target=$homeWs")
+    Assert ($r -and [string]$r.data.active -eq $homeWs) "F: $homeWs is back on show (active='$(if ($r) { $r.data.active })')"
+    $samples = 0; $maxShown = 0; $seenS1 = $false; $others = 0
+    $until = (Get-Date).AddMilliseconds(1500)
+    while ((Get-Date) -lt $until) {
+        $v = @(Get-VisiblePanes $top)
+        $samples++
+        if (@($v | Where-Object { $_.Hwnd -eq $s1Hwnd }).Count -gt 0) { $seenS1 = $true }
+        if ($seenS1) {
+            if ($v.Count -gt $maxShown) { $maxShown = $v.Count }
+            $others += @($v | Where-Object { $_.Hwnd -ne $s1Hwnd }).Count
+        }
+        Start-Sleep -Milliseconds 15
+    }
+    Say "      $samples samples over 1.5 s; most panes on show at once after s1 came back: $maxShown"
+    Assert ($seenS1 -and $maxShown -eq 1 -and $others -eq 0) "F: from the moment s1 came back, s1 was the only pane on show - no blade slid out (max $maxShown, $others stray sighting(s))"
+    $t = ''
+    try {
+        $fs = [System.IO.File]::Open($appLog, 'Open', 'Read', 'ReadWrite')
+        try { [void]$fs.Seek($mark, 'Begin'); $t = (New-Object System.IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
+    } catch { }
+    $caret = [regex]::Match($t, 'workspace adopt caret pane=\S* moved_off_strip=(true|false)')
+    Assert $caret.Success "F: the adopt turn placed the caret ($(if ($caret.Success) { $caret.Value } else { 'no caret line' }))"
+    $glides = ([regex]::Matches($t, 'stack glide landing timer')).Count
+    Assert ($glides -eq 0) "F: no stack glide ran on the way back (glides landed: $glides)"
+    $outByFocus = ([regex]::Matches($t, 'stacked pane brought on show by focus')).Count
+    Assert ($outByFocus -eq 0) "F: no blade was brought on show by focus ($outByFocus)"
+    # +list names every workspace in single-window mode: close the parked one
+    # in place, then the row reads exactly as it did before the switch.
+    $r = Invoke-GhozttyIpc -Action 'close' -Arguments @('--target=blades-away')
+    Assert ($r -and $r.success) 'F: +close --target=blades-away (parked) succeeds'
+    Start-Sleep -Milliseconds 800
+    Assert-Blades 'F'
+    Stop-App
     Complete-TestBody
 } catch {
     $script:fail++
@@ -350,4 +430,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Say ''
-Write-TestVerdict -Label 'T3126 SESSION BLADES' -Pass $script:pass -Fail $script:fail -MinPass 33
+Write-TestVerdict -Label 'T3126 SESSION BLADES' -Pass $script:pass -Fail $script:fail -MinPass 56

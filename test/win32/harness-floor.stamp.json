@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-17T07:28:06-08:00",
-    "commit":  "80e9ea484",
+    "generated":  "2026-11-17T07:39:36-08:00",
+    "commit":  "9cd8c592e",
     "uncommitted":  [
-
+                        "test/win32/session-blades.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -485,7 +485,7 @@
                   "test/win32/self-spawn-audit.ps1":  "a4f014933c7929f28febc9bc55b9603180ce17c9827bc1f5a50ab6d0d4dc1dc7",
                   "test/win32/send-keys-bracketed.ps1":  "3f04c907b40d40409069ee8fe9369820cd96c2c6644567ddfd70d8fdb41bec10",
                   "test/win32/send-keys-soak.ps1":  "6e4525ec0b24fb88c38af8b42a0206d37c6dea2e458613f7c6e0bc9881aec5b9",
-                  "test/win32/session-blades.ps1":  "c4aa9925e177a7fb09af4223f9d2200455a75fcacd43dba3df2a220da043d731",
+                  "test/win32/session-blades.ps1":  "621d8785c63f028ceb9b9465ee6720e2725a3f26b6a9fe067e20acff617e6ce3",
                   "test/win32/session-close.ps1":  "bc90db94c85a72b761db89dbde0baf409845d5df67f23997b425b6d922455ed1",
                   "test/win32/session-crash-recover.ps1":  "bd9d751e4413b22f27cf7a4cbac0f63290367e8c7e262e9d1dbdfdef1573ff24",
                   "test/win32/session-layout-geometry-race.ps1":  "cccb50a65d08201453c84af1cf2cc3dcdac8bf90b87871a29d7dfc0a1ee9a161",
