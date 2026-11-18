@@ -248,6 +248,49 @@ $sckOverloads = @([GhozttyTestDesktop].GetMethods() | Where-Object { $_.Name -eq
 Assert ($sckOverloads.Count -eq 1 -and $sckOverloads[0].GetParameters().Count -eq 2) `
     "GhozttyTestDesktop.SendControlKey takes exactly (ctl, vk) ($($sckOverloads.Count) overload(s), $(if ($sckOverloads.Count) { $sckOverloads[0].GetParameters().Count } else { 0 }) params)"
 
+# ---------------------------------------------------------------------
+# Z3. A launch never reads the user's own config (T3214).
+#
+# Run alone, a script inherits the user's real LOCALAPPDATA, and the app reads
+# its config from there when XDG_CONFIG_HOME is unset - so the user's
+# `macos-window-mode = single` turned every +new-window into a workspace and a
+# dozen harnesses red. The decision is pure; asserted both ways, plus what the
+# launch helpers actually hand a ghoztty.exe child. No desktop needed.
+# ---------------------------------------------------------------------
+Write-Host ''
+Write-Host '-- Z3. launches get an empty config home instead of the user''s (T3214)'
+$cfgReal = 'C:\Users\someone\AppData\Local'
+Assert (Test-TestConfigHomeNeeded -XdgConfigHome '' -LocalAppData $cfgReal -RealLocalAppData $cfgReal) `
+    'the user''s own LOCALAPPDATA with no XDG_CONFIG_HOME IS isolated (the alone-run shape)'
+Assert (Test-TestConfigHomeNeeded -XdgConfigHome $null -LocalAppData 'c:\users\SOMEONE\appdata\local\' -RealLocalAppData $cfgReal) `
+    'the comparison ignores case and a trailing separator'
+Assert (-not (Test-TestConfigHomeNeeded -XdgConfigHome 'D:\tmp\xdg' -LocalAppData $cfgReal -RealLocalAppData $cfgReal)) `
+    'a script that set XDG_CONFIG_HOME keeps its own config (single-window-mode.ps1 shape)'
+Assert (-not (Test-TestConfigHomeNeeded -XdgConfigHome '' -LocalAppData 'D:\tmp\worker\local' -RealLocalAppData $cfgReal)) `
+    'a private LOCALAPPDATA (a pool worker, new-window-cwd.ps1''s roots) is left as chosen'
+# What a real launch on THIS box gets, from the helper the launchers call.
+$cfgSavedXdg = $env:XDG_CONFIG_HOME
+$cfgSavedLocal = $env:LOCALAPPDATA
+Remove-Item Env:XDG_CONFIG_HOME -ErrorAction SilentlyContinue
+$env:LOCALAPPDATA = [Environment]::GetFolderPath('LocalApplicationData')
+$cfgHome = Get-TestConfigHomeOverride -Exe 'D:\x\zig-out\bin\ghoztty.exe'
+$cfgAgent = Get-TestConfigHomeOverride -Exe 'D:\x\zig-out\bin\ghoztty-agent.exe'
+$env:LOCALAPPDATA = Join-Path $env:TEMP "ghoztty-cfg-probe-$PID"
+$cfgPrivate = Get-TestConfigHomeOverride -Exe 'D:\x\zig-out\bin\ghoztty.exe'
+$env:LOCALAPPDATA = $cfgSavedLocal
+if ($null -ne $cfgSavedXdg) { $env:XDG_CONFIG_HOME = $cfgSavedXdg }
+Assert ($cfgHome -and (Test-Path -LiteralPath (Join-Path $cfgHome 'ghostty')) -and
+    @(Get-ChildItem -LiteralPath (Join-Path $cfgHome 'ghostty') -Force).Count -eq 0) `
+    "a ghoztty.exe launch under the real LOCALAPPDATA gets an existing, EMPTY config home ($cfgHome)"
+# Not "outside LOCALAPPDATA": %TEMP% lives under it on a default box. What has
+# to differ is the folder the app reads, <home>\ghostty.
+$cfgUserDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ghostty'
+Assert ($cfgHome -and ((Join-Path $cfgHome 'ghostty').TrimEnd('\') -ine $cfgUserDir.TrimEnd('\'))) `
+    "the config folder it hands the app is not the user's own ($cfgUserDir)"
+Assert ($null -eq $cfgAgent) 'an agent launch is not given one (it reads no config)'
+Assert ($null -eq $cfgPrivate) 'a launch under a private LOCALAPPDATA is not given one'
+Assert ($env:XDG_CONFIG_HOME -eq $cfgSavedXdg) 'asking the helper leaves this process''s XDG_CONFIG_HOME as it was'
+
 # THE DEMONSTRATION THAT THE SKIP PATH FIRES. A capability check that has only
 # ever said 'available' is indistinguishable from one that cannot say anything
 # else, so the missing case is CONSTRUCTED and the whole exit path is driven in

@@ -2800,6 +2800,63 @@ function Clear-TestWindowPlacement {
 }
 
 <#
+Should a ghoztty.exe launch get an empty config home of its own (T3214)?
+
+The app reads `$XDG_CONFIG_HOME\ghostty\config*.ghostty`, falling back to
+`%LOCALAPPDATA%\ghostty\` when XDG_CONFIG_HOME is unset (src\os\xdg.zig). A
+pool worker has a private LOCALAPPDATA, so its launches read no config at all;
+a script run ALONE (a confirm run, an exclusive slot, `-Width 1`) inherits the
+user's real one and reads the user's real settings. On 2026-11-17 that file
+said `macos-window-mode = single`, every `+new-window` became a workspace in
+one HWND, and a dozen harnesses went red for a setting the user is entitled to
+keep (close-undo, overlay-zorder, pane-banner, viewer-*, clipboard-paste ...).
+
+So the answer is yes exactly when the config the app would read is the user's
+own: XDG_CONFIG_HOME unset, and LOCALAPPDATA still the real per-user folder. A
+script that chose its config (XDG_CONFIG_HOME set, or LOCALAPPDATA pointed at
+a temp root the way new-window-cwd.ps1 does) is left exactly as it chose. On
+Windows XDG_CONFIG_HOME steers nothing but the config files and the themes
+directory, so pointing it at an empty folder changes nothing else the app does.
+
+Pure: takes the three values rather than reading them, so the decision is
+testable without launching anything.
+#>
+function Test-TestConfigHomeNeeded {
+    param(
+        [string]$XdgConfigHome,
+        [string]$LocalAppData,
+        [string]$RealLocalAppData
+    )
+    if (-not [string]::IsNullOrEmpty($XdgConfigHome)) { return $false }
+    if ([string]::IsNullOrEmpty($RealLocalAppData)) { return $false }
+    # An unset LOCALAPPDATA falls back to HOME\.config - not the user's config
+    # file either, but not a hermetic one: isolate it too.
+    if ([string]::IsNullOrEmpty($LocalAppData)) { return $true }
+    $norm = { param($p) ([string]$p).Trim().TrimEnd('\', '/').ToLowerInvariant() }
+    return ((& $norm $LocalAppData) -eq (& $norm $RealLocalAppData))
+}
+
+# The empty config home one script run hands its launches (created on first use,
+# reused by every launch of the run so a config the app writes - the dev build's
+# template - is the same one on the second launch, as it is in a worker).
+$script:GhozttyTestConfigHome = $null
+function Get-TestConfigHomeOverride {
+    param([Parameter(Mandatory = $true)][string]$Exe)
+    if ((Split-Path -Leaf $Exe) -ine 'ghoztty.exe') { return $null }
+    $real = ''
+    try { $real = [Environment]::GetFolderPath('LocalApplicationData') } catch { $real = '' }
+    if (-not (Test-TestConfigHomeNeeded -XdgConfigHome $env:XDG_CONFIG_HOME `
+            -LocalAppData $env:LOCALAPPDATA -RealLocalAppData $real)) { return $null }
+    if (-not $script:GhozttyTestConfigHome) {
+        $dir = Join-Path $env:TEMP ("ghoztty-test-config-$PID-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+        [void](New-Item -ItemType Directory -Force -Path (Join-Path $dir 'ghostty'))
+        $script:GhozttyTestConfigHome = $dir
+        Write-Host "test config home: $dir (this run would otherwise read the user's own config - T3214)"
+    }
+    return $script:GhozttyTestConfigHome
+}
+
+<#
 Launch an executable ON the test desktop (STARTUPINFO.lpDesktop). Returns
 { Pid, Process }; Process is the usual System.Diagnostics.Process, so
 $app.Process.HasExited works exactly as with Start-Process.
@@ -2872,7 +2929,16 @@ function Start-OnTestDesktop {
     # T689: a launch that named no log gets one anyway. See the block above
     # New-TestStdErrPath for why this is the helper's job and not the caller's.
     if (-not $StdErr) { $StdErr = New-TestStdErrPath -Exe $Exe }
-    $procId = $td.StartProcess($Exe, $argLine, $WorkingDirectory, $StdErr)
+    # T3214: never the user's own config - see Test-TestConfigHomeNeeded. Set
+    # for this one spawn only (StartProcess inherits the process environment),
+    # so a script that later points LOCALAPPDATA at its own root still gets it.
+    $cfgHome = Get-TestConfigHomeOverride -Exe $Exe
+    if ($cfgHome) { $env:XDG_CONFIG_HOME = $cfgHome }
+    try {
+        $procId = $td.StartProcess($Exe, $argLine, $WorkingDirectory, $StdErr)
+    } finally {
+        if ($cfgHome) { Remove-Item Env:XDG_CONFIG_HOME -ErrorAction SilentlyContinue }
+    }
     if ($procId -eq 0) { throw "Start-OnTestDesktop failed: $($td.LastError)" }
     $script:GhozttyTestDesktopPids += $procId
     $script:GhozttyTestDesktopAllPids += $procId
@@ -3035,8 +3101,16 @@ function Invoke-OnTestDesktop {
     $stem = Join-Path $env:TEMP ("ghoztty-testdesk-cli-$PID-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
     $out = "$stem.txt"
     $err = "$stem.err.txt"
+    # T3214: a cold `+new-window` auto-launches the GUI from this child, so the
+    # child gets the same config home Start-OnTestDesktop gives a direct launch.
+    $cfgHome = Get-TestConfigHomeOverride -Exe $Exe
     try {
-        $res = $td.RunProcess($Exe, $argLine, $WorkingDirectory, $out, $err, [int]($TimeoutSec * 1000))
+        if ($cfgHome) { $env:XDG_CONFIG_HOME = $cfgHome }
+        try {
+            $res = $td.RunProcess($Exe, $argLine, $WorkingDirectory, $out, $err, [int]($TimeoutSec * 1000))
+        } finally {
+            if ($cfgHome) { Remove-Item Env:XDG_CONFIG_HOME -ErrorAction SilentlyContinue }
+        }
         if ([string]::IsNullOrEmpty($res)) { throw "Invoke-OnTestDesktop failed: $($td.LastError)" }
         $parts = $res -split ':'
         $readAll = {
