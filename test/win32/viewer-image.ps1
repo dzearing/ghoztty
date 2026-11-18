@@ -29,6 +29,10 @@
 #     served as WIC-decoded pixels and drawn at its real size, an .icns as its
 #     largest embedded PNG, and a HEIC nothing can decode gets the card that
 #     names the HEIF Image Extensions only on a box that lacks them.
+#   - that decode runs OFF the GUI thread, its request parked on a deferral,
+#     and the body is the bare top-down .bmp (headers + one copy of the
+#     pixels) - and a TIFF carrying EXIF orientation 6 is drawn upright
+#     (T3043).
 #
 # ORACLE, and why it is the log. This runs on the background test desktop,
 # where CopyFromScreen and SendInput are dead (T233), so nothing out here can
@@ -189,8 +193,8 @@ function Get-ImageServed($errlog, $paneId) {
     if (-not (Test-Path $errlog) -or -not $paneId) { return @() }
     $out = @()
     foreach ($line in (Get-Content $errlog -ErrorAction SilentlyContinue)) {
-        if ($line -match "viewer image served pane=$([regex]::Escape($paneId)) rev=(\d+) bytes=(\d+) mime=(\S+)(?: route=(\S+))?") {
-            $out += [pscustomobject]@{ Rev = [int]$Matches[1]; Bytes = [int]$Matches[2]; Mime = $Matches[3]; Route = $Matches[4] }
+        if ($line -match "viewer image served pane=$([regex]::Escape($paneId)) rev=(\d+) bytes=(\d+) mime=(\S+)(?: route=(\S+))?(?: decode_ms=(\d+) parked=(\w+))?") {
+            $out += [pscustomobject]@{ Rev = [int]$Matches[1]; Bytes = [int]$Matches[2]; Mime = $Matches[3]; Route = $Matches[4]; Parked = $Matches[6] }
         }
     }
     return $out
@@ -323,6 +327,22 @@ try {
     $tif.Save($tiffPath, [System.Drawing.Imaging.ImageFormat]::Tiff)
 } finally { $tif.Dispose() }
 
+# T3043: a TIFF stored 64 wide x 32 tall with EXIF Orientation 6 (turn a
+# quarter clockwise to display), the shape of every portrait phone photo. The
+# pane must serve it upright: 32 x 64. PropertyItem has no public constructor,
+# so one is made uninitialized and filled in, the documented workaround.
+$tiffTurnedPath = Join-Path $dir 'portrait.tiff'
+$tt = New-Object System.Drawing.Bitmap 64, 32
+try {
+    $g = [System.Drawing.Graphics]::FromImage($tt)
+    $g.Clear([System.Drawing.Color]::DarkOrange)
+    $g.Dispose()
+    $pi = [Runtime.Serialization.FormatterServices]::GetUninitializedObject([System.Drawing.Imaging.PropertyItem])
+    $pi.Id = 274; $pi.Type = 3; $pi.Len = 2; $pi.Value = [byte[]](6, 0)
+    $tt.SetPropertyItem($pi)
+    $tt.Save($tiffTurnedPath, [System.Drawing.Imaging.ImageFormat]::Tiff)
+} finally { $tt.Dispose() }
+
 # An .icns holding a 32px and a 128px PNG (in that order) behind an RLE entry
 # that is not a PNG: the pane must show the 128px one.
 function Get-PngBytes([int]$size) {
@@ -369,7 +389,12 @@ $td = New-TestDesktop -Interactive:$Interactive
 try {
     $errlog = Join-Path $env:TEMP 'ghoztty-viewer-image-stderr.log'
     Remove-Item $errlog -ErrorAction SilentlyContinue
-    $app = Start-OnTestDesktop -Exe $exe -StdErr $errlog -Arguments @('--session-persistence=false')
+    # Separate windows, whatever the user's own config says: every section
+    # opens its picture with `+new-window --target=<name>` and reads that
+    # window's one pane back. Under `macos-window-mode = single` each of those
+    # is a parked workspace whose web view never starts (T3036), and the whole
+    # script goes red on the box's config rather than on the code (T3043).
+    $app = Start-OnTestDesktop -Exe $exe -StdErr $errlog -Arguments @('--session-persistence=false', '--macos-window-mode=separate')
     Start-Sleep -Seconds 3
     if ($app.Process -and $app.Process.HasExited) { Write-Host 'SETUP FAIL: GUI died at launch'; exit 1 }
     $appPid = $app.Pid
@@ -528,6 +553,25 @@ try {
     $tst = Wait-Loaded $errlog $tifPane
     Assert ($tst -and $tst.NatW -eq 640 -and $tst.NatH -eq 480) `
         "L1: ...and the page DREW it, at its real 640x480 (page reports $(if ($tst) { "$($tst.NatW)x$($tst.NatH)" } else { 'nothing - no picture' }))"
+    # T3043: decoded on the worker, not the GUI thread, and served as the bare
+    # file - 14 + 124 header bytes and ONE copy of the pixels - so nothing was
+    # padded or doubled on its way into the response stream.
+    $wantBytes = 14 + 124 + 640 * 480 * 4
+    Assert ($tserved.Count -ge 1 -and $tserved[0].Parked -eq 'true') `
+        "L1: ...decoded OFF the GUI thread, the request parked on a deferral (parked='$(if ($tserved.Count) { $tserved[0].Parked } else { '-' })')"
+    Assert ($tserved.Count -ge 1 -and $tserved[0].Bytes -eq $wantBytes) `
+        "L1: ...as exactly the .bmp, $wantBytes bytes (got $(if ($tserved.Count) { $tserved[0].Bytes } else { '-' }))"
+
+    $r = Invoke-Verb @('+new-window', '--target=t3043turn', "--view=$tiffTurnedPath")
+    Assert ($r.Code -eq 0) "+new-window --view=<turned>.tiff exits 0 (got $($r.Code))"
+    $turnLeaf = Get-OnlyPane 't3043turn'
+    $turnPane = if ($turnLeaf) { $turnLeaf.id } else { $null }
+    $turnServed = @(Wait-ImageServed $errlog $turnPane)
+    Assert ($turnServed.Count -ge 1 -and $turnServed[0].Route -eq 'wic' -and $turnServed[0].Parked -eq 'true') `
+        "L1b: an EXIF-turned .tiff is decoded on the worker too (route='$(if ($turnServed.Count) { $turnServed[0].Route } else { '-' })' parked='$(if ($turnServed.Count) { $turnServed[0].Parked } else { '-' })')"
+    $turnSt = Wait-Loaded $errlog $turnPane
+    Assert ($turnSt -and $turnSt.NatW -eq 32 -and $turnSt.NatH -eq 64) `
+        "L1b: ...and drawn UPRIGHT, 32x64 from a 64x32 stored grid (page reports $(if ($turnSt) { "$($turnSt.NatW)x$($turnSt.NatH)" } else { 'nothing - no picture' }))"
 
     $r = Invoke-Verb @('+new-window', '--target=t1234icns', "--view=$icnsPath")
     Assert ($r.Code -eq 0) "+new-window --view=<file>.icns exits 0 (got $($r.Code))"

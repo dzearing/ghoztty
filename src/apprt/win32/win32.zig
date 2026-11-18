@@ -3486,8 +3486,10 @@ pub const BOOL = std.os.windows.BOOL;
 
 pub const CLSCTX_INPROC_SERVER: u32 = 0x1;
 pub const COINIT_APARTMENTTHREADED: u32 = 0x2;
+pub const COINIT_MULTITHREADED: u32 = 0x0;
 
 pub extern "ole32" fn CoInitializeEx(pvReserved: ?*anyopaque, dwCoInit: u32) callconv(.winapi) HRESULT;
+pub extern "ole32" fn CoUninitialize() callconv(.winapi) void;
 /// Free a buffer a COM method allocated with `CoTaskMemAlloc` — e.g. the
 /// string `ICoreWebView2Environment::get_BrowserVersionString` hands back
 /// (T372).

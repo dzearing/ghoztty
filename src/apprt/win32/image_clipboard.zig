@@ -64,22 +64,7 @@ pub fn dibV5(alloc: Allocator, bgra: []const u8, width: u32, height: u32) Error!
 
     const out = try alloc.alloc(u8, v5_header_size + image);
     errdefer alloc.free(out);
-    @memset(out[0..v5_header_size], 0);
-    const h = out[0..v5_header_size];
-    std.mem.writeInt(u32, h[0..4], @intCast(v5_header_size), .little);
-    std.mem.writeInt(i32, h[4..8], @intCast(width), .little);
-    // Positive height: bottom-up, the orientation no reader gets wrong.
-    std.mem.writeInt(i32, h[8..12], @intCast(height), .little);
-    std.mem.writeInt(u16, h[12..14], 1, .little); // planes
-    std.mem.writeInt(u16, h[14..16], 32, .little); // bit count
-    std.mem.writeInt(u32, h[16..20], BI_BITFIELDS, .little);
-    std.mem.writeInt(u32, h[20..24], @intCast(image), .little);
-    std.mem.writeInt(u32, h[40..44], 0x00FF0000, .little); // red
-    std.mem.writeInt(u32, h[44..48], 0x0000FF00, .little); // green
-    std.mem.writeInt(u32, h[48..52], 0x000000FF, .little); // blue
-    std.mem.writeInt(u32, h[52..56], 0xFF000000, .little); // alpha
-    std.mem.writeInt(u32, h[56..60], LCS_sRGB, .little);
-    std.mem.writeInt(u32, h[108..112], LCS_GM_IMAGES, .little);
+    writeV5Header(out[0..v5_header_size], width, height, false);
 
     // Flip: source row 0 (the top) is the LAST row of a bottom-up DIB.
     const px = out[v5_header_size..];
@@ -90,6 +75,30 @@ pub fn dibV5(alloc: Allocator, bgra: []const u8, width: u32, height: u32) Error!
         @memcpy(dst, src);
     }
     return out;
+}
+
+/// Fill `h` with the `BITMAPV5HEADER` for a 32-bit straight-alpha BGRA
+/// picture of `width` x `height`. `top_down` writes a negative height, which
+/// is what lets a decoder fill the pixels in WIC's own row order with no flip
+/// (T3043); the clipboard keeps the bottom-up layout every reader gets right.
+/// The caller has checked `sizeOk`.
+pub fn writeV5Header(h: *[v5_header_size]u8, width: u32, height: u32, top_down: bool) void {
+    const image: usize = @as(usize, width) * 4 * @as(usize, height);
+    @memset(h, 0);
+    std.mem.writeInt(u32, h[0..4], @intCast(v5_header_size), .little);
+    std.mem.writeInt(i32, h[4..8], @intCast(width), .little);
+    const signed: i32 = @intCast(height);
+    std.mem.writeInt(i32, h[8..12], if (top_down) -signed else signed, .little);
+    std.mem.writeInt(u16, h[12..14], 1, .little); // planes
+    std.mem.writeInt(u16, h[14..16], 32, .little); // bit count
+    std.mem.writeInt(u32, h[16..20], BI_BITFIELDS, .little);
+    std.mem.writeInt(u32, h[20..24], @intCast(image), .little);
+    std.mem.writeInt(u32, h[40..44], 0x00FF0000, .little); // red
+    std.mem.writeInt(u32, h[44..48], 0x0000FF00, .little); // green
+    std.mem.writeInt(u32, h[48..52], 0x000000FF, .little); // blue
+    std.mem.writeInt(u32, h[52..56], 0xFF000000, .little); // alpha
+    std.mem.writeInt(u32, h[56..60], LCS_sRGB, .little);
+    std.mem.writeInt(u32, h[108..112], LCS_GM_IMAGES, .little);
 }
 
 /// Whether every pixel is fully opaque.
@@ -164,11 +173,30 @@ pub fn orient(
     height: u32,
     o: Orientation,
 ) Error!Oriented {
-    const w: usize = width;
-    const h: usize = height;
-    if (bgra.len != w * h * 4) return error.BadPixels;
+    if (bgra.len != @as(usize, width) * @as(usize, height) * 4) return error.BadPixels;
     const out = try alloc.alloc(u8, bgra.len);
     errdefer alloc.free(out);
+    try orientInto(out, bgra, width, height, o);
+    return .{
+        .bgra = out,
+        .width = if (o.swapsAxes()) height else width,
+        .height = if (o.swapsAxes()) width else height,
+    };
+}
+
+/// `orient`, writing into `out` (which must be exactly `bgra.len` bytes and
+/// must not alias it) instead of allocating — so the image viewer can turn a
+/// photo straight into the response it serves (T3043).
+pub fn orientInto(
+    out: []u8,
+    bgra: []const u8,
+    width: u32,
+    height: u32,
+    o: Orientation,
+) error{BadPixels}!void {
+    const w: usize = width;
+    const h: usize = height;
+    if (bgra.len != w * h * 4 or out.len != bgra.len) return error.BadPixels;
     const ow: usize = if (o.swapsAxes()) h else w;
     for (0..h) |y| {
         for (0..w) |x| {
@@ -188,11 +216,6 @@ pub fn orient(
             @memcpy(out[dst..][0..4], bgra[src..][0..4]);
         }
     }
-    return .{
-        .bgra = out,
-        .width = if (o.swapsAxes()) height else width,
-        .height = if (o.swapsAxes()) width else height,
-    };
 }
 
 pub const Oriented = struct { bgra: []u8, width: u32, height: u32 };
@@ -330,4 +353,17 @@ test "orient: a tag outside 1-8 shows the picture as stored" {
 test "orient refuses a buffer that does not match its dimensions" {
     const px = [_]u8{0} ** 8;
     try testing.expectError(error.BadPixels, orient(testing.allocator, &px, 3, 2, .rotate_90));
+}
+
+test "orientInto writes what orient returns, into a buffer it does not own" {
+    // 2x1: two distinct pixels, turned a quarter clockwise into 1x2 (T3043).
+    const px = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 };
+    const turned = try orient(testing.allocator, &px, 2, 1, .rotate_90);
+    defer testing.allocator.free(turned.bgra);
+    var out: [8]u8 = undefined;
+    try orientInto(&out, &px, 2, 1, .rotate_90);
+    try testing.expectEqualSlices(u8, turned.bgra, &out);
+    // A destination of the wrong size is refused, never half-written.
+    var short: [4]u8 = undefined;
+    try testing.expectError(error.BadPixels, orientInto(&short, &px, 2, 1, .rotate_90));
 }

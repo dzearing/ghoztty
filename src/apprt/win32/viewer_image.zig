@@ -23,6 +23,7 @@
 //! limits and steps disagree on purpose.
 const std = @import("std");
 const testing = std.testing;
+const image_clipboard = @import("image_clipboard.zig");
 
 /// Extensions that open as a picture rather than as highlighted source (Mac's
 /// `ViewerView.imageExtensions`, same list).
@@ -166,29 +167,37 @@ pub fn icnsBestPng(bytes: []const u8) ?[]const u8 {
     return best;
 }
 
-/// A `.bmp` file for a packed DIB (`image_clipboard.dibV5`'s output): the
-/// 14-byte `BITMAPFILEHEADER` in front of it. Caller frees.
+/// Bytes in front of the pixels of the `.bmp` the `wic` route serves: the
+/// 14-byte `BITMAPFILEHEADER` and a `BITMAPV5HEADER`.
+pub const bmp_headers_len: usize = 14 + image_clipboard.v5_header_size;
+
+/// Write both headers of a TOP-DOWN 32-bit straight-alpha BGRA `.bmp` of
+/// `width` x `height` into `out`, and return the whole file's length (headers
+/// plus `width * height * 4` pixel bytes, which follow immediately).
 ///
 /// BMP rather than a PNG re-encode for the `wic` route on purpose: the pixels
 /// never leave this process, so compression buys nothing, and the hand-written
 /// encoder in `png_encode.zig` would spend seconds on a 12-megapixel phone
 /// photo that a header costs nothing to wrap. Chromium honours a BITMAPV5
 /// alpha mask, so a TIFF with transparency stays transparent.
-pub fn bmpFile(alloc: std.mem.Allocator, dib: []const u8) error{ BadDib, OutOfMemory }![]u8 {
-    if (dib.len < 4) return error.BadDib;
-    const header = std.mem.readInt(u32, dib[0..4], .little);
-    if (header < 40 or header > dib.len) return error.BadDib;
-    const file_header = 14;
-    const out = try alloc.alloc(u8, file_header + dib.len);
+///
+/// Top-down (a negative height) since T3043, so WIC's own row order is the
+/// file's and the decoder writes straight into the response body: the route
+/// used to hold the decoded pixels, a bottom-up DIB of them, the `.bmp` that
+/// wrapped the DIB, and the response stream's copy of THAT, all at once.
+pub fn bmpHeaders(out: *[bmp_headers_len]u8, width: u32, height: u32) error{BadPixels}!usize {
+    if (!image_clipboard.sizeOk(width, height)) return error.BadPixels;
+    const total = bmp_headers_len + @as(usize, width) * 4 * @as(usize, height);
+    if (total > std.math.maxInt(u32)) return error.BadPixels;
     out[0] = 'B';
     out[1] = 'M';
-    std.mem.writeInt(u32, out[2..6], @intCast(out.len), .little);
+    std.mem.writeInt(u32, out[2..6], @intCast(total), .little);
     std.mem.writeInt(u32, out[6..10], 0, .little); // two reserved words
     // Pixels start after both headers. BI_BITFIELDS masks live inside a
     // V4/V5 header, so nothing sits between the header and the pixels.
-    std.mem.writeInt(u32, out[10..14], file_header + header, .little);
-    @memcpy(out[file_header..], dib);
-    return out;
+    std.mem.writeInt(u32, out[10..14], @intCast(bmp_headers_len), .little);
+    image_clipboard.writeV5Header(out[14..], width, height, true);
+    return total;
 }
 
 /// Vector art has no pixel grid, so 100% cannot mean "one image pixel per
@@ -442,22 +451,33 @@ test "icnsBestPng takes the widest PNG, wherever it sits in the file" {
     try testing.expect(icnsBestPng(&long) == null);
 }
 
-test "bmpFile puts a BITMAPFILEHEADER in front of a V5 DIB" {
-    const alloc = testing.allocator;
-    var dib = [_]u8{0} ** (124 + 4);
-    std.mem.writeInt(u32, dib[0..4], 124, .little);
-    const bmp = try bmpFile(alloc, &dib);
-    defer alloc.free(bmp);
-    try testing.expectEqualStrings("BM", bmp[0..2]);
-    try testing.expectEqual(@as(u32, 14 + 128), std.mem.readInt(u32, bmp[2..6], .little));
-    // Pixels start right after both headers.
-    try testing.expectEqual(@as(u32, 14 + 124), std.mem.readInt(u32, bmp[10..14], .little));
-    try testing.expectEqualSlices(u8, &dib, bmp[14..]);
-    // A buffer that cannot be a DIB is refused rather than wrapped.
-    try testing.expectError(error.BadDib, bmpFile(alloc, "x"));
-    var tiny = [_]u8{0} ** 8;
-    std.mem.writeInt(u32, tiny[0..4], 124, .little);
-    try testing.expectError(error.BadDib, bmpFile(alloc, &tiny));
+test "bmpHeaders writes a top-down V5 bmp whose pixels follow the headers" {
+    const dib_packed = @import("dib_packed.zig");
+    // 2x1: blue, half-transparent red, in WIC's top-down BGRA.
+    const px = [_]u8{ 0xFF, 0x00, 0x00, 0xFF, 0x00, 0x00, 0xFF, 0x80 };
+    var file: [bmp_headers_len + px.len]u8 = undefined;
+    const total = try bmpHeaders(file[0..bmp_headers_len], 2, 1);
+    try testing.expectEqual(file.len, total);
+    @memcpy(file[bmp_headers_len..], &px);
+
+    try testing.expectEqualStrings("BM", file[0..2]);
+    try testing.expectEqual(@as(u32, @intCast(file.len)), std.mem.readInt(u32, file[2..6], .little));
+    try testing.expectEqual(@as(u32, 14 + 124), std.mem.readInt(u32, file[10..14], .little));
+    // The clipboard's own DIB parser agrees on every layout fact, top-down
+    // included - the property that lets WIC decode straight into the body.
+    const info = try dib_packed.parse(file[14..]);
+    try testing.expectEqual(@as(i32, 2), info.width);
+    try testing.expectEqual(@as(u16, 32), info.bit_count);
+    try testing.expectEqual(dib_packed.BI_BITFIELDS, info.compression);
+    try testing.expectEqual(@as(usize, 124), info.bits_offset);
+    try testing.expect(info.top_down);
+    // Alpha mask present, so transparency survives.
+    try testing.expectEqual(@as(u32, 0xFF000000), std.mem.readInt(u32, file[14 + 52 ..][0..4], .little));
+
+    // Nothing past the clipboard's ceiling, and no empty picture.
+    var hdr: [bmp_headers_len]u8 = undefined;
+    try testing.expectError(error.BadPixels, bmpHeaders(&hdr, 0, 5));
+    try testing.expectError(error.BadPixels, bmpHeaders(&hdr, 64 * 1024, 64 * 1024));
 }
 
 test "unitScale: 100% is one image pixel per device pixel, and 1.0 for vectors" {

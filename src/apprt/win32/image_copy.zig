@@ -184,6 +184,78 @@ pub const Failure = enum {
 /// `decode`, saying why on failure. `why` is written only when the result is
 /// null.
 pub fn decodeWhy(alloc: Allocator, path: []const u8, why: *Failure) ?Decoded {
+    var src = open(alloc, path, why) orelse return null;
+    defer src.deinit();
+    const bgra = alloc.alloc(u8, src.byteLen()) catch return null;
+    if (!src.copyInto(alloc, bgra)) {
+        alloc.free(bgra);
+        return null;
+    }
+    return .{ .bgra = bgra, .width = src.width(), .height = src.height(), .orientation = src.orientation };
+}
+
+/// A decode in two halves (T3043). `open` reads only the header and the
+/// orientation, so a caller can size ONE buffer for the upright picture where
+/// it will finally live — the image viewer's response body — and `copyInto`
+/// fills it. `decodeWhy` is the same two calls into a buffer of its own.
+pub const Source = struct {
+    factory: *IWICImagingFactory,
+    decoder: *IWICBitmapDecoder,
+    frame: *IWICBitmapFrameDecode,
+    converter: *IWICFormatConverter,
+    /// The pixel grid as stored, before `orientation` is applied.
+    stored_w: u32,
+    stored_h: u32,
+    orientation: image_clipboard.Orientation,
+    /// For the log line a failed copy writes. Borrowed from the caller.
+    path: []const u8,
+
+    /// Upright width: what the picture is once `orientation` is applied.
+    pub fn width(self: *const Source) u32 {
+        return if (self.orientation.swapsAxes()) self.stored_h else self.stored_w;
+    }
+
+    pub fn height(self: *const Source) u32 {
+        return if (self.orientation.swapsAxes()) self.stored_w else self.stored_h;
+    }
+
+    /// Bytes of top-down BGRA the upright picture takes.
+    pub fn byteLen(self: *const Source) usize {
+        return @as(usize, self.stored_w) * 4 * @as(usize, self.stored_h);
+    }
+
+    /// Decode into `dst` (exactly `byteLen()` bytes), top-down, upright. An
+    /// oriented photo needs one scratch copy of the stored pixels to turn
+    /// from; an upright one is decoded straight into `dst`.
+    pub fn copyInto(self: *Source, alloc: Allocator, dst: []u8) bool {
+        const total = self.byteLen();
+        if (dst.len != total) return false;
+        const stride: u32 = self.stored_w * 4;
+        const into = if (self.orientation == .normal) dst else alloc.alloc(u8, total) catch return false;
+        defer if (self.orientation != .normal) alloc.free(into);
+        const copied = self.converter.vtable.CopyPixels(self.converter, null, stride, @intCast(total), into.ptr);
+        if (com.failed(copied)) {
+            log.warn("image decode: decoding {s} failed hr=0x{x}", .{ self.path, @as(u32, @bitCast(copied)) });
+            return false;
+        }
+        if (self.orientation == .normal) return true;
+        image_clipboard.orientInto(dst, into, self.stored_w, self.stored_h, self.orientation) catch return false;
+        return true;
+    }
+
+    pub fn deinit(self: *Source) void {
+        _ = self.converter.vtable.Release(self.converter);
+        _ = self.frame.vtable.Release(self.frame);
+        _ = self.decoder.vtable.Release(self.decoder);
+        _ = self.factory.vtable.Release(self.factory);
+        self.* = undefined;
+    }
+};
+
+/// Open `path`'s first frame for a BGRA decode. Null — with `why` set — when
+/// no codec takes it, it has no frame, it cannot convert, or it is past the
+/// size ceiling. Needs COM on the calling thread.
+pub fn open(alloc: Allocator, path: []const u8, why: *Failure) ?Source {
     why.* = .other;
     const wpath = std.unicode.wtf8ToWtf16LeAllocZ(alloc, path) catch return null;
     defer alloc.free(wpath);
@@ -201,7 +273,10 @@ pub fn decodeWhy(alloc: Allocator, path: []const u8, why: *Failure) ?Decoded {
         return null;
     }
     const factory: *IWICImagingFactory = @ptrCast(@alignCast(factory_ptr.?));
-    defer _ = factory.vtable.Release(factory);
+    var keep = false;
+    defer if (!keep) {
+        _ = factory.vtable.Release(factory);
+    };
 
     var decoder: ?*IWICBitmapDecoder = null;
     const opened = factory.vtable.CreateDecoderFromFilename(
@@ -219,18 +294,24 @@ pub fn decodeWhy(alloc: Allocator, path: []const u8, why: *Failure) ?Decoded {
         if (@as(u32, @bitCast(opened)) == WINCODEC_ERR_COMPONENTNOTFOUND) why.* = .no_codec;
         return null;
     }
-    defer _ = decoder.?.vtable.Release(decoder.?);
+    defer if (!keep) {
+        _ = decoder.?.vtable.Release(decoder.?);
+    };
 
     var frame: ?*IWICBitmapFrameDecode = null;
     if (com.failed(decoder.?.vtable.GetFrame(decoder.?, 0, &frame)) or frame == null) {
         log.warn("image decode: {s} has no first frame", .{path});
         return null;
     }
-    defer _ = frame.?.vtable.Release(frame.?);
+    defer if (!keep) {
+        _ = frame.?.vtable.Release(frame.?);
+    };
 
     var converter: ?*IWICFormatConverter = null;
     if (com.failed(factory.vtable.CreateFormatConverter(factory, &converter)) or converter == null) return null;
-    defer _ = converter.?.vtable.Release(converter.?);
+    defer if (!keep) {
+        _ = converter.?.vtable.Release(converter.?);
+    };
     const orientation = readOrientation(frame.?);
     const init = converter.?.vtable.Initialize(
         converter.?,
@@ -246,27 +327,24 @@ pub fn decodeWhy(alloc: Allocator, path: []const u8, why: *Failure) ?Decoded {
         return null;
     }
 
-    var width: u32 = 0;
-    var height: u32 = 0;
-    if (com.failed(converter.?.vtable.GetSize(converter.?, &width, &height))) return null;
-    if (!image_clipboard.sizeOk(width, height)) {
-        log.warn("image decode: {s} is {d}x{d}, past the size ceiling", .{ path, width, height });
+    var w: u32 = 0;
+    var h: u32 = 0;
+    if (com.failed(converter.?.vtable.GetSize(converter.?, &w, &h))) return null;
+    if (!image_clipboard.sizeOk(w, h)) {
+        log.warn("image decode: {s} is {d}x{d}, past the size ceiling", .{ path, w, h });
         return null;
     }
-
-    const stride: u32 = width * 4;
-    const total: usize = @as(usize, stride) * @as(usize, height);
-    const bgra = alloc.alloc(u8, total) catch return null;
-    const copied = converter.?.vtable.CopyPixels(converter.?, null, stride, @intCast(total), bgra.ptr);
-    if (com.failed(copied)) {
-        log.warn("image decode: decoding {s} failed hr=0x{x}", .{ path, @as(u32, @bitCast(copied)) });
-        alloc.free(bgra);
-        return null;
-    }
-    if (orientation == .normal) return .{ .bgra = bgra, .width = width, .height = height };
-    defer alloc.free(bgra);
-    const turned = image_clipboard.orient(alloc, bgra, width, height, orientation) catch return null;
-    return .{ .bgra = turned.bgra, .width = turned.width, .height = turned.height, .orientation = orientation };
+    keep = true;
+    return .{
+        .factory = factory,
+        .decoder = decoder.?,
+        .frame = frame.?,
+        .converter = converter.?,
+        .stored_w = w,
+        .stored_h = h,
+        .orientation = orientation,
+        .path = path,
+    };
 }
 
 /// The frame's EXIF Orientation, `.normal` when it has none or the metadata

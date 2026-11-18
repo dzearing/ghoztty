@@ -503,8 +503,9 @@ pub const ICoreWebView2NewWindowRequestedEventArgs = extern struct {
 /// `Complete` says "the answer I owed you is on the object now, carry on".
 ///
 /// Completing twice is not defined behavior we want to explore, and never
-/// completing hangs the page, so exactly one caller may own one of these —
-/// `ViewerPane.PopupRequest`, which completes it in its own `finish`.
+/// completing hangs the page, so exactly one owner holds each of these —
+/// `ViewerPane.PopupRequest` for a popup, `ViewerImageDecode.Job` for an image
+/// decoded off the GUI thread (T3043) — and completes it on its way out.
 pub const ICoreWebView2Deferral = extern struct {
     vtable: *const Vtbl,
 
@@ -627,7 +628,8 @@ pub const ICoreWebView2WebMessageReceivedEventArgs = extern struct {
 /// the browser process.
 ///
 /// Fourteen slots: `IUnknown`, then `ISequentialStream`'s `Read`/`Write`, then
-/// `IStream`'s own nine. Only `Write`, `Seek` and `Release` are called.
+/// `IStream`'s own nine. Only `Write`, `Seek`, `SetSize` and `Release` are
+/// called.
 pub const IStream = extern struct {
     vtable: *const Vtbl,
 
@@ -640,7 +642,8 @@ pub const IStream = extern struct {
         /// `(LARGE_INTEGER move, DWORD origin, ULARGE_INTEGER *newPosition)`.
         /// The 64-bit displacement is a single register under the x64 ABI.
         Seek: *const fn (*IStream, i64, u32, ?*u64) callconv(.winapi) HRESULT,
-        SetSize: *const anyopaque,
+        /// `(ULARGE_INTEGER newSize)`, one register under the x64 ABI.
+        SetSize: *const fn (*IStream, u64) callconv(.winapi) HRESULT,
         CopyTo: *const anyopaque,
         Commit: *const anyopaque,
         Revert: *const anyopaque,
@@ -665,6 +668,13 @@ pub const IStream = extern struct {
         var written: u32 = 0;
         if (com.failed(self.vtable.Write(self, bytes.ptr, @intCast(bytes.len), &written))) return false;
         return written == bytes.len;
+    }
+
+    /// Trim (or grow) the stream to exactly `len` bytes. A stream made over an
+    /// existing HGLOBAL starts at `GlobalSize`, which the heap may round up,
+    /// and the browser would read the slack as part of the body (T3043).
+    pub fn setSize(self: *IStream, len: u64) bool {
+        return !com.failed(self.vtable.SetSize(self, len));
     }
 
     /// Rewind to the start. Non-optional: `CreateStreamOnHGlobal` leaves the
@@ -781,11 +791,9 @@ pub const ICoreWebView2WebResourceResponse = extern struct {
 
 // ------------------------------- ICoreWebView2WebResourceRequestedEventArgs
 
-/// One intercepted request. `GetDeferral` is declared opaque deliberately, for
-/// the reason the new-window args give: an unused slot with a guessed
-/// signature is a crash waiting for the day somebody calls it, and everything
-/// this handler does is synchronous (read a file, build a response) so there
-/// is nothing to defer.
+/// One intercepted request. Answered synchronously everywhere but one place:
+/// the image viewer's `wic` route decodes a HEIC/TIFF on a worker (T3043), so
+/// it parks the request on `GetDeferral` and answers from the completion.
 pub const ICoreWebView2WebResourceRequestedEventArgs = extern struct {
     vtable: *const Vtbl,
 
@@ -796,9 +804,26 @@ pub const ICoreWebView2WebResourceRequestedEventArgs = extern struct {
         get_Request: *const fn (*ICoreWebView2WebResourceRequestedEventArgs, *?*ICoreWebView2WebResourceRequest) callconv(.winapi) HRESULT,
         get_Response: *const anyopaque,
         put_Response: *const fn (*ICoreWebView2WebResourceRequestedEventArgs, *ICoreWebView2WebResourceResponse) callconv(.winapi) HRESULT,
-        GetDeferral: *const anyopaque,
+        GetDeferral: *const fn (*ICoreWebView2WebResourceRequestedEventArgs, *?*ICoreWebView2Deferral) callconv(.winapi) HRESULT,
         get_ResourceContext: *const anyopaque,
     };
+
+    pub fn addRef(self: *ICoreWebView2WebResourceRequestedEventArgs) void {
+        _ = self.vtable.AddRef(self);
+    }
+
+    pub fn release(self: *ICoreWebView2WebResourceRequestedEventArgs) void {
+        _ = self.vtable.Release(self);
+    }
+
+    /// Park the request until the deferral is completed. Caller owns the
+    /// deferral and owes exactly one `complete`; null when the runtime
+    /// refuses, and the caller then answers synchronously.
+    pub fn getDeferral(self: *ICoreWebView2WebResourceRequestedEventArgs) ?*ICoreWebView2Deferral {
+        var out: ?*ICoreWebView2Deferral = null;
+        if (com.failed(self.vtable.GetDeferral(self, &out))) return null;
+        return out;
+    }
 
     /// The request. Caller owns the reference.
     pub fn request(self: *ICoreWebView2WebResourceRequestedEventArgs) ?*ICoreWebView2WebResourceRequest {

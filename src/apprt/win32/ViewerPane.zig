@@ -86,6 +86,7 @@ const viewer_worktree = @import("viewer_worktree.zig");
 const git_run = @import("git_run.zig");
 const ViewerWorktreeProbe = @import("ViewerWorktreeProbe.zig");
 const ViewerDiffProbe = @import("ViewerDiffProbe.zig");
+const ViewerImageDecode = @import("ViewerImageDecode.zig");
 const viewer_diff = @import("viewer_diff.zig");
 const hidden_poll = @import("hidden_poll.zig");
 const reload_gate = @import("reload_gate.zig");
@@ -203,6 +204,10 @@ pub const WM_APP_VIEWER_PROCESS_FAILED: u32 = w32.WM_APP + 46;
 /// hop lets that settle: a pane still visible when this arrives starts, and a
 /// pane hidden by then waits for its first `setVisible(true)`.
 pub const WM_APP_VIEWER_START: u32 = w32.WM_APP + 47;
+
+/// The image decode worker finished (T3043): a HEIC/TIFF the `wic` route
+/// decoded off the GUI thread is ready to hand to its parked request.
+pub const WM_APP_VIEWER_IMAGE: u32 = w32.WM_APP + 49;
 
 /// How long the "Filed …" confirmation stays up before the composer closes
 /// itself, matching Mac's 1.8s: long enough to read, short enough that the
@@ -359,6 +364,12 @@ image_route: viewer_image.Route = .browser,
 /// for a reason more specific than "cannot display" — a missing codec. Static
 /// text, never freed.
 image_failure: ?[]const u8 = null,
+
+/// The `wic` route's decoder (T3043): the worker that turns a HEIC/TIFF into
+/// the `.bmp` the page draws, off the GUI thread. Built with the pane's other
+/// workers once it has a host window; a request made before then is decoded
+/// inline.
+image_decode: ?ViewerImageDecode = null,
 
 /// The bundled viewer assets directory (`…/share/ghostty/viewer`), resolved
 /// once when the pane starts. Owned. Null on an installation whose resources
@@ -1115,6 +1126,12 @@ pub fn deinit(self: *ViewerPane, alloc: Allocator) void {
         probe.deinit();
         self.diff_probe = null;
     }
+    // Same again (T3043): joins an in-flight decode and answers any parked
+    // picture request with nothing, since the page asking is going away.
+    if (self.image_decode) |*decoder| {
+        decoder.deinit();
+        self.image_decode = null;
+    }
     if (self.diff_file) |f| alloc.free(f);
     self.diff_file = null;
     self.clearDiffTree(alloc);
@@ -1309,6 +1326,12 @@ fn ensureNav(self: *ViewerPane, alloc: Allocator, hinstance: ?w32.HINSTANCE, hwn
         self.diff_probe = ViewerDiffProbe.init(alloc);
         self.diff_probe.?.attach(hwnd, WM_APP_VIEWER_DIFF);
         self.syncDiffPoll();
+    }
+    // ...and so does the image decoder (T3043), which answers a parked
+    // picture request from its completion at this same window.
+    if (self.image_decode == null) {
+        self.image_decode = ViewerImageDecode.init(alloc);
+        self.image_decode.?.attach(hwnd, WM_APP_VIEWER_IMAGE);
     }
     // The composer (T634) needs the same two halves, and it is built HERE
     // rather than on first open for one concrete reason: it edits itself from
@@ -5122,6 +5145,28 @@ fn serveImage(
         self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
         return;
     };
+
+    // The `wic` route (T1234) branches BEFORE the file is read (T3043): WIC
+    // opens the file itself, so reading it here only bought a 32-byte sniff
+    // for the failure card - at the price of up to 32 MB on the GUI thread.
+    // And the decode runs on a worker, the request parked on a deferral, so a
+    // phone photo no longer stalls every pane in the window while it decodes.
+    if (self.image_route == .wic) {
+        if (self.image_decode) |*decoder| {
+            if (decoder.request(path, self.image_revision, a)) return;
+        }
+        // No host window yet, or the runtime refused the deferral: decode
+        // inline, which is what this route always did.
+        const job = ViewerImageDecode.makeJob(alloc, path, self.image_revision, a, false) orelse {
+            self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
+            return;
+        };
+        defer job.finish();
+        job.run();
+        self.answerImageWith(env, a, alloc, job);
+        return;
+    }
+
     const file = std.fs.cwd().readFileAlloc(alloc, path, content.max_file_bytes) catch {
         log.warn("viewer image is unreadable: {s}", .{path});
         self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
@@ -5129,40 +5174,17 @@ fn serveImage(
     };
     defer alloc.free(file);
 
-    // What the page is handed, per route (T1234). `owned` is set when the
-    // bytes are a transcode rather than a slice of the file.
-    var owned: ?[]u8 = null;
-    defer if (owned) |o| alloc.free(o);
-    var why: image_copy.Failure = .other;
-    var served: ?[]const u8 = null;
-    var mime: []const u8 = "image/png";
-    switch (self.image_route) {
-        .browser => {
-            served = file;
-            mime = content.mimeType(content.extension(path));
-        },
-        .icns => served = viewer_image.icnsBestPng(file),
-        .wic => {
-            owned = transcodeImage(alloc, path, &why);
-            served = owned;
-            mime = "image/bmp";
-        },
-    }
+    const served: ?[]const u8 = switch (self.image_route) {
+        .browser => file,
+        .icns => viewer_image.icnsBestPng(file),
+        .wic => unreachable,
+    };
     const bytes = served orelse {
-        // A 404 fires the `<img>`'s `error`, which comes back as `failed` and
-        // puts the card up — titled with the codec to install when the file is
-        // a real HEIF/AVIF AND no installed codec recognised it. A corrupt
-        // photo on a machine that has the extension gets the plain card, not
-        // an instruction to install what is already there.
-        if (why == .no_codec) {
-            if (viewer_image.missingCodec(file[0..@min(file.len, 32)])) |codec| {
-                self.image_failure = codec.title();
-            }
-        }
         log.warn("viewer image cannot be decoded: {s} route={s}", .{ path, @tagName(self.image_route) });
         self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
         return;
     };
+    const mime = if (self.image_route == .browser) content.mimeType(content.extension(path)) else "image/png";
     // The acceptance script's proof that the picture was FETCHED rather than
     // rendered as text: a source view never asks for the file a second time
     // through the page's own origin. The MIME rides along because
@@ -5176,19 +5198,45 @@ fn serveImage(
     self.respond(env, a, alloc, bytes, mime, 200, ok_reason, .no_store);
 }
 
-/// Decode `path` through WIC and wrap the pixels as a `.bmp` (T1234), turned
-/// upright per its EXIF orientation exactly as ctrl+C copies it. Null when
-/// this machine has no codec for it or the file is not a picture.
-///
-/// On the UI thread, which is where the resource request arrives and which
-/// already has COM up. A phone photo decodes in a few hundred milliseconds —
-/// the same cost ctrl+C on the same pane already pays.
-fn transcodeImage(alloc: Allocator, path: []const u8, why: *image_copy.Failure) ?[]u8 {
-    const decoded = image_copy.decodeWhy(alloc, path, why) orelse return null;
-    defer alloc.free(decoded.bgra);
-    const dib = image_clipboard.dibV5(alloc, decoded.bgra, decoded.width, decoded.height) catch return null;
-    defer alloc.free(dib);
-    return viewer_image.bmpFile(alloc, dib) catch null;
+/// Answer a parked `wic` request from its finished decode (T3043), on the GUI
+/// thread. The caller `finish`es the job, which completes the deferral.
+fn answerImage(self: *ViewerPane, alloc: Allocator, job: *ViewerImageDecode.Job) void {
+    const env = self.env orelse return;
+    const a = job.args orelse return;
+    self.answerImageWith(env, a, alloc, job);
+}
+
+/// The `wic` route's answer, parked or inline: the decoded `.bmp` as the
+/// response body, or a 404 that puts the failure card up.
+fn answerImageWith(
+    self: *ViewerPane,
+    env: *iface.ICoreWebView2Environment,
+    a: *iface.ICoreWebView2WebResourceRequestedEventArgs,
+    alloc: Allocator,
+    job: *ViewerImageDecode.Job,
+) void {
+    const len = job.len;
+    const stream = job.takeStream() orelse {
+        // A 404 fires the `<img>`'s `error`, which comes back as `failed` and
+        // puts the card up - titled with the codec to install when the file is
+        // a real HEIF/AVIF AND no installed codec recognised it. A corrupt
+        // photo on a machine that has the extension gets the plain card, not
+        // an instruction to install what is already there.
+        if (job.why == .no_codec) {
+            if (viewer_image.missingCodec(job.sniff[0..job.sniff_len])) |codec| {
+                self.image_failure = codec.title();
+            }
+        }
+        log.warn("viewer image cannot be decoded: {s} route=wic", .{job.path});
+        self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
+        return;
+    };
+    defer stream.release();
+    log.info(
+        "viewer image served pane={s} rev={d} bytes={d} mime=image/bmp route=wic decode_ms={d} parked={}",
+        .{ self.paneId(), job.revision, len, job.decode_ms, job.deferral != null },
+    );
+    self.respondStream(env, a, alloc, stream, "image/bmp", 200, ok_reason, .no_store, "");
 }
 
 fn servePageResource(
@@ -5372,14 +5420,30 @@ fn respondWith(
     caching: Caching,
     extra: []const u8,
 ) void {
-    _ = self;
     var stream_ptr: ?*anyopaque = null;
     if (com.failed(w32.CreateStreamOnHGlobal(null, 1, &stream_ptr))) return;
     const stream: *iface.IStream = @ptrCast(@alignCast(stream_ptr orelse return));
     defer stream.release();
     if (!stream.writeAll(bytes)) return;
     if (!stream.rewind()) return;
+    self.respondStream(env, args, alloc, stream, mime, status, reason, caching, extra);
+}
 
+/// `respondWith` for a body that is already a stream, rewound - the image
+/// decoder's, which was written in place and must not be copied again (T3043).
+fn respondStream(
+    self: *ViewerPane,
+    env: *iface.ICoreWebView2Environment,
+    args: *iface.ICoreWebView2WebResourceRequestedEventArgs,
+    alloc: Allocator,
+    stream: *iface.IStream,
+    mime: []const u8,
+    status: i32,
+    reason: [*:0]const u16,
+    caching: Caching,
+    extra: []const u8,
+) void {
+    _ = self;
     // The runtime parses a CRLF-joined header block, not a single header.
     const headers = std.fmt.allocPrint(alloc, "Content-Type: {s}{s}{s}", .{
         mime,
@@ -7978,6 +8042,16 @@ pub fn wndProc(
         WM_APP_VIEWER_PROCESS_FAILED => {
             const action = std.meta.intToEnum(viewer_process.Action, wparam) catch return 0;
             self.handleProcessFailed(action);
+            return 0;
+        },
+
+        // The image decode worker has a picture (T3043), on the same terms.
+        WM_APP_VIEWER_IMAGE => {
+            const decoder = if (self.image_decode) |*d| d else return 0;
+            const job = decoder.complete() orelse return 0;
+            defer job.finish();
+            const p = self.pending orelse return 0;
+            self.answerImage(p.alloc, job);
             return 0;
         },
 

@@ -1,16 +1,16 @@
 {
     "guard":  "viewer-fold-carried",
     "script":  "test/win32/viewer-fold-carried.ps1",
-    "generated":  "2026-11-17T15:42:50-08:00",
-    "commit":  "9b53852a3",
+    "generated":  "2026-11-17T16:34:41-08:00",
+    "commit":  "389d8f7ad",
     "uncommitted":  [
-
+                        "src/apprt/win32/ViewerPane.zig"
                     ],
     "files":  {
                   "src/apprt/win32/gdiplus_decode.zig":  "baa52fcbcfadc3172373cf0c60f1478557c46a71d8b2cf7d3aac895032668560",
                   "src/apprt/win32/PaneView.zig":  "66178bd1ff0806c699d541876914c4294a95852e411a03e38771eddd8faeaad7",
                   "src/apprt/win32/strip_face.zig":  "4d3213d53c9ef335ba94c6d09a72d553d5bed17b6ca99c7b9c6d3ac1fe4d194b",
-                  "src/apprt/win32/ViewerPane.zig":  "92cbfb31cfb85324d3a49e614d5646c111e52fec293629c1541b9bceacde6930",
+                  "src/apprt/win32/ViewerPane.zig":  "195ff92cb77f567893e9e5c7fc2595ef3fbcb35d8226a0db8aaa706d40114774",
                   "test/win32/viewer-fold-carried.ps1":  "5def07799d4133cc584b6cb6b966271a43971f91864d0242834acfb05399edb4"
               }
 }
