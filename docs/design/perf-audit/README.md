@@ -110,6 +110,12 @@ CPU against a T3111-or-later JSON only.
   12 of 198 metrics are out of tolerance: 9 better, 3 worse. The worse ones are
   +12 idle threads (T3105's IPC listeners, T3152) and USER objects
   (T3153). See `audit-3.md`.
+- `baseline-4.json` is the audit-4 baseline (T3151, commit 424c9e5ab, both
+  builds), and the first with kernel time and cycle counts (T3111). Against
+  baseline-3, 28 of 398 metrics are out of tolerance. Busy wakeups fell about
+  8x (T3060/T3061) and cycle memory fell 60-100 MB. Idle app cycles (T3234)
+  and the agent's idle CPU and release memory (T3235) are worse. See
+  `audit-4.md`.
 - `audit-1.md`, `audit-2.md` and `audit-3.md` are the audit write-ups; `audit-N/` holds each
   area's detail.
 
