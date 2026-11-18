@@ -24,6 +24,7 @@ const Command = @import("../Command.zig");
 const exit_diagnostics = @import("../exit_diagnostics.zig");
 const SegmentedPool = @import("../datastruct/main.zig").SegmentedPool;
 const ptypkg = @import("../pty.zig");
+const read_coalesce = @import("read_coalesce.zig");
 const Pty = ptypkg.Pty;
 const EnvMap = std.process.EnvMap;
 const PasswdEntry = internal_os.passwd.Entry;
@@ -167,7 +168,10 @@ pub fn threadEnter(
     const read_thread = try internal_os.reusable_thread.spawnPane(
         &read_thread_pool,
         if (builtin.os.tag == .windows) ReadThread.threadMainWindows else ReadThread.threadMainPosix,
-        .{ pty_fds.read, io, pipe[0], &td.backend.exec.read_activity },
+        if (comptime builtin.os.tag == .windows)
+            .{ pty_fds.read, io, pipe[0], &td.backend.exec.read_activity, &td.backend.exec.read_thread_quit }
+        else
+            .{ pty_fds.read, io, pipe[0], &td.backend.exec.read_activity },
     );
     read_thread.setName("io-reader") catch {};
     td.backend.exec.read_thread = read_thread;
@@ -217,6 +221,9 @@ pub fn threadExit(self: *Exec, td: *termio.Termio.ThreadData) void {
     if (exec.exited) self.subprocess.externalExit();
     self.subprocess.stop();
 
+    // The Windows reader polls this flag, not the pipe below (T3060).
+    exec.read_thread_quit.store(true, .release);
+
     // Quit our read thread after exiting the subprocess so that
     // we don't get stuck waiting for data to stop flowing if it is
     // a particularly noisy process.
@@ -239,7 +246,7 @@ pub fn threadExit(self: *Exec, td: *termio.Termio.ThreadData) void {
         // misses when it is parsing output instead (e.g. the final burst
         // the subprocess stop above flushed through ConPTY) — a missed
         // cancel left join() below hung forever on the GUI thread. Retry
-        // until the thread exits; it re-checks the quit byte before every
+        // until the thread exits; it re-checks the quit flag before every
         // blocking read, so this converges immediately.
         while (true) {
             if (windows.kernel32.CancelIoEx(exec.read_thread_fd, null) == 0) {
@@ -651,6 +658,11 @@ pub const ThreadData = struct {
     read_thread: internal_os.reusable_thread.PaneThread,
     read_thread_pipe: posix.fd_t,
     read_thread_fd: posix.fd_t,
+    /// Windows: the reader's quit signal (T3060). An atomic load per read
+    /// instead of a PeekNamedPipe syscall on the quit pipe; threadExit sets
+    /// it before its CancelIoEx retry loop, which covers the window between
+    /// the reader's check and its blocking ReadFile.
+    read_thread_quit: std.atomic.Value(bool) = .init(false),
 
     /// The timer to detect termios state changes.
     termios_timer: xev.Timer,
@@ -1533,9 +1545,23 @@ pub const ReadThread = struct {
         io: *termio.Termio,
         quit: posix.fd_t,
         activity: *std.atomic.Value(u64),
+        quit_flag: *const std.atomic.Value(bool),
     ) void {
-        // Always close our end of the pipe when we exit.
+        // Always close our end of the pipe when we exit. The pipe is only
+        // kept for threadExit's shared write; this thread reads quit_flag.
         defer posix.close(quit);
+
+        // Flood coalescing (T3060). Without a high-resolution timer there is
+        // no wait short enough to hold a batch back, so the reader keeps the
+        // plain T62 top-up and parses what is already pending.
+        const coalesce_timer: ?windows.HANDLE = windows.exp.kernel32.CreateWaitableTimerExW(
+            null,
+            null,
+            windows.exp.CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+            windows.exp.TIMER_ALL_ACCESS,
+        );
+        defer if (coalesce_timer) |t| windows.CloseHandle(t);
+        if (coalesce_timer == null) log.warn("no high-resolution timer, pty output is not coalesced", .{});
 
         // Setup our crash metadata
         crash.sentry.thread_state = .{
@@ -1550,6 +1576,7 @@ pub const ReadThread = struct {
         var perf_reads: u64 = 0;
         var perf_batches: u64 = 0;
         var perf_bytes: u64 = 0;
+        var perf_waits: u64 = 0;
 
         // Batch pty output before parsing it. processOutput takes the
         // renderer state mutex, so the lock cadence must be bounded by
@@ -1559,23 +1586,22 @@ pub const ReadThread = struct {
         // observed (T62) — IPC verbs, input, and focus all stall.
         var buf: [64 * 1024]u8 = undefined;
         while (true) {
-            // Check the quit pipe BEFORE the blocking read: threadExit's
+            // Check the quit flag BEFORE the blocking read: threadExit's
             // CancelIoEx only lands if a ReadFile is in flight at that
             // exact instant. When the cancel fires while we're parsing a
             // batch below, this check is what exits the thread — without
             // it a missed cancel left the reader blocked in ReadFile
-            // forever and +close hung the GUI thread in join().
-            var quit_bytes: windows.DWORD = 0;
-            if (windows.exp.kernel32.PeekNamedPipe(quit, null, 0, null, &quit_bytes, null) == 0) {
-                const err = windows.kernel32.GetLastError();
-                log.err("quit pipe reader error err={}", .{err});
-                unreachable;
-            }
-            if (quit_bytes > 0) {
+            // forever and +close hung the GUI thread in join(). It used to
+            // be a PeekNamedPipe on the quit pipe: one syscall per batch
+            // (T3060).
+            if (quit_flag.load(.acquire)) {
                 log.info("read thread got quit signal", .{});
                 return;
             }
 
+            // How long the blocking read waits is the flood signal: see
+            // read_coalesce.zig.
+            const read_start = std.time.Instant.now() catch null;
             var n: windows.DWORD = 0;
             if (windows.kernel32.ReadFile(fd, &buf, buf.len, &n, null) == 0) {
                 const err = windows.kernel32.GetLastError();
@@ -1597,17 +1623,30 @@ pub const ReadThread = struct {
             // latency); a flood coalesces into few large batches. Any
             // peek/read failure just parses what we have — a real
             // error repeats on the next blocking read above.
-            var filled: usize = n;
-            while (filled < buf.len) {
-                var avail: windows.DWORD = 0;
-                if (windows.exp.kernel32.PeekNamedPipe(fd, null, 0, null, &avail, null) == 0) break;
-                if (avail == 0) break;
-                var m: windows.DWORD = 0;
-                const want: windows.DWORD = @intCast(@min(buf.len - filled, avail));
-                if (windows.kernel32.ReadFile(fd, buf[filled..].ptr, want, &m, null) == 0) break;
-                if (m == 0) break;
-                if (perf_on) perf_reads += 1;
-                filled += m;
+            const read_end = std.time.Instant.now() catch null;
+            var filled: usize = topUp(fd, &buf, n, if (perf_on) &perf_reads else null);
+
+            // Coalesce a flood (T3060): the top-up above only takes what is
+            // already waiting, which under a flood is one ~100-byte conhost
+            // write per batch. When the read barely blocked, the producer
+            // is streaming: let it fill the pipe for up to ~1 ms (or 16 KiB)
+            // before taking the terminal lock. An echo on a quiet pane
+            // blocked for the user, so it parses at once.
+            if (coalesce_timer) |timer| coalesce: {
+                const start = read_start orelse break :coalesce;
+                const end = read_end orelse break :coalesce;
+                if (!read_coalesce.shouldWait(filled, end.since(start))) break :coalesce;
+                if (perf_on) perf_waits += 1;
+                while (filled < read_coalesce.target_bytes) {
+                    const now = std.time.Instant.now() catch break;
+                    const wait_ns = read_coalesce.nextWait(now.since(end)) orelse break;
+                    // Negative due time = relative, in 100 ns units.
+                    const due: i64 = -@as(i64, @intCast(@max(wait_ns / 100, 1)));
+                    if (windows.exp.kernel32.SetWaitableTimer(timer, &due, 0, null, null, windows.FALSE) == 0) break;
+                    if (windows.kernel32.WaitForSingleObject(timer, windows.INFINITE) != windows.WAIT_OBJECT_0) break;
+                    filled = topUp(fd, &buf, filled, if (perf_on) &perf_reads else null);
+                    if (quit_flag.load(.acquire)) break;
+                }
             }
 
             if (perf_on) perf: {
@@ -1620,15 +1659,17 @@ pub const ReadThread = struct {
                 };
                 const elapsed = now.since(start);
                 if (elapsed >= std.time.ns_per_s) {
-                    log.info("perf pty reads_per_s={d} batches_per_s={d} kb_per_s={d}", .{
+                    log.info("perf pty reads_per_s={d} batches_per_s={d} kb_per_s={d} coalesce_waits_per_s={d}", .{
                         perf_reads * std.time.ns_per_s / @max(elapsed, 1),
                         perf_batches * std.time.ns_per_s / @max(elapsed, 1),
                         (perf_bytes * std.time.ns_per_s / @max(elapsed, 1)) / 1024,
+                        perf_waits * std.time.ns_per_s / @max(elapsed, 1),
                     });
                     perf_start = now;
                     perf_reads = 0;
                     perf_batches = 0;
                     perf_bytes = 0;
+                    perf_waits = 0;
                 }
             }
 
@@ -1639,6 +1680,25 @@ pub const ReadThread = struct {
             @call(.always_inline, termio.Termio.processOutput, .{ io, buf[0..filled] });
             _ = activity.fetchAdd(1, .monotonic);
         }
+    }
+
+    /// Drain whatever output is ALREADY pending into `buf[filled..]` without
+    /// blocking (T62). Any peek/read failure just stops: a real error repeats
+    /// on the next blocking read. Returns the new fill.
+    fn topUp(fd: posix.fd_t, buf: []u8, filled_in: usize, reads: ?*u64) usize {
+        var filled = filled_in;
+        while (filled < buf.len) {
+            var avail: windows.DWORD = 0;
+            if (windows.exp.kernel32.PeekNamedPipe(fd, null, 0, null, &avail, null) == 0) break;
+            if (avail == 0) break;
+            var m: windows.DWORD = 0;
+            const want: windows.DWORD = @intCast(@min(buf.len - filled, avail));
+            if (windows.kernel32.ReadFile(fd, buf[filled..].ptr, want, &m, null) == 0) break;
+            if (m == 0) break;
+            if (reads) |r| r.* += 1;
+            filled += m;
+        }
+        return filled;
     }
 };
 

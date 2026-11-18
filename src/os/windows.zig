@@ -43,6 +43,8 @@ pub const exp = struct {
     pub const FILE_FLAG_FIRST_PIPE_INSTANCE = 0x00080000;
 
     pub const STATUS_PENDING = 0x00000103;
+    pub const CREATE_WAITABLE_TIMER_HIGH_RESOLUTION: windows.DWORD = 0x00000002;
+    pub const TIMER_ALL_ACCESS: windows.DWORD = 0x001F0003;
     pub const STILL_ACTIVE = STATUS_PENDING;
 
     pub const STARTUPINFOEX = extern struct {
@@ -168,6 +170,22 @@ pub const exp = struct {
             cbSize: windows.SIZE_T,
             lpPreviousValue: ?windows.PVOID,
             lpReturnSize: ?*windows.SIZE_T,
+        ) callconv(.winapi) windows.BOOL;
+        /// Win10 1803+. Null on failure (older OS, quota); callers degrade.
+        pub extern "kernel32" fn CreateWaitableTimerExW(
+            lpTimerAttributes: ?*windows.SECURITY_ATTRIBUTES,
+            lpTimerName: ?[*:0]const u16,
+            dwFlags: windows.DWORD,
+            dwDesiredAccess: windows.DWORD,
+        ) callconv(.winapi) ?windows.HANDLE;
+        /// `lpDueTime` is in 100 ns units; negative is relative to now.
+        pub extern "kernel32" fn SetWaitableTimer(
+            hTimer: windows.HANDLE,
+            lpDueTime: *const i64,
+            lPeriod: i32,
+            pfnCompletionRoutine: ?*const anyopaque,
+            lpArgToCompletionRoutine: ?*anyopaque,
+            fResume: windows.BOOL,
         ) callconv(.winapi) windows.BOOL;
         pub extern "kernel32" fn PeekNamedPipe(
             hNamedPipe: windows.HANDLE,

@@ -414,7 +414,12 @@ const WindowsPty = struct {
         //     _ = windows.CloseHandle(pty.in_pipe);
         // }
 
-        if (windows.exp.kernel32.CreatePipe(&pty.out_pipe, &pty.out_pipe_pty, null, 0) == 0) {
+        // 64 KiB, the reader's buffer, instead of the ~4 KiB default (T3062,
+        // PA-C05): the default holds ~2 ms of a flood, so any reader stall
+        // blocked conhost, and the reader's flood coalescing (T3060) had no
+        // room to accumulate a batch. Bounded rather than larger so output
+        // already written when ^C lands drains in tens of ms, not hundreds.
+        if (windows.exp.kernel32.CreatePipe(&pty.out_pipe, &pty.out_pipe_pty, null, 64 * 1024) == 0) {
             return windows.unexpectedError(windows.kernel32.GetLastError());
         }
         errdefer {

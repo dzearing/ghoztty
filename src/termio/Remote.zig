@@ -2217,7 +2217,9 @@ fn finishAttachReflow(rd: *ThreadData) void {
 /// a pane's pwd/title for `+list`, input, focus, resize — so the mutex hold time
 /// here IS the GUI's worst-case stall. Local Exec never had to think about this:
 /// its reader parses whatever one ConPTY `ReadFile` returned, which the OS hands
-/// out in ~4 KiB pieces, so its holds are naturally short. The agent path
+/// out in ~4 KiB pieces, so its holds are naturally short. (Since T3060/T3062
+/// the ConPTY pipe is 64 KiB and Exec coalesces a flood toward 16 KiB per
+/// parse; the slice here was not re-tuned to match.) The agent path
 /// interposes a 256 KiB inbound ring that COALESCES the stream, so an unsliced
 /// drain fed the parser 16 KiB at a time — 4x Exec's granularity, measured at
 /// ~330 ms of held-lock parsing per chunk under a storm, which stalled `+list`
