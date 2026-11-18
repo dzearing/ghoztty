@@ -762,8 +762,13 @@ fn ensureCardSurface(self: *ViewerFindBar, hdc: w32.HDC, w: i32, h: i32) void {
 }
 
 fn releaseCardSurface(self: *ViewerFindBar) void {
-    if (self.card_bmp) |b| _ = w32.DeleteObject(b);
+    // The DC goes FIRST (T3042), so the bitmap is no longer selected into a
+    // DC when it is deleted - the order DeleteObject's contract asks for and
+    // the TOC card already uses. The old order (bitmap first) did NOT leak on
+    // Windows 11 when measured: GDI accepted the delete and freed the DIB with
+    // the DC. It only leaned on that undocumented leniency.
     if (self.card_dc) |d| _ = w32.DeleteDC(d);
+    if (self.card_bmp) |b| _ = w32.DeleteObject(b);
     self.card_bmp = null;
     self.card_dc = null;
     self.card_w = 0;
@@ -935,4 +940,44 @@ test "viewer find class: a resize invalidates the whole card" {
     registerClass(hinst);
     if (!class_registered) return error.SkipZigTest;
     try class_redraw.expectResizeInvalidatesWholeClient(CLASS_NAME);
+}
+
+// T3042: rebuilding the card's glass (every resize, scale or theme change)
+// must hand back the DC and bitmap it replaces. A release that strands the
+// bitmap ends this loop 50 GDI objects up (measured: 2 -> 52 with the
+// DeleteObject removed). The pre-T3042 delete-while-selected order measured
+// flat here, so this guards the release as a whole, not that ordering.
+test "viewer find card: 50 rebuilds leave the GDI object count flat" {
+    const k = struct {
+        extern "user32" fn GetGuiResources(h: ?*anyopaque, flags: u32) callconv(.winapi) u32;
+        extern "kernel32" fn GetCurrentProcess() callconv(.winapi) ?*anyopaque;
+    };
+    const gr_gdiobjects: u32 = 0;
+    const screen = w32.GetDC(null) orelse return error.SkipZigTest;
+    defer _ = w32.ReleaseDC(null, screen);
+
+    var bar: ViewerFindBar = .{
+        .hwnd = undefined,
+        .edit = undefined,
+        .pane = undefined,
+        .alloc = std.testing.allocator,
+        .scale = 1.0,
+    };
+    // One warm-up build so any one-time GDI allocation is outside the count.
+    bar.ensureCardSurface(screen, 300, 40);
+    if (bar.card_dc == null) return error.SkipZigTest;
+    bar.releaseCardSurface();
+
+    const before = k.GetGuiResources(k.GetCurrentProcess(), gr_gdiobjects);
+    if (before == 0) return error.SkipZigTest;
+    var i: i32 = 0;
+    while (i < 50) : (i += 1) {
+        // A new width each time is the resize path: `stale` forces a release
+        // and a rebuild on every call.
+        bar.ensureCardSurface(screen, 300 + i, 40);
+        try std.testing.expect(bar.card_dc != null);
+    }
+    bar.releaseCardSurface();
+    const after = k.GetGuiResources(k.GetCurrentProcess(), gr_gdiobjects);
+    try std.testing.expectEqual(before, after);
 }

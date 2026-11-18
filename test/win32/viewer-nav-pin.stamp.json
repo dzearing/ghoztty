@@ -1,8 +1,8 @@
 {
     "guard":  "viewer-nav-pin",
     "script":  "test/win32/viewer-nav-pin.ps1",
-    "generated":  "2026-11-17T14:58:07-08:00",
-    "commit":  "ed8755bfc",
+    "generated":  "2026-11-17T15:37:32-08:00",
+    "commit":  "9b53852a3",
     "uncommitted":  [
 
                     ],
