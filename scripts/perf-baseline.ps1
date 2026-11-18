@@ -48,7 +48,11 @@
 #           -ViewerVisibleSeconds shown; hidden: a new tab over them, CPU and
 #           private bytes over -ViewerHiddenSeconds; after_close: every viewer
 #           closed, the tree every 10 s for -ViewerCloseSeconds (residual) and
-#           the app's leak against before the first viewer.
+#           the app's leak against before the first viewer. Since T3169 a
+#           terminal-only CONTROL tab is opened and closed first (warm_base),
+#           so viewer_leak excludes the covering tab's GL driver arena, and an
+#           attribution block splits open/leak by region class, private_rw
+#           allocation, and window/handle/thread kind.
 #   agent   session persistence on: ghoztty-agent.exe idle CPU and wakeups,
 #           private bytes per hosted session, and its handles/threads across
 #           -AttachCycles app kill (detach) / relaunch (re-attach) cycles.
@@ -81,6 +85,10 @@ param(
     [int]$ViewerVisibleSeconds = 60,
     [int]$ViewerHiddenSeconds = 60,
     [int]$ViewerCloseSeconds = 90,
+    # T3169: open/close the three viewers this many MORE times after
+    # after_close (no hidden span), so a residue is told apart as one-time
+    # warm-up (later cycles ~0) or a per-open leak (each cycle adds it again).
+    [int]$ViewerRepeatCycles = 2,
     # all | idle | busy | cycle | viewer | agent, comma-separated or as an array
     [string[]]$Phase = @('all'),
     # The cycle phase's panes: mixed (3 tabs holding 4+3+3, the baseline
@@ -244,7 +252,7 @@ if ($Build -eq 'Both' -and -not $SelfTest) {
             '-AgentSessions', $AgentSessions, '-AttachCycles', $AttachCycles, '-Phase', ($Phase -join ','),
             '-CycleShape', $CycleShape, '-SettledCycles', $SettledCycles, '-CycleMaxWarmup', $CycleMaxWarmup,
             '-SettleBudgetMB', $SettleBudgetMB, '-CycleIdleSeconds', $CycleIdleSeconds,
-            '-ViewerVisibleSeconds', $ViewerVisibleSeconds, '-ViewerHiddenSeconds', $ViewerHiddenSeconds, '-ViewerCloseSeconds', $ViewerCloseSeconds)
+            '-ViewerVisibleSeconds', $ViewerVisibleSeconds, '-ViewerHiddenSeconds', $ViewerHiddenSeconds, '-ViewerCloseSeconds', $ViewerCloseSeconds, '-ViewerRepeatCycles', $ViewerRepeatCycles)
         if ($AppEnv.Count) { $childArgs += @('-AppEnv', ($AppEnv -join ',')) }
         if ($BusyPersistence) { $childArgs += '-BusyPersistence' }
         if ($SampleAgent) { $childArgs += @('-SampleAgent', ([IO.Path]::ChangeExtension([IO.Path]::GetFullPath($SampleAgent), ".$($b.ToLower()).json"))) }
@@ -270,7 +278,7 @@ if ($Build -eq 'Both' -and -not $SelfTest) {
             gpu   = ((Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }) -join '; ')
             os    = (Get-CimInstance Win32_OperatingSystem).Version
         }
-        parameters = [ordered]@{ idle_seconds = $IdleSeconds; busy_mb = $BusyMB; busy_text = $BusyText; resize_seconds = $ResizeSeconds; agent_sessions = $AgentSessions; attach_cycles = $AttachCycles; cycle_shape = $CycleShape; settled_cycles = $SettledCycles; cycle_max_warmup = $CycleMaxWarmup; settle_budget_mb = $SettleBudgetMB; cycle_idle_seconds = $CycleIdleSeconds; viewer_visible_seconds = $ViewerVisibleSeconds; viewer_hidden_seconds = $ViewerHiddenSeconds; viewer_close_seconds = $ViewerCloseSeconds; app_env = $appEnvMap }
+        parameters = [ordered]@{ idle_seconds = $IdleSeconds; busy_mb = $BusyMB; busy_text = $BusyText; resize_seconds = $ResizeSeconds; agent_sessions = $AgentSessions; attach_cycles = $AttachCycles; cycle_shape = $CycleShape; settled_cycles = $SettledCycles; cycle_max_warmup = $CycleMaxWarmup; settle_budget_mb = $SettleBudgetMB; cycle_idle_seconds = $CycleIdleSeconds; viewer_visible_seconds = $ViewerVisibleSeconds; viewer_hidden_seconds = $ViewerHiddenSeconds; viewer_close_seconds = $ViewerCloseSeconds; viewer_repeat_cycles = $ViewerRepeatCycles; app_env = $appEnvMap }
         tolerance = $script:Tolerance
         builds    = $parts
     }
@@ -1272,6 +1280,21 @@ function Get-ViewerWindowCount([IntPtr]$Top) {
     $vis = @($all | Where-Object { $_.Visible -and $_.Width -gt 0 -and $_.Height -gt 0 })
     return @($all.Count, $vis.Count)
 }
+# ctrl+shift+t on the first visible terminal pane; the new tab's listed pane,
+# found as the one leaf not in $Known. Throws when no tab opens.
+function Open-TerminalTab($App, [string[]]$Known) {
+    $panes = @(Get-TestChildWindows -Window $App.Top -Class 'GhozttyTerminal' | Where-Object { $_.Visible -and $_.Width -gt 0 })
+    if ($panes.Count -lt 1) { throw 'no visible terminal pane to open a tab from' }
+    $hw = [IntPtr][int64]$panes[0].Hwnd
+    $f = Focus-TestWindow -Window $App.Top -Child $hw
+    $k = Send-TestKeys -Window $App.Top -Target $hw -Modifiers ctrl, shift -Key T
+    if (-not ($f -and $k)) { throw "ctrl+shift+t was not delivered (focus=$f keys=$k)" }
+    $tabPane = $null
+    $deadline = (Get-Date).AddSeconds(20)
+    do { Start-Sleep -Milliseconds 300; $tabPane = @(Get-PaneLeaves | Where-Object { $Known -notcontains $_.id }) | Select-Object -First 1 } while ($null -eq $tabPane -and (Get-Date) -lt $deadline)
+    if ($null -eq $tabPane) { throw 'ctrl+shift+t opened no listed pane' }
+    return $tabPane
+}
 
 $result = [ordered]@{
     exe = $exe
@@ -1764,6 +1787,24 @@ try {
             $orig = @(Get-PaneLeaves)[0].id
             $baseApp = Get-FullSample $a.Pid 'viewer base' -Settle
             $baseTree = Get-WebViewTree $a.Pid
+            $vRegions = [ordered]@{ base = Get-RegionCensus $a.Pid }
+
+            # --- control (T3169): the same terminal tab the hidden span opens,
+            # opened and closed BEFORE any viewer. A first terminal tab grows
+            # the GL driver's arena (T3130) and that memory is kept, so without
+            # this the viewers' leak carried the covering tab's residue. The
+            # viewer figures below are then also taken against warm_base.
+            $ctlPane = Open-TerminalTab $a @(Get-PaneLeaves | ForEach-Object { $_.id })
+            Start-Sleep -Seconds 5
+            $ctlOpenApp = Get-FullSample $a.Pid 'viewer control open' -Settle
+            $r = Invoke-Verb @('+close', "--target=$($ctlPane.id)")
+            if ($r.Code -ne 0) { throw "+close of the control tab failed: $($r.Text)" }
+            if (-not (Wait-PaneCount 1 30)) { throw "the control tab did not close back to 1 pane ($(@(Get-PaneLeaves).Count) left)" }
+            Start-Sleep -Seconds 3
+            $warmApp = Get-FullSample $a.Pid 'viewer warm base' -Settle
+            $vRegions.warm_base = Get-RegionCensus $a.Pid
+            $vAllocs = [ordered]@{ warm_base = Get-AllocCensus $a.Pid }
+            $vObjWarm = Get-ObjectCensus $a.Pid
 
             # --- open: three viewers beside the one terminal, all in tab 1
             $splits = @(
@@ -1794,6 +1835,9 @@ try {
             Start-Sleep -Seconds 5
             $openApp = Get-FullSample $a.Pid 'viewer open' -Settle
             $openTree = Get-WebViewTree $a.Pid
+            $vRegions.open = Get-RegionCensus $a.Pid
+            $vAllocs.open = Get-AllocCensus $a.Pid
+            $vObjOpen = Get-ObjectCensus $a.Pid
             $wvReason = $null
             if (@($openTree | Where-Object { $null -ne $_ }).Count -eq 0) {
                 $wvReason = 'no msedgewebview2.exe process descends from the app with 3 viewers shown - WebView2 discovery failed on this desktop, so every webview figure in this phase is empty, not zero'
@@ -1819,12 +1863,20 @@ try {
                     app = Format-AppSample $baseApp
                     webview = Format-WebViewTree $baseTree
                 }
+                control = [ordered]@{
+                    method = 'T3169: a terminal tab (ctrl+shift+t, the hidden span''s covering tab) opened, 5 s, settled; closed, 3 s, settled = warm_base. growth = open minus base; leak = warm_base minus base: what one terminal tab open/close leaves (the GL driver arena, T3130). The viewer figures are also given against warm_base'
+                    open = Format-AppSample $ctlOpenApp
+                    growth = [ordered]@{ private_mb = [math]::Round($ctlOpenApp.PrivMB - $baseApp.PrivMB, 1); gdi = $ctlOpenApp.Gdi - $baseApp.Gdi; user = $ctlOpenApp.User - $baseApp.User; threads = $ctlOpenApp.Threads - $baseApp.Threads }
+                    warm_base = Format-AppSample $warmApp
+                    leak = [ordered]@{ private_mb = [math]::Round($warmApp.PrivMB - $baseApp.PrivMB, 1); gdi = $warmApp.Gdi - $baseApp.Gdi; user = $warmApp.User - $baseApp.User; handles = $warmApp.Handles - $baseApp.Handles; threads = $warmApp.Threads - $baseApp.Threads }
+                }
                 open = [ordered]@{
                     method = "3 viewers shown: the tree counted once its process count held for 3 s (cap 45 s) plus 5 s, app settled; then 15 s more and CPU over $ViewerVisibleSeconds s shown and idle (app: user+kernel; webview: per-process user+kernel, a process born in the span counted whole). growth = app minus base"
                     viewers = 3
                     tree_up_s = $treeUpS
                     app = Format-AppSample $openApp
                     growth = [ordered]@{ private_mb = [math]::Round($openApp.PrivMB - $baseApp.PrivMB, 1); gdi = $openApp.Gdi - $baseApp.Gdi; user = $openApp.User - $baseApp.User; handles = $openApp.Handles - $baseApp.Handles; threads = $openApp.Threads - $baseApp.Threads }
+                    growth_vs_warm = [ordered]@{ private_mb = [math]::Round($openApp.PrivMB - $warmApp.PrivMB, 1); gdi = $openApp.Gdi - $warmApp.Gdi; user = $openApp.User - $warmApp.User; handles = $openApp.Handles - $warmApp.Handles; threads = $openApp.Threads - $warmApp.Threads }
                     webview = $openWvBlock
                 }
             }
@@ -1834,17 +1886,7 @@ try {
 
             # --- hidden: a new tab over them (ctrl+shift+t on the terminal),
             # so all three viewers sit in a background tab.
-            $ids = @(Get-PaneLeaves | ForEach-Object { $_.id })
-            $panes = @(Get-TestChildWindows -Window $a.Top -Class 'GhozttyTerminal' | Where-Object { $_.Visible -and $_.Width -gt 0 })
-            if ($panes.Count -lt 1) { throw 'no visible terminal pane to open the covering tab from' }
-            $hw = [IntPtr][int64]$panes[0].Hwnd
-            $f = Focus-TestWindow -Window $a.Top -Child $hw
-            $k = Send-TestKeys -Window $a.Top -Target $hw -Modifiers ctrl, shift -Key T
-            if (-not ($f -and $k)) { throw "ctrl+shift+t was not delivered (focus=$f keys=$k)" }
-            $tabPane = $null
-            $deadline = (Get-Date).AddSeconds(20)
-            do { Start-Sleep -Milliseconds 300; $tabPane = @(Get-PaneLeaves | Where-Object { $ids -notcontains $_.id }) | Select-Object -First 1 } while ($null -eq $tabPane -and (Get-Date) -lt $deadline)
-            if ($null -eq $tabPane) { throw 'ctrl+shift+t opened no listed pane' }
+            $tabPane = Open-TerminalTab $a @(Get-PaneLeaves | ForEach-Object { $_.id })
             Start-Sleep -Seconds 5
             $vcHidden = Get-ViewerWindowCount $a.Top
             $hTree0 = Get-WebViewTree $a.Pid
@@ -1895,12 +1937,82 @@ try {
                 seconds = $ViewerCloseSeconds
                 app = Format-AppSample $closeApp
                 leak = [ordered]@{ private_mb = [math]::Round($closeApp.PrivMB - $baseApp.PrivMB, 1); gdi = $closeApp.Gdi - $baseApp.Gdi; user = $closeApp.User - $baseApp.User; handles = $closeApp.Handles - $baseApp.Handles; threads = $closeApp.Threads - $baseApp.Threads }
+                viewer_leak = [ordered]@{ private_mb = [math]::Round($closeApp.PrivMB - $warmApp.PrivMB, 1); gdi = $closeApp.Gdi - $warmApp.Gdi; user = $closeApp.User - $warmApp.User; handles = $closeApp.Handles - $warmApp.Handles; threads = $closeApp.Threads - $warmApp.Threads }
                 webview = Format-WebViewTree $closeTree
                 series = $series.ToArray()
+            }
+            # T3169: what the viewers hold and leave, by owner: committed
+            # regions by class, private_rw by allocation, windows/handles/
+            # threads by kind - all against warm_base, so the terminal tab's
+            # driver arena is out of the figure.
+            $vRegions.closed = Get-RegionCensus $a.Pid
+            $vAllocs.closed = Get-AllocCensus $a.Pid
+            $vObjClosed = Get-ObjectCensus $a.Pid
+            $result.viewer.after_close.viewer_leak.method = 'app at the end minus warm_base (after the control tab, before any viewer): the viewers'' own residue, the covering tab''s driver arena already paid by the control'
+            $result.viewer.attribution = [ordered]@{
+                method = 'T3169: regions = VirtualQueryEx committed bytes by class (see the cycle phase); private_rw_allocs = private_rw grouped by AllocationBase (T3130 kinds); objects = handle types, windows by class, thread groups. control_leak = base -> warm_base; viewer_open = warm_base -> 3 viewers open; viewer_leak = warm_base -> every viewer and the covering tab closed'
+                regions = [ordered]@{
+                    control_leak = Get-RegionDelta $vRegions.base $vRegions.warm_base
+                    viewer_open = Get-RegionDelta $vRegions.warm_base $vRegions.open
+                    viewer_leak = Get-RegionDelta $vRegions.warm_base $vRegions.closed
+                }
+                private_rw_allocs = [ordered]@{
+                    viewer_open = Get-AllocDelta $vAllocs.warm_base $vAllocs.open
+                    viewer_leak = Get-AllocDelta $vAllocs.warm_base $vAllocs.closed
+                }
+                objects = [ordered]@{
+                    viewer_open = Format-CensusDelta $vObjWarm $vObjOpen
+                    viewer_leak = Format-CensusDelta $vObjWarm $vObjClosed
+                }
+            }
+
+            # --- repeat (T3169): the same three viewers opened and closed
+            # again. A residue the first round left that later rounds do not
+            # add to is warm-up (DLLs, the WebView2 environment, the worker
+            # pool); one every round adds again is a per-open leak.
+            $prev = $closeApp; $prevObj = $vObjClosed
+            $rounds = New-Object System.Collections.ArrayList
+            for ($rc = 1; $rc -le $ViewerRepeatCycles; $rc++) {
+                foreach ($sa in $splits) {
+                    $r = Invoke-Verb $sa
+                    if ($r.Code -ne 0) { throw "repeat $rc $($sa[2]): +split --view failed: $($r.Text)" }
+                }
+                if (-not (Wait-PaneCount 4 30)) { throw "repeat ${rc}: expected 4 panes, +list shows $(@(Get-PaneLeaves).Count)" }
+                $deadline = (Get-Date).AddSeconds(30)
+                do { $vc = Get-ViewerWindowCount $a.Top; if ($vc[1] -ge 3) { break }; Start-Sleep -Milliseconds 250 } while ((Get-Date) -lt $deadline)
+                if ($vc[1] -lt 3) { throw "repeat ${rc}: only $($vc[1]) of 3 viewer windows became visible" }
+                Start-Sleep -Seconds 10
+                foreach ($t in @('pvweb', 'pvgs', 'pvmd')) {
+                    $r = Invoke-Verb @('+close', "--target=$t")
+                    if ($r.Code -ne 0) { throw "repeat ${rc}: +close $t failed: $($r.Text)" }
+                }
+                if (-not (Wait-PaneCount 1 30)) { throw "repeat ${rc}: panes did not close back to 1" }
+                Start-Sleep -Seconds 10
+                $rs = Get-FullSample $a.Pid "viewer repeat $rc closed" -Settle
+                $ro = Get-ObjectCensus $a.Pid
+                [void]$rounds.Add([ordered]@{
+                        round = $rc
+                        app = Format-AppSample $rs
+                        added = [ordered]@{ private_mb = [math]::Round($rs.PrivMB - $prev.PrivMB, 1); gdi = $rs.Gdi - $prev.Gdi; user = $rs.User - $prev.User; handles = $rs.Handles - $prev.Handles; threads = $rs.Threads - $prev.Threads }
+                        objects = Format-CensusDelta $prevObj $ro
+                    })
+                $prev = $rs; $prevObj = $ro
+            }
+            if ($ViewerRepeatCycles -gt 0) {
+                $result.viewer.repeat = [ordered]@{
+                    method = "T3169: the three viewers +split again, 10 s once all 3 are visible, +close, 10 s, settled; $ViewerRepeatCycles round(s). added = this round's closed app minus the previous round's (round 1 against after_close): ~0 means the first round's viewer_leak was warm-up, not a per-open leak"
+                    rounds = $rounds.ToArray()
+                    total_added = [ordered]@{ private_mb = [math]::Round($prev.PrivMB - $closeApp.PrivMB, 1); gdi = $prev.Gdi - $closeApp.Gdi; user = $prev.User - $closeApp.User; threads = $prev.Threads - $closeApp.Threads }
+                }
+                Write-Host ("  viewer: {0} more open/close round(s) added +{1} MB / +{2} GDI / +{3} USER / +{4} threads in all" -f $ViewerRepeatCycles, `
+                    $result.viewer.repeat.total_added.private_mb, $result.viewer.repeat.total_added.gdi, $result.viewer.repeat.total_added.user, $result.viewer.repeat.total_added.threads)
             }
             Write-Host ("  viewer: open tree {0} procs / {1} MB (app +{2} MB, +{3} GDI, +{4} USER); hidden {5}% CPU tree / {6}% app; after close {7} procs / {8} MB left" -f `
                 $openWvBlock.procs, $openWvBlock.private_mb, $result.viewer.open.growth.private_mb, $result.viewer.open.growth.gdi, $result.viewer.open.growth.user, `
                 $hWvBlock.cpu_pct, $hRate.cpu_pct, $result.viewer.after_close.webview.procs, $result.viewer.after_close.webview.private_mb)
+            Write-Host ("  viewer: control tab leaves +{0} MB / +{1} GDI / +{2} USER; viewers leave +{3} MB / +{4} GDI / +{5} USER over warm_base" -f `
+                $result.viewer.control.leak.private_mb, $result.viewer.control.leak.gdi, $result.viewer.control.leak.user, `
+                $result.viewer.after_close.viewer_leak.private_mb, $result.viewer.after_close.viewer_leak.gdi, $result.viewer.after_close.viewer_leak.user)
         } catch { $failed = $true; $result.viewer = [ordered]@{ error = "$_"; partial = $result.viewer } }
         finally {
             Stop-App
@@ -1993,7 +2105,7 @@ $doc = [ordered]@{
     task = 'T2958'
     generated = (Get-Date).ToString('o')
     commit = $commit
-    parameters = [ordered]@{ cycle_shape = $CycleShape; settled_cycles = $SettledCycles; cycle_max_warmup = $CycleMaxWarmup; settle_budget_mb = $SettleBudgetMB; cycle_idle_seconds = $CycleIdleSeconds; viewer_visible_seconds = $ViewerVisibleSeconds; viewer_hidden_seconds = $ViewerHiddenSeconds; viewer_close_seconds = $ViewerCloseSeconds; app_env = $appEnvMap }
+    parameters = [ordered]@{ cycle_shape = $CycleShape; settled_cycles = $SettledCycles; cycle_max_warmup = $CycleMaxWarmup; settle_budget_mb = $SettleBudgetMB; cycle_idle_seconds = $CycleIdleSeconds; viewer_visible_seconds = $ViewerVisibleSeconds; viewer_hidden_seconds = $ViewerHiddenSeconds; viewer_close_seconds = $ViewerCloseSeconds; viewer_repeat_cycles = $ViewerRepeatCycles; app_env = $appEnvMap }
     tolerance = $script:Tolerance
     builds = [ordered]@{ ($Build.ToLower()) = $result }
 }
