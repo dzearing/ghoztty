@@ -301,6 +301,13 @@ zig build -Dapp-runtime=win32 -Doptimize=Debug      # -> zig-out\bin\ghoztty.exe
   nowhere else (the portable locations take
   published releases only, T1221); `go.md` has the full protocol and the staleness gates.
 
+- **Where a process's CPU goes, without elevation** (T3159):
+  `scripts\cpu-sample.ps1 -ProcessId <pid>` (or `-ImagePath <exe>` for every
+  process of that exe, holders born mid-run included) is a user-mode
+  sampling profiler: on-CPU stacks via dbghelp, symbolized from the `.pdb`
+  beside the exe. It is the stand-in for `wpr -start CPU`, which needs admin.
+  `perf-baseline.ps1 -SampleAgent` runs it over the agent family for the
+  busy flood. Reading and caveats: `docs/design/perf-audit/README.md`.
 - **Symbols for a shipped build** (T1936): the packages carry no `.pdb`, so
   every `win-v*` release publishes `Ghoztty-symbols-<version>-x64.zip`, a
   symbol store built by `dist\windows-installer\build-symbols-zip.py`. That

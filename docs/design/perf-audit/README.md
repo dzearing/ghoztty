@@ -91,6 +91,34 @@ system clock interval at both ends of the span: another process's
 is CreateTime), so their `cpu_pct` and `cpu_s` leave kernel time out. Compare
 CPU against a T3111-or-later JSON only.
 
+### Where the CPU goes: sampled stacks (T3159)
+
+`wpr -start CPU` needs an elevated shell, and the loop never has one.
+`scripts\cpu-sample.ps1` is a user-mode sampling profiler that needs only
+same-user access. On each tick it finds the threads that are on a CPU right
+now (their cycle counter moves across a 30 us probe), suspends them, walks
+their stacks with dbghelp against the `.pdb` beside the exe, and counts one
+tick per walk. It reports top self functions, inclusive functions, source
+lines, threads and stacks per process, plus a folded-stack file for a flame
+graph.
+
+```powershell
+# the agent family (daemon + the busy pane's holder) over the busy flood
+powershell -NoProfile -File scripts\perf-baseline.ps1 -Build Release -Phase busy -BusyPersistence -SampleAgent temp\agent-prof.json
+# any process, standalone
+powershell -NoProfile -File scripts\cpu-sample.ps1 -ProcessId 1234 -Seconds 20 -Out temp\prof.json -Folded temp\prof.folded
+```
+
+A sampled run's busy wall and CPU are perturbed, so never compare them
+against a baseline. `-Mode cycles` is the first design. It charges every
+thread's cycles to wherever that thread is parked, so relay code that runs
+short bursts and then blocks reads as "all waiting". Use it only for
+comparison. Acceptance: `test\win32\cpu-sample.ps1`.
+
+First finding: the agent's own code is ~3% of its flood CPU. The rest is
+per-message kernel cost: one message per ~113-byte ConPTY line, at every hop.
+That is T3236.
+
 ## Files
 
 - `baseline-1.json` is the first baseline (T2958, commit 4d1e6a270, both builds).

@@ -4913,6 +4913,17 @@ $GuardTable = @(
             'test\win32\perf-baseline-reader.ps1'
         )
     },
+    # The no-elevation sampling CPU profiler (T3159).
+    [pscustomobject]@{
+        Name   = 'cpu-sample'
+        Script = 'test\win32\cpu-sample.ps1'
+        Stamp  = 'test\win32\cpu-sample.stamp.json'
+        Covers = @(
+            'scripts\cpu-sample.ps1',
+            'scripts\lib\CpuSampler.cs',
+            'test\win32\cpu-sample.ps1'
+        )
+    },
     [pscustomobject]@{
         Name   = 'count-or-zero'
         Script = 'test\win32\count-or-zero.ps1'

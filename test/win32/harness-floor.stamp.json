@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-17T23:13:33-08:00",
-    "commit":  "c66f8dd9d",
+    "generated":  "2026-11-18T02:11:25-08:00",
+    "commit":  "7eba59edd",
     "uncommitted":  [
-
+                        "test/win32/cpu-sample.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -123,6 +123,7 @@
                   "test/win32/context-menu-real-input.ps1":  "90d2537c4df6cc16f4426b415f1befa1edd75761862fb708d40ea9cefaf9d163",
                   "test/win32/control-char-scan.ps1":  "70a206b8794ccbf250ac349adbb5a2303e850c9370117b31afbad1541c9692a9",
                   "test/win32/count-or-zero.ps1":  "569947be0dd433056f05a38d16eae3c81cf3a5a02e0710669458650ea6e5e0ad",
+                  "test/win32/cpu-sample.ps1":  "0f427057fe4425354a4b30083b8c333ff85d5c4ca3de522cebb33e5ccda303b5",
                   "test/win32/crash-databreak.ps1":  "1d4b6f42416ae9bc0e298bf5461be8f5df1f0448c96f3b6b9220230aa5e53f10",
                   "test/win32/crash-diagnostics.ps1":  "c09555c22faad0c3914229d756c7df9423369c0e13b2f32422e04d3eeaed8aca",
                   "test/win32/crash-first-chance.ps1":  "87ef370d66a61a2689c51f3d677589eab39e4ac1def7230cc320d4d72ef50a7e",

@@ -106,6 +106,12 @@ param(
     # its output crosses the app's agent connection - the path whose per-frame
     # cost the data-lane fix removed. Off keeps the classic local-pty number.
     [switch]$BusyPersistence,
+    # T3159: with -BusyPersistence, run scripts\cpu-sample.ps1 over every
+    # ghoztty-agent.exe of this build (daemon + the busy pane's holder) for
+    # the busy span and write its report here. Sampling suspends the agent's
+    # threads ~500 times a second, so a sampled run's wall time is not a
+    # baseline number - leave it off for those.
+    [string]$SampleAgent,
     [string[]]$Compare,
     # T3111: measure this ghoztty.exe instead of the build's zig-out folder -
     # an A/B against an older commit built into its own prefix. Only with
@@ -241,6 +247,7 @@ if ($Build -eq 'Both' -and -not $SelfTest) {
             '-ViewerVisibleSeconds', $ViewerVisibleSeconds, '-ViewerHiddenSeconds', $ViewerHiddenSeconds, '-ViewerCloseSeconds', $ViewerCloseSeconds)
         if ($AppEnv.Count) { $childArgs += @('-AppEnv', ($AppEnv -join ',')) }
         if ($BusyPersistence) { $childArgs += '-BusyPersistence' }
+        if ($SampleAgent) { $childArgs += @('-SampleAgent', ([IO.Path]::ChangeExtension([IO.Path]::GetFullPath($SampleAgent), ".$($b.ToLower()).json"))) }
         Write-Host "== $b build"
         & powershell @childArgs
         if ($LASTEXITCODE -ne 0) { $exit = 1 }
@@ -1378,6 +1385,17 @@ try {
             $t0 = Get-ThreadCtx $a.Pid
             $c0 = Get-ThreadCycles $t0
             $s0 = Get-Snap $a.Pid
+            $sampler = $null
+            if ($SampleAgent -and $BusyPersistence) {
+                $sampleOut = [IO.Path]::GetFullPath($SampleAgent)
+                $sampleLog = [IO.Path]::ChangeExtension($sampleOut, '.txt')
+                $sampler = Start-Process powershell -WindowStyle Hidden -PassThru -RedirectStandardOutput $sampleLog -ArgumentList @(
+                    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$(Join-Path $PSScriptRoot 'cpu-sample.ps1')`"",
+                    '-ImagePath', "`"$agentExe`"", '-StopFile', "`"$marker`"", '-Seconds', '600', '-Top', '25',
+                    '-Out', "`"$sampleOut`"", '-Folded', "`"$([IO.Path]::ChangeExtension($sampleOut, '.folded'))`"")
+                $null = $sampler.Handle
+                Start-Sleep -Seconds 3   # Add-Type compile + first scan, before the flood starts
+            }
             $r = Invoke-Verb @('+split', "--target=$anchor", '--name=perfbusy', '--direction=right', "--command=$typeCmd & echo done> `"$marker`"")
             if ($r.Code -ne 0) { throw "+split for the busy pane failed: $($r.Text)" }
             $deadline = (Get-Date).AddSeconds(600)
@@ -1386,6 +1404,10 @@ try {
             $t1 = Get-ThreadCtx $a.Pid
             $c1 = Get-ThreadCycles $t1
             $f1 = if ($BusyPersistence) { Get-AgentFamilySnaps } else { @{} }
+            if ($sampler) {
+                if (-not $sampler.WaitForExit(60000)) { try { $sampler.Kill() } catch { } }
+                $result.agent_sample = [ordered]@{ report = $sampleOut; log = $sampleLog; note = 'cpu-sample.ps1 ran over the busy span: this run''s busy wall/cpu are perturbed by the sampling' }
+            }
             # The last counter window closes up to a second after the output
             # stops; give it that second before reading the log back.
             Start-Sleep -Milliseconds 1500

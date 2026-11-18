@@ -1,0 +1,16 @@
+{
+    "guard":  "cpu-sample",
+    "script":  "test/win32/cpu-sample.ps1",
+    "generated":  "2026-11-18T01:45:35-08:00",
+    "commit":  "7eba59edd",
+    "uncommitted":  [
+                        "scripts/cpu-sample.ps1",
+                        "scripts/lib/CpuSampler.cs",
+                        "test/win32/cpu-sample.ps1"
+                    ],
+    "files":  {
+                  "scripts/cpu-sample.ps1":  "83495b09a4afab4570f38760eab14c6e56d7ea6d8995401dd7ce59688bbc6d23",
+                  "scripts/lib/CpuSampler.cs":  "5242b1db6e6cb4450870a04de0011b811a5455707a7978028d5a4dd691d5f4e6",
+                  "test/win32/cpu-sample.ps1":  "0f427057fe4425354a4b30083b8c333ff85d5c4ca3de522cebb33e5ccda303b5"
+              }
+}
