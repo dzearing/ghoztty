@@ -107,6 +107,12 @@
 #      ROT: for the card it hands out and still hands it out; `-At` reads the
 #      past. Then the real cards T676 swept, at c03cb4913^: the three rotted
 #      ones found, the four accurate ones fresh.
+#   X. A parked task's own re-queue trigger (T3073): a past `requeue-after`
+#      date comes back as `todo` on `next -Claim` (journalled; plain `next`
+#      writes nothing), a future one and the day before stay parked, the date
+#      itself fires; `requeue-when-closed` fires at exactly N done and not at
+#      N-1 (a skipped task does not count); `validate` names a bad date, an
+#      unknown id, an unreachable count and a non-JSON value.
 #
 # Hermetic: sections A-H run against a fixture task dir under $env:TEMP via
 # `-TaskDir`; docs\design\windows-parity-tasks\ is only ever READ (section I).
@@ -1466,6 +1472,61 @@ if ($LASTEXITCODE -eq 0) {
     Assert "SKIP: W12 cannot run, $t676 is not in this checkout's history" $true
     $script:skipped = $true
 }
+
+# --- X. a parked task's own re-queue trigger (T3073) ------------------------
+""
+"X. requeue-after / requeue-when-closed bring a parked task back by themselves"
+Reset-Fixture
+$env:GHOZTTY_TEST_TODAY = '2026-11-20'
+New-FixtureTask -Id 'T1' -PriorityLine 'priority: "P1"'
+New-FixtureTask -Id 'T10' -Status 'blocked(needs a week to pass)' -PriorityLine 'priority: "P2"' -ExtraLines @('requeue-after: "2000-01-01"')
+New-FixtureTask -Id 'T11' -Status 'blocked(needs a week to pass)' -PriorityLine 'priority: "P2"' -ExtraLines @('requeue-after: "2999-01-01"')
+New-FixtureTask -Id 'T13' -Status 'blocked(needs a week to pass)' -PriorityLine 'priority: "P2"' -ExtraLines @('requeue-after: "2026-11-21"')
+New-FixtureTask -Id 'T20' -Status 'done'
+New-FixtureTask -Id 'T21' -Status 'todo' -PriorityLine 'priority: "P3"'
+New-FixtureTask -Id 'T22' -Status 'skipped(duplicate of T20)'
+New-FixtureTask -Id 'T12' -Status 'blocked(needs two of T20-T22 done)' -PriorityLine 'priority: "P2"' -ExtraLines @('requeue-when-closed: {"count": 2, "of": ["T20-T22"]}')
+$st = { param($id) if ([System.IO.File]::ReadAllText((Join-Path $fixture "$id.md")) -match '(?m)^status: "([^"]*)"') { $Matches[1] } else { '?' } }
+
+$r = Task-Run @('validate')
+Assert 'X0 well-formed triggers validate (positive control)' ($r.Code -eq 0 -and $r.Out -match 'ALL PASS')
+if ($r.Code -ne 0) { "      (X0 saw: " + ($r.Out -replace "`r?`n", ' / ') + ')' }
+
+$r = Task-Run @('next')
+Assert 'X1 plain next names the past-date task as re-queued' ($r.Out -match 'REQUEUED: T10 - requeue-after 2000-01-01 reached')
+Assert 'X1b ...but writes nothing (plain next is read-only)' ((& $st 'T10') -match '^blocked')
+
+$r = Task-Run @('next', '-Claim')
+Assert 'X2 next -Claim flips the past-date task to todo' ((& $st 'T10') -eq 'todo')
+Assert 'X2b ...and journals which trigger fired' ([System.IO.File]::ReadAllText((Join-Path $fixture 'T10.md')) -match 'by its own trigger: requeue-after 2000-01-01 reached')
+Assert 'X2c ...at its own priority (the P1 still heads the queue)' ($r.Out -match 'NEXT: T1\b')
+Assert 'X3 a future date stays parked' ((& $st 'T11') -match '^blocked' -and $r.Out -notmatch 'REQUEUED: T11')
+Assert 'X3b the day before the date stays parked' ((& $st 'T13') -match '^blocked')
+Assert 'X4 one done of two needed (N-1; a skipped one does not count) stays parked' ((& $st 'T12') -match '^blocked' -and $r.Out -notmatch 'REQUEUED: T12')
+
+$env:GHOZTTY_TEST_TODAY = '2026-11-21'
+$r = Task-Run @('next', '-Claim')
+Assert 'X5 on the date itself the task comes back' ((& $st 'T13') -eq 'todo' -and $r.Out -match 'REQUEUED: T13 - requeue-after 2026-11-21 reached')
+
+$p21 = Join-Path $fixture 'T21.md'
+[System.IO.File]::WriteAllText($p21, ([System.IO.File]::ReadAllText($p21) -replace '(?m)^status: .*$', 'status: "done"'), (New-Object System.Text.UTF8Encoding $false))
+$r = Task-Run @('next', '-Claim')
+Assert 'X6 at exactly N done the closed-count trigger fires' ((& $st 'T12') -eq 'todo' -and $r.Out -match 'REQUEUED: T12 - requeue-when-closed reached: 2 of 3 named tasks done, 2 needed \(T20, T21\)')
+Remove-Item Env:\GHOZTTY_TEST_TODAY
+
+# The negative half (T1133 rule): each malformed shape is named by validate.
+Reset-Fixture
+New-FixtureTask -Id 'T1' -Status 'blocked(x)' -ExtraLines @('requeue-after: "2026-13-40"')
+New-FixtureTask -Id 'T2' -Status 'blocked(x)' -ExtraLines @('requeue-when-closed: {"count": 1, "of": ["T1", "T999"]}')
+New-FixtureTask -Id 'T3' -Status 'blocked(x)' -ExtraLines @('requeue-when-closed: {"count": 3, "of": ["T1-T2"]}')
+New-FixtureTask -Id 'T4' -Status 'blocked(x)' -ExtraLines @('requeue-when-closed: ten of T1')
+$r = Task-Run @('validate')
+Assert 'X7 validate fails on malformed triggers' ($r.Code -eq 1)
+Assert 'X7b a bad date is named' ($r.Out -match "BAD REQUEUE-AFTER: T1 = '2026-13-40' is not a YYYY-MM-DD date")
+Assert 'X7c an unknown id is named' ($r.Out -match 'BAD REQUEUE-WHEN-CLOSED: T2 names task\(s\) with no file: T999')
+Assert 'X7d a count that can never be reached is named' ($r.Out -match 'BAD REQUEUE-WHEN-CLOSED: T3 - count 3 is more than the 2')
+Assert 'X7e a non-JSON value is named' ($r.Out -match 'BAD REQUEUE-WHEN-CLOSED: T4 - not JSON')
+Reset-Fixture
 
 # --- teardown ---------------------------------------------------------------
 if (Test-Path $fixture) { Remove-Item -Recurse -Force $fixture }

@@ -405,6 +405,13 @@ function ConvertFrom-Frontmatter {
         # the head of lane b's queue, and handing it back to `todo` as its own
         # Validation said to just made the next `next -Claim` hand it out again.
         Lane         = (& $unquote (& $get 'lane')).ToLowerInvariant()
+        # T3073. A parked task's own way back into the queue: a date
+        # (`requeue-after: "YYYY-MM-DD"`) and/or a count of closed tasks
+        # (`requeue-when-closed: {"count": 10, "of": ["T1", "T5-T9"]}`). Kept
+        # RAW here; Get-RequeueTrigger reads them and `validate` names a
+        # malformed one, so a typo can never quietly park a task forever.
+        RequeueAfterRaw  = & $unquote (& $get 'requeue-after')
+        RequeueClosedRaw = (& $get 'requeue-when-closed')
         Path         = $Path
     }
 }
@@ -637,6 +644,86 @@ function Get-TaskPath {
 function Test-Done {
     param([string]$StatusValue)
     return ($StatusValue -match '^(done|skipped)')
+}
+
+# --------------------------------------------------- re-queue triggers ---
+# T3073. A `blocked(...)` task can say when it comes back on its own: after a
+# DATE, or once COUNT of a named set of tasks are done. Before this the only
+# automatic way back was the idle-box re-queue, so the perf re-audit cadence
+# (T2957 step 4: "7 days, or 10 PA tasks closed, whichever is first") lived
+# in a sentence the morning triage had to remember to read.
+#
+# Ids in `of` may be single (`T3016`) or an inclusive range (`T3016-T3024`),
+# which is how the audit docs list them. Only `done` counts as closed: a
+# `skipped(duplicate ...)` PA task fixed nothing, so it must not bring the
+# re-audit forward.
+
+# Parse `requeue-when-closed`. Returns @{ Count; Ids; Error } - Error is a
+# sentence when the raw value is malformed, $null when it is absent or good.
+function Read-RequeueClosed {
+    param([string]$Raw)
+    $res = @{ Count = 0; Ids = @(); Error = $null }
+    if ([string]::IsNullOrWhiteSpace($Raw) -or $Raw -eq 'null') { return $res }
+    $obj = $null
+    try { $obj = $Raw | ConvertFrom-Json } catch { $res.Error = 'not JSON (want {"count": N, "of": ["T1", "T5-T9"]})'; return $res }
+    if ($null -eq $obj -or $null -eq $obj.count -or $null -eq $obj.of) { $res.Error = 'needs both "count" and "of"'; return $res }
+    $n = 0
+    if (-not [int]::TryParse([string]$obj.count, [ref]$n) -or $n -lt 1) { $res.Error = ("count '{0}' is not a whole number of 1 or more" -f $obj.count); return $res }
+    $ids = New-Object System.Collections.Generic.List[string]
+    foreach ($e in @($obj.of)) {
+        $s = ([string]$e).Trim()
+        if ($s -match '^T(\d+)$') { $ids.Add($s); continue }
+        if ($s -match '^T(\d+)-T(\d+)$' -and [int]$Matches[1] -le [int]$Matches[2]) {
+            foreach ($k in ([int]$Matches[1])..([int]$Matches[2])) { $ids.Add("T$k") }
+            continue
+        }
+        $res.Error = ("'{0}' in of is not a task id or an ascending range Ta-Tb" -f $s); return $res
+    }
+    if ($ids.Count -eq 0) { $res.Error = 'of is empty'; return $res }
+    if ($n -gt $ids.Count) { $res.Error = ("count {0} is more than the {1} task(s) in of - it can never fire" -f $n, $ids.Count); return $res }
+    $res.Count = $n
+    $res.Ids = @($ids)
+    return $res
+}
+
+# Parse `requeue-after`. Returns @{ Date; Error } with Date a [datetime] (the
+# start of that local day) or $null.
+function Read-RequeueAfter {
+    param([string]$Raw)
+    $res = @{ Date = $null; Error = $null }
+    if ([string]::IsNullOrWhiteSpace($Raw)) { return $res }
+    $d = [datetime]::MinValue
+    if ($Raw -notmatch '^\d{4}-\d{2}-\d{2}$' -or -not [datetime]::TryParseExact($Raw, 'yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$d)) {
+        $res.Error = ("'{0}' is not a YYYY-MM-DD date" -f $Raw); return $res
+    }
+    $res.Date = $d
+    return $res
+}
+
+# Which re-queue trigger, if any, has fired for task $T. Returns a sentence
+# naming it (for the output and the progress note), or $null. $Today is the
+# local date; GHOZTTY_TEST_TODAY overrides it so the acceptance can pin one.
+function Get-RequeueTrigger {
+    param($T, [hashtable]$ById, [datetime]$Today)
+    $after = Read-RequeueAfter $T.RequeueAfterRaw
+    if ($after.Date -and $Today.Date -ge $after.Date) {
+        return ("requeue-after {0} reached (today is {1})" -f $after.Date.ToString('yyyy-MM-dd'), $Today.ToString('yyyy-MM-dd'))
+    }
+    $closed = Read-RequeueClosed $T.RequeueClosedRaw
+    if ($closed.Count -gt 0) {
+        $done = @($closed.Ids | Where-Object { $ById.ContainsKey($_) -and ([string]$ById[$_].Status) -match '^done' })
+        if ($done.Count -ge $closed.Count) {
+            return ("requeue-when-closed reached: {0} of {1} named tasks done, {2} needed ({3})" -f $done.Count, $closed.Ids.Count, $closed.Count, ($done -join ', '))
+        }
+    }
+    return $null
+}
+
+function Get-RequeueToday {
+    $raw = $env:GHOZTTY_TEST_TODAY
+    $d = [datetime]::MinValue
+    if ($raw -and [datetime]::TryParseExact($raw, 'yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$d)) { return $d }
+    return (Get-Date).Date
 }
 
 # A dependency on a `skipped(split -> Ta, Tb)` parent is really a dependency on
@@ -1387,6 +1474,27 @@ switch ($Command) {
             catch { Write-Host ("      WARNING: ledger reservations not updated: {0}" -f $_.Exception.Message) }
             $heldElsewhere = Get-LedgerOtherLaneClaims -Lane (Get-ThisLane)
         }
+        # T3073: a parked task that carries its own trigger - a date, or a count
+        # of named tasks done - comes back by itself once it fires, at its own
+        # priority. Same shape as the idle re-queue below: the flip is written
+        # only on -Claim (plain `next` stays read-only) and journals WHICH
+        # trigger fired, so the turn that picks it up can see why it is back.
+        # It runs ahead of the RESUME check, so a turn that resumes a stale
+        # claim still brings a due task back instead of leaving it for later.
+        $requeueToday = Get-RequeueToday
+        foreach ($p in @($ordered | Where-Object { $_.Status -match '^blocked' -and ($_.RequeueAfterRaw -or $_.RequeueClosedRaw) -and (Test-SeatMatch $_.Seat $wantSeat) -and (Test-LaneMatch $_.Lane) -and -not $heldElsewhere.ContainsKey($_.Id) })) {
+            $why = Get-RequeueTrigger -T $p -ById $byId -Today $requeueToday
+            if (-not $why) { continue }
+            Write-Host ("REQUEUED: {0} - {1}; back in the queue now" -f $p.Id, $why)
+            $p.Status = 'todo'
+            if ($Claim) {
+                $pt = [System.IO.File]::ReadAllText($p.Path, [System.Text.Encoding]::UTF8)
+                $pt = [regex]::Replace($pt, '(?m)^status:\s*.*$', 'status: "todo"', 1)
+                Write-TaskFileText -Path $p.Path -Text $pt
+                Add-ProgressNote -Path $p.Path -SessionId $Session -NoteText ("status: blocked -> todo by its own trigger: {0}" -f $why)
+            }
+        }
+
         $heldNames = @()
         $sayHeld = {
             param([string]$HeldId, $HeldClaim)
@@ -2558,6 +2666,22 @@ switch ($Command) {
             # is exactly the silent stall this field exists to end.
             if ($ValidSeats -notcontains $t.Seat) {
                 Write-Host ("ODD SEAT: {0} = '{1}' (want one of: {2})" -f $t.Id, $t.Seat, ($ValidSeats -join ', ')); $problems++
+            }
+            # T3073: a malformed re-queue trigger would park its task forever
+            # without a word, and an id that does not exist can never close.
+            if ($t.RequeueAfterRaw) {
+                $ra = Read-RequeueAfter $t.RequeueAfterRaw
+                if ($ra.Error) { Write-Host ("BAD REQUEUE-AFTER: {0} = {1}" -f $t.Id, $ra.Error); $problems++ }
+            }
+            if ($t.RequeueClosedRaw) {
+                $rc = Read-RequeueClosed $t.RequeueClosedRaw
+                if ($rc.Error) { Write-Host ("BAD REQUEUE-WHEN-CLOSED: {0} - {1}" -f $t.Id, $rc.Error); $problems++ }
+                else {
+                    $missing = @($rc.Ids | Where-Object { -not $byId.ContainsKey($_) })
+                    if ($missing.Count -gt 0) {
+                        Write-Host ("BAD REQUEUE-WHEN-CLOSED: {0} names task(s) with no file: {1} (they can never close)" -f $t.Id, ($missing -join ', ')); $problems++
+                    }
+                }
             }
             # Same silent stall for a lane: no worktree is lane 'lane-a'.
             if ($t.Lane -and $t.Lane -notmatch '^[a-z]$') {
