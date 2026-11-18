@@ -1,15 +1,15 @@
 {
     "guard":  "low-power-render",
     "script":  "test/win32/low-power-render.ps1",
-    "generated":  "2026-11-15T01:16:41-08:00",
-    "commit":  "5270a272c",
+    "generated":  "2026-11-17T20:52:06-08:00",
+    "commit":  "a1537b41d",
     "uncommitted":  [
                         "src/renderer/Thread.zig"
                     ],
     "files":  {
                   "src/apprt/win32/occlusion.zig":  "efe06766422d41454190b9be5d3a865ef33814801f5fb9158e326392eb39d338",
                   "src/renderer/low_power.zig":  "561c61649c3385011078e4c7646604e1f28b70e3cd6889967b8d997e8788e8cb",
-                  "src/renderer/Thread.zig":  "980417b830fa2b4d606958bbbe4112925953056ee423638c12d5b48d9a19c3ee",
+                  "src/renderer/Thread.zig":  "8f1ce8a9434e86e8a06d046e9d61dabad2c634af095211dc5eeda8474a37291f",
                   "test/win32/low-power-render.ps1":  "8c54e7930c1fcaa3549b75281ed4958802af8bf60446ab3426eeab9afbfc137e"
               }
 }

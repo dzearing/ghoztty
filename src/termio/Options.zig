@@ -42,6 +42,12 @@ renderer_state: *renderer.State,
 /// handle, which is how this went unnoticed on macOS/Linux.
 renderer_wakeup: *xev.Async,
 
+/// The coalescing flag for output-driven wakeups of `renderer_wakeup` (T3061;
+/// see renderer/wake_coalesce.zig). Like the Async it must point into the
+/// renderer thread that owns the waiter, never at a copy. Null passes every
+/// output batch's request straight through, the behavior before T3061.
+renderer_wakeup_pending: ?*@import("../renderer/wake_coalesce.zig").Pending = null,
+
 /// The mailbox for renderer messages.
 renderer_mailbox: *renderer.Thread.Mailbox,
 

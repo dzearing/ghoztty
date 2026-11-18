@@ -987,7 +987,9 @@ function Read-FileFrom([string]$Path, [long]$Offset) {
 # the log text it wrote during that span. Every counter line is a rate over a
 # window of >= 1 s, emitted only while its thread is doing work, so:
 #   pty / agent_feed - only the busy pane produces output; mean over windows
-#   queue_render     - per stream handler (target=); the busiest target's mean
+#   queue_render     - per stream handler (target=); the busiest target's mean;
+#                      notifies_per_s on the same line (T3061) is the wakeups
+#                      actually posted after coalescing (null before T3061)
 #   fps              - per pane (pane=); the pane with the most windows
 #   wakeups          - per renderer thread, unlabelled; the MEDIAN, so the
 #                      idle anchor pane's occasional window does not drag it
@@ -1013,7 +1015,9 @@ function Get-PerfCounters([string]$Text) {
             }
         })
     $qr = @(foreach ($l in $lines) {
-            if ($l -match 'perf queue_render_per_s=(\d+) target=(\S+)') { [pscustomobject]@{ v = [double]$Matches[1]; k = $Matches[2] } }
+            # notifies_per_s (T3061): the wakeups actually posted after coalescing;
+            # absent from a pre-T3061 build, which posted one per request.
+            if ($l -match 'perf queue_render_per_s=(\d+) target=(\S+)(?: notifies_per_s=(\d+))?') { [pscustomobject]@{ v = [double]$Matches[1]; k = $Matches[2]; n = $(if ($Matches[3]) { [double]$Matches[3] } else { $null }) } }
         })
     $fps = @(foreach ($l in $lines) {
             if ($l -match 'perf pane=(\S+) fps=(\d+) max_gap_ms=(\d+)') { [pscustomobject]@{ k = $Matches[1]; v = [double]$Matches[2]; gap = [double]$Matches[3] } }
@@ -1031,6 +1035,7 @@ function Get-PerfCounters([string]$Text) {
         pty_kb_per_s = & $mean ($pty | ForEach-Object { $_.kb })
         bytes_per_batch = $(if ($batchSum -gt 0) { [math]::Round((($pty | Measure-Object kb -Sum).Sum * 1024) / $batchSum, 0) } else { $null })
         queue_render_per_s = $(if ($qrTop.Count) { & $mean ($qrTop[0].Group | ForEach-Object { $_.v }) } else { $null })
+        render_notifies_per_s = $(if ($qrTop.Count -and @($qrTop[0].Group | Where-Object { $null -ne $_.n }).Count) { & $mean ($qrTop[0].Group | Where-Object { $null -ne $_.n } | ForEach-Object { $_.n }) } else { $null })
         renderer_wakeups_per_s = & $median $wk
         fps = $(if ($fpsTop.Count) { & $mean ($fpsTop[0].Group | ForEach-Object { $_.v }) } else { $null })
         fps_max_gap_ms = $(if ($fpsTop.Count) { ($fpsTop[0].Group | Measure-Object gap -Maximum).Maximum } else { $null })

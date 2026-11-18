@@ -56,6 +56,7 @@ sandbox `ghoztty.log`). Each line is a rate over a window of at least 1 s.
 | `reads_per_s`, `batches_per_s`, `pty_kb_per_s` | `perf pty` (`termio/Exec.zig`) | the pty reader's `ReadFile` calls, parse batches and bytes per second; mean over the busy pane's windows |
 | `bytes_per_batch` | the same lines | total bytes / total batches: how much output each terminal-lock round parses |
 | `queue_render_per_s` | `perf queue_render_per_s` (`termio/stream_handler.zig`) | render requests per second from the busiest stream handler |
+| `render_notifies_per_s` | `notifies_per_s=` on the same line (T3061) | the wakeups those requests actually posted after coalescing (`renderer/wake_coalesce.zig`); before T3061 every request posted one, and the field is null on such a build. Under a flood it should sit near `renderer_wakeups_per_s`, not near `queue_render_per_s` |
 | `renderer_wakeups_per_s` | `perf wakeups_per_s` (`renderer/Thread.zig`) | renderer thread wakeups per second; the MEDIAN over all renderer threads' windows, so the idle anchor pane does not drag it |
 | `fps`, `fps_max_gap_ms` | `perf pane= fps=` (`renderer/OpenGL.zig`) | frames per second and the longest gap between frames, from the pane with the most windows |
 | `agent_feed.*` | `perf agent_feed` (`termio/Remote.zig`) | only with `-BusyPersistence`: the agent data lane's kB, slices, feeds per second and its parse/lock/work/yield ms per second |

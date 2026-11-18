@@ -60,6 +60,7 @@ test {
     _ = Renderer;
 
     _ = @import("renderer/generic.zig");
+    _ = @import("renderer/wake_coalesce.zig");
     _ = @import("renderer/gl_report.zig");
     _ = @import("renderer/upload_diff.zig");
     _ = @import("renderer/low_power.zig");

@@ -8,6 +8,7 @@ const build_config = @import("../build_config.zig");
 const configpkg = @import("../config.zig");
 const internal_os = @import("../os/main.zig");
 const renderer = @import("../renderer.zig");
+const wake_coalesce = @import("../renderer/wake_coalesce.zig");
 const termio = @import("../termio.zig");
 const terminal = @import("../terminal/main.zig");
 const terminfo = @import("../terminfo/main.zig");
@@ -50,6 +51,10 @@ pub const StreamHandler = struct {
     /// a repaint should happen. Must remain a pointer — see Options.zig
     /// (IOCP xev.Async copies lose notifications).
     renderer_wakeup: *xev.Async,
+
+    /// Coalesces `queueRender` (T3061): set while a wakeup is on its way and
+    /// cleared by the renderer when it wakes. See renderer/wake_coalesce.zig.
+    renderer_wakeup_pending: ?*wake_coalesce.Pending = null,
 
     /// The default cursor state. This is used with CSI q. This is
     /// set to true when we're currently in the default cursor state.
@@ -139,8 +144,9 @@ pub const StreamHandler = struct {
         threadlocal var enabled: ?bool = null;
         threadlocal var window_start: ?std.time.Instant = null;
         threadlocal var count: u32 = 0;
+        threadlocal var notifies: u32 = 0;
 
-        fn hit(target: *anyopaque) void {
+        fn hit(target: *anyopaque, posted: bool) void {
             const on = enabled orelse on: {
                 const on = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_PERF");
                 enabled = on;
@@ -148,6 +154,7 @@ pub const StreamHandler = struct {
             };
             if (!on) return;
             count += 1;
+            if (posted) notifies += 1;
             const now = std.time.Instant.now() catch return;
             const start = window_start orelse {
                 window_start = now;
@@ -155,12 +162,16 @@ pub const StreamHandler = struct {
             };
             const elapsed = now.since(start);
             if (elapsed >= std.time.ns_per_s) {
-                log.info("perf queue_render_per_s={d} target={*}", .{
+                // notifies_per_s: the wakeups queueRender actually posted
+                // after coalescing (T3061); queue_render_per_s is requests.
+                log.info("perf queue_render_per_s={d} target={*} notifies_per_s={d}", .{
                     @as(u64, count) * std.time.ns_per_s / @max(elapsed, 1),
                     target,
+                    @as(u64, notifies) * std.time.ns_per_s / @max(elapsed, 1),
                 });
                 window_start = now;
                 count = 0;
+                notifies = 0;
             }
         }
     };
@@ -168,9 +179,14 @@ pub const StreamHandler = struct {
     /// This queues a render operation with the renderer thread. The render
     /// isn't guaranteed to happen immediately but it will happen as soon as
     /// practical.
+    ///
+    /// Requests are coalesced (T3061): while a wakeup is already on its way
+    /// this costs one atomic swap and no syscall, because the renderer builds
+    /// at most one frame per wakeup and reads the terminal after it clears
+    /// the flag.
     pub inline fn queueRender(self: *StreamHandler) !void {
-        queue_render_telemetry.hit(self.renderer_wakeup);
-        try self.renderer_wakeup.notify();
+        const posted = try wake_coalesce.request(self.renderer_wakeup_pending, self.renderer_wakeup);
+        queue_render_telemetry.hit(self.renderer_wakeup, posted);
     }
 
     /// Change the configuration for this handler.

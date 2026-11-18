@@ -346,6 +346,7 @@ pub fn init(self: *Termio, alloc: Allocator, opts: termio.Options) !void {
         .surface_mailbox = opts.surface_mailbox,
         .renderer_state = opts.renderer_state,
         .renderer_wakeup = opts.renderer_wakeup,
+        .renderer_wakeup_pending = opts.renderer_wakeup_pending,
         .renderer_mailbox = opts.renderer_mailbox,
         .size = &self.size,
         .terminal = &self.terminal,
@@ -1105,9 +1106,23 @@ pub fn focusGained(self: *Termio, td: *ThreadData, focused: bool) !void {
 pub fn processOutput(self: *Termio, buf: []const u8) void {
     // We are modifying terminal state from here on out and we need
     // the lock to grab our read data.
-    self.renderer_state.mutex.lock();
-    defer self.renderer_state.mutex.unlock();
-    self.processOutputLocked(buf);
+    {
+        self.renderer_state.mutex.lock();
+        defer self.renderer_state.mutex.unlock();
+        self.processOutputLocked(buf);
+    }
+    self.queueOutputRender();
+}
+
+/// Ask the renderer for a frame of the output just parsed (T3061). Called
+/// AFTER the parse and after the renderer mutex is released: a wakeup posted
+/// before the parse (the upstream order) woke an idle renderer only to block
+/// it on the mutex this thread still held, and the request is coalesced, so
+/// under a flood it costs an atomic swap rather than a syscall. A renderer
+/// that wakes for some other reason between the unlock and this call simply
+/// draws the output early, and this request then costs one extra frame.
+inline fn queueOutputRender(self: *Termio) void {
+    self.terminal_stream.handler.queueRender() catch unreachable;
 }
 
 /// Like `processOutput` but also advances `applied` by `buf.len` while still
@@ -1121,10 +1136,13 @@ pub fn processOutputTracked(
     buf: []const u8,
     applied: *std.atomic.Value(u64),
 ) void {
-    self.renderer_state.mutex.lock();
-    defer self.renderer_state.mutex.unlock();
-    self.processOutputLocked(buf);
-    _ = applied.fetchAdd(buf.len, .monotonic);
+    {
+        self.renderer_state.mutex.lock();
+        defer self.renderer_state.mutex.unlock();
+        self.processOutputLocked(buf);
+        _ = applied.fetchAdd(buf.len, .monotonic);
+    }
+    self.queueOutputRender();
 }
 
 /// The two halves of one `processOutputTracked` call (T1460), in nanoseconds:
@@ -1167,6 +1185,7 @@ pub fn processOutputTrackedTimed(
         _ = applied.fetchAdd(buf.len, .monotonic);
     }
     const t_done: ?std.time.Instant = std.time.Instant.now() catch null;
+    self.queueOutputRender();
 
     const enter = t_enter orelse return;
     const locked = t_locked orelse return;
@@ -1186,11 +1205,9 @@ pub fn remoteAppliedOffset(self: *const Termio) ?u64 {
     };
 }
 
-/// Process output from readdata but the lock is already held.
+/// Process output from readdata but the lock is already held. The caller
+/// queues the render once it has released the lock (`queueOutputRender`).
 fn processOutputLocked(self: *Termio, buf: []const u8) void {
-    // Schedule a render. We can call this first because we have the lock.
-    self.terminal_stream.handler.queueRender() catch unreachable;
-
     // A held ConPTY frame releases once output goes quiet (T1763).
     if (self.terminal_stream.handler.sync_hold.holding) {
         if (std.time.Instant.now()) |now| {

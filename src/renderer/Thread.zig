@@ -9,6 +9,7 @@ const crash = @import("../crash/main.zig");
 const internal_os = @import("../os/main.zig");
 const rendererpkg = @import("../renderer.zig");
 const low_power = @import("low_power.zig");
+const wake_coalesce = @import("wake_coalesce.zig");
 const apprt = @import("../apprt.zig");
 const configpkg = @import("../config.zig");
 const BlockingQueue = @import("../datastruct/main.zig").BlockingQueue;
@@ -51,6 +52,12 @@ loop: xev.Loop,
 /// any thread.
 wakeup: xev.Async,
 wakeup_c: xev.Completion = .{},
+
+/// Set by the IO thread's output-driven render requests while a `wakeup` is
+/// on its way, cleared at the top of `wakeupCallback` (T3061). Termio points
+/// at this field, so like `wakeup` it must be reached through the owning
+/// Surface's thread, never a copy.
+wakeup_pending: wake_coalesce.Pending = .init(false),
 
 /// This can be used to stop the renderer on the next loop iteration.
 stop: xev.Async,
@@ -731,6 +738,10 @@ fn wakeupCallback(
     };
 
     const t = self_.?;
+    // Clear the coalescing flag BEFORE reading anything the request was
+    // about (T3061): output parsed from here on must notify again, or its
+    // frame waits for some unrelated wakeup.
+    wake_coalesce.consume(&t.wakeup_pending);
     wakeup_telemetry.hit();
     // T2788: when a woken frame starts, on the Win32 resize trace.
     if (comptime @hasField(rendererpkg.Renderer, "api")) {

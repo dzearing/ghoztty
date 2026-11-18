@@ -1338,6 +1338,7 @@ pub fn init(
             // renderer thread registers its waiter on self.renderer_thread's
             // Async, and IOCP Async copies lose notifications (Options.zig).
             .renderer_wakeup = &self.renderer_thread.wakeup,
+            .renderer_wakeup_pending = &self.renderer_thread.wakeup_pending,
             .renderer_mailbox = render_thread.mailbox,
             .surface_mailbox = .{ .surface = self, .app = app_mailbox },
         });
