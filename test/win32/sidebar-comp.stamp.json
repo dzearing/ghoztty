@@ -1,13 +1,13 @@
 {
     "guard":  "sidebar-comp",
     "script":  "test/win32/sidebar-comp.ps1",
-    "generated":  "2026-11-11T21:04:46-08:00",
-    "commit":  "7f1eab807",
+    "generated":  "2026-11-17T22:55:03-08:00",
+    "commit":  "3b5790cde",
     "uncommitted":  [
-                        "src/renderer/comp_overlay.zig"
+                        "src/apprt/win32/child_comp.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/child_comp.zig":  "d14e007155c51d827355e59aadbe58b9d875a1209e0ba53df6d5c87449778a9a",
+                  "src/apprt/win32/child_comp.zig":  "d9501a0c33e411ac965879ffe17c0090d1be802bd21bbcc3927514bffc103a7d",
                   "src/apprt/win32/pane_sidebar_sheen_comp.zig":  "f06165afea46db99c6820b31940085308e61d07da1b02803659b0e218ba68ad4",
                   "src/apprt/win32/pane_sidebar_sheen_layers.zig":  "28b536177be237a04c713120610c9498af69ff4aacb1322c0925b99c3084adfd",
                   "src/renderer/comp_overlay.zig":  "feea0d34376e378897888e0cfd4addeb89faa87f417a3236fd6fe121539a0937",

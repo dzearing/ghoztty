@@ -390,6 +390,15 @@ pub fn cacheReusable(hr: HRESULT) bool {
 /// removed device is never handed out again: the next `acquire` builds a
 /// fresh one, and panes still holding the old one drop it as they fail over.
 /// The cache keeps one reference for the life of the process.
+///
+/// Since T3074 the window chrome (`chrome_comp.zig`) and the sidebar/child
+/// hosts (`child_comp.zig`) take it too, and the chrome draws on it with
+/// Direct2D from the GUI thread. Multithread protection makes each context
+/// call atomic, not a sequence of them, so the rule that keeps that safe:
+/// only the GUI thread binds pipeline state. Every other thread on this
+/// device (renderers, overlay uploads) uses self-contained calls only -
+/// copies, `UpdateSubresource`, `Present` - which bind nothing a draw in
+/// flight relies on. A renderer-thread draw call would break that rule.
 pub const DeviceCache = struct {
     mutex: std.Thread.Mutex = .{},
     device: ?Obj = null,

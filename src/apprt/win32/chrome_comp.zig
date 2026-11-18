@@ -54,6 +54,7 @@ const builtin = @import("builtin");
 const w32 = @import("win32.zig");
 const comp_tree = @import("../../renderer/comp_tree.zig");
 const comp_overlay = @import("../../renderer/comp_overlay.zig");
+const gl_comp_present = @import("../../renderer/gl_comp_present.zig");
 
 const log = std.log.scoped(.comp_chrome);
 
@@ -128,10 +129,6 @@ const IID_IDXGISurface = guid("cafcb56c-6ac3-4889-bf47-9e23bbd260ec");
 const IID_IDCompositionDevice = guid("c37ea93a-e7aa-450d-b16f-9746cb0407f3");
 const IID_ID2D1Factory1 = guid("bb12d362-daee-4b9a-aa1d-14ba401cfa1f");
 
-const D3D_DRIVER_TYPE_HARDWARE: u32 = 1;
-const D3D_DRIVER_TYPE_WARP: u32 = 5;
-const D3D11_CREATE_DEVICE_BGRA_SUPPORT: u32 = 0x20;
-const D3D11_SDK_VERSION: u32 = 7;
 const DXGI_FORMAT_B8G8R8A8_UNORM: u32 = 87;
 const DXGI_ALPHA_MODE_PREMULTIPLIED: u32 = 1;
 const D2D1_FACTORY_TYPE_SINGLE_THREADED: u32 = 0;
@@ -669,21 +666,17 @@ pub fn hex(hr: HRESULT) u32 {
 extern "kernel32" fn LoadLibraryW([*:0]const u16) callconv(.winapi) ?*anyopaque;
 extern "kernel32" fn GetProcAddress(*anyopaque, [*:0]const u8) callconv(.winapi) ?*anyopaque;
 
-const D3D11CreateDeviceFn = *const fn (?Obj, u32, ?*anyopaque, u32, ?*const u32, u32, u32, *?Obj, ?*u32, *?Obj) callconv(.winapi) HRESULT;
 const DCompCreateDeviceFn = *const fn (?Obj, *const GUID, *?Obj) callconv(.winapi) HRESULT;
 const D2D1CreateFactoryFn = *const fn (u32, *const GUID, ?*const anyopaque, *?Obj) callconv(.winapi) HRESULT;
 
 const Entry = struct {
-    d3d11_create: D3D11CreateDeviceFn,
     dcomp_create: DCompCreateDeviceFn,
     d2d_create: D2D1CreateFactoryFn,
 
     fn load() Error!Entry {
-        const d3d11 = LoadLibraryW(std.unicode.utf8ToUtf16LeStringLiteral("d3d11.dll")) orelse return error.Unavailable;
         const dcomp = LoadLibraryW(std.unicode.utf8ToUtf16LeStringLiteral("dcomp.dll")) orelse return error.Unavailable;
         const d2d1 = LoadLibraryW(std.unicode.utf8ToUtf16LeStringLiteral("d2d1.dll")) orelse return error.Unavailable;
         return .{
-            .d3d11_create = @ptrCast(GetProcAddress(d3d11, "D3D11CreateDevice") orelse return error.Unavailable),
             .dcomp_create = @ptrCast(GetProcAddress(dcomp, "DCompositionCreateDevice") orelse return error.Unavailable),
             .d2d_create = @ptrCast(GetProcAddress(d2d1, "D2D1CreateFactory") orelse return error.Unavailable),
         };
@@ -996,18 +989,22 @@ pub const Host = struct {
         stage = "load-libraries";
         const entry = try Entry.load();
 
+        // T3074: the process's one D3D11 device (T2968), not one of the
+        // window's own - a device is ~50 driver threads and its own GPU
+        // memory. Direct2D below draws through its immediate context on
+        // this (the GUI) thread; the renderer threads that share it only
+        // ever copy and upload, which bind no pipeline state, so they
+        // cannot disturb a draw in flight (`DeviceCache`).
         stage = "d3d11-device";
-        var device: ?Obj = null;
-        var context: ?Obj = null;
-        var warp = false;
-        if (entry.d3d11_create(null, D3D_DRIVER_TYPE_HARDWARE, null, D3D11_CREATE_DEVICE_BGRA_SUPPORT, null, 0, D3D11_SDK_VERSION, &device, null, &context) < 0) {
-            warp = true;
-            try check(entry.d3d11_create(null, D3D_DRIVER_TYPE_WARP, null, D3D11_CREATE_DEVICE_BGRA_SUPPORT, null, 0, D3D11_SDK_VERSION, &device, null, &context));
-        }
-        const dev = device orelse return error.ComFailed;
+        const got = gl_comp_present.processDevice() catch |err| {
+            if (err == error.Unavailable) return error.Unavailable;
+            return error.ComFailed;
+        };
+        const dev = got.device;
         errdefer release(dev);
-        const ctx = context orelse return error.ComFailed;
+        const ctx = got.context;
         errdefer release(ctx);
+        const warp = got.warp;
 
         stage = "dxgi-device";
         const dxgi_device = try query(dev, &IID_IDXGIDevice);

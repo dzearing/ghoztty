@@ -41,6 +41,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const comp_overlay = @import("../../renderer/comp_overlay.zig");
+const gl_comp_present = @import("../../renderer/gl_comp_present.zig");
 
 const log = std.log.scoped(.child_comp);
 
@@ -128,13 +129,8 @@ test "Policy: a good build forgives earlier failures" {
 extern "kernel32" fn LoadLibraryW([*:0]const u16) callconv(.winapi) ?*anyopaque;
 extern "kernel32" fn GetProcAddress(*anyopaque, [*:0]const u8) callconv(.winapi) ?*anyopaque;
 
-const D3D11CreateDeviceFn = *const fn (?Obj, u32, ?*anyopaque, u32, ?*const u32, u32, u32, *?Obj, ?*u32, *?Obj) callconv(.winapi) HRESULT;
 const DCompCreateDeviceFn = *const fn (?Obj, *const GUID, *?Obj) callconv(.winapi) HRESULT;
 
-const D3D_DRIVER_TYPE_HARDWARE: u32 = 1;
-const D3D_DRIVER_TYPE_WARP: u32 = 5;
-const D3D11_CREATE_DEVICE_BGRA_SUPPORT: u32 = 0x20;
-const D3D11_SDK_VERSION: u32 = 7;
 
 fn guid(comptime s: []const u8) GUID {
     return GUID.parse("{" ++ s ++ "}");
@@ -206,26 +202,28 @@ pub const Tree = struct {
         last_hr = 0;
 
         stage = "load-libraries";
-        const d3d11 = LoadLibraryW(std.unicode.utf8ToUtf16LeStringLiteral("d3d11.dll")) orelse return error.Unavailable;
         const dcomp_lib = LoadLibraryW(std.unicode.utf8ToUtf16LeStringLiteral("dcomp.dll")) orelse return error.Unavailable;
-        const d3d11_create: D3D11CreateDeviceFn = @ptrCast(GetProcAddress(d3d11, "D3D11CreateDevice") orelse return error.Unavailable);
         const dcomp_create: DCompCreateDeviceFn = @ptrCast(GetProcAddress(dcomp_lib, "DCompositionCreateDevice") orelse return error.Unavailable);
 
+        // T3074: the process's one D3D11 device (T2968), not one of the
+        // tree's own - a device is ~50 driver threads and its own GPU
+        // memory, and a layer only ever uploads through it.
         stage = "d3d11-device";
-        var device: ?Obj = null;
-        var context: ?Obj = null;
-        var warp = false;
-        if (d3d11_create(null, D3D_DRIVER_TYPE_HARDWARE, null, D3D11_CREATE_DEVICE_BGRA_SUPPORT, null, 0, D3D11_SDK_VERSION, &device, null, &context) < 0) {
-            warp = true;
-            try check(d3d11_create(null, D3D_DRIVER_TYPE_WARP, null, D3D11_CREATE_DEVICE_BGRA_SUPPORT, null, 0, D3D11_SDK_VERSION, &device, null, &context));
-        }
-        const dev = device orelse return error.ComFailed;
+        const got = gl_comp_present.processDevice() catch |err| {
+            if (err == error.Unavailable) return error.Unavailable;
+            return error.ComFailed;
+        };
+        const dev = got.device;
         errdefer release(dev);
-        const ctx = context orelse return error.ComFailed;
+        const ctx = got.context;
         errdefer release(ctx);
+        const warp = got.warp;
 
         // A layer uploads through the immediate context (`Layer.setPixels`);
         // protect it the way the pane presenter does before it publishes.
+        // The shared device is protected already; this covers the device
+        // of its own that the A/B knob (or a device without the interface)
+        // hands back.
         stage = "multithread";
         const mt = try query(dev, &comp_overlay.IID_ID3D10Multithread);
         _ = slot(*const fn (Obj, i32) callconv(.winapi) i32, mt, comp_overlay.slot_multithread_set_protected)(mt, 1);
