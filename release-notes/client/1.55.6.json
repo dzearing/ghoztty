@@ -1,0 +1,24 @@
+{
+  "version": "1.55.6",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "A hidden workspace's terminals are sized for the window they will appear in, so they no longer reflow when first shown on a second monitor." },
+        { "text": "A diff viewer no longer copies a file's patch four times or keeps it after showing it." },
+        { "text": "The viewer contents card's slide borrows the app's shared GPU device and lets go of its compositor host when the slide ends." },
+        { "text": "A viewer on glass no longer builds a whole-pane bitmap on every paint." },
+        { "text": "The viewer find card frees its glass bitmap after its DC, and a test proves rebuilds leave nothing behind." },
+        { "text": "A HEIC or TIFF in an image pane now decodes off the GUI thread, straight into the response the page reads." },
+        { "text": "Viewer pages read each file once, straight into the response, and stream video in 2 MB chunks." },
+        { "text": "Closing a viewer pane no longer freezes the app while its git finishes." },
+        { "text": "A flooded pane now lets a waiting key or repaint in between every slice of output." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The perf baseline now says what the busy CPU is spent on." },
+        { "text": "Link hover no longer reads the whole line on every mouse move; plain moves do no link work at all." },
+        { "text": "A flood of output costs about half the CPU: the ConPTY reader batches it." },
+        { "text": "Heavy output wakes the renderer once per frame instead of once per read." }
+      ] }
+  ]
+}
