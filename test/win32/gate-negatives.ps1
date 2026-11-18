@@ -273,6 +273,9 @@ $Registry = @(
     [pscustomobject]@{ Label = 'ODD PRIORITY'; Kind = 'gate'; Demo = $Seat; Marker = 'ODD PRIORITY' }
     [pscustomobject]@{ Label = 'ODD TAG'; Kind = 'gate'; Demo = $Seat; Marker = 'ODD TAG' }
     [pscustomobject]@{ Label = 'NO PROGRESS LOG'; Kind = 'gate'; Demo = $Seat; Marker = 'NO PROGRESS LOG' }
+    # T3073. A malformed re-queue trigger parks its task forever without a word.
+    [pscustomobject]@{ Label = 'BAD REQUEUE-AFTER'; Kind = 'gate'; Demo = $Seat; Marker = 'BAD REQUEUE-AFTER' }
+    [pscustomobject]@{ Label = 'BAD REQUEUE-WHEN-CLOSED'; Kind = 'gate'; Demo = $Seat; Marker = 'BAD REQUEUE-WHEN-CLOSED' }
     # T1231. A control character inside a tracked text file: invisible to a
     # reader, and a path that cannot exist to a script. validate emits the
     # headline itself rather than only relaying the scanner's, so this row is a
@@ -350,6 +353,9 @@ $Registry = @(
     # 4f366d19d: `next` re-queues tasks parked for an idle box when the box
     # reads idle. A report, never a gate: it hands work out, it refuses none.
     [pscustomobject]@{ Label = 'BOX IDLE'; Kind = 'status' }
+    # T3073: `next` re-queues a parked task whose own date / closed-count
+    # trigger fired. Hands work out, refuses none.
+    [pscustomobject]@{ Label = 'REQUEUED'; Kind = 'status' }
     [pscustomobject]@{ Label = 'TODO'; Kind = 'status' }
 )
 

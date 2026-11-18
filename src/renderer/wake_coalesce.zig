@@ -125,6 +125,7 @@ test "concurrent producers against a consuming renderer never strand a request" 
     };
     var s: Shared = .{};
     var threads: [producers]std.Thread = undefined;
+    // thread-join-audit: array of handles, each joined by the `t.join()` loop below; producers end after `per` requests
     for (&threads) |*t| t.* = try std.Thread.spawn(.{}, Producer.run, .{&s});
     var consumed: u32 = 0;
     while (true) {

@@ -1,11 +1,10 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-17T21:28:57-08:00",
-    "commit":  "e575d0a2d",
+    "generated":  "2026-11-17T22:41:08-08:00",
+    "commit":  "75bfd44e6",
     "uncommitted":  [
-                        "src/renderer/State.zig",
-                        "src/termio/Remote.zig"
+                        "src/renderer/wake_coalesce.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -624,8 +623,9 @@
                   "src/renderer/size.zig":  "db99bca7a2b82857fc918748a6b8687745e8282ccf675fa4d2a716dad580b465",
                   "src/renderer/State.zig":  "81718b490fbd482acdd8ccc052b635647586b43b7324d7c3a80b3de2fdc4ea14",
                   "src/renderer/storage_trim.zig":  "5faeb4a54cd520837401dd9f3ff4322f0d36d9bfe4626516d914ce12feba9126",
-                  "src/renderer/Thread.zig":  "980417b830fa2b4d606958bbbe4112925953056ee423638c12d5b48d9a19c3ee",
+                  "src/renderer/Thread.zig":  "8f1ce8a9434e86e8a06d046e9d61dabad2c634af095211dc5eeda8474a37291f",
                   "src/renderer/upload_diff.zig":  "8bb6fef63da22a53f707f3b1d0f3cd6aeec8260f21baea53b3d35b6852237a55",
+                  "src/renderer/wake_coalesce.zig":  "56c3615b0a70b6f704ac61fda870f83e3f6246b44c10d51ba94ec348b13a0db2",
                   "src/renderer/WebGL.zig":  "963023a42188b6d00f8a1a645653d82cf8204e7aed3a7c94946a6b004cae07fd",
                   "src/termio/attach_failed_notice.zig":  "4e2bd13143f7b65eb9ed2d5ea66cb028c4c32cd4704fb26af284fbe51e8fe4c2",
                   "src/termio/backend.zig":  "96c7db442eb93e1a2c8156f73b5a91a447a72f66a75cea3d0b030e448a9f0a6d",
@@ -636,7 +636,7 @@
                   "src/termio/mailbox.zig":  "a11ec1efee3774609ebbff8f50ceb44f8a556860cb04945d9944bb701f9a8edc",
                   "src/termio/message.zig":  "ba96d510bb78f2c31075eb3a4179abd4f101aa6ede62a67769e4bcb6143c50f8",
                   "src/termio/open_failed_notice.zig":  "b1bb823e0da76a5767696caa8a8730ffa543ef857a3b37d9d33115ffb4549283",
-                  "src/termio/Options.zig":  "13585e8d7c656de60a1e69c553a45be13cf3f2e9c0e761e0f42507d9a0b63b1f",
+                  "src/termio/Options.zig":  "f6d8184ad4488ccdb76571a7e87300607beb9a4d5d77a8300dd92e2cd757d5e0",
                   "src/termio/read_coalesce.zig":  "a3c1d8fbbf4797ed5bb314012ef712cb960aaf575895eee6f77cb09220108995",
                   "src/termio/Remote.zig":  "191fe77a18e2887688d4ddeac04a988a80828c5b983d7348139e3d3c6de44db2",
                   "src/termio/restore_history.zig":  "544cdf75e6182afec8cccf7e6fa1fa6205680841a98b92754dbdca7d3bcdc083",
@@ -644,8 +644,8 @@
                   "src/termio/session_notice.zig":  "3e45dd25c959c1b10ec5d004d1f555293b481ecb7e0a89ff7e3667ee75776f3f",
                   "src/termio/session_snapshot.zig":  "72d2abd34fd2df726b6ae44aa88ed1b22c84cdb1b17253f9136597e278052ada",
                   "src/termio/shell_integration.zig":  "9516f3dc973e902e406f09418bce7454e2f09400de0f70462fdf0fd5c9492c58",
-                  "src/termio/stream_handler.zig":  "042e24b60220630125b3014a55fd02d8fcb86d20fc14ab5d55187e1f01c13e40",
-                  "src/termio/Termio.zig":  "3d32777f1847e7b830766848d84156ee242d3abf25f388b22d5db362d291769c",
+                  "src/termio/stream_handler.zig":  "3752baf775e06b249ae48cb56f761a884da3154fab47afd1bb6f2914f8b7c36b",
+                  "src/termio/Termio.zig":  "554f09163ae13c1cbfa5173076197af9fdbba6f0cb40e23aefdaf7db2b7bfd0a",
                   "src/termio/Thread.zig":  "149885ca773afcb6a67fccf730e597f56156858620a40546d71d1679a1edcee9",
                   "src/termio/title_pace.zig":  "914afed249d211b9f119a1f551b1012008c75c2d4f9f1373639d40435eddf32d",
                   "test/win32/lib/SeamAudit.ps1":  "209b551bd95a6e77fbd4c47f40dd4cd8401b81b6c43503acd9ca77534c171b82",
