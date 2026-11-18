@@ -386,6 +386,13 @@ const Mouse = struct {
     /// The last x/y in the cursor position for links. We use this to
     /// only process link hover events when the mouse actually moves cells.
     link_point: ?terminal.point.Coordinate = null,
+
+    /// The screen cell under `link_point` when links were last checked.
+    /// While the mouse stays on a link, a move within the same cell over
+    /// the same cell (no scroll, no screen switch) keeps the match instead
+    /// of redoing it for every pixel (T3064, PA-C10). Compared by value
+    /// only, never dereferenced.
+    link_pin: ?terminal.Pin = null,
 };
 
 /// Keyboard state for the surface.
@@ -2395,6 +2402,9 @@ fn mouseRefreshLinks(
     // Update the last point that we checked for links so we don't
     // recheck if the mouse moves some pixels to the same point.
     self.mouse.link_point = pos_vp;
+    self.mouse.link_pin = self.renderer_state.terminal.screens.active.pages.pin(
+        .{ .viewport = pos_vp },
+    );
 
     // We use an arena for everything below to make things easy to clean up.
     // In the case we don't do any allocs this is very cheap to setup
@@ -5656,6 +5666,97 @@ fn linkAtPos(
     return try self.linkAtPin(mouse_pin, mouse_mods);
 }
 
+/// What a mouse move should do about the link under the mouse.
+const LinkHoverRefresh = enum {
+    /// Match links at the new position.
+    refresh,
+    /// Still over the link already matched: keep it as is.
+    keep,
+    /// Nothing to do (not over a link, and the cell is unchanged).
+    none,
+};
+
+/// Decides whether a mouse move re-matches links (T3064, PA-C10). A move
+/// to a new cell, or a modifier change, re-matches. A move within the
+/// same cell re-matches only when what sits under it changed (scroll,
+/// screen switch, a reallocated page): until T3064 a mouse resting on a
+/// link redid the whole match, two apprt actions and a full hover
+/// rebuild for every pixel it moved.
+const LinkHoverState = struct {
+    over_link: bool,
+    mods_changed: bool,
+    last_point: ?terminal.point.Coordinate,
+    point: terminal.point.Coordinate,
+    last_pin: ?terminal.Pin,
+    pin: ?terminal.Pin,
+};
+
+fn linkHoverRefresh(s: LinkHoverState) LinkHoverRefresh {
+    if (s.mods_changed) return .refresh;
+    const last_point = s.last_point orelse return .refresh;
+    if (!last_point.eql(s.point)) return .refresh;
+    if (!s.over_link) return .none;
+    const a = s.last_pin orelse return .refresh;
+    const b = s.pin orelse return .refresh;
+    if (a.node != b.node or a.y != b.y or a.x != b.x) return .refresh;
+    return .keep;
+}
+
+test "linkHoverRefresh: same cell keeps the link, anything else re-matches" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var t: terminal.Terminal = try .init(alloc, .{ .cols = 10, .rows = 3 });
+    defer t.deinit(alloc);
+    const pages = &t.screens.active.pages;
+    const p00 = pages.pin(.{ .viewport = .{ .x = 0, .y = 0 } }).?;
+    const p10 = pages.pin(.{ .viewport = .{ .x = 1, .y = 0 } }).?;
+    const pt: terminal.point.Coordinate = .{ .x = 0, .y = 0 };
+    const base: LinkHoverState = .{
+        .over_link = true,
+        .mods_changed = false,
+        .last_point = pt,
+        .point = pt,
+        .last_pin = p00,
+        .pin = p00,
+    };
+
+    // Pixel moves inside the hovered link's cell do no work.
+    try testing.expectEqual(LinkHoverRefresh.keep, linkHoverRefresh(base));
+
+    // Not over a link and still in the same cell: nothing to redo.
+    var s = base;
+    s.over_link = false;
+    try testing.expectEqual(LinkHoverRefresh.none, linkHoverRefresh(s));
+
+    // A new cell, a first move, or a modifier change re-matches.
+    s = base;
+    s.point = .{ .x = 1, .y = 0 };
+    try testing.expectEqual(LinkHoverRefresh.refresh, linkHoverRefresh(s));
+    s = base;
+    s.last_point = null;
+    try testing.expectEqual(LinkHoverRefresh.refresh, linkHoverRefresh(s));
+    s = base;
+    s.mods_changed = true;
+    try testing.expectEqual(LinkHoverRefresh.refresh, linkHoverRefresh(s));
+    s = base;
+    s.over_link = false;
+    s.mods_changed = true;
+    try testing.expectEqual(LinkHoverRefresh.refresh, linkHoverRefresh(s));
+
+    // Same viewport cell but different content under it (scrolled): re-match.
+    s = base;
+    s.pin = p10;
+    try testing.expectEqual(LinkHoverRefresh.refresh, linkHoverRefresh(s));
+    s = base;
+    s.last_pin = null;
+    try testing.expectEqual(LinkHoverRefresh.refresh, linkHoverRefresh(s));
+}
+
+/// How many soft-wrapped rows above and below the mouse's row link
+/// matching reads (T3064). A link longer than this many rows on either
+/// side of the mouse is matched by its visible part only.
+const link_match_max_rows = terminal.hard_wrap.max_extend;
+
 /// Detects if a link is present at the given pin.
 ///
 /// If mouse mods is null then mouse mod requirements are ignored (all
@@ -5669,6 +5770,16 @@ fn linkAtPin(
 ) !?Link {
     if (self.config.links.len == 0) return null;
 
+    // Nothing below can match unless some link's modifier rule is met, so
+    // check that before reading the line: the default link is ctrl/cmd
+    // hover, and every cell crossed without the modifier used to select,
+    // stringify and free the whole line for nothing (T3064, PA-C09).
+    if (mouse_mods) |mods| {
+        for (self.config.links) |link| {
+            if (link.highlight.allowsMods(mods)) break;
+        } else return null;
+    }
+
     const screen: *terminal.Screen = self.renderer_state.terminal.screens.active;
     const line = screen.selectLine(.{
         .pin = mouse_pin,
@@ -5678,6 +5789,11 @@ fn linkAtPin(
         .semantic_prompt_boundary = true,
         // A URL a TUI broke across rows is still one URL.
         .hard_wraps = true,
+        // Bound the cost by the rows around the mouse, not the logical
+        // line: a multi-megabyte unbroken line is otherwise stringified
+        // whole, under the renderer mutex, on every cell crossed (T3064,
+        // PA-C08). Same reach the hard-wrap walk already has.
+        .max_rows = link_match_max_rows,
     }) orelse return null;
 
     // Reflowed, so a URL broken across a TUI hard wrap reads back whole:
@@ -5693,10 +5809,7 @@ fn linkAtPin(
 
     for (self.config.links) |link| {
         // Skip highlight/mods check when mouse_mods is null (double-click mode)
-        if (mouse_mods) |mods| switch (link.highlight) {
-            .always, .hover => {},
-            .always_mods, .hover_mods => |v| if (!v.equal(mods)) continue,
-        };
+        if (mouse_mods) |mods| if (!link.highlight.allowsMods(mods)) continue;
 
         var it = strmap.searchIterator(link.regex);
         while (true) {
@@ -5875,6 +5988,7 @@ pub fn cursorPosCallback(
     if (pos.x < 0 or pos.y < 0) {
         // Reset our hyperlink state
         self.mouse.link_point = null;
+        self.mouse.link_pin = null;
         if (self.mouse.over_link) {
             self.mouse.over_link = false;
             _ = try self.rt_app.performAction(
@@ -5904,7 +6018,9 @@ pub fn cursorPosCallback(
     // Always show the mouse again if it is hidden
     if (self.mouse.hidden) self.showMouse();
 
-    // Update our modifiers if they changed
+    // Update our modifiers if they changed. A modifier change can make or
+    // break a link under a still mouse, so it forces a link refresh below.
+    const mods_changed = if (mods) |v| !self.mouse.mods.bindingEqual(v) else false;
     if (mods) |v| self.modsChanged(v);
 
     // The mouse position in the viewport
@@ -5947,25 +6063,35 @@ pub fn cursorPosCallback(
         try self.queueRender();
     }
 
-    // Handle link hovering
-    // We refresh links when
-    // 1. we were previously over a link
-    // OR
-    // 2. the cursor position has changed (either we have no previous state, or the state has
-    //    changed)
-    // AND
+    // Handle link hovering, only when
     // 1. mouse reporting is off
     // OR
     // 2. mouse reporting is on and we are not reporting shift to the terminal
-    if ((over_link or
-        self.mouse.link_point == null or
-        (self.mouse.link_point != null and !self.mouse.link_point.?.eql(pos_vp))) and
-        (self.io.terminal.flags.mouse_event == .none or
-            (self.mouse.mods.shift and !self.mouseShiftCapture(false))))
+    if (self.io.terminal.flags.mouse_event == .none or
+        (self.mouse.mods.shift and !self.mouseShiftCapture(false)))
     {
-        // If we were previously over a link, we always update. We do this so that if the text
-        // changed underneath us, even if the mouse didn't move, we update the URL hints and state
-        try self.mouseRefreshLinks(pos, pos_vp, over_link);
+        const cell_pin = self.renderer_state.terminal.screens.active.pages.pin(
+            .{ .viewport = pos_vp },
+        );
+        switch (linkHoverRefresh(.{
+            .over_link = over_link,
+            .mods_changed = mods_changed,
+            .last_point = self.mouse.link_point,
+            .point = pos_vp,
+            .last_pin = self.mouse.link_pin,
+            .pin = cell_pin,
+        })) {
+            .refresh => try self.mouseRefreshLinks(pos, pos_vp, over_link),
+
+            // Still on the same link: keep it without matching it again
+            // or re-announcing it to the apprt (T3064, PA-C10).
+            .keep => {
+                self.mouse.over_link = true;
+                self.renderer_state.mouse.point = pos_vp;
+            },
+
+            .none => {},
+        }
     }
 
     // Do a mouse report

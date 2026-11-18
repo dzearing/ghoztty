@@ -2532,6 +2532,14 @@ pub const SelectLine = struct {
     /// matching uses this so a URL a TUI broke across rows is one URL;
     /// format the result with `reflow` to read it back whole.
     hard_wraps: bool = false,
+
+    /// If set, follow soft wraps at most this many rows above and below
+    /// the pin's row. A line cut short by the cap does not follow hard
+    /// wraps past the cut. Link hover runs this on every cell the mouse
+    /// crosses, and an unbroken multi-megabyte line (minified JSON,
+    /// base64) would otherwise be selected and stringified whole each
+    /// time (T3064, PA-C08).
+    max_rows: ?usize = null,
 };
 
 /// Select the line under the given point. This will select across soft-wrapped
@@ -2552,10 +2560,15 @@ pub fn selectLine(self: *const Screen, opts: SelectLine) ?Selection {
         break :state rac.cell.semantic_content;
     };
 
+    // Set when `max_rows` stopped a walk inside a soft wrap.
+    var start_capped = false;
+    var end_capped = false;
+
     // The real start of the row is the first row in the soft-wrap.
     var start_pin: Pin = start_pin: {
         var it = opts.pin.rowIterator(.left_up, null);
         var it_prev: Pin = it.next().?; // skip self
+        var above: usize = 0;
 
         // First, check the current row for semantic boundaries before the clicked position.
         if (semantic_prompt_state) |v| {
@@ -2585,6 +2598,17 @@ pub fn selectLine(self: *const Screen, opts: SelectLine) ?Selection {
                 break :start_pin copy;
             }
 
+            // `p` soft-wraps into the line; stop if it is past the cap.
+            if (opts.max_rows) |max| {
+                if (above == max) {
+                    start_capped = true;
+                    var copy = it_prev;
+                    copy.x = 0;
+                    break :start_pin copy;
+                }
+                above += 1;
+            }
+
             if (semantic_prompt_state) |v| {
                 // We need to check every cell in this row in reverse
                 // order since we're going up and back.
@@ -2611,6 +2635,7 @@ pub fn selectLine(self: *const Screen, opts: SelectLine) ?Selection {
     // The real end of the row is the final row in the soft-wrap.
     var end_pin: Pin = end_pin: {
         var it = opts.pin.rowIterator(.right_down, null);
+        var below: usize = 0;
         while (it.next()) |p| {
             const row = p.rowAndCell().row;
 
@@ -2648,18 +2673,29 @@ pub fn selectLine(self: *const Screen, opts: SelectLine) ?Selection {
                 copy.x = p.node.data.size.cols - 1;
                 break :end_pin copy;
             }
+
+            // `p` soft-wraps onward; stop here if the cap is reached.
+            if (opts.max_rows) |max| {
+                if (below == max) {
+                    end_capped = true;
+                    var copy = p;
+                    copy.x = p.node.data.size.cols - 1;
+                    break :end_pin copy;
+                }
+                below += 1;
+            }
         }
 
         return null;
     };
 
     // Follow TUI hard wraps outward, only from a line edge: a line that a
-    // semantic prompt boundary cut short stays cut.
+    // semantic prompt boundary (or the row cap) cut short stays cut.
     if (opts.hard_wraps) {
         const last_x = end_pin.node.data.size.cols - 1;
         const extended = hard_wrap.extend(start_pin, end_pin);
-        if (start_pin.x == 0) start_pin = extended.top;
-        if (end_pin.x == last_x) {
+        if (start_pin.x == 0 and !start_capped) start_pin = extended.top;
+        if (end_pin.x == last_x and !end_capped) {
             end_pin = extended.bottom;
             end_pin.x = last_x;
         }
@@ -7779,6 +7815,70 @@ test "Screen: selectLine across soft-wrap" {
             .y = 1,
         } }, s.pages.pointFromPin(.screen, sel.end()).?);
     }
+}
+
+test "Screen: selectLine max_rows caps the soft-wrap walk" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    // One 250-cell line, soft-wrapped over 25 rows of 10.
+    var s = try init(alloc, .{ .cols = 10, .rows = 30, .max_scrollback = 0 });
+    defer s.deinit();
+    try s.testWriteString("a" ** 250);
+    const mid = s.pages.pin(.{ .active = .{ .x = 4, .y = 12 } }).?;
+
+    // Uncapped: the whole logical line.
+    {
+        const sel = s.selectLine(.{ .pin = mid, .whitespace = null }).?;
+        try testing.expectEqual(point.Point{ .screen = .{ .x = 0, .y = 0 } }, s.pages.pointFromPin(.screen, sel.start()).?);
+        try testing.expectEqual(point.Point{ .screen = .{ .x = 9, .y = 24 } }, s.pages.pointFromPin(.screen, sel.end()).?);
+    }
+
+    // Capped: three rows each side of the pin's row, with or without
+    // hard-wrap following (a capped edge never extends).
+    for ([_]bool{ false, true }) |hard| {
+        const sel = s.selectLine(.{ .pin = mid, .whitespace = null, .hard_wraps = hard, .max_rows = 3 }).?;
+        try testing.expectEqual(point.Point{ .screen = .{ .x = 0, .y = 9 } }, s.pages.pointFromPin(.screen, sel.start()).?);
+        try testing.expectEqual(point.Point{ .screen = .{ .x = 9, .y = 15 } }, s.pages.pointFromPin(.screen, sel.end()).?);
+    }
+
+    // Zero: the pin's row alone.
+    {
+        const sel = s.selectLine(.{ .pin = mid, .whitespace = null, .max_rows = 0 }).?;
+        try testing.expectEqual(point.Point{ .screen = .{ .x = 0, .y = 12 } }, s.pages.pointFromPin(.screen, sel.start()).?);
+        try testing.expectEqual(point.Point{ .screen = .{ .x = 9, .y = 12 } }, s.pages.pointFromPin(.screen, sel.end()).?);
+    }
+
+    // A line's real ends inside the cap are kept.
+    {
+        const top = s.pages.pin(.{ .active = .{ .x = 0, .y = 1 } }).?;
+        const sel = s.selectLine(.{ .pin = top, .whitespace = null, .max_rows = 3 }).?;
+        try testing.expectEqual(point.Point{ .screen = .{ .x = 0, .y = 0 } }, s.pages.pointFromPin(.screen, sel.start()).?);
+        try testing.expectEqual(point.Point{ .screen = .{ .x = 9, .y = 4 } }, s.pages.pointFromPin(.screen, sel.end()).?);
+        const bottom = s.pages.pin(.{ .active = .{ .x = 0, .y = 23 } }).?;
+        const sel2 = s.selectLine(.{ .pin = bottom, .whitespace = null, .max_rows = 3 }).?;
+        try testing.expectEqual(point.Point{ .screen = .{ .x = 0, .y = 20 } }, s.pages.pointFromPin(.screen, sel2.start()).?);
+        try testing.expectEqual(point.Point{ .screen = .{ .x = 9, .y = 24 } }, s.pages.pointFromPin(.screen, sel2.end()).?);
+    }
+}
+
+test "Screen: selectLine max_rows bounds a 1 MB unbroken line" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var s = try init(alloc, .{ .cols = 200, .rows = 10, .max_scrollback = 64 * 1024 * 1024 });
+    defer s.deinit();
+    const line = try alloc.alloc(u8, 1024 * 1024);
+    defer alloc.free(line);
+    @memset(line, 'a');
+    try s.testWriteString(line);
+
+    const pin = s.pages.pin(.{ .active = .{ .x = 7, .y = 5 } }).?;
+    const sel = s.selectLine(.{ .pin = pin, .whitespace = null, .hard_wraps = true, .max_rows = 32 }).?;
+    const str = try s.selectionString(alloc, .{ .sel = sel, .trim = false, .reflow = true });
+    defer alloc.free(str);
+    try testing.expect(str.len <= (2 * 32 + 1) * 200);
+    try testing.expect(str.len >= 32 * 200);
 }
 
 test "Screen: selectLine across TUI hard wraps" {

@@ -49,7 +49,30 @@ pub const Highlight = union(enum) {
     /// detected.
     always_mods: Mods,
     hover_mods: Mods,
+
+    /// True when a mouse holding `mods` meets this highlight's modifier
+    /// requirement (position is not considered). Link hover checks this
+    /// across every configured link BEFORE it reads the line under the
+    /// mouse, so the default ctrl/cmd-hover link costs nothing on a move
+    /// without the modifier (T3064, PA-C09).
+    pub fn allowsMods(self: Highlight, mods: Mods) bool {
+        return switch (self) {
+            .always, .hover => true,
+            .always_mods, .hover_mods => |v| v.equal(mods),
+        };
+    }
 };
+
+test "Highlight.allowsMods" {
+    const testing = std.testing;
+    const ctrl: Mods = .{ .ctrl = true };
+    const none: Mods = .{};
+    try testing.expect((Highlight{ .always = {} }).allowsMods(none));
+    try testing.expect((Highlight{ .hover = {} }).allowsMods(ctrl));
+    try testing.expect(!(Highlight{ .hover_mods = ctrl }).allowsMods(none));
+    try testing.expect((Highlight{ .hover_mods = ctrl }).allowsMods(ctrl));
+    try testing.expect(!(Highlight{ .always_mods = ctrl }).allowsMods(.{ .ctrl = true, .shift = true }));
+}
 
 /// Returns a new oni.Regex that can be used to match the link.
 pub fn oniRegex(self: *const Link) !oni.Regex {
