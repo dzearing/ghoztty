@@ -1,8 +1,8 @@
 {
     "guard":  "viewer-worktree-port",
     "script":  "test/win32/viewer-worktree-port.ps1",
-    "generated":  "2026-11-17T18:52:31-08:00",
-    "commit":  "bc6f72417",
+    "generated":  "2026-11-17T19:15:35-08:00",
+    "commit":  "cb0840816",
     "uncommitted":  [
 
                     ],
