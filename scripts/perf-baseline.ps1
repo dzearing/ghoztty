@@ -22,7 +22,11 @@
 #           kernel handle types, window classes and thread groups it holds.
 #   busy   a pane that `type`s a generated -BusyMB file: wall time, app CPU
 #           seconds and % of one core, GPU engine %; then -ResizeSeconds of
-#           window resizes, same counters.
+#           window resizes, same counters. The busy app runs under
+#           GHOZTTY_PERF=1 and busy.perf is its own counter lines over the
+#           span (T3059: pty reads and batches per second, bytes per batch,
+#           queue_render, renderer wakeups, fps), with busy CPU and context
+#           switches split by thread as for idle.
 #   cycle   private bytes, working set, kernel/GDI/USER handles, threads, GPU
 #           dedicated+shared memory and descendant processes: at start, after
 #           10 panes over 3 tabs, after closing them all - twice, so the
@@ -143,12 +147,17 @@ $script:Tolerance = [ordered]@{
     objects       = @{ rel = 0.10; abs = 10;   note = 'GDI or USER objects' }
     threads       = @{ rel = 0.15; abs = 3;    note = 'threads' }
     count         = @{ rel = 0.00; abs = 1;    note = 'process or session counts' }
+    perf_rate     = @{ rel = 0.35; abs = 5;    note = 'the app''s GHOZTTY_PERF counters (reads, batches, renders, wakeups, fps per second; bytes per batch): rates set by the scheduler as much as by the code, so the wakeups tolerance' }
 }
 
 # ---------------------------------------------------------------- compare
 function Get-MetricFamily([string]$Path) {
     $leaf = ($Path -split '\.')[-1]
-    if ($Path -match '\.leak\.' -and $leaf -match '_mb$' -and $leaf -notmatch 'gpu') { return 'delta_mb' }
+    # T3059: the app's own GHOZTTY_PERF counters. Window counts follow the
+    # span's wall time and are not a metric.
+    if ($Path -match '\.perf\.windows\.' -or $leaf -match '_gap_') { return $null }
+    if ($Path -match '\.perf\.') { return 'perf_rate' }
+    if ($Path -match '\.leak\.'-and $leaf -match '_mb$' -and $leaf -notmatch 'gpu') { return 'delta_mb' }
     # T3111: idle CPU (the app's idle phase, the agent's idle_cpu_pct) has its
     # own small floor; busy and resize CPU keep the wide one.
     if ($leaf -match '^(idle_)?cpu.*pct$' -and ($Path -match '\.idle\.' -or $leaf -like 'idle_*')) { return 'idle_cpu_pct' }
@@ -948,6 +957,98 @@ function Start-App([bool]$Persist, [string[]]$Extra = @()) {
     return [pscustomobject]@{ Pid = $script:app.Pid; Top = [IntPtr]$top }
 }
 function Stop-App { [void](Stop-RepoGhoztty -Exe $exe -AppOnly -SettleMs 500) }
+
+# T3059 (PA-C02): where the app's GHOZTTY_PERF lines land. A Debug exe is a
+# console app and logs to the stderr Start-App redirects; a release exe is
+# GUI-subsystem and appends to %LOCALAPPDATA%\ghoztty\ghoztty.log, which the
+# -ReleaseSandbox isolation points at this run's private profile.
+function Get-AppLogPath {
+    if ($isRelease) { return (Join-Path $env:LOCALAPPDATA 'ghoztty\ghoztty.log') }
+    return $script:appErr
+}
+function Get-FileLength([string]$Path) {
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return 0L }
+    return (Get-Item -LiteralPath $Path).Length
+}
+# The text appended to $Path since byte $Offset (shared read: the app still
+# holds the file open).
+function Read-FileFrom([string]$Path, [long]$Offset) {
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return '' }
+    $fs = [IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite,Delete')
+    try {
+        if ($Offset -gt $fs.Length) { $Offset = 0 }
+        [void]$fs.Seek($Offset, 'Begin')
+        $sr = New-Object IO.StreamReader($fs, [Text.Encoding]::UTF8)
+        return $sr.ReadToEnd()
+    } finally { $fs.Close() }
+}
+
+# T3059 (PA-C02): the app's own GHOZTTY_PERF counters over a span, parsed from
+# the log text it wrote during that span. Every counter line is a rate over a
+# window of >= 1 s, emitted only while its thread is doing work, so:
+#   pty / agent_feed - only the busy pane produces output; mean over windows
+#   queue_render     - per stream handler (target=); the busiest target's mean
+#   fps              - per pane (pane=); the pane with the most windows
+#   wakeups          - per renderer thread, unlabelled; the MEDIAN, so the
+#                      idle anchor pane's occasional window does not drag it
+# bytes_per_batch is total bytes over total batches across the pty windows.
+function Get-PerfCounters([string]$Text) {
+    $lines = @(($Text -split "`r?`n") | Where-Object { $_ -match '\bperf ' })
+    $mean = { param($xs) if (@($xs).Count) { [math]::Round((@($xs) | Measure-Object -Average).Average, 1) } else { $null } }
+    $median = {
+        param($xs)
+        $s = @(@($xs) | Sort-Object)
+        if (-not $s.Count) { return $null }
+        if ($s.Count % 2) { return [double]$s[[int][math]::Floor($s.Count / 2)] }
+        return [math]::Round(([double]$s[$s.Count / 2 - 1] + [double]$s[$s.Count / 2]) / 2, 1)
+    }
+    $pty = @(foreach ($l in $lines) {
+            if ($l -match 'perf pty reads_per_s=(\d+) batches_per_s=(\d+) kb_per_s=(\d+)') {
+                [pscustomobject]@{ reads = [double]$Matches[1]; batches = [double]$Matches[2]; kb = [double]$Matches[3] }
+            }
+        })
+    $feed = @(foreach ($l in $lines) {
+            if ($l -match 'perf agent_feed kb_per_s=(\d+) slices_per_s=(\d+) feeds_per_s=(\d+) parse_ms_per_s=(\d+) lock_ms_per_s=(\d+) work_ms_per_s=(\d+) yield_ms_per_s=(\d+)') {
+                [pscustomobject]@{ kb = [double]$Matches[1]; slices = [double]$Matches[2]; feeds = [double]$Matches[3]; parse = [double]$Matches[4]; lock = [double]$Matches[5]; work = [double]$Matches[6]; yield = [double]$Matches[7] }
+            }
+        })
+    $qr = @(foreach ($l in $lines) {
+            if ($l -match 'perf queue_render_per_s=(\d+) target=(\S+)') { [pscustomobject]@{ v = [double]$Matches[1]; k = $Matches[2] } }
+        })
+    $fps = @(foreach ($l in $lines) {
+            if ($l -match 'perf pane=(\S+) fps=(\d+) max_gap_ms=(\d+)') { [pscustomobject]@{ k = $Matches[1]; v = [double]$Matches[2]; gap = [double]$Matches[3] } }
+        })
+    $wk = @(foreach ($l in $lines) { if ($l -match 'perf wakeups_per_s=(\d+)') { [double]$Matches[1] } })
+
+    $qrTop = @($qr | Group-Object k | Sort-Object { ($_.Group | Measure-Object v -Sum).Sum } -Descending | Select-Object -First 1)
+    $fpsTop = @($fps | Group-Object k | Sort-Object Count -Descending | Select-Object -First 1)
+    $batchSum = ($pty | Measure-Object batches -Sum).Sum
+    $o = [ordered]@{
+        method = 'GHOZTTY_PERF=1 in the app''s environment; the app''s own 1 s counter lines written over the busy span (Debug: stderr; release: the sandbox ghoztty.log) - pty reader (termio/Exec.zig), agent_feed (termio/Remote.zig, persistence on), queue_render (termio/stream_handler.zig), renderer wakeups (renderer/Thread.zig), fps (renderer/OpenGL.zig). Rates are the mean over the windows the busy pane produced; wakeups is the median over all renderer threads'' windows; bytes_per_batch is total bytes / total batches'
+        windows = [ordered]@{ pty = $pty.Count; agent_feed = $feed.Count; queue_render = $qr.Count; fps = $fps.Count; wakeups = $wk.Count }
+        reads_per_s = & $mean ($pty | ForEach-Object { $_.reads })
+        batches_per_s = & $mean ($pty | ForEach-Object { $_.batches })
+        pty_kb_per_s = & $mean ($pty | ForEach-Object { $_.kb })
+        bytes_per_batch = $(if ($batchSum -gt 0) { [math]::Round((($pty | Measure-Object kb -Sum).Sum * 1024) / $batchSum, 0) } else { $null })
+        queue_render_per_s = $(if ($qrTop.Count) { & $mean ($qrTop[0].Group | ForEach-Object { $_.v }) } else { $null })
+        renderer_wakeups_per_s = & $median $wk
+        fps = $(if ($fpsTop.Count) { & $mean ($fpsTop[0].Group | ForEach-Object { $_.v }) } else { $null })
+        fps_max_gap_ms = $(if ($fpsTop.Count) { ($fpsTop[0].Group | Measure-Object gap -Maximum).Maximum } else { $null })
+    }
+    if ($feed.Count) {
+        $o.agent_feed = [ordered]@{
+            kb_per_s = & $mean ($feed | ForEach-Object { $_.kb })
+            slices_per_s = & $mean ($feed | ForEach-Object { $_.slices })
+            feeds_per_s = & $mean ($feed | ForEach-Object { $_.feeds })
+            parse_ms_per_s = & $mean ($feed | ForEach-Object { $_.parse })
+            lock_ms_per_s = & $mean ($feed | ForEach-Object { $_.lock })
+            work_ms_per_s = & $mean ($feed | ForEach-Object { $_.work })
+            yield_ms_per_s = & $mean ($feed | ForEach-Object { $_.yield })
+        }
+    }
+    if (-not $lines.Count) { $o.reason = 'no GHOZTTY_PERF line was logged over the span' }
+    return $o
+}
 function Get-AgentInfo {
     $r = Invoke-Verb @('+sessions', '--agent', '--json')
     try { return ($r.Text | ConvertFrom-Json) } catch { return $null }
@@ -1144,18 +1245,32 @@ try {
                 return $m
             }
             if ($BusyPersistence) { [void](Start-SandboxAgent) }
-            $a = Start-App ([bool]$BusyPersistence)
+            # T3059: the busy app alone runs under GHOZTTY_PERF (an -AppEnv
+            # value wins), so the other phases measure the build as shipped.
+            $perfWas = $env:GHOZTTY_PERF
+            if (-not $perfWas) { $env:GHOZTTY_PERF = '1' }
+            try { $a = Start-App ([bool]$BusyPersistence) } finally { $env:GHOZTTY_PERF = $perfWas }
             Start-Sleep -Seconds 6
             $anchor = @(Get-PaneLeaves)[0].id
             $job = Start-GpuSampler $a.Pid 120
             $f0 = if ($BusyPersistence) { Get-AgentFamilySnaps } else { @{} }
+            $perfLog = Get-AppLogPath
+            $perfOff = Get-FileLength $perfLog
+            $t0 = Get-ThreadCtx $a.Pid
+            $c0 = Get-ThreadCycles $t0
             $s0 = Get-Snap $a.Pid
             $r = Invoke-Verb @('+split', "--target=$anchor", '--name=perfbusy', '--direction=right', "--command=$typeCmd & echo done> `"$marker`"")
             if ($r.Code -ne 0) { throw "+split for the busy pane failed: $($r.Text)" }
             $deadline = (Get-Date).AddSeconds(600)
             while (-not (Test-Path $marker) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 100 }
             $s1 = Get-Snap $a.Pid
+            $t1 = Get-ThreadCtx $a.Pid
+            $c1 = Get-ThreadCycles $t1
             $f1 = if ($BusyPersistence) { Get-AgentFamilySnaps } else { @{} }
+            # The last counter window closes up to a second after the output
+            # stops; give it that second before reading the log back.
+            Start-Sleep -Milliseconds 1500
+            $perfText = Read-FileFrom $perfLog $perfOff
             Stop-Job $job -ErrorAction SilentlyContinue
             $gpu = Stop-GpuSampler $job
             if (-not (Test-Path $marker)) { throw 'the busy pane never finished its output within 600 s' }
@@ -1193,6 +1308,10 @@ try {
             }
             if ($gpu.reason) { $result.busy.gpu_reason = $gpu.reason }
             if ($agentBusy) { $result.busy.agent = $agentBusy }
+            # T3059 (PA-C02): what the busy CPU was spent on - the app's own
+            # reader/renderer counters, and CPU and context switches by thread.
+            $result.busy.perf = Get-PerfCounters $perfText
+            $result.busy.wakeup_attribution = Get-WakeupAttribution $a.Pid $t0 $t1 $rb.wall_s -CyBefore $c0 -CyAfter $c1
             Start-Sleep -Seconds 3
 
             $job = Start-GpuSampler $a.Pid $ResizeSeconds

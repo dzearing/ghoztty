@@ -1,8 +1,8 @@
 {
     "guard":  "blade-page-focus",
     "script":  "test/win32/blade-page-focus.ps1",
-    "generated":  "2026-11-17T17:43:12-08:00",
-    "commit":  "33997a428",
+    "generated":  "2026-11-17T18:45:16-08:00",
+    "commit":  "bc6f72417",
     "uncommitted":  [
 
                     ],

@@ -11,7 +11,7 @@ against an installed Ghoztty:
 | Phase | What | How |
 |---|---|---|
 | `idle` | app CPU (% of one core), context switches/s, GPU engine %, memory | 1 window 1400x900, 1 cmd pane at its prompt, 10 s settle, then 60 s |
-| `busy` | wall time, app CPU, GPU engine % while a pane prints 64 MB | a `+split` pane running `type` of a generated file, timed to a marker file |
+| `busy` | wall time, app CPU, GPU engine % while a pane prints 64 MB; `busy.perf` (the app's own counters) and `busy.wakeup_attribution` (CPU and context switches by thread) | a `+split` pane running `type` of a generated file, timed to a marker file; the busy app runs under `GHOZTTY_PERF=1` (T3059) |
 | `resize` | app CPU and GPU engine % during resizes | `SetWindowPos` to a new size every 50 ms for 8 s |
 | `cycle` | private bytes, working set, handles, GDI/USER objects, threads, GPU memory, child processes | at start, with 10 panes over 3 tabs, after closing them all; twice |
 | `viewer` | the WebView2 tree (every `msedgewebview2.exe` under the app, by `--type=` role): process count, private bytes, CPU; app private bytes and GDI/USER growth; the residual tree and app leak after closing | 1 terminal plus 3 viewers split beside it (a 60-section markdown file, `git-status:` on a scratch repo, a static page from a loopback listener); `open` = 60 s shown; `hidden` = a new tab over them for 60 s; `after_close` = every viewer closed, the tree every 10 s for 90 s (T3033) |
@@ -44,6 +44,34 @@ absolute floor. Idle CPU has its own floor (`idle_cpu_pct`, ±0.05 points, two
 clock ticks over 60 s; T3111), because at a few tenths of a percent the busy
 floor of 0.5 let a 7x rise pass. Memory has ±15%. Handle and object counts
 have ±10%.
+
+### Reading busy.perf (T3059)
+
+The busy app runs under `GHOZTTY_PERF=1` and `busy.perf` is parsed from the
+counter lines it logs over the busy span (Debug: its stderr; release: the
+sandbox `ghoztty.log`). Each line is a rate over a window of at least 1 s.
+
+| Field | Source | Meaning |
+|---|---|---|
+| `reads_per_s`, `batches_per_s`, `pty_kb_per_s` | `perf pty` (`termio/Exec.zig`) | the pty reader's `ReadFile` calls, parse batches and bytes per second; mean over the busy pane's windows |
+| `bytes_per_batch` | the same lines | total bytes / total batches: how much output each terminal-lock round parses |
+| `queue_render_per_s` | `perf queue_render_per_s` (`termio/stream_handler.zig`) | render requests per second from the busiest stream handler |
+| `renderer_wakeups_per_s` | `perf wakeups_per_s` (`renderer/Thread.zig`) | renderer thread wakeups per second; the MEDIAN over all renderer threads' windows, so the idle anchor pane does not drag it |
+| `fps`, `fps_max_gap_ms` | `perf pane= fps=` (`renderer/OpenGL.zig`) | frames per second and the longest gap between frames, from the pane with the most windows |
+| `agent_feed.*` | `perf agent_feed` (`termio/Remote.zig`) | only with `-BusyPersistence`: the agent data lane's kB, slices, feeds per second and its parse/lock/work/yield ms per second |
+| `windows.*` | | how many counter windows each figure is built from (not compared) |
+
+`-Compare` checks every `busy.perf` rate against the `perf_rate` tolerance
+(±35%, floor 5); `fps_max_gap_ms` and the window counts are not compared.
+`busy.wakeup_attribution` has the same shape as the idle one: per-thread
+context switches and cycles over the busy span, grouped by thread name
+(`io-reader`, `renderer`, `main`) or start module.
+
+First reading (2026-11-17, 64 MB ASCII, both builds): about 29-31k reads/s at
+about 94 bytes a batch, 29-32k `queue_render` calls/s, ~118 renderer wakeups/s
+and ~119 fps. The `io-reader` threads carry about 27k of the ~31k context
+switches/s, which confirms that the reader's per-batch syscalls explain the
+busy wakeup rate (PA-C03, PA-C04).
 
 ### Reading idle CPU (T3111)
 

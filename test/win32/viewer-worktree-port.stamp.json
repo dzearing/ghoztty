@@ -1,14 +1,14 @@
 {
     "guard":  "viewer-worktree-port",
     "script":  "test/win32/viewer-worktree-port.ps1",
-    "generated":  "2026-11-17T17:44:48-08:00",
-    "commit":  "80c0cf9d0",
+    "generated":  "2026-11-17T18:52:31-08:00",
+    "commit":  "bc6f72417",
     "uncommitted":  [
-                        "src/apprt/win32/ViewerWorktreeProbe.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/viewer_worktree.zig":  "216b7a5e71476cf126698487b2999fea3b861b04220dd7a184ed646e0172deae",
-                  "src/apprt/win32/ViewerPane.zig":  "195ff92cb77f567893e9e5c7fc2595ef3fbcb35d8226a0db8aaa706d40114774",
+                  "src/apprt/win32/ViewerPane.zig":  "e2165b685053e49c49593ab7d297e0a548788b697fd3edb18b0bdeb9fd50f82a",
                   "src/apprt/win32/ViewerWorktreeProbe.zig":  "c7e71c723e5b1a725e0cb4e5e33320f2bff4016075258801d3ae4799bbe7bfe6",
                   "src/os/listening_pid.zig":  "931260af3ef2fbf2840abea3553cf79ca5d381fc03ccd1af9370b93613e91135",
                   "src/os/process_cwd.zig":  "af02cad98d3e4028e6d97128c3cf20d9d7cdd83d0b6013ee647c4fdac8f6bc98",
