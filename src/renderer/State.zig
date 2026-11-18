@@ -82,6 +82,13 @@ pub fn unlockPriority(self: *State) void {
     self.mutex.unlock();
 }
 
+/// True while at least one thread is blocked in `lockPriority`. A bulk producer
+/// checks this between lock cycles so the handoff costs it one atomic load when
+/// nobody is waiting (T3068).
+pub fn hasPriorityWaiters(self: *const State) bool {
+    return self.priority_waiters.load(.acquire) != 0;
+}
+
 /// Called by a background bulk producer BETWEEN two lock cycles (i.e. while it
 /// holds nothing) to let any priority waiter in first. Returns as soon as the
 /// waiters drain, or after a bounded number of yields.
@@ -283,6 +290,18 @@ test "priority ticket: handoff is bounded when waiters never drain" {
     // holds the lock.
     try testing.expect(mutex.tryLock());
     mutex.unlock();
+}
+
+test "T3068 priority ticket: hasPriorityWaiters follows the announced count" {
+    const testing = std.testing;
+
+    var mutex: std.Thread.Mutex = .{};
+    var state: State = .{ .mutex = &mutex, .terminal = undefined };
+    try testing.expect(!state.hasPriorityWaiters());
+    state.priority_waiters.store(2, .release);
+    try testing.expect(state.hasPriorityWaiters());
+    state.priority_waiters.store(0, .release);
+    try testing.expect(!state.hasPriorityWaiters());
 }
 
 const test_hangul_ga: u21 = 0xAC00; // U+AC00 HANGUL SYLLABLE GA

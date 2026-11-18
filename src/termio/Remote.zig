@@ -2238,9 +2238,35 @@ const max_parse_slice = 4 * 1024;
 /// split is invisible to both the terminal and any snapshot reader (WP-D3):
 /// slicing only makes the (grid, offset) pair advance in finer steps.
 fn feedSliced(rd: *ThreadData, bytes: []const u8) void {
-    var it: SliceIter = .{ .rest = bytes };
     feed_telemetry.bytes(bytes.len);
+    feedSlices(bytes, LiveFeed{ .rd = rd });
+    feed_telemetry.report();
+}
+
+/// The loop of `feedSliced`, generic over what "feed a slice" and "between
+/// lock cycles" do so the yield's reachability is unit tested (T3068).
+///
+/// `ctx.afterSlice()` runs after EVERY slice, the last one included. It used to
+/// run only while `it.rest.len > 0`, i.e. between two slices of the SAME call —
+/// and `drainRing` hands this at most `slice_bytes` (1 KiB) per call, under
+/// `max_parse_slice`, so there never was a second slice and the handoff never
+/// ran on any agent-backed pane: every `lockPriority` site was a plain lock
+/// (PA-C15). The next lock after the last slice is the next ring pop's parse, a
+/// re-lock with nothing but a pop and a memcpy in between, which is exactly the
+/// lost-race shape the handoff exists for.
+fn feedSlices(bytes: []const u8, ctx: anytype) void {
+    var it: SliceIter = .{ .rest = bytes };
     while (it.next()) |slice| {
+        ctx.feed(slice);
+        ctx.afterSlice();
+    }
+}
+
+const LiveFeed = struct {
+    rd: *ThreadData,
+
+    fn feed(self: LiveFeed, slice: []const u8) void {
+        const rd = self.rd;
         const parse_start = feed_telemetry.now();
         // T1460: when telemetry is on, take the twin that reports its own
         // mutex acquire time, so `parse_ms_per_s` is split into the wait and
@@ -2257,6 +2283,9 @@ fn feedSliced(rd: *ThreadData, bytes: []const u8) void {
             });
         }
         feed_telemetry.parsed(parse_start);
+    }
+
+    fn afterSlice(self: LiveFeed) void {
         // T111b/T114/T115: bounding the HOLD (above) is not enough on its own,
         // because nothing bounds how often we re-take it. `processOutputTracked`
         // self-locks and unlocks, and the next iteration re-locks after
@@ -2275,14 +2304,20 @@ fn feedSliced(rd: *ThreadData, bytes: []const u8) void {
         // So the waiter now announces itself (`lockPriority`) and we keep the
         // mutex UNLOCKED until it is in — a real handoff, bounded so a stream
         // of waiters cannot starve the drain in turn.
-        if (it.rest.len > 0) {
+        //
+        // T3068: gated on a waiter actually being announced, so the
+        // uncontended cost per slice is one atomic load. (The bare
+        // `SwitchToThread` the uncontended branch of the handoff makes was
+        // unreachable here since the drain went to 1 KiB pops; running it per
+        // KiB now would be ~512 syscalls a wake for nobody.)
+        const state = self.rd.io.renderer_state;
+        if (state.hasPriorityWaiters()) {
             const yield_start = feed_telemetry.now();
-            rd.io.renderer_state.yieldToPriorityWaiters();
+            state.yieldToPriorityWaiters();
             feed_telemetry.yielded(yield_start);
         }
     }
-    feed_telemetry.report();
-}
+};
 
 /// Env-gated telemetry (GHOZTTY_PERF) for the AGENT data path, added by T1458.
 ///
@@ -2627,8 +2662,8 @@ fn drainRing(td: *termio.Termio.ThreadData) void {
         // blocked in `io_thr.join()` waiting for us to return to the loop and
         // see the stop. Parsing the rest of a flooded ring into a terminal
         // that is about to be freed buys the user nothing and costs them a
-        // frozen window: a full wake is up to 32 x 16 KiB of held-lock parse
-        // (~7.7 s in the debug build), which is most of T63's 10 s close
+        // frozen window: a full wake is up to 512 KiB of parse (~7.7 s in the
+        // debug build, measured when it was 32 x 16 KiB), most of T63's 10 s close
         // bound. Bail immediately instead — same precedent as the EXIT
         // notification below, which is likewise dropped once `closing` is set.
         if (rd.io.closing.load(.acquire)) return;
@@ -2905,10 +2940,60 @@ test "T111 slice iter: exact multiple yields no empty trailing piece" {
 }
 
 test "T111 slice bound stays at or under the drain buffer it slices" {
-    // drainRing pops into a 16 KiB buffer; a slice larger than that would be
-    // dead code and would silently re-widen the mutex hold this bounds.
+    // A parse slice is the most work one mutex hold may cover; keep it bounded.
     try std.testing.expect(max_parse_slice <= 16 * 1024);
     try std.testing.expect(max_parse_slice > 0);
+}
+
+/// Records the order of `feedSlices` callbacks: 'f' per feed, 'y' per
+/// between-lock-cycles point.
+const FeedRecorder = struct {
+    log: *std.ArrayListUnmanaged(u8),
+    fed: *usize,
+
+    fn feed(self: FeedRecorder, slice: []const u8) void {
+        self.fed.* += slice.len;
+        self.log.append(std.testing.allocator, 'f') catch unreachable;
+    }
+
+    fn afterSlice(self: FeedRecorder) void {
+        self.log.append(std.testing.allocator, 'y') catch unreachable;
+    }
+};
+
+test "T3068 feedSlices: the priority handoff point is reached for a drainRing-sized chunk" {
+    // PA-C15: drainRing hands feedSliced at most `slice_bytes` per call, under
+    // one parse slice. The handoff used to run only BETWEEN two slices of one
+    // call, so it never ran at all. It must be reached for exactly this shape.
+    const testing = std.testing;
+    try testing.expect(slice_bytes <= max_parse_slice);
+
+    var calls: std.ArrayListUnmanaged(u8) = .empty;
+    defer calls.deinit(testing.allocator);
+    var fed: usize = 0;
+    var chunk: [slice_bytes]u8 = undefined;
+    @memset(&chunk, 'a');
+    feedSlices(&chunk, FeedRecorder{ .log = &calls, .fed = &fed });
+    try testing.expectEqualStrings("fy", calls.items);
+    try testing.expectEqual(chunk.len, fed);
+}
+
+test "T3068 feedSlices: a handoff point follows every slice, the last included" {
+    const testing = std.testing;
+
+    var calls: std.ArrayListUnmanaged(u8) = .empty;
+    defer calls.deinit(testing.allocator);
+    var fed: usize = 0;
+    var big: [max_parse_slice * 2 + 7]u8 = undefined;
+    @memset(&big, 'b');
+    feedSlices(&big, FeedRecorder{ .log = &calls, .fed = &fed });
+    try testing.expectEqualStrings("fyfyfy", calls.items);
+    try testing.expectEqual(big.len, fed);
+
+    // Nothing to feed: no lock cycle, so no handoff either.
+    calls.clearRetainingCapacity();
+    feedSlices("", FeedRecorder{ .log = &calls, .fed = &fed });
+    try testing.expectEqualStrings("", calls.items);
 }
 
 test "T1460 msPerSecond scales a nanosecond total into ms per wall-clock second" {
