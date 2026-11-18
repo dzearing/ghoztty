@@ -1,8 +1,8 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-11-17T22:47:44-08:00",
-    "commit":  "75bfd44e6",
+    "generated":  "2026-11-17T23:05:34-08:00",
+    "commit":  "c66f8dd9d",
     "uncommitted":  [
 
                     ],
@@ -949,7 +949,7 @@
                   "src/renderer/storage_trim.zig":  "5faeb4a54cd520837401dd9f3ff4322f0d36d9bfe4626516d914ce12feba9126",
                   "src/renderer/Thread.zig":  "8f1ce8a9434e86e8a06d046e9d61dabad2c634af095211dc5eeda8474a37291f",
                   "src/renderer/upload_diff.zig":  "8bb6fef63da22a53f707f3b1d0f3cd6aeec8260f21baea53b3d35b6852237a55",
-                  "src/renderer/wake_coalesce.zig":  "3f98ce9dd33ce401f8ee639f392c421d1a1029f5b30964614b701e5f5d2f1517",
+                  "src/renderer/wake_coalesce.zig":  "56c3615b0a70b6f704ac61fda870f83e3f6246b44c10d51ba94ec348b13a0db2",
                   "src/renderer/WebGL.zig":  "963023a42188b6d00f8a1a645653d82cf8204e7aed3a7c94946a6b004cae07fd",
                   "src/simd/base64.zig":  "72b444f30b59cf05fc4ce8c80e7980043b4018e04909624fa24da40ef39ee611",
                   "src/simd/base64_scalar.zig":  "67b9939963fdacb07f5cc8acd114e69a7cdca3905a2a231d6af803226ea52af2",
