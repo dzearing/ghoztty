@@ -1176,6 +1176,12 @@ top of this file forbids the loop to run one and five quiet minutes is not
 absence. `next` names them as `parked for the user to start`. Park such a task
 `blocked(needs the user to start …)` with `blocked-on: user`.
 
+A park that waits on a **date or on other tasks closing** comes back on its own
+too (T3073): give it `requeue-after: "YYYY-MM-DD"` and/or
+`requeue-when-closed: {"count": N, "of": ["T1", "T5-T9"]}` (README field
+table), and `next -Claim` flips it to `todo` and journals the trigger. Write the
+`unblock:` sentence as well, for the human reading the card.
+
 Since T139 there IS a supervisor, but do not lean on it: the watchdog
 (`scripts\go-loop-watchdog.ps1`) re-enters only after tens of minutes of dead
 time. It is the safety net for a crash, not a substitute for step 7.
