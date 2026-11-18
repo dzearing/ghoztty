@@ -40,6 +40,15 @@ pub fn spawn(comptime f: anytype, args: anytype) std.Thread.SpawnError!std.Threa
     return std.Thread.spawn(config, f, args);
 }
 
+/// Options for a long-lived `std.Thread.Pool` (T3095). `Pool.Options` carries
+/// its own `stack_size`, defaulting to the same 16 MB as `SpawnConfig`, and
+/// `Pool.init` hands it to every worker's spawn - so a pool made with
+/// `.{ .allocator = ..., .n_jobs = ... }` commits 16 MB per worker on Windows
+/// for as long as it lives, which `config` above never reaches.
+pub fn poolOptions(allocator: std.mem.Allocator, n_jobs: ?usize) std.Thread.Pool.Options {
+    return .{ .allocator = allocator, .n_jobs = n_jobs, .stack_size = config.stack_size };
+}
+
 const win = struct {
     const MEMORY_BASIC_INFORMATION = extern struct {
         BaseAddress: ?*anyopaque,
@@ -122,6 +131,44 @@ test "windows: a deep frame still grows into the reserve" {
     const t = try spawn(Deep.run, .{&shape});
     t.join();
     try std.testing.expect(shape.committed >= 4 * 1024 * 1024);
+}
+
+/// Stack shape of one worker of a pool made with `opts`, measured on that
+/// worker while the pool is alive.
+fn measurePoolWorker(opts: std.Thread.Pool.Options) !StackShape {
+    var pool: std.Thread.Pool = undefined;
+    try pool.init(opts);
+    defer pool.deinit();
+    var shape: StackShape = .{};
+    var wg: std.Thread.WaitGroup = .{};
+    pool.spawnWg(&wg, struct {
+        fn run(out: *StackShape) void {
+            out.* = measureOwnStack();
+        }
+    }.run, .{&shape});
+    wg.wait();
+    return shape;
+}
+
+test "windows: poolOptions gives pool workers the small commit too (T3095)" {
+    if (builtin.os.tag != .windows) return error.SkipZigTest;
+    const mb = 1024 * 1024;
+    const alloc = std.testing.allocator;
+
+    // Positive control: a pool made with std's options commits ~16 MB per
+    // worker - the cost sheet_workers' pool carried for the life of the app.
+    const old = try measurePoolWorker(.{ .allocator = alloc, .n_jobs = 1 });
+    try std.testing.expect(old.committed >= 15 * mb);
+
+    const new = try measurePoolWorker(poolOptions(alloc, 1));
+    try std.testing.expect(new.reserved >= 16 * mb);
+    try std.testing.expect(new.committed <= mb);
+}
+
+test "poolOptions carries config's stack size and the caller's job count" {
+    const opts = poolOptions(std.testing.allocator, 3);
+    try std.testing.expectEqual(config.stack_size, opts.stack_size);
+    try std.testing.expectEqual(@as(?usize, 3), opts.n_jobs);
 }
 
 test "config is the std default off Windows" {

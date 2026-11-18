@@ -20,6 +20,7 @@ const testing = std.testing;
 const color_math = @import("color_math.zig");
 const desk_palette = @import("desk_palette.zig");
 const pane_elevation = @import("pane_elevation.zig");
+const thread_stack = @import("../../os/thread_stack.zig");
 
 /// Below this many pixels the hand-off costs more than it saves: a worker's
 /// wake-up is tens of microseconds, and a 256x256 region renders in about that.
@@ -41,7 +42,9 @@ fn initPool() void {
     const cpus = std.Thread.getCpuCount() catch 1;
     const want = @min(cpus -| 1, max_workers);
     if (want == 0) return;
-    pool.init(.{ .allocator = std.heap.smp_allocator, .n_jobs = want }) catch return;
+    // thread_stack's small commit (T3095): std's Pool.Options defaults every
+    // worker to a 16 MB committed stack, held for the life of the app.
+    pool.init(thread_stack.poolOptions(std.heap.smp_allocator, want)) catch return;
     pool_workers = want;
 }
 
