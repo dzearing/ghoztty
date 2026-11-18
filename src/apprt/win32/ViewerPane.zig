@@ -5093,23 +5093,31 @@ fn onWebResourceRequested(
     };
     defer alloc.free(resolved);
 
-    const bytes = std.fs.cwd().readFileAlloc(alloc, resolved, content.max_file_bytes) catch {
+    // Read straight into the response's own stream (T3044), under the same
+    // whole-file ceiling `readFileAlloc` used to enforce.
+    const served = served: {
+        const file = std.fs.cwd().openFile(resolved, .{}) catch break :served false;
+        defer file.close();
+        const size = (file.stat() catch break :served false).size;
+        if (size > content.max_file_bytes) break :served false;
+        break :served self.respondFile(
+            env,
+            a,
+            alloc,
+            file,
+            0,
+            size,
+            content.mimeType(content.extension(rel)),
+            200,
+            ok_reason,
+            .default,
+            "",
+        );
+    };
+    if (!served) {
         log.warn("viewer resource is unreadable: {s}", .{resolved});
         self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .default);
-        return com.S_OK;
-    };
-    defer alloc.free(bytes);
-
-    self.respond(
-        env,
-        a,
-        alloc,
-        bytes,
-        content.mimeType(content.extension(rel)),
-        200,
-        ok_reason,
-        .default,
-    );
+    }
     return com.S_OK;
 }
 
@@ -5167,6 +5175,30 @@ fn serveImage(
         return;
     }
 
+    // The browser decodes the file as it is on disk, so it is read straight
+    // into the response stream rather than through a heap copy (T3044). The
+    // other routes transcode, and need the bytes in hand.
+    if (self.image_route == .browser) {
+        const mime = content.mimeType(content.extension(path));
+        const size: ?u64 = served: {
+            const f = std.fs.cwd().openFile(path, .{}) catch break :served null;
+            defer f.close();
+            const n = (f.stat() catch break :served null).size;
+            if (n > content.max_file_bytes) break :served null;
+            if (!self.respondFile(env, a, alloc, f, 0, n, mime, 200, ok_reason, .no_store, "")) break :served null;
+            break :served n;
+        };
+        const n = size orelse {
+            log.warn("viewer image is unreadable: {s}", .{path});
+            self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
+            return;
+        };
+        log.info(
+            "viewer image served pane={s} rev={d} bytes={d} mime={s} route={s}",
+            .{ self.paneId(), self.image_revision, n, mime, @tagName(self.image_route) },
+        );
+        return;
+    }
     const file = std.fs.cwd().readFileAlloc(alloc, path, content.max_file_bytes) catch {
         log.warn("viewer image is unreadable: {s}", .{path});
         self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
@@ -5174,17 +5206,18 @@ fn serveImage(
     };
     defer alloc.free(file);
 
+    // Only `icns` reaches here: `wic` (T3043) and `browser` (T3044) answered
+    // above, neither through a heap copy of the file.
     const served: ?[]const u8 = switch (self.image_route) {
-        .browser => file,
         .icns => viewer_image.icnsBestPng(file),
-        .wic => unreachable,
+        .browser, .wic => unreachable,
     };
     const bytes = served orelse {
         log.warn("viewer image cannot be decoded: {s} route={s}", .{ path, @tagName(self.image_route) });
         self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
         return;
     };
-    const mime = if (self.image_route == .browser) content.mimeType(content.extension(path)) else "image/png";
+    const mime = "image/png";
     // The acceptance script's proof that the picture was FETCHED rather than
     // rendered as text: a source view never asks for the file a second time
     // through the page's own origin. The MIME rides along because
@@ -5294,10 +5327,7 @@ fn servePageResource(
             return;
         },
         .partial => |span| {
-            const slice = alloc.alloc(u8, @intCast(span.len())) catch return;
-            defer alloc.free(slice);
-            const got = file.preadAll(slice, span.start) catch 0;
-            if (got != slice.len) {
+            if (!self.respondFile(env, a, alloc, file, span.start, span.len(), mime, 206, partial_content_reason, .no_store, extra)) {
                 // The file shrank under us: the size the plan was built on is
                 // no longer true, and a short body would contradict its own
                 // Content-Range. Refuse rather than answer with a lie.
@@ -5307,20 +5337,20 @@ fn servePageResource(
             }
             log.info(
                 "viewer page pane={s} served={s} bytes={d} mime={s} range={d}-{d}/{d} status=206",
-                .{ self.paneId(), rel, slice.len, mime, span.start, span.end, size },
+                .{ self.paneId(), rel, span.len(), mime, span.start, span.end, size },
             );
-            self.respondWith(env, a, alloc, slice, mime, 206, partial_content_reason, .no_store, extra);
             return;
         },
         .whole => {},
     }
 
-    const bytes = file.readToEndAlloc(alloc, content.max_file_bytes) catch {
+    if (size > content.max_file_bytes or
+        !self.respondFile(env, a, alloc, file, 0, size, mime, 200, ok_reason, .no_store, extra))
+    {
         log.warn("viewer page resource is unreadable or too large to serve whole: {s}", .{resolved});
         self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
         return;
-    };
-    defer alloc.free(bytes);
+    }
 
     // A subresource request is proof the page was PARSED as HTML: a document
     // rendered as source never asks for its own stylesheet. That is what the
@@ -5331,9 +5361,8 @@ fn servePageResource(
     // `application/octet-stream`, which the engine then refuses to use.
     log.info(
         "viewer page pane={s} served={s} bytes={d} mime={s}",
-        .{ self.paneId(), rel, bytes.len, mime },
+        .{ self.paneId(), rel, size, mime },
     );
-    self.respondWith(env, a, alloc, bytes, mime, 200, ok_reason, .no_store, extra);
 }
 
 const partial_content_reason = std.unicode.utf8ToUtf16LeStringLiteral("Partial Content");
@@ -5427,6 +5456,63 @@ fn respondWith(
     if (!stream.writeAll(bytes)) return;
     if (!stream.rewind()) return;
     self.respondStream(env, args, alloc, stream, mime, status, reason, caching, extra);
+}
+
+/// Bytes `offset .. offset+len` of `file`, read straight into the memory of a
+/// fresh response stream (T3044).
+///
+/// Before this every served file was read into a heap buffer and then
+/// `Write`-copied into the stream, so a resource cost twice its size for the
+/// length of the request — 64 MB for a 32 MB page asset. Sizing the stream
+/// first and filling its block in place holds it once. The file is read with
+/// the handle the caller already opened, which `std.fs` opens sharing read,
+/// write AND delete, so an editor saving the file mid-request is never
+/// refused the way a share-deny stream would refuse it.
+///
+/// `error.Changed` is a short read: the file shrank under us, and a body
+/// shorter than the size its headers were planned from must not be sent.
+fn fileStream(file: std.fs.File, offset: u64, len: u64) error{ Stream, Read, Changed }!*iface.IStream {
+    if (len > std.math.maxInt(usize)) return error.Stream;
+    var stream_ptr: ?*anyopaque = null;
+    if (com.failed(w32.CreateStreamOnHGlobal(null, 1, &stream_ptr))) return error.Stream;
+    const stream: *iface.IStream = @ptrCast(@alignCast(stream_ptr orelse return error.Stream));
+    errdefer stream.release();
+    if (len == 0) return stream;
+    // A fresh stream's seek pointer is 0 and `SetSize` does not move it, so
+    // the body is readable from its start with no rewind.
+    if (!stream.setSize(len)) return error.Stream;
+    var hglobal: ?*anyopaque = null;
+    if (com.failed(w32.GetHGlobalFromStream(@ptrCast(stream), &hglobal))) return error.Stream;
+    const h = hglobal orelse return error.Stream;
+    const mem = w32.GlobalLock(h) orelse return error.Stream;
+    defer _ = w32.GlobalUnlock(h);
+    const want: usize = @intCast(len);
+    const got = file.preadAll(mem[0..want], offset) catch return error.Read;
+    if (got != want) return error.Changed;
+    return stream;
+}
+
+/// Answer with bytes `offset .. offset+len` of `file` (T3044). False when the
+/// body could not be built — nothing has been answered then, and the caller
+/// answers instead (a `404`, as every other unreadable resource gets).
+fn respondFile(
+    self: *ViewerPane,
+    env: *iface.ICoreWebView2Environment,
+    args: *iface.ICoreWebView2WebResourceRequestedEventArgs,
+    alloc: Allocator,
+    file: std.fs.File,
+    offset: u64,
+    len: u64,
+    mime: []const u8,
+    status: i32,
+    reason: [*:0]const u16,
+    caching: Caching,
+    extra: []const u8,
+) bool {
+    const stream = fileStream(file, offset, len) catch return false;
+    defer stream.release();
+    self.respondStream(env, args, alloc, stream, mime, status, reason, caching, extra);
+    return true;
 }
 
 /// `respondWith` for a body that is already a stream, rewound - the image

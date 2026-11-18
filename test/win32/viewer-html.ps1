@@ -315,7 +315,7 @@ async function check(name, url, range, want, first) {
   await check("miss", "small.bin", "bytes=5000-", "416|bytes */1000|bytes|0");
   // NEGATIVE CONTROL: a multi-range request is IGNORED, never half-honoured.
   await check("multi", "small.bin", "bytes=0-1,5-6", "200||bytes|1000");
-  await check("capped", "big.bin", "bytes=0-", "206|bytes 0-8388607/41943040|bytes|8388608");
+  await check("capped", "big.bin", "bytes=0-", "206|bytes 0-2097151/41943040|bytes|2097152");
   await check("tail", "big.bin", "bytes=41943030-", "206|bytes 41943030-41943039/41943040|bytes|10");
   // Larger than the whole-file ceiling: seekable by range, never read whole.
   await check("toobig", "big.bin", null, "404|||0");
@@ -576,7 +576,7 @@ try {
     $v = Get-Verdict 'multi'
     Assert ($v -eq 'ok') "a multi-range request is ignored and answered whole (negative control) ($v)"
     $v = Get-Verdict 'capped'
-    Assert ($v -eq 'ok') "an open range on a 40 MiB file is capped at one 8 MiB chunk ($v)"
+    Assert ($v -eq 'ok') "an open range on a 40 MiB file is capped at one 2 MiB chunk (T3044) ($v)"
     $v = Get-Verdict 'tail'
     Assert ($v -eq 'ok') "...and its last bytes are reachable, past the whole-file ceiling ($v)"
     $v = Get-Verdict 'toobig'
@@ -588,7 +588,7 @@ try {
     Assert ($v -eq 'ok') "an <audio> element seeked to its last second ($v)"
     $late = $false
     foreach ($line in (Get-Content $errlog -ErrorAction SilentlyContinue)) {
-        if ($line -match "viewer page pane=$([regex]::Escape($rangePane)) served=tone\.wav .* range=(\d+)-\d+/\d+ status=206" -and [long]$Matches[1] -ge 8388608) {
+        if ($line -match "viewer page pane=$([regex]::Escape($rangePane)) served=tone\.wav .* range=(\d+)-\d+/\d+ status=206" -and [long]$Matches[1] -ge 2097152) {
             $late = $true; break
         }
     }

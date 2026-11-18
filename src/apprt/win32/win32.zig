@@ -3516,6 +3516,15 @@ pub extern "ole32" fn CreateStreamOnHGlobal(
     ppstm: *?*anyopaque,
 ) callconv(.winapi) HRESULT;
 
+/// The memory behind a `CreateStreamOnHGlobal` stream (T3044). A viewer
+/// response sizes the stream first and then reads the file straight into this
+/// block, so a resource is held once — not once in a heap buffer and again in
+/// the stream it was copied into.
+pub extern "ole32" fn GetHGlobalFromStream(
+    pstm: *anyopaque,
+    phglobal: *?*anyopaque,
+) callconv(.winapi) HRESULT;
+
 // {56FDF344-FD6D-11D0-958A-006097C9A090}
 pub const CLSID_TaskbarList: GUID = .{
     .Data1 = 0x56FDF344,

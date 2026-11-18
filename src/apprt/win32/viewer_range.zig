@@ -23,8 +23,11 @@
 const std = @import("std");
 
 /// The most one `206` carries. Large enough that a clip streams in a handful
-/// of requests; small enough that one request never allocates a whole film.
-pub const max_chunk: u64 = 8 * 1024 * 1024;
+/// of requests a second; small enough that one request never allocates a
+/// whole film. 2 MB since T3044 (was 8): every chunk is read on the UI thread
+/// and held in memory until the engine has consumed it, so a playing video
+/// held 8 MB above idle per request in flight and stalled input for the read.
+pub const max_chunk: u64 = 2 * 1024 * 1024;
 
 /// What to answer.
 pub const Plan = union(enum) {
