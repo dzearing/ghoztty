@@ -77,6 +77,11 @@ const Job = struct {
     ok: bool = false,
     stem: []const u8 = "",
     err_name: []const u8 = "",
+    /// Set by the pane's teardown (T3045). It ends only the git questions —
+    /// branch and commit are metadata the report can go without — so a report
+    /// the user already sent is still written, just without them, and the
+    /// close no longer waits on git to say what branch it is on.
+    cancel: git_run.Cancel = .{},
 
     fn destroy(self: *Job, alloc: Allocator) void {
         self.arena.deinit();
@@ -154,6 +159,7 @@ pub fn init(alloc: Allocator) Sender {
 /// be destroyed, and destroyed windows drop their posted messages.
 pub fn deinit(self: *Sender) void {
     if (self.thread) |t| {
+        if (self.job) |j| j.cancel.request();
         t.join();
         self.thread = null;
     }
@@ -271,6 +277,8 @@ fn dupeOpt(alloc: Allocator, value: ?[]const u8) !?[]const u8 {
 /// touches nothing on the sender but the two handles it was attached with
 /// (which are set before any worker can exist and never change).
 fn work(self: *Sender, job: *Job) void {
+    git_run.cancel_on_thread = &job.cancel;
+    defer git_run.cancel_on_thread = null;
     const aa = job.arena.allocator();
     job.ctx.branch = revision(aa, job.ctx.worktree_path, .branch);
     job.ctx.commit = revision(aa, job.ctx.worktree_path, .commit);

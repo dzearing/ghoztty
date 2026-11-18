@@ -76,6 +76,9 @@ const Job = struct {
     /// the tests, which is how "the poll costs a syscall, not a process" is
     /// asserted rather than asserted about.
     reused: bool = false,
+    /// Set by the pane's teardown so its join does not wait out a slow git
+    /// (T3045).
+    cancel: git_run.Cancel = .{},
 
     fn destroy(self: *Job) void {
         const alloc = self.alloc;
@@ -194,6 +197,8 @@ fn listenerCwd(alloc: Allocator, port: u16, buf: []u8) ?[]const u8 {
 /// and destroyed windows drop their posted messages.
 pub fn deinit(self: *Probe) void {
     if (self.thread) |t| {
+        // End the git in flight before the GUI thread waits on it (T3045).
+        if (self.job) |j| j.cancel.request();
         t.join();
         self.thread = null;
     }
@@ -385,6 +390,9 @@ fn forgetMemo(self: *Probe) void {
 /// are set before any worker can exist and never change) and `port_lookup`,
 /// which is set at construction.
 fn work(self: *Probe, job: *Job) void {
+    git_run.cancel_on_thread = &job.cancel;
+    // Pooled thread: the next job on it is somebody else's.
+    defer git_run.cancel_on_thread = null;
     var dir_buf: [path_cap]u8 = undefined;
     const dir = if (job.port) |port| worktree.resolvePort(
         job.alloc,

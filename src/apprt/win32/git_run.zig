@@ -51,7 +51,7 @@ pub const default_deadline_ms: u64 = 15_000;
 /// joins this thread — is always called BEFORE the wait. That ordering is the
 /// invariant this struct exists to make obvious.
 const Deadline = struct {
-    child: *std.process.Child,
+    running: *const Running,
     ms: u64,
     done: std.Thread.ResetEvent = .{},
     fired: std.atomic.Value(bool) = .init(false),
@@ -69,8 +69,10 @@ const Deadline = struct {
             self.fired.store(true, .release);
             // `Child.kill` would do this AND reap the child, closing the handle
             // out from under the `wait` the caller is about to make; the raw
-            // terminate is the half that is ours to do.
-            windows.TerminateProcess(self.child.id, 1) catch {};
+            // terminate is the half that is ours to do. It ends the whole
+            // TREE when there is a job (T3045), since the stdout pipe may be
+            // held by a grandchild rather than by the process we launched.
+            self.running.kill();
         };
     }
 
@@ -83,16 +85,183 @@ const Deadline = struct {
     }
 };
 
-/// Run `argv`, returning its stdout in `buf`. Null when the binary could not be
-/// launched at all — the only case worth trying another `git` path for. A git
-/// that ran and failed returns its (usually empty) stdout, because "git said
-/// no" is an ANSWER: a directory outside a repository, a repository with no
-/// commits.
 /// git processes this THREAD has launched (T3038). Per thread so a worker can
 /// read what its own job cost by differencing it around the job, with no lock
 /// and no other worker's spawns mixed in.
 pub threadlocal var spawned_on_thread: u64 = 0;
 
+/// The cancel token of whatever job this worker thread is running (T3045), or
+/// null. A worker sets it for the length of one job and clears it after — the
+/// threads are POOLED (`worker_pool`), so a value left behind would cancel the
+/// next pane's work. Thread-local rather than a parameter because every one of
+/// the dozen call sites below a worker would otherwise have to carry it, and
+/// the one that forgot would be the one that freezes the app.
+pub threadlocal var cancel_on_thread: ?*Cancel = null;
+
+/// How a pane's teardown stops the git its worker is running (T3045).
+///
+/// Every worker that calls into this file is JOINED by its pane's `deinit`, on
+/// the GUI thread, because the worker writes into memory that deinit frees. A
+/// listing is up to six gits in a row with a 15 s deadline each, so before
+/// this a close during a slow git froze the whole app until git finished.
+/// `request` ends the git in flight (its whole process tree) and makes every
+/// later call on that worker refuse to start one, so the join that follows
+/// waits for a worker that is already unwinding.
+pub const Cancel = struct {
+    requested: std.atomic.Value(bool) = .init(false),
+    /// Guards `running` against the worker publishing or retiring it while
+    /// `request` is killing it: the handle must not be closed underneath the
+    /// terminate.
+    mutex: std.Thread.Mutex = .{},
+    running: ?*const Running = null,
+
+    /// Callable from any thread, any number of times.
+    pub fn request(self: *Cancel) void {
+        self.requested.store(true, .release);
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.running) |r| r.kill();
+    }
+
+    pub fn isRequested(self: *const Cancel) bool {
+        return self.requested.load(.acquire);
+    }
+
+    /// Publish the process just launched. If the cancel already happened, the
+    /// process is killed here — the window between the check before spawning
+    /// and this point is where a cancel would otherwise be lost.
+    fn track(self: *Cancel, r: *const Running) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.isRequested()) r.kill();
+        self.running = r;
+    }
+
+    /// Retire it, before its handles are closed.
+    fn untrack(self: *Cancel) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.running = null;
+    }
+};
+
+/// The Win32 job surface `std.os.windows` does not expose (same constants as
+/// `remote/agent/pty_child.zig`, which needs them for the PTY children).
+const win_job = struct {
+    const DWORD = windows.DWORD;
+    const HANDLE = windows.HANDLE;
+    const BOOL = windows.BOOL;
+    const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: DWORD = 0x00002000;
+    const JobObjectExtendedLimitInformation: c_int = 9;
+    const IO_COUNTERS = extern struct { counts: [6]u64 = @splat(0) };
+    const JOBOBJECT_BASIC_LIMIT_INFORMATION = extern struct {
+        PerProcessUserTimeLimit: i64 = 0,
+        PerJobUserTimeLimit: i64 = 0,
+        LimitFlags: DWORD = 0,
+        MinimumWorkingSetSize: usize = 0,
+        MaximumWorkingSetSize: usize = 0,
+        ActiveProcessLimit: DWORD = 0,
+        Affinity: usize = 0,
+        PriorityClass: DWORD = 0,
+        SchedulingClass: DWORD = 0,
+    };
+    const JOBOBJECT_EXTENDED_LIMIT_INFORMATION = extern struct {
+        BasicLimitInformation: JOBOBJECT_BASIC_LIMIT_INFORMATION = .{},
+        IoInfo: IO_COUNTERS = .{},
+        ProcessMemoryLimit: usize = 0,
+        JobMemoryLimit: usize = 0,
+        PeakProcessMemoryUsed: usize = 0,
+        PeakJobMemoryUsed: usize = 0,
+    };
+    extern "kernel32" fn CreateJobObjectW(?*windows.SECURITY_ATTRIBUTES, ?windows.LPCWSTR) callconv(.winapi) ?HANDLE;
+    extern "kernel32" fn SetInformationJobObject(HANDLE, c_int, *const anyopaque, DWORD) callconv(.winapi) BOOL;
+    extern "kernel32" fn AssignProcessToJobObject(HANDLE, HANDLE) callconv(.winapi) BOOL;
+    extern "kernel32" fn TerminateJobObject(HANDLE, c_uint) callconv(.winapi) BOOL;
+    extern "kernel32" fn ResumeThread(HANDLE) callconv(.winapi) DWORD;
+};
+
+/// One launched git: its process, and the kill-on-close job holding it and
+/// everything it starts (T3045).
+///
+/// Why a job: Git for Windows' `cmd\git.exe` — what "git" on PATH resolves to —
+/// is a launcher whose CHILD does the work and inherits the stdout pipe. Ending
+/// only the launcher, which is what the deadline did before, leaves the pipe
+/// open and the reader blocked until the real git finishes on its own; and it
+/// leaves that git running after the pane that asked is gone. The process is
+/// started suspended and assigned before it runs a single instruction, so
+/// nothing it starts can escape the job.
+///
+/// No job (an OS or policy that refuses one) falls back to the process alone:
+/// the behavior from before this change, never worse.
+const Running = struct {
+    child: *std.process.Child,
+    job: ?windows.HANDLE = null,
+
+    /// End the tree. Safe to call more than once and from any thread while
+    /// the handles are open, which `Cancel`'s mutex and `Deadline.stop`
+    /// guarantee.
+    fn kill(self: *const Running) void {
+        if (self.job) |j| {
+            if (win_job.TerminateJobObject(j, 1) != 0) return;
+        }
+        windows.TerminateProcess(self.child.id, 1) catch {};
+    }
+};
+
+/// Spawn `child` inside its own job and publish it to the thread's cancel
+/// token. False when it could not be launched — or when a cancel already
+/// asked this worker to stop, which callers read the same way: try nothing
+/// else.
+fn launch(child: *std.process.Child, running: *Running) bool {
+    if (cancel_on_thread) |c| if (c.isRequested()) return false;
+    child.start_suspended = true;
+    child.spawn() catch return false;
+    spawned_on_thread += 1;
+    running.* = .{ .child = child, .job = makeJob(child.id) };
+    if (win_job.ResumeThread(child.thread_handle) == std.math.maxInt(windows.DWORD)) {
+        // A process that never resumes is a reader that never sees EOF.
+        running.kill();
+    }
+    if (cancel_on_thread) |c| c.track(running);
+    return true;
+}
+
+/// A kill-on-close job holding `process`, or null when the OS refuses one.
+fn makeJob(process: windows.HANDLE) ?windows.HANDLE {
+    const job = win_job.CreateJobObjectW(null, null) orelse return null;
+    var info: win_job.JOBOBJECT_EXTENDED_LIMIT_INFORMATION = .{};
+    info.BasicLimitInformation.LimitFlags = win_job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    const ok = win_job.SetInformationJobObject(
+        job,
+        win_job.JobObjectExtendedLimitInformation,
+        &info,
+        @sizeOf(win_job.JOBOBJECT_EXTENDED_LIMIT_INFORMATION),
+    ) != 0 and win_job.AssignProcessToJobObject(job, process) != 0;
+    if (!ok) {
+        windows.CloseHandle(job);
+        return null;
+    }
+    return job;
+}
+
+/// The other half of `launch`: retire the process from the cancel token, reap
+/// it, and close the job — which, being kill-on-close, also ends anything git
+/// left behind. Returns the wait's answer, and whether a cancel ended the run
+/// (whose output is then not an answer to anything).
+fn finish(running: *Running) struct { term: ?std.process.Child.Term, cancelled: bool } {
+    if (cancel_on_thread) |c| c.untrack();
+    const term = running.child.wait() catch null;
+    if (running.job) |j| windows.CloseHandle(j);
+    running.job = null;
+    const cancelled = if (cancel_on_thread) |c| c.isRequested() else false;
+    return .{ .term = term, .cancelled = cancelled };
+}
+
+/// Run `argv`, returning its stdout in `buf`. Null when the binary could not be
+/// launched at all — the only case worth trying another `git` path for. A git
+/// that ran and failed returns its (usually empty) stdout, because "git said
+/// no" is an ANSWER: a directory outside a repository, a repository with no
+/// commits. Null too when the worker was cancelled (T3045).
 pub fn capture(alloc: Allocator, argv: []const []const u8, buf: []u8) ?[]const u8 {
     return captureDeadline(alloc, argv, buf, default_deadline_ms);
 }
@@ -115,18 +284,19 @@ pub fn captureDeadline(
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Ignore;
     child.create_no_window = true;
-    child.spawn() catch return null;
-    spawned_on_thread += 1;
+    var running: Running = undefined;
+    if (!launch(&child, &running)) return null;
 
     const stdout = child.stdout orelse {
-        _ = child.wait() catch {};
+        _ = finish(&running);
         return null;
     };
-    var deadline: Deadline = .{ .child = &child, .ms = deadline_ms };
+    var deadline: Deadline = .{ .running = &running, .ms = deadline_ms };
     deadline.start();
     const n = stdout.readAll(buf) catch 0;
     _ = deadline.stop();
-    _ = child.wait() catch return null;
+    const end = finish(&running);
+    if (end.term == null or end.cancelled) return null;
     return buf[0..n];
 }
 
@@ -190,14 +360,14 @@ pub fn captureAllocDeadline(
     env.put("GIT_OPTIONAL_LOCKS", "0") catch {};
     child.env_map = &env;
 
-    child.spawn() catch return null;
-    spawned_on_thread += 1;
+    var running: Running = undefined;
+    if (!launch(&child, &running)) return null;
     const stdout = child.stdout orelse {
-        _ = child.wait() catch {};
+        _ = finish(&running);
         return null;
     };
 
-    var deadline: Deadline = .{ .child = &child, .ms = deadline_ms };
+    var deadline: Deadline = .{ .running = &running, .ms = deadline_ms };
     deadline.start();
 
     var out: std.ArrayList(u8) = .empty;
@@ -219,7 +389,13 @@ pub fn captureAllocDeadline(
     }
 
     const timed_out = deadline.stop();
-    const term = child.wait() catch {
+    const end = finish(&running);
+    // A cancelled run answers nothing: the pane that asked is going away.
+    if (end.cancelled) {
+        out.deinit(alloc);
+        return null;
+    }
+    const term = end.term orelse {
         out.deinit(alloc);
         return null;
     };
@@ -287,6 +463,71 @@ test "capture gives up on a git that never answers" {
     // simply to come back, with whatever the child had managed to say.
     _ = out;
     try testing.expect(elapsed_ms < 10_000);
+}
+
+/// The Git-for-Windows shape (T3045): `cmd\git.exe` on PATH is a LAUNCHER that
+/// runs the real `mingw64\bin\git.exe` as its child, and that child inherits
+/// the stdout pipe. Killing only the launcher leaves the pipe open and the
+/// reader blocked until the grandchild finishes on its own. `cmd /c ping`
+/// reproduces it with programs every Windows box has. `-n 8` caps what a
+/// regression costs (about seven seconds) instead of hanging the lane.
+const launcher_argv: []const []const u8 = &.{ "cmd", "/c", "ping", "-n", "8", "127.0.0.1" };
+
+test "the deadline ends a git whose real worker is a grandchild" {
+    if (comptime builtin.os.tag != .windows) return error.SkipZigTest;
+
+    var timer = try std.time.Timer.start();
+    const out = captureAllocDeadline(
+        testing.allocator,
+        launcher_argv,
+        1 << 20,
+        150,
+    ) orelse return error.SpawnFailed;
+    defer testing.allocator.free(out.bytes);
+    const elapsed_ms = timer.read() / std.time.ns_per_ms;
+
+    try testing.expect(out.timed_out);
+    // Well under the grandchild's own seven seconds: the TREE was ended, not
+    // just the launcher.
+    try testing.expect(elapsed_ms < 3_000);
+}
+
+fn cancelSoon(c: *Cancel) void {
+    std.Thread.sleep(150 * std.time.ns_per_ms);
+    c.request();
+}
+
+test "a cancel ends the git in flight, grandchild included, and answers nothing" {
+    if (comptime builtin.os.tag != .windows) return error.SkipZigTest;
+
+    var cancel: Cancel = .{};
+    cancel_on_thread = &cancel;
+    defer cancel_on_thread = null;
+    const t = try std.Thread.spawn(.{}, cancelSoon, .{&cancel});
+    defer t.join();
+
+    var timer = try std.time.Timer.start();
+    // A deadline far past the test: only the cancel can end this early.
+    const out = captureAllocDeadline(testing.allocator, launcher_argv, 1 << 20, 60_000);
+    const elapsed_ms = timer.read() / std.time.ns_per_ms;
+
+    try testing.expect(out == null);
+    try testing.expect(elapsed_ms < 3_000);
+}
+
+test "a worker that was already cancelled starts no git at all" {
+    if (comptime builtin.os.tag != .windows) return error.SkipZigTest;
+
+    var cancel: Cancel = .{};
+    cancel.request();
+    cancel_on_thread = &cancel;
+    defer cancel_on_thread = null;
+
+    const before = spawned_on_thread;
+    var buf: [64]u8 = undefined;
+    try testing.expect(capture(testing.allocator, launcher_argv, &buf) == null);
+    try testing.expect(captureAlloc(testing.allocator, launcher_argv, 64) == null);
+    try testing.expectEqual(before, spawned_on_thread);
 }
 
 test "a git that answers promptly is untouched by the deadline" {

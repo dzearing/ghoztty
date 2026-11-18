@@ -182,6 +182,10 @@ const Job = struct {
     out_unchanged: bool = false,
     /// git processes this job launched, for `git_processes`.
     out_git: u64 = 0,
+    /// Set by the pane's teardown so the join does not wait out a slow git
+    /// (T3045). Lives in the job because the job outlives nothing the worker
+    /// touches, and is freed only after that join.
+    cancel: git_run.Cancel = .{},
     out_untracked: std.ArrayList(UntrackedStat) = .empty,
 
     fn destroy(self: *Job) void {
@@ -272,6 +276,9 @@ pub fn init(alloc: Allocator) Probe {
 /// and a pane can be closed while git is still starting up.
 pub fn deinit(self: *Probe) void {
     if (self.thread) |t| {
+        // Stop the git in flight first (T3045): a listing is up to six gits in
+        // a row, 15 s deadline each, and this join runs on the GUI thread.
+        if (self.job) |j| j.cancel.request();
         t.join();
         self.thread = null;
     }
@@ -630,11 +637,16 @@ pub fn freeSnapshot(alloc: Allocator, entries: []Entry) void {
 
 fn work(self: *Probe, job: *Job) void {
     const before = git_run.spawned_on_thread;
+    git_run.cancel_on_thread = &job.cancel;
     switch (job.kind) {
         .listing => workListing(job),
         .patch => workPatch(job),
     }
+    // Pooled thread: the next job on it is somebody else's.
+    git_run.cancel_on_thread = null;
     job.out_git = git_run.spawned_on_thread - before;
+    // A cancelled job's pane is being torn down; nobody will read this post.
+    if (job.cancel.isRequested()) return;
     if (self.hwnd) |h| {
         if (w32.PostMessageW(h, self.message, 0, 0) == 0) {
             log.debug("diff completion could not be posted", .{});
@@ -1219,4 +1231,45 @@ test "an untracked file whose size and mtime have not moved keeps its count unre
     again.prior_untracked = &moved;
     workListing(again);
     try testing.expectEqual(@as(u32, 2), again.out_files.items[0].additions);
+}
+
+test "closing a pane mid-listing does not wait out a slow git (T3045)" {
+    if (comptime @import("builtin").os.tag != .windows) return error.SkipZigTest;
+
+    // A `git` that is slow the way the real one is shaped: a launcher (cmd)
+    // whose CHILD does the work and holds the output pipe, as Git for
+    // Windows' `cmd\git.exe` does. Seven seconds per call, and a listing is
+    // several calls, so a teardown that waits is unmistakable.
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "git.cmd", .data = "@ping -n 8 127.0.0.1\r\n" });
+    const stub_dir = try tmp.dir.realpathAlloc(testing.allocator, ".");
+    defer testing.allocator.free(stub_dir);
+
+    const old_path = try std.process.getEnvVarOwned(testing.allocator, "PATH");
+    defer testing.allocator.free(old_path);
+    const new_path = try std.fmt.allocPrint(testing.allocator, "{s};{s}", .{ stub_dir, old_path });
+    defer testing.allocator.free(new_path);
+    const name_w = try std.unicode.utf8ToUtf16LeAllocZ(testing.allocator, "PATH");
+    defer testing.allocator.free(name_w);
+    const new_w = try std.unicode.utf8ToUtf16LeAllocZ(testing.allocator, new_path);
+    defer testing.allocator.free(new_w);
+    const old_w = try std.unicode.utf8ToUtf16LeAllocZ(testing.allocator, old_path);
+    defer testing.allocator.free(old_w);
+    _ = w32.SetEnvironmentVariableW(name_w, new_w);
+    defer _ = w32.SetEnvironmentVariableW(name_w, old_w);
+
+    var p = Probe.init(testing.allocator);
+    // No window: the worker runs and posts nothing, which is all this needs.
+    p.spawn(try statusJob(stub_dir, false, null));
+    try testing.expect(p.busy());
+    // Let the first git get going, so the close lands mid-command.
+    std.Thread.sleep(400 * std.time.ns_per_ms);
+
+    var timer = try std.time.Timer.start();
+    p.deinit();
+    const elapsed_ms = timer.read() / std.time.ns_per_ms;
+    // Before T3045 this was the stub's seven seconds at least; the user saw it
+    // as the whole app frozen. Loose, so a loaded box cannot flake it.
+    try testing.expect(elapsed_ms < 2_000);
 }
