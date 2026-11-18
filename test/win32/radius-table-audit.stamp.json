@@ -1,8 +1,8 @@
 {
     "guard":  "radius-table",
     "script":  "test/win32/radius-table-audit.ps1",
-    "generated":  "2026-11-18T00:16:44-08:00",
-    "commit":  "99efd0c58",
+    "generated":  "2026-11-18T00:56:01-08:00",
+    "commit":  "3b32838bf",
     "uncommitted":  [
 
                     ],

@@ -616,8 +616,122 @@ public static class PerfRegions {
             return d;
         } finally { CloseHandle(h); }
     }
+
+    // T3130: the private_rw class split by ALLOCATION (one VirtualAlloc
+    // reservation), so a residue can be named by shape. Per allocation base:
+    // reserved bytes, committed bytes, and a kind -
+    //   heap_large  first qword points into an NT heap: a HEAP_VIRTUAL_ALLOC
+    //               block (malloc above the heap threshold), its LIST_ENTRY.
+    //   exact       the whole reservation is committed: what Zig's
+    //               page_allocator (and any VirtualAlloc(COMMIT|RESERVE)) makes.
+    //   arena       part of the reservation is only reserved: a grow-in-place
+    //               arena (GL driver pools, std.heap.ArenaAllocator never is).
+    // Returns base -> {reserve, commit, kind} as a flat long[3] (kind 0/1/2).
+    public static Dictionary<long, long[]> Allocs(int pid) {
+        Error = "";
+        IntPtr h = OpenProcess(0x0400 | 0x0010, false, pid);
+        if (h == IntPtr.Zero) { Error = "OpenProcess failed: " + Marshal.GetLastWin32Error(); return null; }
+        try {
+            var info = new Dictionary<long, long[]>(); // base -> reserve, commit, flags(1=guard,2=nonprivate,4=wc/nc,8=heap)
+            long addr = 0;
+            int size = Marshal.SizeOf(typeof(MBI));
+            while (true) {
+                MBI m;
+                if (VirtualQueryEx(h, new IntPtr(addr), out m, new IntPtr(size)) == IntPtr.Zero) break;
+                long rs = m.RegionSize.ToInt64();
+                if (rs <= 0) break;
+                if (m.State != 0x10000) {
+                    long ab = m.AllocationBase.ToInt64();
+                    long[] e;
+                    if (!info.TryGetValue(ab, out e)) { e = new long[4]; info[ab] = e; }
+                    e[0] += rs;
+                    if (m.State == 0x1000) {
+                        e[1] += rs;
+                        if ((m.Protect & 0x100) != 0) e[3] |= 1;
+                        if ((m.Protect & 0x600) != 0) e[3] |= 4;
+                    }
+                    if (m.Type != 0x20000) e[3] |= 2;
+                }
+                addr = m.BaseAddress.ToInt64() + rs;
+                if (addr <= 0) break;
+            }
+            byte[] buf = new byte[0x18];
+            var heaps = new List<long[]>(); // [base, end]
+            foreach (var kv in info) {
+                if ((kv.Value[3] & 7) != 0 || kv.Value[1] == 0) continue;
+                IntPtr got;
+                if (ReadProcessMemory(h, new IntPtr(kv.Key), buf, new IntPtr(buf.Length), out got) && got.ToInt64() == buf.Length) {
+                    uint sig = BitConverter.ToUInt32(buf, 0x10);
+                    if (sig == 0xffeeffeeu || sig == 0xddeeddeeu) { kv.Value[3] |= 8; heaps.Add(new long[] { kv.Key, kv.Key + kv.Value[0] }); }
+                }
+            }
+            var outp = new Dictionary<long, long[]>();
+            foreach (var kv in info) {
+                long[] e = kv.Value;
+                if ((e[3] & 15) != 0 || e[1] == 0) continue; // private_rw only
+                long kind = e[1] == e[0] ? 1 : 2;
+                IntPtr got;
+                if (ReadProcessMemory(h, new IntPtr(kv.Key), buf, new IntPtr(buf.Length), out got) && got.ToInt64() == buf.Length) {
+                    long flink = BitConverter.ToInt64(buf, 0);
+                    foreach (var hp in heaps) if (flink >= hp[0] && flink < hp[1]) { kind = 0; break; }
+                }
+                outp[kv.Key] = new long[] { e[0], e[1], kind };
+            }
+            return outp;
+        } finally { CloseHandle(h); }
+    }
 }
 '@
+}
+# T3130: the private_rw allocations, by base. Kept raw so two samples diff.
+function Get-AllocCensus([int]$ProcessId) {
+    $d = [PerfRegions]::Allocs($ProcessId)
+    if ($null -eq $d) { return @{ error = [PerfRegions]::Error } }
+    return $d
+}
+$script:AllocKinds = @('heap_large', 'exact', 'arena')
+function Get-AllocBucket([long]$Bytes) {
+    if ($Bytes -lt 64KB) { return 'lt64k' }
+    if ($Bytes -lt 1MB) { return '64k-1m' }
+    if ($Bytes -lt 4MB) { return '1m-4m' }
+    if ($Bytes -lt 16MB) { return '4m-16m' }
+    if ($Bytes -lt 64MB) { return '16m-64m' }
+    return 'ge64m'
+}
+# What B holds in private_rw that A did not: new allocations whole, grown
+# ones by their growth. Summed by kind and by committed-size bucket, plus the
+# 15 biggest, so "290 MB of private_rw" becomes "N exact 1-4 MB allocations".
+function Get-AllocDelta($A, $B) {
+    if ($A -is [hashtable] -or $B -is [hashtable]) { return [ordered]@{ error = 'an allocation census failed' } }
+    $byKind = [ordered]@{}; foreach ($k in $script:AllocKinds) { $byKind[$k] = [ordered]@{ mb = 0.0; count = 0 } }
+    $byBucket = [ordered]@{}
+    foreach ($bk in 'lt64k', '64k-1m', '1m-4m', '4m-16m', '16m-64m', 'ge64m') { $byBucket[$bk] = [ordered]@{ mb = 0.0; count = 0 } }
+    $rows = New-Object System.Collections.Generic.List[object]
+    $gone = 0.0
+    foreach ($base in @($B.Keys)) {
+        $e = $B[$base]
+        $was = if ($A.ContainsKey($base)) { [long]$A[$base][1] } else { 0 }
+        $grew = [long]$e[1] - $was
+        if ($grew -le 0) { continue }
+        $kind = $script:AllocKinds[[int]$e[2]]
+        $bucket = Get-AllocBucket ([long]$e[1])
+        $byKind[$kind].mb += $grew / 1MB; $byKind[$kind].count++
+        $byBucket[$bucket].mb += $grew / 1MB; $byBucket[$bucket].count++
+        $rows.Add([pscustomobject]@{ base = ('0x{0:x}' -f [long]$base); kind = $kind; reserve_mb = [math]::Round($e[0] / 1MB, 2); commit_mb = [math]::Round($e[1] / 1MB, 2); grew_mb = [math]::Round($grew / 1MB, 2); new = ($was -eq 0) })
+    }
+    foreach ($base in @($A.Keys)) { if (-not $B.ContainsKey($base)) { $gone += [long]$A[$base][1] / 1MB } }
+    foreach ($k in @($byKind.Keys)) { $byKind[$k].mb = [math]::Round($byKind[$k].mb, 1) }
+    foreach ($k in @($byBucket.Keys)) { $byBucket[$k].mb = [math]::Round($byBucket[$k].mb, 1) }
+    # Same-size allocations, most bytes first: N copies of one size is one owner's shape.
+    $sizes = @($rows | Where-Object { $_.new } | Group-Object commit_mb | ForEach-Object { [pscustomobject]@{ commit_mb = [double]$_.Name; count = $_.Count; total_mb = [math]::Round([double]$_.Name * $_.Count, 1); kinds = (@($_.Group | ForEach-Object kind | Sort-Object -Unique) -join '+') } } | Sort-Object total_mb -Descending | Select-Object -First 12)
+    return [ordered]@{
+        grew_mb = [math]::Round((($rows | Measure-Object grew_mb -Sum).Sum), 1)
+        released_mb = [math]::Round($gone, 1)
+        by_kind = $byKind
+        by_bucket = $byBucket
+        by_size = $sizes
+        top = @($rows | Sort-Object grew_mb -Descending | Select-Object -First 15)
+    }
 }
 function Get-RegionCensus([int]$ProcessId) {
     $d = [PerfRegions]::Census($ProcessId)
@@ -1359,6 +1473,7 @@ try {
             $start = Get-FullSample $a.Pid 'start' -Settle
             $census = @(Get-ObjectCensus $a.Pid)
             $regions = [ordered]@{ start = Get-RegionCensus $a.Pid }
+            $allocs = @{ start = Get-AllocCensus $a.Pid }
             $cycles = @()
             # One open/close cycle; returns its open and closed samples.
             function Invoke-PaneCycle([int]$c) {
@@ -1396,6 +1511,7 @@ try {
                 if (-not (Wait-PaneCount $paneTotal 30)) { throw "expected $paneTotal panes, +list shows $(@(Get-PaneLeaves).Count)" }
                 Start-Sleep -Seconds 4
                 $open = Get-FullSample $a.Pid "open $c" -Settle
+                if ($c -eq 1) { $allocs.open1 = Get-AllocCensus $a.Pid }
                 for ($m = $made.Count - 1; $m -ge 0; $m--) {
                     $r = Invoke-Verb @('+close', "--target=$($made[$m])")
                     if ($r.Code -ne 0) { throw "+close $($made[$m]) failed: $($r.Text)" }
@@ -1408,7 +1524,7 @@ try {
             foreach ($c in 1, 2) {
                 $cy = Invoke-PaneCycle $c
                 $census += Get-ObjectCensus $a.Pid
-                if ($c -eq 1) { $regions.cycle1_closed = Get-RegionCensus $a.Pid }
+                if ($c -eq 1) { $regions.cycle1_closed = Get-RegionCensus $a.Pid; $allocs.cycle1_closed = Get-AllocCensus $a.Pid }
                 $cycles +=[ordered]@{ open = (Format-Sample $cy.Open); closed = (Format-Sample $cy.Closed) }
             }
 
@@ -1513,6 +1629,14 @@ try {
             $regions.first_cycle = Get-RegionDelta $regions.start $regions.cycle1_closed
             if ($regions.Contains('settle_start')) { $regions.settled = Get-RegionDelta $regions.settle_start $regions.last_closed }
             if ($regions.Contains('closed_idle')) { $regions.idle = Get-RegionDelta $regions.last_closed $regions.closed_idle }
+            # T3130: private_rw by allocation - what the first cycle grew, and what 10 open panes hold.
+            if ($allocs.Contains('cycle1_closed')) {
+                $regions.private_rw_allocs = [ordered]@{
+                    method = 'T3130: VirtualQueryEx walk grouped by AllocationBase, private_rw allocations only; kind heap_large = first qword points into an NT heap (a HEAP_VIRTUAL_ALLOC block), exact = the whole reservation committed (Zig page_allocator shape), arena = part of the reservation only reserved (grow-in-place pools, e.g. GL driver arenas). first_cycle = start -> cycle 1 closed; open1 = start -> 10 panes open in cycle 1. New allocations count whole, grown ones by their growth'
+                    first_cycle = Get-AllocDelta $allocs.start $allocs.cycle1_closed
+                }
+                if ($allocs.Contains('open1')) { $regions.private_rw_allocs.open1 = Get-AllocDelta $allocs.start $allocs.open1 }
+            }
             $result.cycle.regions = $regions
             if ($null -eq $first.gpu_dedicated_mb) { $result.cycle.gpu_reason = 'GPU Process Memory counters unreadable on this box' }
 
