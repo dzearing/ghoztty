@@ -1865,6 +1865,13 @@ switch ($Command) {
         if ($Status -eq 'done' -and $before -and $before.UserReport) {
             $pubScript = Join-Path $PSScriptRoot 'daily-publish.ps1'
             $reason = "{0}: {1}" -f $tid, $(if ($before.Title) { $before.Title } else { 'a task the user reported' })
+            # PS 5.1 hands a native exe each argument wrapped in quotes but does
+            # NOT escape quotes inside it, so a title quoting an error message
+            # ("error starting IO thread ...", T3251) split into stray positional
+            # arguments and the request was never written. A reason is prose for
+            # a log line: single quotes read the same, and a trailing backslash
+            # (which would escape the closing quote) is dropped for the same reason.
+            $reason = ($reason -replace '"', "'").TrimEnd('\')
             # A fixture task dir is somebody testing this script; it must not
             # write the real box's publish request. GHOZTTY_PUBLISH_REQUEST_PATH
             # is how the acceptance harness points the write at its own sandbox

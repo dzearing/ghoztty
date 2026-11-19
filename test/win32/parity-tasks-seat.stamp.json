@@ -1,15 +1,14 @@
 {
     "guard":  "parity-tasks",
     "script":  "test/win32/parity-tasks-seat.ps1",
-    "generated":  "2026-11-17T21:46:34-08:00",
-    "commit":  "48a9121aa",
+    "generated":  "2026-11-19T06:41:43-08:00",
+    "commit":  "fdb827b6e",
     "uncommitted":  [
-                        "scripts/parity-tasks.ps1",
-                        "test/win32/parity-tasks-seat.ps1"
+                        "scripts/parity-tasks.ps1"
                     ],
     "files":  {
                   "scripts/lib/CardRot.ps1":  "c0ee5e1d432d4ad22f7a5020db60edae29b5cc3f4271f1ce9c8627490b6f3a74",
-                  "scripts/parity-tasks.ps1":  "5b6451c555412fbe26966a63e6328d01bde3c55cf1aed8b7af99d529b57876a5",
+                  "scripts/parity-tasks.ps1":  "cc6c31e848857822727a9e2026194cb26aba3e8ad9cf684083cf6c68471e1102",
                   "test/win32/parity-tasks-seat.ps1":  "d202bdfea3be44ab895459efc924351344c1f48d65e5fb9eaaa27605c03a91e2"
               }
 }

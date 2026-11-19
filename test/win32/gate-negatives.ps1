@@ -990,6 +990,28 @@ try {
         ([System.IO.File]::ReadAllText($fReported) -match '(?mi)^-.*publish request filed') `
         'no receipt in T1.md'
 
+    # T3251: a title that QUOTES an error message. PS 5.1 does not escape
+    # embedded double quotes when it passes the reason to daily-publish.ps1, so
+    # the request split into stray positional arguments and was never written.
+    # Written straight to disk because the same trap would mangle it on the way
+    # in through `new -Title`.
+    $qDir = New-CaseDir 'userreport-quoted-title'
+    $qReq = Join-Path $Sandbox 'publish-request-quoted'
+    Write-Ascii (Join-Path $qDir 'T30.md') @(
+        '---', 'id: T30', 'title: "panes show \"error starting IO thread\" after a relaunch"', 'deps: []',
+        'status: "todo"', 'commits: []', 'seat: "win"', 'user-report: true', '---',
+        '', '# T30 - fixture', '', '## Progress log', '', '- 2026-11-19 00:00: filed'
+    )
+    $env:GHOZTTY_PUBLISH_REQUEST_PATH = $qReq
+    try {
+        $rQ = Invoke-Ps @('-File', $TaskScript, 'set-status', 'T30', '-Status', 'done', '-TaskDir', $qDir)
+        $qText = if (Test-Path -LiteralPath $qReq) { [System.IO.File]::ReadAllText($qReq) } else { '' }
+    }
+    finally { Remove-Item Env:GHOZTTY_PUBLISH_REQUEST_PATH -ErrorAction SilentlyContinue }
+    Check 'F5b a user report whose title quotes an error still files its publish request' `
+        ($rQ.Text -match 'PUBLISH REQUESTED' -and $qText -match 'T30' -and $qText -match 'error starting IO thread') `
+        "$($rQ.Text) | request: $qText"
+
     # The gate with teeth. A hand-edited status, a retro-flag, or a request
     # that could not be written all end here.
     $gDir = New-CaseDir 'userreport-unshipped'
