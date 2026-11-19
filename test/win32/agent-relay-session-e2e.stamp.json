@@ -1,22 +1,20 @@
 {
     "guard":  "agent-relay-session",
     "script":  "test/win32/agent-relay-session-e2e.ps1",
-    "generated":  "2026-11-19T08:42:13-08:00",
-    "commit":  "d5f1e5e93",
+    "generated":  "2026-11-19T09:11:31-08:00",
+    "commit":  "41d1705af",
     "uncommitted":  [
-                        "src/remote/agent/server.zig",
-                        "src/remote/connection.zig",
-                        "src/remote/protocol.zig"
+
                     ],
     "files":  {
                   "src/cli/sessions.zig":  "84d8ab29a13e76c03235a78f7e18a50f292b7c2a244e5fc89eca471eba170ea1",
                   "src/remote/agent/link_control.zig":  "e3138c9c1326081092f25b9c090388fe58a3561c17734a83778df474ededd40a",
                   "src/remote/agent/main.zig":  "3b33263f68a8d3b05e15957ca93065bc86f6e6b57bbae256750b30b32cb672d1",
                   "src/remote/agent/revoke_watch.zig":  "f9fcde81a20c06c12cb8f8b7876386ee8aa1055743cd78ec840ec86c8d207b90",
-                  "src/remote/agent/server.zig":  "425a0e8215e31f7b4edcc2352ef464074b9b32290881e1fe538210c7c55c8e0b",
+                  "src/remote/agent/server.zig":  "5e1cb5d5b89b1a31fedbfdc36b599f613d9adf560a134375255c5fcdca0f7497",
                   "src/remote/agent/session.zig":  "cc987315e33593e6efb528499f62b2a391b74336f1d4b6710a46402d0e9b3adc",
-                  "src/remote/connection.zig":  "b09a66c04e04cb770df7e16f47964f666ef7bbf448126cf005079e73b3663ee9",
-                  "src/remote/protocol.zig":  "25dc6aa8d88849f5a8423fd5d88fc94f7e8996e657ded4c27ab615d0068c62e7",
+                  "src/remote/connection.zig":  "28577c401d6c72ba49afb53a56da328bd149f8bfc08f005923503cc76aa1d4fb",
+                  "src/remote/protocol.zig":  "3f21cf8510519a923e9ea3d1c97798984a9e0d8a449e51b7fd0646c1fc135ad1",
                   "src/remote/relay_revoke_pending.zig":  "9f411c608f6002f393cf1167038837795c75f22ca4a85a9dbace683cd345cdec",
                   "src/remote/ws_client.zig":  "e5ebe28e8a2e5442c596a12fcaa6468d9646d9aaeaa08c40e5f1dce1e71370c2",
                   "test/win32/agent-relay-session-e2e.ps1":  "3453c9cb296d20986b43bc379ec6094eacb27c64be84db06cb90703b8032a06e",
