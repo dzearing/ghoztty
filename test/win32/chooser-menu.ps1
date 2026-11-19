@@ -363,9 +363,16 @@ try {
         Assert ($gap1 -gt (4 * $gap2)) "See Activity is set apart from New Window (gap $gap1 vs $gap2 inside the group)"
         # (Per-caption sizing is unit-tested in chooser_layout.zig: both
         # captions fall under the 96 DIP floor here, so widths cannot tell.)
+        # Both rects are SCREEN coordinates (Get-TestControls reports each
+        # child's GetWindowRect). This used to compare against the chooser's
+        # WIDTH, which only held while the chooser sat at x = 0; a chooser
+        # placed at x = 30 read a button 29 px inside its edge as outside (T1497).
         $crect = Get-TestWindowRect -Window $chooser
-        $inside = ($row | Where-Object { $_.Right -gt ($crect.Right - $crect.Left - $gap2) }).Count
-        Assert ($inside -eq 0) 'the whole run stays inside the detail pane'
+        $limit = $crect.Right - $gap2
+        $rightmost = ($row | Measure-Object Right -Maximum).Maximum
+        $inside = ($row | Where-Object { $_.Right -gt $limit -or $_.Left -lt $crect.Left }).Count
+        Assert ($inside -eq 0) ("the whole run stays inside the detail pane (rightmost {0}, chooser {1}..{2}, limit {3})" -f `
+            $rightmost, $crect.Left, $crect.Right, $limit)
     }
 
     # --- (1c) T177: Activity opens the Activity Monitor for THAT machine, and

@@ -175,6 +175,45 @@ function Get-Shot([IntPtr]$h) {
     return $shot
 }
 
+# Distinct colours in a SCREEN rect of a shot (stepped, capped at $Max).
+function Get-BandColors($Shot, [int]$X0, [int]$Y0, [int]$X1, [int]$Y1, [int]$Max = 16) {
+    $seen = @{}
+    for ($y = $Y0; $y -lt $Y1; $y += 2) {
+        for ($x = $X0; $x -lt $X1; $x += 2) {
+            $lx = $x - $Shot.Left
+            $ly = $y - $Shot.Top
+            if ($lx -lt 0 -or $ly -lt 0 -or $lx -ge $Shot.Width -or $ly -ge $Shot.Height) { continue }
+            $c = $Shot.Bitmap.GetPixel($lx, $ly)
+            $seen["$($c.R),$($c.G),$($c.B)"] = 1
+            if ($seen.Count -ge $Max) { return $seen.Count }
+        }
+    }
+    return $seen.Count
+}
+
+# A shot whose LIST has painted its first row (T1497). Get-Shot's guard is the
+# whole window, and the frame can be fully drawn while the list child has not
+# yet painted into the capture: on 2026-09-12, straight after another chooser
+# script, the frame read 64 colours and every row probe read 255 - gutter, pill,
+# mark band and text column alike - which is a capture of the list's blank
+# background, not of a row that drew the wrong colours. So the row probes wait
+# on the row band itself: a painted row holds the pill, its mark, a glyph and
+# text (many colours); a blank one holds one. Bounded, and it returns the last
+# shot either way, so a list that NEVER paints its row still fails the probes
+# below rather than being waited past.
+function Get-RowShot([IntPtr]$h, [int]$X0, [int]$Y0, [int]$X1, [int]$Y1) {
+    $shot = $null
+    for ($t = 0; $t -lt 10; $t++) {
+        if ($shot) { Close-TestWindowPixels $shot }
+        $shot = Get-Shot $h
+        if ($null -eq $shot) { continue }
+        $script:rowBandColors = Get-BandColors $shot $X0 $Y0 $X1 $Y1
+        if ($script:rowBandColors -ge 4) { break }
+        Start-Sleep -Milliseconds 150
+    }
+    return $shot
+}
+
 # Screen-coordinate pixel from a shot, as @(r, g, b).
 function Get-ShotPixel($Shot, [int]$X, [int]$Y) {
     $px = Get-TestPixel -Shot $Shot -X $X -Y $Y
@@ -477,6 +516,12 @@ try {
         $rowBot = $rowTop + $rowH
         $pillX0 = $lr.Left + (Get-TestChromeDip -Dip 4.0 -Scale $scale)
         $pillX1 = $lr.Left + (Get-TestChromeDip -Dip 60.0 -Scale $scale)
+        # The row band (pill + glyph + title) must be painted in the shot the
+        # row probes read, not only the frame (T1497).
+        $bandX1 = $lr.Left + (Get-TestChromeDip -Dip 110.0 -Scale $scale)
+        Close-TestWindowPixels $shot
+        $shot = Get-RowShot $chooser $lr.Left $rowTop $bandX1 $rowBot
+        Assert ($script:rowBandColors -ge 4) "the selected row has painted into the capture ($($script:rowBandColors) colours in its band)"
         $gutter = Get-ShotPixel $shot ($lr.Left + 3) $yRow0
         $pill = Get-ShotPixel $shot ($lr.Left + 14) $yRow0
         $unsel = Get-ShotPixel $shot ($lr.Left + 14) $yRow1
@@ -537,7 +582,7 @@ try {
         # One Tab from the filter is the list (`nextFocus`: filter -> list).
         Send-TestControlKey -Control $chooser -Key Tab | Out-Null
         Start-Sleep -Milliseconds 350
-        $shotFocus = Get-Shot $chooser
+        $shotFocus = Get-RowShot $chooser $lr.Left $rowTop $bandX1 $rowBot
         $pillF = Get-ShotPixel $shotFocus ($lr.Left + 14) $yRow0
         $pillFTint = $pillF[2] - $pillF[0]
         $markFocused = Get-MaxBlueTint $shotFocus $pillX0 $rowTop $markX1 $rowBot
@@ -557,7 +602,7 @@ try {
         # action, which is always visible.
         Send-TestControlKey -Control $chooser -Key Tab | Out-Null
         Start-Sleep -Milliseconds 350
-        $shotBlur = Get-Shot $chooser
+        $shotBlur = Get-RowShot $chooser $lr.Left $rowTop $bandX1 $rowBot
         $pillB = Get-ShotPixel $shotBlur ($lr.Left + 14) $yRow0
         $markBlur = Get-MaxBlueTint $shotBlur $pillX0 $rowTop $pillX1 $rowBot
         Close-TestWindowPixels $shotBlur
