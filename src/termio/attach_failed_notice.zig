@@ -62,7 +62,30 @@ pub const reason = struct {
     pub const malformed_request = "malformed_request";
     /// The agent declined to take on the attachment (wire token).
     pub const attach_refused = "attach_refused";
+    /// The link to the agent closed while the ATTACH was waiting (T3252).
+    /// Client-side: derived from `error.ConnectionClosed`, never on the wire.
+    pub const link_lost = "link_lost";
+    /// The agent never answered the ATTACH within the RPC bound (T3252).
+    /// Client-side: derived from `error.Timeout`, never on the wire.
+    pub const no_answer = "no_answer";
 };
+
+/// The token for a bring-up that failed in TRANSPORT rather than with an answer
+/// (T3252), or null when `err_name` is not one of those. Keyed on the error's
+/// name so this module stays free of the connection import, like
+/// `reasonForStatus` is free of the protocol one.
+///
+/// These two used to reach the pane as the generic IO-thread paint — "error
+/// starting IO thread: error.ConnectionClosed ... exhausting a system resource"
+/// — which is what a user saw after a relaunch, and which names neither the
+/// service that went away nor anything to do about it.
+pub fn reasonForTransport(err_name: []const u8) ?[]const u8 {
+    const eql = std.mem.eql;
+    if (eql(u8, err_name, "ConnectionClosed") or eql(u8, err_name, "BrokenPipe"))
+        return reason.link_lost;
+    if (eql(u8, err_name, "Timeout")) return reason.no_answer;
+    return null;
+}
 
 /// The token for an `ATTACHED` reply that yielded no live pane.
 ///
@@ -119,6 +142,20 @@ fn explain(r: []const u8) []const u8 {
     \\now.
     \\
     \\Close some panes or windows you are no longer using, then try again.
+    ;
+    if (eql(u8, r, reason.link_lost)) return
+    \\The connection to the background terminal service closed while this pane
+    \\was reconnecting. The session itself may still be running there.
+    \\
+    \\Close this pane and open a new one. `ghoztty +sessions` lists the
+    \\sessions the service still holds.
+    ;
+    if (eql(u8, r, reason.no_answer)) return
+    \\The background terminal service did not answer within 10 seconds while
+    \\this pane was reconnecting. It may be busy or stuck.
+    \\
+    \\Close this pane and open a new one. If new panes do the same, quit
+    \\Ghoztty and open it again.
     ;
     // An unknown token — a NEWER agent naming a reason this build has not
     // learned yet, or a status we do not map. Say the true part and lean on the
@@ -223,6 +260,8 @@ test "format: each known reason gets its own explanation" {
         reason.attached_elsewhere,
         reason.malformed_request,
         reason.attach_refused,
+        reason.link_lost,
+        reason.no_answer,
     };
     var seen: [reasons.len][]const u8 = undefined;
     for (reasons, 0..) |r, i| seen[i] = explain(r);
@@ -262,6 +301,27 @@ test "reasonForStatus: the status the agent already sent names the failure" {
     var buf: [max_len]u8 = undefined;
     const out = format(&buf, reasonForStatus("alive", false), null);
     try testing.expect(std.mem.indexOf(u8, out, "does not recognize") != null);
+}
+
+test "reasonForTransport: a dropped or silent agent is named, not blamed on system resources (T3252)" {
+    try testing.expectEqualStrings(reason.link_lost, reasonForTransport("ConnectionClosed").?);
+    try testing.expectEqualStrings(reason.link_lost, reasonForTransport("BrokenPipe").?);
+    try testing.expectEqualStrings(reason.no_answer, reasonForTransport("Timeout").?);
+    // Anything else keeps whatever path it had: this is not a catch-all.
+    try testing.expect(reasonForTransport("OutOfMemory") == null);
+    try testing.expect(reasonForTransport("RemoteAttachFailed") == null);
+
+    var buf: [max_len]u8 = undefined;
+    const lost = format(&buf, reason.link_lost, "phase=attach err=ConnectionClosed");
+    try testing.expect(std.mem.startsWith(u8, lost, headline));
+    try testing.expect(std.mem.indexOf(u8, lost, "connection to the background terminal service closed") != null);
+    try testing.expect(std.mem.indexOf(u8, lost, "system resource") == null);
+    try testing.expect(std.mem.indexOf(u8, lost, "Details: phase=attach") != null);
+
+    var buf2: [max_len]u8 = undefined;
+    const silent = format(&buf2, reason.no_answer, null);
+    try testing.expect(std.mem.indexOf(u8, silent, "did not answer within 10 seconds") != null);
+    try testing.expect(std.mem.indexOf(u8, silent, "system resource") == null);
 }
 
 test "format: no detail means no Details line" {

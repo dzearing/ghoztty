@@ -770,6 +770,57 @@ fn recordAttachFailure(self: *Remote, outcome: *const connection.AttachOutcome) 
     self.bring_up_notice_len = msg.len;
 }
 
+/// Which bring-up RPC a transport failure interrupted (T3252).
+const BringUpPhase = enum { attach, open };
+
+/// T3252: an OPEN/ATTACH that got NO answer — the link closed while it was
+/// parked (`ConnectionClosed`/`BrokenPipe`) or the agent stayed silent past the
+/// RPC bound (`Timeout`). Paint a message that names that, instead of the
+/// generic "error starting IO thread ... exhausting a system resource" text a
+/// user met after relaunching, and log the facts a field report needs to tell
+/// a dying agent from a busy one: the session, the agent build the link
+/// handshook with, the link state at failure, and how long we waited.
+///
+/// Any other error is left alone (a refusal already recorded its own notice;
+/// `Cancelled` is a teardown nobody sees). Called on the IO thread on the way
+/// out of a failing `threadEnter`, like the other `record*` helpers.
+fn recordTransportFailure(
+    self: *Remote,
+    phase: BringUpPhase,
+    session_id: ?[]const u8,
+    err: anyerror,
+    started_ms: i64,
+) void {
+    const r = attach_failed_notice.reasonForTransport(@errorName(err)) orelse return;
+    const waited_ms = std.time.milliTimestamp() - started_ms;
+    const link = self.conn.state();
+    const build = self.conn.peerBuildVersion();
+    log.warn(
+        "bring-up {s} got no answer err={s} session={s} local={} link={s} agent_build={s} waited_ms={d}",
+        .{
+            @tagName(phase),
+            @errorName(err),
+            session_id orelse "(new)",
+            self.local,
+            @tagName(link),
+            if (build) |b| @as([]const u8, b) else "unknown",
+            waited_ms,
+        },
+    );
+    var detail_buf: [attach_failed_notice.max_detail_len]u8 = undefined;
+    const detail = std.fmt.bufPrint(&detail_buf, "{s} err={s} link={s} waited={d}ms", .{
+        @tagName(phase),
+        @errorName(err),
+        @tagName(link),
+        waited_ms,
+    }) catch null;
+    const msg = switch (phase) {
+        .attach => attach_failed_notice.format(&self.bring_up_notice_buf, r, detail),
+        .open => open_failed_notice.format(&self.bring_up_notice_buf, r, detail),
+    };
+    self.bring_up_notice_len = msg.len;
+}
+
 /// The message to paint instead of the generic IO-thread failure text, or null
 /// when this pane's bring-up failed for a reason we have nothing better to say
 /// about (a timeout, a dead link, an agent too old to answer a refusal).
@@ -891,6 +942,7 @@ pub fn threadEnter(
             if (self.restore_snapshot) |s| s.len else 0,
         });
         var attach_refusal: protocol.RefusalCopy = .{};
+        const attach_started_ms = std.time.milliTimestamp();
         var outcome = self.conn.attachChannelRefusable(
             sid,
             rows,
@@ -910,6 +962,11 @@ pub fn threadEnter(
             // payload, and without this the pane would come up blank and blame
             // a timeout for a refusal that took milliseconds.
             if (err == error.AttachRefused) self.recordAttachRefusal(attach_refusal);
+            // T3252: no answer at all — the link closed under us or the agent
+            // stayed silent. Say THAT in the pane, and log what a field report
+            // needs to tell the two apart (which session, which agent build,
+            // what the link thought it was, and how long we waited).
+            self.recordTransportFailure(.attach, sid, err, attach_started_ms);
             return err;
         };
         // There is no steal retry here any more (T703). §5.3 specified one — a
@@ -1187,12 +1244,14 @@ pub fn threadEnter(
         // place and then recorded nothing, so the next restore lost it again.
         if (self.working_directory) |cwd| attach_cwd = cwd;
         var refusal: protocol.RefusalCopy = .{};
+        const open_started_ms = std.time.milliTimestamp();
         const p = self.conn.openChannelRefusable(open, &self.canceller, &refusal) catch |err| {
             // The agent told us WHY it will not open this pane (T469). Keep the
             // sentence for the failure paint below — the error itself carries no
             // payload, and without this the pane would come up blank and then
             // blame `error.Timeout` for a refusal that took milliseconds.
             if (err == error.OpenRefused) self.recordOpenRefusal(refusal);
+            self.recordTransportFailure(.open, null, err, open_started_ms);
             return err;
         };
         // T1687: the restore gave this pane's session to another pane (T1684)
@@ -3118,6 +3177,34 @@ test "T657 every ATTACHED status that yields no pane maps to its own sentence" {
     const missing = attach_failed_notice.format(&a, reason.session_not_found, null);
     const ended = attach_failed_notice.format(&b, reason.session_ended, null);
     try testing.expect(!std.mem.eql(u8, missing, ended));
+}
+
+test "T3252 the no-answer errors the connection returns map to a pane notice" {
+    const testing = std.testing;
+    // Same coupling as T657, the other way round: `reasonForTransport` matches
+    // ERROR NAMES as strings, so a rename in `connection.PendingError` would
+    // silently put the relaunch failure back on the "exhausting a system
+    // resource" paint. These are the exact errors `rpcCall` hands an OPEN or
+    // ATTACH that never got an answer (`PendingRpc.PendingError`).
+    const reason = attach_failed_notice.reason;
+    const closed: anyerror = error.ConnectionClosed;
+    const timeout: anyerror = error.Timeout;
+    try testing.expectEqualStrings(
+        reason.link_lost,
+        attach_failed_notice.reasonForTransport(@errorName(closed)).?,
+    );
+    try testing.expectEqualStrings(
+        reason.no_answer,
+        attach_failed_notice.reasonForTransport(@errorName(timeout)).?,
+    );
+    // ...and both render a real sentence on the OPEN side too, not the
+    // unknown-token fallback.
+    var buf: [open_failed_notice.max_len]u8 = undefined;
+    for ([_][]const u8{ reason.link_lost, reason.no_answer }) |r| {
+        const out = open_failed_notice.format(&buf, r, null);
+        try testing.expect(std.mem.indexOf(u8, out, "does not recognize") == null);
+        try testing.expect(std.mem.indexOf(u8, out, "system resource") == null);
+    }
 }
 
 test "T824 replay_mode_reset disarms every mode a dead TUI could leave armed" {

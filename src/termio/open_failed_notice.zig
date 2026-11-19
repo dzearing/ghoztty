@@ -73,6 +73,23 @@ fn explain(reason: []const u8) []const u8 {
     \\The background terminal service could not understand the request to
     \\open this pane. This is a bug; please report it.
     ;
+    // T3252: the two CLIENT-side tokens (`attach_failed_notice.reasonForTransport`
+    // derives them from the error; the agent never sends them). An OPEN that
+    // never got an answer used to reach the pane as "exhausting a system
+    // resource".
+    if (eql(u8, reason, "link_lost")) return
+    \\The connection to the background terminal service closed before it
+    \\answered the request to open this pane.
+    \\
+    \\Close this pane and open a new one.
+    ;
+    if (eql(u8, reason, "no_answer")) return
+    \\The background terminal service did not answer within 10 seconds. It
+    \\may be busy or stuck.
+    \\
+    \\Close this pane and open a new one. If new panes do the same, quit
+    \\Ghoztty and open it again.
+    ;
     // An unknown token — i.e. a NEWER agent naming a reason this build has not
     // learned yet. Say the true part (it was refused, deliberately) and lean on
     // the detail below for the rest, rather than either inventing an
@@ -174,7 +191,7 @@ test "format: names the cap and what to do about it" {
 }
 
 test "format: each known reason gets its own explanation" {
-    const reasons = [_][]const u8{ "session_cap", "spawn_failed", "out_of_memory", "malformed_request" };
+    const reasons = [_][]const u8{ "session_cap", "spawn_failed", "out_of_memory", "malformed_request", "link_lost", "no_answer" };
     var seen: [reasons.len][]const u8 = undefined;
     for (reasons, 0..) |r, i| seen[i] = explain(r);
 
