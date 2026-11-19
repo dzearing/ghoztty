@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-18T20:37:35-08:00",
-    "commit":  "d9091f448",
+    "generated":  "2026-11-18T20:59:35-08:00",
+    "commit":  "7b751d61f",
     "uncommitted":  [
-                        "test/win32/session-blades-update.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -392,7 +392,7 @@
                   "test/win32/pane-grab-handle.ps1":  "d0abccbdc04d0e399b5fda02f14e3d701d8f6e99ed1d54f217023af089745c6c",
                   "test/win32/pane-hwnd-reap.ps1":  "93f787edbf5abb1a9841dfd3b52f05a076871ab29cb4dccde3c51489828d9dba",
                   "test/win32/pane-id.ps1":  "710f1f30c57bb798b7ac487cef16a07339692ed6bc3b4da99dc17dedda6f1ad0",
-                  "test/win32/pane-ingest-ab.ps1":  "8a1c931c42ef7e346459a13bbd3c4a8e31a581ca00247520423b3d2bca6e984b",
+                  "test/win32/pane-ingest-ab.ps1":  "b912d766a33952db7fede76109fe0eb7f09420b7f89975b495dac4d09edf5ba7",
                   "test/win32/pane-ingest-lag.ps1":  "1edc18cdbb6b7cf3450ee030f4a674d3a94e77b7d96a63a70e4a3d9197616dcf",
                   "test/win32/pane-sidebar.ps1":  "b2a65cde8fa769058aaff14b26505f282e0dad23352851095e04f2a4a0850e11",
                   "test/win32/pane-sidebar-actions.ps1":  "a9198ff447cc50f3d61e94b0ef27a1637656293818a7b6b35a3c0141c6c60ac3",
@@ -487,7 +487,7 @@
                   "test/win32/send-keys-bracketed.ps1":  "3f04c907b40d40409069ee8fe9369820cd96c2c6644567ddfd70d8fdb41bec10",
                   "test/win32/send-keys-soak.ps1":  "6e4525ec0b24fb88c38af8b42a0206d37c6dea2e458613f7c6e0bc9881aec5b9",
                   "test/win32/session-blades.ps1":  "621d8785c63f028ceb9b9465ee6720e2725a3f26b6a9fe067e20acff617e6ce3",
-                  "test/win32/session-blades-update.ps1":  "788f1b6527f14fa4f9f65fd9ae3e50a3d5e977b3841215d935bf02938e3788b1",
+                  "test/win32/session-blades-update.ps1":  "a0650b65e7dfe27cad9ec8eb2868bfe5ebd630cb7b2b6e41ae6870752d70e979",
                   "test/win32/session-close.ps1":  "bc90db94c85a72b761db89dbde0baf409845d5df67f23997b425b6d922455ed1",
                   "test/win32/session-crash-recover.ps1":  "bd9d751e4413b22f27cf7a4cbac0f63290367e8c7e262e9d1dbdfdef1573ff24",
                   "test/win32/session-layout-geometry-race.ps1":  "cccb50a65d08201453c84af1cf2cc3dcdac8bf90b87871a29d7dfc0a1ee9a161",

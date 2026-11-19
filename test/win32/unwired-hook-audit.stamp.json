@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-18T20:18:35-08:00",
-    "commit":  "2b237eb9f",
+    "generated":  "2026-11-18T20:39:05-08:00",
+    "commit":  "7b751d61f",
     "uncommitted":  [
 
                     ],
@@ -1566,7 +1566,7 @@
                   "test/win32/terminal-link-paths.ps1":  "6fd5a42894831216f8371205fb6ab089201ddbdfda7aace1ee4cf2b42eec67f3",
                   "test/win32/test-binary-soak.ps1":  "96c647eb2fcbdef023f99868ab73bec7341befc23f0a14f2a9eacd4aefa64f3c",
                   "test/win32/test-client-build.ps1":  "57d43fa496cfb634e8b4bf3a96fd6f57c9dcf860009cf6e901bcd702093ceb0f",
-                  "test/win32/test-desktop-harness.ps1":  "d56ce86ffd7aca30705ea6c293d0d07800407c54d1b50a0421c4aa0632fabba1",
+                  "test/win32/test-desktop-harness.ps1":  "77eba27ffdbca2b9f422df3f0e3d32b1db9b753dafdc9b00ab532cde26b862ae",
                   "test/win32/test-desktop-spike.ps1":  "cfa0cf0ad43a56a151cdb010d10d016d5734af34f3dd0e89cc415a02f0524d06",
                   "test/win32/test-filter-guard.ps1":  "8804ee177e925a2cdfbc14a75f80ec01b217378a80025b55c80d7831c2beec00",
                   "test/win32/test-reach-audit.ps1":  "d562023bb072125237aafc17961b81b82356c130003acc64ede75fd73186bf51",
