@@ -1,8 +1,8 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-19T01:14:04-08:00",
-    "commit":  "46d489fce",
+    "generated":  "2026-11-19T01:25:55-08:00",
+    "commit":  "1ece7b084",
     "uncommitted":  [
 
                     ],
@@ -326,7 +326,7 @@
                   "test/win32/lib/PipeBridge.ps1":  "448d2d97a731911d9a9dea55e529a64a546e425cbf38df6ba3bb083d7794000d",
                   "test/win32/lib/PixelOracleAudit.ps1":  "7b18849da492030e15f819601e3fbde28f4042cd6e9c3ab6b11063b22071937b",
                   "test/win32/lib/PixelScan.ps1":  "41c312f9a9db8bd3b6402118af61aa445e6f25f2dfa15f2bd45d1fe5731bb73d",
-                  "test/win32/lib/ProcessMemory.ps1":  "d742e9813857e5dff6e8c1a9559ebb392c4826bcf61d10c4e768760edc38b5b1",
+                  "test/win32/lib/ProcessMemory.ps1":  "c5983686f20d70603eac79578a1575c89b32c5121c96b9126eafe398f623a2b3",
                   "test/win32/lib/RadiusTableAudit.ps1":  "5318bf1f2556edcdafd90f5c7da8680d271f1012e597c612a59c56b91cf4f5fb",
                   "test/win32/lib/RebootShape.ps1":  "6f38d632f286dc5514f3e7973f82bcb7481953e17a20aa8215f631b8521a5c45",
                   "test/win32/lib/RetiredClaims.ps1":  "3fbaacd49f9341d0c4cf7c4a03ed0487a1d371cf6b395e9984cf2ea12f5876bb",
@@ -425,7 +425,7 @@
                   "test/win32/parity-tasks-seat.ps1":  "d202bdfea3be44ab895459efc924351344c1f48d65e5fb9eaaa27605c03a91e2",
                   "test/win32/parity-tasks-split-deps.ps1":  "4cae00c40c97f85c7a4b6871ff32a8276cb752fe7c6c8a5120844dd614e71a78",
                   "test/win32/path-selfheal.ps1":  "fcf69db5534ad019cfdd035ded0ffb29e62cd51cc0c08488ef345c7e2134e367",
-                  "test/win32/perf-baseline-reader.ps1":  "37f53082a2016a1314b68fe59045876bc904f7c10b754125873c7e4cdf1e609c",
+                  "test/win32/perf-baseline-reader.ps1":  "c0cecdd910918c63517af4321be7b780437527f91eb3a5aea846a7b6c82fd78e",
                   "test/win32/persistence-flag.ps1":  "c8d93f1a71d3d4f19304d948c1e00bedfd6a1cd6abda7382c62c81504b224920",
                   "test/win32/persistent-state.ps1":  "e8e10a48df6586dde45f0fef13d3343059bd89eb7c277f6f55805416ff5ec7ce",
                   "test/win32/pixel-oracle-audit.ps1":  "1af4585a75c0eba82c2b7dcb88ab4a8c4f1cd1e75db5624afd0bbb2bb51ab163",

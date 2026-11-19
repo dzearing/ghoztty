@@ -1305,6 +1305,35 @@ pub const Connection = struct {
         protocol.capability.holder_lost,
     };
 
+    /// `client_capabilities` for a connection to THIS machine's own agent (the
+    /// session-persistence pipe on Windows, the 0600 unix socket on macOS) —
+    /// everything except `session_busy` (T3243).
+    ///
+    /// `META{has_descendants}` exists for a pane whose shell is in no process
+    /// table the app can walk. A local-agent pane is not one: its shell is a
+    /// real pid on this box, and the close path walks this box's own table at
+    /// close time, which is the exact answer and wins (`Surface.shellIsIdle`).
+    /// Advertising the capability anyway is what made the agent walk the whole
+    /// process table every second, all day, for an answer nobody read — at
+    /// idle that was the agent's largest cost (T3235). Withholding it is
+    /// skew-safe in both directions: an older agent never sampled without it,
+    /// and an older app keeps advertising it and keeps being sampled for.
+    ///
+    /// Derived from `client_capabilities` rather than listed, so a capability
+    /// added there reaches the local agent too and the two lists cannot drift.
+    pub const local_client_capabilities = blk: {
+        var out: [client_capabilities.len - 1][]const u8 = undefined;
+        var n: usize = 0;
+        for (client_capabilities) |cap| {
+            if (std.mem.eql(u8, cap, protocol.capability.session_busy)) continue;
+            out[n] = cap;
+            n += 1;
+        }
+        if (n != out.len) @compileError("client_capabilities must list session_busy exactly once");
+        const final = out;
+        break :blk final;
+    };
+
     /// `create` with explicit health/heartbeat tunables (increment 2).
     ///
     /// THREAD-SAFETY INVARIANT: `alloc` MUST be thread-safe. `start` spawns the

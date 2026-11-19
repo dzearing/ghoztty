@@ -187,7 +187,7 @@ pub fn dialTimeout(
     sock.* = socket_stream.SocketStream.init(stream.handle);
     // `dialConnected` takes ownership of `sock` (closes + destroys it on any
     // failure), so no errdefer here.
-    return dialConnected(alloc, .{ .sock = sock }, sock.connectionStream(), encoding, handshake_timeout_ns, null, null);
+    return dialConnected(alloc, .{ .sock = sock }, sock.connectionStream(), encoding, .other_machine, handshake_timeout_ns, null, null);
 }
 
 /// Default deadline shared by `dialUnix`; the same rationale as
@@ -238,7 +238,7 @@ pub fn dialUnixTimeout(
     sock.* = socket_stream.SocketStream.init(fd);
     // `dialConnected` takes ownership of `sock` (closes + destroys it on any
     // failure) — cancel the raw-fd errdefer above by returning through it.
-    return dialConnected(alloc, .{ .sock = sock }, sock.connectionStream(), encoding, handshake_timeout_ns, null, null);
+    return dialConnected(alloc, .{ .sock = sock }, sock.connectionStream(), encoding, .this_machine, handshake_timeout_ns, null, null);
 }
 
 /// Connect to a Windows named pipe at `name` (a full `\\.\pipe\...` path) —
@@ -294,7 +294,7 @@ pub fn dialPipeTimeoutReport(
     pipe.* = pipe_stream.PipeStream.init(handle);
     // `dialConnected` takes ownership of `pipe` (closes + destroys it on any
     // failure).
-    return dialConnected(alloc, .{ .pipe = pipe }, pipe.connectionStream(), encoding, handshake_timeout_ns, report, tick);
+    return dialConnected(alloc, .{ .pipe = pipe }, pipe.connectionStream(), encoding, .this_machine, handshake_timeout_ns, report, tick);
 }
 
 /// `Connection.waitHandshakeTimeout`, sliced so a caller-supplied `tick` runs
@@ -334,6 +334,29 @@ fn waitHandshakeTicking(
     }
 }
 
+/// Which agent a dial reaches, which decides what this client advertises.
+///
+/// The local transports (the Windows named pipe, the macOS unix socket) only
+/// ever reach THIS machine's own agent, and TCP only ever reaches another
+/// machine's, so the transport is the one place both apps' every dial passes
+/// through that already knows the answer (T3243).
+pub const Peer = enum {
+    /// This box's own agent: a pane on it has a real local shell pid, so the
+    /// per-second `META{has_descendants}` sampling would answer a question the
+    /// app already answers better itself.
+    this_machine,
+    /// Another machine's agent: the app cannot walk that process table, so it
+    /// asks for the pushed answer.
+    other_machine,
+
+    pub fn capabilities(self: Peer) []const []const u8 {
+        return switch (self) {
+            .this_machine => &connection.Connection.local_client_capabilities,
+            .other_machine => &connection.Connection.client_capabilities,
+        };
+    }
+};
+
 /// Shared post-connect core for every transport (TCP, AF_UNIX, named pipe):
 /// given an already heap-allocated transport wrapper and its connection-side
 /// stream, fold the two logical lanes through a `ClientMux`, stand up + start a
@@ -346,6 +369,7 @@ fn dialConnected(
     transport: Dialed.Transport,
     stream: connection.Stream,
     encoding: protocol.TransferEncoding,
+    peer: Peer,
     handshake_timeout_ns: u64,
     report: ?*DialReport,
     tick: ?WaitTick,
@@ -365,7 +389,10 @@ fn dialConnected(
     errdefer mux.destroy();
 
     // 3. Create the connection over the mux's two lanes with our HELLO.
-    const hello: protocol.Hello = .{ .transfer_encoding = encoding };
+    const hello: protocol.Hello = .{
+        .transfer_encoding = encoding,
+        .capabilities = peer.capabilities(),
+    };
     const conn = mux.createConnection(alloc, hello) catch |e| {
         return e;
     };
@@ -675,10 +702,46 @@ fn dialWithTick(
         return e;
     };
     sock.* = socket_stream.SocketStream.init(stream.handle);
-    return dialConnected(alloc, .{ .sock = sock }, sock.connectionStream(), .raw, timeout_ns, null, tick);
+    return dialConnected(alloc, .{ .sock = sock }, sock.connectionStream(), .raw, .other_machine, timeout_ns, null, tick);
 }
 
 var tick_test_calls: usize = 0;
+
+fn advertised(conn: *const connection.Connection, cap: []const u8) bool {
+    for (conn.local_hello.capabilities) |c| {
+        if (std.mem.eql(u8, c, cap)) return true;
+    }
+    return false;
+}
+
+/// What a dial put in its HELLO is exactly the list for its peer, and the only
+/// difference between the two lists is `session_busy` (T3243).
+fn expectAdvertises(conn: *const connection.Connection, peer: Peer) !void {
+    try testing.expectEqual(peer.capabilities().len, conn.local_hello.capabilities.len);
+    try testing.expectEqual(peer == .other_machine, advertised(conn, protocol.capability.session_busy));
+    try testing.expect(advertised(conn, protocol.capability.close_session));
+    try testing.expect(advertised(conn, protocol.capability.holder_lost));
+}
+
+test "Peer: this machine's agent is offered everything but session_busy (T3243)" {
+    const local = Peer.this_machine.capabilities();
+    const remote = Peer.other_machine.capabilities();
+    try testing.expectEqual(remote.len - 1, local.len);
+    for (remote) |cap| {
+        const in_local = for (local) |l| {
+            if (std.mem.eql(u8, l, cap)) break true;
+        } else false;
+        try testing.expectEqual(!std.mem.eql(u8, cap, protocol.capability.session_busy), in_local);
+    }
+    // Negotiated against an agent that offers it, the local connection leaves the
+    // flag off (so the agent never samples for it) and keeps every other one.
+    const agent: protocol.Hello = .{ .transfer_encoding = .raw, .capabilities = remote };
+    const n_local = try protocol.negotiate(.{ .transfer_encoding = .raw, .capabilities = local }, agent);
+    const n_remote = try protocol.negotiate(.{ .transfer_encoding = .raw, .capabilities = remote }, agent);
+    try testing.expect(!n_local.session_busy);
+    try testing.expect(n_remote.session_busy);
+    try testing.expect(n_local.close_session and n_local.holder_lost);
+}
 
 fn countingTick(ctx: ?*anyopaque) void {
     tick_test_calls += 1;
@@ -775,6 +838,9 @@ test "waitHandshakeTicking: a handshake that SUCCEEDS is not delayed to a slice 
         .{ .ctx = &calls, .func = countingTick, .interval_ns = 20 * std.time.ns_per_ms },
     );
     try testing.expectEqual(enc, dialed.negotiated.transfer_encoding);
+    // A TCP dial reaches another machine's agent, whose panes' shells the app
+    // cannot walk, so it still asks for `META{has_descendants}` (T3243).
+    try expectAdvertises(dialed.conn, .other_machine);
 
     dialed.deinit();
     agent_thread.join();
@@ -815,6 +881,8 @@ test "dialUnix: stands up a Connection over a real AF_UNIX socket, OPEN + DATA r
     // Dial the unix socket (the T09b path).
     var dialed = try dialUnix(alloc, path, enc);
     try testing.expectEqual(enc, dialed.negotiated.transfer_encoding);
+    // The macOS app's local agent: no per-second busy sampling asked for (T3243).
+    try expectAdvertises(dialed.conn, .this_machine);
 
     // OPEN a session.
     const pane = try dialed.conn.openChannel(.{ .rows = 24, .cols = 80 });
@@ -864,6 +932,8 @@ test "dialPipe: stands up a Connection over a real named pipe, OPEN + DATA round
     // Dial the pipe (the T89c path).
     var dialed = try dialPipe(alloc, name, enc);
     try testing.expectEqual(enc, dialed.negotiated.transfer_encoding);
+    // The Windows app's local agent: no per-second busy sampling asked for (T3243).
+    try expectAdvertises(dialed.conn, .this_machine);
 
     // OPEN a session.
     const pane = try dialed.conn.openChannel(.{ .rows = 24, .cols = 80 });
