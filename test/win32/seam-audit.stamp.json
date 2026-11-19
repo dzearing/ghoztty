@@ -1,16 +1,10 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-19T08:15:25-08:00",
-    "commit":  "d320abd7b",
+    "generated":  "2026-11-19T08:29:17-08:00",
+    "commit":  "8c14d8fff",
     "uncommitted":  [
-                        "src/apprt/win32/agent_upgrade.zig",
-                        "src/apprt/win32/App.zig",
-                        "src/apprt/win32/msg_timer.zig",
-                        "src/remote/agent/server.zig",
-                        "src/remote/connection.zig",
-                        "src/remote/protocol.zig",
-                        "test/win32/seam-audit.registry.json"
+
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -638,7 +632,7 @@
                   "src/renderer/upload_diff.zig":  "8bb6fef63da22a53f707f3b1d0f3cd6aeec8260f21baea53b3d35b6852237a55",
                   "src/renderer/wake_coalesce.zig":  "56c3615b0a70b6f704ac61fda870f83e3f6246b44c10d51ba94ec348b13a0db2",
                   "src/renderer/WebGL.zig":  "963023a42188b6d00f8a1a645653d82cf8204e7aed3a7c94946a6b004cae07fd",
-                  "src/termio/attach_failed_notice.zig":  "4e2bd13143f7b65eb9ed2d5ea66cb028c4c32cd4704fb26af284fbe51e8fe4c2",
+                  "src/termio/attach_failed_notice.zig":  "b55be52efe949b44482b1354eae9395d6ebb5dcc046f8a1c95e0f639ebc0c199",
                   "src/termio/backend.zig":  "96c7db442eb93e1a2c8156f73b5a91a447a72f66a75cea3d0b030e448a9f0a6d",
                   "src/termio/conpty_sync_hold.zig":  "3674f41c08c9257d82578e47c2761d03dcd72a59613d137bf61484fc1b35a0f1",
                   "src/termio/Exec.zig":  "7eb306886888e1f97fd44bbf74f39d67a41d73758c6a4406d93609a8eb60d001",
@@ -646,10 +640,10 @@
                   "src/termio/history_guard.zig":  "f06519c1f847bf49afb69a8252e45c15f1aa482d2203c6b7d29bd6f0c30e40d0",
                   "src/termio/mailbox.zig":  "a11ec1efee3774609ebbff8f50ceb44f8a556860cb04945d9944bb701f9a8edc",
                   "src/termio/message.zig":  "ba96d510bb78f2c31075eb3a4179abd4f101aa6ede62a67769e4bcb6143c50f8",
-                  "src/termio/open_failed_notice.zig":  "b1bb823e0da76a5767696caa8a8730ffa543ef857a3b37d9d33115ffb4549283",
+                  "src/termio/open_failed_notice.zig":  "709aba3d06eb0a956a167b00dde2231439d7f7dd43535bad8d2eb36811019d8e",
                   "src/termio/Options.zig":  "f6d8184ad4488ccdb76571a7e87300607beb9a4d5d77a8300dd92e2cd757d5e0",
                   "src/termio/read_coalesce.zig":  "a3c1d8fbbf4797ed5bb314012ef712cb960aaf575895eee6f77cb09220108995",
-                  "src/termio/Remote.zig":  "191fe77a18e2887688d4ddeac04a988a80828c5b983d7348139e3d3c6de44db2",
+                  "src/termio/Remote.zig":  "a4e0a4b236c6f5a7a7cafc3b5436290e47f161101176e65aa898d17859fae3ff",
                   "src/termio/restore_history.zig":  "544cdf75e6182afec8cccf7e6fa1fa6205680841a98b92754dbdca7d3bcdc083",
                   "src/termio/restore_park.zig":  "1e68d21a293216cfb5a003f0fa1cb494ba031fe4d7ac236b4f5ccd168e6f50bd",
                   "src/termio/session_notice.zig":  "3e45dd25c959c1b10ec5d004d1f555293b481ecb7e0a89ff7e3667ee75776f3f",
