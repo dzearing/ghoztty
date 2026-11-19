@@ -2020,6 +2020,23 @@ $GuardTable = @(
             'src\remote\agent_build.zig'
         )
     },
+    # T3252: a full quit + relaunch brings EVERY pane back attached - six panes,
+    # so the restore's attaches queue behind each other (the T3254 shape), and a
+    # second arm relaunching while an agent handoff is in flight. The covered
+    # files are the client side of a bring-up: the connection's reply matching,
+    # the termio attach path and the two failure notices it paints.
+    [pscustomobject]@{
+        Name   = 'relaunch-attach'
+        Script = 'test\win32\relaunch-attach.ps1'
+        Stamp  = 'test\win32\relaunch-attach.stamp.json'
+        Covers = @(
+            'test\win32\relaunch-attach.ps1',
+            'src\remote\connection.zig',
+            'src\termio\Remote.zig',
+            'src\termio\attach_failed_notice.zig',
+            'src\termio\open_failed_notice.zig'
+        )
+    },
     # T3251: the same self-replacement in the shape a REAL delivery produces - the
     # running agent renamed aside (`.old-<stamp>` by the in-app updater) rather
     # than launched from a backup name, which is all agent-handoff.ps1 ever did.

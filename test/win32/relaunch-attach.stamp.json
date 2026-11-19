@@ -1,0 +1,16 @@
+{
+    "guard":  "relaunch-attach",
+    "script":  "test/win32/relaunch-attach.ps1",
+    "generated":  "2026-11-19T09:27:21-08:00",
+    "commit":  "5f0d2d95d",
+    "uncommitted":  [
+                        "test/win32/relaunch-attach.ps1"
+                    ],
+    "files":  {
+                  "src/remote/connection.zig":  "28577c401d6c72ba49afb53a56da328bd149f8bfc08f005923503cc76aa1d4fb",
+                  "src/termio/attach_failed_notice.zig":  "b55be52efe949b44482b1354eae9395d6ebb5dcc046f8a1c95e0f639ebc0c199",
+                  "src/termio/open_failed_notice.zig":  "709aba3d06eb0a956a167b00dde2231439d7f7dd43535bad8d2eb36811019d8e",
+                  "src/termio/Remote.zig":  "a4e0a4b236c6f5a7a7cafc3b5436290e47f161101176e65aa898d17859fae3ff",
+                  "test/win32/relaunch-attach.ps1":  "01fc2a2fab656ee7c9846cf96916239c99d95cd57df4ff471a9ff8999a581068"
+              }
+}
