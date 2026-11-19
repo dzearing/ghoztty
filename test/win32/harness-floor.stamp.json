@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-19T04:59:17-08:00",
-    "commit":  "81a560bbc",
+    "generated":  "2026-11-19T06:09:16-08:00",
+    "commit":  "3d24e09e5",
     "uncommitted":  [
-                        "test/win32/viewer-slow-path.ps1"
+                        "test/win32/agent-handoff-rename.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -25,6 +25,7 @@
                   "test/win32/agent-autostart.ps1":  "bff12ecf95f2c4aaa14fc390a967c1dd1f61749fb4c1a98f8f4490b0f4757d16",
                   "test/win32/agent-first-answer.ps1":  "9c9f092829b9334f23e2bbd700cd98339d2946cce8757548fa9a32b5191e9a3d",
                   "test/win32/agent-handoff.ps1":  "6ccd1314241e48120a71319b2782aec34e4ba29cbb8dcef144d4253fae43aa1f",
+                  "test/win32/agent-handoff-rename.ps1":  "e92bac83fcbde3a3ae3a134ee6227ebfabe1ecfe84b69027c9ed2439ade6d06e",
                   "test/win32/agent-instance-lineage.ps1":  "ee821ee2c358468422cc619b5dab844c35ab3aa4f73d229ae7051a45966e314f",
                   "test/win32/agent-integrations.ps1":  "2b8083f671e2e50fc51f87896710960a8bfb61a737f256676a43f6c191fa83bd",
                   "test/win32/agent-job-escape.ps1":  "948ab51135538139eb3b3395ee633bf2e698b26a19d39c6578474b981ae825d2",
@@ -608,7 +609,6 @@
                   "test/win32/viewer-panes.ps1":  "f483995862ca20b10fff8f76f8c5ff34661f5edbea82716fd12ad7c3aa5d8d95",
                   "test/win32/viewer-popup.ps1":  "026091bd991f9e035761626527cdc873d5af02d5376f941b003448bb6faa7f6d",
                   "test/win32/viewer-restore.ps1":  "13aca3347611d5a5da9619c76cc0b2787f7c70ac3f2c3f0d485803d87c920beb",
-                  "test/win32/viewer-slow-path.ps1":  "4a5a0ac38b934693518a0b2d023cbf6b4440442c2e2d7fadfea66ea48d1aa552",
                   "test/win32/viewer-toc-emphasis.ps1":  "4111f265f10e605dbe667242d2ae6907b115a834782af1b1d171645aeb45ffe0",
                   "test/win32/viewer-toc-handle.ps1":  "c03d9bea47d45df56e8df941ddc0e2156e4af4b5474a2ecf2ec4e1672b97ab9d",
                   "test/win32/viewer-window-chords.ps1":  "98a12374e5503edcbc5fbdefde9cd8d82bd5bcf59089e0775e18b3787a3c02e7",

@@ -2020,6 +2020,21 @@ $GuardTable = @(
             'src\remote\agent_build.zig'
         )
     },
+    # T3251: the same self-replacement in the shape a REAL delivery produces - the
+    # running agent renamed aside (`.old-<stamp>` by the in-app updater) rather
+    # than launched from a backup name, which is all agent-handoff.ps1 ever did.
+    # That gap let the agent on every release box go unreplaced across four
+    # updates. Agent-only and about ten seconds, so it is cheap to keep due.
+    [pscustomobject]@{
+        Name   = 'agent-handoff-rename'
+        Script = 'test\win32\agent-handoff-rename.ps1'
+        Stamp  = 'test\win32\agent-handoff-rename.stamp.json'
+        Covers = @(
+            'test\win32\agent-handoff-rename.ps1',
+            'src\remote\agent\handoff.zig',
+            'src\apprt\win32\update_apply.zig'
+        )
+    },
     # The agent-upgrade DECISION as the user meets it (T147/T125/T907), and the
     # row T1037 exists because of: the policy grew a whole new arm when the agent
     # learned to replace itself, four of this harness's assertions became wrong

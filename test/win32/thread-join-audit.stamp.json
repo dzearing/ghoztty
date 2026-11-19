@@ -1,10 +1,10 @@
 {
     "guard":  "thread-join",
     "script":  "test/win32/thread-join-audit.ps1",
-    "generated":  "2026-11-19T04:44:49-08:00",
-    "commit":  "afc1907f3",
+    "generated":  "2026-11-19T05:45:01-08:00",
+    "commit":  "3d24e09e5",
     "uncommitted":  [
-
+                        "src/remote/agent/handoff.zig"
                     ],
     "files":  {
                   "src/datastruct/array_list_collection.zig":  "f14f6cc26a11eabdd35a36976dce1b3702a2c7f4771b60e339afd1015d4e58dd",
@@ -26,7 +26,7 @@
                   "src/remote/agent/foreground.zig":  "82275d0b6662ba646b4df91534b666f21eaaee6de7f111b85545f96391597388",
                   "src/remote/agent/grid_snapshot.zig":  "0f09e46caa81c3444c458a42227e342f5f374b3555ea47a7e3e9a169b1fe0593",
                   "src/remote/agent/grid_snapshot_budget.zig":  "a5b7511700bc74a6127d46f0dff6148ecb14e459df1602770ba0e6c1743413bb",
-                  "src/remote/agent/handoff.zig":  "b7534f638350af783ae5884676a7b9b85f6746f689d23848e58ac159d0bfedf9",
+                  "src/remote/agent/handoff.zig":  "3ffbc1ebd2a6752ac58994f16796eeb21c70bea19b48f75eb8c9571b5e988469",
                   "src/remote/agent/holder_adopt.zig":  "364d11b359dad4497047e51922c728a816e34c9aa24e15e198927ab4acba261b",
                   "src/remote/agent/keepalive.zig":  "178584c3f9dfd67a8b00076c2ef4147631495461fec17fad8cd0a45d6cb9cb4e",
                   "src/remote/agent/layout_meta.zig":  "7541949239eed45aec6cd00297fa95e56239239e8aab33600439f258f81a00be",

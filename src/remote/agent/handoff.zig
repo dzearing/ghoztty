@@ -198,6 +198,20 @@ pub fn isGo(raw: []const u8) bool {
 /// Returns the input unchanged when it carries no such suffix, which is the
 /// steady state (a freshly installed agent has never been renamed).
 pub fn stripBackupSuffix(path: []const u8) []const u8 {
+    // The in-app updater's shape (T3251): `update_apply.sidelineName` renames
+    // the running agent to `ghoztty-agent.exe.old-<unix stamp>` so msiexec can
+    // write the new build at the canonical path. This is how EVERY release box
+    // takes an update, and before T3251 it was not recognised at all, so a
+    // handoff-capable agent never once replaced itself after an in-app update.
+    if (std.mem.lastIndexOf(u8, path, ".old-")) |at| {
+        const digits = path[at + ".old-".len ..];
+        if (digits.len > 0 and at > 0) {
+            for (digits) |c| {
+                if (!std.ascii.isDigit(c)) break;
+            } else return path[0..at];
+        }
+    }
+
     const marker = ".bak";
     // Find the LAST `.bak` that starts a suffix of the form `.bak` or `.bak-…`,
     // so `.exe.bak-2026…` and `.exe.bak` both resolve to `.exe`.
@@ -211,6 +225,52 @@ pub fn stripBackupSuffix(path: []const u8) []const u8 {
         if (rest.len == 0 or rest[0] == '-') return path[0..i];
     }
     return path;
+}
+
+/// The last path component of `path` (either separator).
+fn leafName(path: []const u8) []const u8 {
+    const at = std.mem.lastIndexOfAny(u8, path, "\\/") orelse return path;
+    return path[at + 1 ..];
+}
+
+/// The handoff candidate when our image may have been renamed WHILE RUNNING
+/// (T3251).
+///
+/// `launch_path` is the path the process was started from — what
+/// `std.fs.selfExePath` returns on Windows, because it reads the PEB's
+/// `ImagePathName`, which a rename never updates. `current_leaf` is the file
+/// name the running image carries NOW (from the mapped section, which does
+/// follow a rename), or null when it could not be read.
+///
+/// Before T3251 the supervisor looked only at `launch_path`, so it could see a
+/// rename only for an agent that had been LAUNCHED from a backup name — which is
+/// exactly what the acceptance scripts did, and what no real delivery does. A
+/// real delivery renames the running `ghoztty-agent.exe` aside and writes the
+/// new build in its place; seen through the PEB, nothing had happened.
+///
+/// Renames are always within the install directory (both the updater and the
+/// upgrade script rename in place, so a rename is atomic and cannot fail for
+/// space), so only the LEAF of the current name matters and the device-form
+/// path never has to be translated back into a drive letter.
+pub fn candidateFor(
+    launch_path: []const u8,
+    current_leaf: ?[]const u8,
+    exists: *const fn ([]const u8) bool,
+) ?[]const u8 {
+    if (current_leaf) |cur| {
+        const launch_leaf = leafName(launch_path);
+        if (cur.len > 0 and
+            !std.ascii.eqlIgnoreCase(cur, launch_leaf) and
+            std.ascii.eqlIgnoreCase(stripBackupSuffix(cur), launch_leaf))
+        {
+            // We were renamed aside from the very name we were launched under,
+            // so whatever sits at that name now is a different file.
+            if (!exists(launch_path)) return null;
+            return launch_path;
+        }
+    }
+    // Launched from a backup name (the pre-T3251 test shape), or not renamed.
+    return candidatePath(launch_path, exists);
 }
 
 /// The path of the binary a handoff would run, or null when there is none to
@@ -360,6 +420,35 @@ const win = struct {
         lpBytesLeftThisMessage: ?*windows.DWORD,
     ) callconv(.winapi) windows.BOOL;
 
+    extern "kernel32" fn GetModuleHandleW(lpModuleName: ?[*:0]const u16) callconv(.winapi) ?windows.HMODULE;
+
+    extern "kernel32" fn K32GetMappedFileNameW(
+        hProcess: windows.HANDLE,
+        lpv: ?*anyopaque,
+        lpFilename: [*]u16,
+        nSize: windows.DWORD,
+    ) callconv(.winapi) windows.DWORD;
+
+    /// The file name our running image carries NOW, as UTF-8 in `buf` (T3251).
+    ///
+    /// Asked of the mapped image section rather than the PEB: the section's
+    /// file object follows a rename, the PEB's `ImagePathName` is frozen at
+    /// launch. The answer is NT device form (`\Device\HarddiskVolume3\...`), and
+    /// only the leaf is returned because only the leaf is needed (see
+    /// `candidateFor`). Null on any failure, which `candidateFor` reads as "not
+    /// renamed" — the pre-T3251 behavior, never a guess.
+    fn currentImageLeaf(buf: []u8) ?[]const u8 {
+        const base = GetModuleHandleW(null) orelse return null;
+        var wbuf: [1024]u16 = undefined;
+        const n = K32GetMappedFileNameW(windows.GetCurrentProcess(), @ptrCast(base), &wbuf, wbuf.len);
+        if (n == 0 or n >= wbuf.len) return null;
+        const wide = wbuf[0..n];
+        const at = std.mem.lastIndexOfScalar(u16, wide, '\\');
+        const leaf_w = if (at) |i| wide[i + 1 ..] else wide;
+        const len = std.unicode.utf16LeToUtf8(buf, leaf_w) catch return null;
+        return buf[0..len];
+    }
+
     fn takeForceFlag(alloc: Allocator) bool {
         if (!@import("agent_build_options").is_debug) return false;
         const v = std.process.getEnvVarOwned(alloc, env_force) catch return false;
@@ -437,7 +526,9 @@ const win = struct {
         fn tick(self: *SupervisorImpl) void {
             const exe = internal_os.self_exe.productExePathAlloc(self.alloc) catch return;
             defer self.alloc.free(exe);
-            const candidate = candidatePath(exe, fileExists) orelse return;
+            var leaf_buf: [std.fs.max_path_bytes]u8 = undefined;
+            const leaf = currentImageLeaf(&leaf_buf);
+            const candidate = candidateFor(exe, leaf, fileExists) orelse return;
 
             const stamp = self.candidateStamp(candidate) orelse return;
 
@@ -806,6 +897,56 @@ test "stripBackupSuffix undoes what every delivery does to the running image" {
     try testing.expectEqualStrings("C:\\p\\a.bak.exe", stripBackupSuffix("C:\\p\\a.bak.exe"));
     try testing.expectEqualStrings("C:\\bak\\a.exe", stripBackupSuffix("C:\\bak\\a.exe"));
     try testing.expectEqualStrings("", stripBackupSuffix(""));
+
+    // The in-app updater's shape (T3251), the one every release box sees.
+    try testing.expectEqualStrings(
+        "C:\\p\\Ghoztty\\ghoztty-agent.exe",
+        stripBackupSuffix("C:\\p\\Ghoztty\\ghoztty-agent.exe.old-1794933656"),
+    );
+    try testing.expectEqualStrings("ghoztty-agent.exe", stripBackupSuffix("ghoztty-agent.exe.old-1"));
+    // Only digits make a sideline: these are somebody else's files.
+    try testing.expectEqualStrings("a.exe.old-keep", stripBackupSuffix("a.exe.old-keep"));
+    try testing.expectEqualStrings("a.exe.old-", stripBackupSuffix("a.exe.old-"));
+    try testing.expectEqualStrings(".old-5", stripBackupSuffix(".old-5"));
+}
+
+test "candidateFor: an image renamed WHILE RUNNING finds the build laid down at its launch name (T3251)" {
+    const Fake = struct {
+        fn yes(_: []const u8) bool {
+            return true;
+        }
+        fn no(_: []const u8) bool {
+            return false;
+        }
+    };
+    const launch = "C:\\Users\\u\\AppData\\Local\\Programs\\Ghoztty\\ghoztty-agent.exe";
+
+    // The production shape on every release box: launched as ghoztty-agent.exe,
+    // sidelined by the in-app updater, the new build written at the old name.
+    // Through the PEB alone this resolved to null, and the agent never handed off.
+    try testing.expectEqualStrings(launch, candidateFor(launch, "ghoztty-agent.exe.old-1794933656", Fake.yes).?);
+    // The upgrade script's shape, same story.
+    try testing.expectEqualStrings(launch, candidateFor(launch, "ghoztty-agent.exe.bak-20260803-090358", Fake.yes).?);
+    try testing.expectEqualStrings(launch, candidateFor(launch, "GHOZTTY-AGENT.EXE.bak", Fake.yes).?);
+
+    // Renamed, but nothing was written back: nothing to adopt.
+    try testing.expect(candidateFor(launch, "ghoztty-agent.exe.old-1", Fake.no) == null);
+
+    // Not renamed (the steady state), or the current name is unreadable: never
+    // our own path — handing off to ourselves is a restart with extra steps.
+    try testing.expect(candidateFor(launch, "ghoztty-agent.exe", Fake.yes) == null);
+    try testing.expect(candidateFor(launch, null, Fake.yes) == null);
+    try testing.expect(candidateFor(launch, "", Fake.yes) == null);
+
+    // Renamed to something that is not one of OUR backup shapes: not evidence.
+    try testing.expect(candidateFor(launch, "ghoztty-agent.exe.old-keep", Fake.yes) == null);
+    try testing.expect(candidateFor(launch, "other.exe.bak", Fake.yes) == null);
+
+    // Launched FROM a backup name (what the acceptance scripts do) still works,
+    // with or without a readable current name.
+    const bak = "C:\\p\\ghoztty-agent.exe.bak";
+    try testing.expectEqualStrings("C:\\p\\ghoztty-agent.exe", candidateFor(bak, "ghoztty-agent.exe.bak", Fake.yes).?);
+    try testing.expectEqualStrings("C:\\p\\ghoztty-agent.exe", candidateFor(bak, null, Fake.yes).?);
 }
 
 test "candidatePath: only a renamed image has a newer build beside it" {
