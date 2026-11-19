@@ -23,6 +23,9 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+# T3258: this run's OWN agent lineage (pipe, guard, state dir), minted before
+# anything launches, so every reset below kills only what this run started.
+[void](Set-GhozttyTestAgentLineage -Tag 'agpipe')
 
 # T1029: the build-mode + freshness pre-flight (lib\BuildMode.ps1, loaded by
 # CleanSlate). `+sessions` below runs $Exe, and a release-lineage CLI dials the
@@ -84,8 +87,11 @@ function Stop-TestProcs {
     # T351: the shared, path-exact kill (lib\CleanSlate.ps1). -AgentOnly because
     # the subject here is the AGENT: the app is left where it is. The remote test
     # client below is this script's own litter, so it stays local.
-    [void](Stop-RepoGhoztty -Exe $Exe -AgentOnly -SettleMs 0)
+    [void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -AgentOnly -SettleMs 0)
+    # T3258: only the clients dialing THIS run's pipe (per-PID name), so a
+    # concurrent run's client is left alone.
     Get-CimInstance Win32_Process -Filter "Name='remote-test-client.exe'" |
+        Where-Object { $_.CommandLine -and $_.CommandLine.Contains("--pipe=$pipe") } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Milliseconds 500
 }

@@ -43,6 +43,12 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+# T3258 (T691 tranche 3): the test-desktop helpers sit beside the kill because the
+# lineage-scoped kill asks them which ghoztty.exe pids this run launched.
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T3258: this run's OWN agent lineage (pipe, guard, state dir), minted before
+# anything launches, so every reset below kills only what this run started.
+[void](Set-GhozttyTestAgentLineage -Tag 'autost')
 # T1140: the one reboot shape (app + manager + every PTY holder).
 . (Join-Path $PSScriptRoot 'lib\RebootShape.ps1')
 
@@ -88,7 +94,7 @@ function Stop-TestProcs {
     # T351: one shared, path-exact kill (lib\CleanSlate.ps1) instead of a private
     # copy - the filter this replaced also matched a detached instance running from
     # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
-    [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 700)
+    [void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -SettleMs 700)
 }
 
 # T1238: on the TEST DESKTOP. The `cmd /c "... > file"` dance this replaced
@@ -169,7 +175,6 @@ Assert-GhozttyPrivateEndpoint -Exe $Exe
 
 # T1238: the GUI and every CLI call below start on a background test desktop,
 # so this script no longer throws a window across whatever the user is reading.
-. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 $td = New-TestDesktop
 
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
@@ -228,7 +233,7 @@ $portFile = Join-Path $aStateDir 'port.json'
 $oldAgentPid = 0
 try { $oldAgentPid = [int]((Get-Content $portFile -Raw | ConvertFrom-Json).pid) } catch {}
 Assert "B1 agent alive before the proxy kill" ($oldAgentPid -gt 0 -and $null -ne (Get-Process -Id $oldAgentPid -ErrorAction SilentlyContinue))
-$reboot = Stop-RebootShape -Exe $Exe -SettleMs 800
+$reboot = Stop-RebootShape -Exe $Exe -SettleMs 800 -ScopeToLineage
 Assert "B2 agent dead after the proxy kill" ($null -eq (Get-Process -Id $oldAgentPid -ErrorAction SilentlyContinue))
 Assert "B2b surviving holders died too (a reboot leaves nothing running)" ($reboot.Survivors -eq 0)
 # Not vacuous: A7 saw one live session, so with holders on (the default) there

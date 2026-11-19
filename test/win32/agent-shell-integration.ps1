@@ -49,6 +49,12 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+# T3258 (T691 tranche 3): the test-desktop helpers sit beside the kill because the
+# lineage-scoped kill asks them which ghoztty.exe pids this run launched.
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T3258: this run's OWN agent lineage (pipe, guard, state dir), minted before
+# anything launches, so every reset below kills only what this run started.
+[void](Set-GhozttyTestAgentLineage -Tag 'shellint')
 
 # T1511: the shared scorer, and the dot-source is also what ARMS the run - a
 # body that unwinds before `Complete-TestBody` may not print a pass, and the
@@ -69,7 +75,7 @@ function Stop-TestProcs {
     # T351: one shared, path-exact kill (lib\CleanSlate.ps1) instead of a private
     # copy - the filter this replaced also matched a detached instance running from
     # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
-    [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 900)
+    [void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -SettleMs 900)
 }
 
 # Run one CLI call; stdout+stderr -> $out, returns the exit code ($null on a
@@ -160,7 +166,6 @@ $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 [void](Set-GhozttyTestIsolation -Tag 't151')
 Assert-GhozttyPrivateEndpoint -Exe $Exe
-. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 $td = New-TestDesktop
 
 # ============================================================================
