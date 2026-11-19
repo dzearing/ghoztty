@@ -1,15 +1,15 @@
 {
     "guard":  "process-family",
     "script":  "test/win32/process-family.ps1",
-    "generated":  "2026-11-17T15:37:43-08:00",
-    "commit":  "9b53852a3",
+    "generated":  "2026-11-19T11:27:17-08:00",
+    "commit":  "f8ea28360",
     "uncommitted":  [
-
+                        "scripts/loop-session.ps1"
                     ],
     "files":  {
                   "scripts/go-loop-pane-probe.ps1":  "e491be3477c3236c4e10af70db2f40e9d632c45f83bf860f4b09fe6eeda5e2b7",
                   "scripts/lib/ProcessFamily.ps1":  "63beb65412f8da3f6cbc32d025be1adde445e46327e5ec2c5361bc0a6972cfac",
-                  "scripts/loop-session.ps1":  "b740488567c16271fab9015223cf9b5d175db2219a000e878ac20d1e033128e6",
+                  "scripts/loop-session.ps1":  "30da7a362b46ee687db80e7d6a6feb6508b595caf918e603aebfe3f77d0f01dd",
                   "scripts/soak-daemon.ps1":  "9b573c837b02c45c2be053a2f2d6f9f1024363ba531b35a5bf7c25a86b8df3ad",
                   "scripts/test-binary-soak.ps1":  "2cc93833d651a51bc19eba0446827b48a75738f3ad4700f199e4cf522566fc2e",
                   "test/win32/lib/PaneIdle.ps1":  "d4f72b019a04fadbd308a08f89445ac1d009c9660842c5c079feeaeaae776697",

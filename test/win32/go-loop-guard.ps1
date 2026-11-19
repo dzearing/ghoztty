@@ -4132,6 +4132,82 @@ Assert 'CC73 an api-error re-enters on the cadence and banners nothing' `
     ($r.Out -match $qhReentry -and $r.Out -notmatch 'banner the loop pane|BANNERED' -and $qhLines.Count -eq 1)
 $env:GHOZTTY_LOOP_ALERT_SINK = $qhPrevSink
 
+# --- CC74-CC85. a block is recorded on the tick that SEES it (T1487) ---------
+#
+# WHY. The dashboard bar (T1484) reads recovery_blocked*, and only a recovery
+# ACTION used to write it: the first record landed after the stall arms (45m+)
+# plus the rearm hold-off, and a lifted block stayed on the screen until a turn
+# completed. The watchdog classifies on every 5-minute poll anyway, so the
+# observing tick now stamps the verdict, and an unblocked tick clears it.
+""
+"CC74. the block is recorded on the observing tick, and cleared the same way"
+$obNow = Get-Date '2026-09-10T12:00:00'
+$obUsage = @{ Blocked = $true; Kind = 'usage-limit'; Why = 'spend limit'; ResetsAt = '2026-09-12 01:00'; NeedsUser = $false }
+$obNone = @{ Blocked = $false; Kind = 'none'; Why = ''; ResetsAt = ''; NeedsUser = $false }
+$obS = Get-LoopBlockerStamp -State $null -TurnKey 'started=A' -Blocker $obUsage -Now $obNow
+Assert 'CC74 a first observation stamps the blocker, keyed to the turn, since now' `
+    ($obS.recovery_blocked -eq $true -and $obS.recovery_blocked_kind -eq 'usage-limit' -and
+     $obS.recovery_turn_key -eq 'started=A' -and $obS.recovery_blocked_since -eq $obNow.ToString('o') -and
+     $obS.recovery_blocked_resets_at -eq '2026-09-12 01:00' -and $obS.recovery_needs_user -eq $false)
+$obPrev = [pscustomobject]@{ recovery_turn_key = 'started=A'; recovery_ineffective = 7; recovery_blocked = $true
+    recovery_blocked_kind = 'usage-limit'; recovery_blocked_why = 'spend limit'; recovery_blocked_since = 'EARLIER' }
+$obS = Get-LoopBlockerStamp -State $obPrev -TurnKey 'started=A' -Blocker $obUsage -Now $obNow
+Assert 'CC75 an observation carries the re-entry count and never bumps it' ($obS.recovery_ineffective -eq 7)
+Assert 'CC76 and keeps "since" from the first tick that saw this same blocker' ($obS.recovery_blocked_since -eq 'EARLIER')
+$obS = Get-LoopBlockerStamp -State $obPrev -TurnKey 'started=A' -Blocker (@{ Blocked = $true; Kind = 'api-error'; Why = '529'; NeedsUser = $false }) -Now $obNow
+Assert 'CC77 a different blocker starts its own "since"' ($obS.recovery_blocked_since -eq $obNow.ToString('o'))
+$obS = Get-LoopBlockerStamp -State $obPrev -TurnKey 'started=B' -Blocker $obUsage -Now $obNow
+Assert 'CC78 and so does the same blocker in a new turn, whose count starts at 0' `
+    ($obS.recovery_blocked_since -eq $obNow.ToString('o') -and $obS.recovery_ineffective -eq 0)
+$obS = Get-LoopBlockerStamp -State $obPrev -TurnKey 'started=A' -Blocker $obNone -Now $obNow
+Assert 'CC79 an unblocked tick clears a standing record, why and remedy included' `
+    ($obS -and $obS.recovery_blocked -eq $false -and $obS.recovery_blocked_why -eq '' -and
+     $obS.recovery_needs_user -eq $false -and $obS.recovery_remedy -eq '' -and -not $obS.Contains('recovery_ineffective'))
+Assert 'CC80 an unblocked tick over an unblocked record writes nothing' `
+    ($null -eq (Get-LoopBlockerStamp -State ([pscustomobject]@{ recovery_blocked = $false }) -TurnKey 'started=A' -Blocker $obNone) -and
+     $null -eq (Get-LoopBlockerStamp -State $null -TurnKey 'started=A' -Blocker $obNone))
+$obS = Get-LoopBlockerStamp -State $null -TurnKey 'started=A' -Blocker $ccLoginV -WindowMarker '[go-loop b]'
+Assert 'CC81 a login blocker is stamped as needing the user, with the lane window in the remedy' `
+    ($obS.recovery_needs_user -eq $true -and $obS.recovery_remedy -match '/login' -and $obS.recovery_remedy -match '\[go-loop b\]')
+
+# The wiring: a HEALTHY tick (young turn, nothing stalled) over a blocked
+# transcript - the window the old code could not see at all.
+Remove-Item $lock, $state -Force -ErrorAction SilentlyContinue
+$obProc = Start-Sleeper; $sleepers += $obProc
+Lock-Run @('acquire', '-PaneId', 'PANE-OB', '-ClaudePid', $obProc.Id, '-TranscriptPath', $ccBlocked) | Out-Null
+$L = Read-LockFile
+$L.turn_started = (Get-Date).AddMinutes(-3).ToString('o')
+Write-LockFile $L
+$obKey = Get-LoopTurnKey (Read-LockFile)
+$r = Dog-Run @('-DryRun')
+$obSt = Get-Content $state -Raw | ConvertFrom-Json
+Assert 'CC82 a healthy tick over a blocked session takes no action but records the block at once' `
+    ($r.Out -match 'ACTION none' -and $r.Out -match 'healthy:.*blocked=usage-limit' -and $r.Out -match 'BLOCK OBSERVED\(usage-limit\)' -and
+     $obSt.recovery_blocked -eq $true -and $obSt.recovery_turn_key -eq $obKey -and [int]$obSt.recovery_ineffective -eq 0 -and
+     [string]$obSt.recovery_blocked_since -ne '')
+$obSince = [string]$obSt.recovery_blocked_since
+$r = Dog-Run @('-DryRun')
+$obSt = Get-Content $state -Raw | ConvertFrom-Json
+Assert 'CC83 the next tick over the same block is quiet and keeps its "since"' `
+    ($r.Out -notmatch 'BLOCK OBSERVED' -and [string]$obSt.recovery_blocked_since -eq $obSince)
+$L = Read-LockFile
+$L.transcript = $ccRecovered
+Write-LockFile $L
+$r = Dog-Run @('-DryRun')
+$obSt = Get-Content $state -Raw | ConvertFrom-Json
+Assert 'CC84 the first tick after the session recovers clears the record, same turn' `
+    ($r.Out -match 'BLOCK LIFTED' -and $obSt.recovery_blocked -eq $false -and (Get-LoopTurnKey (Read-LockFile)) -eq $obKey)
+# Negative control for CC82: the same healthy tick over a working session
+# stamps nothing, so CC82 is the classifier speaking, not a tick that always
+# writes a block.
+$r = Dog-Run @('-DryRun')
+$obSt = Get-Content $state -Raw | ConvertFrom-Json
+Assert 'CC85 a working session is never recorded as blocked, and an already-clear record is not re-cleared' `
+    ($r.Out -match 'ACTION none' -and $r.Out -notmatch 'BLOCK (OBSERVED|LIFTED)' -and $r.Out -notmatch 'blocked=' -and
+     $obSt.recovery_blocked -eq $false)
+# The dashboard's read of this record (turn-key gate included) is section F
+# of test\win32\task-dashboard.ps1; the fields written here are the ones it reads.
+
 Remove-Item $lock, $state -Force -ErrorAction SilentlyContinue
 
 # --- MK: claim marks the RIGHT window, or says it did not (T2842) ----------

@@ -1,10 +1,11 @@
 {
     "guard":  "go-loop",
     "script":  "test/win32/go-loop-guard.ps1",
-    "generated":  "2026-11-17T14:24:52-08:00",
-    "commit":  "f98a73b03",
+    "generated":  "2026-11-19T11:13:58-08:00",
+    "commit":  "f8ea28360",
     "uncommitted":  [
-                        "scripts/go-loop-pane-probe.ps1",
+                        "scripts/go-loop-watchdog.ps1",
+                        "scripts/loop-session.ps1",
                         "test/win32/go-loop-guard.ps1"
                     ],
     "files":  {
@@ -16,13 +17,13 @@
                   "scripts/go-loop-health.ps1":  "895f9cef3791a9f81fd8b975c1d17c127f9595688a4f446bf6a1221f7a2e6a65",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "e491be3477c3236c4e10af70db2f40e9d632c45f83bf860f4b09fe6eeda5e2b7",
-                  "scripts/go-loop-watchdog.ps1":  "d7cb5e65820170e6ed101ee2df0c80924b142dbe840b2a83ec4fd8fca95b5099",
+                  "scripts/go-loop-watchdog.ps1":  "9b1f4a5cf1ccb5fc863722ab90d81ddddbd352ca475804012853b55a72c631c7",
                   "scripts/lib/DigestState.ps1":  "3b0d48ec0c53dfeace8df7d1d9fd675b3541f1f9205a0af31987bdf60be00d0e",
                   "scripts/lib/LoopMark.ps1":  "c43ed69bcfaec131c5f59aa0f570f9ecdf7cecc7b21027686ae86ff68843d71e",
                   "scripts/lib/StampMerge.ps1":  "c1397eeccbf3039c88b7d576b1c1948db4370987ebf053e8b9b6f50a6bf76926",
                   "scripts/lib/UserAlert.ps1":  "785ec9f42291ab67113193989a0a59f2f576c2cc2801fb26cbf7217edd346563",
-                  "scripts/loop-session.ps1":  "b740488567c16271fab9015223cf9b5d175db2219a000e878ac20d1e033128e6",
+                  "scripts/loop-session.ps1":  "30da7a362b46ee687db80e7d6a6feb6508b595caf918e603aebfe3f77d0f01dd",
                   "scripts/stamp-merge.ps1":  "9cac1de32cf4554fbc4070e374cbe163e5b34cf164564499b002c0b3b6a67f3a",
-                  "test/win32/go-loop-guard.ps1":  "eb7dc8448efa972fccdcf4334a802d99ca56920bb8d6112b96e895e2bae2c3bd"
+                  "test/win32/go-loop-guard.ps1":  "cb66c81bfd80f9d683cb9d348055e4f96529078936dc0774abc77b08ada1dd5d"
               }
 }

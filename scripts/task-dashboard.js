@@ -813,8 +813,9 @@ function loopTurnKey(lock) {
  * writes, on the screen the user already has open.
  *
  * The classification is NOT redone here. The watchdog stamps
- * `recovery_blocked*` into its own state file every time it takes an
- * ineffective recovery action, using the shared PowerShell classifier; a
+ * `recovery_blocked*` into its own state file on every tick that observes the
+ * block - and clears it on the first tick that does not (T1487) - using the
+ * shared PowerShell classifier; a
  * second implementation in JS would eventually disagree with the supervisors,
  * which is the one failure worse than not reporting at all.
  *

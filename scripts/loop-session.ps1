@@ -969,6 +969,69 @@ function Get-LoopIneffectiveCount($State, [string]$TurnKey) {
     try { return [int]$State.recovery_ineffective } catch { return 0 }
 }
 
+# Pure: the state fields an OBSERVING tick writes about the blocker (T1487).
+#
+# The dashboard bar (T1484) and -Status read `recovery_blocked*`, and until this
+# existed only a recovery ACTION wrote them - so the screen first learned of a
+# block after the stall arms fired (45m+) plus the rearm hold-off, and an
+# unblocked session kept its "blocked" record until a turn completed. The
+# watchdog already classifies cheaply on a 5-minute poll; stamping the verdict
+# on the tick that observed it makes the screen one poll behind, both ways.
+#
+# Blocked: the record names this turn and the blocker. The re-entry count is
+# CARRIED, never bumped - an observation is not an ineffective re-entry, and
+# the T1483 repetition clock must keep counting only what was typed.
+# `recovery_blocked_since` is the first tick that saw THIS blocker in THIS turn,
+# so "blocked since" survives every later tick re-stamping the same verdict.
+# Unblocked: a standing record is cleared (kind/why/remedy too, so -Status and
+# the health note never quote a lifted block). Returns $null when there is
+# nothing to write - an unblocked tick over an unblocked record.
+function Get-LoopBlockerStamp {
+    param(
+        $State,
+        [string]$TurnKey,
+        $Blocker,
+        [string]$WindowMarker = '[go-loop]',
+        [datetime]$Now = (Get-Date)
+    )
+    $names = @()
+    if ($State) { $names = @($State.PSObject.Properties.Name) }
+    $wasBlocked = ($names -contains 'recovery_blocked') -and [bool]$State.recovery_blocked
+    if ($Blocker -and $Blocker.Blocked) {
+        $kind = [string]$Blocker.Kind
+        $why = [string]$Blocker.Why
+        $since = $Now.ToString('o')
+        if ($wasBlocked -and [string]$State.recovery_turn_key -eq $TurnKey -and
+            [string]$State.recovery_blocked_kind -eq $kind -and [string]$State.recovery_blocked_why -eq $why -and
+            ($names -contains 'recovery_blocked_since') -and $State.recovery_blocked_since) {
+            $since = [string]$State.recovery_blocked_since
+        }
+        $needsUser = [bool]$Blocker.NeedsUser
+        return [ordered]@{
+            recovery_turn_key          = $TurnKey
+            recovery_ineffective       = (Get-LoopIneffectiveCount -State $State -TurnKey $TurnKey)
+            recovery_blocked           = $true
+            recovery_blocked_kind      = $kind
+            recovery_blocked_why       = $why
+            recovery_blocked_resets_at = [string]$Blocker.ResetsAt
+            recovery_blocked_since     = $since
+            recovery_needs_user        = $needsUser
+            recovery_remedy            = $(if ($needsUser) { Get-LoopBlockerRemedy -Kind $kind -WindowMarker $WindowMarker } else { '' })
+        }
+    }
+    if (-not $wasBlocked) { return $null }
+    return [ordered]@{
+        recovery_blocked           = $false
+        recovery_blocked_kind      = 'none'
+        recovery_blocked_why       = ''
+        recovery_blocked_resets_at = ''
+        recovery_blocked_since     = ''
+        recovery_needs_user        = $false
+        recovery_remedy            = ''
+        recovery_blocked_cleared_at = $Now.ToString('o')
+    }
+}
+
 # The prompt to type into a surviving session, derived from the resume command
 # so the two can never disagree: `claude ... --continue "read go.md and go"`
 # resumes with exactly the text a reused session is sent.

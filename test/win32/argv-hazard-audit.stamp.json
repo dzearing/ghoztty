@@ -1,10 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-19T10:46:22-08:00",
-    "commit":  "683e0ae8c",
+    "generated":  "2026-11-19T11:29:53-08:00",
+    "commit":  "f8ea28360",
     "uncommitted":  [
-
+                        "scripts/go-loop-watchdog.ps1",
+                        "scripts/loop-session.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -50,7 +51,7 @@
                   "scripts/go-loop-health.ps1":  "895f9cef3791a9f81fd8b975c1d17c127f9595688a4f446bf6a1221f7a2e6a65",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "e491be3477c3236c4e10af70db2f40e9d632c45f83bf860f4b09fe6eeda5e2b7",
-                  "scripts/go-loop-watchdog.ps1":  "d7cb5e65820170e6ed101ee2df0c80924b142dbe840b2a83ec4fd8fca95b5099",
+                  "scripts/go-loop-watchdog.ps1":  "9b1f4a5cf1ccb5fc863722ab90d81ddddbd352ca475804012853b55a72c631c7",
                   "scripts/guard-due.ps1":  "c552d871d5ff25700c2e3276b0fae6f7b381ebd1ca664a986b5a9a1c296f437c",
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
                   "scripts/hero-glide-onscreen.ps1":  "46d211f7ec7843d13506f4e3bd13933630339adb8aff13b5c97d69ae3fd248a7",
@@ -94,7 +95,7 @@
                   "scripts/lib/TreeIdle.ps1":  "2c4d18f221cbed25de68a4ebb694b447bb35b3307f5ccc28b025aa31a1ed9149",
                   "scripts/lib/UserAlert.ps1":  "785ec9f42291ab67113193989a0a59f2f576c2cc2801fb26cbf7217edd346563",
                   "scripts/lib/WebViewLane.ps1":  "b7dfacab366ddc509be771728f9d939d7b1d98a4ad542f698691e227619612e5",
-                  "scripts/loop-session.ps1":  "b740488567c16271fab9015223cf9b5d175db2219a000e878ac20d1e033128e6",
+                  "scripts/loop-session.ps1":  "30da7a362b46ee687db80e7d6a6feb6508b595caf918e603aebfe3f77d0f01dd",
                   "scripts/main-intake.ps1":  "16e52bcca79577cdfaf9eb2ca8485d3969001c6e2225ed33cc9140fe9ef2c00d",
                   "scripts/manual-check.ps1":  "9ad7bee0f554618e7ebf1d6c349205ed326315166e4ebfdf280a9e30ed15ca37",
                   "scripts/morning-owner.ps1":  "3ce353184a905647f855f15bcc8e2206d7772a22c4af7501488a0a556267faf0",

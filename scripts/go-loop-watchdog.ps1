@@ -836,6 +836,38 @@ function Invoke-Tick {
     $clocks = ("age=$($lock.age_minutes)m(by=$($lock.activity_by)) " +
                "turn_age=$turnText(limit=${TurnStaleMinutes}m)")
 
+    # WHY THE TURN IS NOT MOVING, not just that it is not (T1483). The stall
+    # line below was correct 716 times over 63.5 hours and carried no reason,
+    # while the reason sat in the session transcript in machine-readable form:
+    # every nudge was answered "You've hit your monthly spend limit ... resets
+    # Sep 12, 1am", and the loop came back when the quota reset rather than
+    # because the 180th nudge differed from the 179th. Read it here, once, so
+    # every line downstream can say it.
+    #
+    # And STAMP it here, on every tick that observes it (T1487) - not only when
+    # a recovery action fires. The dashboard bar reads this record, and an
+    # action comes 45m+ after the block began; an unblocked tick likewise
+    # clears it rather than waiting for a turn to complete.
+    $blocker = @{ Blocked = $false; Kind = 'none'; Why = ''; ResetsAt = ''; Source = 'none' }
+    try {
+        $tp = if ($lock -and ($lock.PSObject.Properties.Name -contains 'transcript')) { [string]$lock.transcript } else { '' }
+        $blocker = Resolve-LoopBlocker -TranscriptPath $tp
+    } catch { Log "  note: the blocker probe failed: $($_.Exception.Message)" }
+    $turnKey = Get-LoopTurnKey $lock
+    try {
+        $stamp = Get-LoopBlockerStamp -State (Read-State) -TurnKey $turnKey -Blocker $blocker `
+            -WindowMarker (Get-LoopLaneMarker $Lane)
+        if ($stamp) {
+            $prior = Read-State
+            Update-State $stamp
+            if (-not $blocker.Blocked) {
+                Log "  BLOCK LIFTED: the session's last answer is no longer an error; cleared the blocked record (T1487)"
+            } elseif (-not ($prior -and $prior.recovery_blocked -and [string]$prior.recovery_blocked_since -eq [string]$stamp.recovery_blocked_since)) {
+                Log "  BLOCK OBSERVED($($blocker.Kind)): recorded for the dashboard on this tick, since $($stamp.recovery_blocked_since) (T1487)"
+            }
+        }
+    } catch { Log "  note: the blocker stamp failed: $($_.Exception.Message)" }
+
     if ($state -eq 'held' -and -not $Force) {
         # The pane is only read once the turn clock is already elevated: the
         # probe costs an IPC round trip per tick, and unsent text - or an idle
@@ -900,7 +932,8 @@ function Invoke-Tick {
             }
         } catch { Log "  note: the background-task probe failed: $($_.Exception.Message)" }
         $seen = ("composer=$(if ($pane.Composer) { 'pending' } else { 'none' }) " +
-                 "session=$($pane.Working) bg=$($bgPending.Count) bgdead=$($bgDead.Count) bghung=$($bgHung.Count) probed=$probed")
+                 "session=$($pane.Working) bg=$($bgPending.Count) bgdead=$($bgDead.Count) bghung=$($bgHung.Count) probed=$probed" +
+                 $(if ($blocker.Blocked) { " blocked=$($blocker.Kind)" } else { '' }))
         $verdict = Resolve-LoopStallVerdict -TurnAgeMinutes $turnAge `
             -StaleMinutes $TurnStaleMinutes -SuspectMinutes $TurnSuspectMinutes `
             -ComposerText $pane.Composer -PaneState $pane.Working `
@@ -914,18 +947,7 @@ function Invoke-Tick {
     }
     if ($Force) { Log "forced: re-entry requested despite state=$state (caller knows the loop is broken; T439)" }
 
-    # WHY THE TURN IS NOT MOVING, not just that it is not (T1483). The stall
-    # line above was correct 716 times over 63.5 hours and carried no reason,
-    # while the reason sat in the session transcript in machine-readable form:
-    # every nudge was answered "You've hit your monthly spend limit ... resets
-    # Sep 12, 1am", and the loop came back when the quota reset rather than
-    # because the 180th nudge differed from the 179th. Read it here, once, so
-    # every line downstream can say it.
-    $blocker = @{ Blocked = $false; Kind = 'none'; Why = ''; ResetsAt = ''; Source = 'none' }
-    try {
-        $tp = if ($lock -and ($lock.PSObject.Properties.Name -contains 'transcript')) { [string]$lock.transcript } else { '' }
-        $blocker = Resolve-LoopBlocker -TranscriptPath $tp
-    } catch { Log "  note: the blocker probe failed: $($_.Exception.Message)" }
+    # The blocker was classified (and stamped) at the top of the tick (T1487).
     $blockText = ''
     if ($blocker.Blocked) {
         $blockText = ("BLOCKED($($blocker.Kind), by=$($blocker.Source)): the session's last answer was not work, it was " +
@@ -937,7 +959,6 @@ function Invoke-Tick {
     # 180 identical re-entries inside one unmoved turn is the signal nobody was
     # reading; it is a number now, on the line, rather than 951 log lines a
     # human would have to count.
-    $turnKey = Get-LoopTurnKey $lock
     $ineffective = Get-IneffectiveCount $turnKey
     if ($blocker.Blocked) { Log "  $blockText" }
     if ($ineffective -ge $IneffectiveLimit) {
