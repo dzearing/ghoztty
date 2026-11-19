@@ -977,6 +977,27 @@ pub fn init(
         break :explicit config.@"_command-explicit";
     };
 
+    // T3155: an explicit command that is nothing but a BARE shell
+    // (`command = pwsh.exe`, which is exactly what the Settings "Shell" row
+    // writes; `-e pwsh`) names the user's shell rather than asking for a
+    // command to be run — the same distinction T514 draws for forwarding
+    // below. For freshness it is the default shell: nothing the user started
+    // can be running in it until they send it input. An apprt-built command
+    // (`wait-after-command`, the IPC `--command` path) stays a command.
+    const command_names_shell: bool = named: {
+        if (!command_explicit) break :named false;
+        const c = command orelse break :named false;
+        const s = shell_integration.bareShellCommand(alloc, c) catch |err| {
+            log.warn("bare-shell command detection failed err={}", .{err});
+            break :named false;
+        };
+        if (s) |v| {
+            alloc.free(v);
+            break :named true;
+        }
+        break :named false;
+    };
+
     // A fresh default shell (see `fresh_default_shell`). `command` alone
     // cannot say so here: `Config.finalize` fills the default shell into it
     // when nothing asked (Windows always does), so `command == null` would
@@ -984,12 +1005,16 @@ pub fn init(
     // A remote/agent backend forwards a command only when it was explicitly
     // requested (`wait-after-command`, or a local-agent explicit command,
     // below) and a re-attached session can be mid-work.
-    self.fresh_default_shell = if (rt_surface.remoteBackend()) |rb|
-        rb.session_id == null and !(command != null and
-            (config.@"wait-after-command" or
-                (rb.local_shell_integration and command_explicit)))
-    else
-        command == null or (!command_explicit and !config.@"wait-after-command");
+    self.fresh_default_shell = freshDefaultShell(.{
+        .remote = if (rt_surface.remoteBackend()) |rb| .{
+            .session_attached = rb.session_id != null,
+            .local_agent = rb.local_shell_integration,
+        } else null,
+        .has_command = command != null,
+        .command_explicit = command_explicit,
+        .command_names_shell = command_names_shell,
+        .wait_after_command = config.@"wait-after-command",
+    });
 
     // Start our IO implementation
     // This separate block ({}) is important because our errdefers must
@@ -2738,6 +2763,82 @@ pub const Text = struct {
 /// selection state.
 ///
 /// The returned value contains allocated data and must be deinitialized.
+/// What `freshDefaultShell` decides from (see `fresh_default_shell`).
+const FreshShellInputs = struct {
+    /// Null for a local exec/pty pane.
+    remote: ?struct {
+        /// A re-attached session can be mid-work.
+        session_attached: bool,
+        /// The local agent (forwards an explicit command), not a remote one.
+        local_agent: bool,
+    },
+    has_command: bool,
+    /// Somebody asked for `command` (config key, `-e`, `initial-command`)
+    /// rather than `Config.finalize` filling in the default shell.
+    command_explicit: bool,
+    /// That explicit command is nothing but a bare shell (T3155).
+    command_names_shell: bool,
+    /// The apprt built the command (IPC `--command`): always a command.
+    wait_after_command: bool,
+};
+
+/// Whether a new surface starts as a fresh default shell (`fresh_default_shell`):
+/// nothing anybody asked to run, so closing it before any input needs no
+/// confirmation. A bare shell the user configured (T3155) counts as the
+/// default shell, as on Mac where a configured command never clears it.
+fn freshDefaultShell(in: FreshShellInputs) bool {
+    const asked = in.command_explicit and !in.command_names_shell;
+    if (in.remote) |r| return !r.session_attached and !(in.has_command and
+        (in.wait_after_command or (r.local_agent and asked)));
+    return !in.has_command or (!asked and !in.wait_after_command);
+}
+
+test freshDefaultShell {
+    const t = std.testing;
+    const local_agent: @FieldType(FreshShellInputs, "remote") =
+        .{ .session_attached = false, .local_agent = true };
+    const base: FreshShellInputs = .{
+        .remote = local_agent,
+        .has_command = true,
+        .command_explicit = false,
+        .command_names_shell = false,
+        .wait_after_command = false,
+    };
+    // The default shell Config.finalize filled in.
+    try t.expect(freshDefaultShell(base));
+    // T3155: a shell picked in Settings (`command = pwsh.exe`).
+    var picked = base;
+    picked.command_explicit = true;
+    picked.command_names_shell = true;
+    try t.expect(freshDefaultShell(picked));
+    // ...on the exec path too.
+    var picked_exec = picked;
+    picked_exec.remote = null;
+    try t.expect(freshDefaultShell(picked_exec));
+    // A real command (`-e htop`, `command = pwsh -c x`) is not fresh.
+    var cmd = base;
+    cmd.command_explicit = true;
+    try t.expect(!freshDefaultShell(cmd));
+    var cmd_exec = cmd;
+    cmd_exec.remote = null;
+    try t.expect(!freshDefaultShell(cmd_exec));
+    // `+new-window --command=pwsh.exe` (apprt-built) stays a command.
+    var ipc = picked;
+    ipc.wait_after_command = true;
+    try t.expect(!freshDefaultShell(ipc));
+    var ipc_exec = ipc;
+    ipc_exec.remote = null;
+    try t.expect(!freshDefaultShell(ipc_exec));
+    // A re-attached session is never fresh.
+    var attached = picked;
+    attached.remote = .{ .session_attached = true, .local_agent = true };
+    try t.expect(!freshDefaultShell(attached));
+    // A cross-machine agent never forwards a local command: still fresh.
+    var far = cmd;
+    far.remote = .{ .session_attached = false, .local_agent = false };
+    try t.expect(freshDefaultShell(far));
+}
+
 /// The Claude Code variable that selects its fullscreen renderer
 /// (`claude-code-fullscreen`).
 const claude_fullscreen_env = "CLAUDE_CODE_NO_FLICKER";

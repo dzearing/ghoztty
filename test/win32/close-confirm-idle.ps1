@@ -43,6 +43,9 @@
 #     exec and agent backends: closes with no dialog even while the process
 #     table reads it busy, and asks again after one typed or +send-keys
 #     character. See the comment above `Invoke-FreshSection`.
+#   Sections H/I - the same fresh-shell cases with `--command=cmd.exe`, the
+#     value the Settings "Shell" row writes (T3155): a picked bare shell is
+#     still the default shell.
 #
 # Sections A-C prove a dialog can be ABSENT; D and E prove it is still there
 # where it was never the shell's call. That pairing is the point: until T41
@@ -1007,6 +1010,15 @@ try {
     Stop-RepoProcesses @('ghoztty')
     Reset-AgentState
     Invoke-FreshSection 'G/fresh-agent' @('--session-persistence=true')
+    Stop-RepoProcesses @('ghoztty', 'ghoztty-agent')
+    Reset-AgentState
+    # T3155: a shell the user PICKED (Settings writes `command = cmd.exe`) is
+    # still their default shell, so it is fresh too. Before the fix the
+    # explicit `command` cleared freshness and H/I untouched confirmed.
+    Invoke-FreshSection 'H/fresh-exec-picked' @('--session-persistence=false', '--command=cmd.exe')
+    Stop-RepoProcesses @('ghoztty')
+    Reset-AgentState
+    Invoke-FreshSection 'I/fresh-agent-picked' @('--session-persistence=true', '--command=cmd.exe')
 
     Complete-TestBody  # T1039: the last statement of the body an unwind can skip
 } finally {
