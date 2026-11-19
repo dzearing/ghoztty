@@ -3656,6 +3656,24 @@ $GuardTable = @(
             'test\win32\floor-lane-cache-heal.ps1'
         )
     },
+    # T1500: the scripts that delete trees whose contents came from elsewhere
+    # (a downloaded release, a wiped zig cache, a user's install folder) take
+    # the hard delete; the harness proves each is wired and audits scripts\
+    # so a new bare delete in a file that extracts or downloads is caught.
+    [pscustomobject]@{
+        Name   = 'hard-delete-sites'
+        Script = 'test\win32\hard-delete-sites.ps1'
+        Stamp  = 'test\win32\hard-delete-sites.stamp.json'
+        Covers = @(
+            'scripts\lib\HardDelete.ps1',
+            'scripts\deliver-windows-build.ps1',
+            'scripts\verify-release-assets.ps1',
+            'scripts\verify-release-clean.ps1',
+            'scripts\test-binary-soak.ps1',
+            'scripts\ghoztty-cleanup.ps1',
+            'test\win32\hard-delete-sites.ps1'
+        )
+    },
     # The solo confirm pass (T1170) only speaks on a day already going badly --
     # a red lane -- and a parser that has quietly stopped matching reports the
     # same "the log names no failing test" as a lane that crashed. Same rule as

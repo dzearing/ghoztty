@@ -128,6 +128,7 @@ $ErrorActionPreference = 'Continue'
 # Lane A alone delivers (T1984). -DryRun and -VerifyOnly write nothing, so every
 # lane may still ask what is sitting in the install locations.
 . (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
+. (Join-Path $PSScriptRoot 'lib\HardDelete.ps1')   # Remove-TreeHard (T1500)
 if (-not $DryRun -and -not $VerifyOnly -and
     -not (Assert-LoopLaneOwnsDelivery -Repo (Split-Path -Parent $PSScriptRoot) -What 'deliver to the install locations')) { exit 6 }
 
@@ -423,14 +424,16 @@ if ($FromRelease) {
     # The release zip is `Ghoztty\<binaries>` + `Ghoztty\gl\` + `Ghoztty\share\`;
     # the staging shape this script reads is `bin\<binaries>`, `bin\gl\`, `share\`.
     $x = Join-Path $work 'x'
-    Remove-Item -LiteralPath $x -Recurse -Force -ErrorAction SilentlyContinue
+    # T1500: $x and the staging tree below hold a downloaded release's
+    # contents, so they go through the delete a filename cannot defeat.
+    $null = Remove-TreeHard -Path $x
     Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
     try { [IO.Compression.ZipFile]::ExtractToDirectory($script:releaseZip, $x) }
     catch { Say "ABORT: the release zip could not be extracted: $($_.Exception.Message)"; exit 2 }
     $root = Join-Path $x $ZipRoot
     if (-not (Test-Path -LiteralPath (Join-Path $root 'ghoztty.exe') -PathType Leaf)) { Say "ABORT: the release zip has no $ZipRoot\ghoztty.exe"; exit 2 }
     $Staging = Join-Path $work 'staging'
-    Remove-Item -LiteralPath $Staging -Recurse -Force -ErrorAction SilentlyContinue
+    $null = Remove-TreeHard -Path $Staging
     $null = New-Item -ItemType Directory -Force -Path $Staging
     if (Test-Path -LiteralPath (Join-Path $root 'share')) { Move-Item -LiteralPath (Join-Path $root 'share') -Destination (Join-Path $Staging 'share') }
     Move-Item -LiteralPath $root -Destination (Join-Path $Staging 'bin')

@@ -70,6 +70,8 @@ $EXIT_UNKNOWN = 2
 $EXIT_DETECTED = 3
 $EXIT_NOASK = 4
 
+. (Join-Path $PSScriptRoot 'lib\HardDelete.ps1')   # Remove-TreeHard (T1500)
+
 function Write-Line([string]$Text) {
     if (-not $Quiet) { Write-Host $Text }
 }
@@ -238,7 +240,10 @@ try {
     foreach ($f in @($files)) {
         if ($f.name -notmatch '\.zip$') { continue }
         $dest = Join-Path $work ("expanded-" + [IO.Path]::GetFileNameWithoutExtension($f.name))
-        if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
+        # T1500: a previous expansion of a downloaded zip - hard delete, and
+        # still refuse (as the bare delete did) when it cannot be cleared.
+        $hd = Remove-TreeHard -Path $dest
+        if (-not $hd.Removed) { throw "could not clear ${dest}: $($hd.Error)" }
         New-Item -ItemType Directory -Path $dest -Force | Out-Null
         if (-not $createdWork -and -not (Test-Path -LiteralPath $work)) { $createdWork = $true }
         try {
@@ -360,6 +365,6 @@ try {
     exit $EXIT_CLEAN
 } finally {
     if ($createdWork -and -not $WorkDir -and (Test-Path -LiteralPath $work)) {
-        Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+        $null = Remove-TreeHard -Path $work   # downloaded assets (T1500)
     }
 }

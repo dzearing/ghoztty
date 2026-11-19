@@ -107,6 +107,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 Set-StrictMode -Version 2.0
+. (Join-Path $PSScriptRoot 'lib\HardDelete.ps1')   # Remove-TreeHard (T1500)
 
 $Action = 'inventory'
 $Id = ''
@@ -294,7 +295,16 @@ function Add-InstallDir {
     }
 
     $d = $dir
-    $rm = { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction Stop }.GetNewClosure()
+    # T1500: an install folder is whatever the user unpacked or copied there
+    # (a portable copied off a Mac share carries AppleDouble '._.' files that
+    # defeat Remove-Item), so it takes the hard delete. The function is
+    # captured as a value because a GetNewClosure() block cannot see this
+    # script's functions; it still throws on failure like the bare delete did.
+    $hard = ${function:Remove-TreeHard}
+    $rm = {
+        $r = & $hard -Path $d
+        if (-not $r.Removed) { throw "could not remove ${d}: $($r.Error)" }
+    }.GetNewClosure()
     New-Item2 -ItemId $id -Category 'install' -Title $title -Target $dir `
         -Provenance $provenance -Detail $detail -Remove $rm
 

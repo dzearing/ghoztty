@@ -205,6 +205,7 @@ $ErrorActionPreference = 'Continue'
 . "$PSScriptRoot\lib\CrashCatch.ps1"
 . "$PSScriptRoot\lib\CrashDiag.ps1"
 . "$PSScriptRoot\lib\ProcessFamily.ps1"
+. "$PSScriptRoot\lib\HardDelete.ps1"   # Remove-TreeHard (T1500)
 
 # ------------------------------------------------------------- what to run
 
@@ -584,8 +585,11 @@ function Start-SoakCommandWorkers {
             ('$log = ''' + $spec.Log + ''''),
             ('$iter = ''' + $spec.Iter + ''''),
             ('Set-Location -LiteralPath ''' + $Repo + ''''),
+            # T1500: the wiped cache holds fetched zig packages, which can carry
+            # a '._.' file that defeats Remove-Item (T1499).
+            ('. ''' + (Join-Path $PSScriptRoot 'lib\HardDelete.ps1') + ''''),
             'while ((Get-Date) -lt $deadline) {',
-            '    if ($wipe) { Remove-Item -LiteralPath $wipe -Recurse -Force -ErrorAction SilentlyContinue }',
+            '    if ($wipe) { $null = Remove-TreeHard -Path $wipe }',
             # STARTED is written before the command, not only DONE after it: a
             # build-kind iteration can legitimately outlive the whole soak, and
             # a load measured only by completions would report the heaviest
@@ -1005,7 +1009,9 @@ if ($mode -eq 'build-runner') {
                 $spec = Get-SoakLoadWorkerSpec -Kind $LoadKind -Index $w -WorkDir $loadRunDir -Repo $Repo -Command $LoadCommand
                 foreach ($d in @($spec.WipeCache, (Join-Path $spec.Dir 'zig-out'))) {
                     if (Test-Path -LiteralPath $d) {
-                        Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue
+                        # T1500: a zig cache holds fetched packages (the
+                        # T1499 '._.' shape) - hard delete.
+                        $null = Remove-TreeHard -Path $d
                     }
                 }
             }

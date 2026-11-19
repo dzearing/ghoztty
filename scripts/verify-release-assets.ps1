@@ -75,6 +75,7 @@ $EXIT_BROKEN = 3
 $EXIT_NOASK = 4
 
 . (Join-Path $PSScriptRoot 'delivery-manifest.ps1')   # Get-PeSubsystem
+. (Join-Path $PSScriptRoot 'lib\HardDelete.ps1')     # Remove-TreeHard (T1500)
 
 function Write-Line([string]$Text) {
     if (-not $Quiet) { Write-Host $Text }
@@ -403,6 +404,7 @@ try {
     exit $EXIT_ERROR
 } finally {
     if ($createdWork -and -not $WorkDir -and (Test-Path -LiteralPath $work)) {
-        Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+        # T1500: $work holds downloaded release assets - hard delete.
+        $null = Remove-TreeHard -Path $work
     }
 }

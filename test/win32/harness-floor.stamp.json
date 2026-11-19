@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-19T13:30:28-08:00",
-    "commit":  "aff671807",
+    "generated":  "2026-11-19T14:38:43-08:00",
+    "commit":  "c0ca9a3b2",
     "uncommitted":  [
-                        "test/win32/chooser-menu.ps1",
-                        "test/win32/ipc-machine-chooser.ps1"
+                        "test/win32/hard-delete-sites.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -75,7 +74,7 @@
                   "test/win32/chooser-help-tooltips.ps1":  "8beec224463672893c89c41236ff0713e1987978b8697e256aa79bad391bad92",
                   "test/win32/chooser-kill-hover.ps1":  "da7e531e4fc7ec0c45655d9987cd5060b3ead61d4cc41edb1ca837b9dd8b8766",
                   "test/win32/chooser-link-hover.ps1":  "ec621631330e2317cff5d52b9d5c2edfb9a45eb2c0f5425be26d70fafff76251",
-                  "test/win32/chooser-menu.ps1":  "bc5c413db6e0cb2ffd20a3af3e6bd3963e092c2faa98e1565203d9a3e0e98fca",
+                  "test/win32/chooser-menu.ps1":  "7763974dd2be6ebfa57f035b5999c860c6a02c0b92b434a56800eb221e226af6",
                   "test/win32/chooser-modeless.ps1":  "663f862c81b149ae25e40cea0a05aff318dd82219924f9e8540d7ea9f9cbd2cf",
                   "test/win32/chooser-open-chord.ps1":  "fbf6f3281efd358cdd41d49c2bf630e95b559861f0776ea3eb93167adeb7c028",
                   "test/win32/chooser-orphan-badge.ps1":  "6b75058414d104a0fbffb308ce930837c37ddabad6321611aac1acffc3fbe088",
@@ -202,6 +201,7 @@
                   "test/win32/guard-due.ps1":  "281420e26fbca13e3dfdd2707d8ef2294e277a3c0171aff3e53e5d0f87b939d6",
                   "test/win32/gui-launch-command.ps1":  "fa0a4aad0300e381786ac6c0d32b7666372c22ab9351bfb6d44a6ddfdcb84de3",
                   "test/win32/gui-postmortem.ps1":  "4f9ba3bb7629a71ca32e0c793212c56dfabeb1ed8c96dc41eacddf0d0598da98",
+                  "test/win32/hard-delete-sites.ps1":  "f0e6c5b18f1e786cab6acf996e3bcb9d8b1da46d99c9bfbc7f5664a12dacd71c",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",
                   "test/win32/harness-floor.ps1":  "3b83bf58f86f59dbf9fc47524f5401100fd4bdfce9f9a1a550fed0c1947b5e9b",
                   "test/win32/harness-process-leak.ps1":  "05e37207bcb0ccea6c80bb1e48e79737a5afd59a172deeb624d7942975c39d25",
@@ -235,7 +235,7 @@
                   "test/win32/ipc-floor-setup.ps1":  "5287ba0442d4e1af3172cb30aa32a77face42e7197dd83679339c8724ebfcc8e",
                   "test/win32/ipc-instance-addressability.ps1":  "4ae9906b094f84fc39a83c8da85e704e1e73704311fc4b1ccb3e5e76d1318663",
                   "test/win32/ipc-list-session-id.ps1":  "191cea290a106a5b0610c258bc70a09453001d70108c243d991d42c69ac915c2",
-                  "test/win32/ipc-machine-chooser.ps1":  "26cc7e0436c6f8f37160937e1389c7abbf2d060795604adc58e0299d36598319",
+                  "test/win32/ipc-machine-chooser.ps1":  "2e6dd394fd0f5445f60c36dacfb31a352d2b8ddebd2fbfb4e0212a5036dca97a",
                   "test/win32/ipc-p1.ps1":  "a414e7de2771cec78fb8808095efa0240c43c77eb676d6294b8376253ef2f641",
                   "test/win32/ipc-p2.ps1":  "6c4936ffa14e56b5aaf8cb6da751fb423a2d13f3154e775f7e7692408cfe2ebf",
                   "test/win32/ipc-p3.ps1":  "8ea9acd86f626afafdac94e45145d1d4340a6bb8577f1bba04b63022e3247da1",

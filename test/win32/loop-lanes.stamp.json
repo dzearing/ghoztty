@@ -1,15 +1,14 @@
 {
     "guard":  "loop-lanes",
     "script":  "test/win32/loop-lanes.ps1",
-    "generated":  "2026-11-19T11:28:04-08:00",
-    "commit":  "f8ea28360",
+    "generated":  "2026-11-19T13:50:38-08:00",
+    "commit":  "c0ca9a3b2",
     "uncommitted":  [
-                        "scripts/go-loop-watchdog.ps1",
-                        "scripts/task-dashboard.js"
+                        "scripts/deliver-windows-build.ps1"
                     ],
     "files":  {
                   "scripts/daily-publish.ps1":  "454275dba14771956e2316cf1280ae85b972a187641df70f76bfe522ef2a9793",
-                  "scripts/deliver-windows-build.ps1":  "7246739997be71d01b58307c789f90a4277b6b38dad68c094663fd1b9d1db3c5",
+                  "scripts/deliver-windows-build.ps1":  "005fdf9cb822f6bb0348e0a61ef5bc8a55d54e6e7c390691886987efe6bf90a4",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
                   "scripts/go-loop-exec.ps1":  "7ca39b7c5ee20bef73537ce3b0305317f45cffc36d1ecc7b5a34e2f6abc7ff49",
                   "scripts/go-loop-health.ps1":  "895f9cef3791a9f81fd8b975c1d17c127f9595688a4f446bf6a1221f7a2e6a65",
