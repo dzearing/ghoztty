@@ -74,6 +74,15 @@ pub const Options = struct {
 ///   * `--lines=<N>`: Number of lines to read from the end of the
 ///     scrollback buffer. Default: 50.
 ///
+/// A "line" is a logical line, not a screen row: rows the terminal
+/// soft-wrapped are joined back into one line, so a long line of output
+/// reads back whole (and `--lines` counts it once). The terminal keeps
+/// a row's soft-wrap mark even when a program later erases and rewrites
+/// the row below it, as full-screen programs redraw, so a full-width row
+/// can come back joined to whatever now sits under it (in a Claude Code
+/// pane, the input box and the status line). Rows a program broke itself
+/// with a newline are never joined.
+///
 /// Any other argument starting with `--` is an error, so a misspelled
 /// flag is rejected instead of being dropped by the server.
 ///

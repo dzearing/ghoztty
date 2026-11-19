@@ -263,6 +263,22 @@ ghoztty +read --name=<pane> --lines=<N>
 - `--name`: Named pane to read from (required).
 - `--lines`: Number of lines from the end of scrollback (default: 50).
 
+**A line is a logical line, not a screen row** (T1503, both platforms — the
+dump is the shared core's `selectionString`). Rows the terminal soft-wrapped
+are joined back, so a long path or error message reads back whole and greps as
+one string, and `--lines` counts it once. The catch for screen-row oracles:
+the terminal keeps a row's soft-wrap mark when a program later erases and
+rewrites the row below it (`ESC[2K` keeps it, as in xterm; only an
+erase-to-right *from* the wrapped row clears it). A TUI that redraws a
+full-width row and then repaints the next one therefore reads back as one
+line — in a Claude Code pane the composer and the status row come back glued,
+which is why the T1502 clear gate cuts the composer at the first run of two
+spaces. Rows a program broke itself (a newline) are never joined. This is the
+contract, not a bug: a row-exact mode would split every long output line at
+the pane width, and that is the far more common thing a caller greps for.
+Pinned by `Terminal: +read rejoins a soft-wrapped row even after its
+continuation is erased and rewritten` in `src/terminal/Terminal.zig`.
+
 **An empty pane is an answer, not an error** (T181, win32; the Mac half is
 T481). A terminal pane that has printed nothing yet exits 0 with empty output,
 the way `tail` of an empty file does — that is the state of *every* pane for

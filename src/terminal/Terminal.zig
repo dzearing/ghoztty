@@ -11476,6 +11476,38 @@ test "Terminal: eraseLine complete protected requested" {
     }
 }
 
+// T1503: pins the `+read` contract (Surface.dumpTextLocked's selection
+// options) for the shape a TUI composer produces: a row that soft-wrapped,
+// whose continuation row the program then erased whole and rewrote with
+// unrelated text. Erase-in-line `complete` keeps the soft-wrap mark (as
+// xterm does), so `+read` still rejoins the two screen rows into one line.
+// `+read --help` and docs/claude/cli.md promise exactly this; if it ever
+// changes, they must change with it.
+test "Terminal: +read rejoins a soft-wrapped row even after its continuation is erased and rewritten" {
+    const Selection = @import("Selection.zig");
+    const alloc = testing.allocator;
+    var t = try init(alloc, .{ .cols = 5, .rows = 3 });
+    defer t.deinit(alloc);
+
+    // Six cells into five columns: the sixth soft-wraps onto row 1.
+    try t.printString("ABCDEx");
+    // A TUI redraw: home to row 1, erase it whole, write the status text.
+    t.setCursorPos(2, 1);
+    t.eraseLine(.complete, false);
+    try t.printString("st");
+
+    const s = t.screens.active;
+    const sel = Selection.init(
+        s.pages.getTopLeft(.screen),
+        s.pages.getBottomRight(.screen).?,
+        false,
+    );
+    const text = try s.selectionString(alloc, .{ .sel = sel, .trim = false, .reflow = false });
+    defer alloc.free(text);
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    try testing.expectEqualStrings("ABCDEst", std.mem.trimRight(u8, lines.first(), " "));
+}
+
 test "Terminal: tabClear single" {
     const alloc = testing.allocator;
     var t = try init(alloc, .{ .cols = 30, .rows = 5 });
