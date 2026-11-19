@@ -54,9 +54,14 @@ class SurfaceScrollView: NSView {
         // The document view contains our actual surface as a child.
         // We synchronize the scrolling of the document with this surface
         // so that our primary Ghostty renderer only needs to render the viewport.
-        documentView.addSubview(surfaceView)
+        // Not while hero mode holds it (`SurfaceView.isInHero`): this
+        // wrapper takes it when hero mode lets go (`adoptSurface`).
+        if !surfaceView.isInHero {
+            documentView.addSubview(surfaceView)
+        }
 
         super.init(frame: .zero)
+        surfaceView.scrollHost = self
 
         // Our scroll view is our only view
         addSubview(scrollView)
@@ -164,11 +169,24 @@ class SurfaceScrollView: NSView {
     // surface view if we have the "hidden" titlebar style.
     override var safeAreaInsets: NSEdgeInsets { return NSEdgeInsetsZero }
 
+    /// Whether the surface is in this wrapper. A newer wrapper or hero
+    /// mode may have taken it; this one then leaves its frame and the pty's
+    /// size to whoever has it.
+    private var ownsSurface: Bool { surfaceView.superview === documentView }
+
+    /// Take the surface back (hero mode let go of it).
+    func adoptSurface() {
+        guard !ownsSurface else { return }
+        documentView.addSubview(surfaceView)
+        needsLayout = true
+    }
+
     override func layout() {
         super.layout()
 
         // Fill entire bounds with scroll view
         scrollView.frame = bounds
+        guard ownsSurface else { return }
         surfaceView.frame.size = scrollView.bounds.size
 
         // We only set the width of the documentView here, as the height depends
@@ -198,6 +216,7 @@ class SurfaceScrollView: NSView {
     /// actual terminal rendering) always fills exactly the visible portion of the document view,
     /// so the renderer only needs to render what's currently on screen.
     private func synchronizeSurfaceView() {
+        guard ownsSurface else { return }
         let visibleRect = scrollView.contentView.documentVisibleRect
         surfaceView.frame.origin = visibleRect.origin
     }
@@ -206,6 +225,7 @@ class SurfaceScrollView: NSView {
     /// frame because we do want to render the whole thing, but it will prevent our
     /// rows/cols from going into the non-content area.
     private func synchronizeCoreSurface() {
+        guard ownsSurface else { return }
         // Only update the pty if we have a valid (non-zero) content size. The content size
         // can be zero when this is added early to a view, or to an invisible hierarchy.
         // Practically, this happened in the quick terminal.

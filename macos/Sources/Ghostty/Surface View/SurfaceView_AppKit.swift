@@ -292,6 +292,30 @@ extension Ghostty {
         override var surface: ghostty_surface_t? {
             surfaceModel?.unsafeCValue
         }
+        /// Hero mode has this terminal in one of its slots. Holds, not a
+        /// flag: a hero container SwiftUI rebuilds claims the terminal before
+        /// the one it replaces lets go. While held, a grid wrapper built for
+        /// the terminal (`SurfaceScrollView`) leaves it where it is — the
+        /// grid can render once more as hero mode comes on, and a wrapper
+        /// that took the terminal then was thrown away with it, leaving it
+        /// in no view at all: a blank hero that no key could step.
+        private var heroHolds = 0
+        var isInHero: Bool { heroHolds > 0 }
+
+        /// The newest grid wrapper built for this terminal: it takes the
+        /// terminal back when hero mode lets go of it.
+        weak var scrollHost: SurfaceScrollView?
+
+        func holdForHero() {
+            heroHolds += 1
+        }
+
+        func releaseFromHero() {
+            guard heroHolds > 0 else { return }
+            heroHolds -= 1
+            if heroHolds == 0 { scrollHost?.adoptSurface() }
+        }
+
         /// What the renderer was last told about whether this terminal can
         /// be seen (the core starts out visible). See `setRendererVisible`.
         private var rendererVisible = true

@@ -40,7 +40,13 @@ final class HeroKeyNavigator {
     func install() {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.handle(event) ?? event
+            // Not `self?.handle(event) ?? event`: `handle` returns nil to
+            // swallow the keystroke, and `?? event` turned that nil back into
+            // the event — every hero step also reached the focused pane,
+            // whose Cmd-Shift-Up/Down is `goto_window` (since v1.55.0), so
+            // each step moved the hero AND switched to another window.
+            guard let self else { return event }
+            return self.handle(event)
         }
     }
 

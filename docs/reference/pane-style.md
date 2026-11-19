@@ -88,6 +88,17 @@ banner card `PaneGlass.bannerTint` 25%.
   (the list starts below it); glyphs are
   the mock's icon set drawn natively (`PaneSidebarSymbol`), not SF Symbols.
   Folding a window or project group animates.
+- **Hero mode holds its panes.** A hero slot holds a viewer
+  (`ViewerView.holdForHero`) and a terminal (`SurfaceView.holdForHero`)
+  until it lets go; while held, the grid cannot take the pane back. The grid
+  can render once more as hero mode comes on, and a terminal wrapper built
+  then (`SurfaceScrollView`) used to pull the terminal out of its slot and
+  be thrown away with it: the hero showed nothing and no key stepped it.
+  A wrapper now only takes a terminal that is not held, takes it back when
+  hero lets go (`adoptSurface`, the newest wrapper — `scrollHost`), and
+  leaves the frame and pty size of a terminal it no longer has alone.
+  Test: `SingleWindowModeTests.heroModeCyclesTheWorkspacesPanes` (steps,
+  draws, switch away and back, hero off).
 - **Hero mode** shows its pane as the same glass card — the hero container
   paints no fill of its own on glass (`HeroPaneContainer.isGlass`). It
   turns on over a single pane too, and the window's pane sidebar is out of
@@ -103,7 +114,9 @@ banner card `PaneGlass.bannerTint` 25%.
   `HeroCarouselRatioTests`, `SingleWindowModeTests.heroModeTurnsOnOverOnePaneWithoutTheSidebar`.
 - **Cmd-Shift-Up/Down**: in hero mode, the previous/next pane
   (`HeroKeyNavigator`, which takes the chord first, while there are two or
-  more); otherwise `goto_window` previous/next — the default macOS binding
+  more, and swallows it — its monitor must return `handle`'s nil as nil; a
+  `?? event` there let every step also reach the pane's `goto_window`, so
+  each step switched windows too, v1.55.0–v1.55.2); otherwise `goto_window` previous/next — the default macOS binding
   here (upstream's is `jump_to_prompt`) — which walks the windows in the
   pane sidebar's all-windows order, wrapping
   (`BaseTerminalController.gotoWindow`; workspaces in single-window mode). A
