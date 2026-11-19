@@ -749,3 +749,13 @@ as the digest that showed them.
 - Send a pane to another workspace from the keyboard (new angle on the pane-drag ideas: "Move pane to workspace..." by name, for one-window mode where the target is never on screen)
 - Switching stays instant with many workspaces, and each release proves it (a release measures a switch with twenty workspaces and refuses a regression)
 - Undocking never scrambles a hidden workspace (parked workspaces are re-laid for a new screen size or scale before they are shown)
+
+## 2026-11-18
+
+- Pop a workspace out into its own window (single-window mode: lift one workspace into a real window for a second monitor, fold it back in later)
+- Hold the view still while output pours in (scrolling up pins the view while the program prints; a "N new lines" pill catches you up)
+- See how long a pane has been quiet (tab and sidebar tile hover reads "quiet for 14 min" / "printing now")
+- Start a new workspace in this folder (pane context menu: "New workspace here")
+- Dumping a big log doesn't spin up the fans (output floods travel in large chunks end to end)
+- The session service sleeps when nothing is printing (zero wakeups a second with no session output)
+- A release can't make idle Ghoztty heavier (new angle on "each release says what it costs": the daily publish measures idle CPU and memory and holds back a regression)
