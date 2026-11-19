@@ -87,6 +87,8 @@ const git_run = @import("git_run.zig");
 const ViewerWorktreeProbe = @import("ViewerWorktreeProbe.zig");
 const ViewerDiffProbe = @import("ViewerDiffProbe.zig");
 const ViewerImageDecode = @import("ViewerImageDecode.zig");
+const ViewerDocumentRead = @import("ViewerDocumentRead.zig");
+const viewer_document = @import("viewer_document.zig");
 const viewer_scratch = @import("viewer_scratch.zig");
 const viewer_diff = @import("viewer_diff.zig");
 const hidden_poll = @import("hidden_poll.zig");
@@ -209,6 +211,10 @@ pub const WM_APP_VIEWER_START: u32 = w32.WM_APP + 47;
 /// The image decode worker finished (T3043): a HEIC/TIFF the `wic` route
 /// decoded off the GUI thread is ready to hand to its parked request.
 pub const WM_APP_VIEWER_IMAGE: u32 = w32.WM_APP + 49;
+
+/// The document read worker finished (T3224): a markdown or code file read and
+/// escaped off the GUI thread is ready to hand to the page.
+pub const WM_APP_VIEWER_DOCUMENT: u32 = w32.WM_APP + 50;
 
 /// How long the "Filed …" confirmation stays up before the composer closes
 /// itself, matching Mac's 1.8s: long enough to read, short enough that the
@@ -371,6 +377,19 @@ image_failure: ?[]const u8 = null,
 /// workers once it has a host window; a request made before then is decoded
 /// inline.
 image_decode: ?ViewerImageDecode = null,
+
+/// The markdown/code document reader (T3224): reads, validates and escapes the
+/// viewed file off the GUI thread. Built with the pane's other workers once it
+/// has a host window; a render asked for before then reads inline.
+document_read: ?ViewerDocumentRead = null,
+/// Bumped by every render request and every change of destination. A read
+/// whose generation is no longer this one is dropped on completion, so an old
+/// read never paints over a newer one or reaches a page that replaced it.
+document_generation: u64 = 0,
+/// The generation whose read last reached the page (script or error card).
+/// Equal to `document_generation` once the newest render has landed, which is
+/// what a caller that needs the document ON the page waits for.
+document_shown: u64 = 0,
 
 /// This pane's scratch folder for large pictures (T3241), mapped to
 /// `content.image_scratch_host` before the page's first navigation - a mapping
@@ -1149,6 +1168,12 @@ pub fn deinit(self: *ViewerPane, alloc: Allocator) void {
         decoder.deinit();
         self.image_decode = null;
     }
+    // Same again (T3224): joins an in-flight document read; its script dies
+    // with the page it was for.
+    if (self.document_read) |*reader| {
+        reader.deinit();
+        self.document_read = null;
+    }
     // The staged pictures go with the pane (T3241). The worker is joined
     // above, so nothing is still writing into the folder.
     if (self.image_scratch) |*c| {
@@ -1357,6 +1382,12 @@ fn ensureNav(self: *ViewerPane, alloc: Allocator, hinstance: ?w32.HINSTANCE, hwn
     if (self.image_decode == null) {
         self.image_decode = ViewerImageDecode.init(alloc);
         self.image_decode.?.attach(hwnd, WM_APP_VIEWER_IMAGE);
+    }
+    // ...and so does the document reader (T3224), whose completion carries a
+    // markdown or code file's finished script to the page.
+    if (self.document_read == null) {
+        self.document_read = ViewerDocumentRead.init(alloc);
+        self.document_read.?.attach(hwnd, WM_APP_VIEWER_DOCUMENT);
     }
     // The composer (T634) needs the same two halves, and it is built HERE
     // rather than on first open for one concrete reason: it edits itself from
@@ -2368,6 +2399,9 @@ fn isReadableFile(path: []const u8) bool {
 /// There is no equivalent of `reloadNeedsRearm` to drive from the reload path.
 fn syncWatcher(self: *ViewerPane, alloc: Allocator) void {
     self.watcher.stop();
+    // A document read still out belongs to where the pane WAS (T3224): its
+    // completion must not reach the page that replaces it.
+    self.document_generation +%= 1;
     // No host window means nothing to post at. That is the pre-`createHostWindow`
     // moment and every unit test that drives a bare pane, both of which want a
     // pane that simply does not watch rather than one that fails to open.
@@ -4813,55 +4847,88 @@ fn renderFileContent(self: *ViewerPane) void {
         return;
     }
 
-    // The file's bytes and the script built from them are deliberately NOT
-    // alive at the same time as the call that consumes the script (T389): the
-    // bytes are freed on the way out of this block, so the peak is the file
-    // plus its widened literal rather than the file plus a UTF-8 literal plus
-    // the UTF-16 widening of that literal.
-    const js: [:0]u16 = js: {
-        const bytes = std.fs.cwd().readFileAlloc(alloc, path, content.max_file_bytes) catch |err| {
-            self.injectError(alloc, switch (err) {
-                error.FileTooBig => content.error_too_large,
-                else => content.error_unreadable,
-            }, path);
-            return;
-        };
-        defer alloc.free(bytes);
+    // Neither has content to inject: a website is its own page, and so is a
+    // rendered `.html` file (T601) - the web view loaded it directly. A diff
+    // and an image both answered above, before there was any text to read.
+    switch (self.mode) {
+        .markdown, .code => {},
+        .web, .html, .diff, .image => return,
+    }
 
-        // A UTF-8 BOM is invisible to the reader and NOT invisible to the
-        // renderer: left in place it becomes a stray glyph ahead of the first
-        // heading, and Windows editors write one routinely. Dropped here rather
-        // than in the page, so both platforms' renderers stay one file.
-        // One line per read, with its size: the T3037 acceptance counts
-        // renders by it and checks the catch-up read the LATEST bytes.
-        log.debug("viewer pane {s}: file rendered bytes={d}", .{ self.paneId(), bytes.len });
+    // The read, the UTF-8 check and the escape run on a worker (T3224): up to
+    // 32 MB of it on the GUI thread froze every terminal in the window, and on
+    // a slow or network path for as long as the read took. The newest request
+    // wins; the completion lands on `WM_APP_VIEWER_DOCUMENT`.
+    self.document_generation +%= 1;
+    if (self.document_read) |*reader| {
+        if (reader.request(path, self.mode, self.document_generation)) return;
+    }
+    // No host window yet (or no memory or thread for a job): read inline, as
+    // every render did before.
+    var bytes: usize = 0;
+    const outcome = viewer_document.read(alloc, self.mode, path, &bytes);
+    defer outcome.deinit(alloc);
+    self.applyDocument(alloc, path, outcome, bytes, null, self.document_generation);
+}
 
-        var text = bytes;
-        if (std.mem.startsWith(u8, text, "\xEF\xBB\xBF")) text = text[3..];
+/// Hand a finished document read to the page: the script, or the error card.
+/// `read_ms` is the worker's time, null for an inline read.
+fn applyDocument(
+    self: *ViewerPane,
+    alloc: Allocator,
+    path: []const u8,
+    outcome: viewer_document.Outcome,
+    bytes: usize,
+    read_ms: ?u64,
+    generation: u64,
+) void {
+    self.document_shown = generation;
+    switch (outcome) {
+        .none => {},
+        .failure => |title| self.injectError(alloc, title, path),
+        .script => |js| {
+            // One line per read, with its size: the T3037 acceptance counts
+            // renders by it and checks the catch-up read the LATEST bytes.
+            log.debug("viewer pane {s}: file rendered bytes={d} read_ms={d}", .{
+                self.paneId(), bytes, read_ms orelse 0,
+            });
+            self.executeScriptWide(alloc, js);
+        },
+    }
+}
 
-        // Mac's `String(data:encoding:.utf8)` returning nil is exactly this check;
-        // a binary file opened by mistake gets a card, not mojibake.
-        if (!std.unicode.utf8ValidateSlice(text)) {
-            self.injectError(alloc, content.error_not_text, path);
-            return;
-        }
+/// Whether the newest render asked for has reached the page (T3224). The
+/// document is read on a worker, so `page_loaded` alone no longer means the
+/// content is there: a script queued before this is true runs against an
+/// empty template.
+/// True for a mode with no document to read (a website, an html page, a diff,
+/// an image): nothing is owed.
+pub fn documentRendered(self: *const ViewerPane) bool {
+    switch (self.mode) {
+        .markdown, .code => {},
+        .web, .html, .diff, .image => return true,
+    }
+    return self.document_shown == self.document_generation;
+}
 
-        break :js switch (self.mode) {
-            .markdown => content.setMarkdownCallUtf16(alloc, text),
-            .code => content.setCodeCallUtf16(
-                alloc,
-                text,
-                content.highlightLanguage(content.extension(path)),
-            ),
-            // Neither has content to inject: a website is its own page, and so is a
-            // rendered `.html` file (T601) — the web view loaded it directly. A
-            // diff and an image both answered above, before there was any text to
-            // read.
-            .web, .html, .diff, .image => return,
-        } catch return;
-    };
-    defer alloc.free(js);
-    self.executeScriptWide(alloc, js);
+/// The document worker's completion (T3224). Applied only when it is still the
+/// newest render asked for, of the document the pane is still showing.
+fn completeDocument(self: *ViewerPane) void {
+    const reader = if (self.document_read) |*r| r else return;
+    const job = reader.complete() orelse return;
+    defer job.finish();
+    const p = self.pending orelse return;
+    const current = self.file_path orelse return;
+    if (job.generation != self.document_generation or
+        job.mode != self.mode or
+        !std.mem.eql(u8, job.path, current))
+    {
+        log.debug("viewer pane {s}: document read superseded (gen {d} < {d})", .{
+            self.paneId(), job.generation, self.document_generation,
+        });
+        return;
+    }
+    self.applyDocument(p.alloc, job.path, job.outcome, job.bytes, job.read_ms, job.generation);
 }
 
 // -------------------------------------------------------------------------
@@ -8282,6 +8349,12 @@ pub fn wndProc(
             return 0;
         },
 
+        // The document read worker has a script (T3224), on the same terms.
+        WM_APP_VIEWER_DOCUMENT => {
+            self.completeDocument();
+            return 0;
+        },
+
         // The diff worker has an answer (T463), on the same terms.
         WM_APP_VIEWER_DIFF => {
             if (self.pending) |p| self.completeDiff(p.alloc);
@@ -10151,7 +10224,7 @@ test "host floor: a real controller on a real window, on this box" {
     try pane.navigate(alloc, links_path);
     try waitFor(&msg, 30, struct {
         fn ready(p: *ViewerPane) bool {
-            return p.page_loaded and p.mode == .markdown;
+            return p.page_loaded and p.mode == .markdown and p.documentRendered();
         }
     }.ready, &pane);
 
@@ -10617,7 +10690,7 @@ test "host floor: a real controller on a real window, on this box" {
         try pane.navigate(alloc, links_path);
         try waitFor(&msg, 30, struct {
             fn ready(p: *ViewerPane) bool {
-                return p.page_loaded and p.mode == .markdown;
+                return p.page_loaded and p.mode == .markdown and p.documentRendered();
             }
         }.ready, &pane);
         pane.executeScript(alloc,
@@ -10837,7 +10910,7 @@ test "host floor: a real controller on a real window, on this box" {
             try pane.navigate(alloc, case.location);
             try waitFor(&msg, 30, struct {
                 fn ready(p: *ViewerPane) bool {
-                    return p.page_loaded;
+                    return p.page_loaded and p.documentRendered();
                 }
             }.ready, &pane);
 
@@ -10984,7 +11057,7 @@ test "host floor: a real controller on a real window, on this box" {
         try pane.navigate(alloc, quote_path);
         try waitFor(&msg, 30, struct {
             fn ready(p: *ViewerPane) bool {
-                return p.page_loaded;
+                return p.page_loaded and p.documentRendered();
             }
         }.ready, &pane);
 

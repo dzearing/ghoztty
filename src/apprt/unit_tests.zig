@@ -564,6 +564,11 @@ test {
     // no-OS-imports deal.
     _ = @import("win32/viewer_image.zig");
 
+    // Pure win32 viewer document read - the BOM drop, the not-text and
+    // too-large cards, and the script build that now runs on a worker
+    // (T3224), same no-OS-imports deal.
+    _ = @import("win32/viewer_document.zig");
+
     // Pure win32 viewer-on-glass rules — which pages go see-through over a
     // glass pane, and whose light/dark the page then follows (T1885), same
     // no-OS-imports deal.
