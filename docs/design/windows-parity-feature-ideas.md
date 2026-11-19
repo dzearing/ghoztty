@@ -759,3 +759,12 @@ as the digest that showed them.
 - Dumping a big log doesn't spin up the fans (output floods travel in large chunks end to end)
 - The session service sleeps when nothing is printing (zero wakeups a second with no session output)
 - A release can't make idle Ghoztty heavier (new angle on "each release says what it costs": the daily publish measures idle CPU and memory and holds back a regression)
+
+## 2026-11-19
+
+- A pane that cannot start shows the way out (new angle on "restore names what it could not bring back": a plain message with Retry and "Open a fresh shell here" inside the failed pane, never a raw error code)
+- Copy a pane as a command (right-click gives the one ghoztty line that recreates the pane: folder, shell, name, place)
+- Keys you type while a pane starts are kept (typing into a pane before its shell is ready is held and delivered once it is)
+- The session service never falls behind the app (new angle on "an update never drops a live session": the app checks the running service build after an update and finishes or explains an unfinished hand-over)
+- Relaunch is as quick as a new window, and each release proves it (new angle on "rehearse the restart": quit-and-reopen with kept sessions timed per release, a slower one held back)
+- Every "in progress" has a clock (any update, hand-over or restore reported as underway gets a time limit and a plain note when it overruns)
