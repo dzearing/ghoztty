@@ -4996,7 +4996,7 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
         if (pace_ok) {
             log.info(
                 "session-restore: restored the last-focused window '{s}'; {d} more follow one every {d}ms",
-                .{ if (lead) |w| (w.ipc_name orelse "?") else "?", paced.items.len, restore_pacing.interval_ms },
+                .{ if (lead) |w| (w.ipc_name orelse "?") else "?", paced.items.len, self.pacedIntervalMs() },
             );
             if (union_set.adopted > 0) self.markLayoutDirty();
             return true;
@@ -5109,6 +5109,11 @@ const PacedRestore = struct {
     attached_panes: usize,
     /// When pacing started, for the per-window log line's offset.
     started_ms: i64,
+    /// T3216: when this pacer first found the agent link down (an update's
+    /// agent handoff, a crash), null while the link is steady. It waits up to
+    /// `restore_pacing.link_wait_ms` for a live link and then re-probes on it,
+    /// instead of leaving the rest of the windows for the next launch.
+    link_wait_since_ms: ?i64 = null,
 
     fn windows(self: *const PacedRestore) []const session_layout.Window {
         return self.copy.value.windows;
@@ -5162,8 +5167,20 @@ fn startPacedRestore(
     probe.* = .{};
     for (p.windows()) |win| self.carryUnrestoredWindow(win);
     self.paced_restore = p;
-    _ = w32.SetTimer(hwnd, PACED_RESTORE_TIMER_ID, restore_pacing.interval_ms, null);
+    _ = w32.SetTimer(hwnd, PACED_RESTORE_TIMER_ID, self.pacedIntervalMs(), null);
     return true;
+}
+
+/// The gap between paced windows: `restore_pacing.interval_ms`, or in a DEBUG
+/// build the `GHOZTTY_RESTORE_PACE_MS` test seam (T3216), which lets an
+/// acceptance run stretch the paced restore so an agent handoff reliably lands
+/// inside it. A release build never reads the variable.
+fn pacedIntervalMs(self: *App) u32 {
+    if (comptime !build_config.is_debug) return restore_pacing.interval_ms;
+    const v = std.process.getEnvVarOwned(self.core_app.alloc, restore_pacing.env_interval) catch
+        return restore_pacing.interval_ms;
+    defer self.core_app.alloc.free(v);
+    return restore_pacing.intervalFromEnv(v);
 }
 
 /// One pacer tick (T1163): build the next window behind the first, then arm
@@ -5175,16 +5192,55 @@ fn tickPacedRestore(self: *App) void {
     const gpa = self.core_app.alloc;
 
     // Never attach over a link the probe was not taken on, and never dial or
-    // spawn from a timer: a gone or replaced agent ends the pacing, and what
-    // it had left stays carried for the next launch.
+    // spawn from a timer. T3216: a dropped or replaced link is WAITED OUT, not
+    // the end of the pacing. An update's relaunch routinely meets the agent
+    // replacing itself (T907) while windows are still arriving; giving up there
+    // left a whole window off screen until the next launch. So: wait (bounded)
+    // for whatever link the app's own recovery brings back, take a fresh probe
+    // on it - the old roster describes an agent that may be gone - and carry
+    // on. Only a link that stays down past the budget leaves the rest carried.
     const live_conn = self.local_agent.sharedConnectionIfLive();
-    if (live_conn == null or live_conn.? != p.conn) {
-        log.warn(
-            "session-restore: the local agent went away mid-restore; keeping {d} window(s) for the next launch",
-            .{p.windows().len - p.next},
-        );
-        self.finishPacedRestore();
-        return;
+    const now_ms = std.time.milliTimestamp();
+    const waited: ?i64 = if (p.link_wait_since_ms) |t| now_ms - t else null;
+    switch (restore_pacing.linkStep(
+        live_conn != null,
+        live_conn != null and live_conn.? == p.conn,
+        self.agent_recovering,
+        waited,
+    )) {
+        .proceed => {},
+        .wait => {
+            if (p.link_wait_since_ms == null) {
+                p.link_wait_since_ms = now_ms;
+                log.info(
+                    "session-restore: the local agent link dropped mid-restore; waiting up to {d}ms for it with {d} window(s) left",
+                    .{ restore_pacing.link_wait_ms, p.windows().len - p.next },
+                );
+            }
+            if (self.msg_hwnd) |hwnd|
+                _ = w32.SetTimer(hwnd, PACED_RESTORE_TIMER_ID, self.pacedIntervalMs(), null);
+            return;
+        },
+        .give_up => {
+            log.warn(
+                "session-restore: the local agent went away mid-restore and did not come back in {d}ms; keeping {d} window(s) for the next launch",
+                .{ restore_pacing.link_wait_ms, p.windows().len - p.next },
+            );
+            self.finishPacedRestore();
+            return;
+        },
+        .reprobe => {
+            const conn = live_conn.?;
+            const fresh = AttachProbe.take(gpa, conn, .skip_live_holders);
+            p.probe.deinit();
+            p.probe = fresh;
+            p.conn = conn;
+            p.link_wait_since_ms = null;
+            log.info(
+                "session-restore: the local agent link is back after {d}ms; resuming with {d} window(s) on a fresh probe",
+                .{ waited orelse 0, p.windows().len - p.next },
+            );
+        },
     }
 
     var live: LiveSets = .{};
@@ -5240,7 +5296,7 @@ fn tickPacedRestore(self: *App) void {
         return;
     }
     if (self.msg_hwnd) |hwnd|
-        _ = w32.SetTimer(hwnd, PACED_RESTORE_TIMER_ID, restore_pacing.interval_ms, null);
+        _ = w32.SetTimer(hwnd, PACED_RESTORE_TIMER_ID, self.pacedIntervalMs(), null);
 }
 
 /// The paced restore is over (every window built, or the agent went away):

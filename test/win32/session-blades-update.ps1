@@ -49,6 +49,15 @@ param(
     # 1.55.2 -> 1.55.3 pair this way).
     [string]$RelaunchExePath,
     [string]$AgentExe,
+    # T3216: the restore runs BESIDE A LOCAL-AGENT HANDOFF, the one thing the
+    # user's 1.55.3 update did that the plain run does not ("agent upgrade
+    # check: stale, but the agent is replacing itself without losing any
+    # session"). The agent runs from a renamed copy (`ghoztty-agent.exe.bak`,
+    # the shape a delivery leaves), and a newer build lands under the canonical
+    # name just before the relaunch, so the agent hands off while the relaunch
+    # is restoring and pacing its windows. Same fixture as agent-handoff.ps1:
+    # one tree cannot make two build stamps, so the handoff is FORCED.
+    [switch]$AgentHandoff,
     [switch]$NegativeControl,
     [switch]$Interactive
 )
@@ -76,9 +85,36 @@ function Assert([bool]$cond, [string]$label) {
 }
 function Say($m) { Write-Host $m }
 
+$agentDir = Join-Path $root 'agentdir'
+$runningAgent = Join-Path $agentDir 'ghoztty-agent.exe.bak'
+$canonicalAgent = Join-Path $agentDir 'ghoztty-agent.exe'
+
+# The handoff arm's agents run from the per-run directory, so they are matched
+# by ExecutablePath under it - never by name, which would reach the user's.
+function Get-RunAgentProcs {
+    $prefix = $agentDir.TrimEnd('\') + '\'
+    # The per-session `--pty-host` holders (T905) run from the same image and
+    # outlive a handoff by design; they are not agents.
+    return @(Get-CimInstance Win32_Process -Filter "Name LIKE 'ghoztty-agent%'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) -and
+                [string]$_.CommandLine -notmatch '--pty-host' })
+}
+
+# The app still holds its stderr log open for writing.
+function Read-SharedText([string]$path) {
+    if (-not (Test-Path $path)) { return '' }
+    try {
+        $fs = [System.IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')
+        try { return (New-Object System.IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
+    } catch { return '' }
+}
+
 function Stop-RepoInstances {
     [void](Stop-RepoGhoztty -Exe $exe -SettleMs 700)
     if ($RelaunchExePath) { [void](Stop-RepoGhoztty -Exe $RelaunchExePath -SettleMs 700) }
+    if ($AgentHandoff) {
+        foreach ($p in @(Get-RunAgentProcs)) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+    }
 }
 
 # Persistence ON: the manifest restore path is the subject. The quit chord is
@@ -209,6 +245,23 @@ New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-
 $script:manifest = Get-GhozttySessionLayoutPath -Root $tmp
 $env:LOCALAPPDATA = $tmp
 $env:GHOSTTY_LOCAL_AGENT_BIN = $agent
+$savedForce = $env:GHOZTTY_AGENT_HANDOFF_FORCE
+$savedInterval = $env:GHOZTTY_AGENT_HANDOFF_INTERVAL_MS
+$savedPace = $env:GHOZTTY_RESTORE_PACE_MS
+if ($AgentHandoff) {
+    # The canonical name is deliberately NOT there yet: it lands just before the
+    # relaunch (D), so nothing hands off while the fold is being made.
+    New-Item -ItemType Directory -Force $agentDir | Out-Null
+    Copy-Item -LiteralPath $agent -Destination $runningAgent -Force
+    Remove-Item -LiteralPath $canonicalAgent -Force -ErrorAction SilentlyContinue
+    $env:GHOSTTY_LOCAL_AGENT_BIN = $runningAgent
+    $env:GHOZTTY_AGENT_HANDOFF_FORCE = '1'
+    $env:GHOZTTY_AGENT_HANDOFF_INTERVAL_MS = '1000'
+    # Debug-build seam (T3216): 2.5 s between paced windows, so the handoff
+    # (1 s supervisor tick) lands INSIDE the paced restore on every run rather
+    # than racing a ~0.5 s window and missing it one run in two.
+    $env:GHOZTTY_RESTORE_PACE_MS = '2500'
+}
 $doc = Join-Path $root 'blade-viewer.md'
 Set-Content -Path $doc -Value "# blade viewer`n`nThe viewer pane of the T3213 row." -Encoding ascii
 
@@ -329,7 +382,23 @@ try {
     $err2 = Join-Path $root 'run2.stderr.txt'
     $relaunch = if ($RelaunchExePath) { $RelaunchExePath } else { $exe }
     if ($RelaunchExePath) { [void](Assert-GhozttyIsolatedBuild -Exe $relaunch); Say "      relaunching with $relaunch" }
+    $agentsBefore = @()
+    if ($AgentHandoff) {
+        # The sessions outlived the quit, so the agent that served them is still
+        # running. The newer build lands just after the relaunch's lead window,
+        # and its supervisor (1 s tick) hands off while the rest are paced in.
+        $agentsBefore = @(Get-RunAgentProcs | ForEach-Object { [int]$_.ProcessId })
+        Assert ($agentsBefore.Count -ge 1) "F0 premise: the agent from the renamed image outlived the quit (pids: $($agentsBefore -join ','))"
+    }
     [void](Start-App $err2 $relaunch)
+    if ($AgentHandoff) {
+        # Landed only once the lead window is up: before the launch, the agent
+        # could finish handing off before the app even dialed it, and the
+        # restore would never meet the handoff at all. From here the paced
+        # windows still have ~5 s to go (2 x GHOZTTY_RESTORE_PACE_MS).
+        Copy-Item -LiteralPath $agent -Destination $canonicalAgent -Force
+        Say "      newer agent build landed at the canonical name while the paced windows are still to come"
+    }
     $deadline = (Get-Date).AddSeconds(30)
     while ((Get-WindowCount) -lt 3 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 400 }
     Assert ((Get-WindowCount) -eq 3) "D: all three windows came back (got $(Get-WindowCount))"
@@ -345,6 +414,38 @@ try {
     Say '== E: a few seconds later'
     Start-Sleep -Seconds 4
     Assert-Blades 'E' $wb2
+
+    if ($AgentHandoff) {
+        # ---- F: the handoff really happened under that restore ---------------
+        Say '== F: the agent handed off during the relaunch'
+        $successor = $null
+        $deadline = (Get-Date).AddSeconds(30)
+        do {
+            $successor = @(Get-RunAgentProcs | Where-Object { $agentsBefore -notcontains [int]$_.ProcessId -and $_.ExecutablePath -eq $canonicalAgent })[0]
+            if ($successor) { break }
+            Start-Sleep -Milliseconds 500
+        } while ((Get-Date) -lt $deadline)
+        Assert ($null -ne $successor) 'F1 a successor agent running the canonical (newer) binary took over'
+        $oldAlive = @($agentsBefore | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue })
+        Assert ($oldAlive.Count -eq 0) "F2 the predecessor agent retired (still alive: $($oldAlive -join ','))"
+        $log2 = Read-SharedText $err2
+        foreach ($m in @('agent upgrade check: [^\r\n]*', 'in-place recovery: [^\r\n]*', 'session-restore: the local agent [^\r\n]*', 'session-restore: restored \d+ window\(s\)')) {
+            foreach ($hit in [regex]::Matches($log2, $m)) { Say "      log: $($hit.Value)" }
+        }
+        # The handoff has to have landed INSIDE the paced restore for this run
+        # to test anything: otherwise it is the plain run with a late handoff.
+        # Either line is the pacer meeting the handoff: 'dropped' when a tick
+        # found the link down, 'is back' when the app's recovery re-dialed
+        # between two ticks and the next one found a REPLACED link - the case
+        # that, before T3216, ended the pacing on the spot.
+        Assert ($log2 -match 'session-restore: the local agent link (dropped mid-restore|is back)') 'F4 premise: the agent link dropped while windows were still being paced in'
+        Assert ($log2 -notmatch 'keeping \d+ window\(s\) for the next launch') 'F5 no window was left for the next launch'
+        # The blades are judged once more AFTER the handoff is known to have
+        # landed: a recovery rebuild that runs late would undo them here.
+        Start-Sleep -Seconds 3
+        Assert ((Get-WindowCount) -eq 3) "F3 all three windows are still there after the handoff (got $(Get-WindowCount))"
+        Assert-Blades 'F' $wb2
+    }
     Complete-TestBody
 } catch {
     $script:fail++
@@ -358,6 +459,12 @@ try {
     $env:LOCALAPPDATA = $savedLocalAppData
     if ($null -ne $savedAgentBin) { $env:GHOSTTY_LOCAL_AGENT_BIN = $savedAgentBin }
     else { Remove-Item env:GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue }
+    if ($null -ne $savedForce) { $env:GHOZTTY_AGENT_HANDOFF_FORCE = $savedForce }
+    else { Remove-Item env:GHOZTTY_AGENT_HANDOFF_FORCE -ErrorAction SilentlyContinue }
+    if ($null -ne $savedInterval) { $env:GHOZTTY_AGENT_HANDOFF_INTERVAL_MS = $savedInterval }
+    else { Remove-Item env:GHOZTTY_AGENT_HANDOFF_INTERVAL_MS -ErrorAction SilentlyContinue }
+    if ($null -ne $savedPace) { $env:GHOZTTY_RESTORE_PACE_MS = $savedPace }
+    else { Remove-Item env:GHOZTTY_RESTORE_PACE_MS -ErrorAction SilentlyContinue }
     $env:GHOZTTY_PIPE_SUFFIX = $savedPipe
     if ($script:fail -eq 0) { Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue }
     else { Say "artifacts preserved at $root" }
@@ -377,4 +484,6 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Say ''
-Write-TestVerdict -Label 'T3213 SESSION BLADES UPDATE' -Pass $script:pass -Fail $script:fail -MinPass 34
+# The handoff arm adds F0-F5 and a third Assert-Blades (8 claims): 14 more.
+$minPass = if ($AgentHandoff) { 48 } else { 34 }
+Write-TestVerdict -Label 'T3213 SESSION BLADES UPDATE' -Pass $script:pass -Fail $script:fail -MinPass $minPass

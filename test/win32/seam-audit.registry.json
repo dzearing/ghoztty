@@ -574,6 +574,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the real probe verdict, as in every other restore."
         },
+        "GHOZTTY_RESTORE_PACE_MS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "unset = restore_pacing.interval_ms (200 ms), the shipped gap between paced windows; debug builds only (T3216)."
+        },
         "GHOZTTY_RESTORE_PULL_DELAY_MS": {
             "class": "tuning",
             "unset": "shipped-elsewhere",

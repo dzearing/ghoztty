@@ -34,6 +34,91 @@ const std = @import("std");
 /// windows are all back within a few seconds.
 pub const interval_ms: u32 = 200;
 
+/// The debug-build test seam's environment variable (T3216): stretch the gap
+/// between paced windows so an acceptance run can land an agent handoff inside
+/// the paced restore every time, not one run in two. Never read in a release
+/// build (`App.pacedIntervalMs`).
+pub const env_interval = "GHOZTTY_RESTORE_PACE_MS";
+
+/// The interval a debug build uses given `env_interval`'s value: a whole
+/// number of milliseconds in 50..10000, anything else is the default.
+pub fn intervalFromEnv(value: ?[]const u8) u32 {
+    const v = value orelse return interval_ms;
+    const n = std.fmt.parseInt(u32, std.mem.trim(u8, v, " \t"), 10) catch return interval_ms;
+    if (n < 50 or n > 10_000) return interval_ms;
+    return n;
+}
+
+test "intervalFromEnv: unset, junk and out-of-range values keep the default" {
+    try std.testing.expectEqual(interval_ms, intervalFromEnv(null));
+    try std.testing.expectEqual(interval_ms, intervalFromEnv("soon"));
+    try std.testing.expectEqual(interval_ms, intervalFromEnv("10"));
+    try std.testing.expectEqual(interval_ms, intervalFromEnv("60000"));
+    try std.testing.expectEqual(@as(u32, 2500), intervalFromEnv(" 2500 "));
+}
+
+/// How long a paced restore waits for the local-agent link to come back after
+/// it drops mid-restore (T3216), before it leaves the windows it has not built
+/// for the next launch. An update's relaunch meets exactly this: the agent
+/// replaces itself (T907 handoff) while the windows are still arriving, and
+/// the app's in-place recovery watches the link for 5 s before it re-dials.
+/// Long enough to cover that watch and the re-dial with room to spare; short
+/// enough that a genuinely gone agent does not hold the pacer for minutes.
+pub const link_wait_ms: i64 = 30_000;
+
+/// What one pacer tick does about the agent link (T3216).
+pub const LinkStep = enum {
+    /// The link the probe was taken on is live: build the next window.
+    proceed,
+    /// A link is live, but it is not the one the probe describes (the agent
+    /// was replaced, or the link dropped and came back): take a fresh probe on
+    /// it, then build.
+    reprobe,
+    /// No live link yet, or a recovery is still running: come back next tick.
+    wait,
+    /// No live link for `link_wait_ms`: stop, and leave the rest carried.
+    give_up,
+};
+
+/// `live`: a link that carries requests exists. `same`: it is the one the
+/// probe was taken on. `recovering`: an in-place recovery is mid-flight.
+/// `waited_ms`: how long this pacer has been waiting, null when it was not.
+/// A link that went down and came back on the SAME connection is reprobed
+/// too: what the roster said before the drop is about an agent that may since
+/// have handed its sessions to a successor.
+pub fn linkStep(live: bool, same: bool, recovering: bool, waited_ms: ?i64) LinkStep {
+    if (live and !recovering) {
+        if (same and waited_ms == null) return .proceed;
+        return .reprobe;
+    }
+    if ((waited_ms orelse 0) >= link_wait_ms) return .give_up;
+    return .wait;
+}
+
+test "linkStep: a steady link builds the next window" {
+    try std.testing.expectEqual(LinkStep.proceed, linkStep(true, true, false, null));
+}
+
+test "linkStep: a replaced agent's link is reprobed, never abandoned (T3216)" {
+    try std.testing.expectEqual(LinkStep.reprobe, linkStep(true, false, false, null));
+    try std.testing.expectEqual(LinkStep.reprobe, linkStep(true, false, false, 6_000));
+}
+
+test "linkStep: a link that dropped and came back on the same connection is reprobed" {
+    try std.testing.expectEqual(LinkStep.reprobe, linkStep(true, true, false, 1_200));
+}
+
+test "linkStep: no link, or a recovery mid-flight, waits inside the budget" {
+    try std.testing.expectEqual(LinkStep.wait, linkStep(false, false, false, null));
+    try std.testing.expectEqual(LinkStep.wait, linkStep(false, false, false, link_wait_ms - 1));
+    try std.testing.expectEqual(LinkStep.wait, linkStep(true, false, true, 2_000));
+}
+
+test "linkStep: a link gone for the whole budget gives up" {
+    try std.testing.expectEqual(LinkStep.give_up, linkStep(false, false, false, link_wait_ms));
+    try std.testing.expectEqual(LinkStep.give_up, linkStep(true, true, true, link_wait_ms + 1));
+}
+
 /// Whether the launch should pace the windows it has left to build after the
 /// first. `remaining` is how many still need building; `deferred_armed` is
 /// whether the T976 deferred pass is waiting on the agent.
