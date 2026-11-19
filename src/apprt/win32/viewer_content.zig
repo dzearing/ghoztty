@@ -689,6 +689,60 @@ pub fn imageUrl(alloc: Allocator, revision: u64) Allocator.Error![]u8 {
     );
 }
 
+/// The host a large picture is served from (T3241): the pane's own scratch
+/// folder, mapped with `SetVirtualHostNameToFolderMapping` so the BROWSER
+/// process reads the file from disk. A body handed back through
+/// `WebResourceRequested` is copied several times over inside this process on
+/// its way out (a 48 MB picture cost +459 MB of private bytes and a ~110 ms
+/// stall of the GUI thread, T3223); a mapped folder never passes the bytes
+/// through this process at all.
+///
+/// Two runtime rules decide the shape, both measured over the DevTools
+/// protocol (T3241): a mapping only reaches documents navigated AFTER it is
+/// set (re-pointing it later still serves the old folder), and a redirect out
+/// of an intercepted response is not routed through the mapping. So the host
+/// is mapped once, before the page's first navigation, to a folder that never
+/// moves, and the page is pointed at the picture's url directly.
+///
+/// Dotted, under the reserved `.example` TLD, so it can never be a real site.
+pub const image_scratch_host = "staged.ghoztty.example";
+
+/// The file size from which a picture the browser draws itself is staged into
+/// the scratch folder rather than streamed through `WebResourceRequested`
+/// (T3241). Below it the in-process hand-off costs a few tens of MB for a
+/// moment, less than the copy is worth; a decoded picture (`wic`) is always
+/// staged, since its `.bmp` is width x height x 4 however small the source.
+pub const stage_min_bytes: u64 = 2 * 1024 * 1024;
+
+/// The largest picture staged by copying (T3241). `max_file_bytes` bounds the
+/// copies a document makes inside this process; a staged picture makes none,
+/// so it gets a bound of its own, one that only keeps a mislabelled huge file
+/// from being duplicated into the temp folder.
+pub const max_staged_bytes: u64 = 512 * 1024 * 1024;
+
+/// `https://<image_scratch_host>/<name>?v=<revision>`, with `name`
+/// percent-encoded as one path segment. Everything outside RFC 3986's
+/// unreserved set is escaped, which is stricter than it needs to be and is the
+/// point: a file name may hold `#`, `?`, `%`, spaces or non-ASCII, and each of
+/// those means something else in a URL. The revision does the same job as on
+/// `imageUrl`: the `<img>` only goes back to the network for a `src` it does
+/// not already have. Caller owns the result.
+pub fn mappedImageUrl(alloc: Allocator, name: []const u8, revision: u64) Allocator.Error![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(alloc);
+    try out.appendSlice(alloc, "https://" ++ image_scratch_host ++ "/");
+    for (name) |c| {
+        const unreserved = std.ascii.isAlphanumeric(c) or c == '-' or c == '.' or c == '_' or c == '~';
+        if (unreserved) {
+            try out.append(alloc, c);
+        } else {
+            try out.print(alloc, "%{X:0>2}", .{c});
+        }
+    }
+    try out.print(alloc, "?v={d}", .{revision});
+    return out.toOwnedSlice(alloc);
+}
+
 /// `window.__viewer.setImage("<url>", "<name>", <vector>)` — put a picture on
 /// screen (T1183). `name` is the file's basename, which is what the page uses
 /// for its alt text and its tooltip.
@@ -1925,6 +1979,29 @@ test "the __viewer calls are the shape the page exposes" {
             "window.__viewer.setError(\"Not a text file\", \"C:\\\\a.bin\")",
             js,
         );
+    }
+}
+
+test "mappedImageUrl: one escaped path segment on the scratch host, plus the revision (T3241)" {
+    const alloc = testing.allocator;
+    {
+        const url = try mappedImageUrl(alloc, "photo.png", 3);
+        defer alloc.free(url);
+        try testing.expectEqualStrings("https://staged.ghoztty.example/photo.png?v=3", url);
+    }
+    {
+        // Every character that means something else in a URL is escaped, so a
+        // name cannot end the path early, start a query or a fragment, or
+        // smuggle in a separator.
+        const url = try mappedImageUrl(alloc, "a b#c?d%e/f\\g.bmp", 0);
+        defer alloc.free(url);
+        try testing.expectEqualStrings("https://staged.ghoztty.example/a%20b%23c%3Fd%25e%2Ff%5Cg.bmp?v=0", url);
+    }
+    {
+        // Non-ASCII goes out as its UTF-8 bytes, each escaped.
+        const url = try mappedImageUrl(alloc, "caf\xc3\xa9~_-.jpg", 12);
+        defer alloc.free(url);
+        try testing.expectEqualStrings("https://staged.ghoztty.example/caf%C3%A9~_-.jpg?v=12", url);
     }
 }
 

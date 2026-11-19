@@ -153,6 +153,21 @@ ghoztty +close --target=doc
   it already has does not go back to disk, which would make `+reload` on an
   image do nothing. Acceptance: `test/win32/viewer-image.ps1`.
 
+  A **large** picture skips that path (T3241): every WIC decode, and any
+  picture of 2 MiB or more the browser draws itself, is staged on a worker
+  into the pane's scratch folder (`%TEMP%\ghoztty-viewer-images\<pane>`), and
+  the page loads it from `https://staged.ghoztty.example/<n>.<ext>`, a folder
+  mapping the browser process serves from disk. A body answered through
+  `WebResourceRequested` is copied ~10x inside the app on its way out (+459 MB
+  for a 12 MP picture). Three runtime rules fix the shape, all read over the
+  DevTools protocol: a folder mapping reaches only documents navigated AFTER
+  it is set (so it is set before the first `Navigate`, to a folder that never
+  moves); a 302 out of an intercepted response bypasses the mapping (so the
+  page is pointed at the url directly); and a folder that does not exist
+  cannot be mapped. Each folder holds an `.owner` lock, so the first image
+  pane of a later process sweeps the folders a killed one left
+  (`viewer_scratch.zig`). Section M of the acceptance script.
+
   Find, text selection and quoting are meaningless in a picture and are not
   offered. An undecodable file gets the same in-page error card every other
   file mode falls through to, rather than a blank matte.

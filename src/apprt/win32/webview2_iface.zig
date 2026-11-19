@@ -1419,8 +1419,8 @@ pub const ICoreWebView2 = extern struct {
 };
 
 /// `ICoreWebView2_3` — revision 3 (T3035). Slots 68..70 are `TrySuspend`,
-/// `Resume` and `get_IsSuspended`; 61..67 are revision 2's seven, opaque; the
-/// virtual-host mapping pair after them (71, 72) is not declared. Counted from
+/// `Resume` and `get_IsSuspended`; 61..67 are revision 2's seven, opaque; 71
+/// and 72 are the virtual-host folder mapping pair (T3223). Counted from
 /// the `DECLSPEC_XFGVIRT` annotations of `ICoreWebView2_3Vtbl` in the SDK's
 /// `WebView2.h` (1.0.2903.40), which agree with `ICoreWebView2_13`'s 105.
 pub const ICoreWebView2_3 = extern struct {
@@ -1437,6 +1437,10 @@ pub const ICoreWebView2_3 = extern struct {
         TrySuspend: *const fn (*ICoreWebView2_3, ?*anyopaque) callconv(.winapi) HRESULT,
         Resume: *const fn (*ICoreWebView2_3) callconv(.winapi) HRESULT,
         get_IsSuspended: *const fn (*ICoreWebView2_3, *BOOL) callconv(.winapi) HRESULT,
+        /// `(LPCWSTR hostName, LPCWSTR folderPath,
+        /// COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND accessKind)`.
+        SetVirtualHostNameToFolderMapping: *const fn (*ICoreWebView2_3, [*:0]const u16, [*:0]const u16, HostResourceAccessKind) callconv(.winapi) HRESULT,
+        ClearVirtualHostNameToFolderMapping: *const fn (*ICoreWebView2_3, [*:0]const u16) callconv(.winapi) HRESULT,
     };
 
     pub fn release(self: *ICoreWebView2_3) void {
@@ -1453,12 +1457,30 @@ pub const ICoreWebView2_3 = extern struct {
         return !com.failed(self.vtable.Resume(self));
     }
 
+    /// Serve `https://<host>/...` straight from `folder` in the BROWSER
+    /// process (T3223): the bytes never cross this process, unlike a
+    /// `WebResourceRequested` body, which the runtime copies several times
+    /// over on its way out. Setting a host that is already mapped replaces it.
+    pub fn mapHostToFolder(self: *ICoreWebView2_3, host: [*:0]const u16, folder: [*:0]const u16, access: HostResourceAccessKind) bool {
+        return !com.failed(self.vtable.SetVirtualHostNameToFolderMapping(self, host, folder, access));
+    }
+
+    pub fn clearHostMapping(self: *ICoreWebView2_3, host: [*:0]const u16) bool {
+        return !com.failed(self.vtable.ClearVirtualHostNameToFolderMapping(self, host));
+    }
+
     pub fn isSuspended(self: *ICoreWebView2_3) ?bool {
         var out: BOOL = 0;
         if (com.failed(self.vtable.get_IsSuspended(self, &out))) return null;
         return out != 0;
     }
 };
+
+/// `COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND`. `deny_cors` lets another
+/// origin's document embed the host's files (an `<img>`) but not read them
+/// (`fetch` / XHR), which is exactly what a picture served to the viewer page
+/// needs and no more.
+pub const HostResourceAccessKind = enum(u32) { deny = 0, allow = 1, deny_cors = 2 };
 
 /// `COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL`.
 pub const MemoryUsageTargetLevel = enum(u32) { normal = 0, low = 1 };
@@ -2069,7 +2091,10 @@ test "the slots we actually call sit where the header puts them" {
     try testing.expectEqual(68 * ptr, @offsetOf(ICoreWebView2_3.Vtbl, "TrySuspend"));
     try testing.expectEqual(69 * ptr, @offsetOf(ICoreWebView2_3.Vtbl, "Resume"));
     try testing.expectEqual(70 * ptr, @offsetOf(ICoreWebView2_3.Vtbl, "get_IsSuspended"));
-    try testing.expectEqual(71 * ptr, @sizeOf(ICoreWebView2_3.Vtbl));
+    // T3241: the virtual-host folder mapping pair closes revision 3.
+    try testing.expectEqual(71 * ptr, @offsetOf(ICoreWebView2_3.Vtbl, "SetVirtualHostNameToFolderMapping"));
+    try testing.expectEqual(72 * ptr, @offsetOf(ICoreWebView2_3.Vtbl, "ClearVirtualHostNameToFolderMapping"));
+    try testing.expectEqual(73 * ptr, @sizeOf(ICoreWebView2_3.Vtbl));
     try testing.expectEqual(119 * ptr, @offsetOf(ICoreWebView2_19.Vtbl, "get_MemoryUsageTargetLevel"));
     try testing.expectEqual(120 * ptr, @offsetOf(ICoreWebView2_19.Vtbl, "put_MemoryUsageTargetLevel"));
     try testing.expectEqual(121 * ptr, @sizeOf(ICoreWebView2_19.Vtbl));

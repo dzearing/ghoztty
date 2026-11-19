@@ -64,6 +64,9 @@ test {
     // The WIC decode behind an image pane's ctrl+C (T1872). Same reason: its
     // assertions need the real codec registry.
     _ = @import("win32/image_copy.zig");
+    // The image pane's scratch folders (T3241): the owner lock and the sweep of
+    // abandoned folders need a real file system and real sharing modes.
+    _ = @import("win32/viewer_scratch.zig");
     // The COM callback object every WebView2 handler is an instance of
     // (T376). Listed in its own right, not just as webview2.zig's import:
     // its refcount and interface matching are the part a fifth handler would

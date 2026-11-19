@@ -87,6 +87,7 @@ const git_run = @import("git_run.zig");
 const ViewerWorktreeProbe = @import("ViewerWorktreeProbe.zig");
 const ViewerDiffProbe = @import("ViewerDiffProbe.zig");
 const ViewerImageDecode = @import("ViewerImageDecode.zig");
+const viewer_scratch = @import("viewer_scratch.zig");
 const viewer_diff = @import("viewer_diff.zig");
 const hidden_poll = @import("hidden_poll.zig");
 const reload_gate = @import("reload_gate.zig");
@@ -370,6 +371,22 @@ image_failure: ?[]const u8 = null,
 /// workers once it has a host window; a request made before then is decoded
 /// inline.
 image_decode: ?ViewerImageDecode = null,
+
+/// This pane's scratch folder for large pictures (T3241), mapped to
+/// `content.image_scratch_host` before the page's first navigation - a mapping
+/// set later never reaches the page already up. The worker stages a decode or
+/// a copy here, and the page loads it straight from disk through the browser
+/// process, so none of its bytes pass through this one. Made and locked with
+/// the mapping (the runtime refuses to map a folder that is not there), and
+/// removed with the pane. Null when the runtime cannot map a folder, which
+/// leaves every picture on the request path.
+image_scratch: ?viewer_scratch.Claim = null,
+/// Names the next staged file, so a new one never overwrites a file the page
+/// may still be reading.
+image_stage_seq: u64 = 0,
+/// The staged file the page is showing now. Owned; deleted when the next one
+/// is shown, and with the folder when the pane closes.
+image_staged: ?[]u8 = null,
 
 /// The bundled viewer assets directory (`…/share/ghostty/viewer`), resolved
 /// once when the pane starts. Owned. Null on an installation whose resources
@@ -1132,6 +1149,14 @@ pub fn deinit(self: *ViewerPane, alloc: Allocator) void {
         decoder.deinit();
         self.image_decode = null;
     }
+    // The staged pictures go with the pane (T3241). The worker is joined
+    // above, so nothing is still writing into the folder.
+    if (self.image_scratch) |*c| {
+        c.release(alloc);
+        self.image_scratch = null;
+    }
+    if (self.image_staged) |f| alloc.free(f);
+    self.image_staged = null;
     if (self.diff_file) |f| alloc.free(f);
     self.diff_file = null;
     self.clearDiffTree(alloc);
@@ -4866,8 +4891,16 @@ fn loadImage(self: *ViewerPane, alloc: Allocator, path: []const u8) void {
     self.image_geometry = .{};
     self.image_failure = null;
 
+    // A large picture is staged on the worker and the page pointed at it when
+    // it is ready (T3241): `showStaged`. Everything else is asked for now.
+    if (self.stageImage(path)) return;
     const url = content.imageUrl(alloc, self.image_revision) catch return;
     defer alloc.free(url);
+    self.showImageUrl(alloc, url, path);
+}
+
+/// `setImage(url)` for the picture at `path`.
+fn showImageUrl(self: *ViewerPane, alloc: Allocator, url: []const u8, path: []const u8) void {
     // The page is told whether this is vector art: it is served from a
     // sentinel url with no extension, so the file's own name never reaches it.
     const vector = std.ascii.eqlIgnoreCase(content.extension(path), "svg");
@@ -4875,6 +4908,111 @@ fn loadImage(self: *ViewerPane, alloc: Allocator, path: []const u8) void {
     defer alloc.free(js);
     self.executeScript(alloc, js);
 }
+
+/// Start staging `path` into the scratch folder, if it is a picture worth
+/// staging (`viewer_image.stage`) and this pane can (T3241). False leaves the
+/// caller to serve it through the request, as every picture was before.
+fn stageImage(self: *ViewerPane, path: []const u8) bool {
+    const dir = (self.image_scratch orelse return false).dir;
+    const decoder = if (self.image_decode) |*d| d else return false;
+    const ext = content.extension(path);
+    // Only the browser route's decision depends on the size. The document
+    // cap (`max_file_bytes`) bounds copies made in this process, which a
+    // staged picture never is, so it has its own; past it, the request path
+    // answers as it always did.
+    const size: u64 = if (self.image_route == .browser)
+        (std.fs.cwd().statFile(path) catch return false).size
+    else
+        0;
+    if (size > content.max_staged_bytes) return false;
+    const how = viewer_image.stage(self.image_route, ext, size, content.stage_min_bytes) orelse return false;
+    self.image_stage_seq += 1;
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const spill = std.fmt.bufPrint(&buf, "{s}\\{d}.{s}", .{ dir, self.image_stage_seq, how.extension(ext) }) catch return false;
+    return decoder.stageJob(path, self.image_revision, how, spill);
+}
+
+/// A staged picture is ready (T3241): point the page at it on the scratch
+/// host, and drop the one it replaces. A stage that failed falls back to the
+/// request, which is how the failure card and the codec name are reached; a
+/// stage the page has moved past is deleted unseen.
+fn showStaged(self: *ViewerPane, alloc: Allocator, job: *ViewerImageDecode.Job) void {
+    const spill = job.spill orelse return;
+    const how = job.stage orelse return;
+    const path = self.file_path orelse "";
+    const current = self.mode == .image and job.revision == self.image_revision and
+        std.mem.eql(u8, path, job.path);
+    if (!current) {
+        if (job.spilled) std.fs.cwd().deleteFile(spill) catch {};
+        return;
+    }
+    if (!job.spilled) {
+        log.info("viewer image stage failed pane={s} rev={d} route={s}; serving through the request", .{ self.paneId(), job.revision, @tagName(self.image_route) });
+        const url = content.imageUrl(alloc, self.image_revision) catch return;
+        defer alloc.free(url);
+        self.showImageUrl(alloc, url, path);
+        return;
+    }
+    const url = content.mappedImageUrl(alloc, std.fs.path.basename(spill), job.revision) catch return;
+    defer alloc.free(url);
+    self.showImageUrl(alloc, url, path);
+    // The acceptance oracle's `served` line, the same shape as a request's:
+    // the bytes the page will load, under the MIME the browser takes from the
+    // staged file's extension. `parked=staged`: decoded or copied on the
+    // worker, with no request parked at all.
+    const mime = switch (how) {
+        .decode => "image/bmp",
+        .copy => content.mimeType(content.extension(spill)),
+    };
+    log.info(
+        "viewer image served pane={s} rev={d} bytes={d} mime={s} route={s} decode_ms={d} parked=staged via=mapped",
+        .{ self.paneId(), job.revision, job.len, mime, @tagName(self.image_route), job.decode_ms },
+    );
+    if (self.image_staged) |old| {
+        if (!std.mem.eql(u8, old, spill)) std.fs.cwd().deleteFile(old) catch {};
+        alloc.free(old);
+    }
+    self.image_staged = alloc.dupe(u8, spill) catch null;
+}
+
+/// Map this pane's scratch folder to `content.image_scratch_host` (T3241).
+/// Must run BEFORE the page navigates: a mapping set while a document is up
+/// never reaches that document, and re-pointing one later still serves the
+/// old folder (both measured over the DevTools protocol). Called again for a
+/// re-created controller, which needs its own mapping of the same folder.
+///
+/// The first folder this process claims also sweeps the ones a killed or
+/// crashed Ghoztty left behind (`viewer_scratch.sweep`) - each can hold tens of
+/// megabytes of staged picture, and nothing else would ever remove them.
+fn mapImageScratch(self: *ViewerPane, alloc: Allocator) void {
+    if (self.image_scratch == null) {
+        const parent = viewer_scratch.defaultParent(alloc) orelse return;
+        defer alloc.free(parent);
+        self.image_scratch = viewer_scratch.claim(alloc, parent, self.paneId()) orelse return;
+        if (!scratch_swept.swap(true, .monotonic)) _ = viewer_scratch.sweep(alloc, parent, self.paneId());
+    }
+    const dir = self.image_scratch.?.dir;
+    const ok = mapped: {
+        const c = self.controller orelse break :mapped false;
+        const web = c.coreWebView() orelse break :mapped false;
+        defer web.release();
+        const v3 = web.queryV3() orelse break :mapped false;
+        defer v3.release();
+        const dir_w = std.unicode.wtf8ToWtf16LeAllocZ(alloc, dir) catch break :mapped false;
+        defer alloc.free(dir_w);
+        // `deny_cors`: the page may embed the folder's pictures, and no other
+        // origin may read them.
+        break :mapped v3.mapHostToFolder(std.unicode.utf8ToUtf16LeStringLiteral(content.image_scratch_host), dir_w, .deny_cors);
+    };
+    if (!ok) {
+        log.warn("viewer image scratch folder cannot be mapped; large pictures go through the request", .{});
+        self.image_scratch.?.release(alloc);
+        self.image_scratch = null;
+    }
+}
+
+/// Whether this process has swept abandoned scratch folders yet (T3241).
+var scratch_swept: std.atomic.Value(bool) = .init(false);
 
 /// Act on one `image` message from the page.
 fn applyImageMessage(self: *ViewerPane, alloc: Allocator, msg: bridge.Image) void {
@@ -6310,6 +6448,9 @@ fn adoptController(self: *ViewerPane, c: *iface.ICoreWebView2Controller) void {
     // very first request IS the template's document, so an interception
     // registered after `Navigate` would miss the page it exists to serve.
     self.subscribeFileMode();
+    // And the large-picture folder (T3241): a mapping only reaches documents
+    // navigated after it.
+    if (self.pending) |p| self.mapImageScratch(p.alloc);
     // Before the navigation too, so the FIRST commit already updates the
     // address bar and the history buttons (T159).
     self.subscribeHistory();
@@ -8137,7 +8278,7 @@ pub fn wndProc(
             const job = decoder.complete() orelse return 0;
             defer job.finish();
             const p = self.pending orelse return 0;
-            self.answerImage(p.alloc, job);
+            if (job.stage != null) self.showStaged(p.alloc, job) else self.answerImage(p.alloc, job);
             return 0;
         },
 

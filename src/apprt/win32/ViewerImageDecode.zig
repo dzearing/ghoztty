@@ -18,6 +18,15 @@
 //! that — four or five copies of the picture at once, ~195 MB at 12 MP. Now it
 //! is one, plus one scratch copy for a photo whose EXIF says to turn it.
 //!
+//! **Why a file, for anything large (T3241).** Every byte of a body answered
+//! through `WebResourceRequested` costs about ten times its size inside the
+//! runtime's in-process hand-off (a 48 MB picture: +459 MB of private bytes and
+//! a ~110 ms GUI stall, T3223), whoever produced it. So a STAGED job has no
+//! parked request at all: the worker writes the `.bmp` (or copies a large
+//! picture the browser draws itself) into the pane's scratch folder, which the
+//! browser process serves from disk through a folder mapping, and the pane
+//! points the page at it when the completion lands.
+//!
 //! One worker at a time. A request arriving while one is in flight waits in
 //! `queued` (the newest replaces any older one waiting, which is answered with
 //! nothing: it belongs to a page load that has already been superseded).
@@ -64,6 +73,15 @@ pub const Job = struct {
     /// For the log line: how long the decode took on the worker.
     decode_ms: u64 = 0,
 
+    /// A staged job (T3241): what to put at `spill`. Null for a parked
+    /// request, whose answer is the body above.
+    stage: ?viewer_image.Stage = null,
+    /// Where a staged job writes the picture. Owned.
+    spill: ?[]u8 = null,
+    /// The picture is complete at `spill`, `len` bytes. False when the decode
+    /// or the write failed, which leaves no file behind.
+    spilled: bool = false,
+
     /// Answer the page (whatever is already set on `args` is the answer; none
     /// means the request falls through and fails) and free everything.
     pub fn finish(self: *Job) void {
@@ -74,6 +92,7 @@ pub const Job = struct {
         if (self.args) |a| a.release();
         if (self.body) |b| _ = w32.GlobalFree(b);
         const alloc = self.alloc;
+        if (self.spill) |p| alloc.free(p);
         alloc.free(self.path);
         alloc.destroy(self);
     }
@@ -83,6 +102,7 @@ pub const Job = struct {
     pub fn run(self: *Job) void {
         const started = std.time.milliTimestamp();
         defer self.decode_ms = @intCast(@max(0, std.time.milliTimestamp() - started));
+        if (self.stage == .copy) return self.copy();
         var src = image_copy.open(self.alloc, self.path, &self.why) orelse {
             if (self.why == .no_codec) self.readSniff();
             return;
@@ -99,14 +119,68 @@ pub const Job = struct {
             const dst = w32.GlobalLock(mem) orelse break :fill false;
             defer _ = w32.GlobalUnlock(mem);
             @memcpy(dst[0..headers.len], &headers);
-            break :fill src.copyInto(self.alloc, dst[headers.len..total]);
+            if (!src.copyInto(self.alloc, dst[headers.len..total])) break :fill false;
+            if (self.spill) |p| self.spilled = writeFile(p, dst[0..total]);
+            break :fill true;
         };
         if (!ok) {
             _ = w32.GlobalFree(mem);
             return;
         }
-        self.body = mem;
         self.len = total;
+        // A staged decode is done with its buffer the moment the file is
+        // written, so the pane holds nothing past it. One whose write failed
+        // drops it too: the pane falls back to a parked request, which decodes
+        // again - the failure is rare, and a second way to answer from memory
+        // is not worth keeping for it.
+        if (self.stage != null) {
+            _ = w32.GlobalFree(mem);
+            return;
+        }
+        self.body = mem;
+    }
+
+    /// The `copy` stage: the picture as it is, into the scratch folder.
+    /// `copyFile` writes a temporary name and renames it, so the page can
+    /// never load a half-written file.
+    fn copy(self: *Job) void {
+        const dst = self.spill orelse return;
+        const cwd = std.fs.cwd();
+        cwd.copyFile(self.path, cwd, dst, .{}) catch |err| {
+            log.warn("image stage: cannot copy {s}: {s}", .{ self.path, @errorName(err) });
+            return;
+        };
+        const size = (cwd.statFile(dst) catch {
+            cwd.deleteFile(dst) catch {};
+            return;
+        }).size;
+        self.len = @intCast(size);
+        self.spilled = true;
+    }
+
+    /// Write a decoded `.bmp` to `path` through a temporary name and a
+    /// rename, so a failure - or a page that asks early - never meets a torn
+    /// picture.
+    fn writeFile(path: []const u8, bytes: []const u8) bool {
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const tmp = std.fmt.bufPrint(&buf, "{s}.part", .{path}) catch return false;
+        const cwd = std.fs.cwd();
+        const file = cwd.createFile(tmp, .{}) catch |err| {
+            log.warn("image stage: cannot write {s}: {s}", .{ tmp, @errorName(err) });
+            return false;
+        };
+        const wrote = if (file.writeAll(bytes)) true else |err| fail: {
+            log.warn("image stage: cannot write {s}: {s}", .{ tmp, @errorName(err) });
+            break :fail false;
+        };
+        file.close();
+        if (wrote) {
+            if (cwd.rename(tmp, path)) return true else |err| {
+                log.warn("image stage: cannot rename {s}: {s}", .{ tmp, @errorName(err) });
+            }
+        }
+        cwd.deleteFile(tmp) catch {};
+        return false;
     }
 
     fn readSniff(self: *Job) void {
@@ -149,6 +223,50 @@ pub fn init(alloc: Allocator) Decode {
 pub fn attach(self: *Decode, hwnd: w32.HWND, message: u32) void {
     self.hwnd = hwnd;
     self.message = message;
+}
+
+/// Stage `path` into `spill` off the GUI thread (T3241): no request is parked,
+/// and the pane points the page at the file when the completion lands. False
+/// when there is no window to post that completion to, or no memory or thread
+/// for the job; the caller then serves the picture through a request.
+pub fn stageJob(
+    self: *Decode,
+    path: []const u8,
+    revision: u64,
+    how: viewer_image.Stage,
+    spill: []const u8,
+) bool {
+    if (self.hwnd == null) return false;
+    const alloc = self.alloc;
+    const job = alloc.create(Job) catch return false;
+    const owned = alloc.dupe(u8, path) catch {
+        alloc.destroy(job);
+        return false;
+    };
+    const spill_owned = alloc.dupe(u8, spill) catch {
+        alloc.free(owned);
+        alloc.destroy(job);
+        return false;
+    };
+    job.* = .{
+        .alloc = alloc,
+        .path = owned,
+        .revision = revision,
+        .args = null,
+        .deferral = null,
+        .stage = how,
+        .spill = spill_owned,
+    };
+    if (self.thread != null) {
+        if (self.queued) |old| old.finish();
+        self.queued = job;
+        return true;
+    }
+    if (!self.start(job)) {
+        job.finish();
+        return false;
+    }
+    return true;
 }
 
 /// Make a job for `path`, parking `args` on a deferral when `park` is set.

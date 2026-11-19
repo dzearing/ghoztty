@@ -33,6 +33,14 @@
 #     and the body is the bare top-down .bmp (headers + one copy of the
 #     pixels) - and a TIFF carrying EXIF orientation 6 is drawn upright
 #     (T3043).
+#   - a LARGE picture never passes through the app (T3241, section M): every
+#     decode, and any picture of 2 MiB or more the browser draws itself, is
+#     staged on the worker into the pane's scratch folder and loaded by the
+#     browser process from disk (`parked=staged`). Swapping one into an open
+#     pane leaves the app's private bytes and its GUI thread alone, the file it
+#     replaces is dropped, and the folder goes when the pane closes. Before,
+#     the bytes went back through the request, where the runtime copies them
+#     about ten times over inside the app (+459 MB for 12 MP, T3223).
 #
 # ORACLE, and why it is the log. This runs on the background test desktop,
 # where CopyFromScreen and SendInput are dead (T233), so nothing out here can
@@ -255,6 +263,30 @@ try {
     $g.Dispose()
     $big.Save($bigPath, [System.Drawing.Imaging.ImageFormat]::Png)
 } finally { $big.Dispose() }
+
+# Section M's pictures (T3241): NOISE, so the PNG is as big as the pixels and
+# lands well past the 2 MiB staging threshold, and the TIFF decodes to a 24 MB
+# .bmp. A solid fill compresses to a few KB and would never be staged.
+# Built off to one side and moved INTO the watched folder later: a write in
+# place fires the pane's reload while the file is still half there.
+$mInDir = Join-Path $dir 'm-in'
+New-Item -ItemType Directory -Force $mInDir | Out-Null
+$mNoisePng = Join-Path $mInDir 'noise.png'
+$mNoiseTif = Join-Path $mInDir 'noise.tiff'
+$mw = 3000; $mh = 2000
+$noise = New-Object System.Drawing.Bitmap $mw, $mh, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+try {
+    $bits = $noise.LockBits((New-Object System.Drawing.Rectangle 0, 0, $mw, $mh),
+        [System.Drawing.Imaging.ImageLockMode]::WriteOnly, $noise.PixelFormat)
+    $px = New-Object byte[] ($mw * $mh * 4)
+    (New-Object Random 3241).NextBytes($px)
+    for ($i = 3; $i -lt $px.Length; $i += 4) { $px[$i] = 255 }
+    [Runtime.InteropServices.Marshal]::Copy($px, 0, $bits.Scan0, $px.Length)
+    $noise.UnlockBits($bits)
+    $noise.Save($mNoisePng, [System.Drawing.Imaging.ImageFormat]::Png)
+    $noise.Save($mNoiseTif, [System.Drawing.Imaging.ImageFormat]::Tiff)
+} finally { $noise.Dispose() }
+$px = $null
 
 # Section L's own picture (T1233), with a name no other pane carries, because
 # the DevTools page is found by the <img>'s alt text.
@@ -557,8 +589,11 @@ try {
     # file - 14 + 124 header bytes and ONE copy of the pixels - so nothing was
     # padded or doubled on its way into the response stream.
     $wantBytes = 14 + 124 + 640 * 480 * 4
-    Assert ($tserved.Count -ge 1 -and $tserved[0].Parked -eq 'true') `
-        "L1: ...decoded OFF the GUI thread, the request parked on a deferral (parked='$(if ($tserved.Count) { $tserved[0].Parked } else { '-' })')"
+    # `staged` since T3241: decoded on the worker and written to the scratch
+    # folder, no request parked at all; `true` is the request path's worker.
+    # Either is off the GUI thread; `false` (decoded inline) is the failure.
+    Assert ($tserved.Count -ge 1 -and @('true', 'staged') -contains $tserved[0].Parked) `
+        "L1: ...decoded OFF the GUI thread, on the worker (parked='$(if ($tserved.Count) { $tserved[0].Parked } else { '-' })')"
     Assert ($tserved.Count -ge 1 -and $tserved[0].Bytes -eq $wantBytes) `
         "L1: ...as exactly the .bmp, $wantBytes bytes (got $(if ($tserved.Count) { $tserved[0].Bytes } else { '-' }))"
 
@@ -567,7 +602,7 @@ try {
     $turnLeaf = Get-OnlyPane 't3043turn'
     $turnPane = if ($turnLeaf) { $turnLeaf.id } else { $null }
     $turnServed = @(Wait-ImageServed $errlog $turnPane)
-    Assert ($turnServed.Count -ge 1 -and $turnServed[0].Route -eq 'wic' -and $turnServed[0].Parked -eq 'true') `
+    Assert ($turnServed.Count -ge 1 -and $turnServed[0].Route -eq 'wic' -and @('true', 'staged') -contains $turnServed[0].Parked) `
         "L1b: an EXIF-turned .tiff is decoded on the worker too (route='$(if ($turnServed.Count) { $turnServed[0].Route } else { '-' })' parked='$(if ($turnServed.Count) { $turnServed[0].Parked } else { '-' })')"
     $turnSt = Wait-Loaded $errlog $turnPane
     Assert ($turnSt -and $turnSt.NatW -eq 32 -and $turnSt.NatH -eq 64) `
@@ -595,6 +630,114 @@ try {
     }
     Assert ($heicCard -eq $wantTitle) `
         "L3: an undecodable .heic gets the card for THIS box (HEIF extension installed=$heifInstalled): want '$wantTitle', got '$heicCard'"
+
+    # --- M. a large picture never passes through the app (T3241) ------------
+    # Swapped into an open pane the way an editor saves (a rename into the
+    # watched folder), while the app's private bytes and a WM_NULL round trip
+    # to its window are sampled every 20 ms. The bound is a third of what the
+    # request path cost for the same pictures - it copied ~10x the body inside
+    # the app (T3223) - so the assertion has room for a debug build's noise
+    # and none for the old path.
+    $mSamplePath = Join-Path $dir 'm-samples.txt'
+    $mHwnd = [int64](Wait-TestWindow -ProcessId $appPid -Class 'GhozttyWindow')
+    function Measure-Swap([string]$target, [string]$ext, [string]$big, [string]$mime, [string]$route) {
+        $view = Join-Path $dir "m-$target.$ext"
+        Copy-Item $(if ($ext -eq 'png') { $iconPath } else { $tiffPath }) $view
+        $rr = Invoke-Verb @('+new-window', "--target=$target", "--view=$view")
+        Assert ($rr.Code -eq 0) "M: +new-window --view=<small>.$ext exits 0 (got $($rr.Code))"
+        $leaf = Get-OnlyPane $target
+        $pane = if ($leaf) { $leaf.id } else { $null }
+        $first = Wait-Loaded $errlog $pane
+        Assert ($null -ne $first) "M: the small .$ext drew first"
+        $scratch = Join-Path $env:TEMP "ghoztty-viewer-images\$pane"
+        Assert ($pane -and (Test-Path -LiteralPath $scratch)) "M: the pane holds its own scratch folder ($scratch)"
+
+        Remove-Item $mSamplePath, "$mSamplePath.start" -ErrorAction SilentlyContinue
+        $job = Start-Job -ArgumentList $appPid, $mHwnd, $mSamplePath -ScriptBlock {
+            param($p, $h, $f)
+            Add-Type -Namespace T3241 -Name W -MemberDefinition '[DllImport("user32.dll")] public static extern System.IntPtr SendMessageTimeoutW(System.IntPtr h, uint m, System.IntPtr w, System.IntPtr l, uint flags, uint ms, out System.IntPtr r);'
+            $proc = [Diagnostics.Process]::GetProcessById($p)
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            # When sample 0 was taken, so the caller can place its swap.
+            [IO.File]::WriteAllText("$f.start", [string][DateTime]::Now.Ticks)
+            $lines = New-Object System.Collections.Generic.List[string]
+            $r = [IntPtr]::Zero
+            while ($sw.ElapsedMilliseconds -lt 9000) {
+                $proc.Refresh()
+                $t0 = $sw.Elapsed.TotalMilliseconds
+                [void][T3241.W]::SendMessageTimeoutW([IntPtr]$h, 0, [IntPtr]::Zero, [IntPtr]::Zero, 2, 5000, [ref]$r)
+                $lines.Add(('{0} {1} {2:F1}' -f $sw.ElapsedMilliseconds, $proc.PrivateMemorySize64, ($sw.Elapsed.TotalMilliseconds - $t0)))
+                Start-Sleep -Milliseconds 20
+            }
+            [IO.File]::WriteAllLines($f, $lines)
+        }
+        # The job's own start-up is seconds; the swap waits for its baseline.
+        for ($t = 0; $t -lt 100 -and $job.State -eq 'Running' -and -not (Test-Path "$mSamplePath.start"); $t++) { Start-Sleep -Milliseconds 100 }
+        Start-Sleep -Seconds 2
+        $swapAt = Get-Date
+        $tmpCopy = Join-Path $mInDir "swap.$ext"
+        Copy-Item $big $tmpCopy
+        Move-Item $tmpCopy $view -Force
+        $bigSize = (Get-Item -LiteralPath $big).Length
+        Wait-Job $job -Timeout 30 | Out-Null
+        Remove-Job $job -Force
+
+        $served = @(Get-ImageServed $errlog $pane | Where-Object { $_.Rev -gt 1 })
+        $loaded = @(Get-ImageStates $errlog $pane | Where-Object { $_.Event -eq 'loaded' -and $_.NatW -eq $mw -and $_.NatH -eq $mh })
+        Assert ($served.Count -ge 1 -and $served[0].Parked -eq 'staged' -and $served[0].Route -eq $route -and $served[0].Mime -eq $mime) `
+            "M: the large .$ext was STAGED, not answered through the request (route='$(if ($served.Count) { $served[0].Route } else { '-' })' mime='$(if ($served.Count) { $served[0].Mime } else { '-' })' parked='$(if ($served.Count) { $served[0].Parked } else { '-' })')"
+        $wantBytes = if ($ext -eq 'png') { $bigSize } else { 14 + 124 + $mw * $mh * 4 }
+        Assert ($served.Count -ge 1 -and $served[0].Bytes -eq $wantBytes) `
+            "M: ...the staged file is the whole picture, $wantBytes bytes (got $(if ($served.Count) { $served[0].Bytes } else { '-' }))"
+        Assert ($loaded.Count -ge 1) "M: ...and the page DREW it, at its real $($mw)x$($mh) - the low numbers below are not a picture that never loaded"
+
+        $rows = @(Get-Content $mSamplePath -ErrorAction SilentlyContinue | ForEach-Object {
+                $a = $_.Split(' '); [pscustomobject]@{ T = [long]$a[0]; Priv = [long]$a[1]; Rt = [double]$a[2] } })
+        $started = Get-Content "$mSamplePath.start" -ErrorAction SilentlyContinue
+        $cut = if ($started) { ($swapAt - [DateTime][long]$started).TotalMilliseconds } else { [double]::MaxValue }
+        $pre = @($rows | Where-Object { $_.T -lt $cut })
+        $post = @($rows | Where-Object { $_.T -ge $cut })
+        if ($pre.Count -lt 5 -or $post.Count -lt 20) {
+            $script:skipped++
+            Write-Host "SKIP  M: the sampler did not straddle the swap ($($pre.Count) before, $($post.Count) after)"
+            return $pane
+        }
+        $base = ($pre | Measure-Object Priv -Maximum).Maximum
+        $peak = ($post | Measure-Object Priv -Maximum).Maximum
+        $grew = ($peak - $base) / 1MB
+        $worst = ($post | Measure-Object Rt -Maximum).Maximum
+        $bound = [Math]::Round(($wantBytes * 10 / 3) / 1MB)
+        Assert ($grew -lt $bound) `
+            ("M: ...the app's private bytes grew {0:N0} MB over the load (bound {1} MB; the request path cost ~10x the {2:N0} MB body)" -f $grew, $bound, ($wantBytes / 1MB))
+        Assert ($worst -lt 60) ("M: ...and the GUI thread answered within 60 ms throughout (worst WM_NULL round trip {0:F1} ms)" -f $worst)
+        return $pane
+    }
+
+    $mPngPane = Measure-Swap 't3241png' 'png' $mNoisePng 'image/png' 'browser'
+    $mTifPane = Measure-Swap 't3241tif' 'tiff' $mNoiseTif 'image/bmp' 'wic'
+
+    # A reload stages the picture again under a new name and drops the file it
+    # replaces, so a pane holds one staged picture however often it reloads.
+    if ($mPngPane) {
+        $before = @(Get-ImageServed $errlog $mPngPane).Count
+        $r = Invoke-Verb @('+reload', "--target=$mPngPane")
+        $again = @(Wait-ImageServed $errlog $mPngPane ($before + 1))
+        Assert ($again.Count -gt $before -and $again[-1].Parked -eq 'staged') 'M: +reload stages the large picture again'
+        Start-Sleep -Milliseconds 500
+        $files = @(Get-ChildItem -LiteralPath (Join-Path $env:TEMP "ghoztty-viewer-images\$mPngPane") -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ne '.owner' })
+        Assert ($files.Count -eq 1) "M: ...and the file it replaced is gone (folder holds $($files.Count): $(($files | ForEach-Object { $_.Name }) -join ', '))"
+
+        # Closing the pane takes its folder, staged picture and all.
+        $mScratch = Join-Path $env:TEMP "ghoztty-viewer-images\$mPngPane"
+        $r = Invoke-Verb @('+close', '--target=t3241png')
+        $gone = $false
+        for ($t = 0; $t -lt 40 -and -not $gone; $t++) {
+            $gone = -not (Test-Path -LiteralPath $mScratch)
+            if (-not $gone) { Start-Sleep -Milliseconds 250 }
+        }
+        Assert $gone "M: closing the pane removes its scratch folder ($mScratch)"
+    }
 
     # --- K. ctrl+C at an image pane copies the PICTURE (T1872) ---------------
     # Mac's image pane answers Cmd-C with the image itself; before T1872 the

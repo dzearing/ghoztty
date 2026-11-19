@@ -94,6 +94,51 @@ pub fn fallback(current: Route, ext: []const u8) ?Route {
     return .wic;
 }
 
+/// How a picture is put in the pane's scratch folder for the page to load
+/// straight from disk (T3241), instead of passing its bytes through this
+/// process's `WebResourceRequested` hand-off.
+pub const Stage = enum {
+    /// The file itself, copied - a picture the browser draws as it is.
+    copy,
+    /// WIC's decode of it, written as the `.bmp` the `wic` route serves.
+    decode,
+
+    /// The staged file's extension: the scratch folder is served by the
+    /// browser process, which takes the MIME type from it.
+    pub fn extension(self: Stage, source_ext: []const u8) []const u8 {
+        return switch (self) {
+            .copy => source_ext,
+            .decode => "bmp",
+        };
+    }
+};
+
+/// Whether - and how - to stage a picture (T3241). Null keeps today's path,
+/// the bytes answered from memory or streamed from disk through the request.
+///
+/// A decode is always staged: its `.bmp` is width x height x 4 however small
+/// the source, and every byte of an answered body costs about ten times its
+/// size inside the runtime's hand-off. A picture the browser draws itself is
+/// staged from `min_bytes` up; below that the copy costs more than it saves.
+/// Vector art and `.icns` never are: an `.svg` is small and the page is told
+/// it is vector by a url with no extension, and an icon's PNG is a slice of
+/// the file, not a file. An extension that is not short plain alphanumerics
+/// is not staged either - it names the staged file, and the browser decides
+/// its MIME type from it.
+pub fn stage(r: Route, ext: []const u8, size: u64, min_bytes: u64) ?Stage {
+    switch (r) {
+        .wic => return .decode,
+        .icns => return null,
+        .browser => {
+            if (std.ascii.eqlIgnoreCase(ext, "svg")) return null;
+            if (size < min_bytes) return null;
+            if (ext.len == 0 or ext.len > 8) return null;
+            for (ext) |c| if (!std.ascii.isAlphanumeric(c)) return null;
+            return .copy;
+        },
+    }
+}
+
 /// A codec this machine is missing, named so the card can say what to
 /// install instead of "Cannot display this image".
 pub const Codec = enum {
@@ -386,6 +431,29 @@ test "fallback: one WIC retry for a raster the browser failed, none for vectors 
     // Already decoded on the host: a second try cannot do better.
     try testing.expectEqual(@as(?Route, null), fallback(.wic, "heic"));
     try testing.expectEqual(@as(?Route, null), fallback(.icns, "icns"));
+}
+
+test "stage: every decode, browser rasters from the threshold up, never vectors or icons (T3241)" {
+    const min: u64 = 2 * 1024 * 1024;
+    // A decode is staged whatever the source size: the .bmp is w*h*4.
+    try testing.expectEqual(@as(?Stage, .decode), stage(.wic, "tiff", 10, min));
+    try testing.expectEqual(@as(?Stage, .decode), stage(.wic, "heic", 0, min));
+    // The browser route copies from the threshold up, and not one byte below.
+    try testing.expectEqual(@as(?Stage, .copy), stage(.browser, "png", min, min));
+    try testing.expectEqual(@as(?Stage, .copy), stage(.browser, "JPG", 48_000_000, min));
+    try testing.expectEqual(@as(?Stage, null), stage(.browser, "png", min - 1, min));
+    // Vector art and icon sets never.
+    try testing.expectEqual(@as(?Stage, null), stage(.browser, "svg", 48_000_000, min));
+    try testing.expectEqual(@as(?Stage, null), stage(.browser, "SVG", 48_000_000, min));
+    try testing.expectEqual(@as(?Stage, null), stage(.icns, "icns", 48_000_000, min));
+    // An extension that could not safely name the staged file is not staged.
+    try testing.expectEqual(@as(?Stage, null), stage(.browser, "", 48_000_000, min));
+    try testing.expectEqual(@as(?Stage, null), stage(.browser, "p.ng", 48_000_000, min));
+    try testing.expectEqual(@as(?Stage, null), stage(.browser, "png%20", 48_000_000, min));
+    try testing.expectEqual(@as(?Stage, null), stage(.browser, "abcdefghi", 48_000_000, min));
+    // The staged file keeps the source's extension, or is the decoded .bmp.
+    try testing.expectEqualStrings("webp", Stage.copy.extension("webp"));
+    try testing.expectEqualStrings("bmp", Stage.decode.extension("tiff"));
 }
 
 test "missingCodec names the extension only for a real HEIF/AVIF container" {
