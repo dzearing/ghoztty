@@ -28,7 +28,10 @@
 #      control, the same app doing the same work with no relay in the path.
 #   B. Agent-held pane (`--session-persistence=true`, termio.Remote) - the
 #      shipped configuration.
-#   C. The contrast: B is not materially slower than A.
+#   C. The contrast: B is not materially slower than A. A and B each run
+#      -Samples times (default 3), interleaved A,B,A,B, and C scores
+#      median(B) / median(A) - one pair is noise on this box, not a
+#      measurement (T3172).
 #   D. conhost, for context. Reported, and asserted only as a sanity floor -
 #      the box is not the variable this script controls.
 #   E. The run stayed off the interactive desktop.
@@ -70,6 +73,15 @@ param(
     # Lines in the `type` payload. 500,000 is T1167's 4.5 MB.
     [int]$TypeLines = 500000,
     [int]$WaitSeconds = 300,
+    # How many runs of EACH arm C1 is scored from (T3172). One run is not a
+    # measurement on this box: T3168's twelve solo runs on one unchanged Debug
+    # build found the agent arm steady (9.3-10.4 s) and the local arm anywhere
+    # from 5.3 to 9.8 s, so a single pair scored 0.99x..1.72x - and once 2.73x -
+    # with no code change. The arms run INTERLEAVED (A,B,A,B,...) so box drift
+    # lands on both, and C1 scores median(B) / median(A), so one slow run of
+    # either arm cannot decide the verdict.
+    [ValidateRange(1, 15)]
+    [int]$Samples = 3,
     # Measure an OPTIMIZED build. A ReleaseFast `zig-out` derives the same IPC
     # and agent endpoints as the user's installed release, so it can only be
     # measured under the three-knob release sandbox (T1158) - which is exactly
@@ -277,6 +289,16 @@ nothing ever writes, so every arm scoring the result must go red. Never throws.
 #>
 function Wait-Workload([string]$stamp, [int]$timeoutSec) {
     $watch = if ($NegativeControl) { "$stamp.never" } else { $stamp }
+    # A stamp nothing writes proves the arm scores arrival after any wait at all,
+    # so the negative control need not sit out the full budget once per sample:
+    # 45 s still outlasts the real workload (~10 s on Debug), so the arm is red
+    # because the oracle is watching the wrong file, not because it gave up early.
+    # The REAL workload is then let finish (bounded by what is left of the
+    # budget) before answering, so the setup arms that follow - B4's liveness
+    # probe above all - meet a quiet pane, exactly as in a real run, rather than
+    # one still flooding (observed: B4 red under the 45 s cap alone).
+    $budgetEnd = (Get-Date).AddSeconds($timeoutSec)
+    if ($NegativeControl -and $timeoutSec -gt 45) { $timeoutSec = 45 }
     $dl = (Get-Date).AddSeconds($timeoutSec)
     while ((Get-Date) -lt $dl) {
         if (Test-Path $watch) {
@@ -293,6 +315,9 @@ function Wait-Workload([string]$stamp, [int]$timeoutSec) {
             }
         }
         Start-Sleep -Milliseconds 250
+    }
+    if ($NegativeControl) {
+        while ((Get-Date) -lt $budgetEnd -and -not (Test-Path $stamp)) { Start-Sleep -Milliseconds 250 }
     }
     return $null
 }
@@ -448,54 +473,97 @@ function Show-Run([string]$tag, $r) {
     "  ${tag}: {0} ms, {1:N0} bytes, {2} KB/s (writer clock)" -f $r.Result.Ms, $r.Result.Bytes, $r.Result.KbPerSec
 }
 
-$localRun = $null
-$agentRun = $null
+<#
+The median of a list of numbers, or 0 for an empty one. Middle element of an odd
+count, mean of the two middle ones of an even count. `@()` on the way in, since a
+one-element pipeline result arrives as a scalar (PS5.1).
+#>
+function Get-Median($values) {
+    $v = @($values | Where-Object { $null -ne $_ } | ForEach-Object { [double]$_ } | Sort-Object)
+    if ($v.Count -eq 0) { return 0.0 }
+    $mid = [int][math]::Floor($v.Count / 2)
+    if ($v.Count % 2 -eq 1) { return $v[$mid] }
+    return ($v[$mid - 1] + $v[$mid]) / 2.0
+}
+
+# Every run of each arm, in the order it was taken (T3172).
+$localRuns = New-Object System.Collections.ArrayList
+$agentRuns = New-Object System.Collections.ArrayList
 $conhost = $null
 
 try {
-    "== setup: {0}{1}" -f $(
-        if ($Shape -eq 'type') { "type of $TypeLines lines" } else { "$Chunks chunks" }), $(
+    "== setup: {0}, {1} sample(s) per arm, interleaved{2}" -f $(
+        if ($Shape -eq 'type') { "type of $TypeLines lines" } else { "$Chunks chunks" }), $Samples, $(
         if ($NegativeControl) { ' (NEGATIVE CONTROL - watching a stamp nothing writes)' } else { '' })
 
     Reset-GhozttyTestState -Exe $Exe -SettleMs 1000 -AllowReleaseBuild:$ReleaseSandbox | Out-Null
     Assert-GhozttyPrivateEndpoint -Exe $Exe -AllowReleaseBuild:$ReleaseSandbox
     New-TestDesktop | Out-Null
 
-    # --- Section A: the local-ConPTY control --------------------------------
-    "== A: local-ConPTY pane (termio.Exec, no relay in the path)"
-    $localRun = Measure-Pane 'local' $false $false
-    Show-Run 'A' $localRun
-    Assert 'A1 the local pane came up and its shell echoes' (
-        $null -ne $localRun -and $localRun.Primed)
+    # --- Sections A and B, interleaved --------------------------------------
+    # A: the local-ConPTY control (termio.Exec, no relay in the path).
+    # B: the shipped, agent-held path (termio.Remote).
+    # One A then one B per sample, so whatever the box is doing during the run
+    # (a build cache being reclaimed, a defender scan) lands on both arms rather
+    # than on whichever happened to run second.
+    for ($s = 1; $s -le $Samples; $s++) {
+        "== A#${s}: local-ConPTY pane (termio.Exec, no relay in the path)"
+        $lr = Measure-Pane "local$s" $false $false
+        Show-Run "A#$s" $lr
+        $lr | Add-Member -NotePropertyName Live -NotePropertyValue (
+            $null -ne $lr -and $lr.Pane -and (Test-PaneLive -Exe $Exe -Target $lr.Pane -Tmp $tmp)) -Force
+        $lr | Add-Member -NotePropertyName Leaked -NotePropertyValue (
+            $null -eq $lr -or $null -eq $lr.App -or (Test-TestDesktopLeak -ProcessId $lr.App.Pid)) -Force
+        [void]$localRuns.Add($lr)
+        Reset-GhozttyTestState -Exe $Exe -SettleMs 1000 -AllowReleaseBuild:$ReleaseSandbox | Out-Null
+
+        "== B#${s}: agent-held pane (termio.Remote, the shipped configuration)"
+        $ar = Measure-Pane "agent$s" $true $true
+        Show-Run "B#$s" $ar
+        # Liveness is checked while this sample's app is still up - the reset
+        # below takes it down.
+        $ar | Add-Member -NotePropertyName Live -NotePropertyValue (
+            $null -ne $ar -and $ar.Pane -and (Test-PaneLive -Exe $Exe -Target $ar.Pane -Tmp $tmp)) -Force
+        $ar | Add-Member -NotePropertyName Leaked -NotePropertyValue (
+            $null -eq $ar -or $null -eq $ar.App -or (Test-TestDesktopLeak -ProcessId $ar.App.Pid)) -Force
+        [void]$agentRuns.Add($ar)
+        if ($s -lt $Samples) {
+            Reset-GhozttyTestState -Exe $Exe -SettleMs 1000 -AllowReleaseBuild:$ReleaseSandbox | Out-Null
+        }
+    }
+
+    # An arm's assertion holds only if it holds for EVERY sample: a pane that
+    # fell back to the local path once is a broken agent path, however the
+    # other samples went.
+    $lAll = @($localRuns)
+    $aAll = @($agentRuns)
+    $lDone = @($lAll | Where-Object { $null -ne $_ -and $null -ne $_.Result })
+    $aDone = @($aAll | Where-Object { $null -ne $_ -and $null -ne $_.Result })
+
+    Assert "A1 the local pane came up and its shell echoes (all $Samples)" (
+        $lAll.Count -eq $Samples -and @($lAll | Where-Object { $null -eq $_ -or -not $_.Primed }).Count -eq 0)
     Assert 'A2 the pane really was LOCAL (+list reports no agent session)' (
-        $null -ne $localRun -and -not $localRun.Agent)
-    Assert 'A2b the workload finished in the local pane' (
-        $null -ne $localRun -and $null -ne $localRun.Result)
+        $lAll.Count -eq $Samples -and @($lAll | Where-Object { $null -eq $_ -or $_.Agent }).Count -eq 0)
+    Assert 'A2b the workload finished in the local pane' ($lDone.Count -eq $Samples)
     Assert "A3 local ingest is at least $rateFloorKb KB/s" (
-        $null -ne $localRun -and $null -ne $localRun.Result -and $localRun.Result.KbPerSec -ge $rateFloorKb)
+        $lDone.Count -eq $Samples -and @($lDone | Where-Object { $_.Result.KbPerSec -lt $rateFloorKb }).Count -eq 0)
     Assert 'A4 the local pane is still LIVE afterwards' (
-        $null -ne $localRun -and $localRun.Pane -and (Test-PaneLive -Exe $Exe -Target $localRun.Pane -Tmp $tmp))
+        $lAll.Count -eq $Samples -and @($lAll | Where-Object { -not $_.Live }).Count -eq 0)
 
-    Reset-GhozttyTestState -Exe $Exe -SettleMs 1000 -AllowReleaseBuild:$ReleaseSandbox | Out-Null
-
-    # --- Section B: the shipped, agent-held path ----------------------------
-    "== B: agent-held pane (termio.Remote, the shipped configuration)"
-    $agentRun = Measure-Pane 'agent' $true $true
-    Show-Run 'B' $agentRun
-    Assert 'B1 the agent-held pane came up and its shell echoes' (
-        $null -ne $agentRun -and $agentRun.Primed)
+    Assert "B1 the agent-held pane came up and its shell echoes (all $Samples)" (
+        $aAll.Count -eq $Samples -and @($aAll | Where-Object { $null -eq $_ -or -not $_.Primed }).Count -eq 0)
     Assert 'B2 the pane really was AGENT-HELD (+list names its agent session)' (
-        $null -ne $agentRun -and $agentRun.Agent)
-    Assert 'B2b the workload finished in the agent-held pane' (
-        $null -ne $agentRun -and $null -ne $agentRun.Result)
+        $aAll.Count -eq $Samples -and @($aAll | Where-Object { $null -eq $_ -or -not $_.Agent }).Count -eq 0)
+    Assert 'B2b the workload finished in the agent-held pane' ($aDone.Count -eq $Samples)
     Assert "B3 agent-held ingest is at least $rateFloorKb KB/s" (
-        $null -ne $agentRun -and $null -ne $agentRun.Result -and $agentRun.Result.KbPerSec -ge $rateFloorKb)
+        $aDone.Count -eq $Samples -and @($aDone | Where-Object { $_.Result.KbPerSec -lt $rateFloorKb }).Count -eq 0)
     Assert 'B4 the agent-held pane is still LIVE afterwards' (
-        $null -ne $agentRun -and $agentRun.Pane -and (Test-PaneLive -Exe $Exe -Target $agentRun.Pane -Tmp $tmp))
+        $aAll.Count -eq $Samples -and @($aAll | Where-Object { -not $_.Live }).Count -eq 0)
 
-    # The relay's own meters, from the agent and the holder processes. Reported
-    # rather than asserted: they are how a red C1 is diagnosed, and their shape
-    # (bytes per frame, frames per wake) is what named the defect.
+    # The relay's own meters, from the agent and the holder processes, pooled
+    # over every B sample. Reported rather than asserted: they are how a red C1
+    # is diagnosed, and their shape (bytes per frame, frames per wake) is what
+    # named the defect.
     $relayLogs = @(Get-ChildItem -Path $tmp -Filter 'relay-perf-*.log' -ErrorAction SilentlyContinue)
     if ($relayLogs.Count -gt 0) {
         # The MEDIAN busy second, not the busiest: every leg of this relay peaks
@@ -521,16 +589,31 @@ try {
     }
 
     # --- Section C: the contrast --------------------------------------------
+    # Scored from the MEDIAN of each arm (T3172), never from one pair, and every
+    # sample is printed so a red names its own spread.
     "== C: the relay's cost"
     $ratio = 0.0
-    if ($null -ne $localRun -and $null -ne $localRun.Result -and
-        $null -ne $agentRun -and $null -ne $agentRun.Result -and $localRun.Result.Ms -gt 0) {
-        $ratio = $agentRun.Result.Ms / [double]$localRun.Result.Ms
-        "  agent / local = {0:N2}x  ({1} ms vs {2} ms)" -f $ratio, $agentRun.Result.Ms, $localRun.Result.Ms
-    } else {
-        "  agent / local = (not measured)"
+    $lMs = @($lDone | ForEach-Object { $_.Result.Ms })
+    $aMs = @($aDone | ForEach-Object { $_.Result.Ms })
+    "  A samples (ms): " + $(if ($lMs.Count) { $lMs -join ', ' } else { '(none)' })
+    "  B samples (ms): " + $(if ($aMs.Count) { $aMs -join ', ' } else { '(none)' })
+    for ($s = 0; $s -lt $Samples; $s++) {
+        $l = $lAll[$s]; $a = $aAll[$s]
+        if ($null -ne $l -and $null -ne $l.Result -and $null -ne $a -and $null -ne $a.Result -and $l.Result.Ms -gt 0) {
+            "  pair {0}: {1:N2}x" -f ($s + 1), ($a.Result.Ms / [double]$l.Result.Ms)
+        }
     }
-    Assert "C1 the relay has not got worse (agent within ${relayRatioBound}x of local)" (
+    # Only a full set is scored: a median over the survivors of a partly failed
+    # run would be a number about fewer samples than the verdict claims.
+    $medL = Get-Median $lMs
+    $medA = Get-Median $aMs
+    if ($lMs.Count -eq $Samples -and $aMs.Count -eq $Samples -and $medL -gt 0) {
+        $ratio = $medA / $medL
+        "  agent / local = {0:N2}x  (median {1} ms vs median {2} ms, {3} sample(s) each)" -f $ratio, $medA, $medL, $Samples
+    } else {
+        "  agent / local = (not measured: {0} of {1} local and {2} of {1} agent samples finished)" -f $lMs.Count, $Samples, $aMs.Count
+    }
+    Assert "C1 the relay has not got worse (median agent within ${relayRatioBound}x of median local)" (
         $ratio -gt 0 -and $ratio -le $relayRatioBound)
 
     # --- Section D: conhost, for context ------------------------------------
@@ -545,8 +628,8 @@ try {
     try { if (-not $cp.HasExited) { $cp.Kill() } } catch {}
     if ($null -ne $conhost) {
         "  D: {0} ms, {1} KB/s (writer clock)" -f $conhost.Ms, $conhost.KbPerSec
-        if ($null -ne $agentRun -and $null -ne $agentRun.Result) {
-            "  agent / conhost = {0:N2}x" -f ($agentRun.Result.Ms / [double]$conhost.Ms)
+        if ($aMs.Count -gt 0 -and $conhost.Ms -gt 0) {
+            "  median agent / conhost = {0:N2}x" -f ($medA / [double]$conhost.Ms)
         }
     } else {
         "  D: conhost never finished"
@@ -554,9 +637,10 @@ try {
     Assert "D1 the conhost control ran and cleared $rateFloorKb KB/s" (
         $null -ne $conhost -and $conhost.KbPerSec -ge $rateFloorKb)
 
+    # Checked per sample while that sample's app was up (Measure-Pane's caller).
     Assert 'E1 the run never took the interactive desktop' (
-        $null -ne $agentRun -and $null -ne $agentRun.App -and
-        -not (Test-TestDesktopLeak -ProcessId $agentRun.App.Pid))
+        ($lAll.Count + $aAll.Count) -eq (2 * $Samples) -and
+        @(($lAll + $aAll) | Where-Object { $_.Leaked }).Count -eq 0)
 
     Complete-TestBody   # T1039: last statement of the try body, before the stamp
 } finally {

@@ -1,10 +1,10 @@
 {
     "guard":  "relay-throughput",
     "script":  "test/win32/pane-ingest-ab.ps1",
-    "generated":  "2026-11-16T06:20:48-08:00",
-    "commit":  "94f84640c",
+    "generated":  "2026-11-18T02:24:07-08:00",
+    "commit":  "2b237eb9f",
     "uncommitted":  [
-
+                        "test/win32/pane-ingest-ab.ps1"
                     ],
     "files":  {
                   "src/remote/agent/pty_holder_child.zig":  "07a24cb7372e1b65e5aa4fda62e668996b10e8f0f8cd57876d67795913e8c53e",
@@ -12,6 +12,6 @@
                   "src/remote/agent/relay_perf.zig":  "b74d79c5fa170240818c28504aeac97e85b194fc24042d225a073a23573a2ca7",
                   "src/remote/agent/server.zig":  "ea0a6af894b4973081dff7b146b3c26a0bc6946ac71d124b2af71bea019ef48b",
                   "src/remote/pipe_stream.zig":  "6e75c5df447ba72acc87d0ae4110b86b9a1a782e382e10afb93ef44bb6c196f0",
-                  "test/win32/pane-ingest-ab.ps1":  "8a1c931c42ef7e346459a13bbd3c4a8e31a581ca00247520423b3d2bca6e984b"
+                  "test/win32/pane-ingest-ab.ps1":  "cfed5672c93813fd80c3fd9068c64d59593f154123f57f0b04769026d81416cc"
               }
 }
