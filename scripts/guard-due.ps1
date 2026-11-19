@@ -248,6 +248,18 @@ $GuardTable = @(
             'test\win32\pr-health.ps1'
         )
     },
+    # The digest's blocked-hours sentence (T1488). Like pr-health, only the
+    # morning digest runs it, and its failure - a blocked day reported as not
+    # blocked - reads as a quiet morning, so nothing else would notice.
+    [pscustomobject]@{
+        Name   = 'loop-blocked-time'
+        Script = 'test\win32\loop-blocked-time.ps1'
+        Stamp  = 'test\win32\loop-blocked-time.stamp.json'
+        Covers = @(
+            'scripts\loop-blocked-time.ps1',
+            'test\win32\loop-blocked-time.ps1'
+        )
+    },
     # Stage 0 of the upstream pull (T957): the upstream remote and the union merge
     # drivers. Neither is exercised by any lane - the remote is git config and
     # the drivers only fire inside a merge - so nothing else would notice a

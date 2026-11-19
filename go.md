@@ -212,6 +212,21 @@ Concretely, in order, with no stops in between:
        — and a stranded list holding a fix somebody is waiting on is exactly what
        this tab exists to surface. The remedy is a request, per step 6.5.
 
+       **And name the hours the loop was BLOCKED** (T1488). The log and the
+       tracker are silent while a usage limit or an expired login holds the
+       loop, so a blocked day reads exactly like a slow one unless you ask:
+
+       ```
+       powershell -NoProfile -File scripts\loop-blocked-time.ps1 -Format markdown
+       ```
+
+       (yesterday by default, every lane, read from the watchdog logs). On
+       `LOOP BLOCKED` - some lane blocked for an hour or more - paste its
+       sentence into **Yesterday**: how long, what share of the day, why, and
+       that the thin output is the block and not the work. `LOOP UNKNOWN` (no
+       watchdog log for the day) is said as unknown, never as "not blocked".
+       Drop `-Format` for the per-lane spans.
+
        **And name any `MANUAL CHECK OWED` line it prints** (T1451) under
        **Decisions**, in one plain sentence: a check only a person can run
        (today, the IME checklist, which needs a Microsoft IME this box does not

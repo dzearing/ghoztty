@@ -1,0 +1,14 @@
+{
+    "guard":  "loop-blocked-time",
+    "script":  "test/win32/loop-blocked-time.ps1",
+    "generated":  "2026-11-19T11:41:23-08:00",
+    "commit":  "3f6340efc",
+    "uncommitted":  [
+                        "scripts/loop-blocked-time.ps1",
+                        "test/win32/loop-blocked-time.ps1"
+                    ],
+    "files":  {
+                  "scripts/loop-blocked-time.ps1":  "5a01117352e273d0a320d46220506762f11f735ba9acf68632440f7a9b320b2a",
+                  "test/win32/loop-blocked-time.ps1":  "0b1f75048b329d12ed03aeaa9b74c7225fcf73660061bb673af84e2949673005"
+              }
+}
