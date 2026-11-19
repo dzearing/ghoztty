@@ -1,0 +1,10 @@
+{
+  "version": "1.55.9",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "An agent too old to see an in-app update no longer stands the app down forever; the update row shows instead." },
+        { "text": "A late session answer is never handed to the next pane." }
+      ] }
+  ]
+}

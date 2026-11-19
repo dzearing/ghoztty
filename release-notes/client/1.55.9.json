@@ -1,0 +1,12 @@
+{
+  "version": "1.55.9",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "Closing a user report whose title quotes an error message now files its publish request." },
+        { "text": "A pane that loses the session service on relaunch now says so, and the log records why." },
+        { "text": "A shell picked in Settings closes a just-opened tab without asking." },
+        { "text": "A full quit and relaunch is now proven to bring every pane back attached, including during an agent update." }
+      ] }
+  ]
+}
