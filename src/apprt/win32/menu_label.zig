@@ -370,6 +370,24 @@ test "the default Windows config labels Copy Ctrl+C and Paste Ctrl+V" {
     try testing.expect(same(accelTrigger(set, .paste_from_clipboard), ctrl_v));
 }
 
+// T3139: previous/next pane lost its displayed chord when T3132 gave
+// ctrl+alt+page_up/down to previous/next window - the remaining ctrl+win+[ / ]
+// was performable and so absent from the reverse map. Mac shows Cmd-[ / Cmd-].
+test "the default Windows config labels Previous and Next Pane" {
+    const builtin = @import("builtin");
+    if (comptime builtin.target.os.tag != .windows) return error.SkipZigTest;
+    const Config = @import("../../config.zig").Config;
+    var cfg = try Config.default(testing.allocator);
+    defer cfg.deinit();
+    const set = &cfg.keybind.set;
+
+    var buf: [64]u8 = undefined;
+    const prev = accelTrigger(set, .{ .goto_split = .previous }) orelse return error.TestExpectedChord;
+    try testing.expectEqualStrings("Win+Ctrl+[", fmt(prev, &buf));
+    const next = accelTrigger(set, .{ .goto_split = .next }) orelse return error.TestExpectedChord;
+    try testing.expectEqualStrings("Win+Ctrl+]", fmt(next, &buf));
+}
+
 test "an over-long title falls back to itself rather than truncating" {
     var buf: Buf = undefined;
     const long = u16lit("A" ** (BUF_LEN - 4));

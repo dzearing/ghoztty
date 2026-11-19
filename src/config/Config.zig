@@ -7053,17 +7053,27 @@ pub const Keybinds = struct {
                 .{ .key = .{ .unicode = 'e' }, .mods = .{ .ctrl = true, .shift = true } },
                 .{ .new_split = .down },
             );
+            // T3139: on Windows these are the ONLY previous/next pane chords
+            // (T3132 gave ctrl+alt+page_up/down to previous/next window), and
+            // a performable trigger is kept out of the reverse map, so the
+            // palette and menus showed Previous/Next Pane with no shortcut.
+            // Non-performable on Windows, like Mac's Cmd-[ / Cmd-]: the chord
+            // is advertised, and with no split it is swallowed rather than
+            // sent to the program (no Windows TUI reads ctrl+win+[).
+            const pane_cycle_flags: inputpkg.Binding.Flags = .{
+                .performable = comptime builtin.target.os.tag != .windows,
+            };
             try self.set.putFlags(
                 alloc,
                 .{ .key = .{ .unicode = '[' }, .mods = .{ .ctrl = true, .super = true } },
                 .{ .goto_split = .previous },
-                .{ .performable = true },
+                pane_cycle_flags,
             );
             try self.set.putFlags(
                 alloc,
                 .{ .key = .{ .unicode = ']' }, .mods = .{ .ctrl = true, .super = true } },
                 .{ .goto_split = .next },
-                .{ .performable = true },
+                pane_cycle_flags,
             );
             try self.set.putFlags(
                 alloc,
@@ -11338,18 +11348,24 @@ test "default keybinds: windows previous/next window avoids the shell's win+shif
     }
 
     // Previous/next pane did not lose its last chord with it: ctrl+super+[
-    // and ]. They are performable, which keeps them out of the reverse map,
-    // so they are looked up by trigger.
+    // and ]. T3139: they are non-performable on Windows, so the reverse map -
+    // what the palette and menus display - names them, the way Mac shows
+    // Cmd-[ / Cmd-].
     const pane_cases = .{
         .{ '[', inputpkg.Binding.Action{ .goto_split = .previous } },
         .{ ']', inputpkg.Binding.Action{ .goto_split = .next } },
     };
     inline for (pane_cases) |case| {
-        const entry = cfg.keybind.set.get(.{
+        const trigger: inputpkg.Binding.Trigger = .{
             .key = .{ .unicode = case[0] },
             .mods = .{ .ctrl = true, .super = true },
-        }) orelse return error.TestExpectedBinding;
+        };
+        const entry = cfg.keybind.set.get(trigger) orelse return error.TestExpectedBinding;
         try testing.expectEqual(case[1], entry.value_ptr.leaf.action);
+        try testing.expect(!entry.value_ptr.leaf.flags.performable);
+
+        const shown = cfg.keybind.set.getTrigger(case[1]) orelse return error.TestExpectedBinding;
+        try testing.expect(shown.equal(trigger));
     }
 }
 
