@@ -1,0 +1,515 @@
+diff --git a/src/apprt/win32/ViewerImageDecode.zig b/src/apprt/win32/ViewerImageDecode.zig
+index 3ee73200f..9f4508209 100644
+--- a/src/apprt/win32/ViewerImageDecode.zig
++++ b/src/apprt/win32/ViewerImageDecode.zig
+@@ -55,6 +55,17 @@ pub const Job = struct {
+     /// stream on success; `finish` frees one that was never handed over.
+     body: ?*anyopaque = null,
+     len: usize = 0,
++    /// Where to write the finished `.bmp` instead of handing it over in
++    /// memory (T3223), or null to keep it in `body`. Owned. A body served
++    /// through `WebResourceRequested` is copied several times over inside
++    /// this process on its way to the page (+459 MB for a 12 MP picture); a
++    /// file is served by the browser process from disk, through the pane's
++    /// folder mapping, and costs this process nothing past the decode.
++    spill: ?[]u8 = null,
++    /// The `.bmp` is on disk at `spill` (and `body` is null). False with a
++    /// `spill` set means the write failed and the body stayed in memory, so
++    /// the answer falls back to the stream.
++    spilled: bool = false,
+     /// Why the decode came back empty, and the file's first bytes when no codec
+     /// took it — enough for `viewer_image.missingCodec` to name the extension
+     /// to install. Read from disk only on that failure, never on success.
+@@ -74,6 +85,7 @@ pub const Job = struct {
+         if (self.args) |a| a.release();
+         if (self.body) |b| _ = w32.GlobalFree(b);
+         const alloc = self.alloc;
++        if (self.spill) |p| alloc.free(p);
+         alloc.free(self.path);
+         alloc.destroy(self);
+     }
+@@ -99,14 +111,36 @@ pub const Job = struct {
+             const dst = w32.GlobalLock(mem) orelse break :fill false;
+             defer _ = w32.GlobalUnlock(mem);
+             @memcpy(dst[0..headers.len], &headers);
+-            break :fill src.copyInto(self.alloc, dst[headers.len..total]);
++            if (!src.copyInto(self.alloc, dst[headers.len..total])) break :fill false;
++            if (self.spill) |p| self.spilled = writeFile(p, dst[0..total]);
++            break :fill true;
+         };
+         if (!ok) {
+             _ = w32.GlobalFree(mem);
+             return;
+         }
+-        self.body = mem;
+         self.len = total;
++        if (self.spilled) {
++            _ = w32.GlobalFree(mem);
++            return;
++        }
++        self.body = mem;
++    }
++
++    /// Write `bytes` to `path`, replacing it. A failure leaves no partial
++    /// file behind for the page to draw as a torn picture.
++    fn writeFile(path: []const u8, bytes: []const u8) bool {
++        const file = std.fs.cwd().createFile(path, .{}) catch |err| {
++            log.warn("image decode: cannot write {s}: {s}; serving from memory", .{ path, @errorName(err) });
++            return false;
++        };
++        const ok = if (file.writeAll(bytes)) true else |err| fail: {
++            log.warn("image decode: cannot write {s}: {s}; serving from memory", .{ path, @errorName(err) });
++            break :fail false;
++        };
++        file.close();
++        if (!ok) std.fs.cwd().deleteFile(path) catch {};
++        return ok;
+     }
+ 
+     fn readSniff(self: *Job) void {
+@@ -160,15 +194,20 @@ pub fn makeJob(
+     revision: u64,
+     args: *iface.ICoreWebView2WebResourceRequestedEventArgs,
+     park: bool,
++    spill: ?[]const u8,
+ ) ?*Job {
+     const job = alloc.create(Job) catch return null;
+     const owned = alloc.dupe(u8, path) catch {
+         alloc.destroy(job);
+         return null;
+     };
++    // A spill path that cannot be copied only costs the spill: the picture
++    // still arrives, through the stream.
++    const spill_owned: ?[]u8 = if (spill) |p| alloc.dupe(u8, p) catch null else null;
+     var deferral: ?*iface.ICoreWebView2Deferral = null;
+     if (park) {
+         deferral = args.getDeferral() orelse {
++            if (spill_owned) |p| alloc.free(p);
+             alloc.free(owned);
+             alloc.destroy(job);
+             return null;
+@@ -181,6 +220,7 @@ pub fn makeJob(
+         .revision = revision,
+         .args = if (park) args else null,
+         .deferral = deferral,
++        .spill = spill_owned,
+     };
+     return job;
+ }
+@@ -193,9 +233,10 @@ pub fn request(
+     path: []const u8,
+     revision: u64,
+     args: *iface.ICoreWebView2WebResourceRequestedEventArgs,
++    spill: ?[]const u8,
+ ) bool {
+     if (self.hwnd == null) return false;
+-    const job = makeJob(self.alloc, path, revision, args, true) orelse return false;
++    const job = makeJob(self.alloc, path, revision, args, true, spill) orelse return false;
+     if (self.thread != null) {
+         if (self.queued) |old| old.finish();
+         self.queued = job;
+diff --git a/src/apprt/win32/ViewerPane.zig b/src/apprt/win32/ViewerPane.zig
+index e34876b57..3e1a56e24 100644
+--- a/src/apprt/win32/ViewerPane.zig
++++ b/src/apprt/win32/ViewerPane.zig
+@@ -371,6 +371,23 @@ image_failure: ?[]const u8 = null,
+ /// inline.
+ image_decode: ?ViewerImageDecode = null,
+ 
++/// The folder currently mapped to `content.image_folder_host` (T3223): the
++/// picture's own directory on the `browser` route, so the page's request is
++/// redirected there and the browser process reads the file from disk. Owned.
++/// Null until the first picture, and kept (not re-mapped) while pictures keep
++/// coming from the same folder.
++image_mapped_dir: ?[]u8 = null,
++/// This pane's scratch folder for the `wic` route's decoded `.bmp`s, mapped to
++/// `content.decoded_folder_host` (T3223). Owned; created on the first decode
++/// and deleted with the pane. Null when it could not be made or mapped, which
++/// leaves the route serving from memory as it did before.
++decoded_dir: ?[]u8 = null,
++/// Names the next spilled `.bmp`, so a new decode never writes over a file the
++/// browser may still be reading.
++decoded_seq: u64 = 0,
++/// The last spilled `.bmp` answered, deleted when the next one is. Owned.
++decoded_last: ?[]u8 = null,
++
+ /// The bundled viewer assets directory (`…/share/ghostty/viewer`), resolved
+ /// once when the pane starts. Owned. Null on an installation whose resources
+ /// cannot be found — the pane then renders nothing and says so, rather than
+@@ -1132,6 +1149,17 @@ pub fn deinit(self: *ViewerPane, alloc: Allocator) void {
+         decoder.deinit();
+         self.image_decode = null;
+     }
++    // The decoded pictures go with the pane (T3223); the worker is joined
++    // above, so nothing is still writing into the folder.
++    if (self.decoded_dir) |d| {
++        std.fs.cwd().deleteTree(d) catch |err| log.debug("viewer decoded folder not removed: {s}: {s}", .{ d, @errorName(err) });
++        alloc.free(d);
++        self.decoded_dir = null;
++    }
++    if (self.decoded_last) |f| alloc.free(f);
++    self.decoded_last = null;
++    if (self.image_mapped_dir) |d| alloc.free(d);
++    self.image_mapped_dir = null;
+     if (self.diff_file) |f| alloc.free(f);
+     self.diff_file = null;
+     self.clearDiffTree(alloc);
+@@ -4866,8 +4894,13 @@ fn loadImage(self: *ViewerPane, alloc: Allocator, path: []const u8) void {
+     self.image_geometry = .{};
+     self.image_failure = null;
+ 
+-    const url = content.imageUrl(alloc, self.image_revision) catch return;
++    const direct = self.image_route == .browser and self.mapImageFolder(alloc, std.fs.path.dirname(path) orelse "");
++    const url = (if (direct)
++        content.mappedImageUrl(alloc, content.image_folder_host, std.fs.path.basename(path), self.image_revision)
++    else
++        content.imageUrl(alloc, self.image_revision)) catch return;
+     defer alloc.free(url);
++    log.info("EXPERIMENT image url {s}", .{url});
+     // The page is told whether this is vector art: it is served from a
+     // sentinel url with no extension, so the file's own name never reaches it.
+     const vector = std.ascii.eqlIgnoreCase(content.extension(path), "svg");
+@@ -5122,6 +5155,7 @@ fn onWebResourceRequested(
+ }
+ 
+ const ok_reason = std.unicode.utf8ToUtf16LeStringLiteral("OK");
++const found_reason = std.unicode.utf8ToUtf16LeStringLiteral("Found");
+ const not_found_reason = std.unicode.utf8ToUtf16LeStringLiteral("Not Found");
+ 
+ /// Answer one request a rendered `.html` page made (T601), from the pane's read
+@@ -5160,12 +5194,17 @@ fn serveImage(
+     // And the decode runs on a worker, the request parked on a deferral, so a
+     // phone photo no longer stalls every pane in the window while it decodes.
+     if (self.image_route == .wic) {
++        // Where the worker writes the finished `.bmp` (T3223), so the answer
++        // is a redirect the browser process serves from disk rather than a
++        // body this process hands over. Null keeps the in-memory body.
++        const spill = self.nextDecodedPath(alloc);
++        defer if (spill) |sp| alloc.free(sp);
+         if (self.image_decode) |*decoder| {
+-            if (decoder.request(path, self.image_revision, a)) return;
++            if (decoder.request(path, self.image_revision, a, spill)) return;
+         }
+         // No host window yet, or the runtime refused the deferral: decode
+         // inline, which is what this route always did.
+-        const job = ViewerImageDecode.makeJob(alloc, path, self.image_revision, a, false) orelse {
++        const job = ViewerImageDecode.makeJob(alloc, path, self.image_revision, a, false, spill) orelse {
+             self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
+             return;
+         };
+@@ -5179,6 +5218,10 @@ fn serveImage(
+     // into the response stream rather than through a heap copy (T3044). The
+     // other routes transcode, and need the bytes in hand.
+     if (self.image_route == .browser) {
++        // Redirected to the picture's own folder, mapped (T3223): the browser
++        // process reads the file, and none of it passes through here. The
++        // stream below is the fallback for a runtime that cannot map.
++        if (self.redirectToImageFolder(env, a, alloc, path)) return;
+         const mime = content.mimeType(content.extension(path));
+         const size: ?u64 = served: {
+             const f = std.fs.cwd().openFile(path, .{}) catch break :served null;
+@@ -5249,6 +5292,9 @@ fn answerImageWith(
+     job: *ViewerImageDecode.Job,
+ ) void {
+     const len = job.len;
++    if (job.spilled) {
++        if (self.answerSpilled(env, a, alloc, job)) return;
++    }
+     const stream = job.takeStream() orelse {
+         // A 404 fires the `<img>`'s `error`, which comes back as `failed` and
+         // puts the card up - titled with the codec to install when the file is
+@@ -5272,6 +5318,147 @@ fn answerImageWith(
+     self.respondStream(env, a, alloc, stream, "image/bmp", 200, ok_reason, .no_store, "");
+ }
+ 
++/// Map `dir` to `content.image_folder_host` unless it already is (T3223).
++fn mapImageFolder(self: *ViewerPane, alloc: Allocator, dir: []const u8) bool {
++    if (self.image_mapped_dir) |d| {
++        if (std.mem.eql(u8, d, dir)) return true;
++    }
++    const owned = alloc.dupe(u8, dir) catch return false;
++    if (!self.mapFolder(alloc, content.image_folder_host, dir)) {
++        alloc.free(owned);
++        return false;
++    }
++    if (self.image_mapped_dir) |d| alloc.free(d);
++    self.image_mapped_dir = owned;
++    return true;
++}
++
++/// `SetVirtualHostNameToFolderMapping(host, dir)`, `deny_cors`: the viewer
++/// page may embed the folder's files but not read them. False on a runtime
++/// without `ICoreWebView2_3`, or when the runtime refuses.
++fn mapFolder(self: *ViewerPane, alloc: Allocator, comptime host: []const u8, dir: []const u8) bool {
++    const c = self.controller orelse return false;
++    const web = c.coreWebView() orelse return false;
++    defer web.release();
++    const v3 = web.queryV3() orelse return false;
++    defer v3.release();
++    const dir_w = std.unicode.wtf8ToWtf16LeAllocZ(alloc, dir) catch return false;
++    defer alloc.free(dir_w);
++    const host_w = std.unicode.utf8ToUtf16LeStringLiteral(host);
++    if (!v3.mapHostToFolder(host_w, dir_w, .deny_cors)) {
++        log.warn("viewer folder mapping refused: {s} -> {s}", .{ host, dir });
++        return false;
++    }
++    return true;
++}
++
++/// Answer the page's picture request with a redirect to the picture itself,
++/// on its folder's mapped host (T3223). False leaves the request unanswered
++/// for the caller's fallback.
++fn redirectToImageFolder(
++    self: *ViewerPane,
++    env: *iface.ICoreWebView2Environment,
++    a: *iface.ICoreWebView2WebResourceRequestedEventArgs,
++    alloc: Allocator,
++    path: []const u8,
++) bool {
++    const dir = std.fs.path.dirname(path) orelse return false;
++    const name = std.fs.path.basename(path);
++    // A file that is not there is the fallback's 404 to give, not a redirect
++    // to a page that 404s with no failure card behind it.
++    const size = (std.fs.cwd().statFile(path) catch return false).size;
++    if (!self.mapImageFolder(alloc, dir)) return false;
++    const url = content.mappedImageUrl(alloc, content.image_folder_host, name, self.image_revision) catch return false;
++    defer alloc.free(url);
++    if (!self.redirect(env, a, alloc, url)) return false;
++    log.info(
++        "viewer image served pane={s} rev={d} bytes={d} mime={s} route={s} via=mapped",
++        .{ self.paneId(), self.image_revision, size, content.mimeType(content.extension(path)), @tagName(self.image_route) },
++    );
++    return true;
++}
++
++/// The next path the `wic` worker should write its `.bmp` to (T3223), in this
++/// pane's scratch folder - made, and mapped to `content.decoded_folder_host`,
++/// on the first call. Null when either step fails, which keeps the decoded
++/// picture in memory and the answer a stream, as before. Caller owns it.
++fn nextDecodedPath(self: *ViewerPane, alloc: Allocator) ?[]u8 {
++    if (self.decoded_dir == null) return null;
++    self.decoded_seq += 1;
++    return std.fmt.allocPrint(alloc, "{s}\\{d}.bmp", .{ self.decoded_dir.?, self.decoded_seq }) catch null;
++}
++
++/// Make this pane's scratch folder and map it to `content.decoded_folder_host`
++/// (T3223). Must run BEFORE the page navigates: a mapping set while a document
++/// is up does not reach that document's requests.
++fn mapDecodedFolder(self: *ViewerPane, alloc: Allocator) void {
++    if (self.decoded_dir != null) return;
++    const tmp = std.process.getEnvVarOwned(alloc, "TEMP") catch return;
++    defer alloc.free(tmp);
++    const dir = std.fs.path.join(alloc, &.{ tmp, "ghoztty-decoded", self.paneId() }) catch return;
++    std.fs.cwd().makePath(dir) catch |err| {
++        log.warn("viewer decoded folder cannot be made: {s}: {s}", .{ dir, @errorName(err) });
++        alloc.free(dir);
++        return;
++    };
++    if (!self.mapFolder(alloc, content.decoded_folder_host, dir)) {
++        std.fs.cwd().deleteTree(dir) catch {};
++        alloc.free(dir);
++        return;
++    }
++    self.decoded_dir = dir;
++}
++
++/// Answer a `wic` job whose `.bmp` is on disk (T3223): a redirect to it on the
++/// mapped scratch host, and the previous answer's file deleted. False when not
++/// even the file could be served; the caller then answers as for no picture.
++fn answerSpilled(
++    self: *ViewerPane,
++    env: *iface.ICoreWebView2Environment,
++    a: *iface.ICoreWebView2WebResourceRequestedEventArgs,
++    alloc: Allocator,
++    job: *ViewerImageDecode.Job,
++) bool {
++    const spill = job.spill orelse return false;
++    const mapped: bool = mapped: {
++        const url = content.mappedImageUrl(alloc, content.decoded_folder_host, std.fs.path.basename(spill), job.revision) catch break :mapped false;
++        defer alloc.free(url);
++        break :mapped self.redirect(env, a, alloc, url);
++    };
++    if (!mapped) {
++        // The body is on disk and not in memory: serve the file instead.
++        const file = std.fs.cwd().openFile(spill, .{}) catch return false;
++        defer file.close();
++        if (!self.respondFile(env, a, alloc, file, 0, job.len, "image/bmp", 200, ok_reason, .no_store, "")) return false;
++    }
++    log.info(
++        "viewer image served pane={s} rev={d} bytes={d} mime=image/bmp route=wic decode_ms={d} parked={}{s}",
++        .{ self.paneId(), job.revision, job.len, job.decode_ms, job.deferral != null, if (mapped) " via=mapped" else "" },
++    );
++    // The page has moved on from the previous picture; its file goes now.
++    if (self.decoded_last) |old| {
++        if (!std.mem.eql(u8, old, spill)) std.fs.cwd().deleteFile(old) catch {};
++        alloc.free(old);
++    }
++    self.decoded_last = alloc.dupe(u8, spill) catch null;
++    return true;
++}
++
++/// A `302 Found` to `url`. The `<img>` follows it like any other redirect,
++/// and the mapped host behind it is served by the browser process.
++fn redirect(
++    self: *ViewerPane,
++    env: *iface.ICoreWebView2Environment,
++    a: *iface.ICoreWebView2WebResourceRequestedEventArgs,
++    alloc: Allocator,
++    url: []const u8,
++) bool {
++    const extra = std.fmt.allocPrint(alloc, "\r\nLocation: {s}", .{url}) catch return false;
++    defer alloc.free(extra);
++    self.respondWith(env, a, alloc, "", "text/plain", 302, found_reason, .no_store, extra);
++    return true;
++}
++
+ fn servePageResource(
+     self: *ViewerPane,
+     env: *iface.ICoreWebView2Environment,
+@@ -6310,6 +6497,7 @@ fn adoptController(self: *ViewerPane, c: *iface.ICoreWebView2Controller) void {
+     // very first request IS the template's document, so an interception
+     // registered after `Navigate` would miss the page it exists to serve.
+     self.subscribeFileMode();
++    if (self.pending) |p| self.mapDecodedFolder(p.alloc);
+     // Before the navigation too, so the FIRST commit already updates the
+     // address bar and the history buttons (T159).
+     self.subscribeHistory();
+diff --git a/src/apprt/win32/viewer_content.zig b/src/apprt/win32/viewer_content.zig
+index 1a4978445..67af0fc71 100644
+--- a/src/apprt/win32/viewer_content.zig
++++ b/src/apprt/win32/viewer_content.zig
+@@ -689,6 +689,46 @@ pub fn imageUrl(alloc: Allocator, revision: u64) Allocator.Error![]u8 {
+     );
+ }
+ 
++/// The two hosts a picture is redirected to (T3223), each mapped to a folder
++/// with `SetVirtualHostNameToFolderMapping` so the BROWSER process reads the
++/// file from disk. A body handed back through `WebResourceRequested` is copied
++/// several times over inside this process on its way out — a 48 MB picture
++/// cost +459 MB of private bytes and a ~110 ms stall of the GUI thread — and a
++/// folder mapping is the one way to serve bytes the runtime offers that never
++/// cross this process at all.
++///
++/// `image_folder_host` maps the folder of the picture on screen (the
++/// `browser` route: the file is already something Chromium can draw);
++/// `decoded_folder_host` maps the pane's own scratch folder, where the `wic`
++/// route's worker writes the `.bmp` it decoded.
++pub const image_folder_host = "image.ghoztty.example";
++pub const decoded_folder_host = "decoded.ghoztty.example";
++
++/// `https://<host>/<name>?v=<revision>`, with `name` percent-encoded as one
++/// path segment. Everything outside RFC 3986's unreserved set is escaped,
++/// which is stricter than it needs to be and is the point: a file name may
++/// hold `#`, `?`, `%`, spaces or non-ASCII, and each of those means something
++/// else in a URL. The revision does the same job as on `imageUrl`: the
++/// `<img>` only goes back to the network for a `src` it does not already have.
++/// Caller owns the result.
++pub fn mappedImageUrl(alloc: Allocator, host: []const u8, name: []const u8, revision: u64) Allocator.Error![]u8 {
++    var out: std.ArrayList(u8) = .empty;
++    errdefer out.deinit(alloc);
++    try out.appendSlice(alloc, "https://");
++    try out.appendSlice(alloc, host);
++    try out.append(alloc, '/');
++    for (name) |c| {
++        const unreserved = std.ascii.isAlphanumeric(c) or c == '-' or c == '.' or c == '_' or c == '~';
++        if (unreserved) {
++            try out.append(alloc, c);
++        } else {
++            try out.print(alloc, "%{X:0>2}", .{c});
++        }
++    }
++    try out.print(alloc, "?v={d}", .{revision});
++    return out.toOwnedSlice(alloc);
++}
++
+ /// `window.__viewer.setImage("<url>", "<name>", <vector>)` — put a picture on
+ /// screen (T1183). `name` is the file's basename, which is what the page uses
+ /// for its alt text and its tooltip.
+@@ -1928,6 +1968,29 @@ test "the __viewer calls are the shape the page exposes" {
+     }
+ }
+ 
++test "mappedImageUrl: one escaped path segment on the mapped host, plus the revision (T3223)" {
++    const alloc = testing.allocator;
++    {
++        const url = try mappedImageUrl(alloc, image_folder_host, "photo.png", 3);
++        defer alloc.free(url);
++        try testing.expectEqualStrings("https://ghoztty-image/photo.png?v=3", url);
++    }
++    {
++        // Every character that means something else in a URL is escaped, so a
++        // name cannot end the path early, start a query or a fragment, or
++        // smuggle in a separator.
++        const url = try mappedImageUrl(alloc, decoded_folder_host, "a b#c?d%e/f\\g.bmp", 0);
++        defer alloc.free(url);
++        try testing.expectEqualStrings("https://ghoztty-decoded/a%20b%23c%3Fd%25e%2Ff%5Cg.bmp?v=0", url);
++    }
++    {
++        // Non-ASCII goes out as its UTF-8 bytes, each escaped.
++        const url = try mappedImageUrl(alloc, image_folder_host, "caf\xc3\xa9~_-.jpg", 12);
++        defer alloc.free(url);
++        try testing.expectEqualStrings("https://ghoztty-image/caf%C3%A9~_-.jpg?v=12", url);
++    }
++}
++
+ test "the image calls: a cache-busting url, and numbers that cross as numbers" {
+     const alloc = testing.allocator;
+     {
+diff --git a/src/apprt/win32/webview2_iface.zig b/src/apprt/win32/webview2_iface.zig
+index 59eb2384a..78d984beb 100644
+--- a/src/apprt/win32/webview2_iface.zig
++++ b/src/apprt/win32/webview2_iface.zig
+@@ -1419,8 +1419,8 @@ pub const ICoreWebView2 = extern struct {
+ };
+ 
+ /// `ICoreWebView2_3` — revision 3 (T3035). Slots 68..70 are `TrySuspend`,
+-/// `Resume` and `get_IsSuspended`; 61..67 are revision 2's seven, opaque; the
+-/// virtual-host mapping pair after them (71, 72) is not declared. Counted from
++/// `Resume` and `get_IsSuspended`; 61..67 are revision 2's seven, opaque; 71
++/// and 72 are the virtual-host folder mapping pair (T3223). Counted from
+ /// the `DECLSPEC_XFGVIRT` annotations of `ICoreWebView2_3Vtbl` in the SDK's
+ /// `WebView2.h` (1.0.2903.40), which agree with `ICoreWebView2_13`'s 105.
+ pub const ICoreWebView2_3 = extern struct {
+@@ -1437,6 +1437,10 @@ pub const ICoreWebView2_3 = extern struct {
+         TrySuspend: *const fn (*ICoreWebView2_3, ?*anyopaque) callconv(.winapi) HRESULT,
+         Resume: *const fn (*ICoreWebView2_3) callconv(.winapi) HRESULT,
+         get_IsSuspended: *const fn (*ICoreWebView2_3, *BOOL) callconv(.winapi) HRESULT,
++        /// `(LPCWSTR hostName, LPCWSTR folderPath,
++        /// COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND accessKind)`.
++        SetVirtualHostNameToFolderMapping: *const fn (*ICoreWebView2_3, [*:0]const u16, [*:0]const u16, HostResourceAccessKind) callconv(.winapi) HRESULT,
++        ClearVirtualHostNameToFolderMapping: *const fn (*ICoreWebView2_3, [*:0]const u16) callconv(.winapi) HRESULT,
+     };
+ 
+     pub fn release(self: *ICoreWebView2_3) void {
+@@ -1453,6 +1457,18 @@ pub const ICoreWebView2_3 = extern struct {
+         return !com.failed(self.vtable.Resume(self));
+     }
+ 
++    /// Serve `https://<host>/...` straight from `folder` in the BROWSER
++    /// process (T3223): the bytes never cross this process, unlike a
++    /// `WebResourceRequested` body, which the runtime copies several times
++    /// over on its way out. Setting a host that is already mapped replaces it.
++    pub fn mapHostToFolder(self: *ICoreWebView2_3, host: [*:0]const u16, folder: [*:0]const u16, access: HostResourceAccessKind) bool {
++        return !com.failed(self.vtable.SetVirtualHostNameToFolderMapping(self, host, folder, access));
++    }
++
++    pub fn clearHostMapping(self: *ICoreWebView2_3, host: [*:0]const u16) bool {
++        return !com.failed(self.vtable.ClearVirtualHostNameToFolderMapping(self, host));
++    }
++
+     pub fn isSuspended(self: *ICoreWebView2_3) ?bool {
+         var out: BOOL = 0;
+         if (com.failed(self.vtable.get_IsSuspended(self, &out))) return null;
+@@ -1460,6 +1476,12 @@ pub const ICoreWebView2_3 = extern struct {
+     }
+ };
+ 
++/// `COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND`. `deny_cors` lets another
++/// origin's document embed the host's files (an `<img>`) but not read them
++/// (`fetch` / XHR), which is exactly what a picture served to the viewer page
++/// needs and no more.
++pub const HostResourceAccessKind = enum(u32) { deny = 0, allow = 1, deny_cors = 2 };
++
+ /// `COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL`.
+ pub const MemoryUsageTargetLevel = enum(u32) { normal = 0, low = 1 };
+ 
