@@ -189,6 +189,17 @@ const win = struct {
     // downstream merely follows it. So the message count was never the cost, and
     // a millisecond of added echo latency buys nothing. Do not re-add batching
     // here without a number showing the source can go faster.
+    //
+    // CPU IS A DIFFERENT QUESTION (T3236), and it is answered upstream of this
+    // writer: `PtyChild.readerLoop` now holds a flood's ConPTY read back for up
+    // to ~1 ms (the `termio/read_coalesce.zig` policy, only when the read
+    // barely blocked, so an echo is never delayed). Every chunk this writer
+    // sees is then already a batch: a 4,000-line `for /L` flood went from 180
+    // to ~3,500 bytes per sink delivery, and the 64 MB busy flood's agent
+    // family CPU from 3.0 to 2.1 s (perf-baseline -Phase busy -BusyPersistence,
+    // ReleaseFast A/B, 2 runs a side) at the same 23.5 s wall. Throughput is
+    // unchanged, exactly as T1464 found - which is why the wait lives at the
+    // read, where it cuts the syscalls, rather than here.
 
     /// Per-connection writer handle: `closed` tells a cond-parked writer the
     /// connection is gone (the stream alone cannot wake it).
@@ -253,6 +264,13 @@ const win = struct {
         // persisted pane keeps all 32 logical CPUs; the CPU-set default is a
         // hint the scheduler honours while the fast cores are free.
         if (comptime is_windows) internal_os.power.allowAllCores(pc.pid);
+
+        // The flood coalescer's batches go into the replay ring whole (T3236):
+        // keep one batch at a sixteenth of the ring at most, so a batch can
+        // never push its own head out before the writer takes it, even with
+        // the writer a few batches behind (the smoke's 4 KiB ring would
+        // otherwise see 16 KiB batches; the 1 MiB default is unaffected).
+        pc.max_batch = @max(@min(pc.max_batch, opts.replay_bytes / 16), 256);
 
         const child = pc.child();
         // One conversion for both Windows arms (T355): a `posix.pid_t` here is

@@ -57,6 +57,7 @@ const pty_holder_child = @import("pty_holder_child.zig");
 const relay_perf = @import("relay_perf.zig");
 const agent_lineage = @import("../agent_lineage.zig");
 const pty_job_name = @import("../pty_job_name.zig");
+const read_coalesce = @import("../../termio/read_coalesce.zig");
 
 /// On Windows the OS-specific arms reach `ReadFile`/`WriteFile`/`TerminateProcess`
 /// straight from `std.os.windows` — the same kernel32 surface the smoke uses.
@@ -296,6 +297,12 @@ pub const PtyChild = struct {
     sink: ?*const fn (sink_ctx: *anyopaque, channel: u128, bytes: []const u8) void = null,
     channel: u128 = 0,
     attached: std.Thread.ResetEvent = .{},
+    /// Largest batch the flood coalescer (T3236) may hand the sink in one
+    /// delivery. A sink that buffers into a bounded ring must cap this well
+    /// under the ring: one batch bigger than the ring overwrites its own head
+    /// before anybody can take it (the holder sets it from `--replay-bytes`).
+    /// Set before `attach`; the reader reads it only after `attached` fires.
+    max_batch: usize = read_coalesce.target_bytes,
 
     /// The master-fd reader thread.
     reader: ?std.Thread = null,
@@ -385,6 +392,19 @@ pub const PtyChild = struct {
         // inside the sink, and they sum to the second.
         var read_meter: relay_perf.Meter = .init("child_read");
         var sink_meter: relay_perf.Meter = .init("child_sink");
+        // Flood coalescing (T3236): the same policy and high-resolution timer
+        // the local pane reader uses (T3060, `termio/read_coalesce.zig`). No
+        // timer ⇒ no wait short enough to hold a batch back, so every read is
+        // delivered as it comes, exactly as before.
+        const coalesce_timer: ?windows.HANDLE = if (is_windows) internal_os.windows.exp.kernel32.CreateWaitableTimerExW(
+            null,
+            null,
+            internal_os.windows.exp.CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+            internal_os.windows.exp.TIMER_ALL_ACCESS,
+        ) else null;
+        defer if (is_windows) {
+            if (coalesce_timer) |t| windows.CloseHandle(t);
+        };
         while (true) {
             const read_t = read_meter.start();
             const n = if (is_windows) blk: {
@@ -392,23 +412,30 @@ pub const PtyChild = struct {
                 // bytes arrive and returns 0 (with BROKEN_PIPE) once the ConPTY
                 // tears down after the child exits / `ClosePseudoConsole` runs —
                 // that is our EOF (mirrors `conpty_smoke.zig`'s reader).
+                // Every delivery is bounded by `max_batch`, the blocking read
+                // included: after a coalesce wait conhost may already have more
+                // than a batch pending, and an uncapped read would take it all.
+                const cap: usize = @max(@min(self.max_batch, buf.len), 1);
+                const blocked_from = std.time.Instant.now() catch null;
                 var read: windows.DWORD = 0;
-                if (windows.kernel32.ReadFile(self.pty.out_pipe, &buf, buf.len, &read, null) == 0)
+                if (windows.kernel32.ReadFile(self.pty.out_pipe, &buf, @intCast(cap), &read, null) == 0)
                     break :blk 0;
                 if (read == 0) break :blk 0;
-
-                // NO TOP-UP DRAIN HERE, and that is a measurement rather than an
-                // omission (T1465). `termio/Exec.zig`'s local reader peeks and
-                // refills before parsing, so the obvious guess was that the
-                // holder's ~73-byte chunks were a missing coalesce. They are not:
-                // with the same peek loop added here, `frames_per_wake` on
-                // `perf child_read` stayed at exactly 1 for every second of a
-                // 7.7 MB burst - the pipe is EMPTY every single time this loop
-                // comes back to it, because the reader is faster than conhost by
-                // a wide margin. A peek per read is a syscall on the hot path
-                // buying nothing. Re-add it only with a number showing otherwise.
                 read_meter.frame(read);
-                break :blk @as(usize, read);
+
+                // A bare top-up here buys nothing (T1465: the pipe is empty
+                // every time the loop comes back, because this reader is faster
+                // than conhost). What does pay is WAITING (T3236): under a flood
+                // conhost writes one ~113-byte line at a time, and every one of
+                // them used to cross the holder, the agent and the app as its own
+                // message - ~23,800 a second, each paying a kernel wait/wake and
+                // a pipe write per hop, which was ~90% of the agent family's CPU
+                // (T3159). When the blocking read barely blocked, the shell is
+                // streaming, so let conhost fill the pipe for up to ~1 ms (or
+                // 16 KiB) and send it as one message. A keystroke echo waited for
+                // the user, so it goes out at once.
+                const filled = coalesceWindows(self.pty.out_pipe, buf[0..cap], read, blocked_from, coalesce_timer, &read_meter);
+                break :blk filled;
             } else posix.read(self.pty.master, &buf) catch |err| switch (err) {
                 // On Linux a pty master read after the slave hangs up yields EIO;
                 // treat it as EOF rather than an error.
@@ -449,6 +476,49 @@ pub const PtyChild = struct {
         const channel = self.channel;
         self.mutex.unlock();
         if (sink) |f| f(sink_ctx.?, channel, &.{});
+    }
+
+    /// Hold a flood's first read back while conhost keeps writing (T3236; the
+    /// policy is `termio/read_coalesce.zig`, shared with the local pane reader).
+    /// Returns the new fill of `buf`. Any timer/peek/read failure just stops
+    /// waiting and delivers what is already in hand: a real pipe error repeats
+    /// on the next blocking read, which is where EOF is decided.
+    fn coalesceWindows(
+        pipe: windows.HANDLE,
+        buf: []u8,
+        first: usize,
+        blocked_from: ?std.time.Instant,
+        timer: ?windows.HANDLE,
+        meter: *relay_perf.Meter,
+    ) usize {
+        if (comptime !is_windows) unreachable;
+        var filled = first;
+        const t = timer orelse return filled;
+        const start = blocked_from orelse return filled;
+        const end = std.time.Instant.now() catch return filled;
+        if (!read_coalesce.shouldWait(filled, end.since(start))) return filled;
+        const k32 = internal_os.windows.exp.kernel32;
+        while (filled < read_coalesce.target_bytes and filled < buf.len) {
+            const now = std.time.Instant.now() catch break;
+            const wait_ns = read_coalesce.nextWait(now.since(end)) orelse break;
+            // Negative due time = relative, in 100 ns units.
+            const due: i64 = -@as(i64, @intCast(@max(wait_ns / 100, 1)));
+            if (k32.SetWaitableTimer(t, &due, 0, null, null, windows.FALSE) == 0) break;
+            if (windows.kernel32.WaitForSingleObject(t, windows.INFINITE) != windows.WAIT_OBJECT_0) break;
+            // Take everything conhost wrote meanwhile, without blocking.
+            while (filled < buf.len) {
+                var avail: windows.DWORD = 0;
+                if (k32.PeekNamedPipe(pipe, null, 0, null, &avail, null) == 0) return filled;
+                if (avail == 0) break;
+                var m: windows.DWORD = 0;
+                const want: windows.DWORD = @intCast(@min(buf.len - filled, avail));
+                if (windows.kernel32.ReadFile(pipe, buf[filled..].ptr, want, &m, null) == 0) return filled;
+                if (m == 0) return filled;
+                meter.frame(m);
+                filled += m;
+            }
+        }
+        return filled;
     }
 
     /// Poll `tryWait` until the child is reaped or `timeout_ns` passes. Returns
@@ -1594,6 +1664,7 @@ test "resolveShellPath: POSIX falls back to the login shell before /bin/sh (Bug 
 const CaptureSink = struct {
     mutex: std.Thread.Mutex = .{},
     buf: std.ArrayList(u8) = .empty,
+    deliveries: usize = 0,
     alloc: Allocator,
 
     fn sink(ctx: *anyopaque, channel: u128, bytes: []const u8) void {
@@ -1602,6 +1673,14 @@ const CaptureSink = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
         self.buf.appendSlice(self.alloc, bytes) catch {};
+        if (bytes.len > 0) self.deliveries += 1;
+    }
+    /// (bytes captured, sink deliveries) so far - how the output was CHUNKED,
+    /// which is what the coalescing test (T3236) is about.
+    fn tally(self: *CaptureSink) struct { bytes: usize, deliveries: usize } {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return .{ .bytes = self.buf.items.len, .deliveries = self.deliveries };
     }
     fn contains(self: *CaptureSink, needle: []const u8) bool {
         self.mutex.lock();
@@ -1856,6 +1935,45 @@ test "PtyChild: real pty spawn → input echoes back → exit/tombstone" {
     // terminate is idempotent + frees the child (and joins the reader).
     pc.child().terminate();
     terminated = true;
+}
+
+test "PtyChild: a flood leaves the reader in batches, not one message per line (T3236)" {
+    // Windows-only: the coalescing is on the ConPTY reader. Without it every
+    // ~100-byte line conhost writes is its own sink delivery (T3159 measured
+    // ~113 bytes a message), and each one then crosses the holder, the agent
+    // and the app as its own frame.
+    if (!is_windows) return error.SkipZigTest;
+    const alloc = testing.allocator;
+
+    var spawner = try PtySpawner.init(alloc);
+    defer spawner.deinit();
+    var capture: CaptureSink = .{ .alloc = alloc };
+    defer capture.deinit();
+
+    const pc = try spawner.spawnChild(.{ .rows = 24, .cols = 120 });
+    defer pc.child().terminate();
+    pc.child().attach(&capture, CaptureSink.sink, 0x3236);
+
+    // Let the prompt settle so the flood window holds only the flood.
+    // `set /a` prints 6472, which the typed command line does not contain.
+    try pc.child().writeAll("set /a 3236*2\r");
+    try waitContains(&capture, "6472");
+    const before = capture.tally();
+
+    try pc.child().writeAll("for /L %i in (1,1,4000) do @echo flood-line-%i-padding-padding-padding-padding-padding-padding\r");
+    try waitContains(&capture, "flood-line-4000-");
+    const after = capture.tally();
+
+    const bytes = after.bytes - before.bytes;
+    const deliveries = after.deliveries - before.deliveries;
+    try testing.expect(deliveries > 0);
+    // One delivery per line would average ~100 bytes. Coalesced, a delivery
+    // carries a millisecond of conhost output (kilobytes); 512 leaves a wide
+    // margin for a loaded box while still failing the per-line shape.
+    if (bytes / @max(deliveries, 1) < 512) {
+        std.debug.print("flood: {d} bytes in {d} deliveries ({d} bytes each)\n", .{ bytes, deliveries, bytes / @max(deliveries, 1) });
+        return error.FloodNotCoalesced;
+    }
 }
 
 test "PtySpawner: the reported pid is a real process parented by the agent (T98)" {
