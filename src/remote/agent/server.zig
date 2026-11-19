@@ -604,6 +604,10 @@ pub const Server = struct {
         // `fresh_shell` / `replay_from` for the in-place respawn that follows
         // (T1793).
         protocol.capability.holder_lost,
+        // Every reply to an OPEN or ATTACH echoes that request's `req_id`, so a
+        // client can tell a late answer to a request it already gave up on from
+        // the answer to the one it is waiting for (T3254).
+        protocol.capability.reply_correlation,
     };
 
     pub const Options = struct {
@@ -1324,12 +1328,14 @@ pub const Server = struct {
         channel: u128,
         reason: []const u8,
         detail: ?[]const u8,
+        req_id: ?u64,
     ) void {
         const ok = if (self.negotiated) |n| n.open_failed else |_| false;
         if (!ok) return;
         self.sendJson(.open_failed, channel, protocol.OpenFailed{
             .reason = reason,
             .detail = detail,
+            .req_id = req_id,
         }) catch {};
     }
 
@@ -1344,12 +1350,13 @@ pub const Server = struct {
     ///
     /// Sent on the CONTROL channel, like the `not_found` reply: there is no
     /// session, so there is no session channel to speak on.
-    fn sendAttachFailed(self: *Server, reason: []const u8, detail: ?[]const u8) void {
+    fn sendAttachFailed(self: *Server, reason: []const u8, detail: ?[]const u8, req_id: ?u64) void {
         const ok = if (self.negotiated) |n| n.attach_failed else |_| false;
         if (!ok) return;
         self.sendJson(.attach_failed, protocol.control_channel, protocol.AttachFailed{
             .reason = reason,
             .detail = detail,
+            .req_id = req_id,
         }) catch {};
     }
 
@@ -1359,6 +1366,7 @@ pub const Server = struct {
                 req_channel,
                 protocol.OpenFailed.Reason.malformed_request,
                 @errorName(err),
+                null, // the request did not parse, so it has no id to echo
             );
             return;
         };
@@ -1377,6 +1385,7 @@ pub const Server = struct {
                 req_channel,
                 protocol.OpenFailed.Reason.spawn_failed,
                 @errorName(err),
+                open.req_id,
             );
             return;
         };
@@ -1428,7 +1437,7 @@ pub const Server = struct {
             self.sendOpenFailed(req_channel, switch (err) {
                 error.TooManySessions => protocol.OpenFailed.Reason.session_cap,
                 else => protocol.OpenFailed.Reason.out_of_memory,
-            }, detail);
+            }, detail, open.req_id);
             spawned.child.terminate();
             return;
         };
@@ -1492,6 +1501,7 @@ pub const Server = struct {
             .session_id = id_copy[0..],
             .pid = pid,
             .tty = tty_copy,
+            .req_id = open.req_id,
         }) catch {};
 
         // A new session entered the alive set — durably record the reboot-floor
@@ -1563,6 +1573,7 @@ pub const Server = struct {
             self.sendAttachFailed(
                 protocol.AttachFailed.Reason.malformed_request,
                 @errorName(err),
+                null, // the request did not parse, so it has no id to echo
             );
             return;
         };
@@ -1577,6 +1588,7 @@ pub const Server = struct {
             // client correlates by session_id in its pending-attach table.
             self.sendJson(.attached, protocol.control_channel, protocol.Attached{
                 .status = .not_found,
+                .req_id = att.req_id,
             }) catch {};
             return;
         };
@@ -1593,6 +1605,7 @@ pub const Server = struct {
             // across the encode, exactly like the alive branch below.
             self.sendJson(.attached, s.channel, protocol.Attached{
                 .status = .dead,
+                .req_id = att.req_id,
                 .exit_code = s.exit_code,
                 .relaunchable = s.relaunchable,
                 .rows = s.rows,
@@ -1655,6 +1668,7 @@ pub const Server = struct {
 
         self.sendJson(.attached, s.channel, protocol.Attached{
             .status = .alive,
+            .req_id = att.req_id,
             .rows = s.rows,
             .cols = s.cols,
             .cwd = if (s.cwd) |c| c else null,

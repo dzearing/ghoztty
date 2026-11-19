@@ -156,6 +156,28 @@ design:
 - Acceptance: `test/win32/agent-attach-refused.ps1` (live-restore control /
   fast named refusal / the same message against a suppressed capability).
 
+**A late answer is never handed to the next pane** (T3254). OPEN/ATTACH replies
+ride a channel the AGENT picks, so the client cannot match them by request
+channel; it used to match them by reply type alone, and an answer that arrived
+after its request's 10 s timeout went to the NEXT request of that type — that
+pane adopted the wrong session and the last pane in line timed out.
+
+- Every OPEN/ATTACH carries an optional `req_id` and every reply to it echoes
+  that id, gated on `capability.reply_correlation` (both sides advertise it).
+  The field is elided when null, so against an older agent the request is
+  byte-identical to before.
+- Against an agent that does not echo, a request given up on is remembered and
+  the next reply of its type is discarded as its late answer — replies come back
+  in request order. That is recorded ONLY when the agent negotiated
+  `open_failed`/`attach_failed`: an older agent may stay silent on a refused
+  request, and counting that as owed would swallow the next pane's real reply.
+- A stray reply that bound something is DETACHed again (a fresh OPEN always; an
+  ATTACH only when no retry of the same session is in flight and no pane already
+  reads that channel), so the agent does not go on reporting the session as held
+  by a live window.
+- Acceptance: the `T3254:` tests in `src/remote/connection.zig` (none lane), with
+  a mock agent that answers on its own channel and holds the first answer back.
+
 **A launch command and a restore both happen.** `ghoztty -e <cmd…>` (or a
 `command`/`initial-command` in the config) asked for something on THIS launch;
 the windows restore rebuilds are what the user left behind. Neither silently

@@ -488,8 +488,55 @@ const PendingRpc = struct {
     /// without touching other panes' in-flight RPCs on the shared connection.
     canceller: ?*const RpcCanceller = null,
 
+    // --- T3254: late-reply bookkeeping for the by-type (OPEN/ATTACH) slots ---
+    // All four are read and written under `rpc_mutex`, except `sent`, which only
+    // the owning `rpcCall` thread touches.
+
+    /// The id this request carried (`Open.req_id`/`Attach.req_id`), or null
+    /// when the agent did not negotiate `reply_correlation`.
+    req_id: ?u64 = null,
+    /// The session an ATTACH named (borrowed from the caller for the call's
+    /// lifetime). Lets a stray ATTACHED be detached without touching a
+    /// session another in-flight ATTACH is about to re-bind.
+    session_id: ?[]const u8 = null,
+    /// A reply was consumed FOR this request — delivered, or recognised as its
+    /// answer after it had already been cancelled. Either way the agent owes
+    /// it nothing further.
+    answered: bool = false,
+    /// The request frame was enqueued, so the agent owes it an answer.
+    sent: bool = false,
+    /// `releaseByTypeSlotLocked` already ran (it runs at the timeout AND in the
+    /// trailing defer; only the first counts).
+    released: bool = false,
+
     const PendingError = error{ ConnectionClosed, MalformedReply, WrongReply, Timeout, Cancelled };
 };
+
+/// A by-type request (OPEN/ATTACH) that was given up on — timed out, cancelled
+/// — while the agent still owed it an answer (T3254). Remembered so that the
+/// answer, when it does arrive, is recognised as stray instead of being handed
+/// to the NEXT request of the same type, which would adopt the wrong session.
+const AbandonedRpc = struct {
+    want: protocol.FrameType,
+    req_id: ?u64,
+    session_buf: [max_session_id_len]u8 = undefined,
+    /// 0 ⇒ no session recorded (an OPEN, or an id too long to keep).
+    session_len: u8 = 0,
+
+    const max_session_id_len = 64;
+
+    fn sessionId(self: *const AbandonedRpc) ?[]const u8 {
+        return if (self.session_len == 0) null else self.session_buf[0..self.session_len];
+    }
+};
+
+/// How many abandoned requests a connection remembers. Each one is a request
+/// that waited out a 10 s timeout, so sixteen outstanding at once is already a
+/// link in serious trouble. Past it a request is only COUNTED
+/// (`Connection.abandoned_uncounted`), so its reply is still recognised as
+/// stray — just without the session it named, which costs the DETACH, never a
+/// mis-delivery.
+const abandoned_cap = 16;
 
 /// A cancellation token for session-establishing RPCs (OPEN/ATTACH). One lives
 /// on each `termio.Remote` backend so the GUI thread can abort that pane's
@@ -1076,6 +1123,22 @@ pub const Connection = struct {
     /// inversion. Same-channel RPCs (GET_CWD etc.) do NOT take this lock; they
     /// already correlate by their own fresh request channel.
     open_rpc_mutex: std.Thread.Mutex = .{},
+    /// By-type requests given up on while the agent still owed them an answer,
+    /// oldest first (T3254). Guarded by `rpc_mutex`. See `AbandonedRpc`.
+    abandoned: [abandoned_cap]AbandonedRpc = undefined,
+    abandoned_len: usize = 0,
+    /// Abandoned requests past `abandoned_cap`, per type (index 0 = OPEN,
+    /// 1 = ATTACH), that carried no `req_id` — kept as a count so the
+    /// discard-by-count fallback stays exact. Guarded by `rpc_mutex`.
+    abandoned_uncounted: [2]u32 = .{ 0, 0 },
+    /// The next `req_id` an OPEN/ATTACH carries (T3254). Unique per connection,
+    /// which is the only scope a reply can come back on.
+    next_req_id: std.atomic.Value(u64) = .{ .raw = 1 },
+    /// Late OPEN/ATTACH replies recognised as answering a request that had
+    /// already been given up on (T3254), and how many of those had their
+    /// session DETACHed again. Observability for tests and diagnostics.
+    stray_replies: std.atomic.Value(u32) = .{ .raw = 0 },
+    stray_detaches: std.atomic.Value(u32) = .{ .raw = 0 },
     /// Set by `failPendingRpcs` (shutdown) under `rpc_mutex`. Once set, no new RPC
     /// may park — `rpcCall` fails immediately — closing the register-then-shutdown
     /// race where a slot is inserted just after `failPendingRpcs` already iterated.
@@ -1308,6 +1371,11 @@ pub const Connection = struct {
         // that never advertises the other half keeps sending a plain EXIT, and
         // the pane closes the way it always did.
         protocol.capability.holder_lost,
+        // We put a `req_id` on every OPEN/ATTACH and match the reply by it, so a
+        // late answer to a request we gave up on can never be adopted by the
+        // next pane's request (T3254). An agent that never advertises it gets
+        // no ids (`req_id` is elided) and we discard late replies by count.
+        protocol.capability.reply_correlation,
     };
 
     /// `client_capabilities` for a connection to THIS machine's own agent (the
@@ -2116,9 +2184,16 @@ pub const Connection = struct {
         // We register the inbound ring AFTER OPENED on the agent-chosen channel — the
         // agent streams DATA only after it has sent OPENED, so nothing is lost (this
         // matches the proven frame-level path in `test_client.zig`).
-        const open_json = try protocol.encodeJson(self.alloc, open);
+        // Name this request, so its reply can be told from a late answer to an
+        // earlier OPEN that timed out (T3254). Null against an agent that does
+        // not echo, which leaves the frame byte-identical to before.
+        var tagged = open;
+        tagged.req_id = self.mintReqId();
+        const open_json = try protocol.encodeJson(self.alloc, tagged);
         defer self.alloc.free(open_json);
-        const rpc = try self.rpcCall(req_channel, .open, .opened, open_json, self.rpc_open_timeout_ns, canceller);
+        const rpc = try self.rpcCallCorrelated(req_channel, .open, .opened, open_json, self.rpc_open_timeout_ns, canceller, .{
+            .req_id = tagged.req_id,
+        });
         defer self.alloc.free(rpc.payload);
 
         // The agent refused, and said so (T469). Nothing was created — no
@@ -2637,10 +2712,15 @@ pub const Connection = struct {
             .cols = cols,
             .last_byte_offset = last_byte_offset,
             .force = force,
+            // See `openChannelRefusable` (T3254).
+            .req_id = self.mintReqId(),
         };
         const attach_json = try protocol.encodeJson(self.alloc, attach);
         defer self.alloc.free(attach_json);
-        const rpc = try self.rpcCall(req_channel, .attach, .attached, attach_json, self.rpc_open_timeout_ns, canceller);
+        const rpc = try self.rpcCallCorrelated(req_channel, .attach, .attached, attach_json, self.rpc_open_timeout_ns, canceller, .{
+            .req_id = attach.req_id,
+            .session_id = session_id,
+        });
         defer self.alloc.free(rpc.payload);
 
         // The agent could not answer, and said so (T657). Nothing was attached
@@ -2982,6 +3062,34 @@ pub const Connection = struct {
         if (self.negotiated) |n| return n.holder_lost else |_| return false;
     }
 
+    /// True iff the negotiated peer echoes OPEN/ATTACH `req_id` on its replies
+    /// (`capability.reply_correlation`, T3254).
+    pub fn supportsReplyCorrelation(self: *Connection) bool {
+        if (self.negotiated) |n| return n.reply_correlation else |_| return false;
+    }
+
+    /// A fresh `req_id` for an OPEN/ATTACH, or null when the agent would not
+    /// echo it (then the request goes out without one, byte-identical to a
+    /// pre-T3254 request).
+    fn mintReqId(self: *Connection) ?u64 {
+        if (!self.supportsReplyCorrelation()) return null;
+        return self.next_req_id.fetchAdd(1, .monotonic);
+    }
+
+    /// True iff the agent answers EVERY request of `want`'s kind, so a request
+    /// given up on is guaranteed a late reply that has to be discarded. Without
+    /// the matching negative reply an old agent may simply stay silent (a spawn
+    /// failure, an unparseable ATTACH), and counting such a request as owed
+    /// would swallow the NEXT request's genuine answer instead.
+    fn agentAnswersEvery(self: *Connection, want: protocol.FrameType) bool {
+        const n = self.negotiated catch return false;
+        return switch (want) {
+            .opened => n.open_failed,
+            .attached => n.attach_failed,
+            else => false,
+        };
+    }
+
     /// True iff the negotiated peer advertised `capability.grid_snapshot` — i.e.
     /// every ATTACH is followed by a self-contained repaint of the session's
     /// CURRENT visible screen (`agent/grid_snapshot.zig`), which homes to row 1
@@ -3268,6 +3376,28 @@ pub const Connection = struct {
         timeout_ns: ?u64,
         canceller: ?*const RpcCanceller,
     ) !RpcResult {
+        return self.rpcCallCorrelated(channel, req, want, payload, timeout_ns, canceller, .{});
+    }
+
+    /// What a by-type (OPEN/ATTACH) request tells `deliverRpcReply` about
+    /// itself so that a LATE reply to it is recognised (T3254). `req_id` must
+    /// be the id already written into `payload` (null when the agent does not
+    /// echo); `session_id` is the session an ATTACH names.
+    const ByTypeCorrelation = struct {
+        req_id: ?u64 = null,
+        session_id: ?[]const u8 = null,
+    };
+
+    fn rpcCallCorrelated(
+        self: *Connection,
+        channel: u128,
+        req: protocol.FrameType,
+        want: protocol.FrameType,
+        payload: []const u8,
+        timeout_ns: ?u64,
+        canceller: ?*const RpcCanceller,
+        corr: ByTypeCorrelation,
+    ) !RpcResult {
         // Every RPC's reply type must be DECLARED as one (T403). This is the
         // half of the guard that bites when somebody adds an RPC and forgets
         // the reply side: the control reader dispatches from
@@ -3283,6 +3413,8 @@ pub const Connection = struct {
             .want = want,
             .reply_channel = channel,
             .canceller = canceller,
+            .req_id = corr.req_id,
+            .session_id = corr.session_id,
         };
 
         // Fail fast if our owner was already cancelled (the surface is being
@@ -3326,15 +3458,13 @@ pub const Connection = struct {
             };
         }
         self.rpc_mutex.unlock();
-        // From here, always remove our slot before returning.
+        // From here, always remove our slot before returning. For a by-type
+        // slot that also records, atomically with the removal, whether the
+        // agent still owes this request an answer (T3254).
         defer {
             self.rpc_mutex.lock();
             if (by_type) {
-                if (want == .opened) {
-                    if (self.pending_opened == &slot) self.pending_opened = null;
-                } else {
-                    if (self.pending_attached == &slot) self.pending_attached = null;
-                }
+                self.releaseByTypeSlotLocked(&slot);
             } else {
                 _ = self.pending.remove(channel);
             }
@@ -3350,14 +3480,29 @@ pub const Connection = struct {
         if (canceller) |c| if (c.isCancelled()) return error.Cancelled;
 
         try self.writeControl(req, channel, payload);
+        slot.sent = true;
         if (timeout_ns) |ns| {
             slot.done.timedWait(ns) catch {
                 // The agent never replied in time (e.g. the remote command
                 // failed to spawn, so no OPENED is coming). Fail rather than
-                // wedge the caller. The trailing `defer` removes our slot under
-                // `rpc_mutex`, so a reply that lands after this is dropped by
-                // `deliverRpcReply` (no waiter found) — no use-after-free.
-                return error.Timeout;
+                // wedge the caller.
+                //
+                // Decide that under `rpc_mutex`, because the reply can land
+                // between the wait expiring and here. If it did, it is ours:
+                // take it (dropping it would leak the duped payload and, for a
+                // by-type slot, throw away the session the agent just bound).
+                // If it did not, release the slot NOW, in the same critical
+                // section, so a reply arriving next is recognised as the late
+                // answer to THIS request rather than as the next pane's
+                // (T3254).
+                self.rpc_mutex.lock();
+                const answered = slot.answered;
+                if (!answered and by_type) self.releaseByTypeSlotLocked(&slot);
+                self.rpc_mutex.unlock();
+                if (!answered) return error.Timeout;
+                // `fillSlotLocked` publishes the result under the lock and
+                // sets the event straight after releasing it.
+                slot.done.wait();
             };
         } else {
             slot.done.wait();
@@ -3394,33 +3539,130 @@ pub const Connection = struct {
     /// on a type mismatch, then sets the slot's event. Returns true if it consumed a
     /// waiter.
     fn deliverRpcReply(self: *Connection, frame: protocol.Frame) bool {
+        // Which by-type slot this frame could answer, if it is an OPEN/ATTACH
+        // reply at all. A refusal is the request's answer, so it goes to the
+        // same slot (T469 / T657).
+        const by_type_want: ?protocol.FrameType = switch (frame.type) {
+            .opened, .open_failed => .opened,
+            .attached, .attach_failed => .attached,
+            else => null,
+        };
+        // Read the reply's correlation id (and whether it bound a session)
+        // BEFORE taking the lock: it is a JSON parse.
+        const peek: ReplyPeek = if (by_type_want != null) ReplyPeek.of(self.alloc, frame) else .{};
+
         self.rpc_mutex.lock();
-        const slot = self.pending.get(frame.channel) orelse blk: {
-            // Channel miss: try the by-reply-type slot for the agent-authoritative
-            // OPEN/ATTACH reply. The agent chose `frame.channel`; record it so the
-            // caller registers its inbound ring on the right (agent) channel.
-            const by_type: ?*PendingRpc = switch (frame.type) {
-                // A refusal is the OPEN's answer, so it goes to the same slot
-                // (T469). There is no session and therefore no agent channel to
-                // adopt, but stamping `frame.channel` costs nothing and the
-                // caller never reaches the adopt step on this path.
-                .opened, .open_failed => self.pending_opened,
-                // Likewise for ATTACH: a refusal is the ATTACH's answer and
-                // goes to the same slot (T657). It arrives on the control
-                // channel — there is no session, so there is no session
-                // channel — and the caller never reaches the adopt step.
-                .attached, .attach_failed => self.pending_attached,
-                else => null,
-            };
-            if (by_type) |s| {
-                s.reply_channel = frame.channel;
-                break :blk s;
-            }
+        // 1. By the reply's `Frame.channel` via `pending` (same-channel RPCs —
+        //    the loopback mock agents echo OPENED/ATTACHED on the request
+        //    channel). Unchanged by T3254: a same-channel reply cannot be late
+        //    for anybody else, because every request mints its own channel.
+        if (self.pending.get(frame.channel)) |slot| {
+            self.fillSlotLocked(slot, frame);
+            return true;
+        }
+        const want = by_type_want orelse {
             self.rpc_mutex.unlock();
             return false;
         };
+
+        // 2. The channel-authoritative real-agent path. The agent chose
+        //    `frame.channel`, so the reply cannot be matched by channel; match
+        //    it to its REQUEST instead (T3254). Before this it was matched by
+        //    type alone, so a reply that arrived after its request had timed
+        //    out was handed to the next request of that type, which adopted
+        //    the wrong session.
+        const current: ?*PendingRpc = if (want == .opened) self.pending_opened else self.pending_attached;
+        var stray_session: ?[]const u8 = null;
+        var stray_entry: AbandonedRpc = undefined;
+        const owner: ?*PendingRpc = owner: {
+            if (peek.req_id) |id| {
+                // The agent echoed an id: it names exactly one request.
+                if (current) |s| if (optEql(s.req_id, id) and !s.answered) break :owner s;
+                if (self.takeAbandonedLocked(want, id)) |e| {
+                    stray_entry = e;
+                    stray_session = stray_entry.sessionId();
+                }
+                break :owner null;
+            }
+            // No id (an agent that does not echo): replies come back in
+            // request order, so one owed by a request given up on EARLIER is
+            // this one.
+            if (self.takeAbandonedLocked(want, null)) |e| {
+                stray_entry = e;
+                stray_session = stray_entry.sessionId();
+                break :owner null;
+            }
+            if (self.abandoned_uncounted[abandonedIndex(want)] > 0) {
+                self.abandoned_uncounted[abandonedIndex(want)] -= 1;
+                break :owner null;
+            }
+            if (current) |s| if (!s.answered) break :owner s;
+            break :owner null;
+        };
+
+        if (owner) |slot| {
+            if (!slot.done.isSet()) {
+                // Stamp the agent's channel so the caller adopts it as the
+                // pane's data channel.
+                slot.reply_channel = frame.channel;
+                self.fillSlotLocked(slot, frame);
+                return true;
+            }
+            // Its request was cancelled (the pane is being torn down) before
+            // the answer came: this IS that answer, so nothing further is owed,
+            // but nobody will adopt what it bound.
+            slot.answered = true;
+            stray_session = slot.session_id;
+        }
+
+        // A stray: the answer to a request nobody is waiting on any more.
+        _ = self.stray_replies.fetchAdd(1, .monotonic);
+        // Undo what it bound, or the agent keeps streaming a session to a
+        // channel no pane reads and reports it as attached, which a later
+        // restore probe reads as "held by a live window" and skips. Enqueued
+        // under `rpc_mutex`, so no ATTACH can register-and-send in between and
+        // have this DETACH land after it.
+        if (self.strayNeedsDetachLocked(frame, peek, stray_session)) {
+            self.writeControl(.detach, frame.channel, "") catch {};
+            _ = self.stray_detaches.fetchAdd(1, .monotonic);
+        }
+        self.rpc_mutex.unlock();
+        return true;
+    }
+
+    /// The parts of an OPEN/ATTACH reply `deliverRpcReply` needs before it
+    /// knows whose reply it is (T3254). Every field degrades to "unknown": a
+    /// payload that does not parse is a reply with no id that bound nothing.
+    const ReplyPeek = struct {
+        req_id: ?u64 = null,
+        /// The reply bound a live session to this connection (OPENED, or an
+        /// ATTACHED with `status == .alive`).
+        bound: bool = false,
+
+        fn of(alloc: Allocator, frame: protocol.Frame) ReplyPeek {
+            const Shape = struct {
+                req_id: ?u64 = null,
+                status: ?protocol.Attached.AttachStatus = null,
+            };
+            const p = protocol.parseJson(Shape, alloc, frame.payload) catch return .{};
+            defer p.deinit();
+            return .{
+                .req_id = p.value.req_id,
+                .bound = switch (frame.type) {
+                    .opened => true,
+                    .attached => p.value.status == .alive,
+                    else => false,
+                },
+            };
+        }
+    };
+
+    /// Fill `slot` from `frame` and wake its caller. Called with `rpc_mutex`
+    /// held; RELEASES it (the event is set after the unlock, as before).
+    fn fillSlotLocked(self: *Connection, slot: *PendingRpc, frame: protocol.Frame) void {
         // Fill the result under the lock so it is published before `done.set()`.
         slot.reply_type = frame.type;
+        slot.answered = true;
         if (!acceptsReply(slot.want, frame.type)) {
             slot.result = error.WrongReply;
         } else if (self.alloc.dupe(u8, frame.payload)) |owned| {
@@ -3431,7 +3673,101 @@ pub const Connection = struct {
         const done = &slot.done;
         self.rpc_mutex.unlock();
         done.set();
-        return true;
+    }
+
+    /// Whether a stray reply's session must be DETACHed again. `rpc_mutex` held.
+    ///
+    /// Only a reply that BOUND something needs undoing. An OPENED's channel is
+    /// one the agent minted for that request alone, so detaching it can touch
+    /// nothing else. An ATTACHED re-binds an existing session, so it is undone
+    /// only when we know which session it was and nothing else here wants it:
+    /// no ATTACH for the same session is in flight (its answer arrives on the
+    /// same channel AFTER this one, and the DETACH would land on top of it),
+    /// and no pane on this connection is already reading that channel.
+    fn strayNeedsDetachLocked(
+        self: *Connection,
+        frame: protocol.Frame,
+        peek: ReplyPeek,
+        session_id: ?[]const u8,
+    ) bool {
+        if (!peek.bound) return false;
+        if (frame.channel == protocol.control_channel) return false;
+        if (frame.type == .opened) return true;
+        const sid = session_id orelse return false;
+        if (self.pending_attached) |s| {
+            if (!s.answered) if (s.session_id) |other| {
+                if (std.mem.eql(u8, other, sid)) return false;
+            };
+        }
+        const noop = struct {
+            fn f(_: void, _: *ring.Channel) void {}
+        }.f;
+        return !self.channels.withChannel(frame.channel, {}, noop);
+    }
+
+    fn abandonedIndex(want: protocol.FrameType) usize {
+        return if (want == .opened) 0 else 1;
+    }
+
+    /// Remove a by-type slot from its rendezvous and, when the agent still owes
+    /// it an answer, remember that (T3254). `rpc_mutex` held. Idempotent: it
+    /// runs at the timeout and again in `rpcCall`'s trailing defer.
+    fn releaseByTypeSlotLocked(self: *Connection, slot: *PendingRpc) void {
+        if (slot.released) return;
+        slot.released = true;
+        if (slot.want == .opened) {
+            if (self.pending_opened == slot) self.pending_opened = null;
+        } else {
+            if (self.pending_attached == slot) self.pending_attached = null;
+        }
+        // Answered, or never sent: nothing is owed.
+        if (slot.answered or !slot.sent) return;
+        // Without an id to match, the answer can only be recognised by count,
+        // which is sound only if the agent answers every request (see
+        // `agentAnswersEvery`). Otherwise leave it as it always was.
+        if (slot.req_id == null and !self.agentAnswersEvery(slot.want)) return;
+        if (self.abandoned_len == abandoned_cap) {
+            // Full. An id-less request is still counted so the fallback stays
+            // exact; one with an id is simply not remembered, and its reply is
+            // dropped as unknown (still never mis-delivered: its id matches
+            // nobody).
+            if (slot.req_id == null) self.abandoned_uncounted[abandonedIndex(slot.want)] += 1;
+            return;
+        }
+        var e: AbandonedRpc = .{ .want = slot.want, .req_id = slot.req_id };
+        if (slot.session_id) |sid| {
+            if (sid.len > 0 and sid.len <= AbandonedRpc.max_session_id_len) {
+                @memcpy(e.session_buf[0..sid.len], sid);
+                e.session_len = @intCast(sid.len);
+            }
+        }
+        self.abandoned[self.abandoned_len] = e;
+        self.abandoned_len += 1;
+    }
+
+    /// Take the oldest abandoned request of `want`'s kind that a reply with
+    /// `req_id` answers: exactly that id, or (null) the oldest id-less one.
+    /// `rpc_mutex` held.
+    fn takeAbandonedLocked(self: *Connection, want: protocol.FrameType, req_id: ?u64) ?AbandonedRpc {
+        var i: usize = 0;
+        while (i < self.abandoned_len) : (i += 1) {
+            const e = self.abandoned[i];
+            if (e.want != want) continue;
+            if (!optEql(e.req_id, req_id)) continue;
+            std.mem.copyForwards(
+                AbandonedRpc,
+                self.abandoned[i .. self.abandoned_len - 1],
+                self.abandoned[i + 1 .. self.abandoned_len],
+            );
+            self.abandoned_len -= 1;
+            return e;
+        }
+        return null;
+    }
+
+    fn optEql(a: ?u64, b: ?u64) bool {
+        if (a) |x| return if (b) |y| x == y else false;
+        return b == null;
     }
 
     /// Fail every still-parked RPC caller registered with `canceller` with
@@ -7875,6 +8211,301 @@ test "attachChannel: an agent too old to refuse out loud still just times out (T
     // ...and the refusal is untouched, which is how a caller tells "known
     // reason" from "no more than we knew before" and keeps the generic text.
     try testing.expectEqual(@as(usize, 0), refusal.reason().len);
+}
+
+/// T3254: an agent that answers the way the REAL one does — OPENED/ATTACHED on
+/// its OWN session channel, never the request's — so the client has to use the
+/// by-type rendezvous, and that holds back its answer to the FIRST request until
+/// the SECOND has arrived. The client serializes OPEN/ATTACH, so the second
+/// request is only sent once the first has timed out: the held answer therefore
+/// arrives exactly when it used to be handed to the wrong pane.
+const LateReplyAgent = struct {
+    ctrl: *MockAgent,
+    alloc: Allocator,
+    caps: []const []const u8,
+    /// Echo `req_id` on replies — what `capability.reply_correlation` promises.
+    echo_ids: bool = true,
+    /// Never answer the first request at all (an old agent dropping a request it
+    /// could not serve), instead of answering it late.
+    drop_first: bool = false,
+
+    count: u32 = 0,
+    held: ?Held = null,
+    mtx: std.Thread.Mutex = .{},
+    detached: [8]u128 = undefined,
+    detached_len: usize = 0,
+    err: ?anyerror = null,
+
+    const Held = struct {
+        type: protocol.FrameType,
+        req_id: ?u64,
+        session: [16]u8 = undefined,
+        session_len: usize = 0,
+        k: u32,
+    };
+
+    /// The agent-minted channel a session's replies ride: one per session id
+    /// for ATTACH (an attach re-binds the session's own channel, as the real
+    /// agent does), one per request for OPEN.
+    fn attachChannelFor(session: []const u8) u128 {
+        return 0xA77A_0000 + @as(u128, std.hash.Crc32.hash(session));
+    }
+
+    fn openChannelFor(k: u32) u128 {
+        return 0x0BE0_0000 + @as(u128, k);
+    }
+
+    fn detachedChannels(self: *LateReplyAgent, out: []u128) usize {
+        self.mtx.lock();
+        defer self.mtx.unlock();
+        @memcpy(out[0..self.detached_len], self.detached[0..self.detached_len]);
+        return self.detached_len;
+    }
+
+    fn run(self: *LateReplyAgent) void {
+        self.body() catch |e| {
+            self.err = e;
+        };
+    }
+
+    fn reply(self: *LateReplyAgent, h: Held) !void {
+        const id = if (self.echo_ids) h.req_id else null;
+        if (h.type == .open) {
+            var buf: [16]u8 = undefined;
+            const sid = try std.fmt.bufPrint(&buf, "open-{d}", .{h.k});
+            try self.ctrl.sendJson(.opened, openChannelFor(h.k), protocol.Opened{
+                .session_id = sid,
+                .pid = 100 + @as(i64, h.k),
+                .req_id = id,
+            });
+        } else {
+            const sid = h.session[0..h.session_len];
+            try self.ctrl.sendJson(.attached, attachChannelFor(sid), protocol.Attached{
+                .status = .alive,
+                .rows = 24,
+                .cols = 80,
+                .pid = 200 + @as(i64, h.k),
+                .req_id = id,
+            });
+        }
+    }
+
+    fn body(self: *LateReplyAgent) !void {
+        _ = try self.ctrl.handshakeCaps(self.caps);
+        while (true) {
+            const frame = (try self.ctrl.nextFrame()) orelse return;
+            switch (frame.type) {
+                .open, .attach => {
+                    const Shape = struct { req_id: ?u64 = null, session_id: ?[]const u8 = null };
+                    const p = try protocol.parseJson(Shape, self.alloc, frame.payload);
+                    defer p.deinit();
+                    var h: Held = .{ .type = frame.type, .req_id = p.value.req_id, .k = self.count };
+                    if (p.value.session_id) |sid| {
+                        @memcpy(h.session[0..sid.len], sid);
+                        h.session_len = sid.len;
+                    }
+                    self.count += 1;
+                    if (h.k == 0) {
+                        if (!self.drop_first) self.held = h;
+                        continue;
+                    }
+                    if (self.held) |late| {
+                        self.held = null;
+                        try self.reply(late);
+                    }
+                    try self.reply(h);
+                },
+                .detach => {
+                    self.mtx.lock();
+                    defer self.mtx.unlock();
+                    if (self.detached_len < self.detached.len) {
+                        self.detached[self.detached_len] = frame.channel;
+                        self.detached_len += 1;
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+};
+
+const LateReplyHarness = struct {
+    alloc: Allocator,
+    ctrl_lb: Loopback,
+    data_lb: Loopback,
+    conn: *Connection,
+    ctrl_agent: MockAgent,
+    agent: LateReplyAgent,
+    thread: ?std.Thread = null,
+
+    fn create(alloc: Allocator, caps: []const []const u8) !*LateReplyHarness {
+        const h = try alloc.create(LateReplyHarness);
+        h.* = .{
+            .alloc = alloc,
+            .ctrl_lb = Loopback.init(alloc),
+            .data_lb = Loopback.init(alloc),
+            .conn = undefined,
+            .ctrl_agent = undefined,
+            .agent = undefined,
+        };
+        h.conn = try Connection.createOpts(
+            alloc,
+            h.ctrl_lb.clientStream(),
+            h.data_lb.clientStream(),
+            .{ .transfer_encoding = .raw },
+            .{
+                .heartbeat_interval_ms = 100_000,
+                // Short, so the first request times out quickly; the second is
+                // answered at once, well inside it.
+                .rpc_open_timeout_ns = 300 * std.time.ns_per_ms,
+            },
+        );
+        h.ctrl_agent = MockAgent.init(alloc, h.ctrl_lb.agentStream(), .raw);
+        h.agent = .{ .ctrl = &h.ctrl_agent, .alloc = alloc, .caps = caps };
+        return h;
+    }
+
+    fn start(h: *LateReplyHarness) !void {
+        h.thread = try std.Thread.spawn(.{}, LateReplyAgent.run, .{&h.agent});
+        try h.conn.start();
+        _ = try h.conn.waitHandshake();
+    }
+
+    fn waitStrays(h: *LateReplyHarness, replies: u32, detaches: usize) !void {
+        var deadline = test_util.Deadline.start("the late reply to be recognised as stray and its session detached");
+        while (true) {
+            var buf: [8]u128 = undefined;
+            if (h.conn.stray_replies.load(.monotonic) >= replies and
+                h.agent.detachedChannels(&buf) >= detaches) return;
+            try deadline.yield();
+        }
+    }
+
+    fn destroy(h: *LateReplyHarness) void {
+        h.conn.shutdown();
+        if (h.thread) |t| t.join();
+        h.conn.destroy(h.alloc);
+        h.ctrl_agent.deinit();
+        h.ctrl_lb.deinit();
+        h.data_lb.deinit();
+        h.alloc.destroy(h);
+    }
+};
+
+const caps_correlated = [_][]const u8{
+    protocol.capability.open_failed,
+    protocol.capability.attach_failed,
+    protocol.capability.reply_correlation,
+};
+const caps_answers_all = [_][]const u8{ protocol.capability.open_failed, protocol.capability.attach_failed };
+
+/// The T3254 shape for ATTACH: pane 1's ATTACH times out, pane 2 attaches a
+/// DIFFERENT session, and pane 1's late ATTACHED arrives first. Pane 2 must
+/// come up on its OWN session's channel, and pane 1's session must be detached
+/// again rather than left bound to a channel nobody reads.
+fn expectLateAttachIsNotAdopted(caps: []const []const u8, echo_ids: bool) !void {
+    const alloc = testing.allocator;
+    const h = try LateReplyHarness.create(alloc, caps);
+    defer h.destroy();
+    h.agent.echo_ids = echo_ids;
+    try h.start();
+
+    try testing.expectError(error.Timeout, h.conn.attachChannel("sess-A", 24, 80, 0, false));
+
+    var outcome = try h.conn.attachChannel("sess-B", 24, 80, 0, false);
+    defer outcome.deinit();
+    const pane = outcome.pane orelse return error.NoPane;
+    // Before the fix this was sess-A's channel and pid 200: pane 2 adopted
+    // pane 1's session.
+    try testing.expectEqual(LateReplyAgent.attachChannelFor("sess-B"), outcome.channel);
+    try testing.expectEqual(@as(i64, 201), pane.pid);
+
+    try h.waitStrays(1, 1);
+    var buf: [8]u128 = undefined;
+    const n = h.agent.detachedChannels(&buf);
+    try testing.expectEqual(@as(usize, 1), n);
+    try testing.expectEqual(LateReplyAgent.attachChannelFor("sess-A"), buf[0]);
+    try testing.expect(h.agent.err == null);
+    h.conn.detachChannel(pane);
+}
+
+test "T3254: a late ATTACHED is never handed to the next pane's ATTACH (agent echoes req_id)" {
+    try expectLateAttachIsNotAdopted(&caps_correlated, true);
+}
+
+test "T3254: a late ATTACHED is discarded by count against an agent that does not echo" {
+    // Today's installed agents: they answer every ATTACH (`attach_failed`) but
+    // carry no id, so the client recognises the late reply by ORDER.
+    try expectLateAttachIsNotAdopted(&caps_answers_all, false);
+}
+
+test "T3254: a late OPENED is never adopted by the next pane's OPEN, and its fresh session is detached" {
+    inline for (.{ .{ &caps_correlated, true }, .{ &caps_answers_all, false } }) |mode| {
+        const alloc = testing.allocator;
+        const h = try LateReplyHarness.create(alloc, mode[0]);
+        defer h.destroy();
+        h.agent.echo_ids = mode[1];
+        try h.start();
+
+        try testing.expectError(error.Timeout, h.conn.openChannel(.{ .rows = 24, .cols = 80 }));
+        const pane = try h.conn.openChannel(.{ .rows = 24, .cols = 80 });
+        try testing.expectEqualStrings("open-1", pane.session_id);
+        try testing.expectEqual(LateReplyAgent.openChannelFor(1), pane.id);
+
+        try h.waitStrays(1, 1);
+        var buf: [8]u128 = undefined;
+        try testing.expectEqual(@as(usize, 1), h.agent.detachedChannels(&buf));
+        try testing.expectEqual(LateReplyAgent.openChannelFor(0), buf[0]);
+        h.conn.closeChannel(pane);
+    }
+}
+
+test "T3254: re-attaching the SAME session after a timeout keeps it bound (no DETACH on top)" {
+    // The retry's answer rides the same session channel right behind the late
+    // one. Detaching on the late one would land after the retry's re-bind and
+    // silently stop the pane that just came up.
+    const alloc = testing.allocator;
+    const h = try LateReplyHarness.create(alloc, &caps_correlated);
+    defer h.destroy();
+    try h.start();
+
+    try testing.expectError(error.Timeout, h.conn.attachChannel("sess-A", 24, 80, 0, false));
+    var outcome = try h.conn.attachChannel("sess-A", 24, 80, 0, false);
+    defer outcome.deinit();
+    const pane = outcome.pane orelse return error.NoPane;
+    try testing.expectEqual(@as(i64, 201), pane.pid); // the retry's own answer
+
+    try h.waitStrays(1, 0);
+    // A DETACH would have been enqueued in the same critical section that
+    // counted the stray, so the counter below is already final; the agent's
+    // view is checked as well, after a round trip that must follow it.
+    var probe = try h.conn.attachChannel("sess-C", 24, 80, 0, false);
+    defer probe.deinit();
+    var buf: [8]u128 = undefined;
+    try testing.expectEqual(@as(usize, 0), h.agent.detachedChannels(&buf));
+    try testing.expectEqual(@as(u32, 0), h.conn.stray_detaches.load(.monotonic));
+    if (probe.pane) |p| h.conn.detachChannel(p);
+    h.conn.detachChannel(pane);
+}
+
+test "T3254: an old agent that drops a request does not cost the NEXT request its answer" {
+    // No `attach_failed`: such an agent may never answer an ATTACH it could not
+    // serve, so a timed-out request is NOT counted as owed — counting it would
+    // swallow the next pane's genuine reply as "the late one".
+    const alloc = testing.allocator;
+    const h = try LateReplyHarness.create(alloc, &.{});
+    defer h.destroy();
+    h.agent.echo_ids = false;
+    h.agent.drop_first = true;
+    try h.start();
+
+    try testing.expectError(error.Timeout, h.conn.attachChannel("sess-A", 24, 80, 0, false));
+    var outcome = try h.conn.attachChannel("sess-B", 24, 80, 0, false);
+    defer outcome.deinit();
+    const pane = outcome.pane orelse return error.NoPane;
+    try testing.expectEqual(LateReplyAgent.attachChannelFor("sess-B"), outcome.channel);
+    try testing.expectEqual(@as(u32, 0), h.conn.stray_replies.load(.monotonic));
+    h.conn.detachChannel(pane);
 }
 
 test "acceptsReply: each negative reply answers its own request, and nothing else" {

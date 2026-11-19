@@ -55,6 +55,7 @@
 //! | v1 | `attach_failed` | `ATTACH_FAILED` 0x07 (ATTACH the agent cannot answer) | silence ⇒ client times out |
 //! | v1 | `repaint_data` | `DATA_REPAINT` 0x15 (injected repaint, advances no offset) | repaint counted as stream bytes |
 //! | v1 | `relaunch_notice` | `RELAUNCH.notice` spliced into the replay stream | viewer injects it locally (races the child) |
+//! | v1 | `reply_correlation` | `req_id` on OPEN/ATTACH, echoed on every reply to them | client discards late replies by count (needs `open_failed`/`attach_failed`) |
 //! | v1 | `holder_lost` | `EXIT.lost` for a bound session whose host died; `RELAUNCH.fresh_shell` / `.replay_from` | the pane closes as if its program finished |
 //!
 //! Two rules make that table load-bearing rather than decorative:
@@ -882,6 +883,25 @@ pub const capability = struct {
     /// frame, so both skew directions are safe by construction: an older app
     /// never asks, and an older agent reads as not self-replacing.
     pub const agent_handoff_rename = "agent_handoff_rename";
+
+    /// **OPEN/ATTACH replies name the request they answer** (T3254). The client
+    /// puts a `req_id` on each OPEN and ATTACH; the agent echoes it on whichever
+    /// reply answers that request (`OPENED`/`OPEN_FAILED`/`ATTACHED`/
+    /// `ATTACH_FAILED`).
+    ///
+    /// Why it is needed: those replies arrive on a channel the AGENT picks, so
+    /// the client cannot correlate them by request channel and used to match
+    /// them by reply TYPE alone. A reply that came back after its request had
+    /// timed out was therefore handed to the NEXT pane's request of the same
+    /// type: that pane adopted the first pane's session, its own reply went to
+    /// the pane after it, and the last one in line timed out.
+    ///
+    /// Purely additive — one optional field each way, elided when null. Gated
+    /// anyway because the FALLBACK differs: against an agent that does not echo,
+    /// the client cannot tell whose reply it is holding and instead discards
+    /// one late reply per abandoned request (which is only sound when the agent
+    /// answers every request, i.e. `open_failed`/`attach_failed`).
+    pub const reply_correlation = "reply_correlation";
 };
 
 /// The kind of pseudo-terminal a peer spawns its children on. Wire-visible
@@ -1102,6 +1122,12 @@ pub const Negotiated = struct {
     /// sideline, so its `agent_handoff` promise holds on a box updated that
     /// way. False against either older peer.
     agent_handoff_rename: bool = false,
+
+    /// True iff BOTH peers advertised `capability.reply_correlation` (T3254) —
+    /// the agent echoes OPEN/ATTACH `req_id` on the replies, so the client can
+    /// match a reply to the exact request it answers. False against either
+    /// older peer: the client falls back to discarding late replies by count.
+    reply_correlation: bool = false,
 };
 
 /// True iff `caps` contains the capability string `name`.
@@ -1156,6 +1182,8 @@ pub fn negotiate(local: Hello, remote: Hello) ProtocolError!Negotiated {
             hasCapability(remote.capabilities, capability.holder_lost),
         .agent_handoff_rename = hasCapability(local.capabilities, capability.agent_handoff_rename) and
             hasCapability(remote.capabilities, capability.agent_handoff_rename),
+        .reply_correlation = hasCapability(local.capabilities, capability.reply_correlation) and
+            hasCapability(remote.capabilities, capability.reply_correlation),
     };
 }
 
@@ -1208,6 +1236,13 @@ pub const Open = struct {
     /// it false and keep the idle-TTL. Additive/optional: older agents ignore
     /// the field (unknown-field-tolerant parser) and fall back to TTL reaping.
     pinned: bool = false,
+
+    /// The client's id for THIS request, echoed back on whichever reply answers
+    /// it (`Opened.req_id` / `OpenFailed.req_id`) — see
+    /// `capability.reply_correlation` (T3254). Additive/optional: an older agent
+    /// ignores it and echoes nothing, and null is elided on the wire, so a
+    /// request without one is byte-identical to a pre-T3254 OPEN.
+    req_id: ?u64 = null,
 
     pub const EnvPair = struct { key: []const u8, value: []const u8 };
 
@@ -1263,6 +1298,17 @@ pub const Opened = struct {
     /// older agents omit it (unknown-field-tolerant parser → null) and the
     /// client degrades to its pre-field behavior (no tty).
     tty: ?[]const u8 = null,
+
+    /// Echo of `Open.req_id` (T3254, `capability.reply_correlation`). Null from
+    /// an older agent, or when the OPEN carried none.
+    req_id: ?u64 = null,
+};
+
+/// Just the correlation id of an OPEN/ATTACH reply, whatever its type (T3254).
+/// The client reads it BEFORE it knows which waiter the reply is for, so it
+/// parses this rather than the full reply; every other field is ignored.
+pub const ReplyCorrelation = struct {
+    req_id: ?u64 = null,
 };
 
 /// `OPEN_FAILED` (0x06) — the negative reply to `OPEN`. Sent ONLY when
@@ -1284,6 +1330,11 @@ pub const OpenFailed = struct {
     /// sentence (e.g. `live=256/256 dead=3/256`, or the errno-ish name of a
     /// failed spawn). Optional: absent from a peer that has nothing to add.
     detail: ?[]const u8 = null,
+
+    /// Echo of the refused request's `req_id` (T3254,
+    /// `capability.reply_correlation`). Null from an older agent, when the
+    /// request carried none, or when the request did not parse at all.
+    req_id: ?u64 = null,
 
     /// The `reason` vocabulary. Additive: new tokens may be introduced at any
     /// time and an older client renders the generic sentence for one it does
@@ -1316,6 +1367,11 @@ pub const AttachFailed = struct {
 
     /// Free-form supporting text, shown verbatim after the sentence. Optional.
     detail: ?[]const u8 = null,
+
+    /// Echo of the refused request's `req_id` (T3254,
+    /// `capability.reply_correlation`). Null from an older agent, when the
+    /// request carried none, or when the request did not parse at all.
+    req_id: ?u64 = null,
 
     /// The `reason` vocabulary. Additive: an older client renders the generic
     /// sentence for a token it does not recognize, so new ones never need a
@@ -1404,11 +1460,19 @@ pub const Attach = struct {
     /// meaning: a client that never asked for the handshake would otherwise get
     /// no pane and no retry, which is the one skew this reservation prevents.
     force: bool = false,
+
+    /// The client's id for THIS request, echoed on the reply that answers it
+    /// (`Attached.req_id` / `AttachFailed.req_id`) — `capability.reply_correlation`
+    /// (T3254). Additive/optional, elided when null; an older agent ignores it.
+    req_id: ?u64 = null,
 };
 
 /// `ATTACHED` (0x04). `status` drives per-session recovery tiers (§7.4).
 pub const Attached = struct {
     status: AttachStatus,
+    /// Echo of `Attach.req_id` (T3254, `capability.reply_correlation`). Null
+    /// from an older agent, or when the ATTACH carried none.
+    req_id: ?u64 = null,
     rows: u16 = 0,
     cols: u16 = 0,
     cwd: ?[]const u8 = null,
@@ -3310,6 +3374,54 @@ test "negotiate: cpu_units gates the MEANING of an existing field" {
         );
         try testing.expect(!n.cpu_units);
     }
+}
+
+test "T3254 reply_correlation negotiates on the intersection and req_id is additive" {
+    const alloc = testing.allocator;
+    const modern = [_][]const u8{ capability.attach_failed, capability.reply_correlation };
+    const older = [_][]const u8{capability.attach_failed};
+    {
+        const n = try negotiate(
+            .{ .transfer_encoding = .raw, .capabilities = &modern },
+            .{ .transfer_encoding = .raw, .capabilities = &modern },
+        );
+        try testing.expect(n.reply_correlation);
+    }
+    inline for (.{ .{ &modern, &older }, .{ &older, &modern } }) |pair| {
+        const n = try negotiate(
+            .{ .transfer_encoding = .raw, .capabilities = pair[0] },
+            .{ .transfer_encoding = .raw, .capabilities = pair[1] },
+        );
+        try testing.expect(!n.reply_correlation);
+        try testing.expect(n.attach_failed);
+    }
+
+    // Null is elided, so a request without an id is byte-identical to a
+    // pre-T3254 one — an older agent sees exactly what it always saw.
+    const bare = try encodeJson(alloc, Attach{ .session_id = "abc", .rows = 24, .cols = 80 });
+    defer alloc.free(bare);
+    try testing.expect(std.mem.indexOf(u8, bare, "req_id") == null);
+    const tagged = try encodeJson(alloc, Attach{ .session_id = "abc", .rows = 24, .cols = 80, .req_id = 7 });
+    defer alloc.free(tagged);
+    try testing.expect(std.mem.indexOf(u8, tagged, "\"req_id\":7") != null);
+
+    // Every reply's id can be read without knowing the reply's type, and an
+    // older agent's reply (no field) reads as null rather than failing.
+    inline for (.{
+        Opened{ .session_id = "s", .pid = 1, .req_id = 9 },
+        OpenFailed{ .reason = "x", .req_id = 9 },
+        Attached{ .status = .alive, .req_id = 9 },
+        AttachFailed{ .reason = "x", .req_id = 9 },
+    }) |reply| {
+        const json = try encodeJson(alloc, reply);
+        defer alloc.free(json);
+        const p = try parseJson(ReplyCorrelation, alloc, json);
+        defer p.deinit();
+        try testing.expectEqual(@as(?u64, 9), p.value.req_id);
+    }
+    const p_old = try parseJson(ReplyCorrelation, alloc, "{\"status\":\"alive\",\"rows\":24}");
+    defer p_old.deinit();
+    try testing.expect(p_old.value.req_id == null);
 }
 
 test "T824 relaunch_notice negotiates on the intersection and the field is additive" {
