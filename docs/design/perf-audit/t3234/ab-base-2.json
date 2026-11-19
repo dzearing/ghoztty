@@ -1,0 +1,524 @@
+{
+    "schema":  "ghoztty-perf-baseline/1",
+    "task":  "T2958",
+    "generated":  "2026-11-18T22:00:51.9045376-08:00",
+    "commit":  "46725f243",
+    "parameters":  {
+                       "cycle_shape":  "mixed",
+                       "settled_cycles":  5,
+                       "cycle_max_warmup":  8,
+                       "settle_budget_mb":  2,
+                       "cycle_idle_seconds":  30,
+                       "viewer_visible_seconds":  60,
+                       "viewer_hidden_seconds":  60,
+                       "viewer_close_seconds":  90,
+                       "viewer_repeat_cycles":  2,
+                       "app_env":  {
+
+                                   }
+                   },
+    "tolerance":  {
+                      "cpu_pct":  {
+                                      "abs":  0.5,
+                                      "note":  "percent of one core",
+                                      "rel":  0.5
+                                  },
+                      "idle_cpu_pct":  {
+                                           "abs":  0.05,
+                                           "note":  "idle percent of one core: floor of two clock ticks over 60 s",
+                                           "rel":  0.5
+                                       },
+                      "wakeups":  {
+                                      "abs":  20,
+                                      "note":  "context switches per second",
+                                      "rel":  0.35
+                                  },
+                      "seconds":  {
+                                      "abs":  0.5,
+                                      "note":  "wall or CPU seconds",
+                                      "rel":  0.3
+                                  },
+                      "mb":  {
+                                 "abs":  5,
+                                 "note":  "megabytes",
+                                 "rel":  0.15
+                             },
+                      "delta_mb":  {
+                                       "abs":  15,
+                                       "note":  "megabytes left behind by an open/close cycle: a difference of two readings, so it carries the noise of both (run1 27.3 vs run2 36.1 MB on 2026-11-14)",
+                                       "rel":  0.5
+                                   },
+                      "gpu_mb":  {
+                                     "abs":  5,
+                                     "note":  "GPU megabytes",
+                                     "rel":  0.2
+                                 },
+                      "gpu_pct":  {
+                                      "abs":  3,
+                                      "note":  "GPU engine percent",
+                                      "rel":  0.75
+                                  },
+                      "handles":  {
+                                      "abs":  30,
+                                      "note":  "kernel handles",
+                                      "rel":  0.1
+                                  },
+                      "objects":  {
+                                      "abs":  10,
+                                      "note":  "GDI or USER objects",
+                                      "rel":  0.1
+                                  },
+                      "threads":  {
+                                      "abs":  3,
+                                      "note":  "threads",
+                                      "rel":  0.15
+                                  },
+                      "count":  {
+                                    "abs":  1,
+                                    "note":  "process or session counts",
+                                    "rel":  0
+                                },
+                      "perf_rate":  {
+                                        "abs":  5,
+                                        "note":  "the app\u0027s GHOZTTY_PERF counters (reads, batches, renders, wakeups, fps per second; bytes per batch): rates set by the scheduler as much as by the code, so the wakeups tolerance",
+                                        "rel":  0.35
+                                    }
+                  },
+    "builds":  {
+                   "release":  {
+                                   "exe":  "D:\\git\\ghoztty-b\\zig-out-release\\bin\\ghoztty.exe",
+                                   "build":  "Release",
+                                   "version":  "Ghostty 1.4.0-lane-b-+46725f243  Version (this binary)   - version: 1.4.0-lane-b-+46725f243   - commit: 46725f243 (this binary)   - channel: tip   - update check: off (not the installed release) Build Config   - Zig version   : 0.15.2   - build mode    : .ReleaseFast   - app runtime   : .win32   - font engine   : .freetype_windows   - renderer      : renderer.generic.Renderer(renderer.OpenGL)   - libxev        : iocp   - relay sign-in : not configured (no google client id baked in) Running Instance (the app running now, not this binary)   - none detected",
+                                   "idle":  {
+                                                "method":  "1 window 1400x900, 1 cmd pane at its prompt, persistence off; 10 s settle, then CPU time and summed thread context switches (NtQuerySystemInformation class 5) over 60 s; GPU Engine(pid_*) utilisation summed over engines, 1 s samples, first 30 s. cpu_pct is user+kernel tick-charged time (baselines 1-3: user only); cpu_cycle_pct is the exact cycle count at the nominal 3000 MHz (T3111)",
+                                                "cpu_pct":  0.34,
+                                                "cpu_user_pct":  0.08,
+                                                "cpu_kernel_pct":  0.26,
+                                                "cpu_ticks":  13,
+                                                "cpu_cycle_pct":  0.685,
+                                                "mcycles_per_s":  20.54,
+                                                "timer_resolution_ms":  [
+                                                                            15.625,
+                                                                            15.625
+                                                                        ],
+                                                "wakeups_per_s":  132.2,
+                                                "threads":  83,
+                                                "gpu_engine_pct":  0.03,
+                                                "gpu_engine_peak_pct":  0.04,
+                                                "wakeup_attribution":  {
+                                                                           "method":  "per-thread ContextSwitches (SystemProcessInformation) at both ends of the span; a thread\u0027s group is its start module (NtQueryInformationThread Win32StartAddress against the process\u0027s module list) plus its SetThreadDescription name; threads that exited inside the span are not counted; mcycles_per_s is QueryThreadCycleTime at both ends (exact, not tick-sampled; T3111)",
+                                                                           "threads_seen":  83,
+                                                                           "threads_exited":  4,
+                                                                           "attributed_wakeups_per_s":  133.9,
+                                                                           "top_threads":  [
+                                                                                               {
+                                                                                                   "tid":  37468,
+                                                                                                   "name":  "",
+                                                                                                   "start":  "nvwgf2umx.dll+0xfd367c",
+                                                                                                   "group":  "nvwgf2umx.dll",
+                                                                                                   "new":  false,
+                                                                                                   "wakeups_per_s":  62.07,
+                                                                                                   "mcycles_per_s":  1.666
+                                                                                               },
+                                                                                               {
+                                                                                                   "tid":  47696,
+                                                                                                   "name":  "",
+                                                                                                   "start":  "nvoglv64.dll+0xa3b690",
+                                                                                                   "group":  "nvoglv64.dll",
+                                                                                                   "new":  false,
+                                                                                                   "wakeups_per_s":  34.03,
+                                                                                                   "mcycles_per_s":  7.189
+                                                                                               },
+                                                                                               {
+                                                                                                   "tid":  31132,
+                                                                                                   "name":  "",
+                                                                                                   "start":  "nvoglv64.dll+0xa3b690",
+                                                                                                   "group":  "nvoglv64.dll",
+                                                                                                   "new":  false,
+                                                                                                   "wakeups_per_s":  10.11,
+                                                                                                   "mcycles_per_s":  0.33
+                                                                                               },
+                                                                                               {
+                                                                                                   "tid":  6632,
+                                                                                                   "name":  "main",
+                                                                                                   "start":  "ghoztty.exe+0xdc7d80",
+                                                                                                   "group":  "ghoztty.exe [main]",
+                                                                                                   "new":  false,
+                                                                                                   "wakeups_per_s":  9.85,
+                                                                                                   "mcycles_per_s":  0.596
+                                                                                               },
+                                                                                               {
+                                                                                                   "tid":  52568,
+                                                                                                   "name":  "renderer",
+                                                                                                   "start":  "ghoztty.exe+0x7193e0",
+                                                                                                   "group":  "ghoztty.exe [renderer]",
+                                                                                                   "new":  false,
+                                                                                                   "wakeups_per_s":  9.1,
+                                                                                                   "mcycles_per_s":  8.7
+                                                                                               },
+                                                                                               {
+                                                                                                   "tid":  30288,
+                                                                                                   "name":  "",
+                                                                                                   "start":  "nvwgf2umx.dll+0xfd367c",
+                                                                                                   "group":  "nvwgf2umx.dll",
+                                                                                                   "new":  false,
+                                                                                                   "wakeups_per_s":  8.32,
+                                                                                                   "mcycles_per_s":  1.968
+                                                                                               },
+                                                                                               {
+                                                                                                   "tid":  29844,
+                                                                                                   "name":  "",
+                                                                                                   "start":  "nvwgf2umx.dll+0xfd367c",
+                                                                                                   "group":  "nvwgf2umx.dll",
+                                                                                                   "new":  false,
+                                                                                                   "wakeups_per_s":  0.33,
+                                                                                                   "mcycles_per_s":  0.032
+                                                                                               },
+                                                                                               {
+                                                                                                   "tid":  47132,
+                                                                                                   "name":  "",
+                                                                                                   "start":  "ntdll.dll+0x24990",
+                                                                                                   "group":  "ntdll.dll",
+                                                                                                   "new":  false,
+                                                                                                   "wakeups_per_s":  0.08,
+                                                                                                   "mcycles_per_s":  0.01
+                                                                                               }
+                                                                                           ],
+                                                                           "by_group":  [
+                                                                                            {
+                                                                                                "group":  "nvwgf2umx.dll",
+                                                                                                "threads":  3,
+                                                                                                "wakeups_per_s":  70.72,
+                                                                                                "mcycles_per_s":  3.666
+                                                                                            },
+                                                                                            {
+                                                                                                "group":  "nvoglv64.dll",
+                                                                                                "threads":  2,
+                                                                                                "wakeups_per_s":  44.14,
+                                                                                                "mcycles_per_s":  7.519
+                                                                                            },
+                                                                                            {
+                                                                                                "group":  "ghoztty.exe [main]",
+                                                                                                "threads":  1,
+                                                                                                "wakeups_per_s":  9.85,
+                                                                                                "mcycles_per_s":  0.596
+                                                                                            },
+                                                                                            {
+                                                                                                "group":  "ghoztty.exe [renderer]",
+                                                                                                "threads":  1,
+                                                                                                "wakeups_per_s":  9.1,
+                                                                                                "mcycles_per_s":  8.7
+                                                                                            },
+                                                                                            {
+                                                                                                "group":  "ntdll.dll",
+                                                                                                "threads":  1,
+                                                                                                "wakeups_per_s":  0.08,
+                                                                                                "mcycles_per_s":  0.01
+                                                                                            }
+                                                                                        ],
+                                                                           "attributed_mcycles_per_s":  20.49,
+                                                                           "top_threads_by_cycles":  [
+                                                                                                         {
+                                                                                                             "tid":  52568,
+                                                                                                             "name":  "renderer",
+                                                                                                             "start":  "ghoztty.exe+0x7193e0",
+                                                                                                             "group":  "ghoztty.exe [renderer]",
+                                                                                                             "new":  false,
+                                                                                                             "wakeups_per_s":  9.1,
+                                                                                                             "mcycles_per_s":  8.7
+                                                                                                         },
+                                                                                                         {
+                                                                                                             "tid":  47696,
+                                                                                                             "name":  "",
+                                                                                                             "start":  "nvoglv64.dll+0xa3b690",
+                                                                                                             "group":  "nvoglv64.dll",
+                                                                                                             "new":  false,
+                                                                                                             "wakeups_per_s":  34.03,
+                                                                                                             "mcycles_per_s":  7.189
+                                                                                                         },
+                                                                                                         {
+                                                                                                             "tid":  30288,
+                                                                                                             "name":  "",
+                                                                                                             "start":  "nvwgf2umx.dll+0xfd367c",
+                                                                                                             "group":  "nvwgf2umx.dll",
+                                                                                                             "new":  false,
+                                                                                                             "wakeups_per_s":  8.32,
+                                                                                                             "mcycles_per_s":  1.968
+                                                                                                         },
+                                                                                                         {
+                                                                                                             "tid":  37468,
+                                                                                                             "name":  "",
+                                                                                                             "start":  "nvwgf2umx.dll+0xfd367c",
+                                                                                                             "group":  "nvwgf2umx.dll",
+                                                                                                             "new":  false,
+                                                                                                             "wakeups_per_s":  62.07,
+                                                                                                             "mcycles_per_s":  1.666
+                                                                                                         },
+                                                                                                         {
+                                                                                                             "tid":  6632,
+                                                                                                             "name":  "main",
+                                                                                                             "start":  "ghoztty.exe+0xdc7d80",
+                                                                                                             "group":  "ghoztty.exe [main]",
+                                                                                                             "new":  false,
+                                                                                                             "wakeups_per_s":  9.85,
+                                                                                                             "mcycles_per_s":  0.596
+                                                                                                         },
+                                                                                                         {
+                                                                                                             "tid":  31132,
+                                                                                                             "name":  "",
+                                                                                                             "start":  "nvoglv64.dll+0xa3b690",
+                                                                                                             "group":  "nvoglv64.dll",
+                                                                                                             "new":  false,
+                                                                                                             "wakeups_per_s":  10.11,
+                                                                                                             "mcycles_per_s":  0.33
+                                                                                                         },
+                                                                                                         {
+                                                                                                             "tid":  29844,
+                                                                                                             "name":  "",
+                                                                                                             "start":  "nvwgf2umx.dll+0xfd367c",
+                                                                                                             "group":  "nvwgf2umx.dll",
+                                                                                                             "new":  false,
+                                                                                                             "wakeups_per_s":  0.33,
+                                                                                                             "mcycles_per_s":  0.032
+                                                                                                         },
+                                                                                                         {
+                                                                                                             "tid":  47132,
+                                                                                                             "name":  "",
+                                                                                                             "start":  "ntdll.dll+0x24990",
+                                                                                                             "group":  "ntdll.dll",
+                                                                                                             "new":  false,
+                                                                                                             "wakeups_per_s":  0.08,
+                                                                                                             "mcycles_per_s":  0.01
+                                                                                                         }
+                                                                                                     ],
+                                                                           "by_group_cycles":  [
+                                                                                                   {
+                                                                                                       "group":  "ghoztty.exe [renderer]",
+                                                                                                       "threads":  1,
+                                                                                                       "wakeups_per_s":  9.1,
+                                                                                                       "mcycles_per_s":  8.7
+                                                                                                   },
+                                                                                                   {
+                                                                                                       "group":  "nvoglv64.dll",
+                                                                                                       "threads":  2,
+                                                                                                       "wakeups_per_s":  44.14,
+                                                                                                       "mcycles_per_s":  7.519
+                                                                                                   },
+                                                                                                   {
+                                                                                                       "group":  "nvwgf2umx.dll",
+                                                                                                       "threads":  3,
+                                                                                                       "wakeups_per_s":  70.72,
+                                                                                                       "mcycles_per_s":  3.666
+                                                                                                   },
+                                                                                                   {
+                                                                                                       "group":  "ghoztty.exe [main]",
+                                                                                                       "threads":  1,
+                                                                                                       "wakeups_per_s":  9.85,
+                                                                                                       "mcycles_per_s":  0.596
+                                                                                                   },
+                                                                                                   {
+                                                                                                       "group":  "ntdll.dll",
+                                                                                                       "threads":  1,
+                                                                                                       "wakeups_per_s":  0.08,
+                                                                                                       "mcycles_per_s":  0.01
+                                                                                                   }
+                                                                                               ]
+                                                                       },
+                                                "memory":  {
+                                                               "private_mb":  205.1,
+                                                               "working_set_mb":  143.1,
+                                                               "handles":  827,
+                                                               "gdi":  38,
+                                                               "user":  41,
+                                                               "threads":  83,
+                                                               "gpu_dedicated_mb":  57.6,
+                                                               "gpu_shared_mb":  14.3,
+                                                               "child_procs":  2,
+                                                               "child_private_mb":  5.9
+                                                           },
+                                                "objects":  {
+                                                                "user":  41,
+                                                                "windows":  17,
+                                                                "window_classes":  [
+                                                                                       {
+                                                                                           "name":  "top:IME",
+                                                                                           "count":  4
+                                                                                       },
+                                                                                       {
+                                                                                           "name":  "top:NVOpenGLPbuffer",
+                                                                                           "count":  3
+                                                                                       },
+                                                                                       {
+                                                                                           "name":  "top:tooltips_class32",
+                                                                                           "count":  1
+                                                                                       },
+                                                                                       {
+                                                                                           "name":  "top:MSCTFIME UI",
+                                                                                           "count":  1
+                                                                                       },
+                                                                                       {
+                                                                                           "name":  "child:GhozttyTerminal",
+                                                                                           "count":  1
+                                                                                       },
+                                                                                       {
+                                                                                           "name":  "msg:GhozttyMsg",
+                                                                                           "count":  1
+                                                                                       },
+                                                                                       {
+                                                                                           "name":  "child:GhozttyPaneSidebar",
+                                                                                           "count":  1
+                                                                                       },
+                                                                                       {
+                                                                                           "name":  "msg:OleMainThreadWndClass",
+                                                                                           "count":  1
+                                                                                       },
+                                                                                       {
+                                                                                           "name":  "msg:CicMarshalWndClass",
+                                                                                           "count":  1
+                                                                                       },
+                                                                                       {
+                                                                                           "name":  "top:GhozttyPresenter",
+                                                                                           "count":  1
+                                                                                       },
+                                                                                       {
+                                                                                           "name":  "top:GhozttyWindow",
+                                                                                           "count":  1
+                                                                                       },
+                                                                                       {
+                                                                                           "name":  "top:GhozttyScrollbar",
+                                                                                           "count":  1
+                                                                                       }
+                                                                                   ],
+                                                                "handle_types":  [
+                                                                                     {
+                                                                                         "name":  "Event",
+                                                                                         "count":  224
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "EtwRegistration",
+                                                                                         "count":  155
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Semaphore",
+                                                                                         "count":  87
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Thread",
+                                                                                         "count":  81
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "File",
+                                                                                         "count":  57
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Timer",
+                                                                                         "count":  57
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Key",
+                                                                                         "count":  46
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "WaitCompletionPacket",
+                                                                                         "count":  34
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Section",
+                                                                                         "count":  23
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "IoCompletion",
+                                                                                         "count":  18
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Mutant",
+                                                                                         "count":  15
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "IRTimer",
+                                                                                         "count":  7
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "ALPC Port",
+                                                                                         "count":  5
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "TpWorkerFactory",
+                                                                                         "count":  3
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Process",
+                                                                                         "count":  3
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "DxgkSharedResource",
+                                                                                         "count":  2
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "WindowStation",
+                                                                                         "count":  2
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Directory",
+                                                                                         "count":  2
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "DxgkCompositionObject",
+                                                                                         "count":  2
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "SchedulerSharedData",
+                                                                                         "count":  1
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Desktop",
+                                                                                         "count":  1
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Job",
+                                                                                         "count":  1
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "DxgkSharedSyncObject",
+                                                                                         "count":  1
+                                                                                     }
+                                                                                 ],
+                                                                "thread_groups":  [
+                                                                                      {
+                                                                                          "name":  "nvwgf2umx.dll",
+                                                                                          "count":  55
+                                                                                      },
+                                                                                      {
+                                                                                          "name":  "ghoztty.exe",
+                                                                                          "count":  17
+                                                                                      },
+                                                                                      {
+                                                                                          "name":  "nvoglv64.dll",
+                                                                                          "count":  4
+                                                                                      },
+                                                                                      {
+                                                                                          "name":  "ntdll.dll",
+                                                                                          "count":  3
+                                                                                      },
+                                                                                      {
+                                                                                          "name":  "ghoztty.exe [io-reader]",
+                                                                                          "count":  1
+                                                                                      },
+                                                                                      {
+                                                                                          "name":  "ghoztty.exe [io]",
+                                                                                          "count":  1
+                                                                                      },
+                                                                                      {
+                                                                                          "name":  "ghoztty.exe [renderer]",
+                                                                                          "count":  1
+                                                                                      },
+                                                                                      {
+                                                                                          "name":  "ghoztty.exe [main]",
+                                                                                          "count":  1
+                                                                                      }
+                                                                                  ]
+                                                            }
+                                            }
+                               }
+               }
+}
