@@ -123,6 +123,11 @@ pub const notif_crash_reopened: usize = 29;
 /// a dialog's modal loop on the stack when the posted close came round.
 pub const force_close_retry: usize = 30;
 
+/// One-shot re-check of an agent that said it was replacing itself (T3253,
+/// `App.armHandoffOverdueCheck`): if the same build is still running when it
+/// fires, the stand-down is overdue and the waiting-update row comes up.
+pub const handoff_overdue: usize = 31;
+
 // Fail the build if two ids above are equal. Every `pub const … : usize` in
 // this file is a timer id and is compared against every other one, so a new
 // entry is covered by adding it — there is no second list to keep in step.

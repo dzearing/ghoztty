@@ -114,6 +114,13 @@ pub const Reason = enum {
     /// hurry it along: since T1056 forcing it early would mean ending live
     /// sessions for a build-stamp gap, which is the act rule 3 forbids.
     stale_handoff_draining,
+    /// Stale, and the agent PROMISED to replace itself (`stale_handoff`), but
+    /// the same build is still running `handoff_overdue_ms` later (T3253). A
+    /// promise this app has watched not being kept is no longer grounds for
+    /// standing down: the update is treated as waiting, so the menu row comes
+    /// up and the user can see it, exactly as for the legacy generation. Still
+    /// `.none` - nothing live is ever ended for a build gap (rule 3).
+    stale_handoff_overdue,
 
     /// Protocol skew, and the AGENT is the older side: the mandatory-update path
     /// applies, so confirm and restart it onto the bundled build.
@@ -142,6 +149,7 @@ pub const Reason = enum {
             .stale_live_deferred => "stale with live sessions, but protocol-compatible; leaving it alone and adopting at the next quiet moment",
             .stale_handoff => "stale, but the agent is replacing itself without losing any session (standing down)",
             .stale_handoff_draining => "stale and self-replacing, but sessions the agent owns directly must close first; waiting for them",
+            .stale_handoff_overdue => "handoff overdue: the agent said it was replacing itself but the same build is still running; leaving it alone and showing the waiting update",
             .skew_agent_older => "protocol skew, running agent speaks an OLDER protocol, confirmation required",
             .skew_app_older => "no action, running agent speaks a NEWER protocol — this app is the out-of-date side (never downgrade)",
             .skew_unknown => "no action, protocol skew of unknown direction (no peer version captured)",
@@ -230,6 +238,107 @@ pub fn decide(running: ?[]const u8, bundled: ?[]const u8, live_sessions: usize) 
 }
 
 // =============================================================================
+// The overdue handoff (T3253)
+// =============================================================================
+
+/// How long a stand-down may last before this app stops believing it. The
+/// agent's own supervisor polls every few seconds and a handoff completes in
+/// about one (agent-handoff-rename.ps1), so ten minutes is generous for a slow
+/// box and short against the days an un-kept promise used to last.
+pub const handoff_overdue_ms: i64 = 10 * std.time.ms_per_min;
+
+/// Watches the `stale_handoff` stand-down for a promise that is not being kept
+/// (T3253). The capability check is the first line of defence - an agent too
+/// old to see an in-app update no longer advertises the whole promise - and
+/// this is the general bound behind it: whatever the reason, a stand-down that
+/// sees the SAME running build again `overdue_ms` after it began is answered
+/// `stale_handoff_overdue`, which puts the waiting-update row up.
+///
+/// Pure (the clock is passed in) so both lanes test it without an agent.
+pub const HandoffWatch = struct {
+    stamp_buf: [64]u8 = undefined,
+    stamp_len: usize = 0,
+    since_ms: i64 = 0,
+    armed: bool = false,
+
+    /// Feed one evaluated decision. Returns it unchanged unless it is a
+    /// stand-down for a build this watch has already stood down for, for at
+    /// least `overdue_ms`. Any other decision (current, refreshed, draining,
+    /// a different running build) ends the watch, so a handoff that DID happen
+    /// is never reported overdue.
+    pub fn observe(
+        self: *HandoffWatch,
+        d: Decision,
+        running: ?[]const u8,
+        now_ms: i64,
+        overdue_ms: i64,
+    ) Decision {
+        if (d.reason != .stale_handoff) {
+            self.armed = false;
+            return d;
+        }
+        const r = running orelse "";
+        if (!self.armed or !std.mem.eql(u8, self.stamp_buf[0..self.stamp_len], r)) {
+            const n = @min(r.len, self.stamp_buf.len);
+            @memcpy(self.stamp_buf[0..n], r[0..n]);
+            self.stamp_len = n;
+            self.since_ms = now_ms;
+            self.armed = true;
+            return d;
+        }
+        if (now_ms - self.since_ms >= overdue_ms) {
+            return .{ .action = .none, .reason = .stale_handoff_overdue };
+        }
+        return d;
+    }
+
+    /// Milliseconds the current stand-down has lasted, or null when none is
+    /// being watched. For the log line.
+    pub fn waitedMs(self: *const HandoffWatch, now_ms: i64) ?i64 {
+        if (!self.armed) return null;
+        return now_ms - self.since_ms;
+    }
+};
+
+test "HandoffWatch: a stand-down for the same build turns overdue at the bound, not before (T3253)" {
+    var w: HandoffWatch = .{};
+    const stand: Decision = .{ .action = .handoff_now, .reason = .stale_handoff };
+    const bound: i64 = 600_000;
+    try std.testing.expectEqual(Reason.stale_handoff, w.observe(stand, "20261116-1d7b2e7", 1_000, bound).reason);
+    try std.testing.expectEqual(Reason.stale_handoff, w.observe(stand, "20261116-1d7b2e7", 1_000 + bound - 1, bound).reason);
+    const late = w.observe(stand, "20261116-1d7b2e7", 1_000 + bound, bound);
+    try std.testing.expectEqual(Reason.stale_handoff_overdue, late.reason);
+    try std.testing.expectEqual(Action.none, late.action);
+    // ...and the overdue answer puts the row up.
+    try std.testing.expectEqual(Pending.when_idle, pendingFor(late.reason).?);
+}
+
+test "HandoffWatch: a different running build restarts the clock (the handoff happened) (T3253)" {
+    var w: HandoffWatch = .{};
+    const stand: Decision = .{ .action = .handoff_now, .reason = .stale_handoff };
+    _ = w.observe(stand, "20261101-aaaaaaa", 0, 100);
+    // The successor is ALSO stale (two updates landed): a fresh stand-down,
+    // not an overdue one.
+    try std.testing.expectEqual(Reason.stale_handoff, w.observe(stand, "20261110-bbbbbbb", 500, 100).reason);
+    try std.testing.expectEqual(Reason.stale_handoff_overdue, w.observe(stand, "20261110-bbbbbbb", 600, 100).reason);
+}
+
+test "HandoffWatch: any other decision ends the watch (T3253 negative control)" {
+    var w: HandoffWatch = .{};
+    const stand: Decision = .{ .action = .handoff_now, .reason = .stale_handoff };
+    _ = w.observe(stand, "20261101-aaaaaaa", 0, 100);
+    const cur: Decision = .{ .action = .none, .reason = .current };
+    try std.testing.expectEqual(Reason.current, w.observe(cur, "20261120-ccccccc", 50, 100).reason);
+    try std.testing.expect(w.waitedMs(60) == null);
+    // A new stand-down after that starts from zero.
+    try std.testing.expectEqual(Reason.stale_handoff, w.observe(stand, "20261101-aaaaaaa", 1_000, 100).reason);
+    try std.testing.expectEqual(@as(?i64, 0), w.waitedMs(1_000));
+    // Non-stand-down reasons are passed through untouched.
+    const drain: Decision = .{ .action = .none, .reason = .stale_handoff_draining };
+    try std.testing.expectEqual(Reason.stale_handoff_draining, w.observe(drain, "x", 5_000, 100).reason);
+}
+
+// =============================================================================
 // The waiting-update affordance (T1068)
 // =============================================================================
 
@@ -258,6 +367,9 @@ pub fn pendingFor(reason: Reason) ?Pending {
     return switch (reason) {
         .stale_live_deferred => .when_idle,
         .stale_handoff_draining => .draining,
+        // The agent's own replacement did not happen, so the honest promise is
+        // the legacy one: adopted when the sessions close, or on request.
+        .stale_handoff_overdue => .when_idle,
         else => null,
     };
 }
@@ -273,6 +385,7 @@ pub fn settlesPending(reason: Reason) bool {
         .stale_handoff,
         .stale_live_deferred,
         .stale_handoff_draining,
+        .stale_handoff_overdue,
         => true,
         .bundled_unknown,
         .skew_agent_older,
@@ -316,12 +429,13 @@ pub fn installNowText(buf: []u8, pending: Pending, live_sessions: ?usize) []cons
     }) catch buf[0..0];
 }
 
-test "pendingFor: only the two leave-alone reasons leave an update waiting (T1068)" {
+test "pendingFor: only the leave-alone reasons leave an update waiting (T1068, T3253)" {
     try std.testing.expectEqual(Pending.when_idle, pendingFor(.stale_live_deferred).?);
     try std.testing.expectEqual(Pending.draining, pendingFor(.stale_handoff_draining).?);
+    try std.testing.expectEqual(Pending.when_idle, pendingFor(.stale_handoff_overdue).?);
     inline for (@typeInfo(Reason).@"enum".fields) |f| {
         const r: Reason = @enumFromInt(f.value);
-        if (r != .stale_live_deferred and r != .stale_handoff_draining) {
+        if (r != .stale_live_deferred and r != .stale_handoff_draining and r != .stale_handoff_overdue) {
             try std.testing.expectEqual(@as(?Pending, null), pendingFor(r));
         }
     }
@@ -775,7 +889,9 @@ test "evaluate and decide can never disagree" {
             // would mean the two policies had been crossed. `confirm_deferred`
             // is `applyDeferral`'s, applied on top afterwards — never produced
             // here.
-            .skew_agent_older, .skew_app_older, .skew_unknown, .confirm_deferred => unreachable,
+            // `stale_handoff_overdue` is `HandoffWatch`'s, applied on top
+            // afterwards in the same way.
+            .skew_agent_older, .skew_app_older, .skew_unknown, .confirm_deferred, .stale_handoff_overdue => unreachable,
         };
         try testing.expectEqual(expected, d.action);
         // Staleness now decides the REASON, not the action: since T1056 three of

@@ -50,6 +50,13 @@
 #      stops PROMISING a handoff it will not perform, so the app reads it as
 #      the legacy generation (arm C's leave-alone) instead of standing down
 #      for a replacement that never comes.
+#   Q: T3253 - an agent from between T907 and T3251 (advertises agent_handoff
+#      but not agent_handoff_rename, so it cannot see an in-app update) is
+#      read as the legacy generation: leave-alone plus the waiting-update row,
+#      never the "replacing itself" stand-down.
+#   R: T3253 - a handoff-capable agent that does NOT replace itself: the app
+#      stands down, then re-checks past the bound, logs "handoff overdue" and
+#      puts the waiting-update row up. Nothing is restarted either way.
 #
 # T1068 - a leave-alone is silent but no longer INVISIBLE: the waiting update
 # puts a quiet "Background Update Ready..." row on the window menu. The row is
@@ -563,6 +570,7 @@ $savedNoHandoff = $env:GHOZTTY_AGENT_NO_HANDOFF
 $savedInstance = $env:GHOZTTY_AGENT_INSTANCE
 $savedScheme = $env:GHOZTTY_URL_SCHEME
 $savedSelfheal = $env:GHOZTTY_PATH_SELFHEAL
+$savedOverdue = $env:GHOZTTY_AGENT_HANDOFF_OVERDUE_MS
 
 # BYSTANDERS (T269/T772). What a -Release run must leave exactly as it found it:
 # the agents it did not start - in the release lineage that is the USER'S own,
@@ -1762,6 +1770,108 @@ $env:GHOZTTY_AGENT_BUNDLED_VERSION = $null
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 Stop-TestProcs
 
+# ============================================================================
+Say "== Q: T3253 - an agent too old to see an in-app update is not trusted to replace itself"
+# ============================================================================
+# The user's box on 2026-11-19: an agent built before T3251 advertised
+# agent_handoff, could not see the in-app updater's renamed sideline, and the
+# app stood down ("replacing itself") at every launch with no row, no bound and
+# no end. Such an agent advertises agent_handoff WITHOUT agent_handoff_rename,
+# which is exactly what the T469 suppression seam makes this tree's agent say.
+# Arm M is the negative control: same holder-backed world with both strings,
+# and the stand-down line.
+if ($Release) {
+    Skip "Q1-Q8 T3253 old-generation arm" 'GHOZTTY_AGENT_BUNDLED_VERSION is debug-only; arm M carries the release shape'
+} else {
+    $env:GHOZTTY_AGENT_PTY_HOLDER = '1'
+    $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
+    $env:GHOZTTY_AGENT_BUNDLED_VERSION = $FAKE_NEW
+    $env:GHOSTTY_AGENT_SUPPRESS_CAPS = 'agent_handoff_rename'
+    $appPidQ = Start-App $tmp 't3253-oldgen'
+    $logQ = $script:AppLog
+    Assert "Q1 the GUI came up" ($appPidQ -ne 0)
+    $agentQ = Wait-AgentPid $tmp 25
+    Assert "Q2 an agent is running for this run" ($agentQ -ne 0)
+    $treeQ = Wait-Panes $tmp 'q0' 1
+    Assert "Q3 it has a live session" ((Leaf-Count $treeQ) -ge 1)
+    $leafQ = (All-Leaves $treeQ)[0]
+    if ($NegativeControl) {
+        Say 'NEGATIVE CONTROL: asserting the T907-era agent was trusted to replace itself - this run MUST fail'
+        Assert "Q4 the app stood down for the old agent (inverted)" `
+            (Wait-LogMatch $logQ 'agent upgrade check: stale, but the agent is replacing itself' 25)
+    } else {
+        Assert "Q4 the old agent is reported as NOT handoff-capable" `
+            (Wait-LogMatch $logQ 'agent upgrade check: stale with live sessions.*0 of them legacy, handoff-capable=false' 25)
+    }
+    Assert "Q5 ... so the app takes the legacy leave-alone" `
+        (Wait-LogMatch $logQ 'agent upgrade check: stale with live sessions, but protocol-compatible; leaving it alone' 25)
+    Assert "Q6 the waiting update is surfaced as a menu row (when_idle)" `
+        (Wait-LogMatch $logQ 'agent update affordance: shown \(when_idle\)' 10)
+    Assert "Q7 the 'replacing itself' stand-down was never logged" `
+        ((Read-AppLog $logQ) -notmatch 'replacing itself without losing any session')
+    Assert "Q8 nothing was restarted, no dialog, the pane still answers" `
+        (((Read-AppLog $logQ) -notmatch 'agent restart: begin') -and
+         ((Wait-Dialog $appPidQ 10) -eq [IntPtr]::Zero) -and
+         (Test-PaneResponsive $tmp $leafQ.id 'q' 20))
+    $env:GHOSTTY_AGENT_SUPPRESS_CAPS = $null
+    $env:GHOZTTY_AGENT_BUNDLED_VERSION = $null
+    Stop-TestProcs
+}
+
+# ============================================================================
+Say "== R: T3253 - a stand-down whose agent never replaces itself turns overdue and shows the row"
+# ============================================================================
+# The general bound behind arm Q. The agent is handoff-capable on every string
+# and every session is holder-backed, so the app stands down - but the agent
+# runs from its canonical name with no newer build beside it, so its own
+# supervisor has nothing to hand off to and never moves. Before T3253 that
+# stand-down lasted until the next launch re-stood-down. Now the app looks
+# again past the bound (8s here via GHOZTTY_AGENT_HANDOFF_OVERDUE_MS, ten
+# minutes in a real build) and, finding the same build, says so and shows the
+# waiting-update row. Arm M is the control the other way: there the agent
+# DOES replace itself inside the bound, and no overdue line is ever logged.
+if ($Release) {
+    Skip "R1-R9 T3253 overdue arm" 'GHOZTTY_AGENT_HANDOFF_OVERDUE_MS and the bundled-stamp hook are debug-only'
+} else {
+    $env:GHOZTTY_AGENT_PTY_HOLDER = '1'
+    $env:GHOZTTY_AGENT_HANDOFF_INTERVAL_MS = '2000'
+    $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
+    $env:GHOZTTY_AGENT_BUNDLED_VERSION = $FAKE_NEW
+    $env:GHOZTTY_AGENT_HANDOFF_OVERDUE_MS = '8000'
+    $appPidR = Start-App $tmp 't3253-overdue'
+    $logR = $script:AppLog
+    Assert "R1 the GUI came up" ($appPidR -ne 0)
+    $agentR = Wait-AgentPid $tmp 25
+    Assert "R2 an agent is running for this run" ($agentR -ne 0)
+    $treeR = Wait-Panes $tmp 'r0' 1
+    Assert "R3 it has a live session" ((Leaf-Count $treeR) -ge 1)
+    $leafR = (All-Leaves $treeR)[0]
+    Assert "R4 the app first STOOD DOWN for a capable, fully holder-backed agent" `
+        (Wait-LogMatch $logR 'agent upgrade check: stale, but the agent is replacing itself.*handoff-capable=true' 30)
+    if ($NegativeControl) {
+        Say 'NEGATIVE CONTROL: asserting the stand-down never turned overdue - this run MUST fail'
+        Assert "R5 no overdue line within the bound (inverted)" `
+            (-not (Wait-LogMatch $logR 'handoff overdue' 30))
+    } else {
+        Assert "R5 past the bound the app logged the handoff as OVERDUE (and which build)" `
+            (Wait-LogMatch $logR 'agent upgrade check: handoff overdue - the agent said it was replacing itself \d+s ago and is still build .*\[handoff overdue check\]' 30)
+    }
+    Assert "R6 ... and the decision line names the overdue path" `
+        (Wait-LogMatch $logR 'agent upgrade check: handoff overdue: the agent said it was replacing itself but the same build is still running' 10)
+    Assert "R7 the waiting update is surfaced as a menu row (when_idle)" `
+        (Wait-LogMatch $logR 'agent update affordance: shown \(when_idle\)' 10)
+    $agentR2 = Wait-AgentPid $tmp 3 $agentR
+    Assert "R8 the agent was left alone (same pid, no restart, no dialog)" `
+        ($agentR2 -eq $agentR -and
+         ((Read-AppLog $logR) -notmatch 'agent restart: begin') -and
+         ((Wait-Dialog $appPidR 5) -eq [IntPtr]::Zero))
+    Assert "R9 the live pane is still responsive" (Test-PaneResponsive $tmp $leafR.id 'r' 20)
+    $env:GHOZTTY_AGENT_HANDOFF_OVERDUE_MS = $null
+    $env:GHOZTTY_AGENT_HANDOFF_INTERVAL_MS = $null
+    $env:GHOZTTY_AGENT_BUNDLED_VERSION = $null
+    Stop-TestProcs
+}
+
 } catch {
     # T1511: the foreground-leak checks below are part of this run too, so this
     # try cannot END in `Complete-TestBody`. It SCORES its own throw instead -
@@ -1787,6 +1897,7 @@ Stop-TestProcs
     $env:GHOZTTY_AGENT_INSTANCE = $savedInstance
     $env:GHOZTTY_URL_SCHEME = $savedScheme
     $env:GHOZTTY_PATH_SELFHEAL = $savedSelfheal
+    $env:GHOZTTY_AGENT_HANDOFF_OVERDUE_MS = $savedOverdue
     # The per-run root holds every arm's APP LOG, and a failing Wait-LogMatch
     # assert is answerable only from it - so a failure that needs the log costs a
     # whole second run today, with the evidence deleted again at the end of it.

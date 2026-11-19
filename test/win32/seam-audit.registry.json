@@ -136,6 +136,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the shipped handoff interval."
         },
+        "GHOZTTY_AGENT_HANDOFF_OVERDUE_MS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "unset = agent_upgrade.handoff_overdue_ms (10 min), the bound every real stand-down is held to (T3253)."
+        },
         "GHOZTTY_AGENT_HOLDER_REPLAY_BYTES": {
             "class": "tuning",
             "unset": "shipped-elsewhere",

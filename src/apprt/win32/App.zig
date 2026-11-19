@@ -364,6 +364,9 @@ const UPDATE_AUTO_APPLY_TIMER_ID: usize = msg_timer.update_auto_apply;
 /// The deferred quit a `handoff-quit` request arms (T1070).
 const HANDOFF_QUIT_TIMER_ID: usize = msg_timer.handoff_quit;
 
+/// The overdue-handoff re-check (T3253). One-shot; see `armHandoffOverdueCheck`.
+const HANDOFF_OVERDUE_TIMER_ID: usize = msg_timer.handoff_overdue;
+
 /// The deferred startup window's grace period (T2162). See `run`.
 const STARTUP_FALLBACK_TIMER_ID: usize = msg_timer.startup_fallback;
 /// Long enough for the listener thread to write the reply, short enough that
@@ -877,6 +880,12 @@ agent_upgrade_attempts: u8 = 0,
 /// Ready…" row on the window menu and its palette row; null hides both. Only a
 /// check that can answer the question changes it (`agent_upgrade.settlesPending`).
 agent_update_pending: ?agent_upgrade.Pending = null,
+
+/// The stand-down this app is watching for a kept promise (T3253): when an
+/// agent said it was replacing itself, and which build it was then. A later
+/// check that finds the same build still running past the bound reads
+/// `stale_handoff_overdue` instead of standing down again.
+agent_handoff_watch: agent_upgrade.HandoffWatch = .{},
 
 pub const IpcTarget = IpcRegistry.Target;
 
@@ -6634,10 +6643,26 @@ pub fn refreshLocalAgentIfStale(self: *App, reason: []const u8) void {
     // T1056 it cannot: staleness raises no modal at all, so there is nothing to
     // defer and the marker is not even read on this path. `applyDeferral` still
     // guards the SKEW confirmation, which is the one that remains.
-    const decision = agent_upgrade.evaluate(running, bundled, live, .{
+    const evaluated = agent_upgrade.evaluate(running, bundled, live, .{
         .capable = mix.handoff_capable,
         .legacy_live = mix.legacy,
     });
+    // T3253: a stand-down is a promise, and this is where an un-kept one stops
+    // being believed. Same running build, past the bound => the update is
+    // treated as waiting rather than under way.
+    const overdue_ms = self.handoffOverdueMs();
+    const now_ms = std.time.milliTimestamp();
+    const decision = self.agent_handoff_watch.observe(evaluated, running, now_ms, overdue_ms);
+    if (decision.reason == .stale_handoff_overdue) {
+        log.warn(
+            "agent upgrade check: handoff overdue - the agent said it was replacing itself {d}s ago and is still build {s}; showing the waiting update instead of standing down [{s}]",
+            .{
+                @divTrunc(self.agent_handoff_watch.waitedMs(now_ms) orelse 0, std.time.ms_per_s),
+                agent_upgrade.stampForLog(running),
+                reason,
+            },
+        );
+    }
     log.info(
         "agent upgrade check: {s} (running {s}, bundled {s}, {d} live session(s), {d} of them legacy, handoff-capable={}) [{s}]",
         .{
@@ -6661,7 +6686,13 @@ pub fn refreshLocalAgentIfStale(self: *App, reason: []const u8) void {
         // takes over on the agent's own schedule, and the link drop when it does
         // is what the existing in-place recovery is for. Touching the agent here
         // is precisely the destructive act this arm exists to avoid.
-        .handoff_now => return,
+        .handoff_now => {
+            // ...but not on faith (T3253): come back after the bound and look
+            // again. A kept promise reads as a different (or current) build by
+            // then and ends the watch; an un-kept one reads overdue.
+            self.armHandoffOverdueCheck(overdue_ms);
+            return;
+        },
         .refresh_now => {
             self.agent_upgrade_attempts += 1;
             // Supervised for the same reason the confirmed path is (T421): this
@@ -6698,6 +6729,23 @@ pub fn refreshLocalAgentIfStale(self: *App, reason: []const u8) void {
             return;
         },
     }
+}
+
+/// The overdue-handoff bound (T3253): `agent_upgrade.handoff_overdue_ms`, or
+/// `GHOZTTY_AGENT_HANDOFF_OVERDUE_MS` in a debug build so an acceptance run can
+/// reach the overdue arm in seconds.
+fn handoffOverdueMs(self: *App) i64 {
+    return orphanEnvMs(self.core_app.alloc, "GHOZTTY_AGENT_HANDOFF_OVERDUE_MS", agent_upgrade.handoff_overdue_ms);
+}
+
+/// Re-run the upgrade check once the stand-down's bound has passed (T3253).
+/// Without this the stand-down was only ever re-examined at the next launch or
+/// the last window closing, and an app that stays open for days never looked
+/// again. The slack makes the re-check land past the bound, not just short of it.
+fn armHandoffOverdueCheck(self: *App, overdue_ms: i64) void {
+    const mh = self.msg_hwnd orelse return;
+    const due = std.math.clamp(overdue_ms + 1_000, 1_000, std.math.maxInt(u32));
+    _ = w32.SetTimer(mh, HANDOFF_OVERDUE_TIMER_ID, @intCast(due), null);
 }
 
 /// Show or retire the waiting-update row (T1068). Logged on a CHANGE only, so
@@ -14889,6 +14937,14 @@ fn msgWndProc(
     // recovery aborted with no reachable agent; one-shot per attempt.
     if (msg == w32.WM_TIMER and wparam == AGENT_RETRY_TIMER_ID) {
         app.tickAgentRecoveryRetry();
+        return 0;
+    }
+
+    // The overdue-handoff re-check (T3253). One-shot: the check re-arms it only
+    // if it stands down again.
+    if (msg == w32.WM_TIMER and wparam == HANDOFF_OVERDUE_TIMER_ID) {
+        _ = w32.KillTimer(hwnd, HANDOFF_OVERDUE_TIMER_ID);
+        app.refreshLocalAgentIfStale("handoff overdue check");
         return 0;
     }
 

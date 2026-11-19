@@ -1291,6 +1291,11 @@ pub const Connection = struct {
         // advertises the other half, the negotiated flag stays false, and the
         // caller keeps its pre-T907 policy.
         protocol.capability.agent_handoff,
+        // ...and we know that promise holds on a box updated IN-APP only when
+        // the agent also says it can see the updater's renamed sideline
+        // (T3253). An agent from before T3251 advertises `agent_handoff`
+        // without this, and `peerHandsOffItself` then answers false.
+        protocol.capability.agent_handoff_rename,
         // We judge the "Share this machine" toggle by whether the agent
         // RECONCILES `sharing.json` (T546). Advertising it is what lets a modern
         // agent say it does; an older one never advertises it, the negotiated
@@ -3037,8 +3042,13 @@ pub const Connection = struct {
     /// the safe direction in both cases: the caller keeps its pre-T907 policy
     /// (refresh at idle, confirm while live) rather than waiting forever for a
     /// handoff that is never coming.
+    ///
+    /// Since T3253 it takes BOTH `agent_handoff` and `agent_handoff_rename`.
+    /// Every agent built between T907 and T3251 advertised the first and could
+    /// not see an in-app update, so trusting it alone stood the app down at
+    /// every launch over an agent that was never going to move.
     pub fn peerHandsOffItself(self: *Connection) bool {
-        if (self.negotiated) |n| return n.agent_handoff else |_| return false;
+        if (self.negotiated) |n| return n.agent_handoff and n.agent_handoff_rename else |_| return false;
     }
 
     /// True iff the peer negotiated `capability.sharing_reconcile` — i.e. the

@@ -863,6 +863,25 @@ pub const capability = struct {
     /// already shows it; it never has to, because only an agent that advertises
     /// this ever sends `lost`.
     pub const holder_lost = "holder_lost";
+
+    /// **The handoff sees an in-app update** (T3253): this agent build's
+    /// handoff supervisor recognises the in-app updater's sideline - the running
+    /// `ghoztty-agent.exe` renamed to `ghoztty-agent.exe.old-<stamp>` with the
+    /// new build written under the original name - and reads its own current
+    /// name from the mapped image rather than the frozen PEB path (T3251).
+    ///
+    /// `agent_handoff` alone was a promise older agents could not keep: every
+    /// agent from T907 to T3251 advertised it, yet on a box updated in-app it
+    /// never found its successor, so an app that believed the promise stood
+    /// down ("replacing itself") at every launch and the stale agent ran until
+    /// a reboot. The app trusts the stand-down only when BOTH strings
+    /// negotiate; an agent that has `agent_handoff` without this one is treated
+    /// as the legacy generation, whose waiting update gets the menu row.
+    ///
+    /// Purely additive, advertised by both sides, gates a POLICY and never a
+    /// frame, so both skew directions are safe by construction: an older app
+    /// never asks, and an older agent reads as not self-replacing.
+    pub const agent_handoff_rename = "agent_handoff_rename";
 };
 
 /// The kind of pseudo-terminal a peer spawns its children on. Wire-visible
@@ -1077,6 +1096,12 @@ pub const Negotiated = struct {
     /// viewer will respawn it in place. False against either older peer, which
     /// keeps the plain EXIT and the pane closing on it.
     holder_lost: bool = false,
+
+    /// True iff BOTH peers advertised `capability.agent_handoff_rename`
+    /// (T3253) - the agent's handoff can see an in-app update's renamed
+    /// sideline, so its `agent_handoff` promise holds on a box updated that
+    /// way. False against either older peer.
+    agent_handoff_rename: bool = false,
 };
 
 /// True iff `caps` contains the capability string `name`.
@@ -1129,6 +1154,8 @@ pub fn negotiate(local: Hello, remote: Hello) ProtocolError!Negotiated {
             hasCapability(remote.capabilities, capability.sharing_reconcile),
         .holder_lost = hasCapability(local.capabilities, capability.holder_lost) and
             hasCapability(remote.capabilities, capability.holder_lost),
+        .agent_handoff_rename = hasCapability(local.capabilities, capability.agent_handoff_rename) and
+            hasCapability(remote.capabilities, capability.agent_handoff_rename),
     };
 }
 
@@ -2774,6 +2801,33 @@ test "negotiate: sharing_reconcile is the intersection, and an old agent reads f
         .{ .transfer_encoding = .raw },
         .{ .transfer_encoding = .raw },
     )).sharing_reconcile);
+}
+
+test "negotiate: agent_handoff_rename is the intersection; a T907-era agent reads false (T3253)" {
+    const modern = [_][]const u8{ capability.agent_handoff, capability.agent_handoff_rename };
+    // What every agent from T907 to T3251 advertised: the promise, without the
+    // ability to see an in-app update's renamed sideline.
+    const t907 = [_][]const u8{capability.agent_handoff};
+
+    const both = try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &modern },
+        .{ .transfer_encoding = .raw, .capabilities = &modern },
+    );
+    try testing.expect(both.agent_handoff and both.agent_handoff_rename);
+
+    // The user's shape: a modern app against an agent that predates T3251.
+    const old_agent = try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &modern },
+        .{ .transfer_encoding = .raw, .capabilities = &t907 },
+    );
+    try testing.expect(old_agent.agent_handoff);
+    try testing.expect(!old_agent.agent_handoff_rename);
+
+    // And the other skew: an older app never asks.
+    try testing.expect(!(try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &t907 },
+        .{ .transfer_encoding = .raw, .capabilities = &modern },
+    )).agent_handoff_rename);
 }
 
 test "negotiate: agent_handoff is the intersection, and skew keeps the old policy" {

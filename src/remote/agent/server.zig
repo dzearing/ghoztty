@@ -486,7 +486,8 @@ pub const Server = struct {
     /// capability withdrawn by the kill switch. Whitespace around an entry is
     /// ignored so `"a, b"` behaves like `"a,b"`.
     fn isSuppressed(name: []const u8) bool {
-        if (handoff_withdrawn and std.mem.eql(u8, name, protocol.capability.agent_handoff)) return true;
+        if (handoff_withdrawn and (std.mem.eql(u8, name, protocol.capability.agent_handoff) or
+            std.mem.eql(u8, name, protocol.capability.agent_handoff_rename))) return true;
         if (suppress_len == 0) return false;
         var it = std.mem.splitScalar(u8, suppress_buf[0..suppress_len], ',');
         while (it.next()) |raw| {
@@ -542,8 +543,12 @@ pub const Server = struct {
     /// the cost of the lie is an agent nothing ever upgrades. Comptime, so the
     /// string is simply absent from the list rather than conditionally filtered
     /// at handshake time.
+    ///
+    /// `agent_handoff_rename` rides with it (T3253): this build's supervisor
+    /// sees the in-app updater's `.old-<stamp>` sideline (T3251), which is what
+    /// makes the promise true on a box that updates in-app.
     const handoff_caps: []const []const u8 = if (builtin.os.tag == .windows)
-        &.{protocol.capability.agent_handoff}
+        &.{ protocol.capability.agent_handoff, protocol.capability.agent_handoff_rename }
     else
         &.{};
 
@@ -4406,13 +4411,16 @@ test "withdrawHandoff: a disabled supervisor is not advertised, whatever the ske
     var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
     defer h.deinit();
     try h.server.start();
-    const caps = [_][]const u8{ protocol.capability.agent_handoff, protocol.capability.close_session };
+    const caps = [_][]const u8{ protocol.capability.agent_handoff, protocol.capability.agent_handoff_rename, protocol.capability.close_session };
     try h.client.handshakeCaps(&caps);
     const neg = try h.server.waitHandshake();
     try testing.expect(!neg.agent_handoff);
+    // T3253: the rename half of the promise is withdrawn with it.
+    try testing.expect(!neg.agent_handoff_rename);
     try testing.expect(neg.close_session);
     for (h.server.local_hello.capabilities) |c| {
         try testing.expect(!std.mem.eql(u8, c, protocol.capability.agent_handoff));
+        try testing.expect(!std.mem.eql(u8, c, protocol.capability.agent_handoff_rename));
     }
 }
 
@@ -4425,11 +4433,13 @@ test "withdrawHandoff: off, the seat's handoff promise is advertised as before (
     var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
     defer h.deinit();
     try h.server.start();
-    const caps = [_][]const u8{protocol.capability.agent_handoff};
+    const caps = [_][]const u8{ protocol.capability.agent_handoff, protocol.capability.agent_handoff_rename };
     try h.client.handshakeCaps(&caps);
     const neg = try h.server.waitHandshake();
-    // Only the Windows seat has the mechanism, so only it makes the promise.
+    // Only the Windows seat has the mechanism, so only it makes the promise -
+    // and since T3251 that promise includes seeing an in-app update (T3253).
     try testing.expectEqual(builtin.os.tag == .windows, neg.agent_handoff);
+    try testing.expectEqual(builtin.os.tag == .windows, neg.agent_handoff_rename);
 }
 
 test "OPEN refused: the agent answers OPEN_FAILED with a reason, not silence (T469)" {

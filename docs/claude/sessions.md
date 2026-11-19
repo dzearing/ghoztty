@@ -889,6 +889,17 @@ closed. Five things here are contract:
   about would leave the agent stale forever. The app-side policy arm is
   `agent_upgrade.Action.handoff_now`; the leave-alone arms are
   `Reason.stale_live_deferred` and `Reason.stale_handoff_draining`, both `.none`.
+- **The app trusts the stand-down only with `capability.agent_handoff_rename`
+  too** (T3253). Agents built between T907 and T3251 advertised `agent_handoff`
+  but could not see the in-app updater's `.old-<stamp>` sideline, so on a box
+  updated in-app the app stood down at every launch and the agent never moved.
+  `Connection.peerHandsOffItself` now needs both strings; an agent with only the
+  first is the legacy generation (leave-alone + the waiting-update row). Behind
+  that, a stand-down is re-checked after `agent_upgrade.handoff_overdue_ms` (10
+  min; `GHOZTTY_AGENT_HANDOFF_OVERDUE_MS` in debug builds), and the same build
+  still running reads `Reason.stale_handoff_overdue`, which logs `handoff
+  overdue` and puts the row up. Acceptance: arms Q and R of
+  `test\win32\agent-upgrade.ps1`.
 - **The test seam is `GHOZTTY_AGENT_HANDOFF_FORCE=1`, debug builds only.** One
   tree cannot produce two build stamps, so without it no acceptance script could
   reach the handoff arm at all. It skips ONLY the staleness comparison — never
