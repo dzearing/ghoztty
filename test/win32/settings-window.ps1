@@ -308,6 +308,23 @@ try {
     $s = Invoke-Settings @('--op=state', '--page=panes')
     $ids = @($s.data.pages | ForEach-Object { [string]$_.id }) -join ','
     Assert ($ids -eq 'appearance,panes,terminal,keyboard,session,remote,updates,advanced') "J: the sidebar is Mac's page order ($ids)"
+    # T3190: a section's footer line is drawn under its rows (Mac's Form
+    # `footer:`), on the page, under All settings, and not on a row hit.
+    $foot = @($s.data.footers)
+    Assert ($foot -contains 'Takes effect the next time Ghoztty starts.') "T3190: Panes & Windows > Windows draws Mac's footer (footers=$($foot -join ' | '))"
+    $fz = Invoke-Settings @('--op=state', '--page=advanced', '--filter=all')
+    $foot = @($fz.data.footers)
+    Assert ($foot.Count -eq 1 -and $foot[0] -eq 'Every option, straight from the config schema.') "T3190: Advanced > All settings draws Mac's footer once (footers=$($foot -join ' | '))"
+    $fz = Invoke-Settings @('--op=state', '--query=Open windows')
+    Assert ($null -ne (Find-Row $fz 'macos-window-mode') -and @($fz.data.footers).Count -eq 0) "T3190: a search hit on a row drops its section's footer, as Mac does (footers=$(@($fz.data.footers) -join ' | '))"
+    if ($ShotDir) {
+        # -ShotDir: the Windows section scrolled into view, footer under it.
+        [void](Invoke-Settings @('--op=state', '--query=', '--page=panes'))
+        [void](Invoke-Settings @('--op=reveal', '--key=macos-window-mode'))
+        New-Item -ItemType Directory -Force -Path $ShotDir | Out-Null
+        [void](Invoke-Settings @('--op=shot', "--path=$(Join-Path $ShotDir 'footer-windows.png')"))
+    }
+    $s = Invoke-Settings @('--op=state', '--query=', '--page=panes')
     $ps = Find-Row $s 'macos-pane-style'
     Assert ($ps -and [string]$ps.label -eq 'Pane style' -and [string]$ps.control -eq 'cards' -and [string]$ps.shown -eq 'Elevated') "J: Panes & Windows shows Pane style as preview cards reading Elevated (label='$($ps.label)' control='$($ps.control)' shown='$($ps.shown)')"
     $shotP = Join-Path $work 'panes.png'

@@ -1,8 +1,8 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-19T10:19:03-08:00",
-    "commit":  "b54aa4373",
+    "generated":  "2026-11-19T11:02:37-08:00",
+    "commit":  "683e0ae8c",
     "uncommitted":  [
 
                     ],

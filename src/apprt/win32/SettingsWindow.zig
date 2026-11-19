@@ -118,11 +118,13 @@ const Item = struct {
     summary: []const u8 = "",
     /// The curated row this line draws (null: a raw All Settings row).
     row: ?*const settings_pages.Row = null,
-    /// A header's text (view-arena owned).
+    /// A header's or a footer's text (view-arena or page-table owned).
     title: []const u8 = "",
     custom: settings_pages.Custom = .all_settings,
 
-    const Kind = enum { header, row, custom, more, empty };
+    /// `footer`: a section's caption line under its rows (Mac's Form
+    /// section `footer:`, `.caption` + `.secondary`; T3190).
+    const Kind = enum { header, row, custom, more, empty, footer };
 };
 
 /// A clickable region recorded by the last paint.
@@ -815,6 +817,9 @@ fn refresh(self: *SettingsWindow) void {
             self.matched = listed.len;
             for (listed) |k| self.planRaw(arena, &plan, &keys, k) catch break;
             if (listed.len == 0) plan.append(arena, .{ .y = 0, .h = 0, .kind = .empty }) catch {};
+            // Mac draws the All settings footer under the whole section.
+            if (sectionFooter(settings_pages.page(.advanced), .all_settings)) |t|
+                plan.append(arena, .{ .y = 0, .h = 0, .kind = .footer, .title = t }) catch {};
         } else {
             self.planPage(arena, r, settings_pages.page(self.page), &plan, &keys) catch {};
         }
@@ -859,7 +864,14 @@ fn planPage(self: *SettingsWindow, arena: Allocator, r: Reader, pg: *const setti
         if (sec.title) |t| try plan.append(arena, .{ .y = 0, .h = 0, .kind = .header, .title = t });
         if (sec.custom) |c| try plan.append(arena, .{ .y = 0, .h = 0, .kind = .custom, .custom = c });
         for (sec.rows) |*row| try self.planRow(arena, plan, keys, row);
+        if (sec.footer) |t| try plan.append(arena, .{ .y = 0, .h = 0, .kind = .footer, .title = t });
     }
+}
+
+/// The footer of `pg`'s section holding custom section `c`, if it has one.
+fn sectionFooter(pg: *const settings_pages.Page, c: settings_pages.Custom) ?[]const u8 {
+    for (pg.sections) |sec| if (sec.custom == c) return sec.footer;
+    return null;
 }
 
 /// Mac `searchResults`: curated rows first, each under "<Page> > <Section>",
@@ -885,6 +897,9 @@ fn planSearch(self: *SettingsWindow, arena: Allocator, r: Reader, plan: *std.Arr
                 {
                     try plan.append(arena, .{ .y = 0, .h = 0, .kind = .header, .title = heading });
                     try plan.append(arena, .{ .y = 0, .h = 0, .kind = .custom, .custom = c });
+                    // Mac keeps a custom hit's section whole, footer included;
+                    // a row hit's section is rebuilt with `footer: nil`.
+                    if (sec.footer) |t| try plan.append(arena, .{ .y = 0, .h = 0, .kind = .footer, .title = t });
                 }
                 continue;
             }
@@ -934,6 +949,7 @@ fn layoutItems(self: *SettingsWindow) void {
             .empty => header_h * 2,
             .row => if (hdc) |dc| self.paintRow(dc, self.pal(), item, 0, false) else header_h,
             .custom => if (hdc) |dc| self.paintCustom(dc, self.pal(), item, 0, false) else header_h,
+            .footer => self.footerHeight(),
         };
         list.append(arena, item) catch break;
         y += item.h;
@@ -1876,6 +1892,12 @@ fn tintColor(rgb: u32) u32 {
 /// The All Settings filter, in its segmented control's order.
 const filter_values = [_]Filter{ .all, .changed, .uncovered };
 
+/// A footer line: a tight gap under the section's last row, the caption,
+/// then the regular gap before the next section's header.
+fn footerHeight(self: *SettingsWindow) i32 {
+    return layout.px(dip.tight, self.scale) + self.text.lineHeight(.caption) + layout.px(dip.gap, self.scale);
+}
+
 fn paintList(self: *SettingsWindow, hdc: w32.HDC, f: layout.Frame, p: panel_theme.Panel) void {
     const view = f.list;
     const saved = w32.SaveDC(hdc);
@@ -1897,6 +1919,10 @@ fn paintList(self: *SettingsWindow, hdc: w32.HDC, f: layout.Frame, p: panel_them
                 const label = std.fmt.bufPrint(&buf, "{d} more \u{2014} keep typing to narrow.", .{self.matched - self.listed.len}) catch "";
                 const ch = self.text.lineHeight(.caption);
                 _ = self.text.drawText(hdc, view.x + m, y + @divTrunc(it.h - ch, 2), label, .{}, .caption, cr(p.secondary), true);
+            },
+            .footer => {
+                const ch = self.text.lineHeight(.caption);
+                self.text.drawEllipsized(hdc, .{ .x = view.x + m, .y = y + layout.px(dip.tight, self.scale), .w = view.w - 2 * m, .h = ch }, it.title, .{}, .caption, cr(p.secondary), false);
             },
             .empty => {
                 var buf: [LineEdit.capacity + 64]u8 = undefined;

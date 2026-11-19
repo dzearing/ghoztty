@@ -257,17 +257,16 @@ pub const panes: Page = .{
                 .{ .value = "hidden", .label = "Hidden" },
             } } },
         } },
-        // Mac 3f772a2f0. Mac says "Takes effect the next time Ghoztty
-        // starts." as the section's footer; the win32 form draws no section
-        // footers, so it is the row's hint (which also stands in for the
-        // schema summary's "macOS only"). The hint adds the Windows launch
+        // Mac 3f772a2f0: "Takes effect the next time Ghoztty starts." is the
+        // section's footer (drawn since T3190). The row's hint stands in for
+        // the schema summary's "macOS only" and adds the Windows launch
         // boundary (T3212): the app stays resident with no window, so closing
         // every window is the quit and the next window re-reads the mode.
         .{ .title = "Windows", .footer = "Takes effect the next time Ghoztty starts.", .rows = &.{
             .{ .key = "macos-window-mode", .label = "Open windows", .control = .{ .segmented = &.{
                 .{ .value = "separate", .label = "Each in its own window" },
                 .{ .value = "single", .label = "All in one window" },
-            } }, .hint = "Takes effect the next time Ghoztty starts, or once you have closed every window." },
+            } }, .hint = "On Windows it also applies once you have closed every window." },
         } },
         .{ .title = "Stacked panes", .rows = &.{
             .{ .key = "macos-pane-min-width", .label = "Stack panes narrower than", .control = .{ .stepper = .{ .min = 120, .max = 800, .step = 5, .unit = "px" } } },
@@ -590,7 +589,15 @@ test "settings_pages: lookups, labels and conditions" {
     try testing.expectEqualStrings("Open windows", wm.label);
     try testing.expectEqualStrings("Each in its own window", wm.labelFor("separate"));
     try testing.expectEqualStrings("All in one window", wm.labelFor("single"));
-    try testing.expect(rowMatchesText(wm, "next time"));
+    // The next-launch note is the Windows section's footer (T3190); the row's
+    // own hint keeps only the Windows-only boundary.
+    try testing.expect(rowMatchesText(wm, "closed every window"));
+    try testing.expect(!rowMatchesText(wm, "next time"));
+    var footer: ?[]const u8 = null;
+    for (panes.sections) |sec| for (sec.rows) |row| {
+        if (std.mem.eql(u8, row.key, "macos-window-mode")) footer = sec.footer;
+    };
+    try testing.expectEqualStrings("Takes effect the next time Ghoztty starts.", footer.?);
     try testing.expect(rowMatchesText(wm, "one window"));
     try testing.expectEqual(@as(usize, 8), all.len);
     try testing.expectEqual(PageId.appearance, all[0].id);

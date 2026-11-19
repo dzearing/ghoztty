@@ -230,7 +230,7 @@ try {
     if ($row) {
         Assert ([string]$row.label -eq 'Open windows') "A: the row reads Mac's 'Open windows' (got '$($row.label)')"
         Assert ([string]$row.shown -eq 'All in one window') "A: single reads 'All in one window' (got '$($row.shown)')"
-        Assert ([string]$row.hint -match 'next time Ghoztty starts') "A: the row says it takes effect at the next launch (hint='$($row.hint)')"
+        Assert (@($s.data.footers) -contains 'Takes effect the next time Ghoztty starts.') "A: the Windows section's footer says it takes effect at the next launch (footers=$(@($s.data.footers) -join ' | '))"
         Assert ([string]$row.control -eq 'segmented') "A: Mac's segmented choice (got '$($row.control)')"
     }
 

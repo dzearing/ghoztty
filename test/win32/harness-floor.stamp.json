@@ -1,10 +1,12 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-19T10:51:06-08:00",
-    "commit":  "b54aa4373",
+    "generated":  "2026-11-19T11:10:11-08:00",
+    "commit":  "683e0ae8c",
     "uncommitted":  [
-                        "test/win32/relaunch-attach.ps1"
+                        "test/win32/relaunch-attach.ps1",
+                        "test/win32/settings-window.ps1",
+                        "test/win32/single-window-mode.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -457,7 +459,7 @@
                   "test/win32/rearrange-viewer.ps1":  "ee522f1930125af3207f34809aaf274f7d85e981e312a7cf575e1580d4c6a9ff",
                   "test/win32/rearrange-window-drop.ps1":  "722e98f630f17003e80b241a69b007f7a7c2eea559fccfce8c9c695ed6b5435e",
                   "test/win32/registration-sites.ps1":  "fc3d44c177c819f57a22fa300bd57eb68d88c88288e7d7c893a7bdba622ac660",
-                  "test/win32/relaunch-attach.ps1":  "b5712ab18886a13822ae055ea1c6f722b105cc9cded8a0833c708345f1bdf573",
+                  "test/win32/relaunch-attach.ps1":  "d8ae2836d5ff9e0c378a77f257606211337b1bf90724f31a09a4bcf240053619",
                   "test/win32/relaunch-guard.ps1":  "57d4631599209336af68e48649fb30ad1da5246958c47a42a1604648586b9af9",
                   "test/win32/relay-account.ps1":  "c216b60c10aa37150bcfa292630ed4468f996ea5ed5145057c7628b08d96b6e5",
                   "test/win32/relay-signin-live.ps1":  "f35a640bd8f1bd3dfb8eec671e051d3c5d061026fd7609c62326d3cff96a02fe",
@@ -511,7 +513,7 @@
                   "test/win32/set-state-attention.ps1":  "01020c4f6ba69601bccf89de8576541028072066b5c0445a44772166ecf9c732",
                   "test/win32/settings-advanced.ps1":  "163e889110586bcab9f17f189fc06e6e0c16bb733e35a734c65f157a4e81ab1f",
                   "test/win32/settings-remote-machines.ps1":  "fe540e0e99a8b820d0a86c78ec4b6cde323906f687160b7c514a2e2f398dc5fb",
-                  "test/win32/settings-window.ps1":  "8f9b132cd08580cf6b9ccb59cea54dbfbb21688d13c5f976ac8b72b19950fbe9",
+                  "test/win32/settings-window.ps1":  "db37b2e8c067edebd80318441ac6486e7a66e302b5c45c8f6e71d3e8c7f4947e",
                   "test/win32/share-machine.ps1":  "3e106cee1e6a234570ae04d0480063304756afdeff62e2b5304fe2c24cb29045",
                   "test/win32/ship-workflow.ps1":  "7bf70cc43ea794bd74bf0805a941d717b21105f67302ea654794cebdd6195ac6",
                   "test/win32/shortcut-guide.ps1":  "7418a4994b37655bf3a1cef7dd47eb000ab50db63a33a090f332214d64bac502",
@@ -521,7 +523,7 @@
                   "test/win32/side-pane-featured.ps1":  "5184c74dd94e1001b5f3e6b3636ca64f72f374ee1c932ceb981352ba3e9ffcfa",
                   "test/win32/side-pane-from-strip.ps1":  "905582220dc8d3f0acce9496331db4c4cf5dcaf3f12c74be698987538b3957b3",
                   "test/win32/single-instance-join.ps1":  "5b182fa1d110e5a2eb1cba34f90e80e4ff8dd811838b6d5c4c69de85c2f648f0",
-                  "test/win32/single-window-mode.ps1":  "9568b037d7e6b0fc3e73cc74e9209f47c875b74b68c68fffadea3e04e3451428",
+                  "test/win32/single-window-mode.ps1":  "eedae91f34805244ddb6fa515acac607ab1f0eade5a0a735b80074651547f6d3",
                   "test/win32/size-burst-canvas.ps1":  "c64c1f92290f8d5478d7e2d6a11e928d804f58088c05ed4bcfdf0f28c6e05ba0",
                   "test/win32/skip-visibility.ps1":  "370852bd35fe86b242983fd53ff181891c4666c64ba15a397effc415190aa11c",
                   "test/win32/soak.ps1":  "70115de02426d4dc47fe1b0c021ed89c7a8bf4a58487ded16f353f878a7c9787",

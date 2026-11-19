@@ -232,6 +232,7 @@ function Test-PaneLiveRetry([string]$target, [string]$tag, [int]$attempts = 4, [
 
 # Launch with a state dir of its own; wait for IPC + the first pane. Returns the
 # app pid (0 on failure).
+# persistence: on (default) - a relaunch re-attaching every pane is the subject.
 function Start-App([string]$state, [string]$title, [string]$stderr, [int]$timeoutSec = 60) {
     $env:LOCALAPPDATA = $state
     $launchArgs = @('--window-width=100', '--window-height=30')

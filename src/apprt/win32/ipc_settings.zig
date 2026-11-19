@@ -719,6 +719,11 @@ fn writeState(jws: *std.json.Stringify, alloc: Allocator, w_opt: ?*SettingsWindo
         try jws.beginArray();
         for (w.items) |it| if (it.kind == .custom) try jws.write(@tagName(it.custom));
         try jws.endArray();
+        // The section footer lines, in order (T3190).
+        try jws.objectField("footers");
+        try jws.beginArray();
+        for (w.items) |it| if (it.kind == .footer) try jws.write(it.title);
+        try jws.endArray();
         try writeAdvanced(jws, w);
         try writeLive(jws, w);
         try jws.objectField("rows");
