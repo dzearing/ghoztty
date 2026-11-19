@@ -1,0 +1,21 @@
+{
+  "version": "1.55.7",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "The background-drawing worker threads no longer hold 64 MB of memory for the life of the app." },
+        { "text": "The clipped collapsed sidebar rail is traced past its own window and parked for an on-screen capture." },
+        { "text": "A large picture's ~460 MB memory spike is traced to WebView2's in-process response hand-off, not the decode; the fix is split to T3241." },
+        { "text": "An agent update during a relaunch no longer leaves a window behind until the next launch." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The composited title bar, tab strip and sidebar share the panes' graphics device instead of building their own." },
+        { "text": "The ~200 MB a first burst of panes leaves behind is named: it is the NVIDIA GL driver's own arena." },
+        { "text": "Perf baseline-4: busy output wakes the app about 8x less, but idle CPU and the session agent got worse." },
+        { "text": "The agent's flood CPU is named: one message per ~113-byte ConPTY line, not parsing." },
+        { "text": "Closing viewers leaks nothing per open: the residue was a terminal tab's driver arena plus one-time WebView2 warm-up." },
+        { "text": "pane-ingest-ab scores the median of three interleaved runs per arm, and the stable verdict exposes a real agent-pane slowdown." }
+      ] }
+  ]
+}
