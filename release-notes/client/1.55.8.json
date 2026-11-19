@@ -1,0 +1,16 @@
+{
+  "version": "1.55.8",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "A large picture in an image pane no longer balloons the app's memory." },
+        { "text": "A viewer's markdown or code file is read off the GUI thread." },
+        { "text": "A viewer's pictures, stylesheets and scripts are found and read off the GUI thread: a document on a slow path no longer freezes the terminals beside it." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The doubled idle CPU in baseline-4 is box drift, not a code regression." },
+        { "text": "Previous and Next Pane show their shortcut again in the palette and menus: Win+Ctrl+[ / Win+Ctrl+]." }
+      ] }
+  ]
+}

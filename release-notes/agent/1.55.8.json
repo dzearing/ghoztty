@@ -1,0 +1,16 @@
+{
+  "version": "1.55.8",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "Programs run in a persisted pane are no longer put in Windows efficiency mode, so a big burst of output is as fast as in a plain pane." },
+        { "text": "The session manager now adopts an in-app update instead of claiming it is \"replacing itself\" forever." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The session agent's idle CPU drops by about 45%: its once-a-second process-table walk is cheaper and shared." },
+        { "text": "The session agent's idle CPU drops by another two-thirds: the app no longer asks its own machine's agent to watch every process each second." },
+        { "text": "The session agent batches a flood at the ConPTY read: agent CPU over a 64 MB flood drops ~28%." }
+      ] }
+  ]
+}
