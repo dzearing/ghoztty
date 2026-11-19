@@ -62,12 +62,21 @@ param(
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
+# T1494 (T691 tranche 2): this run's own AGENT lineage, minted ahead of the
+# first reset - a run that mints one after it has started an agent has two.
+# Without it every reset below killed whatever repo agent was holding the
+# box's panes (the dev install's, the other loop lane's) just so this script
+# could have one, and no two of these suites could run at the same time.
+# lib\TestDesktop.ps1 comes with it: the scoped kill asks it which
+# ghoztty.exe pids are OURS, and refuses rather than widening if it cannot.
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+[void](Set-GhozttyTestAgentLineage -Tag 'snapreat')
+
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
 $script:passes = 0
 $root = Join-Path $env:TEMP "ghoztty-snap-reattach-$PID"
 
-. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 # T740: Remove-VtSequences / Get-VtReadableText / ConvertFrom-VtSnapshotBase64,
 # built on [char]27 rather than a `` `e `` that PowerShell 5.1 reads as a letter.
 . (Join-Path $PSScriptRoot 'lib\VtText.ps1')
@@ -83,7 +92,7 @@ function Stop-TestProcs {
     # T351: one shared, path-exact kill (lib\CleanSlate.ps1) instead of a private
     # copy - the filter this replaced also matched a detached instance running from
     # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
-    [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 700)
+    [void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -SettleMs 700)
 }
 
 # Kill ONLY the zig-out ghoztty APP - the agent keeps its PTYs, which is the
@@ -92,7 +101,7 @@ function Stop-AppOnly {
     # T351: one shared, path-exact kill (lib\CleanSlate.ps1) instead of a private
     # copy - the filter this replaced also matched a detached instance running from
     # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
-    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 900)
+    [void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -AppOnly -SettleMs 900)
 }
 
 function Run-Cli($argsLine, $out, $timeoutSec = 15) {

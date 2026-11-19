@@ -33,11 +33,20 @@ param(
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
+# T1494 (T691 tranche 2): this run's own AGENT lineage, minted ahead of the
+# first reset - a run that mints one after it has started an agent has two.
+# Without it every reset below killed whatever repo agent was holding the
+# box's panes (the dev install's, the other loop lane's) just so this script
+# could have one, and no two of these suites could run at the same time.
+# lib\TestDesktop.ps1 comes with it: the scoped kill asks it which
+# ghoztty.exe pids are OURS, and refuses rather than widening if it cannot.
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+[void](Set-GhozttyTestAgentLineage -Tag 'rearrdrop')
+
 # T1240: the GUI launches ON THE TEST DESKTOP, not on the user's. A window
 # arrives on the desktop of whoever started the process, so the fixture here
 # used to put one across whatever the user was reading. The CLI calls stay on
 # `Run-Cli`: none of the verbs they use can create a process.
-. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
@@ -52,7 +61,7 @@ function Stop-TestProcs {
     # T351: one shared, path-exact kill (lib\CleanSlate.ps1) instead of a private
     # copy - the filter this replaced also matched a detached instance running from
     # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
-    [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 700)
+    [void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -SettleMs 700)
 }
 
 # Run a zig-out ghoztty +command with a hard timeout; stdout+stderr -> $out.

@@ -70,6 +70,16 @@ param(
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
+# T1494 (T691 tranche 2): this run's own AGENT lineage, minted ahead of the
+# first reset - a run that mints one after it has started an agent has two.
+# Without it every reset below killed whatever repo agent was holding the
+# box's panes (the dev install's, the other loop lane's) just so this script
+# could have one, and no two of these suites could run at the same time.
+# lib\TestDesktop.ps1 comes with it: the scoped kill asks it which
+# ghoztty.exe pids are OURS, and refuses rather than widening if it cannot.
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+[void](Set-GhozttyTestAgentLineage -Tag 'xlineage')
+
 $ErrorActionPreference = 'Continue'
 
 # T1511: the shared scorer, and the dot-source is also what ARMS the run - a
@@ -90,7 +100,7 @@ function Stop-TestProcs {
     # T351: one shared, path-exact kill (lib\CleanSlate.ps1) instead of a private
     # copy - the filter this replaced also matched a detached instance running from
     # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
-    [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 900)
+    [void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -SettleMs 900)
 }
 
 # Run a zig-out ghoztty +command with a hard timeout; stdout+stderr -> $out.
@@ -273,7 +283,6 @@ Assert-GhozttyPrivateEndpoint -Exe $Exe
 
 # T1876: every launch and every CLI call runs on a background desktop, so no
 # window from this script ever reaches the user's.
-. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 $td = New-TestDesktop
 
 try {
@@ -309,9 +318,14 @@ Assert "A3 the agent holds a layout record per window" (@($recsA).Count -eq 2)
 # Both the app and the agent go: the agent answers GET_LAYOUTS from memory, so
 # an edit under a live one would be read by nobody.
 Stop-TestProcs
-Assert "B1 nothing from zig-out is still running" (
+# T1494: OURS - this run's agents by lineage, its apps by the pids the harness
+# launched. Another loop lane's zig-out processes are not this run's to count.
+$ownApps = Get-GhozttyHarnessLaunchedPid   # NOT @(...): its `, @()` return would nest
+Assert "B1 nothing this run started is still running" (
     @(Get-CimInstance Win32_Process -Filter "Name='ghoztty.exe' or Name='ghoztty-agent.exe'" |
-        Where-Object { $_.CommandLine -like '*zig-out*' }).Count -eq 0)
+        Where-Object { $_.CommandLine -like '*zig-out*' -and (
+            ($_.Name -eq 'ghoztty-agent.exe' -and (Test-GhozttyAgentLineageOwned -CommandLine $_.CommandLine -Instance (Get-GhozttyAgentLineage))) -or
+            ($_.Name -eq 'ghoztty.exe' -and $ownApps -contains [int]$_.ProcessId)) }).Count -eq 0)
 
 $group = 'GGGGGGGG-1111-4222-8333-444444444444'
 $macA = New-MacEntry '1D0A0B0C-0000-4000-8000-000000000001' $group 0 'mac tab one' 'xl-mac' @($idsA[0], $idsA[1])

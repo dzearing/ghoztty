@@ -70,6 +70,16 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+
+# T1494 (T691 tranche 2): this run's own AGENT lineage, minted ahead of the
+# first reset - a run that mints one after it has started an agent has two.
+# Without it every reset below killed whatever repo agent was holding the
+# box's panes (the dev install's, the other loop lane's) just so this script
+# could have one, and no two of these suites could run at the same time.
+# lib\TestDesktop.ps1 comes with it: the scoped kill asks it which
+# ghoztty.exe pids are OURS, and refuses rather than widening if it cannot.
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+[void](Set-GhozttyTestAgentLineage -Tag 'viewrest')
 . (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -82,7 +92,6 @@ $script:pass = 0
 $script:fail = 0
 $root = Join-Path $env:TEMP "ghoztty-viewer-restore-$PID"
 
-. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 # T652: the "attached is not alive" oracle for TERMINAL panes. The viewer half
 # of that claim has no shell to type into and is built below (Wait-ViewerTitleNum
 # over a local page server), honoring the same GHOZTTY_TEST_LIVENESS_BREAK
@@ -101,7 +110,7 @@ function Stop-RepoInstances {
     # T351: one shared, path-exact kill (lib\CleanSlate.ps1) instead of a private
     # copy - the filter this replaced also matched a detached instance running from
     # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
-    [void](Stop-RepoGhoztty -Exe $exe -SettleMs 700)
+    [void](Stop-RepoGhoztty -Exe $exe -ScopeToLineage -SettleMs 700)
 }
 
 # Kill ONLY the app: the detached agent keeps its PTYs, which is the whole
@@ -110,7 +119,7 @@ function Stop-AppOnly {
     # T351: one shared, path-exact kill (lib\CleanSlate.ps1) instead of a private
     # copy - the filter this replaced also matched a detached instance running from
     # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
-    [void](Stop-RepoGhoztty -Exe $exe -AppOnly -SettleMs 900)
+    [void](Stop-RepoGhoztty -Exe $exe -ScopeToLineage -AppOnly -SettleMs 900)
 }
 
 # A PIPE, not a `>` redirect: `ghoztty +verb > file` from PowerShell writes zero
@@ -733,7 +742,7 @@ try {
     # The controls. Without these, an agent that quietly came back would make
     # J1-J4 pass as an ordinary re-attach and prove nothing about T398.
     $agentProcs = @(Get-CimInstance Win32_Process -Filter "Name='ghoztty-agent.exe'" |
-        Where-Object { $_.ExecutablePath -like (Join-Path $repo 'zig-out*') })
+        Where-Object { $_.ExecutablePath -like (Join-Path $repo 'zig-out*') -and (Test-GhozttyAgentLineageOwned -CommandLine $_.CommandLine -Instance (Get-GhozttyAgentLineage)) })
     Assert ($agentProcs.Count -eq 0) `
         "J5 no local agent is running (control, got $($agentProcs.Count))"
     Assert ((@(Alive-Ids)).Count -eq 0) `

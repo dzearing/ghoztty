@@ -97,6 +97,16 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+
+# T1494 (T691 tranche 2): this run's own AGENT lineage, minted ahead of the
+# first reset - a run that mints one after it has started an agent has two.
+# Without it every reset below killed whatever repo agent was holding the
+# box's panes (the dev install's, the other loop lane's) just so this script
+# could have one, and no two of these suites could run at the same time.
+# lib\TestDesktop.ps1 comes with it: the scoped kill asks it which
+# ghoztty.exe pids are OURS, and refuses rather than widening if it cannot.
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+[void](Set-GhozttyTestAgentLineage -Tag 'relnotify')
 # T1140: the one reboot shape (app + manager + every PTY holder).
 . (Join-Path $PSScriptRoot 'lib\RebootShape.ps1')
 
@@ -106,7 +116,6 @@ $script:passes = 0
 $root = Join-Path $env:TEMP "ghoztty-relaunch-notify-$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
-. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 # T652: the "attached is not alive" oracle. Read its header before adding an
 # assertion about a restored pane.
 . (Join-Path $PSScriptRoot 'lib\PaneLiveness.ps1')
@@ -160,7 +169,7 @@ $WIN_TITLE = "T422title$MARK_A"
 function Stop-TestProcs {
     # T351: one shared, path-exact kill (lib\CleanSlate.ps1) for the app and its
     # sibling agent. The marker-ping shells below are this script's own litter.
-    [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 0)
+    [void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -SettleMs 0)
     Stop-MarkerPings
     Start-Sleep -Milliseconds 700
 }
@@ -240,7 +249,7 @@ function Get-RunManagerPids($t) {
 # owns their real sessions - out of the answer.
 function Get-RunHolderPids {
     return @(Get-CimInstance Win32_Process -Filter "Name='ghoztty-agent.exe'" |
-        Where-Object { $_.ExecutablePath -eq $AgentExe -and $_.CommandLine -like '*--pty-host*' } |
+        Where-Object { $_.ExecutablePath -eq $AgentExe -and $_.CommandLine -like '*--pty-host*' -and (Test-GhozttyAgentLineageOwned -CommandLine $_.CommandLine -Instance (Get-GhozttyAgentLineage)) } |
         ForEach-Object { [int]$_.ProcessId })
 }
 function Wait-ManagerPid($t, $timeoutSec = 45, $notPid = 0) {
@@ -568,7 +577,7 @@ function Build-AndKill($cwdA, $withBanners = $false) {
     # one. Keyed by `pane_id`, the only identity that survives a restore.
     $script:preKillOffsets = Snapshot-Offsets (Read-Manifest $script:tmp)
 
-    $reboot = Stop-RebootShape -Exe $Exe
+    $reboot = Stop-RebootShape -Exe $Exe -ScopeToLineage
     Assert "setup: no session manager or PTY holder survived the reboot shape ($($reboot.Survivors))" `
         ($reboot.Survivors -eq 0)
     # Non-vacuous: the panes above are live sessions, so with holders on (the
@@ -926,7 +935,7 @@ Assert "D5 the agent recorded the LAST KNOWN cwd, not the spawn cwd" $sawDeep
 $agentD = Wait-AgentPid $tmp 25
 Assert "D6 an agent is running for this run" ($agentD -ne 0)
 Start-Sleep -Seconds 3   # let the session-layout manifest debounce out
-[void](Stop-RebootShape -Exe $Exe)
+[void](Stop-RebootShape -Exe $Exe -ScopeToLineage)
 Start-Sleep -Seconds 2
 
 $appPidD2 = Start-App 'cwdrestore'
@@ -1082,7 +1091,7 @@ Assert "F5 the agent sampled the TYPED foreground command into sessions.json" $s
 $agentF = Wait-AgentPid $tmp 25
 Assert "F6 an agent is running for this run" ($agentF -ne 0)
 Start-Sleep -Seconds 3   # let the session-layout manifest debounce out
-[void](Stop-RebootShape -Exe $Exe)
+[void](Stop-RebootShape -Exe $Exe -ScopeToLineage)
 Start-Sleep -Seconds 2
 Stop-MarkerPings
 Start-Sleep -Milliseconds 800

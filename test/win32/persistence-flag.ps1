@@ -51,6 +51,16 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+
+# T1494 (T691 tranche 2): this run's own AGENT lineage, minted ahead of the
+# first reset - a run that mints one after it has started an agent has two.
+# Without it every reset below killed whatever repo agent was holding the
+# box's panes (the dev install's, the other loop lane's) just so this script
+# could have one, and no two of these suites could run at the same time.
+# lib\TestDesktop.ps1 comes with it: the scoped kill asks it which
+# ghoztty.exe pids are OURS, and refuses rather than widening if it cannot.
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+[void](Set-GhozttyTestAgentLineage -Tag 'persflag')
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
@@ -65,7 +75,6 @@ $root = Join-Path $env:TEMP "ghoztty-persistence-flag-$PID"
 . (Join-Path $PSScriptRoot 'lib\PersistenceSweep.ps1')
 . (Join-Path $PSScriptRoot 'lib\HarnessScope.ps1')
 $scope = Get-HarnessScope -Repo $repo -Self $PSCommandPath -Only $Only
-. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 # T652: "attached is not alive" - section C's restored pane is proved by typing
 # into it, not by finding it in a tree.
 . (Join-Path $PSScriptRoot 'lib\PaneLiveness.ps1')
@@ -85,7 +94,7 @@ function Stop-RepoInstances {
     # T351: one shared, path-exact kill (lib\CleanSlate.ps1) instead of a private
     # copy - the filter this replaced also matched a detached instance running from
     # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
-    [void](Stop-RepoGhoztty -Exe $exe -SettleMs 700)
+    [void](Stop-RepoGhoztty -Exe $exe -ScopeToLineage -SettleMs 700)
 }
 
 # Kill ONLY the app: the detached agent keeps its PTYs, which is the scenario a
@@ -94,7 +103,7 @@ function Stop-AppOnly {
     # T351: one shared, path-exact kill (lib\CleanSlate.ps1) instead of a private
     # copy - the filter this replaced also matched a detached instance running from
     # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
-    [void](Stop-RepoGhoztty -Exe $exe -AppOnly -SettleMs 900)
+    [void](Stop-RepoGhoztty -Exe $exe -ScopeToLineage -AppOnly -SettleMs 900)
 }
 
 # A PIPE, not a `>` redirect: `ghoztty +verb > file` from PowerShell writes zero

@@ -51,6 +51,16 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+
+# T1494 (T691 tranche 2): this run's own AGENT lineage, minted ahead of the
+# first reset - a run that mints one after it has started an agent has two.
+# Without it every reset below killed whatever repo agent was holding the
+# box's panes (the dev install's, the other loop lane's) just so this script
+# could have one, and no two of these suites could run at the same time.
+# lib\TestDesktop.ps1 comes with it: the scoped kill asks it which
+# ghoztty.exe pids are OURS, and refuses rather than widening if it cannot.
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+[void](Set-GhozttyTestAgentLineage -Tag 'lateagent')
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
@@ -62,7 +72,6 @@ $script:pass = 0
 $script:fail = 0
 $root = Join-Path $env:TEMP "ghoztty-late-agent-$PID"
 
-. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 # T652: the "attached is not alive" oracle. A restored window that came back as
 # a frozen picture satisfies every list-shaped assertion in this file.
 . (Join-Path $PSScriptRoot 'lib\PaneLiveness.ps1')
@@ -86,7 +95,7 @@ function Stop-RepoInstances {
     # T351: one shared, path-exact kill (lib\CleanSlate.ps1) instead of a private
     # copy - the filter this replaced also matched a detached instance running from
     # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
-    [void](Stop-RepoGhoztty -Exe $exe -SettleMs 700)
+    [void](Stop-RepoGhoztty -Exe $exe -ScopeToLineage -SettleMs 700)
 }
 
 # A PIPE, not a `>` redirect: `ghoztty +verb > file` from PowerShell writes zero
@@ -155,8 +164,11 @@ function Manifest-Names($m) {
 # back out is how phase C starts the SAME agent (same pipe, same state files)
 # without this script re-deriving a single lineage rule.
 function Get-RepoAgentArgs {
+    # T1494: this run's MANAGER - another lineage's agent, or one of our own
+    # `--pty-host` holders, would hand phase C somebody else's arguments.
     $p = @(Get-CimInstance Win32_Process -Filter "Name='ghoztty-agent.exe'" |
-        Where-Object { $_.ExecutablePath -like (Join-Path $repo 'zig-out*') })
+        Where-Object { $_.ExecutablePath -like (Join-Path $repo 'zig-out*') -and
+            $_.CommandLine -notlike '*--pty-host*' -and (Test-GhozttyAgentLineageOwned -CommandLine $_.CommandLine -Instance (Get-GhozttyAgentLineage)) })
     if ($p.Count -eq 0) { return @() }
     $cmd = [string]$p[0].CommandLine
     $tokens = @([regex]::Matches($cmd, '"([^"]*)"') | ForEach-Object { $_.Groups[1].Value })

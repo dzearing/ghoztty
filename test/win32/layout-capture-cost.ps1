@@ -82,6 +82,16 @@ param(
 # caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
+# T1494 (T691 tranche 2): this run's own AGENT lineage, minted ahead of the
+# first reset - a run that mints one after it has started an agent has two.
+# Without it every reset below killed whatever repo agent was holding the
+# box's panes (the dev install's, the other loop lane's) just so this script
+# could have one, and no two of these suites could run at the same time.
+# lib\TestDesktop.ps1 comes with it: the scoped kill asks it which
+# ghoztty.exe pids are OURS, and refuses rather than widening if it cannot.
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+[void](Set-GhozttyTestAgentLineage -Tag 'capcost')
+
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
 $script:passes = 0
@@ -149,7 +159,7 @@ function Get-LogEnd { if (Test-Path $appLog) { (Get-Item $appLog).Length } else 
 # ---------------------------------------------------------------------------
 # Isolation + launch
 # ---------------------------------------------------------------------------
-[void](Stop-RepoGhoztty -Exe $Exe -SettleMs 700)
+[void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -SettleMs 700)
 New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
 
 $savedLocalAppData = $env:LOCALAPPDATA
@@ -161,7 +171,6 @@ $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 [void](Set-GhozttyTestIsolation -Tag 't412cost')
 Assert-GhozttyPrivateEndpoint -Exe $Exe
 
-. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 $td = New-TestDesktop -Interactive:$Interactive
 
 function Run-Cli([string[]]$argv, [int]$timeoutSec = 20) {
@@ -191,7 +200,7 @@ while ((Get-Date) -lt $deadline) {
 Assert 'A1 the GUI came up' ($top -ne [IntPtr]::Zero)
 if ($top -eq [IntPtr]::Zero) {
     Remove-TestDesktop
-    [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 500)
+    [void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -SettleMs 500)
     $env:LOCALAPPDATA = $savedLocalAppData
     "LAYOUT-CAPTURE-COST: 1 FAILURE(S)"
     exit 1
@@ -436,7 +445,7 @@ try {
     @{n = 'capture_max_ms'; e = { [math]::Round($_.MaxCapUs / 1000, 2) } }, SnapKB, Fresh, Reuse | Out-String | Write-Host
 } finally {
     Remove-TestDesktop
-    [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 700)
+    [void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -SettleMs 700)
     $env:LOCALAPPDATA = $savedLocalAppData
     if ($null -ne $savedAgentBin) { $env:GHOSTTY_LOCAL_AGENT_BIN = $savedAgentBin }
     else { Remove-Item env:GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue }

@@ -42,6 +42,16 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+
+# T1494 (T691 tranche 2): this run's own AGENT lineage, minted ahead of the
+# first reset - a run that mints one after it has started an agent has two.
+# Without it every reset below killed whatever repo agent was holding the
+# box's panes (the dev install's, the other loop lane's) just so this script
+# could have one, and no two of these suites could run at the same time.
+# lib\TestDesktop.ps1 comes with it: the scoped kill asks it which
+# ghoztty.exe pids are OURS, and refuses rather than widening if it cannot.
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+[void](Set-GhozttyTestAgentLineage -Tag 'layoutpres')
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
@@ -53,7 +63,6 @@ $script:pass = 0
 $script:fail = 0
 $root = Join-Path $env:TEMP "ghoztty-slpreserve-$PID"
 
-. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 # T1511: the shared scorer, and the dot-source is also what ARMS the run - a
 # body that unwinds before `Complete-TestBody` may not print a pass, and the
@@ -70,14 +79,14 @@ function Stop-RepoInstances {
     # T351: one shared, path-exact kill (lib\CleanSlate.ps1) instead of a private
     # copy - the filter this replaced also matched a detached instance running from
     # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
-    [void](Stop-RepoGhoztty -Exe $exe -SettleMs 700)
+    [void](Stop-RepoGhoztty -Exe $exe -ScopeToLineage -SettleMs 700)
 }
 
 function Stop-AppOnly {
     # T351: one shared, path-exact kill (lib\CleanSlate.ps1) instead of a private
     # copy - the filter this replaced also matched a detached instance running from
     # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
-    [void](Stop-RepoGhoztty -Exe $exe -AppOnly -SettleMs 900)
+    [void](Stop-RepoGhoztty -Exe $exe -ScopeToLineage -AppOnly -SettleMs 900)
 }
 
 # A PIPE, not a `>` redirect: `ghoztty +verb > file` from PowerShell writes zero
@@ -245,7 +254,7 @@ try {
     Assert ($null -eq (Get-Win 'solo')) `
         'B4 solo has no live window (control: it truly was not restored)'
     $agentProcs = @(Get-CimInstance Win32_Process -Filter "Name='ghoztty-agent.exe'" |
-        Where-Object { $_.ExecutablePath -like (Join-Path $repo 'zig-out*') })
+        Where-Object { $_.ExecutablePath -like (Join-Path $repo 'zig-out*') -and (Test-GhozttyAgentLineageOwned -CommandLine $_.CommandLine -Instance (Get-GhozttyAgentLineage)) })
     Assert ($agentProcs.Count -eq 0) `
         "B5 no local agent is running (control, got $($agentProcs.Count))"
 
@@ -263,7 +272,7 @@ try {
     Assert ($soloC.Count -eq 1) `
         "C1 solo is a live window again - the carried entry restored (got $($soloC.Count) panes)"
     $agentProcs2 = @(Get-CimInstance Win32_Process -Filter "Name='ghoztty-agent.exe'" |
-        Where-Object { $_.ExecutablePath -like (Join-Path $repo 'zig-out*') })
+        Where-Object { $_.ExecutablePath -like (Join-Path $repo 'zig-out*') -and (Test-GhozttyAgentLineageOwned -CommandLine $_.CommandLine -Instance (Get-GhozttyAgentLineage)) })
     Assert ($agentProcs2.Count -ge 1) 'C2 the local agent is back (control)'
 
     # ---- D: the manifest is not immortal ------------------------------------

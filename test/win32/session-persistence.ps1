@@ -62,6 +62,16 @@ param(
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
+# T1494 (T691 tranche 2): this run's own AGENT lineage, minted ahead of the
+# first reset - a run that mints one after it has started an agent has two.
+# Without it every reset below killed whatever repo agent was holding the
+# box's panes (the dev install's, the other loop lane's) just so this script
+# could have one, and no two of these suites could run at the same time.
+# lib\TestDesktop.ps1 comes with it: the scoped kill asks it which
+# ghoztty.exe pids are OURS, and refuses rather than widening if it cannot.
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+[void](Set-GhozttyTestAgentLineage -Tag 'sesspersist')
+
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
 $root = Join-Path $env:TEMP "ghoztty-session-persist-$PID"
@@ -78,7 +88,6 @@ function Assert($name, $cond) {
 # would fail and E's minimize would silently do nothing. The harness also makes
 # the process DPI-aware, which is what the old driver's SetProcessDPIAware call
 # was for: geometry here is in physical pixels, like the app's.
-. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
 # All GhozttyWindow top-levels belonging to this run's app pids.
 function Top-Windows($appPids) {
@@ -102,15 +111,19 @@ function Win-Rect($hwnd) {
 
 # ---- process helpers (zig-out lineage only) --------------------------------
 function App-Pids {
+    # T1494: the GUIs THIS run launched (lib\TestDesktop.ps1 records them) - a
+    # `*zig-out*` match also took the other loop lane's app down with the crash.
+    $own = Get-GhozttyHarnessLaunchedPid   # NOT @(...): its `, @()` return would nest
     return @(Get-CimInstance Win32_Process -Filter "Name='ghoztty.exe'" |
-        Where-Object { $_.CommandLine -like '*zig-out*' -and $_.CommandLine -notmatch '\+' } |
+        Where-Object { $_.CommandLine -like '*zig-out*' -and $_.CommandLine -notmatch '\+' -and
+            $own -contains [int]$_.ProcessId } |
         ForEach-Object { $_.ProcessId })
 }
 function Stop-TestProcs {
     # T351: one shared, path-exact kill (lib\CleanSlate.ps1) instead of a private
     # copy - the filter this replaced also matched a detached instance running from
     # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
-    [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 700)
+    [void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -SettleMs 700)
 }
 # The crash under test: taskkill /f of the GUI only (agent keeps every ConPTY).
 function Crash-App {
