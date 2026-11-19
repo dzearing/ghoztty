@@ -805,6 +805,43 @@ const windows = struct {
         PeakPagefileUsage: usize = 0,
     };
 
+    const ULONG = W.ULONG;
+    const SystemProcessInformation: c_int = 5;
+    const STATUS_INFO_LENGTH_MISMATCH: i32 = @bitCast(@as(u32, 0xC0000004));
+
+    /// The leading fields of SYSTEM_PROCESS_INFORMATION (winternl.h), through the
+    /// parent pid - all `snapshotParentsWindows` reads. The thread array that
+    /// follows each entry is skipped by `NextEntryOffset`.
+    const SYSTEM_PROCESS_INFORMATION_HEAD = extern struct {
+        NextEntryOffset: ULONG,
+        NumberOfThreads: ULONG,
+        WorkingSetPrivateSize: i64,
+        HardFaultCount: ULONG,
+        NumberOfThreadsHighWatermark: ULONG,
+        CycleTime: u64,
+        CreateTime: i64,
+        UserTime: i64,
+        KernelTime: i64,
+        ImageName: W.UNICODE_STRING,
+        BasePriority: i32,
+        UniqueProcessId: usize,
+        InheritedFromUniqueProcessId: usize,
+    };
+    comptime {
+        // The documented x64/arm64 layout; a drift here would read garbage pids.
+        if (@sizeOf(usize) == 8) {
+            std.debug.assert(@offsetOf(SYSTEM_PROCESS_INFORMATION_HEAD, "UniqueProcessId") == 80);
+            std.debug.assert(@offsetOf(SYSTEM_PROCESS_INFORMATION_HEAD, "InheritedFromUniqueProcessId") == 88);
+        }
+    }
+
+    extern "ntdll" fn NtQuerySystemInformation(
+        SystemInformationClass: c_int,
+        SystemInformation: *anyopaque,
+        SystemInformationLength: ULONG,
+        ReturnLength: ?*ULONG,
+    ) callconv(.winapi) i32;
+
     extern "kernel32" fn CreateToolhelp32Snapshot(dwFlags: DWORD, th32ProcessID: DWORD) callconv(.winapi) HANDLE;
     extern "kernel32" fn Process32FirstW(hSnapshot: HANDLE, lppe: *PROCESSENTRY32W) callconv(.winapi) BOOL;
     extern "kernel32" fn Process32NextW(hSnapshot: HANDLE, lppe: *PROCESSENTRY32W) callconv(.winapi) BOOL;
@@ -1290,30 +1327,79 @@ pub fn snapshotParents(alloc: Allocator) ?descendants.ParentMap {
     };
 }
 
+/// The process table's byte size at the last successful Windows snapshot, so
+/// the next one allocates enough on its first try instead of probing (T3235).
+/// A hint only: a stale value costs one retry, never a wrong answer.
+var parents_buf_hint = std.atomic.Value(usize).init(512 * 1024);
+
+/// `snapshotParents` on Windows: ONE `NtQuerySystemInformation
+/// (SystemProcessInformation)` call, walked in place.
+///
+/// Why not Toolhelp32 (T3235): `CreateToolhelp32Snapshot` makes this same
+/// call and then copies the result into a section it maps, and
+/// `Process32NextW` copies each entry out again with its name - about 18.7M
+/// cycles per snapshot on a box with ~340 processes against 10.7M for the bare
+/// query. The agent takes this snapshot every second for as long as any viewer
+/// wants `META{has_descendants}`, so the difference was most of the release
+/// agent's idle CPU. Same table, same pid and parent pid per process (Toolhelp
+/// reads `InheritedFromUniqueProcessId` too), so the answer does not change.
 fn snapshotParentsWindows(alloc: Allocator) ?descendants.ParentMap {
     if (comptime builtin.os.tag != .windows) return null;
     const w = windows;
-    const W = std.os.windows;
 
-    const snap = w.CreateToolhelp32Snapshot(w.TH32CS_SNAPPROCESS, 0);
-    if (snap == W.INVALID_HANDLE_VALUE) return null;
-    defer W.CloseHandle(snap);
-
-    var map: descendants.ParentMap = .empty;
-
-    var entry: w.PROCESSENTRY32W = .{ .dwSize = @sizeOf(w.PROCESSENTRY32W) };
-    if (w.Process32FirstW(snap, &entry) == 0) {
-        map.deinit(alloc);
-        return null;
+    var size = parents_buf_hint.load(.monotonic);
+    var attempt: usize = 0;
+    while (attempt < 4) : (attempt += 1) {
+        const buf = alloc.alignedAlloc(u8, .of(u64), size) catch return null;
+        defer alloc.free(buf);
+        var needed: w.ULONG = 0;
+        const status = w.NtQuerySystemInformation(
+            w.SystemProcessInformation,
+            buf.ptr,
+            @intCast(@min(buf.len, std.math.maxInt(w.ULONG))),
+            &needed,
+        );
+        if (status == w.STATUS_INFO_LENGTH_MISMATCH) {
+            // The table grew (or the hint was cold): ask for what it said plus
+            // room for the processes that start before the next try.
+            size = @max(size * 2, @as(usize, needed) + 64 * 1024);
+            continue;
+        }
+        if (status != 0) return null;
+        parents_buf_hint.store(@as(usize, needed) + 64 * 1024, .monotonic);
+        return parentsFromProcessInformation(alloc, buf[0..@min(buf.len, @as(usize, needed))]);
     }
-    var ok = true;
-    while (ok) : (ok = w.Process32NextW(snap, &entry) != 0) {
-        map.put(alloc, @intCast(entry.th32ProcessID), @intCast(entry.th32ParentProcessID)) catch {
-            // OOM mid-walk leaves a PARTIAL table, and a partial table's
-            // "no descendants" is a guess. Fail the whole snapshot instead.
+    return null;
+}
+
+/// Walk a `SystemProcessInformation` buffer into a pid -> parent pid map.
+/// Null when the buffer is malformed (an entry offset that points outside it)
+/// or on OOM: a partial table's "no descendants" is a guess, so it fails whole.
+fn parentsFromProcessInformation(alloc: Allocator, buf: []align(8) const u8) ?descendants.ParentMap {
+    const Info = windows.SYSTEM_PROCESS_INFORMATION_HEAD;
+    var map: descendants.ParentMap = .empty;
+    var off: usize = 0;
+    while (true) {
+        if (off + @sizeOf(Info) > buf.len) {
+            map.deinit(alloc);
+            return null;
+        }
+        const info: *const Info = @ptrCast(@alignCast(buf.ptr + off));
+        map.put(alloc, @intCast(info.UniqueProcessId), @intCast(info.InheritedFromUniqueProcessId)) catch {
             map.deinit(alloc);
             return null;
         };
+        if (info.NextEntryOffset == 0) break;
+        // Entries are 8-aligned and move forward; anything else is not a table.
+        if (info.NextEntryOffset % 8 != 0) {
+            map.deinit(alloc);
+            return null;
+        }
+        off += info.NextEntryOffset;
+    }
+    if (map.count() == 0) {
+        map.deinit(alloc);
+        return null;
     }
     return map;
 }
@@ -1409,6 +1495,37 @@ test "snapshotParents: this process is in the table and descends from something"
     // being an accidental identity table.
     const parent = map.get(me).?;
     if (parent > 0) try testing.expect(descendants.hasDescendants(&map, parent));
+}
+
+test "snapshotParents (windows): the NtQuerySystemInformation walk reads pid and parent from each entry and refuses a malformed table (T3235)" {
+    if (comptime builtin.os.tag != .windows) return error.SkipZigTest;
+    const alloc = testing.allocator;
+    const Info = windows.SYSTEM_PROCESS_INFORMATION_HEAD;
+    // Three entries, each followed by padding the walk must skip (the thread
+    // array in a real table), chained by NextEntryOffset.
+    const stride = 160;
+    var buf: [stride * 3]u8 align(8) = @splat(0);
+    const rows = [_][2]usize{ .{ 4, 0 }, .{ 100, 4 }, .{ 200, 100 } };
+    for (rows, 0..) |r, i| {
+        const info: *Info = @ptrCast(@alignCast(&buf[i * stride]));
+        info.NextEntryOffset = if (i + 1 < rows.len) stride else 0;
+        info.UniqueProcessId = r[0];
+        info.InheritedFromUniqueProcessId = r[1];
+    }
+    var map = parentsFromProcessInformation(alloc, &buf).?;
+    defer map.deinit(alloc);
+    try testing.expectEqual(@as(u32, 3), map.count());
+    try testing.expectEqual(@as(i64, 100), map.get(200).?);
+    try testing.expect(descendants.hasDescendants(&map, 4));
+    try testing.expect(!descendants.hasDescendants(&map, 200));
+
+    // An offset that runs off the end is not a table: no partial answer.
+    const first: *Info = @ptrCast(@alignCast(&buf[0]));
+    first.NextEntryOffset = stride * 3;
+    try testing.expect(parentsFromProcessInformation(alloc, &buf) == null);
+    // Nor is one that is not 8-aligned.
+    first.NextEntryOffset = stride + 4;
+    try testing.expect(parentsFromProcessInformation(alloc, &buf) == null);
 }
 
 /// Free one row's caller-owned strings. Public because `sample` hands ownership

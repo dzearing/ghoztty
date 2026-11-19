@@ -1,13 +1,16 @@
 {
     "guard":  "perf-baseline-reader",
     "script":  "test/win32/perf-baseline-reader.ps1",
-    "generated":  "2026-11-18T02:21:21-08:00",
-    "commit":  "7c44aa9ec",
+    "generated":  "2026-11-18T22:55:40-08:00",
+    "commit":  "9f51b405c",
     "uncommitted":  [
-
+                        "scripts/perf-baseline.ps1",
+                        "test/win32/lib/ProcessMemory.ps1",
+                        "test/win32/perf-baseline-reader.ps1"
                     ],
     "files":  {
-                  "scripts/perf-baseline.ps1":  "4d16080197edc2902a820dc1e8a1be2fe77f71cda1bb3d7f7ec6aff7a00be8d4",
-                  "test/win32/perf-baseline-reader.ps1":  "37f53082a2016a1314b68fe59045876bc904f7c10b754125873c7e4cdf1e609c"
+                  "scripts/perf-baseline.ps1":  "277d609f53699590bf906bbbd895825904bc3664e8500ed77b968fd04f6a6a52",
+                  "test/win32/lib/ProcessMemory.ps1":  "c5983686f20d70603eac79578a1575c89b32c5121c96b9126eafe398f623a2b3",
+                  "test/win32/perf-baseline-reader.ps1":  "c0cecdd910918c63517af4321be7b780437527f91eb3a5aea846a7b6c82fd78e"
               }
 }

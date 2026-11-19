@@ -1,17 +1,15 @@
 {
     "guard":  "storage-trim-memory",
     "script":  "test/win32/storage-trim-memory.ps1",
-    "generated":  "2026-11-14T22:24:33-08:00",
-    "commit":  "a23965e5b",
+    "generated":  "2026-11-18T23:14:02-08:00",
+    "commit":  "9f51b405c",
     "uncommitted":  [
-                        "src/renderer/opengl/Target.zig",
-                        "src/renderer/storage_trim.zig",
-                        "test/win32/storage-trim-memory.ps1"
+                        "test/win32/lib/ProcessMemory.ps1"
                     ],
     "files":  {
                   "src/renderer/opengl/Target.zig":  "79d03ac30310b5d56e0c7e763bd2ce12aba8bef98e971ffc019d076c073854ba",
                   "src/renderer/storage_trim.zig":  "5faeb4a54cd520837401dd9f3ff4322f0d36d9bfe4626516d914ce12feba9126",
-                  "test/win32/lib/ProcessMemory.ps1":  "d742e9813857e5dff6e8c1a9559ebb392c4826bcf61d10c4e768760edc38b5b1",
+                  "test/win32/lib/ProcessMemory.ps1":  "c5983686f20d70603eac79578a1575c89b32c5121c96b9126eafe398f623a2b3",
                   "test/win32/storage-trim-memory.ps1":  "013edf25e4692fcfdd704c3a7127fd4ee8ab33065939042702d4105c28af612d"
               }
 }

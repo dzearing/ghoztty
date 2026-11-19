@@ -1928,16 +1928,17 @@ pub const SessionStore = struct {
             // cadence as the foreground pid, and for the same reason: a value
             // read at close time is only as good as its last sample, and a
             // command started seconds ago must not read as an idle prompt.
-            self.sampleDescendants();
+            //
             // Notice a shell that exited with nobody watching (T1162). Runs
             // BEFORE `reapIdle` next tick rather than after it here for no reason
             // beyond order of discovery: a session tombstoned by this sweep is
             // reaped by the ordinary idle rules from then on.
+            //
+            // Both answer from the same process-table snapshot (T3235).
             vanish_ticks +%= 1;
-            if (self.vanish_sweep_enabled and vanish_ticks >= vanish_every_ticks) {
-                vanish_ticks = 0;
-                self.sweepVanishedChildren();
-            }
+            const sweep = self.vanish_sweep_enabled and vanish_ticks >= vanish_every_ticks;
+            if (sweep) vanish_ticks = 0;
+            self.sampleProcessTable(sweep);
             // Track each live session's CURRENT working directory (T425) so the
             // value that outlives the agent is where the user actually IS, not
             // where the shell was spawned. Separate cadence from the ring
@@ -2144,28 +2145,45 @@ pub const SessionStore = struct {
     /// "idle" because we could not look would skip a confirmation and kill a
     /// running job.
     pub fn sampleDescendants(self: *SessionStore) void {
-        // Phase 0: is anyone listening? Read under the lock, act on a snapshot
-        // of the answer — a connection that unbinds right after is handled by
-        // the re-lookup in phase 2.
-        self.mutex.lock();
-        var wanted = false;
-        var it0 = self.table.by_id.valueIterator();
-        while (it0.next()) |sp| {
-            const s = sp.*;
-            if (!s.alive or !s.bound) continue;
-            if (s.bridge_busy != null) {
-                wanted = true;
-                break;
-            }
-        }
-        self.mutex.unlock();
-        if (!wanted) return;
+        if (!self.descendantsWanted()) return;
 
         // Phase 1: one table snapshot for every session, taken unlocked.
         var map = proc.snapshotParents(self.table.alloc) orelse return;
         defer map.deinit(self.table.alloc);
 
         self.sampleDescendantsIn(&map);
+    }
+
+    /// `sampleDescendants`'s phase 0: is anyone listening? Read under the lock,
+    /// act on a snapshot of the answer — a connection that unbinds right after
+    /// is handled by the re-lookup in phase 2.
+    pub fn descendantsWanted(self: *SessionStore) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        var it0 = self.table.by_id.valueIterator();
+        while (it0.next()) |sp| {
+            const s = sp.*;
+            if (!s.alive or !s.bound) continue;
+            if (s.bridge_busy != null) return true;
+        }
+        return false;
+    }
+
+    /// One reaper tick's process-table work (T3235): the descendants sample
+    /// (when a viewer wants it) and the vanished-child sweep (when `sweep` says
+    /// it is due) answered from ONE snapshot. Each used to take its own, so
+    /// every fifth second walked the whole table twice; a walk is an OS
+    /// enumeration of every process on the box, and at idle it was the agent's
+    /// largest cost. The sweep's `started_ms` is read before the snapshot, as
+    /// `sweepVanishedChildren` does, so a session born during it is not judged.
+    pub fn sampleProcessTable(self: *SessionStore, sweep: bool) void {
+        const want = self.descendantsWanted();
+        if (!want and !sweep) return;
+        const started_ms = self.now();
+        var map = proc.snapshotParents(self.table.alloc) orelse return;
+        defer map.deinit(self.table.alloc);
+        if (want) self.sampleDescendantsIn(&map);
+        if (sweep) _ = self.sweepVanishedIn(&map, started_ms);
     }
 
     /// `sampleDescendants`'s phase 2, against a caller-supplied parent table.

@@ -2033,10 +2033,33 @@ try {
             $base = Get-FullSample $agentPid 'agent base' -Settle
             $sessBase = @(Get-SessionRows).Count
 
+            # T3235: the idle span is split by thread too, so an idle cost
+            # names the thread that wakes rather than only the process total.
+            $it0 = Get-ThreadCtx $agentPid
+            $ic0 = Get-ThreadCycles $it0
             $s0 = Get-Snap $agentPid
             Start-Sleep -Seconds 30
             $s1 = Get-Snap $agentPid
+            $it1 = Get-ThreadCtx $agentPid
+            $ic1 = Get-ThreadCycles $it1
             $idle = Get-Rate $s0 $s1
+            $idleAttr = Get-WakeupAttribution $agentPid $it0 $it1 $idle.wall_s -CyBefore $ic0 -CyAfter $ic1
+            # T3235: with -SampleAgent and no -BusyPersistence, a SECOND 30 s
+            # idle span (after the measured one, so the numbers above are not
+            # perturbed) is profiled in cycles mode, which charges each wake to
+            # the stack it woke into - the wait that keeps firing.
+            $idleSample = $null
+            if ($SampleAgent -and -not $BusyPersistence) {
+                $idleOut = [IO.Path]::ChangeExtension([IO.Path]::GetFullPath($SampleAgent), '.agent-idle.json')
+                $idleLog = [IO.Path]::ChangeExtension($idleOut, '.txt')
+                $sp = Start-Process powershell -WindowStyle Hidden -PassThru -RedirectStandardOutput $idleLog -ArgumentList @(
+                    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$(Join-Path $PSScriptRoot 'cpu-sample.ps1')`"",
+                    '-ProcessId', $agentPid, '-Mode', 'cycles', '-Seconds', '30', '-Top', '25', '-SymbolPath', "`"$(Split-Path $exe)`"",
+                    '-Out', "`"$idleOut`"", '-Folded', "`"$([IO.Path]::ChangeExtension($idleOut, '.folded'))`"")
+                $null = $sp.Handle
+                if (-not $sp.WaitForExit(120000)) { try { $sp.Kill() } catch { } }
+                $idleSample = [ordered]@{ report = $idleOut; log = $idleLog; note = 'cpu-sample.ps1 -Mode cycles over a second 30 s idle span, after the measured one' }
+            }
 
             $anchor = @(Get-PaneLeaves)[0].id
             $target = $anchor
@@ -2078,6 +2101,8 @@ try {
                 idle_cpu_pct = $idle.cpu_pct
                 idle_cpu_cycle_pct = $idle.cpu_cycle_pct
                 idle_wakeups_per_s = $idle.wakeups_per_s
+                idle_wakeup_attribution = $idleAttr
+                idle_sample = $idleSample
                 base = Format-Sample $base
                 sessions_base = $sessBase
                 sessions_after = $sessMore

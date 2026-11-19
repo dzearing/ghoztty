@@ -4910,7 +4910,9 @@ $GuardTable = @(
         Stamp  = 'test\win32\perf-baseline-reader.stamp.json'
         Covers = @(
             'scripts\perf-baseline.ps1',
-            'test\win32\perf-baseline-reader.ps1'
+            'test\win32\perf-baseline-reader.ps1',
+            # Section D tests its descendant walk (T3235).
+            'test\win32\lib\ProcessMemory.ps1'
         )
     },
     # The no-elevation sampling CPU profiler (T3159).

@@ -128,6 +128,35 @@ public static class T3111Spi {
     Assert 'C2 agent idle_cpu_cycle_pct 0.02 -> 0.20 is OUT' ((Get-Row $syn.Lines 'release.agent.idle_cpu_cycle_pct') -match '^OUT\s.*idle_cpu_pct\)$') ''
     Assert 'C3 busy 20 -> 25 is within the wide floor' ((Get-Row $syn.Lines 'release.busy.cpu_pct') -match '^ok\s') ''
 
+    # --- D. the descendant walk refuses a recycled parent pid (T3235) ----
+    # A process whose parent exited keeps the dead pid as ParentProcessId; once
+    # Windows hands that pid to a process in the tree, the stranger looked like
+    # its child (one agent sample: a 2.6 GB "session child").
+    ''
+    '-- D. descendant walk vs a recycled parent pid'
+    . (Join-Path $PSScriptRoot 'lib\ProcessMemory.ps1')
+    $t0 = Get-Date '2026-11-18T12:00:00'
+    $row = { param($id, $pp, $born, $mb) [pscustomobject]@{ ProcessId = $id; ParentProcessId = $pp; CreationDate = $born; Name = "p$id"; PrivatePageCount = $mb * 1MB } }
+    $rows = @(
+        (& $row 100 1 $t0 10),
+        (& $row 200 100 $t0.AddSeconds(1) 12),          # a real child
+        (& $row 300 200 $t0.AddSeconds(2) 5),           # a real grandchild
+        (& $row 400 200 $t0.AddHours(-1) 2600),         # older than 200: its parent was a dead process that once had pid 200
+        (& $row 500 400 $t0.AddSeconds(3) 7),           # the stranger's own child
+        (& $row 600 100 $null 1)                        # no creation time: kept, as before
+    )
+    # Control: the fixture really carries the trap a parent-pid walk falls into.
+    Assert 'D0 control: two rows name 200 as parent' (@($rows | Where-Object { $_.ParentProcessId -eq 200 }).Count -eq 2) ''
+    # Select-Descendants returns its array whole (`return ,`), so assign it
+    # before enumerating: piped straight on, it is ONE item.
+    $d1 = Select-Descendants $rows 100
+    $got = @($d1 | ForEach-Object { [int]$_.ProcessId } | Sort-Object)
+    Assert 'D1 descendants are 200, 300, 600 only' (($got -join ',') -eq '200,300,600') "got $($got -join ',')"
+    $got2 = Select-Descendants $rows 400
+    Assert 'D2 the stranger still owns its own child' ($got2.Count -eq 1 -and [int]$got2[0].ProcessId -eq 500) "got $($got2.Count)"
+    $none = Select-Descendants $rows 999
+    Assert 'D3 a pid with no children has none' ($none.Count -eq 0) "got $($none.Count)"
+
     Complete-TestBody
 }
 finally {

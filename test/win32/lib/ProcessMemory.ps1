@@ -115,13 +115,28 @@ function Format-HandleDelta([hashtable]$Before, [hashtable]$After) {
 }
 
 # Every process whose parent chain reaches $RootPid (the root itself excluded).
+#
+# A process whose parent exited keeps the dead parent's pid as its
+# ParentProcessId, and Windows recycles pids, so an unrelated process can name a
+# pid that now belongs to somebody in this tree. Such a "child" was born BEFORE
+# the process it names as parent, and is skipped (T3235: one agent sample
+# counted a 2.6 GB stranger as a session's child, per_session_child_private_mb
+# 2671). A row with no creation time is kept, as before.
 function Get-Descendants([int]$RootPid) {
-    $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, PrivatePageCount)
+    $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, PrivatePageCount, CreationDate)
+    return , (Select-Descendants $all $RootPid)
+}
+# The walk, over rows carrying ProcessId / ParentProcessId / CreationDate (a
+# Win32_Process list, or synthetic rows in a test). Unrolled-safe array.
+function Select-Descendants($All, [int]$RootPid) {
+    $all = @($All | Where-Object { $null -ne $_ })
     $kids = @{}
+    $born = @{}
     foreach ($p in $all) {
         $pp = [int]$p.ParentProcessId
         if (-not $kids.ContainsKey($pp)) { $kids[$pp] = New-Object System.Collections.ArrayList }
         [void]$kids[$pp].Add($p)
+        if ($null -ne $p.CreationDate) { $born[[int]$p.ProcessId] = [datetime]$p.CreationDate }
     }
     $out = New-Object System.Collections.ArrayList
     $queue = New-Object System.Collections.Queue
@@ -133,6 +148,7 @@ function Get-Descendants([int]$RootPid) {
             # A recycled pid can name a process older than its "parent"; the
             # chain only ever walks down, and the app's own pid is never a child.
             if ([int]$c.ProcessId -eq $RootPid) { continue }
+            if ($born.ContainsKey($cur) -and $null -ne $c.CreationDate -and [datetime]$c.CreationDate -lt $born[$cur]) { continue }
             [void]$out.Add($c)
             $queue.Enqueue([int]$c.ProcessId)
         }
