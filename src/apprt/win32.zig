@@ -70,6 +70,10 @@ test {
     // The document read worker (T3224): its queue and generation hand-off run
     // real pooled workers.
     _ = @import("win32/ViewerDocumentRead.zig");
+    // The resource request worker (T3245): its FIFO queue, the 3-tier
+    // resolution's stat probes and the range reads run real pooled workers
+    // against a real file system.
+    _ = @import("win32/ViewerResourceServe.zig");
     // The COM callback object every WebView2 handler is an instance of
     // (T376). Listed in its own right, not just as webview2.zig's import:
     // its refcount and interface matching are the part a fifth handler would

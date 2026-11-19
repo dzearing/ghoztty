@@ -25,6 +25,7 @@ const Allocator = std.mem.Allocator;
 const w32 = @import("win32.zig");
 const content = @import("viewer_content.zig");
 const viewer_document = @import("viewer_document.zig");
+const slow_path = @import("viewer_slow_path.zig");
 const worker_pool = @import("worker_pool.zig");
 
 const log = std.log.scoped(.viewer);
@@ -39,6 +40,8 @@ pub const Job = struct {
     mode: content.Mode,
     /// The pane's render generation when this was asked for.
     generation: u64,
+    /// The simulated slow disk (Debug builds only, `viewer_slow_path`, T3245).
+    slow: slow_path.Config = .{},
 
     outcome: viewer_document.Outcome = .none,
     /// The file's size, for the T3037 render log line.
@@ -49,6 +52,7 @@ pub const Job = struct {
     pub fn run(self: *Job) void {
         const started = std.time.milliTimestamp();
         defer self.read_ms = @intCast(@max(0, std.time.milliTimestamp() - started));
+        self.slow.pause();
         self.outcome = viewer_document.read(self.alloc, self.mode, self.path, &self.bytes);
     }
 
@@ -66,13 +70,16 @@ alloc: Allocator,
 /// render asked for before then is read inline by the caller.
 hwnd: ?w32.HWND = null,
 message: u32 = 0,
+/// The slow-path test seam (T3245): a delay added to every read, or the
+/// worker refused so every read runs inline. Defaults outside Debug builds.
+slow: slow_path.Config = .{},
 
 thread: ?worker_pool.Thread = null,
 job: ?*Job = null,
 queued: ?*Job = null,
 
 pub fn init(alloc: Allocator) Read {
-    return .{ .alloc = alloc };
+    return .{ .alloc = alloc, .slow = slow_path.fromEnv() };
 }
 
 pub fn attach(self: *Read, hwnd: w32.HWND, message: u32) void {
@@ -94,8 +101,9 @@ pub fn makeJob(alloc: Allocator, path: []const u8, mode: content.Mode, generatio
 /// Read `path` off the GUI thread. False means nothing was started - no window
 /// to post to, no memory, no thread - and the caller reads inline instead.
 pub fn request(self: *Read, path: []const u8, mode: content.Mode, generation: u64) bool {
-    if (self.hwnd == null) return false;
+    if (self.hwnd == null or self.slow.force_inline) return false;
     const job = makeJob(self.alloc, path, mode, generation) orelse return false;
+    job.slow = self.slow;
     if (self.thread != null) {
         if (self.queued) |old| old.finish();
         self.queued = job;

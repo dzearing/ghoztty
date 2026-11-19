@@ -88,6 +88,7 @@ const ViewerWorktreeProbe = @import("ViewerWorktreeProbe.zig");
 const ViewerDiffProbe = @import("ViewerDiffProbe.zig");
 const ViewerImageDecode = @import("ViewerImageDecode.zig");
 const ViewerDocumentRead = @import("ViewerDocumentRead.zig");
+const ViewerResourceServe = @import("ViewerResourceServe.zig");
 const viewer_document = @import("viewer_document.zig");
 const viewer_scratch = @import("viewer_scratch.zig");
 const viewer_diff = @import("viewer_diff.zig");
@@ -215,6 +216,11 @@ pub const WM_APP_VIEWER_IMAGE: u32 = w32.WM_APP + 49;
 /// The document read worker finished (T3224): a markdown or code file read and
 /// escaped off the GUI thread is ready to hand to the page.
 pub const WM_APP_VIEWER_DOCUMENT: u32 = w32.WM_APP + 50;
+
+/// The resource worker answered one or more requests (T3245): files the
+/// template or a rendered page asked for, resolved and read off the GUI thread,
+/// ready to hand to their parked requests.
+pub const WM_APP_VIEWER_RESOURCE: u32 = w32.WM_APP + 51;
 
 /// How long the "Filed …" confirmation stays up before the composer closes
 /// itself, matching Mac's 1.8s: long enough to read, short enough that the
@@ -382,6 +388,9 @@ image_decode: ?ViewerImageDecode = null,
 /// viewed file off the GUI thread. Built with the pane's other workers once it
 /// has a host window; a render asked for before then reads inline.
 document_read: ?ViewerDocumentRead = null,
+/// The resource request worker (T3245): every file the page asks for is
+/// resolved and read on it, the request parked on its deferral meanwhile.
+resource_serve: ?ViewerResourceServe = null,
 /// Bumped by every render request and every change of destination. A read
 /// whose generation is no longer this one is dropped on completion, so an old
 /// read never paints over a newer one or reaches a page that replaced it.
@@ -1174,6 +1183,12 @@ pub fn deinit(self: *ViewerPane, alloc: Allocator) void {
         reader.deinit();
         self.document_read = null;
     }
+    // Same again (T3245): joins the resource read in flight and answers every
+    // parked request with nothing, since the page asking is going away.
+    if (self.resource_serve) |*serve| {
+        serve.deinit();
+        self.resource_serve = null;
+    }
     // The staged pictures go with the pane (T3241). The worker is joined
     // above, so nothing is still writing into the folder.
     if (self.image_scratch) |*c| {
@@ -1388,6 +1403,12 @@ fn ensureNav(self: *ViewerPane, alloc: Allocator, hinstance: ?w32.HINSTANCE, hwn
     if (self.document_read == null) {
         self.document_read = ViewerDocumentRead.init(alloc);
         self.document_read.?.attach(hwnd, WM_APP_VIEWER_DOCUMENT);
+    }
+    // ...and so does the resource worker (T3245), whose completion answers
+    // the page's parked requests for its pictures, stylesheets and scripts.
+    if (self.resource_serve == null) {
+        self.resource_serve = ViewerResourceServe.init(alloc);
+        self.resource_serve.?.attach(hwnd, WM_APP_VIEWER_RESOURCE);
     }
     // The composer (T634) needs the same two halves, and it is built HERE
     // rather than on first open for one concrete reason: it edits itself from
@@ -4865,6 +4886,7 @@ fn renderFileContent(self: *ViewerPane) void {
     }
     // No host window yet (or no memory or thread for a job): read inline, as
     // every render did before.
+    if (self.document_read) |*reader| reader.slow.pause();
     var bytes: usize = 0;
     const outcome = viewer_document.read(alloc, self.mode, path, &bytes);
     defer outcome.deinit(alloc);
@@ -5233,9 +5255,11 @@ fn executeScriptWide(self: *ViewerPane, alloc: Allocator, wide: [:0]const u16) v
     _ = web.executeScript(wide.ptr, @ptrCast(handler));
 }
 
-/// Serve one request the bundled template made. Runs on the GUI thread, off
-/// the message loop, and is synchronous by design — every answer is a file
-/// read off local disk, so there is nothing worth a deferral.
+/// Serve one request the bundled template or a rendered page made. Runs on the
+/// GUI thread, off the message loop. Everything that touches the disk - the
+/// resolution's `stat` probes and the read - runs on the resource worker
+/// (T3245), the request parked on its deferral: on a slow or network path
+/// either one stalled every terminal in the window.
 fn onWebResourceRequested(
     p: *Pending,
     sender: ?*iface.ICoreWebView2,
@@ -5286,44 +5310,84 @@ fn onWebResourceRequested(
         return com.S_OK;
     }
 
-    const resolved = self.resolveResource(alloc, rel) orelse {
-        // Chromium asks every origin for a favicon it was never offered, so
-        // that one miss is expected and would otherwise put a warning in the
-        // log on every single page load.
-        if (!std.mem.eql(u8, rel, "favicon.ico")) {
-            log.warn("viewer resource not found: {s}", .{rel});
-        }
+    const job = ViewerResourceServe.makeJob(alloc, .template, rel, null) orelse {
         self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .default);
         return com.S_OK;
     };
-    defer alloc.free(resolved);
-
-    // Read straight into the response's own stream (T3044), under the same
-    // whole-file ceiling `readFileAlloc` used to enforce.
-    const served = served: {
-        const file = std.fs.cwd().openFile(resolved, .{}) catch break :served false;
-        defer file.close();
-        const size = (file.stat() catch break :served false).size;
-        if (size > content.max_file_bytes) break :served false;
-        break :served self.respondFile(
-            env,
-            a,
-            alloc,
-            file,
-            0,
-            size,
-            content.mimeType(content.extension(rel)),
-            200,
-            ok_reason,
-            .default,
-            "",
-        );
-    };
-    if (!served) {
-        log.warn("viewer resource is unreadable: {s}", .{resolved});
-        self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .default);
-    }
+    self.addTemplateCandidates(alloc, rel, job);
+    self.serveJob(env, a, alloc, job);
     return com.S_OK;
+}
+
+/// Answer `job` from the resource worker, or - when the request cannot be
+/// parked (no window yet, a refused deferral) - right here, as every request
+/// was answered before T3245.
+fn serveJob(
+    self: *ViewerPane,
+    env: *iface.ICoreWebView2Environment,
+    a: *iface.ICoreWebView2WebResourceRequestedEventArgs,
+    alloc: Allocator,
+    job: *ViewerResourceServe.Job,
+) void {
+    if (self.resource_serve) |*serve| {
+        if (serve.request(job, a)) return;
+        job.slow = serve.slow;
+    }
+    defer job.finish();
+    job.run();
+    self.answerResource(env, a, alloc, job);
+}
+
+/// The resource worker's completion (T3245): answer every finished request.
+fn completeResources(self: *ViewerPane) void {
+    const serve = if (self.resource_serve) |*s| s else return;
+    while (serve.takeDone()) |job| {
+        defer job.finish();
+        const p = self.pending orelse continue;
+        const env = self.env orelse continue;
+        const a = job.args orelse continue;
+        self.answerResource(env, a, p.alloc, job);
+    }
+}
+
+/// Turn a finished resource job into its response and log line. The log lines
+/// are the ones these requests always produced (the acceptance harnesses read
+/// them), plus `parked=`, which says the answer came off the worker.
+fn answerResource(
+    self: *ViewerPane,
+    env: *iface.ICoreWebView2Environment,
+    a: *iface.ICoreWebView2WebResourceRequestedEventArgs,
+    alloc: Allocator,
+    job: *ViewerResourceServe.Job,
+) void {
+    const rel = job.rel;
+    const mime = content.mimeType(content.extension(rel));
+    const shown = job.resolvedPath() orelse rel;
+    // Chromium asks every origin for a favicon it was never offered, so that
+    // one miss is expected and would otherwise put a warning in the log on
+    // every single page load.
+    const favicon = std.mem.eql(u8, rel, "favicon.ico");
+    switch (job.kind) {
+        .template => {
+            switch (job.result) {
+                .not_found => if (!favicon) log.warn("viewer resource not found: {s}", .{rel}),
+                .served => {
+                    if (job.takeStream()) |stream| {
+                        defer stream.release();
+                        self.respondStream(env, a, alloc, stream, mime, 200, ok_reason, .default, "");
+                        log.info("viewer resource pane={s} served={s} bytes={d} serve_ms={d} parked={}", .{
+                            self.paneId(), rel, job.len, job.serve_ms, job.parked(),
+                        });
+                        return;
+                    }
+                    log.warn("viewer resource is unreadable: {s}", .{shown});
+                },
+                .unreadable, .too_large, .unsatisfiable, .changed => log.warn("viewer resource is unreadable: {s}", .{shown}),
+            }
+            self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .default);
+        },
+        .page => self.answerPageResource(env, a, alloc, job, mime, shown, favicon),
+    }
 }
 
 const ok_reason = std.unicode.utf8ToUtf16LeStringLiteral("OK");
@@ -5491,83 +5555,87 @@ fn servePageResource(
         self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
         return;
     };
-    const resolved = self.takeIfFile(alloc, content.candidateUnder(alloc, root, rel) catch null) orelse {
-        // Chromium asks every origin for a favicon it was never offered.
-        if (!std.mem.eql(u8, rel, "favicon.ico")) {
-            log.warn("viewer page resource not found or outside its grant: {s}", .{rel});
-        }
-        self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
-        return;
-    };
-    defer alloc.free(resolved);
-
-    // A media element seeks by asking for a byte range (T1580). Only the
-    // slice it asked for is read, so a clip larger than the whole-file
-    // ceiling still plays: each `206` is capped, and the engine asks again.
-    const mime = content.mimeType(content.extension(rel));
     var range_buf: [256]u8 = undefined;
     const range = requestRange(req, &range_buf);
-    const file = std.fs.cwd().openFile(resolved, .{}) catch {
-        log.warn("viewer page resource is unreadable: {s}", .{resolved});
+    const job = ViewerResourceServe.makeJob(alloc, .page, rel, range) orelse {
         self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
         return;
     };
-    defer file.close();
-    const size = (file.stat() catch {
-        log.warn("viewer page resource is unreadable: {s}", .{resolved});
-        self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
-        return;
-    }).size;
-    const answer = byte_range.plan(range, size, byte_range.max_chunk);
-    const extra = byte_range.headers(alloc, answer, size) catch return;
-    defer alloc.free(extra);
+    job.addCandidate(content.candidateUnder(alloc, root, rel) catch null);
+    self.serveJob(env, a, alloc, job);
+}
 
-    switch (answer) {
+/// A finished page resource job's response (T601/T1580). Every answer is
+/// `no-store` (see `servePageResource`).
+fn answerPageResource(
+    self: *ViewerPane,
+    env: *iface.ICoreWebView2Environment,
+    a: *iface.ICoreWebView2WebResourceRequestedEventArgs,
+    alloc: Allocator,
+    job: *ViewerResourceServe.Job,
+    mime: []const u8,
+    shown: []const u8,
+    favicon: bool,
+) void {
+    const rel = job.rel;
+    const size = job.size;
+    switch (job.result) {
+        .not_found => if (!favicon) log.warn("viewer page resource not found or outside its grant: {s}", .{rel}),
+        .unreadable => log.warn("viewer page resource is unreadable: {s}", .{shown}),
+        // The file shrank under the read: the size the plan was built on is no
+        // longer true, and a short body would contradict its own
+        // Content-Range. Refuse rather than answer with a lie.
+        .changed => log.warn("viewer page resource changed while reading: {s}", .{shown}),
+        .too_large => log.warn("viewer page resource is unreadable or too large to serve whole: {s}", .{shown}),
         .unsatisfiable => {
+            const extra = byte_range.headers(alloc, job.plan, size) catch return;
+            defer alloc.free(extra);
             log.info(
                 "viewer page pane={s} served={s} range={s} status=416 size={d}",
-                .{ self.paneId(), rel, range orelse "", size },
+                .{ self.paneId(), rel, job.range orelse "", size },
             );
             self.respondWith(env, a, alloc, "", mime, 416, range_not_satisfiable_reason, .no_store, extra);
             return;
         },
-        .partial => |span| {
-            if (!self.respondFile(env, a, alloc, file, span.start, span.len(), mime, 206, partial_content_reason, .no_store, extra)) {
-                // The file shrank under us: the size the plan was built on is
-                // no longer true, and a short body would contradict its own
-                // Content-Range. Refuse rather than answer with a lie.
-                log.warn("viewer page resource changed while reading: {s}", .{resolved});
-                self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
-                return;
+        .served => served: {
+            const extra = byte_range.headers(alloc, job.plan, size) catch return;
+            defer alloc.free(extra);
+            const stream = job.takeStream() orelse {
+                log.warn("viewer page resource is unreadable: {s}", .{shown});
+                break :served;
+            };
+            defer stream.release();
+            switch (job.plan) {
+                // A media element seeks by asking for a byte range (T1580).
+                // Only the slice it asked for was read, so a clip larger than
+                // the whole-file ceiling still plays: each `206` is capped, and
+                // the engine asks again.
+                .partial => |span| {
+                    self.respondStream(env, a, alloc, stream, mime, 206, partial_content_reason, .no_store, extra);
+                    log.info(
+                        "viewer page pane={s} served={s} bytes={d} mime={s} range={d}-{d}/{d} status=206 parked={}",
+                        .{ self.paneId(), rel, span.len(), mime, span.start, span.end, size, job.parked() },
+                    );
+                },
+                // A subresource request is proof the page was PARSED as HTML:
+                // a document rendered as source never asks for its own
+                // stylesheet. That is what the acceptance harness reads, so it
+                // is logged at info rather than debug. The MIME rides along
+                // for the same reason it does on the image path (T750): the
+                // failure a missing table row produces is a correct-looking
+                // 200 carrying `application/octet-stream`.
+                .whole, .unsatisfiable => {
+                    self.respondStream(env, a, alloc, stream, mime, 200, ok_reason, .no_store, extra);
+                    log.info(
+                        "viewer page pane={s} served={s} bytes={d} mime={s} parked={}",
+                        .{ self.paneId(), rel, size, mime, job.parked() },
+                    );
+                },
             }
-            log.info(
-                "viewer page pane={s} served={s} bytes={d} mime={s} range={d}-{d}/{d} status=206",
-                .{ self.paneId(), rel, span.len(), mime, span.start, span.end, size },
-            );
             return;
         },
-        .whole => {},
     }
-
-    if (size > content.max_file_bytes or
-        !self.respondFile(env, a, alloc, file, 0, size, mime, 200, ok_reason, .no_store, extra))
-    {
-        log.warn("viewer page resource is unreadable or too large to serve whole: {s}", .{resolved});
-        self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
-        return;
-    }
-
-    // A subresource request is proof the page was PARSED as HTML: a document
-    // rendered as source never asks for its own stylesheet. That is what the
-    // acceptance harness reads, so it is logged at info rather than debug.
-    // The MIME rides along for the same reason it does on the image path
-    // (T750): a page brings its own fonts, media and wasm, and the failure a
-    // missing table row produces is a correct-looking 200 carrying
-    // `application/octet-stream`, which the engine then refuses to use.
-    log.info(
-        "viewer page pane={s} served={s} bytes={d} mime={s}",
-        .{ self.paneId(), rel, size, mime },
-    );
+    self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
 }
 
 const partial_content_reason = std.unicode.utf8ToUtf16LeStringLiteral("Partial Content");
@@ -5592,15 +5660,23 @@ fn requestRange(req: *iface.ICoreWebView2WebResourceRequest, buf: []u8) ?[]const
 /// readable FILE — a directory is not a resource, and answering with one would
 /// be a read error dressed up as a hit. Caller owns the result.
 fn resolveResource(self: *ViewerPane, alloc: Allocator, rel: []const u8) ?[]u8 {
-    if (self.resources_dir) |root| {
-        if (self.takeIfFile(alloc, content.candidateUnder(alloc, root, rel) catch null)) |hit| return hit;
-    }
+    const job = ViewerResourceServe.makeJob(alloc, .template, rel, null) orelse return null;
+    defer job.finish();
+    self.addTemplateCandidates(alloc, rel, job);
+    const i = ViewerResourceServe.firstFile(job.candidates[0..job.count]) orelse return null;
+    return alloc.dupe(u8, job.candidates[i].?) catch null;
+}
+
+/// The three tiers' candidates for `rel`, in order, onto `job` - the strings
+/// only. Which of them is a file is the worker's question (T3245): a `stat` on
+/// a slow path is exactly what the GUI thread must not wait for.
+fn addTemplateCandidates(self: *ViewerPane, alloc: Allocator, rel: []const u8, job: *ViewerResourceServe.Job) void {
+    if (self.resources_dir) |root| job.addCandidate(content.candidateUnder(alloc, root, rel) catch null);
     const base = if (self.file_path) |p| content.baseDirectory(p) else null;
     if (base) |root| {
-        if (self.takeIfFile(alloc, content.candidateUnder(alloc, root, rel) catch null)) |hit| return hit;
-        if (self.takeIfFile(alloc, content.rootedCandidate(alloc, root, rel) catch null)) |hit| return hit;
+        job.addCandidate(content.candidateUnder(alloc, root, rel) catch null);
+        job.addCandidate(content.rootedCandidate(alloc, root, rel) catch null);
     }
-    return null;
 }
 
 fn takeIfFile(self: *ViewerPane, alloc: Allocator, candidate: ?[]u8) ?[]u8 {
@@ -8352,6 +8428,13 @@ pub fn wndProc(
         // The document read worker has a script (T3224), on the same terms.
         WM_APP_VIEWER_DOCUMENT => {
             self.completeDocument();
+            return 0;
+        },
+
+        // The resource worker has answers (T3245), on the same terms. One
+        // post may carry several, or none (an earlier post took them).
+        WM_APP_VIEWER_RESOURCE => {
+            self.completeResources();
             return 0;
         },
 

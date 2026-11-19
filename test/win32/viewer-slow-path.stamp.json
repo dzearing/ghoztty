@@ -1,0 +1,18 @@
+{
+    "guard":  "viewer-slow-path",
+    "script":  "test/win32/viewer-slow-path.ps1",
+    "generated":  "2026-11-19T04:24:03-08:00",
+    "commit":  "81a560bbc",
+    "uncommitted":  [
+                        "src/apprt/win32/viewer_slow_path.zig",
+                        "src/apprt/win32/ViewerDocumentRead.zig",
+                        "src/apprt/win32/ViewerResourceServe.zig",
+                        "test/win32/viewer-slow-path.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/viewer_slow_path.zig":  "c3a5a2d9a5e54282521b213f3e815e30f82722c2b5fe0b5cac22752278845734",
+                  "src/apprt/win32/ViewerDocumentRead.zig":  "ed0f1ccb5bf28afc624acab46dae0a584a438555b35645884b8ad39a33bb0c4d",
+                  "src/apprt/win32/ViewerResourceServe.zig":  "bd121e0ff837e006c5be318b0908551de2987af86c7312da37e0143a0fbcb2f8",
+                  "test/win32/viewer-slow-path.ps1":  "4a5a0ac38b934693518a0b2d023cbf6b4440442c2e2d7fadfea66ea48d1aa552"
+              }
+}

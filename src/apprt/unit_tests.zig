@@ -569,6 +569,10 @@ test {
     // (T3224), same no-OS-imports deal.
     _ = @import("win32/viewer_document.zig");
 
+    // The viewer slow-path test seam's parsing (T3245), same no-OS-imports
+    // deal.
+    _ = @import("win32/viewer_slow_path.zig");
+
     // Pure win32 viewer-on-glass rules — which pages go see-through over a
     // glass pane, and whose light/dark the page then follows (T1885), same
     // no-OS-imports deal.

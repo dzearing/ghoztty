@@ -4377,6 +4377,20 @@ $GuardTable = @(
             'test\win32\hidden-viewer.ps1'
         )
     },
+    # T3245: a viewer loading its document and every resource from a slow
+    # path never stalls the window's message loop (the reads run on workers,
+    # the requests parked on their deferrals); the inline control must stall.
+    [pscustomobject]@{
+        Name   = 'viewer-slow-path'
+        Script = 'test\win32\viewer-slow-path.ps1'
+        Stamp  = 'test\win32\viewer-slow-path.stamp.json'
+        Covers = @(
+            'src\apprt\win32\ViewerResourceServe.zig',
+            'src\apprt\win32\ViewerDocumentRead.zig',
+            'src\apprt\win32\viewer_slow_path.zig',
+            'test\win32\viewer-slow-path.ps1'
+        )
+    },
     # T1832: a window's own gradient - `+new-window --color=random`, the New
     # Window action, and the seed surviving a restart. The unit tests own the
     # palette maths; this row owns the claim that the right windows get one, the

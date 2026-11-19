@@ -629,6 +629,16 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the real byte <-> UTF-16 conversion, which every composer run including viewer-feedback-utf16.ps1's own default run uses; -BreakUtf16 is its teeth check (T1710)."
         },
+        "GHOZTTY_TEST_VIEWER_INLINE": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the viewer's document read and resource requests run on their workers, which arms A and B of viewer-slow-path.ps1 and every other viewer harness run under; set, the workers are refused and every read runs inline on the GUI thread (the pre-T3245 behavior) so arm C can prove the latency probe sees a stall. Debug builds only (T3245)."
+        },
+        "GHOZTTY_TEST_VIEWER_SLOW_MS": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = viewer file reads at disk speed, which every viewer harness except viewer-slow-path.ps1 runs under; set, every document read and resource read sleeps that long first, simulating a slow or network path wherever the read runs. Debug builds only (T3245)."
+        },
         "GHOZTTY_TEST_PRE_SWITCH": {
             "class": "fault",
             "unset": "shipped-elsewhere",
