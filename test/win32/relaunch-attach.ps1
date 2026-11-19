@@ -171,7 +171,7 @@ function Wait-Layout([string]$tag, [int]$want, [int]$leaves, [int]$timeoutSec = 
     while ((Get-Date) -lt $deadline) {
         $tree = Get-Tree $tag
         $last = All-Leaves $tree
-        if ((Windows-Of $tree).Count -eq $want -and $last.Count -eq $leaves -and
+        if (@(Windows-Of $tree).Count -eq $want -and $last.Count -eq $leaves -and
             @($last | Where-Object { -not $_.session_id }).Count -eq 0) { return , $last }
         Start-Sleep -Milliseconds 700
     }
@@ -236,11 +236,13 @@ function Start-App([string]$state, [string]$title, [string]$stderr, [int]$timeou
     $env:LOCALAPPDATA = $state
     $launchArgs = @('--window-width=100', '--window-height=30')
     if ($title) { $launchArgs = @("--title=$title") + $launchArgs }
+    # persistence: on (default) - the relaunch has to RESTORE what the first launch left.
     if ($stderr) { [void](Start-OnTestDesktop -Exe $Exe -Arguments $launchArgs -StdErr $stderr) }
+    # persistence: on (default) - same launch, no stderr capture.
     else { [void](Start-OnTestDesktop -Exe $Exe -Arguments $launchArgs) }
     $deadline = (Get-Date).AddSeconds($timeoutSec)
     while ((Get-Date) -lt $deadline) {
-        $app = @(Get-TestApps)
+        $app = Get-TestApps
         if ($app.Count -ge 1) {
             $rc = Run-Cli '+list --json' "$tmp\list-boot.json" 10
             if ($rc -eq 0 -and (Out-Text "$tmp\list-boot.json") -match '\S') { return [int]$app[0].ProcessId }

@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-19T09:26:41-08:00",
-    "commit":  "5f8a12dce",
+    "generated":  "2026-11-19T10:55:10-08:00",
+    "commit":  "b54aa4373",
     "uncommitted":  [
 
                     ],
@@ -1475,6 +1475,7 @@
                   "test/win32/rearrange-viewer.ps1":  "ee522f1930125af3207f34809aaf274f7d85e981e312a7cf575e1580d4c6a9ff",
                   "test/win32/rearrange-window-drop.ps1":  "722e98f630f17003e80b241a69b007f7a7c2eea559fccfce8c9c695ed6b5435e",
                   "test/win32/registration-sites.ps1":  "fc3d44c177c819f57a22fa300bd57eb68d88c88288e7d7c893a7bdba622ac660",
+                  "test/win32/relaunch-attach.ps1":  "b5712ab18886a13822ae055ea1c6f722b105cc9cded8a0833c708345f1bdf573",
                   "test/win32/relaunch-guard.ps1":  "57d4631599209336af68e48649fb30ad1da5246958c47a42a1604648586b9af9",
                   "test/win32/relay-account.ps1":  "c216b60c10aa37150bcfa292630ed4468f996ea5ed5145057c7628b08d96b6e5",
                   "test/win32/relay-signin-live.ps1":  "f35a640bd8f1bd3dfb8eec671e051d3c5d061026fd7609c62326d3cff96a02fe",
