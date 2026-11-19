@@ -60,8 +60,9 @@ pub const exp = struct {
     // agent-held pane showed against the same code running inside the
     // foreground app. `SetProcessInformation(ProcessPowerThrottling)` with the
     // EXECUTION_SPEED bit in `ControlMask` and clear in `StateMask` is the
-    // documented way to say "never throttle this one"; child processes inherit
-    // it, which is how the ConPTY's own conhost gets covered.
+    // documented way to say "never throttle this one". It is NOT inherited by
+    // child processes (T3239): each process is opted out on its own - see
+    // `os/power.zig`.
 
     pub const PROCESS_INFORMATION_CLASS = enum(c_int) {
         ProcessMemoryPriority = 0,
@@ -130,6 +131,12 @@ pub const exp = struct {
             lpSystemAffinityMask: *usize,
         ) callconv(.winapi) windows.BOOL;
         pub extern "kernel32" fn SetProcessInformation(
+            hProcess: windows.HANDLE,
+            ProcessInformationClass: PROCESS_INFORMATION_CLASS,
+            ProcessInformation: windows.LPVOID,
+            ProcessInformationSize: windows.DWORD,
+        ) callconv(.winapi) windows.BOOL;
+        pub extern "kernel32" fn GetProcessInformation(
             hProcess: windows.HANDLE,
             ProcessInformationClass: PROCESS_INFORMATION_CLASS,
             ProcessInformation: windows.LPVOID,

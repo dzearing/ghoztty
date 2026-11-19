@@ -167,6 +167,98 @@ const win_job = if (is_windows) struct {
     ) callconv(.winapi) BOOL;
     /// The OS process id behind a process HANDLE; 0 on failure.
     extern "kernel32" fn GetProcessId(Process: HANDLE) callconv(.winapi) DWORD;
+
+    /// JobObjectAssociateCompletionPortInformation (winnt.h JOBOBJECTINFOCLASS = 7).
+    const JobObjectAssociateCompletionPortInformation: c_int = 7;
+    const JOBOBJECT_ASSOCIATE_COMPLETION_PORT = extern struct {
+        CompletionKey: ?*anyopaque,
+        CompletionPort: ?HANDLE,
+    };
+    /// A process joined the job - by assignment or by being created by a
+    /// member. The pid arrives in the packet's lpOverlapped (winnt.h: 6).
+    const JOB_OBJECT_MSG_NEW_PROCESS: DWORD = 6;
+    const PROCESS_SET_INFORMATION: DWORD = 0x0200;
+    extern "kernel32" fn OpenProcess(
+        dwDesiredAccess: DWORD,
+        bInheritHandle: BOOL,
+        dwProcessId: DWORD,
+    ) callconv(.winapi) ?HANDLE;
+} else struct {};
+
+/// Opt every process the PTY job gains out of efficiency mode (T3239).
+///
+/// Windows classifies the programs a user runs in an agent-held pane as
+/// background work - nothing in their tree owns a window - and runs them in
+/// efficiency mode. The holder's own opt-out (`power.disableThrottling`) does
+/// not reach them: the state is not inherited (measured, see os/power.zig). A
+/// 7.7 MB burst from the program in the pane took 11-16 s against ~5.5 s in a
+/// local pane; opting the WRITER out alone brought it to 0.98x, conhost alone
+/// to 1.93x. Affinity is not touched: the shell keeps the whole machine
+/// (`power.allowAllCores`), this only stops the classifier clamping it.
+///
+/// The job already contains the shell and every descendant (kill-on-close,
+/// breakaway refused), and a job with a completion port posts
+/// JOB_OBJECT_MSG_NEW_PROCESS for each process as it joins - the shell itself
+/// included. So this is event-driven: one thread blocked in the port, no
+/// process-table walk, nothing at idle, and each process is opted out moments
+/// after it starts rather than on the next poll.
+///
+/// Best-effort throughout, like the job itself: any failure logs once and
+/// leaves processes in the "system decides" state every build before T3239 had.
+const QosWatch = if (is_windows) struct {
+    fn start(job: windows.HANDLE) void {
+        const port = windows.CreateIoCompletionPort(windows.INVALID_HANDLE_VALUE, null, 0, 1) catch |err| {
+            log.warn("PTY job QoS watch: no completion port ({}); pane programs keep the default power classification", .{err});
+            return;
+        };
+        // The thread first: an associated port whose packets nobody drains
+        // would grow by one per process the panes ever start.
+        const thread = std.Thread.spawn(thread_stack.config, run, .{port}) catch |err| {
+            log.warn("PTY job QoS watch: no thread ({}); pane programs keep the default power classification", .{err});
+            windows.CloseHandle(port);
+            return;
+        };
+        var assoc: win_job.JOBOBJECT_ASSOCIATE_COMPLETION_PORT = .{
+            .CompletionKey = null,
+            .CompletionPort = port,
+        };
+        if (win_job.SetInformationJobObject(
+            job,
+            win_job.JobObjectAssociateCompletionPortInformation,
+            &assoc,
+            @sizeOf(win_job.JOBOBJECT_ASSOCIATE_COMPLETION_PORT),
+        ) == 0) {
+            log.warn("PTY job QoS watch: port association failed (gle={d}); pane programs keep the default power classification", .{@intFromEnum(windows.kernel32.GetLastError())});
+            // Closing the port wakes the thread with a failure and it returns.
+            windows.CloseHandle(port);
+        }
+        // Lives for the process, like the job handle it serves.
+        thread.detach();
+    }
+
+    fn run(port: windows.HANDLE) void {
+        while (true) {
+            var msg: windows.DWORD = 0;
+            var key: usize = 0;
+            var ov: ?*windows.OVERLAPPED = null;
+            if (windows.kernel32.GetQueuedCompletionStatus(port, &msg, &key, &ov, windows.INFINITE) == 0) {
+                // A failure with no packet means the port itself is gone.
+                if (ov == null) return;
+                continue;
+            }
+            if (msg != win_job.JOB_OBJECT_MSG_NEW_PROCESS) continue;
+            optOut(@intCast(@intFromPtr(ov) & 0xffff_ffff));
+        }
+    }
+
+    fn optOut(pid: windows.DWORD) void {
+        // A process that already exited cannot be opened; nothing to do.
+        const h = win_job.OpenProcess(win_job.PROCESS_SET_INFORMATION, windows.FALSE, pid) orelse return;
+        defer windows.CloseHandle(h);
+        if (!internal_os.power.disableThrottlingFor(h)) {
+            log.debug("PTY job QoS watch: pid {d} not opted out (gle={d})", .{ pid, @intFromEnum(windows.kernel32.GetLastError()) });
+        }
+    }
 } else struct {};
 
 /// Process-global, lazily-initialized kill-on-close job handle. Created once on
@@ -197,6 +289,9 @@ const PtyJob = if (is_windows) struct {
         }
         // Hold the handle for the process lifetime — do NOT close it.
         handle = h;
+        // Before the first assignment, so the shell's own NEW_PROCESS packet
+        // is among the ones delivered (T3239).
+        QosWatch.start(h);
     }
 
     /// Create the job under the NAME the app's startup escape probes (T902), or
@@ -2304,6 +2399,43 @@ test "PtyChild (Windows): a ConPTY shell that exits on its own is reapable by tr
         // second exit, and must not lose this one.
         try testing.expectEqual(@as(?i64, c.code), pc.child().tryWait());
     }
+}
+
+test "PtyJob (Windows): the shell AND what it starts are opted out of efficiency mode (T3239)" {
+    // The opt-out is not inherited, so the job's NEW_PROCESS watch is the only
+    // thing that reaches a pane's programs. Both ways a process joins the job
+    // are covered here: the shell by assignment, the ping it runs by creation.
+    if (!is_windows) return error.SkipZigTest;
+    const alloc = testing.allocator;
+    var spawner = try PtySpawner.init(alloc);
+    defer spawner.deinit();
+
+    const pc = try spawner.spawnChild(.{ .rows = 24, .cols = 80, .command = "ping -n 30 127.0.0.1 >nul" });
+    defer pc.child().terminate();
+    if (PtyJob.get() == null) return error.SkipZigTest; // no job on this box: nothing to watch
+    const shell_pid: i64 = @intCast(reportedPid(pc.pid));
+
+    var shell_ok = false;
+    var child_ok = false;
+    var deadline = test_util.Deadline.start("the PTY job's watch to opt the shell and its ping out of power throttling");
+    while (!(shell_ok and child_ok)) {
+        shell_ok = internal_os.power.throttlingDisabled(pc.pid) orelse false;
+        child_ok = false;
+        if (proc.snapshotParents(alloc)) |m| {
+            var map = m;
+            defer map.deinit(alloc);
+            var it = map.iterator();
+            while (it.next()) |e| {
+                if (e.value_ptr.* != shell_pid) continue;
+                const h = win_job.OpenProcess(0x1000, windows.FALSE, @intCast(e.key_ptr.*)) orelse continue;
+                defer windows.CloseHandle(h);
+                if (internal_os.power.throttlingDisabled(h) orelse false) child_ok = true;
+            }
+        }
+        if (!(shell_ok and child_ok)) deadline.tick() catch break;
+    }
+    try testing.expect(shell_ok);
+    try testing.expect(child_ok);
 }
 
 test "PtySpawner: the agent's private control vars never reach a child's env" {

@@ -1965,7 +1965,10 @@ $GuardTable = @(
             'src\remote\agent\pty_holder_child.zig',
             'src\remote\agent\server.zig',
             'src\remote\agent\relay_perf.zig',
-            'src\remote\pipe_stream.zig'
+            'src\remote\pipe_stream.zig',
+            # T3239: the agent-held arm's 2-3x was the pane's programs running
+            # in efficiency mode; the opt-out that reaches them lives here.
+            'src\os\power.zig'
         )
     },
     [pscustomobject]@{

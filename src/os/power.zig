@@ -24,8 +24,16 @@
 //! means *disable throttling*, as distinct from clearing `ControlMask` too
 //! (which means "let the system decide", the default we are leaving).
 //!
-//! Child processes inherit the state, which is what makes one call at the top
-//! of a holder cover the conhost the ConPTY spawns underneath it.
+//! **Child processes do NOT inherit the state** (T3239, measured with
+//! `GetProcessInformation` on a live holder tree: the holder reads
+//! control=1/state=0, its conhost, shell and the shell's children all read
+//! control=0, "system decides"). So the holder's own call covers the holder and
+//! nothing else, and what the user runs in a persisted pane - the program whose
+//! output the pane is waiting on - was left to the classifier, which put it in
+//! efficiency mode: 11-16 s against a local pane's ~5.5 s for the same 7.7 MB
+//! burst, on Release as on Debug. `disableThrottlingFor` opts out one process by
+//! handle; the agent's PTY job calls it for every process the job gains
+//! (`pty_child.zig`, `PtyJob`), which is the only place that sees all of them.
 //!
 //! Everywhere else this is a no-op: macOS has no equivalent knob we want (a
 //! LaunchAgent-run daemon is not QoS-clamped the way an EcoQoS process is), and
@@ -47,8 +55,22 @@ const log = std.log.scoped(.os_power);
 /// asked.
 pub fn disableThrottling() void {
     if (comptime builtin.os.tag != .windows) return;
+    if (disableThrottlingFor(std.os.windows.GetCurrentProcess())) {
+        log.debug("power throttling disabled for this process", .{});
+    } else {
+        log.debug("could not opt out of power throttling (gle={d})", .{
+            @intFromEnum(std.os.windows.kernel32.GetLastError()),
+        });
+    }
+}
 
-    const windows = std.os.windows;
+/// `disableThrottling` for ANOTHER process, by a handle opened with
+/// `PROCESS_SET_INFORMATION` (T3239). The state is not inherited, so this is
+/// how a process tree gets covered: one call per member, as each appears.
+/// Returns whether the OS accepted it; a no-op returning false off Windows.
+pub fn disableThrottlingFor(process: if (builtin.os.tag == .windows) std.os.windows.HANDLE else void) bool {
+    if (comptime builtin.os.tag != .windows) return false;
+
     const exp = internal_os.windows.exp;
 
     var state: exp.PROCESS_POWER_THROTTLING_STATE = .{
@@ -59,19 +81,34 @@ pub fn disableThrottling() void {
         .StateMask = 0,
     };
 
-    const ok = exp.kernel32.SetProcessInformation(
-        windows.GetCurrentProcess(),
+    return exp.kernel32.SetProcessInformation(
+        process,
         .ProcessPowerThrottling,
         @ptrCast(&state),
         @sizeOf(exp.PROCESS_POWER_THROTTLING_STATE),
-    );
-    if (ok == 0) {
-        log.debug("could not opt out of power throttling (gle={d})", .{
-            @intFromEnum(windows.kernel32.GetLastError()),
-        });
-        return;
-    }
-    log.debug("power throttling disabled for this process", .{});
+    ) != 0;
+}
+
+/// What `disableThrottling[For]` left on a process: true when its
+/// EXECUTION_SPEED knob is explicitly "do not throttle" (control bit set, state
+/// bit clear). Null when the question cannot be asked - off Windows, or the
+/// query failed. For tests and diagnostics (T3239).
+pub fn throttlingDisabled(process: if (builtin.os.tag == .windows) std.os.windows.HANDLE else void) ?bool {
+    if (comptime builtin.os.tag != .windows) return null;
+    const exp = internal_os.windows.exp;
+    var state: exp.PROCESS_POWER_THROTTLING_STATE = .{
+        .Version = exp.PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+        .ControlMask = 0,
+        .StateMask = 0,
+    };
+    if (exp.kernel32.GetProcessInformation(
+        process,
+        .ProcessPowerThrottling,
+        @ptrCast(&state),
+        @sizeOf(exp.PROCESS_POWER_THROTTLING_STATE),
+    ) == 0) return null;
+    const bit = exp.PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+    return (state.ControlMask & bit) != 0 and (state.StateMask & bit) == 0;
 }
 
 
