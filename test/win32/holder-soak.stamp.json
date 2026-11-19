@@ -1,13 +1,13 @@
 {
     "guard":  "holder-soak",
     "script":  "test/win32/holder-soak.ps1",
-    "generated":  "2026-11-19T02:53:24-08:00",
-    "commit":  "3f47d8143",
+    "generated":  "2026-11-19T04:23:13-08:00",
+    "commit":  "ccea573ee",
     "uncommitted":  [
                         "src/remote/agent/pty_child.zig"
                     ],
     "files":  {
-                  "src/remote/agent/pty_child.zig":  "4d4d7f4a97be870e6baaaca025d15bcf24f31abc449b57e05e0448715efeef60",
+                  "src/remote/agent/pty_child.zig":  "daa02a675fa324add1a2d242084403bef24e82105bac13a24f4151a730435657",
                   "test/win32/holder-soak.ps1":  "a8c7eaa00a75aeb97f8436055214b4afc913f9af0f6f9c552f672cd42f4f30f6"
               }
 }
