@@ -106,6 +106,14 @@ pub const Options = struct {
     /// Ignored on the app-less paths (`showStandalone`) — opening a URL needs
     /// an `App`, and a link that does nothing is worse than no link.
     links: []const Link = &.{},
+    /// Optional LABELLED ROWS under the message (T1556) - Mac's About panel
+    /// `PropertyRow`s: a right-aligned label column and a left-aligned value
+    /// column, each value selectable so a commit or a path can be copied. The
+    /// About box used to print the same facts as one preformatted block, which
+    /// read as a diagnostic dump. BORROWED like `links`. At most `max_rows`;
+    /// a value wider than `max_row_value_dip` scrolls inside its cell rather
+    /// than widening the dialog off the screen.
+    rows: []const Row = &.{},
     /// Optional caption-sized secondary note under the check rows — Mac's
     /// wrapping caption label in the first-launch accessory (T600, the
     /// agent-config-write disclosure). Rendered in the caption ramp role and
@@ -141,6 +149,24 @@ pub const Link = struct {
     label: []const u16,
     url: []const u8,
 };
+
+/// One labelled row (`Options.rows`, T1556).
+pub const Row = struct {
+    label: [:0]const u16,
+    value: [:0]const u16,
+};
+
+/// Labelled-row capacity - the About box's eight.
+pub const max_rows = 8;
+
+/// The widest a row's value cell grows before it scrolls instead (DIPs).
+pub const max_row_value_dip: f32 = 520;
+
+/// Gap between the label column and the value column, between two rows, and
+/// between the message and the first row (DIPs).
+pub const row_col_gap_dip: f32 = 8;
+pub const row_gap_dip: f32 = 4;
+pub const rows_gap_dip: f32 = 12;
 
 /// Checkbox row capacity (two agent runtimes today; room to grow).
 pub const max_checks = 4;
@@ -240,6 +266,11 @@ link_ctls: [max_links]?w32.HWND = @splat(null),
 /// What those controls point at. Borrowed from the caller's `Options` for the
 /// life of the modal loop (which is the life of this struct).
 links: []const Link = &.{},
+/// The optional labelled rows (`Options.rows`), T1556: a right-aligned label
+/// STATIC and a read-only, selectable value EDIT per row, indexed like `rows`.
+row_labels: [max_rows]?w32.HWND = @splat(null),
+row_values: [max_rows]?w32.HWND = @splat(null),
+n_rows: usize = 0,
 icon_handle: ?w32.HICON,
 icon_rect: w32.RECT,
 default_cancel: bool,
@@ -516,6 +547,29 @@ pub fn linkRowWidth(widths: []const i32, gap: i32) i32 {
     return total + gap * @as(i32, @intCast(n - 1));
 }
 
+/// The labelled-row block's extent (T1556): both columns plus the gap between
+/// them, and every row plus the gaps between them. Pure - unit tested below.
+/// Zero by zero for no rows, so a dialog without rows is byte-identical.
+pub fn rowsExtent(label_w: i32, value_w: i32, row_h: i32, n: usize, col_gap: i32, row_gap: i32) struct { w: i32, h: i32 } {
+    const nr: i32 = @intCast(@min(n, max_rows));
+    if (nr == 0) return .{ .w = 0, .h = 0 };
+    return .{ .w = label_w + col_gap + value_w, .h = nr * row_h + (nr - 1) * row_gap };
+}
+
+/// Row `i`'s two cells, the block's top-left corner at (`left`, `top`). The
+/// label cell is the label column's full width (its text is drawn
+/// right-aligned inside it, so every label ends at the same x) and the value
+/// cell starts one gap after it, so every value starts at the same x. Pure -
+/// unit tested below.
+pub fn rowRects(left: i32, top: i32, label_w: i32, value_w: i32, row_h: i32, col_gap: i32, row_gap: i32, i: usize) struct { label: w32.RECT, value: w32.RECT } {
+    const y = top + @as(i32, @intCast(i)) * (row_h + row_gap);
+    const vx = left + label_w + col_gap;
+    return .{
+        .label = .{ .left = left, .top = y, .right = left + label_w, .bottom = y + row_h },
+        .value = .{ .left = vx, .top = y, .right = vx + value_w, .bottom = y + row_h },
+    };
+}
+
 /// Gap between two links in the row, in DIPs. Wide enough that "Docs" and
 /// "GitHub" read as two destinations rather than one phrase.
 pub const link_gap_dip: f32 = 16;
@@ -689,6 +743,11 @@ fn run(
     var links_w: i32 = 0;
     var links_h: i32 = 0;
     var link_widths: [max_links]i32 = @splat(0);
+    // The labelled rows (T1556): one width per column, one height per row.
+    const n_rows: usize = @min(opts.rows.len, max_rows);
+    var row_label_w: i32 = 0;
+    var row_value_w: i32 = 0;
+    var row_h: i32 = 0;
     {
         const hdc = w32.GetDC(null) orelse return fallback(owner, opts);
         defer _ = w32.ReleaseDC(null, hdc);
@@ -783,11 +842,35 @@ fn run(
             links_h = @max(links_h, r.bottom - r.top);
         }
         if (n_links > 0) links_w = linkRowWidth(link_widths[0..n_links], link_gap);
+
+        // Each column is as wide as its widest cell, so every label ends and
+        // every value starts at one x. A value past the cap (a long install
+        // path) scrolls inside its cell instead of pushing the dialog wider
+        // than a screen. A few pixels of slack per value: the edit control
+        // draws its caret one pixel past the last glyph.
+        for (opts.rows[0..n_rows]) |row| {
+            var lr: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+            _ = w32.DrawTextW(hdc, row.label.ptr, @intCast(row.label.len), &lr, w32.DT_CALCRECT | w32.DT_SINGLELINE | w32.DT_NOPREFIX);
+            var vr: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+            _ = w32.DrawTextW(hdc, row.value.ptr, @intCast(row.value.len), &vr, w32.DT_CALCRECT | w32.DT_SINGLELINE | w32.DT_NOPREFIX);
+            row_label_w = @max(row_label_w, lr.right - lr.left);
+            row_value_w = @max(row_value_w, (vr.right - vr.left) + px(4, scale));
+            row_h = @max(row_h, @max(lr.bottom - lr.top, vr.bottom - vr.top));
+        }
+        row_value_w = @min(row_value_w, px(max_row_value_dip, scale));
     }
+    // The rows ride in the message's band: the message, a gap, then the
+    // block, laid out as one content block so the icon centers against all
+    // of it and nothing in `layoutFor` has to know rows exist.
+    const msg_h = text_rect.bottom - text_rect.top;
+    const row_col_gap = px(row_col_gap_dip, scale);
+    const row_gap = px(row_gap_dip, scale);
+    const rows_ext = rowsExtent(row_label_w, row_value_w, row_h, n_rows, row_col_gap, row_gap);
+    const rows_span: i32 = if (rows_ext.h > 0) px(rows_gap_dip, scale) + rows_ext.h else 0;
     const l = layoutFor(
         scale,
-        text_rect.right - text_rect.left,
-        text_rect.bottom - text_rect.top,
+        @max(text_rect.right - text_rect.left, rows_ext.w),
+        msg_h + rows_span,
         has_icon,
         notes_h,
         n_checks,
@@ -868,12 +951,62 @@ fn run(
         l.text.left,
         l.text.top,
         l.text.right - l.text.left,
-        l.text.bottom - l.text.top,
+        // The message alone; the rows take the rest of the band.
+        msg_h,
         hwnd,
         null,
         hinstance,
         null,
     );
+
+    // Optional labelled rows (T1556). A failed create drops that cell, never
+    // the dialog: the facts are still worth showing in the cells that made it.
+    for (opts.rows[0..n_rows], 0..) |row, i| {
+        const rr = rowRects(
+            l.text.left,
+            l.text.top + msg_h + px(rows_gap_dip, scale),
+            row_label_w,
+            row_value_w,
+            row_h,
+            row_col_gap,
+            row_gap,
+            i,
+        );
+        self.row_labels[i] = w32.CreateWindowExW(
+            0,
+            std.unicode.utf8ToUtf16LeStringLiteral("STATIC"),
+            row.label.ptr,
+            w32.WS_CHILD | w32.WS_VISIBLE_STYLE | w32.SS_NOPREFIX | w32.SS_RIGHT,
+            rr.label.left,
+            rr.label.top,
+            rr.label.right - rr.label.left,
+            rr.label.bottom - rr.label.top,
+            hwnd,
+            null,
+            hinstance,
+            null,
+        );
+        // A read-only EDIT, not a STATIC: Mac's rows are selectable, and a
+        // commit sha or an install path is exactly what someone copies out of
+        // an About box. No border and no margins, so its text sits where the
+        // measurement put it. Not a Tab stop - the rows are facts, not
+        // controls, and the focus cycle stays links + buttons.
+        self.row_values[i] = w32.CreateWindowExW(
+            0,
+            std.unicode.utf8ToUtf16LeStringLiteral("EDIT"),
+            row.value.ptr,
+            w32.WS_CHILD | w32.WS_VISIBLE_STYLE | w32.ES_READONLY | w32.ES_AUTOHSCROLL,
+            rr.value.left,
+            rr.value.top,
+            rr.value.right - rr.value.left,
+            rr.value.bottom - rr.value.top,
+            hwnd,
+            null,
+            hinstance,
+            null,
+        );
+    }
+    self.n_rows = n_rows;
 
     // Optional checkbox rows (Mac's accessory checkboxes, T870).
     // BS_AUTOCHECKBOX toggles itself on click and Space, so no WM_COMMAND
@@ -1080,6 +1213,14 @@ fn run(
     }
     if (font) |f| {
         if (self.static) |s| _ = w32.SendMessageW(s, w32.WM_SETFONT, @intFromPtr(f), 1);
+        for (self.row_labels[0..self.n_rows], self.row_values[0..self.n_rows]) |ml, mv| {
+            if (ml) |h| _ = w32.SendMessageW(h, w32.WM_SETFONT, @intFromPtr(f), 1);
+            if (mv) |h| {
+                _ = w32.SendMessageW(h, w32.WM_SETFONT, @intFromPtr(f), 1);
+                // After the font: EM_SETMARGINS is measured in the font it has.
+                _ = w32.SendMessageW(h, w32.EM_SETMARGINS, w32.EC_LEFTMARGIN | w32.EC_RIGHTMARGIN, 0);
+            }
+        }
         for (self.link_ctls[0..self.links.len]) |maybe| if (maybe) |lc| {
             _ = w32.SendMessageW(lc, w32.WM_SETFONT, @intFromPtr(f), 1);
         };
@@ -1185,28 +1326,51 @@ fn fallback(owner: ?w32.HWND, opts: Options) Result {
     } else if (opts.style == .ok_cancel and opts.default_cancel) {
         flags |= w32.MB_DEFBUTTON2;
     }
-    // The note is a disclosure, not decoration (T600) — a fallback that
-    // dropped it would show a consent prompt missing its fine print, so it
-    // rides along as a trailing paragraph (or the message ships alone when
-    // the combined text cannot fit the stack buffer).
-    var buf: [1024:0]u16 = undefined;
-    const text_ptr: [*:0]const u16 = blk: {
-        const note = opts.note orelse break :blk opts.text.ptr;
-        const total = opts.text.len + 2 + note.len;
-        if (total > buf.len) break :blk opts.text.ptr;
-        @memcpy(buf[0..opts.text.len], opts.text);
-        buf[opts.text.len] = '\n';
-        buf[opts.text.len + 1] = '\n';
-        @memcpy(buf[opts.text.len + 2 ..][0..note.len], note);
-        buf[total] = 0;
-        break :blk @ptrCast(&buf);
-    };
+    var buf: [2048]u16 = undefined;
+    const text_ptr: [*:0]const u16 = if (fallbackText(&buf, opts.text, opts.rows, opts.note)) |t| t.ptr else opts.text.ptr;
     const r = w32.MessageBoxW(owner, text_ptr, opts.title, flags);
     if (alt != null) {
         if (r == w32.IDYES) return .alt;
         return if (r == w32.IDNO) .ok else .cancel;
     }
     return if (opts.style == .ok_only or r == w32.IDOK) .ok else .cancel;
+}
+
+/// The text the degraded system box shows: the message, then the labelled
+/// rows as `Label: value` lines (T1556), then the note. Pure - unit tested
+/// below. Null when the whole of it cannot fit `out`; the caller then ships
+/// the message alone.
+///
+/// The note is a disclosure, not decoration (T600) - a fallback that dropped
+/// it would show a consent prompt missing its fine print. The rows are the
+/// About box's whole content; a fallback About that dropped them would say
+/// "Ghoztty" and nothing about which build.
+pub fn fallbackText(out: []u16, text: []const u16, rows: []const Row, note: ?[]const u16) ?[:0]const u16 {
+    var n: usize = 0;
+    const put = struct {
+        fn put(o: []u16, i: *usize, part: []const u16) bool {
+            if (i.* + part.len >= o.len) return false;
+            @memcpy(o[i.*..][0..part.len], part);
+            i.* += part.len;
+            return true;
+        }
+    }.put;
+    const nl2 = std.unicode.utf8ToUtf16LeStringLiteral("\n\n");
+    const nl = std.unicode.utf8ToUtf16LeStringLiteral("\n");
+    const sep = std.unicode.utf8ToUtf16LeStringLiteral(": ");
+    if (!put(out, &n, text)) return null;
+    for (rows[0..@min(rows.len, max_rows)], 0..) |row, i| {
+        if (!put(out, &n, if (i == 0) nl2 else nl)) return null;
+        if (!put(out, &n, row.label)) return null;
+        if (!put(out, &n, sep)) return null;
+        if (!put(out, &n, row.value)) return null;
+    }
+    if (note) |t| {
+        if (!put(out, &n, nl2)) return null;
+        if (!put(out, &n, t)) return null;
+    }
+    out[n] = 0;
+    return out[0..n :0];
 }
 
 /// Nested modal message pump — the same shape MessageBoxW runs internally.
@@ -1306,10 +1470,22 @@ fn paintInto(self: *const ConfirmDialog, hdc: w32.HDC) void {
     }
 }
 
+fn isRowValue(self: *const ConfirmDialog, ctl: ?w32.HWND) bool {
+    const c = ctl orelse return false;
+    for (self.row_values[0..self.n_rows]) |maybe| if (maybe) |v| {
+        if (c == v) return true;
+    };
+    return false;
+}
+
 fn ownsHwnd(self: *const ConfirmDialog, hwnd: w32.HWND) bool {
     if (hwnd == self.hwnd or hwnd == self.ok_btn) return true;
     if (self.static) |s| if (hwnd == s) return true;
     if (self.note_static) |s| if (hwnd == s) return true;
+    // A clicked row value takes focus; Escape and Enter must still answer.
+    for (self.row_values[0..self.n_rows]) |maybe| if (maybe) |v| {
+        if (hwnd == v) return true;
+    };
     for (self.link_ctls[0..self.links.len]) |maybe| if (maybe) |lc| {
         if (hwnd == lc) return true;
     };
@@ -1593,6 +1769,10 @@ fn dialogWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callcon
             // ramp, everything else in the message color.
             const ctl: ?w32.HWND = @ptrFromInt(@as(usize, @bitCast(lparam)));
             const color = if (self.note_static != null and ctl == self.note_static)
+                p.secondary
+            else if (self.isRowValue(ctl))
+                // Mac's PropertyRow: the label in the body color, the value
+                // dimmed beside it (T1556).
                 p.secondary
             else
                 p.text;
@@ -2121,4 +2301,87 @@ test "linkIndexFor: the link id space misses every other control's" {
     try testing.expectEqual(@as(?usize, null), linkIndexFor(ID_ALT, 4));
     try testing.expectEqual(@as(?usize, null), linkIndexFor(100, 4));
     try testing.expectEqual(@as(?usize, null), linkIndexFor(100 + max_checks - 1, 4));
+}
+
+test "rowsExtent: no rows is nothing at all (T1556)" {
+    const e = rowsExtent(80, 300, 20, 0, 8, 4);
+    try testing.expectEqual(@as(i32, 0), e.w);
+    try testing.expectEqual(@as(i32, 0), e.h);
+}
+
+test "rowsExtent: both columns plus a gap; rows plus the gaps between them (T1556)" {
+    const e = rowsExtent(80, 300, 20, 3, 8, 4);
+    try testing.expectEqual(@as(i32, 388), e.w);
+    try testing.expectEqual(@as(i32, 3 * 20 + 2 * 4), e.h);
+}
+
+test "rowsExtent: a row count beyond capacity is clamped (T1556)" {
+    const e = rowsExtent(10, 10, 10, max_rows + 5, 0, 0);
+    try testing.expectEqual(@as(i32, max_rows * 10), e.h);
+}
+
+test "rowRects: every label ends and every value starts at one x (T1556)" {
+    var i: usize = 0;
+    while (i < 4) : (i += 1) {
+        const r = rowRects(16, 40, 80, 300, 20, 8, 4, i);
+        try testing.expectEqual(@as(i32, 96), r.label.right);
+        try testing.expectEqual(@as(i32, 104), r.value.left);
+        try testing.expectEqual(@as(i32, 404), r.value.right);
+        try testing.expectEqual(r.label.top, r.value.top);
+        try testing.expectEqual(r.label.bottom, r.value.bottom);
+    }
+}
+
+test "rowRects: rows stack without overlap and fill the extent exactly (T1556)" {
+    const n: usize = 5;
+    const e = rowsExtent(80, 300, 20, n, 8, 4);
+    var prev_bottom: i32 = 40;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const r = rowRects(16, 40, 80, 300, 20, 8, 4, i);
+        try testing.expect(r.label.top >= prev_bottom);
+        prev_bottom = r.label.bottom;
+        try testing.expect(r.value.right - 16 <= e.w);
+    }
+    try testing.expectEqual(@as(i32, 40) + e.h, prev_bottom);
+}
+
+test "rows grow the message band layoutFor is given, and stay inside it (T1556)" {
+    const scale: f32 = 1.5;
+    const msg_w: i32 = 200;
+    const msg_h: i32 = 40;
+    const cg = px(row_col_gap_dip, scale);
+    const rg = px(row_gap_dip, scale);
+    const e = rowsExtent(90, 420, 24, 8, cg, rg);
+    const span = px(rows_gap_dip, scale) + e.h;
+    const l = layoutFor(scale, @max(msg_w, e.w), msg_h + span, true, 0, 0, 0, 0, 0, false, false, false, 132);
+    const last = rowRects(l.text.left, l.text.top + msg_h + px(rows_gap_dip, scale), 90, 420, 24, cg, rg, 7);
+    try testing.expect(last.value.right <= l.text.right);
+    try testing.expect(last.value.bottom <= l.text.bottom);
+    try testing.expect(l.ok.top >= last.value.bottom);
+    try testing.expect(l.client_w >= l.text.left + e.w);
+}
+
+test "fallbackText: the rows ride along as Label: value lines (T1556)" {
+    const L = std.unicode.utf8ToUtf16LeStringLiteral;
+    var buf: [256]u16 = undefined;
+    const rows = [_]Row{
+        .{ .label = L("Version"), .value = L("Tip Release") },
+        .{ .label = L("Commit"), .value = L("8bf37b334") },
+    };
+    const got = fallbackText(&buf, L("Ghoztty"), &rows, L("fine print")).?;
+    try testing.expectEqualSlices(u16, L("Ghoztty\n\nVersion: Tip Release\nCommit: 8bf37b334\n\nfine print"), got);
+}
+
+test "fallbackText: no rows and no note is the message unchanged (T1556)" {
+    const L = std.unicode.utf8ToUtf16LeStringLiteral;
+    var buf: [64]u16 = undefined;
+    try testing.expectEqualSlices(u16, L("hello"), fallbackText(&buf, L("hello"), &.{}, null).?);
+}
+
+test "fallbackText: too long for the buffer is null, never truncated (T1556)" {
+    const L = std.unicode.utf8ToUtf16LeStringLiteral;
+    var buf: [8]u16 = undefined;
+    try testing.expect(fallbackText(&buf, L("hello"), &.{}, L("note")) == null);
+    try testing.expect(fallbackText(&buf, L("12345678"), &.{}, null) == null);
 }

@@ -349,6 +349,11 @@ test {
     // gone, for scripts that must not launch a browser. Pure std, every lane.
     _ = @import("win32/open_url_seam.zig");
 
+    // Pure win32 About-box row model (T1556): Version / Build / Commit and the
+    // Windows provenance as labelled rows, "Tip Release" for a branch build.
+    // Every lane, same no-OS-imports deal.
+    _ = @import("win32/about_rows.zig");
+
     // Pure win32 window-placement memory parse/format/clamp (T85), same
     // no-OS-imports deal.
     _ = @import("win32/window_memory.zig");

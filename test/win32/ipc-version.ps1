@@ -331,6 +331,48 @@ if (-not $sent) {
                 Assert "link stays inside the dialog" ($l.Left -ge $dr.Left -and $l.Right -le $dr.Right)
             }
 
+            # T1556: the facts are LABELLED ROWS, Mac's About layout - a
+            # right-aligned label STATIC and a read-only (selectable) value
+            # EDIT per row - not one preformatted text block. Pair each value
+            # with the label on its line, then read the build's real identity
+            # back out of the box.
+            $statics = @(Get-TestChildWindows -Window $dlg -Class 'Static')
+            $values = @(Get-TestChildWindows -Window $dlg -Class 'Edit')
+            $rowMap = @{}
+            $rowLabels = @()
+            foreach ($v in $values) {
+                $lab = $statics | Where-Object { $_.Top -eq $v.Top -and $_.Right -le $v.Left } | Select-Object -First 1
+                if ($null -eq $lab) { continue }
+                $name = Get-TestControlText -Control ([IntPtr]$lab.Hwnd)
+                $rowMap[$name] = Get-TestControlText -Control ([IntPtr]$v.Hwnd)
+                $rowLabels += $lab
+            }
+            "  rows: $(($rowMap.Keys | Sort-Object | ForEach-Object { "$_=$($rowMap[$_])" }) -join ' | ')"
+            Assert "About box lays its facts out as labelled rows" ($rowMap.Count -ge 7)
+            # A zig-out build is a branch build: Mac's words, not the raw id...
+            Assert "a tip build's Version row says 'Tip Release'" ($rowMap['Version'] -eq 'Tip Release')
+            # ...and the raw id is kept, in its own row, exactly as +list says it.
+            $wantVersion = "$($j.data.build.version)"
+            Assert "the Build row carries the real build id ($wantVersion)" ($wantVersion -and $rowMap['Build'] -eq $wantVersion)
+            Assert "the Commit row is the build's real commit ($expectCommit)" ($expectCommit -and $rowMap['Commit'] -eq $expectCommit)
+            # The Windows-only provenance keeps its place (T52/T1205).
+            Assert "the PID row is this process" ($rowMap['PID'] -eq "$($app.Pid)")
+            Assert "the Executable row is the zig-out exe" ($rowMap['Executable'] -eq $Exe)
+            Assert "the Mode row says Debug" ($rowMap['Mode'] -eq 'Debug')
+            Assert "the Started row has the stamp shape" ($rowMap['Started'] -match '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC$')
+            # Aligned: every label ends at one x and every value starts at one
+            # x - the columns are what make it read as rows.
+            $labelRights = @($rowLabels | ForEach-Object { $_.Right } | Sort-Object -Unique)
+            $valueLefts = @($values | ForEach-Object { $_.Left } | Sort-Object -Unique)
+            Assert "every row label ends at one x" ($labelRights.Count -eq 1)
+            Assert "every row value starts at one x" ($valueLefts.Count -eq 1)
+            foreach ($v in $values) {
+                Assert "row value stays inside the dialog" ($v.Left -ge $dr.Left -and $v.Right -le $dr.Right -and $v.Bottom -le $dr.Bottom)
+            }
+            # The link row still sits UNDER the rows (T714).
+            $lastRow = ($values | Measure-Object -Property Bottom -Maximum).Maximum
+            Assert "the link row sits under the rows" (@($links | Where-Object { $_.Top -lt $lastRow }).Count -eq 0)
+
             Send-TestWindowClose -Window $dlg | Out-Null
             Start-Sleep -Milliseconds 500
         }

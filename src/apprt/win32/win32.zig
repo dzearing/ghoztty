@@ -1731,6 +1731,12 @@ pub const ES_AUTOHSCROLL: u32 = 0x0080;
 pub const ES_MULTILINE: u32 = 0x0004;
 pub const ES_AUTOVSCROLL: u32 = 0x0040;
 pub const ES_WANTRETURN: u32 = 0x1000;
+// Selectable-but-not-editable value cells in a dialog's labelled rows (T1556).
+// A read-only edit asks its parent for WM_CTLCOLORSTATIC, not ...EDIT.
+pub const ES_READONLY: u32 = 0x0800;
+pub const EM_SETMARGINS: u32 = 0x00D3;
+pub const EC_LEFTMARGIN: usize = 0x0001;
+pub const EC_RIGHTMARGIN: usize = 0x0002;
 
 // Window styles for child windows
 pub const WS_CHILD: u32 = 0x40000000;

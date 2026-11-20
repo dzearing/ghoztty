@@ -85,6 +85,7 @@ const session_disconnect = @import("session_disconnect.zig");
 const provenance = @import("provenance.zig");
 const about_links = @import("about_links.zig");
 const open_url_seam = @import("open_url_seam.zig");
+const about_rows = @import("about_rows.zig");
 const color_math = @import("color_math.zig");
 const hero_snap_schedule = @import("hero_snap_schedule.zig");
 const busy_light = @import("busy_light.zig");
@@ -4777,23 +4778,24 @@ pub fn showAboutDialog(self: *Surface) void {
 
     const prov = provenance.collect(arena) catch return;
 
-    // Every line here is a fact about THIS process (T1205). The old box put
-    // the running build's version next to the ON-DISK file's mtime, so a
-    // window running yesterday's build read as freshly updated — the user
-    // checked About to confirm an install had worked and it told them the
-    // opposite of the truth. The file's date is still shown, but only inside
-    // the stale-build paragraph, where it is labelled as the other build's.
+    // The message is the name and Mac's tagline; the facts are LABELLED ROWS
+    // under it (T1556), the way Mac's About panel lays them out. A tip build's
+    // Version row says "Tip Release" and its raw build id moves to a Build
+    // row, so nothing the old text block said is lost.
+    //
+    // Every row is a fact about THIS process (T1205). The old box put the
+    // running build's version next to the ON-DISK file's mtime, so a window
+    // running yesterday's build read as freshly updated — the user checked
+    // About to confirm an install had worked and it told them the opposite of
+    // the truth. The file's date is still shown, but only inside the
+    // stale-build paragraph, where it is labelled as the other build's. That
+    // paragraph is the message's second half when it applies: it is the
+    // reason the box carries a warning icon and a Restart button, so it reads
+    // first, above the rows.
     const text = std.fmt.allocPrint(
         arena,
-        "Ghoztty {s}\n\nCommit: {s}\nMode: {s}\nRuntime: {s}\nPID: {d}\nStarted: {s}\n\nExecutable:\n{s}{s}",
+        "Ghoztty\nFast, native, feature-rich terminal emulator pushing modern features.{s}",
         .{
-            prov.version,
-            prov.commit,
-            prov.mode,
-            prov.runtime,
-            prov.pid,
-            prov.started,
-            prov.exe,
             if (prov.newer_build_installed) stale: {
                 break :stale std.fmt.allocPrint(
                     arena,
@@ -4804,6 +4806,29 @@ pub fn showAboutDialog(self: *Surface) void {
         },
     ) catch return;
     const text_w = std.unicode.utf8ToUtf16LeAllocZ(arena, text) catch return;
+
+    var row_store: [about_rows.max_rows]ConfirmDialog.Row = undefined;
+    const rows: []const ConfirmDialog.Row = rows: {
+        var built: [about_rows.max_rows]about_rows.Row = undefined;
+        const pid = std.fmt.allocPrint(arena, "{d}", .{prov.pid}) catch break :rows &.{};
+        const model = about_rows.build(.{
+            .version = prov.version,
+            .commit = prov.commit,
+            .mode = prov.mode,
+            .runtime = prov.runtime,
+            .pid = pid,
+            .started = prov.started,
+            .exe = prov.exe,
+        }, &built);
+        var n: usize = 0;
+        for (model) |m| {
+            const label = std.unicode.utf8ToUtf16LeAllocZ(arena, m.label) catch continue;
+            const value = std.unicode.utf8ToUtf16LeAllocZ(arena, m.value) catch continue;
+            row_store[n] = .{ .label = label, .value = value };
+            n += 1;
+        }
+        break :rows row_store[0..n];
+    };
 
     // The links this build earns (T714). Mac's About panel links its version
     // row at the release that carries it and its commit row at the fork's
@@ -4816,7 +4841,7 @@ pub fn showAboutDialog(self: *Surface) void {
         var built: [about_links.max_links]about_links.Link = undefined;
         // T1555: a Debug build may be told to build its links as a published
         // release would, so the `win-v` tag link is provable on the box. The
-        // provenance text above still names the build's own version.
+        // Version/Build rows above still name the build's own version.
         const link_version: []const u8 = if (open_url_seam.aboutVersion(arena)) |v| v else prov.version;
         const model = about_links.build(arena, link_version, prov.commit, &built) catch
             break :links &.{};
@@ -4845,6 +4870,7 @@ pub fn showAboutDialog(self: *Surface) void {
                 .icon = .warning,
                 .ok_label = std.unicode.utf8ToUtf16LeStringLiteral("Restart Now"),
                 .cancel_label = std.unicode.utf8ToUtf16LeStringLiteral("Later"),
+                .rows = rows,
                 .links = links,
             },
         );
@@ -4863,6 +4889,7 @@ pub fn showAboutDialog(self: *Surface) void {
             .text = text_w,
             .style = .ok_only,
             .icon = .info,
+            .rows = rows,
             .links = links,
         },
     );
