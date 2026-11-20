@@ -103,7 +103,13 @@ banner card `PaneGlass.bannerTint` 25%.
   paints no fill of its own on glass (`HeroPaneContainer.isGlass`). It
   turns on over a single pane too, and the window's pane sidebar is out of
   the window while it is on (`PaneSidebarState.isSuppressed` — that window
-  only; the shared hide/show flag is untouched). The carousel beside it
+  only; the shared hide/show flag is untouched). The carousel's preview
+  tiles are small cards in the panes' look (`CarouselTile`): a soft drop
+  shadow and a hairline rim (20% white, 40% hovered, 60% selected; black on
+  a light theme), and the selected tile backlit like a focused pane, its
+  light masked to outside the card. Their corner radius is their own, 5pt
+  (a pane's 11pt is too round at that size). Unselected pictures fade to
+  70%; the rim never fades. The carousel beside it
   starts **`macos-hero-carousel-width`** wide (points, default 130, clamped
   80–600, never more than 0.6 of the window — `HeroModeState.carouselWidth(in:)`),
   or at **`macos-hero-carousel-ratio`** of the window when that is set

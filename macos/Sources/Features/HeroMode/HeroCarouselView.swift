@@ -352,9 +352,33 @@ private class CarouselTile: NSView {
         }
     }
 
-    private let selectedColor = NSColor(red: 0.416, green: 0.416, blue: 1.0, alpha: 1.0)
-    private let hoverColor = NSColor(red: 0.545, green: 0.361, blue: 0.965, alpha: 1.0)
-    private let normalColor = NSColor(white: 0.5, alpha: 0.3)
+    /// Tiles are small cards in the panes' look (`PaneCard`, `PaneFocusGlow`):
+    /// raised on a soft drop shadow with a hairline rim, and the selected one
+    /// backlit, its light spilling past its edges onto the desk. Only the
+    /// radius is the tile's own — a pane's 11pt is too round for a rect this
+    /// small. (Tiles used to fade to 35% whole, rim and all, which left their
+    /// edges barely visible.)
+    static let cornerRadius: CGFloat = 5
+
+    /// The window's terminal background is light (the panes' `isLight`).
+    private var isLight: Bool {
+        guard let config = (NSApp.delegate as? AppDelegate)?.ghostty.config else { return false }
+        return OSColor(config.backgroundColor).isLightColor
+    }
+
+    private var rimColor: NSColor {
+        switch (isSelected || isHovered, isLight) {
+        case (true, false): return NSColor(white: 1, alpha: isSelected ? 0.6 : 0.4)
+        case (false, false): return NSColor(white: 1, alpha: 0.2)
+        case (true, true): return NSColor(white: 0, alpha: isSelected ? 0.35 : 0.25)
+        case (false, true): return NSColor(white: 0, alpha: 0.14)
+        }
+    }
+
+    /// The selected tile's backlight: a blurred ring of light around the
+    /// card, masked to outside it so the picture is never lightened.
+    private let glowLayer = CALayer()
+    private let glowMask = CAShapeLayer()
 
     var isSelected: Bool = false {
         didSet { updateAppearance() }
@@ -366,18 +390,28 @@ private class CarouselTile: NSView {
         self.pane = pane
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = 6
         layer?.masksToBounds = false
+
+        glowLayer.shadowColor = NSColor.white.cgColor
+        glowLayer.shadowOffset = .zero
+        glowLayer.shadowRadius = 4
+        glowLayer.shadowOpacity = 0
+        glowMask.fillRule = .evenOdd
+        glowLayer.mask = glowMask
+        layer?.addSublayer(glowLayer)
+
+        // The card: a drop shadow under it, like a pane's.
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowOffset = CGSize(width: 0, height: -3)
 
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.wantsLayer = true
-        imageView.layer?.cornerRadius = 6
+        imageView.layer?.cornerRadius = Self.cornerRadius
         imageView.layer?.masksToBounds = true
         addSubview(imageView)
 
         borderLayer.fillColor = nil
         borderLayer.lineWidth = 1
-        borderLayer.strokeColor = normalColor.cgColor
         layer?.addSublayer(borderLayer)
 
         let trackingArea = NSTrackingArea(
@@ -398,10 +432,19 @@ private class CarouselTile: NSView {
     override func layout() {
         super.layout()
         imageView.frame = bounds
+        let r = Self.cornerRadius
+        let card = CGPath(roundedRect: bounds, cornerWidth: r, cornerHeight: r, transform: nil)
         borderLayer.path = CGPath(
             roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
-            cornerWidth: 6, cornerHeight: 6, transform: nil
+            cornerWidth: r - 0.5, cornerHeight: r - 0.5, transform: nil
         )
+        layer?.shadowPath = card
+        glowLayer.frame = bounds
+        glowLayer.shadowPath = card
+        let outside = CGMutablePath()
+        outside.addRect(bounds.insetBy(dx: -30, dy: -30))
+        outside.addPath(card)
+        glowMask.path = outside
     }
 
     /// Capture this tile's thumbnail if the scheduler allows it.
@@ -539,24 +582,11 @@ private class CarouselTile: NSView {
     }
 
     private func updateAppearance() {
-        if isSelected {
-            borderLayer.strokeColor = selectedColor.cgColor
-            borderLayer.lineWidth = 2
-            layer?.shadowColor = selectedColor.cgColor
-            layer?.shadowRadius = 15
-            layer?.shadowOpacity = 0.4
-            layer?.shadowOffset = .zero
-            alphaValue = 1.0
-        } else if isHovered {
-            borderLayer.strokeColor = hoverColor.cgColor
-            borderLayer.lineWidth = 1
-            layer?.shadowOpacity = 0
-            alphaValue = 0.6
-        } else {
-            borderLayer.strokeColor = normalColor.cgColor
-            borderLayer.lineWidth = 1
-            layer?.shadowOpacity = 0
-            alphaValue = 0.35
-        }
+        let light = isLight
+        borderLayer.strokeColor = rimColor.cgColor
+        layer?.shadowRadius = 6
+        layer?.shadowOpacity = light ? 0.14 : 0.32
+        glowLayer.shadowOpacity = isSelected ? (light ? 0.9 : 0.55) : 0
+        imageView.alphaValue = isSelected ? 1.0 : (isHovered ? 0.85 : 0.7)
     }
 }
