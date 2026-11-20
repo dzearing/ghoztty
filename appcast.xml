@@ -1450,5 +1450,28 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.55.2/Ghoztty-1.55.2-arm64.dmg" type="application/octet-stream" sparkle:edSignature="amlo1mdMv0Xr6RAWy9s1gHneG4IeYBLgsH12SQKewDjHWdrp5Ool2rAqXIhLPk1OPty+ohneaS3CK3WsuBGRCw==" length="27793038" />
         </item>
+        <item>
+            <title>Version 1.56.0</title>
+            <sparkle:version>1.56.0</sparkle:version>
+            <sparkle:shortVersionString>1.56.0</sparkle:shortVersionString>
+            <pubDate>Fri, 20 Nov 2026 16:09:39 +0000</pubDate>
+            <description>{
+  "version": "1.56.0",
+  "sections": [
+    { "title": "Hero mode",
+      "items": [
+        { "title": "Previews look like your panes", "text": "The preview tiles beside the hero pane are small raised cards with clear edges, and the selected one is lit from behind like a focused pane." },
+        { "title": "Cmd-Shift-Up/Down stays in the window", "text": "In hero mode the chord steps through the current window's panes only, stops at the first and last pane, and does nothing over a single pane. It used to also jump to another window, in single-window mode as well." },
+        { "title": "The selected pane is never blank", "text": "A terminal picked in hero mode now always shows; it could come up empty and stop responding to the keys." }
+      ] },
+    { "title": "Stacked panes",
+      "items": [
+        { "title": "Minimized panes stay minimized when you click beside them", "text": "Clicking a link or anywhere in a web page next to a pane minimized into a blade no longer brings that pane back out." }
+      ] }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.56.0/Ghoztty-1.56.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="rYTpF3eKk3iGK2GSwIUghKvs3jxtoOcIL8iTgt9r9o1Ip93cZiAgk7NS/855ZQ02jpLKcoI5KFfyVbXi6wtGDg==" length="27795545" />
+        </item>
     </channel>
 </rss>
