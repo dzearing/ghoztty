@@ -1,14 +1,14 @@
 {
     "guard":  "harness-scope",
     "script":  "test/win32/harness-scope.ps1",
-    "generated":  "2026-11-19T22:31:27-08:00",
-    "commit":  "b62b93aab",
+    "generated":  "2026-11-20T05:59:20-08:00",
+    "commit":  "a4875a460",
     "uncommitted":  [
-                        "test/win32/persistence-flag.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
-                  "scripts/lib/HarnessFloor.ps1":  "71a29eb7163c22caf6188a0619f334025498fb841f113b1e5e35b7c0096f02d1",
+                  "scripts/lib/HarnessFloor.ps1":  "ac9e97685cf47e1d5c82bb79caf95addbf5fd2a2f60ed1795d0ce7bcafa9917b",
                   "test/win32/argv-hazard-audit.ps1":  "5e6d8382b90b67ac3acb5ef30dba27c926ea6d90087212da2202b482b5155fdb",
                   "test/win32/foreground-audit.ps1":  "02902ecd3e0a698d1d0e00a5856111d5ae90c38183bcde8e5a8b6ec82a30285b",
                   "test/win32/harness-scope.ps1":  "23c72eacc44b5ac667b1bf0755a9ca55452cb2ec4b20efc9a5b4a107e9565b7e",
