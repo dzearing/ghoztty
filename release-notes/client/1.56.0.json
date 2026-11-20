@@ -1,0 +1,9 @@
+{
+  "version": "1.56.0",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "Hero mode's preview tiles are raised cards now, and the selected one glows from behind." }
+      ] }
+  ]
+}
