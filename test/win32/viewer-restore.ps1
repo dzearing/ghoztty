@@ -81,6 +81,7 @@ param(
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 [void](Set-GhozttyTestAgentLineage -Tag 'viewrest')
 . (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
@@ -760,6 +761,10 @@ try {
         Say "  J7 diag: vrweb title='$(Get-ViewerTitle 'vrweb')' server log=$($hits.Count) last='$($hits | Select-Object -Last 1)'"
     }
 
+} catch {
+    # T1511: the foreground-leak checks below run after this try, so the try
+    # cannot END in `Complete-TestBody`. It SCORES its own throw instead.
+    Assert $false "the run threw and did not finish its sections: $($_.Exception.Message)"
 } finally {
     Say '== cleanup'
     if ($null -ne $script:vrJob) {
@@ -785,12 +790,11 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 }
 
 # --- stamp (T783) -----------------------------------------------------------
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
 if ($script:fail -eq 0 -and -not $NegativeControl) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard viewer-restore -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Say ''
-if ($script:fail -eq 0) { Say "ALL PASS ($script:pass)"; exit 0 }
-Say "$script:fail FAILURE(S) ($script:pass passed)"
-exit 1
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'VIEWER-RESTORE'

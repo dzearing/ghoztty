@@ -1,10 +1,10 @@
 {
     "guard":  "harness-scope",
     "script":  "test/win32/harness-scope.ps1",
-    "generated":  "2026-11-19T14:47:02-08:00",
-    "commit":  "0b839ffed",
+    "generated":  "2026-11-19T22:31:27-08:00",
+    "commit":  "b62b93aab",
     "uncommitted":  [
-                        "scripts/lib/HarnessFloor.ps1"
+                        "test/win32/persistence-flag.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -19,7 +19,7 @@
                   "test/win32/lib/PersistenceSweep.ps1":  "5192924c1de0c954af4e4ba3300744a40d0350353790d9b0de4a9a2a5eb3fe4f",
                   "test/win32/lib/UnrollCountAudit.ps1":  "6f237d65de90843000c81d510845ac188396d6f22dcd4c8889756cd9edbdab77",
                   "test/win32/neuter-audit.ps1":  "b2057597d46fad5597ff832b399d8ee9a585f9131fbfe7244b7cea9bf44bd928",
-                  "test/win32/persistence-flag.ps1":  "350ecc18cca2bf9e76106094fdecfbaeb48c581d8f9ab33edb25210dff0aa6f0",
+                  "test/win32/persistence-flag.ps1":  "080c1e0016cac90cc8916e711a408d7cf1b85856a3ac9fad9671c2780ee1d197",
                   "test/win32/unroll-count-audit.ps1":  "9dcfec7cb85733af607909d2f62e59631473868dfcf64b6fb4e0cfbf706680e2"
               }
 }

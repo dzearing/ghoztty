@@ -42,6 +42,7 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
@@ -395,6 +396,7 @@ public static class T524Job {
     Assert "F5 the relaunched app SURVIVED the job teardown" $survived
     $listF = (& $Exe +list 2>$null) | Out-String
     Assert "F6 ... and still answers +list" ($listF -match '\S')
+    Complete-TestBody  # T1039/T1511: the body reached its end; an unwound run never gets here
 } finally {
     Stop-TestApps
     $env:LOCALAPPDATA = $savedLocalAppData
@@ -415,6 +417,4 @@ if ($script:failures -eq 0) {
         update -Guard relaunch-guard -Repo $repoRoot 2>&1 | ForEach-Object { "  $_" }
 }
 
-if ($script:failures -eq 0) { Say "ALL PASS ($($script:passes) assertions)"; exit 0 }
-Say "$($script:failures) FAILURE(S) ($($script:passes) passed)"
-exit 1
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'RELAUNCH-GUARD'

@@ -50,6 +50,7 @@ param([string]$ExePath, [int]$DirPort = 0, [switch]$NegativeControl, [switch]$In
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 . (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 # T694: the port the OS just handed out, asserted free and printed, instead of a
 # number this script and some other one both guessed.
 $DirPort = Resolve-TestPort -Name 'directory' -Port $DirPort
@@ -293,6 +294,10 @@ try {
     Start-Sleep -Seconds 2
     Assert ((@(Get-Panels)).Count -eq 0) 'D the panel closed cleanly with a failed probe in it'
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'D the app survives that close'
+} catch {
+    # T1511: the leak checks below run after this try, so the try cannot END in
+    # `Complete-TestBody`. It SCORES its own throw instead.
+    Assert $false "the run threw and did not finish its sections: $($_.Exception.Message)"
 } finally {
     Remove-TestDesktop
     if ($null -ne $dirJob) { Stop-Job $dirJob -ErrorAction SilentlyContinue; Remove-Job $dirJob -Force -ErrorAction SilentlyContinue }
@@ -316,11 +321,11 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 # against the code as it now stands?". Until T1040 this harness was in no row,
 # so it had no stamp and an edit to the refused-dial arm made nothing due. A red
 # run leaves the stamp alone on purpose, and a -NegativeControl run never stamps.
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
 if ($script:fail -eq 0 -and -not $NegativeControl) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard activity-monitor-probe-fail -Repo $repo 2>&1 | ForEach-Object { Write-Host "  $_" }
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ACTIVITY MONITOR PROBE-FAIL ACCEPTANCE: ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'ACTIVITY MONITOR PROBE-FAIL ACCEPTANCE'

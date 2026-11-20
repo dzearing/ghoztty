@@ -50,6 +50,7 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 # T1494 (T691 tranche 2): this run's own AGENT lineage, minted ahead of the
 # first reset - a run that mints one after it has started an agent has two.
@@ -70,8 +71,9 @@ $script:failures = 0
 $script:launchSeq = 0
 $root = Join-Path $env:TEMP "ghoztty-session-relaunch-$PID"
 
+$script:passes = 0
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
 # Kill ONLY zig-out ghoztty/agent processes (never the user's release build).
@@ -613,11 +615,11 @@ Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 # scripts\guard-due.ps1 can say when it is due. Until this it had no row: the
 # divider assertions (A10/A11) sat red for three weeks because nothing ever made
 # anyone run it. Red leaves the stamp alone, so a failure stays due.
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
 if ($script:failures -eq 0) {
     $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'scripts\guard-due.ps1') `
         update -Guard session-relaunch-rerun -Repo $repoRoot 2>&1 | ForEach-Object { "  $_" }
 }
 
-if ($script:failures -eq 0) { "ALL PASS"; exit 0 }
-else { "$($script:failures) FAILURE(S)"; exit 1 }
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'SESSION-RELAUNCH'

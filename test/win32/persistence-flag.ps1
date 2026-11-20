@@ -51,6 +51,7 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 # T1494 (T691 tranche 2): this run's own AGENT lineage, minted ahead of the
 # first reset - a run that mints one after it has started an agent has two.
@@ -541,6 +542,10 @@ if ($scope.Scoped) {
         Assert ($wins.Count -eq 1) `
             "C3b the non-persistent launch comes up with exactly its own window (got $($wins.Count))"
 
+    } catch {
+        # T1511: the foreground-leak checks below run after this try, so the try
+        # cannot END in `Complete-TestBody`. It SCORES its own throw instead.
+        Assert $false "the run threw and did not finish its sections: $($_.Exception.Message)"
     } finally {
         Say '== cleanup'
         Remove-TestDesktop
@@ -569,13 +574,11 @@ if ($scope.Scoped) {
 # re-stamps. Nothing owned that question until now, which is how the undeclared
 # count went from 14 to 52 with no run in between. A scoped run (T1969) read
 # only the changed scripts, so it stamps nothing.
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
 if ($script:fail -eq 0 -and -not $scope.Scoped) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard persistence-flag -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Say ''
-$scopeLabel = Get-HarnessScopeLabel $scope
-if ($script:fail -eq 0) { Say "ALL PASS ($script:pass)$scopeLabel"; exit 0 }
-Say "$script:fail FAILURE(S) ($script:pass passed)$scopeLabel"
-exit 1
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label ('PERSISTENCE-FLAG' + (Get-HarnessScopeLabel $scope))

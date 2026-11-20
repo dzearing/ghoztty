@@ -74,6 +74,7 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
@@ -1184,15 +1185,15 @@ Stop-TestProcs
 Remove-TestDesktop | Out-Null
 $env:LOCALAPPDATA = $savedLocalAppData
 if ($null -ne $savedAgentBin) { $env:GHOSTTY_LOCAL_AGENT_BIN = $savedAgentBin }
-else { Remove-Item env:GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue }Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+else { Remove-Item env:GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue }
+Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 
 # A green run stamps the covered files (T783/T2876). Red leaves the stamp alone.
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
 if ($script:failures -eq 0) {
     $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard agent-recovery -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
-if ($script:failures -eq 0) { "AGENT-RECOVERY: ALL PASS ($script:passes)"; exit 0 }
-"AGENT-RECOVERY: $script:failures FAILURE(S) / $script:passes passed"
-exit 1
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'AGENT-RECOVERY'
