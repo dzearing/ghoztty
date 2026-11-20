@@ -160,6 +160,53 @@ function Stop-Everything {
     Stop-MarkerPings
     Start-Sleep -Milliseconds 500
 }
+# T1540: put the fixture images back for the next arm - WAITING for the file to
+# be free rather than copying blind. Stop-Process returns before a killed
+# process's image is unmapped, and Defender scans a freshly written .exe, so a
+# bare Copy-Item over the renamed image (or a silenced Remove-Item of the
+# canonical one) raced the previous arm's processes: alone there was slack, in a
+# suite sweep there was not, and the copy threw "being used by another process"
+# and unwound the body with everything past it unmeasured. Bounded; returns a
+# string naming what never came free ('' on success) so the caller ASSERTS it.
+function Wait-RunAgentsGone([int]$timeoutSec = 30) {
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $left = Get-RunAgentProcs
+        if ($left.Count -eq 0) { return $true }
+        foreach ($p in $left) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+        Start-Sleep -Milliseconds 300
+    }
+    return ((Get-RunAgentProcs).Count -eq 0)
+}
+function Invoke-FixtureFileOp([scriptblock]$op, [int]$timeoutSec = 30) {
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    $last = ''
+    while ($true) {
+        try { & $op; return '' } catch { $last = $_.Exception.Message }
+        if ((Get-Date) -ge $deadline) { return $last }
+        Start-Sleep -Milliseconds 400
+    }
+}
+# The arm's starting shape: the binary under test at the RENAMED name, nothing
+# at the canonical one.
+function Set-AgentFixture {
+    $why = @()
+    if (-not (Wait-RunAgentsGone 30)) {
+        $why += "agent processes still running from $agentDir"
+    }
+    $e = Invoke-FixtureFileOp { Copy-Item -LiteralPath $AgentExe -Destination $runningAgent -Force -ErrorAction Stop }
+    if ($e) { $why += "copy to .bak: $e" }
+    $e = Invoke-FixtureFileOp {
+        if (Test-Path -LiteralPath $canonicalAgent) { Remove-Item -LiteralPath $canonicalAgent -Force -ErrorAction Stop }
+    }
+    if ($e) { $why += "remove canonical: $e" }
+    return ($why -join '; ')
+}
+# The "delivery": a build lands at the canonical name.
+function Set-CanonicalAgent([string]$source) {
+    return (Invoke-FixtureFileOp { Copy-Item -LiteralPath $source -Destination $canonicalAgent -Force -ErrorAction Stop })
+}
+
 function Wait-NewAgent($excludePids, $timeoutSec = 45) {
     $excludePids = @($excludePids | ForEach-Object { [int]$_ })
     $deadline = (Get-Date).AddSeconds($timeoutSec)
@@ -431,7 +478,8 @@ try {
     # thread inside the running agent notices it, spawns it, waits for READY and
     # exits.
     Assert 'B0 premise: no handoff happened before the newer build existed' (Test-Alive $agentPidA)
-    Copy-Item -LiteralPath $AgentExe -Destination $canonicalAgent -Force
+    $fixB = Set-CanonicalAgent $AgentExe
+    Assert "B0b fixture: the newer build landed at the canonical name ($fixB)" ($fixB -eq '')
 
     $agentB = Wait-NewAgent @($agentPidA) 90
     $handedOff = ($null -ne $agentB)
@@ -562,8 +610,8 @@ try {
     # exits at once (so READY never comes) - which is exactly what a broken newer
     # build would do.
     Stop-Everything
-    Copy-Item -LiteralPath $AgentExe -Destination $runningAgent -Force
-    Remove-Item -LiteralPath $canonicalAgent -Force -ErrorAction SilentlyContinue
+    $fixD = Set-AgentFixture
+    Assert "D0 fixture: the agent images were reset once the previous arm's processes let go ($fixD)" ($fixD -eq '')
 
     $paneD = 't907d'
     $bootD = Start-AppAndWait 't907-rollback' $paneD 'd' 60
@@ -572,7 +620,8 @@ try {
     Assert 'D2 premise: a session manager is running' ($null -ne $agentD)
     $agentPidD = if ($agentD) { [int]$agentD.ProcessId } else { 0 }
 
-    Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\ping.exe') -Destination $canonicalAgent -Force
+    $fixD2 = Set-CanonicalAgent (Join-Path $env:SystemRoot 'System32\ping.exe')
+    Assert "D2b fixture: the broken stand-in landed at the canonical name ($fixD2)" ($fixD2 -eq '')
     # Give the supervisor several intervals to try, fail and roll back.
     Start-Sleep -Seconds 12
     Assert 'D3 the ORIGINAL manager is still running after a failed handoff' (Test-Alive $agentPidD)
@@ -585,8 +634,8 @@ try {
     Say "== E: lazy drain - a session the agent owns directly holds it back"
     # ========================================================================
     Stop-Everything
-    Copy-Item -LiteralPath $AgentExe -Destination $runningAgent -Force
-    Remove-Item -LiteralPath $canonicalAgent -Force -ErrorAction SilentlyContinue
+    $fixE = Set-AgentFixture
+    Assert "E0 fixture: the agent images were reset once the previous arm's processes let go ($fixE)" ($fixE -eq '')
     # Holder-backed spawning OFF: the agent owns this session's ConPTY itself,
     # and a ConPTY cannot be carried across a process boundary at any price.
     $env:GHOZTTY_AGENT_PTY_HOLDER = '0'
@@ -604,7 +653,8 @@ try {
     Assert 'E4 +sessions --agent reports the handoff as DRAINING and names the count' (
         $null -ne $repE -and [string]$repE.handoff -eq 'draining' -and [int]$repE.legacy_sessions -ge 1)
 
-    Copy-Item -LiteralPath $AgentExe -Destination $canonicalAgent -Force
+    $fixE2 = Set-CanonicalAgent $AgentExe
+    Assert "E4b fixture: the newer build landed at the canonical name ($fixE2)" ($fixE2 -eq '')
     Start-Sleep -Seconds 12
     Assert 'E5 the handoff WAITED - the same manager is still serving' (Test-Alive $agentPidE)
     Assert 'E6 no successor was spawned while a legacy session was live' (

@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-20T09:55:09-08:00",
-    "commit":  "01a4f9d5f",
+    "generated":  "2026-11-20T10:01:56-08:00",
+    "commit":  "38347b721",
     "uncommitted":  [
-
+                        "test/win32/agent-handoff.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -24,7 +24,7 @@
                   "test/win32/agent-attach-refused.ps1":  "dd2dae2e4953a7c9b46412f478497902684f3631eed9ab474f1fac65c39c358a",
                   "test/win32/agent-autostart.ps1":  "b8a48f7105cfb62727fca90f7405a45d6e25341087a4bfe9d8eea07cb7aa4254",
                   "test/win32/agent-first-answer.ps1":  "9c9f092829b9334f23e2bbd700cd98339d2946cce8757548fa9a32b5191e9a3d",
-                  "test/win32/agent-handoff.ps1":  "6ccd1314241e48120a71319b2782aec34e4ba29cbb8dcef144d4253fae43aa1f",
+                  "test/win32/agent-handoff.ps1":  "48668cf4b8508b962ab826e57b3b8a661e0029ff3f4e6186124efba812e711e9",
                   "test/win32/agent-handoff-rename.ps1":  "e92bac83fcbde3a3ae3a134ee6227ebfabe1ecfe84b69027c9ed2439ade6d06e",
                   "test/win32/agent-instance-lineage.ps1":  "ee821ee2c358468422cc619b5dab844c35ab3aa4f73d229ae7051a45966e314f",
                   "test/win32/agent-integrations.ps1":  "2b8083f671e2e50fc51f87896710960a8bfb61a737f256676a43f6c191fa83bd",
@@ -470,7 +470,7 @@
                   "test/win32/release-artifacts.ps1":  "a831b85c806498c3b0b1c69a0d0affb104d7b790ea631f7ae3e19c0790c1d46f",
                   "test/win32/release-parity.ps1":  "92babe2c0e154c766dd02f9578073f6a04ec281ee706aa8a8dc83c505d579f9f",
                   "test/win32/release-symbols.ps1":  "7c1a87e8cf563ea02c3f1e97d098729af03ddafd75144ce221afb945fc0fb862",
-                  "test/win32/remote-disconnect.ps1":  "b028ff3675031fb478027e7b9010f1a39e6f3cf49fb56ca146a0d1bd580b2d59",
+                  "test/win32/remote-disconnect.ps1":  "27bb610c33deb8f236a52727afe23a6276c5659d4688a6b334481e43ad2794a7",
                   "test/win32/remote-effects.ps1":  "8d7891b2f3cc9c874d19063cdb28864ebb6139db5e98d26ab1c2597e673f33bc",
                   "test/win32/remote-inherit.ps1":  "51c3fd032cd9d40bd1318c0fe69c670dab65756103b4cf02cffe836c9009089a",
                   "test/win32/remote-pill.ps1":  "f5c2447debb4dc2867a0ae2b54f77acc20f8b4f8e562c3cb7cb305d60268e015",
