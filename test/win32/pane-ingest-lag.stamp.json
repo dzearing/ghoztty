@@ -1,16 +1,16 @@
 {
     "guard":  "pane-ingest-lag",
     "script":  "test/win32/pane-ingest-lag.ps1",
-    "generated":  "2026-11-19T16:49:17-08:00",
-    "commit":  "799add52b",
+    "generated":  "2026-11-19T17:52:53-08:00",
+    "commit":  "194d44ecb",
     "uncommitted":  [
-                        "src/remote/inbound_ring.zig"
+
                     ],
     "files":  {
-                  "src/remote/inbound_ring.zig":  "bcefeba18448d822cbbeab3df6dfcaf2b701777cd271fc1d5787a59800ab9caf",
+                  "src/remote/inbound_ring.zig":  "a9c5f6f2de857b51aee8f335ca2a5c6afcd3f7d2268462a71f1c18f7cc64bc3a",
                   "src/renderer/State.zig":  "81718b490fbd482acdd8ccc052b635647586b43b7324d7c3a80b3de2fdc4ea14",
                   "src/termio/Exec.zig":  "7eb306886888e1f97fd44bbf74f39d67a41d73758c6a4406d93609a8eb60d001",
-                  "src/termio/Remote.zig":  "a4e0a4b236c6f5a7a7cafc3b5436290e47f161101176e65aa898d17859fae3ff",
+                  "src/termio/Remote.zig":  "5c2fc604fdd30978498fcaef567793262c7d8234d6796022faa161a87014df46",
                   "test/win32/pane-ingest-lag.ps1":  "1edc18cdbb6b7cf3450ee030f4a674d3a94e77b7d96a63a70e4a3d9197616dcf"
               }
 }
