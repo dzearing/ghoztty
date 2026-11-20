@@ -1,0 +1,11 @@
+{
+  "version": "1.55.10",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "Five more files' tests report their failure instead of hanging on a thread they never joined." },
+        { "text": "A pane whose session another window takes now says so, and can no longer type into it." },
+        { "text": "The last zig tests that could hang on an unjoined thread now report their failure." }
+      ] }
+  ]
+}

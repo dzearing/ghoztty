@@ -1,0 +1,18 @@
+{
+  "version": "1.55.10",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "The dashboard shows a blocked loop within one five-minute check instead of 45+ minutes later." },
+        { "text": "Scripts that delete downloaded or unpacked folders now use the delete a Mac filename cannot defeat." },
+        { "text": "A test that stops its own terminal is confirmed not to be reported as a crash." },
+        { "text": "+read --help now says a line is a logical line, and why a full-width row can come back glued to the next." },
+        { "text": "A CLI verb that cannot read Ghoztty's reply now says what it got, not a ten-digit number." },
+        { "text": "The repo's copy of the website front page matches the live site again." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "Settings on Windows draws a section's footer line under its rows, as Mac does." }
+      ] }
+  ]
+}
