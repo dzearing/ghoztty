@@ -62,6 +62,9 @@ $env:GHOZTTY_PIPE_SUFFIX = "-focusdefertest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 function Assert([bool]$cond, [string]$label) {
@@ -259,6 +262,10 @@ $floodEnd = Get-FloodCounter
 Assert ($floodEnd -gt $floodStart) "flood was still producing across the assertions ($floodStart -> $floodEnd)"
 Assert ($floodEnd -gt 0 -and $floodEnd -lt 150000) "flood had not run out before the assertions ended (counter $floodEnd)"
 
+} catch {
+    # T1511: the foreground-leak checks below are part of this run too, so this
+    # try cannot END in `Complete-TestBody`. It SCORES its own throw instead.
+    Assert $false "the run threw and did not finish its sections: $($_.Exception.Message)"
 } finally {
     Write-Host '== teardown'
     # Read the launched pids BEFORE cleanup: Remove-TestDesktop empties the
@@ -279,6 +286,8 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($leaked.Count -eq 0) 'no test-desktop app ever became foreground on the interactive desktop'
 }
 
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
+
 # A green run stamps the covered files (T1309) so guard-due can answer "has this
 # harness been run against the code as it now stands?". Red leaves the stamp
 # alone - red stays due - and so do both negative controls, whose whole point
@@ -289,5 +298,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl -and -not $NegativeControlBudg
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($($script:pass) assertions)"; exit 0 }
-else { Write-Host "$($script:fail) FAILURE(S) ($($script:pass) passed)" -ForegroundColor Red; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'FOCUS-DEFER'

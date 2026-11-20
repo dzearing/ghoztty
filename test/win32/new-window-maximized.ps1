@@ -43,6 +43,8 @@ if ($ExePath) { $exe = $ExePath }
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 Set-GhozttyTestIsolation -Tag 't2342max' | Out-Null
 
 $script:pass = 0
@@ -164,6 +166,11 @@ try {
     }
     Remove-Item -Recurse -Force $fakeLocal -ErrorAction SilentlyContinue
 }
+catch {
+    # T1511: the foreground-leak check below is part of this run too, so this
+    # try cannot END in `Complete-TestBody`. It SCORES its own throw instead.
+    Assert $false "the run threw and did not finish its sections: $($_.Exception.Message)"
+}
 finally {
     Reset-GhozttyTestState -Exe $exe | Out-Null
     Remove-TestDesktop
@@ -174,6 +181,8 @@ $leaked = @(Get-TestLaunchedPids | Where-Object { $fgSeen -contains $_ })
 Assert ($leaked.Count -eq 0) `
     'no test-desktop app ever became foreground on the interactive desktop'
 
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
+
 # --- stamp (T783) ----------------------------------------------------------
 if ($script:fail -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
@@ -181,6 +190,4 @@ if ($script:fail -eq 0) {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red }
-exit ([int]($script:fail -gt 0))
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'NEW-WINDOW-MAXIMIZED'

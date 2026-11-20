@@ -57,6 +57,9 @@ Remove-Item $errlog -Force -ErrorAction SilentlyContinue
 Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 $script:skipped = 0
@@ -269,6 +272,11 @@ try {
 
     Assert (-not ($appA.Process -and $appA.Process.HasExited)) 'no crash across the walk'
 }
+catch {
+    # T1511: the foreground-leak checks below are part of this run too, so this
+    # try cannot END in `Complete-TestBody`. It SCORES its own throw instead.
+    Assert $false "the run threw and did not finish its sections: $($_.Exception.Message)"
+}
 finally {
     if ($appPid -ne 0) { Stop-Process -Id $appPid -Force -ErrorAction SilentlyContinue }
     Stop-RepoInstances
@@ -281,6 +289,8 @@ $leaked = @($fgSeen | Where-Object { $launched -contains $_ })
 Assert ($fgSeen.Count -gt 0) 'the foreground watcher actually sampled (negative control)'
 Assert ($leaked.Count -eq 0) 'no test-desktop app ever became foreground on the interactive desktop'
 
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
+
 # A clean green run stamps this harness's guard row (scripts\guard-due.ps1).
 if ($script:fail -eq 0 -and -not $NegativeControl) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
@@ -288,10 +298,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ''
-if ($script:fail -gt 0) {
-    Write-Host "$($script:fail) FAILURE(S) ($($script:pass) assertions passed)"
-    exit 1
-} else {
-    Write-Host "ALL PASS ($($script:pass) assertions)"
-    exit 0
-}
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'GOTO-WINDOW'

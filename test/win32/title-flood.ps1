@@ -42,6 +42,9 @@ $errlog = Join-Path $env:TEMP "ghoztty-title-flood-$PID.log"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 Add-Type -Namespace T2428 -Name Win -MemberDefinition @'
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
 '@
@@ -160,6 +163,8 @@ finally {
     Remove-TestDesktop
 }
 
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
+
 # --- stamp (T783) ----------------------------------------------------------
 # Only a clean green run of the repo build, never a negative control.
 if ($script:fail -eq 0 -and -not $ExePath) {
@@ -167,6 +172,4 @@ if ($script:fail -eq 0 -and -not $ExePath) {
         update -Guard title-flood -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($($script:pass) checks)"; exit 0 }
-Write-Host "$($script:fail) FAILURE(S) ($($script:pass) passed)"
-exit 1
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'TITLE-FLOOD' -Unit 'checks'

@@ -50,6 +50,9 @@ $errlog = Join-Path $env:TEMP "ghoztty-hidden-new-pane-$PID.log"
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\PaneCapture.ps1')
 
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 function Assert([bool]$cond, [string]$label) {
@@ -216,11 +219,9 @@ $fgSeen = @(Stop-TestForegroundWatch)
 $leaked = @(Get-TestLaunchedPids | Where-Object { $fgSeen -contains $_ })
 Assert ($leaked.Count -eq 0) "no test-desktop app ever became foreground on the interactive desktop (saw $($leaked -join ','))"
 
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
 if ($script:fail -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard hidden-new-pane -Repo $repo 2>&1 | ForEach-Object { "  $_" }
-    Write-Host "ALL PASS ($($script:pass) passed)"
-    exit 0
 }
-Write-Host "$($script:fail) FAILURE(S) ($($script:pass) passed)"
-exit 1
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'HIDDEN-NEW-PANE'

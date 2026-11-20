@@ -1,8 +1,8 @@
 {
     "guard":  "viewer-feedback-utf16",
     "script":  "test/win32/viewer-feedback-utf16.ps1",
-    "generated":  "2026-11-11T00:45:54-08:00",
-    "commit":  "f21e0360e",
+    "generated":  "2026-11-19T21:31:00-08:00",
+    "commit":  "86892aa9c",
     "uncommitted":  [
                         "test/win32/viewer-feedback-utf16.ps1"
                     ],
@@ -14,6 +14,6 @@
                   "src/viewer/composer.js":  "ba5e2801f2702309b5707497de1ab122b7837da482bf6c15919ed947c8b87eb5",
                   "test/win32/lib/ComposerSurface.ps1":  "7edd6dccc01fa8654f186ad97e64fb13bd9199305aa0424aebfbe7537e39d287",
                   "test/win32/lib/WebViewCdp.ps1":  "694f3e4f7852950d38ca69bcd317b75b1797f364c7f41fa5c23ed3cb56abd5fe",
-                  "test/win32/viewer-feedback-utf16.ps1":  "0aaa020198a8ec6d1e17e651ee29e7540b3f9f1afc1b501718898ddbe8b8582d"
+                  "test/win32/viewer-feedback-utf16.ps1":  "0d062a2a5601257861deed4400ac7fd14666a1b6cdcd3d03f414f120bccad954"
               }
 }
