@@ -78,6 +78,9 @@ $Port = Resolve-TestPort -Name 'agent' -Port $Port
 # body that unwinds before `Complete-TestBody` may not print a pass, and the
 # guard-stamping child below reads the same state and refuses to write.
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+# T1533: Get-PaneShellPids (section F asks the app which shell its pane owns)
+# and Get-DescendantPids (with the T1840 pid-reuse guard).
+. (Join-Path $PSScriptRoot 'lib\PaneIdle.ps1')
 
 Assert-GhozttyIsolatedBuild -Exe $Exe | Out-Null
 [void](Set-GhozttyTestIsolation -Tag 'remdisc')
@@ -92,33 +95,6 @@ $WM_APP_SHIFT_CLOSE = 0x8028
 
 function Stop-Everything {
     [void](Reset-GhozttyTestState -Exe $Exe -SettleMs 800)
-}
-
-# Every live descendant pid of $Root, from the OS process table.
-function Get-DescendantPids([int]$Root) {
-    $all = Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, Name
-    $byParent = @{}
-    foreach ($p in $all) {
-        $key = [int]$p.ParentProcessId
-        if (-not $byParent.ContainsKey($key)) { $byParent[$key] = @() }
-        $byParent[$key] += $p
-    }
-    $out = @()
-    $queue = New-Object System.Collections.Queue
-    $queue.Enqueue($Root)
-    $seen = @{}
-    while ($queue.Count -gt 0) {
-        $cur = [int]$queue.Dequeue()
-        if ($seen.ContainsKey($cur)) { continue }
-        $seen[$cur] = $true
-        foreach ($child in $byParent[$cur]) {
-            $out += $child
-            $queue.Enqueue([int]$child.ProcessId)
-        }
-    }
-    # Plain `return`: `return ,$out` would wrap an EMPTY array in a one-element
-    # array, so `@(...)` counts 1 where there are none (PS 5.1).
-    return $out
 }
 
 # The per-session PTY HOLDER processes (`ghoztty-agent.exe --pty-host`, T905):
@@ -454,13 +430,21 @@ try {
     Assert ($surface -ne [IntPtr]::Zero) 'F: the local window has a terminal surface'
     if ($surface -eq [IntPtr]::Zero) { exit 1 }
 
-    # With session-persistence off the pane's shell is a direct child of the
-    # app, so the process table names it without asking the app anything.
+    # The pane's shell, as the APP names it (T1533). This used to take the first
+    # cmd/powershell/pwsh among the app's descendants, and the app can have more
+    # than one (the job-escape shell hop): on 2026-09-13 it picked one
+    # whose subtree stayed empty while ping ran under the real shell, so setup
+    # died with "0 descendants" twice running. `+list --json` reports the leaf's
+    # own pid, which is the only answer that cannot pick the wrong process.
     $localShell = 0
-    foreach ($p in (Get-DescendantPids $g.Pid)) {
-        if ($p.Name -match '^(cmd|powershell|pwsh)\.exe$') { $localShell = [int]$p.ProcessId; break }
+    $paneShells = @()
+    for ($t = 0; $t -lt 25 -and $paneShells.Count -eq 0; $t++) {
+        $paneShells = @(Get-PaneShellPids $Exe)
+        if ($paneShells.Count -eq 0) { Start-Sleep -Milliseconds 400 }
     }
-    Assert ($localShell -gt 0) "F: the local pane has a shell process (pid $localShell)"
+    Assert ($paneShells.Count -eq 1) "F: the app reports exactly one pane shell (got $($paneShells.Count): $($paneShells -join ', '))"
+    if ($paneShells.Count -ge 1) { $localShell = [int]$paneShells[0] }
+    Assert ($localShell -gt 0 -and (Test-PidAlive $localShell)) "F: the local pane has a live shell process (pid $localShell)"
     if ($localShell -le 0) { exit 1 }
 
     Send-TestText -Window $g.Top -Target $surface -Text 'ping -n 100 127.0.0.1' | Out-Null
