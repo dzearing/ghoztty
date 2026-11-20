@@ -224,6 +224,91 @@ try {
     Check 'C9 an unknown guard name is an error, not a pass' `
         ($r.Exit -eq 2 -and $r.Text -match 'unknown guard') "exit=$($r.Exit): $($r.Text)"
 
+    # --- CI. a comment is not code (T1521) --------------------------------
+    # The guard-due row covers two named files and no wildcard, so it is the
+    # comment-insensitive shape; go-loop (a wildcard row) is the byte-exact one
+    # and B6 above already proves a comment-only edit still fires it. The base
+    # file holds every trap the rule has to step around: a `#` inside a quoted
+    # string, a `#` inside a here-string body, and a marker comment a sweep
+    # reads.
+    Write-Host "`n-- CI. comment-only edits (T1521) --"
+    $ciBase = @(
+        "param([string]`$Mode = 'a')",
+        "`$x = 'not # a comment'",
+        "`$h = @`"",
+        "here-string body # not a comment either",
+        "`"@",
+        "Write-Output `$x # trailing note",
+        "# persistence: none",
+        ""
+    ) -join "`n"
+    Set-FixtureFile 'scripts\guard-due.ps1' $ciBase
+    Set-FixtureFile 'test\win32\guard-due.ps1' "Write-Output 'fake gate harness'`n"
+    $ciStamp = Join-Path $Fixture 'test\win32\guard-due.stamp.json'
+    function Test-CiEdit([string]$name, [string]$text, [string]$expect) {
+        Set-FixtureFile 'scripts\guard-due.ps1' $text
+        $rr = Invoke-Due check -Guard 'guard-due'
+        Set-FixtureFile 'scripts\guard-due.ps1' $ciBase
+        $ok = if ($expect -eq 'current') {
+            $rr.Exit -eq 0 -and $rr.Text -match 'GUARD CURRENT guard-due'
+        } else {
+            $rr.Exit -eq 1 -and $rr.Text -match 'GUARD DUE guard-due' -and $rr.Text -match 'changed\s+scripts/guard-due\.ps1'
+        }
+        Check $name $ok "exit=$($rr.Exit): $($rr.Text)"
+    }
+    $r = Invoke-Due update -Guard 'guard-due'
+    $ciJ = $null
+    try { $ciJ = ([System.IO.File]::ReadAllText($ciStamp) | ConvertFrom-Json) } catch { }
+    Check 'CI1 a comment-insensitive row stamps a code hash per .ps1' `
+        ($r.Text -match 'STAMPED guard-due' -and $null -ne $ciJ -and $null -ne $ciJ.code -and
+         ([string]$ciJ.code.'scripts/guard-due.ps1') -match '^code1:[0-9a-f]{64}$' -and
+         ([string]$ciJ.code.'test/win32/guard-due.ps1') -match '^code1:') "$($r.Text) :: $(if ($ciJ) { $ciJ | ConvertTo-Json -Depth 4 })"
+    $goJ = $null
+    try { $goJ = ([System.IO.File]::ReadAllText((Join-Path $Fixture 'test\win32\go-loop-guard.stamp.json')) | ConvertFrom-Json) } catch { }
+    Check 'CI2 a wildcard (source-audit) row records no code hash - it stays byte-exact' `
+        ($null -ne $goJ -and $null -eq $goJ.PSObject.Properties['code']) ''
+
+    Test-CiEdit 'CI3 a new prose comment line and a reworded trailing comment leave it CURRENT' `
+        ($ciBase.Replace("Write-Output `$x # trailing note", "# Why this prints: the caller reads stdout.`nWrite-Output `$x # a reworded note")) 'current'
+    Test-CiEdit 'CI4 a block comment and extra blank lines leave it CURRENT' `
+        ("<#`n.SYNOPSIS`n  A fixture.`n#>`n`n`n" + $ciBase) 'current'
+    Test-CiEdit 'CI5 NEGATIVE CONTROL: one character of executable text makes it DUE' `
+        ($ciBase.Replace("`$Mode = 'a'", "`$Mode = 'b'")) 'due'
+    Test-CiEdit 'CI6 a # inside a quoted string is string text: editing after it is DUE' `
+        ($ciBase.Replace("'not # a comment'", "'not # a comment at all'")) 'due'
+    Test-CiEdit 'CI7 a # inside a here-string body is string text: editing after it is DUE' `
+        ($ciBase.Replace('# not a comment either', '# not a comment either, really')) 'due'
+    Test-CiEdit 'CI8 a MARKER comment a sweep reads is still code: editing it is DUE' `
+        ($ciBase.Replace('# persistence: none', '# persistence: kept')) 'due'
+    Test-CiEdit 'CI9 re-indenting a line (leading whitespace only) leaves it CURRENT' `
+        ($ciBase.Replace("Write-Output `$x #", "    Write-Output `$x #")) 'current'
+
+    # A stamp from before T1521 carries no code map: it must compare byte-exact
+    # (this change may not turn any existing guard current), and its next green
+    # run must add the map rather than report STAMP UNCHANGED.
+    $legacy = [ordered]@{}
+    foreach ($p in $ciJ.PSObject.Properties) { if ($p.Name -ne 'code') { $legacy[$p.Name] = $p.Value } }
+    [System.IO.File]::WriteAllText($ciStamp, ($legacy | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding($false)))
+    Test-CiEdit 'CI10 a legacy stamp (no code map) still reads a comment-only edit as DUE' `
+        ($ciBase + "# appended prose`n") 'due'
+    $r = Invoke-Due update -Guard 'guard-due'
+    $ciJ2 = $null
+    try { $ciJ2 = ([System.IO.File]::ReadAllText($ciStamp) | ConvertFrom-Json) } catch { }
+    Check 'CI11 and the next green run over unchanged files adds the code map' `
+        ($r.Text -match 'STAMPED guard-due' -and $null -ne $ciJ2 -and $null -ne $ciJ2.code) $r.Text
+
+    # A file the tokenizer rejects has no code hash, so it falls back to bytes.
+    $ciBroken = "function Broken( {`n  Write-Output 'x'`n"
+    Set-FixtureFile 'scripts\guard-due.ps1' $ciBroken
+    $r = Invoke-Due update -Guard 'guard-due'
+    Set-FixtureFile 'scripts\guard-due.ps1' ($ciBroken + "# a comment on a file that does not parse`n")
+    $r = Invoke-Due check -Guard 'guard-due'
+    Check 'CI12 a file that does not parse falls back to byte-exact: a comment edit is DUE' `
+        ($r.Exit -eq 1 -and $r.Text -match 'changed\s+scripts/guard-due\.ps1') "exit=$($r.Exit): $($r.Text)"
+    foreach ($rel in 'scripts\guard-due.ps1', 'test\win32\guard-due.ps1', 'test\win32\guard-due.stamp.json') {
+        Remove-Item -LiteralPath (Join-Path $Fixture $rel) -Force -ErrorAction SilentlyContinue
+    }
+
     # --- D. the teeth: parity-tasks.ps1 validate ---------------------------
     # Asserted on the GUARD's own lines rather than on validate's overall
     # verdict alone, so an unrelated tracker problem cannot make an arm here
@@ -1304,7 +1389,9 @@ $lex
     $ru = Invoke-KbAck @('update', '-Guard', 'kb-blocked', '-IgnoreRunState')
     Check 'R11 a green run (update) deletes the guard''s ack and says ACK CLEARED' `
         ($hadAck -and $ru.Text -match 'ACK CLEARED kb-blocked' -and -not (Test-Path -LiteralPath $kbBlockedAck)) "had=${hadAck}: $($ru.Text)"
-    Set-KbFile 'scripts\plain-one.ps1' "# fixture v2`n"
+    # A CODE edit, not a comment one: since T1521 a comment-only edit to a
+    # named .ps1 leaves the guard current, and this arm needs it due.
+    Set-KbFile 'scripts\plain-one.ps1' "Write-Output 'fixture v2'`n"
     Invoke-KbAck @('ack', '-Guard', 'kb-plain', '-Task', 'T9003') | Out-Null
     $ru = Invoke-KbAck @('unack', '-Guard', 'kb-plain')
     $rc = Invoke-KbDue 'kb-plain'

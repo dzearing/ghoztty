@@ -1,16 +1,18 @@
 {
     "guard":  "pixel-oracle",
     "script":  "test/win32/pixel-oracle-audit.ps1",
-    "generated":  "2026-10-24T04:46:21-07:00",
-    "commit":  "20feab098",
+    "generated":  "2026-11-20T07:25:48-08:00",
+    "commit":  "7c28e92b1",
     "uncommitted":  [
-                        "test/win32/lib/PixelOracleAudit.ps1",
-                        "test/win32/pixel-oracle-audit.baseline.json",
-                        "test/win32/pixel-oracle-audit.ps1"
+
                     ],
     "files":  {
                   "test/win32/lib/PixelOracleAudit.ps1":  "7b18849da492030e15f819601e3fbde28f4042cd6e9c3ab6b11063b22071937b",
                   "test/win32/pixel-oracle-audit.baseline.json":  "f011bd5f46cee348acfd8b78094c40580533f8f1e2a3a9f1b398ca88e1a04b32",
                   "test/win32/pixel-oracle-audit.ps1":  "1af4585a75c0eba82c2b7dcb88ab4a8c4f1cd1e75db5624afd0bbb2bb51ab163"
-              }
+              },
+    "code":  {
+                 "test/win32/lib/PixelOracleAudit.ps1":  "code1:abacbbb225cea49cf900256d37b3a01e02e9898e52e588e3167affe61e1eb00c",
+                 "test/win32/pixel-oracle-audit.ps1":  "code1:6056ba8c03127f2fa40e906c986cc15c3c6e3cddcfab9d55a84da7e98564fe00"
+             }
 }

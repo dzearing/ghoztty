@@ -1,13 +1,17 @@
 {
     "guard":  "isolation-meta",
     "script":  "test/win32/isolation-meta.ps1",
-    "generated":  "2026-11-11T05:43:16-08:00",
-    "commit":  "551e21176",
+    "generated":  "2026-11-20T07:24:07-08:00",
+    "commit":  "7c28e92b1",
     "uncommitted":  [
-                        "test/win32/lib/Isolation.ps1"
+
                     ],
     "files":  {
                   "test/win32/isolation-meta.ps1":  "cb7688ef19b8663b15f80479ff8f220b0ddc09f83670420f6817cc3d85d38ef5",
                   "test/win32/lib/Isolation.ps1":  "c154ff88298f28e8af527e4bcbee3bd3c191b28af329866e1333e9d28126b8da"
-              }
+              },
+    "code":  {
+                 "test/win32/isolation-meta.ps1":  "code1:d4f4785f0bd4965a240dd913644adeea4ccc56ae5b7428d07f7919cd7c96d9cc",
+                 "test/win32/lib/Isolation.ps1":  "code1:a1c202521130c0df041a46f489b089ca0e5d0b1b434be16b12069db78dde849a"
+             }
 }

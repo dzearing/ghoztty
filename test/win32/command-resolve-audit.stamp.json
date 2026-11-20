@@ -1,13 +1,17 @@
 {
     "guard":  "command-resolve",
     "script":  "test/win32/command-resolve-audit.ps1",
-    "generated":  "2026-11-11T22:35:19-08:00",
-    "commit":  "c30ab0063",
+    "generated":  "2026-11-20T07:28:07-08:00",
+    "commit":  "7c28e92b1",
     "uncommitted":  [
-                        "test/win32/lib/CommandResolveAudit.ps1"
+
                     ],
     "files":  {
                   "test/win32/command-resolve-audit.ps1":  "01120dbe18e6961dbb2a463fdbba0632e52388a374252a20b266a88be81e5125",
                   "test/win32/lib/CommandResolveAudit.ps1":  "abcff9cb789047189bd1e9060ba0c4f8523eee95f9b8d84e7789c05f395826d1"
-              }
+              },
+    "code":  {
+                 "test/win32/command-resolve-audit.ps1":  "code1:0842554cfaea29656776e8e5105f5c6b31baa6a1923ddebf8c783cfb68a196ab",
+                 "test/win32/lib/CommandResolveAudit.ps1":  "code1:002f069700526f8e1558a0f74058d913eedef4d64c020700a82e9aa6a9394c3c"
+             }
 }

@@ -1,14 +1,10 @@
 {
     "guard":  "job-teardown",
     "script":  "test/win32/job-teardown.ps1",
-    "generated":  "2026-11-19T23:07:47-08:00",
-    "commit":  "6937f93c8",
+    "generated":  "2026-11-20T07:25:07-08:00",
+    "commit":  "7c28e92b1",
     "uncommitted":  [
-                        "test/win32/job-teardown.ps1",
-                        "test/win32/lib/FakeAgentRelay.ps1",
-                        "test/win32/lib/FakeRelay.ps1",
-                        "test/win32/lib/PipeBridge.ps1",
-                        "test/win32/lib/SharedLog.ps1"
+
                     ],
     "files":  {
                   "test/win32/job-teardown.ps1":  "ae13f7bf783ce14907d159c85b5b416a2f2dc028d78cbaaabb0fc3b69598eb94",
@@ -17,5 +13,13 @@
                   "test/win32/lib/JobTeardown.ps1":  "0984c7f89db7d9a81188aaf7571b536948b4c0d6814bf8a6bbc80b6a0a0b75bd",
                   "test/win32/lib/PipeBridge.ps1":  "1838f4231104da465f6664b0241803812ad6fe5c08b91d4f98a93327f630834f",
                   "test/win32/lib/SharedLog.ps1":  "8d1afd2835838f9e391ce76a4e212a72f64a2773efb602b58209b7eaa4d63e05"
-              }
+              },
+    "code":  {
+                 "test/win32/job-teardown.ps1":  "code1:7c2e67b323b9563edf7593c7dcd8278defbb87626ea2a5864e184073387e8295",
+                 "test/win32/lib/FakeAgentRelay.ps1":  "code1:74d28bdb48b0d5bc199bf4ada20e71cee7aac65698aa25a2edbf653d8b83ba61",
+                 "test/win32/lib/FakeRelay.ps1":  "code1:392389e28c2e0f91ecf4c0f4a8c4192749f6d1f41f86fa21a9bc0b590d660bea",
+                 "test/win32/lib/JobTeardown.ps1":  "code1:c7f17669b888232f6c44b0fa5a2317ef32d5baf03690951a914eaf33927ad9f5",
+                 "test/win32/lib/PipeBridge.ps1":  "code1:3175fbb3665b28d03ccbe98aa44566d2cbe038850d6c399da04f172349077ff2",
+                 "test/win32/lib/SharedLog.ps1":  "code1:5458218c5594da706ee86ca91327cdabbc6228742593d693a26f6aa3d105271d"
+             }
 }

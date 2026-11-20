@@ -1,14 +1,17 @@
 {
     "guard":  "count-or-zero",
     "script":  "test/win32/count-or-zero.ps1",
-    "generated":  "2026-09-07T13:09:42-07:00",
-    "commit":  "5107dd1cd",
+    "generated":  "2026-11-20T07:23:53-08:00",
+    "commit":  "7c28e92b1",
     "uncommitted":  [
-                        "test/win32/count-or-zero.ps1",
-                        "test/win32/lib/CountOrZero.ps1"
+
                     ],
     "files":  {
                   "test/win32/count-or-zero.ps1":  "569947be0dd433056f05a38d16eae3c81cf3a5a02e0710669458650ea6e5e0ad",
                   "test/win32/lib/CountOrZero.ps1":  "becbcdc2dabc0728175ea276fc082a3e270df5637b659c434d93f3e407a9fa9c"
-              }
+              },
+    "code":  {
+                 "test/win32/count-or-zero.ps1":  "code1:4fa4feac05aa2e7a7c8b78df122b5a755999379c19e65deb80c66d20b84da730",
+                 "test/win32/lib/CountOrZero.ps1":  "code1:3544b247ab2e2ce80a0fb33a3eb1c0f919f6c220269df62be90854c2bb614b35"
+             }
 }

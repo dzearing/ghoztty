@@ -1,13 +1,18 @@
 {
     "guard":  "guard-due",
     "script":  "test/win32/guard-due.ps1",
-    "generated":  "2026-11-19T23:21:47-08:00",
-    "commit":  "6937f93c8",
+    "generated":  "2026-11-20T07:03:08-08:00",
+    "commit":  "7c28e92b1",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+                        "scripts/guard-due.ps1",
+                        "test/win32/guard-due.ps1"
                     ],
     "files":  {
-                  "scripts/guard-due.ps1":  "9cc020f0a8c9eac00ee2302a2d61150324a6029eef92bc33063e1219dc1f4dc8",
-                  "test/win32/guard-due.ps1":  "281420e26fbca13e3dfdd2707d8ef2294e277a3c0171aff3e53e5d0f87b939d6"
-              }
+                  "scripts/guard-due.ps1":  "ca5e674a19d5ade40722587b17e9b07d07d80dc6b75ad2c51b03905e3a79b7b7",
+                  "test/win32/guard-due.ps1":  "f32bba80075ab29f3f54a393efa8bce66ebff065c30d52d03cbc4c40338d7d1e"
+              },
+    "code":  {
+                 "scripts/guard-due.ps1":  "code1:1d40d4980f75173f7cda30cca4adc90e7df73b5781672c94763470c35fe6d22f",
+                 "test/win32/guard-due.ps1":  "code1:91f1c45f2cf3d02ad36d8c6ad33a620ff2135df4342663d8fc43bc543881ff18"
+             }
 }

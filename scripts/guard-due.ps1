@@ -7895,6 +7895,131 @@ function Get-NormalizedHash([string]$relPath) {
     return Get-NormalizedFileHash (Join-Path $Repo $relPath)
 }
 
+<#
+  T1521. The stamp asks "has anything that RUNS changed?", and for a PowerShell
+  file a comment is not something that runs. Before this, a pass that only wrote
+  explanations into 25 test scripts (T1012) turned 27 unrelated guards DUE -
+  hours of GUI runs that could not discover anything - and the commit went out
+  under -NoGuardDue, which is the habit the gate exists to break.
+
+  So beside the byte hash, a stamp records a CODE hash for each covered .ps1:
+  the file run through PowerShell's own tokenizer with its comments removed.
+  The tokenizer, not a line scan, because it is the only reader that agrees with
+  the interpreter about what a comment is - a `#` inside a quoted string or a
+  here-string body is string text to it, and so to this hash.
+
+  Three things keep the rule honest:
+    * MARKER comments stay in the hash. Sweeps read `# persistence:`,
+      `# stderr:`, `# cleanslate-exempt:`, `# @timing-sensitive`, `#requires`
+      and their kin, so editing one changes what a sweep concludes - see
+      Test-MarkerCommentLine for the shape.
+    * A row whose Covers holds a wildcard is a SOURCE AUDIT (harness-floor,
+      argv-hazard, unwired-hook ...): it reads the text, comments included, so
+      it keeps byte-exact hashing. `ByteExact = $true` opts any other row out.
+    * The code hash only ever EXCUSES a byte difference. A stamp with no code
+      entry for a file (every stamp written before T1521, or a file that does
+      not parse) compares byte-exact as it always did, so this change makes no
+      guard due and no guard current on the day it lands.
+#>
+$script:CodeHashCache = @{}
+
+function Test-CommentInsensitiveRow($row) {
+    if ($row.PSObject.Properties['ByteExact'] -and $row.ByteExact) { return $false }
+    foreach ($p in @($row.Covers)) { if ([string]$p -match '[*?]') { return $false } }
+    return $true
+}
+
+function Test-CodeHashPath([string]$relPath) {
+    return ($relPath -match '\.(ps1|psm1)$')
+}
+
+function Test-MarkerCommentLine([string]$line) {
+    # One line of a comment token, `#`/`<#`/`#>` stripped: a lowercase
+    # `name:`/`name=` key, an `@tag`, or `requires`. Deliberately generous - a
+    # prose line that happens to look like a key stays in the hash, which costs
+    # one re-run; a marker that fell out of it would cost a missed sweep.
+    $s = ($line.Trim() -replace '^<?#+', '' -replace '#>$', '').Trim()
+    return ($s -cmatch '^(requires\b|@[A-Za-z][\w-]*|[a-z][a-z0-9]*(-[a-z0-9]+)*\s*[:=])')
+}
+
+function Get-PsCodeText([string]$text) {
+    <#
+      The file as the interpreter sees it, minus comments: tokens in order,
+      runs of blank lines collapsed, indentation dropped, and a single space
+      wherever the source had any gap between two tokens (adjacency is kept -
+      `$a[0]` and `$a [0]` are different code). $null when the file does not
+      parse, which sends the caller back to the byte hash.
+    #>
+    $tokens = $null; $errors = $null
+    [void][System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$tokens, [ref]$errors)
+    if ($null -ne $errors -and @($errors).Count -gt 0) { return $null }
+    $sb = New-Object System.Text.StringBuilder
+    $prevEnd = 0
+    $atLineStart = $true
+    $pendingSpace = $false
+    foreach ($t in $tokens) {
+        $start = $t.Extent.StartOffset
+        if ($start -gt $prevEnd) { $pendingSpace = $true }
+        $prevEnd = $t.Extent.EndOffset
+        $kind = [string]$t.Kind
+        $piece = $t.Text
+        if ($kind -eq 'Comment') {
+            $kept = @(($t.Text -split "`r?`n") | Where-Object { Test-MarkerCommentLine $_ } | ForEach-Object { $_.Trim() })
+            if ($kept.Count -eq 0) { $pendingSpace = $true; continue }
+            $piece = $kept -join "`n"
+        }
+        if ($kind -eq 'NewLine' -or $kind -eq 'EndOfInput') {
+            if (-not $atLineStart) { [void]$sb.Append("`n"); $atLineStart = $true }
+            $pendingSpace = $false
+            continue
+        }
+        if ($pendingSpace -and -not $atLineStart) { [void]$sb.Append(' ') }
+        [void]$sb.Append($piece)
+        $atLineStart = $false
+        $pendingSpace = $false
+    }
+    return $sb.ToString()
+}
+
+function Get-CodeFileHash([string]$fullPath) {
+    $bytes = [System.IO.File]::ReadAllBytes($fullPath)
+    $text = (New-Object System.Text.UTF8Encoding($false)).GetString($bytes)
+    if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
+    $code = Get-PsCodeText $text
+    if ($null -eq $code) { return $null }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($code))
+    } finally { $sha.Dispose() }
+    return 'code1:' + ([System.BitConverter]::ToString($digest)).Replace('-', '').ToLowerInvariant()
+}
+
+function Get-CodeHash([string]$relPath) {
+    if ($script:CodeHashCache.ContainsKey($relPath)) { return $script:CodeHashCache[$relPath] }
+    $h = $null
+    try { $h = Get-CodeFileHash (Join-Path $Repo $relPath) } catch { $h = $null }
+    $script:CodeHashCache[$relPath] = $h
+    return $h
+}
+
+function Get-LiveCodeMap($row, $live) {
+    $map = [ordered]@{}
+    if (-not (Test-CommentInsensitiveRow $row)) { return $map }
+    foreach ($rel in $live.Keys) {
+        if (-not (Test-CodeHashPath $rel)) { continue }
+        $h = Get-CodeHash $rel
+        if ($h) { $map[$rel] = $h }
+    }
+    return $map
+}
+
+function Get-StampCodeMap($stamp) {
+    $map = [ordered]@{}
+    if ($null -eq $stamp -or $null -eq $stamp.PSObject.Properties['code'] -or $null -eq $stamp.code) { return $map }
+    foreach ($p in $stamp.code.PSObject.Properties) { $map[$p.Name] = [string]$p.Value }
+    return $map
+}
+
 function Get-LiveMap($row) {
     $map = [ordered]@{}
     foreach ($rel in (Get-CoveredFiles $row)) { $map[$rel] = Get-NormalizedHash $rel }
@@ -8076,11 +8201,23 @@ function Get-GuardState($row) {
         }
     }
 
+    # T1521: a byte difference the stamped CODE hash explains is a comment-only
+    # edit, and is not due. Only a row that is comment-insensitive, and only a
+    # file the stamp recorded a code hash for, can be excused this way.
+    $stampedCode = Get-StampCodeMap $stamp
+    $insensitive = Test-CommentInsensitiveRow $row
+    $commentOnly = @()
     foreach ($rel in $live.Keys) {
         if (-not $stamped.Contains($rel)) {
             $findings += [pscustomobject]@{ Kind = 'new'; Path = $rel }
         } elseif ($stamped[$rel] -ne $live[$rel]) {
-            $findings += [pscustomobject]@{ Kind = 'changed'; Path = $rel }
+            $h = $null
+            if ($insensitive -and $stampedCode.Contains($rel) -and (Test-CodeHashPath $rel)) { $h = Get-CodeHash $rel }
+            if ($h -and $h -eq $stampedCode[$rel]) {
+                $commentOnly += $rel
+            } else {
+                $findings += [pscustomobject]@{ Kind = 'changed'; Path = $rel }
+            }
         }
     }
     foreach ($rel in @($stamped.Keys)) {
@@ -8115,6 +8252,7 @@ function Get-GuardState($row) {
         Advisory = [bool]$row.Advisory; CiGuard = ($null -ne $row.CiEvidence)
         Kind = $kind; Reason = $reason; Findings = $findings
         Files = @($live.Keys)
+        CommentOnly = $commentOnly
         StampedAt = [string]$stamp.generated
         StampedCommit = [string]$stamp.commit
         StampedUncommitted = @($stamp.uncommitted | Where-Object { $_ })
@@ -8144,6 +8282,18 @@ function Write-Stamp($row, $Provenance) {
     if ($same) {
         foreach ($k in $live.Keys) {
             if (-not $existing.Contains($k) -or $existing[$k] -ne $live[$k]) { $same = $false; break }
+        }
+    }
+    # T1521: the code map is part of what a stamp vouches for, so a stamp from
+    # before it (no `code` key) is rewritten once by its next green run.
+    $liveCode = Get-LiveCodeMap $row $live
+    $prevCode = Get-StampCodeMap $prevStamp
+    if ($same) {
+        if ($liveCode.Count -ne $prevCode.Count) { $same = $false }
+        else {
+            foreach ($k in $liveCode.Keys) {
+                if (-not $prevCode.Contains($k) -or $prevCode[$k] -ne $liveCode[$k]) { $same = $false; break }
+            }
         }
     }
     # The upstream shas the run just vouched for (T1325). Where `origin/main` is
@@ -8220,6 +8370,11 @@ function Write-Stamp($row, $Provenance) {
         $doc['upstream'] = $up
     }
     $doc['files'] = $files
+    if ($liveCode.Count -gt 0) {
+        $code = [ordered]@{}
+        foreach ($k in $liveCode.Keys) { $code[$k] = $liveCode[$k] }
+        $doc['code'] = $code
+    }
     $json = ($doc | ConvertTo-Json -Depth 5)
     $path = Join-Path $Repo $row.Stamp
     # A first stamp in a tree that has no test\win32 yet (a fixture repo, a
