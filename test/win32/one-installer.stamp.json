@@ -1,16 +1,16 @@
 {
     "guard":  "one-installer",
     "script":  "test/win32/one-installer.ps1",
-    "generated":  "2026-11-16T00:57:20-08:00",
-    "commit":  "3b05e4e16",
+    "generated":  "2026-11-19T19:19:53-08:00",
+    "commit":  "00574d6e0",
     "uncommitted":  [
-                        "src/remote/agent/main.zig"
+
                     ],
     "files":  {
                   ".claude/commands/release.md":  "cdfb7ab5d6e532c177e522ed11793a4fa45eed3f99cee248c190548a446a72ac",
                   "relay/deploy/Caddyfile.example":  "68976c8bf26255febe085ecfb23896513d4ba93e4deb5a8296cd5c118bab5aa2",
-                  "relay/deploy/ghpages/index.html":  "cdd9e0fbeac01c368266f63e00968efa40bf647e4b41daf7b3dfa67e35005f2b",
-                  "relay/deploy/ghpages/landing/main.js":  "31620c4f632e63d7aa46efb2a2bbae280da1dc347f3c72392b2e1dd946281ae5",
+                  "relay/deploy/ghpages/index.html":  "add55115789607ca85c9f1aaad504b338dd570b5235417f699627e4a14061154",
+                  "relay/deploy/ghpages/landing/main.js":  "9a0eb9c5260c491539d242f7ca7233f26a2b19493728567a85d3f76e14db9b26",
                   "relay/deploy/install.ps1":  "708e187dc3511b38ea0d00b2dd94fd754334fe345d528cb1995812e09c1a0a1c",
                   "relay/deploy/publish-agent.sh":  "2d81df89a033ae30f4a6d693d5e60dd74c5cecaf165ea20b8b81f866e20f4b8c",
                   "relay/deploy/www/index.html":  "760ea43a1e910c1009620fd798003f76e7d1886e126e909f60cb4760dccbbf9f",
