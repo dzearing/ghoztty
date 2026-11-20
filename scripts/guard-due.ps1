@@ -959,6 +959,20 @@ $GuardTable = @(
             'src\apprt\win32\ViewerPane.zig'
         )
     },
+    # A click in a viewer on show never brings out the viewer folded into a
+    # strip beside it (T3280, Mac 084136b2f): a strip's pane is a hidden
+    # window, so the click goes to the pane it lands on.
+    [pscustomobject]@{
+        Name   = 'blade-click-neighbour'
+        Script = 'test\win32\blade-click-neighbour.ps1'
+        Stamp  = 'test\win32\blade-click-neighbour.stamp.json'
+        Covers = @(
+            'test\win32\blade-click-neighbour.ps1',
+            'src\apprt\win32\pane_stack_state.zig',
+            'src\apprt\win32\Window.zig',
+            'src\apprt\win32\ViewerPane.zig'
+        )
+    },
     # Where a split starts (T760). The answer is assembled in `newSplitAt`
     # from three sources - a viewer parent's file directory, the agent's
     # GET_CWD, and the local process read - and the defect this guards was
