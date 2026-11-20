@@ -1,0 +1,20 @@
+{
+  "version": "1.56.1",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "The tab a dragged pane rests on now lights up while it waits to open." },
+        { "text": "Activity Monitor cells now show their full text on hover." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "A click beside a folded viewer never brings it out, and a test now proves it." },
+        { "text": "The commit guard accepts a wildcard pathspec instead of calling its own files another session's work." },
+        { "text": "A sign-in or sharing result now updates every open machine chooser, not just the first." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "A pane popped out of a maximized window now opens at the window's restored size." }
+      ] }
+  ]
+}
