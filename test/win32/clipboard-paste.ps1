@@ -66,6 +66,9 @@ $env:GHOZTTY_PIPE_SUFFIX = "-clippastetest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 function Assert([bool]$cond, [string]$label) {
@@ -506,10 +509,11 @@ Set-ClaudeImagePasteBinding $true
 
 Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash at end of run'
 
-# The last statement of the body (T993): the stamp below is written only for a
-# run that got all the way here, so a throw that unwinds the try cannot fall
-# through to a green verdict and mark the paste path as proven.
-$script:bodyDone = $true
+} catch {
+    # T1511: the foreground-leak checks below are part of this run too, so this
+    # try cannot END in `Complete-TestBody`. It SCORES its own throw instead -
+    # which replaces the hand-rolled T993 `bodyDone` flag with the shared rule.
+    Assert $false "the run threw and did not finish its sections: $($_.Exception.Message)"
 } finally {
     # Read the launched pids BEFORE cleanup: Remove-TestDesktop empties the
     # live pid list as it kills, and an emptied list makes the leak assertion
@@ -530,7 +534,7 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($leaked.Count -eq 0) 'no test-desktop app ever became foreground on the interactive desktop'
 }
 
-if (-not $script:bodyDone) { Assert $false 'the run reached the end of its body (it unwound early)' }
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
 
 # A clean green run stamps the covered files (T783/T993) so scripts\guard-due.ps1
 # can answer "has this harness been run against the paste code as it now
@@ -541,5 +545,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)"; exit 0 }
-else { Write-Host "$script:fail FAILED / $script:pass passed" -ForegroundColor Red; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'CLIPBOARD-PASTE'

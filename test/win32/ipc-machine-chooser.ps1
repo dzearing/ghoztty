@@ -61,6 +61,8 @@ $env:GHOZTTY_PIPE_SUFFIX = "-mctest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 # T694: the port the OS just handed out, asserted free and printed, instead of a
 # number this script and some other one both guessed.
 $DirPort = Resolve-TestPort -Name 'directory' -Port $DirPort
@@ -985,6 +987,10 @@ try {
         }
         Assert (-not ($g3.App.Process -and $g3.App.Process.HasExited)) 'app survived the signed-in chooser'
     }
+} catch {
+    # T1511: the foreground-leak checks below are part of this run too, so this
+    # try cannot END in `Complete-TestBody`. It SCORES its own throw instead.
+    Assert $false "the run threw and did not finish its sections: $($_.Exception.Message)"
 } finally {
     if ($hadAccent) {
         Set-ItemProperty -Path $DWM_KEY -Name AccentColor -Value $origAccent -Type DWord
@@ -1022,6 +1028,8 @@ if ($NegativeControl -and -not $script:negReached3) {
     Assert $false 'NEGATIVE CONTROL never reached its inverted assertion (monogram)'
 }
 
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
+
 # --- stamp (T783 / T1021) ---------------------------------------------------
 # A clean green run records the covered files so scripts\guard-due.ps1 can
 # answer "has anyone run this harness against the code as it now stands?"
@@ -1033,11 +1041,4 @@ if ($script:fail -eq 0 -and $script:skip -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ''
-if ($script:skip -gt 0) { Write-Host "($($script:skip) section(s) SKIPPED)" }
-if ($script:fail -eq 0) {
-    Write-Host "MACHINE-CHOOSER ACCEPTANCE: ALL PASS ($script:pass assertions)"
-    exit 0
-} else {
-    Write-Host "MACHINE-CHOOSER ACCEPTANCE: $($script:fail) FAILURE(S) ($script:pass passed)" -ForegroundColor Red
-    exit 1
-}
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped $script:skip -Label 'MACHINE-CHOOSER ACCEPTANCE'

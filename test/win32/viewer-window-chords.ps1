@@ -95,6 +95,9 @@ Remove-Item $errlog -Force -ErrorAction SilentlyContinue
 Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 $script:haveLog = $false
@@ -526,6 +529,10 @@ try {
         Assert $splitS7 "S7: ctrl+d at a window of only viewers split it ($(@(Get-AllLeaves).Count) leaves)"
     }
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'S7: no crash'
+} catch {
+    # T1511: the foreground-leak checks below are part of this run too, so this
+    # try cannot END in `Complete-TestBody`. It SCORES its own throw instead.
+    Assert $false "the run threw and did not finish its sections: $($_.Exception.Message)"
 } finally {
     if ($script:pageJob) { Stop-Job $script:pageJob -ErrorAction SilentlyContinue; Remove-Job $script:pageJob -Force -ErrorAction SilentlyContinue }
     Remove-TestDesktop
@@ -541,6 +548,8 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($leaked.Count -eq 0) 'no test-desktop app ever became foreground on the interactive desktop'
 }
 
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
+
 # A green run stamps the covered files (T783) so guard-due can answer "has this
 # harness been run against the code as it now stands?". Red leaves the stamp
 # alone: red stays due, and a negative-control run is red by construction.
@@ -550,5 +559,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILED / $script:pass passed" -ForegroundColor Red; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'VIEWER-WINDOW-CHORDS'

@@ -57,6 +57,9 @@ $errlog = Join-Path $env:TEMP 'ghoztty-hero-viewer-tile-stderr.log'
 Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 
@@ -353,6 +356,7 @@ try {
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash after selecting the viewer'
 
     Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
+    Complete-TestBody  # T1039/T1511: the run reached the end of its body
 } finally {
     Stop-RepoInstances
     if ($td) { Remove-TestDesktop -Desktop $td }
@@ -368,6 +372,4 @@ if ($script:fail -eq 0 -and $script:pass -gt 0 -and -not $NegativeControl) {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($($script:pass) checks)"; exit 0 }
-Write-Host "$($script:fail) FAILURE(S) of $($script:pass + $script:fail) checks" -ForegroundColor Red
-exit 1
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'HERO-VIEWER-TILE' -Unit 'checks'
