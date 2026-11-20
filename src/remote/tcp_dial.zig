@@ -536,6 +536,16 @@ const MiniAgent = struct {
     }
 };
 
+/// Test-only: make an accepter thread that may still be parked in `accept()`
+/// return. A throwaway connect is accepted and closed at once, so a `MiniAgent`
+/// run over it reads EOF and exits; a thread that already accepted never sees
+/// it. The failure-path guards below call it before they join (T1505).
+fn pokeAccept(port: u16) void {
+    const addr = std.net.Address.parseIp4("127.0.0.1", port) catch return;
+    const s = std.net.tcpConnectToAddress(addr) catch return;
+    s.close();
+}
+
 test "dial: stands up a Connection over a real loopback socket, OPEN + DATA round-trip" {
     const alloc = testing.allocator;
     const enc: protocol.TransferEncoding = .raw;
@@ -557,9 +567,19 @@ test "dial: stands up a Connection over a real loopback socket, OPEN + DATA roun
     var agent = MiniAgent{ .fd = undefined, .alloc = alloc, .encoding = enc };
     var accepter = Accepter{ .listener = &listener, .agent = &agent };
     const agent_thread = try std.Thread.spawn(.{}, Accepter.run, .{&accepter});
+    // A failure below must free the agent thread before it outlives this
+    // frame (T1505): the dialed connection's errdefer runs first, so the agent
+    // reads EOF; then an accept that never happened is unparked; then join.
+    var agent_joined = false;
+    errdefer if (!agent_joined) {
+        pokeAccept(bound.getPort());
+        agent_thread.join();
+    };
 
     // Dial it.
     var dialed = try dial(alloc, "127.0.0.1", bound.getPort(), enc);
+    var dialed_live = true;
+    errdefer if (dialed_live) dialed.deinit();
     try testing.expectEqual(enc, dialed.negotiated.transfer_encoding);
 
     // OPEN a session.
@@ -574,7 +594,9 @@ test "dial: stands up a Connection over a real loopback socket, OPEN + DATA roun
 
     dialed.conn.closeChannel(pane);
     dialed.deinit();
+    dialed_live = false;
     agent_thread.join();
+    agent_joined = true;
     listener.deinit();
     try testing.expect(agent.err == null);
 }
@@ -643,13 +665,23 @@ test "dial: a peer on a different protocol version fails as ProtocolIncompatible
     };
     var accepter = Accepter{ .listener = &listener, .agent = &agent };
     const agent_thread = try std.Thread.spawn(.{}, Accepter.run, .{&accepter});
+    var agent_joined = false;
+    errdefer if (!agent_joined) {
+        pokeAccept(bound.getPort());
+        agent_thread.join();
+    };
 
-    try testing.expectError(
-        error.ProtocolIncompatible,
-        dial(alloc, "127.0.0.1", bound.getPort(), enc),
-    );
+    // Not `expectError`: a dial that wrongly SUCCEEDS has to be torn down,
+    // or the agent serving it never sees EOF and the join below hangs over
+    // the failure it should be reporting (T1505).
+    if (dial(alloc, "127.0.0.1", bound.getPort(), enc)) |ok| {
+        var dialed = ok;
+        dialed.deinit();
+        return error.TestExpectedError;
+    } else |e| try testing.expectEqual(@as(anyerror, error.ProtocolIncompatible), e);
 
     agent_thread.join();
+    agent_joined = true;
     listener.deinit();
 }
 
@@ -673,6 +705,13 @@ test "dial: a peer that accepts and says nothing is NOT reported as incompatible
     };
     var silent = Silent{ .listener = &listener };
     const t = try std.Thread.spawn(.{}, Silent.run, .{&silent});
+    // On failure, unpark an accept that never happened and join (T1505).
+    var t_joined = false;
+    errdefer if (!t_joined) {
+        pokeAccept(bound.getPort());
+        t.join();
+        if (silent.conn) |c| c.stream.close();
+    };
 
     try testing.expectError(
         error.HandshakeTimeout,
@@ -680,6 +719,7 @@ test "dial: a peer that accepts and says nothing is NOT reported as incompatible
     );
 
     t.join();
+    t_joined = true;
     if (silent.conn) |c| c.stream.close();
     listener.deinit();
 }
@@ -773,6 +813,13 @@ test "waitHandshakeTicking: a silent peer still times out, but the caller is not
     };
     var silent = Silent{ .listener = &listener };
     const t = try std.Thread.spawn(.{}, Silent.run, .{&silent});
+    // On failure, unpark an accept that never happened and join (T1505).
+    var t_joined = false;
+    errdefer if (!t_joined) {
+        pokeAccept(bound.getPort());
+        t.join();
+        if (silent.conn) |c| c.stream.close();
+    };
 
     var calls: usize = 0;
     tick_test_calls = 0;
@@ -799,6 +846,7 @@ test "waitHandshakeTicking: a silent peer still times out, but the caller is not
     try testing.expect(elapsed < 3 * budget_ns);
 
     t.join();
+    t_joined = true;
     if (silent.conn) |c| c.stream.close();
     listener.deinit();
 }
@@ -827,6 +875,12 @@ test "waitHandshakeTicking: a handshake that SUCCEEDS is not delayed to a slice 
     var agent = MiniAgent{ .fd = undefined, .alloc = alloc, .encoding = enc };
     var accepter = Accepter{ .listener = &listener, .agent = &agent };
     const agent_thread = try std.Thread.spawn(.{}, Accepter.run, .{&accepter});
+    // Same failure-path teardown as the first dial test (T1505).
+    var agent_joined = false;
+    errdefer if (!agent_joined) {
+        pokeAccept(bound.getPort());
+        agent_thread.join();
+    };
 
     var calls: usize = 0;
     tick_test_calls = 0;
@@ -837,13 +891,17 @@ test "waitHandshakeTicking: a handshake that SUCCEEDS is not delayed to a slice 
         2 * std.time.ns_per_s,
         .{ .ctx = &calls, .func = countingTick, .interval_ns = 20 * std.time.ns_per_ms },
     );
+    var dialed_live = true;
+    errdefer if (dialed_live) dialed.deinit();
     try testing.expectEqual(enc, dialed.negotiated.transfer_encoding);
     // A TCP dial reaches another machine's agent, whose panes' shells the app
     // cannot walk, so it still asks for `META{has_descendants}` (T3243).
     try expectAdvertises(dialed.conn, .other_machine);
 
     dialed.deinit();
+    dialed_live = false;
     agent_thread.join();
+    agent_joined = true;
     listener.deinit();
     try testing.expect(agent.err == null);
 }
@@ -877,9 +935,19 @@ test "dialUnix: stands up a Connection over a real AF_UNIX socket, OPEN + DATA r
     var agent = MiniAgent{ .fd = undefined, .alloc = alloc, .encoding = enc };
     var accepter = Accepter{ .listener = &listener, .agent = &agent };
     const agent_thread = try std.Thread.spawn(.{}, Accepter.run, .{&accepter});
+    // Failure-path teardown (T1505): the dialed connection's errdefer closes
+    // it first, a throwaway connect unparks an accept that never happened,
+    // then the agent thread is joined.
+    var agent_joined = false;
+    errdefer if (!agent_joined) {
+        if (std.net.connectUnixSocket(path)) |poke| poke.close() else |_| {}
+        agent_thread.join();
+    };
 
     // Dial the unix socket (the T09b path).
     var dialed = try dialUnix(alloc, path, enc);
+    var dialed_live = true;
+    errdefer if (dialed_live) dialed.deinit();
     try testing.expectEqual(enc, dialed.negotiated.transfer_encoding);
     // The macOS app's local agent: no per-second busy sampling asked for (T3243).
     try expectAdvertises(dialed.conn, .this_machine);
@@ -896,7 +964,9 @@ test "dialUnix: stands up a Connection over a real AF_UNIX socket, OPEN + DATA r
 
     dialed.conn.closeChannel(pane);
     dialed.deinit();
+    dialed_live = false;
     agent_thread.join();
+    agent_joined = true;
     listener.deinit();
     try testing.expect(agent.err == null);
 }
@@ -919,7 +989,9 @@ test "dialPipe: stands up a Connection over a real named pipe, OPEN + DATA round
     const Accepter = struct {
         listener: *pipe_stream.PipeListener,
         agent: *MiniAgent,
+        done: std.atomic.Value(bool) = .init(false),
         fn run(self: *@This()) void {
+            defer self.done.store(true, .release);
             const h = self.listener.accept() catch return;
             var ps = pipe_stream.PipeStream.init(h);
             self.agent.runStream(ps.connectionStream());
@@ -928,9 +1000,23 @@ test "dialPipe: stands up a Connection over a real named pipe, OPEN + DATA round
     var agent = MiniAgent{ .fd = undefined, .alloc = alloc, .encoding = enc };
     var accepter = Accepter{ .listener = &listener, .agent = &agent };
     const agent_thread = try std.Thread.spawn(.{}, Accepter.run, .{&accepter});
+    // Failure-path teardown (T1505): the dialed connection's errdefer closes
+    // it first; an accept still parked is cancelled until the thread has
+    // left (a cancel can land before the wait starts, so it is repeated);
+    // then join. The listener's `defer deinit` runs after all of this.
+    var agent_joined = false;
+    errdefer if (!agent_joined) {
+        while (!accepter.done.load(.acquire)) {
+            listener.cancelAccept();
+            std.Thread.sleep(5 * std.time.ns_per_ms);
+        }
+        agent_thread.join();
+    };
 
     // Dial the pipe (the T89c path).
     var dialed = try dialPipe(alloc, name, enc);
+    var dialed_live = true;
+    errdefer if (dialed_live) dialed.deinit();
     try testing.expectEqual(enc, dialed.negotiated.transfer_encoding);
     // The Windows app's local agent: no per-second busy sampling asked for (T3243).
     try expectAdvertises(dialed.conn, .this_machine);
@@ -947,7 +1033,9 @@ test "dialPipe: stands up a Connection over a real named pipe, OPEN + DATA round
 
     dialed.conn.closeChannel(pane);
     dialed.deinit();
+    dialed_live = false;
     agent_thread.join();
+    agent_joined = true;
     try testing.expect(agent.err == null);
 }
 

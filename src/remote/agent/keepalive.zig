@@ -275,6 +275,13 @@ test "keepalive: live link keeps getting pinged and is never closed" {
         .link = fake.link(),
     };
     const t = try std.Thread.spawn(.{}, Keepalive.run, .{&ka});
+    // A failed wait must stop and join the tick thread before `ka`/`fake`
+    // leave this frame (T1505).
+    var t_joined = false;
+    errdefer if (!t_joined) {
+        ka.requestStop();
+        t.join();
+    };
     // Wait for the pings to accumulate rather than sleeping a fixed spell —
     // a fixed sleep undercounts exactly when the tick thread is the starved
     // one (T346).
@@ -286,6 +293,7 @@ test "keepalive: live link keeps getting pinged and is never closed" {
     try testing.expect(test_util.waitUntil("the keepalive thread to send a ping", P.pinged, .{&fake}));
     ka.requestStop();
     t.join();
+    t_joined = true;
 
     try testing.expect(!ka.went_stale.load(.monotonic));
     try testing.expectEqual(@as(u32, 0), fake.closes.load(.monotonic));
@@ -496,30 +504,42 @@ test "integration: silent server → keepalive detects stale, unblocks read, red
         .cfg = .{ .ping_interval_ms = 40, .stale_after_ms = 150 },
         .link = wsLink(ctrl),
     };
+    // Every failure below unsticks and joins both threads before `ctrl`,
+    // `ka` and `reader` go away, so the test reports instead of hanging
+    // (T1505). The errdefers run newest first: close + join the reader,
+    // stop + join the keepalive, then free the client.
+    var ctrl_live = true;
+    errdefer if (ctrl_live) ctrl.deinit();
     const ka_thread = try std.Thread.spawn(.{}, Keepalive.run, .{&ka});
+    var ka_joined = false;
+    errdefer if (!ka_joined) {
+        ka.requestStop();
+        ka_thread.join();
+    };
 
     var reader = BlockingReader{ .ws = ctrl };
     const rd_thread = try std.Thread.spawn(.{}, BlockingReader.run, .{&reader});
+    var rd_joined = false;
+    errdefer if (!rd_joined) {
+        ctrl.close();
+        rd_thread.join();
+    };
 
     // The keepalive must declare the link stale AND release the blocked read
     // well within a few windows (window = 150ms; give CI 5s of slack).
-    reader.done.timedWait(5 * std.time.ns_per_s) catch {
-        // Unstick everything so the test fails rather than hangs.
-        ctrl.close();
-        rd_thread.join();
-        ka.requestStop();
-        ka_thread.join();
-        ctrl.deinit();
+    reader.done.timedWait(5 * std.time.ns_per_s) catch
         return error.StaleDetectionTimedOut;
-    };
     rd_thread.join();
+    rd_joined = true;
     ka_thread.join();
+    ka_joined = true;
 
     try testing.expect(ka.went_stale.load(.monotonic));
     // The blocked control read surfaced as clean EOF (0) → serveControl
     // returns → relayLoop's existing 3s-backoff reconnect runs.
     try testing.expectEqual(@as(i64, 0), reader.result.load(.monotonic));
     ctrl.deinit();
+    ctrl_live = false;
 
     // Redial (#2): the reconnect the relay loop performs succeeds against the
     // same server — the agent is back, no process restart needed.
@@ -547,10 +567,24 @@ test "integration: server heartbeat pings keep the link alive (no false stale)" 
         .cfg = .{ .ping_interval_ms = 40, .stale_after_ms = 150 },
         .link = wsLink(ctrl),
     };
+    // Same teardown as the stale test above, armed for a failed assertion
+    // (T1505): close + join the reader, stop + join the keepalive, free.
+    var ctrl_live = true;
+    errdefer if (ctrl_live) ctrl.deinit();
     const ka_thread = try std.Thread.spawn(.{}, Keepalive.run, .{&ka});
+    var ka_joined = false;
+    errdefer if (!ka_joined) {
+        ka.requestStop();
+        ka_thread.join();
+    };
 
     var reader = BlockingReader{ .ws = ctrl };
     const rd_thread = try std.Thread.spawn(.{}, BlockingReader.run, .{&reader});
+    var rd_joined = false;
+    errdefer if (!rd_joined) {
+        ctrl.close();
+        rd_thread.join();
+    };
 
     // Several stale windows pass; the server's pings are counted as inbound
     // traffic (readMessage consumes them internally, WsClient timestamps them),
@@ -562,10 +596,13 @@ test "integration: server heartbeat pings keep the link alive (no false stale)" 
     // Clean teardown: stop the keepalive, then close to release the reader.
     ka.requestStop();
     ka_thread.join();
+    ka_joined = true;
     ctrl.close();
     rd_thread.join();
+    rd_joined = true;
     try testing.expectEqual(@as(i64, 0), reader.result.load(.monotonic));
     ctrl.deinit();
+    ctrl_live = false;
 }
 
 test {
