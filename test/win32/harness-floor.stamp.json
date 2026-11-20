@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-20T12:15:46-08:00",
-    "commit":  "6b10bace0",
+    "generated":  "2026-11-20T12:41:44-08:00",
+    "commit":  "aa9053cc3",
     "uncommitted":  [
-                        "test/win32/gui-postmortem.ps1",
-                        "test/win32/lib/TestDesktop.ps1"
+                        "test/win32/go-loop-guard.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -197,13 +196,13 @@
                   "test/win32/ghoztty-cleanup.ps1":  "a1b46736eb6a96c57f7598e2a1088afaf501c62be03ec8bfc45d91bc15107629",
                   "test/win32/glass-frame-origin.ps1":  "0a0dfeed8dff3e6ba20ec9402905ac5490ab37b43d85d9316be106de72e26b56",
                   "test/win32/gl-device-lost.ps1":  "3a87a2acf4ebca9c19323687ecd65919747f3691aa09eb9eb245f19246d30711",
-                  "test/win32/go-loop-guard.ps1":  "cb66c81bfd80f9d683cb9d348055e4f96529078936dc0774abc77b08ada1dd5d",
+                  "test/win32/go-loop-guard.ps1":  "4f50bf251a95f5b3a8dc8db1f2d7e7c0cde5eaf306964c213a983d55f077691d",
                   "test/win32/go-loop-resume.ps1":  "14325d8a66784b9f3efd653504c67d9434b27a5d2a98adba2e1d4a54d55b6350",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/goto-window.ps1":  "46d315222e373a99e41e10787bf31cbd847e3cd8c383da93e902008f549627a1",
                   "test/win32/guard-due.ps1":  "f32bba80075ab29f3f54a393efa8bce66ebff065c30d52d03cbc4c40338d7d1e",
                   "test/win32/gui-launch-command.ps1":  "fa0a4aad0300e381786ac6c0d32b7666372c22ab9351bfb6d44a6ddfdcb84de3",
-                  "test/win32/gui-postmortem.ps1":  "5fd3dff126cbf9d7217374532f446ce68740ada412ecfac719fd43f05b55cfcb",
+                  "test/win32/gui-postmortem.ps1":  "4f9ba3bb7629a71ca32e0c793212c56dfabeb1ed8c96dc41eacddf0d0598da98",
                   "test/win32/hard-delete-sites.ps1":  "f0e6c5b18f1e786cab6acf996e3bcb9d8b1da46d99c9bfbc7f5664a12dacd71c",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",
                   "test/win32/harness-floor.ps1":  "3b83bf58f86f59dbf9fc47524f5401100fd4bdfce9f9a1a550fed0c1947b5e9b",
@@ -346,7 +345,7 @@
                   "test/win32/lib/SkipAudit.ps1":  "ad7596801d9becbd3869a0ad315d01302cf6e80a339644d911d74b31b3f577ba",
                   "test/win32/lib/StderrCaptureAudit.ps1":  "69d0a25615d35acc06bf6c1471016186163ae1881ae70a12461425546ac4b7d8",
                   "test/win32/lib/TestClient.ps1":  "2540c6af1c32c497f17c0e4fe04fc49480072ef7b54d464b12d0bd252897a3c5",
-                  "test/win32/lib/TestDesktop.ps1":  "e314f16bfee08139657f4a82d476dbd9836e2cf73392a2d1837761705957974e",
+                  "test/win32/lib/TestDesktop.ps1":  "4104e59cf7831736ce57809fb871fbf6a7ebd8aa99ea8b980f802b53d3a23bcf",
                   "test/win32/lib/TestReachAudit.ps1":  "5e0e10352742575af26220c992790da3e9a74ae6d40281f2fecdf7d6a1cf52c0",
                   "test/win32/lib/TestScore.ps1":  "c9c34503c546b23fc63b4ac19dbab07aa8cef100cbdbf9c4c1753af06114bdca",
                   "test/win32/lib/TestWaitAudit.ps1":  "632b1d2adad0400247dd7d51c7f9ebad0e2c47ca9a7afe5cbdca2cd09318be3d",
@@ -451,7 +450,7 @@
                   "test/win32/rdp-perf-probe.ps1":  "d9a2438358328f459c637242375193fb1651d6b4ee3ba98358617290aa0bb183",
                   "test/win32/rdp-session.ps1":  "26fa35ab178060d0a6ff53c6e00ff3149c78bd04f041c1a953a37d575aac82df",
                   "test/win32/readonly-badge.ps1":  "515216ddf39828bc788ea09f8a3f056c7540493096a022b96a0ee7f4fdc9f653",
-                  "test/win32/rearrange-desktop-drop.ps1":  "452703059cc60186e4339cf741668dd68b793c49b9b68ab94a08556cd500dc23",
+                  "test/win32/rearrange-desktop-drop.ps1":  "4de08a67cea3d025ff6a762c2ce7abb6d177b2f01a92753133950993eff6db91",
                   "test/win32/rearrange-divider-drop.ps1":  "f7f24573ad7a883bdc415151fe5b15813df048425eb73081e647d0576d33f547",
                   "test/win32/rearrange-drag.ps1":  "1200a8bc0fe8f00e7db1c1aa00ae0aa1c433c9e7f7530fa49679940905774fef",
                   "test/win32/rearrange-header.ps1":  "59752b704d6eedda970f58633695ad0708a0e8e642468674290014dfa854f968",

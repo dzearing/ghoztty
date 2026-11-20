@@ -634,9 +634,22 @@ function Get-AutostashLitter {
     return $out
 }
 
+# Does pathspec $r cover $file, the way `git add -- $r` decided it did?
+#
+# A literal names the file or a directory above it. A WILDCARD (T1551) is
+# matched as git matches a default pathspec: `*`, `?` and `[...]` with no
+# special treatment of `/`, so `*` crosses directories - which is also exactly
+# PowerShell's -like. Before T1551 a wildcard was compared as a literal string,
+# so `test/win32/*.stamp.json` staged and committed 19 stamps and then the
+# read-back called every one of them another session's work (exit 5, the
+# commit already made). The `$r/*` arm is git's other rule: a pattern that
+# matches a directory covers everything under it.
 function Test-PathCovered([string]$file, [string[]]$requested) {
     foreach ($r in $requested) {
         if ($file -eq $r -or $file.StartsWith("$r/")) { return $true }
+        if ([System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($r)) {
+            if ($file -like $r -or $file -like "$r/*") { return $true }
+        }
     }
     return $false
 }

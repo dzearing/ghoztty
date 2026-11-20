@@ -1938,6 +1938,40 @@ Assert 'W25 push ships the backlog' ($r.Code -eq 0 -and $r.Out -match 'PUSHED 1 
 $r = CG @('unpushed')
 Assert 'W26 and unpushed goes clean again' ($r.Code -eq 0 -and $r.Out -match 'push clean')
 
+# T1551: a WILDCARD pathspec. `git add` expands it, and the read-back used to
+# compare the commit against the literal pattern - so closing T711 committed 19
+# stamp files and was then refused as T948 (exit 5) with the commit already
+# made. Every expansion is a requested file, so it commits AND pushes.
+$wStamps = Join-Path $wRepo 'stamps'
+New-Item -ItemType Directory -Force (Join-Path $wStamps 'deep') | Out-Null
+Set-Content -Path (Join-Path $wStamps 'one.stamp.json') -Value '1'
+Set-Content -Path (Join-Path $wStamps 'two.stamp.json') -Value '2'
+Set-Content -Path (Join-Path $wStamps 'deep\three.stamp.json') -Value '3'
+$headBefore = WHead
+$r = CG @('commit', '-Paths', 'stamps/*.stamp.json', '-Message', 'stamps by wildcard')
+$committed = @(& git -C $wRepo show --pretty=format: --name-only HEAD 2>$null | Where-Object { $_ })
+$remoteHead = (& git -C $wBare rev-parse HEAD 2>$null | Select-Object -First 1)
+Assert 'W26a a wildcard pathspec whose every expansion was requested commits and pushes (no T948 refusal)' `
+    ($r.Code -eq 0 -and $r.Out -match 'COMMITTED' -and $r.Out -notmatch 'SWALLOWED WORK' -and
+     $r.Out -match 'PUSHED' -and $remoteHead -eq (WHead) -and (WHead) -ne $headBefore)
+Assert 'W26b the wildcard expanded as git expands it (3 files, * crossing into deep/)' `
+    ($committed.Count -eq 3 -and ($committed -contains 'stamps/deep/three.stamp.json'))
+$r = CG @('verify', '-Paths', 'stamps/*.stamp.json', '-Sha', 'HEAD')
+Assert 'W26c verify reads the same wildcard back as CLEAN' ($r.Code -eq 0 -and $r.Out -match 'CLEAN')
+
+# Negative control: the wildcard must not blunt the guard. The commit holds
+# stamps/ files AND a path the pattern does not reach; verify must still call
+# the stranger foreign, and only the stranger.
+Set-Content -Path (Join-Path $wStamps 'four.stamp.json') -Value '4'
+Set-Content -Path (Join-Path $wRepo 'stranger.txt') -Value 'not a stamp'
+$r = CG @('commit', '-Paths', 'stamps/four.stamp.json,stranger.txt', '-Message', 'a stamp and a stranger')
+$r = CG @('verify', '-Paths', 'stamps/*.stamp.json', '-Sha', 'HEAD')
+Assert 'W26d control: a path outside the wildcard is still SWALLOWED WORK (exit 5), and named alone' `
+    ($r.Code -eq 5 -and $r.Out -match 'SWALLOWED WORK: HEAD contains 1 foreign' -and $r.Out -match 'stranger\.txt' -and $r.Out -notmatch 'four\.stamp')
+$r = CG @('verify', '-Paths', 'stamps/*.txt', '-Sha', 'HEAD~1')
+Assert 'W26e control: a wildcard that misses every committed name is not a free pass (all 3 foreign)' `
+    ($r.Code -eq 5 -and $r.Out -match 'contains 3 foreign')
+
 # A rejected push is the one recoverable failure, and go.md step 4 says how:
 # pull with rebase, push again. Reported-and-left is what leaves work here.
 $pBare = Join-Path $root 'reject-remote.git'
