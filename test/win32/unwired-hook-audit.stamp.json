@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-20T11:39:20-08:00",
-    "commit":  "9713a64e3",
+    "generated":  "2026-11-20T12:16:41-08:00",
+    "commit":  "6b10bace0",
     "uncommitted":  [
 
                     ],
@@ -1314,7 +1314,7 @@
                   "test/win32/goto-window.ps1":  "46d315222e373a99e41e10787bf31cbd847e3cd8c383da93e902008f549627a1",
                   "test/win32/guard-due.ps1":  "f32bba80075ab29f3f54a393efa8bce66ebff065c30d52d03cbc4c40338d7d1e",
                   "test/win32/gui-launch-command.ps1":  "fa0a4aad0300e381786ac6c0d32b7666372c22ab9351bfb6d44a6ddfdcb84de3",
-                  "test/win32/gui-postmortem.ps1":  "4f9ba3bb7629a71ca32e0c793212c56dfabeb1ed8c96dc41eacddf0d0598da98",
+                  "test/win32/gui-postmortem.ps1":  "5fd3dff126cbf9d7217374532f446ce68740ada412ecfac719fd43f05b55cfcb",
                   "test/win32/hard-delete-sites.ps1":  "f0e6c5b18f1e786cab6acf996e3bcb9d8b1da46d99c9bfbc7f5664a12dacd71c",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",
                   "test/win32/harness-floor.ps1":  "3b83bf58f86f59dbf9fc47524f5401100fd4bdfce9f9a1a550fed0c1947b5e9b",

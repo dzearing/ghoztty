@@ -2971,6 +2971,103 @@ function Get-TestLaunchRecords {
 }
 
 <#
+Mark the launch records for one pid as killed on purpose (T1550).
+
+Only a record whose process is still RUNNING is marked: a launch that already
+died on its own keeps its postmortem even if a script then "stops" its pid, and
+a pid Windows has since recycled for an unrelated process cannot silence the
+crash of the launch that used to own it. Returns the number of records marked.
+#>
+function Set-TestLaunchKilled {
+    param([Parameter(Mandatory = $true)][int]$ProcessId)
+    $n = 0
+    foreach ($r in @($script:GhozttyTestDesktopLaunches)) {
+        if ([int]$r.Pid -ne $ProcessId -or $r.Killed) { continue }
+        $alive = $true
+        if ($r.Process) { try { $alive = -not $r.Process.HasExited } catch { $alive = $true } }
+        if (-not $alive) { continue }
+        $r.Killed = $true
+        $n++
+    }
+    return $n
+}
+
+<#
+Stop-Process, as every script that loads this library sees it (T1550).
+
+WHY. The teardown postmortem reports every launch that is gone and was not
+killed by the harness. Remove-TestDesktop's own kill and Stop-RepoGhoztty
+(T2058) mark their kills, but about seventy acceptance scripts stop the app they
+launched with a bare `Stop-Process -Id $app.Pid` - to relaunch, to drop a
+windowless first instance (caption-bar.ps1), to end a round. Each of those left
+the record unmarked, and a green ALL PASS run then ended with `GUI POSTMORTEM
+... verdict : CRASHED - 0xFFFFFFFF`, identical to a real crash - the one
+confusion T527 exists to remove. Marking the record at the one place every
+spelling of that kill passes through fixes all of them at once, and the next
+script that stops its app needs to know nothing.
+
+This is the exact proxy PowerShell generates for the cmdlet
+(ProxyCommand::Create), so parameter binding, pipeline input, -ErrorAction and
+-PassThru behave as before; it only marks the harness launch records for each
+pid it is about to stop, then forwards to Microsoft.PowerShell.Management\
+Stop-Process. A pid this harness never launched is untouched. The silence
+comes from the kill mark, never from the exit value: a launch that exits
+0xFFFFFFFF on its own is still CRASHED (gui-postmortem.ps1 sections K and L).
+#>
+function Stop-Process {
+    [CmdletBinding(DefaultParameterSetName = 'Id', SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
+    param(
+        [Parameter(ParameterSetName = 'Name', Mandatory = $true, ValueFromPipelineByPropertyName = $true)]
+        [Alias('ProcessName')]
+        [string[]]
+        ${Name},
+
+        [Parameter(ParameterSetName = 'Id', Mandatory = $true, Position = 0, ValueFromPipelineByPropertyName = $true)]
+        [int[]]
+        ${Id},
+
+        [Parameter(ParameterSetName = 'InputObject', Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
+        [System.Diagnostics.Process[]]
+        ${InputObject},
+
+        [switch]
+        ${PassThru},
+
+        [ValidateNotNullOrEmpty()]
+        [switch]
+        ${Force})
+
+    begin {
+        $outBuffer = $null
+        if ($PSBoundParameters.TryGetValue('OutBuffer', [ref]$outBuffer)) { $PSBoundParameters['OutBuffer'] = 1 }
+        $wrappedCmd = $ExecutionContext.InvokeCommand.GetCommand('Microsoft.PowerShell.Management\Stop-Process', [System.Management.Automation.CommandTypes]::Cmdlet)
+        $scriptCmd = { & $wrappedCmd @PSBoundParameters }
+        $steppablePipeline = $scriptCmd.GetSteppablePipeline($myInvocation.CommandOrigin)
+        $steppablePipeline.Begin($PSCmdlet)
+    }
+
+    process {
+        if (-not $WhatIfPreference -and $script:GhozttyTestDesktopLaunches) {
+            $pids = @()
+            if ($PSCmdlet.ParameterSetName -eq 'Id') { $pids = @($Id) }
+            elseif ($PSCmdlet.ParameterSetName -eq 'InputObject') { $pids = @($InputObject | ForEach-Object { $_.Id }) }
+            else {
+                $pids = @(Microsoft.PowerShell.Management\Get-Process -Name $Name -ErrorAction SilentlyContinue |
+                    ForEach-Object { $_.Id })
+            }
+            foreach ($victim in $pids) {
+                if ($null -ne $victim) { [void](Set-TestLaunchKilled -ProcessId ([int]$victim)) }
+            }
+        }
+        $steppablePipeline.Process($_)
+    }
+
+    end {
+        $steppablePipeline.End()
+    }
+}
+
+<#
 Diagnose one launched process by pid and print the block (T527).
 
 For the SETUP FAIL branch every GUI script already has: instead of

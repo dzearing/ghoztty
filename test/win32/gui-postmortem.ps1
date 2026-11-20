@@ -361,6 +361,49 @@ $kRec = @(Get-TestLaunchRecords | Where-Object { $_.Pid -eq $kDie.Pid })
 Assert 'K4 the launch is not on the record as killed' ($kRec.Count -eq 1 -and -not $kRec[0].Killed)
 Remove-TestDesktop
 
+# ------------- L. a bare Stop-Process on a harness launch is not a crash (T1550)
+
+# WHY. Sections F and J cover the two kills that marked their records by hand.
+# About seventy scripts stop the app they launched with a bare
+# `Stop-Process -Id $app.Pid` instead (caption-bar.ps1 drops its windowless first
+# instance that way), and every one of those green runs ended with `CRASHED -
+# 0xFFFFFFFF`. The library now marks the record inside Stop-Process itself, so
+# all three spellings below must be silent. L4 is the teeth: a launch that died
+# on its own BEFORE a script stopped its pid is still reported, so the mark is
+# per live pid at the moment of the kill rather than a blanket silence.
+Write-Host 'L a bare Stop-Process on a harness launch is not reported as a death'
+$td6 = New-TestDesktop
+$lById = Start-OnTestDesktop -Exe $env:ComSpec -Arguments @('/c', 'ping -n 30 127.0.0.1 >nul')
+$lByPipe = Start-OnTestDesktop -Exe $env:ComSpec -Arguments @('/c', 'ping -n 30 127.0.0.1 >nul')
+$lPositional = Start-OnTestDesktop -Exe $env:ComSpec -Arguments @('/c', 'ping -n 30 127.0.0.1 >nul')
+$lDie = Start-OnTestDesktop -Exe $env:ComSpec -Arguments @('/c', 'ping -n 2 127.0.0.1 >nul & exit -1')
+$lDieGone = Wait-Gone -ProcessId $lDie.Pid -TimeoutSec 60
+Assert 'L1 the self-exiting -1 child exited before the stop' $lDieGone
+Stop-Process -Id $lById.Pid -Force -ErrorAction SilentlyContinue
+Get-Process -Id $lByPipe.Pid -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Stop-Process $lPositional.Pid -Force -ErrorAction SilentlyContinue
+Stop-Process -Id $lDie.Pid -Force -ErrorAction SilentlyContinue
+$lAllGone = (Wait-Gone -ProcessId $lById.Pid -TimeoutSec 10) -and
+    (Wait-Gone -ProcessId $lByPipe.Pid -TimeoutSec 10) -and
+    (Wait-Gone -ProcessId $lPositional.Pid -TimeoutSec 10)
+Assert 'L2 all three spellings of Stop-Process actually stopped their child' $lAllGone
+Clear-LastGuiPostmortem
+$lCount = Write-TestDesktopPostmortems -WaitSeconds 1
+$lBlock = (@(Get-LastGuiPostmortem) -join "`n")
+Assert "L3 the three stopped children are not reported (blocks: $lCount, want 1)" ($lCount -eq 1)
+Assert 'L4 the child that died on its own is still reported as CRASHED - 0xFFFFFFFF' `
+    ($lBlock -like "*pid $($lDie.Pid)*" -and $lBlock -like '*verdict : CRASHED - 0xFFFFFFFF*')
+$lMarked = @(Get-TestLaunchRecords | Where-Object {
+        $_.Killed -and @($lById.Pid, $lByPipe.Pid, $lPositional.Pid) -contains $_.Pid })
+Assert "L5 all three stopped launches are on the record as killed (got $($lMarked.Count))" ($lMarked.Count -eq 3)
+$lDieRec = @(Get-TestLaunchRecords | Where-Object { $_.Pid -eq $lDie.Pid })
+Assert 'L6 the already-dead launch was NOT marked killed by the later stop' `
+    ($lDieRec.Count -eq 1 -and -not $lDieRec[0].Killed)
+$lForeign = Start-Process -FilePath $env:ComSpec -ArgumentList '/c', 'ping -n 30 127.0.0.1 >nul' -WindowStyle Hidden -PassThru
+Stop-Process -Id $lForeign.Id -Force -ErrorAction SilentlyContinue
+Assert 'L7 Stop-Process still stops a pid the harness never launched' (Wait-Gone -ProcessId $lForeign.Id -TimeoutSec 10)
+Remove-TestDesktop
+
 Complete-TestBody
 
 } finally {

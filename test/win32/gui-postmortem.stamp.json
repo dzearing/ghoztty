@@ -1,14 +1,19 @@
 {
     "guard":  "gui-postmortem",
     "script":  "test/win32/gui-postmortem.ps1",
-    "generated":  "2026-10-25T02:16:37-07:00",
-    "commit":  "ea0309277",
+    "generated":  "2026-11-20T11:56:27-08:00",
+    "commit":  "6b10bace0",
     "uncommitted":  [
                         "test/win32/gui-postmortem.ps1"
                     ],
     "files":  {
                   "scripts/lib/CrashDiag.ps1":  "fe512622eae4215c4c4755fcbfe8552b4760ab9ee6174fe4c5aa80a71a76cdf4",
-                  "test/win32/gui-postmortem.ps1":  "4f9ba3bb7629a71ca32e0c793212c56dfabeb1ed8c96dc41eacddf0d0598da98",
+                  "test/win32/gui-postmortem.ps1":  "5fd3dff126cbf9d7217374532f446ce68740ada412ecfac719fd43f05b55cfcb",
                   "test/win32/lib/GuiPostmortem.ps1":  "a00924779898b364a5752d79eb725dc9f8c85ddc4cd3f3b71df27fefd886d3ca"
-              }
+              },
+    "code":  {
+                 "scripts/lib/CrashDiag.ps1":  "code1:e1f05f4814b8836b10bd36069d13bcbf2ad0e28bece5d8b855138f4e64c3f95f",
+                 "test/win32/gui-postmortem.ps1":  "code1:0f94fb67c2607ccc04a04722aa5cebedda8b75e9aee45118c68a96d5eed373e8",
+                 "test/win32/lib/GuiPostmortem.ps1":  "code1:640dce97f9d9a23201c5401efb07e29026858cb72ee9c8726629d41d996ed301"
+             }
 }
