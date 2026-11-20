@@ -1048,12 +1048,6 @@ try {
                             $ok[0].Text -match 'Sign Out Anyway')
                         Send-TestControlClick -Control $ok[0].Hwnd | Out-Null
 
-                        # The network comes back the moment they commit to it.
-                        # Started HERE, not earlier: the first attempt fires as
-                        # soon as the record is armed, and a relay that was
-                        # already up would let a test pass with no retry at all.
-                        $null = Start-FakeRelay $RevokePort $SessTok 3600 $RenewedTok $HitsR $ProbeNonce
-
                         $armed = $false
                         foreach ($i in 1..40) {
                             Start-Sleep -Milliseconds 250
@@ -1088,6 +1082,19 @@ try {
                         # The credential is kept on purpose: it is the only
                         # thing that can ever revoke this machine.
                         Assert "relay.env is kept as the retry's own record" (Test-Path $RelayEnvPath)
+
+                        # The network comes back only NOW, after the record and
+                        # relay.env have been read. The first attempt fires the
+                        # moment the record is armed, so a relay that was up any
+                        # earlier would let a test pass with no retry at all -
+                        # and a relay started right after the click (as this
+                        # used to) let that attempt succeed and SPEND the record
+                        # while the lines above were still reading it: 2 of 9
+                        # runs on 2026-11-20 read an empty record and a deleted
+                        # relay.env (T1553). Starting it here means attempt 0
+                        # always fails and the 5s/15s backoff retry is what
+                        # lands, which the 60s wait below covers.
+                        $null = Start-FakeRelay $RevokePort $SessTok 3600 $RenewedTok $HitsR $ProbeNonce
 
                         $upR = Wait-FakeRelay $RevokePort $ProbeNonce
                         if (-not $upR.Ok) { "  (revocation relay never answered: $($upR.Why))" }
