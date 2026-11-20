@@ -447,6 +447,9 @@ panes: [panes_mod.max_panes]panes_mod.Pane = @splat(.{}),
 pane_count: usize = 0,
 pane_labels: [panes_mod.label_arena_bytes]u8 = undefined,
 pane_labels_len: usize = 0,
+/// `panes[i].detail` points here (T1548), on the same lifetime as the labels.
+pane_details: [panes_mod.detail_arena_bytes]u8 = undefined,
+pane_details_len: usize = 0,
 /// Fingerprint of the pane set the panel last NAMED in its log, so the naming
 /// line is written on a change rather than on every 1.5 s poll.
 pane_sig: u64 = 0,
@@ -597,6 +600,13 @@ tracking_leave: bool = false,
 help_tip: hover_help.Tip = .{},
 /// The help surface under the pointer, or null.
 help_target: ?activity_help.Target = null,
+/// For a table-cell target (T1548): the row's PID, so moving down a column
+/// is a new tip per row; 0 for every other target.
+help_pid: i64 = 0,
+/// For a table-cell target: the client point it was hovered at, re-tested at
+/// show time so a re-sort under a still pointer cannot show one row's words
+/// under another row.
+help_pt: w32.POINT = .{ .x = 0, .y = 0 },
 /// Thumb drag: the grab offset inside the thumb, or -1 when not dragging.
 thumb_drag_dy: i32 = -1,
 

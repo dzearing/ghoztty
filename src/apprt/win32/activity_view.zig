@@ -66,6 +66,7 @@ pub fn filterSpec(self: *const ActivityMonitor) rows_mod.Filter {
 pub fn collectPanes(self: *ActivityMonitor) void {
     self.pane_count = 0;
     self.pane_labels_len = 0;
+    self.pane_details_len = 0;
 
     const want_local = self.source == .local;
 
@@ -97,6 +98,7 @@ pub fn collectPanes(self: *ActivityMonitor) void {
             // (2964c8859).
             var pids: [max_tab_panes]i64 = undefined;
             var titles: [max_tab_panes][]const u8 = undefined;
+            var cwds: [max_tab_panes][]const u8 = undefined;
             var n: usize = 0;
 
             var it = win.tab_trees[ti].iterator();
@@ -111,6 +113,7 @@ pub fn collectPanes(self: *ActivityMonitor) void {
                 // Borrowed from the surface, and only for this iteration — the
                 // label copied out below is what the rows keep.
                 titles[n] = surface.getTitle() orelse "";
+                cwds[n] = if (surface.pwd) |p| p else "";
                 n += 1;
             }
             if (n == 0) continue;
@@ -138,7 +141,26 @@ pub fn collectPanes(self: *ActivityMonitor) void {
                     panes_mod.titleDistinguishes(titles[0..n], i, group),
                 );
                 self.pane_labels_len += label.len;
-                self.panes[self.pane_count] = .{ .shell_pid = pids[i], .label = label };
+
+                // The hover detail (T1548). Its arena holds `max_detail` per
+                // pane, so a pane that got a label always has room here too.
+                const droom = self.pane_details[self.pane_details_len..];
+                const detail = panes_mod.paneDetail(
+                    droom[0..@min(droom.len, panes_mod.max_detail)],
+                    .{
+                        .window_label = window_label,
+                        .tab_title = tab_title,
+                        .tab_index = ti,
+                        .tab_count = tab_count,
+                        .pane_title = titles[i],
+                        .index = i,
+                        .count = n,
+                        .cwd = cwds[i],
+                        .shell_pid = pids[i],
+                    },
+                );
+                self.pane_details_len += detail.len;
+                self.panes[self.pane_count] = .{ .shell_pid = pids[i], .label = label, .detail = detail };
                 self.pane_count += 1;
             }
         }

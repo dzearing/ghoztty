@@ -38,6 +38,9 @@ pub const Row = struct {
     /// by row on the sampling thread. Points into the panel's label arena; see
     /// `activity_panes.zig`.
     pane_label: []const u8 = "",
+    /// That pane's multi-line hover detail (T1548), set beside `pane_label`
+    /// and from the same arena rule. "" exactly when `pane_label` is.
+    pane_detail: []const u8 = "",
 };
 
 /// Which column the table is ordered by. The values line up with

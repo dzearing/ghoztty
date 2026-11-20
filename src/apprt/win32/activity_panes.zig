@@ -83,7 +83,17 @@ pub const Pane = struct {
     /// Human-readable "which window/pane is this", pointing into the panel's
     /// own label arena — never at a window's transient title buffer.
     label: []const u8 = "",
+    /// The multi-line hover detail for the column's tooltip (T1548; Mac's
+    /// `AttributedPane.detail`) — see `paneDetail`. Same arena rule as `label`.
+    detail: []const u8 = "",
 };
+
+/// Longest hover detail a pane gets: four variable lines of at most
+/// `max_label` bytes each plus their fixed captions, with room to spare.
+pub const max_detail: usize = 4 * max_label + 128;
+
+/// Detail storage the panel reserves, alongside `label_arena_bytes`.
+pub const detail_arena_bytes: usize = max_panes * max_detail;
 
 /// The separator between a group and the pane inside it. U+203A, the same
 /// single-angle quote Mac uses.
@@ -106,7 +116,10 @@ pub const sep = " \u{203A} ";
 /// so the torn-snapshot case where 500's parent is 600 and 600's is 500 settles
 /// instead of spinning the GUI thread.
 pub fn attribute(rows: []Row, panes: []const Pane) usize {
-    for (rows) |*r| r.pane_label = "";
+    for (rows) |*r| {
+        r.pane_label = "";
+        r.pane_detail = "";
+    }
     if (rows.len == 0 or panes.len == 0) return 0;
 
     var n: usize = 0;
@@ -118,6 +131,7 @@ pub fn attribute(rows: []Row, panes: []const Pane) usize {
         for (panes) |p| {
             if (p.shell_pid == 0 or p.shell_pid != r.pid) continue;
             r.pane_label = p.label;
+            r.pane_detail = p.detail;
             n += 1;
             break;
         }
@@ -136,6 +150,7 @@ pub fn attribute(rows: []Row, panes: []const Pane) usize {
             for (rows) |parent| {
                 if (parent.pid != r.ppid or parent.pane_label.len == 0) continue;
                 r.pane_label = parent.pane_label;
+                r.pane_detail = parent.pane_detail;
                 n += 1;
                 changed = true;
                 break;
@@ -280,6 +295,77 @@ pub fn fit(buf: []u8, text: []const u8) []const u8 {
     while (n > 0 and (text[n] & 0xC0) == 0x80) n -= 1;
     @memcpy(buf[0..n], text[0..n]);
     return buf[0..n];
+}
+
+/// `s` cut to at most `n` bytes on a code-point boundary, without copying.
+fn clip(s: []const u8, n: usize) []const u8 {
+    if (s.len <= n) return s;
+    var k = n;
+    while (k > 0 and (s[k] & 0xC0) == 0x80) k -= 1;
+    return s[0..k];
+}
+
+/// What one pane's identity is, for its hover detail.
+pub const DetailInput = struct {
+    window_label: []const u8,
+    /// The pane's tab, and where it sits. A one-tab window names no tab.
+    tab_title: []const u8 = "",
+    tab_index: usize = 0,
+    tab_count: usize = 1,
+    pane_title: []const u8 = "",
+    /// The pane's position among its tab's attributing panes, split order.
+    index: usize = 0,
+    count: usize = 1,
+    /// The pane's working directory, full path; the detail shows its last
+    /// component, as Mac's does.
+    cwd: []const u8 = "",
+    shell_pid: i64 = 0,
+};
+
+/// The "Window / Pane" cell's hover detail (T1548): Mac's
+/// `PaneAttribution` detail lines (`Window:`, `Pane:`, `Pane position:`,
+/// `Directory:`, `TTY:`), one per line, translated where the concept differs:
+///
+/// - **`Shell PID:` stands where `TTY:` does.** ConPTY has no tty name, and the
+///   shell pid is what this platform seeds attribution from (the module doc) —
+///   the `+list --tty` → `+list --pid` pair again.
+/// - **`Tab:` is added for a window holding more than one tab.** Mac's window
+///   IS one tab, so its `Window:` line already pins the pane down; a win32
+///   window can hold several, and `Pane position: 1 of 2` would then not say
+///   which tab's first pane it means.
+///
+/// Every variable part is clipped to `max_label`, so with `buf` of
+/// `max_detail` bytes no line is ever dropped; a smaller buffer keeps the
+/// lines that fit, whole.
+pub fn paneDetail(buf: []u8, in: DetailInput) []const u8 {
+    var len: usize = 0;
+    const Line = struct {
+        fn add(b: []u8, l: *usize, comptime fmt: []const u8, args: anytype) void {
+            const sepn: usize = if (l.* == 0) 0 else 1;
+            if (b.len < l.* + sepn) return;
+            const room = b[l.* + sepn ..];
+            const s = std.fmt.bufPrint(room, fmt, args) catch return;
+            if (sepn == 1) b[l.*] = '\n';
+            l.* += sepn + s.len;
+        }
+    };
+
+    Line.add(buf, &len, "Window: {s}", .{clip(trim(in.window_label), max_label)});
+    if (in.tab_count > 1) {
+        const t = clip(trim(in.tab_title), max_label);
+        if (t.len > 0 and !std.mem.eql(u8, t, trim(in.window_label))) {
+            Line.add(buf, &len, "Tab: {s} ({d} of {d})", .{ t, in.tab_index + 1, in.tab_count });
+        } else {
+            Line.add(buf, &len, "Tab: {d} of {d}", .{ in.tab_index + 1, in.tab_count });
+        }
+    }
+    const pane_title = clip(trim(in.pane_title), max_label);
+    if (pane_title.len > 0) Line.add(buf, &len, "Pane: {s}", .{pane_title});
+    if (in.count > 1) Line.add(buf, &len, "Pane position: {d} of {d}", .{ in.index + 1, in.count });
+    const dir = clip(baseName(trim(in.cwd)), max_label);
+    if (dir.len > 0) Line.add(buf, &len, "Directory: {s}", .{dir});
+    if (in.shell_pid != 0) Line.add(buf, &len, "Shell PID: {d}", .{in.shell_pid});
+    return buf[0..len];
 }
 
 // ---------------------------------------------------------------------
@@ -500,4 +586,82 @@ test "a label that overflows its buffer degrades to the group, not to garbage" {
     const out = paneLabel(&buf, "grouplabel", "title", 1, 3, true);
     try testing.expect(out.len <= buf.len);
     try testing.expect(std.unicode.utf8ValidateSlice(out));
+}
+
+test "paneDetail: Mac's lines, Shell PID in place of TTY" {
+    var buf: [max_detail]u8 = undefined;
+    try testing.expectEqualStrings(
+        "Window: build\nPane: ~/git\nPane position: 2 of 3\nDirectory: ghoztty\nShell PID: 31160",
+        paneDetail(&buf, .{
+            .window_label = "build",
+            .pane_title = "~/git",
+            .index = 1,
+            .count = 3,
+            .cwd = "D:\\git\\ghoztty\\",
+            .shell_pid = 31160,
+        }),
+    );
+}
+
+test "paneDetail: a lone pane has no position, and empty parts have no line" {
+    var buf: [max_detail]u8 = undefined;
+    // Mac: `if !single` gates the position, `if !isEmpty` the title and cwd.
+    try testing.expectEqualStrings(
+        "Window: logs\nShell PID: 7",
+        paneDetail(&buf, .{ .window_label = "logs", .pane_title = "  ", .shell_pid = 7 }),
+    );
+}
+
+test "paneDetail: a multi-tab window names the tab, by title or by position" {
+    var buf: [max_detail]u8 = undefined;
+    try testing.expectEqualStrings(
+        "Window: work\nTab: server (2 of 3)\nShell PID: 9",
+        paneDetail(&buf, .{ .window_label = "work", .tab_title = "server", .tab_index = 1, .tab_count = 3, .shell_pid = 9 }),
+    );
+    // A tab title that only restates the window says nothing: position instead.
+    try testing.expectEqualStrings(
+        "Window: work\nTab: 1 of 2\nShell PID: 9",
+        paneDetail(&buf, .{ .window_label = "work", .tab_title = "work", .tab_index = 0, .tab_count = 2, .shell_pid = 9 }),
+    );
+    // A one-tab window names no tab at all.
+    try testing.expectEqualStrings(
+        "Window: work\nShell PID: 9",
+        paneDetail(&buf, .{ .window_label = "work", .tab_title = "server", .tab_count = 1, .shell_pid = 9 }),
+    );
+}
+
+test "paneDetail: overlong parts are clipped on a code point, and every line survives" {
+    var buf: [max_detail]u8 = undefined;
+    const long = "\u{203A}" ** 200; // 600 bytes
+    const out = paneDetail(&buf, .{
+        .window_label = long,
+        .tab_title = long ++ "x",
+        .tab_count = 2,
+        .pane_title = long,
+        .count = 2,
+        .cwd = long,
+        .shell_pid = 42,
+    });
+    try testing.expect(std.unicode.utf8ValidateSlice(out));
+    try testing.expect(std.mem.endsWith(u8, out, "\nShell PID: 42"));
+    try testing.expectEqual(@as(usize, 6), std.mem.count(u8, out, "\n") + 1);
+}
+
+test "paneDetail: a small buffer keeps whole lines, never a partial one" {
+    var small: [24]u8 = undefined;
+    const out = paneDetail(&small, .{ .window_label = "build", .pane_title = "server", .shell_pid = 123456 });
+    try testing.expectEqualStrings("Window: build", out);
+}
+
+test "attribute: carries each pane's detail with its label, down the subtree" {
+    var rows = [_]Row{
+        mkRow(100, 4, "pwsh.exe"),
+        mkRow(101, 100, "zig.exe"),
+        mkRow(5, 4, "svchost.exe"),
+    };
+    const panes = [_]Pane{.{ .shell_pid = 100, .label = "a", .detail = "Window: a\nShell PID: 100" }};
+    try testing.expectEqual(@as(usize, 2), attribute(&rows, &panes));
+    try testing.expectEqualStrings("Window: a\nShell PID: 100", rows[0].pane_detail);
+    try testing.expectEqualStrings("Window: a\nShell PID: 100", rows[1].pane_detail);
+    try testing.expectEqualStrings("", rows[2].pane_detail);
 }

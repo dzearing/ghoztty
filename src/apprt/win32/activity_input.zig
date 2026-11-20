@@ -18,6 +18,7 @@ const std = @import("std");
 const ActivityMonitor = @import("ActivityMonitor.zig");
 const Scrollbar = @import("Scrollbar.zig");
 const cards_mod = @import("activity_cards.zig");
+const hover_help = @import("activity_hover.zig");
 const icon_button = @import("icon_button.zig");
 const layout_mod = @import("activity_layout.zig");
 const rows_mod = @import("activity_rows.zig");
@@ -253,6 +254,8 @@ pub fn onWheel(self: *ActivityMonitor, delta: i16, screen_x: i32, screen_y: i32)
 
     self.scroll -= notches * 3;
     self.clampScroll();
+    // A cell tip names the row that WAS under the pointer (T1548).
+    hover_help.onTableScrolled(self);
     _ = w32.InvalidateRect(self.hwnd, null, 0);
 }
 

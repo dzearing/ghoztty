@@ -33,8 +33,19 @@
 #      track tool plus Show all, New Process and Kill
 #   E  NEGATIVE CONTROLS. Leaving a surface for nothing DROPS its tip (scored on
 #      order), and points with no help derive nothing: the empty badge slot
-#      beside the checkbox, and the table. Without E, B would pass equally well
-#      against a tip that fires anywhere on the control bar.
+#      beside the checkbox, and the empty band under the table's rows. Without
+#      E, B would pass equally well against a tip that fires anywhere on the
+#      control bar.
+#   F  THE PROCESS TABLE'S CELLS (T1548; Mac :1082-1142). Walking across one
+#      row, only Name, Window / Pane and Path answer, in that order, and the
+#      %CPU / Memory columns between them say nothing. Path says the whole
+#      path; Name says the full command (the same string, for one PID); Window
+#      / Pane says the pane's detail - Mac's Window / Pane / Pane position /
+#      Directory lines, with "Shell PID:" where Mac says "TTY:". The next row
+#      down is a new tip with its own PID; the pane tip, allowed its delay, is
+#      SHOWN; and with Show all on, a row no pane started says "Not started by
+#      a Ghoztty pane." Cell lines carry `pid=<n>` and write the detail's
+#      newlines as a literal \n.
 #
 # WHY A LOG LINE IS AN ORACLE. Hover TIMING cannot be observed on the background
 # test desktop: no real cursor rests anywhere, so TrackMouseEvent posts a leave
@@ -270,6 +281,117 @@ try {
     Assert ((Get-LastLineNo 'activity help tooltip target=') -eq $before) `
         'E the empty badge slot and the table derive no tooltip'
 
+    # --- F: the process table's cells (T1548) ------------------------------
+    Write-Host ''
+    Write-Host '2b. the table''s Name, Window / Pane and Path cells explain themselves'
+    # Find the first row: walk DOWN the Name column (about a quarter of the way
+    # across at the default widths: PID 60, Name 200 of 700 DIP) until the app
+    # says the pointer is on a name cell. Found, not derived (T257).
+    $nameX = [int]($client.Width / 4)
+    $cellY = -1
+    $before = Get-LastLineNo 'activity help tooltip target='
+    for ($y = $rowY + 8; $y -lt $client.Height - 4; $y += 4) {
+        Move-Pointer $panel $nameX $y 60
+        if ((Get-LastLineNo 'activity help tooltip target=name pid=') -gt $before) { $cellY = $y + 4; break }
+    }
+    Assert ($cellY -ge 0) "F walking down the Name column finds a row (y=$cellY)"
+
+    # Walk ACROSS that row, recording which cell each x answers as. Only the
+    # columns Mac gives a .help() may answer: name, pane, path - never PID,
+    # Memory or %CPU, so the walk must also cross x that answer nothing.
+    # The table sorts by %CPU, so a refresh mid-walk can move rows: everything
+    # compared across cells is keyed on the PID each line names.
+    $seen = New-Object System.Collections.ArrayList
+    $texts = @{}
+    $pids = @{}
+    $byPid = @{}
+    $silentAfterName = $false
+    $lastNo = Get-LastLineNo 'activity help tooltip target='
+    for ($x = 2; $x -lt $client.Width - 2; $x += 6) {
+        # Off the table between steps, so every x is a fresh hover.
+        Move-Pointer $panel $x ($rowY + 2) 30
+        $lastNo = Get-LastLineNo 'activity help tooltip target='
+        Move-Pointer $panel $x $cellY 60
+        $no = Get-LastLineNo 'activity help tooltip target='
+        if ($no -le $lastNo) {
+            if ($seen.Count -gt 0 -and $seen[-1] -eq 'name') { $silentAfterName = $true }
+            continue
+        }
+        $line = (Get-Content $errlog -Encoding UTF8 -TotalCount $no)[-1]
+        if ($line -match 'activity help tooltip target=(\w+) pid=(\d+) text=(.*)$') {
+            $k = $Matches[1]
+            if ($seen.Count -eq 0 -or $seen[-1] -ne $k) { [void]$seen.Add($k) }
+            $texts[$k] = $Matches[3]
+            $pids[$k] = $Matches[2]
+            $byPid["$k|$($Matches[2])"] = $Matches[3]
+        } elseif ($line -match 'activity help tooltip target=(\S+) text=') {
+            [void]$seen.Add("other:$($Matches[1])")
+        }
+    }
+    Assert (($seen -join ',') -ceq 'name,pane,path') "F across one row the cells answer in column order name, pane, path (got '$($seen -join ',')')"
+    Assert $silentAfterName 'F the %CPU and Memory columns between Name and Window / Pane answer nothing'
+    Assert ($texts['path'] -match '^[A-Za-z]:\\.+\.exe$') "F the Path cell says the whole path (got '$($texts['path'])')"
+    $pathPid = $pids['path']
+    $nameSame = $byPid["name|$pathPid"]
+    if ($null -eq $nameSame) {
+        # The row the walk ended on moved before its Name cell was crossed:
+        # re-hover that row's Name cell is not possible without its y, so
+        # compare the newest pair the walk DID see for one PID.
+        foreach ($key in @($byPid.Keys)) {
+            if ($key -like 'name|*') {
+                $p = $key.Substring(5)
+                if ($byPid.ContainsKey("path|$p")) { $pathPid = $p; $nameSame = $byPid[$key]; break }
+            }
+        }
+    }
+    Assert (($null -ne $nameSame) -and ($nameSame -ceq $byPid["path|$pathPid"])) `
+        "F the Name cell says the full command, as Mac's does (pid $pathPid, got '$nameSame')"
+    # Find the Window / Pane column's x on that row.
+    $paneX = -1
+    for ($x = 2; $x -lt $client.Width - 2; $x += 6) {
+        Move-Pointer $panel $x ($rowY + 2) 20
+        $b = Get-LastLineNo 'activity help tooltip target=pane pid='
+        Move-Pointer $panel $x $cellY 40
+        if ((Get-LastLineNo 'activity help tooltip target=pane pid=') -gt $b) { $paneX = $x + 6; break }
+    }
+
+    # Walk DOWN that column, one hover per step. The spawned-only table holds
+    # this app and its pane's processes: the app's own row is no pane's ("Not
+    # started by..."), while the shell under it is attributed and says Mac's
+    # detail lines, with Shell PID where Mac says TTY. Each row is a NEW
+    # surface: moving down the column re-hovers with that row's PID.
+    $paneTexts = @{}
+    Move-Pointer $panel $paneX ($rowY + 2) 60
+    for ($y = $cellY - 4; $y -lt [Math]::Min($client.Height - 4, $cellY + 240); $y += 4) {
+        $b = Get-LastLineNo 'activity help tooltip target=pane pid='
+        Move-Pointer $panel $paneX $y 60
+        $no = Get-LastLineNo 'activity help tooltip target=pane pid='
+        if ($no -le $b) { continue }
+        $line = (Get-Content $errlog -Encoding UTF8 -TotalCount $no)[-1]
+        if ($line -match 'target=pane pid=(\d+) text=(.*)$') { $paneTexts[$Matches[1]] = $Matches[2] }
+    }
+    Assert ($paneTexts.Count -ge 2) "F moving down the Window / Pane column is a new tip per row ($($paneTexts.Count) PIDs: $(@($paneTexts.Keys) -join ','))"
+    $detail = @($paneTexts.Values | Where-Object { $_ -cmatch '^Window: .+?(\\n(Tab|Pane|Pane position|Directory): .+?)*\\nShell PID: \d+$' }) | Select-Object -First 1
+    Assert ($null -ne $detail) "F an attributed row's Window / Pane cell says the pane's detail (got '$detail')"
+    if ($detail -match 'Shell PID: (\d+)$') {
+        Assert ($paneTexts.ContainsKey($Matches[1])) "F the detail's Shell PID is a row in the table, attributed to its own pane ($($Matches[1]))"
+    }
+
+    # The pane tip, allowed its show delay, is SHOWN.
+    $shown = $false
+    foreach ($try in 1..6) {
+        Move-Pointer $panel $paneX ($rowY + 2) 150
+        $beforeShown = Get-LastLineNo 'activity help tooltip shown target=pane'
+        [void](Send-TestRawMessagePair -Window $panel `
+            -Message1 $WM_MOUSEMOVE -LParam1 (Pack-Point $paneX $cellY) `
+            -Message2 $WM_TIMER -WParam2 ([IntPtr]$HELP_TIMER_ID))
+        Start-Sleep -Milliseconds 400
+        if ((Get-LastLineNo 'activity help tooltip shown target=pane') -gt $beforeShown) { $shown = $true; break }
+    }
+    Assert $shown "F a Window / Pane hover whose delay elapses SHOWS the tip (x=$paneX)"
+    Move-Pointer $panel ([int]($client.Width / 2)) ([int]($client.Height * 3 / 4))
+    Move-Pointer $panel $saRight $rowY
+
     # --- B: the count -------------------------------------------------------
     Write-Host ''
     Write-Host '3. the count explains itself'
@@ -336,6 +458,23 @@ try {
     }
     Assert ($got -cmatch '^\d+ processes$') "B with Show all on the count says just the count (got '$got')"
 
+    # --- F: a row no pane started says so (Mac :1129) -----------------------
+    # With Show all on, the table holds the whole box: walk down the Window /
+    # Pane column until a row says it is not one of ours.
+    $foreign = $null
+    if ($paneX -ge 0) {
+        for ($y = $cellY; $y -lt $client.Height - 4; $y += 5) {
+            $b = Get-LastLineNo 'activity help tooltip target=pane pid='
+            Move-Pointer $panel $paneX $y 50
+            if ((Get-LastLineNo 'activity help tooltip target=pane pid=') -gt $b) {
+                $t = Wait-HelpText 'pane pid=\d+' $b 1000
+                if ($t -ceq 'Not started by a Ghoztty pane.') { $foreign = $t; break }
+            }
+        }
+    }
+    Assert ($null -ne $foreign) "F a row no Ghoztty pane started says Mac's sentence (got '$foreign')"
+    Move-Pointer $panel $saRight $rowY
+
     # --- C: Kill follows the selection --------------------------------------
     Write-Host ''
     Write-Host '5. Kill names what it would terminate'
@@ -391,4 +530,4 @@ if ($script:fail -eq 0 -and $script:skipped -eq 0) {
 
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ''
-Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped $script:skipped -MinPass 20
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped $script:skipped -MinPass 34

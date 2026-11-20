@@ -8,6 +8,14 @@
 //!   The panel sees the pointer on them through its own `WM_MOUSEMOVE`, arms a
 //!   show delay, and places a track-mode tip under the words when it fires.
 //!   Only the drawn WORDS answer, not the slack in their slot (`textHit`).
+//! - **Painted table cells** (T1548) — a row's Name, Window / Pane and Path
+//!   cells, with Mac's per-cell words (the full command, the pane's detail,
+//!   the whole path). These answer anywhere in the cell, as Mac's `.help()`
+//!   on a table cell does, and are one surface PER ROW: the target carries the
+//!   row's PID, so moving down a column re-arms the delay for the new row. A
+//!   wheel scroll drops the tip, and the show re-checks that the same row is
+//!   still under the hover point, so a refresh that re-sorted the table during
+//!   the delay cannot put one process's words under another's row.
 //! - **Real controls** — "Show all", Kill and New Process. A child control
 //!   forwards `WM_SETCURSOR` to the panel, which is where entering one is seen;
 //!   the panel re-words that control's subclass tool and comctl32 shows it,
@@ -23,7 +31,9 @@
 //! cannot hold a hover across the show delay (T233):
 //!
 //! - `activity help tooltip target=<kind> text=<text>` when the pointer reaches
-//!   a surface (`<none>` when it has nothing to say right now);
+//!   a surface (`<none>` when it has nothing to say right now). A table cell
+//!   logs `target=<name|pane|path> pid=<n> text=<text>`, its newlines written
+//!   as a literal `\n` so the multi-line pane detail stays one log line;
 //! - `activity help tooltip dropped target=<kind>` when it leaves one for
 //!   nothing;
 //! - `activity help tooltip shown target=<kind>` when a painted tip appears.
@@ -35,6 +45,7 @@ const actions = @import("activity_actions.zig");
 const activity_help = @import("activity_help.zig");
 const chrome_theme = @import("chrome_theme.zig");
 const help_tooltip = @import("help_tooltip.zig");
+const layout_mod = @import("activity_layout.zig");
 const rows_mod = @import("activity_rows.zig");
 const Window = @import("Window.zig");
 const w32 = @import("win32.zig");
@@ -56,9 +67,24 @@ fn controlFor(t: Target) ?Control {
         .show_all => .show_all,
         .kill => .kill,
         .new_process => .new_process,
-        .badge, .count => null,
+        .badge, .count, .name_cell, .pane_cell, .path_cell => null,
     };
 }
+
+/// The help surface a process-table column carries (T1548), or null for the
+/// columns Mac gives no `.help()` (PID, Memory) and the one whose words the
+/// win32 panel cannot say yet (% CPU, T1549).
+fn cellTargetFor(col: layout_mod.Column) ?Target {
+    return switch (col) {
+        .name => .name_cell,
+        .pane => .pane_cell,
+        .path => .path_cell,
+        .pid, .mem, .cpu => null,
+    };
+}
+
+/// A painted surface under the pointer: which, and for a table cell, whose row.
+const Hit = struct { target: Target, pid: i64 = 0 };
 
 fn controlHwnd(self: *const ActivityMonitor, c: Control) w32.HWND {
     return switch (c) {
@@ -76,19 +102,19 @@ pub fn onSetCursor(self: *ActivityMonitor, over: ?w32.HWND) void {
     const target: ?Target =
         if (h == self.show_all_btn) .show_all else if (h == self.kill_btn) .kill else if (h == self.new_proc_btn) .new_process else null;
     if (target) |t| {
-        setTarget(self, t);
+        setTarget(self, .{ .target = t }, .{ .x = 0, .y = 0 });
         return;
     }
     // Over anything else: a control's tip is over. A painted surface's tip is
     // left to the `WM_MOUSEMOVE` that follows, which knows the point.
     if (self.help_target) |cur| {
-        if (cur.isControl()) setTarget(self, null);
+        if (cur.isControl()) setTarget(self, null, .{ .x = 0, .y = 0 });
     }
 }
 
 /// The pointer moved on the panel itself (client coordinates).
 pub fn onMouseMove(self: *ActivityMonitor, x: i32, y: i32) void {
-    setTarget(self, paintedAt(self, x, y));
+    setTarget(self, paintedAt(self, x, y), .{ .x = x, .y = y });
 }
 
 /// The pointer left the panel. Only what the PANEL paints loses its tip here:
@@ -96,7 +122,15 @@ pub fn onMouseMove(self: *ActivityMonitor, x: i32, y: i32) void {
 /// belongs to comctl32's own tracking of that child.
 pub fn onMouseLeave(self: *ActivityMonitor) void {
     if (self.help_target) |t| {
-        if (!t.isControl()) setTarget(self, null);
+        if (!t.isControl()) setTarget(self, null, .{ .x = 0, .y = 0 });
+    }
+}
+
+/// The table scrolled under the pointer: the row a cell tip describes is no
+/// longer the row under it. Drop the tip; the next move finds the new row.
+pub fn onTableScrolled(self: *ActivityMonitor) void {
+    if (self.help_target) |t| {
+        if (t.isCell()) setTarget(self, null, .{ .x = 0, .y = 0 });
     }
 }
 
@@ -105,25 +139,50 @@ pub fn onMouseLeave(self: *ActivityMonitor) void {
 pub fn destroy(self: *ActivityMonitor) void {
     _ = w32.KillTimer(self.hwnd, TIMER_ID);
     self.help_target = null;
+    self.help_pid = 0;
     self.help_tip.destroy(self.hwnd);
 }
 
 /// The painted help surface at client point (x, y), if any.
-fn paintedAt(self: *ActivityMonitor, x: i32, y: i32) ?Target {
+fn paintedAt(self: *ActivityMonitor, x: i32, y: i32) ?Hit {
     const l = self.layout();
-    // Most moves are over the table: answer those without measuring any text.
+    // The table: a cell hit is arithmetic on the row band and column widths,
+    // with no text measured.
+    if (cellAt(self, l, x, y)) |hit| return hit;
     if (y < l.control.top or y >= l.control.bottom) return null;
     if (badgeText(self)) |badge| {
         const b = l.badge;
         if (b.width() > 0 and activity_help.textHit(b.left, b.right, measure(self, badge), false, x, y >= b.top and y < b.bottom)) {
-            return .badge;
+            return .{ .target = .badge };
         }
     }
     var buf: [64]u8 = undefined;
     const c = l.count;
     const label = countLabel(self, &buf);
     if (activity_help.textHit(c.left, c.right, measure(self, label), true, x, y >= c.top and y < c.bottom)) {
-        return .count;
+        return .{ .target = .count };
+    }
+    return null;
+}
+
+/// The process-table cell at (x, y) that carries help, with its row's PID.
+/// Only rows that exist answer — the empty band under the last row is not a
+/// cell.
+fn cellAt(self: *const ActivityMonitor, l: layout_mod.Layout, x: i32, y: i32) ?Hit {
+    if (x < l.table.left or x >= l.table.right) return null;
+    const idx = layout_mod.rowIndexAt(l, y, self.scroll) orelse return null;
+    const pid = self.pidAt(idx) orelse return null;
+    const widths = layout_mod.columnWidths(self.scale, l.table.width());
+    const col = ActivityMonitor.columnAt(l.table, widths, x) orelse return null;
+    const t = cellTargetFor(col) orelse return null;
+    return .{ .target = t, .pid = pid };
+}
+
+/// The row a cell target describes, while it is still in the snapshot.
+fn rowFor(self: *const ActivityMonitor, pid: i64) ?*const rows_mod.Row {
+    const snap = self.snap orelse return null;
+    for (snap.rows) |*r| {
+        if (r.pid == pid) return r;
     }
     return null;
 }
@@ -157,9 +216,13 @@ fn measure(self: *ActivityMonitor, text: []const u8) i32 {
 
 /// The text for `t`, or null when there is nothing to explain right now (no
 /// truncation, nothing selected). Derived at show time as well as hover time.
-fn textFor(self: *ActivityMonitor, t: Target, out: []u8) ?[]const u8 {
+fn textFor(self: *ActivityMonitor, t: Target, pid: i64, out: []u8) ?[]const u8 {
     const total = if (self.snap) |s| s.rows.len else 0;
     return switch (t) {
+        // A row that left the snapshot since the hover says nothing.
+        .name_cell => if (rowFor(self, pid)) |r| activity_help.nameCell(out, r.name, r.cmd) else null,
+        .path_cell => if (rowFor(self, pid)) |r| activity_help.pathCell(out, r.cmd) else null,
+        .pane_cell => if (rowFor(self, pid)) |r| activity_help.paneCell(r.pane_label, r.pane_detail) else null,
         .badge => activity_help.badge(
             self.refresh_failed,
             if (self.snap) |s| s.truncated else false,
@@ -169,17 +232,9 @@ fn textFor(self: *ActivityMonitor, t: Target, out: []u8) ?[]const u8 {
         .show_all => activity_help.showAll(self.filterSpec()),
         .kill => blk: {
             if (self.sel_len == 0) break :blk null;
-            const pid = self.sel_pids[0];
-            var name: []const u8 = "";
-            if (self.snap) |s| {
-                for (s.rows) |r| {
-                    if (r.pid == pid) {
-                        name = r.name;
-                        break;
-                    }
-                }
-            }
-            break :blk activity_help.kill(out, self.sel_len, pid, name);
+            const first = self.sel_pids[0];
+            const name: []const u8 = if (rowFor(self, first)) |r| r.name else "";
+            break :blk activity_help.kill(out, self.sel_len, first, name);
         },
         .new_process => activity_help.newProcess(out, self.source.label()),
     };
@@ -198,10 +253,16 @@ fn ensure(self: *ActivityMonitor) ?w32.HWND {
 /// The pointer moved onto a different help surface (or off them all): hide
 /// the tip, then arm a fresh delay for a painted surface, or re-word a
 /// control's own tool.
-fn setTarget(self: *ActivityMonitor, new: ?Target) void {
+fn setTarget(self: *ActivityMonitor, hit: ?Hit, pt: w32.POINT) void {
+    const new: ?Target = if (hit) |h| h.target else null;
+    const pid: i64 = if (hit) |h| h.pid else 0;
     const old = self.help_target;
-    if (old == new) return;
+    // Moving within one surface changes nothing - but a cell surface is one
+    // per ROW, so the next row down the same column is a new surface.
+    if (old == new and self.help_pid == pid) return;
     self.help_target = new;
+    self.help_pid = pid;
+    self.help_pt = pt;
     _ = w32.KillTimer(self.hwnd, TIMER_ID);
     self.help_tip.hide(self.hwnd);
 
@@ -213,8 +274,18 @@ fn setTarget(self: *ActivityMonitor, new: ?Target) void {
     const t = new orelse return;
 
     var buf: [activity_help.max_len]u8 = undefined;
-    const text = textFor(self, t, &buf);
-    log.debug("activity help tooltip target={s} text={s}", .{ t.kind(), text orelse "<none>" });
+    const text = textFor(self, t, pid, &buf);
+    if (t.isCell()) {
+        // One line per hover, whatever the text: the pane detail is several.
+        var lbuf: [2 * activity_help.max_len]u8 = undefined;
+        log.debug("activity help tooltip target={s} pid={d} text={s}", .{
+            t.kind(),
+            pid,
+            if (text) |s| activity_help.oneLine(&lbuf, s) else "<none>",
+        });
+    } else {
+        log.debug("activity help tooltip target={s} text={s}", .{ t.kind(), text orelse "<none>" });
+    }
 
     if (controlFor(t)) |c| {
         // comctl32 shows this one: keep the tool's words current, nothing more.
@@ -232,12 +303,20 @@ pub fn onTimer(self: *ActivityMonitor) void {
     const t = self.help_target orelse return;
     if (t.isControl()) return;
 
+    const l = self.layout();
+    // A cell tip is shown only if the same row is still under the point it
+    // was hovered at: a re-sort or a refresh in the delay moves rows under a
+    // still pointer, and the words would then describe a neighbour.
+    if (t.isCell()) {
+        const now = cellAt(self, l, self.help_pt.x, self.help_pt.y) orelse return;
+        if (now.target != t or now.pid != self.help_pid) return;
+    }
+
     var buf: [activity_help.max_len]u8 = undefined;
-    const text = textFor(self, t, &buf) orelse return;
+    const text = textFor(self, t, self.help_pid, &buf) orelse return;
     if (text.len == 0) return;
     const tip = ensure(self) orelse return;
 
-    const l = self.layout();
     const gap: i32 = @intFromFloat(@round(4.0 * self.scale));
     var pt: w32.POINT = switch (t) {
         .badge => .{ .x = l.badge.left, .y = l.badge.bottom + gap },
@@ -245,6 +324,15 @@ pub fn onTimer(self: *ActivityMonitor) void {
             var cbuf: [64]u8 = undefined;
             const w = @min(measure(self, countLabel(self, &cbuf)), l.count.width());
             break :blk .{ .x = l.count.right - w, .y = l.count.bottom + gap };
+        },
+        // Under the hovered row, at its cell's text edge.
+        .name_cell, .pane_cell, .path_cell => blk: {
+            const idx = layout_mod.rowIndexAt(l, self.help_pt.y, self.scroll) orelse return;
+            const row = layout_mod.rowRect(l, idx - self.scroll);
+            const widths = layout_mod.columnWidths(self.scale, l.table.width());
+            const col = ActivityMonitor.columnAt(l.table, widths, self.help_pt.x) orelse return;
+            const cell = layout_mod.cellRect(row, widths, col, self.scale);
+            break :blk .{ .x = cell.left, .y = row.bottom + gap };
         },
         else => return,
     };

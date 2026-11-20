@@ -17,15 +17,24 @@
 //!   an unverifiable CPU column at all yet. That is T1549, and when it lands its
 //!   label takes `cpu_unverified_detail` below through this same plumbing;
 //! - the "Refresh failed" badge — Mac gives it no `.help()` either;
-//! - the per-cell tips of the process table (:1082-1142) — T1548.
+//! - the PID and Memory cells — none on Mac;
+//! - the %CPU cell — Mac's says `cpuUnverifiedDetail` only while the agent's
+//!   CPU units are untrusted and nothing otherwise, and the win32 panel does
+//!   not know "untrusted" yet (T1549 above), so today it is the trusted case.
+//!
+//! The process table's Name, Window / Pane and Path cells (:1082-1142) carry
+//! their tips since T1548; they are painted surfaces like the badge and count,
+//! keyed on the row's PID as well as the column (`activity_hover.zig`).
 
 const std = @import("std");
 const rows_mod = @import("activity_rows.zig");
 
 /// The longest string any of these can produce, for the caller's buffer. The
-/// variable parts are a process name (a basename) and a machine label, both
-/// clipped well under this.
-pub const max_len: usize = 320;
+/// control bar's variable parts are a process name and a machine label, both
+/// short; the table's are a full executable path and a pane's multi-line
+/// detail (`activity_panes.max_detail`, 768), which set this size. A longer
+/// path is clipped on a code point.
+pub const max_len: usize = 1024;
 
 /// The control-bar surface under the pointer. One value names ONE tooltip.
 pub const Target = enum {
@@ -39,6 +48,13 @@ pub const Target = enum {
     kill,
     /// "New Process". A real control.
     new_process,
+    /// A process row's Name cell (T1548). Painted; one per row, so the
+    /// panel keys it on the row's PID too.
+    name_cell,
+    /// A process row's Window / Pane cell (T1548). Painted, per row.
+    pane_cell,
+    /// A process row's Path cell (T1548). Painted, per row.
+    path_cell,
 
     /// Whether a real child CONTROL carries this surface. A control's tip is
     /// shown by comctl32 itself; every other surface is painted, and the panel
@@ -46,7 +62,15 @@ pub const Target = enum {
     pub fn isControl(self: Target) bool {
         return switch (self) {
             .show_all, .kill, .new_process => true,
-            .badge, .count => false,
+            .badge, .count, .name_cell, .pane_cell, .path_cell => false,
+        };
+    }
+
+    /// Whether this surface is a process-table cell, one per row.
+    pub fn isCell(self: Target) bool {
+        return switch (self) {
+            .name_cell, .pane_cell, .path_cell => true,
+            else => false,
         };
     }
 
@@ -58,9 +82,75 @@ pub const Target = enum {
             .show_all => "show-all",
             .kill => "kill",
             .new_process => "new-process",
+            .name_cell => "name",
+            .pane_cell => "pane",
+            .path_cell => "path",
         };
     }
 };
+
+/// The Window / Pane cell of a row no Ghoztty pane started. Mac `:1129`.
+pub const not_a_pane = "Not started by a Ghoztty pane.";
+
+/// The Name cell: the full command line when the agent sent one, else the name
+/// itself — Mac `:1088`, `row.cmd.isEmpty ? row.name : row.cmd`. Null when
+/// both are empty (the cell shows a dash, and Mac's empty `.help` shows
+/// nothing). A command past the buffer is clipped on a code point.
+pub fn nameCell(buf: []u8, name: []const u8, cmd: []const u8) ?[]const u8 {
+    const s = if (cmd.len > 0) cmd else name;
+    if (s.len == 0) return null;
+    return clipCopy(buf, s);
+}
+
+/// The Path cell: the whole path, or nothing when there is none — Mac `:1142`.
+pub fn pathCell(buf: []u8, cmd: []const u8) ?[]const u8 {
+    if (cmd.len == 0) return null;
+    return clipCopy(buf, cmd);
+}
+
+/// The Window / Pane cell: the pane's detail (`activity_panes.paneDetail`),
+/// or Mac's sentence for a row no pane owns — Mac `:1129`,
+/// `pane?.detail ?? "Not started by a Ghoztty pane."`. A row with a label and
+/// somehow no detail falls back to the label rather than to the sentence,
+/// which would contradict the cell.
+pub fn paneCell(label: []const u8, detail: []const u8) []const u8 {
+    if (label.len == 0) return not_a_pane;
+    if (detail.len > 0) return detail;
+    return label;
+}
+
+/// `s` with each newline written as the two characters `\n`, for the debug
+/// oracle: a log line must stay one line for the acceptance script to read the
+/// pane detail back whole. Cut on a code point when it does not fit.
+pub fn oneLine(buf: []u8, s: []const u8) []const u8 {
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < s.len) {
+        if (s[i] == '\n') {
+            if (n + 2 > buf.len) break;
+            buf[n] = '\\';
+            buf[n + 1] = 'n';
+            n += 2;
+            i += 1;
+            continue;
+        }
+        const cp_len = std.unicode.utf8ByteSequenceLength(s[i]) catch 1;
+        const take = @min(cp_len, s.len - i);
+        if (n + take > buf.len) break;
+        @memcpy(buf[n .. n + take], s[i .. i + take]);
+        n += take;
+        i += take;
+    }
+    return buf[0..n];
+}
+
+/// `s` copied into `buf`, cut on a code point when it does not fit.
+fn clipCopy(buf: []u8, s: []const u8) []const u8 {
+    var n = @min(s.len, buf.len);
+    while (n > 0 and n < s.len and (s[n] & 0xC0) == 0x80) n -= 1;
+    @memcpy(buf[0..n], s[0..n]);
+    return buf[0..n];
+}
 
 /// The truncated-list badge. Mac `:1002`.
 pub const truncated = "The agent capped the process table; some rows are not shown.";
@@ -269,4 +359,53 @@ test "Target: only the real child controls are shown by comctl32" {
     try testing.expect(!(Target.count).isControl());
     try testing.expectEqualStrings("new-process", Target.new_process.kind());
     try testing.expectEqualStrings("show-all", Target.show_all.kind());
+}
+
+test "nameCell: the command when there is one, else the name (Mac :1088)" {
+    var buf: [max_len]u8 = undefined;
+    try testing.expectEqualStrings(
+        "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+        nameCell(&buf, "pwsh.exe", "C:\\Program Files\\PowerShell\\7\\pwsh.exe").?,
+    );
+    try testing.expectEqualStrings("System", nameCell(&buf, "System", "").?);
+    // Both empty: the cell shows a dash and says nothing.
+    try testing.expect(nameCell(&buf, "", "") == null);
+}
+
+test "pathCell: the whole path, or nothing (Mac :1142)" {
+    var buf: [max_len]u8 = undefined;
+    try testing.expectEqualStrings("D:\\git\\ghoztty\\zig-out\\bin\\ghoztty.exe", pathCell(&buf, "D:\\git\\ghoztty\\zig-out\\bin\\ghoztty.exe").?);
+    try testing.expect(pathCell(&buf, "") == null);
+}
+
+test "a path past the buffer is clipped on a code point" {
+    var small: [10]u8 = undefined;
+    const t = pathCell(&small, "C:\\abcdef\u{00e9}gh").?;
+    try testing.expectEqualStrings("C:\\abcdef", t);
+    try testing.expect(std.unicode.utf8ValidateSlice(t));
+}
+
+test "paneCell: the detail, Mac's sentence for no pane, the label as a last resort" {
+    try testing.expectEqualStrings("Window: a\nShell PID: 1", paneCell("a", "Window: a\nShell PID: 1"));
+    try testing.expectEqualStrings("Not started by a Ghoztty pane.", paneCell("", ""));
+    // Never the "not started" sentence over a cell that names a pane.
+    try testing.expectEqualStrings("a", paneCell("a", ""));
+}
+
+test "oneLine: newlines become a literal \\n, everything else is kept" {
+    var buf: [64]u8 = undefined;
+    try testing.expectEqualStrings("Window: a\\nPane: \u{203A}x", oneLine(&buf, "Window: a\nPane: \u{203A}x"));
+    // Never half an escape or half a code point at the cut.
+    var small: [3]u8 = undefined;
+    try testing.expectEqualStrings("abc", oneLine(&small, "abc\nd"));
+    try testing.expectEqualStrings("a", oneLine(&small, "a\u{203A}"));
+}
+
+test "Target: the table cells are painted, per-row surfaces" {
+    try testing.expect(!(Target.name_cell).isControl());
+    try testing.expect((Target.name_cell).isCell());
+    try testing.expect((Target.pane_cell).isCell());
+    try testing.expect((Target.path_cell).isCell());
+    try testing.expect(!(Target.count).isCell());
+    try testing.expectEqualStrings("pane", Target.pane_cell.kind());
 }
