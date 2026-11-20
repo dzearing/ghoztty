@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-19T19:35:32-08:00",
-    "commit":  "756ce6ab8",
+    "generated":  "2026-11-19T20:12:00-08:00",
+    "commit":  "d6260d05c",
     "uncommitted":  [
-                        "test/win32/ghoztty-cleanup.ps1"
+                        "test/win32/layout-capture-cost.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -262,7 +262,7 @@
                   "test/win32/launch-preflight-audit.ps1":  "48099d9b4bdad7536379153e2e9eca0138daee304cdb496c6dd33c1cc27f67f0",
                   "test/win32/layout-blob-cross-lineage.ps1":  "a5dc44c2c32c8604a69332ad83d9b0f90bf37eb23797d13c4f96e496cb2080a8",
                   "test/win32/layout-blobs.ps1":  "f2f5cb37cd5da07213e13f2ecc5b2ef3bc889771e9de520d806910e2e294a186",
-                  "test/win32/layout-capture-cost.ps1":  "89bc97a9580415c738a98322208d41cf382769116ca4efb58ee4b44f79e207f5",
+                  "test/win32/layout-capture-cost.ps1":  "8288963f48d554ecaac499da2c693d5eee42e27fd8c000bc96859f854697a66d",
                   "test/win32/ledger-dupes.ps1":  "f693ddaeeb788720bcec7d91a74af3342bc299cea6746c4fecfc7e3930d65635",
                   "test/win32/lib/AccProbe.ps1":  "d9eb8fa032c9254a0e7581a48cab4ccf1f42f459bf92152978e4c8bc1de54c32",
                   "test/win32/lib/AgentLineage.ps1":  "44fd40c6b34712aba13c84ef5257e392195ca475396909bc8052a3e7fd845dc3",

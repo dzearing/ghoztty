@@ -1,13 +1,13 @@
 {
     "guard":  "layout-capture-cost",
     "script":  "test/win32/layout-capture-cost.ps1",
-    "generated":  "2026-11-19T12:53:13-08:00",
-    "commit":  "3bd26f1b9",
+    "generated":  "2026-11-19T20:05:20-08:00",
+    "commit":  "d6260d05c",
     "uncommitted":  [
                         "test/win32/layout-capture-cost.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/layout_cost.zig":  "f6c2b30ef9278ffa2e894c2d0f51649e1be475974ab53c159ddd8ebc3736bcde",
-                  "test/win32/layout-capture-cost.ps1":  "89bc97a9580415c738a98322208d41cf382769116ca4efb58ee4b44f79e207f5"
+                  "test/win32/layout-capture-cost.ps1":  "8288963f48d554ecaac499da2c693d5eee42e27fd8c000bc96859f854697a66d"
               }
 }
