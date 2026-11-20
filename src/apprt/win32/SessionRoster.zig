@@ -578,8 +578,15 @@ pub fn adopt(self: *SessionRoster, res: *Result) bool {
         // back, so what it LOADED is said out loud (T318) — WITH the machine it
         // loaded from (T319), because "5 sessions" is the same sentence whether
         // they came from this box or the one the user clicked.
-        log.info("chooser roster: loaded {d} session(s) target={s} device={s}", .{
+        // `live=` (T1554) separates running sessions from tombstones, which the
+        // agent keeps listing until it reaps them: a session that was ENDED and
+        // one that was only DETACHED are both still "loaded", and only this
+        // number tells them apart. It sits before `target=` so a pattern that
+        // anchors on what follows `device=` (the `pushed=1` lookahead in
+        // chooser-conn-pool.ps1) reads the same line it always did.
+        log.info("chooser roster: loaded {d} session(s) live={d} target={s} device={s}", .{
             self.owned.?.sessions.len,
+            liveCount(self.owned.?.sessions),
             @tagName(self.target),
             self.targetDevice(),
         });
@@ -637,6 +644,17 @@ pub fn adopt(self: *SessionRoster, res: *Result) bool {
 ///     this is the machine the user is already looking at, and sending the
 ///     region back to the top under a parked cursor loses their place — now on
 ///     somebody ELSE's change, which they did not even ask for.
+/// How many rows of a landed roster are running sessions rather than
+/// tombstones (`alive == false`: ended, still listed until the agent reaps
+/// them). The roster's acceptance lines report it as `live=` (T1554).
+fn liveCount(sessions: []const remote_connection.OwnedSession) usize {
+    var n: usize = 0;
+    for (sessions) |s| {
+        if (s.alive) n += 1;
+    }
+    return n;
+}
+
 pub fn adoptPushed(self: *SessionRoster, roster: remote_connection.OwnedSessions) bool {
     if (self.target == .none) {
         var tmp = roster;
@@ -650,8 +668,9 @@ pub fn adoptPushed(self: *SessionRoster, roster: remote_connection.OwnedSessions
     // `serial` and `inflight` belong to the FETCH and are left exactly as they
     // were: the reply that is still coming is this machine's, it brings the
     // layout view with it, and it clears `inflight` itself when it lands.
-    log.info("chooser roster: loaded {d} session(s) target={s} device={s} pushed=1", .{
+    log.info("chooser roster: loaded {d} session(s) live={d} target={s} device={s} pushed=1", .{
         self.owned.?.sessions.len,
+        liveCount(self.owned.?.sessions),
         @tagName(self.target),
         self.targetDevice(),
     });
@@ -2009,6 +2028,16 @@ fn testSessions(alloc: Allocator, n: usize) !remote_connection.OwnedSessions {
 fn testRows(buf: []VisibleRow) []const VisibleRow {
     for (buf) |*r| r.* = .{ .session = .{ .id = "s", .alive = true } };
     return buf;
+}
+
+test "liveCount leaves tombstones out (T1554)" {
+    var roster = try testSessions(testing.allocator, 3);
+    defer roster.deinit();
+    try testing.expectEqual(@as(usize, 3), liveCount(roster.sessions));
+    roster.sessions[1].alive = false;
+    roster.sessions[1].exit_code = 0;
+    try testing.expectEqual(@as(usize, 2), liveCount(roster.sessions));
+    try testing.expectEqual(@as(usize, 0), liveCount(roster.sessions[0..0]));
 }
 
 test "adopt keeps the offset a refetch was parked at (T333)" {

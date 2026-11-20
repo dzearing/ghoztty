@@ -27,9 +27,10 @@
 #   7b. T713: signing out CLOSES that account-backed window, leaves a local
 #      window untouched, and refuses a fresh relay dial until sign-in. Runs
 #      inside 7's live relay+agent, which is the only environment on this box
-#      where an account-backed window can exist at all. What it deliberately
-#      does NOT assert - that the far session kept running - is explained at
-#      the assertion site (T1554).
+#      where an account-backed window can exist at all. And the far session
+#      DETACHED rather than ended (T1554): the far agent's own LIST_SESSIONS,
+#      read through the chooser's `live=` count, still shows it running after
+#      a re-sign-in, against a `+close`d control session that does not.
 #   8. a build with NO Google client id - which is what SHIPS - offers no
 #      sign-in button at all, says so in the row, and puts the remedy in the
 #      hint (T747). Sections 2-4 all set GHOSTTY_GOOGLE_CLIENT_ID, which is how
@@ -446,6 +447,35 @@ function Open-Chooser($g) {
     return $chooser
 }
 
+# Ask the far agent behind relay device $devId how many sessions it is RUNNING
+# (T1554). Opens the chooser, walks the cursor down until that device's row has
+# loaded a roster - which is a LIST_SESSIONS over the relay, answered by the far
+# agent - and returns the new line's `live=` count (tombstones excluded), or -1
+# when no roster for the device loaded. Only a line written AFTER this call
+# began counts, so an earlier read can never answer for this one.
+function Read-FarRosterLive($g, $errlog, $devId) {
+    $pattern = "chooser roster: loaded \d+ session\(s\) live=(\d+) target=\S+ device=$([regex]::Escape($devId))(?: |\r|\n|$)"
+    $c0 = Get-Content $errlog -Raw -ErrorAction SilentlyContinue
+    $before = if ($c0) { [regex]::Matches($c0, $pattern).Count } else { 0 }
+    $ch = Open-Chooser $g
+    if ($ch -eq [IntPtr]::Zero) { return -1 }
+    $live = -1
+    foreach ($step in 1..4) {
+        Send-TestControlKey -Control $ch -Key Down | Out-Null
+        foreach ($i in 1..40) {
+            Start-Sleep -Milliseconds 250
+            $c = Get-Content $errlog -Raw -ErrorAction SilentlyContinue
+            if (-not $c) { continue }
+            $m = [regex]::Matches($c, $pattern)
+            if ($m.Count -gt $before) { $live = [int]$m[$m.Count - 1].Groups[1].Value; break }
+        }
+        if ($live -ge 0) { break }
+    }
+    Send-TestControlKey -Control $ch -Key Escape | Out-Null
+    Start-Sleep -Milliseconds 400
+    return $live
+}
+
 # Play the browser: the GUI logs "open this URL to sign in: <url>" to stderr;
 # parse the redirect_uri + state out of it and GET the redirect with a code.
 # States this run has already answered. The helper below is called more than
@@ -710,7 +740,12 @@ try {
     Write-LegacyStore
     Assert "legacy store staged" (Test-Path $AccountStore)
     $env:GHOSTTY_ACCOUNT_STORE = $AccountStore
-    $g3 = Launch-Gui $FakeABase "$tmp\gui-cli.stderr.log"
+    # The GUI's relay base is section 7's LIVE relay (not up yet - sections 5
+    # and 6 dial with an explicit --relay= and never consult it). It is what the
+    # machine chooser lists devices from, and 7b reads the far agent's roster
+    # through exactly that list (T1554); pointed at fake relay A, the chooser
+    # listed A's canned device and could never reach the real one.
+    $g3 = Launch-Gui $RelayBase "$tmp\gui-cli.stderr.log"
     if (-not $g3) { Write-Host 'SETUP FAIL: GUI did not come up for the CLI sections'; $script:failures++; exit 1 }
     Assert "CLI-section GUI is NOT enumerable on the interactive desktop" (
         -not (Test-TestDesktopLeak -ProcessId $g3.Pid))
@@ -818,16 +853,42 @@ try {
                 Assert "local control window opened" ($code -eq 0)
                 Start-Sleep -Seconds 2
 
-                # NOT asserted here: that the far session kept RUNNING. The
-                # obvious oracles do not exist on this box - the agent's shells
-                # sit behind a PTY holder that deliberately escapes the process
-                # tree (so a descendant count is always 0), and `--relay` mode
-                # takes no `--sessions-file`, so there is no roster on disk to
-                # read. What the close actually does is reuse T1390's DetachPin,
-                # which `remote-disconnect.ps1` already proves spares a far
-                # session. T1554 is the standing thread for measuring it here
-                # rather than inheriting it. An assertion that could only ever
-                # SKIP would claim coverage this section does not have.
+                # The far session must outlive the sign-out (T1554): sign-out
+                # closes the account's windows with T1390's DetachPin, so the
+                # shell keeps running on the other machine. The process table
+                # cannot say so here - the agent's shells sit behind a PTY
+                # holder that escapes the process tree, and `--relay` mode keeps
+                # no roster on disk - so the oracle is the FAR AGENT ITSELF,
+                # asked over the wire: the machine chooser's device row runs
+                # LIST_SESSIONS through the relay and logs `live=`, the rows
+                # that are running sessions rather than tombstones.
+                #
+                # The control is in the same run: a second account window that
+                # `+close` ENDS (remote-disconnect.ps1 section D's contract).
+                # Before the sign-out the roster must read exactly one live
+                # session - acctwin's. A count of 2 would mean an ended session
+                # still reads live, and then "1 live after the sign-out" could
+                # not tell a detach from a kill.
+                $code = Run-Cli "+new-remote-window --relay=$RelayBase --device=$($dev.id) --name=acctkill" 'acctkill.out' 30
+                Assert "control: second account window opened" ($code -eq 0)
+                Start-Sleep -Seconds 2
+                # A close is UNDOABLE for a few seconds (CloseUndo.zig): the
+                # pane is parked and its session stays live until the undo
+                # expires. Read the roster before that and the ended session
+                # still counts, which is what the first cut of this did (live=2).
+                $undoPat = 'undo expired: \d+ close\(s\) finalized'
+                $undoLog = Get-Content "$tmp\gui-cli.stderr.log" -Raw -ErrorAction SilentlyContinue
+                $undoBefore = if ($undoLog) { [regex]::Matches($undoLog, $undoPat).Count } else { 0 }
+                $code = Run-Cli '+close --target=acctkill' 'acctkillclose.out' 20
+                Assert "control: +close of the second account window returned 0" ($code -eq 0)
+                Assert "control: the closed window's undo window expired, so its session is really ended" (
+                    Wait-StderrCount "$tmp\gui-cli.stderr.log" $undoPat ($undoBefore + 1) 30)
+                Start-Sleep -Seconds 2
+
+                $preLive = Read-FarRosterLive $g3 "$tmp\gui-cli.stderr.log" $dev.id
+                Assert "before sign-out the far agent reports exactly 1 live session - the +close'd one is not live, acctwin's is (live=$preLive)" (
+                    $preLive -eq 1)
+
                 $ch3 = Open-Chooser $g3
                 Assert "chooser opened for the sign-out" ($ch3 -ne [IntPtr]::Zero)
                 if ($ch3 -ne [IntPtr]::Zero) {
@@ -856,6 +917,15 @@ try {
 
                     Send-TestControlKey -Control $ch3 -Key Escape | Out-Null
                     Start-Sleep -Milliseconds 400
+
+                    # T1554: the far session DETACHED rather than ended. Sign
+                    # back in (the relay's dev bearer is still good; only the
+                    # local store went away) and ask the far agent again.
+                    Write-AccountStore $SessTok 3600 $RelayBase
+                    $postLive = Read-FarRosterLive $g3 "$tmp\gui-cli.stderr.log" $dev.id
+                    Assert "after sign-out the far agent still runs acctwin's session - detached, not ended (live=$postLive)" (
+                        $postLive -eq 1)
+                    Remove-Item $AccountStore -ErrorAction SilentlyContinue
                 }
                 Run-Cli '+close --target=localctl' 'localctlclose.out' | Out-Null
 
