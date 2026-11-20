@@ -95,6 +95,9 @@ param(
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 [void](Set-GhozttyTestAgentLineage -Tag 'capcost')
 
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
 $script:passes = 0
@@ -513,6 +516,7 @@ try {
     @{n = 'mean_ms'; e = { [math]::Round($_.MeanUs / 1000, 2) } },
     @{n = 'median_ms'; e = { [math]::Round($_.MedianUs / 1000, 2) } }, LoadPct,
     @{n = 'capture_max_ms'; e = { [math]::Round($_.MaxCapUs / 1000, 2) } }, SnapKB, Fresh, Reuse | Out-String | Write-Host
+    Complete-TestBody  # T1039/T1511: the last statement of the body, so an unwind cannot reach it
 } finally {
     Remove-TestDesktop
     [void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -SettleMs 700)
@@ -532,6 +536,4 @@ if ($script:failures -eq 0 -and $BudgetOverrideUs -eq 0) {
 }
 
 ''
-if ($script:failures -eq 0) { "ALL PASS ($script:passes assertions)"; exit 0 }
-"LAYOUT-CAPTURE-COST: $script:failures FAILURE(S) / $script:passes passed"
-exit 1
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'LAYOUT-CAPTURE-COST'

@@ -138,6 +138,32 @@ Assert 'A7b an explicit throw ends the script with no verdict at all' (
     ($r.All -join "`n") -notmatch '(ALL PASS|RUN DID NOT FINISH)')
 Assert 'A7c and is red on its own' ($r.Code -ne 0)
 
+# T1511: a caller under Set-StrictMode, which dot-sources the scorer AFTER
+# turning it on. The arming line used to read the unset global bare, which
+# throws under strict mode: the run was never armed, and a run that finished
+# its body printed RUN DID NOT FINISH (ghoztty-cleanup.ps1, 2026-11-19). Both
+# halves: the finished run is green, and an unwound one is still caught.
+foreach ($shape in @(
+        @{ Tag = 'a-strict-finished'; Body = "`$pass = 7`r`ntry { Complete-TestBody } finally { }`r`nWrite-TestVerdict -Pass `$pass -Fail 0" }
+        @{ Tag = 'a-strict-unwound'; Body = "`$pass = 7`r`ntry { `$z = 1 / 0; Complete-TestBody } finally { }`r`nWrite-TestVerdict -Pass `$pass -Fail 0" })) {
+    $f = Join-Path $tmp "$($shape.Tag).ps1"
+    Set-Content -LiteralPath $f -Encoding utf8 -Value (@(
+        "`$ErrorActionPreference = 'Continue'"
+        'Set-StrictMode -Version 2.0'
+        ". '$lib'"
+        $shape.Body
+    ) -join "`r`n")
+    $out = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $f 2>&1 | ForEach-Object { "$_" })
+    $shape.Code = $LASTEXITCODE
+    $shape.Last = if ($out.Count -gt 0) { $out[-1] } else { '' }
+    $shape.All = $out -join "`n"
+    if ($shape.Tag -eq 'a-strict-finished') { $strictDone = $shape } else { $strictUnwound = $shape }
+}
+Assert 'A7d under Set-StrictMode a finished run still says ALL PASS' ($strictDone.Last -match 'ALL PASS \(7 assertions\)')
+AssertEq 'A7e and exits 0' 0 $strictDone.Code
+Assert 'A7f and arming raised no strict-mode error' ($strictDone.All -notmatch 'VariableIsUndefined|has not been set')
+Assert 'A7g under Set-StrictMode an unwound run still says RUN DID NOT FINISH' ($strictUnwound.Last -match 'RUN DID NOT FINISH')
+
 # The original, not a stand-in: -Raw answers $null for an empty file.
 $empty = Join-Path $tmp 'empty.txt'
 Set-Content -LiteralPath $empty -Value '' -NoNewline

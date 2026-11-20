@@ -116,6 +116,17 @@
 # T1996: the scripts that load TestScore but not BuildMode are guarded here.
 . (Join-Path $PSScriptRoot 'CheckoutGuard.ps1')
 
+# T1511: the body state is read through this, never as a bare
+# `$global:GhozttyTestBody`. A caller under `Set-StrictMode -Version 2.0` (or
+# later) THROWS on reading an unset variable, so the arming line at the bottom
+# of this file failed, the run was never armed, `Complete-TestBody` failed the
+# same way while still publishing `complete` to the stamping child - and the
+# verdict then read an unarmed run as one that unwound. Measured 2026-11-19 on
+# ghoztty-cleanup.ps1: STAMPED, then RUN DID NOT FINISH, over a run that passed.
+function Get-TestBodyState {
+    return Get-Variable -Name GhozttyTestBody -Scope Global -ValueOnly -ErrorAction SilentlyContinue
+}
+
 function Reset-TestBody {
     <#
       Arm the run: its body has not reached its end yet. Called once by
@@ -158,8 +169,8 @@ function Complete-TestBody {
       The run reached the end of its body. The LAST statement of the top-level
       try, so that an unwind cannot reach it.
     #>
-    if ($null -eq $global:GhozttyTestBody) { Reset-TestBody }
-    $global:GhozttyTestBody.Complete = $true
+    if ($null -eq (Get-TestBodyState)) { Reset-TestBody }
+    (Get-TestBodyState).Complete = $true
     $env:GHOZTTY_TEST_BODY = 'complete'
     $n = Get-TestPassCount
     $env:GHOZTTY_TEST_PASSES = $(if ($null -ne $n) { [string]$n } else { $null })
@@ -169,9 +180,10 @@ function Test-TestBodyComplete {
     # Unarmed answers TRUE: nothing was claimed, so nothing is being broken.
     # Only the dot-source above arms, so in this suite that is a caller which
     # reached the scorer without loading it - impossible by construction.
-    if ($null -eq $global:GhozttyTestBody) { return $true }
-    if (-not $global:GhozttyTestBody.Armed) { return $true }
-    return [bool]$global:GhozttyTestBody.Complete
+    $state = Get-TestBodyState
+    if ($null -eq $state) { return $true }
+    if (-not $state.Armed) { return $true }
+    return [bool]$state.Complete
 }
 
 function Get-TestVerdictLine {
@@ -302,4 +314,4 @@ function Write-TestAssertedNothing {
 # thing for a script to remember and no opt-in for the script with the bug to
 # have missed. Already-armed is left alone: a library dot-sourcing this file a
 # second time inside one process must not un-finish a body that has finished.
-if ($null -eq $global:GhozttyTestBody) { Reset-TestBody }
+if ($null -eq (Get-TestBodyState)) { Reset-TestBody }

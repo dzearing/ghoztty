@@ -57,14 +57,19 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
+$script:passes = 0
 $script:skipped = 0
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 function AssertEq($name, $expected, $actual) {
-    if ($expected -eq $actual) { "  PASS $name" }
+    if ($expected -eq $actual) { "  PASS $name"; $script:passes++ }
     else { "  FAIL $name (expected '$expected', got '$actual')"; $script:failures++ }
 }
 function Skip($name, $why) {
@@ -969,12 +974,11 @@ exit 0
 # again. Sections E and F need the network and SKIP without it; they cover
 # neither script, so a skip there must not withhold the stamp -- the T898
 # lesson about a bar that can never be met on this box.
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
 if ($script:failures -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
         update -Guard website-windows-links -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 ""
-if ($script:skipped -gt 0) { "$($script:skipped) SKIPPED" }
-if ($script:failures -eq 0) { "ALL PASS$(if ($script:skipped) { " ($script:skipped SKIPPED)" })" } else { "$($script:failures) FAILURE(S)" }
-exit ([int]($script:failures -gt 0))
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped $script:skipped -Label 'WEBSITE-WINDOWS-DOWNLOAD'

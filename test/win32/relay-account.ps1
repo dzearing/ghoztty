@@ -118,7 +118,11 @@ $env:GHOZTTY_PIPE_SUFFIX = "-relayacct$PID"
 # extend.
 $script:relayJobs = New-Object System.Collections.ArrayList
 
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
+$script:passes = 0
 $script:skipped = 0
 $script:negReached = $false
 $tmp = Join-Path $env:TEMP "ghoztty-relay-acct-$PID"
@@ -180,7 +184,7 @@ $SignInLabel = "Sign in with Google$([char]0x2026)"
 # would otherwise hand its caller @('  PASS ...', $value) (the T217 batch-5
 # trap), and Launch-Gui below does exactly that.
 function Assert($name, $cond) {
-    if ($cond) { Write-Host "  PASS $name" }
+    if ($cond) { Write-Host "  PASS $name"; $script:passes++ }
     else { Write-Host "  FAIL $name" -ForegroundColor Red; $script:failures++ }
 }
 
@@ -1650,6 +1654,8 @@ if ($NegativeControl -and -not $script:negReached) {
 
 if ($script:skipped -gt 0) { "($($script:skipped) section(s) SKIPPED)" }
 
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
+
 # --- stamp (T783/T316) ------------------------------------------------------
 # A clean green run records the covered files so scripts\guard-due.ps1 can
 # answer "has anyone run this harness against the code as it now stands?". This
@@ -1664,5 +1670,4 @@ if ($script:failures -eq 0 -and $script:skipped -eq 0 -and -not $NegativeControl
         update -Guard relay-account 2>&1 | ForEach-Object { Write-Host "  $_" }
 }
 
-if ($script:failures -eq 0) { "ALL PASS$(if ($script:skipped) { " ($script:skipped SKIPPED)" })"; exit 0 }
-else { "$($script:failures) FAILURE(S)"; exit 1 }
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped $script:skipped -Label 'RELAY-ACCOUNT'

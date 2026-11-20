@@ -50,6 +50,9 @@ Set-StrictMode -Version 2.0
 $Repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $Script = Join-Path $Repo 'scripts\ghoztty-cleanup.ps1'
 
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
 $script:passes = 0
 $script:skips = 0
@@ -474,16 +477,11 @@ if ($NegativeControl) {
 
 Remove-Sandbox
 
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
 if ($script:failures -eq 0 -and $script:skips -eq 0 -and -not $NegativeControl) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
         update -Guard ghoztty-cleanup -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Say ''
-if ($script:failures -eq 0) {
-    Say "GHOZTTY-CLEANUP: ALL PASS ($script:passes$(if ($script:skips) { ", $script:skips SKIPPED" }))"
-    exit 0
-} else {
-    Say "GHOZTTY-CLEANUP: $script:failures FAILURE(S) / $script:passes passed"
-    exit 1
-}
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped $script:skips -Label 'GHOZTTY-CLEANUP'

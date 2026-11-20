@@ -70,8 +70,12 @@ if ($ExePath) { $exe = $ExePath }
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
 
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
+$script:skipped = 0
 function Assert([bool]$cond, [string]$label) {
     if ($cond) { $script:pass++; Write-Host "PASS  $label" }
     else { $script:fail++; Write-Host "FAIL  $label" -ForegroundColor Red }
@@ -411,6 +415,12 @@ public static class TabTipSettingChange {
     }
 
     Assert (-not (Test-TestDesktopLeak -ProcessId $app.Pid)) 'no window leaked onto the interactive desktop'
+} catch {
+    # T1511: the foreground-leak check below still has to run, so a throw
+    # anywhere above is SCORED rather than rethrown - the harness broke, and
+    # that is a failure of the run, not a quiet early exit.
+    Assert $false "the run threw and did not finish its sections: $($_.Exception.Message)"
+    Write-Host $_.ScriptStackTrace
 } finally {
     Remove-TestDesktop
     Kill-RepoInstances
@@ -427,19 +437,15 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($leaked.Count -eq 0) 'no test-desktop app ever became foreground on the interactive desktop'
 }
 
-Write-Host ''
-if ($script:fail -eq 0) {
-    if ($script:skipped) {
-        # A run with skipped sections did not observe everything the stamp
-        # would claim - leave it, so the harness stays due (T783).
-        Write-Host "ALL PASS ($script:pass assertions, $script:skipped SKIPPED)"
-    } else {
-        # A clean green run records the covered files so scripts\guard-due.ps1
-        # can answer "has anyone run this harness against the code as it now
-        # stands?" (T783). Red runs leave the stamp alone - red must stay due.
-        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
-            update -Guard tab-tooltip -Repo $repo 2>&1 | ForEach-Object { "  $_" }
-        Write-Host "ALL PASS ($script:pass assertions)"
-    }
+# A clean green run records the covered files so scripts\guard-due.ps1 can
+# answer "has anyone run this harness against the code as it now stands?"
+# (T783). Red runs leave the stamp alone - red must stay due - and so does a
+# run with skipped sections, which did not observe everything the stamp claims.
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
+if ($script:fail -eq 0 -and -not $script:skipped) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard tab-tooltip -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
-else { Write-Host "$script:fail FAILURE(S) / $script:pass passed" -ForegroundColor Red; exit 1 }
+
+Write-Host ''
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped ([int]$script:skipped) -Label 'TAB-TOOLTIP'
