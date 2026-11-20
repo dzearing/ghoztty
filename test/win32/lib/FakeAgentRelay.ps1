@@ -52,6 +52,7 @@
 Set-StrictMode -Off
 
 . (Join-Path $PSScriptRoot 'JobTeardown.ps1')
+. (Join-Path $PSScriptRoot 'SharedLog.ps1')
 
 function Start-FakeAgentRelay {
     param(
@@ -76,7 +77,9 @@ function Start-FakeAgentRelay {
         Set-Content -Path $pidFile -Value $PID
 
         function Write-RelayLog([string]$m) {
-            Add-Content -Path $logPath -Value ("{0} {1}" -f (Get-Date -Format 'HH:mm:ss.fff'), $m)
+            # AppendAllText, never Add-Content: the harness reads this file while
+            # the job writes it, and Add-Content locks it both ways (lib\SharedLog.ps1, T1520).
+            [IO.File]::AppendAllText($logPath, ("{0} {1}`r`n" -f (Get-Date -Format 'HH:mm:ss.fff'), $m))
         }
 
         # Read exactly $n bytes, or $null if the peer went away. Only ever
@@ -456,6 +459,8 @@ function Stop-FakeAgentRelay {
 
 function Get-FakeAgentRelayLog {
     param([Parameter(Mandatory = $true)][string]$LogPath)
-    if (-not (Test-Path $LogPath)) { return @() }
-    return @(Get-Content $LogPath)
+    # Read while the relay job may be appending: Read-SharedLog shares the
+    # write handle and retries, and THROWS rather than handing back an empty
+    # log that would score a real hit as a missing one (T1520).
+    return @(Read-SharedLog -Path $LogPath)
 }

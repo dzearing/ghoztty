@@ -193,7 +193,7 @@ $dirJob = Start-Job -ScriptBlock {
                 [void]$sb.Append([Text.Encoding]::ASCII.GetString($buf, 0, $n))
             }
             $reqLine = ($sb.ToString() -split "`r`n")[0]
-            Add-Content -Path $hitFile -Value $reqLine
+            [IO.File]::AppendAllText($hitFile, "$reqLine`r`n")  # never Add-Content in a job (lib\SharedLog.ps1, T1520)
             if ($reqLine -match '/v1/client/devices') {
                 $stream.Write($ok, 0, $ok.Length)
             } else {

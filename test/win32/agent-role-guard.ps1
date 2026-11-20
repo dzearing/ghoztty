@@ -211,7 +211,7 @@ try {
                     $req += [Text.Encoding]::ASCII.GetString($buf, 0, $n)
                 }
                 $first = ($req -split "`r`n")[0]
-                Add-Content -Path $logPath -Value "401 $first" -Encoding ascii
+                [IO.File]::AppendAllText($logPath, "401 $first`r`n")  # never Add-Content in a job (lib\SharedLog.ps1, T1520)
                 $resp = [Text.Encoding]::ASCII.GetBytes("HTTP/1.1 401 Unauthorized`r`nContent-Length: 7`r`nConnection: close`r`n`r`nrevoked")
                 $s.Write($resp, 0, $resp.Length)
                 $s.Flush()

@@ -146,7 +146,7 @@ function Start-FakeRelay($port, $hitsFile, $nonce) {
                 }
                 $line = ($req -split "`r`n")[0]
                 $isProbe = ($nonce -and ($line -match "^GET /__probe/$nonce"))
-                if (-not $isProbe) { Add-Content -Path $hitsFile -Value $line }
+                if (-not $isProbe) { [IO.File]::AppendAllText($hitsFile, "$line`r`n") }  # never Add-Content in a job (lib\SharedLog.ps1, T1520)
                 if ($isProbe) {
                     $out = Resp200 "{`"probe`":`"$nonce`"}"
                 } elseif ($line -match '^POST /v1/enroll/start') {

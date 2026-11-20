@@ -1,10 +1,10 @@
 {
     "guard":  "viewer-panes",
     "script":  "test/win32/viewer-panes.ps1",
-    "generated":  "2026-11-19T04:25:36-08:00",
-    "commit":  "81a560bbc",
+    "generated":  "2026-11-19T23:24:17-08:00",
+    "commit":  "6937f93c8",
     "uncommitted":  [
-                        "src/apprt/win32/ViewerPane.zig"
+                        "test/win32/viewer-panes.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/IpcHandlers.zig":  "2fd4c481b8f11313022a78d7b886c108a62af8535e2027b36b4ab9e2b5d8bea8",
@@ -15,6 +15,6 @@
                   "src/cli/list.zig":  "e40045744d49bd59b1f862e47ef3701e4c6c4bb346df11271aa02f8a261161ef",
                   "src/cli/reload.zig":  "5755d8fdc574f26b41cf39486b2e31502bc0ee938346c7bd337f40b985095ced",
                   "test/win32/lib/BrowserLeak.ps1":  "ae41845c0869dc0a37c9104ff6189f07d1e4ede98445bdecbeb3e222f5224826",
-                  "test/win32/viewer-panes.ps1":  "f483995862ca20b10fff8f76f8c5ff34661f5edbea82716fd12ad7c3aa5d8d95"
+                  "test/win32/viewer-panes.ps1":  "18e0c574c527f5b06a2ce58874c8ea06e3587ceb904c0291db9b15c6284af3a2"
               }
 }

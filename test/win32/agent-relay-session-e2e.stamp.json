@@ -1,8 +1,8 @@
 {
     "guard":  "agent-relay-session",
     "script":  "test/win32/agent-relay-session-e2e.ps1",
-    "generated":  "2026-11-19T22:19:59-08:00",
-    "commit":  "2b9d83831",
+    "generated":  "2026-11-20T05:13:41-08:00",
+    "commit":  "6937f93c8",
     "uncommitted":  [
                         "test/win32/lib/FakeAgentRelay.ps1"
                     ],
@@ -18,6 +18,6 @@
                   "src/remote/relay_revoke_pending.zig":  "9f411c608f6002f393cf1167038837795c75f22ca4a85a9dbace683cd345cdec",
                   "src/remote/ws_client.zig":  "e5ebe28e8a2e5442c596a12fcaa6468d9646d9aaeaa08c40e5f1dce1e71370c2",
                   "test/win32/agent-relay-session-e2e.ps1":  "3453c9cb296d20986b43bc379ec6094eacb27c64be84db06cb90703b8032a06e",
-                  "test/win32/lib/FakeAgentRelay.ps1":  "8ac6a9df54013c82bd5efab4175ea0f40ebb919a8208246e6901806b558b04a7"
+                  "test/win32/lib/FakeAgentRelay.ps1":  "374449ee10881784377ceffe97a4c83ee9ce69680197325a3bf2ee14407ac896"
               }
 }

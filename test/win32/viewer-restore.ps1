@@ -313,11 +313,11 @@ $script:vrJob = Start-Job -ScriptBlock {
                 if ($r -le 0) { break }
                 $req += [Text.Encoding]::UTF8.GetString($buf, 0, $r)
             }
-            if ($req -eq '') { Add-Content -Path $hitsFile -Value 'EMPTY connection closed unanswered' }
+            if ($req -eq '') { [IO.File]::AppendAllText($hitsFile, "EMPTY connection closed unanswered`r`n") }  # never Add-Content in a job (lib\SharedLog.ps1, T1520)
             $line = ($req -split "`r`n")[0]
             if ($line -match '^GET ') {
                 $n++
-                Add-Content -Path $hitsFile -Value "GET $n $line"
+                [IO.File]::AppendAllText($hitsFile, "GET $n $line`r`n")
                 $html = '<html><head><title>vrlive' + $n + '</title></head><body>vrlive' + $n + '</body></html>'
                 $payload = [Text.Encoding]::UTF8.GetBytes($html)
                 $head = "HTTP/1.1 200 OK`r`nContent-Type: text/html`r`nCache-Control: no-store`r`n" +

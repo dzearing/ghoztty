@@ -139,7 +139,7 @@ $dirJob = Start-Job -ScriptBlock {
                 }
                 Start-Sleep -Milliseconds 25
             }
-            Add-Content -Path $hitFile -Value (($sb.ToString() -split "`r`n")[0])
+            [IO.File]::AppendAllText($hitFile, (($sb.ToString() -split "`r`n")[0] + "`r`n"))  # never Add-Content in a job (lib\SharedLog.ps1, T1520)
             # Held: the GUI must already be showing the seed by now.
             for ($w = 0; $w -lt 1200 -and -not (Test-Path $gateFile); $w++) { Start-Sleep -Milliseconds 25 }
             $payload = [Text.Encoding]::UTF8.GetBytes($body)

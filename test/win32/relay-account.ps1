@@ -112,6 +112,7 @@ $env:GHOZTTY_PIPE_SUFFIX = "-relayacct$PID"
 # used to sit in `Stop-Job` forever, so a run that had finished all of its work
 # never printed a verdict.
 . (Join-Path $PSScriptRoot 'lib\JobTeardown.ps1')
+. (Join-Path $PSScriptRoot 'lib\SharedLog.ps1')
 
 # Every fake relay started by this run, so teardown reaps them by construction
 # rather than by a hand-kept list of variables that the next section forgets to
@@ -192,25 +193,15 @@ function Get-Out($outfile) {
     if (Test-Path "$tmp\$outfile") { Get-Content "$tmp\$outfile" -Raw } else { '' }
 }
 
-# The relay job APPENDS to this file from another process, so a read can land
-# exactly while `Add-Content` holds it and throw "the file is being used by
-# another process" - which under `$ErrorActionPreference = 'Continue'` returns
-# nothing and turns a hit that IS in the log into a FAIL. That is what produced
-# the bogus "FAIL signing back in RE-ENROLLED this machine (T1425)" in the run
-# T1517 was filed from. Retry briefly instead of scoring the collision (T1517).
-function Get-Hits($hitsFile) {
-    if (-not (Test-Path $hitsFile)) { return '' }
-    foreach ($i in 1..20) {
-        try {
-            # FileShare::ReadWrite, so a read is legal while the job holds the
-            # file open for append rather than a coin toss on the timing.
-            $fs = New-Object IO.FileStream($hitsFile, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
-            try { return (New-Object IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
-        } catch { Start-Sleep -Milliseconds 50 }
-    }
-    Write-Host "  (could not read $hitsFile - held by the relay job for 1s)"
-    return ''
-}
+# The relay job APPENDS to this file from another process. A read that landed
+# while the old `Add-Content` writer held it threw "the file is being used by
+# another process", which under `$ErrorActionPreference = 'Continue'` returned
+# nothing and turned a hit that IS in the log into a FAIL - the bogus "FAIL
+# signing back in RE-ENROLLED this machine (T1425)" T1517 was filed from. The
+# writer now appends with AppendAllText and the read goes through the suite's
+# one share-tolerant reader, which throws rather than return an empty log
+# (lib\SharedLog.ps1, T1520).
+function Get-Hits($hitsFile) { Read-SharedLog -Path $hitsFile -Raw }
 
 # Run the CLI with a hard timeout (a hung GUI must fail the script, not hang it).
 function Run-Cli($argsLine, $outfile, $timeoutSec = 20) {
@@ -327,7 +318,7 @@ function Start-FakeRelay($port, $tok, $ttl, $renewTok, $hitsFile, $nonce) {
                     # and a dropped hit line reads downstream as the app never
                     # having made the call (T1517).
                     foreach ($try in 1..20) {
-                        try { Add-Content -Path $hitsFile -Value "$line|auth=$auth" -ErrorAction Stop; break }
+                        try { [IO.File]::AppendAllText($hitsFile, "$line|auth=$auth`r`n"); break }
                         catch { Start-Sleep -Milliseconds 25 }
                     }
                 }

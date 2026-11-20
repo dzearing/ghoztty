@@ -263,7 +263,7 @@ $dirJob = Start-Job -ScriptBlock {
                 }
                 Start-Sleep -Milliseconds 25
             }
-            Add-Content -Path $hitFile -Value (($sb.ToString() -split "`r`n")[0])
+            [IO.File]::AppendAllText($hitFile, (($sb.ToString() -split "`r`n")[0] + "`r`n"))  # never Add-Content in a job (lib\SharedLog.ps1, T1520)
             Send $stream '200 OK' '{"devices":[{"id":"dev-e2e","name":"E2E-Box","hostname":"e2e.local","online":true}]}'
         } catch {}
         $client.Close()

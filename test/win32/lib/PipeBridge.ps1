@@ -56,7 +56,9 @@ function Start-PipeBridge {
         Set-Content -Path $pidFile -Value $PID
 
         function Write-BridgeLog([string]$m) {
-            Add-Content -Path $logPath -Value ("{0} {1}" -f (Get-Date -Format 'HH:mm:ss.fff'), $m)
+            # AppendAllText, never Add-Content: the harness reads this file while
+            # the job writes it, and Add-Content locks it both ways (lib\SharedLog.ps1, T1520).
+            [IO.File]::AppendAllText($logPath, ("{0} {1}`r`n" -f (Get-Date -Format 'HH:mm:ss.fff'), $m))
         }
 
         $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $port)

@@ -1129,7 +1129,7 @@ try {
                     $req += [Text.Encoding]::UTF8.GetString($buf, 0, $n)
                 }
                 $line = ($req -split "`r`n")[0]
-                if ($line -match '^GET ') { Add-Content -Path $hitsFile -Value $line }
+                if ($line -match '^GET ') { [IO.File]::AppendAllText($hitsFile, "$line`r`n") }  # never Add-Content in a job (lib\SharedLog.ps1, T1520)
                 $stream.Write($out, 0, $out.Length)
                 $stream.Flush()
             } catch {}

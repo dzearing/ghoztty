@@ -218,7 +218,7 @@ $dirJob = Start-Job -ScriptBlock {
             $text = $sb.ToString()
             $reqLine = ($text -split "`r`n")[0]
             $body = ($text -split "`r`n`r`n", 2)[1]
-            Add-Content -Path $hitFile -Value ("$reqLine >> " + ($body -replace "`r|`n", ''))
+            [IO.File]::AppendAllText($hitFile, ("$reqLine >> " + ($body -replace "`r|`n", '') + "`r`n"))  # never Add-Content in a job (lib\SharedLog.ps1, T1520)
 
             $method = ($reqLine -split ' ')[0]
             switch ($method) {

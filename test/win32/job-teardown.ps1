@@ -28,8 +28,13 @@
 #    ended by pid well inside its socket read timeout; FakeAgentRelay and
 #    PipeBridge carry the same pid plumbing.
 # F: the sweep - no helper in test\win32\lib stops a job with a bare Stop-Job.
+# G: a job's log read while the job appends to it (T1520) - the `Add-Content`
+#    writer really does collide with the harness's reads, and the suite's
+#    shape (AppendAllText + Read-SharedLog) loses no read and no line.
+# H: the sweep - no `Start-Job` body in test\win32 appends with `Add-Content`
+#    or `Out-File -Append`.
 #
-# `-TeethCheck` proves sections D and F can go red at all: it plants violators in
+# `-TeethCheck` proves sections D, F and H can go red at all: it plants violators in
 # temp copies of the swept text and passes only if the assertions turn over.
 param([switch]$TeethCheck)
 
@@ -346,6 +351,126 @@ if ($TeethCheck) {
     Assert "F the sweep actually read the libraries (negative control)" ($libs.Count -gt 10)
     if ($bare.Count -gt 0) { $bare | ForEach-Object { "       $_" } }
     Assert "F no test\win32\lib helper calls a bare Stop-Job" ($bare.Count -eq 0)
+}
+
+# ============================================================================
+""
+"== G: a job's log, read while the job appends to it (T1520)"
+# ============================================================================
+# The race T1517 tripped over, run for real: a job appends a line every ~10 ms
+# for 2.5 s while this process reads the file as fast as it can. Measured when
+# this was written: the Add-Content writer failed 97% of concurrent reads and
+# dropped 240 of its own lines; AppendAllText failed none and dropped none.
+. (Join-Path $PSScriptRoot 'lib\SharedLog.ps1')
+function Invoke-LogRace([ValidateSet('add-content', 'append')][string]$Writer, [string]$Path) {
+    Remove-Item $Path -ErrorAction SilentlyContinue
+    $job = Start-Job -ScriptBlock {
+        param($path, $writer)
+        $ok = 0; $failed = 0
+        $end = (Get-Date).AddMilliseconds(2500)
+        while ((Get-Date) -lt $end) {
+            $line = "hit $ok"
+            try {
+                # The DEFECT on purpose in the add-content arm; section H
+                # exempts this file for exactly that reason.
+                if ($writer -eq 'add-content') { Add-Content -Path $path -Value $line -ErrorAction Stop }
+                else { [IO.File]::AppendAllText($path, "$line`r`n") }
+                $ok++
+            } catch { $failed++ }
+            Start-Sleep -Milliseconds 10
+        }
+        "$ok $failed"
+    } -ArgumentList $Path, $Writer
+    $r = @{ Reads = 0; GetContentFail = 0; SharedFail = 0 }
+    while ($job.State -eq 'Running' -or $job.State -eq 'NotStarted') {
+        $r.Reads++
+        try { $null = Get-Content $Path -ErrorAction Stop } catch [Management.Automation.ItemNotFoundException] {} catch { $r.GetContentFail++ }
+        try { $null = @(Read-SharedLog -Path $Path -TimeoutMs 250) } catch { $r.SharedFail++ }
+        if ($r.Reads -gt 100000) { break }
+    }
+    $null = Wait-Job $job -Timeout 15
+    $parts = "$(Receive-Job $job)".Trim() -split ' '
+    Remove-Job $job -Force -ErrorAction SilentlyContinue
+    $r.Wrote = [int]$parts[0]
+    $r.WriteFail = [int]$parts[1]
+    $r.ReadBack = @(Read-SharedLog -Path $Path).Count
+    return $r
+}
+$bad = Invoke-LogRace -Writer 'add-content' -Path (Join-Path $tmp 'race-add.log')
+"  add-content writer: $($bad.Reads) reads, Get-Content failed $($bad.GetContentFail), writer dropped $($bad.WriteFail)"
+Assert "G the race is real: an Add-Content writer collides with the harness (reads failed or lines dropped)" (
+    $bad.Reads -gt 20 -and ($bad.GetContentFail + $bad.WriteFail) -gt 0)
+$good = Invoke-LogRace -Writer 'append' -Path (Join-Path $tmp 'race-append.log')
+"  AppendAllText writer: $($good.Reads) reads, Get-Content failed $($good.GetContentFail), Read-SharedLog failed $($good.SharedFail), writer dropped $($good.WriteFail), wrote $($good.Wrote), read back $($good.ReadBack)"
+Assert "G the race ran: the AppendAllText arm wrote and read concurrently (negative control)" (
+    $good.Reads -gt 20 -and $good.Wrote -gt 50)
+Assert "G with AppendAllText no Get-Content read and no Read-SharedLog read failed" (
+    $good.GetContentFail -eq 0 -and $good.SharedFail -eq 0)
+Assert "G with AppendAllText the writer dropped no line, and every line it wrote reads back" (
+    $good.WriteFail -eq 0 -and $good.ReadBack -eq $good.Wrote)
+$missing = Join-Path $tmp 'never-written.log'
+Assert "G Read-SharedLog on a log never written is empty, not an error (lines: 0, -Raw: '')" (
+    @(Read-SharedLog -Path $missing).Count -eq 0 -and (Read-SharedLog -Path $missing -Raw) -eq '')
+# Held with no sharing at all - the one state it cannot read - it must THROW: an
+# empty result is what scored the phantom product FAIL.
+$lockPath = Join-Path $tmp 'locked.log'
+[IO.File]::WriteAllText($lockPath, "hit`r`n")
+$lockFs = New-Object IO.FileStream($lockPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+$threw = $false
+$sw = [Diagnostics.Stopwatch]::StartNew()
+try { $null = Read-SharedLog -Path $lockPath -TimeoutMs 300 } catch { $threw = "$_" -match 'harness error' }
+$sw.Stop()
+$lockFs.Dispose()
+Assert "G Read-SharedLog THROWS a harness error, in bounded time, on a log it cannot read (took $($sw.ElapsedMilliseconds)ms)" (
+    $threw -and $sw.ElapsedMilliseconds -lt 3000)
+Assert "G and reads that same log once it is released" ((@(Read-SharedLog -Path $lockPath)) -join '|' -eq 'hit')
+
+# ============================================================================
+""
+"== H: no Start-Job body in test\win32 appends with Add-Content (T1520)"
+# ============================================================================
+# Text: the next fake server somebody writes appends with AppendAllText or goes
+# red here. Comment text is ignored (a line's `#` and everything after it).
+function Get-JobAppendFindings([string]$Text) {
+    $findings = @()
+    foreach ($m in [regex]::Matches($Text, 'Start-Job')) {
+        $rest = $Text.Substring($m.Index)
+        $end = [regex]::Match($rest, '(?m)^\s*\}\s*-ArgumentList')
+        $body = if ($end.Success) { $rest.Substring(0, $end.Index) } else { $rest }
+        foreach ($line in ($body -split "`r?`n")) {
+            $code = ($line -split '#', 2)[0]
+            if ($code -match '\bAdd-Content\b' -or $code -match '\bOut-File\b.*-Append\b') { $findings += $line.Trim() }
+        }
+    }
+    return , @($findings)
+}
+$appendOffenders = @()
+foreach ($f in $swept) {
+    # Section G's add-content arm is the defect ON PURPOSE.
+    if ($f.FullName -eq $PSCommandPath) { continue }
+    foreach ($hit in (Get-JobAppendFindings (Get-Content $f.FullName -Raw))) {
+        $appendOffenders += "$($f.FullName.Substring($Repo.Length + 1)): $hit"
+    }
+}
+if ($TeethCheck) {
+    $plantedH = @'
+$j = Start-Job -ScriptBlock {
+    param($hits)
+    Add-Content -Path $hits -Value 'GET /x'
+} -ArgumentList $hits
+'@
+    Assert "H TEETH the analyzer flags a planted Add-Content in a job body" (
+        (Get-JobAppendFindings $plantedH).Count -eq 1)
+    Assert "H TEETH and flags Out-File -Append the same way" (
+        (Get-JobAppendFindings ($plantedH -replace "Add-Content -Path \`$hits -Value 'GET /x'", "'GET /x' | Out-File -FilePath `$hits -Append")).Count -eq 1)
+    $fixedH = $plantedH -replace "Add-Content -Path \`$hits -Value 'GET /x'", "[IO.File]::AppendAllText(`$hits, ""GET /x``r``n"")  # never Add-Content here"
+    Assert "H TEETH and does not flag AppendAllText, nor Add-Content named in a comment" (
+        (Get-JobAppendFindings $fixedH).Count -eq 0)
+    Assert "H TEETH and does not flag an Add-Content OUTSIDE any job body" (
+        (Get-JobAppendFindings "Add-Content -Path `$ledger -Value 'x'`n`$j = Start-Job -ScriptBlock { 1 } -ArgumentList 1").Count -eq 0)
+} else {
+    if ($appendOffenders.Count -gt 0) { $appendOffenders | ForEach-Object { "       $_" } }
+    Assert "H no harness job appends to its log with Add-Content or Out-File -Append" ($appendOffenders.Count -eq 0)
 }
 
 Complete-TestBody  # T1039: the run reached the end of its body

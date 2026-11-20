@@ -132,7 +132,7 @@ $listener = Start-Job -ScriptBlock {
                 if ($n -le 0) { break }
                 $text += [System.Text.Encoding]::ASCII.GetString($buf, 0, $n)
             }
-            if ($text.Length -gt 0) { Add-Content -Path $logPath -Value $text -Encoding ascii }
+            if ($text.Length -gt 0) { [IO.File]::AppendAllText($logPath, "$text`r`n") }  # never Add-Content in a job (lib\SharedLog.ps1, T1520)
             $status = '404 Not Found'
             if ((Test-Path $modePath) -and ((Get-Content $modePath -Raw) -match '401')) { $status = '401 Unauthorized' }
             $resp = [System.Text.Encoding]::ASCII.GetBytes("HTTP/1.1 $status`r`nContent-Length: 0`r`n`r`n")

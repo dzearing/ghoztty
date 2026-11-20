@@ -1926,3 +1926,19 @@ live doc, script, harness header or open task. It also fails if the pattern
 stops matching the sentence it retired. The session log, digests, decisions,
 closed tasks and progress logs are history and are not scanned. A quoted
 mention is allowed.
+
+**A background job's log is appended with `AppendAllText`, never `Add-Content`**
+(T1520). Every fake relay and fake HTTP server in the suite runs in a
+`Start-Job` and logs what it saw; the harness's oracle reads that file while the
+job may still be writing it. `Add-Content` locks the file both ways: measured, it
+failed 97% of concurrent `Get-Content` reads and dropped 240 of its own lines in
+four seconds, and under `$ErrorActionPreference = 'Continue'` a failed read is an
+empty result, so a hit that IS in the log scores as the app never having made
+the call (T1517's phantom "RE-ENROLLED this machine"). Inside a job body append
+with `[IO.File]::AppendAllText($path, "$line`r`n")`; read with `Read-SharedLog`
+(`test\win32\lib\SharedLog.ps1`), which shares the write handle, retries, and
+throws a harness error rather than return an empty log. Never
+`[IO.File]::ReadAllText` a job's log - it locks the writer out.
+`test\win32\job-teardown.ps1` section G runs the race live and section H fails
+the suite on any `Start-Job` body that appends with `Add-Content` or
+`Out-File -Append`.

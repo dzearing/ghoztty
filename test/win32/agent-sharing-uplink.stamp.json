@@ -1,10 +1,10 @@
 {
     "guard":  "agent-sharing-uplink",
     "script":  "test/win32/agent-sharing-uplink.ps1",
-    "generated":  "2026-11-19T17:55:33-08:00",
-    "commit":  "0daff8834",
+    "generated":  "2026-11-20T05:12:43-08:00",
+    "commit":  "6937f93c8",
     "uncommitted":  [
-                        "src/remote/agent/link_control.zig"
+                        "test/win32/agent-sharing-uplink.ps1"
                     ],
     "files":  {
                   "src/remote/agent/link_control.zig":  "8a0fb05ef020d3b2ae734aaa9489547cde0cb9e5e7f2c0bdf6d2782b3274c09c",
@@ -13,6 +13,6 @@
                   "src/remote/agent/revoke_watch.zig":  "f9fcde81a20c06c12cb8f8b7876386ee8aa1055743cd78ec840ec86c8d207b90",
                   "src/remote/agent/sharing.zig":  "4ecfaef4c8e7cf9428531f82beee5b28bdb604ce3385507ddc858edf781ff29a",
                   "src/remote/relay_revoke_pending.zig":  "9f411c608f6002f393cf1167038837795c75f22ca4a85a9dbace683cd345cdec",
-                  "test/win32/agent-sharing-uplink.ps1":  "3d5a66673774bb82233a02256a4fbe8325fa7e89c8730994fb28a6cac20b142a"
+                  "test/win32/agent-sharing-uplink.ps1":  "1af396252ddcc7ef09f92e687a042e5d23a8f55dec730d2a74a70f234a9de7d2"
               }
 }

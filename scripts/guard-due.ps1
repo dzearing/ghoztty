@@ -5936,7 +5936,9 @@ $GuardTable = @(
             # T1519: section E drives these three helpers' teardowns.
             'test\win32\lib\FakeRelay.ps1',
             'test\win32\lib\FakeAgentRelay.ps1',
-            'test\win32\lib\PipeBridge.ps1'
+            'test\win32\lib\PipeBridge.ps1',
+            # T1520: section G races this reader against a live appender.
+            'test\win32\lib\SharedLog.ps1'
         )
     },
     # One shared kill for the app under test and its sibling agent (T351). T248

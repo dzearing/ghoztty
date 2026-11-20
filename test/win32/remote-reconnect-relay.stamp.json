@@ -1,8 +1,8 @@
 {
     "guard":  "remote-reconnect-relay",
     "script":  "test/win32/remote-reconnect-relay.ps1",
-    "generated":  "2026-11-19T22:46:20-08:00",
-    "commit":  "2b9d83831",
+    "generated":  "2026-11-19T23:23:43-08:00",
+    "commit":  "6937f93c8",
     "uncommitted":  [
                         "test/win32/lib/FakeRelay.ps1"
                     ],
@@ -10,7 +10,7 @@
                   "src/apprt/win32/remote_reconnect.zig":  "9d6a394fad06de85157f2c3615fce271ce7841c6b9c8ea82c47c6385d03538a4",
                   "src/apprt/win32/RemoteReconnect.zig":  "e6d8c713bcf62325134f244262962ff94da85cb5cb68b54ceb7848c5a2f7f316",
                   "src/remote/relay_dial.zig":  "4427ea9f8bef837116c73264ed6c76f67ac0f99e624dc393322989ba2328e786",
-                  "test/win32/lib/FakeRelay.ps1":  "1ebd94ae1de9830d26cd98046016fd1264e046ed6c986a229b442689155f1e7e",
+                  "test/win32/lib/FakeRelay.ps1":  "576111ff435d3e50092a542c44614d741584fc82210acb4b635c784edb569877",
                   "test/win32/remote-reconnect-relay.ps1":  "fe3f924c5d98e6d35d9a48983ffc163a52a6156cfd40e7e555119ba3c272497a"
               }
 }
