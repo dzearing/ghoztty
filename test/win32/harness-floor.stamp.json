@@ -1,8 +1,8 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-19T17:18:39-08:00",
-    "commit":  "97dad3177",
+    "generated":  "2026-11-19T18:36:38-08:00",
+    "commit":  "747ee8b81",
     "uncommitted":  [
 
                     ],
@@ -347,7 +347,7 @@
                   "test/win32/lib/TestReachAudit.ps1":  "5e0e10352742575af26220c992790da3e9a74ae6d40281f2fecdf7d6a1cf52c0",
                   "test/win32/lib/TestScore.ps1":  "4a094c7b669e3891573f90ac78abdb342f1bf989cb14fce5a6a072addb4df7cd",
                   "test/win32/lib/TestWaitAudit.ps1":  "632b1d2adad0400247dd7d51c7f9ebad0e2c47ca9a7afe5cbdca2cd09318be3d",
-                  "test/win32/lib/ThreadJoinAudit.ps1":  "5a25a369563fc6904e8155828c1850b403062b7d955ae7a4cdc4ca340232f034",
+                  "test/win32/lib/ThreadJoinAudit.ps1":  "295f6547e257f9a009409d06910b8c74a9bf300101601f7b16bc1c92ea8a9b17",
                   "test/win32/lib/ThrowawayProduct.ps1":  "44251729c95f1c92ef33b4dff3b867356a29e4f64e2af6f849d1732cf4de2bae",
                   "test/win32/lib/Transcript.ps1":  "ee440358fdf0d9aee8802817afc995bcefae733b991ba7e5fdf2b82964c09334",
                   "test/win32/lib/TreeSwapAudit.ps1":  "d0189d964f705a3c1447497e0119773fb925b85dc6e561110d127c067f4a9d6e",
@@ -564,7 +564,7 @@
                   "test/win32/test-filter-guard.ps1":  "8804ee177e925a2cdfbc14a75f80ec01b217378a80025b55c80d7831c2beec00",
                   "test/win32/test-reach-audit.ps1":  "d562023bb072125237aafc17961b81b82356c130003acc64ede75fd73186bf51",
                   "test/win32/test-wait-oracle.ps1":  "63ccef37878450ba45a00998c1d19974c42da08ece7b4160305becb11549ec3d",
-                  "test/win32/thread-join-audit.ps1":  "636191df9344abe883a41479504bef2f67fae58e0fff5e609c3050ca793ce219",
+                  "test/win32/thread-join-audit.ps1":  "e46a6d22e67ac938984fa9ebcf60bb9dcdecb96efeedd55a553bc7f3b18c945b",
                   "test/win32/title-churn-redraw.ps1":  "e76dd03723ce484c7b6fa8cfa96272bac7cdf8048bc900b9360624cc87855369",
                   "test/win32/title-flood.ps1":  "ef31613993cf268e58503d86922d77d40d7439ac31fea24b0e5f1c9f687528ec",
                   "test/win32/title-font.ps1":  "946fd12880bb0433a535283fb6146fb7d2a8fd1b2d1f0f74e00fa7ce1720dcb8",

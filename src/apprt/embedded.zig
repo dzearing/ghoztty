@@ -462,8 +462,8 @@ pub const App = struct {
 
         const resp_len = std.mem.bigToNative(u32, std.mem.bytesAsValue(u32, &resp_len_bytes).*);
         if (resp_len == 0 or resp_len > 1048576) {
-            stderr.print("IPC response has invalid length: {d}\n", .{resp_len}) catch {};
-            stderr.flush() catch {};
+            // T1509: quote what arrived instead of its integer value.
+            internal_os.ipc_timeout.writeBadFrame(stderr, action_name, resp_len_bytes, 1048576);
             return error.IPCFailed;
         }
 

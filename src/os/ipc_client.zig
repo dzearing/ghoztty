@@ -211,6 +211,16 @@ pub const Conn = struct {
                     // see the note above about the stack frame.
                     _ = windows.kernel32.CancelIoEx(self.handle, &ov);
                     _ = windows.kernel32.WaitForSingleObject(event, windows.INFINITE);
+                    // The cancel can lose the race: the I/O may have completed
+                    // between the wait expiring and CancelIoEx. Its bytes are
+                    // then already off the pipe, and calling it a timeout would
+                    // drop them — the caller resumes the frame from a cursor
+                    // that never counted them, reads the middle of the reply
+                    // where a length is due, and the stream is out of step for
+                    // good (T1509). So ask what actually happened.
+                    var raced: windows.DWORD = 0;
+                    if (windows.kernel32.GetOverlappedResult(self.handle, &ov, &raced, 0) != 0 and raced > 0)
+                        return raced;
                     return error.WouldBlock;
                 }
             },
@@ -733,8 +743,7 @@ pub fn exchange(
 
     const resp_len = std.mem.bigToNative(u32, std.mem.bytesAsValue(u32, &resp_len_bytes).*);
     if (resp_len == 0 or resp_len > opts.max_response) {
-        stderr.print("IPC response has invalid length: {d}\n", .{resp_len}) catch {};
-        stderr.flush() catch {};
+        timeout.writeBadFrame(stderr, opts.action, resp_len_bytes, opts.max_response);
         return error.IPCFailed;
     }
 

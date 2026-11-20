@@ -1,15 +1,15 @@
 {
     "guard":  "split-name-collision",
     "script":  "test/win32/split-name-collision.ps1",
-    "generated":  "2026-11-16T19:19:07-08:00",
-    "commit":  "0b4aa273d",
+    "generated":  "2026-11-19T18:52:47-08:00",
+    "commit":  "747ee8b81",
     "uncommitted":  [
-                        "src/apprt/win32/IpcHandlers.zig"
+                        "src/os/ipc_client.zig"
                     ],
     "files":  {
                   "src/apprt/ipc/split_name_collision.zig":  "130e8526b53d4ca7f9f9bd14ad6ae2cb39d718e5262469af8bedf000981c6787",
                   "src/apprt/win32/IpcHandlers.zig":  "2fd4c481b8f11313022a78d7b886c108a62af8535e2027b36b4ab9e2b5d8bea8",
-                  "src/os/ipc_client.zig":  "d51c2c71d4814dd64c792b0423876bcbe53065ca9dabfb3c36864c5a6ae09f52",
+                  "src/os/ipc_client.zig":  "d0a8cd0828cf96da77e289f90c95f71625257166b985bf5fbb20a93d993cdbf2",
                   "test/win32/split-name-collision.ps1":  "5064c7b9a869a94f8023ec1afc83d5a5ea9ff17291e1e922f7840910c46299d2"
               }
 }

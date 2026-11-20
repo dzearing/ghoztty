@@ -103,6 +103,57 @@ pub fn remainingWaitMs(timeout_ms: u32) ?u32 {
     return timeout_ms - notice_ms;
 }
 
+/// The line printed when a reply's four-byte length prefix cannot be a length
+/// (T1509): zero, or more than the client will accept. It used to print the
+/// decoded integer — `IPC response has invalid length: 1768842863` — which is
+/// the ASCII text `invo` read as a big-endian u32: the client had fallen out of
+/// step with the stream and was reading the middle of a reply where a prefix
+/// was due. The number was a fragment of the very text that would have
+/// explained it, so the message now quotes those bytes as text when they are
+/// printable, says what the state means, and says whether to retry — the
+/// house wording T755 set for the timeout case.
+pub fn writeBadFrame(
+    w: *std.Io.Writer,
+    action: []const u8,
+    prefix: [4]u8,
+    max_len: u32,
+) void {
+    const len = std.mem.readInt(u32, &prefix, .big);
+    if (len == 0) {
+        w.print(
+            "Ghoztty sent an empty reply to '{s}'. " ++
+                "The app may have closed the connection while starting up or shutting down; " ++
+                "retrying the command is reasonable.\n",
+            .{action},
+        ) catch {};
+    } else if (isPrintable(&prefix)) {
+        w.print(
+            "Ghoztty's reply to '{s}' could not be read: it began with the text \"{s}\" " ++
+                "where a message length was due, so this command fell out of step with the app " ++
+                "(this can happen while the app is still starting up). " ++
+                "Retrying the command is reasonable.\n",
+            .{ action, &prefix },
+        ) catch {};
+    } else {
+        w.print(
+            "Ghoztty's reply to '{s}' could not be read: it announced {d} bytes, " ++
+                "more than the {d} this command accepts, so the connection is out of step " ++
+                "or the reply is not from Ghoztty. Retrying the command is reasonable; " ++
+                "if it keeps happening, another program may be holding Ghoztty's pipe name.\n",
+            .{ action, len, max_len },
+        ) catch {};
+    }
+    w.flush() catch {};
+}
+
+/// Every byte is printable ASCII, so quoting the prefix as text says more than
+/// its integer value does. A length the app would really send (at most 1 MiB)
+/// has a zero high byte and is never printable, so the two cases cannot meet.
+fn isPrintable(bytes: []const u8) bool {
+    for (bytes) |b| if (b < 0x20 or b > 0x7e) return false;
+    return true;
+}
+
 /// The line printed once, at `notice_ms`, while the wait continues.
 pub fn writeNotice(w: *std.Io.Writer, action: []const u8) void {
     w.print(
@@ -179,6 +230,48 @@ test "writeTimeout: the message names the verb, the phase and the way out" {
     try testing.expect(std.mem.indexOf(u8, out, "'+list'") != null);
     try testing.expect(std.mem.indexOf(u8, out, "get a response from") != null);
     try testing.expect(std.mem.indexOf(u8, out, env_var) != null);
+}
+
+test "writeBadFrame: a text prefix is quoted as text, never as its integer (T1509)" {
+    const testing = std.testing;
+    var buf: [512]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    // The 2026-09-12 sighting: 0x696E766F, printed then as 1768842863.
+    writeBadFrame(&w, "+new-window", "invo".*, 1_048_576);
+    const out = w.buffered();
+    try testing.expect(std.mem.indexOf(u8, out, "\"invo\"") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "1768842863") == null);
+    try testing.expect(std.mem.indexOf(u8, out, "'+new-window'") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "Retrying the command is reasonable") != null);
+}
+
+test "writeBadFrame: an oversized binary prefix names the size and the limit" {
+    const testing = std.testing;
+    var buf: [512]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    writeBadFrame(&w, "+list", .{ 0x7f, 0x00, 0x00, 0x01 }, 1_048_576);
+    const out = w.buffered();
+    try testing.expect(std.mem.indexOf(u8, out, "2130706433 bytes") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "1048576") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "Retrying the command is reasonable") != null);
+}
+
+test "writeBadFrame: a zero length reads as an empty reply" {
+    const testing = std.testing;
+    var buf: [512]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    writeBadFrame(&w, "+read", .{ 0, 0, 0, 0 }, 1_048_576);
+    const out = w.buffered();
+    try testing.expect(std.mem.indexOf(u8, out, "empty reply to '+read'") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "retrying the command is reasonable") != null);
+}
+
+test "writeBadFrame: no real length is ever printable" {
+    // The largest reply the client accepts has a zero high byte, so the
+    // "quote it as text" branch can never swallow a genuine length.
+    var prefix: [4]u8 = undefined;
+    std.mem.writeInt(u32, &prefix, 1_048_576, .big);
+    try std.testing.expect(!isPrintable(&prefix));
 }
 
 test "the auto-launch budget is not shorter than one bounded exchange" {
