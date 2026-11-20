@@ -12,8 +12,9 @@
 //! complete a browser consent screen (minutes), and `signOut` does a network
 //! revoke; either on the GUI thread would freeze every window. So both run on a
 //! detached thread and post `WM_APP_RELAY_ACCOUNT` to the app's message-only
-//! window (`AgentIntegration`'s pattern), which routes the outcome to whatever
-//! chooser is open — or to nobody, if the user closed it while signing in. The
+//! window (`AgentIntegration`'s pattern), which routes the outcome to every
+//! chooser that is open (T1552) — or to nobody, if the user closed it while
+//! signing in. The
 //! sign-in still took effect either way: the account store is the state, not
 //! the dialog.
 //!
@@ -50,6 +51,13 @@ pub const Result = struct {
     /// the user is STILL SIGNED IN, and they have to be told and offered the
     /// way past it rather than left believing a sign-out that did not happen.
     machine: relay_signin.MachineOutcome = .nothing_to_revoke,
+    /// The chooser window whose button started this operation (T1552), or
+    /// null when nothing on screen did. Every open chooser hears the result;
+    /// this only decides which one asks a FOLLOW-UP question (the
+    /// `.not_revoked` "Sign Out Anyway" prompt), so one click never raises
+    /// two modal dialogs. Compared, never dereferenced: the chooser may be
+    /// gone by the time the result lands.
+    origin: ?w32.HWND = null,
 };
 
 /// Only one account operation at a time. A second click while one is in flight
@@ -67,8 +75,8 @@ pub fn isRunning() bool {
 
 /// Start a browser sign-in on a detached thread. Safe to call from the GUI
 /// thread. Returns false when one is already in flight.
-pub fn signInAsync(app: *App) bool {
-    return startAsync(app, .sign_in, .revoke);
+pub fn signInAsync(app: *App, origin: ?w32.HWND) bool {
+    return startAsync(app, .sign_in, .revoke, origin);
 }
 
 /// Start a sign-out on a detached thread: revoke THIS machine's device
@@ -77,16 +85,16 @@ pub fn signInAsync(app: *App) bool {
 ///
 /// `mode` is `.revoke` for the button, and `.force` for the "Sign Out Anyway"
 /// the chooser offers after a `.not_revoked` outcome.
-pub fn signOutAsync(app: *App, mode: relay_signin.SignOutMode) bool {
-    return startAsync(app, .sign_out, mode);
+pub fn signOutAsync(app: *App, mode: relay_signin.SignOutMode, origin: ?w32.HWND) bool {
+    return startAsync(app, .sign_out, mode, origin);
 }
 
-fn startAsync(app: *App, kind: Kind, mode: relay_signin.SignOutMode) bool {
+fn startAsync(app: *App, kind: Kind, mode: relay_signin.SignOutMode, origin: ?w32.HWND) bool {
     if (running.swap(true, .acq_rel)) {
         log.info("relay account: an operation is already running; ignoring", .{});
         return false;
     }
-    const thread = std.Thread.spawn(.{}, worker, .{ app, kind, mode }) catch |err| {
+    const thread = std.Thread.spawn(.{}, worker, .{ app, kind, mode, origin }) catch |err| {
         running.store(false, .release);
         log.warn("relay account: thread spawn failed err={}", .{err});
         return false;
@@ -95,7 +103,7 @@ fn startAsync(app: *App, kind: Kind, mode: relay_signin.SignOutMode) bool {
     return true;
 }
 
-fn worker(app: *App, kind: Kind, mode: relay_signin.SignOutMode) void {
+fn worker(app: *App, kind: Kind, mode: relay_signin.SignOutMode, origin: ?w32.HWND) void {
     defer running.store(false, .release);
 
     // The flow's own scratch memory: page-backed so it never touches the GUI
@@ -138,6 +146,7 @@ fn worker(app: *App, kind: Kind, mode: relay_signin.SignOutMode) void {
             };
         },
     };
+    res.origin = origin;
 
     const hwnd = app.msg_hwnd orelse {
         free(app, res);
@@ -167,7 +176,26 @@ pub fn onResult(app: *App, res: *Result) void {
             if (res.email.len > 0) " (signed in)" else "",
         },
     );
-    if (openChooser(app)) |chooser| chooser.onAccountResult(res);
+    // T1552: EVERY open chooser hears it — the account is one state shared by
+    // all of them, so a window that did not ask must still relabel its row and
+    // fetch its list. Only the follow-up question goes to one chooser (below).
+    // No modal pump runs inside `onAccountResult`, so the window list cannot
+    // change under this loop.
+    var target: ?*MachineChooser = null;
+    for (app.windows.items) |win| {
+        const chooser = win.machine_chooser orelse continue;
+        chooser.onAccountResult(res);
+        if (takesPrompt(w32.HWND, if (target) |t| t.hwnd else null, chooser.hwnd, res.origin)) {
+            target = chooser;
+        }
+    }
+
+    // A sign-out that could not revoke this machine left the user SIGNED IN
+    // (T1421): ask "Sign Out Anyway?" once, in the chooser whose button asked.
+    // Last, because it is modal and the chooser set can change under its pump.
+    if (res.kind == .sign_out and res.machine == .not_revoked) {
+        if (target) |chooser| chooser.offerForcedSignOut();
+    }
 
     // T713: the account's WINDOWS follow the account. This runs after the
     // chooser has been told, so the row has already relabelled itself and the
@@ -184,20 +212,16 @@ pub fn onResult(app: *App, res: *Result) void {
     }
 }
 
-/// The first open machine chooser across all windows, if any. At most one is
-/// ever open per window, and in practice only one window has one open — "first"
-/// is then "the one the user is looking at".
-///
-/// It is not a guarantee, and it never was: a chooser was only ever modal to
-/// its OWN window, so a second window could always raise a second one, and
-/// since T712 the chooser is modeless and that is merely easier to do. A sign-in
-/// result would then land on whichever chooser this loop reached first. Tracked
-/// as T1552 rather than papered over here.
-fn openChooser(app: *App) ?*MachineChooser {
-    for (app.windows.items) |win| {
-        if (win.machine_chooser) |chooser| return chooser;
-    }
-    return null;
+/// Whether `candidate` should take over as the chooser that asks a result's
+/// follow-up question from `current` (the pick so far, null for none), walking
+/// the open choosers in window order (T1552). The chooser that started the
+/// operation (`origin`) wins; when it has been closed — or nothing on screen
+/// started it — the first open chooser does, which is what every result used
+/// to get. Pure and generic over the handle type so it is unit-tested.
+pub fn takesPrompt(comptime H: type, current: ?H, candidate: H, origin: ?H) bool {
+    const cur = current orelse return true;
+    const o = origin orelse return false;
+    return cur != o and candidate == o;
 }
 
 // ---------------------------------------------------------------------
@@ -458,4 +482,29 @@ test "SignOutResult.signedOut: only a failed revocation keeps the account" {
     try testing.expect((R{ .was_signed_in = true, .machine = .left_enrolled }).signedOut());
     try testing.expect((R{ .was_signed_in = true, .machine = .nothing_to_revoke }).signedOut());
     try testing.expect(!(R{ .was_signed_in = true, .machine = .not_revoked }).signedOut());
+}
+
+test "takesPrompt: the chooser that asked gets the follow-up, wherever it sits (T1552)" {
+    // Walk three open choosers in window order, the way `onResult` does, and
+    // return which one ended up holding the prompt.
+    const Walk = struct {
+        fn pick(open: []const u32, origin: ?u32) ?u32 {
+            var target: ?u32 = null;
+            for (open) |c| {
+                if (takesPrompt(u32, target, c, origin)) target = c;
+            }
+            return target;
+        }
+    };
+    const open = [_]u32{ 10, 20, 30 };
+    // The asker is the SECOND window: before T1552 the first one got it.
+    try testing.expectEqual(@as(?u32, 20), Walk.pick(&open, 20));
+    try testing.expectEqual(@as(?u32, 30), Walk.pick(&open, 30));
+    try testing.expectEqual(@as(?u32, 10), Walk.pick(&open, 10));
+    // The asker was closed while the flow ran, or nothing on screen asked:
+    // the first open chooser, the pre-T1552 behaviour, rather than nobody.
+    try testing.expectEqual(@as(?u32, 10), Walk.pick(&open, 99));
+    try testing.expectEqual(@as(?u32, 10), Walk.pick(&open, null));
+    // No chooser open: no prompt at all.
+    try testing.expectEqual(@as(?u32, null), Walk.pick(&[_]u32{}, 20));
 }

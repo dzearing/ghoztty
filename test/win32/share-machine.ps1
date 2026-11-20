@@ -22,6 +22,11 @@
 #      persists relay.env with the granted token, THEN enables sharing.
 #   E. the state survives closing and reopening the chooser: a fresh chooser
 #      reads sharing.json and opens checked.
+#   E2. with a chooser open in TWO windows, an untick and a tick made in the
+#      SECOND window's chooser (both finish off-thread) update BOTH choosers:
+#      the clicked one re-enables its box and says what happened (T1552; it
+#      used to stay disabled on its pending sentence while only the first
+#      window's chooser heard the result).
 #   F. enrollment failure (relay unreachable) leaves the box UNCHECKED and
 #      sharing DISABLED - the box never shows a state the work did not reach.
 #   G. with a RUNNING agent that predates the sharing reconciler
@@ -372,6 +377,81 @@ try {
         Assert 'fresh chooser opens CHECKED from sharing.json' ((Get-ShareChecked $chooser2) -eq $true)
     }
     Assert 'GUI never leaked to the interactive desktop' (-not (Test-TestDesktopLeak -ProcessId $g.Pid))
+
+    "== E2: a flip made in a SECOND window's chooser reaches every chooser (T1552)"
+    # Window 1 still has $chooser2 open from E. Open a second window and its own
+    # chooser, then flip from the SECOND one. Window 1 is first in the app's
+    # window list, which is the only chooser a result used to reach: the chooser
+    # that was actually clicked then sat disabled with its pending sentence.
+    $newWinOut = Join-Path $tmp 'new-window.out'
+    $nw = Start-Process -FilePath cmd.exe -WindowStyle Hidden -PassThru `
+        -ArgumentList "/c `"`"$Exe`" +new-window > `"$newWinOut`" 2>&1`""
+    $null = $nw.Handle   # before any wait, or ExitCode reads empty
+    if (-not $nw.WaitForExit(20000)) { Stop-Process -Id $nw.Id -Force -ErrorAction SilentlyContinue }
+    $top2 = [IntPtr]::Zero
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $deadline) {
+        $top2 = Get-TestWindow -ProcessId $g.Pid -Class 'GhozttyWindow' -Exclude $g.Top
+        if ($top2 -ne [IntPtr]::Zero) { break }
+        Start-Sleep -Milliseconds 250
+    }
+    Assert 'E2 +new-window opened a second window' ($top2 -ne [IntPtr]::Zero)
+    $surface2 = if ($top2 -ne [IntPtr]::Zero) { Get-TestChildWindow -Window $top2 -Class 'GhozttyTerminal' } else { [IntPtr]::Zero }
+    $chB = [IntPtr]::Zero
+    if ($surface2 -ne [IntPtr]::Zero -and
+        (Send-TestKeys -Window $top2 -Target $surface2 -Modifiers ctrl, shift -Key N)) {
+        $deadline = (Get-Date).AddSeconds(5)
+        while ((Get-Date) -lt $deadline) {
+            $chB = Get-TestWindow -ProcessId $g.Pid -Class 'GhozttyMachineChooser' -Exclude $chooser2
+            if ($chB -ne [IntPtr]::Zero) { break }
+            Start-Sleep -Milliseconds 250
+        }
+        if ($chB -ne [IntPtr]::Zero) { Start-Sleep -Milliseconds 400 }
+    }
+    Assert 'E2 the second window opened its own chooser' ($chB -ne [IntPtr]::Zero)
+    Assert 'E2 both choosers are up at once' (
+        $chB -ne [IntPtr]::Zero -and (Test-TestWindowExists -Window $chooser2))
+    $cbB = if ($chB -ne [IntPtr]::Zero) { Get-ShareCheckbox $chB } else { $null }
+    Assert 'E2 the second chooser opens CHECKED (state from D)' ($chB -ne [IntPtr]::Zero -and (Get-ShareChecked $chB) -eq $true)
+    if ($null -ne $cbB) {
+        # Untick from window 2: the removal finishes off-thread and is POSTED.
+        [void](Send-TestControlClick -Control $cbB.Hwnd)
+        Assert 'E2 untick: credential removed' (Wait-Gone $relayEnv)
+        $deadline = (Get-Date).AddSeconds(8); $bBack = $null
+        while ((Get-Date) -lt $deadline) {
+            $bBack = Get-ShareCheckbox $chB
+            if ($bBack -and $bBack.Enabled) { break }
+            Start-Sleep -Milliseconds 300
+        }
+        Assert 'E2 untick: the chooser that was CLICKED re-enables its box' ($bBack -and $bBack.Enabled)
+        $hB = Wait-HintMatch $chB 'removed from your account'
+        Assert "E2 untick: the clicked chooser says it left the account (got: '$hB')" ($hB -match 'removed from your account')
+        Assert 'E2 untick: the clicked chooser reads unticked' ((Get-ShareChecked $chB) -eq $false)
+        Assert 'E2 untick: the OTHER chooser reads unticked too' ((Get-ShareChecked $chooser2) -eq $false)
+        $aBack = Get-ShareCheckbox $chooser2
+        Assert 'E2 untick: the OTHER chooser re-enables its box too' ($aBack -and $aBack.Enabled)
+
+        # Tick from window 2 again: browser enrollment, also POSTED.
+        [void](Send-TestControlClick -Control $cbB.Hwnd)
+        $deadline = (Get-Date).AddSeconds(15)
+        while ((Get-Date) -lt $deadline -and -not (Test-Path $relayEnv)) { Start-Sleep -Milliseconds 300 }
+        Assert 'E2 tick: enrollment wrote relay.env' (Test-Path $relayEnv)
+        Assert 'E2 tick: sharing enabled' (Wait-SharingEnabled $true 10)
+        $deadline = (Get-Date).AddSeconds(8); $bOn = $null
+        while ((Get-Date) -lt $deadline) {
+            $bOn = Get-ShareCheckbox $chB
+            if ($bOn -and $bOn.Enabled) { break }
+            Start-Sleep -Milliseconds 300
+        }
+        # The discriminating check: before T1552 the result went to window 1's
+        # chooser, and this box stayed disabled on its pending state.
+        Assert 'E2 tick: the chooser that was CLICKED re-enables its box' ($bOn -and $bOn.Enabled)
+        $hOn = Wait-ChooserHint $chB
+        Assert "E2 tick: the clicked chooser says sharing is on (got: '$hOn')" ($hOn -match 'Sharing is on')
+        Assert 'E2 tick: the clicked chooser reads ticked' ((Get-ShareChecked $chB) -eq $true)
+        Assert 'E2 tick: the OTHER chooser reads ticked too' ((Get-ShareChecked $chooser2) -eq $true)
+    }
+    Assert 'E2 app survived two choosers' (-not ($g.App.Process -and $g.App.Process.HasExited))
 
     "== F: enrollment failure leaves the toggle honestly OFF"
     Stop-DebugGhoztty

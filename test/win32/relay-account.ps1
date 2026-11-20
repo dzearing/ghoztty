@@ -37,6 +37,10 @@
 #      GHOZTTY_RELAY_NO_CLIENT_ID instead, so it measures the shipped state on
 #      any seat - configured or not (T918) - and ends with the configured
 #      relaunch as its control.
+#   11. with a chooser open in TWO windows, a sign-in and a sign-out made from
+#      the SECOND window's chooser relabel BOTH account rows (T1552; the result
+#      used to reach only the first window's chooser, so the one clicked kept
+#      saying "Sign in with Google").
 #
 # Sections 5-7 SEED the account store directly (a DPAPI blob in the current
 # shape) instead of re-driving the GUI: what they exercise is the reader/renew
@@ -1593,6 +1597,90 @@ try {
     Remove-Item $SuspendRec -ErrorAction SilentlyContinue
     Remove-Item $AccountStore -ErrorAction SilentlyContinue
 
+    "== 11: two windows, two choosers - a sign-in from the SECOND reaches both (T1552)"
+    # Before T1552 an account result went to the FIRST open chooser in window
+    # order. Window 1 is first, so signing in from window 2's chooser updated
+    # window 1 and left the chooser the user clicked on "Sign in with Google".
+    $errlog11 = "$tmp\gui-two.stderr.log"
+    Remove-Item $AccountStore -ErrorAction SilentlyContinue
+    $g11 = Launch-Gui $FakeABase $errlog11
+    if (-not $g11) {
+        Write-Host 'SETUP FAIL: GUI did not come up for the two-chooser section'; $script:failures++
+    } else {
+        $null = Run-Cli '+new-window' 'two-newwin.out' 20
+        $top2 = [IntPtr]::Zero
+        foreach ($i in 1..40) {
+            $top2 = Get-TestWindow -ProcessId $g11.Pid -Class 'GhozttyWindow' -Exclude $g11.Top
+            if ($top2 -ne [IntPtr]::Zero) { break }
+            Start-Sleep -Milliseconds 250
+        }
+        Assert "11 +new-window opened a second window" ($top2 -ne [IntPtr]::Zero)
+        $chA = Open-Chooser $g11
+        Assert "11 window 1's chooser opened" ($chA -ne [IntPtr]::Zero)
+        $chB = [IntPtr]::Zero
+        if ($top2 -ne [IntPtr]::Zero -and $chA -ne [IntPtr]::Zero) {
+            $surf2 = Get-TestChildWindow -Window $top2 -Class 'GhozttyTerminal'
+            if ($surf2 -ne [IntPtr]::Zero -and
+                (Send-TestKeys -Window $top2 -Target $surf2 -Modifiers ctrl, shift -Key N)) {
+                foreach ($i in 1..20) {
+                    $chB = Get-TestWindow -ProcessId $g11.Pid -Class 'GhozttyMachineChooser' -Exclude $chA
+                    if ($chB -ne [IntPtr]::Zero) { break }
+                    Start-Sleep -Milliseconds 250
+                }
+                if ($chB -ne [IntPtr]::Zero) { Start-Sleep -Milliseconds 400 }
+            }
+        }
+        Assert "11 window 2's chooser opened beside window 1's" (
+            $chB -ne [IntPtr]::Zero -and (Test-TestWindowExists -Window $chA))
+        $btnB = if ($chB -ne [IntPtr]::Zero) { Get-ChooserAccountButton -Chooser $chB } else { $null }
+        Assert "11 both start signed out" (
+            $null -ne $btnB -and $btnB.Text -eq $SignInLabel -and
+            (Get-ChooserAccountButton -Chooser $chA).Text -eq $SignInLabel)
+        if ($null -ne $btnB) {
+            Send-TestControlClick -Control $btnB.Hwnd | Out-Null
+            Start-Sleep -Milliseconds 800
+            # The flow is app-wide, so window 1's button goes pending as well
+            # rather than offering a click that would be ignored.
+            $busyA = Get-ChooserAccountButton -Chooser $chA
+            Assert "11 the OTHER chooser's button is pending too while signing in" (
+                $null -ne $busyA -and -not $busyA.Enabled)
+            Assert "11 browser redirect delivered" (Complete-BrowserRedirect $errlog11)
+            Assert "11 GUI reports sign_in ok" (Wait-Stderr $errlog11 'relay account: sign_in ok')
+            Start-Sleep -Milliseconds 800
+            $afterB = Get-ChooserAccountButton -Chooser $chB
+            $afterA = Get-ChooserAccountButton -Chooser $chA
+            # The discriminating pair: pre-T1552 only window 1's flipped.
+            Assert "11 the chooser that was CLICKED flipped to 'Sign Out'" (
+                $null -ne $afterB -and $afterB.Text -eq 'Sign Out' -and $afterB.Enabled)
+            Assert "11 the clicked chooser shows the signed-in email" (
+                (Get-ChooserAccountStatusText -Chooser $chB) -eq 'e2e@example.com')
+            Assert "11 the OTHER chooser flipped to 'Sign Out' as well" (
+                $null -ne $afterA -and $afterA.Text -eq 'Sign Out' -and $afterA.Enabled)
+            Assert "11 the OTHER chooser shows the signed-in email" (
+                (Get-ChooserAccountStatusText -Chooser $chA) -eq 'e2e@example.com')
+
+            "  -- 11b: sign out from the second chooser reaches both too"
+            if ($null -ne $afterB) {
+                Send-TestControlClick -Control $afterB.Hwnd | Out-Null
+                Assert "11b GUI reports sign_out ok" (Wait-Stderr $errlog11 'relay account: sign_out ok')
+                Start-Sleep -Milliseconds 600
+                $outB = Get-ChooserAccountButton -Chooser $chB
+                $outA = Get-ChooserAccountButton -Chooser $chA
+                Assert "11b the clicked chooser is back to the Google sign-in" (
+                    $null -ne $outB -and $outB.Text -eq $SignInLabel)
+                Assert "11b the OTHER chooser is back to the Google sign-in" (
+                    $null -ne $outA -and $outA.Text -eq $SignInLabel)
+                Assert "11b the clicked chooser says signed out" (
+                    (Get-ChooserHintText -Chooser $chB) -match 'Signed out|Already signed out')
+            }
+        }
+        Assert "11 app survived two choosers" (-not ($g11.App.Process -and $g11.App.Process.HasExited))
+        if ($g11.App.Process -and -not $g11.App.Process.HasExited) {
+            Stop-Process -Id $g11.Pid -Force -ErrorAction SilentlyContinue
+        }
+        Start-Sleep -Milliseconds 800
+    }
+    Remove-Item $AccountStore -ErrorAction SilentlyContinue
 
 } catch {
     # $ErrorActionPreference is Continue, so a NON-terminating error prints and

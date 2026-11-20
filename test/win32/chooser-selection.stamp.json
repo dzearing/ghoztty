@@ -1,8 +1,8 @@
 {
     "guard":  "chooser-selection",
     "script":  "test/win32/chooser-selection.ps1",
-    "generated":  "2026-11-17T08:51:13-08:00",
-    "commit":  "22e03bbc8",
+    "generated":  "2026-11-20T13:08:05-08:00",
+    "commit":  "a3661155f",
     "uncommitted":  [
                         "src/apprt/win32/MachineChooser.zig"
                     ],
@@ -10,9 +10,13 @@
                   "src/apprt/win32/chooser_rows.zig":  "3330e8e24d9f5230132d39061de1c306af1504c892b972d17bc5ed136a984f61",
                   "src/apprt/win32/chooser_sessions.zig":  "bd16fe31296c83fb3927688984e20cdf083430e0fb4107b85b34f682485646e7",
                   "src/apprt/win32/list_selection.zig":  "b7f5720b1a405deacf48309f6b34439b7148e73a19a876ef9c7f38faf5308913",
-                  "src/apprt/win32/MachineChooser.zig":  "1e15e3dbc4c8e2527354a56fc5cfd7856416a39d82e1f21365b00c9c7f23f66b",
+                  "src/apprt/win32/MachineChooser.zig":  "7829560bfc2d4e6be520b86a83bd5639a92076fb3fff2a6c8db1d8c7b9c5bfa1",
                   "src/apprt/win32/SessionRoster.zig":  "b54aa4c8be55fd85f5f5ccadf2ba49384c08aa268d3de0e029a7ad74c817566a",
                   "test/win32/chooser-selection.ps1":  "98a63fb6f25f0ca4734b26a9b2cb3d7d92fb34c3497e5dd11b316ddd9bf40479",
                   "test/win32/lib/PaintWait.ps1":  "7203cb0ebfc11c1b3379e37f667d6d35cacf64be48f87818a427ec65322d832f"
-              }
+              },
+    "code":  {
+                 "test/win32/chooser-selection.ps1":  "code1:58d34bac717c3c7e667e5be244e081cc386b48f04049e8a4bb751f345e6afda2",
+                 "test/win32/lib/PaintWait.ps1":  "code1:c8a832515a989312650aae929c8aba68d015fbfec704b315fa5ce260b595e00a"
+             }
 }

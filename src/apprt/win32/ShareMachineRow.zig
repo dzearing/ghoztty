@@ -27,7 +27,6 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const App = @import("App.zig");
-const MachineChooser = @import("MachineChooser.zig");
 const enroll = @import("../../remote/agent/enroll.zig");
 const sharing = @import("../../remote/agent/sharing.zig");
 const owner_veto = @import("../../remote/agent/owner_veto.zig");
@@ -450,16 +449,14 @@ fn post(app: *App, outcome: Result) void {
 pub fn onResult(app: *App, res: *Result) void {
     defer app.core_app.alloc.destroy(res);
     log.info("share machine: {s} {s}", .{ @tagName(res.kind), if (res.ok) "ok" else "failed" });
-    if (openChooser(app)) |chooser| chooser.onShareResult(res);
-}
-
-/// The first open machine chooser across all windows, if any (the same
-/// routing `RelayAccountRow.onResult` uses).
-fn openChooser(app: *App) ?*MachineChooser {
+    // T1552: every open chooser shows this machine's sharing box, and the flip
+    // changed one shared file, so every one of them re-reads it — not just the
+    // first chooser in window order, which need not be the one that was ticked.
+    // `onShareResult` re-reads disk and asks nothing, so it is idempotent per
+    // chooser and runs no modal pump under this loop.
     for (app.windows.items) |win| {
-        if (win.machine_chooser) |chooser| return chooser;
+        if (win.machine_chooser) |chooser| chooser.onShareResult(res);
     }
-    return null;
 }
 
 /// This machine's name for the relay's device list: the DNS hostname

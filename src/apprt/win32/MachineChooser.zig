@@ -1604,11 +1604,17 @@ fn onAccountClicked(self: *MachineChooser) void {
         return;
     }
     const started = if (self.email != null)
-        RelayAccountRow.signOutAsync(self.window.app, .revoke)
+        RelayAccountRow.signOutAsync(self.window.app, .revoke, self.hwnd)
     else
-        RelayAccountRow.signInAsync(self.window.app);
+        RelayAccountRow.signInAsync(self.window.app, self.hwnd);
     if (!started) return;
     self.refreshAccountRow();
+    // T1552: the flow is app-wide, so every other open chooser's button goes
+    // to its pending state too rather than offering a click that is ignored.
+    for (self.window.app.windows.items) |win| {
+        const other = win.machine_chooser orelse continue;
+        if (other != self) other.refreshAccountRow();
+    }
     if (self.email == null) self.setHint("Complete the sign-in in your browser…");
 }
 
@@ -1632,20 +1638,20 @@ pub fn onAccountResult(self: *MachineChooser, res: *const RelayAccountRow.Result
     _ = self.syncPendingRevocation();
     self.refreshAccountRow();
     if (res.message.len > 0) self.setHint(res.message);
-
-    // A sign-out that could not revoke this machine left the user SIGNED IN
-    // (T1421). Say so, and offer the way past it — silently doing nothing here
-    // would land them back on a row that still shows their email with no
-    // explanation, which is worse than the bug this path fixes.
-    if (res.kind == .sign_out and res.machine == .not_revoked) {
-        self.offerForcedSignOut();
-    }
+    // A `.not_revoked` sign-out also owes the user the "Sign Out Anyway" offer
+    // (T1421). That is NOT asked here: every open chooser runs this (T1552),
+    // and one click must raise one dialog, so `RelayAccountRow.onResult` asks
+    // it once, in the chooser that started the sign-out.
 }
 
-/// The "Sign Out Anyway" confirmation (T1421). Modal, so it runs after the
-/// row has already been relabelled to its still-signed-in state — the user sees
-/// the true state behind the dialog rather than a half-applied one.
-fn offerForcedSignOut(self: *MachineChooser) void {
+/// The "Sign Out Anyway" confirmation (T1421): a sign-out that could not
+/// revoke this machine left the user SIGNED IN, so say so and offer the way
+/// past it — silently doing nothing would land them back on a row that still
+/// shows their email with no explanation. Modal, so `RelayAccountRow.onResult`
+/// calls it after every chooser's row has been relabelled to its
+/// still-signed-in state — the user sees the true state behind the dialog
+/// rather than a half-applied one.
+pub fn offerForcedSignOut(self: *MachineChooser) void {
     // The body is a long sentence and `utf8ToUtf16LeStringLiteral` walks it at
     // comptime; the default quota does not reach the end of it.
     @setEvalBranchQuota(20_000);
@@ -1666,7 +1672,7 @@ fn offerForcedSignOut(self: *MachineChooser) void {
     if (window.machine_chooser != self) return;
     if (answer != .ok) return;
 
-    if (RelayAccountRow.signOutAsync(window.app, .force)) self.refreshAccountRow();
+    if (RelayAccountRow.signOutAsync(window.app, .force, self.hwnd)) self.refreshAccountRow();
 }
 
 /// The share checkbox was clicked (T547). BS_CHECKBOX does not flip itself,
@@ -1695,6 +1701,7 @@ fn onShareToggled(self: *MachineChooser) void {
             .failed => self.setHint(ShareMachineRow.save_failed_hint),
         }
         self.refreshAccountRow();
+        self.resyncOtherShareBoxes();
         return;
     }
 
@@ -1716,6 +1723,22 @@ fn onShareToggled(self: *MachineChooser) void {
         },
     }
     self.refreshAccountRow();
+    self.resyncOtherShareBoxes();
+}
+
+/// A flip that finished (or started) right here, on the GUI thread, changed a
+/// file every open chooser's share box reads — and no worker result will be
+/// posted to tell the others (T1552). Re-read it in each of them, without
+/// touching their footers: the news is this chooser's to say.
+fn resyncOtherShareBoxes(self: *MachineChooser) void {
+    for (self.window.app.windows.items) |win| {
+        const other = win.machine_chooser orelse continue;
+        if (other == self) continue;
+        if (other.sharing_path) |p| {
+            other.share_enabled = ShareMachineRow.isEnabled(other.arena.allocator(), p);
+        }
+        other.refreshAccountRow();
+    }
 }
 
 /// GUI thread: an async share flip finished — a tick's browser enrollment and
