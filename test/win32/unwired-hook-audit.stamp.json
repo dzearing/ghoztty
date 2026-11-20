@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-20T09:52:06-08:00",
-    "commit":  "a90a5bcb7",
+    "generated":  "2026-11-20T09:52:42-08:00",
+    "commit":  "01a4f9d5f",
     "uncommitted":  [
 
                     ],
@@ -1487,7 +1487,7 @@
                   "test/win32/release-artifacts.ps1":  "a831b85c806498c3b0b1c69a0d0affb104d7b790ea631f7ae3e19c0790c1d46f",
                   "test/win32/release-parity.ps1":  "92babe2c0e154c766dd02f9578073f6a04ec281ee706aa8a8dc83c505d579f9f",
                   "test/win32/release-symbols.ps1":  "7c1a87e8cf563ea02c3f1e97d098729af03ddafd75144ce221afb945fc0fb862",
-                  "test/win32/remote-disconnect.ps1":  "27bb610c33deb8f236a52727afe23a6276c5659d4688a6b334481e43ad2794a7",
+                  "test/win32/remote-disconnect.ps1":  "b028ff3675031fb478027e7b9010f1a39e6f3cf49fb56ca146a0d1bd580b2d59",
                   "test/win32/remote-effects.ps1":  "8d7891b2f3cc9c874d19063cdb28864ebb6139db5e98d26ab1c2597e673f33bc",
                   "test/win32/remote-inherit.ps1":  "51c3fd032cd9d40bd1318c0fe69c670dab65756103b4cf02cffe836c9009089a",
                   "test/win32/remote-pill.ps1":  "f5c2447debb4dc2867a0ae2b54f77acc20f8b4f8e562c3cb7cb305d60268e015",
