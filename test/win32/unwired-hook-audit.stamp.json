@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-19T19:05:19-08:00",
-    "commit":  "d16ef0fd1",
+    "generated":  "2026-11-19T19:14:35-08:00",
+    "commit":  "944d01119",
     "uncommitted":  [
 
                     ],
@@ -13,7 +13,7 @@
                   "src/apprt.zig":  "a96054dc24dea9d7329e9ffe4fac84e09f29cb09cd58bbdf2e0c6b4e742a5a46",
                   "src/apprt/action.zig":  "db3cfffaf6935cc430f730e3e4616c57d0e5c6bb91bf84ba348d795450974ad0",
                   "src/apprt/browser.zig":  "376d2d0984089935cf40015f99ab55e36d2fffb6b575b25d313fa1150a239e39",
-                  "src/apprt/embedded.zig":  "18e63c9ad1afe1342183070789fb26fd6ad35f1b0cf269948e7992f57e9facce",
+                  "src/apprt/embedded.zig":  "7d0ae5cc6f2164554f350527f1dfe8b41d0094fc4ef63e8748756c9ee5898711",
                   "src/apprt/gtk.zig":  "f8c15182a54cc539a782ac6a6ff7d7b3b2e67da917ceef412613b70d356c96e4",
                   "src/apprt/gtk/adw_version.zig":  "0a4ceeda62786bbfb8cf253a2e2b5ddf9ba74899c0550f9fe381303992f8025b",
                   "src/apprt/gtk/App.zig":  "34121c7a8939f2f9e7a9144bce6b3fb3124bd9d372498d9f630e82668c453dc4",
@@ -797,9 +797,9 @@
                   "src/os/hostname.zig":  "b402e461f30d22a5f8227af8591f505c0e76ccaaaf816c7b81b8ce6c7468823b",
                   "src/os/i18n.zig":  "133cfac2158e97441381ec012d76dba5f2ff3f4c09793da129d75e2299c462c4",
                   "src/os/i18n_locales.zig":  "90f6fcf72fc67cfa0223d7786f18467fd58529807a5b00ffd557d11ad447afc2",
-                  "src/os/ipc_client.zig":  "d51c2c71d4814dd64c792b0423876bcbe53065ca9dabfb3c36864c5a6ae09f52",
+                  "src/os/ipc_client.zig":  "d0a8cd0828cf96da77e289f90c95f71625257166b985bf5fbb20a93d993cdbf2",
                   "src/os/ipc_handoff.zig":  "83ed1a0b6464bff5ff9364c56c5c796afe0c821cb8c9220372436dd7b821ffc3",
-                  "src/os/ipc_timeout.zig":  "f42ab6296917c0c8de044e00c43bca6ab8b6725f88655a9350757a5f15fdf259",
+                  "src/os/ipc_timeout.zig":  "3404b4731e4ee9bd4f9fae88b03294aaba6dd79fcddd06dba54a729d4a385904",
                   "src/os/kernel_info.zig":  "af3e484e231296b27ef7c2a76f4608c61a37bf5af01b968d3dbbf565d18de0e4",
                   "src/os/listening_pid.zig":  "931260af3ef2fbf2840abea3553cf79ca5d381fc03ccd1af9370b93613e91135",
                   "src/os/locale.zig":  "258581f92dcd6261444f528ecc1c29a6f8de23ffacebbec3b9d79aadcc9e3359",
