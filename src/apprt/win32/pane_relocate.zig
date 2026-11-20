@@ -102,6 +102,37 @@ fn scaled(dip: i32, scale: f32) i32 {
     return @max(@as(i32, @intFromFloat(v)), 1);
 }
 
+/// A width and a height, in pixels.
+pub const Size = struct { w: i32, h: i32 };
+
+/// What share of the work area a popped-out window takes when the size the
+/// source window would hand down is the whole screen anyway (T1546): two
+/// thirds each way, so the new window is plainly a window, with desktop
+/// showing round it and room to drag it by its caption.
+pub const fallback_share_num: i32 = 2;
+pub const fallback_share_den: i32 = 3;
+
+/// The size a window holding a popped-out pane opens at (T1546).
+///
+/// Normally the size of the window the pane is leaving (`frame`) - the pane
+/// was laid out for that width. A MAXIMIZED source is the exception: its frame
+/// is the whole work area, and copying it gives a window that covers the
+/// screen without being maximized, which cannot be restored to anything
+/// smaller. So a maximized source hands down its RESTORED size (`restored`,
+/// the `rcNormalPosition` the user last chose by hand), and when even that
+/// fills the work area - or cannot be read - two thirds of the work area.
+pub fn popOutSize(frame: Size, maximized: bool, restored: ?Size, work: Rect) Size {
+    if (!maximized) return frame;
+    if (restored) |r| {
+        if (r.w > 0 and r.h > 0 and (r.w < work.width() or r.h < work.height()))
+            return r;
+    }
+    return .{
+        .w = @max(@divTrunc(work.width() * fallback_share_num, fallback_share_den), 1),
+        .h = @max(@divTrunc(work.height() * fallback_share_num, fallback_share_den), 1),
+    };
+}
+
 /// Where a window of `w` x `h` holding the popped-out pane goes when the drop
 /// happened at `point`, clamped into `work` (the monitor's work area).
 ///
@@ -296,6 +327,29 @@ test "a drop past the top-left corner clamps to the work area's origin" {
     const f = newWindowFrame(.{ .x = -1900, .y = 105 }, 800, 500, work, 1.0);
     try std.testing.expectEqual(@as(i32, -1920), f.left);
     try std.testing.expectEqual(@as(i32, 100), f.top);
+}
+
+test "a pop-out from an ordinary window keeps that window's size" {
+    const work: Rect = .{ .left = 0, .top = 0, .right = 1920, .bottom = 1040 };
+    const s = popOutSize(.{ .w = 900, .h = 700 }, false, .{ .w = 500, .h = 400 }, work);
+    try std.testing.expectEqual(@as(i32, 900), s.w);
+    try std.testing.expectEqual(@as(i32, 700), s.h);
+}
+
+test "a pop-out from a maximized window takes its restored size, not the screen (T1546)" {
+    const work: Rect = .{ .left = 0, .top = 0, .right = 1920, .bottom = 1040 };
+    const s = popOutSize(.{ .w = 1936, .h = 1056 }, true, .{ .w = 1000, .h = 720 }, work);
+    try std.testing.expectEqual(@as(i32, 1000), s.w);
+    try std.testing.expectEqual(@as(i32, 720), s.h);
+}
+
+test "a maximized window whose restored size fills the screen too gives two thirds of it" {
+    const work: Rect = .{ .left = -1920, .top = 0, .right = 0, .bottom = 1050 };
+    const full = popOutSize(.{ .w = 1936, .h = 1066 }, true, .{ .w = 1920, .h = 1050 }, work);
+    try std.testing.expectEqual(@as(i32, 1280), full.w);
+    try std.testing.expectEqual(@as(i32, 700), full.h);
+    const unread = popOutSize(.{ .w = 1936, .h = 1066 }, true, null, work);
+    try std.testing.expectEqual(full, unread);
 }
 
 test "a window bigger than the work area pins to its origin rather than hanging off" {

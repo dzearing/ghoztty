@@ -5986,16 +5986,35 @@ fn workAreaAt(point: pane_drop.Point) ?pane_relocate.Rect {
 ///
 /// Same size as the window the pane is leaving, deliberately: the pane was
 /// laid out for that width, and a window that arrives at some default size
-/// reflows everything on screen the instant it appears.
+/// reflows everything on screen the instant it appears. A MAXIMIZED source
+/// hands down its restored size instead (T1546, `pane_relocate.popOutSize`):
+/// its frame is the whole screen, and a copy of it is a window that covers the
+/// screen without being maximized.
 fn newWindowFrameAt(self: *const Window, point: pane_drop.Point) ?drop_highlight.Rect {
     const h = self.hwnd orelse return null;
     var wr: w32.RECT = undefined;
     if (w32.GetWindowRect(h, &wr) == 0) return null;
     const work = workAreaAt(point) orelse return null;
+    const maximized = w32.IsZoomed(h) != 0;
+    var restored: ?pane_relocate.Size = null;
+    if (maximized) {
+        var wp: w32.WINDOWPLACEMENT = undefined;
+        wp.length = @sizeOf(w32.WINDOWPLACEMENT);
+        if (w32.GetWindowPlacement(h, &wp) != 0) restored = .{
+            .w = wp.rcNormalPosition.right - wp.rcNormalPosition.left,
+            .h = wp.rcNormalPosition.bottom - wp.rcNormalPosition.top,
+        };
+    }
+    const size = pane_relocate.popOutSize(
+        .{ .w = wr.right - wr.left, .h = wr.bottom - wr.top },
+        maximized,
+        restored,
+        work,
+    );
     const f = pane_relocate.newWindowFrame(
         .{ .x = point.x, .y = point.y },
-        wr.right - wr.left,
-        wr.bottom - wr.top,
+        size.w,
+        size.h,
         work,
         self.scale,
     );

@@ -39,7 +39,7 @@
 # pointer is - and a point over open desktop is simply far out of range. That
 # out-of-range client point is the whole mechanism under test.
 #
-# Four claims, over three app runs (each starts from a known layout, so no claim
+# Five claims, over four app runs (each starts from a known layout, so no claim
 # inherits the previous one's):
 #   E) carrying a pane off the window previews a NEW WINDOW at the release
 #      point - the source window's own frame size, with the pointer inside it
@@ -50,6 +50,8 @@
 #   H) (T1547) a pane released over a SECOND monitor opens its window wholly
 #      on that monitor, under the release point, where the preview said - a
 #      named SKIP on a box with one monitor
+#   I) (T1546, fourth app run) a pane popped out of a MAXIMIZED window opens at
+#      the source's RESTORED size, not as a screen-filling restored window
 #
 # A positive control (ctrl+k clear_screen, the T55 pattern) runs first, so an
 # injection failure aborts instead of reading as a T1539 regression.
@@ -78,6 +80,7 @@ $errlog = Join-Path $env:TEMP 'ghoztty-rearrange-desktop-drop-stderr.log'
 Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\ChromeGeometry.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -301,7 +304,7 @@ try {
     $scale = $dpi / 96.0
     # The header band is a layout constant (24dip) the product publishes no
     # rect for - re-derived here the way rearrange-window-drop.ps1 derives it.
-    $band = [int][math]::Round(24.0 * $scale)
+    $band = Get-TestChromeDip -Dip 24 -Scale $scale
     Write-Host "      monitor dpi = $dpi, header band = $band px"
 
     # Positive control: a chord posted at the focused pane reaches binding
@@ -506,6 +509,60 @@ try {
             $session = $null
         }
     }
+
+    # ===================================================================
+    # RUN 4 - out of a MAXIMIZED window (T1546)
+    # ===================================================================
+    # A maximized window's frame IS the work area, and the new window used to
+    # copy it: a window covering the screen that was not maximized, so it had
+    # nothing smaller to restore to. It must arrive at the size the user last
+    # chose by hand - the restored 900x700 Start-Session sets.
+    #
+    # Driven by the header's pop-out BUTTON, not a drag: on one monitor a
+    # maximized window leaves no empty desktop to let go over. The drag's
+    # preview and the button's commit both size the window through the one
+    # `newWindowFrameAt`, which claims E/F already hold preview == arrival on.
+    $session = Start-Session -Splits 1 -Work $work
+    $a = $session.Top
+    Assert (Send-TestSysCommand -Window $a -Command 'maximize' -Desktop $td) 'I: setup: maximize delivered'
+    Start-Sleep -Milliseconds 1200
+    $maxFrame = Get-TestWindowRect -Window $a
+    Write-Host ("      maximized source: {0},{1} - {2},{3}" -f $maxFrame.Left, $maxFrame.Top, $maxFrame.Right, $maxFrame.Bottom)
+    $isMax = (($maxFrame.Right - $maxFrame.Left) -ge $work.Width -and ($maxFrame.Bottom - $maxFrame.Top) -ge $work.Height)
+    Assert $isMax 'I: setup: the source window covers the work area (maximized)'
+    if (-not $isMax) { Write-TestAssertedNothing -Reason 'the source window never maximized' }
+    Assert (Enter-RearrangeMode $a) 'I: rearrange mode on'
+    $before = Get-PaneBoxes $a
+    Assert ($before.Count -eq 2) "I: setup: two panes (got $($before.Count))"
+    if ($before.Count -ne 2) { Write-TestAssertedNothing -Reason 'the split never produced two panes' }
+    $popped = $before[1]
+    # Same derivation rearrange-window-drop.ps1 uses: the button sits at the
+    # right end of the header band, one 8dip pad in, with a 20dip hit box.
+    $btnX = $popped.Right - (Get-TestChromeDip -Dip 18 -Scale $scale)
+    $btnY = $popped.Top - [int]($band / 2)
+    Assert (Move-Drag $a $btnX $btnY 'down') 'I: press on the pop-out button delivered'
+    Assert (Move-Drag $a $btnX $btnY 'up') 'I: release delivered'
+    Start-Sleep -Milliseconds 2500
+    Assert (-not ($session.App.Process -and $session.App.Process.HasExited)) 'I: no crash on the pop-out'
+    $opened = @((Get-AppWindows $session.Pid) | Where-Object { [int64]$_.Hwnd -ne [int64]$a })
+    Assert ($opened.Count -eq 1) "I: a window of its own opened (got $($opened.Count) new)"
+    if ($opened.Count -ge 1) {
+        $new = [IntPtr][int64]$opened[0].Hwnd
+        Assert (Test-HasPane $new $popped.Hwnd) 'I: and it holds the popped pane - the same handle'
+        $nf = Get-TestWindowRect -Window $new
+        $nw = $nf.Right - $nf.Left; $nh = $nf.Bottom - $nf.Top
+        Write-Host ("      new window: {0},{1} - {2},{3} ({4}x{5})" -f $nf.Left, $nf.Top, $nf.Right, $nf.Bottom, $nw, $nh)
+        Assert ($nw -lt $work.Width -and $nh -lt $work.Height) `
+            "I: it is SMALLER than the screen, not a screen-filling restored window (${nw}x${nh} vs work $($work.Width)x$($work.Height))"
+        Assert ([math]::Abs($nw - 900) -le 6 -and [math]::Abs($nh - 700) -le 6) `
+            "I: at the source window's RESTORED size, 900x700 (got ${nw}x${nh})"
+        Assert ($nf.Left -ge $work.Left -and $nf.Top -ge $work.Top -and
+                $nf.Right -le $work.Right -and $nf.Bottom -le $work.Bottom) `
+            'I: and wholly inside the work area'
+    }
+
+    Close-Session $session
+    $session = $null
 
     Complete-TestBody  # T1039: the run reached the end of its body
 } finally {

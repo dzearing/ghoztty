@@ -1,13 +1,13 @@
 {
     "guard":  "dip-rounding",
     "script":  "test/win32/dip-rounding-audit.ps1",
-    "generated":  "2026-11-20T07:24:13-08:00",
-    "commit":  "7c28e92b1",
+    "generated":  "2026-11-20T11:07:31-08:00",
+    "commit":  "7b156ed1b",
     "uncommitted":  [
-
+                        "test/win32/dip-rounding-audit.baseline.json"
                     ],
     "files":  {
-                  "test/win32/dip-rounding-audit.baseline.json":  "6f219ff82ae5e19961042257d9b4525e6eaf08fd7a405ae1f374312a54c2cb99",
+                  "test/win32/dip-rounding-audit.baseline.json":  "0072d00158a8659f61edee0e4ad4ff2f3c5ac8266621c9892f0f47624d788e08",
                   "test/win32/dip-rounding-audit.ps1":  "8a3979da25d92635db2d67c480af57699a7a61c55331b19d8e56a3fab18d5f5b",
                   "test/win32/lib/DipRoundingAudit.ps1":  "def9e67665e72015ce65e1f74dea9a69eaf563271b682043df7191041f06e119"
               },
