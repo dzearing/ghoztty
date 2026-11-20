@@ -410,17 +410,47 @@ Assert 'H3 it finds the dev prefixes in this repo' ($htext -match 'install-dev-z
 # the only place the collector is exercised at all. The go-loop watchdog task is
 # registered on this box by scripts\go-loop-boot.ps1 install, which step 0 of
 # every turn re-runs, so it is a dependable subject.
-if ($htext -match 'SCHEDULED TASKS') {
-    Assert 'H6 scheduled tasks are inventoried' ($htext -match 'task-Ghoztty') ''
+# H5 and H6 used to SKIP when the box lacked the subject, and a run with a skip
+# never stamps - so on a box without the ghost registration the guard could not
+# be cleared by anything (T1514). Each now asks the box ITSELF, independently of
+# the screen, and asserts the screen agrees in both directions: present means
+# listed (and, for the ghost, PROTECTED); absent means not invented. Absent is
+# then a check that can fail, not a gap.
+$boxTasks = @()
+try {
+    $boxTasks = @(& schtasks /query /fo csv /nh 2>$null | Where-Object { $_ -and $_ -match 'hoztty' } |
+        ForEach-Object { $_.Split(',')[0].Trim('"') } | Where-Object { $_ } | Sort-Object -Unique)
+} catch { $boxTasks = @() }
+if ($boxTasks.Count -gt 0) {
+    $firstTask = 'task-' + ([string]$boxTasks[0]).TrimStart('\')
+    Assert ("H6 the box's scheduled task is inventoried ({0})" -f $boxTasks[0]) `
+        (($htext -match 'SCHEDULED TASKS') -and ($htext -match [regex]::Escape($firstTask))) ''
 } else {
-    Skip 'H6 scheduled tasks' 'no Ghoztty scheduled task is registered on this box'
+    Assert 'H6 no Ghoztty scheduled task on the box, and the screen lists none' `
+        ($htext -notmatch 'task-') ''
 }
 Assert 'H4 it never emits the ghost uninstall command' `
     ($htext -notmatch [regex]::Escape('msiexec /x ' + $GhostCode)) ''
-if ($htext -match [regex]::Escape($GhostCode)) {
-    Assert 'H5 the real ghost registration is marked PROTECTED' ($htext -match 'PROTECTED') ''
+$ghostOnBox = $false
+foreach ($root in @(
+        'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall')) {
+    $k = Join-Path $root $GhostCode
+    if (-not (Test-Path -LiteralPath $k)) { continue }
+    $gp = Get-ItemProperty -LiteralPath $k -ErrorAction SilentlyContinue
+    # The screen only considers entries whose DisplayName says Ghoztty; one that
+    # does not is not a subject for it either way.
+    if ($gp -and $gp.PSObject.Properties['DisplayName'] -and ([string]$gp.DisplayName -match 'hoztty')) { $ghostOnBox = $true }
+}
+$ghostLine = @($htext -split "`r?`n" | Where-Object { $_ -match [regex]::Escape($GhostCode) })
+if ($ghostOnBox) {
+    Assert 'H5 the real ghost registration is listed and marked PROTECTED' `
+        (($ghostLine.Count -gt 0) -and ($htext -match ('arp-' + [regex]::Escape($GhostCode))) -and ($htext -match 'PROTECTED')) `
+        "lines=$($ghostLine.Count)"
 } else {
-    Skip 'H5 real ghost registration' 'the ghost entry is not registered on this box'
+    Assert 'H5 the ghost is not registered on the box, and the screen does not invent it' `
+        ($ghostLine.Count -eq 0) ("phantom lines: " + ($ghostLine -join ' | '))
 }
 
 # --------------------------------------------------------------- negative ----
@@ -433,6 +463,13 @@ if ($NegativeControl) {
     Assert 'N1 with the ghost dropped from the protected list, it IS offered' $offered `
         'the guard is not doing the work - protection comes from somewhere else'
     Say '  (that PASS is the proof section B can fail: B3 is asserting a real refusal)'
+    # T1514: H5's absent branch is a check, not a skip, only if it can go red.
+    # Feed it a screen that DOES list the ghost (the sandbox seeds one) and the
+    # predicate H5 applies on a ghost-free box must reject it.
+    $n2 = Invoke-Screen -ScriptArgs @('inventory', '-NoProcessScan') -Env (New-Sandbox)
+    $phantom = @($n2.Text -split "`r?`n" | Where-Object { $_ -match [regex]::Escape($GhostCode) })
+    Assert 'N2 the H5 not-invented check rejects a screen that lists the ghost' ($phantom.Count -gt 0) `
+        'the absent-branch predicate cannot fail - H5 would be a disguised skip'
 }
 
 Remove-Sandbox

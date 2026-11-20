@@ -1,10 +1,13 @@
 {
     "guard":  "ghoztty-cleanup",
     "script":  "test/win32/ghoztty-cleanup.ps1",
-    "generated":  "2026-08-30T17:06:57-07:00",
-    "commit":  "7ce092110",
+    "generated":  "2026-11-19T19:28:04-08:00",
+    "commit":  "756ce6ab8",
+    "uncommitted":  [
+                        "test/win32/ghoztty-cleanup.ps1"
+                    ],
     "files":  {
-                  "scripts/ghoztty-cleanup.ps1":  "8fc0b036bb645aed4df88b6d108e355163b6cc36665a47495dece100e53b327f",
-                  "test/win32/ghoztty-cleanup.ps1":  "81bfcb6cb5b018195e1056d6ce7203f18235763916bcec4cffcdafa811e73f76"
+                  "scripts/ghoztty-cleanup.ps1":  "d2307b4c4df220c56944c340fbf60863f23f869fcd52e18acb195627c0aefde9",
+                  "test/win32/ghoztty-cleanup.ps1":  "b5ed7de5c353c544c098bbe0ed0cf83369241b37b4caf7aaf138c62e788d6dfe"
               }
 }
