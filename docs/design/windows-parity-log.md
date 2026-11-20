@@ -39180,3 +39180,7 @@ Section H of `test/win32/ghoztty-cleanup.ps1` skipped H5 whenever the dead `{A10
 ## 2026-11-19 lane a - T3267 log-append.ps1's skip count was already fixed; the audit and the harness floor now confirm it
 
 T3267 was filed because `skip-visibility.ps1` B1 flagged the new Debug arm in `log-append.ps1`: its D1-D6 skip was not counted, and the ALL PASS line gave no skip count. T1508's follow-up commit 944d01119 had already fixed both. The skip now increments `$script:skipped`, and the verdict goes through `Write-TestVerdict -Skipped`. So the task closes against that commit and no new code was written. Validation: `skip-visibility.ps1` ALL PASS including B1. `floor-lane.ps1 -Lane harness` PASS in 333s, which clears the harness-floor ack T3267 owned, and `guard-due check` reads harness-floor CURRENT.
+
+## 2026-11-19 lane b - T1515 closed as already fixed: the tab tooltip no longer shows the folder twice
+
+`next` flagged CHECK FIRST, and it was: T1622's ec17471fb (2026-09-16) added `titleRepeatsLocation` to `src/apprt/win32/tab_tooltip.zig`, which drops a tooltip title line that only repeats the cwd. `tab-tooltip.ps1` run alone on the test desktop at fa1d98a52: ALL PASS (31 assertions), sections A and E green. Closed against ec17471fb; no code this turn. T1511 still waits on T1516.
