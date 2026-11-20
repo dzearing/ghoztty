@@ -21,6 +21,7 @@ const panel_theme = @import("panel_theme.zig");
 const color_math = @import("color_math.zig");
 const split_geometry = @import("split_geometry.zig");
 const system_colors = @import("system_colors.zig");
+const hero_tile_card = @import("hero_tile_card.zig");
 
 const log = std.log.scoped(.win32);
 
@@ -152,7 +153,23 @@ pub fn paint(win: *Window, hdc_screen: w32.HDC) void {
 
     const mem_dc = w32.CreateCompatibleDC(hdc_screen) orelse return;
     defer _ = w32.DeleteDC(mem_dc);
-    const mem_bmp = w32.CreateCompatibleBitmap(hdc_screen, rw, rh) orelse return;
+    // A top-down 32bpp DIB section, not a compatible bitmap (T3279): the
+    // tiles' shadow, backlight, rim and rounded corners are laid per pixel
+    // (`hero_tile_card`), between the GDI fills and blits.
+    const bmi = w32.BITMAPINFO{ .bmiHeader = .{
+        .biWidth = rw,
+        .biHeight = -rh,
+        .biPlanes = 1,
+        .biBitCount = 32,
+        .biCompression = w32.BI_RGB,
+    } };
+    var bits_ptr: ?*anyopaque = null;
+    const mem_bmp = w32.CreateDIBSection(mem_dc, &bmi, w32.DIB_RGB_COLORS, &bits_ptr, null, 0) orelse return;
+    const bits = bits_ptr orelse {
+        _ = w32.DeleteObject(mem_bmp);
+        return;
+    };
+    const pixels: []u32 = @as([*]u32, @ptrCast(@alignCast(bits)))[0..@intCast(rw * rh)];
     const old_bmp = w32.SelectObject(mem_dc, mem_bmp);
     defer {
         _ = w32.SelectObject(mem_dc, old_bmp);
@@ -237,7 +254,8 @@ pub fn paint(win: *Window, hdc_screen: w32.HDC) void {
         // A leaf that has not produced a thumbnail yet paints its placeholder
         // and border, which is the same state a terminal is in for the first
         // frames of its life.
-        paintTile(win, mem_dc, entry.view.heroSnapshot(), local, i == geo.selected, hovered);
+        const state: hero_tile_card.State = if (i == geo.selected) .selected else if (hovered) .hovered else .normal;
+        paintTile(win, mem_dc, pixels, @intCast(rw), @intCast(rh), entry.view.heroSnapshot(), local, state);
     }
 
     _ = w32.BitBlt(hdc_screen, region.left, region.top, rw, rh, mem_dc, 0, 0, w32.SRCCOPY);
@@ -295,99 +313,74 @@ fn paintGlassBand(win: *Window, hdc_screen: w32.HDC, dc: w32.HDC, region: w32.RE
     return true;
 }
 
-/// One thumbnail tile: rounded-clipped snapshot (dimmed unless selected,
-/// half-dimmed while hovered) + rounded border. Mac chrome parity minus
-/// the glow shadow (GDI has no cheap soft shadow — deliberate
-/// simplification, T58 decision 3).
+/// One thumbnail tile, a small card in the panes' look (T3279, Mac d40352d30
+/// `CarouselTile`): a soft drop shadow under it, the selected one backlit by a
+/// ring of light outside its edge, the picture (100% selected / 85% hovered /
+/// 70% otherwise) cut to 5 DIP corners, and a hairline rim on top that never
+/// fades. Before T3279 this was a flat GDI border - 2 px of accent on the
+/// selected tile - and no shadow at all (T58 decision 3), with the whole
+/// picture fading to 35%, which left an unselected tile's edges barely there.
+///
+/// `pixels` is the band's DIB section; GDI fills and blits land in it through
+/// `dc`, so every switch between GDI and the per-pixel passes flushes first.
 fn paintTile(
     win: *Window,
     dc: w32.HDC,
+    pixels: []u32,
+    pw: usize,
+    ph: usize,
     snap: ?PaneView.HeroSnapshot,
     rect: w32.RECT,
-    selected: bool,
-    hovered: bool,
+    state: hero_tile_card.State,
 ) void {
-    const corner = @max(@as(i32, @intFromFloat(@round(12.0 * win.scale))), 4); // 6px radius
     const w = rect.right - rect.left;
     const h = rect.bottom - rect.top;
     if (w <= 0 or h <= 0) return;
+    const card: hero_tile_card.Rect = .{ .left = rect.left, .top = rect.top, .right = rect.right, .bottom = rect.bottom };
+    const bg = win.app.config.background;
+    const is_light = color_math.isLight(.{ .r = bg.r, .g = bg.g, .b = bg.b });
+    const st = hero_tile_card.style(state, is_light, win.scale);
 
-    // Clip the content to the rounded shape (+1: region right/bottom are
-    // exclusive).
-    const rgn = w32.CreateRoundRectRgn(rect.left, rect.top, rect.right + 1, rect.bottom + 1, corner, corner);
-    if (rgn) |r| _ = w32.SelectClipRgn(dc, r);
+    // Under the card: its drop shadow, and the selected tile's backlight.
+    _ = w32.GdiFlush();
+    hero_tile_card.paintUnder(pixels, pw, ph, card, st, win.scale);
 
-    // Placeholder under (or instead of) the snapshot: a well in the band, so a
-    // tile that has not produced a thumbnail yet reads as an empty slot on
-    // either theme rather than as the fixed near-black hole `RGB(16,16,16)`
-    // punched in a light one (T308).
-    const placeholder = panel_theme.recede(bandBackdrop(win), panel_theme.well_recede);
-    if (w32.CreateSolidBrush(w32.RGB(placeholder.r, placeholder.g, placeholder.b))) |brush| {
-        var rr = rect;
-        _ = w32.FillRect(dc, &rr, brush);
-        _ = w32.DeleteObject(@ptrCast(brush));
+    // The picture, square; its corners are cut back antialiased below.
+    var corners: hero_tile_card.Corners = .{};
+    hero_tile_card.saveCorners(pixels, pw, ph, card, st, &corners);
+    blit: {
+        if (snap) |s| {
+            const src_dc = w32.CreateCompatibleDC(dc) orelse break :blit;
+            defer _ = w32.DeleteDC(src_dc);
+            const old = w32.SelectObject(src_dc, s.dib);
+            defer _ = w32.SelectObject(src_dc, old);
+            // Translucent over the band and its shadow, the way Mac's picture
+            // is. AlphaBlend also stretches on transient size mismatches right
+            // after a resize.
+            const bf: w32.BLENDFUNCTION = .{
+                .SourceConstantAlpha = st.picture_alpha,
+                // The GL readback's alpha channel is not meaningful — blend
+                // with the constant alpha only.
+                .AlphaFormat = 0,
+            };
+            _ = w32.AlphaBlend(dc, rect.left, rect.top, w, h, src_dc, 0, 0, s.w, s.h, bf);
+        } else {
+            // No thumbnail yet: a well in the band, so the slot reads as an
+            // empty card on either theme rather than as a fixed near-black
+            // hole punched in a light one (T308).
+            const placeholder = panel_theme.recede(bandBackdrop(win), panel_theme.well_recede);
+            if (w32.CreateSolidBrush(w32.RGB(placeholder.r, placeholder.g, placeholder.b))) |brush| {
+                var rr = rect;
+                _ = w32.FillRect(dc, &rr, brush);
+                _ = w32.DeleteObject(@ptrCast(brush));
+            }
+        }
     }
+    _ = w32.GdiFlush();
+    hero_tile_card.clipCorners(pixels, pw, ph, card, st, &corners);
 
-    // Snapshot, dimmed unless selected (Mac alpha 1.0 selected / 0.6
-    // hovered / 0.35 normal). AlphaBlend also stretches on transient
-    // size mismatches right after a resize.
-    if (snap) |s| blit: {
-        const src_dc = w32.CreateCompatibleDC(dc) orelse break :blit;
-        defer _ = w32.DeleteDC(src_dc);
-        const old = w32.SelectObject(src_dc, s.dib);
-        defer _ = w32.SelectObject(src_dc, old);
-        const bf: w32.BLENDFUNCTION = .{
-            .SourceConstantAlpha = if (selected) 255 else if (hovered) 153 else 89,
-            // The GL readback's alpha channel is not meaningful — blend
-            // with the constant alpha only.
-            .AlphaFormat = 0,
-        };
-        _ = w32.AlphaBlend(
-            dc,
-            rect.left,
-            rect.top,
-            w,
-            h,
-            src_dc,
-            0,
-            0,
-            s.w,
-            s.h,
-            bf,
-        );
-    }
-
-    // Border on top of the content, outside the clip so the full stroke
-    // width lands. Selected: 2px in the user's accent. Hovered: 1px in a
-    // softer step of the same accent — Mac paints a second hue here
-    // (0.416,0.416,1.0 vs 0.545,0.361,0.965), which was ported as two raw
-    // literals and read as an unrelated purple once the accent stopped being
-    // blue (T305). Normal: 1px boundary derived from the band and floored to
-    // 3:1 (T308) — Mac's white 0.5 @ 0.3, which was ported as `RGB(110,110,110)`
-    // and so only ever answered for a dark band.
-    if (rgn) |r| {
-        _ = w32.SelectClipRgn(dc, null);
-        _ = w32.DeleteObject(r);
-    }
-    const border_w: i32 = if (selected)
-        @max(@as(i32, @intFromFloat(@round(2.0 * win.scale))), 2)
-    else
-        @max(@as(i32, @intFromFloat(@round(1.0 * win.scale))), 1);
-    const ba = bandAccent(win);
-    const rest = panel_theme.boundaryOn(bandBackdrop(win));
-    const border_color = if (selected)
-        w32.RGB(ba.on.r, ba.on.g, ba.on.b)
-    else if (hovered)
-        w32.RGB(ba.soft.r, ba.soft.g, ba.soft.b)
-    else
-        w32.RGB(rest.r, rest.g, rest.b);
-    const pen = w32.CreatePen(0, border_w, border_color) orelse return;
-    defer _ = w32.DeleteObject(pen);
-    const old_pen = w32.SelectObject(dc, pen);
-    defer _ = w32.SelectObject(dc, old_pen);
-    const old_brush = w32.SelectObject(dc, w32.GetStockObject(w32.NULL_BRUSH));
-    defer _ = w32.SelectObject(dc, old_brush);
-    _ = w32.RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, corner, corner);
+    // The rim, on top of the picture.
+    hero_tile_card.paintRim(pixels, pw, ph, card, st);
 }
 
 /// Owner-paint the hero region during a selection slide (T58 decision 5):

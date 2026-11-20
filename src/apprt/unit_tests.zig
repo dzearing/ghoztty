@@ -25,6 +25,10 @@ test {
     // Pure win32 hero-mode thumbnail pacing (T1423), same no-OS-imports deal.
     _ = @import("win32/hero_snap_schedule.zig");
 
+    // Pure win32 hero carousel tile cards (T3279, Mac d40352d30): shadow,
+    // backlight, rim and corner pixels, same no-OS-imports deal.
+    _ = @import("win32/hero_tile_card.zig");
+
     // Pure win32 unfocused-split dim logic (T74), same no-OS-imports deal.
     _ = @import("win32/dim_math.zig");
 

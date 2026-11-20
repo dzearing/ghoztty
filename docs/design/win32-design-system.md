@@ -341,6 +341,7 @@ one script that owns the marker.
 | Radius | Applies to | Source |
 |---|---|---|
 | **4 DIP** | Icon-button hover fills, small chips, input fields; the floor a card nested in a rounded pane never rounds below | `settings_window_layout.radius` `shortcut_guide_layout.radius_button` `key_state_pill.CAP_RADIUS` `ViewerFeedbackBar.chip_radius_dip` `banner_card.NESTED_RADIUS_FLOOR` |
+| **5 DIP** | Hero carousel preview tiles: a card that small reads too round at a pane's 11 (Mac `CarouselTile.cornerRadius`, d40352d30) | `hero_tile_card.RADIUS_DIP` |
 | **6 DIP** | List-row highlights (the TOC and sidebar rows) | `viewer_toc_layout.row_corner_dip` |
 | **7 DIP** | Tab chiclet: top corners, and the bottom flare that carries the tab into the strip baseline | `tab_shape.CORNER_TOP` `tab_shape.CORNER_BOTTOM` |
 | **8 DIP** | Small cards: the read-only and key-state badges, the drag ghost, the viewer error card, the region-select hint, the Pane style preview tiles | `readonly_badge.RADIUS` `key_state_pill.RADIUS` `pane_drag_ghost.radius_dip` `viewer_error_card.RADIUS_DIP` `region_select.hint_radius_dip` `settings_window_layout.card_radius` |

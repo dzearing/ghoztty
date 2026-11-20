@@ -1,10 +1,11 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-20T08:21:42-08:00",
-    "commit":  "0eff81562",
+    "generated":  "2026-11-20T08:50:30-08:00",
+    "commit":  "59930614e",
     "uncommitted":  [
-
+                        "src/apprt/win32/hero_tile_card.zig",
+                        "src/apprt/win32/HeroCarousel.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -138,7 +139,8 @@
                   "src/apprt/win32/help_tooltip.zig":  "ccdce010f5eaf4ac4bec702bc2e8eb33210978f3ac2c09e7dba2047816afc855",
                   "src/apprt/win32/hero_math.zig":  "8ad9c3c4d9a953d7ee37c2fdc930eaef3de769209325b18391c15f5b439ed932",
                   "src/apprt/win32/hero_snap_schedule.zig":  "c1eb3f178e825a6f7003d0e4cb92bc32492fe91aab289390f970e5b15ac4883f",
-                  "src/apprt/win32/HeroCarousel.zig":  "d73d3142bef4922e7aecc1aaab90bbb45e36d340d141996c03533b18239edaba",
+                  "src/apprt/win32/hero_tile_card.zig":  "d0bec7f1c9800da286e32e0f1bdfb683c888ec641ae9fdf3d7c15fec0cf8cf53",
+                  "src/apprt/win32/HeroCarousel.zig":  "b6a6247d3b4d94c4df3e9b9c52b4ad645229a54b546a68e9f6039cdb9cc00135",
                   "src/apprt/win32/hidden_poll.zig":  "a991df6af8dcb5c9c79f64fb50a37f02989d03124b172d55b14831cce4c2e03c",
                   "src/apprt/win32/hook_scripts.zig":  "14e615048fbb327357b088f593c277ca098cbcc9020d582bc0958aa4b93fa3d8",
                   "src/apprt/win32/hook_spec.zig":  "2db3663425c1bba4b1f792756033827feeb5e731addc19fc610369e23a629185",

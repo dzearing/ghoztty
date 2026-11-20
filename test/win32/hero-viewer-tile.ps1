@@ -184,7 +184,20 @@ function Measure-Tile($shot, [IntPtr]$top, $tile) {
             if ($col.R -gt $bright) { $bright = $col.R }
         }
     }
-    return @{ Colors = $seen.Count; BorderMax = $bright }
+    # Just OUTSIDE the left edge (T3279): where the selected tile's backlight
+    # falls and nothing else paints - the rim is inside the card, the drop
+    # shadow only darkens. Two columns, so a one-pixel disagreement with
+    # hero_math still lands one sample in the light.
+    $outside = 0
+    foreach ($y in $ys) {
+        foreach ($x in @(($tile.Left - 3), ($tile.Left - 2))) {
+            $px = $x + $ox; $py = $y + $oy
+            if ($px -lt 0 -or $py -lt 0 -or $px -ge $shot.Width -or $py -ge $shot.Height) { continue }
+            $col = $shot.Bitmap.GetPixel($px, $py)
+            if ($col.R -gt $outside) { $outside = $col.R }
+        }
+    }
+    return @{ Colors = $seen.Count; BorderMax = $bright; Outside = $outside }
 }
 
 Stop-RepoInstances
@@ -311,15 +324,18 @@ try {
     Write-Host ("      slot above:               colors=$($mUp.Colors) borderMax=$($mUp.BorderMax)")
     Write-Host ("      slot below:               colors=$($mDown.Colors) borderMax=$($mDown.BorderMax)")
 
-    # The band backdrop here is background * 0.7 = 11,11,14, and the tile
-    # placeholder is 16,16,16 - both far below 60. Any pixel above that on the
-    # ring is a border stroke, and a border stroke means paintTile ran.
-    Assert ($mSel.BorderMax -ge 60) "terminal tile is painted (border stroke found, max R=$($mSel.BorderMax))"
+    # The band backdrop here is background * 0.7 = 11,11,14, and a tile's drop
+    # shadow only darkens it. Since T3279 (Mac d40352d30) a tile's rim is a
+    # hairline of white - 60% on the selected tile, 20% on the rest - over its
+    # picture, which lifts even a black picture to ~60. Any ring pixel at 40 or
+    # more is a rim, and a rim means paintTile ran.
+    $rimFloor = 40
+    Assert ($mSel.BorderMax -ge 140) "terminal tile is painted, the selected rim 60% white (max R=$($mSel.BorderMax), floor 140)"
 
     # Exactly one neighbour slot is occupied - the viewer's - and which side it
     # is on is the strip's iteration order, which this script does not pin.
-    $upPainted = ($mUp.BorderMax -ge 60)
-    $downPainted = ($mDown.BorderMax -ge 60)
+    $upPainted = ($mUp.BorderMax -ge $rimFloor)
+    $downPainted = ($mDown.BorderMax -ge $rimFloor)
     if ($NegativeControl) {
         Assert (-not ($upPainted -or $downPainted)) `
             'NEGATIVE: the viewer slot is bare band backdrop (no border stroke)'
@@ -329,6 +345,13 @@ try {
     }
     $mView = if ($upPainted) { $mUp } else { $mDown }
     $viewerOffset = if ($upPainted) { -1 } else { 1 }
+
+    # --- Claim D: the selected tile is backlit (T3279, Mac d40352d30) --------
+    # A ring of white light outside the selected card; an unselected card has
+    # none, so the band beside it is the backdrop (or darker, under a shadow).
+    Write-Host ("      just outside the left edge: selected R=$($mSel.Outside) viewer R=$($mView.Outside)")
+    Assert ($mSel.Outside -ge ($mView.Outside + 8)) `
+        "the selected tile is backlit outside its edge (selected R=$($mSel.Outside) vs unselected R=$($mView.Outside), margin 8)"
 
     # --- Claim B: the viewer tile shows the page ----------------------------
     Assert ($mSel.Colors -ge 4) "terminal tile carries real content ($($mSel.Colors) distinct colors, floor 4)"
