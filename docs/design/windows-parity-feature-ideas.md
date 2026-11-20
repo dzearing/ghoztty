@@ -768,3 +768,12 @@ as the digest that showed them.
 - The session service never falls behind the app (new angle on "an update never drops a live session": the app checks the running service build after an update and finishes or explains an unfinished hand-over)
 - Relaunch is as quick as a new window, and each release proves it (new angle on "rehearse the restart": quit-and-reopen with kept sessions timed per release, a slower one held back)
 - Every "in progress" has a clock (any update, hand-over or restore reported as underway gets a time limit and a plain note when it overruns)
+
+## 2026-11-20
+
+- A moved shortcut tells you where it went (after an update moves a chord, pressing the old one shows a note naming the new one for a few weeks)
+- Take a session back with one click (new angle on "this shell is open in another window": the window that lost its session gets a Take it back button beside the notice)
+- Quitting says what keeps running (closing the last window names how many sessions keep running and how many will end)
+- Settings say when a change takes effect, and offer the restart (next-launch settings are marked as you change them, with Restart now that brings panes back)
+- A busy PC never makes relaunch fail (new angle on "a pane that cannot start shows the way out": session waits stretch under load and retry once before any pane shows an error)
+- Many panes restore visible-first (with many kept panes, the on-screen ones come back first and the rest follow)
