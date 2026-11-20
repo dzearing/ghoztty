@@ -86,6 +86,13 @@ pub const INACTIVE_LIFT: f32 = card.FILL_LIGHTEN;
 /// rather than a change of color.
 pub const HOVER_LIFT: f32 = card.FILL_LIGHTEN * 2.0;
 
+/// A tab a pane drag is resting on while the dwell clock runs (T1541) lifts
+/// past hover, and takes the selected tab's full-strength rim: it is the
+/// "pressed" look of a tab that is about to open, so it has to read as a step
+/// beyond hover rather than as hover again. Still well short of the content
+/// background, so it can never be mistaken for the selected tab.
+pub const DWELL_LIFT: f32 = card.FILL_LIGHTEN * 3.5;
+
 /// What a tab is doing, which decides its fill.
 pub const Surface = enum {
     /// Selected. Filled with the CONTENT background so it merges into the
@@ -94,7 +101,20 @@ pub const Surface = enum {
     inactive,
     /// Unselected, pointer over it.
     hovered,
+    /// Unselected, and a pane drag is resting on it: releasing nothing, the
+    /// dwell will open it (T1541). Only ever set during a drag.
+    dwelling,
 };
+
+/// The surface one tab paints with. `dwelling` outranks hover — the pointer
+/// over a dwelling tab IS what makes it dwell — and nothing outranks the
+/// selected tab, which a dwell never targets anyway.
+pub fn surfaceFor(active: bool, dwelling: bool, hovered: bool) Surface {
+    if (active) return .active;
+    if (dwelling) return .dwelling;
+    if (hovered) return .hovered;
+    return .inactive;
+}
 
 /// One tab to composite, in physical pixels relative to the strip buffer.
 pub const Tab = struct {
@@ -285,13 +305,14 @@ pub fn fillColor(surface: Surface, strip_bg: Rgb, content_bg: Rgb) Rgb {
         return switch (surface) {
             .active => content_bg,
             // The pre-T206 world: an unselected tab painted nothing at all.
-            .inactive, .hovered => strip_bg,
+            .inactive, .hovered, .dwelling => strip_bg,
         };
     }
     return switch (surface) {
         .active => content_bg,
         .inactive => lift(strip_bg, INACTIVE_LIFT),
         .hovered => lift(strip_bg, HOVER_LIFT),
+        .dwelling => lift(strip_bg, DWELL_LIFT),
     };
 }
 
@@ -328,6 +349,9 @@ pub fn renderTab(
     const fg: f32 = @floatFromInt(fill.g);
     const fb: f32 = @floatFromInt(fill.b);
     const active = (t.surface == .active);
+    // A dwelling tab takes the selected tab's full rim (T1541), without its
+    // flares - those stay the selection cue alone (see `sdTabRim`).
+    const full_rim = active or t.surface == .dwelling;
 
     // White rim on a dark background, black on a light one — a specular
     // highlight is the light source reflecting off the surface's edge, so it
@@ -373,7 +397,7 @@ pub fn renderTab(
             // agree, so this is the same ring it always was.
             const sd_rim = if (T206_NEUTERED) sd else sdTabRim(fx, fy, t, m);
             const ring = if (T206_NEUTERED) 0.0 else @max(coverage(sd_rim) - coverage(sd_rim + m.rim_w), 0.0);
-            const rim = if (ring > 0.0) ring * rimFrom(rim_e.atRow(fx, rim_row), active) else 0.0;
+            const rim = if (ring > 0.0) ring * rimFrom(rim_e.atRow(fx, rim_row), full_rim) else 0.0;
 
             const i = row + @as(usize, @intCast(x));
             const dst = pixels[i];
@@ -431,6 +455,44 @@ test "hover lifts further than inactive, and active is the content background" {
     const hov = fillColor(.hovered, STRIP, DARK);
     try testing.expect(hov.r > inact.r);
     try testing.expectEqual(DARK, fillColor(.active, STRIP, DARK));
+}
+
+test "T1541: a dwelling tab lifts past hover, on dark and light strips alike" {
+    // The dwell look has to be a STEP beyond hover, or the tab a drag is
+    // resting on reads exactly as it did - the report this exists for.
+    const hov = fillColor(.hovered, STRIP, DARK);
+    const dw = fillColor(.dwelling, STRIP, DARK);
+    try testing.expect(lumOf(@as(u32, dw.r) << 16 | @as(u32, dw.g) << 8 | dw.b) >
+        lumOf(@as(u32, hov.r) << 16 | @as(u32, hov.g) << 8 | hov.b));
+    // On a light strip the lift goes DOWN (black wash): still a distinct step.
+    const light = Rgb{ .r = 235, .g = 235, .b = 238 };
+    const hov_l = fillColor(.hovered, light, DARK);
+    const dw_l = fillColor(.dwelling, light, DARK);
+    try testing.expect(!std.meta.eql(hov_l, dw_l));
+    try testing.expect(!std.meta.eql(dw, DARK));
+}
+
+test "T1541: surfaceFor - selected wins, then dwell, then hover" {
+    try testing.expectEqual(Surface.active, surfaceFor(true, true, true));
+    try testing.expectEqual(Surface.dwelling, surfaceFor(false, true, true));
+    try testing.expectEqual(Surface.dwelling, surfaceFor(false, true, false));
+    try testing.expectEqual(Surface.hovered, surfaceFor(false, false, true));
+    try testing.expectEqual(Surface.inactive, surfaceFor(false, false, false));
+}
+
+test "T1541: a dwelling tab takes the full rim but no flares" {
+    const w: i32 = 160;
+    const h: i32 = 40;
+    var a = [_]u32{0} ** (160 * 40);
+    var b = [_]u32{0} ** (160 * 40);
+    const m = Metrics.init(1.0);
+    renderTab(&a, w, h, testTab(.dwelling), m, STRIP, DARK);
+    renderTab(&b, w, h, testTab(.hovered), m, STRIP, DARK);
+    // Just outside the bottom-left corner, where the selected tab's flare
+    // would land: untouched for a dwelling tab.
+    try testing.expectEqual(@as(u32, 0), px(&a, w, 16, 30));
+    // The top rim row, mid-tab, is brighter on the dwelling tab.
+    try testing.expect(lumOf(px(&a, w, 70, 3)) > lumOf(px(&b, w, 70, 3)));
 }
 
 test "the inactive lift is the banner card's own, not a second opinion" {

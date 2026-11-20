@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-20T10:01:56-08:00",
-    "commit":  "38347b721",
+    "generated":  "2026-11-20T10:45:22-08:00",
+    "commit":  "ef95a1c8d",
     "uncommitted":  [
-                        "test/win32/agent-handoff.ps1"
+                        "test/win32/rearrange-tab-drop.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -24,7 +24,7 @@
                   "test/win32/agent-attach-refused.ps1":  "dd2dae2e4953a7c9b46412f478497902684f3631eed9ab474f1fac65c39c358a",
                   "test/win32/agent-autostart.ps1":  "b8a48f7105cfb62727fca90f7405a45d6e25341087a4bfe9d8eea07cb7aa4254",
                   "test/win32/agent-first-answer.ps1":  "9c9f092829b9334f23e2bbd700cd98339d2946cce8757548fa9a32b5191e9a3d",
-                  "test/win32/agent-handoff.ps1":  "48668cf4b8508b962ab826e57b3b8a661e0029ff3f4e6186124efba812e711e9",
+                  "test/win32/agent-handoff.ps1":  "6ccd1314241e48120a71319b2782aec34e4ba29cbb8dcef144d4253fae43aa1f",
                   "test/win32/agent-handoff-rename.ps1":  "e92bac83fcbde3a3ae3a134ee6227ebfabe1ecfe84b69027c9ed2439ade6d06e",
                   "test/win32/agent-instance-lineage.ps1":  "ee821ee2c358468422cc619b5dab844c35ab3aa4f73d229ae7051a45966e314f",
                   "test/win32/agent-integrations.ps1":  "2b8083f671e2e50fc51f87896710960a8bfb61a737f256676a43f6c191fa83bd",
@@ -458,7 +458,7 @@
                   "test/win32/rearrange-noop-drop.ps1":  "4b5de62e0e8318f64db14bdaf85bdf25024714bcbd33deb55678934cd06d800d",
                   "test/win32/rearrange-restore.ps1":  "d80fc3586f2df6c6ea37ac98639080da169a29042b5498af703ebe12259da87b",
                   "test/win32/rearrange-session-drop.ps1":  "f392f2cbe7ed4e046cf0a89ac0904128080d2eda009fe1b84174e3d2e9a514fd",
-                  "test/win32/rearrange-tab-drop.ps1":  "80e105f9602c48519bc13fc86cbeef5db1ce492d81e9c200ba06ae3bd018f9fd",
+                  "test/win32/rearrange-tab-drop.ps1":  "3481066c2100ef71731368fe8ca02bf77846594541992995295334d0612b55fc",
                   "test/win32/rearrange-undo.ps1":  "359bdc46a1a8c8c4f103b2052df020d8ba4edac5f5ca5db1ace0878ff4be341b",
                   "test/win32/rearrange-viewer.ps1":  "ee522f1930125af3207f34809aaf274f7d85e981e312a7cf575e1580d4c6a9ff",
                   "test/win32/rearrange-window-drop.ps1":  "722e98f630f17003e80b241a69b007f7a7c2eea559fccfce8c9c695ed6b5435e",

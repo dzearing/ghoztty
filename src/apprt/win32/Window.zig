@@ -564,6 +564,14 @@ new_tab_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
 /// Index of the tab currently being hovered (-1 = none).
 hover_tab: isize = -1,
 
+/// The tab button a pane drag is resting on while its dwell clock runs
+/// (T1541), drawn in the `dwelling` surface so the tab says it is about to
+/// open. -1 = none. Owned by the DRAGGING window's `armTabDwell`, which may
+/// light a tab in another window's strip (T1543); cleared when the pointer
+/// leaves the tab, when the dwell fires, and when the drag ends. Never set
+/// outside a drag, so a plain pointer resting on a tab is still a hover.
+dwell_lit_tab: isize = -1,
+
 /// Whether the close button on the hovered tab is being hovered.
 hover_close: bool = false,
 
@@ -6447,15 +6455,49 @@ fn armTabDwell(self: *Window, d: *RearrangeDrag, target: ?DwellTarget) void {
     if (want) |t| {
         const win: ?*Window = if (t.window == self) null else t.window;
         if (d.dwell_tab) |cur| if (cur == t.tab and d.dwell_window == win) return;
+        // A different tab: the old one goes dark before the new one lights.
+        self.unlightDwell(d);
         d.dwell_tab = t.tab;
         d.dwell_window = win;
+        t.window.setDwellLit(@intCast(t.tab));
         _ = w32.SetTimer(hwnd, TAB_DWELL_TIMER_ID, TAB_DWELL_MS, null);
         return;
     }
     if (d.dwell_tab == null) return;
+    self.unlightDwell(d);
     d.dwell_tab = null;
     d.dwell_window = null;
     _ = w32.KillTimer(hwnd, TAB_DWELL_TIMER_ID);
+}
+
+/// The window property the lit dwell tab is published on (T1541): its index
+/// plus one, removed when nothing is lit. The tab strip's pixels cannot be
+/// read off the background desktop the acceptance suite runs on (T228), so
+/// `rearrange-tab-drop.ps1` asks this - the `GhozttyDragCursor` pattern.
+const DWELL_TAB_PROP = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyDwellTab");
+
+/// Light (or, with -1, darken) the tab button a drag is dwelling on in THIS
+/// window's strip. Idempotent; repaints the strip only on a change.
+fn setDwellLit(self: *Window, tab: isize) void {
+    if (self.dwell_lit_tab == tab) return;
+    self.dwell_lit_tab = tab;
+    if (self.hwnd) |h| {
+        if (tab >= 0)
+            _ = w32.SetPropW(h, DWELL_TAB_PROP, @ptrFromInt(@as(usize, @intCast(tab)) + 1))
+        else
+            _ = w32.RemovePropW(h, DWELL_TAB_PROP);
+    }
+    self.invalidateTabBar();
+}
+
+/// Darken whatever tab `d`'s dwell currently lights, in whichever window it
+/// is in. The other window is re-validated rather than trusted - it may have
+/// closed since the clock was armed.
+fn unlightDwell(self: *Window, d: *const RearrangeDrag) void {
+    if (d.dwell_tab == null) return;
+    const win: *Window = d.dwell_window orelse self;
+    if (win != self and (!self.app.hasWindow(win) or win.closing)) return;
+    win.setDwellLit(-1);
 }
 
 /// The dwell fired: show the tab the pointer has been resting on, so the drag
@@ -6467,6 +6509,9 @@ fn onTabDwell(self: *Window) void {
     const tab = tab: {
         const d = if (self.rearrange_drag) |*p| p else return;
         const t = d.dwell_tab orelse return;
+        // The clock has run out: the tab stops saying "about to open" whether
+        // or not the switch below goes ahead (T1541).
+        self.unlightDwell(d);
         d.dwell_tab = null;
         const other = d.dwell_window;
         d.dwell_window = null;
@@ -6547,6 +6592,8 @@ fn endRearrangeDrag(self: *Window, commit: bool) void {
     // this.
     self.rearrange_drag = null;
     self.hideDropPreview();
+    // The tab the drag was dwelling on goes dark with the drag (T1541).
+    self.unlightDwell(&d);
     if (self.drag_ghost) |g| g.hide();
     // The ghost card copied the picture it showed; the pane gives it back
     // (T3001) unless a glide or the hero carousel is still reading it.
@@ -20289,14 +20336,13 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
                 const active = (i == self.active_tab);
                 if ((pass == 1) != active) continue;
                 const hovered = (@as(isize, @intCast(i)) == self.hover_tab);
+                const dwelling = (@as(isize, @intCast(i)) == self.dwell_lit_tab);
                 tab_shape.renderTab(pixels, client_w, bar_h, .{
                     .left = tabs[i].left,
                     .top = tabs[i].top,
                     .right = tabs[i].right,
                     .bottom = tabs[i].bottom,
-                    .surface = if (active)
-                        .active
-                    else if (hovered) .hovered else .inactive,
+                    .surface = tab_shape.surfaceFor(active, dwelling, hovered),
                 }, sm, strip_rgb, content_rgb);
             }
         }

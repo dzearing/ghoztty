@@ -38,7 +38,9 @@
 #      tab, the caret shows and the tab moves there - same pane, no new tab
 #   D) resting on another tab's button for the dwell (500ms) SWITCHES to that
 #      tab mid-drag, and the drop then lands in that tab's layout - the pane
-#      crosses tabs without its shell noticing
+#      crosses tabs without its shell noticing. While the clock runs the tab
+#      under the pointer is LIT as about-to-open (T1541), and it goes dark when
+#      the dwell fires; a plain pointer with no drag never lights one
 #
 # A positive control (ctrl+k clear_screen, the T55 pattern) runs first, so an
 # injection failure aborts instead of reading as a T1537 regression.
@@ -118,6 +120,22 @@ function Get-PreviewRect([int]$AppPid) {
 
 function Test-Near([int]$a, [int]$b, [int]$tol = 2) {
     return ([math]::Abs($a - $b) -le $tol)
+}
+
+# The tab the strip is lighting for a running dwell clock (T1541), read off the
+# `GhozttyDwellTab` window property the app publishes (index + 1; absent = none)
+# - the strip's pixels cannot be read on the background desktop (T228), the
+# same reason rearrange-drag.ps1 reads `GhozttyDragCursor`. -1 = nothing lit.
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class TabDwellProp {
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr GetPropW(IntPtr hWnd, string lpString);
+}
+'@
+function Get-DwellLitTab([IntPtr]$top) {
+    return ([int64][TabDwellProp]::GetPropW($top, 'GhozttyDwellTab')) - 1
 }
 
 # The window's tab strip, in SCREEN coordinates, out of the product's OWN
@@ -447,9 +465,17 @@ try {
     if ($caretC2) {
         Assert (Test-Near $caretC2.Left $tab0c.Left 6) 'C2: on the seam BEFORE tab 0, where the tab will go'
     }
+    # The pointer is on tab 0's button with tab 1 on screen, so the dwell clock
+    # is running and tab 0 is lit (T1541) - until the release below ends the
+    # drag, which must put the light out with it.
+    $litC2 = Get-DwellLitTab $top
     # Release before the 500ms dwell can switch tabs under us.
     Assert (Send-TestMouse -Window $top -Target $top -X $c2x -Y $c2y -Action up -Client) 'C2: release delivered'
     Start-Sleep -Milliseconds 1200
+    if (-not $NegativeControl) {
+        Assert ($litC2 -eq 0) "C2: tab 0 is lit while the drag rests on it (got $litC2)"
+        Assert ((Get-DwellLitTab $top) -eq -1) "C2: and the light goes out with the drag (got $(Get-DwellLitTab $top))"
+    }
     Assert (-not ($session.App.Process -and $session.App.Process.HasExited)) 'C2: no crash on the move'
     $stripC2 = Get-Strip $top
     Assert ($stripC2.TabCount -eq 2) "C2: still two tabs - the tab MOVED, none was opened (got $($stripC2.TabCount))"
@@ -467,7 +493,14 @@ try {
     if (-not $otherTab) { Write-TestAssertedNothing -Reason 'no background tab to dwell on' }
     $otherX = [int](($otherTab.Left + $otherTab.Right) / 2)
     $otherY = [int](($otherTab.Top + $otherTab.Bottom) / 2)
-    Write-Host "      dwelling on tab 0 at $otherX,$otherY"
+    $otherIdx = [array]::IndexOf(@($strip3b.Tabs), $otherTab)
+    Write-Host "      dwelling on tab $otherIdx at $otherX,$otherY"
+
+    # D0 (T1541): a plain pointer resting on that tab - no drag - is a hover
+    # and nothing more. Only a drag's dwell lights a tab.
+    [void](Send-TestMouse -Window $top -Target $top -X $otherX -Y $otherY -Action move -Client)
+    Start-Sleep -Milliseconds 700
+    Assert ((Get-DwellLitTab $top) -eq -1) "D0: a plain pointer on a tab lights nothing (got $(Get-DwellLitTab $top))"
 
     $carried = (Get-PaneBoxes $top)[0]
     Assert (Send-TestMouse -Window $top -Target $top -X $grabX -Y $grabY -Action down -Client) 'D: press on the header delivered'
@@ -475,8 +508,16 @@ try {
     # Past the 500ms dwell. A second move on the same button must NOT restart
     # the clock, which is why one is sent here.
     Start-Sleep -Milliseconds 300
+    # Mid-clock (T1541): the tab under the pointer says it is about to open.
+    $litMid = Get-DwellLitTab $top
+    if ($NegativeControl) {
+        Assert ($litMid -eq -1) "D (negative control): nothing lit mid-dwell (got $litMid)"
+    } else {
+        Assert ($litMid -eq $otherIdx) "D: the dwelling tab is LIT while the clock runs (want $otherIdx, got $litMid)"
+    }
     [void](Send-TestMouse -Window $top -Target $top -X ($otherX + 1) -Y $otherY -Action move -Client)
     Start-Sleep -Milliseconds 900
+    Assert ((Get-DwellLitTab $top) -eq -1) "D: the light goes out when the dwell fires (got $(Get-DwellLitTab $top))"
 
     $shown = Get-PaneBoxes $top
     Assert ($shown.Count -eq 1) "D: one pane on screen after the dwell (got $($shown.Count))"
@@ -523,6 +564,18 @@ try {
             $bY = [int](($backTab.Top + $backTab.Bottom) / 2)
             Assert (Send-TestMouse -Window $top -Target $top -X $gX -Y $gY -Action down -Client) 'D2: press on the header delivered'
             Assert (Send-TestMouse -Window $top -Target $top -X $bX -Y $bY -Action move -Client) 'D2: move onto the other tab button delivered'
+            # T1541: leaving the tab before the clock runs out puts its light
+            # out; coming back lights it again and restarts the clock.
+            Start-Sleep -Milliseconds 200
+            $litOn = Get-DwellLitTab $top
+            [void](Send-TestMouse -Window $top -Target $top -X ($here.Left + [int]($here.Width / 2)) -Y ($here.Top + [int]($here.Height / 2)) -Action move -Client)
+            Start-Sleep -Milliseconds 200
+            $litOff = Get-DwellLitTab $top
+            if (-not $NegativeControl) {
+                Assert ($litOn -ge 0) "D2: the tab under the drag lights (got $litOn)"
+                Assert ($litOff -eq -1) "D2: and goes dark when the pointer leaves it (got $litOff)"
+            }
+            Assert (Send-TestMouse -Window $top -Target $top -X $bX -Y $bY -Action move -Client) 'D2: move back onto the other tab button delivered'
             Start-Sleep -Milliseconds 1000
             $revealed = Get-PaneBoxes $top
             Assert ($revealed.Count -eq 1 -and $revealed[0].Hwnd -ne $here.Hwnd) 'D2: the dwell switched tabs again'
