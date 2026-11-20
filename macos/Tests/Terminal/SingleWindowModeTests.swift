@@ -452,6 +452,163 @@ final class SingleWindowModeTests {
         #expect(a.paneSidebarState.mode(windowWidth: wide.width) != .hidden, "the sidebar did not come back")
     }
 
+    /// In hero mode Cmd-Shift-Up/Down steps through the panes of the
+    /// workspace on show — only its panes, never another workspace — with
+    /// the stepped-to pane drawn, including after a switch away and back.
+    @Test func heroModeCyclesTheWorkspacesPanes() async throws {
+        let text = "/bin/sh -c 'i=0; while [ $i -lt 60 ]; do echo line $i of the pane; i=$((i+1)); done; cat'"
+        let first = try terminal(text)
+        let a = TerminalController.newWindow(try ghostty, tree: SplitTree<PaneView>(view: first), activate: true)
+        opened.append(a)
+        _ = await poll(timeout: 10) { a.window?.isVisible == true }
+        let window = try #require(a.window)
+        window.setContentSize(NSSize(width: 1000, height: 600))
+        WindowInUse.setInUseForTesting(window, true)
+        var tree = a.surfaceTree
+        var last = first
+        for _ in 0..<2 {
+            let pane = try terminal(text)
+            tree = try tree.inserting(view: pane, at: last, direction: .right)
+            last = pane
+        }
+        a.surfaceTree = tree
+        // A second workspace from the start: a keystroke that leaks to the
+        // pane's own `goto_window` binding then shows as a switch.
+        let (b, _) = try await workspace()
+        #expect(host.active === a)
+        await settle(1)
+        window.makeFirstResponder(first.surfaceView)
+        NotificationCenter.default.post(name: Ghostty.Notification.didToggleHeroMode, object: first.surfaceView)
+        #expect(await poll(timeout: 2) { a.heroModeState.isActive })
+        await settle(1)
+
+        func press(_ key: NSEvent.SpecialKey) {
+            let characters = String(key.unicodeScalar)
+            guard let event = NSEvent.keyEvent(
+                with: .keyDown, location: .zero,
+                modifierFlags: [.command, .shift, .function, .numericPad],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil,
+                characters: characters, charactersIgnoringModifiers: characters,
+                isARepeat: false, keyCode: key == .upArrow ? 126 : 125)
+            else { Issue.record("no key event"); return }
+            NSApp.sendEvent(event)
+        }
+
+        // Text on screen where the hero pane is: the left 60% of the window,
+        // below the titlebar (the carousel is on the right).
+        func heroShowsText() async throws -> Bool {
+            let recorder = WindowFrameRecorder()
+            try await recorder.start(window, scale: 1)
+            await settle(0.4)
+            let image = try #require(await recorder.stop().last?.1)
+            let rep = NSBitmapImageRep(cgImage: image)
+            var levels: [CGFloat] = []
+            for y in stride(from: image.height / 5, to: image.height * 4 / 5, by: 3) {
+                for x in stride(from: image.width / 10, to: image.width * 5 / 10, by: 3) {
+                    guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
+                    levels.append((c.redComponent + c.greenComponent + c.blueComponent) / 3)
+                }
+            }
+            guard let low = levels.min(), let high = levels.max() else { return false }
+            return high - low > 0.3
+        }
+
+        // The hero is up once it draws: the keys go to its monitor only from
+        // then on.
+        var drawn = false
+        for _ in 0..<10 where !drawn {
+            drawn = try await heroShowsText()
+        }
+        if !drawn {
+            let homes = a.surfaceTree.map { String(describing: $0.contentView.superview.map { type(of: $0) }) }
+            Issue.record("hero panes' superviews: \(homes)")
+        }
+        #expect(drawn, "the hero pane is blank on entry")
+        for (step, key) in [NSEvent.SpecialKey.downArrow, .downArrow, .upArrow, .upArrow].enumerated() {
+            let before = a.heroModeState.selectedIndex
+            let expected = key == .downArrow ? before + 1 : before - 1
+            press(key)
+            await settle(0.6)
+            #expect(a.heroModeState.selectedIndex == expected, "step \(step): Cmd-Shift-\(key == .downArrow ? "Down" : "Up") did not move the hero")
+            #expect(host.active === a, "step \(step): the chord in hero mode switched workspaces")
+            #expect(try await heroShowsText(), "step \(step): pane \(a.heroModeState.selectedIndex) is blank in the hero")
+        }
+
+        // Away and back.
+        host.show(b)
+        await settle(4) // past the idle release
+        host.show(a)
+        await settle(1)
+        #expect(try await heroShowsText(), "after a switch, the hero pane is blank")
+        for (step, key) in [NSEvent.SpecialKey.downArrow, .downArrow, .upArrow, .upArrow].enumerated() {
+            let before = a.heroModeState.selectedIndex
+            let expected = key == .downArrow ? before + 1 : before - 1
+            press(key)
+            await settle(0.6)
+            #expect(a.heroModeState.selectedIndex == expected, "after a switch, step \(step): Cmd-Shift-\(key == .downArrow ? "Down" : "Up") did not move the hero")
+            #expect(host.active === a, "after a switch, step \(step): the chord in hero mode switched workspaces")
+            #expect(try await heroShowsText(), "after a switch, step \(step): pane \(a.heroModeState.selectedIndex) is blank in the hero")
+        }
+
+        // Hero off: every terminal is back in the window's grid.
+        NotificationCenter.default.post(name: Ghostty.Notification.didToggleHeroMode, object: a.focusedSurface ?? first.surfaceView)
+        #expect(await poll(timeout: 2) { !a.heroModeState.isActive })
+        #expect(await poll(timeout: 3) { a.surfaceTree.allSatisfy { $0.contentView.window === window } },
+                "a terminal did not come back from hero mode: \(a.surfaceTree.map { String(describing: $0.contentView.superview.map { type(of: $0) }) })")
+    }
+
+    /// In hero mode Cmd-Shift-Up/Down never leaves the window: past the first
+    /// or last pane, and over a single pane, the chord does nothing.
+    @Test(arguments: [1, 3]) func heroModeKeepsTheChordInItsWindow(panes: Int) async throws {
+        let first = try terminal()
+        let a = TerminalController.newWindow(try ghostty, tree: SplitTree<PaneView>(view: first), activate: true)
+        opened.append(a)
+        _ = await poll(timeout: 10) { a.window?.isVisible == true }
+        let window = try #require(a.window)
+        window.setContentSize(NSSize(width: 1000, height: 600))
+        var tree = a.surfaceTree
+        var last = first
+        for _ in 1..<panes {
+            let pane = try terminal()
+            tree = try tree.inserting(view: pane, at: last, direction: .right)
+            last = pane
+        }
+        a.surfaceTree = tree
+        _ = try await workspace()
+        _ = try await workspace()
+        #expect(host.active === a)
+        await settle(1)
+        window.makeFirstResponder(first.surfaceView)
+        NotificationCenter.default.post(name: Ghostty.Notification.didToggleHeroMode, object: first.surfaceView)
+        #expect(await poll(timeout: 2) { a.heroModeState.isActive })
+        await settle(1)
+
+        func press(_ key: NSEvent.SpecialKey) {
+            let characters = String(key.unicodeScalar)
+            guard let event = NSEvent.keyEvent(
+                with: .keyDown, location: .zero,
+                modifierFlags: [.command, .shift, .function, .numericPad],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil,
+                characters: characters, charactersIgnoringModifiers: characters,
+                isARepeat: false, keyCode: key == .upArrow ? 126 : 125)
+            else { Issue.record("no key event"); return }
+            NSApp.sendEvent(event)
+        }
+
+        // Up from the first pane, down to and past the last, up past the first.
+        let keys: [NSEvent.SpecialKey] = [.upArrow] + Array(repeating: .downArrow, count: panes + 1)
+            + Array(repeating: .upArrow, count: panes + 1)
+        for (step, key) in keys.enumerated() {
+            press(key)
+            await settle(0.4)
+            #expect(host.active === a, "\(panes) pane(s), step \(step) (\(key == .upArrow ? "Up" : "Down")): the chord left the window")
+            #expect(a.heroModeState.isActive)
+        }
+        #expect(a.heroModeState.selectedIndex == 0)
+    }
+
     /// Cmd-Shift-Up/Down is `goto_window`, which walks the windows in the
     /// sidebar's all-windows order, wrapping.
     @Test func cmdShiftArrowsWalkTheSidebarsWindows() async throws {

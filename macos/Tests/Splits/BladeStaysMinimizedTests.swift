@@ -164,6 +164,100 @@ struct BladeStaysMinimizedTests {
                 "\(trigger): the viewer is still a blade (first responder \(responder), pin \(String(describing: controller.paneStackState.pin(for: Set(panes.map(\.id))))))")
     }
 
+    /// Two HTML viewers in a row, the LEFT one minimized into a blade on the
+    /// leading edge, the caret in the right one's page (the user's report:
+    /// a link clicked in the right pane brought the left one out).
+    private func leadingBladeBesideAViewer() async throws -> (TerminalController, NSWindow, [PaneView]) {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let left = try Self.htmlFile("<h1>left</h1><a id=same href='plain.html'>same</a>")
+        let right = try Self.htmlFile("""
+            <h1>right</h1>
+            <p><a id=same href='plain.html' style='font-size:40px'>a same-folder link</a></p>
+            <p><a id=hash href='#below' style='font-size:40px'>an in-page link</a></p>
+            <p><a id=other href='other.html' style='font-size:40px'>a page that autofocuses</a></p>
+            <p id=below-middle style='margin-left:600px;font-size:40px'>plain text far from the blade</p>
+            <div style='height:2000px'></div><p id=below>below</p>
+            """)
+        let panes = [PaneView(viewer: ViewerView(location: left.path)), PaneView(viewer: ViewerView(location: right.path))]
+        var tree = SplitTree<PaneView>(view: panes[0])
+        tree = try tree.inserting(view: panes[1], at: panes[0], direction: .right)
+        tree = SplitTree(root: tree.root?.equalize(), zoomed: nil, stashed: [])
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        controller.paneSidebarState.isHidden = true
+        for _ in 0..<100 where controller.window?.isVisible != true { await settle(0.1) }
+        let window = try #require(controller.window)
+        WindowInUse.setInUseForTesting(window, true)
+        window.setContentSize(NSSize(width: 1400, height: 700))
+        await settle(1.5)
+        controller.performSplitAction(.restack(.init(items: panes.map { [$0.id] }, run: 0...1), .collapse(.leading)))
+        await settle(0.8)
+        let rightViewer = try #require(panes[1].viewerView)
+        window.makeFirstResponder(rightViewer.webView)
+        await settle(0.5)
+        #expect(strips(window) == [panes[0].id], "the left viewer is a blade")
+        return (controller, window, panes)
+    }
+
+    enum RightPaneAction: String, CaseIterable, CustomTestStringConvertible {
+        case mouseClickMiddleOfPage, mouseClickSameFolderLink, mouseClickInPageLink, mouseClickAutofocusPage,
+             jsClickSameFolderLink, cmdClickSameFolderLink, windowResignsAndBecomesKey,
+             appResignsAndBecomesActive
+        var testDescription: String { rawValue }
+    }
+
+    @Test(arguments: RightPaneAction.allCases)
+    func aLeadingBladeStaysMinimized(_ action: RightPaneAction) async throws {
+        let (controller, window, panes) = try await leadingBladeBesideAViewer()
+        defer { controller.close() }
+        let viewer = try #require(panes[1].viewerView)
+
+        // A real click (in-process events) on the link with this id.
+        func click(_ id: String, modifiers: NSEvent.ModifierFlags = []) async throws {
+            let rect = try await viewer.webView.evaluateJavaScript(
+                "(() => { const r = document.getElementById('\(id)').getBoundingClientRect(); return [r.left + 10, r.top + r.height / 2]; })()") as? [Double]
+            let point = try #require(rect)
+            // Page coordinates are top-down from the web view's top-left.
+            let inWeb = NSPoint(x: point[0], y: viewer.webView.isFlipped ? point[1] : viewer.webView.bounds.height - point[1])
+            let inWindow = viewer.webView.convert(inWeb, to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = try #require(NSEvent.mouseEvent(
+                    with: type, location: inWindow, modifierFlags: modifiers,
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                    context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+                NSApp.sendEvent(event)
+                await settle(0.05)
+            }
+        }
+
+        let pinBefore = String(describing: controller.paneStackState.pin(for: Set(panes.map(\.id))))
+        switch action {
+        case .mouseClickMiddleOfPage: try await click("below-middle")
+        case .mouseClickSameFolderLink: try await click("same")
+        case .mouseClickInPageLink: try await click("hash")
+        case .mouseClickAutofocusPage: try await click("other")
+        case .jsClickSameFolderLink:
+            _ = try? await viewer.webView.evaluateJavaScript("document.getElementById('same').click(); 0")
+        case .cmdClickSameFolderLink: try await click("same", modifiers: .command)
+        case .windowResignsAndBecomesKey:
+            let other = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 200),
+                                 styleMask: [.titled], backing: .buffered, defer: false)
+            other.makeKeyAndOrderFront(nil)
+            await settle(0.5)
+            window.makeKeyAndOrderFront(nil)
+            other.close()
+        case .appResignsAndBecomesActive:
+            NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: NSApp)
+            window.resignKey()
+            await settle(0.5)
+            window.becomeKey()
+            NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: NSApp)
+        }
+        await settle(2.0)
+        let responder = window.firstResponder.map { String(describing: type(of: $0)) } ?? "nil"
+        #expect(strips(window).contains(panes[0].id),
+                "\(action): the left viewer came out of its blade (first responder \(responder), url \(viewer.webView.url?.lastPathComponent ?? "nil"), pin before \(pinBefore) after \(String(describing: controller.paneStackState.pin(for: Set(panes.map(\.id))))))")
+    }
+
     /// A page that focuses an element in a blade leaves the caret where the
     /// user had it — not on the window, not in the blade.
     @Test func aPageFocusingAnElementInABladeLeavesTheCaretWhereItWas() async throws {

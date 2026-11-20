@@ -88,11 +88,28 @@ banner card `PaneGlass.bannerTint` 25%.
   (the list starts below it); glyphs are
   the mock's icon set drawn natively (`PaneSidebarSymbol`), not SF Symbols.
   Folding a window or project group animates.
+- **Hero mode holds its panes.** A hero slot holds a viewer
+  (`ViewerView.holdForHero`) and a terminal (`SurfaceView.holdForHero`)
+  until it lets go; while held, the grid cannot take the pane back. The grid
+  can render once more as hero mode comes on, and a terminal wrapper built
+  then (`SurfaceScrollView`) used to pull the terminal out of its slot and
+  be thrown away with it: the hero showed nothing and no key stepped it.
+  A wrapper now only takes a terminal that is not held, takes it back when
+  hero lets go (`adoptSurface`, the newest wrapper — `scrollHost`), and
+  leaves the frame and pty size of a terminal it no longer has alone.
+  Test: `SingleWindowModeTests.heroModeCyclesTheWorkspacesPanes` (steps,
+  draws, switch away and back, hero off).
 - **Hero mode** shows its pane as the same glass card — the hero container
   paints no fill of its own on glass (`HeroPaneContainer.isGlass`). It
   turns on over a single pane too, and the window's pane sidebar is out of
   the window while it is on (`PaneSidebarState.isSuppressed` — that window
-  only; the shared hide/show flag is untouched). The carousel beside it
+  only; the shared hide/show flag is untouched). The carousel's preview
+  tiles are small cards in the panes' look (`CarouselTile`): a soft drop
+  shadow and a hairline rim (20% white, 40% hovered, 60% selected; black on
+  a light theme), and the selected tile backlit like a focused pane, its
+  light masked to outside the card. Their corner radius is their own, 5pt
+  (a pane's 11pt is too round at that size). Unselected pictures fade to
+  70%; the rim never fades. The carousel beside it
   starts **`macos-hero-carousel-width`** wide (points, default 130, clamped
   80–600, never more than 0.6 of the window — `HeroModeState.carouselWidth(in:)`),
   or at **`macos-hero-carousel-ratio`** of the window when that is set
@@ -102,8 +119,14 @@ banner card `PaneGlass.bannerTint` 25%.
   0.05, so a 130pt carousel is not snapped wider). Tests:
   `HeroCarouselRatioTests`, `SingleWindowModeTests.heroModeTurnsOnOverOnePaneWithoutTheSidebar`.
 - **Cmd-Shift-Up/Down**: in hero mode, the previous/next pane
-  (`HeroKeyNavigator`, which takes the chord first, while there are two or
-  more); otherwise `goto_window` previous/next — the default macOS binding
+  (`HeroKeyNavigator`, which takes the chord first and swallows it — its
+  monitor must return `handle`'s nil as nil; a `?? event` there let every
+  step also reach the pane's `goto_window`, so each step switched windows
+  too, v1.55.0–v1.55.2). **Hero mode never leaves its window**: the
+  selection stops at the first and last pane (no wrap), and over a single
+  pane the chord is swallowed and does nothing (it used to pass through to
+  `goto_window`). Test: `SingleWindowModeTests.heroModeKeepsTheChordInItsWindow`.
+  Outside hero mode the chord is `goto_window` previous/next — the default macOS binding
   here (upstream's is `jump_to_prompt`) — which walks the windows in the
   pane sidebar's all-windows order, wrapping
   (`BaseTerminalController.gotoWindow`; workspaces in single-window mode). A

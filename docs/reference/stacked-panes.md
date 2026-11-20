@@ -41,6 +41,14 @@ stashed or moved away, the window resizing or losing key, and a relaunch.
 Tests: `BladeStaysMinimizedTests` (one HTML viewer minimized, each of those
 done to it).
 
+**A click belongs to the pane it lands on.** A minimized viewer stays mounted
+at full size under the pane on show, and every viewer's mouse monitor
+(`ViewerView.handleMouseDown`) used to claim a click by its bounds alone: a
+click in the pane on show (a link, any text) focused the blade beside it,
+which brought it out. It now claims only a click that hit-tests to itself.
+Test: `aLeadingBladeStaysMinimized` (two HTML viewers, the left one a blade,
+real clicks in the right one).
+
 **Saved with the window**: the rows the user collapsed (pin and slot shares)
 and the focus history ride the window's saved state
 (`PaneStackState.Persisted`) — the session layout manifest's `paneStack`, and

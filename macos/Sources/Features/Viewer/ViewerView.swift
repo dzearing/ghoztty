@@ -1381,6 +1381,15 @@ final class ViewerView: NSView, Codable, ObservableObject {
         guard let window, event.window === window else { return }
         let point = convert(event.locationInWindow, from: nil)
         guard bounds.contains(point) else { return }
+        // The click must land on THIS viewer, not just inside its bounds: a
+        // viewer minimized into a blade stays mounted at full size under the
+        // pane on show, so by bounds alone a click in that pane was this
+        // one's too — it focused itself, and focusing a blade brings it out.
+        guard let content = window.contentView,
+              let hit = content.hitTest(content.superview?.convert(event.locationInWindow, from: nil)
+                                        ?? event.locationInWindow),
+              hit === self || hit.isDescendant(of: self)
+        else { return }
 
         // A focus-GAINING click into the address field selects the whole
         // address (browser omnibox). Detected here at the AppKit level, not from

@@ -273,8 +273,10 @@ private class HeroPaneSlot: NSView {
         content.translatesAutoresizingMaskIntoConstraints = true
         addSubview(content)
         // Held until released, so the grid hero mode replaced cannot take a
-        // viewer back while its last update runs (`ViewerView.isInHero`).
+        // pane back while its last update runs (`ViewerView.isInHero`,
+        // `SurfaceView.isInHero`).
         pane.viewerView?.holdForHero()
+        pane.surfaceView?.holdForHero()
         isHolding = true
     }
 
@@ -283,11 +285,12 @@ private class HeroPaneSlot: NSView {
 
     deinit { release() }
 
-    /// The pane leaves hero mode: a viewer goes back to its grid leaf.
+    /// The pane leaves hero mode: it goes back to its grid leaf.
     func release() {
         guard isHolding else { return }
         isHolding = false
         pane.viewerView?.releaseFromHero()
+        pane.surfaceView?.releaseFromHero()
     }
 
     required init?(coder: NSCoder) { fatalError() }
