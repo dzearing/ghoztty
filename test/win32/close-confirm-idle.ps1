@@ -207,16 +207,38 @@ function Wait-Descendants([int]$Root, [bool]$Want, [int]$TimeoutMs = 15000) {
 # The confirm dialog, waited for in either direction.
 function Wait-Dialog([int]$gpid, [bool]$appear, [int]$timeoutMs = 3000) {
     if ($appear) { return Wait-TestWindow -ProcessId $gpid -Class 'GhozttyConfirmDialog' -TimeoutMs $timeoutMs }
+    # Waiting for it to GO. Until T1527 this loop was inverted: it kept
+    # polling while the dialog was ABSENT and returned the handle (a failure)
+    # the moment it was still present, so every "Escape dismisses" check was a
+    # single sample racing the dialog's teardown, and a clean dismissal cost
+    # the whole timeout before it could answer.
     $waited = 0
-    while ($waited -lt $timeoutMs) {
-        if ((Get-TestWindow -ProcessId $gpid -Class 'GhozttyConfirmDialog') -eq [IntPtr]::Zero) {
-            Start-Sleep -Milliseconds 250
-            $waited += 250
-            continue
-        }
-        return (Get-TestWindow -ProcessId $gpid -Class 'GhozttyConfirmDialog')
+    while ($true) {
+        $h = Get-TestWindow -ProcessId $gpid -Class 'GhozttyConfirmDialog'
+        if ($h -eq [IntPtr]::Zero) { return [IntPtr]::Zero }
+        if ($waited -ge $timeoutMs) { return $h }
+        Start-Sleep -Milliseconds 250
+        $waited += 250
     }
-    return [IntPtr]::Zero
+}
+
+# A confirm that never appeared, classified (T1527). The 2026-09-13 flake failed
+# both `always` checks with nothing to say why; these are the states that read
+# identically as "no GhozttyConfirmDialog":
+#   - the window CLOSED without asking (the product skipped the confirm);
+#   - the window is open and a system #32770 box is up (ConfirmDialog.zig's
+#     silent MessageBoxW fallback, taken when the custom class fails);
+#   - the window is open with no dialog at all (the chord never arrived).
+function Write-DialogMiss([string]$Label, [int]$gpid, [IntPtr]$Top) {
+    $exists = Test-TestWindowExists -Window $Top
+    $visible = $exists -and (Test-TestWindowVisible -Window $Top)
+    $sys = Get-TestWindow -ProcessId $gpid -Class '#32770'
+    $alive = $null -ne (Get-Process -Id $gpid -ErrorAction SilentlyContinue)
+    $why = if (-not $alive) { 'the app process exited' }
+        elseif (-not $exists -or -not $visible) { 'the window closed WITHOUT confirming' }
+        elseif ($sys -ne [IntPtr]::Zero) { 'a system #32770 box is up instead (ConfirmDialog fallback)' }
+        else { 'the window is open with no dialog (chord or close never arrived?)' }
+    Write-Host "       $Label dialog miss: $why (alive=$alive exists=$exists visible=$visible sys32770=$($sys -ne [IntPtr]::Zero))"
 }
 
 # The pane's shell pid, straight from the app. With session-persistence ON this
@@ -557,6 +579,7 @@ function Invoke-RemoteSection([string]$Label) {
         Send-TestKeys -Window $top -Target $surface -Modifiers ctrl -Key W | Out-Null
         $dlg = Wait-Dialog $g.Pid $true 5000
         Assert ($dlg -ne [IntPtr]::Zero) "$Label busy remote shell: ctrl+w opens the confirm dialog"
+        if ($dlg -eq [IntPtr]::Zero) { Write-DialogMiss "$Label busy remote" $g.Pid $top }
         if ($dlg -ne [IntPtr]::Zero) {
             Send-TestControlKey -Control $dlg -Key Escape | Out-Null
             $gone = Wait-Dialog $g.Pid $false
@@ -659,6 +682,7 @@ function Assert-ForcedConfirm([string]$Name, $Gui, [IntPtr]$Top, [scriptblock]$S
         Assert ($dlg -eq [IntPtr]::Zero) "$Name (inverted)"
     } else {
         Assert ($dlg -ne [IntPtr]::Zero) $Name
+        if ($dlg -eq [IntPtr]::Zero) { Write-DialogMiss $Name $Gui.Pid $Top }
     }
     if ($dlg -ne [IntPtr]::Zero) {
         Send-TestControlKey -Control $dlg -Key Escape | Out-Null

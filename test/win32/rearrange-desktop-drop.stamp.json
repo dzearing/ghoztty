@@ -1,8 +1,8 @@
 {
     "guard":  "rearrange-desktop-drop",
     "script":  "test/win32/rearrange-desktop-drop.ps1",
-    "generated":  "2026-11-20T07:28:26-08:00",
-    "commit":  "29f62d761",
+    "generated":  "2026-11-20T08:32:34-08:00",
+    "commit":  "0eff81562",
     "uncommitted":  [
 
                     ],
@@ -12,5 +12,8 @@
                   "src/apprt/win32/pane_relocate.zig":  "142dafc0a932792f9f994d3f6bb2563040fefba8c9e0fac3dddfb9d291f00045",
                   "src/apprt/win32/Window.zig":  "d007fa5a6d7b2f5e0fae95d9c8ce87f527ebe3a169fb01ee887a18ed30317220",
                   "test/win32/rearrange-desktop-drop.ps1":  "02c96318e720d96211eb8cfe6292dade96025422b49a287cd61753d3152d4f0c"
-              }
+              },
+    "code":  {
+                 "test/win32/rearrange-desktop-drop.ps1":  "code1:1cb446a877e9522a873812fa122163935f982bfdeb52d7d961a8f19a1b5efbd5"
+             }
 }

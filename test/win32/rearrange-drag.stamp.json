@@ -1,8 +1,8 @@
 {
     "guard":  "rearrange-drag",
     "script":  "test/win32/rearrange-drag.ps1",
-    "generated":  "2026-11-20T07:31:02-08:00",
-    "commit":  "29f62d761",
+    "generated":  "2026-11-20T08:34:45-08:00",
+    "commit":  "0eff81562",
     "uncommitted":  [
 
                     ],
@@ -13,5 +13,8 @@
                   "src/apprt/win32/Window.zig":  "d007fa5a6d7b2f5e0fae95d9c8ce87f527ebe3a169fb01ee887a18ed30317220",
                   "src/datastruct/split_tree.zig":  "56259e5796675b7a557d561659b42c3e47e79dc5d56024c15ef0c9ffa5e79cf3",
                   "test/win32/rearrange-drag.ps1":  "1200a8bc0fe8f00e7db1c1aa00ae0aa1c433c9e7f7530fa49679940905774fef"
-              }
+              },
+    "code":  {
+                 "test/win32/rearrange-drag.ps1":  "code1:007da77948da2b69f36e79c3584b0821dcd63f22b6c0f742bbe5f488a6440b2d"
+             }
 }

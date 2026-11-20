@@ -1,8 +1,8 @@
 {
     "guard":  "side-pane-featured",
     "script":  "test/win32/side-pane-featured.ps1",
-    "generated":  "2026-11-20T07:26:54-08:00",
-    "commit":  "29f62d761",
+    "generated":  "2026-11-20T08:31:21-08:00",
+    "commit":  "0eff81562",
     "uncommitted":  [
 
                     ],
@@ -11,5 +11,8 @@
                   "src/apprt/win32/pane_stack_state.zig":  "e3087d45b99e3a09eb31c6022d285f91114895b601b0d60ab24b48a9a3bcff51",
                   "src/apprt/win32/Window.zig":  "d007fa5a6d7b2f5e0fae95d9c8ce87f527ebe3a169fb01ee887a18ed30317220",
                   "test/win32/side-pane-featured.ps1":  "5184c74dd94e1001b5f3e6b3636ca64f72f374ee1c932ceb981352ba3e9ffcfa"
-              }
+              },
+    "code":  {
+                 "test/win32/side-pane-featured.ps1":  "code1:0c13d06453c8bcd27a6dc308ec98c6c2e58272d7d26b678b835db214b562fa75"
+             }
 }

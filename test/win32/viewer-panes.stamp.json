@@ -1,8 +1,8 @@
 {
     "guard":  "viewer-panes",
     "script":  "test/win32/viewer-panes.ps1",
-    "generated":  "2026-11-20T07:32:30-08:00",
-    "commit":  "29f62d761",
+    "generated":  "2026-11-20T08:35:42-08:00",
+    "commit":  "0eff81562",
     "uncommitted":  [
 
                     ],
@@ -16,5 +16,9 @@
                   "src/cli/reload.zig":  "5755d8fdc574f26b41cf39486b2e31502bc0ee938346c7bd337f40b985095ced",
                   "test/win32/lib/BrowserLeak.ps1":  "ae41845c0869dc0a37c9104ff6189f07d1e4ede98445bdecbeb3e222f5224826",
                   "test/win32/viewer-panes.ps1":  "18e0c574c527f5b06a2ce58874c8ea06e3587ceb904c0291db9b15c6284af3a2"
-              }
+              },
+    "code":  {
+                 "test/win32/lib/BrowserLeak.ps1":  "code1:bdb6f2fbff6a64a62a0d879a33d345b166ce8e38b02b50062698631a2ec3a299",
+                 "test/win32/viewer-panes.ps1":  "code1:4848094d367b29404b5e8924885d25cceff799017883c7cd71ffba298bc6b408"
+             }
 }
