@@ -77,6 +77,9 @@ $env:GHOZTTY_PIPE_SUFFIX = "-t603$PID"
 # what this script actually scored (three reds) inside the suite on 2026-09-02.
 . (Join-Path $PSScriptRoot 'lib\PaneIdle.ps1')
 
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 
@@ -254,6 +257,7 @@ try {
     Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'the app survived the chord'
 
     Assert (-not (Test-TestDesktopLeak -ProcessId $g.Pid)) 'the run never took the interactive desktop'
+    Complete-TestBody  # T1039/T1511: the body ends here; the stamp below reads it
 } finally {
     Stop-RepoProcesses @('ghoztty', 'ghoztty-agent')
     Remove-TestDesktop
@@ -269,6 +273,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red }
-exit ([int]($script:fail -gt 0))
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'CHOOSER-CLOSE-CHORD'

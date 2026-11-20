@@ -46,6 +46,9 @@ $errlog = Join-Path $env:TEMP "ghoztty-maximize-restore-memory-$PID.log"
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\ProcessMemory.ps1')
 
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 function Assert([bool]$cond, [string]$label) {
@@ -140,10 +143,9 @@ if ($NegativeControl) {
     Write-Host 'NEGATIVE CONTROL FAILED: nothing went red with the buffers kept' -ForegroundColor Red
     exit 1
 }
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
 if ($script:fail -eq 0 -and $Cycles -ge 3) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard maximize-restore-memory -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($($script:pass) passed)"; exit 0 }
-Write-Host "$($script:fail) FAILURE(S) ($($script:pass) passed)"
-exit 1
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'MAXIMIZE-RESTORE-MEMORY'

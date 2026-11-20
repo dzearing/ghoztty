@@ -56,6 +56,9 @@ if ($NegativeControl) { $env:GHOZTTY_TEST_MOUSE_KEEP_MODAL = '1' } else { Remove
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 function Ok([string]$msg) { $script:pass++; Write-Host "  PASS  $msg" }
@@ -104,7 +107,6 @@ function WaitZoom($h, [bool]$want, [int]$ms) {
 }
 
 New-TestDesktop | Out-Null
-$exitCode = 1
 try {
     Write-Host "T1141 caption-click modal-loop acceptance$(if ($NegativeControl) { ' (NEGATIVE CONTROL)' })"
     Write-Host "  exe: $exe"
@@ -186,24 +188,21 @@ try {
     }
     Remove-Item Env:GHOZTTY_TEST_MOUSE_STALE_LBUTTON -ErrorAction SilentlyContinue
 
-    Write-Host ""
-    if ($script:fail -eq 0) {
-        Write-Host "ALL PASS ($script:pass assertions)"
-        $exitCode = 0
-        # A clean green run records what it covered, so scripts\guard-due.ps1
-        # can say whether the click path as it now stands has been asked
-        # (T783). The negative control never gets here; red stays due.
-        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
-            update -Guard caption-click-modal -Repo $repo 2>&1 | ForEach-Object { "  $_" }
-    } else {
-        Write-Host "$script:fail FAILURE(S) ($script:pass passed)"
-        $exitCode = 1
-    }
+    Complete-TestBody  # T1039/T1511: the body ends here; the stamp below reads it
 } catch {
-    Write-Host ""
-    Write-Host "1 FAILURE(S) - $($_.Exception.Message)"
-    $exitCode = 1
+    # T1511: a throw is SCORED, so it can never read as a pass or stamp.
+    $script:fail++
+    Write-Host "  FAIL  aborted: $($_.Exception.Message)"
 } finally {
     Remove-TestDesktop
 }
-exit $exitCode
+
+# A clean green run records what it covered, so scripts\guard-due.ps1 can say
+# whether the click path as it now stands has been asked (T783). The negative
+# control never stamps; red stays due.
+if ($script:fail -eq 0 -and -not $NegativeControl) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard caption-click-modal -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-Host ""
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'CAPTION-CLICK-MODAL'

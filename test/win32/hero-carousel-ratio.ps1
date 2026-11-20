@@ -38,6 +38,9 @@ Remove-Item $errlog -ErrorAction SilentlyContinue
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 function Assert([bool]$cond, [string]$label) {
@@ -277,6 +280,10 @@ try {
     }
     Assert (-not ($app2.Process -and $app2.Process.HasExited)) 'no crash through the second run'
     }
+} catch {
+    # T1511: the foreground-leak checks below are part of this run too, so this
+    # try cannot END in `Complete-TestBody`. It SCORES its own throw instead.
+    Assert $false "the run threw and did not finish its sections: $($_.Exception.Message)"
 } finally {
     Remove-TestDesktop
     Kill-RepoInstances
@@ -293,11 +300,11 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 # A clean green run stamps the covered files (T783) so scripts\guard-due.ps1 can
 # answer "has this been checked against the code as it now stands?". Never
 # under -NegativeControl: that run is red on purpose.
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
 if ($script:fail -eq 0 -and -not $NegativeControl) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard hero-carousel-ratio -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILED / $script:pass passed" -ForegroundColor Red; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'HERO-CAROUSEL-RATIO'

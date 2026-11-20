@@ -47,6 +47,9 @@ New-Item -ItemType Directory -Force $tmp | Out-Null
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\ProcessMemory.ps1')
 
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 function Assert([bool]$cond, [string]$label) {
@@ -157,6 +160,11 @@ try {
     Assert ($null -ne (Get-Process -Id $appPid -ErrorAction SilentlyContinue)) 'B1 the app survived'
     Assert (-not (Test-TestDesktopLeak -ProcessId $appPid)) 'B2 GUI never became visible on the interactive desktop'
 }
+catch {
+    # T1511: the foreground-leak check below is part of this run too, so this
+    # try cannot END in `Complete-TestBody`. It SCORES its own throw instead.
+    Assert $false "the run threw and did not finish its sections: $($_.Exception.Message)"
+}
 finally {
     [void](Stop-RepoGhoztty -Exe $exe -AppOnly -SettleMs 500)
     Remove-TestDesktop
@@ -167,6 +175,8 @@ $fgSeen = @(Stop-TestForegroundWatch)
 $leaked = @(Get-TestLaunchedPids | Where-Object { $fgSeen -contains $_ })
 Assert ($leaked.Count -eq 0) "no test-desktop app ever became foreground on the interactive desktop (saw $($leaked -join ','))"
 
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
+
 # A green run stamps the covered files (T783); the negative control never does.
 if ($script:fail -eq 0 -and -not $NegativeControl -and $Lines -ge 40000) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
@@ -174,6 +184,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl -and $Lines -ge 40000) {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" -ForegroundColor Green }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red }
-exit $(if ($script:fail -eq 0) { 0 } else { 1 })
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'SCROLLBACK-CLEAR-MEMORY'

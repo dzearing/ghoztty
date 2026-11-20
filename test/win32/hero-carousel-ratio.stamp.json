@@ -1,14 +1,13 @@
 {
     "guard":  "hero-carousel-ratio",
     "script":  "test/win32/hero-carousel-ratio.ps1",
-    "generated":  "2026-11-15T21:42:05-08:00",
-    "commit":  "34d44bb3e",
+    "generated":  "2026-11-19T21:49:44-08:00",
+    "commit":  "7c50eb57a",
     "uncommitted":  [
-                        "src/apprt/win32/hero_math.zig",
                         "test/win32/hero-carousel-ratio.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/hero_math.zig":  "8ad9c3c4d9a953d7ee37c2fdc930eaef3de769209325b18391c15f5b439ed932",
-                  "test/win32/hero-carousel-ratio.ps1":  "fb3cb8c7948d896022470f117ca9d438156144742f4e79a6ed025182efdfde97"
+                  "test/win32/hero-carousel-ratio.ps1":  "518320e6011f5e4afa18118d9b72ad889ad9f0338447e02221418dde0ee29c9b"
               }
 }

@@ -57,6 +57,9 @@ $errlog = Join-Path $env:TEMP "ghoztty-idle-frame-release-$PID.log"
 . (Join-Path $PSScriptRoot 'lib\ProcessMemory.ps1')
 . (Join-Path $PSScriptRoot 'lib\PaneCapture.ps1')
 
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 $script:skipped = 0
@@ -258,10 +261,9 @@ if ($NegativeControl) {
     Write-Host 'NEGATIVE CONTROL FAILED: nothing went red with the idle release off' -ForegroundColor Red
     exit 1
 }
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
 if ($script:fail -eq 0 -and $script:skipped -eq 0 -and $Cycles -ge 3) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard idle-frame-release -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($($script:pass) passed, $($script:skipped) skipped)"; exit 0 }
-Write-Host "$($script:fail) FAILURE(S) ($($script:pass) passed)"
-exit 1
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped $script:skipped -Label 'IDLE-FRAME-RELEASE'
