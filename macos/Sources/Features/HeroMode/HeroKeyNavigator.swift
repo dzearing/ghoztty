@@ -70,7 +70,6 @@ final class HeroKeyNavigator {
     /// one step with no beep.
     func handle(_ event: NSEvent) -> NSEvent? {
         guard let state, state.isActive else { return event }
-        guard leaves.count > 1 else { return event }
         guard event.modifierFlags.contains([.shift, .command]) else { return event }
 
         // The monitor is app-wide, so it also sees keystrokes aimed at other
@@ -80,7 +79,15 @@ final class HeroKeyNavigator {
         // focus to its own newly selected pane).
         guard let heroWindow, event.window === heroWindow else { return event }
 
+        // Hero mode keeps the chord in its window: over a single pane there
+        // is nothing to step to, and the chord is swallowed all the same —
+        // passed on, it reached the pane's `goto_window` and left the window.
+        // (The selection clamps at the first and last pane for the same
+        // reason: no wrap, no step out.)
         switch event.specialKey {
+        case .upArrow where leaves.count < 2, .downArrow where leaves.count < 2:
+            return nil
+
         case .upArrow:
             state.selectPrevious(leafCount: leaves.count)
             return nil
