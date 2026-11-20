@@ -1514,8 +1514,34 @@ $logN = $script:AppLog
 Assert "N1 the GUI came up" ($appPidN -ne 0)
 $agentN = Wait-AgentPid $tmp 30
 Assert "N2 the skewed agent is running" ($agentN -ne 0)
-$dlgN = Wait-Dialog $appPidN 60
-Assert "N3 the question is still asked (the dialog is not conditional on notes)" `
+# T1518: wait in two stages so a miss says WHICH miss it was. This is the last
+# arm of a long run and its setup starts a fresh app and agent, so on a loaded
+# box the app can take more than a minute to reach the skew decision at all -
+# that is a slow launch, not the defect. The defect this control catches is
+# the app reaching the decision and then raising nothing, so the slow stage
+# (reaching the decision) gets a generous budget, and the dialog itself only
+# a short one once the app has logged that it is about to show it (the line
+# sits directly before ConfirmDialog.show in App.zig).
+$decidedN = Wait-LogMatch $logN 'agent upgrade check: protocol skew, running agent speaks an OLDER protocol' 120
+$showingN = $decidedN -and
+    (Wait-LogMatch $logN 'showing mandatory protocol-skew confirmation.*waiting for the user' 30)
+$waitN = if ($showingN) { 30 } else { 5 }
+if ($NegativeControl) {
+    # Suppress the dialog as far as this arm can see (look for a class the app
+    # never creates): N3 must go red with the third MISS reason, not be waited
+    # away by the bigger decision budget above.
+    Say 'NEGATIVE CONTROL: arm N looks for a dialog class that never exists - N3 MUST fail naming the showing-but-no-dialog miss'
+    $dlgN = Wait-TestWindow -ProcessId ([int]$appPidN) -Class 'GhozttyConfirmDialogNeverCreated' -TimeoutMs ($waitN * 1000)
+} else {
+    $dlgN = Wait-Dialog $appPidN $waitN
+}
+$missN = if ($dlgN -ne [IntPtr]::Zero) { '' }
+    elseif ($appPidN -eq 0) { ' [MISS: the GUI window never came up (N1), so there was no app to look for a dialog under - a slow launch, not the defect]' }
+    elseif (-not $decidedN) { ' [MISS: the app never reached the skew decision in 120s - a slow launch, not the defect]' }
+    elseif (-not $showingN) { ' [MISS: the app decided the skew but never logged that it was showing the question]' }
+    else { ' [MISS: the app logged it was showing the question, and no dialog appeared in 30s]' }
+Assert "N3a the app reached the skew decision" $decidedN
+Assert "N3 the question is still asked (the dialog is not conditional on notes)$missN" `
     ($dlgN -ne [IntPtr]::Zero)
 if ($dlgN -ne [IntPtr]::Zero) {
     Assert "N4 no accessory when there is nothing new to say" `
