@@ -639,6 +639,16 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the viewer's document read and resource requests run on their workers, which arms A and B of viewer-slow-path.ps1 and every other viewer harness run under; set, the workers are refused and every read runs inline on the GUI thread (the pre-T3245 behavior) so arm C can prove the latency probe sees a stall. Debug builds only (T3245)."
         },
+        "GHOZTTY_TEST_OPEN_URL_LOG": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = App.openUrl hands every link to ShellExecuteW and the browser opens, which every harness that does not activate a link runs under; set, each URL is appended to the named file as one line and the shell is never asked, so about-links.ps1 can prove where an About link goes without launching a browser. Debug builds only (T1555)."
+        },
+        "GHOZTTY_TEST_ABOUT_VERSION": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the About box builds its links from the build's own version (a dev build earns no release link), which ipc-version.ps1 asserts; set, the links are built as that X.Y.Z release's would be, so about-links.ps1 can prove the win-v tag link end to end. The provenance text is unchanged. Debug builds only (T1555)."
+        },
         "GHOZTTY_TEST_VIEWER_SLOW_MS": {
             "class": "fault",
             "unset": "shipped-elsewhere",

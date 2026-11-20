@@ -345,6 +345,10 @@ test {
     // no-OS-imports deal.
     _ = @import("win32/about_links.zig");
 
+    // The About/openUrl recorder seam (T1555): where an opened link WOULD have
+    // gone, for scripts that must not launch a browser. Pure std, every lane.
+    _ = @import("win32/open_url_seam.zig");
+
     // Pure win32 window-placement memory parse/format/clamp (T85), same
     // no-OS-imports deal.
     _ = @import("win32/window_memory.zig");

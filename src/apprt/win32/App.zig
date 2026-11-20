@@ -133,6 +133,7 @@ const orphan_endpoint = @import("orphan_endpoint.zig");
 const url_scheme = @import("url_scheme.zig");
 const provenance = @import("provenance.zig");
 const about_links = @import("about_links.zig");
+const open_url_seam = @import("open_url_seam.zig");
 const host_defaults = @import("host_defaults.zig");
 const gui_pump = @import("gui_pump.zig");
 const startup_error = @import("startup_error.zig");
@@ -9658,6 +9659,15 @@ pub fn runComShimGuiRespawn(alloc: Allocator) bool {
 /// has no binding to route through.
 pub fn openUrl(self: *App, url: []const u8) void {
     _ = self;
+    // T1555: under a test lane the link is RECORDED, not opened - so a script
+    // can prove where an About link goes without launching a browser on every
+    // run. Debug builds only; a release compiles this to nothing.
+    if (open_url_seam.logPath(std.heap.page_allocator)) |path| {
+        defer std.heap.page_allocator.free(path);
+        open_url_seam.record(path, url);
+        log.info("openUrl recorded (test seam): {s}", .{url});
+        return;
+    }
     var wbuf: [2048]u16 = undefined;
     const wlen = std.unicode.utf8ToUtf16Le(&wbuf, url) catch return;
     if (wlen >= wbuf.len) return;

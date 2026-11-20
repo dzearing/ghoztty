@@ -84,6 +84,7 @@ const ClaudeKeybinding = @import("ClaudeKeybinding.zig");
 const session_disconnect = @import("session_disconnect.zig");
 const provenance = @import("provenance.zig");
 const about_links = @import("about_links.zig");
+const open_url_seam = @import("open_url_seam.zig");
 const color_math = @import("color_math.zig");
 const hero_snap_schedule = @import("hero_snap_schedule.zig");
 const busy_light = @import("busy_light.zig");
@@ -4813,7 +4814,11 @@ pub fn showAboutDialog(self: *Surface) void {
     var link_store: [about_links.max_links]ConfirmDialog.Link = undefined;
     const links: []const ConfirmDialog.Link = links: {
         var built: [about_links.max_links]about_links.Link = undefined;
-        const model = about_links.build(arena, prov.version, prov.commit, &built) catch
+        // T1555: a Debug build may be told to build its links as a published
+        // release would, so the `win-v` tag link is provable on the box. The
+        // provenance text above still names the build's own version.
+        const link_version: []const u8 = if (open_url_seam.aboutVersion(arena)) |v| v else prov.version;
+        const model = about_links.build(arena, link_version, prov.commit, &built) catch
             break :links &.{};
         var n: usize = 0;
         for (model) |m| {

@@ -2801,6 +2801,21 @@ $GuardTable = @(
             'test\win32\ipc-version.ps1'
         )
     },
+    # T1555: activating an About link reaches the URL it claims - click and
+    # Enter, the release row's `win-v` tag page, Enter on a link leaving the
+    # box open. ipc-version.ps1 proves the row exists; this proves it goes
+    # somewhere, through the Debug-only openUrl recorder seam.
+    [pscustomobject]@{
+        Name   = 'about-links'
+        Script = 'test\win32\about-links.ps1'
+        Stamp  = 'test\win32\about-links.stamp.json'
+        Covers = @(
+            'src\apprt\win32\about_links.zig',
+            'src\apprt\win32\open_url_seam.zig',
+            'src\apprt\win32\ConfirmDialog.zig',
+            'test\win32\about-links.ps1'
+        )
+    },
     # The stale-build notification itself (T1211): the timer's decision, its
     # once-per-file dedupe, the About box's Restart/Later offer, and a restart
     # that cannot be set up leaving the window alive. ipc-version.ps1 covers
