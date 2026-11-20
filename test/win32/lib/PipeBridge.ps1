@@ -33,6 +33,8 @@
 
 Set-StrictMode -Off
 
+. (Join-Path $PSScriptRoot 'JobTeardown.ps1')
+
 function Start-PipeBridge {
     param(
         # The loopback TCP port to listen on (what FakeRelay dials).
@@ -43,9 +45,15 @@ function Start-PipeBridge {
     )
 
     Remove-Item $LogPath -ErrorAction SilentlyContinue
+    $pidFile = "$LogPath.pid"
+    Remove-Item $pidFile -ErrorAction SilentlyContinue
 
     $job = Start-Job -ScriptBlock {
-        param($port, $pipeName, $logPath)
+        param($port, $pipeName, $logPath, $pidFile)
+
+        # FIRST statement (T1519): the teardown ends this job by PID, which is
+        # bounded wherever the loop happens to be parked.
+        Set-Content -Path $pidFile -Value $PID
 
         function Write-BridgeLog([string]$m) {
             Add-Content -Path $logPath -Value ("{0} {1}" -f (Get-Date -Format 'HH:mm:ss.fff'), $m)
@@ -156,7 +164,8 @@ function Start-PipeBridge {
 
             if ($idle) { Start-Sleep -Milliseconds 5 }
         }
-    } -ArgumentList $Port, $PipeName, $LogPath
+    } -ArgumentList $Port, $PipeName, $LogPath, $pidFile
+    $job | Add-Member -NotePropertyName BridgePidFile -NotePropertyValue $pidFile -Force
 
     # Hand back a bridge that is actually listening: one that has not bound yet
     # reads exactly like one that is broken.
@@ -168,11 +177,14 @@ function Start-PipeBridge {
     return $job
 }
 
+# Bounded teardown (T1519): by PID through `Stop-JobBounded`, never a bare
+# `Stop-Job`. Emits nothing on the pipeline; a give-up prints its own line.
 function Stop-PipeBridge {
-    param($Job)
+    param($Job, [int]$TimeoutSec = 10)
     if ($null -eq $Job) { return }
-    try { Stop-Job $Job -ErrorAction SilentlyContinue } catch {}
-    try { Remove-Job $Job -Force -ErrorAction SilentlyContinue } catch {}
+    $pidFile = "$($Job.BridgePidFile)"
+    $null = Stop-JobBounded -Job $Job -PidFile $pidFile -TimeoutSec $TimeoutSec -Label 'pipe bridge'
+    if ($pidFile) { Remove-Item $pidFile -ErrorAction SilentlyContinue }
 }
 
 # The local agent's pipe name for THIS lineage - the same derivation

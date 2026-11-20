@@ -24,9 +24,13 @@
 #    only honest behaviour when nothing can be killed by pid.
 # D: the sweep - no `Start-Job` body in test\win32 blocks in `AcceptTcpClient()`
 #    without a `Pending()` guard.
+# E: the shared fake relay (T1519) - a bridge parked mid-frame in Read-Exact is
+#    ended by pid well inside its socket read timeout; FakeAgentRelay and
+#    PipeBridge carry the same pid plumbing.
+# F: the sweep - no helper in test\win32\lib stops a job with a bare Stop-Job.
 #
-# `-TeethCheck` proves section D can go red at all: it plants a violator in a
-# temp copy of the swept text and passes only if the assertion turns over.
+# `-TeethCheck` proves sections D and F can go red at all: it plants violators in
+# temp copies of the swept text and passes only if the assertions turn over.
 param([switch]$TeethCheck)
 
 $ErrorActionPreference = 'Continue'
@@ -235,6 +239,113 @@ $j = Start-Job -ScriptBlock {
     Assert "D the sweep actually read the suite (negative control)" ($swept.Count -gt 50)
     if ($offenders.Count -gt 0) { $offenders | ForEach-Object { "       $_" } }
     Assert "D no harness parks a job in a bare AcceptTcpClient()" ($offenders.Count -eq 0)
+}
+
+# ============================================================================
+""
+"== E: the shared fake relay stops by pid with a bridge parked mid-frame (T1519)"
+# ============================================================================
+# The second blocking call. FakeRelay's bridge reads a client frame through
+# Read-Exact, which sits in a synchronous stream.Read until the peer finishes a
+# frame it committed to. Here the peer commits to one (one header byte of two)
+# and stalls. Each read is capped by the socket's 5 s ReadTimeout, so a bare
+# Stop-Job would come back after ~5 s per queued read; ending it by pid does
+# not wait on the read at all - the < 3 s bound below is what tells the two
+# apart.
+. (Join-Path $PSScriptRoot 'lib\FakeRelay.ps1')
+$agentPortE = Get-FreePort
+$agentL = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $agentPortE)
+$agentL.Start()   # never accepted: the backlog completes the relay's dial
+$relayPortE = Get-FreePort
+$logE = Join-Path $tmp 'relay-e.log'
+$relayE = Start-FakeRelay -Port $relayPortE -AgentPort $agentPortE -DevicesJson '{"devices":[]}' -LogPath $logE
+$pidFileE = "$($relayE.FakeRelayPidFile)"
+Assert "E the relay job records its pid as its first statement" (
+    $pidFileE -and (Test-Path $pidFileE) -and ("$(Get-Content $pidFileE)".Trim() -match '^\d+$'))
+$relayPidE = if ($pidFileE -and (Test-Path $pidFileE)) { [int]"$(Get-Content $pidFileE)".Trim() } else { 0 }
+
+$wsE = [System.Net.Sockets.TcpClient]::new('127.0.0.1', $relayPortE)
+$nsE = $wsE.GetStream()
+$nsE.ReadTimeout = 5000
+$req = "GET /v1/client/connect?device=dev-e HTTP/1.1`r`nHost: 127.0.0.1`r`nUpgrade: websocket`r`n" +
+"Connection: Upgrade`r`nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==`r`nSec-WebSocket-Version: 13`r`n`r`n"
+$rb = [Text.Encoding]::ASCII.GetBytes($req)
+$nsE.Write($rb, 0, $rb.Length); $nsE.Flush()
+$respE = ''
+$bufE = New-Object byte[] 1024
+try { $n = $nsE.Read($bufE, 0, $bufE.Length); if ($n -gt 0) { $respE = [Text.Encoding]::ASCII.GetString($bufE, 0, $n) } } catch {}
+Assert "E the upgrade went through - a real bridge is up (negative control)" (
+    $respE -match '^HTTP/1.1 101' -and ((Get-FakeRelayLog $logE) -join "`n") -match 'BRIDGE up device=dev-e')
+
+# Commit to a frame and stall: FIN|binary, then nothing. The relay sees data,
+# enters Read-Exact for 2 bytes, and parks on the second.
+$nsE.WriteByte(0x82); $nsE.Flush()
+Start-Sleep -Milliseconds 400
+Assert "E the relay job is still Running with the bridge mid-frame" ($relayE.State -eq 'Running')
+
+$sw = [Diagnostics.Stopwatch]::StartNew()
+$outE = @(Stop-FakeRelay $relayE)
+$sw.Stop()
+$tookE = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+Assert "E Stop-FakeRelay ends it well inside the read timeout (took ${tookE}s)" ($sw.Elapsed.TotalSeconds -lt 3)
+Assert "E Stop-FakeRelay emits nothing on the pipeline (nine call sites invoke it bare)" ($outE.Count -eq 0)
+Assert "E the relay's process is gone" (
+    $relayPidE -gt 0 -and $null -eq (Get-Process -Id $relayPidE -ErrorAction SilentlyContinue))
+Assert "E the job is reaped and its pid file removed" (
+    $null -eq (Get-Job -Id $relayE.Id -ErrorAction SilentlyContinue) -and -not (Test-Path $pidFileE))
+try { $wsE.Close() } catch {}
+$agentL.Stop()
+
+# The two siblings with the same shape get the same teardown; a start/stop
+# smoke proves their pid plumbing is wired (no agent or pipe is needed - both
+# dial only when a client arrives).
+. (Join-Path $PSScriptRoot 'lib\FakeAgentRelay.ps1')
+. (Join-Path $PSScriptRoot 'lib\PipeBridge.ps1')
+$farE = Start-FakeAgentRelay -PortFile (Join-Path $tmp 'far-e.ports') -LogPath (Join-Path $tmp 'far-e.log')
+$farPid = "$($farE.RelayPidFile)"
+Assert "E FakeAgentRelay records its pid" ($farPid -and (Test-Path $farPid))
+$sw = [Diagnostics.Stopwatch]::StartNew()
+$outF = @(Stop-FakeAgentRelay $farE)
+$sw.Stop()
+Assert "E Stop-FakeAgentRelay reaps it, quietly, in bounded time (took $([math]::Round($sw.Elapsed.TotalSeconds, 1))s)" (
+    $outF.Count -eq 0 -and $sw.Elapsed.TotalSeconds -lt 5 -and
+    $null -eq (Get-Job -Id $farE.Id -ErrorAction SilentlyContinue))
+$pbE = Start-PipeBridge -Port (Get-FreePort) -PipeName "ghoztty-job-teardown-none-$PID" -LogPath (Join-Path $tmp 'pb-e.log')
+$pbPid = "$($pbE.BridgePidFile)"
+Assert "E PipeBridge records its pid" ($pbPid -and (Test-Path $pbPid))
+$sw = [Diagnostics.Stopwatch]::StartNew()
+$outP = @(Stop-PipeBridge $pbE)
+$sw.Stop()
+Assert "E Stop-PipeBridge reaps it, quietly, in bounded time (took $([math]::Round($sw.Elapsed.TotalSeconds, 1))s)" (
+    $outP.Count -eq 0 -and $sw.Elapsed.TotalSeconds -lt 5 -and
+    $null -eq (Get-Job -Id $pbE.Id -ErrorAction SilentlyContinue))
+
+# ============================================================================
+""
+"== F: no shared test library stops a job with a bare Stop-Job"
+# ============================================================================
+# Text: the next helper someone writes in lib\ inherits Stop-JobBounded or goes
+# red here. Comment lines are skipped; JobTeardown.ps1 is where the rule lives.
+function Get-BareStopJobLines([string]$Text) {
+    return , @(($Text -split "`r?`n") | Where-Object {
+            $_ -notmatch '^\s*#' -and $_ -match '\bStop-Job\b(?!Bounded)'
+        })
+}
+$libs = @(Get-ChildItem (Join-Path $Repo 'test\win32\lib') -Filter *.ps1 -File |
+    Where-Object { $_.Name -ne 'JobTeardown.ps1' })
+$bare = @()
+foreach ($f in $libs) {
+    foreach ($line in (Get-BareStopJobLines (Get-Content $f.FullName -Raw))) { $bare += "$($f.Name): $($line.Trim())" }
+}
+if ($TeethCheck) {
+    Assert "F TEETH the analyzer flags a planted bare Stop-Job" (
+        (Get-BareStopJobLines "function X {`n    Stop-Job `$Job -ErrorAction SilentlyContinue`n}").Count -eq 1)
+    Assert "F TEETH and ignores comments and Stop-JobBounded" (
+        (Get-BareStopJobLines "# never a bare Stop-Job`n`$null = Stop-JobBounded -Job `$j").Count -eq 0)
+} else {
+    Assert "F the sweep actually read the libraries (negative control)" ($libs.Count -gt 10)
+    if ($bare.Count -gt 0) { $bare | ForEach-Object { "       $_" } }
+    Assert "F no test\win32\lib helper calls a bare Stop-Job" ($bare.Count -eq 0)
 }
 
 Complete-TestBody  # T1039: the run reached the end of its body

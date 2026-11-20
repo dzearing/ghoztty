@@ -49,10 +49,17 @@
 # `-SlowConnectMs` late, deferred rather than slept on).
 #
 # Everything is loopback-only and lives in a background job; `Stop-FakeRelay`
-# kills it. The request log is the independent evidence that a dial really went
+# kills it - by PID, through `Stop-JobBounded` (T1519). Never with a bare
+# `Stop-Job`: that call waits for the job to reach a point where it can be
+# stopped, and a bridge parked in `Read-Exact` on a peer that stalled mid-frame
+# is not such a point (each read is capped by the sockets' 5 s ReadTimeout, but
+# a teardown's bound must not depend on how many reads are still queued). The
+# job writes its own PID to `<LogPath>.pid` as its first statement. The request log is the independent evidence that a dial really went
 # through the relay rather than some local shortcut.
 
 Set-StrictMode -Off
+
+. (Join-Path $PSScriptRoot 'JobTeardown.ps1')
 
 function Start-FakeRelay {
     param(
@@ -92,10 +99,16 @@ function Start-FakeRelay {
     )
 
     Remove-Item $LogPath -ErrorAction SilentlyContinue
+    $pidFile = "$LogPath.pid"
+    Remove-Item $pidFile -ErrorAction SilentlyContinue
 
     $job = Start-Job -ScriptBlock {
         param($port, $agentPort, $devicesJson, $logPath, $unauthDev, $deadDev, $tripFile, $tripAuthFile,
-            $slowFile, $slowMs, $dropFile)
+            $slowFile, $slowMs, $dropFile, $pidFile)
+
+        # FIRST statement (T1519): the teardown ends this job by PID, which is
+        # bounded wherever the loop happens to be parked.
+        Set-Content -Path $pidFile -Value $PID
 
         function Write-RelayLog([string]$m) {
             Add-Content -Path $logPath -Value ("{0} {1}" -f (Get-Date -Format 'HH:mm:ss.fff'), $m)
@@ -443,7 +456,8 @@ function Start-FakeRelay {
 
             if ($idle) { Start-Sleep -Milliseconds 5 }
         }
-    } -ArgumentList $Port, $AgentPort, $DevicesJson, $LogPath, $UnauthorizedDevice, $UnreachableDevice, $TripFile, $TripUnauthorizedFile, $SlowConnectFile, $SlowConnectMs, $DropBridgesFile
+    } -ArgumentList $Port, $AgentPort, $DevicesJson, $LogPath, $UnauthorizedDevice, $UnreachableDevice, $TripFile, $TripUnauthorizedFile, $SlowConnectFile, $SlowConnectMs, $DropBridgesFile, $pidFile
+    $job | Add-Member -NotePropertyName FakeRelayPidFile -NotePropertyValue $pidFile -Force
 
     # Wait for the listener to actually bind before handing the job back: a
     # relay that is not listening yet reads exactly like a relay that is broken.
@@ -455,11 +469,16 @@ function Start-FakeRelay {
     return $job
 }
 
+# Ends the relay in bounded time (T1519): by PID through `Stop-JobBounded`,
+# never a bare `Stop-Job`. Emits NOTHING on the pipeline - nine call sites
+# invoke it bare, so a returned bool would print into their output. A give-up
+# is reported by `Stop-JobBounded`'s own one-line message.
 function Stop-FakeRelay {
-    param($Job)
+    param($Job, [int]$TimeoutSec = 10)
     if ($null -eq $Job) { return }
-    Stop-Job $Job -ErrorAction SilentlyContinue
-    Remove-Job $Job -Force -ErrorAction SilentlyContinue
+    $pidFile = "$($Job.FakeRelayPidFile)"
+    $null = Stop-JobBounded -Job $Job -PidFile $pidFile -TimeoutSec $TimeoutSec -Label 'fake relay'
+    if ($pidFile) { Remove-Item $pidFile -ErrorAction SilentlyContinue }
 }
 
 function Get-FakeRelayLog {

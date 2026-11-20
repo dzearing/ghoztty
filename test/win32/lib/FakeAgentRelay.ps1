@@ -51,6 +51,8 @@
 
 Set-StrictMode -Off
 
+. (Join-Path $PSScriptRoot 'JobTeardown.ps1')
+
 function Start-FakeAgentRelay {
     param(
         # Written once both listeners are bound: "relay=<port> entry=<port>".
@@ -63,9 +65,15 @@ function Start-FakeAgentRelay {
 
     Remove-Item $LogPath -ErrorAction SilentlyContinue
     Remove-Item $PortFile -ErrorAction SilentlyContinue
+    $pidFile = "$LogPath.pid"
+    Remove-Item $pidFile -ErrorAction SilentlyContinue
 
     $job = Start-Job -ScriptBlock {
-        param($portFile, $logPath, $pendingTimeoutSec)
+        param($portFile, $logPath, $pendingTimeoutSec, $pidFile)
+
+        # FIRST statement (T1519): the teardown ends this job by PID, which is
+        # bounded wherever the loop happens to be parked.
+        Set-Content -Path $pidFile -Value $PID
 
         function Write-RelayLog([string]$m) {
             Add-Content -Path $logPath -Value ("{0} {1}" -f (Get-Date -Format 'HH:mm:ss.fff'), $m)
@@ -413,7 +421,8 @@ function Start-FakeAgentRelay {
 
             if ($idle) { Start-Sleep -Milliseconds 5 }
         }
-    } -ArgumentList $PortFile, $LogPath, $PendingTimeoutSec
+    } -ArgumentList $PortFile, $LogPath, $PendingTimeoutSec, $pidFile
+    $job | Add-Member -NotePropertyName RelayPidFile -NotePropertyValue $pidFile -Force
 
     # Wait for both listeners to actually bind before handing the job back: a
     # relay that is not listening yet reads exactly like a relay that is broken.
@@ -434,11 +443,15 @@ function Get-FakeAgentRelayPorts {
     return @{ Relay = [int]$Matches[1]; Entry = [int]$Matches[2] }
 }
 
+# Bounded teardown (T1519): by PID through `Stop-JobBounded`, never a bare
+# `Stop-Job`, which waits on a loop that may be parked in a socket read. Emits
+# nothing on the pipeline; a give-up prints its own one line.
 function Stop-FakeAgentRelay {
-    param($Job)
+    param($Job, [int]$TimeoutSec = 10)
     if ($null -eq $Job) { return }
-    Stop-Job $Job -ErrorAction SilentlyContinue
-    Remove-Job $Job -Force -ErrorAction SilentlyContinue
+    $pidFile = "$($Job.RelayPidFile)"
+    $null = Stop-JobBounded -Job $Job -PidFile $pidFile -TimeoutSec $TimeoutSec -Label 'fake agent relay'
+    if ($pidFile) { Remove-Item $pidFile -ErrorAction SilentlyContinue }
 }
 
 function Get-FakeAgentRelayLog {

@@ -5932,7 +5932,11 @@ $GuardTable = @(
         Stamp  = 'test\win32\job-teardown.stamp.json'
         Covers = @(
             'test\win32\job-teardown.ps1',
-            'test\win32\lib\JobTeardown.ps1'
+            'test\win32\lib\JobTeardown.ps1',
+            # T1519: section E drives these three helpers' teardowns.
+            'test\win32\lib\FakeRelay.ps1',
+            'test\win32\lib\FakeAgentRelay.ps1',
+            'test\win32\lib\PipeBridge.ps1'
         )
     },
     # One shared kill for the app under test and its sibling agent (T351). T248
