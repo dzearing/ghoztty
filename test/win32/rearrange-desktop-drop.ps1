@@ -39,7 +39,7 @@
 # pointer is - and a point over open desktop is simply far out of range. That
 # out-of-range client point is the whole mechanism under test.
 #
-# Three claims, over two app runs (each starts from a known layout, so no claim
+# Four claims, over three app runs (each starts from a known layout, so no claim
 # inherits the previous one's):
 #   E) carrying a pane off the window previews a NEW WINDOW at the release
 #      point - the source window's own frame size, with the pointer inside it
@@ -47,6 +47,9 @@
 #      the previewed frame, and the source window keeps what it still has
 #   G) a window's LAST pane released over nothing previews nothing and does
 #      nothing: no window opens, and the pane stays where it was
+#   H) (T1547) a pane released over a SECOND monitor opens its window wholly
+#      on that monitor, under the release point, where the preview said - a
+#      named SKIP on a box with one monitor
 #
 # A positive control (ctrl+k clear_screen, the T55 pattern) runs first, so an
 # injection failure aborts instead of reading as a T1539 regression.
@@ -193,6 +196,57 @@ function Close-Session($s) {
 # actually delivers, including for points far outside that window.
 function Move-Drag([IntPtr]$source, [int]$ScreenX, [int]$ScreenY, [string]$Action) {
     return Send-TestMouse -Window $source -Target $source -X $ScreenX -Y $ScreenY -Action $Action -Client
+}
+
+$script:skipped = 0
+function Skip([string]$label) { $script:skipped++; Write-Host "SKIP  $label" -ForegroundColor Yellow }
+
+# Every monitor's BOUNDS (rcMonitor) in physical pixels, primary first (T1547).
+# Bounds, not the work area: the app runs on a background desktop with no
+# taskbar, so its work area IS the monitor there, and bounds read the same from
+# any desktop - which the host thread's work area would not. Read per-monitor
+# DPI aware so the numbers share the space Get-TestWindowRect answers in.
+Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public static class T1547Monitors {
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int left, top, right, bottom; }
+    [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
+    delegate bool EnumProc(IntPtr mon, IntPtr hdc, IntPtr rc, IntPtr data);
+    [DllImport("user32.dll")] static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr clip, EnumProc fn, IntPtr data);
+    [DllImport("user32.dll")] static extern bool GetMonitorInfoW(IntPtr mon, ref MONITORINFO mi);
+    [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr ctx);
+    public static int[][] Bounds() {
+        var list = new List<int[]>();
+        IntPtr old = SetThreadDpiAwarenessContext(new IntPtr(-4));
+        try {
+            EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, delegate(IntPtr m, IntPtr h, IntPtr r, IntPtr d) {
+                var mi = new MONITORINFO(); mi.cbSize = Marshal.SizeOf(typeof(MONITORINFO));
+                if (GetMonitorInfoW(m, ref mi)) {
+                    var b = new int[] { mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right, mi.rcMonitor.bottom, (int)(mi.dwFlags & 1) };
+                    if (b[4] == 1) list.Insert(0, b); else list.Add(b);
+                }
+                return true;
+            }, IntPtr.Zero);
+        } finally { if (old != IntPtr.Zero) SetThreadDpiAwarenessContext(old); }
+        return list.ToArray();
+    }
+}
+'@
+function Get-MonitorBounds {
+    return , @([T1547Monitors]::Bounds() | ForEach-Object {
+        [pscustomobject]@{
+            Left = $_[0]; Top = $_[1]; Right = $_[2]; Bottom = $_[3]
+            Width = $_[2] - $_[0]; Height = $_[3] - $_[1]; Primary = ($_[4] -eq 1)
+        }
+    })
+}
+
+function Test-RectInside($inner, $outer) {
+    if ($null -eq $inner -or $null -eq $outer) { return $false }
+    return ($inner.Left -ge $outer.Left -and $inner.Top -ge $outer.Top -and
+            $inner.Right -le $outer.Right -and $inner.Bottom -le $outer.Bottom)
 }
 
 function Select-Window([IntPtr]$top) {
@@ -368,6 +422,91 @@ try {
     Close-Session $session
     $session = $null
 
+    # ===================================================================
+    # RUN 3 - two panes, released over a SECOND monitor (T1547)
+    # ===================================================================
+    # `workAreaAt` resolves the RELEASE point's monitor and `newWindowFrame`
+    # clamps into it, so the window should open on the monitor the hand let go
+    # over - not the one the source window lives on. Nothing measured that
+    # until here; on a one-monitor box the claim says so and skips.
+    $monitors = Get-MonitorBounds
+    Write-Host "      monitors: $($monitors.Count)"
+    foreach ($m in $monitors) {
+        Write-Host ("        {0},{1} - {2},{3}{4}" -f $m.Left, $m.Top, $m.Right, $m.Bottom, $(if ($m.Primary) { ' (primary)' } else { '' }))
+    }
+    # The source window sits on the work area this script was handed, which is
+    # the primary monitor's; the target is any monitor that does not contain it.
+    $homeX = $work.Left + 40 + 450
+    $homeY = $work.Top + 40 + 350
+    $others = @($monitors | Where-Object {
+        -not ($homeX -ge $_.Left -and $homeX -lt $_.Right -and $homeY -ge $_.Top -and $homeY -lt $_.Bottom)
+    })
+    if ($others.Count -eq 0) {
+        Skip "H: second-monitor drop - this box has $($monitors.Count) monitor(s), so there is no other monitor to release over (T1547 needs two)"
+    } else {
+        $target = $others[0]
+        if ($target.Width -lt 1000 -or $target.Height -lt 800) {
+            Skip "H: second-monitor drop - the other monitor is $($target.Width)x$($target.Height), too small to tell a clamp from a placement"
+        } else {
+            # A third of the way in: well clear of the edge the two monitors
+            # share, so a frame that leaked back across it is a real defect and
+            # not a clamp taking up the slack.
+            $mDropX = $target.Left + [int]($target.Width / 3)
+            $mDropY = $target.Top + [int]($target.Height / 3)
+            Write-Host "      H: releasing at $mDropX,$mDropY on the monitor at $($target.Left),$($target.Top)"
+
+            $session = Start-Session -Splits 1 -Work $work
+            $a = $session.Top
+            Assert (Enter-RearrangeMode $a) 'H: rearrange mode on'
+            $before = Get-PaneBoxes $a
+            Assert ($before.Count -eq 2) "H: setup: the window has two panes (got $($before.Count))"
+            if ($before.Count -ne 2) {
+                Write-TestAssertedNothing -Reason 'H: the split never produced the two panes the claim reads'
+            }
+            $srcFrame = Get-TestWindowRect -Window $a
+            Assert (-not (Test-RectInside $srcFrame $target)) 'H: setup: the source window is NOT on the target monitor'
+            $dragged = $before[0]
+            $grabX = $dragged.Left + 60
+            $grabY = $dragged.Top - [int]($band / 2)
+
+            Assert (Move-Drag $a $grabX $grabY 'down') 'H: press on the pane header delivered'
+            Assert (Move-Drag $a $mDropX $mDropY 'move') 'H: move out over the other monitor delivered'
+            Start-Sleep -Milliseconds 600
+            $mPreview = Get-PreviewRect $session.Pid
+            Assert ($null -ne $mPreview) 'H: a release over the other monitor is previewed'
+            if ($mPreview) {
+                Write-Host ("      preview: x={0} y={1} w={2} h={3}" -f $mPreview.Left, $mPreview.Top, $mPreview.Width, $mPreview.Height)
+                Assert (Test-RectInside $mPreview $target) 'H: and the preview stands wholly on that monitor'
+            }
+            Assert (Move-Drag $a $mDropX $mDropY 'up') 'H: release over the other monitor delivered'
+            Start-Sleep -Milliseconds 2500
+            Assert (-not ($session.App.Process -and $session.App.Process.HasExited)) 'H: no crash on the drop'
+
+            # Assigned first: Get-AppWindows returns with a unary comma, so
+            # piping it straight in hands Where-Object the whole array as one.
+            $mWins = Get-AppWindows $session.Pid
+            $opened = @($mWins | Where-Object { [int64]$_.Hwnd -ne [int64]$a })
+            if ($NegativeControl) {
+                Assert ($opened.Count -eq 0) 'NEGATIVE: the second-monitor drop opened no window (inert behavior)'
+            } else {
+                Assert ($opened.Count -eq 1) "H: a window of its own opened (got $($opened.Count) new)"
+            }
+            if ($opened.Count -ge 1) {
+                $new = [IntPtr][int64]$opened[0].Hwnd
+                Assert (Test-HasPane $new $dragged.Hwnd) 'H: holding the dragged pane - the same window handle'
+                $newFrame = Get-TestWindowRect -Window $new
+                Write-Host ("      new window: {0},{1} - {2},{3}" -f $newFrame.Left, $newFrame.Top, $newFrame.Right, $newFrame.Bottom)
+                Assert (Test-RectInside $newFrame $target) 'H: and it opened ON THE MONITOR the pane was released over'
+                Assert ($mDropX -ge $newFrame.Left -and $mDropX -lt $newFrame.Right -and
+                        $mDropY -ge $newFrame.Top -and $mDropY -lt $newFrame.Bottom) `
+                    'H: under the point the hand let go'
+                Assert (Test-RectNear $newFrame $mPreview 6) 'H: exactly where the preview promised'
+            }
+            Close-Session $session
+            $session = $null
+        }
+    }
+
     Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     if ($session) { Close-Session $session }
@@ -391,4 +530,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ''
-Write-TestVerdict -Label 'T1539 REARRANGE DESKTOP DROP' -Pass $script:pass -Fail $script:fail
+Write-TestVerdict -Label 'T1539 REARRANGE DESKTOP DROP' -Pass $script:pass -Fail $script:fail -Skipped $script:skipped

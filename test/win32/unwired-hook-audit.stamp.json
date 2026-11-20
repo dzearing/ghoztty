@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-20T10:22:55-08:00",
-    "commit":  "ef95a1c8d",
+    "generated":  "2026-11-20T11:00:20-08:00",
+    "commit":  "d8ce25c1e",
     "uncommitted":  [
 
                     ],
@@ -1136,7 +1136,7 @@
                   "test/win32/agent-attach-refused.ps1":  "dd2dae2e4953a7c9b46412f478497902684f3631eed9ab474f1fac65c39c358a",
                   "test/win32/agent-autostart.ps1":  "b8a48f7105cfb62727fca90f7405a45d6e25341087a4bfe9d8eea07cb7aa4254",
                   "test/win32/agent-first-answer.ps1":  "9c9f092829b9334f23e2bbd700cd98339d2946cce8757548fa9a32b5191e9a3d",
-                  "test/win32/agent-handoff.ps1":  "6ccd1314241e48120a71319b2782aec34e4ba29cbb8dcef144d4253fae43aa1f",
+                  "test/win32/agent-handoff.ps1":  "48668cf4b8508b962ab826e57b3b8a661e0029ff3f4e6186124efba812e711e9",
                   "test/win32/agent-handoff-rename.ps1":  "e92bac83fcbde3a3ae3a134ee6227ebfabe1ecfe84b69027c9ed2439ade6d06e",
                   "test/win32/agent-instance-lineage.ps1":  "ee821ee2c358468422cc619b5dab844c35ab3aa4f73d229ae7051a45966e314f",
                   "test/win32/agent-integrations.ps1":  "2b8083f671e2e50fc51f87896710960a8bfb61a737f256676a43f6c191fa83bd",
@@ -1467,7 +1467,7 @@
                   "test/win32/rdp-perf-probe.ps1":  "d9a2438358328f459c637242375193fb1651d6b4ee3ba98358617290aa0bb183",
                   "test/win32/rdp-session.ps1":  "26fa35ab178060d0a6ff53c6e00ff3149c78bd04f041c1a953a37d575aac82df",
                   "test/win32/readonly-badge.ps1":  "515216ddf39828bc788ea09f8a3f056c7540493096a022b96a0ee7f4fdc9f653",
-                  "test/win32/rearrange-desktop-drop.ps1":  "02c96318e720d96211eb8cfe6292dade96025422b49a287cd61753d3152d4f0c",
+                  "test/win32/rearrange-desktop-drop.ps1":  "452703059cc60186e4339cf741668dd68b793c49b9b68ab94a08556cd500dc23",
                   "test/win32/rearrange-divider-drop.ps1":  "f7f24573ad7a883bdc415151fe5b15813df048425eb73081e647d0576d33f547",
                   "test/win32/rearrange-drag.ps1":  "1200a8bc0fe8f00e7db1c1aa00ae0aa1c433c9e7f7530fa49679940905774fef",
                   "test/win32/rearrange-header.ps1":  "59752b704d6eedda970f58633695ad0708a0e8e642468674290014dfa854f968",
