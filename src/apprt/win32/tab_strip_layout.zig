@@ -414,6 +414,45 @@ pub fn applySticky(
     return sticky[0..n];
 }
 
+/// Negative control for section 4 of `test/win32/tab-strip.ps1` ("two tabs:
+/// each is still its own content's width"), same contract as the three above.
+/// Flip to `true`, rebuild `-Dapp-runtime=win32`, and re-run: `releaseFresh`
+/// becomes a no-op, so a new tab keeps the width of its shell's launch title
+/// and that assertion fails, while the T249 shrink controls of section 8 (a
+/// pane the script has typed into) must NOT.
+const T1577_NEUTERED = false;
+
+/// Let a tab that is still SETTLING follow its title in both directions
+/// (T1577). Call it on `sticky` just before `applySticky`; `fresh[i]` is true
+/// while nobody has sent tab `i`'s pane any input.
+///
+/// The ratchet's premise is that a title shrinking is a command FINISHING -
+/// motion that fires long after the user did anything, which is why it is
+/// refused. A new tab breaks that premise at birth. Its shell titles itself in
+/// two steps, the launch command (`C:\WINDOWS\system32\cmd.exe`) and then the
+/// prompt's own (`C:\Users\David`) a beat later, and the strip re-fits when
+/// the tab opens, between the two. So the mark was taken from the transient,
+/// the real title could only shrink, and the new tab stayed ~150 px wider than
+/// an identical neighbour until something else re-fitted the strip - measured
+/// 319 against 171, deterministically, in `tab-strip.ps1`.
+///
+/// Until its pane takes input, every retitle is the shell starting up, not a
+/// command the user ran, so it is exactly the "what the tab IS" case that
+/// `setTabTitlePin` already re-fits for. The first keystroke ends it and the
+/// ratchet takes over from the width the settled title earned.
+///
+/// T737 still wins: while the pointer is in the strip nothing is released, so
+/// a settling tab never slides its neighbours out from under a hand; the
+/// release lands on the repaint after the pointer leaves, like a deferred grow.
+pub fn releaseFresh(prefer: []const i32, sticky: []i32, fresh: []const bool, freeze: bool) void {
+    if (T1577_NEUTERED) return;
+    if (freezeActive(freeze)) return;
+    const n = @min(@min(prefer.len, fresh.len), @min(sticky.len, MAX_TABS));
+    for (prefer[0..n], sticky[0..n], fresh[0..n]) |p, *s, f| {
+        if (f) s.* = p;
+    }
+}
+
 /// Resolve the strip for `client_w` pixels of client width and one entry per
 /// tab in `prefer` — each the PAINTED width that tab's title wants, from
 /// `Metrics.preferredWidth` (the caller measures the text; this module never
@@ -690,6 +729,7 @@ test "T283: the strip's negative controls are clear in the shipped build" {
     // T788: T737 landed after T283's hand sweep and shipped unpinned for a
     // month. The sweep is `test\win32\neuter-audit.ps1` now.
     try testing.expect(!T737_NEUTERED);
+    try testing.expect(!T1577_NEUTERED);
 }
 
 test "one tab is its title's width, not stretched across the window" {
@@ -1002,6 +1042,74 @@ test "T737: nothing moves while the pointer is inside the strip" {
             for (pref3[0..3]) |*e| e.* = modest;
             const eff = applySticky(m, avail, pref3[0..3], wide[0..3], true);
             for (eff) |e| try testing.expectEqual(modest, e);
+        }
+    }
+}
+
+test "T1577: a new tab settles onto its shell's real title, then ratchets" {
+    // The measured defect: the strip re-fits when tab 2 opens, while its shell
+    // is still titled with the launch command, and the prompt's shorter title
+    // that follows could only shrink - so tab 2 stayed wider than an identical
+    // tab 1 (319 vs 171 in tab-strip.ps1).
+    var buf: [MAX_TABS]Rect = undefined;
+    for ([_]f32{ 1.0, 1.25, 1.5, 2.0 }) |scale| {
+        const m = Metrics.init(scale);
+        const avail = runWidth(m, WIDE, true);
+        const px = struct {
+            fn f(s: f32, dip: f32) i32 {
+                return @intFromFloat(@round(dip * s));
+            }
+        }.f;
+        const cwd = m.preferredWidth(px(scale, 110));
+        const launch = m.preferredWidth(px(scale, 220));
+
+        // Tab 2 opens: the structural re-fit takes the launch title's width.
+        var sticky = [_]i32{ cwd, launch };
+
+        // Its prompt retitles it before anyone has typed: it settles.
+        {
+            const pref = [_]i32{ cwd, cwd };
+            releaseFresh(&pref, &sticky, &[_]bool{ false, true }, false);
+            const eff = applySticky(m, avail, &pref, &sticky, false);
+            _ = layout(m, WIDE, true, eff, &buf);
+            try testing.expectEqual(buf[0].width(), buf[1].width());
+        }
+
+        // Typed into, it is an ordinary tab: a command's long title grows
+        // it and the short one coming back does NOT narrow it (T249 intact).
+        {
+            const fresh = [_]bool{ false, false };
+            const busy = [_]i32{ cwd, launch };
+            releaseFresh(&busy, &sticky, &fresh, false);
+            _ = applySticky(m, avail, &busy, &sticky, false);
+            const idle = [_]i32{ cwd, cwd };
+            releaseFresh(&idle, &sticky, &fresh, false);
+            const eff = applySticky(m, avail, &idle, &sticky, false);
+            try testing.expectEqual(launch, eff[1]);
+        }
+
+        // T737 still wins: under a resting pointer a settling tab keeps its
+        // width, and settles on the first paint after the pointer leaves.
+        {
+            var s2 = [_]i32{ cwd, launch };
+            const pref = [_]i32{ cwd, cwd };
+            const fresh = [_]bool{ false, true };
+            releaseFresh(&pref, &s2, &fresh, true);
+            const held = applySticky(m, avail, &pref, &s2, true);
+            try testing.expectEqual(launch, held[1]);
+            releaseFresh(&pref, &s2, &fresh, false);
+            const left = applySticky(m, avail, &pref, &s2, false);
+            try testing.expectEqual(cwd, left[1]);
+        }
+
+        // A tab that has been typed into is never released, whatever its
+        // neighbour is doing.
+        {
+            var s3 = [_]i32{ launch, launch };
+            const pref = [_]i32{ cwd, cwd };
+            releaseFresh(&pref, &s3, &[_]bool{ false, true }, false);
+            try testing.expectEqual(launch, s3[0]);
+            try testing.expectEqual(cwd, s3[1]);
         }
     }
 }

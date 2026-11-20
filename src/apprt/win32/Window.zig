@@ -20205,6 +20205,23 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
     // raising as well, so no tab can widen under a hand that is already
     // resting there. The deferred grow lands on the repaint `setPointerInStrip`
     // fires when the pointer leaves.
+    //
+    // T1577: a tab whose pane nobody has typed into yet is still settling onto
+    // its shell's real title (the launch command first, the prompt's own a
+    // beat later), so its mark follows that title down as well as up. A pinned
+    // title is the user's, not the shell's, and already re-fits on its own.
+    var fresh: [MAX_TABS]bool = [_]bool{false} ** MAX_TABS;
+    for (0..self.tab_count) |i| {
+        if (self.tab_title_pinned[i]) continue;
+        const s = self.tab_active_pane[i].surface() orelse continue;
+        fresh[i] = !s.core_surface_ready or !s.core_surface.user_input_sent;
+    }
+    tab_strip.releaseFresh(
+        prefer[0..self.tab_count],
+        self.tab_sticky_w[0..self.tab_count],
+        fresh[0..self.tab_count],
+        self.pointer_in_strip,
+    );
     const effective = tab_strip.applySticky(
         m,
         tab_strip.runWidth(m, strip_client_w, has_menu),

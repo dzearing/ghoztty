@@ -1108,6 +1108,16 @@ later):
    is the only thing that may ever ellipsize. A marked width outliving the
    string that earned it must not squeeze the run.
 
+   **A slot still settling follows its content both ways** (T1577). A new
+   item's first content is not what the user will see: a tab opens titled with
+   its shell's launch command and retitles to the prompt's own a beat later.
+   The re-fit at "an item added" lands between the two, so the mark would come
+   from the transient and the real, shorter string could never pull it back -
+   two identical tabs, one 150 px wider. Until the slot's pane takes input,
+   every change to its content is the item starting up rather than something
+   it ran, so the slot tracks it in both directions; the first keystroke hands
+   it to the ratchet. A pointer resting in the strip still defers the change.
+
 Note this **supersedes T202's fixed `max_tab_w = 200 DIP`**, which came from
 measuring Windows Terminal's `TabWidthMode="Equal"`. The measurement was
 right and the conclusion was too literal: matching a platform control's
