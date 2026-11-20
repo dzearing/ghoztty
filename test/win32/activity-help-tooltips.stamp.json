@@ -1,15 +1,20 @@
 {
     "guard":  "activity-help-tooltips",
     "script":  "test/win32/activity-help-tooltips.ps1",
-    "generated":  "2026-11-09T21:40:02-08:00",
-    "commit":  "b99af7bb3",
+    "generated":  "2026-11-20T11:34:10-08:00",
+    "commit":  "9713a64e3",
     "uncommitted":  [
-                        "src/apprt/win32/help_tooltip.zig"
+                        "src/apprt/win32/activity_help.zig",
+                        "src/apprt/win32/activity_hover.zig",
+                        "test/win32/activity-help-tooltips.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/activity_help.zig":  "d953cfc58d9b9b5cd789fc08892e5dbfde14382b9b0479f9873d4261c921a9c5",
-                  "src/apprt/win32/activity_hover.zig":  "524b85c7a6a3de870d2434b15058e555b3b26b433b46e5cf4fe08f3d31ec6895",
+                  "src/apprt/win32/activity_help.zig":  "8953fcfd79d2c4025010f55bd3cd11d2efab5f058ec25e4f6fec00e46c273071",
+                  "src/apprt/win32/activity_hover.zig":  "c9456f44813544b84d73b6313956095e748ec8f59c89566b30a709813f517e99",
                   "src/apprt/win32/help_tooltip.zig":  "ccdce010f5eaf4ac4bec702bc2e8eb33210978f3ac2c09e7dba2047816afc855",
-                  "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b"
-              }
+                  "test/win32/activity-help-tooltips.ps1":  "0023622d51e2dce579e45f7f46ffeed4195fc995570bd6cdffde961b229ed1b6"
+              },
+    "code":  {
+                 "test/win32/activity-help-tooltips.ps1":  "code1:4fe25b0830aaf117428c2694442307d318ee5881aa8d544790caa501acfd582a"
+             }
 }

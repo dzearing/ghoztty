@@ -1,13 +1,16 @@
 {
     "guard":  "activity-pane-column",
     "script":  "test/win32/activity-pane-column.ps1",
-    "generated":  "2026-09-25T21:11:29-07:00",
-    "commit":  "afd355dca",
+    "generated":  "2026-11-20T11:33:18-08:00",
+    "commit":  "9713a64e3",
     "uncommitted":  [
                         "src/apprt/win32/activity_view.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/activity_view.zig":  "cfe43016b371a94ee98e1eaaea1a8f8c19c9e393853cb1feb444b9b9d9f81a89",
+                  "src/apprt/win32/activity_view.zig":  "b008448619c9ef6a7202baa1b21477332315c1ed07a697e5971a5af5d67d72f3",
                   "test/win32/activity-pane-column.ps1":  "0048768f928d269a2141a5206ad3b7c63771478f7aa46de7d4f424e64b8be4ea"
-              }
+              },
+    "code":  {
+                 "test/win32/activity-pane-column.ps1":  "code1:92b4c964627d3869229ec9b1df2d216e51b2a2215f3f9234c9136b3f64a8e473"
+             }
 }
