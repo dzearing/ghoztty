@@ -223,9 +223,12 @@ zig build -Dapp-runtime=win32 -Doptimize=Debug      # -> zig-out\bin\ghoztty.exe
   debug chrome as the proxy for what ships (see
   `docs/design/win32-design-system.md` §2.5).
 - **Debug builds link the Console subsystem**, so `std.log` output goes to
-  stderr in the shell you launched from, like every other platform. Release
+  stderr in the shell you launched from, like every other platform — and ALSO
+  append `info` and above to `%LOCALAPPDATA%\ghoztty\ghoztty-debug.log` (T1508),
+  because the app an acceptance script auto-launches has a stderr nobody
+  captures: read that file when a harness says the app answered wrongly. Release
   builds use the GUI subsystem (no console) and append `info` and above to
-  `%LOCALAPPDATA%\ghoztty\ghoztty.log`; add `-Dwindows-console=true` to give a
+  `%LOCALAPPDATA%\ghoztty\ghoztty.log` (the two names never collide, T350); add `-Dwindows-console=true` to give a
   release build a console when you need to debug one live.
 - IPC endpoint: the named pipe `\\.\pipe\ghoztty[-debug]-<USERNAME>` — the
   `-debug` suffix is what lets a debug build run alongside the installed

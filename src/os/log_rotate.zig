@@ -1,5 +1,6 @@
 //! Bounding the shared Windows log sink
-//! (`%LOCALAPPDATA%\ghoztty\ghoztty.log`).
+//! (`%LOCALAPPDATA%\ghoztty\ghoztty.log`, or `ghoztty-debug.log` from a Debug
+//! build - see `live_name`).
 //!
 //! That file is the ONLY diagnostic surface a release build leaves behind (the
 //! GUI subsystem has no console), and it is appended to by the GUI app, the
@@ -47,8 +48,13 @@ const builtin = @import("builtin");
 /// reasonable thing to ask of a user.
 pub const max_bytes: u64 = 4 * 1024 * 1024;
 
-pub const live_name = "ghoztty.log";
-pub const rotated_name = "ghoztty.log.1";
+/// The live sink's file name. A Debug build gets its own (T1508): the user's
+/// installed release appends to `ghoztty.log` continuously, and a dev build
+/// must never write where the release build writes (T350). The suffixed NAME
+/// follows the repo convention for debug state in this directory
+/// (`session-layout-debug.json`, `local-agent-debug`).
+pub const live_name = if (builtin.mode == .Debug) "ghoztty-debug.log" else "ghoztty.log";
+pub const rotated_name = live_name ++ ".1";
 
 /// Whether a sink of `size` bytes has reached the point of being archived.
 ///
@@ -191,7 +197,7 @@ test "rotate: exactly two generations survive, and the newer one wins" {
     // The first generation was replaced rather than kept as a `.2`: the cap is
     // two files, not a growing pile of them.
     try testing.expectEqual(@as(u8, 'b'), try firstByte(tmp.dir, rotated_name));
-    try testing.expectError(error.FileNotFound, tmp.dir.statFile("ghoztty.log.2"));
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(live_name ++ ".2"));
 
     var count: usize = 0;
     var it = tmp.dir.iterate();
@@ -294,4 +300,18 @@ fn firstByte(dir: std.fs.Dir, name: []const u8) !u8 {
     var one: [1]u8 = undefined;
     _ = try file.readAll(&one);
     return one[0];
+}
+
+test "live_name: a Debug build never shares the release build's sink" {
+    // T350/T1508: the user's installed release appends to `ghoztty.log`; a
+    // Debug build writing there would interleave dev noise into the one file a
+    // user is asked to send back.
+    const testing = std.testing;
+    if (comptime builtin.mode == .Debug) {
+        try testing.expectEqualStrings("ghoztty-debug.log", live_name);
+        try testing.expectEqualStrings("ghoztty-debug.log.1", rotated_name);
+    } else {
+        try testing.expectEqualStrings("ghoztty.log", live_name);
+        try testing.expectEqualStrings("ghoztty.log.1", rotated_name);
+    }
 }

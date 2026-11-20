@@ -177,7 +177,9 @@ try {
         ($body -match 'NoStartupWindow')
     Assert "A6 the body tells the user what to DO about it" `
         ($body -match 'Restart it')
-    Assert "A7 the body points at the log" ($body -match 'ghoztty\.log')
+    # T1508: the subject is always a Debug build (the isolation pre-flight
+    # refuses a release one), and a Debug build's sink is ghoztty-debug.log.
+    Assert "A7 the body points at the log" ($body -match 'ghoztty-debug\.log')
 
     # The whole point: no terminal window ever appeared, and the app did not
     # simply vanish either.
@@ -318,7 +320,7 @@ try {
     # dialog must not send the user to do it.
     Assert "E6 it does NOT tell the user to reinstall" `
         ($bodyE -notmatch 'Reinstall Ghoztty' -and $bodyE -notmatch 'reinstall it')
-    Assert "E7 it still points at the log" ($bodyE -match 'ghoztty\.log')
+    Assert "E7 it still points at the log" ($bodyE -match 'ghoztty-debug\.log')
 
     if ($foundE.Hwnd -ne [IntPtr]::Zero) {
         [void](Invoke-TestMessage -Window $foundE.Hwnd -Message ([uint32]$WM_CLOSE))
@@ -361,10 +363,10 @@ try {
     $env:GHOZTTY_GL_FALLBACK_DLL = Join-Path $env:SystemRoot 'System32\opengl32.dll'
     Assert "F0 the stand-in fallback exists on this box" (Test-Path $env:GHOZTTY_GL_FALLBACK_DLL)
 
-    # Debug builds log to stderr, not to %LOCALAPPDATA%\ghoztty\ghoztty.log -
-    # the file sink is the release build's answer to having no console - so the
-    # renderer's own account of what it loaded is captured from the child's
-    # stderr here rather than read out of the log file.
+    # The renderer's own account of what it loaded is captured from the child's
+    # stderr here rather than read out of a log file: a Debug build writes
+    # ghoztty-debug.log (T1508) and a release build ghoztty.log, and stderr is
+    # the one record both modes produce for this launch.
     $errF = Join-Path $tmpF 'stderr.txt'
     # persistence: on (default) - this arm runs in a brand-new $env:LOCALAPPDATA
     # ($tmpF), so there is no manifest anywhere for the launch to restore.

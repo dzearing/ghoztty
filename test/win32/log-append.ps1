@@ -38,14 +38,17 @@
 # N writers crossing the threshold in the same millisecond must not destroy the
 # archive between them, and must not lose a line across the boundary.
 #
-# Release build only - the file sink is compiled out of Debug builds (they log
-# to stderr). Hermetic: its own LOCALAPPDATA and IPC pipe suffix, and it only
+# T1508 adds the Debug arm: a Debug build keeps its own sink, ghoztty-debug.log,
+# and never touches ghoztty.log. Everything else is measured on the release
+# build (-Exe); the Debug arm uses -DebugExe and SKIPs without one. Hermetic: its own LOCALAPPDATA and IPC pipe suffix, and it only
 # runs `+list`, which touches nothing.
 #
 #   powershell -NoProfile -File test\win32\log-append.ps1
 #   powershell -NoProfile -File test\win32\log-append.ps1 -Exe <pre-fix exe>   # negative control
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out-release\bin\ghoztty.exe',
+    # T1508: the Debug arm's subject. Defaults to this tree's own Debug build.
+    [string]$DebugExe = (Join-Path $PSScriptRoot '..\..\zig-out\bin\ghoztty.exe'),
     [int]$Writers = 24,
     [switch]$NegativeControl
 )
@@ -455,6 +458,66 @@ $gateComplete = $true
     Say "    CLI gate section threw: $_"
 }
 Assert "T6 the CLI-gate section ran to completion" $gateComplete
+
+# --- T1508: a Debug build keeps a file sink of its own ----------------------
+# The app an acceptance script drives is auto-launched by a `+verb` with a
+# stderr nobody captures, so until T1508 a Debug build left no record at all of
+# what it did. It now appends to ghoztty-debug.log - and must NEVER write the
+# release build's ghoztty.log, which on a real box is the file the user's
+# installed app is appending to (T350).
+$debugComplete = $false
+try {
+$debugLog = Join-Path $root 'ghoztty\ghoztty-debug.log'
+Assert "D0 premise: the release build never wrote the Debug sink" (-not (Test-Path $debugLog))
+if (-not (Test-Path $DebugExe)) {
+    Say "    SKIP D1-D6: no Debug build at $DebugExe (zig build -Dapp-runtime=win32 -Doptimize=Debug)"
+    $debugComplete = $true
+} else {
+    Remove-Item $logPath, $rotPath -Force -ErrorAction SilentlyContinue
+    [System.IO.File]::WriteAllText($logPath, "release-sentinel`n")
+    $sentinel = [System.IO.File]::ReadAllBytes($logPath)
+    # GHOZTTY_CLI_LOG=info so the call contributes its startup banner, which is
+    # what proves the GUI-shaped info trail reaches the Debug file.
+    $env:GHOZTTY_CLI_LOG = 'info'
+    # persistence: n/a - a CLI invocation, which opens no window.
+    $dq = Start-Process -FilePath $DebugExe -ArgumentList @('+validate-config', "--config-file=$badCfg") -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput (Join-Path $root 'dbg.out') -RedirectStandardError (Join-Path $root 'dbg.err')
+    $null = $dq.Handle
+    $dq.WaitForExit(60000) | Out-Null
+    Remove-Item env:GHOZTTY_CLI_LOG -ErrorAction SilentlyContinue
+    $dbgLines = @()
+    if (Test-Path $debugLog) { $dbgLines = @(Get-Content $debugLog) }
+    $dbgOwn = @($dbgLines | Where-Object { $_ -match "^\S+ $($dq.Id) " })
+    Say "    Debug +validate-config (pid $($dq.Id)) wrote $($dbgLines.Count) line(s) to ghoztty-debug.log"
+    Assert "D1 a Debug build writes ghoztty-debug.log" ($dbgLines.Count -ge 1)
+    Assert "D2 every Debug line carries the T270 prefix and a level" (
+        $dbgLines.Count -ge 1 -and @($dbgLines | Where-Object { $_ -notmatch $shape }).Count -eq 0)
+    Assert "D3 the lines are the Debug writer's own pid" ($dbgOwn.Count -eq $dbgLines.Count)
+    Assert "D4 its startup banner is there, naming the Debug build" (
+        @($dbgLines | Where-Object { $_ -match 'info: ghoztty build optimize=Debug' }).Count -eq 1)
+    Assert "D5 its warnings reach the file too" (
+        @($dbgLines | Where-Object { $_ -match '^\S+ \d+ (warning|error)' }).Count -ge 1)
+    $after = [System.IO.File]::ReadAllBytes($logPath)
+    Assert "D6 the release sink ghoztty.log is byte-unchanged by the Debug run" (
+        [System.Linq.Enumerable]::SequenceEqual([byte[]]$sentinel, [byte[]]$after))
+
+    # The T1998 contract holds for the Debug file too: an ordinary +list writes
+    # nothing - in particular not the three "This is a debug build" warnings,
+    # which on thousands of harness CLI calls would bury the app's own lines.
+    # persistence: n/a - a CLI invocation, which opens no window.
+    $lq = Start-Process -FilePath $DebugExe -ArgumentList @('+list') -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput (Join-Path $root 'dbg-list.out') -RedirectStandardError (Join-Path $root 'dbg-list.err')
+    $null = $lq.Handle
+    $lq.WaitForExit(60000) | Out-Null
+    $listLines = @(Get-Content $debugLog | Where-Object { $_ -match "^\S+ $($lq.Id) " })
+    Say "    Debug +list (pid $($lq.Id)) wrote $($listLines.Count) line(s)"
+    Assert "D8 a Debug +list call writes no line into ghoztty-debug.log" ($listLines.Count -eq 0)
+    $debugComplete = $true
+}
+} catch {
+    Say "    Debug-sink section threw: $_"
+}
+Assert "D7 the Debug-sink section ran to completion" $debugComplete
 
 }
 

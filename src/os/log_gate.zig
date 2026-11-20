@@ -27,8 +27,8 @@ const std = @import("std");
 ///
 /// `cli_action` is true while the process is executing a `+verb`;
 /// `cli_info_opt_in` is `GHOZTTY_CLI_LOG=info`. Debug lines never reach the
-/// file: they are compiled out of release builds anyway, and the sink itself
-/// exists only in release builds.
+/// file: they are compiled out of release builds anyway, and a Debug build's
+/// sink (T1508) is for the info/warn/err trail, not the debug firehose.
 pub fn fileSinkAccepts(
     level: std.log.Level,
     cli_action: bool,

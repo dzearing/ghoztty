@@ -226,7 +226,13 @@ pub fn main() !MainReturn {
         }
     }
 
-    if (comptime builtin.mode == .Debug) {
+    // T1508: not from a Windows `+verb` call. A Debug build's warnings reach
+    // its ghoztty-debug.log, and acceptance scripts make thousands of CLI
+    // calls - three lines each would bury the app's own trail (the T1998
+    // shape). The app itself still says it; `build optimize=Debug` is in
+    // every banner regardless.
+    const windows_cli_call = builtin.os.tag == .windows and state.action != null;
+    if ((comptime builtin.mode == .Debug) and !windows_cli_call) {
         std.log.warn("This is a debug build. Performance will be very poor.", .{});
         std.log.warn("You should only use a debug build for developing Ghostty.", .{});
         std.log.warn("Otherwise, please rebuild in a release mode.", .{});
@@ -246,8 +252,10 @@ pub fn main() !MainReturn {
             // T1998: this process is the app now, and its startup banner was
             // emitted while it was still a CLI call - which keeps info lines
             // out of the shared Windows log. Log it again as the app. Only
-            // there: every other sink already took the first copy.
-            if (comptime builtin.os.tag == .windows and builtin.mode != .Debug)
+            // there: every other sink already took the first copy. (A Debug
+            // build has that file sink too since T1508, so its stderr carries
+            // the banner twice - the price of the file having it once.)
+            if (comptime builtin.os.tag == .windows)
                 @import("global.zig").GlobalState.logStartupBanner();
         } else {
             posix.exit(exit_code);
@@ -420,10 +428,15 @@ fn logFn(
 
     // On Windows release builds the exe uses the GUI subsystem, so stderr
     // goes nowhere. Append to %LOCALAPPDATA%\ghoztty\ghoztty.log instead so
-    // beta crashes/failures are diagnosable. (Debug builds use the Console
-    // subsystem and log to stderr like every other platform.)
+    // beta crashes/failures are diagnosable.
+    //
+    // Debug builds use the Console subsystem and ALSO log to stderr, but the
+    // app an acceptance script drives is auto-launched by a `+verb` with a
+    // stderr nobody captures - so they keep a file too (T1508), under their
+    // own name (`ghoztty-debug.log`, `log_rotate.live_name`) so they never
+    // write into the sink the user's installed release appends to (T350).
     windows_file: {
-        if (comptime !(builtin.os.tag == .windows and builtin.mode != .Debug)) break :windows_file;
+        if (comptime builtin.os.tag != .windows) break :windows_file;
         // T1998: a `+verb` call keeps only warnings and errors in the shared
         // sink, so the CLI's constant traffic does not bury the app's lines.
         // The opt-in is read only for the lines it could change.
@@ -446,7 +459,7 @@ fn logFn(
 
         var dir = std.fs.cwd().makeOpenPath(dir_path, .{}) catch break :windows_file;
         defer dir.close();
-        const file = openAppendW(dir, std.unicode.utf8ToUtf16LeStringLiteral("ghoztty.log")) catch
+        const file = openAppendW(dir, std.unicode.utf8ToUtf16LeStringLiteral(log_rotate.live_name)) catch
             break :windows_file;
         defer file.close();
 

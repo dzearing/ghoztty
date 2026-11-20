@@ -36,12 +36,15 @@ const builtin = @import("builtin");
 const ConfirmDialog = @import("ConfirmDialog.zig");
 const w32 = @import("win32.zig");
 const gl_report = @import("../../renderer/gl_report.zig");
+const log_rotate = @import("../../os/log_rotate.zig");
 
 const log = std.log.scoped(.win32_startup);
 
 /// Where the log the dialog points at lives. Kept in one place so the message
 /// and `main_ghostty.zig`'s sink cannot drift apart.
-pub const log_path = "%LOCALAPPDATA%\\ghoztty\\ghoztty.log";
+/// The name is `log_rotate.live_name`, so a Debug build points at its own
+/// `ghoztty-debug.log` (T1508).
+pub const log_path = "%LOCALAPPDATA%\\ghoztty\\" ++ log_rotate.live_name;
 
 /// Largest DETAIL line we compose - one sentence naming what the display
 /// actually offers. Sized for a driver string pair plus its frame.
@@ -303,7 +306,7 @@ test "describeWithDetail: the display sentence lands between error and remedy" {
     const detail_at = std.mem.indexOf(u8, text, "GDI Generic").?;
     const remedy_at = std.mem.indexOf(u8, text, "Remote Desktop").?;
     try testing.expect(err_at < detail_at and detail_at < remedy_at);
-    try testing.expect(std.mem.indexOf(u8, text, "ghoztty.log") != null);
+    try testing.expect(std.mem.indexOf(u8, text, log_rotate.live_name) != null);
 }
 
 test "describeWithDetail: no detail leaves no blank gap" {
@@ -326,7 +329,7 @@ test "describe: names the stage, the error and where to look" {
     const text = describe(&buf, "opening its first window", error.NoStartupWindow);
     try testing.expect(std.mem.indexOf(u8, text, "opening its first window") != null);
     try testing.expect(std.mem.indexOf(u8, text, "NoStartupWindow") != null);
-    try testing.expect(std.mem.indexOf(u8, text, "ghoztty.log") != null);
+    try testing.expect(std.mem.indexOf(u8, text, log_rotate.live_name) != null);
     // The remedy, not just the diagnosis.
     try testing.expect(std.mem.indexOf(u8, text, "Restart it") != null);
 }
