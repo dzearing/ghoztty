@@ -280,6 +280,16 @@ fn formatHumanReadable(alloc: Allocator, resp_body: []const u8, stdout: *std.Io.
             try stdout.writeAll(" (focused)");
         }
 
+        // T1557: a cross-machine window names the machine it is on, in the
+        // pill's words. Absent for a local window, so nothing is printed.
+        if (win_obj.get("machine")) |m| {
+            if (m == .string and m.string.len > 0) {
+                try stdout.writeAll(" [machine: ");
+                try stdout.writeAll(m.string);
+                try stdout.writeAll("]");
+            }
+        }
+
         // T609: a cross-machine window says how its link is doing. Absent for
         // a local window, which has no link, so nothing is printed there.
         if (win_obj.get("connection")) |conn| {
@@ -518,4 +528,35 @@ test "formatTerminal: [read-only] composes with the other tags" {
         "t  /w  pid:1  /dev/ttys001  [name: build]  running  [stashed]  [read-only]  [busy]",
         out,
     );
+}
+
+fn formatHumanForTest(alloc: Allocator, json_text: []const u8) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(alloc);
+    defer aw.deinit();
+    try formatHumanReadable(alloc, json_text, &aw.writer);
+    return try alloc.dupe(u8, aw.written());
+}
+
+test "formatHumanReadable: a cross-machine window names its machine (T1557)" {
+    const alloc = std.testing.allocator;
+    const out = try formatHumanForTest(alloc,
+        \\{"success":true,"data":{"windows":[{"id":"1","title":"pwsh","target":"far",
+        \\ "focused":true,"tabs":[],"title_set_by_user":false,
+        \\ "connection":{"state":"connected"},"machine":"devbox"}]}}
+    );
+    defer alloc.free(out);
+    try std.testing.expectEqualStrings(
+        "Window: \"pwsh\" [target: far] (focused) [machine: devbox] [connection: connected]\n",
+        out,
+    );
+}
+
+test "formatHumanReadable: a local window prints no machine tag (T1557)" {
+    const alloc = std.testing.allocator;
+    const out = try formatHumanForTest(alloc,
+        \\{"success":true,"data":{"windows":[{"id":"1","title":"pwsh","target":null,
+        \\ "focused":false,"tabs":[],"title_set_by_user":false}]}}
+    );
+    defer alloc.free(out);
+    try std.testing.expectEqualStrings("Window: \"pwsh\"\n", out);
 }

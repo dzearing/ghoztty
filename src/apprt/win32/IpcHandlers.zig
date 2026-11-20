@@ -2445,6 +2445,14 @@ fn handleList(ctx: Context, request: Request) Allocator.Error!?[]u8 {
                 window.reconnect.ladder.listConnection()
             else
                 null,
+            // T1557: the machine the window is on, named exactly as its pill
+            // names it; absent for a local window (no machine record). Copied
+            // into the arena because a relay listing can rename the machine
+            // in place (`adoptRelayNames`).
+            .machine = if (apprt.ipc.List.machineField(window.machineDisplayName())) |m|
+                try arena.dupe(u8, m)
+            else
+                null,
         });
     }
 

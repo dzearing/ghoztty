@@ -345,6 +345,27 @@ if ($null -eq $relwin -or $relwin.connection.state -ne 'connected') {
     "    +list --json said: $((Get-Out 'list1json.txt').Trim())"
 }
 
+"== 1c: +list names the machine a cross-machine window is on (T1557)"
+# Mac publishes this as AXGhosttyMachine; +list is its Windows home. The value is
+# the pill's own name for the machine (RemoteMachine.displayName). A CLI-opened
+# relay window in this isolated profile has no remembered directory, so it is
+# named by the hostname the far agent reported in its HELLO
+# (Window.resolveRelayName) - and the far agent here is a loopback one on THIS
+# box, so the expected name is this box's DNS hostname, never the device id.
+$expectMachine = [System.Net.Dns]::GetHostName()
+Assert "the relay window reports machine = the far agent's hostname ($expectMachine)" (
+    $null -ne $relwin -and $relwin.PSObject.Properties.Name -contains 'machine' -and
+    $relwin.machine -eq $expectMachine)
+Assert "the LOCAL base window has no machine field at all" (
+    $null -ne $relbase -and $relbase.PSObject.Properties.Name -notcontains 'machine')
+if ($null -ne $relwin) { "    machine = '$($relwin.machine)'" }
+$humanList = Get-Out 'list1.txt'
+Assert "+list human output tags the relay window with [machine: ...]" (
+    $null -ne $relwin -and $relwin.machine -and
+    $humanList -match ('\[target: relwin\][^\r\n]*\[machine: ' + [regex]::Escape([string]$relwin.machine) + '\]'))
+Assert "+list human output tags no LOCAL window with [machine: ...]" (
+    $humanList -notmatch '\[target: relbase\][^\r\n]*\[machine: ')
+
 "== 2: terminal round-trip through relay + agent"
 $code = Run-Cli '+send-keys --target=relwin "echo relay-roundtrip-ok" Enter' 'sk.txt'
 Assert "send-keys exit 0" ($code -eq 0)

@@ -202,7 +202,25 @@ pub const List = struct {
         /// two. Additive: null omits the field, so every existing consumer and
         /// the golden Mac shape below are unchanged.
         connection: ?Connection = null,
+        /// T1557. The NAME of the machine a cross-machine window is on - the
+        /// same string its pill, the pill's tooltip and the close confirmation
+        /// speak (`RemoteMachine.displayName`), never a second derivation.
+        /// Mac publishes it as `AXGhosttyMachine` so tools can group windows
+        /// by machine; `+list` is its home on this platform. Absent for a
+        /// local window, the same convention as `connection` (Mac's AX value
+        /// says the literal `"Local"`; here absence already says it, and two
+        /// conventions in one object would be worse than either). Build it
+        /// with `machineField` so an empty name can never be published.
+        machine: ?[]const u8 = null,
     };
+
+    /// The `machine` value for a window whose machine is named `display_name`
+    /// (T1557): the name itself, or null - field absent - when there is no
+    /// machine to name. An empty name means "no machine record", never a
+    /// machine called "".
+    pub fn machineField(display_name: []const u8) ?[]const u8 {
+        return if (display_name.len == 0) null else display_name;
+    }
 
     /// A leaf for an empty tree, matching the Mac server's placeholder.
     pub const empty_terminal: Terminal = .{
@@ -280,6 +298,10 @@ pub const List = struct {
         try jws.write(w.title_set_by_user);
         if (w.chrome) |c| try writeChrome(jws, c);
         if (w.connection) |c| try writeConnection(jws, c);
+        if (w.machine) |m| {
+            try jws.objectField("machine");
+            try jws.write(m);
+        }
         try jws.endObject();
     }
 
@@ -912,6 +934,63 @@ test "List: connection is additive and absent for a local window (T609)" {
     try testing.expect(std.mem.indexOf(u8, json, "connection") == null);
 }
 
+test "List: machine names a cross-machine window and is absent for a local one (T1557)" {
+    const testing = std.testing;
+
+    const leaf: List.Node = .{ .leaf = List.empty_terminal };
+    const tabs = [_]List.Tab{.{
+        .id = "0",
+        .title = "pwsh",
+        .index = 0,
+        .selected = true,
+        .splits = &leaf,
+    }};
+
+    // A local window: no machine record, so the display name is empty and
+    // the field is absent - not `"machine":""`, not `"machine":null`.
+    try testing.expect(List.machineField("") == null);
+    {
+        const windows = [_]List.Window{.{
+            .id = "1",
+            .title = "pwsh",
+            .target = null,
+            .focused = true,
+            .tabs = &tabs,
+            .machine = List.machineField(""),
+        }};
+        const json = try (List{ .windows = &windows }).serializeResponse(testing.allocator);
+        defer testing.allocator.free(json);
+        try testing.expect(std.mem.indexOf(u8, json, "machine") == null);
+    }
+
+    // A cross-machine window: the display name verbatim, after `connection`.
+    try testing.expectEqualStrings("devbox", List.machineField("devbox").?);
+    {
+        const windows = [_]List.Window{.{
+            .id = "1",
+            .title = "pwsh",
+            .target = "box",
+            .focused = true,
+            .tabs = &tabs,
+            .connection = .{ .state = "connected" },
+            .machine = List.machineField("Dev \"box\""),
+        }};
+        const json = try (List{ .windows = &windows }).serializeResponse(testing.allocator);
+        defer testing.allocator.free(json);
+        try testing.expect(std.mem.indexOf(
+            u8,
+            json,
+            "\"connection\":{\"state\":\"connected\"},\"machine\":\"Dev \\\"box\\\"\"}",
+        ) != null);
+
+        // It round-trips as a plain string a script can read back.
+        var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, json, .{});
+        defer parsed.deinit();
+        const w = parsed.value.object.get("data").?.object.get("windows").?.array.items[0].object;
+        try testing.expectEqualStrings("Dev \"box\"", w.get("machine").?.string);
+    }
+}
+
 test "List: connection reports the ladder's three states (T609)" {
     const testing = std.testing;
 
@@ -1277,6 +1356,7 @@ test "List: the JSON shape still matches the Mac Swift encoder (T370)" {
         .tabs = &tabs,
         .chrome = .{ .dpi = 96 },
         .connection = .{ .state = "connected" },
+        .machine = "box",
     }};
     const json = try (List{
         .windows = &windows,
@@ -1302,12 +1382,12 @@ test "List: the JSON shape still matches the Mac Swift encoder (T370)" {
     const leaf = node.get("left").?.object;
     const term = leaf.get("terminal").?.object;
 
-    // `build` (T52), `chrome` (T231), `connection` (T609), `background_tint`
+    // `build` (T52), `chrome` (T231), `connection` (T609), `machine` (T1557), `background_tint`
     // (T67), `session_id` (T332) and `minimized` (T2103, Mac half T2148) are
     // win32-only on purpose; the Mac half of each is filed separately.
     // Everything else must match name for name and position for position.
     try expectMacShape(alloc, swift, "struct ListStateData", data.keys(), &.{"build"});
-    try expectMacShape(alloc, swift, "struct WindowData", window.keys(), &.{ "chrome", "connection" });
+    try expectMacShape(alloc, swift, "struct WindowData", window.keys(), &.{ "chrome", "connection", "machine" });
     try expectMacShape(alloc, swift, "struct TabData", tab.keys(), &.{});
     try expectMacShape(alloc, swift, "struct TerminalData", term.keys(), &.{ "background_tint", "minimized", "session_id" });
 
