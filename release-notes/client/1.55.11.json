@@ -1,0 +1,14 @@
+{
+  "version": "1.55.11",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "agent-upgrade's mandatory-update check now says whether the app was slow or the dialog was missing." },
+        { "text": "Every Windows window activation now logs whether a click, a held button or neither brought it forward, so a hover focus steal names its trigger." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The layout-save cost test no longer goes red on a busy box, and still fails on a real freeze." }
+      ] }
+  ]
+}
