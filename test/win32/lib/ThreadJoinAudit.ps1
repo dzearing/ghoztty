@@ -76,10 +76,15 @@
 # Deliberately sets no StrictMode: this file is dot-sourced INTO suite scripts,
 # and a mode set here would silently change how every one of them evaluates.
 
-# A statement that can leave the block early. `try` and `catch` are the Zig
-# error paths; `return` is the explicit one. `orelse return` is matched by the
-# `return` pattern already.
-$script:TjaEscapePattern = '(^|[^\w.])(try|return)([^\w]|$)|\bcatch\b'
+# A statement that can leave the block early: `try` is the Zig error path and
+# `return` the explicit one. `orelse return` and `catch |e| return e` are matched
+# by the `return` pattern already, and so is a multi-line catch block whose
+# `return` sits on a later line before the join. A bare `catch` is NOT an exit:
+# `std.Thread.yield() catch {};` or `x() catch 0` swallows the error and falls
+# through, and `catch unreachable` panics rather than returning, so it cannot
+# leave a live thread behind. Counting it reported sites whose only "exit" was a
+# swallowed yield (T1505).
+$script:TjaEscapePattern = '(^|[^\w.])(try|return)([^\w]|$)'
 
 function Get-ThreadJoinBlocks {
     <#

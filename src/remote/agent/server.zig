@@ -4912,9 +4912,18 @@ test "session_cpu: stopping the pump twice does not double-join (agent panic)" {
 
         var gate: std.Thread.ResetEvent = .{};
         const a = try std.Thread.spawn(.{}, Racer.stop, .{ h.server, &gate });
+        // If the second spawn fails, `a` is parked on the gate: open it, then
+        // join, so the failure is reported instead of leaking a thread that
+        // still holds `h.server` (T1505).
+        var a_joined = false;
+        errdefer if (!a_joined) {
+            gate.set();
+            a.join();
+        };
         const b = try std.Thread.spawn(.{}, Racer.stop, .{ h.server, &gate });
         gate.set();
         a.join();
+        a_joined = true;
         b.join();
 
         // Whichever stopper won, the pump is gone and a re-subscribe on the next

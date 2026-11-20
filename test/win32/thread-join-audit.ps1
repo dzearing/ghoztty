@@ -221,6 +221,29 @@ test "bare marker: no reason, no exemption" {
 }
 '@
 
+$swallowedCatch = @'
+test "swallowed catch: an error that is caught and dropped cannot leave the block" {
+    var ctx: Ctx = .{};
+    const ath = try std.Thread.spawn(.{}, Ctx.run, .{&ctx});
+    std.Thread.yield() catch {};
+    const n = conn.read(&buf) catch 0;
+    ath.join();
+    try testing.expect(n == 0);
+}
+'@
+
+$catchReturn = @'
+test "catch then return: the catch block leaves on a later line" {
+    var ctx: Ctx = .{};
+    const ath = try std.Thread.spawn(.{}, Ctx.run, .{&ctx});
+    conn.start() catch |err| {
+        log.warn("start: {s}", .{@errorName(err)});
+        return err;
+    };
+    ath.join();
+}
+'@
+
 $productionField = @'
 const Watcher = struct {
     thread: ?std.Thread = null,
@@ -312,6 +335,15 @@ Assert 'A14 a field nothing in the file ever joins is reported' (
 $f = @(Get-FixtureFindings ($guarded + "`n" + $unguarded) 'a-both')
 Assert 'A15 one bad site among good ones is still the only finding' (
     $f.Count -eq 1 -and $f[0].Kind -eq 'unguarded')
+
+# T1505: a bare `catch` swallows the error and falls through - it is not an
+# exit - but a catch block that RETURNS still is, on whichever line it does so.
+$f = @(Get-FixtureFindings $swallowedCatch 'a-swallowed')
+AssertEq 'A16 a swallowed catch between the spawn and the join yields nothing' 0 $f.Count
+
+$f = @(Get-FixtureFindings $catchReturn 'a-catch-return')
+Assert 'A17 a catch block that returns on a later line is still reported, at that line' (
+    $f.Count -eq 1 -and $f[0].Kind -eq 'unguarded' -and $f[0].Detail -match 'line 6 can return')
 
 # ===========================================================================
 Write-Host ''

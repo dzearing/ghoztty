@@ -870,6 +870,13 @@ test {
         threadMain,
         .{&thread},
     );
+    // Any failure below must stop and join the search thread before the
+    // deferred `thread.deinit()` frees what it is reading.
+    var os_thread_joined = false;
+    errdefer if (!os_thread_joined) {
+        thread.stop.notify() catch {};
+        os_thread.join();
+    };
 
     // Start our search
     _ = thread.mailbox.push(
@@ -887,6 +894,7 @@ test {
     // Stop the thread
     try thread.stop.notify();
     os_thread.join();
+    os_thread_joined = true;
 
     // 1 total matches
     try testing.expectEqual(1, ud.total);

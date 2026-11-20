@@ -1200,6 +1200,10 @@ test "InboundRing: concurrent SPSC streams 4 MiB without loss or corruption" {
     const total: usize = 4 * 1024 * 1024;
     var ctx: SpscCtx = .{ .ring = &ring, .total = total };
 
+    // Started BEFORE the spawn: it is the only fallible step of the consumer
+    // loop, and a failure after the spawn would return past the join and free
+    // the ring under the live producer (T1505).
+    var timer = try std.time.Timer.start();
     const producer = try std.Thread.spawn(.{}, spscProducer, .{&ctx});
 
     // Consumer runs on this thread: verify every byte matches its stream position.
@@ -1209,7 +1213,6 @@ test "InboundRing: concurrent SPSC streams 4 MiB without loss or corruption" {
     var consumed: usize = 0;
     var stalled = false;
     var corrupt = false;
-    var timer = try std.time.Timer.start();
     var dst: [577]u8 = undefined; // odd size, different from producer chunk
     while (consumed < total) {
         const n = ring.pop(&dst);
@@ -1347,9 +1350,22 @@ test "stress: 4 channels, one firehose, quiet panes are not HOL-blocked" {
         };
     }
 
+    // Started BEFORE the consumers: a failure after them would return past the
+    // joins and free `channels` under live threads (T1505).
+    var stall_timer = try std.time.Timer.start();
+
     var threads: [n_channels]std.Thread = undefined;
+    // A spawn that fails part-way leaves the earlier consumers running: open
+    // the firehose gate and join them. Each one exits on its own stall bound,
+    // so the join is bounded and the spawn error is what gets reported.
+    var spawned: usize = 0;
+    errdefer if (spawned < n_channels) {
+        fire_gate.set();
+        for (threads[0..spawned]) |t| t.join();
+    };
     for (&threads, 0..) |*t, i| {
         t.* = try std.Thread.spawn(.{}, PaneConsumer.run, .{&consumers[i]});
+        spawned = i + 1;
     }
 
     // The single demux/producer thread (this thread). Round-robin generate data
@@ -1367,7 +1383,6 @@ test "stress: 4 channels, one firehose, quiet panes are not HOL-blocked" {
     // for the whole liveness bound, break out and fail red after the joins
     // instead of spinning forever (T498).
     var producer_stalled = false;
-    var stall_timer = try std.time.Timer.start();
     while (true) {
         var any_progress = false;
         var all_done = true;

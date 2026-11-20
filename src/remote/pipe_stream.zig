@@ -115,6 +115,9 @@ const stub = struct {
             _ = self;
             unreachable;
         }
+        pub fn cancelAccept(self: *@This()) void {
+            _ = self;
+        }
         pub fn deinit(self: *@This()) void {
             _ = self;
         }
@@ -385,6 +388,16 @@ const win = struct {
             return .{ .alloc = alloc, .name_w = name_w, .sd = sd, .next = first };
         }
 
+        /// Cancel an `accept()` parked on another thread: its
+        /// `ConnectNamedPipe` completes aborted, so `accept` drops and
+        /// replaces the pending instance and returns `AcceptFailed`. A cancel
+        /// that lands before the wait starts cancels nothing, so a caller that
+        /// must see the accepter leave repeats it until it has (T1505).
+        pub fn cancelAccept(self: *Listener) void {
+            const pending = @atomicLoad(W.HANDLE, &self.next, .acquire);
+            if (pending != W.INVALID_HANDLE_VALUE) _ = k32.CancelIoEx(pending, null);
+        }
+
         pub fn deinit(self: *Listener) void {
             if (self.next != W.INVALID_HANDLE_VALUE) W.CloseHandle(self.next);
             if (self.sd) |p| _ = LocalFree(p);
@@ -590,6 +603,18 @@ const win = struct {
 const testing = std.testing;
 const test_util = @import("test_util.zig");
 
+/// The unblock half of a test's accepter guard (T1505). A test that fails
+/// between spawning its accepter and joining it leaves that thread parked in
+/// `accept()`, writing into an `Accepter` on the failing test's stack; joining
+/// it without this turns the reported failure into a hang. Cancels until the
+/// accepter says it has left `run`.
+fn unparkAccepter(listener: *PipeListener, done: *const std.atomic.Value(bool)) void {
+    while (!done.load(.acquire)) {
+        listener.cancelAccept();
+        std.Thread.sleep(5 * std.time.ns_per_ms);
+    }
+}
+
 /// A unique-per-process pipe name for one test.
 fn testPipeName(buf: []u8, tag: []const u8) ![]const u8 {
     const pid: u32 = if (builtin.os.tag == .windows)
@@ -613,7 +638,9 @@ test "PipeStream: round-trips bytes over a real loopback pipe" {
         listener: *PipeListener,
         handle: std.os.windows.HANDLE = undefined,
         err: ?anyerror = null,
+        done: std.atomic.Value(bool) = .init(false),
         fn run(self: *@This()) void {
+            defer self.done.store(true, .release);
             self.handle = self.listener.accept() catch |e| {
                 self.err = e;
                 return;
@@ -622,9 +649,15 @@ test "PipeStream: round-trips bytes over a real loopback pipe" {
     };
     var accepter = Accepter{ .listener = &listener };
     const t = try std.Thread.spawn(.{}, Accepter.run, .{&accepter});
+    var t_joined = false;
+    errdefer if (!t_joined) {
+        unparkAccepter(&listener, &accepter.done);
+        t.join();
+    };
 
     const client_h = try dialHandle(alloc, name);
     t.join();
+    t_joined = true;
     try testing.expect(accepter.err == null);
 
     var a = PipeStream.init(accepter.handle); // agent end
@@ -669,14 +702,22 @@ test "PipeStream: peer close surfaces as EOF (read returns 0)" {
     const Accepter = struct {
         listener: *PipeListener,
         handle: std.os.windows.HANDLE = undefined,
+        done: std.atomic.Value(bool) = .init(false),
         fn run(self: *@This()) void {
+            defer self.done.store(true, .release);
             self.handle = self.listener.accept() catch return;
         }
     };
     var accepter = Accepter{ .listener = &listener };
     const t = try std.Thread.spawn(.{}, Accepter.run, .{&accepter});
+    var t_joined = false;
+    errdefer if (!t_joined) {
+        unparkAccepter(&listener, &accepter.done);
+        t.join();
+    };
     const client_h = try dialHandle(alloc, name);
     t.join();
+    t_joined = true;
 
     var a = PipeStream.init(accepter.handle);
     var b = PipeStream.init(client_h);
@@ -703,14 +744,22 @@ test "PipeStream: close unblocks a blocked read" {
     const Accepter = struct {
         listener: *PipeListener,
         handle: std.os.windows.HANDLE = undefined,
+        done: std.atomic.Value(bool) = .init(false),
         fn run(self: *@This()) void {
+            defer self.done.store(true, .release);
             self.handle = self.listener.accept() catch return;
         }
     };
     var accepter = Accepter{ .listener = &listener };
     const at = try std.Thread.spawn(.{}, Accepter.run, .{&accepter});
+    var at_joined = false;
+    errdefer if (!at_joined) {
+        unparkAccepter(&listener, &accepter.done);
+        at.join();
+    };
     const client_h = try dialHandle(alloc, name);
     at.join();
+    at_joined = true;
 
     const a = try PipeStream.create(alloc, accepter.handle);
     defer a.destroy(alloc);
@@ -840,7 +889,9 @@ test "PipeListener: serves multiple concurrent client connections" {
         listener: *PipeListener,
         handles: [2]std.os.windows.HANDLE = undefined,
         err: ?anyerror = null,
+        done: std.atomic.Value(bool) = .init(false),
         fn run(self: *@This()) void {
+            defer self.done.store(true, .release);
             for (&self.handles) |*h| {
                 h.* = self.listener.accept() catch |e| {
                     self.err = e;
@@ -851,10 +902,16 @@ test "PipeListener: serves multiple concurrent client connections" {
     };
     var accepter = Accepter{ .listener = &listener };
     const t = try std.Thread.spawn(.{}, Accepter.run, .{&accepter});
+    var t_joined = false;
+    errdefer if (!t_joined) {
+        unparkAccepter(&listener, &accepter.done);
+        t.join();
+    };
 
     const c1 = try dialHandle(alloc, name);
     const c2 = try dialHandle(alloc, name);
     t.join();
+    t_joined = true;
     try testing.expect(accepter.err == null);
 
     // Both server ends must round-trip independently.
@@ -903,7 +960,12 @@ test "PipeListener: a client that vanishes before accept() does not wedge the li
     const Accepter = struct {
         listener: *PipeListener,
         served: bool = false,
+        done: std.atomic.Value(bool) = .init(false),
+        // Set by the failing test's guard so the retry loop leaves at its
+        // next cancelled accept instead of running out the liveness bound.
+        quit: std.atomic.Value(bool) = .init(false),
         fn run(self: *@This()) void {
+            defer self.done.store(true, .release);
             // Bounded on the WALL CLOCK, not on an attempt count (T738). An
             // attempt budget measures how many times this thread got to try,
             // which is a different amount of time on every box and under every
@@ -911,7 +973,7 @@ test "PipeListener: a client that vanishes before accept() does not wedge the li
             // The shared liveness bound is an upper bound on a hang, not a
             // performance assertion, so a slow box cannot spend it.
             var timer = std.time.Timer.start() catch return;
-            while (timer.read() < test_util.liveness_ns) {
+            while (timer.read() < test_util.liveness_ns and !self.quit.load(.acquire)) {
                 const h = self.listener.accept() catch {
                     std.Thread.sleep(50 * std.time.ns_per_ms);
                     continue;
@@ -929,11 +991,21 @@ test "PipeListener: a client that vanishes before accept() does not wedge the li
     };
     var accepter = Accepter{ .listener = &listener };
     const t = try std.Thread.spawn(.{}, Accepter.run, .{&accepter});
+    var t_joined = false;
+    errdefer if (!t_joined) {
+        accepter.quit.store(true, .release);
+        unparkAccepter(&listener, &accepter.done);
+        t.join();
+    };
 
     const client_h = try dialHandle(alloc, name);
     var client = PipeStream.init(client_h);
+    // Runs before the guard above: the accepter may be parked in a read on
+    // this client's server end, which only the client closing ends.
+    errdefer client.connectionStream().close();
     try client.connectionStream().writeAll("hi");
     t.join();
+    t_joined = true;
     client.connectionStream().close();
 
     try testing.expect(accepter.served);
