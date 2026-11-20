@@ -300,7 +300,9 @@ Write-Host "  ($($uncountedFinal.Count) script(s) still print an UNCOUNTED final
 # viewer-find) each hand-rolled a bare "ALL PASS", against one (morning-refresh)
 # that was retired. All five are on the shared scorer now, so the ceiling comes
 # down past where T962 left it rather than up to where the drift landed.
-$ceiling = 28
+# 2026-11-19 (T1511, batches 11-16): 28 -> 25, the measured count once the
+# post-October drift was converted.
+$ceiling = 25
 Assert "C3 the uncounted-final count did not grow past $ceiling" ($uncountedFinal.Count -le $ceiling)
 
 # T1510's ratchets, same contract as C3 and for a sharper reason: until a
@@ -371,7 +373,14 @@ Assert "C3 the uncounted-final count did not grow past $ceiling" ($uncountedFina
 # the verdict, which keeps its "a skipped run must not stamp" rule intact. The
 # six that remain are each blocked on something other than the conversion:
 # T1513-T1517, and release-artifacts, which needs wixl and therefore Docker.
-$selfCeiling  = 125
+# 2026-11-19 (T1511, batches 11-16): C4 125 -> 106; C5 stays 6, and is GREEN
+# again. Thirty-two stamping scripts landed after 2026-10-24 without the scorer
+# (T1568), taking the unarmed count to 38; batches 11-16 converted them back
+# down to 6. The six left: release-artifacts (Docker), translucent-window and
+# background-blur (@input-desktop-exception, so the loop may not run them),
+# tab-strip (T1577), overlay-zorder (T2300) and pane-close-memory (T2692) - each
+# red or unrunnable here for a reason of its own, so none can re-stamp yet.
+$selfCeiling  = 106
 $stampCeiling = 6
 
 $ratchetSweep = @($sweep)

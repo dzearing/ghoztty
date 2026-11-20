@@ -1,8 +1,8 @@
 {
     "guard":  "viewer-feedback-carousel",
     "script":  "test/win32/viewer-feedback-carousel.ps1",
-    "generated":  "2026-11-11T00:45:52-08:00",
-    "commit":  "f21e0360e",
+    "generated":  "2026-11-19T23:23:01-08:00",
+    "commit":  "1f0ed0428",
     "uncommitted":  [
                         "test/win32/viewer-feedback-carousel.ps1"
                     ],
@@ -14,6 +14,6 @@
                   "src/viewer/composer.js":  "ba5e2801f2702309b5707497de1ab122b7837da482bf6c15919ed947c8b87eb5",
                   "test/win32/lib/ComposerSurface.ps1":  "7edd6dccc01fa8654f186ad97e64fb13bd9199305aa0424aebfbe7537e39d287",
                   "test/win32/lib/WebViewCdp.ps1":  "694f3e4f7852950d38ca69bcd317b75b1797f364c7f41fa5c23ed3cb56abd5fe",
-                  "test/win32/viewer-feedback-carousel.ps1":  "537ae75c2a2f895677872fa5ff3b67a7fbdc4df72366664922ba04c6107e6fe3"
+                  "test/win32/viewer-feedback-carousel.ps1":  "c732a5a15ce1cf08a6d7dff415085fd1433e9335a157a23c0dfee5dabc393ab4"
               }
 }

@@ -91,9 +91,9 @@ $script:HARNESS_FLOOR_PENDING = @{
     # (skip-visibility.ps1 left this list on 2026-10-17, T2056: pending against
     # T1123 it ran red in every sweep for two months and joined 14 violators
     # without ever failing one. A new violator now fails the floor.)
-    # C5: eight scripts stamp a guard from a body that may have unwound, against
-    # a ratchet ceiling of six.
-    'asserted-nothing.ps1' = 'T1568'
+    # (asserted-nothing.ps1 left this list on 2026-11-20, T1568: T1511's
+    # batches 11-16 took C5's unarmed stampers from 38 back to its ceiling of
+    # six, so the audit is green and a new unarmed stamper fails the floor.)
 }
 
 function Get-HarnessFloorAudits { return @($script:HARNESS_FLOOR_AUDITS) }

@@ -72,6 +72,8 @@ $env:GHOZTTY_PIPE_SUFFIX = "-fbimg$PID"
 
 # Show-Text: how a whole-text comparison prints what it actually found (T672).
 . (Join-Path $PSScriptRoot 'lib\ShowText.ps1')
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 Add-Type -AssemblyName System.Drawing
 
@@ -498,6 +500,10 @@ try {
 
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'GUI process alive after all scenarios'
     Assert (-not (Test-TestDesktopLeak -ProcessId $appPid)) 'GUI never became visible on the interactive desktop'
+} catch {
+    # T1511: the foreground-leak check below is part of this run too, so this
+    # try cannot END in `Complete-TestBody`. It SCORES its own throw instead.
+    Assert $false "the run threw and did not finish its sections: $($_.Exception.Message)"
 } finally {
     Close-Cdp $cdp
     Disable-WebViewCdp
@@ -510,6 +516,8 @@ $fgSeen = @(Stop-TestForegroundWatch)
 $leaked = @(Get-TestLaunchedPids | Where-Object { $fgSeen -contains $_ })
 Assert ($leaked.Count -eq 0) "no test-desktop app ever became foreground on the interactive desktop (saw $($leaked -join ','))"
 
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
+
 # A clean green run stamps the covered files (T1472) so scripts\guard-due.ps1
 # can answer "has this harness been run against the composer's offset code as
 # it now stands?". Red leaves the stamp alone - red stays due.
@@ -519,5 +527,4 @@ if ($script:fail -eq 0) {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)"; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'VIEWER-FEEDBACK-IMAGES'

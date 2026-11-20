@@ -51,6 +51,9 @@ $env:GHOZTTY_PIPE_SUFFIX = "-kbactionstest$PID"
 # T782: byte-exact argv - the alternate-screen one-liners below carry embedded quotes.
 . (Join-Path $repo 'scripts\lib\NativeArgv.ps1')
 
+# T1511: arms the run, so an unwound body neither prints a pass nor stamps.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 function Assert([bool]$cond, [string]$label) {
@@ -349,6 +352,10 @@ $tail2 = & $Exe +read --name=$pane --lines=5 | Out-String
 Assert ($tail2 -match 'buni2ok') 'T64 injected characters land in win32-input mode (9001)'
 Assert (Select-String -Path $errlog -Pattern 'injected WM_CHAR in win32-input mode' -Quiet) 'T64 injected char routed via win32-input encoding (log oracle)'
 
+} catch {
+    # T1511: the foreground-leak checks below are part of this run too, so this
+    # try cannot END in `Complete-TestBody`. It SCORES its own throw instead.
+    Assert $false "the run threw and did not finish its sections: $($_.Exception.Message)"
 } finally {
     # Read the launched pids BEFORE cleanup: Remove-TestDesktop empties the
     # live pid list as it kills, and an emptied list makes the leak assertion
@@ -366,17 +373,16 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($leaked.Count -eq 0) 'no test-desktop app ever became foreground on the interactive desktop'
 }
 
+Complete-TestBody  # T1039/T1511: before the stamp, which is a child process reading this run's state
+
 # A green run stamps the covered files (T783/T1599) so guard-due can answer
 # "has this harness been run against the key-delivery code as it now stands?".
-# Red leaves the stamp alone: red stays due. The pass floor is the stand-in for
-# Complete-TestBody, which this script predates - an unwind that skipped the
-# body would otherwise reach here with fail=0 and stamp a run that asserted
-# nothing.
+# Red leaves the stamp alone: red stays due. The pass floor predates the shared
+# marker above and is kept as a second, independent check on a short run.
 if ($script:fail -eq 0 -and $script:pass -ge 35) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard kb-actions -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)"; exit 0 }
-else { Write-Host "$script:fail FAILED / $script:pass passed" -ForegroundColor Red; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'KB-ACTIONS'
