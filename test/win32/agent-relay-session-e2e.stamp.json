@@ -1,8 +1,8 @@
 {
     "guard":  "agent-relay-session",
     "script":  "test/win32/agent-relay-session-e2e.ps1",
-    "generated":  "2026-11-19T19:01:59-08:00",
-    "commit":  "747ee8b81",
+    "generated":  "2026-11-19T19:02:28-08:00",
+    "commit":  "d16ef0fd1",
     "uncommitted":  [
 
                     ],

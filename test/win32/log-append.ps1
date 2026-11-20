@@ -67,6 +67,7 @@ $ErrorActionPreference = 'Continue'
 
 $script:failures = 0
 $script:passes = 0
+$script:skipped = 0
 function Assert($name, $cond) {
     if ($cond) { Write-Host "  PASS $name"; $script:passes++ }
     else { Write-Host "  FAIL $name" -ForegroundColor Red; $script:failures++ }
@@ -471,6 +472,7 @@ $debugLog = Join-Path $root 'ghoztty\ghoztty-debug.log'
 Assert "D0 premise: the release build never wrote the Debug sink" (-not (Test-Path $debugLog))
 if (-not (Test-Path $DebugExe)) {
     Say "    SKIP D1-D6: no Debug build at $DebugExe (zig build -Dapp-runtime=win32 -Doptimize=Debug)"
+    $script:skipped++
     $debugComplete = $true
 } else {
     Remove-Item $logPath, $rotPath -Force -ErrorAction SilentlyContinue
@@ -539,11 +541,11 @@ Assert "D7 the Debug-sink section ran to completion" $debugComplete
 # can answer it - and it is not in the P1-P3 floor. A negative-control run
 # never stamps: it asserts the OPPOSITE of the contract.
 Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
-if ($script:failures -eq 0 -and -not $NegativeControl) {
+if ($script:failures -eq 0 -and $script:skipped -eq 0 -and -not $NegativeControl) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot '..\..\scripts\guard-due.ps1') `
         update -Guard log-sink -Repo (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path 2>&1 |
         ForEach-Object { Write-Host "  $_" }
 }
 
 Say ""
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'LOG-APPEND'
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped $script:skipped -Label 'LOG-APPEND'
