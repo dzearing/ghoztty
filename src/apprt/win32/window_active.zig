@@ -257,3 +257,42 @@ test "shouldForwardFocus: background desktop with no active window still forward
     try testing.expect(shouldForwardFocus(a, root));
     try testing.expect(!isActive(a, root));
 }
+
+/// Why a window just became active (T3272), for the one log line WM_ACTIVATE
+/// writes so a reported focus steal names its trigger after the fact.
+///
+/// `state` is WM_ACTIVATE's LOWORD(wParam): 0 = WA_INACTIVE, 1 = WA_ACTIVE
+/// (keyboard, Alt+Tab, the taskbar, or a program call such as
+/// SetForegroundWindow), 2 = WA_CLICKACTIVE (a mouse click). `button_down` is
+/// whether any mouse button is held as the message is handled.
+///
+/// The case the log exists to catch is `.program_no_button`: activation that
+/// was not a click while no button was held. A hover that activates the
+/// window, which no code path of ours does (the T3272 audit), would land
+/// there, as would Alt+Tab or a taskbar click. The surrounding log lines and
+/// the user's account then tell those apart.
+pub const ActivationCause = enum {
+    inactive,
+    click,
+    program_button_held,
+    program_no_button,
+};
+
+pub fn activationCause(state: u16, button_down: bool) ActivationCause {
+    return switch (state) {
+        0 => .inactive,
+        2 => .click,
+        else => if (button_down) .program_button_held else .program_no_button,
+    };
+}
+
+test "activationCause: WM_ACTIVATE states map to the cause the log names (T3272)" {
+    try testing.expectEqual(ActivationCause.inactive, activationCause(0, false));
+    try testing.expectEqual(ActivationCause.inactive, activationCause(0, true));
+    try testing.expectEqual(ActivationCause.click, activationCause(2, false));
+    try testing.expectEqual(ActivationCause.click, activationCause(2, true));
+    try testing.expectEqual(ActivationCause.program_button_held, activationCause(1, true));
+    try testing.expectEqual(ActivationCause.program_no_button, activationCause(1, false));
+    // An unknown future state is never reported as a click.
+    try testing.expectEqual(ActivationCause.program_no_button, activationCause(7, false));
+}

@@ -1,14 +1,13 @@
 {
     "guard":  "window-in-use",
     "script":  "test/win32/window-in-use.ps1",
-    "generated":  "2026-11-11T00:16:38-08:00",
-    "commit":  "4d1bce708",
+    "generated":  "2026-11-20T06:39:31-08:00",
+    "commit":  "d23f0fab0",
     "uncommitted":  [
-                        "src/apprt/win32/window_active.zig",
-                        "test/win32/window-in-use.ps1"
+                        "src/apprt/win32/window_active.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/window_active.zig":  "4076ebbfce81f4505a33e20f6e6da8f95cc82ec11130b6b3b35544d899efe535",
+                  "src/apprt/win32/window_active.zig":  "9c82c52ed63a12a6670d7d1dd891f8f59c504ce50811e3a65620f647e787f944",
                   "test/win32/window-in-use.ps1":  "c79a51ec377224dfcdd808af977d1cfee3b5e07863b88339caa653a5180d28ff"
               }
 }

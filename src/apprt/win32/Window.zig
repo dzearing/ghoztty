@@ -23956,6 +23956,19 @@ pub fn windowWndProc(
         },
         w32.WM_ACTIVATE => {
             const activated = @as(u16, @truncate(wparam & 0xFFFF));
+            // T3272: name what activated the window, so a reported focus
+            // steal ("hovering brought it forward") can be read off the log.
+            // A high bit in GetAsyncKeyState means the button is down now.
+            if (activated != w32.WA_INACTIVE) {
+                const held = w32.GetAsyncKeyState(0x01) < 0 or // VK_LBUTTON
+                    w32.GetAsyncKeyState(0x02) < 0 or // VK_RBUTTON
+                    w32.GetAsyncKeyState(0x04) < 0; // VK_MBUTTON
+                log.info("window activated hwnd={x} cause={s} input_desktop={}", .{
+                    @intFromPtr(hwnd),
+                    @tagName(window_active.activationCause(activated, held)),
+                    w32.onInputDesktop(),
+                });
+            }
             // The sidebar every window shares: take what changed while
             // another window was in use (T2336).
             if (activated != w32.WA_INACTIVE) window.paneSidebarCatchUp();
