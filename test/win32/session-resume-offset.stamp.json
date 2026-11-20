@@ -1,14 +1,15 @@
 {
     "guard":  "resume-offset",
     "script":  "test/win32/session-resume-offset.ps1",
-    "generated":  "2026-11-19T12:36:53-08:00",
-    "commit":  "3bd26f1b9",
+    "generated":  "2026-11-19T16:30:19-08:00",
+    "commit":  "97dad3177",
     "uncommitted":  [
-                        "test/win32/session-resume-offset.ps1"
+                        "src/remote/connection.zig",
+                        "src/termio/Remote.zig"
                     ],
     "files":  {
-                  "src/remote/connection.zig":  "28577c401d6c72ba49afb53a56da328bd149f8bfc08f005923503cc76aa1d4fb",
-                  "src/termio/Remote.zig":  "a4e0a4b236c6f5a7a7cafc3b5436290e47f161101176e65aa898d17859fae3ff",
+                  "src/remote/connection.zig":  "8f6a13430431d6f7947a4bbe2bec6b747d40bf5c4b29b0b5de1fea1b22780c49",
+                  "src/termio/Remote.zig":  "5c2fc604fdd30978498fcaef567793262c7d8234d6796022faa161a87014df46",
                   "test/win32/session-resume-offset.ps1":  "d35b1fd5a524b1ec6c3a677225792c204fff3851b3a709956397a7f1686247dd"
               }
 }

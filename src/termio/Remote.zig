@@ -1777,6 +1777,9 @@ pub fn resize(
     const td_live = td orelse return;
     assert(td_live.backend == .remote);
     const rd = &td_live.backend.remote;
+    // T1506: a pane whose session another window took must not resize it under
+    // that window (the agent drops it anyway; this keeps it off the wire).
+    if (rd.taken) return;
     log.debug("RESIZE send rows={} cols={} ch={x}", .{
         grid_size.rows, grid_size.columns, rd.pane.id,
     });
@@ -1800,8 +1803,9 @@ pub fn queueWrite(
     assert(td.backend == .remote);
     const rd = &td.backend.remote;
 
-    // If the agent reported the session exited we stop sending input.
-    if (rd.exited) return;
+    // If the agent reported the session exited we stop sending input. Same for
+    // a session another window took (T1506): it is somebody else's shell now.
+    if (rd.exited or rd.taken) return;
 
     // Prompt policy (T12c2): a dead-but-relaunchable pane is showing the
     // "press any key to relaunch" affordance. The first keystroke consents to the
@@ -2847,6 +2851,17 @@ fn drainRing(td: *termio.Termio.ThreadData) void {
         }
     }
 
+    // T1506: another window ATTACHed this session and it no longer streams here.
+    // Say so once, after whatever output already arrived has rendered, and stop
+    // sending input (`queueWrite`/`resize` check `rd.taken`). The pane stays: it
+    // is not closed under the user, and nothing it shows was lost.
+    if (!rd.taken and ch.isTaken()) {
+        rd.taken = true;
+        log.warn("this pane's session was taken by another viewer; input stopped ch={x}", .{ch.id});
+        @call(.always_inline, termio.Termio.processOutput, .{ rd.io, session_notice.taken_notice });
+        return;
+    }
+
     // T1793: the session's HOST died, not its program. Respawn in place under a
     // notice instead of closing; only a respawn that cannot be made falls through
     // to the ordinary close below.
@@ -2900,6 +2915,11 @@ pub const ThreadData = struct {
 
     /// Set true once the agent reports the session exited (stops further input).
     exited: bool = false,
+
+    /// Set true once the agent says another viewer took this session (T1506,
+    /// `Channel.isTaken`). Stops input and resizes; the pane stays open with a
+    /// notice. Touched only on the pane's IO thread.
+    taken: bool = false,
 
     /// T106 geometry-faithful attach replay: nonzero while the local grid is
     /// reflowed to the agent-reported capture geometry so the raw ring replay

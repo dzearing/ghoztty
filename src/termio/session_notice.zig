@@ -96,6 +96,17 @@ fn lostSentence(reason: Reason) []const u8 {
     };
 }
 
+/// The notice a LIVE pane prints when another window takes its session (T1506).
+/// A session streams to one viewer, and the newest one to attach wins; this
+/// pane is the one that lost it. Unlike the reasons above nothing ended and no
+/// fresh shell follows: the session is running, somewhere else, and this pane
+/// stops sending it input. Same `Label:` voice as the rest of the module
+/// (T424). A constant, so it needs no sanitizing — nothing in it came off the
+/// wire.
+pub const taken_notice =
+    "\r\n\x1b[2mSession opened elsewhere: another window is showing this session now, and a session can only be shown in one place.\x1b[0m\r\n" ++
+    "\x1b[2m    Nothing was closed. This pane no longer sends input to it; close it, or reopen the session here from the session list.\x1b[0m\r\n";
+
 /// `format` for any `Reason`. `command` is only rendered for
 /// `.agent_restarted`: a session restored elsewhere is still running its
 /// command, so there is no "previous command" to hand back.
@@ -543,6 +554,35 @@ test "formatFor: host_lost says the session's host stopped, names the command, a
     try testing.expect(std.mem.indexOf(u8, banner, "restarted") == null);
     for ([_][]const u8{ stream, banner }) |out| {
         try testing.expect(std.mem.indexOf(u8, out, "\u{2014}") == null);
+    }
+}
+
+test "taken_notice: says the session is open elsewhere and alive, in the Label: voice, with no em dash" {
+    // T1506: the session was taken by another window, not lost. The wording
+    // must say it is still running and that this pane has stopped typing into
+    // it - never "interrupted", "closed" as a verdict, or "fresh shell".
+    const testing = std.testing;
+    const out = taken_notice;
+    try testing.expect(std.mem.indexOf(u8, out, "Session opened elsewhere: another window is showing this session now") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "Nothing was closed.") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "no longer sends input") != null);
+    try testing.expect(std.mem.indexOf(u8, out, "interrupted") == null);
+    try testing.expect(std.mem.indexOf(u8, out, "fresh shell") == null);
+    try testing.expect(std.mem.indexOf(u8, out, "\u{2014}") == null);
+    // Only SGR (dim/reset) and CR/LF: nothing a VT parser would act on beyond
+    // styling, so the notice cannot move the cursor or retitle the window.
+    var i: usize = 0;
+    while (i < out.len) : (i += 1) {
+        const c = out[i];
+        if (c == 0x1b) {
+            try testing.expect(i + 1 < out.len and out[i + 1] == '[');
+            var j = i + 2;
+            while (j < out.len and (std.ascii.isDigit(out[j]) or out[j] == ';')) j += 1;
+            try testing.expect(j < out.len and out[j] == 'm');
+            i = j;
+        } else if (c < 0x20) {
+            try testing.expect(c == '\r' or c == '\n');
+        }
     }
 }
 

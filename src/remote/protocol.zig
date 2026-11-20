@@ -57,6 +57,7 @@
 //! | v1 | `relaunch_notice` | `RELAUNCH.notice` spliced into the replay stream | viewer injects it locally (races the child) |
 //! | v1 | `reply_correlation` | `req_id` on OPEN/ATTACH, echoed on every reply to them | client discards late replies by count (needs `open_failed`/`attach_failed`) |
 //! | v1 | `holder_lost` | `EXIT.lost` for a bound session whose host died; `RELAUNCH.fresh_shell` / `.replay_from` | the pane closes as if its program finished |
+//! | v1 | `session_taken` | `DETACHED{taken}` on a session's own channel when another viewer attaches it | the losing pane is not told (its stream just stops) |
 //!
 //! Two rules make that table load-bearing rather than decorative:
 //!
@@ -902,6 +903,21 @@ pub const capability = struct {
     /// one late reply per abandoned request (which is only sound when the agent
     /// answers every request, i.e. `open_failed`/`attach_failed`).
     pub const reply_correlation = "reply_correlation";
+
+    /// **A viewer whose session was taken is told so** (T1506). A session
+    /// streams to ONE viewer, and the newest ATTACH wins (T703). When a bound
+    /// session is attached by another connection, the agent sends the viewer
+    /// it was taken FROM a `DETACHED` (0x05) on the session's OWN channel,
+    /// with a `Detached{reason="taken"}` payload, and that pane says so and
+    /// stops sending input.
+    ///
+    /// Gated because the opcode already has a meaning to older clients: a
+    /// `DETACHED` used to be read as a connection-wide eviction, and a
+    /// connection carries every pane of a window, so sending it to an older
+    /// viewer would kill all of them. Without it the loser is not told (its
+    /// stream just stops); its stale input is still dropped by the agent,
+    /// which needs no capability because it changes nothing on the wire.
+    pub const session_taken = "session_taken";
 };
 
 /// The kind of pseudo-terminal a peer spawns its children on. Wire-visible
@@ -1128,6 +1144,12 @@ pub const Negotiated = struct {
     /// match a reply to the exact request it answers. False against either
     /// older peer: the client falls back to discarding late replies by count.
     reply_correlation: bool = false,
+
+    /// True iff BOTH peers advertised `capability.session_taken` (T1506) — the
+    /// agent tells a viewer its session was taken with a per-channel
+    /// `DETACHED{taken}`, and the viewer shows it in that pane only. False
+    /// against either older peer: the loser is not told.
+    session_taken: bool = false,
 };
 
 /// True iff `caps` contains the capability string `name`.
@@ -1184,6 +1206,8 @@ pub fn negotiate(local: Hello, remote: Hello) ProtocolError!Negotiated {
             hasCapability(remote.capabilities, capability.agent_handoff_rename),
         .reply_correlation = hasCapability(local.capabilities, capability.reply_correlation) and
             hasCapability(remote.capabilities, capability.reply_correlation),
+        .session_taken = hasCapability(local.capabilities, capability.session_taken) and
+            hasCapability(remote.capabilities, capability.session_taken),
     };
 }
 
@@ -1598,6 +1622,17 @@ pub const Exit = struct {
     /// command, else the recorded argv label — so the notice can name it. Null
     /// when the agent never recorded one.
     command: ?[]const u8 = null,
+};
+
+/// `DETACHED` (0x05) payload when it is sent on a SESSION channel (T1506): the
+/// session was attached by another viewer and no longer streams to this one.
+/// Sent only to a peer that negotiated `capability.session_taken`. A
+/// `DETACHED` on the control channel keeps its older connection-wide meaning,
+/// and carries no payload.
+pub const Detached = struct {
+    reason: Reason = .taken,
+
+    pub const Reason = enum { taken };
 };
 
 /// `META` (0x21). All fields optional; `listening_ports` powers auto-forward
@@ -3493,6 +3528,39 @@ test "T824 relaunch_notice negotiates on the intersection and the field is addit
     );
     defer legacy.deinit();
     try testing.expect(legacy.value.notice == null);
+}
+
+test "T1506 session_taken negotiates on the intersection; Detached round-trips and tolerates unknown fields" {
+    const alloc = testing.allocator;
+    const both = [_][]const u8{capability.session_taken};
+    const other = [_][]const u8{capability.rpc};
+
+    try testing.expect((try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+    )).session_taken);
+    // Either side older: false, so the agent never sends a per-channel DETACHED
+    // to a client that would read it as a connection-wide eviction.
+    try testing.expect(!(try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+        .{ .transfer_encoding = .raw, .capabilities = &other },
+    )).session_taken);
+    try testing.expect(!(try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &other },
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+    )).session_taken);
+
+    const enc = try encodeJson(alloc, Detached{});
+    defer alloc.free(enc);
+    var p = try parseJson(Detached, alloc, enc);
+    defer p.deinit();
+    try testing.expectEqual(Detached.Reason.taken, p.value.reason);
+
+    var later = try parseJson(Detached, alloc,
+        \\{"reason":"taken","by":"somebody"}
+    );
+    defer later.deinit();
+    try testing.expectEqual(Detached.Reason.taken, later.value.reason);
 }
 
 test "T1793 holder_lost negotiates on the intersection; EXIT.lost and the RELAUNCH fields are additive" {

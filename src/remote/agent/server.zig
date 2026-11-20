@@ -608,6 +608,9 @@ pub const Server = struct {
         // client can tell a late answer to a request it already gave up on from
         // the answer to the one it is waiting for (T3254).
         protocol.capability.reply_correlation,
+        // A viewer whose bound session another connection ATTACHes is told so
+        // with a per-channel `DETACHED{taken}` (T1506).
+        protocol.capability.session_taken,
     };
 
     pub const Options = struct {
@@ -1031,6 +1034,22 @@ pub const Server = struct {
             .command = command,
         }) catch {};
         self.markRosterDirty();
+    }
+
+    /// T1506: this connection's session on `channel` was just ATTACHed by another
+    /// connection. Frame `DETACHED{taken}` on that channel, but only to a peer
+    /// that negotiated `capability.session_taken`: an older client reads any
+    /// DETACHED as a connection-wide eviction and would drop every pane it
+    /// carries. Caller holds `store.mutex` (it runs inside the new holder's
+    /// `bindLocked`); `sendJson` only enqueues.
+    fn notifyTakenLocked(self: *Server, channel: u128) void {
+        const told = if (self.negotiated) |n| n.session_taken else |_| false;
+        if (!told) {
+            std.log.info("session on ch={x} taken by another viewer; previous viewer predates session_taken, not told", .{channel});
+            return;
+        }
+        std.log.info("session on ch={x} taken by another viewer; telling the previous one", .{channel});
+        self.sendJson(.detached, channel, protocol.Detached{}) catch {};
     }
 
     /// Push the session's changed foreground pid as `META{foreground_pid}` on
@@ -1516,6 +1535,19 @@ pub const Server = struct {
     /// bound + streaming, and record its channel for detach-on-disconnect. Caller
     /// holds `store.mutex`. Idempotent-ish: re-binding repoints the bridge.
     fn bindLocked(self: *Server, s: *session.Session) void {
+        // T1506: another connection is holding this session and is about to
+        // lose it (the newest ATTACH wins, T703). Tell it, on the session's own
+        // channel, so its pane can say so instead of looking alive forever. The
+        // previous holder is still a live Server here: `detachAll` and
+        // `handleDetach` clear `bridge_ctx` under this same store lock before a
+        // connection goes away. Lock order store -> write_mutex, as every
+        // bridge callback already takes it.
+        if (s.bridge_ctx) |prev_ctx| {
+            if (prev_ctx != @as(*anyopaque, self)) {
+                const prev: *Server = @ptrCast(@alignCast(prev_ctx));
+                prev.notifyTakenLocked(s.channel);
+            }
+        }
         s.bridge_ctx = self;
         s.bridge_data = bridgeData;
         s.bridge_exit = bridgeExit;
@@ -1831,6 +1863,12 @@ pub const Server = struct {
                 std.log.warn("RESIZE: session for ch={x} not alive", .{channel});
                 break :blk null;
             }
+            // T1506: a viewer that lost the session must not re-size it under
+            // the viewer that now holds it.
+            if (self.takenFromUsLocked(s)) {
+                std.log.info("RESIZE: session for ch={x} is held by another viewer; ignored", .{channel});
+                break :blk null;
+            }
             s.setGeometry(rz.rows, rz.cols);
             s.px_w = rz.px_w;
             s.px_h = rz.px_h;
@@ -1868,6 +1906,7 @@ pub const Server = struct {
         const child: ?session.Child = blk: {
             const s = self.store.table.getByChannel(channel) orelse break :blk null;
             if (!s.alive) break :blk null;
+            if (self.takenFromUsLocked(s)) break :blk null; // T1506: not ours any more
             s.setSignal(sig.name) catch {};
             break :blk s.child;
         };
@@ -3083,6 +3122,17 @@ pub const Server = struct {
 
     // --- Inbound DATA (client keystrokes) ------------------------------------
 
+    /// T1506 input fence: true when ANOTHER connection now holds `s`'s bridge —
+    /// i.e. this one was its viewer and lost it to a newer ATTACH. Input,
+    /// signals and resizes from here are then dropped, so a pane that lost its
+    /// session can no longer type into the shell somebody else is driving. An
+    /// UNBOUND session (`bridge_ctx == null`) is not fenced: nothing changes for
+    /// a write nobody is contesting. Caller holds `store.mutex`.
+    fn takenFromUsLocked(self: *Server, s: *const session.Session) bool {
+        const holder = s.bridge_ctx orelse return false;
+        return holder != @as(*anyopaque, self);
+    }
+
     fn handleInboundData(self: *Server, frame: protocol.Frame) void {
         const dp = protocol.DataPayload.decode(frame.payload) catch return;
 
@@ -3099,7 +3149,10 @@ pub const Server = struct {
         // lock→snapshot→unlock→IO discipline as `handleGetCwd`.)
         self.store.mutex.lock();
         const s = self.store.table.getByChannel(frame.channel);
-        const child: ?session.Child = if (s) |sess| (if (sess.alive) sess.child else null) else null;
+        const child: ?session.Child = if (s) |sess|
+            (if (sess.alive and !self.takenFromUsLocked(sess)) sess.child else null)
+        else
+            null;
         self.store.mutex.unlock();
 
         // A short/failed write is non-fatal here.
@@ -7421,6 +7474,159 @@ test "T703: a second viewer's ATTACH takes a still-bound session, silently — n
         try testing.expect(h.store.table.getByChannel(o.channel).?.bridge_ctx ==
             @as(?*anyopaque, h.server));
     }
+}
+
+/// T1506 fixture: viewer 1 (the harness client, advertising `v1_caps`) opens TWO
+/// sessions; viewer 2 (a second connection, modern caps) then ATTACHes the
+/// first. Returns the stolen session's channel and the untouched one's.
+const TakenFixture = struct {
+    stolen: u128,
+    kept: u128,
+
+    fn setUp(h: *Harness, rc: *ReConn, v1_caps: []const []const u8) !TakenFixture {
+        try h.server.start();
+        try h.client.handshakeCaps(v1_caps);
+        _ = try h.server.waitHandshake();
+        const o1 = try doOpen(h, .{ .rows = 24, .cols = 80 });
+        var id_buf: [32]u8 = o1.id;
+        const o2 = try doOpen(h, .{ .rows = 24, .cols = 80 });
+
+        try rc.server.start();
+        const v2_caps = [_][]const u8{ protocol.capability.close_session, protocol.capability.session_taken };
+        try rc.client.handshakeCaps(&v2_caps);
+        _ = try rc.server.waitHandshake();
+        try rc.client.sendControlJson(.attach, protocol.control_channel, protocol.Attach{
+            .session_id = id_buf[0..],
+            .rows = 24,
+            .cols = 80,
+        });
+        const af = try rc.client.waitControl(.attached);
+        var ap = try protocol.parseJson(protocol.Attached, h.alloc, af.payload);
+        defer ap.deinit();
+        try testing.expectEqual(protocol.Attached.AttachStatus.alive, ap.value.status);
+        return .{ .stolen = o1.channel, .kept = o2.channel };
+    }
+};
+
+test "T1506: the viewer a session is taken from gets DETACHED{taken} on that session's channel only" {
+    const alloc = testing.allocator;
+    var clock: TestClock = .{ .ms = 1000 };
+    var fc1: FakeChild = .{ .alloc = alloc };
+    defer fc1.deinit();
+    var fc2: FakeChild = .{ .alloc = alloc };
+    defer fc2.deinit();
+    var kids = [_]*FakeChild{ &fc1, &fc2 };
+    var sp: FakeSpawner = .{ .children = &kids };
+    var prng = std.Random.DefaultPrng.init(15061);
+
+    var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
+    defer h.deinit();
+    var rc = try ReConn.init(&h, .raw);
+    defer rc.deinit();
+    const caps = [_][]const u8{ protocol.capability.close_session, protocol.capability.session_taken };
+    const fx = try TakenFixture.setUp(&h, &rc, &caps);
+
+    // Viewer 1 is told, on the stolen session's own channel — never the
+    // control channel, which an older client reads as "this whole connection
+    // is evicted" and would take every other pane down with it.
+    const d = try h.client.waitControl(.detached);
+    try testing.expectEqual(fx.stolen, d.channel);
+    try testing.expect(d.channel != protocol.control_channel);
+    var dp = try protocol.parseJson(protocol.Detached, alloc, d.payload);
+    defer dp.deinit();
+    try testing.expectEqual(protocol.Detached.Reason.taken, dp.value.reason);
+
+    // Viewer 2 attaching the session it already holds tells nobody anything.
+    try h.client.sendControlRaw(.ping, protocol.control_channel, "after-steal");
+    _ = try h.client.waitControl(.pong);
+}
+
+test "T1506: a viewer that predates session_taken is not sent DETACHED when its session is taken" {
+    const alloc = testing.allocator;
+    var clock: TestClock = .{ .ms = 1000 };
+    var fc1: FakeChild = .{ .alloc = alloc };
+    defer fc1.deinit();
+    var fc2: FakeChild = .{ .alloc = alloc };
+    defer fc2.deinit();
+    var kids = [_]*FakeChild{ &fc1, &fc2 };
+    var sp: FakeSpawner = .{ .children = &kids };
+    var prng = std.Random.DefaultPrng.init(15062);
+
+    var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
+    defer h.deinit();
+    var rc = try ReConn.init(&h, .raw);
+    defer rc.deinit();
+    // The old app: no session_taken. A DETACHED would be read as a
+    // connection-wide eviction and kill the OTHER pane (fx.kept) as well.
+    const old_caps = [_][]const u8{protocol.capability.close_session};
+    _ = try TakenFixture.setUp(&h, &rc, &old_caps);
+
+    // The bind enqueued anything it was going to send before viewer 2 got its
+    // ATTACHED, so a PONG reaching viewer 1 with no DETACHED ahead of it means
+    // none was sent.
+    try h.client.sendControlRaw(.ping, protocol.control_channel, "old-client");
+    while (true) {
+        const f = (try h.client.nextControl()) orelse return error.Eof;
+        try testing.expect(f.type != .detached);
+        if (f.type == .pong) break;
+    }
+}
+
+test "T1506: input, signals and resizes from the viewer a session was taken from never reach it" {
+    const alloc = testing.allocator;
+    var clock: TestClock = .{ .ms = 1000 };
+    var fc1: FakeChild = .{ .alloc = alloc };
+    defer fc1.deinit();
+    var fc2: FakeChild = .{ .alloc = alloc };
+    defer fc2.deinit();
+    var kids = [_]*FakeChild{ &fc1, &fc2 };
+    var sp: FakeSpawner = .{ .children = &kids };
+    var prng = std.Random.DefaultPrng.init(15063);
+
+    var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
+    defer h.deinit();
+    var rc = try ReConn.init(&h, .raw);
+    defer rc.deinit();
+    // The fence needs no capability (it changes nothing on the wire), so it
+    // holds for the OLD client too — the case that is never told.
+    const old_caps = [_][]const u8{protocol.capability.close_session};
+    const fx = try TakenFixture.setUp(&h, &rc, &old_caps);
+
+    // Keystrokes into the stolen session, then a marker into the session viewer
+    // 1 still holds, on the same data lane: one reader thread handles them in
+    // order, so once the marker lands the stale write has been decided.
+    try h.client.sendDataInput(fx.stolen, 0, "stale-keys");
+    try h.client.sendDataInput(fx.kept, 0, "marker");
+    const P = struct {
+        fn sawMarker(c: *FakeChild, a: Allocator) !bool {
+            const got = try c.inputCopy(a);
+            defer a.free(got);
+            return std.mem.eql(u8, got, "marker");
+        }
+        fn sawNew(c: *FakeChild, a: Allocator) !bool {
+            const got = try c.inputCopy(a);
+            defer a.free(got);
+            return std.mem.eql(u8, got, "new-keys");
+        }
+    };
+    try testing.expect(waitUntil("the kept session to see the marker", P.sawMarker, .{ &fc2, alloc }));
+    {
+        const got = try fc1.inputCopy(alloc);
+        defer alloc.free(got);
+        try testing.expectEqual(@as(usize, 0), got.len); // "stale-keys" never landed
+    }
+
+    // RESIZE and SIGNAL ride the control lane; a PING after them proves both
+    // were handled.
+    try h.client.sendControlJson(.resize, fx.stolen, protocol.Resize{ .rows = 51, .cols = 133 });
+    try h.client.sendControlJson(.signal, fx.stolen, protocol.Signal{ .name = "INT" });
+    try h.client.sendControlRaw(.ping, protocol.control_channel, "fence-sync");
+    _ = try h.client.waitControl(.pong);
+    if (fc1.lastResize()) |r| try testing.expect(!(r[0] == 51 and r[1] == 133));
+
+    // The viewer that holds it now types straight through.
+    try rc.client.sendDataInput(fx.stolen, 0, "new-keys");
+    try testing.expect(waitUntil("the new holder's input to land", P.sawNew, .{ &fc1, alloc }));
 }
 
 test "P1: explicit DETACH orphans the session (kept alive, unbound, not streaming)" {

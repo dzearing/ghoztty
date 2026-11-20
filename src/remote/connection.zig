@@ -1376,6 +1376,11 @@ pub const Connection = struct {
         // next pane's request (T3254). An agent that never advertises it gets
         // no ids (`req_id` is elided) and we discard late replies by count.
         protocol.capability.reply_correlation,
+        // We read a `DETACHED` on a SESSION channel as "this one pane's session
+        // was taken by another viewer" and say so in that pane only (T1506).
+        // An agent that never advertises it never sends one, and an agent that
+        // does sends it only to a client that advertised this.
+        protocol.capability.session_taken,
     };
 
     /// `client_capabilities` for a connection to THIS machine's own agent (the
@@ -3068,6 +3073,12 @@ pub const Connection = struct {
         if (self.negotiated) |n| return n.reply_correlation else |_| return false;
     }
 
+    /// True iff both peers advertised `capability.session_taken` (T1506): a
+    /// `DETACHED` on a session channel means that one pane lost its session.
+    fn sessionTakenNegotiated(self: *Connection) bool {
+        if (self.negotiated) |n| return n.session_taken else |_| return false;
+    }
+
     /// A fresh `req_id` for an OPEN/ATTACH, or null when the agent would not
     /// echo it (then the request goes out without one, byte-identical to a
     /// pre-T3254 request).
@@ -4107,7 +4118,25 @@ pub const Connection = struct {
                 }
             },
             .detached => {
-                // Server-initiated eviction / steal (§5.3): terminal DEAD.
+                // T1506: on a SESSION channel it means one pane's session was
+                // taken by another viewer, and only that pane is told. The
+                // agent sends it there only when we negotiated `session_taken`;
+                // the check is ours as well, so a peer that sends one anyway
+                // cannot make us misread it. Any payload is accepted: `taken`
+                // is the only reason today and a newer one still means "this
+                // pane no longer has its session".
+                if (frame.channel != protocol.control_channel) {
+                    if (!self.sessionTakenNegotiated()) return;
+                    const Taken = struct {
+                        fn apply(_: @This(), ch: *ring.Channel) void {
+                            ch.signalTaken();
+                        }
+                    };
+                    _ = self.channels.withChannel(frame.channel, Taken{}, Taken.apply);
+                    return;
+                }
+                // Server-initiated eviction of the whole connection (§5.3):
+                // terminal DEAD.
                 self.evicted.store(true, .monotonic);
                 self.withLink(LinkState.onSessionGone);
             },
@@ -6285,6 +6314,9 @@ const LifecycleAgent = struct {
     // models an agent that receives the request and never answers — the shape the
     // client saw for the whole life of the T96 defect.
     advertise_close_session: bool = true,
+    /// T1506: also advertise `session_taken`, so a per-channel DETACHED means
+    /// "this pane's session was taken". Off by default: an older agent.
+    advertise_session_taken: bool = false,
     silent_close_session: bool = false,
     close_session_miss_id: []const u8 = "ffffffffffffffffffffffffffffffff",
     saw_close_session: std.atomic.Value(bool) = .{ .raw = false },
@@ -6333,7 +6365,11 @@ const LifecycleAgent = struct {
 
     fn body(self: *LifecycleAgent) !void {
         const caps = [_][]const u8{protocol.capability.close_session};
-        _ = try self.ctrl.handshakeCaps(if (self.advertise_close_session) &caps else &.{});
+        const caps_taken = [_][]const u8{ protocol.capability.close_session, protocol.capability.session_taken };
+        const taken_only = [_][]const u8{protocol.capability.session_taken};
+        _ = try self.ctrl.handshakeCaps(if (self.advertise_session_taken)
+            (if (self.advertise_close_session) &caps_taken else &taken_only)
+        else if (self.advertise_close_session) &caps else &.{});
         while (true) {
             const frame = (try self.ctrl.nextFrame()) orelse return; // EOF: done
             switch (frame.type) {
@@ -6668,6 +6704,75 @@ test "EXIT frame: signals the pane's ring so the consumer can close the pane" {
     // exactly what the Remote backend's drain coerces into `.child_exited`.
     try testing.expectEqual(@as(i64, 137), pane.ring.exit_code);
     try testing.expectEqual(@as(u64, 4242), pane.ring.runtime_ms);
+
+    try testing.expect(a.err == null);
+    h.conn.closeChannel(pane);
+}
+
+test "T1506: a DETACHED on a pane's channel marks only that pane taken; the connection stays up" {
+    const alloc = testing.allocator;
+    const h = try LifecycleHarness.create(alloc);
+    defer h.destroy();
+    const a = h.configure();
+    a.unique_sessions = true;
+    a.advertise_session_taken = true;
+    try h.start();
+
+    const taken = try h.conn.openChannel(.{ .rows = 24, .cols = 80, .command = "bash" });
+    const other = try h.conn.openChannel(.{ .rows = 24, .cols = 80, .command = "bash" });
+    try testing.expect(!taken.ring.isTaken());
+
+    try h.ctrl_agent.sendJson(.detached, taken.id, protocol.Detached{});
+    const RingWait = struct {
+        ring: *ring.Channel,
+        fn done(self: *@This()) bool {
+            return self.ring.isTaken();
+        }
+    };
+    var rw: RingWait = .{ .ring = taken.ring };
+    try spinUntil(RingWait, &rw, RingWait.done);
+
+    // Only that pane: the other pane on the same connection is untouched, and
+    // the connection was NOT evicted (the pre-T1506 reading of any DETACHED).
+    try testing.expect(!other.ring.isTaken());
+    try testing.expect(!h.conn.evicted.load(.monotonic));
+    // The other pane still streams.
+    try agentSendData(&h.data_agent, other.id, 0, "still here");
+    var got: std.ArrayList(u8) = .empty;
+    defer got.deinit(alloc);
+    try drainChannel(other.ring, &got, alloc, "still here".len);
+    try testing.expectEqualStrings("still here", got.items);
+
+    try testing.expect(a.err == null);
+    h.conn.closeChannel(taken);
+    h.conn.closeChannel(other);
+}
+
+test "T1506: without session_taken negotiated, a per-channel DETACHED marks no pane taken" {
+    // Skew: an agent that never advertised the capability has no business
+    // sending one; if it does, the client does not act on a meaning that was
+    // never agreed.
+    const alloc = testing.allocator;
+    const h = try LifecycleHarness.create(alloc);
+    defer h.destroy();
+    const a = h.configure();
+    a.advertise_session_taken = false;
+    try h.start();
+
+    const pane = try h.conn.openChannel(.{ .rows = 24, .cols = 80, .command = "bash" });
+    try h.ctrl_agent.sendJson(.detached, pane.id, protocol.Detached{});
+    // Then an EXIT on the same control lane: once it lands, the DETACHED
+    // before it has been handled.
+    try h.ctrl_agent.sendJson(.exit, pane.id, protocol.Exit{ .code = 0 });
+    const RingWait = struct {
+        ring: *ring.Channel,
+        fn done(self: *@This()) bool {
+            return self.ring.isExited();
+        }
+    };
+    var rw: RingWait = .{ .ring = pane.ring };
+    try spinUntil(RingWait, &rw, RingWait.done);
+    try testing.expect(!pane.ring.isTaken());
 
     try testing.expect(a.err == null);
     h.conn.closeChannel(pane);

@@ -1,16 +1,13 @@
 {
     "guard":  "thread-join",
     "script":  "test/win32/thread-join-audit.ps1",
-    "generated":  "2026-11-19T16:01:12-08:00",
-    "commit":  "799add52b",
+    "generated":  "2026-11-19T16:36:51-08:00",
+    "commit":  "97dad3177",
     "uncommitted":  [
                         "src/remote/agent/server.zig",
+                        "src/remote/connection.zig",
                         "src/remote/inbound_ring.zig",
-                        "src/remote/pipe_stream.zig",
-                        "src/terminal/search/Thread.zig",
-                        "test/win32/lib/ThreadJoinAudit.ps1",
-                        "test/win32/thread-join-audit.baseline.json",
-                        "test/win32/thread-join-audit.ps1"
+                        "src/remote/protocol.zig"
                     ],
     "files":  {
                   "src/datastruct/array_list_collection.zig":  "f14f6cc26a11eabdd35a36976dce1b3702a2c7f4771b60e339afd1015d4e58dd",
@@ -56,7 +53,7 @@
                   "src/remote/agent/revoke_watch.zig":  "f9fcde81a20c06c12cb8f8b7876386ee8aa1055743cd78ec840ec86c8d207b90",
                   "src/remote/agent/revoked_credential.zig":  "779f0bd15e7be3efe614e8152c253add3b6c6e3a9f365c69974da626f86f3b68",
                   "src/remote/agent/ring_snapshot.zig":  "43d927ca2996eeecafac57a50952fc4de4c0fb5b07bf1368d10eecd4a05f4234",
-                  "src/remote/agent/server.zig":  "47e953f10c327fc381d7044df21c3622c11386cfa1a79a7a06a4a23855158e90",
+                  "src/remote/agent/server.zig":  "6a7d3875cb23e955c0f9b25e973d5c95fc1a9209976feb11e44c7c6f1b80c533",
                   "src/remote/agent/session.zig":  "cc987315e33593e6efb528499f62b2a391b74336f1d4b6710a46402d0e9b3adc",
                   "src/remote/agent/session_meta.zig":  "e49d5f38c06cea3ca899917c134b8ff70aa39cb8123083450c4852d2e6b39891",
                   "src/remote/agent/sharing.zig":  "4ecfaef4c8e7cf9428531f82beee5b28bdb604ce3385507ddc858edf781ff29a",
@@ -67,12 +64,12 @@
                   "src/remote/agent_lineage.zig":  "277bca4d33eb667f06fc7676e7c933d74b7a50911fadf6266fae5f8cc69f40d7",
                   "src/remote/agent_smoke.zig":  "d3e386356c7201fba0edf48eab76d88205556e8ec8c855bfc23c049affd3a052",
                   "src/remote/client_mux.zig":  "8c6148780c71545ba246d6eca41b650bcba4415b215f2ccea25272ba8366bbb4",
-                  "src/remote/connection.zig":  "28577c401d6c72ba49afb53a56da328bd149f8bfc08f005923503cc76aa1d4fb",
+                  "src/remote/connection.zig":  "8f6a13430431d6f7947a4bbe2bec6b747d40bf5c4b29b0b5de1fea1b22780c49",
                   "src/remote/google_oauth.zig":  "40138a3e0293322de8ee722b7aa0e5688eb4ac68332971c5d624f1d8471c5510",
                   "src/remote/http_client.zig":  "aa3dc49d2baa17240a59b1b51c1fc7d08b81fe8652ab7650bbdbcd59c3dff225",
-                  "src/remote/inbound_ring.zig":  "bcefeba18448d822cbbeab3df6dfcaf2b701777cd271fc1d5787a59800ab9caf",
-                  "src/remote/pipe_stream.zig":  "8567c09a0a231520224bd07e2dea247094273ec7a584cdc4cda9c7dbbbc7b1db",
-                  "src/remote/protocol.zig":  "3f21cf8510519a923e9ea3d1c97798984a9e0d8a449e51b7fd0646c1fc135ad1",
+                  "src/remote/inbound_ring.zig":  "6ca936b1aac584e0c247c90df0757027bc91ce33335e71982240d146ebad1f52",
+                  "src/remote/pipe_stream.zig":  "6e75c5df447ba72acc87d0ae4110b86b9a1a782e382e10afb93ef44bb6c196f0",
+                  "src/remote/protocol.zig":  "6072c547e6cfac7d4c64179218dbadd1eddbc2cda0913544f2fe864b5eac6344",
                   "src/remote/pty_job_name.zig":  "613abf1c9722bb3e78ff7e3221f5995373a5b0c30df36709b75740fcd4c969df",
                   "src/remote/relay_account.zig":  "0073c9a5f825d624e6976c7847721c8bae7806427199a5065214451fd609a234",
                   "src/remote/relay_dial.zig":  "4427ea9f8bef837116c73264ed6c76f67ac0f99e624dc393322989ba2328e786",
@@ -98,10 +95,10 @@
                   "src/terminal/search/pagelist.zig":  "05d0138c5d1691ae728fc79d449d8b4bd0ed193802fdc2481fecca9cdc9567c6",
                   "src/terminal/search/screen.zig":  "14d0453f1e4f36f02d33941fcb0c4ebca1a526894a0ba469157dd69063399cf4",
                   "src/terminal/search/sliding_window.zig":  "a7e662a3d9cf69fe070d51e8fae8f014eae75ed745274cd50c7c3f16e6e1495e",
-                  "src/terminal/search/Thread.zig":  "0b85e929d75d88144176bda871131f4e594dfe17d99ee37970817910de0f1315",
+                  "src/terminal/search/Thread.zig":  "de61547e097e9b7ccd5a75c99cbfcc03696244570c4fbaa0deb23dac8194d61a",
                   "src/terminal/search/viewport.zig":  "80f561b510e7c554637fa539a0004f5d55ae15fc0b95a7258177bd454d9e0ff0",
-                  "test/win32/lib/ThreadJoinAudit.ps1":  "295f6547e257f9a009409d06910b8c74a9bf300101601f7b16bc1c92ea8a9b17",
-                  "test/win32/thread-join-audit.baseline.json":  "cd733ef5fd2b7bcdc17f9b2f7cf212ec36bcf364665780c8bcae06f3b3f6c302",
-                  "test/win32/thread-join-audit.ps1":  "e46a6d22e67ac938984fa9ebcf60bb9dcdecb96efeedd55a553bc7f3b18c945b"
+                  "test/win32/lib/ThreadJoinAudit.ps1":  "5a25a369563fc6904e8155828c1850b403062b7d955ae7a4cdc4ca340232f034",
+                  "test/win32/thread-join-audit.baseline.json":  "e3b1938a51c75f282f89cb2bdef44dbf647d58a3150f68453b6f0da41242d26a",
+                  "test/win32/thread-join-audit.ps1":  "636191df9344abe883a41479504bef2f67fae58e0fff5e609c3050ca793ce219"
               }
 }

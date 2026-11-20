@@ -299,6 +299,13 @@ pub const Channel = struct {
     lost_command_buf: [max_lost_command_len]u8 = undefined,
     lost_command_len: usize = 0,
 
+    /// Set once the agent says another viewer ATTACHed this session and it no
+    /// longer streams here (`DETACHED{taken}` on this channel, T1506). Written by
+    /// the control reader (`signalTaken`), read by the pane's IO thread during
+    /// its drain, which then says so in the pane and stops sending input. Sticky:
+    /// a pane that wants the session back attaches again as a new pane.
+    taken: Atomic(bool) = .init(false),
+
     /// The session's live FOREGROUND pid, pushed by the agent as
     /// `META{foreground_pid}` whenever the pty's foreground process group
     /// changes (wp3 complete-semantics: `tcgetpgrp` parity with local Exec).
@@ -484,6 +491,18 @@ pub const Channel = struct {
         self.lost_command_len = n;
         self.exited.store(true, .release);
         self.waker.wake();
+    }
+
+    /// Producer entry point for `DETACHED{taken}` (T1506): another viewer took
+    /// this session. Wakes the consumer so its next drain observes `isTaken`.
+    pub fn signalTaken(self: *Channel) void {
+        self.taken.store(true, .release);
+        self.waker.wake();
+    }
+
+    /// Consumer entry point: has the agent said another viewer took this session?
+    pub fn isTaken(self: *const Channel) bool {
+        return self.taken.load(.acquire);
     }
 
     /// Consumer entry point, valid once `isExited` is true: was it a lost host?
