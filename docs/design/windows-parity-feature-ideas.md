@@ -777,3 +777,13 @@ as the digest that showed them.
 - Settings say when a change takes effect, and offer the restart (next-launch settings are marked as you change them, with Restart now that brings panes back)
 - A busy PC never makes relaunch fail (new angle on "a pane that cannot start shows the way out": session waits stretch under load and retry once before any pane shows an error)
 - Many panes restore visible-first (with many kept panes, the on-screen ones come back first and the rest follow)
+
+## 2026-11-21
+
+- Copy everything a bug report needs (one "Copy details" button in About and Help: version, session service build, Windows version, scales, GPU, pane and session counts)
+- Choose which sessions a restart ends (new angle on "quitting says what keeps running": Restart Ghoztty and Background Sessions lists running shells with a tick box each)
+- Jump to a hero tile by number (holding Alt numbers the preview cards; Alt+number brings that pane forward)
+- A window goes back to its screen when you plug it back in (windows forced off a disconnected monitor return to it, same place and size, when it reconnects)
+- An update puts every window back where it was (after the in-app update restart, each window reopens on the same monitor, size and maximized state)
+- A settings change lands in one smooth frame (a font or theme change repaints each window once, no flash, however many panes)
+- Closing a picture or document never freezes the window (a viewer still reading a big file is released in the background)
