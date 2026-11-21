@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-20T23:18:31-08:00",
-    "commit":  "580556f1c",
+    "generated":  "2026-11-20T23:24:06-08:00",
+    "commit":  "57330663a",
     "uncommitted":  [
 
                     ],
@@ -1178,7 +1178,7 @@
                   "test/win32/build-cache.ps1":  "c72878df10c33c065ebc87b66eaaf8fb3ecf9da1d1a43171dcc6ccf989dc1782",
                   "test/win32/build-fresh-guard.ps1":  "5215065abfc02691db5643057d1d897acac947d64c18649b4ec9105dee1b9d32",
                   "test/win32/build-locked-artifact.ps1":  "e42a71b9730f428c28d7cc844a54d73d5730f696a9a3e315dc5cffaafe0869f5",
-                  "test/win32/build-mode-guard.ps1":  "c86f43d4a66a2686efefe1ef3d18faf942668270a6bfc4e3b78eeca264f11942",
+                  "test/win32/build-mode-guard.ps1":  "4bc9296e96ee525c7e66050cc2bfb720925ca940d110dfa58b5bd780572ea75c",
                   "test/win32/caller-anchor.ps1":  "6c5ce12b4624feb742eba828395db41c9959e3875db60a481e5ce4c92584a299",
                   "test/win32/caption-bar.ps1":  "aab923aa402dd8afa921a6c7b982f6989510a0b4b50305ce85fc20b7a2ebd6e1",
                   "test/win32/caption-click-modal.ps1":  "e66ad48137be5cf233ca5e8b2087bb47d6a40782556b2d5bbda642e62f70da3c",
@@ -1255,7 +1255,7 @@
                   "test/win32/deny-escape-damage.ps1":  "2fc4374ce0468d7f7274c10218e38a1ec1c5ec2634fdb231bf2b8b290e9a7e29",
                   "test/win32/deny-git-autostash.ps1":  "625dfd8e4a308dc01902adb6c31b80b0a60a47a1b2e230a9385eaaecd40846e0",
                   "test/win32/deny-sh-from-powershell.ps1":  "345a909a59c95edc61dc97247f3d94784431cae1203ca76951f5dbe755e25a8e",
-                  "test/win32/desktop-launch-audit.ps1":  "8f1bc55e5aed5b5d8d6e31d06d7d392a3042e58b105e4a8f46ae94db39577810",
+                  "test/win32/desktop-launch-audit.ps1":  "3d0622472ecc931c9a6244beba14b488348284c6ee25dfc9d6357a4db8ff903b",
                   "test/win32/desk-variant.ps1":  "7c119c32b230bc259617070c20518cfcd522d2fc1877e310056cbd5c33bc8776",
                   "test/win32/dip-rounding-audit.ps1":  "8a3979da25d92635db2d67c480af57699a7a61c55331b19d8e56a3fab18d5f5b",
                   "test/win32/divergence-inventory.ps1":  "204e43a76176ef9d5536b00eff27c9af89be83bf0ea4032a9c2eb11a59eecc3b",
@@ -1368,7 +1368,7 @@
                   "test/win32/ipc-under-load.ps1":  "0a636d56ea711bf3eeffdd2c414f5aea7603a129a10a497ffa55ac69e9c477c0",
                   "test/win32/ipc-version.ps1":  "ad301f96fa4ac911b1a2dc970269bc25735c4536a06f32070d2a237c8f5603b3",
                   "test/win32/ipc-when-idle.ps1":  "9f4f4e064df51079fdd4dd86dfb8afad9b4f639e43f91f7bd557f75dc5fb50d6",
-                  "test/win32/isolation-meta.ps1":  "cb7688ef19b8663b15f80479ff8f220b0ddc09f83670420f6817cc3d85d38ef5",
+                  "test/win32/isolation-meta.ps1":  "fed158ddddeec5a51f8eb3597dbeae80d8331b8290388a43f2632dec74ecc497",
                   "test/win32/job-escape-startup.ps1":  "5d14fe7f499bbbe6d87ed6d375d4d43abc8e22e2eed9e2e6a6c32c3de6dfc573",
                   "test/win32/job-teardown.ps1":  "ae13f7bf783ce14907d159c85b5b416a2f2dc028d78cbaaabb0fc3b69598eb94",
                   "test/win32/kb-actions.ps1":  "2d1e2ccfc21d5c05fa2eeb78509f724d63dd9a2d83bdaab1ce24bd4a6d0f3c46",
