@@ -407,6 +407,21 @@ $tp = (Get-Command -Name (Join-Path $Repo 'scripts\daily-publish.ps1')).Paramete
 Assert 'P9 the threshold is a named parameter of the publish script' ($null -ne $tp)
 AssertMatch 'P9 whose default is written down with its reasoning' '\[int\]\$StrandedThreshold = \d+' ([IO.File]::ReadAllText($publishDecider))
 
+# ---- LG. which log a run writes (T1726) ----------------------------------
+#
+# Every harness that drives the decider points -WatermarkPath or -RequestPath at
+# a fixture, and before T1726 all of them appended to the REAL publish log - a
+# postmortem read 'REQUESTED: T1: the installer dies silently' as history.
+"== LG. the log path =="
+$lgTemp = 'C:\t'
+$lgReal = Join-Path $lgTemp 'ghoztty-daily-publish.log'
+AssertEq 'LG1 a real run (nothing overridden) logs to the real log' $lgReal (Resolve-DailyPublishLog -Bound @{} -TempDir $lgTemp)
+AssertEq 'LG2 a fixture watermark logs beside it' 'C:\fx\wm.log' (Resolve-DailyPublishLog -Bound @{ WatermarkPath = 1 } -WatermarkPath 'C:\fx\wm' -TempDir $lgTemp)
+AssertEq 'LG3 a fixture request alone logs beside it' 'C:\fx\req.log' (Resolve-DailyPublishLog -Bound @{ RequestPath = 1 } -RequestPath 'C:\fx\req' -TempDir $lgTemp)
+AssertEq 'LG4 GHOZTTY_DAILY_PUBLISH_LOG beats the fixture rule' 'C:\e.log' (Resolve-DailyPublishLog -EnvLog 'C:\e.log' -Bound @{ RequestPath = 1 } -RequestPath 'C:\fx\req' -TempDir $lgTemp)
+AssertEq 'LG5 an explicit -LogPath beats everything' 'C:\l.log' (Resolve-DailyPublishLog -LogPath 'C:\l.log' -EnvLog 'C:\e.log' -Bound @{ WatermarkPath = 1 } -WatermarkPath 'C:\fx\wm' -TempDir $lgTemp)
+AssertEq 'LG6 a default-valued watermark that was not passed is not a fixture' $lgReal (Resolve-DailyPublishLog -Bound @{} -WatermarkPath 'C:\real\daily-publish' -TempDir $lgTemp)
+
 # ---- live sections -------------------------------------------------------
 #
 # A sandbox with a fake `docker`/`gh` ahead of the real ones on PATH, and a
@@ -929,6 +944,31 @@ exit 0
     $u12 = Invoke-Decider -Extra @('-Status', '-ManualChecksPath', $mc) -DockerCode 0 -GhCode 0
     AssertMatch 'U12 -Status now reads the line as passed' "MANUAL CHECK OK: ime passed for the $([regex]::Escape($uLine)) line on 2026-09-01" $u12.Text
     Assert 'U12 and owes nothing' ($u12.Text -notmatch 'MANUAL CHECK OWED')
+
+    # LG7/LG8 score the whole harness run from both sides: every decider run
+    # above passed this sandbox's watermark, so the fixture log holds their
+    # lines and the real log holds none naming the sandbox. A path, not a line
+    # count: lane a's real publish runs keep writing the real log meanwhile.
+    "== LG. live: this run's lines stayed out of the real log =="
+    # A reason no real run could ever log, so its absence from the real log is
+    # evidence and not luck (the pre-T1726 decider wrote it there verbatim).
+    $lgTag = 'T1726-fixture-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+    $null = Invoke-Decider -Extra @('-Request', '-Reason', $lgTag) -DockerCode 0 -GhCode 0
+    Remove-Item -LiteralPath $requestFile -Force -ErrorAction SilentlyContinue
+    $lgFixtureLog = $watermark + '.log'
+    Assert 'LG7a the fixture log carries the tagged request line' (
+        (Test-Path -LiteralPath $lgFixtureLog) -and ((Get-Content -LiteralPath $lgFixtureLog -Raw).Contains($lgTag)))
+    Assert 'LG7 the fixture log beside the sandbox watermark holds this run''s lines' (
+        (Test-Path -LiteralPath $lgFixtureLog) -and ((Get-Content -LiteralPath $lgFixtureLog -Raw) -match 'NOT DUE|SKIP|PUBLISH'))
+    $lgRealLog = Join-Path $env:TEMP 'ghoztty-daily-publish.log'
+    $lgRealText = ''
+    if (Test-Path -LiteralPath $lgRealLog) {
+        $fs = [IO.File]::Open($lgRealLog, 'Open', 'Read', 'ReadWrite')
+        try { $lgRealText = (New-Object IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
+    }
+    Assert "LG8 and the real $lgRealLog names nothing from this sandbox" (
+        $lgRealText.IndexOf($lgTag, [StringComparison]::Ordinal) -lt 0 -and
+        $lgRealText.IndexOf((Split-Path -Leaf $sandbox), [StringComparison]::OrdinalIgnoreCase) -lt 0)
     Complete-TestBody
 } finally {
     Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue

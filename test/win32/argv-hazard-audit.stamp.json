@@ -1,10 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-21T13:45:17-08:00",
-    "commit":  "94b3bae09",
+    "generated":  "2026-11-21T14:01:10-08:00",
+    "commit":  "a03d8ff6e",
     "uncommitted":  [
-
+                        "scripts/daily-publish.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "4b958ede38c0911c4945146f0a52810ebbf8c01d44ac8a60532f2eb77f8fd0af",
@@ -31,7 +31,7 @@
                   "scripts/cpu-sample.ps1":  "83495b09a4afab4570f38760eab14c6e56d7ea6d8995401dd7ce59688bbc6d23",
                   "scripts/crash-catch.ps1":  "c8515ad0ae67ec2fc457f54a7477f5afb5fc28281906f261d631ad0a640ca4aa",
                   "scripts/crash-databreak.ps1":  "ec45063075848cb962ca00262960aec8380bd5de3f0d9f9bc9f1d25c109e3b0d",
-                  "scripts/daily-publish.ps1":  "cd2b62fefc1e6788539046edde27e67ee332400c458b61cdd54b7c8b77436d8b",
+                  "scripts/daily-publish.ps1":  "bc0b792e3c0c6f7d99508d87e02811c151365c9c464e43cae2f050bf5b258fd2",
                   "scripts/deliver-audit.ps1":  "5598626fd46a8b8da014508f9d26c8f423cebddb4c741aec4e5fbe6d882149ce",
                   "scripts/deliver-windows-build.ps1":  "921866556dc1bd62bd8f85a3b413ff3f3557a3c70214f02d3b98004dc2851f2c",
                   "scripts/delivery-manifest.ps1":  "e1d865b58a35c5d226f2078a8e0d4e274d75fbbb5adc2f5aa2639382ae71de60",

@@ -241,7 +241,15 @@ param(
     # box this loop does not have). Empty = the repo's
     # docs\design\windows-parity-manual-checks.json. What it says is OWED is
     # named in the publish log and in -Status; it never blocks a publish.
-    [string]$ManualChecksPath = ''
+    [string]$ManualChecksPath = '',
+    # T1726. Where this run's log lines go. Empty = $env:GHOZTTY_DAILY_PUBLISH_LOG,
+    # else - when -WatermarkPath or -RequestPath points at a fixture - a file
+    # beside that fixture, else the real %TEMP%\ghoztty-daily-publish.log. Every
+    # harness that drives this script passes a fixture watermark or request
+    # path, and before this they all appended to the real log: a postmortem read
+    # 'REQUESTED: T1: the installer dies silently' and 'REQUEST FAILED ...
+    # gate-negatives-*\not-a-dir\req' as the loop's own history.
+    [string]$LogPath = ''
 )
 
 $ErrorActionPreference = 'Continue'
@@ -511,6 +519,19 @@ function Read-PublishRequest {
     return [pscustomobject]@{ Requested = $true; At = ''; Reason = ($t -split "`n")[0].Trim(); Commit = '' }
 }
 
+# T1726: which file this run logs to. Pure, so the acceptance test scores it.
+function Resolve-DailyPublishLog {
+    param([string]$LogPath, [string]$EnvLog, $Bound, [string]$WatermarkPath,
+        [string]$RequestPath, [string]$TempDir)
+    if ($LogPath) { return $LogPath }
+    if ($EnvLog) { return $EnvLog }
+    # A fixture watermark or request is somebody testing this script: its log
+    # belongs beside the fixture, never in the box's real supervision log.
+    if ($Bound -and $Bound.ContainsKey('WatermarkPath') -and $WatermarkPath) { return ($WatermarkPath + '.log') }
+    if ($Bound -and $Bound.ContainsKey('RequestPath') -and $RequestPath) { return ($RequestPath + '.log') }
+    return (Join-Path $TempDir 'ghoztty-daily-publish.log')
+}
+
 # Dot-sourced by the acceptance test for the functions above; running it that
 # way must publish nothing.
 if ($env:GHOZTTY_DAILY_PUBLISH_DOTSOURCE -eq '1') { return }
@@ -521,10 +542,13 @@ if (-not $PublishScript) {
     $PublishScript = Join-Path $PSScriptRoot 'publish-windows-tag.ps1'
 }
 
-$log = Join-Path $env:TEMP 'ghoztty-daily-publish.log'
+$log = Resolve-DailyPublishLog -LogPath $LogPath -EnvLog ([string]$env:GHOZTTY_DAILY_PUBLISH_LOG) `
+    -Bound $PSBoundParameters -WatermarkPath $WatermarkPath -RequestPath $RequestPath -TempDir $env:TEMP
 function Log($m) {
     $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $m"
-    $line | Add-Content $log
+    # A fixture log can sit under a path a negative control made unwritable on
+    # purpose (gate-negatives' not-a-dir); the console line still carries it.
+    try { $line | Add-Content -LiteralPath $log -ErrorAction Stop } catch { }
     Write-Host $line
 }
 
