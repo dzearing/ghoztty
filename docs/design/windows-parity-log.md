@@ -39385,3 +39385,7 @@ T1589 stopped the chooser's session roster from talking over a wedged local-agen
 # 2026-11-21 lane b - T3151: perf audit-4 finished - 31 more slowdowns confirmed fixed, 18 small new ones filed, no open P0
 
 The six Fable 5.2 area auditors (R W M I V C) re-judged all 129 PA ids at c9af15802: 31 newly fixed since audit-3 (W17, M07, I02-I04/I07/I18, V01/V03-V09/V11/V13/V26, C02-C05/C08-C10, plus incomplete I05/I06/I08/V12/C15), V02 and V10 judged wrong, 18 new findings read at HEAD and filed P2/P3 as T3298-T3315 (none functional; the single-window port and five fix commits are their sources), 7 more folded into existing tasks. T3007 closed against 073c924a7 (T1590). Umbrella T2957 still not closable: the only open P1 PA item is T2984 (Mac seat). Audit-5 is T3316, parked until 2026-11-28 or 10 of the 94 open PA tasks closing. Detail: docs/design/perf-audit/audit-4.md.
+
+# 2026-11-21 lane a - T1610: closed as already fixed by T1550
+
+The keepalive run's false `CRASHED - 0xFFFFFFFF` verdict was the harness's own teardown kill being scored as a crash. c8153633b (T1550) fixed it for every script: harness-stopped launches are marked killed and the postmortem skips them. Re-verified on a fresh Debug build of d9c24579b: `test/win32/ipc-command-keepalive.ps1` ALL PASS (2 skipped, pwsh/nu absent) and `test/win32/tab-tooltip.ps1` ALL PASS (31). Neither printed a GUI POSTMORTEM block. tab-tooltip re-stamped. No code changed.
