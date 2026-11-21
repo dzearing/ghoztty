@@ -1,10 +1,10 @@
 {
     "guard":  "relay-throughput",
     "script":  "test/win32/pane-ingest-ab.ps1",
-    "generated":  "2026-11-19T18:01:01-08:00",
-    "commit":  "194d44ecb",
+    "generated":  "2026-11-21T03:28:34-08:00",
+    "commit":  "a8b541024",
     "uncommitted":  [
-
+                        "test/win32/pane-ingest-ab.ps1"
                     ],
     "files":  {
                   "src/os/power.zig":  "e885aa82fc39a006827d097d50fd9fd53168bdb1cddca564c69baf75bfee264f",
@@ -13,6 +13,9 @@
                   "src/remote/agent/relay_perf.zig":  "b74d79c5fa170240818c28504aeac97e85b194fc24042d225a073a23573a2ca7",
                   "src/remote/agent/server.zig":  "dd0eb0c25df19ade4b1e4771822c3cd3c97c21ae0499d0266678ca94b940610f",
                   "src/remote/pipe_stream.zig":  "8567c09a0a231520224bd07e2dea247094273ec7a584cdc4cda9c7dbbbc7b1db",
-                  "test/win32/pane-ingest-ab.ps1":  "b912d766a33952db7fede76109fe0eb7f09420b7f89975b495dac4d09edf5ba7"
-              }
+                  "test/win32/pane-ingest-ab.ps1":  "5e6aff0e0aaf6c5557507b79354171161e1a4a198d6ee5d3f9c1af3e23d42621"
+              },
+    "code":  {
+                 "test/win32/pane-ingest-ab.ps1":  "code1:e5b45d2ea5b389c5760ec9453fef2660832ddf6b07a9d37d1d83756e2963d70b"
+             }
 }

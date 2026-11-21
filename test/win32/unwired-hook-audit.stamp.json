@@ -1,7 +1,7 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-21T03:32:53-08:00",
+    "generated":  "2026-11-21T03:58:29-08:00",
     "commit":  "a8b541024",
     "uncommitted":  [
 
@@ -1422,7 +1422,7 @@
                   "test/win32/pane-grab-handle.ps1":  "d0abccbdc04d0e399b5fda02f14e3d701d8f6e99ed1d54f217023af089745c6c",
                   "test/win32/pane-hwnd-reap.ps1":  "93f787edbf5abb1a9841dfd3b52f05a076871ab29cb4dccde3c51489828d9dba",
                   "test/win32/pane-id.ps1":  "710f1f30c57bb798b7ac487cef16a07339692ed6bc3b4da99dc17dedda6f1ad0",
-                  "test/win32/pane-ingest-ab.ps1":  "b912d766a33952db7fede76109fe0eb7f09420b7f89975b495dac4d09edf5ba7",
+                  "test/win32/pane-ingest-ab.ps1":  "5e6aff0e0aaf6c5557507b79354171161e1a4a198d6ee5d3f9c1af3e23d42621",
                   "test/win32/pane-ingest-lag.ps1":  "1edc18cdbb6b7cf3450ee030f4a674d3a94e77b7d96a63a70e4a3d9197616dcf",
                   "test/win32/pane-sidebar.ps1":  "b2a65cde8fa769058aaff14b26505f282e0dad23352851095e04f2a4a0850e11",
                   "test/win32/pane-sidebar-actions.ps1":  "a9198ff447cc50f3d61e94b0ef27a1637656293818a7b6b35a3c0141c6c60ac3",
@@ -1505,7 +1505,7 @@
                   "test/win32/reset-context.ps1":  "54e0f328f37b3dc7694d1ae00013569ce64b504094ce00138baf2ad71ea0d0dd",
                   "test/win32/reset-window-size.ps1":  "28e18f6472e20ae4a5e0f9b5d93ec392c6a81e67c8b519785e1b433b18ada3ba",
                   "test/win32/resize-debounce.ps1":  "2e44a1b8cfe58c0ef286df245380afc6abbb1e11d691ef4ac3820d1d683a531d",
-                  "test/win32/resize-flicker.ps1":  "f524c81c21fe503a6f572e179c4cb33c0d12b0180772402b3622774370d99ae1",
+                  "test/win32/resize-flicker.ps1":  "82224b840c8598a4d8ee56b078138c9357ef0a0b3d7a67ec660faf2e273b69fd",
                   "test/win32/resolve-window-persist.ps1":  "1e4386ee3b89a7e8ebb39eb53263a8c596ca2d405c2ccc9ed8716e013fad5958",
                   "test/win32/restore-dead-sessions.ps1":  "95e0b3b6d0e2c2c6cd9c02e0823c715a4eff72e8ac7d12a70a50976d5baf25ce",
                   "test/win32/restore-dpi-frame.ps1":  "d108aa2a21aa785326a2f845906c3d9a7f252f1dd5711cb9d33f28a7fb6fdcbe",

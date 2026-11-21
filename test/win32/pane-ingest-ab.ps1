@@ -462,6 +462,52 @@ function Wait-ForLine([string]$errFile, [string]$needle, [int]$timeoutSec) {
     return $false
 }
 
+<#
+Wait until the app has CAUGHT UP with a pane before its liveness probe (T1627,
+T1670). The workload's stamp says when the WRITER finished, not when the app
+finished drawing what it wrote: on the agent path the relay's ring absorbs the
+whole 8 MB burst and the app digests it for seconds afterwards (observed
+`ipcperf action=list accept=18445ms`, the renderer at fps=1). A probe typed into
+that window has its `+send-keys` time out before the app accepts it, the token is
+never sent, and a pane that answers twenty seconds later is scored DEAD.
+
+So wait for what "caught up" means, bounded by the wall clock (T831): two
+consecutive `+read`s that both ANSWER (an empty string is a timeout or an error)
+and return the same screen. Returns a note for the run's output. Never throws,
+and never decides liveness itself: a pane that never goes quiet is still probed,
+so a genuinely dead pane fails B4 exactly as before (the teeth-check is
+`GHOZTTY_TEST_LIVENESS_BREAK=1`, lib\PaneLiveness.ps1).
+#>
+function Wait-PaneCaughtUp([string]$target, [int]$timeoutSec = 120) {
+    $t0 = Get-Date
+    $dl = $t0.AddSeconds($timeoutSec)
+    $prev = $null
+    $reads = 0
+    while ((Get-Date) -lt $dl) {
+        $cur = Invoke-Ghoztty "+read --name=$target --lines=8" 20
+        $reads++
+        if ($cur.Trim() -and $null -ne $prev -and $cur -eq $prev) {
+            return "caught up after {0:N1} s ({1} reads)" -f ((Get-Date) - $t0).TotalSeconds, $reads
+        }
+        $prev = if ($cur.Trim()) { $cur } else { $null }
+        Start-Sleep -Milliseconds 1000
+    }
+    return "NOT quiet after $timeoutSec s ($reads reads) - probing anyway"
+}
+
+<#
+The liveness arm for one sample: let the app catch up, then type the token. The
+probe's own deadline is 45 s rather than the library's 25 s default because a
+post-flood pane on a loaded Debug box still answers its first `+read` slowly even
+once its screen has stopped moving; the catch-up wait above is what makes the
+arm measure survival instead of the digestion time.
+#>
+function Test-PaneSurvived([string]$label, $r) {
+    if ($null -eq $r -or -not $r.Pane) { return $false }
+    "  ${label} liveness: " + (Wait-PaneCaughtUp $r.Pane) | Write-Host
+    return (Test-PaneLive -Exe $Exe -Target $r.Pane -Tmp $tmp -TimeoutSec 45)
+}
+
 function Show-Run([string]$tag, $r) {
     if ($null -eq $r) { "  ${tag}: no result"; return }
     if (-not $r.Primed) { "  ${tag}: pane never primed (pane=$($r.Pane))"; return }
@@ -510,8 +556,7 @@ try {
         "== A#${s}: local-ConPTY pane (termio.Exec, no relay in the path)"
         $lr = Measure-Pane "local$s" $false $false
         Show-Run "A#$s" $lr
-        $lr | Add-Member -NotePropertyName Live -NotePropertyValue (
-            $null -ne $lr -and $lr.Pane -and (Test-PaneLive -Exe $Exe -Target $lr.Pane -Tmp $tmp)) -Force
+        $lr | Add-Member -NotePropertyName Live -NotePropertyValue (Test-PaneSurvived "A#$s" $lr) -Force
         $lr | Add-Member -NotePropertyName Leaked -NotePropertyValue (
             $null -eq $lr -or $null -eq $lr.App -or (Test-TestDesktopLeak -ProcessId $lr.App.Pid)) -Force
         [void]$localRuns.Add($lr)
@@ -522,8 +567,7 @@ try {
         Show-Run "B#$s" $ar
         # Liveness is checked while this sample's app is still up - the reset
         # below takes it down.
-        $ar | Add-Member -NotePropertyName Live -NotePropertyValue (
-            $null -ne $ar -and $ar.Pane -and (Test-PaneLive -Exe $Exe -Target $ar.Pane -Tmp $tmp)) -Force
+        $ar | Add-Member -NotePropertyName Live -NotePropertyValue (Test-PaneSurvived "B#$s" $ar) -Force
         $ar | Add-Member -NotePropertyName Leaked -NotePropertyValue (
             $null -eq $ar -or $null -eq $ar.App -or (Test-TestDesktopLeak -ProcessId $ar.App.Pid)) -Force
         [void]$agentRuns.Add($ar)
