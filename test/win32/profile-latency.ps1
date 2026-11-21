@@ -45,7 +45,9 @@ $report = Join-Path $outDir 'report.txt'
 $rttCsv = Join-Path $outDir 'seek-rtt.csv'
 $fakeLocal = Join-Path $outDir 'env'
 New-Item -ItemType Directory -Force $fakeLocal | Out-Null
-$profLog = Join-Path $fakeLocal 'ghoztty\ghoztty.log'
+# $profLog is derived from the build under test once BuildMode.ps1 is loaded
+# (below): a Debug build writes ghoztty-debug.log, not ghoztty.log (T1679).
+$profLog = $null
 
 function Rep($m) { $m | Tee-Object -FilePath $report -Append | Write-Host }
 $script:pass = 0
@@ -320,6 +322,7 @@ $realLocalAppData = $env:LOCALAPPDATA
 # run's own LOCALAPPDATA ($fakeLocal, so $profLog is unchanged).
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 [void](Set-GhozttyTestIsolation -Tag 'prof' -ReleaseSandbox -SandboxRoot $fakeLocal)
+$profLog = Get-GhozttyAppLogPath -Exe $exe -LocalAppData $fakeLocal
 try {
 
 $exeItem = Get-Item $exe
@@ -409,6 +412,10 @@ Assert ($medBig -le ([Math]::Max($medFresh * 3, $medFresh + 100))) "no gross deg
 $hashBottom = [ProfDrv]::PixelHash($surface)
 $slice0 = PerfSlice 0
 $logMark = $slice0.NewLen
+# T1679: the renderer numbers below come from this file. A sink nobody wrote
+# (the wrong name for the build under test) reads as 'no samples' and every
+# number silently drops out of the report, so the premise is asserted.
+Assert ($slice0.NewLen -gt 0) "premise: this run's app wrote its log sink ($profLog)"
 
 $r = [ProfDrv]::Chord($top, @([uint16]0x11), 0x24)  # ctrl+home = scroll_to_top
 Assert ($r -eq 'SENT') "ctrl+home sent ($r)"

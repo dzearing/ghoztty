@@ -415,6 +415,7 @@ New-Item -ItemType Directory -Force $sTemp | Out-Null
 function New-SandboxFixture([string]$Name, [string]$Mark) {
     $d = Join-Path $sTemp $Name
     New-Item -ItemType Directory -Force (Join-Path $d 'ghoztty') | Out-Null
+    # @log-sink-literal - a sandbox fixture that only needs SOME file on disk; nothing reads it as a log
     Set-Content -LiteralPath (Join-Path $d 'ghoztty\ghoztty.log') -Value 'fixture' -Encoding ASCII
     if ($Mark) { [IO.File]::WriteAllText((Join-Path $d '.ghoztty-sandbox-owner'), $Mark) }
     return $d

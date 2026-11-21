@@ -1,15 +1,14 @@
 {
     "guard":  "harness-scope",
     "script":  "test/win32/harness-scope.ps1",
-    "generated":  "2026-11-21T08:32:48-08:00",
-    "commit":  "b1376b8e6",
+    "generated":  "2026-11-21T10:37:51-08:00",
+    "commit":  "33f75de88",
     "uncommitted":  [
-                        "test/win32/lib/UnrollCountAudit.ps1",
-                        "test/win32/unroll-count-audit.ps1"
+                        "scripts/lib/HarnessFloor.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
-                  "scripts/lib/HarnessFloor.ps1":  "410759477c80263893846d22acae0b12e7dcb3600685784e72969b29f6d86c69",
+                  "scripts/lib/HarnessFloor.ps1":  "1860dbc16b6d9bc15f50882eedfc764b5c39f1f91aa059ba6450118729fabd7b",
                   "test/win32/argv-hazard-audit.ps1":  "5e6d8382b90b67ac3acb5ef30dba27c926ea6d90087212da2202b482b5155fdb",
                   "test/win32/foreground-audit.ps1":  "02902ecd3e0a698d1d0e00a5856111d5ae90c38183bcde8e5a8b6ec82a30285b",
                   "test/win32/harness-scope.ps1":  "23c72eacc44b5ac667b1bf0755a9ca55452cb2ec4b20efc9a5b4a107e9565b7e",
@@ -25,7 +24,7 @@
               },
     "code":  {
                  "scripts/harness-floor.ps1":  "code1:ed864d27ef0d14d42b6b63b586c0ebbd70bbd8f58c3a8072d1ba67ba3b54a7ca",
-                 "scripts/lib/HarnessFloor.ps1":  "code1:ba177bc96be276c2e17cffd699f6a23deaccb8ca9d1aca3708aaa61255cb553c",
+                 "scripts/lib/HarnessFloor.ps1":  "code1:7898efad219f1dd42a1c7e7e77ca086e81eb171a3cb4b02c46ee891804865712",
                  "test/win32/argv-hazard-audit.ps1":  "code1:af2b49801d7cc064d107a902ee50d5232d6f6831449933f63871f7828636ed50",
                  "test/win32/foreground-audit.ps1":  "code1:6156756dc261b0758f623a0fc280bdf802afc4463ec86d667f1f5b4298b24efa",
                  "test/win32/harness-scope.ps1":  "code1:d14f27cd60da204425358fad74fcbe45d6c8ca818686c11a02dcac4cbbf9c526",
@@ -36,7 +35,7 @@
                  "test/win32/lib/PersistenceSweep.ps1":  "code1:d78429a75cc1ac51aabdaeef4b25e51fd9a212b21ddeb1ed6aaea2bbaf3b5f32",
                  "test/win32/lib/UnrollCountAudit.ps1":  "code1:881f3d5abf0a00c647d1665da98b0192134f9003c53b46e478abc9b3c180f142",
                  "test/win32/neuter-audit.ps1":  "code1:933c1dc495ee518b176ea695bb79af5901ea9e931bb1474182c40189d80dcbeb",
-                 "test/win32/persistence-flag.ps1":  "code1:3f913d80192190c9fe54e6dda166d4e3c3999e1fbef016ae06442d00566a68e0",
+                 "test/win32/persistence-flag.ps1":  "code1:a274069186108d99becdd0da3bd6a68a6c5d8d06b30205d17b67c3b48ce2dafb",
                  "test/win32/unroll-count-audit.ps1":  "code1:faa98acb173481a181c74540ec45dde53e52bba8493a4d8671c86c498813cc9b"
              }
 }

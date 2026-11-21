@@ -159,6 +159,7 @@
 #     appended file serves the whole run - so each arm records the file's length
 #     at launch and reads only the tail past it, on top of its own stderr
 #     capture.
+# @log-sink-literal - the shared-log read is the -Release arm only (its sink IS ghoztty.log); the Debug arm reads each app's stderr capture
 #
 #   powershell -NoProfile -File test\win32\agent-upgrade.ps1
 #   powershell -NoProfile -File test\win32\agent-upgrade.ps1 -Release

@@ -1,8 +1,8 @@
 {
     "guard":  "log-sink",
     "script":  "test/win32/log-append.ps1",
-    "generated":  "2026-11-19T18:59:02-08:00",
-    "commit":  "d16ef0fd1",
+    "generated":  "2026-11-21T10:31:26-08:00",
+    "commit":  "33f75de88",
     "uncommitted":  [
                         "test/win32/log-append.ps1"
                     ],
@@ -10,6 +10,9 @@
                   "src/os/log_gate.zig":  "83e93780c28bf59a357d1d5048af10aa3253c3f4d4eaf2b76827f4fac9bf2cab",
                   "src/os/log_rotate.zig":  "4e4f787ff5eb8d95c744a0f1e69995b7ae1706810670f1f555d4fe7d189c20bb",
                   "src/os/log_stamp.zig":  "3473329b92837b3f42ca046a5733636846933794165b2f000ee1c416ab356756",
-                  "test/win32/log-append.ps1":  "ec3e38523c740105d1b2504904257a7a839018cabeb4b53babe50eda3bbc07f4"
-              }
+                  "test/win32/log-append.ps1":  "0e27fcba73c36fa065e4ccd091504ee66c83e9d3c12615cab6ff984d95e98010"
+              },
+    "code":  {
+                 "test/win32/log-append.ps1":  "code1:d3bf059b45c1d8a420cd2b525d78c053e81ab0c9dcabb395b614cea28239dba7"
+             }
 }

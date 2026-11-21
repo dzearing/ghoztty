@@ -110,6 +110,7 @@ marker with no reason waives nothing.
 | No script carries a control character that breaks it on another box | `control-char-scan.ps1` | — |
 | No script writes `` `e `` for ESC — under 5.1 it is the letter e (T740) | `vt-escape-scan.ps1` | — use `[char]27`, or `lib\VtText.ps1` |
 | A fixture plants the filename it reads as — not one Windows quietly rewrites (trailing dot/space, CON/NUL/...) (T1501) | `fixture-name-audit.ps1` | — write through `ConvertTo-ExtendedPath` (`scripts\lib\HardDelete.ps1`), or mark `# fixture-name-ok: <why>` |
+| A harness reads the log sink its build writes — never a spelled `ghoztty.log`, which a Debug build leaves empty (T1679) | `log-sink-audit.ps1` | — derive it with `Get-GhozttyAppLogPath -Exe $exe` (`lib\BuildMode.ps1`), or declare `# @log-sink-literal - <why>` |
 
 Each audit is also its own acceptance script: it self-tests its analyzer
 against fixtures and proves its own teeth, so running one by hand answers a

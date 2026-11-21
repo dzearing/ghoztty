@@ -382,7 +382,9 @@ if ($oldRuns.Count) { Rep "pruned $($oldRuns.Count) soak report dir(s) beyond th
 # Now that LOCALAPPDATA is the sandbox, this is the log THIS run's app writes.
 # It used to be the user's own `ghoztty.log`, so the GHOZTTY_PERF slice below
 # was reading the user's live terminal's telemetry interleaved with the soak's.
-$appLog = Join-Path $env:LOCALAPPDATA 'ghoztty\ghoztty.log'
+# T1679: the sink's NAME follows the build under test (a Debug build writes
+# ghoztty-debug.log), so it is derived, never spelled.
+$appLog = Get-GhozttyAppLogPath -Exe $exe
 $exeItem = Get-Item $exe
 Rep "=== ghoztty soak $stamp"
 Rep "exe: $exe ($(($exeItem).LastWriteTime), $(($exeItem).Length) bytes)"
@@ -726,6 +728,10 @@ if ((Test-Path $appLog) -and (Get-Item $appLog).Length -gt $logStart) {
 # --- Assertions ---------------------------------------------------------------
 Assert $procAlive 'gui process alive for the whole soak'
 if ($procAlive) {
+    # T1679: the telemetry below is read from this file, and a sink nobody wrote
+    # (the wrong name for the build under test) used to read as 'too few perf
+    # windows' - a WARN, not a failure - so the premise is asserted.
+    Assert ((Test-Path $appLog) -and (Get-Item $appLog).Length -gt $logStart) "premise: this run's app wrote its log sink ($appLog)"
     Assert ($notRespondingSamples -eq 0) "responsive at every sample (not-responding samples: $notRespondingSamples)"
     Assert $listOk 'IPC still answers +list at the end'
     Assert ($readBigMs -lt 1000) "+read on 150k-line scrollback < 1s (${readBigMs}ms)"

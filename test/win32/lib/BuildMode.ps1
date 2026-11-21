@@ -163,6 +163,45 @@ function Get-GhozttyBuildMode {
     return $mode
 }
 
+# @log-sink-literal - Get-GhozttyAppLogName IS the one place a harness spells the sink, mirroring log_rotate.live_name
+function Get-GhozttyAppLogName {
+    <#
+    .SYNOPSIS
+    Pure: the file name of the Windows log sink a build of $Mode appends to.
+
+    .DESCRIPTION
+    Mirrors `log_rotate.live_name` (src\os\log_rotate.zig): `.Debug` writes
+    `ghoztty-debug.log` (T1508), every other mode - ReleaseSafe included, which
+    is NOT the endpoint split above - writes `ghoztty.log`. A harness that
+    spells `ghoztty.log` while driving a Debug build reads a file nobody writes,
+    and every `-notmatch` over it passes for free (T1679).
+    #>
+    param([string]$Mode)
+    $m = if ($Mode) { $Mode.TrimStart('.').Trim() } else { '' }
+    if ($m -eq 'Debug') { return 'ghoztty-debug.log' }
+    return 'ghoztty.log'
+}
+
+function Get-GhozttyAppLogPath {
+    <#
+    .SYNOPSIS
+    The log sink $Exe appends to under $LocalAppData (default: the current
+    $env:LOCALAPPDATA, i.e. call it AFTER the run's sandbox is set).
+
+    .DESCRIPTION
+    T1679: derive the sink from the build under test instead of spelling it.
+    Throws when the build mode cannot be read, because guessing a name is the
+    exact defect this exists to remove.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Exe,
+        [string]$LocalAppData = $env:LOCALAPPDATA
+    )
+    $mode = Get-GhozttyBuildMode -Exe $Exe
+    if (-not $mode) { throw "Get-GhozttyAppLogPath: could not read the build mode of $Exe (+version)" }
+    return (Join-Path $LocalAppData ('ghoztty\' + (Get-GhozttyAppLogName -Mode $mode)))
+}
+
 function Get-GhozttyReleaseSandboxGaps {
     <#
     .SYNOPSIS

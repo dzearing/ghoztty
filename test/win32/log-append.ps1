@@ -43,6 +43,8 @@
 # build (-Exe); the Debug arm uses -DebugExe and SKIPs without one. Hermetic: its own LOCALAPPDATA and IPC pipe suffix, and it only
 # runs `+list`, which touches nothing.
 #
+# @log-sink-literal - this harness's SUBJECT is both named sinks: it measures ghoztty.log on the release build and ghoztty-debug.log on the Debug one, and asserts each against the other
+#
 #   powershell -NoProfile -File test\win32\log-append.ps1
 #   powershell -NoProfile -File test\win32\log-append.ps1 -Exe <pre-fix exe>   # negative control
 param(
@@ -520,6 +522,41 @@ if (-not (Test-Path $DebugExe)) {
     Say "    Debug-sink section threw: $_"
 }
 Assert "D7 the Debug-sink section ran to completion" $debugComplete
+
+# --- K: no harness spells the sink by name (T1679) ---------------------------
+# A Debug build writes ghoztty-debug.log, a release build ghoztty.log, and a
+# Debug build is what an acceptance script launches - so a harness that spells
+# `ghoztty.log` reads a file nobody writes and every -notmatch over it passes
+# for free. Get-GhozttyAppLogPath (BuildMode.ps1) derives the name from the
+# exe, and this section proves it names the files A and D watched being written.
+$auditComplete = $false
+try {
+    # K1/K2: the helper names the file the build under test actually writes -
+    # checked against the sinks sections A and D just watched being written.
+    Assert "K1 Get-GhozttyAppLogPath names the release sink for the release build" (
+        (Get-GhozttyAppLogPath -Exe $Exe -LocalAppData $root) -eq $logPath)
+    if (Test-Path $DebugExe) {
+        Assert "K2 Get-GhozttyAppLogPath names ghoztty-debug.log for the Debug build" (
+            (Get-GhozttyAppLogPath -Exe $DebugExe -LocalAppData $root) -eq $debugLog)
+    } else {
+        Say "    SKIP K2: no Debug build at $DebugExe"
+        $script:skipped++
+    }
+    Assert "K3 the name rule mirrors log_rotate.live_name (Debug only, not ReleaseSafe)" (
+        (Get-GhozttyAppLogName -Mode '.Debug') -eq 'ghoztty-debug.log' -and
+        (Get-GhozttyAppLogName -Mode 'ReleaseSafe') -eq 'ghoztty.log' -and
+        (Get-GhozttyAppLogName -Mode 'ReleaseFast') -eq 'ghoztty.log')
+    $liveRule = Select-String -LiteralPath (Join-Path $PSScriptRoot '..\..\src\os\log_rotate.zig') `
+        -Pattern 'live_name = if \(builtin\.mode == \.Debug\) "ghoztty-debug\.log" else "ghoztty\.log"' -Quiet
+    Assert "K4 premise: log_rotate.zig still states the rule K3 mirrors" ([bool]$liveRule)
+
+    # The tree-wide sweep that forbids spelling the sink is its own harness-floor
+    # member, test\win32\log-sink-audit.ps1.
+    $auditComplete = $true
+} catch {
+    Say "    sink-name section threw: $_"
+}
+Assert "K5 the sink-name section ran to completion" $auditComplete
 
 }
 

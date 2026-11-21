@@ -1,10 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-21T10:12:26-08:00",
-    "commit":  "17f9bf987",
+    "generated":  "2026-11-21T10:51:06-08:00",
+    "commit":  "33f75de88",
     "uncommitted":  [
-
+                        "scripts/lib/HarnessFloor.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "4b958ede38c0911c4945146f0a52810ebbf8c01d44ac8a60532f2eb77f8fd0af",
@@ -76,7 +76,7 @@
                   "scripts/lib/Duration.ps1":  "b9889f194a1af5fee4177fd4c87ea6f7d74be5bffac0828532b55ebaa1f4787c",
                   "scripts/lib/EscapeDamage.ps1":  "87c096ced08379d50c3dbabbd65bcf6596c2812039dde1e4d00d66943a0baa84",
                   "scripts/lib/HardDelete.ps1":  "78ca1c0b521f9ae991e6b8f5304eb2a4e30a7a8ef1e3ba93839de8b740ea88b2",
-                  "scripts/lib/HarnessFloor.ps1":  "410759477c80263893846d22acae0b12e7dcb3600685784e72969b29f6d86c69",
+                  "scripts/lib/HarnessFloor.ps1":  "1860dbc16b6d9bc15f50882eedfc764b5c39f1f91aa059ba6450118729fabd7b",
                   "scripts/lib/LaneDesktop.ps1":  "eba72a217797149f3d24226023a839ec9beb8ebccfbc25a94f10bfd248594353",
                   "scripts/lib/LaneLeak.ps1":  "6726edfdc47336ad70d6664990d976a49ac455a1f7ca3225a1725c4a839ac654",
                   "scripts/lib/LaneSolo.ps1":  "3774871845d542b517f11f423a4ab8a4ce1fa4df14ed29c6b9b670381461bbf4",
