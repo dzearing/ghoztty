@@ -167,7 +167,8 @@ function Dog-Run([string[]]$extra, [string]$taskDirPath) {
 
 function Exec-Run([string[]]$extra) {
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $execScript,
-        '-Repo', $Repo, '-LockPath', $lock, '-StopPath', $stopFile, '-GhozttyExe', $Exe) + $extra
+        '-Repo', $Repo, '-LockPath', $lock, '-StopPath', $stopFile, '-GhozttyExe', $Exe,
+        '-LogPath', $log, '-TaskDir', $taskDir) + $extra   # T1713: never the real log/queue
     $out = & powershell @argList 2>&1 | ForEach-Object { $_.ToString() } | Out-String
     return @{ Code = $LASTEXITCODE; Out = $out.Trim() }
 }
@@ -525,6 +526,7 @@ Remove-Item $lock -Force -ErrorAction SilentlyContinue
 function Recover-Run([string]$exeArg, [string[]]$more) {
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $execScript,
         '-Repo', $Repo, '-LockPath', $lock, '-StopPath', $stopFile, '-StatePath', $state,
+        '-LogPath', $log, '-TaskDir', $taskDir,   # T1713: same reason, for the log and queue
         '-GhozttyExe', $exeArg, 'recover', '-PaneId', 'PANE-NONE') + $more
     $o = & powershell @argList 2>&1 | ForEach-Object { $_.ToString() } | Out-String
     return @{ Code = $LASTEXITCODE; Out = $o.Trim() }
@@ -2563,8 +2565,34 @@ Assert 'X5a -NoRecover says it restarted nothing' ($r.Out -match 'nothing was re
 # And the full command, against a loop that cannot come back: it must go RED
 # rather than report the 2026-09-09 success over a loop that is still down.
 XExec @('stop', '-Repo', $xRepo, '-PaneId', 'none', '-Reason', 'harness arm 2') | Out-Null
+# T1713: -LogPath/-TaskDir are what keep this arm's forced tick out of the REAL
+# watchdog log - before resume forwarded them, X5b wrote 'LAUNCH-APP FAILED ...
+# gz-stop-*\no-such-ghoztty.exe' there on every sweep, which read as the live
+# loop being down. X5e/X5f score the redirection from both sides.
+$x5Log = Join-Path $xRoot 'x5-watchdog.log'
+$x5Tasks = Join-Path $xRoot 'tasks'
+New-Item -ItemType Directory -Force $x5Tasks | Out-Null
+@('---', 'id: T999', 'title: "fixture"', 'status: "todo"', 'seat: "win"', '---', '', '# T999') `
+    -join "`r`n" | Out-File -FilePath (Join-Path $x5Tasks 'T999.md') -Encoding utf8
+$realDogLog = Get-LoopLaneWatchdogLog $laneId
+$realDogLogStart = 0L
+if (Test-Path -LiteralPath $realDogLog) { $realDogLogStart = (Get-Item -LiteralPath $realDogLog).Length }
 $r = XExec @('resume', '-Repo', $xRepo, '-PaneId', 'none', '-HeldTimeoutSeconds', 5,
+    '-LogPath', $x5Log, '-TaskDir', $x5Tasks,
     '-GhozttyExe', (Join-Path $xRoot 'no-such-ghoztty.exe'))
+$x5Tail = ''
+if (Test-Path -LiteralPath $realDogLog) {
+    $fs = [System.IO.File]::Open($realDogLog, 'Open', 'Read', 'ReadWrite')
+    try {
+        $st0 = $realDogLogStart; if ($fs.Length -lt $st0) { $st0 = 0 }
+        $null = $fs.Seek($st0, 'Begin')
+        $x5Tail = (New-Object System.IO.StreamReader($fs)).ReadToEnd()
+    } finally { $fs.Dispose() }
+}
+Assert 'X5e the forced tick logged into the fixture log, not nowhere' `
+    ((Test-Path -LiteralPath $x5Log) -and ((Get-Content -LiteralPath $x5Log -Raw) -match 'no-such-ghoztty'))
+Assert "X5f and appended nothing naming this fixture to the REAL $realDogLog" `
+    ($x5Tail.IndexOf($xRoot, [System.StringComparison]::OrdinalIgnoreCase) -lt 0)
 Assert 'X5b a resume that does not bring the loop back exits 5' ($r.Code -eq 5)
 Assert 'X5c and says the loop did not come back, with the remedy' `
     ($r.Out -match 'RESUME INCOMPLETE' -and $r.Out -match '\+read')

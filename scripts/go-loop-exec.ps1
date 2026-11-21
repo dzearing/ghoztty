@@ -68,6 +68,12 @@ param(
     [int]$HeldTimeoutSeconds = 150,
     [switch]$NoRecover,       # resume: clear the flag only, restart nothing (tests)
     [string]$StatePath,       # resume: the watchdog's rearm/beacon state (tests)
+    # resume/recover: the spawned watchdog's log and task dir (T1713). Without
+    # them a hermetic harness's forced tick logged into the REAL
+    # %TEMP%\ghoztty-go-loop-watchdog.log and counted the real queue
+    # (remaining=479), which read as the live loop being down.
+    [string]$LogPath,
+    [string]$TaskDir,
     # claim: the instant the daily-digest check is judged against (T1262).
     # Defaults to now; the harness passes one so "before 05:00" is reachable.
     [datetime]$DigestAsOf = [datetime]::MinValue,
@@ -322,6 +328,8 @@ switch ($Action) {
         if ($LockPath) { $dogArgs += @('-LockPath', $LockPath) }
         if ($StopPath) { $dogArgs += @('-StopPath', $StopPath) }
         if ($StatePath) { $dogArgs += @('-StatePath', $StatePath) }
+        if ($LogPath) { $dogArgs += @('-LogPath', $LogPath) }
+        if ($TaskDir) { $dogArgs += @('-TaskDir', $TaskDir) }
         if ($GhozttyExe) { $dogArgs += @('-GhozttyExe', $GhozttyExe) }
         "  restarting the loop (watchdog forced tick, up to ${HeldTimeoutSeconds}s for it to take the lock)"
         $out = (& powershell @dogArgs 2>&1 | ForEach-Object { $_.ToString() } | Out-String).Trim()
@@ -382,6 +390,8 @@ switch ($Action) {
         if ($LockPath) { $dogArgs += @('-LockPath', $LockPath) }
         if ($StopPath) { $dogArgs += @('-StopPath', $StopPath) }
         if ($StatePath) { $dogArgs += @('-StatePath', $StatePath) }
+        if ($LogPath) { $dogArgs += @('-LogPath', $LogPath) }
+        if ($TaskDir) { $dogArgs += @('-TaskDir', $TaskDir) }
         if ($GhozttyExe) { $dogArgs += @('-GhozttyExe', $GhozttyExe) }
         if ($NoRecover) {
             "  -NoRecover: the lock is released, but nothing was restarted"

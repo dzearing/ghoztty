@@ -77,6 +77,27 @@ $dogScript = Join-Path $Repo 'scripts\go-loop-watchdog.ps1'
 $execScript = Join-Path $Repo 'scripts\go-loop-exec.ps1'
 New-Item -ItemType Directory -Force $root | Out-Null
 
+# T1713: the REAL supervisor log this lane's watchdog writes. A resume that did
+# not forward -LogPath logged its forced tick here, which read as the live loop
+# being down. Section G reads what was appended during this run. The watchdog
+# never rotates it, so a byte offset is a sound baseline; the live supervisor
+# keeps appending its own lines, which is why G looks for THIS run's fixtures
+# rather than counting lines.
+. (Join-Path $Repo 'scripts\lib\LoopLane.ps1')
+$realDogLog = Get-LoopLaneWatchdogLog (Get-LoopLaneId -Repo $Repo)
+$realDogLogStart = 0L
+if (Test-Path -LiteralPath $realDogLog) { $realDogLogStart = (Get-Item -LiteralPath $realDogLog).Length }
+function Read-RealDogLogSince {
+    if (-not (Test-Path -LiteralPath $realDogLog)) { return '' }
+    $fs = [System.IO.File]::Open($realDogLog, 'Open', 'Read', 'ReadWrite')
+    try {
+        $start = $realDogLogStart
+        if ($fs.Length -lt $start) { $start = 0 }
+        $null = $fs.Seek($start, 'Begin')
+        return (New-Object System.IO.StreamReader($fs)).ReadToEnd()
+    } finally { $fs.Dispose() }
+}
+
 . (Join-Path $Repo 'scripts\loop-session.ps1')        # New-LoopSendKeysText
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
@@ -112,8 +133,12 @@ function Dog-Run([string[]]$extra, [string]$exeOverride) {
     return @{ Code = $LASTEXITCODE; Out = $out }
 }
 function Exec-Run([string[]]$extra) {
+    # -LogPath/-TaskDir (T1713): resume spawns a forced watchdog tick, and
+    # without these it logged into the REAL watchdog log and counted the real
+    # queue. Section F scores both.
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $execScript,
-        '-Repo', $Repo, '-LockPath', $lock, '-StopPath', $stopFile, '-GhozttyExe', $Exe) + $extra
+        '-Repo', $Repo, '-LockPath', $lock, '-StopPath', $stopFile, '-GhozttyExe', $Exe,
+        '-LogPath', $log, '-TaskDir', $taskDir) + $extra
     $out = (& powershell @argList 2>&1 | ForEach-Object { $_.ToString() } | Out-String).Trim()
     return @{ Code = $LASTEXITCODE; Out = $out }
 }
@@ -147,6 +172,7 @@ function New-TestWindow($target) {
     return $null
 }
 $sleepers = @()
+$dPaneId = $null   # the D arm's pane, for section G
 function Start-Sleeper {
     return Start-Process powershell -PassThru -WindowStyle Hidden `
         -ArgumentList '-NoProfile', '-Command', 'Start-Sleep -Seconds 900'
@@ -398,6 +424,13 @@ if (-not $ready) {
         $st = Lock-Run @('status', '-PaneId', $pane.id)
         Assert 'D5 the lock really is held by the parked pane' ($st.Out -match 'held ' -and $st.Out -match [regex]::Escape($pane.id))
         Assert 'D6 the stale "next turn will claim it" promise is gone' ($r.Out -notmatch 'on the next turn')
+        # T1713: the fixture queue holds one open task (T999). Before -TaskDir was
+        # forwarded this tick counted the real queue (remaining=479).
+        Assert 'D7 the forced tick counted the fixture queue, not the real one' `
+            ($r.Out -match 'nudge live session' -and $r.Out -match 'remaining=1\)')
+        Assert 'D8 and it logged into the fixture log' `
+            ((Test-Path -LiteralPath $log) -and ((Get-Content -LiteralPath $log -Raw) -match [regex]::Escape("nudge live session in pane $($pane.id)")))
+        $dPaneId = $pane.id
 
         ""
         "E. resume on a loop that is already running types nothing at it"
@@ -411,6 +444,19 @@ if (-not $ready) {
         Ghoz @('+close', '--target=go-loop-parked') | Out-Null
     }
 }
+
+""
+"G. nothing this run did reached the REAL watchdog log (T1713)"
+# The live supervisor goes on appending its own ticks, so count is not the
+# question: whether any appended line names THIS run's fixtures is. The fixture
+# root is in every stand-in exe path, the D pane id is in the nudge line.
+$tail = Read-RealDogLogSince
+$leaked = @($tail -split "`r?`n" | Where-Object {
+        $_ -and ($_.IndexOf($root, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            ($dPaneId -and $_.IndexOf($dPaneId, [System.StringComparison]::OrdinalIgnoreCase) -ge 0))
+    })
+Assert "G1 zero lines naming this run's fixtures in $realDogLog ($($leaked.Count))" ($leaked.Count -eq 0)
+foreach ($l in $leaked) { "    leaked: $l" }
 
 # --- teardown -------------------------------------------------------------
 foreach ($s in $sleepers) { Stop-Process -Id $s.Id -Force -ErrorAction SilentlyContinue }
