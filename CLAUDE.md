@@ -24,7 +24,7 @@ its partition.
 | Building either platform, launch/debug, crash diagnostics, delivery | `docs/claude/build.md` |
 | Writing or running ANY test or acceptance script; the harness audit rules | `docs/claude/testing.md` |
 | Any pixel of win32 chrome | `docs/design/win32-design-system.md` + `docs/claude/win32-ui.md` |
-| The Linux/WSL port, `src/apprt/gtk/`, any `seat: linux` task | `docs/design/linux-port.md` |
+| The Linux/WSL port, `src/apprt/gtk/`, any `seat: linux` task | `docs/design/linux-port.md` + `docs/claude/linux.md` (how to run anything in WSL: `scripts\linux\wsl-run.ps1` only) |
 
 `docs/reference/` (from main) holds the **Mac** seat's topic reference docs —
 how each area behaves on macOS now, with Swift code pointers and test names.

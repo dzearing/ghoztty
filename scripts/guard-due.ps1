@@ -4922,6 +4922,18 @@ $GuardTable = @(
     # Its failure mode is silent - two lanes building the same fix, or two
     # tasks filed under one id - and nothing else races two lanes, so this
     # harness (with its ledger-off negative control) is its only proof.
+    # The one Linux entry point (T3329): every refusal that keeps WSL from
+    # booting on a short box or from a Windows lane, and the argv path that a
+    # param() block silently broke. Its harness never boots WSL.
+    [pscustomobject]@{
+        Name   = 'wsl-run'
+        Script = 'test\linux\wsl-run-guard.ps1'
+        Stamp  = 'test\linux\wsl-run-guard.stamp.json'
+        Covers = @(
+            'scripts\linux\wsl-run.ps1',
+            'test\linux\wsl-run-guard.ps1'
+        )
+    },
     [pscustomobject]@{
         Name   = 'parity-tasks-lanes'
         Script = 'test\win32\parity-tasks-lanes.ps1'
