@@ -538,14 +538,32 @@ try {
             $opened = Wait-DiffFileLine $navLeaf.id
             Assert ($null -ne $opened) 'T817: the controls pane opened a file to step through'
             $firstFile = if ($opened) { $opened.Groups[1].Value } else { '' }
+            # T1642: this was filed as failing one run in two (2026-09-17) and
+            # did not reproduce in ten runs on 2026-11-21. The wait is already
+            # for the OBSERVABLE -- a `file=` line naming a different file --
+            # re-read after every press, so a slow page costs presses, not the
+            # verdict. What it lacked was a failure that says what happened:
+            # how many presses actually landed on the bar (a press that finds
+            # no `next_change` in the strip, or no window to post to, returns
+            # false) and which files the pane did report. A red here now reads
+            # as "the press never landed" or "it landed and the pane stayed on
+            # X", which are different bugs.
             $moved = $false
+            $presses = 0; $landed = 0
+            $seen = New-Object System.Collections.Generic.List[string]
             for ($i = 0; $i -lt 8 -and -not $moved; $i++) {
-                Click-NavButton $navLeaf.id 'next_change' | Out-Null
+                $presses++
+                if (Click-NavButton $navLeaf.id 'next_change') { $landed++ }
                 Start-Sleep -Milliseconds 600
                 $now = Wait-DiffFileLine $navLeaf.id -TimeoutMs 1500
-                if ($now -and $now.Groups[1].Value -ne $firstFile) { $moved = $true }
+                if ($now) {
+                    $f = $now.Groups[1].Value
+                    if (-not $seen.Contains($f)) { $seen.Add($f) }
+                    if ($f -ne $firstFile) { $moved = $true }
+                }
             }
-            Assert $moved "T817: next-change walks off the end of a file into the next one (from '$firstFile')"
+            Assert $moved ("T817: next-change walks off the end of a file into the next one (from '$firstFile'; " +
+                "$landed of $presses presses landed; files reported: $(if ($seen.Count) { $seen -join ', ' } else { 'none' }))")
 
             # The layout toggle: the pane re-renders side by side, says so, and
             # REMEMBERS it -- the next diff pane opens in the same layout, which
