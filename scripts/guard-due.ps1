@@ -5396,6 +5396,13 @@ $GuardTable = @(
     # this harness is the only thing that proves the relaunch actually comes
     # back, keeps the sessions, lands on the caller's desktop (job_spawn's
     # lpDesktop) and stops only this build's agent.
+    #
+    # T1592: arms R5/R6 are also the only run that drives the destructive kill
+    # from an app born INSIDE a pane's kill-on-close job - R5 proves T771's
+    # refusal (LocalAgent.terminateAgent, keyed off job_object's
+    # AGENT_OWNS_JOB) fires when the agent owns the job and is a negative
+    # control for it; R6 proves it stays quiet when a holder owns the job
+    # (pty_holder_child / pty_child decide which). Hence the four sources below.
     [pscustomobject]@{
         Name   = 'app-restart'
         Script = 'test\win32\app-restart.ps1'
@@ -5404,7 +5411,11 @@ $GuardTable = @(
             'test\win32\app-restart.ps1',
             'src\apprt\win32\app_restart.zig',
             'src\apprt\win32\relaunch_guard.zig',
-            'src\apprt\win32\job_spawn.zig'
+            'src\apprt\win32\job_spawn.zig',
+            'src\apprt\win32\LocalAgent.zig',
+            'src\apprt\win32\job_object.zig',
+            'src\remote\agent\pty_holder_child.zig',
+            'src\remote\agent\pty_child.zig'
         )
     },
     # The palette's "Focus: <pane>" jump entries (T555). The pure derivation

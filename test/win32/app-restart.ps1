@@ -95,6 +95,131 @@ function Wait-PidGone([int]$procId, [int]$timeoutSec = 20) {
     return $false
 }
 
+function Agent-PidAt([string]$dir) {
+    $p = Join-Path (Get-GhozttyAgentStateDir -Root $dir) 'port.json'
+    if (-not (Test-Path $p)) { return 0 }
+    try { return [int]((Get-Content $p -Raw | ConvertFrom-Json).pid) } catch { return 0 }
+}
+
+# T1592 (R5): create a process with ANOTHER process as its parent - the pane's
+# shell - so it inherits that parent's job at creation, the way an app typed
+# into a pane does. stdout/stderr go to a file: the handles are duplicated INTO
+# the parent (a PARENT_PROCESS child inherits from the parent's handle table,
+# not ours) and named in a HANDLE_LIST so nothing else of the shell's leaks in.
+# The environment is still ours (lpEnvironment null = the CREATOR's).
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class T1592Spawn {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct STARTUPINFO {
+        public int cb; public string lpReserved; public string lpDesktop; public string lpTitle;
+        public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+        public short wShowWindow, cbReserved2; public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct STARTUPINFOEX { public STARTUPINFO StartupInfo; public IntPtr lpAttributeList; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct PROCESS_INFORMATION { public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId; }
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32.dll")]
+    static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr sa, uint disp, uint flags, IntPtr tmpl);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool DuplicateHandle(IntPtr srcProc, IntPtr src, IntPtr dstProc, out IntPtr dst, uint access, bool inherit, uint options);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool InitializeProcThreadAttributeList(IntPtr list, int count, int flags, ref IntPtr size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool UpdateProcThreadAttribute(IntPtr list, uint flags, IntPtr attr, IntPtr value, IntPtr size, IntPtr prev, IntPtr retSize);
+    [DllImport("kernel32.dll")]
+    static extern void DeleteProcThreadAttributeList(IntPtr list);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern bool CreateProcessW(string app, System.Text.StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit,
+        uint flags, IntPtr env, string cwd, ref STARTUPINFOEX si, out PROCESS_INFORMATION pi);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern IntPtr OpenJobObjectW(uint access, bool inherit, string name);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
+
+    public static string LastError = "";
+
+    // JOB_OBJECT_QUERY only: this script never assigns, terminates or holds it.
+    public static IntPtr OpenJob(string name) { return OpenJobObjectW(0x0004, false, name); }
+
+    // 1 = in the job, 0 = not, -1 = could not ask.
+    public static int InJob(int pid, IntPtr job) {
+        IntPtr h = OpenProcess(0x1000 /* QUERY_LIMITED_INFORMATION */, false, pid);
+        if (h == IntPtr.Zero) return -1;
+        try { bool r; if (!IsProcessInJob(h, job, out r)) return -1; return r ? 1 : 0; }
+        finally { CloseHandle(h); }
+    }
+
+    public static int SpawnUnder(int parentPid, string exe, string args, string desktop, string outPath) {
+        LastError = "";
+        // CREATE_PROCESS | DUP_HANDLE | QUERY_LIMITED_INFORMATION
+        IntPtr parent = OpenProcess(0x0080 | 0x0040 | 0x1000, false, parentPid);
+        if (parent == IntPtr.Zero) { LastError = "OpenProcess(parent) " + Marshal.GetLastWin32Error(); return 0; }
+        IntPtr me = GetCurrentProcess();
+        IntPtr hOut = CreateFileW(outPath, 0x40000000, 3, IntPtr.Zero, 2, 0x80, IntPtr.Zero);
+        IntPtr hNul = CreateFileW("NUL", 0x80000000, 3, IntPtr.Zero, 3, 0x80, IntPtr.Zero);
+        IntPtr pOut = IntPtr.Zero, pNul = IntPtr.Zero;
+        IntPtr list = IntPtr.Zero, vParent = IntPtr.Zero, vHandles = IntPtr.Zero;
+        try {
+            if (hOut == new IntPtr(-1) || hNul == new IntPtr(-1)) { LastError = "CreateFileW " + Marshal.GetLastWin32Error(); return 0; }
+            // DUPLICATE_SAME_ACCESS, inheritable, in the PARENT's table.
+            if (!DuplicateHandle(me, hOut, parent, out pOut, 0, true, 2) ||
+                !DuplicateHandle(me, hNul, parent, out pNul, 0, true, 2)) {
+                LastError = "DuplicateHandle " + Marshal.GetLastWin32Error(); return 0;
+            }
+            IntPtr size = IntPtr.Zero;
+            InitializeProcThreadAttributeList(IntPtr.Zero, 2, 0, ref size);
+            list = Marshal.AllocHGlobal(size);
+            if (!InitializeProcThreadAttributeList(list, 2, 0, ref size)) { LastError = "InitAttr " + Marshal.GetLastWin32Error(); return 0; }
+            vParent = Marshal.AllocHGlobal(IntPtr.Size);
+            Marshal.WriteIntPtr(vParent, parent);
+            if (!UpdateProcThreadAttribute(list, 0, (IntPtr)0x00020000 /* PARENT_PROCESS */, vParent,
+                    (IntPtr)IntPtr.Size, IntPtr.Zero, IntPtr.Zero)) { LastError = "UpdateAttr(parent) " + Marshal.GetLastWin32Error(); return 0; }
+            vHandles = Marshal.AllocHGlobal(IntPtr.Size * 2);
+            Marshal.WriteIntPtr(vHandles, 0, pOut);
+            Marshal.WriteIntPtr(vHandles, IntPtr.Size, pNul);
+            if (!UpdateProcThreadAttribute(list, 0, (IntPtr)0x00020002 /* HANDLE_LIST */, vHandles,
+                    (IntPtr)(IntPtr.Size * 2), IntPtr.Zero, IntPtr.Zero)) { LastError = "UpdateAttr(handles) " + Marshal.GetLastWin32Error(); return 0; }
+            var si = new STARTUPINFOEX();
+            si.StartupInfo.cb = Marshal.SizeOf(typeof(STARTUPINFOEX));
+            si.StartupInfo.lpDesktop = desktop;
+            si.StartupInfo.dwFlags = 0x00000100; // STARTF_USESTDHANDLES
+            si.StartupInfo.hStdInput = pNul;
+            si.StartupInfo.hStdOutput = pOut;
+            si.StartupInfo.hStdError = pOut;
+            si.lpAttributeList = list;
+            PROCESS_INFORMATION pi;
+            var cmd = new System.Text.StringBuilder("\"" + exe + "\" " + args);
+            // EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW (Start-OnTestDesktop's flag)
+            if (!CreateProcessW(exe, cmd, IntPtr.Zero, IntPtr.Zero, true, 0x00080000 | 0x08000000,
+                    IntPtr.Zero, null, ref si, out pi)) { LastError = "CreateProcessW " + Marshal.GetLastWin32Error(); return 0; }
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            return pi.dwProcessId;
+        } finally {
+            IntPtr dummy;
+            // DUPLICATE_CLOSE_SOURCE: the copies in the shell's table go again.
+            if (pOut != IntPtr.Zero) DuplicateHandle(parent, pOut, IntPtr.Zero, out dummy, 0, false, 1);
+            if (pNul != IntPtr.Zero) DuplicateHandle(parent, pNul, IntPtr.Zero, out dummy, 0, false, 1);
+            if (list != IntPtr.Zero) { DeleteProcThreadAttributeList(list); Marshal.FreeHGlobal(list); }
+            if (vParent != IntPtr.Zero) Marshal.FreeHGlobal(vParent);
+            if (vHandles != IntPtr.Zero) Marshal.FreeHGlobal(vHandles);
+            if (hOut != new IntPtr(-1) && hOut != IntPtr.Zero) CloseHandle(hOut);
+            if (hNul != new IntPtr(-1) && hNul != IntPtr.Zero) CloseHandle(hNul);
+            CloseHandle(parent);
+        }
+    }
+}
+'@ -ErrorAction SilentlyContinue
+
 function Agent-Pid {
     # The app's agent runs under the ambient lineage (the runner's, or none).
     $p = Join-Path (Get-GhozttyAgentStateDir -Root $root) 'port.json'
@@ -329,6 +454,166 @@ try {
     Start-Sleep -Seconds 2
     Assert ($null -ne (Get-Process -Id $offPid -ErrorAction SilentlyContinue)) 'R4 cancelling kept the app'
     Assert ($null -ne (Wait-LogLine $b.Err 'restart cancelled by the user')) 'R4 the cancel was logged'
+
+    # ------------------------------------------------------------------------
+    # R5/R6 (T1592): an app launched FROM A PANE, then the agent restart.
+    #
+    # The T268 shape. A pane's shell lives in a kill-on-close PTY job; an app
+    # started from that shell is born in the same job; if killing the agent
+    # closes that job's last handle, the teardown kills the app inside its own
+    # TerminateProcess call. T675's startup escape normally moves such an app
+    # out first; T771's refusal in `LocalAgent.terminateAgent` is the net under
+    # it, keyed off `AGENT_OWNS_JOB` ("our job holds a process the agent
+    # PARENTED"). Until this arm that refusal had only ever been seen saying
+    # "carry on" (agent-upgrade.ps1 J22c).
+    #
+    # WHO owns the job decides whether the kill is fatal, so it is measured in
+    # both of the shapes the agent can run:
+    #   R5  GHOZTTY_AGENT_PTY_HOLDER=0 - the in-process ConPTY child (the
+    #       pre-T909 default, and today's fallback when a holder will not
+    #       start). The AGENT creates the job, parents the shell, and holds the
+    #       only handle: the kill IS fatal, and the refusal must fire.
+    #   R6  the default since T909 - a per-session HOLDER process (escaped
+    #       from the agent's job) creates the job and parents the shell. The
+    #       agent's death leaves the job alive, so the kill is NOT fatal, the
+    #       refusal must stay quiet, and the app must outlive the kill.
+    #
+    # How the shape is built: app B is created with the pane's SHELL as its
+    # parent process (PROC_THREAD_ATTRIBUTE_PARENT_PROCESS), so Windows puts it
+    # in the shell's job at creation - exactly what typing `ghoztty` in the pane
+    # does - and the startup escape stays suppressed (BuildMode.ps1 sets
+    # GHOZTTY_NO_STARTUP_ESCAPE for every harness launch). This script holds no
+    # handle to the job by the time anything destructive runs, so the hazard is
+    # the real one and R5 doubles as the negative control: with the refusal
+    # removed, B dies inside the call and R5c/R5d go red.
+    # ------------------------------------------------------------------------
+    $r5SavedLineage = Get-GhozttyAgentLineage
+    $r5SavedHolder = $env:GHOZTTY_AGENT_PTY_HOLDER
+
+    # Bring up the shape under its own lineage and profile; returns what the
+    # arm's asserts need. A lineage of its own because the job NAME is
+    # lineage-keyed: under the box's default lineage another debug agent may
+    # already own `...PtyJob-local-debug`, and this run's job then (correctly)
+    # falls back to an anonymous one nobody can open (measured: the first run
+    # of this arm found the name and no pane shell in it).
+    function New-PaneLaunchedApp([string]$tag, [bool]$holder) {
+        Stop-TestProcs
+        $env:GHOZTTY_AGENT_INSTANCE = "t1592$tag-$PID"
+        if ($holder) { Remove-Item Env:\GHOZTTY_AGENT_PTY_HOLDER -ErrorAction SilentlyContinue }
+        else { $env:GHOZTTY_AGENT_PTY_HOLDER = '0' }
+        $dir = Join-Path $root "r-$tag"
+        $env:LOCALAPPDATA = $dir
+        New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $dir) | Out-Null
+        $r = @{ Agent = 0; Shell = 0; Owner = 0; App = 0; Err = (Join-Path $root "app-$tag-b.err.txt"); Dir = $dir }
+
+        $first = Launch-App @("--title=t1592$tag") "$tag-a"
+        Assert ((Wait-TestWindow -ProcessId $first.Pid -Class 'GhozttyWindow' -TimeoutMs 20000) -ne [IntPtr]::Zero) "$tag setup: the first app is up"
+        $deadline = (Get-Date).AddSeconds(30)
+        while ((Get-Date) -lt $deadline -and $r.Agent -eq 0) { $r.Agent = Agent-PidAt $dir; if ($r.Agent -eq 0) { Start-Sleep -Milliseconds 500 } }
+        Assert ($r.Agent -gt 0) "$tag setup: its agent is running (pid $($r.Agent))"
+        $ids = @()
+        $deadline = (Get-Date).AddSeconds(20)
+        while ((Get-Date) -lt $deadline -and $ids.Count -lt 1) { $ids = @(Alive-Ids); if ($ids.Count -lt 1) { Start-Sleep -Milliseconds 500 } }
+        Assert ($ids.Count -ge 1) "$tag setup: a live session ($($ids.Count))"
+
+        # The PTY job, opened by the name its creator gave it
+        # (src/remote/pty_job_name.zig) - QUERY access only, closed again before
+        # anything destructive runs.
+        $lin = if (Test-GhozttyIsolatedBuildMode -Mode (Get-GhozttyBuildMode -Exe $Exe)) { 'local-debug' } else { 'local' }
+        $jobName = "Local\GhozttyAgentPtyJob-$lin-$($env:GHOZTTY_AGENT_INSTANCE)"
+        $job = [IntPtr]::Zero
+        $deadline = (Get-Date).AddSeconds(15)
+        while ((Get-Date) -lt $deadline -and $job -eq [IntPtr]::Zero) { $job = [T1592Spawn]::OpenJob($jobName); if ($job -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 500 } }
+        Assert ($job -ne [IntPtr]::Zero) "$tag setup: the PTY job exists ($jobName)"
+
+        # The pane's shell: a member of that job within two generations of the
+        # agent (its child in-process; its grandchild under a holder).
+        $deadline = (Get-Date).AddSeconds(20)
+        while ((Get-Date) -lt $deadline -and $r.Shell -eq 0) {
+            $kids = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($r.Agent)" -ErrorAction SilentlyContinue)
+            $cands = @($kids)
+            foreach ($k in $kids) { $cands += @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($k.ProcessId)" -ErrorAction SilentlyContinue) }
+            foreach ($k in $cands) {
+                if ($k.Name -in @('conhost.exe', 'OpenConsole.exe', 'ghoztty-agent.exe')) { continue }
+                if ([T1592Spawn]::InJob([int]$k.ProcessId, $job) -eq 1) { $r.Shell = [int]$k.ProcessId; $r.Owner = [int]$k.ParentProcessId; break }
+            }
+            if ($r.Shell -eq 0) { Start-Sleep -Milliseconds 500 }
+        }
+        if ($r.Shell -eq 0) {
+            foreach ($k in @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($r.Agent)" -ErrorAction SilentlyContinue)) {
+                Write-Host "      agent child: $($k.Name) pid $($k.ProcessId) inJob=$([T1592Spawn]::InJob([int]$k.ProcessId, $job))"
+            }
+        }
+        Assert ($r.Shell -gt 0) "$tag setup: the pane's shell is in the PTY job (pid $($r.Shell), parent $($r.Owner))"
+
+        # The first app goes (its session stays with the agent), so B is the
+        # only app on this pipe rather than forwarding to it and exiting.
+        Stop-Process -Id $first.Pid -Force -ErrorAction SilentlyContinue
+        Assert (Wait-PidGone $first.Pid) "$tag setup: the first app is gone"
+        Assert ($r.Shell -gt 0 -and (Agent-PidAt $dir) -eq $r.Agent -and $null -ne (Get-Process -Id $r.Shell -ErrorAction SilentlyContinue)) "$tag setup: ... and the agent and the pane shell are still running"
+
+        # The raw spawn below bypasses Start-OnTestDesktop, so it asks the
+        # build-mode question itself: never a release build's endpoints.
+        Assert-GhozttyIsolatedBuild -Exe $Exe | Out-Null
+        $desk = if ($Interactive -or $env:GHOZTTY_TEST_INTERACTIVE -eq '1') { $null } else { 'WinSta0\' + $td.Name }
+        $cfgHome = Get-TestConfigHomeOverride -Exe $Exe
+        if ($cfgHome) { $env:XDG_CONFIG_HOME = $cfgHome }
+        try {
+            if ($r.Shell -gt 0) { $r.App = [T1592Spawn]::SpawnUnder($r.Shell, $Exe, "--maximize=false --title=t1592$tag-b", $desk, $r.Err) }
+        } finally {
+            if ($cfgHome) { Remove-Item Env:XDG_CONFIG_HOME -ErrorAction SilentlyContinue }
+        }
+        if ($r.App -le 0) { Write-Host "      spawn under the shell failed: $([T1592Spawn]::LastError)" }
+        else { [void]$relaunched.Add($r.App) }
+        Assert ($r.App -gt 0) "$tag setup: app B was created with the pane shell as its parent (pid $($r.App))"
+        Assert ($r.App -gt 0 -and [T1592Spawn]::InJob($r.App, $job) -eq 1) "$tag setup: ... so it was BORN in the pane's kill-on-close job"
+        # Ours goes now: from here on the job's creator holds its only handle.
+        if ($job -ne [IntPtr]::Zero) { [T1592Spawn]::CloseHandle($job) | Out-Null }
+        Assert ($r.App -gt 0 -and (Wait-TestWindow -ProcessId $r.App -Class 'GhozttyWindow' -TimeoutMs 20000) -ne [IntPtr]::Zero) "$tag setup: app B has a window on the test desktop"
+        Assert ($r.App -gt 0 -and $null -eq (Wait-LogLine $r.Err 'startup escape: respawned' 2)) "$tag setup: ... and did not escape the job at startup (suppressed)"
+        Start-Sleep -Seconds 2
+
+        Assert ($r.App -gt 0 -and (Invoke-PaletteCommand $r.App 'Background Sessions')) "$tag chose the agent restart from the palette"
+        $d = if ($r.App -gt 0) { Wait-Dialog $r.App } else { [IntPtr]::Zero }
+        Assert ($d -ne [IntPtr]::Zero) "$tag a confirmation came up"
+        if ($d -ne [IntPtr]::Zero) {
+            Start-Sleep -Milliseconds 400
+            [void](Confirm-Restart $d)
+        }
+        $r.Facts = Wait-LogLine $r.Err 'agent restart: job facts before the kill' 20
+        if ($r.Facts) { Write-Host "      $($r.Facts.Trim())" }
+        return $r
+    }
+
+    Write-Host '== R5: in-process PTYs - the app launched from a pane REFUSES to stop its executioner'
+    $s = New-PaneLaunchedApp 'r5' $false
+    Assert ($s.Owner -gt 0 -and $s.Owner -eq $s.Agent) "R5 premise: the AGENT itself parents the pane shell (in-process ConPTY)"
+    Assert ($null -ne $s.Facts -and $s.Facts -match 'AGENT_OWNS_JOB=yes') 'R5a the pre-kill line reads AGENT_OWNS_JOB=yes'
+    Assert ($null -ne (Wait-LogLine $s.Err "agent restart: REFUSING to terminate pid $($s.Agent) .*holds processes that agent parented" 10)) "R5b the kill was REFUSED, naming the agent's pid ($($s.Agent))"
+    # The app lived through the call that used to end it: restartApp's line for
+    # terminateAgent RETURNING is there. Before T771 the log simply stopped at
+    # the job-facts line.
+    Assert ($null -ne (Wait-LogLine $s.Err 'restart: background agent stopped=false' 10)) 'R5c the app SURVIVED the refused kill (it logged the call returning)'
+    Assert ($null -ne $s.Facts -and $null -eq (Wait-LogLine $s.Err "agent restart: pid $($s.Agent) terminate returned" 1)) 'R5d ... and TerminateProcess was never called'
+    Assert ($null -ne $s.Facts -and $null -ne (Get-Process -Id $s.Agent -ErrorAction SilentlyContinue)) "R5e the agent is the same live process (pid $($s.Agent))"
+    Assert ($null -ne $s.Facts -and $s.Shell -gt 0 -and $null -ne (Get-Process -Id $s.Shell -ErrorAction SilentlyContinue)) "R5f ... and so is the pane's shell (pid $($s.Shell))"
+    # restartApp quits for its relaunch guard after the call either way; what
+    # comes back is this run's process, never the user's.
+    $back = if ($s.App -gt 0) { Wait-NewAppPid $s.App 20 } else { 0 }
+    if ($back -gt 0) { [void]$relaunched.Add($back) }
+
+    Write-Host '== R6: holder-backed PTYs (the default) - the refusal stays quiet and the app outlives the kill'
+    $h = New-PaneLaunchedApp 'r6' $true
+    Assert ($h.Owner -gt 0 -and $h.Owner -ne $h.Agent) "R6 premise: a HOLDER, not the agent, parents the pane shell (pid $($h.Owner))"
+    Assert ($null -ne $h.Facts -and $h.Facts -match 'AGENT_OWNS_JOB=(no|\?)') 'R6a the pre-kill line does NOT read AGENT_OWNS_JOB=yes'
+    Assert ($null -ne $h.Facts -and $null -eq (Wait-LogLine $h.Err 'agent restart: REFUSING' 1)) 'R6b nothing was refused'
+    Assert ($null -ne (Wait-LogLine $h.Err "agent restart: pid $($h.Agent) terminate returned" 10)) "R6c the agent (pid $($h.Agent)) was terminated"
+    # The point of R6: the app was IN the pane's kill-on-close job when the
+    # agent died, and lived, because the job's handle is the holder's.
+    Assert ($null -ne (Wait-LogLine $h.Err 'restart: background agent stopped=true' 10)) 'R6d the app SURVIVED the kill (it logged the call returning)'
+    Assert ($h.Owner -gt 0 -and $null -ne (Get-Process -Id $h.Owner -ErrorAction SilentlyContinue)) "R6e ... because the holder that owns the job is still running (pid $($h.Owner))"
+    $back = if ($h.App -gt 0) { Wait-NewAppPid $h.App 20 } else { 0 }
+    if ($back -gt 0) { [void]$relaunched.Add($back) }
 } catch {
     $script:fail++
     Write-Host "FAIL  script terminated: $($_.Exception.Message)" -ForegroundColor Red
@@ -336,6 +621,10 @@ try {
 } finally {
     Remove-TestDesktop
     Stop-TestProcs
+    if (Get-Variable -Name r5SavedLineage -ErrorAction SilentlyContinue) {
+        Restore-GhozttyAgentLineage -Saved $r5SavedLineage
+        if ($null -ne $r5SavedHolder) { $env:GHOZTTY_AGENT_PTY_HOLDER = $r5SavedHolder } else { Remove-Item Env:\GHOZTTY_AGENT_PTY_HOLDER -ErrorAction SilentlyContinue }
+    }
     $env:LOCALAPPDATA = $savedLocalAppData
     if ($null -ne $savedAgentBin) { $env:GHOSTTY_LOCAL_AGENT_BIN = $savedAgentBin } else { Remove-Item Env:\GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue }
 }
