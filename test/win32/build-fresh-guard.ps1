@@ -298,6 +298,82 @@ Assert "G1 docs/claude/testing.md states the freshness rule" ($testingDoc -match
 Assert "G2 and names the failure it prevents" ($testingDoc -match 'stale')
 Assert "G3 and points at this script" ($testingDoc -match 'build-fresh-guard\.ps1')
 
+# ============================================================================
+"== H: build-graph sources are covered by a build having RUN (T1564)"
+# ============================================================================
+# build.zig and most of src\build\ are read by the build runner, not compiled
+# into the exe, so an edit there relinks nothing and the exe's mtime can never
+# pass it. A build runner zig compiled AFTER the edit is the proof instead.
+$fxH = New-FixtureRepo 'h'
+New-Item -ItemType Directory -Force (Join-Path $fxH.Root 'src\build') | Out-Null
+$hUnlock = Join-Path $fxH.Root 'src\build\InstallUnlock.zig'
+$hConfig = Join-Path $fxH.Root 'src\build\Config.zig'
+Set-Content -LiteralPath $hUnlock -Value 'const u = 1;' -Encoding ascii
+Set-Content -LiteralPath $hConfig -Value 'const k = 1;' -Encoding ascii
+$hRunnerDir = Join-Path $fxH.Root '.zig-cache\o\0123456789abcdef'
+New-Item -ItemType Directory -Force $hRunnerDir | Out-Null
+$hRunner = Join-Path $hRunnerDir 'build.exe'
+Set-Content -LiteralPath $hRunner -Value 'runner' -Encoding ascii
+foreach ($f in @($hUnlock, $hConfig, $hRunner)) { Set-Age $f 240 }
+$hBuildZig = Join-Path $fxH.Root 'build.zig'
+Set-Age $fxH.Exe 60
+
+Assert "H1 build.zig and src\build\ are build-graph sources" `
+    ((Test-GhozttyBuildGraphSource -Relative 'build.zig') -and (Test-GhozttyBuildGraphSource -Relative 'src\build\InstallUnlock.zig'))
+Assert "H2 but build.zig.zon, src\build\Config.zig and ordinary src\ are not" `
+    (-not (Test-GhozttyBuildGraphSource -Relative 'build.zig.zon') -and
+     -not (Test-GhozttyBuildGraphSource -Relative 'src\build\Config.zig') -and
+     -not (Test-GhozttyBuildGraphSource -Relative 'src\main.zig'))
+
+# build.zig edited after the exe, and no build has run since: still stale.
+Set-Age $hBuildZig 10
+Reset-FreshCache
+$h3 = Test-GhozttyFreshBuild -Exe $fxH.Exe -Repo $fxH.Root
+Assert "H3 a build.zig edit with no build since reads as stale" (-not $h3.Fresh)
+Assert "H4 naming build.zig as the file that outran it" ($h3.HighWaterPath -like '*build.zig')
+
+# A zig build ran after the edit and relinked nothing: the runner is newer.
+Set-Age $hRunner 5
+Reset-FreshCache
+$h5 = Test-GhozttyFreshBuild -Exe $fxH.Exe -Repo $fxH.Root
+Assert "H5 a build runner compiled after the edit clears it without the opt-in" ($h5.Fresh)
+Assert "H6 and says the runner, not the exe, covered it" ($h5.CoveredBy -eq 'build-runner')
+Assert "H7 the refusal path agrees: no throw" `
+    ($null -eq (Get-Throw { Assert-GhozttyFreshBuild -Exe $fxH.Exe -Repo $fxH.Root }))
+
+# The T722 case: an edit to a build-graph-only file under src\build\.
+Set-Age $hUnlock 3
+Reset-FreshCache
+Assert "H8 an InstallUnlock.zig edit newer than the runner is stale" `
+    (-not (Test-GhozttyFreshBuild -Exe $fxH.Exe -Repo $fxH.Root).Fresh)
+Set-Age $hRunner 1
+Reset-FreshCache
+Assert "H9 and the next build's runner clears it" `
+    ((Test-GhozttyFreshBuild -Exe $fxH.Exe -Repo $fxH.Root).Fresh)
+
+# A src\build\ file the exe itself imports stays on the exe's mark.
+Set-Age $hConfig 2
+Set-Age $hRunner 0
+Reset-FreshCache
+$h10 = Test-GhozttyFreshBuild -Exe $fxH.Exe -Repo $fxH.Root
+Assert "H10 a Config.zig edit is NOT cleared by the runner - the exe compiles it" (-not $h10.Fresh)
+Assert "H11 and names Config.zig" ($h10.HighWaterPath -like '*Config.zig')
+
+# Code drift outranks a covered graph mark.
+Set-Age $hConfig 240
+Set-Age (Join-Path $fxH.Root 'src\main.zig') 2
+Reset-FreshCache
+$h12 = Test-GhozttyFreshBuild -Exe $fxH.Exe -Repo $fxH.Root
+Assert "H12 an ordinary source edit is still stale with the graph covered" `
+    ((-not $h12.Fresh) -and ($h12.HighWaterPath -like '*main.zig'))
+Set-Age (Join-Path $fxH.Root 'src\main.zig') 240
+Set-Age $hRunner 240
+Set-Age $hBuildZig 2
+Reset-FreshCache
+$hMsg = Get-Throw { Assert-GhozttyFreshBuild -Exe $fxH.Exe -Repo $fxH.Root }
+Assert "H13 the refusal says a plain build clears a build-graph source" `
+    (($null -ne $hMsg) -and ($hMsg -match 'build runner'))
+
 ""
 if ($NegativeControl -and -not $script:negReached) {
     Assert "NEGATIVE CONTROL never reached its inverted assertion" $false

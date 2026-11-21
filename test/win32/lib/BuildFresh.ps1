@@ -49,6 +49,25 @@
 # docs-only edit builds the same bytes) and `src\apprt\gtk\` (Linux's frontend,
 # which this exe cannot contain). 1258 files, ~17ms, cached per process.
 #
+# BUILD-GRAPH SOURCES ARE COVERED BY A BUILD HAVING RUN (T1564)
+#
+# `build.zig` and most of `src\build\` are read by zig's BUILD RUNNER, not
+# compiled into ghoztty.exe. An edit there that does not change the exe's bytes
+# relinks nothing, so the exe's mtime never passes it and the plain
+# `zig build` the refusal names could not clear it: T722 had to opt into
+# GHOZTTY_TEST_REBUILD_STALE over an edit to src\build\InstallUnlock.zig, and a
+# gate whose own remedy does not work teaches the loop to reach for the opt-in.
+# So those files form a second mark, the GRAPH mark, judged against whichever
+# is newer: the exe, or the build runner zig compiled into
+# `<repo>\.zig-cache\o\<hash>\build.exe`. Zig recompiles that runner on the
+# first `zig build` after any build-graph edit, so its mtime proves a build has
+# read the edit. The few `src\build\` files the exe imports itself (Config.zig
+# and its local imports, through src\build_config.zig) stay on the exe's mark,
+# and so does build.zig.zon, whose dependencies are compiled into the exe.
+# The residual: `zig build agent` alone, after a build.zig edit that DOES
+# change the exe's bytes, compiles the runner without rebuilding the exe.
+# Every turn's first test step is the Debug `zig build`, which closes it.
+#
 # THE ONE FALSE POSITIVE, AND ITS EXIT
 #
 # An edit to a `src\` file that is NOT in this exe's module graph - a Mac-only
@@ -79,6 +98,27 @@ if (-not (Get-Variable -Name GhozttyFreshCache -Scope Script -ErrorAction Silent
 # Directories under src\ whose contents cannot be in a win32 ghoztty.exe.
 $script:GhozttyFreshExcludedDirs = @('\src\apprt\gtk\')
 
+# T1564: build-graph sources - read by the build runner, judged against the
+# newest compiled runner as well as the exe. Repo-relative, lower case.
+$script:GhozttyFreshGraphDir = 'src\build\'
+# ...except these src\build\ files, which the exe itself imports
+# (src\build_config.zig -> build/Config.zig -> its local imports).
+$script:GhozttyFreshExeGraphBuildFiles = @(
+    'src\build\config.zig', 'src\build\xcframework.zig', 'src\build\gtk.zig', 'src\build\gitversion.zig'
+)
+
+function Test-GhozttyBuildGraphSource {
+    <#
+    .SYNOPSIS
+    Is this repo-relative path read by the build runner rather than the exe (T1564)?
+    #>
+    param([Parameter(Mandatory = $true)][string]$Relative)
+    $rel = $Relative.TrimStart('\').ToLowerInvariant()
+    if ($rel -eq 'build.zig') { return $true }
+    if (-not $rel.StartsWith($script:GhozttyFreshGraphDir)) { return $false }
+    return ($script:GhozttyFreshExeGraphBuildFiles -notcontains $rel)
+}
+
 # T1431: `Invoke-GhozttyDebugBuild` scratches on the repo's drive rather than in
 # %TEMP%. The rule lives in one place (scripts\lib\BuildCache.ps1) beside the
 # global-cache rule it mirrors, so this file asks for it instead of keeping a
@@ -103,8 +143,10 @@ function Get-GhozttySourceHighWater {
     The newest mtime among the files that feed a win32 ghoztty.exe.
 
     .DESCRIPTION
-    Returns a PSCustomObject with Time (UTC), Path (the file holding it) and
-    Count, or $null when the tree cannot be read. Enumerated with
+    Returns a PSCustomObject with Time (UTC) and Path - the CODE mark, the
+    newest source the exe compiles - plus GraphTime / GraphPath, the newest
+    build-graph-only source (T1564; $null when there is none), and Count over
+    both, or $null when the tree cannot be read. Enumerated with
     [System.IO.Directory]::EnumerateFiles rather than Get-ChildItem: 1258 files
     in ~17ms, which is cheap enough to sit in front of every acceptance script.
     Cached per repo per process - the tree does not change under a running
@@ -121,7 +163,10 @@ function Get-GhozttySourceHighWater {
     if (Test-Path -LiteralPath $srcDir) {
         $newestTime = [datetime]::MinValue
         $newestPath = $null
+        $graphTime = [datetime]::MinValue
+        $graphPath = $null
         $count = 0
+        $prefixLen = $root.Length + 1
         foreach ($f in [System.IO.Directory]::EnumerateFiles($srcDir, '*', 'AllDirectories')) {
             if ($f.EndsWith('.md', [StringComparison]::OrdinalIgnoreCase)) { continue }
             $skip = $false
@@ -131,23 +176,64 @@ function Get-GhozttySourceHighWater {
             if ($skip) { continue }
             $count++
             $t = [System.IO.File]::GetLastWriteTimeUtc($f)
-            if ($t -gt $newestTime) { $newestTime = $t; $newestPath = $f }
+            if (Test-GhozttyBuildGraphSource -Relative $f.Substring($prefixLen)) {
+                if ($t -gt $graphTime) { $graphTime = $t; $graphPath = $f }
+            } elseif ($t -gt $newestTime) { $newestTime = $t; $newestPath = $f }
         }
         foreach ($name in @('build.zig', 'build.zig.zon')) {
             $p = Join-Path $root $name
             if (Test-Path -LiteralPath $p) {
                 $count++
                 $t = [System.IO.File]::GetLastWriteTimeUtc($p)
-                if ($t -gt $newestTime) { $newestTime = $t; $newestPath = $p }
+                if (Test-GhozttyBuildGraphSource -Relative $name) {
+                    if ($t -gt $graphTime) { $graphTime = $t; $graphPath = $p }
+                } elseif ($t -gt $newestTime) { $newestTime = $t; $newestPath = $p }
             }
         }
-        if ($newestPath) {
-            $result = [pscustomobject]@{ Time = $newestTime; Path = $newestPath; Count = $count }
+        if ($newestPath -or $graphPath) {
+            $result = [pscustomobject]@{
+                Time      = $(if ($newestPath) { $newestTime } else { $null })
+                Path      = $newestPath
+                GraphTime = $(if ($graphPath) { $graphTime } else { $null })
+                GraphPath = $graphPath
+                Count     = $count
+            }
         }
     }
 
     $script:GhozttyFreshCache[$key] = $result
     return $result
+}
+
+function Get-GhozttyBuildRunnerTime {
+    <#
+    .SYNOPSIS
+    When zig last compiled this repo's build runner, as a UTC time, or $null.
+
+    .DESCRIPTION
+    T1564. The newest `<repo>\.zig-cache\o\<hash>\build.exe`. Zig compiles a
+    new runner (a new hash directory) on the first `zig build` after any edit
+    to the build graph, so a runner newer than a build-graph source proves a
+    build has read that source - relink or no relink. ~4000 directories in
+    ~45ms; cached per repo per process like the high-water scan.
+    #>
+    param([string]$Repo)
+    $root = Get-GhozttyRepoRootForFresh -Repo $Repo
+    $key = "runner:$root"
+    if ($script:GhozttyFreshCache.ContainsKey($key)) { return $script:GhozttyFreshCache[$key] }
+    $newest = $null
+    $o = Join-Path $root '.zig-cache\o'
+    if ([System.IO.Directory]::Exists($o)) {
+        foreach ($d in [System.IO.Directory]::EnumerateDirectories($o)) {
+            $b = Join-Path $d 'build.exe'
+            if ([System.IO.File]::Exists($b)) {
+                $t = [System.IO.File]::GetLastWriteTimeUtc($b)
+                if ($null -eq $newest -or $t -gt $newest) { $newest = $t }
+            }
+        }
+    }
+    $script:GhozttyFreshCache[$key] = $newest
+    return $newest
 }
 
 function Get-GhozttyFreshWitnessPath {
@@ -290,8 +376,14 @@ function Test-GhozttyFreshBuild {
 
     .DESCRIPTION
     Returns a PSCustomObject: Fresh (bool), InScope (bool), ExeTime, HighWater,
-    HighWaterPath, DriftSeconds. Out-of-scope exes report Fresh = $true, because
-    this gate has nothing to say about them.
+    HighWaterPath, DriftSeconds, CoveredBy. Out-of-scope exes report Fresh =
+    $true, because this gate has nothing to say about them.
+
+    Two marks (T1564): the CODE mark must be older than the exe; the GRAPH mark
+    (build-graph-only sources) must be older than the exe OR the newest
+    compiled build runner. When both are stale the CODE drift is the one
+    reported, since only a rebuild of the exe clears it. CoveredBy is 'exe', or
+    'build-runner' when only the runner covered the graph mark.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$Exe,
@@ -305,6 +397,7 @@ function Test-GhozttyFreshBuild {
         HighWater     = $null
         HighWaterPath = $null
         DriftSeconds  = 0
+        CoveredBy     = 'exe'
     }
 
     if (-not (Test-GhozttyExeIsRepoBuild -Exe $Exe -Repo $Repo)) { return $shape }
@@ -314,14 +407,30 @@ function Test-GhozttyFreshBuild {
     if (-not $high) { return $shape }
     $shape.HighWater = $high.Time
     $shape.HighWaterPath = $high.Path
+    if (-not $high.Path) {
+        $shape.HighWater = $high.GraphTime
+        $shape.HighWaterPath = $high.GraphPath
+    }
 
     $exeTime = Get-GhozttyExeBuildTime -Exe $Exe
     if (-not $exeTime) { return $shape }   # a missing exe is BuildMode's refusal to make
     $shape.ExeTime = $exeTime
 
-    if ($high.Time -gt $exeTime) {
+    if ($high.Path -and $high.Time -gt $exeTime) {
         $shape.Fresh = $false
         $shape.DriftSeconds = [int]($high.Time - $exeTime).TotalSeconds
+        return $shape
+    }
+    if ($high.GraphPath -and $high.GraphTime -gt $exeTime) {
+        $runner = Get-GhozttyBuildRunnerTime -Repo $Repo
+        if ($runner -and $runner -ge $high.GraphTime) {
+            $shape.CoveredBy = 'build-runner'
+        } else {
+            $shape.Fresh = $false
+            $shape.HighWater = $high.GraphTime
+            $shape.HighWaterPath = $high.GraphPath
+            $shape.DriftSeconds = [int]($high.GraphTime - $exeTime).TotalSeconds
+        }
     }
     return $shape
 }
@@ -403,9 +512,11 @@ harness has been run against the code as it now stands when it never saw it.
 Build it and re-run:
     zig build -Dapp-runtime=win32 -Doptimize=Debug
 
-If that build reports nothing to do - the edit was not in this exe's module
-graph - re-run this script once with the rebuild opt-in, which records that a
-build covered these sources:
+A build-graph-only source (build.zig, most of src\build\) is cleared by that
+build alone, relink or no relink: the build runner it compiles is the proof
+(T1564). If the build reports nothing to do for anything else - the edit was
+not in this exe's module graph - re-run this script once with the rebuild
+opt-in, which records that a build covered these sources:
     `$env:GHOZTTY_TEST_REBUILD_STALE = '1'
 
 If this box genuinely cannot build and you accept a result about the old bytes,

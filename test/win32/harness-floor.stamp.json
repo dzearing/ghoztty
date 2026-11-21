@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-20T18:05:47-08:00",
+    "generated":  "2026-11-20T18:16:38-08:00",
     "commit":  "6e0e3b7ad",
     "uncommitted":  [
-                        "test/win32/viewer-feedback-capture.ps1"
+                        "test/win32/build-fresh-guard.ps1",
+                        "test/win32/lib/BuildFresh.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
@@ -62,7 +63,7 @@
                   "test/win32/blade-shadow.ps1":  "a324592e11e92841a183b026f3b38c397bc340c9205fbc3f583040f913de7b7c",
                   "test/win32/body-complete-audit.ps1":  "9593707492fd8afd721955b88aa112993a86c31d27a00d812cc922050cbe1200",
                   "test/win32/build-cache.ps1":  "c72878df10c33c065ebc87b66eaaf8fb3ecf9da1d1a43171dcc6ccf989dc1782",
-                  "test/win32/build-fresh-guard.ps1":  "0e567d9a72a4e5ff377b5c7d98281ddbfd5da0543d93e277cb99aeac351b09c2",
+                  "test/win32/build-fresh-guard.ps1":  "5215065abfc02691db5643057d1d897acac947d64c18649b4ec9105dee1b9d32",
                   "test/win32/build-locked-artifact.ps1":  "e42a71b9730f428c28d7cc844a54d73d5730f696a9a3e315dc5cffaafe0869f5",
                   "test/win32/build-mode-guard.ps1":  "c86f43d4a66a2686efefe1ef3d18faf942668270a6bfc4e3b78eeca264f11942",
                   "test/win32/caller-anchor.ps1":  "e51f43169e0cb021ffbcc719cbf36be8882b65940a6c5c5a461cd7c679732135",
@@ -273,7 +274,7 @@
                   "test/win32/lib/AssertedNothingAudit.ps1":  "1e402acc9b9bf5d673f6dca1eadb864a3493643f786e380e3ffd3e5262838af1",
                   "test/win32/lib/BodyCompleteAudit.ps1":  "bf666bb6bd484b81a2bb21089bf92ff70e8a7a80fe52f9acf90b9ff11a9e02d8",
                   "test/win32/lib/BrowserLeak.ps1":  "ae41845c0869dc0a37c9104ff6189f07d1e4ede98445bdecbeb3e222f5224826",
-                  "test/win32/lib/BuildFresh.ps1":  "0314737dc6419b7d45d9421584a37dc009939b0384ae609378701c0cb306e31b",
+                  "test/win32/lib/BuildFresh.ps1":  "8ef3d35b374882e3e7538823ec18773a0a84ddf63de421bf7d291a7f8a08f23a",
                   "test/win32/lib/BuildMode.ps1":  "71e515e4630722195cf187d5b7229f26fe2d596661d758bafbff98a6d1bf19e1",
                   "test/win32/lib/ChainFoldOracle.ps1":  "6e774b2679c3acb1172991c393b17d36b1524fa4cd843863eacc1848c8fa3423",
                   "test/win32/lib/CheckoutGuard.ps1":  "e386d340814b5deebec8f5c09dfdcc31a6b3b45aae875daad03dd82d0d857f29",
@@ -606,7 +607,7 @@
                   "test/win32/viewer-feedback.ps1":  "a27afcc98a135b5f5e6ae9259d6ee57b11ea3a86d01175b8ebac9edb3e5469cd",
                   "test/win32/viewer-feedback-a11y.ps1":  "5fac54144f172e562b4139426c421f0a083bb19294815e3095af62b8201e4411",
                   "test/win32/viewer-feedback-alpha.ps1":  "7e3ed8de4c1caf1382b53ab1fa99ce89b4a3d9239263be65c7bbf80de97f34c1",
-                  "test/win32/viewer-feedback-capture.ps1":  "e10dae4745467899f42554208a1f58f092d047b1a67a0691c1566ecaed180dfd",
+                  "test/win32/viewer-feedback-capture.ps1":  "b4cb455788298726f5b0bdf98020e5176430ebcaa451b3d56172c3975821d1c8",
                   "test/win32/viewer-feedback-carousel.ps1":  "c732a5a15ce1cf08a6d7dff415085fd1433e9335a157a23c0dfee5dabc393ab4",
                   "test/win32/viewer-feedback-images.ps1":  "73e6ed849642cd790866a8396f853d8afba27329309740188ad1f723439dbe1a",
                   "test/win32/viewer-feedback-utf16.ps1":  "0d062a2a5601257861deed4400ac7fd14666a1b6cdcd3d03f414f120bccad954",

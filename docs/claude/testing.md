@@ -1315,6 +1315,12 @@ question ask the second one too, with no per-script edit:
 - **Sources are `build.zig`, `build.zig.zon` and `src\` minus `*.md` and
   `src\apprt\gtk\`.** A docs-only edit and Linux's frontend cannot change these
   bytes. ~1258 files in ~17ms, cached per process.
+- **Build-graph sources are covered by a build having RUN** (T1564).
+  `build.zig` and `src\build\` (except `Config.zig` and its local imports,
+  which the exe compiles itself) are read by zig's build runner, not the exe,
+  so their edits are judged against the newer of the exe and the newest
+  compiled runner (`<repo>\.zig-cache\o\<hash>\build.exe`). A plain
+  `zig build` clears a `build.zig` edit; it no longer needs the opt-in below.
 - **Only `<repo>\zig-out\` is in scope.** An installed release, a portable copy
   and a `$TEMP` stub are not claimed to be built from this tree, so "older than
   `src\`" says nothing about them.
