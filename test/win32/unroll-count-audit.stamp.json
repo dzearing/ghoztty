@@ -1,10 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-20T23:49:01-08:00",
-    "commit":  "d47aca185",
+    "generated":  "2026-11-21T00:20:57-08:00",
+    "commit":  "c9af15802",
     "uncommitted":  [
-                        "scripts/deliver-windows-build.ps1"
+
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -33,7 +33,7 @@
                   "scripts/crash-databreak.ps1":  "ec45063075848cb962ca00262960aec8380bd5de3f0d9f9bc9f1d25c109e3b0d",
                   "scripts/daily-publish.ps1":  "454275dba14771956e2316cf1280ae85b972a187641df70f76bfe522ef2a9793",
                   "scripts/deliver-audit.ps1":  "5598626fd46a8b8da014508f9d26c8f423cebddb4c741aec4e5fbe6d882149ce",
-                  "scripts/deliver-windows-build.ps1":  "0b827bd4cd51d35abc7ef83f04a38ce03d9473c4b149165620290ce05b4d8690",
+                  "scripts/deliver-windows-build.ps1":  "921866556dc1bd62bd8f85a3b413ff3f3557a3c70214f02d3b98004dc2851f2c",
                   "scripts/delivery-manifest.ps1":  "e1d865b58a35c5d226f2078a8e0d4e274d75fbbb5adc2f5aa2639382ae71de60",
                   "scripts/delivery-version.ps1":  "0e13b53aff9be9cf6c7c4c35cbe4fc3293dccf5fef434bef769806b966eb62ce",
                   "scripts/divergence-inventory.ps1":  "f299f907df872214375bd6f88b868bbbaf5db7125301d6481c6a39d44222ff61",

@@ -1,13 +1,13 @@
 {
     "guard":  "hard-delete-sites",
     "script":  "test/win32/hard-delete-sites.ps1",
-    "generated":  "2026-11-21T00:08:06-08:00",
-    "commit":  "d47aca185",
+    "generated":  "2026-11-21T00:15:27-08:00",
+    "commit":  "c9af15802",
     "uncommitted":  [
-                        "scripts/deliver-windows-build.ps1"
+
                     ],
     "files":  {
-                  "scripts/deliver-windows-build.ps1":  "0b827bd4cd51d35abc7ef83f04a38ce03d9473c4b149165620290ce05b4d8690",
+                  "scripts/deliver-windows-build.ps1":  "921866556dc1bd62bd8f85a3b413ff3f3557a3c70214f02d3b98004dc2851f2c",
                   "scripts/ghoztty-cleanup.ps1":  "d2307b4c4df220c56944c340fbf60863f23f869fcd52e18acb195627c0aefde9",
                   "scripts/lib/HardDelete.ps1":  "78ca1c0b521f9ae991e6b8f5304eb2a4e30a7a8ef1e3ba93839de8b740ea88b2",
                   "scripts/test-binary-soak.ps1":  "c838c5077d2b82c98952a1903f0d73d12bf0830432dc65aaceba45124832d3f4",
@@ -16,7 +16,7 @@
                   "test/win32/hard-delete-sites.ps1":  "f0e6c5b18f1e786cab6acf996e3bcb9d8b1da46d99c9bfbc7f5664a12dacd71c"
               },
     "code":  {
-                 "scripts/deliver-windows-build.ps1":  "code1:e3f78bd219d779957caecd6a00972330632f633427fc37d6c03c760ce15280f4",
+                 "scripts/deliver-windows-build.ps1":  "code1:8cecabc124eca2e6f52fe60b66581e6f3c5310f5de3bbb0a04ab33bdb016d125",
                  "scripts/ghoztty-cleanup.ps1":  "code1:c35b95f9cd9b1a799cad29fd99f59b02e13d257040dfe285a418761a2ba4c256",
                  "scripts/lib/HardDelete.ps1":  "code1:f77048e94c5dd08f39759e800c0335b025498a07dc245a28775db20c79801a61",
                  "scripts/test-binary-soak.ps1":  "code1:448793d5bedb5a8e678e63cf26cd6bea6a834b93b4e57d0a7fe4d9ea10e0775b",

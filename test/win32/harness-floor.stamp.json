@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-21T00:03:17-08:00",
-    "commit":  "d47aca185",
+    "generated":  "2026-11-21T00:32:05-08:00",
+    "commit":  "c9af15802",
     "uncommitted":  [
-                        "test/win32/deliver-windows-build.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
@@ -34,7 +34,7 @@
                   "test/win32/agent-lineage-suites.ps1":  "589bd4707698f2254f3e0fc30d5f2ebe99aaf78fe6edaf973d87d3fc713a932f",
                   "test/win32/agent-open-refused.ps1":  "7686e24eb9c042bbe780ece4027272b3f5b5561b61edd339f5c93f6d3747309e",
                   "test/win32/agent-pipe.ps1":  "548988e24fa2341355155e576f684522b14bb2938080070dcde9bad51ddef050",
-                  "test/win32/agent-recovery.ps1":  "61e3c190ee696840b1b515a4ab1e657bbf998e95194fe6a4f41de5ff8e508dc2",
+                  "test/win32/agent-recovery.ps1":  "40677e79a0664d0a2d9b1320ffe5a50c7e73e1cfd8930af147a6df01e7a092fb",
                   "test/win32/agent-recovery-tabs.ps1":  "ca7c7093ad03a5bec83c10cb76a477b25a97133700075fb0d402c1b106bad176",
                   "test/win32/agent-relay-session-e2e.ps1":  "3453c9cb296d20986b43bc379ec6094eacb27c64be84db06cb90703b8032a06e",
                   "test/win32/agent-role-guard.ps1":  "957cfcde77365fe019417a0b3729912a9a88df85f1e4c0fdc93f6f25d3cc1bca",
@@ -137,7 +137,7 @@
                   "test/win32/dark-menus.ps1":  "944b48c2b49d5d2ca8148572da1dcc70a9628871b27246187b9a3982e2a34491",
                   "test/win32/dashboard-dom.ps1":  "5c8bec2cd488707972cd1b71ae0c4e0bdbc61d2f7d7a844d8c24aa50b0cc3b62",
                   "test/win32/dashboard-keepalive.ps1":  "907915acd38d52b16755167f2df7e4383bc5d1cb53a3f8cbd84e419a559c7429",
-                  "test/win32/deliver-windows-build.ps1":  "919f090cf0e02931139caf3c58c36d36c7fa6036b4650e46c6e9d2076228bb22",
+                  "test/win32/deliver-windows-build.ps1":  "b0fdd5a3484f57332ecb021e8d89c6cf0320af7f9d5a1a8581807159c9570a51",
                   "test/win32/deny-escape-damage.ps1":  "2fc4374ce0468d7f7274c10218e38a1ec1c5ec2634fdb231bf2b8b290e9a7e29",
                   "test/win32/deny-git-autostash.ps1":  "625dfd8e4a308dc01902adb6c31b80b0a60a47a1b2e230a9385eaaecd40846e0",
                   "test/win32/deny-sh-from-powershell.ps1":  "345a909a59c95edc61dc97247f3d94784431cae1203ca76951f5dbe755e25a8e",
