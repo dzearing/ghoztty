@@ -1,8 +1,8 @@
 {
     "guard":  "thread-join",
     "script":  "test/win32/thread-join-audit.ps1",
-    "generated":  "2026-11-19T18:59:03-08:00",
-    "commit":  "747ee8b81",
+    "generated":  "2026-11-21T04:35:55-08:00",
+    "commit":  "428d66dad",
     "uncommitted":  [
 
                     ],
@@ -61,7 +61,7 @@
                   "src/remote/agent_lineage.zig":  "277bca4d33eb667f06fc7676e7c933d74b7a50911fadf6266fae5f8cc69f40d7",
                   "src/remote/agent_smoke.zig":  "d3e386356c7201fba0edf48eab76d88205556e8ec8c855bfc23c049affd3a052",
                   "src/remote/client_mux.zig":  "8c6148780c71545ba246d6eca41b650bcba4415b215f2ccea25272ba8366bbb4",
-                  "src/remote/connection.zig":  "8f6a13430431d6f7947a4bbe2bec6b747d40bf5c4b29b0b5de1fea1b22780c49",
+                  "src/remote/connection.zig":  "6821826b2162167c18feba2bcae91fcb8f69dae71a41debe87fa3b1ebf3fe21f",
                   "src/remote/google_oauth.zig":  "40138a3e0293322de8ee722b7aa0e5688eb4ac68332971c5d624f1d8471c5510",
                   "src/remote/http_client.zig":  "aa3dc49d2baa17240a59b1b51c1fc7d08b81fe8652ab7650bbdbcd59c3dff225",
                   "src/remote/inbound_ring.zig":  "a9c5f6f2de857b51aee8f335ca2a5c6afcd3f7d2268462a71f1c18f7cc64bc3a",
