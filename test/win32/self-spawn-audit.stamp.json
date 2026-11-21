@@ -1,8 +1,8 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-11-20T15:33:29-08:00",
-    "commit":  "f23da11a1",
+    "generated":  "2026-11-20T16:18:09-08:00",
+    "commit":  "35f939e6b",
     "uncommitted":  [
 
                     ],
@@ -67,7 +67,7 @@
                   "src/apprt/gtk/winproto/x11.zig":  "31a8499677b2d9200a202ee1a6781fc022e8f66afaa4fec827526f3a68903811",
                   "src/apprt/ipc.zig":  "2de6a9bf62a12c9cd312c1b0f59df46cd1c7965a1703398a530eb34a4934a8e5",
                   "src/apprt/ipc/args.zig":  "da85c78969d1e2d8b74cb1f6fa087d097d7e9bc922d9672697a709a74544ee0e",
-                  "src/apprt/ipc/list.zig":  "2e213fafa984e8eff65b6bde243069cacdfded75c83610ff570d1f82eee6315c",
+                  "src/apprt/ipc/list.zig":  "b3cff45d2d8b3b2d45ae055b70e59ce8fe79568ff56241426a747ab1fcb9b892",
                   "src/apprt/ipc/read_tail.zig":  "43e8b7a2c10d1a73990cec6b09a6ddd1b857065f39cd855d9c83bf289fbb2ee4",
                   "src/apprt/ipc/segments.zig":  "4804011167bdc7a1eb954c4c9a44d96f730ee1a5c1cfa1b26e66383df28c775c",
                   "src/apprt/ipc/split_name_collision.zig":  "130e8526b53d4ca7f9f9bd14ad6ae2cb39d718e5262469af8bedf000981c6787",
@@ -243,7 +243,7 @@
                   "src/apprt/win32/ipc_shortcut_guide.zig":  "ffbe20a34b9868b26615353dfab84d2b65d011faf27094c957711cdd4d756705",
                   "src/apprt/win32/ipc_whats_new.zig":  "35f9a55aca347095990a162cba08e95edf95b3ff9440b04c9dd58370a58e1d10",
                   "src/apprt/win32/ipc_workspaces.zig":  "c9b57d7078145c2e43b355192d211ed5eeff61b8484c57a706b13011766c0648",
-                  "src/apprt/win32/IpcHandlers.zig":  "2fd4c481b8f11313022a78d7b886c108a62af8535e2027b36b4ab9e2b5d8bea8",
+                  "src/apprt/win32/IpcHandlers.zig":  "7b701d9f018d48c0dbd974af37c760389f9e5a1ad6168757168783521d1a2bca",
                   "src/apprt/win32/IpcRegistry.zig":  "1de5658631df1d1d11d63b392aba043d7dd619e2bd3e7ac5717fc62e10ecd206",
                   "src/apprt/win32/IpcServer.zig":  "d52089f909a9bad6600892d1cc80030a3dccfa7b251a5215fb1b16bc0d4b6570",
                   "src/apprt/win32/job_escape.zig":  "060f58a8a8739baf8246aaca8cf5d4a0e6113bfa69e981fdc2282ea8a060cb7e",
@@ -602,7 +602,7 @@
                   "src/cli/ghostty.zig":  "e62f31c7e4e2e2302c4ac01f77401612781e284086c2885ed529f60403862605",
                   "src/cli/help.zig":  "ad8647deba3db716e751701821bdf3d958235b7bb8bea1a3f60642dd0ab4e528",
                   "src/cli/json.zig":  "3e9d5025af34529c2cc57d433306195a1c55b4c582dc385379ce9b6748e0f251",
-                  "src/cli/list.zig":  "e40045744d49bd59b1f862e47ef3701e4c6c4bb346df11271aa02f8a261161ef",
+                  "src/cli/list.zig":  "d667393b27b28bcf9d0626f085967507756d1ba13765500e42e47fc447a3ac53",
                   "src/cli/list_actions.zig":  "71a293e3ddd367680c048d09333eed9c4d0b6fc99eddaaceaa1010bd128869fa",
                   "src/cli/list_colors.zig":  "ac649fb765789173c9b73a797d9de094ca587edf144874a8e5ca71770ec9aff6",
                   "src/cli/list_fonts.zig":  "7e25bc361e6c81ee9a61231b45713417c33eedd190d2fbf9d538c1db0aee1715",
