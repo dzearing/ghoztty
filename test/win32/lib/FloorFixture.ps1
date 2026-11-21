@@ -252,6 +252,74 @@ function Wait-FloorState {
 }
 
 <#
+The bound ONE CLI call is allowed, in ms, resolved the way the CLI resolves it
+(T1677) - `src/os/ipc_timeout.zig` `resolve()`: `$GHOZTTY_IPC_TIMEOUT_MS` when
+it parses as a non-negative integer, `default_ms` when it is unset, blank or
+unparseable, and `0` meaning "no bound". `ipc-floor-setup.ps1` section D holds
+`$script:FloorIpcDefaultMs` to the zig constant, so the two cannot drift.
+#>
+$script:FloorIpcDefaultMs = 30000
+function Get-FloorIpcCallBoundMs {
+    $raw = "$env:GHOZTTY_IPC_TIMEOUT_MS".Trim()
+    if (-not $raw) { return $script:FloorIpcDefaultMs }
+    $v = [uint32]0
+    if ([uint32]::TryParse($raw, [Globalization.NumberStyles]::None,
+            [Globalization.CultureInfo]::InvariantCulture, [ref]$v)) { return [int64]$v }
+    return $script:FloorIpcDefaultMs
+}
+
+<#
+Poll `+list` until `$Pattern` shows, and return the last text seen (T1677).
+
+THE DEFECT THIS REPLACES. Every floor script carried its own copy of
+
+    $deadline = (Get-Date).AddSeconds(20)
+    do { $l = Get-List; if ($l -match $Pattern) { return $l } ... } while (now -lt $deadline)
+
+whose body is a `+list` the CLI allows `ipc_timeout.default_ms` (30s). On a cold
+box ONE call could spend more than the whole 20s window: the loop ran once, the
+deadline was already gone, and the stale answer went to `Need-Listed`, which
+reported "the fixture never appeared in +list" about an app that was coming up
+fine. The poll had less budget than one of its own calls.
+
+THE RULE NOW. `$TimeoutSec` is the POLLING window, and it is granted on top of
+the bound one call may take - read from the same place the CLI reads it, not a
+second hand-written number. So however long the first call runs, the poll still
+gets its window afterwards. A "no bound" CLI (`0`) is held to `$HarnessCallSec`,
+the bound `Invoke-OnTestDesktop` itself puts on a call.
+
+A match that needed longer than `$TimeoutSec` parks a `NOTE SLOW STATE:` line,
+for T894's reason: a wait that quietly absorbs a slow box makes the next box
+that is slow for a REAL reason look like a fast one.
+#>
+function Wait-FloorListMatch {
+    param(
+        [Parameter(Mandatory = $true)][string]$Pattern,
+        [Parameter(Mandatory = $true)][scriptblock]$GetList,
+        [int]$TimeoutSec = 20,
+        [int]$PollMs = 500,
+        [int]$HarnessCallSec = 60
+    )
+    $boundMs = Get-FloorIpcCallBoundMs
+    if ($boundMs -le 0) { $boundMs = [int64]$HarnessCallSec * 1000 }
+    $budgetMs = [int64]$TimeoutSec * 1000 + $boundMs
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $l = $null
+    do {
+        $l = & $GetList
+        if ("$l" -match $Pattern) {
+            $ms = $sw.ElapsedMilliseconds
+            if ($ms -gt ([int64]$TimeoutSec * 1000)) {
+                $script:FloorSetupNotes += "  NOTE SLOW STATE: +list showing $Pattern settled after ${ms}ms (poll window ${TimeoutSec}s + one call's ${boundMs}ms bound)"
+            }
+            return $l
+        }
+        Start-Sleep -Milliseconds $PollMs
+    } while ($sw.ElapsedMilliseconds -lt $budgetMs)
+    return $l
+}
+
+<#
 Run the acceptance body, swallowing ONLY the setup sentinel. Anything else is
 re-thrown with its original error, so a real bug in a script still surfaces.
 #>

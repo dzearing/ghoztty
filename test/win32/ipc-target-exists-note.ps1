@@ -26,6 +26,8 @@ function Assert($name, $cond) {
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 [void](Set-GhozttyTestIsolation -Tag 't135')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T1677: Wait-FloorListMatch, the floor's shared +list poll.
+. (Join-Path $PSScriptRoot 'lib\FloorFixture.ps1')
 $td = New-TestDesktop
 
 function Stop-DebugGhoztty {
@@ -53,13 +55,9 @@ function Get-List {
     (Invoke-OnTestDesktop -Exe $Exe -Arguments @('+list') -TimeoutSec 30).Output
 }
 function Wait-ListMatch([string]$Pattern, [int]$TimeoutSec = 20) {
-    $deadline = (Get-Date).AddSeconds($TimeoutSec)
-    do {
-        $l = Get-List
-        if ($l -match $Pattern) { return $l }
-        Start-Sleep -Milliseconds 500
-    } while ((Get-Date) -lt $deadline)
-    return $l
+    # T1677: one shared poll whose window is granted ON TOP of one +list
+    # call's own bound, so a single cold call cannot spend the whole wait.
+    return Wait-FloorListMatch -Pattern $Pattern -TimeoutSec $TimeoutSec -GetList { Get-List }
 }
 
 # T900: a RED run's transcript is copied somewhere the next re-run cannot

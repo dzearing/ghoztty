@@ -33,6 +33,11 @@
 #    directly over canned CLI answers: slow-then-succeeded must PASS with a
 #    note, gave-up must FAIL, and the FAIL half is what stops this from being a
 #    fix that simply never refuses anything.
+#
+# D. THE POLL OUTLASTS ONE CALL (T1677). The floor polled +list for 20s while a
+#    single +list is allowed 30s, so one cold call could spend the whole wait.
+#    `Wait-FloorListMatch` grants its window on top of the CLI's own call bound;
+#    D1 runs the old loop over the same canned answers and must miss.
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe'
 )
@@ -180,6 +185,89 @@ Assert "C8 an ordinary quiet call passes with no note" (
     $probeOut['silent'] -match 'OUTCOME: returned' -and
     $probeOut['silent'] -match 'FAILURES: 0' -and
     $probeOut['silent'] -notmatch 'NOTE SLOW SETUP')
+
+"== D: one cold +list cannot spend the whole poll (T1677)"
+# Every floor script used to poll +list for 20s while ONE +list is allowed the
+# CLI's 30s bound, so a single cold call could outlast the wait and the run
+# reported a fixture "missing" from an app that was coming up fine. Scaled down
+# so it runs in seconds: the CLI bound is 3s (GHOZTTY_IPC_TIMEOUT_MS, read the
+# way the CLI reads it), the poll window 1s, and the canned +list's FIRST call
+# takes 2.5s and answers without the fixture, every later one with it. D1 is the
+# negative control: the old loop, verbatim, over the same canned answers, must
+# miss - otherwise D2 proves nothing about the change.
+$lprobe = Join-Path $env:TEMP "ghoztty-floor-list-probe-$PID.ps1"
+$lprobeSrc = @'
+param([Parameter(Mandatory = $true)][string]$Fixture,
+      [Parameter(Mandatory = $true)][string]$Mode)
+$ErrorActionPreference = 'Continue'
+. $Fixture
+if ($Mode -eq 'resolve') {
+    "DEFAULT: $script:FloorIpcDefaultMs"
+    foreach ($v in @('<unset>', '', 'soon', '-1', '12.5', '0', '1500', ' 2000 ')) {
+        if ($v -eq '<unset>') { Remove-Item Env:GHOZTTY_IPC_TIMEOUT_MS -ErrorAction SilentlyContinue }
+        else { $env:GHOZTTY_IPC_TIMEOUT_MS = $v }
+        "RESOLVE [$v] = $(Get-FloorIpcCallBoundMs)"
+    }
+    return
+}
+$env:GHOZTTY_IPC_TIMEOUT_MS = '3000'
+$script:calls = 0
+$fake = {
+    $script:calls++
+    if ($Mode -eq 'never') { return 'no windows' }
+    if ($Mode -eq 'warm' -or $script:calls -gt 1) { return 'win 1 [target: probe]' }
+    Start-Sleep -Milliseconds 2500
+    return 'no windows'
+}
+$sw = [Diagnostics.Stopwatch]::StartNew()
+if ($Mode -eq 'legacy') {
+    $deadline = (Get-Date).AddSeconds(1)
+    do {
+        $l = & $fake
+        if ($l -match '\[target: probe\]') { break }
+        Start-Sleep -Milliseconds 500
+    } while ((Get-Date) -lt $deadline)
+} else {
+    $l = Wait-FloorListMatch -Pattern '\[target: probe\]' -TimeoutSec 1 -GetList $fake
+}
+"MATCH: $("$l" -match '\[target: probe\]')"
+"MS: $($sw.ElapsedMilliseconds)"
+"CALLS: $script:calls"
+"NOTES: $(($script:FloorSetupNotes -join ' | ').Trim())"
+'@
+Set-Content -LiteralPath $lprobe -Value $lprobeSrc -Encoding ASCII
+$lout = @{}
+foreach ($mode in 'legacy', 'cold', 'never', 'warm', 'resolve') {
+    $lout[$mode] = (& powershell -NoProfile -File $lprobe -Fixture $fixture -Mode $mode) -join "`n"
+}
+Remove-Item -LiteralPath $lprobe -Force -ErrorAction SilentlyContinue
+foreach ($mode in 'legacy', 'cold', 'never', 'warm') { "    ${mode}: $($lout[$mode] -replace "`n", '; ')" }
+
+Assert "D1 negative control: the old 20s-style loop misses when one call outlasts it" (
+    $lout['legacy'] -match 'MATCH: False' -and $lout['legacy'] -match 'CALLS: 1')
+Assert "D2 the shared poll still finds a fixture after one call spent the whole window" (
+    $lout['cold'] -match 'MATCH: True' -and $lout['cold'] -match 'CALLS: 2')
+Assert "D3 and says the state was slow to settle" (
+    $lout['cold'] -match 'NOTE SLOW STATE: \+list showing .* settled after \d+ms')
+$neverMs = if ($lout['never'] -match 'MS: (\d+)') { [int]$Matches[1] } else { -1 }
+Assert "D4 a fixture that never shows is still a miss, bounded by window + one call's bound (${neverMs}ms)" (
+    $lout['never'] -match 'MATCH: False' -and $neverMs -ge 4000 -and $neverMs -lt 8000)
+Assert "D5 a warm first-call match returns at once with no note" (
+    $lout['warm'] -match 'MATCH: True' -and $lout['warm'] -match 'CALLS: 1' -and
+    $lout['warm'] -match 'NOTES: $' -and $lout['warm'] -notmatch 'NOTE SLOW')
+Assert "D6 the bound resolves the way the CLI's resolve() does" (
+    $lout['resolve'] -match 'RESOLVE \[<unset>\] = 30000' -and
+    $lout['resolve'] -match 'RESOLVE \[\] = 30000' -and
+    $lout['resolve'] -match 'RESOLVE \[soon\] = 30000' -and
+    $lout['resolve'] -match 'RESOLVE \[-1\] = 30000' -and
+    $lout['resolve'] -match 'RESOLVE \[12\.5\] = 30000' -and
+    $lout['resolve'] -match 'RESOLVE \[0\] = 0' -and
+    $lout['resolve'] -match 'RESOLVE \[1500\] = 1500' -and
+    $lout['resolve'] -match 'RESOLVE \[ 2000 \] = 2000')
+$zigSrc = Get-Content -Raw (Join-Path $PSScriptRoot '..\..\src\os\ipc_timeout.zig')
+$zigDefault = if ($zigSrc -match 'pub const default_ms: u32 = ([\d_]+);') { [int]($Matches[1] -replace '_', '') } else { -1 }
+Assert "D7 the fixture's default is the CLI's default_ms ($zigDefault)" (
+    $zigDefault -gt 0 -and $lout['resolve'] -match "DEFAULT: $zigDefault(`n|$)")
 
 "== teardown"
 Reset-GhozttyTestState -Exe $Exe -SettleMs 500 | Out-Null

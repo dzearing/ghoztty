@@ -73,13 +73,9 @@ function Get-List {
 # passed forever. Polls resolve as soon as the pattern shows, so warm runs get
 # FASTER, and the timeout only spends itself on a run that would have failed.
 function Wait-ListMatch([string]$Pattern, [int]$TimeoutSec = 20) {
-    $deadline = (Get-Date).AddSeconds($TimeoutSec)
-    do {
-        $l = Get-List
-        if ($l -match $Pattern) { return $l }
-        Start-Sleep -Milliseconds 500
-    } while ((Get-Date) -lt $deadline)
-    return $l
+    # T1677: one shared poll whose window is granted ON TOP of one +list
+    # call's own bound, so a single cold call cannot spend the whole wait.
+    return Wait-FloorListMatch -Pattern $Pattern -TimeoutSec $TimeoutSec -GetList { Get-List }
 }
 
 # T379: every PASS/FAIL line is teed to a transcript file so a red run keeps

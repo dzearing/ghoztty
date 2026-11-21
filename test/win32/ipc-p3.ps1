@@ -72,13 +72,9 @@ function Get-P3Json {
 # just-replaced exe (cold: Defender scan, no cache) cannot outrun a fixed
 # sleep. Warm runs resolve on the first poll.
 function Wait-ListMatch([string]$Pattern, [int]$TimeoutSec = 20) {
-    $deadline = (Get-Date).AddSeconds($TimeoutSec)
-    do {
-        $l = (Ghoz @('+list')).Output
-        if ($l -match $Pattern) { return $l }
-        Start-Sleep -Milliseconds 500
-    } while ((Get-Date) -lt $deadline)
-    return $l
+    # T1677: one shared poll whose window is granted ON TOP of one +list
+    # call's own bound, so a single cold call cannot spend the whole wait.
+    return Wait-FloorListMatch -Pattern $Pattern -TimeoutSec $TimeoutSec -GetList { (Ghoz @('+list')).Output }
 }
 
 # T379: tee every PASS/FAIL line to a transcript so a red run keeps its
