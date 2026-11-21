@@ -6026,8 +6026,8 @@ $GuardTable = @(
     # property of the whole directory, so any script that gains a launch has to
     # re-prove it. This row is why the count cannot quadruple unnoticed again:
     # nothing re-ran the sweep between 14 undeclared sites in August and 52 in
-    # September, because no guard owned it. About two minutes (it opens two GUIs
-    # for the live control).
+    # September, because no guard owned it. Static since T1572: a few seconds,
+    # and it launches nothing (the live control is the next row).
     [pscustomobject]@{
         Name   = 'persistence-flag'
         Script = 'test\win32\persistence-flag.ps1'
@@ -6037,6 +6037,43 @@ $GuardTable = @(
             'test\win32\lib\PersistenceSweep.ps1',
             'test\win32\lib\TestDesktop.ps1',
             'test\win32\lib\HarnessScope.ps1'
+        )
+    },
+    # The live half of the row above (T1572): does a relaunch restore the last
+    # run's window, and does `--session-persistence=false` stop it - the flag
+    # every other acceptance script relies on. It used to be persistence-flag's
+    # section C, which put a GUI run inside the harness floor (a source-sweep
+    # lane) and made it the floor's one recurring false red. Its subject is the
+    # PRODUCT, so it goes due when the restore code changes: the manifest writer
+    # and reader, and the launch flag's plumbing. About two minutes (two GUIs).
+    [pscustomobject]@{
+        Name   = 'persistence-restore'
+        Script = 'test\win32\persistence-restore.ps1'
+        Stamp  = 'test\win32\persistence-restore.stamp.json'
+        Covers = @(
+            'test\win32\persistence-restore.ps1',
+            'test\win32\lib\PaneLiveness.ps1',
+            'src\apprt\win32\session_layout.zig',
+            'src\apprt\win32\layout_blobs.zig',
+            'src\apprt\win32\LocalAgent.zig'
+        )
+    },
+    # T1079's end-to-end half (T1572): a `+split`/`+rearrange` with no explicit
+    # anchor lands at the pane it was invoked FROM. It used to be a harness-floor
+    # member, which made a two-window GUI run part of a source-sweep lane; the
+    # floor is for static audits, and a row is how a behavior script stands. It
+    # goes due on the three places the caller anchor lives: the CLI's seeding
+    # (`apprt.ipc.seedCallerPane`), the precedence table
+    # (`apprt.ipc.args.callerAnchorPane`) and the win32 server that honours it.
+    [pscustomobject]@{
+        Name   = 'caller-anchor'
+        Script = 'test\win32\caller-anchor.ps1'
+        Stamp  = 'test\win32\caller-anchor.stamp.json'
+        Covers = @(
+            'test\win32\caller-anchor.ps1',
+            'src\apprt\ipc.zig',
+            'src\apprt\ipc\args.zig',
+            'src\apprt\win32\IpcHandlers.zig'
         )
     },
     [pscustomobject]@{

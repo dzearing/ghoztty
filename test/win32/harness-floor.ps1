@@ -83,6 +83,52 @@ try {
             -not (Test-Path (Join-Path $taskDir "$_.md")) })
     Assert 'A8 those tasks are filed' ($deadTask.Count -eq 0) ($deadTask -join ', ')
 
+    # T1572: the membership rule - a member launches nothing and builds nothing -
+    # checked on every row rather than only on A5's one case. caller-anchor.ps1
+    # (two GUI windows) got into the set because nothing read the rule, and
+    # persistence-flag.ps1's live section made the lane the box's colour.
+    $launchers = @()
+    foreach ($n in $names) {
+        $p = Join-Path $testRoot $n
+        if (-not (Test-Path -LiteralPath $p)) { continue }
+        $h = @(Get-HarnessFloorLaunch ([System.IO.File]::ReadAllText($p)))
+        if ($h.Count -gt 0) { $launchers += "$n ($($h[0]))" }
+    }
+    Assert 'A9 no member of the set launches the app or runs zig build' ($launchers.Count -eq 0) ($launchers -join '; ')
+
+    # A9's teeth: planted rows, one per shape the check reads, plus the shapes
+    # it must leave alone. Text is assembled so this file's own source carries
+    # no launch the check (or launch-preflight-audit) would read as real.
+    $sod = 'Start-' + 'OnTestDesktop'
+    $plant = @{
+        'gui.ps1'      = "`$exe = Join-Path `$repo 'zig-out\bin\ghoztty.exe'`r`n`$app = $sod -Exe `$exe -Arguments @('--session-persistence=false')"
+        'param.ps1'    = "param([string]`$Exe = 'D:\x\zig-out\bin\ghoztty.exe')`r`n`$p = Start-Process -FilePath cmd.exe -ArgumentList `"/c `"`"`$Exe`"`" +list`" -PassThru"
+        'callop.ps1'   = "`$exe = Join-Path `$repo 'zig-out\bin\ghoztty.exe'`r`n& `$exe +list --json"
+        'zig.ps1'      = "zig build test -Dapp-runtime=none"
+        'shell.ps1'    = "`$cmd = `"cd /d `"`"`$Repo`"`" && zig build `$argLine`"`r`ncmd /c `$cmd"
+        'fake.ps1'     = "`$fakeExe = Join-Path `$env:TEMP 'ghoztty.exe'`r`nStart-Process -FilePath `$fakeExe -ArgumentList '/c','exit' -PassThru"
+        'prose.ps1'    = "# $sod -Exe zig-out\bin\ghoztty.exe, then zig build`r`n`$msg = `"zig build test exited 1`"`r`n`$fix = @'`r`n$sod -Exe 'zig-out\bin\ghoztty.exe'`r`n'@"
+    }
+    $found = @{}
+    foreach ($k in $plant.Keys) { $found[$k] = @(Get-HarnessFloorLaunch $plant[$k]).Count }
+    Assert 'A9a a planted GUI launch of the repo build is caught' ($found['gui.ps1'] -ge 1) "hits=$($found['gui.ps1'])"
+    Assert 'A9b a CLI call through a wrapper on a param()-bound build is caught' ($found['param.ps1'] -ge 1) "hits=$($found['param.ps1'])"
+    Assert 'A9c the call operator on the repo build is caught' ($found['callop.ps1'] -ge 1) "hits=$($found['callop.ps1'])"
+    Assert 'A9d a bare zig build is caught' ($found['zig.ps1'] -ge 1) "hits=$($found['zig.ps1'])"
+    Assert 'A9e a zig build inside a shell command line is caught' ($found['shell.ps1'] -ge 1) "hits=$($found['shell.ps1'])"
+    Assert 'A9f a fake ghoztty.exe outside zig-out is not the app' ($found['fake.ps1'] -eq 0) "hits=$($found['fake.ps1'])"
+    Assert 'A9g prose, a message and a here-string fixture are not launches' ($found['prose.ps1'] -eq 0) "hits=$($found['prose.ps1'])"
+    # And end to end through the rule A9 states: a set with a planted GUI row is red.
+    $plantedSet = @($names) + 'gui.ps1'
+    $plantedRed = @($plantedSet | Where-Object {
+            $t = if ($plant.ContainsKey($_)) { $plant[$_] } else { [System.IO.File]::ReadAllText((Join-Path $testRoot $_)) }
+            @(Get-HarnessFloorLaunch $t).Count -gt 0 })
+    Assert 'A9h a set that gains a GUI row fails the rule, naming only that row' (
+        $plantedRed.Count -eq 1 -and $plantedRed[0] -eq 'gui.ps1') ($plantedRed -join ', ')
+    Assert 'A9i the scripts that left the set are still caught by the rule' (
+        @('caller-anchor.ps1', 'persistence-restore.ps1', 'test-filter-guard.ps1' | Where-Object {
+                @(Get-HarnessFloorLaunch ([System.IO.File]::ReadAllText((Join-Path $testRoot $_)))).Count -eq 0 }).Count -eq 0) ''
+
     # ========================================================================
     ""
     "== B: the scorer, in both directions"

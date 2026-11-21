@@ -17,7 +17,11 @@
 # minutes rather than an afternoon, and it is the line to hold when adding a
 # row. `test-filter-guard.ps1` is the deliberate exclusion - it drives real
 # `zig build` runs, which is the zig lanes' job and is a cold-cache wait the
-# other 20-odd members do not have.
+# other 20-odd members do not have. Since T1572 the rule is CHECKED, not only
+# stated: `Get-HarnessFloorLaunch` below finds a member's app launches and
+# `zig build` runs, and section A9 of test\win32\harness-floor.ps1 fails on any.
+# A behavior script that wants to be standing gets a row in scripts\guard-due.ps1
+# instead (caller-anchor.ps1 and persistence-restore.ps1 left the set that way).
 #
 # THE PENDING RATCHET. An audit that is red TODAY for a reason somebody has
 # already filed is listed in $HARNESS_FLOOR_PENDING against the task that
@@ -77,7 +81,6 @@ $script:HARNESS_FLOOR_AUDITS = @(
     [pscustomobject]@{ Name = 'thread-join-audit.ps1'; Why = 'a thread a test starts is joined, so a leak is not scored green' }
     [pscustomobject]@{ Name = 'test-wait-oracle.ps1'; Why = 'a wait is bounded by the wall clock, never by a count of spins (T831)' }
     [pscustomobject]@{ Name = 'foreground-audit.ps1'; Why = 'a script states what it does to the foreground window (T272/T276)' }
-    [pscustomobject]@{ Name = 'caller-anchor.ps1'; Why = 'a shared helper is anchored to the caller that is actually under test' }
     [pscustomobject]@{ Name = 'control-char-scan.ps1'; Why = 'no script carries a control character that breaks it on another box' }
     [pscustomobject]@{ Name = 'build-fresh-guard.ps1'; Why = 'a run measures the build it thinks it measures, not a stale one' }
     [pscustomobject]@{ Name = 'job-teardown.ps1'; Why = 'a job object a test creates is torn down with its processes (T1517)' }
@@ -97,6 +100,86 @@ $script:HARNESS_FLOOR_PENDING = @{
 }
 
 function Get-HarnessFloorAudits { return @($script:HARNESS_FLOOR_AUDITS) }
+
+<#
+.SYNOPSIS
+The membership rule, as a check (T1572): the places a script launches the app
+under test or runs `zig build`. Empty means the script may be a floor member.
+
+.DESCRIPTION
+Read off the PowerShell AST, so prose, fixture here-strings and a `@@LAUNCH@@`
+placeholder never count - only commands the script would actually run:
+
+  * a `Start-OnTestDesktop`, `Start-Process` or `&` call that names THIS repo's
+    build: a variable bound (by assignment or param() default) to a path that
+    mentions both `zig-out` and `ghoztty.exe`, or such a path literally. A fake
+    `ghoztty.exe` under a temp dir (cleanslate-audit's reaped cmd.exe copy) or a
+    stub `.cmd` (build-mode-guard) is not the app, and is not counted.
+  * a `zig` command whose first argument is `build`, or a `zig build` inside a
+    shell command line string (`cmd /c "... && zig build ..."`).
+
+It reads the member's OWN source. A build reached through a shared library is
+not seen: test-reach-audit.ps1 (a `daily` row) builds the win32 test lane through
+lib\TestReachAudit.ps1, by design, and is the known case.
+
+Stated in the header since T725 and enforced on one case (test-filter-guard)
+before this; `caller-anchor.ps1`, a two-window GUI script, got in because
+nothing checked the rule generally.
+#>
+function Get-HarnessFloorLaunch([string]$Text) {
+    if ([string]::IsNullOrEmpty($Text)) { return @() }
+    $tok = $null; $err = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$tok, [ref]$err)
+    $appPath = '(?i)zig-out.*ghoztty\.exe'
+    $key = { param($v) (($v.VariablePath.UserPath -split ':')[-1]).ToLower() }
+
+    $vars = @{}
+    foreach ($a in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {
+        if ($a.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $a.Right.Extent.Text -match $appPath) { $vars[(& $key $a.Left)] = $true }
+    }
+    foreach ($p in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.ParameterAst] }, $true)) {
+        if ($p.DefaultValue -and $p.DefaultValue.Extent.Text -match $appPath) { $vars[(& $key $p.Name)] = $true }
+    }
+    $isApp = {
+        param($n)
+        ($n -is [System.Management.Automation.Language.VariableExpressionAst] -and $vars.ContainsKey((& $key $n))) -or
+        ($n -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $n.Value -match $appPath)
+    }
+
+    $hits = @()
+    foreach ($c in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+        $name = $c.GetCommandName()
+        $line = $c.Extent.StartLineNumber
+        if ($name -and $name -match '^(?i)(zig|zig\.exe)$') {
+            $first = if ($c.CommandElements.Count -gt 1) { $c.CommandElements[1].Extent.Text.Trim("'`"") } else { '' }
+            if ($first -eq 'build') { $hits += "zig build (line $line)" }
+            continue
+        }
+        $launcher = ($name -and $name -match '^(?i)(Start-OnTestDesktop|Start-Process)$')
+        $callOp = ($c.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Ampersand)
+        if (-not ($launcher -or $callOp)) { continue }
+        $scope = if ($callOp) { @($c.CommandElements[0]) } else { @($c.CommandElements | Select-Object -Skip 1) }
+        $named = $false
+        foreach ($e in $scope) { if (@($e.FindAll($isApp, $true)).Count -gt 0 -or (& $isApp $e)) { $named = $true; break } }
+        if ($named) {
+            $verb = if ($callOp) { '&' } else { $name }
+            $hits += "$verb <app> (line $line)"
+        }
+    }
+    # A `zig build` handed to a shell as a command line (`cmd /c "... && zig
+    # build ..."`, test-filter-guard's shape) - the build sits in a string, so no
+    # CommandAst names it. Anchored on the shell separator so a message such as
+    # "zig build test exited 1" is not read as a build.
+    $shellBuild = '(?i)(&&|\|\||/[ck])\s*"?zig(\.exe)?"?\s+build\b'
+    foreach ($s in $ast.FindAll({ param($n)
+                ($n -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+                 $n -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) -and
+                $n.StringConstantType -notin @('SingleQuotedHereString', 'DoubleQuotedHereString') }, $true)) {
+        if ($s.Value -match $shellBuild) { $hits += "zig build in a shell command line (line $($s.Extent.StartLineNumber))" }
+    }
+    return $hits
+}
 
 # 'daily' or 'turn' (the default for a row that names none).
 function Get-HarnessFloorTier($Audit) {

@@ -1082,15 +1082,19 @@ powershell -NoProfile -File scripts\floor-lane.ps1 -Lane harness -HarnessFull   
   baseline entries, and keeps its cross-file index in
   `temp\harness-floor\unroll-index-cache.json`, keyed by content hash, so
   nothing goes stale), `scripts\` (argv-hazard and unroll-count each have their
-  own guard row over it), `src\` for neuter, and persistence-flag's live
-  restore control. `test\win32\harness-scope.ps1` proves each audit goes red on
+  own guard row over it), and `src\` for neuter. `test\win32\harness-scope.ps1` proves each audit goes red on
   a changed script and does not read an unchanged one.
 
 - **The set lives in `scripts\lib\HarnessFloor.ps1`**, one row per audit with
   the property it holds. Membership is a line: a static sweep over source or a
   pure-logic check of a shared gate — no GUI, no app launch, no `zig build`
   (which is why `test-filter-guard.ps1` is excluded and why the acceptance
-  asserts that it stays excluded). That line is what keeps the whole set to
+  asserts that it stays excluded). Since T1572 the line is CHECKED for every
+  row: section A9 of `test\win32\harness-floor.ps1` fails when a member's own
+  source launches the repo's build or runs `zig build`
+  (`Get-HarnessFloorLaunch`). `caller-anchor.ps1` (two GUI windows) and the
+  live restore control now in `persistence-restore.ps1` left the set for
+  guard-due rows, which is how a behavior script stands. That line is what keeps the whole set to
   minutes rather than hours - about 40 serially by 2026-10, which is why the
   floor runs its members four at a time (`-Jobs`, T1657) and why
   `floor-lane -Lane harness` takes the floor's declared 3600s budget as its cap.
@@ -1646,8 +1650,9 @@ window used to be six lines flat, which is one short of a marker on a function
 header, and the sweep reported those sites as work nobody had considered; a
 false `undeclared` is worse than a missed one, because the fix applied to it
 lands on a site that was already correct. Enumerator:
-`test/win32/lib/PersistenceSweep.ps1`; acceptance (and the live control that the
-flag really stops a restore): `test/win32/persistence-flag.ps1`.
+`test/win32/lib/PersistenceSweep.ps1`; acceptance: `test/win32/persistence-flag.ps1`
+(static). The live control that the flag really stops a restore is
+`test/win32/persistence-restore.ps1` (T1572), a guard-due row of its own.
 
 **Every launch in an acceptance script keeps the app's stderr** (T689). A debug
 build writes `std.log` to stderr and nothing else — no event-log record, no

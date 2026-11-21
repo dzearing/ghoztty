@@ -1,21 +1,22 @@
 {
     "guard":  "harness-floor-teeth",
     "script":  "test/win32/harness-floor.ps1",
-    "generated":  "2026-11-20T15:32:26-08:00",
-    "commit":  "19b39814e",
+    "generated":  "2026-11-20T18:27:15-08:00",
+    "commit":  "62b4164eb",
     "uncommitted":  [
-
+                        "scripts/lib/HarnessFloor.ps1",
+                        "test/win32/harness-floor.ps1"
                     ],
     "files":  {
                   "scripts/floor-lane.ps1":  "6dda749300bdd3ff549b1e28d4a5efca36f9bcc6d61deee2c5dfc7f4475e8cf3",
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
-                  "scripts/lib/HarnessFloor.ps1":  "ac9e97685cf47e1d5c82bb79caf95addbf5fd2a2f60ed1795d0ce7bcafa9917b",
-                  "test/win32/harness-floor.ps1":  "3b83bf58f86f59dbf9fc47524f5401100fd4bdfce9f9a1a550fed0c1947b5e9b"
+                  "scripts/lib/HarnessFloor.ps1":  "4e0c6355e5501418c364152a2e77d42320d45d52b5e0d6e7c90c76d3ba74452e",
+                  "test/win32/harness-floor.ps1":  "2de63ef87a892548880eab65d0a015dadec00044486a5ce1c3bbe28c3b5e68b3"
               },
     "code":  {
                  "scripts/floor-lane.ps1":  "code1:fc9b977ddf5f396bd8d2245356ca7fbef2d23b1dd1b683f8533f5a095394c33d",
                  "scripts/harness-floor.ps1":  "code1:bcf8b66bd9e8af932cd1d21580635c65d6561668927201cfc7589ebbe95a6f66",
-                 "scripts/lib/HarnessFloor.ps1":  "code1:b30d84cb2db4502ec1be4646cc1f141bd92bc5d28d3c8f0fe8d93b7bc0dc7b48",
-                 "test/win32/harness-floor.ps1":  "code1:5c9aa27dc7e9063c868dacf35fcbc8b9f05c709805a4e292ee9b43416bf3c543"
+                 "scripts/lib/HarnessFloor.ps1":  "code1:4240f0478a4eab451544748599f01cb1bc56becf2d9cdb96c991ab1f4ff41c73",
+                 "test/win32/harness-floor.ps1":  "code1:9198474e822b53b5ec6c6bd1f7e195a6d4a62c776d735977a92527f7e24e2f3d"
              }
 }

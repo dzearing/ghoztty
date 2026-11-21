@@ -44,7 +44,9 @@
 #
 #   powershell -NoProfile -File test\win32\caller-anchor.ps1
 param(
-    [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
+    # T1572: THIS tree's build. The default used to name lane A's checkout, so a
+    # run from any other worktree measured somebody else's zig-out.
+    [string]$Exe = (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'zig-out\bin\ghoztty.exe'),
     [switch]$NegativeControl,
     [switch]$Interactive
 )
@@ -353,6 +355,17 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($fgSeen.Count -gt 0) 'the foreground watcher actually sampled (negative control)'
     $leaked = @($launched | Where-Object { $fgSeen -contains $_ })
     Assert ($leaked.Count -eq 0) 'no test-desktop app ever became foreground on the interactive desktop'
+}
+
+# --- stamp (T783/T1572) ----------------------------------------------------
+# A clean green run records the content of everything this covers, so
+# scripts\guard-due.ps1 can answer "has anybody driven the caller anchor end to
+# end against the code as it now stands?". Red, skipped, or the negative
+# control: no stamp, so the row stays due.
+if ($script:fail -eq 0 -and $script:skipped -eq 0 -and -not $NegativeControl) {
+    $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'scripts\guard-due.ps1') `
+        update -Guard caller-anchor -Repo $repoRoot 2>&1 | ForEach-Object { "  $_" }
 }
 
 Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped $script:skipped -Label 'caller-anchor'

@@ -107,7 +107,6 @@ marker with no reason waives nothing.
 | A job object a test creates is torn down with its processes (T1517) | `job-teardown.ps1` | — |
 | A run measures the build it thinks it measures, not a stale one | `build-fresh-guard.ps1` | — |
 | No script carries a control character that breaks it on another box | `control-char-scan.ps1` | — |
-| A shared helper is anchored to the caller that is actually under test (T1079) | `caller-anchor.ps1` | — |
 | No script writes `` `e `` for ESC — under 5.1 it is the letter e (T740) | `vt-escape-scan.ps1` | — use `[char]27`, or `lib\VtText.ps1` |
 | A fixture plants the filename it reads as — not one Windows quietly rewrites (trailing dot/space, CON/NUL/...) (T1501) | `fixture-name-audit.ps1` | — write through `ConvertTo-ExtendedPath` (`scripts\lib\HardDelete.ps1`), or mark `# fixture-name-ok: <why>` |
 
@@ -127,7 +126,11 @@ single rule in seconds.
    `scripts\lib\HarnessFloor.ps1` with one line saying what property it holds,
    document it in the table above, and keep it a static sweep — no GUI, no app
    launch, no `zig build`. That criterion is what lets the whole set run as one
-   lane in minutes.
+   lane in minutes, and since T1572 it is checked: section A9 of
+   `harness-floor.ps1` fails when a member's own source launches the repo's
+   build or runs `zig build` (`Get-HarnessFloorLaunch`). A script that needs a
+   window is a behavior script; step 2 is how it becomes standing
+   (`caller-anchor.ps1` and `persistence-restore.ps1` are rows, not members).
 
 `test\win32\harness-floor.ps1` is the acceptance harness for the floor itself,
 and its section F asserts that every audit in the set appears in the table

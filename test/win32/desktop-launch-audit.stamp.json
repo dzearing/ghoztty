@@ -1,8 +1,8 @@
 {
     "guard":  "desktop-launch",
     "script":  "test/win32/desktop-launch-audit.ps1",
-    "generated":  "2026-11-20T17:48:45-08:00",
-    "commit":  "6e0e3b7ad",
+    "generated":  "2026-11-20T18:30:29-08:00",
+    "commit":  "62b4164eb",
     "uncommitted":  [
 
                     ],
@@ -14,7 +14,7 @@
               },
     "code":  {
                  "test/win32/desktop-launch-audit.ps1":  "code1:f16f25198f77df84d8b63181a572c1aaa209797200f66d7e8d6b1162b8f5f324",
-                 "test/win32/lib/DesktopLaunchAudit.ps1":  "code1:4f300b82cd75211137ddc7515f21ba263aa51fe32446405ebb3b1b400faedb05",
+                 "test/win32/lib/DesktopLaunchAudit.ps1":  "code1:431d35a0cad58c6e1610cf2fd396bfde9dd319d409229e7c66333b66d08ab6f8",
                  "test/win32/lib/TestDesktop.ps1":  "code1:b866a660d561557068c104684506a7a8d90d61f9ff9ddd32a3ac5c1e7903efe2"
              }
 }
