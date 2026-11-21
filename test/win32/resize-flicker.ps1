@@ -320,12 +320,12 @@ try {
 
     & $exe +split --direction=right 2>&1 | Out-Null
     Start-Sleep -Seconds 3
-    $panes = Get-VisiblePanes ([IntPtr]$top)
+    $panes = @(Get-VisiblePanes ([IntPtr]$top))
     Assert ($panes.Count -eq 2) "split produced 2 panes (saw $($panes.Count))"
     if ($panes.Count -ne 2) { throw 'no split' }
 
     # ---- B2. the panes clip each other ----------------------------------
-    $unclipped = Get-UnclippedPanes $panes
+    $unclipped = @(Get-UnclippedPanes $panes)
     Assert ($unclipped.Count -eq 0) ('every visible pane has WS_CLIPSIBLINGS' +
         $(if ($unclipped.Count) { ' -- missing on ' + ($unclipped -join ', ') } else { '' }))
 
@@ -340,7 +340,7 @@ try {
         Start-Sleep -Milliseconds 300
     }
     Start-Sleep -Milliseconds 500
-    $panes = Get-VisiblePanes ([IntPtr]$top)
+    $panes = @(Get-VisiblePanes ([IntPtr]$top))
 
     # VACUITY NEXT. The whole erase half of this script asserts "no line says
     # it filled", which a build that logs nothing satisfies for free - a
@@ -348,7 +348,7 @@ try {
     # running at all. So the oracle has to be shown to be alive before it is
     # believed: at least one erase decision logged, over a surface, with a
     # frame already presented. That is the exact state the fix is about.
-    $decisions = Get-EraseDecisions $errlog
+    $decisions = @(Get-EraseDecisions $errlog)
     $live = @($decisions | Where-Object { $_.Surface -and $_.Presented })
     if ($decisions.Count -eq 0) {
         $script:skipped++
@@ -362,7 +362,7 @@ try {
     # THE DEFECT ITSELF. A pane that already holds a frame must never blank
     # itself: that is one displayed flat frame ahead of a GL frame that was
     # already on its way, once per relayout tick.
-    $blanking = Get-BlankingErases $decisions 0
+    $blanking = @(Get-BlankingErases $decisions 0)
     $eraseOk = ($blanking.Count -eq 0)
     if ($NegativeControl) { $eraseOk = -not $eraseOk }
     Assert $eraseOk ('a pane that has presented a frame DECLINES the background fill' +
@@ -375,7 +375,7 @@ try {
     $maxBand = [int](24 * ($dpi / 96.0))
     Write-Host "  window dpi=$dpi (band ceiling ${maxBand}px)"
 
-    $tv = Get-TileViolations $panes 'settled' $maxBand
+    $tv = @(Get-TileViolations $panes 'settled' $maxBand)
     Assert ($tv.Count -eq 0) ('panes tile the content area before the drag' +
         $(if ($tv.Count) { ' -- ' + ($tv -join '; ') } else { '' }))
 
@@ -403,7 +403,7 @@ try {
         [void](Send-TestMouse -Window ([IntPtr]$top) -Target ([IntPtr]$top) `
             -X ($startX + ($i * 12)) -Y $startY -Action move -HoldMs 0)
         Start-Sleep -Milliseconds 60
-        $now = Get-VisiblePanes ([IntPtr]$top)
+        $now = @(Get-VisiblePanes ([IntPtr]$top))
         $dragViolations += Get-TileViolations $now "drag-$i" $maxBand
         $left = @($now | Sort-Object Left)[0]
         if (($left.Right - $left.Left) -ne $widthBefore) { $dragMoved = $true }
@@ -413,10 +413,10 @@ try {
     Start-Sleep -Milliseconds 400
 
     Assert $dragMoved 'the posted drag actually grabbed the divider (the panes resized)'
-    Assert ($dragViolations.Count -eq 0) ('panes tile at every step of a divider drag' +
-        $(if ($dragViolations.Count) { ' -- ' + (($dragViolations | Select-Object -First 4) -join '; ') } else { '' }))
-    $decisions = Get-EraseDecisions $errlog
-    $dragFilling = Get-BlankingErases $decisions $seen
+    Assert (@($dragViolations).Count -eq 0) ('panes tile at every step of a divider drag' +
+        $(if (@($dragViolations).Count) { ' -- ' + (($dragViolations | Select-Object -First 4) -join '; ') } else { '' }))
+    $decisions = @(Get-EraseDecisions $errlog)
+    $dragFilling = @(Get-BlankingErases $decisions $seen)
     Assert ($dragFilling.Count -eq 0) ('no pane blanks itself during a divider drag' +
         $(if ($dragFilling.Count) { ' -- ' + (($dragFilling | Select-Object -First 4) -join ', ') } else { '' }))
     $seen = $decisions.Count
@@ -428,7 +428,7 @@ try {
     # stderr when the app's buffer next flushes, which is not instant.
     $drags = @()
     for ($t = 0; $t -lt 20; $t++) {
-        $drags = Get-DragSummaries $errlog
+        $drags = @(Get-DragSummaries $errlog)
         if ($drags.Count -gt 0) { break }
         Start-Sleep -Milliseconds 250
     }
@@ -455,11 +455,11 @@ try {
     foreach ($w in @(1100, 950, 800, 1000, 1250)) {
         [void](Set-TestWindowPos -Window ([IntPtr]$top) -X 40 -Y 40 -Width $w -Height 820)
         Start-Sleep -Milliseconds 350
-        $now = Get-VisiblePanes ([IntPtr]$top)
+        $now = @(Get-VisiblePanes ([IntPtr]$top))
         $winViolations += Get-TileViolations $now "winresize-$w" $maxBand
     }
-    Assert ($winViolations.Count -eq 0) ('panes tile across whole-window resizes' +
-        $(if ($winViolations.Count) { ' -- ' + (($winViolations | Select-Object -First 4) -join '; ') } else { '' }))
+    Assert (@($winViolations).Count -eq 0) ('panes tile across whole-window resizes' +
+        $(if (@($winViolations).Count) { ' -- ' + (($winViolations | Select-Object -First 4) -join '; ') } else { '' }))
     # T2503: a LAYERED pane (GHOZTTY_PANE_LAYER=1, T2499) keeps a surface of
     # its own, and the system sends it no WM_ERASEBKGND when its parent resizes
     # (5 of 5 runs, 0 decisions; an RDW_INVALIDATE|RDW_ERASE|RDW_ERASENOW raised
@@ -503,10 +503,10 @@ try {
     Start-Sleep -Seconds 2
     & $exe +set-banner --target=window-1 '' 2>&1 | Out-Null
     Start-Sleep -Seconds 2
-    $now = Get-VisiblePanes ([IntPtr]$top)
-    $decisions = Get-EraseDecisions $errlog
-    $bannerFilling = Get-BlankingErases $decisions $seen
-    $bannerViolations = Get-TileViolations $now 'banner-cleared' $maxBand
+    $now = @(Get-VisiblePanes ([IntPtr]$top))
+    $decisions = @(Get-EraseDecisions $errlog)
+    $bannerFilling = @(Get-BlankingErases $decisions $seen)
+    $bannerViolations = @(Get-TileViolations $now 'banner-cleared' $maxBand)
 
     Assert ($bannerFilling.Count -eq 0) ('no pane blanks itself across a banner set/clear' +
         $(if ($bannerFilling.Count) { ' -- ' + ($bannerFilling -join ', ') } else { '' }))
@@ -547,7 +547,7 @@ try {
     $wide = @(Get-VisiblePanes ([IntPtr]$top))
     Assert ($wide.Count -ge 4) "four panes open for the whole-window checks (saw $($wide.Count))"
 
-    $winresizeBefore = (Get-ResizePasses $errlog).Count
+    $winresizeBefore = @(Get-ResizePasses $errlog).Count
 
     # D1. a bracketed modal frame drag - the one path that already worked, kept
     # here as the positive control for the three below.
@@ -586,7 +586,7 @@ try {
     # Driven by keybinds because there is no `+new-window --tab` verb and no
     # IPC action for either half; the keys are POSTED (Send-TestKeys), so this
     # works on the background desktop where SendInput does not.
-    $panesBefore = (Get-VisiblePanes ([IntPtr]$top)).Count
+    $panesBefore = @(Get-VisiblePanes ([IntPtr]$top)).Count
     [void](Send-TestKeys -Window ([IntPtr]$top) -Target ([IntPtr]$wide[0].Hwnd) -Key F9)
     Start-Sleep -Seconds 3
     [void](Set-TestWindowPos -Window ([IntPtr]$top) -X 20 -Y 20 -Width 1240 -Height 780)
