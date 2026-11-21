@@ -230,6 +230,14 @@ zig build -Dapp-runtime=win32 -Doptimize=Debug      # -> zig-out\bin\ghoztty.exe
   builds use the GUI subsystem (no console) and append `info` and above to
   `%LOCALAPPDATA%\ghoztty\ghoztty.log` (the two names never collide, T350); add `-Dwindows-console=true` to give a
   release build a console when you need to debug one live.
+- **The agent and its pty holders log to `agent.log` in the agent's state dir**
+  (T1721): `%LOCALAPPDATA%\ghoztty\local-agent[-debug][-<instance>]\agent.log`
+  (+ `agent.log.1`, the same 4 MiB two-generation bound), the Windows spelling
+  of the Mac LaunchAgent's `<state dir>/agent.log` redirect. They are spawned
+  detached with no std handles, so this file is the only place a replay gap,
+  a holder drop or an adoption failure is ever recorded; holder lines carry a
+  `holder ` tag after the stamp. stderr is still written too. Acceptance:
+  `test\win32\agent-log.ps1`.
 - IPC endpoint: the named pipe `\\.\pipe\ghoztty[-debug]-<USERNAME>` — the
   `-debug` suffix is what lets a debug build run alongside the installed
   release. `GHOZTTY_PIPE_SUFFIX` overrides the suffix; `GHOZTTY_IPC_SOCKET`

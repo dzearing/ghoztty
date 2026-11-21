@@ -2587,6 +2587,21 @@ $GuardTable = @(
     # below. A row that is due after every unrelated startup edit is a row
     # nobody reads - and it would charge each of those edits a ReleaseFast
     # build, which is what running this harness costs.
+    # The agent's and its pty holders' own sink (T1721): agent.log in the
+    # agent's state dir, the Windows spelling of the Mac LaunchAgent redirect.
+    # Covers the sink module, its root wiring and the rotation it reuses; the
+    # Debug agent is the subject, so a run costs one debug build and seconds.
+    [pscustomobject]@{
+        Name   = 'agent-log'
+        Script = 'test\win32\agent-log.ps1'
+        Stamp  = 'test\win32\agent-log.stamp.json'
+        Covers = @(
+            'src\remote\agent\agent_log.zig',
+            'src\agent_main.zig',
+            'src\os\log_rotate.zig',
+            'test\win32\agent-log.ps1'
+        )
+    },
     [pscustomobject]@{
         Name   = 'log-sink'
         Script = 'test\win32\log-append.ps1'

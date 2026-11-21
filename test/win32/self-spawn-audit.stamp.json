@@ -1,13 +1,13 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-11-21T09:14:22-08:00",
-    "commit":  "6a2574dd3",
+    "generated":  "2026-11-21T14:07:04-08:00",
+    "commit":  "94b3bae09",
     "uncommitted":  [
 
                     ],
     "files":  {
-                  "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
+                  "src/agent_main.zig":  "99e6cb028e2b775a2d08465c84314b7ab3d525262d4d07119a2d170bc71db940",
                   "src/App.zig":  "f37fc79030cbe520bca8c44853c6c4fc4e95ecf9a7bc2f5b626b6dd44e24afe4",
                   "src/apprt.zig":  "a96054dc24dea9d7329e9ffe4fac84e09f29cb09cd58bbdf2e0c6b4e742a5a46",
                   "src/apprt/action.zig":  "db3cfffaf6935cc430f730e3e4616c57d0e5c6bb91bf84ba348d795450974ad0",
@@ -807,7 +807,7 @@
                   "src/os/listening_pid.zig":  "931260af3ef2fbf2840abea3553cf79ca5d381fc03ccd1af9370b93613e91135",
                   "src/os/locale.zig":  "258581f92dcd6261444f528ecc1c29a6f8de23ffacebbec3b9d79aadcc9e3359",
                   "src/os/log_gate.zig":  "83e93780c28bf59a357d1d5048af10aa3253c3f4d4eaf2b76827f4fac9bf2cab",
-                  "src/os/log_rotate.zig":  "4e4f787ff5eb8d95c744a0f1e69995b7ae1706810670f1f555d4fe7d189c20bb",
+                  "src/os/log_rotate.zig":  "0bec1eb27fbdd76096c451e9ae8c1e6051b8bc2e174563d360de1fe307c1fe45",
                   "src/os/log_stamp.zig":  "3473329b92837b3f42ca046a5733636846933794165b2f000ee1c416ab356756",
                   "src/os/mach.zig":  "c7f44fb3ba8e4b568cc098dddd9025e4b8ab1352905067b7d5c26f83705e9840",
                   "src/os/macos.zig":  "b78dfb6371ed0a17a48d37824e5e9d3df95142754f3bb2818702f5f9d53d75b7",
@@ -839,6 +839,7 @@
                   "src/pty.zig":  "883021684199ff07823c578fe014c8b7debd85cbbc9200126075d4f8964868f7",
                   "src/quirks.zig":  "eeef560fe350b99f541827b53de3c057d16fadb2f625cf08764da0f8a57ef021",
                   "src/remote/agent/adopt.zig":  "0af7bf58df99cd1f6036c58e4fa45797fe9b6df93c255de1e90960703030b5bb",
+                  "src/remote/agent/agent_log.zig":  "b6edc2cd75d2e4ab02d09877efdfda4ac8a4595d2800a9a2d64d4dc0f9e84538",
                   "src/remote/agent/atomic_write.zig":  "74bfecbb79a06425c8e32bb7b0381d23605355a90983191cbaf2758f0b002222",
                   "src/remote/agent/conpty_smoke.zig":  "3f650db98cbffa0f247ff4078441ad6d1f00607432548b5935e7bb0b349e0395",
                   "src/remote/agent/descendants.zig":  "bbd319ec821cb683fbaddfd9b76f4bc20c32d44b6efb5369aa25e6341142319b",
@@ -851,7 +852,7 @@
                   "src/remote/agent/keepalive.zig":  "08ce019b6d8998aa52868e0101bb1b6549fd8560ed337329ddf420362ff7c5f6",
                   "src/remote/agent/layout_meta.zig":  "7541949239eed45aec6cd00297fa95e56239239e8aab33600439f258f81a00be",
                   "src/remote/agent/link_control.zig":  "8a0fb05ef020d3b2ae734aaa9489547cde0cb9e5e7f2c0bdf6d2782b3274c09c",
-                  "src/remote/agent/main.zig":  "3b33263f68a8d3b05e15957ca93065bc86f6e6b57bbae256750b30b32cb672d1",
+                  "src/remote/agent/main.zig":  "e5753c41541d67ef311f91be4596ef7c53f8b037573d007dc73e54efec4901f5",
                   "src/remote/agent/metrics.zig":  "c4f0863d8706b9b7d24057cff5b388f72cc606a30df05105b19a19f97a68a4d6",
                   "src/remote/agent/msi_ca.zig":  "fa0ef30b29983b3edf5995afbe9ac5d4c5909361ac76b33e0c43651787eb17fb",
                   "src/remote/agent/mux.zig":  "bb91f11b8e95720f71e322fe788d2b7fbeba605e99132ec0ce0f317003f49867",

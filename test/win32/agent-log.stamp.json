@@ -1,0 +1,21 @@
+{
+    "guard":  "agent-log",
+    "script":  "test/win32/agent-log.ps1",
+    "generated":  "2026-11-21T15:03:24-08:00",
+    "commit":  "e4d25b159",
+    "uncommitted":  [
+                        "src/agent_main.zig",
+                        "src/os/log_rotate.zig",
+                        "src/remote/agent/agent_log.zig",
+                        "test/win32/agent-log.ps1"
+                    ],
+    "files":  {
+                  "src/agent_main.zig":  "99e6cb028e2b775a2d08465c84314b7ab3d525262d4d07119a2d170bc71db940",
+                  "src/os/log_rotate.zig":  "0bec1eb27fbdd76096c451e9ae8c1e6051b8bc2e174563d360de1fe307c1fe45",
+                  "src/remote/agent/agent_log.zig":  "b6edc2cd75d2e4ab02d09877efdfda4ac8a4595d2800a9a2d64d4dc0f9e84538",
+                  "test/win32/agent-log.ps1":  "7b6356ef873468abe0582e30aa6ef718845cb5fc95ab9b3fb55b380c03c3e81d"
+              },
+    "code":  {
+                 "test/win32/agent-log.ps1":  "code1:831b557b4bfc70249df73b49a40366d5501f15d3a23a63f5d0bfb45de8ba6981"
+             }
+}

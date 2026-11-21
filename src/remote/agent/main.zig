@@ -142,6 +142,7 @@ const adopt = @import("adopt.zig");
 const single_instance = @import("single_instance.zig");
 const startup_error = @import("startup_error.zig");
 const agent_lineage = @import("../agent_lineage.zig");
+const agent_log = @import("agent_log.zig");
 const job_object = @import("../../apprt/win32/job_object.zig");
 
 /// The agent's baked build version: `YYYYMMDD-<git short hash>` (commit date),
@@ -204,6 +205,8 @@ pub fn main() !void {
     const encoding = encodingFromEnv(alloc);
 
     const mode = try parseArgs(alloc);
+    // T1721: a holder's lines in the shared `agent.log` say they are a holder's.
+    if (mode == .pty_host) agent_log.role = .holder;
 
     // Ring size (T11): the `--ring-bytes` flag (resolved in parseArgs) wins; else
     // fall back to GHOSTTY_AGENT_RING_BYTES. Resolved once here, read-only after.

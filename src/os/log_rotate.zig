@@ -3,9 +3,11 @@
 //! build - see `live_name`).
 //!
 //! That file is the ONLY diagnostic surface a release build leaves behind (the
-//! GUI subsystem has no console), and it is appended to by the GUI app, the
-//! agent and every one-shot `ghoztty +…` CLI invocation — several a second on a
-//! box driving Ghoztty from scripts. Until T410 nothing ever bounded it: it was
+//! GUI subsystem has no console), and it is appended to by the GUI app and
+//! every one-shot `ghoztty +…` CLI invocation — several a second on a
+//! box driving Ghoztty from scripts. (The agent and its pty holders keep their
+//! own `agent.log` in the agent's state dir - `rotateNamed`, T1721.) Until T410
+//! nothing ever bounded it: it was
 //! 9.4 MB on this box with no rotation and no cap, so the file a user would be
 //! asked to send back grows without limit, and the only way it ever got smaller
 //! was somebody deleting it by hand.
@@ -82,10 +84,18 @@ pub fn oversize(file: std.fs.File) bool {
 /// the rename handle rather than trusted from `oversize`: that is what makes
 /// two writers crossing the threshold together safe (see the header).
 pub fn rotate(dir: std.fs.Dir) void {
+    rotateNamed(dir, live_name, rotated_name);
+}
+
+/// `rotate` for a sink with a name of its own: the agent and its pty holders
+/// keep `agent.log` in the agent's state dir (T1721), the Windows spelling of
+/// the Mac LaunchAgent's `agent.log`, and it is bounded by the same
+/// two-generation scheme for the same several-writers reason.
+pub fn rotateNamed(dir: std.fs.Dir, comptime live: []const u8, comptime rotated: []const u8) void {
     if (comptime builtin.os.tag != .windows) return;
 
     const w = std.os.windows;
-    const live_w = std.unicode.utf8ToUtf16LeStringLiteral(live_name);
+    const live_w = std.unicode.utf8ToUtf16LeStringLiteral(live);
     const handle = w.OpenFile(live_w, .{
         .dir = dir.fd,
         .access_mask = w.SYNCHRONIZE | w.DELETE | w.FILE_READ_ATTRIBUTES,
@@ -99,7 +109,7 @@ pub fn rotate(dir: std.fs.Dir) void {
     renameHandle(
         handle,
         dir.fd,
-        std.unicode.utf8ToUtf16LeStringLiteral(rotated_name),
+        std.unicode.utf8ToUtf16LeStringLiteral(rotated),
     ) catch return;
 }
 
