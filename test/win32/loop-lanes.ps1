@@ -167,6 +167,10 @@ try {
         -not ('[go-loop b] ghoztty parity'.StartsWith((Get-LoopLaneMarker 'a'))) -and
         -not ('[go-loop] ghoztty parity'.StartsWith((Get-LoopLaneMarker 'b'))))
     Assert 'B7 only lane a owns delivery' ((Test-LoopLaneOwnsDelivery 'a') -and -not (Test-LoopLaneOwnsDelivery 'b'))
+    Assert 'B8 lane l (the Linux lane) works seat linux and does not deliver' (
+        (Get-LoopLaneSeat 'l') -ceq 'linux' -and -not (Test-LoopLaneOwnsDelivery 'l'))
+    Assert 'B9 every other lane works seat win (lanes a, b, c unchanged)' (
+        (Get-LoopLaneSeat 'a') -ceq 'win' -and (Get-LoopLaneSeat 'b') -ceq 'win' -and (Get-LoopLaneSeat 'c') -ceq 'win')
 
     # --- C. refusals -----------------------------------------------------------
     "C. lane b never publishes or delivers"

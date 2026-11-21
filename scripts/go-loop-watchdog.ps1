@@ -446,14 +446,19 @@ function Get-RemainingTasks {
         if (@(Get-ChildItem -Path $TaskDir -Filter 'T*.md' -ErrorAction SilentlyContinue).Count -eq 0) { return -1 }
         return 0
     }
+    # This lane's seat (LoopLane.ps1): `win` for a Windows lane, `linux` for lane
+    # 'l'. A task counts when its seat is this lane's or `any`; no `seat:` field
+    # means `win`. Before the Linux lane this skipped `mac` only, which counted
+    # every `seat: linux` task as Windows work.
+    $mySeat = Get-LoopLaneSeat $Lane
     $remaining = 0
     foreach ($p in $open) {
-        $isMac = $false
+        $seat = 'win'
         foreach ($line in @(Get-Content -Path $p -TotalCount 40 -ErrorAction SilentlyContinue | Select-Object -Skip 1)) {
             if ($line -match '^---') { break }                       # end of frontmatter
-            if ($line -match '^seat:\s*"?mac') { $isMac = $true; break }
+            if ($line -match '^seat:\s*"?(\w+)') { $seat = $Matches[1].ToLowerInvariant(); break }
         }
-        if (-not $isMac) { $remaining++ }
+        if ($seat -eq $mySeat -or $seat -eq 'any') { $remaining++ }
     }
     return $remaining
 }

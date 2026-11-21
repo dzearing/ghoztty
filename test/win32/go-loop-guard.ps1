@@ -302,9 +302,9 @@ function New-TestWindow($target) {
 
 # One-file-per-task fixtures (T479; the watchdog counts open task files, not
 # rows in the frozen tracker table). $taskDir holds exactly one task this seat
-# could work: a win todo, beside a done task and a mac-seat todo that must not
-# count - so every `remaining=1` assertion below is also asserting both
-# exclusions. $emptyTaskDir is all closed; $macOnlyTaskDir's only open task
+# could work: a win todo, beside a done task, a mac-seat todo and a linux-seat
+# todo that must not count - so every `remaining=1` assertion below is also
+# asserting all three exclusions. $emptyTaskDir is all closed; $macOnlyTaskDir's only open task
 # belongs to the Mac seat.
 function Write-TaskFixture([string]$dir, [string]$id, [string]$status, [string]$seat) {
     New-Item -ItemType Directory -Force $dir | Out-Null
@@ -322,6 +322,7 @@ function Write-TaskFixture([string]$dir, [string]$id, [string]$status, [string]$
 Write-TaskFixture $taskDir 'T999' 'todo' 'win'
 Write-TaskFixture $taskDir 'T998' 'done' 'win'
 Write-TaskFixture $taskDir 'T997' 'todo' 'mac'
+Write-TaskFixture $taskDir 'T996' 'todo' 'linux'   # the Linux lane's; a win lane must not count it
 Write-TaskFixture $emptyTaskDir 'T999' 'done' 'win'
 Write-TaskFixture $macOnlyTaskDir 'T999' 'todo' 'mac'
 

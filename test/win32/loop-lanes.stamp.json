@@ -1,38 +1,40 @@
 {
     "guard":  "loop-lanes",
     "script":  "test/win32/loop-lanes.ps1",
-    "generated":  "2026-11-21T14:00:53-08:00",
-    "commit":  "a03d8ff6e",
+    "generated":  "2026-11-21T14:20:25-08:00",
+    "commit":  "94b3bae09",
     "uncommitted":  [
-                        "scripts/daily-publish.ps1"
+                        "scripts/go-loop-watchdog.ps1",
+                        "scripts/lib/LoopLane.ps1",
+                        "test/win32/loop-lanes.ps1"
                     ],
     "files":  {
-                  "scripts/daily-publish.ps1":  "bc0b792e3c0c6f7d99508d87e02811c151365c9c464e43cae2f050bf5b258fd2",
+                  "scripts/daily-publish.ps1":  "cd2b62fefc1e6788539046edde27e67ee332400c458b61cdd54b7c8b77436d8b",
                   "scripts/deliver-windows-build.ps1":  "921866556dc1bd62bd8f85a3b413ff3f3557a3c70214f02d3b98004dc2851f2c",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
                   "scripts/go-loop-exec.ps1":  "f14b52f885f4db1e3a9aa1a1707bf51710558711f624dd1c98f7ac7319f43ebe",
                   "scripts/go-loop-health.ps1":  "a6183dc09cf4d308bda7253e5022d6d1774c0cfc89ae36ce909977f92eaed160",
-                  "scripts/go-loop-watchdog.ps1":  "83c13e1d35ee73b73fa511835d69a716a7562faa6fdcfb69ada841ed6da6a297",
+                  "scripts/go-loop-watchdog.ps1":  "37f19f9ce08a701645b7267fea8411125b9112d83ef5ff0cbddb8e380f058d67",
                   "scripts/launch-upgrade.ps1":  "cdac13e044f5b31ec2346cbd23556ea45ddf937972e033f56f7a6451ffbaaaa1",
-                  "scripts/lib/LoopLane.ps1":  "5a323edad01338d2719fcb162c838a68f80b66a01616d9abf8d44daf9e1b51a8",
+                  "scripts/lib/LoopLane.ps1":  "867b1eef3ef55e20f317e5800fc8b5585ec75fb7933bff467f856624fbfb8897",
                   "scripts/morning-owner.ps1":  "3ce353184a905647f855f15bcc8e2206d7772a22c4af7501488a0a556267faf0",
                   "scripts/publish-windows-tag.ps1":  "28b1b5a25a0216a2305278b0bb48d7255813eae8f608b6f333536fee1b0d3b05",
                   "scripts/task-dashboard.js":  "73937d8335b48fb979078178c85d7c048a5f978b63d5efe855f9eb465c7692db",
                   "scripts/upgrade-ghoztty-windows.ps1":  "83fc5645440aeb390dc05c1cb432420dcd136a1833af441aa0cbb2ad2fe6c40c",
-                  "test/win32/loop-lanes.ps1":  "41606233b8e2bf5f95a1bc0cc894c69ff76ae56c6ea12d99971b09a156d716bb"
+                  "test/win32/loop-lanes.ps1":  "75a378c905ac606ee4a7431a6c8b7118b34574c5f19ecc646eba1719fd2d1756"
               },
     "code":  {
-                 "scripts/daily-publish.ps1":  "code1:3e17430a21586f5b4163f363be516ad12d605df45c3740e84f4fe3a0eae3d41d",
+                 "scripts/daily-publish.ps1":  "code1:6360d0a13b8e695ae92eb18a8eb9f13b04d7bf56cd9757f09f2eb490076ac093",
                  "scripts/deliver-windows-build.ps1":  "code1:8cecabc124eca2e6f52fe60b66581e6f3c5310f5de3bbb0a04ab33bdb016d125",
                  "scripts/go-loop-boot.ps1":  "code1:3a6f52330144f61ecaa7cdcde3b7a9eb84aa47ba0be12584cf71696f6fc55ba0",
                  "scripts/go-loop-exec.ps1":  "code1:103e27c205828413a02f929cdad757568b445762ace4c8c156829d043dd4372d",
                  "scripts/go-loop-health.ps1":  "code1:c67d25bc9b09f198b4164195424250a8c11e1f568a72c0814e02ac7be7211b54",
-                 "scripts/go-loop-watchdog.ps1":  "code1:ccdc1ad0d3c9667012ae6ed9df4bbe10fe3e17c2c243d4fb1fa94adf0c54b595",
+                 "scripts/go-loop-watchdog.ps1":  "code1:f50b5b1f370dd50442c1878b13fe2db23ae608bc7c686d8611493965e2091914",
                  "scripts/launch-upgrade.ps1":  "code1:bafd3732a4b148f497466a6a7215616df33652dfe4755e2aae4a986da0f32f9d",
-                 "scripts/lib/LoopLane.ps1":  "code1:f46a84a4ec2d979cec1e8c64c2d24d821bba34d7f43a65567deea46d750cc2dd",
+                 "scripts/lib/LoopLane.ps1":  "code1:1ac307990a68414120ce5695689be2ffe76fe2df254fc460b10618956bcbd6d7",
                  "scripts/morning-owner.ps1":  "code1:43737babd6bece33b6a1f3b5843a33748f264bf1f16cd5c1a0450751c3c90392",
                  "scripts/publish-windows-tag.ps1":  "code1:b824548a3fabed0c94dc63c10e35b15f372f9830adbe977c12f4f3e1543bc22f",
                  "scripts/upgrade-ghoztty-windows.ps1":  "code1:c15cf4ced2767c9f61f0972cf45c723af9dc3c2ce708d75e9d02018f8e1d30f6",
-                 "test/win32/loop-lanes.ps1":  "code1:5ab1d61d6d054b11ffc758d15147feb1bc429d612922116c77160398e8f3100c"
+                 "test/win32/loop-lanes.ps1":  "code1:89048edc2f1358cb0f020e0490fa586ee12a632d7c232e6171d2949f052a7a98"
              }
 }

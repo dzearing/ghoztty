@@ -148,6 +148,23 @@ Concretely, in order, with no stops in between:
        `-Install` above, then `go-loop-watchdog.ps1 -Once -Force -RearmMinutes 0
        -WaitForHeldSeconds 540` from the same tree (it opens the window in
        the background, so it never takes the user's focus).
+   - **Lane L is the Linux/WSL port** (user, 2026-11-21). Same shape as lane
+     B: tree `D:\git\ghoztty-l` on a local branch `lane-l` tracking the trunk,
+     window `main-l` titled `[go-loop l]`, supervisor
+     `GhozttyGoLoopWatchdog-l`. `Get-LoopLaneSeat` makes its `next` hand out
+     **only `seat: linux` and `any` tasks**. In lane L, read this file with
+     these overrides:
+     - Read `docs/design/linux-port.md` before picking a task.
+     - Every Linux build, test or launch goes through
+       `scripts\linux\wsl-run.ps1` (T3329) and nothing else. Until T3329 is
+       done, it is the only task the lane may take. Never edit
+       `%USERPROFILE%\.wslconfig`; it belongs to the user.
+     - The floor for a Linux-only change (`src/apprt/gtk/`, `scripts/linux/`,
+       `test/linux/`) is the Linux floor the lane builds (T3331), run in WSL.
+       A change that touches shared code (`src/` outside `apprt/gtk`) ALSO
+       runs the Windows floor, because both Windows lanes build that same
+       code.
+     - Follow-up work found in lane L is filed with `-Seat linux`.
 
 0.5. **Daily digest** (user, 2026-08-05) — before picking a task, check
    `docs/design/windows-parity-digests/<today>.md` (local date). If it is

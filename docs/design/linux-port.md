@@ -52,10 +52,11 @@ emulation of the Mac mechanism.
 
 ## WSL specifics
 
-- **Memory cap first.** WSL2 has already taken 28 GB on this box. Before
-  anything runs Linux builds unattended, `%USERPROFILE%\.wslconfig` needs a cap
-  (e.g. `memory=8GB`, `autoMemoryReclaim=gradual`). That file is the user's;
-  the plan does not write it, task L0 asks for it.
+- **Memory: guard on the Windows side, never edit `.wslconfig`.** WSL2 has
+  already taken 28 GB on this box. The user's `%USERPROFILE%\.wslconfig` is
+  tuned for their other WSL work (`memory=48GB`, `vmIdleTimeout=-1`), so a
+  low cap is not ours to set. Instead the L0 wrapper refuses to start a build
+  when Windows free memory is under a floor, and caps zig's parallelism.
 - **WSL is never started unasked** (standing rule). Every Linux script launches
   through one wrapper that refuses to run when the cap is missing, and nothing
   in the Windows floor or sweeps boots WSL.
@@ -92,9 +93,14 @@ Each step is a `seat: linux` task (filed 2026-11-21; `parity-tasks.ps1 next
 | L3 agent on Linux | T3332 | L8 sessions | T3337 | L13 Linux intake sweep | T3342 |
 | L4 linux.md + headless harness | T3333 | L9 viewers (WebKitGTK) | T3338 | L14 packaging + scheme | T3343 |
 
-## Open question for the user
+## The Linux lane
 
-Who works the Linux seat? The tasks are filed and ordered, but no loop takes
-them: the Windows go-loop filters them out, and running them needs WSL up,
-which is the user's call on this box. Options when ready: a third go-loop lane
-on this box with `-Seat linux` (after the L0 cap), or a separate Linux machine.
+The Linux seat is worked by its own go-loop **lane `l`**, in its own worktree
+`D:\git\ghoztty-l` (user, 2026-11-21: "we could do that in its own worktree on
+its own go loop"). It uses the lane machinery lane `b` already runs on
+(`scripts\lib\LoopLane.ps1`): its own lock, watchdog (`GhozttyGoLoopWatchdog-l`),
+window marker `[go-loop l]` and window `main-l`. `Get-LoopLaneSeat` maps lane
+`l` to seat `linux`, so its `next` hands out only `seat: linux` and `any`
+tasks, and the Windows lanes never see them. Like every lane but `a`, it never
+publishes or delivers. The turn is go.md, word for word, with the lane `l`
+overrides listed there.

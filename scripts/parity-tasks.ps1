@@ -320,6 +320,12 @@ function Get-ThisLane {
 $DefaultSeat = 'win'
 $ValidSeats = @('win', 'mac', 'linux', 'any')
 
+# The seat THIS worktree's selector works when -Seat is not given: the lane's
+# (LoopLane.ps1 Get-LoopLaneSeat - lane 'l' is the Linux lane, every other lane
+# is `win`). Distinct from $DefaultSeat, which is what a task file with no
+# `seat:` field MEANS and stays `win` in every lane.
+function Get-ThisSeat { return (Get-LoopLaneSeat (Get-ThisLaneId)) }
+
 # The priority a `new` task gets when none is given. P1 is "feature work and
 # polish", which is what most parity tasks are; something severe or something
 # merely nice gets said out loud with -Priority.
@@ -1431,7 +1437,7 @@ switch ($Command) {
         foreach ($t in $tasks) { $byId[$t.Id] = $t }
 
         # The selector runs on ONE box, so it defaults to that box's seat.
-        $wantSeat = if ($Seat) { $Seat } else { $DefaultSeat }
+        $wantSeat = if ($Seat) { $Seat } else { Get-ThisSeat }
 
         # Scan the WHOLE list for the other seat's todos, not just the ones
         # ahead of the pick: the point of the line below is to show that the
@@ -2298,7 +2304,7 @@ switch ($Command) {
             if (-not $rev) { Write-Host "rot-scan: -At '$At' is not a commit."; exit 2 }
             $rev = $rev.Trim()
         }
-        $wantSeat = if ($Seat) { $Seat } else { $DefaultSeat }
+        $wantSeat = if ($Seat) { $Seat } else { Get-ThisSeat }
         $named = @()
         if ($Id) { $named = @($Id -split '[,\s]+' | Where-Object { $_ }) }
 
@@ -2490,7 +2496,7 @@ switch ($Command) {
             Write-Host "stale-scan: $TaskDir is not inside a git repository, so there is no history to ask."
             exit 1
         }
-        $wantSeat = if ($Seat) { $Seat } else { $DefaultSeat }
+        $wantSeat = if ($Seat) { $Seat } else { Get-ThisSeat }
         $todos = @(Get-AllTasks | Where-Object {
                 $_.Status -match '^todo' -and (Test-SeatMatch $_.Seat $wantSeat)
             })

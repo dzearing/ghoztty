@@ -80,6 +80,17 @@ function Get-LoopLaneIdFromPath {
     return 'b'
 }
 
+# The tracker SEAT a lane works (parity-tasks.ps1 `seat:`). Lane 'l' is the
+# Linux/WSL port (D:\git\ghoztty-l, docs/design/linux-port.md) and works
+# `seat: linux` tasks; every other lane is a Windows lane and works `win`, which
+# is what every lane did before the Linux lane existed. `any` tasks match both
+# (Test-SeatMatch in parity-tasks.ps1).
+function Get-LoopLaneSeat {
+    param([string]$Lane)
+    if ($Lane -eq 'l') { return 'linux' }
+    return 'win'
+}
+
 # '' for lane A (every historical name unchanged), '-<x>' otherwise.
 function Get-LoopLaneSuffix {
     param([string]$Lane)
