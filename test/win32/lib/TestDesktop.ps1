@@ -4505,6 +4505,52 @@ function Get-TestWindowDpi {
 # reach it.
 . (Join-Path $PSScriptRoot 'ChooserControls.ps1')
 
+# WHICH WINDOW HOLDS PANE <id> (T1641). The pure half - find the window record
+# in +list --json and prove its id is one of the app's live top-levels - is
+# lib\ListTree.ps1 (`Resolve-GhozttyPaneHwnd`, pinned by test\win32\list-tree.ps1).
+# This is the half that asks the process. Before it, a script aiming a click
+# into one pane had to close every other window first (viewer-diff.ps1's T817
+# arm did).
+. (Join-Path $PSScriptRoot 'ListTree.ps1')
+
+<#
+The top-level HWND holding pane $PaneId, from the pane id alone. Returns
+[IntPtr]::Zero when no window holds it - never the first window - and leaves
+the reason in $script:TestWindowForPaneReason. Polls up to -TimeoutMs, since a
+window +new-window just made can be listed a beat before it is enumerable.
+-NeedSelected also requires the pane's tab to be the one on show.
+#>
+function Get-TestWindowForPane {
+    param(
+        [Parameter(Mandatory = $true)][string]$Exe,
+        [Parameter(Mandatory = $true)][string]$PaneId,
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [int]$TimeoutMs = 5000,
+        [switch]$NeedSelected,
+        $Desktop
+    )
+    $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
+    $script:TestWindowForPaneReason = $null
+    do {
+        $list = $null
+        try {
+            $raw = (& $Exe +list --json 2>$null | Out-String).Trim()
+            if ($raw) { $list = $raw | ConvertFrom-Json }
+        } catch { $list = $null }
+        $tops = @(Get-TestWindows -ProcessId $ProcessId -Desktop $Desktop | ForEach-Object { [int64]$_.Hwnd })
+        $r = Resolve-GhozttyPaneHwnd -List $list -PaneId $PaneId -Tops $tops
+        if (-not $r.Reason -and $NeedSelected -and -not $r.TabSelected) {
+            $r.Reason = "pane $PaneId is in tab $($r.TabIndex) of its window, which is not the selected tab"
+            $r.Hwnd = 0
+        }
+        if (-not $r.Reason) { return [IntPtr]$r.Hwnd }
+        $script:TestWindowForPaneReason = $r.Reason
+        if ((Get-Date) -ge $deadline) { break }
+        Start-Sleep -Milliseconds 200
+    } while ($true)
+    return [IntPtr]::Zero
+}
+
 <#
 Wait for a popup menu (win32 class '#32768') owned by $ProcessId.
 

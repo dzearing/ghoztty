@@ -454,39 +454,35 @@ try {
     # reports and reading what the pane did next: a file the diff moved to, and
     # the style it re-rendered in.
     #
-    # Every window above is CLOSED first, and the assertions below are gated on
-    # exactly one viewer window being left. The clicks need a bar that can be
-    # named without ambiguity: nothing maps a pane id to an HWND, so with five
-    # viewer panes still open the only way to pick "this pane's bar" is to
-    # guess, and a click aimed into the wrong window lands on nothing and reads
-    # as a dead button. Everything those windows were opened to prove has
-    # already been asserted by here.
-    foreach ($gone in @('vd', 'vdctl')) { Invoke-Verb @('+close', "--target=$gone") | Out-Null }
-    Start-Sleep -Seconds 2
-
+    # The earlier viewer windows stay OPEN (T1641): the bar to click is found
+    # from the pane id - Get-TestWindowForPane maps it to its window's HWND -
+    # so it no longer has to be the only viewer window left on the desktop.
     $r = Invoke-Verb @('+new-window', '--target=vdnav', "--working-directory=$work", '--view=git-status:')
     Assert ($r.Code -eq 0) "T817: +new-window for the controls pane exits 0 (got $($r.Code))"
     $navLeaf = Wait-Leaf 'vdnav' $null
     Assert ($null -ne $navLeaf) 'T817: a diff pane was created for the controls check'
 
-    # The one window carrying viewer chrome. Counted, not picked: two would mean
-    # a close did not take, and clicking into either would be a coin toss.
+    # Precondition the old arm could not tolerate: other viewer windows are
+    # still up, so "the window with a nav bar" would be ambiguous.
+    $barWindows = @(Get-TestWindows -ProcessId $appPid | Where-Object {
+        (Get-TestChildWindow -Window ([IntPtr]$_.Hwnd) -Class 'GhozttyViewerNav') -ne [IntPtr]::Zero })
+    Assert ($barWindows.Count -ge 2) "T1641: other viewer windows are still open beside the controls pane ($($barWindows.Count) with a nav bar)"
+
     $navTop = [IntPtr]::Zero
     $navBar = [IntPtr]::Zero
-    $withBars = 0
-    for ($t = 0; $t -lt 40; $t++) {
-        $navTop = [IntPtr]::Zero; $navBar = [IntPtr]::Zero; $withBars = 0
-        foreach ($w in (Get-TestWindows -ProcessId $appPid)) {
-            $b = Get-TestChildWindow -Window ([IntPtr]$w.Hwnd) -Class 'GhozttyViewerNav'
-            if ($b -eq [IntPtr]::Zero) { continue }
-            $withBars++
-            $navTop = [IntPtr]$w.Hwnd
-            $navBar = $b
+    if ($navLeaf) {
+        $navTop = Get-TestWindowForPane -Exe $exe -PaneId $navLeaf.id -ProcessId $appPid -NeedSelected -TimeoutMs 8000
+        Assert ($navTop -ne [IntPtr]::Zero) "T1641: the controls pane's window is found from its pane id ($script:TestWindowForPaneReason)"
+        if ($navTop -ne [IntPtr]::Zero) {
+            for ($t = 0; $t -lt 40 -and $navBar -eq [IntPtr]::Zero; $t++) {
+                $navBar = Get-TestChildWindow -Window $navTop -Class 'GhozttyViewerNav'
+                if ($navBar -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 250 }
+            }
         }
-        if ($withBars -eq 1) { break }
-        Start-Sleep -Milliseconds 250
+        # NEGATIVE CONTROL: an id nothing holds answers no window at all.
+        $ghost = Get-TestWindowForPane -Exe $exe -PaneId '00000000-0000-0000-0000-000000000000' -ProcessId $appPid -TimeoutMs 400
+        Assert ($ghost -eq [IntPtr]::Zero) "T1641: CONTROL a pane id nothing holds maps to no window (got 0x$('{0:X}' -f [int64]$ghost))"
     }
-    Assert ($withBars -eq 1) "T817: exactly one viewer window is left to click in (found $withBars)"
     Assert ($navBar -ne [IntPtr]::Zero) 'T817: the pane has a nav-bar window to click'
 
     if ($navLeaf -and $navTop -ne [IntPtr]::Zero) {

@@ -3433,7 +3433,10 @@ $GuardTable = @(
         Covers = @(
             'test\win32\lib\ListTree.ps1',
             'test\win32\list-tree.ps1',
-            'test\win32\float-on-top.ps1'
+            'test\win32\float-on-top.ps1',
+            # T1641: the pane -> window wiring it pins.
+            'test\win32\viewer-diff.ps1',
+            'test\win32\lib\TestDesktop.ps1'
         )
     },
     # T1996: a script run by hand from lane B's checkout must not grade lane A's
