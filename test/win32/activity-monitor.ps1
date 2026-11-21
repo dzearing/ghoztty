@@ -474,6 +474,29 @@ function Get-TestPidLabel([int]$ProcessId) {
     return "$ProcessId($($p.Name) ppid=$($p.ParentProcessId))"
 }
 
+# T1615: when M or O sees more "ping" rows than it spawned, print every live
+# PING.EXE on the box - pid, ppid, what the ppid is now, both creation times,
+# and whether the pid is one of this run's - so the red names its own cause.
+# The two candidates it separates: a stray whose ppid was RECYCLED into this
+# run's tree (its parent was created AFTER it), and a previous run's victim
+# still dying when this run enumerated (created before this app, parent gone).
+function Write-TestStrayPingReport([string]$Section, [int[]]$Ours) {
+    $appPid = [int]$script:app.Pid
+    $appProc = Get-CimInstance Win32_Process -Filter "ProcessId=$appPid" -ErrorAction SilentlyContinue
+    $appBorn = if ($appProc) { $appProc.CreationDate.ToString('HH:mm:ss.fff') } else { '?' }
+    Write-Host "  $Section stray report: app pid=$appPid created=$appBorn ours=[$($Ours -join ' ')]"
+    foreach ($p in @(Get-CimInstance Win32_Process -Filter "Name='PING.EXE'" -ErrorAction SilentlyContinue)) {
+        $par = Get-CimInstance Win32_Process -Filter "ProcessId=$($p.ParentProcessId)" -ErrorAction SilentlyContinue
+        $parText = 'gone'
+        if ($par) {
+            $order = if ($par.CreationDate -gt $p.CreationDate) { 'RECYCLED(parent younger)' } else { 'parent older' }
+            $parText = "$($par.Name) created=$($par.CreationDate.ToString('HH:mm:ss.fff')) $order"
+        }
+        $mine = if ($Ours -contains [int]$p.ProcessId) { 'ours' } else { 'STRAY' }
+        Write-Host "    $mine pid=$($p.ProcessId) created=$($p.CreationDate.ToString('HH:mm:ss.fff')) ppid=$($p.ParentProcessId) ($parText)"
+    }
+}
+
 # Is the pid a LIVE process? Asked of the process table rather than through
 # Get-Process, which OPENS A HANDLE - and a handle held on an exited pid keeps it
 # a valid process object, which is the state section M creates on purpose (T293).
@@ -1640,6 +1663,7 @@ try {
     } else {
         Assert ($st.Shown -eq 3) "M the needle isolates exactly the three victims (shown=$($st.Shown))"
     }
+    if ($st.Shown -ne 3) { Write-TestStrayPingReport 'M' $victims }
     # The GUARD is never inverted, only the claim above it: a run that is trying
     # to score red must not buy that verdict by clicking rows it does not own.
     $safeToClick = ($victims.Count -eq 3 -and $st.Shown -eq 3 -and -not $st.ShowAll)
@@ -1852,6 +1876,7 @@ try {
     Assert ($null -ne $stO -and $stO.Shown -eq 1 -and -not $stO.ShowAll) `
         "O the needle isolates exactly the one victim (shown=$($stO.Shown), show_all=$($stO.ShowAll))"
     $safeO = ($victimO -gt 0 -and $null -ne $stO -and $stO.Shown -eq 1 -and -not $stO.ShowAll)
+    if ($null -eq $stO -or $stO.Shown -ne 1) { Write-TestStrayPingReport 'O' @($victimO) }
 
     if ($safeO) {
         # O1. Reach the table and select the row with NO mouse. The cycle L

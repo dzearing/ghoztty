@@ -1,21 +1,20 @@
 {
     "guard":  "activity-monitor",
     "script":  "test/win32/activity-monitor.ps1",
-    "generated":  "2026-11-20T11:40:01-08:00",
-    "commit":  "9713a64e3",
+    "generated":  "2026-11-21T00:49:41-08:00",
+    "commit":  "a965d39fd",
     "uncommitted":  [
-                        "src/apprt/win32/activity_input.zig",
-                        "src/apprt/win32/ActivityMonitor.zig"
+                        "test/win32/activity-monitor.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/activity_input.zig":  "665093d4241e568170ebe6a6e67c9130a4c87bf1eeb5959909dbd7f425ef911b",
                   "src/apprt/win32/activity_procs.zig":  "2b26c4affe21d11cbee186ff3b40d6b0e4d6c9d8e60d81e130a466c77a6ccae4",
                   "src/apprt/win32/ActivityMonitor.zig":  "76c35de207c87e35b20f684c14196c0189d8d9e1a4a44f5a83739f71fb2becac",
-                  "test/win32/activity-monitor.ps1":  "efbc5f4de0acf3b53ddce473468ef49684ed2df863bc79f47c7ee946ac93759c",
+                  "test/win32/activity-monitor.ps1":  "93e97e4fafa4f8ee17d6c09decb340c01da43afb9e949f4b84a86547107d7b2e",
                   "test/win32/lib/PixelScan.ps1":  "41c312f9a9db8bd3b6402118af61aa445e6f25f2dfa15f2bd45d1fe5731bb73d"
               },
     "code":  {
-                 "test/win32/activity-monitor.ps1":  "code1:abef906f465b7a853c453451556bf2a63be887abb68d20d731dddcd3a79005ff",
+                 "test/win32/activity-monitor.ps1":  "code1:6f8996f85991b37e9323fcadf2ff82a45098b8f444214d04b7efcf1f9b8e1b10",
                  "test/win32/lib/PixelScan.ps1":  "code1:6c071f6e8da95d21fab2cfe1367549b0e42b8ce7dc0e0c7953687ae94f01dff2"
              }
 }
