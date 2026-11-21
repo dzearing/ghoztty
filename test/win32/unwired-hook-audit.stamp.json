@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-20T17:42:09-08:00",
-    "commit":  "3f972c721",
+    "generated":  "2026-11-20T18:07:47-08:00",
+    "commit":  "6e0e3b7ad",
     "uncommitted":  [
 
                     ],
@@ -1307,7 +1307,7 @@
                   "test/win32/frame-score.ps1":  "d98795f50fd5c8a171332eef326942ed62398f6f8e62601c1102716d240b89d9",
                   "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",
                   "test/win32/fullscreen-guard.ps1":  "a6c1a301a11d7493a2e7b5411fbcb25daea08302c0a822e91d98fd6db0a67450",
-                  "test/win32/gate-negatives.ps1":  "4fd0f965d9825aec7b776c727e3610dea30764f7e7ecba640c97cca71819ec96",
+                  "test/win32/gate-negatives.ps1":  "2b4228c14739b1be37f906830bd211d43c84ce3e961eac3a59bc8ef377df7e5c",
                   "test/win32/ghoztty-cleanup.ps1":  "a1b46736eb6a96c57f7598e2a1088afaf501c62be03ec8bfc45d91bc15107629",
                   "test/win32/glass-frame-origin.ps1":  "0a0dfeed8dff3e6ba20ec9402905ac5490ab37b43d85d9316be106de72e26b56",
                   "test/win32/gl-device-lost.ps1":  "3a87a2acf4ebca9c19323687ecd65919747f3691aa09eb9eb245f19246d30711",
@@ -1450,7 +1450,7 @@
                   "test/win32/parity-decisions.ps1":  "6f371c66bd381d734ac8a5408671d8695e48d7a6215004c299a2ccb1a92ace88",
                   "test/win32/parity-sweep.ps1":  "2251497104f8df5a8b1146441bd2b5e3ebb38a495c7d7fe16a9f64a05c801044",
                   "test/win32/parity-tasks-lanes.ps1":  "0ea40fdd89dbf37e287727eb97d5153afa3e9f656e120df2b18302f31c49fff1",
-                  "test/win32/parity-tasks-seat.ps1":  "d202bdfea3be44ab895459efc924351344c1f48d65e5fb9eaaa27605c03a91e2",
+                  "test/win32/parity-tasks-seat.ps1":  "6badf08e9aa5075feeb35446f119517ac3d32533327be34a8892fb17da3dfb22",
                   "test/win32/parity-tasks-split-deps.ps1":  "4cae00c40c97f85c7a4b6871ff32a8276cb752fe7c6c8a5120844dd614e71a78",
                   "test/win32/path-selfheal.ps1":  "fcf69db5534ad019cfdd035ded0ffb29e62cd51cc0c08488ef345c7e2134e367",
                   "test/win32/perf-baseline-reader.ps1":  "c0cecdd910918c63517af4321be7b780437527f91eb3a5aea846a7b6c82fd78e",
@@ -1624,7 +1624,7 @@
                   "test/win32/viewer-feedback.ps1":  "a27afcc98a135b5f5e6ae9259d6ee57b11ea3a86d01175b8ebac9edb3e5469cd",
                   "test/win32/viewer-feedback-a11y.ps1":  "5fac54144f172e562b4139426c421f0a083bb19294815e3095af62b8201e4411",
                   "test/win32/viewer-feedback-alpha.ps1":  "7e3ed8de4c1caf1382b53ab1fa99ce89b4a3d9239263be65c7bbf80de97f34c1",
-                  "test/win32/viewer-feedback-capture.ps1":  "b4cb455788298726f5b0bdf98020e5176430ebcaa451b3d56172c3975821d1c8",
+                  "test/win32/viewer-feedback-capture.ps1":  "e10dae4745467899f42554208a1f58f092d047b1a67a0691c1566ecaed180dfd",
                   "test/win32/viewer-feedback-carousel.ps1":  "c732a5a15ce1cf08a6d7dff415085fd1433e9335a157a23c0dfee5dabc393ab4",
                   "test/win32/viewer-feedback-images.ps1":  "73e6ed849642cd790866a8396f853d8afba27329309740188ad1f723439dbe1a",
                   "test/win32/viewer-feedback-utf16.ps1":  "0d062a2a5601257861deed4400ac7fd14666a1b6cdcd3d03f414f120bccad954",

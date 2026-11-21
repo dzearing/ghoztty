@@ -10,6 +10,10 @@
 #      and read back after, byte for byte. This is the one hard constraint the
 #      whole design (D44) turns on -- the Windows snipping tools were ruled out
 #      precisely because they publish through the clipboard.
+#      The clipboard is per SESSION, so a change is ATTRIBUTED before it is
+#      scored (T1562): the app's write FAILS, anyone else's is a named SKIP.
+#      C0 checks those rules on synthetic writers; C3 checks them live, with
+#      a real foreign process taking the clipboard.
 #   D. Escape cancels: no chip, no image, and the overlay is gone.
 #   E. A CLICK with no drag cancels too. A zero-area drag must not become a
 #      zero-pixel picture, which would look like the capture worked.
@@ -386,7 +390,107 @@ function Send-TestSelectKeys($overlay, [int[]]$Keys, [switch]$Shift, [switch]$Ct
 function Get-Overlay($appPid) {
     $w = @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyRegionSelect')
     if ($w.Count -lt 1) { return $null }
-    return [IntPtr]$w[0].Hwnd
+    $h = [IntPtr]$w[0].Hwnd
+    # T1562: every overlay the app ever put up, so a clipboard write owned by
+    # one that has since been destroyed (its pid then reads 0) is still
+    # recognised as the APP's, never excused as a foreign one.
+    if ($script:appHwnds -notcontains [int64]$h) { $script:appHwnds += [int64]$h }
+    return $h
+}
+
+# --- T1562: who wrote the clipboard? ------------------------------------------
+# The clipboard is per SESSION, not per desktop, so the sentinel arms (C) are
+# also measuring every other process the user is running: on 2026-09-14 both
+# failed holding three U+2500 box-drawing dashes, which nothing in this run writes, and a re-run was ALL
+# PASS. A changed clipboard is therefore attributed before it is scored:
+#
+#   intact   the sentinel is still there                         -> PASS
+#   app      the owner window is the app's (its pid, a ghoztty
+#            under this repo, or one of its own windows by handle
+#            after it was destroyed), or the app logged an
+#            ownerless open (T992), which no owner can rule out  -> FAIL
+#   foreign  anything else: another live process, or a writer
+#            whose window is gone and was never the app's        -> SKIP, named
+#
+# The app opens the clipboard with a real owner window on every write
+# (src\apprt\win32\clipboard_open.zig, T992), which is what makes the owner a
+# fair witness. The residual blind spot is honest and stated: a foreign write
+# that lands AFTER an app clobber hides it, and that run SKIPs, it never passes.
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public class GhozttyClipWriter {
+    [DllImport("user32.dll")] public static extern IntPtr GetClipboardOwner();
+    [DllImport("user32.dll")] public static extern uint GetClipboardSequenceNumber();
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+}
+'@ -ErrorAction SilentlyContinue
+
+$script:appHwnds = @()
+
+function Get-ClipboardWriter {
+    $h = [GhozttyClipWriter]::GetClipboardOwner()
+    [uint32]$wpid = 0
+    if ($h -ne [IntPtr]::Zero) { [void][GhozttyClipWriter]::GetWindowThreadProcessId($h, [ref]$wpid) }
+    $path = $null
+    if ($wpid -ne 0) {
+        try { $path = (Get-Process -Id $wpid -ErrorAction Stop).Path } catch { $path = $null }
+        if (-not $path) { try { $path = (Get-Process -Id $wpid -ErrorAction Stop).ProcessName } catch { } }
+    }
+    [pscustomobject]@{
+        Owner = [int64]$h
+        Pid   = [int]$wpid
+        Path  = $path
+        Seq   = [GhozttyClipWriter]::GetClipboardSequenceNumber()
+    }
+}
+
+# Pure: the verdict from the facts, so the rules are checked with synthetic
+# writers before any live arm leans on them.
+function Get-ClipboardVerdict {
+    param(
+        [string]$Text, [string]$Sentinel,
+        [int64]$Owner, [int]$WriterPid, [string]$WriterPath,
+        [int[]]$AppPids = @(), [int64[]]$AppHwnds = @(),
+        [string]$RepoRoot, [bool]$AppOwnerlessOpen
+    )
+    if ($Text -ceq $Sentinel) { return 'intact' }
+    if ($AppOwnerlessOpen) { return 'app' }
+    if ($WriterPid -ne 0 -and $AppPids -contains $WriterPid) { return 'app' }
+    if ($WriterPath -and $RepoRoot -and
+        $WriterPath.StartsWith($RepoRoot, [StringComparison]::OrdinalIgnoreCase) -and
+        $WriterPath -match '\\zig-out[^\\]*\\.*ghoztty[^\\]*\.exe$') { return 'app' }
+    if ($Owner -ne 0 -and $AppHwnds -contains $Owner) { return 'app' }
+    return 'foreign'
+}
+
+# Scores one sentinel arm: PASS when intact, FAIL when the app wrote it, and a
+# named SKIP when somebody else did - the run cannot then say whether the app
+# would have kept it, so it says so rather than guessing either way.
+function Measure-Clipboard([string]$Sentinel, [string]$ErrLog, [int]$AppPid) {
+    $text = [System.Windows.Forms.Clipboard]::GetText()
+    $w = Get-ClipboardWriter
+    $ownerless = $false
+    if ($ErrLog -and (Test-Path $ErrLog)) {
+        $ownerless = [bool](Select-String -Path $ErrLog -SimpleMatch 'clipboard open with no owner window' -Quiet)
+    }
+    $v = Get-ClipboardVerdict -Text $text -Sentinel $Sentinel -Owner $w.Owner -WriterPid $w.Pid `
+        -WriterPath $w.Path -AppPids @($AppPid) -AppHwnds $script:appHwnds -RepoRoot $repo `
+        -AppOwnerlessOpen $ownerless
+    $who = "owner hwnd 0x{0:X} pid {1} ({2}), seq {3}" -f $w.Owner, $w.Pid, $(if ($w.Path) { $w.Path } else { 'gone' }), $w.Seq
+    [pscustomobject]@{ Verdict = $v; Text = $text; Who = $who; Writer = $w }
+}
+
+function Assert-ClipboardSurvived([string]$Sentinel, [string]$Label, [string]$ErrLog, [int]$AppPid) {
+    $m = Measure-Clipboard $Sentinel $ErrLog $AppPid
+    switch ($m.Verdict) {
+        'intact' { Assert $true "$Label (holds the sentinel)" }
+        'app'    { Assert $false "$Label - the APP overwrote it with '$($m.Text)' [$($m.Who)]" }
+        default  {
+            Write-Host "SKIP  $Label - unproven: another process wrote the session clipboard mid-run ('$($m.Text)') [$($m.Who)]"
+            $script:skipped++
+        }
+    }
 }
 
 function Wait-Overlay($appPid, [bool]$Present) {
@@ -548,6 +652,28 @@ try {
     Assert ([System.Windows.Forms.Clipboard]::GetText() -eq $sentinel) `
         'a known string is on the clipboard before the first capture'
 
+    # --- C0 (T1562). The attribution rules, on synthetic writers, before a
+    # live arm leans on them. The two that matter most are the FAIL ones: a
+    # rule that excused the app's own write would turn arm C into a SKIP
+    # machine that can never go red.
+    $vr = @{ Sentinel = 's'; AppPids = @(4242); AppHwnds = @([int64]0x1234); RepoRoot = 'D:\r' }
+    Assert ((Get-ClipboardVerdict @vr -Text 's' -Owner 0 -WriterPid 0) -eq 'intact') `
+        'C0: the sentinel still there reads intact'
+    Assert ((Get-ClipboardVerdict @vr -Text 'x' -Owner 0x99 -WriterPid 4242) -eq 'app') `
+        "C0: a write owned by the app's pid reads as the app's"
+    Assert ((Get-ClipboardVerdict @vr -Text 'x' -Owner 0x99 -WriterPid 7 -WriterPath 'D:\r\zig-out\bin\ghoztty.exe') -eq 'app') `
+        "C0: a write owned by another ghoztty under this repo's zig-out reads as the app's"
+    Assert ((Get-ClipboardVerdict @vr -Text 'x' -Owner 0x1234 -WriterPid 0) -eq 'app') `
+        "C0: a write owned by one of the app's windows, destroyed since, reads as the app's"
+    Assert ((Get-ClipboardVerdict @vr -Text 'x' -Owner 0 -WriterPid 0 -AppOwnerlessOpen $true) -eq 'app') `
+        'C0: any change after the app logged an ownerless open reads as the app (no owner can rule it out)'
+    Assert ((Get-ClipboardVerdict @vr -Text 'x' -Owner 0x99 -WriterPid 7 -WriterPath 'C:\Windows\explorer.exe') -eq 'foreign') `
+        'C0: a write owned by another live process reads foreign'
+    Assert ((Get-ClipboardVerdict @vr -Text 'x' -Owner 0x77 -WriterPid 0) -eq 'foreign') `
+        "C0: a write whose owner is gone and was never the app's reads foreign"
+    Assert ((Get-ClipboardVerdict @vr -Text 'S' -Owner 0 -WriterPid 0) -eq 'foreign') `
+        'C0: the sentinel compares case-sensitively (a case-folded copy is not the sentinel)'
+
     # --- A. the + button puts the selector up --------------------------------
     Assert (Invoke-SnapshotButton $view $fb) 'the composer took a click at its + button'
     $overlay = Wait-Overlay $appPid $true
@@ -630,9 +756,7 @@ try {
     Assert ($null -eq (Wait-Overlay $appPid $false)) 'the overlay came down after the drag'
 
     # --- C (second half). The clipboard is exactly as it was -----------------
-    $after = [System.Windows.Forms.Clipboard]::GetText()
-    Assert ($after -eq $sentinel) `
-        "the clipboard survived every capture byte for byte (holds '$after')"
+    [void](Assert-ClipboardSurvived $sentinel 'the clipboard survived every capture byte for byte' $errlog $appPid)
 
     # --- G. the picture reaches the report at the dragged size ---------------
     # Typed after the chip, at the end of the document, through the page's own
@@ -846,9 +970,7 @@ try {
 
         # C, once more, over the mode this section added: a window pick must
         # cost the user their clipboard no more than a drag does.
-        $afterWindow = [System.Windows.Forms.Clipboard]::GetText()
-        Assert ($afterWindow -eq $sentinel) `
-            "the clipboard survived the window picks too (holds '$afterWindow')"
+        [void](Assert-ClipboardSurvived $sentinel 'the clipboard survived the window picks too' $errlog $appPid)
     }
 
     # --- J. the capture starts on the PANE's monitor, not the pointer's ------
@@ -924,6 +1046,34 @@ try {
                 Write-Host "SKIP  one monitor on this desk, so left and right are the same screen ($($left.Home.W)x$($left.Home.H)) - the cross-monitor half of T706 is unproven here"; $script:skipped++
             }
         }
+    }
+
+    # --- C3 (T1562). The attribution, live: a real foreign process takes the
+    # clipboard while it holds the sentinel, and the arm must name it and
+    # SKIP, not FAIL the product. Last, because it spends the sentinel. The
+    # writer is a hidden child, which owns its clipboard window for as long
+    # as it sleeps - the shape of a user's editor copying mid-run.
+    $sentinel2 = 'clipboard-sentinel-' + [guid]::NewGuid().ToString('N')
+    [System.Windows.Forms.Clipboard]::SetText($sentinel2)
+    $foreignText = 'foreign-writer-' + [guid]::NewGuid().ToString('N')
+    $writer = Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -PassThru -ArgumentList @(
+        '-NoProfile', '-Sta', '-Command',
+        "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::SetText('$foreignText'); Start-Sleep -Seconds 30")
+    try {
+        $seen = $null
+        for ($t = 0; $t -lt 60; $t++) {
+            $seen = [System.Windows.Forms.Clipboard]::GetText()
+            if ($seen -eq $foreignText) { break }
+            Start-Sleep -Milliseconds 250
+        }
+        Assert ($seen -eq $foreignText) "C3: a foreign process wrote the clipboard (holds '$seen')"
+        $m3 = Measure-Clipboard $sentinel2 $errlog $appPid
+        Assert ($m3.Writer.Pid -eq $writer.Id) `
+            "C3: ...and the owner window names that process (pid $($m3.Writer.Pid), want $($writer.Id))"
+        Assert ($m3.Verdict -eq 'foreign') `
+            "C3: ...so arm C would SKIP it by name rather than FAIL the product (verdict '$($m3.Verdict)' [$($m3.Who)])"
+    } finally {
+        if ($writer -and -not $writer.HasExited) { Stop-Process -Id $writer.Id -Force -ErrorAction SilentlyContinue }
     }
 
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'GUI process alive after all scenarios'
