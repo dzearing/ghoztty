@@ -197,7 +197,7 @@ function Wait-AliveCount($tmp, $tag, $target, $timeoutSec = 20) {
     $rows = @()
     while ((Get-Date) -lt $deadline) {
         $rows = Get-Sessions $tmp $tag
-        if ((Alive-Rows $rows).Count -eq $target) { return , $rows }
+        if (@(Alive-Rows $rows).Count -eq $target) { return , $rows }
         Start-Sleep -Milliseconds 500
     }
     return , $rows
@@ -519,7 +519,7 @@ Assert "A2c the tab now holds 2 terminals and 1 viewer" (
 
 $paneA = (Terminal-Leaves $treeA)[0]
 $rowsA = Wait-AliveCount $tmp 'a' 2 25
-Assert "A3 both panes are agent-backed (2 live sessions)" ((Alive-Rows $rowsA).Count -eq 2)
+Assert "A3 both panes are agent-backed (2 live sessions)" (@(Alive-Rows $rowsA).Count -eq 2)
 $pidsA = Alive-Pids $rowsA
 Assert "A4 both live sessions report a real child pid" (@($pidsA | Where-Object { $_ -gt 0 }).Count -eq 2)
 
@@ -584,7 +584,7 @@ Assert "B5 the app skipped the settle window for an agent that has EXITED" $waiv
 # Settle window (5s) + re-dial/spawn (<=2s) + agent restore + RELAUNCH.
 $rowsC = Wait-AliveCount $tmp 'c' 2 45
 Assert "C1 two sessions are alive again on the respawned agent" (
-    (Alive-Rows $rowsC).Count -eq 2)
+    @(Alive-Rows $rowsC).Count -eq 2)
 
 $newAgents = Get-RunAgents $tmp
 Assert "C2 a fresh agent is running for this run" ($newAgents.Count -ge 1)
@@ -605,7 +605,7 @@ $pidsC = Alive-Pids $rowsC
 $newPids = @($pidsC | Where-Object { $pidsA -notcontains $_ })
 if ($newPids.Count -ne 0) { "    [C5] before=$($pidsA -join ',') after=$($pidsC -join ',')" }
 Assert "C5 the shells SURVIVED the agent and were adopted (same pids, nothing relaunched)" (
-    $newPids.Count -eq 0 -and (Alive-Rows $rowsC).Count -eq 2)
+    $newPids.Count -eq 0 -and @(Alive-Rows $rowsC).Count -eq 2)
 
 Assert "C6 the named pane is RESPONSIVE again - the actual defect" (
     Test-PaneResponsive $tmp 't145b' 'c' 30)
@@ -619,7 +619,7 @@ Assert "C6 the named pane is RESPONSIVE again - the actual defect" (
 Start-Sleep -Seconds 6
 $rowsD = Get-Sessions $tmp 'd'
 Assert "D1 still exactly 2 live sessions after the old surfaces finished" (
-    (Alive-Rows $rowsD).Count -eq 2)
+    @(Alive-Rows $rowsD).Count -eq 2)
 Assert "D2 the pane still works after the teardown window" (
     Test-PaneResponsive $tmp 't145b' 'd' 20)
 
@@ -702,7 +702,7 @@ $rowsG0 = Wait-AliveCount $tmp 'g0' 2 25
 $pidsG0 = Alive-Pids $rowsG0
 $surfG0 = Get-TerminalSurfaces $appPid
 Assert "G2 two live sessions and two terminal surfaces before the blip" (
-    (Alive-Rows $rowsG0).Count -eq 2 -and $surfG0.Count -eq 2)
+    @(Alive-Rows $rowsG0).Count -eq 2 -and $surfG0.Count -eq 2)
 
 # Everything after this point is judged against log text written from here on,
 # so a line from the section-C recovery cannot be mistaken for a fresh one.
@@ -760,7 +760,7 @@ Assert "G9b the tab still shows 2 terminal surfaces (count=$($surfG1.Count))" ($
 
 $rowsG1 = Wait-AliveCount $tmp 'g1' 2 25
 $pidsG1 = Alive-Pids $rowsG1
-Assert "G10 still exactly 2 live sessions after the blip" ((Alive-Rows $rowsG1).Count -eq 2)
+Assert "G10 still exactly 2 live sessions after the blip" (@(Alive-Rows $rowsG1).Count -eq 2)
 if ("$($pidsG1 -join ',')" -ne "$($pidsG0 -join ',')") {
     "    [G11] before=$($pidsG0 -join ',') after=$($pidsG1 -join ',')"
 }
@@ -820,7 +820,7 @@ Assert "H4 a drop held past the window DID trigger in-place recovery" $recoverSe
 # Recovery re-dials, re-attaches and rebuilds; give it the same room section C
 # gives it.
 $rowsH = Wait-AliveCount $tmp 'h' 2 45
-Assert "H5 two sessions are alive after the rebuild" ((Alive-Rows $rowsH).Count -eq 2)
+Assert "H5 two sessions are alive after the rebuild" (@(Alive-Rows $rowsH).Count -eq 2)
 
 $closedH = Wait-RebuildCloses $logMarkH 30
 if ($closedH -ne 2) { Show-RebuildEvidence $appPid $logMarkH 'H6' }
@@ -961,7 +961,7 @@ Assert "I8 a FRESH agent was spawned by the retry" (
     $agentsI1.Count -eq 1 -and [int]$agentsI1[0].ProcessId -ne $agentPidI)
 
 $rowsI = Wait-AliveCount $tmp 'i' 2 60
-Assert "I9 two sessions are alive again" ((Alive-Rows $rowsI).Count -eq 2)
+Assert "I9 two sessions are alive again" (@(Alive-Rows $rowsI).Count -eq 2)
 Assert "I10 the pane is a WORKING pane, not a picture of one" (
     Test-PaneResponsive $tmp 't145b' 'i' 60)
 $treeI = Get-List $tmp 'i' 12

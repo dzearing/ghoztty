@@ -224,7 +224,7 @@ function Wait-Topology($tmp, $tag, $wins, $panes, $timeoutSec = 40) {
     $tree = $null
     while ((Get-Date) -lt $deadline) {
         $tree = Get-Tree $tmp $tag
-        if ((Tree-Windows $tree).Count -eq $wins -and (Count-Leaves $tree) -eq $panes) { return $tree }
+        if (@(Tree-Windows $tree).Count -eq $wins -and (Count-Leaves $tree) -eq $panes) { return $tree }
         Start-Sleep -Milliseconds 500
     }
     return $tree
@@ -272,7 +272,7 @@ Assert "A1 three agent-backed sessions are alive" ($idsA.Count -eq 3)
 
 $treeA = Wait-Topology $tmp 'a' 2 3 40
 Assert "A2 the live layout is two windows / three panes" (
-    (Tree-Windows $treeA).Count -eq 2 -and (Count-Leaves $treeA) -eq 3)
+    @(Tree-Windows $treeA).Count -eq 2 -and (Count-Leaves $treeA) -eq 3)
 
 $mA = Wait-Manifest $tmp {
     param($m) @($m.windows).Count -eq 2 -and (All-Sids $m).Count -eq 3
@@ -310,7 +310,7 @@ $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 Start-App 't194-recovered'
 
 $treeC = Wait-Topology $tmp 'c' 2 3 45
-$winsC = (Tree-Windows $treeC).Count
+$winsC = @(Tree-Windows $treeC).Count
 $panesC = (Count-Leaves $treeC)
 "  (post-relaunch topology: $winsC window(s) / $panesC pane(s))"
 

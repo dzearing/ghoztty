@@ -1,19 +1,19 @@
 {
     "guard":  "remote-disconnect",
     "script":  "test/win32/remote-disconnect.ps1",
-    "generated":  "2026-11-20T21:39:56-08:00",
-    "commit":  "243bf7cb3",
+    "generated":  "2026-11-21T02:29:41-08:00",
+    "commit":  "49c680ce5",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig"
+                        "test/win32/remote-disconnect.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/ConfirmDialog.zig":  "afdb4f3b59b707671599621314ea278cb34d6b9909b2b79acb830652fee84cdf",
                   "src/apprt/win32/session_disconnect.zig":  "48e500d2b9b46d62ba035fa218d792e4a6047d35065952cb3428ebc0c40db025",
                   "src/apprt/win32/Surface.zig":  "ce736c2a853f2ce559fbf07d0f358dc9ca114ef6023d48b8b802dc18be677185",
                   "src/apprt/win32/Window.zig":  "d851027b3010ea6a9cddf6b21623e21049cced47a6d0ab51112bd7dee6df53bd",
-                  "test/win32/remote-disconnect.ps1":  "27bb610c33deb8f236a52727afe23a6276c5659d4688a6b334481e43ad2794a7"
+                  "test/win32/remote-disconnect.ps1":  "738c0d4f3f3ae9cfda297db9620a47d6428813006c3234862811a4ac32f49176"
               },
     "code":  {
-                 "test/win32/remote-disconnect.ps1":  "code1:b9d4facdf898e03d67a25e049f0fd16146713baa966ad05ac7560c5384430c02"
+                 "test/win32/remote-disconnect.ps1":  "code1:2514adfa337fe784b2acc2620393af983dc086e09f7ebfd63230fdd840ee7748"
              }
 }

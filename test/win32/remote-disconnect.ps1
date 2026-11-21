@@ -264,7 +264,7 @@ try {
     Assert ($dlg -ne [IntPtr]::Zero) 'A: closing an IDLE remote window still confirms'
     if ($dlg -eq [IntPtr]::Zero) { exit 1 }
 
-    $buttons = Get-DialogButtons $dlg
+    $buttons = @(Get-DialogButtons $dlg)
     Assert ($buttons.Count -eq 3) "A: the confirmation offers three buttons (got $($buttons.Count): $(($buttons | ForEach-Object { $_.Text }) -join ', '))"
     $disconnect = Get-DialogButton $dlg 'Disconnect'
     $close = Get-DialogButton $dlg 'Close'
@@ -463,7 +463,7 @@ try {
     $dlg = Wait-Dialog $g.Pid $true
     Assert ($dlg -ne [IntPtr]::Zero) 'F: a LOCAL window still confirms (positive control)'
     if ($dlg -ne [IntPtr]::Zero) {
-        $buttons = Get-DialogButtons $dlg
+        $buttons = @(Get-DialogButtons $dlg)
         Assert ($buttons.Count -eq 2) "F: the local confirmation has two buttons (got $($buttons.Count): $(($buttons | ForEach-Object { $_.Text }) -join ', '))"
         Assert ($null -eq (Get-DialogButton $dlg 'Disconnect')) 'F: a local WINDOW is offered NO Disconnect'
         Send-TestControlKey -Control $dlg -Key Escape | Out-Null
@@ -489,7 +489,7 @@ try {
     $dlg = Wait-Dialog $g.Pid $true
     Assert ($dlg -ne [IntPtr]::Zero) 'F(pane): a LOCAL pane still confirms (positive control)'
     if ($dlg -ne [IntPtr]::Zero) {
-        $buttons = Get-DialogButtons $dlg
+        $buttons = @(Get-DialogButtons $dlg)
         Assert ($buttons.Count -eq 2) "F(pane): the local confirmation has two buttons (got $($buttons.Count))"
         Assert ($null -eq (Get-DialogButton $dlg 'Disconnect')) 'F(pane): a local PANE is offered NO Disconnect'
         Send-TestControlKey -Control $dlg -Key Escape | Out-Null

@@ -500,7 +500,7 @@ for ($cycle = 1; $cycle -le $Cycles; $cycle++) {
     $markers += $marker
 
     Crash-App
-    Assert "B$cycle.2 app is gone after taskkill /f" ((App-Pids).Count -eq 0)
+    Assert "B$cycle.2 app is gone after taskkill /f" (@(App-Pids).Count -eq 0)
     $deadIds = @(Wait-AliveIds "b$cycle-dead" 5 20)
     Assert "B$cycle.3 agent kept all 5 sessions across the crash" (Same-Ids $baseIds $deadIds)
 
@@ -629,7 +629,7 @@ $preVals = @([regex]::Matches($preTxt, [regex]::Escape($gtok) + '-(\d+)') |
 $preKill = if ($preVals.Count -gt 0) { ($preVals | Measure-Object -Maximum).Maximum } else { 0 }
 
 Crash-App
-Assert "D2 app killed mid-flood (last value shown pre-kill: $preKill)" ((App-Pids).Count -eq 0)
+Assert "D2 app killed mid-flood (last value shown pre-kill: $preKill)" (@(App-Pids).Count -eq 0)
 Start-Sleep -Seconds 8   # the agent alone absorbs ~8 more sequence lines
 
 Relaunch-App              # ATTACH replay races the still-running flood
@@ -705,7 +705,7 @@ $preVals2 = @([regex]::Matches($preTxt2, [regex]::Escape($gtok2) + '-(\d+)') |
 $preKill2 = if ($preVals2.Count -gt 0) { ($preVals2 | Measure-Object -Maximum).Maximum } else { 0 }
 
 Crash-App
-Assert "D9 app killed mid-flood again (last value shown pre-kill: $preKill2)" ((App-Pids).Count -eq 0)
+Assert "D9 app killed mid-flood again (last value shown pre-kill: $preKill2)" (@(App-Pids).Count -eq 0)
 Start-Sleep -Seconds 8
 
 Relaunch-App
