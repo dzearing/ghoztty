@@ -45,7 +45,16 @@ if ($ExePath) { $exe = $ExePath }
 # instance on the shared pipe cannot answer for this run.
 $env:GHOZTTY_PIPE_SUFFIX = "-fottest$PID"
 
+# Section B measures the banner POPUP (GhozttyBannerOverlay) inheriting the
+# owner's topmost bit. On the composition present (GHOZTTY_COMP_PRESENT, the
+# default since T2514) the banner is a visual inside the pane and the popup
+# stays hidden, so B could only ever SKIP. The popup is still the shipped
+# fallback on any machine without GL/D3D interop, so pin it here, the way
+# pane-banner.ps1 and overlay-zorder.ps1 do (T2747; found under T1561).
+$env:GHOZTTY_COMP_PRESENT = '0'
+
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\ListTree.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -128,26 +137,32 @@ try {
     # Target the pane by its own id rather than a name: the window's name comes
     # from the launch flag, and a banner on the wrong target is a silent no-op
     # that would read here as "the overlay never appeared".
+    # A tab's panes are a `splits` TREE in +list --json, not a `panes` array
+    # (T1561: this read `.panes` for months, always got $null and always fell
+    # back without anybody noticing). lib\ListTree.ps1 walks the real shape.
     $paneId = $null
+    $why = $null
     try {
         $json = (& $exe +list --json 2>$null | Out-String).Trim()
-        if ($json) {
-            $w = @(($json | ConvertFrom-Json).data.windows)[0]
-            if ($w) { $paneId = @(@($w.tabs)[0].panes)[0].id }
-        }
-    } catch { }
-    if (-not $paneId) {
-        Write-Host "SETUP NOTE: no pane id from +list --json, falling back to the window's auto name"
+        $listed = if ($json) { $json | ConvertFrom-Json } else { $null }
+        $first = Get-GhozttyFirstPaneId $listed
+        $paneId = $first.Id
+        $why = $first.Reason
+    } catch { $why = "+list --json did not parse: $($_.Exception.Message)" }
+    if ($paneId) {
+        Write-Host "SETUP: banner target is pane $paneId (from +list --json)"
+    } else {
+        Write-Host "SETUP NOTE: no pane id from +list --json ($why); falling back to the window's auto name 'window-1'"
         $paneId = 'window-1'
     }
-    & $exe +set-banner --target=$paneId '**T277** pinned owner' | Out-Null
+    $bannerSaid = (& $exe +set-banner --target=$paneId '**T277** pinned owner' 2>&1 | ForEach-Object { $_.ToString() } | Out-String).Trim()
     $ov = $null
     for ($t = 0; $t -lt 25 -and -not $ov; $t++) {
         $ov = @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyBannerOverlay')[0]
         if (-not $ov) { Start-Sleep -Milliseconds 200 }
     }
     if (-not $ov) {
-        Write-Host 'SKIP B: no banner overlay window appeared'
+        Write-Host "SKIP B: no banner overlay window appeared (+set-banner --target=$paneId answered: $bannerSaid)"
         $script:skipped++
     } else {
         $ovHwnd = [IntPtr]$ov.Hwnd

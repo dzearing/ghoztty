@@ -3405,6 +3405,20 @@ $GuardTable = @(
             'test\win32\focus-pull-scan.ps1'
         )
     },
+    # T1561: the shared reader of pane ids out of +list --json. The shape it
+    # walks (a `splits` tree, not a `panes` array) is what float-on-top.ps1 got
+    # wrong for months without a single red row, so the reader is pinned by
+    # constructed answers and a scan for the old idiom coming back.
+    [pscustomobject]@{
+        Name   = 'list-tree'
+        Script = 'test\win32\list-tree.ps1'
+        Stamp  = 'test\win32\list-tree.stamp.json'
+        Covers = @(
+            'test\win32\lib\ListTree.ps1',
+            'test\win32\list-tree.ps1',
+            'test\win32\float-on-top.ps1'
+        )
+    },
     # T1996: a script run by hand from lane B's checkout must not grade lane A's
     # build. The guard is a refusal that only fires outside the literal
     # checkout, so lane A never sees it work - this row is the only thing that

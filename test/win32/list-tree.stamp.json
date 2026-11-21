@@ -1,0 +1,21 @@
+{
+    "guard":  "list-tree",
+    "script":  "test/win32/list-tree.ps1",
+    "generated":  "2026-11-20T17:40:06-08:00",
+    "commit":  "3f972c721",
+    "uncommitted":  [
+                        "test/win32/float-on-top.ps1",
+                        "test/win32/lib/ListTree.ps1",
+                        "test/win32/list-tree.ps1"
+                    ],
+    "files":  {
+                  "test/win32/float-on-top.ps1":  "de11c0e7d92df540089b607e0d5da8503872d76788a085b4e7dcc104ae2d2dae",
+                  "test/win32/lib/ListTree.ps1":  "2038a29f27bda015bfa1994d84b48f788051e92e39c21405db8ec12b6b8ed399",
+                  "test/win32/list-tree.ps1":  "ccf11a8f88b712f60873d9572b6dcea1c65874721ff8f667148aaf22e88768ad"
+              },
+    "code":  {
+                 "test/win32/float-on-top.ps1":  "code1:2789fd3f9787e44864e0f86ef61ce17960814588e55abcf251ad7c8bf2c5c93b",
+                 "test/win32/lib/ListTree.ps1":  "code1:fbe85410f86b80c8bc2689c920661f1cd49c0b2a249fe5c87d1a0ce12111c807",
+                 "test/win32/list-tree.ps1":  "code1:4797e468a1cc8631d83b0a0572e65d4e69238c50a27a35028e4c59a7f82d821b"
+             }
+}
