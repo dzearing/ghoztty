@@ -1,14 +1,14 @@
 {
     "guard":  "registration-sites",
     "script":  "test/win32/registration-sites.ps1",
-    "generated":  "2026-11-14T13:22:05-08:00",
-    "commit":  "c82d9fe49",
+    "generated":  "2026-11-21T03:12:59-08:00",
+    "commit":  "3749a5df9",
     "uncommitted":  [
-                        "src/remote/agent/adopt.zig"
+                        "src/apprt/win32/AgentIntegration.zig"
                     ],
     "files":  {
                   "docs/design/windows-registration-sites.md":  "3d9679dbe0a31af34f5ae48050c05b2055249f78dcad007f375bf78b144591c3",
-                  "src/apprt/win32/AgentIntegration.zig":  "9f992ebc89a7728c0c1689eb36ce662562a7e2e29d9aa8a2d1019852e0d8222e",
+                  "src/apprt/win32/AgentIntegration.zig":  "206d196b9c35bf6826ff6daeafd2a5d1d089f053cfb9037bfd9b640099fc98cc",
                   "src/apprt/win32/install_location.zig":  "724fa228ee06cc60787c0710347a1002cf4d2bfcfe83e584259f36897eaf5717",
                   "src/apprt/win32/LocalAgent.zig":  "e42cdcaa438d37476992cf2abb20ddc6ab6e3602612d0615f6405afeadf096e6",
                   "src/apprt/win32/PathInstaller.zig":  "77ee61d5ba639eb627756e917077c3de09b6f77c1fd2440fb707b1a7a9e5d2e5",
@@ -17,5 +17,8 @@
                   "src/os/source_checkout.zig":  "63291415bd09a9c53edbbe6fe55533f749abfbf35894df04a1448dd8e64f14e7",
                   "src/remote/agent/adopt.zig":  "0af7bf58df99cd1f6036c58e4fa45797fe9b6df93c255de1e90960703030b5bb",
                   "test/win32/registration-sites.ps1":  "fc3d44c177c819f57a22fa300bd57eb68d88c88288e7d7c893a7bdba622ac660"
-              }
+              },
+    "code":  {
+                 "test/win32/registration-sites.ps1":  "code1:9b8ccdb46a293d3d720604b21df6ceb2cf990a27a3e519e8e63f4abb94853a4f"
+             }
 }

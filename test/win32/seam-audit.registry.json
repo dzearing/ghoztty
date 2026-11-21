@@ -1,7 +1,7 @@
 {
     "note": "T796. One entry per env seam that test\\win32 SETS and src\\ READS. `class` says what the seam does; `unset` says what happens to the state the seam hides - shipped-elsewhere (every other run uses it), armed (`unsetArm` names the arm that aims at it), gap (`gap` names the open task), unreachable (`note` says why this box cannot exercise it). See test\\win32\\lib\\SeamAudit.ps1 for the rule and test\\win32\\seam-audit.ps1 for the enforcement.",
     "generated": "2026-09-16",
-    "gapCeiling": 1,
+    "gapCeiling": 0,
     "seams": {
         "GHOSTTY_ACCOUNT_STORE": {
             "class": "isolation",
@@ -215,9 +215,9 @@
         },
         "GHOZTTY_CLAUDE_EXE": {
             "class": "isolation",
-            "unset": "gap",
-            "gap": "T1620",
-            "note": "Both scripts point it at a stub, so findClaude only ever returns from its override branch; the PATH walk and install-location fallback have no coverage of any kind."
+            "unset": "armed",
+            "unsetArm": "src\\apprt\\win32\\claude_locate.zig::claude_locate: a miss everywhere is null, after probing every candidate in order",
+            "note": "T1620: both scripts point it at a stub, so findClaude's override branch is all they reach; the PATH walk and the install-location fallback underneath - the search every real user takes - run in claude_locate.zig's unit tests (none + win32 lanes) over a synthesized environment and a fake filesystem."
         },
         "GHOZTTY_CLAUDE_SETUP": {
             "class": "non-default",

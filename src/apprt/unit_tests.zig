@@ -219,6 +219,8 @@ test {
     _ = @import("win32/claude_setup.zig");
     // Which agents the integration offer names, one answer per agent (T2604).
     _ = @import("win32/agent_offer.zig");
+    // Where the claude CLI is found: override, PATH, well-known homes (T1620).
+    _ = @import("win32/claude_locate.zig");
 
     // Pure win32 managed-artifact marker + install-state grammar (T865),
     // same no-OS-imports deal.

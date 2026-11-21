@@ -52,7 +52,7 @@ const runtime_probe = @import("runtime_probe.zig");
 const RuntimeIntegration = @import("RuntimeIntegration.zig");
 const agent_home = @import("agent_home.zig");
 const migration = @import("claude_plugin_migration.zig");
-const path_env = @import("../../os/path_env.zig");
+const claude_locate = @import("claude_locate.zig");
 const install_location = @import("install_location.zig");
 
 const log = std.log.scoped(.win32_claude);
@@ -740,48 +740,23 @@ fn runClaude(
 
 /// Find the claude CLI for the migration's uninstall: env override, then
 /// the process PATH, then the well-known install locations (the Mac
-/// findClaude, Windows-flavored).
+/// findClaude, Windows-flavored). The search itself, and its order, is
+/// `claude_locate.locate` (T1620); this only reads the process environment
+/// and the real filesystem into it.
 pub fn findClaude(arena: std.mem.Allocator) ?[]const u8 {
-    if (std.process.getEnvVarOwned(arena, "GHOZTTY_CLAUDE_EXE") catch null) |override| {
-        if (override.len == 0) return null;
-        return if (fileExists(override)) override else null;
-    }
-
-    const exts = [_][]const u8{ ".exe", ".cmd", ".bat" };
-
-    if (std.process.getEnvVarOwned(arena, "PATH") catch null) |path_value| {
-        var it = std.mem.splitScalar(u8, path_value, ';');
-        while (it.next()) |entry| {
-            const dir = path_env.normalize(entry);
-            if (dir.len == 0) continue;
-            for (exts) |ext| {
-                const candidate = std.mem.concat(
-                    arena,
-                    u8,
-                    &.{ dir, "\\claude", ext },
-                ) catch continue;
-                if (fileExists(candidate)) return candidate;
-            }
-        }
-    }
-
-    // Common install locations in case the process PATH misses them:
-    // the native installer and an npm global install.
-    if (std.process.getEnvVarOwned(arena, "USERPROFILE") catch null) |home| {
-        for ([_][]const u8{ "\\.local\\bin\\claude.exe", "\\.claude\\local\\claude.exe" }) |rel| {
-            const candidate = std.mem.concat(arena, u8, &.{ home, rel }) catch continue;
-            if (fileExists(candidate)) return candidate;
-        }
-    }
-    if (std.process.getEnvVarOwned(arena, "APPDATA") catch null) |appdata| {
-        const candidate = std.mem.concat(arena, u8, &.{ appdata, "\\npm\\claude.cmd" }) catch
-            return null;
-        if (fileExists(candidate)) return candidate;
-    }
-    return null;
+    return claude_locate.locate(arena, .{
+        .override = envVar(arena, "GHOZTTY_CLAUDE_EXE"),
+        .path = envVar(arena, "PATH"),
+        .userprofile = envVar(arena, "USERPROFILE"),
+        .appdata = envVar(arena, "APPDATA"),
+    }, null, fileExists);
 }
 
-fn fileExists(path: []const u8) bool {
+fn envVar(arena: std.mem.Allocator, name: []const u8) ?[]const u8 {
+    return std.process.getEnvVarOwned(arena, name) catch null;
+}
+
+fn fileExists(_: ?*anyopaque, path: []const u8) bool {
     std.fs.cwd().access(path, .{}) catch return false;
     return true;
 }
