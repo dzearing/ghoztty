@@ -1,7 +1,7 @@
 {
     "guard":  "hard-delete-sites",
     "script":  "test/win32/hard-delete-sites.ps1",
-    "generated":  "2026-11-21T00:15:27-08:00",
+    "generated":  "2026-11-21T00:30:16-08:00",
     "commit":  "c9af15802",
     "uncommitted":  [
 

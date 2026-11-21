@@ -1,7 +1,7 @@
 {
     "guard":  "deliver-verify",
     "script":  "test/win32/deliver-windows-build.ps1",
-    "generated":  "2026-11-21T00:15:26-08:00",
+    "generated":  "2026-11-21T00:33:18-08:00",
     "commit":  "c9af15802",
     "uncommitted":  [
 
