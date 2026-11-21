@@ -310,6 +310,26 @@ function Get-TreeReachFindings {
     return [pscustomobject]@{ Missing = $missing; Exempt = $exempt; Stale = $stale; Extra = $extra }
 }
 
+# Section C's planted probes (`zz_reach_probe_<pid>`) are written into the REAL
+# tree, so a second copy of the audit running in the same tree at the same
+# moment sees them as un-run modules and goes red over a correct tree (T1643:
+# 2026-11-13, C2 named both runs' plants, 15704 and 42536). A run reads only
+# its OWN probes; any other pid's are dropped from a module list before it is
+# scored. Its owner's `finally` removes them, and a crashed run's leftovers are
+# inert here for the same reason - they are not this run's subject.
+function Remove-ForeignReachProbes {
+    param([string[]]$Names, [int]$OwnPid)
+    $out = New-Object System.Collections.ArrayList
+    foreach ($n in $Names) {
+        $m = [regex]::Match([string]$n, '(?:^|\.)zz_reach_probe_(\d+)$')
+        if ($m.Success -and [int]$m.Groups[1].Value -ne $OwnPid) { continue }
+        [void]$out.Add($n)
+    }
+    # Unrolled on purpose: callers wrap in @(), and `return ,` of an EMPTY
+    # list would count as one element there.
+    return $out
+}
+
 # Build one lane by its own command and hand back the binary it ran
 # (`Resolve-WinTestBinary` is this for win32).
 #

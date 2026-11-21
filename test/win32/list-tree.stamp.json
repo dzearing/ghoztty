@@ -1,26 +1,23 @@
 {
     "guard":  "list-tree",
     "script":  "test/win32/list-tree.ps1",
-    "generated":  "2026-11-21T04:18:25-08:00",
-    "commit":  "a17448bd4",
+    "generated":  "2026-11-21T05:30:36-08:00",
+    "commit":  "b4430cbea",
     "uncommitted":  [
-                        "test/win32/lib/ListTree.ps1",
-                        "test/win32/lib/TestDesktop.ps1",
-                        "test/win32/list-tree.ps1",
-                        "test/win32/viewer-diff.ps1"
+
                     ],
     "files":  {
                   "test/win32/float-on-top.ps1":  "de11c0e7d92df540089b607e0d5da8503872d76788a085b4e7dcc104ae2d2dae",
                   "test/win32/lib/ListTree.ps1":  "b34980aaae91d3fb167ada3273c91c4a2d9da5803e526799072e1ea33de1063c",
                   "test/win32/lib/TestDesktop.ps1":  "7548de334603b049c94949cf4002dc20e318866f8cdec9878b49a5f745ace372",
                   "test/win32/list-tree.ps1":  "5c4fb21485592f6d33195c4cf11c49fd25bf23cc2e286b5175e257698486d902",
-                  "test/win32/viewer-diff.ps1":  "ced8747a8513b6d81ee577a9fdf06091281c875cf6a5f304f3f29cd84806c846"
+                  "test/win32/viewer-diff.ps1":  "d9cc9a010beae1ab93ff5ed1fd5a5af8bb06d3aceca23fd3576df8a98e6fa42e"
               },
     "code":  {
                  "test/win32/float-on-top.ps1":  "code1:2789fd3f9787e44864e0f86ef61ce17960814588e55abcf251ad7c8bf2c5c93b",
                  "test/win32/lib/ListTree.ps1":  "code1:695444427992a0a14706606d4ba48ac2a04e7c42be2ed74d2271151558419fc7",
                  "test/win32/lib/TestDesktop.ps1":  "code1:8dc5ba2640052ad4f648ba9b6bf45520579d956869194bf593296dba21c1d317",
-                 "test/win32/list-tree.ps1":  "code1:f53bce7fc9db5cb02e7d0a54721f73a927138d6c042978610e3c95138febfcd8",
-                 "test/win32/viewer-diff.ps1":  "code1:42421c380ddc7c5d1e294c79d589ab30663de58692ebdd4f34a7db9997a710a1"
+                 "test/win32/list-tree.ps1":  "code1:8f43e5054450f510fd62872707e282791da7211ca55004068761cef8801c8f50",
+                 "test/win32/viewer-diff.ps1":  "code1:ff35315c136360c6fe23fb0a36a50c63e662fb1c871adce3f427ffb95dd89e69"
              }
 }

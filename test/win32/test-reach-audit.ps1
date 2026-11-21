@@ -92,7 +92,7 @@ Assert 'A3 a binary-only module is reported, not swallowed' `
 # The source scan reads the tree, so it is checked against the tree: the four
 # modules T1191 found are all real files with real test blocks, and the scan
 # must see every one of them.
-$withTests = @(Get-WinModulesWithTests $Repo)
+$withTests = @(Remove-ForeignReachProbes -Names @(Get-WinModulesWithTests $Repo) -OwnPid $PID)
 Assert "A4 the source scan finds win32 modules with tests ($($withTests.Count))" `
     ($withTests.Count -ge 150) "found $($withTests.Count)"
 foreach ($m in @('AgentIntegrationsDialog', 'ipc_agent_integration', 'provenance', 'restore_retry', 'startup_error')) {
@@ -138,6 +138,16 @@ Assert 'A10 an exemption covers its prefix and below (`.*`: below only), never a
 $f11 = Get-TreeReachFindings -WithTests @('apprt.gtk.key') -InLanes @('apprt.gtk.key') -Exemptions $fx
 Assert 'A11 an exempt module that a lane runs is reported stale' (@($f11.Stale).Count -eq 1) `
     ("stale: " + (@($f11.Stale) -join ', '))
+# Another run's plants are not this run's subject (T1643): two audits in one
+# tree used to fail each other's C2 by naming both runs' probes.
+$f12 = @(Remove-ForeignReachProbes -OwnPid 42 -Names @(
+        'os', 'os.zz_reach_probe_42', 'os.zz_reach_probe_7', 'zz_reach_probe_7',
+        'apprt.win32.zz_reach_probe_421', 'os.zz_reach_probe_42x', 'zz_reach_probe_42'))
+Assert 'A12 another run''s planted probes are dropped; this run''s and look-alikes are kept' `
+    (($f12 -join ',') -eq 'os,os.zz_reach_probe_42,os.zz_reach_probe_42x,zz_reach_probe_42') `
+    ("kept: " + ($f12 -join ', '))
+$f12e = @(Remove-ForeignReachProbes -OwnPid 42 -Names @('zz_reach_probe_7'))
+Assert 'A13 a list of only foreign probes comes back empty' ($f12e.Count -eq 0) "count $($f12e.Count)"
 
 # ===========================================================================
 '== B: the sweep - every win32 module with tests is in the lane'
@@ -187,6 +197,7 @@ Assert 'B5 the binary carries no module that has no test block on disk' `
 # is that lane's own verified build, newer than every source: reused when the
 # floor lanes already left one (`Find-FreshLaneBinary`), built here otherwise.
 $tree = Get-SrcTestTree $Repo
+$tree.WithTests = @(Remove-ForeignReachProbes -Names @($tree.WithTests) -OwnPid $PID)
 $srcNewest = Get-SourceNewestWriteUtc $Repo
 $laneBins = [ordered]@{ win32 = $lane }
 foreach ($spec in @(@('none', 'test -Dapp-runtime=none', 'ghostty-test.exe'),
@@ -266,11 +277,13 @@ $probes = @(
 try {
     foreach ($p in $probes) { [System.IO.File]::WriteAllText($p, $probeBody) }
 
-    $cWin = Get-TestReachFindings -WithTests @(Get-WinModulesWithTests $Repo) -InBinary $inBinary
+    $cWin = Get-TestReachFindings -InBinary $inBinary `
+        -WithTests @(Remove-ForeignReachProbes -Names @(Get-WinModulesWithTests $Repo) -OwnPid $PID)
     Assert 'C1 the win32 sweep names the planted module' (@($cWin.Missing) -contains $probeName) `
         ("named: " + (@($cWin.Missing) -join ', '))
     $cTree = Get-SrcTestTree $Repo
-    $cAll = Get-TreeReachFindings -WithTests @($cTree.WithTests) -InLanes @($inLanes)
+    $cAll = Get-TreeReachFindings -InLanes @($inLanes) `
+        -WithTests @(Remove-ForeignReachProbes -Names @($cTree.WithTests) -OwnPid $PID)
     Assert 'C2 the whole-tree sweep names all three planted modules, and nothing else' `
         (((@($cAll.Missing) | Sort-Object) -join ',') -eq "apprt.win32.$probeName,os.$probeName,remote.agent.$probeName") `
         ("named: " + (@($cAll.Missing) -join ', '))
