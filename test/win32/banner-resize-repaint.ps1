@@ -173,9 +173,9 @@ try {
     Assert ($null -ne $owner) 'found the banner''s owner pane'
     if (-not $owner) { throw 'no owner pane' }
 
-    $v = Get-TilingViolations $b $owner 'settled'
+    $v = @(Get-TilingViolations $b $owner 'settled')
     Assert ($v.Count -eq 0) ('band tiles the pane before the drag' +
-        $(if ($v.Count) { ' -- ' + ($v -join '; ') } else { '' }))
+        $(if (@($v).Count) { ' -- ' + ($v -join '; ') } else { '' }))
 
     # ---- B1. posted divider drag, BOTH directions -----------------------
     # Dragging so the bannered pane SHRINKS is the direction that vacates
@@ -238,10 +238,10 @@ try {
         Assert ($dragMoved[$label] -ge 100) `
             "the posted $label drag actually moved the divider (owner width changed by up to $($dragMoved[$label]) px, from $ownerW0)"
     }
-    $dragOk = ($allViolations.Count -eq 0)
+    $dragOk = (@($allViolations).Count -eq 0)
     if ($NegativeControl) { $dragOk = -not $dragOk }
     Assert $dragOk ('band tiles the pane at every step of a divider drag, both directions' +
-        $(if ($allViolations.Count) { ' -- ' + (($allViolations | Select-Object -First 4) -join '; ') } else { '' }))
+        $(if (@($allViolations).Count) { ' -- ' + (($allViolations | Select-Object -First 4) -join '; ') } else { '' }))
 
     # ---- B2. whole-window resize (goal 2) -------------------------------
     $winViolations = @()
@@ -252,8 +252,8 @@ try {
         $pp = Get-Rect $owner.Hwnd
         if ($bb) { $winViolations += Get-TilingViolations $bb $pp "winresize-$w" }
     }
-    Assert ($winViolations.Count -eq 0) ('band tiles the pane across whole-window resizes' +
-        $(if ($winViolations.Count) { ' -- ' + (($winViolations | Select-Object -First 4) -join '; ') } else { '' }))
+    Assert (@($winViolations).Count -eq 0) ('band tiles the pane across whole-window resizes' +
+        $(if (@($winViolations).Count) { ' -- ' + (($winViolations | Select-Object -First 4) -join '; ') } else { '' }))
 
     # ---- C. hero mode: the banner must track the HERO divider drag -------
     # T1324. Hero mode has its OWN divider (hero pane on the left, thumbnail
@@ -285,9 +285,9 @@ try {
         # banner that is present at all here belongs to the hero.
         Assert (($null -ne $hb) -and ($hb.Visible)) 'hero mode: the bannered pane is the hero and its strip is showing'
         if ($hb -and $hb.Visible) {
-            $v = Get-TilingViolations $hb $hero 'hero-settled'
+            $v = @(Get-TilingViolations $hb $hero 'hero-settled')
             Assert ($v.Count -eq 0) ('band tiles the hero pane before the hero drag' +
-                $(if ($v.Count) { ' -- ' + ($v -join '; ') } else { '' }))
+                $(if (@($v).Count) { ' -- ' + ($v -join '; ') } else { '' }))
 
             # Press in the hero divider band and walk LEFT (the user's case:
             # the hero narrows, so the band rewraps taller and both edges of
@@ -316,10 +316,10 @@ try {
                 -X ($divX - 200) -Y $midY -Action up)
             Start-Sleep -Milliseconds 500
 
-            $heroOk = ($heroViolations.Count -eq 0)
+            $heroOk = (@($heroViolations).Count -eq 0)
             if ($NegativeControl) { $heroOk = -not $heroOk }
             Assert $heroOk ('band tiles the hero pane at every step of a hero divider drag' +
-                $(if ($heroViolations.Count) { ' -- ' + (($heroViolations | Select-Object -First 4) -join '; ') } else { '' }))
+                $(if (@($heroViolations).Count) { ' -- ' + (($heroViolations | Select-Object -First 4) -join '; ') } else { '' }))
 
             # And the hero actually narrowed - otherwise the loop above proved
             # nothing, because a divider that never moved cannot desynchronise

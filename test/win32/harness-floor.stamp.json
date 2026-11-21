@@ -1,21 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-21T03:06:10-08:00",
-    "commit":  "a3d462e0a",
+    "generated":  "2026-11-21T03:18:31-08:00",
+    "commit":  "09807f362",
     "uncommitted":  [
-                        "test/win32/activity-monitor.ps1",
-                        "test/win32/chooser-menu.ps1",
-                        "test/win32/chooser-open-chord.ps1",
-                        "test/win32/chrome-theme.ps1",
-                        "test/win32/context-menu.ps1",
-                        "test/win32/drag-perf.ps1",
-                        "test/win32/focus-follows-mouse.ps1",
-                        "test/win32/host-settings.ps1",
-                        "test/win32/palette-close-crash.ps1",
-                        "test/win32/probe-topmost-restore.ps1",
-                        "test/win32/rdp-session.ps1",
-                        "test/win32/window-active.ps1"
+                        "test/win32/banner-resize-repaint.ps1",
+                        "test/win32/split-divider.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
@@ -66,7 +56,7 @@
                   "test/win32/auto-launch-cwd.ps1":  "89143d743d16d05c3dd1d07e0b53f11ddf9c5b0088aaf3ffb333c37ba5c44471",
                   "test/win32/background-blur.ps1":  "dffab046e7560e606416751d4441733b0b9acd8630dcf61d3da36389b04edc9a",
                   "test/win32/background-window-frame.ps1":  "558f33f7cd12663f4fba03479038e7cc924b5fb119da50efc006958b278f7791",
-                  "test/win32/banner-resize-repaint.ps1":  "72fcba6f7a5e8e77ddfec7528121eac975fa5e11463250478ac87d91ab936848",
+                  "test/win32/banner-resize-repaint.ps1":  "16270909bbab5af81b5f8767ccfa661795ff7d9350097119ce06b0a294e3adee",
                   "test/win32/bell-border.ps1":  "9fd6e642cbecf863a82c0488e78c162f4c54f232139c7974920da095d24e765e",
                   "test/win32/bell-features.ps1":  "8e4282148bae932f6cf792520c381559de087a3527901e48111a334e2fae7990",
                   "test/win32/blade-click-neighbour.ps1":  "c08e9f99aeab1b37a262d84d85e6730a5c33c77eab34c6f0b7f8f4ca18d312c0",
@@ -551,7 +541,7 @@
                   "test/win32/soak-daemon.ps1":  "266cee53040004b1a1c4189de4a94d25521563339cda9927632decdc1006b1ac",
                   "test/win32/split-dim.ps1":  "30755455ff09fcbb5f402221385d654eb5e5cab7b2d5e29f31706a8e9ce9a524",
                   "test/win32/split-dim-viewer.ps1":  "f269b9ec906441b8b059b81de7e19af676d26e0a6c546442b764cd820b346c7d",
-                  "test/win32/split-divider.ps1":  "89e6e473507d9dea78a64b76f8889c0bdf23845b94102fa84d813cc550935dda",
+                  "test/win32/split-divider.ps1":  "5db950b84838100285c03dd91167d620bd1739cf86a8a537511dfb3c378ba54c",
                   "test/win32/split-inherit-cwd.ps1":  "1847958f9f04284b722642ba5e6cfc9ceda88af84c73631a7e6e296f1d312a3f",
                   "test/win32/split-name-collision.ps1":  "5064c7b9a869a94f8023ec1afc83d5a5ea9ff17291e1e922f7840910c46299d2",
                   "test/win32/split-zoom-nav.ps1":  "7ed3a76e0a6abc09573263efa8f7c7d3889ab31d6d8b258040ab7cf5e9882b12",

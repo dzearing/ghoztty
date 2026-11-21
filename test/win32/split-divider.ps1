@@ -276,7 +276,7 @@ function Divider-HasColor([IntPtr]$top, $A, $B, [int]$tr, [int]$tg, [int]$tb, [i
 # which is the single point every probe here used before T228. `A`/`B` are the
 # two pane rects, for the tiling assertion in the T155 section.
 function Get-GapStrip([IntPtr]$top, [string]$axis, $shot = $null) {
-    $panes = Get-Panes $top
+    $panes = @(Get-Panes $top)
     if ($panes.Count -ne 2) { return $null }
     if ($axis -eq 'down') {
         $pa = $panes | Sort-Object Top | Select-Object -First 1
@@ -356,7 +356,7 @@ function Start-Gui([string]$label, [string[]]$extraArgs, [bool]$control) {
         "$label window is NOT enumerable on the interactive desktop"
     & $exe +split --direction=down | Out-Null
     Start-Sleep -Milliseconds 800
-    $panes = Get-Panes $top
+    $panes = @(Get-Panes $top)
     Assert ($panes.Count -eq 2) "$label setup: 2 visible panes"
     if ($panes.Count -ne 2) { Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue; exit 1 }
     [void](Focus-TestWindow -Window $top -Child ([IntPtr]($panes[0].Hwnd)))
@@ -539,7 +539,7 @@ Assert (-not (Divider-HasColor $top $A $B 128 128 128 6)) 'default: the fixed 0x
 #     window, so it is the window's own hit test that refuses it).
 # ---------------------------------------------------------------------------
 function Get-DividerLine([IntPtr]$top) {
-    $panes = Get-Panes $top
+    $panes = @(Get-Panes $top)
     $pa = $panes | Sort-Object Top | Select-Object -First 1
     $pb = $panes | Sort-Object Top | Select-Object -Last 1
     [pscustomobject]@{
@@ -1127,7 +1127,7 @@ foreach ($axis in @('down', 'right')) {
     $top = $g.Top
     $bandPx = Get-ExpectedBandPx (Get-TestWindowDpi -Window $top)
     $gutterPx = Get-ExpectedGutterPx (Get-TestWindowDpi -Window $top)
-    $panes = Get-Panes $top
+    $panes = @(Get-Panes $top)
     if ($panes.Count -ne 2) {
         Assert $false "T155/$axis setup: 2 visible panes (got $($panes.Count))"
         Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
@@ -1145,7 +1145,7 @@ foreach ($axis in @('down', 'right')) {
     # un-composited control (below) to count, and change nothing the
     # composited claims score.
     foreach ($delta in 60, -40, 70) {
-        $panes = Get-Panes $top
+        $panes = @(Get-Panes $top)
         if ($axis -eq 'down') {
             $pa = $panes | Sort-Object Top | Select-Object -First 1
             $pb = $panes | Sort-Object Top | Select-Object -Last 1
@@ -1273,7 +1273,7 @@ if ($null -eq $g) {
     } else {
         # The same three rightward drags as the loop above.
         foreach ($delta in 60, -40, 70) {
-            $panes = Get-Panes $g.Top
+            $panes = @(Get-Panes $g.Top)
             $pa = $panes | Sort-Object Left | Select-Object -First 1
             $pb = $panes | Sort-Object Left | Select-Object -Last 1
             $lineX = [int](($pa.Right + $pb.Left) / 2)
@@ -1354,7 +1354,7 @@ if ($a495.Process -and $a495.Process.HasExited) {
         Start-Sleep -Milliseconds 800
         & $exe +split --direction=right | Out-Null
         Start-Sleep -Milliseconds 800
-        $panes495 = Get-Panes $t495
+        $panes495 = @(Get-Panes $t495)
         Assert ($panes495.Count -eq 3) "T495 setup: 3 visible panes (got $($panes495.Count))"
         if ($panes495.Count -eq 3) {
             function Get-SecondDividerX([IntPtr]$top) {
