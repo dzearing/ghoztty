@@ -55,7 +55,10 @@
   Exit 0: every script passed or skipped. Exit 1: something is red, or
   -FailFast left scripts unrun. Exit 3: the schedule was violated (an exclusive
   script overlapped another) - a runner defect, never a script's. Exit 4: the
-  build is stale and was not (or could not be) rebuilt - nothing ran.
+  build is stale and was not (or could not be) rebuilt - nothing ran. Exit 5:
+  another test run in this worktree (acceptance-parallel or floor-lane, often a
+  batch a previous turn backgrounded before a reset) held the test-run lock for
+  the whole wait - nothing ran (T1658; scripts\lib\MachineLock.ps1).
 
 .EXAMPLE
   powershell -NoProfile -File scripts\acceptance-parallel.ps1 due
@@ -93,6 +96,7 @@ $Repo = (Resolve-Path $Repo).Path
 . (Join-Path $PSScriptRoot 'lib\AcceptanceParallel.ps1')
 . (Join-Path $PSScriptRoot 'lib\AcceptanceFresh.ps1')
 . (Join-Path $PSScriptRoot '..\test\win32\lib\PersistentState.ps1')
+. (Join-Path $PSScriptRoot 'lib\MachineLock.ps1')
 
 function Resolve-ApScript {
     param([string]$Name)
@@ -151,12 +155,24 @@ if ($List) {
     exit 0
 }
 
+if (-not $LogDir) { $LogDir = Join-Path $env:TEMP ("ghoztty-acceptance-parallel\" + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
+
+# T1658: one test run per worktree at a time. A batch a previous turn left
+# running behind a reset still holds this, so the run WAITS for it (bounded,
+# printed) instead of overlapping it - and before the freshness check, which
+# may rebuild the zig-out that batch is still testing. A run nested inside
+# another (a harness that drives this script) is part of that run.
+$runLock = Enter-MachineLock -Kind testrun -Repo $Repo -Label "acceptance-parallel $Action" -Detail "logs $LogDir"
+if (-not $runLock.Acquired) {
+    "TEST RUN BUSY: another test run in this worktree held the lock for the whole wait - nothing ran. Read its results when it ends (the holder line above names its logs), or stop it, then re-run (T1658)."
+    exit 5
+}
+
 # T1961: one freshness answer for the whole run, before anything launches.
 $fresh = Invoke-AcceptanceFreshPreflight -Repo $Repo -NoRebuild:$NoRebuild
 $fresh.Line
 if (-not $fresh.Ok) { exit 4 }
 
-if (-not $LogDir) { $LogDir = Join-Path $env:TEMP ("ghoztty-acceptance-parallel\" + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
 "ACCEPTANCE {0}: {1} script(s), width {2}, logs {3}" -f $Action, $jobs.Count, $Width, $LogDir
 
 # T1230: the before-half of the persistent-state arm, taken after the rebuild

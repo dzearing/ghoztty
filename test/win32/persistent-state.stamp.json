@@ -1,16 +1,19 @@
 {
     "guard":  "persistent-state",
     "script":  "test/win32/persistent-state.ps1",
-    "generated":  "2026-10-22T23:26:48-07:00",
-    "commit":  "cc69dd753",
+    "generated":  "2026-11-21T09:01:27-08:00",
+    "commit":  "997f54c84",
     "uncommitted":  [
-                        "scripts/acceptance-parallel.ps1",
-                        "test/win32/lib/PersistentState.ps1",
-                        "test/win32/persistent-state.ps1"
+                        "scripts/acceptance-parallel.ps1"
                     ],
     "files":  {
-                  "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
+                  "scripts/acceptance-parallel.ps1":  "4b958ede38c0911c4945146f0a52810ebbf8c01d44ac8a60532f2eb77f8fd0af",
                   "test/win32/lib/PersistentState.ps1":  "f5256d10c2866031a73ccc1fc247f9f670836e2dfdab53ad2432dbd0189019e9",
                   "test/win32/persistent-state.ps1":  "e8e10a48df6586dde45f0fef13d3343059bd89eb7c277f6f55805416ff5ec7ce"
-              }
+              },
+    "code":  {
+                 "scripts/acceptance-parallel.ps1":  "code1:2b18cafdff04a13a9fb2d29fb0e641424e7b661dbec0b15b8d6633973f6e8729",
+                 "test/win32/lib/PersistentState.ps1":  "code1:3ce8c3552fc3c34bdaaedf46a4480e37d3677c86834198891f2c48decdc3e0e5",
+                 "test/win32/persistent-state.ps1":  "code1:50f27ca81da7394b4cea45e6a5a4220a60ef2770ac43083ef9bb6b8e8b5e5cfc"
+             }
 }

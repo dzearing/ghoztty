@@ -1,8 +1,8 @@
 {
     "guard":  "dashboard-dom",
     "script":  "test/win32/dashboard-dom.ps1",
-    "generated":  "2026-11-21T09:13:17-08:00",
-    "commit":  "6a2574dd3",
+    "generated":  "2026-11-21T09:30:57-08:00",
+    "commit":  "997f54c84",
     "uncommitted":  [
 
                     ],

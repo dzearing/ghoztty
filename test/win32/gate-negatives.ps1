@@ -139,6 +139,9 @@ $Registry = @(
     # T2393: reported, never fatal - the deny-git-autostash hook stops new
     # entries and dropping old ones is the user's call.
     [pscustomobject]@{ Label = 'STASH LITTER'; Kind = 'status' }
+    # T1658: reported, never fatal - the runners already wait on the same lock;
+    # the line only says why. Driven in section I of test\win32\machine-lock.ps1.
+    [pscustomobject]@{ Label = 'TEST RUN IN FLIGHT'; Kind = 'status' }
     [pscustomobject]@{ Label = 'RESUMED'; Kind = 'status' }
     # T1478. `resume` restarts the parked loop and is judged on the loop coming
     # back, so its failure is a gate: exit 5 with the remedy, rather than the

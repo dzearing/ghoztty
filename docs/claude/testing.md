@@ -75,6 +75,21 @@ at once. That was the box, not the code. `-Serial` runs the old path,
 unchanged. Acceptance: `test\win32\floor-lane-parallel.ps1`. Lanes beside lanes
 are fine. Lanes beside acceptance scripts are still not (T401).
 
+**One test run per worktree, enforced** (T1658). `floor-lane.ps1` and
+`acceptance-parallel.ps1` each hold this worktree's test-run lock
+(`Global\GhozttyTestRun-<worktree>`, `scripts\lib\MachineLock.ps1`) for their
+whole run, so a batch a previous turn backgrounded and then reset away from is
+WAITED for (up to 60 min, printed, `GHOZTTY_TESTRUN_LOCK_WAIT_MIN` overrides)
+rather than overlapped - and the loop's claim prints `TEST RUN IN FLIGHT`
+naming it and where its logs land. Out of wait, acceptance-parallel exits 5 and
+floor-lane `FLOOR NOT GREEN`, nothing launched. A run started inside another
+one is part of it: the holder exports `GHOZTTY_TESTRUN_OWNER`, and
+`test\win32\lib\TestScore.ps1` makes every harness the owner for what it
+launches, so a harness that drives floor-lane or acceptance-parallel itself
+never queues behind its own children. The gap that remains: a single harness
+run directly (not through either runner) does not wait. Acceptance: section I
+of `test\win32\machine-lock.ps1`.
+
 **The floor compiles its tests at Debug, and Debug provides correctness the
 shipping build does not** (T846). That is not a theory: T477 found two live
 defects at once behind 26 consecutive green Debug runs — a `free()` on an

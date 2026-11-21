@@ -1,16 +1,23 @@
 {
     "guard":  "lane-parallel",
     "script":  "test/win32/floor-lane-parallel.ps1",
-    "generated":  "2026-11-10T21:24:26-08:00",
-    "commit":  "00273b23a",
+    "generated":  "2026-11-21T09:06:01-08:00",
+    "commit":  "997f54c84",
     "uncommitted":  [
                         "scripts/floor-lane.ps1"
                     ],
     "files":  {
                   "scripts/build-cache.ps1":  "d94c8308363992f42d7ef2c3b729dbce0a7cad28b41f415a7bad39cfab16013a",
-                  "scripts/floor-lane.ps1":  "6dda749300bdd3ff549b1e28d4a5efca36f9bcc6d61deee2c5dfc7f4475e8cf3",
+                  "scripts/floor-lane.ps1":  "3f13136d4cdb634f08e3a4402d33f80b36d4ccf2014695c139bbf82cf045ca06",
                   "scripts/lib/BuildCache.ps1":  "ee9ec82ca0da753164d67b9ab808265d29f45e0ec74512987d07bdeaf6fcf0a0",
                   "scripts/lib/CrashDiag.ps1":  "fe512622eae4215c4c4755fcbfe8552b4760ab9ee6174fe4c5aa80a71a76cdf4",
                   "test/win32/floor-lane-parallel.ps1":  "e4821c99f31c4708e5402a8f7d0682586f130592268f8d3b5a2a2e11aab3161d"
-              }
+              },
+    "code":  {
+                 "scripts/build-cache.ps1":  "code1:a881a2551b853c41020487d2e38b7e1c2abf97aebba4d8ce002511c6d6e92bb5",
+                 "scripts/floor-lane.ps1":  "code1:a28f55ce1ea24230caf0c302d741d80bd63a03b46c4e58e76c06d34e3d9bc642",
+                 "scripts/lib/BuildCache.ps1":  "code1:5ffaa24da9edbe853545916aa6b63591156044ac630695e790da2bc3cc83d8e1",
+                 "scripts/lib/CrashDiag.ps1":  "code1:e1f05f4814b8836b10bd36069d13bcbf2ad0e28bece5d8b855138f4e64c3f95f",
+                 "test/win32/floor-lane-parallel.ps1":  "code1:1052e6fc90a26384a0f3ee3226257f02eb36211338f5a4c4138e7d7acec43b8e"
+             }
 }

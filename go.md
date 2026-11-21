@@ -729,6 +729,12 @@ Concretely, in order, with no stops in between:
    is writing (`bgdead=` in its log), so a lost notification costs minutes, not
    the 180m backstop.
 
+   **And a sweep outlives a reset** (T1658). A batch you background and then
+   `/reset-context` away from keeps running; the next turn's claim prints
+   `TEST RUN IN FLIGHT` naming it and its logs, and `acceptance-parallel` /
+   `floor-lane` WAIT on it (one test run per worktree) instead of overlapping
+   it. Read its results; do not stop it to make room for your own.
+
    **The sweep's own result file is the signal, not the notification** (T2805).
    Redirect the sweep to a named file (`> $env:TEMP\<task>-due-$PID.txt`), and
    if the notification seems late, read that file: a final verdict line there

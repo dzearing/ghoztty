@@ -723,6 +723,22 @@ switch ($Action) {
             "  STASH LITTER: $($stashRows.Count) autostash entr$(if ($stashRows.Count -eq 1) { 'y' } else { 'ies' }) on the shared stash (oldest $($oldest[0]) from $($oldest[1])) - not this turn's work; never pop one as your own, inspect with git stash show -p (T2393)"
         }
 
+        # T1658: a test run a previous turn backgrounded and then reset away
+        # from is still running - the claim reports stranded FILES above, and
+        # this is the stranded RUN. Reported, never fatal: acceptance-parallel
+        # and floor-lane already WAIT for it on the same lock; the line is so
+        # the turn knows why, and reads that run's results instead of
+        # re-running the same scripts beside it.
+        try {
+            . (Join-Path $PSScriptRoot 'lib\MachineLock.ps1')
+            $inFlight = Get-TestRunInFlight -Repo $Repo
+            if ($inFlight) {
+                "  TEST RUN IN FLIGHT: $($inFlight.Text) holds this worktree's test-run lock - most likely a batch a previous turn started before its reset. acceptance-parallel and floor-lane will wait for it; read its results when it ends rather than running the same scripts beside it (T1658)"
+            }
+        } catch {
+            "  test-run lock not read ($($_.Exception.Message))"
+        }
+
         # T1219: what did the build machine say about the commit this branch is
         # sitting on? Every push this loop makes starts a build and, until this
         # line, nothing in the turn ever read the answer - fork-ci's

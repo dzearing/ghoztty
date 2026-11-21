@@ -315,3 +315,16 @@ function Write-TestAssertedNothing {
 # have missed. Already-armed is left alone: a library dot-sourcing this file a
 # second time inside one process must not un-finish a body that has finished.
 if ($null -eq (Get-TestBodyState)) { Reset-TestBody }
+
+# T1658: a harness IS a test run. A floor-lane.ps1 or acceptance-parallel.ps1
+# it launches is part of it, not a second run to queue behind the first - so
+# the harness owns the run for its descendants unless it is already inside a
+# live one (a worker of acceptance-parallel inherits that run's owner). Without
+# this, a harness that starts two floor-lane children at once would park the
+# second behind the first for the whole test-run lock wait
+# (scripts\lib\MachineLock.ps1).
+$script:testScoreRunOwner = [string]$env:GHOZTTY_TESTRUN_OWNER
+if ($script:testScoreRunOwner -notmatch '^\d+$' -or
+    $null -eq (Get-Process -Id ([int]$script:testScoreRunOwner) -ErrorAction SilentlyContinue)) {
+    $env:GHOZTTY_TESTRUN_OWNER = [string]$PID
+}

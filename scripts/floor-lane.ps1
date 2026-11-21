@@ -1719,6 +1719,21 @@ if ($DryRun) {
     exit $EXIT_PASS
 }
 
+# T1658: one test run per worktree at a time - the lanes never overlap an
+# acceptance run, the T401 rule, which until now nothing could enforce against
+# a batch a previous turn backgrounded and then reset away from. An -Isolated
+# child is part of its parent's run and inherits its ownership anyway.
+if (-not $Isolated) {
+    $testRunLock = Enter-MachineLock -Kind testrun -Repo $Repo -Label "floor-lane -Lane $Lane"
+    if (-not $testRunLock.Acquired) {
+        Write-Host 'TEST RUN BUSY: another test run in this worktree held the lock for the whole wait - no lane was launched. Read its results when it ends, or stop it, then re-run (T1658).'
+        Write-Host ''
+        Write-Host 'FLOOR SUMMARY: testrun=BUSY'
+        Write-Host 'FLOOR NOT GREEN'
+        exit $EXIT_FAIL
+    }
+}
+
 if ($parallel) { exit (Invoke-ParallelFloor -Lanes $lanes) }
 
 $worst = $EXIT_PASS

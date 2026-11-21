@@ -1,3 +1,4 @@
+# @parallel-unsafe - its negative control waits out a 120s wall-clock cap that box load from sibling workers can move (red beside others, green alone: 2026-11-21 due sweep, T1658).
 <#
 .SYNOPSIS
   Acceptance test for floor-lane.ps1's stall detector under a box that cannot

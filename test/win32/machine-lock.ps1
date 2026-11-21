@@ -22,6 +22,14 @@
 #   G. Floor lock: `floor-lane.ps1 -Lane harness` (planted command) takes the
 #      floor lock and tells the child it holds it; held by someone else, it
 #      prints WAIT and TIMEOUT and runs the sweep anyway.
+#   H. Every timing-marked script reaches the hook.
+#   I. The per-WORKTREE test-run lock (T1658): free reads as nothing in flight;
+#      held, another process sees TEST RUN IN FLIGHT with the holder's logs; a
+#      run inside the holder's run is nested and never waits; acceptance-
+#      parallel and floor-lane outside it wait, then refuse (exit 5 / FLOOR NOT
+#      GREEN) with nothing launched; I8 is the negative control (same
+#      contention, owner inherited, runs green); a dead holder never reads as
+#      in flight; the claim asks the same question.
 #
 # Hermetic: every mutex name is suffixed by GHOZTTY_MACHINE_LOCK_SCOPE and the
 # holder files live under $env:TEMP, so no real lane's lock is ever touched. No
@@ -191,6 +199,79 @@ try {
     $planted = "$marker`r`nWrite-Host 'no hook here'"
     Assert 'H3 negative control: a marked script with no hook fails the H2 rule' (
         $planted -match $markerRx -and $planted -notmatch 'lib\\CleanSlate\.ps1|MachineLock\.ps1')
+
+    # ---- I. the per-worktree test-run lock (T1658)
+    # A batch a previous turn backgrounded and then reset away from kept
+    # running, and the next turn's own runs overlapped it. The runners now
+    # wait on a per-worktree lock, nested runs pass through, and the claim
+    # names a live holder.
+    "I. test-run lock"
+    $mlLib = Join-Path $Repo 'scripts\lib\MachineLock.ps1'
+    $probe = Join-Path $work 'inflight.ps1'
+    [IO.File]::WriteAllText($probe, ". '$mlLib'`r`n`$f = Get-TestRunInFlight -Repo '$Repo'`r`nif (`$f) { Write-Host ('INFLIGHT ' + `$f.Text) } else { Write-Host 'FREE' }`r`nexit 0")
+    $nest = Join-Path $work 'nest.ps1'
+    [IO.File]::WriteAllText($nest, ". '$mlLib'`r`n`$l = Enter-MachineLock -Kind testrun -Repo '$Repo' -Label nest.ps1`r`nWrite-Host ('ACQUIRED=' + `$l.Acquired + ' NESTED=' + `$l.Nested)`r`nexit 0")
+    $testRunDier = Join-Path $work 'testrun-dier.ps1'
+    [IO.File]::WriteAllText($testRunDier, ". '$mlLib'`r`n`$l = Enter-MachineLock -Kind testrun -Repo '$Repo' -Label testrun-dier.ps1`r`nWrite-Host 'DIER HOLDS'`r`nexit 0")
+    $apRun = Join-Path $work 'ap-run.ps1'
+    [IO.File]::WriteAllText($apRun, "& powershell -NoProfile -ExecutionPolicy Bypass -File '$(Join-Path $Repo 'scripts\acceptance-parallel.ps1')' run -Scripts machine-lock.ps1`r`nexit `$LASTEXITCODE")
+    # A child that is NOT inside this harness's run: no inherited owner.
+    $outside = @{ GHOZTTY_TESTRUN_OWNER = $null; GHOZTTY_TESTRUN_LOCK_WAIT_MIN = '0.05' }
+
+    $r = Run-Fixture $probe
+    Assert 'I1 a free test-run lock reads as nothing in flight' ($r.Out -match 'FREE') $r.Out
+
+    $held = Enter-MachineLock -Kind testrun -Repo $Repo -Label 'harness-testrun-holder' -Detail 'logs C:\fixture-logs'
+    try {
+        $rIn = Run-Fixture $probe
+        $rNest = Run-Fixture $nest @{ GHOZTTY_TESTRUN_LOCK_WAIT_MIN = '0.05' }
+        $rOut = Run-Fixture $nest $outside
+        $rAp = Run-Fixture $apRun $outside
+    } finally { Exit-MachineLock $held }
+    Assert 'I2 held: another process sees it IN FLIGHT, naming the holder and where its logs land' (
+        $rIn.Out -match 'INFLIGHT harness-testrun-holder \(lane harness-lane, pid \d+, since [^,]+, logs C:\\fixture-logs\)') $rIn.Out
+    Assert 'I3 a run inside the holder''s run (inherited owner) is nested: acquired at once, no wait' (
+        $rNest.Out -match 'nested inside pid' -and $rNest.Out -match 'ACQUIRED=True NESTED=True' -and $rNest.Out -notmatch 'WAIT') $rNest.Out
+    Assert 'I4 a run outside it waits, naming the holder, and gives up bounded' (
+        $rOut.Out -match 'TEST RUN LOCK WAIT: .*held by harness-testrun-holder' -and $rOut.Out -match 'TEST RUN LOCK TIMEOUT' -and $rOut.Out -match 'ACQUIRED=False') $rOut.Out
+    Assert 'I5 acceptance-parallel outside the holder''s run: TEST RUN BUSY, exit 5, nothing started' (
+        $rAp.Out -match 'TEST RUN LOCK WAIT' -and $rAp.Out -match 'TEST RUN BUSY' -and $rAp.Code -eq 5 -and
+        $rAp.Out -notmatch 'ACCEPTANCE (due|run):' -and $rAp.Out -notmatch 'build (fresh|stale)') $rAp.Out
+
+    # floor-lane, through the same planted harness lane section G uses.
+    $runFloorTr = {
+        param([hashtable]$Vars)
+        $Vars['GHOZTTY_FLOOR_LANE_FAKE'] = (@{ harness = 'cmd /c exit 0' } | ConvertTo-Json -Compress)
+        $saved = @{}
+        foreach ($k in $Vars.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $Vars[$k]) }
+        try {
+            $o = & powershell -NoProfile -ExecutionPolicy Bypass -File $floor -Lane harness -StallSeconds 15 -NoCatch -NoSoloConfirm 2>&1 |
+                ForEach-Object { $_.ToString() } | Out-String
+            return [pscustomobject]@{ Code = $LASTEXITCODE; Out = $o }
+        } finally { foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) } }
+    }
+    $r = & $runFloorTr @{ GHOZTTY_TESTRUN_OWNER = $null }
+    Assert 'I6 an uncontended floor-lane takes this worktree''s test-run lock and runs' (
+        $r.Out -match 'TEST RUN LOCK acquired: Global\\GhozttyTestRun-[a-z0-9_]+-test-' -and $r.Code -eq 0) $r.Out
+    $held = Enter-MachineLock -Kind testrun -Repo $Repo -Label 'harness-testrun-holder'
+    try { $r = & $runFloorTr @{ GHOZTTY_TESTRUN_OWNER = $null; GHOZTTY_TESTRUN_LOCK_WAIT_MIN = '0.05' } } finally { Exit-MachineLock $held }
+    Assert 'I7 held elsewhere: floor-lane waits, then refuses - TEST RUN BUSY, FLOOR NOT GREEN, exit 1, no lane launched' (
+        $r.Out -match 'TEST RUN LOCK WAIT' -and $r.Out -match 'TEST RUN BUSY' -and $r.Out -match 'FLOOR NOT GREEN' -and
+        $r.Code -eq 1 -and $r.Out -notmatch 'FLOOR LOCK acquired') $r.Out
+    # Negative control for I7: the same contention with the owner inherited is nested and runs.
+    $held = Enter-MachineLock -Kind testrun -Repo $Repo -Label 'harness-testrun-holder'
+    try { $r = & $runFloorTr @{ GHOZTTY_TESTRUN_LOCK_WAIT_MIN = '0.05' } } finally { Exit-MachineLock $held }
+    Assert 'I8 negative control: the same contention from INSIDE the holder''s run passes through and runs green' (
+        $r.Out -match 'nested inside pid' -and $r.Out -notmatch 'TEST RUN BUSY' -and $r.Code -eq 0) $r.Out
+
+    $r1 = Run-Fixture $testRunDier $outside
+    $r = Run-Fixture $probe
+    Assert 'I9 a holder that died never reads as in flight (the mutex is asked, not the stale file)' (
+        $r1.Out -match 'DIER HOLDS' -and $r.Out -match 'FREE') ($r1.Out + $r.Out)
+
+    $execText = [IO.File]::ReadAllText((Join-Path $Repo 'scripts\go-loop-exec.ps1'))
+    Assert 'I10 the loop''s claim asks the same question and prints TEST RUN IN FLIGHT' (
+        $execText -match 'Get-TestRunInFlight -Repo \$Repo' -and $execText -match 'TEST RUN IN FLIGHT: ')
 
     Complete-TestBody
 }

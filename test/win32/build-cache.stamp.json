@@ -1,15 +1,15 @@
 {
     "guard":  "build-cache",
     "script":  "test/win32/build-cache.ps1",
-    "generated":  "2026-11-20T18:03:10-08:00",
-    "commit":  "6e0e3b7ad",
+    "generated":  "2026-11-21T09:07:58-08:00",
+    "commit":  "997f54c84",
     "uncommitted":  [
-                        "test/win32/lib/BuildFresh.ps1"
+                        "scripts/floor-lane.ps1"
                     ],
     "files":  {
                   "scripts/build-cache.ps1":  "d94c8308363992f42d7ef2c3b729dbce0a7cad28b41f415a7bad39cfab16013a",
                   "scripts/crash-databreak.ps1":  "ec45063075848cb962ca00262960aec8380bd5de3f0d9f9bc9f1d25c109e3b0d",
-                  "scripts/floor-lane.ps1":  "6dda749300bdd3ff549b1e28d4a5efca36f9bcc6d61deee2c5dfc7f4475e8cf3",
+                  "scripts/floor-lane.ps1":  "3f13136d4cdb634f08e3a4402d33f80b36d4ccf2014695c139bbf82cf045ca06",
                   "scripts/launch-upgrade.ps1":  "cdac13e044f5b31ec2346cbd23556ea45ddf937972e033f56f7a6451ffbaaaa1",
                   "scripts/lib/BuildCache.ps1":  "ee9ec82ca0da753164d67b9ab808265d29f45e0ec74512987d07bdeaf6fcf0a0",
                   "scripts/lib/HardDelete.ps1":  "78ca1c0b521f9ae991e6b8f5304eb2a4e30a7a8ef1e3ba93839de8b740ea88b2",
@@ -19,7 +19,7 @@
     "code":  {
                  "scripts/build-cache.ps1":  "code1:a881a2551b853c41020487d2e38b7e1c2abf97aebba4d8ce002511c6d6e92bb5",
                  "scripts/crash-databreak.ps1":  "code1:e9cc905de7779e9fceb0676e2b5936ee9f2f5415e1b80369c00f5952d8f2185c",
-                 "scripts/floor-lane.ps1":  "code1:fc9b977ddf5f396bd8d2245356ca7fbef2d23b1dd1b683f8533f5a095394c33d",
+                 "scripts/floor-lane.ps1":  "code1:a28f55ce1ea24230caf0c302d741d80bd63a03b46c4e58e76c06d34e3d9bc642",
                  "scripts/launch-upgrade.ps1":  "code1:bafd3732a4b148f497466a6a7215616df33652dfe4755e2aae4a986da0f32f9d",
                  "scripts/lib/BuildCache.ps1":  "code1:5ffaa24da9edbe853545916aa6b63591156044ac630695e790da2bc3cc83d8e1",
                  "scripts/lib/HardDelete.ps1":  "code1:f77048e94c5dd08f39759e800c0335b025498a07dc245a28775db20c79801a61",
