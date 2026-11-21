@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-21T07:30:33-08:00",
-    "commit":  "680aa163e",
+    "generated":  "2026-11-21T08:09:17-08:00",
+    "commit":  "3a7973989",
     "uncommitted":  [
-                        "test/win32/soak-daemon.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
@@ -46,7 +46,7 @@
                   "test/win32/agent-stamp-inputs.ps1":  "96b125e6d59506d12af8a5e4efff0e358975b4e096026a9f485865c3d1f96c37",
                   "test/win32/agent-upgrade.ps1":  "8240ffbdeec73e27ea64c99da93f03e823ec13d280574a9c08e4ebfd54af6792",
                   "test/win32/agent-user-env.ps1":  "6bb44600b96dca3b342a128736b63e28e9955c5517c2c87eba6e0c0d8d5b3fd1",
-                  "test/win32/app-restart.ps1":  "fe3e55900a51a12cf65404d228a812ae0c28a412a35b820ae6579d2df5f5eb91",
+                  "test/win32/app-restart.ps1":  "220c45d3793ad8ef5cbe62ede8d8fd207722e9d09656907f84bab3b7edac8723",
                   "test/win32/argv-hazard-audit.ps1":  "5e6d8382b90b67ac3acb5ef30dba27c926ea6d90087212da2202b482b5155fdb",
                   "test/win32/arp-orphan.ps1":  "f014fb0c70494f975cdbdadba99dd7a204abbb89795b5fc5dd7046d2307ca21d",
                   "test/win32/arp-sweep.ps1":  "97c08fac944b2ce622e5817dc673c0f22b7ecea06d9485c2628fb24c9985c1eb",
