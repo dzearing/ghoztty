@@ -1,10 +1,10 @@
 {
     "guard":  "harness-scope",
     "script":  "test/win32/harness-scope.ps1",
-    "generated":  "2026-11-20T19:15:43-08:00",
-    "commit":  "701f25074",
+    "generated":  "2026-11-20T22:52:32-08:00",
+    "commit":  "8897df29e",
     "uncommitted":  [
-
+                        "test/win32/lib/UnrollCountAudit.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
@@ -17,7 +17,7 @@
                   "test/win32/lib/HarnessScope.ps1":  "d3fde09c67a200a4d66feef4d1f2a58a691fb46b740781b320574625c6e230bf",
                   "test/win32/lib/NeuterAudit.ps1":  "c06f3a9c39d1f1a76d9a496844053bb051c8c4ae046da95348963c91faad5f77",
                   "test/win32/lib/PersistenceSweep.ps1":  "5192924c1de0c954af4e4ba3300744a40d0350353790d9b0de4a9a2a5eb3fe4f",
-                  "test/win32/lib/UnrollCountAudit.ps1":  "6f237d65de90843000c81d510845ac188396d6f22dcd4c8889756cd9edbdab77",
+                  "test/win32/lib/UnrollCountAudit.ps1":  "325b6b7bb3f3567cbb98eaf3d71aa172cbaa62c262485aa0dd9fd508527a6e9b",
                   "test/win32/neuter-audit.ps1":  "b2057597d46fad5597ff832b399d8ee9a585f9131fbfe7244b7cea9bf44bd928",
                   "test/win32/persistence-flag.ps1":  "5546742819ff4ac654a77cdeda8413c2490ae73292f969adeaa2278f49f8d90f",
                   "test/win32/unroll-count-audit.ps1":  "9dcfec7cb85733af607909d2f62e59631473868dfcf64b6fb4e0cfbf706680e2"
@@ -33,9 +33,9 @@
                  "test/win32/lib/HarnessScope.ps1":  "code1:01632df0c006fb3987ae845a2acbafb09a23869437cb2dc452be7f75da784ae5",
                  "test/win32/lib/NeuterAudit.ps1":  "code1:d0e652751a54b369cc09091d141abe8c0322d137ac8ff9527f7d477eb71dd47b",
                  "test/win32/lib/PersistenceSweep.ps1":  "code1:d78429a75cc1ac51aabdaeef4b25e51fd9a212b21ddeb1ed6aaea2bbaf3b5f32",
-                 "test/win32/lib/UnrollCountAudit.ps1":  "code1:8bc97022ddd5219fa309318e8cc86daa500b420c20c817ff6b462e55b8b01e80",
+                 "test/win32/lib/UnrollCountAudit.ps1":  "code1:1ec29bb390d7bbae29d29fe6e57cd21a2820dbc10c18d060b1c43e6522b9f303",
                  "test/win32/neuter-audit.ps1":  "code1:933c1dc495ee518b176ea695bb79af5901ea9e931bb1474182c40189d80dcbeb",
-                 "test/win32/persistence-flag.ps1":  "code1:a274069186108d99becdd0da3bd6a68a6c5d8d06b30205d17b67c3b48ce2dafb",
+                 "test/win32/persistence-flag.ps1":  "code1:3f913d80192190c9fe54e6dda166d4e3c3999e1fbef016ae06442d00566a68e0",
                  "test/win32/unroll-count-audit.ps1":  "code1:e96c99511e95c19e667e0fe1bca9c7455b29538103b49db7159bae2f8f822ebf"
              }
 }

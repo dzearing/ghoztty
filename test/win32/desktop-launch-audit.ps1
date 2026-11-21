@@ -102,6 +102,14 @@ Assert 'A4 an indented marker still counts' ($good[1].Script -eq 'beta.ps1')
 Assert 'A5 a separator-less line is MALFORMED, not dropped' ($bad.Count -eq 2)
 Assert 'A6 the malformed line is reported by line number' (($bad | ForEach-Object { $_.Line }) -contains 4)
 
+# T1597: a header holding exactly ONE line. A one-element [string[]] used to
+# unroll to a bare string through the parser's `if`, so $lines[0] was a
+# character and this parsed as zero declarations - the case no multi-line
+# fixture above can reach.
+$one = @(Get-DesktopLaunchAuditDeclarations -Text @('# @user-desktop-launch: solo.ps1 -- (T1597) the only one'))
+Assert 'A7 a single-line header yields its one declaration' ($one.Count -eq 1 -and $one[0].Script -eq 'solo.ps1' -and -not $one[0].Malformed)
+Assert 'A8 a single-line exemption marker is still read' ((Test-DesktopLaunchAuditExempt -Text @('# desktop-launch-audit: fixture')) -eq $true)
+
 # ---------------------------------------------------------------------------
 Write-Host ''
 Write-Host 'B. the detector, both directions'

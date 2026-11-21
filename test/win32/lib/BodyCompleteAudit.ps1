@@ -184,7 +184,7 @@ function Get-BodyCompleteFindings {
         [string[]]$Text
     )
     $findings = New-Object System.Collections.ArrayList
-    $lines = if ($null -ne $Text) { $Text } else { @(Get-Content -LiteralPath $Path) }
+    $lines = @(if ($null -ne $Text) { $Text } else { Get-Content -LiteralPath $Path })
 
     $scored = $false
     foreach ($l in $lines) {

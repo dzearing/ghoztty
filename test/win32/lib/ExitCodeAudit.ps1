@@ -83,7 +83,7 @@ function Get-ExitCodeAuditFindings {
         [string]$Path,
         [string[]]$Text
     )
-    $lines = if ($null -ne $Text) { $Text } else { @(Get-Content -LiteralPath $Path) }
+    $lines = @(if ($null -ne $Text) { $Text } else { Get-Content -LiteralPath $Path })
     $logical = @(ConvertTo-LogicalLines $lines)
     $findings = New-Object System.Collections.ArrayList
 

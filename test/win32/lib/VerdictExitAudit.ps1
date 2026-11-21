@@ -251,7 +251,7 @@ function Get-VerdictExitFindings {
         [string[]]$Text
     )
     $findings = New-Object System.Collections.ArrayList
-    $lines = if ($null -ne $Text) { $Text } else { @(Get-Content -LiteralPath $Path) }
+    $lines = @(if ($null -ne $Text) { $Text } else { Get-Content -LiteralPath $Path })
 
     # The stated-intent exemption, file-scope.
     foreach ($l in $lines) { if ($l -match '#\s*verdict-audit:') { return $findings } }

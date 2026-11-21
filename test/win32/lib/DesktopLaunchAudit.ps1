@@ -135,7 +135,7 @@ function Test-DesktopLaunchAuditExempt {
         [string]$Path,
         [string[]]$Text
     )
-    $lines = if ($null -ne $Text) { $Text } else { @(Get-Content -LiteralPath $Path) }
+    $lines = @(if ($null -ne $Text) { $Text } else { Get-Content -LiteralPath $Path })
     foreach ($l in $lines) { if ($l -match '#\s*desktop-launch-audit:') { return $true } }
     return $false
 }
@@ -150,7 +150,7 @@ function Get-DesktopLaunchAuditDeclarations {
         [string]$Path,
         [string[]]$Text
     )
-    $lines = if ($null -ne $Text) { $Text } else { @(Get-Content -LiteralPath $Path) }
+    $lines = @(if ($null -ne $Text) { $Text } else { Get-Content -LiteralPath $Path })
     $out = New-Object System.Collections.ArrayList
     for ($i = 0; $i -lt $lines.Count; $i++) {
         $l = $lines[$i]

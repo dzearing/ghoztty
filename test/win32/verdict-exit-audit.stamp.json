@@ -1,17 +1,17 @@
 {
     "guard":  "verdict-exit",
     "script":  "test/win32/verdict-exit-audit.ps1",
-    "generated":  "2026-11-20T07:26:23-08:00",
-    "commit":  "7c28e92b1",
+    "generated":  "2026-11-20T22:21:54-08:00",
+    "commit":  "8897df29e",
     "uncommitted":  [
-
+                        "test/win32/lib/VerdictExitAudit.ps1"
                     ],
     "files":  {
-                  "test/win32/lib/VerdictExitAudit.ps1":  "87d8cad08aa867a0cc2de896872e47d4abcd469850f4f5a897deb778a7aaf16f",
+                  "test/win32/lib/VerdictExitAudit.ps1":  "fac2614ac0a2956125073aa93171111c6e708d21c2e02ef6e4b6032d15e8ac63",
                   "test/win32/verdict-exit-audit.ps1":  "0a356320134c6a1f234067b806e439f64ba62573cd251f39c7adcf43ad51c91b"
               },
     "code":  {
-                 "test/win32/lib/VerdictExitAudit.ps1":  "code1:332314552fdf3f283940c6df49ef9cb2e8d0e1d9dfab1c48e2d16f0e3b7230a0",
+                 "test/win32/lib/VerdictExitAudit.ps1":  "code1:5546e65a0be68351109a8a4429f2a1de96e6f90e0b8d65092759b578357db5c4",
                  "test/win32/verdict-exit-audit.ps1":  "code1:8eb5d37845930ccf365a24e1082d1f6f19d7c1c5aa891c4f99b6e702173cb4c0"
              }
 }

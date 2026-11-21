@@ -380,7 +380,7 @@ function Get-UnrollCountFindings {
         [hashtable]$CommaIndex
     )
     $findings = New-Object System.Collections.ArrayList
-    $lines = if ($null -ne $Text) { @($Text) } else { @(Get-Content -LiteralPath $Path) }
+    $lines = @(if ($null -ne $Text) { $Text } else { Get-Content -LiteralPath $Path })
     if ($null -eq $Index) { $Index = @{} }
     if ($null -eq $CommaIndex) { $CommaIndex = @{} }
 

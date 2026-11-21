@@ -1,18 +1,18 @@
 {
     "guard":  "stderr-capture",
     "script":  "test/win32/stderr-capture-audit.ps1",
-    "generated":  "2026-11-20T19:04:30-08:00",
-    "commit":  "701f25074",
+    "generated":  "2026-11-20T22:21:58-08:00",
+    "commit":  "8897df29e",
     "uncommitted":  [
-
+                        "test/win32/lib/StderrCaptureAudit.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "939701053dfe4da4ec3640b04276c97e87420ae3def107282fc820354e1680fd",
-                  "test/win32/lib/StderrCaptureAudit.ps1":  "69d0a25615d35acc06bf6c1471016186163ae1881ae70a12461425546ac4b7d8",
+                  "test/win32/lib/StderrCaptureAudit.ps1":  "e25ef8505c7dcefaf623638d0214b86d24b489dce6894d64ac8514905f97a7d4",
                   "test/win32/stderr-capture-audit.ps1":  "928dd559d8e1df45f9fce6baa0071a920d997aca8977790161b1c41c34368efe"
               },
     "code":  {
-                 "test/win32/lib/StderrCaptureAudit.ps1":  "code1:5448ae08c3602f746c66feac4e52c01c71bd958c6cff202f8dd48f4c87ec97e4",
+                 "test/win32/lib/StderrCaptureAudit.ps1":  "code1:295684edf114ba957faaa7ede58a90b98081440e65ef953cdd30854aba968d86",
                  "test/win32/stderr-capture-audit.ps1":  "code1:ff75688ff72b4733a47411fed45b5df0db5987f79379a845fc454681c6e44220"
              }
 }

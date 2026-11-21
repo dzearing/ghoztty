@@ -183,7 +183,7 @@ function Get-AssertedNothingFindings {
         [string[]]$Text
     )
     $findings = New-Object System.Collections.ArrayList
-    $lines = if ($null -ne $Text) { $Text } else { @(Get-Content -LiteralPath $Path) }
+    $lines = @(if ($null -ne $Text) { $Text } else { Get-Content -LiteralPath $Path })
 
     foreach ($l in $lines) { if ($l -match '#\s*asserted-nothing-audit:') { return $findings } }
 
