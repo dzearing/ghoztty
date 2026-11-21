@@ -188,7 +188,7 @@ if (-not $StampPaths) {
         Write-Output "ERROR: build recipe not found: src/build/GhosttyAgent.zig"
         exit 2
     }
-    $StampPaths = Get-StampPaths $recipe
+    $StampPaths = @(Get-StampPaths $recipe)
     if ($StampPaths.Count -eq 0) {
         Write-Output "ERROR: no stamp paths parsed out of src/build/GhosttyAgent.zig"
         exit 2

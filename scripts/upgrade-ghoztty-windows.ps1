@@ -428,7 +428,7 @@ if (-not $preCliPe.Ok) {
         # T663: through $oldExe (GUI subsystem) this captured nothing, so the probe
         # reported 0 sessions on every run and the survive-assert below never fired.
         $preRaw = (& $cliExe +sessions --json 2>$null) | Out-String
-        if ($LASTEXITCODE -eq 0 -and $preRaw) { $preSessions = Get-GhozttySessionIds $preRaw }
+        if ($LASTEXITCODE -eq 0 -and $preRaw) { $preSessions = @(Get-GhozttySessionIds $preRaw) }
     } catch {}
 }
 Log "pre-kill agent sessions: $($preSessions.Count) ($($preSessions -join ', '))"

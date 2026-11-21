@@ -1979,7 +1979,7 @@ switch ($Command) {
     # that already exists.
     'set-tags' {
         $tid = Get-TaskId $Id
-        $tagList = Get-TagList $Tags
+        $tagList = @(Get-TagList $Tags)
         if ($tagList.Count -eq 0) {
             throw "set-tags requires -Tags (one or more of: $($ValidTags -join ', '))."
         }
@@ -2116,7 +2116,7 @@ switch ($Command) {
         $seatValue = if ($Seat -and $Seat -ne 'all') { $Seat } else { $DefaultSeat }
         $priorityValue = if ($Priority) { $Priority } else { $DefaultPriority }
 
-        $tagList = Get-TagList $Tags
+        $tagList = @(Get-TagList $Tags)
         $tagsJson = '[]'
         if ($tagList.Count -gt 0) {
             $tagsJson = '[' + (($tagList | ForEach-Object { ConvertTo-Json $_ -Compress }) -join ', ') + ']'

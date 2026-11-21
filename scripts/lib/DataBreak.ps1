@@ -208,7 +208,7 @@ function Invoke-DataBreakProbe {
     # ---- session A: where is the symbol, and where is the module?
     $xLines = Invoke-CdbOnce -CdbPath $cdbPath -ExePath $exePath -Command "x $target; q" -TimeoutSeconds $TimeoutSeconds
     if ($null -eq $xLines) { $res.Error = "probe timed out after ${TimeoutSeconds}s"; return $res }
-    if ($xLines.Count -eq 0) { $res.Error = 'probe produced no output'; return $res }
+    if (@($xLines).Count -eq 0) { $res.Error = 'probe produced no output'; return $res }
 
     foreach ($l in $xLines) {
         if ($res.ModuleBase -eq 0 -and $l -match ('^ModLoad:\s+([0-9a-f]{8})`([0-9a-f]{8})\s+[0-9a-f`]+\s+.*' + [regex]::Escape($exeLeaf) + '\s*$')) {

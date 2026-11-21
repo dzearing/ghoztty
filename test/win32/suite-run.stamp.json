@@ -1,18 +1,25 @@
 {
     "guard":  "suite-run",
     "script":  "test/win32/suite-run.ps1",
-    "generated":  "2026-10-29T19:01:40-07:00",
-    "commit":  "b2fe1644f",
+    "generated":  "2026-11-21T01:34:08-08:00",
+    "commit":  "6a2e8043b",
     "uncommitted":  [
-                        "scripts/suite-run.ps1",
-                        "test/win32/suite-run.ps1"
+                        "scripts/suite-run.ps1"
                     ],
     "files":  {
                   "scripts/lib/Duration.ps1":  "b9889f194a1af5fee4177fd4c87ea6f7d74be5bffac0828532b55ebaa1f4787c",
                   "scripts/lib/RunVerdict.ps1":  "ed6bb40ba6413b29c93c3dfffddd61dbe0fd36068ae92429442ae07dd4a7cb4e",
-                  "scripts/suite-run.ps1":  "bf2f5de835338ccd60e97faa92bcf7289853c09e7b3c1c8fd342c716adfb5d71",
+                  "scripts/suite-run.ps1":  "a6f288e8d36426129a296894974feea46986d3508e1d68f6b7266c55c976e449",
                   "test/win32/lib/ModalSweep.ps1":  "ad1fde46a8704161d73608cf0ebcf58c1a0251d82fbea3967f79281065f91649",
                   "test/win32/soak.ps1":  "70115de02426d4dc47fe1b0c021ed89c7a8bf4a58487ded16f353f878a7c9787",
                   "test/win32/suite-run.ps1":  "eb659bbb368bac2bc8e1ed8c3384c389aa191b64636d4264c1b4242485eb261a"
-              }
+              },
+    "code":  {
+                 "scripts/lib/Duration.ps1":  "code1:0091e52efa9cd5cbcfe2b915b80777c0f7109364ae1de3a85a4ab7d41d350276",
+                 "scripts/lib/RunVerdict.ps1":  "code1:a9bf680631c6f457555c6cd48ba497cc2e021110e8054a13c5f5860db0f40e92",
+                 "scripts/suite-run.ps1":  "code1:00938e95bce9f5d46aed2ba8cb626ab0cf601bf66055dc8ac2b5aeecc179ca30",
+                 "test/win32/lib/ModalSweep.ps1":  "code1:c6180acc297a94957168b4a88a126367456c996961148c9ed9f896147a1dfb21",
+                 "test/win32/soak.ps1":  "code1:2bc55d8f71519a6c0e962d49c858a8f3a4ad300760bcfb2100d5eb42cc1e1032",
+                 "test/win32/suite-run.ps1":  "code1:cf38abe46a8b5b5d8a93000d1df8ffd642e48d900c2de17cab4a50c033e78ccd"
+             }
 }

@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-21T01:00:05-08:00",
-    "commit":  "a965d39fd",
+    "generated":  "2026-11-21T01:23:51-08:00",
+    "commit":  "6a2e8043b",
     "uncommitted":  [
 
                     ],
@@ -1450,7 +1450,7 @@
                   "test/win32/parity-decisions.ps1":  "6f371c66bd381d734ac8a5408671d8695e48d7a6215004c299a2ccb1a92ace88",
                   "test/win32/parity-sweep.ps1":  "2251497104f8df5a8b1146441bd2b5e3ebb38a495c7d7fe16a9f64a05c801044",
                   "test/win32/parity-tasks-lanes.ps1":  "0ea40fdd89dbf37e287727eb97d5153afa3e9f656e120df2b18302f31c49fff1",
-                  "test/win32/parity-tasks-seat.ps1":  "6badf08e9aa5075feeb35446f119517ac3d32533327be34a8892fb17da3dfb22",
+                  "test/win32/parity-tasks-seat.ps1":  "30c09e4ccca97778c9e91df5154fbe54c737fe755ee3d163ca9714d6ad391187",
                   "test/win32/parity-tasks-split-deps.ps1":  "4cae00c40c97f85c7a4b6871ff32a8276cb752fe7c6c8a5120844dd614e71a78",
                   "test/win32/path-selfheal.ps1":  "fcf69db5534ad019cfdd035ded0ffb29e62cd51cc0c08488ef345c7e2134e367",
                   "test/win32/perf-baseline-reader.ps1":  "c0cecdd910918c63517af4321be7b780437527f91eb3a5aea846a7b6c82fd78e",

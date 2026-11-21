@@ -213,7 +213,7 @@ function Split-List {
 
 $IncludeList = Split-List $Include
 $ExcludeList = Split-List $Exclude
-$RunsList = Split-List $Runs
+$RunsList = @(Split-List $Runs)
 
 # ---------------------------------------------------------------- enumeration
 

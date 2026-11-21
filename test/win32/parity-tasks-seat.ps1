@@ -682,19 +682,19 @@ Assert 'the discarded blocked(reason) survives in the log' (
     $txt -match 'status: blocked\(waiting on a crash to recur\) -> todo')
 Assert 'the note names who asked for it' ($txt -match '\(by dashboard: Mark unblocked\)')
 Assert 'and stamps the session' ($txt -match '\[session sess-7\]')
-Assert 'two transitions, two entries' ((Get-LogLines).Count -eq 2)
+Assert 'two transitions, two entries' (@(Get-LogLines).Count -eq 2)
 
 # A no-op is not a transition: re-running the same status must not pad the log.
 $r = Task-Run @('set-status', 'T1', '-Status', 'todo')
 Assert 'setting the same status again exits 0' ($r.Code -eq 0)
-Assert 'and writes no entry' ((Get-LogLines).Count -eq 2)
+Assert 'and writes no entry' (@(Get-LogLines).Count -eq 2)
 
 # -NoNote is the bulk-normalisation escape hatch, and nothing else.
 $r = Task-Run @('set-status', 'T1', '-Status', 'done', '-Commit', 'abc1234', '-NoNote')
 $txt = [System.IO.File]::ReadAllText((Join-Path $fixture 'T1.md'))
 Assert '-NoNote still applies the status' ($txt -match '(?m)^status: "done"$')
 Assert '-NoNote still records the commit' ($txt -match '(?m)^commits: \["abc1234"\]$')
-Assert '-NoNote suppresses the entry' ((Get-LogLines).Count -eq 2)
+Assert '-NoNote suppresses the entry' (@(Get-LogLines).Count -eq 2)
 
 # A commit-carrying transition names the commit in the log, so `done` is
 # traceable to its evidence from the task file alone.
@@ -904,7 +904,7 @@ Assert 'and restates the unblock condition' ($r.Out -match 'PROCTHROTTLEMAX must
 Assert 'and names the -SourceNote it wants' ($r.Out -match '-SourceNote')
 Assert 'the file is untouched: still blocked' (
     (Get-FixtureText) -match '(?m)^status: "blocked\(armed watch - needs an occurrence\)"$')
-Assert 'and nothing was journaled' ((Get-PLines).Count -eq 0)
+Assert 'and nothing was journaled' (@(Get-PLines).Count -eq 0)
 
 # With evidence it goes through, and the condition is echoed at the moment
 # somebody claims it is satisfied.
@@ -919,12 +919,12 @@ Assert 'and the command echoed the condition being claimed' (
 # The bulk hatch still opens, and is loud about it - same contract as
 # -NoGuardDue: a flip made under it can be explained rather than excused.
 $r = Task-Run @('set-status', 'T1', '-Status', 'blocked(re-parked)')
-$before = (Get-PLines).Count
+$before = @(Get-PLines).Count
 $r = Task-Run @('set-status', 'T1', '-Status', 'todo', '-NoNote')
 Assert '-NoNote gets a bulk pass through the gate' ($r.Code -eq 0)
 Assert 'and says out loud that it bypassed it' ($r.Out -match 'bypassed the un-block evidence gate')
 Assert 'the status still moved' ((Get-FixtureText) -match '(?m)^status: "todo"$')
-Assert 'and no receipt was written' ((Get-PLines).Count -eq $before)
+Assert 'and no receipt was written' (@(Get-PLines).Count -eq $before)
 
 # A parked task with no `unblock:` field is gated just the same - the gate is
 # about the transition, not about the field being present.
