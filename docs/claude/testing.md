@@ -1052,6 +1052,17 @@ powershell -NoProfile -File scripts\floor-lane.ps1 -Lane harness   # the per-tur
 powershell -NoProfile -File scripts\floor-lane.ps1 -Lane harness -HarnessFull   # the daily full sweep (go.md 0.6)
 ```
 
+- **A stale app is rebuilt before the sweep, not scored red inside it**
+  (T1571). Two members (build-mode-guard, build-fresh-guard) grade the repo's real `zig-out\bin\ghoztty.exe`
+  (`NeedsApp` on their rows in `scripts\lib\HarnessFloor.ps1`), and
+  `floor-lane.ps1 -Lane all` never builds the app, so after a `.zig` edit they
+  used to go red on staleness ten minutes in. When the sweep selects one of
+  them, `harness-floor.ps1` asks the T1961 question first: fresh is one line,
+  stale is rebuilt once (Debug), and a failed rebuild - or a stale exe under
+  `-NoRebuild` - stops the sweep before anything runs, naming the build to
+  run. A source-only sweep never builds. Section I of
+  `test\win32\harness-floor.ps1` fails a member that runs the real exe without
+  the flag.
 - **The per-turn sweep is SCOPED** (T1958). `-Lane harness` and the guard row's
   run line both mean `harness-floor.ps1 -Scoped`, which compares the tree with
   what the floor last verified green (`temp\harness-floor\verified.json`) and

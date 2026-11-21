@@ -595,6 +595,89 @@ try {
         $goText -match 'HarnessFull' -and $goText -match 'T1958') ''
     Assert 'H17 testing.md states the scoped per-turn sweep (T1958)' ($tsText -match 'T1958' -and $tsText -match '-Scoped') ''
 
+    # ========================================================================
+    "== I: a stale app is settled before a member that grades it runs (T1571)"
+    # ========================================================================
+    # floor-lane -Lane all builds test binaries and never the app, so after any
+    # .zig edit the members that grade zig-out\bin\ghoztty.exe used to score
+    # red on staleness, ten minutes in, naming GHOZTTY_TEST_ALLOW_STALE.
+
+    # I1: the flag matches the code. A member whose own source points at the
+    # repo's real exe (a `[string]$Exe = '...zig-out\bin\ghoztty.exe'` default
+    # or a `Join-Path $repo 'zig-out\bin\ghoztty.exe'`) and gates or launches
+    # it must carry NeedsApp,
+    # and a flagged member must still do so - otherwise a new member that runs
+    # the app goes back to scoring staleness red.
+    # Pointing at the path is not enough (cleanslate-audit kills by it,
+    # stderr-launch-capture quotes it in fixtures): the member must also hand
+    # that exe to a call that gates or launches it, on a line that is not a
+    # quoted fixture.
+    $exeRef = "(?m)(\[string\]\`$Exe\s*=\s*'[^']*zig-out\\bin\\ghoztty\.exe'|Join-Path \`$repo 'zig-out\\bin\\ghoztty\.exe')"
+    $exeUse = "(?m)^[^'\r\n]*\b(Assert-GhozttyIsolatedBuild|Assert-GhozttyPrivateEndpoint|Assert-GhozttyFreshBuild|Test-GhozttyFreshBuild|Start-OnTestDesktop)\s+-Exe\s+\`$exe\b"
+    $appMembers = @(Get-HarnessFloorAppMembers $audits)
+    $drift = @(foreach ($a in $audits) {
+            $src = Get-Content -Raw -LiteralPath (Join-Path $testRoot $a.Name) -ErrorAction SilentlyContinue
+            $runs = [bool]($src -match $exeRef) -and [bool]($src -match $exeUse)
+            $flag = $appMembers -contains [string]$a.Name
+            if ($runs -ne $flag) { "$($a.Name): runs-real-exe=$runs NeedsApp=$flag" }
+        })
+    Assert 'I1 NeedsApp is set on exactly the members whose source runs the real zig-out exe' (
+        $drift.Count -eq 0 -and $appMembers.Count -ge 1) ("members=$($appMembers -join ',') drift=$($drift -join ' | ')")
+
+    . (Join-Path $Repo 'scripts\lib\AcceptanceFresh.ps1')
+    $fk = Join-Path $work 'fresh-repo'
+    foreach ($d in 'src', 'zig-out\bin') { New-Item -ItemType Directory -Force -Path (Join-Path $fk $d) | Out-Null }
+    Set-Content -LiteralPath (Join-Path $fk 'src\a.zig') -Value 'const a = 1;'
+    Set-Content -LiteralPath (Join-Path $fk 'build.zig') -Value 'build'
+    $fkExe = Join-Path $fk 'zig-out\bin\ghoztty.exe'
+    Copy-Item (Join-Path $env:SystemRoot 'System32\PING.EXE') $fkExe
+    $fkNow = Get-Date
+    function Set-FreshFixture([bool]$Stale) {
+        Remove-Item -LiteralPath (Join-Path $fk 'zig-out\bin\.build-fresh-witness.json') -Force -ErrorAction SilentlyContinue
+        foreach ($f in (Join-Path $fk 'src\a.zig'), (Join-Path $fk 'build.zig')) { (Get-Item $f).LastWriteTime = $fkNow.AddHours(-2) }
+        (Get-Item $fkExe).LastWriteTime = $fkNow.AddHours(-1)
+        if ($Stale) { (Get-Item (Join-Path $fk 'src\a.zig')).LastWriteTime = $fkNow.AddMinutes(-5) }
+    }
+    $appRow = @($audits | Where-Object { $_.NeedsApp } | Select-Object -First 1)
+    $srcRows = @($audits | Where-Object { -not $_.NeedsApp } | Select-Object -First 3)
+
+    Set-FreshFixture $true
+    $script:fkBuilds = 0
+    $p = Invoke-HarnessFloorFreshness -Repo $fk -Audits $srcRows -Builder { param($x) $script:fkBuilds++; $true }
+    Assert 'I2 a sweep with no app member never checks or builds, even over a stale exe' (
+        -not $p.Ran -and $p.Ok -and $script:fkBuilds -eq 0) "ran=$($p.Ran) builds=$($script:fkBuilds)"
+
+    $p = Invoke-HarnessFloorFreshness -Repo $fk -Audits ($srcRows + $appRow) -NoRebuild
+    Assert 'I3 THE PLANTED STALE APP under -NoRebuild is refused, and the line names the member' (
+        $p.Ran -and -not $p.Ok -and $p.State -eq 'refused' -and $p.Line -match [regex]::Escape($appRow[0].Name)) $p.Line
+
+    $p = Invoke-HarnessFloorFreshness -Repo $fk -Audits $appRow -Builder { param($x) $false }
+    Assert 'I4 a stale app whose rebuild fails is refused' (-not $p.Ok -and $p.Line -match 'rebuild FAILED') $p.Line
+
+    $script:fkBuilds = 0
+    $p = Invoke-HarnessFloorFreshness -Repo $fk -Audits $appRow -Builder { param($x) $script:fkBuilds++; $true }
+    $p2 = Invoke-HarnessFloorFreshness -Repo $fk -Audits $appRow -Builder { param($x) $script:fkBuilds++; $true }
+    Assert 'I5 a stale app is rebuilt once, and the next sweep finds it fresh' (
+        $p.Ok -and $p.State -eq 'rebuilt' -and $p2.State -eq 'fresh' -and $script:fkBuilds -eq 1) "first=$($p.State) second=$($p2.State) builds=$($script:fkBuilds)"
+
+    # I6: the runner itself, end to end - a stale app under -NoRebuild stops the
+    # sweep before suite-run starts anything (no OutDir summary), exit 1, with
+    # the rebuild named. The lock flag keeps it from queueing behind a real
+    # sweep on the box.
+    Set-FreshFixture $true
+    New-Item -ItemType Directory -Force -Path (Join-Path $fk 'test\win32') | Out-Null
+    $i6Out = Join-Path $work 'i6-out'
+    $env:GHOZTTY_FLOOR_LOCK_HELD = '1'
+    $i6 = @(& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\harness-floor.ps1') `
+            -Repo $fk -Include $appRow[0].Name -NoRebuild -OutDir $i6Out -RecordPath (Join-Path $work 'i6-rec.json') `
+            -VerifiedPath (Join-Path $work 'i6-ver.json') -DryRunStamp 2>&1 | ForEach-Object { "$_" })
+    $i6Code = $LASTEXITCODE
+    Remove-Item Env:GHOZTTY_FLOOR_LOCK_HELD -ErrorAction SilentlyContinue
+    $i6Text = $i6 -join "`n"
+    Assert 'I6 harness-floor.ps1 refuses a stale app before any member runs, and names the build that clears it' (
+        $i6Code -eq 1 -and $i6Text -match 'BUILD STALE - REFUSED' -and $i6Text -match 'zig build -Dapp-runtime=win32 -Doptimize=Debug' -and
+        -not (Test-Path (Join-Path $i6Out 'summary.json'))) "exit=$i6Code :: $i6Text"
+
     if ($NegativeControl) {
         "  NEGATIVE CONTROL: one assertion is inverted below; this run MUST be red"
         Assert 'N1 (inverted) the floor set is empty' ($audits.Count -eq 0) "count=$($audits.Count)"

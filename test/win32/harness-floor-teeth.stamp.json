@@ -1,22 +1,23 @@
 {
     "guard":  "harness-floor-teeth",
     "script":  "test/win32/harness-floor.ps1",
-    "generated":  "2026-11-20T18:27:15-08:00",
-    "commit":  "62b4164eb",
+    "generated":  "2026-11-20T19:01:41-08:00",
+    "commit":  "86351bf07",
     "uncommitted":  [
+                        "scripts/harness-floor.ps1",
                         "scripts/lib/HarnessFloor.ps1",
                         "test/win32/harness-floor.ps1"
                     ],
     "files":  {
                   "scripts/floor-lane.ps1":  "6dda749300bdd3ff549b1e28d4a5efca36f9bcc6d61deee2c5dfc7f4475e8cf3",
-                  "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
-                  "scripts/lib/HarnessFloor.ps1":  "4e0c6355e5501418c364152a2e77d42320d45d52b5e0d6e7c90c76d3ba74452e",
-                  "test/win32/harness-floor.ps1":  "2de63ef87a892548880eab65d0a015dadec00044486a5ce1c3bbe28c3b5e68b3"
+                  "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
+                  "scripts/lib/HarnessFloor.ps1":  "e79eb696cb2e374a83f935c033b67630009a48d84535f40cd7e9375e28700d3e",
+                  "test/win32/harness-floor.ps1":  "1db054250529b447363a296512d10e0b44eef62f4ac94b957ddd29ef11c922c5"
               },
     "code":  {
                  "scripts/floor-lane.ps1":  "code1:fc9b977ddf5f396bd8d2245356ca7fbef2d23b1dd1b683f8533f5a095394c33d",
-                 "scripts/harness-floor.ps1":  "code1:bcf8b66bd9e8af932cd1d21580635c65d6561668927201cfc7589ebbe95a6f66",
-                 "scripts/lib/HarnessFloor.ps1":  "code1:4240f0478a4eab451544748599f01cb1bc56becf2d9cdb96c991ab1f4ff41c73",
-                 "test/win32/harness-floor.ps1":  "code1:9198474e822b53b5ec6c6bd1f7e195a6d4a62c776d735977a92527f7e24e2f3d"
+                 "scripts/harness-floor.ps1":  "code1:ed864d27ef0d14d42b6b63b586c0ebbd70bbd8f58c3a8072d1ba67ba3b54a7ca",
+                 "scripts/lib/HarnessFloor.ps1":  "code1:69ec655e8f455ca29d0481d4e73a5d8ca5d3c1f5cd38bf7da8106aaef52539ec",
+                 "test/win32/harness-floor.ps1":  "code1:73c297c4d87d6c4eb0196fd59938b64ee66c20a0ae3357c73d3b9e4e63d8875f"
              }
 }

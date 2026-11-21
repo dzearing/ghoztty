@@ -115,7 +115,11 @@ param(
     [double]$MaxFullAgeHours = 26,
 
     # With -Scoped: print what would run, and why, and run nothing.
-    [switch]$PlanOnly
+    [switch]$PlanOnly,
+
+    # T1571: refuse a stale app instead of rebuilding it, when the sweep
+    # includes a member that grades zig-out\bin\ghoztty.exe.
+    [switch]$NoRebuild
 )
 
 $ErrorActionPreference = 'Stop'
@@ -242,6 +246,18 @@ else {
         if (-not $floorLock.Acquired) {
             Write-Host "FLOOR LOCK: running the sweep anyway - two sweeps at once are slower, not wrong"
         }
+    }
+    # T1571: the NeedsApp members grade the real app and each refuses a stale one;
+    # without this the sweep after any .zig edit (floor-lane -Lane all never
+    # builds the app) spent its minutes scoring those refusals red. Rebuild once
+    # here, or stop before anything runs and say which build clears it.
+    . (Join-Path $PSScriptRoot 'lib\AcceptanceFresh.ps1')
+    $fresh = Invoke-HarnessFloorFreshness -Repo $Repo -Audits $audits -NoRebuild:$NoRebuild
+    if ($fresh.Ran) { Write-Host $fresh.Line }
+    if (-not $fresh.Ok) {
+        Write-Host ''
+        Write-Host "HARNESS FLOOR: 1 FAILURE(S) - the app build is stale and was not rebuilt; nothing ran. Build it: zig build -Dapp-runtime=win32 -Doptimize=Debug"
+        exit 1
     }
     Write-Host "harness floor: $($audits.Count) audit(s) via suite-run -Jobs $Jobs -> $OutDir"
     # T1969: a scoped sweep tells its members which top-level scripts changed,

@@ -52,6 +52,11 @@ Set-StrictMode -Off
 #
 # Owns (T1958): files outside test\win32\ that only this member reads, so an
 # edit there selects this member instead of forcing a full sweep.
+#
+# NeedsApp (T1571): the member grades the repo's real zig-out\bin\ghoztty.exe
+# and refuses a stale one, so a sweep that selects it rebuilds a stale app once
+# first (Invoke-HarnessFloorFreshness). test\win32\harness-floor.ps1 fails a
+# member whose source runs that exe without the flag.
 $script:HARNESS_FLOOR_AUDITS = @(
     [pscustomobject]@{ Name = 'harness-exitcode-audit.ps1'; Why = 'a script exits the code its verdict implies (T197)' }
     [pscustomobject]@{ Name = 'verdict-exit-audit.ps1'; Why = 'a scorer cannot fall through without printing a verdict' }
@@ -66,7 +71,7 @@ $script:HARNESS_FLOOR_AUDITS = @(
     [pscustomobject]@{ Name = 'pixel-oracle-audit.ps1'; Why = 'a pixel aggregate scores its subject''s region, or says why the whole capture is the region, so chrome alone cannot pass it (T1281)' }
     [pscustomobject]@{ Name = 'seam-audit.ps1'; Why = 'an env seam a script sets is classified, so the state it hides is armed, a named gap, or knowingly out of reach (T796)' }
     [pscustomobject]@{ Name = 'isolation-meta.ps1'; Why = 'a script drives its own endpoints, never the user terminal''s' }
-    [pscustomobject]@{ Name = 'build-mode-guard.ps1'; Why = 'a run refuses a release-lineage build before it launches anything (T350)' }
+    [pscustomobject]@{ Name = 'build-mode-guard.ps1'; Why = 'a run refuses a release-lineage build before it launches anything (T350)'; NeedsApp = $true }
     [pscustomobject]@{ Name = 'launch-preflight-audit.ps1'; Why = 'no script launches the app without asking what build it is (T1033)' }
     [pscustomobject]@{ Name = 'cleanslate-audit.ps1'; Why = 'shared state is cleared per script, so order cannot decide a verdict' }
     [pscustomobject]@{ Name = 'persistence-flag.ps1'; Why = 'a script states its persistence intent rather than inheriting one (T158)' }
@@ -82,7 +87,7 @@ $script:HARNESS_FLOOR_AUDITS = @(
     [pscustomobject]@{ Name = 'test-wait-oracle.ps1'; Why = 'a wait is bounded by the wall clock, never by a count of spins (T831)' }
     [pscustomobject]@{ Name = 'foreground-audit.ps1'; Why = 'a script states what it does to the foreground window (T272/T276)' }
     [pscustomobject]@{ Name = 'control-char-scan.ps1'; Why = 'no script carries a control character that breaks it on another box' }
-    [pscustomobject]@{ Name = 'build-fresh-guard.ps1'; Why = 'a run measures the build it thinks it measures, not a stale one' }
+    [pscustomobject]@{ Name = 'build-fresh-guard.ps1'; Why = 'a run measures the build it thinks it measures, not a stale one'; NeedsApp = $true }
     [pscustomobject]@{ Name = 'job-teardown.ps1'; Why = 'a job object a test creates is torn down with its processes (T1517)' }
     [pscustomobject]@{ Name = 'fixture-name-audit.ps1'; Why = 'a fixture plants the filename it reads as, not one Windows quietly rewrites (T1501)' }
     [pscustomobject]@{ Name = 'vt-escape-scan.ps1'; Why = 'no script writes ``e for ESC, which under 5.1 is the letter e (T740)'; Owns = @('scripts\vt-escape-scan.ps1') }
@@ -188,6 +193,52 @@ function Get-HarnessFloorTier($Audit) {
 }
 
 function Get-HarnessFloorPending { return $script:HARNESS_FLOOR_PENDING }
+
+# The members of $Audits that grade the repo's real zig-out\bin\ghoztty.exe
+# (NeedsApp, T1571), by name.
+function Get-HarnessFloorAppMembers($Audits) {
+    return @(@($Audits) | Where-Object { $_ -and $_.NeedsApp } | ForEach-Object { [string]$_.Name })
+}
+
+<#
+.SYNOPSIS
+T1571: settle whether zig-out is the code under test before a sweep that
+includes a member grading the real app. Returns { Ran, Ok, State, Line }.
+
+.DESCRIPTION
+The members with NeedsApp on their rows read the repo's own ghoztty.exe; each
+refuses a stale one through test\win32\lib\BuildFresh.ps1 - correctly, and too
+late: `floor-lane.ps1 -Lane all` builds test binaries, never the app, so the
+sweep that follows any .zig edit spent ten minutes to score three or four red
+rows whose text named GHOZTTY_TEST_ALLOW_STALE rather than "rebuild". This asks
+the T1961 question once, up front, exactly the way acceptance-parallel.ps1
+does: fresh -> one line; stale -> rebuild once (Debug); a failed rebuild, or a
+stale exe under -NoRebuild -> refused, with nothing run.
+
+A sweep with no such member does not ask (Ran = $false): a source-only scoped
+sweep must not start a multi-minute build it does not need. Needs
+scripts\lib\AcceptanceFresh.ps1 loaded by the caller (harness-floor.ps1 does);
+-Builder is passed straight through, so a harness can play the stale case
+without compiling.
+#>
+function Invoke-HarnessFloorFreshness {
+    param(
+        [Parameter(Mandatory = $true)][string]$Repo,
+        $Audits,
+        [switch]$NoRebuild,
+        [scriptblock]$Builder
+    )
+    $needs = @(Get-HarnessFloorAppMembers $Audits)
+    if ($needs.Count -eq 0) {
+        return [pscustomobject]@{ Ran = $false; Ok = $true; State = 'not-needed'; Line = 'BUILD NOT CHECKED: no member in this sweep runs the app' }
+    }
+    $p = if ($Builder) { Invoke-AcceptanceFreshPreflight -Repo $Repo -NoRebuild:$NoRebuild -Builder $Builder }
+         else { Invoke-AcceptanceFreshPreflight -Repo $Repo -NoRebuild:$NoRebuild }
+    return [pscustomobject]@{
+        Ran = $true; Ok = [bool]$p.Ok; State = [string]$p.State
+        Line = ("{0} (for {1})" -f $p.Line, ($needs -join ', '))
+    }
+}
 
 <#
 .SYNOPSIS
