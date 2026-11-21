@@ -68,6 +68,22 @@ function Get-IdeJson {
     $j.data.windows | Where-Object { $_.target -eq 'p2ide' }
 }
 
+# T1727: the same snapshot for a POLL. A parse failure here is "not yet", never
+# a scored setup failure - Need-Parsed inside a poll would score once per
+# attempt (the P3 rearranged-tree wait reads raw for the same reason). The
+# asserted snapshot after each wait still goes through the checked Get-IdeJson.
+function Get-IdeJsonRaw {
+    $j = $null
+    try { $j = (Ghoz @('+list', '--json')).StdOut | ConvertFrom-Json } catch {}
+    if ($null -eq $j) { return $null }
+    $j.data.windows | Where-Object { $_.target -eq 'p2ide' }
+}
+
+function Get-IdeLeafCount($ide) {
+    if ($null -eq $ide) { return -1 }
+    return ([regex]::Matches(($ide | ConvertTo-Json -Depth 15), '"type":\s*"leaf"')).Count
+}
+
 # T379: poll +list until a pattern shows, so the FIRST launch of a
 # just-replaced exe (cold: Defender scan, no cache) cannot outrun a fixed
 # sleep. Warm runs resolve on the first poll.
@@ -102,13 +118,23 @@ Need-Listed 'the p2ide fixture window' '\[target: p2ide\]' (Wait-ListMatch '\[ta
 Start-Sleep -Seconds 3
 # Before the first +send-keys: prove the instance answering is ours.
 Assert-GhozttyIsolated -Exe $Exe
+# T1727: every effect below is POLLED for, bounded by Wait-FloorState's clock
+# (the T1156 fix P3 already carries), instead of read once after a fixed sleep
+# that a slow box outruns. NominalMs is the sleep each wait replaced, so a run
+# that only settles past it says so with a NOTE SLOW STATE line.
 $r = Ghoz @('+split', '--target=p2ide', '--name=p2term', '--direction=down')
 Assert "split 1 exit 0" ($r.ExitCode -eq 0)
-Start-Sleep -Seconds 1
+# The second split goes in only once the first is registered.
+[void](Wait-FloorState 'the p2term pane' -NominalMs 1000 { (Get-List) -match '\[name: p2term\]' })
 $r = Ghoz @('+split', '--target=p2ide', '--name=p2logs', '--direction=right')
 Assert "split 2 exit 0" ($r.ExitCode -eq 0)
-Start-Sleep -Seconds 2
-$list = Get-List
+$script:p2List = ''
+[void](Wait-FloorState 'the three-pane layout' -NominalMs 2000 {
+    $script:p2List = Get-List
+    ($script:p2List -match '\[name: p2term\]') -and ($script:p2List -match '\[name: p2logs\]') -and
+        ((Get-IdeLeafCount (Get-IdeJsonRaw)) -eq 3)
+})
+$list = $script:p2List
 Assert "p2term registered" ($list -match '\[name: p2term\]')
 Assert "p2logs registered" ($list -match '\[name: p2logs\]')
 $ide = Get-IdeJson
@@ -118,6 +144,9 @@ Assert "3 leaves in p2ide" (([regex]::Matches($ideText, '"type":\s*"leaf"')).Cou
 "== 2: idempotent +split --name (no new pane)"
 $r = Ghoz @('+split', '--target=p2ide', '--name=p2term', '--direction=down')
 Assert "exit 0" ($r.ExitCode -eq 0)
+# T1727: the one settle that stays. "No new pane" has no positive state to poll
+# for - the leaf that must NOT appear never does - so this is the window a late
+# duplicate gets to show up in, not a guess at when an effect lands.
 Start-Sleep -Seconds 1
 $ideText = Get-IdeJson | ConvertTo-Json -Depth 15
 Assert "still 3 leaves" (([regex]::Matches($ideText, '"type":\s*"leaf"')).Count -eq 3)
@@ -125,7 +154,10 @@ Assert "still 3 leaves" (([regex]::Matches($ideText, '"type":\s*"leaf"')).Count 
 "== 3: +split --pane targeting"
 $r = Ghoz @('+split', '--pane=p2term', '--direction=right', '--name=p2deep', '--percent=30')
 Assert "exit 0" ($r.ExitCode -eq 0)
-Start-Sleep -Seconds 2
+[void](Wait-FloorState 'the p2deep split' -NominalMs 2000 {
+    $t = Get-IdeJsonRaw | ConvertTo-Json -Depth 15
+    ($t -match 'p2deep') -and ($t -match '0\.7')
+})
 $ideText = Get-IdeJson | ConvertTo-Json -Depth 15
 Assert "p2deep created" ($ideText -match 'p2deep')
 Assert "percent ratio applied" ($ideText -match '0\.7')
@@ -133,13 +165,11 @@ Assert "percent ratio applied" ($ideText -match '0\.7')
 "== 4: +send-keys executes (shell title change observable via +list)"
 $r = Ghoz @('+send-keys', '--target=p2term', 'title P2-SENT-OK', 'Enter')
 Assert "exit 0" ($r.ExitCode -eq 0)
-Start-Sleep -Seconds 2
-Assert "command ran in pane" ((Get-List) -match 'P2-SENT-OK')
+Assert "command ran in pane" (Wait-FloorState 'the P2-SENT-OK shell title' -NominalMs 2000 { (Get-List) -match 'P2-SENT-OK' })
 
 "== 5: +send-keys escapes (\n) and C-c accepted"
 [void](Ghoz @('+send-keys', '--target=p2term', 'title P2-ESCAPED\n'))
-Start-Sleep -Seconds 2
-Assert "escape-run title" ((Get-List) -match 'P2-ESCAPED')
+Assert "escape-run title" (Wait-FloorState 'the P2-ESCAPED shell title' -NominalMs 2000 { (Get-List) -match 'P2-ESCAPED' })
 $r = Ghoz @('+send-keys', '--target=p2term', 'C-c')
 Assert "C-c exit 0" ($r.ExitCode -eq 0)
 
@@ -150,14 +180,18 @@ Assert "nonzero exit" ($r.ExitCode -ne 0)
 "== 7: +rename override wins over terminal titles"
 $r = Ghoz @('+rename', '--target=p2ide', '--title=P2-OVERRIDE')
 Assert "rename exit 0" ($r.ExitCode -eq 0)
-Start-Sleep -Seconds 1
 # Debug builds append a " [DEBUG]" marker inside the quoted title.
-Assert "window title is override" ((Get-List) -match 'Window: "P2-OVERRIDE( \[DEBUG\])?"')
+Assert "window title is override" (Wait-FloorState 'the P2-OVERRIDE window title' -NominalMs 1000 { (Get-List) -match 'Window: "P2-OVERRIDE( \[DEBUG\])?"' })
 [void](Ghoz @('+send-keys', '--target=p2term', 'title P2-SHELL-FIGHTS\n'))
-Start-Sleep -Seconds 2
-$list = Get-List
-Assert "override still wins" ($list -match 'Window: "P2-OVERRIDE( \[DEBUG\])?"')
-Assert "tab title tracks shell" ($list -match 'P2-SHELL-FIGHTS')
+# T1727: wait for the POSITIVE (the shell's title reached the tab) first, and
+# only then read the negative from that same snapshot - "override still wins"
+# would otherwise pass on a title the shell simply had not changed yet.
+$script:p2List = ''
+Assert "tab title tracks shell" (Wait-FloorState 'the P2-SHELL-FIGHTS tab title' -NominalMs 2000 {
+    $script:p2List = Get-List
+    $script:p2List -match 'P2-SHELL-FIGHTS'
+})
+Assert "override still wins" ($script:p2List -match 'Window: "P2-OVERRIDE( \[DEBUG\])?"')
 
 "== 8: +rename missing target errors"
 $r = Ghoz @('+rename', '--target=p2ghost', '--title=x')

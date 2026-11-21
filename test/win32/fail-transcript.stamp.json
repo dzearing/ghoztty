@@ -1,22 +1,19 @@
 {
     "guard":  "fail-transcript",
     "script":  "test/win32/fail-transcript.ps1",
-    "generated":  "2026-11-21T10:30:47-08:00",
-    "commit":  "8cb6d6817",
+    "generated":  "2026-11-21T14:41:01-08:00",
+    "commit":  "4867de175",
     "uncommitted":  [
-                        "test/win32/ipc-floor-setup.ps1",
                         "test/win32/ipc-p1.ps1",
-                        "test/win32/ipc-p2.ps1",
-                        "test/win32/ipc-p3.ps1",
-                        "test/win32/ipc-target-exists-note.ps1"
+                        "test/win32/ipc-p2.ps1"
                     ],
     "files":  {
                   "test/win32/cli-argv-fidelity.ps1":  "c51d36e42d332a1085d12418098befe48a46aa119badb5173be35727cc598221",
                   "test/win32/fail-transcript.ps1":  "707a88600b425647c186a194594404490be96e76acc20ee4de2dd0f04f3306c7",
                   "test/win32/ipc-floor-setup.ps1":  "ff0383e4ea86e6927d7ebaa585dbef58b23b94d9512b7b28a6cd5fb3fa11be4b",
                   "test/win32/ipc-list-session-id.ps1":  "191cea290a106a5b0610c258bc70a09453001d70108c243d991d42c69ac915c2",
-                  "test/win32/ipc-p1.ps1":  "fb9425579d9543f4ab30979610f9ab5f6c20403819f21d009abe242980d19c72",
-                  "test/win32/ipc-p2.ps1":  "682d079e3f314bd46a7d26d600dfb257e4aa7ac50d8b9bde6ebc884f9706e499",
+                  "test/win32/ipc-p1.ps1":  "4c42469cf2230b427ed3f88fe2886bb70196b416802d0fa56f347fcef02e6744",
+                  "test/win32/ipc-p2.ps1":  "47ce0321660f3211bd2e21417ba3a19290cc5c5d0317080ddfcc2af274ec53c9",
                   "test/win32/ipc-p3.ps1":  "edb9916fa8997b7b6cd0d3b3b8b3880fd6e6bba5907aae72eca47c63f6348797",
                   "test/win32/ipc-target-exists-note.ps1":  "a0170e8b88c46f8732de681dfd0457b7b864ec0f8b91c133bb8dd00abf175dce",
                   "test/win32/lib/Transcript.ps1":  "ee440358fdf0d9aee8802817afc995bcefae733b991ba7e5fdf2b82964c09334"
@@ -26,8 +23,8 @@
                  "test/win32/fail-transcript.ps1":  "code1:36a7df4d51d82d42ff64b28d3a6556b0c0a037deb2f6d7e0de85ae8ae7220664",
                  "test/win32/ipc-floor-setup.ps1":  "code1:12a0d7844314b23986f7d938fe7b42837e944e4df6f26d0057818958a3751a8d",
                  "test/win32/ipc-list-session-id.ps1":  "code1:26be3cb64f34c1937a46fadb3496b41b1916f2f2660df10575b8a9739e039427",
-                 "test/win32/ipc-p1.ps1":  "code1:933e06ea7c69d80f5085088b003a6fe00a91d99bf667bd9f16490adee6609909",
-                 "test/win32/ipc-p2.ps1":  "code1:824f859d60ccd15a05424bf53982b5be85fccf212eca3dc8920d70a186ef7f61",
+                 "test/win32/ipc-p1.ps1":  "code1:199ed6cb0896b85dbfadc96791645117af5fbc036d3d0590c012350babcc5f3b",
+                 "test/win32/ipc-p2.ps1":  "code1:f8b37dada945f3ef8603c7993138014d3cc8adaca560ed2c5e3354ad1a4c6970",
                  "test/win32/ipc-p3.ps1":  "code1:739ce97cce57c16bf074cd70ce0bebc97194e2d6b9f8896f2644f26e78505009",
                  "test/win32/ipc-target-exists-note.ps1":  "code1:f7e2fc07afd275e7ebdb3f91f5127924b4b1a4c2c48c5406bfae104bda503aca",
                  "test/win32/lib/Transcript.ps1":  "code1:d63e2806156d0168cc34ce229c7693253b67742628ac7386bdb8d91faa1d93a2"

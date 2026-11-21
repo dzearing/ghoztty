@@ -112,6 +112,10 @@ Assert "title override shows" ($list -match 'P1Title')
 "== 2: idempotent re-create focuses, no duplicate"
 $r = Ghoz @('+new-window', '--target=p1win')
 Assert "exit 0" ($r.ExitCode -eq 0)
+# T1727: the one settle that stays. "No duplicate" has no positive state to
+# poll for - the window that must NOT appear never does - so this is the
+# window a late duplicate gets to show up in, not a guess at when an effect
+# lands. Every other read below polls for its effect.
 Start-Sleep -Seconds 1
 $list = Get-List
 Assert "still exactly one p1win" (([regex]::Matches($list, '\[target: p1win\]')).Count -eq 1)
@@ -174,18 +178,22 @@ Assert "local window publishes no connection object" (
 "== 6: +close named pane"
 $r = Ghoz @('+close', '--target=p1term')
 Assert "exit 0" ($r.ExitCode -eq 0)
-Start-Sleep -Seconds 1
-$list = Get-List
-Assert "pane gone" (-not ($list -match '\[name: p1term\]'))
+# T1727: polled, not read once after a fixed sleep (the T1156 shape). The pane
+# was listed in section 3, so "gone" is a change that has to happen, and the
+# window check after it is a read taken once the close has landed.
+$script:p1List = ''
+Assert "pane gone" (Wait-FloorState 'the closed p1term pane' -NominalMs 1000 {
+    $script:p1List = Get-List
+    -not ($script:p1List -match '\[name: p1term\]')
+})
+$list = $script:p1List
 Assert "window still there" ($list -match '\[target: p1ide\]')
 
 "== 7: +close windows"
 $r = Ghoz @('+close', '--target=p1ide')
 Assert "close window exit 0" ($r.ExitCode -eq 0)
 [void](Ghoz @('+close', '--target=p1exec'))
-Start-Sleep -Seconds 1
-$list = Get-List
-Assert "p1ide gone" (-not ($list -match '\[target: p1ide\]'))
+Assert "p1ide gone" (Wait-FloorState 'the closed p1ide window' -NominalMs 1000 { -not ((Get-List) -match '\[target: p1ide\]') })
 
 "== 8: +close missing target is silent success"
 $r = Ghoz @('+close', '--target=does-not-exist')
@@ -197,9 +205,15 @@ $before = ([regex]::Matches((Get-List), '(?m)^Window:')).Count
 $second = Invoke-OnTestDesktop -Exe $Exe -TimeoutSec 15
 Assert "second instance exited" (-not $second.TimedOut)
 if (-not $second.TimedOut) { Assert "exit code 0" ($second.ExitCode -eq 0) }
-Start-Sleep -Seconds 2
+# T1727: poll for the forwarded window; the count is re-read once it settles so
+# an over-count (two windows for one launch) still scores red.
+$script:p1After = -1
+[void](Wait-FloorState 'the forwarded new-window' -NominalMs 2000 {
+    $script:p1After = ([regex]::Matches((Get-List), '(?m)^Window:')).Count
+    $script:p1After -ge ($before + 1)
+})
 $after = ([regex]::Matches((Get-List), '(?m)^Window:')).Count
-Assert "window count grew" ($after -eq ($before + 1))
+Assert "window count grew ($before -> $after)" ($after -eq ($before + 1))
 
 }  # Invoke-FloorBody - teardown below runs whether or not the body stopped early
 
