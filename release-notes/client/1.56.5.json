@@ -1,0 +1,19 @@
+{
+  "version": "1.56.5",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "Restart Ghoztty and Background Sessions now really ends your running sessions." },
+        { "text": "A viewer's worktree poll no longer queues behind its own lookup." },
+        { "text": "job-escape-startup's flaky section B is green 10 of 10 now, and a red B says why its log is empty." },
+        { "text": "A pane that \"died silently\" was killed from outside, and the crash report now names that exit code." },
+        { "text": "The dashboard launcher no longer hangs a script that captures its output." },
+        { "text": "A user-report close no longer cuts a second, empty release when the release that carries its fix has already gone out." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "T1651 closed as superseded: the due sweep's real cost is its serial exclusive tail." },
+        { "text": "The task dashboard's poll drops from 13.7 MB to 603 KB on the wire." }
+      ] }
+  ]
+}
