@@ -507,6 +507,54 @@
         });
       })
       .then(function () {
+        /* --- the '#' sort is the loop's queue, not order: alone (T1723) ---- */
+        var qc = window.queueCompare;
+        if (typeof qc !== 'function') { check('C60 the page defines queueCompare', false, 'missing'); return; }
+        var ids = function (list) {
+          return list.slice().sort(function (a, b) { return qc(a, b, 'M1'); })
+            .map(function (t) { return t.id; }).join(',');
+        };
+        // Sort-TaskQueue's rules, shape by shape (parity-tasks-seat.ps1 K/K3).
+        var got = ids([
+          { id: 'T10', priority: 'P2', milestone: null, order: 1 },
+          { id: 'T20', priority: 'P1', milestone: null, order: null },
+          { id: 'T30', priority: null, milestone: 'M1', order: 1 },
+          { id: 'T40', priority: 'P3', milestone: null, order: null }
+        ]);
+        check('C60 priority outranks order, and untriaged sorts behind P3', got === 'T20,T10,T40,T30', got);
+        got = ids([
+          { id: 'T5', priority: 'P2', milestone: null, order: 1 },
+          { id: 'T900', priority: 'P2', milestone: 'M1', order: null }
+        ]);
+        check('C61 inside a band an M1 member beats a hand-placed non-member', got === 'T900,T5', got);
+        got = ids([
+          { id: 'T7', priority: 'P2', milestone: null, order: null },
+          { id: 'T50', priority: 'P2', milestone: null, order: 3 },
+          { id: 'T60', priority: 'P2', milestone: null, order: 2.5 },
+          { id: 'T3', priority: 'P2', milestone: null, order: null }
+        ]);
+        check('C62 then order, unplaced last, then the id number ascending', got === 'T60,T50,T3,T7', got);
+        // Wiring: the default table IS that order.
+        go('tasks');
+        return waitFor(function () {
+          var b = document.querySelector('#tbody');
+          return b && b.children.length ? b : null;
+        }, 'task rows').then(function (body) {
+          var shown = [];
+          if (body) for (var i = 0; i < body.children.length; i++) {
+            var td = body.children[i].querySelectorAll('td')[1];
+            shown.push(td ? td.textContent.trim() : '');
+          }
+          var byId = {};
+          (state.data.tasks || []).forEach(function (t) { byId[t.id] = t; });
+          var want = shown.map(function (id) { return byId[id]; }).filter(Boolean)
+            .sort(function (a, b) { return qc(a, b); }).map(function (t) { return t.id; });
+          check('C63 the default tasks table is sorted by queueCompare',
+            state.sort.key === 'order' && shown.length > 1 && shown.join(',') === want.join(','),
+            'key=' + state.sort.key + ' shown=' + shown.slice(0, 6).join(',') + ' want=' + want.slice(0, 6).join(','));
+        });
+      })
+      .then(function () {
         check('C30 nothing threw during the whole run', errors.length === 0, errors.join(' | '));
       })
       .catch(function (e) {

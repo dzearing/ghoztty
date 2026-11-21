@@ -1,19 +1,17 @@
 {
     "guard":  "dashboard-dom",
     "script":  "test/win32/dashboard-dom.ps1",
-    "generated":  "2026-11-21T09:36:53-08:00",
-    "commit":  "356000632",
+    "generated":  "2026-11-21T13:39:58-08:00",
+    "commit":  "94b3bae09",
     "uncommitted":  [
-                        "scripts/task-dashboard.js",
                         "scripts/task-dashboard.page.html",
-                        "test/win32/lib/dashboard-dom-selftest.js",
-                        "test/win32/lib/dashboard-stub-server.js"
+                        "test/win32/lib/dashboard-dom-selftest.js"
                     ],
     "files":  {
                   "scripts/task-dashboard.js":  "73937d8335b48fb979078178c85d7c048a5f978b63d5efe855f9eb465c7692db",
-                  "scripts/task-dashboard.page.html":  "9a08aff1175a913bb1f1e8f26acac7d9e6f001126db50abf87b54952db6c9a80",
+                  "scripts/task-dashboard.page.html":  "84977f7550a00e9fb174f773be5b557da00cca25dbfdbe23e4e7823287cf2df5",
                   "test/win32/dashboard-dom.ps1":  "5c8bec2cd488707972cd1b71ae0c4e0bdbc61d2f7d7a844d8c24aa50b0cc3b62",
-                  "test/win32/lib/dashboard-dom-selftest.js":  "aefa31c434776d9c4eb8d4e8edf609d7419b268def043846258120503c37702b",
+                  "test/win32/lib/dashboard-dom-selftest.js":  "c9eafca412d585dbe94ff3a63893bef61624b163f93209f37b1d288b47734cbe",
                   "test/win32/lib/dashboard-stub-server.js":  "2d8d027ef64c3c5820f6f3eb159990c3f68d891a1b04eaa0a3b2d37c1b322ca8"
               },
     "code":  {

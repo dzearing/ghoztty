@@ -2064,7 +2064,7 @@ function tasksView(d) {
     ])]),
     h('tbody', { id: 'tbody' })
   ]);
-  var c = card('All tasks', 'Queue order first — # is what the loop works down. Click a row for the full task, or a header to re-sort.',
+  var c = card('All tasks', 'Queue order first — sorted by # the rows run the way the loop picks: priority, then M1, then # (hand-placed order), then id. Click a row for the full task, or a header to re-sort.',
     [controls, h('div', { class: 'tv-wrap' }, [table])]);
   // The row count lives IN the title — "All tasks (129 of 592 total)" — not
   // as a stray label dangling right of the filters (user, 2026-08-07).
@@ -2091,6 +2091,27 @@ function idRank(id) {
 /** P0 first, then P1/P2/P3, untriaged last of all: "somebody looked and put
     this last" outranks "nobody has looked yet" (T345). */
 function priRank(p) { return p === 'P0' ? 0 : p === 'P1' ? 1 : p === 'P2' ? 2 : p === 'P3' ? 3 : 9; }
+
+/** The loop's queue order — a copy of Sort-TaskQueue in
+    scripts/parity-tasks.ps1, the one place `next` and `list` rank from
+    (T1723): priority, then membership of the current milestone (T1722), then
+    `order:` with an unplaced task last in its band, then the id's number.
+    The '#' sort used to read `order:` alone, so its head was not what `next`
+    hands out. Keep the two in step; test/win32/dashboard-dom.ps1 C60-C63
+    hold this copy to the PowerShell one's rules. */
+function queueCompare(a, b, milestone) {
+  var ms = milestone || (state.data && state.data.milestone && state.data.milestone.name) || 'M1';
+  var d = priRank(a.priority) - priRank(b.priority);
+  if (d) return d;
+  d = (a.milestone === ms ? 0 : 1) - (b.milestone === ms ? 0 : 1);
+  if (d) return d;
+  var ao = a.order == null ? Infinity : Number(a.order);
+  var bo = b.order == null ? Infinity : Number(b.order);
+  if (ao !== bo) return ao < bo ? -1 : 1;
+  d = idRank(a.id) - idRank(b.id);
+  if (d) return d;
+  return String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0;
+}
 
 /** A date cell: short label, full date + time on hover, em dash when unknown. */
 function dateCell(ts, cls) {
@@ -2290,14 +2311,8 @@ function renderTasks() {
   rows.sort(function (a, b) {
     var k = state.sort.key;
     if (k === 'order') {
-      // Unordered tasks park at the end in BOTH directions: flipping the sort
-      // is meant to show you the tail of the queue, not 300 blanks.
-      var ao = a.order, bo = b.order;
-      if (ao == null && bo == null) return idRank(b.id) - idRank(a.id);
-      if (ao == null) return 1;
-      if (bo == null) return -1;
-      if (ao !== bo) return (ao - bo) * dir;
-      return idRank(a.id) - idRank(b.id);
+      // The real queue, head first (T1723); flipped, it is the queue's tail.
+      return queueCompare(a, b) * dir;
     }
     if (k === 'priority') {
       // Untriaged after P2, always — an unranked task must not outrank one
