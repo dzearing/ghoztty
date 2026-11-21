@@ -352,13 +352,17 @@ if (-not (Get-Variable -Name GhozttyAgentEndpointsCache -Scope Script -ErrorActi
 function Get-GhozttyAgentEndpoints {
     <#
     .SYNOPSIS
-    The endpoint family ('debug' or 'release') $Exe says it derives, read from
-    its own `--build-mode` output; $null when it prints no such line.
+    The endpoint family ('debug' or 'release') the AGENT binary says it
+    derives, read from its own `--build-mode` output; $null when it prints no
+    such line. The parameter is `-AgentBinary` (alias `-Exe`) rather than
+    `$Exe` because the binary is the agent, which prints and exits: under the
+    app's name the desktop-launch audit reads the probe as a launch of the app
+    (T1598).
     #>
-    param([Parameter(Mandatory = $true)][string]$Exe)
+    param([Parameter(Mandatory = $true)][Alias('Exe')][string]$AgentBinary)
 
-    if ($script:GhozttyAgentEndpointsCache.ContainsKey($Exe)) {
-        return $script:GhozttyAgentEndpointsCache[$Exe]
+    if ($script:GhozttyAgentEndpointsCache.ContainsKey($AgentBinary)) {
+        return $script:GhozttyAgentEndpointsCache[$AgentBinary]
     }
     $family = $null
     try {
@@ -368,7 +372,7 @@ function Get-GhozttyAgentEndpoints {
         $prevEap = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
-            $raw = (& $Exe --build-mode 2>&1 | ForEach-Object { $_.ToString() } | Out-String)
+            $raw = (& $AgentBinary --build-mode 2>&1 | ForEach-Object { $_.ToString() } | Out-String)
         } finally { $ErrorActionPreference = $prevEap }
         if ($raw -match '(?m)^\s*-\s*endpoints\s*:\s*(debug|release)\b') {
             $family = $matches[1]
@@ -376,7 +380,7 @@ function Get-GhozttyAgentEndpoints {
     } catch {
         $family = $null
     }
-    $script:GhozttyAgentEndpointsCache[$Exe] = $family
+    $script:GhozttyAgentEndpointsCache[$AgentBinary] = $family
     return $family
 }
 

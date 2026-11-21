@@ -1,13 +1,13 @@
 {
     "guard":  "verdict-exit",
     "script":  "test/win32/verdict-exit-audit.ps1",
-    "generated":  "2026-11-20T22:21:54-08:00",
-    "commit":  "8897df29e",
+    "generated":  "2026-11-20T23:22:04-08:00",
+    "commit":  "580556f1c",
     "uncommitted":  [
                         "test/win32/lib/VerdictExitAudit.ps1"
                     ],
     "files":  {
-                  "test/win32/lib/VerdictExitAudit.ps1":  "fac2614ac0a2956125073aa93171111c6e708d21c2e02ef6e4b6032d15e8ac63",
+                  "test/win32/lib/VerdictExitAudit.ps1":  "c983509be9ffbdfe9c86d9624a4a2b70fceba52e44b9da03fbe5b1db97e4f176",
                   "test/win32/verdict-exit-audit.ps1":  "0a356320134c6a1f234067b806e439f64ba62573cd251f39c7adcf43ad51c91b"
               },
     "code":  {

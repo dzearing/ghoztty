@@ -1,21 +1,21 @@
 {
     "guard":  "desktop-launch",
     "script":  "test/win32/desktop-launch-audit.ps1",
-    "generated":  "2026-11-20T22:19:39-08:00",
-    "commit":  "8897df29e",
+    "generated":  "2026-11-20T23:21:55-08:00",
+    "commit":  "580556f1c",
     "uncommitted":  [
                         "test/win32/desktop-launch-audit.ps1",
                         "test/win32/lib/DesktopLaunchAudit.ps1"
                     ],
     "files":  {
                   "src/cli/ghostty.zig":  "e62f31c7e4e2e2302c4ac01f77401612781e284086c2885ed529f60403862605",
-                  "test/win32/desktop-launch-audit.ps1":  "8f1bc55e5aed5b5d8d6e31d06d7d392a3042e58b105e4a8f46ae94db39577810",
-                  "test/win32/lib/DesktopLaunchAudit.ps1":  "6336c022336a259ae90fc01b807e3fa23aeb6430e30cad384b1ae3c30261261b",
+                  "test/win32/desktop-launch-audit.ps1":  "3d0622472ecc931c9a6244beba14b488348284c6ee25dfc9d6357a4db8ff903b",
+                  "test/win32/lib/DesktopLaunchAudit.ps1":  "b05fe6c8a9c82bffc6db3ee04d8d2c7d0977892e113abe83ca30c18f21d5ee58",
                   "test/win32/lib/TestDesktop.ps1":  "e314f16bfee08139657f4a82d476dbd9836e2cf73392a2d1837761705957974e"
               },
     "code":  {
-                 "test/win32/desktop-launch-audit.ps1":  "code1:6d19f6cef54aa1ae5d5f32ff1f460e329419acd350ea751e17b40f0cdc1f36da",
-                 "test/win32/lib/DesktopLaunchAudit.ps1":  "code1:7c3c0695cbbc84861e8efd231a78ab2b99fd912d4373f0c7bc7c0f04a65d0638",
+                 "test/win32/desktop-launch-audit.ps1":  "code1:82f47ccf92a8f9e1dbe9de661a8b15169dc91f454bdad5a2244d6e1159889d49",
+                 "test/win32/lib/DesktopLaunchAudit.ps1":  "code1:256662f05c5667381db30975a293b1f158e29c479cfa0caeb184b529e3ab543c",
                  "test/win32/lib/TestDesktop.ps1":  "code1:b866a660d561557068c104684506a7a8d90d61f9ff9ddd32a3ac5c1e7903efe2"
              }
 }

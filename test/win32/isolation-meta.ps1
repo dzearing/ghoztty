@@ -439,6 +439,11 @@ try {
 "== B: the real tree is clean"
 # ---------------------------------------------------------------------------
 $self = Split-Path -Leaf $PSCommandPath
+# SCOPE (T1598): the top level only, on purpose. Isolation is process
+# environment that the acceptance SCRIPT sets before it launches anything; a
+# `lib\` helper runs inside that process and inherits whatever the script
+# chose, so a helper has no endpoint of its own to leave unisolated. The helper
+# that sets the knobs, lib\Isolation.ps1, is tested directly in section A.
 $scripts = @(Get-ChildItem (Join-Path $Repo 'test\win32\*.ps1') -File |
     Where-Object { $_.Name -ne $self })
 Assert 'B1 the sweep found a plausible number of scripts' ($scripts.Count -ge 50) `

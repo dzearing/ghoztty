@@ -510,6 +510,14 @@ function Test-LaunchTokenQuoted {
 Every launch site in $Root's *.ps1 scripts, with a Declared flag and how it was
 declared. Shape per row: File, Line, Kind (TD|SP), Declared, How,
 CapturesStderr, StderrHow, Stmt.
+
+SCOPE: $Root's top level. A `lib\` helper COULD carry this defect (one that
+starts the app without a persistence flag would do so for every caller), so the
+top-level-only scope is a known gap, not a claim. Measured for T1598 on
+2026-11-20: `lib\` holds two launch sites - FrameLabDriver.ps1's, declared and
+capturing stderr, and TestDesktop.ps1's forwarding of the CALLER's argv, which
+the caller declares - so nothing hides there today. Widening it needs that
+forwarding shape recognised first; T1598's follow-up tracks it.
 #>
 function Get-GhozttyLaunchSites {
     param(

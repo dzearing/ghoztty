@@ -390,6 +390,10 @@ Assert "I2 a sandboxed, skipping release script passes" ((Get-ReleaseSubjectGap 
 Assert "I3 a debug-default script is not in scope" ($null -eq (Get-ReleaseSubjectGap $debugText))
 $releaseSubjects = @()
 $releaseGaps = @()
+# Top level only (T1598): a release SUBJECT is named by a script's own param()
+# default, and a `lib\` helper is dot-sourced with no param block of its own to
+# default one. The launch-side check that DOES reach helpers is
+# launch-preflight-audit, which sweeps lib\ already.
 foreach ($f in Get-ChildItem -LiteralPath (Join-Path $Repo 'test\win32') -Filter '*.ps1') {
     $g = Get-ReleaseSubjectGap (Get-Content -LiteralPath $f.FullName -Raw)
     if ($null -eq $g) { continue }

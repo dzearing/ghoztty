@@ -30,8 +30,14 @@
          how many the script created) and does not count a `+new-window` (its
          app is already up, so the CLI creates nothing).
 
-      E. The sweep over `test\win32\*.ps1`: every launch site is declared, and
-         every declaration still names a script that launches.
+      E. The sweep over `test\win32\*.ps1` and `test\win32\lib\*.ps1` (T1598):
+         every launch site is declared, and every declaration still names a
+         script that launches.
+
+      F. The `lib\` scope (T1598): helpers are swept and keyed by path, a
+         declaration may name one, and a `# desktop-launch-helper:` marker with
+         a reason exempts a helper under `lib\` only - stale when it launches
+         nothing. (Lettered F to keep A-E's ids stable.)
 
     `-TeethCheck` proves the section-E assertion can fail: it writes four real
     violators into the swept directory - one bare `Start-Process $exe`, one raw
@@ -109,6 +115,14 @@ Assert 'A6 the malformed line is reported by line number' (($bad | ForEach-Objec
 $one = @(Get-DesktopLaunchAuditDeclarations -Text @('# @user-desktop-launch: solo.ps1 -- (T1597) the only one'))
 Assert 'A7 a single-line header yields its one declaration' ($one.Count -eq 1 -and $one[0].Script -eq 'solo.ps1' -and -not $one[0].Malformed)
 Assert 'A8 a single-line exemption marker is still read' ((Test-DesktopLaunchAuditExempt -Text @('# desktop-launch-audit: fixture')) -eq $true)
+
+# T1598: a helper is declared by its path under the root.
+$libDecl = @(Get-DesktopLaunchAuditDeclarations -Text @(
+    '# @user-desktop-launch: lib\Helper.ps1 -- (T1) a helper declared by path'
+    '# @user-desktop-launch: lib/Slash.ps1 -- (T1) forward slash normalised'))
+Assert 'A9 a lib\ declaration parses and keys by its path' (
+    @($libDecl | Where-Object { -not $_.Malformed }).Count -eq 2 -and
+    (($libDecl | ForEach-Object { $_.Script }) -join ',') -eq 'lib\Helper.ps1,lib\Slash.ps1')
 
 # ---------------------------------------------------------------------------
 Write-Host ''
@@ -303,6 +317,24 @@ $s = Sites $wrapSp
 Assert 'B36 a Start-Process wrapper is scored at the CALL that passes +new-window' (
     @($s).Count -eq 1 -and @($s)[0].Line -eq 4)
 
+# T1598: lib\FrameLabDriver.ps1's Invoke-FrameLabCli, in shape - the argv is a
+# SPLATTED parameter, so the wrapper is scored at its calls. Both caller shapes
+# it uses: an array expression, and a parenthesised array concatenation.
+$wrapSplat = @(
+    'function Invoke-Cli {'
+    '    param([Parameter(Mandatory = $true)][string]$Exe, [Parameter(Mandatory = $true)][string[]]$Arguments)'
+    '    $out = & $Exe @Arguments 2>&1 | Out-String }'
+    'Invoke-Cli $live.Exe (@(''+split'', "--target=$from", ''-e'') + (Get-Rest $s))'
+    'Invoke-Cli $live.Exe @(''+rearrange'', "--target=$id")'
+)
+$s = Sites $wrapSplat
+Assert 'B37 a splatted-parameter wrapper whose calls pass quiet verbs is not a launch' (@($s).Count -eq 0)
+
+$s = Sites ($wrapSplat + @('Invoke-Cli -Exe $e -Arguments @(''+new-window'', ''--name=x'')', 'Invoke-Cli $e $built'))
+Assert 'B38 the same wrapper is scored at a call passing +new-window, and at one passing a runtime argv' (
+    @($s).Count -eq 2 -and @($s)[0].Kind -eq 'new-window' -and @($s)[0].Line -eq 6 -and
+    @($s)[1].Kind -eq 'unknown' -and @($s)[1].Line -eq 7)
+
 # ---------------------------------------------------------------------------
 Write-Host ''
 Write-Host 'C. the quiet-verb list against the CLI'
@@ -344,6 +376,73 @@ Assert 'D2 a desktop-owning script does not count +new-window' ($kept.Count -eq 
 $noDesktop = @('& $Exe +new-window')
 $kept = @(Select-DesktopLaunchAuditSites -Text $noDesktop -Sites (Sites $noDesktop))
 Assert 'D3 a script with NO desktop counts every site' ($kept.Count -eq 1)
+
+# ---------------------------------------------------------------------------
+Write-Host ''
+Write-Host 'F. the lib\ scope and the helper marker (T1598)'
+
+$fx = Join-Path $env:TEMP "ghoztty-t1598-dla-$PID"
+try {
+    New-Item -ItemType Directory -Force -Path (Join-Path $fx 'lib') | Out-Null
+    $fxHarness = Join-Path $fx 'lib\TestDesktop.ps1'
+    Set-Content -LiteralPath $fxHarness -Encoding ASCII -Value @(
+        '# @user-desktop-launch: lib\Declared.ps1 -- (T1) declared by path'
+        '# @user-desktop-launch: lib\Gone.ps1 -- (T1) names a helper that does not exist')
+    Set-Content -LiteralPath (Join-Path $fx 'lib\Launcher.ps1') -Encoding ASCII -Value @(
+        'function Start-Thing { Start-Process $Exe }')
+    Set-Content -LiteralPath (Join-Path $fx 'lib\Declared.ps1') -Encoding ASCII -Value @(
+        'function Start-Thing { Start-Process $Exe }')
+    Set-Content -LiteralPath (Join-Path $fx 'lib\Marked.ps1') -Encoding ASCII -Value @(
+        '# desktop-launch-helper: (T1) starts the app where the caller is, by design'
+        'function Start-Thing { Start-Process $Exe }')
+    Set-Content -LiteralPath (Join-Path $fx 'lib\StaleMark.ps1') -Encoding ASCII -Value @(
+        '# desktop-launch-helper: (T1) used to launch'
+        'function Get-Thing { & $Exe +list }')
+    Set-Content -LiteralPath (Join-Path $fx 'lib\BareMark.ps1') -Encoding ASCII -Value @(
+        '# desktop-launch-helper:'
+        'function Start-Thing { Start-Process $Exe }')
+    Set-Content -LiteralPath (Join-Path $fx 'top-marked.ps1') -Encoding ASCII -Value @(
+        '# desktop-launch-helper: (T1) a marker outside lib\ means nothing'
+        'Start-Process $Exe')
+
+    $scope = @(Get-DesktopLaunchAuditScope -Root $fx)
+    Assert "F1 the scope reads lib\ as well as the top level ($($scope.Count) files)" ($scope.Count -eq 7)
+    Assert 'F2 a helper is keyed by its lib\ path; a top-level script by its leaf' (
+        (Get-DesktopLaunchAuditKey -Path (Join-Path $fx 'lib\Marked.ps1') -Root $fx) -eq 'lib\Marked.ps1' -and
+        (Get-DesktopLaunchAuditKey -Path (Join-Path $fx 'top-marked.ps1') -Root $fx) -eq 'top-marked.ps1')
+
+    $ff = @(Get-DesktopLaunchAuditFindings -Root $fx)
+    function FKeys([string]$Kind) {
+        return (@($ff | Where-Object { $_.Kind -eq $Kind } |
+            ForEach-Object { Get-DesktopLaunchAuditKey -Path $_.Path -Root $fx } | Sort-Object) -join ',')
+    }
+    $undecl = FKeys 'undeclared'
+    Assert "F3 an undeclared launching helper, a reasonless marker and a top-level marker are findings ($undecl)" (
+        $undecl -eq 'lib\BareMark.ps1,lib\Launcher.ps1,top-marked.ps1')
+    Assert 'F4 a helper declared by path and a helper carrying a reasoned marker are not' (
+        $undecl -notmatch 'Declared|lib\\Marked')
+    $staleM = FKeys 'stale-helper-marker'
+    Assert "F5 a marker on a helper that launches nothing is a stale marker ($staleM)" ($staleM -eq 'lib\StaleMark.ps1')
+    $staleD = @($ff | Where-Object { $_.Kind -eq 'stale-declaration' } | ForEach-Object { $_.Detail })
+    Assert 'F6 a lib\ declaration naming a missing helper is stale' (
+        $staleD.Count -eq 1 -and $staleD[0] -match 'lib\\Gone\.ps1')
+    Assert 'F7 the stale marker is a hard kind' ((Get-DesktopLaunchAuditHardKinds) -contains 'stale-helper-marker')
+    $oneMark = Get-DesktopLaunchAuditHelperMarker -Text @('# desktop-launch-helper: (T1597) the only line')
+    Assert 'F9 a single-line helper marker is still read (the T1597 unroll)' (
+        $null -ne $oneMark -and $oneMark.Line -eq 1 -and $oneMark.Reason -eq '(T1597) the only line')
+} catch {
+    # An unwind must not skip the rest of F and still reach a green verdict
+    # (T1039): failing to finish the fixtures IS a failure.
+    Assert "F0 the lib\ scope fixtures ran to completion ($_)" $false
+} finally {
+    Remove-Item -LiteralPath $fx -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# And against the real suite: a scope regression is silent by construction -
+# the findings stay at zero and nothing says fewer files were read.
+$realScope = @(Get-DesktopLaunchAuditScope -Root $Suite)
+$realLib = @($realScope | Where-Object { (Get-DesktopLaunchAuditKey -Path $_ -Root $Suite) -like 'lib\*' })
+Assert "F8 the real sweep reads lib\ ($($realLib.Count) helper(s))" ($realLib.Count -ge 50)
 
 # ---------------------------------------------------------------------------
 Write-Host ''
@@ -402,7 +501,12 @@ try {
             'Copy-Item $exe $applier -Force'
             'Start-Process -FilePath $applier -ArgumentList ''--apply-update'''
         )
-        $planted = @($v1, $v2, $v3, $v4, $v5, $v6)
+        # T1598: a launching HELPER, which the top-level-only sweep never read.
+        $v7 = Join-Path $Suite 'lib\zz-desktop-launch-teeth-helper.ps1'
+        Set-Content -LiteralPath $v7 -Encoding UTF8 -Value @(
+            'function Start-TeethApp { Start-Process -FilePath $Exe -ArgumentList ''--session-persistence=false'' }'
+        )
+        $planted = @($v1, $v2, $v3, $v4, $v5, $v6, $v7)
     }
 
     $findings = @(Get-DesktopLaunchAuditSweep $Suite)
@@ -417,6 +521,7 @@ try {
         Assert 'E0d the planted splatted Start-Process is found' ($names -contains 'zz-desktop-launch-teeth-splat.ps1')
         Assert 'E0e the planted static-method CreateProcessW spawn is found' ($names -contains 'zz-desktop-launch-teeth-static.ps1')
         Assert 'E0f the planted renamed copy of the exe is found' ($names -contains 'zz-desktop-launch-teeth-copy.ps1')
+        Assert 'E0g the planted launching lib\ helper is found' ($names -contains 'zz-desktop-launch-teeth-helper.ps1')
         $bad = @($bad | Where-Object { (Split-Path $_.Path -Leaf) -notlike 'zz-desktop-launch-teeth-*' })
     }
 

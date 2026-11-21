@@ -22,6 +22,15 @@
 #     it lands on the background test desktop. An undeclared launch on the
 #     caller's desktop is a miss.
 #
+# SCOPE: the top level AND `lib\` (T1598) - a helper that launches makes every
+# caller a launcher. A helper is keyed `lib\<name>.ps1`; one that launches on
+# the caller's desktop by design says so on a `# desktop-launch-helper:` line
+# with a reason (honoured under `lib\` only), or is declared by that path.
+# Measured on 2026-11-20 before the widening: two `lib\` sites, both false -
+# BuildMode's agent `--build-mode` probe (the parameter was named like the app)
+# and FrameLabDriver's `& $Exe @Arguments` wrapper (every call passes `+split`
+# or `+rearrange`), which is why the splatted-parameter shape is resolved.
+#
 # WHAT COUNTS AS STARTING THE APP (measured, not assumed). Only two argv shapes
 # put a window on screen:
 #
@@ -156,9 +165,12 @@ function Get-DesktopLaunchAuditDeclarations {
         $l = $lines[$i]
         if ($l -notmatch '@user-desktop-launch:') { continue }
         $rest = ($l -split '@user-desktop-launch:', 2)[1]
-        if ($rest -match '^\s*(?<s>[A-Za-z0-9._\-]+\.ps1)\s+--\s+(?<r>\S.*)$') {
+        # An optional `lib\` prefix (T1598): a helper that genuinely launches on
+        # the caller's desktop can be declared by its path, as ForegroundAudit's
+        # list allows since T780.
+        if ($rest -match '^\s*(?<s>(?:lib[\\/])?[A-Za-z0-9._\-]+\.ps1)\s+--\s+(?<r>\S.*)$') {
             [void]$out.Add([pscustomobject]@{
-                Script    = $Matches['s'].Trim()
+                Script    = ($Matches['s'].Trim() -replace '/', '\')
                 Reason    = $Matches['r'].Trim()
                 Line      = $i + 1
                 Malformed = $false
@@ -487,6 +499,27 @@ function Get-DesktopLaunchAuditStringText($Node) {
         }
         return ($parts -join ' ')
     }
+    # T1598: `(@('+split', ...) + (Get-Rest))` - FrameLabDriver's call shape.
+    # A parenthesised expression is its one expression; an array concatenation
+    # is its left side followed by whatever of the right side is readable, so
+    # the first token is the literal verb the caller wrote.
+    if ($Node -is [System.Management.Automation.Language.ParenExpressionAst]) {
+        $pipe = $Node.Pipeline
+        if ($pipe -is [System.Management.Automation.Language.PipelineAst] -and
+            $pipe.PipelineElements.Count -eq 1 -and
+            $pipe.PipelineElements[0] -is [System.Management.Automation.Language.CommandExpressionAst]) {
+            return (Get-DesktopLaunchAuditStringText $pipe.PipelineElements[0].Expression)
+        }
+        return $null
+    }
+    if ($Node -is [System.Management.Automation.Language.BinaryExpressionAst] -and
+        $Node.Operator -eq [System.Management.Automation.Language.TokenKind]::Plus) {
+        $left = Get-DesktopLaunchAuditStringText $Node.Left
+        if ($null -eq $left) { return $null }
+        $right = Get-DesktopLaunchAuditStringText $Node.Right
+        if ($null -eq $right) { return $left }
+        return (($left, $right) -join ' ')
+    }
     return $null
 }
 
@@ -786,6 +819,20 @@ function Get-DesktopLaunchAuditSites {
 
         # Shape 2 - a direct invocation: `& $Exe +new-window ...`, `$Exe --flag`.
         if (-not (Test-DesktopLaunchAuditGhozttyRef $els[0])) { continue }
+        # T1598 - `function Invoke-X($Exe, [string[]]$Arguments) { & $Exe @Arguments }`:
+        # the argv is a splatted PARAMETER, so score the wrapper's calls, the
+        # way the cmd and Start-Process wrappers are scored. A splat of anything
+        # that is not a parameter stays unknown (B11).
+        if ($els.Count -ge 2 -and
+            $els[1] -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $els[1].Splatted) {
+            $resolved = Resolve-DesktopLaunchAuditParamSites -Ast $ast -Cmd $cmd `
+                -VarName $els[1].VariablePath.UserPath
+            if ($null -ne $resolved) {
+                foreach ($site in @($resolved)) { [void]$sites.Add($site) }
+                continue
+            }
+        }
         $kind = Get-DesktopLaunchAuditKind (Get-DesktopLaunchAuditFirstArg $els)
         if ($null -eq $kind) { continue }
         [void]$sites.Add([pscustomobject]@{
@@ -875,7 +922,8 @@ function Select-DesktopLaunchAuditSites {
 # ---------------------------------------------------------------------------
 function Get-DesktopLaunchAuditFindings {
     <#
-      -Files       the scripts to score (paths). Defaults to `$Root\*.ps1`.
+      -Files       the scripts to score (paths). Defaults to `$Root\*.ps1` plus
+                   `$Root\lib\*.ps1` (T1598, Get-DesktopLaunchAuditScope).
       -Root        the acceptance directory (`test\win32`).
       -Declared    override the declaration list, for the self-test.
     #>
@@ -906,17 +954,28 @@ function Get-DesktopLaunchAuditFindings {
     $good = @($Declared | Where-Object { -not $_.Malformed })
 
     if ($null -eq $Files) {
-        $Files = @(Get-ChildItem -LiteralPath $Root -Filter *.ps1 -File |
-            ForEach-Object { $_.FullName })
+        $Files = @(Get-DesktopLaunchAuditScope -Root $Root)
     }
 
     $launchers = @{}
     foreach ($f in $Files) {
-        $name = Split-Path $f -Leaf
+        $name = Get-DesktopLaunchAuditKey -Path $f -Root $Root
         if (Test-DesktopLaunchAuditExempt -Path $f) { continue }
+        $helper = $null
+        if ($name -like 'lib\*') { $helper = Get-DesktopLaunchAuditHelperMarker -Path $f }
         $sites = @(Get-DesktopLaunchAuditSites -Path $f)
-        if ($sites.Count -eq 0) { continue }
-        $sites = @(Select-DesktopLaunchAuditSites -Path $f -Sites $sites)
+        if ($sites.Count -gt 0) { $sites = @(Select-DesktopLaunchAuditSites -Path $f -Sites $sites) }
+        if ($null -ne $helper) {
+            # A helper that states it launches on the caller's desktop by design
+            # is exempt; one that states it while launching nothing is a stale
+            # marker, for the same reason a stale declaration is a finding.
+            if ($sites.Count -eq 0) {
+                [void]$findings.Add([pscustomobject]@{
+                    Path = $f; Line = $helper.Line; Kind = 'stale-helper-marker'
+                    Detail = "$name carries '# desktop-launch-helper:' but no longer launches the app on the caller's desktop" })
+            }
+            continue
+        }
         if ($sites.Count -eq 0) { continue }
         $launchers[$name] = $sites
         $decl = @($good | Where-Object { $_.Script -eq $name })
@@ -937,7 +996,7 @@ function Get-DesktopLaunchAuditFindings {
 
     foreach ($d in $good) {
         if ($launchers.ContainsKey($d.Script)) { continue }
-        $exists = $null -ne ($Files | Where-Object { (Split-Path $_ -Leaf) -eq $d.Script })
+        $exists = $null -ne ($Files | Where-Object { (Get-DesktopLaunchAuditKey -Path $_ -Root $Root) -eq $d.Script })
         $why = if ($exists) { 'no longer launches on the caller''s desktop' } else { 'no longer exists' }
         [void]$findings.Add([pscustomobject]@{
             Path = 'lib\TestDesktop.ps1'; Line = $d.Line; Kind = 'stale-declaration'
@@ -948,7 +1007,56 @@ function Get-DesktopLaunchAuditFindings {
 }
 
 function Get-DesktopLaunchAuditHardKinds {
-    return @('undeclared', 'stale-declaration', 'malformed-declaration')
+    return @('undeclared', 'stale-declaration', 'malformed-declaration', 'stale-helper-marker')
+}
+
+# ---------------------------------------------------------------------------
+# SCOPE (T1598): `test\win32\*.ps1` AND `test\win32\lib\*.ps1`. A helper that
+# starts the app - `Start-SomethingApp { Start-Process $Exe }` - would put a
+# window on the user's desktop for EVERY script that calls it, while a sweep of
+# the top level read none of them. The same argument T780 made for the input-
+# desktop audit. Files are keyed by their path under the root: a top-level
+# script by its leaf (`ipc-p1.ps1`), a helper as `lib\<name>.ps1`, which is
+# also how a helper is declared.
+# ---------------------------------------------------------------------------
+function Get-DesktopLaunchAuditScope([string]$Root) {
+    $out = @(Get-ChildItem -LiteralPath $Root -Filter *.ps1 -File | ForEach-Object { $_.FullName })
+    $lib = Join-Path $Root 'lib'
+    if (Test-Path -LiteralPath $lib -PathType Container) {
+        $out += @(Get-ChildItem -LiteralPath $lib -Filter *.ps1 -File | ForEach-Object { $_.FullName })
+    }
+    return $out
+}
+
+function Get-DesktopLaunchAuditKey([string]$Path, [string]$Root) {
+    $leaf = Split-Path $Path -Leaf
+    if ([string]::IsNullOrEmpty($Root)) { return $leaf }
+    $parent = Split-Path $Path -Parent
+    $libDir = Join-Path $Root 'lib'
+    try {
+        if ([System.IO.Path]::GetFullPath($parent).TrimEnd('\') -ieq
+            [System.IO.Path]::GetFullPath($libDir).TrimEnd('\')) { return "lib\$leaf" }
+    } catch { }
+    return $leaf
+}
+
+# The per-file stated intent of a `lib\` helper that launches on the caller's
+# desktop BY DESIGN: one comment line, reason required -
+#
+#     # desktop-launch-helper: <why this helper must start the app here>
+#
+# Honoured only for a file under `lib\` (the caller decides that), and only with
+# a reason: a bare marker states no intent. Returns @{ Line; Reason } or $null.
+function Get-DesktopLaunchAuditHelperMarker {
+    param([string]$Path, [string[]]$Text)
+    # Wrapped OUTSIDE the `if` (T1597): a one-line file must stay an array.
+    $lines = @(if ($null -ne $Text) { $Text } else { Get-Content -LiteralPath $Path })
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\s*#\s*desktop-launch-helper:\s*(?<r>\S.*)$') {
+            return [pscustomobject]@{ Line = $i + 1; Reason = $Matches['r'].Trim() }
+        }
+    }
+    return $null
 }
 
 function Get-DesktopLaunchAuditSweep([string]$Root) {

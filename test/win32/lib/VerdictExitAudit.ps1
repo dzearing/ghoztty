@@ -367,6 +367,15 @@ function Get-VerdictExitFindings {
 # has a verdict to score, so recursing would report `no-verdict` against fifteen
 # files that are correct - a sweep that cries wolf is a sweep nobody reads.
 #
+# Re-measured for T1598 (2026-11-20), because a helper's `exit` ends its CALLER:
+# the five `exit` statements in `lib\` are three skip exits that print their
+# own SKIP verdict first (`Exit-TestSkip`, `Exit-IfOccludedDisplay`,
+# `Assert-UserAbsent`), the scorer's own `exit $v.Code` in `Write-TestVerdict`
+# (asserted-nothing and body-complete test it on the wire, section A), and
+# `paint-blocks.ps1`, a pane fixture rather than an acceptance script. None can
+# end a run without a verdict, so this audit and its two siblings keep the top
+# level. A new `exit` in a helper is the thing to re-check this against.
+#
 # `scripts\` is not swept for the same reason, and was checked by hand instead
 # (T221, 2026-08-11): exactly two files there mention `ALL PASS`, and only
 # `floor-lane.ps1` emits one as its own verdict - correctly, with a nonzero exit
