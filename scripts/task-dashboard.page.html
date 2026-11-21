@@ -1855,12 +1855,14 @@ function dataView(d) {
     ])
   ]);
   var mac = (d.seats.filter(function (x) { return x.seat === 'mac'; })[0] || { open: 0 }).open;
+  var linux = (d.seats.filter(function (x) { return x.seat === 'linux'; })[0] || { open: 0 }).open;
   var tiles = [
     { v: c.open, l: 'Open', c: 'var(--open)', n: 'to do, in progress or blocked' },
     { v: d.doneLast7, l: 'Done in 7 days', c: 'var(--done)', n: 'completions since ' + fDay(d.generatedAt - 7 * 864e5) },
     { v: c.in_progress, l: 'In progress', c: 'var(--warning)' },
     { v: c.blocked, l: 'Blocked', c: 'var(--critical)' },
     { v: mac, l: 'Mac-seat open', c: 'var(--muted)', n: 'this box cannot validate these' },
+    { v: linux, l: 'Linux-seat open', c: 'var(--muted)', n: 'Linux/WSL port; needs a Linux build' },
     { v: c.skipped, l: 'Skipped / split', c: 'var(--muted)', n: 'not counted in scope' }
   ];
   out.push(h('div', { class: 'lead' }, [hero, h('div', { class: 'tiles' }, tiles.map(function (t) {

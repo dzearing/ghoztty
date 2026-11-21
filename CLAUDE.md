@@ -2,8 +2,9 @@
 
 A fork of [Ghostty](https://github.com/ghostty-org/ghostty) that adds CLI-driven window management for AI agents and automation.
 
-Ghoztty ships on **macOS and Windows**, and the two are kept symmetric. Read
-the platform-symmetry section below before you add anything.
+Ghoztty ships on **macOS and Windows**, and the two are kept symmetric; a
+**Linux (WSL-first)** port is in bring-up behind them. Read the
+platform-symmetry section below before you add anything.
 
 ## How to use these docs (progressive disclosure)
 
@@ -23,6 +24,7 @@ its partition.
 | Building either platform, launch/debug, crash diagnostics, delivery | `docs/claude/build.md` |
 | Writing or running ANY test or acceptance script; the harness audit rules | `docs/claude/testing.md` |
 | Any pixel of win32 chrome | `docs/design/win32-design-system.md` + `docs/claude/win32-ui.md` |
+| The Linux/WSL port, `src/apprt/gtk/`, any `seat: linux` task | `docs/design/linux-port.md` |
 
 `docs/reference/` (from main) holds the **Mac** seat's topic reference docs —
 how each area behaves on macOS now, with Swift code pointers and test names.
@@ -65,6 +67,16 @@ What that means in practice:
   gap undocumented.
 - **Both seats work the same branch**, so pull before starting and push at
   every task boundary.
+
+**Linux is the third platform, in bring-up** (user directive, 2026-11-21: "the
+mac version is first to get features, we port to windows and linux"). The GTK
+frontend in `src/apprt/gtk/`, running under WSL2/WSLg first, follows the Mac
+the same way Windows does. Plan, translation table and phases:
+`docs/design/linux-port.md`. Until Linux reaches the Phase 1 baseline, a new
+feature is not blocked on it: land Mac + Windows as above, and the Linux half
+is a `seat: linux` task (`parity-tasks.ps1 new -Seat linux`), which the Windows
+loop never claims. **Never start WSL unasked** - nothing in the Windows floor,
+sweeps or go-loop may boot it.
 
 
 ## Non-negotiables (in force for every task, however small)

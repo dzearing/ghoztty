@@ -161,9 +161,11 @@ param(
     [string]$Summary,
     [string]$Commit,
 
-    # Which box can do the work: win (default) | mac | any. `list`/`next` treat
-    # it as a filter, `new` writes it into the created file.
-    [ValidateSet('win', 'mac', 'any', 'all')]
+    # Which box can do the work: win (default) | mac | linux | any. `list`/`next`
+    # treat it as a filter, `new` writes it into the created file. `linux` is the
+    # Linux/WSL port (docs/design/linux-port.md): a Windows `next` never hands
+    # one out, since its validation needs a Linux build.
+    [ValidateSet('win', 'mac', 'linux', 'any', 'all')]
     [string]$Seat,
 
     # `next -Claim` marks the task it hands out `in-progress` in the same
@@ -316,7 +318,7 @@ function Get-ThisLane {
 # The seat a file with no `seat:` field belongs to. Absent means win, so the
 # field is optional forever and every pre-T344 task file keeps working.
 $DefaultSeat = 'win'
-$ValidSeats = @('win', 'mac', 'any')
+$ValidSeats = @('win', 'mac', 'linux', 'any')
 
 # The priority a `new` task gets when none is given. P1 is "feature work and
 # polish", which is what most parity tasks are; something severe or something

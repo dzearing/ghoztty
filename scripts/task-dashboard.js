@@ -1659,7 +1659,7 @@ function handlePost(url, body) {
     if (!title) throw new Error('a task needs a title');
     const args = ['new', '-Title', title.slice(0, 300)];
     if (body.summary) args.push('-Summary', String(body.summary).slice(0, 4000));
-    if (body.seat) args.push('-Seat', must(body.seat, /^(win|mac|any)$/, 'seat'));
+    if (body.seat) args.push('-Seat', must(body.seat, /^(win|mac|linux|any)$/, 'seat'));
     if (Array.isArray(body.tags) && body.tags.length) {
       args.push('-Tags', body.tags.map((t) => must(t, /^[a-z]+$/, 'tag')).join(','));
     }

@@ -1,0 +1,100 @@
+# Ghoztty for Linux (WSL first)
+
+Started 2026-11-21 at the user's request: "start a port of ghoztty for linux as
+well so that it can run in wsl. similar to how we're approaching the windows
+port - the mac version is first to get features, we port to windows and linux."
+
+## Stance
+
+- **macOS leads.** Features land on the Mac first. Windows and Linux are both
+  followers that translate the Mac feature, never the Mac implementation - the
+  same contract the Windows port has run under since July (CLAUDE.md, "Platform
+  symmetry is a standing rule").
+- **First target is WSL2 + WSLg on this box.** WSLg gives a Linux GUI app a
+  Wayland compositor (with XWayland) that draws into ordinary Windows windows.
+  Anything that runs there runs on a native Linux desktop too; native desktops
+  are not a separate target, only a later validation lane.
+- **One tracker.** Linux work is filed in `docs/design/windows-parity-tasks/`
+  with `seat: linux`. `parity-tasks.ps1 next` filters by seat, so the Windows
+  go-loop never claims a Linux task and its queue is untouched. Same id space,
+  same dashboard (a "Linux-seat open" tile sits beside "Mac-seat open").
+
+## Starting point (read from the tree, 2026-11-21)
+
+| Piece | State | Where |
+|---|---|---|
+| Linux frontend | Upstream Ghostty's GTK4/libadwaita apprt is still in the tree. The fork has only touched it in sweeping renames (`912299319` purged `com.mitchellh.*`); none of the Ghoztty features are in it. Expect it **not to compile**: Ghoztty added apprt actions that the GTK `performAction` has never been taught. Unverified until a Linux build runs. | `src/apprt/gtk/` |
+| CLI → app IPC client | Already POSIX. The Mac path is a Unix domain socket, and `apprt.ipc.socketPath()` only special-cases Windows, so a Linux client resolves a socket with no new code. | `src/apprt/ipc.zig`, `src/os/ipc_client.zig` |
+| IPC server + verb handlers | The Windows server is Zig: 2793 lines of handlers with only 7 `w32.` calls, plus shared helpers already in `src/apprt/ipc/` (args, list, read_tail, target_lookup, url_scheme...). Most of the verb logic can move into shared code and serve GTK too. The Mac server is Swift and cannot be shared. | `src/apprt/win32/IpcHandlers.zig`, `IpcServer.zig`, `IpcRegistry.zig` |
+| `ghoztty-agent` | Already has Linux branches: metrics sampling, foreground-process lookup, pid, `xdg-open`. PTYs are the same POSIX code the Mac uses. Probably the closest to working today. | `src/remote/agent/` |
+| Sweep/intake | `parity-sweep.ps1` and the staleness check currently **exclude** `src/apprt/gtk/` as "Linux's, owes Windows nothing". That stays right for the Windows seat; the Linux seat needs its own intake later (task L13). | `go.md` step 5, `docs/claude/testing.md` |
+
+## Translation table (Mac → Windows → Linux)
+
+Follow the pattern the Windows port set: the native equivalent, not an
+emulation of the Mac mechanism.
+
+| Concept | macOS | Windows | Linux |
+|---|---|---|---|
+| Frontend | Swift/SwiftUI | Zig win32 (`src/apprt/win32/`) | Zig GTK4 + libadwaita (`src/apprt/gtk/`) |
+| IPC transport | AF_UNIX at `$TMPDIR/ghostty[-debug]-<uid>.sock` | owner-only-DACL named pipe | AF_UNIX, mode 0600, at the same derivation as the Mac (one function, so it cannot drift); `$XDG_RUNTIME_DIR` preferred when set |
+| Agent autostart | LaunchAgent | HKCU Run | `systemd --user` unit; XDG autostart `.desktop` when systemd is off (WSL needs `[boot] systemd=true` in `/etc/wsl.conf`) |
+| Secret store | Keychain | DPAPI | libsecret (Secret Service); file at mode 0600 under `$XDG_DATA_HOME` when no keyring daemon runs, which is the WSL default |
+| Viewer panes (markdown/HTML/web/diff) | WKWebView | WebView2 | WebKitGTK (`webkitgtk-6.0`, the GTK4 build) |
+| `+list` process column | `--tty` | `--pid` | `--tty` (Linux has real ttys) |
+| Shell launch | `$SHELL -lic` | per-flavor (`pwsh -NoExit -Command`, `cmd /K`, `wsl --`) | `$SHELL -lic`, like the Mac |
+| `ghoztty://` scheme | LaunchServices | registry `HKCU\Software\Classes` | `.desktop` with `MimeType=x-scheme-handler/ghoztty` + `xdg-mime default` |
+| Pane/window screenshots | CGWindow | PrintWindow | in-app GTK snapshot (`gtk_widget_snapshot_child` / `GdkTexture`); Wayland has no global capture, so it must come from our own render |
+| Focus on CLI open | `--focus` opts in | `--focus` opts in, `SWP_NOACTIVATE` | Wayland refuses focus stealing outright, so `--no-activate` is free and `--focus` needs `xdg-activation` |
+| Chrome | native AppKit | custom, `docs/design/win32-design-system.md` | libadwaita widgets; parity is behavior and information, not pixels |
+| Delivery | `.app` / dmg | MSI + auto-update | tarball → `.deb`/AppImage later (L14) |
+| GUI test isolation | n/a | background desktop (`TestDesktop.ps1`) | a headless nested Wayland compositor (`weston --backend=headless` or `sway` headless) so a test never opens a window on the user's screen |
+
+## WSL specifics
+
+- **Memory cap first.** WSL2 has already taken 28 GB on this box. Before
+  anything runs Linux builds unattended, `%USERPROFILE%\.wslconfig` needs a cap
+  (e.g. `memory=8GB`, `autoMemoryReclaim=gradual`). That file is the user's;
+  the plan does not write it, task L0 asks for it.
+- **WSL is never started unasked** (standing rule). Every Linux script launches
+  through one wrapper that refuses to run when the cap is missing, and nothing
+  in the Windows floor or sweeps boots WSL.
+- **Renderer.** Ghostty needs OpenGL 3.3+. WSLg's Mesa d3d12 driver provides it
+  on the GPU; llvmpipe is the software fallback. Check with `glxinfo -B` in L1.
+- **The two Ghoztty apps stay separate.** Inside WSL, Windows `PATH` is appended
+  by default, so a bare `ghoztty` can resolve to the Windows `ghoztty.exe`
+  through interop and drive the user's Windows terminal. The Linux build must be
+  first on `PATH` in every script, and the CLI should be named by full path in
+  tests (the Windows CreateProcess lesson, same shape).
+- **Debug and release endpoints must differ** - the T243/T350 rule applies
+  unchanged: a release-mode dev build would answer on the installed socket name.
+- **Fonts.** Windows fonts are not visible to WSL by default; bundle or install
+  the default font in the dev setup.
+
+## Phases
+
+| Phase | Goal | Tasks |
+|---|---|---|
+| 0 Bring-up | A Linux debug build launches in WSLg, the lib/none test lanes and the agent pass, and a script can do all of it from this box | L0-L4 |
+| 1 CLI core | Every verb in the CLI at a glance (`+new-window`, `+split`, `+close`, `+list`, `+read`, `+send-keys`, `+rearrange`, `+set-state`, `+set-banner`, `+reload`) works against the GTK app over the Unix socket, with acceptance tests that drive the CLI only | L5-L7 |
+| 2 Sessions | `ghoztty-agent` hosts the panes; restore/re-attach works; HELLO handshake contract unchanged | L8 |
+| 3 Feature intake | One task per `docs/reference/*.md` topic (viewers, banners, pane sidebar, stacked panes, window modes, settings, ...), ported in the Mac's order | L9-L12 |
+| 4 Ship | Intake sweep for the Linux seat; packaging; `ghoztty://` registration | L13-L14 |
+
+Each step is a `seat: linux` task (filed 2026-11-21; `parity-tasks.ps1 next
+-Seat linux` hands out the next one):
+
+| Step | Task | Step | Task | Step | Task |
+|---|---|---|---|---|---|
+| L0 WSL cap + wrapper | T3329 | L5 shared IPC handlers | T3334 | L10 banners + sidebar | T3339 |
+| L1 GTK builds, launches | T3330 | L6 GTK IPC server | T3335 | L11 reference intake | T3340 |
+| L2 lib/none lanes | T3331 | L7 CLI verbs | T3336 | L12 secrets + relay | T3341 |
+| L3 agent on Linux | T3332 | L8 sessions | T3337 | L13 Linux intake sweep | T3342 |
+| L4 linux.md + headless harness | T3333 | L9 viewers (WebKitGTK) | T3338 | L14 packaging + scheme | T3343 |
+
+## Open question for the user
+
+Who works the Linux seat? The tasks are filed and ordered, but no loop takes
+them: the Windows go-loop filters them out, and running them needs WSL up,
+which is the user's call on this box. Options when ready: a third go-loop lane
+on this box with `-Seat linux` (after the L0 cap), or a separate Linux machine.
