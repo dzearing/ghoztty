@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-20T19:12:43-08:00",
-    "commit":  "701f25074",
+    "generated":  "2026-11-20T19:33:28-08:00",
+    "commit":  "7604d0c03",
     "uncommitted":  [
-
+                        "test/win32/lib/ViewerExtTableAudit.ps1",
+                        "test/win32/viewer-ext-tables.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
@@ -360,6 +361,7 @@
                   "test/win32/lib/UnwiredHookAudit.ps1":  "4a0600ed0088b093dddebaab1adfbbf2fffe4c572a49948a89cd58ec94acc28c",
                   "test/win32/lib/UserPresence.ps1":  "27d0d87f1688ed7ea25369f59e0a90a1a4c18d7c70c3a275d86cb2c8a60fd942",
                   "test/win32/lib/VerdictExitAudit.ps1":  "87d8cad08aa867a0cc2de896872e47d4abcd469850f4f5a897deb778a7aaf16f",
+                  "test/win32/lib/ViewerExtTableAudit.ps1":  "a3793d62d765dfd146e7b2cf1f3ac3c2607ec7dd719ffac0ee596d1f6d6a76fe",
                   "test/win32/lib/VtText.ps1":  "e9a099093c681d1bbef2c78055e1ed4b29daf9b0d020a3e4c454509c9ee28f9a",
                   "test/win32/lib/WebViewCdp.ps1":  "694f3e4f7852950d38ca69bcd317b75b1797f364c7f41fa5c23ed3cb56abd5fe",
                   "test/win32/lib/WindowComposite.ps1":  "d008709aee808b1e3d02f6da34d0bf910168df10bd5ab284e9037e706d9a74fa",
@@ -604,6 +606,7 @@
                   "test/win32/viewer-diff.ps1":  "cc23218d9edb84d62274a35372c68c73be6d17617717bd6727511a3489b5ba62",
                   "test/win32/viewer-diff-tree.ps1":  "88025654dcd8819678596bfcd043f45a0e14dbb3ef2057abb99eed9a09474f82",
                   "test/win32/viewer-error-card.ps1":  "f8015c9f4ae53bf6ed0daa8f079cc1c8618b8841ca7da22dc40832e65f01a3c9",
+                  "test/win32/viewer-ext-tables.ps1":  "66267101658e77c90cf1608a271461abeeed66247e72f11a07f88fa49adefbaf",
                   "test/win32/viewer-feedback.ps1":  "a27afcc98a135b5f5e6ae9259d6ee57b11ea3a86d01175b8ebac9edb3e5469cd",
                   "test/win32/viewer-feedback-a11y.ps1":  "5fac54144f172e562b4139426c421f0a083bb19294815e3095af62b8201e4411",
                   "test/win32/viewer-feedback-alpha.ps1":  "7e3ed8de4c1caf1382b53ab1fa99ce89b4a3d9239263be65c7bbf80de97f34c1",

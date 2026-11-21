@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-20T19:14:44-08:00",
-    "commit":  "701f25074",
+    "generated":  "2026-11-20T19:35:19-08:00",
+    "commit":  "7604d0c03",
     "uncommitted":  [
 
                     ],
@@ -1622,6 +1622,7 @@
                   "test/win32/viewer-diff.ps1":  "cc23218d9edb84d62274a35372c68c73be6d17617717bd6727511a3489b5ba62",
                   "test/win32/viewer-diff-tree.ps1":  "88025654dcd8819678596bfcd043f45a0e14dbb3ef2057abb99eed9a09474f82",
                   "test/win32/viewer-error-card.ps1":  "f8015c9f4ae53bf6ed0daa8f079cc1c8618b8841ca7da22dc40832e65f01a3c9",
+                  "test/win32/viewer-ext-tables.ps1":  "66267101658e77c90cf1608a271461abeeed66247e72f11a07f88fa49adefbaf",
                   "test/win32/viewer-feedback.ps1":  "a27afcc98a135b5f5e6ae9259d6ee57b11ea3a86d01175b8ebac9edb3e5469cd",
                   "test/win32/viewer-feedback-a11y.ps1":  "5fac54144f172e562b4139426c421f0a083bb19294815e3095af62b8201e4411",
                   "test/win32/viewer-feedback-alpha.ps1":  "7e3ed8de4c1caf1382b53ab1fa99ce89b4a3d9239263be65c7bbf80de97f34c1",

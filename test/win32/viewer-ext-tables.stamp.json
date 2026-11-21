@@ -1,0 +1,20 @@
+{
+    "guard":  "viewer-ext-tables",
+    "script":  "test/win32/viewer-ext-tables.ps1",
+    "generated":  "2026-11-20T19:22:18-08:00",
+    "commit":  "7604d0c03",
+    "uncommitted":  [
+                        "test/win32/lib/ViewerExtTableAudit.ps1",
+                        "test/win32/viewer-ext-tables.ps1"
+                    ],
+    "files":  {
+                  "macos/Sources/Features/Viewer/ViewerView.swift":  "26b25d5ff604100b6d1d99bb6f25574b40da15355b8da4b001490d91db442e21",
+                  "src/apprt/win32/viewer_content.zig":  "b05500d2af37f6ea40d7441cc2f733ca0e80a346e2469395049a03a002078d0a",
+                  "test/win32/lib/ViewerExtTableAudit.ps1":  "a3793d62d765dfd146e7b2cf1f3ac3c2607ec7dd719ffac0ee596d1f6d6a76fe",
+                  "test/win32/viewer-ext-tables.ps1":  "66267101658e77c90cf1608a271461abeeed66247e72f11a07f88fa49adefbaf"
+              },
+    "code":  {
+                 "test/win32/lib/ViewerExtTableAudit.ps1":  "code1:1c42ed53286cd7d6462a093ffd03388aedf607362120d138674c3987ccef3c92",
+                 "test/win32/viewer-ext-tables.ps1":  "code1:782f210d82e7134026c37332ccd5b11a1ccf73ab77994c9fbd7d7812a5c5dd84"
+             }
+}

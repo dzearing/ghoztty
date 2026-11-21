@@ -7415,6 +7415,22 @@ $GuardTable = @(
         )
     }
 
+    # T1581 - the viewer's extension tables. viewer_content.mimeType and
+    # highlightLanguage claim to be byte-identical with Mac's ViewerView tables;
+    # the sweep parses both sides, so an edit to EITHER source file (a Zig-only
+    # row, or a Mac row arriving with a main intake) makes it due.
+    [pscustomobject]@{
+        Name   = 'viewer-ext-tables'
+        Script = 'test\win32\viewer-ext-tables.ps1'
+        Stamp  = 'test\win32\viewer-ext-tables.stamp.json'
+        Covers = @(
+            'test\win32\viewer-ext-tables.ps1',
+            'test\win32\lib\ViewerExtTableAudit.ps1',
+            'src\apprt\win32\viewer_content.zig',
+            'macos\Sources\Features\Viewer\ViewerView.swift'
+        )
+    }
+
     # T831 - the counted-wait sweep. It covers the two files that rediscovered
     # the wall-clock deadline independently, the shared helper they now share,
     # and the directories whose waits are cross-thread: the case the rule exists
