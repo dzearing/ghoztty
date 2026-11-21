@@ -471,10 +471,24 @@ fn armSyncHold(self: *Thread, cb: *CallbackData, wait_ns: u64) void {
     );
 }
 
+/// Refresh the loop's cached clock. A static backend (kqueue on macOS, iocp on
+/// Windows) has `update_now` on its Loop; the Dynamic loop Linux runs
+/// (io_uring or epoll, chosen at startup) does not forward it, so reach the
+/// active backend's loop directly (T3330).
+fn updateLoopNow(loop: *xev.Loop) void {
+    if (comptime xev.dynamic) {
+        switch (xev.backend) {
+            inline else => |tag| @field(loop.backend, @tagName(tag)).update_now(),
+        }
+    } else {
+        loop.update_now();
+    }
+}
+
 fn armTitle(self: *Thread, cb: *CallbackData, wait_ns: u64) void {
     // The loop's clock is cached; after an idle stretch it is stale and the
     // timer, measured from it, would fire at once.
-    self.loop.update_now();
+    updateLoopNow(&self.loop);
     self.title.reset(
         &self.loop,
         &self.title_c,
@@ -587,7 +601,7 @@ fn applyResize(self: *Thread, cb: *CallbackData) void {
     // Cap the hold on a cleared prompt (a no-op if it was not cleared). The
     // loop's clock is cached; after an idle stretch it is seconds stale and
     // the timer, measured from it, would fire at once.
-    self.loop.update_now();
+    updateLoopNow(&self.loop);
     self.prompt_redraw.reset(
         &self.loop,
         &self.prompt_redraw_c,
@@ -621,7 +635,7 @@ fn promptRedrawCallback(
 fn armResize(self: *Thread, cb: *CallbackData, delay_ms: u64) void {
     // `reset` cancels a timer that is already armed and re-arms it, measured
     // from the loop's cached clock.
-    self.loop.update_now();
+    updateLoopNow(&self.loop);
     self.coalesce.reset(
         &self.loop,
         &self.coalesce_c,

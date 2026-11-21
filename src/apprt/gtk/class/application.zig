@@ -791,6 +791,22 @@ pub const Application = extern struct {
                 log.warn("unimplemented action={}", .{action});
                 return false;
             },
+
+            // Ghoztty actions the GTK frontend has not been taught yet
+            // (T3330 L1 bring-up). Each is a Linux-seat port task; the list
+            // and owners are in docs/design/windows-parity-tasks/T3330.md.
+            .toggle_hero_mode,
+            .toggle_rearrange_mode,
+            .toggle_pane_sidebar,
+            .stash_pane,
+            .restore_stashed_pane,
+            .activity_state,
+            .pane_banner,
+            .prompt_banner,
+            => {
+                log.warn("ghoztty action not ported to gtk yet action={}", .{action});
+                return false;
+            },
         }
 
         // Assume it was handled. The unhandled case must be explicit

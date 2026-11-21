@@ -7,6 +7,7 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const apprt = @import("../../apprt.zig");
 const configpkg = @import("../../config.zig");
+const internal_os = @import("../../os/main.zig");
 const Config = configpkg.Config;
 const CoreApp = @import("../../App.zig");
 
@@ -82,9 +83,19 @@ pub fn performIpc(
     comptime action: apprt.ipc.Action.Key,
     value: apprt.ipc.Action.Value(action),
 ) !bool {
-    switch (action) {
-        .new_window => return try ipcNewWindow(alloc, target, value),
-    }
+    // Ghoztty (T3330): every verb goes over the same Unix socket the Mac
+    // uses (`apprt.ipc.socketPath()`), so the CLI surface is identical on all
+    // three platforms. The GTK app does not SERVE that socket yet - that is
+    // L6 (T3335) - so until then a verb answers NoRunningInstance. The
+    // upstream D-Bus `new-window` path (`ipcNewWindow`) is kept below for
+    // the auto-launch work (T3336): its arguments are upstream's `-e` CLI
+    // args, not Ghoztty's wire args, so it cannot carry `+new-window` as is.
+    _ = target;
+    return internal_os.ipc_client.sendAction(
+        alloc,
+        comptime action.wireName(),
+        value.arguments,
+    );
 }
 
 /// Redraw the inspector for the given surface.

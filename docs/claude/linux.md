@@ -66,16 +66,86 @@ a8e7bd2d1, 1764 files under `src/` + `pkg/`):
 | `rm -rf` those 2000 | 1.02 s | 0.01 s |
 
 Zig's cache is thousands of small files written and stat'ed, which is exactly
-the 100x+ row. A zig build timing is owed once zig is installed in the distro
-(L1, T3330); the file-system gap above already settles the default.
+the 100x+ row.
+
+**`zig build` does not work on `/mnt` at all** (measured in T3330, 2026-11-21).
+On the live tree it fails after about 20 s with `failed to rename compilation
+results ('.zig-cache/tmp/...') into local cache ('.zig-cache/o/...'):
+AccessDenied`. Zig's atomic cache rename does not survive the Windows drive
+mount. So **build in the clone**: commit first, then `-Repo clone` (the
+default). In the clone the GTK debug build took 24 s when the global cache was
+already warm, and `test/linux/gtk-smoke.sh` takes about 1 minute end to end.
+Keep `-Repo mnt` for steps that do not build, such as `setup-distro.sh`.
+
+## Distro setup (one time, idempotent): `scripts/linux/setup-distro.sh` (T3330)
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -Repo mnt -CommandFile scripts\linux\setup-distro.sh
+```
+
+It ends `SETUP OK` and prints each tool's version. Re-running it is a no-op
+when everything is present. What it puts where:
+
+- **apt** (the exact line it runs for whatever is missing):
+
+  ```
+  apt-get install -y --no-install-recommends libgtk-4-dev libadwaita-1-dev gettext libxml2-utils python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 mesa-utils weston git curl xz-utils
+  ```
+
+  Ubuntu 24.04 gives GTK 4.14.5 and libadwaita 1.5.0.
+- **zig 0.15.2** (`build.zig.zon` `minimum_zig_version`) in `~/.local/zig-0.15.2`.
+- **blueprint-compiler 0.16.0** in `~/.local/blueprint-compiler-0.16.0`, a
+  checkout of the tag. `src/apprt/gtk/build/blueprint.zig` requires 0.16 and
+  Ubuntu 24.04 ships 0.12. Two traps it handles: GNOME's gitlab answers an
+  automated clone with HTTP 406, so it clones GNOME's GitHub mirror; and a
+  source checkout answers `--version` with `uninstalled`, which the build's
+  version check rejects, so the wrapper answers with the tag's number.
+- `~/.local/ghoztty-tools/bin` links both, and `wsl-run.ps1` puts that dir on
+  PATH right after `zig-out/bin`. Nothing else in `~` is touched.
+
+A `-Repo mnt` step has `GIT_DIR`/`GIT_WORK_TREE` exported at this worktree, so
+any other `git clone` or `git init` inside it needs `env -u GIT_DIR -u
+GIT_WORK_TREE` (or it fails with `working tree ... already exists`).
+
+## Build and smoke test (T3330)
+
+```
+zig build -Dapp-runtime=gtk -Doptimize=Debug -fno-sys=gtk4-layer-shell
+```
+
+`-fno-sys=gtk4-layer-shell` builds that library from source: Ubuntu 24.04 does
+not package it, and the default links the system one. The output is
+`zig-out/bin/ghoztty`. `-Doptimize=Debug` is required for the same reason as on
+Windows: the debug app id is `com.dzearing.ghoztty-debug` and the debug socket
+is `ghostty-debug-<uid>.sock`, so a release-mode dev build would answer on the
+installed app's names.
+
+The acceptance script builds and launches it:
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\gtk-smoke.sh
+```
+
+It opens the window in a **private headless Weston** (its own
+`XDG_RUNTIME_DIR` and socket), never in WSLg, so no window ever lands on the
+user's desktop or takes focus. It checks the build, the debug app id, that the
+window's shell ran on a pty, that the app stays up, and that OpenGL loaded.
+It ends `GTK SMOKE: ALL PASS` or `GTK SMOKE: <n> FAILURE(S)`.
+
+**The GPU is reachable, but Mesa does not pick it by default.** Measured
+2026-11-21: `glxinfo -B` and the app both report `llvmpipe` (software) unless
+`GALLIUM_DRIVER=d3d12` is set. With it, both report `D3D12 (NVIDIA GeForce RTX
+4090)` and the app loads OpenGL 4.6. `/dev/dxg` and `/usr/lib/wsl/lib` are
+present. The smoke script sets the variable when `/dev/dxg` exists. The app
+does not set it on its own yet; that is T3350.
 
 ## Distro state (2026-11-21)
 
 - Ubuntu 24.04.1 LTS, runs as `root` (`$HOME=/root`), 32 cores, 47 GB visible.
-- **No zig** (`type -P zig` is empty; inside a step `command -v zig` names the
-  wrapper function, not a binary). 0.15.2 (`build.zig.zon`
-  `minimum_zig_version`) is installed in L1.
-- git is `/usr/bin/git`. No Linux `ghoztty` yet, and the Windows `ghoztty.exe`
-  is not reachable from a step (PATH guard).
+- zig 0.15.2 and blueprint-compiler 0.16.0 are installed by `setup-distro.sh`
+  (above). Inside a step `command -v zig` names the wrapper function; ask
+  `type -P zig` for the binary.
+- git is `/usr/bin/git`. The Windows `ghoztty.exe` is not reachable from a step
+  (PATH guard).
 - The user runs other work in this distro (`~/*.sh`, a model server): do not
-  touch `~` beyond `~/ghoztty-l`.
+  touch `~` beyond `~/ghoztty-l` and the `~/.local` entries named above.

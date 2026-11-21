@@ -116,6 +116,7 @@ $r = Invoke-Wrapper @('-Plan', '-FakeFreeGB', '100000', '-MinFreeGB', '16', '--'
 Check "E3 never over the core count ($cores)" ($r.Text -match "jobs=$cores\b") $r.Text
 Check 'E4 zig build is wrapped with -j' ($r.Text -match 'command zig build -j"\$GHOZTTY_WSL_JOBS"') $r.Text
 Check 'E5 /mnt/* is dropped from PATH and zig-out/bin goes first' (($r.Text -match '/mnt/\*\) ;;') -and ($r.Text -match 'export PATH="\$PWD/zig-out/bin:')) $r.Text
+Check 'E5b the pinned build tools dir is on PATH, right after zig-out/bin' ($r.Text -match 'export PATH="\$PWD/zig-out/bin:\$HOME/\.local/ghoztty-tools/bin:') $r.Text
 
 # --- F. steps ----------------------------------------------------------------
 $r = Invoke-Wrapper @('-Plan', '-FakeFreeGB', '40', '-Step', 'echo one', '-Step', 'echo two') $lane

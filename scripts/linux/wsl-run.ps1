@@ -195,7 +195,10 @@ $lines.Add("cd $workDir")
 # PATH: our Linux build first, then the distro's own entries; every /mnt/* entry
 # (the Windows PATH that WSL appends) is dropped.
 $lines.Add('__p=""; IFS=:; for __e in $PATH; do case "$__e" in /mnt/*) ;; *) __p="${__p:+$__p:}$__e";; esac; done; unset IFS')
-$lines.Add('export PATH="$PWD/zig-out/bin:$__p"; unset __p __e')
+# Then our pinned build tools (T3330, scripts/linux/setup-distro.sh): zig at
+# build.zig.zon's minimum_zig_version and blueprint-compiler 0.16, which the
+# distro does not carry (Ubuntu 24.04 has no zig and blueprint 0.12).
+$lines.Add('export PATH="$PWD/zig-out/bin:$HOME/.local/ghoztty-tools/bin:$__p"; unset __p __e')
 # zig build gets the memory-derived -j unless the caller already gave one.
 $lines.Add('zig() { if [ "$1" = build ]; then shift; case " $* " in *" -j"*) command zig build "$@";; *) command zig build -j"$GHOZTTY_WSL_JOBS" "$@";; esac; else command zig "$@"; fi; }')
 $lines.Add('export -f zig')

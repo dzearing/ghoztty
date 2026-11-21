@@ -1,6 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const xev = @import("xev");
+// The process-wide backend (Dynamic on Linux: io_uring or epoll, picked at
+// startup). renderer.Thread hands us its `idle_arm` Async from that type, so
+// the raw `@import("xev")` (static io_uring on Linux) does not match it
+// (T3330: the first Linux build of the idle-release path).
+const xev = @import("../global.zig").xev;
 const wuffs = @import("wuffs");
 const apprt = @import("../apprt.zig");
 const configpkg = @import("../config.zig");
