@@ -68,6 +68,11 @@ $script:GUIPM_STATUS_NAME = @{
     '0xC000041D' = 'STATUS_FATAL_USER_CALLBACK_EXCEPTION (an exception escaped a window procedure)'
     '0xC0000602' = 'STATUS_FAIL_FAST_EXCEPTION'
     '0x40010004' = 'DBG_TERMINATE_PROCESS (something asked Windows to kill it)'
+    # Not an exception code: exit -1 is what TerminateProcess(h, -1) leaves,
+    # and that is the call PowerShell's Stop-Process and .NET's Process.Kill
+    # make. Still reported (a child CAN exit -1 itself, section K), but named
+    # so the reader looks for whoever stopped it before hunting a crash (T1685).
+    '0xFFFFFFFF' = 'exit -1 (the TerminateProcess(-1) that Stop-Process / Process.Kill leave: usually an outside kill, not an exception)'
 }
 
 # 2^31 as an Int64. Written out rather than as `0x80000000`, for the reason in

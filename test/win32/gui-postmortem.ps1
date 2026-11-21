@@ -359,6 +359,11 @@ Assert "K2 the unkilled -1 exit is reported (blocks: $kCount, want 1)" `
 Assert 'K3 its verdict is CRASHED - 0xFFFFFFFF' ($kBlock -like '*verdict : CRASHED - 0xFFFFFFFF*')
 $kRec = @(Get-TestLaunchRecords | Where-Object { $_.Pid -eq $kDie.Pid })
 Assert 'K4 the launch is not on the record as killed' ($kRec.Count -eq 1 -and -not $kRec[0].Killed)
+# T1685: the verdict names what the code almost always means - an outside
+# TerminateProcess(-1), the exit Stop-Process / Process.Kill leave - instead of
+# "unnamed NTSTATUS", which sent that card hunting for an in-app crash.
+Assert 'K5 the 0xFFFFFFFF verdict names the outside-kill signature' `
+    ($kBlock -like '*0xFFFFFFFF exit -1*Stop-Process*' -and $kBlock -notlike '*0xFFFFFFFF unnamed NTSTATUS*')
 Remove-TestDesktop
 
 # ------------- L. a bare Stop-Process on a harness launch is not a crash (T1550)
