@@ -1,22 +1,22 @@
 {
     "guard":  "deliver-verify",
     "script":  "test/win32/deliver-windows-build.ps1",
-    "generated":  "2026-11-20T23:40:25-08:00",
-    "commit":  "c15f2572d",
+    "generated":  "2026-11-20T23:42:13-08:00",
+    "commit":  "d47aca185",
     "uncommitted":  [
                         "scripts/deliver-windows-build.ps1",
                         "test/win32/deliver-windows-build.ps1"
                     ],
     "files":  {
                   "scripts/deliver-audit.ps1":  "5598626fd46a8b8da014508f9d26c8f423cebddb4c741aec4e5fbe6d882149ce",
-                  "scripts/deliver-windows-build.ps1":  "da270536b281d2a38cf89c047d2236e70d57ec0714fdef1b6d0946342cfd6dcc",
+                  "scripts/deliver-windows-build.ps1":  "0b827bd4cd51d35abc7ef83f04a38ce03d9473c4b149165620290ce05b4d8690",
                   "scripts/delivery-manifest.ps1":  "e1d865b58a35c5d226f2078a8e0d4e274d75fbbb5adc2f5aa2639382ae71de60",
-                  "test/win32/deliver-windows-build.ps1":  "808d6c774ec17c47e3db1b6e7b34fcad64d165f9dc8be659679f8b6c18e08b00"
+                  "test/win32/deliver-windows-build.ps1":  "919f090cf0e02931139caf3c58c36d36c7fa6036b4650e46c6e9d2076228bb22"
               },
     "code":  {
                  "scripts/deliver-audit.ps1":  "code1:0a06f7c65f26c50d356a9b699660d99af055626f9fe6ee3e8257711eacac033e",
-                 "scripts/deliver-windows-build.ps1":  "code1:bba12ac5364820a7e4290b26a003f161469abee10516b16b0dcf79f479ccd61a",
+                 "scripts/deliver-windows-build.ps1":  "code1:e3f78bd219d779957caecd6a00972330632f633427fc37d6c03c760ce15280f4",
                  "scripts/delivery-manifest.ps1":  "code1:320328379574361dd4adabdcd2af640fce04c4ab2c6845d0eb6c5252dda250aa",
-                 "test/win32/deliver-windows-build.ps1":  "code1:b96253f15b5f4140aa64ea7d8d01a5387639f8da7cbb21a6d68e46375e0877a3"
+                 "test/win32/deliver-windows-build.ps1":  "code1:ca98ae073387c6b06a0631930182ee60866ef50af6bcf3b8cab8defab9203155"
              }
 }

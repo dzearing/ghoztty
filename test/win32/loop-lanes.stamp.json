@@ -1,14 +1,14 @@
 {
     "guard":  "loop-lanes",
     "script":  "test/win32/loop-lanes.ps1",
-    "generated":  "2026-11-20T23:47:55-08:00",
-    "commit":  "c15f2572d",
+    "generated":  "2026-11-21T00:08:47-08:00",
+    "commit":  "d47aca185",
     "uncommitted":  [
                         "scripts/deliver-windows-build.ps1"
                     ],
     "files":  {
                   "scripts/daily-publish.ps1":  "454275dba14771956e2316cf1280ae85b972a187641df70f76bfe522ef2a9793",
-                  "scripts/deliver-windows-build.ps1":  "da270536b281d2a38cf89c047d2236e70d57ec0714fdef1b6d0946342cfd6dcc",
+                  "scripts/deliver-windows-build.ps1":  "0b827bd4cd51d35abc7ef83f04a38ce03d9473c4b149165620290ce05b4d8690",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
                   "scripts/go-loop-exec.ps1":  "7ca39b7c5ee20bef73537ce3b0305317f45cffc36d1ecc7b5a34e2f6abc7ff49",
                   "scripts/go-loop-health.ps1":  "895f9cef3791a9f81fd8b975c1d17c127f9595688a4f446bf6a1221f7a2e6a65",
@@ -23,7 +23,7 @@
               },
     "code":  {
                  "scripts/daily-publish.ps1":  "code1:9122d245791833336a8a5d35d166774ff6202ed16c71a41735ae8a1362f65a54",
-                 "scripts/deliver-windows-build.ps1":  "code1:bba12ac5364820a7e4290b26a003f161469abee10516b16b0dcf79f479ccd61a",
+                 "scripts/deliver-windows-build.ps1":  "code1:e3f78bd219d779957caecd6a00972330632f633427fc37d6c03c760ce15280f4",
                  "scripts/go-loop-boot.ps1":  "code1:3a6f52330144f61ecaa7cdcde3b7a9eb84aa47ba0be12584cf71696f6fc55ba0",
                  "scripts/go-loop-exec.ps1":  "code1:d4db5b088d3f66b65497e7782cf611a782407c59f42b748bfb40597c228663fc",
                  "scripts/go-loop-health.ps1":  "code1:e335612a70cc42b28fb025eb6835fe9686d05a71e69669bfa65ca007fd8bd3c1",

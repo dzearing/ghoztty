@@ -134,11 +134,16 @@ if (-not $DryRun -and -not $VerifyOnly -and
 
 $script:problems = New-Object System.Collections.Generic.List[string]
 $script:skipped = New-Object System.Collections.Generic.List[string]
+$script:warnings = New-Object System.Collections.Generic.List[string]
 
 function Say([string]$m) { Write-Host $m }
 function Ok([string]$m) { Write-Host "  ok   $m" }
 function Bad([string]$m) { Write-Host "  FAIL $m"; $script:problems.Add($m) }
 function Skip([string]$m) { Write-Host "  skip $m"; $script:skipped.Add($m) }
+# T1604: a state worth reading that is not a failure - today only a location
+# whose agent -AppOnly left beside the new app. Carried onto the verdict line,
+# because a warning that scrolls past mid-run is the "never says so" defect.
+function Warn([string]$m) { Write-Host "  WARN $m"; $script:warnings.Add($m) }
 
 function Complete-Delivery {
     $n = $script:problems.Count
@@ -149,6 +154,7 @@ function Complete-Delivery {
         exit 1
     }
     $tail = if ($script:skipped.Count) { " ($($script:skipped.Count) skipped: $($script:skipped -join '; '))" } else { '' }
+    if ($script:warnings.Count) { $tail += " ($($script:warnings.Count) warning(s): $($script:warnings -join '; '))" }
     if ($DryRun) { Say "DELIVER DRY RUN: nothing was written across $script:locationCount location(s)$tail"; exit 0 }
     if ($script:locationCount -eq 0) {
         # Never "OK": nothing was reached, so nothing was delivered. Not fatal
@@ -533,6 +539,24 @@ if (-not $AppOnly) {
     }
 }
 
+# T1604: -AppOnly ships no agent, which is the point - but it leaves each
+# location holding a new app beside whatever agent it already had, the very
+# pairing the zip skip below refuses to publish. So the staged agent is still
+# READ under -AppOnly (never copied), and a location whose agent is another
+# build is a WARN on the verdict line rather than a failure.
+$script:appOnlyAgentStamp = ''
+if ($AppOnly) {
+    $stagedAgentExe = Join-Path $stagingBin 'ghoztty-agent.exe'
+    if (Test-Path -LiteralPath $stagedAgentExe -PathType Leaf) {
+        $sa = Resolve-GhozttyAgentStamp -Exe $stagedAgentExe
+        $script:appOnlyAgentStamp = $sa.Stamp
+        if ($sa.Stamp) { Say "   agent $($sa.Stamp) (not shipped, -AppOnly; each location's agent is compared against it)" }
+        else { Say "  note: the staged agent would not report a stamp ($($sa.Why)); what agent each location keeps cannot be checked this run" }
+    } else {
+        Say "  note: staging has no ghoztty-agent.exe, so what agent each location keeps cannot be checked this run (-AppOnly)"
+    }
+}
+
 # ---- copy + verify one file --------------------------------------------------
 #
 # Copy-Item preserves the source's length and modification time, so those two
@@ -675,6 +699,17 @@ foreach ($dir in $Targets) {
             if (Test-AgentStampsMatch $ga.Stamp $script:stagedAgentStamp) { Ok "ghoztty-agent.exe reports $($ga.Stamp)" }
             elseif ($ga.Stamp) { Bad "$dir\ghoztty-agent.exe reports $($ga.Stamp) but staging has $($script:stagedAgentStamp)"; $failedHere = $true }
             else { Bad "$dir\ghoztty-agent.exe could not be asked its version ($($ga.Why))"; $failedHere = $true }
+        }
+    } elseif ($script:appOnlyAgentStamp) {
+        # T1604: the -AppOnly half of the same read - reported, never failed.
+        $agentThere = Join-Path $dir 'ghoztty-agent.exe'
+        if (-not (Test-Path -LiteralPath $agentThere -PathType Leaf)) {
+            Warn "$dir has no ghoztty-agent.exe beside the new app (-AppOnly ships none)"
+        } else {
+            $ga = Resolve-GhozttyAgentStamp -Exe $agentThere
+            if (Test-AgentStampsMatch $ga.Stamp $script:appOnlyAgentStamp) { Ok "ghoztty-agent.exe reports $($ga.Stamp), the staged build's (kept, -AppOnly)" }
+            elseif ($ga.Stamp) { Warn "$dir keeps ghoztty-agent.exe $($ga.Stamp) beside the new app, but staging's agent is $($script:appOnlyAgentStamp) (-AppOnly ships no agent)" }
+            else { Warn "$dir\ghoztty-agent.exe could not be asked its version ($($ga.Why)), so the agent left beside the new app is unknown (-AppOnly)" }
         }
     }
 

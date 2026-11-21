@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-20T23:47:24-08:00",
-    "commit":  "c15f2572d",
+    "generated":  "2026-11-21T00:05:06-08:00",
+    "commit":  "d47aca185",
     "uncommitted":  [
 
                     ],
@@ -1251,7 +1251,7 @@
                   "test/win32/dark-menus.ps1":  "944b48c2b49d5d2ca8148572da1dcc70a9628871b27246187b9a3982e2a34491",
                   "test/win32/dashboard-dom.ps1":  "5c8bec2cd488707972cd1b71ae0c4e0bdbc61d2f7d7a844d8c24aa50b0cc3b62",
                   "test/win32/dashboard-keepalive.ps1":  "907915acd38d52b16755167f2df7e4383bc5d1cb53a3f8cbd84e419a559c7429",
-                  "test/win32/deliver-windows-build.ps1":  "808d6c774ec17c47e3db1b6e7b34fcad64d165f9dc8be659679f8b6c18e08b00",
+                  "test/win32/deliver-windows-build.ps1":  "919f090cf0e02931139caf3c58c36d36c7fa6036b4650e46c6e9d2076228bb22",
                   "test/win32/deny-escape-damage.ps1":  "2fc4374ce0468d7f7274c10218e38a1ec1c5ec2634fdb231bf2b8b290e9a7e29",
                   "test/win32/deny-git-autostash.ps1":  "625dfd8e4a308dc01902adb6c31b80b0a60a47a1b2e230a9385eaaecd40846e0",
                   "test/win32/deny-sh-from-powershell.ps1":  "345a909a59c95edc61dc97247f3d94784431cae1203ca76951f5dbe755e25a8e",

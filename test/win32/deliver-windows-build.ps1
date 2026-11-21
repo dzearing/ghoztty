@@ -284,6 +284,21 @@ AssertEq "D12a -AppOnly still delivers the app" 0 $r.Code
 Assert "D12b and leaves the portable zip alone" ((Get-Item -LiteralPath $zipPath).LastWriteTimeUtc -eq $zipStamp)
 Assert "D12c saying why" ($r.Text -match 'AppOnly ships no agent')
 Assert "D12d and skips the share's loose agent for the same reason" ($r.Text -match 'loose share agent')
+# T1604: -AppOnly still READS each location's agent against the staged one. Here
+# both locations hold the staged agent (C's full delivery put it there), so the
+# read clears them and the verdict carries no warning. The stale-agent arm needs a
+# second agent build and lives in section H (H21-H25).
+Assert "D12e -AppOnly reads the kept agent back and clears a staged-build one" `
+    ($r.Text -match 'the staged build''s \(kept, -AppOnly\)')
+Assert "D12f and a clean -AppOnly verdict carries no warning" (($r.Last -like 'DELIVER OK:*') -and ($r.Last -notmatch 'warning'))
+# A location left with NO agent beside the new app is said on the verdict line.
+$p1AgentD = Join-Path $p1 'ghoztty-agent.exe'
+$p1AgentKeep = "$p1AgentD.t1604-keep"
+Move-Item -LiteralPath $p1AgentD $p1AgentKeep -Force
+try { $r = Invoke-Deliver -Extra @{ AppOnly = $true; NoZip = $true } } finally { Move-Item -LiteralPath $p1AgentKeep $p1AgentD -Force }
+AssertEq "D12g a location with no agent still delivers the app (a warning, not a failure)" 0 $r.Code
+Assert "D12h and the verdict line names the agentless location" `
+    (($r.Last -like 'DELIVER OK:*') -and ($r.Last -match ([regex]::Escape($p1) + ' has no ghoztty-agent\.exe beside the new app')))
 
 # D12: an absent location is skipped, never a failure - a sleeping NAS must not
 # fail a delivery that otherwise worked.
@@ -598,6 +613,22 @@ if (-not $staleStamp -or (Test-AgentStampsMatch $staleStamp $stagedStamp)) {
     AssertEq "H19 and agrees again once the location is repaired" 0 $r.Code
     Assert "H20 reporting the one agent stamp every location shares" `
         ($r.Text -match ("ghoztty-agent\.exe $([regex]::Escape($stagedStamp)) in \d+ location"))
+
+    # T1604: -AppOnly ships no agent, so a location keeping another build's agent
+    # is LEFT that way - and must be SAID, on the verdict line, never failed.
+    Copy-Item -LiteralPath $staleAgent $p2Agent -Force
+    $r = Invoke-Deliver -Extra @{ AppOnly = $true; NoZip = $true }
+    AssertEq "H21 -AppOnly beside another build's agent still delivers the app" 0 $r.Code
+    Assert "H22 THE POINT: the run names the stale agent it left beside the new app, and staging's" `
+        ($r.Text -match ([regex]::Escape($p2) + ' keeps ghoztty-agent\.exe ' + [regex]::Escape($staleStamp) +
+            ' beside the new app, but staging''s agent is ' + [regex]::Escape($stagedStamp)))
+    Assert "H23 on the verdict line, not only mid-run" (($r.Last -like 'DELIVER OK:*') -and ($r.Last -match '1 warning\(s\)'))
+    Assert "H24 and -AppOnly really did leave the stale bytes in place" `
+        ((Get-FileHash -LiteralPath $p2Agent).Hash -eq (Get-FileHash -LiteralPath $staleAgent).Hash)
+    Copy-Item -LiteralPath $stagedAgent $p2Agent -Force
+    $r = Invoke-Deliver -Extra @{ AppOnly = $true; NoZip = $true }
+    Assert "H25 POSITIVE TWIN: the same run over the staged agent warns about nothing" `
+        (($r.Last -like 'DELIVER OK:*') -and ($r.Last -notmatch 'warning') -and -not ($r.Text -match 'keeps ghoztty-agent'))
 }
 
 # ============================================================================
