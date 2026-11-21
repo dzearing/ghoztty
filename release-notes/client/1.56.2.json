@@ -1,0 +1,14 @@
+{
+  "version": "1.56.2",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "+list now names the machine a cross-machine window is on." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The About box lays its facts out as labelled rows, like Mac's." },
+        { "text": "App-less warning dialogs are drawn at the display's scale." }
+      ] }
+  ]
+}
