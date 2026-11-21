@@ -154,7 +154,7 @@ $stamp1 = "t192-c-$PID"
 $r = Invoke-ZigBuild -Stamp $stamp1 -Unlock '' -LogName 'control.log'
 Assert "control build exits 0" ($r.Code -eq 0)
 Assert "installed agent carries the new stamp" (Test-StampIn $AgentExe $stamp1)
-Assert "nothing was moved aside" ((Get-AsideFiles).Count -eq 0)
+Assert "nothing was moved aside" (@(Get-AsideFiles).Count -eq 0)
 
 "== 2: teeth - with the guard off, a held agent still fails the build"
 $held = Start-HeldAgent
@@ -171,7 +171,7 @@ $stamp3 = "t192-f-$PID"
 $r = Invoke-ZigBuild -Stamp $stamp3 -Unlock '' -LogName 'fix.log'
 Assert "build exits 0 with an agent still running" ($r.Code -eq 0)
 Assert "the NEW agent is on disk at the install path" (Test-StampIn $AgentExe $stamp3)
-$aside = Get-AsideFiles
+$aside = @(Get-AsideFiles)
 Assert "exactly one file was moved aside" ($aside.Count -eq 1)
 Assert "the moved-aside file is the OLD binary" `
     ($aside.Count -eq 1 -and (Test-StampIn $aside[0].FullName $stamp1))
@@ -188,7 +188,7 @@ Assert "the moved-aside process still matches the repo-path kill filter" ($still
 Stop-RepoAgents
 $r = Invoke-ZigBuild -Stamp '' -Unlock '' -LogName 'sweep.log'
 Assert "sweep build exits 0" ($r.Code -eq 0)
-Assert "no moved-aside files remain" ((Get-AsideFiles).Count -eq 0)
+Assert "no moved-aside files remain" (@(Get-AsideFiles).Count -eq 0)
 Assert "zig-out is back on the tree's own agent build" (-not (Test-StampIn $AgentExe $stamp3))
 
 # ---------------------------------------------------------------------------
@@ -229,7 +229,7 @@ Get-AsideFilesFor $ClientExe | ForEach-Object { Remove-Item $_.FullName -Force -
 $r = Invoke-ZigBuild -Step 'remote-test-client' -Stamp '' -Unlock '' -LogName 'client-base.log'
 Assert "remote-test-client build exits 0" ($r.Code -eq 0)
 Assert "remote-test-client installed" (Test-Path $ClientExe)
-Assert "nothing was moved aside" ((Get-AsideFilesFor $ClientExe).Count -eq 0)
+Assert "nothing was moved aside" (@(Get-AsideFilesFor $ClientExe).Count -eq 0)
 
 "== 6: teeth - with the guard off, a RUNNING remote-test-client fails its install"
 (Get-Item $ClientExe).LastWriteTime = $clientAged
@@ -243,14 +243,14 @@ Assert "and it fails with AccessDenied on remote-test-client" `
     ($r.Text -match 'AccessDenied' -and $r.Text -match 'remote-test-client\.exe')
 Assert "the old binary is still the one on disk" `
     ((Get-Item $ClientExe).LastWriteTime -eq $clientAged)
-Assert "nothing was moved aside with the guard off" ((Get-AsideFilesFor $ClientExe).Count -eq 0)
+Assert "nothing was moved aside with the guard off" (@(Get-AsideFilesFor $ClientExe).Count -eq 0)
 
 "== 7: the fix - the same build succeeds with the guard on"
 $r = Invoke-ZigBuild -Step 'remote-test-client' -Stamp '' -Unlock '' -LogName 'client-fix.log'
 Assert "build exits 0 with the client still running" ($r.Code -eq 0)
 Assert "a NEW binary landed at the install path" `
     ((Get-Item $ClientExe).LastWriteTime -ne $clientAged)
-$clientAsides = Get-AsideFilesFor $ClientExe
+$clientAsides = @(Get-AsideFilesFor $ClientExe)
 Assert "exactly one file was moved aside" ($clientAsides.Count -eq 1)
 Assert "the moved-aside file is the OLD binary" `
     ($clientAsides.Count -eq 1 -and $clientAsides[0].LastWriteTime -eq $clientAged)
@@ -262,7 +262,7 @@ Stop-HeldClient
 Stop-RepoAgents
 $r = Invoke-ZigBuild -Step 'remote-test-client' -Stamp '' -Unlock '' -LogName 'client-sweep.log'
 Assert "sweep build exits 0" ($r.Code -eq 0)
-Assert "no moved-aside client files remain" ((Get-AsideFilesFor $ClientExe).Count -eq 0)
+Assert "no moved-aside client files remain" (@(Get-AsideFilesFor $ClientExe).Count -eq 0)
 
 Stop-HeldClient
 Stop-RepoAgents

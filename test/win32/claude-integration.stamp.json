@@ -1,10 +1,10 @@
 {
     "guard":  "claude-integration",
     "script":  "test/win32/claude-integration.ps1",
-    "generated":  "2026-11-09T21:49:58-08:00",
-    "commit":  "b99af7bb3",
+    "generated":  "2026-11-21T02:02:31-08:00",
+    "commit":  "11458bea9",
     "uncommitted":  [
-                        "src/apprt/win32/AgentIntegrationsDialog.zig"
+                        "test/win32/claude-integration.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/agent_integrations_vm.zig":  "42b753ce83ad0b8994a1ed4f30a27604fbb16dd21c874af1228b546402eef089",
@@ -12,6 +12,9 @@
                   "src/apprt/win32/AgentIntegrationsDialog.zig":  "246d10bd97a670440044da56b0072d1e41dff7d0c20ac4caae859bc0ab900eee",
                   "src/apprt/win32/claude_plugin_migration.zig":  "b2412476c3a45aaaae81863a2c23428b6a29cb9c0b60e3dc19b1f80841366297",
                   "src/apprt/win32/claude_setup.zig":  "7800892ae8d8afadd52d0574aaa86fb7e0d945b2824030c79661e3e5761fb47f",
-                  "test/win32/claude-integration.ps1":  "1565ee1d5cc2e43059e677c48bd4f83b7e7fa5339f58ac132cb567510ac13b7f"
-              }
+                  "test/win32/claude-integration.ps1":  "3bf7bbd173d926114d0b9ee422c8c9579e09e58160840b59a32198748f2038c3"
+              },
+    "code":  {
+                 "test/win32/claude-integration.ps1":  "code1:3582bc8790f4e6f2f5c62302169ce23a2282c375d1bc5b47ca381631dc9909c8"
+             }
 }

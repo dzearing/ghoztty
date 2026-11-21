@@ -89,7 +89,7 @@ function Get-TagPatterns($yaml) {
         ForEach-Object { $_.Groups[1].Value })
 }
 $winTags = Get-TagPatterns $wf
-$macTags = Get-TagPatterns $macWf
+$macTags = @(Get-TagPatterns $macWf)
 Assert "A1 release.yml has a tag trigger" ($macTags.Count -gt 0)
 foreach ($t in $macTags) {
     Assert "A2 Windows trigger carries macOS pattern '$t'" ($winTags -contains $t)

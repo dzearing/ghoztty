@@ -1,10 +1,9 @@
 {
     "guard":  "release-artifacts",
     "script":  "test/win32/release-artifacts.ps1",
-    "generated":  "2026-11-20T19:51:44-08:00",
-    "commit":  "d23a34b0f",
+    "generated":  "2026-11-21T02:02:45-08:00",
+    "commit":  "11458bea9",
     "uncommitted":  [
-                        "dist/windows-installer/install-msitools.sh",
                         "test/win32/release-artifacts.ps1"
                     ],
     "files":  {
@@ -13,9 +12,9 @@
                   "dist/windows-installer/build-release-artifacts.sh":  "0e1f38f77a2655a038c775bb8e4508f9db74ed019b1a28862f3ffa909a5940c3",
                   "dist/windows-installer/install-msitools.sh":  "cb4fdb384cf3a87e514ae12f59ef7a3b05a271d18c236eed030b04544ca6fb6c",
                   "dist/windows-installer/sign-artifacts.sh":  "fc8baac16a2f6b699aa3deb79ab0782e5646a2b19e6961bd423d4fab47213404",
-                  "test/win32/release-artifacts.ps1":  "cdf701920a0e5a3c1c23cec1551073f12a1d04536ded264e62f37d5a1db56228"
+                  "test/win32/release-artifacts.ps1":  "cd3fe5d2f52998aeda15417513f32601f925f17b1d4be582a078c34fbdac0246"
               },
     "code":  {
-                 "test/win32/release-artifacts.ps1":  "code1:3029859ed394154bbc19493a9c1cc5fa53a7e7d7260a8136b259a9b82a5019e1"
+                 "test/win32/release-artifacts.ps1":  "code1:628a26fd85c1af90360fc0a7bf101d788b5f425160ef3caaf1b7ef34189ad8b9"
              }
 }

@@ -101,15 +101,15 @@ $prettyArray = @'
 '@
 $ndjson = '{"id":"aaa","alive":true}' + "`r`n" + '{"id":"bbb","alive":true}'
 
-AssertEq "A1 pretty array yields both session ids" 2 (Get-GhozttySessionIds $prettyArray).Count
+AssertEq "A1 pretty array yields both session ids" 2 @(Get-GhozttySessionIds $prettyArray).Count
 AssertEq "A2 pretty array yields the right first id" '59777171fd211b995a94f16163ad83e0' `
     (Get-GhozttySessionIds $prettyArray)[0]
-AssertEq "A3 NDJSON still parses (the shape docs/claude/cli.md documents)" 2 (Get-GhozttySessionIds $ndjson).Count
+AssertEq "A3 NDJSON still parses (the shape docs/claude/cli.md documents)" 2 @(Get-GhozttySessionIds $ndjson).Count
 AssertEq "A4 a leading warning line does not defeat the parse" 2 `
-    (Get-GhozttySessionIds ("warning: something`r`n" + $prettyArray)).Count
-AssertEq "A5 empty output yields no sessions" 0 (Get-GhozttySessionIds '').Count
-AssertEq "A6 garbage yields no sessions instead of throwing" 0 (Get-GhozttySessionIds 'not json at all').Count
-AssertEq "A7 a single object parses" 1 (Get-GhozttySessionIds '{"id":"solo"}').Count
+    @(Get-GhozttySessionIds ("warning: something`r`n" + $prettyArray)).Count
+AssertEq "A5 empty output yields no sessions" 0 @(Get-GhozttySessionIds '').Count
+AssertEq "A6 garbage yields no sessions instead of throwing" 0 @(Get-GhozttySessionIds 'not json at all').Count
+AssertEq "A7 a single object parses" 1 @(Get-GhozttySessionIds '{"id":"solo"}').Count
 
 # The pre-fix oracle: the reader the upgrade script used to have, run over the
 # output the command actually prints. It finds nothing - which is exactly what
@@ -675,7 +675,7 @@ function Wait-Windows($tag, $count, $timeoutSec = 60) {
     $tree = $null
     while ((Get-Date) -lt $deadline) {
         $tree = Get-Tree $tag
-        if ((Windows-Of $tree).Count -ge $count) { return $tree }
+        if (@(Windows-Of $tree).Count -ge $count) { return $tree }
         Start-Sleep -Milliseconds 800
     }
     return $tree
@@ -757,7 +757,7 @@ try {
     $paneB = Pane-In $treeB 'main'
     Assert "B2 the loop's pane exists and is addressable" ($null -ne $paneB -and $paneB.id)
     $paneId = if ($paneB) { [string]$paneB.id } else { '' }
-    $windowsBefore = (Windows-Of $treeB).Count
+    $windowsBefore = @(Windows-Of $treeB).Count
 
     # T441 - the isolation assert, and it comes BEFORE anything is typed. Every
     # later section drives `$paneId` with `+send-keys`, including a line that
@@ -829,7 +829,7 @@ try {
     $paneB2 = Pane-In $treeB2 'main'
     Assert "B12 the app came back with the loop's window re-attached" ($null -ne $paneB2)
     AssertEq "B13 it is the SAME pane (re-attached, not recreated)" $paneId ([string]$paneB2.id)
-    AssertEq "B14 no extra window was opened" $windowsBefore (Windows-Of $treeB2).Count
+    AssertEq "B14 no extra window was opened" $windowsBefore @(Windows-Of $treeB2).Count
 
     # The prompt must actually reach the pane, INTACT. The pane runs cmd.exe, so
     # typed characters echo at its prompt - proof of delivery, not of intent.

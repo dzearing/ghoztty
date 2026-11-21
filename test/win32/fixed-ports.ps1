@@ -180,8 +180,8 @@ if ($TeethCheck) {
         @($found | Where-Object { $_.File -eq $script:teeth }).Count -eq 1)
 }
 else {
-    Assert "C1 every acceptance script draws its ports (found $($found.Count) fixed)" (
-        $found.Count -eq 0)
+    Assert "C1 every acceptance script draws its ports (found $(@($found).Count) fixed)" (
+        @($found).Count -eq 0)
 }
 
 Write-Host ''

@@ -284,7 +284,7 @@ if ($NegativeControl) {
 
 # Let the transfer run out, then read what the panel said while it did.
 Assert (Wait-Log 'update progress: .*(failed|complete)' 30000) 'the download reached a terminal state'
-$tenths = Get-ProgressTenths
+$tenths = @(Get-ProgressTenths)
 Assert ($tenths.Count -ge 2) "the panel reported progress more than once (got $($tenths.Count) lines)"
 if ($tenths.Count -ge 2) {
     Assert ($tenths[-1] -gt $tenths[0]) `

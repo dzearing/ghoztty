@@ -328,7 +328,7 @@ Assert 'D6 the handoff passes the prompt by file, never on the command line' `
 # frame a text run when the SAME call carries the key run after it. So the
 # submitting call has to bring a text run of its own - a bare `Enter` there is
 # the defect, not the fix.
-$submit = Get-LoopSubmitArgs
+$submit = @(Get-LoopSubmitArgs)
 Assert 'D7 the submit carries a text run before the key' `
     ($submit.Count -eq 2 -and $submit[0] -eq ' ' -and $submit[1] -eq 'Enter')
 Assert 'D8 the reuse path submits through Get-LoopSubmitArgs' `

@@ -325,7 +325,7 @@ try {
     Assert ($gone -eq [IntPtr]::Zero) 'Escape (Not Now) dismisses the prompt'
     Assert (Test-TestWindowEnabled -Window $g.Top) 'owner window is enabled again once the prompt closes'
     Start-Sleep -Milliseconds 500
-    Assert ((Get-StubLines).Count -eq 0) 'declining runs no claude command'
+    Assert (@(Get-StubLines).Count -eq 0) 'declining runs no claude command'
     Assert (-not (Test-Path (Join-Path $home1 '.claude\skills\ghoztty'))) 'declining installs nothing'
     $stateFile = Join-Path $state1 'claude_setup'
     Assert ((Test-Path $stateFile) -and ((Get-Content $stateFile -Raw).Trim() -eq 'declined')) 'state file records declined'
@@ -374,7 +374,7 @@ try {
         Start-Sleep -Milliseconds 100
     }
     Assert $installedOk 'accepting installs skills, hooks and banner scripts under the sandbox home'
-    Assert ((Get-StubLines).Count -eq 0) 'the new flow spawns NO claude CLI for the install'
+    Assert (@(Get-StubLines).Count -eq 0) 'the new flow spawns NO claude CLI for the install'
 
     $stateFile3 = Join-Path $state3 'claude_setup'
     $stateOk = $false
@@ -485,7 +485,7 @@ try {
                 Assert $false 'palette reopen injectable'
             }
         }
-        Assert ((Get-StubLines).Count -eq 0) 'the management window spawns no claude CLI'
+        Assert (@(Get-StubLines).Count -eq 0) 'the management window spawns no claude CLI'
     }
     Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'app alive after the management flow'
     Stop-Process -Id $gpid -Force -ErrorAction SilentlyContinue
