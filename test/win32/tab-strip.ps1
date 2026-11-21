@@ -334,10 +334,13 @@ try {
     # runs, on a build with nothing wrong with it, and the "+" duly measured at
     # 531 rather than 383 - the strip really was that wide for a moment.
     #
-    # Settling is an OBSERVABLE state, not a longer sleep: two consecutive
-    # captures agreeing on the selected tab's extent. `$script:settleNote`
-    # records how it went so an assertion built on the capture can say whether
-    # the run ever fell still.
+    # Settling is an OBSERVABLE state, not a longer sleep. T756 first made it
+    # two consecutive captures agreeing on the selected tab's extent
+    # (`Settle-Shot`); T1585 retired that helper, because agreement between two
+    # captures cannot tell a settled strip from a transient that held still for
+    # 150ms (below). `Strip-Shot` replaced it: the app's layout goes quiet, and
+    # the paint must then MATCH that layout. `$script:settleNote` records how it
+    # went so an assertion built on the capture can say whether it ever did.
     # ...and the thing the pixels are waiting FOR, asked of the app rather than
     # guessed at (T756).
     #
@@ -372,24 +375,158 @@ try {
         return $false
     }
 
-    function Settle-Shot([int]$Tries = 20, [int]$Ms = 150) {
-        $prev = $null
-        $last = $null
+    # THE APP'S OWN ANSWER TO "HAS THE STRIP STOPPED MOVING?" (T1585).
+    #
+    # Every measurement in this file that follows an action used to take it a
+    # FIXED SLEEP later. T756 converted two of them; this is the rest. The
+    # strip re-fits on its own schedule (the ratchet, T249/T737; a title
+    # arriving from a shell, T1396), so the precondition for measuring it is a
+    # state, and the app publishes every part of that state over +list --json:
+    # the tab list, each tab's title, which one is selected, and the rects the
+    # strip LAID OUT for them (T231 - the rects its own hit tests read).
+    #
+    # Quiet means all of those read identically for -QuietMs. That is still a
+    # window of time, but it is a window of OBSERVED stillness that restarts on
+    # any change, not a bet that a change has finished: a title that moves at
+    # 400ms resets it rather than being photographed mid-flight. The narrower
+    # predicates on top close the case a quiet window alone cannot (a transient
+    # title that holds still): -Tabs (the count an action must have produced),
+    # -TitlesAgree (every tab runs the same shell, so a tab still on its launch
+    # title disagrees with one on its prompt title - T756's measured hole), and
+    # -FirstTitle (a title this script set itself, so it is known exactly).
+    #
+    # Returns the last read: Ok, Note, Count, Titles, Rects, Selected (the
+    # selected tab's published rect), NewTab.
+    function Read-StripState {
+        $old = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { $raw = & $exe +list --json 2>$null | Out-String } finally { $ErrorActionPreference = $old }
+        if (-not $raw -or -not $raw.Trim()) { return $null }
+        $j = $raw | ConvertFrom-Json -ErrorAction SilentlyContinue
+        if ($null -eq $j -or $null -eq $j.data) { return $null }
+        $w = @($j.data.windows | Where-Object { [int64]$_.id -eq [int64]$top })
+        if ($w.Count -ne 1) { return $null }
+        $w = $w[0]
+        $tabsJ = @($w.tabs)
+        $strip = $null
+        if ($w.PSObject.Properties.Name -contains 'chrome' -and $null -ne $w.chrome) { $strip = $w.chrome.tab_strip }
+        $rects = @()
+        $newTab = $null
+        if ($null -ne $strip) {
+            $rects = @(@($strip.tabs) | ForEach-Object { if ($null -ne $_) { ConvertTo-TestChromeRect $_ } else { $null } })
+            if ($null -ne $strip.new_tab) { $newTab = ConvertTo-TestChromeRect $strip.new_tab }
+        }
+        $selIdx = -1
+        for ($i = 0; $i -lt $tabsJ.Count; $i++) { if ($tabsJ[$i].selected) { $selIdx = $i } }
+        $sel = $null
+        if ($selIdx -ge 0 -and $selIdx -lt $rects.Count) { $sel = $rects[$selIdx] }
+        $titles = @($tabsJ | ForEach-Object { [string]$_.title })
+        $key = ($titles -join [string][char]1) + '|' + $selIdx + '|' +
+            (@($rects | ForEach-Object { if ($null -ne $_) { "$($_.Left),$($_.Right)" } else { 'null' } }) -join ';') + '|' +
+            $(if ($null -ne $newTab) { "$($newTab.Left),$($newTab.Right)" } else { 'null' })
+        return [pscustomobject]@{
+            Count = $tabsJ.Count; Titles = $titles; Rects = $rects; SelectedIndex = $selIdx
+            Selected = $sel; NewTab = $newTab; Key = $key; Window = $w
+        }
+    }
+
+    function Wait-StripQuiet([int]$Tabs = -1, [switch]$TitlesAgree, [string]$FirstTitle = '',
+                             [int]$QuietMs = 700, [int]$TimeoutMs = 15000) {
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $lastKey = $null
+        $quietSince = 0
+        $st = $null
+        $why = 'never read'
+        while ($sw.ElapsedMilliseconds -lt $TimeoutMs) {
+            $st = Read-StripState
+            if ($null -eq $st) {
+                $why = 'the window is not in +list --json'; $lastKey = $null
+            } else {
+                $want = $true
+                if ($Tabs -ge 0 -and $st.Count -ne $Tabs) { $want = $false; $why = "$($st.Count) tabs, want $Tabs" }
+                elseif (@($st.Titles | Where-Object { $_ -eq '' }).Count -gt 0) { $want = $false; $why = 'a tab has no title yet' }
+                elseif ($TitlesAgree -and @($st.Titles | Where-Object { $_ -ne $st.Titles[0] }).Count -gt 0) {
+                    $want = $false; $why = "titles disagree ($($st.Titles -join ' | '))"
+                }
+                elseif ($FirstTitle -ne '' -and $st.Titles[0] -ne $FirstTitle) { $want = $false; $why = "tab 1 is '$($st.Titles[0])', want '$FirstTitle'" }
+                elseif ($st.Rects.Count -ne $st.Count -or $null -eq $st.Selected) { $want = $false; $why = "the strip published $($st.Rects.Count) rects for $($st.Count) tabs" }
+                if (-not $want) {
+                    $lastKey = $null
+                } elseif ($st.Key -ne $lastKey) {
+                    $lastKey = $st.Key; $quietSince = $sw.ElapsedMilliseconds; $why = 'changed'
+                } elseif (($sw.ElapsedMilliseconds - $quietSince) -ge $QuietMs) {
+                    $script:quietNote = "strip quiet ($($st.Count) tabs, sel $($st.SelectedIndex) at $($st.Selected.Left)..$($st.Selected.Right)) after $($sw.ElapsedMilliseconds)ms"
+                    $st | Add-Member -NotePropertyName Ok -NotePropertyValue $true -Force
+                    $st | Add-Member -NotePropertyName Note -NotePropertyValue $script:quietNote -Force
+                    return $st
+                }
+            }
+            Start-Sleep -Milliseconds 120
+        }
+        $script:quietNote = "STRIP NEVER WENT QUIET in ${TimeoutMs}ms ($why)"
+        if ($null -eq $st) { $st = [pscustomobject]@{ Count = -1; Titles = @(); Rects = @(); SelectedIndex = -1; Selected = $null; NewTab = $null; Key = ''; Window = $null } }
+        $st | Add-Member -NotePropertyName Ok -NotePropertyValue $false -Force
+        $st | Add-Member -NotePropertyName Note -NotePropertyValue $script:quietNote -Force
+        return $st
+    }
+
+    # A capture of the strip the app says it laid out (T1585): the strip is
+    # quiet first (above), and then the PAINT must show it - the selected
+    # chiclet's measured extent lands on the selected tab's published rect, to
+    # within what the paint may legitimately differ by (a pixel or two of
+    # corner antialiasing inward, the selected tab's flare outward; the same
+    # allowance section 4b's T231 assertions use). That replaces the retired
+    # Settle-Shot's two-captures-agree as the gate, which was MEASURED to settle on a
+    # transient (T756); agreeing with the app's layout cannot. A capture that
+    # never matches is returned anyway, with the note saying so, so the
+    # assertion it feeds reads red with the reason rather than throwing.
+    function Strip-Shot([int]$Tabs = -1, [switch]$TitlesAgree, [string]$FirstTitle = '',
+                        [int]$QuietMs = 700, [int]$Tries = 20) {
+        $q = Wait-StripQuiet -Tabs $Tabs -TitlesAgree:$TitlesAgree -FirstTitle $FirstTitle -QuietMs $QuietMs
+        $script:stripState = $q
+        $tol = [int]$m.FlareR + 2
+        $s = $null
         for ($i = 0; $i -lt $Tries; $i++) {
+            if ($null -ne $s) { Close-TestWindowPixels $s }
             $s = Get-Shot
+            if ($null -eq $q.Selected) { break }
             $e = Selected-Extent $s
-            if ($null -ne $prev -and $e[0] -eq $prev[0] -and $e[1] -eq $prev[1]) {
-                if ($null -ne $last) { Close-TestWindowPixels $last }
-                $script:settleNote = "settled at $($e[0])..$($e[1]) after $($i + 1) capture(s)"
+            if ($e[0] -ge 0 -and [math]::Abs($e[0] - $q.Selected.Left) -le $tol -and
+                [math]::Abs($e[1] - $q.Selected.Right) -le $tol) {
+                $script:settleNote = "$($q.Note); paint matches the published rect at $($e[0])..$($e[1]) after $($i + 1) capture(s)"
                 return $s
             }
-            if ($null -ne $last) { Close-TestWindowPixels $last }
-            $last = $s
-            $prev = $e
-            Start-Sleep -Milliseconds $Ms
+            Start-Sleep -Milliseconds 100
         }
-        $script:settleNote = "NEVER SETTLED after $Tries capture(s)"
-        return $last
+        $script:settleNote = "$($q.Note); PAINT NEVER MATCHED the published selected rect $(if ($q.Selected) { "$($q.Selected.Left)..$($q.Selected.Right)" } else { '(none)' }) after $Tries capture(s)"
+        return $s
+    }
+
+    # A stderr debug line, polled for rather than slept for (T1585): a log line
+    # is written on the GUI thread before the probe that caused it returns, so
+    # its ARRIVAL is the event; the timeout only bounds a build that never
+    # writes it.
+    function Wait-LogLines([string]$Path, [string]$Pattern, [int]$TimeoutMs = 3000) {
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        do {
+            $hit = @(Select-String -Path $Path -Pattern $Pattern -ErrorAction SilentlyContinue)
+            if ($hit.Count -gt 0) { return $hit }
+            Start-Sleep -Milliseconds 100
+        } while ($sw.ElapsedMilliseconds -lt $TimeoutMs)
+        return @()
+    }
+
+    # The app's tab count, waited on until it reaches -AtLeast (T1585). The
+    # positive form of every "a click/keystroke opened a tab" check below.
+    function Wait-TabCount([int]$AtLeast, [int]$TimeoutMs = 8000) {
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $n = -1
+        do {
+            $st = Read-StripState
+            if ($null -ne $st) { $n = $st.Count; if ($n -ge $AtLeast) { return $n } }
+            Start-Sleep -Milliseconds 120
+        } while ($sw.ElapsedMilliseconds -lt $TimeoutMs)
+        return $n
     }
 
     # Tab index of the selected tab, read back out of its chiclet's left edge:
@@ -420,25 +557,35 @@ try {
     # row that column belongs to the caption's close button - so a routed click
     # there would close the window instead of answering the question asked.
     function Strip-Click([int]$cx, [switch]$Client) {
+        # No trailing sleep (T1585): every caller waits on the state its click
+        # is supposed to produce - or, for a click that must produce nothing,
+        # on the strip going quiet - instead of measuring 300ms later.
         [void](Send-TestMouse -Window $top -Target $top -X ($clientX + $cx) -Y ($clientY + $m.StripTopClient + [int]($barH / 2)) -Button left -Action click -Client:$Client)
-        Start-Sleep -Milliseconds 300
     }
 
     # ctrl+t at the CURRENTLY focused surface: every new tab is a new child.
+    # Returns once the APP lists the new tab (T1585), not 250ms later, so a
+    # burst of these cannot outrun the window and coalesce.
     function New-Tab {
+        $st = Read-StripState
+        $before = if ($null -ne $st) { $st.Count } else { -1 }
         $fw = Get-TestFocusedWindow -Window $top
         if ($fw -eq 0) {
             $vis = @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal' | Where-Object Visible)
             if ($vis.Count -gt 0) { $fw = $vis[0].Hwnd }
         }
         [void](Send-TestKeys -Window $top -Target ([IntPtr]$fw) -Modifiers ctrl -Key T)
-        Start-Sleep -Milliseconds 250
+        if ($before -ge 0) { [void](Wait-TabCount ($before + 1)) } else { Start-Sleep -Milliseconds 250 }
     }
 
     # -----------------------------------------------------------------------
     # 1. A single tab does not span the client width
     # -----------------------------------------------------------------------
-    $shot = Get-Shot
+    # The first tab's width is its title's, and its shell publishes that title
+    # in two steps - so this is measured off the strip the app says is quiet,
+    # not 1200ms after a resize (T1585). Every width below is a ratio of it.
+    $shot = Strip-Shot -Tabs 1
+    Write-Host "INFO  single tab capture: $script:settleNote"
     $ext = Selected-Extent $shot
     $tabLeft = $ext[0]; $tabRight = $ext[1]
     $tabW = $tabRight - $tabLeft
@@ -664,9 +811,14 @@ try {
     # 3. There is a real gap between the last tab and the "+", and clicking in
     #    that gap does nothing
     # -----------------------------------------------------------------------
+    # A click that must change NOTHING has no event to wait for, so it waits for
+    # the strip to be observed still instead (T1585) - a tab the click DID open
+    # would restart that window and show up in the count, not be photographed
+    # before it arrived.
     Strip-Click ($tabRight + [int]($gap / 2))
-    Close-TestWindowPixels $shot; $shot = Get-Shot
+    Close-TestWindowPixels $shot; $shot = Strip-Shot
     $ext = Selected-Extent $shot
+    Assert ($script:stripState.Count -eq 1) "gap: the app still lists ONE tab after a click in the gap ($script:settleNote)"
     Assert ((Selected-Index $ext[0] $slotW) -eq 0) 'gap: a click between the last tab and the + creates nothing (still 1 tab)'
 
     # -----------------------------------------------------------------------
@@ -682,7 +834,7 @@ try {
     # from a fixed sleep (T756).
     $titlesOk = Wait-TabTitles 2
     Assert $titlesOk "+ : the new tab's shell publishes the same title as the first ($script:titleNote)"
-    Close-TestWindowPixels $shot; $shot = Settle-Shot
+    Close-TestWindowPixels $shot; $shot = Strip-Shot -Tabs 2 -TitlesAgree
     $ext = Selected-Extent $shot
     $idx = Selected-Index $ext[0] $slotW
     Write-Host "INFO  after + click #1: left=$($ext[0]) right=$($ext[1]) index=$idx ($script:settleNote)"
@@ -699,7 +851,7 @@ try {
     Assert ($plusX2 -gt $plusX) "+ : moved right with the new tab ($plusX -> $plusX2)"
     Strip-Click $plusX2
     [void](Wait-TabTitles 3)
-    Close-TestWindowPixels $shot; $shot = Settle-Shot
+    Close-TestWindowPixels $shot; $shot = Strip-Shot -Tabs 3 -TitlesAgree
     $ext = Selected-Extent $shot
     $idx = Selected-Index $ext[0] $slotW
     Assert ($idx -eq 2) "+ : clicking at its NEW position creates tab 3 (selected index=$idx; $script:settleNote; $script:titleNote)"
@@ -720,7 +872,9 @@ try {
     #     pre-T206 look - no inactive fill, no rim, no flare, hard edges - so
     #     all four fail together and sections 1-7 do not.
     # -----------------------------------------------------------------------
-    Close-TestWindowPixels $shot; $shot = Get-Shot
+    # Quiet across ALL THREE tabs, not just the selected one (T1585): this
+    # section scans every chiclet against its published rect.
+    Close-TestWindowPixels $shot; $shot = Strip-Shot -Tabs 3 -TitlesAgree
     # MEASURED here on purpose, and it is the one place in this file that has to
     # be: the claim below is that an inactive tab PAINTS something, and only a
     # capture can say that. The published rects (T231) cannot - the app reports
@@ -936,7 +1090,7 @@ try {
     #         fails. Each capture is probed at BOTH squares, so a frame where
     #         everything is lit cannot pass either.
     # -----------------------------------------------------------------------
-    Close-TestWindowPixels $shot; $shot = Get-Shot
+    Close-TestWindowPixels $shot; $shot = Strip-Shot -Tabs 3 -TitlesAgree
     $selNow = @(Get-TestTabExtents -Window $top -Shot $shot -Metrics $m)
     if ($selNow.Count -lt 1) {
         Assert $false 'T204 hover: no measurable tab to hover'
@@ -956,21 +1110,19 @@ try {
         $hoverLogged = $false
         if (Test-Path $errlog) {
             Clear-Content $errlog -ErrorAction SilentlyContinue
+            # Each move's debug line is POLLED for (T1585), not read 300ms later.
             [void](Send-TestMouse -Window $top -Target $top -X ($clientX + $cCx) -Y ($clientY + $m.StripTopClient + $cCy) -Action move)
-            Start-Sleep -Milliseconds 300
-            $onClose = @(Select-String -Path $errlog -Pattern 'tab hover .*close=true' -ErrorAction SilentlyContinue)
+            $onClose = @(Wait-LogLines $errlog 'tab hover .*close=true')
             $hoverLogged = ($onClose.Count -gt 0)
             if ($hoverLogged) {
                 Assert ($onClose.Count -gt 0) 'T204 trigger: a move onto the close button sets close=true'
                 Clear-Content $errlog -ErrorAction SilentlyContinue
                 [void](Send-TestMouse -Window $top -Target $top -X ($clientX + $t3.Left + 6) -Y ($clientY + $m.StripTopClient + $cCy) -Action move)
-                Start-Sleep -Milliseconds 300
-                $offClose = @(Select-String -Path $errlog -Pattern 'tab hover .*close=false' -ErrorAction SilentlyContinue)
+                $offClose = @(Wait-LogLines $errlog 'tab hover .*close=false')
                 Assert ($offClose.Count -gt 0) 'T204 trigger: a move onto the tab title clears it again'
                 Clear-Content $errlog -ErrorAction SilentlyContinue
                 [void](Send-TestMouse -Window $top -Target $top -X ($clientX + $pCx) -Y ($clientY + $m.StripTopClient + $pCy) -Action move)
-                Start-Sleep -Milliseconds 300
-                $onPlus = @(Select-String -Path $errlog -Pattern 'tab hover .*plus=true' -ErrorAction SilentlyContinue)
+                $onPlus = @(Wait-LogLines $errlog 'tab hover .*plus=true')
                 Assert ($onPlus.Count -gt 0) 'T204 trigger: a move onto the + sets plus=true (the same hit-test path)'
             }
         }
@@ -1122,30 +1274,31 @@ try {
         if ($env:GHOZTTY_T756_PERTURB -eq '1') {
             Write-Host 'INFO  T756 perturb: adding a tab so the strip re-fits before the click'
             New-Tab
-            Start-Sleep -Milliseconds 200
         }
         # Titles first, then pixels: the run cannot be measured while a shell is
-        # still publishing what its tab should say (T756).
-        $wNow = Tab-Window
-        if ($null -ne $wNow) { [void](Wait-TabTitles @($wNow.tabs).Count) }
+        # still publishing what its tab should say (T756) - and since T1585 the
+        # pixels are not settled by "two captures agree", which T756 measured
+        # settling on a transient, but by the painted last tab landing on the
+        # rect the app laid out for it once the strip has gone quiet.
+        $qClick = Wait-StripQuiet -TitlesAgree
+        $tolClick = [int]$m.FlareR + 2
         $clickCx = -1
-        $clickSettle = 'never settled'
-        $prevRight = -2147483647
-        for ($s = 0; $s -lt 20; $s++) {
+        $clickSettle = "never settled ($($qClick.Note))"
+        $pubLast = if ($qClick.Rects.Count -gt 0) { $qClick.Rects[$qClick.Rects.Count - 1] } else { $null }
+        for ($s = 0; $s -lt 20 -and $null -ne $pubLast; $s++) {
             $sSh = Get-Shot
             $sExt = @(Get-TestTabExtents -Window $top -Shot $sSh -Metrics $m)
             Close-TestWindowPixels $sSh
-            if ($sExt.Count -lt 1) { $prevRight = -2147483647; Start-Sleep -Milliseconds 150; continue }
+            if ($sExt.Count -lt 1) { Start-Sleep -Milliseconds 100; continue }
             $right = $sExt[$sExt.Count - 1].Right
-            if ($right -eq $prevRight) {
+            if ([math]::Abs($right - $pubLast.Right) -le $tolClick) {
                 $hitL = $right - $sm - $btnPaint - $btnPad
                 $hitR = $right - $sm + $btnPad
                 $clickCx = [int][Math]::Truncate(($hitL + $hitR) / 2)
-                $clickSettle = "settled at right=$right after $($s + 1) capture(s)"
+                $clickSettle = "painted right=$right matches published $($pubLast.Right) after $($s + 1) capture(s); $($qClick.Note)"
                 break
             }
-            $prevRight = $right
-            Start-Sleep -Milliseconds 150
+            Start-Sleep -Milliseconds 100
         }
         Write-Host "INFO  close-click target: cx=$clickCx (carried cx=$cCx) - $clickSettle"
         Assert ($clickCx -ge 0) `
@@ -1187,12 +1340,18 @@ try {
     # DIP cap, in which case ceil(clientW / 200) tabs would not fill the run at
     # all and this section would assert nothing.
     $want = [int][math]::Ceiling($runW / $slotW) + 4
+    # The case with the MOST title traffic in the file: $want shells all
+    # publishing twice. It used to be read 800ms after the last ctrl+t (T1585);
+    # now every tab is listed (New-Tab waits for each), every title has agreed,
+    # and the paint matches the layout, before anything is measured.
+    $st5 = Read-StripState
+    $n5 = if ($null -ne $st5) { $st5.Count } else { -1 }
     for ($i = 0; $i -lt $want; $i++) { New-Tab }
-    Start-Sleep -Milliseconds 800
-    Close-TestWindowPixels $shot; $shot = Get-Shot
+    Close-TestWindowPixels $shot; $shot = Strip-Shot -Tabs ($n5 + $want) -TitlesAgree
     $ext = Selected-Extent $shot
     $manyW = $ext[1] - $ext[0]
-    Write-Host "INFO  many tabs: left=$($ext[0]) right=$($ext[1]) w=$manyW (preferred was $tabW)"
+    Write-Host "INFO  many tabs: left=$($ext[0]) right=$($ext[1]) w=$manyW (preferred was $tabW; $script:settleNote)"
+    Assert ($script:stripState.Ok) "many tabs: all $($n5 + $want) tabs are listed and their titles agree before measuring ($script:settleNote)"
     # Shrink only UNDER PRESSURE, and this is the pressure: the same title that
     # got its preferred width above now gets less.
     Assert ($manyW -gt 0 -and $manyW -lt $tabW) "many tabs: tab width shrank below its preferred width ($manyW < $tabW)"
@@ -1235,21 +1394,27 @@ try {
         -X ($clientX + $clientW - 1) -Y ($clientY + $m.StripTopClient + [int]($barH / 2))
     Assert $edgeRoute.NonClient `
         "right inset: the window's last column belongs to the caption, not the strip (hit $($edgeRoute.Code))"
-    $tabsBeforeEdge = @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal').Count
+    $st6 = Read-StripState
     Strip-Click ($clientW - 1) -Client
-    Start-Sleep -Milliseconds 300
+    # Nothing must happen, so wait for the strip to be observed still (T1585).
+    # The oracle is the app's tab list: the pane child-window count this used
+    # to compare still holds section 4c's closed tab, which can go away at any
+    # moment and read as a change the click never made.
+    $q6 = Wait-StripQuiet
     Assert ((Get-TestWindow -ProcessId $app.Pid -Class '#32768') -eq [IntPtr]::Zero) `
         'right inset: the strip does not run flush to the window border (a click at the edge opens nothing)'
-    Assert (@(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal').Count -eq $tabsBeforeEdge) `
-        'right inset: ...and not a tab either - the hit box stops short of the border'
+    Assert ($null -ne $st6 -and $q6.Count -eq $st6.Count) `
+        "right inset: ...and not a tab either - the hit box stops short of the border ($(if ($st6) { $st6.Count }) -> $($q6.Count) listed; $($q6.Note))"
 
     # -Client for the same reason as the edge probe above: the claim is about
     # what the STRIP does with that slot, and the merged row's right end is the
     # caption's button cluster - a routed click there would close the window
     # (it lands on HTCLOSE) rather than answer the question.
     Strip-Click ($clientW - $padR - [int]($btnPaint / 2)) -Client
-    Start-Sleep -Milliseconds 500
-    $menu = Wait-TestPopupMenu -ProcessId $app.Pid -TimeoutMs 1200
+    # A menu that must NOT open: the popup wait itself is the observation
+    # window (it returns the moment one appears), so the flat 500ms that used
+    # to precede it is folded into its timeout (T1585).
+    $menu = Wait-TestPopupMenu -ProcessId $app.Pid -TimeoutMs 1700
     Assert ($menu -eq [IntPtr]::Zero) `
         'T260: the strip carries NO menu button on a window whose caption hosts the menu'
     if ($menu -ne [IntPtr]::Zero) {
@@ -1257,7 +1422,9 @@ try {
         # without touching focus; Send-TestKeys would SetFocus and dismiss it
         # by accident, which would score this assertion for free.
         [void](Send-TestControlKey -Control $menu -Key Escape)
-        Start-Sleep -Milliseconds 400
+        for ($k = 0; $k -lt 20 -and (Get-TestWindow -ProcessId $app.Pid -Class '#32768') -ne [IntPtr]::Zero; $k++) {
+            Start-Sleep -Milliseconds 100
+        }
     }
 
     # ...and the "+" is still there and still works, wherever the run left it.
@@ -1266,13 +1433,17 @@ try {
     # limit. This used to measure the run off a capture and then re-apply the
     # layout's own `min(runRight + gap, plus_limit)` rule, which is the second
     # copy of a product rule that T231 exists to delete.
-    $tabsNow = @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal').Count
+    # Waited on the app's own tab list (T1585), not 500ms of hope. The pane
+    # child-window count this used to read is the oracle section 4c already
+    # rejected: the tab section 4c closed still has its child window at this
+    # point (measured: 13 listed, 14 panes), so the count says nothing.
+    $listedNow = (Read-StripState).Count
     $plus = (Get-TestStripRegions -Window $top -Exe $exe).NewTab
     Assert ($null -ne $plus) 'the strip still reports a "+" with the run overrun by tabs'
     Strip-Click $plus.CenterX
-    Start-Sleep -Milliseconds 500
-    Assert (@(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal').Count -gt $tabsNow) `
-        'the "+" survives the strip being full and still opens a tab'
+    $listedAfter = Wait-TabCount ($listedNow + 1)
+    Assert ($listedAfter -gt $listedNow) `
+        "the `"+`" survives the strip being full and still opens a tab ($listedNow -> $listedAfter listed)"
 
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash'
 
@@ -1337,7 +1508,10 @@ try {
         Write-Host 'SETUP FAIL: could not focus the long-title GUI'; exit 1
     }
 
-    $shot = Get-Shot
+    # Tab 1's title is one this script chose, so it is waited for EXACTLY
+    # (T1585) - cmd.exe shows "<path> - title ..." while the command runs.
+    $shot = Strip-Shot -Tabs 1 -FirstTitle $longTitle
+    Write-Host "INFO  long-title capture: $script:settleNote"
     $ext = Selected-Extent $shot
     $longW = $ext[1] - $ext[0]
     Write-Host "INFO  long title: left=$($ext[0]) right=$($ext[1]) w=$longW runW=$runW cap=$capW"
@@ -1347,9 +1521,12 @@ try {
 
     # Second tab, default shell, short title - and it takes the selection.
     Close-TestWindowPixels $shot
+    # Tab 2's title is its shell's, so it cannot be predicted - and cannot be
+    # agreed against tab 1's. A LONGER quiet window stands in for agreement
+    # (T1585): the shell's two titles each hold still for a few hundred ms.
     New-Tab
-    Start-Sleep -Milliseconds 600
-    $shot = Get-Shot
+    $shot = Strip-Shot -Tabs 2 -FirstTitle $longTitle -QuietMs 1500
+    Write-Host "INFO  two-title capture: $script:settleNote"
     $ext2 = Selected-Extent $shot
     $shortW = $ext2[1] - $ext2[0]
     $longSlot = $ext2[0] - $padL
@@ -1420,7 +1597,18 @@ try {
     function Set-Tab1Title([string]$t) {
         # argv-audit: $t is this helper's parameter and every caller passes a literal tab title.
         [void](& $exe +send-keys --target=$pane8 "title $t" Enter 2>$null)
-        Start-Sleep -Milliseconds 900
+        # The title is this script's own, so the app is asked for it exactly,
+        # and then for the strip to fall still around it (T1585) - not 900ms.
+        # echo-marker: the wait reads the TAB TITLE from +list --json, never the screen, and echoing "title $t" sets no title
+        $q = Wait-StripQuiet -FirstTitle $t
+        # A title that never arrives is a precondition failure, not a detail:
+        # every arm below reads a width change as the title's doing (T1585).
+        Assert $q.Ok "the title '$t' reached tab 1 and the strip fell still ($($q.Note))"
+    }
+    # A resize re-fits the run; the strip is read once it has gone quiet again.
+    function Resize-AndSettle([int]$w) {
+        Set-TestWindowSize -Window $top -Width $w -Height 800 | Out-Null
+        [void](Wait-StripQuiet)
     }
     if (-not $pane8) {
         Write-Host 'SKIP  T249 grow-only: could not resolve tab 1 pane id from +list --json'
@@ -1435,8 +1623,7 @@ try {
         # strip left near capacity would legitimately RELEASE the ratchet
         # mid-arm (which is correct behaviour and would read as a failure).
         Set-Tab1Title 'aa'
-        Set-TestWindowSize -Window $top -Width 1360 -Height 800 | Out-Null
-        Start-Sleep -Milliseconds 900
+        Resize-AndSettle 1360
         $r0 = Get-TestStripRegions -Window $top -Exe $exe
         Set-Tab1Title 'a-title-long-enough-to-widen-a-tab-well-short-of-the-cap'
         $r1 = Get-TestStripRegions -Window $top -Exe $exe
@@ -1467,8 +1654,7 @@ try {
         # the ratchet cannot leave a tab permanently wide for a string nobody
         # can see. A resize is one; so are opening or closing a tab, reordering
         # one, and a DPI change.
-        Set-TestWindowSize -Window $top -Width 1400 -Height 800 | Out-Null
-        Start-Sleep -Milliseconds 900
+        Resize-AndSettle 1400
         $r3 = Get-TestStripRegions -Window $top -Exe $exe
         Write-Host "INFO  T249 re-fit: t1w $($r2.Tabs[0].Width) -> $($r3.Tabs[0].Width) after a resize"
         Assert ($r3.Tabs[0].Width -lt $r2.Tabs[0].Width) `
@@ -1535,8 +1721,7 @@ try {
         if (Test-Path $errlog2) {
             Clear-Content $errlog2 -ErrorAction SilentlyContinue
             $hov = Get-TestHoverCapture -Hwnd $top -X ($clientX + $gapMid) -Y $stripY
-            Start-Sleep -Milliseconds 300
-            $lines = @(Select-String -Path $errlog2 -Pattern 'tab strip freeze=' -ErrorAction SilentlyContinue)
+            $lines = @(Wait-LogLines $errlog2 'tab strip freeze=')
             $freezeLogged = ($lines.Count -gt 0)
             if (-not $hov) {
                 Assert $false "T737: capture-hover over the strip run failed ($(Get-LastHoverCaptureError))"
@@ -1557,8 +1742,7 @@ try {
             Clear-Content $errlog2 -ErrorAction SilentlyContinue
             $paneY = $clientY + $m.StripTopClient + $barH + 40
             $ctl = Get-TestHoverCapture -Hwnd $top -X ($clientX + $gapMid) -Y $paneY
-            Start-Sleep -Milliseconds 300
-            $ctlLines = @(Select-String -Path $errlog2 -Pattern 'tab strip freeze=' -ErrorAction SilentlyContinue)
+            $ctlLines = @(Wait-LogLines $errlog2 'tab strip freeze=')
             if (-not $ctl) {
                 Assert $false "T737 control: capture-hover over the pane failed ($(Get-LastHoverCaptureError))"
             } else {
@@ -1599,10 +1783,18 @@ try {
         # read deferred=0 against a perfectly good freeze. A short title alone
         # re-fits nothing (that is the T249 ratchet), so a resize re-fits it.
         $growTitle = 'a-title-long-enough-to-widen-a-tab-well-short-of-the-cap'
+        # A DIFFERENT short title each time (T1585). 9e's grow is applied by the
+        # probe straight to the app (the OSC path), behind the shell's back, so
+        # the shell still believes its title is the 'aa' it set last - and a
+        # second `title aa` changes nothing it can see, so it sends nothing. The
+        # 900ms sleep this replaced never noticed: 9f then retitled a tab that
+        # already WORE the grow title, so its "taken at once, nothing deferred"
+        # control held for any build, frozen or not.
+        $script:narrowN = 0
         function Reset-Tab1Narrow([int]$w) {
-            Set-Tab1Title 'aa'
-            Set-TestWindowSize -Window $top -Width $w -Height 800 | Out-Null
-            Start-Sleep -Milliseconds 900
+            $script:narrowN++
+            Set-Tab1Title "a$($script:narrowN)"
+            Resize-AndSettle $w
         }
         function Get-FreezeLines {
             @(Select-String -Path $errlog2 -Pattern 'tab strip freeze=(\d) deferred=(\d+)' -ErrorAction SilentlyContinue |
@@ -1620,7 +1812,7 @@ try {
             Clear-Content $errlog2 -ErrorAction SilentlyContinue
             $arr = Get-TestHoverCapture -Hwnd $top -X ($clientX + $eGap) -Y $stripY `
                 -RetitleTarget $pane8 -Retitle $growTitle
-            Start-Sleep -Milliseconds 300
+            [void](Wait-LogLines $errlog2 'tab strip freeze=')
             $eLines = @(Get-FreezeLines)
             if (-not $arr) {
                 Assert $false "T1576: capture-hover with a retitle over the strip run failed ($(Get-LastHoverCaptureError))"
@@ -1647,7 +1839,7 @@ try {
             Clear-Content $errlog2 -ErrorAction SilentlyContinue
             $ctlArr = Get-TestHoverCapture -Hwnd $top -X ($clientX + $eGap) -Y $paneY `
                 -RetitleTarget $pane8 -Retitle $growTitle
-            Start-Sleep -Milliseconds 300
+            [void](Wait-LogLines $errlog2 'tab strip freeze=')
             $fLines = @(Get-FreezeLines)
             if (-not $ctlArr) {
                 Assert $false "T1576 control: capture-hover with a retitle over the pane failed ($(Get-LastHoverCaptureError))"
