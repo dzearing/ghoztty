@@ -83,6 +83,9 @@ $script:HARNESS_FLOOR_AUDITS = @(
     [pscustomobject]@{ Name = 'neuter-audit.ps1'; Why = 'a negative control has a live consumer, a shipped-value pin and a claim (T788)' }
     [pscustomobject]@{ Name = 'desktop-launch-audit.ps1'; Why = 'a GUI script launches on the test desktop, not the user''s' }
     [pscustomobject]@{ Name = 'printclient-audit.ps1'; Why = 'every painting window answers the screenshot path the tests read' }
+    # T1614: printclient's twin - same 237-file win32 Covers list, same static
+    # shape. Outside the set, a win32 edit left it DUE after a green floor.
+    [pscustomobject]@{ Name = 'window-active-audit.ps1'; Why = 'product code asks whether a window is active through window_active, never GetForegroundWindow, which is null on a background desktop (T730)' }
     [pscustomobject]@{ Name = 'thread-join-audit.ps1'; Why = 'a thread a test starts is joined, so a leak is not scored green' }
     [pscustomobject]@{ Name = 'test-wait-oracle.ps1'; Why = 'a wait is bounded by the wall clock, never by a count of spins (T831)' }
     [pscustomobject]@{ Name = 'foreground-audit.ps1'; Why = 'a script states what it does to the foreground window (T272/T276)' }
