@@ -1,0 +1,16 @@
+{
+  "version": "1.56.3",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "A GNOME server outage no longer turns the Windows CI build red." },
+        { "text": "A config reload rebuilds each window once, not once per pane plus one." },
+        { "text": "A delivery now asks the share's loose agent which build it is even when the copy onto it fails." },
+        { "text": "An -AppOnly delivery now says which locations kept an old agent beside the new app." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "Perf audit-4: 31 more slowdowns confirmed fixed, 18 small new ones filed, no open P0 left." }
+      ] }
+  ]
+}
