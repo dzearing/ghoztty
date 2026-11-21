@@ -560,6 +560,31 @@ if (-not $staleStamp -or (Test-AgentStampsMatch $staleStamp $stagedStamp)) {
     Assert "H16 and the staged agent really is the one on disk now" `
         ((Get-FileHash -LiteralPath $p2Agent).Hash -eq (Get-FileHash -LiteralPath $stagedAgent).Hash)
 
+    # T1603: the share's LOOSE agent, the one bootstrap.ps1 and the watcher
+    # fetch. Its read-back used to sit inside the copy-succeeded branch, so the
+    # one path that leaves a stale binary there - a copy that could not land -
+    # was also the one path that never asked what was there. Same pin, same
+    # pair: stale pinned must name both stamps, staged pinned must clear.
+    $looseAgent = Join-Path $shareRoot 'ghoztty-agent.exe'
+    Copy-Item -LiteralPath $staleAgent $looseAgent -Force
+    $lock = Lock-ForReading $looseAgent
+    try { $r = Invoke-Deliver -Extra @{ NoZip = $true } } finally { $lock.Close(); $lock.Dispose() }
+    Assert "H16a the loose agent's copy was refused" `
+        ($r.Text -match ([regex]::Escape($looseAgent) + ' could not be written'))
+    Assert "H16b THE POINT: the loose read-back still names the stale stamp and the staged one" `
+        ($r.Text -match ([regex]::Escape($looseAgent) + " reports $([regex]::Escape($staleStamp)) but staging has $([regex]::Escape($stagedStamp))"))
+    Assert "H16c the stale loose bytes really were still there to be caught" `
+        ((Get-FileHash -LiteralPath $looseAgent).Hash -eq (Get-FileHash -LiteralPath $staleAgent).Hash)
+    AssertEq "H16d and the run fails" 1 $r.Code
+    Copy-Item -LiteralPath $stagedAgent $looseAgent -Force
+    $lock = Lock-ForReading $looseAgent
+    try { $r = Invoke-Deliver -Extra @{ NoZip = $true } } finally { $lock.Close(); $lock.Dispose() }
+    Assert "H16e with the staged build pinned instead, the read-back clears it" `
+        (($r.Text -match ([regex]::Escape($looseAgent) + ' could not be written')) -and
+         -not ($r.Text -match 'but staging has'))
+    $r = Invoke-Deliver -Extra @{ NoZip = $true }
+    AssertEq "H16f and the loose location recovers once unpinned" 0 $r.Code
+
     # The AUDIT half (T727) reads the same binary with a different yardstick -
     # the locations against each other, with no staging in the picture - and that
     # comparison had no live control either.

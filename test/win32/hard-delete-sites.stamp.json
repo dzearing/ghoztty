@@ -1,23 +1,27 @@
 {
     "guard":  "hard-delete-sites",
     "script":  "test/win32/hard-delete-sites.ps1",
-    "generated":  "2026-11-19T14:03:30-08:00",
-    "commit":  "c0ca9a3b2",
+    "generated":  "2026-11-20T23:47:12-08:00",
+    "commit":  "c15f2572d",
     "uncommitted":  [
-                        "scripts/deliver-windows-build.ps1",
-                        "scripts/ghoztty-cleanup.ps1",
-                        "scripts/test-binary-soak.ps1",
-                        "scripts/verify-release-assets.ps1",
-                        "scripts/verify-release-clean.ps1",
-                        "test/win32/hard-delete-sites.ps1"
+                        "scripts/deliver-windows-build.ps1"
                     ],
     "files":  {
-                  "scripts/deliver-windows-build.ps1":  "005fdf9cb822f6bb0348e0a61ef5bc8a55d54e6e7c390691886987efe6bf90a4",
+                  "scripts/deliver-windows-build.ps1":  "da270536b281d2a38cf89c047d2236e70d57ec0714fdef1b6d0946342cfd6dcc",
                   "scripts/ghoztty-cleanup.ps1":  "d2307b4c4df220c56944c340fbf60863f23f869fcd52e18acb195627c0aefde9",
                   "scripts/lib/HardDelete.ps1":  "78ca1c0b521f9ae991e6b8f5304eb2a4e30a7a8ef1e3ba93839de8b740ea88b2",
                   "scripts/test-binary-soak.ps1":  "c838c5077d2b82c98952a1903f0d73d12bf0830432dc65aaceba45124832d3f4",
                   "scripts/verify-release-assets.ps1":  "a9b3a63b4540c4feed70b834444ad82fd6adf8312c8dad05789cd06797caae18",
                   "scripts/verify-release-clean.ps1":  "bda3aa7cdea27a60aeaa864d6319aa662e3f68dfdefc707a6205012278a6edab",
                   "test/win32/hard-delete-sites.ps1":  "f0e6c5b18f1e786cab6acf996e3bcb9d8b1da46d99c9bfbc7f5664a12dacd71c"
-              }
+              },
+    "code":  {
+                 "scripts/deliver-windows-build.ps1":  "code1:bba12ac5364820a7e4290b26a003f161469abee10516b16b0dcf79f479ccd61a",
+                 "scripts/ghoztty-cleanup.ps1":  "code1:c35b95f9cd9b1a799cad29fd99f59b02e13d257040dfe285a418761a2ba4c256",
+                 "scripts/lib/HardDelete.ps1":  "code1:f77048e94c5dd08f39759e800c0335b025498a07dc245a28775db20c79801a61",
+                 "scripts/test-binary-soak.ps1":  "code1:448793d5bedb5a8e678e63cf26cd6bea6a834b93b4e57d0a7fe4d9ea10e0775b",
+                 "scripts/verify-release-assets.ps1":  "code1:38125fc94f8ec3af3bf24067e6c9f0ae7cdd8886f29dadb48156c069b3d36207",
+                 "scripts/verify-release-clean.ps1":  "code1:30568fb91e37229b89bec7b9863e4d116d2aa9900fddcaa74db9104552444c79",
+                 "test/win32/hard-delete-sites.ps1":  "code1:2cc5cd45d123317687df64a5878bba0064aa9f63857c1827d172f81a30c330b0"
+             }
 }

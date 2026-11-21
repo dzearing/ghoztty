@@ -694,20 +694,29 @@ if ($LooseAgentDir -and -not $AppOnly) {
             Say '  dry  would refresh ghoztty-agent.exe'
         } else {
             $err = Copy-DeliveredFile -Src $src -Dst $dst -BackupNames @('ghoztty-agent.exe')
+            $landed = $false
             if ($err) { Bad "$dst could not be written: $err" }
             else {
                 $why = Test-SameFile -Src $src -Dst $dst -Deep:$DeepVerify
-                if ($why) { Bad "$dst did not land: $why" }
-                elseif (-not $script:stagedAgentStamp) { $script:deliveredCount++; Ok 'ghoztty-agent.exe (stamp unverifiable, see note above)' }
-                else {
-                    # T281: the semantic half. The share's loose agent is what
-                    # bootstrap.ps1 and ghoztty-agent-watcher.ps1 fetch, so a
-                    # stale one here reaches boxes this delivery never touched.
-                    $ga = Resolve-GhozttyAgentStamp -Exe $dst
-                    if (Test-AgentStampsMatch $ga.Stamp $script:stagedAgentStamp) { $script:deliveredCount++; Ok "ghoztty-agent.exe reports $($ga.Stamp)" }
-                    elseif ($ga.Stamp) { Bad "$dst reports $($ga.Stamp) but staging has $($script:stagedAgentStamp)" }
-                    else { Bad "$dst could not be asked its version ($($ga.Why))" }
+                if ($why) { Bad "$dst did not land: $why" } else { $landed = $true }
+            }
+            # T281: the semantic half. The share's loose agent is what
+            # bootstrap.ps1 and ghoztty-agent-watcher.ps1 fetch, so a stale one
+            # here reaches boxes this delivery never touched.
+            # T1603: asked whether or not the copy landed, the way the
+            # per-location read above is (T785). A copy that could not land is
+            # the one path that LEAVES a stale binary here, so it is the path
+            # that most needs to say which build is sitting there.
+            if (-not $script:stagedAgentStamp) {
+                if ($landed) { $script:deliveredCount++; Ok 'ghoztty-agent.exe (stamp unverifiable, see note above)' }
+            } elseif (Test-Path -LiteralPath $dst -PathType Leaf) {
+                $ga = Resolve-GhozttyAgentStamp -Exe $dst
+                if (Test-AgentStampsMatch $ga.Stamp $script:stagedAgentStamp) {
+                    if ($landed) { $script:deliveredCount++ }
+                    Ok "ghoztty-agent.exe reports $($ga.Stamp)"
                 }
+                elseif ($ga.Stamp) { Bad "$dst reports $($ga.Stamp) but staging has $($script:stagedAgentStamp)" }
+                else { Bad "$dst could not be asked its version ($($ga.Why))" }
             }
         }
     }
