@@ -49,6 +49,10 @@
 #      fall back to a plain exec pane and WORK, instead of inheriting the stuck
 #      shared connection and opening frozen, and the window must still open
 #      promptly rather than blocking on a handshake that never completes.
+#   M: T1608 - the machine chooser opened while the agent is wedged reaches a
+#      verdict (the local machine is unreachable) inside 4s instead of sitting
+#      on its loading state behind the wedged link, and - the positive control -
+#      the same chooser loads the roster once the wedge is over.
 #
 # The oracle for "did a rebuild run" is the number of terminal SURFACES the app
 # closed inside the rebuild (its `surface closed` lines between `in-place
@@ -1179,6 +1183,119 @@ Assert "L5 the window opened in the gap is a WORKING pane" (
     Test-PaneResponsive $tmp 't1473w' 'l' 60)
 Assert "L6 the pre-existing panes came back on the fresh agent too" (
     Test-PaneResponsive $tmp 't145b' 'l2' 60)
+
+# ============================================================================
+"== M: T1608 - the machine chooser opened DURING a wedge answers instead of spinning"
+# ============================================================================
+# T1589 fixed the decision: a wedged shared link (`reconnecting`, never `dead`)
+# no longer carries the chooser's requests, so its session roster probe-dials
+# the running agent instead - bounded by `probe_handshake_ns` (1.2s) - and
+# resolves `failed`, which the dialog paints as a sentence. Before it the
+# roster's LIST_SESSIONS went down the wedged link and sat on its 5s
+# `rpc_timeout_ns` with the region showing the loading state. The none lane
+# proves the policy (`agent_recovery.carriesRequests`); this is the half the
+# user sees: open the chooser while the agent is wedged and get an ANSWER.
+#
+# The oracle is the roster's own verdict line, for the reason chooser-sessions.ps1
+# gives: the roster is owner-drawn, with no HWND to read back. Teeth: M5's 4s
+# bound sits under the 5s rpc timeout a pre-T1589 fetch spends on the wedged
+# link before it can say anything. M8 is the positive control - the SAME chooser
+# path, with the wedge ended, LOADS - so M4/M5 cannot pass on a chooser whose
+# roster fails for some reason that has nothing to do with the wedge.
+function Open-ChooserM($tag) {
+    $tops = @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyWindow')
+    foreach ($t in $tops) {
+        $surf = Get-TestChildWindow -Window ([IntPtr]$t.Hwnd) -Class 'GhozttyTerminal'
+        if ($surf -eq [IntPtr]::Zero) { continue }
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        if (Send-TestKeys -Window ([IntPtr]$t.Hwnd) -Target $surf -Modifiers ctrl, shift -Key N) {
+            $ch = Wait-TestWindow -ProcessId $appPid -Class 'GhozttyMachineChooser' -TimeoutMs 6000
+            if ($ch -ne [IntPtr]::Zero) { return @{ Hwnd = $ch; Clock = $sw } }
+        }
+        "    [$tag] chord on window $($t.Hwnd) opened no chooser"
+        return $null
+    }
+    "    [$tag] no GhozttyWindow with a terminal surface to send the chord to"
+    return $null
+}
+function Wait-RosterVerdictM($from, $timeoutSec) {
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $t = Read-AppLog $from
+        $m = [regex]::Match($t, 'chooser roster: (loaded \d+ session\(s\)[^\r\n]*target=local|fetch failed target=local[^\r\n]*)')
+        if ($m.Success) { return $m.Groups[1].Value }
+        Start-Sleep -Milliseconds 100
+    }
+    return $null
+}
+
+$logMarkM = Get-AppLogLength
+$agentsM = Get-RunAgents $tmp
+if ($agentsM.Count -ne 1) { Show-Agents $tmp 'M' }
+Assert "M1 one agent belongs to this run before the wedge" ($agentsM.Count -eq 1)
+$agentPidM = if ($agentsM.Count -ge 1) { [int]$agentsM[0].ProcessId } else { 0 }
+Assert "M2 the agent was suspended" (
+    $agentPidM -gt 0 -and (Set-AgentSuspended $agentPidM $true) -eq 0)
+
+# Same reason as K3: opening the chooser before the app's FSM has walked the
+# link to `reconnecting` would test the healthy path and pass either way.
+$downSeenM = $false
+$deadline = (Get-Date).AddSeconds(60)
+while ((Get-Date) -lt $deadline) {
+    if ((Read-AppLog $logMarkM) -match 'shared local-agent link went down') { $downSeenM = $true; break }
+    Start-Sleep -Milliseconds 200
+}
+if (-not $downSeenM) { Dump-AppLog $logMarkM 'M3' }
+Assert "M3 the app sees the shared link as down" $downSeenM
+
+$logMarkM2 = Get-AppLogLength
+$chM = Open-ChooserM 'M4'
+Assert "M4 ctrl+shift+n opens the chooser during the wedge" ($null -ne $chM)
+$verdictM = $null
+$msM = -1
+if ($null -ne $chM) {
+    $verdictM = Wait-RosterVerdictM $logMarkM2 20
+    $chM.Clock.Stop()
+    $msM = [int]$chM.Clock.Elapsed.TotalMilliseconds
+}
+"    [M5] roster verdict after ${msM}ms: $verdictM"
+if ($null -eq $verdictM) { Dump-AppLog $logMarkM2 'M5' }
+Assert "M5 the local roster reached a verdict within 4s of the chord (under the 5s rpc timeout)" (
+    $null -ne $verdictM -and $msM -ge 0 -and $msM -lt 4000)
+# The verdict a wedged agent deserves is "unreachable" - `failed`, which paints
+# the couldn't-reach sentence. A `loaded` here would mean the roster was read
+# from somewhere the wedge did not reach, which is not this scenario.
+Assert "M6 the verdict is 'failed' (the dialog says the machine is unreachable)" (
+    $null -ne $verdictM -and $verdictM -match 'fetch failed target=local.*state=failed')
+if ($null -ne $chM) {
+    Send-TestControlKey -Control $chM.Hwnd -Key Escape | Out-Null
+    $gone = $false
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $deadline) {
+        if (@(Get-TestWindows -ProcessId $appPid -Class 'GhozttyMachineChooser').Count -eq 0) { $gone = $true; break }
+        Start-Sleep -Milliseconds 200
+    }
+    if (-not $gone) { "    [M6] the chooser did not close on Escape" }
+}
+
+# Unwedge unconditionally - a suspended agent must never outlive this script -
+# with K8's "or already gone" for the same reason K8 gives.
+$resumeRcM = Set-AgentSuspended $agentPidM $false
+$agentGoneM = $null -eq (Get-Process -Id $agentPidM -ErrorAction SilentlyContinue)
+Assert "M7 the wedged agent is resumed (or already gone)" ($resumeRcM -eq 0 -or $agentGoneM)
+
+# Positive control: the same chord, the same roster, the agent answering again.
+# Polled with a fresh chooser each try only once the panes say the link is back,
+# so a slow heal is not scored as a broken chooser.
+[void](Test-PaneResponsive $tmp 't145b' 'm' 60)
+$logMarkM3 = Get-AppLogLength
+$chM2 = Open-ChooserM 'M8'
+$verdictM2 = if ($null -ne $chM2) { Wait-RosterVerdictM $logMarkM3 20 } else { $null }
+"    [M8] roster verdict with the agent answering: $verdictM2"
+if ($null -eq $verdictM2 -or $verdictM2 -notmatch '^loaded') { Dump-AppLog $logMarkM3 'M8' }
+Assert "M8 positive control: with the wedge over, the same chooser LOADS the local roster" (
+    $null -ne $verdictM2 -and $verdictM2 -match '^loaded')
+if ($null -ne $chM2) { Send-TestControlKey -Control $chM2.Hwnd -Key Escape | Out-Null }
 
 # ============================================================================
 Stop-TestProcs
