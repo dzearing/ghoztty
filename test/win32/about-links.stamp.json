@@ -1,19 +1,18 @@
 {
     "guard":  "about-links",
     "script":  "test/win32/about-links.ps1",
-    "generated":  "2026-11-20T14:12:50-08:00",
-    "commit":  "70ba8b4b4",
+    "generated":  "2026-11-20T15:30:59-08:00",
+    "commit":  "f23da11a1",
     "uncommitted":  [
-                        "src/apprt/win32/open_url_seam.zig",
-                        "test/win32/about-links.ps1"
+
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
-                  "src/apprt/win32/ConfirmDialog.zig":  "923df73794844ce2c3441d0643b400ed13573da6552a57cd6d7112951005e451",
+                  "src/apprt/win32/ConfirmDialog.zig":  "fd18ef767f68cd453798b5c23b0cd0bdbbc73706fc39eebecb3597b571152c5f",
                   "src/apprt/win32/open_url_seam.zig":  "538f709a0f949fb87112fc946b45d58e0efeed55947abeaf2fde670d91897bbf",
                   "test/win32/about-links.ps1":  "cb6ba712f258265f9a5d03dc219567a0025a1f081a2b7d2029586140247906eb"
               },
     "code":  {
-                 "test/win32/about-links.ps1":  "code1:2e6abdd94456cc9f287d39b8bd72aeda21ed6546c830d55caf42924f75b21ce8"
+                 "test/win32/about-links.ps1":  "code1:57ae3d7b22751d8afd296d698b696c35150dbf90a808aca84a19373e488ab553"
              }
 }
