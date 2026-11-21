@@ -1,19 +1,19 @@
 {
     "guard":  "parity-tasks-lanes",
     "script":  "test/win32/parity-tasks-lanes.ps1",
-    "generated":  "2026-11-21T09:31:13-08:00",
-    "commit":  "997f54c84",
+    "generated":  "2026-11-21T09:41:47-08:00",
+    "commit":  "06da2dfdb",
     "uncommitted":  [
 
                     ],
     "files":  {
                   "scripts/lib/LoopLedger.ps1":  "925856ccac93bf14d6d9edfcf34bbc99ab044de1b496d30c2e31c437df83819a",
-                  "scripts/parity-tasks.ps1":  "8b53d2dc06d155a9d20ee30eb8932053e62b3004c05c781cf91518ef10ce51f1",
+                  "scripts/parity-tasks.ps1":  "d0b41f120f1dfd123d3698a16af802c42ed698e52a3a5eb6f0cce9cbf13c1697",
                   "test/win32/parity-tasks-lanes.ps1":  "0ea40fdd89dbf37e287727eb97d5153afa3e9f656e120df2b18302f31c49fff1"
               },
     "code":  {
                  "scripts/lib/LoopLedger.ps1":  "code1:7708e1481678a347f65f2dc05aafe13f7ee77a94f319dd53cc6f8a65ff04cfaf",
-                 "scripts/parity-tasks.ps1":  "code1:dbd9e1876728a05ba912ac42b0440ecde6fc03bbb7b64ed6c7d342bc763100f0",
+                 "scripts/parity-tasks.ps1":  "code1:edc6d5b50ae2b86125a6e0cc2b7f797bb604ccffee630c46ba17eaa9b2ee7ecd",
                  "test/win32/parity-tasks-lanes.ps1":  "code1:0c33917bebdc0c7ed7d39cec4c0b086097277f333925c9f2d24c21f1712ce2ba"
              }
 }

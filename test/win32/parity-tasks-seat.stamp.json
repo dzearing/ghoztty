@@ -1,21 +1,21 @@
 {
     "guard":  "parity-tasks",
     "script":  "test/win32/parity-tasks-seat.ps1",
-    "generated":  "2026-11-21T09:35:52-08:00",
-    "commit":  "997f54c84",
+    "generated":  "2026-11-21T09:42:49-08:00",
+    "commit":  "06da2dfdb",
     "uncommitted":  [
 
                     ],
     "files":  {
                   "scripts/lib/CardRot.ps1":  "c0ee5e1d432d4ad22f7a5020db60edae29b5cc3f4271f1ce9c8627490b6f3a74",
                   "scripts/lib/TaskVerify.ps1":  "64b9839a73193b1cf47b24d3c3718944d0d88c57c8ac91ec9d5caefb46d3b3ff",
-                  "scripts/parity-tasks.ps1":  "8b53d2dc06d155a9d20ee30eb8932053e62b3004c05c781cf91518ef10ce51f1",
+                  "scripts/parity-tasks.ps1":  "d0b41f120f1dfd123d3698a16af802c42ed698e52a3a5eb6f0cce9cbf13c1697",
                   "test/win32/parity-tasks-seat.ps1":  "30c09e4ccca97778c9e91df5154fbe54c737fe755ee3d163ca9714d6ad391187"
               },
     "code":  {
                  "scripts/lib/CardRot.ps1":  "code1:ad0e609eb162a2144be17ed7f7a29a0e14a3621af864cda33e4dd8b586c5bb5a",
                  "scripts/lib/TaskVerify.ps1":  "code1:08435acdddd505dd40e04ee3b55ea179024b36d93c7352e1e17525d62315649a",
-                 "scripts/parity-tasks.ps1":  "code1:dbd9e1876728a05ba912ac42b0440ecde6fc03bbb7b64ed6c7d342bc763100f0",
+                 "scripts/parity-tasks.ps1":  "code1:edc6d5b50ae2b86125a6e0cc2b7f797bb604ccffee630c46ba17eaa9b2ee7ecd",
                  "test/win32/parity-tasks-seat.ps1":  "code1:426ec18e7c9b7299fbf0df99a1c7faf043ac10261ab6e42669782b304c6861e9"
              }
 }

@@ -1,13 +1,13 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-21T09:25:03-08:00",
-    "commit":  "6a2574dd3",
+    "generated":  "2026-11-21T09:43:13-08:00",
+    "commit":  "06da2dfdb",
     "uncommitted":  [
-                        "scripts/parity-tasks.ps1"
+
                     ],
     "files":  {
-                  "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
+                  "scripts/acceptance-parallel.ps1":  "4b958ede38c0911c4945146f0a52810ebbf8c01d44ac8a60532f2eb77f8fd0af",
                   "scripts/agent-stamp-inputs.ps1":  "559de37ae22cd0d6dfd5957e86be89ff09bba7d6ee399749235aba23b2b7cde3",
                   "scripts/arp-version-check.ps1":  "5b54ae7cb88d3517dc9c5d250e95c44d7a02a34fdc31ac57656d09b17d088615",
                   "scripts/bell-fade-onscreen.ps1":  "13b481236a845edaab2ae60a6d7ebcf08082c764cc3db6a687c6c60182075f3f",
@@ -39,14 +39,14 @@
                   "scripts/divergence-inventory.ps1":  "f299f907df872214375bd6f88b868bbbaf5db7125301d6481c6a39d44222ff61",
                   "scripts/divider-drag-onscreen.ps1":  "09c6b79655c929a091a1946a98b1c95875c0b4f19b5c1f9535cdc58d0b7eaba1",
                   "scripts/fetch-symbols.ps1":  "ef40b9f0b393b5662331bb7fdca267fe87d2dcf64f6ce9b83e99a3d7cc39c35a",
-                  "scripts/floor-lane.ps1":  "6dda749300bdd3ff549b1e28d4a5efca36f9bcc6d61deee2c5dfc7f4475e8cf3",
+                  "scripts/floor-lane.ps1":  "3f13136d4cdb634f08e3a4402d33f80b36d4ccf2014695c139bbf82cf045ca06",
                   "scripts/focus-pull-scan.ps1":  "ce1ebfa8aac19eed0eb7cc7578fb0a1df8b39974204777a9991ac2fea1eec8e8",
                   "scripts/fork-identity.ps1":  "3a6d62da446fa39923b07b6c4c36852016acb8db2d0cd4b4fd4e992c36bb4866",
                   "scripts/ghoztty-agent-watcher.ps1":  "51f93a125f8c81543a365acc9a990175f3b1b599184c19e2a87748b417559db4",
                   "scripts/ghoztty-cleanup.ps1":  "d2307b4c4df220c56944c340fbf60863f23f869fcd52e18acb195627c0aefde9",
                   "scripts/git-commit-guard.ps1":  "c2001be65b8fc95809a41474a041f896b90fe83adcc428fce7341766aa69b0d5",
                   "scripts/go-loop-boot.ps1":  "62b910dada177775a1dbecdfde944ca014ce9b93ab427d97640edfa4d536a5ef",
-                  "scripts/go-loop-exec.ps1":  "7ca39b7c5ee20bef73537ce3b0305317f45cffc36d1ecc7b5a34e2f6abc7ff49",
+                  "scripts/go-loop-exec.ps1":  "9333967bf009293e2d24bc0a9d6e77485705e91325f8c2cacce354ab1e27e308",
                   "scripts/go-loop-health.ps1":  "895f9cef3791a9f81fd8b975c1d17c127f9595688a4f446bf6a1221f7a2e6a65",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "e491be3477c3236c4e10af70db2f40e9d632c45f83bf860f4b09fe6eeda5e2b7",
@@ -85,7 +85,7 @@
                   "scripts/lib/LoopLedger.ps1":  "925856ccac93bf14d6d9edfcf34bbc99ab044de1b496d30c2e31c437df83819a",
                   "scripts/lib/LoopMark.ps1":  "c43ed69bcfaec131c5f59aa0f570f9ecdf7cecc7b21027686ae86ff68843d71e",
                   "scripts/lib/LoopPaneSession.ps1":  "90a19ef1a37b5b5990c1f1f53ff2d69115ed61e125cddd9e04e3ac8646e4964b",
-                  "scripts/lib/MachineLock.ps1":  "f9e8529b949b37f2f85c50dd87f551556454e85a7425de4899594fd07c828cd7",
+                  "scripts/lib/MachineLock.ps1":  "0392f179e69ab3c1271a2ba65e49838e3dea02517923d7084c76525d04b0ec1d",
                   "scripts/lib/ManualChecks.ps1":  "c13b824504fd874e258e5042e3eb33ed0ebdcdfb56e2671aa911160d2aeabfd4",
                   "scripts/lib/NativeArgv.ps1":  "49faad6cbe0907079281ac45a3e96f140fd6162f4c1729e82b145105137933b5",
                   "scripts/lib/ProcessFamily.ps1":  "63beb65412f8da3f6cbc32d025be1adde445e46327e5ec2c5361bc0a6972cfac",
