@@ -736,6 +736,77 @@ Assert "E11c apt-get update is retried and non-fatal" (
     $msiInstall -match 'apt_update_retried' -and
     $msiInstall -notmatch '(?m)^sudo apt-get update$')
 
+# E13 (T1582): the msitools SOURCE is not one unguarded network call to a host
+# we do not run. gitlab.gnome.org answered 503 on 2026-09-15, 09-24 and 10-13,
+# and each time the one bare `git clone` exited 128 and the branch head read
+# red with nothing wrong in it. The clone now goes through clone_pinned_tag:
+# retries with backoff, falls back to GNOME's GitHub mirror, and refuses any
+# source whose tag does not resolve to the pinned commit.
+$cloneRetryPath = Join-Path $Repo 'dist\windows-installer\clone-retry.sh'
+Assert "E13 install-msitools clones through clone_pinned_tag" (
+    $msiInstall -match 'clone-retry\.sh' -and
+    $msiInstall -match '(?m)^clone_pinned_tag /tmp/msitools "\$MSITOOLS_TAG" "\$MSITOOLS_COMMIT"' -and
+    $msiInstall -notmatch '(?m)^git clone')
+Assert "E13b it has a second source besides gitlab.gnome.org" (
+    $msiInstall -match 'https://gitlab\.gnome\.org/GNOME/msitools\.git' -and
+    $msiInstall -match 'https://github\.com/GNOME/msitools\.git')
+Assert "E13c the tag is pinned to a full commit sha" (
+    $msiInstall -match 'MSITOOLS_COMMIT="\$\{MSITOOLS_COMMIT:-[0-9a-f]{40}\}"')
+
+# E13d-g drive the helper itself against local repositories: a dead source
+# falls through to a live one, a source serving the wrong commit is refused
+# even though its clone succeeded, and no good source at all is a non-zero
+# exit with nothing left at the destination.
+$bashE = Get-BashPath
+if (-not $bashE -or -not (Test-Path -LiteralPath $cloneRetryPath)) {
+    $why = if (-not $bashE) { 'no Git Bash' } else { 'clone-retry.sh missing' }
+    foreach ($n in 'E13d a dead source falls through to the next', 'E13e the dead source was retried',
+                   'E13f a source serving the wrong commit is refused', 'E13g no good source fails and leaves nothing') {
+        Skip $n $why
+    }
+} else {
+    $cloneWork = Join-Path ([IO.Path]::GetTempPath()) "release-clone-retry-$PID"
+    New-Item -ItemType Directory -Path $cloneWork -Force | Out-Null
+    $cw = ConvertTo-MsysPath $cloneWork
+    $helper = ConvertTo-MsysPath $cloneRetryPath
+    # Two origin repos carrying the same annotated tag at DIFFERENT commits:
+    # "good" is the one we pin, "other" plays a mirror that drifted.
+    $setup = @"
+set -e
+cd '$cw'
+for r in good other; do
+  git init -q `$r
+  git -C `$r -c user.name=t -c user.email=t@t commit -q --allow-empty -m `$r
+  git -C `$r -c user.name=t -c user.email=t@t tag -a v9.9 -m v9.9
+done
+git -C good rev-parse HEAD
+"@
+    $want = ([string](& $bashE -c $setup 2>&1 | Select-Object -Last 1)).Trim()
+    $run = {
+        param([string]$urls)
+        $script = "export CLONE_RETRY_SLEEP=0 CLONE_RETRY_ATTEMPTS=2; . '$helper'; " +
+                  "clone_pinned_tag '$cw/dest' v9.9 $want $urls; echo rc=`$?"
+        ((& $bashE -c $script 2>&1) | Out-String)
+    }
+    $dead = "file://$cw/does-not-exist"
+    $outA = & $run "'$dead' 'file://$cw/good'"
+    $gotA = if (Test-Path -LiteralPath (Join-Path $cloneWork 'dest\.git')) {
+        ([string](& $bashE -c "git -C '$cw/dest' rev-parse HEAD" 2>&1)).Trim() } else { '' }
+    Assert "E13d a dead source falls through to the next" (
+        $want -match '^[0-9a-f]{40}$' -and $outA -match 'rc=0' -and $gotA -eq $want)
+    Assert "E13e the dead source was retried" (
+        ([regex]::Matches($outA, [regex]::Escape("from $dead (attempt"))).Count -eq 2)
+    $outB = & $run "'file://$cw/other' 'file://$cw/good'"
+    Assert "E13f a source serving the wrong commit is refused" (
+        $outB -match 'rc=0' -and $outB -match "file://$cw/other serves v9\.9 at" -and
+        ([regex]::Matches($outB, [regex]::Escape("from file://$cw/other (attempt"))).Count -eq 1)
+    $outC = & $run "'$dead' 'file://$cw/other'"
+    Assert "E13g no good source fails and leaves nothing" (
+        $outC -match 'rc=1' -and $outC -match 'could not clone v9\.9' -and
+        -not (Test-Path -LiteralPath (Join-Path $cloneWork 'dest')))
+    Remove-Item -LiteralPath $cloneWork -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 # ============================================================================
 "== F: a published build can sign in (T795, pure)"
 # ============================================================================

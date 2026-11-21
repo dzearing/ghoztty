@@ -112,9 +112,20 @@ meson --version
 #     git describe -- and a --depth 1 clone of an ANNOTATED tag leaves no tag
 #     object to describe against, which would make wixl report a version the
 #     assertion below then rejects.
-git clone --recurse-submodules --shallow-submodules \
-  --branch "$MSITOOLS_TAG" \
-  https://gitlab.gnome.org/GNOME/msitools.git /tmp/msitools
+#
+# Retried, with a second source (T1582). gitlab.gnome.org is a host we do not
+# run, and it answering 503 for a minute used to be a red build: the clone was
+# one unguarded call. GNOME's read-only GitHub mirror carries the same
+# annotated tag, and clone_pinned_tag refuses either source unless the tag
+# resolves to the commit pinned below, so the fallback cannot quietly build
+# different bytes under the same version. Bumping MSITOOLS_TAG means bumping
+# MSITOOLS_COMMIT with it (`git ls-remote --tags <url> 'v0.106^{}'`).
+MSITOOLS_COMMIT="${MSITOOLS_COMMIT:-279a1d54ad58a4f5593462ffd607c663f60a32a1}"
+# shellcheck source=clone-retry.sh
+. "$(dirname "${BASH_SOURCE[0]}")/clone-retry.sh"
+clone_pinned_tag /tmp/msitools "$MSITOOLS_TAG" "$MSITOOLS_COMMIT" \
+  https://gitlab.gnome.org/GNOME/msitools.git \
+  https://github.com/GNOME/msitools.git
 meson setup /tmp/msitools/_build /tmp/msitools --prefix=/usr/local
 ninja -C /tmp/msitools/_build
 sudo ninja -C /tmp/msitools/_build install
