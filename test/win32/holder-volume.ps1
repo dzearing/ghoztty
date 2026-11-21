@@ -321,7 +321,7 @@ try {
     while ((Get-Date) -lt $deadline) {
         $rc = Run-Cli '+list --json' "$tmp\list-a.json" 10
         if ($rc -eq 0 -and (Out-Text "$tmp\list-a.json") -match '\S') {
-            $app = @(Get-TestApps | Where-Object { $_.CommandLine -like '*t969-volume*' })
+            $app = @((Get-TestApps) | Where-Object { $_.CommandLine -like '*t969-volume*' })
             if ($app.Count -ge 1) { $appPid = [int]$app[0].ProcessId; break }
         }
         Start-Sleep -Milliseconds 600

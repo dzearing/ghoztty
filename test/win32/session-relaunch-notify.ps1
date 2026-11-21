@@ -1333,7 +1333,7 @@ Run-CliArgs @('+send-keys', "--target=$paneCmdH", 'exit', 'Enter') "$tmp\keys-h-
 $closedH = $false
 $deadlineH = (Get-Date).AddSeconds(25)
 while ((Get-Date) -lt $deadlineH) {
-    $ids = @(All-Leaves (Get-List 'h-exit') | ForEach-Object { [string]$_.id })
+    $ids = @((All-Leaves (Get-List 'h-exit')) | ForEach-Object { [string]$_.id })
     if ($ids.Count -ge 1 -and -not ($ids -contains $paneCmdH)) { $closedH = $true; break }
     Start-Sleep -Milliseconds 700
 }

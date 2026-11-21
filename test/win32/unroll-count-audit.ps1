@@ -59,6 +59,13 @@
 
     B7-B9 measure both on this interpreter.
 
+    T1656 added a third, also held at zero by D7:
+
+      * `comma-piped` - `Helper ... | Next-Command` around a comma helper. The
+        pipe does not undo the comma: the next command gets the whole array as
+        one `$_`, so a Where-Object filter passes every row when any matches.
+        Fix: `(Helper ...) | ...`. B10-B12 measure it.
+
     `-TeethCheck` proves C and D can fail: it plants each unwrapped shape into a
     throwaway tree and requires the assertions to score red. Run it after any
     change to the analyzer.
@@ -301,6 +308,36 @@ foreach ($leaf in (Get-Leaves $x)) { $leaf }
 AssertEq 'A20 a comma helper read bare is the correct shape and yields nothing' 0 `
     @(Get-FixtureFindings $bareComma).Count
 
+# T1656: PIPING a comma helper is the same trap. T1656 was filed believing the
+# pipe re-enumerates the wrapper; B10-B12 measure that it does not - the next
+# command gets the whole array as one `$_`. Only the parenthesised call, or an
+# explicit `| ForEach-Object { $_ }` unwrap, enumerates.
+$pipedComma = @'
+function Get-Leaves($t) { return , @($t.leaves) }
+$n = @(Get-Leaves $x | Where-Object { $_ }).Count
+$m = Get-Leaves $x | ForEach-Object { [string]$_.id }
+'@
+$f = @(Get-FixtureFindings $pipedComma)
+AssertEq 'A26 a comma helper piped bare into the next command is reported, per pipeline' 2 $f.Count
+Assert 'A27 and named as comma-piped, with the helper' (
+    $f.Count -eq 2 -and @($f | Where-Object { $_.Kind -eq 'comma-piped' -and $_.Name -eq 'Get-Leaves' }).Count -eq 2)
+
+$pipedOk = @'
+function Get-Leaves($t) { return , @($t.leaves) }
+$n = @((Get-Leaves $x) | Where-Object { $_ }).Count
+$m = Get-Leaves $x | ForEach-Object { $_ }
+$k = Get-Leaves $x | % {$_} | Where-Object { $_.ok }
+'@
+AssertEq 'A28 a parenthesised call and the explicit ForEach { $_ } unwrap yield nothing' 0 `
+    @(Get-FixtureFindings $pipedOk).Count
+
+$pipedWaived = @'
+function Get-Leaves($t) { return , @($t.leaves) }
+# count-audit: the whole array as one item is what this line wants
+$all = Get-Leaves $x | ConvertTo-Json
+'@
+AssertEq 'A29 the stated-reason marker exempts a comma-piped site' 0 @(Get-FixtureFindings $pipedWaived).Count
+
 $sharedComma = @'
 $n = @(Get-SharedLeaves $x).Count
 '@
@@ -375,6 +412,14 @@ AssertEq 'B6 and wrapping THAT call is the new defect, not the fix' 1 @(Get-Comm
 function Get-CommaNone { return , @() }
 # count-audit: the comma-rewrapped defect on purpose - B7 measures the empty case
 AssertEq 'B7 and over an EMPTY result the rewrap still reads 1 - a phantom element' 1 @(Get-CommaNone).Count
+# T1656, measured: PIPING the call does not re-enumerate the wrapper either - the
+# next command gets the whole array as one item. That is why A26 is a finding.
+# count-audit: the comma-piped defect on purpose - B10 measures what it answers
+AssertEq 'B10 a comma-protected return piped bare reaches the next command as ONE item' 1 @(Get-CommaWrapped | Where-Object { $_ }).Count
+# count-audit: the comma-piped defect on purpose - B11 measures the empty case
+AssertEq 'B11 and over an EMPTY result the piped filter still passes a phantom item' 1 @(Get-CommaNone | Where-Object { $true }).Count
+AssertEq 'B12 parenthesising the call is what enumerates it (2, and 0 over empty)' '2/0' (
+    "$(@((Get-CommaWrapped) | Where-Object { $_ }).Count)/$(@((Get-CommaNone) | Where-Object { $true }).Count)")
 
 # The empty-as-null measurement (T1004): what T982/T1000 died on. An empty
 # collection returned from a function arrives as $null, so [AllowEmptyCollection()]
@@ -506,11 +551,11 @@ Assert 'D4 and the shared window helpers are among them' (
 $commaIndex = Get-UnrollCommaIndex -Roots $Roots
 Assert "D6 the comma index found the dot-sourced comma helpers ($($commaIndex.Count))" (
     $commaIndex.Count -ge 5)
-$t1004 = @($sweep | Where-Object { $_.Kind -eq 'comma-rewrapped' -or $_.Kind -eq 'empty-as-null' })
+$t1004 = @($sweep | Where-Object { @('comma-rewrapped', 'comma-piped', 'empty-as-null') -contains $_.Kind })
 foreach ($x in $t1004) {
     Write-Host "      $(Get-UnrollCountRelativePath -Path $x.Path -Repo $Repo):$($x.Line) $($x.Kind): $($x.Detail)" -ForegroundColor Red
 }
-AssertEq 'D7 no @() nests a comma-protected helper, and no Mandatory collection refuses an empty return' 0 $t1004.Count
+AssertEq 'D7 no @() nests or bare pipe feeds a comma-protected helper, and no Mandatory collection refuses an empty return' 0 $t1004.Count
 
 $kinds = @($sweep | ForEach-Object { $_.Kind } | Sort-Object -Unique)
 Assert "D5 every finding is one of the declared kinds ($($kinds -join ', '))" (
@@ -559,12 +604,23 @@ if ($TeethCheck) {
     $t = @(Get-UnrollCountFindings -Path $victim -Text $wounded -Index $index -CommaIndex $commaIndex)
     AssertEq 'T6 and D7 would see it' 1 @($t | Where-Object { $_.Kind -eq 'comma-rewrapped' }).Count
 
+    # T1656's teeth: take the parentheses back off a pipe this task fixed.
+    $victim = Join-Path $Repo 'test\win32\agent-handoff.ps1'
+    $text = @(Get-Content -LiteralPath $victim)
+    $wounded = @($text | ForEach-Object { $_.Replace('@((Get-TestApps) | Where-Object', '@(Get-TestApps | Where-Object') })
+    Assert 'T9 the fixture actually re-planted a bare comma pipe' ((($text -join "`n") -ne ($wounded -join "`n")))
+    $t = @(Get-UnrollCountFindings -Path $victim -Text $wounded -Index $index -CommaIndex $commaIndex)
+    AssertEq 'T10 and D7 would see it' 1 @($t | Where-Object { $_.Kind -eq 'comma-piped' }).Count
+
     $victim = Join-Path $Repo 'test\win32\lib\CleanSlateAudit.ps1'
     $text = @(Get-Content -LiteralPath $victim)
     $wounded = @($text | ForEach-Object { $_.Replace('[AllowNull()][AllowEmptyCollection()]', '[AllowEmptyCollection()]') })
     Assert 'T7 the fixture actually stripped the AllowNull' ((($text -join "`n") -ne ($wounded -join "`n")))
+    # One finding per parameter stripped - the lib has grown a second such
+    # parameter since T1004, and a hard-coded 1 went red over that (T1656).
+    $stripped = @($text | Where-Object { $_.Contains('[AllowNull()][AllowEmptyCollection()]') }).Count
     $t = @(Get-UnrollCountFindings -Path $victim -Text $wounded -Index $index -CommaIndex $commaIndex)
-    AssertEq 'T8 and D7 would see it' 1 @($t | Where-Object { $_.Kind -eq 'empty-as-null' }).Count
+    AssertEq "T8 and D7 would see every one ($stripped stripped)" $stripped @($t | Where-Object { $_.Kind -eq 'empty-as-null' }).Count
 }
 
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

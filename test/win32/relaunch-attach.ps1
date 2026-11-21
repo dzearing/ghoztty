@@ -376,7 +376,7 @@ try {
     $sidsB = @($leavesB | ForEach-Object { [string]$_.session_id } | Sort-Object -Unique)
     Assert "B2 premise: six agent-backed panes before the quit (got $($leavesB.Count))" ($leavesB.Count -eq 6 -and $sidsB.Count -eq 6)
     Assert 'B2b premise: the manifest holds all six before the quit' ((Wait-ManifestSids $stateB 6 15) -ge 6)
-    $oldAgents = @(Get-TestAgents | Where-Object { [string]$_.ExecutablePath -eq $runningB })
+    $oldAgents = @((Get-TestAgents) | Where-Object { [string]$_.ExecutablePath -eq $runningB })
     Assert 'B3 premise: the serving agent runs the RENAMED image (a handoff target can land)' ($oldAgents.Count -ge 1)
     $oldPid = if ($oldAgents.Count -ge 1) { [int]$oldAgents[0].ProcessId } else { 0 }
 
@@ -386,7 +386,7 @@ try {
     $successor = $null
     $deadline = (Get-Date).AddSeconds(30)
     while ((Get-Date) -lt $deadline) {
-        $successor = @(Get-TestAgents | Where-Object { [string]$_.ExecutablePath -eq $canonicalB }) | Select-Object -First 1
+        $successor = @((Get-TestAgents) | Where-Object { [string]$_.ExecutablePath -eq $canonicalB }) | Select-Object -First 1
         if ($null -ne $successor) { break }
         Start-Sleep -Milliseconds 50
     }
@@ -399,7 +399,7 @@ try {
 
     $deadline = (Get-Date).AddSeconds(45)
     while ((Get-Date) -lt $deadline -and (Test-Alive $oldPid)) { Start-Sleep -Milliseconds 500 }
-    $newServing = @(Get-TestAgents | Where-Object { [string]$_.ExecutablePath -eq $canonicalB })
+    $newServing = @((Get-TestAgents) | Where-Object { [string]$_.ExecutablePath -eq $canonicalB })
     Assert 'B6 the handoff completed: the predecessor is gone, the newer build serves' (
         -not (Test-Alive $oldPid) -and $newServing.Count -ge 1)
 

@@ -1,10 +1,11 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-21T07:12:11-08:00",
-    "commit":  "680aa163e",
+    "generated":  "2026-11-21T08:25:27-08:00",
+    "commit":  "b1376b8e6",
     "uncommitted":  [
-                        "scripts/soak-daemon.ps1"
+                        "test/win32/lib/UnrollCountAudit.ps1",
+                        "test/win32/unroll-count-audit.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -133,8 +134,8 @@
                   "scripts/zig-build.ps1":  "152bcf709588b50e61222d4efdb1ea114ea20ba87ba6d75c2710531121e95912",
                   "scripts/zig-crash-repro.ps1":  "f2bb90664c97717417d38a7a566349d4704643cf8ce8be94e6820b486df73409",
                   "test/win32/lib/HarnessScope.ps1":  "d3fde09c67a200a4d66feef4d1f2a58a691fb46b740781b320574625c6e230bf",
-                  "test/win32/lib/UnrollCountAudit.ps1":  "325b6b7bb3f3567cbb98eaf3d71aa172cbaa62c262485aa0dd9fd508527a6e9b",
+                  "test/win32/lib/UnrollCountAudit.ps1":  "966bbf5a3b5e2e6fba3d0f651a722f8930a1b3611c7a2c018ac4f90a9dd9d798",
                   "test/win32/unroll-count-audit.baseline.json":  "4e35181c17aa9b1dcdb7b2ab683d1503b16027994229d7be774324ca0d7d32a7",
-                  "test/win32/unroll-count-audit.ps1":  "9dcfec7cb85733af607909d2f62e59631473868dfcf64b6fb4e0cfbf706680e2"
+                  "test/win32/unroll-count-audit.ps1":  "8f9939d5b911220d4f35eb324fd1e3c2ce6c97b80160f88538c34ebbd07b1cca"
               }
 }

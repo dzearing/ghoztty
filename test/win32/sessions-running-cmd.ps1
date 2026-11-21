@@ -274,7 +274,7 @@ if ($null -ne $paneRow) { Say "    pane_id = $($paneRow.pane_id)" }
 
 # ...and the OTHER direction agrees: the pane's own leaf names that session.
 $joinTree = Get-List 'join'
-$joinLeaf = @(All-Leaves $joinTree | Where-Object { $_.id -eq $paneId })
+$joinLeaf = @((All-Leaves $joinTree) | Where-Object { $_.id -eq $paneId })
 Assert "D the pane's +list leaf is bound to a session" `
     ($joinLeaf.Count -eq 1 -and -not [string]::IsNullOrWhiteSpace($joinLeaf[0].session_id))
 Assert "D the two directions name each other (session_id <-> pane_id)" `

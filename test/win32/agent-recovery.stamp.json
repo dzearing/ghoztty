@@ -1,18 +1,18 @@
 {
     "guard":  "agent-recovery",
     "script":  "test/win32/agent-recovery.ps1",
-    "generated":  "2026-11-21T08:02:20-08:00",
-    "commit":  "09ebaa14a",
+    "generated":  "2026-11-21T08:32:57-08:00",
+    "commit":  "b1376b8e6",
     "uncommitted":  [
-
+                        "test/win32/agent-recovery.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/agent_recovery.zig":  "518b0429ac5125fa4dd90df0a7e1b04297dd314bf2f2e5ef43a47c3512fabcfb",
                   "src/apprt/win32/LocalAgent.zig":  "e23f56ca133ba4693761afbcbfd54918126d60609322439c440266b5a5dc19cd",
                   "src/apprt/win32/pane_pool.zig":  "658d9446d74f0820b4911d17290590286c26c40f05375cf2c37adb38e72d2d33",
-                  "test/win32/agent-recovery.ps1":  "5a88a2fa3957b568daa47796ac79f51b06c7e65bfbd3231f2a5286e2ec9127b1"
+                  "test/win32/agent-recovery.ps1":  "c072390d35b0dfd14d8473922207c3f60a5bf7d996bc22b4aa8c91701b8c0e3d"
               },
     "code":  {
-                 "test/win32/agent-recovery.ps1":  "code1:fd618c5dd83427c292bff1b99a75fcfed20800aa617a51cb67edfe73bd5ff08e"
+                 "test/win32/agent-recovery.ps1":  "code1:3aa802ff34ffae8fc0228797112c66df3b0af8271b23a85dfac4e1431da0699f"
              }
 }

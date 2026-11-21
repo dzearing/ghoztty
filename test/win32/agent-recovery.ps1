@@ -972,7 +972,7 @@ Assert "I11 the topology survived: one window, 2 terminals, the viewer intact" (
 # And the give-up notice must NOT be showing: it is for a recovery that ran out
 # of retries, and this one succeeded. A pane wearing "your shell is frozen" over
 # a working shell is its own defect.
-$bannersI = @(Terminal-Leaves $treeI | Where-Object { $_.banner -like '*Session helper unreachable*' })
+$bannersI = @((Terminal-Leaves $treeI) | Where-Object { $_.banner -like '*Session helper unreachable*' })
 Assert "I12 no pane is left wearing the give-up banner after a successful retry" (
     $bannersI.Count -eq 0)
 

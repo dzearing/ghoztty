@@ -179,7 +179,7 @@ $preDone = @($preHits | Where-Object { $_.Var -eq 'done' })
 Assert "B2 and its flood wait on the echoed end marker is flagged ($(@($preDone | ForEach-Object { 'L' + $_.Line }) -join ','))" (
     $preDone.Count -ge 1)
 $now = @(Get-Content -LiteralPath (Join-Path $Root 'holder-volume.ps1'))
-$nowDone = @(Get-EchoMarkerFindings -Path 'holder-volume.ps1' -Text $now | Where-Object { $_.Var -eq 'done' })
+$nowDone = @((Get-EchoMarkerFindings -Path 'holder-volume.ps1' -Text $now) | Where-Object { $_.Var -eq 'done' })
 AssertEq 'B3 the file as it stands now (marker typed in halves) has no finding on it' 0 $nowDone.Count
 
 # ===========================================================================

@@ -1497,7 +1497,7 @@ try {
         $ws = Invoke-GhozttyIpc -Action 'workspaces' -Arguments @('--op=state')
         Assert ([string]$ws.data.active -eq 'swm-jb') "K4: ...without switching (active='$($ws.data.active)')"
         $line3 = K-Last $mark ($outlineRx + 'expanded')
-        $row = @(K-Items $line3 | Where-Object { $_.Group -eq $gC }) | Select-Object -First 1
+        $row = @((K-Items $line3) | Where-Object { $_.Group -eq $gC }) | Select-Object -First 1
         $mark = Log-Count
         if ($row -and $sb2) { Assert (K-Click $sb2 $row.X $row.Y) 'K4: pane row click delivered' } else { Assert $false "K4: SWM-J-C's pane has a row to click (g$gC)" }
         Assert ([bool](K-Last $mark 'pane sidebar focus other window' 2000)) 'K4: the row click is the other-window focus (log)'

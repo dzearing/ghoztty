@@ -49,7 +49,7 @@ function Assert($name, $cond) {
 # one-finding result comes back as a scalar whose `.Count` is $null and every
 # assertion below silently passes (PS 5.1).
 function Findings($lines) { return , @(Get-VerdictExitFindings -Text $lines) }
-function KindsOf($lines) { return (Findings $lines | ForEach-Object { $_.Kind }) -join ',' }
+function KindsOf($lines) { return ((Findings $lines) | ForEach-Object { $_.Kind }) -join ',' }
 
 # ============================================================================
 "== A: the analyzer catches the shapes it exists for, and only those shapes"

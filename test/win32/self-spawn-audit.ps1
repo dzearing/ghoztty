@@ -168,7 +168,7 @@ fn spawnOurselves(alloc: Allocator) !void {
     _ = try child.spawn();
 }
 '@, $enc)
-        $teeth = @(Get-SelfSpawnFindings -Repo $Repo -RegistryPath $Registry |
+        $teeth = @((Get-SelfSpawnFindings -Repo $Repo -RegistryPath $Registry) |
             Where-Object { $_.File -like '*zz-t980-teeth-fixture.zig' })
         Assert 'C1 the sweep goes red on a planted T933-shape self-spawn' ($teeth.Count -eq 1)
         Assert 'C2 and names it as unregistered, with the remedy' (

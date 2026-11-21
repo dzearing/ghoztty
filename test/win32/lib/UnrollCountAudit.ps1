@@ -70,6 +70,12 @@
 #     "Cannot bind argument to parameter 'Tree' because it is null" aborted a
 #     whole floor run (T982/T1000). Fix: add `[AllowNull()]`.
 #
+#   * `comma-piped` (T1656) - `Helper ... | Next-Command` where `Helper` returns
+#     with the comma idiom. The pipe does not re-enumerate: the next command gets
+#     the whole array as ONE `$_`, so a Where-Object filter passes every row
+#     when any row matches. Fix: `(Helper ...) | ...`. `| ForEach-Object { $_ }`
+#     is the explicit unwrap and is not a finding.
+#
 #   A Mandatory collection parameter with NEITHER permission is deliberately not
 #   a finding: that refusal is the author's stated intent (argument lists, a
 #   non-empty set of image names), and the error it raises names itself.
@@ -367,6 +373,20 @@ function Get-UnrollIndexedCall($Expression, $Index) {
     return $cn
 }
 
+# Is this pipeline element `ForEach-Object { $_ }` (or `% { $_ }`) and nothing
+# else? That is the explicit unwrap of a comma-protected return: each element
+# of the array `$_` is re-emitted onto the pipeline (T1656).
+function Test-UnrollIdentityForEach($Element) {
+    if (-not ($Element -is [System.Management.Automation.Language.CommandAst])) { return $false }
+    $cn = $Element.GetCommandName()
+    if (-not $cn -or @('foreach-object', '%', 'foreach') -notcontains $cn.ToLower()) { return $false }
+    $parts = @($Element.CommandElements)
+    if ($parts.Count -ne 2) { return $false }
+    $sb = $parts[1]
+    if (-not ($sb -is [System.Management.Automation.Language.ScriptBlockExpressionAst])) { return $false }
+    return ($sb.ScriptBlock.Extent.Text -replace '\s', '') -eq '{$_}'
+}
+
 # ---------------------------------------------------------------------------
 # The analyzer. One object per finding; an empty result is a clean file.
 # `-Text` may be passed instead of `-Path` so the self-test drives it from
@@ -439,6 +459,33 @@ function Get-UnrollCountFindings {
         [void]$findings.Add([pscustomobject]@{
                 Path = $Path; Line = $line; Kind = 'comma-rewrapped'; Name = $cn
                 Detail = "$($n.Extent.Text.Split("`n")[0].Trim()) - $cn already returns with the comma idiom, so this @() NESTS it (.Count reads 1, [0] is the whole array); drop the @()"
+            })
+    }
+
+    # --- kind 3b: CommaHelper ... | Next-Command (T1656) ----------------------
+    #
+    # PIPING the call does not undo the comma either. The command's output is the
+    # outer wrapper, unrolled ONCE, so the next command receives the whole inner
+    # array as a single `$_`: `CommaTwo | Where-Object { $_.a -eq 1 }` passes BOTH
+    # rows through as one item the moment either matches, and
+    # `CommaTwo | ForEach-Object { [string]$_.id }` yields "x y", not "x","y".
+    # Measured on this box in B10-B12. The fix is to parenthesise the call -
+    # `(CommaHelper ...) | ...` - which makes it an expression the pipeline
+    # enumerates. The one exempt shape is `| ForEach-Object { $_ }` alone, which
+    # is the explicit unwrap and re-emits each element.
+    foreach ($n in $all) {
+        if (-not ($n -is [System.Management.Automation.Language.PipelineAst])) { continue }
+        $els = @($n.PipelineElements)
+        if ($els.Count -lt 2) { continue }
+        if (-not ($els[0] -is [System.Management.Automation.Language.CommandAst])) { continue }
+        $cn = $els[0].GetCommandName()
+        if (-not $cn -or -not $localComma.ContainsKey($cn.ToLower())) { continue }
+        if (Test-UnrollIdentityForEach $els[1]) { continue }
+        $line = $n.Extent.StartLineNumber
+        if (Test-UnrollExempt $lines $line) { continue }
+        [void]$findings.Add([pscustomobject]@{
+                Path = $Path; Line = $line; Kind = 'comma-piped'; Name = $cn
+                Detail = "$($n.Extent.Text.Split("`n")[0].Trim()) - $cn returns with the comma idiom, so the next command gets the WHOLE array as one `$_`; parenthesise the call: ($cn ...) | ..."
             })
     }
 
@@ -542,7 +589,7 @@ function Get-UnrollCountFindings {
 # Every kind is the defect. There is no advisory kind here: the fix is one
 # `@()` and it is correct whatever the helper turns out to return.
 function Get-UnrollCountHardKinds {
-    return @('unwrapped-call', 'unwrapped-var', 'comma-rewrapped', 'empty-as-null', 'parse-error')
+    return @('unwrapped-call', 'unwrapped-var', 'comma-rewrapped', 'comma-piped', 'empty-as-null', 'parse-error')
 }
 
 function Get-UnrollCountRelativePath([string]$Path, [string]$Repo) {
