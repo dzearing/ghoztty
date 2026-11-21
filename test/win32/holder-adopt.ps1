@@ -39,9 +39,15 @@
 #      again by anybody, so a starting agent shuts it down. Forced rather than
 #      waited for: stop the app and agent (leaving the holder alive), delete
 #      `sessions.json`, relaunch. The holder must be gone.
+#   E. LINEAGE BOUNDARY (T1594). An ownerless holder of ANOTHER
+#      GHOZTTY_AGENT_INSTANCE lineage survives this lineage's sweep.
+#   F. BUILD-MODE BOUNDARY (T1595). Two hand-bound decoy pipes that differ only
+#      in the `-debug` segment: the debug sweep sends the debug-shaped one
+#      SHUTDOWN (the control) and never dials the release-shaped one - the
+#      shape of the user's own live holders.
 #
-# `-NegativeControl` inverts section C's adoption assertions, so a run that
-# scores this build as NOT adopting is available on demand.
+# `-NegativeControl` inverts section C's adoption assertions and E3/F5, so a
+# run that scores this build as NOT adopting is available on demand.
 #
 # Hermetic: a per-run $env:LOCALAPPDATA, a private IPC endpoint (lib\Isolation),
 # GHOSTTY_LOCAL_AGENT_BIN pinned to the agent under test, and only processes
@@ -244,6 +250,7 @@ $savedLocalAppData = $env:LOCALAPPDATA
 $savedAgentBin = $env:GHOSTTY_LOCAL_AGENT_BIN
 $savedHolderFlag = $env:GHOZTTY_AGENT_PTY_HOLDER
 $td = New-TestDesktop
+$script:decoyPids = @()
 
 try {
     Stop-Everything
@@ -620,9 +627,130 @@ try {
     if ($NegativeControl) { $survived = -not $survived }
     Assert 'E3 the other lineage''s holder is UNTOUCHED (its shells are not ours to end)' $survived
 
+    # ========================================================================
+    Say "== F: the sweep stops at the build-mode boundary (T1595)"
+    # ========================================================================
+    # E proved the lineage segment. The OTHER segment in the sweep's scope is
+    # the build mode, and it is the one that matters most on this box: every
+    # acceptance run is a DEBUG agent, and the holders serving the user's own
+    # panes are RELEASE holders, same user, feet away. Until now only the
+    # isHolderPipe unit test said a debug sweep leaves them alone.
+    #
+    # A real release holder cannot be stood up here - a release-mode build
+    # derives the user's live endpoints (T243/T350), which is exactly what a
+    # test must never drive. So both subjects are hand-bound DECOY pipes that
+    # play an ownerless holder's part of the conversation: accept a dial, send
+    # a HELLO, and record whether a SHUTDOWN came back. The two names are
+    # derived from the holder pipe the agent itself recorded in section A and
+    # differ in ONE place - the `-debug` segment. The debug-shaped decoy is the
+    # teeth: the sweep must dial it and send it SHUTDOWN, which proves the
+    # sweep ran, enumerated, and would kill an ownerless pipe in that shape.
+    # Strip the segment and the release decoy IS that pipe.
+    Stop-AppAndAgent
+    $recordedPipe = if ($recA) { [string]$recA.holder_pipe } else { '' }
+    $bareRecorded = $recordedPipe -replace '^\\\\\.\\pipe\\', ''
+    # The holder's id segment is its own (not the pane's session id), so the
+    # prefix is cut at the shape pty_host.defaultPipeName builds: through the
+    # last `~` under a lineage, else `ghoztty-pty-host-debug-<user>-`.
+    $tilde = $bareRecorded.LastIndexOf('~')
+    $prefixDbg = if ($tilde -ge 0) { $bareRecorded.Substring(0, $tilde + 1) }
+        else { "ghoztty-pty-host-debug-$($env:USERNAME)-" }
+    $shapeOk = ($prefixDbg -match '^ghoztty-pty-host-debug-') -and
+        ($bareRecorded.Length -gt $prefixDbg.Length) -and
+        $bareRecorded.StartsWith($prefixDbg, [System.StringComparison]::OrdinalIgnoreCase)
+    Say "  recorded holder pipe: '$recordedPipe' -> sweep prefix '$prefixDbg'"
+    Assert 'F1 premise: the recorded holder pipe is debug-shaped, so the sweep prefix is known' $shapeOk
+    $prefixRel = $prefixDbg -replace '^ghoztty-pty-host-debug-', 'ghoztty-pty-host-'
+    $decoyDbgName = "${prefixDbg}t1595dbg-$PID"
+    $decoyRelName = "${prefixRel}t1595rel-$PID"
+
+    # The decoy: an ASCII-only script in its own hidden powershell, so a
+    # blocking pipe server cannot stall this one. It writes what happened to
+    # a file, one word per line: listening / connected / shutdown.
+    $decoyScript = Join-Path $tmp 't1595-decoy.ps1'
+    [System.IO.File]::WriteAllText($decoyScript, @'
+param([string]$Name, [string]$Out, [int]$TimeoutSec = 120)
+$ErrorActionPreference = 'Stop'
+try {
+    $s = New-Object System.IO.Pipes.NamedPipeServerStream($Name,
+        [System.IO.Pipes.PipeDirection]::InOut, 1,
+        [System.IO.Pipes.PipeTransmissionMode]::Byte,
+        [System.IO.Pipes.PipeOptions]::Asynchronous)
+} catch { [System.IO.File]::WriteAllText($Out, "bindfailed $($_.Exception.Message)`n"); exit 1 }
+[System.IO.File]::WriteAllText($Out, "listening`n")
+$ar = $s.BeginWaitForConnection($null, $null)
+if (-not $ar.AsyncWaitHandle.WaitOne($TimeoutSec * 1000)) { [System.IO.File]::AppendAllText($Out, "timeout`n"); exit 0 }
+$s.EndWaitForConnection($ar)
+[System.IO.File]::AppendAllText($Out, "connected`n")
+# HELLO: len u32 BE = 0, type 0x01. The sweep checks only the frame type.
+$s.Write([byte[]](0, 0, 0, 0, 1), 0, 5); $s.Flush()
+$buf = New-Object byte[] 5
+$got = 0
+$deadline = (Get-Date).AddSeconds(10)
+while ($got -lt 5 -and (Get-Date) -lt $deadline) {
+    $rar = $s.BeginRead($buf, $got, 5 - $got, $null, $null)
+    if (-not $rar.AsyncWaitHandle.WaitOne(10000)) { break }
+    $n = $s.EndRead($rar)
+    if ($n -le 0) { break }
+    $got += $n
+}
+if ($got -ge 5 -and $buf[4] -eq 9) { [System.IO.File]::AppendAllText($Out, "shutdown`n") }
+else { [System.IO.File]::AppendAllText($Out, "noframe $got`n") }
+'@)
+    function Start-Decoy([string]$name, [string]$out) {
+        $p = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $decoyScript,
+            '-Name', $name, '-Out', $out) -WindowStyle Hidden -PassThru
+        # exitcode-audit: a decoy is killed in the finally block; only the
+        # words it wrote to its file are scored, never its exit code.
+        $null = $p.Handle
+        $script:decoyPids += [int]$p.Id
+        return $p
+    }
+    function Decoy-Says([string]$out, [string]$word) {
+        if (-not (Test-Path $out)) { return $false }
+        $lines = @((Get-Content -LiteralPath $out -ErrorAction SilentlyContinue) | ForEach-Object { $_.Trim() })
+        return ($lines -contains $word)
+    }
+    $decoyDbgOut = Join-Path $tmp 't1595-decoy-dbg.txt'
+    $decoyRelOut = Join-Path $tmp 't1595-decoy-rel.txt'
+    if ($shapeOk) {
+        [void](Start-Decoy $decoyDbgName $decoyDbgOut)
+        [void](Start-Decoy $decoyRelName $decoyRelOut)
+    }
+    $bound = $false
+    $deadline = (Get-Date).AddSeconds(20)
+    while ($shapeOk -and (Get-Date) -lt $deadline) {
+        if ((Decoy-Says $decoyDbgOut 'listening') -and (Decoy-Says $decoyRelOut 'listening')) { $bound = $true; break }
+        Start-Sleep -Milliseconds 300
+    }
+    Assert 'F2 premise: both decoys are bound (debug-shaped and release-shaped, same user and lineage)' $bound
+
+    $beforeF = @((Get-TestAgents) | ForEach-Object { [int]$_.ProcessId })
+    # persistence: on (default) - same reason as D and E: the subject is the
+    # sweep an ordinary startup runs.
+    [void](Start-OnTestDesktop -Exe $Exe -Arguments @(
+        '--title=t1595-buildmode', '--window-width=100', '--window-height=30'))
+    $sweepAgentF = Wait-NewAgent $beforeF 60
+    Assert 'F3 premise: a debug session manager started, which sweeps' ($sweepAgentF -ne 0)
+
+    $dbgShut = $false
+    $deadline = (Get-Date).AddSeconds(30)
+    while ($bound -and (Get-Date) -lt $deadline) {
+        if (Decoy-Says $decoyDbgOut 'shutdown') { $dbgShut = $true; break }
+        Start-Sleep -Milliseconds 400
+    }
+    Assert 'F4 control: the sweep dialed the DEBUG-shaped decoy and sent it SHUTDOWN' $dbgShut
+    # The sweep's whole budget is 2s; it has had that and more once F4 fired.
+    Start-Sleep -Seconds 4
+    $relUntouched = $bound -and -not (Decoy-Says $decoyRelOut 'connected')
+    if ($NegativeControl) { $relUntouched = -not $relUntouched }
+    Assert 'F5 the RELEASE-shaped decoy was never dialed (a debug agent cannot reach the user''s holders)' $relUntouched
+
     Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     Stop-Everything
+    foreach ($d in @($script:decoyPids)) { Stop-Process -Id $d -Force -ErrorAction SilentlyContinue }
     Remove-TestDesktop | Out-Null
     $env:LOCALAPPDATA = $savedLocalAppData
     if ($null -ne $savedAgentBin) { $env:GHOSTTY_LOCAL_AGENT_BIN = $savedAgentBin }
