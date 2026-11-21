@@ -54,6 +54,8 @@ Remove-Item $errlog -ErrorAction SilentlyContinue
 $env:GHOZTTY_PIPE_SUFFIX = "-windowtitletest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T1600: arms the run, so an unwound body cannot stamp its guard (T1511).
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -317,6 +319,7 @@ try {
 
     & $exe +close --target=$script:win | Out-Null
     Start-Sleep -Seconds 1
+    Complete-TestBody  # T1600: last statement of the body; an unwind never reaches it
 } finally {
     Remove-TestDesktop
     Kill-RepoInstances
@@ -331,6 +334,14 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($fgSeen.Count -gt 0) 'the foreground watcher actually sampled (negative control)'
     $leaked = @($launched | Where-Object { $fgSeen -contains $_ })
     Assert ($leaked.Count -eq 0) 'no test-desktop app ever became foreground on the interactive desktop'
+}
+
+# A green run stamps the covered files (T783/T1600) so guard-due can answer
+# "has anybody run the three-level title model against the title code as it
+# now stands?". Red, or a -NegativeControl run, leaves the stamp alone.
+if ($script:fail -eq 0 -and -not $NegativeControl -and $script:pass -ge 20) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard window-title -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Write-Host ''

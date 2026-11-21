@@ -3660,6 +3660,42 @@ $GuardTable = @(
             'test\win32\kb-actions.ps1'
         )
     },
+    # The Windows ctrl-mirror defaults (T1600, the rest of T1599's gap):
+    # ctrl+t/1/9/f4/d/shift+d/w/shift+p/c/v/n driven as real chords, asserted by
+    # tab, leaf and window counts, the palette and the clipboard. The table it
+    # proves lives in the shared Config.zig (Keybinds.init's windows block) and
+    # resolves through input\Binding.zig, and keybinds-t01.ps1 is the only
+    # harness that presses those chords, so it had no row and an edit to the
+    # table made nothing due. Config.zig is edited every couple of days, and an
+    # upstream pull lands there too - which is exactly when the defaults move.
+    # Surface.zig (key delivery) is already kb-actions' row; Window.zig and
+    # App.zig are left out for the reason kb-actions gives.
+    [pscustomobject]@{
+        Name   = 'keybinds-t01'
+        Script = 'test\win32\keybinds-t01.ps1'
+        Stamp  = 'test\win32\keybinds-t01.stamp.json'
+        Covers = @(
+            'src\config\Config.zig',
+            'src\input\Binding.zig',
+            'test\win32\keybinds-t01.ps1'
+        )
+    },
+    # The three-level title model (T92/T2404/T1600): window pin > tab pin >
+    # pane title, the Change Window Title dialog, and a user's title refusing a
+    # script's +rename. Covers the title rules' own modules and the dialog; the
+    # dispatch in Window.zig is left out (edited most turns for unrelated
+    # reasons, so a row keyed on it would be due every day and ignored).
+    [pscustomobject]@{
+        Name   = 'window-title'
+        Script = 'test\win32\window-title.ps1'
+        Stamp  = 'test\win32\window-title.stamp.json'
+        Covers = @(
+            'src\apprt\win32\window_title_owner.zig',
+            'src\apprt\win32\held_title.zig',
+            'src\apprt\win32\RenameDialog.zig',
+            'test\win32\window-title.ps1'
+        )
+    },
     # Crash evidence is the other thing whose failure nothing else catches: a
     # capture path that has quietly stopped working looks exactly like a lane
     # that did not crash, and is only ever exercised on a day already going

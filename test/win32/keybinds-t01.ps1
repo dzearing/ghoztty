@@ -61,6 +61,8 @@ Remove-Item $errlog -ErrorAction SilentlyContinue
 $env:GHOZTTY_PIPE_SUFFIX = "-t01test$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T1600: arms the run, so an unwound body cannot stamp its guard (T1511).
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -394,6 +396,7 @@ if ($wins.Count -eq 2) {
     Assert (@($lj.data.windows).Count -eq 1) 'new window closed via +close'
 }
 Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash at end of run'
+Complete-TestBody  # T1600: last statement of the body; an unwind never reaches it
 
 } finally {
     # Read the launched pids BEFORE cleanup: Remove-TestDesktop empties the
@@ -410,6 +413,15 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($fgSeen.Count -gt 0) 'the foreground watcher actually sampled (negative control)'
     $leaked = @($script:launched | Where-Object { $fgSeen -contains $_ })
     Assert ($leaked.Count -eq 0) 'no test-desktop app ever became foreground on the interactive desktop'
+}
+
+# A green run stamps the covered files (T783/T1600) so guard-due can answer
+# "has anybody run the ctrl-mirror chords against the default keybind table as
+# it now stands?". Red, or a -NegativeControl run (which is red by design),
+# leaves the stamp alone: red stays due.
+if ($script:fail -eq 0 -and -not $NegativeControl -and $script:pass -ge 20) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard keybinds-t01 -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Write-Host ''

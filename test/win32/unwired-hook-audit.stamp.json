@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-20T22:46:53-08:00",
-    "commit":  "8897df29e",
+    "generated":  "2026-11-20T23:18:31-08:00",
+    "commit":  "580556f1c",
     "uncommitted":  [
 
                     ],
@@ -1372,7 +1372,7 @@
                   "test/win32/job-escape-startup.ps1":  "5d14fe7f499bbbe6d87ed6d375d4d43abc8e22e2eed9e2e6a6c32c3de6dfc573",
                   "test/win32/job-teardown.ps1":  "ae13f7bf783ce14907d159c85b5b416a2f2dc028d78cbaaabb0fc3b69598eb94",
                   "test/win32/kb-actions.ps1":  "2d1e2ccfc21d5c05fa2eeb78509f724d63dd9a2d83bdaab1ce24bd4a6d0f3c46",
-                  "test/win32/keybinds-t01.ps1":  "77d86dafe21d72ca1424579503a72fc62342e22097c50d16286df096d508b653",
+                  "test/win32/keybinds-t01.ps1":  "a244a863dc5d381d261b1113c86f1b102ede68cbd9fdfd4bd09bf21736b9a31c",
                   "test/win32/key-state-pill.ps1":  "c5d814a9ca33fba96fa311ecdbe4e867d76a46e3c9dfe528711c2b0551319757",
                   "test/win32/kitty-key-bridge.ps1":  "d0abdeadfff0633fac70c7d4f15ebaf0812ba5ee95a2947016e6c95725d4b5d5",
                   "test/win32/launch-preflight-audit.ps1":  "48099d9b4bdad7536379153e2e9eca0138daee304cdb496c6dd33c1cc27f67f0",
@@ -1663,7 +1663,7 @@
                   "test/win32/window-placement-isolation.ps1":  "20d8b605382eb89ef87c19898b48f0c3a195236f29a7ff46d82f92a2ff87e560",
                   "test/win32/window-presenter.ps1":  "5cd3cb6d7813cb05c9748387abbaf915060bfe81ea2758c33d844b00ea4f2493",
                   "test/win32/window-size-memory.ps1":  "8f450ced42c46d1762c4dd0329b1204b7d21999192cfe6bfbfdfbcd497c97647",
-                  "test/win32/window-title.ps1":  "2c1bf41872184f86306547c309c00ea3c994d0be4521c848b8ba9f404a25beb5",
+                  "test/win32/window-title.ps1":  "e648149d63cc562e8047298986f4e9008d2db024db71fb5139d79ed505890b32",
                   "test/win32/zig-repro-t476.ps1":  "18809a84f951773567de7a6ed8dbe628d2ad3a7872b339e292a2bebd0afb1364"
               }
 }
