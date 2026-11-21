@@ -2279,9 +2279,13 @@ switch ($Command) {
             Write-Host "rot-scan: $TaskDir is not inside a git repository, so there is no history to ask."
             exit 1
         }
-        $rootFull = [System.IO.Path]::GetFullPath($root)
-        $dirFull = [System.IO.Path]::GetFullPath($TaskDir)
-        $taskRel = ($dirFull.Substring($rootFull.TrimEnd('\', '/').Length).TrimStart([char[]]@('\', '/'))) -replace '\\', '/'
+        # Ask git where the task dir sits in the repo rather than trimming the
+        # root's length off the path: under a junction (an acceptance worker's
+        # mirror) git reports the RESOLVED root while $TaskDir keeps the mirror
+        # path, and the trim produced a garbage path that `git show` could not
+        # find - every card read "no such card at <rev>" (T1661).
+        $taskRel = ((& git -C $TaskDir rev-parse --show-prefix 2>$null | Select-Object -First 1) -as [string])
+        $taskRel = ([string]$taskRel).Trim().TrimEnd('/') -replace '\\', '/'
         $rev = $null
         if ($At) {
             $rev = (& git -C $root rev-parse --verify --quiet ($At + '^{commit}') 2>$null | Select-Object -Last 1)
