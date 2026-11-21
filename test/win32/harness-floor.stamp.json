@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-21T12:23:07-08:00",
-    "commit":  "2a34f4021",
+    "generated":  "2026-11-21T12:44:05-08:00",
+    "commit":  "110016f14",
     "uncommitted":  [
-                        "test/win32/daily-publish.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
@@ -131,7 +131,7 @@
                   "test/win32/crash-databreak.ps1":  "1d4b6f42416ae9bc0e298bf5461be8f5df1f0448c96f3b6b9220230aa5e53f10",
                   "test/win32/crash-diagnostics.ps1":  "c09555c22faad0c3914229d756c7df9423369c0e13b2f32422e04d3eeaed8aca",
                   "test/win32/crash-first-chance.ps1":  "87ef370d66a61a2689c51f3d677589eab39e4ac1def7230cc320d4d72ef50a7e",
-                  "test/win32/crash-report.ps1":  "53703d4a6b3570c999587542a1c88a977f626ebb603e356de7cb56d6d52e999d",
+                  "test/win32/crash-report.ps1":  "5154c6582e5c0f5006fca2d82311624ee46ca38dceaa8db07f4954a04634f5f6",
                   "test/win32/crash-stacks.ps1":  "d5bc3c0802b16f15d9c80804b0aa9dac36f533d542d6cad5c9daa86a42fbc5d0",
                   "test/win32/cursor-blink-redraw.ps1":  "5c7725e905ad660031583cb9a2058be442b6df96c4c7b18f24f4a0be372f4e34",
                   "test/win32/daily-publish.ps1":  "1ceef78ee9f379d007b9640afaffcf9f8a3add9df14883ca6271eb120626dced",
@@ -204,7 +204,7 @@
                   "test/win32/goto-window.ps1":  "46d315222e373a99e41e10787bf31cbd847e3cd8c383da93e902008f549627a1",
                   "test/win32/guard-due.ps1":  "f32bba80075ab29f3f54a393efa8bce66ebff065c30d52d03cbc4c40338d7d1e",
                   "test/win32/gui-launch-command.ps1":  "fa0a4aad0300e381786ac6c0d32b7666372c22ab9351bfb6d44a6ddfdcb84de3",
-                  "test/win32/gui-postmortem.ps1":  "5fd3dff126cbf9d7217374532f446ce68740ada412ecfac719fd43f05b55cfcb",
+                  "test/win32/gui-postmortem.ps1":  "b621c58624501914bb14d520cfe6aab2ec5a94cc5ce7d7ae509965fb22d84ac0",
                   "test/win32/hard-delete-sites.ps1":  "f0e6c5b18f1e786cab6acf996e3bcb9d8b1da46d99c9bfbc7f5664a12dacd71c",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",
                   "test/win32/harness-floor.ps1":  "1db054250529b447363a296512d10e0b44eef62f4ac94b957ddd29ef11c922c5",
@@ -313,7 +313,7 @@
                   "test/win32/lib/FrameLabTrigger.ps1":  "e34b9a8562bf5e4266c62f7fa51d2b41b25976908a39f5310d250eedb78d2078",
                   "test/win32/lib/FrameScore.ps1":  "bbae7d0196076712df01ca2625a8eac5af348c03f31b9589fafc48f0dc43aae7",
                   "test/win32/lib/FreePort.ps1":  "1f6d3230171a1f76c1f1327e8ad01ddd9c65aba78cbe70f7b7716b9a1a2109c7",
-                  "test/win32/lib/GuiPostmortem.ps1":  "a00924779898b364a5752d79eb725dc9f8c85ddc4cd3f3b71df27fefd886d3ca",
+                  "test/win32/lib/GuiPostmortem.ps1":  "f0161fed3260b582ea490129dc781a7f58cc9a78da775458c2c992b98b9883c9",
                   "test/win32/lib/HarnessLeak.ps1":  "a004e6a27e5e6698181aa7c4696831bc8cd7268768d1ad31deecd8bac31feb3c",
                   "test/win32/lib/HarnessScope.ps1":  "d3fde09c67a200a4d66feef4d1f2a58a691fb46b740781b320574625c6e230bf",
                   "test/win32/lib/HoverCapture.ps1":  "7790fa1746250a596f8bc1df3f928246f7145bc736579ae0ebc792834692219d",
@@ -565,7 +565,7 @@
                   "test/win32/tab-strip-autohide.ps1":  "c92b1ef02c00bfd41c313f35185f35f2116e93b13a9d260e421e57c6469a65cc",
                   "test/win32/tab-tooltip.ps1":  "78cc901aeb9b6aac0bcaff5fc3cfe30999f2bb75146fea2b82eee6089b4c601a",
                   "test/win32/target-staleness.ps1":  "f839b289d37ee78c0a57d46ae0f2278545a7337dfca72a7744b34cb6b8c929de",
-                  "test/win32/task-dashboard.ps1":  "e7ea3bac86237f48a6c201e9b6f6353757ad63ac0293e38ce7a5fcab9cce990f",
+                  "test/win32/task-dashboard.ps1":  "1694e9c907e1e01265c4b24a697f9ca4365967e80200760677a546c1d1df8168",
                   "test/win32/terminal-link-paths.ps1":  "6fd5a42894831216f8371205fb6ab089201ddbdfda7aace1ee4cf2b42eec67f3",
                   "test/win32/test-binary-soak.ps1":  "96c647eb2fcbdef023f99868ab73bec7341befc23f0a14f2a9eacd4aefa64f3c",
                   "test/win32/test-client-build.ps1":  "57d43fa496cfb634e8b4bf3a96fd6f57c9dcf860009cf6e901bcd702093ceb0f",

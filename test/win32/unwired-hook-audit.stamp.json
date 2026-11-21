@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-21T12:18:26-08:00",
-    "commit":  "93a08b928",
+    "generated":  "2026-11-21T12:32:06-08:00",
+    "commit":  "110016f14",
     "uncommitted":  [
 
                     ],
@@ -1249,7 +1249,7 @@
                   "test/win32/crash-report.ps1":  "5154c6582e5c0f5006fca2d82311624ee46ca38dceaa8db07f4954a04634f5f6",
                   "test/win32/crash-stacks.ps1":  "d5bc3c0802b16f15d9c80804b0aa9dac36f533d542d6cad5c9daa86a42fbc5d0",
                   "test/win32/cursor-blink-redraw.ps1":  "5c7725e905ad660031583cb9a2058be442b6df96c4c7b18f24f4a0be372f4e34",
-                  "test/win32/daily-publish.ps1":  "4f3c1da3c57ee97406d56c612e897a71db089664c936b017f7f5ff36c8dba324",
+                  "test/win32/daily-publish.ps1":  "1ceef78ee9f379d007b9640afaffcf9f8a3add9df14883ca6271eb120626dced",
                   "test/win32/dark-menus.ps1":  "944b48c2b49d5d2ca8148572da1dcc70a9628871b27246187b9a3982e2a34491",
                   "test/win32/dashboard-dom.ps1":  "5c8bec2cd488707972cd1b71ae0c4e0bdbc61d2f7d7a844d8c24aa50b0cc3b62",
                   "test/win32/dashboard-keepalive.ps1":  "907915acd38d52b16755167f2df7e4383bc5d1cb53a3f8cbd84e419a559c7429",
