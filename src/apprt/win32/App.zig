@@ -6701,7 +6701,7 @@ pub fn refreshLocalAgentIfStale(self: *App, reason: []const u8) void {
             // explain than one that ended after a dialog.
             var guard = relaunch_guard.arm(self.core_app.alloc);
             defer if (guard) |*g| g.disarm();
-            _ = self.local_agent.restartForUpgrade();
+            _ = self.local_agent.restartForUpgrade(.keep);
             // Re-dial straight away so the fresh agent is warm before the next
             // window asks — and through the recovery path, not a bare re-dial:
             // "no LIVE sessions" still allows agent-backed windows full of
@@ -6979,7 +6979,7 @@ fn handleAgentProtocolSkew(self: *App, skew: LocalAgent.Skew, reason: []const u8
     var guard = relaunch_guard.arm(alloc);
     defer if (guard) |*g| g.disarm();
 
-    _ = self.local_agent.restartForUpgrade();
+    _ = self.local_agent.restartForUpgrade(.keep);
     const rebuilt = self.recoverLocalAgentInPlace();
     log.warn("protocol-skew agent restart finished: {d} window(s) rebuilt", .{rebuilt orelse 0});
     if (rebuilt == null) {
@@ -12722,7 +12722,7 @@ pub fn restartApp(self: *App, kind: app_restart.Kind) app_restart.Outcome {
     recordUpdateClose(alloc, app_restart.reopenReason(kind, self.config.@"session-persistence"));
 
     if (kind == .app_and_agent) {
-        const killed = self.local_agent.restartForUpgrade();
+        const killed = self.local_agent.restartForUpgrade(.end);
         // Not killed means no agent was found to stop (or, rarely, the kill
         // itself failed); either way the relaunch dials whatever is running and
         // starts a fresh agent only if nothing is.

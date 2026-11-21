@@ -430,6 +430,14 @@ try {
     $agent2 = Agent-Pid
     Assert ($agent2 -gt 0 -and $agent2 -ne $agent0) "R3 a fresh agent is running (pid $agent2)"
     Assert ($null -ne (Get-Process -Id $standinPid -ErrorAction SilentlyContinue)) "R3 the stand-in agent is untouched (pid $standinPid)"
+    # T3295: the dialog said these sessions END. Under holders (the default) a
+    # killed agent leaves every shell running and the next agent re-adopts it,
+    # so a new agent pid proves nothing about the sessions. Ask the new agent
+    # for the ids that were alive before the restart: none may still be alive.
+    # The new agent adopts before it accepts anyone, so its first answer is final.
+    $ids3 = @(Alive-Ids)
+    $kept = @($ids0 | Where-Object { $ids3 -contains $_ })
+    Assert ($kept.Count -eq 0) "R3 none of the $($ids0.Count) sessions alive before the restart is alive after it (still alive: $($kept -join ','))"
 
     Write-Host '== R4: Restart Ghoztty with persistence OFF asks first'
     Stop-TestProcs
@@ -621,6 +629,10 @@ try {
     # The point of R6: the app was IN the pane's kill-on-close job when the
     # agent died, and lived, because the job's handle is the holder's.
     Assert ($null -ne (Wait-LogLine $h.Err 'restart: background agent stopped=true' 10)) 'R6d the app SURVIVED the kill (it logged the call returning)'
+    # T3295: the sessions were ended through the agent before the kill - except the
+    # pane this app was started from, whose job holds the app (ending it would end
+    # the app halfway through its own restart).
+    Assert ($null -ne (Wait-LogLine $h.Err 'agent restart: ended [0-9]+ of [0-9]+ live session\(s\) \([1-9][0-9]* left running because this app runs inside them; confirmed by the agent\)' 10)) 'R6f the sessions were ended before the kill, leaving only the one hosting this app'
     Assert ($h.Owner -gt 0 -and $null -ne (Get-Process -Id $h.Owner -ErrorAction SilentlyContinue)) "R6e ... because the holder that owns the job is still running (pid $($h.Owner))"
     $back = if ($h.App -gt 0) { Wait-NewAppPid $h.App 20 } else { 0 }
     if ($back -gt 0) { [void]$relaunched.Add($back) }

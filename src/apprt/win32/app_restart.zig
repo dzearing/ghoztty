@@ -134,6 +134,37 @@ pub fn reopenReason(kind: Kind, persistence: bool) @import("update_reopen.zig").
     return if (kind == .app and persistence) .restart else .restart_sessions;
 }
 
+/// What the agent restart does with one session in the agent's roster before
+/// it stops the agent (T3295).
+///
+/// Stopping the agent is NOT what ends a session any more. Since T905/T909 each
+/// session's shell lives in its own holder process, which outlives the agent on
+/// purpose - and the next agent re-adopts it, so the shell, its scrollback and
+/// its pid all come back. That is right for an update and wrong here: the user
+/// just confirmed a dialog that said these sessions end. So each one is ended
+/// through the agent first, the way the chooser's Kill ends one.
+pub const SessionFate = enum {
+    /// Ask the agent to end it.
+    end,
+    /// Nothing to end: already a dead record (a tombstone).
+    not_live,
+    /// Left running: this app process is inside that session's job (it was
+    /// started from that pane), so ending the session would end the app halfway
+    /// through its own restart - with the agent not yet stopped.
+    hosts_this_app,
+};
+
+/// `shares_our_job` is whether the session's shell is a member of the job this
+/// app runs in (`job_object.ownJobContains`). Unknown ends the session: the
+/// cost of being wrong is the app dying early, which the relaunch guard is
+/// already armed to recover from, while keeping a session the user was told
+/// would end is the very defect this exists to fix.
+pub fn sessionFate(alive: bool, shares_our_job: ?bool) SessionFate {
+    if (!alive) return .not_live;
+    if (shares_our_job orelse false) return .hosts_this_app;
+    return .end;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -191,6 +222,16 @@ test "failedText explains every outcome that did nothing, and only those" {
     try testing.expect(std.mem.indexOf(u8, t, "Your sessions are still running") != null);
     try testing.expect(std.mem.indexOf(u8, t, "started from inside one of those sessions") != null);
     try testing.expect(std.mem.indexOf(u8, t, "try again") != null);
+}
+
+test "sessionFate: the agent restart ends every live session except the one hosting this app" {
+    try testing.expectEqual(SessionFate.end, sessionFate(true, false));
+    // Unknown membership is not grounds for keeping a session the user was told ends.
+    try testing.expectEqual(SessionFate.end, sessionFate(true, null));
+    try testing.expectEqual(SessionFate.hosts_this_app, sessionFate(true, true));
+    // A tombstone has nothing running to end, whatever its job.
+    try testing.expectEqual(SessionFate.not_live, sessionFate(false, null));
+    try testing.expectEqual(SessionFate.not_live, sessionFate(false, true));
 }
 
 test "only a persistent plain restart claims the sessions kept running" {

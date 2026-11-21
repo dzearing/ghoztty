@@ -47,6 +47,7 @@ const build_config = @import("../../build_config.zig");
 const protocol = @import("../../remote/protocol.zig");
 const agent_recovery = @import("agent_recovery.zig");
 const agent_upgrade = @import("agent_upgrade.zig");
+const app_restart = @import("app_restart.zig");
 const gui_pump = @import("gui_pump.zig");
 const job_object = @import("job_object.zig");
 const job_spawn = @import("job_spawn.zig");
@@ -774,19 +775,35 @@ pub fn dialProbe(alloc: Allocator) ?tcp_dial.Dialed {
     return probe.dialExisting();
 }
 
+/// What a restart of the local agent does with the sessions it holds (T3295).
+pub const RestartSessions = enum {
+    /// Leave them to the holders. Since T905/T909 a session's shell lives in a
+    /// holder process that outlives the agent, and the next agent re-adopts it -
+    /// which is exactly what an update or a protocol-skew restart wants.
+    keep,
+    /// End every live session through the agent before stopping it: the user
+    /// confirmed "Restart Ghoztty and Background Sessions", whose dialog says
+    /// they end. Killing the agent alone no longer does that.
+    end,
+};
+
 /// Terminate the running local agent and drop our connection to it, so the next
-/// resolve spawns the binary now on disk (T147). DESTRUCTIVE: the agent owns
-/// every persistent PTY, so its children die with it — the caller MUST have
-/// established that this is safe (no live sessions) or user-confirmed.
+/// resolve spawns the binary now on disk (T147).
+///
+/// Stopping the agent does NOT end the sessions it holds: each holder-backed
+/// session's shell outlives the agent and the next agent re-adopts it (T905/
+/// T909). Only a legacy agent-owned PTY dies with it. So `sessions` says which
+/// outcome the caller wants, and `.end` ends every live session through the
+/// agent first - the caller MUST have user-confirmed that.
 ///
 /// Returns true when an agent was actually terminated. The connection is
 /// RETIRED, never freed, for the same borrowed-pointer reason as everywhere
 /// else in this file.
-pub fn restartForUpgrade(self: *LocalAgent) bool {
+pub fn restartForUpgrade(self: *LocalAgent, sessions: RestartSessions) bool {
     if (comptime builtin.os.tag != .windows) return false;
 
-    // A STEP TRAIL, not a result line (T229). The three statements below can
-    // each block indefinitely — a `retire` teardown, a `TerminateProcess`, a
+    // A STEP TRAIL, not a result line (T229). The statements below can each
+    // block - a `retire` teardown, the session closes, a `TerminateProcess`, a
     // bounded wait on a dying process — and a hang leaves NO record at all
     // unless the step before it announced itself. The field failure this fixes
     // stopped logging immediately after the confirm, and there was no way to
@@ -795,12 +812,6 @@ pub fn restartForUpgrade(self: *LocalAgent) bool {
     const info = self.readInfoFile();
     const pid: i64 = if (info) |i| i.pid else 0;
 
-    // Shut our end down BEFORE the kill: a retired connection fails sends fast
-    // instead of blocking the GUI thread on a pipe whose server just died.
-    log.info("agent restart: retiring the shared connection (agent pid {d})", .{pid});
-    if (self.shared) |old| self.retire(old);
-    self.shared = null;
-    self.shared_pid = 0;
     // A deliberate restart is not a failure, and the cooldown must not make the
     // very next resolve fall back to exec.
     self.last_failure_ms = null;
@@ -810,7 +821,10 @@ pub fn restartForUpgrade(self: *LocalAgent) bool {
     self.protocol_skew = null;
 
     log.info("agent restart: terminating agent pid {d}", .{pid});
-    const killed = if (pid > 0) self.terminateAgent(pid) else false;
+    const killed = if (pid > 0) self.terminateAgent(pid, sessions) else false;
+    // Every path out of here has retired the connection; on the kill path
+    // `terminateAgent` already did, just before the kill. Idempotent.
+    self.retireShared(pid, self.shared != null);
     if (killed) {
         log.info("terminated local agent pid {d} to adopt the bundled build", .{pid});
     } else {
@@ -852,6 +866,104 @@ pub fn stopWouldEndThisApp(self: *LocalAgent) bool {
     return false;
 }
 
+/// Retire the shared connection, if there is one. Idempotent.
+///
+/// `announce` writes the T229 step-trail line whether or not there is a
+/// connection to retire: the trail names the STEP, so a hang after it is
+/// placeable (agent-upgrade.ps1 J15 asserts it on the skew path, where the
+/// skewed agent was never installed as the shared connection).
+fn retireShared(self: *LocalAgent, pid: i64, announce: bool) void {
+    if (announce) log.info("agent restart: retiring the shared connection (agent pid {d})", .{pid});
+    const old = self.shared orelse return;
+    self.retire(old);
+    self.shared = null;
+    self.shared_pid = 0;
+}
+
+/// End every live session the agent holds, through the agent (T3295) - the
+/// same `CLOSE_SESSION` the machine chooser's Kill sends, so the agent stops
+/// the holder, which takes the shell's whole job with it, and drops the record
+/// so the next agent has nothing to re-adopt.
+///
+/// **The closing roster read is a barrier, not a formality.** The agent answers
+/// a `CLOSE_SESSION` BEFORE it tears the session down (T326), so the last
+/// reply proves nothing about the last teardown. But it serves one
+/// connection's requests in order on one thread, so a `LIST_SESSIONS` sent
+/// after the closes is answered only once every teardown before it has
+/// finished - and what it still lists alive is what the kill will leave behind.
+///
+/// Best-effort throughout: no connection, an agent too old for the request, or
+/// a request that fails leaves those sessions running and the log says how
+/// many. The restart goes on either way - the user asked for a fresh agent.
+fn endLiveSessions(self: *LocalAgent) void {
+    const conn = self.sharedConnectionIfLive() orelse {
+        log.warn("agent restart: no live connection to the agent; its sessions are left running", .{});
+        return;
+    };
+    if (!conn.supportsCloseSession()) {
+        log.warn("agent restart: this agent cannot close sessions on request; its sessions are left running", .{});
+        return;
+    }
+    var roster = conn.requestSessions(end_sessions_rpc_ns) catch |err| {
+        log.warn("agent restart: could not list the agent's sessions err={}; they are left running", .{err});
+        return;
+    };
+    defer roster.deinit();
+
+    var live: usize = 0;
+    var hosting: usize = 0;
+    var asked: usize = 0;
+    for (roster.sessions) |s| {
+        const shares: ?bool = if (s.pid > 0 and s.pid <= std.math.maxInt(u32))
+            job_object.ownJobContains(@intCast(s.pid))
+        else
+            null;
+        switch (app_restart.sessionFate(s.alive, shares)) {
+            .not_live => continue,
+            .hosts_this_app => {
+                live += 1;
+                hosting += 1;
+                log.warn(
+                    "agent restart: leaving session {s} running - this app was started inside it, and ending it would end the app",
+                    .{s.id},
+                );
+            },
+            .end => {
+                live += 1;
+                const ok = conn.closeSession(s.id, end_sessions_rpc_ns) catch |err| blk: {
+                    log.warn("agent restart: ending session {s} failed err={}", .{ s.id, err });
+                    break :blk false;
+                };
+                if (ok) asked += 1;
+            },
+        }
+    }
+
+    // The barrier (see above): every teardown is done once this is answered.
+    var still: ?usize = null;
+    if (conn.requestSessions(end_sessions_rpc_ns)) |after_const| {
+        var after = after_const;
+        defer after.deinit();
+        var n: usize = 0;
+        for (after.sessions) |s| {
+            if (s.alive) n += 1;
+        }
+        still = n;
+    } else |err| {
+        log.warn("agent restart: could not re-read the roster after ending sessions err={}", .{err});
+    }
+    const ended: usize = if (still) |n| live -| n else asked;
+    log.info(
+        "agent restart: ended {d} of {d} live session(s) ({d} left running because this app runs inside them; {s})",
+        .{ ended, live, hosting, if (still != null) "confirmed by the agent" else "unconfirmed" },
+    );
+}
+
+/// Per-request budget for the session closes above. The agent replies before
+/// its teardown (T326), so a healthy close answers in milliseconds; this only
+/// bounds a wedged one. GUI thread, user-confirmed, app about to quit.
+const end_sessions_rpc_ns: u64 = 3 * std.time.ns_per_s;
+
 /// TerminateProcess + a bounded wait for the process to actually go away, so a
 /// respawn can't race the dying agent's still-bound pipe. Best-effort: a
 /// process we cannot open (gone already, or access-denied) reports false and
@@ -868,7 +980,7 @@ pub fn stopWouldEndThisApp(self: *LocalAgent) bool {
 ///
 /// Each step announces itself for the same reason the caller's step trail
 /// exists: the next occurrence must say WHICH call it stopped in.
-fn terminateAgent(self: *LocalAgent, pid: i64) bool {
+fn terminateAgent(self: *LocalAgent, pid: i64, sessions: RestartSessions) bool {
     if (comptime builtin.os.tag != .windows) return false;
     if (pid <= 0 or pid > std.math.maxInt(u32)) return false;
     const windows = std.os.windows;
@@ -953,6 +1065,14 @@ fn terminateAgent(self: *LocalAgent, pid: i64) bool {
         );
         return false;
     }
+
+    // Only now, with the kill vetted: ending a session first and THEN having
+    // the kill refused would leave the user with neither outcome they chose.
+    if (sessions == .end) self.endLiveSessions();
+
+    // Shut our end down BEFORE the kill: a retired connection fails sends fast
+    // instead of blocking the GUI thread on a pipe whose server just died.
+    self.retireShared(pid, true);
 
     if (windows.kernel32.TerminateProcess(h, 0) == 0) {
         log.warn("TerminateProcess(agent pid {d}) failed err={}", .{ pid, windows.kernel32.GetLastError() });

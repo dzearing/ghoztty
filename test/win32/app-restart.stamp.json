@@ -1,24 +1,24 @@
 {
     "guard":  "app-restart",
     "script":  "test/win32/app-restart.ps1",
-    "generated":  "2026-11-21T06:20:17-08:00",
-    "commit":  "bd69f54cb",
+    "generated":  "2026-11-21T07:18:39-08:00",
+    "commit":  "680aa163e",
     "uncommitted":  [
                         "src/apprt/win32/app_restart.zig",
                         "src/apprt/win32/LocalAgent.zig",
                         "test/win32/app-restart.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/app_restart.zig":  "fa93bee8567aea80dbbf156c7a40141db5dd205ff109362f1ca860351c24f71a",
+                  "src/apprt/win32/app_restart.zig":  "cb29ce354e630b7509f501fdb56a70b34bb21a06fbbc6b232ca40083f952dd25",
                   "src/apprt/win32/job_object.zig":  "33642e779f1f12facb8014d1cac70b0e60677f145149876e79be44755c87d525",
                   "src/apprt/win32/job_spawn.zig":  "fc29b31b0b0c07379fdfec6a60851d74c0aca08d4faf4d3459ad45421486649a",
-                  "src/apprt/win32/LocalAgent.zig":  "cb3e12d90b8697e971def60d113a850f85d920eb85ae1ec250fb6339c7ac94c7",
+                  "src/apprt/win32/LocalAgent.zig":  "e23f56ca133ba4693761afbcbfd54918126d60609322439c440266b5a5dc19cd",
                   "src/apprt/win32/relaunch_guard.zig":  "3cc0c7d3961eb984559da32e7e6ab36db57795d1e0165bc5fe9fe71104c2b847",
                   "src/remote/agent/pty_child.zig":  "372c2a9763483afb7a4684dde749d7d3d0b3ec55249985d75f24e5f347a3b844",
                   "src/remote/agent/pty_holder_child.zig":  "07a24cb7372e1b65e5aa4fda62e668996b10e8f0f8cd57876d67795913e8c53e",
-                  "test/win32/app-restart.ps1":  "fe3e55900a51a12cf65404d228a812ae0c28a412a35b820ae6579d2df5f5eb91"
+                  "test/win32/app-restart.ps1":  "220c45d3793ad8ef5cbe62ede8d8fd207722e9d09656907f84bab3b7edac8723"
               },
     "code":  {
-                 "test/win32/app-restart.ps1":  "code1:5c5ddeb17bde0d7dceb3846164c73007ba05666b7d2fba5a6422fd05ea6ccf64"
+                 "test/win32/app-restart.ps1":  "code1:366495e2c3065fb9d29921ef3c8c679b716d2bf21ab3198a36408c7a81c30fd5"
              }
 }
