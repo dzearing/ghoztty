@@ -1,0 +1,9 @@
+{
+  "version": "1.56.4",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "Restart Ghoztty and Background Sessions no longer restarts when it cannot end the sessions." }
+      ] }
+  ]
+}

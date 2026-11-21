@@ -1,0 +1,9 @@
+{
+  "version": "1.56.4",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "The agent connection's control-message listener can now be removed safely, with a clear that waits for a running call." }
+      ] }
+  ]
+}
