@@ -284,7 +284,7 @@ $gpid = $g.Pid; $pane = $g.Pane; $paneName = $g.PaneName
 $menuWnd = Wait-Menu $gpid 3000
 Assert ($menuWnd -ne [IntPtr]::Zero) 'F: WM_CONTEXTMENU (VK_APPS path) opens the menu'
 if ($menuWnd -ne [IntPtr]::Zero) {
-    $items = Get-MenuItems $menuWnd
+    $items = @(Get-MenuItems $menuWnd)
     $parsed = @(Split-Items $items)
     Assert ($items.Count -eq $expected.Count) "F: menu has $($expected.Count) rows (got $($items.Count))"
     $mismatch = @()

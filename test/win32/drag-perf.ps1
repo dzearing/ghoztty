@@ -184,8 +184,8 @@ function Get-DragSamples([string]$log) {
 # Drive one divider drag with posted mouse messages and hand back the summary
 # line it produced, or $null if the app printed none.
 function Invoke-DividerDrag([IntPtr]$top, [string]$log, [int]$moves) {
-    $before = (Get-DragSamples $log).Count
-    $panes = Get-VisiblePanes $top
+    $before = @(Get-DragSamples $log).Count
+    $panes = @(Get-VisiblePanes $top)
     if ($panes.Count -lt 2) { return $null }
     $sorted = @($panes | Sort-Object Left)
     # The ROOT divider: every extra split below goes inside the RIGHT half, so
@@ -292,11 +292,11 @@ function Measure-DragShape([string]$mode, [int[]]$counts, [int]$moves) {
                 # had one pane, which produced no sample at all.
                 for ($t = 0; $t -lt 40; $t++) {
                     Start-Sleep -Milliseconds 250
-                    if ((Get-VisiblePanes ([IntPtr]$top)).Count -ge $have) { break }
+                    if (@(Get-VisiblePanes ([IntPtr]$top)).Count -ge $have) { break }
                 }
             }
             Start-Sleep -Milliseconds 500
-            $live = (Get-VisiblePanes ([IntPtr]$top)).Count
+            $live = @(Get-VisiblePanes ([IntPtr]$top)).Count
             $s = Invoke-DividerDrag ([IntPtr]$top) $log $moves
             if ($null -eq $s) {
                 Rep ("  {0,-8} panes={1,-2} NO SAMPLE (the app printed no drag summary)" -f $mode, $live)

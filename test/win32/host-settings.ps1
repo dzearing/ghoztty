@@ -341,7 +341,7 @@ try {
         $popup = Wait-TestPopupMenu -ProcessId $app.Pid -TimeoutMs 2500
         Assert ($popup -ne [IntPtr]::Zero) 'the management button opens a popup menu'
         if ($popup -ne [IntPtr]::Zero) {
-            $items = Get-MenuItems $popup
+            $items = @(Get-MenuItems $popup)
             $want = @('Host Settings...', 'SEP', 'Rename...', 'SEP', 'Remove from Account...')
             Assert (($items -join '|') -eq ($want -join '|')) `
                 "menu is Host Settings | Rename | Remove (got: $($items -join ' | '))"

@@ -149,7 +149,7 @@ try {
         Start-Sleep -Seconds 3
         Assert (Test-AppAlive) 'A the app survived +close on a window that had opened the palette'
         if (Test-AppAlive) {
-            Assert ((Get-Tops).Count -ge 1) 'A the first window is still open'
+            Assert (@(Get-Tops).Count -ge 1) 'A the first window is still open'
         }
     }
 

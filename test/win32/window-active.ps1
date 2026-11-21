@@ -133,7 +133,7 @@ try {
 
     # ---- A: exactly one window reports focused -------------------------
     Activate-Window ([int64]$w1) 'w1'
-    $focused = Get-FocusedIds
+    $focused = @(Get-FocusedIds)
     Assert ($focused.Count -eq 1) `
         "A: +list --json reports exactly one focused window (saw $($focused.Count))"
 
@@ -145,7 +145,7 @@ try {
     # A field hardcoded true for, say, the first window would pass A and B;
     # only moving activation tells the two apart.
     Activate-Window $w2 'w2'
-    $focused2 = Get-FocusedIds
+    $focused2 = @(Get-FocusedIds)
     Assert ($focused2.Count -eq 1 -and $focused2[0] -eq $w2) `
         'C: moving activation to w2 moves `focused` with it'
 

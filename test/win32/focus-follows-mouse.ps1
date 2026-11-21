@@ -127,7 +127,7 @@ function Run-Case([string]$label, [string[]]$extraArgs, [bool]$expectFollow, [bo
     & $exe +split --direction=down | Out-Null
     Start-Sleep -Milliseconds 800
 
-    $panes = Get-Panes $top
+    $panes = @(Get-Panes $top)
     Assert ($panes.Count -eq 2) "$label setup: 2 visible panes"
     if ($panes.Count -ne 2) { Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue; exit 1 }
     $A = $panes | Sort-Object Top | Select-Object -First 1     # top pane

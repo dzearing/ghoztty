@@ -146,7 +146,7 @@ try {
     $chooser = Get-Chooser $g.Pid
     Assert ($chooser -ne [IntPtr]::Zero) 'CONTROL: a focused terminal opens the chooser'
     Close-Chooser $g.Top $g.Pid
-    Assert ((Get-TestWindows -ProcessId $g.Pid -Class 'GhozttyMachineChooser').Count -eq 0) `
+    Assert (@(Get-TestWindows -ProcessId $g.Pid -Class 'GhozttyMachineChooser').Count -eq 0) `
         'CONTROL: and Escape dismissed it again'
 
     # --- 2. a focused VIEWER pane ------------------------------------------

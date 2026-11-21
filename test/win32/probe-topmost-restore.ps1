@@ -92,7 +92,7 @@ try {
     if (-not $a) { Write-Host 'SETUP FAIL: no charmap window for section A'; exit 1 }
 
     Assert (-not (Test-Topmost $a.Hwnd)) 'A: the subject window does not start out topmost'
-    Assert ((Get-TestTopmostPending).Count -eq 0) 'A: the ledger starts empty'
+    Assert (@(Get-TestTopmostPending).Count -eq 0) 'A: the ledger starts empty'
 
     Set-TestWindowTopmost -Window $a.Hwnd -On $true | Out-Null
     Start-Sleep -Milliseconds 200
@@ -102,7 +102,7 @@ try {
     $freed = @(Restore-TestWindowTopmost)
     Assert ($freed -contains [int64]$a.Hwnd) 'A: the restore reports the window it had to un-pin'
     Assert (-not (Test-Topmost $a.Hwnd)) 'A: and the window is actually back to NOTOPMOST'
-    Assert ((Get-TestTopmostPending).Count -eq 0) 'A: the ledger is empty again'
+    Assert (@(Get-TestTopmostPending).Count -eq 0) 'A: the ledger is empty again'
     Assert ((Get-TestTopmostRestored) -contains [int64]$a.Hwnd) 'A: the leak is recorded for the end-of-run assertion'
 
     # Idempotent: a second restore has nothing to do and invents nothing.

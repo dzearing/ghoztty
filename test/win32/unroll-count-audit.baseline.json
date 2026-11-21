@@ -2,20 +2,8 @@
     "note":  "Per-file counts of unroll-count-audit findings not yet fixed. May only go DOWN, and the run that lowers one rewrites this file with -UpdateBaseline. See docs/design/windows-parity-tasks/T1617.md.",
     "generated":  "2026-11-21",
     "files":  {
-                  "test\\win32\\activity-monitor.ps1":  4,
                   "test\\win32\\banner-resize-repaint.ps1":  10,
-                  "test\\win32\\chooser-menu.ps1":  1,
-                  "test\\win32\\chooser-open-chord.ps1":  1,
-                  "test\\win32\\chrome-theme.ps1":  1,
-                  "test\\win32\\context-menu.ps1":  2,
-                  "test\\win32\\drag-perf.ps1":  4,
-                  "test\\win32\\focus-follows-mouse.ps1":  2,
-                  "test\\win32\\host-settings.ps1":  1,
-                  "test\\win32\\palette-close-crash.ps1":  1,
-                  "test\\win32\\probe-topmost-restore.ps1":  2,
-                  "test\\win32\\rdp-session.ps1":  1,
                   "test\\win32\\resize-flicker.ps1":  28,
-                  "test\\win32\\split-divider.ps1":  8,
-                  "test\\win32\\window-active.ps1":  4
+                  "test\\win32\\split-divider.ps1":  8
               }
 }

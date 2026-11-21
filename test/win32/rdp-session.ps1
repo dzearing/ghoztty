@@ -422,7 +422,7 @@ try {
     $listRaw = (& $Exe +list --json 2>&1 | ForEach-Object { $_.ToString() } | Out-String)
     $listCode = $LASTEXITCODE
     Assert "D1 +list --json exited 0 (got $listCode)" ($listCode -eq 0)
-    $names = Get-ListNames
+    $names = @(Get-ListNames)
     Assert "D2 and reported the live window (names: $($names -join ', '))" ($names.Count -ge 1)
 
     # ========================================================================

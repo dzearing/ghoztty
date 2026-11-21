@@ -864,7 +864,7 @@ try {
     # appearing during the spawn IS the flash. Measured, not assumed: the
     # experiment in T291's progress log showed the old flag starting
     # conhost.exe + OpenConsole.exe from a test-desktop spawner.
-    $consolesBefore = Get-ConsoleWindows
+    $consolesBefore = @(Get-ConsoleWindows)
     $delegationBefore = @(Get-Process -Name 'OpenConsole', 'WindowsTerminal' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
     Click-TestPosted $panel $newProcBtn | Out-Null
     $dlg = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyNewProcess' -TimeoutMs 8000
@@ -905,7 +905,7 @@ try {
     # alive (asserted just above - the whole risk of this change is trading the
     # visible console for a dead child) while nothing appears on the desktop.
     Start-Sleep -Milliseconds 300
-    $consolesAfter = Get-ConsoleWindows
+    $consolesAfter = @(Get-ConsoleWindows)
     Assert ($consolesAfter.Count -le $consolesBefore.Count) "H no console window appeared on the test desktop (before=$($consolesBefore.Count) after=$($consolesAfter.Count))"
 
     # The delegation probe waits out a cold start: a NEGATIVE needs a bounded

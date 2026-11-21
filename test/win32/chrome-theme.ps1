@@ -389,7 +389,7 @@ function Close-Panel([IntPtr]$panel) {
     $edit = Find-TestWindowEx -Parent $panel -Class 'EDIT'
     if ($edit -ne [IntPtr]::Zero) { Send-TestControlKey -Control $edit -Key Escape | Out-Null }
     Start-Sleep -Milliseconds 900
-    return ((Get-Panels).Count -eq 0)
+    return (@(Get-Panels).Count -eq 0)
 }
 
 # ---------------------------------------------------------------------------
