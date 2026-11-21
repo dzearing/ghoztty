@@ -391,7 +391,7 @@ fn ask(version: []const u8, windows: usize) Answer {
     };
     wbuf[n] = 0;
 
-    const result = ConfirmDialog.showStandalone(null, 1.0, .{
+    const result = ConfirmDialog.showStandalone(null, ConfirmDialog.standaloneScale(), .{
         .title = std.unicode.utf8ToUtf16LeStringLiteral(title),
         .text = wbuf[0..n :0],
         .style = .ok_cancel,
@@ -520,7 +520,7 @@ fn report(box_title: []const u8, text: []const u8) void {
     const n = std.unicode.utf8ToUtf16Le(wbuf[0 .. wbuf.len - 1], text) catch return;
     wbuf[n] = 0;
 
-    _ = ConfirmDialog.showStandalone(null, 1.0, .{
+    _ = ConfirmDialog.showStandalone(null, ConfirmDialog.standaloneScale(), .{
         .title = title_buf[0..tn :0],
         .text = wbuf[0..n :0],
         .style = .ok_only,

@@ -236,7 +236,7 @@ fn ask(version: []const u8) Answer {
     };
     wbuf[n] = 0;
 
-    const result = ConfirmDialog.showStandalone(null, 1.0, .{
+    const result = ConfirmDialog.showStandalone(null, ConfirmDialog.standaloneScale(), .{
         .title = std.unicode.utf8ToUtf16LeStringLiteral(title),
         .text = wbuf[0..n :0],
         .style = .ok_cancel,

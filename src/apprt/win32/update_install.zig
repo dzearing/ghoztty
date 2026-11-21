@@ -718,7 +718,7 @@ fn report(text: []const u8) void {
     var seam_buf: [64]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&seam_buf);
     const timeout = forcedReportTimeout(fba.allocator()) orelse update_apply.report_timeout_ms;
-    const result = ConfirmDialog.showStandalone(null, 1.0, .{
+    const result = ConfirmDialog.showStandalone(null, ConfirmDialog.standaloneScale(), .{
         .title = std.unicode.utf8ToUtf16LeStringLiteral(update_apply.failure_title),
         .text = wbuf[0..n :0],
         .style = .ok_only,

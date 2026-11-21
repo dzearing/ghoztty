@@ -1,14 +1,14 @@
 {
     "guard":  "about-links",
     "script":  "test/win32/about-links.ps1",
-    "generated":  "2026-11-20T15:30:59-08:00",
-    "commit":  "f23da11a1",
+    "generated":  "2026-11-20T16:09:44-08:00",
+    "commit":  "08f1ebf3b",
     "uncommitted":  [
-
+                        "src/apprt/win32/ConfirmDialog.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
-                  "src/apprt/win32/ConfirmDialog.zig":  "fd18ef767f68cd453798b5c23b0cd0bdbbc73706fc39eebecb3597b571152c5f",
+                  "src/apprt/win32/ConfirmDialog.zig":  "afdb4f3b59b707671599621314ea278cb34d6b9909b2b79acb830652fee84cdf",
                   "src/apprt/win32/open_url_seam.zig":  "538f709a0f949fb87112fc946b45d58e0efeed55947abeaf2fde670d91897bbf",
                   "test/win32/about-links.ps1":  "cb6ba712f258265f9a5d03dc219567a0025a1f081a2b7d2029586140247906eb"
               },

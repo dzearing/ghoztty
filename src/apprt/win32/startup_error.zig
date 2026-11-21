@@ -214,7 +214,7 @@ pub fn reportFatal(stage: []const u8, err: anyerror) void {
 
     var wbuf: [max_message * 2]u16 = undefined;
     const text_w = toUtf16Z(&wbuf, text) orelse return;
-    _ = ConfirmDialog.showStandalone(null, 1.0, .{
+    _ = ConfirmDialog.showStandalone(null, ConfirmDialog.standaloneScale(), .{
         .title = std.unicode.utf8ToUtf16LeStringLiteral("Ghoztty could not start"),
         .text = text_w,
         .style = .ok_only,

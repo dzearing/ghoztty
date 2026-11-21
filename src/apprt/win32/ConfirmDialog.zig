@@ -2385,3 +2385,40 @@ test "fallbackText: too long for the buffer is null, never truncated (T1556)" {
     try testing.expect(fallbackText(&buf, L("hello"), &.{}, L("note")) == null);
     try testing.expect(fallbackText(&buf, L("12345678"), &.{}, null) == null);
 }
+
+test "every app-less dialog is drawn at the display's scale, never a literal (T1558)" {
+    // `showStandalone` has no owner window to inherit a DPI from, so its caller
+    // supplies the scale. A literal there (it was `1.0` at five sites until
+    // T1558) draws a 96-DPI dialog in a PerMonitorV2 process: on a 150% display
+    // it comes up two thirds the size of every in-app prompt. Every caller is
+    // listed here; one that stops calling `showStandalone` fails too, so the
+    // list cannot quietly go stale.
+    const callers = [_]struct { name: []const u8, src: []const u8 }{
+        .{ .name = "startup_error.zig", .src = @embedFile("startup_error.zig") },
+        .{ .name = "install_restart.zig", .src = @embedFile("install_restart.zig") },
+        .{ .name = "install_maintenance.zig", .src = @embedFile("install_maintenance.zig") },
+        .{ .name = "update_install.zig", .src = @embedFile("update_install.zig") },
+        .{ .name = "url_scheme.zig", .src = @embedFile("url_scheme.zig") },
+    };
+    const needle = "ConfirmDialog.showStandalone(";
+    for (callers) |c| {
+        var calls: usize = 0;
+        var at: usize = 0;
+        while (std.mem.indexOfPos(u8, c.src, at, needle)) |i| {
+            at = i + needle.len;
+            calls += 1;
+            // Second argument: the text between the first and second comma.
+            const first = std.mem.indexOfScalarPos(u8, c.src, at, ',') orelse return error.TestUnexpectedResult;
+            const second = std.mem.indexOfScalarPos(u8, c.src, first + 1, ',') orelse return error.TestUnexpectedResult;
+            const arg = std.mem.trim(u8, c.src[first + 1 .. second], " \t\r\n");
+            if (arg.len == 0 or std.ascii.isDigit(arg[0])) {
+                std.debug.print("{s}: showStandalone scale is the literal '{s}'; use ConfirmDialog.standaloneScale()\n", .{ c.name, arg });
+                return error.TestUnexpectedResult;
+            }
+        }
+        if (calls == 0) {
+            std.debug.print("{s} no longer calls showStandalone; drop it from this list\n", .{c.name});
+            return error.TestUnexpectedResult;
+        }
+    }
+}
