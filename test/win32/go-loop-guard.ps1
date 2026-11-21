@@ -3071,6 +3071,10 @@ Assert 'AJ6 and no longer tells the reader to go and read the pane' ($ag -notmat
 $ag = AGHealth (AGPane @('  Committed and pushed.', '') '/reset-context read go.md and go')
 Assert 'AJ7 an unsent continuation is named as one, with the text' `
     ($ag -match 'unsent text in its composer' -and $ag -match '/reset-context read go\.md and go' -and $ag -match 'step 7')
+# T1712: Claude Code's greyed prompt suggestion is not input somebody typed.
+$ag = AGHealth (AGPane @('  Committed and pushed.', '') 'keep going')
+Assert 'AJ7b a prompt suggestion is named as one, not as an unsent continuation' `
+    ($ag -match 'prompt suggestion' -and $ag -match "'keep going'" -and $ag -notmatch 'unsent text' -and $ag -match 'ended without its continuation')
 $ag = AGHealth (AGPane @($agSpin))
 Assert 'AJ8 a working pane past the backstop reads as a long turn, not a dead one' `
     ($ag -match 'pane_state=working\b' -and $ag -match 'WORKING' -and $ag -match 'very long turn')
@@ -3238,9 +3242,10 @@ Assert 'BB15 a lock that cannot say when its turn started reads as stalled, not 
 # running turn') that IDLE has already ruled out: there is no turn to have
 # queued against, and nothing running to consume the text.
 #
-# The source of the text is still unidentified - it matches no script, no
-# watchdog nudge, and no transcript - so this shortens the rescue. It does not
-# claim a cure, and the arm must not be read as one.
+# The text matched no script, no watchdog nudge and no transcript because it
+# was Claude Code's greyed prompt suggestion (T1712, section AK): the session
+# had simply gone idle, so idle-with-nothing-running is the stall this arm
+# catches, and the suggestion is only what that idle composer happened to show.
 $agIdle = Resolve-LoopStallVerdict -TurnAgeMinutes 20 -StaleMinutes 180 -SuspectMinutes 45 `
     -ComposerText 'run the due guards and commit' -PaneState 'idle'
 Assert 'AG1 unsent text on an IDLE session is stalled well before the 45m bar' `
@@ -3320,6 +3325,45 @@ $ahIdle = Resolve-LoopStallVerdict -TurnAgeMinutes 46 -StaleMinutes 180 -Suspect
     -ComposerText 'keep going' -PaneState 'idle'
 Assert 'AH4 the same text on an idle pane is still caught, under the idle clock' `
     ($ahIdle.Stalled -and $ahIdle.Clock -eq 'composer-idle')
+
+# --- AK. a prompt SUGGESTION is named as one, not as unsent input (T1712) ----
+# WHY. 'keep going' sat in the loop's composer on every idle stall from
+# 2026-09-04, and three incident write-ups went looking for whoever typed it.
+# Nobody did: Claude Code draws a greyed predicted next prompt in an idle
+# composer (tengu_prompt_suggestion; promptSuggestionUnusedStreak=21 on this
+# box), and `+read` drops the grey. Plain text cannot show the styling, so the
+# kind is decided by ORIGIN: the loop only ever types a slash command or the
+# go.md continuation. The verdicts must not move - an idle session with nothing
+# running is the stall either way - only the words do.
+# The pane shape is the measured one (v2.1.306+): a full-width rule whose
+# input row arrives as a continuation of it, marker `>` + U+00A0.
+$akRule = ([string][char]0x2500) * 92
+$akNbsp = [string][char]0x00A0
+$akTail = ("  Committed and pushed.`r`n`r`n" + $akRule + '>' + $akNbsp + "keep going`r`n" +
+    $akRule + "  ctx: 121k/1000k (12%) | v2.1.327`r`n  lane-b | D:\git\ghoztty-b")
+$akText = Get-PaneComposerText -Tail $akTail
+Assert "AK1 the measured pane shape yields the suggestion text (got '$akText')" ($akText -eq 'keep going')
+Assert 'AK2 text the loop never types is classed as a suggestion' `
+    ((Get-LoopComposerKind $akText) -eq 'suggestion')
+Assert 'AK3 a slash command is still pending input' `
+    ((Get-LoopComposerKind '/reset-context read go.md and go') -eq 'command')
+Assert 'AK4 the bare go.md continuation is still pending input' `
+    ((Get-LoopComposerKind 'read go.md and go') -eq 'continuation')
+Assert 'AK5 an empty composer has no kind' ((Get-LoopComposerKind '   ') -eq '')
+$akIdle = Resolve-LoopStallVerdict -TurnAgeMinutes 20 -StaleMinutes 180 -SuspectMinutes 45 `
+    -ComposerText $akText -PaneState 'idle'
+Assert 'AK6 a suggestion on an IDLE session is still stalled on the idle clock' `
+    ($akIdle.Stalled -and $akIdle.Clock -eq 'composer-idle')
+Assert "AK7 and the line calls it a suggestion, not unsent text ($($akIdle.Why))" `
+    ($akIdle.Why -match 'prompt suggestion' -and $akIdle.Why -notmatch 'unsent' -and $akIdle.Why -match "'keep going'")
+$akCmd = Resolve-LoopStallVerdict -TurnAgeMinutes 20 -StaleMinutes 180 -SuspectMinutes 45 `
+    -ComposerText '/reset-context read go.md and go' -PaneState 'idle'
+Assert 'AK8 a typed, unsent continuation is still called unsent text' `
+    ($akCmd.Stalled -and $akCmd.Why -match "unsent text: '/reset-context read go\.md and go'" -and $akCmd.Why -notmatch 'suggestion')
+$akLate = Resolve-LoopStallVerdict -TurnAgeMinutes 60 -StaleMinutes 180 -SuspectMinutes 45 `
+    -ComposerText 'keep going' -PaneState 'unknown'
+Assert 'AK9 the 45m composer arm still fires on a suggestion, and names it' `
+    ($akLate.Stalled -and $akLate.Clock -eq 'composer' -and $akLate.Why -match 'prompt suggestion')
 
 # --- AI. a session waiting on its OWN background task is not stalled (T1711) --
 # WHY. On 2026-09-23 three turns (12:45, 16:05, 16:25) ended on purpose with a

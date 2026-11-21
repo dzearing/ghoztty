@@ -482,7 +482,12 @@ if ($alive -and $turnAgeMin -gt $TurnStaleMinutes) {
             "$head - the pane shows the session WORKING$said, so this is a very long turn rather than a dead one"
         }
         'idle' {
-            if ($paneComposer) {
+            if ($paneComposer -and (Get-LoopComposerKind $paneComposer) -eq 'suggestion') {
+                # T1712: text the loop never types is Claude Code's greyed
+                # prompt suggestion, drawn in an idle composer - not input.
+                "$head - the pane is IDLE at an empty composer showing Claude Code's prompt " +
+                "suggestion ('$paneComposer')${said}: the turn ended without its continuation"
+            } elseif ($paneComposer) {
                 "$head - the pane is IDLE with unsent text in its composer ('$paneComposer')${said}: the turn " +
                 'typed its continuation and never submitted it (go.md step 7)'
             } else {

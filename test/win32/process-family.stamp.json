@@ -1,15 +1,15 @@
 {
     "guard":  "process-family",
     "script":  "test/win32/process-family.ps1",
-    "generated":  "2026-11-21T07:05:18-08:00",
-    "commit":  "680aa163e",
+    "generated":  "2026-11-21T12:56:24-08:00",
+    "commit":  "bc94458f3",
     "uncommitted":  [
-                        "scripts/soak-daemon.ps1"
+                        "scripts/loop-session.ps1"
                     ],
     "files":  {
                   "scripts/go-loop-pane-probe.ps1":  "e491be3477c3236c4e10af70db2f40e9d632c45f83bf860f4b09fe6eeda5e2b7",
                   "scripts/lib/ProcessFamily.ps1":  "63beb65412f8da3f6cbc32d025be1adde445e46327e5ec2c5361bc0a6972cfac",
-                  "scripts/loop-session.ps1":  "30da7a362b46ee687db80e7d6a6feb6508b595caf918e603aebfe3f77d0f01dd",
+                  "scripts/loop-session.ps1":  "40bf602b8d9867a42b98e872161298c6403507ff93c12bc0d321fe2f1aee5e94",
                   "scripts/soak-daemon.ps1":  "d444b820a16c7cfac1a19a4aeae73beaa7af85babaff7e1efc64d871e8773f58",
                   "scripts/test-binary-soak.ps1":  "c838c5077d2b82c98952a1903f0d73d12bf0830432dc65aaceba45124832d3f4",
                   "test/win32/lib/PaneIdle.ps1":  "d4f72b019a04fadbd308a08f89445ac1d009c9660842c5c079feeaeaae776697",
@@ -18,7 +18,7 @@
     "code":  {
                  "scripts/go-loop-pane-probe.ps1":  "code1:4b98ff7707d435e391f969ea85f26dfcff84f7c5fd864eced05f66a05dc9e9a1",
                  "scripts/lib/ProcessFamily.ps1":  "code1:1fcb4fad53b58054eca35291cb6d22418b01e5062e471b6afd0ee39d1125217b",
-                 "scripts/loop-session.ps1":  "code1:bb0919a0dfa1e134257c555422baa22a397f0b6200d3e4d43cf3c98a29891997",
+                 "scripts/loop-session.ps1":  "code1:3be2e5ba6184b654644d2dd295123e5438009bea11aaa1ff111068c4d840a2bd",
                  "scripts/soak-daemon.ps1":  "code1:5d07c8eb61c58169d0491a19ca55afd87789c54a675166c0ac66b6cabff5c58c",
                  "scripts/test-binary-soak.ps1":  "code1:448793d5bedb5a8e678e63cf26cd6bea6a834b93b4e57d0a7fe4d9ea10e0775b",
                  "test/win32/lib/PaneIdle.ps1":  "code1:35b233431491754d399ec5fd8ae2c476b58c94f6fe8ec04c6d82832a7f36f05f",

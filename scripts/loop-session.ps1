@@ -209,6 +209,45 @@ function Test-LoopComposerPending([AllowEmptyString()][string]$Text) {
     return [bool](Get-LoopComposerText $Text)
 }
 
+# WHERE the composer's text came from, as far as plain text can say (T1712).
+#
+#   ''            nothing there
+#   'command'     a slash command (`/reset-context ...`, `/clear`) - what a
+#                 turn's own close-out or a supervisor nudge types
+#   'continuation' the reset continuation, which always names go.md
+#                 (`read go.md and go`) - typed by the reset helper
+#   'suggestion'  anything else: text this loop never types
+#
+# The 'keep going' / 'commit and push it' / 'run the due guards and commit'
+# that sat in the loop's composer on every idle stall since 2026-09-04 is Claude
+# Code's PROMPT SUGGESTION: after a turn ends the TUI draws a greyed predicted
+# next prompt in the empty composer (`~/.claude.json` has
+# `tengu_prompt_suggestion: true`; the binary carries the suggestion state and a
+# "Showing fewer prompt suggestions" back-off after 20 unused in a row, and this
+# box's `promptSuggestionUnusedStreak` reads 21 - every one ignored, because
+# nobody is at the loop's keyboard to take one). `+read` returns text without
+# SGR, so the grey is gone before this file sees it; origin is the only thing
+# left to classify on. A person typing prose into the loop's pane reads as
+# 'suggestion' too - the label is the likely source, not a proof, and the stall
+# arms treat every kind alike, so a misread changes a log word, never a verdict.
+function Get-LoopComposerKind([AllowEmptyString()][string]$Text) {
+    $t = Get-LoopComposerText $Text
+    if (-not $t) { return '' }
+    if ($t.StartsWith('/')) { return 'command' }
+    if ($t -match '(?i)\bgo\.md\b') { return 'continuation' }
+    return 'suggestion'
+}
+
+# The phrase a stall line uses for that text: what it is, then the text itself.
+function Format-LoopComposerQuote([AllowEmptyString()][string]$Text) {
+    $t = Get-LoopComposerText $Text
+    if ($t.Length -gt 60) { $t = $t.Substring(0, 60) + '...' }
+    if ((Get-LoopComposerKind $Text) -eq 'suggestion') {
+        return "text this loop never types - most likely Claude Code's greyed prompt suggestion, not input: '$t'"
+    }
+    return "unsent text: '$t'"
+}
+
 # Returns @{ Stalled; Clock; Why } - Clock names WHICH arm decided, so a wrong
 # call is readable in the log afterwards instead of being one word, `healthy`.
 function Resolve-LoopStallVerdict {
@@ -244,8 +283,8 @@ function Resolve-LoopStallVerdict {
     # Every arm below reads an idle pane as evidence, and a turn that launched a
     # 15-minute harness with run_in_background and went quiet for the
     # notification IS an idle pane - with Claude Code's prompt suggestion (a
-    # plain-text 'keep going' this probe cannot tell from typing) sitting in the
-    # composer. 2026-09-23: two turns in a row were nudged at ~19m that way; the
+    # plain-text 'keep going' this probe cannot tell from typing; T1712
+    # confirmed the source, see Get-LoopComposerKind) sitting in the composer. 2026-09-23: two turns in a row were nudged at ~19m that way; the
     # nudge wiped the wait and the harness result landed in a dead session.
     # Only the backstop above may overrule an outstanding task, so one that
     # never reports back still cannot hold the loop longer than $StaleMinutes.
@@ -254,7 +293,7 @@ function Resolve-LoopStallVerdict {
                   Why = "waiting on $BackgroundPending background task(s) of its own" }
     }
     $pending = Get-LoopComposerText $ComposerText
-    if ($pending.Length -gt 60) { $pending = $pending.Substring(0, 60) + '...' }
+    $quote = Format-LoopComposerQuote $ComposerText
     # AN IDLE SESSION WITH UNSENT TEXT IS NEVER LEGITIMATE (user, 2026-09-06).
     #
     # The 45m bar exists because the composer arm alone cannot tell a wedge from
@@ -267,17 +306,19 @@ function Resolve-LoopStallVerdict {
     # Measured 2026-09-06: four wedges, all `composer=pending session=idle`,
     # caught at 58.8, 59.3, 60.0 and 61.6 minutes - every one of them sat there
     # from about the five-minute mark, so the 45m bar was pure latency. ~3.7
-    # hours of loop time in one day. Source of the text still unidentified (it
-    # matches no script, no nudge, and no transcript), so this shortens the
-    # rescue rather than claiming a cure.
+    # hours of loop time in one day. The text matched no script, no nudge and
+    # no transcript because it was Claude Code's prompt suggestion (T1712,
+    # Get-LoopComposerKind): the session simply went idle with no turn running,
+    # and the suggestion is what an idle composer looks like. So this arm is
+    # right for that reason - idle with nothing in flight is the stall - and
+    # the line says 'suggestion' rather than blaming a phantom typist.
     #
     # 'unknown' deliberately does NOT qualify: a probe that could not classify
     # the pane must not be read as having said idle (T1370).
     if ($pending -and $PaneState -eq 'idle' -and $TurnAgeMinutes -gt $ComposerIdleMinutes) {
         return @{ Stalled = $true; Clock = 'composer-idle'
-                  Why = ("the composer holds unsent text with the session IDLE after $age " +
-                         "and no completed turn - nothing is running to consume it: '" +
-                         $pending + "'") }
+                  Why = ("the session is IDLE after $age with no completed turn - nothing is " +
+                         "running - and the composer holds $quote") }
     }
     # ...AND A WORKING SESSION WITH QUEUED TEXT IS NOT A WEDGE (user, 2026-09-07).
     #
@@ -300,8 +341,7 @@ function Resolve-LoopStallVerdict {
     # backstop, which is what a backstop is for.
     if ($TurnAgeMinutes -gt $SuspectMinutes -and $pending -and $PaneState -ne 'working') {
         return @{ Stalled = $true; Clock = 'composer'
-                  Why = ("the composer holds unsent text after $age with no completed turn: '" +
-                         $pending + "'") }
+                  Why = ("no turn has completed after $age and the composer holds $quote") }
     }
     if ($TurnAgeMinutes -gt $SuspectMinutes -and $PaneState -eq 'idle') {
         return @{ Stalled = $true; Clock = 'idle'

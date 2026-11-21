@@ -931,7 +931,15 @@ function Invoke-Tick {
                 else { $bgPending += $bgT.Id }
             }
         } catch { Log "  note: the background-task probe failed: $($_.Exception.Message)" }
-        $seen = ("composer=$(if ($pane.Composer) { 'pending' } else { 'none' }) " +
+        # T1712: 'suggestion' is Claude Code's greyed predicted prompt in an
+        # idle composer - text the loop never types - so the log stops calling
+        # it unsent input. The stall arms treat both kinds alike.
+        $composerWord = switch (Get-LoopComposerKind $pane.Composer) {
+            '' { 'none' }
+            'suggestion' { 'suggestion' }
+            default { 'pending' }
+        }
+        $seen = ("composer=$composerWord " +
                  "session=$($pane.Working) bg=$($bgPending.Count) bgdead=$($bgDead.Count) bghung=$($bgHung.Count) probed=$probed" +
                  $(if ($blocker.Blocked) { " blocked=$($blocker.Kind)" } else { '' }))
         $verdict = Resolve-LoopStallVerdict -TurnAgeMinutes $turnAge `
