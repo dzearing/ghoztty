@@ -1716,6 +1716,23 @@ $GuardTable = @(
             'test\win32\lib\RebootShape.ps1'
         )
     },
+    # The SHIPPED agent resolution (T1619): the only harness that launches the
+    # app with GHOSTTY_LOCAL_AGENT_BIN unset, so the only one that runs
+    # `LocalAgent.agentBinary`'s sibling-of-our-exe branch - the one every
+    # delivered build takes - and the missing-sibling fallback beside it. Every
+    # other agent harness names the agent through the override, so an edit to
+    # how the sibling is found (or to self_exe's install-dir answer) is
+    # otherwise graded by nothing.
+    [pscustomobject]@{
+        Name   = 'agent-sibling-resolve'
+        Script = 'test\win32\agent-sibling-resolve.ps1'
+        Stamp  = 'test\win32\agent-sibling-resolve.stamp.json'
+        Covers = @(
+            'test\win32\agent-sibling-resolve.ps1',
+            'src\apprt\win32\LocalAgent.zig',
+            'src\os\self_exe.zig'
+        )
+    },
     # Suite LINEAGE ISOLATION (T691): the only harness that measures whether an
     # acceptance run cleans up after ITSELF. Everything it covers is shared by
     # every persistence-touching script here - the scoped kill, the lineage

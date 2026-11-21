@@ -1,22 +1,22 @@
 {
     "guard":  "checkout-guard",
     "script":  "test/win32/checkout-guard.ps1",
-    "generated":  "2026-11-21T01:36:10-08:00",
-    "commit":  "6a2e8043b",
+    "generated":  "2026-11-21T01:57:41-08:00",
+    "commit":  "121ce0b9e",
     "uncommitted":  [
-                        "scripts/suite-run.ps1"
+                        "scripts/guard-due.ps1"
                     ],
     "files":  {
-                  "scripts/guard-due.ps1":  "24dd0d8ff0286ce4f66b150aaec9e332bbd77870f48706717f664e08d5b0ccd4",
-                  "scripts/suite-run.ps1":  "a6f288e8d36426129a296894974feea46986d3508e1d68f6b7266c55c976e449",
+                  "scripts/guard-due.ps1":  "c08a330864828742738f1063568110c660a3ee44177f20c93af36952bf9b6c03",
+                  "scripts/suite-run.ps1":  "bf2f5de835338ccd60e97faa92bcf7289853c09e7b3c1c8fd342c716adfb5d71",
                   "test/win32/checkout-guard.ps1":  "d2757d2072ad93548f99073d50cdb316e927a31ac80d2aa5b77792de9506c619",
                   "test/win32/lib/BuildMode.ps1":  "1e331395e6fc5339ecaf21480907555785f6820f2b2999558670733dcb62f588",
                   "test/win32/lib/CheckoutGuard.ps1":  "e386d340814b5deebec8f5c09dfdcc31a6b3b45aae875daad03dd82d0d857f29",
                   "test/win32/lib/TestScore.ps1":  "c9c34503c546b23fc63b4ac19dbab07aa8cef100cbdbf9c4c1753af06114bdca"
               },
     "code":  {
-                 "scripts/guard-due.ps1":  "code1:3a57c5cee29c15726e4bc70e45494ec8eeaf48387868d56f6bac124eef731baf",
-                 "scripts/suite-run.ps1":  "code1:00938e95bce9f5d46aed2ba8cb626ab0cf601bf66055dc8ac2b5aeecc179ca30",
+                 "scripts/guard-due.ps1":  "code1:e98e4c3d6dae7f2d8a850adcc4d4b1c534f69e4b3665d501fde6455f8c121c1e",
+                 "scripts/suite-run.ps1":  "code1:3bc56b90f9f0b1c8c88a9f5eaa3a312f751aa96a6ffe95df8739b3ae15c63549",
                  "test/win32/checkout-guard.ps1":  "code1:f3a76365ac62a9d3634a0334ec77a692b722fc8af7f9106ed2b1aafa178d49a9",
                  "test/win32/lib/BuildMode.ps1":  "code1:c23f672134be889f5db353d13378eb90662aea3cb914e7ad3fc2d63b9dc29bfb",
                  "test/win32/lib/CheckoutGuard.ps1":  "code1:6d93536e1206f1ad3d15220bc55a732bb2af403fa2b22e2cbbaab8ae4fa7b778",

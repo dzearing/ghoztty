@@ -1,0 +1,17 @@
+{
+    "guard":  "agent-sibling-resolve",
+    "script":  "test/win32/agent-sibling-resolve.ps1",
+    "generated":  "2026-11-21T02:20:54-08:00",
+    "commit":  "121ce0b9e",
+    "uncommitted":  [
+                        "test/win32/agent-sibling-resolve.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/LocalAgent.zig":  "e42cdcaa438d37476992cf2abb20ddc6ab6e3602612d0615f6405afeadf096e6",
+                  "src/os/self_exe.zig":  "9472a506cd7c2d044f0f43048b2a89f78b38eded7bca3e1af35690182174487e",
+                  "test/win32/agent-sibling-resolve.ps1":  "008e915d0bd423968168199706c94bbcaeaaccaaa4a160816999c6205facd464"
+              },
+    "code":  {
+                 "test/win32/agent-sibling-resolve.ps1":  "code1:9feec8abdd1d88e034d6ce1fbb6cf65eed744d0e1abdb535af66ec66c153c3b1"
+             }
+}
