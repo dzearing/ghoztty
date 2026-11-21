@@ -408,6 +408,73 @@ try {
     Assert "G1 a warm /api/data answers inside ${budgetMs}ms (half the ${pollMs}ms poll)" `
         ($times.Count -eq 3 -and $worst -lt $budgetMs) "times = $($times -join ', ') ms"
 
+    # --- the payload carries what the board draws, not the whole tracker (T1664)
+    # On 2026-11-21 the poll was 13.7 MB: every task's progress log, plain
+    # terms, goals, validation checklist and summary, and all 3530 timeline
+    # events, re-parsed by the page every five seconds. G4 is the wire size a
+    # browser actually downloads (it sends Accept-Encoding: gzip); G5/G6 are
+    # the structural rules, so a field moving back into the payload goes red
+    # here even while the gzip budget still has room.
+    $wire = -1; $rawLen = -1
+    try {
+        $rq = [System.Net.HttpWebRequest]::Create("$Base/api/data")
+        $rq.Headers.Add('Accept-Encoding', 'gzip')
+        $rq.AutomaticDecompression = [System.Net.DecompressionMethods]::None
+        $rq.Timeout = 120000
+        $rs = $rq.GetResponse()
+        $ms = New-Object System.IO.MemoryStream
+        $rs.GetResponseStream().CopyTo($ms); $rs.Close()
+        $wire = [int]$ms.Length
+        $enc = [string]$rs.Headers['Content-Encoding']
+    } catch { $enc = "error: $($_.Exception.Message)" }
+    Assert 'G4 /api/data is gzipped for a client that asks, and under 1 MB on the wire' `
+        ($enc -eq 'gzip' -and $wire -gt 0 -and $wire -lt 1MB) "encoding=$enc wire=$wire bytes"
+    $full = $null
+    try {
+        $rq = [System.Net.HttpWebRequest]::Create("$Base/api/data")
+        $rq.Timeout = 120000
+        $rs = $rq.GetResponse()
+        $sr = New-Object System.IO.StreamReader ($rs.GetResponseStream(), [System.Text.Encoding]::UTF8)
+        $fullText = $sr.ReadToEnd(); $sr.Close(); $rs.Close()
+        $rawLen = [System.Text.Encoding]::UTF8.GetByteCount($fullText)
+        $full = $fullText | ConvertFrom-Json
+    } catch {}
+    Write-Host ("  info /api/data: {0:N0} bytes uncompressed, {1:N0} on the wire gzipped" -f $rawLen, $wire)
+    $leak = @()
+    if ($full) {
+        foreach ($t in @($full.tasks)) {
+            if ($null -ne $t.validation) { $leak += "$($t.id).validation" }
+            if ($t.bucket -ne 'in_progress') {
+                foreach ($k in 'plain', 'goals', 'progress', 'summary') {
+                    if ($null -ne $t.$k) { $leak += "$($t.id).$k" }
+                }
+            }
+        }
+    }
+    Assert 'G5 only in-progress tasks carry plain/goals/progress/summary, and none carries validation' `
+        ($null -ne $full -and $leak.Count -eq 0) "leaked: $(($leak | Select-Object -First 8) -join ', ') ($($leak.Count) in all)"
+    $win = if ($full) { @($full.activity).Count } else { -1 }
+    $tot = if ($full) { [int]$full.activityTotal } else { -1 }
+    Assert 'G6 the poll carries a window of the timeline and names the whole count' `
+        ($win -gt 0 -and $win -le 120 -and $tot -ge $win) "window=$win total=$tot"
+    if ($tot -gt $win -and $win -gt 0) {
+        $pg = $null
+        try { $pg = (Get-Http "$Base/api/activity?from=$win&n=5" 60).Body | ConvertFrom-Json } catch {}
+        $pgItems = @(if ($pg) { $pg.items | ForEach-Object { $_ } })
+        $winShas = @($full.activity | ForEach-Object { $_.sha })
+        Assert 'G7 /api/activity pages past the window with events the window does not hold' `
+            ($pgItems.Count -ge 1 -and $pg.total -eq $tot -and $winShas -notcontains $pgItems[0].sha) `
+            "items=$($pgItems.Count) total=$($pg.total)"
+        $old = $pgItems | Where-Object { $_.sha } | Select-Object -First 1
+        if ($old) {
+            $one = $null
+            try { $one = (Get-Http "$Base/api/activity?sha=$($old.sha)" 60).Body | ConvertFrom-Json } catch {}
+            $oneItems = @(if ($one) { $one.items | ForEach-Object { $_ } })
+            Assert 'G8 /api/activity?sha= finds an event older than the window (the ?event= deep link)' `
+                ($oneItems.Count -eq 1 -and $oneItems[0].sha -eq $old.sha) "sha=$($old.sha) got=$($oneItems.Count)"
+        }
+    }
+
     # ...and the speed must not come from serving a stale answer. A second
     # server, pointed at a fixture tracker, is asked for the payload, has a
     # task added under it, and is asked again immediately: the new task has to
@@ -490,6 +557,18 @@ try {
                 Assert 'H5 a second read is served from the cache, not a fresh spawn' ($cached -eq $pRaw -and $sw.ElapsedMilliseconds -lt 1500) ("{0}ms" -f $sw.ElapsedMilliseconds)
                 $withBadge = ((Get-Http "$fxBase/api/data" 120).Body | ConvertFrom-Json)
                 Assert 'H6 /api/data carries the open-PR count for the nav badge' ($withBadge -and $withBadge.reviews -and $withBadge.reviews.open -eq 1 -and $withBadge.reviews.needs -eq 0) "reviews=$($withBadge.reviews | ConvertTo-Json -Compress)"
+
+                # --- G9: search still reaches a summary the poll no longer carries (T1664)
+                $st = "---`nid: T9004`ntitle: `"fixture T9004`"`nstatus: `"todo`"`nseat: `"win`"`n---`n`n# T9004`n`n## Summary`n`nThe zebraquokka phrase lives only in this summary.`n"
+                [System.IO.File]::WriteAllText((Join-Path $fxDir 'T9004.md'), $st)
+                $srch = $null
+                try { $srch = (Get-Http "$fxBase/api/search?q=ZebraQuokka" 60).Body | ConvertFrom-Json } catch {}
+                $ids = @(if ($srch) { $srch.ids | ForEach-Object { $_ } })
+                $polled = ((Get-Http "$fxBase/api/data" 120).Body | ConvertFrom-Json)
+                $t4 = @(if ($polled) { $polled.tasks | Where-Object { $_.id -eq 'T9004' } })
+                Assert 'G9 /api/search matches a summary-only phrase, case-insensitively, that /api/data does not ship' `
+                    ($ids.Count -eq 1 -and $ids[0] -eq 'T9004' -and $t4.Count -eq 1 -and $null -eq $t4[0].summary) `
+                    "ids=$($ids -join ',') polled=$($t4.Count)"
             }
         }
     } finally {

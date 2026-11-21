@@ -129,6 +129,29 @@ const DECISION = {
 payload.tasks = (payload.tasks || [])
   .filter((t) => t.bucket !== 'blocked' && t.bucket !== 'in_progress')
   .concat([BLOCKED, WATCHING, STALE]);
+/* T1664: the poll no longer carries summaries for tasks that are not in
+   flight, so TX901's summary lives only behind /api/search here - the search
+   box has to ask for it. */
+delete BLOCKED.summary;
+const SEARCH_ONLY = { zebraquokka: ['TX901'] };
+
+/* T1664: the poll carries the newest window of the timeline; older events are
+   paged from /api/activity. The stub claims 40 more than the window holds and
+   synthesises them, so "Show more" has to fetch to get past the window. */
+const OLDER = 40;
+const oldestTs = (payload.activity || []).reduce((m, a) => Math.min(m, a.ts), Date.now());
+const olderEvents = [];
+for (let i = 0; i < OLDER; i++) {
+  olderEvents.push({
+    kind: 'work', ts: oldestTs - (i + 1) * 60e3, sha: 'f00d' + String(i).padStart(5, '0'),
+    title: 'Fixture older event ' + i, subject: 'Fixture older event ' + i, summary: '',
+    completed: [], filed: [], tags: [], userReport: false, durationMs: null,
+  });
+}
+const activityWindow = (payload.activity || []).length;
+payload.activityTotal = activityWindow + OLDER;
+const activityReads = [];
+
 payload.decisions = [DECISION];
 payload.openDecisions = 1;
 
@@ -255,6 +278,19 @@ const server = http.createServer(async (req, res) => {
     blockedNow = false;
     return send(res, 200, 'application/json', JSON.stringify({ ok: true, blocked: false }));
   }
+  if (url === '/api/search') {
+    const q = (new URL(req.url, 'http://x').searchParams.get('q') || '').trim().toLowerCase();
+    return send(res, 200, 'application/json', JSON.stringify({ q, ids: SEARCH_ONLY[q] || [] }));
+  }
+  if (url === '/api/activity') {
+    const sp = new URL(req.url, 'http://x').searchParams;
+    const from = Number(sp.get('from') || 0), n = Number(sp.get('n') || 30);
+    activityReads.push({ from, n });
+    // Positions past the window map onto the synthesised older events.
+    const items = olderEvents.slice(Math.max(0, from - activityWindow), Math.max(0, from - activityWindow) + n);
+    return send(res, 200, 'application/json', JSON.stringify({ total: payload.activityTotal, from, items }));
+  }
+  if (url === '/api/_activity_reads') return send(res, 200, 'application/json', JSON.stringify(activityReads));
   if (url === '/api/prs') return send(res, 200, 'application/json', JSON.stringify(PRS));
   if (url === '/api/_posted') return send(res, 200, 'application/json', JSON.stringify(posted));
   if (url === '/api/task') {

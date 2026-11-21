@@ -37,6 +37,7 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const zlib = require('zlib');
 const { execFile, execFileSync } = require('child_process');
 
 const REPO = path.resolve(__dirname, '..');
@@ -1394,6 +1395,62 @@ function freshenPayload(p) {
   return p;
 }
 
+/**
+ * The poll payload as it goes on the wire (T1664). The built payload keeps
+ * everything (the cache, `/api/activity` and the in-flight panel read it);
+ * what the page fetches every five seconds is only what it draws:
+ *
+ * - `plain`, `goals` and `progress` are rendered for IN-PROGRESS tasks only
+ *   (the in-flight panel and its change signature). On every other task they
+ *   were 4 MB the page parsed and dropped; the detail dialog reads the whole
+ *   file from `/api/task` anyway.
+ * - `validation` is rendered nowhere (the dialog shows it from the file).
+ * - `activity` is the newest ACTIVITY_WINDOW events; the timeline shows 30 at a
+ *   time and fetches older pages from `/api/activity` when "Show more" runs
+ *   past what it has. `activityTotal` is the count the card's heading names.
+ *
+ * Measured 2026-11-21 on the real tracker (3356 tasks, 3530 events): 13.7 MB
+ * compact before, see the T1664 progress log for after.
+ */
+const ACTIVITY_WINDOW = 120;
+// `summary` too: the table's `.t-sum` is hidden, so off the in-flight panel it
+// is only search material, and the search box asks `/api/search` for it.
+const INFLIGHT_ONLY = ['plain', 'goals', 'progress', 'summary'];
+
+function wirePayload(p) {
+  const tasks = p.tasks.map((t) => {
+    const out = { ...t };
+    delete out.validation;
+    if (t.bucket !== 'in_progress') for (const k of INFLIGHT_ONLY) delete out[k];
+    // A null or false field reads the same to the page as an absent one (it
+    // only ever tests them with `== null`, `||` or truthiness), and across
+    // 3000+ tasks the empty keys alone were half a megabyte.
+    for (const k of Object.keys(out)) if (out[k] === null || out[k] === false) delete out[k];
+    return out;
+  });
+  return {
+    ...p,
+    tasks,
+    activity: p.activity.slice(0, ACTIVITY_WINDOW),
+    activityTotal: p.activity.length,
+  };
+}
+
+/** Gzip when the client says it can take it (browsers do; PS 5.1 does not). */
+function sendJson(req, res, obj) {
+  const body = Buffer.from(JSON.stringify(obj), 'utf8');
+  const accepts = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
+  if (accepts && body.length > 1024) {
+    const z = zlib.gzipSync(body, { level: 6 });
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
+      'Content-Encoding': 'gzip', Vary: 'Accept-Encoding',
+    });
+    return res.end(z);
+  }
+  send(res, 200, 'application/json; charset=utf-8', body);
+}
+
 let payloadCache = { key: null, payload: null };
 
 /** The served payload: rebuilt only when the fingerprint moves. */
@@ -1683,7 +1740,35 @@ function serve(port) {
           });
       }
       if (url === '/api/data') {
-        return send(res, 200, 'application/json; charset=utf-8', JSON.stringify(payload()));
+        return sendJson(req, res, wirePayload(payload()));
+      }
+      // Task search over the text the poll no longer carries (T1664): the ids
+      // whose "id title summary" contains `q`, case-insensitively - the same
+      // test the page used to run locally over the full payload.
+      if (url === '/api/search') {
+        const q = (new URL(req.url, 'http://x').searchParams.get('q') || '').trim().toLowerCase().slice(0, 200);
+        const ids = q
+          ? payload().tasks.filter((t) => (t.id + ' ' + t.title + ' ' + (t.summary || '')).toLowerCase().indexOf(q) >= 0).map((t) => t.id)
+          : [];
+        return sendJson(req, res, { q, ids });
+      }
+      // Older timeline events, on demand (T1664): the poll carries only the
+      // newest ACTIVITY_WINDOW. `?from=<n>&n=<count>` pages by position;
+      // `?sha=<hex>` finds one event for the `?event=` deep link.
+      if (url === '/api/activity') {
+        const q = new URL(req.url, 'http://x').searchParams;
+        const all = payload().activity;
+        const sha = (q.get('sha') || '').toLowerCase();
+        if (sha) {
+          if (!/^[0-9a-f]{7,40}$/.test(sha)) {
+            return send(res, 400, 'application/json; charset=utf-8', JSON.stringify({ error: 'bad sha' }));
+          }
+          const hit = all.filter((a) => a.sha && (a.sha.indexOf(sha) === 0 || sha.indexOf(a.sha) === 0));
+          return sendJson(req, res, { total: all.length, items: hit.slice(0, 1) });
+        }
+        const from = Math.max(0, parseInt(q.get('from') || '0', 10) || 0);
+        const n = Math.min(500, Math.max(1, parseInt(q.get('n') || '30', 10) || 30));
+        return sendJson(req, res, { total: all.length, from, items: all.slice(from, from + n) });
       }
       // Full task text, on demand. The detail popup wants the whole file, and
       // 485 whole files in every poll payload would be megabytes on the wire
@@ -1878,7 +1963,9 @@ function main() {
   const argv = process.argv.slice(2);
   if (argv.includes('--selftest')) return selfTest();
   if (argv.includes('--once')) {
-    const p = buildPayload();
+    // The wire shape, so `--once` stays "the same object /api/data serves"
+    // (dashboard-dom.ps1 feeds it to the page through a stub server).
+    const p = wirePayload(buildPayload());
     p.boot = bootStateSync();
     process.stdout.write(JSON.stringify(p, null, 2) + '\n');
     return;

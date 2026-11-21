@@ -459,6 +459,54 @@
           });
       })
       .then(function () {
+        /* --- the timeline pages past the poll's window (T1664) ------------ */
+        go('activity');
+        var evCount = function () { return document.querySelectorAll('#view .ev').length; };
+        var win = state.data.activity.length, total = state.data.activityTotal;
+        var heading = byText('#view .card', 'events since');
+        check('C56 the timeline heading counts every event, not just the polled window',
+          !!heading && heading.textContent.indexOf(total + ' events since') >= 0, heading ? heading.textContent.slice(0, 80) : 'no Timeline card');
+        var clicks = 0;
+        var more = function () {
+          var b = byText('#view .more button', 'more');
+          if (!b || evCount() > win || clicks > 10) return Promise.resolve();
+          clicks++;
+          b.click();
+          return waitFor(function () { return !state.actLoading; }, 'page').then(function () { return sleep(50); }).then(more);
+        };
+        return more().then(function () {
+          var older = byText('#view .ev-title', 'Fixture older event 0');
+          check('C57 Show more past the polled window fetches older events and renders them',
+            evCount() > win && !!older, 'cards=' + evCount() + ' window=' + win + ' clicks=' + clicks);
+          return fetch('/api/_activity_reads', { cache: 'no-store' }).then(function (r) { return r.json(); });
+        }).then(function (reads) {
+          check('C58 the older page was asked for from the end of the window',
+            reads.length === 1 && reads[0].from === win, JSON.stringify(reads));
+        });
+      })
+      .then(function () {
+        /* --- search reaches a summary the poll does not carry (T1664) ----- */
+        go('tasks');
+        var input = document.querySelector('#view input[type=search]');
+        if (!input) { check('C59 the tasks view has a search box', false, 'no input'); return; }
+        input.value = 'ZebraQuokka';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        var hit = function () {
+          var rows = document.querySelectorAll('#view .t-row');
+          for (var i = 0; i < rows.length; i++) {
+            var td = rows[i].querySelectorAll('td')[1];
+            if (td && td.textContent.trim() === 'TX901') return rows.length;
+          }
+          return 0;
+        };
+        return waitFor(hit, 'search hit', 50).then(function (n) {
+          check('C59 a summary-only phrase finds its task through the server search', n === 1,
+            'rows matching=' + document.querySelectorAll('#view .t-row').length);
+          input.value = '';
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+      })
+      .then(function () {
         check('C30 nothing threw during the whole run', errors.length === 0, errors.join(' | '));
       })
       .catch(function (e) {

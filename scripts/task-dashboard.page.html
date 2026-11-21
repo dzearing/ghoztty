@@ -588,6 +588,9 @@ var state = {
   prsAt: 0, prsLoading: false,
   prOpen: {},        // which PR <details> are expanded, kept across re-renders
   shown: PAGE_SIZE, // timeline paging
+  olderAct: [],      // timeline events fetched past the poll's window (T1664)
+  search: { q: null, ids: {}, pending: null }, // server-side summary matches (T1664)
+  actLoading: false,
   decIdx: 0        // which open decision "Needs your call" is showing
 };
 
@@ -1501,8 +1504,11 @@ function activityView(d) {
     out.push(wc);
   }
 
-  // Timeline
-  var items = d.activity.slice(0, state.shown);
+  // Timeline. The poll carries the newest events only (T1664); "Show more"
+  // past them fetches older pages from /api/activity into state.olderAct.
+  var allAct = timelineEvents(d);
+  var actTotal = activityTotal(d);
+  var items = allAct.slice(0, state.shown);
   var body = [];
   var lastDay = null;
   items.forEach(function (a) {
@@ -1538,7 +1544,7 @@ function activityView(d) {
     // stopPropagation and open their task directly, as before.
     body.push(h('div', {
       class: cls, role: 'button', tabindex: '0',
-      'data-anim-key': 'ev:' + (a.sha || (a.kind + ':' + (a.decision || '') + ':' + a.ts)),
+      'data-anim-key': 'ev:' + evKey(a),
       onclick: function () { openEvent(a); },
       onkeydown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEvent(a); } }
     }, [
@@ -1551,15 +1557,46 @@ function activityView(d) {
       ])
     ]));
   });
-  if (state.shown < d.activity.length) {
+  if (state.shown < actTotal) {
     body.push(h('div', { class: 'more' }, [
-      h('button', { class: 'btn', type: 'button', text: 'Show ' + Math.min(PAGE_SIZE, d.activity.length - state.shown) + ' more',
-        onclick: function () { state.shown += PAGE_SIZE; renderView(); } })
+      h('button', { class: 'btn', type: 'button', disabled: state.actLoading,
+        text: state.actLoading ? 'Loading…' : 'Show ' + Math.min(PAGE_SIZE, actTotal - state.shown) + ' more',
+        onclick: function () { showMoreActivity(); } })
     ]));
   }
-  out.push(card('Timeline', d.activity.length + ' events since ' + fDate(d.historyStart) +
+  out.push(card('Timeline', actTotal + ' events since ' + fDate(d.historyStart) +
     ' — each one is a commit that finished or filed work.', body.length ? body : [h('div', { class: 'empty', text: 'No activity yet.' })]));
   return out;
+}
+
+/* Timeline events: the poll's window plus any older pages already fetched,
+   newest first, each event once (a poll that lands new events shifts the
+   positions, so an older page can overlap what the window already holds). */
+function evKey(a) { return a.sha || (a.kind + ':' + (a.decision || '') + ':' + a.ts); }
+function activityTotal(d) { return d.activityTotal != null ? d.activityTotal : d.activity.length; }
+function timelineEvents(d) {
+  if (!state.olderAct.length) return d.activity;
+  var seen = {}, out = [];
+  d.activity.concat(state.olderAct).forEach(function (a) {
+    var k = evKey(a);
+    if (seen[k]) return;
+    seen[k] = true;
+    out.push(a);
+  });
+  return out;
+}
+function showMoreActivity() {
+  var d = state.data;
+  state.shown += PAGE_SIZE;
+  var have = timelineEvents(d).length;
+  if (state.shown <= have || have >= activityTotal(d) || state.actLoading) { renderView(); return; }
+  state.actLoading = true;
+  renderView();
+  fetch('/api/activity?from=' + have + '&n=' + Math.max(PAGE_SIZE, state.shown - have))
+    .then(function (r) { return r.json(); })
+    .then(function (j) { state.olderAct = state.olderAct.concat(j.items || []); })
+    .catch(function () { state.shown -= PAGE_SIZE; })
+    .then(function () { state.actLoading = false; renderView(); });
 }
 
 /* --- event detail dialog (T505) -------------------------------------------
@@ -2200,6 +2237,37 @@ function metaBit(label, value) {
   return h('span', { class: 'td-bit' }, [h('b', { text: label }), h('span', { text: String(value) })]);
 }
 
+/* The search box matches id, title and summary. The poll no longer carries
+   summaries (T1664: 1.6 MB the table never draws - `.t-sum` is hidden), so the
+   summary half is answered by /api/search over the full text and merged in
+   when it lands. id and title still match instantly, as before. */
+function taskMatches(t, q) {
+  if ((t.id + ' ' + t.title + ' ' + (t.summary || '')).toLowerCase().indexOf(q) >= 0) return true;
+  return state.search.q === q && !!state.search.ids[t.id];
+}
+function searchSummaries(q) {
+  var sr = state.search;
+  if (sr.q === q || sr.pending === q) return;
+  sr.pending = q;
+  setTimeout(function () {
+    if (state.filters.q.trim().toLowerCase() !== q) { if (sr.pending === q) sr.pending = null; return; }
+    fetch('/api/search?q=' + encodeURIComponent(q))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var ids = {};
+        (j.ids || []).forEach(function (id) { ids[id] = true; });
+        sr.q = q; sr.ids = ids;
+      })
+      // A failed search settles as "no summary matches" rather than retrying
+      // on every render; id and title matches are unaffected.
+      .catch(function () { sr.q = q; sr.ids = {}; })
+      .then(function () {
+        if (sr.pending === q) sr.pending = null;
+        if (state.view === 'tasks' && state.filters.q.trim().toLowerCase() === q) renderTasks();
+      });
+  }, 150);
+}
+
 function renderTasks() {
   var d = state.data;
   if (!d) return;
@@ -2210,9 +2278,10 @@ function renderTasks() {
     if (f.priority && (t.priority || 'untriaged') !== f.priority) return false;
     if (f.seat && t.seat !== f.seat) return false;
     if (f.origin && !!t.userReport !== (f.origin === 'user')) return false;
-    if (q && (t.id + ' ' + t.title + ' ' + t.summary).toLowerCase().indexOf(q) < 0) return false;
+    if (q && !taskMatches(t, q)) return false;
     return true;
   });
+  if (q) searchSummaries(q);
 
   var dir = state.sort.dir;
   // A date key sorts on its own value; rows with no date park at the end in
@@ -2542,7 +2611,7 @@ function signature(d) {
     }),
     d.decisions.map(function (x) { return x.id + x.status + x.answer; }),
     d.digests, d.digest && d.digest.body,
-    d.activity.length, d.series.length, d.daily.map(function (x) { return x.count; }),
+    activityTotal(d), d.activity.length && evKey(d.activity[0]), d.series.length, d.daily.map(function (x) { return x.count; }),
     // The loop card's reboot rows (T931): the first probe lands a poll or two
     // after the page does, and a new outage must show without a task moving.
     d.boot && [d.boot.link1, d.boot.boots, d.boot.outages, (d.boot.broken || []).length],
@@ -2611,7 +2680,12 @@ if (evLink) {
     })[0];
     evFired = true;
     clearInterval(evWhenReady);
-    if (a) openEvent(a);
+    if (a) { openEvent(a); return; }
+    // Older than the poll's window (T1664): ask the server for that one event.
+    fetch('/api/activity?sha=' + encodeURIComponent(evWanted))
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (j.items && j.items[0]) openEvent(j.items[0]); })
+      .catch(function () {});
   }, 120);
 }
 
