@@ -26,7 +26,8 @@ Sections:
      the GUI thread that crashed, and points at the dump
   D. the minidump exists and is a minidump
   E. the exit ledger still got its `crash` line - the two filters chain
-     rather than the newer one hiding the older
+     rather than the newer one hiding the older - naming the same faulting
+     address as the report, with no `exit` record beside it (T1691)
   F. `ghoztty +crash-report` lists both files
 
 Isolation: XDG_STATE_HOME points the crash directory at a throwaway folder,
@@ -197,6 +198,18 @@ try {
     $ledgerLine = @(Get-Content $ledgerPath -ErrorAction SilentlyContinue |
         Where-Object { $_ -match "pid=$appPid event=crash code=0x80000003" })
     Assert ($ledgerLine.Count -eq 1) "E: the exit ledger recorded the crash too - the filters chain ($($ledgerLine.Count) line(s))"
+    # T1691: the line is the crash, not merely a line. Its address is the same
+    # ExceptionRecord field the crash report wrote, read by a different filter,
+    # so the two agreeing proves the ledger names WHERE it died and not a
+    # placeholder. And the run's ledger story is start -> crash, with no `exit`
+    # beside it: a crash recorded as a clean quit would be the lie this
+    # ledger exists to prevent.
+    $ledgerAddr = if ($ledgerLine.Count -eq 1 -and $ledgerLine[0] -match '\baddr=(0x[0-9A-F]+)\b') { $Matches[1] } else { '' }
+    Assert ($ledgerAddr -ne '' -and $ledgerAddr -eq $fields['address']) `
+        "E: the ledger's crash address is the one the crash report names (ledger $ledgerAddr, report $($fields['address']))"
+    $runLines = @(Get-Content $ledgerPath -ErrorAction SilentlyContinue | Where-Object { $_ -match "\bpid=$appPid event=" })
+    $runEvents = @($runLines | ForEach-Object { if ($_ -match '\bevent=([a-z-]+)') { $Matches[1] } })
+    Assert (($runEvents -join ',') -eq 'start,crash') "E: the crashed run's ledger entries are exactly start then crash ($($runEvents -join ','))"
 
     # -------------------------------------------------------------------
     # F. +crash-report lists both.
@@ -223,6 +236,13 @@ try {
     Assert ($g.Line -match 'body="It crashed a moment ago and was reopened\. Click to see the crash report\."') `
         'G: the sentence names the crash, how long ago, and what a click does'
     Assert (-not (Test-TestDesktopLeak -ProcessId $g.Pid)) 'G: the relaunched app stayed on the test desktop'
+    # T1691: the crash line CLOSES the run. The relaunch read the ledger; had
+    # it treated the crashed run as still open, it would also have accused it
+    # of vanishing without a reason - one death told twice, the second time
+    # wrongly.
+    $accused = @(Get-Content $ledgerPath -ErrorAction SilentlyContinue |
+        Where-Object { $_ -match "event=unrecorded-exit prev_pid=$appPid\b" })
+    Assert ($accused.Count -eq 0) "G: the relaunch does not also report the crashed run as an unrecorded exit ($($accused.Count) line(s))"
     Stop-RepoInstances
 
     # -------------------------------------------------------------------
@@ -256,4 +276,4 @@ if ($script:fail -eq 0 -and (Test-TestBodyComplete)) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'crash-report' -MinPass 27
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'crash-report' -MinPass 30

@@ -1,10 +1,9 @@
 {
     "guard":  "crash-report",
     "script":  "test/win32/crash-report.ps1",
-    "generated":  "2026-11-10T05:54:35-08:00",
-    "commit":  "faac640de",
+    "generated":  "2026-11-21T11:49:33-08:00",
+    "commit":  "39248d413",
     "uncommitted":  [
-                        "src/apprt/win32/exit_reason.zig",
                         "test/win32/crash-report.ps1"
                     ],
     "files":  {
@@ -12,6 +11,9 @@
                   "src/crash/main.zig":  "dce33698396ce06900fc2a76298c3ba93fef65f2b36d6fe73ae5d2d99f9414f4",
                   "src/crash/windows.zig":  "341334134a5b24a80add0f4af1a26ce4d34426ce9304abab017d8e288cbe95e3",
                   "src/crash/windows_report.zig":  "9d52a6f6d4f5646aa241fde86487549c07180b29c1d98b36b1184ae24e014ebd",
-                  "test/win32/crash-report.ps1":  "53703d4a6b3570c999587542a1c88a977f626ebb603e356de7cb56d6d52e999d"
-              }
+                  "test/win32/crash-report.ps1":  "5154c6582e5c0f5006fca2d82311624ee46ca38dceaa8db07f4954a04634f5f6"
+              },
+    "code":  {
+                 "test/win32/crash-report.ps1":  "code1:561733f0802806a90a27ab6352bc32987710acb4ef6178ef55a9975c5fdfb8f7"
+             }
 }
