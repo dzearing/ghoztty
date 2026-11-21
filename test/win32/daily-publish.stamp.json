@@ -1,20 +1,26 @@
 {
     "guard":  "daily-publish",
     "script":  "test/win32/daily-publish.ps1",
-    "generated":  "2026-11-10T20:01:41-08:00",
-    "commit":  "667971aec",
+    "generated":  "2026-11-21T11:26:07-08:00",
+    "commit":  "2a34f4021",
     "uncommitted":  [
                         "scripts/daily-publish.ps1",
-                        "scripts/lib/ManualChecks.ps1",
-                        "scripts/manual-check.ps1",
                         "test/win32/daily-publish.ps1"
                     ],
     "files":  {
-                  "scripts/daily-publish.ps1":  "454275dba14771956e2316cf1280ae85b972a187641df70f76bfe522ef2a9793",
+                  "scripts/daily-publish.ps1":  "cd2b62fefc1e6788539046edde27e67ee332400c458b61cdd54b7c8b77436d8b",
                   "scripts/lib/ManualChecks.ps1":  "c13b824504fd874e258e5042e3eb33ed0ebdcdfb56e2671aa911160d2aeabfd4",
                   "scripts/manual-check.ps1":  "9ad7bee0f554618e7ebf1d6c349205ed326315166e4ebfdf280a9e30ed15ca37",
                   "scripts/publish-windows-tag.ps1":  "28b1b5a25a0216a2305278b0bb48d7255813eae8f608b6f333536fee1b0d3b05",
                   "scripts/release-notes-author.ps1":  "9e5293ccde4efefa2e2371b297321db8b644f9061689d194beedd800f4d9caf3",
-                  "test/win32/daily-publish.ps1":  "4f3c1da3c57ee97406d56c612e897a71db089664c936b017f7f5ff36c8dba324"
-              }
+                  "test/win32/daily-publish.ps1":  "1ceef78ee9f379d007b9640afaffcf9f8a3add9df14883ca6271eb120626dced"
+              },
+    "code":  {
+                 "scripts/daily-publish.ps1":  "code1:6360d0a13b8e695ae92eb18a8eb9f13b04d7bf56cd9757f09f2eb490076ac093",
+                 "scripts/lib/ManualChecks.ps1":  "code1:9fd8df1a9083b2e08bc89e10d624cf393b198223107fa87b39307e4daa3300f3",
+                 "scripts/manual-check.ps1":  "code1:5a40bd101316e04a67994d103a4142b7c3992a737c126c79f96471dbbe6de838",
+                 "scripts/publish-windows-tag.ps1":  "code1:b824548a3fabed0c94dc63c10e35b15f372f9830adbe977c12f4f3e1543bc22f",
+                 "scripts/release-notes-author.ps1":  "code1:1af8bb9a9bb5b75bb284052c454970f46bde8df1834d7cf9edfbf401b869a919",
+                 "test/win32/daily-publish.ps1":  "code1:1a0f74e42000ef87f0d6c993b64e54b8ba2b33b2ceb456f1140800fe76554a55"
+             }
 }

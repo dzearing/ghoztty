@@ -1085,7 +1085,11 @@ Concretely, in order, with no stops in between:
      request; what it catches is a status hand-edited in the file, a request
      write that failed, and a task retro-flagged after it was already closed —
      all three of which the user experiences identically, as a fix they were
-     told about and cannot install. Flag it when you file it; the hand-run
+     told about and cannot install. The close records its request at the
+     fix's own sha (`-AtCommit`), and a request whose commit the last
+     PUBLISHED release already contains is cleared as satisfied rather than
+     honoured (T1689) - otherwise a close made just after the release that
+     carried the fix cut a second release over tracker commits alone. Flag it when you file it; the hand-run
      `-Request` above stays the way to ask for anything else. Acceptance:
      section F of `test\win32\gate-negatives.ps1`.
 

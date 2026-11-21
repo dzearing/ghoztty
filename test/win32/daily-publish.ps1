@@ -350,6 +350,25 @@ $j5 = Test-DailyPublishDue -Now ([datetime]'2026-09-03T09:00:00') -LastDate '202
     -Requested -RequestReason 'morning ask' -HeadCommit 'bbb2222' -LastCommit 'aaa1111'
 Assert 'J5 the request does not wait for the evening hour either' $j5.Due
 
+# ---- J6..J8. a request the last release already carries (T1689) ----------
+#
+# The 2026-09-20 shape: the release went out at 6aaba1724, the user-report close
+# filed its request at that same commit twelve seconds later, and HEAD then
+# moved by two tracker commits. HEAD != the watermark, so the J3 guard missed it.
+$j6 = Test-DailyPublishDue -Now ([datetime]'2026-09-23T10:00:00') -LastDate '2026-09-20' -LastAt '2026-09-20T12:34:22' `
+    -HourLocal 17 -Requested -RequestReason 'T1684: a user report' -HeadCommit 'ccc3333' -LastCommit '6aaba17' `
+    -LastTag 'win-v1.36.33' -RequestSatisfied -RequestCommit '6aaba17'
+Assert 'J6 a request the last release already carries is not due' (-not $j6.Due)
+Assert 'J6 and is cleared rather than left to re-fire' $j6.ClearRequest
+AssertMatch 'J6 naming the release that carried it' 'win-v1\.36\.33 already carries it' $j6.Why
+$j7 = Test-DailyPublishDue -Now ([datetime]'2026-09-23T10:00:00') -LastDate '2026-09-20' -LastAt '2026-09-20T12:34:22' `
+    -HourLocal 17 -Requested -RequestReason 'T1690: a newer fix' -HeadCommit 'ccc3333' -LastCommit '6aaba17' `
+    -LastTag 'win-v1.36.33' -RequestCommit 'ccc3333'
+Assert 'J7 positive control: a request newer than the release still publishes' $j7.Due
+$j8 = Test-DailyPublishDue -Now ([datetime]'2026-09-23T10:00:00') -LastDate '2026-09-20' -HourLocal 17 `
+    -RequestSatisfied -HeadCommit 'ccc3333' -LastCommit '6aaba17'
+Assert 'J8 satisfied without a request at all changes nothing (still the catch-up rule)' ($j8.Why -notmatch 'already carries')
+
 # ---- K. the request reader ----------------------------------------------
 "== K. request reader =="
 $k1 = Read-PublishRequest -Text '{"at":"2026-09-03T11:05:00-07:00","reason":"T1291 installer","commit":"65da707"}'
@@ -724,6 +743,42 @@ try {
     $r2 = Invoke-Decider -Extra @() -DockerCode 0 -GhCode 0 -At '2026-09-25T10:00:00'
     AssertMatch 'R2 up to date, the same request reads nothing landed' 'nothing has landed' $r2.Text
     Remove-Item -LiteralPath $requestFile -Force -ErrorAction SilentlyContinue
+
+    "== V. a request the last release already carries (T1689) =="
+    # 2026-09-20: the release went out at the fix, the user-report close filed its
+    # request at that same fix seconds later, and HEAD moved on by tracker commits
+    # alone. The sandbox HEAD does not move, so the release is placed at HEAD~2.
+    Remove-Item -LiteralPath $ranMarker, $requestFile -Force -ErrorAction SilentlyContinue
+    Set-PublishedAt 'HEAD~2'
+    $fixAt = (git -C $Repo rev-parse --short HEAD~2).Trim()
+    $t0 = Invoke-Decider -Extra @('-Request', '-Reason', 'T1684: a user report', '-AtCommit', 'HEAD~2') -DockerCode 0 -GhCode 0 -At '2026-09-25T10:00:00'
+    AssertEq 'V0 a request at an explicit commit is recorded' 0 $t0.Exit
+    $t0Req = Read-PublishRequest -Text ([IO.File]::ReadAllText($requestFile))
+    AssertEq 'V0 at that commit, not at HEAD' $fixAt $t0Req.Commit
+    $t1 = Invoke-Decider -Extra @('-StrandedThreshold', '0') -DockerCode 0 -GhCode 0 -At '2026-09-25T10:00:00'
+    AssertEq 'V1 the next boundary publishes nothing' 0 $t1.Exit
+    AssertMatch 'V1 saying the release already carries it' 'win-v1\.36\.37 already carries it' $t1.Text
+    Assert 'V1 and the publish script was NOT called' (-not (Test-Path -LiteralPath $ranMarker))
+    Assert 'V1 and the request is cleared, so it cannot re-fire' (-not (Test-Path -LiteralPath $requestFile))
+
+    # Positive control: the same release, a request at a commit it does NOT carry.
+    $t2w = Invoke-Decider -Extra @('-Request', '-Reason', 'T1690: a newer fix') -DockerCode 0 -GhCode 0 -At '2026-09-25T10:05:00'
+    AssertEq 'V2 a request at HEAD is recorded' 0 $t2w.Exit
+    $t2 = Invoke-Decider -Extra @('-StrandedThreshold', '0') -DockerCode 0 -GhCode 0 -At '2026-09-25T10:06:00'
+    AssertEq 'V2 a request newer than the release still publishes' 10 $t2.Exit
+    Assert 'V2 and the publisher ran' (Test-Path -LiteralPath $ranMarker)
+    Remove-Item -LiteralPath $ranMarker, $requestFile -Force -ErrorAction SilentlyContinue
+
+    # An -AtCommit that does not resolve falls back to HEAD - the direction that
+    # still publishes for whoever is waiting.
+    Set-PublishedAt 'HEAD~2'
+    $t3 = Invoke-Decider -Extra @('-Request', '-Reason', 'bad sha', '-AtCommit', 'not-a-commit-xyz') -DockerCode 0 -GhCode 0 -At '2026-09-25T10:10:00'
+    AssertEq 'V3 an unresolvable -AtCommit still records the request' 0 $t3.Exit
+    AssertEq 'V3 at HEAD' ((git -C $Repo rev-parse --short HEAD).Trim()) (Read-PublishRequest -Text ([IO.File]::ReadAllText($requestFile))).Commit
+    Remove-Item -LiteralPath $requestFile -Force -ErrorAction SilentlyContinue
+
+    # And the close is what passes the fix's sha (parity-tasks.ps1 set-status).
+    AssertMatch 'V4 a user-report close records its request at the fix commit' "'-AtCommit', \`$fixSha" ([IO.File]::ReadAllText((Join-Path $Repo 'scripts\parity-tasks.ps1')))
 
     "== S. release notes for the version being published (T1444) =="
     # What's New reads release-notes\{client,agent}\<version>.json, embedded at

@@ -1932,6 +1932,12 @@ switch ($Command) {
             else {
                 $reqArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $pubScript, '-Request', '-Reason', $reason)
                 if ($reqPath) { $reqArgs += @('-RequestPath', $reqPath) }
+                # T1689: record the request at the FIX, not at HEAD. A close
+                # runs after the fix is committed - often after the release that
+                # carries it - and HEAD by then is a tracker commit, which made
+                # the next boundary cut a release with nothing in it.
+                $fixSha = if ($Commit) { (("$Commit" -split '[,\s]+') | Where-Object { $_ } | Select-Object -First 1) } else { '' }
+                if ($fixSha) { $reqArgs += @('-AtCommit', $fixSha) }
                 $reqOut = & powershell.exe @reqArgs 2>&1 | Out-String
                 if ($LASTEXITCODE -eq 0) {
                     Add-ProgressNote -Path $path -SessionId $Session -NoteText ("publish request filed: {0}" -f $reason)

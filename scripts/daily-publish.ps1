@@ -220,6 +220,11 @@ param(
     # Why the request was made - a task id and a sentence. It is what the log,
     # the health line and the morning digest quote.
     [string]$Reason = '',
+    # T1689. The commit that carries the work being waited on. Empty = HEAD.
+    # A user-report close passes the fix's own sha, so a release that already
+    # contains it reads the request as satisfied instead of cutting another
+    # release over the tracker commits that landed after it.
+    [string]$AtCommit = '',
     # Where a pending request lives. Defaults beside the watermark.
     [string]$RequestPath = '',
     # Report what shipped and what has landed since, and change nothing. This is
@@ -273,6 +278,11 @@ function Test-DailyPublishDue {
         [int]$Attempts = 0,
         [int]$MaxAttemptsPerDay = 3,
         [switch]$Requested,
+        # T1689: the last PUBLISHED release already contains the commit the
+        # request was filed at. The caller decides it (git ancestry); this
+        # function only acts on it.
+        [switch]$RequestSatisfied,
+        [string]$RequestCommit = '',
         [switch]$Force
     )
     $today = $Now.ToString('yyyy-MM-dd')
@@ -290,6 +300,15 @@ function Test-DailyPublishDue {
         $why = if ($RequestReason) { $RequestReason } else { '(no reason recorded)' }
         if ($HeadCommit -and $LastCommit -and $HeadCommit -eq $LastCommit) {
             return Verdict $false "a publish was requested ($why) but nothing has landed since $LastCommit - clearing the request rather than minting an empty release" $true
+        }
+        # T1689: on 2026-09-20 a user-report close filed its request twelve
+        # seconds AFTER the release that carried the fix had gone out, and the
+        # next boundary would have tagged a release over two tracker commits.
+        # Head has moved, but not past anything anybody was waiting on.
+        if ($RequestSatisfied) {
+            $rel = if ($LastTag) { $LastTag } else { "the release at $LastCommit" }
+            $at = if ($RequestCommit) { " at $RequestCommit" } else { '' }
+            return Verdict $false "a publish was requested ($why)$at but $rel already carries it - clearing the request as satisfied rather than minting a release with nothing waiting in it" $true
         }
         return Verdict $true "requested: $why"
     }
@@ -605,13 +624,23 @@ if ($Request) {
         Log 'REQUEST REFUSED: -Request needs -Reason "<who is waiting, and for what>" - an unexplained release is noise'
         exit 1
     }
+    $reqCommit = $headHash
+    if ($AtCommit) {
+        # Only a commit this checkout can resolve is recorded; anything else
+        # falls back to HEAD, which can only make the request MORE likely to
+        # publish - the safe direction for somebody who is waiting.
+        $resolved = ''
+        try { $resolved = "$(& git rev-parse --short --verify --quiet "$($AtCommit.Trim())^{commit}" 2>$null)".Trim() } catch { $resolved = '' }
+        if ($resolved) { $reqCommit = $resolved }
+        else { Log "NOTE: -AtCommit '$AtCommit' does not resolve here; recording the request at HEAD ($headHash)" }
+    }
     try {
         $dir = Split-Path -Parent $RequestPath
         if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
         $json = [ordered]@{
             at     = $nowDt.ToString('yyyy-MM-ddTHH:mm:ssK')
             reason = $reasonText
-            commit = $headHash
+            commit = $reqCommit
         } | ConvertTo-Json -Compress
         [IO.File]::WriteAllText($RequestPath, "$json`n", (New-Object Text.UTF8Encoding($false)))
     } catch {
@@ -764,9 +793,23 @@ if ($behind -gt 0) {
     exit 0
 }
 
+# T1689: a request whose commit the last PUBLISHED release already contains has
+# been honoured, whatever has landed since. Only `published` counts: a tag still
+# building (`tagged`) can yet fail, and a failed one shipped nothing, so either
+# keeps the request. A request with no commit (typed by hand) is never satisfied
+# this way - it publishes, which is the safe direction.
+$reqSatisfied = $false
+if ($req.Requested -and $req.Commit -and $mark.Commit -and $mark.Result -eq 'published') {
+    try {
+        & git merge-base --is-ancestor $req.Commit $mark.Commit 2>$null | Out-Null
+        $reqSatisfied = ($LASTEXITCODE -eq 0)
+    } catch { $reqSatisfied = $false }
+}
+
 $d = Test-DailyPublishDue -Now $nowDt -LastDate $mark.Date -LastAt $mark.At `
     -HourLocal $HourLocal -StaleHours $StaleHours `
     -Requested:$req.Requested -RequestReason $req.Reason -HeadCommit $headHash -LastCommit $mark.Commit `
+    -RequestSatisfied:$reqSatisfied -RequestCommit $req.Commit `
     -LastResult $mark.Result -LastTag $mark.Tag -Attempts $mark.Attempts -MaxAttemptsPerDay $MaxAttemptsPerDay `
     -Force:$Force
 if (-not $d.Due) {

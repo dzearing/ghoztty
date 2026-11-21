@@ -1,23 +1,23 @@
 {
     "guard":  "gate-negatives",
     "script":  "test/win32/gate-negatives.ps1",
-    "generated":  "2026-11-21T10:13:25-08:00",
-    "commit":  "17f9bf987",
+    "generated":  "2026-11-21T11:35:25-08:00",
+    "commit":  "2a34f4021",
     "uncommitted":  [
-
+                        "scripts/parity-tasks.ps1"
                     ],
     "files":  {
                   "scripts/ci-status.ps1":  "e71f5180b132afed86eebc918efd289b1b2e9e35ffc1d46a28881cfe573eca5a",
                   "scripts/go-loop-exec.ps1":  "9333967bf009293e2d24bc0a9d6e77485705e91325f8c2cacce354ab1e27e308",
                   "scripts/lib/DigestState.ps1":  "3b0d48ec0c53dfeace8df7d1d9fd675b3541f1f9205a0af31987bdf60be00d0e",
-                  "scripts/parity-tasks.ps1":  "d0b41f120f1dfd123d3698a16af802c42ed698e52a3a5eb6f0cce9cbf13c1697",
+                  "scripts/parity-tasks.ps1":  "b16da30e04e976fe35ce1e37784b81c01d5e92463d372d455069a47a149cb60a",
                   "test/win32/gate-negatives.ps1":  "a48ab20f37991e34cb2058ff50b0cfe9db6e4e6477fde70f0b4a6bbd273a1222"
               },
     "code":  {
                  "scripts/ci-status.ps1":  "code1:d631ebeec06660b4b6c364a6e17c0a9eb90cf84c0774f932325b9f57d6bd4aa9",
                  "scripts/go-loop-exec.ps1":  "code1:d6d18544f3798ee9860e259ff0bc0868bb32c92f770603fabf289955c6698a6e",
                  "scripts/lib/DigestState.ps1":  "code1:d956d293f941b58701840da44538dff6fbdb86bf7bc24b1debc7c656a67362ad",
-                 "scripts/parity-tasks.ps1":  "code1:edc6d5b50ae2b86125a6e0cc2b7f797bb604ccffee630c46ba17eaa9b2ee7ecd",
+                 "scripts/parity-tasks.ps1":  "code1:fa2fea74cd6a6d174b76c026948cd39e534e5fadc414f37f388e0a938d719375",
                  "test/win32/gate-negatives.ps1":  "code1:6c01c5ef878f12e51ae819d09eb1cddaa0244ff7f0bc9d14ca281bac59e95944"
              }
 }
