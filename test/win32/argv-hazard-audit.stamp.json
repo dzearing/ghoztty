@@ -1,10 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-21T10:37:49-08:00",
-    "commit":  "33f75de88",
+    "generated":  "2026-11-21T12:19:15-08:00",
+    "commit":  "93a08b928",
     "uncommitted":  [
-                        "scripts/lib/HarnessFloor.ps1"
+                        "scripts/guard-due.ps1",
+                        "scripts/task-dashboard.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "4b958ede38c0911c4945146f0a52810ebbf8c01d44ac8a60532f2eb77f8fd0af",
@@ -51,7 +52,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "e491be3477c3236c4e10af70db2f40e9d632c45f83bf860f4b09fe6eeda5e2b7",
                   "scripts/go-loop-watchdog.ps1":  "9b1f4a5cf1ccb5fc863722ab90d81ddddbd352ca475804012853b55a72c631c7",
-                  "scripts/guard-due.ps1":  "fefaab416366aabe6fc616344f1b2677a3f065f541c80bb8fc72ac3bdf0555f3",
+                  "scripts/guard-due.ps1":  "40fd1ed697b0f63041849f0a9bb3cbb2adea9d29d91d9b77b921c2152f52833d",
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
                   "scripts/hero-glide-onscreen.ps1":  "46d211f7ec7843d13506f4e3bd13933630339adb8aff13b5c97d69ae3fd248a7",
                   "scripts/hidden-windows-cpu.ps1":  "61551ac8760570d16a46ab2ef235c9792a2e29fb9e9d116ebbc23a5ce9051876",
@@ -120,7 +121,7 @@
                   "scripts/suite-run.ps1":  "a6f288e8d36426129a296894974feea46986d3508e1d68f6b7266c55c976e449",
                   "scripts/t470-ring-measure.ps1":  "427dc0cada150aadb214a007e32238f1d75d3751ad40a02260b325157672f143",
                   "scripts/t857-boost-ab.ps1":  "a0f1bd35f21fb689f306a5a100e9cccf37b0087bbcc29e98fce0dfc1b6638071",
-                  "scripts/task-dashboard.ps1":  "616fa636356bdfa1dc07aafe573f5aaf3b9a421ee6bbdc4c4404367845564fd7",
+                  "scripts/task-dashboard.ps1":  "6aee526699c987901ed71e8d493e376ad26a1abf98956a41546644c94ccb10d6",
                   "scripts/test-binary-soak.ps1":  "c838c5077d2b82c98952a1903f0d73d12bf0830432dc65aaceba45124832d3f4",
                   "scripts/upgrade-ghoztty-windows.ps1":  "83fc5645440aeb390dc05c1cb432420dcd136a1833af441aa0cbb2ad2fe6c40c",
                   "scripts/upstream-remote.ps1":  "1eaafbe08c8b98e9520b96cbba2db8799879864d2a5163f0e64277636793cfbc",

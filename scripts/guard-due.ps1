@@ -5046,8 +5046,10 @@ $GuardTable = @(
     # The dashboard (T505): its detached server keeps serving whatever code it
     # was started with, so a page or server edit that broke the app stays "up"
     # and is only ever met by the user. Nothing in the P1-P3 floor touches it.
-    # scripts\task-dashboard.ps1 (the pane launcher) is deliberately NOT
-    # covered - it moves for pane/viewer reasons the HTTP harness cannot see.
+    # scripts\task-dashboard.ps1 (the launcher) is covered since T1701: its
+    # section I runs the launcher's -NoPane server start under captured output,
+    # where a spawn that leaks the caller's pipe hangs the caller. The pane
+    # half of the launcher stays unexercised here.
     [pscustomobject]@{
         Name   = 'task-dashboard'
         Script = 'test\win32\task-dashboard.ps1'
@@ -5055,6 +5057,7 @@ $GuardTable = @(
         Covers = @(
             'scripts\task-dashboard.js',
             'scripts\task-dashboard.page.html',
+            'scripts\task-dashboard.ps1',
             'test\win32\task-dashboard.ps1'
         )
     },

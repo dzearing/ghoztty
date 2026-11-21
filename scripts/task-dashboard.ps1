@@ -155,10 +155,24 @@ if (Test-Listening -P $Port) {
         if (Test-Path $f) { Move-Item -LiteralPath $f -Destination "$f.prev" -Force }
     }
 
-    Start-Process -FilePath 'node' `
-        -ArgumentList @($Script, '--port', $Port) `
-        -WorkingDirectory $RepoRoot -WindowStyle Hidden `
-        -RedirectStandardOutput $outLog -RedirectStandardError $errLog | Out-Null
+    # T1701: NOT `Start-Process node -RedirectStandardOutput ...`. Any -Redirect*
+    # switch makes Start-Process call CreateProcess with bInheritHandles=TRUE,
+    # and node then inherits every inheritable handle in THIS process - among
+    # them the pipe our caller reads our output from. node holds its write end
+    # for as long as it serves, so a scripted caller (`... *> file`, a tool
+    # capturing output) never sees EOF: the launcher printed "serving" and the
+    # caller hung until its timeout. Clearing the inherit flag on our three std
+    # handles is not enough - powershell.exe keeps a second inheritable copy of
+    # a redirected stdout (tried and measured, 2026-11-21).
+    #
+    # Without -Redirect*, Start-Process goes through ShellExecuteEx, which
+    # passes NO handles to the child. A hidden `cmd /s /c` then opens the two
+    # log files itself, so node's output still lands where it always did.
+    $nodeExe = (Get-Command node -CommandType Application | Select-Object -First 1).Source
+    $cmdLine = "/d /s /c `"`"$nodeExe`" `"$Script`" --port $Port 1>`"$outLog`" 2>`"$errLog`"`""
+    Start-Process -FilePath "$env:SystemRoot\System32\cmd.exe" `
+        -ArgumentList $cmdLine `
+        -WorkingDirectory $RepoRoot -WindowStyle Hidden | Out-Null
 
     # The first run walks ~440 commits of git history to build the trend, so
     # allow for a slow start instead of declaring failure at one second.

@@ -586,6 +586,94 @@ try {
     if ($srv -and -not $srv.HasExited) { Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue }
 }
 
+# --- section I: the launcher returns to a caller that captures it (T1701) ---
+# scripts\task-dashboard.ps1 -NoPane, run the way a script or tool runs it:
+# stdout/stderr captured through pipes. Before T1701 the detached node server
+# inherited the write end of the caller's pipe, so the launcher exited but its
+# output never reached EOF and the caller hung until its own timeout. The
+# launcher runs from a FIXTURE checkout (a temp folder holding copies of the
+# three dashboard files), so the temp\task-dashboard.log rotation it performs
+# never touches this tree's real log. I3 is the teeth: the pre-T1701
+# Start-Process line, put back into a second fixture, must still hang here.
+function Invoke-LauncherCaptured([string]$launcher, [int]$port, [int]$eofSec) {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = 'powershell.exe'
+    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$launcher`" -Port $port -NoPane"
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $null = $p.Handle   # cache it before exit (ps-startprocess-exitcode trap)
+    $o = $p.StandardOutput.ReadToEndAsync()
+    $e = $p.StandardError.ReadToEndAsync()
+    $exited = $p.WaitForExit(60000)
+    $eof = $o.Wait($eofSec * 1000) -and $e.Wait(1000)
+    if (-not $exited) { try { $p.Kill() } catch {} }
+    return [pscustomobject]@{
+        Exited = $exited
+        Eof    = $eof
+        Out    = $(if ($o.IsCompleted) { $o.Result.Trim() } else { '' })
+    }
+}
+function Stop-FixtureServer([string]$root) {
+    Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+        Where-Object { $_.CommandLine -and $_.CommandLine -like "*$root*" } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+function New-LauncherFixture([string]$root, [string]$launcherText) {
+    $s = Join-Path $root 'scripts'
+    New-Item -ItemType Directory -Force $s | Out-Null
+    Copy-Item $dash, $page -Destination $s
+    [IO.File]::WriteAllText((Join-Path $s 'task-dashboard.ps1'), $launcherText)
+    return (Join-Path $s 'task-dashboard.ps1')
+}
+$liveLauncher = Join-Path $Repo 'scripts\task-dashboard.ps1'
+$liveText = [IO.File]::ReadAllText($liveLauncher)
+$fixI = Join-Path $env:TEMP "t1701-launcher-$PID"
+$fixOld = Join-Path $env:TEMP "t1701-launcher-old-$PID"
+$portI = 0; $portOld = 0
+foreach ($p in 7861..7880) {
+    if (Test-PortFree $p) { if ($portI -eq 0) { $portI = $p } elseif ($portOld -eq 0) { $portOld = $p; break } }
+}
+if ($portI -eq 0 -or $portOld -eq 0) {
+    $script:skipped++
+    Write-Host '  SKIP I no two free ports in 7861-7880 for the launcher fixtures'
+} else {
+    try {
+        $fl = New-LauncherFixture $fixI $liveText
+        $r = Invoke-LauncherCaptured $fl $portI 15
+        Assert 'I1 the launcher exits and its captured output reaches EOF while the server keeps running' `
+            ($r.Exited -and $r.Eof -and $r.Out -match 'serving') "exited=$($r.Exited) eof=$($r.Eof) out=$($r.Out)"
+        $g = Get-Http "http://127.0.0.1:$portI/" 30
+        $logI = Join-Path $fixI 'temp\task-dashboard.log'
+        Assert 'I2 the server it left behind answers, and still writes its stdout log' `
+            ($g.Status -eq 200 -and (Test-Path $logI) -and ((Get-Content $logI -Raw) -match "localhost:$portI")) `
+            "status=$($g.Status) log=$(Test-Path $logI)"
+
+        # Teeth: the pre-T1701 spawn, verbatim, in place of the fixed one.
+        $oldSpawn = "    Start-Process -FilePath 'node' ``" + "`n" +
+            "        -ArgumentList @(`$Script, '--port', `$Port) ``" + "`n" +
+            "        -WorkingDirectory `$RepoRoot -WindowStyle Hidden ``" + "`n" +
+            "        -RedirectStandardOutput `$outLog -RedirectStandardError `$errLog | Out-Null" + "`n"
+        $oldText = [regex]::Replace($liveText,
+            '(?ms)^    \$nodeExe = .*?-WindowStyle Hidden \| Out-Null\r?\n', { param($m) $oldSpawn })
+        if ($oldText -eq $liveText) {
+            Assert 'I3 the pre-T1701 spawn could be re-created for the teeth leg' $false 'the fixed spawn block was not found in the launcher'
+        } else {
+            $flOld = New-LauncherFixture $fixOld $oldText
+            $rOld = Invoke-LauncherCaptured $flOld $portOld 8
+            Assert 'I3 teeth: the pre-T1701 spawn still leaves the caller without EOF (so I1 can see the bug)' `
+                ($rOld.Exited -and -not $rOld.Eof) "exited=$($rOld.Exited) eof=$($rOld.Eof)"
+        }
+    } finally {
+        Stop-FixtureServer $fixI
+        Stop-FixtureServer $fixOld
+        Start-Sleep -Milliseconds 500
+        Remove-Item $fixI, $fixOld -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # --- stamp (T783) -----------------------------------------------------------
 # A clean green run records the covered files so scripts\guard-due.ps1 can
 # answer "has anyone run this harness against the code as it now stands?".
