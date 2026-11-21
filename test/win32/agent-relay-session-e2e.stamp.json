@@ -1,10 +1,10 @@
 {
     "guard":  "agent-relay-session",
     "script":  "test/win32/agent-relay-session-e2e.ps1",
-    "generated":  "2026-11-20T05:13:41-08:00",
-    "commit":  "6937f93c8",
+    "generated":  "2026-11-21T04:32:44-08:00",
+    "commit":  "fb9ba41f0",
     "uncommitted":  [
-                        "test/win32/lib/FakeAgentRelay.ps1"
+                        "src/remote/connection.zig"
                     ],
     "files":  {
                   "src/cli/sessions.zig":  "84d8ab29a13e76c03235a78f7e18a50f292b7c2a244e5fc89eca471eba170ea1",
@@ -13,11 +13,15 @@
                   "src/remote/agent/revoke_watch.zig":  "f9fcde81a20c06c12cb8f8b7876386ee8aa1055743cd78ec840ec86c8d207b90",
                   "src/remote/agent/server.zig":  "dd0eb0c25df19ade4b1e4771822c3cd3c97c21ae0499d0266678ca94b940610f",
                   "src/remote/agent/session.zig":  "cc987315e33593e6efb528499f62b2a391b74336f1d4b6710a46402d0e9b3adc",
-                  "src/remote/connection.zig":  "8f6a13430431d6f7947a4bbe2bec6b747d40bf5c4b29b0b5de1fea1b22780c49",
+                  "src/remote/connection.zig":  "6821826b2162167c18feba2bcae91fcb8f69dae71a41debe87fa3b1ebf3fe21f",
                   "src/remote/protocol.zig":  "6072c547e6cfac7d4c64179218dbadd1eddbc2cda0913544f2fe864b5eac6344",
                   "src/remote/relay_revoke_pending.zig":  "9f411c608f6002f393cf1167038837795c75f22ca4a85a9dbace683cd345cdec",
                   "src/remote/ws_client.zig":  "e5ebe28e8a2e5442c596a12fcaa6468d9646d9aaeaa08c40e5f1dce1e71370c2",
                   "test/win32/agent-relay-session-e2e.ps1":  "3453c9cb296d20986b43bc379ec6094eacb27c64be84db06cb90703b8032a06e",
                   "test/win32/lib/FakeAgentRelay.ps1":  "374449ee10881784377ceffe97a4c83ee9ce69680197325a3bf2ee14407ac896"
-              }
+              },
+    "code":  {
+                 "test/win32/agent-relay-session-e2e.ps1":  "code1:1a1d041032671c5034d05de7ce9e639d9b8ec65ffc2376d6d3a30ae22bdd7b66",
+                 "test/win32/lib/FakeAgentRelay.ps1":  "code1:74d28bdb48b0d5bc199bf4ada20e71cee7aac65698aa25a2edbf653d8b83ba61"
+             }
 }

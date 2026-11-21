@@ -165,7 +165,10 @@ pub const SessionsHandler = *const fn (ctx: *anyopaque, json: []const u8) void;
 /// The pushed-stream handler slots that `unsubscribeX` must DRAIN before it
 /// returns (T814). One counter per kind so a drain waits for its own stream
 /// only — a metrics unsubscribe has no business blocking on a roster push.
-const PushKind = enum(usize) { metrics, session_cpu, sessions };
+/// `control` is the post-handshake `ctrl_handler` slot (T1638): not a pushed
+/// stream, but the same read-under-lock / call-unlocked shape, so it takes the
+/// same in-flight accounting and drains the same way.
+const PushKind = enum(usize) { metrics, session_cpu, sessions, control };
 const push_kind_count = @typeInfo(PushKind).@"enum".fields.len;
 
 /// One queued outbound frame, owned by the writer queue until the writer emits it.
@@ -1157,7 +1160,10 @@ pub const Connection = struct {
     negotiated: protocol.ProtocolError!protocol.Negotiated = error.Incompatible,
 
     // --- Control dispatch -----------------------------------------------------
-    /// Registered post-handshake control-frame handler (optional).
+    /// Registered post-handshake control-frame handler (optional). Both fields
+    /// are guarded by `write_mutex`: published by `setControlHandler`, read by
+    /// the control reader under the lock with `pushEnter(.control)`, and nulled
+    /// + drained by `clearControlHandler` (T1638).
     ctrl_handler: ?ControlHandler = null,
     ctrl_handler_ctx: *anyopaque = undefined,
 
@@ -1587,14 +1593,30 @@ pub const Connection = struct {
     /// Register the post-handshake control-frame handler. Single-slot; the last
     /// registration wins. `frame.payload` passed to the handler is valid only for
     /// the duration of the call (it borrows the control reader's buffer).
+    ///
+    /// Re-registering does NOT wait for a dispatch of the previous handler that
+    /// is already running. A caller that wants to free the ctx it registered
+    /// calls `clearControlHandler`, which does.
     pub fn setControlHandler(self: *Connection, ctx: *anyopaque, handler: ControlHandler) void {
-        self.ctrl_handler_ctx = ctx;
-        // Publish the handler under the write mutex so it's visible to the reader;
-        // the reader reads it without a lock on the hot path but the store here is
-        // ordered before threads observe it via the queue/handshake machinery.
+        // Handler and ctx are published together under the lock the reader
+        // reads them under, so the reader never pairs one with the other's
+        // predecessor.
         self.write_mutex.lock();
         defer self.write_mutex.unlock();
+        self.ctrl_handler_ctx = ctx;
         self.ctrl_handler = handler;
+    }
+
+    /// Clear the control-frame handler and DRAIN any dispatch already inside it
+    /// (T1638): no call reaches the old handler, or is still running in it,
+    /// after this returns, so its ctx may be freed. A handler that clears
+    /// itself (on the control-reader thread) returns without waiting, exactly
+    /// like the push unsubscribes. Safe when nothing is registered.
+    pub fn clearControlHandler(self: *Connection) void {
+        self.write_mutex.lock();
+        defer self.write_mutex.unlock();
+        self.ctrl_handler = null;
+        self.drainPush(.control);
     }
 
     // --- Pushed-stream dispatch accounting (T814) ----------------------------
@@ -3950,8 +3972,17 @@ pub const Connection = struct {
                 // handler is then ALWAYS invoked so callers can observe every frame
                 // (the simpler, consistent policy — internal handling is additive).
                 self.handleControlInternal(frame);
-                if (self.ctrl_handler) |handler| {
-                    handler(self.ctrl_handler_ctx, self, frame);
+                // Read the slot under the lock and count the dispatch in the
+                // same critical section (T1638), so `clearControlHandler` can
+                // never return while this call is still running.
+                self.write_mutex.lock();
+                const handler = self.ctrl_handler;
+                const ctx = self.ctrl_handler_ctx;
+                if (handler != null) self.pushEnter(.control);
+                self.write_mutex.unlock();
+                if (handler) |h| {
+                    defer self.pushLeave(.control);
+                    h(ctx, self, frame);
                 }
             }
             const n = self.control.read(&scratch) catch {
@@ -7457,6 +7488,7 @@ const FakeDispatch = struct {
             .session_cpu => self.conn.pushEnter(.session_cpu),
             .sessions => self.conn.pushEnter(.sessions),
             .metrics => self.conn.pushEnter(.metrics),
+            .control => self.conn.pushEnter(.control),
         }
         self.conn.write_mutex.unlock();
         self.entered.set();
@@ -7467,6 +7499,7 @@ const FakeDispatch = struct {
             .session_cpu => self.conn.pushLeave(.session_cpu),
             .sessions => self.conn.pushLeave(.sessions),
             .metrics => self.conn.pushLeave(.metrics),
+            .control => self.conn.pushLeave(.control),
         }
     }
 };
@@ -7478,7 +7511,7 @@ test "T814: every push kind drains, and each waits only on its own" {
     _ = h.configure();
     try h.start();
 
-    inline for (.{ PushKind.session_cpu, PushKind.sessions }) |kind| {
+    inline for (.{ PushKind.session_cpu, PushKind.sessions, PushKind.control }) |kind| {
         var fake: FakeDispatch = .{ .conn = h.conn, .kind = kind };
         const t = try std.Thread.spawn(.{}, FakeDispatch.run, .{&fake});
         // Join LAST (defers unwind in reverse) and release FIRST, so an
@@ -7497,10 +7530,84 @@ test "T814: every push kind drains, and each waits only on its own" {
         switch (kind) {
             .session_cpu => h.conn.unsubscribeSessionCpu(),
             .sessions => h.conn.unsubscribeSessions(),
+            .control => h.conn.clearControlHandler(),
             .metrics => unreachable,
         }
         try testing.expect(fake.finished.load(.acquire));
     }
+}
+
+/// A control handler that parks inside its FIRST call, so a clear issued while
+/// it is parked has a dispatch to wait for. Later calls return at once.
+const SlowCtrlRec = struct {
+    calls: std.atomic.Value(u32) = .{ .raw = 0 },
+    entered: std.Thread.ResetEvent = .{},
+    finished: std.atomic.Value(bool) = .{ .raw = false },
+    hold_ns: u64 = 200 * std.time.ns_per_ms,
+
+    fn handler(ctx: *anyopaque, conn: *Connection, frame: protocol.Frame) void {
+        _ = conn;
+        _ = frame;
+        const self: *SlowCtrlRec = @ptrCast(@alignCast(ctx));
+        if (self.calls.fetchAdd(1, .acq_rel) != 0) return;
+        self.entered.set();
+        std.Thread.sleep(self.hold_ns);
+        self.finished.store(true, .release);
+    }
+};
+
+test "T1638: clearControlHandler waits for a handler that is already running" {
+    // Before T1638 there was no clear at all, and the reader read the slot with
+    // no lock, so nothing could promise the registered ctx was safe to free.
+    const alloc = testing.allocator;
+    const h = try LifecycleHarness.create(alloc);
+    defer h.destroy();
+    const a = h.configure();
+    a.metrics_push_count = 1; // a control frame for the handler to see
+    try h.start();
+
+    var rec: SlowCtrlRec = .{};
+    h.conn.setControlHandler(&rec, SlowCtrlRec.handler);
+    var metrics: MetricsRec = .{};
+    try h.conn.subscribeMetrics(500, &metrics, MetricsRec.handler);
+    try rec.entered.timedWait(5 * std.time.ns_per_s);
+
+    h.conn.clearControlHandler();
+    try testing.expect(rec.finished.load(.acquire));
+    h.conn.unsubscribeMetrics(&metrics);
+    try testing.expect(a.err == null);
+}
+
+/// A control handler that clears ITSELF on the control-reader thread — the
+/// one case the drain must not wait for.
+const SelfClearCtrlRec = struct {
+    returned: std.Thread.ResetEvent = .{},
+
+    fn handler(ctx: *anyopaque, conn: *Connection, frame: protocol.Frame) void {
+        _ = frame;
+        const self: *SelfClearCtrlRec = @ptrCast(@alignCast(ctx));
+        conn.clearControlHandler();
+        self.returned.set();
+    }
+};
+
+test "T1638: a control handler may clear itself without deadlocking" {
+    const alloc = testing.allocator;
+    const h = try LifecycleHarness.create(alloc);
+    defer h.destroy();
+    const a = h.configure();
+    a.metrics_push_count = 1;
+    try h.start();
+
+    var rec: SelfClearCtrlRec = .{};
+    h.conn.setControlHandler(&rec, SelfClearCtrlRec.handler);
+    var metrics: MetricsRec = .{};
+    try h.conn.subscribeMetrics(500, &metrics, MetricsRec.handler);
+    try rec.returned.timedWait(5 * std.time.ns_per_s);
+
+    h.conn.clearControlHandler(); // nothing registered any more: a no-op
+    h.conn.unsubscribeMetrics(&metrics);
+    try testing.expect(a.err == null);
 }
 
 test "requestProcSnapshot: owned deep copy round-trips and frees clean" {
