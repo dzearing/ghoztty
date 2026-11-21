@@ -18,6 +18,10 @@
 #      (negative control + the config-file path works).
 #   4. Edit the config file back to Segoe UI + ctrl+shift+comma reload ->
 #      signature changes live without a relaunch (onConfigChange path).
+#   5. (T1591, debug builds) the reload's own logged update region covers the
+#      tab bar band. Step 4 alone cannot fail on a reload that never asks for
+#      the repaint, because the PrintWindow capture repaints the strip itself;
+#      this is the T252/T765 second oracle that can.
 #
 # T218: migrated onto the BACKGROUND test desktop (test/win32/lib/TestDesktop.ps1),
 # so it never takes the user's foreground - asserted here, not assumed. Three
@@ -74,14 +78,21 @@ function Kill-RepoInstances {
 # Launch the GUI onto the test desktop with the given extra args and measure
 # the geometry the signature is sampled from. The tab bar is up (always + 1
 # tab). Returns $null if the launch died or never showed a window.
-function Launch-Gui([string[]]$extraArgs) {
+function Launch-Gui([string[]]$extraArgs, [string]$errPath) {
     # --session-persistence=false: each launch would otherwise write a layout
     # manifest that the next one restores (T131).
     $args_ = @(
         '--config-default-files=false', '--background=#000000',
-        '--window-show-tab-bar=always', '--session-persistence=false'
+        '--window-show-tab-bar=always', '--session-persistence=false',
+        # T1591: a fixed title, so the strip's text is the same string in
+        # every capture. Unpinned, the shell retitles the tab some time after
+        # launch, and a capture on either side of that scored a 1012-column
+        # diff between two launches of the SAME font.
+        '--title=Ghoztty font probe'
     ) + $extraArgs
-    $app = Start-OnTestDesktop -Exe $exe -Arguments $args_
+    $sp = @{ Exe = $exe; Arguments = $args_ }
+    if ($errPath) { Remove-Item $errPath -ErrorAction SilentlyContinue; $sp.StdErr = $errPath }
+    $app = Start-OnTestDesktop @sp
     Start-Sleep -Seconds 3
     if ($app.Process -and $app.Process.HasExited) { return $null }
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
@@ -128,10 +139,15 @@ function Get-ColSig($shot, [int]$x0, [int]$x1, [int]$y0, [int]$y1, [int]$step) {
 # not built yet rather than a frame photographed mid-paint.
 function Get-Signature($g) {
     $scale = $g.BarH / 40.0
-    $tabW = [math]::Round(200 * $scale)
-    $plusW = [math]::Round(8 * $scale) + [math]::Round(28 * $scale)
-    $x0 = $g.ClientLeft + [math]::Round(8 * $scale)    # text pad
-    $x1 = $g.ClientLeft + $tabW + $plusW - 2           # through the + glyph
+    $tabW = Get-TestChromeDip -Dip 200 -Scale $scale
+    $plusW = (Get-TestChromeDip -Dip 8 -Scale $scale) + (Get-TestChromeDip -Dip 28 -Scale $scale)
+    # T1591: the sample starts at the tab, past the strip's leading slot
+    # (~54 DIP, measured 2026-11-20). That slot sometimes draws a light panel
+    # with an icon and title text (T3293) and sometimes does
+    # not, which scored a ~1000-column diff between two launches of one font.
+    $lead = Get-TestChromeDip -Dip 56 -Scale $scale
+    $x0 = $g.ClientLeft + $lead + (Get-TestChromeDip -Dip 8 -Scale $scale)    # text pad
+    $x1 = $g.ClientLeft + $lead + $tabW + $plusW - 2           # through the + glyph
     $y0 = $g.ClientTop + 4
     $y1 = $g.ClientTop + $g.BarH - 5                   # skip accent-stripe rows
     for ($t = 0; $t -lt 20; $t++) {
@@ -199,13 +215,17 @@ try {
     # Launch C: same family via --config-file, then live reload back to Segoe UI
     # -----------------------------------------------------------------------
     Set-Content -Path $conf -Value 'window-title-font-family = Times New Roman' -Encoding ascii
-    $c = Launch-Gui @("--config-file=$conf")
+    $errC = Join-Path $env:TEMP "ghoztty-titlefont-stderr-$PID.log"
+    $c = Launch-Gui @("--config-file=$conf") $errC
     if ($null -eq $c) { Write-Host 'SETUP FAIL: launch C died'; exit 1 }
     $sigC = Get-Signature $c
     $dBC = Sig-Diff $sigB $sigC
     Assert ($dBC -le 15) "same family reproduces the raster / config-file path works (diff B-vs-C=$dBC)"
 
     Set-Content -Path $conf -Value 'window-title-font-family = Segoe UI' -Encoding ascii
+    # T1591: dropped before the chord so the log oracle below can only read
+    # THIS reload's line.
+    if (Test-Path $errC) { Clear-Content $errC -ErrorAction SilentlyContinue }
     if (-not (Focus-TestWindow -Window $c.Top -Child $c.Surface)) {
         Write-Host 'SETUP FAIL: could not focus launch C'; exit 1
     }
@@ -221,6 +241,42 @@ try {
         if ($dCD -ge 25) { $reloaded = $true; break }
     }
     Assert $reloaded "config reload re-fonts the tab bar live (diff C-vs-D=$dCD)"
+
+    # T1591: the LIVE half's second oracle. The raster diff above cannot fail
+    # on a reload that forgets to repaint the strip: the capture is a
+    # PrintWindow, which repaints the whole client from current state before it
+    # photographs it, so it does the invalidate the product left out. What a
+    # user on a real desktop depends on is that the reload ASKED for the
+    # repaint, which the reload logs as a count of invalidateTabBar calls it
+    # made (Window.onConfigChange). The window's update region cannot stand in
+    # for it: under the default elevated pane style the reload also repaints
+    # the desk, and that rect already touches the strip - measured, it is the
+    # whole client with the strip's invalidate deleted. Debug builds only:
+    # log.debug is compiled out of a release build, where the raster half
+    # alone stands.
+    $mode = Get-GhozttyBuildMode -Exe $exe
+    if ($mode -eq 'Debug') {
+        $askLog = @()
+        for ($t = 0; $t -lt 10 -and $askLog.Count -eq 0; $t++) {
+            $askLog = @(Select-String -Path $errC `
+                    -Pattern 'config reload tab bar repaints asked=(\d+) visible=(\w+)' `
+                    -ErrorAction SilentlyContinue)
+            if ($askLog.Count -eq 0) { Start-Sleep -Milliseconds 200 }
+        }
+        if ($askLog.Count -eq 0) {
+            Assert $false "the reload reported its tab bar repaints (log line missing from $errC)"
+        } else {
+            $m = $askLog[-1].Matches[0].Groups
+            $asked = [int]$m[1].Value; $vis = $m[2].Value
+            # In-band control: the same line proves the reload ran with a strip
+            # to repaint, so asked=0 cannot be read as "nothing was showing".
+            Assert ($vis -eq 'true') "in-band control: the reload saw the strip visible (visible=$vis)"
+            Assert ($asked -gt 0) "the reload itself asked for the tab bar repaint (invalidateTabBar x$asked)"
+        }
+    } else {
+        Write-Host "OK    log oracle degraded: build mode '$mode' has no debug log, raster half only"
+    }
+
     if ($reloaded) {
         $dAD = Sig-Diff $sigA $sigD
         Assert ($dAD -le 15) "reloaded Segoe UI matches the default raster (diff A-vs-D=$dAD)"
@@ -231,6 +287,7 @@ try {
     Remove-TestDesktop
     Kill-RepoInstances
     Remove-Item $conf -ErrorAction SilentlyContinue
+    if ($errC) { Remove-Item $errC -ErrorAction SilentlyContinue }
 }
 
 $fgSeen = @(Stop-TestForegroundWatch)

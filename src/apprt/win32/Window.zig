@@ -493,6 +493,12 @@ active_tab: usize = 0,
 /// Whether the tab bar is visible (shown when >1 tab).
 tab_bar_visible: bool = false,
 
+/// How many times `invalidateTabBar` has asked for a non-empty strip
+/// repaint, wrapping (T1591). Only differences are meaningful: the config
+/// reload logs its own delta, so a test can tell "the reload asked" from "the
+/// capture repainted it anyway".
+tab_bar_invalidations: u32 = 0,
+
 /// Whether this window is in pane rearrange mode (T1524). While it is on,
 /// the tab strip is forced visible because it is a drop target, and every
 /// pane carries a drag header (T1525). Window-scoped, not per-tab: the mode
@@ -2049,6 +2055,21 @@ pub fn logReloadUpdateRegion(self: *Window) void {
 /// Called from App.config_change so the title bar and the blur track live
 /// config reloads (background color in particular).
 pub fn onConfigChange(self: *Window) void {
+    const tab_bar_asks_before = self.tab_bar_invalidations;
+    defer {
+        // Debug-build oracle for title-font.ps1 (T1591): how many times THIS
+        // reload asked for the strip to be repainted. Its pixel probe cannot
+        // tell - it is a `PrintWindow`, which repaints the strip from current
+        // state before it photographs it - and neither can the update region,
+        // because the elevated pane style's desk repaint already dirties a
+        // rect that touches the strip. Zero with the strip visible means a
+        // user on a real desktop keeps the old font until something else
+        // dirties the strip.
+        log.debug("config reload tab bar repaints asked={d} visible={}", .{
+            self.tab_bar_invalidations -% tab_bar_asks_before,
+            self.tab_bar_visible,
+        });
+    }
     if (self.hwnd) |hwnd| {
         applyChromeTheme(hwnd, self.app.config.@"window-theme", self.app.config.background);
         applyBackgroundBlur(hwnd, self.app.config.@"background-blur".enabled());
@@ -19143,6 +19164,9 @@ pub fn invalidateTabBar(self: *Window) void {
         .bottom = self.tabBarTop() + self.tabBarHeight(),
     };
     _ = w32.InvalidateRect(hwnd, &rect, 0);
+    // Counted only when there is a strip to repaint (T1591; read by
+    // `onConfigChange`'s debug line).
+    if (rect.bottom > rect.top) self.tab_bar_invalidations +%= 1;
 }
 
 /// Invalidate the caption band so it gets repainted (T254).

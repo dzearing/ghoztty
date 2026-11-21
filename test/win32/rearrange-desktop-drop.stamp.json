@@ -1,19 +1,19 @@
 {
     "guard":  "rearrange-desktop-drop",
     "script":  "test/win32/rearrange-desktop-drop.ps1",
-    "generated":  "2026-11-20T11:15:57-08:00",
-    "commit":  "22791eb33",
+    "generated":  "2026-11-20T21:38:19-08:00",
+    "commit":  "243bf7cb3",
     "uncommitted":  [
-
+                        "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/apprt/win32/drop_highlight.zig":  "37c731db58d85417f767681947573b2e22febfd4563b2b0792716d876ddbb8c3",
                   "src/apprt/win32/pane_drop.zig":  "0f1f597d7dbbd93bfd8808a15567a58eb228d19e3598b3a287f1c5bd6f4df2e7",
                   "src/apprt/win32/pane_relocate.zig":  "17bd8f675a9470961a969f6eee64cf82f210c89ea7992b136a7864ed2f11d783",
-                  "src/apprt/win32/Window.zig":  "fa5d72c39edb2f7078d9fcf3ea96bd374a135070187fcb1534d9bfb73b003985",
+                  "src/apprt/win32/Window.zig":  "d851027b3010ea6a9cddf6b21623e21049cced47a6d0ab51112bd7dee6df53bd",
                   "test/win32/rearrange-desktop-drop.ps1":  "4de08a67cea3d025ff6a762c2ce7abb6d177b2f01a92753133950993eff6db91"
               },
     "code":  {
-                 "test/win32/rearrange-desktop-drop.ps1":  "code1:6290def25b31e137571c33881dcb0c752e2e96addb0672d93f8c032ac27b750b"
+                 "test/win32/rearrange-desktop-drop.ps1":  "code1:c05f989cf87da815470d587b3d2a76c4fb51cf886f4526ff88ce6b7bd1dce13f"
              }
 }
