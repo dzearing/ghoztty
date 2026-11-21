@@ -1,14 +1,17 @@
 {
     "guard":  "restore-late-agent",
     "script":  "test/win32/restore-late-agent.ps1",
-    "generated":  "2026-11-19T12:36:06-08:00",
-    "commit":  "3bd26f1b9",
+    "generated":  "2026-11-21T05:45:03-08:00",
+    "commit":  "bd69f54cb",
     "uncommitted":  [
-                        "test/win32/restore-late-agent.ps1"
+                        "src/apprt/win32/LocalAgent.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/LocalAgent.zig":  "e42cdcaa438d37476992cf2abb20ddc6ab6e3602612d0615f6405afeadf096e6",
+                  "src/apprt/win32/LocalAgent.zig":  "cb3e12d90b8697e971def60d113a850f85d920eb85ae1ec250fb6339c7ac94c7",
                   "src/apprt/win32/restore_retry.zig":  "7d45262cc40021067e332e04a2ebc76a3044ec05f2c2187da6748f86ff135fb7",
                   "test/win32/restore-late-agent.ps1":  "7e1f5d3504e3e18fbc021a91419df108b258041d0a0e496eacc6ee039071a8b4"
-              }
+              },
+    "code":  {
+                 "test/win32/restore-late-agent.ps1":  "code1:b1f30e3b87135fd61348fdffbea3a5b53f60cef3a6c149df3f404c4b30d00d7f"
+             }
 }

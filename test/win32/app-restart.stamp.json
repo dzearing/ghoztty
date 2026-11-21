@@ -1,22 +1,24 @@
 {
     "guard":  "app-restart",
     "script":  "test/win32/app-restart.ps1",
-    "generated":  "2026-11-20T21:47:35-08:00",
-    "commit":  "eaa909541",
+    "generated":  "2026-11-21T06:20:17-08:00",
+    "commit":  "bd69f54cb",
     "uncommitted":  [
+                        "src/apprt/win32/app_restart.zig",
+                        "src/apprt/win32/LocalAgent.zig",
                         "test/win32/app-restart.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/app_restart.zig":  "e6de2b1d367b2e5832906b032b50b8f1fd3ff7f9cd59602b2e626b7f4a9ea73f",
+                  "src/apprt/win32/app_restart.zig":  "fa93bee8567aea80dbbf156c7a40141db5dd205ff109362f1ca860351c24f71a",
                   "src/apprt/win32/job_object.zig":  "33642e779f1f12facb8014d1cac70b0e60677f145149876e79be44755c87d525",
                   "src/apprt/win32/job_spawn.zig":  "fc29b31b0b0c07379fdfec6a60851d74c0aca08d4faf4d3459ad45421486649a",
-                  "src/apprt/win32/LocalAgent.zig":  "e42cdcaa438d37476992cf2abb20ddc6ab6e3602612d0615f6405afeadf096e6",
+                  "src/apprt/win32/LocalAgent.zig":  "cb3e12d90b8697e971def60d113a850f85d920eb85ae1ec250fb6339c7ac94c7",
                   "src/apprt/win32/relaunch_guard.zig":  "3cc0c7d3961eb984559da32e7e6ab36db57795d1e0165bc5fe9fe71104c2b847",
                   "src/remote/agent/pty_child.zig":  "372c2a9763483afb7a4684dde749d7d3d0b3ec55249985d75f24e5f347a3b844",
                   "src/remote/agent/pty_holder_child.zig":  "07a24cb7372e1b65e5aa4fda62e668996b10e8f0f8cd57876d67795913e8c53e",
-                  "test/win32/app-restart.ps1":  "42cb590708a911aec474ab42a1be0c63014d66c731dc1d1e6194ab6455b1f77b"
+                  "test/win32/app-restart.ps1":  "fe3e55900a51a12cf65404d228a812ae0c28a412a35b820ae6579d2df5f5eb91"
               },
     "code":  {
-                 "test/win32/app-restart.ps1":  "code1:206cc46820128de3073f17e478ab9c309e517dbe1819cc199c1a11f4b04f53d8"
+                 "test/win32/app-restart.ps1":  "code1:5c5ddeb17bde0d7dceb3846164c73007ba05666b7d2fba5a6422fd05ea6ccf64"
              }
 }

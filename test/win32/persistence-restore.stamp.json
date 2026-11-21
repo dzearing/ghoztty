@@ -1,20 +1,20 @@
 {
     "guard":  "persistence-restore",
     "script":  "test/win32/persistence-restore.ps1",
-    "generated":  "2026-11-20T18:29:18-08:00",
-    "commit":  "62b4164eb",
+    "generated":  "2026-11-21T05:46:44-08:00",
+    "commit":  "bd69f54cb",
     "uncommitted":  [
-                        "test/win32/persistence-restore.ps1"
+                        "src/apprt/win32/LocalAgent.zig"
                     ],
     "files":  {
                   "src/apprt/win32/layout_blobs.zig":  "0aa66783a8d060eade2dbdac90586ab5bddc866c40346fec85af32b6f1ceb7be",
-                  "src/apprt/win32/LocalAgent.zig":  "e42cdcaa438d37476992cf2abb20ddc6ab6e3602612d0615f6405afeadf096e6",
+                  "src/apprt/win32/LocalAgent.zig":  "cb3e12d90b8697e971def60d113a850f85d920eb85ae1ec250fb6339c7ac94c7",
                   "src/apprt/win32/session_layout.zig":  "23de7c84c9bda3017a52911fb9743e5f963978426160938e66f3aa079aa70e2b",
                   "test/win32/lib/PaneLiveness.ps1":  "d6e189f9d6336ccf01f67a4c971f82c2ef65833f99250200e7f7655ac54f52fd",
                   "test/win32/persistence-restore.ps1":  "2e137e80ddda5e1e6a07cc2eaa33fee12db3bb237b423c531013fb07c8e93dd4"
               },
     "code":  {
                  "test/win32/lib/PaneLiveness.ps1":  "code1:12ca560b01084eab4cad0c12de50b1a712268b9ca702325f80f1c75deec27c1a",
-                 "test/win32/persistence-restore.ps1":  "code1:1279df997b18bf2f5da6d9708c6ae4d200129f5e5da6b2bcc2ee37dc5951c1f0"
+                 "test/win32/persistence-restore.ps1":  "code1:eaba3081cbcefb0563f3c92a755c3e66c2be96cf4c91904617a129447aa9478b"
              }
 }

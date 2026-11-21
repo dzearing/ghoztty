@@ -93,6 +93,38 @@ pub fn sessionsEndText(buf: []u8, live_sessions: ?usize) []const u8 {
     return std.fmt.bufPrint(buf, lead ++ "every open terminal session" ++ tail, .{}) catch buf[0..0];
 }
 
+/// What `App.restartApp` did (T3294). Anything but `quitting` means NOTHING
+/// happened: no session ended, no window closed, no relaunch is waiting.
+pub const Outcome = enum {
+    /// The relaunch is armed and the app is quitting for it.
+    quitting,
+    /// The relaunch could not be set up.
+    not_armed,
+    /// "Restart Ghoztty and Background Sessions" could not stop the background
+    /// process, because this app was started from inside one of its sessions
+    /// and stopping it would close this app too (T771). Restarting anyway
+    /// would bring back every session the user just agreed to end, with no
+    /// word why, so the restart does not happen and the user is told.
+    agent_unstoppable,
+};
+
+pub const failed_title = "Restart Ghoztty";
+
+/// The body of the notice for an `Outcome` that is not `quitting`; empty for
+/// `quitting`, which has nothing to explain.
+pub fn failedText(outcome: Outcome) []const u8 {
+    return switch (outcome) {
+        .quitting => "",
+        .not_armed => "Ghoztty could not restart itself.\n\n" ++
+            "Nothing was closed. Quit and reopen Ghoztty instead.",
+        .agent_unstoppable => "Ghoztty could not restart its background sessions, " ++
+            "so nothing was restarted. Your sessions are still running.\n\n" ++
+            "This Ghoztty was started from inside one of those sessions, so " ++
+            "stopping them would close it too. Quit it, open Ghoztty again the " ++
+            "usual way, then try again.",
+    };
+}
+
 /// The marker reason the closing process leaves for the relaunched one
 /// (`update_reopen`), so the relaunched app's notice can say truthfully what
 /// came back: only a plain restart WITH persistence kept the sessions running.
@@ -147,6 +179,18 @@ test "sessionsEndText names the count and points at the lossless command" {
 test "sessionsEndText never truncates silently into a misleading sentence" {
     var tiny: [16]u8 = undefined;
     try testing.expectEqual(@as(usize, 0), sessionsEndText(&tiny, 3).len);
+}
+
+test "failedText explains every outcome that did nothing, and only those" {
+    try testing.expectEqual(@as(usize, 0), failedText(.quitting).len);
+    try testing.expect(std.mem.indexOf(u8, failedText(.not_armed), "Nothing was closed") != null);
+    // T3294: the refused agent stop says nothing happened, that the sessions
+    // live on, why, and what to do instead.
+    const t = failedText(.agent_unstoppable);
+    try testing.expect(std.mem.indexOf(u8, t, "nothing was restarted") != null);
+    try testing.expect(std.mem.indexOf(u8, t, "Your sessions are still running") != null);
+    try testing.expect(std.mem.indexOf(u8, t, "started from inside one of those sessions") != null);
+    try testing.expect(std.mem.indexOf(u8, t, "try again") != null);
 }
 
 test "only a persistent plain restart claims the sessions kept running" {

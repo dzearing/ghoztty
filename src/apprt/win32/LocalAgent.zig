@@ -819,6 +819,39 @@ pub fn restartForUpgrade(self: *LocalAgent) bool {
     return killed;
 }
 
+/// Would stopping the running agent take THIS app down with it (T3294)?
+///
+/// The same `AGENT_OWNS_JOB` test `terminateAgent` refuses on (T771), asked
+/// BEFORE anything is changed. `restartForUpgrade` retires the shared connection
+/// and the restart arms its relaunch before the kill, so a refusal found inside
+/// `terminateAgent` arrives too late to leave the app as it was; asked here, the
+/// user's restart can be declined with nothing touched. Only that one cause is
+/// predicted: a missing agent or a stale info file means there is nothing to
+/// stop, which a restart handles honestly by starting a fresh agent.
+pub fn stopWouldEndThisApp(self: *LocalAgent) bool {
+    if (comptime builtin.os.tag != .windows) return false;
+    const info = self.readInfoFile() orelse return false;
+    if (info.pid <= 0 or info.pid > std.math.maxInt(u32)) return false;
+    if (info.pid == @as(i64, w32.GetCurrentProcessId())) return false;
+
+    const facts = job_object.probe(@intCast(info.pid), null);
+    {
+        var line_buf: [256]u8 = undefined;
+        log.info("agent restart: preflight job facts — {s}", .{job_object.describe(&line_buf, facts)});
+    }
+    if (facts.job_is_agents orelse false) {
+        log.err(
+            "agent restart: REFUSING to terminate pid {d} — this app is in a job that " ++
+                "holds processes that agent parented, so the job is the agent's and " ++
+                "killing it would take this app down with it (T268/T771/T3294); " ++
+                "the restart is declined before anything is changed",
+            .{info.pid},
+        );
+        return true;
+    }
+    return false;
+}
+
 /// TerminateProcess + a bounded wait for the process to actually go away, so a
 /// respawn can't race the dying agent's still-bound pipe. Best-effort: a
 /// process we cannot open (gone already, or access-denied) reports false and

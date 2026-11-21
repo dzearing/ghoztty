@@ -6820,7 +6820,7 @@ pub fn offerAgentUpdate(self: *App, owner: ?*Window, refocus: ?w32.HWND) void {
     // Background Sessions" (T1804): the relaunched app spawns the agent from
     // the newer binary on disk. Already confirmed above, so it is not asked
     // twice.
-    if (!self.restartApp(.app_and_agent)) self.showRestartFailed(owner, refocus);
+    self.showRestartFailed(self.restartApp(.app_and_agent), owner, refocus);
 }
 
 /// The mandatory-update path, and since T1056 its ONLY trigger: the running
@@ -12598,7 +12598,7 @@ fn staleBuildOnDiskNs(exe: []const u8) i128 {
 /// arm), so the restart could come back as nothing at all. The guard waits for
 /// the exit instead.
 pub fn restartIntoInstalledBuild(self: *App) void {
-    if (self.restartApp(.app)) return;
+    if (self.restartApp(.app) == .quitting) return;
     const shown = self.showTrayBalloon(
         NOTIF_STALE_UID,
         NOTIF_STALE_TIMER_ID,
@@ -12658,22 +12658,26 @@ pub fn requestRestart(self: *App, kind: app_restart.Kind, owner: ?*Window, refoc
         }
     }
 
-    if (!self.restartApp(kind)) self.showRestartFailed(owner, refocus);
+    self.showRestartFailed(self.restartApp(kind), owner, refocus);
 }
 
-/// A restart the user asked for could not be set up, so nothing happened.
-fn showRestartFailed(self: *App, owner: ?*Window, refocus: ?w32.HWND) void {
-    const text = std.unicode.utf8ToUtf16LeStringLiteral(
-        "Ghoztty could not restart itself.\n\nNothing was closed. Quit and reopen Ghoztty instead.",
-    );
+/// A restart the user asked for did not happen, so nothing was closed; say
+/// why. A no-op for `.quitting`.
+fn showRestartFailed(self: *App, outcome: app_restart.Outcome, owner: ?*Window, refocus: ?w32.HWND) void {
+    const msg = app_restart.failedText(outcome);
+    if (msg.len == 0) return;
+    const alloc = self.core_app.alloc;
+    const text_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, msg) catch return;
+    defer alloc.free(text_w);
+    log.info("restart: told the user it did not happen (outcome={s})", .{@tagName(outcome)});
     _ = ConfirmDialog.show(
         self,
         if (owner) |w| w.hwnd else null,
         if (owner) |w| w.scale else 1.0,
         refocus,
         .{
-            .title = std.unicode.utf8ToUtf16LeStringLiteral("Restart Ghoztty"),
-            .text = text,
+            .title = std.unicode.utf8ToUtf16LeStringLiteral(app_restart.failed_title),
+            .text = text_w,
             .style = .ok_only,
             .icon = .warning,
         },
@@ -12694,11 +12698,21 @@ fn showRestartFailed(self: *App, owner: ?*Window, refocus: ?w32.HWND) void {
 /// before it is killed (`LocalAgent.terminateAgent`), so a debug build cannot
 /// reach the installed release's agent. The protocol has no shutdown request, so
 /// termination is the only stop there is; the relaunch starts a fresh agent.
-pub fn restartApp(self: *App, kind: app_restart.Kind) bool {
+///
+/// T3294: when stopping the agent would take this app down with it (the app was
+/// started from inside one of the agent's sessions, T771), the kill is refused
+/// and the relaunch would only re-attach every session the user just agreed to
+/// end. So that is asked FIRST, and a yes declines the restart with nothing
+/// touched: `.agent_unstoppable`, which the caller explains.
+pub fn restartApp(self: *App, kind: app_restart.Kind) app_restart.Outcome {
     const alloc = self.core_app.alloc;
+    if (kind == .app_and_agent and self.local_agent.stopWouldEndThisApp()) {
+        log.err("restart: NOT restarting - the background agent cannot be stopped from this app, so its sessions would only come back (kind={s})", .{@tagName(kind)});
+        return .agent_unstoppable;
+    }
     var guard = relaunch_guard.armFor(alloc, .app_restart) orelse {
         log.err("restart: the relaunch guard could not be armed; NOT quitting (kind={s})", .{@tagName(kind)});
-        return false;
+        return .not_armed;
     };
     // The marker is the guard's order to relaunch, so it stays on disk; only the
     // allocation is ours to give back.
@@ -12709,7 +12723,14 @@ pub fn restartApp(self: *App, kind: app_restart.Kind) bool {
 
     if (kind == .app_and_agent) {
         const killed = self.local_agent.restartForUpgrade();
-        log.warn("restart: background agent stopped={} (the relaunch starts a fresh one)", .{killed});
+        // Not killed means no agent was found to stop (or, rarely, the kill
+        // itself failed); either way the relaunch dials whatever is running and
+        // starts a fresh agent only if nothing is.
+        if (killed) {
+            log.warn("restart: background agent stopped=true (the relaunch starts a fresh one)", .{});
+        } else {
+            log.warn("restart: background agent stopped=false (none was stopped; the relaunch uses whatever agent is running, or starts one)", .{});
+        }
     }
 
     // The user asked for this, so the windows that come back may come to the
@@ -12720,7 +12741,7 @@ pub fn restartApp(self: *App, kind: app_restart.Kind) bool {
     log.warn("restart: quitting for the relaunch guard (kind={s})", .{@tagName(kind)});
     self.quit_requested = true;
     w32.PostQuitMessage(0);
-    return true;
+    return .quitting;
 }
 
 /// Quit so a launch of another build can start in this one's place (T1070,

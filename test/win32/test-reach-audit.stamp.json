@@ -1,8 +1,8 @@
 {
     "guard":  "test-reach",
     "script":  "test/win32/test-reach-audit.ps1",
-    "generated":  "2026-11-21T05:28:23-08:00",
-    "commit":  "afd89c92f",
+    "generated":  "2026-11-21T06:37:29-08:00",
+    "commit":  "bd69f54cb",
     "uncommitted":  [
                         "src/apprt/win32/App.zig",
                         "src/apprt/win32/app_restart.zig",
@@ -40,7 +40,7 @@
                   "src/apprt/win32/AgentIntegration.zig":  "206d196b9c35bf6826ff6daeafd2a5d1d089f053cfb9037bfd9b640099fc98cc",
                   "src/apprt/win32/AgentIntegrationsDialog.zig":  "246d10bd97a670440044da56b0072d1e41dff7d0c20ac4caae859bc0ab900eee",
                   "src/apprt/win32/App.zig":  "5016af9872d4563c4e6b0b08e80fa9030b6699f15ae1d055f6eec74124f6a8c0",
-                  "src/apprt/win32/app_restart.zig":  "bd21fcf4e98ee4514cbbea3faa75fcc7a7c24220226fb663e46838913fc0968e",
+                  "src/apprt/win32/app_restart.zig":  "fa93bee8567aea80dbbf156c7a40141db5dd205ff109362f1ca860351c24f71a",
                   "src/apprt/win32/arp_orphan.zig":  "fd1ca05529e1196fda78983b639c3cf5d93ad3b0ad1640ccbffba158764626fc",
                   "src/apprt/win32/ArpOrphanSweep.zig":  "84bc2b0e4717d2fa8fc18d8cfb68a77440d2089c719b6c4a52941b8f8be89c1f",
                   "src/apprt/win32/backdrop_pool.zig":  "ff650a9b868bd90fedcde062d92dcb9cb9b4e14dc0109267b5f8a06dc7e5bd96",

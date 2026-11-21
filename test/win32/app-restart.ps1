@@ -580,7 +580,9 @@ try {
             Start-Sleep -Milliseconds 400
             [void](Confirm-Restart $d)
         }
-        $r.Facts = Wait-LogLine $r.Err 'agent restart: job facts before the kill' 20
+        # T3294: the preflight measures the job before anything is touched; the
+        # kill's own line follows only when the restart goes ahead (R6).
+        $r.Facts = Wait-LogLine $r.Err 'agent restart: (preflight job facts|job facts before the kill)' 20
         if ($r.Facts) { Write-Host "      $($r.Facts.Trim())" }
         return $r
     }
@@ -590,17 +592,25 @@ try {
     Assert ($s.Owner -gt 0 -and $s.Owner -eq $s.Agent) "R5 premise: the AGENT itself parents the pane shell (in-process ConPTY)"
     Assert ($null -ne $s.Facts -and $s.Facts -match 'AGENT_OWNS_JOB=yes') 'R5a the pre-kill line reads AGENT_OWNS_JOB=yes'
     Assert ($null -ne (Wait-LogLine $s.Err "agent restart: REFUSING to terminate pid $($s.Agent) .*holds processes that agent parented" 10)) "R5b the kill was REFUSED, naming the agent's pid ($($s.Agent))"
-    # The app lived through the call that used to end it: restartApp's line for
-    # terminateAgent RETURNING is there. Before T771 the log simply stopped at
-    # the job-facts line.
-    Assert ($null -ne (Wait-LogLine $s.Err 'restart: background agent stopped=false' 10)) 'R5c the app SURVIVED the refused kill (it logged the call returning)'
+    # T3294: the refusal is found BEFORE anything changes, and the restart is
+    # declined. Before it, restartApp logged the refused kill returning and
+    # quit for its relaunch anyway, so the user's confirmed "end my sessions"
+    # came back as a relaunch with every session still attached and no word why.
+    Assert ($null -ne (Wait-LogLine $s.Err 'restart: NOT restarting - the background agent cannot be stopped' 10)) 'R5c the restart was declined, not carried out over the refused kill'
     Assert ($null -ne $s.Facts -and $null -eq (Wait-LogLine $s.Err "agent restart: pid $($s.Agent) terminate returned" 1)) 'R5d ... and TerminateProcess was never called'
     Assert ($null -ne $s.Facts -and $null -ne (Get-Process -Id $s.Agent -ErrorAction SilentlyContinue)) "R5e the agent is the same live process (pid $($s.Agent))"
     Assert ($null -ne $s.Facts -and $s.Shell -gt 0 -and $null -ne (Get-Process -Id $s.Shell -ErrorAction SilentlyContinue)) "R5f ... and so is the pane's shell (pid $($s.Shell))"
-    # restartApp quits for its relaunch guard after the call either way; what
-    # comes back is this run's process, never the user's.
-    $back = if ($s.App -gt 0) { Wait-NewAppPid $s.App 20 } else { 0 }
+    Assert ($null -ne (Wait-LogLine $s.Err 'restart: told the user it did not happen \(outcome=agent_unstoppable\)' 10)) 'R5g the user is told why nothing was restarted'
+    $note = if ($s.App -gt 0) { Wait-Dialog $s.App } else { [IntPtr]::Zero }
+    Assert ($note -ne [IntPtr]::Zero) 'R5h ... in a notice on screen'
+    Assert ($null -eq (Wait-LogLine $s.Err 'restart: quitting for the relaunch guard' 1) -and $null -eq (Wait-LogLine $s.Err 'agent restart: retiring the shared connection' 1)) 'R5i the app neither quit for a relaunch nor dropped its agent connection'
+    $marker = Join-Path $s.Dir 'ghoztty\app-restart-debug.marker'
+    Assert (-not (Test-Path $marker)) "R5j no relaunch was armed ($marker absent)"
+    if ($note -ne [IntPtr]::Zero) { Send-TestControlKey -Control $note -Key Enter | Out-Null }
+    # No relaunch is coming: the app that asked is the one still running.
+    $back = if ($s.App -gt 0) { Wait-NewAppPid $s.App 8 } else { 0 }
     if ($back -gt 0) { [void]$relaunched.Add($back) }
+    Assert ($s.App -gt 0 -and $back -le 0 -and $null -ne (Get-Process -Id $s.App -ErrorAction SilentlyContinue)) "R5k app B is still the running app (pid $($s.App)), and nothing relaunched"
 
     Write-Host '== R6: holder-backed PTYs (the default) - the refusal stays quiet and the app outlives the kill'
     $h = New-PaneLaunchedApp 'r6' $true
