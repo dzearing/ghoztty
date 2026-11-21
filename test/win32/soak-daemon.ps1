@@ -29,8 +29,23 @@
 # soak, its ledger, or the repo's zig cache.
 #
 #   powershell -NoProfile -File test\win32\soak-daemon.ps1
+#
+# AMBIENT WORK (T1650). This file runs on a box where other things are working:
+# the PRODUCTION soak daemon's own rounds, the other lane's floor, a sibling
+# acceptance worker. Every one of those is foreground work by the very rule
+# under test, so until T1650 any of them turned "the box reads idle" red and
+# left the round-running sections waiting for an idle box that never came. The
+# harness now asks the daemon's own rule - from a state directory nobody
+# pauses, with nobody present, its own stand-ins excluded - what work on the
+# box is NOT its own, and hands each such process family to the daemon under
+# test as -IgnoreTrees. Section N keeps that honest: a stand-in shaped like the
+# production daemon's round (and spawning a child mid-run, the way a lane
+# spawns zig.exe) lives through the WHOLE file, so every run is measured under
+# the T1650 condition rather than only the runs that happen to meet it.
+# -NegativeControl turns the exclusion off and must score red.
 param(
-    [string]$Repo = 'D:\git\ghoztty'
+    [string]$Repo = 'D:\git\ghoztty',
+    [switch]$NegativeControl
 )
 
 $ErrorActionPreference = 'Continue'
@@ -41,9 +56,18 @@ $script:failures = 0
 $script:skipped = 0
 $script:asserted = 0
 $script:passes = 0
-function Assert($name, $cond) {
+$script:lastOut = ''
+# A red line names WHY (T1650): the evidence is the daemon's last answer unless
+# the assertion supplies its own, and without it a red D6 read as one bare word.
+function Assert($name, $cond, $detail = $null) {
     $script:asserted++
-    if ($cond) { Write-Host "  PASS $name"; $script:passes++ } else { Write-Host "  FAIL $name"; $script:failures++ }
+    if ($cond) { Write-Host "  PASS $name"; $script:passes++; return }
+    Write-Host "  FAIL $name"
+    $script:failures++
+    $why = if ($null -ne $detail) { [string]$detail } else { 'last daemon output: ' + [string]$script:lastOut }
+    foreach ($l in @(($why.Trim() -split "`r?`n") | Where-Object { $_.Trim() } | Select-Object -First 8)) {
+        Write-Host "       $l"
+    }
 }
 function Skip($name, $why) {
     $script:skipped++
@@ -60,16 +84,115 @@ $marker = Split-Path -Leaf $scratchDir
 $ledger = Join-Path $stateDir 'ledger.jsonl'
 $statePath = Join-Path $stateDir 'state.json'
 $sleepers = @()
+# The harness's DELIBERATE stand-ins: processes it starts on purpose so the
+# rule has something to see. Never ambient, whatever they look like.
+$script:deliberate = @()
+# Roots of process families on the box that are foreground work and are not
+# this harness's (T1650); handed to every daemon call as -IgnoreTrees.
+$script:ambientRoots = @()
+$probeStateDir = Join-Path $stateDir 'ambient-probe'
 
-function Daemon {
+function Invoke-DaemonRaw {
     param([string[]]$Argv)
-    $all = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $daemon) + $Argv +
-    @('-Repo', $Repo, '-StateDir', $stateDir, '-ScratchDir', $scratchDir, '-IgnorePids', $PID)
     # Stringified before Out-String: a merged stream carries ErrorRecords whose
     # rendered text depends on the host's width and formatting, and the audit is
     # right that a verdict must not (T883).
-    $out = & powershell @all 2>&1 | ForEach-Object { "$_" } | Out-String
+    $out = & powershell @(@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $daemon) + $Argv) 2>&1 |
+        ForEach-Object { "$_" } | Out-String
     return [pscustomobject]@{ Code = $LASTEXITCODE; Out = $out }
+}
+
+# Every ancestor of this process, oldest-checked: a parent counts only if it
+# was born before its child, so a reused pid cannot adopt a stranger (T1867).
+function Get-OwnAncestry {
+    param($Snapshot)
+    $byPid = @{}
+    foreach ($p in @($Snapshot)) { $byPid[[int]$p.ProcessId] = $p }
+    $set = @{ [int]$PID = $true }
+    $cur = $byPid[[int]$PID]
+    while ($null -ne $cur) {
+        $par = $byPid[[int]$cur.ParentProcessId]
+        if ($null -eq $par -or $set.ContainsKey([int]$par.ProcessId)) { break }
+        if ($null -ne $par.CreationDate -and $null -ne $cur.CreationDate -and
+            [datetime]$par.CreationDate -gt [datetime]$cur.CreationDate) { break }
+        $set[[int]$par.ProcessId] = $true
+        $cur = $par
+    }
+    return $set
+}
+
+# The biggest family holding $Id that holds none of this harness: climb from
+# $Id while the parent is not one of our own ancestors. A sibling acceptance
+# worker, the other lane's floor, the production daemon - each comes back as
+# its own top, so the work it spawns NEXT is excluded too.
+function Get-AmbientRoot {
+    param([int]$Id)
+    $snap = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    $own = Get-OwnAncestry -Snapshot $snap
+    $byPid = @{}
+    foreach ($p in $snap) { $byPid[[int]$p.ProcessId] = $p }
+    $cur = $byPid[$Id]
+    if ($null -eq $cur) { return $Id }
+    while ($true) {
+        $par = $byPid[[int]$cur.ParentProcessId]
+        if ($null -eq $par -or $own.ContainsKey([int]$par.ProcessId)) { break }
+        if ($null -ne $par.CreationDate -and $null -ne $cur.CreationDate -and
+            [datetime]$par.CreationDate -gt [datetime]$cur.CreationDate) { break }
+        $cur = $par
+    }
+    return [int]$cur.ProcessId
+}
+
+# Ask the daemon's OWN rule what foreground work is on the box that this
+# harness did not start: a state directory nobody pauses, nobody present, our
+# stand-ins and everything already found excluded. Each answer is climbed to
+# its family's root and excluded in turn until the rule reads idle.
+function Update-AmbientWork {
+    if ($NegativeControl) { return }
+    $prior = $env:GHOZTTY_TEST_FORCE_USER_PRESENCE
+    $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = 'absent'
+    try {
+        for ($i = 0; $i -lt 16; $i++) {
+            $ign = @([int]$PID) + @($script:deliberate | ForEach-Object { [int]$_.Id })
+            $argv = @('busy', '-Repo', $Repo, '-StateDir', $probeStateDir, '-ScratchDir', $scratchDir,
+                '-IgnorePids', ($ign -join ','))
+            if ($script:ambientRoots.Count -gt 0) { $argv += @('-IgnoreTrees', ($script:ambientRoots -join ',')) }
+            $r = Invoke-DaemonRaw $argv
+            if ($r.Out -notmatch 'foreground work: pid (\d+)') { return }
+            $hit = [int]$Matches[1]
+            $root = Get-AmbientRoot -Id $hit
+            if ($script:ambientRoots -contains $root) { return }  # cannot exclude it further; let the check say so
+            $script:ambientRoots += $root
+            Write-Host ("  (ambient: pid {0} is foreground work that is not this harness's - its family under pid {1} is excluded)" -f $hit, $root)
+        }
+    }
+    finally {
+        if ($null -eq $prior) { Remove-Item Env:GHOZTTY_TEST_FORCE_USER_PRESENCE -ErrorAction SilentlyContinue }
+        else { $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = $prior }
+    }
+}
+
+function Daemon {
+    param([string[]]$Argv)
+    $verb = if ($Argv.Count -gt 0) { $Argv[0] } else { '' }
+    # A round-running verb waits for an idle box, so the exclusion is brought up
+    # to date BEFORE it rather than discovered by a run that never starts.
+    if ($verb -in @('run', 'start', 'tick')) { Update-AmbientWork }
+    for ($try = 0; $try -lt 3; $try++) {
+        $all = $Argv + @('-Repo', $Repo, '-StateDir', $stateDir, '-ScratchDir', $scratchDir, '-IgnorePids', $PID)
+        if ($script:ambientRoots.Count -gt 0) { $all += @('-IgnoreTrees', ($script:ambientRoots -join ',')) }
+        $r = Invoke-DaemonRaw $all
+        $script:lastOut = $r.Out
+        # `busy` naming a process that is none of our stand-ins is ambient work
+        # that arrived since the last refresh: exclude it and ask again.
+        if ($verb -ne 'busy' -or $r.Out -notmatch 'foreground work: pid (\d+)') { break }
+        $hit = [int]$Matches[1]
+        if (@($script:deliberate | Where-Object { $_.Id -eq $hit }).Count -gt 0) { break }
+        $n = $script:ambientRoots.Count
+        Update-AmbientWork
+        if ($script:ambientRoots.Count -eq $n) { break }
+    }
+    return $r
 }
 
 function Read-Ledger {
@@ -91,6 +214,7 @@ function Start-Sleeper {
         ('"Start-Sleep -Seconds ' + $Seconds + ' # ' + $Tag + '"'))
     $null = $p.Handle
     $script:sleepers += $p
+    $script:deliberate += $p
     return $p
 }
 
@@ -113,7 +237,57 @@ New-Item -ItemType Directory -Force $stateDir | Out-Null
 $priorPresence = $env:GHOZTTY_TEST_FORCE_USER_PRESENCE
 $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = 'absent'
 
+. (Join-Path $Repo 'scripts\lib\ProcessFamily.ps1')
+$ambientStandIn = $null
+
 try {
+    ""
+    "N. work on the box that is not this harness's never scores it red (T1650)"
+    # Whatever is really running first, so N1 below can name the stand-in alone.
+    Update-AmbientWork
+    # The stand-in is the 2026-09-18 shape: a powershell whose command line names
+    # floor-lane.ps1 and the PRODUCTION scratch directory (not ours), and which
+    # spawns a `zig build`-shaped child a few seconds in - after the harness has
+    # excluded it - the way a lane spawns a fresh zig.exe every few seconds.
+    New-Item -ItemType Directory -Force $probeStateDir | Out-Null
+    $ambientScript = Join-Path $stateDir 'ambient-standin.ps1'
+    Set-Content -LiteralPath $ambientScript -Encoding ASCII -Value @(
+        'param([string]$Tag)',
+        'Start-Sleep -Seconds 4',
+        "Start-Process powershell.exe -WindowStyle Hidden -ArgumentList '-NoProfile','-Command','""Start-Sleep -Seconds 900 # zig build test T1650-ambient-child""'",
+        'Start-Sleep -Seconds 900')
+    $realScratch = Join-Path ($qual + '\') 'ghoztty-idle-soak'
+    $ambientStandIn = Start-Process -FilePath 'powershell.exe' -PassThru -WindowStyle Hidden -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ambientScript,
+        '-Tag', ('"floor-lane.ps1 -Lane none --cache-dir ' + $realScratch + '\none\zig-cache"'))
+    $null = $ambientStandIn.Handle
+    Start-Sleep -Milliseconds 1500
+    $ign = @([int]$PID) + @($script:deliberate | ForEach-Object { [int]$_.Id })
+    $argv = @('busy', '-Repo', $Repo, '-StateDir', $probeStateDir, '-ScratchDir', $scratchDir, '-IgnorePids', ($ign -join ','))
+    if ($script:ambientRoots.Count -gt 0) { $argv += @('-IgnoreTrees', ($script:ambientRoots -join ',')) }
+    $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = 'absent'
+    $r = Invoke-DaemonRaw $argv
+    Assert 'N1 control: the rule itself reads the stand-in as foreground work' (
+        $r.Code -eq 3 -and $r.Out -match ('foreground work: pid ' + $ambientStandIn.Id + ' ')) $r.Out
+    Update-AmbientWork
+    Assert 'N2 the harness finds it and excludes its family' ($script:ambientRoots -contains $ambientStandIn.Id) (
+        'ambient roots: ' + ($script:ambientRoots -join ','))
+    $child = $null
+    $born = Wait-For {
+        $script:ambChild = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($ambientStandIn.Id)" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -like '*T1650-ambient-child*' })
+        $script:ambChild.Count -gt 0
+    } 20
+    if ($born) { $child = $script:ambChild[0] }
+    Assert 'N3 the stand-in spawned its zig-shaped child after it was excluded' $born
+    $argv = @('busy', '-Repo', $Repo, '-StateDir', $stateDir, '-ScratchDir', $scratchDir, '-IgnorePids', $PID)
+    if ($script:ambientRoots.Count -gt 0) { $argv += @('-IgnoreTrees', ($script:ambientRoots -join ',')) }
+    # Raw, NOT through Daemon: its retry would exclude the child as a new root
+    # and hide a tree rule that missed it.
+    $r = Invoke-DaemonRaw $argv
+    Assert 'N4 a descendant born after the exclusion is excluded with its root (-IgnoreTrees)' (
+        $r.Code -eq 0 -and $r.Out -match 'IDLE') $r.Out
+
     ""
     "A. status on a fresh state directory"
     $r = Daemon @('status')
@@ -125,8 +299,11 @@ try {
     "B. rounds accumulate unattended"
     # `run` in this process's foreground with a round budget: the same body the
     # background daemon runs, bounded so a test can wait on it.
+    # Every round-running call below is bounded (-QuitAfterBusySeconds): work
+    # the exclusion did not see must cost a red line that says `box busy`, not a
+    # run that waits for an idle box until the runner kills it (T1650).
     $r = Daemon @('run', '-MaxRounds', '2', '-FixtureCommand', 'exit 0',
-        '-YieldPollSeconds', '1', '-IdleWaitSeconds', '1')
+        '-YieldPollSeconds', '1', '-IdleWaitSeconds', '1', '-QuitAfterBusySeconds', '90')
     $rows = @(Read-Ledger)
     Assert 'B1 two rounds ran' ($rows.Count -eq 2)
     Assert 'B2 both were scored pass' (@($rows | Where-Object { $_.outcome -eq 'pass' }).Count -eq 2)
@@ -140,7 +317,7 @@ try {
     # test-binary-soak.ps1 exits 1 when a run crashed; the daemon reads that
     # code, so a fixture exiting 1 is the same input the real instrument gives.
     $r = Daemon @('run', '-MaxRounds', '1', '-FixtureCommand', 'exit 1',
-        '-YieldPollSeconds', '1', '-IdleWaitSeconds', '1')
+        '-YieldPollSeconds', '1', '-IdleWaitSeconds', '1', '-QuitAfterBusySeconds', '90')
     $rows = @(Read-Ledger)
     Assert 'C1 the round is scored crash' ($rows[-1].outcome -eq 'crash')
     Assert 'C2 the round log is named, so the evidence is findable' ([bool]$rows[-1].log)
@@ -199,7 +376,8 @@ try {
     $r = Daemon @('busy')
     Assert 'F1 a process carrying the marker is not foreground work' ($r.Code -eq 0 -and $r.Out -match 'IDLE')
     $before = @(Read-Ledger).Count
-    $r = Daemon @('run', '-MaxRounds', '1', '-FixtureCommand', 'exit 0', '-YieldPollSeconds', '1', '-IdleWaitSeconds', '1')
+    $r = Daemon @('run', '-MaxRounds', '1', '-FixtureCommand', 'exit 0', '-YieldPollSeconds', '1', '-IdleWaitSeconds', '1',
+        '-QuitAfterBusySeconds', '90')
     Assert 'F2 so a round still runs beside it' (@(Read-Ledger).Count -eq $before + 1)
     Stop-Process -Id $self.Id -Force -ErrorAction SilentlyContinue
 
@@ -305,7 +483,7 @@ try {
     Assert 'L1 control: the probe says no on the input desktop' ($LASTEXITCODE -eq 1)
     $before = @(Read-Ledger).Count
     $r = Daemon @('run', '-MaxRounds', '1', '-FixtureCommand', ("& '" + $probe + "'; exit `$LASTEXITCODE"),
-        '-YieldPollSeconds', '1', '-IdleWaitSeconds', '1')
+        '-YieldPollSeconds', '1', '-IdleWaitSeconds', '1', '-QuitAfterBusySeconds', '90')
     $rows = @(Read-Ledger)
     Assert 'L2 the round ran and its probe found the lane desktop' ($rows.Count -eq $before + 1 -and $rows[-1].outcome -eq 'pass')
     Assert 'L3 and the daemon did not fall back to the input desktop' ($r.Out -notmatch 'INPUT desktop')
@@ -341,6 +519,8 @@ finally {
     if ($null -eq $priorPresence) { Remove-Item Env:GHOZTTY_TEST_FORCE_USER_PRESENCE -ErrorAction SilentlyContinue }
     else { $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = $priorPresence }
     foreach ($s in $sleepers) { try { Stop-Process -Id $s.Id -Force -ErrorAction SilentlyContinue } catch { } }
+    # The ambient stand-in and the child it spawned (T1650), root first.
+    if ($null -ne $ambientStandIn) { try { $null = Stop-ProcessFamily -Id $ambientStandIn.Id } catch { } }
     Remove-Item -Recurse -Force $stateDir -ErrorAction SilentlyContinue
     Remove-Item -Recurse -Force $scratchDir -ErrorAction SilentlyContinue
 }

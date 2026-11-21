@@ -148,6 +148,13 @@ param(
     # yield rule is right to read as a turn using the box - so without a way to
     # say "that one is me", the rule could only be tested by disabling it.
     [string]$IgnorePids = '',
+    # Process ids whose WHOLE FAMILY is not foreground work, comma-separated -
+    # the root and every descendant, including ones born after this argument
+    # was written (T1650). Also the acceptance harness's: it runs beside work
+    # that is not its own (the production daemon's round, another lane's floor)
+    # and must measure its own rule without scoring that work red. -IgnorePids
+    # cannot do it: a lane spawns a fresh zig.exe every few seconds.
+    [string]$IgnoreTrees = '',
     [string]$Reason = ''
 )
 
@@ -170,6 +177,8 @@ if ($LaneList.Count -eq 0) { $LaneList = @('agent', 'none', 'none-releasesafe', 
 . (Join-Path $PSScriptRoot 'lib\ProcessFamily.ps1')
 
 $IgnoreList = @($IgnorePids -split ',' | ForEach-Object { $_.Trim() } |
+    Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ })
+$IgnoreTreeList = @($IgnoreTrees -split ',' | ForEach-Object { $_.Trim() } |
     Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ })
 
 # --------------------------------------------------------------- locations
@@ -296,13 +305,28 @@ function Get-BoxBusyReason {
     }
 
     $patterns = @('floor-lane.ps1', 'suite-run.ps1', '\test\win32\', 'zig build', 'zig.exe build')
-    $procs = @(Get-CimInstance Win32_Process `
-            -Filter "Name='powershell.exe' OR Name='pwsh.exe' OR Name='zig.exe'" -ErrorAction SilentlyContinue)
+    $names = @('powershell.exe', 'pwsh.exe', 'zig.exe')
+    $treeSkip = @{}
+    if ($IgnoreTreeList.Count -gt 0) {
+        # The family walk needs every process (a lane's zig.exe hangs off a
+        # cmd.exe), so the whole table is read only when somebody asked.
+        $all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+        foreach ($root in $IgnoreTreeList) {
+            $treeSkip[$root] = $true
+            foreach ($m in @(Get-ProcessFamily -RootPid $root -Snapshot $all)) { $treeSkip[[int]$m.ProcessId] = $true }
+        }
+        $procs = @($all | Where-Object { $names -contains ([string]$_.Name).ToLowerInvariant() })
+    }
+    else {
+        $procs = @(Get-CimInstance Win32_Process `
+                -Filter "Name='powershell.exe' OR Name='pwsh.exe' OR Name='zig.exe'" -ErrorAction SilentlyContinue)
+    }
     foreach ($p in $procs) {
         if (-not $p.CommandLine) { continue }
         if ($p.ProcessId -eq $PID) { continue }
         if ($OwnPids -contains $p.ProcessId) { continue }
         if ($IgnoreList -contains $p.ProcessId) { continue }
+        if ($treeSkip.ContainsKey([int]$p.ProcessId)) { continue }
         # Ours, at any depth: every descendant carries the scratch name.
         if ($p.CommandLine -like ('*' + $Marker + '*')) { continue }
         if ($p.CommandLine -like '*soak-daemon.ps1*') { continue }
@@ -491,6 +515,7 @@ function Invoke-Start {
     if ($QuitAfterBusySeconds -gt 0) { $argv += @('-QuitAfterBusySeconds', $QuitAfterBusySeconds) }
     if ($FixtureCommand) { $argv += @('-FixtureCommand', (& $qa $FixtureCommand)) }
     if ($IgnorePids) { $argv += @('-IgnorePids', $IgnorePids) }
+    if ($IgnoreTrees) { $argv += @('-IgnoreTrees', $IgnoreTrees) }
     Start-Process -FilePath 'powershell.exe' -ArgumentList $argv -WindowStyle Hidden | Out-Null
     Log 'daemon started'
     return 0
