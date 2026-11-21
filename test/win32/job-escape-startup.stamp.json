@@ -1,10 +1,10 @@
 {
     "guard":  "job-escape-startup",
     "script":  "test/win32/job-escape-startup.ps1",
-    "generated":  "2026-11-19T04:51:15-08:00",
-    "commit":  "afc1907f3",
+    "generated":  "2026-11-21T10:52:43-08:00",
+    "commit":  "f3ed909cf",
     "uncommitted":  [
-
+                        "test/win32/job-escape-startup.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/job_escape.zig":  "060f58a8a8739baf8246aaca8cf5d4a0e6113bfa69e981fdc2282ea8a060cb7e",
@@ -12,6 +12,9 @@
                   "src/apprt/win32/job_spawn.zig":  "fc29b31b0b0c07379fdfec6a60851d74c0aca08d4faf4d3459ad45421486649a",
                   "src/remote/agent/pty_child.zig":  "372c2a9763483afb7a4684dde749d7d3d0b3ec55249985d75f24e5f347a3b844",
                   "src/remote/pty_job_name.zig":  "613abf1c9722bb3e78ff7e3221f5995373a5b0c30df36709b75740fcd4c969df",
-                  "test/win32/job-escape-startup.ps1":  "5d14fe7f499bbbe6d87ed6d375d4d43abc8e22e2eed9e2e6a6c32c3de6dfc573"
-              }
+                  "test/win32/job-escape-startup.ps1":  "a860fdb308366a87c9158707ae7751d981e02132e40aa2dc60fc4ea66bc3c3ab"
+              },
+    "code":  {
+                 "test/win32/job-escape-startup.ps1":  "code1:d2ab2d1adac66c4d727c9dc952ae2f64b9ca007a4f60af8cc52ec18c1950dbc4"
+             }
 }

@@ -288,11 +288,33 @@ Set-Content -Path '$appPidFile' -Value `$app.Id
     $appSeen = Wait-File $appPidFile 20
     $origPid = if ($appSeen) { [int](Get-Content $appPidFile | Select-Object -First 1) } else { 0 }
     Assert "B1 premise: the jailed launcher started the app" ($origPid -ne 0)
+    # T1680: hold the original open NOW (caching .Handle is what lets ExitCode
+    # be read after it exits) and note its session, so a red B2/B3 can say why
+    # app.err.txt is empty. Read from this side on purpose: keeping the
+    # launcher alive to wait on it would change the process tree the escape's
+    # shell-parent hop walks.
+    $origProc = $null; $origSession = '?'
+    if ($origPid -ne 0) {
+        try { $origProc = Get-Process -Id $origPid -ErrorAction Stop; $null = $origProc.Handle; $origSession = $origProc.SessionId } catch {}
+    }
 
-    Assert "B2 the jailed app DETECTED the kill-on-close job" `
-        (Wait-LogMatch $errFile 'startup escape: this process is inside a kill-on-close job' 30)
-    Assert "B3 ... and respawned itself outside it, naming the tier" `
-        (Wait-LogMatch $errFile 'startup escape: respawned as pid \d+ \((breakaway|shell-parent|jobless-parent)\)' 30)
+    $b2 = Wait-LogMatch $errFile 'startup escape: this process is inside a kill-on-close job' 30
+    Assert "B2 the jailed app DETECTED the kill-on-close job" $b2
+    $b3 = Wait-LogMatch $errFile 'startup escape: respawned as pid \d+ \((breakaway|shell-parent|jobless-parent)\)' 30
+    Assert "B3 ... and respawned itself outside it, naming the tier" $b3
+    if (-not ($b2 -and $b3)) {
+        # T1680 diagnosis: name how the original ended. An empty log with an
+        # exit code means the app quit before its first line (forwarded to
+        # another instance, or failed early); still-running means it hung
+        # before logging; no exit file means the launcher never got that far.
+        $errBytes = if (Test-Path $errFile) { (Get-Item $errFile).Length } else { -1 }
+        $exitInfo = if ($null -eq $origProc) { 'exited before this script could open it (code unknown)' }
+            elseif ($origProc.HasExited) { "exited with code $($origProc.ExitCode)" }
+            else { 'STILL RUNNING (hung before its first log line?)' }
+        Say "  DIAG T1680: app.err.txt=$errBytes bytes; original pid $origPid in session $origSession $exitInfo"
+        $tail = (Read-AppLog $errFile)
+        if ($tail) { Say ("  DIAG T1680 log tail: " + (($tail -split "`r?`n" | Select-Object -Last 8) -join ' | ')) }
+    }
 
     $twinPid = 0
     if ((Read-AppLog $errFile) -match 'startup escape: respawned as pid (\d+)') {
