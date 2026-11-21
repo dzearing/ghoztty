@@ -206,6 +206,54 @@ Check 'a red lane exit code (1) is not a crash, and neither is the expected 0' `
 ((Get-CrashOccurrenceLine -Lines @(
             '  error: the following command exited with code 1 (expected exited with code 0):')) -eq '')
 
+# T1718: the 2026-09-24 out-of-memory build soak, line for line. Clang's exit
+# 5/66 and zig's compile child exiting 9 after `LLVM ERROR: out of memory` all
+# have a low byte in the NTSTATUS table, and they were counted as four
+# worker crashes. A compiler is not a test binary.
+Check 'clang exiting with code 5 is not a test-binary crash (T1718)' `
+((Get-CrashOccurrenceLine -Lines @('error: clang exited with code 5')) -eq '')
+Check 'clang exit 66 with a source-path prefix is not a crash either' `
+((Get-CrashOccurrenceLine -Lines @(
+            'D:\zig-global-cache\p\N-V-x\adler32.c:1:1: error: clang exited with code 66')) -eq '')
+Check 'zig''s compile child exiting 9 after an OOM is not a crash, even with the command wrapped mid-path' `
+((Get-CrashOccurrenceLine -Lines @(
+            'error: LLVM ERROR: out of memory',
+            'error: the following command exited with error code 9:',
+            '"C:\\Users\\David\\AppData\\Local\\zig-x86_',
+            '64-windows-0.15.2\\zig.exe" build-exe -fno-strip -fno-omit-frame-pointer')) -eq '')
+Check 'the same code-9 line over a zig `test` compile is not a crash' `
+((Get-CrashOccurrenceLine -Lines @(
+            'error: the following command exited with error code 9:',
+            '"C:\\zig\\zig.exe" test -fllvm -ODebug -target native-native-msvc')) -eq '')
+# ...and through the FILE path every caller uses, which pre-filters a log to
+# its occurrence-shaped lines. Keeping only the matching line threw away the
+# command on the lines after it, so the code-9 compile still counted.
+$oomLog = Join-Path $work 'oom-worker.log'
+@(
+    '      +- compile test ghoztty-build-helpers-test Debug native-native-msvc failure',
+    'error: LLVM ERROR: out of memory',
+    'Allocation failed',
+    '',
+    'error: the following command exited with error code 9:',
+    '"C:\\Users\\David\\AppData\\Local\\zig-x86_',
+    '64-windows-0.15.2\\zig.exe" test -fllvm -ODebug -target native-native-msvc -mcpu baseline',
+    'error: clang exited with code 5'
+) | Set-Content -LiteralPath $oomLog -Encoding ASCII
+Check 'a whole out-of-memory worker log, read through Get-CrashCandidateLines, holds no crash' `
+((Get-CrashOccurrenceLine -Lines @(Get-CrashCandidateLines -LiteralPath $oomLog)) -eq '') `
+    (Get-CrashOccurrenceLine -Lines @(Get-CrashCandidateLines -LiteralPath $oomLog))
+$deadLog = Join-Path $work 'dead-worker.log'
+@(
+    "error: while executing test 'x', the following command exited with code 3 (expected exited with code 0):",
+    'Q:\fixture\.zig-cache\o\abc\ghostty-test.exe --seed=0x1 --listen=-'
+) | Set-Content -LiteralPath $deadLog -Encoding ASCII
+Check 'negative control: the same file path still finds a test binary''s exit 3' `
+((Get-CrashOccurrenceLine -Lines @(Get-CrashCandidateLines -LiteralPath $deadLog)) -ne '')
+Check 'negative control: a TEST BINARY exiting 3 over its own exe command is still a crash' `
+((Get-CrashOccurrenceLine -Lines @(
+            "error: while executing test 'x', the following command exited with code 3 (expected exited with code 0):",
+            'Q:\fixture\.zig-cache\o\abc\ghostty-test.exe --seed=0x1 --listen=-')) -ne '')
+
 # --------------------------------------------- 3b. -LoadWorkers (T443 turn 6)
 
 # The cell with all of T443's sightings in it and no measurement is
@@ -339,6 +387,15 @@ Check 'worker 0 and worker 1 do not share a cache directory' `
 ($r.Text -match '--cache-dir "[^"]*w1[^"]*"') ($r.Text -replace '\s+', ' ')
 Check 'the private caches default to the repo drive (zig asserts across drives)' `
 ($r.Text -match ('--cache-dir "' + [regex]::Escape($drive) + '\\')) ($r.Text -replace '\s+', ' ')
+# T1718: an uncapped build worker asks for one job per processor, so eight of
+# them on 32 cores asked for 256 compiles and ran the box out of memory.
+$autoJobs = [math]::Max(1, [math]::Floor([Environment]::ProcessorCount / 3))
+Check 'each build worker''s zig build is job-capped by default (processors / (workers + lane))' `
+($r.Text -match ('worker 0 runs: zig build test -Dapp-runtime=none -j' + $autoJobs + ' ')) `
+    ("want -j$autoJobs; " + ($r.Text -replace '\s+', ' '))
+$rj = Invoke-Soak @{ LaneCommand = 'cmd /c exit 0'; Runs = 1; Label = 'buildjobs'; LoadWorkers = 2; LoadKind = 'build'; LoadJobs = 3; LoadDryRun = $true }
+Check '-LoadJobs overrides the cap' ($rj.Text -match 'worker 1 runs: zig build test -Dapp-runtime=none -j3 ') `
+    ($rj.Text -replace '\s+', ' ')
 Check '-LoadDryRun starts nothing and runs no rounds' `
 ($r.Code -eq 0 -and $r.Text -match 'started nothing' -and -not ($r.Text -match 'run  1/1')) `
     ($r.Text -replace '\s+', ' ')
@@ -381,6 +438,42 @@ $r = Invoke-Soak @{
 }
 Check 'a clean load still says worker-crash=0 rather than omitting the field' `
 ($r.Text -match 'SOAK wclean:.*worker-crash=0') ($r.Text -replace '\s+', ' ')
+Check 'a clean load says worker-fail=0 and is not degraded' `
+($r.Text -match 'SOAK wclean:.*worker-fail=0' -and -not ($r.Text -match 'load-degraded|DEGRADED')) `
+    ($r.Text -replace '\s+', ' ')
+Check 'a crashed worker is a crash, not also a build failure' `
+(-not ((Invoke-Soak @{
+                LaneCommand = 'cmd /c exit 0'; Runs = 1; Label = 'wcrash2'; LoadWorkers = 1
+                LoadCommand = "cmd /c $crashLoad"; LoadWorkDir = $keepWork
+            }).Text -match 'load-degraded'))
+
+# T1718: a worker whose builds FAIL (the out-of-memory shape: exit 1, no crash)
+# is reported apart from a crash, and the load is called degraded rather than
+# claimed. Its TMP is private to the worker.
+$failLoad = Join-Path $work 'loadfail.cmd'
+@(
+    '@echo off',
+    'echo TMPIS=%TEMP%',
+    'echo error: error: OutOfMemory',
+    'exit /b 1'
+) | Set-Content -LiteralPath $failLoad -Encoding ASCII
+$r = Invoke-Soak @{
+    LaneCommand = 'cmd /c exit 0'; Runs = 1; Label = 'wfail'; LoadWorkers = 2
+    LoadCommand = "cmd /c $failLoad"; LoadWorkDir = $keepWork
+}
+Check 'failed worker builds are counted as worker-fail, not worker-crash (T1718)' `
+($r.Text -match 'SOAK wfail:.*worker-crash=0 worker-fail=[1-9]') ($r.Text -replace '\s+', ' ')
+Check 'a load with failed builds is marked load-degraded in the summary' `
+($r.Text -match 'SOAK wfail:.*load-degraded') ($r.Text -replace '\s+', ' ')
+Check 'the DEGRADED line names each failing worker and its log' `
+($r.Text -match 'load: DEGRADED' -and $r.Text -match 'w0: \d+ failed' -and $r.Text -match 'w1: \d+ failed') `
+    ($r.Text -replace '\s+', ' ')
+Check 'failed builds do not turn the measured round red' ($r.Text -match 'pass=1 fail=0 crash=0') `
+    ($r.Text -replace '\s+', ' ')
+$wfLog = @(Get-ChildItem -Path (Join-Path $keepWork 'wfail-*\w1\worker.log') -ErrorAction SilentlyContinue)
+$wfText = if ($wfLog.Count -eq 1) { (Get-Content -LiteralPath $wfLog[0].FullName -ErrorAction SilentlyContinue) -join "`n" } else { '' }
+Check 'each worker runs with a private TMP/TEMP inside its own directory' `
+($wfText -match 'TMPIS=\S*wfail-[^\\]*\\w1\\tmp') "log: $wfText"
 
 # ...and the second soak did not destroy the first soak's worker evidence.
 $wcrashLogs = @(Get-ChildItem -Path (Join-Path $keepWork 'wcrash-*\w0\worker.log') -ErrorAction SilentlyContinue)

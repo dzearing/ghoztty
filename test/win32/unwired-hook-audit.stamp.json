@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-21T12:57:17-08:00",
-    "commit":  "bc94458f3",
+    "generated":  "2026-11-21T13:16:57-08:00",
+    "commit":  "7529293f2",
     "uncommitted":  [
 
                     ],
@@ -1249,7 +1249,7 @@
                   "test/win32/crash-report.ps1":  "5154c6582e5c0f5006fca2d82311624ee46ca38dceaa8db07f4954a04634f5f6",
                   "test/win32/crash-stacks.ps1":  "d5bc3c0802b16f15d9c80804b0aa9dac36f533d542d6cad5c9daa86a42fbc5d0",
                   "test/win32/cursor-blink-redraw.ps1":  "5c7725e905ad660031583cb9a2058be442b6df96c4c7b18f24f4a0be372f4e34",
-                  "test/win32/daily-publish.ps1":  "4f3c1da3c57ee97406d56c612e897a71db089664c936b017f7f5ff36c8dba324",
+                  "test/win32/daily-publish.ps1":  "1ceef78ee9f379d007b9640afaffcf9f8a3add9df14883ca6271eb120626dced",
                   "test/win32/dark-menus.ps1":  "944b48c2b49d5d2ca8148572da1dcc70a9628871b27246187b9a3982e2a34491",
                   "test/win32/dashboard-dom.ps1":  "5c8bec2cd488707972cd1b71ae0c4e0bdbc61d2f7d7a844d8c24aa50b0cc3b62",
                   "test/win32/dashboard-keepalive.ps1":  "907915acd38d52b16755167f2df7e4383bc5d1cb53a3f8cbd84e419a559c7429",
@@ -1584,7 +1584,7 @@
                   "test/win32/target-staleness.ps1":  "f839b289d37ee78c0a57d46ae0f2278545a7337dfca72a7744b34cb6b8c929de",
                   "test/win32/task-dashboard.ps1":  "1694e9c907e1e01265c4b24a697f9ca4365967e80200760677a546c1d1df8168",
                   "test/win32/terminal-link-paths.ps1":  "6fd5a42894831216f8371205fb6ab089201ddbdfda7aace1ee4cf2b42eec67f3",
-                  "test/win32/test-binary-soak.ps1":  "96c647eb2fcbdef023f99868ab73bec7341befc23f0a14f2a9eacd4aefa64f3c",
+                  "test/win32/test-binary-soak.ps1":  "e9c98bf87a0216e367b8bdde320fc7c01253286b7f6be286914ec378bb016a16",
                   "test/win32/test-client-build.ps1":  "57d43fa496cfb634e8b4bf3a96fd6f57c9dcf860009cf6e901bcd702093ceb0f",
                   "test/win32/test-desktop-harness.ps1":  "77eba27ffdbca2b9f422df3f0e3d32b1db9b753dafdc9b00ab532cde26b862ae",
                   "test/win32/test-desktop-spike.ps1":  "cfa0cf0ad43a56a151cdb010d10d016d5734af34f3dd0e89cc415a02f0524d06",

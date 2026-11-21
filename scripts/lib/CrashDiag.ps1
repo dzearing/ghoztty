@@ -236,7 +236,9 @@ function Get-CrashOccurrenceLine {
         [string[]]$ExeNames = $script:CRASHDIAG_TEST_EXES
     )
 
-    foreach ($l in @($Lines)) {
+    $all = @($Lines)
+    for ($i = 0; $i -lt $all.Count; $i++) {
+        $l = $all[$i]
         if ($null -eq $l) { continue }
         if ($l -match '^\s*CRASH\s+\d{1,2}:\d{2}:\d{2}\s+(\S+)\s+pid=') {
             if ($ExeNames -contains $matches[1]) { return $l.Trim() }
@@ -246,10 +248,64 @@ function Get-CrashOccurrenceLine {
         # counts -- the same rule Get-TruncatedExitCodeFromLog applies.
         if ($l -match 'exited with (?:error )?code\s+(\d+)') {
             $c = [int]$matches[1]
-            if ($c -ne 0 -and @(Get-NtStatusCandidate -Code $c).Count -gt 0) { return $l.Trim() }
+            if ($c -eq 0 -or @(Get-NtStatusCandidate -Code $c).Count -eq 0) { continue }
+            # A COMPILER is not a test binary (T1718). Under memory pressure
+            # clang exits 5/66 and zig's own compile child exits 9 after
+            # `LLVM ERROR: out of memory`; all three low bytes are in the
+            # NTSTATUS table, so an out-of-memory build used to be counted as
+            # four T443 crashes by the instrument that hunts them.
+            if (Test-CompilerExitLine -Lines $all -Index $i) { continue }
+            return $l.Trim()
         }
     }
     return ''
+}
+
+function Get-CrashCandidateLines {
+    <#
+    .SYNOPSIS
+        The lines of a log Get-CrashOccurrenceLine needs to see: every
+        occurrence-shaped line, each followed by the three lines after it.
+    .DESCRIPTION
+        A lane log is thousands of test lines and only two shapes can be an
+        occurrence, so callers filter first. The three trailing lines are what
+        tells a compiler's exit from a test binary's (T1718): zig prints the
+        command that exited on the lines AFTER `exited with error code N:`, and
+        a pre-filter that kept only the matching line threw that away.
+    #>
+    param([Parameter(Mandatory)][string]$LiteralPath)
+    $out = @()
+    foreach ($m in @(Select-String -LiteralPath $LiteralPath -ErrorAction SilentlyContinue -Context 0, 3 `
+                -Pattern '^\s*CRASH\s+\d', 'exited with (?:error )?code')) {
+        $out += $m.Line
+        if ($m.Context) { $out += @($m.Context.PostContext) }
+    }
+    return $out
+}
+
+function Test-CompilerExitLine {
+    <#
+    .SYNOPSIS
+        Is the `exited with ... code N` line at $Index about the COMPILER rather
+        than a test binary? (T1718)
+    .DESCRIPTION
+        Two shapes: clang naming itself (`error: clang exited with code 5`), and
+        zig's "the following command exited with error code N:" whose command
+        -- on the next lines -- is zig.exe running a compile subcommand
+        (build-exe, build-obj, build-lib, test, translate-c, cc, c++). The
+        command is read across up to three lines joined without a separator,
+        because a PowerShell-wrapped native error log breaks it at the console
+        width, often in the middle of the zig.exe path. A test binary's own
+        command is the built `.exe`, which none of these shapes match.
+    #>
+    param([string[]]$Lines, [int]$Index)
+    $l = $Lines[$Index]
+    if ($l -match '\bclang(?:\.exe)?"?\s+exited with (?:error )?code') { return $true }
+    $next = ''
+    for ($k = $Index + 1; $k -le [math]::Min($Index + 3, $Lines.Count - 1); $k++) {
+        if ($null -ne $Lines[$k]) { $next += $Lines[$k].Trim() }
+    }
+    return ($next -match '(?i)\bzig(?:\.exe)?"?\s+(?:build-exe|build-obj|build-lib|test|translate-c|cc|c\+\+)\s')
 }
 
 function Test-LaneTestBinaryCrash {
@@ -293,8 +349,7 @@ function Test-LaneTestBinaryCrash {
     if ($LogPath -and (Test-Path -LiteralPath $LogPath)) {
         # Only the occurrence shapes can ever match, so filter before handing a
         # log of thousands of test lines to the classifier.
-        $hits = @(Select-String -LiteralPath $LogPath -ErrorAction SilentlyContinue `
-                -Pattern '^\s*CRASH\s+\d', 'exited with (?:error )?code' | ForEach-Object { $_.Line })
+        $hits = @(Get-CrashCandidateLines -LiteralPath $LogPath)
         if ($hits.Count -gt 0 -and (Get-CrashOccurrenceLine -Lines $hits -ExeNames $ExeNames)) { return $true }
     }
     return $false

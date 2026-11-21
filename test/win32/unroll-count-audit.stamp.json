@@ -1,12 +1,11 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-21T12:57:33-08:00",
-    "commit":  "bc94458f3",
+    "generated":  "2026-11-21T13:17:54-08:00",
+    "commit":  "7529293f2",
     "uncommitted":  [
-                        "scripts/go-loop-health.ps1",
-                        "scripts/go-loop-watchdog.ps1",
-                        "scripts/loop-session.ps1"
+                        "scripts/lib/CrashDiag.ps1",
+                        "scripts/test-binary-soak.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "4b958ede38c0911c4945146f0a52810ebbf8c01d44ac8a60532f2eb77f8fd0af",
@@ -33,7 +32,7 @@
                   "scripts/cpu-sample.ps1":  "83495b09a4afab4570f38760eab14c6e56d7ea6d8995401dd7ce59688bbc6d23",
                   "scripts/crash-catch.ps1":  "c8515ad0ae67ec2fc457f54a7477f5afb5fc28281906f261d631ad0a640ca4aa",
                   "scripts/crash-databreak.ps1":  "ec45063075848cb962ca00262960aec8380bd5de3f0d9f9bc9f1d25c109e3b0d",
-                  "scripts/daily-publish.ps1":  "454275dba14771956e2316cf1280ae85b972a187641df70f76bfe522ef2a9793",
+                  "scripts/daily-publish.ps1":  "cd2b62fefc1e6788539046edde27e67ee332400c458b61cdd54b7c8b77436d8b",
                   "scripts/deliver-audit.ps1":  "5598626fd46a8b8da014508f9d26c8f423cebddb4c741aec4e5fbe6d882149ce",
                   "scripts/deliver-windows-build.ps1":  "921866556dc1bd62bd8f85a3b413ff3f3557a3c70214f02d3b98004dc2851f2c",
                   "scripts/delivery-manifest.ps1":  "e1d865b58a35c5d226f2078a8e0d4e274d75fbbb5adc2f5aa2639382ae71de60",
@@ -71,7 +70,7 @@
                   "scripts/lib/CompBoxState.ps1":  "243ed647a2cd48194b0e8d7cb854b2839f07f97af3d89ef794c30007d6a0d773",
                   "scripts/lib/CompilerCrash.ps1":  "3c0fd966fdd0fbb9daac57b22868ca7260351b812f6577b3dc43d0fedb83d09c",
                   "scripts/lib/CrashCatch.ps1":  "9d9607d0fd750c0537ed48d7711902e29449d5798ff97406bf23d61f48cccf60",
-                  "scripts/lib/CrashDiag.ps1":  "fe512622eae4215c4c4755fcbfe8552b4760ab9ee6174fe4c5aa80a71a76cdf4",
+                  "scripts/lib/CrashDiag.ps1":  "dcc1adba72d7a3a3d7086ab93f857fb3aee79b7745df5cfd3f77b8451b9d5e45",
                   "scripts/lib/CrashDump.ps1":  "17d0900f709f2b500e444f9166c1c80a712cfe33ca3f54f8c59594b4efadb670",
                   "scripts/lib/DataBreak.ps1":  "a1db0f74d47f8b3fb6e1d818f33f903ffe01fc4c0059478772e3e67bbbe58fc0",
                   "scripts/lib/DigestState.ps1":  "3b0d48ec0c53dfeace8df7d1d9fd675b3541f1f9205a0af31987bdf60be00d0e",
@@ -105,7 +104,7 @@
                   "scripts/msi-test-identity.ps1":  "f4114e015c29fa884abebff8fb7e057aab52582cf89584351f7b9b0c08ecce63",
                   "scripts/parity-decisions.ps1":  "b015b8a70ced5c02206665da242777565107d12832421122bc800ce59d516e70",
                   "scripts/parity-sweep.ps1":  "2558a090ed2db1add4c101c99b74c469c6c4904ed1646f1dd4138c5bc0ca5046",
-                  "scripts/parity-tasks.ps1":  "d0b41f120f1dfd123d3698a16af802c42ed698e52a3a5eb6f0cce9cbf13c1697",
+                  "scripts/parity-tasks.ps1":  "b16da30e04e976fe35ce1e37784b81c01d5e92463d372d455069a47a149cb60a",
                   "scripts/perf-baseline.ps1":  "277d609f53699590bf906bbbd895825904bc3664e8500ed77b968fd04f6a6a52",
                   "scripts/pr-health.ps1":  "a37d7a44dda98ec8650d3c0f65015f255956c3c2e5c1f1535a767aaa7a65184a",
                   "scripts/pr-review.ps1":  "8c817f2422323eb57ba9a7bb52a9fc72fd2a731fa4388f2f3d8116985003078c",
@@ -123,7 +122,7 @@
                   "scripts/t470-ring-measure.ps1":  "427dc0cada150aadb214a007e32238f1d75d3751ad40a02260b325157672f143",
                   "scripts/t857-boost-ab.ps1":  "a0f1bd35f21fb689f306a5a100e9cccf37b0087bbcc29e98fce0dfc1b6638071",
                   "scripts/task-dashboard.ps1":  "6aee526699c987901ed71e8d493e376ad26a1abf98956a41546644c94ccb10d6",
-                  "scripts/test-binary-soak.ps1":  "c838c5077d2b82c98952a1903f0d73d12bf0830432dc65aaceba45124832d3f4",
+                  "scripts/test-binary-soak.ps1":  "33f993218dc93cb72fdc0233fb00a85daf2062e48e527ae6d0999cc7640f309b",
                   "scripts/upgrade-ghoztty-windows.ps1":  "83fc5645440aeb390dc05c1cb432420dcd136a1833af441aa0cbb2ad2fe6c40c",
                   "scripts/upstream-remote.ps1":  "1eaafbe08c8b98e9520b96cbba2db8799879864d2a5163f0e64277636793cfbc",
                   "scripts/upstream-stage.ps1":  "a51dc2a35a5f4e1dcec4f5e7e16b2b895ec39af1b6a25bea056c780dba6aa81f",

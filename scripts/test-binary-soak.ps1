@@ -108,6 +108,18 @@
     Both write one line per completed iteration, and the count lands in the
     summary: a load claim nobody measured is exactly what T832 had to unwind.
 
+.PARAMETER LoadJobs
+    `-LoadKind build` only: the `-j<N>` each worker's zig build gets. 0 (the
+    default) divides the box's logical processors by the workers plus one (the
+    lane being measured), at least 1.
+
+    Without a cap every worker defaults to one job per processor, so eight
+    workers on a 32-core box asked for 256 concurrent compiles and ran the box
+    out of memory: on 2026-09-24 all eight failed their first build inside a
+    minute and a half (`OutOfMemory`, `LLVM ERROR: out of memory`, clang exit
+    45/5/66), and the 'loaded' soak ran on failed builds rather than compiles
+    (T1718). Each worker also gets a private TMP/TEMP under its own directory.
+
 .PARAMETER LoadCommand
     The command line a `command`-kind worker loops. Giving it implies
     -LoadKind command.
@@ -153,6 +165,11 @@
     text. `worker-crash=N` is the same question asked of the load workers'
     logs, which each run a real lane and so can crash in the same way; it is
     reported separately because `crash-rate` is per measured ROUND.
+    `worker-fail=N` counts worker iterations that exited non-zero WITHOUT
+    crashing -- a failed build or a red test -- and any of them adds
+    `load-degraded`, because a load whose builds fail a minute in is not the
+    load the label claims (T1718). A compiler's own exit code (clang, or zig's
+    compile child after an out-of-memory) is never a crash.
     When more than one binary was soaked (-Lane agent standalone), a per-binary
     line follows the summary attributing pass/fail/crash to each exe, and each
     per-run log name carries the exe basename so the two binaries' logs cannot
@@ -186,6 +203,7 @@ param(
     [ValidateRange(1, 64)][int]$Concurrency = 1,
     [ValidateRange(0, 64)][int]$LoadWorkers = 0,
     [ValidateSet('cpu', 'build', 'command')][string]$LoadKind = 'cpu',
+    [ValidateRange(0, 256)][int]$LoadJobs = 0,
     [string]$LoadCommand = '',
     [string]$LoadWorkDir = '',
     [switch]$LoadDryRun,
@@ -552,7 +570,12 @@ function Get-SoakLoadWorkerSpec {
             $q = Split-Path -Qualifier $Repo -ErrorAction SilentlyContinue
             if ($q) { Join-Path ($q + '\') 'zig-global-cache' } else { '' }
         }
-        $cmd = 'zig build test -Dapp-runtime=none' +
+        # Bounded concurrency (T1718): see -LoadJobs.
+        $jobs = $LoadJobs
+        if ($jobs -le 0) {
+            $jobs = [math]::Max(1, [math]::Floor([Environment]::ProcessorCount / ([math]::Max(1, $LoadWorkers) + 1)))
+        }
+        $cmd = 'zig build test -Dapp-runtime=none -j' + $jobs +
         ' --cache-dir "' + $cache + '"'
         if ($glob) { $cmd += ' --global-cache-dir "' + $glob + '"' }
         $cmd += ' --prefix "' + (Join-Path $dir 'zig-out') + '"'
@@ -562,6 +585,10 @@ function Get-SoakLoadWorkerSpec {
         Index = $Index; Dir = $dir; Command = $cmd; WipeCache = $cache
         Script = (Join-Path $dir 'worker.ps1'); Log = (Join-Path $dir 'worker.log')
         Iter = (Join-Path $dir 'iterations.txt')
+        # A private TMP/TEMP per worker (T1718): eight compilers sharing one
+        # temp directory is a contention nobody measured, and clang/zig
+        # scratch files must not collide across workers.
+        Tmp = (Join-Path $dir 'tmp')
     }
 }
 
@@ -584,6 +611,9 @@ function Start-SoakCommandWorkers {
             ('$cmd = ''' + ($spec.Command -replace "'", "''") + ''''),
             ('$log = ''' + $spec.Log + ''''),
             ('$iter = ''' + $spec.Iter + ''''),
+            ('$tmp = ''' + $spec.Tmp + ''''),
+            '$null = New-Item -ItemType Directory -Force -Path $tmp',
+            '$env:TMP = $tmp; $env:TEMP = $tmp',
             ('Set-Location -LiteralPath ''' + $Repo + ''''),
             # T1500: the wiped cache holds fetched zig packages, which can carry
             # a '._.' file that defeats Remove-Item (T1499).
@@ -629,15 +659,30 @@ function Get-SoakLoadIterations {
     param([string]$WorkDir, [int]$Count)
     $started = 0
     $done = 0
+    $failed = 0
+    $failedBy = @{}
     for ($w = 0; $w -lt $Count; $w++) {
         $f = Join-Path (Join-Path $WorkDir ("w{0}" -f $w)) 'iterations.txt'
         if (-not (Test-Path -LiteralPath $f)) { continue }
         foreach ($line in @(Get-Content -LiteralPath $f -ErrorAction SilentlyContinue)) {
             if ($line -match '\bstart$') { $started++ }
-            elseif ($line -match '\bexit=') { $done++ }
+            elseif ($line -match '\bexit=(-?\d+)') {
+                $done++
+                # A non-zero iteration is a FAILED build/test, which is not
+                # the same thing as a crash (T1718): the crash question is
+                # Get-SoakWorkerCrash's, and an out-of-memory compile that
+                # exits 1 a minute in is not load in the shape asked for.
+                if ([int]$matches[1] -ne 0) {
+                    $failed++
+                    $failedBy[$w] = 1 + [int]$failedBy[$w]
+                }
+            }
         }
     }
-    return [pscustomobject]@{ Started = $started; Completed = $done }
+    return [pscustomobject]@{
+        Started = $started; Completed = $done; Failed = $failed
+        FailedBy = $failedBy
+    }
 }
 
 # Worker iterations that DIED, by the same definition a measured round uses.
@@ -660,10 +705,7 @@ function Get-SoakWorkerCrash {
         # The decoded shapes first (a CRASH block line, or an exit code whose
         # low byte is a fatal NTSTATUS), then the handler signatures -- a worker
         # log has no floor-lane wrapper, so both halves have to be asked for.
-        $line = Get-CrashOccurrenceLine -Lines @(
-            Select-String -LiteralPath $log -ErrorAction SilentlyContinue `
-                -Pattern '^\s*CRASH\s+\d', 'exited with (?:error )?code' |
-                ForEach-Object { $_.Line })
+        $line = Get-CrashOccurrenceLine -Lines @(Get-CrashCandidateLines -LiteralPath $log)
         if (-not $line) {
             foreach ($pat in $Patterns) {
                 $h = @(Select-String -LiteralPath $log -Pattern $pat -List -ErrorAction SilentlyContinue)
@@ -756,6 +798,8 @@ if ($mode -eq 'build-runner') {
     $loadDeadline = [math]::Min(14400, ($Runs * $roundTimeout) + 600)
     $workerHits = @()
     $workerCrashes = 0
+    $workerFails = 0
+    $failedSlots = @()
 
     # THIS soak's workers get THIS soak's directory. The slots used to be
     # `<LoadWorkDir>\w0..wN` flat, reused by every soak and cleared at startup,
@@ -897,10 +941,7 @@ if ($mode -eq 'build-runner') {
             # Select-String first: a lane log is thousands of test lines, and
             # only these two shapes can ever be an occurrence. Matches come back
             # in file order, so the first hit is still the first hit.
-            $diagHit = Get-CrashOccurrenceLine -Lines @(
-                Select-String -LiteralPath $laneLog -ErrorAction SilentlyContinue `
-                    -Pattern '^\s*CRASH\s+\d', 'exited with (?:error )?code' |
-                    ForEach-Object { $_.Line })
+            $diagHit = Get-CrashOccurrenceLine -Lines @(Get-CrashCandidateLines -LiteralPath $laneLog)
         }
 
         $verdict = 'PASS'
@@ -972,6 +1013,14 @@ if ($mode -eq 'build-runner') {
             $workerHits = @(Get-SoakWorkerCrash -WorkDir $loadRunDir -Count $LoadWorkers `
                     -Patterns $laneCrashPatterns)
             $workerCrashes = $workerHits.Count
+            # Failed iterations of workers that did NOT crash: a build that
+            # failed is a load that was not applied in the shape asked for,
+            # and it is not T443 evidence either way (T1718).
+            $crashedSlots = @($workerHits | ForEach-Object { $_.Index })
+            foreach ($k in @($it.FailedBy.Keys)) {
+                if ($crashedSlots -notcontains $k) { $workerFails += [int]$it.FailedBy[$k] }
+            }
+            $failedSlots = @($it.FailedBy.Keys | Where-Object { $crashedSlots -notcontains $_ } | Sort-Object)
         }
         Write-Host ''
         $loadLine = "  load: $LoadWorkers worker(s) requested, $loadAliveEnd still running at the end"
@@ -1001,13 +1050,25 @@ if ($mode -eq 'build-runner') {
                 Write-Host "        w$($h.Index): $($h.Line)"
                 Write-Host "             $($h.Log)"
             }
+            # A worker whose build FAILED is reported apart from a crash, and
+            # the load is called DEGRADED: eight workers failing their first
+            # build inside a minute is a box running out of memory, not a box
+            # carrying eight compiles (T1718).
+            Write-Host "  load: worker-fail=$workerFails (failed build/test iterations, not crashes)"
+            if ($workerFails -gt 0) {
+                Write-Host ("  load: DEGRADED -- $workerFails worker iteration(s) failed in $($failedSlots.Count) of " +
+                    "$LoadWorkers worker(s); the soak ran partly on failed builds rather than compiles.")
+                foreach ($s in $failedSlots) {
+                    Write-Host "        w${s}: $($it.FailedBy[$s]) failed -- $(Join-Path (Join-Path $loadRunDir ('w' + $s)) 'worker.log')"
+                }
+            }
         }
         # The private build caches are multi-gigabyte and belong to nobody; the
         # logs and iteration files stay, because they are the evidence.
         if ($LoadKind -eq 'build') {
             for ($w = 0; $w -lt $LoadWorkers; $w++) {
                 $spec = Get-SoakLoadWorkerSpec -Kind $LoadKind -Index $w -WorkDir $loadRunDir -Repo $Repo -Command $LoadCommand
-                foreach ($d in @($spec.WipeCache, (Join-Path $spec.Dir 'zig-out'))) {
+                foreach ($d in @($spec.WipeCache, (Join-Path $spec.Dir 'zig-out'), $spec.Tmp)) {
                     if (Test-Path -LiteralPath $d) {
                         # T1500: a zig cache holds fetched packages (the
                         # T1499 '._.' shape) - hard delete.
@@ -1044,7 +1105,8 @@ if ($mode -eq 'build-runner') {
         # which is the whole T877 complaint one level down. It is a separate
         # number rather than folded into crash=, because crash-rate is per
         # measured ROUND and a worker crash is not one of those.
-        $summary += " worker-crash=$workerCrashes"
+        $summary += " worker-crash=$workerCrashes worker-fail=$workerFails"
+        if ($workerFails -gt 0) { $summary += ' load-degraded' }
     }
 }
 Write-Host $summary
