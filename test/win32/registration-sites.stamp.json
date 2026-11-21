@@ -1,8 +1,8 @@
 {
     "guard":  "registration-sites",
     "script":  "test/win32/registration-sites.ps1",
-    "generated":  "2026-11-21T07:54:17-08:00",
-    "commit":  "3a7973989",
+    "generated":  "2026-11-21T08:15:46-08:00",
+    "commit":  "09ebaa14a",
     "uncommitted":  [
 
                     ],

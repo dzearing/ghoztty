@@ -1,8 +1,8 @@
 {
     "guard":  "persistence-restore",
     "script":  "test/win32/persistence-restore.ps1",
-    "generated":  "2026-11-21T07:40:33-08:00",
-    "commit":  "3a7973989",
+    "generated":  "2026-11-21T08:01:53-08:00",
+    "commit":  "09ebaa14a",
     "uncommitted":  [
 
                     ],
@@ -15,6 +15,6 @@
               },
     "code":  {
                  "test/win32/lib/PaneLiveness.ps1":  "code1:12ca560b01084eab4cad0c12de50b1a712268b9ca702325f80f1c75deec27c1a",
-                 "test/win32/persistence-restore.ps1":  "code1:1279df997b18bf2f5da6d9708c6ae4d200129f5e5da6b2bcc2ee37dc5951c1f0"
+                 "test/win32/persistence-restore.ps1":  "code1:eaba3081cbcefb0563f3c92a755c3e66c2be96cf4c91904617a129447aa9478b"
              }
 }

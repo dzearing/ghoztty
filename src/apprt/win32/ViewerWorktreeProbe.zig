@@ -19,10 +19,12 @@
 //! process. Which is why `kick` plans rather than resolves: `viewer_worktree`'s
 //! `plan` settles legs 1 and 3 here (string work) and hands the port to `work`.
 //!
-//! One worker at a time. A request arriving while one is in flight sets
-//! `dirty` and is re-issued from the completion rather than racing a second
-//! spawn — a pane can move three times in a second (a link, a redirect, a
-//! back), and each move must not cost its own process.
+//! One worker at a time. A request arriving while one is in flight for a
+//! DIFFERENT question sets `dirty` and is re-issued from the completion rather
+//! than racing a second spawn — a pane can move three times in a second (a
+//! link, a redirect, a back), and each move must not cost its own process. A
+//! request for the SAME question (the loopback poll's tick) is dropped, since
+//! the worker out is already answering it (T1655, `disposition`).
 const Probe = @This();
 
 const std = @import("std");
@@ -134,6 +136,10 @@ want_origin: ?[]u8 = null,
 thread: ?worker_pool.Thread = null,
 job: ?*Job = null,
 dirty: bool = false,
+
+/// Requests dropped because the worker in flight was already answering the
+/// same question (T1655). Diagnostics; the tests assert on it.
+dropped: u64 = 0,
 
 /// The directory the last completed resolution asked git about, the root it
 /// answered, and when. Owned. This is the memo `dir_memo_ttl_ms` describes; it
@@ -266,12 +272,58 @@ fn remember(self: *Probe, slot: *?[]u8, value: []const u8) void {
     slot.* = dup;
 }
 
+/// What a request that arrives while a worker may be out should do (T1655).
+pub const Disposition = enum {
+    /// No worker is out: run it now.
+    start,
+    /// Re-issue it the moment the current worker lands.
+    queue,
+    /// Throw it away; the worker already out is answering this very question.
+    drop,
+};
+
+/// The rule, as a pure function so it can be asserted without a window, a
+/// thread or git: a request on a busy probe re-issues only when its QUESTION
+/// moved - the pane navigated somewhere the worker in flight is not answering.
+///
+/// The same question again is dropped. That is the loopback poll's tick (it
+/// re-asks for an unchanged location by construction), and queueing it is the
+/// shape T1654 found in the diff probe: a tick remembered while a worker is out
+/// is re-issued the instant that worker lands, so on a lookup slower than the
+/// interval the two chain end to end and the probe is never idle. A dropped
+/// tick costs nothing, since the worker already out is fetching its answer.
+pub fn disposition(busy_now: bool, question_moved: bool) Disposition {
+    if (!busy_now) return .start;
+    return if (question_moved) .queue else .drop;
+}
+
+/// Whether `want_*` asks something other than the worker in flight is
+/// answering. GUI thread only; `job` is the requester's until `complete`.
+fn questionMoved(self: *const Probe) bool {
+    const job = self.job orelse return true;
+    var key_buf: [path_cap * 2]u8 = undefined;
+    const key = worktree.Cache.key(&key_buf, self.want_location orelse "", self.want_origin) orelse
+        return true;
+    return !std.mem.eql(u8, key, job.key);
+}
+
 /// Start (or defer) a resolution for whatever `want_*` currently says.
 fn kick(self: *Probe) Outcome {
-    // A worker is already out. It will re-read `want_*` when it lands.
-    if (self.thread != null) {
-        self.dirty = true;
-        return .pending;
+    switch (disposition(self.thread != null, self.questionMoved())) {
+        .start => {},
+        // A worker is out on a different question. It re-reads `want_*` when
+        // it lands.
+        .queue => {
+            self.dirty = true;
+            return .pending;
+        },
+        // A worker is out on this exact question; its completion is the
+        // answer. Any `dirty` an earlier, different ask left stays set: the
+        // completion's re-kick then finds this question in the cache.
+        .drop => {
+            self.dropped += 1;
+            return .pending;
+        },
     }
 
     const location = self.want_location orelse "";
@@ -723,6 +775,53 @@ test "a git init inside a memoized directory is not hidden by the memo" {
     try testing.expectEqual(Outcome.pending, p.refresh(b, null));
     _ = p.complete();
     try testing.expect(std.ascii.eqlIgnoreCase(p.worktreePath().?, dir_path));
+}
+
+test "a request on a busy probe re-issues only when its question moved (T1655)" {
+    // All four cases. An idle probe runs either kind straight away.
+    try testing.expectEqual(Disposition.start, disposition(false, true));
+    try testing.expectEqual(Disposition.start, disposition(false, false));
+    // A navigation while a worker is out: the pane is somewhere the worker is
+    // not answering, so it must be asked again when that worker lands.
+    try testing.expectEqual(Disposition.queue, disposition(true, true));
+    // The line under test: the poll's tick, landing on a worker that is
+    // already answering the same question. With `.queue` here a lookup slower
+    // than the interval chains end to end and the probe is never idle.
+    try testing.expectEqual(Disposition.drop, disposition(true, false));
+}
+
+test "a tick for the question in flight is dropped; a move while busy still re-issues (T1655)" {
+    var p = Probe.init(testing.allocator);
+    defer p.deinit();
+
+    if (!worktree.realDirExists("D:\\git\\ghoztty")) return error.SkipZigTest;
+    const a = "D:\\git\\ghoztty\\src\\apprt\\win32\\ViewerWorktreeProbe.zig";
+    const b = "D:\\git\\ghoztty\\src\\apprt\\win32\\ViewerPane.zig";
+
+    // A worker goes out for `a`. `thread` stays set until `complete` joins it,
+    // so everything below lands on a busy probe however fast git is.
+    try testing.expectEqual(Outcome.pending, p.refresh(a, null));
+    try testing.expect(p.thread != null);
+
+    // The same question again - what the loopback poll's tick is. Dropped:
+    // nothing is remembered to re-issue.
+    try testing.expectEqual(Outcome.pending, p.refresh(a, null));
+    try testing.expect(!p.dirty);
+    try testing.expectEqual(@as(u64, 1), p.dropped);
+
+    // The pane moves while the worker is out. That is a new question, and it
+    // must still be asked when the worker lands.
+    try testing.expectEqual(Outcome.pending, p.refresh(b, null));
+    try testing.expect(p.dirty);
+    try testing.expectEqual(@as(u64, 1), p.dropped);
+
+    // The completion re-kicks for `b` (not cached), so a second worker is out.
+    _ = p.complete();
+    try testing.expect(!p.dirty);
+    try testing.expect(p.thread != null);
+    _ = p.complete();
+    try testing.expect(p.thread == null);
+    try testing.expect(p.worktreePath() != null);
 }
 
 /// `git init` a throwaway repository at `dir`, answering whether git now

@@ -1,8 +1,8 @@
 {
     "guard":  "goto-window",
     "script":  "test/win32/goto-window.ps1",
-    "generated":  "2026-11-21T07:41:03-08:00",
-    "commit":  "3a7973989",
+    "generated":  "2026-11-21T08:02:22-08:00",
+    "commit":  "09ebaa14a",
     "uncommitted":  [
 
                     ],

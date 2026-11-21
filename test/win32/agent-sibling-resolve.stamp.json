@@ -1,8 +1,8 @@
 {
     "guard":  "agent-sibling-resolve",
     "script":  "test/win32/agent-sibling-resolve.ps1",
-    "generated":  "2026-11-21T07:38:05-08:00",
-    "commit":  "3a7973989",
+    "generated":  "2026-11-21T07:57:09-08:00",
+    "commit":  "09ebaa14a",
     "uncommitted":  [
 
                     ],

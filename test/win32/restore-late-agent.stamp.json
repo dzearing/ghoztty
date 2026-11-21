@@ -1,8 +1,8 @@
 {
     "guard":  "restore-late-agent",
     "script":  "test/win32/restore-late-agent.ps1",
-    "generated":  "2026-11-21T07:38:49-08:00",
-    "commit":  "3a7973989",
+    "generated":  "2026-11-21T08:00:12-08:00",
+    "commit":  "09ebaa14a",
     "uncommitted":  [
 
                     ],
