@@ -9828,6 +9828,29 @@ pub fn performAction(
         },
 
         .config_change => {
+            // Only the APP-scoped notification is app-wide work (T1590). The
+            // core's `App.updateConfig` sends one `config_change` per surface
+            // and then one for the app, and this arm used to run the whole
+            // per-window rebuild (chrome theme, blur, dim overlays, divider
+            // bands, two HFONTs recreated, tab bar) for every one of them: a
+            // six-pane window rebuilt its chrome seven times per reload. The
+            // surface's core has already taken its own derived config by the
+            // time it notifies, and everything below reads the APP config,
+            // which the app-scoped call that ends every hard reload delivers.
+            //
+            // It was also wrong, not just slow: a surface-only soft reload
+            // (one surface's conditional color-scheme state flipped) carries
+            // THAT surface's derived config, and cloning it into `self.config`
+            // made one pane's conditional theme the app's config - the one new
+            // windows and the chrome are built from. Mac's `configChange`
+            // makes the same split: a surface target updates that surface
+            // only.
+            switch (target) {
+                .surface => return true,
+                .app => {},
+            }
+            log.debug("config_change applied app-wide windows={d}", .{self.windows.items.len});
+
             // Update our stored config with the new one.
             if (value.config.clone(self.core_app.alloc)) |new_config| {
                 self.config.deinit();

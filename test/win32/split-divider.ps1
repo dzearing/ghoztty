@@ -483,6 +483,16 @@ if ($debugLogging) {
         Assert ($any -eq 0) `
             "red->cyan: the reload left NO client area dirty behind it (any=$any rect=$rect)"
     }
+
+    # T1590: and it did that work ONCE. The core sends one config_change per
+    # surface plus one for the app; the window rebuild used to run for every
+    # one of them, so this two-pane window logged the update-region line three
+    # times for one chord. One window, one app-scoped pass, one line. The band
+    # count above is the control here too: the reload demonstrably ran.
+    $passes = @(Select-String -Path $errlog -Pattern 'config_change applied app-wide' `
+            -ErrorAction SilentlyContinue).Count
+    Assert ($updLog.Count -eq 1 -and $passes -eq 1) `
+        "red->cyan: one reload rebuilt the window once (update-region lines=$($updLog.Count), app-wide passes=$passes, panes=2)"
 } else {
     Write-Host 'OK    log oracle degraded: no debug log (release build), pixel half only'
 }
