@@ -4841,6 +4841,8 @@ $GuardTable = @(
             'scripts\parity-tasks.ps1',
             # T1474: `next`'s ROT: lines and `rot-scan` (section W).
             'scripts\lib\CardRot.ps1',
+            # T1560: `next`'s VERIFY: line and stale-scan's verify pass (section Y).
+            'scripts\lib\TaskVerify.ps1',
             'test\win32\parity-tasks-seat.ps1'
         )
     },

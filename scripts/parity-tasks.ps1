@@ -68,6 +68,17 @@
   written; `rot-scan` sweeps the queue for the daily triage. Reports, never
   gates (scripts\lib\CardRot.ps1).
 
+  AND DOES ITS OWN CHECK ALREADY PASS? (T1560). The two signals above cannot
+  see a sibling task that fixed the same defect without naming it: T719's whole
+  Summary was one sweep whose clean run IS done, T744 fixed it two days later,
+  and it sat open 34 days because nothing ever ran the sweep. A card may now
+  carry `verify: "<command>"` - one read-only, fast PowerShell command line,
+  run from the repo root, exit 0 = satisfied. `next` runs it for the card it
+  hands out and says ALREADY SATISFIED on a pass; `stale-scan` runs every open
+  card's and leads with the passes. The one verdict among these prompts, and
+  still never a gate: a timeout (-VerifyTimeout, 60s) or an error is reported,
+  and the pick goes on (scripts\lib\TaskVerify.ps1).
+
   TWO LANES, ONE QUEUE (T1981). A second loop LANE runs in its own worktree,
   and both used to decide from their own copy of the task files - so both
   claimed the head of the queue and both minted the same next id. The facts
@@ -86,6 +97,7 @@
   scripts\parity-tasks.ps1 show T144
   scripts\parity-tasks.ps1 new -Title "Fix the thing" -Deps T73,T94 -Tags fix,polish
   scripts\parity-tasks.ps1 new -Title "The installer dies" -UserReport -Tags fix
+  scripts\parity-tasks.ps1 new -Title "No pane still writes X" -Verify "if (git grep -q 'X') { exit 1 }"   # T1560
   scripts\parity-tasks.ps1 set-priority T144 -Priority P0 -UserReport
   scripts\parity-tasks.ps1 note T144 -Text "caption_layout re-pinned; next: slab fills"
   scripts\parity-tasks.ps1 set-order T377 -Order 2
@@ -246,7 +258,17 @@ param(
     # `rot-scan -At <rev>` (T1474) reads every card, and the code it quotes, as
     # they stood at that revision: "what would this have said the day T676
     # swept?" is how the check is proved against the cards it was built from.
-    [string]$At
+    [string]$At,
+
+    # T1560. A card's `verify:` check - one read-only command whose exit 0
+    # means the card is already satisfied - is run by `next` for the card it
+    # hands out and by `stale-scan` for every open card. The timeout is what
+    # holds a check to "fast"; `-NoVerify` asks the question without running
+    # anything (a fixture run, a box where the checks cannot run).
+    [int]$VerifyTimeout = 60,
+    [switch]$NoVerify,
+    # `new -Verify "<command>"` writes the card's `verify:` line at filing.
+    [string]$Verify
 )
 
 $ErrorActionPreference = 'Stop'
@@ -274,6 +296,8 @@ $LedgerOn = [bool](Get-LedgerPath) -and -not ($TaskDirGiven -and -not $env:GHOZT
 . (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
 # Card rot (T1474): quoted line refs and counts re-checked against the code.
 . (Join-Path $PSScriptRoot 'lib\CardRot.ps1')
+# A card's own `verify:` check (T1560).
+. (Join-Path $PSScriptRoot 'lib\TaskVerify.ps1')
 $script:ThisLaneId = $null
 function Get-ThisLaneId {
     if (-not $script:ThisLaneId) { $script:ThisLaneId = Get-LoopLaneId -Repo $RepoRoot }
@@ -412,6 +436,11 @@ function ConvertFrom-Frontmatter {
         # malformed one, so a typo can never quietly park a task forever.
         RequeueAfterRaw  = & $unquote (& $get 'requeue-after')
         RequeueClosedRaw = (& $get 'requeue-when-closed')
+        # T1560. The card's own definition of done as ONE runnable read-only
+        # command (exit 0 = already satisfied). HasVerify is kept so `validate`
+        # can tell "absent" from "present and empty".
+        Verify       = & $unquote (& $get 'verify')
+        HasVerify    = [bool]($fm -match '(?m)^verify:')
         Path         = $Path
     }
 }
@@ -1680,6 +1709,21 @@ switch ($Command) {
                         Write-Host "      CHECK SCOPE: the card's quoted evidence has moved - re-measure before you plan the size of the job."
                     }
                 }
+                # "Does the card's OWN check already pass?" (T1560). Asked of
+                # every card that carries one, stale or not: T719's fix landed
+                # in a sibling task that never named it, so neither signal
+                # above could see it. Never allowed to stop a pick.
+                if ($t.Verify -and -not $NoVerify) {
+                    $vRoot = Get-RepoRootFor $TaskDir
+                    if (-not $vRoot) { $vRoot = $RepoRoot }
+                    $v = Invoke-TaskVerify -Command $t.Verify -Root $vRoot -TimeoutSeconds $VerifyTimeout
+                    Write-Host ("      VERIFY: {0} - {1}" -f (Format-TaskVerify -Result $v -TimeoutSeconds $VerifyTimeout), $t.Verify)
+                    if ($v.Outcome -eq 'pass') {
+                        Write-Host "      ALREADY SATISFIED: this card's own check is green - close it as already fixed, with the commit that fixed it."
+                    } elseif ($v.Tail.Count -gt 0) {
+                        foreach ($l in $v.Tail) { Write-Host ("        | {0}" -f $l) }
+                    }
+                }
                 if ($Claim) {
                     $claimText = [System.IO.File]::ReadAllText($t.Path, [System.Text.Encoding]::UTF8)
                     $claimed = [regex]::Replace($claimText, '(?m)^status:\s*.*$', 'status: "in-progress"', 1)
@@ -2140,6 +2184,11 @@ switch ($Command) {
                 # "not a user report", and stamping `user-report: false` into
                 # every task file would make the one that matters harder to see.
                 if ($UserReport) { $lines += 'user-report: true' }
+                # T1560: a card whose done is one runnable command says so at
+                # filing, so it can prove itself fixed the first time asked.
+                # PS 5.1 writes ' as ' - valid JSON, unreadable on a card,
+                # and a grep check is mostly single quotes.
+                if ($Verify) { $lines += ("verify: " + ((ConvertTo-Json $Verify -Compress) -replace '\\u0027', "'")) }
                 $lines += @(
                     '---'
                     ''
@@ -2590,6 +2639,35 @@ switch ($Command) {
                 $todos.Count, $wantSeat, $named, $cited, $ranked.Count)
         Write-Host "Each line is a PROMPT TO VERIFY, not a verdict - the defect may still be entirely open."
         Write-Host ""
+
+        # The one signal here that IS a verdict (T1560): a card whose own
+        # `verify:` check now exits 0 is satisfied, whoever fixed it. Named-by
+        # and touched-by cannot see a sibling task that fixed the same defect
+        # without citing it - T719 sat 34 days that way - so these run first
+        # and the passes lead the report.
+        $withVerify = @($todos | Where-Object { $_.Verify })
+        if ($withVerify.Count -gt 0) {
+            if ($NoVerify) {
+                Write-Host ("VERIFY: {0} open todo(s) carry their own check; not run (-NoVerify)." -f $withVerify.Count)
+            } else {
+                $vRows = @()
+                foreach ($t in $withVerify) {
+                    $vRows += [pscustomobject]@{ Task = $t; Result = (Invoke-TaskVerify -Command $t.Verify -Root $root -TimeoutSeconds $VerifyTimeout) }
+                }
+                $vPass = @($vRows | Where-Object { $_.Result.Outcome -eq 'pass' })
+                Write-Host ("VERIFY: {0} open todo(s) carry their own check; {1} already pass." -f $vRows.Count, $vPass.Count)
+                foreach ($v in @($vPass) + @($vRows | Where-Object { $_.Result.Outcome -ne 'pass' })) {
+                    $tag = if ($v.Result.Outcome -eq 'pass') { 'ALREADY SATISFIED:' } else { 'open:' }
+                    Write-Host ("{0,-7} {1,-18} {2}" -f $v.Task.Id, $tag, $v.Task.Title)
+                    Write-Host ("     {0} - {1}" -f (Format-TaskVerify -Result $v.Result -TimeoutSeconds $VerifyTimeout), $v.Task.Verify)
+                }
+                if ($vPass.Count -gt 0) {
+                    Write-Host "Close each ALREADY SATISFIED card as already fixed, with the commit that actually fixed it."
+                }
+            }
+            Write-Host ""
+        }
+
         foreach ($r in ($ranked | Select-Object -First $Top)) {
             $age = if ($r.Filed) { [int][math]::Floor(($now - $r.Filed).TotalDays) } else { 0 }
             $pri = if ($r.Task.Priority) { $r.Task.Priority } else { '--' }
@@ -2673,6 +2751,13 @@ switch ($Command) {
             # is exactly the silent stall this field exists to end.
             if ($ValidSeats -notcontains $t.Seat) {
                 Write-Host ("ODD SEAT: {0} = '{1}' (want one of: {2})" -f $t.Id, $t.Seat, ($ValidSeats -join ', ')); $problems++
+            }
+            # T1560: a `verify:` line with no command is a card that LOOKS
+            # self-checking and is never checked. Validate does not RUN it -
+            # that is next's and stale-scan's job, and a pre-commit gate must
+            # not depend on the state of whatever the check reads.
+            if ($t.HasVerify -and [string]::IsNullOrWhiteSpace($t.Verify)) {
+                Write-Host ("BAD VERIFY: {0} has a verify: line with no command (want a quoted one-line PowerShell command whose exit 0 means the card is satisfied)" -f $t.Id); $problems++
             }
             # T3073: a malformed re-queue trigger would park its task forever
             # without a word, and an id that does not exist can never close.

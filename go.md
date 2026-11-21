@@ -291,6 +291,13 @@ Concretely, in order, with no stops in between:
      something else already fixed in passing. Verify before closing; the report
      is a prompt, not a verdict. Anything closed this way names the commit that
      actually fixed it and lands the validation the card was owed.
+     The same report opens with a `VERIFY:` block (T1560): every open card
+     carrying its own `verify:` check is run, and an `ALREADY SATISFIED:` row
+     is the one verdict in it - that card's definition of done passes now,
+     whoever fixed it. Close those first, with the commit that fixed them.
+     And when a card you file or triage is done the moment ONE fast read-only
+     command comes back clean, give it that command
+     (`new -Verify "<command>"`, or a `verify:` line), so it can prove itself.
    - **Rotted-evidence sweep** (T1474): run
      `scripts\parity-tasks.ps1 rot-scan` — open cards whose quoted `path:line`
      moved or changed since they quoted it, or whose count ("the only

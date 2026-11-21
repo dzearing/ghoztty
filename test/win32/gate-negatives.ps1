@@ -276,6 +276,9 @@ $Registry = @(
     # T3073. A malformed re-queue trigger parks its task forever without a word.
     [pscustomobject]@{ Label = 'BAD REQUEUE-AFTER'; Kind = 'gate'; Demo = $Seat; Marker = 'BAD REQUEUE-AFTER' }
     [pscustomobject]@{ Label = 'BAD REQUEUE-WHEN-CLOSED'; Kind = 'gate'; Demo = $Seat; Marker = 'BAD REQUEUE-WHEN-CLOSED' }
+    # T1560. A `verify:` line with no command looks self-checking and is never
+    # checked. Section Y6 of the seat harness drives it red.
+    [pscustomobject]@{ Label = 'BAD VERIFY'; Kind = 'gate'; Demo = $Seat; Marker = 'BAD VERIFY' }
     # T1231. A control character inside a tracked text file: invisible to a
     # reader, and a path that cannot exist to a script. validate emits the
     # headline itself rather than only relaying the scanner's, so this row is a
@@ -356,6 +359,11 @@ $Registry = @(
     # T3073: `next` re-queues a parked task whose own date / closed-count
     # trigger fired. Hands work out, refuses none.
     [pscustomobject]@{ Label = 'REQUEUED'; Kind = 'status' }
+    # T1560: a card's own verify: check, run by `next` and `stale-scan`. A
+    # report - the one verdict among the staleness prompts - and never a gate:
+    # the pick goes on whatever it says (Y2c of the seat harness).
+    [pscustomobject]@{ Label = 'VERIFY'; Kind = 'status' }
+    [pscustomobject]@{ Label = 'ALREADY SATISFIED'; Kind = 'status' }
     [pscustomobject]@{ Label = 'TODO'; Kind = 'status' }
 )
 

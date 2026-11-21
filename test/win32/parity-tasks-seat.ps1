@@ -113,6 +113,12 @@
 #      itself fires; `requeue-when-closed` fires at exactly N done and not at
 #      N-1 (a skipped task does not count); `validate` names a bad date, an
 #      unknown id, an unreachable count and a non-JSON value.
+#   Y. A card's own `verify:` check (T1560), in a throwaway repo: `next` runs
+#      the picked card's check - red while the defect stands, PASS + ALREADY
+#      SATISFIED once an unrelated change removes it, the pick going on either
+#      way; `stale-scan` runs every open card's (not a done one's), leads with
+#      the passes, kills an overrun as TIMEOUT and reads an erroring check red;
+#      `-NoVerify` runs nothing; `validate` names an empty verify line.
 #
 # Hermetic: sections A-H run against a fixture task dir under $env:TEMP via
 # `-TaskDir`; docs\design\windows-parity-tasks\ is only ever READ (section I).
@@ -1527,6 +1533,85 @@ Assert 'X7c an unknown id is named' ($r.Out -match 'BAD REQUEUE-WHEN-CLOSED: T2 
 Assert 'X7d a count that can never be reached is named' ($r.Out -match 'BAD REQUEUE-WHEN-CLOSED: T3 - count 3 is more than the 2')
 Assert 'X7e a non-JSON value is named' ($r.Out -match 'BAD REQUEUE-WHEN-CLOSED: T4 - not JSON')
 Reset-Fixture
+
+# --- Y. a card's own verify: check (T1560) -----------------------------------
+# A throwaway repo, because the check runs from the repo root and reads a file
+# there: the card is "the old shape is gone from flag.txt", red while it is
+# there and green the moment a commit that never names the card removes it -
+# the T719 shape exactly.
+""
+"Y. verify: a card that names its own check proves itself already fixed"
+$yrepo = Join-Path $env:TEMP "ghoztty-parity-verify-$PID"
+$ytasks = Join-Path $yrepo 'docs\design\windows-parity-tasks'
+if (Test-Path $yrepo) { Remove-Item -Recurse -Force $yrepo }
+New-Item -ItemType Directory -Force $ytasks | Out-Null
+$yUtf8 = New-Object System.Text.UTF8Encoding $false
+function Y-Task {
+    param([string]$Id, [string]$Status = 'todo', [string]$Pri = 'P2', [string]$VerifyLine = '')
+    $lines = @('---', "id: $Id", ("title: " + (ConvertTo-Json "fixture $Id" -Compress)),
+        'deps: []', ("status: " + (ConvertTo-Json $Status -Compress)), 'commits: []', 'seat: "win"', "priority: `"$Pri`"")
+    if ($VerifyLine) { $lines += $VerifyLine }
+    $lines += @('---', '', "# $Id - fixture", '')
+    [System.IO.File]::WriteAllText((Join-Path $ytasks "$Id.md"), ($lines -join "`n"), $yUtf8)
+}
+$yflag = Join-Path $yrepo 'flag.txt'
+[System.IO.File]::WriteAllText($yflag, "OLD shape`n", $yUtf8)
+# The check reads a RELATIVE path, so a pass also proves it ran from the root.
+Y-Task -Id 'T1' -Pri 'P1' -VerifyLine ('verify: ' + (ConvertTo-Json "if ((Get-Content flag.txt) -match 'OLD') { exit 1 }" -Compress))
+Y-Task -Id 'T2' -VerifyLine 'verify: "exit 0"'
+Y-Task -Id 'T3' -VerifyLine 'verify: "Start-Sleep 30"'
+Y-Task -Id 'T4'
+Y-Task -Id 'T5' -Status 'done' -VerifyLine 'verify: "exit 0"'
+# An ERROR must read red, never green: a cmdlet that fails sets no exit code.
+Y-Task -Id 'T6' -VerifyLine 'verify: "Get-Item no-such-file-T1560"'
+& git -C $yrepo init --quiet 2>&1 | Out-Null
+& git -C $yrepo config user.email 'seat@example.com' 2>&1 | Out-Null
+& git -C $yrepo config user.name 'Seat Harness' 2>&1 | Out-Null
+& git -C $yrepo config commit.gpgsign false 2>&1 | Out-Null
+& git -C $yrepo add -A 2>&1 | Out-Null
+& git -C $yrepo commit -m seed --quiet 2>&1 | Out-Null
+
+$r = Task-Run @('validate') -Dir $ytasks
+Assert 'Y0 well-formed verify lines validate (positive control)' ($r.Code -eq 0 -and $r.Out -match 'ALL PASS')
+if ($r.Code -ne 0) { "      (Y0 saw: " + ($r.Out -replace "`r?`n", ' / ') + ')' }
+
+$r = Task-Run @('next') -Dir $ytasks
+Assert 'Y1 next runs the picked card''s check and reports it red' ($r.Out -match 'NEXT: T1\b' -and $r.Out -match 'VERIFY: still red \(exit 1 in')
+Assert 'Y1b ...and does NOT call a red card satisfied' ($r.Out -notmatch 'ALREADY SATISFIED')
+
+# A sibling's fix that never names T1.
+[System.IO.File]::WriteAllText($yflag, "NEW shape`n", $yUtf8)
+$r = Task-Run @('next') -Dir $ytasks
+Assert 'Y2 once the defect is gone the same check reads PASS' ($r.Out -match 'VERIFY: PASS \(exit 0 in')
+Assert 'Y2b ...and next says ALREADY SATISFIED' ($r.Out -match 'ALREADY SATISFIED: this card''s own check is green')
+Assert 'Y2c ...and still hands the card out (a report, never a gate)' ($r.Code -eq 0 -and $r.Out -match 'NEXT: T1\b')
+
+$r = Task-Run @('next', '-NoVerify') -Dir $ytasks
+Assert 'Y3 -NoVerify runs nothing' ($r.Code -eq 0 -and $r.Out -notmatch 'VERIFY:')
+
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
+$r = Task-Run @('stale-scan', '-VerifyTimeout', '3') -Dir $ytasks
+$sw.Stop()
+Assert 'Y4 stale-scan runs every open card''s check (done cards excluded)' ($r.Out -match 'VERIFY: 4 open todo\(s\) carry their own check; 2 already pass\.')
+Assert 'Y4b the passes are named ALREADY SATISFIED' ($r.Out -match '(?m)^T1\s+ALREADY SATISFIED' -and $r.Out -match '(?m)^T2\s+ALREADY SATISFIED')
+$iPass = $r.Out.IndexOf('T2      ALREADY SATISFIED'); $iOpen = $r.Out.IndexOf('T3      open')
+Assert 'Y4c ...and lead the report, ahead of the still-open ones' ($iPass -ge 0 -and $iOpen -gt $iPass)
+Assert 'Y4d a check that overruns is killed and named TIMEOUT' ($r.Out -match 'TIMEOUT \(killed after 3s' -and $sw.Elapsed.TotalSeconds -lt 25)
+Assert 'Y4e a check that ERRORS reads red, never satisfied (negative control)' ($r.Out -match 'still red \(exit 99 in' -and $r.Out -notmatch '(?m)^T6\s+ALREADY')
+Assert 'Y4f a done card''s check is not run' ($r.Out -notmatch '(?m)^T5\s')
+
+$r = Task-Run @('stale-scan', '-NoVerify') -Dir $ytasks
+Assert 'Y5 stale-scan -NoVerify names the checks and runs none' ($r.Out -match 'VERIFY: 4 open todo\(s\) carry their own check; not run \(-NoVerify\)\.')
+
+Y-Task -Id 'T7' -VerifyLine 'verify: ""'
+$r = Task-Run @('validate') -Dir $ytasks
+Assert 'Y6 validate fails a verify: line with no command' ($r.Code -eq 1 -and $r.Out -match 'BAD VERIFY: T7 has a verify: line with no command')
+Remove-Item (Join-Path $ytasks 'T7.md')
+$r = Task-Run @('new', '-Title', 'verify filed at birth', '-NoSimilarCheck', '-Verify', "if (git grep -q 'needle') { exit 1 }") -Dir $ytasks
+$yNew = Get-ChildItem $ytasks -Filter 'T*.md' | Where-Object { [System.IO.File]::ReadAllText($_.FullName) -match 'verify filed at birth' } | Select-Object -First 1
+$yNewText = if ($yNew) { [System.IO.File]::ReadAllText($yNew.FullName) } else { '' }
+Assert 'Y7 new -Verify writes the verify: line, quoting intact' ($r.Code -eq 0 -and $yNewText -match '(?m)^verify: "if \(git grep -q ''needle''\) \{ exit 1 \}"$')
+if (Test-Path $yrepo) { Remove-Item -Recurse -Force $yrepo }
 
 # --- teardown ---------------------------------------------------------------
 if (Test-Path $fixture) { Remove-Item -Recurse -Force $fixture }

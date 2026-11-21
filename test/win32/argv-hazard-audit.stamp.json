@@ -1,10 +1,12 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-20T14:35:13-08:00",
-    "commit":  "70ba8b4b4",
+    "generated":  "2026-11-20T17:16:26-08:00",
+    "commit":  "c9f2e962f",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+                        "scripts/guard-due.ps1",
+                        "scripts/lib/TaskVerify.ps1",
+                        "scripts/parity-tasks.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "938241ea73e2ac2f9e0dc519cc0503f40202e369ad7c58c466d5b153e8b3affb",
@@ -51,7 +53,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "e491be3477c3236c4e10af70db2f40e9d632c45f83bf860f4b09fe6eeda5e2b7",
                   "scripts/go-loop-watchdog.ps1":  "9b1f4a5cf1ccb5fc863722ab90d81ddddbd352ca475804012853b55a72c631c7",
-                  "scripts/guard-due.ps1":  "57f03fe901e107f720c9d1718826236fdde0dcff12f4a02f85209da8a6b77605",
+                  "scripts/guard-due.ps1":  "50c40083a09c0db5040a941c3d71f20a8c87c056c70a8ab516df9cc374da8d19",
                   "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
                   "scripts/hero-glide-onscreen.ps1":  "46d211f7ec7843d13506f4e3bd13933630339adb8aff13b5c97d69ae3fd248a7",
                   "scripts/hidden-windows-cpu.ps1":  "61551ac8760570d16a46ab2ef235c9792a2e29fb9e9d116ebbc23a5ce9051876",
@@ -91,6 +93,7 @@
                   "scripts/lib/ProcessFamily.ps1":  "63beb65412f8da3f6cbc32d025be1adde445e46327e5ec2c5361bc0a6972cfac",
                   "scripts/lib/RunVerdict.ps1":  "ed6bb40ba6413b29c93c3dfffddd61dbe0fd36068ae92429442ae07dd4a7cb4e",
                   "scripts/lib/StampMerge.ps1":  "c1397eeccbf3039c88b7d576b1c1948db4370987ebf053e8b9b6f50a6bf76926",
+                  "scripts/lib/TaskVerify.ps1":  "64b9839a73193b1cf47b24d3c3718944d0d88c57c8ac91ec9d5caefb46d3b3ff",
                   "scripts/lib/TreeIdle.ps1":  "2c4d18f221cbed25de68a4ebb694b447bb35b3307f5ccc28b025aa31a1ed9149",
                   "scripts/lib/UserAlert.ps1":  "785ec9f42291ab67113193989a0a59f2f576c2cc2801fb26cbf7217edd346563",
                   "scripts/lib/WebViewLane.ps1":  "b7dfacab366ddc509be771728f9d939d7b1d98a4ad542f698691e227619612e5",
@@ -102,7 +105,7 @@
                   "scripts/msi-test-identity.ps1":  "f4114e015c29fa884abebff8fb7e057aab52582cf89584351f7b9b0c08ecce63",
                   "scripts/parity-decisions.ps1":  "b015b8a70ced5c02206665da242777565107d12832421122bc800ce59d516e70",
                   "scripts/parity-sweep.ps1":  "2558a090ed2db1add4c101c99b74c469c6c4904ed1646f1dd4138c5bc0ca5046",
-                  "scripts/parity-tasks.ps1":  "cc6c31e848857822727a9e2026194cb26aba3e8ad9cf684083cf6c68471e1102",
+                  "scripts/parity-tasks.ps1":  "42c0e1ee66323d037e4b2ce395e01b8be71bc2bd849ad1bfcb89accf0b24d111",
                   "scripts/perf-baseline.ps1":  "277d609f53699590bf906bbbd895825904bc3664e8500ed77b968fd04f6a6a52",
                   "scripts/pr-health.ps1":  "a37d7a44dda98ec8650d3c0f65015f255956c3c2e5c1f1535a767aaa7a65184a",
                   "scripts/pr-review.ps1":  "8c817f2422323eb57ba9a7bb52a9fc72fd2a731fa4388f2f3d8116985003078c",
