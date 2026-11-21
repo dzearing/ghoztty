@@ -60,6 +60,11 @@ pub const Error = error{
     MissingPath,
     /// `--x=`/`--y=` was absent or not a number.
     BadCoord,
+    /// Exactly one of `--retitle-target=`/`--retitle=` was given, or the
+    /// target was empty (T1576). Half a retitle is refused rather than
+    /// guessed at: a probe that silently skipped the title change would
+    /// photograph the very frame it exists to rule out.
+    BadRetitle,
 };
 
 /// A parsed `capture-hover` request.
@@ -78,6 +83,16 @@ pub const Request = struct {
     /// non-client — the server-side twin of `Send-TestMouse -Client`, for a
     /// probe whose subject IS that path.
     client_only: bool = false,
+    /// T1576: a pane (any `+list` identity spelling) whose title is changed
+    /// AFTER the move and BEFORE the paint, through the same path a terminal's
+    /// OSC title takes. This is the "state X arrives while the pointer is
+    /// somewhere" half a hover probe could not hold on its own: a title change
+    /// from outside is asynchronous and lands on a different stack, after the
+    /// leave has already cleared the hover. Null = no retitle.
+    retitle_target: ?[]const u8 = null,
+    /// The title to apply to `retitle_target`. May be empty (an empty title is
+    /// a title). Set exactly when `retitle_target` is.
+    retitle: ?[]const u8 = null,
 };
 
 /// Parse the argument vector of a `capture-hover` request.
@@ -90,6 +105,8 @@ pub fn parse(args: ?[]const []const u8) Error!Request {
     var y: ?i32 = null;
     var path: ?[]const u8 = null;
     var client_only = false;
+    var retitle_target: ?[]const u8 = null;
+    var retitle: ?[]const u8 = null;
 
     if (args) |list| for (list) |arg| {
         if (drop(arg, "--hwnd=")) |v| {
@@ -102,8 +119,15 @@ pub fn parse(args: ?[]const []const u8) Error!Request {
             path = v;
         } else if (std.mem.eql(u8, arg, "--client")) {
             client_only = true;
+        } else if (drop(arg, "--retitle-target=")) |v| {
+            retitle_target = v;
+        } else if (drop(arg, "--retitle=")) |v| {
+            retitle = v;
         }
     };
+
+    if ((retitle_target == null) != (retitle == null)) return Error.BadRetitle;
+    if (retitle_target) |t| if (t.len == 0) return Error.BadRetitle;
 
     const h = hwnd orelse return Error.BadHwnd;
     if (h == 0) return Error.BadHwnd;
@@ -116,6 +140,8 @@ pub fn parse(args: ?[]const []const u8) Error!Request {
         .y = y orelse return Error.BadCoord,
         .path = p,
         .client_only = client_only,
+        .retitle_target = retitle_target,
+        .retitle = retitle,
     };
 }
 
@@ -242,6 +268,25 @@ test "parse: --client forces the client path, and unknown flags are ignored" {
     const req = try parse(&.{ "--hwnd=8", "--x=3", "--y=4", "--path=a.png", "--client", "--future=1" });
     try testing.expect(req.client_only);
     try testing.expectEqual(@as(i32, 3), req.x);
+}
+
+test "parse: a retitle needs both its target and its text (T1576)" {
+    const testing = std.testing;
+    try testing.expectError(Error.BadRetitle, parse(&.{ "--hwnd=8", "--x=3", "--y=4", "--path=a.png", "--retitle=wide" }));
+    try testing.expectError(Error.BadRetitle, parse(&.{ "--hwnd=8", "--x=3", "--y=4", "--path=a.png", "--retitle-target=p1" }));
+    try testing.expectError(Error.BadRetitle, parse(&.{ "--hwnd=8", "--x=3", "--y=4", "--path=a.png", "--retitle-target=", "--retitle=wide" }));
+
+    const none = try parse(&.{ "--hwnd=8", "--x=3", "--y=4", "--path=a.png" });
+    try testing.expectEqual(@as(?[]const u8, null), none.retitle_target);
+    try testing.expectEqual(@as(?[]const u8, null), none.retitle);
+
+    const both = try parse(&.{ "--hwnd=8", "--x=3", "--y=4", "--path=a.png", "--retitle-target=p1", "--retitle=a wider title" });
+    try testing.expectEqualStrings("p1", both.retitle_target.?);
+    try testing.expectEqualStrings("a wider title", both.retitle.?);
+
+    // An empty title is a title, not a missing one.
+    const empty = try parse(&.{ "--hwnd=8", "--x=3", "--y=4", "--path=a.png", "--retitle-target=p1", "--retitle=" });
+    try testing.expectEqualStrings("", empty.retitle.?);
 }
 
 test "parse: a nonsense number is refused, not clamped" {

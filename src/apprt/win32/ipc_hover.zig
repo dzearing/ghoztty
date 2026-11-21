@@ -59,11 +59,22 @@
 //! ```
 //! {"action":"capture-hover","arguments":[
 //!    "--hwnd=<decimal>","--x=<screen px>","--y=<screen px>",
-//!    "--path=<file.png>","--client"]}
+//!    "--path=<file.png>","--client",
+//!    "--retitle-target=<pane>","--retitle=<title>"]}
 //! ```
 //!
 //! → `{"success":true,"data":{"path":…,"width":N,"height":N,"bytes":N,
-//!      "hit":N,"nonclient":true|false,"changed":true|false,"left":N,"top":N}}`
+//!      "hit":N,"nonclient":true|false,"changed":true|false,
+//!      "retitled":true|false,"left":N,"top":N}}`
+//!
+//! `--retitle-target`/`--retitle` (T1576, both or neither) change a pane's
+//! title between the move and the paint, through `Surface.setTitle` — the
+//! entry a terminal's OSC title takes. It is the other half of "state X
+//! ARRIVES while the pointer is somewhere": a title change sent from outside
+//! is asynchronous and lands on another stack, after the leave has already
+//! cleared the hover, so without it the tab strip's freeze (T737) could only
+//! ever be photographed with nothing arriving. Unlike the hover, the title
+//! stays changed afterwards — it is a title, and the caller set it.
 //!
 //! `hit`/`nonclient` are reported because a probe that lands on the wrong
 //! ROUTE and a probe that lands on an unlit control look identical in pixels —
@@ -85,6 +96,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+const App = @import("App.zig");
 const build_config = @import("../../build_config.zig");
 const hover_capture = @import("hover_capture.zig");
 const ipc_capture = @import("ipc_capture.zig");
@@ -100,12 +112,33 @@ pub const enabled = build_config.is_debug;
 
 /// Handle one `capture-hover` request on the GUI thread. Returns the response
 /// JSON (allocated from `alloc`; the listener frees it).
-pub fn handle(alloc: Allocator, arguments: ?[]const []const u8) Allocator.Error![]u8 {
+pub fn handle(app: *App, alloc: Allocator, arguments: ?[]const []const u8) Allocator.Error![]u8 {
     const req = hover_capture.parse(arguments) catch |err| return switch (err) {
         error.BadHwnd => ipc_capture.errorResponse(alloc, "--hwnd must be a nonzero window handle", .{}),
         error.MissingPath => ipc_capture.errorResponse(alloc, "--path is required for capture-hover", .{}),
         error.BadCoord => ipc_capture.errorResponse(alloc, "--x and --y are required screen coordinates", .{}),
+        error.BadRetitle => ipc_capture.errorResponse(alloc, "--retitle-target and --retitle go together", .{}),
     };
+
+    // T1576: resolve the retitle's pane BEFORE the probe starts, so every
+    // refusal it can produce happens with no message sent - a half-run probe
+    // that moved the pointer and then refused would leave a hover for the
+    // next assertion to trip over.
+    const retitle_surface = if (req.retitle_target) |target| blk: {
+        const entry = app.ipcLookup(target) orelse
+            return ipc_capture.errorResponse(alloc, "pane '{s}' not found in registry", .{target});
+        const pane = switch (entry) {
+            .pane => |p| p,
+            .window => |win| if (win.tab_count == 0)
+                return ipc_capture.errorResponse(alloc, "pane '{s}' is no longer alive", .{target})
+            else
+                win.tab_active_pane[win.active_tab],
+        };
+        break :blk pane.surface() orelse
+            return ipc_capture.errorResponse(alloc, "{s} is a viewer pane, not a terminal: it has no terminal title to change", .{target});
+    } else null;
+    const retitle_z: ?[:0]u8 = if (req.retitle) |t| try alloc.dupeZ(u8, t) else null;
+    defer if (retitle_z) |z| alloc.free(z);
 
     // Every refusal below names a DIFFERENT state, for the reason T181 gave
     // `+read` the same treatment: a harness that cannot tell "that window is
@@ -182,6 +215,13 @@ pub fn handle(alloc: Allocator, arguments: ?[]const []const u8) Allocator.Error!
         _ = w32.ScreenToClient(hwnd, &p);
         _ = w32.SendMessageW(hwnd, w32.WM_MOUSEMOVE, 0, hover_capture.packPoint(p.x, p.y));
     }
+    // T1576: the state change that must ARRIVE while the pointer is in place.
+    // `Surface.setTitle` is the exact entry a terminal's OSC 0/2 title takes
+    // (performAction(.set_title)), so what reaches the window is the real
+    // title-change path rather than a write to the tab array; it is called
+    // here, after the move and before the paint, so the frame below is the
+    // one where both are true at once.
+    if (retitle_surface) |s| s.setTitle(retitle_z.?);
     // Invalidate the WHOLE window rather than trusting the hover handler's own
     // partial invalidation: what a probe wants is one consistent frame, and a
     // control that lights something outside the rect it invalidated is a bug
@@ -238,6 +278,8 @@ pub fn handle(alloc: Allocator, arguments: ?[]const []const u8) Allocator.Error!
         jws.write(nonclient) catch break :write;
         jws.objectField("changed") catch break :write;
         jws.write(changed) catch break :write;
+        jws.objectField("retitled") catch break :write;
+        jws.write(retitle_surface != null) catch break :write;
         jws.objectField("left") catch break :write;
         jws.write(rect.left) catch break :write;
         jws.objectField("top") catch break :write;

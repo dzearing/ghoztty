@@ -1,10 +1,12 @@
 {
     "guard":  "printclient-audit",
     "script":  "test/win32/printclient-audit.ps1",
-    "generated":  "2026-11-20T17:40:33-08:00",
-    "commit":  "c3e44ea24",
+    "generated":  "2026-11-20T19:36:17-08:00",
+    "commit":  "7604d0c03",
     "uncommitted":  [
-
+                        "src/apprt/win32/hover_capture.zig",
+                        "src/apprt/win32/ipc_hover.zig",
+                        "src/apprt/win32/IpcHandlers.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -147,7 +149,7 @@
                   "src/apprt/win32/HookComponent.zig":  "3d361d52017260e9ddac744a89d6c357eeaaba30f2c0bd1d7c04aa21396109b2",
                   "src/apprt/win32/host_defaults.zig":  "994b374543855d65b0203cfd687650c1d07d6ff5ff645d0455854f50e4ca59be",
                   "src/apprt/win32/HostSettingsDialog.zig":  "93054aa1e3906a51be134accd8a31ff154ab1c9e1c70650c1956ce903749fd93",
-                  "src/apprt/win32/hover_capture.zig":  "8ecc3234b911ff803f105bc21091aa33f5206fe9010b4afe3b73264ece4ad78c",
+                  "src/apprt/win32/hover_capture.zig":  "b7ec56fbfc97d1be11ca32a7698569b01f0b163a954c2b86e1a395d49448bd4b",
                   "src/apprt/win32/HoverTint.zig":  "76b666c7ea820b8eb7c26dbd2b4a4406978c6df0098200b355374aea73335945",
                   "src/apprt/win32/icon_button.zig":  "6a3a4f1eb1abe83ec20e99cf0bac21916ffc1de249530f199ba65cab4c421c08",
                   "src/apprt/win32/icon_button_paint.zig":  "0cf301f90a56c39e060eeb5da7e39ad4dc23f308d16c13427d1b72cd1e5eafbf",
@@ -162,7 +164,7 @@
                   "src/apprt/win32/install_restart.zig":  "33dfa41ec77d83babfa627709686cb0b806f13e164e3ab8a13bf3cd96ff32347",
                   "src/apprt/win32/ipc_agent_integration.zig":  "df7de6466f6d5036d5725e22d8d3913a03081c0b249931518f4a41c3a9d4cf80",
                   "src/apprt/win32/ipc_capture.zig":  "4d6c1c356c844d38fde23941fbe670ea16680d4d4d2ee5db08934434a217d26e",
-                  "src/apprt/win32/ipc_hover.zig":  "1847680eff4c6b48bcd780f152b176bcc0a459407e804ffb028f0aaa83e50381",
+                  "src/apprt/win32/ipc_hover.zig":  "cd36f5e93bee21c853af57ca9cac0295c14bd13f5effd040f597d8320c0d96eb",
                   "src/apprt/win32/ipc_pipe_io.zig":  "413b22076f0481ab03697b2cc0d68a2830f77216fc7f3f7fc3033185c32739ae",
                   "src/apprt/win32/ipc_remote_dial.zig":  "87f7119dccf90660a3d9a18c7c8a303005fb5a7af3bec2d67596e92d35f94ebb",
                   "src/apprt/win32/ipc_session_await.zig":  "1da78151a2f721f464a27e2637fbadc77488a217366ecfb46e77be722379e95b",
@@ -170,7 +172,7 @@
                   "src/apprt/win32/ipc_shortcut_guide.zig":  "ffbe20a34b9868b26615353dfab84d2b65d011faf27094c957711cdd4d756705",
                   "src/apprt/win32/ipc_whats_new.zig":  "35f9a55aca347095990a162cba08e95edf95b3ff9440b04c9dd58370a58e1d10",
                   "src/apprt/win32/ipc_workspaces.zig":  "c9b57d7078145c2e43b355192d211ed5eeff61b8484c57a706b13011766c0648",
-                  "src/apprt/win32/IpcHandlers.zig":  "7b701d9f018d48c0dbd974af37c760389f9e5a1ad6168757168783521d1a2bca",
+                  "src/apprt/win32/IpcHandlers.zig":  "6637c343c22314f53b3ae8f6dab2f9f021c91f4b3cfa8872a78dc725de7b3532",
                   "src/apprt/win32/IpcRegistry.zig":  "1de5658631df1d1d11d63b392aba043d7dd619e2bd3e7ac5717fc62e10ecd206",
                   "src/apprt/win32/IpcServer.zig":  "d52089f909a9bad6600892d1cc80030a3dccfa7b251a5215fb1b16bc0d4b6570",
                   "src/apprt/win32/job_escape.zig":  "060f58a8a8739baf8246aaca8cf5d4a0e6113bfa69e981fdc2282ea8a060cb7e",

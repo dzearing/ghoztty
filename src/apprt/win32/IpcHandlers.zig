@@ -138,7 +138,7 @@ pub fn dispatch(ctx: Context, request_json: []const u8) Allocator.Error!?[]u8 {
         // T282: the same DEBUG-ONLY test seam for a HOVERED frame, which the
         // harness cannot paint from outside at all — see ipc_hover.zig for the
         // ordering argument. Release builds fall through to unknown-action.
-        return try ipc_hover.handle(ctx.alloc, request.arguments);
+        return try ipc_hover.handle(ctx.app, ctx.alloc, request.arguments);
     } else if (ipc_agent_integration.enabled and std.mem.eql(u8, request.action, "agent-integration")) {
         // T872: the DEBUG-ONLY seam the agent-integrations acceptance harness
         // drives install/uninstall/status through — the GUI offers one action

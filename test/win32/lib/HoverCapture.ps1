@@ -86,6 +86,14 @@ close".
 -Client forces the client message even where the point hit-tests non-client,
 the twin of Send-TestMouse -Client.
 
+-RetitleTarget <pane id> with -Retitle <text> (T1576) changes that pane's
+title AFTER the move and BEFORE the paint, through the same app path a
+terminal's OSC title takes - so the frame captured is one where the pointer is
+in place AND the title change has arrived. A title sent from outside (send-keys,
++rename) lands on another GUI-thread turn, after the leave has cleared the
+hover, which is why the tab strip's freeze (T737) needed this to be asserted
+end to end. { Retitled } says the app applied it. The title stays changed.
+
 $null on failure, with the server's reason in Get-LastHoverCaptureError so a
 caller can put it in the assertion label: a capture that failed for a fixture
 reason and one that failed because nothing lit must not look the same.
@@ -96,6 +104,8 @@ function Get-TestHoverCapture {
         [Parameter(Mandatory = $true)][int]$X,
         [Parameter(Mandatory = $true)][int]$Y,
         [switch]$Client,
+        [string]$RetitleTarget,
+        [AllowEmptyString()][string]$Retitle,
         [string]$PipeName,
         [string]$Path,
         [switch]$KeepFile
@@ -108,6 +118,10 @@ function Get-TestHoverCapture {
 
     $args = @("--hwnd=$([int64]$Hwnd)", "--x=$X", "--y=$Y", "--path=$Path")
     if ($Client) { $args += '--client' }
+    if ($RetitleTarget) {
+        $args += "--retitle-target=$RetitleTarget"
+        $args += "--retitle=$Retitle"
+    }
 
     $resp = Invoke-GhozttyIpc -Action 'capture-hover' -Arguments $args -PipeName $PipeName
     if ($null -eq $resp) {
@@ -145,6 +159,7 @@ function Get-TestHoverCapture {
         Hit       = [int]$resp.data.hit
         NonClient = [bool]$resp.data.nonclient
         Changed   = [bool]$resp.data.changed
+        Retitled  = [bool]$resp.data.retitled
         Path      = $Path
         Bytes     = [int]$resp.data.bytes
     }

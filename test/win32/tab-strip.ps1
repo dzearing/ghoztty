@@ -1583,6 +1583,82 @@ try {
         Write-Host ("INFO  T737 unlatch: t1w $($r9a.Tabs[0].Width) -> $($r9b.Tabs[0].Width) after the probes")
         Assert ($r9b.Tabs[0].Width -ge $r9a.Tabs[0].Width) `
             "T737: the strip is not left frozen once the pointer is gone ($($r9a.Tabs[0].Width) -> $($r9b.Tabs[0].Width))"
+
+        # --- 9e. T1576: a growth ARRIVING while the pointer is inside -------
+        # The pair 9b could not hold: 9b's frozen paint had nothing arriving,
+        # because a title sent from out here lands on a later GUI-thread turn,
+        # after the leave. `capture-hover -Retitle` applies the title through
+        # the OSC title path BETWEEN the move and the paint, so the strip paint
+        # it photographs has the pointer inside AND a wider title waiting - and
+        # must refuse it (`deferred` >= 1). Once the leave lands, the grow
+        # takes its room (tab 2 slides right), which is T737's "the deferred
+        # grow lands on the first paint after the pointer leaves".
+        #
+        # Each arm starts from a tab that is NOT at the 50% cap - 9d left tab 1
+        # pinned near it, and a tab at the cap cannot grow, so the arm would
+        # read deferred=0 against a perfectly good freeze. A short title alone
+        # re-fits nothing (that is the T249 ratchet), so a resize re-fits it.
+        $growTitle = 'a-title-long-enough-to-widen-a-tab-well-short-of-the-cap'
+        function Reset-Tab1Narrow([int]$w) {
+            Set-Tab1Title 'aa'
+            Set-TestWindowSize -Window $top -Width $w -Height 800 | Out-Null
+            Start-Sleep -Milliseconds 900
+        }
+        function Get-FreezeLines {
+            @(Select-String -Path $errlog2 -Pattern 'tab strip freeze=(\d) deferred=(\d+)' -ErrorAction SilentlyContinue |
+                ForEach-Object { [pscustomobject]@{ Freeze = [int]$_.Matches[0].Groups[1].Value; Deferred = [int]$_.Matches[0].Groups[2].Value } })
+        }
+        if (-not (Test-Path $errlog2) -or -not $freezeLogged) {
+            Write-Host 'SKIP  T1576 arriving-grow arm: no freeze oracle in the log for this instance'
+            $script:skipped++
+        } else {
+            Reset-Tab1Narrow 1360
+            $e0 = Get-TestStripRegions -Window $top -Exe $exe
+            $eLast = $e0.Tabs[$e0.Tabs.Count - 1]
+            $eGap  = [int][Math]::Truncate(($eLast.Right + $e0.NewTab.Left) / 2)
+            if ($eGap -le $eLast.Right) { $eGap = $e0.NewTab.Left + 2 }
+            Clear-Content $errlog2 -ErrorAction SilentlyContinue
+            $arr = Get-TestHoverCapture -Hwnd $top -X ($clientX + $eGap) -Y $stripY `
+                -RetitleTarget $pane8 -Retitle $growTitle
+            Start-Sleep -Milliseconds 300
+            $eLines = @(Get-FreezeLines)
+            if (-not $arr) {
+                Assert $false "T1576: capture-hover with a retitle over the strip run failed ($(Get-LastHoverCaptureError))"
+            } else {
+                Assert $arr.Retitled 'T1576: the probe applied the title change on the hover stack'
+                $held = @($eLines | Where-Object { $_.Freeze -eq 1 -and $_.Deferred -ge 1 })
+                Assert ($held.Count -gt 0) `
+                    ("T1576: a growth arriving WHILE the pointer is in the strip is held back " +
+                     "($($eLines.Count) strip paints, $($held.Count) frozen with a grow deferred)")
+                Close-TestHoverCapture $arr
+            }
+            $e1 = Get-TestStripRegions -Window $top -Exe $exe
+            Write-Host ("INFO  T1576 release: t1w $($e0.Tabs[0].Width) -> $($e1.Tabs[0].Width), " +
+                        "t2.left $($e0.Tabs[1].Left) -> $($e1.Tabs[1].Left) once the pointer left")
+            Assert ($e1.Tabs[1].Left -gt $e0.Tabs[1].Left) `
+                "T1576: the held grow lands once the pointer leaves (t2.left $($e0.Tabs[1].Left) -> $($e1.Tabs[1].Left))"
+
+            # --- 9f. the control: the same arriving grow, pointer in a PANE --
+            # Teeth on 9e: with the pointer outside the strip the identical
+            # title change must be taken at once (no paint frozen, none with a
+            # grow deferred) - so 9e's deferred count is the freeze's doing and
+            # not a property of the retitle path or of the cap.
+            Reset-Tab1Narrow 1400
+            Clear-Content $errlog2 -ErrorAction SilentlyContinue
+            $ctlArr = Get-TestHoverCapture -Hwnd $top -X ($clientX + $eGap) -Y $paneY `
+                -RetitleTarget $pane8 -Retitle $growTitle
+            Start-Sleep -Milliseconds 300
+            $fLines = @(Get-FreezeLines)
+            if (-not $ctlArr) {
+                Assert $false "T1576 control: capture-hover with a retitle over the pane failed ($(Get-LastHoverCaptureError))"
+            } else {
+                Assert ($fLines.Count -gt 0) 'T1576 control: the strip repaints for the title change (negative control has teeth)'
+                $fHeld = @($fLines | Where-Object { $_.Freeze -eq 1 -or $_.Deferred -ge 1 })
+                Assert ($fHeld.Count -eq 0) `
+                    "T1576 control: with the pointer in a pane the same grow is taken at once ($($fHeld.Count) frozen/deferred paints)"
+                Close-TestHoverCapture $ctlArr
+            }
+        }
     }
 
     Assert (-not ($app2.Process -and $app2.Process.HasExited)) 'no crash (long-title instance)'
