@@ -75,15 +75,20 @@ HS="(function(){var h=document.querySelector('#content h1')||document.querySelec
 COLOR="getComputedStyle(document.querySelector('h1')).color"
 
 # ---- the steps the pane runs once it has rendered --------------------------
+# A `sleep` before each scroll probe: the template restores the scroll on the
+# next animation frame after a re-render (src/viewer/viewer.js restoreScroll),
+# and WebKit restores a reloaded page's after its load finishes.
 steps="$HL_RUNTIME/steps"
 out="$HL_RUNTIME/steps.out"
 cat > "$steps" <<EOF
 probe window.scrollTo(0, 600); Math.round(window.scrollY)
 mark inplace
 wait
+sleep 400
 probe $HS
 mark atomic
 wait
+sleep 400
 probe $HS
 mark rm
 wait
