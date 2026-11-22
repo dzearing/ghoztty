@@ -1,0 +1,9 @@
+{
+  "version": "1.56.9",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "A session the test client holds lists as attached again." }
+      ] }
+  ]
+}

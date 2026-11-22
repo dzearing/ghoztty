@@ -1,0 +1,26 @@
+{
+  "version": "1.56.9",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "One implementation answers +new-window, +split, +rename and +list's layout on Windows and Linux." },
+        { "text": "A relay window open when Ghoztty quits comes back at the next launch." },
+        { "text": "On Linux a pane's shell now outlives the app: closing it yourself still ends it." },
+        { "text": "The Linux viewer-pane card is split into eleven ordered slices." },
+        { "text": "The Linux app links WebKitGTK and its viewer renders markdown, code, local pages and websites." },
+        { "text": "Linux viewer tests skip their POSIX-only path asserts on Windows, and the test-reach audit knows a pure gtk module runs in every lane." },
+        { "text": "On Linux, +split --view and +new-window --view open viewer panes in the split tree." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "A test sandbox can no longer auto-update the user's installed Ghoztty." },
+        { "text": "A copy of Ghoztty that is not the installed one no longer runs the installer over the real install." },
+        { "text": "self-spawn-audit is green again: the GTK app's agent lookup was already guarded." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The update harnesses refuse to install anything that could reach the user's Ghoztty, and prove afterwards it did not move." },
+        { "text": "Every test that runs the real Windows installer now refuses a package that could reach the user's Ghoztty, and an audit keeps it that way." }
+      ] }
+  ]
+}
