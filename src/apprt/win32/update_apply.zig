@@ -839,10 +839,12 @@ test "sidelineName renames in place and is recognised by the sweep" {
     var buf: [512]u8 = undefined;
     const n = try sidelineName(&buf, "C:\\Program Files\\Ghoztty\\ghoztty-agent.exe", 1756500000);
     try testing.expectEqualStrings("C:\\Program Files\\Ghoztty\\ghoztty-agent.exe.old-1756500000", n);
-    // Same directory: a cross-volume MoveFileW would copy 48MB, or fail.
+    // Same directory: a cross-volume MoveFileW would copy 48MB, or fail. These
+    // are Windows paths on every host, so ask the Windows parser (T3331: the
+    // native one is POSIX on the Linux none lane and finds no separator).
     try testing.expectEqualStrings(
-        std.fs.path.dirname("C:\\Program Files\\Ghoztty\\ghoztty-agent.exe").?,
-        std.fs.path.dirname(n).?,
+        std.fs.path.dirnameWindows("C:\\Program Files\\Ghoztty\\ghoztty-agent.exe").?,
+        std.fs.path.dirnameWindows(n).?,
     );
     try testing.expect(isSidelined(n));
 }

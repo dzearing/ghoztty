@@ -40,7 +40,10 @@ const present_stamps = @import("present_stamps.zig");
 const log = std.log.scoped(.comp_present);
 
 const GUID = std.os.windows.GUID;
-const HRESULT = std.os.windows.HRESULT;
+/// A Win32 HRESULT is a 32-bit LONG. `std.os.windows.HRESULT` is `c_long`,
+/// which is 64 bits on Linux, so the hex `@bitCast`s below (and in the tests
+/// the Linux none lane compiles, T3331) only hold with the width spelled out.
+const HRESULT = i32;
 const HWND = std.os.windows.HWND;
 const HANDLE = ?*anyopaque;
 const Obj = *anyopaque;

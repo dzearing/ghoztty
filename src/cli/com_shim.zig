@@ -44,7 +44,9 @@ const std = @import("std");
 /// case-preserving); the build mode is irrelevant — a debug `.com` behaves
 /// identically.
 pub fn isComShim(self_path: []const u8) bool {
-    const base = std.fs.path.basename(self_path);
+    // A Windows path on every host (the one caller is the win32 app); the
+    // native basename is POSIX on the Linux none lane (T3331).
+    const base = std.fs.path.basenameWindows(self_path);
     return std.ascii.eqlIgnoreCase(base, "ghoztty.com");
 }
 

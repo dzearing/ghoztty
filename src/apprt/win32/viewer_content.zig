@@ -257,9 +257,11 @@ pub fn filePath(buf: []u8, location: []const u8) ?[]const u8 {
 }
 
 /// The directory a file-mode pane resolves relative resources against: the
-/// viewed file's own. Borrowed from `path`.
+/// viewed file's own. Borrowed from `path`. A viewer path is a Windows path
+/// (either separator), so it is parsed as one on every host - the native
+/// `dirname` is POSIX on the Linux none lane and finds no `\` (T3331).
 pub fn baseDirectory(path: []const u8) ?[]const u8 {
-    return std.fs.path.dirname(path);
+    return std.fs.path.dirnameWindows(path);
 }
 
 /// The working directory a TERMINAL split created FROM a viewer pane starts

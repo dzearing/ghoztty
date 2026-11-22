@@ -596,10 +596,10 @@ test "T1802: pathExists reads the real disk" {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const root = try tmp.dir.realpath(".", &buf);
     var p1: [std.fs.max_path_bytes]u8 = undefined;
-    const here = try std.fmt.bufPrint(&p1, "{s}\\here.md", .{root});
+    const here = try std.fmt.bufPrint(&p1, "{s}" ++ std.fs.path.sep_str ++ "here.md", .{root});
     try testing.expect(pathExists(here));
     var p2: [std.fs.max_path_bytes]u8 = undefined;
-    const gone = try std.fmt.bufPrint(&p2, "{s}\\gone\\x.md", .{root});
+    const gone = try std.fmt.bufPrint(&p2, "{s}" ++ std.fs.path.sep_str ++ "gone" ++ std.fs.path.sep_str ++ "x.md", .{root});
     try testing.expect(!pathExists(gone));
     const t = revealTarget(gone, &pathExists);
     try testing.expectEqualStrings(root, t.open_folder);

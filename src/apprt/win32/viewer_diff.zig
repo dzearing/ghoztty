@@ -809,7 +809,9 @@ fn appendNumber(
 pub fn subtitle(buf: []u8, spec: Spec, repo: ?[]const u8) []const u8 {
     var len: usize = 0;
     if (repo) |r| {
-        const name = std.fs.path.basename(r);
+        // A Windows repo path on every host; the native basename is POSIX on
+        // the Linux none lane (T3331).
+        const name = std.fs.path.basenameWindows(r);
         if (name.len <= buf.len) {
             @memcpy(buf[0..name.len], name);
             len = name.len;

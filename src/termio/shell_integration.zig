@@ -779,21 +779,26 @@ test "detectShell: a direct spaced path is one argument (T862)" {
     const testing = std.testing;
     const alloc = testing.allocator;
 
+    // detectShell basenames with the HOST's rules, so the spaced path is
+    // spelled the way this host spells one (T3331: a `C:\` path is a single
+    // file name on Linux).
+    const win = builtin.os.tag == .windows;
+    const bash_path: [:0]const u8 = if (win) "C:\\Program Files\\Git\\bin\\bash.exe" else "/opt/Git Tools/bin/bash";
+    const pwsh_path: [:0]const u8 = if (win) "C:\\Program Files\\PowerShell\\7\\pwsh.exe" else "/opt/Power Shell/7/pwsh";
+    const nu_path: [:0]const u8 = if (win) "C:\\Program Files\\nu\\bin\\nu.exe" else "/opt/Nu Shell/bin/nu";
+
     // The `.shell` spelling is what broke: shell-words splits at the space
     // and `detectShell` basenames `Program`.
-    try testing.expect(try detectShell(
-        alloc,
-        .{ .shell = "C:\\Program Files\\Git\\bin\\bash.exe" },
-    ) == null);
+    try testing.expect(try detectShell(alloc, .{ .shell = bash_path }) == null);
 
     // The `.direct` spelling the shell-path callers now use detects.
-    const argv: []const [:0]const u8 = &.{"C:\\Program Files\\Git\\bin\\bash.exe"};
+    const argv: []const [:0]const u8 = &.{bash_path};
     try testing.expectEqual(.bash, try detectShell(alloc, .{ .direct = argv }));
 
-    const pwsh: []const [:0]const u8 = &.{"C:\\Program Files\\PowerShell\\7\\pwsh.exe"};
+    const pwsh: []const [:0]const u8 = &.{pwsh_path};
     try testing.expectEqual(.powershell, try detectShell(alloc, .{ .direct = pwsh }));
 
-    const nu: []const [:0]const u8 = &.{"C:\\Program Files\\nu\\bin\\nu.exe"};
+    const nu: []const [:0]const u8 = &.{nu_path};
     try testing.expectEqual(.nushell, try detectShell(alloc, .{ .direct = nu }));
 }
 

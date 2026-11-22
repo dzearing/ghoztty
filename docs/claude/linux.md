@@ -139,6 +139,39 @@ It ends `GTK SMOKE: ALL PASS` or `GTK SMOKE: <n> FAILURE(S)`.
 present. The smoke script sets the variable when `/dev/dxg` exists. The app
 does not set it on its own yet; that is T3350.
 
+## The Linux floor: `scripts/linux/floor.sh` (T3331)
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile scripts\linux\floor.sh
+```
+
+The same two shared-core lanes `floor-lane.ps1` runs as `lib` and `none` on
+Windows, built natively in the clone: `zig build -Dapp-runtime=none` and
+`zig build test -Dapp-runtime=none`. One `LANE <name> PASS|FAIL|STALL` line
+each, then `LINUX FLOOR: ALL PASS` or `LINUX FLOOR: <n> FAILURE(S)`; full logs
+are `/tmp/linux-floor-<lane>.log` in the distro. `FLOOR_LANES=none` picks
+lanes, and `FLOOR_LANE_TIMEOUT` (1800 s) bounds each one. It tests the
+committed HEAD, so commit first.
+
+**What breaks here that Windows and macOS never see.** The none lane compiles
+the `src/apprt/win32/` and `src/renderer/` pure-logic tests too, and Linux is
+the first host where they meet both an LP64 C ABI and a POSIX `std.fs.path`:
+
+- `std.os.windows.HRESULT` is `c_long`, which is 64 bits on Linux (32 on
+  Windows), so `@bitCast(@as(u32, 0x8...))` into it does not compile. Spell a
+  Win32 `LONG`/`HRESULT` as `i32`.
+- `std.fs.path.dirname`/`basename` are the POSIX ones on Linux and find no
+  `\`, so a test (or helper) handling a Windows path panics on `.?`. Use
+  `dirnameWindows`/`basenameWindows` for a value that IS a Windows path, and
+  `std.fs.path.sep_str` when a test builds a path on the real disk.
+- `close(2)` on Linux never wakes a `read` blocked on the same fd in another
+  thread (macOS does), so code that "unblocks a reader by closing" hangs
+  here. `ssh_transport`'s `ChildStream.close` does exactly that: T3354, and
+  its test is skipped on Linux until that lands.
+- A panic stops that test process and the runner restarts after it, so one
+  crash can hide the next: re-run until the lane is green, not until the first
+  named failure is gone.
+
 ## Distro state (2026-11-21)
 
 - Ubuntu 24.04.1 LTS, runs as `root` (`$HOME=/root`), 32 cores, 47 GB visible.

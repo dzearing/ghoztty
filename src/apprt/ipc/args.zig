@@ -2,6 +2,7 @@
 //! server's prefix table), the Windows shell-flavor wrap table, and ConPTY
 //! input normalization. No platform imports — everything here is unit
 //! tested in the none-runtime test build.
+const builtin = @import("builtin");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -1311,8 +1312,13 @@ test "wrapShellCommandArgv: every flavor branch" {
         .{ .shell = "nushell.exe", .expect = &.{ "nushell.exe", "-e", "echo hi" } },
         .{ .shell = "C:\\Program Files\\Git\\bin\\bash.exe", .expect = &.{ "C:\\Program Files\\Git\\bin\\bash.exe", "-lic", "echo hi; exec \"C:\\Program Files\\Git\\bin\\bash.exe\" -li" } },
         .{ .shell = "zsh", .expect = &.{ "zsh", "-lic", "echo hi; exec \"zsh\" -li" } },
+        // A `/` path reads the same on every host.
+        .{ .shell = "/usr/bin/zsh", .expect = &.{ "/usr/bin/zsh", "-lic", "echo hi; exec \"/usr/bin/zsh\" -li" } },
     };
     for (cases) |case| {
+        // A `C:\` path is a path only where the host's basename reads `\`
+        // (T3331: on Linux it is one file name, and no flavor matches).
+        if (builtin.os.tag != .windows and std.mem.indexOfScalar(u8, case.shell, '\\') != null) continue;
         const argv = try wrapShellCommandArgv(alloc, case.shell, "echo hi");
         try testing.expectEqual(case.expect.len, argv.len);
         for (case.expect, argv) |want, got| try testing.expectEqualStrings(want, got);
