@@ -1468,9 +1468,9 @@ pub const Window = extern struct {
         // Before it (and for any plain transient window): a toplevel whose
         // transient-for is this window.
         const me = self.as(gtk.Window);
-        var node: ?*glib.List = gtk.Window.listToplevels();
-        defer if (node) |n| n.free();
-        var it = node;
+        const head: ?*glib.List = gtk.Window.listToplevels();
+        defer if (head) |n| n.free();
+        var it = head;
         while (it) |n| : (it = n.f_next) {
             const obj: *gobject.Object = @ptrCast(@alignCast(n.f_data orelse continue));
             const w = gobject.ext.cast(gtk.Window, obj) orelse continue;
