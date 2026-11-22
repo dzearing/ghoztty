@@ -39,8 +39,11 @@ printf '# Pane Heading\n\ntext\n' > "$fx/doc.md"
 printf '# Other Doc\n' > "$fx/other.md"
 printf '# Raw Socket Doc\n' > "$fx/sub/raw.md"
 
-# Every CLI call runs FROM the fixture dir, so a relative --view resolves there.
-cli() { (cd "$fx" && env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID "$app" "$@"); }
+# Every CLI call runs FROM the fixture dir, so a relative --view resolves
+# there. The source-built gtk4-layer-shell is found through a cwd-relative
+# path, so name its directory outright once we leave the repo root.
+lsdir=$(dirname "$(find "$PWD/zig-out" "$PWD/.zig-cache" -name 'libgtk4-layer-shell.so*' -print -quit 2>/dev/null)")
+cli() { (cd "$fx" && env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID LD_LIBRARY_PATH="$lsdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$app" "$@"); }
 
 # raw <action> <arg>...: one request straight to the socket, as a client that
 # is not our CLI would send it (no CLI-side path resolution).
@@ -153,6 +156,7 @@ hl_check "P17 a raw +split resolves a relative --view against --working-director
 
 # ---- +close never prompts ---------------------------------------------------
 before=$(count)
+had_vw=$(leaves | grep '^vw|')
 out=$(cli +close --target=doc 2>&1); rc=$?
 gone_doc() { [ -z "$(leaf doc)" ]; }
 hl_wait_for 10 gone_doc
@@ -161,6 +165,7 @@ hl_check "P18 +close closes a viewer pane at once (no confirmation)" $? "rc=$rc 
 out=$(cli +close --target=vw 2>&1); rc=$?
 no_vw() { ! have_vw; }
 hl_wait_for 10 no_vw
+[ $rc = 0 ] && [ -n "$had_vw" ] && no_vw
 hl_check "P19 +close closes a window holding only a viewer" $? "rc=$rc out=$out list: $(dump_list)"
 
 kill -0 "$APP" 2>/dev/null
