@@ -1,0 +1,23 @@
+{
+  "version": "1.56.8",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "The Windows and Linux apps answer +read and +send-keys from one shared implementation." },
+        { "text": "The Linux app opens windows and named side panes, and retitles windows, from the ghoztty CLI." },
+        { "text": "The Linux app closes panes and windows from the ghoztty CLI, and ghoztty:// focus works against it." },
+        { "text": "The Linux app rearranges a window's panes from a layout." },
+        { "text": "test/linux/cli-rearrange.sh is executable like its siblings." },
+        { "text": "One implementation answers +close, focus, +set-state and +set-banner on Windows and Linux." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "A crash the test teardown diagnosed is now in the saved transcript of the failed run." },
+        { "text": "The test-client wiring check now takes its build-subject exemption from the script itself." },
+        { "text": "A command that exits at once now leaves its \"Process exited\" notice on screen instead of a blank pane." },
+        { "text": "A window the agent alone remembered comes back under its own name, not a fresh one." },
+        { "text": "The agent-recovery wedge test is green again: its I3/I4 red was test timing drift, fixed by T1473." },
+        { "text": "Typing exit in the fresh shell that replaced a dead session's command now closes the pane." }
+      ] }
+  ]
+}
