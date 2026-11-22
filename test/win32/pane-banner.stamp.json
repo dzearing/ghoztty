@@ -1,8 +1,8 @@
 {
     "guard":  "pane-banner",
     "script":  "test/win32/pane-banner.ps1",
-    "generated":  "2026-11-19T04:44:44-08:00",
-    "commit":  "81a560bbc",
+    "generated":  "2026-11-21T16:10:06-08:00",
+    "commit":  "b3f1dcfc6",
     "uncommitted":  [
                         "src/apprt/win32/ViewerPane.zig"
                     ],
@@ -15,7 +15,10 @@
                   "src/apprt/win32/BannerDialog.zig":  "4bd17f175a1edac2f80752b525f38044cdb579755c7f23a296962e966a8ef1c0",
                   "src/apprt/win32/BannerFreeze.zig":  "04ce51c3a27e36fb8ddf4a0bbb0e7a2df64df6c3d2e68686ee7b3fd42fc73dd9",
                   "src/apprt/win32/BannerOverlay.zig":  "d682de170002f0d8d61762966c2c345a0ec6dcbf422c99a2935f389850776199",
-                  "src/apprt/win32/ViewerPane.zig":  "e75854cba9ef9c30e87425c4aaaea6feadaa052d16f92cf03f81f6624e4eefad",
+                  "src/apprt/win32/ViewerPane.zig":  "5d93af9366d04b5f64f508d53c9208fdedaf18f7b1fd380c25d44c375d644db4",
                   "test/win32/pane-banner.ps1":  "d4a45cd1385d9571e00634abc3bf028a980ca90d415539f58198fbd0153ed156"
-              }
+              },
+    "code":  {
+                 "test/win32/pane-banner.ps1":  "code1:55fa2848fb93152b9d51233e61d95ea1ffce58dfcbb4e70f7799d00d3f2b4b61"
+             }
 }

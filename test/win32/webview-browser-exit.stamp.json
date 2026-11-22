@@ -1,14 +1,17 @@
 {
     "guard":  "webview-browser-exit",
     "script":  "test/win32/webview-browser-exit.ps1",
-    "generated":  "2026-11-19T04:22:31-08:00",
-    "commit":  "81a560bbc",
+    "generated":  "2026-11-21T16:02:17-08:00",
+    "commit":  "b3f1dcfc6",
     "uncommitted":  [
                         "src/apprt/win32/ViewerPane.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/ViewerPane.zig":  "e75854cba9ef9c30e87425c4aaaea6feadaa052d16f92cf03f81f6624e4eefad",
+                  "src/apprt/win32/ViewerPane.zig":  "5d93af9366d04b5f64f508d53c9208fdedaf18f7b1fd380c25d44c375d644db4",
                   "src/apprt/win32/webview2.zig":  "8acac18b06c3b93c47fe1dc3008b50cf00252a07b80ff3a995ba31f0dec4edbc",
                   "test/win32/webview-browser-exit.ps1":  "fc5366b411e3c79e5be9d1a529b45e0b66c1047558d1680fb5ee2e5f4e9e9a2d"
-              }
+              },
+    "code":  {
+                 "test/win32/webview-browser-exit.ps1":  "code1:dc9cd45fcfddf178cda04e4d838ba73d279ffdde5168575beacca4747cd5e2a5"
+             }
 }

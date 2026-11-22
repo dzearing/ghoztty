@@ -10167,9 +10167,27 @@ test "host floor: a real controller on a real window, on this box" {
     try pane.navigate(alloc, reload_url);
     // `page_loaded` too: issuing GoBack while the forward load is still in
     // flight cancels that load instead of testing the boundary.
+    //
+    // And the web view must have COMMITTED the website (T1735). `navigate`
+    // sets `mode` and `location` itself, before the browser has moved, and
+    // `can_go_back` was already true from the entries behind the template; so
+    // a late NavigationCompleted from the template's own load satisfied all
+    // three flags while the template was still the current entry. Under full
+    // CPU load that happened 1 run in 3: GoBack then walked from the TEMPLATE
+    // onto the website the T593 section left behind it, cancelling the
+    // forward load, and the pane sat on that older t390 entry for the whole
+    // 30s. The committed Source is the one thing `navigate` cannot fake.
     try waitFor(&msg, 30, struct {
         fn ready(p: *ViewerPane) bool {
-            return p.mode == .web and p.can_go_back and p.page_loaded;
+            if (!(p.mode == .web and p.can_go_back and p.page_loaded)) return false;
+            const committed = testCommittedSource(p) orelse return false;
+            defer testing.allocator.free(committed);
+            if (viewMode(committed) == .web) return true;
+            if (!t1735_stale_logged) {
+                t1735_stale_logged = true;
+                log.warn("t1735: flags said loaded while the web view still showed {s}", .{committed});
+            }
+            return false;
         }
     }.ready, &pane);
     log.warn("history: web, can_back={} can_fwd={}", .{ pane.can_go_back, pane.can_go_forward });
@@ -12349,6 +12367,19 @@ fn logWaitState(p: *const ViewerPane) void {
 /// lane went red for load rather than for a defect. Waiting on stillness fails
 /// a wedge just as fast — a wedged pane is still from the first tick — without
 /// failing a slow box.
+/// What the web view has actually COMMITTED, read off the runtime rather than
+/// the pane's own bookkeeping (T1735) — `navigate` writes `location` before
+/// the browser has moved at all. Owned by `testing.allocator`.
+fn testCommittedSource(p: *ViewerPane) ?[]u8 {
+    const c = p.controller orelse return null;
+    const web = c.coreWebView() orelse return null;
+    defer web.release();
+    return sourceUtf8(testing.allocator, web);
+}
+
+/// Set once the T1735 race was seen, so its line is logged once per run.
+var t1735_stale_logged = false;
+
 fn waitFor(
     msg: *w32.MSG,
     timeout_s: u64,
