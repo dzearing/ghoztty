@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-22T15:06:16-08:00",
-    "commit":  "37816554e",
+    "generated":  "2026-11-22T15:40:10-08:00",
+    "commit":  "f69dca8e1",
     "uncommitted":  [
 
                     ],
@@ -460,11 +460,11 @@
                   "src/apprt/win32/tray_notify.zig":  "438ad677381ef9f53b06473e00de87530b524a401fc78cad5414a5e26cc4480f",
                   "src/apprt/win32/trend_gauge.zig":  "8e40bbb1bb211dddaa315851043ecabdc88fb365a735ce5dbd2f062ba90e3483",
                   "src/apprt/win32/type_ramp.zig":  "c7c36e8fa6e894ad362e6d91a78518a5c0d24a7ff6a47cd5c6d79a42d376b7b9",
-                  "src/apprt/win32/update_apply.zig":  "9850e43882f9f7413767ce1aec28654f49a57a52635eff3f2996f6f6fe283149",
+                  "src/apprt/win32/update_apply.zig":  "3c1dc00f07f7af391e6b2531c9a25b720abe5b097183480f63e6a68cf523f119",
                   "src/apprt/win32/update_auto_apply.zig":  "8f591a386f1d0b3cc6c0aa3378877a0e9a1a906980add59353ca598610da11ff",
                   "src/apprt/win32/update_badge.zig":  "ae2e792492c96ae7b19ac3e7a08fa87e1f34d56e5a47c0ed1469fd54a859a546",
                   "src/apprt/win32/update_check.zig":  "e8c76a63e80081788c5f082f1f2b9282ac78e19ff132a590c87767a658500489",
-                  "src/apprt/win32/update_install.zig":  "95e0bd8e65305a93c233d53b18ecb13d1d179c1a59837aae0c9e1511eae15d58",
+                  "src/apprt/win32/update_install.zig":  "9523be7a31405350edf0795f6be857b756468b3de3bf4a259703e90cfd35f2b5",
                   "src/apprt/win32/update_progress.zig":  "22e63ca2dc45f03d1215fc2e9bf1ff87ceee1ed8f5eba1e71c4c01fb65117c24",
                   "src/apprt/win32/update_reopen.zig":  "4ed799edea2e15b512323b5c811e6129e5c4b896421a9f543723a152256be944",
                   "src/apprt/win32/update_target.zig":  "81e78859640bd220c3e105401042030ba88fb1d45cc012b49b574e564bc035a7",
@@ -1638,7 +1638,7 @@
                   "test/win32/update-failure-visible.ps1":  "c8e5dbcf196daf7908d01c6660052aee5479c7946d53a557381dc24ac5bc06d3",
                   "test/win32/update-graceful.ps1":  "7dc9554f8f1cc26a1f499cca63334bd21c4b08f8fedc564a90e40fc3a857c385",
                   "test/win32/update-progress.ps1":  "8072f7491ab432094f5742d7fe667110a060189d5c4a581f92e1ef208771f4f7",
-                  "test/win32/update-real-msi.ps1":  "9e2bb5d62f2ae66a6e52467e821cb23f9e80b361b069c163a4f4d2776e890b2b",
+                  "test/win32/update-real-msi.ps1":  "3da4e05442f8c785fc9b847fb66bbceadb24dbf132b8fd976cfaf416ca24f13a",
                   "test/win32/update-target-guard.ps1":  "ea15159fd907d6b0872a0741fb25f5f7d8845ecb0f15db7ca7bbd3ceff69dc0e",
                   "test/win32/upgrade-no-fork.ps1":  "0d527c074d84e2eb24c8716b41a98f8f8cf8189e7893e808003ab73979a9e1ef",
                   "test/win32/upgrade-resume-readiness.ps1":  "e5957b091de230bdc31d0899be7e58f5d258658c578513d707d121c696ab01a0",

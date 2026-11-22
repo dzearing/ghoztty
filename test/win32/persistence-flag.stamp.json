@@ -1,8 +1,8 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-11-22T14:37:12-08:00",
-    "commit":  "04583b4d2",
+    "generated":  "2026-11-22T15:08:00-08:00",
+    "commit":  "b04c716e7",
     "uncommitted":  [
 
                     ],

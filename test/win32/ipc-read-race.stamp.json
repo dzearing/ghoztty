@@ -1,14 +1,14 @@
 {
     "guard":  "ipc-read-race",
     "script":  "test/win32/ipc-read-race.ps1",
-    "generated":  "2026-11-22T08:58:14-08:00",
-    "commit":  "a9a6632cf",
+    "generated":  "2026-11-22T14:38:49-08:00",
+    "commit":  "b04c716e7",
     "uncommitted":  [
 
                     ],
     "files":  {
                   "src/apprt/ipc/read_tail.zig":  "43e8b7a2c10d1a73990cec6b09a6ddd1b857065f39cd855d9c83bf289fbb2ee4",
-                  "src/apprt/ipc/verbs.zig":  "6c94ba464f5782df7b4ad3994c754fdae8acd4232ae4fdc79a5739b8e7730b08",
+                  "src/apprt/ipc/verbs.zig":  "50de8207665e8331637aeaff721fa2343fb33ef8992d440b65626b2ef811d5dd",
                   "src/apprt/win32/ipc_capture.zig":  "4d6c1c356c844d38fde23941fbe670ea16680d4d4d2ee5db08934434a217d26e",
                   "src/cli/read.zig":  "7c9f61c0d7891295d0f38e97db4c6c79db2853ed8945cc9aca9005c49a318e96",
                   "test/win32/ipc-read-race.ps1":  "329fe7490b88294af8f4daeacc8b69bf646c7da2664a7b7d848ae12b604a5293"

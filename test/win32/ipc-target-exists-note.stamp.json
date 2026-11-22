@@ -1,14 +1,14 @@
 {
     "guard":  "ipc-target-exists-note",
     "script":  "test/win32/ipc-target-exists-note.ps1",
-    "generated":  "2026-11-22T08:07:27-08:00",
-    "commit":  "da76287a2",
+    "generated":  "2026-11-22T14:38:39-08:00",
+    "commit":  "b04c716e7",
     "uncommitted":  [
 
                     ],
     "files":  {
                   "src/apprt/ipc/server.zig":  "b1fd2345bb0978e48b30abba7d11990f03f1f4a0c055c5e4e2bfefe93450d5ae",
-                  "src/apprt/win32/IpcHandlers.zig":  "524ab33bafaad93bba75e96922ff6e67d47f0e9aae72f2fca07ec84f83bdd3a9",
+                  "src/apprt/win32/IpcHandlers.zig":  "a58aa4cf379d629df8b2b99924cb78342aae0a001f2fe8dc259a73cfb9f8bbb0",
                   "src/cli/new_window.zig":  "bb577b56c988625d456f92af9501d497d00c0f560822b6fb81b260774ca1fa1a",
                   "src/cli/verb_flags.zig":  "c69bc8244c20ef85e5251f960267614d577a1391609ee20bbbcbdc1365703dcc",
                   "src/os/ipc_client.zig":  "b90cfaf1bb3298b3bb7ff3be1d9f8447e127d7104872f34fa034c77990085348",
