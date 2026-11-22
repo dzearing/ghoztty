@@ -210,9 +210,9 @@ private runtime dir, so a test app can never meet the user's.
   replies are win32's by construction. A new verb body goes into `verbs.zig`
   first (T3374, T3375), not into this file.
   `+list`, `+version`, `+send-keys`, `+read`, `+new-window`, `+split`,
-  `+rename`, `+close` and the `focus` action are real; every other verb
+  `+rename`, `+close`, `+rearrange` and the `focus` action are real; every other verb
   answers `+<verb> is not served by the Linux app yet (<task>)`, naming the
-  card that brings it (T3368 rearrange, T3369 reload, T3339 set-state/set-banner, T3337
+  card that brings it (T3369 reload, T3339 set-state/set-banner, T3337
   stash/restore/remote), and `--view` says the same for T3338.
 - **Names (T3370)** follow win32's rules exactly (`apprt/ipc/target_lookup.zig`,
   T2250): a window name is global (`+new-window --target`, else a minted
@@ -238,6 +238,17 @@ private runtime dir, so a test app can never meet the user's.
   `+new-window --target` equals `$GHOZTTY_TEST_ASK_TO_CLOSE` with its real
   close confirmation up. Acceptance: `wsl-run.ps1 -CommandFile
   test\linux\cli-close-focus.sh`, ends `CLI CLOSE FOCUS: ALL PASS`.
+- **`+rearrange` (T3368)** is win32's `handleRearrange`: the shared
+  `validateLayout` / `firstDuplicate` checks and sentences, then the window
+  (`--target`, else the caller's window, else the front one), then every leaf
+  resolved inside that window's active tab (a pane id anywhere, else a pane
+  name of THAT window; a name held only elsewhere is "not in the target
+  window"). Panes move with their shells; ratios are percents clamped 10-90;
+  focus stays on a surviving focused pane, else goes to the top-left leaf. A
+  pane the layout omits closes at once with its shell: the Linux app has no
+  close undo or stash yet (T3384), which is win32's `undo-timeout = 0`.
+  Acceptance: `wsl-run.ps1 -CommandFile test\linux\cli-rearrange.sh`, ends
+  `CLI REARRANGE: ALL PASS` (27 checks).
 - `+send-keys` and `+read` take a pane id, a pane name or a window name (its
   active pane). `+send-keys` is the Mac's:
   text runs framed as a bracketed paste when the program asked for one, key

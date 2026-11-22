@@ -167,9 +167,9 @@ hl_check "M2 b and c MOVED: same shells, still running" $? "b=$pid_b->$(list_py 
 focused_is rw "$a"
 hl_check "M3 the focus stayed on a, which survived" $? "$(dump)"
 cli +send-keys --target=b 'echo M4_$((40+2))' Enter > /dev/null 2>&1
-read_b() { cli +read --target=b --lines=20 2>/dev/null | grep -q 'M4_42'; }
+read_b() { cli +read --name=b --lines=20 2>/dev/null | grep -q 'M4_42'; }
 hl_wait_for 10 read_b
-hl_check "M4 b still answers to its name and runs what it is sent" $? "$(cli +read --target=b --lines=6 2>&1 | tr '\n' '|' | head -c 300)"
+hl_check "M4 b still answers to its name and runs what it is sent" $? "$(cli +read --name=b --lines=6 2>&1 | tr '\n' '|' | head -c 300)"
 shape_of rx | grep -Eq '^H50\([^,]+,x\)$'
 hl_check "M5 window rx is untouched (still H50(<its pane>,x))" $? "$(dump)"
 

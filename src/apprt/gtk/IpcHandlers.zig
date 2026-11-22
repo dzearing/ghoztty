@@ -5,9 +5,9 @@
 //!
 //! Served now: `+list` (windows, tabs, the split tree, each pane's stable id,
 //! name, title, cwd, shell pid and tty, plus the serving build so a caller can
-//! see WHICH app answered), `+version`, `+send-keys` / `+read` (T3336), and
+//! see WHICH app answered), `+version`, `+send-keys` / `+read` (T3336),
 //! `+new-window` / `+split` / `+rename` over a pane-name registry (T3370),
-//! and `+close` plus the `focus` action (T3367).
+//! `+close` plus the `focus` action (T3367), and `+rearrange` (T3368).
 //! Every other verb answers a plain "not served by the Linux app yet" error
 //! naming the task that brings it, so a script learns the gap instead of
 //! hanging or guessing.
