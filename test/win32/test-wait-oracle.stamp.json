@@ -1,8 +1,8 @@
 {
     "guard":  "test-wait-oracle",
     "script":  "test/win32/test-wait-oracle.ps1",
-    "generated":  "2026-11-21T18:28:20-08:00",
-    "commit":  "1d982830a",
+    "generated":  "2026-11-22T08:58:24-08:00",
+    "commit":  "a9a6632cf",
     "uncommitted":  [
 
                     ],
@@ -36,7 +36,7 @@
                   "src/cli/rename.zig":  "d3cd394288ea21515ee0b30fcda6288cbb7e0a56f5a98808eb01ad54f30a18f9",
                   "src/cli/restore.zig":  "4eaa13d8fb675b5724b6ff33f8dd7826961db96488eb71190137aff436594597",
                   "src/cli/send_keys.zig":  "eadc5860163f0131418b4826922cb715c8e8ebd7913d83ac4811fdcbd5cba395",
-                  "src/cli/sessions.zig":  "84d8ab29a13e76c03235a78f7e18a50f292b7c2a244e5fc89eca471eba170ea1",
+                  "src/cli/sessions.zig":  "dbc27e6b3e4ab7bb56e505b9368641029b5835d6be002978cff2cb4f2cbee915",
                   "src/cli/set_banner.zig":  "3de7548bc1abbd047c91fb49b680437ef621d549812aecc08348e789a3e9db00",
                   "src/cli/set_state.zig":  "0d20fe8ccd6fe87235c260df2997785acd3a972240e8d38eecd345c05bce019a",
                   "src/cli/show_config.zig":  "4b35c3bc443a8f8a5d1946e9fd2392319c5b68908451127e15d6d0f151ae27bc",
