@@ -128,6 +128,10 @@ pub const force_close_retry: usize = 30;
 /// fires, the stand-down is overdue and the waiting-update row comes up.
 pub const handoff_overdue: usize = 31;
 
+/// 500 ms poll for the session ids newly recorded relay windows are still
+/// missing (T3352, `App.armRelaySidCapture`); stops itself within 30 s.
+pub const relay_sid: usize = 32;
+
 // Fail the build if two ids above are equal. Every `pub const … : usize` in
 // this file is a timer id and is compared against every other one, so a new
 // entry is covered by adding it — there is no second list to keep in step.

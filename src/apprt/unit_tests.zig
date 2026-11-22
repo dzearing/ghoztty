@@ -747,6 +747,11 @@ test {
     // shown under another's sign-in.
     _ = @import("win32/machine_cache.zig");
 
+    // The record of open relay windows that brings them back at the next
+    // launch (T3352, Mac `RemoteSessionManifest`): register / capture /
+    // mark-don't-drain restore / the file round trip.
+    _ = @import("win32/relay_manifest.zig");
+
     // The machine chooser's REFRESH POLICY (T711) - when the directory is
     // re-asked, when a quiet failure is allowed to speak, and whether a landed
     // answer is worth redrawing for.

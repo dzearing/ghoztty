@@ -51,6 +51,7 @@ const sidebar_order = @import("pane_sidebar_order.zig");
 const sidebar_shared = @import("pane_sidebar_shared.zig");
 const PaneSidebar = @import("PaneSidebar.zig");
 const window_title_owner = @import("window_title_owner.zig");
+const relay_manifest = @import("relay_manifest.zig");
 const held_title = @import("held_title.zig");
 const PaneGrabHandle = @import("PaneGrabHandle.zig");
 const pane_grab_handle = @import("pane_grab_handle.zig");
@@ -1434,6 +1435,11 @@ reconnect: RemoteReconnect.State = .{},
 /// on this window open a fresh connection to the same agent. Owned strings
 /// (set via `setRemoteMachine`, freed in `deinit`). Null for local windows.
 remote_machine: ?RemoteMachine = null,
+
+/// This relay window's entry in `App.relay_manifest` (T3352), the record that
+/// brings it back at the next launch. Null for local and direct-TCP windows. A
+/// deliberate close (`closeNow`) removes the entry; a quit (`deinit`) keeps it.
+relay_manifest_id: ?relay_manifest.Id = null,
 
 /// The shared LOCAL session-persistence agent connection this window's
 /// surfaces ride (T89d), or null when persistence is off / unavailable / this
@@ -3972,6 +3978,13 @@ pub fn adoptRelayNames(app: *App, entries: []const machine_cache.Entry) void {
         relay.name = owned;
         log.info("remote machine renamed from directory device={s} name={s}", .{ relay.device, owned });
         win.refreshRemotePill();
+    }
+    // T3352: and every RECORDED relay window, open or waiting for the next
+    // launch, so a restored window comes back under the machine's current name
+    // (Mac `RemoteSessionManifest.updateName`; pinned entries keep theirs).
+    for (entries) |e| {
+        const name = machine_cache.nameFor(entries, e.id) orelse continue;
+        app.relay_manifest.updateName(e.id, name);
     }
     // And every open Activity panel titled by a machine this listing names
     // (T1420) — outside the window loop, because a panel opened before any
@@ -19080,6 +19093,10 @@ pub fn setTitleOverrideBy(self: *Window, title: ?[]const u8, setter: window_titl
     // merged, the painted title lives in the STRIP's half.
     self.invalidateCaption();
     self.app.markLayoutDirty(); // T89f: window title pin changed → re-persist
+    // T3352: a relay window keeps its pin across a relaunch too (Mac
+    // `updateWindowTitleOverride`); the local layout above skips it.
+    if (self.relay_manifest_id) |*id|
+        self.app.relay_manifest.setTitle(id, self.title_override, self.title_set_by_user);
     // The pin is the window's name on every all-windows list (T1829).
     self.syncPaneSidebar();
 }
@@ -23067,6 +23084,14 @@ pub fn closeNow(self: *Window) void {
     // it still exists, before the surfaces' GL contexts are torn down.
     self.app.close_undo.finalizeWindow(self);
     self.markAllSessionsClose();
+    // T3352: a deliberate close (the user's, a Disconnect, the remote shell
+    // exiting) means the window does not come back at the next launch. A quit
+    // never reaches here (`deinit`), and a sign-out's close keeps the entry so
+    // a later launch can still re-attach (Mac `isSigningOut`).
+    if (self.relay_manifest_id) |*id| if (!self.app.relay_signing_out) {
+        self.app.relay_manifest.remove(id);
+        self.relay_manifest_id = null;
+    };
 
     // First, cleanly shut down all surfaces (renderer/IO threads, WGL, DC).
     self.cleanupAllSurfaces();

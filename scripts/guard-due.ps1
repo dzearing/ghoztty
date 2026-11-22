@@ -1536,6 +1536,20 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # T3352: a relay window open at quit comes back at the next launch. The
+    # record (`relay_manifest.zig`) and the launch worker that replays it
+    # (`RelayWindowRestore.zig`) are the feature; the App/Window hooks around
+    # them are covered by the rows that already name those files.
+    [pscustomobject]@{
+        Name   = 'relay-window-relaunch'
+        Script = 'test\win32\relay-window-relaunch.ps1'
+        Stamp  = 'test\win32\relay-window-relaunch.stamp.json'
+        Covers = @(
+            'test\win32\relay-window-relaunch.ps1',
+            'src\apprt\win32\relay_manifest.zig',
+            'src\apprt\win32\RelayWindowRestore.zig'
+        )
+    },
     # T1544: the moves above SURVIVE a restart. A relocation is only durable if
     # its commit re-pushes the manifest (`markLayoutDirty`) and the restore
     # rebuilds each window from its cross-run uuid, so the row names the

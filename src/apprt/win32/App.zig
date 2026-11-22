@@ -70,6 +70,8 @@ const pane_sidebar_add = @import("pane_sidebar_add.zig");
 const dial_failure = @import("dial_failure.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
 const relay_signout = @import("relay_signout.zig");
+const relay_manifest_mod = @import("relay_manifest.zig");
+const RelayWindowRestore = @import("RelayWindowRestore.zig");
 const tcp_dial = @import("../../remote/tcp_dial.zig");
 const LocalAgent = @import("LocalAgent.zig");
 const MachineConnectionPool = @import("MachineConnectionPool.zig");
@@ -370,6 +372,7 @@ const HANDOFF_OVERDUE_TIMER_ID: usize = msg_timer.handoff_overdue;
 
 /// The deferred startup window's grace period (T2162). See `run`.
 const STARTUP_FALLBACK_TIMER_ID: usize = msg_timer.startup_fallback;
+const RELAY_SID_TIMER_ID: usize = msg_timer.relay_sid;
 /// Long enough for the listener thread to write the reply, short enough that
 /// the launch waiting on this process barely notices.
 const HANDOFF_QUIT_DELAY_MS: u32 = 150;
@@ -779,6 +782,18 @@ ipc_remote_dial: ?*IpcHandlers.RemoteDialJob = null,
 /// long as somebody is signed out and is consumed by the next sign-in.
 relay_suspended: relay_signout.Store = .{},
 
+/// The record of open relay windows that brings them back at the next launch
+/// (T3352, Mac `RemoteSessionManifest`). Loaded in `init`; GUI thread only.
+relay_manifest: relay_manifest_mod.Manifest,
+
+/// True while a relay SIGN-OUT closes its windows (T3352, Mac `isSigningOut`):
+/// that close keeps their `relay_manifest` entries, a user's close does not.
+relay_signing_out: bool = false,
+
+/// The relay windows whose entry still waits for its pane's session id
+/// (T3352): how many `RELAY_SID_TIMER_ID` ticks are left before giving up.
+relay_sid_ticks: u32 = 0,
+
 /// Find-or-spawn manager for the local session-persistence agent (T89d).
 /// Owns the ONE shared connection every persistent window/tab/split rides
 /// (mirrors the Mac `LocalAgentManager.sharedOwner`). Bounded + non-fatal:
@@ -996,8 +1011,16 @@ pub fn init(
         .bg_brush = bg_brush,
         .local_agent = LocalAgent.init(alloc),
         .machine_pool = MachineConnectionPool.init(alloc),
+        .relay_manifest = .{ .alloc = alloc },
     };
     self.close_undo = CloseUndo.init(self);
+    // T3352: the relay windows the last run left open. Read here, replayed by
+    // `RelayWindowRestore.start` once the launch's own windows are up.
+    {
+        const path = relay_manifest_mod.manifestPath(alloc);
+        defer if (path) |p| alloc.free(p);
+        self.relay_manifest = relay_manifest_mod.Manifest.load(alloc, path);
+    }
 
     // A COM apartment on the UI thread before anything can build a viewer
     // (T2015). WebView2 refuses to create an environment without one
@@ -2368,6 +2391,11 @@ pub fn run(self: *App) !void {
         }
     }
 
+    // T3352: the relay windows the last run left open come back too (Mac
+    // `restoreRemoteWindows`). Dialing is network work, so a worker does it and
+    // the windows open as each machine answers - never blocking this launch.
+    _ = RelayWindowRestore.start(self);
+
     // T1177: a launch that reaches this point with NO WINDOW is the silent
     // startup failure, and it is silent precisely because nothing errored — the
     // restore reported success, or a window was created and never materialized,
@@ -2874,6 +2902,8 @@ pub fn terminate(self: *App) void {
     // T713: whatever a sign-out suspended and no sign-in came back for. The
     // sessions it names outlive us on the far agent, which is the point.
     self.relay_suspended.deinit(alloc);
+    // T3352: the file stays on disk - it is what the next launch restores from.
+    self.relay_manifest.deinit();
 
     // Layout-blob bookkeeping (T334): the agent KEEPS the blobs on purpose —
     // they are what makes this machine restorable after we exit — so this frees
@@ -6232,6 +6262,10 @@ fn restoreWindowWhole(
         // Non-fatal: only T68's "New Window inherits the remote host" degrades.
         log.warn("session-restore: recording machine identity failed err={}", .{err});
     };
+    // T3352: a relay window the chooser rebuilt is recorded like a dialed one
+    // (Mac registers on its restore path too), so it also survives a relaunch.
+    // Its first pane's session id is captured once the pane has attached.
+    if (tr.dialed != null) self.recordRelayWindow(window, .{});
     try self.restoreTab(window, 0, win.tabs[0], tr, attach);
 
     // Remaining tabs, appended in manifest order (addTab activates each new tab,
@@ -8550,6 +8584,12 @@ pub const RemoteOpenOptions = struct {
     /// The window's own gradient (T1832): a window opened by hand, or with
     /// `--from-focused --color=random`, in the elevated style.
     desk_variant: ?desk_palette.Variant = null,
+    /// `title` was typed by the user rather than set by a script (T3352: a
+    /// relaunch restoring a relay window's user-set pin).
+    title_by_user: bool = false,
+    /// The relay record this window supersedes (T3352): a launch restore
+    /// re-attaching that entry's session. Borrowed.
+    manifest_replacing: ?[]const u8 = null,
 };
 
 /// `IncompatibleVersion` is kept apart from `DialFailed` for the reason T319
@@ -8624,7 +8664,12 @@ pub fn openDialedWindow(
         };
     }
 
-    if (opts.title) |title| window.setTitleOverride(title);
+    // T3352: record a relay window so it comes back at the next launch. After
+    // the machine (its resolved name is what gets recorded) and before the
+    // title (whose setter writes the pin into this entry).
+    self.recordRelayWindow(window, opts);
+
+    if (opts.title) |title| window.setTitleOverrideBy(title, if (opts.title_by_user) .user else .script);
     if (opts.activate) if (window.hwnd) |hwnd| {
         _ = w32.SetForegroundWindow(hwnd);
     };
@@ -8656,6 +8701,164 @@ pub fn openRelayWindow(
     var opts_with_machine = opts;
     opts_with_machine.machine = .{ .relay = .{ .base = relay_base, .device = device, .token = token } };
     return self.openDialedWindow(.{ .relay = dialed }, opts_with_machine);
+}
+
+/// Record a just-opened RELAY window in `relay_manifest` (T3352) so the next
+/// launch can re-attach it. Direct-TCP and local windows are not recorded (Mac
+/// records relay windows only: a TCP endpoint is not an account resource and
+/// has no stable identity to come back to). `opts.manifest_replacing` is the
+/// entry a launch restore is superseding, dropped in the same write.
+fn recordRelayWindow(self: *App, window: *Window, opts: RemoteOpenOptions) void {
+    const machine = window.remote_machine orelse return;
+    const relay = switch (machine) {
+        .relay => |r| r,
+        .tcp => return,
+    };
+    const id = self.relay_manifest.register(.{
+        .relay_base = relay.base,
+        .device = relay.device,
+        .session_id = opts.session_id,
+        .name = relay.name,
+        .name_pinned = relay.name_pinned,
+        .ipc_name = opts.ipc_name,
+    }, opts.manifest_replacing) catch |err| {
+        log.warn("relay window record: register failed err={}", .{err});
+        return;
+    };
+    window.relay_manifest_id = id;
+    log.info("relay window record: registered device={s} session={s} name={s} pinned={}", .{
+        relay.device,
+        opts.session_id orelse "(pending)",
+        relay.name orelse "",
+        relay.name_pinned,
+    });
+    if (opts.session_id == null) self.armRelaySidCapture();
+}
+
+/// Poll every 500 ms, for up to 30 s, for the session ids recorded relay
+/// windows are still missing (T3352). The pane learns its id only once the far
+/// agent has answered the OPEN, a network round trip after the window exists;
+/// Mac polls the same way (`RemoteSessionManifest.captureSessionID`).
+fn armRelaySidCapture(self: *App) void {
+    self.relay_sid_ticks = 60;
+    const mh = self.msg_hwnd orelse return;
+    _ = w32.SetTimer(mh, RELAY_SID_TIMER_ID, 500, null);
+}
+
+fn tickRelaySidCapture(self: *App) void {
+    var pending: usize = 0;
+    for (self.windows.items) |win| {
+        const id = &(win.relay_manifest_id orelse continue);
+        const entry = self.relay_manifest.find(id) orelse continue;
+        if (entry.session_id != null) continue;
+        if (firstPaneSessionId(win)) |sid| {
+            self.relay_manifest.setSessionId(id, sid);
+            log.info("relay window record: session captured session={s}", .{sid});
+        } else pending += 1;
+    }
+    if (self.relay_sid_ticks > 0) self.relay_sid_ticks -= 1;
+    if (pending == 0 or self.relay_sid_ticks == 0) {
+        if (self.msg_hwnd) |mh| _ = w32.KillTimer(mh, RELAY_SID_TIMER_ID);
+        if (pending > 0) log.warn("relay window record: {d} window(s) never reported a session id", .{pending});
+    }
+}
+
+/// Whether a live target already answers to `name` (T3352: a restored relay
+/// window must not steal a name somebody registered while it was gone).
+fn ipcNameTaken(self: *App, name: []const u8) bool {
+    for (self.ipc_registry.entries.items) |e| {
+        if (std.mem.eql(u8, e.name, name)) return true;
+    }
+    return false;
+}
+
+/// The session id of `win`'s first terminal pane (Mac: `surfaceTree.first`),
+/// or null while it has none.
+fn firstPaneSessionId(win: *Window) ?[]const u8 {
+    if (win.tab_count == 0) return null;
+    var it = win.tab_trees[0].iterator();
+    while (it.next()) |entry| {
+        const surface = entry.view.surface() orelse continue;
+        if (!surface.core_surface_ready) continue;
+        const sid = surface.core_surface.remoteSessionId() orelse continue;
+        if (sid.len == 0) continue;
+        return sid;
+    }
+    return null;
+}
+
+/// GUI thread (T3352): reopen the relay windows a `RelayWindowRestore` worker
+/// dialed and found alive, and settle every other entry's fate. Each restored
+/// window's registration supersedes its old entry in one write; a session the
+/// far agent no longer knows is removed; anything the worker could not reach
+/// is released and stays for the next launch. Returns how many reopened.
+pub fn adoptRelayWindowRestore(self: *App, job: *RelayWindowRestore.Job) usize {
+    var restored: usize = 0;
+    for (job.items) |*item| {
+        const id = item.entry.id;
+        switch (item.fate) {
+            .drop => {
+                self.relay_manifest.remove(id);
+                continue;
+            },
+            .keep => {
+                self.relay_manifest.releaseRestore(id);
+                continue;
+            },
+            .restore => {},
+        }
+        const sid = item.entry.session_id orelse {
+            self.relay_manifest.remove(id);
+            continue;
+        };
+        const machine: Window.RemoteMachine = .{ .relay = .{
+            .base = item.entry.relay_base,
+            .device = item.entry.device,
+            .token = job.token,
+            .name = item.entry.name,
+            .name_pinned = item.entry.name_pinned,
+        } };
+        // The app is leaving, or a live pane already holds this session (a
+        // second ATTACH would evict it): leave the entry for a later launch.
+        if (self.quit_requested or self.paneForSession(sid, machine) != null) {
+            log.info("relay window restore: session={s} skipped (quitting or already open)", .{sid});
+            self.relay_manifest.releaseRestore(id);
+            continue;
+        }
+        const dialed = item.dialed orelse {
+            self.relay_manifest.releaseRestore(id);
+            continue;
+        };
+        // Ownership moves to the window (or `openDialedWindow` frees it).
+        item.dialed = null;
+        // A name somebody else has taken since stays theirs; the window comes
+        // back unnamed rather than stealing the target.
+        const ipc_name: ?[]const u8 = if (item.entry.ipc_name) |n|
+            (if (self.ipcNameTaken(n)) null else n)
+        else
+            null;
+        _ = self.openDialedWindow(dialed, .{
+            .session_id = sid,
+            .ipc_name = ipc_name,
+            .title = item.entry.window_title,
+            .title_by_user = item.entry.title_by_user,
+            .machine = machine,
+            .activate = false,
+            .manifest_replacing = id,
+        }) catch |err| {
+            log.warn("relay window restore: reopen failed session={s} err={}", .{ sid, err });
+            self.relay_manifest.releaseRestore(id);
+            continue;
+        };
+        log.info("relay window restore: reattached device={s} session={s} name={s}", .{
+            item.entry.device,
+            sid,
+            ipc_name orelse "",
+        });
+        restored += 1;
+    }
+    log.info("relay window restore: {d} of {d} window(s) reopened", .{ restored, job.items.len });
+    return restored;
 }
 
 /// Resume ONE browsed session of the LOCAL agent (T320): open a window whose
@@ -9005,7 +9208,10 @@ pub fn suspendRelayWindowsForSignOut(self: *App) usize {
         };
 
         relay_signout.pinDetachAll(window);
-        // Sign-out's close, not the user's: nothing to undo (T1874).
+        // Sign-out's close, not the user's: nothing to undo (T1874). Its relay
+        // record stays, so a later launch can still re-attach (T3352).
+        self.relay_signing_out = true;
+        defer self.relay_signing_out = false;
         window.closeNow();
         closed += 1;
     }
@@ -15098,6 +15304,22 @@ fn msgWndProc(
     if (msg == w32.WM_TIMER and wparam == STARTUP_FALLBACK_TIMER_ID) {
         _ = w32.KillTimer(hwnd, STARTUP_FALLBACK_TIMER_ID);
         app.finishDeferredStartup();
+        return 0;
+    }
+
+    // T3352: capture the session ids recorded relay windows are waiting on.
+    if (msg == w32.WM_TIMER and wparam == RELAY_SID_TIMER_ID) {
+        app.tickRelaySidCapture();
+        return 0;
+    }
+
+    // T3352: a launch's relay-window restore worker is done.
+    if (msg == RelayWindowRestore.WM_APP_RELAY_WINDOW_RESTORE) {
+        if (wparam != 0) {
+            const job: *RelayWindowRestore.Job = @ptrFromInt(wparam);
+            defer job.destroy();
+            _ = app.adoptRelayWindowRestore(job);
+        }
         return 0;
     }
 

@@ -1,0 +1,19 @@
+{
+    "guard":  "relay-window-relaunch",
+    "script":  "test/win32/relay-window-relaunch.ps1",
+    "generated":  "2026-11-22T08:37:05-08:00",
+    "commit":  "5c52e9145",
+    "uncommitted":  [
+                        "src/apprt/win32/relay_manifest.zig",
+                        "src/apprt/win32/RelayWindowRestore.zig",
+                        "test/win32/relay-window-relaunch.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/relay_manifest.zig":  "e61a162c68e9c38a4ad69ae96f387c316deb07eef079ee879ee49c6308376445",
+                  "src/apprt/win32/RelayWindowRestore.zig":  "ad13c74872df69fbc2e743ea88cb27476472b353cb0917c1ab09fa010e37d065",
+                  "test/win32/relay-window-relaunch.ps1":  "4beadd83eb1cd6cba1975068b4182453fd6263c391533c9f21b5d42b850b1341"
+              },
+    "code":  {
+                 "test/win32/relay-window-relaunch.ps1":  "code1:4b59455c491b6e00ec76783dd6dbbb1088adcf2b7894c0c6f9cb7b731a56aa81"
+             }
+}

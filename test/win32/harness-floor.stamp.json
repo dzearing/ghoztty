@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-22T07:51:45-08:00",
-    "commit":  "18f282b0e",
+    "generated":  "2026-11-22T08:44:09-08:00",
+    "commit":  "5c52e9145",
     "uncommitted":  [
-
+                        "test/win32/relay-window-relaunch.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
@@ -478,6 +478,7 @@
                   "test/win32/relaunch-guard.ps1":  "36646dcf48c6956acfe72cf6fd61f22d097789692135fcf10845f81cb0b52299",
                   "test/win32/relay-account.ps1":  "aeda41ced1deeedcf6a9a0c1cbd0d9caafff4b1c341a6bb521eaedd6ca5bbdbf",
                   "test/win32/relay-signin-live.ps1":  "6bf109569944c01f2e026bf80c1ed5f912c2ebac3f8763299a9f9cae2eff8585",
+                  "test/win32/relay-window-relaunch.ps1":  "4beadd83eb1cd6cba1975068b4182453fd6263c391533c9f21b5d42b850b1341",
                   "test/win32/release-artifacts.ps1":  "cd3fe5d2f52998aeda15417513f32601f925f17b1d4be582a078c34fbdac0246",
                   "test/win32/release-parity.ps1":  "92babe2c0e154c766dd02f9578073f6a04ec281ee706aa8a8dc83c505d579f9f",
                   "test/win32/release-symbols.ps1":  "7c1a87e8cf563ea02c3f1e97d098729af03ddafd75144ce221afb945fc0fb862",

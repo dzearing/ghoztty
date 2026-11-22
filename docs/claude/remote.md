@@ -98,6 +98,14 @@ session and resume it later from the Cmd-Shift-N chooser.
 - A Disconnect is still a deliberate close: the window's `RemoteSessionManifest`
   entry is removed, so the WINDOW does not come back on next launch. The
   SESSION stays alive and is resumed from the chooser.
+- **Windows keeps the same record** (T3352): `src/apprt/win32/relay_manifest.zig`,
+  persisted as `%LOCALAPPDATA%\ghoztty\remote-windows[-debug].json`. A relay
+  window is registered at open (`App.recordRelayWindow`), gains its first pane's
+  session id within ~30 s, is removed by `Window.closeNow` (any deliberate close,
+  Disconnect included) and kept by a quit, a crash or a sign-out. At launch
+  `RelayWindowRestore` dials each entry off the GUI thread, probes the session,
+  and reopens the live ones with their `--name`, pin and title. Acceptance:
+  `test\win32\relay-window-relaunch.ps1`.
 
 The user's answer is recorded as a **pin** (`SessionDetachPin`), not as a
 one-shot intent write, because a single close marks CLOSE-on-free twice from two
