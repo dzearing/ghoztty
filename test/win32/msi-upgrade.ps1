@@ -40,8 +40,13 @@ if (-not $MsiV2) { $MsiV2 = Join-Path $repo 'zig-out\t23-v2.msi' }
 # private suffix makes the Test-ExeRuns probes answer about the throwaway
 # install alone. (Set only, no asserts: the installed exe is a Release build
 # by design, which is exactly what Assert-GhozttyPrivateEndpoint refuses.)
+$realLocalAppData = $env:LOCALAPPDATA
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 [void](Set-GhozttyTestIsolation -Tag 't23msi')
+# The proof that the user's real install was never reached (T3394/T3405): the
+# package pre-flight that refuses msiexec, and the before/after snapshot.
+. (Join-Path $PSScriptRoot 'lib\UserInstallSentinel.ps1')
+$userInstallDir = Join-Path $realLocalAppData 'Programs\Ghoztty'
 
 $script:pass = 0
 $script:fail = 0
@@ -149,6 +154,27 @@ $verCmp = 0
 if ($v1ProductVer -and $v2MsiProductVer) { $verCmp = ([version]$v2MsiProductVer).CompareTo([version]$v1ProductVer) }
 Assert ($verCmp -gt 0) "setup: v2 ProductVersion $v2MsiProductVer > v1 $v1ProductVer (a real major upgrade)"
 
+# The REFUSAL (T3394/T3405): both packages must be a throwaway identity, or no
+# msiexec runs at all. build-msi.sh --test-identity is what makes them one, and
+# a package built without it carries the shipping UpgradeCode - which would
+# upgrade, and on the uninstall below REMOVE, the user's terminal.
+$reach = @()
+foreach ($m in @($MsiV1, $MsiV2)) {
+    foreach ($r in @(Get-PackageUserProductReach -Msi $m)) { $reach += "$(Split-Path $m -Leaf): $r" }
+}
+Assert ($reach.Count -eq 0) "setup: neither package can reach the user's installed Ghoztty$(if ($reach.Count) { ' - ' + ($reach -join '; ') })"
+if ($reach.Count -gt 0) {
+    Write-Host "`nREFUSED: no msiexec was run - the packages are not a throwaway identity." -ForegroundColor Red
+    Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red
+    exit 1
+}
+
+# What the user's install IS before any msiexec here runs (T3405); compared in
+# the finally below, after the final cleanup's own `msiexec /x`.
+$runStarted = Get-Date
+$userSnapBefore = Get-UserInstallSnapshot -Dir $userInstallDir
+
+try {
 Write-Host "== pre-clean any leftover $TestName install =="
 Remove-TestProduct
 
@@ -231,6 +257,16 @@ Remove-TestProduct
 Assert (-not (Test-Path $installDir)) 'cleanup: install dir removed'
 Assert (@(Get-TestUninstallEntries).Count -eq 0) 'cleanup: no Apps & Features entries left'
 Assert ((Get-UserPathEntryCount) -eq 0) 'cleanup: user PATH entry removed'
+} finally {
+    # The user's install, measured on every path out (T3405), a run that threw
+    # half-way included: $ErrorActionPreference is Stop here.
+    $userDiff = Compare-UserInstallSnapshot -Before $userSnapBefore -After (Get-UserInstallSnapshot -Dir $userInstallDir)
+    if ($userDiff) { Write-Host "  user install changed:`n    $($userDiff -replace "`n", "`n    ")" -ForegroundColor Red }
+    Assert (-not $userDiff) 'user install: byte-for-byte what it was (product, version, files, image hashes)'
+    $userEvents = Get-UserProductInstallerEvents -Since $runStarted
+    if ($userEvents) { Write-Host "  installer events naming the user's product:`n    $($userEvents -replace "`n", "`n    ")" -ForegroundColor Red }
+    Assert (-not $userEvents) 'user install: Windows Installer logged nothing against the user''s product during the run'
+}
 
 Write-Host ''
 if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass)" }

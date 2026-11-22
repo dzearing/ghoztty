@@ -101,6 +101,9 @@ $realAppData = $env:APPDATA
 $env:GHOZTTY_NO_STARTUP_ESCAPE = '1'
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 . (Join-Path $PSScriptRoot 'lib\ThrowawayProduct.ps1')
+# The proof that the user's real install was never reached (T3394/T3405): the
+# package pre-flight that refuses msiexec, and the before/after snapshot.
+. (Join-Path $PSScriptRoot 'lib\UserInstallSentinel.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $Repo 'scripts\lib\ArpVersion.ps1')
 
@@ -332,12 +335,13 @@ Write-Host "  package : $source"
 Write-Host "  identity: $Identity -> $installDir"
 
 $pathHitsBefore = Get-UserPathHits -Dir $installDir
-$userFilesBefore = if (Test-Path $userInstallDir) {
-    @(Get-ChildItem $userInstallDir -Recurse -File -ErrorAction SilentlyContinue).Count
-} else { -1 }
-$userExeStampBefore = if (Test-Path (Join-Path $userInstallDir 'ghoztty.exe')) {
-    (Get-Item (Join-Path $userInstallDir 'ghoztty.exe')).LastWriteTimeUtc.Ticks
-} else { 0 }
+# What the user's install IS before any msiexec here runs (T3405): registered
+# product and version, every file, the live images' hashes. G compares against
+# it in the finally, after the cleanup. It replaces a file count and the exe's
+# mtime, which read the 2026-11-22 damage (the agent renamed aside, nothing
+# rewritten) as clean.
+$runStarted = Get-Date
+$userSnapBefore = Get-UserInstallSnapshot -Dir $userInstallDir
 
 $desktopUp = $false
 try {
@@ -394,6 +398,20 @@ Assert 'A2 it is the throwaway product, by name' `
 $upgradeCode = Get-MsiProperty -Msi $pkgNew -Name 'UpgradeCode'
 Assert 'A3 its UpgradeCode is NOT the shipping product''s' `
     ($upgradeCode -ne '' -and $upgradeCode -ne '{5EB02044-7F06-498B-B7A9-7EFD65486CFB}')
+
+# The REFUSAL (T3394/T3405). A2/A3 score the rewrite; this stops the walk when
+# it did not take, before any msiexec can act on the user's product - over
+# every package the walk installs, the predecessor included.
+$reach = @()
+foreach ($m in @($pkgNew, $pkgOld | Where-Object { $_ })) {
+    foreach ($r in @(Get-PackageUserProductReach -Msi $m)) { $reach += "$(Split-Path $m -Leaf): $r" }
+}
+Assert "A3b no package here can reach the user's installed Ghoztty$(if ($reach.Count) { ' - ' + ($reach -join '; ') })" `
+    ($reach.Count -eq 0)
+if ($reach.Count -gt 0) {
+    Write-Host "`nREFUSED: no msiexec was run - the packages are not a throwaway identity." -ForegroundColor Red
+    Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped $script:skipped -Label 'install-walkthrough'
+}
 
 $customActions = @(Get-MsiTableColumn -Package $pkgNew -Query 'SELECT `Action` FROM `CustomAction`')
 $hasMaintenancePrompt = ($customActions -contains 'MaintenancePrompt')
@@ -711,15 +729,8 @@ Assert 'F5 the Start Menu shortcut is gone' (-not (Test-Path -LiteralPath $short
 Write-Host "`n-- G. and the user's own Ghoztty, before and after --"
 
 Assert 'G1 the user''s install directory is still there' (Test-Path $userInstallDir)
-$userFilesAfter = if (Test-Path $userInstallDir) {
-    @(Get-ChildItem $userInstallDir -Recurse -File -ErrorAction SilentlyContinue).Count
-} else { -1 }
-Assert "G2 its file count is unchanged ($userFilesBefore -> $userFilesAfter)" `
-    ($userFilesAfter -eq $userFilesBefore)
-$userExeStampAfter = if (Test-Path (Join-Path $userInstallDir 'ghoztty.exe')) {
-    (Get-Item (Join-Path $userInstallDir 'ghoztty.exe')).LastWriteTimeUtc.Ticks
-} else { 0 }
-Assert 'G3 its ghoztty.exe was not rewritten' ($userExeStampAfter -eq $userExeStampBefore)
+# G2/G3 - the byte-for-byte comparison and the installer's own record - run in
+# the finally below, after the cleanup's msiexec, so every path reaches them.
 
 # LAST statement of the top-level try (T1039): reaching it is what makes a green
 # verdict below a statement about the whole walk.
@@ -739,6 +750,15 @@ Complete-TestBody
         }
     }
     if ($desktopUp) { Remove-TestDesktop | Out-Null }
+
+    # The user's install, measured AFTER the cleanup (T3405): the cleanup runs
+    # `msiexec /x` too, and a run that threw half-way never reached G.
+    $userDiff = Compare-UserInstallSnapshot -Before $userSnapBefore -After (Get-UserInstallSnapshot -Dir $userInstallDir)
+    if ($userDiff) { Write-Host "  user install changed:`n    $($userDiff -replace "`n", "`n    ")" -ForegroundColor Red }
+    Assert 'G2 the user''s install is byte-for-byte what it was (product, version, files, image hashes)' (-not $userDiff)
+    $userEvents = Get-UserProductInstallerEvents -Since $runStarted
+    if ($userEvents) { Write-Host "  installer events naming the user's product:`n    $($userEvents -replace "`n", "`n    ")" -ForegroundColor Red }
+    Assert 'G3 Windows Installer logged nothing against the user''s product during the run' (-not $userEvents)
 }
 
 # --- stamp (T783) ----------------------------------------------------------

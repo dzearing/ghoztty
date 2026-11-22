@@ -63,6 +63,9 @@ Set-StrictMode -Off
 
 $realLocalAppData = $env:LOCALAPPDATA
 . (Join-Path $PSScriptRoot 'lib\ThrowawayProduct.ps1')
+# The proof that the user's real install was never reached (T3394/T3405): the
+# package pre-flight that refuses msiexec, and the before/after snapshot.
+. (Join-Path $PSScriptRoot 'lib\UserInstallSentinel.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -168,6 +171,12 @@ function Invoke-UpgradeArm {
 $userRowsBefore = @(Get-ThrowawayUninstallEntries -Identity 'Ghoztty' -IncludeHidden |
     ForEach-Object { $_.PSPath } | Sort-Object)
 $pathBefore = Get-UserPathEntryCount
+# What the user's install IS before any msiexec here runs (T3405): registered
+# product and version, every file, the live images' hashes. D compares against
+# it, in the finally, after the cleanup's own `msiexec /x`.
+$runStarted = Get-Date
+$userInstallDir = Get-ThrowawayUserInstallDir -RealLocalAppData $realLocalAppData
+$userSnapBefore = Get-UserInstallSnapshot -Dir $userInstallDir
 
 # ===================================================== A. packages
 Write-Host "`n-- A. throwaway packages from the newest published release --"
@@ -208,6 +217,19 @@ $pubEarly = ($repPub -gt $validate -and $repPub -lt $initialize)
 Write-Host "  published $Tag sequences RemoveExistingProducts at $repPub (InstallValidate=$validate InstallInitialize=$initialize InstallFinalize=$finalize): $(if ($pubEarly) { 'EARLY' } else { 'LATE' })"
 Assert ($repPub -gt 0) "A5 the published package has a RemoveExistingProducts row ($repPub)"
 Assert ($repFix -gt $validate -and $repFix -lt $initialize) "A6 the fixed copy runs it between InstallValidate and InstallInitialize ($repFix)"
+
+# The REFUSAL (T3394/T3405). A3 scores the rewrite; this stops the run when it
+# did not take, before any msiexec can act on the user's product - over all
+# four packages B and C install, the two re-sequenced copies included.
+$reach = @()
+foreach ($m in @($pubOld, $pubNew, $fixOld, $fixNew)) {
+    foreach ($r in @(Get-PackageUserProductReach -Msi $m)) { $reach += "$(Split-Path $m -Leaf): $r" }
+}
+Assert ($reach.Count -eq 0) "A7 no package here can reach the user's installed Ghoztty$(if ($reach.Count) { ' - ' + ($reach -join '; ') })"
+if ($reach.Count -gt 0) {
+    Write-Host "`nREFUSED: no msiexec was run - the packages are not a throwaway identity." -ForegroundColor Red
+    Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped $script:skip -Label 'arp-orphan'
+}
 
 try {
     # ===================================================== B. as published
@@ -258,6 +280,14 @@ try {
     $userRowsAfter = @(Get-ThrowawayUninstallEntries -Identity 'Ghoztty' -IncludeHidden |
         ForEach-Object { $_.PSPath } | Sort-Object)
     Assert (($userRowsAfter -join '|') -eq ($userRowsBefore -join '|')) "D4 the user's own Ghoztty rows never moved ($($userRowsBefore.Count) -> $($userRowsAfter.Count))"
+    # The user's install, measured after the cleanup (T3405): every path ends
+    # here, a run that threw half-way included.
+    $userDiff = Compare-UserInstallSnapshot -Before $userSnapBefore -After (Get-UserInstallSnapshot -Dir $userInstallDir)
+    if ($userDiff) { Write-Host "  user install changed:`n    $($userDiff -replace "`n", "`n    ")" -ForegroundColor Red }
+    Assert (-not $userDiff) 'D5 the user''s install is byte-for-byte what it was (product, version, files, image hashes)'
+    $userEvents = Get-UserProductInstallerEvents -Since $runStarted
+    if ($userEvents) { Write-Host "  installer events naming the user's product:`n    $($userEvents -replace "`n", "`n    ")" -ForegroundColor Red }
+    Assert (-not $userEvents) 'D6 Windows Installer logged nothing against the user''s product during the run'
 }
 
 # --- stamp (T783) ----------------------------------------------------------

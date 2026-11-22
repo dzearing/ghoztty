@@ -111,6 +111,7 @@ marker with no reason waives nothing.
 | No script writes `` `e `` for ESC — under 5.1 it is the letter e (T740) | `vt-escape-scan.ps1` | — use `[char]27`, or `lib\VtText.ps1` |
 | A fixture plants the filename it reads as — not one Windows quietly rewrites (trailing dot/space, CON/NUL/...) (T1501) | `fixture-name-audit.ps1` | — write through `ConvertTo-ExtendedPath` (`scripts\lib\HardDelete.ps1`), or mark `# fixture-name-ok: <why>` |
 | A harness reads the log sink its build writes — never a spelled `ghoztty.log`, which a Debug build leaves empty (T1679) | `log-sink-audit.ps1` | — derive it with `Get-GhozttyAppLogPath -Exe $exe` (`lib\BuildMode.ps1`), or declare `# @log-sink-literal - <why>` |
+| A script that runs a real msiexec refuses a package that can reach the user's Ghoztty and proves afterwards their install did not move (T3405) | `msiexec-sentinel-audit.ps1` | — dot-source `lib\UserInstallSentinel.ps1` and call `Get-PackageUserProductReach` before the install, `Get-UserInstallSnapshot` before and after, `Compare-UserInstallSnapshot` and `Get-UserProductInstallerEvents` in the finally |
 
 Each audit is also its own acceptance script: it self-tests its analyzer
 against fixtures and proves its own teeth, so running one by hand answers a
