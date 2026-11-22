@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-21T17:54:48-08:00",
-    "commit":  "81bcd95b2",
+    "generated":  "2026-11-21T18:38:08-08:00",
+    "commit":  "1d982830a",
     "uncommitted":  [
-                        "test/win32/remote-pill-relay-name.ps1"
+                        "test/win32/remote-cwd-follow.ps1",
+                        "test/win32/remote-reconnect-fresh.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
@@ -479,13 +480,14 @@
                   "test/win32/release-artifacts.ps1":  "cd3fe5d2f52998aeda15417513f32601f925f17b1d4be582a078c34fbdac0246",
                   "test/win32/release-parity.ps1":  "92babe2c0e154c766dd02f9578073f6a04ec281ee706aa8a8dc83c505d579f9f",
                   "test/win32/release-symbols.ps1":  "7c1a87e8cf563ea02c3f1e97d098729af03ddafd75144ce221afb945fc0fb862",
+                  "test/win32/remote-cwd-follow.ps1":  "321a7f5001288ccde0fdb0f3045e43e50a0818d4cdb2cdd56c1a2285502bc100",
                   "test/win32/remote-disconnect.ps1":  "738c0d4f3f3ae9cfda297db9620a47d6428813006c3234862811a4ac32f49176",
                   "test/win32/remote-effects.ps1":  "8d7891b2f3cc9c874d19063cdb28864ebb6139db5e98d26ab1c2597e673f33bc",
                   "test/win32/remote-inherit.ps1":  "51c3fd032cd9d40bd1318c0fe69c670dab65756103b4cf02cffe836c9009089a",
                   "test/win32/remote-pill.ps1":  "f5c2447debb4dc2867a0ae2b54f77acc20f8b4f8e562c3cb7cb305d60268e015",
                   "test/win32/remote-pill-relay-name.ps1":  "129a54b1808bf80d8975195b561137c349a58826aa5c662d2121d2ac1d5f0672",
                   "test/win32/remote-pill-tabs.ps1":  "9cb6a4f8879279060911b0523716a772ea29aa0b68c483709d17cf72d818c424",
-                  "test/win32/remote-reconnect-fresh.ps1":  "11e07c5c68e6d0ba0aa69d829f121d9967424d216d17533ec6ba3162b8eb6094",
+                  "test/win32/remote-reconnect-fresh.ps1":  "4aecfb785e8489f185e21c17714c8d21fa8dd985d0125d55c964f0f4ad144b71",
                   "test/win32/remote-reconnect-relay.ps1":  "fe3f924c5d98e6d35d9a48983ffc163a52a6156cfd40e7e555119ba3c272497a",
                   "test/win32/reset-context.ps1":  "54e0f328f37b3dc7694d1ae00013569ce64b504094ce00138baf2ad71ea0d0dd",
                   "test/win32/reset-window-size.ps1":  "28e18f6472e20ae4a5e0f9b5d93ec392c6a81e67c8b519785e1b433b18ada3ba",

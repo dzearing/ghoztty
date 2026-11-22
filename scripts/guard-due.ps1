@@ -3383,6 +3383,22 @@ $GuardTable = @(
             'test\win32\remote-reconnect-relay.ps1'
         )
     },
+    # A dialed pane's directory follows the user's `cd` (T1741, proving T1583).
+    # The only on-box run of the agent's META{cwd} push for a shell that reports
+    # no OSC 7: the ring hand-off, the pane-side apply, and the shell's OS cwd
+    # read. Its restore half (the recorded value spent by a Reconnect swap) is
+    # arm C6/D2 of remote-reconnect-fresh.ps1.
+    [pscustomobject]@{
+        Name   = 'remote-cwd-follow'
+        Script = 'test\win32\remote-cwd-follow.ps1'
+        Stamp  = 'test\win32\remote-cwd-follow.stamp.json'
+        Covers = @(
+            'src\remote\inbound_ring.zig',
+            'src\termio\Remote.zig',
+            'src\os\process_cwd.zig',
+            'test\win32\remote-cwd-follow.ps1'
+        )
+    },
     # The relay window end to end against a REAL relay and a REAL agent (T368),
     # where remote-reconnect-relay above drives a fake one. It is the only thing
     # that kills and RESTARTS the agent under a live remote window, so it owns

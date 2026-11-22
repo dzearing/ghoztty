@@ -1,8 +1,8 @@
 {
     "guard":  "test-wait-oracle",
     "script":  "test/win32/test-wait-oracle.ps1",
-    "generated":  "2026-11-21T04:35:52-08:00",
-    "commit":  "428d66dad",
+    "generated":  "2026-11-21T18:28:20-08:00",
+    "commit":  "1d982830a",
     "uncommitted":  [
 
                     ],
@@ -12,7 +12,7 @@
                   "src/cli/args.zig":  "76cc8b648aa605674b588665c9a45b2b1f489027e5945ab41aa411f88b13cb8c",
                   "src/cli/boo.zig":  "6c202d7e2fa8f0f42dbfc1e9b200a500ab7fa1d66418757ef3cc96317f1294a3",
                   "src/cli/close.zig":  "bee3f9f9c91df726676f24a8be2279a2dd9f7704ae51664041c33f3e3b5016cc",
-                  "src/cli/com_shim.zig":  "7c582f13252b1267effa949eb48e92bb6088a2d8403991b972cb5660c0c496ed",
+                  "src/cli/com_shim.zig":  "2a8e81d192077280e76e99d30de3ec62256def112f9f4e113f8b18cda8e3cbd9",
                   "src/cli/CommaSplitter.zig":  "656dc9562dd81cb638234082c53b1b3b709153ab47271648321bdf6e1f861891",
                   "src/cli/crash_report.zig":  "26e7efaaab1276009ff47d6e42a842f2743443ccb6e74390fe0f905f3e3689c5",
                   "src/cli/diagnostics.zig":  "0e3e9e5b6bf77f1269c5425ae3ed068c290c5bd769e92e5ab4eabb6ac9024726",

@@ -216,6 +216,12 @@ try {
     $env:GHOSTTY_AGENT_LOCK = Join-Path $tmp 'agent1.lock'
     # T1036: the agent answers for its own endpoints before it is launched.
     Assert-GhozttyIsolatedAgent -Exe $AgentExe | Out-Null
+    # T1741: no inherited PROMPT. Run from a Ghoztty cmd pane, this script
+    # inherits the T512 integration PROMPT (OSC 7 included) and the agent would
+    # hand it to every shell - the "other machine" would then report its own
+    # directory and C6/D2 would never exercise the agent's cwd push. Both agent
+    # launches below inherit this.
+    $env:PROMPT = $null
     $agent = Start-Process -FilePath $AgentExe -ArgumentList '--listen', "127.0.0.1:$Port", '--headless' -PassThru -WindowStyle Hidden
     Start-Sleep -Seconds 2
     if ($agent.HasExited) { throw 'SETUP FAIL: loopback agent exited immediately' }
@@ -287,6 +293,32 @@ try {
         Check $false "C5 skipped: the two-pane control never came up"
     }
 
+    # T1741: the SECOND pane `cd`s before the drop, and has to come back where
+    # it went rather than where the window opened. This shell reports no OSC 7
+    # (the agent was launched without the caller's PROMPT, see above), so the
+    # only way the app can know is the agent's T1583 `META{cwd}` push. C6 waits
+    # for that push to land in `+list` before anything is dropped, so D2 is
+    # about the recorded value being SPENT, not about a race with the push.
+    $moved = Join-Path $workdir 't1741-moved'
+    New-Item -ItemType Directory -Force $moved | Out-Null
+    if ($ids0.Count -eq 2) {
+        Run-Cli "+send-keys --target=$($ids0[1]) `"cd t1741-moved`" Enter" "$tmp\cdsend.txt" 15 | Out-Null
+        $seen = ''
+        $deadline = (Get-Date).AddSeconds(30)
+        while ((Get-Date) -lt $deadline) {
+            $wC = Window-Named (Get-Tree 'c6') 'rw'
+            foreach ($lf in @(Window-Leaves $wC)) {
+                if ((Leaf-Id $lf) -eq $ids0[1]) { $seen = [string]$lf.terminal.working_directory }
+            }
+            if ($seen.TrimEnd('\') -ieq $moved) { break }
+            Start-Sleep -Milliseconds 500
+        }
+        Check ($seen.TrimEnd('\') -ieq $moved) `
+            "C6 the cd reached the app through the agent's push before the drop (got '$seen')"
+    } else {
+        Check $false "C6 skipped: the two-pane control never came up"
+    }
+
     # --- A. automatic: the ladder's own retry must NOT open fresh shells ----
     # Kill the agent and bring it straight back. The window's fast ladder is
     # already counting out its 1s backoff, so its own next attempt reaches an
@@ -351,8 +383,9 @@ try {
         $d2 = Pane-Cwd $ids1[1] 'd2'
         Check ($d1 -ieq $workdir) `
             "D1 the first fresh pane opened where the pane was, not in the agent's directory (got '$d1')"
-        Check ($d2 -ieq $workdir) `
-            "D2 the second fresh pane opened where the pane was (got '$d2')"
+        # T1741: where the user `cd`'d to (C6), not where the window opened.
+        Check ($d2 -ieq $moved) `
+            "D2 the second fresh pane opened where the user cd'd to, not where it was opened (got '$d2')"
     } else {
         Check $false "D1/D2 skipped: the window did not come back with two panes"
     }
