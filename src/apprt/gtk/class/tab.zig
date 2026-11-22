@@ -192,6 +192,7 @@ pub const Tab = extern struct {
         working_directory: ?[:0]const u8 = null,
         title: ?[:0]const u8 = null,
         env: []const []const u8 = &.{},
+        view: ?[:0]const u8 = null,
 
         pub const none: @This() = .{};
     }) *Self {
@@ -216,6 +217,7 @@ pub const Tab = extern struct {
             .working_directory = overrides.working_directory,
             .title = overrides.title,
             .env = overrides.env,
+            .view = overrides.view,
         }) catch |err| switch (err) {
             error.OutOfMemory => {
                 // TODO: We should make our "no surfaces" state more aesthetically

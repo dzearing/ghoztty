@@ -15,7 +15,9 @@
 //! - Images and diffs are their own cards (T3416, T3417); until they land a
 //!   pane in those modes shows the template's error card naming the card.
 //!
-//! What this file does NOT do yet, by design: live in the split tree (T3411),
+//! A viewer PANE is a `Surface` that hosts one of these in place of its
+//! terminal (T3411), so it splits, resizes, focuses, zooms and closes through
+//! the split tree's own code. What this file does NOT do yet, by design:
 //! chrome and keys (T3412), reload (T3413), find (T3414), link routing
 //! (T3415). It is a widget and a lifecycle, nothing else.
 //!
@@ -84,6 +86,13 @@ pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
     }
     self.assets_dir = findAssetsDir(alloc);
 
+    // DEBUG-ONLY test seam: with `GHOZTTY_TEST_VIEWER_DUMP` set, every
+    // viewer - a pane's too (T3411) - writes its probe result there once it
+    // has rendered. Headless Weston has no pixels to read back; the page is.
+    if (comptime build_config.is_debug) {
+        if (std.posix.getenv("GHOZTTY_TEST_VIEWER_DUMP") != null) self.on_rendered = &onTestRendered;
+    }
+
     wk.g_object_set_data(w, data_key, self);
     _ = wk.g_signal_connect_data(w, "load-changed", @ptrCast(&onLoadChanged), self, null, 0);
     _ = wk.g_signal_connect_data(w, "load-failed", @ptrCast(&onLoadFailed), self, null, 0);
@@ -96,6 +105,23 @@ pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
 /// The web view as a GTK widget, for whatever container holds it.
 pub fn widget(self: *const Viewer) *wk.GtkWidget {
     return wk.asWidget(self.view);
+}
+
+/// What `+list` reports as the pane's `url` (T3411): the page a website pane
+/// is on NOW (it may have navigated), else the file it shows, else the
+/// location it was opened with.
+pub fn currentLocation(self: *const Viewer) []const u8 {
+    if (self.mode == .web) if (wk.webkit_web_view_get_uri(self.view)) |u| {
+        const s = std.mem.span(u);
+        if (s.len > 0) return s;
+    };
+    return self.file_path orelse self.location;
+}
+
+/// The pane's title: the file's name, a website's host, a diff's subject
+/// (win32's `initialTitle`, the Mac's `mode.title`). Borrowed from the viewer.
+pub fn title(self: *const Viewer) []const u8 {
+    return content.initialTitle(self.mode, self.location, self.file_path);
 }
 
 fn deinit(self: *Viewer) void {
@@ -347,10 +373,10 @@ fn finishNotFound(req: *wk.URISchemeRequest, why: [*:0]const u8) void {
 /// `GHOZTTY_TEST_VIEWER_PROBE` (a JS expression; default the page's text) and
 /// writes `OK <result>` or `FAIL <why>` to `GHOZTTY_TEST_VIEWER_DUMP`.
 ///
-/// It exists because a viewer cannot be a pane until T3411 retypes the split
-/// tree's leaf, and the foundation still needs proving on its own: that
-/// WebKit links, the schemes serve, and the page renders the document. The
-/// same shape as `GHOZTTY_TEST_ASK_TO_CLOSE`: compiled out of a release.
+/// It predates viewer panes (T3411) and stays because the foundation is worth
+/// proving on its own: that WebKit links, the schemes serve, and the page
+/// renders the document, with no split tree in the way. The same shape as
+/// `GHOZTTY_TEST_ASK_TO_CLOSE`: compiled out of a release.
 pub fn openTestWindowFromEnv() void {
     if (comptime !build_config.is_debug) return;
     const location = std.posix.getenv("GHOZTTY_TEST_VIEWER") orelse return;

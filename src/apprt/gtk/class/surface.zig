@@ -39,6 +39,7 @@ const media = @import("../media.zig");
 // The pure UUID helper win32 uses for `$GHOZTTY_PANE_ID` (no OS imports), so
 // both frontends mint the same shape of id (docs/claude/cli.md "Pane identity").
 const pane_id_mod = @import("../../ipc/pane_id.zig");
+const Viewer = @import("../Viewer.zig");
 
 const log = std.log.scoped(.gtk_ghostty_surface);
 
@@ -730,6 +731,14 @@ pub const Surface = extern struct {
         /// belong to the window the pane is in (T2250). Owned.
         ipc_name: ?[]u8 = null,
 
+        /// The viewer this pane shows INSTEAD of a terminal (T3411), or null
+        /// for a terminal pane. A viewer pane is an ordinary Surface in the
+        /// split tree - it splits, resizes, focuses, zooms and closes through
+        /// the same code - whose GL area is hidden and never realized, so its
+        /// core surface (and pty) is never created. Owned by its web view,
+        /// which is a child of this widget; cleared in dispose.
+        viewer: ?*Viewer = null,
+
         pub var offset: c_int = 0;
     };
 
@@ -738,6 +747,10 @@ pub const Surface = extern struct {
         working_directory: ?[:0]const u8 = null,
         title: ?[:0]const u8 = null,
         env: []const []const u8 = &.{},
+        /// Open a VIEWER pane on this location instead of a terminal
+        /// (`--view`, T3411). Already resolved; command, cwd and env are
+        /// ignored, since a viewer has no shell.
+        view: ?[:0]const u8 = null,
 
         pub const none: @This() = .{};
     }) *Self {
@@ -746,12 +759,58 @@ pub const Surface = extern struct {
         });
         const alloc = Application.default().allocator();
         const priv: *Private = self.private();
+        if (overrides.view) |location| {
+            self.attachViewer(location);
+            return self;
+        }
         priv.overrides = .{
             .command = if (overrides.command) |c| c.clone(alloc) catch null else null,
             .working_directory = if (overrides.working_directory) |wd| alloc.dupeZ(u8, wd) catch null else null,
             .env = dupeEnv(alloc, overrides.env) catch &.{},
         };
         return self;
+    }
+
+    /// Make this surface a viewer pane on `location` (T3411): the web view
+    /// goes where the GL area was and the GL area is hidden, so it is never
+    /// realized and no core surface or pty ever starts. Everything that
+    /// speaks to the core already tolerates its absence (it is the state
+    /// every surface is in before its first resize).
+    fn attachViewer(self: *Self, location: []const u8) void {
+        const priv = self.private();
+        const viewer = Viewer.create(std.heap.c_allocator, location) catch |err| {
+            // Only OOM: there is nothing to show, so say so where the
+            // terminal would have been rather than start a shell nobody
+            // asked for.
+            log.warn("viewer pane: create failed err={} location={s}", .{ err, location });
+            self.setError(true);
+            return;
+        };
+        priv.viewer = viewer;
+
+        const gl = priv.gl_area.as(gtk.Widget);
+        gl.setVisible(0);
+        const web: *gtk.Widget = @ptrCast(@alignCast(viewer.widget()));
+        web.setHexpand(1);
+        web.setVexpand(1);
+        if (gl.getParent()) |parent| {
+            if (gobject.ext.cast(gtk.Box, parent)) |box| box.prepend(web);
+        }
+
+        const t = viewer.title();
+        var buf: [512]u8 = undefined;
+        const tz = std.fmt.bufPrintZ(&buf, "{s}", .{t[0..@min(t.len, buf.len - 1)]}) catch "viewer";
+        self.setTitle(tz);
+        log.info("viewer pane: opened mode={s} location={s} pane={s}", .{ @tagName(viewer.mode), location, self.paneId() });
+    }
+
+    /// The viewer this pane shows, or null for a terminal pane (T3411).
+    pub fn getViewer(self: *Self) ?*Viewer {
+        return self.private().viewer;
+    }
+
+    pub fn isViewer(self: *Self) bool {
+        return self.private().viewer != null;
     }
 
     fn dupeEnv(alloc: Allocator, env: []const []const u8) Allocator.Error![]const []const u8 {
@@ -1272,6 +1331,9 @@ pub const Surface = extern struct {
         gtk_mods: gdk.ModifierType,
     ) bool {
         //log.warn("keyEvent action={}", .{action});
+        // A viewer pane's keys are the web view's (its chrome keys are T3412);
+        // there is no terminal to encode them for.
+        if (self.private().viewer != null) return false;
         const event = ec_key.as(gtk.EventController).getCurrentEvent() orelse return false;
         const key_event = gobject.ext.cast(gdk.KeyEvent, event) orelse return false;
         const priv = self.private();
@@ -1782,6 +1844,11 @@ pub const Surface = extern struct {
     /// our surface.
     pub fn grabFocus(self: *Self) void {
         const priv = self.private();
+        if (priv.viewer) |v| {
+            const web: *gtk.Widget = @ptrCast(@alignCast(v.widget()));
+            _ = web.grabFocus();
+            return;
+        }
         _ = priv.gl_area.as(gtk.Widget).grabFocus();
     }
 
@@ -1943,6 +2010,10 @@ pub const Surface = extern struct {
         // also the root child of the template. By unsetting the child here,
         // we avoid the double-free.
         self.as(adw.Bin).setChild(null);
+
+        // The viewer is freed with its web view, which the template teardown
+        // below destroys; nothing may reach it through us after that.
+        priv.viewer = null;
 
         gtk.Widget.disposeTemplate(
             self.as(gtk.Widget),
@@ -3321,6 +3392,9 @@ pub const Surface = extern struct {
         // we have errors here we can't render and we switch to the error
         // state.
         const priv = self.private();
+        // A viewer pane's GL area is hidden and never meant to start a
+        // terminal (T3411).
+        if (priv.viewer != null) return;
         priv.gl_area.makeCurrent();
         if (priv.gl_area.getError()) |err| {
             log.warn("failed to make GL context current: {s}", .{err.f_message orelse "(no message)"});
@@ -3454,7 +3528,9 @@ pub const Surface = extern struct {
             return;
         }
 
-        // If we don't have a surface, then we initialize it.
+        // If we don't have a surface, then we initialize it - unless this is
+        // a viewer pane, which never has one (T3411).
+        if (priv.viewer != null) return;
         self.initSurface() catch |err| {
             log.warn("surface failed to initialize err={}", .{err});
         };

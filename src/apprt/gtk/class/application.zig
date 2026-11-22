@@ -1257,11 +1257,13 @@ pub const Application = extern struct {
         command: ?configpkg.Command,
         working_directory: ?[:0]const u8,
         env: []const []const u8,
+        view: ?[:0]const u8,
     ) *Window {
         return Action.newWindowForIpc(self, .{
             .command = command,
             .working_directory = working_directory,
             .env = env,
+            .view = view,
         });
     }
 
@@ -2363,6 +2365,7 @@ const Action = struct {
             command: ?configpkg.Command = null,
             working_directory: ?[:0]const u8 = null,
             env: []const []const u8 = &.{},
+            view: ?[:0]const u8 = null,
         },
     ) *Window {
         self.private().requested_window = true;
@@ -2371,6 +2374,7 @@ const Action = struct {
             .command = overrides.command,
             .working_directory = overrides.working_directory,
             .env = overrides.env,
+            .view = overrides.view,
         });
         return win;
     }
@@ -2384,6 +2388,7 @@ const Action = struct {
             working_directory: ?[:0]const u8 = null,
             title: ?[:0]const u8 = null,
             env: []const []const u8 = &.{},
+            view: ?[:0]const u8 = null,
 
             pub const none: @This() = .{};
         },
@@ -2405,6 +2410,7 @@ const Action = struct {
             .working_directory = overrides.working_directory,
             .title = overrides.title,
             .env = overrides.env,
+            .view = overrides.view,
         });
 
         // Estimate the initial window size before presenting so the window

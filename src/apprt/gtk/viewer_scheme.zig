@@ -30,6 +30,7 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 const content = @import("../win32/viewer_content.zig");
+const view_arg = @import("../../cli/view_arg.zig");
 
 /// The template scheme. Same name as the Mac's `ViewerSchemeHandler.scheme`,
 /// which the template's own link guard already lists (`links.js`).
@@ -137,11 +138,86 @@ pub fn mimeType(path: []const u8) []const u8 {
     return content.mimeType(content.extension(path));
 }
 
+/// The location a `--view=` pane opens, as the app takes it from IPC (T3411).
+///
+/// The CLI already resolves a relative path against `--working-directory`
+/// (else its own cwd) before it sends (`cli/view_arg.zig`), so this is the
+/// server's half for a caller that spoke the socket directly: a value that
+/// still reads as a relative PATH is joined onto `working_directory`, and
+/// everything that names its own location passes through untouched - a URL,
+/// `about:blank` (the blank browser pane), a `git-diff:`/`git-status:` spec
+/// (a revspec, never a path), and an absolute path. With no working
+/// directory a relative path stays as given: the app's own cwd is not the
+/// caller's, and guessing it would open the wrong file.
+///
+/// Linux paths are POSIX, so the join is POSIX on every seat (this runs in
+/// the Windows none lane too). Caller owns the result.
+pub fn resolveLocation(
+    alloc: Allocator,
+    location: []const u8,
+    working_directory: ?[]const u8,
+) Allocator.Error![:0]u8 {
+    const loc = std.mem.trim(u8, location, " \t\r\n");
+    const relative = loc.len > 0 and
+        loc[0] != '/' and
+        std.mem.indexOf(u8, loc, "://") == null and
+        !std.mem.startsWith(u8, loc, "about:") and
+        !view_arg.isDiffView(loc);
+    const wd = working_directory orelse "";
+    if (!relative or wd.len == 0 or wd[0] != '/') return try alloc.dupeZ(u8, loc);
+    const joined = try std.fs.path.resolvePosix(alloc, &.{ wd, loc });
+    defer alloc.free(joined);
+    return try alloc.dupeZ(u8, joined);
+}
+
 // -------------------------------------------------------------------------
 // Tests
 // -------------------------------------------------------------------------
 
 const testing = std.testing;
+
+test "resolveLocation: a relative path joins the working directory" {
+    const a = testing.allocator;
+    const r = try resolveLocation(a, "docs/README.md", "/home/u/repo");
+    defer a.free(r);
+    try testing.expectEqualStrings("/home/u/repo/docs/README.md", r);
+    const up = try resolveLocation(a, "../x.md", "/home/u/repo");
+    defer a.free(up);
+    try testing.expectEqualStrings("/home/u/x.md", up);
+}
+
+test "resolveLocation: what names its own location passes through" {
+    const a = testing.allocator;
+    for ([_][]const u8{
+        "/abs/file.md",
+        "https://example.com/a?b",
+        "about:blank",
+        "git-diff:main...HEAD",
+        "git-status:",
+        "git-status",
+    }) |loc| {
+        const r = try resolveLocation(a, loc, "/home/u/repo");
+        defer a.free(r);
+        try testing.expectEqualStrings(loc, r);
+    }
+    // A file that merely starts like a diff scheme is still a path.
+    const f = try resolveLocation(a, "git-diff-notes.md", "/w");
+    defer a.free(f);
+    try testing.expectEqualStrings("/w/git-diff-notes.md", f);
+}
+
+test "resolveLocation: no usable working directory leaves a relative path alone" {
+    const a = testing.allocator;
+    const none = try resolveLocation(a, "a.md", null);
+    defer a.free(none);
+    try testing.expectEqualStrings("a.md", none);
+    const empty = try resolveLocation(a, "a.md", "");
+    defer a.free(empty);
+    try testing.expectEqualStrings("a.md", empty);
+    const rel = try resolveLocation(a, "a.md", "not/absolute");
+    defer a.free(rel);
+    try testing.expectEqualStrings("a.md", rel);
+}
 
 /// The candidate paths come from win32's `viewer_content` helpers, which join
 /// with the HOST separator: `/` on Linux, `\` when this file's tests run in a

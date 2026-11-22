@@ -7,7 +7,10 @@
 //! name, title, cwd, shell pid and tty, plus the serving build so a caller can
 //! see WHICH app answered), `+version`, `+send-keys` / `+read` (T3336),
 //! `+new-window` / `+split` / `+rename` over a pane-name registry (T3370),
-//! `+close` plus the `focus` action (T3367), and `+rearrange` (T3368).
+//! `+close` plus the `focus` action (T3367), `+rearrange` (T3368), and
+//! `--view` viewer panes on `+new-window` / `+split` (T3411): a viewer is a
+//! `Surface` showing a web view instead of a terminal, listed as `type:
+//! viewer` with its `url`, and refused by the terminal verbs.
 //! Every other verb answers a plain "not served by the Linux app yet" error
 //! naming the task that brings it, so a script learns the gap instead of
 //! hanging or guessing.
@@ -41,6 +44,7 @@ const Request = server.Request;
 const verbs = apprt.ipc.verbs;
 const verb_args = apprt.ipc.args;
 const target_lookup = @import("../ipc/target_lookup.zig");
+const viewer_scheme = @import("viewer_scheme.zig");
 
 const Application = @import("class/application.zig").Application;
 const Window = @import("class/window.zig").Window;
@@ -107,8 +111,6 @@ pub fn handleHandoffQuit(_: Context, _: Request) Allocator.Error!?[]u8 { return 
 pub fn handleStash(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.stash, "T3337"); }
 pub fn handleRestore(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.restore, "T3337"); }
 
-/// `--view` opens a viewer pane, which the Linux app does not have yet.
-const view_not_yet = "--view is not served by the Linux app yet (T3411)";
 
 // ---------------------------------------------------------------------------
 // Walking the live windows and panes.
@@ -465,8 +467,6 @@ pub fn handleRename(app: Context, request: Request) Allocator.Error!?[]u8 {
     return verbs.rename(@This(), app, request);
 }
 
-pub const view_not_served = view_not_yet;
-
 /// What a WINDOW name means: `resolve` with no caller window, since window
 /// names are global (T2250). A name panes hold is refused as a window name
 /// whatever they are, so the ambiguity needs no sentence.
@@ -493,11 +493,19 @@ pub fn openWindow(
     plan: verbs.WindowPlan,
 ) Allocator.Error!verbs.Opened {
     _ = request;
-    const window = app.newWindowForIpc(
-        try paneCommand(arena, app, args.e_args, args.command, args.shell),
-        try workingDirectory(arena, args.working_directory),
-        try paneEnv(arena, args.env, args.target, plan.first_pane_env_name),
-    );
+    // `--view` (T3411): the first pane is a VIEWER, with no shell to build a
+    // command, cwd or environment for. The inline split's pane is still a
+    // terminal, as on win32.
+    const view = try viewLocation(arena, args);
+    const window = if (view) |location|
+        app.newWindowForIpc(null, null, &.{}, location)
+    else
+        app.newWindowForIpc(
+            try paneCommand(arena, app, args.e_args, args.command, args.shell),
+            try workingDirectory(arena, args.working_directory),
+            try paneEnv(arena, args.env, args.target, plan.first_pane_env_name),
+            null,
+        );
 
     if (args.target) |t| window.setIpcName(t) else _ = windowName(app, window);
     if (plan.first_pane_name) |n| if (window.getActiveSurface()) |s| s.setIpcName(n);
@@ -588,10 +596,25 @@ pub fn nameHolderIn(app: Context, name: []const u8, window: *Window) ?verbs.Name
         };
     }
     const p = namedPaneIn(window, app, name) orelse return null;
+    // A viewer of that name is "already what was asked for" only when it
+    // shows the same thing (T2184's reuse rule, decided in the shared code).
+    const kind: @FieldType(verbs.NameHolder(Target), "existing").Kind = if (p.surface.getViewer()) |v|
+        .{ .viewer = .{ .location = v.currentLocation(), .home_location = v.location } }
+    else
+        .terminal;
     return .{
         .target = .{ .pane = p },
-        .existing = .{ .kind = .terminal, .window_name = windowName(app, window) orelse "" },
+        .existing = .{ .kind = kind, .window_name = windowName(app, window) orelse "" },
     };
+}
+
+/// The resolved `--view` location, or null when this is not a viewer
+/// request (T3411). Relative paths resolve against `--working-directory`,
+/// which the CLI seeds with the caller's cwd; `git-*:` specs, URLs and
+/// `about:blank` pass through.
+fn viewLocation(arena: Allocator, args: verb_args.VerbArgs) Allocator.Error!?[:0]const u8 {
+    const view = server.nonEmpty(args.view) orelse return null;
+    return try viewer_scheme.resolveLocation(arena, view, server.nonEmpty(args.working_directory));
 }
 
 fn treeDirection(dir: verbs.SplitDirection) Surface.Tree.Split.Direction {
@@ -617,6 +640,23 @@ pub fn createSplit(
     const tab = tabOf(window, at.surface) orelse return null;
     const inherit = spec.inherit;
     const name: ?[]const u8 = if (inherit) null else args.name;
+
+    // `--view` (T3411): a VIEWER split. None of the shell plumbing below
+    // applies - no command, cwd or environment to give a pane with no pty.
+    if (try viewLocation(arena, args)) |location| {
+        const surface = tab.getSplitTree().newSplitAt(treeDirection(spec.direction), at.surface, .{
+            .view = location,
+            .at = at.surface,
+            .ratio = spec.ratio,
+            .focus = args.focus,
+        }) catch |err| {
+            log.warn("IPC viewer split failed err={}", .{err});
+            return null;
+        };
+        if (name) |n| surface.setIpcName(n);
+        return .{ .window = window, .surface = surface };
+    }
+
     const command = args.split_command orelse args.command;
     const surface = tab.getSplitTree().newSplitAt(treeDirection(spec.direction), at.surface, .{
         .command = if (inherit) null else try paneCommand(arena, app, args.e_args, command, args.shell),
@@ -866,6 +906,8 @@ pub fn lookupTerminal(app: Context, name: []const u8) verbs.Lookup(Terminal) {
         else => return .not_found,
     };
     const surface = entry.surface() orelse return .gone;
+    // A viewer pane has no pty to read or type into (T3411).
+    if (surface.isViewer()) return .viewer;
     const core = surface.core() orelse return .not_started;
     return .{ .ready = .{ .core = core } };
 }
@@ -1027,6 +1069,10 @@ const ListLeaves = struct {
             .name = if (surface.ipcName()) |nm| try arena.dupe(u8, nm) else id,
             .focused = surface == self.active,
             .exit_code = null,
+            // T3411: a viewer leaf says so, with what it shows now (the Mac's
+            // `type`/`url`; `+list` prints it as `view: <title>  <url>`).
+            .pane_type = if (surface.isViewer()) "viewer" else "terminal",
+            .url = if (surface.getViewer()) |v| try arena.dupe(u8, v.currentLocation()) else null,
         };
     }
 };

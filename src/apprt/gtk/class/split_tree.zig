@@ -209,6 +209,7 @@ pub const SplitTree = extern struct {
             working_directory: ?[:0]const u8 = null,
             title: ?[:0]const u8 = null,
             env: []const []const u8 = &.{},
+            view: ?[:0]const u8 = null,
 
             pub const none: @This() = .{};
         },
@@ -218,6 +219,7 @@ pub const SplitTree = extern struct {
             .working_directory = overrides.working_directory,
             .title = overrides.title,
             .env = overrides.env,
+            .view = overrides.view,
         });
     }
 
@@ -234,6 +236,7 @@ pub const SplitTree = extern struct {
             working_directory: ?[:0]const u8 = null,
             title: ?[:0]const u8 = null,
             env: []const []const u8 = &.{},
+            view: ?[:0]const u8 = null,
             at: ?*Surface = null,
             ratio: f16 = 0.5,
             focus: bool = true,
@@ -249,6 +252,7 @@ pub const SplitTree = extern struct {
             .working_directory = overrides.working_directory,
             .title = overrides.title,
             .env = overrides.env,
+            .view = overrides.view,
         });
         defer surface.unref();
         _ = surface.refSink();
@@ -802,7 +806,10 @@ pub const SplitTree = extern struct {
         surface: *Surface,
         self: *Self,
     ) callconv(.c) void {
-        const core = surface.core() orelse return;
+        // A viewer pane has no core and nothing running, so it never asks
+        // (T3411); any other core-less surface is not ours to close yet.
+        const core = surface.core();
+        if (core == null and !surface.isViewer()) return;
 
         // Reset our pending close state
         const priv = self.private();
@@ -823,7 +830,7 @@ pub const SplitTree = extern struct {
         };
 
         // If we don't need to confirm then just close immediately.
-        if (!core.needsConfirmQuit()) {
+        if (core == null or !core.?.needsConfirmQuit()) {
             closeConfirmationClose(
                 null,
                 self,
