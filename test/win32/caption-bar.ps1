@@ -78,6 +78,7 @@ if ($ExePath) { $exe = $ExePath }
 $env:GHOZTTY_PIPE_SUFFIX = "-captiontest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 # T363: the chrome color this script probes is DERIVED (a bar_wash over the
 # launch --background), so the expectation is computed rather than written down.
 . (Join-Path $PSScriptRoot 'lib\ColorMath.ps1')
@@ -689,19 +690,24 @@ try {
     Check ($endBlocker -eq 'none') "the close click raised no modal dialog (got '$endBlocker')"
     Check (-not (Test-TestWindowExists -Window $h)) "close click closed the window"
 
-    Write-Host ""
-    if ($script:fail -eq 0) {
-        Write-Host "ALL PASS ($script:pass assertions$(if ($script:skipped) { ", $script:skipped SKIPPED" }))"
-        $exitCode = 0
-    } else {
-        Write-Host "$script:fail FAILURE(S) ($script:pass passed)"
-        $exitCode = 1
-    }
+    # The try's last statement (body-complete-audit D1): an unwind above skips
+    # it, so the verdict reads DID NOT FINISH instead of green.
+    Complete-TestBody
 } catch {
-    Write-Host ""
-    Write-Host "1 FAILURE(S) - $($_.Exception.Message)"
-    $exitCode = 1
+    Write-Host ''
+    $script:fail++
+    Write-Host "  FAIL  the run threw: $($_.Exception.Message)"
 } finally {
     Remove-TestDesktop
 }
-exit $exitCode
+Write-Host ''
+if ($script:fail -eq 0 -and $script:skipped -eq 0 -and -not $NegativeControl) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    # Continue: under Stop, a stderr line from the native call through 2>&1
+    # would throw in PowerShell 5.1.
+    $ErrorActionPreference = 'Continue'
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard caption-bar -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T254 CAPTION BAR' -Pass $script:pass -Fail $script:fail -Skipped $script:skipped

@@ -44,6 +44,7 @@ param([string]$ExePath, [switch]$NegativeControl, [switch]$Interactive)
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
@@ -144,9 +145,28 @@ function Run-Case([string]$label, [string]$themeArg, [bool]$expectDark) {
     # --- Tab-bar context menu: right-click inside the tab strip, which the
     # top-level window paints and handles (Window.zig WM_RBUTTONUP), so the
     # click is posted THERE. The bar is at the top of the client area (always
-    # visible via config); y=12 device px sits inside it at any DPI >= 100%.
+    # visible via config).
+    # T1768: the click lands on the middle of the first TAB, asked of the
+    # strip's own geometry. The literal it replaces, (60, 12) client px, was the
+    # tab strip's top-left before the strip merged into the caption row (T205)
+    # and moved to the pane sidebar's edge (T1900); there it is caption band,
+    # which opens no menu, and the run read SETUP FAIL for a theme it never
+    # reached.
+    # The rect is the one the app PUBLISHES (T231), as tab-color.ps1 asks it,
+    # and the right-click is retried as there: the first click after the
+    # surface menu's Escape can land while that menu loop is still unwinding.
     $cr = Get-TestWindowRect -Window $top -Client
-    $b = Measure-Menu $app.Pid $top $top ($cr.Left + 60) ($cr.Top + 12)
+    $tabs = @((Get-TestStripRegions -Window $top -Exe $exe).Tabs | Where-Object { $null -ne $_ })
+    if ($tabs.Count -lt 1) {
+        Write-Host "SETUP FAIL ($label): the strip published no tab to right-click"
+        Stop-Process -Id $app.Pid -Force; exit 1
+    }
+    $tabX = [int]($cr.Left + $tabs[0].CenterX)
+    $tabY = [int]($cr.Top + $tabs[0].CenterY)
+    $b = -1
+    for ($try = 0; $try -lt 3 -and $b -lt 0; $try++) {
+        $b = Measure-Menu $app.Pid $top $top $tabX $tabY
+    }
     if ($b -lt 0) {
         Write-Host "SETUP FAIL ($label): tab-bar menu never appeared or never painted (injection/capture broken, not a theme verdict)"
         Stop-Process -Id $app.Pid -Force; exit 1
@@ -175,6 +195,9 @@ try {
     $launched += $script:GhozttyTestDesktopPids
     Run-Case 'light' '--window-theme=light' $false
     $launched += $script:GhozttyTestDesktopPids
+    # The try's last statement (body-complete-audit D1): an unwind above skips
+    # it, so the verdict reads DID NOT FINISH instead of green.
+    Complete-TestBody
 } finally {
     Remove-TestDesktop
     Kill-RepoInstances
@@ -190,5 +213,13 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILED / $script:pass passed" -ForegroundColor Red; exit 1 }
+if ($script:fail -eq 0 -and -not $NegativeControl) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    # Continue: under Stop, a stderr line from the native call through 2>&1
+    # would throw in PowerShell 5.1.
+    $ErrorActionPreference = 'Continue'
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard dark-menus -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T79 DARK MENUS' -Pass $script:pass -Fail $script:fail

@@ -1,0 +1,17 @@
+{
+    "guard":  "tab-strip-autohide",
+    "script":  "test/win32/tab-strip-autohide.ps1",
+    "generated":  "2026-11-22T13:06:24-08:00",
+    "commit":  "412ba5a0c",
+    "uncommitted":  [
+                        "test/win32/tab-strip-autohide.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/caption_layout.zig":  "39e4484c2478bd4b72a4053f80aaf39c50510637ab9b63f70a5b21ff67744603",
+                  "src/apprt/win32/tab_strip_layout.zig":  "ef2d2f198cdba5186e0f8f0f4447be77dcba4e4df38fad5825a245ee10a5bbbe",
+                  "test/win32/tab-strip-autohide.ps1":  "0cf86103c3e6cad7fc179939568b35edfddb16dd400b50116d6f602c92478353"
+              },
+    "code":  {
+                 "test/win32/tab-strip-autohide.ps1":  "code1:d83c34501f34b2c88ed41e1cf577ae5909001a7a291e208a88f9af8579c2109f"
+             }
+}

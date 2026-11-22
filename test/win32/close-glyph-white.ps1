@@ -51,6 +51,7 @@ if ($ExePath) { $exe = $ExePath }
 $env:GHOZTTY_PIPE_SUFFIX = "-closeglyph$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 
 $script:pass = 0
 $script:fail = 0
@@ -119,12 +120,18 @@ try {
     if ((Get-TestDistinctColors $restShot) -lt 3) { throw 'SETUP FAIL: captured a mid-paint frame' }
     $rest = Get-TestPixel -Shot $restShot -X ($win.Left + $borderX + $closeL + 3) -Y $cy
     # T363: "bare chrome" is a claim about WHICH SURFACE this pixel is, so it is
-    # scored against the band itself - probed mid-width, right of the title text
-    # and well left of the buttons, the same column caption-bar.ps1 uses. The
-    # literal it replaces (R < 80) restated the chrome color the app DERIVES
-    # from the terminal background, so it would go red for a lighter theme that
-    # is painting exactly what it should, and it passed for any dark fill.
-    $bandRef = Get-TestPixel -Shot $restShot -X ($win.Left + $borderX + [int]($cli.Width / 2)) -Y $cy
+    # scored against the band itself. The literal it replaces (R < 80) restated
+    # the chrome color the app DERIVES from the terminal background, so it would
+    # go red for a lighter theme that is painting exactly what it should, and it
+    # passed for any dark fill.
+    # T1768: the reference is the UNLIT maximize slab beside it, at the same
+    # offset into its slab. Since the glass title bar (T1886) the band is the
+    # window's gradient, not one colour, so a mid-width column is a different
+    # stop of that gradient (measured: 21,41,58 mid-band vs 18,26,34 at the
+    # buttons, a 24-step gap with no red anywhere) and scored a correct paint red.
+    $maxL = $m.CaptionMaxLeft
+    if ($null -eq $maxL) { throw 'SETUP FAIL: ChromeGeometry published no CaptionMaxLeft for this window' }
+    $bandRef = Get-TestPixel -Shot $restShot -X ($win.Left + $borderX + $maxL + 3) -Y $cy
     Close-TestWindowPixels $restShot
     $restDelta = if ($null -eq $rest -or $null -eq $bandRef) { 999 } else {
         [Math]::Max([math]::Abs([int]$rest.R - $bandRef.R),
@@ -174,20 +181,25 @@ try {
     Start-Sleep -Milliseconds 300
     Check (Test-TestWindowExists -Window $h) "the window survived the measurement"
 
-    Write-Host ""
-    if ($script:fail -eq 0) {
-        Write-Host "ALL PASS ($script:pass assertions$(if ($script:skipped) { ", $script:skipped SKIPPED" }))"
-        $exitCode = 0
-    } else {
-        Write-Host "$script:fail FAILURE(S) ($script:pass passed)"
-        $exitCode = 1
-    }
+    # The try's last statement (body-complete-audit D1): an unwind above skips
+    # it, so the verdict reads DID NOT FINISH instead of green.
+    Complete-TestBody
 } catch {
-    Write-Host ""
-    Write-Host "1 FAILURE(S) - $($_.Exception.Message)"
-    $exitCode = 1
+    Write-Host ''
+    $script:fail++
+    Write-Host "  FAIL  the run threw: $($_.Exception.Message)"
 } finally {
     if ($proc) { Stop-Process -Id $proc.Pid -Force -ErrorAction SilentlyContinue }
     Remove-TestDesktop
 }
-exit $exitCode
+Write-Host ''
+if ($script:fail -eq 0 -and $script:skipped -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    # Continue: under Stop, a stderr line from the native call through 2>&1
+    # would throw in PowerShell 5.1.
+    $ErrorActionPreference = 'Continue'
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard close-glyph-white -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T528 CLOSE GLYPH' -Pass $script:pass -Fail $script:fail -Skipped $script:skipped

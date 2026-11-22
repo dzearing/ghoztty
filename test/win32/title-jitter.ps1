@@ -74,6 +74,7 @@ param([string]$ExePath, [switch]$NegativeControl, [switch]$Interactive)
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
@@ -336,13 +337,28 @@ try {
 
     # 2b - the control. A tab still sizes to its own title (T235); the fix
     # freezes the GLYPH's contribution, not the tab's width.
+    # T1768: both widths are the rects the app PUBLISHES (T231), not the pixel
+    # scan above. The scan is the right oracle for "did anything move" (it is
+    # what a viewer sees), but as a WIDTH it runs a chiclet into whatever
+    # strip paint touches it, and measured 589 px for this short title and
+    # 514 px for the long one - a control that scored the live width red.
+    function Get-PublishedTabWidth {
+        $r = @((Get-TestStripRegions -Window $top -Exe $exe).Tabs | Where-Object { $null -ne $_ })
+        if ($r.Count -ge 2) { return [int]$r[1].Width } else { return 0 }
+    }
+    $baseW = Get-PublishedTabWidth
     Send-PaneLine ('title ' + [char]0x2733 + ' ' + $suffix + ' and then a great deal more title than that')
+    $wider = Get-PublishedTabWidth
     $t = @(Get-TestTabExtents -Window $top -Metrics $ms)
-    $wider = if ($t.Count -ge 2) { $t[1].Right - $t[1].Left } else { 0 }
-    $baseW = [int]($extents[0].Split(',')[1]) - [int]($extents[0].Split(',')[0])
+    $scanW = if ($t.Count -ge 2) { $t[1].Right - $t[1].Left } else { 0 }
+    Write-Host "published tab width $baseW -> $wider px (painted scan now $scanW px)"
+    Assert ($baseW -gt 0) "control: the strip publishes the second tab's rect ($baseW px)"
     Assert ($wider -gt $baseW) `
         "control: a longer title still widens the tab, so the width is live ($baseW -> $wider px)"
 
+    # The try's last statement (body-complete-audit D1): an unwind above skips
+    # it, so the verdict reads DID NOT FINISH instead of green.
+    Complete-TestBody
 } finally {
     Kill-RepoInstances
     Remove-TestDesktop -Desktop $td
@@ -350,6 +366,13 @@ try {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red }
-exit ([int]($script:fail -gt 0))
+if ($script:fail -eq 0 -and -not $NegativeControl) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    # Continue: under Stop, a stderr line from the native call through 2>&1
+    # would throw in PowerShell 5.1.
+    $ErrorActionPreference = 'Continue'
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard title-jitter -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T60 TITLE JITTER' -Pass $script:pass -Fail $script:fail

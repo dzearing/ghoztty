@@ -1306,6 +1306,118 @@ $GuardTable = @(
             'src\remote\agent\layout_meta.zig'
         )
     },
+    # T1768: the window-chrome family. Each row names the pure module its
+    # harness scores. Window.zig (paint + hit tests, 24k lines) and Surface.zig
+    # (7k lines, ~80 commits a month) are left out on purpose, as for the
+    # session-layout-geometry-race row: either would make these GUI launches due
+    # on nearly every commit, which trains the reader to ack rather than run.
+    # The window draws its own caption bar - title, min/max/close, hit tests
+    # and the caption hover fill (T254/T496).
+    [pscustomobject]@{
+        Name   = 'caption-bar'
+        Script = 'test\win32\caption-bar.ps1'
+        Stamp  = 'test\win32\caption-bar.stamp.json'
+        Covers = @(
+            'test\win32\caption-bar.ps1',
+            'src\apprt\win32\caption_layout.zig'
+        )
+    },
+    # The tab strip lives inside the caption bar: one chrome row, not two (T205).
+    [pscustomobject]@{
+        Name   = 'chrome-merged-row'
+        Script = 'test\win32\chrome-merged-row.ps1'
+        Stamp  = 'test\win32\chrome-merged-row.stamp.json'
+        Covers = @(
+            'test\win32\chrome-merged-row.ps1',
+            'src\apprt\win32\caption_layout.zig',
+            'src\apprt\win32\tab_strip_layout.zig'
+        )
+    },
+    # The close button's glyph is white on its red hover fill (T528):
+    # chrome_theme.dangerFillOn caps the fill so white always clears.
+    [pscustomobject]@{
+        Name   = 'close-glyph-white'
+        Script = 'test\win32\close-glyph-white.ps1'
+        Stamp  = 'test\win32\close-glyph-white.stamp.json'
+        Covers = @(
+            'test\win32\close-glyph-white.ps1',
+            'src\apprt\win32\chrome_theme.zig'
+        )
+    },
+    # The strip is not painted at one tab, and the window menu is the caption's
+    # "..." button (T234).
+    [pscustomobject]@{
+        Name   = 'tab-strip-autohide'
+        Script = 'test\win32\tab-strip-autohide.ps1'
+        Stamp  = 'test\win32\tab-strip-autohide.stamp.json'
+        Covers = @(
+            'test\win32\tab-strip-autohide.ps1',
+            'src\apprt\win32\caption_layout.zig',
+            'src\apprt\win32\tab_strip_layout.zig'
+        )
+    },
+    # window-title-font-family drives the tab bar's font (T78).
+    [pscustomobject]@{
+        Name   = 'title-font'
+        Script = 'test\win32\title-font.ps1'
+        Stamp  = 'test\win32\title-font.stamp.json'
+        Covers = @(
+            'test\win32\title-font.ps1',
+            'src\apprt\win32\title_font.zig'
+        )
+    },
+    # An animated leading glyph never moves the title, the tab or the "+" (T60).
+    [pscustomobject]@{
+        Name   = 'title-jitter'
+        Script = 'test\win32\title-jitter.ps1'
+        Stamp  = 'test\win32\title-jitter.stamp.json'
+        Covers = @(
+            'test\win32\title-jitter.ps1',
+            'src\apprt\win32\title_spinner.zig'
+        )
+    },
+    # Tab accent colors from the tab context menu (T72, Mac TerminalTabColor).
+    [pscustomobject]@{
+        Name   = 'tab-color'
+        Script = 'test\win32\tab-color.ps1'
+        Stamp  = 'test\win32\tab-color.stamp.json'
+        Covers = @(
+            'test\win32\tab-color.ps1',
+            'src\apprt\win32\tab_color.zig'
+        )
+    },
+    # Resizing a pane with a banner never leaves an unpainted band around the
+    # card (T456: the overlay class redraws on a size change).
+    [pscustomobject]@{
+        Name   = 'banner-resize-repaint'
+        Script = 'test\win32\banner-resize-repaint.ps1'
+        Stamp  = 'test\win32\banner-resize-repaint.stamp.json'
+        Covers = @(
+            'test\win32\banner-resize-repaint.ps1',
+            'src\apprt\win32\BannerOverlay.zig'
+        )
+    },
+    # Context menus follow window-theme, dark and light (T79).
+    [pscustomobject]@{
+        Name   = 'dark-menus'
+        Script = 'test\win32\dark-menus.ps1'
+        Stamp  = 'test\win32\dark-menus.stamp.json'
+        Covers = @(
+            'test\win32\dark-menus.ps1',
+            'src\apprt\win32\DarkMode.zig'
+        )
+    },
+    # A new split or window inherits the live (zoomed) font size, or not, per
+    # window-inherit-font-size (T76). The logic is in Surface.zig, left out
+    # for the reason above, so this row holds the harness alone.
+    [pscustomobject]@{
+        Name   = 'font-inherit'
+        Script = 'test\win32\font-inherit.ps1'
+        Stamp  = 'test\win32\font-inherit.stamp.json'
+        Covers = @(
+            'test\win32\font-inherit.ps1'
+        )
+    },
     # The overview action (T708): the only thing that proves a bound
     # `toggle_tab_overview` actually opens hero mode, from a terminal AND from
     # a focused viewer. Covers the harness, the forwarding decision it rides
