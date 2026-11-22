@@ -385,12 +385,36 @@ pub fn switchToFallback() bool {
 }
 
 fn logPath(prefix: []const u8, path: [:0]const u16) void {
-    var utf8: [max_path]u8 = undefined;
-    const n = std.unicode.utf16LeToUtf8(&utf8, path) catch {
+    var utf8: [log_path_bytes]u8 = undefined;
+    const text = pathForLog(&utf8, path) orelse {
         log.info("{s}", .{prefix});
         return;
     };
-    log.info("{s} ({s})", .{ prefix, utf8[0..n] });
+    log.info("{s} ({s})", .{ prefix, text });
+}
+
+/// What `logPath` needs to hold a whole `max_path` path as UTF-8. One UTF-16
+/// unit is at most three UTF-8 bytes (a surrogate pair is two units for four),
+/// so a buffer `max_path` BYTES long - what this used to be - overran on an
+/// install path of ~341 non-ASCII characters and panicked at startup (T1767).
+pub const log_path_bytes = max_path * 3;
+
+/// `path` as UTF-8 in `out`, for a log line. A path too long for `out` is cut
+/// at a codepoint boundary rather than overrunning it: `std.unicode`'s
+/// converter does not bound its writes, so the input is shortened to what
+/// three bytes a unit guarantees will fit. Null on malformed UTF-16, which the
+/// caller logs without the path.
+pub fn pathForLog(out: []u8, path: []const u16) ?[]const u8 {
+    var src = path;
+    const fit = out.len / 3;
+    if (src.len > fit) {
+        src = src[0..fit];
+        // Never keep half of a surrogate pair that the cut split.
+        if (src.len > 0 and std.unicode.utf16IsHighSurrogate(src[src.len - 1]))
+            src = src[0 .. src.len - 1];
+    }
+    const n = std.unicode.utf16LeToUtf8(out, src) catch return null;
+    return out[0..n];
 }
 
 /// glad's loader, bound to whichever implementation is active. Passed to
@@ -430,6 +454,49 @@ test "fallbackRelPath: a buffer too small errors instead of truncating" {
         error.NoSpaceLeft,
         fallbackRelPath(&buf, "C:\\Program Files\\Ghoztty"),
     );
+}
+
+test "pathForLog: a max_path path of three-byte characters fits whole (T1767)" {
+    const testing = std.testing;
+    // U+4E2D (中) is one UTF-16 unit and three UTF-8 bytes - the worst case.
+    var wide: [max_path - 1]u16 = undefined;
+    @memset(&wide, 0x4E2D);
+    var out: [log_path_bytes]u8 = undefined;
+    const text = pathForLog(&out, &wide).?;
+    try testing.expectEqual(@as(usize, (max_path - 1) * 3), text.len);
+    try testing.expect(std.unicode.utf8ValidateSlice(text));
+}
+
+test "pathForLog: an over-long path is cut, never overruns" {
+    const testing = std.testing;
+    var wide: [400]u16 = undefined;
+    @memset(&wide, 0x4E2D);
+    var out: [max_path]u8 = undefined; // the old, too-small buffer
+    const text = pathForLog(&out, &wide).?;
+    try testing.expect(text.len <= out.len);
+    try testing.expectEqual(@as(usize, (max_path / 3) * 3), text.len);
+    try testing.expect(std.unicode.utf8ValidateSlice(text));
+}
+
+test "pathForLog: a cut never keeps half a surrogate pair" {
+    const testing = std.testing;
+    // U+1F600 as a pair, repeated; a 9-byte buffer fits three units' worth,
+    // so the cut lands after the second pair's high surrogate and must drop it.
+    const pair = [_]u16{ 0xD83D, 0xDE00 };
+    const wide = pair ++ pair ++ pair;
+    var out: [9]u8 = undefined;
+    const text = pathForLog(&out, &wide).?;
+    try testing.expectEqual(@as(usize, 4), text.len);
+    try testing.expect(std.unicode.utf8ValidateSlice(text));
+}
+
+test "pathForLog: ASCII converts unchanged and malformed input is null" {
+    const testing = std.testing;
+    var out: [log_path_bytes]u8 = undefined;
+    const ascii = std.unicode.utf8ToUtf16LeStringLiteral("C:\\Ghoztty\\gl\\opengl32.dll");
+    try testing.expectEqualStrings("C:\\Ghoztty\\gl\\opengl32.dll", pathForLog(&out, ascii).?);
+    const lone = [_]u16{ 'a', 0xDC00, 'b' };
+    try testing.expect(pathForLog(&out, &lone) == null);
 }
 
 test "shouldRetry: a version refusal with a fallback present is retried once" {
