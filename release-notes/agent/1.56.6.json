@@ -1,0 +1,9 @@
+{
+  "version": "1.56.6",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "The session manager and its pty holders write agent.log, so their warnings are no longer lost." }
+      ] }
+  ]
+}

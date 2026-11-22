@@ -1,0 +1,16 @@
+{
+  "version": "1.56.6",
+  "sections": [
+    { "title": "Fixes",
+      "items": [
+        { "text": "The loop's watchdog calls Claude Code's greyed prompt suggestion a suggestion, not unsent text." },
+        { "text": "The dashboard's task table now sorts the way the loop picks its next task." },
+        { "text": "A scripted relay window keeps the machine name its script gave it." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "The caption buttons name themselves on hover, in the words Windows uses." },
+        { "text": "A terminal pane's frame pacing can be measured, and T1423's before/after is taken." }
+      ] }
+  ]
+}
