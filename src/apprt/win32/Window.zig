@@ -1480,6 +1480,12 @@ title_set_by_user: bool = false,
 /// terminals (not IPC-addressable) or if registration failed.
 ipc_name: ?[]u8 = null,
 
+/// The adopted name this window asked for and could not have, because another
+/// target already held it (T1772) - a late-restored window whose name the
+/// launch's stand-in window minted first. `reclaimWantedIpcName` takes it once
+/// the holder lets go. Owned; null when the window got the name it asked for.
+ipc_name_wanted: ?[]u8 = null,
+
 /// This window's stable layout identity (T338) — the key its agent-side
 /// layout blob is pushed under, and what `session_layout.Window.uuid`
 /// records. Generated once here and re-adopted by every restore, because
@@ -2316,11 +2322,40 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
                         "IPC window name '{s}' is already held by another target; minting a fresh one",
                         .{name},
                     );
-                    gpa.free(name);
+                    // T1772: remember the adopted name it was refused, so the
+                    // window can take it back if the holder goes (the late
+                    // restore's stand-in window, closed right after).
+                    if (attempt == 0 and adopted != null and self.ipc_name_wanted == null)
+                        self.ipc_name_wanted = name
+                    else
+                        gpa.free(name);
                 },
             }
         } else break :register;
         self.ipc_name = claimed;
+    }
+}
+
+/// Take the adopted name this window was refused at registration, now that
+/// whoever held it may have let go (T1772). True when the window now holds
+/// it - `ipc_name` then names it and the minted fallback is dropped. False,
+/// with nothing changed, when it wanted nothing or the name is still held.
+pub fn reclaimWantedIpcName(self: *Window) bool {
+    const wanted = self.ipc_name_wanted orelse return false;
+    const current = self.ipc_name orelse return false;
+    const result = self.app.ipcRename(.{ .window = self }, current, wanted) catch return false;
+    if (result != .registered) return false;
+    log.info("IPC window '{s}' takes back its restored name '{s}'", .{ current, wanted });
+    self.app.core_app.alloc.free(current);
+    self.ipc_name = wanted;
+    self.ipc_name_wanted = null;
+    return true;
+}
+
+fn freeWantedIpcName(self: *Window) void {
+    if (self.ipc_name_wanted) |n| {
+        self.app.core_app.alloc.free(n);
+        self.ipc_name_wanted = null;
     }
 }
 
@@ -2639,6 +2674,7 @@ pub fn deinit(self: *Window) void {
         self.app.core_app.alloc.free(n);
         self.ipc_name = null;
     }
+    self.freeWantedIpcName();
 
     if (self.title_override) |t| {
         self.app.core_app.alloc.free(t);
@@ -23152,6 +23188,7 @@ fn onDestroy(self: *Window) void {
         app.core_app.alloc.free(n);
         self.ipc_name = null;
     }
+    self.freeWantedIpcName();
     if (self.title_override) |t| {
         app.core_app.alloc.free(t);
         self.title_override = null;

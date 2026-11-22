@@ -2971,6 +2971,17 @@ pub fn ipcRegisterChecked(
     return self.ipc_registry.register(self.core_app.alloc, self.windows.items, name, target);
 }
 
+/// Move `target` from `old` to `new`, keeping `old` when another target holds
+/// `new`. See IpcRegistry.rename (T1772).
+pub fn ipcRename(
+    self: *App,
+    target: IpcTarget,
+    old: []const u8,
+    new: []const u8,
+) Allocator.Error!IpcRegistry.RegisterResult {
+    return self.ipc_registry.rename(self.core_app.alloc, self.windows.items, target, old, new);
+}
+
 /// Reserve an ADOPTED window name so the auto allocator can never re-mint it.
 /// See IpcRegistry.reserveWindowName (T121).
 pub fn ipcReserveWindowName(self: *App, name: []const u8) void {
@@ -5692,10 +5703,33 @@ fn retireRestorePlaceholder(self: *App, restored: bool) void {
         return;
     }
     log.info("session-restore: closing the launch's untouched blank window; the restored windows replace it", .{});
+    // T1772: the stand-in minted its name before the late restore could read
+    // the names it would bring back, so a restored window that wanted that
+    // name was given a fresh one. Note the name now - `window` is freed by the
+    // close - and hand it to that window once the stand-in has let it go.
     // A real close, not a discard: the pane has a shell (and, with an agent,
     // a session) behind it, and both must end with the window. Not the
     // user's close, so nothing to undo (T1874).
     window.closeNow();
+    self.reclaimWantedWindowNames();
+}
+
+/// Hand every window the adopted name it was refused, wherever that name is
+/// free now (T1772). It cascades: the late restore's `window-1`, refused by the
+/// stand-in, minted `window-2` and so pushed the restored `window-2` on to
+/// `window-3`; once the stand-in closes, the first reclaim frees `window-2`
+/// for the second. Each pass either moves a window or stops, and a move
+/// clears that window's want, so it ends within one pass per window.
+fn reclaimWantedWindowNames(self: *App) void {
+    var passes: usize = 0;
+    while (passes <= self.windows.items.len) : (passes += 1) {
+        var moved = false;
+        for (self.windows.items) |w| {
+            if (w.ipc_name_wanted == null) continue;
+            if (w.reclaimWantedIpcName()) moved = true;
+        }
+        if (!moved) return;
+    }
 }
 
 /// Read what `restore_placeholder.shouldClose` needs about `window`.

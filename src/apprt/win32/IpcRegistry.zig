@@ -328,6 +328,34 @@ pub fn forget(self: *IpcRegistry, alloc: Allocator, target: Target) void {
     }
 }
 
+/// Move `target` from the name `old` to the name `new` (T1772): `new` is
+/// registered first, and only once `target` actually holds it is `old`
+/// dropped - so a refused rename leaves `target` reachable exactly as it was.
+/// `already_held` means another target holds `new` and nothing changed.
+pub fn rename(
+    self: *IpcRegistry,
+    alloc: Allocator,
+    live_windows: []const *Window,
+    target: Target,
+    old: []const u8,
+    new: []const u8,
+) Allocator.Error!RegisterResult {
+    const result = try self.register(alloc, live_windows, new, target);
+    if (result != .registered) return result;
+    if (std.mem.eql(u8, old, new)) return .registered;
+    var i: usize = 0;
+    while (i < self.entries.items.len) {
+        const e = self.entries.items[i];
+        if (!e.target.eql(target) or !std.mem.eql(u8, e.name, old)) {
+            i += 1;
+            continue;
+        }
+        alloc.free(e.name);
+        _ = self.entries.orderedRemove(i);
+    }
+    return .registered;
+}
+
 /// Remove registry entries whose target is no longer alive.
 fn prune(self: *IpcRegistry, alloc: Allocator, live_windows: []const *Window) void {
     var i: usize = 0;
@@ -490,6 +518,78 @@ test "registering a name a different target holds reports already_held" {
         try reg.register(alloc, &live, "window-3", .{ .window = b }),
     );
     try testing.expect(reg.lookup(alloc, &live, "window-3", null).target().?.eql(.{ .window = a }));
+}
+
+test "rename moves a window to a freed name and drops the one it had (T1772)" {
+    const alloc = testing.allocator;
+    var reg: IpcRegistry = .{};
+    defer reg.deinit(alloc);
+
+    const stand_in: *Window = @ptrFromInt(0x1000);
+    const restored: *Window = @ptrFromInt(0x2000);
+    const both = [_]*Window{ stand_in, restored };
+    _ = try reg.register(alloc, &both, "window-1", .{ .window = stand_in });
+    _ = try reg.register(alloc, &both, "window-3", .{ .window = restored });
+
+    // While the stand-in still holds window-1 the rename is refused, and the
+    // restored window keeps the name it had.
+    try testing.expectEqual(
+        IpcRegistry.RegisterResult.already_held,
+        try reg.rename(alloc, &both, .{ .window = restored }, "window-3", "window-1"),
+    );
+    try testing.expect(reg.lookup(alloc, &both, "window-3", null).target().?.eql(.{ .window = restored }));
+
+    // The stand-in closes: the name is free, and the rename takes it.
+    reg.forget(alloc, .{ .window = stand_in });
+    const only = [_]*Window{restored};
+    try testing.expectEqual(
+        IpcRegistry.RegisterResult.registered,
+        try reg.rename(alloc, &only, .{ .window = restored }, "window-3", "window-1"),
+    );
+    try testing.expect(reg.lookup(alloc, &only, "window-1", null).target().?.eql(.{ .window = restored }));
+    // ...and the minted name is gone rather than left as a second route.
+    try testing.expectEqual(@as(?Target, null), reg.lookup(alloc, &only, "window-3", null).target());
+    try testing.expectEqualStrings("window-1", reg.nameOf(.{ .window = restored }).?);
+
+    // Renaming to the name already held is a no-op that keeps it.
+    try testing.expectEqual(
+        IpcRegistry.RegisterResult.registered,
+        try reg.rename(alloc, &only, .{ .window = restored }, "window-1", "window-1"),
+    );
+    try testing.expect(reg.lookup(alloc, &only, "window-1", null).target().?.eql(.{ .window = restored }));
+}
+
+test "renames cascade: the first reclaim frees the name the second wants (T1772)" {
+    const alloc = testing.allocator;
+    var reg: IpcRegistry = .{};
+    defer reg.deinit(alloc);
+
+    // The late restore's shape once the stand-in (window-1) has closed: the
+    // restored window-1 was minted window-2, so the restored window-2 got
+    // window-3.
+    const first: *Window = @ptrFromInt(0x1000);
+    const second: *Window = @ptrFromInt(0x2000);
+    const live = [_]*Window{ first, second };
+    _ = try reg.register(alloc, &live, "window-2", .{ .window = first });
+    _ = try reg.register(alloc, &live, "window-3", .{ .window = second });
+
+    // Out of order, the second is refused: the first still holds window-2...
+    try testing.expectEqual(
+        IpcRegistry.RegisterResult.already_held,
+        try reg.rename(alloc, &live, .{ .window = second }, "window-3", "window-2"),
+    );
+    // ...and once the first moves, the second can follow.
+    try testing.expectEqual(
+        IpcRegistry.RegisterResult.registered,
+        try reg.rename(alloc, &live, .{ .window = first }, "window-2", "window-1"),
+    );
+    try testing.expectEqual(
+        IpcRegistry.RegisterResult.registered,
+        try reg.rename(alloc, &live, .{ .window = second }, "window-3", "window-2"),
+    );
+    try testing.expectEqualStrings("window-1", reg.nameOf(.{ .window = first }).?);
+    try testing.expectEqualStrings("window-2", reg.nameOf(.{ .window = second }).?);
+    try testing.expectEqual(@as(?Target, null), reg.lookup(alloc, &live, "window-3", null).target());
 }
 
 test "save copies out a target's names so a pruned target can have them back" {

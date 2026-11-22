@@ -410,9 +410,10 @@ try {
     # What SHOULD come back is D's three agent-backed windows. D's typed-in
     # blank window is not one of them: it opened with no agent, so its shell was
     # a local one that died with the crash, and nothing holds it to restore.
-    # (`window-1` itself returns under a freshly minted name - E's stand-in
-    # window already held the name, and a window nobody could read in advance
-    # cannot have it reserved. That is T1772's, not this task's.)
+    # `window-1` comes back under its own name (T1772): E's stand-in window
+    # minted it first, so the restored window is built under a fresh one - and
+    # that fresh `window-2` pushes the restored `window-2` on to `window-3`.
+    # Both take their names back the moment the untouched stand-in is closed.
     Start-Sleep -Seconds 4
     $nowE = @(Get-Targets)
     $dupesE = @(Get-Duplicates $nowE)
@@ -420,6 +421,9 @@ try {
         "E6 every window has a target name nobody else holds (dupes: $($dupesE -join ', '); all: $($nowE -join ', '))"
     Assert ($nowE.Count -eq $want.Count) `
         "E7 exactly the agent-backed windows are back - none twice, the stand-in put away (want $($want.Count); got: $($nowE -join ', '))"
+    $renamedE = @($want | Where-Object { $nowE -notcontains $_ })
+    Assert ($renamedE.Count -eq 0) `
+        "E9 every restored window answers to the name it had, window-1 included though the stand-in minted it first (missing: $($renamedE -join ', '); got: $($nowE -join ', '))"
     $mE2 = Wait-Manifest $tmp { param($mm) (@(Manifest-Names $mm) -contains 'solo') } 20
     Assert ($null -ne $mE2) 'E8 the recovered windows were adopted back into the local manifest'
 
