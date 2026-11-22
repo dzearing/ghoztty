@@ -120,7 +120,7 @@ pub fn currentLocation(self: *const Viewer) []const u8 {
 
 /// The pane's title: the file's name, a website's host, a diff's subject
 /// (win32's `initialTitle`, the Mac's `mode.title`). Borrowed from the viewer.
-pub fn title(self: *const Viewer) []const u8 {
+pub fn paneTitle(self: *const Viewer) []const u8 {
     return content.initialTitle(self.mode, self.location, self.file_path);
 }
 

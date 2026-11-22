@@ -797,7 +797,7 @@ pub const Surface = extern struct {
             if (gobject.ext.cast(gtk.Box, parent)) |box| box.prepend(web);
         }
 
-        const t = viewer.title();
+        const t = viewer.paneTitle();
         var buf: [512]u8 = undefined;
         const tz = std.fmt.bufPrintZ(&buf, "{s}", .{t[0..@min(t.len, buf.len - 1)]}) catch "viewer";
         self.setTitle(tz);
