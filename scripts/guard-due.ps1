@@ -409,6 +409,91 @@ $GuardTable = @(
             'src\apprt\win32\job_object.zig'
         )
     },
+    # T1768: the agent family. Each is the only run that scores its behavior by
+    # OUTCOME against a real agent - what a pane says, whether a session comes
+    # up - where the unit lanes see only the frame or the helper.
+    # An ATTACH the agent answers not_found must say so in the pane (T657).
+    [pscustomobject]@{
+        Name   = 'agent-attach-refused'
+        Script = 'test\win32\agent-attach-refused.ps1'
+        Stamp  = 'test\win32\agent-attach-refused.stamp.json'
+        Covers = @(
+            'test\win32\agent-attach-refused.ps1',
+            'src\termio\attach_failed_notice.zig'
+        )
+    },
+    # An OPEN the agent refuses fails fast and names the cap (T469), and an
+    # agent without the capability degrades to the old timeout.
+    [pscustomobject]@{
+        Name   = 'agent-open-refused'
+        Script = 'test\win32\agent-open-refused.ps1'
+        Stamp  = 'test\win32\agent-open-refused.stamp.json'
+        Covers = @(
+            'test\win32\agent-open-refused.ps1',
+            'src\termio\open_failed_notice.zig'
+        )
+    },
+    # 256 dead tombstones must not cost a working pane (T278): the cap lives in
+    # session.zig.
+    [pscustomobject]@{
+        Name   = 'agent-session-cap'
+        Script = 'test\win32\agent-session-cap.ps1'
+        Stamp  = 'test\win32\agent-session-cap.stamp.json'
+        Covers = @(
+            'test\win32\agent-session-cap.ps1',
+            'src\remote\agent\session.zig'
+        )
+    },
+    # A sandbox runs its own agent lineage beside the box's (T167): the lineage
+    # derivation and the single-instance guard it keys.
+    [pscustomobject]@{
+        Name   = 'agent-instance-lineage'
+        Script = 'test\win32\agent-instance-lineage.ps1'
+        Stamp  = 'test\win32\agent-instance-lineage.stamp.json'
+        Covers = @(
+            'test\win32\agent-instance-lineage.ps1',
+            'src\remote\agent_lineage.zig',
+            'src\remote\agent\single_instance.zig'
+        )
+    },
+    # The agent's named-pipe listener and +sessions over it (T89c).
+    [pscustomobject]@{
+        Name   = 'agent-pipe'
+        Script = 'test\win32\agent-pipe.ps1'
+        Stamp  = 'test\win32\agent-pipe.stamp.json'
+        Covers = @(
+            'test\win32\agent-pipe.ps1',
+            'src\remote\pipe_stream.zig',
+            'src\cli\sessions.zig'
+        )
+    },
+    # An agent-spawned session gets the interactive user's environment (T42,
+    # T358), with the GHOZTTY_USER_ENV=off negative control.
+    [pscustomobject]@{
+        Name   = 'agent-user-env'
+        Script = 'test\win32\agent-user-env.ps1'
+        Stamp  = 'test\win32\agent-user-env.stamp.json'
+        Covers = @(
+            'test\win32\agent-user-env.ps1',
+            'src\os\user_env.zig'
+        )
+    },
+    # The local agent spawned OUTSIDE the app's kill-on-close job (T426), and
+    # surviving that job's teardown. ADVISORY for the background-blur reason:
+    # it is a @user-desktop-launch script (T1238 - the shell-parent escape
+    # needs a desktop with a shell window), and go.md forbids opening windows
+    # on the user's desktop while they are present, so an unattended turn
+    # cannot answer it. Reported as due after a job_spawn edit, never a gate.
+    [pscustomobject]@{
+        Name     = 'agent-job-escape'
+        Script   = 'test\win32\agent-job-escape.ps1'
+        Stamp    = 'test\win32\agent-job-escape.stamp.json'
+        Advisory = $true
+        Covers   = @(
+            'test\win32\agent-job-escape.ps1',
+            'src\apprt\win32\job_spawn.zig'
+        )
+    },
     # The overview action (T708): the only thing that proves a bound
     # `toggle_tab_overview` actually opens hero mode, from a terminal AND from
     # a focused viewer. Covers the harness, the forwarding decision it rides

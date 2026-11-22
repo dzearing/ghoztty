@@ -526,4 +526,10 @@ Complete-TestBody  # T1039: the run reached the end of its body
 }
 
 Write-Host ''
+if ($script:failures -eq 0 -and $script:skipped -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red or a skip stays due.
+    $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard agent-instance-lineage -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+}
 Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped $script:skipped -Unit 'checks'

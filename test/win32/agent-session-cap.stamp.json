@@ -1,0 +1,16 @@
+{
+    "guard":  "agent-session-cap",
+    "script":  "test/win32/agent-session-cap.ps1",
+    "generated":  "2026-11-22T00:49:55-08:00",
+    "commit":  "f81eb427a",
+    "uncommitted":  [
+                        "test/win32/agent-session-cap.ps1"
+                    ],
+    "files":  {
+                  "src/remote/agent/session.zig":  "cc987315e33593e6efb528499f62b2a391b74336f1d4b6710a46402d0e9b3adc",
+                  "test/win32/agent-session-cap.ps1":  "d8affcd2199a9616597b1f67cbe8153d19d85935bad10904b75acc6100bad30c"
+              },
+    "code":  {
+                 "test/win32/agent-session-cap.ps1":  "code1:29917fa9f04c3992e8e499d71977db34c498348ddf694870e74e28936c8e9aff"
+             }
+}

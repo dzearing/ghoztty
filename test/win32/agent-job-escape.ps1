@@ -49,6 +49,9 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp below is
+# refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 if ($TestDesktop) { . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1') }
 
 $ErrorActionPreference = 'Continue'
@@ -314,6 +317,7 @@ try {
         Assert "E3 no spawn on this desktop degraded into the job" `
             ($logText -notmatch 'job escape=IN-JOB')
     }
+    Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     if ($job -ne [IntPtr]::Zero) { [T426Job]::CloseHandle($job) | Out-Null }
     Stop-TestProcs
@@ -327,6 +331,10 @@ try {
 }
 
 Say ""
-if ($script:failures -eq 0) { Say "ALL PASS ($($script:passes) assertions)"; exit 0 }
-Say "$($script:failures) FAILURE(S) ($($script:passes) passed)"
-exit 1
+if ($script:failures -eq 0) {
+    # A green run stamps the covered files (T783/T1768); red stays due.
+    $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard agent-job-escape -Repo $repo 2>&1 | ForEach-Object { Say "  $_" }
+}
+Write-TestVerdict -Pass $script:passes -Fail $script:failures

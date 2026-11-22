@@ -74,11 +74,11 @@ function Get-FixedPortViolations {
         $kind = $null
         if ($raw -match '\[int\]\s*\$([A-Za-z_]\w*)\s*=\s*(\d+)') {
             $name = $matches[1]; $num = $matches[2]
-            if ($name -match 'port' -and (Test-IsPortNumber $num)) { $kind = 'pinned-default' }
+            if ((Test-IsPortName $name) -and (Test-IsPortNumber $num)) { $kind = 'pinned-default' }
         }
         if (-not $kind -and $raw -match '^\s*\$(?:script:|global:)?([A-Za-z_]\w*)\s*=\s*(\d+)\s*(?:#.*)?$') {
             $name = $matches[1]; $num = $matches[2]
-            if ($name -match 'port' -and (Test-IsPortNumber $num)) { $kind = 'literal-assignment' }
+            if ((Test-IsPortName $name) -and (Test-IsPortNumber $num)) { $kind = 'literal-assignment' }
         }
         if (-not $kind -and $raw -match '(?:127\.0\.0\.1|localhost):(\d+)') {
             $num = $matches[1]
@@ -103,6 +103,15 @@ function Get-FixedPortViolations {
 
 # 1024-65535 is a port. Anything else on a line that looked port-shaped is a
 # timeout, an HRESULT, or a digit run inside a sha - not our business.
+# Does a variable NAME say "port"? As a word part, not as a substring: $ppPort,
+# $RelayPort, $RELAY_PORT and $port are ports; $REPORT_TIMEOUT_MS, $report,
+# $support and $import are not (T1768: update-failure-visible.ps1's 4000 ms
+# report timeout read as a pinned port). Case-sensitive on purpose - the
+# camelCase / UPPER_SNAKE boundary is what tells "relayPort" from "rePORT".
+function Test-IsPortName([string]$name) {
+    return ($name -cmatch '(^|_)(port|Port|PORT)|[a-z0-9]Port')
+}
+
 function Test-IsPortNumber($value) {
     $n = 0
     if (-not [int]::TryParse([string]$value, [ref]$n)) { return $false }

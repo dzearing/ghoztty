@@ -82,6 +82,13 @@ $ErrorActionPreference = 'Continue'
 Set-GhozttyTestIsolation -Tag 'relaysignin' | Out-Null
 
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+
+# The loopback redirect Google is ASKED about. Nothing ever binds it - the
+# probe stops at Google's verdict - but a drawn, verified-free port is the T694
+# rule for every loopback endpoint, and Google accepts any port for a
+# desktop client's loopback redirect, so the verdict does not depend on it.
+$script:probeRedirect = "http://127.0.0.1:$(Get-FreePort)"
 
 $script:passes = 0
 $script:failures = 0
@@ -289,7 +296,7 @@ try {
 
     $online = $false
     if ($liveId) {
-        $v = Get-GoogleAuthVerdict -ClientId $liveId -RedirectUri 'http://127.0.0.1:49152'
+        $v = Get-GoogleAuthVerdict -ClientId $liveId -RedirectUri $script:probeRedirect
         $online = $v.Reached
         if (-not $v.Reached) {
             Write-Host "  SKIP B: Google's authorization endpoint is unreachable ($($v.Detail))"
@@ -322,7 +329,7 @@ try {
     } else {
         # A syntactically valid client id that Google has never issued.
         $bogus = '000000000000-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz.apps.googleusercontent.com'
-        $cv = Get-GoogleAuthVerdict -ClientId $bogus -RedirectUri 'http://127.0.0.1:49152'
+        $cv = Get-GoogleAuthVerdict -ClientId $bogus -RedirectUri $script:probeRedirect
         Assert 'C1 a never-issued client id is NOT accepted' (-not $cv.Accepted) `
             "Google accepted a made-up id: $($cv.Detail)"
         Assert 'C2 and Google says why: invalid_client' ($cv.Error -match 'invalid_client') `

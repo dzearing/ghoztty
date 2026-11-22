@@ -23,6 +23,9 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp below is
+# refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 # T3258: this run's OWN agent lineage (pipe, guard, state dir), minted before
 # anything launches, so every reset below kills only what this run started.
 [void](Set-GhozttyTestAgentLineage -Tag 'agpipe')
@@ -41,7 +44,8 @@ $ClientExe = Resolve-RemoteTestClient -ClientExe $ClientExe
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
-$tmp = Join-Path $env:TEMP "ghoztty-agent-pipe-$PID"
+$script:passes = 0
+$tmp =Join-Path $env:TEMP "ghoztty-agent-pipe-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
 
 # isolation: none - `+sessions` dials the AGENT pipe it finds via
@@ -62,7 +66,7 @@ $sessFile = Join-Path $stateDir 'sessions.json'
 $pipe = "\\.\pipe\ghoztty-agent-t89c-$PID"
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
 # Run ghoztty +sessions with a hard timeout (a wedged agent must never hang the
@@ -215,5 +219,11 @@ Stop-TestProcs
 $env:LOCALAPPDATA = $savedLocalAppData
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 
-if ($script:failures -eq 0) { "ALL PASS"; exit 0 }
-else { "$($script:failures) FAILURE(S)"; exit 1 }
+Complete-TestBody  # T1039: the run reached the end of its body
+if ($script:failures -eq 0) {
+    # A green run stamps the covered files (T783/T1768); red stays due.
+    $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard agent-pipe -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Pass $script:passes -Fail $script:failures

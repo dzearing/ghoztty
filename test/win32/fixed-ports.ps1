@@ -135,6 +135,8 @@ $ENDSESSION_LOGOFF = -2147483648
 $sig = $sig % 2147483647
 $sha = '2389d318249a47333d7bfad9d05ded7247a44011'
 $portWaitMs = 250
+$REPORT_TIMEOUT_MS = 4000
+$support = 8080
 '@ | Set-Content -LiteralPath $noise -Encoding ASCII
 $v = @(Get-FixedPortViolations -Path $noise)
 Assert "B6 non-port numbers are not violations (got $($v.Count))" ($v.Count -eq 0)

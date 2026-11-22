@@ -1,0 +1,16 @@
+{
+    "guard":  "agent-attach-refused",
+    "script":  "test/win32/agent-attach-refused.ps1",
+    "generated":  "2026-11-22T00:49:59-08:00",
+    "commit":  "f81eb427a",
+    "uncommitted":  [
+                        "test/win32/agent-attach-refused.ps1"
+                    ],
+    "files":  {
+                  "src/termio/attach_failed_notice.zig":  "b55be52efe949b44482b1354eae9395d6ebb5dcc046f8a1c95e0f639ebc0c199",
+                  "test/win32/agent-attach-refused.ps1":  "df7bced757ce78049ddb43322c52f39435d4acc35cc2acd43516faa7ba1e94dd"
+              },
+    "code":  {
+                 "test/win32/agent-attach-refused.ps1":  "code1:f8849a8208583049cbd0218a5b968d21922c5fe463dff0a9660d734b3d099345"
+             }
+}
