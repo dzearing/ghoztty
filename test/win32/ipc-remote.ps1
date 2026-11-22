@@ -129,15 +129,13 @@ Assert "command output visible" ($dump -match 'remote-cmd-marker')
 # the `command not found` line - and both halves are asserted, exactly as arm I
 # of ipc-command-keepalive.ps1 does for the local table.
 #
-# Gated on a distro that actually RUNS rather than on wsl.exe existing: the exe
-# ships with Windows and answers even with no distro installed.
-$wslOk = $false
-if (Get-Command wsl.exe -ErrorAction SilentlyContinue) {
-    cmd /c "wsl.exe -e /bin/true > `"$tmp\wsl-probe.txt`" 2>&1" | Out-Null
-    $wslOk = ($LASTEXITCODE -eq 0)
-}
-if (-not $wslOk) {
-    "  SKIP 3b wsl.exe - no WSL distro on this box that can run /bin/true"; $script:skipped++
+# Gated on a distro rather than on wsl.exe existing: the exe ships with Windows
+# and answers even with no distro installed.
+# And on a distro already RUNNING (T1751): the old `wsl -e /bin/true` gate booted
+# the WSL VM, and Windows scripts never start WSL (CLAUDE.md).
+. (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'scripts\lib\WslState.ps1')
+if (-not (Test-WslDefaultDistroRunning)) {
+    "  SKIP 3b wsl.exe - $(Get-WslSkipReason)"; $script:skipped++
 } else {
     $r = Ghoz @('+new-remote-window', '--host=127.0.0.1', "--port=$Port", '--name=remwsl', '--shell=wsl.exe', '--command=echo remote-wsl-marker')
     Assert "wsl remote exit 0" ($r.ExitCode -eq 0)

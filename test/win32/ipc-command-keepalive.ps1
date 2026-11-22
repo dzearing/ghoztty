@@ -94,6 +94,8 @@ $env:GHOZTTY_PIPE_SUFFIX = "-cmdkeepalive$PID"
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 # T1601 arm J: byte-exact argv, so the quotes in a `--command=` reach the CLI.
 . (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'scripts\lib\NativeArgv.ps1')
+# T1751: arm I asks whether WSL is already up, and never starts it.
+. (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'scripts\lib\WslState.ps1')
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
 function Assert($name, $cond) {
@@ -185,13 +187,32 @@ function Test-KeepAlive($Label, $Pane, $Marker, $TimeoutSec = 25) {
     Assert "$Label the command ran" ($tail -match [regex]::Escape($Marker))
     Assert "$Label the pane did not exit (no 'Process exited' tombstone)" (
         $tail -notmatch 'Process exited')
+    # T1751: the wait is for the probe's OUTPUT - the probe alone on a line - not
+    # for the probe text. The old wait matched the echoed command line itself
+    # (`... echo ALIVEX` + newline), so it returned the instant the keys were
+    # echoed and, on a shell slower to answer than to echo (git-bash, wsl), read
+    # the tail before the output line existed: one hit, FAIL, over a live pane.
     $probe = "ALIVE$($Marker)"
-    Invoke-Ghoztty "+send-keys --target=$Pane `"echo $probe`" Enter" "$tmp\keys.txt" | Out-Null
-    $after = Wait-Read $Pane "$probe\s*[\r\n]" $TimeoutSec
-    # The echoed command line matches too, so require the OUTPUT: the marker on
-    # a line of its own, i.e. at least twice in the tail.
-    $hits = ([regex]::Matches($after, [regex]::Escape($probe))).Count
-    Assert "$Label +send-keys runs in the pane afterwards" ($hits -ge 2)
+    $outLine = "(?m)^\s*$([regex]::Escape($probe))\s*$"
+    # And the posix rows `exec <shell> -li` right after the command, so the
+    # probe can be typed while the login shell is still starting and be dropped
+    # with the handover. Type it again once if half the wait passes without an
+    # answer: only a shell that RAN the echo prints the bare probe line, so a
+    # retry cannot make a dead pane pass.
+    $half = [Math]::Max(5, [int]($TimeoutSec / 2))
+    $sent = 0
+    $after = ''
+    while ($sent -lt 2 -and $after -notmatch $outLine) {
+        Invoke-Ghoztty "+send-keys --target=$Pane `"echo $probe`" Enter" "$tmp\keys.txt" | Out-Null
+        $sent++
+        $after = Wait-Read $Pane $outLine $half
+    }
+    $ok = ($after -match $outLine)
+    Assert "$Label +send-keys runs in the pane afterwards" $ok
+    if ($ok -and $sent -gt 1) { "    (probe answered on the second send - the first was typed before the shell was reading)" }
+    if (-not $ok) {
+        "    pane tail:"; ($after -split "`n" | Select-Object -Last 8) | ForEach-Object { "      $_" }
+    }
 }
 
 Reset-GhozttyTestState -Exe $Exe -SettleMs 1000 | Out-Null
@@ -290,16 +311,12 @@ try {
     # ------------------------------------------------------------------
     "== I: --shell=wsl.exe (T656 - the argv row, not a command-string row)"
     # ------------------------------------------------------------------
-    # Gate on a distro that actually RUNS, not on wsl.exe existing: the exe
-    # ships with Windows and answers even with nothing installed, so keying on
-    # the binary would turn a real regression into a green run.
-    $wslOk = $false
-    if (Get-Command wsl.exe -ErrorAction SilentlyContinue) {
-        cmd /c "wsl.exe -e /bin/true > `"$tmp\wsl-probe.txt`" 2>&1" | Out-Null
-        $wslOk = ($LASTEXITCODE -eq 0)
-    }
-    if (-not $wslOk) {
-        Skip 'I wsl.exe' 'no WSL distro on this box that can run /bin/true'
+    # Gate on a distro that is already RUNNING, not on wsl.exe existing (the exe
+    # ships with Windows and answers with nothing installed). It used to be gated
+    # on `wsl -e /bin/true`, which BOOTS the VM - and Windows scripts never start
+    # WSL (CLAUDE.md, T1751). Asking the distro table starts nothing.
+    if (-not (Test-WslDefaultDistroRunning)) {
+        Skip 'I wsl.exe' (Get-WslSkipReason)
     } else {
         Invoke-Ghoztty "+new-window --target=kawsl --shell=wsl.exe `"--command=echo KAMARKERWSL`"" "$tmp\new-wsl.txt" | Out-Null
         $leaves = @(Get-WindowLeaves 'kawsl')
@@ -368,6 +385,9 @@ try {
         AssertAlways "H the -e command ran" ($tail -match 'KAMARKEREXEC')
         AssertAlways "H the -e pane exits with its command (no wrap imposed)" (
             $tail -match 'Process exited')
+        if ($tail -notmatch 'Process exited') {
+            "    pane tail:"; ($tail -split "`n" | Select-Object -Last 8) | ForEach-Object { "      $_" }
+        }
     }
 
     # ------------------------------------------------------------------
