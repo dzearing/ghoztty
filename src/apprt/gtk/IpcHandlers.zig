@@ -103,7 +103,6 @@ fn notYet(comptime verb: server.Verb, comptime task: []const u8) Allocator.Error
     );
 }
 
-pub fn handleReload(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.reload, "T3369"); }
 pub fn handleSetState(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.set_state, "T3339"); }
 pub fn handleSetBanner(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.set_banner, "T3339"); }
 pub fn handleNewRemoteWindow(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.new_remote_window, "T3337"); }
@@ -409,6 +408,27 @@ pub fn handleFocus(app: Context, request: Request) Allocator.Error!?[]u8 {
 
 pub fn handleClose(app: Context, request: Request) Allocator.Error!?[]u8 {
     return verbs.close(@This(), app, request);
+}
+
+/// `+reload` (T3413): the shared body in `apprt/ipc/verbs.zig`, win32's
+/// arguments and sentences. A viewer pane (or a window's focused one) reloads
+/// in place, bypassing caches; `--config` is T3369's.
+pub fn handleReload(app: Context, request: Request) Allocator.Error!?[]u8 {
+    return verbs.reload(@This(), app, request);
+}
+
+pub fn reloadConfig(_: Context, _: Allocator) Allocator.Error!?[]const u8 {
+    return "+reload --config is not served by the Linux app yet (T3369)";
+}
+
+pub fn reloadViewer(target: Target) verbs.ReloadOutcome {
+    const s = target.surface() orelse return .gone;
+    const viewer = s.getViewer() orelse return switch (target) {
+        .pane => .terminal,
+        .window => .focused_terminal,
+    };
+    viewer.reloadContent(.chrome);
+    return .reloaded;
 }
 
 /// What a name means, by T2250's order (`resolve`), or the ambiguity sentence.

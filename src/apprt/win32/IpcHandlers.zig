@@ -1353,62 +1353,34 @@ pub fn handleSetBanner(ctx: Context, request: Request) Allocator.Error!?[]u8 {
 /// terminal is a mistake about which pane has focus, and the fix for each is
 /// not the same. Neither is the `is a viewer pane, not a terminal` string the
 /// terminal-only verbs use — that one points the opposite way.
+///
+/// The body is shared with the Linux app (`verbs.reload`, T3413); the model is
+/// the two functions below.
 pub fn handleReload(ctx: Context, request: Request) Allocator.Error!?[]u8 {
-    var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    return verbs.reload(@This(), ctx, request);
+}
 
-    const args = try parseVerbArgs(arena, request.arguments);
+/// `+reload --config` (T893): re-read the configuration from disk, exactly as
+/// the menu's Reload Configuration does - a HARD reload.
+pub fn reloadConfig(ctx: Context, arena: Allocator) Allocator.Error!?[]const u8 {
+    _ = ctx.app.performAction(.app, .reload_config, .{ .soft = false }) catch |err| {
+        return try std.fmt.allocPrint(arena, "config reload failed: {}", .{err});
+    };
+    return null;
+}
 
-    // `--config` is the app-wide form (T893): re-read the configuration from
-    // disk, exactly as the menu's Reload Configuration does. It names no
-    // pane, so combining it with `--target` is a mistake about which reload
-    // was meant rather than two requests to run.
-    if (args.config) {
-        if (args.target != null) return try errorResponse(
-            ctx.alloc,
-            "{s}",
-            .{verb_args.reload_config_target_error},
-        );
-
-        _ = ctx.app.performAction(.app, .reload_config, .{ .soft = false }) catch |err| {
-            return try errorResponse(ctx.alloc, "config reload failed: {}", .{err});
-        };
-        log.info("IPC: reloaded configuration", .{});
-        return try ctx.alloc.dupe(u8, "{\"success\":true}");
-    }
-
-    const target = args.target orelse
-        return try errorResponse(ctx.alloc, "--target is required for +reload", .{});
-
-    const entry = ctx.app.ipcLookup(target) orelse
-        return try missingResponse(ctx, target, "target '{s}' not found in registry", .{target});
-
+/// `+reload` is the explicit "these bytes are stale" verb, so it bypasses
+/// caches rather than reloading in place (T601's `ReloadReason`).
+pub fn reloadViewer(entry: Target) verbs.ReloadOutcome {
     const view = switch (entry) {
-        .pane => |pane| pane.viewer() orelse return try errorResponse(
-            ctx.alloc,
-            "target '{s}' is a terminal pane, nothing to reload",
-            .{target},
-        ),
+        .pane => |pane| pane.viewer() orelse return .terminal,
         .window => w: {
-            const pane = targetPane(entry) orelse return try errorResponse(
-                ctx.alloc,
-                "target '{s}' is no longer alive",
-                .{target},
-            );
-            break :w pane.viewer() orelse return try errorResponse(
-                ctx.alloc,
-                "focused pane of '{s}' is a terminal pane, nothing to reload",
-                .{target},
-            );
+            const pane = targetPane(entry) orelse return .gone;
+            break :w pane.viewer() orelse return .focused_terminal;
         },
     };
-
-    // `+reload` is the explicit "these bytes are stale" verb, so it bypasses
-    // caches rather than reloading in place (T601's `ReloadReason`).
     view.reloadContent(.chrome);
-    log.info("IPC: reloaded viewer '{s}'", .{target});
-    return try ctx.alloc.dupe(u8, "{\"success\":true}");
+    return .reloaded;
 }
 
 /// `+stash` / `+restore` (T1827, Mac `handleStash`): move a pane out of its

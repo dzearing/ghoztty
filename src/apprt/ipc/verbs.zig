@@ -9,7 +9,7 @@
 //! Moved so far: `+read` and `+send-keys` (T3361), then `+close`, the `focus`
 //! action, `+set-state` and `+set-banner` (T3374), then `+new-window`,
 //! `+split`, `+rename` and `+list`'s split-tree walk (T3375; their model is
-//! documented on each body below). Each is
+//! documented on each body below), then `+reload` (T3413). Each is
 //! `fn (comptime F, ctx: F.Context, request) Allocator.Error!?[]u8`, so a
 //! frontend's handler is one line: `return verbs.read(@This(), ctx, request);`.
 //! A frontend only needs the model decls of the verbs it routes here: Zig
@@ -524,6 +524,61 @@ pub fn setBanner(comptime F: type, ctx: F.Context, request: Request) Allocator.E
         .no_pane => try errorResponse(alloc, "target '{s}' has no focused pane", .{name}),
         .viewer => try errorResponse(alloc, "{s} is a viewer pane, not a terminal", .{name}),
     };
+}
+
+/// What reloading a target's viewer found (T3413).
+pub const ReloadOutcome = enum {
+    /// The viewer reloaded in place.
+    reloaded,
+    /// A pane target that is a terminal.
+    terminal,
+    /// A window target whose focused pane is a terminal.
+    focused_terminal,
+    /// A window target with no pane left.
+    gone,
+};
+
+/// `+reload --target=<name>` reloads a viewer pane in place, bypassing caches
+/// (a window target reloads its focused pane); `+reload --config` re-reads the
+/// app's configuration, app-wide (T893). win32's handler since T893, shared in
+/// T3413 so the Linux app answers with the same sentences. The model:
+///
+/// - `fn reloadConfig(ctx, arena) Allocator.Error!?[]const u8` - reload the
+///   configuration; null on success, else the sentence that says why not.
+/// - `fn reloadViewer(target) ReloadOutcome` - reload the target's viewer.
+pub fn reload(comptime F: type, ctx: F.Context, request: Request) Allocator.Error!?[]u8 {
+    const alloc = F.replyAllocator(ctx);
+    const log = std.log.scoped(F.log_scope);
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const args = try verb_args.parseVerbArgs(arena, request.arguments);
+
+    // `--config` names no pane, so combining it with `--target` is a mistake
+    // about which reload was meant rather than two requests to run.
+    if (args.config) {
+        if (args.target != null)
+            return try errorResponse(alloc, "{s}", .{verb_args.reload_config_target_error});
+        if (try F.reloadConfig(ctx, arena)) |why| return try errorResponse(alloc, "{s}", .{why});
+        log.info("IPC: reloaded configuration", .{});
+        return try alloc.dupe(u8, ok_reply);
+    }
+
+    const name = args.target orelse
+        return try errorResponse(alloc, "--target is required for +reload", .{});
+    const target = switch (try resolveTarget(F, ctx, arena, name)) {
+        .target => |t| t,
+        .reply => |r| return r,
+    };
+    switch (F.reloadViewer(target)) {
+        .reloaded => {},
+        .terminal => return try errorResponse(alloc, "target '{s}' is a terminal pane, nothing to reload", .{name}),
+        .focused_terminal => return try errorResponse(alloc, "focused pane of '{s}' is a terminal pane, nothing to reload", .{name}),
+        .gone => return try errorResponse(alloc, "target '{s}' is no longer alive", .{name}),
+    }
+    log.info("IPC: reloaded viewer '{s}'", .{name});
+    return try alloc.dupe(u8, ok_reply);
 }
 
 // ---------------------------------------------------------------------------
@@ -1203,6 +1258,9 @@ const FakeRecord = struct {
     var state: ?ActivityState = null;
     var banner_set = false;
     var banner_null = false;
+    var reloaded: usize = 0;
+    var config_error: ?[]const u8 = null;
+    var config_reloads: usize = 0;
 };
 
 const FakeTargets = struct {
@@ -1265,7 +1323,54 @@ const FakeTargets = struct {
             },
         };
     }
+    pub fn reloadConfig(_: *Self, _: Allocator) Allocator.Error!?[]const u8 {
+        FakeRecord.config_reloads += 1;
+        return FakeRecord.config_error;
+    }
+    /// "v" is the only viewer: a window "w" stands for one focused on a
+    /// terminal.
+    pub fn reloadViewer(t: Target) ReloadOutcome {
+        return switch (t) {
+            .v => {
+                FakeRecord.reloaded += 1;
+                return .reloaded;
+            },
+            .p => .terminal,
+            .w => .focused_terminal,
+            .e => .gone,
+        };
+    }
 };
+
+test "+reload: a viewer reloads; terminals, an empty window and a missing name each say why" {
+    const F = FakeTargets;
+    var fe: F = .{};
+    defer fe.deinit();
+    FakeRecord.reloaded = 0;
+    try expectReply(try reload(F, &fe, req("reload", &.{})), errJson("--target is required for +reload"));
+    try expectReply(try reload(F, &fe, req("reload", &.{"--target=v"})), ok_json);
+    try testing.expectEqual(@as(usize, 1), FakeRecord.reloaded);
+    try expectReply(try reload(F, &fe, req("reload", &.{"--target=p"})), errJson("target 'p' is a terminal pane, nothing to reload"));
+    try expectReply(try reload(F, &fe, req("reload", &.{"--target=w"})), errJson("focused pane of 'w' is a terminal pane, nothing to reload"));
+    try expectReply(try reload(F, &fe, req("reload", &.{"--target=e"})), errJson("target 'e' is no longer alive"));
+    try expectReply(try reload(F, &fe, req("reload", &.{"--target=nope"})), errJson("target 'nope' not found in registry"));
+    try expectReply(try reload(F, &fe, req("reload", &.{"--target=amb"})), errJson("'amb' is ambiguous"));
+    try testing.expectEqual(@as(usize, 1), FakeRecord.reloaded);
+}
+
+test "+reload --config: app-wide, refuses --target, carries the frontend's failure sentence" {
+    const F = FakeTargets;
+    var fe: F = .{};
+    defer fe.deinit();
+    FakeRecord.config_reloads = 0;
+    FakeRecord.config_error = null;
+    try expectReply(try reload(F, &fe, req("reload", &.{"--config"})), ok_json);
+    try expectReply(try reload(F, &fe, req("reload", &.{ "--config", "--target=v" })), errJson("--config cannot be combined with --target"));
+    try testing.expectEqual(@as(usize, 1), FakeRecord.config_reloads);
+    FakeRecord.config_error = "config reload failed: Boom";
+    defer FakeRecord.config_error = null;
+    try expectReply(try reload(F, &fe, req("reload", &.{"--config"})), errJson("config reload failed: Boom"));
+}
 
 const ok_json = "{\"success\":true}";
 

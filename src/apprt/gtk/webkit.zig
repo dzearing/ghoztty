@@ -77,6 +77,15 @@ pub extern fn webkit_web_view_reload_bypass_cache(view: *WebView) void;
 pub extern fn webkit_web_view_get_zoom_level(view: *WebView) f64;
 pub extern fn webkit_web_view_set_zoom_level(view: *WebView, level: f64) void;
 
+// A dead web process (T3413).
+pub extern fn webkit_web_view_terminate_web_process(view: *WebView) void;
+pub extern fn webkit_web_view_load_alternate_html(
+    view: *WebView,
+    content: [*:0]const u8,
+    content_uri: [*:0]const u8,
+    base_uri: ?[*:0]const u8,
+) void;
+
 // --- WebKitWebContext / security -----------------------------------------
 
 pub extern fn webkit_web_context_get_default() *WebContext;
@@ -205,6 +214,15 @@ pub extern fn gtk_file_launcher_open_containing_folder_finish(launcher: *GtkFile
 pub extern fn g_signal_emit_by_name(instance: *anyopaque, signal: [*:0]const u8, ...) void;
 pub extern fn g_idle_add(function: *const fn (?*anyopaque) callconv(.c) c_int, data: ?*anyopaque) c_uint;
 pub extern fn g_timeout_add(interval_ms: c_uint, function: *const fn (?*anyopaque) callconv(.c) c_int, data: ?*anyopaque) c_uint;
+pub extern fn g_source_remove(id: c_uint) c_int;
+
+// --- File monitoring, for live reload (T3413) ------------------------------
+
+pub const GFileMonitor = opaque {};
+pub extern fn g_file_monitor_file(file: *GFile, flags: c_uint, cancellable: ?*anyopaque, err: *?*GError) ?*GFileMonitor;
+pub extern fn g_file_monitor_cancel(monitor: *GFileMonitor) c_int;
+pub extern fn g_signal_handler_disconnect(instance: *anyopaque, handler_id: c_ulong) void;
+pub extern fn gtk_widget_get_mapped(widget: *GtkWidget) c_int;
 
 /// `G_IO_ERROR_NOT_FOUND`.
 pub const io_error_not_found: c_int = 1;

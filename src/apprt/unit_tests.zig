@@ -588,6 +588,11 @@ test {
     // tables (T3412). No GTK imports, like viewer_scheme.zig.
     _ = @import("gtk/viewer_chrome.zig");
 
+    // The GTK viewer's reload policy - which file-monitor events are a save,
+    // a WebKit termination onto win32's restart budget, the crash card
+    // (T3413). No GTK imports, like viewer_chrome.zig.
+    _ = @import("gtk/viewer_reload.zig");
+
     // Pure win32 image-viewer zoom rules — what 100% means, best-fit's refusal
     // to upscale, the double-click toggle and the step/clamp (T1183), same
     // no-OS-imports deal.

@@ -38,8 +38,15 @@
 //!
 //! A viewer PANE is a `Surface` that hosts one of these in place of its
 //! terminal (T3411), so it splits, resizes, focuses, zooms and closes through
-//! the split tree's own code. Not here yet, by design: `+reload` and live
-//! reload (T3413), find (T3414), link routing (T3415).
+//! the split tree's own code. Not here yet, by design: find (T3414), link
+//! routing (T3415).
+//!
+//! **Reloads** (T3413): a file pane watches its file (`viewer_watch.zig`) and
+//! re-renders on a save, keeping the scroll; `+reload` and Ctrl+R are the
+//! explicit "these bytes are stale" reload, which bypasses caches; a web
+//! process that dies under the pane is restarted at most 3 times a minute,
+//! then the pane says the page keeps crashing. Each decision is win32's
+//! (`viewer_reload.zig` names them).
 //!
 //! The scheme handlers are registered on WebKit's default context once per
 //! process; a request finds its viewer through the web view it came from
@@ -58,6 +65,9 @@ const content = @import("../win32/viewer_content.zig");
 const document = @import("../win32/viewer_document.zig");
 const nav = @import("../win32/viewer_nav.zig");
 const view_arg = @import("../../cli/view_arg.zig");
+const reload_gate = @import("../win32/reload_gate.zig");
+const reload_policy = @import("viewer_reload.zig");
+const Watch = @import("viewer_watch.zig");
 
 const log = std.log.scoped(.gtk_viewer);
 
@@ -83,6 +93,23 @@ assets_dir: ?[]u8 = null,
 base_dir: ?[]u8 = null,
 /// The template committed and still needs its document pushed in.
 needs_render: bool = false,
+/// A load has FINISHED in a live web process: there is a page to render
+/// into. False from a load's start, and from the moment its process dies -
+/// a render into a dead page goes nowhere (the Mac's `pageLoaded` defect).
+page_live: bool = false,
+
+/// The file pane's watcher (T3413) and what the last render saw of the file
+/// (win32's T3037 gate: an unchanged save renders nothing, a save while the
+/// pane is unmapped is owed until it maps).
+watch: Watch = .{},
+file_gate: reload_gate.Gate = .{},
+/// Restarts spent on a dying web process (Mac: 3 in 60 s).
+restarts: reload_policy.Budget = .{},
+/// How many times a dead web process was reloaded; the tests read it.
+process_reloads: u32 = 0,
+/// The crash card is going up, or is up: its load is not the pane's
+/// document, so it neither moves the pane nor gets a document pushed in.
+crash_card: enum { none, pending, shown } = .none,
 
 /// Called each time content is on screen: a template mode's page call has
 /// run, or a page/website finished loading. `ok` is false when the load
@@ -150,6 +177,9 @@ pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
     _ = wk.g_signal_connect_data(w, "load-changed", @ptrCast(&onLoadChanged), self, null, 0);
     _ = wk.g_signal_connect_data(w, "load-failed", @ptrCast(&onLoadFailed), self, null, 0);
     _ = wk.g_signal_connect_data(w, "destroy", @ptrCast(&onDestroy), self, null, 0);
+    _ = wk.g_signal_connect_data(w, "web-process-terminated", @ptrCast(&onWebProcessTerminated), self, null, 0);
+    // A save that landed while the pane was unmapped renders when it maps.
+    _ = wk.g_signal_connect_data(box, "map", @ptrCast(&onMapped), self, null, 0);
 
     _ = wk.g_signal_connect_data(self.bar.back, "clicked", @ptrCast(&onBackClicked), self, null, 0);
     _ = wk.g_signal_connect_data(self.bar.forward, "clicked", @ptrCast(&onForwardClicked), self, null, 0);
@@ -196,6 +226,7 @@ fn deinit(self: *Viewer) void {
     if (comptime build_config.is_debug) {
         if (steps.viewer == self) steps.viewer = null;
     }
+    self.watch.stop();
     const alloc = self.alloc;
     alloc.free(self.location);
     alloc.free(self.current);
@@ -258,6 +289,7 @@ pub fn navigate(self: *Viewer, target: []const u8) void {
         .diff => wk.webkit_web_view_load_uri(self.view, scheme.template_url),
     }
     self.syncChrome();
+    self.syncWatch();
 }
 
 /// Read where the pane IS from a committed URI: a typed address, a link and
@@ -292,7 +324,92 @@ fn syncCommitted(self: *Viewer) void {
         },
     }
     self.syncChrome();
+    self.syncWatch();
     if (self.on_location_changed) |cb| cb(self);
+}
+
+// -------------------------------------------------------------------------
+// Live reload (T3413)
+// -------------------------------------------------------------------------
+
+/// Watch the file the pane shows now, and only that one: a link, Back or a
+/// typed address moves the watch with the pane, and a website watches
+/// nothing. Leaving a file drops a save it still owed (win32's T400/T3037).
+fn syncWatch(self: *Viewer) void {
+    const path: ?[]const u8 = if (self.mode.isFile()) self.file_path else null;
+    if (self.watch.watching()) |w| {
+        if (path) |p| if (std.mem.eql(u8, w, p)) return;
+    } else if (path == null) return;
+
+    self.watch.stop();
+    self.file_gate.reset();
+    const p = path orelse return;
+    self.file_gate.note(fileStamp(p));
+    self.watch.start(self.alloc, p, &onFileSaved, self);
+}
+
+fn fileStamp(path: []const u8) ?reload_gate.Stamp {
+    const st = std.fs.cwd().statFile(path) catch return null;
+    return .{ .size = st.size, .mtime = st.mtime };
+}
+
+fn onFileSaved(ctx: *anyopaque) void {
+    const self: *Viewer = @ptrCast(@alignCast(ctx));
+    self.fileSaved();
+}
+
+/// The watcher's debounced save landed, through the T3037 gate.
+fn fileSaved(self: *Viewer) void {
+    const path = self.file_path orelse return;
+    const shown = wk.gtk_widget_get_mapped(self.box) != 0;
+    // An unmapped pane does not even stat: a writer saving ten times a
+    // second must cost a hidden pane nothing but this branch.
+    const now = if (shown) fileStamp(path) else null;
+    switch (self.file_gate.save(shown, now)) {
+        .owed => log.debug("viewer: {s} saved while hidden; render owed", .{path}),
+        .unchanged => log.debug("viewer: {s} saved unchanged; nothing to render", .{path}),
+        .render => {
+            log.info("viewer: {s} changed on disk; reloading", .{path});
+            self.reloadContent(.file_changed);
+        },
+    }
+}
+
+fn onMapped(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    if (self.file_gate.reveal()) self.fileSaved();
+}
+
+// -------------------------------------------------------------------------
+// A dead web process (T3413; Mac `webViewWebContentProcessDidTerminate`)
+// -------------------------------------------------------------------------
+
+fn onWebProcessTerminated(_: *wk.WebView, reason: reload_policy.TerminationReason, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    self.page_live = false;
+    const action = self.restarts.decide(reload_policy.kindFor(reason), std.time.milliTimestamp());
+    log.warn("viewer: web process terminated reason={d} -> {s}", .{ @intFromEnum(reason), @tagName(action) });
+    switch (action) {
+        // `reload` rather than `navigate`: it reloads the document the pane
+        // is ON (a website the user went to, not the one it opened with), and
+        // a template's commit re-renders its file exactly as the button does.
+        .reload => {
+            self.process_reloads +|= 1;
+            wk.webkit_web_view_reload(self.view);
+        },
+        .capped, .browser_gone => self.showCrashCard(),
+        .ignore => {},
+    }
+}
+
+/// The page used up its restarts: say so instead of staying blank. The card
+/// is its own small page (the template is a page too, and pages are what
+/// keep dying), shown in place of the current one without a history entry;
+/// a `+reload` or Ctrl+R afterwards is the user asking to try again.
+fn showCrashCard(self: *Viewer) void {
+    const uri = wk.webkit_web_view_get_uri(self.view) orelse self.current.ptr;
+    self.crash_card = .pending;
+    wk.webkit_web_view_load_alternate_html(self.view, reload_policy.keeps_crashing_html, uri, null);
 }
 
 fn setCurrent(self: *Viewer, value: []const u8) void {
@@ -335,20 +452,42 @@ pub fn goHome(self: *Viewer) void {
     self.navigate(self.location);
 }
 
-/// Reload in place, the interactive `+reload` (Mac's Cmd+R): a template mode
-/// re-reads its file and pushes it into the page it already has, so the
-/// scroll position survives; a page or a website re-fetches from origin.
-pub fn reloadContent(self: *Viewer) void {
-    if (self.mode.usesTemplate() and self.render_count > 0 and !self.needs_render) {
-        self.renderTemplate();
-        return;
+/// Reload in place: `+reload` and Ctrl+R (`.chrome`, Mac's Cmd+R), and a save
+/// of the viewed file (`.file_changed`). win32's `reloadPlan` decides: a
+/// template mode re-reads its file and pushes it into the page it already
+/// has, so the scroll survives; a saved `.html` page reloads in place, which
+/// WebKit restores the scroll across; an explicit reload of a page or a
+/// website re-fetches bypassing caches (an edited sibling stylesheet); and
+/// with no live page - mid-load, or its process died - the load runs again.
+pub fn reloadContent(self: *Viewer, reason: content.ReloadReason) void {
+    // An explicit reload re-reads the file as it stands: that is what is on
+    // screen next, so a later save is judged against it, and a save it
+    // already covered owes nothing more.
+    if (reason == .chrome) {
+        if (self.file_path) |p| self.file_gate.note(fileStamp(p));
+        self.watch.cancelPending();
     }
-    wk.webkit_web_view_reload_bypass_cache(self.view);
+    const live = self.page_live and !self.needs_render and self.crash_card == .none;
+    const plan = content.reloadPlan(self.mode, live, reason);
+    log.debug("viewer: reload reason={s} plan={s}", .{ @tagName(reason), @tagName(plan) });
+    switch (plan) {
+        .rerender => self.renderTemplate(),
+        .reload_in_place => wk.webkit_web_view_reload(self.view),
+        .refetch => wk.webkit_web_view_reload_bypass_cache(self.view),
+        // Behind a crash card, load where the pane IS again (the card's own
+        // reload would only reload the card).
+        .full_load => if (self.crash_card == .none and wk.webkit_web_view_get_uri(self.view) != null)
+            wk.webkit_web_view_reload_bypass_cache(self.view)
+        else
+            self.navigate(self.current),
+    }
 }
 
 /// The bar's reload button: a plain browser reload (Mac's `reloadPage`). A
 /// template mode reloads the template, whose commit re-renders the file.
 fn reloadFromChrome(self: *Viewer) void {
+    // Behind the crash card a plain reload would reload the card.
+    if (self.crash_card != .none) return self.reloadContent(.chrome);
     wk.webkit_web_view_reload(self.view);
 }
 
@@ -584,7 +723,7 @@ pub fn handleKey(self: *Viewer, keyval: u32, state: u32) bool {
     const action = chrome.classify(keyval, state, .{ .address = self.addressHasFocus() }) orelse return false;
     switch (action) {
         .pane => |c| switch (c) {
-            .reload => self.reloadContent(),
+            .reload => self.reloadContent(.chrome),
             .focus_address => self.focusAddress(),
             // Find in page is T3414's: declined until it lands, so the chord
             // falls through exactly as an unclaimed one does.
@@ -674,9 +813,30 @@ fn finishRender(self: *Viewer, ok: bool, detail: []const u8) void {
 fn onLoadChanged(view: *wk.WebView, event: wk.LoadEvent, ud: ?*anyopaque) callconv(.c) void {
     _ = view;
     const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    // The crash card (T3413) is not the pane's document: it neither moves
+    // the pane nor takes a render, and the load after it is the pane again.
+    switch (self.crash_card) {
+        .none => {},
+        .pending, .shown => {
+            if (event == .started and self.crash_card == .shown) {
+                self.crash_card = .none;
+            } else {
+                if (event == .started) self.crash_card = .shown;
+                if (event == .finished) {
+                    self.crash_card = .shown;
+                    self.page_live = true;
+                    self.syncChrome();
+                    self.finishRender(false, reload_policy.keeps_crashing_title);
+                }
+                return;
+            }
+        },
+    }
     switch (event) {
+        .started => self.page_live = false,
         .committed => self.syncCommitted(),
         .finished => {
+            self.page_live = true;
             self.syncChrome();
             if (self.mode.usesTemplate()) {
                 if (self.needs_render) self.renderTemplate();
@@ -917,6 +1077,8 @@ fn writeDump(text: []const u8) void {
 ///   state           `state mode= current= address= back= forward= reveal=
 ///                   zoom= focus=address|content|other sel=<start>-<end>`
 ///   probe <js>      evaluate in the page: `probe OK <value>`
+///   terminate       kill the page's web process through WebKit's API, as a
+///                   crash would: `terminate`
 ///   mark <text>     `mark <text>`, a sync point for the driving script
 ///   sleep <ms>
 ///
@@ -1016,6 +1178,9 @@ const steps = if (build_config.is_debug) struct {
             return 0;
         } else if (std.mem.eql(u8, verb, "state")) {
             writeState(v);
+        } else if (std.mem.eql(u8, verb, "terminate")) {
+            out("terminate", .{});
+            wk.webkit_web_view_terminate_web_process(v.view);
         } else if (std.mem.eql(u8, verb, "mark")) {
             // A sync point for the driving script (it edits a fixture, reads
             // +list, ...) while a following `sleep` holds the steps.
@@ -1044,7 +1209,7 @@ const steps = if (build_config.is_debug) struct {
             (if (f == wk.asWidget(v.view) or wk.gtk_widget_is_ancestor(f, wk.asWidget(v.view)) != 0) "content" else "other")
         else
             "none";
-        out("state mode={s} current={s} address={s} back={} forward={} reveal={} zoom={d:.3} focus={s} sel={d}-{d} barh={d}", .{
+        out("state mode={s} current={s} address={s} back={} forward={} reveal={} zoom={d:.3} focus={s} sel={d}-{d} barh={d} reloads={d} card={s}", .{
             @tagName(v.mode),
             v.current,
             std.mem.span(wk.gtk_editable_get_text(v.bar.address)),
@@ -1056,6 +1221,8 @@ const steps = if (build_config.is_debug) struct {
             start_i,
             end_i,
             wk.gtk_widget_get_height(v.bar.row),
+            v.process_reloads,
+            @tagName(v.crash_card),
         });
     }
 
