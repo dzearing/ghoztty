@@ -143,17 +143,32 @@ pub const DialConfig = struct {
 ///
 /// Threading matches the `Stream` contract: one reader thread calls `read`,
 /// one writer thread calls `write`, and `close` is safe to call concurrently
-/// with a blocked `read` (closing the fd makes the blocked `read` return).
-/// `close` is idempotent (guarded by an atomic flag) so the writer's failure
-/// path and `Connection.shutdown` can both call it.
+/// with a blocked `read`. `close` is idempotent (guarded by an atomic flag) so
+/// the writer's failure path and `Connection.shutdown` can both call it.
+///
+/// How `close` wakes the reader (T3354): the reader never blocks in `read`
+/// itself; it blocks in `poll` on `read_fd` AND the read end of a private
+/// wake pipe, and `close` writes one byte to that pipe. Closing `read_fd`
+/// under a blocked reader is NOT a wake-up on Linux (close(2) leaves a read
+/// in another thread blocked until the peer closes, which hung the Linux
+/// test lane forever); it only happened to work on macOS. For the same
+/// reason `close` no longer closes `read_fd` - a reader may be about to use
+/// it, and a closed number can be reused by an unrelated open. `read_fd` and
+/// the wake pipe are released by `deinit`, which the owner calls once the
+/// reader thread has been joined (every `alloc.destroy` of a ChildStream is
+/// preceded by one).
 pub const ChildStream = struct {
-    /// Parent-side read end of the child's stdout. Blocking `read`s here.
+    /// Parent-side read end of the child's stdout. Read after `poll` says so.
     read_fd: posix.fd_t,
     /// Parent-side write end of the child's stdin.
     write_fd: posix.fd_t,
+    /// Wake pipe: `close` writes `wake[1]`, the reader polls `wake[0]`.
+    /// Unused (both -1) on Windows, which never reaches this type's readFn
+    /// with a pipe (the module's `pipe()` is Unsupported there).
+    wake: [2]posix.fd_t,
     closed: std.atomic.Value(bool) = .{ .raw = false },
 
-    pub fn init(read_fd: posix.fd_t, write_fd: posix.fd_t) ChildStream {
+    pub fn init(read_fd: posix.fd_t, write_fd: posix.fd_t) !ChildStream {
         // On Darwin/BSD, request EPIPE-instead-of-SIGPIPE on the write fd so a
         // write to a dead child returns `error.BrokenPipe` (which `writeFn`
         // turns into a clean closed-lane) rather than killing the process. On
@@ -165,7 +180,24 @@ pub const ChildStream = struct {
             },
             else => {},
         }
-        return .{ .read_fd = read_fd, .write_fd = write_fd };
+        const wake: [2]posix.fd_t = if (comptime builtin.os.tag == .windows)
+            .{ invalidFd(), invalidFd() }
+        else
+            try pipe();
+        return .{ .read_fd = read_fd, .write_fd = write_fd, .wake = wake };
+    }
+
+    /// Release what `close` deliberately leaves open: `read_fd` and the wake
+    /// pipe. Call after the reader thread is joined (or never started), and
+    /// before freeing the struct. Idempotent; implies `close`.
+    pub fn deinit(self: *ChildStream) void {
+        closeFn(self);
+        if (fdOpen(self.read_fd) and self.read_fd != self.write_fd) posix.close(self.read_fd);
+        self.read_fd = invalidFd();
+        for (&self.wake) |*fd| {
+            if (fdOpen(fd.*)) posix.close(fd.*);
+            fd.* = invalidFd();
+        }
     }
 
     /// The `Stream` view over this child's pipes.
@@ -181,6 +213,20 @@ pub const ChildStream = struct {
 
     fn readFn(ctx: *anyopaque, buf: []u8) anyerror!usize {
         const self: *ChildStream = @ptrCast(@alignCast(ctx));
+        if (comptime builtin.os.tag != .windows) {
+            // Block in poll, not read, so `close` can wake us (T3354).
+            while (true) {
+                if (self.closed.load(.acquire)) return 0;
+                var fds = [_]posix.pollfd{
+                    .{ .fd = self.read_fd, .events = posix.POLL.IN, .revents = 0 },
+                    .{ .fd = self.wake[0], .events = posix.POLL.IN, .revents = 0 },
+                };
+                // NOMEM etc: fall through to a plain read rather than spin.
+                _ = posix.poll(&fds, -1) catch break;
+                if (fds[1].revents != 0 or self.closed.load(.acquire)) return 0;
+                if (fds[0].revents != 0) break; // IN, HUP or ERR: read reports it
+            }
+        }
         const n = posix.read(self.read_fd, buf) catch |err| switch (err) {
             // A closed fd (during shutdown) surfaces as NotOpenForReading /
             // OperationAborted → report EOF, not a crash.
@@ -201,15 +247,28 @@ pub const ChildStream = struct {
         };
     }
 
-    /// Idempotent. Closing the read fd unblocks any blocked `read`.
+    /// Idempotent. Closes the write fd (the child sees stdin EOF) and wakes
+    /// any blocked `read`, which then returns 0. `read_fd` stays open until
+    /// `deinit` (see the type comment for why).
     fn closeFn(ctx: *anyopaque) void {
         const self: *ChildStream = @ptrCast(@alignCast(ctx));
         if (self.closed.swap(true, .acq_rel)) return;
-        // Close write first (signals EOF to the child's stdin), then read.
         if (fdOpen(self.write_fd)) posix.close(self.write_fd);
-        if (fdOpen(self.read_fd) and self.read_fd != self.write_fd) posix.close(self.read_fd);
+        if (comptime builtin.os.tag == .windows) {
+            // No wake pipe here; keep the old close-to-wake behaviour.
+            if (fdOpen(self.read_fd) and self.read_fd != self.write_fd) posix.close(self.read_fd);
+            self.read_fd = invalidFd();
+        } else if (fdOpen(self.wake[1])) {
+            _ = posix.write(self.wake[1], "x") catch {};
+        }
     }
 };
+
+/// The "no descriptor" value `fdOpen` reports false for, per platform.
+fn invalidFd() posix.fd_t {
+    if (comptime builtin.os.tag == .windows) return std.os.windows.INVALID_HANDLE_VALUE;
+    return -1;
+}
 
 // -----------------------------------------------------------------------------
 // Argument / environment construction (pure — unit-tested without spawning)
@@ -468,7 +527,12 @@ pub fn spawnChannel(
 
     const stream_impl = try alloc.create(ChildStream);
     errdefer alloc.destroy(stream_impl);
-    stream_impl.* = ChildStream.init(stdout_pipe[0], stdin_pipe[1]);
+    stream_impl.* = try ChildStream.init(stdout_pipe[0], stdin_pipe[1]);
+    // From here the parent ends are the stream's: on a failed start, release
+    // the wake pipe only (the outer errdefers close the four pipe fds).
+    errdefer for (stream_impl.wake) |fd| {
+        if (fdOpen(fd)) posix.close(fd);
+    };
 
     var cmd: CommandT = .{
         .path = args[0],
@@ -586,6 +650,8 @@ pub fn Transport(comptime CommandT: type) type {
             // Streams are already closed by `shutdown`; reap the children.
             reapChild(CommandT, &self.control_child);
             reapChild(CommandT, &self.data_child);
+            self.control_child.stream_impl.deinit();
+            self.data_child.stream_impl.deinit();
             alloc.destroy(self.control_child.stream_impl);
             alloc.destroy(self.data_child.stream_impl);
             alloc.free(self.control_path);
@@ -676,6 +742,7 @@ pub fn SingleTransport(comptime CommandT: type) type {
             // `shutdown` closed the lane streams, which closed the mux + transport.
             self.mux.joinPump();
             reapChild(CommandT, &self.child);
+            self.child.stream_impl.deinit();
             alloc.destroy(self.child.stream_impl);
             self.mux.destroy();
             alloc.destroy(self);
@@ -705,6 +772,7 @@ fn teardownChild(comptime CommandT: type, alloc: Allocator, child: ChildChannel(
     var c = child;
     c.stream_impl.stream().close();
     reapChild(CommandT, &c);
+    c.stream_impl.deinit();
     alloc.destroy(c.stream_impl);
 }
 
@@ -923,7 +991,8 @@ test "ChildStream: round-trips bytes through the Stream vtable" {
     // from_peer: peer writes from_peer[1], stream reads from_peer[0].
     const from_peer = try pipe();
 
-    var cs = ChildStream.init(from_peer[0], to_peer[1]);
+    var cs = try ChildStream.init(from_peer[0], to_peer[1]);
+    defer cs.deinit();
     const s = cs.stream();
 
     // Write through the stream → readable on the peer's read end.
@@ -950,14 +1019,12 @@ test "ChildStream: round-trips bytes through the Stream vtable" {
 
 test "ChildStream: close unblocks a blocked read" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    // Linux: close(2) never wakes a read blocked on the same fd in another
-    // thread, so this hangs the lane forever. That is a real defect in
-    // closeFn on Linux, filed as T3354 (found by the T3331 Linux floor); the
-    // skip goes when closeFn wakes the reader on every POSIX host.
-    if (builtin.os.tag == .linux) return error.SkipZigTest;
+    // Runs on Linux too since T3354: close wakes the reader through the wake
+    // pipe, where closing the fd alone left it blocked forever on Linux.
     const to_peer = try pipe();
     const from_peer = try pipe();
-    var cs = ChildStream.init(from_peer[0], to_peer[1]);
+    var cs = try ChildStream.init(from_peer[0], to_peer[1]);
+    defer cs.deinit();
 
     const Ctx = struct {
         cs: *ChildStream,
@@ -974,8 +1041,12 @@ test "ChildStream: close unblocks a blocked read" {
     std.Thread.sleep(20 * std.time.ns_per_ms);
     cs.stream().close();
     th.join();
-    // The blocked read returns 0 (EOF) once the fd is closed under it.
+    // The blocked read returns 0 (EOF) once close wakes it - while the peer
+    // still holds its write end open, so nothing but close could end it.
     try testing.expectEqual(@as(usize, 0), ctx.got);
+    // And a read after close returns 0 at once rather than blocking.
+    var after: [8]u8 = undefined;
+    try testing.expectEqual(@as(usize, 0), try cs.stream().read(&after));
 
     posix.close(to_peer[0]);
     posix.close(from_peer[1]);
@@ -1082,6 +1153,8 @@ test "spawnChannel: pipes carry a real HELLO handshake (fake agent, no ssh)" {
     defer {
         reapChild(FakeAgentCommand, &ctrl_child);
         reapChild(FakeAgentCommand, &data_child);
+        ctrl_child.stream_impl.deinit();
+        data_child.stream_impl.deinit();
         alloc.destroy(ctrl_child.stream_impl);
         alloc.destroy(data_child.stream_impl);
     }
