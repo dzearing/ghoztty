@@ -54,8 +54,11 @@ advancing() { # advancing <file>: its content changes within 1.5 s
 
 # ---- 1. the first pane is agent-hosted and outlives a killed app ----------
 beat1="$HL_RUNTIME/beat1"; pid1="$HL_RUNTIME/pid1"
-hl_launch APP "$app" --gtk-single-instance=false -e /bin/sh -c \
-    "echo \$\$ > $pid1; while :; do date +%s%N > $beat1; sleep 0.2; done"
+# One-argv `-e` (a script file): a multi-argument `-e` loses its quoting on
+# the way to the agent today (T3396), which is not what this test is about.
+printf '#!/bin/sh\necho $$ > %s\nwhile :; do date +%%s%%N > %s; sleep 0.2; done\n' "$pid1" "$beat1" > "$HL_RUNTIME/pane1.sh"
+chmod +x "$HL_RUNTIME/pane1.sh"
+hl_launch APP "$app" --gtk-single-instance=false -e "$HL_RUNTIME/pane1.sh"
 hl_wait_for 30 test -s "$pid1"
 hl_check "S4 the startup pane's command runs" $?
 agent=$(hl_agent_pid)
@@ -76,8 +79,10 @@ kill -0 "$agent" 2>/dev/null
 hl_check "S10 the agent is still up" $?
 
 # ---- 2. a second app FINDS the running agent; a user close ends a session --
-hl_launch APP2 "$app" --gtk-single-instance=false -e /bin/sh -c 'PS1="hl$ " exec /bin/sh -i'
-hl_wait_for 30 test -S "$sock"
+hl_launch APP2 "$app" --gtk-single-instance=false
+# Not `test -S`: the SIGKILLed app left its socket file behind, so only a
+# live answer proves the second app is serving.
+hl_wait_for 30 sh -c "env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID '$app' +list > /dev/null 2>&1"
 hl_check "S11 a second app serves its socket" $?
 again=$(hl_agent_pid)
 [ "$again" = "$agent" ]
@@ -102,8 +107,9 @@ hl_check "S17 the orphaned first pane is untouched by the other close" $?
 kill -TERM "$APP2" 2>/dev/null; wait "$APP2" 2>/dev/null
 hl_wait_for 10 sh -c "! test -S $sock"
 pid3="$HL_RUNTIME/pid3"
-hl_launch APP3 "$app" --gtk-single-instance=false --session-persistence=false -e /bin/sh -c \
-    "echo \$\$ > $pid3; sleep 60"
+printf '#!/bin/sh\necho $$ > %s\nsleep 60\n' "$pid3" > "$HL_RUNTIME/pane3.sh"
+chmod +x "$HL_RUNTIME/pane3.sh"
+hl_launch APP3 "$app" --gtk-single-instance=false --session-persistence=false -e "$HL_RUNTIME/pane3.sh"
 hl_wait_for 30 test -s "$pid3"
 shell3=$(cat "$pid3" 2>/dev/null)
 [ -n "$shell3" ] && is_ancestor "$APP3" "$shell3" && ! is_ancestor "$agent" "$shell3"
