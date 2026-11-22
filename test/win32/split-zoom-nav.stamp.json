@@ -1,0 +1,16 @@
+{
+    "guard":  "split-zoom-nav",
+    "script":  "test/win32/split-zoom-nav.ps1",
+    "generated":  "2026-11-22T14:09:41-08:00",
+    "commit":  "e40b3c3df",
+    "uncommitted":  [
+                        "test/win32/split-zoom-nav.ps1"
+                    ],
+    "files":  {
+                  "src/datastruct/split_tree.zig":  "56259e5796675b7a557d561659b42c3e47e79dc5d56024c15ef0c9ffa5e79cf3",
+                  "test/win32/split-zoom-nav.ps1":  "8e1ad86aa8265a425b5cba060c5e51e2d27bc32b0ae877a8319abf9db75a9095"
+              },
+    "code":  {
+                 "test/win32/split-zoom-nav.ps1":  "code1:abd92320994c58bc97c14c094e2192452071b0c15b123b420cff58d03eb3bea5"
+             }
+}

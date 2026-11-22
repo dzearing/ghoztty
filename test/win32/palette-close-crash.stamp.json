@@ -1,0 +1,16 @@
+{
+    "guard":  "palette-close-crash",
+    "script":  "test/win32/palette-close-crash.ps1",
+    "generated":  "2026-11-22T14:10:13-08:00",
+    "commit":  "e40b3c3df",
+    "uncommitted":  [
+                        "test/win32/palette-close-crash.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/surface_window_role.zig":  "5af08d4834c92f03c30c4a642d598f21e7961c8bf976b63c55d91f90bf652528",
+                  "test/win32/palette-close-crash.ps1":  "c4da5e073557f044caeb352dea0605783436f0eddd82039ecdcaa3bbe1a1c639"
+              },
+    "code":  {
+                 "test/win32/palette-close-crash.ps1":  "code1:918982b3f588e3b4294c736e9c23bbe1513e04520c7251c2a2319ff474037e3b"
+             }
+}

@@ -35,6 +35,7 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -58,6 +59,7 @@ $env:GHOZTTY_COMP_PRESENT = '0'
 
 $script:pass = 0
 $script:fail = 0
+$script:skipped = 0   # T1768: the stamp tail tests -eq 0, which $null never is
 
 function Assert([bool]$cond, [string]$label) {
     if ($cond) { $script:pass++; Write-Host "PASS  $label" }
@@ -282,6 +284,9 @@ try {
 
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash'
     Assert (-not (Test-TestDesktopLeak -ProcessId $appPid)) 'GUI never became visible on the interactive desktop'
+    # The try's last statement (body-complete-audit D1): an unwind above skips
+    # it, so the verdict reads DID NOT FINISH instead of green.
+    Complete-TestBody
 } finally {
     Remove-TestDesktop
     Stop-RepoInstances
@@ -293,6 +298,15 @@ try {
 $stray = @(Get-TestTopmostRestored)
 Assert ($stray.Count -eq 0) "no probe left a window topmost (harness had to un-pin: $($stray -join ','))"
 
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions$(if ($script:skipped) { ", $script:skipped SKIPPED" }))" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" }
-exit ([int]($script:fail -gt 0))
+Write-Host ''
+if ($script:fail -eq 0 -and $script:skipped -eq 0) {
+    # A clean green run with no skipped section stamps the covered files
+    # (T783/T1768); red or skipped stays due.
+    # Continue: under Stop, a stderr line from the native call through 2>&1
+    # would throw in PowerShell 5.1.
+    $ErrorActionPreference = 'Continue'
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard float-on-top -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T277 FLOAT ON TOP' -Pass $script:pass -Fail $script:fail -Skipped $script:skipped

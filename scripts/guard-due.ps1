@@ -1418,6 +1418,104 @@ $GuardTable = @(
             'test\win32\font-inherit.ps1'
         )
     },
+    # T1768: the pane/split family. Same rule as the window-chrome block above:
+    # each row names the module where its behavior is decided, and Window.zig /
+    # Surface.zig are left out on purpose. Where the behavior lives ONLY in one
+    # of those two (focus-follows-mouse's hover focus is Surface.handleMouseMove,
+    # split-zoom-nav's zoom-vs-navigate choice is Window.gotoSplit) the row holds
+    # the harness plus whatever pure module it does reach.
+    # Unfocused split panes are washed with unfocused-split-fill at
+    # unfocused-split-opacity, and the wash follows focus and zoom (T74).
+    [pscustomobject]@{
+        Name   = 'split-dim'
+        Script = 'test\win32\split-dim.ps1'
+        Stamp  = 'test\win32\split-dim.stamp.json'
+        Covers = @(
+            'test\win32\split-dim.ps1',
+            'src\apprt\win32\DimOverlay.zig',
+            'src\apprt\win32\dim_math.zig'
+        )
+    },
+    # goto_split under a zoom never focuses a hidden pane; split-preserve-zoom
+    # decides clear vs follow (T77). The neighbour search is SplitTree's.
+    [pscustomobject]@{
+        Name   = 'split-zoom-nav'
+        Script = 'test\win32\split-zoom-nav.ps1'
+        Stamp  = 'test\win32\split-zoom-nav.stamp.json'
+        Covers = @(
+            'test\win32\split-zoom-nav.ps1',
+            'src\datastruct\split_tree.zig'
+        )
+    },
+    # A closed pane's terminal HWND is destroyed off the close path, not leaked
+    # for the life of the app (T681).
+    [pscustomobject]@{
+        Name   = 'pane-hwnd-reap'
+        Script = 'test\win32\pane-hwnd-reap.ps1'
+        Stamp  = 'test\win32\pane-hwnd-reap.stamp.json'
+        Covers = @(
+            'test\win32\pane-hwnd-reap.ps1',
+            'src\apprt\win32\surface_reap.zig'
+        )
+    },
+    # The debug-only capture-pane IPC action reads the GL glass off the test
+    # desktop: each pane's capture is ITS tint (T275).
+    [pscustomobject]@{
+        Name   = 'pane-capture'
+        Script = 'test\win32\pane-capture.ps1'
+        Stamp  = 'test\win32\pane-capture.stamp.json'
+        Covers = @(
+            'test\win32\pane-capture.ps1',
+            'src\apprt\win32\pane_capture.zig',
+            'src\apprt\win32\ipc_capture.zig'
+        )
+    },
+    # toggle_window_float_on_top actually pins: win32.setTopmost reads the
+    # ex-style back and retries the call that reports success and lands
+    # nothing (T277).
+    [pscustomobject]@{
+        Name   = 'float-on-top'
+        Script = 'test\win32\float-on-top.ps1'
+        Stamp  = 'test\win32\float-on-top.stamp.json'
+        Covers = @(
+            'test\win32\float-on-top.ps1',
+            'src\apprt\win32\win32.zig'
+        )
+    },
+    # focus-follows-mouse focuses the split under the pointer, and only when on
+    # (T75). Surface.zig only - see the block comment.
+    [pscustomobject]@{
+        Name   = 'focus-follows-mouse'
+        Script = 'test\win32\focus-follows-mouse.ps1'
+        Stamp  = 'test\win32\focus-follows-mouse.stamp.json'
+        Covers = @(
+            'test\win32\focus-follows-mouse.ps1'
+        )
+    },
+    # reset_window_size returns to the configured default (cells x cell size),
+    # 800x600 DIP without one; a font zoom re-stores but never resizes (T66).
+    [pscustomobject]@{
+        Name   = 'reset-window-size'
+        Script = 'test\win32\reset-window-size.ps1'
+        Stamp  = 'test\win32\reset-window-size.stamp.json'
+        Covers = @(
+            'test\win32\reset-window-size.ps1',
+            'src\apprt\win32\frame_size.zig',
+            'src\apprt\win32\window_memory.zig'
+        )
+    },
+    # Closing a window that ever opened the palette or the search bar does not
+    # take the process down: a popup's WM_DESTROY clears only its own role
+    # (T613).
+    [pscustomobject]@{
+        Name   = 'palette-close-crash'
+        Script = 'test\win32\palette-close-crash.ps1'
+        Stamp  = 'test\win32\palette-close-crash.stamp.json'
+        Covers = @(
+            'test\win32\palette-close-crash.ps1',
+            'src\apprt\win32\surface_window_role.zig'
+        )
+    },
     # The overview action (T708): the only thing that proves a bound
     # `toggle_tab_overview` actually opens hero mode, from a terminal AND from
     # a focused viewer. Covers the harness, the forwarding decision it rides

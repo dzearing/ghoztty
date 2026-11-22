@@ -252,4 +252,14 @@ Complete-TestBody  # T1039: the run reached the end of its body
     if ($td) { Remove-TestDesktop $td }
 }
 
-Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped $script:skipped -Label 'pane-capture'
+if ($script:fail -eq 0 -and $script:skipped -eq 0 -and -not $NegativeControl) {
+    # A clean green run with no skipped section stamps the covered files
+    # (T783/T1768); red or skipped stays due.
+    # Continue: under Stop, a stderr line from the native call through 2>&1
+    # would throw in PowerShell 5.1.
+    $ErrorActionPreference = 'Continue'
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard pane-capture -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'pane-capture' -Pass $script:pass -Fail $script:fail -Skipped $script:skipped

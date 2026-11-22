@@ -1,0 +1,16 @@
+{
+    "guard":  "float-on-top",
+    "script":  "test/win32/float-on-top.ps1",
+    "generated":  "2026-11-22T14:09:47-08:00",
+    "commit":  "e40b3c3df",
+    "uncommitted":  [
+                        "test/win32/float-on-top.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/win32.zig":  "cfce2ad2bb8318e449786ef898bb9e6bafff1546981ed3361218846b0a4b3207",
+                  "test/win32/float-on-top.ps1":  "b4f9825a9e63f8400b54c33ab6f85ae3866af58e9306305c63c033c818b9239d"
+              },
+    "code":  {
+                 "test/win32/float-on-top.ps1":  "code1:d53accfbf5f179fe1ee0bbd4f254bfa69e3fac41969294433a82f9b7162c860a"
+             }
+}
