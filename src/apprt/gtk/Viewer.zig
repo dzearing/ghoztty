@@ -1075,7 +1075,9 @@ fn writeDump(text: []const u8) void {
 ///                   `clicked`, as a pointer click does
 ///   wait            until the next render finishes (10 s): `wait ok=<bool>`
 ///   state           `state mode= current= address= back= forward= reveal=
-///                   zoom= focus=address|content|other sel=<start>-<end>`
+///                   zoom= focus=address|content|other sel=<start>-<end>
+///                   reloads=<dead-process reloads> card=none|pending|shown
+///                   barh=<bar height>`
 ///   probe <js>      evaluate in the page: `probe OK <value>`
 ///   terminate       kill the page's web process through WebKit's API, as a
 ///                   crash would: `terminate`
@@ -1209,7 +1211,7 @@ const steps = if (build_config.is_debug) struct {
             (if (f == wk.asWidget(v.view) or wk.gtk_widget_is_ancestor(f, wk.asWidget(v.view)) != 0) "content" else "other")
         else
             "none";
-        out("state mode={s} current={s} address={s} back={} forward={} reveal={} zoom={d:.3} focus={s} sel={d}-{d} barh={d} reloads={d} card={s}", .{
+        out("state mode={s} current={s} address={s} back={} forward={} reveal={} zoom={d:.3} focus={s} sel={d}-{d} reloads={d} card={s} barh={d}", .{
             @tagName(v.mode),
             v.current,
             std.mem.span(wk.gtk_editable_get_text(v.bar.address)),
@@ -1220,9 +1222,9 @@ const steps = if (build_config.is_debug) struct {
             focus,
             start_i,
             end_i,
-            wk.gtk_widget_get_height(v.bar.row),
             v.process_reloads,
             @tagName(v.crash_card),
+            wk.gtk_widget_get_height(v.bar.row),
         });
     }
 
