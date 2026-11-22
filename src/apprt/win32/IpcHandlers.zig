@@ -1501,77 +1501,14 @@ fn buildLayoutNode(
     return handle;
 }
 
+/// `+set-state` and `+set-banner` (T35) are the shared bodies in
+/// `apprt/ipc/verbs.zig` (T3374), over the window-or-pane model below.
 pub fn handleSetState(ctx: Context, request: Request) Allocator.Error!?[]u8 {
-    var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const args = try parseVerbArgs(arena, request.arguments);
-    const target = args.target orelse
-        return try errorResponse(ctx.alloc, "--target is required for +set-state", .{});
-    const state_str = args.state orelse
-        return try errorResponse(ctx.alloc, "--state is required for +set-state", .{});
-
-    const state: terminal.osc.Command.ActivityState = state: {
-        if (std.mem.eql(u8, state_str, "idle")) break :state .idle;
-        if (std.mem.eql(u8, state_str, "busy")) break :state .busy;
-        if (std.mem.eql(u8, state_str, "needs_input")) break :state .needs_input;
-        return try errorResponse(
-            ctx.alloc,
-            "invalid state '{s}': must be idle, busy, or needs_input",
-            .{state_str},
-        );
-    };
-
-    const entry = ctx.app.ipcLookup(target) orelse
-        return try missingResponse(ctx, target, "target '{s}' not found in registry", .{target});
-
-    // Pane targets set just that pane; window targets set every pane in
-    // the window (Mac handleSetState semantics).
-    switch (entry) {
-        .pane => |pane| {
-            const surface = pane.surface() orelse
-                return try errorResponse(ctx.alloc, "{s} is a viewer pane, not a terminal", .{target});
-            surface.activity_state = state;
-            surface.parent_window.updateWindowTitle();
-        },
-        .window => |window| {
-            for (0..window.tab_count) |i| {
-                var it = window.tab_trees[i].iterator();
-                while (it.next()) |view_entry| {
-                    const surface = view_entry.view.surface() orelse continue;
-                    surface.activity_state = state;
-                }
-            }
-            window.updateWindowTitle();
-        },
-    }
-
-    return try ctx.alloc.dupe(u8, "{\"success\":true}");
+    return verbs.setState(@This(), ctx, request);
 }
 
-/// `+set-banner` (T35): set or clear the sticky banner of a named pane or
-/// window. Banners are per-pane; a window target applies to its focused
-/// pane (Mac handleSetBanner semantics).
 pub fn handleSetBanner(ctx: Context, request: Request) Allocator.Error!?[]u8 {
-    var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const args = try verb_args.parseSetBannerArgs(arena, request.arguments);
-    const target = args.target orelse
-        return try errorResponse(ctx.alloc, "--target is required for +set-banner", .{});
-
-    const entry = ctx.app.ipcLookup(target) orelse
-        return try missingResponse(ctx, target, "target '{s}' not found in registry", .{target});
-
-    const pane = targetPane(entry) orelse
-        return try errorResponse(ctx.alloc, "target '{s}' has no focused pane", .{target});
-    const surface = pane.surface() orelse
-        return try errorResponse(ctx.alloc, "{s} is a viewer pane, not a terminal", .{target});
-
-    surface.setPaneBanner(if (args.clear) null else args.text);
-    return try ctx.alloc.dupe(u8, "{\"success\":true}");
+    return verbs.setBanner(@This(), ctx, request);
 }
 
 /// `+reload` (T390): reload a named VIEWER pane's content in place. Website
@@ -1718,20 +1655,7 @@ fn stashOrRestore(ctx: Context, request: Request, restore: bool) Allocator.Error
 /// correctly answers "not found" rather than opening a window as a side effect,
 /// which would smuggle window creation back into the scheme's surface.
 pub fn handleFocus(ctx: Context, request: Request) Allocator.Error!?[]u8 {
-    var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const args = try parseVerbArgs(arena, request.arguments);
-    const target = args.target orelse
-        return try errorResponse(ctx.alloc, "--target is required for focus", .{});
-
-    const entry = ctx.app.ipcLookup(target) orelse
-        return try missingResponse(ctx, target, "target '{s}' not found in registry", .{target});
-
-    focusTarget(entry);
-    log.info("IPC: focused '{s}'", .{target});
-    return try ctx.alloc.dupe(u8, "{\"success\":true}");
+    return verbs.focus(@This(), ctx, request);
 }
 
 pub fn handleRename(ctx: Context, request: Request) Allocator.Error!?[]u8 {
@@ -1860,77 +1784,105 @@ fn callerAnchorPaneView(app: *App, args: VerbArgs) ?*PaneView {
     return resolver.found;
 }
 
+/// `+close` is the shared body in `apprt/ipc/verbs.zig` (T3374), over the
+/// window-or-pane model below.
 pub fn handleClose(ctx: Context, request: Request) Allocator.Error!?[]u8 {
-    const app = ctx.app;
+    return verbs.close(@This(), ctx, request);
+}
 
-    var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+// ---------------------------------------------------------------------------
+// The window-or-pane verbs' model (apprt/ipc/verbs.zig, T3374): +close,
+// focus, +set-state, +set-banner. `focusTarget` above is its focus half.
 
-    const args = try parseVerbArgs(arena, request.arguments);
-    const target = args.target orelse
-        return try errorResponse(ctx.alloc, "--target is required for +close", .{});
+pub const Target = App.IpcTarget;
 
-    // Idempotent: closing a target that's already gone succeeds silently. A
-    // name panes in several other windows hold is not "gone": closing one of
-    // them at random would be closing another agent's pane (T2250).
-    const entry = app.ipcLookup(target) orelse {
-        if (try app.ipcAmbiguity(ctx.alloc, target)) |msg| {
-            defer ctx.alloc.free(msg);
-            return try errorResponse(ctx.alloc, "{s}", .{msg});
-        }
-        return try ctx.alloc.dupe(u8, "{\"success\":true}");
-    };
+/// What a name means by the IPC registry, or the T2250 ambiguity sentence
+/// when panes in several windows hold it and none is the caller's.
+pub fn lookupTarget(ctx: Context, arena: Allocator, name: []const u8) Allocator.Error!verbs.TargetLookup(Target) {
+    if (ctx.app.ipcLookup(name)) |entry| return .{ .found = entry };
+    if (try ctx.app.ipcAmbiguity(arena, name)) |msg| return .{ .ambiguous = msg };
+    return .not_found;
+}
 
-    const window: *Window = switch (entry) {
+fn targetWindow(entry: Target) *Window {
+    return switch (entry) {
         .pane => |pane| pane.parentWindow(),
         .window => |w| w,
     };
+}
 
-    // A dialog is up over the window (T2938, Mac 4b558ab8f's `attachedSheet`):
-    // its modal loop is on the stack below this dispatch, waiting for an
-    // answer nothing on the IPC path can give. A plain close would tear the
-    // window out from under that question and report success over it, so it
-    // closes nothing and says so. `--force` answers the dialog (Cancel) and
-    // closes once its loop has unwound - see `App.forceCloseDeferred`.
-    const dialogs = if (window.hwnd) |h| ConfirmDialog.openOver(h) else 0;
-    if (dialogs > 0) {
-        if (!args.force) {
-            log.info("IPC: +close '{s}' is waiting on a confirmation in its window", .{target});
-            return try errorResponse(
-                ctx.alloc,
-                "'{s}' is waiting on a close confirmation in its window, so nothing closed yet; answer it there, or run +close --force (no confirmation, no undo)",
-                .{target},
-            );
-        }
-        _ = ConfirmDialog.dismissOver(window.hwnd.?);
-        const queued = app.forceCloseDeferred(.{
-            .window = window,
-            .pane = switch (entry) {
-                .pane => |pane| pane,
-                .window => null,
-            },
-        });
-        if (!queued) return try errorResponse(
-            ctx.alloc,
-            "'{s}': the confirmation was dismissed but too many forced closes are already waiting; run +close --force again",
-            .{target},
-        );
-        log.info("IPC: +close --force '{s}': dismissed {d} dialog(s); closing once they unwind", .{ target, dialogs });
-        return try ctx.alloc.dupe(u8, "{\"success\":true}");
-    }
+/// A confirmation dialog is up over the target's window (T2938): its modal
+/// loop is on the stack below this dispatch.
+pub fn closeConfirmationOpen(entry: Target) bool {
+    const hwnd = targetWindow(entry).hwnd orelse return false;
+    return ConfirmDialog.openOver(hwnd) > 0;
+}
 
+/// `--force` answers the dialog (Cancel), and the close runs once its modal
+/// loop has unwound - see `App.forceCloseDeferred`. Closing here would tear
+/// the window out from under the loop still on this stack.
+pub fn dismissConfirmations(ctx: Context, entry: Target, name: []const u8) verbs.Dismissed {
+    const window = targetWindow(entry);
+    const dialogs = if (window.hwnd) |h| ConfirmDialog.dismissOver(h) else 0;
+    const queued = ctx.app.forceCloseDeferred(.{
+        .window = window,
+        .pane = switch (entry) {
+            .pane => |pane| pane,
+            .window => null,
+        },
+    });
+    if (!queued) return .queue_full;
+    log.info("IPC: +close --force '{s}': dismissed {d} dialog(s); closing once they unwind", .{ name, dialogs });
+    return .closing;
+}
+
+/// Close without confirmation (the CLI drives teardown; the Mac server's
+/// withConfirmation:false / closeWindowImmediately). Registry entries drop
+/// via ipcForget in the destroy paths. `--force` (T2938) also skips the undo
+/// window: nothing is parked, every session ENDS and every core is freed now.
+pub fn closeTarget(_: Context, entry: Target, force: bool) bool {
+    const window = targetWindow(entry);
     switch (entry) {
-        // Both paths close without confirmation (the CLI drives teardown;
-        // matching the Mac server's withConfirmation:false /
-        // closeWindowImmediately). Registry entries drop via ipcForget in
-        // the destroy paths. `--force` (T2938) also skips the undo window:
-        // nothing is parked, every session ENDS and every core is freed now.
-        .pane => |pane| if (args.force) window.forceCloseSplitPane(pane) else window.closeSplitPane(pane),
-        .window => if (args.force) window.forceClose() else window.close(),
+        .pane => |pane| if (force) window.forceCloseSplitPane(pane) else window.closeSplitPane(pane),
+        .window => if (force) window.forceClose() else window.close(),
     }
+    return true;
+}
 
-    return try ctx.alloc.dupe(u8, "{\"success\":true}");
+/// A pane target sets that pane; a window target sets every terminal pane in
+/// the window. False for a viewer pane target.
+pub fn setActivityState(entry: Target, state: verbs.ActivityState) bool {
+    const core_state: terminal.osc.Command.ActivityState = switch (state) {
+        .idle => .idle,
+        .busy => .busy,
+        .needs_input => .needs_input,
+    };
+    switch (entry) {
+        .pane => |pane| {
+            const surface = pane.surface() orelse return false;
+            surface.activity_state = core_state;
+            surface.parent_window.updateWindowTitle();
+        },
+        .window => |window| {
+            for (0..window.tab_count) |i| {
+                var it = window.tab_trees[i].iterator();
+                while (it.next()) |view_entry| {
+                    const surface = view_entry.view.surface() orelse continue;
+                    surface.activity_state = core_state;
+                }
+            }
+            window.updateWindowTitle();
+        },
+    }
+    return true;
+}
+
+/// The banner of the target's pane (a window's focused pane).
+pub fn setPaneBanner(entry: Target, text: ?[]const u8) verbs.BannerSet {
+    const pane = targetPane(entry) orelse return .no_pane;
+    const surface = pane.surface() orelse return .viewer;
+    surface.setPaneBanner(text);
+    return .set;
 }
 
 fn parseSplitDirection(s: []const u8) ?SplitTree.Split.Direction {

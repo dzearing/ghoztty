@@ -711,7 +711,7 @@ pub fn keysResolvedValue(value: []const u8) bool {
 /// Unconditional, so it is only for a request WITHOUT `keys_resolved_arg`
 /// above. A resolved CLI has already spelled Enter as CR, and every LF still
 /// in its payload is content — content a bracketed-paste receiver must get
-/// verbatim. See `IpcHandlers.prepareSendKeysRun` for the three-way rule.
+/// verbatim. See `verbs.prepareRun` (apprt/ipc/verbs.zig) for the three-way rule.
 pub fn normalizeConptyInput(alloc: Allocator, bytes: []const u8) Allocator.Error![]u8 {
     const normalized = try alloc.alloc(u8, bytes.len);
     errdefer alloc.free(normalized);

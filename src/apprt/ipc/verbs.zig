@@ -6,11 +6,17 @@
 //! instead of two hand-kept copies drifting apart (T3336 had already copied
 //! `+send-keys`/`+read` from win32 into GTK once).
 //!
-//! Moved so far: `+read` and `+send-keys`. Each is
+//! Moved so far: `+read` and `+send-keys` (T3361), then `+close`, the `focus`
+//! action, `+set-state` and `+set-banner` (T3374). Each is
 //! `fn (comptime F, ctx: F.Context, request) Allocator.Error!?[]u8`, so a
 //! frontend's handler is one line: `return verbs.read(@This(), ctx, request);`.
+//! A frontend only needs the model decls of the verbs it routes here: Zig
+//! analyzes a body only when it is called, so GTK can serve `+close` before it
+//! has a banner to set.
 //!
 //! ## The model a frontend supplies (beyond server.zig's interface)
+//!
+//! For `+read` / `+send-keys`, which act on a terminal:
 //!
 //! - `pub const Terminal: type` - a handle to one terminal pane, with
 //!   - `fn writeRaw(self, bytes) !void` - bytes to the pty, as typed;
@@ -32,6 +38,22 @@
 //!   - the reply for a name nothing answers to. win32 uses it to name an
 //!   AMBIGUOUS name (several windows hold it, none is the caller's, T2250);
 //!   without it the verb's own not-found sentence is the reply.
+//!
+//! For `+close` / `focus` / `+set-state` / `+set-banner`, which act on a
+//! window or a pane:
+//!
+//! - `pub const Target: type` - what a name resolves to: a window or a pane.
+//! - `fn lookupTarget(ctx, arena, name) Allocator.Error!TargetLookup(Target)`.
+//! - `focus`: `fn focusTarget(target) void` - raise the window, focus the pane.
+//! - `+close`: `fn closeConfirmationOpen(target) bool` - a close confirmation
+//!   is up over the target's window; `fn dismissConfirmations(ctx, target,
+//!   name) Dismissed` - answer it (Cancel) for `--force`; and
+//!   `fn closeTarget(ctx, target, force: bool) bool` - close it now, false
+//!   when that failed.
+//! - `+set-state`: `fn setActivityState(target, ActivityState) bool` - a
+//!   pane, or every terminal pane of a window; false for a viewer pane.
+//! - `+set-banner`: `fn setPaneBanner(target, text: ?[]const u8) BannerSet` -
+//!   the pane's, or a window's focused pane's; null clears it.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const server = @import("server.zig");
@@ -316,6 +338,191 @@ fn prepareRun(
 }
 
 // ---------------------------------------------------------------------------
+// The window-or-pane verbs: +close, focus, +set-state, +set-banner (T3374).
+
+/// What a window-or-pane name resolves to.
+pub fn TargetLookup(comptime Target: type) type {
+    return union(enum) {
+        found: Target,
+        /// Panes in several windows hold the name and none of them is the
+        /// caller's (T2250): the sentence that names those windows, allocated
+        /// in the arena the lookup was given.
+        ambiguous: []const u8,
+        not_found,
+    };
+}
+
+/// The not-found sentence of every window-or-pane verb (win32's since T35).
+const target_not_found_fmt = "target '{s}' not found in registry";
+
+/// Resolve `name` to a target, or the reply that says why not.
+fn resolveTarget(
+    comptime F: type,
+    ctx: F.Context,
+    arena: Allocator,
+    name: []const u8,
+) Allocator.Error!union(enum) { target: F.Target, reply: []u8 } {
+    const alloc = F.replyAllocator(ctx);
+    return switch (try F.lookupTarget(ctx, arena, name)) {
+        .found => |t| .{ .target = t },
+        .ambiguous => |msg| .{ .reply = try errorResponse(alloc, "{s}", .{msg}) },
+        .not_found => .{ .reply = try errorResponse(alloc, target_not_found_fmt, .{name}) },
+    };
+}
+
+/// `focus --target=<name>`: raise the window holding the target and focus the
+/// pane. There is no `+focus` CLI verb on any platform: this is the wire
+/// action the `ghoztty://` launcher sends (T695, `url_scheme.zig`), and it
+/// never creates, so a link that launched nothing answers "not found" instead
+/// of opening a window as a side effect.
+pub fn focus(comptime F: type, ctx: F.Context, request: Request) Allocator.Error!?[]u8 {
+    const alloc = F.replyAllocator(ctx);
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const args = try verb_args.parseVerbArgs(arena, request.arguments);
+    const name = args.target orelse
+        return try errorResponse(alloc, "--target is required for focus", .{});
+    const target = switch (try resolveTarget(F, ctx, arena, name)) {
+        .target => |t| t,
+        .reply => |r| return r,
+    };
+    F.focusTarget(target);
+    std.log.scoped(F.log_scope).info("IPC: focused '{s}'", .{name});
+    return try alloc.dupe(u8, ok_reply);
+}
+
+/// What answering a close confirmation for `+close --force` left to do.
+pub const Dismissed = enum {
+    /// Dismissed; close the target now.
+    close_now,
+    /// The frontend closes it itself once the dialog has unwound (win32's
+    /// dialogs are modal loops on the stack below this dispatch).
+    closing,
+    /// Dismissed, but nothing could be queued to close it.
+    queue_full,
+};
+
+/// `+close --target=<name> [--force]`: close a pane (its window too, when it
+/// was the last one) or a whole window, with no confirmation - the CLI drives
+/// teardown, as on the Mac (`withConfirmation: false` /
+/// `closeWindowImmediately`). `--force` (T2938) also skips the undo window.
+///
+/// Idempotent: a target nothing answers to is already closed. A name panes in
+/// several other windows hold is NOT that: closing one at random would close
+/// another agent's pane (T2250).
+///
+/// A dialog up over the window (T2938, Mac 4b558ab8f's `attachedSheet`) is a
+/// question nothing on the IPC path can answer; closing under it would report
+/// success over it, so a plain close closes nothing and says so, and
+/// `--force` answers it (Cancel) and closes.
+pub fn close(comptime F: type, ctx: F.Context, request: Request) Allocator.Error!?[]u8 {
+    const alloc = F.replyAllocator(ctx);
+    const log = std.log.scoped(F.log_scope);
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const args = try verb_args.parseVerbArgs(arena, request.arguments);
+    const name = args.target orelse
+        return try errorResponse(alloc, "--target is required for +close", .{});
+
+    const target = switch (try F.lookupTarget(ctx, arena, name)) {
+        .found => |t| t,
+        .ambiguous => |msg| return try errorResponse(alloc, "{s}", .{msg}),
+        .not_found => return try alloc.dupe(u8, ok_reply),
+    };
+
+    if (F.closeConfirmationOpen(target)) {
+        if (!args.force) {
+            log.info("IPC: +close '{s}' is waiting on a confirmation in its window", .{name});
+            return try errorResponse(
+                alloc,
+                "'{s}' is waiting on a close confirmation in its window, so nothing closed yet; answer it there, or run +close --force (no confirmation, no undo)",
+                .{name},
+            );
+        }
+        switch (F.dismissConfirmations(ctx, target, name)) {
+            .close_now => {},
+            .closing => return try alloc.dupe(u8, ok_reply),
+            .queue_full => return try errorResponse(
+                alloc,
+                "'{s}': the confirmation was dismissed but too many forced closes are already waiting; run +close --force again",
+                .{name},
+            ),
+        }
+    }
+
+    if (!F.closeTarget(ctx, target, args.force))
+        return try errorResponse(alloc, "failed to close '{s}'", .{name});
+    log.info("IPC: closed '{s}'", .{name});
+    return try alloc.dupe(u8, ok_reply);
+}
+
+/// The states `+set-state --state=` takes (the tokens of the core's
+/// `osc.Command.ActivityState`, whose names they are).
+pub const ActivityState = enum { idle, busy, needs_input };
+
+/// `+set-state --target=<name> --state=idle|busy|needs_input`: a pane target
+/// sets that pane, a window target every terminal pane in the window (Mac
+/// `handleSetState`).
+pub fn setState(comptime F: type, ctx: F.Context, request: Request) Allocator.Error!?[]u8 {
+    const alloc = F.replyAllocator(ctx);
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const args = try verb_args.parseVerbArgs(arena, request.arguments);
+    const name = args.target orelse
+        return try errorResponse(alloc, "--target is required for +set-state", .{});
+    const state_str = args.state orelse
+        return try errorResponse(alloc, "--state is required for +set-state", .{});
+    const state = std.meta.stringToEnum(ActivityState, state_str) orelse
+        return try errorResponse(alloc, "invalid state '{s}': must be idle, busy, or needs_input", .{state_str});
+
+    const target = switch (try resolveTarget(F, ctx, arena, name)) {
+        .target => |t| t,
+        .reply => |r| return r,
+    };
+    if (!F.setActivityState(target, state))
+        return try errorResponse(alloc, "{s} is a viewer pane, not a terminal", .{name});
+    return try alloc.dupe(u8, ok_reply);
+}
+
+/// What setting a banner found.
+pub const BannerSet = enum {
+    set,
+    /// A window target with no tabs left.
+    no_pane,
+    /// The pane is a viewer pane, which has no banner.
+    viewer,
+};
+
+/// `+set-banner --target=<name> <text>... | --clear` (T35): set or clear the
+/// sticky banner of a pane. Banners are per-pane; a window target applies to
+/// its focused pane (Mac `handleSetBanner`).
+pub fn setBanner(comptime F: type, ctx: F.Context, request: Request) Allocator.Error!?[]u8 {
+    const alloc = F.replyAllocator(ctx);
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const args = try verb_args.parseSetBannerArgs(arena, request.arguments);
+    const name = args.target orelse
+        return try errorResponse(alloc, "--target is required for +set-banner", .{});
+    const target = switch (try resolveTarget(F, ctx, arena, name)) {
+        .target => |t| t,
+        .reply => |r| return r,
+    };
+    return switch (F.setPaneBanner(target, if (args.clear) null else args.text)) {
+        .set => try alloc.dupe(u8, ok_reply),
+        .no_pane => try errorResponse(alloc, "target '{s}' has no focused pane", .{name}),
+        .viewer => try errorResponse(alloc, "{s} is a viewer pane, not a terminal", .{name}),
+    };
+}
+
+// ---------------------------------------------------------------------------
 // Tests (none lane): a fake frontend whose terminals record their writes.
 
 const testing = std.testing;
@@ -555,4 +762,188 @@ test "+send-keys: a refused write is answered, not dropped" {
     fe.term.fail_writes = true;
     try expectReply(try sendKeys(F, &fe, req("send-keys", &.{ "--target=p1", "--keys=a" })),
         "{\"success\":false,\"error\":\"failed to queue input\"}");
+}
+
+// ---------------------------------------------------------------------------
+// The window-or-pane verbs over a fake frontend (T3374).
+
+/// The target-only model calls take no context, so the fake records them here.
+const FakeRecord = struct {
+    var focused: usize = 0;
+    var dialog = false;
+    var state: ?ActivityState = null;
+    var banner_set = false;
+    var banner_null = false;
+};
+
+const FakeTargets = struct {
+    const Self = @This();
+
+    /// What a name resolves to: "w" a window, "p" a terminal pane, "v" a
+    /// viewer pane, "e" a window with no tabs, "amb" ambiguous, else nothing.
+    pub const Target = enum { w, p, v, e };
+
+    dismissed: Dismissed = .close_now,
+    close_ok: bool = true,
+    /// 'D' dismiss, 'C' close, in call order.
+    calls: std.ArrayList(u8) = .empty,
+    last_force: bool = false,
+
+    pub const Context = *Self;
+    pub const log_scope = .ipc_verbs_test;
+
+    fn deinit(self: *Self) void {
+        self.calls.deinit(testing.allocator);
+    }
+
+    pub fn replyAllocator(_: *Self) Allocator {
+        return testing.allocator;
+    }
+    pub fn lookupTarget(_: *Self, arena: Allocator, name: []const u8) Allocator.Error!TargetLookup(Target) {
+        if (std.mem.eql(u8, name, "amb"))
+            return .{ .ambiguous = try std.fmt.allocPrint(arena, "'{s}' is ambiguous", .{name}) };
+        if (std.meta.stringToEnum(Target, name)) |t| return .{ .found = t };
+        return .not_found;
+    }
+    pub fn focusTarget(_: Target) void {
+        FakeRecord.focused += 1;
+    }
+    pub fn closeConfirmationOpen(_: Target) bool {
+        return FakeRecord.dialog;
+    }
+    pub fn dismissConfirmations(ctx: *Self, _: Target, _: []const u8) Dismissed {
+        ctx.calls.append(testing.allocator, 'D') catch @panic("OOM");
+        return ctx.dismissed;
+    }
+    pub fn closeTarget(ctx: *Self, _: Target, force: bool) bool {
+        ctx.calls.append(testing.allocator, 'C') catch @panic("OOM");
+        ctx.last_force = force;
+        return ctx.close_ok;
+    }
+    pub fn setActivityState(t: Target, state: ActivityState) bool {
+        if (t == .v) return false;
+        FakeRecord.state = state;
+        return true;
+    }
+    pub fn setPaneBanner(t: Target, text: ?[]const u8) BannerSet {
+        return switch (t) {
+            .e => .no_pane,
+            .v => .viewer,
+            else => {
+                FakeRecord.banner_set = true;
+                FakeRecord.banner_null = text == null;
+                return .set;
+            },
+        };
+    }
+};
+
+const ok_json = "{\"success\":true}";
+
+fn errJson(comptime msg: []const u8) []const u8 {
+    return "{\"success\":false,\"error\":\"" ++ msg ++ "\"}";
+}
+
+test "focus: focuses what the name resolves to, names what it cannot" {
+    const F = FakeTargets;
+    var fe: F = .{};
+    defer fe.deinit();
+    FakeRecord.focused = 0;
+    try expectReply(try focus(F, &fe, req("focus", &.{"--target=p"})), ok_json);
+    try expectReply(try focus(F, &fe, req("focus", &.{"--target=w"})), ok_json);
+    try testing.expectEqual(@as(usize, 2), FakeRecord.focused);
+    try expectReply(try focus(F, &fe, req("focus", &.{"--target=nope"})), errJson("target 'nope' not found in registry"));
+    try expectReply(try focus(F, &fe, req("focus", &.{"--target=amb"})), errJson("'amb' is ambiguous"));
+    try expectReply(try focus(F, &fe, req("focus", &.{})), errJson("--target is required for focus"));
+    try testing.expectEqual(@as(usize, 2), FakeRecord.focused);
+}
+
+test "+close: idempotent on nothing, refuses an ambiguous name, passes --force" {
+    const F = FakeTargets;
+    var fe: F = .{};
+    defer fe.deinit();
+    FakeRecord.dialog = false;
+    try expectReply(try close(F, &fe, req("close", &.{})), errJson("--target is required for +close"));
+    try expectReply(try close(F, &fe, req("close", &.{"--target=gone"})), ok_json);
+    try expectReply(try close(F, &fe, req("close", &.{"--target=amb"})), errJson("'amb' is ambiguous"));
+    try testing.expectEqualStrings("", fe.calls.items);
+
+    try expectReply(try close(F, &fe, req("close", &.{"--target=p"})), ok_json);
+    try testing.expect(!fe.last_force);
+    try expectReply(try close(F, &fe, req("close", &.{ "--target=w", "--force" })), ok_json);
+    try testing.expect(fe.last_force);
+    try testing.expectEqualStrings("CC", fe.calls.items);
+
+    fe.close_ok = false;
+    try expectReply(try close(F, &fe, req("close", &.{"--target=p"})), errJson("failed to close 'p'"));
+}
+
+test "+close under a confirmation: refused without --force, each dismissal outcome with it" {
+    const F = FakeTargets;
+    var fe: F = .{};
+    defer fe.deinit();
+    FakeRecord.dialog = true;
+    defer FakeRecord.dialog = false;
+
+    try expectReply(try close(F, &fe, req("close", &.{"--target=p"})), errJson(
+        "'p' is waiting on a close confirmation in its window, so nothing closed yet; answer it there, or run +close --force (no confirmation, no undo)",
+    ));
+    try testing.expectEqualStrings("", fe.calls.items);
+
+    // GTK's shape: dismissed, close now.
+    fe.dismissed = .close_now;
+    try expectReply(try close(F, &fe, req("close", &.{ "--target=p", "--force" })), ok_json);
+    try testing.expectEqualStrings("DC", fe.calls.items);
+
+    // win32's: the frontend closes once the dialog's loop unwinds.
+    fe.dismissed = .closing;
+    try expectReply(try close(F, &fe, req("close", &.{ "--target=p", "--force" })), ok_json);
+    try testing.expectEqualStrings("DCD", fe.calls.items);
+
+    fe.dismissed = .queue_full;
+    try expectReply(try close(F, &fe, req("close", &.{ "--target=w", "--force" })), errJson(
+        "'w': the confirmation was dismissed but too many forced closes are already waiting; run +close --force again",
+    ));
+    try testing.expectEqualStrings("DCDD", fe.calls.items);
+}
+
+test "+set-state: arguments, the three states, a viewer pane refused" {
+    const F = FakeTargets;
+    var fe: F = .{};
+    defer fe.deinit();
+    try expectReply(try setState(F, &fe, req("set-state", &.{"--state=busy"})), errJson("--target is required for +set-state"));
+    try expectReply(try setState(F, &fe, req("set-state", &.{"--target=p"})), errJson("--state is required for +set-state"));
+    try expectReply(try setState(F, &fe, req("set-state", &.{ "--target=p", "--state=asleep" })), errJson("invalid state 'asleep': must be idle, busy, or needs_input"));
+    try expectReply(try setState(F, &fe, req("set-state", &.{ "--target=nope", "--state=idle" })), errJson("target 'nope' not found in registry"));
+    try expectReply(try setState(F, &fe, req("set-state", &.{ "--target=amb", "--state=idle" })), errJson("'amb' is ambiguous"));
+    inline for (.{ "idle", "busy", "needs_input" }) |s| {
+        FakeRecord.state = null;
+        try expectReply(try setState(F, &fe, req("set-state", &.{ "--target=w", "--state=" ++ s })), ok_json);
+        try testing.expectEqual(std.meta.stringToEnum(ActivityState, s).?, FakeRecord.state.?);
+    }
+    try expectReply(try setState(F, &fe, req("set-state", &.{ "--target=v", "--state=idle" })), errJson("v is a viewer pane, not a terminal"));
+}
+
+test "+set-banner: set, clear, and the no-pane / viewer / missing sentences" {
+    const F = FakeTargets;
+    var fe: F = .{};
+    defer fe.deinit();
+    try expectReply(try setBanner(F, &fe, req("set-banner", &.{"hello"})), errJson("--target is required for +set-banner"));
+
+    FakeRecord.banner_set = false;
+    try expectReply(try setBanner(F, &fe, req("set-banner", &.{ "--target=p", "hello" })), ok_json);
+    try testing.expect(FakeRecord.banner_set and !FakeRecord.banner_null);
+    try expectReply(try setBanner(F, &fe, req("set-banner", &.{ "--target=w", "--clear" })), ok_json);
+    try testing.expect(FakeRecord.banner_null);
+
+    try expectReply(try setBanner(F, &fe, req("set-banner", &.{ "--target=e", "x" })), errJson("target 'e' has no focused pane"));
+    try expectReply(try setBanner(F, &fe, req("set-banner", &.{ "--target=v", "x" })), errJson("v is a viewer pane, not a terminal"));
+    try expectReply(try setBanner(F, &fe, req("set-banner", &.{ "--target=nope", "x" })), errJson("target 'nope' not found in registry"));
+}
+
+test "the core's activity-state tokens are the ones +set-state takes" {
+    const Core = @import("../../terminal/osc.zig").Command.ActivityState;
+    inline for (@typeInfo(ActivityState).@"enum".fields) |f|
+        try testing.expect(@hasField(Core, f.name));
+    try testing.expectEqual(@typeInfo(Core).@"enum".fields.len, @typeInfo(ActivityState).@"enum".fields.len);
 }

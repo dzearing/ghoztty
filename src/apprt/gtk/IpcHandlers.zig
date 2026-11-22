@@ -210,7 +210,8 @@ fn nameTaken(app: Context, name: []const u8) bool {
     return false;
 }
 
-const Target = union(enum) {
+/// A window or a pane: the window-or-pane verbs' `Target` (verbs.zig, T3374).
+pub const Target = union(enum) {
     window: *Window,
     pane: PaneAt,
 
@@ -416,7 +417,7 @@ fn parseSplitDirection(s: []const u8) ?Surface.Tree.Split.Direction {
 /// Wayland is an xdg-activation request the compositor may decline; inside
 /// the app the pane is focused either way. The default (no `--focus`) never
 /// asks.
-fn focusTarget(target: Target) void {
+pub fn focusTarget(target: Target) void {
     if (target.surface()) |s| {
         if (tabOf(target.window_(), s)) |tab| tab.getSplitTree().focusSurface(s);
         return s.present();
@@ -427,85 +428,53 @@ fn focusTarget(target: Target) void {
 // ---------------------------------------------------------------------------
 // focus (the `ghoztty://` scheme's one action) and +close
 
-/// `focus`: raise the window holding `--target` and focus the pane, or do
-/// nothing if nothing open answers to it. There is no `+focus` CLI verb on
-/// any platform: this is the wire action the URL launcher sends (T695,
-/// `apprt/ipc/url_scheme.zig`), and it never creates, so a link that
-/// launched nothing answers "not found" instead of opening a window.
+/// `focus` (the `ghoztty://` scheme's one action) and `+close` are the shared
+/// bodies in `apprt/ipc/verbs.zig` (T3374), over the model below: the same
+/// arguments, the same sentences and the same idempotence as win32.
 pub fn handleFocus(app: Context, request: Request) Allocator.Error!?[]u8 {
-    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const args = try verb_args.parseVerbArgs(arena, request.arguments);
-    const target = args.target orelse
-        return try server.errorResponse(c_alloc, "--target is required for focus", .{});
-
-    const resolved = try resolve(arena, app, target);
-    const entry = switch (resolved) {
-        .found => |e| e,
-        else => return try missingResponse(arena, resolved, target, "target '{s}' not found in registry", .{target}),
-    };
-    focusTarget(entry);
-    log.info("IPC: focused '{s}'", .{target});
-    return try c_alloc.dupe(u8, "{\"success\":true}");
+    return verbs.focus(@This(), app, request);
 }
 
-/// `+close`: close a pane (its window too, when it was the last one) or a
-/// whole window, with no confirmation - the CLI drives teardown, as on the
-/// Mac (`withConfirmation: false` / `closeWindowImmediately`) and win32.
-/// Idempotent: a target nothing answers to is already closed. A name panes
-/// in several other windows hold is NOT that: closing one at random would
-/// close another agent's pane (T2250).
 pub fn handleClose(app: Context, request: Request) Allocator.Error!?[]u8 {
-    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    return verbs.close(@This(), app, request);
+}
 
-    const args = try verb_args.parseVerbArgs(arena, request.arguments);
-    const target = args.target orelse
-        return try server.errorResponse(c_alloc, "--target is required for +close", .{});
-
-    const entry = switch (try resolve(arena, app, target)) {
-        .found => |e| e,
-        .ambiguous => |windows| {
-            const msg = try target_lookup.ambiguityError(arena, target, windows);
-            return try server.errorResponse(c_alloc, "{s}", .{msg});
-        },
-        .not_found => return try c_alloc.dupe(u8, "{\"success\":true}"),
+/// What a name means, by T2250's order (`resolve`), or the ambiguity sentence.
+pub fn lookupTarget(app: Context, arena: Allocator, name: []const u8) Allocator.Error!verbs.TargetLookup(Target) {
+    return switch (try resolve(arena, app, name)) {
+        .found => |t| .{ .found = t },
+        .ambiguous => |windows| .{ .ambiguous = try target_lookup.ambiguityError(arena, name, windows) },
+        .not_found => .not_found,
     };
-    const window = entry.window_();
+}
 
-    // A dialog is up over the window (T2938, Mac `attachedSheet`): closing
-    // under it would report success over a question nobody answered, so a
-    // plain close closes nothing and says so. `--force` dismisses it
-    // unanswered and closes. GTK dialogs are not modal loops on this stack
-    // (win32's are), so the close follows at once.
-    if (window.hasOpenDialog()) {
-        if (!args.force) {
-            log.info("IPC: +close '{s}' is waiting on a confirmation in its window", .{target});
-            return try server.errorResponse(
-                c_alloc,
-                "'{s}' is waiting on a close confirmation in its window, so nothing closed yet; answer it there, or run +close --force (no confirmation, no undo)",
-                .{target},
-            );
-        }
-        // Bounded: a dialog may still read as visible while it animates out.
-        for (0..8) |_| if (!window.dismissOpenDialog()) break;
-        log.info("IPC: +close --force '{s}': dismissed the confirmation", .{target});
-    }
+/// A dialog is up over the window (T2938, Mac `attachedSheet`).
+pub fn closeConfirmationOpen(target: Target) bool {
+    return target.window_().hasOpenDialog();
+}
 
-    switch (entry) {
+/// `--force` dismisses it unanswered. GTK dialogs are not modal loops on this
+/// stack (win32's are), so the close follows at once.
+pub fn dismissConfirmations(_: Context, target: Target, name: []const u8) verbs.Dismissed {
+    const window = target.window_();
+    // Bounded: a dialog may still read as visible while it animates out.
+    for (0..8) |_| if (!window.dismissOpenDialog()) break;
+    log.info("IPC: +close --force '{s}': dismissed the confirmation", .{name});
+    return .close_now;
+}
+
+/// Close a pane (its window too, when it was the last one) or a window, with
+/// no confirmation.
+pub fn closeTarget(_: Context, target: Target, force: bool) bool {
+    _ = force; // the GTK close has no undo window to skip
+    switch (target) {
         .pane => |p| {
-            const tab = tabOf(p.window, p.surface) orelse
-                return try server.errorResponse(c_alloc, "failed to close '{s}'", .{target});
-            if (!tab.getSplitTree().closeSurfaceNow(p.surface))
-                return try server.errorResponse(c_alloc, "failed to close '{s}'", .{target});
+            const tab = tabOf(p.window, p.surface) orelse return false;
+            return tab.getSplitTree().closeSurfaceNow(p.surface);
         },
         .window => |w| w.as(gtk.Window).destroy(),
     }
-    log.info("IPC: closed '{s}'", .{target});
-    return try c_alloc.dupe(u8, "{\"success\":true}");
+    return true;
 }
 
 // ---------------------------------------------------------------------------
