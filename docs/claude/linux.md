@@ -276,8 +276,10 @@ the first host where they meet both an LP64 C ABI and a POSIX `std.fs.path`:
   `std.fs.path.sep_str` when a test builds a path on the real disk.
 - `close(2)` on Linux never wakes a `read` blocked on the same fd in another
   thread (macOS does), so code that "unblocks a reader by closing" hangs
-  here. `ssh_transport`'s `ChildStream.close` does exactly that: T3354, and
-  its test is skipped on Linux until that lands.
+  here. `ssh_transport`'s `ChildStream.close` did exactly that until T3354:
+  the reader now blocks in `poll` on its fd plus a private wake pipe that
+  `close` writes, and the fd itself is released by `deinit` once the reader
+  is joined. Use the same shape for any new "close unblocks the reader" code.
 - A panic stops that test process and the runner restarts after it, so one
   crash can hide the next: re-run until the lane is green, not until the first
   named failure is gone.
