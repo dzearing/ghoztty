@@ -163,6 +163,7 @@ test {
     _ = @import("win32/AgentIntegrationsDialog.zig");
     _ = @import("win32/ipc_agent_integration.zig");
     _ = @import("win32/ipc_whats_new.zig");
+    _ = @import("win32/ipc_frame_pacing.zig");
     _ = @import("win32/ipc_shortcut_guide.zig");
     _ = @import("win32/ipc_settings.zig");
     _ = @import("win32/ipc_workspaces.zig");

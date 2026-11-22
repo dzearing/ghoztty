@@ -88,6 +88,8 @@ const open_url_seam = @import("open_url_seam.zig");
 const about_rows = @import("about_rows.zig");
 const color_math = @import("color_math.zig");
 const hero_snap_schedule = @import("hero_snap_schedule.zig");
+const frame_pacing = @import("frame_pacing.zig");
+const build_config = @import("../../build_config.zig");
 const busy_light = @import("busy_light.zig");
 
 const log = std.log.scoped(.win32);
@@ -245,6 +247,13 @@ presented_size: std.atomic.Value(u64) = .init(0),
 /// new size, which is how "the terminal has redrawn" is told from "the
 /// terminal has drawn once" (Mac `resizeOutOfSight`).
 present_seq: std.atomic.Value(u32) = .init(0),
+
+/// When each frame of this pane reached the screen, as intervals (T1737) -
+/// the probe a smoothness claim is scored with, read by the debug-only
+/// `frame-pacing` IPC action (`ipc_frame_pacing.zig`). Debug builds only: a
+/// shipped build carries an empty struct and `markFrameShown` compiles the
+/// recording out.
+frame_pacing_probe: FramePacingProbe = .{},
 
 /// Apply the NEXT resize to the grid at once instead of after the coalescing
 /// window (T2252, Mac `flushNextResize`): a banner toggle resizes once, behind
@@ -7181,6 +7190,7 @@ pub fn markFrameShown(self: *Surface, width: u32, height: u32) void {
     // was woken for (T1476).
     self.presented_size.store(resize_paint.packSize(width, height), .release);
     _ = self.present_seq.fetchAdd(1, .release);
+    if (comptime frame_pacing_enabled) self.frame_pacing_probe.record();
     // Ordered before the event: a thread woken by the event must never see
     // "no frame yet" for a frame that has already been presented (T1031).
     // Load-then-store so the steady state is a relaxed read rather than a
@@ -7191,6 +7201,68 @@ pub fn markFrameShown(self: *Surface, width: u32, height: u32) void {
     if (self.frame_event) |event| {
         _ = w32.SetEvent(event);
     }
+}
+
+/// Whether this build measures frame pacing at all (T1737): the same gate as
+/// the `frame-pacing` IPC action that reads it.
+pub const frame_pacing_enabled = build_config.is_debug;
+
+/// The per-pane frame-interval probe (T1737). Written by whichever thread
+/// reports the frame shown (the renderer, or the window presenter), read by
+/// the GUI thread answering `frame-pacing`; a mutex rather than atomics
+/// because a summary has to see one consistent ring, and this exists only in
+/// debug builds.
+pub const FramePacingProbe = if (frame_pacing_enabled) struct {
+    mutex: std.Thread.Mutex = .{},
+    recorder: frame_pacing.Recorder = .{},
+    /// The monotonic origin timestamps are measured from (QPC underneath).
+    epoch: ?std.time.Instant = null,
+    /// `snap_seq` when the probe was last reset, so a reading can say how many
+    /// thumbnail captures rode this pane's frames over the same window.
+    snap_seq_at_reset: u32 = 0,
+
+    fn record(self: *@This()) void {
+        const now = std.time.Instant.now() catch return;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const epoch = self.epoch orelse blk: {
+            self.epoch = now;
+            break :blk now;
+        };
+        self.recorder.record(now.since(epoch));
+    }
+} else struct {};
+
+/// GUI thread (T1737): forget every frame measured so far, and note the
+/// capture count the next reading is relative to.
+pub fn framePacingReset(self: *Surface) void {
+    if (comptime !frame_pacing_enabled) return;
+    self.snap_mutex.lock();
+    const seq = self.snap_seq;
+    self.snap_mutex.unlock();
+    const p = &self.frame_pacing_probe;
+    p.mutex.lock();
+    defer p.mutex.unlock();
+    p.recorder.reset();
+    p.snap_seq_at_reset = seq;
+}
+
+pub const FramePacingReading = struct {
+    summary: frame_pacing.Summary,
+    /// Thumbnail captures this pane's renderer committed since the reset.
+    captures: u32,
+};
+
+/// GUI thread (T1737): the frame intervals since the last reset.
+pub fn framePacingRead(self: *Surface) FramePacingReading {
+    if (comptime !frame_pacing_enabled) return .{ .summary = .{}, .captures = 0 };
+    self.snap_mutex.lock();
+    const seq = self.snap_seq;
+    self.snap_mutex.unlock();
+    const p = &self.frame_pacing_probe;
+    p.mutex.lock();
+    defer p.mutex.unlock();
+    return .{ .summary = p.recorder.summary(), .captures = seq -% p.snap_seq_at_reset };
 }
 
 /// Hold the frame signal back `ms` milliseconds, and actually that long

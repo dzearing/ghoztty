@@ -436,6 +436,22 @@ $GuardTable = @(
             'src\apprt\win32\hero_math.zig'
         )
     },
+    # A terminal pane's frame pacing (T1737): the only run that proves the
+    # frame-interval probe records, tells panes apart and resets, and the A/B
+    # that shows T1423's capture pacing keeps thumbnail captures off the hero
+    # pane's frames during a gesture. Covers the harness, the probe and its
+    # IPC action, and the pacing rule it scores.
+    [pscustomobject]@{
+        Name   = 'frame-pacing'
+        Script = 'test\win32\frame-pacing.ps1'
+        Stamp  = 'test\win32\frame-pacing.stamp.json'
+        Covers = @(
+            'test\win32\frame-pacing.ps1',
+            'src\apprt\win32\frame_pacing.zig',
+            'src\apprt\win32\ipc_frame_pacing.zig',
+            'src\apprt\win32\hero_snap_schedule.zig'
+        )
+    },
     # The hero carousel's tiles (T397, T1469): the only run that proves every
     # tile - terminal AND viewer - is painted with its border ring, and that
     # a viewer tile shows the decoded page. It went red on the terminal tile's

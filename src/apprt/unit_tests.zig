@@ -24,6 +24,8 @@ test {
 
     // Pure win32 hero-mode thumbnail pacing (T1423), same no-OS-imports deal.
     _ = @import("win32/hero_snap_schedule.zig");
+    // ... and the frame-interval recorder that scores it (T1737).
+    _ = @import("win32/frame_pacing.zig");
 
     // Pure win32 hero carousel tile cards (T3279, Mac d40352d30): shadow,
     // backlight, rim and corner pixels, same no-OS-imports deal.

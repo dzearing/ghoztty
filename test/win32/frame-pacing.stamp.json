@@ -1,0 +1,20 @@
+{
+    "guard":  "frame-pacing",
+    "script":  "test/win32/frame-pacing.ps1",
+    "generated":  "2026-11-21T17:09:52-08:00",
+    "commit":  "8beee4f5e",
+    "uncommitted":  [
+                        "src/apprt/win32/frame_pacing.zig",
+                        "src/apprt/win32/ipc_frame_pacing.zig",
+                        "test/win32/frame-pacing.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/frame_pacing.zig":  "4539e80e8fa23677a521f6fcad0641d5cee4564e136ef4d31abc956e9e54b9b5",
+                  "src/apprt/win32/hero_snap_schedule.zig":  "c1eb3f178e825a6f7003d0e4cb92bc32492fe91aab289390f970e5b15ac4883f",
+                  "src/apprt/win32/ipc_frame_pacing.zig":  "d9e677daddf7dcb506dfc52a95b88492a42e0b7b080f67fc4b6f85c986fb86f8",
+                  "test/win32/frame-pacing.ps1":  "0925ecb5f4b7c3dd79026633451d80e9bb424d54e05ff617d52d89624a609104"
+              },
+    "code":  {
+                 "test/win32/frame-pacing.ps1":  "code1:7a85164aa9dc76822947e96ffe6d0b81e3df1fdb17be4f7ac18cea220cc95414"
+             }
+}

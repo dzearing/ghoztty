@@ -24,6 +24,7 @@ const ipc_capture = @import("ipc_capture.zig");
 const ipc_hover = @import("ipc_hover.zig");
 const ipc_agent_integration = @import("ipc_agent_integration.zig");
 const ipc_whats_new = @import("ipc_whats_new.zig");
+const ipc_frame_pacing = @import("ipc_frame_pacing.zig");
 const ipc_shortcut_guide = @import("ipc_shortcut_guide.zig");
 const ipc_settings = @import("ipc_settings.zig");
 const ipc_workspaces = @import("ipc_workspaces.zig");
@@ -147,6 +148,11 @@ pub fn dispatch(ctx: Context, request_json: []const u8) Allocator.Error!?[]u8 {
         // ipc_agent_integration.zig; release builds fall through to
         // unknown-action.
         return try ipc_agent_integration.handle(ctx.alloc, request.arguments);
+    } else if (ipc_frame_pacing.enabled and std.mem.eql(u8, request.action, "frame-pacing")) {
+        // T1737: the DEBUG-ONLY frame-interval probe a smoothness claim is
+        // scored with - see ipc_frame_pacing.zig. Release builds fall through
+        // to unknown-action and record nothing.
+        return try ipc_frame_pacing.handle(ctx.app, ctx.alloc, request.arguments);
     } else if (ipc_whats_new.enabled and std.mem.eql(u8, request.action, "whats-new")) {
         // T624: the DEBUG-ONLY seam for the What's New window. Which bundled
         // versions count as "new" is a decision no screenshot can check, so

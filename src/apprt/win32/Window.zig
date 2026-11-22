@@ -170,6 +170,7 @@ const DarkMode = @import("DarkMode.zig");
 const HeroCarousel = @import("HeroCarousel.zig");
 const hero_math = @import("hero_math.zig");
 const hero_snap_schedule = @import("hero_snap_schedule.zig");
+const build_config = @import("../../build_config.zig");
 const dim_math = @import("dim_math.zig");
 const bell_math = @import("bell_math.zig");
 const activity_attention_rule = @import("activity_attention.zig");
@@ -8271,6 +8272,25 @@ pub fn heroSlidePainted(self: *const Window) bool {
     return self.hero_slide != null and !self.hero_slide_declared;
 }
 
+var hero_snap_unpaced_state: ?bool = null;
+
+/// `GHOZTTY_HERO_SNAP_UNPACED=1`, debug builds only (T1737): the window never
+/// hears about interaction, so the T1423 quiet gate never closes and every
+/// heartbeat captures every tile through a gesture - the pre-T1423 behavior.
+/// It is the "before" arm of `test/win32/frame-pacing.ps1`'s A/B; a shipped
+/// build ignores the variable.
+fn heroSnapUnpaced() bool {
+    if (comptime !build_config.is_debug) return false;
+    if (hero_snap_unpaced_state) |v| return v;
+    var buf: [8]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const raw = std.process.getEnvVarOwned(fba.allocator(), "GHOZTTY_HERO_SNAP_UNPACED") catch null;
+    const v = if (raw) |r| std.mem.eql(u8, r, "1") else false;
+    if (v) log.info("hero snap pacing DISABLED (GHOZTTY_HERO_SNAP_UNPACED=1)", .{});
+    hero_snap_unpaced_state = v;
+    return v;
+}
+
 var hero_declare_state: ?bool = null;
 
 /// Whether a hero slide may be handed to the compositor whole (T2573): in
@@ -8718,6 +8738,7 @@ fn heroSnapTick(self: *Window) void {
 /// click, a drag) for a window inside this one (T1423).
 pub fn heroNoteInteraction(self: *Window) void {
     if (self.tab_count == 0 or !self.tab_hero_active[self.active_tab]) return;
+    if (heroSnapUnpaced()) return;
     self.hero_snap_sched.noteInteraction(std.time.milliTimestamp());
 }
 
@@ -8739,6 +8760,7 @@ fn heroProbeForeignInput(self: *Window, now: i64) void {
     if (!had_sample) return;
     const fg = w32.windowIsActive(self.hwnd);
     if (!hero_snap_schedule.foreignInputIsInteraction(input_moved, fg, pointer_moved)) return;
+    if (heroSnapUnpaced()) return;
     // Both ticks are the same 32-bit wrapping clock, so the difference is exact.
     const ago: i64 = @intCast(w32.GetTickCount() -% lii.dwTime);
     self.hero_snap_sched.noteInteraction(now - ago);

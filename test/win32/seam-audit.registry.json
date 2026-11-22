@@ -529,6 +529,11 @@
             "unset": "unreachable",
             "note": "unset is the user's live named pipe. Isolating is a standing safety rule (docs\\claude\\build.md), not a convenience."
         },
+        "GHOZTTY_HERO_SNAP_UNPACED": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "T1737. frame-pacing.ps1 sets it for the 'before' arm of its A/B only (debug builds; the window never hears about interaction, so T1423's quiet gate never closes). Unset is the shipped pacing, which the same harness's paced arm and hero-mode.ps1 phase 1b score."
+        },
         "GHOZTTY_PRESENT_LAG_MS": {
             "class": "non-default",
             "unset": "shipped-elsewhere",
