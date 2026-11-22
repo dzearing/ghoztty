@@ -282,6 +282,11 @@ $Registry = @(
     # T1560. A `verify:` line with no command looks self-checking and is never
     # checked. Section Y6 of the seat harness drives it red.
     [pscustomobject]@{ Label = 'BAD VERIFY'; Kind = 'gate'; Demo = $Seat; Marker = 'BAD VERIFY' }
+    # T1758. An open card whose Summary is still the `new` placeholder (filed
+    # past the gate id, or being worked). Section Z of the seat harness drives
+    # it red; the pre-gate backlog is the informational SCAFFOLD BACKLOG line.
+    [pscustomobject]@{ Label = 'SCAFFOLD SUMMARY'; Kind = 'gate'; Demo = $Seat; Marker = 'SCAFFOLD SUMMARY' }
+    [pscustomobject]@{ Label = 'SCAFFOLD BACKLOG'; Kind = 'status' }
     # T1231. A control character inside a tracked text file: invisible to a
     # reader, and a path that cannot exist to a script. validate emits the
     # headline itself rather than only relaying the scanner's, so this row is a

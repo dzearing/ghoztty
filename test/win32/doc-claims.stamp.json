@@ -1,10 +1,10 @@
 {
     "guard":  "doc-claims",
     "script":  "test/win32/doc-claims.ps1",
-    "generated":  "2026-11-21T20:14:09-08:00",
-    "commit":  "1a38ae52c",
+    "generated":  "2026-11-21T20:52:11-08:00",
+    "commit":  "13cee8df8",
     "uncommitted":  [
-                        "docs/claude/linux.md"
+                        "go.md"
                     ],
     "files":  {
                   "CLAUDE.md":  "d36c55011e0aaa79791f102a88c900fe847edb05aa35518e44aa0dcf5e5e39af",
@@ -16,7 +16,7 @@
                   "docs/claude/testing.md":  "d424bb8bd674038d1f9e8183877d7954cab4822fbe30928b54958a1c7fa32646",
                   "docs/claude/viewers.md":  "de51d9dcfe632a8b9b947120b8952648fdb3829444b162bc04e072f210308333",
                   "docs/claude/win32-ui.md":  "0d161ccd181de4fdb54cf6a4b434abc75dcc00f65094c681df21dfab7ac05e55",
-                  "go.md":  "0797fa8653ff3c1a9c88a696535fb097805b58fa3d669d75b218aa766145453a",
+                  "go.md":  "521f9e44dac1aa6e5c2723726b955c91b152169732e8e00ab06e51e3e16a5072",
                   "test/win32/doc-claims.ps1":  "89225631de66b3d1dc4c196c2dbea93fd7c416774c464c32fdc3e6f3198d3ece",
                   "test/win32/lib/BuildMode.ps1":  "769de92d4724e04f1c557324ea48664508fd4fff3b69aee3b5afcd59c0d480fc",
                   "test/win32/lib/Isolation.ps1":  "c154ff88298f28e8af527e4bcbee3bd3c191b28af329866e1333e9d28126b8da",

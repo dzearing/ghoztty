@@ -1613,6 +1613,59 @@ $yNewText = if ($yNew) { [System.IO.File]::ReadAllText($yNew.FullName) } else { 
 Assert 'Y7 new -Verify writes the verify: line, quoting intact' ($r.Code -eq 0 -and $yNewText -match '(?m)^verify: "if \(git grep -q ''needle''\) \{ exit 1 \}"$')
 if (Test-Path $yrepo) { Remove-Item -Recurse -Force $yrepo }
 
+# --- Z. a card whose body is still the `new` scaffold (T1758) -----------------
+# The placeholder text is built here from scratch rather than read from the
+# script, so a drift between what `new` writes and what validate looks for
+# shows up as Z1 going green when it should not.
+""
+"Z. validate refuses an open card whose Summary is still the TODO scaffold"
+$zdir = Join-Path $env:TEMP "ghoztty-parity-scaffold-$PID"
+if (Test-Path $zdir) { Remove-Item -Recurse -Force $zdir }
+New-Item -ItemType Directory -Force $zdir | Out-Null
+$zSum = 'TODO: describe the defect or gap, the evidence, the fix, and the validation.'
+$zCrit = '- [ ] TODO: the observable checks that prove this is done, ticked with evidence of how each was validated.'
+function Z-Task {
+    param([string]$Id, [string]$Status = 'todo', [string]$Summary = $zSum, [string]$Criteria = $zCrit)
+    $lines = @('---', "id: $Id", ("title: " + (ConvertTo-Json "fixture $Id" -Compress)),
+        'deps: []', ("status: " + (ConvertTo-Json $Status -Compress)), 'commits: []', 'seat: "win"', 'priority: "P2"',
+        '---', '', "# $Id - fixture", '', '## Summary', '', $Summary, '', '## Validation criteria', '', $Criteria, '')
+    [System.IO.File]::WriteAllText((Join-Path $zdir "$Id.md"), ($lines -join "`n"), (New-Object System.Text.UTF8Encoding $false))
+}
+# Past the gate id: a real card, and one closed with the scaffold left in.
+Z-Task -Id 'T9001' -Summary 'The thing breaks when X; evidence Y; fix Z.' -Criteria '- [ ] X no longer breaks (harness Q).'
+Z-Task -Id 'T9002' -Status 'done'
+$r = Task-Run @('validate') -Dir $zdir
+Assert 'Z0 a card with a real Summary passes, and a closed scaffold card is nobody''s business (negative control)' ($r.Code -eq 0 -and $r.Out -match 'ALL PASS' -and $r.Out -notmatch 'SCAFFOLD')
+if ($r.Code -ne 0) { "      (Z0 saw: " + ($r.Out -replace "`r?`n", ' / ') + ')' }
+
+Z-Task -Id 'T9003'
+$r = Task-Run @('validate') -Dir $zdir
+Assert 'Z1 validate FAILS an open card filed past the gate whose Summary is the scaffold, by id' ($r.Code -eq 1 -and $r.Out -match 'SCAFFOLD SUMMARY: T9003 is todo')
+Assert 'Z1b ...and does not name the card with a real Summary' ($r.Out -notmatch 'SCAFFOLD SUMMARY: T9001')
+Z-Task -Id 'T9003' -Summary 'Now it says something.'
+$r = Task-Run @('validate') -Dir $zdir
+Assert 'Z2 writing the Summary clears it, whatever the criteria still say' ($r.Code -eq 0 -and $r.Out -notmatch 'SCAFFOLD SUMMARY')
+
+# A pre-gate card: counted, not failed - unless it is being worked.
+Z-Task -Id 'T12'
+$r = Task-Run @('validate') -Dir $zdir
+Assert 'Z3 a pre-gate scaffold card is reported as SCAFFOLD BACKLOG and does not fail' ($r.Code -eq 0 -and $r.Out -match 'SCAFFOLD BACKLOG: 1 open card\(s\) filed before T\d+ still have the placeholder Summary: T12 ' -and $r.Out -notmatch 'SCAFFOLD SUMMARY')
+Assert 'Z3b ...and the backlog line counts placeholder criteria too' ($r.Out -match '2 open card\(s\) still have placeholder validation criteria')
+Z-Task -Id 'T12' -Status 'in-progress'
+Add-Content -LiteralPath (Join-Path $zdir 'T12.md') -Value "`n## Progress log`n`n- 2026-11-21 20:00: claimed."
+$r = Task-Run @('validate') -Dir $zdir
+Assert 'Z4 ...but the same card FAILS once it is claimed, whatever its age' ($r.Code -eq 1 -and $r.Out -match 'SCAFFOLD SUMMARY: T12 is in-progress')
+
+Remove-Item (Join-Path $zdir 'T12.md')
+$r = Task-Run @('new', '-Title', 'filed with no summary', '-NoSimilarCheck') -Dir $zdir
+Assert 'Z5 new without -Summary says the placeholder must be written before the commit' ($r.Code -eq 0 -and $r.Out -match "note: T\d+'s Summary is the TODO placeholder" -and $r.Out -match 'SCAFFOLD SUMMARY')
+$r = Task-Run @('new', '-Title', 'filed with a summary', '-NoSimilarCheck', '-Summary', 'Real words.') -Dir $zdir
+Assert 'Z5b ...and says nothing when it was given one' ($r.Code -eq 0 -and $r.Out -notmatch 'TODO placeholder')
+$zNew = Get-ChildItem $zdir -Filter 'T*.md' | Where-Object { [System.IO.File]::ReadAllText($_.FullName) -match 'filed with no summary' } | Select-Object -First 1
+$zNewText = if ($zNew) { [System.IO.File]::ReadAllText($zNew.FullName) } else { '' }
+Assert 'Z6 what new writes is exactly the scaffold validate looks for (no drift)' ($zNewText.Contains($zSum) -and $zNewText.Contains($zCrit))
+if (Test-Path $zdir) { Remove-Item -Recurse -Force $zdir }
+
 # --- teardown ---------------------------------------------------------------
 if (Test-Path $fixture) { Remove-Item -Recurse -Force $fixture }
 

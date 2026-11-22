@@ -683,6 +683,39 @@ function Test-Done {
     return ($StatusValue -match '^(done|skipped)')
 }
 
+# ------------------------------------------------------ scaffold body ---
+# T1758. `new` writes these two placeholders when it is not given the text,
+# and until this check nothing noticed when they were never replaced: T1745-
+# T1747 sat in the queue for a day as a title and nothing else. One copy of
+# each string, so the writer and the checker cannot drift apart.
+$ScaffoldSummary = 'TODO: describe the defect or gap, the evidence, the fix, and the validation.'
+$ScaffoldCriteria = '- [ ] TODO: the observable checks that prove this is done, ticked with evidence of how each was validated.'
+# The gate is enforced for every card filed from this id on, and for any card
+# being WORKED (in-progress) whatever its id. The cards older than this that
+# still carry the scaffold are the backlog the SCAFFOLD BACKLOG line counts -
+# failing on them would have wedged every lane's commit the moment this landed,
+# and the triage works them down by id instead.
+$ScaffoldGateFromId = 3360
+
+# The text of one `## <Heading>` section, trimmed; $null when there is none.
+function Get-TaskSection {
+    param([string]$Text, [string]$Heading)
+    $m = [regex]::Match($Text, '(?ms)^## ' + [regex]::Escape($Heading) + '[ \t]*\r?\n(.*?)(?=^## |\z)')
+    if (-not $m.Success) { return $null }
+    return $m.Groups[1].Value.Trim()
+}
+
+# Which halves of a card body are still the `new` scaffold: @{ Summary; Criteria }.
+function Get-ScaffoldState {
+    param([string]$Text)
+    $s = Get-TaskSection -Text $Text -Heading 'Summary'
+    $c = Get-TaskSection -Text $Text -Heading 'Validation criteria'
+    return @{
+        Summary  = ($null -ne $s -and $s -eq $ScaffoldSummary)
+        Criteria = ($null -ne $c -and $c -eq $ScaffoldCriteria)
+    }
+}
+
 # --------------------------------------------------- re-queue triggers ---
 # T3073. A `blocked(...)` task can say when it comes back on its own: after a
 # DATE, or once COUNT of a named set of tasks are done. Before this the only
@@ -2181,7 +2214,7 @@ switch ($Command) {
             $path = Join-Path $TaskDir "$tid.md"
             if (Test-Path -LiteralPath $path) { continue }   # taken (possibly by the other agent, this second)
             try {
-                $body = if ($Summary) { $Summary } else { 'TODO: describe the defect or gap, the evidence, the fix, and the validation.' }
+                $body = if ($Summary) { $Summary } else { $ScaffoldSummary }
                 $lines = @(
                     '---'
                     "id: $tid"
@@ -2217,7 +2250,7 @@ switch ($Command) {
                     # lands it ticks them and records HOW each was verified.
                     '## Validation criteria'
                     ''
-                    '- [ ] TODO: the observable checks that prove this is done, ticked with evidence of how each was validated.'
+                    $ScaffoldCriteria
                     ''
                 )
                 $bytes = [System.Text.Encoding]::UTF8.GetBytes(($lines -join "`n"))
@@ -2269,6 +2302,11 @@ switch ($Command) {
             catch { Write-Host ("      WARNING: ledger high-water mark not raised to {0}: {1}" -f $created, $_.Exception.Message) }
         }
         Write-Host ("created {0}: docs/design/windows-parity-tasks/{0}.md" -f $created)
+        # T1758: validate refuses a card filed with the placeholder Summary, so
+        # say it now, while the turn that knows what the card is about is here.
+        if (-not $Summary) {
+            Write-Host ("      note: {0}'s Summary is the TODO placeholder - write it (defect, evidence, fix, validation) before you commit; validate refuses it as SCAFFOLD SUMMARY" -f $created)
+        }
     }
 
     # T651. The duplicate question asked on its own, so a turn can check
@@ -2703,6 +2741,8 @@ switch ($Command) {
         $tasks = Get-AllTasks
         $byId = @{}
         $problems = 0
+        $scaffoldBacklog = New-Object System.Collections.Generic.List[string]
+        $criteriaBacklogCount = 0
 
         foreach ($f in Get-ChildItem -Path $TaskDir -Filter 'T*.md') {
             # T1053: an empty file is not a malformed task, it is a `new` whose
@@ -2836,6 +2876,33 @@ switch ($Command) {
                     $problems++
                 }
             }
+            # T1758: an open card whose body is still the `new` placeholder is
+            # a title and nothing else, and the turn that claims it has to
+            # rediscover what it is about. Enforced for cards filed from
+            # $ScaffoldGateFromId on (the turn that filed it is the one that
+            # knows) and for the card being worked, whatever its age; older
+            # cards are counted below instead of failing every lane at once.
+            if (-not (Test-Done $t.Status)) {
+                $bodyText = [System.IO.File]::ReadAllText($t.Path, [System.Text.Encoding]::UTF8)
+                $sc = Get-ScaffoldState -Text $bodyText
+                $idNum = 0
+                if ($t.Id -match '^T(\d+)') { $idNum = [int]$Matches[1] }
+                $gated = ($idNum -ge $ScaffoldGateFromId -or $t.Status -match '^in-progress')
+                if ($sc.Summary -and $gated) {
+                    Write-Host ("SCAFFOLD SUMMARY: {0} is {1} and its Summary is still the TODO placeholder - write what the defect is, the evidence, the fix and how it will be validated" -f $t.Id, ($t.Status -replace '\(.*$', ''))
+                    $problems++
+                }
+                elseif ($sc.Summary) { $scaffoldBacklog.Add([string]$t.Id) }
+                if ($sc.Criteria) { $criteriaBacklogCount++ }
+            }
+        }
+
+        # T1758: the pre-gate backlog, said out loud so the triage can work it
+        # down. Informational: these cards predate the gate.
+        if ($scaffoldBacklog.Count -gt 0) {
+            $shownIds = @($scaffoldBacklog | Select-Object -First 12) -join ', '
+            $more = if ($scaffoldBacklog.Count -gt 12) { (' and {0} more' -f ($scaffoldBacklog.Count - 12)) } else { '' }
+            Write-Host ("SCAFFOLD BACKLOG: {0} open card(s) filed before T{1} still have the placeholder Summary: {2}{3} (write them at triage; {4} open card(s) still have placeholder validation criteria)" -f $scaffoldBacklog.Count, $ScaffoldGateFromId, $shownIds, $more, $criteriaBacklogCount)
         }
 
         # A ring of tasks that wait on each other (T1133). Checked over the

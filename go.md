@@ -834,6 +834,12 @@ Concretely, in order, with no stops in between:
    lost. Never hand-pick an id; `new` allocates atomically so a second agent
    filing at the same moment cannot collide with you.
 
+   **Give it a Summary** (`new -Summary "…"`, or write the section before the
+   commit). Since T1758 `validate` FAILS on `SCAFFOLD SUMMARY`: an open card
+   whose Summary is still the TODO placeholder, for every card filed from
+   T3360 on and for the card being worked. The older ones are the
+   `SCAFFOLD BACKLOG` line, worked down at triage (T3363).
+
    **Read the `SIMILAR:` block when it prints** (T651). `new` names existing
    tasks whose titles look like the one you are filing, before it writes the
    file, because the same defect used to be filed three times - the T400
