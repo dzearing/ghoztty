@@ -1,8 +1,8 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-11-22T07:42:35-08:00",
-    "commit":  "5c52e9145",
+    "generated":  "2026-11-22T09:10:21-08:00",
+    "commit":  "14b236f46",
     "uncommitted":  [
                         "scripts/guard-due.ps1"
                     ],
@@ -51,7 +51,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "e491be3477c3236c4e10af70db2f40e9d632c45f83bf860f4b09fe6eeda5e2b7",
                   "scripts/go-loop-watchdog.ps1":  "37f19f9ce08a701645b7267fea8411125b9112d83ef5ff0cbddb8e380f058d67",
-                  "scripts/guard-due.ps1":  "06841ee4784c15fd72f6e0bc31cf1df1216800015beb4b274a8e48433e4b9190",
+                  "scripts/guard-due.ps1":  "4fac9c3f9fbf9faf2407b55cb03e85d4a1493001a8afe4db5069db6d825f916f",
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
                   "scripts/hero-glide-onscreen.ps1":  "46d211f7ec7843d13506f4e3bd13933630339adb8aff13b5c97d69ae3fd248a7",
                   "scripts/hidden-windows-cpu.ps1":  "61551ac8760570d16a46ab2ef235c9792a2e29fb9e9d116ebbc23a5ce9051876",

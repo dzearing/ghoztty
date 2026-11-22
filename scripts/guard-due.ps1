@@ -4035,6 +4035,7 @@ $GuardTable = @(
             'scripts\msi-test-identity.ps1',
             'dist\windows-installer\build-msi.sh',
             'test\win32\lib\ThrowawayProduct.ps1',
+            'test\win32\lib\UserInstallSentinel.ps1',
             'test\win32\update-real-msi.ps1'
         )
     },
@@ -4057,7 +4058,25 @@ $GuardTable = @(
             'scripts\msi-test-identity.ps1',
             'dist\windows-installer\build-msi.sh',
             'test\win32\lib\ThrowawayProduct.ps1',
+            'test\win32\lib\UserInstallSentinel.ps1',
             'test\win32\update-graceful.ps1'
+        )
+    },
+    # The proof that a real-msiexec harness never reached the user's installed
+    # Ghoztty (T3394): the package pre-flight, the install snapshot and the
+    # installer-event filter, each measured against a state it must catch -
+    # including the 2026-11-22 shape (the agent renamed aside, file count
+    # unchanged) that the old file-count check read as clean.
+    [pscustomobject]@{
+        Name   = 'user-install-sentinel'
+        Script = 'test\win32\user-install-sentinel.ps1'
+        Stamp  = 'test\win32\user-install-sentinel.stamp.json'
+        Covers = @(
+            'test\win32\lib\UserInstallSentinel.ps1',
+            'test\win32\lib\ThrowawayProduct.ps1',
+            'test\win32\update-real-msi.ps1',
+            'test\win32\update-graceful.ps1',
+            'test\win32\user-install-sentinel.ps1'
         )
     },
     # The update download's own REPORT (T1195): does a consented download show

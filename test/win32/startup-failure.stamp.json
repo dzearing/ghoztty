@@ -1,8 +1,8 @@
 {
     "guard":  "startup-failure",
     "script":  "test/win32/startup-failure.ps1",
-    "generated":  "2026-11-22T08:58:20-08:00",
-    "commit":  "a9a6632cf",
+    "generated":  "2026-11-22T09:33:50-08:00",
+    "commit":  "14b236f46",
     "uncommitted":  [
 
                     ],

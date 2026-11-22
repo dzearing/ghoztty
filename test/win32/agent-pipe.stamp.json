@@ -1,13 +1,13 @@
 {
     "guard":  "agent-pipe",
     "script":  "test/win32/agent-pipe.ps1",
-    "generated":  "2026-11-22T00:37:23-08:00",
-    "commit":  "f81eb427a",
+    "generated":  "2026-11-22T09:31:16-08:00",
+    "commit":  "14b236f46",
     "uncommitted":  [
-                        "test/win32/agent-pipe.ps1"
+
                     ],
     "files":  {
-                  "src/cli/sessions.zig":  "84d8ab29a13e76c03235a78f7e18a50f292b7c2a244e5fc89eca471eba170ea1",
+                  "src/cli/sessions.zig":  "dbc27e6b3e4ab7bb56e505b9368641029b5835d6be002978cff2cb4f2cbee915",
                   "src/remote/pipe_stream.zig":  "8567c09a0a231520224bd07e2dea247094273ec7a584cdc4cda9c7dbbbc7b1db",
                   "test/win32/agent-pipe.ps1":  "19720721076a90b8beb2380fccb59ec6019c22eaf5d872b5738977d938b6884b"
               },

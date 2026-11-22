@@ -1,8 +1,8 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-22T08:58:36-08:00",
-    "commit":  "a9a6632cf",
+    "generated":  "2026-11-22T09:11:40-08:00",
+    "commit":  "14b236f46",
     "uncommitted":  [
 
                     ],
@@ -36,7 +36,7 @@
                   "src/apprt/win32/agent_upgrade.zig":  "49c5c7ceea8da9bbf31619d51bfdede3b0e3d952e59553c4447410fd508895e9",
                   "src/apprt/win32/AgentIntegration.zig":  "206d196b9c35bf6826ff6daeafd2a5d1d089f053cfb9037bfd9b640099fc98cc",
                   "src/apprt/win32/AgentIntegrationsDialog.zig":  "246d10bd97a670440044da56b0072d1e41dff7d0c20ac4caae859bc0ab900eee",
-                  "src/apprt/win32/App.zig":  "1aa844b44352b2cd3acb5f54354e0b560c673d8b4a29b51da64406ee5f8219a2",
+                  "src/apprt/win32/App.zig":  "b42370ab327ac8513778939b45c69d34a85e199a0f0186afaabf0c8aff6cd5fc",
                   "src/apprt/win32/app_restart.zig":  "cb29ce354e630b7509f501fdb56a70b34bb21a06fbbc6b232ca40083f952dd25",
                   "src/apprt/win32/arp_orphan.zig":  "fd1ca05529e1196fda78983b639c3cf5d93ad3b0ad1640ccbffba158764626fc",
                   "src/apprt/win32/ArpOrphanSweep.zig":  "84bc2b0e4717d2fa8fc18d8cfb68a77440d2089c719b6c4a52941b8f8be89c1f",
@@ -202,7 +202,7 @@
                   "src/apprt/win32/menu_activation.zig":  "52008ebc1041b2cfbfb504eb954b92979312509ee4c78d8956fbd45043f0a90d",
                   "src/apprt/win32/menu_bar.zig":  "e1a9a5a28999ef0e2b9185306797076f46696ded5705c0a4390ab0a91a6e70a0",
                   "src/apprt/win32/menu_label.zig":  "a0de304b15968486fbaba1ea66a4549aabecc4e5c1b9881e6b41f43ad0d90d7b",
-                  "src/apprt/win32/msg_timer.zig":  "13ecd51b3d7cc11c97bbcc88ef9b9111577dad74d6b3c5fcfdf00dc8a044631d",
+                  "src/apprt/win32/msg_timer.zig":  "d346997ea9adfd3f4547cd66910e88101002c17710471898e4643a8f1f1acd1b",
                   "src/apprt/win32/NewProcessDialog.zig":  "c3879674e8ac21ef656f29c1a280a1bd833ba23a23ec23623864e6075e999157",
                   "src/apprt/win32/occlusion.zig":  "efe06766422d41454190b9be5d3a865ef33814801f5fb9158e326392eb39d338",
                   "src/apprt/win32/opacity_mode.zig":  "15862807a7578171d1b1c2b45c81f0de2951af89133c4d40cd1a5fd03d3ac07f",
@@ -278,8 +278,10 @@
                   "src/apprt/win32/region_select.zig":  "52142410f42673a6df6cf22e10244c7bb5d9d7afd6a0158bc9380fa2bad4db95",
                   "src/apprt/win32/RegionSelector.zig":  "195e4cfd88e9ee9eed60b00f2b5c150b407b868e49d20a18d9f3f85fa4a3092a",
                   "src/apprt/win32/relaunch_guard.zig":  "3cc0c7d3961eb984559da32e7e6ab36db57795d1e0165bc5fe9fe71104c2b847",
+                  "src/apprt/win32/relay_manifest.zig":  "e61a162c68e9c38a4ad69ae96f387c316deb07eef079ee879ee49c6308376445",
                   "src/apprt/win32/relay_signout.zig":  "994dc25858584da4db9520c7933cb40ddff6b1b9ed803117bf7a7867689114ed",
                   "src/apprt/win32/RelayAccountRow.zig":  "1a98979fa009d3e2d9687a4dc307e94b4ea245330efcecbe1f080fa626005227",
+                  "src/apprt/win32/RelayWindowRestore.zig":  "ad13c74872df69fbc2e743ea88cb27476472b353cb0917c1ab09fa010e37d065",
                   "src/apprt/win32/release_notes.zig":  "54904539dc626e7f1d32c10b2c55177fd2bccb7634bd15789e0e6f2b15536f3d",
                   "src/apprt/win32/release_notes_bundle.zig":  "726d7ab4b5a19c6fdd840ae9af57452d287f1dce30c9d3737111425b4c2920ce",
                   "src/apprt/win32/reload_gate.zig":  "2ff59ffdcd9e7d49ed03adf6f31496a55daadb5a047eacb0c16f5e2fb44bf6cf",
@@ -370,7 +372,7 @@
                   "src/apprt/win32/tray_notify.zig":  "438ad677381ef9f53b06473e00de87530b524a401fc78cad5414a5e26cc4480f",
                   "src/apprt/win32/trend_gauge.zig":  "8e40bbb1bb211dddaa315851043ecabdc88fb365a735ce5dbd2f062ba90e3483",
                   "src/apprt/win32/type_ramp.zig":  "c7c36e8fa6e894ad362e6d91a78518a5c0d24a7ff6a47cd5c6d79a42d376b7b9",
-                  "src/apprt/win32/update_apply.zig":  "8626d9256e757aedb41b0757a398e2aa3278cb2d2c99ad631911a27b50d08fc9",
+                  "src/apprt/win32/update_apply.zig":  "3aa5e8f072db7d450da4f477dbb3cb5fe730966f6b748c5e67f44c9acace7e9d",
                   "src/apprt/win32/update_auto_apply.zig":  "8f591a386f1d0b3cc6c0aa3378877a0e9a1a906980add59353ca598610da11ff",
                   "src/apprt/win32/update_badge.zig":  "ae2e792492c96ae7b19ac3e7a08fa87e1f34d56e5a47c0ed1469fd54a859a546",
                   "src/apprt/win32/update_check.zig":  "e8c76a63e80081788c5f082f1f2b9282ac78e19ff132a590c87767a658500489",
@@ -435,7 +437,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "cfce2ad2bb8318e449786ef898bb9e6bafff1546981ed3361218846b0a4b3207",
-                  "src/apprt/win32/Window.zig":  "ff27b351f864e7087b72ce5b89f25665e8f81d75a10507ee4b0184a46c58fcc2",
+                  "src/apprt/win32/Window.zig":  "e88e53ea2c007257bf512ee8815e87eedf6f1e3cc9412bb0a4201d3d87ec2191",
                   "src/apprt/win32/window_active.zig":  "9c82c52ed63a12a6670d7d1dd891f8f59c504ce50811e3a65620f647e787f944",
                   "src/apprt/win32/window_broadcast.zig":  "fc5995714ac90f0cd549c8ab3466748b2cc43bb47593ba01e439c358a8f0b054",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
@@ -663,6 +665,6 @@
                   "src/termio/title_pace.zig":  "914afed249d211b9f119a1f551b1012008c75c2d4f9f1373639d40435eddf32d",
                   "test/win32/lib/SeamAudit.ps1":  "209b551bd95a6e77fbd4c47f40dd4cd8401b81b6c43503acd9ca77534c171b82",
                   "test/win32/seam-audit.ps1":  "e7ef6b8614ad022f48f0cfa94c7183270545ba2d3f29fc2e0b14669429e6c586",
-                  "test/win32/seam-audit.registry.json":  "22bad70decb0961eb27f868fcc55206ec3b9ed14bb1fbdd3cc611c6979e7f0d6"
+                  "test/win32/seam-audit.registry.json":  "618d14bc5859f1e553c1facedad7e6c7ce02a17bed36c8dbeaf763ddf48b1e11"
               }
 }

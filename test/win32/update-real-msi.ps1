@@ -79,6 +79,9 @@ $env:GHOZTTY_NO_STARTUP_ESCAPE = '1'
 # test\win32\update-graceful.ps1, which drives the same machinery through the
 # graceful close-and-reopen this harness stubs out.
 . (Join-Path $PSScriptRoot 'lib\ThrowawayProduct.ps1')
+# The proof that the user's real install was never reached (T3394): the
+# package pre-flight that refuses msiexec, and the before/after snapshot.
+. (Join-Path $PSScriptRoot 'lib\UserInstallSentinel.ps1')
 # The registered-ProductVersion decode D reads (T2168).
 . (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'scripts\lib\ArpVersion.ps1')
 # -ReleaseSandbox, not a bare suffix: everything this script launches is a
@@ -107,12 +110,13 @@ function Assert([bool]$cond, [string]$label) {
 function Skip([string]$label) { $script:skip++; Write-Host "SKIP  $label" -ForegroundColor Yellow }
 
 $pathBefore = Get-UserPathEntryCount
-$userInstallBefore = if (Test-Path $userInstallDir) {
-    @(Get-ChildItem $userInstallDir -Recurse -File -ErrorAction SilentlyContinue).Count
-} else { -1 }
-$userExeVersionBefore = if (Test-Path (Join-Path $userInstallDir 'ghoztty.exe')) {
-    (Get-Item (Join-Path $userInstallDir 'ghoztty.exe')).LastWriteTimeUtc.Ticks
-} else { 0 }
+# What the user's install IS before anything here runs an installer (T3394):
+# its registered product and version, every file, and a hash of the three live
+# images. E compares against it. The old check - a file count and the exe's
+# mtime - read the 2026-11-22 damage (the agent renamed aside, nothing
+# rewritten) as clean.
+$runStarted = Get-Date
+$userSnapBefore = Get-UserInstallSnapshot -Dir $userInstallDir
 
 try {
 
@@ -142,6 +146,21 @@ $upNew = Get-MsiProperty -Msi $msiNew -Name 'UpgradeCode'
 Assert ($upOld -eq $upNew -and $upOld -ne '') 'A: both packages share one throwaway UpgradeCode'
 Assert ($upOld -ne '{5EB02044-7F06-498B-B7A9-7EFD65486CFB}') "A: that UpgradeCode is NOT the shipping product's"
 Assert ((Get-MsiProperty -Msi $msiOld -Name 'ProductName') -eq $Identity) 'A: the older package is the throwaway product'
+
+# The REFUSAL (T3394). The asserts above score the rewrite; this stops the run
+# when it did not take, before any msiexec can act on the user's product. An
+# Upgrade-table row naming the shipping code would remove the user's terminal
+# even under a fresh UpgradeCode, so that is checked too.
+$reach = @()
+foreach ($m in @($msiOld, $msiNew)) {
+    foreach ($r in @(Get-PackageUserProductReach -Msi $m)) { $reach += "$(Split-Path $m -Leaf): $r" }
+}
+Assert ($reach.Count -eq 0) "A: neither package can reach the user's installed Ghoztty$(if ($reach.Count) { ' - ' + ($reach -join '; ') })"
+if ($reach.Count -gt 0) {
+    Write-Host "`nREFUSED: no msiexec was run - the packages are not a throwaway identity." -ForegroundColor Red
+    Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped $script:skip -Unit 'checks'
+    exit 1
+}
 
 # ================================================ B. install the old release
 Write-Host "`n-- B. install $OldTag for real --"
@@ -322,6 +341,15 @@ Stop-ThrowawayInstances -InstallDir $installDir -RealLocalAppData $realLocalAppD
 
 # =============================================== D. the applier installs it
 Write-Host "`n-- D. the applier runs msiexec and the version moves --"
+
+# The applier runs msiexec on whatever the app STAGED, which is a download,
+# not the file A checked - so it is checked again, and a package that could
+# reach the user's product is never handed to the applier (T3394).
+if ($staged) {
+    $stagedReach = @(Get-PackageUserProductReach -Msi $staged)
+    Assert ($stagedReach.Count -eq 0) "D: the staged package cannot reach the user's installed Ghoztty$(if ($stagedReach.Count) { ' - ' + ($stagedReach -join '; ') })"
+    if ($stagedReach.Count -gt 0) { $staged = $null }
+}
 
 if (-not $staged) {
     Skip 'D: nothing was staged to install'
@@ -567,17 +595,10 @@ if ($swept) {
     Assert ($leftAfter -eq '') "E: the next launch swept everything the update left ($leftNote)"
 }
 
-# The whole reason a throwaway identity was worth building. If any of these
-# three moved, the test upgraded the user's terminal.
+# The whole reason a throwaway identity was worth building. The full proof -
+# registration, every file, the live images' hashes and the installer's own
+# event record (T3394) - runs in the finally, after the cleanup's msiexec /x.
 Assert (Test-Path $userInstallDir) 'E: the user''s Ghoztty install directory is still there'
-$userInstallAfter = if (Test-Path $userInstallDir) {
-    @(Get-ChildItem $userInstallDir -Recurse -File -ErrorAction SilentlyContinue).Count
-} else { -1 }
-Assert ($userInstallAfter -eq $userInstallBefore) "E: its file count is unchanged ($userInstallBefore -> $userInstallAfter)"
-$userExeVersionAfter = if (Test-Path (Join-Path $userInstallDir 'ghoztty.exe')) {
-    (Get-Item (Join-Path $userInstallDir 'ghoztty.exe')).LastWriteTimeUtc.Ticks
-} else { 0 }
-Assert ($userExeVersionAfter -eq $userExeVersionBefore) 'E: the user''s ghoztty.exe was not rewritten'
 
 Complete-TestBody
 
@@ -595,6 +616,16 @@ Complete-TestBody
     } else {
         Write-Host "`n-- cleanup SKIPPED (-KeepInstall) --"
     }
+
+    # The user's install, measured AFTER the cleanup (T3394): the cleanup runs
+    # `msiexec /x` too, and a run that threw half-way never reached its own
+    # checks - so this lives in the finally, where every path ends.
+    $userDiff = Compare-UserInstallSnapshot -Before $userSnapBefore -After (Get-UserInstallSnapshot -Dir $userInstallDir)
+    if ($userDiff) { Write-Host "  user install changed:`n    $($userDiff -replace "`n", "`n    ")" -ForegroundColor Red }
+    Assert (-not $userDiff) 'E: the user''s install is byte-for-byte what it was (product, version, files, image hashes)'
+    $userEvents = Get-UserProductInstallerEvents -Since $runStarted
+    if ($userEvents) { Write-Host "  installer events naming the user's product:`n    $($userEvents -replace "`n", "`n    ")" -ForegroundColor Red }
+    Assert (-not $userEvents) 'E: Windows Installer logged nothing against the user''s product during the run'
 }
 
 Write-Host ''

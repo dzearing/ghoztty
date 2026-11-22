@@ -109,6 +109,9 @@ $env:GHOZTTY_NO_STARTUP_ESCAPE = '1'
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\PaneLiveness.ps1')
 . (Join-Path $PSScriptRoot 'lib\ThrowawayProduct.ps1')
+# The proof that the user's real install was never reached (T3394): the
+# package pre-flight that refuses msiexec, and the before/after snapshot.
+. (Join-Path $PSScriptRoot 'lib\UserInstallSentinel.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 # -ReleaseSandbox, not a bare suffix: everything this script launches is a
@@ -159,15 +162,14 @@ $WM_QUERYENDSESSION = 0x0011
 $WM_ENDSESSION = 0x0016
 $ENDSESSION_CLOSEAPP = 1
 
-# The user's install, measured before anything runs and again in H. If either
-# of these moves, this harness upgraded the user's terminal.
+# The user's install, measured before anything runs and again after the
+# cleanup (T3394): its registered product and version, every file, and a hash
+# of the three live images. The old check - a file count and the exe's mtime -
+# read the 2026-11-22 damage (the agent renamed aside, nothing rewritten) as
+# clean.
 $pathBefore = Get-UserPathEntryCount
-$userInstallBefore = if (Test-Path $userInstallDir) {
-    @(Get-ChildItem $userInstallDir -Recurse -File -ErrorAction SilentlyContinue).Count
-} else { -1 }
-$userExeStampBefore = if (Test-Path (Join-Path $userInstallDir 'ghoztty.exe')) {
-    (Get-Item (Join-Path $userInstallDir 'ghoztty.exe')).LastWriteTimeUtc.Ticks
-} else { 0 }
+$runStarted = Get-Date
+$userSnapBefore = Get-UserInstallSnapshot -Dir $userInstallDir
 
 # ===================================================== A. packages (preflight)
 Write-Host "`n-- A. throwaway packages from the published releases --"
@@ -201,6 +203,21 @@ Assert ([version]$prodOld -lt [version]$prodNew) "A7 and BELOW the published one
 $codeOld = Get-MsiProperty -Msi $msiOld -Name 'ProductCode'
 $codeNew = Get-MsiProperty -Msi $msiNew -Name 'ProductCode'
 Assert ($codeOld -ne $codeNew) 'A8 they are two distinct products under that one UpgradeCode'
+
+# The REFUSAL (T3394). The asserts above score the rewrite; this stops the run
+# when it did not take, before any msiexec can act on the user's product. An
+# Upgrade-table row naming the shipping code would remove the user's terminal
+# even under a fresh UpgradeCode, so that is checked too.
+$reach = @()
+foreach ($m in @($msiOld, $msiNew)) {
+    foreach ($r in @(Get-PackageUserProductReach -Msi $m)) { $reach += "$(Split-Path $m -Leaf): $r" }
+}
+Assert ($reach.Count -eq 0) "A9 neither package can reach the user's installed Ghoztty$(if ($reach.Count) { ' - ' + ($reach -join '; ') })"
+if ($reach.Count -gt 0) {
+    Write-Host "`nREFUSED: no msiexec was run - the packages are not a throwaway identity." -ForegroundColor Red
+    Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped $script:skip -Label 'update-graceful'
+    exit 1
+}
 
 $td = New-TestDesktop -Interactive:$Interactive
 $appProc = $null
@@ -302,6 +319,14 @@ try {
     # ============================================================ D. the join
     Write-Host "`n-- D. arm on the LIVE app, close it the installer's way, install --"
 
+    # The applier runs msiexec on whatever the app STAGED - a download, not the
+    # file A checked - so it is checked again and never handed over if it could
+    # reach the user's product (T3394).
+    if ($staged) {
+        $stagedReach = @(Get-PackageUserProductReach -Msi $staged)
+        Assert ($stagedReach.Count -eq 0) "C3 the staged package cannot reach the user's installed Ghoztty$(if ($stagedReach.Count) { ' - ' + ($stagedReach -join '; ') })"
+        if ($stagedReach.Count -gt 0) { $staged = $null }
+    }
     if (-not $staged) {
         Skip 'D  nothing was staged, so there is no update to apply'
     } else {
@@ -461,14 +486,8 @@ try {
     Write-Host "`n-- H. nothing of the user's was touched --"
 
     Assert (Test-Path $userInstallDir) "H1 the user's Ghoztty install directory is still there"
-    $userInstallAfter = if (Test-Path $userInstallDir) {
-        @(Get-ChildItem $userInstallDir -Recurse -File -ErrorAction SilentlyContinue).Count
-    } else { -1 }
-    Assert ($userInstallAfter -eq $userInstallBefore) "H2 its file count is unchanged ($userInstallBefore -> $userInstallAfter)"
-    $userExeStampAfter = if (Test-Path (Join-Path $userInstallDir 'ghoztty.exe')) {
-        (Get-Item (Join-Path $userInstallDir 'ghoztty.exe')).LastWriteTimeUtc.Ticks
-    } else { 0 }
-    Assert ($userExeStampAfter -eq $userExeStampBefore) "H3 the user's ghoztty.exe was not rewritten"
+    # H2/H3, the full proof (T3394), run in the finally - after the cleanup's
+    # msiexec /x, and on every path, including one that threw half-way.
 
     # LAST statement of the top-level try (T1039): an unwind from anywhere above
     # must not reach the verdict as if the run had finished.
@@ -487,6 +506,16 @@ try {
     } else {
         Write-Host '  install kept (-KeepInstall)'
     }
+
+    # The user's install, measured AFTER the cleanup (T3394): the cleanup runs
+    # `msiexec /x` too, and a run that threw half-way never reached its own
+    # checks - so this lives in the finally, where every path ends.
+    $userDiff = Compare-UserInstallSnapshot -Before $userSnapBefore -After (Get-UserInstallSnapshot -Dir $userInstallDir)
+    if ($userDiff) { Write-Host "  user install changed:`n    $($userDiff -replace "`n", "`n    ")" -ForegroundColor Red }
+    Assert (-not $userDiff) 'H2 the user''s install is byte-for-byte what it was (product, version, files, image hashes)'
+    $userEvents = Get-UserProductInstallerEvents -Since $runStarted
+    if ($userEvents) { Write-Host "  installer events naming the user's product:`n    $($userEvents -replace "`n", "`n    ")" -ForegroundColor Red }
+    Assert (-not $userEvents) 'H3 Windows Installer logged nothing against the user''s product during the run'
 }
 
 # --- stamp (T783) ----------------------------------------------------------
