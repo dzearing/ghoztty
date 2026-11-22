@@ -197,9 +197,61 @@ fn consoleProcessCount() usize {
 /// so it can never steal one, and the window in which we are a member of the
 /// caller's console (and would receive its Ctrl-C) is microseconds wide with
 /// nothing in it.
+///
+/// The round trip must leave the standard handles exactly as it found them
+/// (T3376). `AttachConsole` repoints all three at the parent's console, and
+/// `FreeConsole` closes those console handles WITHOUT clearing the slots, so
+/// the slots are left holding closed handle numbers. The next handle this
+/// process creates reuses one of them: on 2026-11-21 it was the IPC listener's
+/// named pipe, so stderr became the app's own pipe. In a Debug build every log
+/// line then failed with ERROR_PIPE_LISTENING, std's diagnostic print for that
+/// unexpected error failed the same way, and the recursion ate the whole 16 MB
+/// main stack - a crash 8s after a cold auto-launch. In a release build the
+/// same log lines would be written INTO whatever object took the number.
 fn parentOwnsConsole() bool {
     if (consoleProcessCount() != 0) return false;
-    if (AttachConsole(ATTACH_PARENT_PROCESS) == 0) return false;
+    const saved = std_handles.save();
+    if (AttachConsole(ATTACH_PARENT_PROCESS) == 0) {
+        // A failed attach changes nothing today, but restoring costs nothing
+        // and keeps the invariant independent of that detail.
+        std_handles.restore(saved);
+        return false;
+    }
     _ = FreeConsole();
+    std_handles.restore(saved);
     return true;
 }
+
+/// The three standard-handle slots, saved and put back around the probe.
+const std_handles = struct {
+    const windows = std.os.windows;
+    const ids = [_]windows.DWORD{
+        windows.STD_INPUT_HANDLE,
+        windows.STD_OUTPUT_HANDLE,
+        windows.STD_ERROR_HANDLE,
+    };
+
+    const Saved = [ids.len]?windows.HANDLE;
+
+    fn save() Saved {
+        var out: Saved = undefined;
+        for (ids, 0..) |id, i| out[i] = GetStdHandle(id);
+        return out;
+    }
+
+    fn restore(saved: Saved) void {
+        // NULL is what a detached process with no inherited handles started
+        // with, and SetStdHandle accepts it: GetStdHandle then answers NULL and
+        // a write fails cleanly instead of landing in a reused handle.
+        for (ids, 0..) |id, i| _ = SetStdHandle(id, saved[i]);
+    }
+};
+
+extern "kernel32" fn GetStdHandle(
+    nStdHandle: std.os.windows.DWORD,
+) callconv(.winapi) ?std.os.windows.HANDLE;
+
+extern "kernel32" fn SetStdHandle(
+    nStdHandle: std.os.windows.DWORD,
+    hHandle: ?std.os.windows.HANDLE,
+) callconv(.winapi) std.os.windows.BOOL;

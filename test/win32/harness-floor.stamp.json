@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-22T00:13:24-08:00",
-    "commit":  "a2eb2bb80",
+    "generated":  "2026-11-22T00:50:25-08:00",
+    "commit":  "e8dad8e85",
     "uncommitted":  [
-                        "test/win32/ipc-floor-setup.ps1",
-                        "test/win32/lib/FloorFixture.ps1"
+                        "test/win32/cli-launch-cwd.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
@@ -106,7 +105,7 @@
                   "test/win32/cli-argv-fidelity.ps1":  "c51d36e42d332a1085d12418098befe48a46aa119badb5173be35727cc598221",
                   "test/win32/click-coord-audit.ps1":  "cd83fc5d9f26712fd0c66245cb9fc86a2879206235fc7ffc9a47f5b43534d7c0",
                   "test/win32/cli-focus-policy.ps1":  "ced06854134a16c61ce7b11f30904368de56bab4a959c74ea94dba872a4f319c",
-                  "test/win32/cli-launch-cwd.ps1":  "4a377618f1c5954fa3459d6e1582cee72aa72a86b7346be41f96dc7aacc5b1a0",
+                  "test/win32/cli-launch-cwd.ps1":  "abaccba71a0caa55dc4de94474e9ca9ae8c24208b79d31f85650f1c3b4af890b",
                   "test/win32/clipboard-paste.ps1":  "090a1a91a8a84f4ca0e25f13e440bfc54993f07c5c38b539d94dff0f844e0d19",
                   "test/win32/clipboard-retry.ps1":  "43b4fe9e1b843df6e073bcec780f8b10a2051e948566c99a6c776d2e13992208",
                   "test/win32/cli-shim-redirect.ps1":  "d9270707fa5daba04008292352c21cfb3aa71a688528a10a3db2319484e5f3bb",

@@ -30,6 +30,11 @@
 #      a DETACHED_PROCESS spawn out of this script's own console-owning host,
 #      which is the only way to reach it from a Debug build.
 #
+#   F  the probe arm D runs leaves the standard handles as it found them
+#      (T3376): its AttachConsole/FreeConsole round trip used to leave them
+#      holding closed handle numbers, which the IPC listener then reused - a
+#      Debug crash, and in release, log lines written into the app's own pipe.
+#
 #   E  the marker does not leak. It is consumed and cleared on first read, so no
 #      pane's shell - and nothing the app or the local agent spawns - inherits an
 #      internal variable that would make it read as CLI in turn.
@@ -186,6 +191,72 @@ public static class T506Spawn {
         CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
         return pi.dwProcessId;
     }
+
+    // ---- arm F (T3376): what do the app's standard handles point at? ----
+    [StructLayout(LayoutKind.Sequential)] struct PROCESS_BASIC_INFORMATION {
+        public IntPtr Reserved1, PebBaseAddress, Reserved2a, Reserved2b, UniqueProcessId, Reserved3;
+    }
+    [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr h, int cls,
+        ref PROCESS_BASIC_INFORMATION pbi, int len, out int ret);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool ReadProcessMemory(IntPtr h, IntPtr addr,
+        byte[] buf, int size, out IntPtr read);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool DuplicateHandle(IntPtr srcProc, IntPtr src,
+        IntPtr dstProc, out IntPtr dst, uint access, bool inherit, uint options);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern uint GetFileType(IntPtr h);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetNamedPipeInfo(IntPtr h, out uint flags,
+        IntPtr outSize, IntPtr inSize, IntPtr maxInst);
+
+    static long ReadPtr(IntPtr proc, long addr) {
+        byte[] b = new byte[8]; IntPtr n;
+        if (!ReadProcessMemory(proc, new IntPtr(addr), b, 8, out n)) return -1;
+        return BitConverter.ToInt64(b, 0);
+    }
+
+    // One line per standard handle: "<name> value=0x.. kind=<none|dead|pipe-server|pipe-client|file|char|...>".
+    // The values come from PEB->ProcessParameters (x64: +0x20 -> StandardInput
+    // +0x20, StandardOutput +0x28, StandardError +0x30), which is what
+    // GetStdHandle reads and SetStdHandle writes. Each is duplicated into this
+    // process to ask what kernel object it names; a value that no longer
+    // duplicates is a closed slot (`dead`), which is harmless - WriteFile on it
+    // fails cleanly. `pipe-server` is the defect: the slot names a named pipe
+    // the app itself created (its IPC listener), so every log line goes INTO it.
+    public static string StdHandleKinds(int pid) {
+        const uint PROCESS_QUERY_INFORMATION = 0x0400, PROCESS_VM_READ = 0x0010, PROCESS_DUP_HANDLE = 0x0040;
+        IntPtr proc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_DUP_HANDLE, false, pid);
+        if (proc == IntPtr.Zero) return "ERROR open " + Marshal.GetLastWin32Error();
+        try {
+            var pbi = new PROCESS_BASIC_INFORMATION(); int ret;
+            int st = NtQueryInformationProcess(proc, 0, ref pbi, Marshal.SizeOf(typeof(PROCESS_BASIC_INFORMATION)), out ret);
+            if (st != 0) return "ERROR ntqip " + st;
+            long pp = ReadPtr(proc, pbi.PebBaseAddress.ToInt64() + 0x20);
+            if (pp <= 0) return "ERROR params";
+            var sb = new StringBuilder();
+            string[] names = { "stdin", "stdout", "stderr" };
+            for (int i = 0; i < 3; i++) {
+                long v = ReadPtr(proc, pp + 0x20 + 8 * i);
+                string kind;
+                IntPtr dup;
+                if (v == 0 || v == -1) kind = "none";
+                else if (!DuplicateHandle(proc, new IntPtr(v), GetCurrentProcess(), out dup, 0, false, 2)) kind = "dead";
+                else {
+                    uint t = GetFileType(dup);
+                    if (t == 3) {
+                        uint flags;
+                        if (GetNamedPipeInfo(dup, out flags, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero))
+                            kind = (flags & 1) != 0 ? "pipe-server" : "pipe-client";
+                        else kind = "pipe";
+                    } else if (t == 1) kind = "file";
+                    else if (t == 2) kind = "char";
+                    else kind = "type" + t;
+                    CloseHandle(dup);
+                }
+                sb.AppendFormat("{0} value=0x{1:x} kind={2}\n", names[i], v, kind);
+            }
+            return sb.ToString();
+        } finally { CloseHandle(proc); }
+    }
 }
 '@
 Add-Type -TypeDefinition $detachSrc -Language CSharp -ErrorAction SilentlyContinue | Out-Null
@@ -298,6 +369,31 @@ if ($consoleProcs -lt 1) {
     Assert "D2 the app launched a terminal pane" ($null -ne $paneD)
     AssertEq "D3 a parent that owns a console makes this a command line" `
         (Norm $workDir) (Norm $paneD.working_directory)
+
+    # ---- F (T3376): the probe leaves the standard handles as it found them --
+    # Arm D is the only launch that runs the parent-console probe, and the
+    # probe's AttachConsole repoints all three standard handles at the parent's
+    # console; FreeConsole then closes those console handles and leaves the
+    # slots holding the closed numbers. The next handle the app creates reuses
+    # one - on 2026-11-21 it was the IPC listener, so stderr WAS the app's own
+    # pipe. In a Debug build every log line then failed with 536, whose
+    # diagnostic print failed the same way, recursing until the 16 MB main
+    # stack ran out (crash 8s after a cold auto-launch, T3376). In a release
+    # build the same lines are written into whatever object took the number.
+    # By the time the pane exists the IPC listener is up, so the defect is in
+    # its final shape here. The child was spawned with no inherited handles and
+    # no STARTF_USESTDHANDLES, so it STARTED with none, and none is the only
+    # correct answer: before the fix all three named live objects the app had
+    # created for something else (0x220/0x224/0x228, type unknown, on the
+    # 2026-11-22 negative run), the pipe listener being the crash's case.
+    $kinds = if ($pidD -ne 0) { [T506Spawn]::StdHandleKinds($pidD) } else { 'ERROR no pid' }
+    $kinds.Trim() -split "`n" | ForEach-Object { "    $_" }
+    Assert "F1 the app's standard handles could be read" ($kinds -notmatch '^ERROR')
+    Assert "F2 no standard handle names one of the app's own pipe listeners" `
+        ($kinds -notmatch 'kind=pipe-server')
+    $live = @($kinds.Trim() -split "`n" | Where-Object { $_ -notmatch 'kind=(none|dead)\s*$' })
+    Assert "F3 all three standard handles are still empty after the probe (live: $($live -join '; '))" `
+        ($kinds -notmatch '^ERROR' -and $live.Count -eq 0)
     Stop-TestProcs
 }
 
