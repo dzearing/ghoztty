@@ -172,6 +172,35 @@ the first host where they meet both an LP64 C ABI and a POSIX `std.fs.path`:
   crash can hide the next: re-run until the lane is green, not until the first
   named failure is gone.
 
+## The agent on Linux (T3332)
+
+`floor.sh` carries two agent lanes, `agentx` (`zig build agent`) and `agent`
+(`zig build test-agent`), both with `-Dapp-runtime=none`: under the default gtk
+runtime the build's configure step wants a system `gtk4-layer-shell`, even for
+the GUI-free agent (T3358). Measured 2026-11-21: test-agent 2839 passed / 40
+skipped (the skips are Windows-only tests) in about a minute.
+
+- **glibc has no `getpeereid`.** The Mac binds it as an `extern "c"`; on Linux
+  the link fails with `undefined symbol: getpeereid`. `peerUid` in
+  `src/remote/agent/main.zig` reads `SO_PEERCRED` (a local `struct ucred`, which
+  zig 0.15's std does not declare) instead, and the real-socket test
+  `listen-unix: peerUid on a real accepted connection` covers it.
+- The rest already had Linux branches: `/proc/<pid>/cmdline` and `/exe` in
+  `single_instance.zig`, `/proc` sampling in `proc.zig` and `metrics.zig`,
+  `/proc/<pid>/cwd` in `pty_child.zig`, `xdg-open` in `enroll.zig`.
+
+Acceptance that a pane outlives its client (the GUI half is L8, T3337):
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\agent-survive.sh
+```
+
+It starts the agent by hand on an ephemeral loopback port with a private
+`HOME`/`XDG_RUNTIME_DIR`, opens a session with `remote-test-client
+--open-command=... --hold=1` whose command writes a heartbeat file, checks the
+heartbeat still advances after the client exits, then CLOSEs the session by id
+and checks it stops. Ends `AGENT SURVIVE: ALL PASS`.
+
 ## Distro state (2026-11-21)
 
 - Ubuntu 24.04.1 LTS, runs as `root` (`$HOME=/root`), 32 cores, 47 GB visible.

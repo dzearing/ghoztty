@@ -1993,8 +1993,10 @@ fn probeUnixAlive(path: []const u8) bool {
 /// `getpeereid(2)`: the effective uid/gid of the peer on a connected AF_UNIX
 /// socket. Cross-platform (macOS/BSD `LOCAL_PEERCRED`, Linux `SO_PEERCRED`); not
 /// declared in Zig std, so we bind it directly. Absent on Windows (unreachable —
-/// the unix listen mode is POSIX-only).
-const getpeereid = if (builtin.os.tag == .windows) struct {} else struct {
+/// the unix listen mode is POSIX-only) and on Linux, where glibc has no
+/// `getpeereid` at all (T3332: the link failed with `undefined symbol`), so
+/// `peerUid` reads `SO_PEERCRED` there instead.
+const getpeereid = if (builtin.os.tag == .windows or builtin.os.tag == .linux) struct {} else struct {
     extern "c" fn getpeereid(fd: c_int, euid: *posix.uid_t, egid: *posix.uid_t) c_int;
 }.getpeereid;
 
@@ -2002,6 +2004,15 @@ const getpeereid = if (builtin.os.tag == .windows) struct {} else struct {
 /// be read (a null result is treated as "reject" by `shouldServe`).
 fn peerUid(fd: posix.socket_t) ?posix.uid_t {
     if (builtin.os.tag == .windows) return null;
+    if (builtin.os.tag == .linux) {
+        // `struct ucred` from <sys/socket.h>; zig 0.15's std does not declare it.
+        const Ucred = extern struct { pid: i32, uid: posix.uid_t, gid: posix.gid_t };
+        var cred: Ucred = undefined;
+        var len: posix.socklen_t = @sizeOf(Ucred);
+        const rc = std.c.getsockopt(fd, posix.SOL.SOCKET, posix.SO.PEERCRED, @ptrCast(&cred), &len);
+        if (rc != 0 or len != @sizeOf(Ucred)) return null;
+        return cred.uid;
+    }
     var euid: posix.uid_t = undefined;
     var egid: posix.uid_t = undefined;
     if (getpeereid(fd, &euid, &egid) != 0) return null;

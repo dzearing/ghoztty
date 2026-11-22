@@ -12,8 +12,14 @@
 # Lanes, the same commands as floor-lane.ps1's lanes of the same name:
 #   lib   zig build -Dapp-runtime=none        compiles libghostty for Linux
 #   none  zig build test -Dapp-runtime=none   the pure-logic unit tests
+#   agentx zig build agent -Dapp-runtime=none       builds ghoztty-agent for Linux (T3332)
+#   agent  zig build test-agent -Dapp-runtime=none  the agent's tests, incl. real-pty (T3332)
 #
-# Pick lanes with FLOOR_LANES (default "lib none"), e.g. FLOOR_LANES=none.
+# The agent lanes pass -Dapp-runtime=none because the default runtime on Linux
+# is gtk, whose configure step needs a system gtk4-layer-shell that Ubuntu 24.04
+# does not package, even for the GUI-free agent (T3358).
+#
+# Pick lanes with FLOOR_LANES (default "lib none agentx agent"), e.g. FLOOR_LANES=none.
 # Each lane is bounded by FLOOR_LANE_TIMEOUT seconds (default 1800), so a
 # wedged lane ends as STALL rather than holding the wrapper forever.
 #
@@ -23,7 +29,7 @@
 # 'LINUX FLOOR: <n> FAILURE(S)'. Exit 0 only on ALL PASS. Full lane logs are
 # /tmp/linux-floor-<lane>.log inside the distro.
 set -u
-lanes=${FLOOR_LANES:-lib none}
+lanes=${FLOOR_LANES:-lib none agentx agent}
 limit=${FLOOR_LANE_TIMEOUT:-1800}
 fails=0
 
@@ -31,6 +37,8 @@ lane_args() {
     case "$1" in
         lib) echo "-Dapp-runtime=none" ;;
         none) echo "test -Dapp-runtime=none" ;;
+        agentx) echo "agent -Dapp-runtime=none" ;;
+        agent) echo "test-agent -Dapp-runtime=none" ;;
         *) return 1 ;;
     esac
 }
@@ -38,7 +46,7 @@ lane_args() {
 echo "LINUX FLOOR at $(git rev-parse --short HEAD 2>/dev/null || echo '?') lanes='$lanes' jobs=${GHOZTTY_WSL_JOBS:-default}"
 for lane in $lanes; do
     if ! args=$(lane_args "$lane"); then
-        echo "LANE $lane FAIL - unknown lane (known: lib none)"
+        echo "LANE $lane FAIL - unknown lane (known: lib none agentx agent)"
         fails=$((fails+1)); continue
     fi
     log=/tmp/linux-floor-$lane.log
