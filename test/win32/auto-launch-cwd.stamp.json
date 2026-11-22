@@ -1,8 +1,8 @@
 {
     "guard":  "auto-launch-cwd",
     "script":  "test/win32/auto-launch-cwd.ps1",
-    "generated":  "2026-11-22T07:20:18-08:00",
-    "commit":  "1577c31bc",
+    "generated":  "2026-11-22T08:00:17-08:00",
+    "commit":  "18f282b0e",
     "uncommitted":  [
 
                     ],

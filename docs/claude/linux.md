@@ -207,8 +207,11 @@ private runtime dir, so a test app can never meet the user's.
   `apprt/ipc/verbs.zig` (T3361): GTK supplies only the model (`Terminal`
   over the core Surface via `apprt/ipc/core_terminal.zig`, `lookupTerminal`,
   `input_line_ends = .pty`), so its argument handling, failure sentences and
-  replies are win32's by construction. A new verb body goes into `verbs.zig`
-  first (T3374, T3375), not into this file.
+  replies are win32's by construction. `+close`/`focus` (T3374) and
+  `+new-window`/`+split`/`+rename` plus `+list`'s split-tree walk (T3375)
+  are shared the same way: this file only opens the window or pane
+  (`openWindow`, `createSplit`) and builds a `+list` leaf. A new verb body
+  goes into `verbs.zig` first, not into this file.
   `+list`, `+version`, `+send-keys`, `+read`, `+new-window`, `+split`,
   `+rename`, `+close`, `+rearrange` and the `focus` action are real; every other verb
   answers `+<verb> is not served by the Linux app yet (<task>)`, naming the

@@ -1,15 +1,15 @@
 {
     "guard":  "window-title",
     "script":  "test/win32/window-title.ps1",
-    "generated":  "2026-11-20T23:15:15-08:00",
-    "commit":  "580556f1c",
+    "generated":  "2026-11-22T06:52:35-08:00",
+    "commit":  "18f282b0e",
     "uncommitted":  [
-                        "test/win32/window-title.ps1"
+
                     ],
     "files":  {
                   "src/apprt/win32/held_title.zig":  "4f983eaa6c37d9e93eb33e6e9cfb15ea837b41e7d719a9ba300ff235a1ab7f5c",
                   "src/apprt/win32/RenameDialog.zig":  "b35f3a9aa5d0f37015c997aa10a494b31cc4aa4c6e5fe956e0cd54f0bc7735dc",
-                  "src/apprt/win32/window_title_owner.zig":  "def309e4b6aed806940e2aceea5f14105f3db5f6334dc78ce34ef20ed254025f",
+                  "src/apprt/win32/window_title_owner.zig":  "fd9297b8fd558f51ec51cbcc65bd764197cd78c03fc5476540026ead6d8a63f7",
                   "test/win32/window-title.ps1":  "e648149d63cc562e8047298986f4e9008d2db024db71fb5139d79ed505890b32"
               },
     "code":  {

@@ -1,8 +1,8 @@
 {
     "guard":  "test-reach",
     "script":  "test/win32/test-reach-audit.ps1",
-    "generated":  "2026-11-22T07:11:33-08:00",
-    "commit":  "1577c31bc",
+    "generated":  "2026-11-22T07:49:05-08:00",
+    "commit":  "18f282b0e",
     "uncommitted":  [
 
                     ],
@@ -174,7 +174,7 @@
                   "src/apprt/win32/ipc_shortcut_guide.zig":  "ffbe20a34b9868b26615353dfab84d2b65d011faf27094c957711cdd4d756705",
                   "src/apprt/win32/ipc_whats_new.zig":  "35f9a55aca347095990a162cba08e95edf95b3ff9440b04c9dd58370a58e1d10",
                   "src/apprt/win32/ipc_workspaces.zig":  "c9b57d7078145c2e43b355192d211ed5eeff61b8484c57a706b13011766c0648",
-                  "src/apprt/win32/IpcHandlers.zig":  "8d8378ed589c8190f3f5710adc10831ca83818f8b78a00582eda9ad81929b5d3",
+                  "src/apprt/win32/IpcHandlers.zig":  "524ab33bafaad93bba75e96922ff6e67d47f0e9aae72f2fca07ec84f83bdd3a9",
                   "src/apprt/win32/IpcRegistry.zig":  "4337c643db3bcd081f639932420132e3b87f44213f8199f16de1b76e58d40e50",
                   "src/apprt/win32/IpcServer.zig":  "d52089f909a9bad6600892d1cc80030a3dccfa7b251a5215fb1b16bc0d4b6570",
                   "src/apprt/win32/job_escape.zig":  "060f58a8a8739baf8246aaca8cf5d4a0e6113bfa69e981fdc2282ea8a060cb7e",
@@ -443,7 +443,7 @@
                   "src/apprt/win32/window_memory.zig":  "5525d3e747fd7a5e272f8de1c82754c9139652ccefa7a51f71efbe30a9452d3a",
                   "src/apprt/win32/window_mode.zig":  "00649db1d8e0a4eb9f1f0dee317e7fb4bf8370526eff8c695a59265f00613308",
                   "src/apprt/win32/window_placement.zig":  "bacb6516f8f2367c869bd63f85d2722fc0145907560f5dab4deac07554a2cb6e",
-                  "src/apprt/win32/window_title_owner.zig":  "def309e4b6aed806940e2aceea5f14105f3db5f6334dc78ce34ef20ed254025f",
+                  "src/apprt/win32/window_title_owner.zig":  "fd9297b8fd558f51ec51cbcc65bd764197cd78c03fc5476540026ead6d8a63f7",
                   "src/apprt/win32/WindowPresenter.zig":  "a870489b12b1401f20c50398d123393d10187f6a50ce0dde446923734fa50b27",
                   "src/apprt/win32/winrt_comp.zig":  "dd700de7f7ffba1de068560c8cabeb545a46eb0de0adb6c5d011df051d3fb4e7",
                   "src/apprt/win32/worker_pool.zig":  "f1ee62197c73dbbd6c21143089ffbce3768f4f2434a1997b5ec5a1b471d44c65",
