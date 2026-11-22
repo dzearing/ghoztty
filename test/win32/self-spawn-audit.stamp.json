@@ -1,8 +1,8 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-11-22T00:52:38-08:00",
-    "commit":  "e8dad8e85",
+    "generated":  "2026-11-22T00:58:18-08:00",
+    "commit":  "3ce07f80a",
     "uncommitted":  [
 
                     ],
@@ -1132,6 +1132,6 @@
                   "src/unicode/symbols_uucode.zig":  "cb6ae86fe8549c435e11a2e038960aa9cae907aa89aa14598f8b6416c51b61ce",
                   "test/win32/lib/SelfSpawnAudit.ps1":  "97af60fbd58ea585cf651d137c4e35e0a1d3b35cea6a71bd3498117339d70999",
                   "test/win32/self-spawn-audit.ps1":  "f7be29f3b35947dbefe27866db48ad4524996c2486c748a0641c5012f1acb13a",
-                  "test/win32/self-spawn-audit.registry.json":  "d6c46e11203531c650810aae9400efca3767d139cc87b01530ee2405f47e7483"
+                  "test/win32/self-spawn-audit.registry.json":  "fffbdaf471d474e49fded6326644db8396d22a69c212165db845a766249a41fb"
               }
 }
