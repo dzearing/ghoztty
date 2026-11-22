@@ -193,7 +193,7 @@ hl_check "N11 +list follows the pane: url is the website, title its host" $? "le
 [ "$(pr 3)" = "probe OK Nav Two" ] && has "$(st 5)" "mode=markdown current=$fx/other.md address=$fx/other.md back=true forward=true reveal=true"
 hl_check "N12 Back from the website re-renders the file it left" $? "$(pr 3) / $(st 5)"
 
-[ "$(pr 4)" = "probe OK Nav One" ] && has "$(st 6)" "current=$fx/doc.md back=false forward=true"
+[ "$(pr 4)" = "probe OK Nav One" ] && has "$(st 6)" "current=$fx/doc.md " && has "$(st 6)" "back=false forward=true"
 hl_check "N13 Back again walks to the first file; nothing left behind it" $? "$(pr 4) / $(st 6)"
 
 [ "$(pr 5)" = "probe OK Nav Two" ]

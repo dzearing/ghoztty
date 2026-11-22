@@ -911,8 +911,8 @@ fn writeDump(text: []const u8) void {
 ///                   (`<Control>l`): `key <accel> handled=<bool>`
 ///   type <text>     replace the address field's text, as typing would
 ///   activate        press Return in the address field (its `activate`)
-///   click <button>  back|forward|reload|home|reveal - `gtk_widget_activate`,
-///                   which emits the button's own `clicked`
+///   click <button>  back|forward|reload|home|reveal - emits the button's own
+///                   `clicked`, as a pointer click does
 ///   wait            until the next render finishes (10 s): `wait ok=<bool>`
 ///   state           `state mode= current= address= back= forward= reveal=
 ///                   zoom= focus=address|content|other sel=<start>-<end>`
@@ -1003,7 +1003,9 @@ const steps = if (build_config.is_debug) struct {
                 const sens = wk.gtk_widget_get_sensitive(w) != 0;
                 const vis = wk.gtk_widget_get_visible(w) != 0;
                 // A real click cannot reach an insensitive or hidden button.
-                if (sens and vis) _ = wk.gtk_widget_activate(w);
+                // `clicked` itself, as a pointer click emits it: a button's
+                // keyboard `activate` delays it by 250 ms.
+                if (sens and vis) wk.g_signal_emit_by_name(w, "clicked");
                 out("click {s} sensitive={} visible={}", .{ arg, sens, vis });
             } else out("click {s} NO-SUCH-BUTTON", .{arg});
         } else if (std.mem.eql(u8, verb, "wait")) {
