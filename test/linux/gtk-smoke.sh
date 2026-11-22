@@ -7,9 +7,9 @@
 # (-Repo clone, the default, builds the committed HEAD in ~/ghoztty-l; add
 # -Repo mnt to build the live tree at /mnt speed.)
 #
-# The window opens in a PRIVATE headless Weston (its own XDG_RUNTIME_DIR and
-# socket), never in WSLg, so nothing ever appears on - or takes focus from - the
-# user's Windows desktop (go.md: NEVER PULL FOCUS FROM THE USER). glxinfo talks
+# The window opens in a PRIVATE headless Weston (test/linux/lib/headless.sh:
+# its own XDG_RUNTIME_DIR and socket), never in WSLg, so nothing ever appears
+# on - or takes focus from - the user's Windows desktop (go.md: NEVER PULL FOCUS FROM THE USER). glxinfo talks
 # to WSLg's XWayland but maps no window.
 #
 # Prerequisite: scripts/linux/setup-distro.sh has run once.
@@ -39,23 +39,18 @@ gpu=""
 if [ -e /dev/dxg ]; then export GALLIUM_DRIVER=d3d12; gpu=" (GALLIUM_DRIVER=d3d12)"; fi
 echo "INFO glxinfo$gpu: $(DISPLAY=:0 glxinfo -B 2>/dev/null | grep 'OpenGL renderer string' | sed 's/.*: //')"
 
-export XDG_RUNTIME_DIR=/tmp/gtk-smoke-xdg
-rm -rf "$XDG_RUNTIME_DIR"; mkdir -m 0700 "$XDG_RUNTIME_DIR"
-unset DISPLAY
-weston --backend=headless --renderer=gl --socket=wayland-smoke --width=1280 --height=800 --idle-time=0 > /tmp/gtk-smoke-weston.log 2>&1 &
-wpid=$!
-for _ in $(seq 1 100); do [ -S "$XDG_RUNTIME_DIR/wayland-smoke" ] && break; sleep 0.1; done
-[ -S "$XDG_RUNTIME_DIR/wayland-smoke" ]
-check "S4 a private headless Weston is up" $? "$(tail -2 /tmp/gtk-smoke-weston.log)"
+# The private headless compositor is the shared harness (T3333): it refuses to
+# launch anything while the environment could still reach WSLg.
+. "$PWD/test/linux/lib/headless.sh"
+hl_start
+check "S4 a private headless Weston is up" $? "$(tail -2 "${HL_WESTON_LOG:-/dev/null}" 2>/dev/null)"
 
-export WAYLAND_DISPLAY=wayland-smoke GDK_BACKEND=wayland
-mark=/tmp/gtk-smoke-shell-ran
-rm -f "$mark"
-applog=/tmp/gtk-smoke-app.log
-timeout 30 ./zig-out/bin/ghoztty --gtk-single-instance=false \
-    -e /bin/sh -c "tty > $mark; sleep 60" > "$applog" 2>&1 &
-apid=$!
-for _ in $(seq 1 200); do [ -s "$mark" ] && break; sleep 0.1; done
+app=$(hl_ghoztty) || app=./zig-out/bin/ghoztty
+mark="$HL_RUNTIME/shell-ran"
+hl_launch APP timeout 30 "$app" --gtk-single-instance=false -e /bin/sh -c "tty > $mark; sleep 60"
+apid=$APP
+applog=$APP_LOG
+hl_wait_for 20 test -s "$mark"
 [ -s "$mark" ] && grep -q '^/dev/pts/' "$mark"
 check "S5 the window's shell ran on a pty" $? "mark=$(cat "$mark" 2>/dev/null)"
 sleep 1
@@ -67,9 +62,7 @@ echo "INFO app renderer: $(grep -m1 'loaded OpenGL' "$applog" | sed 's/.*loaded 
 ! grep -qE '^(panic|thread [0-9]+ panic)|reached unreachable' "$applog"
 check "S8 no panic in the app log" $?
 
-kill $apid 2>/dev/null; wait $apid 2>/dev/null
-kill $wpid 2>/dev/null; wait $wpid 2>/dev/null
-rm -rf "$XDG_RUNTIME_DIR" "$mark"
+hl_stop
 
 if [ $fails = 0 ]; then echo "GTK SMOKE: ALL PASS"; exit 0; fi
 echo "GTK SMOKE: $fails FAILURE(S)"; exit 1
