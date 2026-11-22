@@ -1,0 +1,16 @@
+{
+    "guard":  "chooser-open-chord",
+    "script":  "test/win32/chooser-open-chord.ps1",
+    "generated":  "2026-11-22T01:28:50-08:00",
+    "commit":  "53df4cd56",
+    "uncommitted":  [
+                        "test/win32/chooser-open-chord.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
+                  "test/win32/chooser-open-chord.ps1":  "5c05cdf6638181c3ce19595e6d142f0508a829220136260efeb88f8b39ce36b1"
+              },
+    "code":  {
+                 "test/win32/chooser-open-chord.ps1":  "code1:ceab6865837cebc01a6d470f1066982337409a5ff5b019e094d5b7fe5aa35bce"
+             }
+}

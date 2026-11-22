@@ -1,0 +1,17 @@
+{
+    "guard":  "chooser-menu",
+    "script":  "test/win32/chooser-menu.ps1",
+    "generated":  "2026-11-22T01:28:33-08:00",
+    "commit":  "53df4cd56",
+    "uncommitted":  [
+                        "test/win32/chooser-menu.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/chooser_menu.zig":  "9bf2b649e019b931e31deefc684e09cdec2a49ba7f54d2adecb7edc3fd474cc1",
+                  "src/remote/relay_directory.zig":  "69b406e2f41856cf317780028cca84c214d7e8a8a30193f45de94e35c8c514a0",
+                  "test/win32/chooser-menu.ps1":  "ce2af4d14bdfe8c974a86591af0337dff8a4061a0d1dff60c4971519c952d87e"
+              },
+    "code":  {
+                 "test/win32/chooser-menu.ps1":  "code1:d7a483a34f6e2817fe4307eae845d0f2ad9c8e4151f87c94e3f4ec7dc7bafa4f"
+             }
+}

@@ -70,6 +70,9 @@ if (-not (Test-Path $Exe)) { $Exe = Join-Path $repo 'zig-out\bin\ghoztty.exe' }
 $env:GHOZTTY_PIPE_SUFFIX = "-killhover$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp below is
+# refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -317,6 +320,7 @@ try {
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'the app survived the whole hover drive'
     $script:drove = $true
 
+    Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     Remove-TestDesktop
     Stop-DebugGhoztty
@@ -339,10 +343,10 @@ if ($NegativeControl -and -not $script:negReached) {
 
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ''
-if ($script:fail -eq 0) {
-    Write-Host "CHOOSER-KILL-HOVER ACCEPTANCE: ALL PASS ($($script:pass) assertions)"
-    exit 0
-} else {
-    Write-Host "CHOOSER-KILL-HOVER ACCEPTANCE: $($script:fail) FAILURE(S) ($($script:pass) passed)" -ForegroundColor Red
-    exit 1
+if ($script:fail -eq 0 -and -not $NegativeControl) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard chooser-kill-hover -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
+Write-TestVerdict -Label 'CHOOSER-KILL-HOVER ACCEPTANCE' -Pass $script:pass -Fail $script:fail

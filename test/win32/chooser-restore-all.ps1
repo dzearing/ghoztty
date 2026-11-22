@@ -78,6 +78,9 @@ $env:GHOZTTY_PIPE_SUFFIX = "-t335$PID"
 # T652: the "attached is not alive" oracle. Read its header before adding an
 # assertion about a recovered pane.
 . (Join-Path $PSScriptRoot 'lib\PaneLiveness.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp below is
+# refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -442,12 +445,17 @@ try {
     $shapesFinal = @(Get-WindowShapes)
     Assert ($shapesFinal.Count -eq $shapesAfter.Count) `
         "the window count did not change ($($shapesFinal.Count))"
+    Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     Stop-RepoProcesses @('ghoztty', 'ghoztty-agent')
     Remove-TestDesktop
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red }
-exit ([int]($script:fail -gt 0))
+if ($script:fail -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard chooser-restore-all -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Pass $script:pass -Fail $script:fail

@@ -494,6 +494,117 @@ $GuardTable = @(
             'src\apprt\win32\job_spawn.zig'
         )
     },
+    # T1768: the chooser family. Each row names the module where its behavior is
+    # decided. MachineChooser.zig appears only where the property lives in that
+    # file and nowhere else (the two hover rows: the TME_LEAVE arms are its own
+    # window procedures), on the chooser-modeless precedent; the rest leave it
+    # out for the reason the chooser-resume row gives.
+    # One warm relay connection per remote machine, counted on the relay's own
+    # request log (T461).
+    [pscustomobject]@{
+        Name   = 'chooser-conn-pool'
+        Script = 'test\win32\chooser-conn-pool.ps1'
+        Stamp  = 'test\win32\chooser-conn-pool.stamp.json'
+        Covers = @(
+            'test\win32\chooser-conn-pool.ps1',
+            'src\apprt\win32\MachineConnectionPool.zig',
+            'src\apprt\win32\machine_pool.zig'
+        )
+    },
+    # A session card's Kill hover clears when the pointer leaves the chooser
+    # straight from the button (T588): the dialog's TME_LEAVE arm and the
+    # roster's hover state it clears.
+    [pscustomobject]@{
+        Name   = 'chooser-kill-hover'
+        Script = 'test\win32\chooser-kill-hover.ps1'
+        Stamp  = 'test\win32\chooser-kill-hover.stamp.json'
+        Covers = @(
+            'test\win32\chooser-kill-hover.ps1',
+            'src\apprt\win32\MachineChooser.zig',
+            'src\apprt\win32\SessionRoster.zig'
+        )
+    },
+    # The Sign Out link's underline clears when the pointer leaves the window
+    # straight from the link (T315): the link's subclass proc and the account
+    # row it sits in.
+    [pscustomobject]@{
+        Name   = 'chooser-link-hover'
+        Script = 'test\win32\chooser-link-hover.ps1'
+        Stamp  = 'test\win32\chooser-link-hover.stamp.json'
+        Covers = @(
+            'test\win32\chooser-link-hover.ps1',
+            'src\apprt\win32\MachineChooser.zig',
+            'src\apprt\win32\RelayAccountRow.zig'
+        )
+    },
+    # The per-row "..." menu's shape and its Rename / Remove relay calls
+    # (T176), proven by a stateful fake relay's request log.
+    [pscustomobject]@{
+        Name   = 'chooser-menu'
+        Script = 'test\win32\chooser-menu.ps1'
+        Stamp  = 'test\win32\chooser-menu.stamp.json'
+        Covers = @(
+            'test\win32\chooser-menu.ps1',
+            'src\apprt\win32\chooser_menu.zig',
+            'src\remote\relay_directory.zig'
+        )
+    },
+    # Ctrl+Shift+N opens the chooser wherever the window's focus is - a
+    # terminal, a viewer, the bare top-level (T746).
+    [pscustomobject]@{
+        Name   = 'chooser-open-chord'
+        Script = 'test\win32\chooser-open-chord.ps1'
+        Stamp  = 'test\win32\chooser-open-chord.stamp.json'
+        Covers = @(
+            'test\win32\chooser-open-chord.ps1',
+            'src\apprt\win32\window_chord.zig'
+        )
+    },
+    # Restore All rebuilds a machine's topology from the AGENT's layout copy
+    # (T335), offered only for two or more live sessions.
+    [pscustomobject]@{
+        Name   = 'chooser-restore-all'
+        Script = 'test\win32\chooser-restore-all.ps1'
+        Stamp  = 'test\win32\chooser-restore-all.stamp.json'
+        Covers = @(
+            'test\win32\chooser-restore-all.ps1',
+            'src\apprt\win32\RestoreAllLocal.zig',
+            'src\apprt\win32\layout_blobs.zig'
+        )
+    },
+    # The local Restore All's own rebuild into an already-running viewer
+    # (T486): the arm launch-time restore no longer exercises.
+    [pscustomobject]@{
+        Name   = 'chooser-restore-all-adopt'
+        Script = 'test\win32\chooser-restore-all-adopt.ps1'
+        Stamp  = 'test\win32\chooser-restore-all-adopt.stamp.json'
+        Covers = @(
+            'test\win32\chooser-restore-all-adopt.ps1',
+            'src\apprt\win32\RestoreAllLocal.zig'
+        )
+    },
+    # A roster refetch keeps the scroll offset and the cursor (T333).
+    [pscustomobject]@{
+        Name   = 'chooser-roster-refetch'
+        Script = 'test\win32\chooser-roster-refetch.ps1'
+        Stamp  = 'test\win32\chooser-roster-refetch.stamp.json'
+        Covers = @(
+            'test\win32\chooser-roster-refetch.ps1',
+            'src\apprt\win32\SessionRoster.zig'
+        )
+    },
+    # The session roster end to end: off-thread load, painted cards, Kill, and
+    # only actionable rows offered (T318, T1791).
+    [pscustomobject]@{
+        Name   = 'chooser-sessions'
+        Script = 'test\win32\chooser-sessions.ps1'
+        Stamp  = 'test\win32\chooser-sessions.stamp.json'
+        Covers = @(
+            'test\win32\chooser-sessions.ps1',
+            'src\apprt\win32\SessionRoster.zig',
+            'src\apprt\win32\chooser_sessions.zig'
+        )
+    },
     # The overview action (T708): the only thing that proves a bound
     # `toggle_tab_overview` actually opens hero mode, from a terminal AND from
     # a focused viewer. Covers the harness, the forwarding decision it rides

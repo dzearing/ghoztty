@@ -92,6 +92,9 @@ if (-not (Test-Path $Exe)) { $Exe = Join-Path $repo 'zig-out\bin\ghoztty.exe' }
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\PaneLiveness.ps1')
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp below is
+# refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 # Refuse a build whose endpoints are the user's before anything is launched.
 Assert-GhozttyIsolatedBuild -Exe $Exe | Out-Null
@@ -492,6 +495,7 @@ try {
     $names = if ($null -ne $manifest) { @($manifest.windows | ForEach-Object { $_.ipc_name }) } else { @() }
     Assert ($names -contains 't486-multi') 'the adopted named window included'
     } while ($false)
+    Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     if ($gA -and $gA.Pid) { Stop-Process -Id $gA.Pid -Force -ErrorAction SilentlyContinue }
     Stop-RepoProcesses @('ghoztty', 'ghoztty-agent')
@@ -499,9 +503,11 @@ try {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) {
-    Write-Host "ALL PASS ($script:pass assertions$(if ($script:skipped) { ", $script:skipped SKIPPED" }))"
-} else {
-    Write-Host "$script:fail FAILURE(S) ($script:pass passed$(if ($script:skipped) { ", $script:skipped SKIPPED" }))" -ForegroundColor Red
+if ($script:fail -eq 0 -and -not $script:skipped) {
+    # A clean green run stamps the covered files (T783/T1768); red or a skip
+    # stays due.
+    $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard chooser-restore-all-adopt -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
-exit ([int]($script:fail -gt 0))
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped ([int]$script:skipped)

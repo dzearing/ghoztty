@@ -73,6 +73,9 @@ $env:GHOZTTY_PIPE_SUFFIX = "-cmenutest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp below is
+# refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 # T694: the port the OS just handed out, asserted free and printed, instead of a
 # number this script and some other one both guessed.
 $DirPort = Resolve-TestPort -Name 'directory' -Port $DirPort
@@ -595,6 +598,7 @@ try {
     Assert (-not (Test-TestWindowExists -Window $chooser)) 'Escape closed the chooser'
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'app survived the whole menu/rename/remove flow'
 
+    Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     $script:hitsFinal = Get-Hits
     Remove-TestDesktop
@@ -632,11 +636,11 @@ if ($script:fail -gt 0 -and $env:CM_DEBUG) {
     Write-Host $script:hitsFinal
 }
 Remove-Item $errlog -ErrorAction SilentlyContinue
-if ($script:skip -gt 0) { Write-Host "($($script:skip) section(s) SKIPPED)" }
-if ($script:fail -eq 0) {
-    Write-Host "CHOOSER-MENU ACCEPTANCE: ALL PASS ($($script:pass) assertions$(if ($script:skip) { ", $($script:skip) SKIPPED" }))"
-    exit 0
-} else {
-    Write-Host "CHOOSER-MENU ACCEPTANCE: $($script:fail) FAILURE(S) ($($script:pass) passed)" -ForegroundColor Red
-    exit 1
+if ($script:fail -eq 0 -and $script:skip -eq 0 -and -not $NegativeControl) {
+    # A clean green run stamps the covered files (T783/T1768); red or a skip
+    # stays due.
+    $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard chooser-menu -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
+Write-TestVerdict -Label 'CHOOSER-MENU ACCEPTANCE' -Pass $script:pass -Fail $script:fail -Skipped $script:skip
