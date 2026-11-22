@@ -1,0 +1,17 @@
+{
+    "guard":  "sessions-agent-build",
+    "script":  "test/win32/sessions-agent-build.ps1",
+    "generated":  "2026-11-22T02:03:14-08:00",
+    "commit":  "9a40d1d10",
+    "uncommitted":  [
+                        "test/win32/sessions-agent-build.ps1"
+                    ],
+    "files":  {
+                  "src/cli/sessions.zig":  "84d8ab29a13e76c03235a78f7e18a50f292b7c2a244e5fc89eca471eba170ea1",
+                  "src/remote/agent_build.zig":  "a5c429e91c7eed2a6995e2fbf8459962a16e0dc519c96f6c479fa3ad2d744d2f",
+                  "test/win32/sessions-agent-build.ps1":  "9310172a9f38b8066bf875e711bd6471bc5706b40e3b89d30cd6c5a2592f2617"
+              },
+    "code":  {
+                 "test/win32/sessions-agent-build.ps1":  "code1:aae7145062408b9e1a6983bf8aad508ef46b9dea43ccf1214feec917bc4dbf00"
+             }
+}

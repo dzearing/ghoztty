@@ -1,0 +1,16 @@
+{
+    "guard":  "session-open",
+    "script":  "test/win32/session-open.ps1",
+    "generated":  "2026-11-22T02:03:09-08:00",
+    "commit":  "9a40d1d10",
+    "uncommitted":  [
+                        "test/win32/session-open.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/LocalAgent.zig":  "e23f56ca133ba4693761afbcbfd54918126d60609322439c440266b5a5dc19cd",
+                  "test/win32/session-open.ps1":  "a8676a1822dccea06051cf7afe281c2c2315e2332c941b6baedd67136bb7cab3"
+              },
+    "code":  {
+                 "test/win32/session-open.ps1":  "code1:ae1b6162268100dd8da6baece413fea0f120a27be7eb3b5295adade68845e3e2"
+             }
+}

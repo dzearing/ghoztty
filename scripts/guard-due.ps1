@@ -605,6 +605,161 @@ $GuardTable = @(
             'src\apprt\win32\chooser_sessions.zig'
         )
     },
+    # T1768: the session family. Each row names the module where its behavior
+    # is decided. App.zig and Window.zig are left out on the chooser-family
+    # precedent: launch restore and savePlacement's ordering sit there, but a
+    # row on a 15k-24k line file would make the harness due on nearly every
+    # commit.
+    # A persistent pane's +list leaf carries its agent session_id, a viewer's
+    # omits it, and the verb answers only once the id is bound (T332, T1612).
+    [pscustomobject]@{
+        Name   = 'ipc-list-session-id'
+        Script = 'test\win32\ipc-list-session-id.ps1'
+        Stamp  = 'test\win32\ipc-list-session-id.stamp.json'
+        Covers = @(
+            'test\win32\ipc-list-session-id.ps1',
+            'src\apprt\ipc\list.zig',
+            'src\apprt\win32\ipc_session_await.zig'
+        )
+    },
+    # A +rearrange that drops a pane ENDS its session; one that keeps every
+    # pane ends none (T128): the swap and the sessionSpared rule.
+    [pscustomobject]@{
+        Name   = 'rearrange-session-drop'
+        Script = 'test\win32\rearrange-session-drop.ps1'
+        Stamp  = 'test\win32\rearrange-session-drop.stamp.json'
+        Covers = @(
+            'test\win32\rearrange-session-drop.ps1',
+            'src\apprt\win32\LayoutUndo.zig',
+            'src\apprt\win32\agent_recovery.zig'
+        )
+    },
+    # A user close of a pane/window CLOSEs its session while an app exit
+    # DETACHes it (T89e): the per-pane close intent and the backend teardown
+    # that reads it.
+    [pscustomobject]@{
+        Name   = 'session-close'
+        Script = 'test\win32\session-close.ps1'
+        Stamp  = 'test\win32\session-close.stamp.json'
+        Covers = @(
+            'test\win32\session-close.ps1',
+            'src\apprt\win32\PaneView.zig',
+            'src\termio\Remote.zig'
+        )
+    },
+    # A crash plus a lost manifest still restores every window from the
+    # AGENT's layouts and adopts them back (T194): the reconcile union, the
+    # blob decode and the retry bookkeeping.
+    [pscustomobject]@{
+        Name   = 'session-crash-recover'
+        Script = 'test\win32\session-crash-recover.ps1'
+        Stamp  = 'test\win32\session-crash-recover.stamp.json'
+        Covers = @(
+            'test\win32\session-crash-recover.ps1',
+            'src\apprt\win32\session_layout.zig',
+            'src\apprt\win32\layout_blobs.zig',
+            'src\apprt\win32\restore_retry.zig'
+        )
+    },
+    # A kill right after a drag-resize restores the NEW frame (T220): the
+    # manifest frame and the placement memory written beside it.
+    [pscustomobject]@{
+        Name   = 'session-layout-geometry-race'
+        Script = 'test\win32\session-layout-geometry-race.ps1'
+        Stamp  = 'test\win32\session-layout-geometry-race.stamp.json'
+        Covers = @(
+            'test\win32\session-layout-geometry-race.ps1',
+            'src\apprt\win32\session_layout.zig',
+            'src\apprt\win32\window_memory.zig'
+        )
+    },
+    # Panes OPEN under the local agent, and fall back to exec when persistence
+    # is off or the agent cannot be reached (T89d, T99): find-or-spawn.
+    [pscustomobject]@{
+        Name   = 'session-open'
+        Script = 'test\win32\session-open.ps1'
+        Stamp  = 'test\win32\session-open.stamp.json'
+        Covers = @(
+            'test\win32\session-open.ps1',
+            'src\apprt\win32\LocalAgent.zig'
+        )
+    },
+    # The end-to-end persistence soak (T89i, T114/T115): crash-kill re-attach
+    # with exact topology, winsize, flood gap-fill and the storm IPC bounds.
+    [pscustomobject]@{
+        Name   = 'session-persistence'
+        Script = 'test\win32\session-persistence.ps1'
+        Stamp  = 'test\win32\session-persistence.stamp.json'
+        Covers = @(
+            'test\win32\session-persistence.ps1',
+            'src\apprt\win32\session_layout.zig',
+            'src\termio\Remote.zig',
+            'src\remote\agent\session.zig'
+        )
+    },
+    # The manifest is written as the topology changes, and a relaunch
+    # re-ATTACHes the same sessions with their names, scrollback, titles and
+    # tints (T89f, T3176).
+    [pscustomobject]@{
+        Name   = 'session-reattach'
+        Script = 'test\win32\session-reattach.ps1'
+        Stamp  = 'test\win32\session-reattach.stamp.json'
+        Covers = @(
+            'test\win32\session-reattach.ps1',
+            'src\apprt\win32\session_layout.zig',
+            'src\termio\Remote.zig'
+        )
+    },
+    # A restored pane is LIVE, not a painted photograph (T532): the resume
+    # point clamped to the agent's stream head, and the alt-screen ATTACH
+    # branch that skips the ring replay.
+    [pscustomobject]@{
+        Name   = 'session-reattach-zombie'
+        Script = 'test\win32\session-reattach-zombie.ps1'
+        Stamp  = 'test\win32\session-reattach-zombie.stamp.json'
+        Covers = @(
+            'test\win32\session-reattach-zombie.ps1',
+            'src\remote\connection.zig',
+            'src\remote\agent\server.zig'
+        )
+    },
+    # Restore round-trips a window's maximized state and normal rect as one
+    # placement (T748).
+    [pscustomobject]@{
+        Name   = 'session-restore-maximized'
+        Script = 'test\win32\session-restore-maximized.ps1'
+        Stamp  = 'test\win32\session-restore-maximized.stamp.json'
+        Covers = @(
+            'test\win32\session-restore-maximized.ps1',
+            'src\apprt\win32\window_placement.zig'
+        )
+    },
+    # `+sessions --agent` reports the RUNNING agent build as not_running /
+    # current / stale / newer (T662): the shared staleness rule and the verb.
+    [pscustomobject]@{
+        Name   = 'sessions-agent-build'
+        Script = 'test\win32\sessions-agent-build.ps1'
+        Stamp  = 'test\win32\sessions-agent-build.stamp.json'
+        Covers = @(
+            'test\win32\sessions-agent-build.ps1',
+            'src\remote\agent_build.zig',
+            'src\cli\sessions.zig'
+        )
+    },
+    # A relaunch re-attaches on the WP-D3 delta path from the recorded
+    # snapshot offset, and the snapshot drops the live input modes (T109,
+    # T1055/T1066/T1067).
+    [pscustomobject]@{
+        Name   = 'session-snapshot-reattach'
+        Script = 'test\win32\session-snapshot-reattach.ps1'
+        Stamp  = 'test\win32\session-snapshot-reattach.stamp.json'
+        Covers = @(
+            'test\win32\session-snapshot-reattach.ps1',
+            'src\termio\session_snapshot.zig',
+            'src\termio\Remote.zig',
+            'src\remote\agent\grid_snapshot.zig'
+        )
+    },
     # The overview action (T708): the only thing that proves a bound
     # `toggle_tab_overview` actually opens hero mode, from a terminal AND from
     # a focused viewer. Covers the harness, the forwarding decision it rides

@@ -1,0 +1,18 @@
+{
+    "guard":  "session-snapshot-reattach",
+    "script":  "test/win32/session-snapshot-reattach.ps1",
+    "generated":  "2026-11-22T02:03:38-08:00",
+    "commit":  "9a40d1d10",
+    "uncommitted":  [
+                        "test/win32/session-snapshot-reattach.ps1"
+                    ],
+    "files":  {
+                  "src/remote/agent/grid_snapshot.zig":  "0f09e46caa81c3444c458a42227e342f5f374b3555ea47a7e3e9a169b1fe0593",
+                  "src/termio/Remote.zig":  "5c2fc604fdd30978498fcaef567793262c7d8234d6796022faa161a87014df46",
+                  "src/termio/session_snapshot.zig":  "72d2abd34fd2df726b6ae44aa88ed1b22c84cdb1b17253f9136597e278052ada",
+                  "test/win32/session-snapshot-reattach.ps1":  "4684a936d30408e2047de3dcf1705478e1331b1e781d7741ca78f3a22821a389"
+              },
+    "code":  {
+                 "test/win32/session-snapshot-reattach.ps1":  "code1:e6bd821eed0f30f8c1930fa7e1a548624a1627625b2bf913c47e698c2713ff46"
+             }
+}

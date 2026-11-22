@@ -38,6 +38,9 @@ if ($ExePath) { $exe = $ExePath }
 $env:GHOZTTY_PIPE_SUFFIX = "-geomracetest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp below is
+# refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -149,6 +152,7 @@ try {
         Stop-Process -Id $script:app.Pid -Force -ErrorAction SilentlyContinue
         Start-Sleep -Milliseconds 400
     }
+    Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     Remove-TestDesktop
     Kill-RepoInstances -Agent
@@ -165,5 +169,10 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILED / $script:pass passed" -ForegroundColor Red; exit 1 }
+if ($script:fail -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard session-layout-geometry-race -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Pass $script:pass -Fail $script:fail

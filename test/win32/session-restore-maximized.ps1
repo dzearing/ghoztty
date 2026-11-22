@@ -248,4 +248,11 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 }
 
 Write-Host ''
+if ($script:fail -eq 0 -and $script:pass -ge 16) {
+    # A clean green run stamps the covered files (T783/T1768); red, or a run
+    # under the -MinPass floor below, stays due.
+    $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard session-restore-maximized -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+}
 Write-TestVerdict -Label 'T748 RESTORE-MAXIMIZED' -Pass $script:pass -Fail $script:fail -MinPass 16

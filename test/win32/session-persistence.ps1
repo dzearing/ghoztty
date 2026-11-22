@@ -71,13 +71,17 @@ param(
 # ghoztty.exe pids are OURS, and refuses rather than widening if it cannot.
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 [void](Set-GhozttyTestAgentLineage -Tag 'sesspersist')
+# T271/T1768: the shared scorer arms the run, so the guard stamp below is
+# refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
+$script:passes = 0
 $root = Join-Path $env:TEMP "ghoztty-session-persist-$PID"
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
 # ---- window enumeration + programmatic resize ------------------------------
@@ -865,5 +869,11 @@ else { Remove-Item env:GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue }
 if ($script:failures -eq 0) { Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue }
 else { "artifacts preserved at $root" }
 
-if ($script:failures -eq 0) { "ALL PASS"; exit 0 }
-else { "$($script:failures) FAILURE(S)"; exit 1 }
+Complete-TestBody  # T1039: the run reached the end of its body
+if ($script:failures -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard session-persistence -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Pass $script:passes -Fail $script:failures

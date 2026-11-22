@@ -48,6 +48,9 @@ $root = Join-Path $env:TEMP "ghoztty-t662-$PID"
 
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 . (Join-Path $PSScriptRoot 'lib\AgentLineage.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp below is
+# refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 function Assert($name, $cond) {
     if ($cond) { Write-Host "  PASS $name"; $script:passes++ }
@@ -263,6 +266,7 @@ if ($null -ne $json) {
     Assert "E: nothing is draining on an empty roster" ($json.legacy_sessions -eq 0)
 }
 
+Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     foreach ($id in $script:mine) {
         Stop-Process -Id $id -Force -ErrorAction SilentlyContinue
@@ -276,6 +280,11 @@ if ($null -ne $json) {
 }
 
 Write-Host ""
-if ($script:failures -eq 0) { Write-Host "ALL PASS ($script:passes checks)" -ForegroundColor Green; exit 0 }
-Write-Host "$script:failures FAILURE(S) ($script:passes passed)" -ForegroundColor Red
-exit 1
+if ($script:failures -eq 0 -and -not $TeethCheck) {
+    # A clean green run stamps the covered files (T783/T1768); red or the
+    # -TeethCheck self-test stays due.
+    $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard sessions-agent-build -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Unit 'checks'

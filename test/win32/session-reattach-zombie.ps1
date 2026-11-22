@@ -78,6 +78,9 @@ param(
 # ghoztty.exe pids are OURS, and refuses rather than widening if it cannot.
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 [void](Set-GhozttyTestAgentLineage -Tag 'reatzomb')
+# T271/T1768: the shared scorer arms the run, so the guard stamp below is
+# refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
@@ -455,6 +458,7 @@ if ($script:failures -gt 0) {
     }
 }
 
+Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     Say "== cleanup"
     Remove-TestDesktop
@@ -477,5 +481,10 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 }
 
 Say ""
-if ($script:failures -eq 0) { Say "ALL PASS ($script:passes assertions)"; exit 0 }
-else { Say "$($script:failures) FAILURE(S) / $script:passes passed"; exit 1 }
+if ($script:failures -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard session-reattach-zombie -Repo $repo 2>&1 | ForEach-Object { Say "  $_" }
+}
+Write-TestVerdict -Pass $script:passes -Fail $script:failures

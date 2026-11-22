@@ -1,0 +1,18 @@
+{
+    "guard":  "session-crash-recover",
+    "script":  "test/win32/session-crash-recover.ps1",
+    "generated":  "2026-11-22T02:02:46-08:00",
+    "commit":  "9a40d1d10",
+    "uncommitted":  [
+                        "test/win32/session-crash-recover.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/layout_blobs.zig":  "0aa66783a8d060eade2dbdac90586ab5bddc866c40346fec85af32b6f1ceb7be",
+                  "src/apprt/win32/restore_retry.zig":  "7d45262cc40021067e332e04a2ebc76a3044ec05f2c2187da6748f86ff135fb7",
+                  "src/apprt/win32/session_layout.zig":  "23de7c84c9bda3017a52911fb9743e5f963978426160938e66f3aa079aa70e2b",
+                  "test/win32/session-crash-recover.ps1":  "28370a624fb060b264f6dc0e3e877078b3348902aa801812fd91a3f9f2150946"
+              },
+    "code":  {
+                 "test/win32/session-crash-recover.ps1":  "code1:a34a25613e4b25d7b7b8f4bc81e8a645501ff8891264aaf433080e4bd0962856"
+             }
+}

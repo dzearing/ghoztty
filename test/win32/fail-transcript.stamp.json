@@ -1,18 +1,16 @@
 {
     "guard":  "fail-transcript",
     "script":  "test/win32/fail-transcript.ps1",
-    "generated":  "2026-11-22T01:09:34-08:00",
-    "commit":  "9ac7dd1a6",
+    "generated":  "2026-11-22T02:38:07-08:00",
+    "commit":  "9a40d1d10",
     "uncommitted":  [
-                        "test/win32/fail-transcript.ps1",
-                        "test/win32/lib/GuiPostmortem.ps1",
-                        "test/win32/lib/Transcript.ps1"
+                        "test/win32/ipc-list-session-id.ps1"
                     ],
     "files":  {
                   "test/win32/cli-argv-fidelity.ps1":  "c51d36e42d332a1085d12418098befe48a46aa119badb5173be35727cc598221",
                   "test/win32/fail-transcript.ps1":  "96961e5658923dda19ea6d47e0c671b62c31229a983dfc25f4ff9a0051831fbe",
                   "test/win32/ipc-floor-setup.ps1":  "28aaf7abf2a2e34135a3150477a4806db5807263d5d7fc252a9f96320c8be472",
-                  "test/win32/ipc-list-session-id.ps1":  "191cea290a106a5b0610c258bc70a09453001d70108c243d991d42c69ac915c2",
+                  "test/win32/ipc-list-session-id.ps1":  "19c4e044a427a7d1844e742f29edaf14179eba49d4f6555409aed7a0e559a455",
                   "test/win32/ipc-p1.ps1":  "4c42469cf2230b427ed3f88fe2886bb70196b416802d0fa56f347fcef02e6744",
                   "test/win32/ipc-p2.ps1":  "47ce0321660f3211bd2e21417ba3a19290cc5c5d0317080ddfcc2af274ec53c9",
                   "test/win32/ipc-p3.ps1":  "edb9916fa8997b7b6cd0d3b3b8b3880fd6e6bba5907aae72eca47c63f6348797",
@@ -24,7 +22,7 @@
                  "test/win32/cli-argv-fidelity.ps1":  "code1:5e1f170a2f8b0deda799b942d781a0ef8b721adc35501de73828d7830f4a662e",
                  "test/win32/fail-transcript.ps1":  "code1:e165f818667937b8c29c3b4e8b6fc63504ffe78449735ce13e42ce3b1f638a9b",
                  "test/win32/ipc-floor-setup.ps1":  "code1:a4db0241c3623dc4b2b111175ec9262e3190e04ca2a5f6ddae0fa0628e7f2c8c",
-                 "test/win32/ipc-list-session-id.ps1":  "code1:26be3cb64f34c1937a46fadb3496b41b1916f2f2660df10575b8a9739e039427",
+                 "test/win32/ipc-list-session-id.ps1":  "code1:3ad728c02cd42fac6d5e3c74d84f4bd91fe5a6c93bb04ff98759b35e37cb3dc4",
                  "test/win32/ipc-p1.ps1":  "code1:199ed6cb0896b85dbfadc96791645117af5fbc036d3d0590c012350babcc5f3b",
                  "test/win32/ipc-p2.ps1":  "code1:f8b37dada945f3ef8603c7993138014d3cc8adaca560ed2c5e3354ad1a4c6970",
                  "test/win32/ipc-p3.ps1":  "code1:739ce97cce57c16bf074cd70ce0bebc97194e2d6b9f8896f2644f26e78505009",
