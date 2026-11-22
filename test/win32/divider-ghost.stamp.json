@@ -1,13 +1,17 @@
 {
     "guard":  "divider-ghost",
     "script":  "test/win32/divider-ghost.ps1",
-    "generated":  "2026-11-06T21:47:55-08:00",
-    "commit":  "61d11ab13",
+    "generated":  "2026-11-21T18:01:20-08:00",
+    "commit":  "8a5a28c6c",
     "uncommitted":  [
-                        "test/win32/divider-ghost.ps1"
+
                     ],
     "files":  {
                   "test/win32/divider-ghost.ps1":  "4f13eb7227c14af77a22be7f50e8c693ebba3aa91fac369bc9cf84dc8cb01959",
                   "test/win32/lib/DividerGhostScore.ps1":  "e546a557b77c218dcffa6fb07c688cd11c4e17d844974195c9e6783dcae45ebd"
-              }
+              },
+    "code":  {
+                 "test/win32/divider-ghost.ps1":  "code1:94874e5d74f6dd8625943a0d9d79a0d549dd45ae3a054647ed594b5a89b5c0c8",
+                 "test/win32/lib/DividerGhostScore.ps1":  "code1:a339f3fed05fc6ad74fa728840cc447015587dd507b228ff56df6273d123b786"
+             }
 }

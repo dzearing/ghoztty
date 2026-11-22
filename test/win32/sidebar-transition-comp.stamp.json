@@ -1,16 +1,19 @@
 {
     "guard":  "sidebar-transition-comp",
     "script":  "test/win32/sidebar-transition-comp.ps1",
-    "generated":  "2026-11-17T23:34:05-08:00",
-    "commit":  "3b5790cde",
+    "generated":  "2026-11-21T18:02:38-08:00",
+    "commit":  "8a5a28c6c",
     "uncommitted":  [
-                        "src/apprt/win32/child_comp.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/child_comp.zig":  "d9501a0c33e411ac965879ffe17c0090d1be802bd21bbcc3927514bffc103a7d",
                   "src/apprt/win32/pane_sidebar_transition_comp.zig":  "6eb134c96c6471d333c0c556edabbeb3c133af884f8e2f8e810e427769531360",
                   "src/apprt/win32/pane_sidebar_xfade.zig":  "ffff6c1dbc839ce1d1b14f45efa4022bba09887bb708126a041ac4c8944c0aac",
-                  "src/renderer/comp_overlay.zig":  "feea0d34376e378897888e0cfd4addeb89faa87f417a3236fd6fe121539a0937",
+                  "src/renderer/comp_overlay.zig":  "22569d60e55bac7587b94b18bb1ce1136a539a5518ef051254aa06a65c15b209",
                   "test/win32/sidebar-transition-comp.ps1":  "311ee9edc37759c5a238992bd98f2265c5775afe7e9ec9a3465df78e7d873c3e"
-              }
+              },
+    "code":  {
+                 "test/win32/sidebar-transition-comp.ps1":  "code1:f7abc9e921366a3e59f3f1b95c4bae18f6dfd4859cdb4deb7b976a9e02240d43"
+             }
 }

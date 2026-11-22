@@ -1,15 +1,20 @@
 {
     "guard":  "divider-flicker",
     "script":  "test/win32/divider-flicker.ps1",
-    "generated":  "2026-11-14T12:08:44-08:00",
-    "commit":  "1a6637683",
+    "generated":  "2026-11-21T18:01:20-08:00",
+    "commit":  "8a5a28c6c",
     "uncommitted":  [
-                        "src/apprt/win32/FrameClock.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/FrameClock.zig":  "17fde68b0898b10d397e3d3283edaa599b7c735045ca0228aea9dceac9558af3",
                   "test/win32/divider-flicker.ps1":  "a2f3802113607c54502bccdffa79ca8eca2cfe0fefe1b3e5466d52d9f4c5aad4",
                   "test/win32/lib/DividerFlickerScore.ps1":  "1a35204043813baad3b6252051e0571fb6ca3acbd0c903e944ada0e7c8105854",
                   "test/win32/lib/OccludedDisplay.ps1":  "8dd39834f961bd5884304a53447ecaf2ea1984920d42e6082e5afe992d5f5087"
-              }
+              },
+    "code":  {
+                 "test/win32/divider-flicker.ps1":  "code1:5e04b9aa012c45269762714ba2ed7d03863e97853ce7cdf52bdf46df16d6fd4e",
+                 "test/win32/lib/DividerFlickerScore.ps1":  "code1:67b6ac130f175a6552b893e1838da2f029ba242c4e422edb8bc15040ba89d685",
+                 "test/win32/lib/OccludedDisplay.ps1":  "code1:6f7ae6694ff70a337e9e3de2e50cdcbdf1f6526d5cf9f1129c90becc43ba1bd6"
+             }
 }

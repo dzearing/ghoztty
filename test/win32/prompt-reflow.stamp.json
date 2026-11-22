@@ -1,8 +1,8 @@
 {
     "guard":  "prompt-reflow",
     "script":  "test/win32/prompt-reflow.ps1",
-    "generated":  "2026-11-21T15:58:37-08:00",
-    "commit":  "ce13b48b8",
+    "generated":  "2026-11-21T18:47:26-08:00",
+    "commit":  "8a5a28c6c",
     "uncommitted":  [
 
                     ],
@@ -10,7 +10,7 @@
                   "src/renderer/generic.zig":  "d546f534c12fa6b100923b7224a48f530fc6e9e6f3a9612aa8c9d4b15bf0add7",
                   "src/renderer/Thread.zig":  "8f1ce8a9434e86e8a06d046e9d61dabad2c634af095211dc5eeda8474a37291f",
                   "src/shell-integration/powershell/ghostty.ps1":  "0e2c1488bf860cd453bb87a7f0e6464c526fb3a8e23d1f5dd0f30a7e5b80a726",
-                  "src/termio/shell_integration.zig":  "9516f3dc973e902e406f09418bce7454e2f09400de0f70462fdf0fd5c9492c58",
+                  "src/termio/shell_integration.zig":  "77b1ca5e9aa49d6af14806ed8810e83150e5f50cff7a565c4b6db62bfc1ff15b",
                   "src/termio/Termio.zig":  "554f09163ae13c1cbfa5173076197af9fdbba6f0cb40e23aefdaf7db2b7bfd0a",
                   "src/termio/Thread.zig":  "2928f03d5827da98f687164d7c84f7d7e91aabc633120c738ed6c7d27a70b4e3",
                   "test/win32/prompt-reflow.ps1":  "566e5e362676f4fe06e2364f1be7255015dc2d9f9c83acef163a2167e6f4aedf"
