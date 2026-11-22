@@ -787,3 +787,12 @@ as the digest that showed them.
 - An update puts every window back where it was (after the in-app update restart, each window reopens on the same monitor, size and maximized state)
 - A settings change lands in one smooth frame (a font or theme change repaints each window once, no flash, however many panes)
 - Closing a picture or document never freezes the window (a viewer still reading a big file is released in the background)
+
+## 2026-11-22
+
+- A pane that will not close tells you why (when exit or close leaves the pane open, a note names what holds it and offers Close anyway)
+- A pane that closes by itself leaves a note (a pane that vanished without you closing it shows, for a few seconds, which program ended, how, and a Reopen button)
+- Your Ghoztty setup follows you into Linux (the Linux Ghoztty in WSL reads the same settings, theme and shortcuts as the Windows app)
+- An update proves it can open a pane before it takes over (the new version opens a pane and runs a command first; on failure you stay on the working version)
+- A busy session service never slows your typing (new angle on "typing never waits": keys echo within a frame even when the session service is slow)
+- The same script drives Ghoztty on every platform (a ghoztty CLI script runs unchanged on Windows, Mac and Linux, proven by one shared script per release)
