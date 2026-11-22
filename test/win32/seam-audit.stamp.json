@@ -1,8 +1,8 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-21T22:21:58-08:00",
-    "commit":  "a1d775d78",
+    "generated":  "2026-11-21T23:05:47-08:00",
+    "commit":  "61f4baedf",
     "uncommitted":  [
 
                     ],
@@ -617,7 +617,7 @@
                   "src/renderer/cursor.zig":  "1cec4ef3e7be9cdd649c7e121052ee3e77e645c4f8093b73c97e3d8fe5ed1c3f",
                   "src/renderer/generic.zig":  "d546f534c12fa6b100923b7224a48f530fc6e9e6f3a9612aa8c9d4b15bf0add7",
                   "src/renderer/gl_comp_present.zig":  "c9dfdf47702b0d22d945646853c430bf9cace558df34b5bf4a477220a0aa4267",
-                  "src/renderer/gl_loader.zig":  "5e48c65d81df3cf24ab97ecd9e2d29f658aade47867fa4687af3efdaf84f8992",
+                  "src/renderer/gl_loader.zig":  "9a92b476463d9e027dc3b104a7309fc97386c6a555482f494714a67f507fa89a",
                   "src/renderer/gl_report.zig":  "cab949c5e9d9586daef1261de0090f4cd58a53dee78ef01022aa478d1ce3f51e",
                   "src/renderer/gl_robust.zig":  "e025250fd1194337a3f5cf33c7dbeca409f3f644129cad2e7a3aee7b892e00f4",
                   "src/renderer/gl_window_presenter.zig":  "018f01a92d2787d8f1363009f1eeba7e891ad997e3a63234a781250ff1f190da",

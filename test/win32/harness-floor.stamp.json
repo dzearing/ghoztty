@@ -1,8 +1,8 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-21T22:58:01-08:00",
-    "commit":  "fb0f3e023",
+    "generated":  "2026-11-21T23:09:04-08:00",
+    "commit":  "61f4baedf",
     "uncommitted":  [
 
                     ],
@@ -94,7 +94,7 @@
                   "test/win32/chooser-sessions.ps1":  "826e9fbedb3c93dd35223668832a561ca9512fcdbef48e1937d0bf4cc46b8c05",
                   "test/win32/chooser-session-sort.ps1":  "fba7952496c289ffc4b4e5583ccae49ab0e22daf42c2d2f3acf9447c97547b87",
                   "test/win32/chooser-sessions-push.ps1":  "77bd4ca1b2ee476f4323f9b62e04862984d61aa0e04ae2fcd55621471bbb60d5",
-                  "test/win32/chooser-sessions-remote.ps1":  "6d4bef6c7bf6703dba1ddc0d8a8ce43b7fb78a9e2019bc63d49d8c2fc782f7ef",
+                  "test/win32/chooser-sessions-remote.ps1":  "02711dededed6572ce0e55af74df523c62e5829a74f8c5a381ebe3d6aa72371c",
                   "test/win32/chooser-warm-list.ps1":  "c615a0de86c2debc15e196b56f97cc2021594a6548058fa4f9a48e991fca28f2",
                   "test/win32/chrome-merged-row.ps1":  "54a72f9a33d3a97306fa46cbdb4f641b2cb08097b0539cd2fcd4be7b5d60abe2",
                   "test/win32/chrome-paint-clip.ps1":  "a15cab3fc7c466e5169a9c5fa548687c0af50d2ef9cf19f75bcf090fad777496",
