@@ -33,9 +33,9 @@ pub fn keptFromScript(pin: ?[]const u8, by_user: bool) ?[]const u8 {
 }
 
 /// The `+rename` refusal, word for word as Mac's (`IPCServer.swift`), so a
-/// script reading the error sees one sentence on both platforms.
-pub const refusal_fmt = "window '{s}' was renamed by the user ('{s}'); " ++
-    "+rename leaves a user's title alone until they clear it";
+/// script reading the error sees one sentence on every platform. It lives
+/// with the shared `+rename` body (T3375), which is what sends it.
+pub const refusal_fmt = @import("../ipc/verbs.zig").rename_refusal_fmt;
 
 /// The session-layout spelling of the bit: `true`, or absent. A script's
 /// title and a cleared pin both write nothing, so an older reader sees the

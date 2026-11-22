@@ -369,120 +369,75 @@ fn deskVariantFor(color: ?[]const u8, style: anytype) ?desk_palette.Variant {
     return desk_palette.Variant.random();
 }
 
+/// `+new-window` is the shared body in `apprt/ipc/verbs.zig` (T3375): the
+/// argument checks, the idempotent `focused` answers and their notes, and the
+/// inline split's direction. What is win32's is the model below it - opening
+/// the window (`openWindow`) and the remote `--from-focused` window.
 pub fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+    return verbs.newWindow(@This(), ctx, request);
+}
+
+/// `--from-focused` (T68): mirror the keyboard "New Window" action on the
+/// focused window so a REMOTE parent's machine is inherited (the Mac
+/// newWindowInheritingRemote analog - win32 re-dials the same agent). Null for
+/// a local (or no) parent, which opens a plain local window.
+pub fn newWindowFromFocused(ctx: Context, arena: Allocator, args: VerbArgs) Allocator.Error!?[]u8 {
+    _ = arena;
     const app = ctx.app;
-
-    var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    var args = try parseVerbArgs(arena, request.arguments);
-
-    // Before anything is created or focused (Mac checks here too,
-    // IPCServer.swift:386 — ahead of its idempotent target focus).
-    if (try viewArgResponse(ctx, args)) |response| return response;
-
-    // `--from-focused` (T68): mirror the keyboard "New Window" action on the
-    // focused window so a REMOTE parent's machine is inherited (the Mac
-    // newWindowInheritingRemote analog — win32 re-dials the same agent).
-    // Like the Mac, this path ignores `--target`/`--name` registration and
-    // the inline-split flags.
-    if (args.from_focused) {
-        if (frontWindow(app)) |front| {
-            if (front.remote_machine != null) {
-                _ = app.openRemoteWindowFrom(front, .{
-                    .working_directory = nonEmpty(args.working_directory),
-                    .shell = nonEmpty(args.shell),
-                    .command = nonEmpty(args.command),
-                    .activate = args.focus, // T1797
-                    .desk_variant = deskVariantFor(args.color, app.config.@"macos-pane-style"),
-                }) catch |err| switch (err) {
-                    error.OutOfMemory => return error.OutOfMemory,
-                    error.DialFailed => return try errorResponse(
-                        ctx.alloc,
-                        "failed to reach the focused window's remote machine: the agent is not running or not reachable",
-                        .{},
-                    ),
-                    // The machine answered and disagreed (T628). Saying it
-                    // could not be reached would send a script — and whoever
-                    // reads its log — after a network that is fine.
-                    error.IncompatibleVersion => return try errorResponse(
-                        ctx.alloc,
-                        "incompatible Ghoztty version on the focused window's remote machine: update one side",
-                        .{},
-                    ),
-                    error.CreateFailed => return try errorResponse(ctx.alloc, "failed to create window", .{}),
-                };
-                return try successResponse(ctx.alloc, "created", null);
-            }
-        }
-        // Local (or no) parent: a normal local window; drop the flags the
-        // Mac ignores for the inheriting case and fall through.
-        args.target = null;
-        args.name = null;
-        args.split_direction = null;
-        args.title = null;
-    }
-
-    // Idempotent: an existing live target is found, not recreated - and raised
-    // only with `--focus` (T1797). T135:
-    // the reply says so (`outcome: focused` vs `created`), and when the
-    // caller passed flags that only a create would honor, a `note` names
-    // them — the CLI prints it to stderr so the drop is loud. Exit stays 0:
-    // idempotency is the contract, silence was the defect.
-    //
-    // Window names are global, and a pane's name is never a window's (T2250,
-    // Mac 71da9a680): a `--target` a pane holds fails, rather than "succeeding"
-    // without opening the window that was asked for.
-    if (args.target) |target| {
-        const held = app.ipc_registry.lookup(app.core_app.alloc, app.windows.items, target, null);
-        if (held == .ambiguous) return try errorResponse(
+    const front = frontWindow(app) orelse return null;
+    if (front.remote_machine == null) return null;
+    _ = app.openRemoteWindowFrom(front, .{
+        .working_directory = nonEmpty(args.working_directory),
+        .shell = nonEmpty(args.shell),
+        .command = nonEmpty(args.command),
+        .activate = args.focus, // T1797
+        .desk_variant = deskVariantFor(args.color, app.config.@"macos-pane-style"),
+    }) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.DialFailed => return try errorResponse(
             ctx.alloc,
-            "'{s}' is already the name of a pane, so no window can take it. Use another --target.",
-            .{target},
-        );
-        if (held.target()) |entry| {
-            if (entry == .pane) return try errorResponse(
-                ctx.alloc,
-                "'{s}' is already the name of a pane, so no window can take it. Use another --target.",
-                .{target},
-            );
-            if (args.focus) focusTarget(entry); // T1797: raised only on request
-            if (try verb_args.droppedOnExistingTarget(arena, args)) |dropped| {
-                const note = try std.fmt.allocPrint(
-                    arena,
-                    "target '{s}' already exists; {s} it. Ignored: {s}. +close it first to recreate.",
-                    .{ target, foundVerb(args.focus), dropped },
-                );
-                return try successResponse(ctx.alloc, "focused", note);
-            }
-            return try successResponse(ctx.alloc, "focused", null);
-        }
-    }
-
-    // T968: `--name` names a PANE (the first one, or the inline split's), and
-    // is idempotent the same way `+split --name` is — a live pane already
-    // under that name is focused rather than a second window opened beside
-    // it. `--target` decided first above, so this only answers when the
-    // caller named no window.
-    if (args.name) |name| if (args.target == null) {
-        if (app.ipcLookup(name)) |entry| {
-            if (args.focus) focusTarget(entry); // T1797: raised only on request
-            var lost = args;
-            lost.name = null;
-            if (try verb_args.droppedOnExistingTarget(arena, lost)) |dropped| {
-                const note = try std.fmt.allocPrint(
-                    arena,
-                    "pane '{s}' already exists; {s} it. Ignored: {s}. +close it first to recreate.",
-                    .{ name, foundVerb(args.focus), dropped },
-                );
-                return try successResponse(ctx.alloc, "focused", note);
-            }
-            return try successResponse(ctx.alloc, "focused", null);
-        }
+            "failed to reach the focused window's remote machine: the agent is not running or not reachable",
+            .{},
+        ),
+        // The machine answered and disagreed (T628). Saying it could not be
+        // reached would send a script - and whoever reads its log - after a
+        // network that is fine.
+        error.IncompatibleVersion => return try errorResponse(
+            ctx.alloc,
+            "incompatible Ghoztty version on the focused window's remote machine: update one side",
+            .{},
+        ),
+        error.CreateFailed => return try errorResponse(ctx.alloc, "failed to create window", .{}),
     };
+    return try successResponse(ctx.alloc, "created", null);
+}
 
-    const first_pane_name = verb_args.newWindowFirstPaneName(args);
+/// What a WINDOW name means: the registry with no caller window, since window
+/// names are global (T2250). The ambiguity needs no sentence here - a name
+/// panes hold is refused as a window name whatever they are.
+pub fn lookupWindowName(ctx: Context, arena: Allocator, name: []const u8) Allocator.Error!verbs.TargetLookup(Target) {
+    _ = arena;
+    const app = ctx.app;
+    const held = app.ipc_registry.lookup(app.core_app.alloc, app.windows.items, name, null);
+    if (held == .ambiguous) return .{ .ambiguous = "" };
+    if (held.target()) |entry| return .{ .found = entry };
+    return .not_found;
+}
+
+pub fn isPane(entry: Target) bool {
+    return entry == .pane;
+}
+
+/// Open the window `+new-window` asked for, once the shared checks passed.
+pub fn openWindow(
+    ctx: Context,
+    arena: Allocator,
+    request: Request,
+    args: VerbArgs,
+    plan: verbs.WindowPlan,
+) Allocator.Error!verbs.Opened {
+    const app = ctx.app;
+    const first_pane_name = plan.first_pane_name;
 
     // Environment for the first surface: --env flags plus the window/pane
     // name vars the Mac injects for named windows. A `--name` for the first
@@ -492,7 +447,7 @@ pub fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     if (args.target) |t| {
         try env.append(arena, .{ .key = "GHOZTTY_WINDOW_NAME", .value = t });
     }
-    if (first_pane_name orelse args.target) |p| {
+    if (plan.first_pane_env_name) |p| {
         try env.append(arena, .{ .key = "GHOZTTY_PANE_NAME", .value = p });
     }
 
@@ -573,7 +528,7 @@ pub fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         .background = !args.focus,
     }) catch |err| {
         log.warn("IPC new-window failed err={}", .{err});
-        return try errorResponse(ctx.alloc, "failed to create window", .{});
+        return .{ .failed = "failed to create window" };
     };
 
     // T1612: answer once the first pane's agent session is bound, so the
@@ -607,10 +562,12 @@ pub fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     // shown in the background by its first tab, and nothing here touches it.
     if (args.focus) if (window.hwnd) |hwnd| raiseWindow(hwnd);
 
-    // Inline split (`--split=<dir>`, `--split-command`, `--name`).
-    if (args.split_direction) |dir_str| {
-        const dir = parseSplitDirection(dir_str) orelse
-            return try errorResponse(ctx.alloc, "invalid split direction: {s}", .{dir_str});
+    // Inline split (`--split=<dir>`, `--split-command`, `--name`); its
+    // direction was checked before the window opened. A split that fails
+    // leaves the window, which is what was asked for, so the reply stays
+    // `created`.
+    if (plan.split) |split_dir| {
+        const dir = treeDirection(split_dir);
 
         var split_env: std.ArrayList(Surface.Overrides.EnvVar) = .empty;
         if (args.target) |t| {
@@ -664,7 +621,7 @@ pub fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         }
     }
 
-    return try successResponse(ctx.alloc, "created", try handoffNote(ctx, arena, request));
+    return .{ .created = try handoffNote(ctx, arena, request) };
 }
 
 /// The caveat a LAUNCH HANDOFF earns when the build that asked for the window
@@ -912,152 +869,144 @@ pub fn resolveToken(arena: Allocator) ?[]const u8 {
     return resolveAccountToken(arena) orelse resolveEnvToken(arena);
 }
 
+/// `+split` is the shared body in `apprt/ipc/verbs.zig` (T3375): the name
+/// collision check (T2184/T2250), `--percent` and `--direction`, where the
+/// split lands, `--focus`, and the reply and its log line. What is win32's is
+/// the model below - above all `createSplit`, which builds the pane.
 pub fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+    return verbs.split(@This(), ctx, request);
+}
+
+// ---------------------------------------------------------------------------
+// The create verbs' model (apprt/ipc/verbs.zig, T3375).
+
+pub const WindowHandle = *Window;
+pub const PaneHandle = *PaneView;
+
+pub fn windowOfTarget(entry: Target) *Window {
+    return targetWindow(entry);
+}
+
+pub fn paneOfTarget(entry: Target) ?*PaneView {
+    return switch (entry) {
+        .pane => |pane| pane,
+        .window => null,
+    };
+}
+
+pub fn paneTarget(pane: *PaneView) Target {
+    return .{ .pane = pane };
+}
+
+pub fn paneWindow(pane: *PaneView) *Window {
+    return pane.parentWindow();
+}
+
+pub fn activePane(window: *Window) ?*PaneView {
+    if (window.tab_count == 0) return null;
+    return window.tab_active_pane[window.active_tab];
+}
+
+pub fn defaultWindow(ctx: Context) ?*Window {
+    return frontWindow(ctx.app);
+}
+
+pub fn callerPane(ctx: Context, args: VerbArgs) ?*PaneView {
+    return callerAnchorPaneView(ctx.app, args);
+}
+
+pub fn paneId(pane: *PaneView) []const u8 {
+    return pane.paneId();
+}
+
+pub fn windowName(_: Context, window: *Window) ?[]const u8 {
+    return window.ipc_name;
+}
+
+/// What holds `name` where a `+split --name=` into `window` would put it
+/// (`App.ipcHolderIn`). Null for a viewer with nothing loaded yet: nothing to
+/// compare against, so the name stays the existing pane's and the split goes
+/// ahead, as on the Mac.
+pub fn nameHolderIn(ctx: Context, name: []const u8, window: *Window) ?verbs.NameHolder(Target) {
+    const entry = ctx.app.ipcHolderIn(name, window) orelse return null;
+    return .{ .target = entry, .existing = describeExisting(entry) orelse return null };
+}
+
+fn describeExisting(entry: App.IpcTarget) ?split_name_collision.Existing {
+    const holder: *Window = switch (entry) {
+        .window => |w| w,
+        .pane => |pane| pane.parentWindow(),
+    };
+    const kind: split_name_collision.Existing.Kind = switch (entry) {
+        .window => .window,
+        .pane => |pane| if (pane.viewer()) |viewer| kind: {
+            const home: ?[]const u8 = if (viewer.home_location) |h| h else null;
+            const location: []const u8 = if (viewer.location) |l| l else home orelse return null;
+            break :kind .{ .viewer = .{ .location = location, .home_location = home } };
+        } else .terminal,
+    };
+    return .{
+        .kind = kind,
+        .window_name = holder.ipc_name orelse "",
+    };
+}
+
+fn treeDirection(dir: verbs.SplitDirection) SplitTree.Split.Direction {
+    return switch (dir) {
+        .right => .right,
+        .down => .down,
+        .left => .left,
+        .up => .up,
+    };
+}
+
+/// Open the pane `+split` asked for at `at`: the new pane, registered under
+/// `--name` and awaited for its agent session (T1612), or null when none
+/// opened. The new pane does not take the keyboard unless `--focus` (T1797):
+/// the pane that had it - normally the caller's own - keeps it.
+pub fn createSplit(
+    ctx: Context,
+    arena: Allocator,
+    args: VerbArgs,
+    window: *Window,
+    at: *PaneView,
+    spec: verbs.SplitSpec,
+) Allocator.Error!?*PaneView {
     const app = ctx.app;
+    const direction = treeDirection(spec.direction);
+    window.split_background = !args.focus;
+    defer window.split_background = false;
 
-    var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const args = try parseVerbArgs(arena, request.arguments);
-
-    // First thing, as on the Mac (IPCServer.swift:572).
-    if (try viewArgResponse(ctx, args)) |response| return response;
-
-    // Idempotent: if --name is already held in THE WINDOW THIS SPLIT LANDS IN
-    // and already is what was asked for, it is the answer - and the reply says
-    // so. A request it does not satisfy fails instead, naming what holds the
-    // name (T2184, Mac c2057a810; policy in `apprt.ipc.split_name_collision`).
-    // A pane of that name in another window does not count: pane names belong
-    // to their window (T2250, Mac 71da9a680), so this split creates this
-    // window's own. Focusing a reused pane is the caller's choice (`--focus`,
-    // T1797). `--from-focused` ignores `--name`, as on the Mac. An anchor that
-    // names nothing skips the check; the split below fails with the reason.
-    if (args.name) |name| check: {
-        if (args.from_focused) break :check;
-        const anchor = splitAnchorWindow(app, args) orelse break :check;
-        if (app.ipcHolderIn(name, anchor)) |entry| {
-            if (describeExisting(entry)) |existing| {
-                switch (try split_name_collision.decide(arena, name, existing, nonEmpty(args.view))) {
-                    .conflict => |msg| {
-                        logSplit(request, args, anchor, null, msg, null);
-                        return try errorResponse(ctx.alloc, "{s}", .{msg});
-                    },
-                    .reuse => |msg| {
-                        logSplit(request, args, anchor, null, msg, null);
-                        if (args.focus) focusTarget(entry); // T1797
-                        return try messageResponse(ctx.alloc, msg);
-                    },
-                }
-            }
-        }
-    }
-
-    const ratio: f16 = if (args.percent) |percent| ratio: {
-        if (percent < 1 or percent > 99) {
-            return try errorResponse(
-                ctx.alloc,
-                "percent must be between 1 and 99, got {d}",
-                .{percent},
-            );
-        }
-        const r = @as(f16, @floatFromInt(100 - percent)) / 100.0;
-        break :ratio @min(0.9, @max(0.1, r));
-    } else 0.5;
-
-    const dir_str = args.split_direction orelse "right";
-    const direction = parseSplitDirection(dir_str) orelse
-        return try errorResponse(ctx.alloc, "invalid direction: {s}", .{dir_str});
-
-    // `--from-focused` (T68): mirror the keyboard split on the focused
-    // window's active pane, passing NO overrides so remote inheritance
-    // (same connection + parent command/cwd) is never suppressed (Mac
-    // rule). Like the Mac, `--name`/tint plumbing is skipped — this
-    // trigger is the inheriting case.
-    if (args.from_focused) {
-        const window = frontWindow(app) orelse
-            return try errorResponse(ctx.alloc, "no window found for split", .{});
-        if (window.tab_count == 0)
-            return try errorResponse(ctx.alloc, "no surface to split", .{});
-        const at = window.tab_active_pane[window.active_tab];
-        window.split_background = !args.focus; // T1797
-        defer window.split_background = false;
-        const inherited = window.newSplitAt(at, direction, ratio) catch |err| {
+    // `--from-focused` (T68): the keyboard split, passing NO overrides so
+    // remote inheritance (same connection + parent command/cwd) is never
+    // suppressed (Mac rule). Like the Mac, `--name`/tint plumbing is skipped.
+    if (spec.inherit) {
+        const inherited = window.newSplitAt(at, direction, spec.ratio) catch |err| {
             log.warn("IPC split --from-focused failed err={}", .{err});
-            return try errorResponse(ctx.alloc, "failed to create split", .{});
-        } orelse return try errorResponse(ctx.alloc, "failed to create split", .{});
-        const pv = inherited.pane_view orelse
-            return try splitFailed(ctx, request, args, window, "failed to create split");
+            return null;
+        } orelse return null;
+        const pv = inherited.pane_view orelse return null;
         app.ipc_session_await.add(pv.paneId()); // T1612
-        if (args.focus) focusTarget(.{ .pane = pv });
-        return try createdResponse(ctx, arena, request, args, window, pv);
+        return pv;
     }
 
-    // Resolve where to split: --pane names the exact surface; --target
-    // names a window (or a pane, whose window is used) and splits at its
-    // active surface; neither → the pane this command was invoked FROM
-    // (T1079), and failing that the foreground (else most recent) window.
-    var window: *Window = undefined;
-    var at: *PaneView = undefined;
-    if (args.pane) |pane_name| {
-        const entry = app.ipcLookup(pane_name) orelse
-            return try missingResponse(ctx, pane_name, "pane '{s}' not found", .{pane_name});
-        switch (entry) {
-            .pane => |pane| {
-                at = pane;
-                window = pane.parentWindow();
-            },
-            .window => return try errorResponse(ctx.alloc, "pane '{s}' not found", .{pane_name}),
-        }
-    } else if (args.target) |target| {
-        const entry = app.ipcLookup(target) orelse
-            return try missingResponse(ctx, target, "target '{s}' not found in registry", .{target});
-        window = switch (entry) {
-            .window => |w| w,
-            .pane => |pane| pane.parentWindow(),
-        };
-        if (window.tab_count == 0)
-            return try errorResponse(ctx.alloc, "target '{s}' has no surface to split", .{target});
-        at = window.tab_active_pane[window.active_tab];
-    } else if (callerAnchorPaneView(app, args)) |caller| {
-        // No explicit anchor: split off the pane this command was invoked FROM
-        // rather than whatever window is focused by the time we get here. This
-        // lands on the same two locals the `--pane=` branch above sets, so a
-        // caller-anchored split IS the split an explicit one would be.
-        at = caller;
-        window = caller.parentWindow();
-    } else {
-        window = frontWindow(app) orelse
-            return try errorResponse(ctx.alloc, "no window found for split", .{});
-        if (window.tab_count == 0)
-            return try errorResponse(ctx.alloc, "no surface to split", .{});
-        at = window.tab_active_pane[window.active_tab];
-    }
-
-    // `--view` (T374): a VIEWER split. Returns here rather than falling through
-    // like `+new-window` does, because everything below this line describes a
-    // shell — the overrides, the remote/agent inheritance, the background tint
-    // a terminal reads against — and a viewer has none of it.
-    if (args.view) |view| {
-        if (nonEmpty(view)) |location| {
-            // `--working-directory` is the ORIGIN DIRECTORY here, not a cwd:
-            // `+split --view=` seeds it with the caller's cwd for exactly this
-            // (`cli/split.zig:seedViewWorkingDirectory`), and a viewer has no
-            // shell to hand a cwd to.
-            window.split_background = !args.focus; // T1797
-            defer window.split_background = false;
-            const pane = window.newViewerSplitAt(at, direction, ratio, .{
-                .location = location,
-                .origin_directory = nonEmpty(args.working_directory),
-            }) catch |err| {
-                log.warn("IPC viewer split failed err={}", .{err});
-                return try errorResponse(ctx.alloc, "failed to create split", .{});
-            } orelse return try errorResponse(ctx.alloc, "failed to create split", .{});
-            if (args.name) |name| app.ipcRegister(name, .{ .pane = pane }) catch {};
-            if (args.focus) focusTarget(.{ .pane = pane });
-            return try createdResponse(ctx, arena, request, args, window, pane);
-        }
-    }
+    // `--view` (T374): a VIEWER split. Everything below describes a shell -
+    // the overrides, the remote/agent inheritance, the background tint a
+    // terminal reads against - and a viewer has none of it.
+    if (args.view) |view| if (nonEmpty(view)) |location| {
+        // `--working-directory` is the ORIGIN DIRECTORY here, not a cwd:
+        // `+split --view=` seeds it with the caller's cwd for exactly this
+        // (`cli/split.zig:seedViewWorkingDirectory`).
+        const pane = window.newViewerSplitAt(at, direction, spec.ratio, .{
+            .location = location,
+            .origin_directory = nonEmpty(args.working_directory),
+        }) catch |err| {
+            log.warn("IPC viewer split failed err={}", .{err});
+            return null;
+        } orelse return null;
+        if (args.name) |name| app.ipcRegister(name, .{ .pane = pane }) catch {};
+        return pane;
+    };
 
     // Surface overrides for the new pane.
     var env: std.ArrayList(Surface.Overrides.EnvVar) = .empty;
@@ -1073,7 +1022,7 @@ pub fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     // T68: a split in a REMOTE window opens a fresh session on the same
     // machine/connection, never a local ConPTY pane. Explicit
     // `--command`/`--working-directory` are REMOTE-native (never wrapped by
-    // the local shell table — the agent applies its own shell's convention);
+    // the local shell table - the agent applies its own shell's convention);
     // a `-e` argv is joined into one command line for the agent's shell.
     // `--shell` alone counts as an explicit value (T1665: it used to take the
     // inherit shortcut below and be dropped without a word).
@@ -1085,12 +1034,12 @@ pub fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         nonEmpty(command);
 
     // T515: a split opens where its PARENT pane is unless `--working-directory`
-    // says otherwise — and an explicit `--command` must not cost it that. The
+    // says otherwise - and an explicit `--command` must not cost it that. The
     // override branches below used to carry a null cwd whenever no path was
     // passed, and what filled it in was the CORE's own inheritance, which is
     // app-GLOBAL (`apprt/surface.zig` `newConfig` reads `app.focusedSurface`):
-    // it answers with whatever pane last had focus — another window's pane when
-    // one is in front, and the shell's home when nothing is focused at all —
+    // it answers with whatever pane last had focus - another window's pane when
+    // one is in front, and the shell's home when nothing is focused at all -
     // and a cross-machine window never gets even that, because a local path is
     // withheld from a remote agent (`termio.Remote.openWorkingDirectory`). So
     // resolve the split-parent's live cwd here, through the same GET_CWD
@@ -1124,8 +1073,8 @@ pub fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         };
     } else if (window.local_agent_conn) |conn| ov: {
         // T99: a split in a LOCAL persistence window opens a fresh AGENT session
-        // (survives the app), never a plain ConPTY — mirrors the remote_dialed
-        // branch. No explicit command/cwd ⇒ a null baton so newSplitAt's
+        // (survives the app), never a plain ConPTY - mirrors the remote_dialed
+        // branch. No explicit command/cwd => a null baton so newSplitAt's
         // `buildRemoteInherit` injects the agent and inherits the split-parent
         // pane's cwd; otherwise a `.remote{local_agent}` override carrying the
         // agent-native command + the name env.
@@ -1151,119 +1100,28 @@ pub fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
 
     if (overrides) |*ov| window.pending_surface_overrides = ov;
     defer window.pending_surface_overrides = null;
-    // T1797: the new pane does not take the keyboard unless `--focus` - the
-    // pane that had it (normally the caller's own) keeps it.
-    window.split_background = !args.focus;
-    defer window.split_background = false;
-    const new_surface = window.newSplitAt(at, direction, ratio) catch |err| {
+    const new_surface = window.newSplitAt(at, direction, spec.ratio) catch |err| {
         log.warn("IPC split failed err={}", .{err});
-        return try errorResponse(ctx.alloc, "failed to create split", .{});
-    } orelse return try errorResponse(ctx.alloc, "failed to create split", .{});
+        return null;
+    } orelse return null;
 
-    // `--color` (T67): explicit tint for the new pane — bg + contrast fg +
+    // `--color` (T67): explicit tint for the new pane - bg + contrast fg +
     // adjusted palette (overwrites the parent tint newSplitAt inherited).
     if (resolveColor(args.color)) |tint| new_surface.applyBackgroundTint(tint, true);
 
-    // A surface with no pane is not a pane anybody can see or target: say so
-    // rather than reply "created" (T2250).
-    const pv = new_surface.pane_view orelse
-        return try splitFailed(ctx, request, args, window, "failed to create split");
-
+    const pv = new_surface.pane_view orelse return null;
     if (args.name) |name| app.ipcRegister(name, .{ .pane = pv }) catch {};
 
     // T1612: answer once the new pane's agent session is bound (see
     // `ipc_session_await.zig`), so `+list --json` right after reads it.
     app.ipc_session_await.add(pv.paneId());
-    // `--focus` (T1797): focus the new pane, raise its window, take the
-    // foreground - the one focus implementation a `--target` hit uses.
-    if (args.focus) focusTarget(.{ .pane = pv });
-
-    return try createdResponse(ctx, arena, request, args, window, pv);
-}
-
-/// The window a `+split` lands in: the `--pane` pane's window, else
-/// `--target`'s, else the calling pane's, else the foreground window - the
-/// precedence `handleSplit` splits by. Null when that names nothing (the split
-/// itself then fails with the reason). GUI thread only.
-fn splitAnchorWindow(app: *App, args: VerbArgs) ?*Window {
-    if (args.pane) |pane_name| {
-        return switch (app.ipcLookup(pane_name) orelse return null) {
-            .pane => |pane| pane.parentWindow(),
-            .window => null,
-        };
-    }
-    if (args.target) |target| {
-        return switch (app.ipcLookup(target) orelse return null) {
-            .window => |w| w,
-            .pane => |pane| pane.parentWindow(),
-        };
-    }
-    if (callerAnchorPaneView(app, args)) |caller| return caller.parentWindow();
-    return frontWindow(app);
-}
-
-/// What holds a name `+split --name=` asked for in the window it lands in
-/// (`App.ipcHolderIn`), for `split_name_collision`. Null for a viewer with
-/// nothing loaded yet - nothing to compare against, so the name stays the
-/// existing pane's and the split goes ahead, as on the Mac.
-fn describeExisting(entry: App.IpcTarget) ?split_name_collision.Existing {
-    const holder: *Window = switch (entry) {
-        .window => |w| w,
-        .pane => |pane| pane.parentWindow(),
-    };
-    const kind: split_name_collision.Existing.Kind = switch (entry) {
-        .window => .window,
-        .pane => |pane| if (pane.viewer()) |viewer| kind: {
-            const home: ?[]const u8 = if (viewer.home_location) |h| h else null;
-            const location: []const u8 = if (viewer.location) |l| l else home orelse return null;
-            break :kind .{ .viewer = .{ .location = location, .home_location = home } };
-        } else .terminal,
-    };
-    return .{
-        .kind = kind,
-        .window_name = holder.ipc_name orelse "",
-    };
-}
-
-/// The reply to a `+split` that created `pane` in `window`, logged: which
-/// pane, where, and - when it did not come on show - that it is a strip
-/// (T2250; Mac `createdMessage`).
-fn createdResponse(
-    ctx: Context,
-    arena: Allocator,
-    request: Request,
-    args: VerbArgs,
-    window: *Window,
-    pane: *PaneView,
-) Allocator.Error![]u8 {
-    const on_show = paneOnShow(window, pane);
-    const message = try verb_args.splitCreatedMessage(arena, .{
-        .name = args.name,
-        .pane_id = pane.paneId(),
-        .window_name = window.ipc_name orelse "",
-        .view = nonEmpty(args.view),
-        .on_show = on_show,
-    });
-    logSplit(request, args, window, pane, "created", on_show);
-    return try messageResponse(ctx.alloc, message);
-}
-
-/// A `+split` that did not produce a pane: logged, and the reason sent back.
-fn splitFailed(
-    ctx: Context,
-    request: Request,
-    args: VerbArgs,
-    window: ?*Window,
-    reason: []const u8,
-) Allocator.Error![]u8 {
-    logSplit(request, args, window, null, reason, null);
-    return try errorResponse(ctx.alloc, "{s}", .{reason});
+    return pv;
 }
 
 /// Whether `pane` is on show in `window` as laid out now: false when its row
 /// has no room and it is minimized to a strip, null when the window has no
 /// layout for it (not in any tab, or no client area yet).
-fn paneOnShow(window: *Window, pane: *PaneView) ?bool {
+pub fn paneOnShow(window: *Window, pane: *PaneView) ?bool {
     for (0..window.tab_count) |i| {
         var panes = window.tab_trees[i].iterator();
         while (panes.next()) |v| {
@@ -1275,32 +1133,6 @@ fn paneOnShow(window: *Window, pane: *PaneView) ?bool {
         }
     }
     return null;
-}
-
-/// Every `+split`, in the log (T2250; the Mac logs it at `.notice`), so the
-/// next unexplained "I opened it in a side pane" can be read back: who asked,
-/// where it went, and what came of it.
-fn logSplit(
-    request: Request,
-    args: VerbArgs,
-    window: ?*Window,
-    pane: ?*PaneView,
-    outcome: []const u8,
-    on_show: ?bool,
-) void {
-    const shown: []const u8 = if (on_show) |s| (if (s) "yes" else "NO (strip)") else "unknown";
-    log.info(
-        "IPC +split: caller={s} window={s} pane={s} name={s} view={s} outcome={s} onShow={s}",
-        .{
-            request.caller_pane orelse args.caller_pane orelse "-",
-            if (window) |w| w.ipc_name orelse "-" else "-",
-            if (pane) |p| p.paneId() else "-",
-            args.name orelse "-",
-            nonEmpty(args.view) orelse "-",
-            outcome,
-            shown,
-        },
-    );
 }
 
 /// T1612: whether every pane in `list` lets the reply go out — gone, a viewer,
@@ -1658,37 +1490,24 @@ pub fn handleFocus(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     return verbs.focus(@This(), ctx, request);
 }
 
+/// `+rename` is the shared body in `apprt/ipc/verbs.zig` (T3375).
 pub fn handleRename(ctx: Context, request: Request) Allocator.Error!?[]u8 {
-    var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    return verbs.rename(@This(), ctx, request);
+}
 
-    const args = try parseVerbArgs(arena, request.arguments);
-    const target = args.target orelse
-        return try errorResponse(ctx.alloc, "--target is required for +rename", .{});
-    const title = args.title orelse
-        return try errorResponse(ctx.alloc, "--title is required for +rename", .{});
-
-    const entry = ctx.app.ipcLookup(target) orelse
-        return try missingResponse(ctx, target, "target '{s}' not found in registry", .{target});
-    const window = switch (entry) {
-        .window => |w| w,
-        .pane => |pane| pane.parentWindow(),
-    };
-
-    // T2404: a title the user typed outranks any script's - leave it, and
-    // say so (the skills that tag a title, `(prep)`/`(ready)`, ignore a
-    // failed rename). Checked and set on this one UI-thread turn, so a user
-    // rename cannot land between them (Mac IPCServer `onMain`).
+/// Pin `title` on the target's window (null clears the pin, T92): the
+/// override wins over terminal-reported titles until cleared (Mac
+/// BaseTerminalController.titleOverride). T2404: a title the user typed
+/// outranks any script's - it is left alone and reported (the skills that tag
+/// a title, `(prep)`/`(ready)`, ignore a failed rename). Checked and set on
+/// this one UI-thread turn, so a user rename cannot land between them (Mac
+/// IPCServer `onMain`).
+pub fn renameWindow(_: Context, entry: Target, title: ?[]const u8) verbs.Renamed {
+    const window = targetWindow(entry);
     if (window_title_owner.keptFromScript(window.title_override, window.title_set_by_user)) |kept|
-        return try errorResponse(ctx.alloc, window_title_owner.refusal_fmt, .{ target, kept });
-
-    // titleOverride semantics: the override wins over terminal-reported
-    // titles until cleared (Mac BaseTerminalController.titleOverride).
-    // T92: `--title=""` CLEARS the pin (Mac fixed the same in 9c7665354)
-    // instead of pinning an empty string.
-    window.setTitleOverride(if (title.len == 0) null else title);
-    return try ctx.alloc.dupe(u8, "{\"success\":true}");
+        return .{ .kept = kept };
+    window.setTitleOverride(title);
+    return .renamed;
 }
 
 /// `+send-keys` and `+read` are the shared bodies in `apprt/ipc/verbs.zig`
@@ -1885,14 +1704,6 @@ pub fn setPaneBanner(entry: Target, text: ?[]const u8) verbs.BannerSet {
     return .set;
 }
 
-fn parseSplitDirection(s: []const u8) ?SplitTree.Split.Direction {
-    if (std.mem.eql(u8, s, "right")) return .right;
-    if (std.mem.eql(u8, s, "down")) return .down;
-    if (std.mem.eql(u8, s, "left")) return .left;
-    if (std.mem.eql(u8, s, "up")) return .up;
-    return null;
-}
-
 /// `version` (T52): build provenance of THIS instance, so any pane can
 /// answer "which build is this window running?" (`ghoztty +version` shows
 /// it as the "Running Instance" section).
@@ -2077,14 +1888,11 @@ pub fn handleList(ctx: Context, request: Request) Allocator.Error!?[]u8 {
             );
             var grid = window.stackGridForTab(i);
             defer if (grid) |*g| g.deinit();
-            const node = try buildNode(
-                ctx,
-                arena,
-                &window.tab_trees[i],
-                .root,
-                window.tab_active_pane[i],
-                if (grid) |*g| g else null,
-            );
+            const node = try verbs.listSplitNode(SplitTree, arena, &window.tab_trees[i], .root, ListLeaves{
+                .ctx = ctx,
+                .active_pane = window.tab_active_pane[i],
+                .grid = if (grid) |*g| g else null,
+            });
             try tabs.append(arena, .{
                 .id = try std.fmt.allocPrint(arena, "{d}", .{i}),
                 .title = tab_title,
@@ -2218,173 +2026,148 @@ fn windowChrome(arena: Allocator, window: *Window) Allocator.Error!apprt.ipc.Lis
     };
 }
 
-/// Recursively build the split-node model for one tree node. Every leaf is
-/// auto-registered under its fallback name (the surface id), matching the
-/// Mac server.
-fn buildNode(
+/// The leaves of one tab's `+list` split tree, for the shared walk
+/// (`verbs.listSplitNode`, T3375). Every leaf is auto-registered under its
+/// fallback name (the surface id), matching the Mac server.
+const ListLeaves = struct {
     ctx: Context,
-    arena: Allocator,
-    tree: *const SplitTree,
-    handle: SplitTree.Node.Handle,
     active_pane: *PaneView,
     /// The tab's stacked layout, for `minimized` (T2103); null reports none.
     grid: ?*const pane_stack_grid.Grid,
-) Allocator.Error!*const apprt.ipc.List.Node {
-    const node = try arena.create(apprt.ipc.List.Node);
 
-    // An empty tree renders as the Mac server's placeholder leaf.
-    if (tree.isEmpty()) {
-        node.* = .{ .leaf = apprt.ipc.List.empty_terminal };
-        return node;
+    pub fn terminal(self: ListLeaves, arena: Allocator, pane: *PaneView) Allocator.Error!apprt.ipc.List.Terminal {
+        const ctx = self.ctx;
+        const active_pane = self.active_pane;
+        const grid = self.grid;
+        // A viewer leaf reports the Mac's additive `type`/`url` shape and
+        // none of the terminal fields — it has no shell, no pwd, and no
+        // banner (docs/claude/cli.md: `+list` marks viewer panes with a `view:`
+        // prefix; JSON `"type": "viewer"` plus `"url"`).
+        const surface = pane.surface() orelse {
+            const vid = try arena.dupe(u8, pane.paneId());
+            const vname = ctx.app.ipcNameOf(.{ .pane = pane }) orelse name: {
+                ctx.app.ipcRegister(vid, .{ .pane = pane }) catch {};
+                break :name vid;
+            };
+            const viewer = pane.viewer().?;
+            return .{
+                .id = vid,
+                .title = viewer.title orelse "",
+                .working_directory = "",
+                .pid = 0,
+                .tty = "",
+                .name = vname,
+                .focused = pane == active_pane,
+                .exit_code = null,
+                .pane_type = "viewer",
+                .url = if (viewer.location) |loc| try arena.dupe(u8, loc) else null,
+                .stashed = pane_stash.isStashed(pane),
+                .minimized = isMinimized(grid, pane),
+            };
+        };
+        // T113: the leaf `id` is the pane's stable ghoztty-owned id, the
+        // same value its processes see as `$GHOZTTY_PANE_ID` and the same
+        // shape the Mac reports (`pane.id.uuidString`). It used to be the
+        // decimal `core_surface.id`, which changed on every re-attach and
+        // matched nothing in the pane's environment.
+        const id = try arena.dupe(u8, surface.paneId());
+        const name = ctx.app.ipcNameOf(.{ .pane = pane }) orelse name: {
+            ctx.app.ipcRegister(id, .{ .pane = pane }) catch {};
+            break :name id;
+        };
+        // T111b: read the pane's CACHED working directory. This used to
+        // call `core_surface.pwd()`, which takes that pane's renderer
+        // mutex — under a flood the IO thread holds it nearly
+        // continuously, so `+list`, the liveness probe every automation
+        // bar here is written against, was the one call that queued
+        // behind the flood (one handler measured at 29.3 s). Core pushes
+        // every change to the cache as a `.pwd` action, so the only
+        // value the cache can miss is the initial cwd termio sets at
+        // startup with no action: the first `+list` to see a pane seeds
+        // that, and no `+list` after it takes a terminal lock at all.
+        const pwd: []const u8 = pwd: {
+            // T185: a shell that never reports OSC 7 (cmd.exe) leaves
+            // the cache frozen at its STARTING directory — ask the OS
+            // for the shell process's real cwd instead, which tracks
+            // the user's `cd`s. Null (shell reports OSC 7, no pid, or
+            // read failure) falls through to the cached path. This is
+            // two bounded syscall reads with no ghoztty lock, so the
+            // T111b "no terminal mutex in +list" rule holds.
+            if (surface.livePwd(arena)) |live| break :pwd live;
+            if (surface.pwd) |cached| break :pwd cached;
+            // Cache miss: this is the ONLY path in `+list` that can touch
+            // a terminal lock, so GHOZTTY_PERF names the leaf and times
+            // it — a miss that repeats every call is the whole bug back.
+            const perf = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_PERF");
+            const t0: ?std.time.Instant =
+                if (perf) (std.time.Instant.now() catch null) else null;
+            const copy = surface.core_surface.pwd(arena) catch null;
+            if (perf) perf: {
+                const now = std.time.Instant.now() catch break :perf;
+                const start = t0 orelse break :perf;
+                log.info("ipcperf list pwd-miss name={s} ms={d} got={s}", .{
+                    name,
+                    now.since(start) / std.time.ns_per_ms,
+                    if (copy != null) "yes" else "no",
+                });
+            }
+            // Seed even when the terminal has NO pwd, or the miss repeats
+            // forever: a pane launched without a working directory (every
+            // `+split` that doesn't pass one) never gets a terminal pwd,
+            // and re-asking put `+list` right back on that pane's mutex —
+            // measured at 183/298/535/584 ms per call on a flooded pane
+            // and, under the section-E double storm, a 68 s handler.
+            // "No pwd" is a permanent answer, not a not-yet: the initial
+            // pwd is set synchronously by `Termio.init` →
+            // `backend.initTerminal`, so it is already there (or already
+            // absent) before `core_surface_ready`, and every later change
+            // arrives as a `.pwd` action.
+            surface.setPwd(copy orelse "");
+            break :pwd surface.pwd orelse "";
+        };
+        return .{
+                .id = id,
+                .title = surface.getTitle() orelse "",
+                .working_directory = pwd,
+                // The shell's process id. There is no tty name on
+                // Windows (ConPTY); the Mac reports /dev/ttysNNN here.
+                .pid = @intCast(surfaceShellPid(surface)),
+                .tty = "",
+                .name = name,
+                .focused = pane == active_pane,
+                .exit_code = null,
+                .background_tint = if (surface.background_tint) |tint| tint: {
+                    const buf = try arena.alloc(u8, 7);
+                    break :tint color_math.hexString(tint, buf[0..7]);
+                } else null,
+                .banner = if (surface.banner_text) |t|
+                    try arena.dupe(u8, t)
+                else
+                    null,
+                // T574: read-only mode, the machine-readable half of the
+                // badge T445 paints. Absent when off (and for viewers),
+                // so it is additive for every existing caller.
+                .readonly = if (surface.core_surface.readonly) true else null,
+                // T1827: stashed out of the layout but still a live,
+                // targetable pane - `+list` marks it, as Mac does.
+                .stashed = pane_stash.isStashed(pane),
+                // T2103: folded into a stacked row's strip.
+                .minimized = isMinimized(grid, pane),
+                // main eb8162e59: the activity state's machine token,
+                // written for every terminal pane as Mac does.
+                .state = surface.activity_state.token(),
+                // T332: the agent session this pane is bound to — the join
+                // key against `+sessions --json`. Lock-free read (the
+                // backend publishes the id atomically), duped because the
+                // borrow must not outlive the call; null for a plain
+                // local ConPTY pane, so the field is omitted there.
+                .session_id = if (surface.core_surface.remoteSessionId()) |sid|
+                    try arena.dupe(u8, sid)
+                else
+                    null,
+        };
     }
-
-    switch (tree.nodes[handle.idx()]) {
-        .leaf => |pane| {
-            // A viewer leaf reports the Mac's additive `type`/`url` shape and
-            // none of the terminal fields — it has no shell, no pwd, and no
-            // banner (docs/claude/cli.md: `+list` marks viewer panes with a `view:`
-            // prefix; JSON `"type": "viewer"` plus `"url"`).
-            const surface = pane.surface() orelse {
-                const vid = try arena.dupe(u8, pane.paneId());
-                const vname = ctx.app.ipcNameOf(.{ .pane = pane }) orelse name: {
-                    ctx.app.ipcRegister(vid, .{ .pane = pane }) catch {};
-                    break :name vid;
-                };
-                const viewer = pane.viewer().?;
-                node.* = .{ .leaf = .{
-                    .id = vid,
-                    .title = viewer.title orelse "",
-                    .working_directory = "",
-                    .pid = 0,
-                    .tty = "",
-                    .name = vname,
-                    .focused = pane == active_pane,
-                    .exit_code = null,
-                    .pane_type = "viewer",
-                    .url = if (viewer.location) |loc| try arena.dupe(u8, loc) else null,
-                    .stashed = pane_stash.isStashed(pane),
-                    .minimized = isMinimized(grid, pane),
-                } };
-                return node;
-            };
-            // T113: the leaf `id` is the pane's stable ghoztty-owned id, the
-            // same value its processes see as `$GHOZTTY_PANE_ID` and the same
-            // shape the Mac reports (`pane.id.uuidString`). It used to be the
-            // decimal `core_surface.id`, which changed on every re-attach and
-            // matched nothing in the pane's environment.
-            const id = try arena.dupe(u8, surface.paneId());
-            const name = ctx.app.ipcNameOf(.{ .pane = pane }) orelse name: {
-                ctx.app.ipcRegister(id, .{ .pane = pane }) catch {};
-                break :name id;
-            };
-            // T111b: read the pane's CACHED working directory. This used to
-            // call `core_surface.pwd()`, which takes that pane's renderer
-            // mutex — under a flood the IO thread holds it nearly
-            // continuously, so `+list`, the liveness probe every automation
-            // bar here is written against, was the one call that queued
-            // behind the flood (one handler measured at 29.3 s). Core pushes
-            // every change to the cache as a `.pwd` action, so the only
-            // value the cache can miss is the initial cwd termio sets at
-            // startup with no action: the first `+list` to see a pane seeds
-            // that, and no `+list` after it takes a terminal lock at all.
-            const pwd: []const u8 = pwd: {
-                // T185: a shell that never reports OSC 7 (cmd.exe) leaves
-                // the cache frozen at its STARTING directory — ask the OS
-                // for the shell process's real cwd instead, which tracks
-                // the user's `cd`s. Null (shell reports OSC 7, no pid, or
-                // read failure) falls through to the cached path. This is
-                // two bounded syscall reads with no ghoztty lock, so the
-                // T111b "no terminal mutex in +list" rule holds.
-                if (surface.livePwd(arena)) |live| break :pwd live;
-                if (surface.pwd) |cached| break :pwd cached;
-                // Cache miss: this is the ONLY path in `+list` that can touch
-                // a terminal lock, so GHOZTTY_PERF names the leaf and times
-                // it — a miss that repeats every call is the whole bug back.
-                const perf = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_PERF");
-                const t0: ?std.time.Instant =
-                    if (perf) (std.time.Instant.now() catch null) else null;
-                const copy = surface.core_surface.pwd(arena) catch null;
-                if (perf) perf: {
-                    const now = std.time.Instant.now() catch break :perf;
-                    const start = t0 orelse break :perf;
-                    log.info("ipcperf list pwd-miss name={s} ms={d} got={s}", .{
-                        name,
-                        now.since(start) / std.time.ns_per_ms,
-                        if (copy != null) "yes" else "no",
-                    });
-                }
-                // Seed even when the terminal has NO pwd, or the miss repeats
-                // forever: a pane launched without a working directory (every
-                // `+split` that doesn't pass one) never gets a terminal pwd,
-                // and re-asking put `+list` right back on that pane's mutex —
-                // measured at 183/298/535/584 ms per call on a flooded pane
-                // and, under the section-E double storm, a 68 s handler.
-                // "No pwd" is a permanent answer, not a not-yet: the initial
-                // pwd is set synchronously by `Termio.init` →
-                // `backend.initTerminal`, so it is already there (or already
-                // absent) before `core_surface_ready`, and every later change
-                // arrives as a `.pwd` action.
-                surface.setPwd(copy orelse "");
-                break :pwd surface.pwd orelse "";
-            };
-            node.* = .{
-                .leaf = .{
-                    .id = id,
-                    .title = surface.getTitle() orelse "",
-                    .working_directory = pwd,
-                    // The shell's process id. There is no tty name on
-                    // Windows (ConPTY); the Mac reports /dev/ttysNNN here.
-                    .pid = @intCast(surfaceShellPid(surface)),
-                    .tty = "",
-                    .name = name,
-                    .focused = pane == active_pane,
-                    .exit_code = null,
-                    .background_tint = if (surface.background_tint) |tint| tint: {
-                        const buf = try arena.alloc(u8, 7);
-                        break :tint color_math.hexString(tint, buf[0..7]);
-                    } else null,
-                    .banner = if (surface.banner_text) |t|
-                        try arena.dupe(u8, t)
-                    else
-                        null,
-                    // T574: read-only mode, the machine-readable half of the
-                    // badge T445 paints. Absent when off (and for viewers),
-                    // so it is additive for every existing caller.
-                    .readonly = if (surface.core_surface.readonly) true else null,
-                    // T1827: stashed out of the layout but still a live,
-                    // targetable pane - `+list` marks it, as Mac does.
-                    .stashed = pane_stash.isStashed(pane),
-                    // T2103: folded into a stacked row's strip.
-                    .minimized = isMinimized(grid, pane),
-                    // main eb8162e59: the activity state's machine token,
-                    // written for every terminal pane as Mac does.
-                    .state = surface.activity_state.token(),
-                    // T332: the agent session this pane is bound to — the join
-                    // key against `+sessions --json`. Lock-free read (the
-                    // backend publishes the id atomically), duped because the
-                    // borrow must not outlive the call; null for a plain
-                    // local ConPTY pane, so the field is omitted there.
-                    .session_id = if (surface.core_surface.remoteSessionId()) |sid|
-                        try arena.dupe(u8, sid)
-                    else
-                        null,
-                },
-            };
-        },
-        .split => |split| {
-            node.* = .{ .split = .{
-                .direction = switch (split.layout) {
-                    .horizontal => "horizontal",
-                    .vertical => "vertical",
-                },
-                .ratio = @floatCast(split.ratio),
-                .left = try buildNode(ctx, arena, tree, split.left, active_pane, grid),
-                .right = try buildNode(ctx, arena, tree, split.right, active_pane, grid),
-            } };
-        },
-    }
-    return node;
-}
+};
 
 /// The pane's shell process id, or 0 when unavailable. Lives on the Surface
 /// (`Surface.shellPid`) because the close-confirmation path needs the same

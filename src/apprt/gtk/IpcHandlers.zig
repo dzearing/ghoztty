@@ -40,7 +40,6 @@ const List = apprt.ipc.List;
 const Request = server.Request;
 const verbs = apprt.ipc.verbs;
 const verb_args = apprt.ipc.args;
-const split_name_collision = apprt.ipc.split_name_collision;
 const target_lookup = @import("../ipc/target_lookup.zig");
 
 const Application = @import("class/application.zig").Application;
@@ -183,7 +182,7 @@ fn paneIterator(app: Context) PaneIterator {
 /// Null only on OOM.
 var window_counter: u64 = 0;
 
-fn windowName(app: Context, window: *Window) ?[]const u8 {
+pub fn windowName(app: Context, window: *Window) ?[]const u8 {
     if (window.ipcName()) |n| return n;
     var buf: [32]u8 = undefined;
     // Bounded: a pane can be named `window-N` too.
@@ -300,27 +299,6 @@ fn missingResponse(
     }
 }
 
-/// What holds `name` where a `+split --name` into `window` would put it, for
-/// `split_name_collision`: a window of that name anywhere (window names are
-/// global), else a pane of that name in `window`.
-fn holderIn(app: Context, name: []const u8, window: *Window) ?split_name_collision.Existing {
-    var windows = windowIterator(app);
-    while (windows.next()) |w| {
-        const wn = windowName(app, w) orelse continue;
-        if (std.mem.eql(u8, wn, name)) return .{ .kind = .window, .window_name = wn };
-    }
-    var panes = paneIterator(app);
-    while (panes.next()) |p| {
-        if (p.window != window) continue;
-        const n = p.surface.ipcName() orelse continue;
-        if (std.mem.eql(u8, n, name)) return .{
-            .kind = .terminal,
-            .window_name = windowName(app, window) orelse "",
-        };
-    }
-    return null;
-}
-
 /// The window a default-target verb means: the active one, else the most
 /// recently created (the head of GTK's window list is the most recent).
 fn frontWindow(app: Context) ?*Window {
@@ -401,14 +379,6 @@ fn workingDirectory(arena: Allocator, wd: ?[]const u8) Allocator.Error!?[:0]cons
     return try arena.dupeZ(u8, v);
 }
 
-fn parseSplitDirection(s: []const u8) ?Surface.Tree.Split.Direction {
-    if (std.mem.eql(u8, s, "right")) return .right;
-    if (std.mem.eql(u8, s, "down")) return .down;
-    if (std.mem.eql(u8, s, "left")) return .left;
-    if (std.mem.eql(u8, s, "up")) return .up;
-    return null;
-}
-
 /// Raise and focus a target: `--focus` on a verb, and the `focus` action. A
 /// pane goes through the surface's own present request, which selects its
 /// tab first (a pane in a background tab is otherwise focused out of sight,
@@ -478,98 +448,59 @@ pub fn closeTarget(_: Context, target: Target, force: bool) bool {
 }
 
 // ---------------------------------------------------------------------------
-// +new-window
+// +new-window, +split, +rename: the shared bodies in `apprt/ipc/verbs.zig`
+// (T3375) - win32's argument checks, idempotence, name collisions, anchor
+// precedence, sentences and replies - over the model below, which only builds
+// the window or the pane.
 
 pub fn handleNewWindow(app: Context, request: Request) Allocator.Error!?[]u8 {
-    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    return verbs.newWindow(@This(), app, request);
+}
 
-    var args = try verb_args.parseVerbArgs(arena, request.arguments);
+pub fn handleSplit(app: Context, request: Request) Allocator.Error!?[]u8 {
+    return verbs.split(@This(), app, request);
+}
 
-    if (verb_args.viewConflictsWithCommand(args))
-        return try server.errorResponse(c_alloc, "{s}", .{verb_args.view_command_conflict_error});
-    if (args.view != null) return try server.errorResponse(c_alloc, view_not_yet, .{});
+pub fn handleRename(app: Context, request: Request) Allocator.Error!?[]u8 {
+    return verbs.rename(@This(), app, request);
+}
 
-    // `--from-focused` inherits a REMOTE parent's machine; the Linux app has
-    // no remote windows yet (T3337), so it is a plain local window, dropping
-    // the flags win32 drops on its local path.
-    if (args.from_focused) {
-        args.target = null;
-        args.name = null;
-        args.split_direction = null;
-        args.title = null;
-    }
+pub const view_not_served = view_not_yet;
 
-    // Idempotent: an existing window of that name is found, not recreated,
-    // and raised only with `--focus` (T1797). A pane's name is never a
-    // window's (T2250).
-    if (args.target) |target| {
-        const held = try resolveGlobal(arena, app, target);
-        switch (held) {
-            .ambiguous => return try server.errorResponse(
-                c_alloc,
-                "'{s}' is already the name of a pane, so no window can take it. Use another --target.",
-                .{target},
-            ),
-            .found => |entry| {
-                if (entry == .pane) return try server.errorResponse(
-                    c_alloc,
-                    "'{s}' is already the name of a pane, so no window can take it. Use another --target.",
-                    .{target},
-                );
-                if (args.focus) focusTarget(entry);
-                if (try verb_args.droppedOnExistingTarget(arena, args)) |dropped| {
-                    const note = try std.fmt.allocPrint(
-                        arena,
-                        "target '{s}' already exists; {s} it. Ignored: {s}. +close it first to recreate.",
-                        .{ target, server.foundVerb(args.focus), dropped },
-                    );
-                    return try server.successResponse(c_alloc, "focused", note);
-                }
-                return try server.successResponse(c_alloc, "focused", null);
-            },
-            .not_found => {},
-        }
-    }
-
-    // T968: `--name` names a PANE and is idempotent the same way.
-    if (args.name) |name| if (args.target == null) {
-        switch (try resolve(arena, app, name)) {
-            .found => |entry| {
-                if (args.focus) focusTarget(entry);
-                var lost = args;
-                lost.name = null;
-                if (try verb_args.droppedOnExistingTarget(arena, lost)) |dropped| {
-                    const note = try std.fmt.allocPrint(
-                        arena,
-                        "pane '{s}' already exists; {s} it. Ignored: {s}. +close it first to recreate.",
-                        .{ name, server.foundVerb(args.focus), dropped },
-                    );
-                    return try server.successResponse(c_alloc, "focused", note);
-                }
-                return try server.successResponse(c_alloc, "focused", null);
-            },
-            else => {},
-        }
+/// What a WINDOW name means: `resolve` with no caller window, since window
+/// names are global (T2250). A name panes hold is refused as a window name
+/// whatever they are, so the ambiguity needs no sentence.
+pub fn lookupWindowName(app: Context, arena: Allocator, name: []const u8) Allocator.Error!verbs.TargetLookup(Target) {
+    return switch (try resolveGlobal(arena, app, name)) {
+        .found => |t| .{ .found = t },
+        .ambiguous => .{ .ambiguous = "" },
+        .not_found => .not_found,
     };
+}
 
-    // Validate the inline split before anything opens.
-    const split_dir: ?Surface.Tree.Split.Direction = if (args.split_direction) |d|
-        parseSplitDirection(d) orelse
-            return try server.errorResponse(c_alloc, "invalid split direction: {s}", .{d})
-    else
-        null;
+pub fn isPane(target: Target) bool {
+    return target == .pane;
+}
 
-    const first_pane_name = verb_args.newWindowFirstPaneName(args);
+/// Open the window `+new-window` asked for, once the shared checks passed.
+/// `--from-focused` inherits a REMOTE parent's machine on win32; the Linux
+/// app has no remote windows yet (T3337), so it is always a local window here.
+pub fn openWindow(
+    app: Context,
+    arena: Allocator,
+    request: Request,
+    args: verb_args.VerbArgs,
+    plan: verbs.WindowPlan,
+) Allocator.Error!verbs.Opened {
+    _ = request;
     const window = app.newWindowForIpc(
         try paneCommand(arena, app, args.e_args, args.command, args.shell),
         try workingDirectory(arena, args.working_directory),
-        try paneEnv(arena, args.env, args.target, first_pane_name orelse args.target),
+        try paneEnv(arena, args.env, args.target, plan.first_pane_env_name),
     );
 
     if (args.target) |t| window.setIpcName(t) else _ = windowName(app, window);
-    if (first_pane_name) |n| if (window.getActiveSurface()) |s| s.setIpcName(n);
+    if (plan.first_pane_name) |n| if (window.getActiveSurface()) |s| s.setIpcName(n);
 
     // T92: an empty `--title=` means "no pin".
     if (args.title) |title| if (title.len > 0) window.setTitleOverride(title);
@@ -581,141 +512,133 @@ pub fn handleNewWindow(app: Context, request: Request) Allocator.Error!?[]u8 {
         if (args.target) |t| if (std.mem.eql(u8, t, want)) window.testAskToClose();
     };
 
-    if (split_dir) |dir| {
-        const tab = window.getSelectedTab() orelse
-            return try server.errorResponse(c_alloc, "failed to create split", .{});
+    // The inline split. One that fails leaves the window, which is what was
+    // asked for, so the reply stays `created` (win32's answer).
+    if (plan.split) |dir| split: {
+        const tab = window.getSelectedTab() orelse {
+            log.warn("IPC inline split failed: the new window has no tab", .{});
+            break :split;
+        };
         const parent = window.getActiveSurface();
         const split_cmd = server.nonEmpty(args.split_command);
-        const s = tab.getSplitTree().newSplitAt(dir, parent, .{
+        const s = tab.getSplitTree().newSplitAt(treeDirection(dir), parent, .{
             .command = if (split_cmd) |cmd| try paneCommand(arena, app, &.{}, cmd, args.shell) else null,
             .env = try paneEnv(arena, &.{}, args.target, args.name),
             .at = parent,
             .focus = args.focus,
         }) catch |err| {
             log.warn("IPC inline split failed err={}", .{err});
-            return try server.errorResponse(c_alloc, "failed to create split", .{});
+            break :split;
         };
         if (args.name) |n| s.setIpcName(n);
     }
 
-    return try server.successResponse(c_alloc, "created", null);
+    return .{ .created = null };
 }
 
-// ---------------------------------------------------------------------------
-// +split
+pub const WindowHandle = *Window;
+pub const PaneHandle = PaneAt;
 
-pub fn handleSplit(app: Context, request: Request) Allocator.Error!?[]u8 {
-    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+pub fn windowOfTarget(target: Target) *Window {
+    return target.window_();
+}
 
-    const args = try verb_args.parseVerbArgs(arena, request.arguments);
-
-    if (verb_args.viewConflictsWithCommand(args))
-        return try server.errorResponse(c_alloc, "{s}", .{verb_args.view_command_conflict_error});
-    if (args.view != null) return try server.errorResponse(c_alloc, view_not_yet, .{});
-
-    // Where the split lands: --pane names the exact pane; --target a window
-    // (or a pane, whose window's active pane is used); neither, the pane the
-    // command was run from (T1079), else the front window's active pane.
-    var window: *Window = undefined;
-    var at: *Surface = undefined;
-    if (args.pane) |pane_name| {
-        const resolved = try resolve(arena, app, pane_name);
-        const entry = switch (resolved) {
-            .found => |e| e,
-            else => return try missingResponse(arena, resolved, pane_name, "pane '{s}' not found", .{pane_name}),
-        };
-        switch (entry) {
-            .pane => |p| {
-                window = p.window;
-                at = p.surface;
-            },
-            .window => return try server.errorResponse(c_alloc, "pane '{s}' not found", .{pane_name}),
-        }
-    } else if (args.target) |target| {
-        const resolved = try resolve(arena, app, target);
-        const entry = switch (resolved) {
-            .found => |e| e,
-            else => return try missingResponse(arena, resolved, target, "target '{s}' not found in registry", .{target}),
-        };
-        window = entry.window_();
-        at = window.getActiveSurface() orelse
-            return try server.errorResponse(c_alloc, "target '{s}' has no surface to split", .{target});
-    } else if (callerAnchor(app, args)) |caller| {
-        window = caller.window;
-        at = caller.surface;
-    } else {
-        window = frontWindow(app) orelse
-            return try server.errorResponse(c_alloc, "no window found for split", .{});
-        at = window.getActiveSurface() orelse
-            return try server.errorResponse(c_alloc, "no surface to split", .{});
-    }
-
-    // Idempotent: a --name already held in THE WINDOW THIS SPLIT LANDS IN is
-    // the answer when it is what was asked for, and a failure naming what
-    // holds it when not (T2184, `split_name_collision`). A pane of that name
-    // in another window does not count (T2250).
-    if (args.name) |name| if (!args.from_focused) {
-        if (holderIn(app, name, window)) |existing| {
-            switch (try split_name_collision.decide(arena, name, existing, null)) {
-                .conflict => |msg| {
-                    logSplit(request, args, window, null, msg);
-                    return try server.errorResponse(c_alloc, "{s}", .{msg});
-                },
-                .reuse => |msg| {
-                    logSplit(request, args, window, null, msg);
-                    if (args.focus) if (namedPaneIn(window, app, name)) |p| focusTarget(.{ .pane = p });
-                    return try server.messageResponse(c_alloc, msg);
-                },
-            }
-        }
+pub fn paneOfTarget(target: Target) ?PaneAt {
+    return switch (target) {
+        .pane => |p| p,
+        .window => null,
     };
+}
 
-    const ratio: f16 = if (args.percent) |percent| ratio: {
-        if (percent < 1 or percent > 99) return try server.errorResponse(
-            c_alloc,
-            "percent must be between 1 and 99, got {d}",
-            .{percent},
-        );
-        const r = @as(f16, @floatFromInt(100 - percent)) / 100.0;
-        break :ratio @min(0.9, @max(0.1, r));
-    } else 0.5;
+pub fn paneTarget(pane: PaneAt) Target {
+    return .{ .pane = pane };
+}
 
-    const dir_str = args.split_direction orelse "right";
-    const direction = parseSplitDirection(dir_str) orelse
-        return try server.errorResponse(c_alloc, "invalid direction: {s}", .{dir_str});
+pub fn paneWindow(pane: PaneAt) *Window {
+    return pane.window;
+}
 
-    const tab = tabOf(window, at) orelse
-        return try server.errorResponse(c_alloc, "failed to create split", .{});
+pub fn activePane(window: *Window) ?PaneAt {
+    const surface = window.getActiveSurface() orelse return null;
+    return .{ .window = window, .surface = surface };
+}
 
-    // `--from-focused` mirrors the keyboard split (inherits everything, names
-    // nothing), as win32 and the Mac do.
-    const name: ?[]const u8 = if (args.from_focused) null else args.name;
+pub fn defaultWindow(app: Context) ?*Window {
+    return frontWindow(app);
+}
+
+pub fn callerPane(app: Context, args: verb_args.VerbArgs) ?PaneAt {
+    return callerAnchor(app, args);
+}
+
+pub fn paneId(pane: PaneAt) []const u8 {
+    return pane.surface.paneId();
+}
+
+/// What holds `name` where a `+split --name` into `window` would put it, for
+/// `split_name_collision`: a window of that name anywhere (window names are
+/// global), else a pane of that name in `window`.
+pub fn nameHolderIn(app: Context, name: []const u8, window: *Window) ?verbs.NameHolder(Target) {
+    var windows = windowIterator(app);
+    while (windows.next()) |w| {
+        const wn = windowName(app, w) orelse continue;
+        if (std.mem.eql(u8, wn, name)) return .{
+            .target = .{ .window = w },
+            .existing = .{ .kind = .window, .window_name = wn },
+        };
+    }
+    const p = namedPaneIn(window, app, name) orelse return null;
+    return .{
+        .target = .{ .pane = p },
+        .existing = .{ .kind = .terminal, .window_name = windowName(app, window) orelse "" },
+    };
+}
+
+fn treeDirection(dir: verbs.SplitDirection) Surface.Tree.Split.Direction {
+    return switch (dir) {
+        .right => .right,
+        .down => .down,
+        .left => .left,
+        .up => .up,
+    };
+}
+
+/// Open the pane `+split` asked for at `at`, named `--name` (not for
+/// `--from-focused`, which mirrors the keyboard split: it inherits everything
+/// and names nothing). Null when none opened.
+pub fn createSplit(
+    app: Context,
+    arena: Allocator,
+    args: verb_args.VerbArgs,
+    window: *Window,
+    at: PaneAt,
+    spec: verbs.SplitSpec,
+) Allocator.Error!?PaneAt {
+    const tab = tabOf(window, at.surface) orelse return null;
+    const inherit = spec.inherit;
+    const name: ?[]const u8 = if (inherit) null else args.name;
     const command = args.split_command orelse args.command;
-    const surface = tab.getSplitTree().newSplitAt(direction, at, .{
-        .command = if (args.from_focused) null else try paneCommand(arena, app, args.e_args, command, args.shell),
-        .working_directory = if (args.from_focused) null else try workingDirectory(arena, args.working_directory),
-        .env = if (args.from_focused) &.{} else try paneEnv(arena, args.env, windowName(app, window), name),
-        .at = at,
-        .ratio = ratio,
+    const surface = tab.getSplitTree().newSplitAt(treeDirection(spec.direction), at.surface, .{
+        .command = if (inherit) null else try paneCommand(arena, app, args.e_args, command, args.shell),
+        .working_directory = if (inherit) null else try workingDirectory(arena, args.working_directory),
+        .env = if (inherit) &.{} else try paneEnv(arena, args.env, windowName(app, window), name),
+        .at = at.surface,
+        .ratio = spec.ratio,
         .focus = args.focus,
     }) catch |err| {
         log.warn("IPC split failed err={}", .{err});
-        logSplit(request, args, window, null, "failed to create split");
-        return try server.errorResponse(c_alloc, "failed to create split", .{});
+        return null;
     };
-
     if (name) |n| surface.setIpcName(n);
-    if (args.focus) focusTarget(.{ .pane = .{ .window = window, .surface = surface } });
+    return .{ .window = window, .surface = surface };
+}
 
-    const message = try verb_args.splitCreatedMessage(arena, .{
-        .name = name,
-        .pane_id = surface.paneId(),
-        .window_name = windowName(app, window) orelse "",
-    });
-    logSplit(request, args, window, surface, "created");
-    return try server.messageResponse(c_alloc, message);
+/// Pin `title` on the target's window (null clears it, T92). The GTK app has
+/// no user-set WINDOW title yet (its prompts title a tab or a pane), so
+/// T2404's "the user's title outranks a script's" has nothing to keep here.
+pub fn renameWindow(_: Context, target: Target, title: ?[]const u8) verbs.Renamed {
+    target.window_().setTitleOverride(title);
+    return .renamed;
 }
 
 /// The pane in `window` named `name`.
@@ -762,52 +685,6 @@ fn paneAlive(app: Context, id: []const u8) bool {
         if (std.mem.eql(u8, p.surface.paneId(), id)) return true;
     }
     return false;
-}
-
-/// Every `+split`, in the log (T2250): who asked, where it went, what came
-/// of it.
-fn logSplit(
-    request: Request,
-    args: verb_args.VerbArgs,
-    window: ?*Window,
-    surface: ?*Surface,
-    outcome: []const u8,
-) void {
-    log.info("IPC +split: caller={s} window={s} pane={s} name={s} outcome={s}", .{
-        request.caller_pane orelse args.caller_pane orelse "-",
-        if (window) |w| w.ipcName() orelse "-" else "-",
-        if (surface) |s| s.paneId() else "-",
-        args.name orelse "-",
-        outcome,
-    });
-}
-
-// ---------------------------------------------------------------------------
-// +rename
-
-pub fn handleRename(app: Context, request: Request) Allocator.Error!?[]u8 {
-    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const args = try verb_args.parseVerbArgs(arena, request.arguments);
-    const target = args.target orelse
-        return try server.errorResponse(c_alloc, "--target is required for +rename", .{});
-    const title = args.title orelse
-        return try server.errorResponse(c_alloc, "--title is required for +rename", .{});
-
-    const resolved = try resolve(arena, app, target);
-    const entry = switch (resolved) {
-        .found => |e| e,
-        else => return try missingResponse(arena, resolved, target, "target '{s}' not found in registry", .{target}),
-    };
-
-    // The pin wins over the tabs' titles until cleared; `--title=""` clears
-    // it (T92). The GTK app has no user-set WINDOW title (its prompts title a
-    // tab or a pane), so T2404's "the user's title outranks a script's"
-    // refusal has nothing to protect here yet.
-    entry.window_().setTitleOverride(title);
-    return try c_alloc.dupe(u8, "{\"success\":true}");
 }
 
 // ---------------------------------------------------------------------------
@@ -1101,7 +978,8 @@ fn buildWindow(arena: Allocator, app: Context, window: *Window) Allocator.Error!
         const tab = gobject.ext.cast(Tab, page.getChild());
         const active: ?*Surface = if (tab) |tb| tb.getActiveSurface() else null;
         const splits: *const List.Node = if (tab) |tb| splits: {
-            if (tb.getSplitTree().getTree()) |tree| break :splits try buildNode(arena, tree, .root, active);
+            if (tb.getSplitTree().getTree()) |tree|
+                break :splits try verbs.listSplitNode(Surface.Tree, arena, tree, .root, ListLeaves{ .active = active });
             break :splits try emptyNode(arena);
         } else try emptyNode(arena);
         t.* = .{
@@ -1131,42 +1009,27 @@ fn emptyNode(arena: Allocator) Allocator.Error!*const List.Node {
     return node;
 }
 
-fn buildNode(
-    arena: Allocator,
-    tree: *const Surface.Tree,
-    handle: Surface.Tree.Node.Handle,
+/// The leaves of one tab's `+list` split tree, for the shared walk
+/// (`verbs.listSplitNode`, T3375).
+const ListLeaves = struct {
     active: ?*Surface,
-) Allocator.Error!*const List.Node {
-    if (tree.isEmpty()) return emptyNode(arena);
-    const node = try arena.create(List.Node);
-    switch (tree.nodes[handle.idx()]) {
-        .leaf => |surface| {
-            const id = try arena.dupe(u8, surface.paneId());
-            const shell = surface.shellInfo();
-            node.* = .{ .leaf = .{
-                .id = id,
-                .title = try arena.dupe(u8, surface.getTitle() orelse ""),
-                .working_directory = try arena.dupe(u8, surface.getPwd() orelse ""),
-                .pid = shell.pid,
-                .tty = try arena.dupe(u8, shell.tty),
-                // An unnamed pane answers to its id, the Mac's fallback.
-                .name = if (surface.ipcName()) |nm| try arena.dupe(u8, nm) else id,
-                .focused = surface == active,
-                .exit_code = null,
-            } };
-        },
-        .split => |split| node.* = .{ .split = .{
-            .direction = switch (split.layout) {
-                .horizontal => "horizontal",
-                .vertical => "vertical",
-            },
-            .ratio = @floatCast(split.ratio),
-            .left = try buildNode(arena, tree, split.left, active),
-            .right = try buildNode(arena, tree, split.right, active),
-        } },
+
+    pub fn terminal(self: ListLeaves, arena: Allocator, surface: *Surface) Allocator.Error!List.Terminal {
+        const id = try arena.dupe(u8, surface.paneId());
+        const shell = surface.shellInfo();
+        return .{
+            .id = id,
+            .title = try arena.dupe(u8, surface.getTitle() orelse ""),
+            .working_directory = try arena.dupe(u8, surface.getPwd() orelse ""),
+            .pid = shell.pid,
+            .tty = try arena.dupe(u8, shell.tty),
+            // An unnamed pane answers to its id, the Mac's fallback.
+            .name = if (surface.ipcName()) |nm| try arena.dupe(u8, nm) else id,
+            .focused = surface == self.active,
+            .exit_code = null,
+        };
     }
-    return node;
-}
+};
 
 comptime {
     server.checkFrontend(@This());
