@@ -29,7 +29,11 @@
 #      parallel and floor-lane outside it wait, then refuse (exit 5 / FLOOR NOT
 #      GREEN) with nothing launched; I8 is the negative control (same
 #      contention, owner inherited, runs green); a dead holder never reads as
-#      in flight; the claim asks the same question.
+#      in flight; the claim asks the same question. Section I runs with any
+#      inherited GHOZTTY_TESTRUN_OWNER cleared, so inside a real sweep the
+#      harness still HOLDS the scoped lock (I0), and a copy of this script
+#      started under I5's ap-run fixture refuses at once (I11) - T3409, the
+#      2026-11-22 57-level recursion.
 #
 # Hermetic: every mutex name is suffixed by GHOZTTY_MACHINE_LOCK_SCOPE and the
 # holder files live under $env:TEMP, so no real lane's lock is ever touched. No
@@ -41,6 +45,19 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+
+# T3409 depth guard. Section I's I5 fixture (ap-run.ps1) really runs
+# acceptance-parallel against THIS script, and is only safe because the test-run
+# lock refuses it. If that refusal ever regresses, the inner copy would reach
+# section I again and recurse without end (2026-11-22: 57 levels, 210
+# processes). The fixture marks its children, so a copy started under it stops
+# here, before it launches anything; I5 then reads red instead of the box
+# filling with processes.
+if ($env:GHOZTTY_MACHINE_LOCK_UNDER_APRUN) {
+    Write-Host "MACHINE-LOCK RECURSION REFUSED: started under machine-lock.ps1's own ap-run fixture (pid $env:GHOZTTY_MACHINE_LOCK_UNDER_APRUN); a nested copy never runs"
+    Write-Host 'ASSERTED NOTHING (recursion guard, T3409)'
+    exit 2
+}
 
 # The shared scorer; dot-sourcing it ARMS the run (T1039).
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
@@ -206,6 +223,13 @@ try {
     # wait on a per-worktree lock, nested runs pass through, and the claim
     # names a live holder.
     "I. test-run lock"
+    # T3409: inside an acceptance sweep this process inherits the sweep's
+    # GHOZTTY_TESTRUN_OWNER, so the holder acquisitions below would be NESTED
+    # and take no mutex - and then I5's ap-run finds the lock free and really
+    # runs. Section I is about this harness HOLDING the (scoped) lock, so it
+    # runs as if outside any run; the outer owner is restored at the end.
+    $script:outerTestRunOwner = $env:GHOZTTY_TESTRUN_OWNER
+    Remove-Item Env:GHOZTTY_TESTRUN_OWNER -ErrorAction SilentlyContinue
     $mlLib = Join-Path $Repo 'scripts\lib\MachineLock.ps1'
     $probe = Join-Path $work 'inflight.ps1'
     [IO.File]::WriteAllText($probe, ". '$mlLib'`r`n`$f = Get-TestRunInFlight -Repo '$Repo'`r`nif (`$f) { Write-Host ('INFLIGHT ' + `$f.Text) } else { Write-Host 'FREE' }`r`nexit 0")
@@ -214,7 +238,7 @@ try {
     $testRunDier = Join-Path $work 'testrun-dier.ps1'
     [IO.File]::WriteAllText($testRunDier, ". '$mlLib'`r`n`$l = Enter-MachineLock -Kind testrun -Repo '$Repo' -Label testrun-dier.ps1`r`nWrite-Host 'DIER HOLDS'`r`nexit 0")
     $apRun = Join-Path $work 'ap-run.ps1'
-    [IO.File]::WriteAllText($apRun, "& powershell -NoProfile -ExecutionPolicy Bypass -File '$(Join-Path $Repo 'scripts\acceptance-parallel.ps1')' run -Scripts machine-lock.ps1`r`nexit `$LASTEXITCODE")
+    [IO.File]::WriteAllText($apRun, "`$env:GHOZTTY_MACHINE_LOCK_UNDER_APRUN = [string]`$PID`r`n& powershell -NoProfile -ExecutionPolicy Bypass -File '$(Join-Path $Repo 'scripts\acceptance-parallel.ps1')' run -Scripts machine-lock.ps1`r`nexit `$LASTEXITCODE")
     # A child that is NOT inside this harness's run: no inherited owner.
     $outside = @{ GHOZTTY_TESTRUN_OWNER = $null; GHOZTTY_TESTRUN_LOCK_WAIT_MIN = '0.05' }
 
@@ -222,6 +246,8 @@ try {
     Assert 'I1 a free test-run lock reads as nothing in flight' ($r.Out -match 'FREE') $r.Out
 
     $held = Enter-MachineLock -Kind testrun -Repo $Repo -Label 'harness-testrun-holder' -Detail 'logs C:\fixture-logs'
+    Assert 'I0 the harness really holds the scoped test-run lock (not nested in an outer sweep, T3409)' (
+        $held.Acquired -and -not $held.Nested -and $null -ne $held.Mutex)
     try {
         $rIn = Run-Fixture $probe
         $rNest = Run-Fixture $nest @{ GHOZTTY_TESTRUN_LOCK_WAIT_MIN = '0.05' }
@@ -230,6 +256,8 @@ try {
     } finally { Exit-MachineLock $held }
     Assert 'I2 held: another process sees it IN FLIGHT, naming the holder and where its logs land' (
         $rIn.Out -match 'INFLIGHT harness-testrun-holder \(lane harness-lane, pid \d+, since [^,]+, logs C:\\fixture-logs\)') $rIn.Out
+    Assert 'I5a the I5 fixture never ran a nested copy of this harness (no recursion, T3409)' (
+        $rAp.Out -notmatch 'MACHINE-LOCK RECURSION REFUSED') $rAp.Out
     Assert 'I3 a run inside the holder''s run (inherited owner) is nested: acquired at once, no wait' (
         $rNest.Out -match 'nested inside pid' -and $rNest.Out -match 'ACQUIRED=True NESTED=True' -and $rNest.Out -notmatch 'WAIT') $rNest.Out
     Assert 'I4 a run outside it waits, naming the holder, and gives up bounded' (
@@ -273,9 +301,19 @@ try {
     Assert 'I10 the loop''s claim asks the same question and prints TEST RUN IN FLIGHT' (
         $execText -match 'Get-TestRunInFlight -Repo \$Repo' -and $execText -match 'TEST RUN IN FLIGHT: ')
 
+    # I11: the depth guard itself has teeth - a copy of this harness started
+    # under the ap-run marker refuses before it launches anything.
+    $r = Run-Fixture (Join-Path $Repo 'test\win32\machine-lock.ps1') @{ GHOZTTY_MACHINE_LOCK_UNDER_APRUN = '1' }
+    Assert 'I11 a copy started under the ap-run fixture refuses at once: RECURSION REFUSED, exit 2, no section ran' (
+        $r.Out -match 'MACHINE-LOCK RECURSION REFUSED' -and $r.Code -eq 2 -and $r.Out -notmatch '(?m)^A\. uncontended' -and $r.Seconds -lt 30) $r.Out
+
     Complete-TestBody
 }
 finally {
+    if ($null -ne (Get-Variable -Name outerTestRunOwner -Scope Script -ErrorAction SilentlyContinue)) {
+        if ($script:outerTestRunOwner) { $env:GHOZTTY_TESTRUN_OWNER = $script:outerTestRunOwner }
+        else { Remove-Item Env:GHOZTTY_TESTRUN_OWNER -ErrorAction SilentlyContinue }
+    }
     Remove-Item Env:GHOZTTY_MACHINE_LOCK_SCOPE, Env:GHOZTTY_MACHINE_LOCK_DIR, Env:GHOZTTY_LOOP_LANE -ErrorAction SilentlyContinue
     if (Test-Path $work) { Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue }
 }

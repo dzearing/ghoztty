@@ -39755,3 +39755,9 @@ Reproduce-first: agent-recovery.ps1 is ALL PASS (104 assertions) on HEAD 15640bd
 - The task's premise was partly wrong: one-installer never runs msiexec (it only inspects relay page content), so it owed nothing.
 - New harness-floor member `test/win32/msiexec-sentinel-audit.ps1`. It reads the PowerShell AST, so comments, labels and fixture strings never count as a run. A run is a direct msiexec, `&`, or Start-Process / Start-OnTestDesktop with msiexec as the program (variables followed). Any such top-level script without the loader and all four sentinel calls fails the audit. B also asserts the detector still sees the five known installers, so it cannot go blind and still pass.
 - Evidence: audit ALL PASS (24), -NegativeControl red (5 reported). arp-orphan 24/24, install-walkthrough 49/49 and msi-upgrade 40/40 ran on the box with the new checks green. No zig changed.
+
+## 2026-11-22 11:15 - T3409: machine-lock.ps1 no longer recurses when it runs inside another acceptance sweep
+
+- Root cause: inside a sweep the harness inherits the sweep's GHOZTTY_TESTRUN_OWNER, so its own section I holder was "nested" and took no mutex. I5's fixture then found the scoped lock free and really ran acceptance-parallel against machine-lock.ps1, which reached section I again (lane b, 09:34: 57 levels, 210 processes).
+- Fix: section I clears the inherited owner and restores it in the finally, so the harness really holds the scoped lock (new I0). Depth guard: the ap-run fixture exports GHOZTTY_MACHINE_LOCK_UNDER_APRUN, and a copy of the harness started under it refuses before its first section (new I11, plus I5a).
+- Evidence: standalone and inside `acceptance-parallel.ps1 run -Scripts machine-lock.ps1` (68s, one level), I0/I5/I5a/I11 PASS. Only red is H2, which T2905 owns (acked).
