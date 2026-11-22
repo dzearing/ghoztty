@@ -1,8 +1,8 @@
 {
     "guard":  "window-name-restore",
     "script":  "test/win32/window-name-restore.ps1",
-    "generated":  "2026-11-22T05:18:07-08:00",
-    "commit":  "b4cb5eedc",
+    "generated":  "2026-11-22T05:24:28-08:00",
+    "commit":  "5f05e5661",
     "uncommitted":  [
 
                     ],

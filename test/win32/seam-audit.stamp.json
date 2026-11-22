@@ -1,8 +1,8 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-22T04:51:19-08:00",
-    "commit":  "b7c29cb43",
+    "generated":  "2026-11-22T05:26:37-08:00",
+    "commit":  "5f05e5661",
     "uncommitted":  [
 
                     ],
@@ -173,7 +173,7 @@
                   "src/apprt/win32/ipc_shortcut_guide.zig":  "ffbe20a34b9868b26615353dfab84d2b65d011faf27094c957711cdd4d756705",
                   "src/apprt/win32/ipc_whats_new.zig":  "35f9a55aca347095990a162cba08e95edf95b3ff9440b04c9dd58370a58e1d10",
                   "src/apprt/win32/ipc_workspaces.zig":  "c9b57d7078145c2e43b355192d211ed5eeff61b8484c57a706b13011766c0648",
-                  "src/apprt/win32/IpcHandlers.zig":  "838430e0b9c32744f58264e345a1800db31902bbf5f69f5b373378074051ecdf",
+                  "src/apprt/win32/IpcHandlers.zig":  "8d8378ed589c8190f3f5710adc10831ca83818f8b78a00582eda9ad81929b5d3",
                   "src/apprt/win32/IpcRegistry.zig":  "4337c643db3bcd081f639932420132e3b87f44213f8199f16de1b76e58d40e50",
                   "src/apprt/win32/IpcServer.zig":  "d52089f909a9bad6600892d1cc80030a3dccfa7b251a5215fb1b16bc0d4b6570",
                   "src/apprt/win32/job_escape.zig":  "060f58a8a8739baf8246aaca8cf5d4a0e6113bfa69e981fdc2282ea8a060cb7e",
