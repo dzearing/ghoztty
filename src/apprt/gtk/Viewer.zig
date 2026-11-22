@@ -499,7 +499,8 @@ pub fn reveal(self: *Viewer) void {
     const path = self.file_path orelse return;
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const target = revealTarget(&buf, path) orelse return;
-    const z = std.fmt.bufPrintZ(&buf, "{s}", .{target.path}) catch return;
+    var zbuf: [std.fs.max_path_bytes + 1]u8 = undefined;
+    const z = std.fmt.bufPrintZ(&zbuf, "{s}", .{target.path}) catch return;
     const file = wk.g_file_new_for_path(z.ptr);
     defer wk.g_object_unref(file);
     const launcher = wk.gtk_file_launcher_new(file);
@@ -992,7 +993,9 @@ const steps = if (build_config.is_debug) struct {
             wk.gtk_editable_set_text(v.bar.address, z.ptr);
             out("type {s}", .{arg});
         } else if (std.mem.eql(u8, verb, "activate")) {
-            _ = wk.gtk_widget_activate(v.bar.address);
+            // What Return in the field does: GtkText re-emits it as the
+            // entry's own `activate` (`gtk_widget_activate` does not).
+            wk.g_signal_emit_by_name(v.bar.address, "activate");
             out("activate", .{});
         } else if (std.mem.eql(u8, verb, "click")) {
             const b: ?*wk.GtkWidget = if (std.mem.eql(u8, arg, "back")) v.bar.back else if (std.mem.eql(u8, arg, "forward")) v.bar.forward else if (std.mem.eql(u8, arg, "reload")) v.bar.reload else if (std.mem.eql(u8, arg, "home")) v.bar.home else if (std.mem.eql(u8, arg, "reveal")) v.bar.reveal else null;

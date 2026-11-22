@@ -202,6 +202,7 @@ pub extern fn gtk_file_launcher_open_containing_folder(
 ) void;
 pub extern fn gtk_file_launcher_launch_finish(launcher: *GtkFileLauncher, result: *GAsyncResult, err: *?*GError) c_int;
 pub extern fn gtk_file_launcher_open_containing_folder_finish(launcher: *GtkFileLauncher, result: *GAsyncResult, err: *?*GError) c_int;
+pub extern fn g_signal_emit_by_name(instance: *anyopaque, signal: [*:0]const u8, ...) void;
 pub extern fn g_idle_add(function: *const fn (?*anyopaque) callconv(.c) c_int, data: ?*anyopaque) c_uint;
 pub extern fn g_timeout_add(interval_ms: c_uint, function: *const fn (?*anyopaque) callconv(.c) c_int, data: ?*anyopaque) c_uint;
 
