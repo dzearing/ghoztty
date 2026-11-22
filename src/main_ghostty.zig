@@ -584,6 +584,7 @@ test {
     // win32 apprt otherwise, so pull it in explicitly to run its unit tests in
     // the `none` lane too.
     _ = @import("remote/agent_lineage.zig");
+    _ = @import("remote/local_agent_paths.zig");
     // T2917: the test-redirectable HKCU Run key, shared by the win32 app's
     // autostart and the agent's adopt bookkeeping.
     _ = @import("remote/run_key.zig");

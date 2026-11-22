@@ -98,12 +98,13 @@ pub fn defaultTermioEnv(self: *Self) !std.process.EnvMap {
     return try self.surface.defaultTermioEnv();
 }
 
-/// Remote-machine backend (remote-machines design §3.2). The GTK apprt does
-/// not (yet) support remote surfaces, so this always returns null and surfaces
-/// use the local exec/pty backend.
+/// The `.remote` termio backend for this surface, or null for a plain exec
+/// pty (remote-machines design §3.2). With `session-persistence` on (the
+/// default) a new pane runs under the LOCAL `ghoztty-agent` so it outlives
+/// the app (T3337); a missing or broken agent answers null and the pane runs
+/// as an exec pane. Cross-machine windows are not served on Linux yet.
 pub fn remoteBackend(self: *Self) ?CoreSurface.RemoteBackend {
-    _ = self;
-    return null;
+    return self.surface.remoteBackend();
 }
 
 /// Redraw the inspector for our surface.

@@ -69,6 +69,12 @@ hl_start() {
     trap 'hl_stop' EXIT
     trap 'exit 143' TERM; trap 'exit 130' INT    # so a killed test still runs the EXIT trap
     export XDG_RUNTIME_DIR="$HL_RUNTIME"
+    # T3337: a private config root, so the app reads no user config and the
+    # ghoztty-agent it spawns keeps its socket, roster and log under the
+    # harness dir (local_agent_paths honors XDG_CONFIG_HOME on Linux), never
+    # in the user's ~/.config. hl_stop reaps that agent.
+    export XDG_CONFIG_HOME="$HL_RUNTIME/config"
+    mkdir -p "$XDG_CONFIG_HOME"
     unset DISPLAY WAYLAND_SOCKET
     if [ -e /dev/dxg ]; then export GALLIUM_DRIVER=d3d12; fi
     weston --backend=headless --renderer=gl --socket="$HL_SOCKET" \
@@ -95,6 +101,7 @@ hl_isolation_problem() {
         ''|/mnt/wslg*|/run/user/*) echo "XDG_RUNTIME_DIR='${XDG_RUNTIME_DIR:-}' is not a private harness dir"; return ;;
     esac
     [ -n "${HL_RUNTIME:-}" ] && [ "$XDG_RUNTIME_DIR" = "$HL_RUNTIME" ] || { echo "XDG_RUNTIME_DIR='$XDG_RUNTIME_DIR' is not the dir hl_start made"; return; }
+    [ "${XDG_CONFIG_HOME:-}" = "$HL_RUNTIME/config" ] || { echo "XDG_CONFIG_HOME='${XDG_CONFIG_HOME:-}' is not the harness config dir (an agent would land in the user's ~/.config)"; return; }
     case "${WAYLAND_DISPLAY:-}" in
         ''|/*|wayland-0) echo "WAYLAND_DISPLAY='${WAYLAND_DISPLAY:-}' is not the private socket"; return ;;
     esac
@@ -164,13 +171,52 @@ hl_env_is_private() {
     ! printf '%s\n' "$env" | grep -q '^DISPLAY='
 }
 
-# hl_stop: kill everything hl_launch started (children too), then Weston, then
-# remove the runtime dir. Idempotent; it is also the EXIT trap.
+# hl_tree <pid>: <pid> and every descendant, one per line (parents first).
+hl_tree() {
+    local root=$1
+    ps -e -o pid=,ppid= 2>/dev/null | awk -v r="$root" '
+        { kids[$2] = kids[$2] " " $1 }
+        END { q[1] = r; n = 1; for (i = 1; i <= n; i++) { print q[i]; c = split(kids[q[i]], k, " "); for (j = 1; j <= c; j++) q[++n] = k[j] } }'
+}
+
+# hl_agent_pid: the pid of the ghoztty-agent the app spawned under this
+# harness's config dir (its info file), or nothing. Only a live process whose
+# executable is a ghoztty-agent counts, so a stale file never names a
+# stranger.
+hl_agent_pid() {
+    local f pid exe
+    for f in "${XDG_CONFIG_HOME:-/nonexistent}"/ghoztty/local-agent*/port.json; do
+        [ -s "$f" ] || continue
+        pid=$(sed -n 's/.*"pid":\([0-9]*\).*/\1/p' "$f")
+        [ -n "$pid" ] || continue
+        exe=$(readlink "/proc/$pid/exe" 2>/dev/null) || continue
+        case "$exe" in */ghoztty-agent) printf '%s\n' "$pid"; return 0 ;; esac
+    done
+    return 1
+}
+
+# hl_stop_agent: TERM (then KILL) the harness's agent and every pane it hosts.
+# The agent is not hl_launch's child (it runs in its own session, reparented
+# to init), so nothing else would reap it.
+hl_stop_agent() {
+    local a pids p
+    a=$(hl_agent_pid) || return 0
+    pids=$(hl_tree "$a")
+    for p in $pids; do kill -TERM "$p" 2>/dev/null; done
+    for _ in $(seq 1 20); do kill -0 "$a" 2>/dev/null || break; sleep 0.1; done
+    for p in $pids; do kill -KILL "$p" 2>/dev/null; done
+    return 0
+}
+
+# hl_stop: kill everything hl_launch started (children too), then the agent
+# the app spawned, then Weston, then remove the runtime dir. Idempotent; it is
+# also the EXIT trap.
 hl_stop() {
     local p
     for p in $HL_PIDS; do pkill -TERM -P "$p" 2>/dev/null; kill "$p" 2>/dev/null; done
     for p in $HL_PIDS; do wait "$p" 2>/dev/null; done
     HL_PIDS=""
+    hl_stop_agent
     if [ -n "${HL_WESTON_PID:-}" ]; then kill "$HL_WESTON_PID" 2>/dev/null; wait "$HL_WESTON_PID" 2>/dev/null; HL_WESTON_PID=""; fi
     if [ -n "${HL_RUNTIME:-}" ] && [ -d "$HL_RUNTIME" ]; then
         case "$HL_RUNTIME" in /tmp/ghoztty-hl.*) rm -rf "$HL_RUNTIME" ;; esac

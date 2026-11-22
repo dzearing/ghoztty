@@ -1615,6 +1615,21 @@ pub const Surface = extern struct {
         return self.private().cursor_pos;
     }
 
+    /// T3337: ride the shared local-agent connection when session persistence
+    /// is on, the way the Mac (`LocalAgentManager`) and win32
+    /// (`Surface.remoteBackend`) back every local pane. `local_shell_integration`
+    /// is the core's "this agent IS this machine" signal: it injects shell
+    /// integration and the GHOSTTY_* env, forwards this machine's working
+    /// directory, and pins the session so it survives the app.
+    pub fn remoteBackend(self: *Self) ?CoreSurface.RemoteBackend {
+        const priv = self.private();
+        const config = if (priv.config) |c| c.get() else return null;
+        if (!config.@"session-persistence") return null;
+        const app = Application.default();
+        const conn = app.rt().local_agent.sharedConnection() orelse return null;
+        return .{ .connection = conn, .local_shell_integration = true };
+    }
+
     pub fn defaultTermioEnv(self: *Self) !std.process.EnvMap {
         const app = Application.default();
         const alloc = app.allocator();
@@ -1952,6 +1967,13 @@ pub const Surface = extern struct {
             // NOTE: We must deinit the surface in the finalize call and NOT
             // the dispose call because the inspector widget relies on this
             // behavior with a weakRef to properly deactivate.
+
+            // T3337: a pane freed while the app is NOT quitting was closed
+            // by the user (its pane, tab or window, or `+close`), so an
+            // agent-backed pane ends its session (CLOSE). A quit leaves the
+            // default (DETACH): the session survives for the next launch.
+            // A no-op for an exec pane.
+            if (!Application.default().isQuitting()) v.setSessionCloseIntent(true);
 
             // Deinit the surface
             v.deinit();
@@ -3469,6 +3491,10 @@ pub const Surface = extern struct {
 
         if (priv.overrides.command) |c| {
             config.command = try c.clone(config._arena.?.allocator());
+            // T3337: an IPC `--command`/`-e` was asked for, so an
+            // agent-backed pane forwards it in the OPEN rather than dropping
+            // it for the agent's default shell (core `command_explicit`).
+            config.@"_command-explicit" = true;
         }
         if (priv.overrides.working_directory) |wd| {
             const config_alloc = config.arenaAlloc();

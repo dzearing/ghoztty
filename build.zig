@@ -378,6 +378,13 @@ pub fn build(b: *std.Build) !void {
                 msi_ca.install();
                 install_unlock.guardArtifact(msi_ca.install_step);
             }
+
+            // Linux (T3337): the GTK app finds ghoztty-agent beside itself
+            // (`apprt/gtk/LocalAgent.agentBinary`), the same sibling layout
+            // as Windows, so a build that installs the app installs the agent.
+            if (config.target.result.os.tag == .linux and config.app_runtime == .gtk) {
+                agent.install();
+            }
         }
     } else if (!config.emit_lib_vt) {
         // The macOS Ghostty Library

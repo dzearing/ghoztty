@@ -16,6 +16,7 @@ const Surface = @import("Surface.zig");
 const ipcNewWindow = @import("ipc/new_window.zig").newWindow;
 const IpcServer = @import("IpcServer.zig");
 const IpcHandlers = @import("IpcHandlers.zig");
+const LocalAgent = @import("LocalAgent.zig");
 
 const log = std.log.scoped(.gtk);
 
@@ -35,6 +36,12 @@ app: *Application,
 
 /// The CLI's Unix socket (T3335), while this instance serves it.
 ipc_server: ?*IpcServer = null,
+
+/// The local `ghoztty-agent` every persistent pane rides (T3337). Its
+/// connection is deliberately never torn down at terminate: surfaces borrow
+/// it and nothing refcounts it, and process exit closes the socket, which the
+/// agent reads as a detach (the sessions survive for the next launch).
+local_agent: LocalAgent = .init(std.heap.c_allocator),
 
 pub fn init(
     self: *App,

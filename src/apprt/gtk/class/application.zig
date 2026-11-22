@@ -188,6 +188,13 @@ pub const Application = extern struct {
         /// only be set by the main loop thread.
         running: bool = false,
 
+        /// T3337: set once `quitNow` starts tearing the windows down. A pane
+        /// freed while it is set is the app QUITTING, so its agent session
+        /// detaches and survives for the next launch; a pane freed while it
+        /// is clear was closed by the user, so its session ends (the Mac's
+        /// and win32's quit-vs-close rule).
+        quitting: bool = false,
+
         /// The timer used to quit the application after the last window is
         /// closed. Even if there is no quit delay set, this is the state
         /// used to determine to close the app.
@@ -644,7 +651,13 @@ pub const Application = extern struct {
         dialog.present(parent);
     }
 
+    /// True once the app has begun quitting (T3337). See `Private.quitting`.
+    pub fn isQuitting(self: *Self) bool {
+        return self.private().quitting;
+    }
+
     fn quitNow(self: *Self) void {
+        self.private().quitting = true;
         // Get all our windows and destroy them, forcing them to free.
         const list = gtk.Window.listToplevels();
         defer list.free();

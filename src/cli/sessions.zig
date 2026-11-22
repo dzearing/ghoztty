@@ -6,7 +6,7 @@ const Action = @import("../cli.zig").ghostty.Action;
 const args = @import("args.zig");
 const diagnostics = @import("diagnostics.zig");
 const build_config = @import("../build_config.zig");
-const homedir = @import("../os/homedir.zig");
+const local_agent_paths = @import("../remote/local_agent_paths.zig");
 const internal_os = @import("../os/main.zig");
 const tcp_dial = @import("../remote/tcp_dial.zig");
 const connection = @import("../remote/connection.zig");
@@ -356,9 +356,12 @@ fn agentInfoPath(alloc: Allocator) ![]const u8 {
         defer alloc.free(local);
         return std.fmt.allocPrint(alloc, "{s}\\ghoztty\\{s}\\port.json", .{ local, dir });
     }
-    var home_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const home = (try homedir.home(&home_buf)) orelse return error.NoHome;
-    return std.fmt.allocPrint(alloc, "{s}/.config/ghoztty/{s}/port.json", .{ home, dir });
+    // POSIX: the one derivation the GTK app's LocalAgent uses too (T3337), so
+    // `+sessions` on Linux reads the same `$XDG_CONFIG_HOME`-aware dir the app
+    // spawned its agent in; on macOS it is `~/.config/...` exactly as before.
+    const state = try local_agent_paths.stateDir(alloc, build_config.is_debug);
+    defer alloc.free(state);
+    return local_agent_paths.join(alloc, state, local_agent_paths.port_file);
 }
 
 fn readInfoFile(alloc: Allocator, path: []const u8) !InfoFile {
