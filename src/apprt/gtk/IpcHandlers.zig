@@ -503,11 +503,11 @@ pub fn handleNewWindow(app: Context, request: Request) Allocator.Error!?[]u8 {
         null;
 
     const first_pane_name = verb_args.newWindowFirstPaneName(args);
-    const window = app.newWindowForIpc(.{
-        .command = try paneCommand(arena, app, args.e_args, args.command, args.shell),
-        .working_directory = try workingDirectory(arena, args.working_directory),
-        .env = try paneEnv(arena, args.env, args.target, first_pane_name orelse args.target),
-    });
+    const window = app.newWindowForIpc(
+        try paneCommand(arena, app, args.e_args, args.command, args.shell),
+        try workingDirectory(arena, args.working_directory),
+        try paneEnv(arena, args.env, args.target, first_pane_name orelse args.target),
+    );
 
     if (args.target) |t| window.setIpcName(t) else _ = windowName(app, window);
     if (first_pane_name) |n| if (window.getActiveSurface()) |s| s.setIpcName(n);

@@ -1233,6 +1233,20 @@ pub const Application = extern struct {
         return self.private().config.ref();
     }
 
+    /// Open a window for an IPC `+new-window` (T3370) and return it.
+    pub fn newWindowForIpc(
+        self: *Self,
+        command: ?configpkg.Command,
+        working_directory: ?[:0]const u8,
+        env: []const []const u8,
+    ) *Window {
+        return Action.newWindowForIpc(self, .{
+            .command = command,
+            .working_directory = working_directory,
+            .env = env,
+        });
+    }
+
     /// Set the configuration for this application. The reference count
     /// is increased on the new configuration and the old one is
     /// unreferenced.

@@ -108,7 +108,7 @@ hl_check "W4b the minted name has the window-N shape" $? "first=$first"
 
 # +split --name from outside any pane: the front window, a new named pane.
 out=$(cli +split --name=side 2>&1); rc=$?
-[ $rc = 0 ] && echo "$out" | grep -Eq "^created pane 'side' \([0-9a-f-]{36}\) in window '$first'$"
+[ $rc = 0 ] && echo "$out" | grep -Eq "^created pane 'side' \([0-9A-Fa-f-]{36}\) in window '$first'$"
 hl_check "W5 +split --name=side creates the pane and the reply names it and its window" $? "rc=$rc out=$out"
 [ "$(leaves_in "$first")" = 2 ]
 hl_check "W5b the window now has two panes" $? "$(summary | tr '\n' ' ')"
@@ -155,7 +155,7 @@ hl_check "W11 a second +new-window --target=work keeps it and names the dropped 
 
 # Pane names belong to their window: 'side' in work is a new pane.
 out=$(cli +split --target=work --name=side 2>&1); rc=$?
-[ $rc = 0 ] && echo "$out" | grep -Eq "^created pane 'side' \([0-9a-f-]{36}\) in window 'work'$"
+[ $rc = 0 ] && echo "$out" | grep -Eq "^created pane 'side' \([0-9A-Fa-f-]{36}\) in window 'work'$"
 hl_check "W12 +split --target=work --name=side creates work's own 'side'" $? "rc=$rc out=$out"
 work_side=$(id_of work side)
 first_side=$(id_of "$first" side)

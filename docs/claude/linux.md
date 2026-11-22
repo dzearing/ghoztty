@@ -209,12 +209,26 @@ private runtime dir, so a test app can never meet the user's.
   `input_line_ends = .pty`), so its argument handling, failure sentences and
   replies are win32's by construction. A new verb body goes into `verbs.zig`
   first (T3374, T3375), not into this file.
-  `+list`, `+version`, `+send-keys` and `+read` are real; every other verb
-  answers `+<verb> is not served by the Linux app yet (T3336)` until its card
-  lands (T3370 new-window/split/rename, T3367 close/focus, T3368 rearrange,
-  T3369 reload, T3339 set-state/set-banner, T3337 stash/restore/remote).
-- `+send-keys` and `+read` target a pane by its stable id (`$GHOZTTY_PANE_ID`,
-  the `+list` id) until names arrive with T3370. `+send-keys` is the Mac's:
+  `+list`, `+version`, `+send-keys`, `+read`, `+new-window`, `+split` and
+  `+rename` are real; every other verb answers `+<verb> is not served by the
+  Linux app yet (<task>)`, naming the card that brings it (T3367 close/focus,
+  T3368 rearrange, T3369 reload, T3339 set-state/set-banner, T3337
+  stash/restore/remote), and `--view` says the same for T3338.
+- **Names (T3370)** follow win32's rules exactly (`apprt/ipc/target_lookup.zig`,
+  T2250): a window name is global (`+new-window --target`, else a minted
+  `window-N`, shown as `target` in `+list`); a pane name (`--name`) belongs
+  to its window, and a lookup starts in the caller's window (the CLI forwards
+  `$GHOZTTY_PANE_ID`), so the same name in two windows is ambiguous from
+  outside both and the command fails naming them. The names live on the GTK
+  objects (`Window.ipcName`, `Surface.ipcName`) and every lookup walks the
+  live windows, so there is no registry to forget a closed pane from. A pane
+  id always works as a target. `--command` runs as the Mac's
+  `<shell> -lic '<cmd>; exec <shell> -li'` (a pane that stays drivable),
+  `-e` execs its argv. `+rename` pins the window title over the tabs' until
+  `--title=` clears it. Acceptance: `wsl-run.ps1 -CommandFile
+  test\linux\cli-windows.sh`, ends `CLI WINDOWS: ALL PASS` (35 checks).
+- `+send-keys` and `+read` take a pane id, a pane name or a window name (its
+  active pane). `+send-keys` is the Mac's:
   text runs framed as a bracketed paste when the program asked for one, key
   runs bare, no LF rewriting (a POSIX pty takes LF as a line end).
   Acceptance: `wsl-run.ps1 -CommandFile test\linux\cli-send-read.sh`, ends
