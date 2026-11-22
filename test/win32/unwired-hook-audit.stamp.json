@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-21T23:29:02-08:00",
-    "commit":  "5520aa272",
+    "generated":  "2026-11-21T23:31:22-08:00",
+    "commit":  "1b12b28f6",
     "uncommitted":  [
 
                     ],
@@ -1132,7 +1132,7 @@
                   "src/unicode/symbols_table.zig":  "913391113e2715088dbfa9c09363bff4de361228d27d7b4b9db6bb48202ae1c0",
                   "src/unicode/symbols_uucode.zig":  "cb6ae86fe8549c435e11a2e038960aa9cae907aa89aa14598f8b6416c51b61ce",
                   "test/win32/about-links.ps1":  "cb6ba712f258265f9a5d03dc219567a0025a1f081a2b7d2029586140247906eb",
-                  "test/win32/acceptance-parallel.ps1":  "112add92412ef2d5e520a37bb79e1d88d7df0b1dbd876596fc80479275d55107",
+                  "test/win32/acceptance-parallel.ps1":  "2673dccb32a1a23a91372cea2ed37ca934158fae369c8fbbe0c6976b7ed2657a",
                   "test/win32/activity-help-tooltips.ps1":  "0023622d51e2dce579e45f7f46ffeed4195fc995570bd6cdffde961b229ed1b6",
                   "test/win32/activity-monitor.ps1":  "4f64617fe0299c1a3cc9abd3f851928f47c4d19db12886130242a1dc555d2e06",
                   "test/win32/activity-monitor-dialed.ps1":  "e8d248a8d5507c68b3a67fd0f15692a98868d2542cbc6f0cdb714c9ee98ade99",

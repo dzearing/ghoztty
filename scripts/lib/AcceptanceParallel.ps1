@@ -558,6 +558,91 @@ public static class ApProc {
 '@
 }
 
+# T3364: the parent of every process, from one Toolhelp32 snapshot - the same
+# no-WMI rule as ApProc, for the descendant walk a failed tree kill falls back on.
+# Its own type so a session that already loaded ApProc still gets it.
+if (-not ('ApTree' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public static class ApTree {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct PROCESSENTRY32W {
+        public uint dwSize; public uint cntUsage; public uint th32ProcessID; public IntPtr th32DefaultHeapID;
+        public uint th32ModuleID; public uint cntThreads; public uint th32ParentProcessID; public int pcPriClassBase;
+        public uint dwFlags; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szExeFile;
+    }
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern bool Process32FirstW(IntPtr snap, ref PROCESSENTRY32W e);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern bool Process32NextW(IntPtr snap, ref PROCESSENTRY32W e);
+    [DllImport("kernel32.dll")]
+    static extern bool CloseHandle(IntPtr h);
+    // pid -> parent pid for every process alive at the snapshot.
+    public static Dictionary<int, int> Parents() {
+        Dictionary<int, int> map = new Dictionary<int, int>();
+        IntPtr snap = CreateToolhelp32Snapshot(0x2, 0);  // TH32CS_SNAPPROCESS
+        if (snap == IntPtr.Zero || snap == new IntPtr(-1)) return map;
+        try {
+            PROCESSENTRY32W e = new PROCESSENTRY32W();
+            e.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32W));
+            if (!Process32FirstW(snap, ref e)) return map;
+            do { map[(int)e.th32ProcessID] = (int)e.th32ParentProcessID; } while (Process32NextW(snap, ref e));
+        } finally { CloseHandle(snap); }
+        return map;
+    }
+}
+'@
+}
+
+function Get-ApDescendants {
+    <#
+    .SYNOPSIS
+    Every live descendant of -RootPid as Process objects, without WMI. A child
+    must have started no earlier than its parent, so a reused parent pid never
+    adopts an unrelated process (the T1840 rule).
+    #>
+    param([Parameter(Mandatory = $true)][int]$RootPid)
+    $parents = [ApTree]::Parents()
+    $kids = @{}
+    foreach ($k in $parents.Keys) {
+        $pp = $parents[$k]
+        if ($pp -eq $k) { continue }
+        if (-not $kids.ContainsKey($pp)) { $kids[$pp] = New-Object System.Collections.Generic.List[int] }
+        $kids[$pp].Add($k)
+    }
+    $start = @{}
+    $startOf = {
+        param([int]$id)
+        if (-not $start.ContainsKey($id)) {
+            $start[$id] = $null
+            try { $start[$id] = ([System.Diagnostics.Process]::GetProcessById($id)).StartTime } catch {}
+        }
+        return $start[$id]
+    }
+    $out = @()
+    $queue = New-Object System.Collections.Generic.Queue[int]
+    $queue.Enqueue($RootPid)
+    $seen = @{ $RootPid = $true }
+    while ($queue.Count -gt 0) {
+        $id = $queue.Dequeue()
+        if (-not $kids.ContainsKey($id)) { continue }
+        $pStart = & $startOf $id
+        foreach ($c in $kids[$id]) {
+            if ($seen.ContainsKey($c)) { continue }
+            $seen[$c] = $true
+            $cStart = & $startOf $c
+            if ($null -eq $cStart -or ($null -ne $pStart -and $cStart -lt $pStart)) { continue }
+            try { $out += [System.Diagnostics.Process]::GetProcessById($c) } catch { continue }
+            $queue.Enqueue($c)
+        }
+    }
+    return $out
+}
+
 function Get-ApProcessesUnder {
     <#
     .SYNOPSIS
@@ -589,6 +674,52 @@ function Stop-ApWorkerProcess {
     }
     if ($n -gt 0) { Start-Sleep -Milliseconds 400 }
     return $n
+}
+
+# The tree killer a timed-out row goes through. A variable only so the harness
+# can plant one that fails the way taskkill does (section J of
+# test\win32\acceptance-parallel.ps1); nothing else sets it.
+$script:ApTreeKillExe = 'taskkill.exe'
+
+function Stop-ApProcessTree {
+    <#
+    .SYNOPSIS
+    Kill a timed-out job's whole process tree and SAY what could not be killed,
+    instead of throwing. Returns { Ok; ExitCode; Message }.
+
+    .DESCRIPTION
+    T3364. taskkill writes "could not be terminated" (or "not found", when the
+    root exits in the gap) to stderr, and PS 5.1 turns a native command's
+    stderr into an ErrorRecord that THROWS under the caller's
+    ErrorActionPreference = 'Stop' - on 2026-11-21 that took a 32-script due
+    sweep down after 26 rows with no verdict line. So taskkill runs under a
+    local Continue, its text is kept as the reason, and whatever of the tree is
+    still alive afterwards (root and descendants, walked without WMI) is
+    stopped directly, so the row can still be scored and the sweep goes on.
+    #>
+    param([Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process)
+    $ErrorActionPreference = 'Continue'
+    $text = @(& $script:ApTreeKillExe /T /F /PID $Process.Id 2>&1 | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+    $code = $LASTEXITCODE
+    $msg = ''
+    if ($code -ne 0) {
+        $msg = (@($text | Where-Object { $_ -notmatch '^SUCCESS' }) -join ' ').Trim()
+        if (-not $msg) { $msg = "taskkill exit $code" }
+        # Whatever taskkill left behind, stopped one by one: the job's root is
+        # cmd.exe and the script's powershell its child, so the root alone is
+        # not enough. Descendants are read before the root goes.
+        $left = @(Get-ApDescendants -RootPid $Process.Id)
+        $alive = $false
+        try { $alive = -not $Process.HasExited } catch {}
+        if ($alive) { $left += $Process }
+        $survivors = @()
+        foreach ($p in $left) {
+            try { if (-not $p.HasExited) { $p.Kill() } } catch {}
+            try { if (-not $p.WaitForExit(3000)) { $survivors += $p.Id } } catch {}
+        }
+        if ($survivors.Count -gt 0) { $msg += " (still alive after a direct kill: pid $($survivors -join ', '))" }
+    }
+    return [pscustomobject]@{ Ok = ($code -eq 0); ExitCode = $code; Message = $msg }
 }
 
 # ------------------------------------------------------------------ running
@@ -792,8 +923,10 @@ function Invoke-AcceptanceRun {
     }
     $finish = {
         param($job, [bool]$timedOut)
+        $killNote = ''
         if ($timedOut) {
-            & taskkill.exe /T /F /PID $job.Process.Id *> $null
+            $kill = Stop-ApProcessTree -Process $job.Process
+            if (-not $kill.Ok) { $killNote = " [tree kill incomplete: $($kill.Message)]" }
             try { $job.Process.WaitForExit(10000) | Out-Null } catch {}
         }
         $code = -1
@@ -801,6 +934,7 @@ function Invoke-AcceptanceRun {
         $v = Get-RunVerdict -ExitCode $code -LogPath $job.Out -TimedOut $timedOut -AltLogPath $job.Err
         $vLine = $v.Line
         if ($timedOut -and $job.Watch.Killed) { $vLine = Get-TreeIdleLine -Watch $job.Watch }
+        $vLine += $killNote
         if ($job.Item.Class -eq 'parallel' -and $job.Phase -eq 'pool') { [void](Stop-ApWorkerProcess -Root $workers[$job.Slot].Root) }
         $row = [pscustomobject]@{
             Seq = $job.Item.Seq; Name = $job.Item.Name; Script = $job.Item.Script; Args = $job.Item.Args

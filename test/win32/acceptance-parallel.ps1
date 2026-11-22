@@ -69,6 +69,13 @@
        own row stays PASS); -NoStateCheck lets it through and says so; a clean
        script stays GREEN with no state line (positive control). The entry is
        removed by this harness, and its suffix is one the clean slate sweeps.
+    J  T3364. A tree kill that fails does not end the sweep: the old inline
+       taskkill throws under Stop when taskkill reports on stderr (negative
+       control), Stop-ApProcessTree reports the same failure without throwing
+       and kills a killable tree (positive control), and a timed-out row whose
+       planted tree killer fails the way taskkill did is still scored, names
+       what could not be killed, has what is left of its tree (the script's
+       powershell under the job's cmd.exe root) stopped, and the next row runs.
 
   The "app" here is a renamed copy of ping.exe started with no window, and the
   scripts are fixtures written into a throwaway repo under %TEMP%, so the run
@@ -622,6 +629,56 @@ onexistent\ghoztty-agent.exe') } finally { $rk.Close() }
     Check 'H5 the neighbour is scored, and the whole run ends well inside either script''s 90s' `
         ($ok -and $ok.Kind -eq 'pass' -and $hr.Count -eq 3 -and $hClock.Elapsed.TotalSeconds -lt 45) `
         ("rows=$($hr.Count) ok=$($ok.Kind) wall=$([int]$hClock.Elapsed.TotalSeconds)s")
+
+    # ---- J: a tree kill that fails does not take the sweep down (T3364) ------------
+    # PID 999999 is never a live process (Windows pids are multiples of 4), so
+    # taskkill always answers it on stderr - the same channel as the
+    # "could not be terminated" line that ended the 2026-11-21 sweep.
+    $j1Threw = $false
+    try { & { $ErrorActionPreference = 'Stop'; & taskkill.exe /T /F /PID 999999 *> $null } } catch { $j1Threw = $true }
+    Check 'J1 negative control: the old inline taskkill throws under Stop when taskkill reports a failure' $j1Threw
+    # An already-exited root is the "not found" shape: the gap between the
+    # timeout check and the kill.
+    $j2p = [System.Diagnostics.Process]::Start((New-Object System.Diagnostics.ProcessStartInfo 'cmd.exe' -Property @{ Arguments = '/c exit 0'; UseShellExecute = $false; CreateNoWindow = $true }))
+    [void]$j2p.WaitForExit(10000)
+    $j2 = $null; $j2Err = ''
+    try { $j2 = & { $ErrorActionPreference = 'Stop'; Stop-ApProcessTree -Process $j2p } } catch { $j2Err = $_.Exception.Message }
+    Check 'J2 Stop-ApProcessTree reports the same failure under Stop instead of throwing, with taskkill''s reason' `
+        ($j2 -and -not $j2.Ok -and $j2.Message -match 'not found|ERROR' -and -not $j2Err) ("err=$j2Err ok=$($j2.Ok) msg=$($j2.Message)")
+    $jpsi = New-Object System.Diagnostics.ProcessStartInfo 'ping.exe'
+    $jpsi.Arguments = '-n 60 127.0.0.1'; $jpsi.UseShellExecute = $false; $jpsi.CreateNoWindow = $true
+    $jp = [System.Diagnostics.Process]::Start($jpsi); $planted += $jp
+    $j3 = & { $ErrorActionPreference = 'Stop'; Stop-ApProcessTree -Process $jp }
+    $j3Gone = $jp.WaitForExit(5000)
+    Check 'J3 positive control: a killable tree is killed and reported Ok' ($j3.Ok -and $j3Gone) ("ok=$($j3.Ok) exited=$j3Gone msg=$($j3.Message)")
+
+    # The runner level: a timed-out row whose tree kill fails the way taskkill
+    # did must still be scored, name what could not be killed, and leave the next
+    # row to run. The planted killer kills nothing, so the root it leaves alive
+    # proves the fallback too.
+    $jStub = Join-Path $fixLog 'jkill.cmd'; $jMark = Join-Path $fixLog 'jkill.ran'
+    Write-Fixture $jStub ("@echo off`r`necho ran>`"$jMark`"`r`necho ERROR: The process with PID 4242 (child process of PID 4141) could not be terminated. 1>&2`r`nexit /b 1`r`n")
+    $jx = [ordered]@{
+        'jhang' = "# suite-timeout-sec: 5`nSet-Content -LiteralPath (Join-Path `$env:AP_FIXTURE_LOG 'jhang.pid') -Value `$PID`nStart-Sleep -Seconds 90`n'ALL PASS'`n"
+        'jnext' = "'ALL PASS'`n"
+    }
+    foreach ($k in $jx.Keys) { Write-Fixture (Join-Path $fake "test\win32\$k.ps1") $jx[$k] }
+    $jJobs = @($jx.Keys | ForEach-Object { [pscustomobject]@{ Script = "test\win32\$_.ps1"; Args = '' } })
+    $script:ApTreeKillExe = $jStub
+    $jr = @(); $jErr = ''
+    try { $jr = @(Invoke-AcceptanceRun -Repo $fake -Jobs $jJobs -Width 1 -LogDir (Join-Path $fixLog 'j') -TimeoutSec 120 -RepoLiteral $fake -NoConfirm) }
+    catch { $jErr = "$($_.Exception.Message) at $($_.InvocationInfo.ScriptLineNumber)" }
+    finally { $script:ApTreeKillExe = 'taskkill.exe' }
+    $jBy = @{}; foreach ($r in $jr) { $jBy[$r.Name] = $r }
+    $jh = $jBy['jhang.ps1']; $jn = $jBy['jnext.ps1']
+    Check 'J4 a timed-out row whose tree kill fails is still scored, and the run returns instead of throwing' `
+        (-not $jErr -and (Test-Path $jMark) -and $jh -and $jh.Kind -eq 'stall') ("err=$jErr stubRan=$(Test-Path $jMark) kind=$($jh.Kind)")
+    Check 'J5 the row names what could not be killed' ($jh -and $jh.Line -match 'tree kill incomplete: .*could not be terminated') "line=$($jh.Line)"
+    Check 'J6 the next row still runs and passes' ($jn -and $jn.Kind -eq 'pass' -and $jr.Count -eq 2) ("rows=$($jr.Count) next=$($jn.Kind)")
+    $jPid = 0; try { $jPid = [int](Get-Content (Join-Path $fixLog 'jhang.pid') | Select-Object -First 1) } catch {}
+    $jAlive = $false; if ($jPid) { try { $jAlive = -not ([System.Diagnostics.Process]::GetProcessById($jPid)).HasExited } catch {} }
+    Check 'J7 the hung script the failed tree kill left alive (a child of the job''s cmd.exe root) is stopped directly' ($jPid -gt 0 -and -not $jAlive) "pid=$jPid alive=$jAlive"
+    if ($jAlive) { Stop-Process -Id $jPid -Force -ErrorAction SilentlyContinue }
 
     # ---- I: a run that leaves durable state behind is RED (T1230) -------------------
     # The fixture passes on its own terms and leaves a lineage-suffixed startup
