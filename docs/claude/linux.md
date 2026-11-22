@@ -248,7 +248,7 @@ private runtime dir, so a test app can never meet the user's.
   pane the layout omits closes at once with its shell: the Linux app has no
   close undo or stash yet (T3384), which is win32's `undo-timeout = 0`.
   Acceptance: `wsl-run.ps1 -CommandFile test\linux\cli-rearrange.sh`, ends
-  `CLI REARRANGE: ALL PASS` (27 checks).
+  `CLI REARRANGE: ALL PASS` (28 checks).
 - `+send-keys` and `+read` take a pane id, a pane name or a window name (its
   active pane). `+send-keys` is the Mac's:
   text runs framed as a bracketed paste when the program asked for one, key

@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-22T03:12:17-08:00",
-    "commit":  "1da28c9d9",
+    "generated":  "2026-11-22T03:40:23-08:00",
+    "commit":  "947bab45a",
     "uncommitted":  [
 
                     ],
@@ -37,7 +37,7 @@
                   "src/apprt/gtk/class/key_state_overlay.zig":  "2ccdd2c9dfe09f0ea256f5df6a5b4ce39f9344f38a59eb73346365bcdafd7f15",
                   "src/apprt/gtk/class/resize_overlay.zig":  "28e96fba32fa79da6736d51965583f17655d59899fec3964a717b66364160a07",
                   "src/apprt/gtk/class/search_overlay.zig":  "d3e6ca662b546ccadcee62fa3d564addb1df6e7ea420eab6492bc06a89f08158",
-                  "src/apprt/gtk/class/split_tree.zig":  "791775bf5c5571f7114d68973cc9245affba66a3807b5bf4ab60976d812b55da",
+                  "src/apprt/gtk/class/split_tree.zig":  "07b9c7079b677e834b8454343c8ca45b10315478db06558803716e25b85c04a7",
                   "src/apprt/gtk/class/surface.zig":  "5c972cd6da28ba3815e5e4617adf484c2e9b25c2626fad94dbfbc31fc7a93064",
                   "src/apprt/gtk/class/surface_child_exited.zig":  "6b4cf3d1ed4ed891ca02f841973bd1518acb76451830172e87ab9512e711ff1b",
                   "src/apprt/gtk/class/surface_scrolled_window.zig":  "88e36e9a7318aa492360697ec08c6914cd3c672f16d320c79f12ba3c85297d3c",
@@ -52,7 +52,7 @@
                   "src/apprt/gtk/gtk_version.zig":  "a7e4f5636fccf9ff025406186823167ad9964739f243754067adb2abb6d91260",
                   "src/apprt/gtk/ipc/DBus.zig":  "c71d0348d0b3159a418020d5cbbd7dcdfd8a876949f56257cb8f25697906fd00",
                   "src/apprt/gtk/ipc/new_window.zig":  "2146e1ee1e3a4fd3de21447b81fec4344e3f76e366dc37ed2dd0ac657af9dbd2",
-                  "src/apprt/gtk/IpcHandlers.zig":  "5063424a1d5867ae30c0ab094e01489f42e0beb9da392d321cae2e7139a92c87",
+                  "src/apprt/gtk/IpcHandlers.zig":  "e73ccd72fdf0e5d493a594da1a27a913699bd3bba815be55224f287455c8b94f",
                   "src/apprt/gtk/IpcServer.zig":  "43e55ae4352aa812e22905766625101a964e014f6189ceddb7b05d92bc4e93b4",
                   "src/apprt/gtk/key.zig":  "26190d1c1be8ddfc9874f035ffe218881ca6a24a91d27966555d3663c83a0cf4",
                   "src/apprt/gtk/media.zig":  "da263904ef36a20ef70335f15086943241c45ab687a685775f50336d67eb080d",
