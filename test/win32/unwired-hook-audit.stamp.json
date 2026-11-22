@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-21T20:57:26-08:00",
-    "commit":  "4e5927d42",
+    "generated":  "2026-11-21T22:08:11-08:00",
+    "commit":  "49d0b0134",
     "uncommitted":  [
 
                     ],
@@ -1316,7 +1316,7 @@
                   "test/win32/frame-score.ps1":  "d98795f50fd5c8a171332eef326942ed62398f6f8e62601c1102716d240b89d9",
                   "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",
                   "test/win32/fullscreen-guard.ps1":  "a6c1a301a11d7493a2e7b5411fbcb25daea08302c0a822e91d98fd6db0a67450",
-                  "test/win32/gate-negatives.ps1":  "a48ab20f37991e34cb2058ff50b0cfe9db6e4e6477fde70f0b4a6bbd273a1222",
+                  "test/win32/gate-negatives.ps1":  "aae5633720a9d07aa05234044ce89b3492d4a9211578e78e588873f16032144a",
                   "test/win32/ghoztty-cleanup.ps1":  "a1b46736eb6a96c57f7598e2a1088afaf501c62be03ec8bfc45d91bc15107629",
                   "test/win32/glass-frame-origin.ps1":  "0a0dfeed8dff3e6ba20ec9402905ac5490ab37b43d85d9316be106de72e26b56",
                   "test/win32/gl-device-lost.ps1":  "3a87a2acf4ebca9c19323687ecd65919747f3691aa09eb9eb245f19246d30711",
@@ -1460,7 +1460,7 @@
                   "test/win32/parity-decisions.ps1":  "6f371c66bd381d734ac8a5408671d8695e48d7a6215004c299a2ccb1a92ace88",
                   "test/win32/parity-sweep.ps1":  "2251497104f8df5a8b1146441bd2b5e3ebb38a495c7d7fe16a9f64a05c801044",
                   "test/win32/parity-tasks-lanes.ps1":  "0ea40fdd89dbf37e287727eb97d5153afa3e9f656e120df2b18302f31c49fff1",
-                  "test/win32/parity-tasks-seat.ps1":  "30c09e4ccca97778c9e91df5154fbe54c737fe755ee3d163ca9714d6ad391187",
+                  "test/win32/parity-tasks-seat.ps1":  "690edc11733ba052e10de05dc272f006931a741e9f12d439369518d35184929e",
                   "test/win32/parity-tasks-split-deps.ps1":  "4cae00c40c97f85c7a4b6871ff32a8276cb752fe7c6c8a5120844dd614e71a78",
                   "test/win32/path-selfheal.ps1":  "fcf69db5534ad019cfdd035ded0ffb29e62cd51cc0c08488ef345c7e2134e367",
                   "test/win32/perf-baseline-reader.ps1":  "c0cecdd910918c63517af4321be7b780437527f91eb3a5aea846a7b6c82fd78e",
