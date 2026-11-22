@@ -46,6 +46,7 @@ test {
     _ = @import("termio/FocusSlot.zig");
     _ = @import("termio/title_pace.zig");
     _ = @import("termio/read_coalesce.zig");
+    _ = @import("termio/conpty_exit_gate.zig");
     _ = @import("termio/restore_history.zig");
     _ = @import("termio/session_snapshot.zig");
 }

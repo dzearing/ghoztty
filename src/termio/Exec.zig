@@ -25,6 +25,7 @@ const exit_diagnostics = @import("../exit_diagnostics.zig");
 const SegmentedPool = @import("../datastruct/main.zig").SegmentedPool;
 const ptypkg = @import("../pty.zig");
 const read_coalesce = @import("read_coalesce.zig");
+const conpty_exit_gate = @import("conpty_exit_gate.zig");
 const Pty = ptypkg.Pty;
 const EnvMap = std.process.EnvMap;
 const PasswdEntry = internal_os.passwd.Entry;
@@ -43,8 +44,7 @@ const TERMIOS_POLL_MS = 200;
 
 /// Windows: poll cadence for ConPTY output quiescence after the child
 /// exits, and the max number of polls before notifying the surface anyway.
-const EXIT_NOTIFY_POLL_MS = 50;
-const EXIT_NOTIFY_MAX_TICKS = 20;
+const EXIT_NOTIFY_POLL_MS = conpty_exit_gate.poll_ms;
 
 /// If we build with flatpak support then we have to keep track of
 /// a potential execution on the host.
@@ -169,7 +169,7 @@ pub fn threadEnter(
         &read_thread_pool,
         if (builtin.os.tag == .windows) ReadThread.threadMainWindows else ReadThread.threadMainPosix,
         if (comptime builtin.os.tag == .windows)
-            .{ pty_fds.read, io, pipe[0], &td.backend.exec.read_activity, &td.backend.exec.read_thread_quit }
+            .{ pty_fds.read, io, pipe[0], &td.backend.exec.read_activity, &td.backend.exec.read_painted, &td.backend.exec.read_thread_quit }
         else
             .{ pty_fds.read, io, pipe[0], &td.backend.exec.read_activity },
     );
@@ -350,8 +350,8 @@ fn processExitCommon(td: *termio.Termio.ThreadData, exit_code: u32) void {
     // thread AFTER this process-exit callback. Notifying the surface now
     // would let that late repaint overwrite whatever the surface draws in
     // response (the in-terminal child-exited message, T65). Hold the
-    // notification until pty output has been quiet for one poll tick,
-    // bounded by EXIT_NOTIFY_MAX_TICKS.
+    // notification until conhost has painted at least once and pty output
+    // has then been quiet for one poll tick, bounded (conpty_exit_gate.zig).
     if (comptime builtin.os.tag == .windows) {
         execdata.pending_exit = info;
         execdata.exit_activity_snapshot = execdata.read_activity.load(.monotonic);
@@ -372,20 +372,6 @@ fn processExitCommon(td: *termio.Termio.ThreadData, exit_code: u32) void {
     _ = td.surface_mailbox.push(.{ .child_exited = info }, .{ .forever = {} });
 }
 
-/// Windows child-exit notification gate (pure logic for exitNotifyTimer):
-/// fire once pty output has been quiet for a full tick, or when out of
-/// patience.
-fn exitNotifyShouldFire(snapshot: u64, activity: u64, ticks: u32) bool {
-    return activity == snapshot or ticks >= EXIT_NOTIFY_MAX_TICKS;
-}
-
-test "exitNotifyShouldFire" {
-    const testing = std.testing;
-    try testing.expect(exitNotifyShouldFire(5, 5, 1));
-    try testing.expect(!exitNotifyShouldFire(5, 9, 1));
-    try testing.expect(exitNotifyShouldFire(5, 9, EXIT_NOTIFY_MAX_TICKS));
-}
-
 fn exitNotifyTimer(
     td_: ?*termio.Termio.ThreadData,
     _: *xev.Loop,
@@ -402,10 +388,11 @@ fn exitNotifyTimer(
 
     const activity = execdata.read_activity.load(.monotonic);
     execdata.exit_notify_ticks += 1;
-    if (exitNotifyShouldFire(
+    if (conpty_exit_gate.shouldFire(
         execdata.exit_activity_snapshot,
         activity,
         execdata.exit_notify_ticks,
+        execdata.read_painted.load(.acquire),
     )) {
         execdata.pending_exit = null;
         _ = td.surface_mailbox.push(.{ .child_exited = info }, .{ .forever = {} });
@@ -679,6 +666,12 @@ pub const ThreadData = struct {
     /// surface before that output lands lets the late repaint overwrite
     /// anything the surface draws in response (the child-exited message).
     read_activity: std.atomic.Value(u64) = .init(0),
+
+    /// Set by the Windows read thread once conhost has PAINTED, i.e. sent
+    /// anything but its startup mode preamble (T3383). Until then a quiet
+    /// pipe means "not painted yet", not "finished painting", and the
+    /// child-exited gate keeps waiting (conpty_exit_gate.zig).
+    read_painted: std.atomic.Value(bool) = .init(false),
 
     /// Timer used on Windows to delay the child-exited notification until
     /// pty output goes quiet (see read_activity).
@@ -1545,6 +1538,7 @@ pub const ReadThread = struct {
         io: *termio.Termio,
         quit: posix.fd_t,
         activity: *std.atomic.Value(u64),
+        painted: *std.atomic.Value(bool),
         quit_flag: *const std.atomic.Value(bool),
     ) void {
         // Always close our end of the pipe when we exit. The pipe is only
@@ -1677,6 +1671,8 @@ pub const ReadThread = struct {
             // quiescence poll landing mid-parse still observes movement
             // across its tick (see exitNotifyTimer).
             _ = activity.fetchAdd(filled, .monotonic);
+            if (!painted.load(.monotonic) and conpty_exit_gate.isPaint(buf[0..filled]))
+                painted.store(true, .release);
             @call(.always_inline, termio.Termio.processOutput, .{ io, buf[0..filled] });
             _ = activity.fetchAdd(1, .monotonic);
         }
