@@ -6,7 +6,8 @@
 //! Served now: `+list` (windows, tabs, the split tree, each pane's stable id,
 //! name, title, cwd, shell pid and tty, plus the serving build so a caller can
 //! see WHICH app answered), `+version`, `+send-keys` / `+read` (T3336), and
-//! `+new-window` / `+split` / `+rename` over a pane-name registry (T3370).
+//! `+new-window` / `+split` / `+rename` over a pane-name registry (T3370),
+//! and `+close` plus the `focus` action (T3367).
 //! Every other verb answers a plain "not served by the Linux app yet" error
 //! naming the task that brings it, so a script learns the gap instead of
 //! hanging or guessing.
@@ -32,6 +33,7 @@ const gobject = @import("gobject");
 const gtk = @import("gtk");
 
 const apprt = @import("../../apprt.zig");
+const build_config = @import("../../build_config.zig");
 const configpkg = @import("../../config.zig");
 const server = apprt.ipc.server;
 const List = apprt.ipc.List;
@@ -98,8 +100,6 @@ fn notYet(comptime verb: server.Verb, comptime task: []const u8) Allocator.Error
     );
 }
 
-pub fn handleClose(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.close, "T3367"); }
-pub fn handleFocus(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.focus, "T3367"); }
 pub fn handleRearrange(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.rearrange, "T3368"); }
 pub fn handleReload(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.reload, "T3369"); }
 pub fn handleSetState(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.set_state, "T3339"); }
@@ -409,13 +409,101 @@ fn parseSplitDirection(s: []const u8) ?Surface.Tree.Split.Direction {
     return null;
 }
 
-/// Raise and focus a target for `--focus`. Wayland only lets a compositor-
-/// granted activation take focus (xdg-activation), so this is a request the
-/// compositor may decline; the default (no `--focus`) never asks.
+/// Raise and focus a target: `--focus` on a verb, and the `focus` action. A
+/// pane goes through the surface's own present request, which selects its
+/// tab first (a pane in a background tab is otherwise focused out of sight,
+/// win32's T555) and then raises the window - the one path a bell or a
+/// notification click takes too. Raising is `gtk_window_present`, which on
+/// Wayland is an xdg-activation request the compositor may decline; inside
+/// the app the pane is focused either way. The default (no `--focus`) never
+/// asks.
 fn focusTarget(target: Target) void {
-    const window = target.window_();
-    if (target.surface()) |s| s.grabFocus();
-    window.as(gtk.Window).present();
+    if (target.surface()) |s| return s.present();
+    target.window_().as(gtk.Window).present();
+}
+
+// ---------------------------------------------------------------------------
+// focus (the `ghoztty://` scheme's one action) and +close
+
+/// `focus`: raise the window holding `--target` and focus the pane, or do
+/// nothing if nothing open answers to it. There is no `+focus` CLI verb on
+/// any platform: this is the wire action the URL launcher sends (T695,
+/// `apprt/ipc/url_scheme.zig`), and it never creates, so a link that
+/// launched nothing answers "not found" instead of opening a window.
+pub fn handleFocus(app: Context, request: Request) Allocator.Error!?[]u8 {
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const args = try verb_args.parseVerbArgs(arena, request.arguments);
+    const target = args.target orelse
+        return try server.errorResponse(c_alloc, "--target is required for focus", .{});
+
+    const resolved = try resolve(arena, app, target);
+    const entry = switch (resolved) {
+        .found => |e| e,
+        else => return try missingResponse(arena, resolved, target, "target '{s}' not found in registry", .{target}),
+    };
+    focusTarget(entry);
+    log.info("IPC: focused '{s}'", .{target});
+    return try c_alloc.dupe(u8, "{\"success\":true}");
+}
+
+/// `+close`: close a pane (its window too, when it was the last one) or a
+/// whole window, with no confirmation - the CLI drives teardown, as on the
+/// Mac (`withConfirmation: false` / `closeWindowImmediately`) and win32.
+/// Idempotent: a target nothing answers to is already closed. A name panes
+/// in several other windows hold is NOT that: closing one at random would
+/// close another agent's pane (T2250).
+pub fn handleClose(app: Context, request: Request) Allocator.Error!?[]u8 {
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const args = try verb_args.parseVerbArgs(arena, request.arguments);
+    const target = args.target orelse
+        return try server.errorResponse(c_alloc, "--target is required for +close", .{});
+
+    const entry = switch (try resolve(arena, app, target)) {
+        .found => |e| e,
+        .ambiguous => |windows| {
+            const msg = try target_lookup.ambiguityError(arena, target, windows);
+            return try server.errorResponse(c_alloc, "{s}", .{msg});
+        },
+        .not_found => return try c_alloc.dupe(u8, "{\"success\":true}"),
+    };
+    const window = entry.window_();
+
+    // A dialog is up over the window (T2938, Mac `attachedSheet`): closing
+    // under it would report success over a question nobody answered, so a
+    // plain close closes nothing and says so. `--force` dismisses it
+    // unanswered and closes. GTK dialogs are not modal loops on this stack
+    // (win32's are), so the close follows at once.
+    if (window.hasOpenDialog()) {
+        if (!args.force) {
+            log.info("IPC: +close '{s}' is waiting on a confirmation in its window", .{target});
+            return try server.errorResponse(
+                c_alloc,
+                "'{s}' is waiting on a close confirmation in its window, so nothing closed yet; answer it there, or run +close --force (no confirmation, no undo)",
+                .{target},
+            );
+        }
+        // Bounded: a dialog may still read as visible while it animates out.
+        for (0..8) |_| if (!window.dismissOpenDialog()) break;
+        log.info("IPC: +close --force '{s}': dismissed the confirmation", .{target});
+    }
+
+    switch (entry) {
+        .pane => |p| {
+            const tab = tabOf(p.window, p.surface) orelse
+                return try server.errorResponse(c_alloc, "failed to close '{s}'", .{target});
+            if (!tab.getSplitTree().closeSurfaceNow(p.surface))
+                return try server.errorResponse(c_alloc, "failed to close '{s}'", .{target});
+        },
+        .window => |w| w.as(gtk.Window).destroy(),
+    }
+    log.info("IPC: closed '{s}'", .{target});
+    return try c_alloc.dupe(u8, "{\"success\":true}");
 }
 
 // ---------------------------------------------------------------------------
@@ -514,6 +602,13 @@ pub fn handleNewWindow(app: Context, request: Request) Allocator.Error!?[]u8 {
 
     // T92: an empty `--title=` means "no pin".
     if (args.title) |title| if (title.len > 0) window.setTitleOverride(title);
+
+    // DEBUG-ONLY test seam (T3367): the window named by
+    // GHOZTTY_TEST_ASK_TO_CLOSE opens with its close confirmation up, so
+    // `+close` over a dialog can be tested with no input to raise one.
+    if (comptime build_config.is_debug) if (std.posix.getenv("GHOZTTY_TEST_ASK_TO_CLOSE")) |want| {
+        if (args.target) |t| if (std.mem.eql(u8, t, want)) window.testAskToClose();
+    };
 
     if (split_dir) |dir| {
         const tab = window.getSelectedTab() orelse

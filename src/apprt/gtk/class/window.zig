@@ -1409,23 +1409,75 @@ pub const Window = extern struct {
         self: *Self,
     ) callconv(.c) c_int {
         if (self.getNeedsConfirmQuit()) {
-            // Show a confirmation dialog
-            const dialog: *CloseConfirmationDialog = .new(.window);
-            _ = CloseConfirmationDialog.signals.@"close-request".connect(
-                dialog,
-                *Self,
-                closeConfirmationClose,
-                self,
-                .{},
-            );
-
-            // Show it
-            dialog.present(self.as(gtk.Widget));
+            self.askToClose();
             return @intFromBool(true);
         }
 
         self.as(gtk.Window).destroy();
         return @intFromBool(false);
+    }
+
+    /// Put the "Close Window?" confirmation up over this window.
+    fn askToClose(self: *Self) void {
+        const dialog: *CloseConfirmationDialog = .new(.window);
+        _ = CloseConfirmationDialog.signals.@"close-request".connect(
+            dialog,
+            *Self,
+            closeConfirmationClose,
+            self,
+            .{},
+        );
+        dialog.present(self.as(gtk.Widget));
+    }
+
+    /// DEBUG-ONLY test seam (T3367): put the window's real close
+    /// confirmation up, as a close request with a running program would.
+    /// Wayland gives a test no input to press the close shortcut with, so
+    /// this is the only way `test/linux/cli-close-focus.sh` can stand a
+    /// dialog over a window. Compiled out of every release build.
+    pub fn testAskToClose(self: *Self) void {
+        if (comptime !build_config.is_debug) return;
+        self.askToClose();
+    }
+
+    /// Whether a dialog (a close confirmation, a clipboard prompt...) is up
+    /// over this window: the Mac's `attachedSheet`, win32's
+    /// `ConfirmDialog.openOver` (T2938). `+close` refuses over one.
+    pub fn hasOpenDialog(self: *Self) bool {
+        return self.openDialog() != null;
+    }
+
+    /// Dismiss the dialog up over this window, unanswered (`+close --force`).
+    /// True when there was one.
+    pub fn dismissOpenDialog(self: *Self) bool {
+        const open = self.openDialog() orelse return false;
+        switch (open) {
+            .adw => |d| d.forceClose(),
+            .window => |w| w.destroy(),
+        }
+        return true;
+    }
+
+    const OpenDialog = union(enum) { adw: *adw.Dialog, window: *gtk.Window };
+
+    fn openDialog(self: *Self) ?OpenDialog {
+        // libadwaita 1.5+ hosts dialogs inside the window.
+        if (comptime adw_version.supportsDialogs()) {
+            if (self.as(adw.ApplicationWindow).getVisibleDialog()) |d| return .{ .adw = d };
+        }
+        // Before it (and for any plain transient window): a toplevel whose
+        // transient-for is this window.
+        const me = self.as(gtk.Window);
+        var node: ?*glib.List = gtk.Window.listToplevels();
+        defer if (node) |n| n.free();
+        var it = node;
+        while (it) |n| : (it = n.f_next) {
+            const obj: *gobject.Object = @ptrCast(@alignCast(n.f_data orelse continue));
+            const w = gobject.ext.cast(gtk.Window, obj) orelse continue;
+            if (w == me) continue;
+            if (w.getTransientFor() == me and w.as(gtk.Widget).getVisible() != 0) return .{ .window = w };
+        }
+        return null;
     }
 
     fn closeConfirmationClose(

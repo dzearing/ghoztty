@@ -529,6 +529,23 @@ pub const SplitTree = extern struct {
         return tree.zoomed != null;
     }
 
+    /// Close `surface` now, with no confirmation: the CLI's `+close` drives
+    /// teardown, as the Mac server's `closeSurface(withConfirmation: false)`
+    /// and win32's `closeSplitPane` do (T3367). It takes the same path a
+    /// confirmed close takes, so the focus hand-off and the empty-tree tab
+    /// close (which closes a window left with no tabs) are the keyboard
+    /// close's. False when `surface` is not in this tree.
+    pub fn closeSurfaceNow(self: *Self, surface: *Surface) bool {
+        const tree = self.getTree() orelse return false;
+        var it = tree.iterator();
+        const handle = while (it.next()) |entry| {
+            if (entry.view == surface) break entry.handle;
+        } else return false;
+        self.private().pending_close = handle;
+        closeConfirmationClose(null, self);
+        return true;
+    }
+
     /// Get the tree data model that we're showing in this widget. This
     /// does not clone the tree.
     pub fn getTree(self: *Self) ?*Surface.Tree {
