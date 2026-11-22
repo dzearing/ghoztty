@@ -44,6 +44,10 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
+$script:passes = 0
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 $root = Join-Path $env:TEMP "ghoztty-pane-id-$PID"
 
 # The canonical pane-id shape: 8-4-4-4-12 hex (src/apprt/ipc/pane_id.zig).
@@ -52,7 +56,7 @@ $UUID_RE = '[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa
 $SURFID_RE = '0x[0-9a-fA-F]{16}'
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
 # Kill ONLY zig-out ghoztty/agent processes (never the user's release build).
@@ -583,6 +587,9 @@ if ($missing.Count -gt 0) {
         $bannerG -match '## T113 hook' -and $bannerG -match '\|')
     Stop-TestProcs
 }
+# The body's last statement (body-complete-audit): an unwind above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
 
 # ============================================================================
 "== cleanup"
@@ -593,5 +600,11 @@ else { Remove-Item env:GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue }
 Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 Remove-TestDesktop | Out-Null
 
-if ($script:failures -eq 0) { "ALL PASS$(if ($script:skipped) { " ($script:skipped SKIPPED)" })"; exit 0 }
-else { "$($script:failures) FAILURE(S)"; exit 1 }
+if ($script:failures -eq 0 -and -not $script:skipped) {
+    # A clean green run stamps the covered files (T783/T1768); red or a skipped
+    # section stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard pane-id -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T113 ACCEPTANCE' -Pass $script:passes -Fail $script:failures -Skipped ([int]$script:skipped)

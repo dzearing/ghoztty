@@ -1,3 +1,5 @@
+# @parallel-unsafe - two of its agent-cwd arms failed beside other workers and
+# passed alone (2026-11-22, T1768's run); it measures the agent's own cwd.
 # New-window working-directory fidelity under session persistence (tracker T144).
 #
 # User report, 2026-07-29: "it keeps defaulting to windows system32 folder
@@ -85,7 +87,11 @@ $ErrorActionPreference = 'Continue'
 $env:GHOZTTY_PIPE_SUFFIX = "-nwcwdtest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 $script:failures = 0
+$script:passes = 0
 $root = Join-Path $env:TEMP "ghoztty-new-window-cwd-$PID"
 
 # The directory the app is LAUNCHED from. It must be one nothing would ever pick
@@ -102,10 +108,10 @@ $workDir = Join-Path $root 'workdir'
 # RETURN something (Launch), and a pipeline-emitted line would be part of the
 # return value.
 function Assert($name, $cond) {
-    if ($cond) { Write-Host "  PASS $name" } else { Write-Host "  FAIL $name"; $script:failures++ }
+    if ($cond) { Write-Host "  PASS $name"; $script:passes++ } else { Write-Host "  FAIL $name"; $script:failures++ }
 }
 function AssertEq($name, $expected, $actual) {
-    if ($expected -eq $actual) { Write-Host "  PASS $name" }
+    if ($expected -eq $actual) { Write-Host "  PASS $name"; $script:passes++ }
     else { Write-Host "  FAIL $name (expected '$expected', got '$actual')"; $script:failures++ }
 }
 function Norm($p) {
@@ -594,6 +600,16 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     $leaked = @($launched | Where-Object { $fgSeen -contains $_ })
     Assert "no test-desktop app ever became foreground on the interactive desktop" ($leaked.Count -eq 0)
 }
+# The body's last statement (body-complete-audit): an unwind above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
 
 ""
-if ($script:failures -eq 0) { "ALL PASS"; exit 0 } else { "$($script:failures) FAILURE(S)"; exit 1 }
+if ($script:failures -eq 0 -and -not $NegativeControl) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due,
+    # and a negative-control run never stamps.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard new-window-cwd -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T144 ACCEPTANCE' -Pass $script:passes -Fail $script:failures

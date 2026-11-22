@@ -1,0 +1,19 @@
+{
+    "guard":  "target-staleness",
+    "script":  "test/win32/target-staleness.ps1",
+    "generated":  "2026-11-22T05:14:22-08:00",
+    "commit":  "b4cb5eedc",
+    "uncommitted":  [
+                        "test/win32/target-staleness.ps1"
+                    ],
+    "files":  {
+                  "test/win32/lib/CleanSlate.ps1":  "8802aadbd87990b0553c46fdf167ec938e740f110e517eee4d811218b83d1534",
+                  "test/win32/lib/Isolation.ps1":  "c154ff88298f28e8af527e4bcbee3bd3c191b28af329866e1333e9d28126b8da",
+                  "test/win32/target-staleness.ps1":  "40ccb7c6dd7adc7f580b7dc8b3c505e75f7d50a6da468ea47a062e7da3f759ec"
+              },
+    "code":  {
+                 "test/win32/lib/CleanSlate.ps1":  "code1:db36a2f413ca698063f6d2a68a1e8d2213511275826ce27925d50fdb47fb3201",
+                 "test/win32/lib/Isolation.ps1":  "code1:a1c202521130c0df041a46f489b089ca0e5d0b1b434be16b12069db78dde849a",
+                 "test/win32/target-staleness.ps1":  "code1:4ef59485ff07cd52ccb9f72a9a510877b38c6e1fbb9a50e8d9f51284cbdcd42b"
+             }
+}

@@ -1059,6 +1059,146 @@ $GuardTable = @(
             'src\apprt\win32\window_memory.zig'
         )
     },
+    # T1768: the CLI and launch family. App.zig, Window.zig, Surface.zig and
+    # Config.zig are left out the way they are for every other family: each
+    # row names the focused module where its behavior is decided, so a
+    # GUI-launching harness is not due on nearly every commit.
+    # `+new-window` with no running instance auto-launches the GUI in the
+    # directory it was asked for, not the launcher's (T132, the loop-killer).
+    [pscustomobject]@{
+        Name   = 'auto-launch-cwd'
+        Script = 'test\win32\auto-launch-cwd.ps1'
+        Stamp  = 'test\win32\auto-launch-cwd.stamp.json'
+        Covers = @(
+            'test\win32\auto-launch-cwd.ps1',
+            'src\apprt\ipc\args.zig',
+            'src\os\cli_launch.zig'
+        )
+    },
+    # Launching ghoztty from a shell opens where you stood (T506): the
+    # command-line detection the `working-directory = inherit` default keys on.
+    [pscustomobject]@{
+        Name   = 'cli-launch-cwd'
+        Script = 'test\win32\cli-launch-cwd.ps1'
+        Stamp  = 'test\win32\cli-launch-cwd.stamp.json'
+        Covers = @(
+            'test\win32\cli-launch-cwd.ps1',
+            'src\os\cli_launch.zig',
+            'src\os\homedir.zig'
+        )
+    },
+    # CLI output survives a PowerShell `>` redirect through the ghoztty.com
+    # console twin (T245): the twin's relaunch logic and the build step that
+    # flips its PE subsystem.
+    [pscustomobject]@{
+        Name   = 'cli-shim-redirect'
+        Script = 'test\win32\cli-shim-redirect.ps1'
+        Stamp  = 'test\win32\cli-shim-redirect.stamp.json'
+        Covers = @(
+            'test\win32\cli-shim-redirect.ps1',
+            'src\cli\com_shim.zig',
+            'src\build\patch_subsystem_main.zig',
+            'src\build\GhosttyExe.zig'
+        )
+    },
+    # A new window opens in the focused pane's directory, never System32,
+    # under session persistence (T144/T185): the CLI verb, the home fallback,
+    # the config template self-heal and the agent-side cwd forwarding.
+    [pscustomobject]@{
+        Name   = 'new-window-cwd'
+        Script = 'test\win32\new-window-cwd.ps1'
+        Stamp  = 'test\win32\new-window-cwd.stamp.json'
+        Covers = @(
+            'test\win32\new-window-cwd.ps1',
+            'src\cli\new_window.zig',
+            'src\os\homedir.zig',
+            'src\config\file_load.zig'
+        )
+    },
+    # A local tab or split does not re-run the parent's `--command` but does
+    # inherit its cwd (T148). The rule itself sits in Window.zig, left out as
+    # above; the row holds the split path that resolves the parent's live cwd.
+    [pscustomobject]@{
+        Name   = 'local-split-no-command-rerun'
+        Script = 'test\win32\local-split-no-command-rerun.ps1'
+        Stamp  = 'test\win32\local-split-no-command-rerun.stamp.json'
+        Covers = @(
+            'test\win32\local-split-no-command-rerun.ps1',
+            'src\apprt\win32\IpcHandlers.zig'
+        )
+    },
+    # `+send-keys` text then a key arrives as a framed paste plus a bare CR
+    # (T428/T658), byte-exact from an in-pane raw capture.
+    [pscustomobject]@{
+        Name   = 'send-keys-bracketed'
+        Script = 'test\win32\send-keys-bracketed.ps1'
+        Stamp  = 'test\win32\send-keys-bracketed.stamp.json'
+        Covers = @(
+            'test\win32\send-keys-bracketed.ps1',
+            'src\cli\send_keys.zig',
+            'src\apprt\ipc\segments.zig',
+            'src\apprt\win32\IpcHandlers.zig'
+        )
+    },
+    # Every pane has a stable UUID: exported as $GHOZTTY_PANE_ID, reported by
+    # `+list`, accepted by every --target, and kept across re-attach (T113).
+    [pscustomobject]@{
+        Name   = 'pane-id'
+        Script = 'test\win32\pane-id.ps1'
+        Stamp  = 'test\win32\pane-id.stamp.json'
+        Covers = @(
+            'test\win32\pane-id.ps1',
+            'src\apprt\ipc\pane_id.zig',
+            'src\apprt\ipc\target_lookup.zig',
+            'src\apprt\win32\IpcRegistry.zig'
+        )
+    },
+    # A reused --target name never silently probes last run's pane (T248):
+    # the test-state reset and per-run endpoint every other harness relies on.
+    [pscustomobject]@{
+        Name   = 'target-staleness'
+        Script = 'test\win32\target-staleness.ps1'
+        Stamp  = 'test\win32\target-staleness.stamp.json'
+        Covers = @(
+            'test\win32\target-staleness.ps1',
+            'test\win32\lib\CleanSlate.ps1',
+            'test\win32\lib\Isolation.ps1'
+        )
+    },
+    # The command palette dispatches off the shared command registry (T189),
+    # including a command that reached it only through the registry.
+    [pscustomobject]@{
+        Name   = 'command-registry'
+        Script = 'test\win32\command-registry.ps1'
+        Stamp  = 'test\win32\command-registry.stamp.json'
+        Covers = @(
+            'test\win32\command-registry.ps1',
+            'src\apprt\win32\commands.zig'
+        )
+    },
+    # A broken config raises a visible, dark Configuration Errors dialog at
+    # startup and on reload, and a clean one raises nothing (T69).
+    [pscustomobject]@{
+        Name   = 'config-errors'
+        Script = 'test\win32\config-errors.ps1'
+        Stamp  = 'test\win32\config-errors.stamp.json'
+        Covers = @(
+            'test\win32\config-errors.ps1',
+            'src\apprt\win32\ConfirmDialog.zig',
+            'src\config\file_load.zig'
+        )
+    },
+    # Free text a PowerShell 5.1 caller puts on a ghoztty argv arrives
+    # byte-exact (T279): the shared native-argv quoter.
+    [pscustomobject]@{
+        Name   = 'cli-argv-fidelity'
+        Script = 'test\win32\cli-argv-fidelity.ps1'
+        Stamp  = 'test\win32\cli-argv-fidelity.stamp.json'
+        Covers = @(
+            'test\win32\cli-argv-fidelity.ps1',
+            'scripts\lib\NativeArgv.ps1'
+        )
+    },
     # The overview action (T708): the only thing that proves a bound
     # `toggle_tab_overview` actually opens hero mode, from a terminal AND from
     # a focused viewer. Covers the harness, the forwarding decision it rides

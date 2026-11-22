@@ -43,9 +43,13 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
+$script:passes = 0
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 Assert-GhozttyIsolatedBuild -Exe $Exe | Out-Null
@@ -135,6 +139,9 @@ Assert "CLI verb runs in the twin itself, not the sibling" (($LASTEXITCODE -eq 0
 $viaCom = & $Com +version 2>&1 | ForEach-Object { $_.ToString() } | Out-String
 $viaExe = & $Exe +version 2>&1 | ForEach-Object { $_.ToString() } | Out-String
 Assert "pipe output identical through the twin" ($viaCom -eq $viaExe)
+# The try's last statement (body-complete-audit D1): an unwind above skips
+# it, so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
 
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
@@ -143,9 +150,9 @@ Assert "pipe output identical through the twin" ($viaCom -eq $viaExe)
 
 ""
 if ($script:failures -eq 0) {
-    "T245 ACCEPTANCE: ALL PASS"
-    exit 0
-} else {
-    "T245 ACCEPTANCE: $script:failures FAILURE(S)"
-    exit 1
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard cli-shim-redirect -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
 }
+Write-TestVerdict -Label 'T245 ACCEPTANCE' -Pass $script:passes -Fail $script:failures

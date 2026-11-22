@@ -33,9 +33,13 @@ New-Item -ItemType Directory -Force $tmp | Out-Null
 $env:GHOZTTY_PIPE_SUFFIX = "-t148$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
+$script:passes = 0
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
@@ -241,6 +245,9 @@ try {
     "== cleanup"
     & $Exe +close --target=cmdwin 2>&1 | Out-Null
     Start-Sleep -Seconds 1
+    # The try's last statement (body-complete-audit D1): an unwind above skips
+    # it, so the verdict reads DID NOT FINISH instead of green.
+    Complete-TestBody
 } finally {
     Remove-TestDesktop
     Stop-DebugGhoztty
@@ -256,5 +263,10 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert "no test-desktop app ever became foreground on the interactive desktop" ($leaked.Count -eq 0)
 }
 
-if ($script:failures -eq 0) { "ALL PASS"; exit 0 }
-else { "$($script:failures) FAILURE(S)"; exit 1 }
+if ($script:failures -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard local-split-no-command-rerun -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T148 ACCEPTANCE' -Pass $script:passes -Fail $script:failures

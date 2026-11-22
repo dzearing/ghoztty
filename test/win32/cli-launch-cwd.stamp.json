@@ -1,0 +1,17 @@
+{
+    "guard":  "cli-launch-cwd",
+    "script":  "test/win32/cli-launch-cwd.ps1",
+    "generated":  "2026-11-22T05:12:12-08:00",
+    "commit":  "b4cb5eedc",
+    "uncommitted":  [
+                        "test/win32/cli-launch-cwd.ps1"
+                    ],
+    "files":  {
+                  "src/os/cli_launch.zig":  "14314a25cff3a2d74cc216c9aa6b881c84d891c0516c2bd5d6a5bcf4732d504b",
+                  "src/os/homedir.zig":  "47ed2777ec445d309d7a912b81826c19348c115e1f53160f8001e24d2c8298ea",
+                  "test/win32/cli-launch-cwd.ps1":  "aa79a875925450e707b550f271536226757715a10b876ee36b8634995b1e6d99"
+              },
+    "code":  {
+                 "test/win32/cli-launch-cwd.ps1":  "code1:e78b353f8b588aa119c315ba3676daca7080cbbab9da5155a1c93c53c506790f"
+             }
+}

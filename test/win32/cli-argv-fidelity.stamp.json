@@ -1,0 +1,17 @@
+{
+    "guard":  "cli-argv-fidelity",
+    "script":  "test/win32/cli-argv-fidelity.ps1",
+    "generated":  "2026-11-22T05:12:50-08:00",
+    "commit":  "b4cb5eedc",
+    "uncommitted":  [
+                        "test/win32/cli-argv-fidelity.ps1"
+                    ],
+    "files":  {
+                  "scripts/lib/NativeArgv.ps1":  "49faad6cbe0907079281ac45a3e96f140fd6162f4c1729e82b145105137933b5",
+                  "test/win32/cli-argv-fidelity.ps1":  "477c8ec73f32fcf34676b6aed44c9d968d85d1561e9465366dd0720b6e7062df"
+              },
+    "code":  {
+                 "scripts/lib/NativeArgv.ps1":  "code1:e3cf46f3aae7f34432df1523d0864d979899e6ec82239aed75611b3aa9b2614d",
+                 "test/win32/cli-argv-fidelity.ps1":  "code1:cdaa8b9f1352f449ee6800d37e4b9a03462d3f0364c08f3817dc712261b15639"
+             }
+}

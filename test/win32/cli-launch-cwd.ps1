@@ -63,9 +63,13 @@ param(
 # console created for it, arm C is still two processes in one console, and arm D
 # is still DETACHED_PROCESS under a console-owning parent.
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
+$script:passes = 0
 $script:skipped = 0
 
 $root = Join-Path $env:TEMP "ghoztty-cli-launch-cwd-$PID"
@@ -73,10 +77,10 @@ $workDir = Join-Path $root 'workdir'
 $homeDir = "$env:HOMEDRIVE$env:HOMEPATH"
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 function AssertEq($name, $expected, $actual) {
-    if ($expected -eq $actual) { "  PASS $name" }
+    if ($expected -eq $actual) { "  PASS $name"; $script:passes++ }
     else { "  FAIL $name (expected '$expected', got '$actual')"; $script:failures++ }
 }
 function Norm($p) {
@@ -396,16 +400,20 @@ if ($consoleProcs -lt 1) {
         ($kinds -notmatch '^ERROR' -and $live.Count -eq 0)
     Stop-TestProcs
 }
+# The body's last statement (body-complete-audit): an unwind above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
 
 # ============================================================================
 Stop-TestProcs
 Remove-TestDesktop | Out-Null
 Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 
-if ($script:failures -eq 0) {
-    "ALL PASS$(if ($script:skipped) { " ($script:skipped SKIPPED)" })"
-    exit 0
-} else {
-    "$($script:failures) FAILURE(S)$(if ($script:skipped) { " ($script:skipped SKIPPED)" })"
-    exit 1
+if ($script:failures -eq 0 -and $script:skipped -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red or a skipped
+    # section stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard cli-launch-cwd -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
 }
+Write-TestVerdict -Label 'T506 ACCEPTANCE' -Pass $script:passes -Fail $script:failures -Skipped $script:skipped

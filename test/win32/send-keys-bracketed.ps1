@@ -40,12 +40,16 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
+$script:passes = 0
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 $tmp = Join-Path $env:TEMP "ghoztty-skb-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
 $win = "skbw$PID"
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
@@ -473,6 +477,9 @@ Assert "same bytes as a trailing \n (round 9) and an explicit Enter (round 1)" `
     ($r17 -eq ($FRAME_START + $msgHex + $FRAME_END + $CR))
 Assert "exactly one submitting CR, not two" `
     (-not $r17.EndsWith($CR + $CR))
+# The body's last statement (body-complete-audit): an unwind above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
 
 "== teardown"
 [void](Ghoz @('+close', "--target=$win"))
@@ -482,9 +489,9 @@ Remove-TestDesktop | Out-Null
 
 ""
 if ($script:failures -eq 0) {
-    "SEND-KEYS BRACKETED ACCEPTANCE: ALL PASS"
-    exit 0
-} else {
-    "SEND-KEYS BRACKETED ACCEPTANCE: $script:failures FAILURE(S)"
-    exit 1
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard send-keys-bracketed -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
 }
+Write-TestVerdict -Label 'SEND-KEYS BRACKETED ACCEPTANCE' -Pass $script:passes -Fail $script:failures

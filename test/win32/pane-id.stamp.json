@@ -1,0 +1,18 @@
+{
+    "guard":  "pane-id",
+    "script":  "test/win32/pane-id.ps1",
+    "generated":  "2026-11-22T05:13:56-08:00",
+    "commit":  "b4cb5eedc",
+    "uncommitted":  [
+                        "test/win32/pane-id.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/ipc/pane_id.zig":  "8996c381dfc0045e5ebcce8c021aac1a61d332e50a1c1c9490c5a5b9d4b3a9c2",
+                  "src/apprt/ipc/target_lookup.zig":  "d02b484db28ca91624449f2ea3bf1e167487dfd4fd13598f4b3c61ca629e0451",
+                  "src/apprt/win32/IpcRegistry.zig":  "4337c643db3bcd081f639932420132e3b87f44213f8199f16de1b76e58d40e50",
+                  "test/win32/pane-id.ps1":  "4aaa0089b0f1084148538bcae2b37a6bcd0bde75fac78374b5b1bf9ad4ce9325"
+              },
+    "code":  {
+                 "test/win32/pane-id.ps1":  "code1:ff2d61c86e0fc0c6e41741e6899c32c670b4a68b8aef8b68978b87c3df36e0e2"
+             }
+}

@@ -39,9 +39,13 @@ New-Item -ItemType Directory -Force $tmp | Out-Null
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 [void](Set-GhozttyTestIsolation -Tag 'tstale')
 
+$script:passes = 0
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 # T1240: the CLI runs ON THE TEST DESKTOP, not on the user's. `+new-window` is
 # the one verb that auto-launches the app, and the window it spawns lands on the
@@ -162,6 +166,9 @@ try {
     $manifest = Get-GhozttySessionLayoutPath -Root $env:LOCALAPPDATA
     Reset-GhozttyTestState -Exe $Exe -SettleMs 1200 | Out-Null
     Assert "debug session-layout manifest removed" (-not (Test-Path $manifest))
+    # The try's last statement (body-complete-audit D1): an unwind above skips
+    # it, so the verdict reads DID NOT FINISH instead of green.
+    Complete-TestBody
 } finally {
     Reset-GhozttyTestState -Exe $Exe -SettleMs 500 | Out-Null
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
@@ -169,4 +176,10 @@ try {
 }
 
 ""
-if ($script:failures -eq 0) { "ALL PASS"; exit 0 } else { "$($script:failures) FAILURE(S)"; exit 1 }
+if ($script:failures -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard target-staleness -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T248 ACCEPTANCE' -Pass $script:passes -Fail $script:failures

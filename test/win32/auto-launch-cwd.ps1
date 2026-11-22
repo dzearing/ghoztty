@@ -1,3 +1,6 @@
+# @parallel-unsafe - its "agent inherited the launcher's cwd" and "no agent is
+# running" arms read another worker's agent beside it and passed alone
+# (2026-11-22, T1768's run).
 # Auto-launch working-directory fidelity (tracker T132).
 #
 # The loop-killer this covers: `upgrade-ghoztty-windows.ps1` killed the app and
@@ -56,9 +59,13 @@ param(
 # put one across whatever the user was reading. The launch's WORKING DIRECTORY,
 # which is what the script measures, is passed through unchanged.
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
+$script:passes = 0
 $root = Join-Path $env:TEMP "ghoztty-auto-launch-cwd-$PID"
 
 # The directory the caller ASKS for, and the one the launcher SITS in. They must
@@ -68,10 +75,10 @@ $workDir = Join-Path $root 'workdir'
 $launcherDir = 'C:\Windows\System32'
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 function AssertEq($name, $expected, $actual) {
-    if ($expected -eq $actual) { "  PASS $name" }
+    if ($expected -eq $actual) { "  PASS $name"; $script:passes++ }
     else { "  FAIL $name (expected '$expected', got '$actual')"; $script:failures++ }
 }
 
@@ -367,6 +374,9 @@ AssertEq "E2 no window yet inside the grace period" 0 @(Windows-Of $treeE0).Coun
 $treeE = Wait-WindowCount $tmpE 'e' 1 30
 AssertEq "E3 the deferred startup window opened once the grace period ended" 1 `
     @(Windows-Of $treeE).Count
+# The body's last statement (body-complete-audit): an unwind above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
 
 # ---- teardown --------------------------------------------------------------
 Stop-TestProcs
@@ -380,4 +390,10 @@ Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 Remove-TestDesktop | Out-Null
 
 ""
-if ($script:failures -eq 0) { "ALL PASS"; exit 0 } else { "$($script:failures) FAILURE(S)"; exit 1 }
+if ($script:failures -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard auto-launch-cwd -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T132 ACCEPTANCE' -Pass $script:passes -Fail $script:failures
