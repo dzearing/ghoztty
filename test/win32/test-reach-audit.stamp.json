@@ -1,8 +1,8 @@
 {
     "guard":  "test-reach",
     "script":  "test/win32/test-reach-audit.ps1",
-    "generated":  "2026-11-22T13:04:17-08:00",
-    "commit":  "342c396f7",
+    "generated":  "2026-11-22T13:49:18-08:00",
+    "commit":  "f2eb40405",
     "uncommitted":  [
 
                     ],
@@ -452,7 +452,7 @@
                   "src/apprt/win32/winrt_comp.zig":  "dd700de7f7ffba1de068560c8cabeb545a46eb0de0adb6c5d011df051d3fb4e7",
                   "src/apprt/win32/worker_pool.zig":  "f1ee62197c73dbbd6c21143089ffbce3768f4f2434a1997b5ec5a1b471d44c65",
                   "src/apprt/win32/workspace_host.zig":  "ce994101bfbe3de9d9119d4ceab94dc5614a536d3c377eea32065c81288cca46",
-                  "test/win32/lib/TestReachAudit.ps1":  "30cf350fa38570f213765b4138af75cba6d3e400ed88509f27c72bb10abe8344",
+                  "test/win32/lib/TestReachAudit.ps1":  "dd5360592c754288c5764834002f93bc78832630a79534784b7ebae97288f2bf",
                   "test/win32/test-reach-audit.ps1":  "6f750b133310449a3709ff815f2212fbb29b9b1498b49e8cc890a5f695ae66d2"
               }
 }

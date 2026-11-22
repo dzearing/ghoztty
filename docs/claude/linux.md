@@ -330,8 +330,49 @@ same, and this shape kept the GTK tree, tab and window code untouched.)
 - `+close` and a pane's own close never prompt: nothing is running in it.
 - A `--name` held by a viewer is reused for the same view and refused for
   another (the shared `split_name_collision` rule, fed the viewer's location).
-- Keys are the web view's (the Surface's key handler steps aside); the
-  navigation bar and viewer keys are T3412, restore with the session T3420.
+- Keys are the web view's (the Surface's key handler steps aside), after the
+  viewer's own pane chords (T3412, below); restore with the session is T3420.
+
+### The nav bar and pane keys (T3412)
+
+`Viewer.widget()` is a vertical box: the nav bar (back, forward, reload,
+home, reveal, address) and then the web view, so the bar reserves its height
+from the first frame. Focusing the pane focuses the PAGE
+(`Viewer.focusContent`), never the box, which would hand focus to Back.
+
+- **History is WebKit's own.** A template mode's URL carries its file:
+  `ghoztty-viewer://page/viewer.html?file=<escaped path>`
+  (`viewer_chrome.templateUrlFor`), so each back/forward entry names the file
+  it showed, and every committed URI is read back (`syncCommitted`) to say
+  where the pane is - mode, `+list` url, title, address, reveal button.
+- **The address** goes through win32's `viewer_nav.resolveInput` (paths,
+  `about:`, diff specs pass; a host is omnibox-completed) plus `~` expansion.
+- **Pane keys**: a CAPTURE-phase key controller on the box asks
+  `viewer_chrome.classify`, which maps the GDK keysym onto win32's pure tables
+  (`viewer_accel.paneChord`/`zoomAction`, `viewer_find.fieldKeyAction`) - the
+  same chords as Windows, Ctrl as the modifier. Ctrl+R reloads in place,
+  Ctrl+L / Alt+D select the address, Ctrl +/-/0 zoom, Escape reverts the
+  address. Find chords are declined until T3414; the app-keybinding fallback
+  for every other chord is T3430.
+- **Reveal** is `gtk_file_launcher_open_containing_folder` (the desktop's
+  FileManager1), or the nearest existing folder for a deleted file. Headless
+  Weston has neither, so the test reads the `viewer: reveal ...` log line.
+- **Driving it headless**: a debug build with
+  `GHOZTTY_TEST_VIEWER_STEPS=<file>` runs that file's steps (`key <accel>`,
+  `type`, `activate`, `click <button>`, `wait`, `state`, `probe <js>`,
+  `mark`, `sleep`) on the first viewer to write its dump, and appends one
+  result line per step to `GHOZTTY_TEST_VIEWER_STEPS_OUT`. `key` calls the
+  controller's own handler; `click` emits `clicked` (a GtkButton's
+  `activate` delays it by 250 ms); `activate` emits the entry's `activate`,
+  which is what Return does.
+
+Acceptance:
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-nav.sh
+```
+
+Ends `VIEWER NAV: ALL PASS` (26 checks).
 
 Acceptance:
 
