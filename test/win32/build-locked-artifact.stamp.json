@@ -1,0 +1,17 @@
+{
+    "guard":  "build-locked-artifact",
+    "script":  "test/win32/build-locked-artifact.ps1",
+    "generated":  "2026-11-22T05:41:21-08:00",
+    "commit":  "1577c31bc",
+    "uncommitted":  [
+                        "test/win32/build-locked-artifact.ps1"
+                    ],
+    "files":  {
+                  "src/build/install_unlock_main.zig":  "f41d1d0de8a581a7880c443d53b501d5d57464a34685626f3752a74f295ac03c",
+                  "src/build/InstallUnlock.zig":  "e04ede2e898d3b477247a68c9a75e317aa46e0dfbe4a61d051176678250d647d",
+                  "test/win32/build-locked-artifact.ps1":  "92e89275b3d3344394334033f8690665a9cfea67cf52b54ae00823ef5d17e71e"
+              },
+    "code":  {
+                 "test/win32/build-locked-artifact.ps1":  "code1:3df80b3420293be2a6274525322f1eae221345c197255cb4c514d9f22601a20e"
+             }
+}

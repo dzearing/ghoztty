@@ -21,6 +21,9 @@ param()
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $lockScript = Join-Path $repo 'scripts\go-loop-lock.ps1'
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:failures = 0
 $script:skipped = 0
@@ -140,11 +143,19 @@ if (-not ($mParse.Success -and $mCarry.Success)) {
         ((Resolve-CarriedAcquired $lock $acq) -eq $acq)
 }
 
+# The body's last statement (body-complete-audit): an unwind above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
+
 ""
-if ($script:failures -eq 0) {
-    "ALL PASS ($($script:asserted) assertions$(if ($script:skipped) { ", $script:skipped SKIPPED" }))"
-    exit 0
-} else {
-    "$($script:failures) FAILURE(S)"
-    exit 1
+if ($script:failures -eq 0 -and $script:skipped -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red or a skipped
+    # section stays due. Continue: under Stop, a stderr line from the native
+    # call through 2>&1 would throw in PowerShell 5.1.
+    $ErrorActionPreference = 'Continue'
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard go-loop-uptime -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
 }
+Write-TestVerdict -Label 'GO-LOOP UPTIME' -Pass ($script:asserted - $script:failures) `
+    -Fail $script:failures -Skipped $script:skipped

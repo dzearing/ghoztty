@@ -1,0 +1,19 @@
+{
+    "guard":  "upgrade-resume-readiness",
+    "script":  "test/win32/upgrade-resume-readiness.ps1",
+    "generated":  "2026-11-22T05:42:21-08:00",
+    "commit":  "1577c31bc",
+    "uncommitted":  [
+                        "test/win32/upgrade-resume-readiness.ps1"
+                    ],
+    "files":  {
+                  "scripts/loop-session.ps1":  "40bf602b8d9867a42b98e872161298c6403507ff93c12bc0d321fe2f1aee5e94",
+                  "scripts/upgrade-ghoztty-windows.ps1":  "83fc5645440aeb390dc05c1cb432420dcd136a1833af441aa0cbb2ad2fe6c40c",
+                  "test/win32/upgrade-resume-readiness.ps1":  "e5957b091de230bdc31d0899be7e58f5d258658c578513d707d121c696ab01a0"
+              },
+    "code":  {
+                 "scripts/loop-session.ps1":  "code1:3be2e5ba6184b654644d2dd295123e5438009bea11aaa1ff111068c4d840a2bd",
+                 "scripts/upgrade-ghoztty-windows.ps1":  "code1:c15cf4ced2767c9f61f0972cf45c723af9dc3c2ce708d75e9d02018f8e1d30f6",
+                 "test/win32/upgrade-resume-readiness.ps1":  "code1:f3f2942c9754aca9f11ed3c8d11d0da8f5229b079b269e28c3fbb1d191ba9d46"
+             }
+}

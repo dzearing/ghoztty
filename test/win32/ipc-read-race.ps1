@@ -131,8 +131,9 @@ try {
     if ($silent) {
         $r = Invoke-Ghoztty "+read --name=$($silent.id) --lines=5" "$tmp\read-silent.txt"
         Assert "A +read of a silent pane exits 0 (was: failed to read terminal content)" ($r.Code -eq 0)
-        Assert "A +read of a silent pane says nothing rather than failing" (
-            $r.Text.Trim() -eq '' -and $r.Text -notmatch 'failed to read')
+        $silentQuiet = ($r.Text.Trim() -eq '' -and $r.Text -notmatch 'failed to read')
+        Assert "A +read of a silent pane says nothing rather than failing" $silentQuiet
+        if (-not $silentQuiet) { "    +read returned: [$($r.Text)]" }
     }
     Invoke-Ghoztty "+close --target=silent" "$tmp\close-silent.txt" | Out-Null
 

@@ -1,0 +1,16 @@
+{
+    "guard":  "history-guard-flavor",
+    "script":  "test/win32/history-guard-flavor.ps1",
+    "generated":  "2026-11-22T05:40:14-08:00",
+    "commit":  "1577c31bc",
+    "uncommitted":  [
+                        "test/win32/history-guard-flavor.ps1"
+                    ],
+    "files":  {
+                  "src/termio/history_guard.zig":  "f06519c1f847bf49afb69a8252e45c15f1aa482d2203c6b7d29bd6f0c30e40d0",
+                  "test/win32/history-guard-flavor.ps1":  "0411d42ec5a55b477b15fa43913be4af394a38941e274cff9ecdfe0610ac5dd1"
+              },
+    "code":  {
+                 "test/win32/history-guard-flavor.ps1":  "code1:3cc2663d46b65e9cbdb6171e6aa55467be0c7c60c6f177c21e1eeaa986ad4193"
+             }
+}

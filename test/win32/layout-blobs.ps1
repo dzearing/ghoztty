@@ -60,11 +60,15 @@ param(
 # `Run-Cli`: none of the verbs they use can create a process.
 
 $ErrorActionPreference = 'Continue'
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 $script:failures = 0
+$script:passes = 0
 $root = Join-Path $env:TEMP "ghoztty-layout-blobs-$PID"
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
 function Stop-TestProcs {
@@ -311,7 +315,11 @@ Assert "D2 the survivor is the first window, not the closed one" (
 # ============================================================================
 "== E: the blobs survive the app exit (quit / crash / upgrade class)"
 # ============================================================================
-$idsE = @(Alive-Ids (Get-Sessions $tmp 'e0'))
+# Since T1874 a closed window is PARKED for `undo-timeout` (5s) with its
+# session still alive, and only ends it when the undo expires. Read the alive
+# set after that, or the hard kill below lands inside the undo window, strands
+# the parked session in the agent, and F5b counts it as one the recovery opened.
+$idsE = @(Alive-Ids (Wait-AliveCount $tmp 'e0' 2 20))
 Stop-GuiOnly
 $recsE = Get-Layouts $tmp
 Assert "E1 the record is still in the store with no viewer running" (@($recsE).Count -eq 1)
@@ -376,6 +384,9 @@ Assert "F7 the new window took a fresh uuid key of its own" (
 Assert "F8 the new record claims a session the recovered one does not" (
     $null -ne $recF2 -and @($recF2.session_ids).Count -eq 1 -and
     -not ($idsE -contains $recF2.session_ids[0]))
+# The body's last statement (body-complete-audit): an unwind above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
 
 # ============================================================================
 "== cleanup"
@@ -386,5 +397,10 @@ else { Remove-Item env:GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue }
 Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 Remove-TestDesktop | Out-Null
 
-if ($script:failures -eq 0) { "ALL PASS"; exit 0 }
-else { "$($script:failures) FAILURE(S)"; exit 1 }
+if ($script:failures -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard layout-blobs -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T334 LAYOUT BLOBS' -Pass $script:passes -Fail $script:failures

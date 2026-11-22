@@ -70,11 +70,17 @@ $BranchOwnSha = '029ae4b1238c0e7ac8ee729d283b6fe7ec7ec926'
 $Win32Range = '839a1b812941901088169c92d512bcd55b2bd7cb..c72220cd7420f720cd2cde1ff9de5d33922ce556'
 $Win32Incoming = 'c72220cd7420f720cd2cde1ff9de5d33922ce556'
 
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:Failures = 0
+$script:Passes = 0
 function Check {
     param([string]$Name, [bool]$Ok, [string]$Detail = '')
     if ($Ok) {
         Write-Host ("PASS  {0}" -f $Name)
+        $script:Passes++
     }
     else {
         Write-Host ("FAIL  {0}{1}" -f $Name, $(if ($Detail) { " - $Detail" } else { '' }))
@@ -295,6 +301,7 @@ try {
     $r = Invoke-Sweep -DocsPath $sharedFixture -UseRange $Win32Range -IncomingRef $Win32Incoming -Paths @('src/')
     Check '10b without the exclusion the same commit IS enumerated' `
         ($r.Text -match 'commits: 1\s') ("got: " + (($r.Lines | Where-Object { $_ -match 'commits:' }) -join '; '))
+    Complete-TestBody  # T1039: the run reached the end of its body
 }
 finally {
     foreach ($d in $created) {
@@ -306,8 +313,11 @@ finally {
 
 Write-Host ''
 if ($script:Failures -eq 0) {
-    Write-Host 'ALL PASS'
-    exit 0
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    # Continue: under Stop, a stderr line from the native call through 2>&1
+    # would throw in PowerShell 5.1.
+    $ErrorActionPreference = 'Continue'
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot 'scripts\guard-due.ps1') `
+        update -Guard parity-sweep -Repo $RepoRoot 2>&1 | ForEach-Object { "  $_" }
 }
-Write-Host ("{0} FAILURE(S)" -f $script:Failures)
-exit 1
+Write-TestVerdict -Label 'T152 PARITY SWEEP' -Pass $script:Passes -Fail $script:Failures

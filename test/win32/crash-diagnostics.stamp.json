@@ -1,0 +1,17 @@
+{
+    "guard":  "crash-diagnostics",
+    "script":  "test/win32/crash-diagnostics.ps1",
+    "generated":  "2026-11-22T05:44:39-08:00",
+    "commit":  "1577c31bc",
+    "uncommitted":  [
+                        "test/win32/crash-diagnostics.ps1"
+                    ],
+    "files":  {
+                  "scripts/lib/CrashDiag.ps1":  "dcc1adba72d7a3a3d7086ab93f857fb3aee79b7745df5cfd3f77b8451b9d5e45",
+                  "test/win32/crash-diagnostics.ps1":  "c05cea8bb12af4d565da9b669a740fb4f5ca6963b4cd364e035ea78e4abeb7ee"
+              },
+    "code":  {
+                 "scripts/lib/CrashDiag.ps1":  "code1:393f266b7fc2d3a173f3a9a9ff9ca29f0d2d08e7c7f01de8fe716cee7d127283",
+                 "test/win32/crash-diagnostics.ps1":  "code1:b392e8e3483716e84dbd986523ef40f760327c79405e8ebd86a79e0a14855303"
+             }
+}

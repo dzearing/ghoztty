@@ -30,13 +30,17 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 $script:failures = 0
+$script:passes = 0
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 function AssertEq($name, $expected, $actual) {
-    if ($expected -eq $actual) { "  PASS $name" }
+    if ($expected -eq $actual) { "  PASS $name"; $script:passes++ }
     else { "  FAIL $name (expected '$expected', got '$actual')"; $script:failures++ }
 }
 
@@ -537,7 +541,16 @@ if ($PureOnly) {
             ($gVia.Length -gt 0 -and $LASTEXITCODE -eq 0)
     }
 }
+# The body's last statement (body-complete-audit): an unwind above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
 
 ""
-if ($script:failures -eq 0) { "ALL PASS$(if ($script:skipped) { " ($script:skipped SKIPPED)" })" } else { "$($script:failures) FAILURE(S)" }
-exit ([int]($script:failures -gt 0))
+if ($script:failures -eq 0 -and -not $script:skipped) {
+    # A clean green run stamps the covered files (T783/T1768); red, -PureOnly
+    # or a skipped section stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard upgrade-resume-readiness -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T439 RESUME READINESS' -Pass $script:passes -Fail $script:failures -Skipped ([int]$script:skipped)

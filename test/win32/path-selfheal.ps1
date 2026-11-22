@@ -41,6 +41,9 @@
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 # T1241: the GUI launches on the background test desktop, not the user's.
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 $ErrorActionPreference = 'Stop'
 # T675: suppress the app's startup job self-escape - this harness tracks the
 # pids it launches, and a pane-launched app would otherwise hand its work to
@@ -302,8 +305,16 @@ try {
                 Copy-Item -Destination $relCopy -Recurse -Force
             $relExe = Join-Path $relCopy 'ghoztty.exe'
             $pathJ = Get-UserPathRaw
+            # T3388: `--auto-update=off` on BOTH launches. The copy sits in the
+            # sandbox's Programs\Ghoztty, which a release build reads as the
+            # installed-release folder, so it checks for updates, downloads the
+            # newer MSI and runs msiexec - and msiexec does not care about the
+            # sandbox: on 2026-11-22 it reconfigured the user's REAL per-user
+            # product and its prepare step left their install with no
+            # ghoztty-agent.exe.
+            $relArgs = @('--session-persistence=false', '--auto-update=off')
 
-            $app = Start-OnTestDesktop -Exe $relExe -AllowReleaseBuild -Arguments @('--session-persistence=false')
+            $app = Start-OnTestDesktop -Exe $relExe -AllowReleaseBuild -Arguments $relArgs
             Start-Sleep -Seconds 4
             $aliveJ = -not $app.Process.HasExited
             Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
@@ -317,7 +328,7 @@ try {
             # J2: the negative control. Clear the seam and the same copy, same
             # sandbox, writes - so J1 measured the seam, not a gate that was shut.
             Remove-Item Env:GHOZTTY_PATH_SELFHEAL -ErrorAction SilentlyContinue
-            $app = Start-OnTestDesktop -Exe $relExe -AllowReleaseBuild -Arguments @('--session-persistence=false')
+            $app = Start-OnTestDesktop -Exe $relExe -AllowReleaseBuild -Arguments $relArgs
             $healed = Wait-PathContains $relCopy 10
             Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue
             Assert $healed 'J2 control: without the seam the same sandboxed release copy DOES write the user Path'
@@ -345,6 +356,7 @@ try {
             }
         }
     }
+    Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     Kill-RepoInstances
     Set-UserPathRaw $orig.Value $orig.Kind
@@ -380,5 +392,12 @@ if ($script:relOwnedTouched) {
 if ($relCopy) { Remove-Item -LiteralPath $relCopy -Recurse -Force -ErrorAction SilentlyContinue }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions$(if ($script:skipped) { ", $script:skipped SKIPPED" }))" }
-else { Write-Host "$script:fail FAILED / $script:pass passed" -ForegroundColor Red; exit 1 }
+if ($script:fail -eq 0 -and $script:skipped -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red or a skipped
+    # section stays due. Continue: under Stop, a stderr line from the native
+    # call through 2>&1 would throw in PowerShell 5.1.
+    $ErrorActionPreference = 'Continue'
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard path-selfheal -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T70 PATH SELF-HEAL' -Pass $script:pass -Fail $script:fail -Skipped $script:skipped

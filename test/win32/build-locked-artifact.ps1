@@ -53,9 +53,14 @@ $ErrorActionPreference = 'Continue'
 Set-StrictMode -Off
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
+$script:passes = 0
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
 # The build under test must be the isolated (debug) one - this script rebuilds
@@ -268,10 +273,18 @@ Stop-RepoAgents
 $r = Invoke-ZigBuild -Step 'remote-test-client' -Stamp '' -Unlock '' -LogName 'client-sweep.log'
 Assert "sweep build exits 0" ($r.Code -eq 0)
 Assert "no moved-aside client files remain" (@(Get-AsideFilesFor $ClientExe).Count -eq 0)
+# The body's last statement (body-complete-audit): an unwind above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
 
 Stop-HeldClient
 Stop-RepoAgents
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 
-if ($script:failures -eq 0) { "ALL PASS" } else { "$($script:failures) FAILURE(S)" }
-exit $script:failures
+if ($script:failures -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard build-locked-artifact -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T192 BUILD LOCKED ARTIFACT' -Pass $script:passes -Fail $script:failures

@@ -1,0 +1,16 @@
+{
+    "guard":  "path-selfheal",
+    "script":  "test/win32/path-selfheal.ps1",
+    "generated":  "2026-11-22T05:47:46-08:00",
+    "commit":  "1577c31bc",
+    "uncommitted":  [
+                        "test/win32/path-selfheal.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/PathInstaller.zig":  "77ee61d5ba639eb627756e917077c3de09b6f77c1fd2440fb707b1a7a9e5d2e5",
+                  "test/win32/path-selfheal.ps1":  "8021e91362fdc936948a7f30e1aaf1380b1c2e8f0c5404486c30b43c9e74f0f2"
+              },
+    "code":  {
+                 "test/win32/path-selfheal.ps1":  "code1:1733cecf522bc4fbdffe3d9b0bfa7e546d05da0a39a40ce9cfe937e3f3fcd3cf"
+             }
+}

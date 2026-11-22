@@ -283,16 +283,24 @@ Assert "B5 those tasks are filed" ($deadTask.Count -eq 0)
 # the oracle rather than its exit code (T197).
 $pure = Join-Path $PSScriptRoot 'upgrade-resume-readiness.ps1'
 $log = Join-Path $env:TEMP "skip-visibility-$PID.log"
-cmd /c "powershell -NoProfile -File `"$pure`" -PureOnly > `"$log`" 2>&1" | Out-Null
+# -Repo names this script's own tree: the fixture's default is the lane-a
+# literal, and since it loads lib\TestScore.ps1 (T1768) the checkout guard
+# refuses that default from any other lane instead of grading lane a (T1996).
+$pureRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+cmd /c "powershell -NoProfile -File `"$pure`" -Repo `"$pureRepo`" -PureOnly > `"$log`" 2>&1" | Out-Null
 $out = @(Get-Content -LiteralPath $log -ErrorAction SilentlyContinue)
 $last = if ($out.Count) { $out[-1].Trim() } else { '<no output>' }
 Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
 
 Assert "C1 the skipped sections printed their SKIP lines" (
     (@($out | Where-Object { $_ -cmatch '^\s*SKIP' })).Count -eq 2)
+# The fixture scores through lib\TestScore.ps1 since T1768, whose verdict is
+# `<label>: ALL PASS (<n> assertions, 2 SKIPPED)`; the rule is the same - the
+# skip count rides the last line.
+$c2Shape = '^(.+: )?ALL PASS \((\d+ assertions, )?2 SKIPPED\)$'
 Assert "C2 the LAST line carries the count, not just an ALL PASS" (
-    $last -eq 'ALL PASS (2 SKIPPED)')
-if ($last -ne 'ALL PASS (2 SKIPPED)') { "       last line was: $last" }
+    $last -match $c2Shape)
+if ($last -notmatch $c2Shape) { "       last line was: $last" }
 
 # The count is real rather than a constant: a run with nothing skipped says
 # nothing, and two skips say two. The fixture is the canonical shape from

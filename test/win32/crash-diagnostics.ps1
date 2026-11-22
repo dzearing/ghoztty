@@ -42,11 +42,15 @@ $td = New-TestDesktop
 
 $ErrorActionPreference = 'Continue'
 . "$Repo\scripts\lib\CrashDiag.ps1"
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $failures = 0
+$passes = 0
 function Check {
     param([string]$Name, [bool]$Ok, [string]$Detail = '')
-    if ($Ok) { Write-Host "PASS $Name" }
+    if ($Ok) { Write-Host "PASS $Name"; $script:passes++ }
     else { Write-Host "FAIL $Name $Detail"; $script:failures++ }
 }
 
@@ -167,6 +171,9 @@ $laneOut = & powershell -NoProfile -File (Join-Path $Repo 'scripts\floor-lane.ps
 $laneText = ($laneOut | Out-String)
 Check 'floor-lane self-test still passes with the diagnostic wired in' ($laneText -match 'ALL PASS') `
     "tail: $(($laneOut | Select-Object -Last 3) -join ' / ')"
+# The body's last statement (body-complete-audit): an unwind above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
 
 # --------------------------------------------------------------------- cleanup
 
@@ -174,5 +181,10 @@ Remove-TestDesktop | Out-Null
 Remove-Item $logDir -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $crashDir -Recurse -Force -ErrorAction SilentlyContinue
 
-if ($failures -eq 0) { Write-Host 'ALL PASS' } else { Write-Host "$failures FAILURE(S)" }
-exit $(if ($failures -eq 0) { 0 } else { 1 })
+if ($failures -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard crash-diagnostics -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T444 CRASH DIAGNOSTICS' -Pass $passes -Fail $failures

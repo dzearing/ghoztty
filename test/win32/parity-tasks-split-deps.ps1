@@ -38,14 +38,18 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 $script:failures = 0
+$script:passes = 0
 
 $taskScript = Join-Path $Repo 'scripts\parity-tasks.ps1'
 $realDir = Join-Path $Repo 'docs\design\windows-parity-tasks'
 $fixture = Join-Path $env:TEMP "ghoztty-parity-split-$PID"
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
 function Task-Run {
@@ -270,10 +274,18 @@ $r = Task-Run @('validate') $realDir
 Assert 'the real tracker validates' ($r.Code -eq 0 -and $r.Out -match 'ALL PASS')
 $r = Task-Run @('next') $realDir
 Assert 'next on the real tracker still answers' ($r.Out -match '(NEXT|RESUME|IN FLIGHT): T\d')
+# The body's last statement (body-complete-audit): an unwind above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
 
 # --- teardown ---------------------------------------------------------------
 if (Test-Path $fixture) { Remove-Item -Recurse -Force $fixture }
 
 ""
-if ($script:failures -eq 0) { "ALL PASS" } else { "$($script:failures) FAILURE(S)" }
-exit ([int]($script:failures -gt 0))
+if ($script:failures -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard parity-tasks-split-deps -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T382 SPLIT DEPS' -Pass $script:passes -Fail $script:failures

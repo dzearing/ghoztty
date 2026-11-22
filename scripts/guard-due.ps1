@@ -1199,6 +1199,113 @@ $GuardTable = @(
             'scripts\lib\NativeArgv.ps1'
         )
     },
+    # T1768: the build-and-tooling family. Each row names the file the harness
+    # asserts on and nothing wider: parity-tasks.ps1 and the go-loop scripts are
+    # already covered by their main harnesses, and these are the narrower
+    # questions about one function or one subsystem in them.
+    # `zig build` installs over an exe a running process holds open (T192): the
+    # move-aside-and-sweep step and its build wiring.
+    [pscustomobject]@{
+        Name   = 'build-locked-artifact'
+        Script = 'test\win32\build-locked-artifact.ps1'
+        Stamp  = 'test\win32\build-locked-artifact.stamp.json'
+        Covers = @(
+            'test\win32\build-locked-artifact.ps1',
+            'src\build\InstallUnlock.zig',
+            'src\build\install_unlock_main.zig'
+        )
+    },
+    # A crashed build child is reported as a crash with its decoded NTSTATUS,
+    # not as a bare exit code (T444).
+    [pscustomobject]@{
+        Name   = 'crash-diagnostics'
+        Script = 'test\win32\crash-diagnostics.ps1'
+        Stamp  = 'test\win32\crash-diagnostics.stamp.json'
+        Covers = @(
+            'test\win32\crash-diagnostics.ps1',
+            'scripts\lib\CrashDiag.ps1'
+        )
+    },
+    # The loop's uptime figure floors its leading unit and carries a run across
+    # a pane relaunch but not across a reboot (Format-Uptime,
+    # Resolve-CarriedAcquired).
+    [pscustomobject]@{
+        Name   = 'go-loop-uptime'
+        Script = 'test\win32\go-loop-uptime.ps1'
+        Stamp  = 'test\win32\go-loop-uptime.stamp.json'
+        Covers = @(
+            'test\win32\go-loop-uptime.ps1',
+            'scripts\go-loop-lock.ps1'
+        )
+    },
+    # The scrollback guard arms from the pty flavor the agent reports in its
+    # HELLO, not from the local OS (T471).
+    [pscustomobject]@{
+        Name   = 'history-guard-flavor'
+        Script = 'test\win32\history-guard-flavor.ps1'
+        Stamp  = 'test\win32\history-guard-flavor.stamp.json'
+        Covers = @(
+            'test\win32\history-guard-flavor.ps1',
+            'src\termio\history_guard.zig'
+        )
+    },
+    # The intake gate maps every incoming Mac/core commit to Windows work, and
+    # a hex-shaped coincidence never counts as a mapping (T152/T685).
+    [pscustomobject]@{
+        Name   = 'parity-sweep'
+        Script = 'test\win32\parity-sweep.ps1'
+        Stamp  = 'test\win32\parity-sweep.stamp.json'
+        Covers = @(
+            'test\win32\parity-sweep.ps1',
+            'scripts\parity-sweep.ps1'
+        )
+    },
+    # A dependency on a split or redirected task resolves through its children
+    # (T382/T518), so `next` never offers work whose prerequisites are open.
+    [pscustomobject]@{
+        Name   = 'parity-tasks-split-deps'
+        Script = 'test\win32\parity-tasks-split-deps.ps1'
+        Stamp  = 'test\win32\parity-tasks-split-deps.stamp.json'
+        Covers = @(
+            'test\win32\parity-tasks-split-deps.ps1',
+            'scripts\parity-tasks.ps1'
+        )
+    },
+    # The GUI self-heals the user PATH so `ghoztty` resolves from any shell
+    # (T70/T2169): gated, idempotent, variant-aware, ahead of the release.
+    [pscustomobject]@{
+        Name   = 'path-selfheal'
+        Script = 'test\win32\path-selfheal.ps1'
+        Stamp  = 'test\win32\path-selfheal.stamp.json'
+        Covers = @(
+            'test\win32\path-selfheal.ps1',
+            'src\apprt\win32\PathInstaller.zig'
+        )
+    },
+    # The upgrade's resume waits for a replayed pane and retries a prompt that
+    # did not arrive (T439): the loop-session helpers and the upgrade wiring.
+    [pscustomobject]@{
+        Name   = 'upgrade-resume-readiness'
+        Script = 'test\win32\upgrade-resume-readiness.ps1'
+        Stamp  = 'test\win32\upgrade-resume-readiness.stamp.json'
+        Covers = @(
+            'test\win32\upgrade-resume-readiness.ps1',
+            'scripts\loop-session.ps1',
+            'scripts\upgrade-ghoztty-windows.ps1'
+        )
+    },
+    # The app mirrors its live window topology into the agent's layout store
+    # and keeps it convergent across split, close and a hard kill (T334).
+    [pscustomobject]@{
+        Name   = 'layout-blobs'
+        Script = 'test\win32\layout-blobs.ps1'
+        Stamp  = 'test\win32\layout-blobs.stamp.json'
+        Covers = @(
+            'test\win32\layout-blobs.ps1',
+            'src\apprt\win32\layout_blobs.zig',
+            'src\remote\agent\layout_meta.zig'
+        )
+    },
     # The overview action (T708): the only thing that proves a bound
     # `toggle_tab_overview` actually opens hero mode, from a terminal AND from
     # a focused viewer. Covers the harness, the forwarding decision it rides
