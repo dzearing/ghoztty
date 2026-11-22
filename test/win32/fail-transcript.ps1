@@ -338,6 +338,86 @@ exit (Complete-TestTranscript -Name 'throwaway' -Path `$transcript ``
     Assert 'H8 control: without the marker the same red IS preserved' `
         ($hCtl.Evidence -and (Test-Path -LiteralPath $hCtl.Evidence)) "evidence '$($hCtl.Evidence)'"
 
+    # --- I. a teardown postmortem reaches the preserved transcript -----------
+    ''
+    '-- I. T3377: the GUI POSTMORTEM block a teardown prints is in the red transcript'
+
+    # The floor's real shape: the postmortem is printed INSIDE the teed body
+    # (Remove-TestDesktop runs from the body's finally) through Write-Host,
+    # which `2>&1 | Tee-Object` does not carry. -Mode picks the variant:
+    #   red      the fix's case
+    #   green    nothing preserved, but the live file still holds the block
+    #   control  the hand-off removed - proves the Tee really drops it
+    #   allstreams  a `*>&1` caller - the block must not be written twice
+    $pmHarness = Join-Path $root 'postmortem-harness.ps1'
+    @"
+param([string]`$Mode = 'red')
+`$ErrorActionPreference = 'Continue'
+`$lib = '$($PSScriptRoot -replace "'","''")'
+. (Join-Path `$lib 'lib\Transcript.ps1')
+. (Join-Path `$lib 'lib\GuiPostmortem.ps1')
+`$script:passes = 0
+`$script:failures = 0
+`$transcript = New-TestTranscript -Name ('pmh-' + `$Mode) -Dir '$($root -replace "'","''")'
+`$body = {
+    '  PASS the fixture came up'
+    `$script:passes++
+    if (`$Mode -ne 'green') { '  FAIL the pane never answered'; `$script:failures++ }
+    `$rep = [pscustomobject]@{ Name = 'fakeapp'; ProcessId = 4242; Verdict = 'CRASHED 0xC0000005 (ACCESS_VIOLATION)';
+        CrashEvent = `$null; Crashed = `$true; DumpPath = `$null; DumpAnalysis = `$null; DumpWhy = '';
+        StdErrFound = `$false; StdErrTail = ''; StdErrMidLine = `$false }
+    Write-GuiPostmortem -Report `$rep
+}
+if (`$Mode -eq 'allstreams') { & `$body *>&1 | Tee-Object -FilePath `$transcript }
+else { & `$body 2>&1 | Tee-Object -FilePath `$transcript }
+'LIVE=' + `$transcript
+if (`$Mode -eq 'control') { Remove-Item Function:\Get-GuiPostmortemHostedBlocks }
+Complete-TestBody
+exit (Complete-TestTranscript -Name ('pmh-' + `$Mode) -Path `$transcript ``
+        -Dir '$($root -replace "'","''")' -Label 'PMH' ``
+        -Pass `$script:passes -Fail `$script:failures).Code
+"@ | Set-Content -LiteralPath $pmHarness -Encoding ASCII
+
+    function Invoke-PmHarness([string]$Mode) {
+        $o = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $pmHarness -Mode $Mode 2>&1 | ForEach-Object { "$_" })
+        $last = @($o | Where-Object { $_.Trim() })[-1]
+        $liveP = (@($o | Where-Object { $_ -like 'LIVE=*' }) | Select-Object -First 1)
+        if ($liveP) { $liveP = $liveP.Substring(5) }
+        $ev = if ($last -match ' - evidence: (.+\.log)$') { $Matches[1].Trim() } else { $null }
+        $evText = if ($ev -and (Test-Path -LiteralPath $ev)) { [string](Get-Content -LiteralPath $ev -Raw) } else { '' }
+        $liveText = if ($liveP -and (Test-Path -LiteralPath $liveP)) { [string](Get-Content -LiteralPath $liveP -Raw) } else { '' }
+        return [pscustomobject]@{ Out = ($o -join "`n"); Last = $last; Evidence = $ev; EvText = $evText; LiveText = $liveText }
+    }
+    function Measure-Hits([string]$Text, [string]$Needle) {
+        return ([regex]::Matches($Text, [regex]::Escape($Needle))).Count
+    }
+    $needle = 'GUI POSTMORTEM fakeapp pid 4242'
+
+    $iRed = Invoke-PmHarness 'red'
+    Assert 'I1 the red run printed the block to its console' ($iRed.Out -match [regex]::Escape($needle)) ''
+    Assert 'I2 THE FIX: the preserved red transcript holds the postmortem block' `
+        ((Measure-Hits $iRed.EvText $needle) -eq 1) "evidence '$($iRed.Evidence)'"
+    Assert 'I3 with its verdict line, so the crash is in the file a reader is sent to' `
+        ($iRed.EvText -match 'CRASHED 0xC0000005') ''
+    $pmAt = $iRed.EvText.IndexOf($needle)
+    $vAt = $iRed.EvText.IndexOf('PMH: 1 FAILURE(S)')
+    Assert 'I4 and it lands before the score, keeping the verdict the file''s last line' `
+        ($pmAt -ge 0 -and $vAt -gt $pmAt) "postmortem at $pmAt, verdict at $vAt"
+
+    $iCtl = Invoke-PmHarness 'control'
+    Assert 'I5 negative control: without the hand-off the Tee alone drops the block' `
+        ($iCtl.Evidence -and $iCtl.EvText -and (Measure-Hits $iCtl.EvText $needle) -eq 0 -and ($iCtl.Out -match [regex]::Escape($needle))) `
+        "evidence '$($iCtl.Evidence)'"
+
+    $iAll = Invoke-PmHarness 'allstreams'
+    Assert 'I6 a *>&1 caller, whose Tee already carried it, gets the block once and not twice' `
+        ((Measure-Hits $iAll.EvText $needle) -eq 1) "hits $(Measure-Hits $iAll.EvText $needle)"
+
+    $iGreen = Invoke-PmHarness 'green'
+    Assert 'I7 a green run preserves nothing' (-not $iGreen.Evidence) "last '$($iGreen.Last)'"
+    Assert 'I8 but its live transcript still carries the block' `
+        ((Measure-Hits $iGreen.LiveText $needle) -eq 1) ''
+
     Complete-TestBody
 }
 finally {

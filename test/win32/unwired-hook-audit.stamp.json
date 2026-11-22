@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-22T00:59:38-08:00",
-    "commit":  "3ce07f80a",
+    "generated":  "2026-11-22T01:09:46-08:00",
+    "commit":  "9ac7dd1a6",
     "uncommitted":  [
 
                     ],
@@ -1281,7 +1281,7 @@
                   "test/win32/edge-drag-rate.ps1":  "2fca304221d50b9ef944602b898f1b74374622f0c940916889130dc0acd4a32c",
                   "test/win32/exec-user-env.ps1":  "2320afd696e761ea6c0c3850cd3df9b0a893aedb1da9e9863df4014d35ee2ea1",
                   "test/win32/exit-reason.ps1":  "0ca75a25399950b555b7ba59118f8dab9a0313d5a4189296e88d4910e66e98ff",
-                  "test/win32/fail-transcript.ps1":  "707a88600b425647c186a194594404490be96e76acc20ee4de2dd0f04f3306c7",
+                  "test/win32/fail-transcript.ps1":  "96961e5658923dda19ea6d47e0c671b62c31229a983dfc25f4ff9a0051831fbe",
                   "test/win32/false-positive-report.ps1":  "3e4c34e6b40b6b99969d38afbd1c055899802cfa119529c06f84c6ad24a4e981",
                   "test/win32/feedback-user-report.ps1":  "cfda91deffac1fe7971ef8c37c1cb1d4d275ee34ea7c83c87460d740508917fd",
                   "test/win32/fixed-ports.ps1":  "03635f28d25ffc5cc840e515f8db32f2e8e5f4022b96da7c1498e49591097ca1",

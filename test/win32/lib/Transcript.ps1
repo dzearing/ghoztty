@@ -158,6 +158,36 @@ function Save-FailedTranscript {
     return $preserved
 }
 
+function Add-TranscriptHostedPostmortems {
+    <#
+      T3377. Append to a closed transcript every GUI POSTMORTEM block the run
+      wrote to the host. Write-Host is the information stream in PS 5.1 and the
+      floor's `& { ... } 2>&1 | Tee-Object` carries only streams 1 and 2, so a
+      crash the teardown diagnosed was on the console and absent from the file
+      a red run preserves. A block already in the file (a caller that tees
+      `*>&1`) is not written twice. Returns the number of blocks appended; 0
+      when GuiPostmortem.ps1 was never loaded or reported nothing - every
+      healthy run.
+    #>
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Get-Command Get-GuiPostmortemHostedBlocks -ErrorAction SilentlyContinue)) { return 0 }
+    if (-not (Test-Path -LiteralPath $Path)) { return 0 }
+    $blocks = Get-GuiPostmortemHostedBlocks
+    $have = [string](Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue)
+    $add = @()
+    foreach ($b in $blocks) {
+        $lines = @($b)
+        if ($lines.Count -eq 0) { continue }
+        if ($have -and $have.Contains($lines[0])) { continue }
+        $add += , $lines
+    }
+    if ($add.Count -eq 0) { return 0 }
+    $out = @('', '-- teardown postmortems (written to the console; the transcript''s Tee does not carry Write-Host - T3377)')
+    foreach ($lines in $add) { $out += $lines }
+    Add-Content -LiteralPath $Path -Value $out
+    return $add.Count
+}
+
 function Complete-TestTranscript {
     <#
       The trailer every teed acceptance script ends on: score the run, and if it
@@ -205,6 +235,11 @@ function Complete-TestTranscript {
 
     $verdictLine = $v.Line
     if ($v.Code -ne 0 -and $Cause) { $verdictLine = "$verdictLine - setup failed: $Cause" }
+
+    # T3377: the crash postmortems lib\GuiPostmortem.ps1 printed go to the host
+    # (stream 6), which `2>&1 | Tee-Object` never carries - so they are added
+    # here, after the Tee has closed the file and before a red run is copied.
+    [void](Add-TranscriptHostedPostmortems -Path $Path)
 
     $evidence = $null
     if ($v.Code -ne 0 -and -not $expectedRed) {

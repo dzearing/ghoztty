@@ -90,6 +90,16 @@ $script:GUIPM_LAST = @()
 # thrown away; a script-scoped sink is the version that survives (PS 5.1).
 $script:GUIPM_SINK = @()
 
+# T3377: every block either writer printed this run, in order, each one an
+# array of the exact lines that went to the host. Write-Host is the information
+# stream in PS 5.1, and the floor's `& { ... } 2>&1 | Tee-Object` carries only
+# streams 1 and 2 - so a crash this library diagnosed in teardown reached the
+# console and NEVER the transcript Complete-TestTranscript preserves on a red
+# run (the 2026-11-21 14:12 P1 red had a dump written one second earlier and a
+# preserved transcript that said nothing about it). Transcript.ps1 reads this
+# through Get-GuiPostmortemHostedBlocks and appends what the Tee missed.
+$script:GUIPM_HOSTED = @()
+
 <#
 Turn a raw Win32 exit code into { IsCrash, Hex, Name }.
 
@@ -351,8 +361,28 @@ function Write-GuiPostmortem {
     }
 
     $script:GUIPM_LAST = $lines
-    foreach ($l in $lines) { Write-Host ($Indent + $l) }
+    Write-GuiPostmortemHosted -Lines $lines -Indent $Indent
     return
+}
+
+# T3377: the one way a block reaches the host - printed, and remembered for
+# Complete-TestTranscript, which runs after the Tee has closed its file.
+function Write-GuiPostmortemHosted {
+    param([string[]]$Lines = @(), [string]$Indent = '  ')
+    $out = @($Lines | ForEach-Object { $Indent + $_ })
+    if ($out.Count -eq 0) { return }
+    $script:GUIPM_HOSTED += , $out
+    foreach ($l in $out) { Write-Host $l }
+}
+
+# Every block printed this run, oldest first; each element is a string[].
+# `return ,` so a single block is not unrolled into its lines at the call site.
+function Get-GuiPostmortemHostedBlocks {
+    return , @($script:GUIPM_HOSTED)
+}
+
+function Clear-GuiPostmortemHostedBlocks {
+    $script:GUIPM_HOSTED = @()
 }
 
 <#
@@ -409,7 +439,7 @@ function Write-GuiUnclaimedCrashDump {
         }
 
         $script:GUIPM_LAST = $lines
-        foreach ($l in $lines) { Write-Host ($Indent + $l) }
+        Write-GuiPostmortemHosted -Lines $lines -Indent $Indent
         $n++
     }
     return $n

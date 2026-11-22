@@ -6717,7 +6717,11 @@ $GuardTable = @(
             'test\win32\cli-argv-fidelity.ps1',
             'test\win32\ipc-floor-setup.ps1',
             'test\win32\ipc-list-session-id.ps1',
-            'test\win32\ipc-target-exists-note.ps1'
+            'test\win32\ipc-target-exists-note.ps1',
+            # T3377: section I drives the postmortem writers through a teed
+            # body, so a change to how they print is a change to what a red
+            # transcript holds.
+            'test\win32\lib\GuiPostmortem.ps1'
         )
     },
     # A silent IPC client (T3105, Mac 1956f5f55): the bounded pipe I/O is
