@@ -216,7 +216,8 @@ private runtime dir, so a test app can never meet the user's.
   `+rename`, `+close`, `+rearrange` and the `focus` action are real; every other verb
   answers `+<verb> is not served by the Linux app yet (<task>)`, naming the
   card that brings it (T3369 reload, T3339 set-state/set-banner, T3337
-  stash/restore/remote), and `--view` says the same for T3411 (the viewer foundation, T3410, is below).
+  stash/restore/remote). `--view` on `+new-window`/`+split` opens a viewer
+  pane (T3411, below).
 - **Names (T3370)** follow win32's rules exactly (`apprt/ipc/target_lookup.zig`,
   T2250): a window name is global (`+new-window --target`, else a minted
   `window-N`, shown as `target` in `+list`); a pane name (`--name`) belongs
@@ -297,11 +298,50 @@ in place, and what every later slice builds on:
   unset override renders, `WEBKIT_DISABLE_DMABUF_RENDERER=1` and
   `LIBGL_ALWAYS_SOFTWARE=1` alone do not, disabling the sandbox does (never
   do that).
-- **Until T3411 a viewer is not a pane.** A debug build opens one in a plain
-  window from `GHOZTTY_TEST_VIEWER=<location>` and writes the result of
-  `GHOZTTY_TEST_VIEWER_PROBE` (a JS expression) to `GHOZTTY_TEST_VIEWER_DUMP`
-  as `OK <value>` / `FAIL <why>`. Reading the page back with a probe is how a
-  headless test sees a viewer: there are no pixels to look at in the harness.
+- **Reading a viewer back.** In a debug build, with `GHOZTTY_TEST_VIEWER_DUMP`
+  set, every viewer - a pane's too - writes the result of
+  `GHOZTTY_TEST_VIEWER_PROBE` (a JS expression) there once it has rendered,
+  as `OK <value>` / `FAIL <why>`; `GHOZTTY_TEST_VIEWER=<location>` also opens
+  one in a plain window at startup, with no split tree in the way. A probe is
+  how a headless test sees a viewer: there are no pixels in the harness.
+
+### Viewer panes (T3411)
+
+A viewer pane is a **`Surface` in viewer mode**, not a new leaf type: the
+split tree, tabs, zoom, focus and close code all speak `Surface`, and a
+Surface whose core never started is a state every surface already passes
+through before its first resize. So `Surface.new(.{ .view = location })`
+puts the `Viewer`'s web view where the GL area was and hides the GL area,
+which is then never realized - no core surface, no pty, no agent session.
+(Win32 retyped its leaf to `PaneView`, T90a; the observable behavior is the
+same, and this shape kept the GTK tree, tab and window code untouched.)
+
+- `+split --view` / `+new-window --view` open one. The CLI resolves a relative
+  path against `--working-directory` (else its cwd); the server resolves one
+  a raw client sent the same way (`viewer_scheme.resolveLocation`). `git-*:`
+  specs, URLs and `about:blank` (a blank browser pane) are never touched.
+  `+new-window --split=` still splits a TERMINAL beside the viewer, as on win32.
+- `+list` reports the leaf as `type: viewer` with `url` = the page a website
+  is on now, else the file (`Viewer.currentLocation`); the title is the file
+  name, host or diff subject. The text form prints `view: <title>  <url>`.
+- `+read` / `+send-keys` fail with `<name> is a viewer pane, not a terminal`
+  (`lookupTerminal` answers `.viewer`); `+set-state` / `+set-banner` will
+  answer the same once T3339 serves them through the shared bodies.
+- `+close` and a pane's own close never prompt: nothing is running in it.
+- A `--name` held by a viewer is reused for the same view and refused for
+  another (the shared `split_name_collision` rule, fed the viewer's location).
+- Keys are the web view's (the Surface's key handler steps aside); the
+  navigation bar and viewer keys are T3412, restore with the session T3420.
+
+Acceptance:
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cli-viewer-panes.sh
+```
+
+Ends `CLI VIEWER PANES: ALL PASS` (21 checks).
+
+### The viewer foundation's own test (T3410)
 
 Acceptance:
 

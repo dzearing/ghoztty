@@ -166,7 +166,7 @@ out=$(cli +close --target=vw 2>&1); rc=$?
 no_vw() { ! have_vw; }
 hl_wait_for 10 no_vw
 [ $rc = 0 ] && [ -n "$had_vw" ] && no_vw
-hl_check "P19 +close closes a window holding only a viewer" $? "rc=$rc out=$out list: $(dump_list)"
+hl_check "P19 +close closes a window holding only viewers" $? "rc=$rc out=$out list: $(dump_list)"
 
 kill -0 "$APP" 2>/dev/null
 hl_check "P20 the app is still running" $?

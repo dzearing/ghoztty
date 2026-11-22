@@ -10,7 +10,7 @@
 # (-Repo clone, the default, tests the committed HEAD.) Each viewer opens in
 # the debug build's test window (GHOZTTY_TEST_VIEWER, src/apprt/gtk/Viewer.zig)
 # inside the private headless Weston (test/linux/lib/headless.sh), so nothing
-# reaches WSLg or the user's desktop. A viewer cannot be a pane until T3411.
+# reaches WSLg or the user's desktop. Viewer PANES are cli-viewer-panes.sh (T3411).
 #
 # Output: one PASS/FAIL line per check, then 'VIEWER WEBKIT: ALL PASS' or
 # 'VIEWER WEBKIT: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
