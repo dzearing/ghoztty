@@ -189,6 +189,28 @@ then a GUI test asserts on the app's log, its pty and its process tree.
 path on this box, because the only display is the user's. To look at it, the
 person at the keyboard runs it into WSLg themselves.
 
+## The CLI socket (T3335)
+
+The GTK app serves the same Unix socket the CLI dials, derived in ONE place
+for server and clients: `ipc_client.endpointPath` (`src/os/ipc_client.zig`) -
+`<dir>/ghostty[-debug]-<uid>.sock`, where `<dir>` is `$XDG_RUNTIME_DIR` on
+Linux when set, else `$TMPDIR`, else `/tmp` (the Mac keeps `$TMPDIR`, which
+its Swift server binds). Inside the headless harness that is the harness's
+private runtime dir, so a test app can never meet the user's.
+
+- `IpcServer.zig` is the transport: chmod 0600 before `listen`, one accept
+  thread, each request run on the GTK main thread through `glib.idleAdd`.
+  A live socket at the path is left alone (the app logs `another instance
+  already serves`); a stale one of ours is replaced; anything else is refused.
+- `IpcHandlers.zig` plugs into the shared `apprt/ipc/server.zig` dispatcher.
+  `+list` and `+version` are real; every other verb answers `+<verb> is not
+  served by the Linux app yet (T3336)`.
+- Every pane is baked with `$GHOZTTY_IPC_SOCKET` (this app's) and a UUID
+  `$GHOZTTY_PANE_ID`; an inherited `$GHOZTTY_IPC_SOCKET` is unset at startup.
+
+Acceptance: `wsl-run.ps1 -CommandFile test\linux\ipc-server.sh`, ends
+`IPC SERVER: ALL PASS`.
+
 ## The interop PATH trap
 
 Inside WSL the Windows `PATH` is appended by default, so a bare `ghoztty` can

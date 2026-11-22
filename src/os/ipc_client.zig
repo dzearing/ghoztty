@@ -450,14 +450,85 @@ pub fn endpointPath(alloc: Allocator) Allocator.Error![:0]u8 {
         );
     }
 
-    const tmpdir = std.posix.getenv("TMPDIR") orelse "/tmp";
-    const uid = std.c.getuid();
+    return posixEndpointPathFrom(
+        alloc,
+        builtin.os.tag,
+        std.posix.getenv("XDG_RUNTIME_DIR"),
+        std.posix.getenv("TMPDIR"),
+        suffix,
+        std.c.getuid(),
+    );
+}
+
+/// The POSIX socket derivation with the environment injected (T3335), so the
+/// one rule the server binds and every client dials is testable as a pure
+/// function: `<dir>/ghostty<suffix>-<uid>.sock`, exactly one `/` between.
+///
+/// `<dir>` is `$TMPDIR` (else `/tmp`) - the Mac's `NSTemporaryDirectory()`,
+/// which its Swift server binds. On Linux `$XDG_RUNTIME_DIR` comes first when
+/// it is set: it is the per-user, 0700, cleared-at-logout directory the
+/// freedesktop spec gives exactly this kind of file, and it is what makes a
+/// headless test harness (its own private runtime dir) unable to meet the
+/// user's app. macOS keeps `$TMPDIR` whatever else is set, because the Swift
+/// server does.
+///
+/// Before T3335 this was `"{TMPDIR}ghostty..."` with no separator: right on
+/// the Mac (its `$TMPDIR` always ends in `/`) and `/tmpghostty-<uid>.sock` on
+/// a Linux box with `$TMPDIR` unset.
+pub fn posixEndpointPathFrom(
+    alloc: Allocator,
+    os: std.Target.Os.Tag,
+    xdg_runtime_dir: ?[]const u8,
+    tmpdir: ?[]const u8,
+    suffix: []const u8,
+    uid: anytype,
+) Allocator.Error![:0]u8 {
+    const xdg: ?[]const u8 = if (os == .linux) nonEmptyDir(xdg_runtime_dir) else null;
+    const raw = xdg orelse nonEmptyDir(tmpdir) orelse "/tmp";
+    // Trim trailing slashes, but never down to nothing ("/" stays "/").
+    var dir = raw;
+    while (dir.len > 1 and dir[dir.len - 1] == '/') dir = dir[0 .. dir.len - 1];
+    const sep: []const u8 = if (std.mem.endsWith(u8, dir, "/")) "" else "/";
     return std.fmt.allocPrintSentinel(
         alloc,
-        "{s}ghostty{s}-{d}.sock",
-        .{ tmpdir, suffix, uid },
+        "{s}{s}ghostty{s}-{d}.sock",
+        .{ dir, sep, suffix, uid },
         0,
     );
+}
+
+fn nonEmptyDir(v: ?[]const u8) ?[]const u8 {
+    const s = v orelse return null;
+    return if (s.len > 0) s else null;
+}
+
+test "posixEndpointPathFrom: one separator, XDG first on Linux only" {
+    const t = std.testing;
+    const a = t.allocator;
+    const cases = [_]struct {
+        os: std.Target.Os.Tag,
+        xdg: ?[]const u8,
+        tmp: ?[]const u8,
+        suffix: []const u8,
+        want: []const u8,
+    }{
+        // The Mac: $TMPDIR always ends in '/', and XDG never applies.
+        .{ .os = .macos, .xdg = null, .tmp = "/var/folders/x/T/", .suffix = "-debug", .want = "/var/folders/x/T/ghostty-debug-501.sock" },
+        .{ .os = .macos, .xdg = "/run/user/501", .tmp = "/var/folders/x/T/", .suffix = "", .want = "/var/folders/x/T/ghostty-501.sock" },
+        // Linux: XDG wins when set and non-empty.
+        .{ .os = .linux, .xdg = "/run/user/501", .tmp = "/tmp", .suffix = "-debug", .want = "/run/user/501/ghostty-debug-501.sock" },
+        .{ .os = .linux, .xdg = "/run/user/501/", .tmp = null, .suffix = "", .want = "/run/user/501/ghostty-501.sock" },
+        .{ .os = .linux, .xdg = "", .tmp = "/scratch/", .suffix = "-debug", .want = "/scratch/ghostty-debug-501.sock" },
+        // The pre-T3335 bug: $TMPDIR unset on Linux gave "/tmpghostty-...".
+        .{ .os = .linux, .xdg = null, .tmp = null, .suffix = "-debug", .want = "/tmp/ghostty-debug-501.sock" },
+        .{ .os = .linux, .xdg = null, .tmp = "/tmp", .suffix = "", .want = "/tmp/ghostty-501.sock" },
+        .{ .os = .linux, .xdg = null, .tmp = "/", .suffix = "", .want = "/ghostty-501.sock" },
+    };
+    for (cases) |c| {
+        const got = try posixEndpointPathFrom(a, c.os, c.xdg, c.tmp, c.suffix, @as(u32, 501));
+        defer a.free(got);
+        try t.expectEqualStrings(c.want, got);
+    }
 }
 
 /// Connect to the running instance. Fails with NoRunningInstance if nothing

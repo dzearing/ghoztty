@@ -70,21 +70,12 @@ fn socketPathFrom(alloc: Allocator, baked: ?[]const u8) Allocator.Error![:0]u8 {
         if (path.len > 0) return alloc.dupeZ(u8, path);
     }
 
-    // Windows has no uid and no unix-socket path: the IPC endpoint is a named
-    // pipe. Defer to the helper the win32 CLI actually dials so the two can't
-    // drift, rather than deriving a POSIX path that would never connect.
-    // (`std.c.getuid` does not even link on this target.)
-    if (comptime builtin.os.tag == .windows) {
-        return internal_os.ipc_client.endpointPath(alloc);
-    }
-
-    const tmpdir = try internal_os.allocTmpDir(alloc);
-    defer internal_os.freeTmpDir(alloc, tmpdir);
-    const uid = std.c.getuid();
-    const suffix = if (build_config.is_debug) "-debug" else "";
-    return std.fmt.allocPrintSentinel(alloc, "{s}/ghostty{s}-{d}.sock", .{
-        tmpdir, suffix, uid,
-    }, 0);
+    // The derivation is `ipc_client.endpointPath` on every platform - the
+    // named pipe on Windows, the socket the GTK server binds on Linux (T3335)
+    // and the one the Swift server binds on the Mac - so this resolver and
+    // the transport the CLI dials cannot drift. (This used to keep its own
+    // POSIX copy; the two disagreed on the separator when $TMPDIR was unset.)
+    return internal_os.ipc_client.endpointPath(alloc);
 }
 
 test "socketPath: prefers the pane's baked socket over the compile-time guess" {

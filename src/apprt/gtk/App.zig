@@ -14,6 +14,8 @@ const CoreApp = @import("../../App.zig");
 const Application = @import("class/application.zig").Application;
 const Surface = @import("Surface.zig");
 const ipcNewWindow = @import("ipc/new_window.zig").newWindow;
+const IpcServer = @import("IpcServer.zig");
+const IpcHandlers = @import("IpcHandlers.zig");
 
 const log = std.log.scoped(.gtk);
 
@@ -30,6 +32,9 @@ pub const object_path = @import("build/info.zig").object_path;
 
 /// The GObject Application instance
 app: *Application,
+
+/// The CLI's Unix socket (T3335), while this instance serves it.
+ipc_server: ?*IpcServer = null,
 
 pub fn init(
     self: *App,
@@ -85,8 +90,8 @@ pub fn performIpc(
 ) !bool {
     // Ghoztty (T3330): every verb goes over the same Unix socket the Mac
     // uses (`apprt.ipc.socketPath()`), so the CLI surface is identical on all
-    // three platforms. The GTK app does not SERVE that socket yet - that is
-    // L6 (T3335) - so until then a verb answers NoRunningInstance. The
+    // three platforms. The GTK app serves it (`startIpc`, T3335); verbs it
+    // does not serve yet answer a plain error naming T3336. The
     // upstream D-Bus `new-window` path (`ipcNewWindow`) is kept below for
     // the auto-launch work (T3336): its arguments are upstream's `-e` CLI
     // args, not Ghoztty's wire args, so it cannot carry `+new-window` as is.
@@ -96,6 +101,56 @@ pub fn performIpc(
         comptime action.wireName(),
         value.arguments,
     );
+}
+
+/// Start serving the CLI's Unix socket (T3335). Called once, from
+/// `Application.run`, after GApplication registration says this process is
+/// the primary instance and before the first window spawns a shell, so every
+/// pane can be baked with the endpoint.
+///
+/// Never fatal: an app that cannot serve still runs, and says why.
+pub fn startIpc(self: *App) void {
+    // An app launched from ANOTHER instance's pane inherits that instance's
+    // `$GHOZTTY_IPC_SOCKET`. It names someone else's socket, so drop it
+    // before anything we spawn inherits it (win32 does the same, T118);
+    // our own panes are baked with OUR endpoint explicitly.
+    _ = internal_os.unsetenv(apprt.ipc.socket_env);
+
+    const alloc = std.heap.c_allocator;
+    const path = internal_os.ipc_client.endpointPath(alloc) catch {
+        log.warn("IPC: out of memory deriving the socket path; the CLI cannot reach this app", .{});
+        return;
+    };
+    defer alloc.free(path);
+
+    self.ipc_server = IpcServer.start(alloc, path, IpcHandlers.serve, self.app) catch |err| {
+        switch (err) {
+            error.AlreadyServed => log.warn(
+                "IPC: another instance already serves {s}; ghoztty +<verb> reaches that one, not this app",
+                .{path},
+            ),
+            error.PathOccupied => log.warn(
+                "IPC: {s} exists and is not a stale socket of ours; leaving it alone, so the CLI cannot reach this app",
+                .{path},
+            ),
+            else => log.warn("IPC: cannot serve {s} err={}", .{ path, err }),
+        }
+        return;
+    };
+}
+
+/// Stop serving the socket and remove it (T3335).
+pub fn stopIpc(self: *App) void {
+    const s = self.ipc_server orelse return;
+    self.ipc_server = null;
+    s.stop();
+}
+
+/// The socket this instance serves, for baking into each pane's
+/// `$GHOZTTY_IPC_SOCKET`; null while it serves none.
+pub fn ipcEndpoint(self: *App) ?[]const u8 {
+    const s = self.ipc_server orelse return null;
+    return s.path;
 }
 
 /// Redraw the inspector for the given surface.

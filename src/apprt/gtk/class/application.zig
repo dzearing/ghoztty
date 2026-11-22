@@ -522,6 +522,14 @@ pub const Application = extern struct {
         //
         // https://gitlab.gnome.org/GNOME/glib/-/blob/bd2ccc2f69ecfd78ca3f34ab59e42e2b462bad65/gio/gapplication.c#L2302
         const priv = self.private();
+
+        // Ghoztty (T3335): serve the CLI's Unix socket - only as the primary
+        // instance (a remote one exits below) and before activation opens
+        // the first window, so its pane is baked with the endpoint. Stopped
+        // before the final main-context drain above runs.
+        if (self.as(gio.Application).getIsRemote() == 0) self.rt().startIpc();
+        defer self.rt().stopIpc();
+
         {
             // We need to scope any config access because once we run our
             // event loop, this can change out from underneath us.

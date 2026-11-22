@@ -36,6 +36,9 @@ const Window = @import("window.zig").Window;
 const InspectorWindow = @import("inspector_window.zig").InspectorWindow;
 const i18n = @import("../../../os/i18n.zig");
 const media = @import("../media.zig");
+// The pure UUID helper win32 uses for `$GHOZTTY_PANE_ID` (no OS imports), so
+// both frontends mint the same shape of id (docs/claude/cli.md "Pane identity").
+const pane_id_mod = @import("../../win32/pane_id.zig");
 
 const log = std.log.scoped(.gtk_ghostty_surface);
 
@@ -552,6 +555,11 @@ pub const Surface = extern struct {
     const Private = struct {
         /// The configuration that this surface is using.
         config: ?*Config = null,
+
+        /// Ghoztty's stable pane id (T3335): baked into the pane as
+        /// `$GHOZTTY_PANE_ID` and reported as the `+list` leaf `id`, the
+        /// contract docs/claude/cli.md names for every platform.
+        pane_id: pane_id_mod.Buf = undefined,
 
         /// The default size for a window that embeds this surface.
         default_size: ?*Size = null,
@@ -1770,6 +1778,7 @@ pub const Surface = extern struct {
         priv.focused = true;
         priv.size = .{ .width = 0, .height = 0 };
         priv.vadj_signal_group = null;
+        _ = pane_id_mod.generate(&priv.pane_id);
 
         // If our configuration is null then we get the configuration
         // from the application.
@@ -1998,6 +2007,32 @@ pub const Surface = extern struct {
         priv.title_override = null;
         if (title) |v| priv.title_override = glib.ext.dupeZ(u8, v);
         self.as(gobject.Object).notifyByPspec(properties.@"title-override".impl.param_spec);
+    }
+
+    /// Ghoztty's stable pane id (T3335), minted once per surface.
+    pub fn paneId(self: *Self) []const u8 {
+        return &self.private().pane_id;
+    }
+
+    /// The pane's shell pid and tty (T3335, for `+list`), or zero/empty when
+    /// it has not spawned. Reads the exec backend the way win32's
+    /// `shellPid` does.
+    pub fn shellInfo(self: *Self) struct { pid: i64 = 0, tty: []const u8 = "" } {
+        const core_surface = self.core() orelse return .{};
+        switch (core_surface.io.backend) {
+            .exec => |*exec| {
+                const pid: i64 = if (exec.subprocess.process) |process| switch (process) {
+                    .fork_exec => |cmd| if (cmd.pid) |p| @intCast(p) else 0,
+                    else => 0,
+                } else 0;
+                const tty: []const u8 = if (exec.subprocess.pty) |*pty|
+                    pty.getProcessInfo(.tty_name) orelse ""
+                else
+                    "";
+                return .{ .pid = pid, .tty = tty };
+            },
+            else => return .{},
+        }
     }
 
     /// Returns the pwd property without a copy.
@@ -3375,6 +3410,30 @@ pub const Surface = extern struct {
             var wd_val: configpkg.WorkingDirectory = .{ .path = try config_alloc.dupe(u8, wd) };
             try wd_val.finalize(config_alloc);
             config.@"working-directory" = wd_val;
+        }
+
+        // T3335: bake the pane's identity and THIS app's IPC socket into the
+        // pane's environment, the way the Mac (`environmentVariables`) and
+        // win32 (`Surface.init`, T113/T118) do - so a CLI run inside the pane
+        // drives this instance, whatever `ghoztty` on $PATH is, and knows
+        // which pane is asking. Through the config's `env` overrides, the one
+        // seam the exec backend applies last.
+        {
+            const carena = config.arenaAlloc();
+            const id_kv = try std.fmt.allocPrint(carena, "{s}={s}", .{
+                internal_os.ipc_client.caller_pane_env, self.paneId(),
+            });
+            config.env.parseCLI(carena, id_kv) catch |err| {
+                log.warn("pane id env bake failed err={}", .{err});
+            };
+            if (app.rt().ipcEndpoint()) |endpoint| {
+                const kv = try std.fmt.allocPrint(carena, "{s}={s}", .{
+                    apprt.ipc.socket_env, endpoint,
+                });
+                config.env.parseCLI(carena, kv) catch |err| {
+                    log.warn("ipc endpoint env bake failed err={}", .{err});
+                };
+            }
         }
 
         // Properties that can impact surface init
