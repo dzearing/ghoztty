@@ -532,29 +532,26 @@ fn parseLineNum(raw: []const u8) ?i64 {
 // Session — drives OPEN/OPENED + an inbound ring at the frame level
 // -----------------------------------------------------------------------------
 
-/// A client-side remote shell session driven directly over the `Connection`
-/// transport primitives (see the module doc for why). Owns an inbound ring
-/// registered on the agent-chosen data channel.
+/// A client-side remote shell session opened through `Connection.openChannel`.
+/// `ch` is the pane's inbound ring, registered on the agent-chosen data channel
+/// and owned by the connection (released by `closeChannel`/`detachChannel`).
+///
+/// It used to send OPEN as a raw control frame and catch OPENED in its own
+/// control handler. Since T3254 the connection answers an OPENED that no RPC
+/// slot claims with a DETACH (a late reply must not leave a session bound to a
+/// channel nobody reads), so every session this tool opened was detached ~6 ms
+/// later and `+sessions` listed a held one as `attached=false` (T3408). Going
+/// through `openChannel` makes the reply this request's own.
 const Session = struct {
     alloc: Allocator,
     channel: u128,
     session_id: []u8,
     pid: i64,
     ch: *ring.Channel,
+    /// The connection-owned pane behind this session; `ch` is its ring.
+    pane: *connection.Pane,
     /// Outbound byte offset for client→agent input DATA (§4.2).
     out_offset: protocol.ByteOffset = .{},
-
-    /// Correlation state filled by the control handler when OPENED arrives.
-    const Pending = struct {
-        done: std.Thread.ResetEvent = .{},
-        channel: u128 = 0,
-        session_id_buf: [64]u8 = undefined,
-        session_id_len: usize = 0,
-        pid: i64 = 0,
-        ok: bool = false,
-    };
-
-    var pending: Pending = .{};
 
     /// Send OPEN, wait for OPENED (on the agent's channel), register a ring there.
     fn open(alloc: Allocator, conn: *connection.Connection, rows: u16, cols: u16) !Session {
@@ -582,57 +579,23 @@ const Session = struct {
         command: ?[]const u8,
         cwd: ?[]const u8,
     ) !Session {
-        pending = .{};
-        conn.setControlHandler(undefined, onControl);
-
-        const open_payload: protocol.Open = .{ .rows = rows, .cols = cols, .command = command, .cwd = cwd };
-        const json = try protocol.encodeJson(alloc, open_payload);
-        defer alloc.free(json);
-        // The agent ignores the OPEN frame's channel and mints its own; we send on
-        // the control channel and learn the real one from OPENED.
-        try conn.writeControl(.open, protocol.control_channel, json);
-
-        // Wait (bounded) for OPENED.
-        pending.done.timedWait(10 * std.time.ns_per_s) catch return error.OpenTimeout;
-        if (!pending.ok) return error.OpenFailed;
-
-        const channel = pending.channel;
-        const sid = try alloc.dupe(u8, pending.session_id_buf[0..pending.session_id_len]);
-        errdefer alloc.free(sid);
-
-        // Register an inbound ring on the agent's data channel so output DATA lands.
-        const ch = try alloc.create(ring.Channel);
-        errdefer alloc.destroy(ch);
-        ch.* = try ring.Channel.init(alloc, channel, .{});
-        errdefer ch.deinit(alloc);
-        try conn.registerChannel(ch);
+        // `openChannel` owns the request: it tags the OPEN, parks a slot for its
+        // OPENED, adopts the agent-chosen channel and registers the ring there.
+        const pane = conn.openChannel(.{ .rows = rows, .cols = cols, .command = command, .cwd = cwd }) catch |err| switch (err) {
+            error.Timeout => return error.OpenTimeout,
+            else => return error.OpenFailed,
+        };
+        errdefer conn.closeChannel(pane);
+        const sid = try alloc.dupe(u8, pane.session_id);
 
         return .{
             .alloc = alloc,
-            .channel = channel,
+            .channel = pane.id,
             .session_id = sid,
-            .pid = pending.pid,
-            .ch = ch,
+            .pid = pane.pid,
+            .ch = pane.ring,
+            .pane = pane,
         };
-    }
-
-    /// The control-frame handler: catch OPENED and publish the agent's channel.
-    fn onControl(_: *anyopaque, _: *connection.Connection, frame: protocol.Frame) void {
-        if (frame.type != .opened) return;
-        if (pending.done.isSet()) return;
-        var parsed = protocol.parseJson(protocol.Opened, std.heap.page_allocator, frame.payload) catch {
-            pending.ok = false;
-            pending.done.set();
-            return;
-        };
-        defer parsed.deinit();
-        const sid = parsed.value.session_id;
-        pending.channel = frame.channel;
-        pending.session_id_len = @min(sid.len, pending.session_id_buf.len);
-        @memcpy(pending.session_id_buf[0..pending.session_id_len], sid[0..pending.session_id_len]);
-        pending.pid = parsed.value.pid;
-        pending.ok = true;
-        pending.done.set();
     }
 
     /// Send input bytes to the session's child (client→agent DATA on the channel).
@@ -645,22 +608,17 @@ const Session = struct {
         // Best-effort CLOSE so the agent terminates the child, then deregister +
         // free the ring. (The connection's data reader is still running; deregister
         // under the table lock makes the ring safe to free — the §3.4 invariant.)
-        conn.writeControl(.close, self.channel, "") catch {};
-        conn.deregisterChannel(self.channel);
-        self.ch.deinit(self.alloc);
-        self.alloc.destroy(self.ch);
+        conn.closeChannel(self.pane);
         self.alloc.free(self.session_id);
         self.* = undefined;
     }
 
     /// Tear down the LOCAL ring/state WITHOUT sending CLOSE — the close-laptop path.
-    /// The remote session keeps running; we just forget it locally so the
-    /// connection can be dropped. The caller still owns the `session_id` copy it
-    /// needs for the later ATTACH (we free our own here).
+    /// The remote session keeps running (DETACH, not CLOSE); we forget it locally
+    /// so the connection can be dropped. The caller still owns the `session_id`
+    /// copy it needs for the later ATTACH (we free our own here).
     fn dropLocal(self: *Session, conn: *connection.Connection) void {
-        conn.deregisterChannel(self.channel);
-        self.ch.deinit(self.alloc);
-        self.alloc.destroy(self.ch);
+        conn.detachChannel(self.pane);
         self.alloc.free(self.session_id);
         self.* = undefined;
     }

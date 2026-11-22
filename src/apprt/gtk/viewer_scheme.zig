@@ -142,6 +142,18 @@ pub fn mimeType(path: []const u8) []const u8 {
 
 const testing = std.testing;
 
+/// The candidate paths come from win32's `viewer_content` helpers, which join
+/// with the HOST separator: `/` on Linux, `\` when this file's tests run in a
+/// Windows none lane. The expectations are written POSIX-style; compare with
+/// the separator normalised so the same assertion holds on every seat.
+fn expectPath(expected: []const u8, found: []const u8) !void {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    if (found.len > buf.len) return error.TestExpectedEqual;
+    const norm = buf[0..found.len];
+    for (found, 0..) |ch, i| norm[i] = if (ch == '\\') '/' else ch;
+    try testing.expectEqualStrings(expected, norm);
+}
+
 test "originOf: only our two origins, and only at an origin boundary" {
     try testing.expectEqual(Origin.template, originOf("ghoztty-viewer://page/viewer.html").?);
     try testing.expectEqual(Origin.template, originOf("GHOZTTY-VIEWER://page/x").?);
@@ -167,9 +179,9 @@ test "candidates: template tiers are assets, then the file's directory, then abs
     var c = try candidates(alloc, .template, .{ .assets_dir = "/share/viewer", .base_dir = "/home/u/docs" }, "img/a.png");
     defer c.deinit(alloc);
     try testing.expectEqual(@as(usize, 3), c.len);
-    try testing.expectEqualStrings("/share/viewer/img/a.png", c.slice()[0]);
-    try testing.expectEqualStrings("/home/u/docs/img/a.png", c.slice()[1]);
-    try testing.expectEqualStrings("/img/a.png", c.slice()[2]);
+    try expectPath("/share/viewer/img/a.png", c.slice()[0]);
+    try expectPath("/home/u/docs/img/a.png", c.slice()[1]);
+    try expectPath("/img/a.png", c.slice()[2]);
 }
 
 test "candidates: a .. escape is refused by both guarded tiers" {
@@ -187,7 +199,7 @@ test "candidates: a rendered page reaches its own directory only" {
     var ok = try candidates(alloc, .page, .{ .assets_dir = "/share/viewer", .base_dir = "/home/u/site" }, "css/app.css");
     defer ok.deinit(alloc);
     try testing.expectEqual(@as(usize, 1), ok.len);
-    try testing.expectEqualStrings("/home/u/site/css/app.css", ok.slice()[0]);
+    try expectPath("/home/u/site/css/app.css", ok.slice()[0]);
 
     // Never the bundled assets, and never out of its directory.
     var esc = try candidates(alloc, .page, .{ .assets_dir = "/share/viewer", .base_dir = "/home/u/site" }, "../secrets.txt");
