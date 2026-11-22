@@ -562,6 +562,38 @@ pub const SplitTree = extern struct {
         return true;
     }
 
+    /// Replace the whole layout with `new_tree` (cloned): the IPC
+    /// `+rearrange` (T3368). Every leaf of `new_tree` must already be a
+    /// surface of this tree, so this MOVES panes; a surface `new_tree` leaves
+    /// out leaves the widget hierarchy and is destroyed, exactly as a closed
+    /// one is (win32 T128, Mac `handleRearrange`). Focus stays on the pane
+    /// that had it when that pane survives, else goes to the top-left one on
+    /// screen (Mac `leftmostLeaf()`, win32 T1371) - never storage order.
+    pub fn rearrange(self: *Self, new_tree: *const Surface.Tree) void {
+        const priv = self.private();
+        const survivor: ?*Surface = survivor: {
+            const active = self.getActiveSurface() orelse break :survivor null;
+            var it = new_tree.iterator();
+            while (it.next()) |entry| {
+                if (entry.view == active) break :survivor active;
+            }
+            break :survivor null;
+        };
+        const focus: ?*Surface = survivor orelse if (new_tree.isEmpty())
+            null
+        else
+            new_tree.nodes[new_tree.deepest(.left, .root).idx()].leaf;
+
+        self.setTree(new_tree);
+
+        // The rebuild re-focuses `last_focused`, so this is what takes the
+        // keyboard; a grab now would be undone by the pending rebuild.
+        if (focus) |f| {
+            priv.last_focused.set(f);
+            self.as(gobject.Object).notifyByPspec(properties.@"active-surface".impl.param_spec);
+        }
+    }
+
     /// Get the tree data model that we're showing in this widget. This
     /// does not clone the tree.
     pub fn getTree(self: *Self) ?*Surface.Tree {

@@ -100,7 +100,6 @@ fn notYet(comptime verb: server.Verb, comptime task: []const u8) Allocator.Error
     );
 }
 
-pub fn handleRearrange(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.rearrange, "T3368"); }
 pub fn handleReload(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.reload, "T3369"); }
 pub fn handleSetState(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.set_state, "T3339"); }
 pub fn handleSetBanner(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.set_banner, "T3339"); }
@@ -840,6 +839,152 @@ pub fn handleRename(app: Context, request: Request) Allocator.Error!?[]u8 {
     // refusal has nothing to protect here yet.
     entry.window_().setTitleOverride(title);
     return try c_alloc.dupe(u8, "{\"success\":true}");
+}
+
+// ---------------------------------------------------------------------------
+// +rearrange (T3368)
+
+/// `+rearrange --layout=<json>`: replace the active tab's whole split layout
+/// with one whose every leaf names a pane already in it, so panes MOVE rather
+/// than being created. Win32's `handleRearrange` order and sentences: the
+/// shared `validateLayout` / `firstDuplicate` checks first, then the window
+/// (`--target`, else the caller's window, T1079, else the front one), then
+/// every pane against that window's active tab. A pane the layout omits is
+/// closed (T128); the Linux app has no close undo or stash yet, so it closes
+/// at once, as `undo-timeout = 0` does on win32.
+pub fn handleRearrange(app: Context, request: Request) Allocator.Error!?[]u8 {
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const args = try verb_args.parseVerbArgs(arena, request.arguments);
+    const layout_json = args.layout orelse
+        return try server.errorResponse(c_alloc, "--layout is required for +rearrange", .{});
+
+    const layout = std.json.parseFromSliceLeaky(std.json.Value, arena, layout_json, .{}) catch
+        return try server.errorResponse(c_alloc, "invalid layout JSON", .{});
+
+    var names: std.ArrayList([]const u8) = .empty;
+    if (try verb_args.validateLayout(arena, layout, &names)) |msg|
+        return try server.errorResponse(c_alloc, "{s}", .{msg});
+    if (names.items.len == 0)
+        return try server.errorResponse(c_alloc, "layout must contain at least one pane", .{});
+    if (verb_args.firstDuplicate(names.items)) |dupe|
+        return try server.errorResponse(c_alloc, "duplicate pane name in layout: '{s}'", .{dupe});
+
+    const window: *Window = if (args.target) |target| window: {
+        const resolved = try resolve(arena, app, target);
+        break :window switch (resolved) {
+            .found => |e| e.window_(),
+            else => return try missingResponse(arena, resolved, target, "target window '{s}' not found", .{target}),
+        };
+    } else if (callerAnchor(app, args)) |caller|
+        // T1079: "rearrange this window" is the caller's window, not the one
+        // the user clicked into since - the layout names ITS panes.
+        caller.window
+    else
+        frontWindow(app) orelse
+            return try server.errorResponse(c_alloc, "no focused window found", .{});
+
+    const tab = window.getSelectedTab() orelse
+        return try server.errorResponse(c_alloc, "no focused window found", .{});
+    const split_tree = tab.getSplitTree();
+    const tree = split_tree.getTree() orelse
+        return try server.errorResponse(c_alloc, "no focused window found", .{});
+
+    // Every leaf, resolved inside THIS tab. A pane name belongs to its window
+    // (T2250), so a name is looked up in the target window rather than from
+    // the caller's; a pane id names one pane wherever it is.
+    var surfaces: std.StringHashMapUnmanaged(*Surface) = .empty;
+    for (names.items) |name| {
+        const surface = layoutPane(app, window, name) orelse
+            return try server.errorResponse(c_alloc, "pane '{s}' not found in registry", .{name});
+        if (!treeHas(tree, surface))
+            return try server.errorResponse(c_alloc, "pane '{s}' is not in the target window", .{name});
+        try surfaces.put(arena, name, surface);
+    }
+
+    // The replacement tree borrows the kept surfaces in a scratch arena;
+    // `rearrange` clones it, taking the tree's own references (the boxed
+    // copy clones with this arena's child allocator, so it is the app's -
+    // the one every other tree in the widget is built with).
+    var nodes: std.ArrayList(Surface.Tree.Node) = .empty;
+    _ = try buildLayoutNode(arena, &nodes, layout, &surfaces);
+    const borrowed: Surface.Tree = .{
+        .arena = std.heap.ArenaAllocator.init(app.allocator()),
+        .nodes = nodes.items,
+        .zoomed = null,
+    };
+    split_tree.rearrange(&borrowed);
+
+    log.info("IPC +rearrange: window={s} panes={d}", .{ window.ipcName() orelse "-", names.items.len });
+    return try c_alloc.dupe(u8, "{\"success\":true}");
+}
+
+/// The pane a `+rearrange` leaf names: a pane id anywhere, else a pane of
+/// that name in `window`, else the same name in another window (which the
+/// caller then refuses as "not in the target window").
+fn layoutPane(app: Context, window: *Window, name: []const u8) ?*Surface {
+    var it = paneIterator(app);
+    while (it.next()) |p| {
+        if (std.mem.eql(u8, p.surface.paneId(), name)) return p.surface;
+    }
+    if (namedPaneIn(window, app, name)) |p| return p.surface;
+    it = paneIterator(app);
+    while (it.next()) |p| {
+        const n = p.surface.ipcName() orelse continue;
+        if (std.mem.eql(u8, n, name)) return p.surface;
+    }
+    return null;
+}
+
+fn treeHas(tree: *const Surface.Tree, surface: *Surface) bool {
+    var it = tree.iterator();
+    while (it.next()) |entry| {
+        if (entry.view == surface) return true;
+    }
+    return false;
+}
+
+/// Append the nodes for `node` (already passed `validateLayout`) preorder,
+/// so the root lands at index 0; win32's `buildLayoutNode`. Returns its
+/// handle.
+fn buildLayoutNode(
+    arena: Allocator,
+    nodes: *std.ArrayList(Surface.Tree.Node),
+    node: std.json.Value,
+    surfaces: *const std.StringHashMapUnmanaged(*Surface),
+) Allocator.Error!Surface.Tree.Node.Handle {
+    const handle: Surface.Tree.Node.Handle = @enumFromInt(nodes.items.len);
+    try nodes.append(arena, undefined);
+    const obj = node.object;
+
+    if (obj.get("pane")) |pane| {
+        nodes.items[handle.idx()] = .{ .leaf = surfaces.get(pane.string).? };
+        return handle;
+    }
+
+    // The ratio arrives as a percent (default 50), clamped like the Mac.
+    const ratio_percent: f64 = switch (obj.get("ratio") orelse std.json.Value{ .float = 50 }) {
+        .float => |v| v,
+        .integer => |v| @floatFromInt(v),
+        else => 50,
+    };
+    const ratio: f16 = @floatCast(@min(0.9, @max(0.1, ratio_percent / 100.0)));
+    const split_layout: Surface.Tree.Split.Layout = if (std.ascii.eqlIgnoreCase(
+        obj.get("direction").?.string,
+        "horizontal",
+    )) .horizontal else .vertical;
+
+    const left = try buildLayoutNode(arena, nodes, obj.get("left").?, surfaces);
+    const right = try buildLayoutNode(arena, nodes, obj.get("right").?, surfaces);
+    nodes.items[handle.idx()] = .{ .split = .{
+        .layout = split_layout,
+        .ratio = ratio,
+        .left = left,
+        .right = right,
+    } };
+    return handle;
 }
 
 // ---------------------------------------------------------------------------
