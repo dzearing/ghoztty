@@ -112,6 +112,13 @@ pub const RemoteMachine = union(enum) {
         /// by `adoptRelayNames` whenever a listing lands, so a rename on the
         /// relay reaches an open window rather than pinning the old name.
         name: ?[]const u8 = null,
+        /// `name` is the CALLER's label (T1736, Mac `Machine.namePinned`):
+        /// `+new-remote-window --name=X` names the machine X, and a directory
+        /// listing never renames it. Only meaningful with a non-null `name`
+        /// (`setRemoteMachine` drops a pin that has no name to pin, Mac's
+        /// `namePinned && fallbackName != nil`). Copied by T68's inheritance,
+        /// so a New Window on a pinned window keeps the caller's label.
+        name_pinned: bool = false,
     },
 
     pub fn deinitFree(self: RemoteMachine, alloc: std.mem.Allocator) void {
@@ -3861,6 +3868,9 @@ pub fn setRemoteMachine(self: *Window, machine: RemoteMachine) Allocator.Error!v
                     // A name the caller carried (T68's inheritance copies the
                     // parent window's) wins; otherwise ask what we already know.
                     .name = if (r.name) |n| try alloc.dupe(u8, n) else self.resolveRelayName(r.device),
+                    // A pin needs a name the caller gave (Mac: `namePinned &&
+                    // fallbackName != nil`); a resolved one is never pinned.
+                    .name_pinned = r.name_pinned and r.name != null,
                 },
             };
         },
@@ -3912,7 +3922,14 @@ pub fn adoptRelayNames(app: *App, entries: []const machine_cache.Entry) void {
             .tcp => continue,
         };
         const name = machine_cache.nameFor(entries, relay.device) orelse continue;
-        if (relay.name) |old| if (std.mem.eql(u8, old, name)) continue;
+        switch (relayRename(relay.name_pinned, relay.name, name)) {
+            .keep => continue,
+            .pinned => {
+                log.info("remote machine name pinned, directory rename skipped device={s} name={s} listed={s}", .{ relay.device, relay.name.?, name });
+                continue;
+            },
+            .rename => {},
+        }
         const owned = alloc.dupe(u8, name) catch continue;
         if (relay.name) |old| alloc.free(old);
         relay.name = owned;
@@ -3924,6 +3941,21 @@ pub fn adoptRelayNames(app: *App, entries: []const machine_cache.Entry) void {
     // window learned the name is titled by the device id even when no window
     // needs renaming.
     activity_machines.adoptSourceNames(entries);
+}
+
+/// What a listing that names a relay machine `listed` does to a window that
+/// calls it `current` (T1736). Pure, so the pin rule is unit-tested without an
+/// app: a pinned name is the caller's and a listing never overwrites it (Mac
+/// `if !machine.namePinned { machine.name = renamed.name }`); otherwise a
+/// differing name is adopted and an equal one is left alone.
+pub const RelayRename = enum { keep, pinned, rename };
+
+pub fn relayRename(pinned: bool, current: ?[]const u8, listed: []const u8) RelayRename {
+    if (current) |old| {
+        if (std.mem.eql(u8, old, listed)) return .keep;
+        if (pinned) return .pinned;
+    }
+    return .rename;
 }
 
 /// Remote inheritance for one new tab/split in a REMOTE window (T68, Mac
@@ -24380,4 +24412,17 @@ test "T1420: a panel titled by a device id adopts the name a listing gives it" {
     try std.testing.expectEqualStrings("dev-abc", activity_machines.relayLabel("", "dev-abc"));
     try std.testing.expectEqualStrings("dev-abc", activity_machines.relayLabel(long, "dev-abc"));
     try std.testing.expectEqualStrings("Studio PC", activity_machines.relayLabel("Studio PC", "dev-abc"));
+}
+
+test "T1736: a caller-pinned relay name survives a directory listing; an unpinned one follows it" {
+    // Unpinned (T1418): a listing that names the machine differently renames
+    // the window, and the same name is left alone.
+    try std.testing.expectEqual(RelayRename.rename, relayRename(false, "Old Box", "New Box"));
+    try std.testing.expectEqual(RelayRename.keep, relayRename(false, "Same", "Same"));
+    try std.testing.expectEqual(RelayRename.rename, relayRename(false, null, "Named"));
+
+    // Pinned (`+new-remote-window --name=X`): the listing is reported, never
+    // adopted. An equal listing is still a plain keep, not a skipped rename.
+    try std.testing.expectEqual(RelayRename.pinned, relayRename(true, "build-box", "MaximusHome"));
+    try std.testing.expectEqual(RelayRename.keep, relayRename(true, "build-box", "build-box"));
 }

@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-21T16:40:09-08:00",
+    "generated":  "2026-11-21T17:54:48-08:00",
     "commit":  "81bcd95b2",
     "uncommitted":  [
-
+                        "test/win32/remote-pill-relay-name.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
@@ -483,7 +483,7 @@
                   "test/win32/remote-effects.ps1":  "8d7891b2f3cc9c874d19063cdb28864ebb6139db5e98d26ab1c2597e673f33bc",
                   "test/win32/remote-inherit.ps1":  "51c3fd032cd9d40bd1318c0fe69c670dab65756103b4cf02cffe836c9009089a",
                   "test/win32/remote-pill.ps1":  "f5c2447debb4dc2867a0ae2b54f77acc20f8b4f8e562c3cb7cb305d60268e015",
-                  "test/win32/remote-pill-relay-name.ps1":  "44a6e2888de14d59caa5e071c1910c3c5389930958860026d06e55cb0e5690c6",
+                  "test/win32/remote-pill-relay-name.ps1":  "129a54b1808bf80d8975195b561137c349a58826aa5c662d2121d2ac1d5f0672",
                   "test/win32/remote-pill-tabs.ps1":  "9cb6a4f8879279060911b0523716a772ea29aa0b68c483709d17cf72d818c424",
                   "test/win32/remote-reconnect-fresh.ps1":  "11e07c5c68e6d0ba0aa69d829f121d9967424d216d17533ec6ba3162b8eb6094",
                   "test/win32/remote-reconnect-relay.ps1":  "fe3f924c5d98e6d35d9a48983ffc163a52a6156cfd40e7e555119ba3c272497a",

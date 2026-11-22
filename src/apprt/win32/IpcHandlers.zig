@@ -880,7 +880,17 @@ pub fn finishRemoteWindow(ctx: Context, job: *RemoteDialJob) Allocator.Error![]u
     };
     opts.machine = switch (job.target) {
         .tcp => |t| .{ .tcp = .{ .host = t.host, .port = t.port } },
-        .relay => |r| .{ .relay = .{ .base = r.base, .device = r.device, .token = r.token } },
+        // An explicit `--name=` is the caller's label for the machine (T1736,
+        // Mac IPCServer `namePinned: name != nil`): the pill says it, and a
+        // directory listing never renames it. Without one the window resolves
+        // the directory/HELLO name as before.
+        .relay => |r| .{ .relay = .{
+            .base = r.base,
+            .device = r.device,
+            .token = r.token,
+            .name = nonEmpty(job.options.name),
+            .name_pinned = nonEmpty(job.options.name) != null,
+        } },
     };
     _ = app.openDialedWindow(dialed, opts) catch |err| switch (err) {
         error.CreateFailed => return try errorResponse(ctx.alloc, "failed to create window", .{}),

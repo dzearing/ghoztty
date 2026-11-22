@@ -1,16 +1,16 @@
 {
     "guard":  "viewer-window-chords",
     "script":  "test/win32/viewer-window-chords.ps1",
-    "generated":  "2026-11-21T16:24:30-08:00",
+    "generated":  "2026-11-21T16:50:03-08:00",
     "commit":  "81bcd95b2",
     "uncommitted":  [
-
+                        "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/App.zig":  "f37fc79030cbe520bca8c44853c6c4fc4e95ecf9a7bc2f5b626b6dd44e24afe4",
                   "src/apprt/win32/viewer_accel.zig":  "07d6f44e59f931c2c1caa5db167ffb7c099bb0684ae386a15260f6b46c5c1d2e",
                   "src/apprt/win32/ViewerPane.zig":  "5d93af9366d04b5f64f508d53c9208fdedaf18f7b1fd380c25d44c375d644db4",
-                  "src/apprt/win32/Window.zig":  "6c5ae71dfd749cc703432e94001b2c58f8fb38db8ee025cfc3bfbf360ba25988",
+                  "src/apprt/win32/Window.zig":  "4c71f9fc030cefa446f3b4346279ae26aec37f72bb7b8932fd2f718e6366c378",
                   "test/win32/viewer-window-chords.ps1":  "05c069b7eaa44b646ed720b157ea9a5c5d0e4368ff34c80112ff51020343b0ab"
               },
     "code":  {

@@ -26,6 +26,11 @@
 #      and both open windows take the new names without being reopened. The
 #      relay is started once and never restarted, so no link drops under the
 #      windows mid-arm.
+#   D  A CALLER-NAMED window keeps the caller's label (T1736, Mac
+#      `Machine.namePinned`). `+new-remote-window --name=X` on A's device shows
+#      X - not the remembered name - and C's listing, which renames A's window
+#      on the same device, skips it and says so. A and B open WITHOUT `--name`
+#      for exactly this reason: a name given on the command line is the label.
 #
 # NEGATIVE CONTROL: -NegativeControl asserts arm A's pill reads the DEVICE ID,
 # which is the pre-fix behaviour, and MUST fail.
@@ -110,9 +115,12 @@ function Wait-PillLabel([string]$label, [int]$timeoutMs) {
     return $false
 }
 
-function Open-RelayWindow([string]$device, [string]$name) {
+# $name names the output file; -Pin also passes it as `--name=`, which since
+# T1736 is the machine's pinned label rather than only the IPC target name.
+function Open-RelayWindow([string]$device, [string]$name, [switch]$Pin) {
     $out = Join-Path $tmp "open-$name.txt"
-    cmd /c "`"$Exe`" +new-remote-window --relay=http://127.0.0.1:$RelayPort --device=$device --token=$TOKEN --name=$name > `"$out`" 2>&1"
+    $nameArg = if ($Pin) { " --name=$name" } else { '' }
+    cmd /c "`"$Exe`" +new-remote-window --relay=http://127.0.0.1:$RelayPort --device=$device --token=$TOKEN$nameArg > `"$out`" 2>&1"
     return $LASTEXITCODE
 }
 
@@ -122,6 +130,7 @@ $DEV2 = 'dev-t1418-unlisted'
 $NAME1 = 'PillFriendly'
 $NAME1B = 'PillRenamedBox'
 $NAME2 = 'Second-Machine-Name'
+$PINNED = 'CallerPinnedLabel'
 # The remembered list for the env-token account bucket (`""`), which is what
 # `machine_cache.load` hands a window when nobody is signed in with Google.
 $seedJson = '{"account":"","devices":[{"id":"' + $DEV + '","name":"' + $NAME1 + '"}]}'
@@ -231,6 +240,13 @@ try {
     Assert $gotB "B the pill reads the agent's hostname '$hostName' (labels seen: $((Get-PillLabels) -join ' | '))"
     Assert (-not ((Get-PillLabels) -contains $DEV2)) 'B and never the device id'
 
+    # --- D (open): a caller-named window shows the caller's label ----------
+    Write-Host ''
+    Write-Host 'D. a window opened with --name= shows that name, not the remembered one'
+    $rc = Open-RelayWindow $DEV $PINNED -Pin
+    Assert ($rc -eq 0) "D +new-remote-window --name=$PINNED opened the window (exit $rc)"
+    Assert (Wait-PillLabel $PINNED 10000) "D the pill reads '$PINNED' (labels seen: $((Get-PillLabels) -join ' | '))"
+
     # --- C: a later listing renames the open windows -----------------------
     Write-Host ''
     Write-Host 'C. a new directory listing renames windows that are already open'
@@ -248,6 +264,12 @@ try {
     Assert $ren2 "C the hostname-named window takes its new directory name '$NAME2'"
     Assert (Wait-PillLabel $NAME1B 5000) "C the first pill now reads '$NAME1B'"
     Assert (Wait-PillLabel $NAME2 5000) "C the second pill now reads '$NAME2'"
+
+    # --- D (listing): the same listing leaves the pinned window alone ------
+    $pinKept = Wait-LogCount $errlog "remote machine name pinned, directory rename skipped device=$DEV name=$PINNED listed=$NAME1B" 1 5000
+    Assert $pinKept "D the listing that renamed A's window skips the pinned one on the same device"
+    $renamedDev = Count-LogLines $errlog "remote machine renamed from directory device=$DEV name="
+    Assert ($renamedDev -eq 1) "D exactly one window on $DEV was renamed (A's), not the pinned one (got $renamedDev)"
     if ($chooser -ne [IntPtr]::Zero) {
         Send-TestControlKey -Control $chooser -Key Escape | Out-Null
         Start-Sleep -Milliseconds 500
