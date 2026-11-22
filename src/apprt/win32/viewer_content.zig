@@ -367,6 +367,18 @@ pub fn pageRequestPath(buf: []u8, uri: []const u8) ?[]const u8 {
 }
 
 fn underOrigin(buf: []u8, prefix: []const u8, uri: []const u8) ?[]const u8 {
+    return pathUnderOrigin(buf, prefix, uri);
+}
+
+/// The decoded relative path `uri` names under `prefix` (a scheme plus
+/// authority with no trailing slash), or null when it is not under it.
+///
+/// Public so a frontend with its OWN origins can use the same parser: the GTK
+/// viewer serves the template over `ghoztty-viewer://page` and a rendered
+/// page over `ghoztty-page://page` (WebKit custom schemes, as on the Mac;
+/// T3410), and a second copy of this parse would be a second place for the
+/// origin test to go wrong.
+pub fn pathUnderOrigin(buf: []u8, prefix: []const u8, uri: []const u8) ?[]const u8 {
     if (uri.len < prefix.len) return null;
     if (!std.ascii.eqlIgnoreCase(uri[0..prefix.len], prefix)) return null;
     var rest = uri[prefix.len..];
@@ -402,6 +414,19 @@ pub fn pageUrlFor(
     root: []const u8,
     path: []const u8,
 ) Allocator.Error!?[:0]u8 {
+    return pageUrlForOrigin(alloc, page_origin_prefix, root, path);
+}
+
+/// `pageUrlFor` under another origin (T3410): the GTK viewer's page origin is
+/// the WebKit custom scheme `ghoztty-page://page`, and the URL it loads has to
+/// round-trip through `pathUnderOrigin` exactly as WebView2's does through
+/// `pageRequestPath`.
+pub fn pageUrlForOrigin(
+    alloc: Allocator,
+    origin: []const u8,
+    root: []const u8,
+    path: []const u8,
+) Allocator.Error!?[:0]u8 {
     if (root.len == 0 or path.len == 0) return null;
     if (!isUnder(path, root)) return null;
     var rel = path[root.len..];
@@ -410,7 +435,7 @@ pub fn pageUrlFor(
 
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(alloc);
-    try out.appendSlice(alloc, page_origin_prefix);
+    try out.appendSlice(alloc, origin);
     try out.append(alloc, '/');
     for (rel) |c| {
         if (isSep(c) or c == '/') {
@@ -804,6 +829,19 @@ fn call(alloc: Allocator, name: []const u8, args: []const []const u8) Allocator.
         error.OutOfMemory => return error.OutOfMemory,
     };
     return try out.toOwnedSlice(alloc);
+}
+
+/// `window.__viewer.setMarkdown("…")` as UTF-8, for a web view that takes
+/// its script as UTF-8 bytes (WebKitGTK's `evaluate_javascript`, T3410). The
+/// same escape table as the UTF-16 form; caller owns the result.
+pub fn setMarkdownCall(alloc: Allocator, source: []const u8) Allocator.Error![]u8 {
+    return try call(alloc, "setMarkdown", &.{source});
+}
+
+/// `window.__viewer.setCode("…", "lang")` as UTF-8 - the code-mode twin of
+/// `setMarkdownCall`. Caller owns the result.
+pub fn setCodeCall(alloc: Allocator, source: []const u8, lang: ?[]const u8) Allocator.Error![]u8 {
+    return try call(alloc, "setCode", &.{ source, lang orelse "" });
 }
 
 /// What building a page call can fail with. `InvalidUtf8` is reachable only on

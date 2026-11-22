@@ -544,6 +544,11 @@ pub const Application = extern struct {
             if (config.@"initial-window") self.as(gio.Application).activate();
         }
 
+        // Ghoztty (T3410): a debug build's headless viewer test window. A
+        // no-op unless GHOZTTY_TEST_VIEWER is set, and compiled out of a
+        // release.
+        if (self.as(gio.Application).getIsRemote() == 0) @import("../Viewer.zig").openTestWindowFromEnv();
+
         // If we are NOT the primary instance, then we never want to run.
         // This means that another instance of the GTK app is running.
         if (self.as(gio.Application).getIsRemote() != 0) {

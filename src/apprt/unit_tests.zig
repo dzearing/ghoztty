@@ -576,6 +576,11 @@ test {
     // same no-OS-imports deal.
     _ = @import("win32/viewer_content.zig");
 
+    // The GTK viewer's two WebKit custom schemes - origins, the template and
+    // page grants, the page URL (T3410). Pure, no GTK imports, so every lane
+    // runs it, like the win32 modules above.
+    _ = @import("gtk/viewer_scheme.zig");
+
     // Pure win32 image-viewer zoom rules — what 100% means, best-fit's refusal
     // to upscale, the double-click toggle and the step/clamp (T1183), same
     // no-OS-imports deal.

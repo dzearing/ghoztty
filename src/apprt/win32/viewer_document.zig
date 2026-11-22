@@ -64,6 +64,20 @@ pub fn read(alloc: Allocator, mode: content.Mode, path: []const u8, bytes_read: 
 /// Bytes already in hand to their outcome. Split from `read` so the rules are
 /// checkable on literals.
 pub fn build(alloc: Allocator, mode: content.Mode, path: []const u8, bytes: []const u8) Outcome {
+    const text = documentText(bytes) orelse return .{ .failure = content.error_not_text };
+
+    const js = switch (mode) {
+        .markdown => content.setMarkdownCallUtf16(alloc, text),
+        .code => content.setCodeCallUtf16(alloc, text, content.highlightLanguage(content.extension(path))),
+        .web, .html, .diff, .image => return .none,
+    } catch return .{ .failure = content.error_unreadable };
+    return .{ .script = js };
+}
+
+/// The text a document's bytes render as, or null when they are not text.
+/// Borrowed from `bytes`. Shared by both script builds, so the UTF-16 and
+/// UTF-8 paths cannot disagree about what counts as a text file.
+pub fn documentText(bytes: []const u8) ?[]const u8 {
     // A UTF-8 BOM is invisible to the reader and NOT to the renderer: left in
     // place it is a stray glyph ahead of the first heading, and Windows
     // editors write one routinely.
@@ -72,14 +86,56 @@ pub fn build(alloc: Allocator, mode: content.Mode, path: []const u8, bytes: []co
 
     // Mac's `String(data:encoding:.utf8)` returning nil is exactly this check;
     // a binary file opened by mistake gets a card, not mojibake.
-    if (!std.unicode.utf8ValidateSlice(text)) return .{ .failure = content.error_not_text };
+    if (!std.unicode.utf8ValidateSlice(text)) return null;
+    return text;
+}
 
-    const js = switch (mode) {
-        .markdown => content.setMarkdownCallUtf16(alloc, text),
-        .code => content.setCodeCallUtf16(alloc, text, content.highlightLanguage(content.extension(path))),
+/// `build`'s outcome as a UTF-8 script, for a web view that evaluates UTF-8
+/// (WebKitGTK, T3410). Same rules, same cards.
+pub const Utf8Outcome = union(enum) {
+    /// The page call. Caller owns.
+    script: []u8,
+    failure: []const u8,
+    none,
+
+    pub fn deinit(self: Utf8Outcome, alloc: Allocator) void {
+        switch (self) {
+            .script => |s| alloc.free(s),
+            .failure, .none => {},
+        }
+    }
+};
+
+/// `build`, writing UTF-8 (T3410).
+pub fn buildUtf8(alloc: Allocator, mode: content.Mode, path: []const u8, bytes: []const u8) Utf8Outcome {
+    switch (mode) {
+        .markdown, .code => {},
         .web, .html, .diff, .image => return .none,
+    }
+    const text = documentText(bytes) orelse return .{ .failure = content.error_not_text };
+    const js = switch (mode) {
+        .markdown => content.setMarkdownCall(alloc, text),
+        .code => content.setCodeCall(alloc, text, content.highlightLanguage(content.extension(path))),
+        .web, .html, .diff, .image => unreachable,
     } catch return .{ .failure = content.error_unreadable };
     return .{ .script = js };
+}
+
+/// `read`, writing UTF-8 (T3410): the file is read under the same ceiling and
+/// every failure is the same card.
+pub fn readUtf8(alloc: Allocator, mode: content.Mode, path: []const u8) Utf8Outcome {
+    switch (mode) {
+        .markdown, .code => {},
+        .web, .html, .diff, .image => return .none,
+    }
+    const bytes = std.fs.cwd().readFileAlloc(alloc, path, content.max_file_bytes) catch |err| {
+        return .{ .failure = switch (err) {
+            error.FileTooBig => content.error_too_large,
+            else => content.error_unreadable,
+        } };
+    };
+    defer alloc.free(bytes);
+    return buildUtf8(alloc, mode, path, bytes);
 }
 
 // -------------------------------------------------------------------------
@@ -105,6 +161,27 @@ test "a markdown document becomes a setMarkdown call" {
     const o = build(testing.allocator, .markdown, "C:\\a.md", "# Hi");
     defer o.deinit(testing.allocator);
     try expectScriptContains(o, "setMarkdown(\"# Hi\")");
+}
+
+test "buildUtf8: the same call as the UTF-16 build, in UTF-8 (T3410)" {
+    const alloc = testing.allocator;
+    const md = buildUtf8(alloc, .markdown, "/a.md", "\xEF\xBB\xBF# Hi \"q\"\n");
+    defer md.deinit(alloc);
+    try testing.expectEqualStrings("window.__viewer.setMarkdown(\"# Hi \\\"q\\\"\\n\")", md.script);
+
+    const code = buildUtf8(alloc, .code, "/x/a.py", "x = 1");
+    defer code.deinit(alloc);
+    try testing.expectEqualStrings("window.__viewer.setCode(\"x = 1\", \"python\")", code.script);
+
+    const bin = buildUtf8(alloc, .markdown, "/a.md", "\xFF\xFEbinary");
+    try testing.expectEqualStrings(content.error_not_text, bin.failure);
+
+    for ([_]content.Mode{ .web, .html, .diff, .image }) |m| {
+        try testing.expect(buildUtf8(alloc, m, "/a.md", "# Hi") == .none);
+        try testing.expect(readUtf8(alloc, m, "/definitely/missing.md") == .none);
+    }
+    const missing = readUtf8(alloc, .markdown, "/no/such/dir/missing.md");
+    try testing.expectEqualStrings(content.error_unreadable, missing.failure);
 }
 
 test "a code file carries the language its extension names" {

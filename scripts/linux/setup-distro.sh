@@ -8,7 +8,8 @@
 # What it installs, and where:
 #   - apt: the GTK4 + libadwaita dev packages the gtk apprt links, the GObject
 #     introspection data blueprint-compiler reads, gettext/xml tools the build
-#     runs, mesa-utils (glxinfo) and weston (a headless compositor for tests).
+#     runs, mesa-utils (glxinfo) and weston (a headless compositor for tests),
+#     and webkitgtk-6.0 (the GTK4 WebKit, for viewer panes - T3410).
 #   - zig at build.zig.zon's minimum_zig_version, under ~/.local/zig-<ver>.
 #   - blueprint-compiler 0.16.0 (src/apprt/gtk/build/blueprint.zig requires
 #     0.16; Ubuntu 24.04 ships 0.12), a source checkout under
@@ -23,6 +24,7 @@ TOOLS="$HOME/.local/ghoztty-tools/bin"
 
 APT_PKGS=(
     libgtk-4-dev libadwaita-1-dev
+    libwebkitgtk-6.0-dev
     gettext libxml2-utils
     python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
     mesa-utils weston
@@ -76,5 +78,5 @@ chmod +x "$TOOLS/blueprint-compiler"
 
 echo "SETUP zig: $("$TOOLS/zig" version)"
 echo "SETUP blueprint-compiler: $("$TOOLS/blueprint-compiler" --version)"
-echo "SETUP gtk4: $(pkg-config --modversion gtk4)  libadwaita: $(pkg-config --modversion libadwaita-1)"
+echo "SETUP gtk4: $(pkg-config --modversion gtk4)  libadwaita: $(pkg-config --modversion libadwaita-1)  webkitgtk-6.0: $(pkg-config --modversion webkitgtk-6.0)"
 echo "SETUP OK"

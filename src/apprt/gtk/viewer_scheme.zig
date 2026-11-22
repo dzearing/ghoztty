@@ -1,0 +1,223 @@
+//! The GTK viewer's two WebKit custom schemes, as pure path arithmetic
+//! (T3410, Linux L9a).
+//!
+//! The Mac serves its viewer template over a WebKit custom scheme,
+//! `ghoztty-viewer://page/viewer.html` (`ViewerSchemeHandler`), and WebKitGTK
+//! is the same engine with the same facility
+//! (`webkit_web_context_register_uri_scheme`), so the Linux viewer uses the
+//! Mac's scheme and URL shape rather than win32's synthetic `https://` hosts,
+//! which exist only because WebView2 has no custom schemes.
+//!
+//! Two origins, two grants - win32's split (T601), translated:
+//!
+//! - `ghoztty-viewer://page/<rel>` is the bundled template. A request resolves
+//!   against the bundled assets first (`viewer.html`, `vendor/...`), then the
+//!   viewed file's directory (a markdown document's relative images), then as
+//!   an absolute path the document wrote itself - the Mac's three tiers, in its
+//!   order. The first two refuse `..` escapes; the third is unguarded by design
+//!   (`viewer_content.zig`'s header says why).
+//! - `ghoztty-page://page/<rel>` is a directly rendered `.html` FILE and
+//!   nothing else: its own directory, recursively, which is exactly the grant
+//!   the Mac's `loadFileURL(_:allowingReadAccessTo:)` gives. It never reaches
+//!   the bundled assets, so a page asking for `vendor/markdown-it.min.js` is
+//!   not handed ours.
+//!
+//! Everything here is pure - no GTK, no WebKit, no filesystem - so it runs in
+//! the none lane on every seat. `Viewer.zig` is the half that asks WebKit and
+//! the disk.
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const content = @import("../win32/viewer_content.zig");
+
+/// The template scheme. Same name as the Mac's `ViewerSchemeHandler.scheme`,
+/// which the template's own link guard already lists (`links.js`).
+pub const template_scheme = "ghoztty-viewer";
+
+/// The rendered-page scheme (win32's `ghoztty-page` host, as a scheme).
+pub const page_scheme = "ghoztty-page";
+
+/// Both origins carry the Mac's `page` authority; WebKit hands the handler
+/// the full URI and the path after it is the request.
+pub const template_origin = template_scheme ++ "://page";
+pub const page_origin = page_scheme ++ "://page";
+
+/// Where a template-mode viewer navigates. The file's bytes arrive afterwards
+/// through `window.__viewer`.
+pub const template_url = template_origin ++ "/viewer.html";
+
+pub const Origin = enum { template, page };
+
+/// Which of our origins `uri` belongs to, or null when it is neither.
+pub fn originOf(uri: []const u8) ?Origin {
+    if (startsWithOrigin(uri, template_origin)) return .template;
+    if (startsWithOrigin(uri, page_origin)) return .page;
+    return null;
+}
+
+fn startsWithOrigin(uri: []const u8, origin: []const u8) bool {
+    if (uri.len < origin.len) return false;
+    if (!std.ascii.eqlIgnoreCase(uri[0..origin.len], origin)) return false;
+    return uri.len == origin.len or uri[origin.len] == '/';
+}
+
+/// The decoded relative path a request names, written into `buf`.
+/// `ghoztty-viewer://page/vendor/x.js?v=1` -> `vendor/x.js`. Null for a URI
+/// that is not under `origin`, or names nothing.
+pub fn requestPath(buf: []u8, origin: Origin, uri: []const u8) ?[]const u8 {
+    return content.pathUnderOrigin(buf, switch (origin) {
+        .template => template_origin,
+        .page => page_origin,
+    }, uri);
+}
+
+/// What a request may read: the bundled assets directory and the viewed
+/// file's directory. Either may be missing (no assets found, a website pane).
+pub const Grant = struct {
+    assets_dir: ?[]const u8 = null,
+    base_dir: ?[]const u8 = null,
+};
+
+/// The paths a request may resolve to, in the order they are tried. Each is
+/// owned by the list; `deinit` frees them.
+pub const Candidates = struct {
+    buf: [3][]u8 = undefined,
+    len: usize = 0,
+
+    pub fn slice(self: *const Candidates) []const []u8 {
+        return self.buf[0..self.len];
+    }
+
+    pub fn deinit(self: *Candidates, alloc: Allocator) void {
+        for (self.buf[0..self.len]) |p| alloc.free(p);
+        self.len = 0;
+    }
+
+    fn add(self: *Candidates, p: ?[]u8) void {
+        const v = p orelse return;
+        self.buf[self.len] = v;
+        self.len += 1;
+    }
+};
+
+/// The candidate files for `rel` under `origin`'s grant, in tier order. The
+/// caller serves the first one that exists as a regular file.
+pub fn candidates(
+    alloc: Allocator,
+    origin: Origin,
+    grant: Grant,
+    rel: []const u8,
+) Allocator.Error!Candidates {
+    var out: Candidates = .{};
+    errdefer out.deinit(alloc);
+    switch (origin) {
+        .template => {
+            if (grant.assets_dir) |d| out.add(try content.candidateUnder(alloc, d, rel));
+            if (grant.base_dir) |d| {
+                out.add(try content.candidateUnder(alloc, d, rel));
+                out.add(try content.rootedCandidate(alloc, d, rel));
+            }
+        },
+        // A rendered page's own directory and nothing else.
+        .page => if (grant.base_dir) |d| out.add(try content.candidateUnder(alloc, d, rel)),
+    }
+    return out;
+}
+
+/// The `ghoztty-page://` URL that loads the `.html` file at `path`, whose
+/// grant is `root` (its directory). Null when `path` is not under `root`.
+pub fn pageUrl(alloc: Allocator, root: []const u8, path: []const u8) Allocator.Error!?[:0]u8 {
+    return content.pageUrlForOrigin(alloc, page_origin, root, path);
+}
+
+/// The content type a served file goes out with - win32's table, which is
+/// the Mac's plus what a real page brings with it (T750).
+pub fn mimeType(path: []const u8) []const u8 {
+    return content.mimeType(content.extension(path));
+}
+
+// -------------------------------------------------------------------------
+// Tests
+// -------------------------------------------------------------------------
+
+const testing = std.testing;
+
+test "originOf: only our two origins, and only at an origin boundary" {
+    try testing.expectEqual(Origin.template, originOf("ghoztty-viewer://page/viewer.html").?);
+    try testing.expectEqual(Origin.template, originOf("GHOZTTY-VIEWER://page/x").?);
+    try testing.expectEqual(Origin.page, originOf("ghoztty-page://page/index.html").?);
+    try testing.expect(originOf("ghoztty-viewer://pages/x") == null);
+    try testing.expect(originOf("https://ghoztty-viewer/viewer.html") == null);
+    try testing.expect(originOf("ghoztty-page://page.evil/x") == null);
+    try testing.expect(originOf("about:blank") == null);
+}
+
+test "requestPath: decodes, drops the query, refuses the other origin" {
+    var buf: [256]u8 = undefined;
+    try testing.expectEqualStrings("vendor/x.js", requestPath(&buf, .template, "ghoztty-viewer://page/vendor/x.js?v=1").?);
+    try testing.expectEqualStrings("my pic.png", requestPath(&buf, .template, "ghoztty-viewer://page/my%20pic.png").?);
+    try testing.expectEqualStrings("sub/app.css", requestPath(&buf, .page, "ghoztty-page://page/sub/app.css").?);
+    try testing.expect(requestPath(&buf, .page, "ghoztty-viewer://page/viewer.html") == null);
+    try testing.expect(requestPath(&buf, .template, "ghoztty-viewer://page/") == null);
+    try testing.expect(requestPath(&buf, .template, "ghoztty-viewer://page") == null);
+}
+
+test "candidates: template tiers are assets, then the file's directory, then absolute" {
+    const alloc = testing.allocator;
+    var c = try candidates(alloc, .template, .{ .assets_dir = "/share/viewer", .base_dir = "/home/u/docs" }, "img/a.png");
+    defer c.deinit(alloc);
+    try testing.expectEqual(@as(usize, 3), c.len);
+    try testing.expectEqualStrings("/share/viewer/img/a.png", c.slice()[0]);
+    try testing.expectEqualStrings("/home/u/docs/img/a.png", c.slice()[1]);
+    try testing.expectEqualStrings("/img/a.png", c.slice()[2]);
+}
+
+test "candidates: a .. escape is refused by both guarded tiers" {
+    const alloc = testing.allocator;
+    var c = try candidates(alloc, .template, .{ .assets_dir = "/share/viewer", .base_dir = "/home/u/docs" }, "../../secrets.txt");
+    defer c.deinit(alloc);
+    for (c.slice()) |p| {
+        try testing.expect(!std.mem.startsWith(u8, p, "/share/viewer/"));
+        try testing.expect(!std.mem.startsWith(u8, p, "/home/u/docs/"));
+    }
+}
+
+test "candidates: a rendered page reaches its own directory only" {
+    const alloc = testing.allocator;
+    var ok = try candidates(alloc, .page, .{ .assets_dir = "/share/viewer", .base_dir = "/home/u/site" }, "css/app.css");
+    defer ok.deinit(alloc);
+    try testing.expectEqual(@as(usize, 1), ok.len);
+    try testing.expectEqualStrings("/home/u/site/css/app.css", ok.slice()[0]);
+
+    // Never the bundled assets, and never out of its directory.
+    var esc = try candidates(alloc, .page, .{ .assets_dir = "/share/viewer", .base_dir = "/home/u/site" }, "../secrets.txt");
+    defer esc.deinit(alloc);
+    try testing.expectEqual(@as(usize, 0), esc.len);
+    var abs = try candidates(alloc, .page, .{ .base_dir = "/home/u/site" }, "/etc/passwd");
+    defer abs.deinit(alloc);
+    try testing.expectEqual(@as(usize, 0), abs.len);
+}
+
+test "candidates: no grant, no candidates" {
+    const alloc = testing.allocator;
+    var c = try candidates(alloc, .template, .{}, "viewer.html");
+    defer c.deinit(alloc);
+    try testing.expectEqual(@as(usize, 0), c.len);
+}
+
+test "pageUrl: round-trips through requestPath" {
+    const alloc = testing.allocator;
+    const url = (try pageUrl(alloc, "/home/u/my site", "/home/u/my site/sub/index page.html")).?;
+    defer alloc.free(url);
+    try testing.expectEqualStrings("ghoztty-page://page/sub/index%20page.html", url);
+    var buf: [256]u8 = undefined;
+    try testing.expectEqualStrings("sub/index page.html", requestPath(&buf, .page, url).?);
+    try testing.expect((try pageUrl(alloc, "/home/u/site", "/elsewhere/x.html")) == null);
+}
+
+test "mimeType: the template's own files go out typed" {
+    try testing.expectEqualStrings("text/html", mimeType("viewer.html"));
+    try testing.expectEqualStrings("text/javascript", mimeType("vendor/markdown-it.min.js"));
+    try testing.expectEqualStrings("text/css", mimeType("viewer.css"));
+    try testing.expectEqualStrings("application/octet-stream", mimeType("blob"));
+}

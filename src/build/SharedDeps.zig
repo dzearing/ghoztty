@@ -722,6 +722,9 @@ fn addGtkNg(
 
     step.linkSystemLibrary2("gtk4", dynamic_link_opts);
     step.linkSystemLibrary2("libadwaita-1", dynamic_link_opts);
+    // Ghoztty viewer panes (T3410): WebKitGTK's GTK4 build. zig-gobject has
+    // no WebKit module, so `src/apprt/gtk/webkit.zig` binds it by hand.
+    step.linkSystemLibrary2("webkitgtk-6.0", dynamic_link_opts);
 
     if (self.config.x11) {
         step.linkSystemLibrary2("X11", dynamic_link_opts);
