@@ -186,9 +186,10 @@ fn agentBinary(alloc: Allocator) ![]u8 {
         if (v.len > 0) return v;
         alloc.free(v);
     } else |_| {}
-    var buf: [std.fs.max_path_bytes]u8 = undefined;
-    const exe = try std.fs.selfExePath(&buf);
-    const dir = std.fs.path.dirname(exe) orelse return error.NoExeDir;
+    // We are about to LAUNCH the sibling, so go through the self-spawn guard:
+    // a test binary's dir is build output, never an install (T980).
+    const dir = try internal_os.self_exe.productExeDirPathAlloc(alloc);
+    defer alloc.free(dir);
     return std.fs.path.join(alloc, &.{ dir, "ghoztty-agent" });
 }
 
