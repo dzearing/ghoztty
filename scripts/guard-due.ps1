@@ -901,6 +901,164 @@ $GuardTable = @(
             'src\apprt\win32\IpcServer.zig'
         )
     },
+    # T1768: the viewer family. ViewerPane.zig (14k lines) is left out the
+    # way Window.zig is for the window rows: it moves for a hundred reasons
+    # none of these harnesses score, so each row names the module where its
+    # feature is decided.
+    # git-status: / git-diff: panes (T463, T817): the file list, a bad revspec
+    # reported rather than swallowed, the poll, +reload, and the nav bar's
+    # previous/next-change and remembered layout toggle.
+    [pscustomobject]@{
+        Name   = 'viewer-diff'
+        Script = 'test\win32\viewer-diff.ps1'
+        Stamp  = 'test\win32\viewer-diff.stamp.json'
+        Covers = @(
+            'test\win32\viewer-diff.ps1',
+            'src\apprt\win32\viewer_diff.zig',
+            'src\apprt\win32\ViewerDiffProbe.zig',
+            'src\apprt\win32\git_run.zig',
+            'src\apprt\win32\viewer_prefs.zig',
+            'src\apprt\win32\ViewerNavBar.zig',
+            'src\viewer\diff.js'
+        )
+    },
+    # A transparent picture in the feedback carousel shows the tile's own
+    # fill, not black (T669): the alpha-preserving decode and the tile paint.
+    [pscustomobject]@{
+        Name   = 'viewer-feedback-alpha'
+        Script = 'test\win32\viewer-feedback-alpha.ps1'
+        Stamp  = 'test\win32\viewer-feedback-alpha.stamp.json'
+        Covers = @(
+            'test\win32\viewer-feedback-alpha.ps1',
+            'src\apprt\win32\gdiplus_decode.zig',
+            'src\apprt\win32\viewer_feedback_images.zig',
+            'test\win32\lib\ComposerSurface.ps1',
+            'test\win32\lib\WebViewCdp.ps1'
+        )
+    },
+    # A .html file renders as a live page (T601): relative assets, live
+    # reload, real content types for a page's assets (T750) and seekable
+    # media through Range requests (T1580).
+    [pscustomobject]@{
+        Name   = 'viewer-html'
+        Script = 'test\win32\viewer-html.ps1'
+        Stamp  = 'test\win32\viewer-html.stamp.json'
+        Covers = @(
+            'test\win32\viewer-html.ps1',
+            'src\apprt\win32\ViewerResourceServe.zig',
+            'src\apprt\win32\viewer_range.zig',
+            'src\apprt\win32\viewer_watcher.zig',
+            'src\apprt\win32\viewer_content.zig'
+        )
+    },
+    # A window.open() popup with no URL or a non-web scheme becomes its own
+    # ghoztty window whose viewer pane IS the popup (T163).
+    [pscustomobject]@{
+        Name   = 'viewer-popup'
+        Script = 'test\win32\viewer-popup.ps1'
+        Stamp  = 'test\win32\viewer-popup.stamp.json'
+        Covers = @(
+            'test\win32\viewer-popup.ps1',
+            'src\apprt\win32\viewer_popup.zig'
+        )
+    },
+    # Worktree provenance decides whether the nav bar carries the feedback
+    # button (T633), plus Reveal in File Explorer (T1802) and every button's
+    # tooltip rect (T639).
+    [pscustomobject]@{
+        Name   = 'viewer-worktree'
+        Script = 'test\win32\viewer-worktree.ps1'
+        Stamp  = 'test\win32\viewer-worktree.stamp.json'
+        Covers = @(
+            'test\win32\viewer-worktree.ps1',
+            'src\apprt\win32\viewer_worktree.zig',
+            'src\apprt\win32\ViewerWorktreeProbe.zig',
+            'src\apprt\win32\ViewerNavBar.zig',
+            'src\apprt\win32\viewer_nav_layout.zig'
+        )
+    },
+    # A viewer pane never gets the unfocused-split dim, and focus moving into
+    # one still moves the dim onto the terminal (T1809).
+    [pscustomobject]@{
+        Name   = 'split-dim-viewer'
+        Script = 'test\win32\split-dim-viewer.ps1'
+        Stamp  = 'test\win32\split-dim-viewer.stamp.json'
+        Covers = @(
+            'test\win32\split-dim-viewer.ps1',
+            'src\apprt\win32\DimOverlay.zig',
+            'src\apprt\win32\dim_math.zig'
+        )
+    },
+    # T1768: the window family. Window.zig and App.zig are left out for the
+    # same reason as the session and ipc families.
+    # +list reports the ACTIVE window as focused, and an untargeted verb lands
+    # there, on a background desktop with no foreground window (T215).
+    [pscustomobject]@{
+        Name   = 'window-active'
+        Script = 'test\win32\window-active.ps1'
+        Stamp  = 'test\win32\window-active.stamp.json'
+        Covers = @(
+            'test\win32\window-active.ps1',
+            'src\apprt\win32\window_active.zig'
+        )
+    },
+    # --color / --split-color tints, split inheritance, and the context
+    # menu's Background Color picker (T67, T2310).
+    [pscustomobject]@{
+        Name   = 'window-color'
+        Script = 'test\win32\window-color.ps1'
+        Stamp  = 'test\win32\window-color.stamp.json'
+        Covers = @(
+            'test\win32\window-color.ps1',
+            'src\apprt\win32\IpcHandlers.zig',
+            'src\apprt\win32\context_menu.zig'
+        )
+    },
+    # A window that ignores WM_CLOSE / WM_SYSCOMMAND is blocked by the close
+    # confirmation's modal, not broken (T255).
+    [pscustomobject]@{
+        Name   = 'window-modal-block'
+        Script = 'test\win32\window-modal-block.ps1'
+        Stamp  = 'test\win32\window-modal-block.stamp.json'
+        Covers = @(
+            'test\win32\window-modal-block.ps1',
+            'src\apprt\win32\ConfirmDialog.zig'
+        )
+    },
+    # Auto window-N names stay unique across a session restore (T121).
+    [pscustomobject]@{
+        Name   = 'window-name-restore'
+        Script = 'test\win32\window-name-restore.ps1'
+        Stamp  = 'test\win32\window-name-restore.stamp.json'
+        Covers = @(
+            'test\win32\window-name-restore.ps1',
+            'src\apprt\win32\IpcRegistry.zig',
+            'src\apprt\win32\session_layout.zig'
+        )
+    },
+    # A GUI script's window geometry does not depend on run order (T267):
+    # the test desktop clears the placement memory before every launch.
+    [pscustomobject]@{
+        Name   = 'window-placement-isolation'
+        Script = 'test\win32\window-placement-isolation.ps1'
+        Stamp  = 'test\win32\window-placement-isolation.stamp.json'
+        Covers = @(
+            'test\win32\window-placement-isolation.ps1',
+            'test\win32\lib\TestDesktop.ps1',
+            'src\apprt\win32\window_memory.zig'
+        )
+    },
+    # New windows remember the last user-chosen size, and only user-driven
+    # changes write that memory (T85).
+    [pscustomobject]@{
+        Name   = 'window-size-memory'
+        Script = 'test\win32\window-size-memory.ps1'
+        Stamp  = 'test\win32\window-size-memory.stamp.json'
+        Covers = @(
+            'test\win32\window-size-memory.ps1',
+            'src\apprt\win32\window_memory.zig'
+        )
+    },
     # The overview action (T708): the only thing that proves a bound
     # `toggle_tab_overview` actually opens hero mode, from a terminal AND from
     # a focused viewer. Covers the harness, the forwarding decision it rides

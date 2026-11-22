@@ -610,4 +610,10 @@ $leaked = @(Get-TestLaunchedPids | Where-Object { $fgSeen -contains $_ })
 Assert ($leaked.Count -eq 0) "no test-desktop app ever became foreground on the interactive desktop (saw $($leaked -join ','))"
 
 Write-Host ''
+if ($script:fail -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard viewer-diff -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
 Write-TestVerdict -Label 'T463 ACCEPTANCE' -Pass $script:pass -Fail $script:fail

@@ -1,0 +1,16 @@
+{
+    "guard":  "window-active",
+    "script":  "test/win32/window-active.ps1",
+    "generated":  "2026-11-22T04:40:08-08:00",
+    "commit":  "a50885b21",
+    "uncommitted":  [
+                        "test/win32/window-active.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/window_active.zig":  "9c82c52ed63a12a6670d7d1dd891f8f59c504ce50811e3a65620f647e787f944",
+                  "test/win32/window-active.ps1":  "1e8da7c61ec9ca7ddc6019092ab0187d4c2b069cd3e780e1afbac64edad27f43"
+              },
+    "code":  {
+                 "test/win32/window-active.ps1":  "code1:3047985e2a053e8485a2faf4668e099bb7419b9f0b0f3a12be962087910bf415"
+             }
+}

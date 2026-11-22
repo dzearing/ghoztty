@@ -78,6 +78,9 @@ $env:GHOZTTY_PIPE_SUFFIX = "-fbalpha$PID"
 . (Join-Path $PSScriptRoot 'lib\WebViewCdp.ps1')
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -442,6 +445,9 @@ try {
     # slab is unmistakable.
     Invoke-Arm 'light' 'ffffff'
     Invoke-Arm 'dark' '1e2430'
+    # The try's last statement (body-complete-audit D1): an unwind above skips
+    # it, so the verdict reads DID NOT FINISH instead of green.
+    Complete-TestBody
 } finally {
     Remove-TestDesktop
     Stop-RepoInstances
@@ -453,5 +459,10 @@ $leaked = @(Get-TestLaunchedPids | Where-Object { $fgSeen -contains $_ })
 Assert ($leaked.Count -eq 0) "no test-desktop app ever became foreground on the interactive desktop (saw $($leaked -join ','))"
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)"; exit 1 }
+if ($script:fail -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard viewer-feedback-alpha -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T669 ACCEPTANCE' -Pass $script:pass -Fail $script:fail

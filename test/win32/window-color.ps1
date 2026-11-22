@@ -64,6 +64,9 @@ $env:GHOZTTY_PIPE_SUFFIX = "-colortest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\PaneCapture.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -362,6 +365,9 @@ Assert $alive 'GUI process alive after all scenarios'
 $json = (& $exe +list --json 2>$null | Out-String).Trim()
 Assert ($json -match '"success":true') '+list still responds'
 
+    # The try's last statement (body-complete-audit D1): an unwind above skips
+    # it, so the verdict reads DID NOT FINISH instead of green.
+    Complete-TestBody
 } finally {
     Remove-TestDesktop
     Kill-RepoInstances
@@ -380,5 +386,10 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)"; exit 1 }
+if ($script:fail -eq 0 -and -not $NegativeControl) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard window-color -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T67 ACCEPTANCE' -Pass $script:pass -Fail $script:fail

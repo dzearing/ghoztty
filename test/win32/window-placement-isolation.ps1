@@ -44,6 +44,9 @@ if ($ExePath) { $exe = $ExePath }
 $env:GHOZTTY_PIPE_SUFFIX = "-t267placement$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
 $script:pass = 0
@@ -99,6 +102,9 @@ try {
         Assert ($left -eq $case.Keep) `
             "$($case.Name): placement file survived the launch = $left (want $($case.Keep))"
     }
+    # The try's last statement (body-complete-audit D1): an unwind above skips
+    # it, so the verdict reads DID NOT FINISH instead of green.
+    Complete-TestBody
 }
 finally {
     Reset-GhozttyTestState -Exe $exe | Out-Null
@@ -114,6 +120,10 @@ Assert ($leaked.Count -eq 0) `
     'no test-desktop app ever became foreground on the interactive desktop'
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red }
-exit ([int]($script:fail -gt 0))
+if ($script:fail -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard window-placement-isolation -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T267 ACCEPTANCE' -Pass $script:pass -Fail $script:fail

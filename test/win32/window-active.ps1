@@ -45,6 +45,9 @@ if ($ExePath) { $exe = $ExePath }
 $env:GHOZTTY_PIPE_SUFFIX = "-wactest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
 
@@ -169,6 +172,9 @@ try {
 
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash'
     $launched += $script:GhozttyTestDesktopPids
+    # The try's last statement (body-complete-audit D1): an unwind above skips
+    # it, so the verdict reads DID NOT FINISH instead of green.
+    Complete-TestBody
 } finally {
     if ($appPid) { Stop-Process -Id $appPid -Force -ErrorAction SilentlyContinue }
     Remove-TestDesktop
@@ -185,5 +191,10 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILED / $script:pass passed" -ForegroundColor Red; exit 1 }
+if ($script:fail -eq 0 -and -not $NegativeControl) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard window-active -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T215 ACCEPTANCE' -Pass $script:pass -Fail $script:fail

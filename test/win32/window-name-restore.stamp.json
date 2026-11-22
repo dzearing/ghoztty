@@ -1,0 +1,17 @@
+{
+    "guard":  "window-name-restore",
+    "script":  "test/win32/window-name-restore.ps1",
+    "generated":  "2026-11-22T04:40:28-08:00",
+    "commit":  "a50885b21",
+    "uncommitted":  [
+                        "test/win32/window-name-restore.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/IpcRegistry.zig":  "bbb833540a21583c682fc7223c7525d4995fa959b505b55cc2d42d6439e09093",
+                  "src/apprt/win32/session_layout.zig":  "23de7c84c9bda3017a52911fb9743e5f963978426160938e66f3aa079aa70e2b",
+                  "test/win32/window-name-restore.ps1":  "127404766c05165a9f9a57cf1bbaa9cf876eff77d8547ef70fbff538cd2cd0f0"
+              },
+    "code":  {
+                 "test/win32/window-name-restore.ps1":  "code1:f5ab7467b8d8490555b9e975edcca64b56d21fac422213d73e2de71ff13bf5b3"
+             }
+}

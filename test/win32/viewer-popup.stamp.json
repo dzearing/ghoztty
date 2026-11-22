@@ -1,0 +1,16 @@
+{
+    "guard":  "viewer-popup",
+    "script":  "test/win32/viewer-popup.ps1",
+    "generated":  "2026-11-22T04:39:48-08:00",
+    "commit":  "a50885b21",
+    "uncommitted":  [
+                        "test/win32/viewer-popup.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/viewer_popup.zig":  "98e0bae294a0e609b40ec30f2a33975807dd0ea76068d21dffc4f2c038c59ed9",
+                  "test/win32/viewer-popup.ps1":  "4867273527d449f30886a14f5b571e8a77174f1af2e5788feb2aa96b760bddf8"
+              },
+    "code":  {
+                 "test/win32/viewer-popup.ps1":  "code1:810cc7161e0daa6e8d92039e3171e9ebe4adcc9a9f926521f76bdc9e31c142e4"
+             }
+}

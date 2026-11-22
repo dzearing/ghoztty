@@ -73,6 +73,9 @@ if ($ExePath) { $exe = $ExePath }
 $env:GHOZTTY_PIPE_SUFFIX = "-htmltest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -597,6 +600,9 @@ try {
     # --- I. the app survived all of it ---------------------------------------
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'GUI process alive after all scenarios'
     Assert (-not (Test-TestDesktopLeak -ProcessId $appPid)) 'GUI never became visible on the interactive desktop'
+    # The try's last statement (body-complete-audit D1): an unwind above skips
+    # it, so the verdict reads DID NOT FINISH instead of green.
+    Complete-TestBody
 } finally {
     Remove-TestDesktop
     Stop-RepoInstances
@@ -608,9 +614,10 @@ $leaked = @(Get-TestLaunchedPids | Where-Object { $fgSeen -contains $_ })
 Assert ($leaked.Count -eq 0) "no test-desktop app ever became foreground on the interactive desktop (saw $($leaked -join ','))"
 
 Write-Host ''
-if ($script:fail -eq 0) {
-    Write-Host "ALL PASS ($script:pass assertions$(if ($script:skipped) { ", $script:skipped SKIPPED" }))"
-} else {
-    Write-Host "$script:fail FAILURE(S) ($script:pass passed$(if ($script:skipped) { ", $script:skipped SKIPPED" }))"
-    exit 1
+if ($script:fail -eq 0 -and $script:skipped -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard viewer-html -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
 }
+Write-TestVerdict -Label 'T601 ACCEPTANCE' -Pass $script:pass -Fail $script:fail -Skipped $script:skipped

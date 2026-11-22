@@ -1,0 +1,16 @@
+{
+    "guard":  "window-modal-block",
+    "script":  "test/win32/window-modal-block.ps1",
+    "generated":  "2026-11-22T04:54:34-08:00",
+    "commit":  "a50885b21",
+    "uncommitted":  [
+                        "test/win32/window-modal-block.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/ConfirmDialog.zig":  "afdb4f3b59b707671599621314ea278cb34d6b9909b2b79acb830652fee84cdf",
+                  "test/win32/window-modal-block.ps1":  "1a04561620dcffdb0d85e4232153871348693b4a5612ebed4585bcb5e95bfbb6"
+              },
+    "code":  {
+                 "test/win32/window-modal-block.ps1":  "code1:86739338abf0834ad625c4391d1b1cf9cbb008d287c43e733be3016563732acd"
+             }
+}

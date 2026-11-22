@@ -74,6 +74,9 @@ $root = Join-Path $env:TEMP "ghoztty-window-name-restore-$PID"
 # opens and CLOSES windows by auto name; against the user's endpoints that is
 # their terminal it would be closing.
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 Assert-GhozttyIsolatedBuild -Exe $exe
 
 # Write-Host, not the pipeline: a helper that asserts must never also return a
@@ -477,6 +480,9 @@ try {
             "F3 the minted names are distinct (targets: $($fTargets -join ', '))"
     }
 
+    # The try's last statement (body-complete-audit D1): an unwind above skips
+    # it, so the verdict reads DID NOT FINISH instead of green.
+    Complete-TestBody
 } finally {
     Say '== cleanup'
     Remove-TestDesktop
@@ -497,7 +503,11 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($leaked.Count -eq 0) 'Z2 no test-desktop app ever became foreground on the interactive desktop'
 }
 
-Say ''
-if ($script:fail -eq 0) { Say "ALL PASS ($script:pass)"; exit 0 }
-Say "$script:fail FAILURE(S) ($script:pass passed)"
-exit 1
+Write-Host ''
+if ($script:fail -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard window-name-restore -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T121 ACCEPTANCE' -Pass $script:pass -Fail $script:fail

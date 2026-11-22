@@ -61,6 +61,9 @@ $env:GHOZTTY_PIPE_SUFFIX = "-modalblock$PID"
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 Assert-GhozttyIsolatedBuild -Exe $exe
+# T271/T1768: the shared scorer arms the run, so the guard stamp at the end
+# is refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -105,7 +108,6 @@ function Stop-Subject($s) {
 }
 
 New-TestDesktop | Out-Null
-$exitCode = 1
 $subject = $null
 try {
     Write-Host "T255 modal-block acceptance"
@@ -179,20 +181,22 @@ try {
     Check (((Get-TestWindowStyle -Window $h) -band $WS_MINIMIZE) -ne 0) `
         "C4 the SAME SC_MINIMIZE now iconifies the window - the dialog was the whole cause"
 
-    Write-Host ""
-    if ($script:fail -eq 0) {
-        Write-Host "ALL PASS ($script:pass assertions)"
-        $exitCode = 0
-    } else {
-        Write-Host "$script:fail FAILURE(S) ($script:pass passed)"
-        $exitCode = 1
-    }
+    # The try's last statement (body-complete-audit D1): an unwind above skips
+    # it, so the verdict reads DID NOT FINISH instead of green.
+    Complete-TestBody
 } catch {
     Write-Host ""
-    Write-Host "1 FAILURE(S) - $($_.Exception.Message)"
-    $exitCode = 1
+    $script:fail++
+    Write-Host "  FAIL  the run threw: $($_.Exception.Message)"
 } finally {
     Stop-Subject $subject
     Remove-TestDesktop
 }
-exit $exitCode
+Write-Host ''
+if ($script:fail -eq 0 -and -not $NegativeControl) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard window-modal-block -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T255 ACCEPTANCE' -Pass $script:pass -Fail $script:fail
