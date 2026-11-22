@@ -209,10 +209,10 @@ private runtime dir, so a test app can never meet the user's.
   `input_line_ends = .pty`), so its argument handling, failure sentences and
   replies are win32's by construction. A new verb body goes into `verbs.zig`
   first (T3374, T3375), not into this file.
-  `+list`, `+version`, `+send-keys`, `+read`, `+new-window`, `+split` and
-  `+rename` are real; every other verb answers `+<verb> is not served by the
-  Linux app yet (<task>)`, naming the card that brings it (T3367 close/focus,
-  T3368 rearrange, T3369 reload, T3339 set-state/set-banner, T3337
+  `+list`, `+version`, `+send-keys`, `+read`, `+new-window`, `+split`,
+  `+rename`, `+close` and the `focus` action are real; every other verb
+  answers `+<verb> is not served by the Linux app yet (<task>)`, naming the
+  card that brings it (T3368 rearrange, T3369 reload, T3339 set-state/set-banner, T3337
   stash/restore/remote), and `--view` says the same for T3338.
 - **Names (T3370)** follow win32's rules exactly (`apprt/ipc/target_lookup.zig`,
   T2250): a window name is global (`+new-window --target`, else a minted
@@ -227,6 +227,17 @@ private runtime dir, so a test app can never meet the user's.
   `-e` execs its argv. `+rename` pins the window title over the tabs' until
   `--title=` clears it. Acceptance: `wsl-run.ps1 -CommandFile
   test\linux\cli-windows.sh`, ends `CLI WINDOWS: ALL PASS` (35 checks).
+- **`+close` and `focus` (T3367)** follow win32's too: `+close` closes a pane
+  (its window when it was the last pane) or a window with no confirmation,
+  succeeds on a name nothing holds, refuses an ambiguous one, and refuses
+  over an open dialog unless `--force` (which dismisses it). `focus` has no
+  CLI verb on any platform - it is the `ghoztty://` launcher's action - and
+  never creates. Weston headless has no seat, so no window is ever ACTIVE in
+  the harness: a window raise cannot be asserted there, only pane focus. To
+  stand a dialog over a window, a debug build opens the window whose
+  `+new-window --target` equals `$GHOZTTY_TEST_ASK_TO_CLOSE` with its real
+  close confirmation up. Acceptance: `wsl-run.ps1 -CommandFile
+  test\linux\cli-close-focus.sh`, ends `CLI CLOSE FOCUS: ALL PASS`.
 - `+send-keys` and `+read` take a pane id, a pane name or a window name (its
   active pane). `+send-keys` is the Mac's:
   text runs framed as a bracketed paste when the program asked for one, key

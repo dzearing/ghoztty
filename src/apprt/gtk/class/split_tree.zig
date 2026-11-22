@@ -529,6 +529,16 @@ pub const SplitTree = extern struct {
         return tree.zoomed != null;
     }
 
+    /// Make `surface` this tree's focused pane (the `focus` action, T3367).
+    /// Like `goto`, it records it as `last_focused` as well as grabbing
+    /// focus: a grab alone is lost when a rebuild is still pending (a split
+    /// made just before), since the rebuild re-focuses `last_focused`.
+    pub fn focusSurface(self: *Self, surface: *Surface) void {
+        self.private().last_focused.set(surface);
+        surface.grabFocus();
+        self.as(gobject.Object).notifyByPspec(properties.@"active-surface".impl.param_spec);
+    }
+
     /// Close `surface` now, with no confirmation: the CLI's `+close` drives
     /// teardown, as the Mac server's `closeSurface(withConfirmation: false)`
     /// and win32's `closeSplitPane` do (T3367). It takes the same path a

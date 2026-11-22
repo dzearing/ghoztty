@@ -418,7 +418,10 @@ fn parseSplitDirection(s: []const u8) ?Surface.Tree.Split.Direction {
 /// the app the pane is focused either way. The default (no `--focus`) never
 /// asks.
 fn focusTarget(target: Target) void {
-    if (target.surface()) |s| return s.present();
+    if (target.surface()) |s| {
+        if (tabOf(target.window_(), s)) |tab| tab.getSplitTree().focusSurface(s);
+        return s.present();
+    }
     target.window_().as(gtk.Window).present();
 }
 
