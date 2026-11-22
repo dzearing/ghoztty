@@ -101,12 +101,25 @@ grep -E 'panic|reached unreachable' "$MD_LOG" "$CODE_LOG" "$PAGE_LOG" "$WEB_LOG"
 [ $? != 0 ]
 hl_check "W9 no app log carries a panic" $? "$(grep -h -m2 -E 'panic|unreachable' "$MD_LOG" "$CODE_LOG" "$PAGE_LOG" "$WEB_LOG" "$MISS_LOG" 2>/dev/null | tr '\n' ' ')"
 
+# The web process must not inherit WSLg's d3d12 override (its sandbox has no
+# /dev/dxg, so it aborts), and taking it away must not take the GPU from the
+# terminal beside it: the app brings GDK's GL up on d3d12 first.
+if [ "${GALLIUM_DRIVER:-}" = d3d12 ]; then
+    grep -q 'kept from WebKit' "$MD_LOG"
+    hl_check "W10 the viewer kept GALLIUM_DRIVER=d3d12 from WebKit's web process" $?
+    r=$(grep -m1 'loaded OpenGL' "$MD_LOG" | sed 's/.*renderer=//')
+    case "$r" in *D3D12*) true ;; *) false ;; esac
+    hl_check "W11 the terminal beside the viewer still renders on the GPU (D3D12)" $? "renderer=$r"
+fi
+
 if [ "$HL_FAILS" != 0 ]; then
     for v in MD CODE PAGE WEB MISS; do
         lv="${v}_LOG"
         echo "---- $v log (viewer lines) ----"
-        grep -iE 'viewer|webkit|bwrap|sandbox|critical|error' "${!lv}" 2>/dev/null | head -20
+        grep -iE 'viewer|webkit|bwrap|sandbox|critical|error' "${!lv}" 2>/dev/null | grep -v 'Portal not found' | head -20
     done
+    echo "---- MD log (tail) ----"
+    tail -40 "$MD_LOG" 2>/dev/null
 fi
 
 hl_finish "$L"

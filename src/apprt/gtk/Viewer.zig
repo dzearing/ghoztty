@@ -67,10 +67,10 @@ pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
     const loc = try alloc.dupeZ(u8, location);
     errdefer alloc.free(loc);
 
-    const widget = wk.webkit_web_view_new();
+    const w = wk.webkit_web_view_new();
     self.* = .{
         .alloc = alloc,
-        .view = wk.asWebView(widget),
+        .view = wk.asWebView(w),
         .mode = content.modeFor(location),
         .location = loc,
     };
@@ -84,10 +84,10 @@ pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
     }
     self.assets_dir = findAssetsDir(alloc);
 
-    wk.g_object_set_data(widget, data_key, self);
-    _ = wk.g_signal_connect_data(widget, "load-changed", @ptrCast(&onLoadChanged), self, null, 0);
-    _ = wk.g_signal_connect_data(widget, "load-failed", @ptrCast(&onLoadFailed), self, null, 0);
-    _ = wk.g_signal_connect_data(widget, "destroy", @ptrCast(&onDestroy), self, null, 0);
+    wk.g_object_set_data(w, data_key, self);
+    _ = wk.g_signal_connect_data(w, "load-changed", @ptrCast(&onLoadChanged), self, null, 0);
+    _ = wk.g_signal_connect_data(w, "load-failed", @ptrCast(&onLoadFailed), self, null, 0);
+    _ = wk.g_signal_connect_data(w, "destroy", @ptrCast(&onDestroy), self, null, 0);
 
     self.load();
     return self;
@@ -243,6 +243,7 @@ var schemes_registered: bool = false;
 fn registerSchemes() void {
     if (schemes_registered) return;
     schemes_registered = true;
+    prepareWebProcessEnv();
     const ctx = wk.webkit_web_context_get_default();
     wk.webkit_web_context_register_uri_scheme(ctx, scheme.template_scheme, &onSchemeRequest, null, null);
     wk.webkit_web_context_register_uri_scheme(ctx, scheme.page_scheme, &onSchemeRequest, null, null);
@@ -254,6 +255,40 @@ fn registerSchemes() void {
         wk.webkit_security_manager_register_uri_scheme_as_local(sm, s);
         wk.webkit_security_manager_register_uri_scheme_as_secure(sm, s);
     }
+}
+
+/// Keep WSLg's GPU driver choice away from WebKit's web processes.
+///
+/// `GALLIUM_DRIVER=d3d12` is how Mesa reaches the GPU under WSLg (T3350): the
+/// driver talks to `/dev/dxg` and loads from `/usr/lib/wsl/lib`. WebKit runs
+/// its web processes inside a bubblewrap sandbox that exposes neither, so a
+/// web process that inherits the override cannot create its EGL display and
+/// aborts (`Could not create surfaceless EGL display: EGL_NOT_INITIALIZED`)
+/// before a page ever loads - measured 2026-11-22, and it renders the moment
+/// the variable is unset, with the sandbox left on. Disabling the sandbox
+/// would also work and is not an option.
+///
+/// The app's own renderer still wants the GPU, so GDK's GL is brought up
+/// FIRST (`gdk_display_prepare_gl` is a no-op once it is up): Mesa reads the
+/// override when the display's EGL is initialized, and every later context
+/// reuses that display. Only then is the variable removed, before the first
+/// web view can spawn a web process - which is also T3350's own rule that the
+/// override must not leak into what the app spawns. Only the d3d12 value is
+/// touched; any other override is the user's and is left alone.
+fn prepareWebProcessEnv() void {
+    const value = std.posix.getenv("GALLIUM_DRIVER") orelse return;
+    if (!std.mem.eql(u8, value, "d3d12")) return;
+    if (wk.gdk_display_get_default()) |display| {
+        var err: ?*wk.GError = null;
+        if (wk.gdk_display_prepare_gl(display, &err) == 0) {
+            if (err) |e| {
+                log.warn("viewer: GDK GL not available before the web process starts: {s}", .{std.mem.span(e.message orelse "?")});
+                wk.g_error_free(e);
+            }
+        }
+    }
+    _ = internal_os.unsetenv("GALLIUM_DRIVER");
+    log.info("viewer: GALLIUM_DRIVER=d3d12 kept from WebKit's sandboxed web processes (the app's GL already chose its driver)", .{});
 }
 
 fn onSchemeRequest(req: *wk.URISchemeRequest, _: ?*anyopaque) callconv(.c) void {

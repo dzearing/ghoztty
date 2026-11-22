@@ -116,6 +116,9 @@ pub extern fn g_signal_connect_data(
     destroy_data: ?*const anyopaque,
     flags: c_uint,
 ) c_ulong;
+pub const GdkDisplay = opaque {};
+pub extern fn gdk_display_get_default() ?*GdkDisplay;
+pub extern fn gdk_display_prepare_gl(display: *GdkDisplay, err: *?*GError) c_int;
 pub extern fn gtk_window_new() *GtkWidget;
 pub extern fn gtk_window_set_child(window: *GtkWidget, child: ?*GtkWidget) void;
 pub extern fn gtk_window_set_title(window: *GtkWidget, title: [*:0]const u8) void;
