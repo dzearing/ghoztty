@@ -54,6 +54,8 @@ const ConfirmDialog = @import("ConfirmDialog.zig");
 const job_spawn = @import("job_spawn.zig");
 const update_apply = @import("update_apply.zig");
 const update_progress = @import("update_progress.zig");
+const update_target = @import("update_target.zig");
+const update_target_msi = @import("update_target_msi.zig");
 const w32 = @import("win32.zig");
 
 const log = std.log.scoped(.win32_update_install);
@@ -405,6 +407,11 @@ fn armImpl(alloc: Allocator, msi_path: []const u8, report_spec: update_apply.Rep
     // relaunch guard and the holder spawn use (and the one that refuses to
     // self-spawn a test binary).
     const exe = try internal_os.self_exe.productExePathAlloc(arena);
+
+    // T3393: msiexec acts on the PRODUCT the package names, wherever it is
+    // registered, not on this exe. Refuse unless that is this copy.
+    try checkTarget(arena, msi_path, exe);
+
     const dir = try stagingDir(arena);
     const pid = w32.GetCurrentProcessId();
     const applier = try stageApplier(arena, exe, dir, pid);
@@ -452,6 +459,41 @@ fn armImpl(alloc: Allocator, msi_path: []const u8, report_spec: update_apply.Rep
         "update apply: ARMED (applier pid {d} waiting on app pid {d}; package {s}; escape={s})",
         .{ applier_pid, pid, msi_path, spawned.tier.name() },
     );
+}
+
+/// DEBUG-ONLY seam (T3393): enforce the target guard even while
+/// `GHOZTTY_UPDATE_MSI_CODE` is set (see `update_target.enforced`).
+const target_enforce_seam_var = "GHOZTTY_UPDATE_TARGET_ENFORCE";
+
+/// Refuse to arm when the package's product is not installed at `exe`'s
+/// folder (T3393). The refusal is `error.NotTheInstalledCopy`, which the app
+/// reports in its arm-failure dialog; nothing is spawned and the app stays up.
+fn checkTarget(arena: Allocator, msi_path: []const u8, exe: []const u8) !void {
+    const verdict = update_target_msi.check(arena, msi_path, exe);
+    var buf: [2 * std.fs.max_path_bytes + 160]u8 = undefined;
+    const exe_dir = std.fs.path.dirnameWindows(exe) orelse exe;
+    const why = update_target.describe(&buf, verdict, exe_dir);
+    if (verdict.allows()) {
+        log.info("update apply: target ok - {s}", .{why});
+        return;
+    }
+    const debug = comptime builtin.mode == .Debug;
+    const enforce = update_target.enforced(
+        debug,
+        debug and forcedCode(arena) != null,
+        debug and envIsOne(arena, target_enforce_seam_var),
+    );
+    if (!enforce) {
+        log.warn("update apply: target would be REFUSED ({s}) - advisory only, {s} is set and msiexec will not run", .{ why, code_seam_var });
+        return;
+    }
+    log.err("update apply: REFUSED - {s}; nothing armed, nothing installed", .{why});
+    return error.NotTheInstalledCopy;
+}
+
+fn envIsOne(arena: Allocator, name: []const u8) bool {
+    const raw = std.process.getEnvVarOwned(arena, name) catch return false;
+    return std.mem.eql(u8, std.mem.trim(u8, raw, " \t\r\n"), "1");
 }
 
 /// Copy `exe` to the applier path and return it. A fresh copy every time: an

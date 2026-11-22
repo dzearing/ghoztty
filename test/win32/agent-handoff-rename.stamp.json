@@ -1,13 +1,13 @@
 {
     "guard":  "agent-handoff-rename",
     "script":  "test/win32/agent-handoff-rename.ps1",
-    "generated":  "2026-11-22T08:10:07-08:00",
-    "commit":  "da76287a2",
+    "generated":  "2026-11-22T09:13:03-08:00",
+    "commit":  "71649d592",
     "uncommitted":  [
                         "src/apprt/win32/update_apply.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/update_apply.zig":  "3aa5e8f072db7d450da4f477dbb3cb5fe730966f6b748c5e67f44c9acace7e9d",
+                  "src/apprt/win32/update_apply.zig":  "9850e43882f9f7413767ce1aec28654f49a57a52635eff3f2996f6f6fe283149",
                   "src/remote/agent/handoff.zig":  "3ffbc1ebd2a6752ac58994f16796eeb21c70bea19b48f75eb8c9571b5e988469",
                   "test/win32/agent-handoff-rename.ps1":  "e92bac83fcbde3a3ae3a134ee6227ebfabe1ecfe84b69027c9ed2439ade6d06e"
               },

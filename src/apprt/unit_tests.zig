@@ -301,6 +301,8 @@ test {
     // lane, same no-OS-imports deal — the one place where "is this an MSI"
     // and "does this URL belong to this release" are answered.
     _ = @import("win32/update_apply.zig");
+    // T3393: does a staged package act on THIS copy (pure decision half).
+    _ = @import("win32/update_target.zig");
 
     // Pure win32 PERSISTENT update affordance (T1673): the escalation ladder
     // behind the menu-button dot, its geometry, the row's wording, and the

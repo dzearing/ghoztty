@@ -704,6 +704,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = msiexec's real exit code."
         },
+        "GHOZTTY_UPDATE_TARGET_ENFORCE": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "T3393: =1 makes a Debug build enforce the installed-copy target guard even while GHOZTTY_UPDATE_MSI_CODE is set; unset = the guard is advisory under that seam, which every canned-package update harness runs with. Release builds always enforce."
+        },
         "GHOZTTY_UPDATE_REPORT": {
             "class": "non-default",
             "unset": "armed",

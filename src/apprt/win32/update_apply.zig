@@ -409,7 +409,19 @@ pub fn armFailureCause(err_name: []const u8) []const u8 {
         return "The downloaded update could not be found on disk.";
     if (std.mem.eql(u8, err_name, "NoSpaceLeft"))
         return "There is not enough free disk space to prepare the installer.";
+    if (std.mem.eql(u8, err_name, "NotTheInstalledCopy"))
+        return "This copy of Ghoztty is not the installed one, so the installer " ++
+            "would have updated a different copy instead of this one.";
     return "Ghoztty could not prepare the installer.";
+}
+
+/// What to do next. Retrying cannot help a copy that is not the install
+/// (T3393), so it is sent straight to the releases page.
+fn armFailureNextStep(err_name: []const u8) []const u8 {
+    if (std.mem.eql(u8, err_name, "NotTheInstalledCopy"))
+        return "To update this copy, download the new version from the Ghoztty releases page.";
+    return "Try again from Ghoztty's menu in a minute. If it keeps failing, " ++
+        "install the new version from the Ghoztty releases page.";
 }
 
 /// The whole dialog body for an update that could not be started (T2322).
@@ -421,10 +433,8 @@ pub fn describeArmFailure(buf: []u8, err_name: []const u8) []const u8 {
     return std.fmt.bufPrint(
         buf,
         "The update was not installed, and Ghoztty is still running the version " ++
-            "you already had.\n\n{s}\n\nTry again from Ghoztty's menu in a minute. " ++
-            "If it keeps failing, install the new version from the Ghoztty " ++
-            "releases page.\n\n(Error: {s})",
-        .{ armFailureCause(err_name), err_name },
+            "you already had.\n\n{s}\n\n{s}\n\n(Error: {s})",
+        .{ armFailureCause(err_name), armFailureNextStep(err_name), err_name },
     ) catch buf[0..0];
 }
 
@@ -703,6 +713,17 @@ test "describeArmFailure: says the terminal is untouched, the cause, the way for
     try testing.expect(std.mem.indexOf(u8, g, "could not prepare the installer") != null);
     try testing.expect(std.mem.endsWith(u8, g, "(Error: Unexpected)"));
     try testing.expect(g.len < max_failure_message);
+}
+
+test "describeArmFailure: a copy that is not the install is sent to the releases page, not told to retry (T3393)" {
+    var buf: [max_failure_message]u8 = undefined;
+    const t = describeArmFailure(&buf, "NotTheInstalledCopy");
+    try testing.expect(std.mem.indexOf(u8, t, "still running the version") != null);
+    try testing.expect(std.mem.indexOf(u8, t, "not the installed one") != null);
+    try testing.expect(std.mem.indexOf(u8, t, "download the new version from the Ghoztty releases page") != null);
+    try testing.expect(std.mem.indexOf(u8, t, "Try again") == null);
+    try testing.expect(std.mem.endsWith(u8, t, "(Error: NotTheInstalledCopy)"));
+    try testing.expect(t.len < max_failure_message);
 }
 
 test "the two failure dialogs are told apart by their titles (T2322)" {

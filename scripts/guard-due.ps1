@@ -4128,6 +4128,20 @@ $GuardTable = @(
         )
     },
     [pscustomobject]@{
+        # T3393: a copy that is not the installed product never arms msiexec.
+        Name   = 'update-target-guard'
+        Script = 'test\win32\update-target-guard.ps1'
+        Stamp  = 'test\win32\update-target-guard.stamp.json'
+        Covers = @(
+            'src\apprt\win32\update_install.zig',
+            'src\apprt\win32\update_target.zig',
+            'src\apprt\win32\update_target_msi.zig',
+            'src\apprt\win32\update_apply.zig',
+            'test\win32\update-target-guard.ps1',
+            'test\win32\lib\ApplierSandbox.ps1'
+        )
+    },
+    [pscustomobject]@{
         Name   = 'website-windows-links'
         Script = 'test\win32\website-windows-download.ps1'
         Stamp  = 'test\win32\website-windows-links.stamp.json'

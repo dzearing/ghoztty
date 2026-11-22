@@ -198,7 +198,11 @@ Assert ($e.Log -notmatch $installed) 'nopersist: nothing installed'
 # The user is "typing" too - no window of ours is up to type in.
 Reset-UpdateState
 [void](Invoke-Case -Label 'stage-only2' -Env @{ GHOZTTY_UPDATE_AUTO_APPLY = $null } -AppArgs @('--session-persistence=false') -WatchSecs 10)
-$f = Invoke-Case -Label 'launch' -Env @{ GHOZTTY_UPDATE_IDLE_MS = '1'; GHOZTTY_UPDATE_URL = $null } -AppArgs @('--session-persistence=false') -WatchSecs 20
+# No test feed here on purpose (the install must beat the network check), so
+# the isolation's GHOZTTY_AUTO_UPDATE=off kill switch (T3388) would win and
+# read the launch as `disabled`; lift it for this one launch. Still safe: a
+# Debug build under GHOZTTY_UPDATE_MSI_CODE=0 never runs msiexec.
+$f = Invoke-Case -Label 'launch' -Env @{ GHOZTTY_UPDATE_IDLE_MS = '1'; GHOZTTY_UPDATE_URL = $null; GHOZTTY_AUTO_UPDATE = $null } -AppArgs @('--session-persistence=false') -WatchSecs 20
 Assert ($f.Log -match "$installed \(launch; moment=launch") 'launch: the staged package installed at launch'
 Assert ($f.Log -notmatch 'update available') 'launch: before the network check had even gone out'
 Assert $f.Exited 'launch: the process ended for the install'

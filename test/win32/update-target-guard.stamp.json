@@ -1,0 +1,25 @@
+{
+    "guard":  "update-target-guard",
+    "script":  "test/win32/update-target-guard.ps1",
+    "generated":  "2026-11-22T08:48:41-08:00",
+    "commit":  "71649d592",
+    "uncommitted":  [
+                        "src/apprt/win32/update_apply.zig",
+                        "src/apprt/win32/update_install.zig",
+                        "src/apprt/win32/update_target.zig",
+                        "src/apprt/win32/update_target_msi.zig",
+                        "test/win32/update-target-guard.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/update_apply.zig":  "9850e43882f9f7413767ce1aec28654f49a57a52635eff3f2996f6f6fe283149",
+                  "src/apprt/win32/update_install.zig":  "95e0bd8e65305a93c233d53b18ecb13d1d179c1a59837aae0c9e1511eae15d58",
+                  "src/apprt/win32/update_target.zig":  "81e78859640bd220c3e105401042030ba88fb1d45cc012b49b574e564bc035a7",
+                  "src/apprt/win32/update_target_msi.zig":  "47644e8dec7b3f4cc1744b0aa7e8c76be4b0f47d2eb587ab88ff20f25a9bc6f4",
+                  "test/win32/lib/ApplierSandbox.ps1":  "82870ff2c01dd3d3e36b1b1f8ff7ed7359059245db8e5d88ac9e30838e177bd8",
+                  "test/win32/update-target-guard.ps1":  "ea15159fd907d6b0872a0741fb25f5f7d8845ecb0f15db7ca7bbd3ceff69dc0e"
+              },
+    "code":  {
+                 "test/win32/lib/ApplierSandbox.ps1":  "code1:8bf850c25defcbb6cdc5be992c46adfea22afb675fdbf58c914b156e69ba48ca",
+                 "test/win32/update-target-guard.ps1":  "code1:4e904690ea4dd78187c92e091a4004b6bc9bdc2a6ab40c04eef542448175f0fd"
+             }
+}
