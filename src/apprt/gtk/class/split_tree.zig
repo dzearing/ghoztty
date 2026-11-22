@@ -278,7 +278,13 @@ pub const SplitTree = extern struct {
         const old_last_focused = self.private().last_focused.get();
         defer if (old_last_focused) |v| v.unref(); // unref strong ref from get
         const old_tree_ = self.getTree();
-        if (overrides.focus or old_tree_ == null) self.private().last_focused.set(surface);
+        if (overrides.focus or old_tree_ == null)
+            self.private().last_focused.set(surface)
+        else
+            // It never receives focus, so it would never receive the leave
+            // that clears the "focused" a new surface starts with, and the
+            // tree would read IT as the active pane forever (T3367).
+            surface.startUnfocused();
         errdefer self.private().last_focused.set(old_last_focused);
 
         // If we have no tree yet, then this becomes our tree and we're done.

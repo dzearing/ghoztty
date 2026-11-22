@@ -2792,6 +2792,19 @@ pub const Surface = extern struct {
         self.updateFocus(false);
     }
 
+    /// Start this surface unfocused: it is being opened beside the focused
+    /// pane without taking the focus (a CLI `+split` without `--focus`).
+    /// A surface otherwise starts "focused" and relies on a focus-leave to
+    /// clear it, which a pane that never had focus never gets (T3367).
+    pub fn startUnfocused(self: *Self) void {
+        const priv = self.private();
+        if (!priv.focused) return;
+        if (priv.core_surface != null) return self.updateFocus(false);
+        // Before the core exists its init applies `priv.focused`.
+        priv.focused = false;
+        self.as(gobject.Object).notifyByPspec(properties.focused.impl.param_spec);
+    }
+
     fn updateFocus(self: *Self, focused: bool) void {
         const priv = self.private();
         priv.focused = focused;

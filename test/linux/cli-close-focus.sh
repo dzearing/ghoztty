@@ -232,26 +232,30 @@ out=$(focus_raw nothing-is-called-this)
 echo "$out" | grep -q '"success":false' && echo "$out" | grep -q "not found" && [ "$(windows)" = "$n" ]
 hl_check "G2 focus of a name nothing holds says not found and opens nothing" $? "out=$out $(dump)"
 
-# Within a window: the pane focus moves to the target. A new split takes the
-# focus itself, so each check starts from the OTHER pane being focused.
+# Within a window: the pane focus moves to the target. A +split without
+# --focus leaves the focus where it was - and the new pane must not CLAIM it
+# either (a GTK surface starts "focused" and only a focus-leave clears it,
+# which a pane that never had focus never gets).
 cli +split --target=wa --name=fa > /dev/null 2>&1
 hl_wait_for 10 leaves_are wa 2
-hl_wait_for 10 pane_focused wa fa
-hl_check "G3a the new split fa starts focused (the baseline the next checks move off)" $? "$(dump)"
-out=$(focus_raw "$wa_main")
-echo "$out" | grep -q '"success":true'
-hl_check "G3b focus by pane id succeeds" $? "out=$out"
-hl_wait_for 10 pane_focused wa "$wa_main"
-lrc=$?
+sleep 1
 f_off=1; pane_focused wa fa && f_off=0
-[ $lrc = 0 ] && [ $f_off = 1 ]
-hl_check "G3 focus by pane id moves the pane focus off fa onto that pane" $? "$(dump)"
+pane_focused wa "$wa_main" && [ $f_off = 1 ]
+hl_check "G3a +split without --focus keeps the focus on the original pane, and fa does not claim it" $? "$(dump)"
 out=$(focus_raw fa)
+echo "$out" | grep -q '"success":true'
+hl_check "G3b focus --target=fa succeeds" $? "out=$out"
 hl_wait_for 10 pane_focused wa fa
 lrc=$?
 m_off=1; pane_focused wa "$wa_main" && m_off=0
 [ $lrc = 0 ] && [ $m_off = 1 ]
-hl_check "G4 focus --target=fa (a pane name) moves it back" $? "out=$out $(dump)"
+hl_check "G3 focus --target=fa (a pane name) moves the pane focus onto fa" $? "$(dump)"
+out=$(focus_raw "$wa_main")
+hl_wait_for 10 pane_focused wa "$wa_main"
+lrc=$?
+f_off=1; pane_focused wa fa && f_off=0
+[ $lrc = 0 ] && [ $f_off = 1 ]
+hl_check "G4 focus by pane id moves it back" $? "out=$out $(dump)"
 
 # Across windows: the compositor decides whether a window is raised
 # (xdg-activation); the reply is the same either way. Weston headless has no
