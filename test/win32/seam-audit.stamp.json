@@ -1,10 +1,10 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-21T16:06:45-08:00",
-    "commit":  "b3f1dcfc6",
+    "generated":  "2026-11-21T16:22:59-08:00",
+    "commit":  "81bcd95b2",
     "uncommitted":  [
-                        "src/apprt/win32/ViewerPane.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -61,7 +61,7 @@
                   "src/apprt/win32/blur_backdrop.zig":  "35e95fc688e5251678422cb22df3f2dd08c32f325397332e5021ea4cb81aec8b",
                   "src/apprt/win32/brush_cache.zig":  "6ca6b43b601eb13b29ace632ea449ab7e6c1a5e9133847d29c51f21a69483a78",
                   "src/apprt/win32/busy_light.zig":  "a6573cd9d166705097cadf69bc7a19316b04edc98136f92234842ccb07f226ce",
-                  "src/apprt/win32/caption_layout.zig":  "787f2a9f6747b245d2eef7d3b5b089b5accd0ba43d61e319bb8885622f6beb44",
+                  "src/apprt/win32/caption_layout.zig":  "39e4484c2478bd4b72a4053f80aaf39c50510637ab9b63f70a5b21ff67744603",
                   "src/apprt/win32/child_comp.zig":  "d9501a0c33e411ac965879ffe17c0090d1be802bd21bbcc3927514bffc103a7d",
                   "src/apprt/win32/chooser_cpu.zig":  "8aecf1253b878bcb951b7928f7244718e59f9ac10ae626dfb9ffddee6e7d06bd",
                   "src/apprt/win32/chooser_help.zig":  "b886379f026f9de00a4411270464122322200e2eebc1385961bc821408c6bfe9",
@@ -434,7 +434,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "cfce2ad2bb8318e449786ef898bb9e6bafff1546981ed3361218846b0a4b3207",
-                  "src/apprt/win32/Window.zig":  "d851027b3010ea6a9cddf6b21623e21049cced47a6d0ab51112bd7dee6df53bd",
+                  "src/apprt/win32/Window.zig":  "6c5ae71dfd749cc703432e94001b2c58f8fb38db8ee025cfc3bfbf360ba25988",
                   "src/apprt/win32/window_active.zig":  "9c82c52ed63a12a6670d7d1dd891f8f59c504ce50811e3a65620f647e787f944",
                   "src/apprt/win32/window_broadcast.zig":  "fc5995714ac90f0cd549c8ab3466748b2cc43bb47593ba01e439c358a8f0b054",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
@@ -613,7 +613,7 @@
                   "src/renderer/comp_overlay.zig":  "feea0d34376e378897888e0cfd4addeb89faa87f417a3236fd6fe121539a0937",
                   "src/renderer/comp_tree.zig":  "796b0cb57c6c43a027e070605dcd3c2d1ca2bfa37be914b5fbbceda43dc02876",
                   "src/renderer/cursor.zig":  "1cec4ef3e7be9cdd649c7e121052ee3e77e645c4f8093b73c97e3d8fe5ed1c3f",
-                  "src/renderer/generic.zig":  "3b429c7fcdca62160825330f3003e15f08548bfa07ce8ee670f30ada6678a61a",
+                  "src/renderer/generic.zig":  "d546f534c12fa6b100923b7224a48f530fc6e9e6f3a9612aa8c9d4b15bf0add7",
                   "src/renderer/gl_comp_present.zig":  "042c775eeba3baaaf304a393c790e25bea307a59ac433452ee0118fb9e338c24",
                   "src/renderer/gl_loader.zig":  "5e48c65d81df3cf24ab97ecd9e2d29f658aade47867fa4687af3efdaf84f8992",
                   "src/renderer/gl_report.zig":  "cab949c5e9d9586daef1261de0090f4cd58a53dee78ef01022aa478d1ce3f51e",
@@ -656,7 +656,7 @@
                   "src/termio/shell_integration.zig":  "9516f3dc973e902e406f09418bce7454e2f09400de0f70462fdf0fd5c9492c58",
                   "src/termio/stream_handler.zig":  "3752baf775e06b249ae48cb56f761a884da3154fab47afd1bb6f2914f8b7c36b",
                   "src/termio/Termio.zig":  "554f09163ae13c1cbfa5173076197af9fdbba6f0cb40e23aefdaf7db2b7bfd0a",
-                  "src/termio/Thread.zig":  "149885ca773afcb6a67fccf730e597f56156858620a40546d71d1679a1edcee9",
+                  "src/termio/Thread.zig":  "2928f03d5827da98f687164d7c84f7d7e91aabc633120c738ed6c7d27a70b4e3",
                   "src/termio/title_pace.zig":  "914afed249d211b9f119a1f551b1012008c75c2d4f9f1373639d40435eddf32d",
                   "test/win32/lib/SeamAudit.ps1":  "209b551bd95a6e77fbd4c47f40dd4cd8401b81b6c43503acd9ca77534c171b82",
                   "test/win32/seam-audit.ps1":  "e7ef6b8614ad022f48f0cfa94c7183270545ba2d3f29fc2e0b14669429e6c586",
