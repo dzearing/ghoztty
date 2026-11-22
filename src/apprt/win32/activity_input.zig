@@ -312,6 +312,8 @@ pub fn focusVisibility(self: *const ActivityMonitor) [focus_count]bool {
     var v: [focus_count]bool = @splat(true);
     v[@intFromEnum(Focusable.carousel)] = cards_mod.hasCarousel(self.card_count);
     v[@intFromEnum(Focusable.kill)] = self.sel_len > 0;
+    // A disabled "Show all" (T1748) takes no focus, so Tab steps over it.
+    v[@intFromEnum(Focusable.show_all)] = self.show_all_enabled orelse true;
     return v;
 }
 

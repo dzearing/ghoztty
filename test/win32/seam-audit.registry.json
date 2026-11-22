@@ -634,6 +634,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the shipped 512-row cap, which every other Activity Monitor harness and activity-truncated.ps1's own section C run under (T1640); debug builds only."
         },
+        "GHOZTTY_TEST_ACTIVITY_NO_SPAWNED": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = a Local panel's real root pid and pane attribution, which every other Activity Monitor harness and activity-show-all-disabled.ps1's own section E run under (T1748); debug builds only."
+        },
         "GHOZTTY_TEST_BREAK_UTF16": {
             "class": "fault",
             "unset": "shipped-elsewhere",

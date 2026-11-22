@@ -5824,6 +5824,23 @@ $GuardTable = @(
             'test\win32\activity-truncated.ps1'
         )
     },
+    # The Activity Monitor's "Show all" checkbox disables itself when there is
+    # no spawned set to narrow to (T1748). Every real source this box can open
+    # has one, so this is the only harness that sees the checkbox DISABLED
+    # (through the debug-only no-spawned seam in activity_sample.zig), and the
+    # only one that drives the disabled control's panel-routed hover help.
+    [pscustomobject]@{
+        Name   = 'activity-show-all-disabled'
+        Script = 'test\win32\activity-show-all-disabled.ps1'
+        Stamp  = 'test\win32\activity-show-all-disabled.stamp.json'
+        Covers = @(
+            'src\apprt\win32\activity_sample.zig',
+            'src\apprt\win32\activity_view.zig',
+            'src\apprt\win32\activity_hover.zig',
+            'src\apprt\win32\activity_input.zig',
+            'test\win32\activity-show-all-disabled.ps1'
+        )
+    },
     # The chooser's session RESUME (T320/T620/T816): taking over a live session
     # that has no window is the machine chooser's reason to list sessions at
     # all, and no other harness drives it - the P1-P3 floor never opens the

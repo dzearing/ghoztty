@@ -86,6 +86,21 @@ fn cellTargetFor(col: layout_mod.Column) ?Target {
 /// A painted surface under the pointer: which, and for a table cell, whose row.
 const Hit = struct { target: Target, pid: i64 = 0 };
 
+fn showAllEnabled(self: *const ActivityMonitor) bool {
+    return self.show_all_enabled orelse true;
+}
+
+/// Whether comctl32's subclass tool shows `t`'s tip. True for a real control,
+/// EXCEPT a disabled "Show all" (T1748): a disabled window receives no mouse
+/// messages, so its subclass tool never fires and the panel shows the tip as
+/// a painted surface instead - which keeps Mac's "pre-dates" sentence, the one
+/// that explains WHY it is disabled, reachable.
+fn comctlShows(self: *const ActivityMonitor, t: Target) bool {
+    if (!t.isControl()) return false;
+    if (t == .show_all) return showAllEnabled(self);
+    return true;
+}
+
 fn controlHwnd(self: *const ActivityMonitor, c: Control) w32.HWND {
     return switch (c) {
         .show_all => self.show_all_btn,
@@ -108,7 +123,7 @@ pub fn onSetCursor(self: *ActivityMonitor, over: ?w32.HWND) void {
     // Over anything else: a control's tip is over. A painted surface's tip is
     // left to the `WM_MOUSEMOVE` that follows, which knows the point.
     if (self.help_target) |cur| {
-        if (cur.isControl()) setTarget(self, null, .{ .x = 0, .y = 0 });
+        if (comctlShows(self, cur)) setTarget(self, null, .{ .x = 0, .y = 0 });
     }
 }
 
@@ -122,7 +137,7 @@ pub fn onMouseMove(self: *ActivityMonitor, x: i32, y: i32) void {
 /// belongs to comctl32's own tracking of that child.
 pub fn onMouseLeave(self: *ActivityMonitor) void {
     if (self.help_target) |t| {
-        if (!t.isControl()) setTarget(self, null, .{ .x = 0, .y = 0 });
+        if (!comctlShows(self, t)) setTarget(self, null, .{ .x = 0, .y = 0 });
     }
 }
 
@@ -150,6 +165,13 @@ fn paintedAt(self: *ActivityMonitor, x: i32, y: i32) ?Hit {
     // with no text measured.
     if (cellAt(self, l, x, y)) |hit| return hit;
     if (y < l.control.top or y >= l.control.bottom) return null;
+    // A disabled "Show all" gets no mouse input of its own - Windows routes the
+    // pointer over it to the panel - so its words are a painted surface while
+    // it is disabled, answering anywhere in the control's rect.
+    if (!showAllEnabled(self)) {
+        const s = l.show_all;
+        if (x >= s.left and x < s.right and y >= s.top and y < s.bottom) return .{ .target = .show_all };
+    }
     if (badgeText(self)) |badge| {
         const b = l.badge;
         if (b.width() > 0 and activity_help.textHit(b.left, b.right, measure(self, badge), false, x, y >= b.top and y < b.bottom)) {
@@ -287,7 +309,7 @@ fn setTarget(self: *ActivityMonitor, hit: ?Hit, pt: w32.POINT) void {
         log.debug("activity help tooltip target={s} text={s}", .{ t.kind(), text orelse "<none>" });
     }
 
-    if (controlFor(t)) |c| {
+    if (if (comctlShows(self, t)) controlFor(t) else null) |c| {
         // comctl32 shows this one: keep the tool's words current, nothing more.
         const tip = ensure(self) orelse return;
         self.help_tip.setControlText(self.hwnd, tip, c, controlHwnd(self, c), text orelse "");
@@ -301,7 +323,7 @@ fn setTarget(self: *ActivityMonitor, hit: ?Hit, pt: w32.POINT) void {
 pub fn onTimer(self: *ActivityMonitor) void {
     _ = w32.KillTimer(self.hwnd, TIMER_ID);
     const t = self.help_target orelse return;
-    if (t.isControl()) return;
+    if (comctlShows(self, t)) return;
 
     const l = self.layout();
     // A cell tip is shown only if the same row is still under the point it
@@ -320,6 +342,8 @@ pub fn onTimer(self: *ActivityMonitor) void {
     const gap: i32 = @intFromFloat(@round(4.0 * self.scale));
     var pt: w32.POINT = switch (t) {
         .badge => .{ .x = l.badge.left, .y = l.badge.bottom + gap },
+        // Only reached while the checkbox is disabled (`comctlShows`).
+        .show_all => .{ .x = l.show_all.left, .y = l.show_all.bottom + gap },
         .count => blk: {
             var cbuf: [64]u8 = undefined;
             const w = @min(measure(self, countLabel(self, &cbuf)), l.count.width());

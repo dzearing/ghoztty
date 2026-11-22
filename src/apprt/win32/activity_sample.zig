@@ -222,7 +222,7 @@ pub fn buildSnapshot(self: *ActivityMonitor, alloc: Allocator) !*Snapshot {
         .rows = &.{},
         .host = .{},
         .truncated = false,
-        .root_pid = selfPid(),
+        .root_pid = if (noSpawnedSeam(self)) 0 else selfPid(),
     };
     errdefer snap.arena.deinit();
     const arena = snap.arena.allocator();
@@ -284,6 +284,43 @@ fn readRowCapSeam() void {
 fn localRowCap() usize {
     row_cap_once.call();
     return row_cap_seam;
+}
+
+// ---------------------------------------------------------------------------
+// Test seam (T1748)
+//
+// "Show all" is disabled when the panel has no way to tell Ghoztty's processes
+// from the rest - no root pid and no row attributed to a pane, which is what an
+// agent that pre-dates PROC_SNAPSHOT.agent_pid hands back. Every agent this
+// repo builds sends agent_pid, and a Local panel always knows its own pid, so
+// without this an acceptance script can show the checkbox ENABLED and never
+// DISABLED.
+//
+//   GHOZTTY_TEST_ACTIVITY_NO_SPAWNED=1  a Local panel's samples carry no root
+//                                       pid and no pane attribution.
+//
+// Debug builds only, read once, Local only - the same fences as the row cap.
+// ---------------------------------------------------------------------------
+
+var no_spawned_seam: bool = false;
+var no_spawned_once = std.once(readNoSpawnedSeam);
+
+fn readNoSpawnedSeam() void {
+    if (comptime !build_config.is_debug) return;
+    const value = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_TEST_ACTIVITY_NO_SPAWNED") catch return;
+    defer std.heap.page_allocator.free(value);
+    if (std.mem.eql(u8, std.mem.trim(u8, value, " \t"), "1")) {
+        no_spawned_seam = true;
+        log.warn("test seam active: GHOZTTY_TEST_ACTIVITY_NO_SPAWNED=1 (Local samples carry no root and no attribution)", .{});
+    }
+}
+
+/// Whether a LOCAL sample is to pretend it cannot name Ghoztty's processes.
+/// Always false outside a debug build.
+pub fn noSpawnedSeam(self: *const ActivityMonitor) bool {
+    if (self.source == .remote) return false;
+    no_spawned_once.call();
+    return no_spawned_seam;
 }
 
 /// One poll against a REMOTE source, on the worker thread. Same shape as the

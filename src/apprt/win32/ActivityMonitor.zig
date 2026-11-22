@@ -571,6 +571,10 @@ gate: sample_gate.Gate = .{},
 /// Current view state.
 sort: rows_mod.Sort = rows_mod.default_sort,
 show_all: bool = false,
+/// Whether the "Show all" checkbox is enabled - Mac's `.disabled(!canFilterSpawned)`
+/// (T1748). Mirrors the control so `rebuild` logs only a CHANGE; null until the
+/// first rebuild has decided it.
+show_all_enabled: ?bool = null,
 /// The filter box's text, UTF-8. Sized for what the SOURCE can hold rather
 /// than for what a filter is expected to be (T989): `onFilterChanged` reads
 /// `filter_wide_cap` UTF-16 units and UTF-8 needs up to three bytes per unit,

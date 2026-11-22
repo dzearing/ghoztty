@@ -14,7 +14,9 @@
 const std = @import("std");
 
 const ActivityMonitor = @import("ActivityMonitor.zig");
+const activity_help = @import("activity_help.zig");
 const input_mod = @import("activity_input.zig");
+const sample_mod = @import("activity_sample.zig");
 const actions = @import("activity_actions.zig");
 const cards_mod = @import("activity_cards.zig");
 const layout_mod = @import("activity_layout.zig");
@@ -227,13 +229,18 @@ fn sameMachine(self: *const ActivityMonitor, win: *const Window) bool {
 pub fn rebuild(self: *ActivityMonitor) void {
     const snap = self.snap orelse {
         self.order_len = 0;
+        syncShowAllEnabled(self);
         return;
     };
     // Attribution comes FIRST: the filter reads `any_attributed` and
     // `markSpawned` reads every row's `pane_label`, so a rebuild that ordered
     // these the other way would filter against the previous poll's answer.
     collectPanes(self);
-    self.attributed_rows = panes_mod.attribute(snap.rows, self.panes[0..self.pane_count]);
+    self.attributed_rows = if (sample_mod.noSpawnedSeam(self))
+        0
+    else
+        panes_mod.attribute(snap.rows, self.panes[0..self.pane_count]);
+    syncShowAllEnabled(self);
 
     const f = filterSpec(self);
     rows_mod.markSpawned(snap.rows, if (rows_mod.spawnedOnlyActive(f)) f.root_pid else 0, &self.spawned);
@@ -285,6 +292,33 @@ pub fn rebuild(self: *ActivityMonitor) void {
             snap.truncated,
         },
     );
+}
+
+/// Enable "Show all" exactly when there is a spawned set to narrow to - Mac's
+/// `.disabled(!canFilterSpawned)` (`RemoteActivityMonitorView.swift:1016-1021`,
+/// T1748). With no root pid and no pane-attributed row, unchecking it would
+/// change nothing, so it must not look like it could. The checked state is left
+/// alone, as Mac's binding is: the filter ignores it while it cannot apply
+/// (`spawnedOnlyActive`), and it means what it says again the moment a root
+/// appears.
+///
+/// Logged on a change only - `activity monitor: show-all enabled=<bool>` is the
+/// acceptance oracle, read beside `IsWindowEnabled` on the control itself.
+pub fn syncShowAllEnabled(self: *ActivityMonitor) void {
+    const enabled = activity_help.canFilterSpawned(filterSpec(self));
+    if (self.show_all_enabled == enabled) return;
+    self.show_all_enabled = enabled;
+    // Hand the keyboard off BEFORE disabling the control that holds it: a
+    // disabled window keeps no focus, and a panel with no focus window goes
+    // deaf to keys - the trap `refreshChrome` documents for hiding Kill.
+    if (!enabled and self.focus == .show_all) {
+        var vis = input_mod.focusVisibility(self);
+        vis[@intFromEnum(input_mod.Focusable.show_all)] = false;
+        const next = input_mod.nextVisibleFocus(.show_all, false, vis);
+        if (w32.GetFocus() == self.show_all_btn) moveFocus(self, next) else noteFocus(self, next);
+    }
+    _ = w32.EnableWindow(self.show_all_btn, @intFromBool(enabled));
+    log.info("activity monitor: show-all enabled={}", .{enabled});
 }
 
 pub fn clampScroll(self: *ActivityMonitor) void {

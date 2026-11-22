@@ -1,7 +1,7 @@
 {
     "guard":  "pane-stack-strip",
     "script":  "test/win32/pane-stack-strip.ps1",
-    "generated":  "2026-11-21T18:49:13-08:00",
+    "generated":  "2026-11-21T19:09:10-08:00",
     "commit":  "ea57924a0",
     "uncommitted":  [
 
