@@ -1,15 +1,15 @@
 {
     "guard":  "caller-anchor",
     "script":  "test/win32/caller-anchor.ps1",
-    "generated":  "2026-11-21T22:47:31-08:00",
-    "commit":  "f81eb427a",
+    "generated":  "2026-11-22T00:30:41-08:00",
+    "commit":  "2d5f8aeb9",
     "uncommitted":  [
 
                     ],
     "files":  {
-                  "src/apprt/ipc.zig":  "c6a3c06b1890013214b721ad93fb75e12da2c809f65eb031fde96d8fe40aaf3f",
+                  "src/apprt/ipc.zig":  "3912c95d7a1692a7abc4355e44afeb58bfe18aa04ed3526246b90c2b975e8e71",
                   "src/apprt/ipc/args.zig":  "c434ad0eac1fb913714792af851cc374540da642a6510ea6b6e73fc617040157",
-                  "src/apprt/win32/IpcHandlers.zig":  "36d5a50a7bebe991b8614068f4452ec8c594fce93a78e8198acb127a5be03c67",
+                  "src/apprt/win32/IpcHandlers.zig":  "838430e0b9c32744f58264e345a1800db31902bbf5f69f5b373378074051ecdf",
                   "test/win32/caller-anchor.ps1":  "6c5ce12b4624feb742eba828395db41c9959e3875db60a481e5ce4c92584a299"
               },
     "code":  {

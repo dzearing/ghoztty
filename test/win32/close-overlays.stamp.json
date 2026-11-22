@@ -1,14 +1,17 @@
 {
     "guard":  "close-overlays",
     "script":  "test/win32/close-overlays.ps1",
-    "generated":  "2026-11-17T06:26:20-08:00",
-    "commit":  "9f1260ff1",
+    "generated":  "2026-11-22T00:17:33-08:00",
+    "commit":  "2d5f8aeb9",
     "uncommitted":  [
-                        "src/apprt/win32/CloseUndo.zig"
+
                     ],
     "files":  {
-                  "src/apprt/win32/CloseUndo.zig":  "7a1dab59701ae4c6d2fd722ab724a9805f106425ee498991918fd402b848bec6",
+                  "src/apprt/win32/CloseUndo.zig":  "9210f8638e65623f49300a63518ddb622ff3a24f18859497b60be1dae8458159",
                   "src/apprt/win32/PaneView.zig":  "66178bd1ff0806c699d541876914c4294a95852e411a03e38771eddd8faeaad7",
                   "test/win32/close-overlays.ps1":  "88db943f6f346474c38e0ceb43af78054083aba54323d385159932a659deb3be"
-              }
+              },
+    "code":  {
+                 "test/win32/close-overlays.ps1":  "code1:9f563511af3c1b8213a820c4250d52a82ec1638a49962f77fdd14d94af0c9605"
+             }
 }

@@ -202,7 +202,13 @@ private runtime dir, so a test app can never meet the user's.
   thread, each request run on the GTK main thread through `glib.idleAdd`.
   A live socket at the path is left alone (the app logs `another instance
   already serves`); a stale one of ours is replaced; anything else is refused.
-- `IpcHandlers.zig` plugs into the shared `apprt/ipc/server.zig` dispatcher.
+- `IpcHandlers.zig` plugs into the shared `apprt/ipc/server.zig` dispatcher,
+  and serves `+read`/`+send-keys` through the shared verb bodies in
+  `apprt/ipc/verbs.zig` (T3361): GTK supplies only the model (`Terminal`
+  over the core Surface via `apprt/ipc/core_terminal.zig`, `lookupTerminal`,
+  `input_line_ends = .pty`), so its argument handling, failure sentences and
+  replies are win32's by construction. A new verb body goes into `verbs.zig`
+  first (T3374, T3375), not into this file.
   `+list`, `+version`, `+send-keys` and `+read` are real; every other verb
   answers `+<verb> is not served by the Linux app yet (T3336)` until its card
   lands (T3370 new-window/split/rename, T3367 close/focus, T3368 rearrange,
