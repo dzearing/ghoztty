@@ -203,8 +203,17 @@ private runtime dir, so a test app can never meet the user's.
   A live socket at the path is left alone (the app logs `another instance
   already serves`); a stale one of ours is replaced; anything else is refused.
 - `IpcHandlers.zig` plugs into the shared `apprt/ipc/server.zig` dispatcher.
-  `+list` and `+version` are real; every other verb answers `+<verb> is not
-  served by the Linux app yet (T3336)`.
+  `+list`, `+version`, `+send-keys` and `+read` are real; every other verb
+  answers `+<verb> is not served by the Linux app yet (T3336)` until its card
+  lands (T3370 new-window/split/rename, T3367 close/focus, T3368 rearrange,
+  T3369 reload, T3339 set-state/set-banner, T3337 stash/restore/remote).
+- `+send-keys` and `+read` target a pane by its stable id (`$GHOZTTY_PANE_ID`,
+  the `+list` id) until names arrive with T3370. `+send-keys` is the Mac's:
+  text runs framed as a bracketed paste when the program asked for one, key
+  runs bare, no LF rewriting (a POSIX pty takes LF as a line end).
+  Acceptance: `wsl-run.ps1 -CommandFile test\linux\cli-send-read.sh`, ends
+  `CLI SEND READ: ALL PASS` (15 checks, including a byte-exact raw-tty probe
+  of the paste framing).
 - Every pane is baked with `$GHOZTTY_IPC_SOCKET` (this app's) and a UUID
   `$GHOZTTY_PANE_ID`; an inherited `$GHOZTTY_IPC_SOCKET` is unset at startup.
 
