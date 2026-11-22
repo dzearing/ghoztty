@@ -69,8 +69,8 @@ tty > "$pane/tty"
 "$app" +list --json > "$pane/list.json" 2> "$pane/list.err"
 echo \$? > "$pane/list.rc"
 "$app" +list --tty="\$(tty)" > "$pane/bytty" 2>&1
-"$app" +split --direction=right > "$pane/split.out" 2>&1
-echo \$? > "$pane/split.rc"
+"$app" +reload > "$pane/unserved.out" 2>&1
+echo \$? > "$pane/unserved.rc"
 echo done > "$pane/done"
 sleep 120
 EOF
@@ -130,8 +130,8 @@ ctl=$(GHOZTTY_IPC_SOCKET="$decoy" "$app" +list --json 2>/dev/null | python3 -c '
 hl_check "I15c control: a CLI aimed at the decoy does reach it" $? "pid=$ctl hits=$(wc -l < "$decoy_hits")"
 
 # A verb not served yet says so, naming the task, and fails.
-[ "$(cat "$pane/split.rc")" != 0 ] && grep -q 'not served by the Linux app yet (T3336)' "$pane/split.out"
-hl_check "I16 +split answers 'not served by the Linux app yet (T3336)'" $? "$(head -c 200 "$pane/split.out")"
+[ "$(cat "$pane/unserved.rc")" != 0 ] && grep -q 'not served by the Linux app yet (T3369)' "$pane/unserved.out"
+hl_check "I16 +reload answers 'not served by the Linux app yet (T3369)'" $? "$(head -c 200 "$pane/unserved.out")"
 
 # Outside any pane, the CLI derives the same path from the same environment.
 out=$(env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID "$app" +version 2>&1)

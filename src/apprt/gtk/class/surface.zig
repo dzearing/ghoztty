@@ -717,9 +717,18 @@ pub const Surface = extern struct {
         overrides: struct {
             command: ?configpkg.Command = null,
             working_directory: ?[:0]const u8 = null,
+            /// `KEY=VALUE` entries baked into the pane's environment (T3370:
+            /// `+new-window`/`+split` `--env`, `GHOZTTY_PANE_NAME`,
+            /// `GHOZTTY_WINDOW_NAME`). Owned.
+            env: []const []const u8 = &.{},
 
             pub const none: @This() = .{};
         } = .none,
+
+        /// The IPC name `+split --name` / `+new-window --name` gave this pane
+        /// (T3370), or null: an unnamed pane answers to its id only. Names
+        /// belong to the window the pane is in (T2250). Owned.
+        ipc_name: ?[]u8 = null,
 
         pub var offset: c_int = 0;
     };
@@ -728,6 +737,7 @@ pub const Surface = extern struct {
         command: ?configpkg.Command = null,
         working_directory: ?[:0]const u8 = null,
         title: ?[:0]const u8 = null,
+        env: []const []const u8 = &.{},
 
         pub const none: @This() = .{};
     }) *Self {
@@ -739,8 +749,44 @@ pub const Surface = extern struct {
         priv.overrides = .{
             .command = if (overrides.command) |c| c.clone(alloc) catch null else null,
             .working_directory = if (overrides.working_directory) |wd| alloc.dupeZ(u8, wd) catch null else null,
+            .env = dupeEnv(alloc, overrides.env) catch &.{},
         };
         return self;
+    }
+
+    fn dupeEnv(alloc: Allocator, env: []const []const u8) Allocator.Error![]const []const u8 {
+        if (env.len == 0) return &.{};
+        const out = try alloc.alloc([]const u8, env.len);
+        var n: usize = 0;
+        errdefer {
+            for (out[0..n]) |e| alloc.free(e);
+            alloc.free(out);
+        }
+        for (env) |e| {
+            out[n] = try alloc.dupe(u8, e);
+            n += 1;
+        }
+        return out;
+    }
+
+    fn freeEnv(alloc: Allocator, env: []const []const u8) void {
+        if (env.len == 0) return;
+        for (env) |e| alloc.free(e);
+        alloc.free(env);
+    }
+
+    /// The pane's IPC name (T3370), or null when it has none.
+    pub fn ipcName(self: *Self) ?[]const u8 {
+        return self.private().ipc_name;
+    }
+
+    /// Give the pane an IPC name, or clear it with null.
+    pub fn setIpcName(self: *Self, name: ?[]const u8) void {
+        const alloc = Application.default().allocator();
+        const priv = self.private();
+        if (priv.ipc_name) |v| alloc.free(v);
+        priv.ipc_name = null;
+        if (name) |n| priv.ipc_name = alloc.dupe(u8, n) catch null;
     }
 
     pub fn core(self: *Self) ?*CoreSurface {
@@ -1948,6 +1994,12 @@ pub const Surface = extern struct {
         if (priv.overrides.working_directory) |wd| {
             alloc.free(wd);
             priv.overrides.working_directory = null;
+        }
+        freeEnv(alloc, priv.overrides.env);
+        priv.overrides.env = &.{};
+        if (priv.ipc_name) |v| {
+            alloc.free(v);
+            priv.ipc_name = null;
         }
 
         // Clean up key sequence and key table state
@@ -3432,6 +3484,14 @@ pub const Surface = extern struct {
                 });
                 config.env.parseCLI(carena, kv) catch |err| {
                     log.warn("ipc endpoint env bake failed err={}", .{err});
+                };
+            }
+            // T3370: what the IPC verb that opened this pane asked for
+            // (`--env`, the pane and window names), the Mac's
+            // `environmentVariables` and win32's `Overrides.env`.
+            for (priv.overrides.env) |kv| {
+                config.env.parseCLI(carena, kv) catch |err| {
+                    log.warn("ipc env override bake failed err={}", .{err});
                 };
             }
         }

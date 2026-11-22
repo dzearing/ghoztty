@@ -2322,6 +2322,27 @@ const Action = struct {
         );
     }
 
+    /// `newWindow` for an IPC `+new-window` (T3370): the first pane also
+    /// gets `env` (`KEY=VALUE`), and the caller gets the window back to name,
+    /// title and split.
+    pub fn newWindowForIpc(
+        self: *Application,
+        overrides: struct {
+            command: ?configpkg.Command = null,
+            working_directory: ?[:0]const u8 = null,
+            env: []const []const u8 = &.{},
+        },
+    ) *Window {
+        self.private().requested_window = true;
+        const win = Window.new(self, .none);
+        initAndShowWindow(self, win, null, .{
+            .command = overrides.command,
+            .working_directory = overrides.working_directory,
+            .env = overrides.env,
+        });
+        return win;
+    }
+
     fn initAndShowWindow(
         self: *Application,
         win: *Window,
@@ -2330,6 +2351,7 @@ const Action = struct {
             command: ?configpkg.Command = null,
             working_directory: ?[:0]const u8 = null,
             title: ?[:0]const u8 = null,
+            env: []const []const u8 = &.{},
 
             pub const none: @This() = .{};
         },
@@ -2350,6 +2372,7 @@ const Action = struct {
             .command = overrides.command,
             .working_directory = overrides.working_directory,
             .title = overrides.title,
+            .env = overrides.env,
         });
 
         // Estimate the initial window size before presenting so the window

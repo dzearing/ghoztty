@@ -208,10 +208,39 @@ pub const SplitTree = extern struct {
             command: ?configpkg.Command = null,
             working_directory: ?[:0]const u8 = null,
             title: ?[:0]const u8 = null,
+            env: []const []const u8 = &.{},
 
             pub const none: @This() = .{};
         },
     ) Allocator.Error!void {
+        _ = try self.newSplitAt(direction, parent_, .{
+            .command = overrides.command,
+            .working_directory = overrides.working_directory,
+            .title = overrides.title,
+            .env = overrides.env,
+        });
+    }
+
+    /// `newSplit` with the knobs an IPC `+split` needs (T3370): split next to
+    /// `at` (else the active surface), at `ratio`, and - with `focus` false -
+    /// leave the keyboard on the pane that had it (the T1797 background
+    /// default). Returns the new surface; the tree holds its reference.
+    pub fn newSplitAt(
+        self: *Self,
+        direction: Surface.Tree.Split.Direction,
+        parent_: ?*Surface,
+        overrides: struct {
+            command: ?configpkg.Command = null,
+            working_directory: ?[:0]const u8 = null,
+            title: ?[:0]const u8 = null,
+            env: []const []const u8 = &.{},
+            at: ?*Surface = null,
+            ratio: f16 = 0.5,
+            focus: bool = true,
+
+            pub const none: @This() = .{};
+        },
+    ) Allocator.Error!*Surface {
         const alloc = Application.default().allocator();
 
         // Create our new surface.
@@ -219,6 +248,7 @@ pub const SplitTree = extern struct {
             .command = overrides.command,
             .working_directory = overrides.working_directory,
             .title = overrides.title,
+            .env = overrides.env,
         });
         defer surface.unref();
         _ = surface.refSink();
@@ -242,29 +272,39 @@ pub const SplitTree = extern struct {
         var single_tree = try Surface.Tree.init(alloc, surface);
         defer single_tree.deinit();
 
-        // We want to move our focus to the new surface no matter what.
+        // We want to move our focus to the new surface (unless the caller
+        // asked to keep it where it is, and there is somewhere to keep it).
         // But we need to be careful to restore state if we fail.
         const old_last_focused = self.private().last_focused.get();
         defer if (old_last_focused) |v| v.unref(); // unref strong ref from get
-        self.private().last_focused.set(surface);
+        const old_tree_ = self.getTree();
+        if (overrides.focus or old_tree_ == null) self.private().last_focused.set(surface);
         errdefer self.private().last_focused.set(old_last_focused);
 
         // If we have no tree yet, then this becomes our tree and we're done.
-        const old_tree = self.getTree() orelse {
+        const old_tree = old_tree_ orelse {
             self.setTree(&single_tree);
-            return;
+            return surface;
         };
 
-        // The handle we create the split relative to. Today this is the active
-        // surface but this might be the handle of the given parent if we want.
-        const handle = self.getActiveSurfaceHandle() orelse .root;
+        // The handle we create the split relative to: `at` when it is in
+        // this tree, else the active surface.
+        const handle = handle: {
+            if (overrides.at) |at| {
+                var it = old_tree.iterator();
+                while (it.next()) |entry| {
+                    if (entry.view == at) break :handle entry.handle;
+                }
+            }
+            break :handle self.getActiveSurfaceHandle() orelse .root;
+        };
 
         // Create our split!
         var new_tree = try old_tree.split(
             alloc,
             handle,
             direction,
-            0.5, // Always split equally for new splits
+            overrides.ratio,
             &single_tree,
         );
         defer new_tree.deinit();
@@ -275,6 +315,7 @@ pub const SplitTree = extern struct {
 
         // Replace our tree
         self.setTree(&new_tree);
+        return surface;
     }
 
     pub fn resize(

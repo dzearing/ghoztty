@@ -228,6 +228,15 @@ pub const Window = extern struct {
         /// Binding group for our active tab.
         tab_bindings: *gobject.BindingGroup,
 
+        /// The window's IPC name (`+new-window --target`, else a minted
+        /// `window-N`; T3370). Window names are global. Owned.
+        ipc_name: ?[]u8 = null,
+
+        /// A title pinned by `+rename` / `+new-window --title` (T3370): while
+        /// set it wins over the active tab's title, as the Mac's
+        /// `titleOverride` does. Owned.
+        title_override: ?[:0]u8 = null,
+
         /// The configuration that this surface is using.
         config: ?*Config = null,
 
@@ -398,6 +407,7 @@ pub const Window = extern struct {
             command: ?configpkg.Command = null,
             working_directory: ?[:0]const u8 = null,
             title: ?[:0]const u8 = null,
+            env: []const []const u8 = &.{},
 
             pub const none: @This() = .{};
         },
@@ -409,6 +419,7 @@ pub const Window = extern struct {
                 .command = overrides.command,
                 .working_directory = overrides.working_directory,
                 .title = overrides.title,
+                .env = overrides.env,
             },
         );
     }
@@ -421,6 +432,7 @@ pub const Window = extern struct {
             command: ?configpkg.Command = null,
             working_directory: ?[:0]const u8 = null,
             title: ?[:0]const u8 = null,
+            env: []const []const u8 = &.{},
 
             pub const none: @This() = .{};
         },
@@ -435,6 +447,7 @@ pub const Window = extern struct {
                 .command = overrides.command,
                 .working_directory = overrides.working_directory,
                 .title = overrides.title,
+                .env = overrides.env,
             },
         );
 
@@ -870,6 +883,44 @@ pub const Window = extern struct {
         return tab.getActiveSurface();
     }
 
+    /// The window's IPC name (T3370), or null before one is given.
+    pub fn ipcName(self: *Self) ?[]const u8 {
+        return self.private().ipc_name;
+    }
+
+    /// Give the window an IPC name (the IPC handlers keep it unique).
+    pub fn setIpcName(self: *Self, name: ?[]const u8) void {
+        const alloc = Application.default().allocator();
+        const priv = self.private();
+        if (priv.ipc_name) |v| alloc.free(v);
+        priv.ipc_name = null;
+        if (name) |n| priv.ipc_name = alloc.dupe(u8, n) catch null;
+    }
+
+    /// The title a script pinned (T3370), or null.
+    pub fn titleOverride(self: *Self) ?[]const u8 {
+        return self.private().title_override;
+    }
+
+    /// Pin the window's title, or with null (or "") let the active tab's
+    /// title through again (T92: an empty title clears, never pins "").
+    pub fn setTitleOverride(self: *Self, title: ?[]const u8) void {
+        const alloc = Application.default().allocator();
+        const priv = self.private();
+        if (priv.title_override) |v| alloc.free(v);
+        priv.title_override = null;
+        const t = title orelse "";
+        if (t.len > 0) priv.title_override = alloc.dupeZ(u8, t) catch null;
+
+        priv.tab_bindings.setSource(null);
+        if (priv.title_override) |pinned| {
+            self.as(gtk.Window).setTitle(pinned);
+            return;
+        }
+        const page = priv.tab_view.getSelectedPage() orelse return;
+        priv.tab_bindings.setSource(page.getChild().as(gobject.Object));
+    }
+
     /// Returns the configuration for this window. The reference count
     /// is not increased.
     pub fn getConfig(self: *Self) ?*Config {
@@ -921,7 +972,7 @@ pub const Window = extern struct {
     }
 
     /// Get the currently selected tab as a Tab object.
-    fn getSelectedTab(self: *Self) ?*Tab {
+    pub fn getSelectedTab(self: *Self) ?*Tab {
         const priv = self.private();
         const page = priv.tab_view.getSelectedPage() orelse return null;
         const child = page.getChild();
@@ -1239,6 +1290,11 @@ pub const Window = extern struct {
         const priv = self.private();
         priv.tab_bindings.unref();
         priv.winproto.deinit();
+        const alloc = Application.default().allocator();
+        if (priv.ipc_name) |v| alloc.free(v);
+        priv.ipc_name = null;
+        if (priv.title_override) |v| alloc.free(v);
+        priv.title_override = null;
 
         gobject.Object.virtual_methods.finalize.call(
             Class.parent,
@@ -1462,8 +1518,13 @@ pub const Window = extern struct {
         assert(gobject.ext.isA(child, Tab));
 
         // Setup our binding group. This ensures things like the title
-        // are synced from the active tab.
-        priv.tab_bindings.setSource(child.as(gobject.Object));
+        // are synced from the active tab - unless a script pinned the
+        // window's title (T3370), which wins until it is cleared.
+        if (priv.title_override) |t| {
+            self.as(gtk.Window).setTitle(t);
+        } else {
+            priv.tab_bindings.setSource(child.as(gobject.Object));
+        }
 
         // If the tab was previously marked as needing attention
         // (e.g. due to a bell character), we now unmark that
