@@ -216,8 +216,8 @@ hl_check "W17d +rename without --target is refused" $? "rc=$rc out=$out"
 # --view is a viewer pane, which the Linux app does not have yet: it says so
 # rather than open a terminal.
 out=$(cli +split --view=/etc/hostname 2>&1); rc=$?
-[ $rc != 0 ] && echo "$out" | grep -q 'not served by the Linux app yet (T3338)'
-hl_check "W18 +split --view says viewers are not served yet (T3338)" $? "rc=$rc out=$out"
+[ $rc != 0 ] && echo "$out" | grep -q 'not served by the Linux app yet (T3411)'
+hl_check "W18 +split --view says viewers are not served yet (T3411)" $? "rc=$rc out=$out"
 
 # Nothing above crashed the app.
 kill -0 "$APP" 2>/dev/null

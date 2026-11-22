@@ -26,6 +26,7 @@
 //! the none lane on every seat. `Viewer.zig` is the half that asks WebKit and
 //! the disk.
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 const content = @import("../win32/viewer_content.zig");
@@ -175,6 +176,9 @@ test "requestPath: decodes, drops the query, refuses the other origin" {
 }
 
 test "candidates: template tiers are assets, then the file's directory, then absolute" {
+    // POSIX paths, which `std.fs.path.resolve` spells differently on a Windows
+    // host; the GTK viewer only ever runs on POSIX.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
     const alloc = testing.allocator;
     var c = try candidates(alloc, .template, .{ .assets_dir = "/share/viewer", .base_dir = "/home/u/docs" }, "img/a.png");
     defer c.deinit(alloc);
@@ -195,6 +199,9 @@ test "candidates: a .. escape is refused by both guarded tiers" {
 }
 
 test "candidates: a rendered page reaches its own directory only" {
+    // POSIX paths, which `std.fs.path.resolve` spells differently on a Windows
+    // host; the GTK viewer only ever runs on POSIX.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
     const alloc = testing.allocator;
     var ok = try candidates(alloc, .page, .{ .assets_dir = "/share/viewer", .base_dir = "/home/u/site" }, "css/app.css");
     defer ok.deinit(alloc);

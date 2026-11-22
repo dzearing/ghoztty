@@ -1,14 +1,14 @@
 {
     "guard":  "viewer-ext-tables",
     "script":  "test/win32/viewer-ext-tables.ps1",
-    "generated":  "2026-11-21T19:07:44-08:00",
-    "commit":  "ea57924a0",
+    "generated":  "2026-11-22T11:05:11-08:00",
+    "commit":  "9bda02cb6",
     "uncommitted":  [
 
                     ],
     "files":  {
                   "macos/Sources/Features/Viewer/ViewerView.swift":  "26b25d5ff604100b6d1d99bb6f25574b40da15355b8da4b001490d91db442e21",
-                  "src/apprt/win32/viewer_content.zig":  "ba9c2e8b0899a3116617653bbd26369f862e2116fa7609ba72552910d4f40960",
+                  "src/apprt/win32/viewer_content.zig":  "dfb525d8ee6971cb03d2b6c2dc51ff24c2cc6ab337b9f805dc2ca08bbdc1400a",
                   "test/win32/lib/ViewerExtTableAudit.ps1":  "a3793d62d765dfd146e7b2cf1f3ac3c2607ec7dd719ffac0ee596d1f6d6a76fe",
                   "test/win32/viewer-ext-tables.ps1":  "66267101658e77c90cf1608a271461abeeed66247e72f11a07f88fa49adefbaf"
               },

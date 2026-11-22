@@ -108,7 +108,7 @@ pub fn handleStash(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet
 pub fn handleRestore(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.restore, "T3337"); }
 
 /// `--view` opens a viewer pane, which the Linux app does not have yet.
-const view_not_yet = "--view is not served by the Linux app yet (T3338)";
+const view_not_yet = "--view is not served by the Linux app yet (T3411)";
 
 // ---------------------------------------------------------------------------
 // Walking the live windows and panes.

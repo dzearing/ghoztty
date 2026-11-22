@@ -83,7 +83,11 @@
 # other direction too: an exempted module that DOES turn up in a lane is
 # reported (`Stale`), so an exemption cannot outlive the reason for it.
 $script:TestReachExemptions = @(
-    [pscustomobject]@{ Prefix = 'apprt.gtk.*'; Why = 'the Linux GTK frontend; no Windows lane compiles it (apprt\gtk.zig itself is compiled, and runs)' }
+    # Except: the PURE gtk modules apprt\unit_tests.zig pulls into every lane
+    # (no GTK imports, so they compile and run here too - T3410). Listed by
+    # name, so a new gtk module is still exempt by default and a pure one that
+    # joins a lane without being listed is still reported stale.
+    [pscustomobject]@{ Prefix = 'apprt.gtk.*'; Why = 'the Linux GTK frontend; no Windows lane compiles it (apprt\gtk.zig itself is compiled, and runs)'; Except = @('apprt.gtk.viewer_scheme') }
     [pscustomobject]@{ Prefix = 'font.face.coretext'; Why = 'CoreText, macOS only' }
     [pscustomobject]@{ Prefix = 'font.shaper.coretext'; Why = 'CoreText, macOS only' }
     [pscustomobject]@{ Prefix = 'input.KeymapDarwin'; Why = 'the macOS keymap' }
@@ -278,6 +282,8 @@ function Get-SrcModulesInTestBinary {
 # itself to the rule, because a lane compiles that file and runs its tests.
 function Get-TestReachExemption([string]$Module, $Exemptions = $script:TestReachExemptions) {
     foreach ($x in $Exemptions) {
+        # A row's `Except` names modules under its prefix that a lane DOES run.
+        if ($x.PSObject.Properties['Except'] -and ($x.Except -contains $Module)) { continue }
         if ($x.Prefix.EndsWith('.*')) {
             if ($Module.StartsWith($x.Prefix.Substring(0, $x.Prefix.Length - 1))) { return $x }
         } elseif ($Module -eq $x.Prefix -or $Module.StartsWith($x.Prefix + '.')) { return $x }

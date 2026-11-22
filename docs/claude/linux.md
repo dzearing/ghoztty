@@ -89,10 +89,10 @@ when everything is present. What it puts where:
 - **apt** (the exact line it runs for whatever is missing):
 
   ```
-  apt-get install -y --no-install-recommends libgtk-4-dev libadwaita-1-dev gettext libxml2-utils python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 mesa-utils weston git curl xz-utils
+  apt-get install -y --no-install-recommends libgtk-4-dev libadwaita-1-dev libwebkitgtk-6.0-dev gettext libxml2-utils python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 mesa-utils weston git curl xz-utils
   ```
 
-  Ubuntu 24.04 gives GTK 4.14.5 and libadwaita 1.5.0.
+  Ubuntu 24.04 gives GTK 4.14.5, libadwaita 1.5.0 and WebKitGTK 2.52.6 (`webkitgtk-6.0`, the GTK4 build, for viewer panes).
 - **zig 0.15.2** (`build.zig.zon` `minimum_zig_version`) in `~/.local/zig-0.15.2`.
 - **blueprint-compiler 0.16.0** in `~/.local/blueprint-compiler-0.16.0`, a
   checkout of the tag. `src/apprt/gtk/build/blueprint.zig` requires 0.16 and
@@ -216,7 +216,7 @@ private runtime dir, so a test app can never meet the user's.
   `+rename`, `+close`, `+rearrange` and the `focus` action are real; every other verb
   answers `+<verb> is not served by the Linux app yet (<task>)`, naming the
   card that brings it (T3369 reload, T3339 set-state/set-banner, T3337
-  stash/restore/remote), and `--view` says the same for T3338.
+  stash/restore/remote), and `--view` says the same for T3411 (the viewer foundation, T3410, is below).
 - **Names (T3370)** follow win32's rules exactly (`apprt/ipc/target_lookup.zig`,
   T2250): a window name is global (`+new-window --target`, else a minted
   `window-N`, shown as `target` in `+list`); a pane name (`--name`) belongs
@@ -264,6 +264,55 @@ private runtime dir, so a test app can never meet the user's.
 
 Acceptance: `wsl-run.ps1 -CommandFile test\linux\ipc-server.sh`, ends
 `IPC SERVER: ALL PASS`.
+
+## Viewers on WebKitGTK: the foundation (T3410)
+
+The viewer-pane work (L9, T3410-T3420) runs on WebKitGTK 6.0. What L9a put
+in place, and what every later slice builds on:
+
+- **The binding is hand-written**: `src/apprt/gtk/webkit.zig`. zig-gobject has
+  no WebKit module, so these are C externs over opaque types; `addGtkNg`
+  links `webkitgtk-6.0`. Add a function when a slice needs one.
+- **`src/apprt/gtk/Viewer.zig`** wraps one web view. Template modes (markdown,
+  code) load `ghoztty-viewer://page/viewer.html` - the Mac's own custom scheme
+  and URL - and push the file in through `window.__viewer.setMarkdown` /
+  `setCode` once the page has loaded, built by win32's pure
+  `viewer_document.readUtf8`. A `.html` file loads from
+  `ghoztty-page://page/<rel>`, whose grant is the file's own directory (win32's
+  T601 split). A website is navigated to directly. Images and diffs show the
+  error card naming T3416/T3417 until those slices land.
+- **The schemes are pure** in `src/apprt/gtk/viewer_scheme.zig` (none lane):
+  template tiers are bundled assets, then the file's directory, then absolute
+  (the Mac's order, `..` refused by the first two); the page origin is its
+  directory only. Both are registered local + secure on WebKit's default
+  context, once per process; a request finds its viewer through the web view
+  (`g_object_get_data`).
+- **The WSLg GPU trap.** WebKit runs its web processes in a bubblewrap
+  sandbox with no `/dev/dxg`, so a web process that inherits
+  `GALLIUM_DRIVER=d3d12` aborts with `Could not create surfaceless EGL
+  display: EGL_NOT_INITIALIZED` and no page ever loads (the app log shows it;
+  the viewer just never renders). The viewer brings GDK's GL up first and then
+  unsets the d3d12 override before the first web process spawns, so the
+  terminal stays on the GPU and the sandbox stays on. Measured 2026-11-22:
+  unset override renders, `WEBKIT_DISABLE_DMABUF_RENDERER=1` and
+  `LIBGL_ALWAYS_SOFTWARE=1` alone do not, disabling the sandbox does (never
+  do that).
+- **Until T3411 a viewer is not a pane.** A debug build opens one in a plain
+  window from `GHOZTTY_TEST_VIEWER=<location>` and writes the result of
+  `GHOZTTY_TEST_VIEWER_PROBE` (a JS expression) to `GHOZTTY_TEST_VIEWER_DUMP`
+  as `OK <value>` / `FAIL <why>`. Reading the page back with a probe is how a
+  headless test sees a viewer: there are no pixels to look at in the harness.
+
+Acceptance:
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-webkit.sh
+```
+
+Ends `VIEWER WEBKIT: ALL PASS` (11 checks: the link, markdown with a file read
+from beside it, highlighted code, a local page with its own CSS/JS and its
+grant enforced both ways, a loopback website, the missing-file card, and the
+terminal still on D3D12).
 
 ## The interop PATH trap
 

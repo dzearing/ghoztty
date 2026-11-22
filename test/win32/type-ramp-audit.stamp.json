@@ -1,8 +1,8 @@
 {
     "guard":  "type-ramp",
     "script":  "test/win32/type-ramp-audit.ps1",
-    "generated":  "2026-11-22T09:35:46-08:00",
-    "commit":  "14b236f46",
+    "generated":  "2026-11-22T11:05:11-08:00",
+    "commit":  "9bda02cb6",
     "uncommitted":  [
 
                     ],
@@ -385,9 +385,9 @@
                   "src/apprt/win32/utf16_text.zig":  "34d7ef72beeb4a19d5517504bc40e80841e645eb5ddd2a66e7f2337180bbd2b0",
                   "src/apprt/win32/viewer_accel.zig":  "07d6f44e59f931c2c1caa5db167ffb7c099bb0684ae386a15260f6b46c5c1d2e",
                   "src/apprt/win32/viewer_bridge.zig":  "f1b065896d827648775c98b91ae9ccb5f527c554eee598f19aa7e675e440b20f",
-                  "src/apprt/win32/viewer_content.zig":  "ba9c2e8b0899a3116617653bbd26369f862e2116fa7609ba72552910d4f40960",
+                  "src/apprt/win32/viewer_content.zig":  "dfb525d8ee6971cb03d2b6c2dc51ff24c2cc6ab337b9f805dc2ca08bbdc1400a",
                   "src/apprt/win32/viewer_diff.zig":  "ab7315d1415a453e4aa2cc356df48f3beb74773451787aee44f5a3ca25a6bb2f",
-                  "src/apprt/win32/viewer_document.zig":  "09423714bde39258bd68957230120a1767a80c1217417004d31b5cd4d850e0e8",
+                  "src/apprt/win32/viewer_document.zig":  "0171029ff500c58fa6b8d184dcb580476fd75ac516a57e536db216eeed14e22c",
                   "src/apprt/win32/viewer_error_card.zig":  "ad6f9ccddb002f4cd7cda4c185370ae0d2b41102a528dccd327135383a2bad0e",
                   "src/apprt/win32/viewer_feedback_a11y.zig":  "360db1218337b04b0bcf80438dfb19c6017603617e5c880ea3e0486661e4ca0f",
                   "src/apprt/win32/viewer_feedback_acc.zig":  "3fd6d388b4084a066d62c774113ca2de51aaddee99ab8263c4fd9bbbdcbed328",

@@ -138,6 +138,15 @@ Assert 'A10 an exemption covers its prefix and below (`.*`: below only), never a
 $f11 = Get-TreeReachFindings -WithTests @('apprt.gtk.key') -InLanes @('apprt.gtk.key') -Exemptions $fx
 Assert 'A11 an exempt module that a lane runs is reported stale' (@($f11.Stale).Count -eq 1) `
     ("stale: " + (@($f11.Stale) -join ', '))
+# A row's Except names a module under its prefix that a lane DOES run (T3410:
+# the pure apprt\gtk\viewer_scheme.zig): it is scored like any module, so it is
+# neither stale when run nor exempt when missing; its siblings stay exempt.
+$fxE = @([pscustomobject]@{ Prefix = 'apprt.gtk.*'; Why = 'linux'; Except = @('apprt.gtk.pure') })
+$f11e = Get-TreeReachFindings -WithTests @('apprt.gtk.pure', 'apprt.gtk.key') -InLanes @('apprt.gtk.pure') -Exemptions $fxE
+$f11m = Get-TreeReachFindings -WithTests @('apprt.gtk.pure') -InLanes @() -Exemptions $fxE
+Assert 'A11b an Except module is scored like any other: not stale when run, missing when not' `
+    (@($f11e.Stale).Count -eq 0 -and (@($f11e.Exempt) -join ',') -eq 'apprt.gtk.key' -and (@($f11m.Missing) -join ',') -eq 'apprt.gtk.pure') `
+    ("stale: " + (@($f11e.Stale) -join ', ') + "; exempt: " + (@($f11e.Exempt) -join ', ') + "; missing: " + (@($f11m.Missing) -join ', '))
 # Another run's plants are not this run's subject (T1643): two audits in one
 # tree used to fail each other's C2 by naming both runs' probes.
 $f12 = @(Remove-ForeignReachProbes -OwnPid 42 -Names @(
