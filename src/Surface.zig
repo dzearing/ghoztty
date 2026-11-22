@@ -260,6 +260,12 @@ config_conditional_state: configpkg.ConditionalState,
 /// This is used to determine if we need to confirm, hold open, etc.
 child_exited: bool = false,
 
+/// Set when the backend replaced the command this surface was opened to run
+/// with a fresh shell in place (`Message.child_is_shell`, T3328). Sticky, so a
+/// config reload re-deriving `wait_after_command` cannot re-arm the wait for a
+/// command that is no longer there.
+child_is_shell: bool = false,
+
 /// This surface started its own default shell: no explicit command, and no
 /// existing session re-attached (a restored agent session can be mid-work).
 /// Until the user sends it input (`user_input_sent`) nothing they started
@@ -1877,6 +1883,11 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
 
         .child_exited => |v| self.childExited(v),
 
+        .child_is_shell => {
+            log.info("surface child replaced by a fresh shell; an exit now closes the surface", .{});
+            self.child_is_shell = true;
+        },
+
         .desktop_notification => |notification| {
             if (!self.config.desktop_notifications) {
                 log.info("application attempted to display a desktop notification, but 'desktop-notifications' is disabled", .{});
@@ -2134,7 +2145,10 @@ fn childExited(self: *Surface, info: apprt.surface.Message.ChildExited) void {
 
     // Waiting after command we stop here. The terminal is updated, our
     // state is updated, and now its up to the user to decide what to do.
-    if (self.config.wait_after_command) return;
+    // A command the backend has since replaced with a fresh shell
+    // (`child_is_shell`, T3328) is not the command the wait was for: the
+    // shell's `exit` closes the surface like any shell's.
+    if (waitsAfterExit(self.config.wait_after_command, self.child_is_shell)) return;
 
     // If we aren't waiting after the command, then we exit immediately
     // with no confirmation.
@@ -2837,6 +2851,27 @@ test freshDefaultShell {
     var far = cmd;
     far.remote = .{ .session_attached = false, .local_agent = false };
     try t.expect(freshDefaultShell(far));
+}
+
+/// Whether a child's exit holds the surface open (`wait-after-command`) rather
+/// than closing it. The wait is for the command the surface was opened to run;
+/// once a backend has replaced that command with a fresh shell
+/// (`child_is_shell`, T3328) the shell's exit closes the surface like any other
+/// shell's.
+fn waitsAfterExit(wait_after_command: bool, child_is_shell: bool) bool {
+    return wait_after_command and !child_is_shell;
+}
+
+test waitsAfterExit {
+    const t = std.testing;
+    // `+new-window --command=...`: the command's exit holds the pane open.
+    try t.expect(waitsAfterExit(true, false));
+    // T3328: the same pane after its host died and a fresh shell replaced the
+    // command - `exit` in that shell closes it.
+    try t.expect(!waitsAfterExit(true, true));
+    // A plain shell pane closes on exit either way.
+    try t.expect(!waitsAfterExit(false, false));
+    try t.expect(!waitsAfterExit(false, true));
 }
 
 /// The Claude Code variable that selects its fullscreen renderer

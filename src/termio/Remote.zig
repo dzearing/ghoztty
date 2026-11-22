@@ -2055,6 +2055,17 @@ fn respawnLostInPlace(self: *Remote, td: *termio.Termio.ThreadData, ch: *inbound
     log.info("respawned in place after a lost host pid={}", .{res.pid});
     self.publishProcessInfo(rd.pane);
 
+    // T3328: under `restore` the pane now runs a fresh shell, not the command it
+    // was opened with, so that shell's `exit` must close it like any shell's
+    // rather than hold it for the command's `wait-after-command`. The mailbox
+    // is FIFO, so this lands before the new shell's own `child_exited`. Same
+    // timed retries as that push: never a forever park on the GUI's mailbox.
+    if (fresh) {
+        while (td.surface_mailbox.push(.child_is_shell, .{ .ns = 10 * std.time.ns_per_ms }) == 0) {
+            if (io.closing.load(.acquire)) break;
+        }
+    }
+
     // The notice fold (restore) moves the old screen into the scrollback on the
     // shell's first byte. The divider (rerun) has no fold, so park the screen
     // now, as `performAwaitedRelaunch` does, before the shell's repaint erases it.

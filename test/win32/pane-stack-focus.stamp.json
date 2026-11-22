@@ -1,8 +1,8 @@
 {
     "guard":  "pane-stack-focus",
     "script":  "test/win32/pane-stack-focus.ps1",
-    "generated":  "2026-11-22T05:25:23-08:00",
-    "commit":  "5f05e5661",
+    "generated":  "2026-11-22T06:33:01-08:00",
+    "commit":  "004893d0e",
     "uncommitted":  [
 
                     ],

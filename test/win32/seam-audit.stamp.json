@@ -1,10 +1,10 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-22T05:26:37-08:00",
-    "commit":  "5f05e5661",
+    "generated":  "2026-11-22T06:35:41-08:00",
+    "commit":  "004893d0e",
     "uncommitted":  [
-
+                        "src/termio/Remote.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -650,7 +650,7 @@
                   "src/termio/open_failed_notice.zig":  "709aba3d06eb0a956a167b00dde2231439d7f7dd43535bad8d2eb36811019d8e",
                   "src/termio/Options.zig":  "f6d8184ad4488ccdb76571a7e87300607beb9a4d5d77a8300dd92e2cd757d5e0",
                   "src/termio/read_coalesce.zig":  "a3c1d8fbbf4797ed5bb314012ef712cb960aaf575895eee6f77cb09220108995",
-                  "src/termio/Remote.zig":  "5c2fc604fdd30978498fcaef567793262c7d8234d6796022faa161a87014df46",
+                  "src/termio/Remote.zig":  "4b8b0cbf3af7db4d298c73d4c561bd26a87e44f9f3d0cc2389ad99fb9febe3e7",
                   "src/termio/restore_history.zig":  "544cdf75e6182afec8cccf7e6fa1fa6205680841a98b92754dbdca7d3bcdc083",
                   "src/termio/restore_park.zig":  "1e68d21a293216cfb5a003f0fa1cb494ba031fe4d7ac236b4f5ccd168e6f50bd",
                   "src/termio/session_notice.zig":  "1aa4830a68bd520fa8f3114d44499bec8442be4fa8309afa3fe17fe5bc211728",

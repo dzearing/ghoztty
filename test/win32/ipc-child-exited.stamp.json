@@ -1,14 +1,14 @@
 {
     "guard":  "ipc-child-exited",
     "script":  "test/win32/ipc-child-exited.ps1",
-    "generated":  "2026-11-22T04:07:30-08:00",
-    "commit":  "7f6f32480",
+    "generated":  "2026-11-22T06:32:14-08:00",
+    "commit":  "004893d0e",
     "uncommitted":  [
-
+                        "src/termio/Remote.zig"
                     ],
     "files":  {
                   "src/apprt/win32/Surface.zig":  "71155f71e0c73654fe8b324947cb011108dc694685f43ac9c27d5ea33d540e69",
-                  "src/termio/Remote.zig":  "5c2fc604fdd30978498fcaef567793262c7d8234d6796022faa161a87014df46",
+                  "src/termio/Remote.zig":  "4b8b0cbf3af7db4d298c73d4c561bd26a87e44f9f3d0cc2389ad99fb9febe3e7",
                   "test/win32/ipc-child-exited.ps1":  "64b4bd336c1f9742aaed474e62f55f124ad53a1a0d745eb40dd7619ae42b0794"
               },
     "code":  {

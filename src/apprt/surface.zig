@@ -51,6 +51,15 @@ pub const Message = union(enum) {
     /// command are given in the `ChildExited` struct.
     child_exited: ChildExited,
 
+    /// The child is now a plain interactive shell, whatever the surface was
+    /// opened to run (T3328). Sent by a backend that replaced a command with a
+    /// fresh shell in place (a remote pane whose session host died, respawned
+    /// under the `restore` relaunch policy). From here on an exit closes the
+    /// surface the way a shell's exit always does, instead of holding it open
+    /// for `wait-after-command`, which was meant for the command that is gone.
+    /// Ordered before that shell's own `child_exited` by the mailbox.
+    child_is_shell,
+
     /// Show a desktop notification.
     desktop_notification: struct {
         /// Desktop notification title.
