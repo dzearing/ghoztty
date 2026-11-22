@@ -358,6 +358,47 @@ It starts the agent by hand on an ephemeral loopback port with a private
 heartbeat still advances after the client exits, then CLOSEs the session by id
 and checks it stops. Ends `AGENT SURVIVE: ALL PASS`.
 
+## Session persistence: agent-hosted panes (T3337)
+
+With `session-persistence = true` (the default, as on the Mac and Windows) the
+GTK app runs every new pane under the local `ghoztty-agent`, so the pane's
+shell outlives the app.
+
+- **Find or spawn** is `src/apprt/gtk/LocalAgent.zig`, the Mac's
+  `LocalAgentManager` translated: read `port.json`, check its pid, dial its
+  0600 AF_UNIX `agent.sock` (the HELLO is the health check); otherwise
+  double-fork + `setsid` the `ghoztty-agent` that sits beside `ghoztty` (the
+  GTK build installs it there; `GHOSTTY_LOCAL_AGENT_BIN` overrides) and poll
+  the info file, 3 s at most. A missing or broken agent gives the pane a plain
+  exec pty, and new panes skip the agent for 15 s after a failure.
+- **The state dir** is `remote/local_agent_paths.zig`, shared with `+sessions`:
+  `$XDG_CONFIG_HOME/ghoztty/local-agent[-debug][-<instance>]/` when
+  `XDG_CONFIG_HOME` is absolute, else `~/.config/...` (macOS is always
+  `~/.config`, byte for byte the Swift derivation). It holds `agent.sock`,
+  `port.json`, `sessions.json`, `agent.lock`, `agent.heartbeat`, `agent.log`.
+- **Close vs quit.** A pane freed while the app is not quitting was closed by
+  the user (pane, tab, window, `+close`), so its session ends (CLOSE). Panes
+  freed by `quitNow` detach, and a killed app detaches by dropping the socket:
+  the sessions survive. Re-attaching them on the next launch is T3397.
+- **`+list`** reads an agent-hosted pane's pid and tty from what the agent
+  reported, so `--tty=$(tty)` still finds it.
+- **The harness** exports a private `XDG_CONFIG_HOME` under its runtime dir,
+  so the agent a test app spawns lives there, and `hl_stop` reaps it and every
+  pane it hosts (`hl_agent_pid`, `hl_stop_agent`). Every GTK suite now runs
+  with agent-hosted panes.
+
+Acceptance:
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\session-agent.sh
+```
+
+Ends `SESSION AGENT: ALL PASS`: the agent is spawned under the harness dir with
+a 0600 socket, the pane descends from it and not from the app, `+sessions`
+lists it, it keeps running after the app is SIGKILLed, a second app finds the
+same agent, `+close` ends a session, and `session-persistence=false` keeps the
+exec pty.
+
 ## Distro state (2026-11-21)
 
 - Ubuntu 24.04.1 LTS, runs as `root` (`$HOME=/root`), 32 cores, 47 GB visible.

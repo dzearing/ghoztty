@@ -1090,7 +1090,7 @@ pub fn init(
                 // forwarded argv rewrite would then SWAP the pane's shell.
                 const inherited_shell: ?[]const u8 =
                     if (rb.local_shell_integration and
-                        comptime builtin.os.tag != .windows)
+                    comptime builtin.os.tag != .windows)
                         (if (env.get("SHELL")) |s| try alloc.dupe(u8, s) else null)
                     else
                         null;
@@ -1159,7 +1159,17 @@ pub fn init(
                         (config.@"wait-after-command" or
                             (rb.local_shell_integration and command_explicit)))
                     {
-                        remote_command = try c.string(alloc);
+                        // T3396: a POSIX LOCAL agent runs this as
+                        // `<shell> -lic <command>`, so an `-e` argv must be
+                        // quoted word by word or `-e sh -c "a; b"` arrives as
+                        // `sh -c a; b`. A Windows agent's per-shell
+                        // convention, and a cross-machine agent's OS, are not
+                        // POSIX quoting, so they keep the plain join.
+                        remote_command = if (rb.local_shell_integration and
+                            comptime builtin.os.tag != .windows)
+                            try c.posixShellString(alloc)
+                        else
+                            try c.string(alloc);
                     }
                 }
                 errdefer if (remote_command) |rc| alloc.free(rc);

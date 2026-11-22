@@ -79,11 +79,18 @@ kill -0 "$agent" 2>/dev/null
 hl_check "S10 the agent is still up" $?
 
 # ---- 2. a second app FINDS the running agent; a user close ends a session --
-hl_launch APP2 "$app" --gtk-single-instance=false
+# A multi-argument `-e` whose last word holds shell syntax (T3396): it must
+# reach the agent quoted, so `sh -c` gets the whole script as one argument.
+pid4="$HL_RUNTIME/pid4"
+hl_launch APP2 "$app" --gtk-single-instance=false -e /bin/sh -c "echo \$\$ > $pid4; exec /bin/sh -i"
 # Not `test -S`: the SIGKILLed app left its socket file behind, so only a
 # live answer proves the second app is serving.
 hl_wait_for 30 sh -c "env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID '$app' +list > /dev/null 2>&1"
 hl_check "S11 a second app serves its socket" $?
+hl_wait_for 10 test -s "$pid4"
+shell4=$(cat "$pid4" 2>/dev/null)
+[ -n "$shell4" ] && kill -0 "$shell4" 2>/dev/null && is_ancestor "$(hl_agent_pid)" "$shell4"
+hl_check "S11b a multi-argument -e runs intact in an agent-hosted pane (T3396)" $? "pid4=[$shell4] $(cli +sessions 2>&1 | grep -F "$pid4" | head -1)"
 again=$(hl_agent_pid)
 [ "$again" = "$agent" ]
 hl_check "S12 the second app dialed the SAME agent (no second spawn)" $? "first=$agent now=${again:-none}"
@@ -95,6 +102,24 @@ hl_check "S13 +new-window --command runs its command in an agent-hosted pane" $?
 shell2=$(cat "$pid2" 2>/dev/null)
 [ -n "$shell2" ] && is_ancestor "$agent" "$shell2"
 hl_check "S14 that pane descends from the agent" $?
+leaf=$(cli +list --json 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)["data"]
+def walk(n):
+    if n["type"] == "split":
+        yield from walk(n["left"]); yield from walk(n["right"])
+    else:
+        yield n["terminal"]
+for w in d["windows"]:
+    if (w.get("target") or "") == "closeme":
+        for t in w["tabs"]:
+            for l in walk(t["splits"]):
+                print(l.get("pid", 0), l.get("tty", "")); sys.exit(0)
+' 2>/dev/null)
+lpid=${leaf%% *}; ltty=${leaf#* }
+ptty=$(readlink "/proc/$shell2/fd/0" 2>/dev/null)
+[ -n "$lpid" ] && [ "$lpid" != 0 ] && is_ancestor "$agent" "$lpid" && is_ancestor "$lpid" "$shell2" && [ -n "$ltty" ] && [ "$ltty" = "$ptty" ]
+hl_check "S14b +list reports the agent-hosted pane's shell pid and tty" $? "list pid=$lpid tty=$ltty; shell=$shell2 tty=$ptty"
 cli +close --target=closeme > /dev/null 2>&1
 hl_wait_for 10 sh -c "! kill -0 $shell2 2>/dev/null"
 hl_check "S15 +close (a user close) ends the pane's process" $?

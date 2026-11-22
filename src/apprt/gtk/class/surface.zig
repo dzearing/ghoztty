@@ -2105,7 +2105,17 @@ pub const Surface = extern struct {
                     "";
                 return .{ .pid = pid, .tty = tty };
             },
-            else => return .{},
+            // T3337: an agent-hosted pane's shell is the agent's child, so
+            // its pid and tty are the ones the agent reported (OPENED/ATTACHED,
+            // published for the local agent only) - what keeps `+list` and
+            // its `--tty=$(tty)` self-lookup answering for persistent panes.
+            .remote => |*remote| {
+                const pid = remote.child_pid.load(.acquire);
+                return .{
+                    .pid = if (pid > 0) pid else 0,
+                    .tty = remote.getProcessInfo(.tty_name) orelse "",
+                };
+            },
         }
     }
 

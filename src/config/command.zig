@@ -102,6 +102,78 @@ pub const Command = union(enum) {
         };
     }
 
+    /// The command as ONE string a POSIX shell parses back into exactly this
+    /// command (T3396): a `.shell` string is already shell syntax and is
+    /// returned as is; each `.direct` word is single-quoted unless it is made
+    /// only of characters no shell treats specially, with an embedded `'`
+    /// written `'\''`.
+    ///
+    /// This is what a POSIX session-persistence agent needs, because it runs a
+    /// forwarded command as `<shell> -lic <command>`: `string()`'s plain join
+    /// turned `-e /bin/sh -c "a; b"` into `/bin/sh -c a; b`, so `sh -c` ran a
+    /// bare `a` and `b` ran outside it.
+    pub fn posixShellString(
+        self: *const Self,
+        alloc: Allocator,
+    ) Allocator.Error![:0]const u8 {
+        const words = switch (self.*) {
+            .shell => |v| return try alloc.dupeZ(u8, v),
+            .direct => |v| v,
+        };
+        var out: std.ArrayList(u8) = .empty;
+        errdefer out.deinit(alloc);
+        for (words, 0..) |w, i| {
+            if (i > 0) try out.append(alloc, ' ');
+            if (w.len > 0 and posixSafeWord(w)) {
+                try out.appendSlice(alloc, w);
+                continue;
+            }
+            try out.append(alloc, '\'');
+            for (w) |ch| {
+                if (ch == '\'') try out.appendSlice(alloc, "'\\''") else try out.append(alloc, ch);
+            }
+            try out.append(alloc, '\'');
+        }
+        return try out.toOwnedSliceSentinel(alloc, 0);
+    }
+
+    fn posixSafeWord(w: []const u8) bool {
+        for (w) |ch| switch (ch) {
+            'a'...'z', 'A'...'Z', '0'...'9', '/', '.', '_', '-', '+', ',', ':', '@', '%', '=' => {},
+            else => return false,
+        };
+        return true;
+    }
+
+    test "posixShellString: a .direct argv survives a POSIX shell's parse" {
+        const testing = std.testing;
+        const alloc = testing.allocator;
+        const argv = [_][:0]const u8{ "/bin/sh", "-c", "PS1=\"hl$ \" exec /bin/sh -i" };
+        const c: Self = .{ .direct = &argv };
+        const s = try c.posixShellString(alloc);
+        defer alloc.free(s);
+        try testing.expectEqualStrings("/bin/sh -c 'PS1=\"hl$ \" exec /bin/sh -i'", s);
+    }
+
+    test "posixShellString: quotes, empty words and safe words" {
+        const testing = std.testing;
+        const alloc = testing.allocator;
+        const argv = [_][:0]const u8{ "echo", "it's", "", "a=b", "x y" };
+        const c: Self = .{ .direct = &argv };
+        const s = try c.posixShellString(alloc);
+        defer alloc.free(s);
+        try testing.expectEqualStrings("echo 'it'\\''s' '' a=b 'x y'", s);
+    }
+
+    test "posixShellString: a .shell command is already shell syntax" {
+        const testing = std.testing;
+        const alloc = testing.allocator;
+        const c: Self = .{ .shell = "echo a; sleep 1" };
+        const s = try c.posixShellString(alloc);
+        defer alloc.free(s);
+        try testing.expectEqualStrings("echo a; sleep 1", s);
+    }
+
     /// Get an iterator over the arguments array. This may allocate
     /// depending on the active tag of the command.
     ///
