@@ -580,6 +580,23 @@ if (-not $swept) {
     Write-Host "  note: last +list --json answer: $rawHead" -ForegroundColor Yellow
 }
 $leftAfter = Get-SweepLeftovers
+# An applier copy the sweep found held is retried in the background for 30s
+# (T3429, update_install.retryApplierDelete), so a leftover at first-window
+# time is not yet a verdict. Wait out that window (35s) before judging it.
+if ($swept -and $leftAfter -and -not $PlantLeak) {
+    $retryDeadline = (Get-Date).AddSeconds(35)
+    while ($leftAfter -and (Get-Date) -lt $retryDeadline) {
+        Start-Sleep -Milliseconds 500
+        $leftAfter = Get-SweepLeftovers
+    }
+}
+if ($leftAfter -and (Test-Path $sweepLog)) {
+    # The sweep names every file it could not delete and why (T3429), so a red
+    # here carries its own cause instead of a bare file name.
+    foreach ($l in @(Select-String -Path $sweepLog -Pattern 'update sweep' -ErrorAction SilentlyContinue)) {
+        Write-Host "  note: $($l.Line)" -ForegroundColor Yellow
+    }
+}
 if ($leakLock) {
     $leakLock.Dispose()
     Remove-Item $leakFile -Force -ErrorAction SilentlyContinue

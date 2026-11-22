@@ -1,15 +1,15 @@
 {
     "guard":  "update-consent",
     "script":  "test/win32/update-consent.ps1",
-    "generated":  "2026-11-22T09:33:32-08:00",
-    "commit":  "71649d592",
+    "generated":  "2026-11-22T14:23:09-08:00",
+    "commit":  "04583b4d2",
     "uncommitted":  [
                         "src/apprt/win32/update_install.zig"
                     ],
     "files":  {
                   "src/apprt/win32/ConfirmDialog.zig":  "afdb4f3b59b707671599621314ea278cb34d6b9909b2b79acb830652fee84cdf",
                   "src/apprt/win32/tray_notify.zig":  "438ad677381ef9f53b06473e00de87530b524a401fc78cad5414a5e26cc4480f",
-                  "src/apprt/win32/update_install.zig":  "95e0bd8e65305a93c233d53b18ecb13d1d179c1a59837aae0c9e1511eae15d58",
+                  "src/apprt/win32/update_install.zig":  "9523be7a31405350edf0795f6be857b756468b3de3bf4a259703e90cfd35f2b5",
                   "test/win32/lib/ApplierSandbox.ps1":  "82870ff2c01dd3d3e36b1b1f8ff7ed7359059245db8e5d88ac9e30838e177bd8",
                   "test/win32/update-consent.ps1":  "ffb7dcd7d1d3df0010fa627dc98e1dd3d6da014703124651dd9f160612bbd687"
               },

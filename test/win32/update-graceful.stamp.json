@@ -1,17 +1,18 @@
 {
     "guard":  "update-graceful",
     "script":  "test/win32/update-graceful.ps1",
-    "generated":  "2026-11-22T12:57:48-08:00",
-    "commit":  "dc7dea4ec",
+    "generated":  "2026-11-22T14:27:55-08:00",
+    "commit":  "04583b4d2",
     "uncommitted":  [
-
+                        "src/apprt/win32/update_apply.zig",
+                        "src/apprt/win32/update_install.zig"
                     ],
     "files":  {
                   "dist/windows-installer/build-msi.sh":  "366a80161b9cc243de25c0c4c786238d24e696c18224d21d2f9afa97e4e19383",
                   "scripts/msi-test-identity.ps1":  "f4114e015c29fa884abebff8fb7e057aab52582cf89584351f7b9b0c08ecce63",
                   "src/apprt/win32/install_prepare.zig":  "661e30c9ca180ca97b65a87d98517d1b8acb38caa27678533309ea357d780462",
-                  "src/apprt/win32/update_apply.zig":  "9850e43882f9f7413767ce1aec28654f49a57a52635eff3f2996f6f6fe283149",
-                  "src/apprt/win32/update_install.zig":  "95e0bd8e65305a93c233d53b18ecb13d1d179c1a59837aae0c9e1511eae15d58",
+                  "src/apprt/win32/update_apply.zig":  "3c1dc00f07f7af391e6b2531c9a25b720abe5b097183480f63e6a68cf523f119",
+                  "src/apprt/win32/update_install.zig":  "9523be7a31405350edf0795f6be857b756468b3de3bf4a259703e90cfd35f2b5",
                   "test/win32/lib/ThrowawayProduct.ps1":  "44251729c95f1c92ef33b4dff3b867356a29e4f64e2af6f849d1732cf4de2bae",
                   "test/win32/lib/UserInstallSentinel.ps1":  "e8e4fb160ba7370674c1b595c129a17200347056287c078e6074a04f5751c4b0",
                   "test/win32/update-graceful.ps1":  "7dc9554f8f1cc26a1f499cca63334bd21c4b08f8fedc564a90e40fc3a857c385"

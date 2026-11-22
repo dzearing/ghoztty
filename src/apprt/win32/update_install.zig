@@ -330,11 +330,22 @@ pub fn sweep(alloc: Allocator, keep: ?[]const u8) void {
         defer d.close();
         var it = d.iterate();
         const keep_name: ?[]const u8 = if (keep) |k| std.fs.path.basename(k) else null;
+        var retry: std.ArrayListUnmanaged([]const u8) = .empty;
         while (it.next() catch null) |entry| {
             if (entry.kind != .file) continue;
             if (keep_name) |k| if (std.ascii.eqlIgnoreCase(entry.name, k)) continue;
-            d.deleteFile(entry.name) catch continue;
+            d.deleteFile(entry.name) catch |err| {
+                // Said, not swallowed (T3429): a leftover that outlives every
+                // launch used to leave nothing to read.
+                log.info("update sweep: {s} still in use ({s})", .{ entry.name, @errorName(err) });
+                if (update_apply.isApplierImage(entry.name)) {
+                    const owned = arena.dupe(u8, entry.name) catch continue;
+                    retry.append(arena, owned) catch continue;
+                }
+                continue;
+            };
         }
+        if (retry.items.len > 0) retryApplierDelete(dir, retry.items);
     } else |_| {}
 
     // Sidelined images beside the running exe.
@@ -353,6 +364,81 @@ pub fn sweep(alloc: Allocator, keep: ?[]const u8) void {
         }
     }
 }
+
+/// How long the background retry keeps trying an applier copy the launch sweep
+/// could not delete (T3429), and how often.
+const applier_retry_total_ms: u64 = 30 * std.time.ms_per_s;
+const applier_retry_step_ms: u64 = 500;
+
+/// Keep trying to delete the applier copies the launch sweep found in use, on
+/// a detached thread (T3429). After an update the applier relaunches the app
+/// and only then exits, so the relaunched app's sweep always finds it running;
+/// and a launch that comes right after it exits can still find its image held
+/// for a moment by a scanner. Either way the copy used to sit there until the
+/// NEXT launch. Only applier images are retried, never a package: a package
+/// name could be re-staged by the update check this launch is about to start.
+/// Best effort throughout - a thread that cannot start leaves the old
+/// next-launch behaviour.
+fn retryApplierDelete(dir: []const u8, names: []const []const u8) void {
+    const gpa = std.heap.page_allocator;
+    const job = gpa.create(RetryJob) catch return;
+    job.* = .{ .dir = gpa.dupe(u8, dir) catch {
+        gpa.destroy(job);
+        return;
+    } };
+    for (names) |n| {
+        if (job.count == job.names.len) break;
+        job.names[job.count] = gpa.dupe(u8, n) catch continue;
+        job.count += 1;
+    }
+    const t = std.Thread.spawn(.{}, RetryJob.run, .{job}) catch {
+        job.deinit();
+        return;
+    };
+    t.detach();
+}
+
+const RetryJob = struct {
+    dir: []const u8,
+    names: [4]?[]const u8 = .{ null, null, null, null },
+    count: usize = 0,
+
+    fn deinit(self: *RetryJob) void {
+        const gpa = std.heap.page_allocator;
+        for (self.names[0..self.count]) |n| if (n) |s| gpa.free(s);
+        gpa.free(self.dir);
+        gpa.destroy(self);
+    }
+
+    fn run(self: *RetryJob) void {
+        defer self.deinit();
+        var waited: u64 = 0;
+        while (waited < applier_retry_total_ms) {
+            std.Thread.sleep(applier_retry_step_ms * std.time.ns_per_ms);
+            waited += applier_retry_step_ms;
+            var d = std.fs.cwd().openDir(self.dir, .{}) catch return;
+            defer d.close();
+            var left: usize = 0;
+            for (&self.names) |*slot| {
+                const n = slot.* orelse continue;
+                if (d.deleteFile(n)) |_| {
+                    log.info("update sweep: removed {s} after {d}ms", .{ n, waited });
+                    std.heap.page_allocator.free(n);
+                    slot.* = null;
+                } else |err| switch (err) {
+                    error.FileNotFound => {
+                        std.heap.page_allocator.free(n);
+                        slot.* = null;
+                    },
+                    else => left += 1,
+                }
+            }
+            if (left == 0) return;
+        }
+        for (self.names) |slot| if (slot) |n|
+            log.info("update sweep: {s} still in use after {d}ms; the next launch tries again", .{ n, applier_retry_total_ms });
+    }
+};
 
 // =============================================================================
 // Arming

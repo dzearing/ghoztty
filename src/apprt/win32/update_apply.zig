@@ -238,6 +238,38 @@ pub fn applierName(buf: []u8, pid: ?u32) ![]const u8 {
     return std.fmt.bufPrint(buf, "ghoztty-updater-{d}.exe", .{p});
 }
 
+/// True if `name` is an applier copy `applierName` produces: the usual
+/// `ghoztty-updater.exe` or a `ghoztty-updater-<pid>.exe` fallback (T3429).
+/// The launch sweep gives these a background retry, because they are the one
+/// staged file that is routinely still held for a moment at launch: the applier
+/// relaunches the app and only then exits, and a scanner may open the image
+/// once it has.
+pub fn isApplierImage(name: []const u8) bool {
+    const prefix = "ghoztty-updater";
+    const ext = ".exe";
+    if (name.len < prefix.len + ext.len) return false;
+    if (!std.ascii.startsWithIgnoreCase(name, prefix)) return false;
+    if (!std.ascii.endsWithIgnoreCase(name, ext)) return false;
+    const mid = name[prefix.len .. name.len - ext.len];
+    if (mid.len == 0) return true;
+    if (mid[0] != '-' or mid.len == 1) return false;
+    for (mid[1..]) |c| if (!std.ascii.isDigit(c)) return false;
+    return true;
+}
+
+test "isApplierImage: both applier shapes, and nothing else (T3429)" {
+    var buf: [64]u8 = undefined;
+    try testing.expect(isApplierImage(try applierName(&buf, null)));
+    try testing.expect(isApplierImage(try applierName(&buf, 35516)));
+    try testing.expect(isApplierImage("GHOZTTY-UPDATER.EXE"));
+    try testing.expect(!isApplierImage("ghoztty-updater-.exe"));
+    try testing.expect(!isApplierImage("ghoztty-updater-12a.exe"));
+    try testing.expect(!isApplierImage("ghoztty-updaterx.exe"));
+    try testing.expect(!isApplierImage("ghoztty.exe"));
+    try testing.expect(!isApplierImage("Ghoztty-1.39.7-x64.msi"));
+    try testing.expect(!isApplierImage("ghoztty-updater.exe.log"));
+}
+
 /// How long the applier's failure dialog stays up before it dismisses itself
 /// and the applier exits (T2321). Long enough to be read by someone at the
 /// machine; short enough that an unseen dialog cannot pin the applier for a
