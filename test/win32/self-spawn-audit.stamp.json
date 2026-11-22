@@ -1,8 +1,8 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-11-21T20:57:52-08:00",
-    "commit":  "4e5927d42",
+    "generated":  "2026-11-21T22:31:21-08:00",
+    "commit":  "a1d775d78",
     "uncommitted":  [
 
                     ],
@@ -15,13 +15,13 @@
                   "src/apprt/embedded.zig":  "7d0ae5cc6f2164554f350527f1dfe8b41d0094fc4ef63e8748756c9ee5898711",
                   "src/apprt/gtk.zig":  "f8c15182a54cc539a782ac6a6ff7d7b3b2e67da917ceef412613b70d356c96e4",
                   "src/apprt/gtk/adw_version.zig":  "0a4ceeda62786bbfb8cf253a2e2b5ddf9ba74899c0550f9fe381303992f8025b",
-                  "src/apprt/gtk/App.zig":  "67709cf564efbc2689d6ce837e1bdbb517bd5665579c3b922b88b8aa3e617e44",
+                  "src/apprt/gtk/App.zig":  "994e441fdc353e8c76551e8f97dc60c667b71da724dd99c8f166197cbdad5e3e",
                   "src/apprt/gtk/build/blueprint.zig":  "d9b0b45a108d437e76ffc1f0f2ad36c4db094323b3090a34cef3cfcbce46c674",
                   "src/apprt/gtk/build/gresource.zig":  "f93ac7774fda99cf061980d08c7c4870c3c56c46beff73fa2be45155f54b819c",
                   "src/apprt/gtk/build/info.zig":  "764b6a02ec6604f9d3e06c56caba7aa1d65f0fd42e3f8ae11e07da734f00fad7",
                   "src/apprt/gtk/cgroup.zig":  "372cae8dcb5e10e5068debf3132f25e98b0f86c48bd535a661cd10192d68502a",
                   "src/apprt/gtk/class.zig":  "8d1e5c64e3d97635e21c0861e73c1f957c52aa939100357e039d1f5dc690d8cc",
-                  "src/apprt/gtk/class/application.zig":  "c776fa56d3b9bd9a01ff4f103885afffaba3ef1fd407b3de84e9842fd102f5f2",
+                  "src/apprt/gtk/class/application.zig":  "e21923dacf58b02ae677f0f9ec0f0fa00377a160fd369b2099ec8fdef4c3372e",
                   "src/apprt/gtk/class/clipboard_confirmation_dialog.zig":  "ce0b3150d6909398ec46c7a1c2e3cc8add359ee816dc50c856349202217129c3",
                   "src/apprt/gtk/class/close_confirmation_dialog.zig":  "bac38a30d9884382c21589362d613f5557ed793319d3a376469c8bcf57217123",
                   "src/apprt/gtk/class/command_palette.zig":  "d9f4bb9b9be3769c58f33a20fbb77ff48111f73e06bfbcc0a9cdc0d4656ca3f3",
@@ -37,7 +37,7 @@
                   "src/apprt/gtk/class/resize_overlay.zig":  "28e96fba32fa79da6736d51965583f17655d59899fec3964a717b66364160a07",
                   "src/apprt/gtk/class/search_overlay.zig":  "d3e6ca662b546ccadcee62fa3d564addb1df6e7ea420eab6492bc06a89f08158",
                   "src/apprt/gtk/class/split_tree.zig":  "fc02155f98ca9eff3b4effeea9803b6a54eb4cc58837f7f79333c5db99588fc6",
-                  "src/apprt/gtk/class/surface.zig":  "5133e120195650af884528ff66a2ea148b8b68088d3a6a35c33e57a54d7ad3f6",
+                  "src/apprt/gtk/class/surface.zig":  "eec8177417433973a4bd0723989642c7e0e0c77dea5ec01008d368e5eb800636",
                   "src/apprt/gtk/class/surface_child_exited.zig":  "6b4cf3d1ed4ed891ca02f841973bd1518acb76451830172e87ab9512e711ff1b",
                   "src/apprt/gtk/class/surface_scrolled_window.zig":  "88e36e9a7318aa492360697ec08c6914cd3c672f16d320c79f12ba3c85297d3c",
                   "src/apprt/gtk/class/tab.zig":  "791fb44603edb8271621244bddec931a3a1c77d27eeb66a91babe578019cbfdd",
@@ -51,6 +51,8 @@
                   "src/apprt/gtk/gtk_version.zig":  "a7e4f5636fccf9ff025406186823167ad9964739f243754067adb2abb6d91260",
                   "src/apprt/gtk/ipc/DBus.zig":  "c71d0348d0b3159a418020d5cbbd7dcdfd8a876949f56257cb8f25697906fd00",
                   "src/apprt/gtk/ipc/new_window.zig":  "2146e1ee1e3a4fd3de21447b81fec4344e3f76e366dc37ed2dd0ac657af9dbd2",
+                  "src/apprt/gtk/IpcHandlers.zig":  "524655e56597361947f76eb53f9b1b684e7f65fe19785f00fd77ac9b18d093c1",
+                  "src/apprt/gtk/IpcServer.zig":  "43e55ae4352aa812e22905766625101a964e014f6189ceddb7b05d92bc4e93b4",
                   "src/apprt/gtk/key.zig":  "26190d1c1be8ddfc9874f035ffe218881ca6a24a91d27966555d3663c83a0cf4",
                   "src/apprt/gtk/media.zig":  "da263904ef36a20ef70335f15086943241c45ab687a685775f50336d67eb080d",
                   "src/apprt/gtk/portal.zig":  "2832170e68fbdd330e256b7f2925a916024de67e83dff5880d450efd3dde7707",
@@ -65,7 +67,7 @@
                   "src/apprt/gtk/winproto/wayland.zig":  "4d4cf0fef0f736bea033f890cee991c94be6fe6bbfea61b9e2f9dbdda0283787",
                   "src/apprt/gtk/winproto/wayland/Globals.zig":  "f93c2e65cdd9f3a04c364e6aabcc290867f551134413c95b27d9eb8c8889b885",
                   "src/apprt/gtk/winproto/x11.zig":  "31a8499677b2d9200a202ee1a6781fc022e8f66afaa4fec827526f3a68903811",
-                  "src/apprt/ipc.zig":  "51404da32f23d899700d9d70a6f8840ebda7995cedc953b5ce98cf271b7d680d",
+                  "src/apprt/ipc.zig":  "c6a3c06b1890013214b721ad93fb75e12da2c809f65eb031fde96d8fe40aaf3f",
                   "src/apprt/ipc/args.zig":  "c434ad0eac1fb913714792af851cc374540da642a6510ea6b6e73fc617040157",
                   "src/apprt/ipc/list.zig":  "b3cff45d2d8b3b2d45ae055b70e59ce8fe79568ff56241426a747ab1fcb9b892",
                   "src/apprt/ipc/read_tail.zig":  "43e8b7a2c10d1a73990cec6b09a6ddd1b857065f39cd855d9c83bf289fbb2ee4",
@@ -803,7 +805,7 @@
                   "src/os/hostname.zig":  "b402e461f30d22a5f8227af8591f505c0e76ccaaaf816c7b81b8ce6c7468823b",
                   "src/os/i18n.zig":  "133cfac2158e97441381ec012d76dba5f2ff3f4c09793da129d75e2299c462c4",
                   "src/os/i18n_locales.zig":  "90f6fcf72fc67cfa0223d7786f18467fd58529807a5b00ffd557d11ad447afc2",
-                  "src/os/ipc_client.zig":  "d0a8cd0828cf96da77e289f90c95f71625257166b985bf5fbb20a93d993cdbf2",
+                  "src/os/ipc_client.zig":  "b90cfaf1bb3298b3bb7ff3be1d9f8447e127d7104872f34fa034c77990085348",
                   "src/os/ipc_handoff.zig":  "83ed1a0b6464bff5ff9364c56c5c796afe0c821cb8c9220372436dd7b821ffc3",
                   "src/os/ipc_timeout.zig":  "3404b4731e4ee9bd4f9fae88b03294aaba6dd79fcddd06dba54a729d4a385904",
                   "src/os/kernel_info.zig":  "af3e484e231296b27ef7c2a76f4608c61a37bf5af01b968d3dbbf565d18de0e4",
@@ -1130,6 +1132,6 @@
                   "src/unicode/symbols_uucode.zig":  "cb6ae86fe8549c435e11a2e038960aa9cae907aa89aa14598f8b6416c51b61ce",
                   "test/win32/lib/SelfSpawnAudit.ps1":  "97af60fbd58ea585cf651d137c4e35e0a1d3b35cea6a71bd3498117339d70999",
                   "test/win32/self-spawn-audit.ps1":  "f7be29f3b35947dbefe27866db48ad4524996c2486c748a0641c5012f1acb13a",
-                  "test/win32/self-spawn-audit.registry.json":  "33f9c873cf178c36c52b7c1ccbbb0b362c7fb2d9d5f44d8b6bc5aef6d3deb1dc"
+                  "test/win32/self-spawn-audit.registry.json":  "d6c46e11203531c650810aae9400efca3767d139cc87b01530ee2405f47e7483"
               }
 }

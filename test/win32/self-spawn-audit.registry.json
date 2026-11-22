@@ -12,6 +12,7 @@
     { "file": "src\\apprt\\win32\\install_restart.zig", "fn": "runFromArgs", "use": "read", "why": "default install dir whose windows the restart step enumerates" },
     { "file": "src\\apprt\\win32\\LocalAgent.zig", "fn": "ensureAutostart", "use": "read", "why": "source-checkout gate before the Run key is written; the command itself comes from agentBinary (productExeDirPathAlloc)" },
     { "file": "src\\apprt\\win32\\PathInstaller.zig", "fn": "ensureOnPath", "use": "read", "why": "the directory added to the user PATH, behind the canonical-install gate" },
+    { "file": "src\\apprt\\gtk\\IpcHandlers.zig", "fn": "selfExe", "use": "read", "why": "reports the running image path in the GTK app's +version and +list build data (T3335)" },
     { "file": "src\\apprt\\win32\\provenance.zig", "fn": "collect", "use": "read", "why": "reports the running image path in +version provenance" },
     { "file": "src\\apprt\\win32\\update_install.zig", "fn": "runningInside", "use": "read", "why": "compares our image path against an install dir" },
     { "file": "src\\remote\\agent\\adopt.zig", "fn": "runningFromSourceCheckout", "use": "read", "why": "location gate: is the running agent build output?" }

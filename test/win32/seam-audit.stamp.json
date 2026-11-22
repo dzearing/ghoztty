@@ -1,8 +1,8 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-21T20:43:28-08:00",
-    "commit":  "dd74926ac",
+    "generated":  "2026-11-21T22:21:58-08:00",
+    "commit":  "a1d775d78",
     "uncommitted":  [
 
                     ],
@@ -505,7 +505,7 @@
                   "src/os/hostname.zig":  "b402e461f30d22a5f8227af8591f505c0e76ccaaaf816c7b81b8ce6c7468823b",
                   "src/os/i18n.zig":  "133cfac2158e97441381ec012d76dba5f2ff3f4c09793da129d75e2299c462c4",
                   "src/os/i18n_locales.zig":  "90f6fcf72fc67cfa0223d7786f18467fd58529807a5b00ffd557d11ad447afc2",
-                  "src/os/ipc_client.zig":  "d0a8cd0828cf96da77e289f90c95f71625257166b985bf5fbb20a93d993cdbf2",
+                  "src/os/ipc_client.zig":  "b90cfaf1bb3298b3bb7ff3be1d9f8447e127d7104872f34fa034c77990085348",
                   "src/os/ipc_handoff.zig":  "83ed1a0b6464bff5ff9364c56c5c796afe0c821cb8c9220372436dd7b821ffc3",
                   "src/os/ipc_timeout.zig":  "3404b4731e4ee9bd4f9fae88b03294aaba6dd79fcddd06dba54a729d4a385904",
                   "src/os/kernel_info.zig":  "af3e484e231296b27ef7c2a76f4608c61a37bf5af01b968d3dbbf565d18de0e4",
