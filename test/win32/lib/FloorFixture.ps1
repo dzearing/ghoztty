@@ -127,6 +127,131 @@ function Add-FloorCallEvidence {
 }
 
 <#
+The app's own pipe name for THIS run, derived the way `ipc_client`'s
+`clientEndpointPathFrom` resolves it (T1769): an explicit
+`$GHOZTTY_PIPE_SUFFIX` first, then a baked `$GHOZTTY_IPC_SOCKET`, then the
+debug build's own `ghoztty-debug-<user>`. Same shape as `Get-GhozttyPipeName`
+in lib\PaneCapture.ps1, which a floor script does not load.
+#>
+function Get-FloorAppPipeName {
+    $user = if ($env:USERNAME) { $env:USERNAME } else { 'default' }
+    if ($null -ne $env:GHOZTTY_PIPE_SUFFIX -and "$env:GHOZTTY_PIPE_SUFFIX" -ne '') {
+        return "ghoztty$($env:GHOZTTY_PIPE_SUFFIX)-$user"
+    }
+    if ($env:GHOZTTY_IPC_SOCKET) {
+        return ("$env:GHOZTTY_IPC_SOCKET" -replace '^\\\\\.\\pipe\\', '')
+    }
+    return "ghoztty-debug-$user"
+}
+
+<#
+Say what the APP was doing when a fixture verb failed (T1769).
+
+THE GAP THIS CLOSES. On 2026-09-26 P1's cold `+new-window --target=p1win`
+waited its full 30s and the evidence block said exactly that: the verb, exit 1,
+30.0s, the CLI's "Timed out" sentence. It could not say WHICH of three different
+bugs had happened - the app never started, the app started and was stuck before
+it opened its IPC pipe, or the app was up with its pipe open and not answering -
+and the immediate re-run was green, so the one occurrence was all there would
+ever be. Each of those has a different owner (the launcher, startup, the IPC
+thread), and a 30s budget is only "too small" in the second case.
+
+So the failure path now reads, once, without launching or killing anything:
+every live process running from `$Exe` (pid, parent, age, CPU, threads), whether
+this run's pipe exists, and the tail of the app's own log; and it names which
+of the shapes those add up to. A crash is still the teardown's to report
+(`Write-TestDesktopUnclaimedCrashes` reads the dump an auto-spawned app leaves);
+this is the alive-or-never-was half that nothing measured.
+
+Never throws: it runs on a failure path, where an exception would replace the
+evidence it exists to add.
+#>
+function Get-FloorAppSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][string]$Exe,
+        [int[]]$ExcludePid = @(),
+        [string]$PipeName = '',
+        [string]$LogPath = '',
+        [int]$LogLines = 8,
+        [int]$MaxProcs = 4
+    )
+    $out = @()
+    $verdict = 'unknown'
+    try {
+        if (-not $PipeName) { $PipeName = Get-FloorAppPipeName }
+        $full = $Exe
+        try { $full = [System.IO.Path]::GetFullPath($Exe) } catch { $full = $Exe }
+
+        $procs = @()
+        try {
+            $procs = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+                    $_.ExecutablePath -and ($_.ExecutablePath -ieq $full) -and
+                    ($ExcludePid -notcontains [int]$_.ProcessId) })
+        } catch { $procs = @() }
+
+        $pipeUp = $false
+        try {
+            $pipeUp = @([System.IO.Directory]::GetFiles('\\.\pipe\') |
+                    Where-Object { ($_ -replace '^\\\\\.\\pipe\\', '') -ieq $PipeName }).Count -gt 0
+        } catch { $pipeUp = $false }
+
+        $out += "    app state: $($procs.Count) process(es) running from $full"
+        # Youngest first, and only a few: the one this verb spawned is the
+        # newest, and a leaked instance from an earlier run is the next thing
+        # worth seeing. A long tail of rows is noise on a failure block.
+        $shown = @($procs | Sort-Object CreationDate -Descending | Select-Object -First $MaxProcs)
+        foreach ($p in $shown) {
+            $age = ''
+            try { $age = '{0:N1}s' -f ((Get-Date) - $p.CreationDate).TotalSeconds } catch { $age = '?' }
+            $cpu = '?'
+            $gp = $null
+            try { $gp = Get-Process -Id ([int]$p.ProcessId) -ErrorAction Stop } catch { $gp = $null }
+            if ($gp) { try { $cpu = '{0:N2}s' -f $gp.TotalProcessorTime.TotalSeconds } catch { $cpu = '?' } }
+            $out += "      pid $($p.ProcessId) (parent $($p.ParentProcessId)) up $age, cpu $cpu, threads $($p.ThreadCount), handles $($p.HandleCount)"
+        }
+        if ($procs.Count -gt $shown.Count) { $out += "      (+$($procs.Count - $shown.Count) older not shown)" }
+        $out += "    app pipe:  \\.\pipe\$PipeName $(if ($pipeUp) { 'EXISTS' } else { 'does not exist' })"
+
+        $verdict = if ($procs.Count -eq 0 -and -not $pipeUp) {
+            'never-started-or-exited'
+        } elseif ($procs.Count -eq 0) {
+            'pipe-without-process'
+        } elseif (-not $pipeUp) {
+            'running-no-pipe'
+        } else {
+            'running-not-answering'
+        }
+        $out += '    app verdict: ' + $(switch ($verdict) {
+                'never-started-or-exited' { 'NO APP - nothing is running from this exe and the pipe is gone: it never started, or it exited (a crash dump, if Windows kept one, is reported at teardown)' }
+                'pipe-without-process'    { 'FOREIGN PIPE - the pipe exists but no process from this exe is running: another build owns the endpoint' }
+                'running-no-pipe'         { 'STARTING OR STUCK - the app is running but has not opened its IPC pipe: still in startup, or wedged before it' }
+                'running-not-answering'   { 'UP BUT SILENT - the app is running and its pipe exists, yet it did not answer: the IPC side is wedged or busy' }
+            })
+
+        if (-not $LogPath) {
+            if (Get-Command Get-GhozttyAppLogPath -ErrorAction SilentlyContinue) {
+                try { $LogPath = Get-GhozttyAppLogPath -Exe $Exe } catch { $LogPath = '' }
+            }
+            if (-not $LogPath -and $env:LOCALAPPDATA) {
+                $LogPath = Join-Path $env:LOCALAPPDATA 'ghoztty\ghoztty-debug.log'
+            }
+        }
+        if ($LogPath -and (Test-Path -LiteralPath $LogPath)) {
+            $fi = Get-Item -LiteralPath $LogPath
+            $out += "    app log:   $LogPath (last written $($fi.LastWriteTime.ToString('HH:mm:ss.fff')))"
+            $tail = @()
+            try { $tail = @(Get-Content -LiteralPath $LogPath -Tail $LogLines -ErrorAction Stop) } catch { $tail = @() }
+            foreach ($l in $tail) { if ("$l".Trim()) { $out += "      | $l" } }
+        } elseif ($LogPath) {
+            $out += "    app log:   $LogPath does not exist"
+        }
+    } catch {
+        $out += "    app state: could not be read ($($_.Exception.Message))"
+    }
+    return [pscustomobject]@{ Verdict = $verdict; Lines = $out }
+}
+
+<#
 Run a CLI call the rest of the script cannot continue without.
 
 Returns the result on success. On failure it prints the evidence above, scores
@@ -148,6 +273,12 @@ function Need-Ghoz {
             "$What - the app under test stopped answering IPC"
         } else { $What }
         Add-FloorCallEvidence -What $why -GhozArgs $GhozArgs -Result $r -Ms $ms
+        # T1769: and what the app itself was doing, so a one-off names its cause.
+        $exclude = @()
+        if ($r.Pid) { $exclude = @([int]$r.Pid) }
+        $snap = Get-FloorAppSnapshot -Exe $Exe -ExcludePid $exclude
+        $script:FloorSetupEvidence += $snap.Lines
+        $script:FloorSetupCause += " [app: $($snap.Verdict)]"
         $script:failures++
         throw $script:FloorSetupFail
     }

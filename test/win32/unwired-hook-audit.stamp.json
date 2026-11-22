@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-21T23:31:22-08:00",
-    "commit":  "1b12b28f6",
+    "generated":  "2026-11-22T00:02:15-08:00",
+    "commit":  "a2eb2bb80",
     "uncommitted":  [
 
                     ],
@@ -1360,7 +1360,7 @@
                   "test/win32/ipc-child-exited.ps1":  "d976a5172b4773f582972eedc3fa1b00bb1c03f5c33eeb5efc06e5d52542112b",
                   "test/win32/ipc-command-keepalive.ps1":  "af535856fb87a02abb30f2c3055b618551117a5cc88646ef5c10a4f5900fc53a",
                   "test/win32/ipc-fake-server.ps1":  "9d8e13d29c266916b1f65168c58d3b9b93b8a172ad32b6d5174fbcfeee78cfeb",
-                  "test/win32/ipc-floor-setup.ps1":  "ff0383e4ea86e6927d7ebaa585dbef58b23b94d9512b7b28a6cd5fb3fa11be4b",
+                  "test/win32/ipc-floor-setup.ps1":  "28aaf7abf2a2e34135a3150477a4806db5807263d5d7fc252a9f96320c8be472",
                   "test/win32/ipc-instance-addressability.ps1":  "4ae9906b094f84fc39a83c8da85e704e1e73704311fc4b1ccb3e5e76d1318663",
                   "test/win32/ipc-list-session-id.ps1":  "191cea290a106a5b0610c258bc70a09453001d70108c243d991d42c69ac915c2",
                   "test/win32/ipc-machine-chooser.ps1":  "55d47c45b91f34c432079fcaa66266edef26d1dca59acb06ac74c2581349b1d3",

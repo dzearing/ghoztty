@@ -38,6 +38,11 @@
 #    single +list is allowed 30s, so one cold call could spend the whole wait.
 #    `Wait-FloorListMatch` grants its window on top of the CLI's own call bound;
 #    D1 runs the old loop over the same canned answers and must miss.
+#
+# E. THE APP'S SIDE OF A FAILURE (T1769). A fixture verb that failed used to
+#    name only the CLI's half - exit code, elapsed, "Timed out". The evidence
+#    block now also says what the app was doing (running? pipe open? log tail?)
+#    and names one of four shapes; each is constructed here.
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe'
 )
@@ -268,6 +273,51 @@ $zigSrc = Get-Content -Raw (Join-Path $PSScriptRoot '..\..\src\os\ipc_timeout.zi
 $zigDefault = if ($zigSrc -match 'pub const default_ms: u32 = ([\d_]+);') { [int]($Matches[1] -replace '_', '') } else { -1 }
 Assert "D7 the fixture's default is the CLI's default_ms ($zigDefault)" (
     $zigDefault -gt 0 -and $lout['resolve'] -match "DEFAULT: $zigDefault(`n|$)")
+
+"== E: a setup failure says what the APP was doing (T1769)"
+# The 2026-09-26 P1 flake waited 30s and the block could only say "timed out".
+# Each of the four shapes the snapshot names is CONSTRUCTED here - a path
+# nothing runs from, this very powershell.exe (a live process with no pipe),
+# and a pipe this section opens itself - so every verdict is shown reachable,
+# not just the one a healthy box happens to produce.
+. $fixture
+$self = (Get-Process -Id $PID).Path
+$ghost = Join-Path $env:TEMP "ghoztty-floor-noexe-$PID\ghoztty.exe"
+$pipeName = "ghoztty-floorsetup-snap-$PID"
+$noPipe = "ghoztty-floorsetup-nopipe-$PID"
+$snapLog = Join-Path $env:TEMP "ghoztty-floor-snap-$PID.log"
+Set-Content -LiteralPath $snapLog -Value @('info(app): early line', "info(app): SNAPMARK-$PID last line") -Encoding ASCII
+$e1 = Get-FloorAppSnapshot -Exe $ghost -PipeName $noPipe -LogPath $snapLog
+$e2 = Get-FloorAppSnapshot -Exe $self -PipeName $noPipe -LogPath "$snapLog.missing"
+$server = $null
+try {
+    $server = New-Object System.IO.Pipes.NamedPipeServerStream($pipeName)
+    $e3 = Get-FloorAppSnapshot -Exe $self -PipeName $pipeName
+    $e4 = Get-FloorAppSnapshot -Exe $ghost -PipeName $pipeName
+    $e5 = Get-FloorAppSnapshot -Exe $self -PipeName $pipeName -ExcludePid @($PID) -MaxProcs 100000
+} finally {
+    if ($server) { $server.Dispose() }
+}
+Remove-Item -LiteralPath $snapLog -Force -ErrorAction SilentlyContinue
+foreach ($n in 'e1', 'e2', 'e3', 'e4') { "    ${n}: $((Get-Variable $n -ValueOnly).Lines -join ' ; ')" }
+Assert "E1 nothing running and no pipe reads as NO APP" (
+    $e1.Verdict -eq 'never-started-or-exited' -and ($e1.Lines -join "`n") -match 'app verdict: NO APP' -and
+    ($e1.Lines -join "`n") -match 'app state: 0 process')
+Assert "E2 a live process with no pipe reads as STARTING OR STUCK, with its pid" (
+    $e2.Verdict -eq 'running-no-pipe' -and ($e2.Lines -join "`n") -match "pid \d+ \(parent \d+\) up [\d.,]+s, cpu")
+$e2rows = @($e2.Lines | Where-Object { $_ -match '^\s+pid \d+ \(parent' }).Count
+$e2all = if (($e2.Lines -join "`n") -match 'app state: (\d+) process') { [int]$Matches[1] } else { -1 }
+Assert "E2b a crowd of processes is capped to the youngest few, and the rest counted ($e2rows of $e2all shown)" (
+    $e2all -gt 4 -and $e2rows -eq 4 -and ($e2.Lines -join "`n") -match "\(\+$($e2all - 4) older not shown\)")
+Assert "E3 a live process whose pipe exists reads as UP BUT SILENT" (
+    $e3.Verdict -eq 'running-not-answering' -and ($e3.Lines -join "`n") -match "pipe\\$pipeName EXISTS")
+Assert "E4 a pipe with no process from the exe reads as FOREIGN PIPE" ($e4.Verdict -eq 'pipe-without-process')
+Assert "E5 the CLI's own pid is left out of the count" (($e5.Lines -join "`n") -notmatch "pid $PID ")
+Assert "E6 the app log's tail is quoted" (($e1.Lines -join "`n") -match "\| info\(app\): SNAPMARK-$PID last line")
+Assert "E7 a missing app log is named as missing, not skipped" (($e2.Lines -join "`n") -match 'app log: .* does not exist')
+Assert "E8 a failed fixture call carries the snapshot in its evidence" (
+    $probeOut['gaveup'] -match 'app verdict: NO APP' -and $probeOut['gaveup'] -match 'app pipe:')
+Assert "E9 a slow-but-successful call does not pay for one" ($probeOut['slow'] -notmatch 'app state:')
 
 "== teardown"
 Reset-GhozttyTestState -Exe $Exe -SettleMs 500 | Out-Null

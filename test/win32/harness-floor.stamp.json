@@ -1,17 +1,18 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-21T23:37:09-08:00",
-    "commit":  "5520aa272",
+    "generated":  "2026-11-22T00:13:24-08:00",
+    "commit":  "a2eb2bb80",
     "uncommitted":  [
-
+                        "test/win32/ipc-floor-setup.ps1",
+                        "test/win32/lib/FloorFixture.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
                   "scripts/lib/HarnessFloor.ps1":  "1860dbc16b6d9bc15f50882eedfc764b5c39f1f91aa059ba6450118729fabd7b",
                   "scripts/vt-escape-scan.ps1":  "a23758e33821d194e040b24ac5e9811b705f53c5fc0313633aa1478f11567ced",
                   "test/win32/about-links.ps1":  "cb6ba712f258265f9a5d03dc219567a0025a1f081a2b7d2029586140247906eb",
-                  "test/win32/acceptance-parallel.ps1":  "112add92412ef2d5e520a37bb79e1d88d7df0b1dbd876596fc80479275d55107",
+                  "test/win32/acceptance-parallel.ps1":  "2673dccb32a1a23a91372cea2ed37ca934158fae369c8fbbe0c6976b7ed2657a",
                   "test/win32/activity-help-tooltips.ps1":  "0023622d51e2dce579e45f7f46ffeed4195fc995570bd6cdffde961b229ed1b6",
                   "test/win32/activity-monitor.ps1":  "4f64617fe0299c1a3cc9abd3f851928f47c4d19db12886130242a1dc555d2e06",
                   "test/win32/activity-monitor-dialed.ps1":  "e8d248a8d5507c68b3a67fd0f15692a98868d2542cbc6f0cdb714c9ee98ade99",
@@ -239,7 +240,7 @@
                   "test/win32/ipc-child-exited.ps1":  "d976a5172b4773f582972eedc3fa1b00bb1c03f5c33eeb5efc06e5d52542112b",
                   "test/win32/ipc-command-keepalive.ps1":  "af535856fb87a02abb30f2c3055b618551117a5cc88646ef5c10a4f5900fc53a",
                   "test/win32/ipc-fake-server.ps1":  "9d8e13d29c266916b1f65168c58d3b9b93b8a172ad32b6d5174fbcfeee78cfeb",
-                  "test/win32/ipc-floor-setup.ps1":  "ff0383e4ea86e6927d7ebaa585dbef58b23b94d9512b7b28a6cd5fb3fa11be4b",
+                  "test/win32/ipc-floor-setup.ps1":  "28aaf7abf2a2e34135a3150477a4806db5807263d5d7fc252a9f96320c8be472",
                   "test/win32/ipc-instance-addressability.ps1":  "4ae9906b094f84fc39a83c8da85e704e1e73704311fc4b1ccb3e5e76d1318663",
                   "test/win32/ipc-list-session-id.ps1":  "191cea290a106a5b0610c258bc70a09453001d70108c243d991d42c69ac915c2",
                   "test/win32/ipc-machine-chooser.ps1":  "55d47c45b91f34c432079fcaa66266edef26d1dca59acb06ac74c2581349b1d3",
@@ -303,7 +304,7 @@
                   "test/win32/lib/FakeRelay.ps1":  "576111ff435d3e50092a542c44614d741584fc82210acb4b635c784edb569877",
                   "test/win32/lib/FixedPortAudit.ps1":  "5b8eae57bc3afba34e185140098cce1509f5a3ebca7d5e67d59f1c6d2ad21212",
                   "test/win32/lib/FixtureNames.ps1":  "41183ca1b976e2539d6937a88601900d1a92b11dd90fc51a74f3ad96055d5ff7",
-                  "test/win32/lib/FloorFixture.ps1":  "688042bf28c0256b508a1af3add7e1823afbfab6b3f88f13164c84facd853d3e",
+                  "test/win32/lib/FloorFixture.ps1":  "74b82afafea96e8bcb3f0b8bc58c435fc2b96d3959fb6ae2dfc97d5d8574c639",
                   "test/win32/lib/ForegroundAudit.ps1":  "b47d5a5915dcac0a495c1ac13f441cd017f11c5b7d98efcd51c2e1bba72f5876",
                   "test/win32/lib/FrameCapture.ps1":  "aa2c93fabf2ab32a181df3600b58141d39ebc7d6970280c92b4d7c7d57db1e4b",
                   "test/win32/lib/FrameLabCard.ps1":  "ab2e320bcc7db90e43429596eca1732f5dc924004a295659376eb401d49b8430",
