@@ -67,6 +67,16 @@ pub extern fn webkit_web_view_evaluate_javascript_finish(
     err: *?*GError,
 ) ?*JSCValue;
 
+// History, reload and zoom (the nav bar and pane keys, T3412).
+pub extern fn webkit_web_view_go_back(view: *WebView) void;
+pub extern fn webkit_web_view_go_forward(view: *WebView) void;
+pub extern fn webkit_web_view_can_go_back(view: *WebView) c_int;
+pub extern fn webkit_web_view_can_go_forward(view: *WebView) c_int;
+pub extern fn webkit_web_view_reload(view: *WebView) void;
+pub extern fn webkit_web_view_reload_bypass_cache(view: *WebView) void;
+pub extern fn webkit_web_view_get_zoom_level(view: *WebView) f64;
+pub extern fn webkit_web_view_set_zoom_level(view: *WebView, level: f64) void;
+
 // --- WebKitWebContext / security -----------------------------------------
 
 pub extern fn webkit_web_context_get_default() *WebContext;
@@ -124,6 +134,76 @@ pub extern fn gtk_window_set_child(window: *GtkWidget, child: ?*GtkWidget) void;
 pub extern fn gtk_window_set_title(window: *GtkWidget, title: [*:0]const u8) void;
 pub extern fn gtk_window_set_default_size(window: *GtkWidget, w: c_int, h: c_int) void;
 pub extern fn gtk_window_present(window: *GtkWidget) void;
+
+// --- The nav bar's widgets (T3412) ----------------------------------------
+//
+// Plain GTK4 C calls rather than the zig-gobject classes: the viewer is a
+// handful of stock widgets, and keeping it on one binding style keeps it
+// readable next to the WebKit calls above.
+
+pub const GtkEventController = opaque {};
+pub const GFile = opaque {};
+pub const GtkFileLauncher = opaque {};
+
+/// `GtkOrientation`.
+pub const orientation_horizontal: c_int = 0;
+pub const orientation_vertical: c_int = 1;
+/// `GtkPropagationPhase`.
+pub const phase_capture: c_int = 1;
+
+pub extern fn gtk_box_new(orientation: c_int, spacing: c_int) *GtkWidget;
+pub extern fn gtk_box_append(box: *GtkWidget, child: *GtkWidget) void;
+pub extern fn gtk_button_new_from_icon_name(icon: [*:0]const u8) *GtkWidget;
+pub extern fn gtk_entry_new() *GtkWidget;
+pub extern fn gtk_entry_set_placeholder_text(entry: *GtkWidget, text: ?[*:0]const u8) void;
+pub extern fn gtk_editable_get_text(editable: *GtkWidget) [*:0]const u8;
+pub extern fn gtk_editable_set_text(editable: *GtkWidget, text: [*:0]const u8) void;
+pub extern fn gtk_editable_select_region(editable: *GtkWidget, start: c_int, end: c_int) void;
+pub extern fn gtk_editable_get_selection_bounds(editable: *GtkWidget, start: ?*c_int, end: ?*c_int) c_int;
+pub extern fn gtk_widget_set_tooltip_text(widget: *GtkWidget, text: ?[*:0]const u8) void;
+pub extern fn gtk_widget_set_sensitive(widget: *GtkWidget, sensitive: c_int) void;
+pub extern fn gtk_widget_get_sensitive(widget: *GtkWidget) c_int;
+pub extern fn gtk_widget_set_visible(widget: *GtkWidget, visible: c_int) void;
+pub extern fn gtk_widget_get_visible(widget: *GtkWidget) c_int;
+pub extern fn gtk_widget_set_hexpand(widget: *GtkWidget, expand: c_int) void;
+pub extern fn gtk_widget_set_vexpand(widget: *GtkWidget, expand: c_int) void;
+pub extern fn gtk_widget_set_focus_on_click(widget: *GtkWidget, focus: c_int) void;
+pub extern fn gtk_widget_set_margin_start(widget: *GtkWidget, margin: c_int) void;
+pub extern fn gtk_widget_set_margin_end(widget: *GtkWidget, margin: c_int) void;
+pub extern fn gtk_widget_set_margin_top(widget: *GtkWidget, margin: c_int) void;
+pub extern fn gtk_widget_set_margin_bottom(widget: *GtkWidget, margin: c_int) void;
+pub extern fn gtk_widget_add_css_class(widget: *GtkWidget, class: [*:0]const u8) void;
+pub extern fn gtk_widget_grab_focus(widget: *GtkWidget) c_int;
+pub extern fn gtk_widget_has_focus(widget: *GtkWidget) c_int;
+pub extern fn gtk_widget_is_ancestor(widget: *GtkWidget, ancestor: *GtkWidget) c_int;
+pub extern fn gtk_widget_get_root(widget: *GtkWidget) ?*GtkWidget;
+pub extern fn gtk_widget_get_height(widget: *GtkWidget) c_int;
+pub extern fn gtk_widget_add_controller(widget: *GtkWidget, controller: *GtkEventController) void;
+pub extern fn gtk_widget_activate(widget: *GtkWidget) c_int;
+pub extern fn gtk_root_get_focus(root: *GtkWidget) ?*GtkWidget;
+pub extern fn gtk_event_controller_key_new() *GtkEventController;
+pub extern fn gtk_event_controller_set_propagation_phase(controller: *GtkEventController, phase: c_int) void;
+pub extern fn gtk_accelerator_parse(accel: [*:0]const u8, keyval: ?*c_uint, mods: ?*c_uint) c_int;
+pub extern fn g_file_new_for_path(path: [*:0]const u8) *GFile;
+pub extern fn gtk_file_launcher_new(file: ?*GFile) *GtkFileLauncher;
+pub extern fn gtk_file_launcher_launch(
+    launcher: *GtkFileLauncher,
+    parent: ?*GtkWidget,
+    cancellable: ?*anyopaque,
+    callback: ?GAsyncReadyCallback,
+    user_data: ?*anyopaque,
+) void;
+pub extern fn gtk_file_launcher_open_containing_folder(
+    launcher: *GtkFileLauncher,
+    parent: ?*GtkWidget,
+    cancellable: ?*anyopaque,
+    callback: ?GAsyncReadyCallback,
+    user_data: ?*anyopaque,
+) void;
+pub extern fn gtk_file_launcher_launch_finish(launcher: *GtkFileLauncher, result: *GAsyncResult, err: *?*GError) c_int;
+pub extern fn gtk_file_launcher_open_containing_folder_finish(launcher: *GtkFileLauncher, result: *GAsyncResult, err: *?*GError) c_int;
+pub extern fn g_idle_add(function: *const fn (?*anyopaque) callconv(.c) c_int, data: ?*anyopaque) c_uint;
+pub extern fn g_timeout_add(interval_ms: c_uint, function: *const fn (?*anyopaque) callconv(.c) c_int, data: ?*anyopaque) c_uint;
 
 /// `G_IO_ERROR_NOT_FOUND`.
 pub const io_error_not_found: c_int = 1;

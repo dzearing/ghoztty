@@ -73,9 +73,9 @@ view() {
 xhr='function get(u){try{var x=new XMLHttpRequest();x.open("GET",u,false);x.send();return x.responseText.length?x.responseText.trim():"REFUSED"}catch(e){return "REFUSED"}}'
 
 # ---- markdown: template, vendor scripts, the file's own directory ----------
-view MD "$fx/doc.md" "(function(){$xhr;var h=document.querySelector('#content h1'),b=document.querySelector('#content strong');return [h?h.textContent:'NOH1',b?b.textContent:'NOB',get('tier2.txt'),location.href].join('|')})()"
-[ "$MD_OUT" = "OK Viewer Heading|bold|TIER2-OK|ghoztty-viewer://page/viewer.html" ]
-hl_check "W4 markdown renders through the template (heading, bold, a file beside it, the template URL)" $? "got: $MD_OUT"
+view MD "$fx/doc.md" "(function(){$xhr;var h=document.querySelector('#content h1'),b=document.querySelector('#content strong');return [h?h.textContent:'NOH1',b?b.textContent:'NOB',get('tier2.txt'),location.href.split('?')[0],decodeURIComponent(location.search)].join('|')})()"
+[ "$MD_OUT" = "OK Viewer Heading|bold|TIER2-OK|ghoztty-viewer://page/viewer.html|?file=$fx/doc.md" ]
+hl_check "W4 markdown renders through the template (heading, bold, a file beside it, the template URL naming its file - T3412)" $? "got: $MD_OUT"
 
 # ---- code: highlight.js colours it by its extension ------------------------
 view CODE "$fx/code.py" "(function(){var c=document.querySelector('#content code');if(!c)return 'NOCODE';return [c.className,!!c.querySelector('.hljs-keyword'),c.textContent.indexOf('return 42')>=0].join('|')})()"

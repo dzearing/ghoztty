@@ -583,6 +583,11 @@ test {
     // runs it, like the win32 modules above.
     _ = @import("gtk/viewer_scheme.zig");
 
+    // The GTK viewer nav chrome's pure half - the template URL that carries
+    // its file through history, and a GDK key event onto the shared chord
+    // tables (T3412). No GTK imports, like viewer_scheme.zig.
+    _ = @import("gtk/viewer_chrome.zig");
+
     // Pure win32 image-viewer zoom rules — what 100% means, best-fit's refusal
     // to upscale, the double-click toggle and the step/clamp (T1183), same
     // no-OS-imports deal.

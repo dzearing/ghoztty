@@ -797,11 +797,24 @@ pub const Surface = extern struct {
             if (gobject.ext.cast(gtk.Box, parent)) |box| box.prepend(web);
         }
 
+        viewer.owner = self;
+        viewer.on_location_changed = &viewerLocationChanged;
+        self.syncViewerTitle(viewer);
+        log.info("viewer pane: opened mode={s} location={s} pane={s}", .{ @tagName(viewer.mode), location, self.paneId() });
+    }
+
+    /// The pane is titled by what it shows NOW (T3412): a link, a typed
+    /// address or Back moves it, and the tab follows.
+    fn viewerLocationChanged(viewer: *Viewer) void {
+        const self: *Self = @ptrCast(@alignCast(viewer.owner orelse return));
+        self.syncViewerTitle(viewer);
+    }
+
+    fn syncViewerTitle(self: *Self, viewer: *Viewer) void {
         const t = viewer.paneTitle();
         var buf: [512]u8 = undefined;
         const tz = std.fmt.bufPrintZ(&buf, "{s}", .{t[0..@min(t.len, buf.len - 1)]}) catch "viewer";
         self.setTitle(tz);
-        log.info("viewer pane: opened mode={s} location={s} pane={s}", .{ @tagName(viewer.mode), location, self.paneId() });
     }
 
     /// The viewer this pane shows, or null for a terminal pane (T3411).
@@ -1331,8 +1344,9 @@ pub const Surface = extern struct {
         gtk_mods: gdk.ModifierType,
     ) bool {
         //log.warn("keyEvent action={}", .{action});
-        // A viewer pane's keys are the web view's (its chrome keys are T3412);
-        // there is no terminal to encode them for.
+        // A viewer pane's keys are the web view's, and its pane chords are
+        // the viewer's own capture-phase controller's (T3412); there is no
+        // terminal to encode them for.
         if (self.private().viewer != null) return false;
         const event = ec_key.as(gtk.EventController).getCurrentEvent() orelse return false;
         const key_event = gobject.ext.cast(gdk.KeyEvent, event) orelse return false;
@@ -1845,8 +1859,9 @@ pub const Surface = extern struct {
     pub fn grabFocus(self: *Self) void {
         const priv = self.private();
         if (priv.viewer) |v| {
-            const web: *gtk.Widget = @ptrCast(@alignCast(v.widget()));
-            _ = web.grabFocus();
+            // The page, not the nav bar above it (T3412): grabbing the
+            // viewer's box would hand focus to its first button.
+            v.focusContent();
             return;
         }
         _ = priv.gl_area.as(gtk.Widget).grabFocus();
@@ -2012,7 +2027,12 @@ pub const Surface = extern struct {
         self.as(adw.Bin).setChild(null);
 
         // The viewer is freed with its web view, which the template teardown
-        // below destroys; nothing may reach it through us after that.
+        // below destroys; nothing may reach it through us after that - and it
+        // must not call back into a pane that is going away.
+        if (priv.viewer) |v| {
+            v.owner = null;
+            v.on_location_changed = null;
+        }
         priv.viewer = null;
 
         gtk.Widget.disposeTemplate(

@@ -1,6 +1,7 @@
 //! A viewer: one WebKitGTK web view showing a markdown or code file through
 //! the bundled template, a local `.html` file as a page, or a website
-//! (T3410, Linux L9a - the foundation the viewer-pane cards build on).
+//! (T3410, Linux L9a - the foundation the viewer-pane cards build on), under
+//! the navigation bar every viewer mode gets (T3412, L9c).
 //!
 //! The Mac's `ViewerView` translated to WebKitGTK, which is the same engine:
 //!
@@ -8,18 +9,37 @@
 //!   and, once it has finished loading, push the file's bytes in through
 //!   `window.__viewer.setMarkdown` / `setCode` - the same page calls win32
 //!   builds (`viewer_document.zig`), in UTF-8 because that is what
-//!   `webkit_web_view_evaluate_javascript` takes.
+//!   `webkit_web_view_evaluate_javascript` takes. The template URL carries the
+//!   file as `?file=` (`viewer_chrome.templateUrlFor`), so WebKit's own
+//!   back/forward list knows which file each entry showed.
 //! - **A `.html` file** loads as a page from `ghoztty-page://page/<rel>`, whose
-//!   grant is the file's own directory (`viewer_scheme.zig`).
+//!   grant is the file's own directory (`viewer_scheme.zig`), pinned when the
+//!   pane navigates to the file - a link into `docs/` must not move it.
 //! - **A website** is navigated to directly.
 //! - Images and diffs are their own cards (T3416, T3417); until they land a
 //!   pane in those modes shows the template's error card naming the card.
 //!
+//! **The nav bar** (T3412; `docs/reference/viewer-panes.md`, Navigation
+//! chrome): back / forward / reload / home, a reveal-in-file-manager button
+//! while a local file is shown, and an editable address. It is a row of the
+//! viewer's own vertical box, so it reserves its height from the first frame
+//! and the page is laid out below it, never under it. History is WebKit's,
+//! across the file <-> web boundary: where the pane IS is read back from every
+//! committed URI (`syncCommitted`), never assumed from what was asked for.
+//!
+//! **Pane keys** (Linux modifier = Ctrl, as on Windows): a capture-phase key
+//! controller on the viewer's box sees a chord before the page does, and asks
+//! `viewer_chrome.classify` - the shared win32 tables - what it means. Ctrl+R
+//! reloads, Ctrl+L / Alt+D focus the address with it selected, Ctrl +/-/0
+//! zoom the page, Escape in the address reverts it. Find (Ctrl+F/G, F3) is
+//! T3414's and declined until then, so it falls through like any unclaimed
+//! chord. GTK has no "beep on an unhandled key" (AppKit's `NSBeep`), so the
+//! Mac's no-beep rule is already this platform's behavior.
+//!
 //! A viewer PANE is a `Surface` that hosts one of these in place of its
 //! terminal (T3411), so it splits, resizes, focuses, zooms and closes through
-//! the split tree's own code. What this file does NOT do yet, by design:
-//! chrome and keys (T3412), reload (T3413), find (T3414), link routing
-//! (T3415). It is a widget and a lifecycle, nothing else.
+//! the split tree's own code. Not here yet, by design: `+reload` and live
+//! reload (T3413), find (T3414), link routing (T3415).
 //!
 //! The scheme handlers are registered on WebKit's default context once per
 //! process; a request finds its viewer through the web view it came from
@@ -33,8 +53,11 @@ const internal_os = @import("../../os/main.zig");
 
 const wk = @import("webkit.zig");
 const scheme = @import("viewer_scheme.zig");
+const chrome = @import("viewer_chrome.zig");
 const content = @import("../win32/viewer_content.zig");
 const document = @import("../win32/viewer_document.zig");
+const nav = @import("../win32/viewer_nav.zig");
+const view_arg = @import("../../cli/view_arg.zig");
 
 const log = std.log.scoped(.gtk_viewer);
 
@@ -43,21 +66,48 @@ const data_key = "ghoztty-viewer";
 
 alloc: Allocator,
 view: *wk.WebView,
+/// The viewer's own vertical box: the nav bar, then the web view. This is
+/// the widget a container holds.
+box: *wk.GtkWidget,
+bar: Bar,
 mode: content.Mode,
-/// What the viewer was opened on, as given.
+/// What the viewer was opened on, as given: Home goes back here.
 location: [:0]u8,
+/// Where the viewer is NOW: the file it shows, else the page's URI. Read
+/// back from every committed load, so a link or a history walk moves it.
+current: [:0]u8,
 /// The file behind a file mode; null for a website.
 file_path: ?[]u8 = null,
 /// The read grant both schemes resolve against.
 assets_dir: ?[]u8 = null,
 base_dir: ?[]u8 = null,
+/// The template committed and still needs its document pushed in.
+needs_render: bool = false,
 
-/// Called once the content is on screen: a template mode's page call has
+/// Called each time content is on screen: a template mode's page call has
 /// run, or a page/website finished loading. `ok` is false when the load
-/// failed. Test hook and future chrome both hang off it.
+/// failed. The test hooks hang off it.
 on_rendered: ?*const fn (*Viewer, ok: bool, detail: []const u8) void = null,
 user_data: ?*anyopaque = null,
-rendered: bool = false,
+/// How many renders have finished; the first one is the test dump's.
+render_count: u32 = 0,
+
+/// Told when the location changes (a navigation, a link, Back), so the pane
+/// can retitle itself. `owner` is the pane; the pane clears both before it
+/// goes away.
+on_location_changed: ?*const fn (*Viewer) void = null,
+owner: ?*anyopaque = null,
+
+/// The nav bar's widgets. All owned by `box`.
+const Bar = struct {
+    row: *wk.GtkWidget,
+    back: *wk.GtkWidget,
+    forward: *wk.GtkWidget,
+    reload: *wk.GtkWidget,
+    home: *wk.GtkWidget,
+    reveal: *wk.GtkWidget,
+    address: *wk.GtkWidget,
+};
 
 /// Make a viewer for `location` and start loading it. The returned viewer is
 /// owned by its web view: it is freed when the widget is destroyed.
@@ -68,23 +118,26 @@ pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
     errdefer alloc.destroy(self);
     const loc = try alloc.dupeZ(u8, location);
     errdefer alloc.free(loc);
+    const cur = try alloc.dupeZ(u8, location);
+    errdefer alloc.free(cur);
 
     const w = wk.webkit_web_view_new();
+    const box = wk.gtk_box_new(wk.orientation_vertical, 0);
     self.* = .{
         .alloc = alloc,
         .view = wk.asWebView(w),
+        .box = box,
+        .bar = buildBar(),
         .mode = content.modeFor(location),
         .location = loc,
+        .current = cur,
     };
-
-    if (self.mode.isFile()) {
-        var buf: [std.fs.max_path_bytes]u8 = undefined;
-        if (content.filePath(&buf, location)) |p| {
-            self.file_path = alloc.dupe(u8, p) catch null;
-            if (std.fs.path.dirname(p)) |d| self.base_dir = alloc.dupe(u8, d) catch null;
-        }
-    }
     self.assets_dir = findAssetsDir(alloc);
+
+    wk.gtk_widget_set_hexpand(w, 1);
+    wk.gtk_widget_set_vexpand(w, 1);
+    wk.gtk_box_append(box, self.bar.row);
+    wk.gtk_box_append(box, w);
 
     // DEBUG-ONLY test seam: with `GHOZTTY_TEST_VIEWER_DUMP` set, every
     // viewer - a pane's too (T3411) - writes its probe result there once it
@@ -98,35 +151,54 @@ pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
     _ = wk.g_signal_connect_data(w, "load-failed", @ptrCast(&onLoadFailed), self, null, 0);
     _ = wk.g_signal_connect_data(w, "destroy", @ptrCast(&onDestroy), self, null, 0);
 
-    self.load();
+    _ = wk.g_signal_connect_data(self.bar.back, "clicked", @ptrCast(&onBackClicked), self, null, 0);
+    _ = wk.g_signal_connect_data(self.bar.forward, "clicked", @ptrCast(&onForwardClicked), self, null, 0);
+    _ = wk.g_signal_connect_data(self.bar.reload, "clicked", @ptrCast(&onReloadClicked), self, null, 0);
+    _ = wk.g_signal_connect_data(self.bar.home, "clicked", @ptrCast(&onHomeClicked), self, null, 0);
+    _ = wk.g_signal_connect_data(self.bar.reveal, "clicked", @ptrCast(&onRevealClicked), self, null, 0);
+    _ = wk.g_signal_connect_data(self.bar.address, "activate", @ptrCast(&onAddressActivate), self, null, 0);
+
+    // The pane's chords, before the page or a field sees them.
+    const keys = wk.gtk_event_controller_key_new();
+    wk.gtk_event_controller_set_propagation_phase(keys, wk.phase_capture);
+    _ = wk.g_signal_connect_data(keys, "key-pressed", @ptrCast(&onKeyPressed), self, null, 0);
+    wk.gtk_widget_add_controller(box, keys);
+
+    self.navigate(location);
     return self;
 }
 
-/// The web view as a GTK widget, for whatever container holds it.
+/// The viewer as a GTK widget - the nav bar and the page - for whatever
+/// container holds it.
 pub fn widget(self: *const Viewer) *wk.GtkWidget {
-    return wk.asWidget(self.view);
+    return self.box;
 }
 
-/// What `+list` reports as the pane's `url` (T3411): the page a website pane
-/// is on NOW (it may have navigated), else the file it shows, else the
-/// location it was opened with.
+/// Give keyboard focus to the page (Mac's `focusContent`): what focusing the
+/// pane means, and where a submitted address or an Escape hands focus back.
+pub fn focusContent(self: *const Viewer) void {
+    _ = wk.gtk_widget_grab_focus(wk.asWidget(self.view));
+}
+
+/// What `+list` reports as the pane's `url` (T3411): where the pane is NOW -
+/// the page a website is on, else the file it shows.
 pub fn currentLocation(self: *const Viewer) []const u8 {
-    if (self.mode == .web) if (wk.webkit_web_view_get_uri(self.view)) |u| {
-        const s = std.mem.span(u);
-        if (s.len > 0) return s;
-    };
-    return self.file_path orelse self.location;
+    return self.current;
 }
 
 /// The pane's title: the file's name, a website's host, a diff's subject
 /// (win32's `initialTitle`, the Mac's `mode.title`). Borrowed from the viewer.
 pub fn paneTitle(self: *const Viewer) []const u8 {
-    return content.initialTitle(self.mode, self.location, self.file_path);
+    return content.initialTitle(self.mode, self.current, self.file_path);
 }
 
 fn deinit(self: *Viewer) void {
+    if (comptime build_config.is_debug) {
+        if (steps.viewer == self) steps.viewer = null;
+    }
     const alloc = self.alloc;
     alloc.free(self.location);
+    alloc.free(self.current);
     if (self.file_path) |p| alloc.free(p);
     if (self.assets_dir) |p| alloc.free(p);
     if (self.base_dir) |p| alloc.free(p);
@@ -145,26 +217,399 @@ fn findAssetsDir(alloc: Allocator) ?[]u8 {
     return std.fs.path.join(alloc, &.{ dir, "viewer" }) catch null;
 }
 
-fn load(self: *Viewer) void {
-    switch (self.mode) {
-        .web => wk.webkit_web_view_load_uri(self.view, self.location.ptr),
+// -------------------------------------------------------------------------
+// Navigation
+// -------------------------------------------------------------------------
+
+/// Point the pane at `target` - a path, a URL, a diff spec - and load it.
+/// The state set here is what the scheme handler needs before the load
+/// commits; `syncCommitted` re-reads it from the committed URI either way.
+pub fn navigate(self: *Viewer, target: []const u8) void {
+    const mode = content.modeFor(target);
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path: ?[]const u8 = if (mode.isFile()) content.filePath(&path_buf, target) else null;
+
+    self.setCurrent(path orelse target);
+    self.mode = mode;
+    self.setFile(path);
+    // The grant: a template's relative images and a page's own directory.
+    // A page's root is pinned here and nowhere else (win32's T601 note).
+    if (path) |p| self.setBaseDir(std.fs.path.dirname(p));
+
+    switch (mode) {
+        .web => wk.webkit_web_view_load_uri(self.view, self.current.ptr),
         .html => {
-            const path = self.file_path orelse return self.fail("Cannot read file", self.location);
-            const root = self.base_dir orelse return self.fail("Cannot read file", path);
-            const url = scheme.pageUrl(self.alloc, root, path) catch null;
-            const u = url orelse return self.fail("Cannot read file", path);
+            const p = path orelse return self.fail("Cannot read file", target);
+            const root = self.base_dir orelse return self.fail("Cannot read file", p);
+            const url = scheme.pageUrl(self.alloc, root, p) catch null;
+            const u = url orelse return self.fail("Cannot read file", p);
             defer self.alloc.free(u);
             wk.webkit_web_view_load_uri(self.view, u.ptr);
         },
-        .markdown, .code, .image, .diff => wk.webkit_web_view_load_uri(self.view, scheme.template_url),
+        .markdown, .code, .image => {
+            const p = path orelse {
+                wk.webkit_web_view_load_uri(self.view, scheme.template_url);
+                return;
+            };
+            const url = chrome.templateUrlFor(self.alloc, p) catch return self.fail("Cannot read file", p);
+            defer self.alloc.free(url);
+            wk.webkit_web_view_load_uri(self.view, url.ptr);
+        },
+        .diff => wk.webkit_web_view_load_uri(self.view, scheme.template_url),
+    }
+    self.syncChrome();
+}
+
+/// Read where the pane IS from a committed URI: a typed address, a link and
+/// a history walk all arrive here, and only here do they move the pane.
+fn syncCommitted(self: *Viewer) void {
+    const uri_z = wk.webkit_web_view_get_uri(self.view) orelse return;
+    const uri = std.mem.span(uri_z);
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    switch (chrome.classifyCommitted(&buf, uri)) {
+        .template_file => |file| {
+            self.mode = content.modeFor(file);
+            self.setCurrent(file);
+            self.setFile(file);
+            self.setBaseDir(std.fs.path.dirname(file));
+            self.needs_render = true;
+        },
+        // The bare template (a diff, or a file that never resolved): keep
+        // what the pane was told, render that.
+        .template_bare => self.needs_render = true,
+        .page => |rel| {
+            self.mode = .html;
+            const root = self.base_dir orelse "";
+            const full = std.fs.path.join(self.alloc, &.{ root, rel }) catch return;
+            defer self.alloc.free(full);
+            self.setCurrent(full);
+            self.setFile(full);
+        },
+        .web => {
+            self.mode = .web;
+            self.setCurrent(uri);
+            self.setFile(null);
+        },
+    }
+    self.syncChrome();
+    if (self.on_location_changed) |cb| cb(self);
+}
+
+fn setCurrent(self: *Viewer, value: []const u8) void {
+    if (std.mem.eql(u8, self.current, value)) return;
+    const copy = self.alloc.dupeZ(u8, value) catch return;
+    self.alloc.free(self.current);
+    self.current = copy;
+}
+
+fn setFile(self: *Viewer, value: ?[]const u8) void {
+    if (self.file_path) |old| {
+        if (value) |v| if (std.mem.eql(u8, old, v)) return;
+        self.alloc.free(old);
+        self.file_path = null;
+    }
+    const v = value orelse return;
+    self.file_path = self.alloc.dupe(u8, v) catch null;
+}
+
+fn setBaseDir(self: *Viewer, value: ?[]const u8) void {
+    const v = value orelse return;
+    if (self.base_dir) |old| {
+        if (std.mem.eql(u8, old, v)) return;
+        self.alloc.free(old);
+        self.base_dir = null;
+    }
+    self.base_dir = self.alloc.dupe(u8, v) catch null;
+}
+
+pub fn goBack(self: *Viewer) void {
+    wk.webkit_web_view_go_back(self.view);
+}
+
+pub fn goForward(self: *Viewer) void {
+    wk.webkit_web_view_go_forward(self.view);
+}
+
+/// Home: the location the pane was opened with.
+pub fn goHome(self: *Viewer) void {
+    self.navigate(self.location);
+}
+
+/// Reload in place, the interactive `+reload` (Mac's Cmd+R): a template mode
+/// re-reads its file and pushes it into the page it already has, so the
+/// scroll position survives; a page or a website re-fetches from origin.
+pub fn reloadContent(self: *Viewer) void {
+    if (self.mode.usesTemplate() and self.render_count > 0 and !self.needs_render) {
+        self.renderTemplate();
+        return;
+    }
+    wk.webkit_web_view_reload_bypass_cache(self.view);
+}
+
+/// The bar's reload button: a plain browser reload (Mac's `reloadPage`). A
+/// template mode reloads the template, whose commit re-renders the file.
+fn reloadFromChrome(self: *Viewer) void {
+    wk.webkit_web_view_reload(self.view);
+}
+
+/// Submit from the address field (Mac's `navigate(to:)`): trim, classify,
+/// complete omnibox-style, expand `~` - then hand focus to the page, as a
+/// browser omnibox does.
+fn navigateFromAddress(self: *Viewer) void {
+    const text = std.mem.span(wk.gtk_editable_get_text(self.bar.address));
+    var resolve_buf: [nav.max_address]u8 = undefined;
+    const resolved = nav.resolveInput(&resolve_buf, text) orelse return;
+
+    var tilde_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const target: []const u8 = expand: {
+        const rem = view_arg.tildeRemainder(resolved) orelse break :expand resolved;
+        var home_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const home = (internal_os.home(&home_buf) catch null) orelse break :expand resolved;
+        const rel = std.mem.trimLeft(u8, rem, "/");
+        break :expand std.fmt.bufPrint(&tilde_buf, "{s}{s}{s}", .{
+            home,
+            if (rel.len > 0) "/" else "",
+            rel,
+        }) catch resolved;
+    };
+    log.info("viewer: address navigates to {s}", .{target});
+    self.focusContent();
+    self.navigate(target);
+}
+
+/// Ctrl+L / Alt+D: the caret in the address with the whole address selected.
+pub fn focusAddress(self: *Viewer) void {
+    _ = wk.gtk_widget_grab_focus(self.bar.address);
+    wk.gtk_editable_select_region(self.bar.address, 0, -1);
+}
+
+/// Escape while editing the address: the edit is thrown away, the real
+/// location goes back in the field, and the page gets focus (Mac's
+/// `cancelAddressEditing`).
+fn cancelAddressEdit(self: *Viewer) void {
+    self.focusContent();
+    self.syncAddress(true);
+}
+
+fn zoom(self: *Viewer, action: chrome.ZoomAction) void {
+    const level = chrome.steppedZoom(wk.webkit_web_view_get_zoom_level(self.view), action);
+    wk.webkit_web_view_set_zoom_level(self.view, level);
+}
+
+// -------------------------------------------------------------------------
+// The nav bar
+// -------------------------------------------------------------------------
+
+fn buildBar() Bar {
+    const row = wk.gtk_box_new(wk.orientation_horizontal, 2);
+    wk.gtk_widget_add_css_class(row, "toolbar");
+    const bar: Bar = .{
+        .row = row,
+        .back = barButton("go-previous-symbolic", "Back"),
+        .forward = barButton("go-next-symbolic", "Forward"),
+        .reload = barButton("view-refresh-symbolic", "Reload"),
+        .home = barButton("go-home-symbolic", "Home"),
+        .reveal = barButton("folder-open-symbolic", "Open Containing Folder"),
+        .address = wk.gtk_entry_new(),
+    };
+    wk.gtk_entry_set_placeholder_text(bar.address, "Enter URL");
+    wk.gtk_widget_set_hexpand(bar.address, 1);
+    wk.gtk_widget_set_margin_start(bar.address, 4);
+    inline for (.{ "back", "forward", "reload", "home", "reveal", "address" }) |f| {
+        wk.gtk_box_append(row, @field(bar, f));
+    }
+    return bar;
+}
+
+fn barButton(icon: [*:0]const u8, tip: [*:0]const u8) *wk.GtkWidget {
+    const b = wk.gtk_button_new_from_icon_name(icon);
+    wk.gtk_widget_set_tooltip_text(b, tip);
+    wk.gtk_widget_add_css_class(b, "flat");
+    // Clicking Back must not take the caret out of the page.
+    wk.gtk_widget_set_focus_on_click(b, 0);
+    return b;
+}
+
+/// Mirror where the pane is onto the bar.
+fn syncChrome(self: *Viewer) void {
+    wk.gtk_widget_set_sensitive(self.bar.back, wk.webkit_web_view_can_go_back(self.view));
+    wk.gtk_widget_set_sensitive(self.bar.forward, wk.webkit_web_view_can_go_forward(self.view));
+    wk.gtk_widget_set_visible(self.bar.reveal, @intFromBool(chrome.showsReveal(self.mode) and self.file_path != null));
+    self.syncAddress(false);
+}
+
+/// Put the pane's location in the address field - unless someone is typing
+/// there and `force` is off, because a page finishing a load must not throw
+/// away a half-typed address.
+fn syncAddress(self: *Viewer, force: bool) void {
+    if (!force and self.addressHasFocus()) return;
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const text = nav.addressText(&buf, self.current);
+    var zbuf: [std.fs.max_path_bytes + 1]u8 = undefined;
+    const z = std.fmt.bufPrintZ(&zbuf, "{s}", .{text}) catch return;
+    wk.gtk_editable_set_text(self.bar.address, z.ptr);
+}
+
+fn focusWidget(self: *const Viewer) ?*wk.GtkWidget {
+    const root = wk.gtk_widget_get_root(self.box) orelse return null;
+    return wk.gtk_root_get_focus(root);
+}
+
+fn addressHasFocus(self: *const Viewer) bool {
+    const f = self.focusWidget() orelse return false;
+    return f == self.bar.address or wk.gtk_widget_is_ancestor(f, self.bar.address) != 0;
+}
+
+fn onBackClicked(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    self.goBack();
+}
+
+fn onForwardClicked(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    self.goForward();
+}
+
+fn onReloadClicked(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    self.reloadFromChrome();
+}
+
+fn onHomeClicked(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    self.goHome();
+}
+
+fn onRevealClicked(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    self.reveal();
+}
+
+fn onAddressActivate(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    self.navigateFromAddress();
+}
+
+/// Show the pane's file in the file manager with it selected (Mac's Reveal
+/// in Finder; GTK's `open_containing_folder`, which asks the desktop's
+/// `org.freedesktop.FileManager1`). A file deleted under the pane opens the
+/// nearest folder that still exists instead of a dead click - the Mac's
+/// answer too.
+pub fn reveal(self: *Viewer) void {
+    const path = self.file_path orelse return;
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const target = revealTarget(&buf, path) orelse return;
+    const z = std.fmt.bufPrintZ(&buf, "{s}", .{target.path}) catch return;
+    const file = wk.g_file_new_for_path(z.ptr);
+    defer wk.g_object_unref(file);
+    const launcher = wk.gtk_file_launcher_new(file);
+    const parent = wk.gtk_widget_get_root(self.box);
+    switch (target.kind) {
+        .file => {
+            log.info("viewer: reveal file={s}", .{target.path});
+            wk.gtk_file_launcher_open_containing_folder(launcher, parent, null, &onRevealDone, null);
+        },
+        .folder => {
+            log.info("viewer: reveal folder={s} (the file is gone)", .{target.path});
+            wk.gtk_file_launcher_launch(launcher, parent, null, &onRevealFolderDone, null);
+        },
     }
 }
 
+const RevealTarget = struct {
+    kind: enum { file, folder },
+    path: []const u8,
+};
+
+/// The file itself when it exists, else its nearest existing ancestor.
+fn revealTarget(buf: []u8, path: []const u8) ?RevealTarget {
+    if (std.fs.accessAbsolute(path, .{})) |_| {
+        if (path.len > buf.len) return null;
+        @memcpy(buf[0..path.len], path);
+        return .{ .kind = .file, .path = buf[0..path.len] };
+    } else |_| {}
+    var dir = std.fs.path.dirname(path);
+    while (dir) |d| : (dir = std.fs.path.dirname(d)) {
+        std.fs.accessAbsolute(d, .{}) catch continue;
+        if (d.len > buf.len) return null;
+        @memcpy(buf[0..d.len], d);
+        return .{ .kind = .folder, .path = buf[0..d.len] };
+    }
+    return null;
+}
+
+fn onRevealDone(source: ?*wk.GObject, result: *wk.GAsyncResult, _: ?*anyopaque) callconv(.c) void {
+    const launcher: *wk.GtkFileLauncher = @ptrCast(source orelse return);
+    defer wk.g_object_unref(launcher);
+    var err: ?*wk.GError = null;
+    if (wk.gtk_file_launcher_open_containing_folder_finish(launcher, result, &err) == 0) {
+        if (err) |e| {
+            defer wk.g_error_free(e);
+            log.warn("viewer: reveal failed: {s}", .{std.mem.span(e.message orelse "?")});
+        }
+    }
+}
+
+fn onRevealFolderDone(source: ?*wk.GObject, result: *wk.GAsyncResult, _: ?*anyopaque) callconv(.c) void {
+    const launcher: *wk.GtkFileLauncher = @ptrCast(source orelse return);
+    defer wk.g_object_unref(launcher);
+    var err: ?*wk.GError = null;
+    if (wk.gtk_file_launcher_launch_finish(launcher, result, &err) == 0) {
+        if (err) |e| {
+            defer wk.g_error_free(e);
+            log.warn("viewer: reveal failed: {s}", .{std.mem.span(e.message orelse "?")});
+        }
+    }
+}
+
+// -------------------------------------------------------------------------
+// Pane keys
+// -------------------------------------------------------------------------
+
+fn onKeyPressed(
+    _: *wk.GtkEventController,
+    keyval: c_uint,
+    _: c_uint,
+    state: c_uint,
+    ud: ?*anyopaque,
+) callconv(.c) c_int {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return 0));
+    return @intFromBool(self.handleKey(keyval, state));
+}
+
+/// One key press in the pane. True when the pane claimed it; false leaves it
+/// to the page or the focused field, and from there to the app's bindings.
+pub fn handleKey(self: *Viewer, keyval: u32, state: u32) bool {
+    const action = chrome.classify(keyval, state, .{ .address = self.addressHasFocus() }) orelse return false;
+    switch (action) {
+        .pane => |c| switch (c) {
+            .reload => self.reloadContent(),
+            .focus_address => self.focusAddress(),
+            // Find in page is T3414's: declined until it lands, so the chord
+            // falls through exactly as an unclaimed one does.
+            .find, .find_next, .find_previous => return false,
+        },
+        .zoom => |z| self.zoom(z),
+        .field => |f| switch (f) {
+            .revert_address => self.cancelAddressEdit(),
+            // No diff filter (T3417) or find card (T3414) on Linux yet.
+            .clear_diff_filter, .close_find, .find_next, .find_previous => return false,
+        },
+    }
+    log.debug("viewer: key {x} state {x} -> {s}", .{ keyval, state, @tagName(action) });
+    return true;
+}
+
+// -------------------------------------------------------------------------
+// Rendering
+// -------------------------------------------------------------------------
+
 /// The template finished loading: put the document on it.
 fn renderTemplate(self: *Viewer) void {
+    self.needs_render = false;
     switch (self.mode) {
         .markdown, .code => {
-            const path = self.file_path orelse return self.showError(content.error_unreadable, self.location);
+            const path = self.file_path orelse return self.showError(content.error_unreadable, self.current);
             const out = document.readUtf8(self.alloc, self.mode, path);
             defer out.deinit(self.alloc);
             switch (out) {
@@ -173,9 +618,9 @@ fn renderTemplate(self: *Viewer) void {
                 .none => self.finishRender(true, ""),
             }
         },
-        .image => self.showError("Image viewer panes are not on Linux yet (T3416)", self.location),
-        .diff => self.showError("Diff viewer panes are not on Linux yet (T3417)", self.location),
-        .web, .html => unreachable,
+        .image => self.showError("Image viewer panes are not on Linux yet (T3416)", self.current),
+        .diff => self.showError("Diff viewer panes are not on Linux yet (T3417)", self.current),
+        .web, .html => self.finishRender(true, ""),
     }
 }
 
@@ -188,6 +633,7 @@ fn showError(self: *Viewer, title: []const u8, detail: []const u8) void {
 /// A failure before anything could load: there is no page to put a card on.
 fn fail(self: *Viewer, title: []const u8, detail: []const u8) void {
     log.warn("viewer: {s}: {s}", .{ title, detail });
+    self.syncChrome();
     self.finishRender(false, title);
 }
 
@@ -219,20 +665,24 @@ fn onRenderEvaluated(source: ?*wk.GObject, result: *wk.GAsyncResult, ud: ?*anyop
 }
 
 fn finishRender(self: *Viewer, ok: bool, detail: []const u8) void {
-    if (self.rendered) return;
-    self.rendered = true;
+    self.render_count += 1;
     if (self.on_rendered) |cb| cb(self, ok, detail);
+    if (comptime build_config.is_debug) steps.onRendered(self, ok);
 }
 
 fn onLoadChanged(view: *wk.WebView, event: wk.LoadEvent, ud: ?*anyopaque) callconv(.c) void {
     _ = view;
     const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
-    if (event != .finished) return;
-    if (self.mode.usesTemplate()) {
-        // Only the template's own load; a later navigation (a link, T3415)
-        // is not a fresh render.
-        if (!self.rendered) self.renderTemplate();
-    } else self.finishRender(true, "");
+    switch (event) {
+        .committed => self.syncCommitted(),
+        .finished => {
+            self.syncChrome();
+            if (self.mode.usesTemplate()) {
+                if (self.needs_render) self.renderTemplate();
+            } else self.finishRender(true, "");
+        },
+        else => {},
+    }
 }
 
 fn onLoadFailed(
@@ -394,7 +844,10 @@ pub fn openTestWindowFromEnv() void {
     log.info("viewer test window: opened mode={s} location={s}", .{ @tagName(viewer.mode), location });
 }
 
+/// The first render writes the dump; later renders (a navigation, Back) are
+/// the steps runner's business.
 fn onTestRendered(self: *Viewer, ok: bool, detail: []const u8) void {
+    if (self.render_count != 1) return;
     log.info("viewer test window: rendered ok={} detail={s}", .{ ok, detail });
     if (!ok) {
         var buf: [512]u8 = undefined;
@@ -405,23 +858,31 @@ fn onTestRendered(self: *Viewer, ok: bool, detail: []const u8) void {
     wk.webkit_web_view_evaluate_javascript(self.view, probe.ptr, @intCast(probe.len), null, null, null, &onTestProbed, self);
 }
 
-fn onTestProbed(source: ?*wk.GObject, result: *wk.GAsyncResult, _: ?*anyopaque) callconv(.c) void {
+fn onTestProbed(source: ?*wk.GObject, result: *wk.GAsyncResult, ud: ?*anyopaque) callconv(.c) void {
+    const line = probeLine(source, result) orelse return;
+    defer std.heap.c_allocator.free(line);
+    writeDump(line);
+    // The first render's dump is down: the steps, if any, start now.
+    if (comptime build_config.is_debug) {
+        const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+        steps.start(self);
+    }
+}
+
+/// `OK <value>` / `FAIL <why>` for an evaluated probe. Caller frees.
+fn probeLine(source: ?*wk.GObject, result: *wk.GAsyncResult) ?[]u8 {
+    const alloc = std.heap.c_allocator;
     var err: ?*wk.GError = null;
-    const value = wk.webkit_web_view_evaluate_javascript_finish(@ptrCast(source orelse return), result, &err);
+    const value = wk.webkit_web_view_evaluate_javascript_finish(@ptrCast(source orelse return null), result, &err);
     if (err) |e| {
         defer wk.g_error_free(e);
-        var buf: [512]u8 = undefined;
-        writeDump(std.fmt.bufPrint(&buf, "FAIL probe: {s}", .{std.mem.span(e.message orelse "?")}) catch "FAIL probe");
-        return;
+        return std.fmt.allocPrint(alloc, "FAIL probe: {s}", .{std.mem.span(e.message orelse "?")}) catch null;
     }
-    const v = value orelse return writeDump("FAIL probe: no value");
+    const v = value orelse return alloc.dupe(u8, "FAIL probe: no value") catch null;
     defer wk.g_object_unref(v);
-    const s = wk.jsc_value_to_string(v) orelse return writeDump("FAIL probe: not a string");
+    const s = wk.jsc_value_to_string(v) orelse return alloc.dupe(u8, "FAIL probe: not a string") catch null;
     defer wk.g_free(s);
-    const alloc = std.heap.c_allocator;
-    const line = std.fmt.allocPrint(alloc, "OK {s}", .{std.mem.span(s)}) catch return writeDump("FAIL oom");
-    defer alloc.free(line);
-    writeDump(line);
+    return std.fmt.allocPrint(alloc, "OK {s}", .{std.mem.span(s)}) catch null;
 }
 
 fn writeDump(text: []const u8) void {
@@ -434,3 +895,196 @@ fn writeDump(text: []const u8) void {
     f.writeAll(text) catch {};
     f.writeAll("\n") catch {};
 }
+
+// -------------------------------------------------------------------------
+// The debug steps runner (headless acceptance, test/linux/viewer-nav.sh)
+// -------------------------------------------------------------------------
+
+/// DEBUG-ONLY: drive the nav bar and the pane keys from a script, because a
+/// headless Weston has no seat to type into and Wayland has no input
+/// injection. With `GHOZTTY_TEST_VIEWER_STEPS=<file>` set, the first viewer
+/// to write its test dump then runs the file's lines in order and appends one
+/// result line per step to `GHOZTTY_TEST_VIEWER_STEPS_OUT`:
+///
+///   key <accel>     the pane's key handler, as a GTK accelerator string
+///                   (`<Control>l`): `key <accel> handled=<bool>`
+///   type <text>     replace the address field's text, as typing would
+///   activate        press Return in the address field (its `activate`)
+///   click <button>  back|forward|reload|home|reveal - `gtk_widget_activate`,
+///                   which emits the button's own `clicked`
+///   wait            until the next render finishes (10 s): `wait ok=<bool>`
+///   state           `state mode= current= address= back= forward= reveal=
+///                   zoom= focus=address|content|other sel=<start>-<end>`
+///   probe <js>      evaluate in the page: `probe OK <value>`
+///   mark <text>     `mark <text>`, a sync point for the driving script
+///   sleep <ms>
+///
+/// The key handler is the same function the capture-phase controller calls,
+/// so only GDK's delivery of the press is not exercised.
+const steps = if (build_config.is_debug) struct {
+    var viewer: ?*Viewer = null;
+    var started = false;
+    var lines: std.ArrayList([]const u8) = .empty;
+    var bytes: []u8 = &.{};
+    var index: usize = 0;
+    var waiting = false;
+    var wait_gen: u32 = 0;
+
+    fn start(v: *Viewer) void {
+        if (started) return;
+        const path = std.posix.getenv("GHOZTTY_TEST_VIEWER_STEPS") orelse return;
+        started = true;
+        const alloc = std.heap.c_allocator;
+        bytes = std.fs.cwd().readFileAlloc(alloc, path, 1 << 20) catch |err| {
+            log.warn("viewer steps: cannot read {s} err={}", .{ path, err });
+            return;
+        };
+        var it = std.mem.splitScalar(u8, bytes, '\n');
+        while (it.next()) |raw| {
+            const line = std.mem.trim(u8, raw, " \t\r");
+            if (line.len == 0 or line[0] == '#') continue;
+            lines.append(alloc, line) catch return;
+        }
+        viewer = v;
+        log.info("viewer steps: {d} step(s) from {s}", .{ lines.items.len, path });
+        schedule();
+    }
+
+    fn schedule() void {
+        _ = wk.g_idle_add(&runNext, null);
+    }
+
+    fn out(comptime fmt: []const u8, args: anytype) void {
+        const path = std.posix.getenv("GHOZTTY_TEST_VIEWER_STEPS_OUT") orelse return;
+        const f = std.fs.cwd().createFile(path, .{ .truncate = false }) catch return;
+        defer f.close();
+        f.seekFromEnd(0) catch return;
+        var buf: [4096]u8 = undefined;
+        const s = std.fmt.bufPrint(&buf, fmt ++ "\n", args) catch return;
+        f.writeAll(s) catch {};
+    }
+
+    fn runNext(_: ?*anyopaque) callconv(.c) c_int {
+        const v = viewer orelse return 0;
+        if (index >= lines.items.len) {
+            out("done", .{});
+            return 0;
+        }
+        const line = lines.items[index];
+        index += 1;
+        const sp = std.mem.indexOfScalar(u8, line, ' ');
+        const verb = if (sp) |i| line[0..i] else line;
+        const arg = if (sp) |i| line[i + 1 ..] else "";
+
+        if (std.mem.eql(u8, verb, "key")) {
+            var zbuf: [128]u8 = undefined;
+            const z = std.fmt.bufPrintZ(&zbuf, "{s}", .{arg}) catch "";
+            var kv: c_uint = 0;
+            var mods: c_uint = 0;
+            if (wk.gtk_accelerator_parse(z.ptr, &kv, &mods) == 0) {
+                out("key {s} PARSE-FAILED", .{arg});
+            } else {
+                out("key {s} handled={}", .{ arg, v.handleKey(kv, mods) });
+            }
+        } else if (std.mem.eql(u8, verb, "type")) {
+            var zbuf: [2048]u8 = undefined;
+            const z = std.fmt.bufPrintZ(&zbuf, "{s}", .{arg}) catch "";
+            wk.gtk_editable_set_text(v.bar.address, z.ptr);
+            out("type {s}", .{arg});
+        } else if (std.mem.eql(u8, verb, "activate")) {
+            _ = wk.gtk_widget_activate(v.bar.address);
+            out("activate", .{});
+        } else if (std.mem.eql(u8, verb, "click")) {
+            const b: ?*wk.GtkWidget = if (std.mem.eql(u8, arg, "back")) v.bar.back else if (std.mem.eql(u8, arg, "forward")) v.bar.forward else if (std.mem.eql(u8, arg, "reload")) v.bar.reload else if (std.mem.eql(u8, arg, "home")) v.bar.home else if (std.mem.eql(u8, arg, "reveal")) v.bar.reveal else null;
+            if (b) |w| {
+                const sens = wk.gtk_widget_get_sensitive(w) != 0;
+                const vis = wk.gtk_widget_get_visible(w) != 0;
+                // A real click cannot reach an insensitive or hidden button.
+                if (sens and vis) _ = wk.gtk_widget_activate(w);
+                out("click {s} sensitive={} visible={}", .{ arg, sens, vis });
+            } else out("click {s} NO-SUCH-BUTTON", .{arg});
+        } else if (std.mem.eql(u8, verb, "wait")) {
+            waiting = true;
+            wait_gen +%= 1;
+            const gen = wait_gen;
+            _ = wk.g_timeout_add(10_000, &waitTimeout, @ptrFromInt(@as(usize, gen) + 1));
+            return 0;
+        } else if (std.mem.eql(u8, verb, "state")) {
+            writeState(v);
+        } else if (std.mem.eql(u8, verb, "mark")) {
+            // A sync point for the driving script (it edits a fixture, reads
+            // +list, ...) while a following `sleep` holds the steps.
+            out("mark {s}", .{arg});
+        } else if (std.mem.eql(u8, verb, "probe")) {
+            wk.webkit_web_view_evaluate_javascript(v.view, arg.ptr, @intCast(arg.len), null, null, null, &onProbed, null);
+            return 0;
+        } else if (std.mem.eql(u8, verb, "sleep")) {
+            const ms = std.fmt.parseInt(c_uint, arg, 10) catch 100;
+            _ = wk.g_timeout_add(ms, &afterSleep, null);
+            return 0;
+        } else {
+            out("{s} UNKNOWN-STEP", .{verb});
+        }
+        schedule();
+        return 0;
+    }
+
+    fn writeState(v: *Viewer) void {
+        var start_i: c_int = 0;
+        var end_i: c_int = 0;
+        _ = wk.gtk_editable_get_selection_bounds(v.bar.address, &start_i, &end_i);
+        const focus: []const u8 = if (v.addressHasFocus())
+            "address"
+        else if (v.focusWidget()) |f|
+            (if (f == wk.asWidget(v.view) or wk.gtk_widget_is_ancestor(f, wk.asWidget(v.view)) != 0) "content" else "other")
+        else
+            "none";
+        out("state mode={s} current={s} address={s} back={} forward={} reveal={} zoom={d:.3} focus={s} sel={d}-{d} barh={d}", .{
+            @tagName(v.mode),
+            v.current,
+            std.mem.span(wk.gtk_editable_get_text(v.bar.address)),
+            wk.gtk_widget_get_sensitive(v.bar.back) != 0,
+            wk.gtk_widget_get_sensitive(v.bar.forward) != 0,
+            wk.gtk_widget_get_visible(v.bar.reveal) != 0,
+            wk.webkit_web_view_get_zoom_level(v.view),
+            focus,
+            start_i,
+            end_i,
+            wk.gtk_widget_get_height(v.bar.row),
+        });
+    }
+
+    fn onRendered(v: *Viewer, ok: bool) void {
+        if (!waiting or viewer != v) return;
+        waiting = false;
+        out("wait ok={}", .{ok});
+        schedule();
+    }
+
+    fn waitTimeout(data: ?*anyopaque) callconv(.c) c_int {
+        const gen: u32 = @intCast(@intFromPtr(data) - 1);
+        if (waiting and gen == wait_gen) {
+            waiting = false;
+            out("wait TIMEOUT", .{});
+            schedule();
+        }
+        return 0;
+    }
+
+    fn afterSleep(_: ?*anyopaque) callconv(.c) c_int {
+        schedule();
+        return 0;
+    }
+
+    fn onProbed(source: ?*wk.GObject, result: *wk.GAsyncResult, _: ?*anyopaque) callconv(.c) void {
+        if (probeLine(source, result)) |line| {
+            defer std.heap.c_allocator.free(line);
+            out("probe {s}", .{line});
+        } else out("probe FAIL", .{});
+        schedule();
+    }
+} else struct {
+    var viewer: ?*Viewer = null;
+    fn start(_: *Viewer) void {}
+    fn onRendered(_: *Viewer, _: bool) void {}
+};
