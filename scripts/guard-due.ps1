@@ -5790,6 +5790,23 @@ $GuardTable = @(
             'test\win32\chooser-help-tooltips.ps1'
         )
     },
+    # The chooser's roster against a REMOTE machine over a loopback relay (T319),
+    # and since T1759 the only on-box run of the count capsule's REMOTE paths: a
+    # device-keyed count, its drop when a session is ended from the list, and
+    # its clearing when that machine's load fails. Coverage is the count cache,
+    # the relay fixture the harness stands up, and the harness itself;
+    # `MachineChooser.zig` is left out for the reason the `chooser-resume` row
+    # states.
+    [pscustomobject]@{
+        Name   = 'chooser-sessions-remote'
+        Script = 'test\win32\chooser-sessions-remote.ps1'
+        Stamp  = 'test\win32\chooser-sessions-remote.stamp.json'
+        Covers = @(
+            'src\apprt\win32\chooser_row_counts.zig',
+            'test\win32\lib\FakeRelay.ps1',
+            'test\win32\chooser-sessions-remote.ps1'
+        )
+    },
     # The Activity Monitor control bar's HOVER HELP (T1634): Mac's `.help()`
     # words on the count, the truncated-list badge, Show all, Kill and New
     # Process, through the tooltip control the chooser shares. Silent by

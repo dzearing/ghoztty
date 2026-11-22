@@ -1,10 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-11-21T20:50:24-08:00",
-    "commit":  "13cee8df8",
+    "generated":  "2026-11-21T20:57:15-08:00",
+    "commit":  "4e5927d42",
     "uncommitted":  [
-                        "scripts/parity-tasks.ps1"
+                        "scripts/guard-due.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "4b958ede38c0911c4945146f0a52810ebbf8c01d44ac8a60532f2eb77f8fd0af",
@@ -51,7 +51,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "e491be3477c3236c4e10af70db2f40e9d632c45f83bf860f4b09fe6eeda5e2b7",
                   "scripts/go-loop-watchdog.ps1":  "37f19f9ce08a701645b7267fea8411125b9112d83ef5ff0cbddb8e380f058d67",
-                  "scripts/guard-due.ps1":  "68a9d1b16a77d64afa2ef3b0b6b9f1624a84113ef28cd10e0b0b8403ea782954",
+                  "scripts/guard-due.ps1":  "f1ba77fcb2abafc6febc59460a43080c7f4bef0e5fb0198995e79744630647c1",
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
                   "scripts/hero-glide-onscreen.ps1":  "46d211f7ec7843d13506f4e3bd13933630339adb8aff13b5c97d69ae3fd248a7",
                   "scripts/hidden-windows-cpu.ps1":  "61551ac8760570d16a46ab2ef235c9792a2e29fb9e9d116ebbc23a5ce9051876",
@@ -95,6 +95,7 @@
                   "scripts/lib/TreeIdle.ps1":  "2c4d18f221cbed25de68a4ebb694b447bb35b3307f5ccc28b025aa31a1ed9149",
                   "scripts/lib/UserAlert.ps1":  "785ec9f42291ab67113193989a0a59f2f576c2cc2801fb26cbf7217edd346563",
                   "scripts/lib/WebViewLane.ps1":  "b7dfacab366ddc509be771728f9d939d7b1d98a4ad542f698691e227619612e5",
+                  "scripts/lib/WslState.ps1":  "87a37c6012e79751831edede2c30097bb4ba458ed720c8aebfe9cd12760d72e0",
                   "scripts/loop-blocked-time.ps1":  "5a01117352e273d0a320d46220506762f11f735ba9acf68632440f7a9b320b2a",
                   "scripts/loop-session.ps1":  "40bf602b8d9867a42b98e872161298c6403507ff93c12bc0d321fe2f1aee5e94",
                   "scripts/main-intake.ps1":  "16e52bcca79577cdfaf9eb2ca8485d3969001c6e2225ed33cc9140fe9ef2c00d",
@@ -103,7 +104,7 @@
                   "scripts/msi-test-identity.ps1":  "f4114e015c29fa884abebff8fb7e057aab52582cf89584351f7b9b0c08ecce63",
                   "scripts/parity-decisions.ps1":  "b015b8a70ced5c02206665da242777565107d12832421122bc800ce59d516e70",
                   "scripts/parity-sweep.ps1":  "2558a090ed2db1add4c101c99b74c469c6c4904ed1646f1dd4138c5bc0ca5046",
-                  "scripts/parity-tasks.ps1":  "5fdcc42933845af4dd07b455db41888282fdad748f8dbd6531e8765dbda45f2c",
+                  "scripts/parity-tasks.ps1":  "499ba135fc28a993d9ac2c40e7472a9f32878f82919018a127b6914f2d02d215",
                   "scripts/perf-baseline.ps1":  "277d609f53699590bf906bbbd895825904bc3664e8500ed77b968fd04f6a6a52",
                   "scripts/pr-health.ps1":  "a37d7a44dda98ec8650d3c0f65015f255956c3c2e5c1f1535a767aaa7a65184a",
                   "scripts/pr-review.ps1":  "8c817f2422323eb57ba9a7bb52a9fc72fd2a731fa4388f2f3d8116985003078c",

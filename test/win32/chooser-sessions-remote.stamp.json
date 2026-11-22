@@ -1,0 +1,18 @@
+{
+    "guard":  "chooser-sessions-remote",
+    "script":  "test/win32/chooser-sessions-remote.ps1",
+    "generated":  "2026-11-21T20:44:02-08:00",
+    "commit":  "4e5927d42",
+    "uncommitted":  [
+                        "test/win32/chooser-sessions-remote.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/chooser_row_counts.zig":  "de6c43c061611dfbf3baeb77ceb14ec45150e7bc1cd5866bc7efd164db82778c",
+                  "test/win32/chooser-sessions-remote.ps1":  "02711dededed6572ce0e55af74df523c62e5829a74f8c5a381ebe3d6aa72371c",
+                  "test/win32/lib/FakeRelay.ps1":  "576111ff435d3e50092a542c44614d741584fc82210acb4b635c784edb569877"
+              },
+    "code":  {
+                 "test/win32/chooser-sessions-remote.ps1":  "code1:c290ba85494b777ee9b0d583f2cb694a9bd233003edd7f85003d4ad2d130336d",
+                 "test/win32/lib/FakeRelay.ps1":  "code1:392389e28c2e0f91ecf4c0f4a8c4192749f6d1f41f86fa21a9bc0b590d660bea"
+             }
+}

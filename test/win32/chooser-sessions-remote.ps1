@@ -31,6 +31,12 @@
 #      control: a row pointed at a machine that answers 502)
 #   H  ... and the dialog is still alive after both failures - it repaints,
 #      re-fetches the Local row, and Escape still closes it
+#   T1759 - the machine ROW's session-count capsule (T1745), whose oracle is
+#   the change-only `chooser row count key=<device> count=N|cleared` line:
+#   C2 the remote row records count=2 under its device id
+#   G2 a never-loaded machine records and clears nothing
+#   E2 ending a session from the list logs count=1
+#   E3 a failed load (agent gone, relay tripped) logs `cleared` for that key
 #
 # NEGATIVE CONTROL. `-NegativeControl` makes the relay refuse `dev-remote` too,
 # and inverts C: the roster must NOT load. Without it, "the remote roster
@@ -69,6 +75,9 @@ $env:GHOZTTY_PIPE_SUFFIX = "-t319$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\FakeRelay.ps1')
+# T1759: the shared scorer arms the run, so a body that unwinds can neither
+# print a green verdict nor stamp this harness's guard (T1510).
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -261,6 +270,23 @@ try {
             "C the device row loaded the remote agent's 2 sessions (got $remoteCount)"
     }
 
+    # C2 (T1759): the machine ROW's count capsule follows the remote roster,
+    # keyed by the device id it loaded from. The rows are owner-drawn, so the
+    # oracle is the change-only `chooser row count` line T1745 logs. In the
+    # negative-control run nothing loaded, so no capsule may be recorded.
+    $capPat = "chooser row count key=$DEV_OK count=(\d+)"
+    if ($NegativeControl) {
+        Start-Sleep -Milliseconds 500
+        Assert ((Count-LogLines $errlog $capPat) -eq 0) `
+            'NEGATIVE CONTROL: no count capsule is recorded for a machine whose roster never loaded'
+    } else {
+        $capLine = Wait-LogLine $errlog $capPat 5000
+        $capCount = -1
+        if ($capLine -match 'count=(\d+)') { $capCount = [int]$Matches[1] }
+        Assert ($capCount -eq $remoteCount -and $capCount -eq 2) `
+            "C2 the remote row's capsule is recorded under its device id and matches its listed sessions ($capLine)"
+    }
+
     # D: independent witness - the bytes went through the relay.
     Assert ((Get-FakeRelayLog $relaylog | Select-String "CONNECT device=$DEV_OK").Count -ge 3) `
         'D the roster dialled the relay (a connect beyond the two windows'' own)'
@@ -286,6 +312,14 @@ try {
     $offLine = Wait-LogLine $errlog "chooser roster: fetch failed .*device=$DEV_OFFLINE" 10000
     Assert ($null -ne $offLine -and $offLine -match 'state=failed') `
         "G an unreachable machine resolves to failed ($offLine)"
+
+    # G2 (T1759): a machine that NEVER loaded has no capsule to take away, so
+    # its failure logs nothing - the line is change-only, and a `cleared` here
+    # would mean the cache invents entries for machines it never counted.
+    foreach ($d in $DEV_EXPIRED, $DEV_OFFLINE) {
+        Assert ((Count-LogLines $errlog "chooser row count key=$d ") -eq 0) `
+            "G2 a never-loaded machine ($d) records no capsule and clears none"
+    }
 
     # H: the dialog survived both. A failed dial that wedged the GUI thread
     # would fail HERE and nowhere else - which is the whole point of asserting
@@ -320,9 +354,14 @@ try {
         }
         Assert ($chooser2 -ne [IntPtr]::Zero) 'E the chooser opens a second time'
         if ($chooser2 -ne [IntPtr]::Zero) {
+            # The count cache belongs to a chooser, so this one starts empty and
+            # records its own capsule - the baseline is taken before it loads.
+            $capBefore = Count-LogLines $errlog $capPat
             Send-TestControlKey -Control $chooser2 -Key Down | Out-Null
             $reload = Wait-LogCount $errlog "chooser roster: loaded (\d+) session.*device=$DEV_OK" 2 12000
             Assert ($reload -match 'loaded 2 session') "E the second chooser sees the same 2 sessions ($reload)"
+            $cap2 = Wait-LogCount $errlog $capPat ($capBefore + 1) 5000
+            Assert ($cap2 -match "key=$DEV_OK count=2\b") "E the second chooser records the remote capsule at 2 ($cap2)"
 
             $scale = (Get-TestWindowDpi -Window $chooser2) / 96.0
             $geo = Get-TestChooserRosterGeometry -Scale $scale
@@ -361,12 +400,39 @@ try {
                     $rpc = Wait-LogLine $errlog 'chooser roster: (close session|LIST_SESSIONS) failed' 1000
                     Write-Host "  DIAG app rpc failure line: $rpc"
                 }
+                # E2 (T1759): ending a session from the chooser's own list moves
+                # the machine row's capsule down with it (the optimistic hide
+                # calls noteRowCount; the refetch then agrees silently).
+                $capDown = Wait-LogLine $errlog "chooser row count key=$DEV_OK count=1\b" 8000
+                Assert ($null -ne $capDown) "E2 ending a session from the list logs the lower count ($capDown)"
             }
+
+            # E3 (T1759): the machine stops answering - its agent is gone and the
+            # relay refuses new connects - and re-selecting it fails the load.
+            # Mac hides the capsule on failure, so the count is CLEARED rather
+            # than left showing a number nobody can vouch for.
+            Write-Host ''
+            Write-Host '7. a failed load takes the machine row''s capsule away'
+            $clearPat = "chooser row count key=$DEV_OK cleared"
+            $clearsBefore = Count-LogLines $errlog $clearPat
+            Assert ($clearsBefore -eq 0) 'E3 control: nothing cleared the capsule while the machine answered'
+            New-Item -ItemType File -Path $tripFile -Force | Out-Null
+            Stop-Process -Id $script:agent.Id -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Milliseconds 800
+            Send-TestControlKey -Control $chooser2 -Key Down | Out-Null
+            Start-Sleep -Milliseconds 1200
+            Send-TestControlKey -Control $chooser2 -Key Up | Out-Null
+            $failLine = Wait-LogLine $errlog "chooser roster: fetch failed .*device=$DEV_OK" 15000
+            $cleared = Wait-LogCount $errlog $clearPat ($clearsBefore + 1) 15000
+            Assert ($null -ne $cleared) `
+                "E3 a failed load logs 'cleared' for that machine's key (fail: $failLine)"
+            Assert (Test-TestWindowResponsive -Window $chooser2) 'E3 the chooser is still responsive after the failed reload'
             Send-TestControlKey -Control $chooser2 -Key Escape | Out-Null
         }
     }
 
     Assert (-not (Test-TestDesktopLeak -ProcessId $app.Pid)) 'the run never took the user''s foreground'
+    Complete-TestBody
 } finally {
     Stop-FakeRelay $script:relay
     if ($null -ne $script:agent) {
@@ -377,7 +443,15 @@ try {
     Remove-Item "env:GHOSTTY_AGENT_LOCK" -ErrorAction SilentlyContinue
 }
 
+# --- stamp (T783/T1759) -----------------------------------------------------
+# Only a CLEAN green run of the REAL test records the covered files: a red run
+# must stay due, and the negative control inverts C, so its green proves the
+# harness can fail rather than that the code works.
+if ($script:fail -eq 0 -and -not $NegativeControl) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard chooser-sessions-remote -Repo $repo 2>&1 |
+        ForEach-Object { Write-Host "  $($_.ToString())" }
+}
+
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($($script:pass))" }
-else { Write-Host "$($script:fail) FAILURE(S) ($($script:pass) passed)" -ForegroundColor Red }
-exit ([int]($script:fail -gt 0))
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'CHOOSER SESSIONS REMOTE'
