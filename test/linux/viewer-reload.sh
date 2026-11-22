@@ -105,7 +105,7 @@ wait
 state
 terminate
 wait
-probe document.getElementById('ghoztty-crashed') ? document.getElementById('ghoztty-crashed').textContent + '|' + document.body.innerText : 'NOCARD'
+probe document.getElementById('ghoztty-crashed') ? (document.getElementById('ghoztty-crashed').textContent + '|' + document.body.innerText).replace(/\s+/g, ' ') : 'NOCARD'
 state
 key <Control>r
 wait
