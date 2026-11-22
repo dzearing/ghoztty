@@ -1,0 +1,22 @@
+{
+  "version": "1.56.7",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "The IPC server's request, reply and routing layer is shared, so the Linux app answers commands the way Windows does." },
+        { "text": "The Linux app answers the ghoztty CLI on its own 0600 Unix socket, and a command run in one of its panes always reaches that app." },
+        { "text": "test/linux/ipc-server.sh is executable like its siblings." },
+        { "text": "test/linux/cli-send-read.sh: K7 matches type-ahead output, and the script is executable." },
+        { "text": "test/linux/cli-send-read.sh is executable like its siblings." },
+        { "text": "A script can type into a Linux pane and read back what it shows: +send-keys and +read are served by the GTK app." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "Activity Monitor's Show all checkbox is greyed out when it can do nothing." },
+        { "text": "The OpenGL loader's fallback log line can no longer overrun its buffer on a long non-ASCII install path." },
+        { "text": "Closing an SSH connection now wakes its reader on Linux." },
+        { "text": "A floor fixture that never comes up now says what the app was doing." },
+        { "text": "Starting from a shell without a console no longer leaves the app's stderr pointing at its own IPC pipe." }
+      ] }
+  ]
+}
