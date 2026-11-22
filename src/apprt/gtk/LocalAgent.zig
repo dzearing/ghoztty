@@ -127,8 +127,10 @@ fn resolve(self: *LocalAgent) !Resolved {
     };
 
     try std.fs.cwd().makePath(dir);
-    // 0700: the dir holds the socket, the roster and the log.
-    if (std.fs.cwd().openDir(dir, .{})) |d| {
+    // 0700: the dir holds the socket, the roster and the log. `.iterate`
+    // because a plain openDir is an O_PATH fd on Linux, which fchmod refuses
+    // with EBADF (and std turns that into a panic).
+    if (std.fs.cwd().openDir(dir, .{ .iterate = true })) |d| {
         var dd = d;
         defer dd.close();
         std.posix.fchmod(dd.fd, 0o700) catch {};
