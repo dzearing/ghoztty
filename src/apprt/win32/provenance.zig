@@ -10,15 +10,13 @@ const build_config = @import("../../build_config.zig");
 const image_freshness = @import("image_freshness.zig");
 const install_location = @import("install_location.zig");
 
-/// Comptime provenance: baked into the binary by build.zig/GitVersion.
-pub const version: []const u8 = build_config.version_string;
-pub const commit: []const u8 = build_config.version.build orelse "unknown";
-pub const mode: []const u8 = mode: {
-    // mode_string is ".Debug"/".ReleaseFast"; drop the leading dot.
-    const m = build_config.mode_string;
-    break :mode if (m.len > 0 and m[0] == '.') m[1..] else m;
-};
-pub const runtime: []const u8 = @tagName(build_config.app_runtime);
+/// Comptime provenance: baked into the binary by build.zig/GitVersion, and
+/// shared with the GTK frontend (T3361).
+const build_identity = @import("../ipc/build_identity.zig");
+pub const version: []const u8 = build_identity.version;
+pub const commit: []const u8 = build_identity.commit;
+pub const mode: []const u8 = build_identity.mode;
+pub const runtime: []const u8 = build_identity.runtime;
 
 /// Whether this build checks the win-v update channel (T24): true for MSI
 /// release-pipeline builds (-Dwindows-update-check).

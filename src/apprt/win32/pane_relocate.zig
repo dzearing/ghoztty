@@ -14,7 +14,7 @@
 //! window against the drop point.
 
 const std = @import("std");
-const pane_id = @import("pane_id.zig");
+const pane_id = @import("../ipc/pane_id.zig");
 
 /// What the source window must do once the pane is out of its tree.
 ///

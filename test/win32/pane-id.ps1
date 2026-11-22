@@ -46,7 +46,7 @@ $ErrorActionPreference = 'Continue'
 $script:failures = 0
 $root = Join-Path $env:TEMP "ghoztty-pane-id-$PID"
 
-# The canonical pane-id shape: 8-4-4-4-12 hex (src/apprt/win32/pane_id.zig).
+# The canonical pane-id shape: 8-4-4-4-12 hex (src/apprt/ipc/pane_id.zig).
 $UUID_RE = '[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}'
 # The verbatim $GHOSTTY_SURFACE_ID spelling core bakes (0x + 16 hex).
 $SURFID_RE = '0x[0-9a-fA-F]{16}'

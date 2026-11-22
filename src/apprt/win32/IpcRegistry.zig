@@ -16,7 +16,7 @@ const Allocator = std.mem.Allocator;
 
 const PaneView = @import("PaneView.zig");
 const Window = @import("Window.zig");
-const pane_id_mod = @import("pane_id.zig");
+const pane_id_mod = @import("../ipc/pane_id.zig");
 const target_lookup = @import("../ipc/target_lookup.zig");
 
 /// Every registration. A list rather than a map because a pane name may be

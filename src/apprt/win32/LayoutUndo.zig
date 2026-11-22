@@ -29,7 +29,7 @@ const CloseUndo = @import("CloseUndo.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
 const agent_recovery = @import("agent_recovery.zig");
 const layout_undo = @import("layout_undo.zig");
-const pane_id = @import("pane_id.zig");
+const pane_id = @import("../ipc/pane_id.zig");
 const pane_stash = @import("pane_stash.zig");
 const pane_stack_state = @import("pane_stack_state.zig");
 

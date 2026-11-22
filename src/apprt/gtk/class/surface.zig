@@ -38,7 +38,7 @@ const i18n = @import("../../../os/i18n.zig");
 const media = @import("../media.zig");
 // The pure UUID helper win32 uses for `$GHOZTTY_PANE_ID` (no OS imports), so
 // both frontends mint the same shape of id (docs/claude/cli.md "Pane identity").
-const pane_id_mod = @import("../../win32/pane_id.zig");
+const pane_id_mod = @import("../../ipc/pane_id.zig");
 
 const log = std.log.scoped(.gtk_ghostty_surface);
 

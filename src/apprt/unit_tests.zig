@@ -873,9 +873,9 @@ test {
     // the menu system (T190), same no-OS-imports deal.
     _ = @import("win32/menu_label.zig");
 
-    // Pure win32 pane-identity (UUID generation + legacy surface-id target
-    // aliases, T113), same no-OS-imports deal.
-    _ = @import("win32/pane_id.zig");
+    // Pure pane-identity (UUID generation + legacy surface-id target
+    // aliases, T113), shared by win32 and GTK (T3361), no OS imports.
+    _ = @import("ipc/pane_id.zig");
 
     // Pure win32 list of panes an IPC verb waits on for their agent session
     // before answering (T1612), same no-OS-imports deal.

@@ -14,7 +14,7 @@
 const std = @import("std");
 const testing = std.testing;
 const pane_drop = @import("pane_drop.zig");
-const pane_id = @import("pane_id.zig");
+const pane_id = @import("../ipc/pane_id.zig");
 
 /// Every divider of `tree` whose two sides are on screen and apart, as
 /// `rects` has them, written to `out`; returns how many.

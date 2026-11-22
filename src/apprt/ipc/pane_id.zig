@@ -1,4 +1,5 @@
-//! Stable, ghoztty-owned pane identity for the win32 apprt (T113).
+//! Stable, ghoztty-owned pane identity for the Zig frontends (T113; shared
+//! with GTK since T3361, which is why it lives in apprt/ipc/).
 //!
 //! docs/claude/cli.md's "Pane identity" section is a cross-platform contract: every
 //! pane has a stable UUID that is exported to the pane's processes as

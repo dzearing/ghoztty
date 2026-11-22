@@ -23,7 +23,7 @@
 //! Pure: ids in, indices or ids out, into caller buffers. No allocation.
 
 const std = @import("std");
-const pane_id = @import("pane_id.zig");
+const pane_id = @import("../ipc/pane_id.zig");
 
 /// The most ids an order holds - every pane of every tab of one window.
 pub const max_ids: usize = 256;

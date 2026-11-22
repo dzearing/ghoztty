@@ -1358,7 +1358,7 @@ pub fn performDeferredFocus(hwnd: w32.HWND) void {
 /// tab by its identity.
 pub const QuietClose = struct {
     window: *Window,
-    tab: @import("pane_id.zig").Buf,
+    tab: @import("../ipc/pane_id.zig").Buf,
 };
 
 /// Close `targets` on the next loop turn (T2298, Mac

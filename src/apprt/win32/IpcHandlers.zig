@@ -30,7 +30,6 @@ const ipc_settings = @import("ipc_settings.zig");
 const ipc_workspaces = @import("ipc_workspaces.zig");
 const ipc_handoff = @import("../../os/ipc_handoff.zig");
 const build_config = @import("../../build_config.zig");
-const CoreSurface = @import("../../Surface.zig");
 const PaneView = @import("PaneView.zig");
 const ViewerPane = @import("ViewerPane.zig");
 const Window = @import("Window.zig");
@@ -44,7 +43,6 @@ const window_active = @import("window_active.zig");
 const color_math = @import("color_math.zig");
 const desk_palette = @import("desk_palette.zig");
 const apprt = @import("../../apprt.zig");
-const termio = @import("../../termio.zig");
 const terminal = @import("../../terminal/main.zig");
 
 const log = std.log.scoped(.win32_ipc);
@@ -63,6 +61,7 @@ pub const Context = struct {
 // `CallerScope`, `log_scope`, the caller-scope hooks, one `handle*` per verb,
 // `handleSeam`) are its interface, and a missing verb is a compile error.
 const ipc_server = apprt.ipc.server;
+const verbs = apprt.ipc.verbs;
 const Request = ipc_server.Request;
 const errorResponse = ipc_server.errorResponse;
 const successResponse = ipc_server.successResponse;
@@ -192,9 +191,6 @@ fn missingResponse(
 const verb_args = apprt.ipc.args;
 const split_name_collision = apprt.ipc.split_name_collision;
 
-// The `+send-keys` `--segments=` wire format, shared with the CLI that
-// writes it (src/cli/send_keys.zig) so encoder and decoder cannot drift.
-const verb_segments = apprt.ipc.segments;
 const VerbArgs = verb_args.VerbArgs;
 const parseVerbArgs = verb_args.parseVerbArgs;
 const dropPrefix = verb_args.dropPrefix;
@@ -1325,109 +1321,7 @@ pub fn sessionsSettled(app: *App, list: *const IpcSessionAwait) bool {
 }
 
 pub fn handleRead(ctx: Context, request: Request) Allocator.Error!?[]u8 {
-    var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const args = try parseVerbArgs(arena, request.arguments);
-    const name = args.name orelse
-        return try errorResponse(ctx.alloc, "--name is required for +read", .{});
-    const line_count: usize = if (args.lines) |l|
-        (if (l > 0) @intCast(l) else 50)
-    else
-        50;
-
-    const entry = ctx.app.ipcLookup(name) orelse
-        return try missingResponse(ctx, name, "pane '{s}' not found in registry", .{name});
-    const pane = targetPane(entry) orelse
-        return try errorResponse(ctx.alloc, "pane '{s}' is no longer alive", .{name});
-    const surface = pane.surface() orelse
-        return try errorResponse(ctx.alloc, "{s} is a viewer pane, not a terminal", .{name});
-    // T181: each remaining failure names a DIFFERENT state, because a caller
-    // that cannot tell them apart cannot react to any of them. `core_surface_
-    // ready` covers two: a surface that once worked and is being torn down,
-    // and one whose terminal never came up at all (`core_surface_initialized`
-    // is set together with `ready` at the end of init, so it stays false when
-    // init failed). "It died" and "it never started" are different bugs.
-    if (!surface.core_surface_ready) {
-        return if (surface.core_surface_initialized)
-            try errorResponse(ctx.alloc, "pane '{s}' is no longer alive", .{name})
-        else
-            try errorResponse(
-                ctx.alloc,
-                "pane '{s}' is not readable: its terminal never finished starting up",
-                .{name},
-            );
-    }
-
-    // Dump the whole screen (scrollback + active) as plain text, matching
-    // the Mac's full-SCREEN ghostty_surface_read_text selection.
-    const core = &surface.core_surface;
-    // GHOZTTY_PERF (T111b): split the handler into LOCK WAIT vs work under the
-    // lock. `+read` of a flooded pane is the sharpest probe of contention on
-    // that pane's renderer mutex, and the two halves have opposite fixes.
-    const perf = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_PERF");
-    const t_enter: ?std.time.Instant =
-        if (perf) (std.time.Instant.now() catch null) else null;
-    var t_locked: ?std.time.Instant = null;
-    const dump: ?[]const u8 = dump: {
-        // PRIORITY (T114): this runs ON the GUI thread, so losing races here
-        // freezes the window. Measured at 23628 ms of lock wait for 45 ms of
-        // work before the fairness ticket existed.
-        core.renderer_state.lockPriority();
-        if (perf) t_locked = std.time.Instant.now() catch null;
-        defer core.renderer_state.unlockPriority();
-        const pages = &core.io.terminal.screens.active.pages;
-        const tl = pages.getTopLeft(.screen);
-        const br = pages.getBottomRight(.screen) orelse break :dump null;
-        const sel = terminal.Selection.init(tl, br, false);
-        // `+read` reports the screen as laid out, so no TUI reflow (main d886ba4b5).
-        const text = core.dumpTextLocked(arena, sel, false) catch break :dump null;
-        break :dump text.text;
-    };
-    if (perf) perf: {
-        const now = std.time.Instant.now() catch break :perf;
-        const enter = t_enter orelse break :perf;
-        const locked = t_locked orelse break :perf;
-        log.info("ipcperf read pane={s} lockwait={d}ms dump={d}ms", .{
-            name,
-            locked.since(enter) / std.time.ns_per_ms,
-            now.since(locked) / std.time.ns_per_ms,
-        });
-    }
-
-    // A null dump is a genuine internal failure — the screen could not be
-    // serialized at all (OOM, or no pages, which should not happen). An EMPTY
-    // dump is not: see below.
-    const full = dump orelse
-        return try errorResponse(ctx.alloc, "failed to read terminal content from '{s}'", .{name});
-
-    // Last N lines, by the shared rule (T181). An empty result is returned as
-    // success with empty text: a pane that has printed nothing yet — the
-    // normal state of every pane for the first fraction of a second of its
-    // life, and the permanent state of a pane running something silent — is
-    // readable, and "" is the truthful answer. Reporting it as a failure made
-    // a lost race indistinguishable from a missing or wedged pane, which is
-    // how an agent ends up recording "no output" as a verdict.
-    const result = apprt.ipc.read_tail.tail(full, line_count);
-
-    // {"success":true,"data":{"text":<result>}}
-    var out: std.Io.Writer.Allocating = .init(ctx.alloc);
-    errdefer out.deinit();
-    var jws: std.json.Stringify = .{ .writer = &out.writer };
-    write: {
-        jws.beginObject() catch break :write;
-        jws.objectField("success") catch break :write;
-        jws.write(true) catch break :write;
-        jws.objectField("data") catch break :write;
-        jws.beginObject() catch break :write;
-        jws.objectField("text") catch break :write;
-        jws.write(result) catch break :write;
-        jws.endObject() catch break :write;
-        jws.endObject() catch break :write;
-        return try out.toOwnedSlice();
-    }
-    return error.OutOfMemory;
+    return verbs.read(@This(), ctx, request);
 }
 
 pub fn handleRearrange(ctx: Context, request: Request) Allocator.Error!?[]u8 {
@@ -1873,165 +1767,41 @@ pub fn handleRename(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     return try ctx.alloc.dupe(u8, "{\"success\":true}");
 }
 
-/// The bytes of one `+send-keys` run as they should reach the ConPTY, owned by
-/// the caller (T661).
-///
-/// Three cases, and the shape of the answer is the whole point:
-///
-///   * NOT resolved — a CLI old enough that a bare `\n` meant Enter. Rewrite
-///     every newline to CR exactly as this server always did, whatever the
-///     pane is running. Nothing else can be inferred about those bytes.
-///   * a `.key` run — a keypress the CLI already spelled as its terminal byte.
-///     Verbatim; there is no newline in it to decide about.
-///   * a `.text` run — pasted content, so it follows the terminal-wide paste
-///     convention `input.paste.encode` implements: a program that asked for
-///     bracketed paste understands a newline as a line break in the content
-///     and gets it verbatim, while one that did not gets LF mapped to CR the
-///     way xterm has always done it.
-///
-/// That last split is what makes this parity rather than a Windows quirk. On a
-/// POSIX pty an unframed LF is a line terminator for a shell, so macOS needs
-/// no mapping to run `a` then `b`; conhost's VT input translation SWALLOWS a
-/// bare LF, so without the mapping `+send-keys "echo A\necho B\n"` reaches
-/// cmd.exe as `echo Aecho B` — measured, 2026-08-10. Mapping it restores the
-/// behavior a Mac user sees, while a TUI's composer still receives the literal
-/// line break main's contract promises it.
-fn prepareSendKeysRun(
-    alloc: Allocator,
-    surface: *CoreSurface,
-    bytes: []const u8,
-    kind: verb_segments.Kind,
-    resolved: bool,
-) Allocator.Error![]u8 {
-    if (!resolved) return try verb_args.normalizeConptyInput(alloc, bytes);
-    if (kind == .text and !surface.pasteIsBracketed())
-        return try verb_args.normalizeConptyInput(alloc, bytes);
-    return try alloc.dupe(u8, bytes);
+/// `+send-keys` and `+read` are the shared bodies in `apprt/ipc/verbs.zig`
+/// (T3361), over the model below. What stays here is only what is win32's:
+/// the registry lookup, the ambiguity sentence, and that a ConPTY needs LF
+/// mapped to CR.
+pub fn handleSendKeys(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+    return verbs.sendKeys(@This(), ctx, request);
 }
 
-pub fn handleSendKeys(ctx: Context, request: Request) Allocator.Error!?[]u8 {
-    // The CLI resolves all key notation (C-x, Enter, \n escapes) before
-    // sending; the server receives `--target=` and raw `--keys=` bytes and
-    // just writes them to the pane's PTY (Mac writePtyRaw semantics).
-    //
-    // `--segments=` rides ALONGSIDE `--keys=` when the send mixes text with
-    // keys, carrying where the argument boundaries were. With it we can frame
-    // the text runs as a bracketed paste and write the key runs bare, which
-    // is what makes the trailing `Enter` of `"some message" Enter` submit
-    // instead of landing in the composer as a pasted newline (T428). Without
-    // it — an older CLI, or a send with nothing to disambiguate — the flat
-    // payload is written exactly as it always was.
-    //
-    // `--keys-resolved=1` (T661) says the CLI already spelled every keypress
-    // as the byte a terminal sends for it, so every LF still in a text run is
-    // CONTENT — an interior line break, or a `--keys-file=`'s own trailing
-    // newline — and only the paste convention may touch it. Absent, the
-    // request came from a CLI old enough that a bare `\n` did mean Enter and
-    // is normalized exactly as it always was. `prepareSendKeysRun` above owns
-    // both cases; nothing here writes bytes it did not return.
-    var target: ?[]const u8 = null;
-    var text: ?[]const u8 = null;
-    var segments_value: ?[]const u8 = null;
-    var resolved = false;
-    if (request.arguments) |arguments| {
-        for (arguments) |arg| {
-            if (dropPrefix(arg, "--target=")) |v| {
-                target = v;
-            } else if (dropPrefix(arg, verb_segments.prefix)) |v| {
-                segments_value = v;
-            } else if (dropPrefix(arg, verb_args.keys_resolved_prefix)) |v| {
-                resolved = verb_args.keysResolvedValue(v);
-            } else if (dropPrefix(arg, "--keys=")) |v| {
-                text = v;
-            }
-        }
-    }
-    const target_name = target orelse
-        return try errorResponse(ctx.alloc, "--target is required for +send-keys", .{});
-    const bytes = text orelse
-        return try errorResponse(ctx.alloc, "text is required for +send-keys", .{});
-    if (bytes.len == 0)
-        return try errorResponse(ctx.alloc, "text is required for +send-keys", .{});
+// ---------------------------------------------------------------------------
+// The shared verbs' model (apprt/ipc/verbs.zig).
 
-    const entry = ctx.app.ipcLookup(target_name) orelse
-        return try missingResponse(ctx, target_name, "target '{s}' not found", .{target_name});
-    const pane = targetPane(entry) orelse
-        return try errorResponse(ctx.alloc, "target '{s}' is no longer alive", .{target_name});
-    const surface = pane.surface() orelse
-        return try errorResponse(ctx.alloc, "{s} is a viewer pane, not a terminal", .{target_name});
-    // T181: same split as `+read` — a pane that died and a pane whose terminal
-    // never came up are different bugs, and the `/reset-context` helper aims
-    // `+send-keys` at a freshly created pane, so it is a caller that cares.
-    if (!surface.core_surface_ready) {
-        return if (surface.core_surface_initialized)
-            try errorResponse(ctx.alloc, "target '{s}' is no longer alive", .{target_name})
-        else
-            try errorResponse(
-                ctx.alloc,
-                "target '{s}' is not writable: its terminal never finished starting up",
-                .{target_name},
-            );
-    }
+pub const Terminal = apprt.ipc.CoreTerminal;
+pub const input_line_ends: verbs.LineEnds = .conpty;
 
-    // Segmented send: one write per run, framed by kind. A `--segments=` we
-    // cannot parse is not a reason to fail the request — the same bytes are
-    // in `--keys=`, so fall through and lose only the framing.
-    if (segments_value) |value| decode: {
-        const runs = verb_segments.decode(ctx.alloc, value) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.Malformed => {
-                log.warn("+send-keys: ignoring malformed --segments=, sending flat", .{});
-                break :decode;
-            },
-        };
-        defer verb_segments.freeSegments(ctx.alloc, runs);
-        if (runs.len == 0) break :decode;
+pub fn replyAllocator(ctx: Context) Allocator {
+    return ctx.alloc;
+}
 
-        for (runs) |run| {
-            if (run.bytes.len == 0) continue;
-            const run_bytes = try prepareSendKeysRun(
-                ctx.alloc,
-                &surface.core_surface,
-                run.bytes,
-                run.kind,
-                resolved,
-            );
-            defer ctx.alloc.free(run_bytes);
-            const written = switch (run.kind) {
-                .text => surface.core_surface.writePtyBracketed(run_bytes),
-                .key => surface.core_surface.writePtyRaw(run_bytes),
-            };
-            written catch return try errorResponse(ctx.alloc, "failed to queue input", .{});
-        }
+/// What a `--target`/`--name` names, by the IPC registry. T181: a pane that
+/// died and a pane whose terminal never came up are different states.
+/// `core_surface_ready` is false for both; `core_surface_initialized` is set
+/// together with it at the end of init, so it stays false only when init
+/// never completed.
+pub fn lookupTerminal(ctx: Context, name: []const u8) verbs.Lookup(Terminal) {
+    const entry = ctx.app.ipcLookup(name) orelse return .not_found;
+    const pane = targetPane(entry) orelse return .gone;
+    const surface = pane.surface() orelse return .viewer;
+    if (!surface.core_surface_ready)
+        return if (surface.core_surface_initialized) .gone else .not_started;
+    return .{ .ready = .{ .core = &surface.core_surface } };
+}
 
-        return try ctx.alloc.dupe(u8, "{\"success\":true}");
-    }
-
-    // No `--segments=`, so the kind is unknown — but the rule above does not
-    // need it. A flat payload is all text or all keys, and a key run from a
-    // resolved CLI is already CR with no LF for either branch to touch, so
-    // calling it text is right for both of the things it can be.
-    const normalized = try prepareSendKeysRun(
-        ctx.alloc,
-        &surface.core_surface,
-        bytes,
-        .text,
-        resolved,
-    );
-    defer ctx.alloc.free(normalized);
-
-    const write_req = termio.Message.WriteReq.init(ctx.alloc, normalized) catch
-        return try errorResponse(ctx.alloc, "failed to queue input", .{});
-    // `+send-keys` is input sent to the pane (T3133), as the segmented path's
-    // `writePtyRaw`/`writePtyBracketed` record; this one writes past them.
-    if (normalized.len > 0) surface.core_surface.user_input_sent = true;
-    surface.core_surface.io.queueMessage(switch (write_req) {
-        .small => |v| .{ .write_small = v },
-        .stable => |v| .{ .write_stable = v },
-        .alloc => |v| .{ .write_alloc = v },
-    }, .unlocked);
-
-    return try ctx.alloc.dupe(u8, "{\"success\":true}");
+/// A name nothing answers to may be one several windows hold (T2250).
+pub fn notFoundResponse(ctx: Context, name: []const u8, fallback: []const u8) Allocator.Error![]u8 {
+    return missingResponse(ctx, name, "{s}", .{fallback});
 }
 
 /// The window the user is most plausibly working in: the ACTIVE window if it

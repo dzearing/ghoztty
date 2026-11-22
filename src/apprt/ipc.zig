@@ -411,6 +411,15 @@ pub const target_lookup = @import("ipc/target_lookup.zig");
 /// handlers into (T3334). A frontend missing a verb does not compile.
 pub const server = @import("ipc/server.zig");
 
+/// The shared verb BODIES (T3361): what `+read` and `+send-keys` do with a
+/// request, written once over a small model each frontend implements, so the
+/// two Zig servers answer with the same bytes and sentences.
+pub const verbs = @import("ipc/verbs.zig");
+
+/// `verbs.Terminal` over the shared core Surface, which both Zig frontends
+/// host one of per terminal pane. Not referenced by the none-lane tests.
+pub const CoreTerminal = @import("ipc/core_terminal.zig").CoreTerminal;
+
 /// The build identity a launch carries when it hands its window to the
 /// instance already running, and the notice shown when the two builds differ
 /// (T1022 / D79). Lives beside the transport in `os/` — the wire field is the
@@ -426,6 +435,7 @@ test {
     _ = split_name_collision;
     _ = target_lookup;
     _ = server;
+    _ = verbs;
     _ = @import("ipc/list.zig");
 }
 

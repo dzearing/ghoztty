@@ -18,7 +18,7 @@
 const std = @import("std");
 const testing = std.testing;
 const pane_drop = @import("pane_drop.zig");
-const pane_id = @import("pane_id.zig");
+const pane_id = @import("../ipc/pane_id.zig");
 
 const RowDirection = pane_drop.RowDirection;
 const Side = pane_drop.Side;

@@ -69,7 +69,7 @@ const session_layout = @import("session_layout.zig");
 const tcp_dial = @import("../../remote/tcp_dial.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
 const remote_connection = @import("../../remote/connection.zig");
-const pane_id_mod = @import("pane_id.zig");
+const pane_id_mod = @import("../ipc/pane_id.zig");
 const msg_timer = @import("msg_timer.zig");
 const w32 = @import("win32.zig");
 

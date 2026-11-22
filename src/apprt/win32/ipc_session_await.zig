@@ -19,7 +19,7 @@
 //! Pure data and policy only, so the none lane can test it.
 
 const std = @import("std");
-const pane_id = @import("pane_id.zig");
+const pane_id = @import("../ipc/pane_id.zig");
 
 const SessionAwait = @This();
 

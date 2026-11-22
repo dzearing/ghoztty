@@ -21,13 +21,10 @@ const gobject = @import("gobject");
 const gtk = @import("gtk");
 
 const apprt = @import("../../apprt.zig");
-const build_config = @import("../../build_config.zig");
 const server = apprt.ipc.server;
 const List = apprt.ipc.List;
 const Request = server.Request;
-const verb_args = apprt.ipc.args;
-const verb_segments = apprt.ipc.segments;
-const terminal = @import("../../terminal/main.zig");
+const verbs = apprt.ipc.verbs;
 
 const Application = @import("class/application.zig").Application;
 const Window = @import("class/window.zig").Window;
@@ -103,143 +100,43 @@ fn findSurface(app: Context, id: []const u8) ?*Surface {
     return null;
 }
 
-fn dropPrefix(arg: []const u8, prefix: []const u8) ?[]const u8 {
-    return if (std.mem.startsWith(u8, arg, prefix)) arg[prefix.len..] else null;
-}
-
-const ok_reply = "{\"success\":true}";
-
 // ---------------------------------------------------------------------------
-// +send-keys
+// +send-keys and +read: the shared bodies in apprt/ipc/verbs.zig (T3361),
+// over the model below - the same argument handling, sentences and replies
+// win32 answers with. A POSIX pty takes a bare LF as a line end, so nothing
+// is rewritten on the way in; that mapping is a ConPTY necessity only win32
+// has.
 
-/// The CLI resolves all key notation (C-x, Enter, `\n` escapes) before
-/// sending, so this only writes bytes - the Mac's `handleSendKeys` exactly:
-/// with `--segments=` each text run is written as a paste (framed when the
-/// program asked for bracketed paste) and each key run bare, so the trailing
-/// `Enter` of `"msg" Enter` submits; without it the flat `--keys=` payload is
-/// written raw. A POSIX pty takes a bare LF as a line end, so nothing here
-/// rewrites newlines - that mapping is a conhost necessity only win32 has.
 pub fn handleSendKeys(app: Context, request: Request) Allocator.Error!?[]u8 {
-    var target: ?[]const u8 = null;
-    var text: ?[]const u8 = null;
-    var segments_value: ?[]const u8 = null;
-    if (request.arguments) |arguments| for (arguments) |arg| {
-        if (dropPrefix(arg, "--target=")) |v| {
-            target = v;
-        } else if (dropPrefix(arg, verb_segments.prefix)) |v| {
-            segments_value = v;
-        } else if (dropPrefix(arg, "--keys=")) |v| {
-            text = v;
-        }
-    };
-    const target_name = target orelse
-        return try server.errorResponse(c_alloc, "--target is required for +send-keys", .{});
-    const bytes = text orelse
-        return try server.errorResponse(c_alloc, "text is required for +send-keys", .{});
-    if (bytes.len == 0)
-        return try server.errorResponse(c_alloc, "text is required for +send-keys", .{});
-
-    const surface = findSurface(app, target_name) orelse
-        return try server.errorResponse(c_alloc, "target '{s}' not found", .{target_name});
-    const core = surface.core() orelse return try server.errorResponse(
-        c_alloc,
-        "target '{s}' is not writable: its terminal never finished starting up",
-        .{target_name},
-    );
-
-    if (segments_value) |value| decode: {
-        // A `--segments=` we cannot parse loses only the framing: the same
-        // bytes are in `--keys=`, so fall through to the flat write.
-        const runs = verb_segments.decode(c_alloc, value) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.Malformed => {
-                std.log.scoped(log_scope).warn("+send-keys: ignoring malformed --segments=, sending flat", .{});
-                break :decode;
-            },
-        };
-        defer verb_segments.freeSegments(c_alloc, runs);
-        if (runs.len == 0) break :decode;
-        for (runs) |run| {
-            const written = switch (run.kind) {
-                .text => core.writePtyBracketed(run.bytes),
-                .key => core.writePtyRaw(run.bytes),
-            };
-            written catch return try server.errorResponse(c_alloc, "failed to queue input", .{});
-        }
-        return try c_alloc.dupe(u8, ok_reply);
-    }
-
-    core.writePtyRaw(bytes) catch
-        return try server.errorResponse(c_alloc, "failed to queue input", .{});
-    return try c_alloc.dupe(u8, ok_reply);
+    return verbs.sendKeys(@This(), app, request);
 }
 
-// ---------------------------------------------------------------------------
-// +read
-
-/// The pane's whole screen (scrollback + active) as laid out, the last
-/// `--lines=` (default 50) of it by the shared rule. A pane that has printed
-/// nothing answers success with empty text, as on the Mac and win32 (T181).
 pub fn handleRead(app: Context, request: Request) Allocator.Error!?[]u8 {
-    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    return verbs.read(@This(), app, request);
+}
 
-    const args = try verb_args.parseVerbArgs(arena, request.arguments);
-    const name = args.name orelse
-        return try server.errorResponse(c_alloc, "--name is required for +read", .{});
-    const line_count: usize = if (args.lines) |l| (if (l > 0) @intCast(l) else 50) else 50;
+pub const Terminal = apprt.ipc.CoreTerminal;
+pub const input_line_ends: verbs.LineEnds = .pty;
 
-    const surface = findSurface(app, name) orelse
-        return try server.errorResponse(c_alloc, "pane '{s}' not found in registry", .{name});
-    const core = surface.core() orelse return try server.errorResponse(
-        c_alloc,
-        "pane '{s}' is not readable: its terminal never finished starting up",
-        .{name},
-    );
+pub fn replyAllocator(_: Context) Allocator {
+    return c_alloc;
+}
 
-    const full: ?[]const u8 = dump: {
-        // This runs on the GTK main thread: take the renderer lock with
-        // priority so a flooding pane cannot starve the UI (T114).
-        core.renderer_state.lockPriority();
-        defer core.renderer_state.unlockPriority();
-        const pages = &core.io.terminal.screens.active.pages;
-        const tl = pages.getTopLeft(.screen);
-        const br = pages.getBottomRight(.screen) orelse break :dump null;
-        const sel = terminal.Selection.init(tl, br, false);
-        // `+read` reports the screen as laid out, so no reflow (main d886ba4b5).
-        const t = core.dumpTextLocked(arena, sel, false) catch break :dump null;
-        break :dump t.text;
-    };
-    const text = full orelse
-        return try server.errorResponse(c_alloc, "failed to read terminal content from '{s}'", .{name});
-    const result = apprt.ipc.read_tail.tail(text, line_count);
-
-    var out: std.Io.Writer.Allocating = .init(c_alloc);
-    errdefer out.deinit();
-    var jws: std.json.Stringify = .{ .writer = &out.writer };
-    write: {
-        jws.beginObject() catch break :write;
-        jws.objectField("success") catch break :write;
-        jws.write(true) catch break :write;
-        jws.objectField("data") catch break :write;
-        jws.beginObject() catch break :write;
-        jws.objectField("text") catch break :write;
-        jws.write(result) catch break :write;
-        jws.endObject() catch break :write;
-        jws.endObject() catch break :write;
-        return try out.toOwnedSlice();
-    }
-    return error.OutOfMemory;
+/// Pane names are not registered on this frontend yet (T3370), so a pane
+/// answers to its stable id only. A surface whose core never came up is the
+/// "never finished starting up" state.
+pub fn lookupTerminal(app: Context, name: []const u8) verbs.Lookup(Terminal) {
+    const surface = findSurface(app, name) orelse return .not_found;
+    const core = surface.core() orelse return .not_started;
+    return .{ .ready = .{ .core = core } };
 }
 
 // ---------------------------------------------------------------------------
 // +version
 
-const mode: []const u8 = mode: {
-    const m = build_config.mode_string;
-    break :mode if (m.len > 0 and m[0] == '.') m[1..] else m;
-};
+/// The build's comptime identity, the same constants win32's provenance
+/// reads (T3361).
+const build_identity = @import("../ipc/build_identity.zig");
 
 fn selfExe(buf: []u8) []const u8 {
     return std.fs.selfExePath(buf) catch "";
@@ -259,13 +156,13 @@ pub fn handleVersion(_: Context, _: Request) Allocator.Error!?[]u8 {
         jws.objectField("data") catch break :write;
         jws.beginObject() catch break :write;
         jws.objectField("version") catch break :write;
-        jws.write(build_config.version_string) catch break :write;
+        jws.write(build_identity.version) catch break :write;
         jws.objectField("commit") catch break :write;
-        jws.write(build_config.version.build orelse "unknown") catch break :write;
+        jws.write(build_identity.commit) catch break :write;
         jws.objectField("mode") catch break :write;
-        jws.write(mode) catch break :write;
+        jws.write(build_identity.mode) catch break :write;
         jws.objectField("runtime") catch break :write;
-        jws.write(@tagName(build_config.app_runtime)) catch break :write;
+        jws.write(build_identity.runtime) catch break :write;
         jws.objectField("update_check") catch break :write;
         jws.write(false) catch break :write;
         jws.objectField("exe") catch break :write;
@@ -309,10 +206,10 @@ pub fn handleList(app: Context, request: Request) Allocator.Error!?[]u8 {
     const list: List = .{
         .windows = windows.items,
         .build = .{
-            .version = build_config.version_string,
-            .commit = build_config.version.build orelse "unknown",
-            .mode = mode,
-            .runtime = @tagName(build_config.app_runtime),
+            .version = build_identity.version,
+            .commit = build_identity.commit,
+            .mode = build_identity.mode,
+            .runtime = build_identity.runtime,
             .exe = try arena.dupe(u8, selfExe(&exe_buf)),
             .exe_modified = "",
             .pid = std.c.getpid(),

@@ -26,7 +26,7 @@
 
 const std = @import("std");
 const testing = std.testing;
-const pane_id = @import("pane_id.zig");
+const pane_id = @import("../ipc/pane_id.zig");
 
 /// A point in screen coordinates, physical pixels, y growing downward.
 pub const Point = struct {
