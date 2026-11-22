@@ -760,6 +760,147 @@ $GuardTable = @(
             'src\remote\agent\grid_snapshot.zig'
         )
     },
+    # T1768: the ipc family. Same precedent as the session family: App.zig,
+    # Window.zig and core src\Surface.zig are left out (each moves for a
+    # hundred reasons the harness does not score), so a row names the module
+    # where its verb's behavior is decided. ipc-fake-server.ps1 is a helper,
+    # not a harness - it is covered through ipc-timeout's row below and
+    # exempted in $UncoveredExempt.
+    # A child exit keeps the pane with the in-terminal notice (clean) or the
+    # rich diagnostic (abnormal), and a REAL key closes the waited pane (T65).
+    [pscustomobject]@{
+        Name   = 'ipc-child-exited'
+        Script = 'test\win32\ipc-child-exited.ps1'
+        Stamp  = 'test\win32\ipc-child-exited.stamp.json'
+        Covers = @(
+            'test\win32\ipc-child-exited.ps1',
+            'src\apprt\win32\Surface.zig',
+            'src\termio\Remote.zig'
+        )
+    },
+    # A `--command=` pane lands at a LIVE shell: the per-flavor keep-alive
+    # wrap is sent as OPEN.argv to the agent (T468).
+    [pscustomobject]@{
+        Name   = 'ipc-command-keepalive'
+        Script = 'test\win32\ipc-command-keepalive.ps1'
+        Stamp  = 'test\win32\ipc-command-keepalive.stamp.json'
+        Covers = @(
+            'test\win32\ipc-command-keepalive.ps1',
+            'src\apprt\win32\IpcHandlers.zig',
+            'src\apprt\win32\Surface.zig',
+            'src\termio\Remote.zig'
+        )
+    },
+    # A CLI run inside a pane drives the instance that owns the pane: the
+    # baked $GHOZTTY_IPC_SOCKET, the client preferring it, and the server
+    # never binding an inherited value (T118).
+    [pscustomobject]@{
+        Name   = 'ipc-instance-addressability'
+        Script = 'test\win32\ipc-instance-addressability.ps1'
+        Stamp  = 'test\win32\ipc-instance-addressability.stamp.json'
+        Covers = @(
+            'test\win32\ipc-instance-addressability.ps1',
+            'src\apprt\ipc.zig',
+            'src\os\ipc_client.zig',
+            'src\os\env.zig',
+            'src\apprt\win32\IpcServer.zig'
+        )
+    },
+    # `+read` of an empty pane answers exit 0 with empty output, and every
+    # failure names a different state (T181).
+    [pscustomobject]@{
+        Name   = 'ipc-read-race'
+        Script = 'test\win32\ipc-read-race.ps1'
+        Stamp  = 'test\win32\ipc-read-race.stamp.json'
+        Covers = @(
+            'test\win32\ipc-read-race.ps1',
+            'src\cli\read.zig',
+            'src\apprt\ipc\read_tail.zig',
+            'src\apprt\ipc\verbs.zig',
+            'src\apprt\win32\ipc_capture.zig'
+        )
+    },
+    # +new-remote-window over direct TCP to a loopback agent: dial, round
+    # trip, forwarded --command, dial-failure and protocol-skew errors (T20,
+    # T628, T704).
+    [pscustomobject]@{
+        Name   = 'ipc-remote'
+        Script = 'test\win32\ipc-remote.ps1'
+        Stamp  = 'test\win32\ipc-remote.stamp.json'
+        Covers = @(
+            'test\win32\ipc-remote.ps1',
+            'src\cli\new_remote_window.zig',
+            'src\apprt\win32\ipc_remote_dial.zig',
+            'src\apprt\win32\dial_failure.zig'
+        )
+    },
+    # `+send-keys --keys-file=` reaches the pane byte-exact, against a
+    # positional-argument negative control (T210).
+    [pscustomobject]@{
+        Name   = 'ipc-send-keys-fidelity'
+        Script = 'test\win32\ipc-send-keys-fidelity.ps1'
+        Stamp  = 'test\win32\ipc-send-keys-fidelity.stamp.json'
+        Covers = @(
+            'test\win32\ipc-send-keys-fidelity.ps1',
+            'src\cli\send_keys.zig',
+            'src\apprt\ipc\args.zig'
+        )
+    },
+    # The app answers IPC while it is still restoring (T188): the GUI pump
+    # and the deferred resolve that serve requests mid-restore.
+    [pscustomobject]@{
+        Name   = 'ipc-startup-latency'
+        Script = 'test\win32\ipc-startup-latency.ps1'
+        Stamp  = 'test\win32\ipc-startup-latency.stamp.json'
+        Covers = @(
+            'test\win32\ipc-startup-latency.ps1',
+            'src\apprt\win32\gui_pump.zig',
+            'src\apprt\win32\resolve_defer.zig',
+            'src\apprt\win32\LocalAgent.zig'
+        )
+    },
+    # `+new-window --target=<existing>` focuses it and says which flags it
+    # dropped, but the CLI's implicit cwd never triggers the note (T135).
+    [pscustomobject]@{
+        Name   = 'ipc-target-exists-note'
+        Script = 'test\win32\ipc-target-exists-note.ps1'
+        Stamp  = 'test\win32\ipc-target-exists-note.stamp.json'
+        Covers = @(
+            'test\win32\ipc-target-exists-note.ps1',
+            'src\cli\new_window.zig',
+            'src\cli\verb_flags.zig',
+            'src\apprt\ipc\server.zig',
+            'src\apprt\win32\IpcHandlers.zig',
+            'src\os\ipc_client.zig'
+        )
+    },
+    # A verb whose peer never answers gives up inside its bound and says why;
+    # slow is announced, not mistaken for dead (T755). The wedged peer is
+    # ipc-fake-server.ps1 -Wedge, so the helper is covered here.
+    [pscustomobject]@{
+        Name   = 'ipc-timeout'
+        Script = 'test\win32\ipc-timeout.ps1'
+        Stamp  = 'test\win32\ipc-timeout.stamp.json'
+        Covers = @(
+            'test\win32\ipc-timeout.ps1',
+            'test\win32\ipc-fake-server.ps1',
+            'src\os\ipc_timeout.zig',
+            'src\os\ipc_client.zig',
+            'src\apprt\win32\ipc_pipe_io.zig'
+        )
+    },
+    # CLI verbs keep answering while a pane streams heavily (T53a), through
+    # the listener accept pool (T111b). The wakeup coalescing itself sits in
+    # App.zig, left out on the precedent above.
+    [pscustomobject]@{
+        Name   = 'ipc-under-load'
+        Script = 'test\win32\ipc-under-load.ps1'
+        Stamp  = 'test\win32\ipc-under-load.stamp.json'
+        Covers = @(
+            'test\win32\ipc-under-load.ps1',
+            'src\apprt\win32\IpcServer.zig'
+        )
+    },
     # The overview action (T708): the only thing that proves a bound
     # `toggle_tab_overview` actually opens hero mode, from a terminal AND from
     # a focused viewer. Covers the harness, the forwarding decision it rides
@@ -8341,6 +8482,9 @@ $UncoveredExempt = @(
     [pscustomobject]@{ Script = 'test\win32\ipc-p1.ps1'; Why = 'standing P1 floor, run every turn (go.md step 3)' }
     [pscustomobject]@{ Script = 'test\win32\ipc-p2.ps1'; Why = 'standing P2 floor, run every turn (go.md step 3)' }
     [pscustomobject]@{ Script = 'test\win32\ipc-p3.ps1'; Why = 'standing P3 floor, run every turn (go.md step 3)' }
+    # A helper process with no verdict (its own header, T221): ipc-timeout's
+    # row runs it as the wedged peer and names it in its Covers (T1768).
+    [pscustomobject]@{ Script = 'test\win32\ipc-fake-server.ps1'; Why = 'helper fake IPC server, no verdict; run and covered by the ipc-timeout row' }
 )
 
 # ---------------------------------------------------------------------------

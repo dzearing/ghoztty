@@ -65,6 +65,9 @@ if (-not (Test-Path $Exe)) { $Exe = Join-Path $repo 'zig-out\bin\ghoztty.exe' }
 
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp below is
+# refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -336,7 +339,8 @@ try {
     }
 } catch {
     # An escaping exception must SCORE, not print a green summary on its way out.
-    Assert $false "unexpected error: $_"
+    Write-Host "  FAIL unexpected error: $_" -ForegroundColor Red
+    $script:fail++
 } finally {
     Remove-Item Env:GHOZTTY_IPC_SOCKET -ErrorAction SilentlyContinue
     Remove-Item Env:GHOZTTY_PIPE_SUFFIX -ErrorAction SilentlyContinue
@@ -347,6 +351,10 @@ try {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red }
-exit ([int]($script:fail -gt 0))
+Complete-TestBody  # T1039: the run reached the end of its body
+if ($script:fail -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard ipc-instance-addressability -Repo $repo 2>&1 | ForEach-Object { Write-Host "  $_" }
+}
+Write-TestVerdict -Pass $script:pass -Fail $script:fail

@@ -60,6 +60,9 @@ $root = Join-Path $env:TEMP "ghoztty-startup-latency-$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp below is
+# refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 function Assert($name, $cond) {
     if ($cond) { Write-Host "  PASS $name"; $script:passes++ }
@@ -316,6 +319,9 @@ if ($NegativeControl) {
 
 Resume-Pid $suspended | Out-Null
 $suspended = 0
+# The try's last statement (body-complete-audit D1): an unwind above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
 
 } finally {
     if ($suspended -ne 0) { Resume-Pid $suspended | Out-Null }
@@ -329,6 +335,11 @@ $suspended = 0
 }
 
 Say ''
-if ($script:failures -eq 0) { Say "ALL PASS ($script:passes)" }
-else { Write-Host "$script:failures FAILURE(S) ($script:passes passed)" -ForegroundColor Red }
-exit ([int]($script:failures -gt 0))
+Complete-TestBody  # T1039: the run reached the end of its body
+if ($script:failures -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard ipc-startup-latency -Repo $gdRepo 2>&1 | ForEach-Object { Say "  $_" }
+}
+Write-TestVerdict -Pass $script:passes -Fail $script:failures

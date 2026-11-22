@@ -1,0 +1,19 @@
+{
+    "guard":  "ipc-instance-addressability",
+    "script":  "test/win32/ipc-instance-addressability.ps1",
+    "generated":  "2026-11-22T03:51:52-08:00",
+    "commit":  "d6b2cf1a3",
+    "uncommitted":  [
+                        "test/win32/ipc-instance-addressability.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/ipc.zig":  "3912c95d7a1692a7abc4355e44afeb58bfe18aa04ed3526246b90c2b975e8e71",
+                  "src/apprt/win32/IpcServer.zig":  "d52089f909a9bad6600892d1cc80030a3dccfa7b251a5215fb1b16bc0d4b6570",
+                  "src/os/env.zig":  "71071114bb27a1a70225dc402c43cd979291b0b5775bd6a2a06600ca212e3bcd",
+                  "src/os/ipc_client.zig":  "b90cfaf1bb3298b3bb7ff3be1d9f8447e127d7104872f34fa034c77990085348",
+                  "test/win32/ipc-instance-addressability.ps1":  "c3165683e8f1c2a66f915873c93c26c0e104cdd16fe48a7568192d5b87d003dc"
+              },
+    "code":  {
+                 "test/win32/ipc-instance-addressability.ps1":  "code1:03d0c76ca1a63fcf32684355a97be64d77768642b155aa93c4ba4b0567665053"
+             }
+}

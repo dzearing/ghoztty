@@ -1,0 +1,20 @@
+{
+    "guard":  "ipc-timeout",
+    "script":  "test/win32/ipc-timeout.ps1",
+    "generated":  "2026-11-22T02:47:21-08:00",
+    "commit":  "d6b2cf1a3",
+    "uncommitted":  [
+                        "test/win32/ipc-timeout.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/ipc_pipe_io.zig":  "413b22076f0481ab03697b2cc0d68a2830f77216fc7f3f7fc3033185c32739ae",
+                  "src/os/ipc_client.zig":  "b90cfaf1bb3298b3bb7ff3be1d9f8447e127d7104872f34fa034c77990085348",
+                  "src/os/ipc_timeout.zig":  "3404b4731e4ee9bd4f9fae88b03294aaba6dd79fcddd06dba54a729d4a385904",
+                  "test/win32/ipc-fake-server.ps1":  "9d8e13d29c266916b1f65168c58d3b9b93b8a172ad32b6d5174fbcfeee78cfeb",
+                  "test/win32/ipc-timeout.ps1":  "a708a6c090a0660bfa9a7e8a7a6d76fbc418a0dd5408dbea808f42a2311d733c"
+              },
+    "code":  {
+                 "test/win32/ipc-fake-server.ps1":  "code1:cc52af073b6285ae45f0cc68619d5d4b75e43a01fffb18323e9ef234eab3ce22",
+                 "test/win32/ipc-timeout.ps1":  "code1:cf61385ebdbab213f755c82d4875605e2163029e6a3888fc70c22310978f851e"
+             }
+}

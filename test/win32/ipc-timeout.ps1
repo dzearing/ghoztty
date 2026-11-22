@@ -245,4 +245,10 @@ Complete-TestBody  # T1039: the run reached the end of its body
 }
 
 ""
+if ($script:failures -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard ipc-timeout -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
 Write-TestVerdict -Label 'T755 ACCEPTANCE' -Pass $script:passes -Fail $script:failures

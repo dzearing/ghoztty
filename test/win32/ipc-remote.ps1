@@ -21,11 +21,15 @@ param(
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
 $script:skipped = 0
+$script:passes = 0
 $tmp = Join-Path $env:TEMP "ghoztty-ipc-remote-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
+# T271/T1768: the shared scorer arms the run, so the guard stamp below is
+# refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
@@ -202,6 +206,11 @@ try {
     Assert "and says the same sentence as before" ($hungText -match "failed to reach 127\.0\.0\.1:${silentPort}: the agent is not running or not reachable")
     if ($hungText -notmatch 'failed to reach') { "    silent dial said: $hungText" }
     Assert "no window was opened for the silent machine" (-not ((Get-List) -match '\[target: remsilent\]'))
+} catch {
+    # A throw mid-section must SCORE (body-complete-audit D1), not skip the
+    # rest of section 4 and still reach a green verdict.
+    "  FAIL section 4 (silent dial) threw: $_"
+    $script:failures++
 } finally {
     $silent.Stop()
 }
@@ -326,5 +335,11 @@ Stop-DebugGhoztty
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 Remove-TestDesktop | Out-Null
 
-if ($script:failures -eq 0) { "ALL PASS$(if ($script:skipped) { " ($script:skipped SKIPPED)" })"; exit 0 }
-else { "$($script:failures) FAILURE(S)"; exit 1 }
+Complete-TestBody  # T1039: the run reached the end of its body
+if ($script:failures -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard ipc-remote -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped $script:skipped

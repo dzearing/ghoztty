@@ -43,10 +43,14 @@ $pane = "skf$PID"
 
 . (Join-Path $Repo 'scripts\loop-session.ps1')   # New-LoopPromptFile / Test-LoopPromptArrived
 
+$script:passes = 0
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp below is
+# refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 # T441: this run's own IPC endpoint, before any CLI call — otherwise every
 # `& $Exe` inherits the caller pane's baked `$GHOZTTY_IPC_SOCKET` and this
@@ -231,10 +235,10 @@ Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 Remove-TestDesktop | Out-Null
 
 ""
+Complete-TestBody  # T1039: the run reached the end of its body
 if ($script:failures -eq 0) {
-    "SEND-KEYS FIDELITY ACCEPTANCE: ALL PASS"
-    exit 0
-} else {
-    "SEND-KEYS FIDELITY ACCEPTANCE: $script:failures FAILURE(S)"
-    exit 1
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
+        update -Guard ipc-send-keys-fidelity -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
 }
+Write-TestVerdict -Label 'SEND-KEYS FIDELITY ACCEPTANCE' -Pass $script:passes -Fail $script:failures

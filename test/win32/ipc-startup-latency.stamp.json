@@ -1,0 +1,18 @@
+{
+    "guard":  "ipc-startup-latency",
+    "script":  "test/win32/ipc-startup-latency.ps1",
+    "generated":  "2026-11-22T03:52:26-08:00",
+    "commit":  "d6b2cf1a3",
+    "uncommitted":  [
+                        "test/win32/ipc-startup-latency.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/gui_pump.zig":  "ac66102200ebf3a08b1992846ff7189d4ff80226cfdb6dc750db74501be02782",
+                  "src/apprt/win32/LocalAgent.zig":  "e23f56ca133ba4693761afbcbfd54918126d60609322439c440266b5a5dc19cd",
+                  "src/apprt/win32/resolve_defer.zig":  "267a538d490ece3f25763b40bb3b88b1ea1b9f7e0d026bdb126f510d06f07f80",
+                  "test/win32/ipc-startup-latency.ps1":  "230848e3814fe409b63e9627df1db6515aea7f3041b6cae9ad59e756e112b58a"
+              },
+    "code":  {
+                 "test/win32/ipc-startup-latency.ps1":  "code1:8702617d497d29e065ce7d4d132c3f44c850b1e005787a0b6365836311a084d9"
+             }
+}

@@ -141,5 +141,11 @@ Remove-TestDesktop | Out-Null
 # the transcript keeper - this script used to hand-roll `ALL PASS`/`exit 0`, so
 # a run that asserted nothing scored green.
 Complete-TestBody  # T1039: the run reached the end of its body
+if ($script:failures -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard ipc-target-exists-note -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
 exit (Complete-TestTranscript -Name 't135' -Path $transcript `
         -Label 'T135 ACCEPTANCE' -Pass $script:passes -Fail $script:failures).Code

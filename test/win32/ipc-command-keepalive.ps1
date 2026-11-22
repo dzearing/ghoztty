@@ -97,9 +97,13 @@ $env:GHOZTTY_PIPE_SUFFIX = "-cmdkeepalive$PID"
 # T1751: arm I asks whether WSL is already up, and never starts it.
 . (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'scripts\lib\WslState.ps1')
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+# T271/T1768: the shared scorer arms the run, so the guard stamp below is
+# refused when the body unwound or asserted nothing.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+$script:passes = 0
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 function AssertAlways($name, $cond) { Assert $name $cond }
 function Skip($name, $why) { $script:skipped++; "  SKIP $name - $why" }
@@ -440,11 +444,20 @@ try {
     $fgSeen = @(Stop-TestForegroundWatch)
     $leaked = @(Get-TestLaunchedPids | Where-Object { $fgSeen -contains $_ })
     AssertAlways "the user's foreground was never taken" ($leaked.Count -eq 0)
+    # The try's last statement (body-complete-audit D1): an unwind above skips
+    # it, so the verdict reads DID NOT FINISH instead of green.
+    Complete-TestBody
 } finally {
     Reset-GhozttyTestState -Exe $Exe -SettleMs 500 | Out-Null
     if ($td) { Remove-TestDesktop $td }
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }
 
-if ($script:failures -eq 0) { "ALL PASS$(if ($script:skipped) { " ($script:skipped SKIPPED)" })" } else { "$($script:failures) FAILURE(S)" }
-exit ([int]($script:failures -gt 0))
+Complete-TestBody  # T1039: the run reached the end of its body
+if ($script:failures -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard ipc-command-keepalive -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped ([int]$script:skipped)
