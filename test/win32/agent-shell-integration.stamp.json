@@ -1,8 +1,8 @@
 {
     "guard":  "agent-shell-integration",
     "script":  "test/win32/agent-shell-integration.ps1",
-    "generated":  "2026-11-21T17:51:42-08:00",
-    "commit":  "8a5a28c6c",
+    "generated":  "2026-11-21T20:09:05-08:00",
+    "commit":  "ea57924a0",
     "uncommitted":  [
 
                     ],

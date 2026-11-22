@@ -1,19 +1,19 @@
 {
     "guard":  "body-complete",
     "script":  "test/win32/body-complete-audit.ps1",
-    "generated":  "2026-11-21T18:27:32-08:00",
-    "commit":  "1d982830a",
+    "generated":  "2026-11-21T18:47:29-08:00",
+    "commit":  "ea57924a0",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+
                     ],
     "files":  {
-                  "scripts/guard-due.ps1":  "0c6f57309ab490e9af2bc4d1f4dd0a7f7d875d0b21546b5ba8724549df9315d5",
+                  "scripts/guard-due.ps1":  "3057c7222145852734cd55706cfc93bd8488a8b6c5ea738ff28883c7c32d128b",
                   "test/win32/body-complete-audit.ps1":  "9593707492fd8afd721955b88aa112993a86c31d27a00d812cc922050cbe1200",
                   "test/win32/lib/BodyCompleteAudit.ps1":  "d769e0c53cae44b303b136563e8f5e095da2f94d7f726668eebb0a9ba7fb5e40",
                   "test/win32/lib/TestScore.ps1":  "3fb664ca0d24b67641b761935f5956fecc2773a91915507f5d9b03d8934c10ba"
               },
     "code":  {
-                 "scripts/guard-due.ps1":  "code1:f17a34f0f81452ba14d2c0b0fa29b6ab981cd8b6057f1999a67180516376093a",
+                 "scripts/guard-due.ps1":  "code1:d957c1adfc483a6f3b9177b487c4d0a6467ea53d33c841120ef8d734fb7da0be",
                  "test/win32/body-complete-audit.ps1":  "code1:13e537255921b3ccec053eff19f7f7f8b41a55044204a123aff6d5183bf3e8ba",
                  "test/win32/lib/BodyCompleteAudit.ps1":  "code1:3e98e0f5ff5fd9b77934e6dd9ebc743209904db3a77f159e352a722554065691",
                  "test/win32/lib/TestScore.ps1":  "code1:a3da7c202ecac3e5fe84e769f26e567bf4312af623d7719a7a5d4de571595e04"

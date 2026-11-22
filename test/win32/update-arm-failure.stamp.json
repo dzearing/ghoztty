@@ -1,8 +1,8 @@
 {
     "guard":  "update-arm-failure",
     "script":  "test/win32/update-arm-failure.ps1",
-    "generated":  "2026-11-21T19:06:26-08:00",
-    "commit":  "8a5a28c6c",
+    "generated":  "2026-11-21T19:42:10-08:00",
+    "commit":  "ea57924a0",
     "uncommitted":  [
 
                     ],

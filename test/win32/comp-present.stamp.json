@@ -1,8 +1,8 @@
 {
     "guard":  "comp-present",
     "script":  "test/win32/comp-present.ps1",
-    "generated":  "2026-11-21T17:52:27-08:00",
-    "commit":  "8a5a28c6c",
+    "generated":  "2026-11-21T18:44:01-08:00",
+    "commit":  "ea57924a0",
     "uncommitted":  [
 
                     ],

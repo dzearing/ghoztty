@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-11-21T18:38:08-08:00",
-    "commit":  "1d982830a",
+    "generated":  "2026-11-21T20:06:32-08:00",
+    "commit":  "ea57924a0",
     "uncommitted":  [
-                        "test/win32/remote-cwd-follow.ps1",
-                        "test/win32/remote-reconnect-fresh.ps1"
+
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
@@ -193,6 +192,7 @@
                   "test/win32/frame-lab-live-scene.ps1":  "5c3c1df335ad2cd0a034d7ba1f7e2cd12e631f708f7d3406ac0dfd3dd2346660",
                   "test/win32/frame-lab-report.ps1":  "00354861a681dc69eea52acb01372631d4fd307ed85841421fa56c31e6815d73",
                   "test/win32/frame-lab-scene.ps1":  "2ed3fdcc10b378d720a4ef23d95bbcc1a58cd9eaddb2f920dc625a163ade0f8a",
+                  "test/win32/frame-pacing.ps1":  "0925ecb5f4b7c3dd79026633451d80e9bb424d54e05ff617d52d89624a609104",
                   "test/win32/frame-score.ps1":  "d98795f50fd5c8a171332eef326942ed62398f6f8e62601c1102716d240b89d9",
                   "test/win32/fullscreen-exit.ps1":  "2e470f39aa21efdc4f4e2ea5203bfea80e9dd2dbccdfb58cc0786df440f94854",
                   "test/win32/fullscreen-guard.ps1":  "a6c1a301a11d7493a2e7b5411fbcb25daea08302c0a822e91d98fd6db0a67450",
