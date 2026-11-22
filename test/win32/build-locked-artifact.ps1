@@ -3,6 +3,11 @@
 #
 #   powershell -NoProfile -File test\win32\build-locked-artifact.ps1
 #
+# @test-client-build-subject
+#   It builds remote-test-client itself (sections 5-8) because that install is
+#   what it measures, so test-client-build.ps1 E2 does not ask it to resolve
+#   the client through lib\TestClient.ps1 (T1770).
+#
 # WHAT IS UNDER TEST
 #
 # Windows holds an executable's image file open for the life of the process, and

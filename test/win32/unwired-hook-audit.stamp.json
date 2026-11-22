@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-22T01:09:46-08:00",
-    "commit":  "9ac7dd1a6",
+    "generated":  "2026-11-22T01:40:52-08:00",
+    "commit":  "6e8d41f41",
     "uncommitted":  [
 
                     ],
@@ -1187,7 +1187,7 @@
                   "test/win32/body-complete-audit.ps1":  "9593707492fd8afd721955b88aa112993a86c31d27a00d812cc922050cbe1200",
                   "test/win32/build-cache.ps1":  "c72878df10c33c065ebc87b66eaaf8fb3ecf9da1d1a43171dcc6ccf989dc1782",
                   "test/win32/build-fresh-guard.ps1":  "5215065abfc02691db5643057d1d897acac947d64c18649b4ec9105dee1b9d32",
-                  "test/win32/build-locked-artifact.ps1":  "18886a4b19b14e0fa6689248223e7f5210ceb21b07b9ffbaa6b45ffdc650cc43",
+                  "test/win32/build-locked-artifact.ps1":  "d36e7b3ee0d40863c1ba0175c28a28774b67b41b8e25f3111ec2a41c44b25be4",
                   "test/win32/build-mode-guard.ps1":  "4bc9296e96ee525c7e66050cc2bfb720925ca940d110dfa58b5bd780572ea75c",
                   "test/win32/caller-anchor.ps1":  "6c5ce12b4624feb742eba828395db41c9959e3875db60a481e5ce4c92584a299",
                   "test/win32/caption-bar.ps1":  "540fa8d0293bfb7d16a973f9efec4e6711f10dd64c1e772a88105fc7d174a450",
@@ -1595,7 +1595,7 @@
                   "test/win32/task-dashboard.ps1":  "1694e9c907e1e01265c4b24a697f9ca4365967e80200760677a546c1d1df8168",
                   "test/win32/terminal-link-paths.ps1":  "6fd5a42894831216f8371205fb6ab089201ddbdfda7aace1ee4cf2b42eec67f3",
                   "test/win32/test-binary-soak.ps1":  "e9c98bf87a0216e367b8bdde320fc7c01253286b7f6be286914ec378bb016a16",
-                  "test/win32/test-client-build.ps1":  "57d43fa496cfb634e8b4bf3a96fd6f57c9dcf860009cf6e901bcd702093ceb0f",
+                  "test/win32/test-client-build.ps1":  "d827e9b68c6124ad3ce866640b212afa5dcd311813cc8bff5f9a1da5c5195ca1",
                   "test/win32/test-desktop-harness.ps1":  "77eba27ffdbca2b9f422df3f0e3d32b1db9b753dafdc9b00ab532cde26b862ae",
                   "test/win32/test-desktop-spike.ps1":  "cfa0cf0ad43a56a151cdb010d10d016d5734af34f3dd0e89cc415a02f0524d06",
                   "test/win32/test-filter-guard.ps1":  "8804ee177e925a2cdfbc14a75f80ec01b217378a80025b55c80d7831c2beec00",

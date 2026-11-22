@@ -134,20 +134,61 @@ Write-Host 'E. every script that needs the client resolves it through the helper
 # and lib\FakeAgentRelay mention `remote-test-client.exe` as a process name and
 # in prose, and neither one launches it.
 #
-# build-locked-artifact.ps1 (T722) is not a consumer: the client's BUILD is its
-# subject - it runs `zig build remote-test-client` itself, with the install
-# guard on and off, so routing it through the helper would skip the very
-# install it measures.
-$consumers = Get-ChildItem (Join-Path $PSScriptRoot '*.ps1') -File |
-    Where-Object { $_.Name -ne 'test-client-build.ps1' -and $_.Name -ne 'build-locked-artifact.ps1' } |
-    Where-Object { (Get-Content $_.FullName -Raw) -match 'zig-out\\bin\\remote-test-client\.exe' }
+# A script whose SUBJECT is the client's build (build-locked-artifact.ps1,
+# T722: it runs the install with the guard on and off, so routing it through
+# the helper would skip the very install it measures) is not a consumer. It
+# says so itself, with a `# @test-client-build-subject` line, and the marker
+# only counts when the script really does build the client by name - so a
+# consumer cannot opt out of E2 by pasting the comment (T1770; until then the
+# exemption was a filename here, which nothing tied to what the script does).
+$script:ClientPathPattern = 'zig-out\\bin\\remote-test-client\.exe'
+$script:BuildSubjectMarker = '(?m)^\s*#\s*@test-client-build-subject\b'
+$script:BuildStepPattern = "(zig build|-Step)\s+'?remote-test-client\b"
+
+function Get-ClientConsumers([string]$Dir) {
+    Get-ChildItem (Join-Path $Dir '*.ps1') -File |
+        Where-Object { $_.Name -ne 'test-client-build.ps1' } |
+        ForEach-Object {
+            $text = Get-Content $_.FullName -Raw
+            if ($text -notmatch $script:ClientPathPattern) { return }
+            $exempt = ($text -match $script:BuildSubjectMarker) -and ($text -match $script:BuildStepPattern)
+            [pscustomobject]@{
+                Name     = $_.Name
+                FullName = $_.FullName
+                Exempt = $exempt
+                Wired  = ($text -match "lib\\TestClient\.ps1") -and ($text -match 'Resolve-RemoteTestClient')
+            }
+        }
+}
+
+$all = @(Get-ClientConsumers $PSScriptRoot)
+$consumers = @($all | Where-Object { -not $_.Exempt })
+$exempted = @($all | Where-Object { $_.Exempt })
 
 Assert "E1 found the client's consumers ($($consumers.Count))" ($consumers.Count -ge 6)
 foreach ($c in $consumers) {
-    $text = Get-Content $c.FullName -Raw
-    $wired = ($text -match "lib\\TestClient\.ps1") -and ($text -match 'Resolve-RemoteTestClient')
-    Assert "E2 $($c.Name) resolves through lib\TestClient.ps1" $wired
+    Assert "E2 $($c.Name) resolves through lib\TestClient.ps1" $c.Wired
 }
+Assert "E4 build-locked-artifact.ps1 is exempt by its own declaration ($(($exempted | ForEach-Object Name) -join ', '))" `
+    (@($exempted | Where-Object { $_.Name -eq 'build-locked-artifact.ps1' }).Count -eq 1)
+
+# E5: the discriminator still has teeth. Four synthetic scripts in a scratch
+# dir: an unwired consumer, a consumer wearing the marker with no build step,
+# the real build-subject shape, and a wired consumer. Only the first two may
+# come back unwired-and-not-exempt.
+$e5 = Join-Path $tmp 'e5'
+New-Item -ItemType Directory -Force $e5 | Out-Null
+$path = 'zig-out\bin\remote-test-client.exe'
+Set-Content -Encoding ascii (Join-Path $e5 'unwired.ps1') "`$c = Join-Path `$repo '$path'; & `$c --hold=5"
+Set-Content -Encoding ascii (Join-Path $e5 'marker-only.ps1') "# @test-client-build-subject`n`$c = Join-Path `$repo '$path'; & `$c"
+Set-Content -Encoding ascii (Join-Path $e5 'builder.ps1') "# @test-client-build-subject`n`$c = '$path'`nInvoke-ZigBuild -Step 'remote-test-client'"
+Set-Content -Encoding ascii (Join-Path $e5 'wired.ps1') ". (Join-Path `$PSScriptRoot 'lib\TestClient.ps1')`n`$c = Resolve-RemoteTestClient # $path"
+$syn = @(Get-ClientConsumers $e5)
+$red = @($syn | Where-Object { -not $_.Exempt -and -not $_.Wired } | ForEach-Object Name | Sort-Object)
+Assert "E5 an unwired consumer is still flagged, marker or not (flagged: $($red -join ', '))" `
+    (($red -join ',') -eq 'marker-only.ps1,unwired.ps1')
+Assert 'E5 a script that really builds the client is exempt' `
+    (@($syn | Where-Object { $_.Name -eq 'builder.ps1' -and $_.Exempt }).Count -eq 1)
 
 # The shape this replaced: a bare existence assert with no way to act on it.
 $stale = $consumers | Where-Object {
