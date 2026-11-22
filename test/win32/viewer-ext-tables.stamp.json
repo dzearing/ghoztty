@@ -1,8 +1,8 @@
 {
     "guard":  "viewer-ext-tables",
     "script":  "test/win32/viewer-ext-tables.ps1",
-    "generated":  "2026-11-22T11:41:09-08:00",
-    "commit":  "9a004f14c",
+    "generated":  "2026-11-22T12:41:17-08:00",
+    "commit":  "dc7dea4ec",
     "uncommitted":  [
 
                     ],
@@ -14,6 +14,6 @@
               },
     "code":  {
                  "test/win32/lib/ViewerExtTableAudit.ps1":  "code1:1c42ed53286cd7d6462a093ffd03388aedf607362120d138674c3987ccef3c92",
-                 "test/win32/viewer-ext-tables.ps1":  "code1:de280449bdf266c9ff809c522497bd4b19a95d98596112131098bb9daad0d8ff"
+                 "test/win32/viewer-ext-tables.ps1":  "code1:782f210d82e7134026c37332ccd5b11a1ccf73ab77994c9fbd7d7812a5c5dd84"
              }
 }
