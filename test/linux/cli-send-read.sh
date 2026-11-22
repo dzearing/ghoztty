@@ -74,7 +74,10 @@ hl_check "K6 the shell ran the sent command (its output K6_42 is on screen)" $? 
 # (docs/claude/cli.md): the shell, which never asked for bracketed paste,
 # runs both lines.
 cli +send-keys --target="$pid" 'echo K7_A\necho K7_B\n' > /dev/null 2>&1
-k7_both() { read_has '^K7_A$' && read_has '^K7_B$'; }
+# Both lines are typed ahead, so the tty echoes them together and the second
+# command's output can land right after the prompt it was typed at
+# ('hl$ K7_B'): match the output line, never the echoed 'echo K7_B'.
+k7_both() { read_has '^(hl\$ )?K7_A$' && read_has '^(hl\$ )?K7_B$'; }
 hl_wait_for 10 k7_both
 hl_check "K7 a two-line send runs both lines in an unbracketed shell" $? "$(cli +read --name="$pid" --lines=8 2>&1 | tr '\n' '|' | head -c 300)"
 
