@@ -3,8 +3,8 @@
 > Progressive-disclosure doc routed from `/CLAUDE.md`. Load it for any
 > `seat: linux` task, anything under `src/apprt/gtk/`, `scripts/linux/` or
 > `test/linux/`. The plan and phases are `docs/design/linux-port.md`; this file
-> is how to actually run things. L4 (T3333) grows it into the full harness
-> guide.
+> is how to actually run things, test things inside the headless harness, and
+> read a crash.
 
 ## The one entry point: `scripts\linux\wsl-run.ps1` (T3329)
 
@@ -126,8 +126,8 @@ The acceptance script builds and launches it:
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\gtk-smoke.sh
 ```
 
-It opens the window in a **private headless Weston** (its own
-`XDG_RUNTIME_DIR` and socket), never in WSLg, so no window ever lands on the
+It opens the window in a **private headless Weston** (the shared harness
+below: its own `XDG_RUNTIME_DIR` and socket), never in WSLg, so no window ever lands on the
 user's desktop or takes focus. It checks the build, the debug app id, that the
 window's shell ran on a pty, that the app stays up, and that OpenGL loaded.
 It ends `GTK SMOKE: ALL PASS` or `GTK SMOKE: <n> FAILURE(S)`.
@@ -138,6 +138,85 @@ It ends `GTK SMOKE: ALL PASS` or `GTK SMOKE: <n> FAILURE(S)`.
 4090)` and the app loads OpenGL 4.6. `/dev/dxg` and `/usr/lib/wsl/lib` are
 present. The smoke script sets the variable when `/dev/dxg` exists. The app
 does not set it on its own yet; that is T3350.
+
+## GUI tests: the headless harness, `test/linux/lib/headless.sh` (T3333)
+
+**Never launch the Linux app into WSLg.** WSLg draws every Linux window into an
+ordinary Windows window on the user's desktop and gives it focus - exactly what
+go.md's first rule forbids. A wsl-run step inherits WSLg's environment
+(`DISPLAY=:0`, `WAYLAND_DISPLAY=wayland-0`, `XDG_RUNTIME_DIR=/mnt/wslg/runtime-dir`),
+so a bare `./zig-out/bin/ghoztty` in a step WOULD pop a window. Every Linux GUI
+test runs inside the harness instead; it is the analog of
+`test/win32/lib/TestDesktop.ps1`.
+
+```bash
+. "$PWD/test/linux/lib/headless.sh"   # a -CommandFile step's cwd is the repo root
+hl_check_init
+hl_start                               # private `weston --backend=headless`
+app=$(hl_ghoztty)                      # absolute path, refuses a non-ELF
+hl_launch APP "$app" --gtk-single-instance=false -e /bin/sh -c 'tty > "$XDG_RUNTIME_DIR/m"; sleep 60'
+hl_wait_for 20 test -s "$XDG_RUNTIME_DIR/m"
+hl_check "my check" $?                 # PASS/FAIL line, counted
+grep -q 'loaded OpenGL' "$APP_LOG"     # each launch logs to $HL_RUNTIME/<var>.log
+hl_finish "MY SCRIPT"                  # stops everything, '<LABEL>: ALL PASS', exit 0/1
+```
+
+| Piece | What it guarantees |
+|---|---|
+| `hl_start [w] [h]` | `XDG_RUNTIME_DIR` = a fresh `mktemp` dir under `/tmp` (0700); socket `wayland-hl-<pid>`, so concurrent harnesses never share one; `DISPLAY`/`WAYLAND_SOCKET` unset; `GDK_BACKEND=wayland` so GTK cannot fall back to X11; `GALLIUM_DRIVER=d3d12` when `/dev/dxg` exists. EXIT/TERM/INT traps run `hl_stop`. |
+| `hl_launch <var> <cmd...>` | Re-checks isolation first and **refuses with exit 4** (`HEADLESS REFUSED: <why> - nothing was launched`) if anything points back at WSLg. Records the pid in `<var>`, the log in `<var>_LOG`. |
+| `hl_isolation_problem` | Prints the first reason the environment is not isolated, or nothing. Pure. |
+| `hl_ghoztty [root]` | `<root>/zig-out/bin/ghoztty` by absolute path; refuses a missing or non-ELF file (the interop PATH trap below). |
+| `hl_weston_sockets`, `hl_env_is_private <pid>` | Evidence that an app connected to the private Weston: its socket-fd count rises, and the app's own `/proc/<pid>/environ` names only it. |
+| `hl_stop` | Kills every launched process and its children, then Weston, then removes the runtime dir. Idempotent. |
+
+Acceptance (it builds the GTK app, then proves the refusals and the isolation,
+and that a SIGTERMed harness leaves no Weston, app or dir behind):
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\headless-harness.sh
+```
+
+Ends `HEADLESS HARNESS: ALL PASS` (15 checks, about a minute warm).
+
+**What the harness cannot give you yet.** There is no screenshot or input path:
+Weston headless has no capture a client can ask for, and Wayland has no global
+input injection. Pixels come from the app's own render (the translation table's
+GTK snapshot row) and input from the CLI (`+send-keys`) once L6/L7 land; until
+then a GUI test asserts on the app's log, its pty and its process tree.
+
+**Running the app by hand** is a harness run too: there is no "just open it"
+path on this box, because the only display is the user's. To look at it, the
+person at the keyboard runs it into WSLg themselves.
+
+## The interop PATH trap
+
+Inside WSL the Windows `PATH` is appended by default, so a bare `ghoztty` can
+resolve to the Windows `ghoztty.exe` through interop and drive the user's
+installed Windows terminal. `wsl-run.ps1` drops every `/mnt/*` PATH entry and
+puts `zig-out/bin` first, and tests still name the Linux binary by full path
+(`hl_ghoztty`). The same rule as Windows' CreateProcess lesson: never let a
+lookup decide which binary a test drives.
+
+## Crash diagnostics
+
+Measured 2026-11-21 in the distro: no `gdb`, no `coredumpctl`, `ulimit -c` is
+0, and `core_pattern` is `|/wsl-capture-crash %t %E %p %s` (WSL's own crash
+collector). So a crashing Linux build leaves no core by default, and:
+
+- **The Zig panic trace is the first evidence.** A debug build prints the panic
+  message and a symbolized stack to stderr - inside the harness that is
+  `$<var>_LOG`. Grep it for `panic`/`reached unreachable` before it is removed
+  (`hl_finish` deletes the runtime dir), or copy it out first.
+- **GTK/GLib warnings** land in the same log; `G_DEBUG=fatal-criticals` turns
+  a critical into a trap with a stack when one is the suspect.
+- **For a native crash with no Zig trace** (a segfault in GTK, Mesa, a C
+  dependency), install gdb (`apt-get install -y gdb`, a one-time distro change,
+  so say so in the task) and run the app under
+  `gdb -batch -ex run -ex 'thread apply all bt' --args "$app" ...` inside the
+  harness. A core file needs `ulimit -c unlimited` in the step plus a
+  `core_pattern` the distro owns, and that file is system-wide: leave it to the
+  user.
 
 ## The Linux floor: `scripts/linux/floor.sh` (T3331)
 
