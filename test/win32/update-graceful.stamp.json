@@ -1,11 +1,10 @@
 {
     "guard":  "update-graceful",
     "script":  "test/win32/update-graceful.ps1",
-    "generated":  "2026-11-22T10:11:38-08:00",
-    "commit":  "71649d592",
+    "generated":  "2026-11-22T11:54:23-08:00",
+    "commit":  "9a004f14c",
     "uncommitted":  [
-                        "src/apprt/win32/update_apply.zig",
-                        "src/apprt/win32/update_install.zig"
+
                     ],
     "files":  {
                   "dist/windows-installer/build-msi.sh":  "366a80161b9cc243de25c0c4c786238d24e696c18224d21d2f9afa97e4e19383",
@@ -14,11 +13,13 @@
                   "src/apprt/win32/update_apply.zig":  "9850e43882f9f7413767ce1aec28654f49a57a52635eff3f2996f6f6fe283149",
                   "src/apprt/win32/update_install.zig":  "95e0bd8e65305a93c233d53b18ecb13d1d179c1a59837aae0c9e1511eae15d58",
                   "test/win32/lib/ThrowawayProduct.ps1":  "44251729c95f1c92ef33b4dff3b867356a29e4f64e2af6f849d1732cf4de2bae",
-                  "test/win32/update-graceful.ps1":  "d36ca938cd4e11724893428c3482c0389db25fabb2bc862cbe6cce131d83c31b"
+                  "test/win32/lib/UserInstallSentinel.ps1":  "e8e4fb160ba7370674c1b595c129a17200347056287c078e6074a04f5751c4b0",
+                  "test/win32/update-graceful.ps1":  "7dc9554f8f1cc26a1f499cca63334bd21c4b08f8fedc564a90e40fc3a857c385"
               },
     "code":  {
                  "scripts/msi-test-identity.ps1":  "code1:c9eff8a038544061614b41475c3b9c2d21c89a4e90977530fc78e611f5afd582",
                  "test/win32/lib/ThrowawayProduct.ps1":  "code1:782aad43cabe884b5975509e1865c7619472ea75bee22e9e9da8b57bc0537810",
-                 "test/win32/update-graceful.ps1":  "code1:dc42796c9d9ffaa45024ae9fd6caec1b4766bd3100e2fc1a0788e2f8ff23247e"
+                 "test/win32/lib/UserInstallSentinel.ps1":  "code1:6418946dfd448c0e51da4cb466f1911fa865a937f9bff6b5a35016be6172281b",
+                 "test/win32/update-graceful.ps1":  "code1:03abd79fb5bc40dcab854d4c9246e590e1be5d14c06d479ba08c970ffde07d96"
              }
 }
