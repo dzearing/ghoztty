@@ -1,8 +1,8 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-11-21T20:28:56-08:00",
-    "commit":  "cfa5ffa35",
+    "generated":  "2026-11-21T20:47:15-08:00",
+    "commit":  "dd74926ac",
     "uncommitted":  [
 
                     ],
@@ -65,11 +65,12 @@
                   "src/apprt/gtk/winproto/wayland.zig":  "4d4cf0fef0f736bea033f890cee991c94be6fe6bbfea61b9e2f9dbdda0283787",
                   "src/apprt/gtk/winproto/wayland/Globals.zig":  "f93c2e65cdd9f3a04c364e6aabcc290867f551134413c95b27d9eb8c8889b885",
                   "src/apprt/gtk/winproto/x11.zig":  "31a8499677b2d9200a202ee1a6781fc022e8f66afaa4fec827526f3a68903811",
-                  "src/apprt/ipc.zig":  "2de6a9bf62a12c9cd312c1b0f59df46cd1c7965a1703398a530eb34a4934a8e5",
+                  "src/apprt/ipc.zig":  "51404da32f23d899700d9d70a6f8840ebda7995cedc953b5ce98cf271b7d680d",
                   "src/apprt/ipc/args.zig":  "c434ad0eac1fb913714792af851cc374540da642a6510ea6b6e73fc617040157",
                   "src/apprt/ipc/list.zig":  "b3cff45d2d8b3b2d45ae055b70e59ce8fe79568ff56241426a747ab1fcb9b892",
                   "src/apprt/ipc/read_tail.zig":  "43e8b7a2c10d1a73990cec6b09a6ddd1b857065f39cd855d9c83bf289fbb2ee4",
                   "src/apprt/ipc/segments.zig":  "4804011167bdc7a1eb954c4c9a44d96f730ee1a5c1cfa1b26e66383df28c775c",
+                  "src/apprt/ipc/server.zig":  "b1fd2345bb0978e48b30abba7d11990f03f1f4a0c055c5e4e2bfefe93450d5ae",
                   "src/apprt/ipc/split_name_collision.zig":  "130e8526b53d4ca7f9f9bd14ad6ae2cb39d718e5262469af8bedf000981c6787",
                   "src/apprt/ipc/target_lookup.zig":  "d02b484db28ca91624449f2ea3bf1e167487dfd4fd13598f4b3c61ca629e0451",
                   "src/apprt/ipc/url_scheme.zig":  "f9c7cccb30ad4f6bd7e93e50c73e4a99845d97dc605158185eb1c4628bc1e8d6",
@@ -246,7 +247,7 @@
                   "src/apprt/win32/ipc_shortcut_guide.zig":  "ffbe20a34b9868b26615353dfab84d2b65d011faf27094c957711cdd4d756705",
                   "src/apprt/win32/ipc_whats_new.zig":  "35f9a55aca347095990a162cba08e95edf95b3ff9440b04c9dd58370a58e1d10",
                   "src/apprt/win32/ipc_workspaces.zig":  "c9b57d7078145c2e43b355192d211ed5eeff61b8484c57a706b13011766c0648",
-                  "src/apprt/win32/IpcHandlers.zig":  "77a5c23a4456250a6515e67a8901b9053f265726832df6f3b19bc8d96a9637b1",
+                  "src/apprt/win32/IpcHandlers.zig":  "36d5a50a7bebe991b8614068f4452ec8c594fce93a78e8198acb127a5be03c67",
                   "src/apprt/win32/IpcRegistry.zig":  "1de5658631df1d1d11d63b392aba043d7dd619e2bd3e7ac5717fc62e10ecd206",
                   "src/apprt/win32/IpcServer.zig":  "d52089f909a9bad6600892d1cc80030a3dccfa7b251a5215fb1b16bc0d4b6570",
                   "src/apprt/win32/job_escape.zig":  "060f58a8a8739baf8246aaca8cf5d4a0e6113bfa69e981fdc2282ea8a060cb7e",
