@@ -154,11 +154,25 @@ function Set-GhozttyTestIsolation {
         # (path-selfheal.ps1, registration-sites.ps1) keeps its value.
         if (-not $env:GHOZTTY_PATH_SELFHEAL) { $env:GHOZTTY_PATH_SELFHEAL = 'off' }
 
+        # T3388: and the sixth, the worst of them. A release build copied into
+        # this sandbox's Programs\Ghoztty reads that folder as the installed
+        # release, so its automatic update check fetches the REAL release,
+        # downloads the real MSI and runs msiexec - and msiexec's product state
+        # is per user, not per LOCALAPPDATA. On 2026-11-22 path-selfheal.ps1
+        # section J reconfigured the user's real install that way and left it
+        # with no ghoztty-agent.exe. The app honors GHOZTTY_AUTO_UPDATE=off
+        # (update_apply.policyWithEnv); a harness that points the updater at
+        # its own GHOZTTY_UPDATE_URL feed still gets its updates, because the
+        # feed wins over the switch. Get-GhozttyReleaseSandboxGaps refuses a
+        # release launch that has neither.
+        if (-not $env:GHOZTTY_AUTO_UPDATE) { $env:GHOZTTY_AUTO_UPDATE = 'off' }
+
         if (-not $Quiet) {
             "  [isolation] GHOZTTY_AGENT_INSTANCE=$instance"
             "  [isolation] LOCALAPPDATA=$root"
             "  [isolation] GHOZTTY_URL_SCHEME=$($env:GHOZTTY_URL_SCHEME)"
             "  [isolation] GHOZTTY_PATH_SELFHEAL=$($env:GHOZTTY_PATH_SELFHEAL)"
+            "  [isolation] GHOZTTY_AUTO_UPDATE=$($env:GHOZTTY_AUTO_UPDATE)"
         }
     }
 

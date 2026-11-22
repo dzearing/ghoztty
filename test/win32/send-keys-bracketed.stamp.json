@@ -1,8 +1,8 @@
 {
     "guard":  "send-keys-bracketed",
     "script":  "test/win32/send-keys-bracketed.ps1",
-    "generated":  "2026-11-22T06:52:35-08:00",
-    "commit":  "18f282b0e",
+    "generated":  "2026-11-22T08:06:30-08:00",
+    "commit":  "da76287a2",
     "uncommitted":  [
 
                     ],

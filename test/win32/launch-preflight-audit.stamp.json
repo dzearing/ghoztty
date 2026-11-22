@@ -1,19 +1,20 @@
 {
     "guard":  "launch-preflight",
     "script":  "test/win32/launch-preflight-audit.ps1",
-    "generated":  "2026-11-21T10:35:00-08:00",
-    "commit":  "33f75de88",
+    "generated":  "2026-11-22T07:35:35-08:00",
+    "commit":  "da76287a2",
     "uncommitted":  [
+                        "test/win32/launch-preflight-audit.ps1",
                         "test/win32/lib/BuildMode.ps1"
                     ],
     "files":  {
-                  "test/win32/launch-preflight-audit.ps1":  "48099d9b4bdad7536379153e2e9eca0138daee304cdb496c6dd33c1cc27f67f0",
-                  "test/win32/lib/BuildMode.ps1":  "769de92d4724e04f1c557324ea48664508fd4fff3b69aee3b5afcd59c0d480fc",
+                  "test/win32/launch-preflight-audit.ps1":  "9358e543d900e488b7d45ac923e588e57aefa42eb0c9f8da489bae919b70a46d",
+                  "test/win32/lib/BuildMode.ps1":  "2e420213f445ed93f56d853ebdb2cea5652bccaa852f2dc01e5a5f29a794b67e",
                   "test/win32/lib/TestDesktop.ps1":  "7548de334603b049c94949cf4002dc20e318866f8cdec9878b49a5f745ace372"
               },
     "code":  {
-                 "test/win32/launch-preflight-audit.ps1":  "code1:bdf15865cfd352ae566b279af7aeff7d61a536b73b2feeffe49d513195a0c811",
-                 "test/win32/lib/BuildMode.ps1":  "code1:7ac0152dd984df703bf8a1e1b72c3f55c30f418c5ed197ea3059b6363c16b54a",
+                 "test/win32/launch-preflight-audit.ps1":  "code1:501bdf4b059bddd38029827aa92e259bd7adaef40136f169bce965480a8ca6bd",
+                 "test/win32/lib/BuildMode.ps1":  "code1:a32d94fb10d75a44365afbf0389e798f412445b17cfb5056e4773cf3beb9dbd3",
                  "test/win32/lib/TestDesktop.ps1":  "code1:8dc5ba2640052ad4f648ba9b6bf45520579d956869194bf593296dba21c1d317"
              }
 }

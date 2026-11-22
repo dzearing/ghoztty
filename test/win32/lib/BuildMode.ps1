@@ -237,6 +237,15 @@ function Get-GhozttyReleaseSandboxGaps {
         ($env:LOCALAPPDATA.TrimEnd([char]92) -eq $realLad.TrimEnd([char]92))) {
         $gaps += "LOCALAPPDATA is still the user's ($realLad) - state files, layout blobs and the session roster are shared"
     }
+    # T3388: the fourth knob. LOCALAPPDATA does not sandbox msiexec: a release
+    # build whose automatic update check reaches the real release feed installs
+    # the real MSI over the user's installed product (2026-11-22). Closed by
+    # GHOZTTY_AUTO_UPDATE=off, or by pointing the updater at the run's own
+    # GHOZTTY_UPDATE_URL feed, which the app lets win over the switch.
+    $au = if ($env:GHOZTTY_AUTO_UPDATE) { $env:GHOZTTY_AUTO_UPDATE.Trim() } else { '' }
+    if (($au -ne 'off') -and ($au -ne '0') -and [string]::IsNullOrWhiteSpace($env:GHOZTTY_UPDATE_URL)) {
+        $gaps += 'GHOZTTY_AUTO_UPDATE is not off and no GHOZTTY_UPDATE_URL test feed is set - the automatic update check can install the REAL release over the user''s installed Ghoztty with msiexec (T3388)'
+    }
     return @($gaps)
 }
 
@@ -311,7 +320,8 @@ PARTLY isolated, which is the dangerous state, not a partial win:
 
 $list
 
-Isolating a release-lineage run takes all THREE knobs. The one-liner is:
+Isolating a release-lineage run takes every knob above (since T3388 that
+includes GHOZTTY_AUTO_UPDATE=off). The one-liner sets them all:
 
     . (Join-Path `$PSScriptRoot 'lib\Isolation.ps1')
     Set-GhozttyTestIsolation -Tag '<script>' -ReleaseSandbox

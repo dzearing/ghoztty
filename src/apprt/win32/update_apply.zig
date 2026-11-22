@@ -152,6 +152,31 @@ pub fn policyFromName(name: ?[]const u8) Policy {
     return .download;
 }
 
+/// The policy once the `GHOZTTY_AUTO_UPDATE` kill switch is applied (T3388).
+///
+/// `GHOZTTY_AUTO_UPDATE=off` (or `0`) turns every automatic update path off
+/// whatever the config says. It exists for test sandboxes: a release build
+/// copied into a sandbox `Programs\Ghoztty` reads that folder as the installed
+/// release, checks the REAL feed, downloads the real MSI and hands it to
+/// msiexec - and msiexec product state is per user, not per LOCALAPPDATA, so
+/// on 2026-11-22 a harness reconfigured the user's real install and left it
+/// with no agent exe. `Set-GhozttyTestIsolation -ReleaseSandbox` sets it.
+///
+/// An explicit test feed (`GHOZTTY_UPDATE_URL`, `test_feed`) wins over the
+/// switch: a harness that points the updater at its own feed has opted into
+/// updates on purpose, and its packages are fixtures rather than the product.
+/// Any other value of the switch is ignored, so it can only ever turn updates
+/// off - never on.
+pub fn policyWithEnv(config_name: ?[]const u8, env_value: ?[]const u8, test_feed: bool) Policy {
+    if (!test_feed) {
+        if (env_value) |raw| {
+            const v = std.mem.trim(u8, raw, " \t\r\n");
+            if (std.ascii.eqlIgnoreCase(v, "off") or std.mem.eql(u8, v, "0")) return .off;
+        }
+    }
+    return policyFromName(config_name);
+}
+
 /// The msiexec command line that applies a staged package.
 ///
 /// `/i` installs (a major upgrade removes the old product first, keyed on the
@@ -795,6 +820,30 @@ test "policyFromName: unset behaves like the Mac default" {
     try testing.expectEqual(Policy.download, policyFromName("download"));
     // A value this build does not know must not silently disable updates.
     try testing.expectEqual(Policy.download, policyFromName("tomorrow"));
+}
+
+test "policyWithEnv: GHOZTTY_AUTO_UPDATE=off overrides the config (T3388)" {
+    // The sandbox's switch beats the default and an explicit `download`.
+    try testing.expectEqual(Policy.off, policyWithEnv(null, "off", false));
+    try testing.expectEqual(Policy.off, policyWithEnv("download", "off", false));
+    try testing.expectEqual(Policy.off, policyWithEnv("check", " OFF\r\n", false));
+    try testing.expectEqual(Policy.off, policyWithEnv(null, "0", false));
+    // Unset or empty leaves the config in charge.
+    try testing.expectEqual(Policy.download, policyWithEnv(null, null, false));
+    try testing.expectEqual(Policy.notify, policyWithEnv("check", "", false));
+    try testing.expectEqual(Policy.off, policyWithEnv("off", null, false));
+}
+
+test "policyWithEnv: the switch can only turn updates off, and a test feed wins (T3388)" {
+    // Any other value is ignored - it never turns a configured `off` back on.
+    try testing.expectEqual(Policy.off, policyWithEnv("off", "download", false));
+    try testing.expectEqual(Policy.off, policyWithEnv("off", "on", false));
+    try testing.expectEqual(Policy.download, policyWithEnv(null, "on", false));
+    // A harness pointing the updater at its own feed opted in on purpose.
+    try testing.expectEqual(Policy.download, policyWithEnv(null, "off", true));
+    try testing.expectEqual(Policy.notify, policyWithEnv("check", "off", true));
+    // ...but a feed does not override the user's own `off`.
+    try testing.expectEqual(Policy.off, policyWithEnv("off", "off", true));
 }
 
 test "msiexecCommandLine quotes both paths and stays non-interactive" {

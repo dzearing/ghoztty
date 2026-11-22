@@ -1,10 +1,12 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-11-22T06:53:43-08:00",
-    "commit":  "18f282b0e",
+    "generated":  "2026-11-22T08:35:44-08:00",
+    "commit":  "da76287a2",
     "uncommitted":  [
-
+                        "src/apprt/win32/App.zig",
+                        "src/apprt/win32/update_apply.zig",
+                        "test/win32/seam-audit.registry.json"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -36,7 +38,7 @@
                   "src/apprt/win32/agent_upgrade.zig":  "49c5c7ceea8da9bbf31619d51bfdede3b0e3d952e59553c4447410fd508895e9",
                   "src/apprt/win32/AgentIntegration.zig":  "206d196b9c35bf6826ff6daeafd2a5d1d089f053cfb9037bfd9b640099fc98cc",
                   "src/apprt/win32/AgentIntegrationsDialog.zig":  "246d10bd97a670440044da56b0072d1e41dff7d0c20ac4caae859bc0ab900eee",
-                  "src/apprt/win32/App.zig":  "1aa844b44352b2cd3acb5f54354e0b560c673d8b4a29b51da64406ee5f8219a2",
+                  "src/apprt/win32/App.zig":  "f697400fbcfd60bbab075c15bff34704d0d9878635e1a889af71912434b830aa",
                   "src/apprt/win32/app_restart.zig":  "cb29ce354e630b7509f501fdb56a70b34bb21a06fbbc6b232ca40083f952dd25",
                   "src/apprt/win32/arp_orphan.zig":  "fd1ca05529e1196fda78983b639c3cf5d93ad3b0ad1640ccbffba158764626fc",
                   "src/apprt/win32/ArpOrphanSweep.zig":  "84bc2b0e4717d2fa8fc18d8cfb68a77440d2089c719b6c4a52941b8f8be89c1f",
@@ -370,7 +372,7 @@
                   "src/apprt/win32/tray_notify.zig":  "438ad677381ef9f53b06473e00de87530b524a401fc78cad5414a5e26cc4480f",
                   "src/apprt/win32/trend_gauge.zig":  "8e40bbb1bb211dddaa315851043ecabdc88fb365a735ce5dbd2f062ba90e3483",
                   "src/apprt/win32/type_ramp.zig":  "c7c36e8fa6e894ad362e6d91a78518a5c0d24a7ff6a47cd5c6d79a42d376b7b9",
-                  "src/apprt/win32/update_apply.zig":  "8626d9256e757aedb41b0757a398e2aa3278cb2d2c99ad631911a27b50d08fc9",
+                  "src/apprt/win32/update_apply.zig":  "3aa5e8f072db7d450da4f477dbb3cb5fe730966f6b748c5e67f44c9acace7e9d",
                   "src/apprt/win32/update_auto_apply.zig":  "8f591a386f1d0b3cc6c0aa3378877a0e9a1a906980add59353ca598610da11ff",
                   "src/apprt/win32/update_badge.zig":  "ae2e792492c96ae7b19ac3e7a08fa87e1f34d56e5a47c0ed1469fd54a859a546",
                   "src/apprt/win32/update_check.zig":  "e8c76a63e80081788c5f082f1f2b9282ac78e19ff132a590c87767a658500489",
@@ -650,7 +652,7 @@
                   "src/termio/open_failed_notice.zig":  "709aba3d06eb0a956a167b00dde2231439d7f7dd43535bad8d2eb36811019d8e",
                   "src/termio/Options.zig":  "f6d8184ad4488ccdb76571a7e87300607beb9a4d5d77a8300dd92e2cd757d5e0",
                   "src/termio/read_coalesce.zig":  "a3c1d8fbbf4797ed5bb314012ef712cb960aaf575895eee6f77cb09220108995",
-                  "src/termio/Remote.zig":  "5c2fc604fdd30978498fcaef567793262c7d8234d6796022faa161a87014df46",
+                  "src/termio/Remote.zig":  "4b8b0cbf3af7db4d298c73d4c561bd26a87e44f9f3d0cc2389ad99fb9febe3e7",
                   "src/termio/restore_history.zig":  "544cdf75e6182afec8cccf7e6fa1fa6205680841a98b92754dbdca7d3bcdc083",
                   "src/termio/restore_park.zig":  "1e68d21a293216cfb5a003f0fa1cb494ba031fe4d7ac236b4f5ccd168e6f50bd",
                   "src/termio/session_notice.zig":  "1aa4830a68bd520fa8f3114d44499bec8442be4fa8309afa3fe17fe5bc211728",
@@ -662,6 +664,6 @@
                   "src/termio/title_pace.zig":  "914afed249d211b9f119a1f551b1012008c75c2d4f9f1373639d40435eddf32d",
                   "test/win32/lib/SeamAudit.ps1":  "209b551bd95a6e77fbd4c47f40dd4cd8401b81b6c43503acd9ca77534c171b82",
                   "test/win32/seam-audit.ps1":  "e7ef6b8614ad022f48f0cfa94c7183270545ba2d3f29fc2e0b14669429e6c586",
-                  "test/win32/seam-audit.registry.json":  "22bad70decb0961eb27f868fcc55206ec3b9ed14bb1fbdd3cc611c6979e7f0d6"
+                  "test/win32/seam-audit.registry.json":  "618d14bc5859f1e553c1facedad7e6c7ce02a17bed36c8dbeaf763ddf48b1e11"
               }
 }

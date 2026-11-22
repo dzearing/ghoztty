@@ -504,6 +504,9 @@ Assert 'B5y and the refusal names the knob that is missing' `
 
 $env:GHOZTTY_AGENT_INSTANCE = "lpa$PID"
 $env:LOCALAPPDATA = Join-Path $stubDir 'sandbox-lad'
+# T3388: the fourth knob - no automatic update may reach the real release feed.
+$savedB5Au = $env:GHOZTTY_AUTO_UPDATE
+$env:GHOZTTY_AUTO_UPDATE = 'off'
 # persistence: n/a - stops at "No test desktop"; the stub never runs.
 $msgAllow = Get-Throw { Start-OnTestDesktop -Exe $stubApp -AllowReleaseBuild }
 Assert 'B5 -AllowReleaseBuild reaches the gate and passes through once isolated' `
@@ -513,6 +516,8 @@ if ($null -eq $savedB5Suffix) { Remove-Item Env:GHOZTTY_PIPE_SUFFIX -ErrorAction
 else { $env:GHOZTTY_PIPE_SUFFIX = $savedB5Suffix }
 Restore-GhozttyAgentLineage -Saved $savedB5Inst
 $env:LOCALAPPDATA = $savedB5Lad
+if ($null -eq $savedB5Au) { Remove-Item Env:GHOZTTY_AUTO_UPDATE -ErrorAction SilentlyContinue }
+else { $env:GHOZTTY_AUTO_UPDATE = $savedB5Au }
 
 # T1036: the agent is gated too - by its OWN gate, which is what speaks.
 # persistence: n/a - refused by the agent gate; nothing starts.

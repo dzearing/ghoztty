@@ -11414,9 +11414,17 @@ const UpdateTrigger = enum { automatic, manual };
 /// What `auto-update` asks this platform to do (T1178). Unset means
 /// `download`, which is Sparkle's default on the Mac and therefore what
 /// "update it like the normal mac ghoztty" means here.
+///
+/// `GHOZTTY_AUTO_UPDATE=off` overrides it (T3388): the test sandbox's switch,
+/// so a release build launched from a sandbox `Programs\Ghoztty` can never
+/// fetch the real release and run msiexec against the user's installed
+/// product. An explicit GHOZTTY_UPDATE_URL test feed wins over the switch.
 fn updatePolicy(self: *const App) update_apply.Policy {
     const name: ?[]const u8 = if (self.config.@"auto-update") |au| @tagName(au) else null;
-    return update_apply.policyFromName(name);
+    const alloc = self.core_app.alloc;
+    const env: ?[]u8 = std.process.getEnvVarOwned(alloc, "GHOZTTY_AUTO_UPDATE") catch null;
+    defer if (env) |e| alloc.free(e);
+    return update_apply.policyWithEnv(name, env, envUpdateUrlIsSet(alloc));
 }
 
 /// Start a background thread to check for updates (T24, extended by T1178

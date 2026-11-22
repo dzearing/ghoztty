@@ -1,8 +1,8 @@
 {
     "guard":  "local-split-no-command-rerun",
     "script":  "test/win32/local-split-no-command-rerun.ps1",
-    "generated":  "2026-11-22T06:51:24-08:00",
-    "commit":  "18f282b0e",
+    "generated":  "2026-11-22T07:58:01-08:00",
+    "commit":  "da76287a2",
     "uncommitted":  [
 
                     ],

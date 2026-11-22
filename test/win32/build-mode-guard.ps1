@@ -113,9 +113,14 @@ $savedInst = Get-GhozttyAgentLineage
 $savedLad = $env:LOCALAPPDATA
 $realLad = [Environment]::GetFolderPath('LocalApplicationData')
 
+$savedAu = $env:GHOZTTY_AUTO_UPDATE
+$savedFeed = $env:GHOZTTY_UPDATE_URL
+
 # Every knob off: the state the soak was in for weeks, minus even the suffix.
 Remove-Item Env:GHOZTTY_PIPE_SUFFIX -ErrorAction SilentlyContinue
 Remove-Item Env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue
+Remove-Item Env:GHOZTTY_AUTO_UPDATE -ErrorAction SilentlyContinue
+Remove-Item Env:GHOZTTY_UPDATE_URL -ErrorAction SilentlyContinue
 $env:LOCALAPPDATA = $realLad
 
 $msgD1 = Get-Throw { Assert-GhozttyIsolatedBuild -Exe $stubFast -Allow }
@@ -147,7 +152,22 @@ Assert "D5 two of the three is still refused" ($null -ne $msgD5)
 Assert "D5b and the one it names is the file half" ($msgD5 -match 'LOCALAPPDATA is still the user')
 
 $env:LOCALAPPDATA = Join-Path $tmp 'sandbox-lad'
-Assert "D6 all three knobs plus -Allow is accepted" `
+# T3388: three of four is still refused. LOCALAPPDATA does not sandbox msiexec,
+# and on 2026-11-22 exactly this state installed the real release over the
+# user's installed Ghoztty.
+$msgD5c = Get-Throw { Assert-GhozttyIsolatedBuild -Exe $stubFast -Allow }
+Assert "D5c three knobs without the update switch is still refused (T3388)" ($null -ne $msgD5c)
+Assert "D5d and it names the update switch and why" `
+    (($msgD5c -match 'GHOZTTY_AUTO_UPDATE is not off') -and ($msgD5c -match 'msiexec'))
+$env:GHOZTTY_UPDATE_URL = 'file:///C:/nowhere/feed.json'
+Assert "D5e a run pointed at its own update feed has closed that gap" `
+    ($null -eq (Get-Throw { Assert-GhozttyIsolatedBuild -Exe $stubFast -Allow }))
+Remove-Item Env:GHOZTTY_UPDATE_URL -ErrorAction SilentlyContinue
+$env:GHOZTTY_AUTO_UPDATE = 'on'
+Assert "D5f a switch value other than off does not count" `
+    ($null -ne (Get-Throw { Assert-GhozttyIsolatedBuild -Exe $stubFast -Allow }))
+$env:GHOZTTY_AUTO_UPDATE = 'off'
+Assert "D6 all four knobs plus -Allow is accepted" `
     ($null -eq (Get-Throw { Assert-GhozttyIsolatedBuild -Exe $stubFast -Allow }))
 Assert "D6b and it returns the mode it read" `
     ((Assert-GhozttyIsolatedBuild -Exe $stubFast -Allow) -eq 'ReleaseFast')
@@ -169,12 +189,14 @@ Assert "D8 a Debug exe under -Allow passes with no knobs at all" `
 
 # --- Get-GhozttyReleaseSandboxGaps, asked directly ---------------------------
 Remove-Item Env:GHOZTTY_PIPE_SUFFIX -ErrorAction SilentlyContinue
-Assert "D9 gaps names all three when nothing is set" `
-    (@(Get-GhozttyReleaseSandboxGaps).Count -eq 3)
+Remove-Item Env:GHOZTTY_AUTO_UPDATE -ErrorAction SilentlyContinue
+Assert "D9 gaps names all four when nothing is set" `
+    (@(Get-GhozttyReleaseSandboxGaps).Count -eq 4)
 $env:GHOZTTY_PIPE_SUFFIX = "-bmguard$PID"
 $env:GHOZTTY_AGENT_INSTANCE = "bmguard$PID"
 $env:LOCALAPPDATA = Join-Path $tmp 'sandbox-lad'
-Assert "D9b and none when all three are" (@(Get-GhozttyReleaseSandboxGaps).Count -eq 0)
+$env:GHOZTTY_AUTO_UPDATE = 'off'
+Assert "D9b and none when all four are" (@(Get-GhozttyReleaseSandboxGaps).Count -eq 0)
 $env:LOCALAPPDATA = $realLad + '\'
 Assert "D9c a trailing separator does not read as a different directory" `
     (((Get-GhozttyReleaseSandboxGaps) -join '|') -match 'LOCALAPPDATA is still the user')
@@ -182,9 +204,11 @@ Assert "D9c a trailing separator does not read as a different directory" `
 # --- Set-GhozttyTestIsolation -ReleaseSandbox closes all three in one call ----
 Remove-Item Env:GHOZTTY_PIPE_SUFFIX -ErrorAction SilentlyContinue
 Remove-Item Env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue
+Remove-Item Env:GHOZTTY_AUTO_UPDATE -ErrorAction SilentlyContinue
 $env:LOCALAPPDATA = $realLad
 [void](Set-GhozttyTestIsolation -Tag 'bmguard' -ReleaseSandbox -Quiet -SandboxRoot (Join-Path $tmp 'iso-sandbox'))
 Assert "D10 -ReleaseSandbox closes every gap in one call" (@(Get-GhozttyReleaseSandboxGaps).Count -eq 0)
+Assert "D10l and it switched automatic updates off (T3388)" ($env:GHOZTTY_AUTO_UPDATE -eq 'off')
 Assert "D10b the agent lineage stays inside agent_lineage.max_len (24)" `
     ($env:GHOZTTY_AGENT_INSTANCE.Length -le 24)
 Assert "D10c and it is run-unique, so two runs never share a lineage" `
@@ -236,6 +260,18 @@ Assert "D10k while the plain call does not touch it" ($null -eq $env:GHOZTTY_PAT
 if ($null -eq $savedHeal) { Remove-Item Env:GHOZTTY_PATH_SELFHEAL -ErrorAction SilentlyContinue }
 else { $env:GHOZTTY_PATH_SELFHEAL = $savedHeal }
 
+# T3388: the update switch follows the same contract as the two seams above.
+$env:GHOZTTY_AUTO_UPDATE = 'download'
+[void](Set-GhozttyTestIsolation -Tag 'bmguard' -ReleaseSandbox -Quiet -SandboxRoot (Join-Path $tmp 'iso-sandbox7'))
+Assert "D10m a switch value the caller set on purpose is kept" ($env:GHOZTTY_AUTO_UPDATE -eq 'download')
+Remove-Item Env:GHOZTTY_AUTO_UPDATE -ErrorAction SilentlyContinue
+[void](Set-GhozttyTestIsolation -Tag 'bmguard' -Quiet)
+Assert "D10n while the plain call does not touch it" ($null -eq $env:GHOZTTY_AUTO_UPDATE)
+if ($null -eq $savedAu) { Remove-Item Env:GHOZTTY_AUTO_UPDATE -ErrorAction SilentlyContinue }
+else { $env:GHOZTTY_AUTO_UPDATE = $savedAu }
+if ($null -eq $savedFeed) { Remove-Item Env:GHOZTTY_UPDATE_URL -ErrorAction SilentlyContinue }
+else { $env:GHOZTTY_UPDATE_URL = $savedFeed }
+
 # Hand section E the partial state it is written against: a release exe with a
 # private suffix and nothing else, which is what -AllowReleaseBuild has to be
 # able to opt out of. T2005: "nothing else" means the lineage is UNSET here, not
@@ -275,11 +311,15 @@ $savedEInst = Get-GhozttyAgentLineage
 $savedELad = $env:LOCALAPPDATA
 $env:GHOZTTY_AGENT_INSTANCE = "bmguardE$PID"
 $env:LOCALAPPDATA = Join-Path $tmp 'sandbox-lad-e'
+$savedEAu = $env:GHOZTTY_AUTO_UPDATE
+$env:GHOZTTY_AUTO_UPDATE = 'off'
 $msgAllow = Get-Throw { Reset-GhozttyTestState -Exe $stubFast -SettleMs 0 -AllowReleaseBuild }
 Assert "E3 -AllowReleaseBuild passes through to it once the run is isolated" ($msgAllow -notmatch 'REFUSING TO RUN')
 Assert "E3b and the run continues to the next pre-flight" ($msgAllow -match 'not under the repo')
 Restore-GhozttyAgentLineage -Saved $savedEInst
 $env:LOCALAPPDATA = $savedELad
+if ($null -eq $savedEAu) { Remove-Item Env:GHOZTTY_AUTO_UPDATE -ErrorAction SilentlyContinue }
+else { $env:GHOZTTY_AUTO_UPDATE = $savedEAu }
 
 $msgIso = Get-Throw { Assert-GhozttyPrivateEndpoint -Exe $stubFast }
 Assert "E4 Assert-GhozttyPrivateEndpoint refuses a release exe" ($null -ne $msgIso)

@@ -1,16 +1,17 @@
 {
     "guard":  "doc-claims",
     "script":  "test/win32/doc-claims.ps1",
-    "generated":  "2026-11-22T06:53:11-08:00",
-    "commit":  "18f282b0e",
+    "generated":  "2026-11-22T08:08:14-08:00",
+    "commit":  "da76287a2",
     "uncommitted":  [
-                        "docs/claude/linux.md"
+                        "test/win32/lib/BuildMode.ps1",
+                        "test/win32/lib/Isolation.ps1"
                     ],
     "files":  {
                   "CLAUDE.md":  "d36c55011e0aaa79791f102a88c900fe847edb05aa35518e44aa0dcf5e5e39af",
                   "docs/claude/build.md":  "a0a14f36aa2af9e3a0d3da454e15e072b4c5170a29887d3a1e282d76c0f1d389",
                   "docs/claude/cli.md":  "9653a715d5522fe4c6b7f7aeddbbbda2caa14e8858f250e38b3b7820eb2b2b4f",
-                  "docs/claude/linux.md":  "8b0dc22cf83857e49053cbb47dc2f48a4f2e7daa2c6d413315f9b2c0c83512a5",
+                  "docs/claude/linux.md":  "38c4cf3ca484cdfebd9885ff6bc72d85faae05f9fd1abc0c506a0245440775a8",
                   "docs/claude/remote.md":  "cadcd3be8a1f8ab4ee2a4d2ea0046e8cc5a30493df8f6da0b66b8989ac20dba6",
                   "docs/claude/sessions.md":  "3e64b5911bff2bd1d146e78e6b40c3fdb545ff39ef9fcf77d5c271a7755ebaef",
                   "docs/claude/testing.md":  "d424bb8bd674038d1f9e8183877d7954cab4822fbe30928b54958a1c7fa32646",
@@ -18,8 +19,8 @@
                   "docs/claude/win32-ui.md":  "0d161ccd181de4fdb54cf6a4b434abc75dcc00f65094c681df21dfab7ac05e55",
                   "go.md":  "521f9e44dac1aa6e5c2723726b955c91b152169732e8e00ab06e51e3e16a5072",
                   "test/win32/doc-claims.ps1":  "89225631de66b3d1dc4c196c2dbea93fd7c416774c464c32fdc3e6f3198d3ece",
-                  "test/win32/lib/BuildMode.ps1":  "769de92d4724e04f1c557324ea48664508fd4fff3b69aee3b5afcd59c0d480fc",
-                  "test/win32/lib/Isolation.ps1":  "c154ff88298f28e8af527e4bcbee3bd3c191b28af329866e1333e9d28126b8da",
+                  "test/win32/lib/BuildMode.ps1":  "2e420213f445ed93f56d853ebdb2cea5652bccaa852f2dc01e5a5f29a794b67e",
+                  "test/win32/lib/Isolation.ps1":  "eee67ba3782e551404b498bbc97457777d93a5cf48728cd2ab056f30cdbdb8f7",
                   "test/win32/lib/RetiredClaims.ps1":  "3fbaacd49f9341d0c4cf7c4a03ed0487a1d371cf6b395e9984cf2ea12f5876bb"
               }
 }

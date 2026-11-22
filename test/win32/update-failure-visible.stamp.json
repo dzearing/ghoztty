@@ -1,13 +1,13 @@
 {
     "guard":  "update-failure-visible",
     "script":  "test/win32/update-failure-visible.ps1",
-    "generated":  "2026-11-21T19:18:55-08:00",
-    "commit":  "ea57924a0",
+    "generated":  "2026-11-22T08:17:42-08:00",
+    "commit":  "da76287a2",
     "uncommitted":  [
-
+                        "src/apprt/win32/update_apply.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/update_apply.zig":  "8626d9256e757aedb41b0757a398e2aa3278cb2d2c99ad631911a27b50d08fc9",
+                  "src/apprt/win32/update_apply.zig":  "3aa5e8f072db7d450da4f477dbb3cb5fe730966f6b748c5e67f44c9acace7e9d",
                   "src/apprt/win32/update_install.zig":  "4752deb8b256fda0ae594e332c8c90adec6c16a81c062014b6ac3cba85e9979f",
                   "test/win32/lib/ApplierSandbox.ps1":  "82870ff2c01dd3d3e36b1b1f8ff7ed7359059245db8e5d88ac9e30838e177bd8",
                   "test/win32/update-failure-visible.ps1":  "c8e5dbcf196daf7908d01c6660052aee5479c7946d53a557381dc24ac5bc06d3"
