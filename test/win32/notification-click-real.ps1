@@ -55,6 +55,7 @@ param([string]$ExePath, [switch]$NegativeControl)
 # ahead of any isolation setup, because it drops an inherited
 # $GHOZTTY_IPC_SOCKET - a test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 # T1100: the oracle is a PHYSICAL click on a shell-drawn toast, so this needs
 # three things the box may not have - SendInput landing, a window it can bring
 # to the foreground, and a shell that draws toasts at all. Asked BEFORE
@@ -341,6 +342,9 @@ Assert (-not $app.HasExited) 'the app survived both clicks'
 & $exe +list 2>&1 | Out-Null
 Assert ($LASTEXITCODE -eq 0) '+list still answers (the GUI thread survived the clicks)'
 
+# The try's last statement (body-complete-audit D1): an unwind above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
 } finally {
     Write-Host '== teardown'
     [NotifRealClick]::MoveCursor($script:cursorHome.X, $script:cursorHome.Y)
@@ -349,5 +353,13 @@ Assert ($LASTEXITCODE -eq 0) '+list still answers (the GUI thread survived the c
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($($script:pass) assertions)"; exit 0 }
-else { Write-Host "$($script:fail) FAILURE(S) ($($script:pass) passed)" -ForegroundColor Red; exit 1 }
+if ($script:fail -eq 0 -and -not $NegativeControl) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    # Continue: under Stop, a stderr line from the native call through 2>&1
+    # would throw in PowerShell 5.1.
+    $ErrorActionPreference = 'Continue'
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard notification-click-real -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T572 NOTIFICATION CLICK REAL' -Pass $script:pass -Fail $script:fail

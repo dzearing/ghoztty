@@ -1516,6 +1516,84 @@ $GuardTable = @(
             'src\apprt\win32\surface_window_role.zig'
         )
     },
+    # T1768: the remote + notification family. Same rule as the pane/split
+    # block above: each row names the module where its behavior is decided, and
+    # Window.zig / App.zig are left out on purpose.
+    # +split / ctrl+t / +new-window --from-focused on a remote window reuse the
+    # remote host and inherit the parent's live cwd through the agent (T68).
+    [pscustomobject]@{
+        Name   = 'remote-inherit'
+        Script = 'test\win32\remote-inherit.ps1'
+        Stamp  = 'test\win32\remote-inherit.stamp.json'
+        Covers = @(
+            'test\win32\remote-inherit.ps1',
+            'src\apprt\win32\inherit_cwd.zig'
+        )
+    },
+    # A relay window's pill names the machine by its listed name, never its
+    # device id; a listing renames open windows; a caller-pinned name holds
+    # (T1418, T1736). The naming order is machine_cache's.
+    [pscustomobject]@{
+        Name   = 'remote-pill-relay-name'
+        Script = 'test\win32\remote-pill-relay-name.ps1'
+        Stamp  = 'test\win32\remote-pill-relay-name.stamp.json'
+        Covers = @(
+            'test\win32\remote-pill-relay-name.ps1',
+            'src\apprt\win32\machine_cache.zig',
+            'src\apprt\win32\remote_pill.zig'
+        )
+    },
+    # Reconnect on a machine whose sessions are gone gives back the same split
+    # with LIVE fresh shells, in the panes' last cwd; the automatic ladder
+    # never does that on its own (T611, T752).
+    [pscustomobject]@{
+        Name   = 'remote-reconnect-fresh'
+        Script = 'test\win32\remote-reconnect-fresh.ps1'
+        Stamp  = 'test\win32\remote-reconnect-fresh.stamp.json'
+        Covers = @(
+            'test\win32\remote-reconnect-fresh.ps1',
+            'src\apprt\win32\remote_reconnect.zig',
+            'src\apprt\win32\RemoteReconnect.zig'
+        )
+    },
+    # The per-host defaults store and its editor, and the three places a stored
+    # cwd/shell may apply (T174).
+    [pscustomobject]@{
+        Name   = 'host-settings'
+        Script = 'test\win32\host-settings.ps1'
+        Stamp  = 'test\win32\host-settings.stamp.json'
+        Covers = @(
+            'test\win32\host-settings.ps1',
+            'src\apprt\win32\host_defaults.zig',
+            'src\apprt\win32\HostSettingsDialog.zig'
+        )
+    },
+    # A balloon click focuses the pane (and window) that raised it - the
+    # ROUTING half, with the tray callback posted (T448).
+    [pscustomobject]@{
+        Name   = 'notification-click-focus'
+        Script = 'test\win32\notification-click-focus.ps1'
+        Stamp  = 'test\win32\notification-click-focus.stamp.json'
+        Covers = @(
+            'test\win32\notification-click-focus.ps1',
+            'src\apprt\win32\tray_notify.zig'
+        )
+    },
+    # The DELIVERY half: a real click on a real shell toast (T572). ADVISORY:
+    # it is an @input-desktop-exception script (toasts render only on the input
+    # desktop), and go.md forbids taking the user's foreground while they are
+    # present, so an unattended turn cannot answer it. Reported as due after a
+    # tray_notify edit, never a gate.
+    [pscustomobject]@{
+        Name     = 'notification-click-real'
+        Script   = 'test\win32\notification-click-real.ps1'
+        Stamp    = 'test\win32\notification-click-real.stamp.json'
+        Advisory = $true
+        Covers   = @(
+            'test\win32\notification-click-real.ps1',
+            'src\apprt\win32\tray_notify.zig'
+        )
+    },
     # The overview action (T708): the only thing that proves a bound
     # `toggle_tab_overview` actually opens hero mode, from a terminal AND from
     # a focused viewer. Covers the harness, the forwarding decision it rides

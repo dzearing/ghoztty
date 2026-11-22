@@ -291,4 +291,12 @@ try {
 }
 
 Write-Host ''
+if ($script:fail -eq 0 -and $script:skipped -eq 0 -and -not $NegativeControl) {
+    # A clean green run stamps the covered files (T783/T1768); red, a skipped
+    # arm or a negative control stays due.
+    $ErrorActionPreference = 'Continue'
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard remote-pill-relay-name -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
 Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped $script:skipped

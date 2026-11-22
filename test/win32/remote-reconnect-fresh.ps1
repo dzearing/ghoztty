@@ -60,6 +60,7 @@ $Port = Resolve-TestPort -Name 'agent' -Port $Port
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 . (Join-Path $PSScriptRoot 'lib\PaneLiveness.ps1')
 . (Join-Path $PSScriptRoot 'lib\HarnessLeak.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
 
 # T1127: the finally below kills the agent it started, and the agent's
@@ -205,7 +206,6 @@ function Wait-Log([string]$pattern, [int]$timeoutSec) {
 
 New-TestDesktop | Out-Null
 $agent = $null
-$exitCode = 1
 try {
     Write-Host "T611 fresh-session reconnect acceptance"
     Write-Host "  exe:   $exe"
@@ -390,21 +390,27 @@ try {
         Check $false "D1/D2 skipped: the window did not come back with two panes"
     }
 
-    Write-Host ""
-    if ($script:fail -eq 0) {
-        Write-Host "ALL PASS ($($script:pass) checks$(if ($script:skipped) { ", $script:skipped SKIPPED" }))"
-        $exitCode = 0
-    } else {
-        Write-Host "$($script:fail) FAILURE(S) ($($script:pass) passed$(if ($script:skipped) { ", $script:skipped SKIPPED" }))"
-        $exitCode = 1
-    }
+    # The try's last statement (body-complete-audit D1): an unwind above skips
+    # it, so the verdict reads DID NOT FINISH instead of green.
+    Complete-TestBody
 } catch {
+    # A throw is scored as a product FAILURE, not left as an unwind.
+    $script:fail++
     Write-Host "  FAIL  $($_.Exception.Message)"
-    Write-Host "1 FAILURE(S)"
-    $exitCode = 1
 } finally {
     if ($null -ne $agent) { Stop-Process -Id $agent.Id -Force -ErrorAction SilentlyContinue }
     Remove-TestDesktop | Out-Null
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }
-exit $exitCode
+
+Write-Host ""
+if ($script:fail -eq 0 -and $script:skipped -eq 0) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    # Continue: under Stop, a stderr line from the native call through 2>&1
+    # would throw in PowerShell 5.1.
+    $ErrorActionPreference = 'Continue'
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard remote-reconnect-fresh -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T611 REMOTE RECONNECT FRESH' -Pass $script:pass -Fail $script:fail -Skipped $script:skipped

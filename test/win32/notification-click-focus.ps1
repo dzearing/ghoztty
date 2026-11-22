@@ -72,6 +72,7 @@ $env:GHOZTTY_PIPE_SUFFIX = "-notifclicktest$PID"
 . (Join-Path $repo 'scripts\lib\NativeArgv.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 
 $script:pass = 0
 $script:fail = 0
@@ -183,6 +184,11 @@ if ($script:msgWnd -eq [IntPtr]::Zero) { throw 'no message window: refusing to p
 
 Write-Host '== 1: a background pane raises a notification; the click focuses THAT pane'
 Assert (Invoke-Notification 'nf-a2' 'case-one') '+send-keys delivered the OSC 777 notify (case 1)'
+# Window B was made last (with --focus), so it is the ACTIVE window here.
+# Focus-TestWindow only moves the keyboard WITHIN a window; moving it BETWEEN
+# top-level windows is Set-TestActiveWindow's job (lib\TestDesktop.ps1). Without
+# it the park below never landed and case 1 started from window B (T1768).
+Assert (Set-TestActiveWindow -Window $script:winA) 'window A made the active window before parking (control)'
 [void](Focus-TestWindow -Window $script:winA -Child ([IntPtr]$paneA1))
 Assert ((Get-FocusedPane) -eq $paneA1) 'focus parked off the notifying pane'
 Assert (Send-BalloonEvent $UID_DESKTOP $NIN_BALLOONUSERCLICK) 'posted the balloon click'
@@ -265,6 +271,9 @@ if ($Interactive -or $env:GHOZTTY_TEST_INTERACTIVE -eq '1') {
         'CONTROL: the balloon path ran (this desktop has no shell, so it must have logged)'
 }
 
+# The try's last statement (body-complete-audit D1): an unwind above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
 } finally {
     Write-Host '== teardown'
     $script:launched = @(Get-TestLaunchedPids)
@@ -281,5 +290,11 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($($script:pass) assertions)"; exit 0 }
-else { Write-Host "$($script:fail) FAILURE(S) ($($script:pass) passed)" -ForegroundColor Red; exit 1 }
+if ($script:fail -eq 0 -and -not $NegativeControl) {
+    # A clean green run stamps the covered files (T783/T1768); red stays due.
+    $ErrorActionPreference = 'Continue'
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard notification-click-focus -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
+}
+Write-TestVerdict -Label 'T448 NOTIFICATION CLICK FOCUS' -Pass $script:pass -Fail $script:fail

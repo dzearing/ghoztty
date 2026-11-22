@@ -1,0 +1,16 @@
+{
+    "guard":  "notification-click-focus",
+    "script":  "test/win32/notification-click-focus.ps1",
+    "generated":  "2026-11-22T14:45:23-08:00",
+    "commit":  "37816554e",
+    "uncommitted":  [
+                        "test/win32/notification-click-focus.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/tray_notify.zig":  "438ad677381ef9f53b06473e00de87530b524a401fc78cad5414a5e26cc4480f",
+                  "test/win32/notification-click-focus.ps1":  "3aa1620e8914dac09fe3134fe439f714bab40641d9f66707f4affbed9d1661af"
+              },
+    "code":  {
+                 "test/win32/notification-click-focus.ps1":  "code1:66a0e573dbed8500aa241ea197d6da6bdedc6f881283235d0bb537162d794703"
+             }
+}

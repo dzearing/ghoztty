@@ -196,6 +196,7 @@ function Send-DlgText([IntPtr]$dlg, [string]$text) {
 }
 
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 
 # T248: one shared reset instead of a private copy — see lib\CleanSlate.ps1.
 # Same app+agent kill as before, but exact-exe (a '*zig-out*' CommandLine
@@ -608,6 +609,9 @@ try {
         Assert (-not $agent.HasExited) 'agent survived the whole apply flow'
     }
 
+    # The try's last statement (body-complete-audit D1): an unwind above skips
+    # it, so the verdict reads DID NOT FINISH instead of green.
+    Complete-TestBody
 } finally {
     if ($agent -and -not $agent.HasExited) { Stop-Process -Id $agent.Id -Force -ErrorAction SilentlyContinue }
     Remove-TestDesktop
@@ -646,11 +650,11 @@ if ($script:fail -gt 0 -and $env:HS_DEBUG) {
 } else {
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }
-if ($script:skip -gt 0) { Write-Host "($($script:skip) section(s) SKIPPED)" }
-if ($script:fail -eq 0) {
-    Write-Host "HOST-SETTINGS ACCEPTANCE: ALL PASS ($($script:pass) assertions$(if ($script:skip) { ", $($script:skip) SKIPPED" }))"
-    exit 0
-} else {
-    Write-Host "HOST-SETTINGS ACCEPTANCE: $($script:fail) FAILURE(S) ($($script:pass) passed)" -ForegroundColor Red
-    exit 1
+if ($script:fail -eq 0 -and $script:skip -eq 0 -and -not $NegativeControl) {
+    # A clean green run stamps the covered files (T783/T1768); red, a skipped
+    # section or a negative control stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard host-settings -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
 }
+Write-TestVerdict -Label 'HOST-SETTINGS ACCEPTANCE' -Pass $script:pass -Fail $script:fail -Skipped $script:skip
