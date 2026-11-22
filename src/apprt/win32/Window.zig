@@ -341,8 +341,10 @@ const TAB_TIP_TIMER_ID: usize = 0x5450; // 'TP'
 /// comctl32 control, one delay timer and one theme-reset path; this says which
 /// of them armed the timer, so the fire derives the right text and a stale
 /// leave from the OTHER region cannot cancel it. `tab` reads its index from
-/// `hover_tab`, `pill` its state from the reconnect ladder, both at fire time.
-const TipSubject = enum { none, tab, pill };
+/// `hover_tab`, `pill` its state from the reconnect ladder, `button` (the "…"
+/// and the system trio, T1733) its text from `caption_hover` and the zoom
+/// state, all at fire time.
+const TipSubject = enum { none, tab, pill, button };
 
 /// Dwell timer for a rearrange drag resting on a tab button (T1537): armed
 /// when the pointer settles on a tab mid-drag, cancelled the moment it moves
@@ -19312,6 +19314,7 @@ fn handleNcMouseMove(self: *Window, wparam: usize) void {
     if (hovered == self.caption_hover) return;
     self.caption_hover = hovered;
     self.pillTipOnHoverChange(hovered);
+    self.buttonTipOnHoverChange(hovered);
     self.invalidateCaption();
 }
 
@@ -19328,6 +19331,7 @@ fn handleNcMouseMove(self: *Window, wparam: usize) void {
 fn handleNcMouseLeave(self: *Window) void {
     self.tracking_nc_mouse = false;
     self.tipHideFor(.pill);
+    self.tipHideFor(.button);
     if (self.caption_hover == null) return;
     self.caption_hover = null;
     self.invalidateCaption();
@@ -19352,8 +19356,10 @@ fn handleNcLButtonDown(self: *Window, wparam: usize) bool {
     if (!self.customCaption()) return false;
     const btn = captionButtonFor(wparam) orelse return false;
     // A press is an answer to "what is this" — the pill's tooltip (T1417)
-    // has nothing left to add, the same as a click on a tab.
+    // has nothing left to add, the same as a click on a tab. Nor has a
+    // button's name (T1733) once the button has been pressed.
     self.tipHideFor(.pill);
+    self.tipHideFor(.button);
 
     // A menu button opens on PRESS, not on release — every Windows menu bar
     // does, and so does the strip's own "≡", which this button duplicates.
@@ -22343,6 +22349,7 @@ fn tabTipTimerFire(self: *Window) void {
     switch (self.tip_subject) {
         .none => return,
         .pill => return self.pillTipShow(),
+        .button => return self.buttonTipShow(),
         .tab => {},
     }
     if (self.hover_tab < 0) return;
@@ -22488,6 +22495,89 @@ fn pillTipRefresh(self: *Window) void {
     if (!self.pillTipLoadText()) return;
     var ti = self.tabTipToolInfo();
     _ = w32.SendMessageW(tip, w32.TTM_UPDATETIPTEXTW, 0, @bitCast(@intFromPtr(&ti)));
+}
+
+// --- The caption buttons' tooltips (T1733) ---------------------------------
+//
+// Windows' own caption buttons name themselves on hover; ours are custom-drawn,
+// so they say nothing unless we say it. Same control, same delay timer and
+// same hover source as the pill's (`handleNcMouseMove`); the text is
+// `caption_layout.tooltip` — pure and none-lane tested — read at fire time so
+// maximize says "Restore Down" exactly when its click would restore.
+
+/// The tooltip text for the button under the pointer, or null when there is
+/// none (nothing hovered, or the pill, which has its own).
+fn buttonTipText(self: *const Window) ?[]const u8 {
+    const b = self.caption_hover orelse return null;
+    const hwnd = self.hwnd orelse return null;
+    return caption_layout.tooltip(b, w32.IsZoomed(hwnd) != 0);
+}
+
+/// The caption hover moved to `hovered`: arm the shared delay when it landed on
+/// a button that names itself, drop a button tip otherwise. Also the debug
+/// oracle for `test\win32\caption-bar.ps1`'s tooltip section, for the reason
+/// `tabTipOnHoverChange` logs its own.
+fn buttonTipOnHoverChange(self: *Window, hovered: ?caption_layout.Button) void {
+    const b = hovered orelse return self.tipHideFor(.button);
+    const hwnd = self.hwnd orelse return;
+    const text = caption_layout.tooltip(b, w32.IsZoomed(hwnd) != 0) orelse
+        return self.tipHideFor(.button);
+    self.tabTipHide();
+    self.tip_subject = .button;
+    _ = w32.SetTimer(hwnd, TAB_TIP_TIMER_ID, w32.GetDoubleClickTime(), null);
+    log.debug("caption tooltip button={s} text={s}", .{ @tagName(b), text });
+}
+
+/// The delay elapsed with the pointer still on a button: show its name just
+/// below it, left-aligned, pulled back inside the window when it would run off
+/// the right edge — which, for close in the corner, it always would. Shown
+/// first and placed second, for the reason `pillTipShow` gives.
+fn buttonTipShow(self: *Window) void {
+    const b = self.caption_hover orelse return;
+    const text = self.buttonTipText() orelse return;
+    const hwnd = self.hwnd orelse return;
+    const l = self.captionLayout() orelse return;
+    const anchor: caption_layout.Rect = switch (b) {
+        .overflow => l.overflow,
+        .minimize => l.minimize,
+        .maximize => l.maximize,
+        .close => l.close,
+        .pill => return,
+    };
+
+    // The control FIRST: creating it empties the buffer its tool points at.
+    const tip = self.tabTipEnsure() orelse return;
+    if (text.len >= self.tab_tip_text.len) return;
+    const len16 = std.unicode.utf8ToUtf16Le(
+        self.tab_tip_text[0 .. self.tab_tip_text.len - 1],
+        text,
+    ) catch return;
+    self.tab_tip_text[len16] = 0;
+    var ti = self.tabTipToolInfo();
+    _ = w32.SendMessageW(tip, w32.TTM_UPDATETIPTEXTW, 0, @bitCast(@intFromPtr(&ti)));
+
+    const gap: i32 = @intFromFloat(@round(4.0 * self.scale));
+    var pt = w32.POINT{ .x = anchor.left, .y = anchor.bottom + gap };
+    _ = w32.ClientToScreen(hwnd, &pt);
+    var client: w32.RECT = undefined;
+    var right_edge = w32.POINT{ .x = 0, .y = 0 };
+    if (w32.GetClientRect(hwnd, &client) != 0) {
+        right_edge.x = client.right;
+        _ = w32.ClientToScreen(hwnd, &right_edge);
+    }
+    trackTipAt(tip, pt.x, pt.y);
+    _ = w32.SendMessageW(tip, w32.TTM_TRACKACTIVATE, 1, @bitCast(@intFromPtr(&ti)));
+    self.tab_tip_shown = true;
+
+    var r: w32.RECT = undefined;
+    var x = pt.x;
+    var bw: i32 = 0;
+    if (w32.GetWindowRect(tip, &r) != 0) bw = r.right - r.left;
+    if (right_edge.x > 0 and x + bw > right_edge.x) {
+        x = right_edge.x - bw;
+        trackTipAt(tip, x, pt.y);
+    }
+    log.debug("caption tooltip shown button={s} x={d} y={d} w={d} text={s}", .{ @tagName(b), x, pt.y, bw, text });
 }
 
 /// `TTM_TRACKPOSITION` at a screen point, packed the way the message wants it.

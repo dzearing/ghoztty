@@ -39,6 +39,13 @@
 #   5. Press-then-slide-off CANCELS. A press on close released over minimize
 #      must not close the window - the thing every native button does, and the
 #      thing that makes a mis-aimed close recoverable.
+#   3t. Each button NAMES ITSELF on hover (T1733), in the words Windows' own
+#      caption buttons use: "Menu (Alt)", "Minimize", "Maximize" ("Restore
+#      Down" once maximized, asserted in section 6), "Close". Read from the
+#      app's arm/show log lines, because the background desktop cannot hold a
+#      hover across the show delay (T233) - the delay timer is posted in the
+#      same breath as the move, the way remote-pill.ps1 section 6 does it.
+#      Negatives: the drag band arms nothing, and a bare timer shows nothing.
 #   6. Maximized, the caption is ON SCREEN. This is the classic custom-titlebar
 #      bug: without the SM_CYSIZEFRAME + SM_CXPADDEDBORDER inset in
 #      WM_NCCALCSIZE the whole button row sits above the monitor's top edge,
@@ -86,6 +93,8 @@ function Check([bool]$cond, [string]$msg) { if ($cond) { Ok $msg } else { Bad $m
 $HTCAPTION = 2; $HTSYSMENU = 3; $HTMINBUTTON = 8; $HTMAXBUTTON = 9; $HTTOP = 12
 $HTTOPLEFT = 13; $HTTOPRIGHT = 14; $HTCLOSE = 20
 $WM_NCHITTEST = 0x0084; $WM_NCLBUTTONDOWN = 0x00A1; $WM_NCLBUTTONUP = 0x00A2
+$WM_NCMOUSEMOVE = 0x00A0; $WM_NCMOUSELEAVE = 0x02A2; $WM_TIMER = 0x0113
+$TIP_TIMER = 0x5450  # Window.zig TAB_TIP_TIMER_ID: the one tooltip delay timer
 
 # lparam for a mouse/hit-test message: screen point packed lo=x, hi=y.
 function PackPoint([int]$x, [int]$y) {
@@ -180,13 +189,49 @@ function ClickCaption($h, [int[]]$downPt, [int[]]$upPt) {
     Start-Sleep -Milliseconds 400
 }
 
+# The caption buttons' tooltips (T1733). A posted WM_NCMOUSEMOVE's hover is
+# cleared by the leave TrackMouseEvent queues within a frame here (no real
+# cursor, T233), so the delay timer goes IN THE SAME BREATH as the move and
+# lands ahead of that leave - retried, because that narrows the race rather
+# than closing it. Returns the newest arm line and show line this hover wrote.
+function TipLines([string]$log, [string]$pat) {
+    if (-not (Test-Path $log)) { return @() }
+    return @(Get-Content $log | Select-String -Pattern $pat | ForEach-Object { $_.Line })
+}
+function CaptionTip($h, [string]$log, [int]$hit, [int[]]$pt) {
+    $armBefore = @(TipLines $log 'caption tooltip button=').Count
+    $shownBefore = @(TipLines $log 'caption tooltip shown').Count
+    for ($try = 0; $try -lt 6; $try++) {
+        # A leave first, so the move below is a TRANSITION onto the button.
+        Send-TestRawMessage -Window $h -Message $WM_NCMOUSELEAVE | Out-Null
+        Start-Sleep -Milliseconds 150
+        Send-TestRawMessagePair -Window $h `
+            -Message1 $WM_NCMOUSEMOVE -WParam1 ([IntPtr]$hit) -LParam1 (PackPoint $pt[0] $pt[1]) `
+            -Message2 $WM_TIMER -WParam2 ([IntPtr]$TIP_TIMER) | Out-Null
+        Start-Sleep -Milliseconds 400
+        if (@(TipLines $log 'caption tooltip shown').Count -gt $shownBefore) { break }
+    }
+    $arm = @(TipLines $log 'caption tooltip button=')
+    $shown = @(TipLines $log 'caption tooltip shown')
+    Send-TestRawMessage -Window $h -Message $WM_NCMOUSELEAVE | Out-Null
+    Start-Sleep -Milliseconds 150
+    return [pscustomobject]@{
+        Arm   = $(if ($arm.Count -gt $armBefore) { $arm[$arm.Count - 1] } else { '' })
+        Shown = $(if ($shown.Count -gt $shownBefore) { $shown[$shown.Count - 1] } else { '' })
+    }
+}
+
 New-TestDesktop | Out-Null
 $exitCode = 1
 try {
     Write-Host "T254 caption bar acceptance"
     Write-Host "  exe: $exe"
 
-    $proc = Start-OnTestDesktop -Exe $exe -Arguments @(
+    # The app's debug log: section 3t's tooltip oracle (T1733).
+    $applog = Join-Path $env:TEMP "caption-bar-$PID-app.log"
+    $applog2 = Join-Path $env:TEMP "caption-bar-$PID-app2.log"
+    Remove-Item $applog, $applog2 -ErrorAction SilentlyContinue
+    $proc = Start-OnTestDesktop -Exe $exe -StdErr $applog -Arguments @(
         '--config-default-files=false',
         # `false`, not the documented `off`: the bool parser takes true/false
         # only and swallows the error, so `=off` silently leaves persistence ON
@@ -366,6 +411,45 @@ try {
         "the reclaimed top border still resizes -> HTTOP* (got $hitTop)"
     Check ($hitCorner -eq $HTCLOSE) "the top-right corner lands on close, not on empty band (got $hitCorner)"
 
+    # --- 3t. each button names itself on hover (T1733) -----------------------
+    $tipCases = @(
+        @{ Name = 'overflow'; Hit = $HTSYSMENU;   Pt = $geo.PtOver;  Text = 'Menu \(Alt\)' },
+        @{ Name = 'minimize'; Hit = $HTMINBUTTON; Pt = $geo.PtMin;   Text = 'Minimize' },
+        @{ Name = 'maximize'; Hit = $HTMAXBUTTON; Pt = $geo.PtMax;   Text = 'Maximize' },
+        @{ Name = 'close';    Hit = $HTCLOSE;     Pt = $geo.PtClose; Text = 'Close' }
+    )
+    $rw = Get-TestWindowRect -Window $h
+    foreach ($tc in $tipCases) {
+        $t = CaptionTip $h $applog $tc.Hit $tc.Pt
+        Check ($t.Arm -match "button=$($tc.Name) text=$($tc.Text)$") `
+            "hovering $($tc.Name) arms its native-worded tooltip - $($t.Arm)"
+        Check ($t.Shown -match "button=$($tc.Name) .*text=$($tc.Text)$") `
+            "...and the delay SHOWS it - $($t.Shown)"
+        # Below the band and inside the window: close sits in the corner, so its
+        # bubble only fits by being pulled back left. A bubble narrower than
+        # 20 DIP is bare padding - the blank-first-show shape T1417 fixed.
+        if ($t.Shown -match 'x=(-?\d+) y=(-?\d+) w=(\d+)') {
+            $tx = [int]$Matches[1]; $ty = [int]$Matches[2]; $tw = [int]$Matches[3]
+            Check (($tw -gt (Get-TestChromeDip -Dip 20 -Scale $scale)) -and ($tx -ge $rw.Left) -and ($tx + $tw -le $rw.Right) -and ($ty -ge ($rw.Top + $expectCapH))) `
+                "...placed below the band and inside the window (tip x=$tx..$($tx + $tw) y=$ty, window $($rw.Left)..$($rw.Right))"
+        } else {
+            Bad "...the show line carries no placement - $($t.Shown)"
+        }
+    }
+    # Negatives: the drag band is not a button and must arm nothing, and the
+    # delay with nothing hovered must show nothing - the show is gated on the
+    # pointer being ON a button, not on the timer elapsing.
+    $tDrag = CaptionTip $h $applog $HTCAPTION $geo.PtDrag
+    Check ($tDrag.Arm -eq '' -and $tDrag.Shown -eq '') `
+        "hovering the drag band arms and shows no caption tooltip (arm='$($tDrag.Arm)' shown='$($tDrag.Shown)')"
+    $shownBefore = @(TipLines $applog 'caption tooltip shown').Count
+    Send-TestRawMessage -Window $h -Message $WM_NCMOUSELEAVE | Out-Null
+    Start-Sleep -Milliseconds 150
+    Send-TestRawMessage -Window $h -Message $WM_TIMER -WParam ([IntPtr]$TIP_TIMER) | Out-Null
+    Start-Sleep -Milliseconds 400
+    Check (@(TipLines $applog 'caption tooltip shown').Count -eq $shownBefore) `
+        "a tip timer with nothing hovered shows no caption tooltip"
+
     # --- 4. a press REACHES our handler and lights the button ----------------
     # The oracle is the PRESSED FILL, which is a painted pixel: the shared
     # icon-button treatment shades the chrome by 25 for `pressed`, so a
@@ -507,7 +591,7 @@ try {
     # relaunching; it is the exact pid this script started.
     Stop-Process -Id $proc.Pid -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 600
-    $proc2 = Start-OnTestDesktop -Exe $exe -Arguments @(
+    $proc2 = Start-OnTestDesktop -Exe $exe -StdErr $applog2 -Arguments @(
         '--config-default-files=false', '--session-persistence=false',
         '--background=#000000', '--window-show-tab-bar=never', '--macos-pane-glass=false'
     )
@@ -575,6 +659,12 @@ try {
             "maximized: the capture content score sees the caption band ($($mContent.Distinct) distinct >= 8, top $([math]::Round($mContent.TopShare, 3)); saved $mPng)"
         Check ($mEdge -ge $expectCapH) `
             "maximized: the whole caption band is painted on screen (band bottom $mEdge >= $expectCapH)"
+        # T1733: maximized, the maximize button's click restores, so its name
+        # must say so - the native "Restore Down", never "Maximize".
+        $zgeo = CaptionGeom $h
+        $tz = CaptionTip $h $applog2 $HTMAXBUTTON $zgeo.PtMax
+        Check ($tz.Arm -match 'button=maximize text=Restore Down$' -and $tz.Shown -match 'text=Restore Down$') `
+            "maximized: the maximize button's tooltip says Restore Down - arm '$($tz.Arm)' shown '$($tz.Shown)'"
     } else {
         Bad "maximized: caption-on-screen check could not run"
     }

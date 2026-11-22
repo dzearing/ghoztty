@@ -481,6 +481,32 @@ pub fn command(b: Button, maximized: bool) Command {
     };
 }
 
+/// The hover tooltip a caption button shows (T1733), worded the way Windows'
+/// own caption buttons word theirs — "Minimize", "Maximize", "Restore Down",
+/// "Close" — because the trio is drawn to look native and a user who rests on
+/// it expects the native answer.
+///
+/// Derived from `command`, not written beside it, so the tip cannot say
+/// "Maximize" over a button whose click restores.
+///
+/// The "…" is the app's own and has no native word; it opens the window menu,
+/// which F10 or a lone Alt also opens (`Window.openMenuBar`), so the tip names
+/// that key the way a menu bar's mnemonic would.
+///
+/// Null for the pill: its tooltip is about the CONNECTION, not the control, and
+/// lives in `remote_pill.tooltip`, which needs live ladder state this pure
+/// module never sees.
+pub fn tooltip(b: Button, maximized: bool) ?[]const u8 {
+    return switch (command(b, maximized)) {
+        .pill => null,
+        .menu => "Menu (Alt)",
+        .minimize => "Minimize",
+        .maximize => "Maximize",
+        .restore => "Restore Down",
+        .close => "Close",
+    };
+}
+
 /// Which caption button, if any, is under a point in band-local coordinates.
 ///
 /// Tested right-to-left so that even if a future layout let two boxes
@@ -1383,5 +1409,33 @@ test "T1900: beside the pane sidebar the band left of the tabs is caption" {
         try testing.expectEqual(NcHit.caption, ncHitTestBeside(m, l, right + 5, mid_y, frame, false, left, right));
         // With no inset it is exactly `ncHitTest`.
         try testing.expectEqual(ncHitTest(m, l, 20, mid_y, frame, false, right), ncHitTestBeside(m, l, 20, mid_y, frame, false, 0, right));
+    }
+}
+
+test "T1733: every caption button but the pill names itself in native words" {
+    try testing.expectEqualStrings("Minimize", tooltip(.minimize, false).?);
+    try testing.expectEqualStrings("Minimize", tooltip(.minimize, true).?);
+    try testing.expectEqualStrings("Close", tooltip(.close, false).?);
+    try testing.expectEqualStrings("Close", tooltip(.close, true).?);
+    try testing.expectEqualStrings("Menu (Alt)", tooltip(.overflow, false).?);
+    // The pill's tip is remote_pill.tooltip's, never this module's.
+    try testing.expect(tooltip(.pill, false) == null);
+    try testing.expect(tooltip(.pill, true) == null);
+}
+
+test "T1733: the maximize tip follows what the click will do" {
+    try testing.expectEqualStrings("Maximize", tooltip(.maximize, false).?);
+    try testing.expectEqualStrings("Restore Down", tooltip(.maximize, true).?);
+    // And agrees with `command` for every button and state.
+    for ([_]bool{ false, true }) |zoomed| {
+        for (std.enums.values(Button)) |b| {
+            const tip = tooltip(b, zoomed);
+            switch (command(b, zoomed)) {
+                .restore => try testing.expectEqualStrings("Restore Down", tip.?),
+                .maximize => try testing.expectEqualStrings("Maximize", tip.?),
+                .pill => try testing.expect(tip == null),
+                else => try testing.expect(tip != null and tip.?.len > 0),
+            }
+        }
     }
 }

@@ -1,8 +1,8 @@
 {
     "guard":  "parity-tasks",
     "script":  "test/win32/parity-tasks-seat.ps1",
-    "generated":  "2026-11-21T14:52:02-08:00",
-    "commit":  "a8e7bd2d1",
+    "generated":  "2026-11-21T15:07:36-08:00",
+    "commit":  "7cc43e773",
     "uncommitted":  [
 
                     ],

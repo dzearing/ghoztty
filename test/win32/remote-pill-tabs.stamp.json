@@ -1,14 +1,17 @@
 {
     "guard":  "remote-pill-tabs",
     "script":  "test/win32/remote-pill-tabs.ps1",
-    "generated":  "2026-11-10T16:28:38-08:00",
-    "commit":  "a6f512509",
+    "generated":  "2026-11-21T15:01:35-08:00",
+    "commit":  "7cc43e773",
     "uncommitted":  [
-                        "test/win32/remote-pill-tabs.ps1"
+                        "src/apprt/win32/caption_layout.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/caption_layout.zig":  "787f2a9f6747b245d2eef7d3b5b089b5accd0ba43d61e319bb8885622f6beb44",
+                  "src/apprt/win32/caption_layout.zig":  "39e4484c2478bd4b72a4053f80aaf39c50510637ab9b63f70a5b21ff67744603",
                   "src/apprt/win32/remote_pill.zig":  "6997259de405ee7fecb4e29c179ba56380c4ce423cf48e09bba95f0a249e6286",
                   "test/win32/remote-pill-tabs.ps1":  "9cb6a4f8879279060911b0523716a772ea29aa0b68c483709d17cf72d818c424"
-              }
+              },
+    "code":  {
+                 "test/win32/remote-pill-tabs.ps1":  "code1:88f6a89703b863901f987c124e811ee3ded344e6cec0ba44a709d66fa494df59"
+             }
 }

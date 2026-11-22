@@ -1,8 +1,8 @@
 {
     "guard":  "parity-tasks-lanes",
     "script":  "test/win32/parity-tasks-lanes.ps1",
-    "generated":  "2026-11-21T14:50:55-08:00",
-    "commit":  "a8e7bd2d1",
+    "generated":  "2026-11-21T15:02:08-08:00",
+    "commit":  "7cc43e773",
     "uncommitted":  [
 
                     ],
