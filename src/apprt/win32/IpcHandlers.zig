@@ -56,90 +56,69 @@ pub const Context = struct {
     alloc: Allocator,
 };
 
-const Request = struct {
-    action: []const u8,
-    arguments: ?[]const []const u8 = null,
-    /// Set only by a LAUNCH that lost the race for the IPC endpoint and handed
-    /// its window to us (T1022). Absent for every CLI verb, and absent from a
-    /// launch built before this existed — both of which mean "say nothing",
-    /// which is what the app did before.
-    handoff: ?ipc_handoff.Identity = null,
-    /// The pane the command was run from (`$GHOZTTY_PANE_ID`), which every CLI
-    /// command sends (T2250; main 71da9a680) so a NAME is looked up in the
-    /// caller's own window first. Absent from an older CLI and from a caller
-    /// with no pane, both of which search every window.
-    caller_pane: ?[]const u8 = null,
-};
+// The frontend-independent half of the server (T3334): request shape, the
+// action table, the reply builders and the dispatcher live in
+// apprt/ipc/server.zig, shared with the GTK frontend. This file IS the win32
+// frontend that dispatcher calls: the `pub` decls below (`Context`,
+// `CallerScope`, `log_scope`, the caller-scope hooks, one `handle*` per verb,
+// `handleSeam`) are its interface, and a missing verb is a compile error.
+const ipc_server = apprt.ipc.server;
+const Request = ipc_server.Request;
+const errorResponse = ipc_server.errorResponse;
+const successResponse = ipc_server.successResponse;
+const messageResponse = ipc_server.messageResponse;
+const nonEmpty = ipc_server.nonEmpty;
+const joinArgv = ipc_server.joinArgv;
+const foundVerb = ipc_server.foundVerb;
 
 /// Dispatch one request on the GUI thread. Returns the response JSON
 /// (allocated; the listener frees it). Error strings byte-match the Mac
 /// server where the cases overlap.
 pub fn dispatch(ctx: Context, request_json: []const u8) Allocator.Error!?[]u8 {
-    const parsed = std.json.parseFromSlice(
-        Request,
-        ctx.alloc,
-        request_json,
-        .{ .ignore_unknown_fields = true },
-    ) catch {
-        return try errorResponse(ctx.alloc, "malformed JSON", .{});
-    };
-    defer parsed.deinit();
-    const request = parsed.value;
+    return ipc_server.dispatch(@This(), ctx, ctx.alloc, request_json);
+}
 
-    log.info("IPC: received action '{s}'", .{request.action});
+/// `IPC: received action '<verb>'` keeps the `win32_ipc` scope postmortems
+/// and `os/log_gate.zig` read.
+pub const log_scope = .win32_ipc;
 
-    // Pane names belong to their window (T2250): every lookup this request
-    // makes starts in the caller's. Restored rather than cleared, so a request
-    // served inside another's nested wait hands the outer one its scope back.
-    const outer_caller = ctx.app.ipc_caller_window;
-    ctx.app.ipc_caller_window = callerWindow(ctx.app, request.caller_pane);
-    defer ctx.app.ipc_caller_window = outer_caller;
+/// Pane names belong to their window (T2250): every lookup a request makes
+/// starts in the caller's. Restored rather than cleared, so a request served
+/// inside another's nested wait hands the outer one its scope back.
+pub const CallerScope = ?*Window;
 
-    if (std.mem.eql(u8, request.action, "new-window")) {
-        return try handleNewWindow(ctx, request);
-    } else if (std.mem.eql(u8, request.action, "list")) {
-        return try handleList(ctx, request);
-    } else if (std.mem.eql(u8, request.action, "close")) {
-        return try handleClose(ctx, request);
-    } else if (std.mem.eql(u8, request.action, "split")) {
-        return try handleSplit(ctx, request);
-    } else if (std.mem.eql(u8, request.action, "rename")) {
-        return try handleRename(ctx, request);
-    } else if (std.mem.eql(u8, request.action, "send-keys")) {
-        return try handleSendKeys(ctx, request);
-    } else if (std.mem.eql(u8, request.action, "read")) {
-        return try handleRead(ctx, request);
-    } else if (std.mem.eql(u8, request.action, "set-state")) {
-        return try handleSetState(ctx, request);
-    } else if (std.mem.eql(u8, request.action, "rearrange")) {
-        return try handleRearrange(ctx, request);
-    } else if (std.mem.eql(u8, request.action, "new-remote-window")) {
-        return try handleNewRemoteWindow(ctx, request);
-    } else if (std.mem.eql(u8, request.action, "version")) {
-        return try handleVersion(ctx);
-    } else if (std.mem.eql(u8, request.action, ipc_handoff.quit_action)) {
-        return try handleHandoffQuit(ctx, request);
-    } else if (std.mem.eql(u8, request.action, "set-banner")) {
-        return try handleSetBanner(ctx, request);
-    } else if (std.mem.eql(u8, request.action, "reload")) {
-        return try handleReload(ctx, request);
-    } else if (std.mem.eql(u8, request.action, "focus")) {
-        return try handleFocus(ctx, request);
-    } else if (std.mem.eql(u8, request.action, "stash")) {
-        return try handleStash(ctx, request, false);
-    } else if (std.mem.eql(u8, request.action, "restore")) {
-        return try handleStash(ctx, request, true);
-    } else if (ipc_capture.enabled and std.mem.eql(u8, request.action, "capture-pane")) {
+pub fn enterCallerScope(ctx: Context, caller_pane: ?[]const u8) CallerScope {
+    const outer = ctx.app.ipc_caller_window;
+    ctx.app.ipc_caller_window = callerWindow(ctx.app, caller_pane);
+    return outer;
+}
+
+pub fn leaveCallerScope(ctx: Context, outer: CallerScope) void {
+    ctx.app.ipc_caller_window = outer;
+}
+
+pub fn handleStash(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+    return stashOrRestore(ctx, request, false);
+}
+
+pub fn handleRestore(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+    return stashOrRestore(ctx, request, true);
+}
+
+/// The DEBUG-ONLY test seams: not CLI verbs, and compiled out of a release
+/// build, where each action falls through to `unknown action`.
+pub fn handleSeam(ctx: Context, request: Request) Allocator.Error!ipc_server.SeamReply {
+    if (ipc_capture.enabled and std.mem.eql(u8, request.action, "capture-pane")) {
         // T275: a DEBUG-ONLY test seam, not a CLI verb — see ipc_capture.zig
         // for why it is gated and why there is no `+capture-pane`. In a
         // release build `enabled` is false and this falls through to the
-        // ordinary unknown-action answer below.
-        return try ipc_capture.handle(ctx.app, ctx.alloc, request.arguments);
+        // ordinary unknown-action answer.
+        return .{ .reply = try ipc_capture.handle(ctx.app, ctx.alloc, request.arguments) };
     } else if (ipc_hover.enabled and std.mem.eql(u8, request.action, "capture-hover")) {
         // T282: the same DEBUG-ONLY test seam for a HOVERED frame, which the
         // harness cannot paint from outside at all — see ipc_hover.zig for the
         // ordering argument. Release builds fall through to unknown-action.
-        return try ipc_hover.handle(ctx.app, ctx.alloc, request.arguments);
+        return .{ .reply = try ipc_hover.handle(ctx.app, ctx.alloc, request.arguments) };
     } else if (ipc_agent_integration.enabled and std.mem.eql(u8, request.action, "agent-integration")) {
         // T872: the DEBUG-ONLY seam the agent-integrations acceptance harness
         // drives install/uninstall/status through — the GUI offers one action
@@ -147,38 +126,38 @@ pub fn dispatch(ctx: Context, request_json: []const u8) Allocator.Error!?[]u8 {
         // refcount are unreachable from outside without it. See
         // ipc_agent_integration.zig; release builds fall through to
         // unknown-action.
-        return try ipc_agent_integration.handle(ctx.alloc, request.arguments);
+        return .{ .reply = try ipc_agent_integration.handle(ctx.alloc, request.arguments) };
     } else if (ipc_frame_pacing.enabled and std.mem.eql(u8, request.action, "frame-pacing")) {
         // T1737: the DEBUG-ONLY frame-interval probe a smoothness claim is
         // scored with - see ipc_frame_pacing.zig. Release builds fall through
         // to unknown-action and record nothing.
-        return try ipc_frame_pacing.handle(ctx.app, ctx.alloc, request.arguments);
+        return .{ .reply = try ipc_frame_pacing.handle(ctx.app, ctx.alloc, request.arguments) };
     } else if (ipc_whats_new.enabled and std.mem.eql(u8, request.action, "whats-new")) {
         // T624: the DEBUG-ONLY seam for the What's New window. Which bundled
         // versions count as "new" is a decision no screenshot can check, so
         // the harness reads the model out of the same store the window
         // paints. Release builds fall through to unknown-action.
-        return try ipc_whats_new.handle(ctx.app, ctx.alloc, request.arguments);
+        return .{ .reply = try ipc_whats_new.handle(ctx.app, ctx.alloc, request.arguments) };
     } else if (ipc_shortcut_guide.enabled and std.mem.eql(u8, request.action, "shortcut-guide")) {
         // T2591: the DEBUG-ONLY seam for the keyboard shortcut guide. Which
         // bindings are live, customized or matched by a key-combo search is a
         // model, not pixels. Release builds fall through to unknown-action.
-        return try ipc_shortcut_guide.handle(ctx.app, ctx.alloc, request.arguments);
+        return .{ .reply = try ipc_shortcut_guide.handle(ctx.app, ctx.alloc, request.arguments) };
     } else if (ipc_settings.enabled and std.mem.eql(u8, request.action, "settings")) {
         // T2675: the DEBUG-ONLY seam for the Settings window. What a row
         // reads (its file line, the effective value, a later include's
         // override, the parser's refusal) is a model, not pixels. Release
         // builds fall through to unknown-action.
-        return try ipc_settings.handle(ctx.app, ctx.alloc, request.arguments);
+        return .{ .reply = try ipc_settings.handle(ctx.app, ctx.alloc, request.arguments) };
     } else if (ipc_workspaces.enabled and std.mem.eql(u8, request.action, "workspaces")) {
         // T3191: the DEBUG-ONLY seam for single-window mode - which workspace
         // holds the shared window, which are parked, and a hand-off by name
         // until the sidebar switch (T3182) lands. Release builds fall through
         // to unknown-action.
-        return try ipc_workspaces.handle(ctx.app, ctx.alloc, request.arguments);
+        return .{ .reply = try ipc_workspaces.handle(ctx.app, ctx.alloc, request.arguments) };
     }
 
-    return try errorResponse(ctx.alloc, "unknown action: {s}", .{request.action});
+    return .unhandled;
 }
 
 /// The window of the pane a request came from, by the pane's own id. Null for
@@ -376,13 +355,6 @@ fn raiseWindow(hwnd: w32.HWND) void {
     _ = w32.SetActiveWindow(hwnd);
 }
 
-/// How the idempotent-hit note names what happened to the existing surface
-/// (T1797): it is raised only on request now, so "focused it" would describe a
-/// raise that did not happen.
-fn foundVerb(focus: bool) []const u8 {
-    return if (focus) "focused" else "kept";
-}
-
 /// Resolve a `--color`/`--split-color` value to a color: `#rgb`/`#rrggbb`
 /// hex or `random` (a dark muted color). Unparseable values are silently
 /// ignored (Mac rule: `NSColor(hex:)` failing just skips the tint).
@@ -401,7 +373,7 @@ fn deskVariantFor(color: ?[]const u8, style: anytype) ?desk_palette.Variant {
     return desk_palette.Variant.random();
 }
 
-fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+pub fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     const app = ctx.app;
 
     var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
@@ -756,7 +728,7 @@ fn handoffNote(ctx: Context, arena: Allocator, request: Request) Allocator.Error
 /// forwarded verbatim in the agent OPEN (empty ⇒ absent, like the Mac);
 /// they are never wrapped by the local shell table — the agent applies its
 /// own shell's convention.
-fn handleNewRemoteWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+pub fn handleNewRemoteWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     const app = ctx.app;
 
     var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
@@ -905,26 +877,6 @@ pub fn finishRemoteWindow(ctx: Context, job: *RemoteDialJob) Allocator.Error![]u
     return try ctx.alloc.dupe(u8, "{\"success\":true}");
 }
 
-/// Empty ⇒ null, so blank flag values are treated as absent.
-fn nonEmpty(v: ?[]const u8) ?[]const u8 {
-    const s = v orelse return null;
-    return if (s.len > 0) s else null;
-}
-
-/// Join a `-e arg...` argv into a single command line for a remote/agent shell,
-/// which runs ONE command string rather than an argv (the agent applies its own
-/// shell's convention). Space-separated; the values never contain embedded
-/// quotes in practice. Null ⇒ no `-e` argv was given. Allocated in `arena`.
-fn joinArgv(arena: Allocator, argv: []const []const u8) Allocator.Error!?[]const u8 {
-    if (argv.len == 0) return null;
-    var joined: std.ArrayList(u8) = .empty;
-    for (argv, 0..) |a, i| {
-        if (i > 0) try joined.append(arena, ' ');
-        try joined.appendSlice(arena, a);
-    }
-    return joined.items;
-}
-
 /// The account tier of relay token resolution (T21a; brokered per T93): if an
 /// account is signed in (`account.dat` exists), return its relay session
 /// token — renewed (and rotated) at the stored relay when it nears expiry. A
@@ -964,7 +916,7 @@ pub fn resolveToken(arena: Allocator) ?[]const u8 {
     return resolveAccountToken(arena) orelse resolveEnvToken(arena);
 }
 
-fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+pub fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     const app = ctx.app;
 
     var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
@@ -1355,24 +1307,6 @@ fn logSplit(
     );
 }
 
-/// `{"success":true,"message":<msg>}`: a success the CLI reports on stdout
-/// (T2184; the Mac's `IPCResponse.message`).
-fn messageResponse(alloc: Allocator, message: []const u8) Allocator.Error![]u8 {
-    var out: std.Io.Writer.Allocating = .init(alloc);
-    errdefer out.deinit();
-    var jws: std.json.Stringify = .{ .writer = &out.writer };
-    write: {
-        jws.beginObject() catch break :write;
-        jws.objectField("success") catch break :write;
-        jws.write(true) catch break :write;
-        jws.objectField("message") catch break :write;
-        jws.write(message) catch break :write;
-        jws.endObject() catch break :write;
-        return try out.toOwnedSlice();
-    }
-    return error.OutOfMemory;
-}
-
 /// T1612: whether every pane in `list` lets the reply go out — gone, a viewer,
 /// a plain local pane, or an agent-backed pane whose OPEN/ATTACH has finished
 /// (bound or failed). GUI thread only: it walks the live pane set.
@@ -1390,7 +1324,7 @@ pub fn sessionsSettled(app: *App, list: *const IpcSessionAwait) bool {
     return true;
 }
 
-fn handleRead(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+pub fn handleRead(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -1496,7 +1430,7 @@ fn handleRead(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     return error.OutOfMemory;
 }
 
-fn handleRearrange(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+pub fn handleRearrange(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     const app = ctx.app;
 
     var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
@@ -1673,7 +1607,7 @@ fn buildLayoutNode(
     return handle;
 }
 
-fn handleSetState(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+pub fn handleSetState(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -1725,7 +1659,7 @@ fn handleSetState(ctx: Context, request: Request) Allocator.Error!?[]u8 {
 /// `+set-banner` (T35): set or clear the sticky banner of a named pane or
 /// window. Banners are per-pane; a window target applies to its focused
 /// pane (Mac handleSetBanner semantics).
-fn handleSetBanner(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+pub fn handleSetBanner(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -1756,7 +1690,7 @@ fn handleSetBanner(ctx: Context, request: Request) Allocator.Error!?[]u8 {
 /// terminal is a mistake about which pane has focus, and the fix for each is
 /// not the same. Neither is the `is a viewer pane, not a terminal` string the
 /// terminal-only verbs use — that one points the opposite way.
-fn handleReload(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+pub fn handleReload(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -1818,7 +1752,7 @@ fn handleReload(ctx: Context, request: Request) Allocator.Error!?[]u8 {
 /// window's layout, or back. Both idempotent, like every IPC verb, and -
 /// like every one - `+restore` leaves focus alone unless given `--focus`.
 /// The refusal strings are Mac's, byte for byte.
-fn handleStash(ctx: Context, request: Request, restore: bool) Allocator.Error!?[]u8 {
+fn stashOrRestore(ctx: Context, request: Request, restore: bool) Allocator.Error!?[]u8 {
     var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -1889,7 +1823,7 @@ fn handleStash(ctx: Context, request: Request, restore: bool) Allocator.Error!?[
 /// It never creates: a link that LAUNCHED nothing finds an empty registry and
 /// correctly answers "not found" rather than opening a window as a side effect,
 /// which would smuggle window creation back into the scheme's surface.
-fn handleFocus(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+pub fn handleFocus(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -1906,7 +1840,7 @@ fn handleFocus(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     return try ctx.alloc.dupe(u8, "{\"success\":true}");
 }
 
-fn handleRename(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+pub fn handleRename(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -1975,7 +1909,7 @@ fn prepareSendKeysRun(
     return try alloc.dupe(u8, bytes);
 }
 
-fn handleSendKeys(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+pub fn handleSendKeys(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     // The CLI resolves all key notation (C-x, Enter, \n escapes) before
     // sending; the server receives `--target=` and raw `--keys=` bytes and
     // just writes them to the pane's PTY (Mac writePtyRaw semantics).
@@ -2156,7 +2090,7 @@ fn callerAnchorPaneView(app: *App, args: VerbArgs) ?*PaneView {
     return resolver.found;
 }
 
-fn handleClose(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+pub fn handleClose(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     const app = ctx.app;
 
     var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
@@ -2240,7 +2174,8 @@ fn parseSplitDirection(s: []const u8) ?SplitTree.Split.Direction {
 /// `version` (T52): build provenance of THIS instance, so any pane can
 /// answer "which build is this window running?" (`ghoztty +version` shows
 /// it as the "Running Instance" section).
-fn handleVersion(ctx: Context) Allocator.Error!?[]u8 {
+pub fn handleVersion(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+    _ = request;
     var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -2316,7 +2251,7 @@ fn actsPreSwitch() bool {
 /// Teardown is the ordinary Quit, so with persistence on every pane's session
 /// is detached rather than closed and the saved layout is flushed — which is
 /// what the launch's own restore re-attaches.
-fn handleHandoffQuit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+pub fn handleHandoffQuit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     // A build from before the switch answers exactly this.
     if (actsPreSwitch()) return try errorResponse(ctx.alloc, "unknown action: {s}", .{request.action});
     const own: ipc_handoff.Identity = .{
@@ -2335,7 +2270,7 @@ fn handleHandoffQuit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     return try ctx.alloc.dupe(u8, "{\"success\":true}");
 }
 
-fn handleList(ctx: Context, request: Request) Allocator.Error!?[]u8 {
+pub fn handleList(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     const app = ctx.app;
 
     var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
@@ -2757,53 +2692,3 @@ fn utf16ToUtf8Arena(arena: Allocator, utf16: []const u16) Allocator.Error![]cons
     };
 }
 
-/// T135: `+new-window`'s success reply carries an `outcome` ("created" or
-/// "focused") and, when the idempotent focus dropped caller flags, a `note`
-/// the CLI prints to stderr. Both fields are additive: an older CLI parses
-/// with ignore_unknown_fields and sees the same `success` it always did.
-fn successResponse(
-    alloc: Allocator,
-    outcome: []const u8,
-    note: ?[]const u8,
-) Allocator.Error![]u8 {
-    var out: std.Io.Writer.Allocating = .init(alloc);
-    errdefer out.deinit();
-    var jws: std.json.Stringify = .{ .writer = &out.writer };
-    write: {
-        jws.beginObject() catch break :write;
-        jws.objectField("success") catch break :write;
-        jws.write(true) catch break :write;
-        jws.objectField("outcome") catch break :write;
-        jws.write(outcome) catch break :write;
-        if (note) |n| {
-            jws.objectField("note") catch break :write;
-            jws.write(n) catch break :write;
-        }
-        jws.endObject() catch break :write;
-        return try out.toOwnedSlice();
-    }
-    return error.OutOfMemory;
-}
-
-fn errorResponse(
-    alloc: Allocator,
-    comptime fmt: []const u8,
-    args: anytype,
-) Allocator.Error![]u8 {
-    const msg = try std.fmt.allocPrint(alloc, fmt, args);
-    defer alloc.free(msg);
-
-    var out: std.Io.Writer.Allocating = .init(alloc);
-    errdefer out.deinit();
-    var jws: std.json.Stringify = .{ .writer = &out.writer };
-    write: {
-        jws.beginObject() catch break :write;
-        jws.objectField("success") catch break :write;
-        jws.write(false) catch break :write;
-        jws.objectField("error") catch break :write;
-        jws.write(msg) catch break :write;
-        jws.endObject() catch break :write;
-        return try out.toOwnedSlice();
-    }
-    return error.OutOfMemory;
-}

@@ -415,6 +415,11 @@ pub const split_name_collision = @import("ipc/split_name_collision.zig");
 /// `TargetLookup.swift`).
 pub const target_lookup = @import("ipc/target_lookup.zig");
 
+/// The frontend-independent half of an IPC server: request shape, action
+/// table, reply builders and the dispatcher each frontend plugs its verb
+/// handlers into (T3334). A frontend missing a verb does not compile.
+pub const server = @import("ipc/server.zig");
+
 /// The build identity a launch carries when it hands its window to the
 /// instance already running, and the notice shown when the two builds differ
 /// (T1022 / D79). Lives beside the transport in `os/` — the wire field is the
@@ -429,6 +434,7 @@ test {
     _ = url_scheme;
     _ = split_name_collision;
     _ = target_lookup;
+    _ = server;
     _ = @import("ipc/list.zig");
 }
 
