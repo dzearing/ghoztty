@@ -3800,6 +3800,23 @@ $GuardTable = @(
             'src\apprt\win32\session_layout.zig'
         )
     },
+    # T1861: a STASHED pane stays stashed through in-place agent recovery, on
+    # both rebuild paths - the leaf swap (`Window.replaceTabLeaf` carries
+    # `stash_seq`) and the root fallback (`applyRecordedStash` from the
+    # capture). stash-restore.ps1 covers only the app-restart path. App.zig and
+    # Window.zig stay out for the agent-recovery-tabs reason above; what the
+    # stash and the recovery decide lives in the pure modules listed.
+    [pscustomobject]@{
+        Name   = 'stash-recovery'
+        Script = 'test\win32\stash-recovery.ps1'
+        Stamp  = 'test\win32\stash-recovery.stamp.json'
+        Covers = @(
+            'test\win32\stash-recovery.ps1',
+            'src\apprt\win32\pane_stash.zig',
+            'src\apprt\win32\agent_recovery.zig',
+            'src\apprt\win32\session_layout.zig'
+        )
+    },
     # T2876: in-place local-agent crash recovery on a single window - the kill
     # (C/E), the blip that must change nothing (G) and its negative control (H),
     # and the aborted re-dial a retry has to save (I/J), plus the pane opened
