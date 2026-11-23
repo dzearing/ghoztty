@@ -570,6 +570,8 @@ test {
     // in BOTH the `none` and `win32` lanes.
     _ = @import("remote/google_oauth.zig");
     _ = @import("remote/relay_account.zig");
+    // T3341: the Linux Secret Service binding the account store uses.
+    _ = @import("remote/secret_service.zig");
     _ = @import("remote/relay_directory.zig");
     _ = @import("remote/relay_session.zig");
     _ = @import("remote/relay_signin.zig");

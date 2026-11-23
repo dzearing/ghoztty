@@ -16,10 +16,20 @@
 //! The blob is DPAPI-encrypted per-user (`CryptProtectData`) on Windows, so it
 //! is unreadable by other users and unusable if copied to another machine.
 //! The write is atomic (tmp + rename, like `enroll.saveRelayEnv`) and the file
-//! gets an owner-only DACL (`win_acl`). On non-Windows (the Mac none-lane
-//! regression build) DPAPI is unavailable, so the seam is an identity
-//! passthrough — the store is a Windows-only feature; that branch exists only
-//! so the module compiles and the pure round-trip test runs off-box.
+//! gets an owner-only DACL (`win_acl`). Off Windows DPAPI is unavailable, so
+//! the `protect` seam is an identity passthrough.
+//!
+//! On **Linux** (T3341) the account lives in the Secret Service (libsecret,
+//! `secret_service.zig`) when a keyring daemon answers - the Keychain/DPAPI
+//! row of the translation table - keyed by the store path, so the T1859
+//! debug/release split holds there too. When no keyring answers, which is the
+//! WSL default, it falls back to the path itself: a mode-0600 file under
+//! `$XDG_DATA_HOME/ghoztty/`. `location` says which one holds the current
+//! sign-in, so the chooser's account row can tell the person. A save that
+//! reaches the keyring deletes any fallback file, so a keyring that appears
+//! later absorbs the credential on the next renewal instead of leaving a copy
+//! on disk. On macOS this Zig store is unused (the Swift app owns the
+//! Keychain); that branch exists so the module compiles and its tests run.
 //!
 //! ## The token-resolution seam
 //! `resolveSessionToken` returns the stored session token while it has >60s of
@@ -43,6 +53,7 @@ const Allocator = std.mem.Allocator;
 const relay_session = @import("relay_session.zig");
 const win_acl = @import("win_acl.zig");
 const atomic_write = @import("agent/atomic_write.zig");
+const secret_service = @import("secret_service.zig");
 
 const log = std.log.scoped(.relay_account);
 
@@ -105,8 +116,11 @@ pub fn storeFileName(debug: bool) []const u8 {
 /// Resolve the account store path:
 ///   1. `GHOSTTY_ACCOUNT_STORE` (explicit full-path override; tests use this),
 ///   2. Windows: `%LOCALAPPDATA%\ghoztty\<storeFileName>`,
-///   3. else `$XDG_CONFIG_HOME/ghoztty/<storeFileName>`, falling back to
-///      `$HOME/.config/ghoztty/<storeFileName>` (non-Windows test builds only).
+///   3. Linux: `$XDG_DATA_HOME/ghoztty/<storeFileName>`, falling back to
+///      `$HOME/.local/share/ghoztty/<storeFileName>` - the 0600 fallback file,
+///      and the key of the Secret Service item when a keyring holds it (T3341),
+///   4. else `$XDG_CONFIG_HOME/ghoztty/<storeFileName>`, falling back to
+///      `$HOME/.config/ghoztty/<storeFileName>` (macOS test builds only).
 /// `<storeFileName>` is `account.dat` for a release build and
 /// `account-debug.dat` for a debug one. Owned by the caller.
 pub fn accountPath(alloc: Allocator) ![]u8 {
@@ -120,6 +134,14 @@ pub fn accountPath(alloc: Allocator) ![]u8 {
         const local = try std.process.getEnvVarOwned(alloc, "LOCALAPPDATA");
         defer alloc.free(local);
         return std.fs.path.join(alloc, &.{ local, "ghoztty", name });
+    } else if (builtin.os.tag == .linux) {
+        if (std.process.getEnvVarOwned(alloc, "XDG_DATA_HOME")) |xdg| {
+            defer alloc.free(xdg);
+            if (xdg.len > 0) return std.fs.path.join(alloc, &.{ xdg, "ghoztty", name });
+        } else |_| {}
+        const home = try std.process.getEnvVarOwned(alloc, "HOME");
+        defer alloc.free(home);
+        return std.fs.path.join(alloc, &.{ home, ".local", "share", "ghoztty", name });
     } else {
         if (std.process.getEnvVarOwned(alloc, "XDG_CONFIG_HOME")) |xdg| {
             defer alloc.free(xdg);
@@ -144,9 +166,79 @@ const Stored = struct {
     refresh_token: ?[]const u8 = null,
 };
 
+/// Where a credential can live besides the file at the store path: the Linux
+/// Secret Service (T3341). A seam so the tests drive a fake one and never the
+/// person's real keyring.
+pub const Keyring = struct {
+    storeFn: *const fn (Allocator, []const u8, []const u8, []const u8) secret_service.Error!void,
+    lookupFn: *const fn (Allocator, []const u8) secret_service.Error!?[]u8,
+    clearFn: *const fn (Allocator, []const u8) secret_service.Error!void,
+};
+
+/// The machine's keyring, or null when the account must use the file: not
+/// Linux, libsecret missing, or `GHOSTTY_ACCOUNT_KEYRING=off`. A test binary
+/// never touches the real keyring unless `GHOZTTY_TEST_SECRET_SERVICE=1` asks
+/// for it (`test/linux/secret-store.sh` sets that inside a private session
+/// bus that runs its own keyring daemon).
+pub fn systemKeyring() ?Keyring {
+    if (comptime !secret_service.supported) return null;
+    if (envEquals("GHOSTTY_ACCOUNT_KEYRING", "off")) return null;
+    if (builtin.is_test and
+        !envEquals("GHOZTTY_TEST_SECRET_SERVICE", "1") and
+        !envEquals("GHOZTTY_TEST_SECRET_SERVICE", "absent")) return null;
+    if (!secret_service.libraryLoaded()) return null;
+    return .{
+        .storeFn = secret_service.store,
+        .lookupFn = secret_service.lookup,
+        .clearFn = secret_service.clear,
+    };
+}
+
+fn envEquals(name: []const u8, want: []const u8) bool {
+    if (comptime builtin.os.tag == .windows) return false;
+    const v = std.posix.getenv(name) orelse return false;
+    return std.mem.eql(u8, v, want);
+}
+
+/// Where the current sign-in is kept, for the account row to say so.
+pub const Location = enum {
+    /// The Secret Service (a keyring daemon answered).
+    keyring,
+    /// The private file at the store path (DPAPI-wrapped on Windows; on Linux
+    /// the 0600 fallback used when no keyring runs).
+    file,
+    /// Signed out.
+    none,
+};
+
+/// Which store holds the account at `path` right now.
+pub fn location(alloc: Allocator, path: []const u8) Location {
+    return locationIn(alloc, systemKeyring(), path);
+}
+
+pub fn locationIn(alloc: Allocator, keyring: ?Keyring, path: []const u8) Location {
+    if (keyring) |kr| {
+        if (kr.lookupFn(alloc, path)) |got| {
+            if (got) |g| {
+                std.crypto.secureZero(u8, g);
+                alloc.free(g);
+                return .keyring;
+            }
+        } else |_| {}
+    }
+    std.fs.cwd().access(path, .{}) catch return .none;
+    return .file;
+}
+
 /// Encrypt + write `account` at `path` atomically, then tighten its DACL.
 /// Parent directories are created. On POSIX the temp file is mode 0600.
+/// On Linux with a keyring running the account goes to the keyring instead,
+/// and any file at `path` is removed (T3341).
 pub fn save(alloc: Allocator, path: []const u8, account: Account) !void {
+    return saveIn(alloc, systemKeyring(), path, account);
+}
+
+pub fn saveIn(alloc: Allocator, keyring: ?Keyring, path: []const u8, account: Account) !void {
     const json = try std.json.Stringify.valueAlloc(alloc, .{
         .session_token = account.session_token,
         .expiry = account.expiry,
@@ -154,7 +246,24 @@ pub fn save(alloc: Allocator, path: []const u8, account: Account) !void {
         .relay_base = account.relay_base,
         .picture = account.picture,
     }, .{});
-    defer alloc.free(json);
+    defer {
+        std.crypto.secureZero(u8, json);
+        alloc.free(json);
+    }
+
+    if (keyring) |kr| keyring: {
+        const label = std.fmt.allocPrint(alloc, "Ghoztty relay account ({s})", .{account.email}) catch break :keyring;
+        defer alloc.free(label);
+        kr.storeFn(alloc, path, label, json) catch |err| {
+            log.info("account: keyring store failed ({}); using the private file", .{err});
+            break :keyring;
+        };
+        // The keyring holds it now: a fallback copy on disk would be a second
+        // credential nobody needs.
+        std.fs.cwd().deleteFile(path) catch {};
+        atomic_write.cleanStaging(path);
+        return;
+    }
 
     const blob = try protect(alloc, json);
     defer alloc.free(blob);
@@ -175,6 +284,22 @@ pub fn save(alloc: Allocator, path: []const u8, account: Account) !void {
 /// (caller `deinit`s). `error.SignedOut` when the file is absent;
 /// `error.Legacy` for a pre-T93 refresh-token store.
 pub fn load(alloc: Allocator, path: []const u8) !Account {
+    return loadIn(alloc, systemKeyring(), path);
+}
+
+pub fn loadIn(alloc: Allocator, keyring: ?Keyring, path: []const u8) !Account {
+    if (keyring) |kr| {
+        if (kr.lookupFn(alloc, path)) |got| {
+            if (got) |json| {
+                defer {
+                    std.crypto.secureZero(u8, json);
+                    alloc.free(json);
+                }
+                return parseStored(alloc, json);
+            }
+        } else |_| {}
+    }
+
     const blob = std.fs.cwd().readFileAlloc(alloc, path, 1 << 20) catch |err| switch (err) {
         error.FileNotFound => return Error.SignedOut,
         else => return err,
@@ -183,7 +308,10 @@ pub fn load(alloc: Allocator, path: []const u8) !Account {
 
     const json = unprotect(alloc, blob) catch return Error.Corrupt;
     defer alloc.free(json);
+    return parseStored(alloc, json);
+}
 
+fn parseStored(alloc: Allocator, json: []const u8) !Account {
     const parsed = std.json.parseFromSlice(
         Stored,
         alloc,
@@ -214,15 +342,21 @@ pub fn load(alloc: Allocator, path: []const u8) !Account {
 /// Delete account.dat (sign out), and any staging sibling a crashed save left
 /// behind — that debris is a credential too. A missing file is success.
 pub fn delete(path: []const u8) void {
+    deleteIn(std.heap.page_allocator, systemKeyring(), path);
+}
+
+pub fn deleteIn(alloc: Allocator, keyring: ?Keyring, path: []const u8) void {
+    if (keyring) |kr| kr.clearFn(alloc, path) catch |err| {
+        log.warn("account: clearing the keyring item failed: {}", .{err});
+    };
     std.fs.cwd().deleteFile(path) catch {};
     atomic_write.cleanStaging(path);
 }
 
-/// Whether a signed-in account exists (cheap: file presence, no decrypt).
+/// Whether a signed-in account exists (cheap: file presence, no decrypt; on
+/// Linux with a keyring, one Secret Service lookup first).
 pub fn isSignedIn(alloc: Allocator, path: []const u8) bool {
-    _ = alloc;
-    std.fs.cwd().access(path, .{}) catch return false;
-    return true;
+    return location(alloc, path) != .none;
 }
 
 /// Resolve a live relay bearer from the stored account: the cached session
@@ -233,7 +367,8 @@ pub fn isSignedIn(alloc: Allocator, path: []const u8) bool {
 /// `error.SignedOut` / `error.Legacy` when no usable account is stored;
 /// `error.Unauthorized` when the relay refused the renewal (sign in again).
 pub fn resolveSessionToken(alloc: Allocator, path: []const u8) ![]u8 {
-    var account = try load(alloc, path);
+    const keyring = systemKeyring();
+    var account = try loadIn(alloc, keyring, path);
     defer account.deinit(alloc);
 
     if (account.isFresh(std.time.timestamp())) {
@@ -249,7 +384,7 @@ pub fn resolveSessionToken(alloc: Allocator, path: []const u8) ![]u8 {
     // Persist the rotation. A failed re-save is logged but does not fail this
     // resolution — the minted token is valid for this call; only the NEXT
     // resolve would find a stale store (and land in Unauthorized → re-login).
-    save(alloc, path, .{
+    saveIn(alloc, keyring, path, .{
         .session_token = renewed.value.session_token,
         .expiry = renewed.value.expiry,
         .email = renewed.value.email,
@@ -502,6 +637,250 @@ test "T1859: accountPath picks the store for this build's lineage" {
     if (build_config.is_debug) {
         try testing.expect(!std.mem.eql(u8, "account.dat", std.fs.path.basename(path)));
     }
+}
+
+/// An in-memory keyring for the routing tests: one item, and a switch that
+/// makes every call fail the way a missing Secret Service does.
+const FakeKeyring = struct {
+    var key: ?[]u8 = null;
+    var secret: ?[]u8 = null;
+    var down: bool = false;
+
+    fn reset() void {
+        if (key) |k| testing.allocator.free(k);
+        if (secret) |s| testing.allocator.free(s);
+        key = null;
+        secret = null;
+        down = false;
+    }
+
+    fn storeFn(_: Allocator, k: []const u8, _: []const u8, s: []const u8) secret_service.Error!void {
+        if (down) return secret_service.Error.ServiceFailed;
+        if (key) |old| testing.allocator.free(old);
+        if (secret) |old| testing.allocator.free(old);
+        key = try testing.allocator.dupe(u8, k);
+        secret = try testing.allocator.dupe(u8, s);
+    }
+
+    fn lookupFn(alloc: Allocator, k: []const u8) secret_service.Error!?[]u8 {
+        if (down) return secret_service.Error.ServiceFailed;
+        const have = key orelse return null;
+        if (!std.mem.eql(u8, have, k)) return null;
+        return try alloc.dupe(u8, secret.?);
+    }
+
+    fn clearFn(_: Allocator, k: []const u8) secret_service.Error!void {
+        if (down) return secret_service.Error.ServiceFailed;
+        const have = key orelse return;
+        if (!std.mem.eql(u8, have, k)) return;
+        reset();
+    }
+
+    const keyring: Keyring = .{ .storeFn = storeFn, .lookupFn = lookupFn, .clearFn = clearFn };
+};
+
+const sample_account: Account = .{
+    .session_token = "sess-kr",
+    .expiry = 1893456000,
+    .email = "user@example.com",
+    .relay_base = "https://relay.example.com",
+};
+
+test "T3341: with a keyring the account goes there and no file is written" {
+    const alloc = testing.allocator;
+    FakeKeyring.reset();
+    defer FakeKeyring.reset();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try tmpAccountPath(alloc, &tmp, "account-debug.dat");
+    defer alloc.free(path);
+
+    try saveIn(alloc, FakeKeyring.keyring, path, sample_account);
+    try testing.expectEqualStrings(path, FakeKeyring.key.?);
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile("account-debug.dat"));
+    try testing.expectEqual(Location.keyring, locationIn(alloc, FakeKeyring.keyring, path));
+
+    var got = try loadIn(alloc, FakeKeyring.keyring, path);
+    defer got.deinit(alloc);
+    try testing.expectEqualStrings("sess-kr", got.session_token);
+    try testing.expectEqualStrings("user@example.com", got.email);
+
+    deleteIn(alloc, FakeKeyring.keyring, path);
+    try testing.expect(FakeKeyring.key == null);
+    try testing.expectEqual(Location.none, locationIn(alloc, FakeKeyring.keyring, path));
+}
+
+test "T3341: no Secret Service answering falls back to the 0600 file" {
+    const alloc = testing.allocator;
+    FakeKeyring.reset();
+    defer FakeKeyring.reset();
+    FakeKeyring.down = true;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try tmpAccountPath(alloc, &tmp, "account-debug.dat");
+    defer alloc.free(path);
+
+    try saveIn(alloc, FakeKeyring.keyring, path, sample_account);
+    const st = try tmp.dir.statFile("account-debug.dat");
+    if (builtin.os.tag != .windows) {
+        try testing.expectEqual(@as(std.fs.File.Mode, 0o600), st.mode & 0o777);
+    }
+    try testing.expectEqual(Location.file, locationIn(alloc, FakeKeyring.keyring, path));
+
+    var got = try loadIn(alloc, FakeKeyring.keyring, path);
+    defer got.deinit(alloc);
+    try testing.expectEqualStrings("sess-kr", got.session_token);
+
+    deleteIn(alloc, FakeKeyring.keyring, path);
+    try testing.expectEqual(Location.none, locationIn(alloc, FakeKeyring.keyring, path));
+}
+
+test "T3341: a keyring that appears later absorbs the fallback file on the next save" {
+    const alloc = testing.allocator;
+    FakeKeyring.reset();
+    defer FakeKeyring.reset();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try tmpAccountPath(alloc, &tmp, "account-debug.dat");
+    defer alloc.free(path);
+
+    // Signed in while no keyring ran: the file holds it.
+    FakeKeyring.down = true;
+    try saveIn(alloc, FakeKeyring.keyring, path, sample_account);
+    try testing.expectEqual(Location.file, locationIn(alloc, FakeKeyring.keyring, path));
+
+    // A keyring starts. The file still answers until the next save (a renewal
+    // rotates the token and saves), which moves it and removes the file.
+    FakeKeyring.down = false;
+    {
+        var got = try loadIn(alloc, FakeKeyring.keyring, path);
+        defer got.deinit(alloc);
+        try testing.expectEqualStrings("sess-kr", got.session_token);
+    }
+    var rotated = sample_account;
+    rotated.session_token = "sess-rotated";
+    try saveIn(alloc, FakeKeyring.keyring, path, rotated);
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile("account-debug.dat"));
+    try testing.expectEqual(Location.keyring, locationIn(alloc, FakeKeyring.keyring, path));
+    var got = try loadIn(alloc, FakeKeyring.keyring, path);
+    defer got.deinit(alloc);
+    try testing.expectEqualStrings("sess-rotated", got.session_token);
+}
+
+test "T3341: keyring items are keyed by store path, so debug never reads release" {
+    const alloc = testing.allocator;
+    FakeKeyring.reset();
+    defer FakeKeyring.reset();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const release = try tmpAccountPath(alloc, &tmp, storeFileName(false));
+    defer alloc.free(release);
+    const debug = try tmpAccountPath(alloc, &tmp, storeFileName(true));
+    defer alloc.free(debug);
+
+    try saveIn(alloc, FakeKeyring.keyring, release, sample_account);
+    try testing.expectEqual(Location.none, locationIn(alloc, FakeKeyring.keyring, debug));
+    try testing.expectError(Error.SignedOut, loadIn(alloc, FakeKeyring.keyring, debug));
+}
+
+test "T3341: a unit-test binary never reaches the person's real keyring by default" {
+    if (std.process.getEnvVarOwned(testing.allocator, "GHOZTTY_TEST_SECRET_SERVICE")) |v| {
+        testing.allocator.free(v);
+        return error.SkipZigTest;
+    } else |_| {}
+    try testing.expect(systemKeyring() == null);
+}
+
+test "T3341: Linux keeps the fallback file under XDG_DATA_HOME" {
+    if (comptime builtin.os.tag != .linux) return error.SkipZigTest;
+    const alloc = testing.allocator;
+    if (std.process.getEnvVarOwned(alloc, "GHOSTTY_ACCOUNT_STORE")) |p| {
+        alloc.free(p);
+        return error.SkipZigTest;
+    } else |_| {}
+    const path = try accountPath(alloc);
+    defer alloc.free(path);
+    const want_tail = try std.fs.path.join(alloc, &.{ "ghoztty", storeFileName(build_config.is_debug) });
+    defer alloc.free(want_tail);
+    try testing.expect(std.mem.endsWith(u8, path, want_tail));
+    if (std.posix.getenv("XDG_DATA_HOME")) |xdg| {
+        if (xdg.len > 0) try testing.expect(std.mem.startsWith(u8, path, xdg));
+    } else {
+        try testing.expect(std.mem.indexOf(u8, path, "/.local/share/") != null);
+    }
+}
+
+test "T3341: with libsecret loaded but no daemon the real store falls back to the file" {
+    // Opt-in (`test/linux/secret-store.sh`, inside a private session bus with
+    // NO keyring daemon - the WSL default, reproduced on purpose).
+    const want = std.process.getEnvVarOwned(testing.allocator, "GHOZTTY_TEST_SECRET_SERVICE") catch
+        return error.SkipZigTest;
+    defer testing.allocator.free(want);
+    if (!std.mem.eql(u8, want, "absent")) return error.SkipZigTest;
+
+    const alloc = testing.allocator;
+    const kr = systemKeyring() orelse return error.TestExpectedLibsecret;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try tmpAccountPath(alloc, &tmp, "account-debug.dat");
+    defer alloc.free(path);
+
+    try saveIn(alloc, kr, path, sample_account);
+    const st = try tmp.dir.statFile("account-debug.dat");
+    try testing.expectEqual(@as(std.fs.File.Mode, 0o600), st.mode & 0o777);
+    try testing.expectEqual(Location.file, locationIn(alloc, kr, path));
+    {
+        var got = try loadIn(alloc, kr, path);
+        defer got.deinit(alloc);
+        try testing.expectEqualStrings("sess-kr", got.session_token);
+    }
+    deleteIn(alloc, kr, path);
+    try testing.expectEqual(Location.none, locationIn(alloc, kr, path));
+    markRan("ABSENT libsecret loaded, no daemon answered, the account went to a 0600 file and was deleted");
+}
+
+/// Append one line to `$GHOZTTY_TEST_SECRET_SERVICE_MARK`, so the acceptance
+/// script can tell an opt-in test that RAN and passed from one that skipped
+/// (the build runner reports both as a green step).
+fn markRan(line: []const u8) void {
+    if (comptime builtin.os.tag == .windows) return;
+    const p =std.posix.getenv("GHOZTTY_TEST_SECRET_SERVICE_MARK") orelse return;
+    const f = std.fs.cwd().createFile(p, .{ .truncate = false }) catch return;
+    defer f.close();
+    f.seekFromEnd(0) catch return;
+    f.writeAll(line) catch return;
+    f.writeAll("\n") catch return;
+}
+
+test "T3341: the real Secret Service round-trips (test/linux/secret-store.sh)" {
+    // Opt-in: only inside a private session bus with its own keyring daemon,
+    // never against the person's keyring.
+    const want = std.process.getEnvVarOwned(testing.allocator, "GHOZTTY_TEST_SECRET_SERVICE") catch
+        return error.SkipZigTest;
+    defer testing.allocator.free(want);
+    if (!std.mem.eql(u8, want, "1")) return error.SkipZigTest;
+
+    const alloc = testing.allocator;
+    const kr = systemKeyring() orelse return error.TestExpectedKeyring;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try tmpAccountPath(alloc, &tmp, "account-debug.dat");
+    defer alloc.free(path);
+
+    try saveIn(alloc, kr, path, sample_account);
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile("account-debug.dat"));
+    try testing.expectEqual(Location.keyring, locationIn(alloc, kr, path));
+    {
+        var got = try loadIn(alloc, kr, path);
+        defer got.deinit(alloc);
+        try testing.expectEqualStrings("sess-kr", got.session_token);
+        try testing.expectEqualStrings("https://relay.example.com", got.relay_base);
+    }
+    markRan("ROUNDTRIP stored in the keyring, no file written, found and read back");
+
+    deleteIn(alloc, kr, path);
+    try testing.expectEqual(Location.none, locationIn(alloc, kr, path));
+    markRan("CLEAR the keyring item is gone after sign-out");
 }
 
 test "isFresh honors the 60s leeway" {
