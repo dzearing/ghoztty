@@ -39895,3 +39895,7 @@ Reproduce-first: agent-recovery.ps1 is ALL PASS (104 assertions) on HEAD 15640bd
 
 - 2,483 -> 1,165 lines (tests included). Cut on its own section banners: measurement, placement and the show/hide slide went to viewer_toc_place.zig (730), painting to viewer_toc_paint.zig (690). Alias blocks where the code used to sit are the owner's surface, so every `self.f(x)` call site is unchanged.
 - Evidence: the 85 top-level fn signatures are identical; the code-line multiset differs only by import and alias lines. No tests lived in the moved ranges. Build clean; floor-lane all PASS; the four viewer TOC harnesses and nine source audits green, with the guard rows extended to the planes. body-complete-audit stays red on T3425 (another lane's msiexec-sentinel-audit.ps1), acked to it.
+
+## 2026-11-22 22:05 lane b - T1818: fullscreen Claude Code needs the resize sync hold on every resize
+- Measured Claude Code 2.1.330 under in-box ConPTY with a windowless scratch probe: fullscreen (`CLAUDE_CODE_NO_FLICKER=1`, the T1801 default) emits the T1763 empty-erase bracket (`?2026h ?25l 2J ?2026l`, then an unbracketed paint ~9ms later) on 6 of 6 resizes; classic now erases on 0 of 6, short history or long.
+- In the Debug app on the test desktop: fullscreen with the hold, 6/6 held (idle, 21-24ms), 0 blank; with `GHOZTTY_CONPTY_SYNC_HOLD=0`, 6/6 shown blank. The hold stays and carries the main workload. Filed T3547 (the hold's harness only stubs the classic shape). Parked T1808 for the user to start: both of its harnesses are input-desktop exceptions.
