@@ -213,10 +213,29 @@ private runtime dir, so a test app can never meet the user's.
   (`openWindow`, `createSplit`) and builds a `+list` leaf. A new verb body
   goes into `verbs.zig` first, not into this file.
   `+list`, `+version`, `+send-keys`, `+read`, `+new-window`, `+split`,
-  `+rename`, `+close`, `+rearrange`, `+reload` (a viewer pane, T3413) and the
+  `+rename`, `+close`, `+rearrange`, `+reload` (a viewer pane, T3413),
+  `+set-banner`, `+set-state` (T3339) and the
   `focus` action are real; every other verb answers `+<verb> is not served by
   the Linux app yet (<task>)`, naming the card that brings it (T3369
-  `+reload --config`, T3339 set-state/set-banner, T3337 stash/restore/remote).
+  `+reload --config`, T3337 stash/restore/remote).
+- **Pane banners and activity state (T3339)**: `+set-banner` / OSC 7778 put
+  a card above the terminal (`PaneBanner.zig`): the shared parser
+  (`win32/banner_markdown.zig`, with `PathContext.posix` so `./` and `~/`
+  links join with `/`) turned into stock widgets - a markup `GtkLabel` per
+  line or heading (`banner_markup.zig` is the pure markdown-to-Pango half,
+  none-lane tested), a grid per list (a pointer-blind `GtkCheckButton` for
+  `[x]`) and per table (bold header, `:` alignment, cells wrapped to 3 lines),
+  a separator per rule. The card is prepended to the pane's content box,
+  which turns vertical, so the terminal is laid out and resized BELOW it.
+  Link clicks take `banner_link.clickAction` with the modifiers of the press
+  (`Surface.bannerLink`; Ctrl splits a viewer beside the pane). `+set-state` /
+  OSC 7777 is stored on the surface and listed as `state`; it is not shown
+  yet (T3561). A debug build appends every render to
+  `$GHOZTTY_TEST_BANNER_DUMP` (`BANNER <pane-id> shown|cleared`, one line per
+  widget, `END`). Acceptance: `wsl-run.ps1 -CommandFile
+  test\linux\cli-banner.sh`, ends `CLI BANNER: ALL PASS` (32 checks). Not
+  yet: collapse and the Ctrl+R editor (T3559), restore (T3560), the link
+  menu (T3561), the pane sidebar (T3557, T3558).
   `--view` on `+new-window`/`+split` opens a viewer pane (T3411, below).
 - **Names (T3370)** follow win32's rules exactly (`apprt/ipc/target_lookup.zig`,
   T2250): a window name is global (`+new-window --target`, else a minted

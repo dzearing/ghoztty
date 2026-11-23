@@ -87,7 +87,7 @@ $script:TestReachExemptions = @(
     # (no GTK imports, so they compile and run here too - T3410). Listed by
     # name, so a new gtk module is still exempt by default and a pure one that
     # joins a lane without being listed is still reported stale.
-    [pscustomobject]@{ Prefix = 'apprt.gtk.*'; Why = 'the Linux GTK frontend; no Windows lane compiles it (apprt\gtk.zig itself is compiled, and runs)'; Except = @('apprt.gtk.viewer_scheme', 'apprt.gtk.viewer_chrome', 'apprt.gtk.viewer_reload', 'apprt.gtk.viewer_links', 'apprt.gtk.viewer_image', 'apprt.gtk.viewer_diff_text', 'apprt.gtk.viewer_toc', 'apprt.gtk.viewer_worktree', 'apprt.gtk.viewer_feedback_host', 'apprt.gtk.viewer_quote') }
+    [pscustomobject]@{ Prefix = 'apprt.gtk.*'; Why = 'the Linux GTK frontend; no Windows lane compiles it (apprt\gtk.zig itself is compiled, and runs)'; Except = @('apprt.gtk.viewer_scheme', 'apprt.gtk.viewer_chrome', 'apprt.gtk.viewer_reload', 'apprt.gtk.viewer_links', 'apprt.gtk.viewer_image', 'apprt.gtk.viewer_diff_text', 'apprt.gtk.viewer_toc', 'apprt.gtk.viewer_worktree', 'apprt.gtk.viewer_feedback_host', 'apprt.gtk.viewer_quote', 'apprt.gtk.viewer_shot', 'apprt.gtk.banner_markup') }
     [pscustomobject]@{ Prefix = 'font.face.coretext'; Why = 'CoreText, macOS only' }
     [pscustomobject]@{ Prefix = 'font.shaper.coretext'; Why = 'CoreText, macOS only' }
     [pscustomobject]@{ Prefix = 'input.KeymapDarwin'; Why = 'the macOS keymap' }
