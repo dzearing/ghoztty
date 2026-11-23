@@ -1,13 +1,17 @@
 {
     "guard":  "update-consent",
     "script":  "test/win32/update-consent.ps1",
-    "generated":  "2026-11-22T14:23:09-08:00",
-    "commit":  "04583b4d2",
+    "generated":  "2026-11-22T21:35:06-08:00",
+    "commit":  "9d2120a31",
     "uncommitted":  [
-                        "src/apprt/win32/update_install.zig"
+                        "src/apprt/win32/confirm_dialog_layout.zig",
+                        "src/apprt/win32/confirm_dialog_window.zig",
+                        "src/apprt/win32/ConfirmDialog.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/ConfirmDialog.zig":  "afdb4f3b59b707671599621314ea278cb34d6b9909b2b79acb830652fee84cdf",
+                  "src/apprt/win32/confirm_dialog_layout.zig":  "cf61d58e920b246a7e0f70ce0036a62263e583e7acbe61769eac9afcf657ba99",
+                  "src/apprt/win32/confirm_dialog_window.zig":  "3e031c15acf56cc51876b27b823520114c48781a45861beb5800e00d34d02614",
+                  "src/apprt/win32/ConfirmDialog.zig":  "e0c8c4bdc94a04723340a92e0b7153de03e08ec8ebc117cba0553cbfae6b0c06",
                   "src/apprt/win32/tray_notify.zig":  "438ad677381ef9f53b06473e00de87530b524a401fc78cad5414a5e26cc4480f",
                   "src/apprt/win32/update_install.zig":  "9523be7a31405350edf0795f6be857b756468b3de3bf4a259703e90cfd35f2b5",
                   "test/win32/lib/ApplierSandbox.ps1":  "82870ff2c01dd3d3e36b1b1f8ff7ed7359059245db8e5d88ac9e30838e177bd8",

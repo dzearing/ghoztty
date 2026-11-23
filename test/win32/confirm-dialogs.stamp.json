@@ -1,13 +1,17 @@
 {
     "guard":  "confirm-dialogs",
     "script":  "test/win32/confirm-dialogs.ps1",
-    "generated":  "2026-11-22T17:25:25-08:00",
-    "commit":  "1d5d07c73",
+    "generated":  "2026-11-22T21:28:35-08:00",
+    "commit":  "9d2120a31",
     "uncommitted":  [
-                        "test/win32/confirm-dialogs.ps1"
+                        "src/apprt/win32/confirm_dialog_layout.zig",
+                        "src/apprt/win32/confirm_dialog_window.zig",
+                        "src/apprt/win32/ConfirmDialog.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/ConfirmDialog.zig":  "afdb4f3b59b707671599621314ea278cb34d6b9909b2b79acb830652fee84cdf",
+                  "src/apprt/win32/confirm_dialog_layout.zig":  "cf61d58e920b246a7e0f70ce0036a62263e583e7acbe61769eac9afcf657ba99",
+                  "src/apprt/win32/confirm_dialog_window.zig":  "3e031c15acf56cc51876b27b823520114c48781a45861beb5800e00d34d02614",
+                  "src/apprt/win32/ConfirmDialog.zig":  "e0c8c4bdc94a04723340a92e0b7153de03e08ec8ebc117cba0553cbfae6b0c06",
                   "test/win32/confirm-dialogs.ps1":  "75af8174b4d3c482bab9e7a45c1d5095de9d667f0b128c967a1e8b5ccb0cdb92"
               },
     "code":  {
