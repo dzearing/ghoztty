@@ -1,0 +1,21 @@
+{
+  "version": "1.56.14",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "Ctrl+C at an image pane now puts the file on the clipboard too, so a paste into Explorer copies it." },
+        { "text": "Signing back in to the relay brings back the remote windows a script opened, the way the Mac app does." },
+        { "text": "On Linux, +reload --config reloads the app configuration." },
+        { "text": "test/linux/cli-reload.sh is executable like the other Linux test scripts." },
+        { "text": "On Linux, --color tints a new window's or split's pane." },
+        { "text": "test/linux/cli-color.sh is executable like the other Linux test scripts." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "The Linux app recovers when its CLI socket stops answering: it rebinds on the <socket>.reset sentinel." },
+        { "text": "An -e argument holding a space now reaches the program intact when the session agent runs it." },
+        { "text": "On Linux a script's new window opens behind, and comes forward only with --focus." },
+        { "text": "A saved image keeps its zoom and scroll when it comes back at the same size." }
+      ] }
+  ]
+}
