@@ -303,6 +303,15 @@
   function copySelection() {
     const found = current();
     if (!found) return;
+    /* A host that owns the clipboard natively (GTK: the page's async
+     * clipboard is not reliably granted to a script on a custom scheme) sets
+     * window.__ghozttyHostCopy before this script runs, and the text goes up
+     * the bridge as a `copy` message instead. Mac and Windows never set it. */
+    if (window.__ghozttyHostCopy) {
+      post({ type: "copy", text: found.text });
+      flashCopied();
+      return;
+    }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(found.text).then(flashCopied, flashCopied);
       return;

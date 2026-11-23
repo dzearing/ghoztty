@@ -97,6 +97,7 @@ const image_rules = @import("viewer_image.zig");
 const ViewerDiff = @import("ViewerDiff.zig");
 const ViewerTOC = @import("ViewerTOC.zig");
 const ViewerFeedback = @import("ViewerFeedback.zig");
+const quoting = @import("viewer_quote.zig");
 
 const log = std.log.scoped(.gtk_viewer);
 
@@ -1495,6 +1496,13 @@ fn installFindScript(self: *Viewer) void {
     const script = wk.webkit_user_script_new(bridge.find_js, wk.inject_top_frame, wk.inject_at_document_end, null, null);
     wk.webkit_user_content_manager_add_script(m, script);
     wk.webkit_user_script_unref(script);
+    // The Quote/Copy selection toolbar (T3545): the shared `selection.js`,
+    // in every page like `find.js` and for the same reason, main frame only
+    // (win32's rule: it positions itself in viewport coordinates a subframe
+    // does not share). It posts `quote`/`copy` on the same handler.
+    const sel = wk.webkit_user_script_new(quoting.selection_script, wk.inject_top_frame, wk.inject_at_document_end, null, null);
+    wk.webkit_user_content_manager_add_script(m, sel);
+    wk.webkit_user_script_unref(sel);
     if (wk.webkit_user_content_manager_register_script_message_handler(m, bridge.handler_name, null) == 0) {
         // The page still searches and paints; only the count goes quiet.
         log.warn("viewer: could not register the {s} message handler; find shows no count", .{bridge.handler_name});
@@ -1518,9 +1526,20 @@ fn onScriptMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyopaq
     const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
     const json = wk.jsc_value_to_json(value, 0) orelse return;
     defer wk.g_free(json);
-    const parsed = bridge.parse(self.alloc, std.mem.span(json)) orelse return;
+    const text = std.mem.span(json);
+    const parsed = bridge.parse(self.alloc, text) orelse {
+        // The toolbar's Copy (T3545): GTK owns the clipboard natively.
+        if (quoting.copyText(self.alloc, text)) |t| {
+            defer self.alloc.free(t);
+            self.copyText(t);
+            log.info("viewer: copied the page selection bytes={d}", .{t.len});
+        }
+        return;
+    };
     defer parsed.deinit();
     switch (parsed.message) {
+        // The toolbar's Quote (T3545): into the feedback composer.
+        .quote => |q| self.feedback.acceptQuote(self, q),
         .find => |f| self.applyFindMessage(f),
         // `links.js` (T3415) suppressed WebKit's menu over a link of ours.
         .link_menu => |href| self.armLinkMenu(href),

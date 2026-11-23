@@ -39,6 +39,9 @@ const content = @import("../win32/viewer_content.zig");
 const page = @import("../win32/viewer_feedback_page.zig");
 const report = @import("../win32/viewer_feedback_report.zig");
 const git_run = @import("../win32/git_run.zig");
+const bridge = @import("../win32/viewer_bridge.zig");
+const doc = @import("../win32/viewer_feedback_doc.zig");
+const quoting = @import("viewer_quote.zig");
 
 const log = std.log.scoped(.gtk_viewer);
 
@@ -98,6 +101,11 @@ sending: bool = false,
 /// Reports filed from this pane, and the folder of the last one.
 sends: u32 = 0,
 filed: ?[]u8 = null,
+/// Every passage quoted into this composer (T3545), and where the live ones
+/// sit in `text` as byte spans - the page's own report of its quote blocks
+/// after every edit, so a deleted block drops out and an edited one stays.
+quotes: doc.Registry = .{},
+spans: std.ArrayListUnmanaged(doc.Span) = .empty,
 
 /// What a worker completion needs to find its pane: the viewer pointer, read
 /// and cleared only on the UI thread, behind a count every job holds.
@@ -186,6 +194,8 @@ pub fn deinit(self: *ViewerFeedback) void {
     self.ucm = null;
     self.view = null;
     self.text.deinit(alloc);
+    self.quotes.deinit(alloc);
+    self.spans.deinit(alloc);
     if (self.status_text) |t| alloc.free(t);
     self.status_text = null;
     if (self.filed) |f| alloc.free(f);
@@ -597,9 +607,14 @@ fn pushVars(self: *ViewerFeedback) void {
 }
 
 /// Make the page equal the pane's buffer - the only native write there is.
-fn pushSeed(self: *ViewerFeedback) void {
+/// The quote spans go down with it, so the page rebuilds each block with its
+/// id (T935); `undo` marks a seed that is ONE edit (a quote going in), which
+/// the page journals so Ctrl+Z takes it back out (T983).
+fn pushSeed(self: *ViewerFeedback, undo: bool) void {
     self.seed_gen +%= 1;
-    const json = page.seedJson(alloc, self.text.items, self.caret, self.seed_gen, &.{}, &.{}, false) catch return;
+    const quotes = quoting.seedSpans(alloc, self.text.items, self.spans.items, self.quotes.entries.items) catch &.{};
+    defer if (quotes.len != 0) alloc.free(quotes);
+    const json = page.seedJson(alloc, self.text.items, self.caret, self.seed_gen, quotes, &.{}, undo) catch return;
     defer alloc.free(json);
     self.post(json);
 }
@@ -608,6 +623,52 @@ fn focusComposer(self: *ViewerFeedback) void {
     const w = self.view orelse return;
     _ = wk.gtk_widget_grab_focus(w);
     if (self.ready) self.post(page.focus_json);
+}
+
+/// The page's Quote button (T3545; win32 `ViewerPane.acceptQuote`, Mac
+/// `handleQuoteMessage`): register the passage with its referential context,
+/// put it into the composer at the caret as its own block, and open the
+/// composer - the user pressed Quote to say something about the passage, and
+/// a quote filed into a composer they cannot see is one they do not know they
+/// made. A pane in no working tree has nowhere to file, so the quote is
+/// dropped there (the toolbar's Copy still works).
+pub fn acceptQuote(self: *ViewerFeedback, v: *Viewer, q: bridge.Quote) void {
+    if (self.root == null) {
+        log.info("viewer quote dropped: no worktree to file into", .{});
+        return;
+    }
+    const id = self.quotes.add(alloc, q) catch |err| {
+        log.warn("viewer quote not registered: {s}", .{@errorName(err)});
+        return;
+    };
+    const index = self.quotes.entries.items.len - 1;
+    const entry = self.quotes.entries.items[index];
+    const s = quoting.splice(alloc, self.text.items, self.caret, self.spans.items, entry.text, index) catch return;
+    defer s.deinit(alloc);
+    self.text.clearRetainingCapacity();
+    self.text.appendSlice(alloc, s.text) catch return;
+    self.spans.clearRetainingCapacity();
+    self.spans.appendSlice(alloc, s.spans) catch {};
+    self.caret = s.caret_units;
+
+    // A closed composer seeds its new page from the buffer on `ready`; an
+    // open one gets the edit now, journalled so Ctrl+Z takes it back out.
+    if (!self.open) {
+        self.openComposer(v);
+    } else if (self.ready) {
+        self.pushSeed(true);
+        self.focusComposer();
+    }
+    // The acceptance oracle: the context it recorded, which is the half a
+    // "the text arrived" check would miss.
+    log.info("viewer quote id={d} bytes={d} heading={s} block={s} offset={?d} live={d}", .{
+        id,
+        entry.text.len,
+        entry.heading_id orelse "-",
+        entry.block_selector orelse "-",
+        entry.document_offset,
+        quoting.liveCount(self.spans.items, self.quotes.entries.items),
+    });
 }
 
 /// A message from the composer's page: the shim's send/close chords, or the
@@ -633,7 +694,7 @@ fn onComposerMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyop
             // pane's buffer.
             self.ready = true;
             self.pushVars();
-            self.pushSeed();
+            self.pushSeed(false);
             if (self.open) self.focusComposer();
         },
         .state => |st| self.adoptState(st),
@@ -648,6 +709,15 @@ fn adoptState(self: *ViewerFeedback, st: page.State) void {
     self.text.clearRetainingCapacity();
     self.text.appendSlice(alloc, st.text) catch {};
     self.caret = if (st.caret) |c| @intCast(c) else -1;
+    // ...then where its quote blocks are, against the text just written. A
+    // snapshot reporting none leaves none: the user deleted them.
+    self.spans.clearRetainingCapacity();
+    if (st.quotes.len != 0) {
+        if (quoting.adoptSpans(alloc, self.text.items, st.quotes, &self.quotes)) |got| {
+            defer alloc.free(got);
+            self.spans.appendSlice(alloc, got) catch {};
+        } else |_| {}
+    }
     if (st.lines != self.lines) {
         self.lines = st.lines;
         if (self.view) |w| wk.gtk_widget_set_size_request(w, -1, host.boxHeight(self.lines, line_px, 0));
@@ -704,6 +774,7 @@ const SendJob = struct {
     link: *Link,
     ctx: report.Context = undefined,
     body: []const u8 = "",
+    quotes: []report.Quote = &.{},
     epoch: u64,
     suffix: u24,
     ok: bool = false,
@@ -787,7 +858,10 @@ fn fillJob(self: *ViewerFeedback, v: *Viewer, job: *SendJob, root: []const u8, s
         ctx.relative_path = report.relativePath(buf, p, root_d);
     }
     job.ctx = ctx;
-    job.body = try report.renderBody(aa, self.text.items, &.{});
+    // Each live quote renders as a markdown blockquote in the body, and
+    // carries its referential context in `quotes` (T3545).
+    job.body = try report.renderBody(aa, self.text.items, self.spans.items);
+    job.quotes = try quoting.reportQuotes(aa, self.text.items, self.spans.items, self.quotes.entries.items);
 }
 
 /// ON THE WORKER: the revision as of NOW (a branch switched under an
@@ -797,7 +871,13 @@ fn sendWork(job: *SendJob) void {
     const aa = job.arena.allocator();
     job.ctx.branch = revision(aa, job.ctx.worktree_path, .branch);
     job.ctx.commit = revision(aa, job.ctx.worktree_path, .commit);
-    if (report.write(aa, job.ctx, job.body, &.{}, &.{}, job.epoch, job.suffix, null)) |w| {
+    // `sourceLine`: search the file for each passage, at send time.
+    if (job.quotes.len != 0) if (job.ctx.file_path) |path| {
+        if (std.fs.cwd().readFileAlloc(aa, path, quoting.source_cap)) |source| {
+            quoting.resolveSourceLines(aa, source, job.quotes);
+        } else |err| log.debug("viewer feedback: source read failed path={s} err={}", .{ path, err });
+    };
+    if (report.write(aa, job.ctx, job.body, job.quotes, &.{}, job.epoch, job.suffix, null)) |w| {
         job.ok = true;
         job.folder = w.folder;
         job.stem = w.stem;
@@ -854,7 +934,8 @@ fn onSent(data: ?*anyopaque) callconv(.c) c_int {
     // The composer clears behind a filed report...
     self.text.clearRetainingCapacity();
     self.caret = -1;
-    if (self.ready) self.pushSeed();
+    self.spans.clearRetainingCapacity();
+    if (self.ready) self.pushSeed(false);
     var buf: [256]u8 = undefined;
     self.setStatus(host.filedText(&buf, job.stem));
     // ...shows the confirmation, then closes - unless the user has since
@@ -896,13 +977,15 @@ pub fn describeComposer(self: *const ViewerFeedback, buf: []u8) []const u8 {
         @memcpy(tbuf[n..][0..esc.len], esc);
         n += esc.len;
     }
-    return std.fmt.bufPrint(buf, "open={} view={} ready={} lines={d} sending={} sends={d} filed={s} status={s} text={s}", .{
+    return std.fmt.bufPrint(buf, "open={} view={} ready={} lines={d} sending={} sends={d} quotes={d} quoted={d} filed={s} status={s} text={s}", .{
         self.open,
         self.view != null,
         self.ready,
         self.lines,
         self.sending,
         self.sends,
+        quoting.liveCount(self.spans.items, self.quotes.entries.items),
+        self.quotes.entries.items.len,
         if (self.filed) |f| f else "-",
         if (self.status_text) |s| s else "-",
         tbuf[0..n],
