@@ -61,6 +61,10 @@ const log = std.log.scoped(.user_env);
 pub const Var = struct {
     key: []const u8,
     value: []const u8,
+    /// A `REG_EXPAND_SZ`: `value` is still raw, and its `%NAME%` references
+    /// are expanded by `applyAdditive` against the environment being BUILT
+    /// (T1980), not against whatever process happens to be reading the key.
+    expandable: bool = false,
 };
 
 /// The environment variable whose registry values are concatenated rather than
@@ -121,46 +125,113 @@ fn existingKey(env: *const std.process.EnvMap, name: []const u8) ?[]const u8 {
     return null;
 }
 
+/// Expand `%NAME%` references in `src` against `env` (names compared
+/// case-insensitively), the way `ExpandEnvironmentStringsW` does: a reference
+/// to a name `env` does not define, a lone `%`, and `%%` all stay literal.
+/// Caller owns the result.
+pub fn expandRefs(alloc: Allocator, src: []const u8, env: *const std.process.EnvMap) Allocator.Error![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(alloc);
+
+    var i: usize = 0;
+    while (i < src.len) {
+        if (src[i] != '%') {
+            try out.append(alloc, src[i]);
+            i += 1;
+            continue;
+        }
+        const close = std.mem.indexOfScalarPos(u8, src, i + 1, '%') orelse {
+            // A `%` with no partner: the rest is literal.
+            try out.appendSlice(alloc, src[i..]);
+            break;
+        };
+        const name = src[i + 1 .. close];
+        if (name.len > 0) {
+            if (existingKey(env, name)) |k| {
+                try out.appendSlice(alloc, env.get(k) orelse "");
+                i = close + 1;
+                continue;
+            }
+        }
+        // Unresolved (or `%%`): emit the opening `%` and the name literally,
+        // and rescan from the closing `%`, which may open the next reference
+        // (`%NOPE%USERPROFILE%` leaves `%NOPE` and still expands the rest —
+        // the ExpandEnvironmentStringsW rule).
+        try out.appendSlice(alloc, src[i..close]);
+        i = close;
+    }
+    return out.toOwnedSlice(alloc);
+}
+
+/// Put every `vars` entry `env` does not already define (case-insensitive).
+/// Used for the profile-derived variables (`USERPROFILE`, `LOCALAPPDATA`,
+/// `APPDATA`) a logon environment always has and a service/installer-started
+/// process may not (T1980).
+pub fn putMissing(env: *std.process.EnvMap, vars: []const Var) !void {
+    for (vars) |v| {
+        if (v.key.len == 0 or v.value.len == 0) continue;
+        if (existingKey(env, v.key) != null) continue;
+        try env.put(v.key, v.value);
+    }
+}
+
 /// Overlay registry variables onto `env` additively (see the module header).
 /// `system` and `user` are the HKLM and HKCU sets, in registry order.
+///
+/// `REG_EXPAND_SZ` values (`expandable`) are expanded against `env` as it is
+/// being built (T1980): the non-Path variables are merged first, so a `Path`
+/// entry like `%USERPROFILE%\AppData\Local\Microsoft\WindowsApps` resolves
+/// from the environment the SHELL will have, not from the spawning process's
+/// (a service or installer custom action may carry no `USERPROFILE` at all).
 pub fn applyAdditive(
     alloc: Allocator,
     env: *std.process.EnvMap,
     system: []const Var,
     user: []const Var,
 ) !void {
-    // 1. Path: existing value first, then system, then user. The existing key
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // 1. Everything but Path: only what the environment is missing. User
+    //    before system so the user key wins a key both define, matching how
+    //    Windows composes a logon environment. Plain values go in first so an
+    //    expandable value can reference any of them, whatever the registry's
+    //    enumeration order.
+    for ([_]bool{ false, true }) |pass_expandable| {
+        for ([_][]const Var{ user, system }) |set| {
+            for (set) |v| {
+                if (v.expandable != pass_expandable) continue;
+                if (v.key.len == 0) continue;
+                if (std.ascii.eqlIgnoreCase(v.key, path_key)) continue;
+                if (existingKey(env, v.key) != null) continue;
+                const value = if (v.expandable) try expandRefs(arena, v.value, env) else v.value;
+                if (value.len == 0) continue;
+                try env.put(v.key, value);
+            }
+        }
+    }
+
+    // 2. Path: existing value first, then system, then user. The existing key
     //    keeps its spelling so we replace rather than shadow it.
     const existing_path_key = existingKey(env, path_key);
     const current_path: []const u8 =
         if (existing_path_key) |k| env.get(k) orelse "" else "";
 
     var parts: std.ArrayList([]const u8) = .empty;
-    defer parts.deinit(alloc);
-    if (current_path.len > 0) try parts.append(alloc, current_path);
+    if (current_path.len > 0) try parts.append(arena, current_path);
     for ([_][]const Var{ system, user }) |set| {
         for (set) |v| {
-            if (std.ascii.eqlIgnoreCase(v.key, path_key)) try parts.append(alloc, v.value);
+            if (!std.ascii.eqlIgnoreCase(v.key, path_key)) continue;
+            const value = if (v.expandable) try expandRefs(arena, v.value, env) else v.value;
+            try parts.append(arena, value);
         }
     }
     if (parts.items.len > 1) {
-        const merged = try mergePath(alloc, parts.items);
-        defer alloc.free(merged);
+        const merged = try mergePath(arena, parts.items);
         try env.put(existing_path_key orelse path_key, merged);
     } else if (parts.items.len == 1 and existing_path_key == null) {
         try env.put(path_key, parts.items[0]);
-    }
-
-    // 2. Everything else: only what the process environment is missing. User
-    //    before system so the user key wins a key both define, matching how
-    //    Windows composes a logon environment.
-    for ([_][]const Var{ user, system }) |set| {
-        for (set) |v| {
-            if (v.key.len == 0) continue;
-            if (std.ascii.eqlIgnoreCase(v.key, path_key)) continue;
-            if (existingKey(env, v.key) != null) continue;
-            try env.put(v.key, v.value);
-        }
     }
 }
 
@@ -257,11 +328,49 @@ extern "advapi32" fn RegEnumValueW(
 
 extern "advapi32" fn RegCloseKey(hKey: HKEY) callconv(.winapi) u32;
 
-extern "kernel32" fn ExpandEnvironmentStringsW(
-    lpSrc: [*:0]const u16,
-    lpDst: ?[*]u16,
-    nSize: u32,
-) callconv(.winapi) u32;
+const GUID = std.os.windows.GUID;
+
+extern "shell32" fn SHGetKnownFolderPath(
+    rfid: *const GUID,
+    dwFlags: u32,
+    hToken: ?*anyopaque,
+    ppszPath: *?[*:0]u16,
+) callconv(.winapi) i32;
+
+extern "ole32" fn CoTaskMemFree(pv: ?*anyopaque) callconv(.winapi) void;
+
+/// KF_FLAG_DONT_VERIFY: answer from the profile's registration without
+/// touching the disk (a roaming folder on an offline share must not stall a
+/// spawn).
+const KF_FLAG_DONT_VERIFY: u32 = 0x00004000;
+
+/// The variables a logon environment derives from the user's PROFILE rather
+/// than from either registry key, and that `REG_EXPAND_SZ` registry values
+/// (above all `Path`) are written against.
+const profile_folders = [_]struct { key: []const u8, id: GUID }{
+    .{ .key = "USERPROFILE", .id = GUID.parse("{5E6C858F-0E22-4760-9AFE-EA3317B67173}") },
+    .{ .key = "LOCALAPPDATA", .id = GUID.parse("{F1B32785-6FBA-4FCF-9D55-7B8E7F157091}") },
+    .{ .key = "APPDATA", .id = GUID.parse("{3EB685DB-65F9-4CF6-A03A-E3EF65729F3D}") },
+};
+
+/// The profile-derived variables for the current user, resolved from the
+/// known-folder registry (which does not depend on this process's
+/// environment). A folder that will not resolve is simply left out.
+fn readProfileVars(arena: Allocator) ![]Var {
+    if (!is_windows) return &.{};
+    var out: std.ArrayList(Var) = .empty;
+    for (profile_folders) |f| {
+        var raw: ?[*:0]u16 = null;
+        const hr = SHGetKnownFolderPath(&f.id, KF_FLAG_DONT_VERIFY, null, &raw);
+        defer CoTaskMemFree(@ptrCast(raw));
+        if (hr != 0) continue;
+        const p = raw orelse continue;
+        const value = try std.unicode.utf16LeToUtf8Alloc(arena, std.mem.sliceTo(p, 0));
+        if (value.len == 0) continue;
+        try out.append(arena, .{ .key = f.key, .value = value });
+    }
+    return out.toOwnedSlice(arena);
+}
 
 const system_subkey = "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment";
 const user_subkey = "Environment";
@@ -271,8 +380,9 @@ const user_subkey = "Environment";
 /// environment variable any shell can use.
 const max_value_wchars = 32 * 1024;
 
-/// Read every `REG_SZ`/`REG_EXPAND_SZ` value under `root\subkey`, expanding
-/// `REG_EXPAND_SZ` with `ExpandEnvironmentStringsW`. Allocated in `arena`.
+/// Read every `REG_SZ`/`REG_EXPAND_SZ` value under `root\subkey`, raw; a
+/// `REG_EXPAND_SZ` is marked `expandable` for `applyAdditive`. Allocated in
+/// `arena`.
 /// Returns an empty slice when the key cannot be opened (a locked-down HKLM, a
 /// profile with no `Environment` key at all) — absence is not an error here.
 fn readKey(arena: Allocator, root: HKEY, comptime subkey: []const u8) ![]Var {
@@ -321,34 +431,21 @@ fn readKey(arena: Allocator, root: HKEY, comptime subkey: []const u8) ![]Var {
         while (wide.len > 0 and wide[wide.len - 1] == 0) wide = wide[0 .. wide.len - 1];
         if (wide.len == 0) continue;
 
-        const raw = try std.unicode.utf16LeToUtf8Alloc(arena, wide);
-        const value = if (vtype == REG_EXPAND_SZ)
-            expand(arena, raw) catch raw
-        else
-            raw;
+        const value = try std.unicode.utf16LeToUtf8Alloc(arena, wide);
         if (value.len == 0) continue;
 
-        try out.append(arena, .{ .key = name, .value = value });
+        // A REG_EXPAND_SZ stays raw here: `applyAdditive` expands it against
+        // the environment being built (T1980). Expanding it now, against THIS
+        // process's environment, handed a shell a literal `%USERPROFILE%\...`
+        // PATH entry whenever the spawner had no USERPROFILE.
+        try out.append(arena, .{
+            .key = name,
+            .value = value,
+            .expandable = vtype == REG_EXPAND_SZ and std.mem.indexOfScalar(u8, value, '%') != null,
+        });
     }
 
     return out.toOwnedSlice(arena);
-}
-
-/// Expand `%VAR%` references against the CURRENT process environment, the way
-/// the logon composer does for a `REG_EXPAND_SZ`. Returns `src` unchanged when
-/// the OS declines to expand it.
-fn expand(arena: Allocator, src: []const u8) ![]const u8 {
-    if (!is_windows) return src;
-    if (std.mem.indexOfScalar(u8, src, '%') == null) return src;
-
-    const src_w = try std.unicode.utf8ToUtf16LeAllocZ(arena, src);
-    const need = ExpandEnvironmentStringsW(src_w, null, 0);
-    if (need == 0) return src;
-    const buf = try arena.alloc(u16, need);
-    const written = ExpandEnvironmentStringsW(src_w, buf.ptr, need);
-    if (written == 0 or written > need) return src;
-    // `written` counts the terminating NUL.
-    return std.unicode.utf16LeToUtf8Alloc(arena, buf[0 .. written - 1]);
 }
 
 /// Overlay the Windows registry environment onto `env` (see the module
@@ -376,6 +473,17 @@ pub fn overlay(alloc: Allocator, env: *std.process.EnvMap) void {
         break :blk &.{};
     };
     if (system.len == 0 and user.len == 0) return;
+
+    // T1980: the profile variables first (only where missing), so the
+    // registry's `%USERPROFILE%`/`%LOCALAPPDATA%` references expand against
+    // them. Additive like everything else here.
+    const profile = readProfileVars(arena) catch |err| blk: {
+        log.warn("resolving the profile folders failed: {s}", .{@errorName(err)});
+        break :blk &.{};
+    };
+    putMissing(env, profile) catch |err| {
+        log.warn("applying the profile variables failed: {s}", .{@errorName(err)});
+    };
 
     applyAdditive(alloc, env, system, user) catch |err| {
         log.warn("applying the user environment failed: {s}", .{@errorName(err)});
@@ -517,6 +625,91 @@ test "applyAdditive: an empty key never creates a bare =value entry" {
     const user = [_]Var{.{ .key = "", .value = "junk" }};
     try applyAdditive(alloc, &env, &.{}, &user);
     try testing.expectEqual(@as(usize, 0), env.count());
+}
+
+test "expandRefs: references resolve case-insensitively; unknown, lone and doubled % stay literal" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var env = std.process.EnvMap.init(alloc);
+    defer env.deinit();
+    try env.put("USERPROFILE", "C:\\Users\\me");
+
+    const cases = [_]struct { in: []const u8, want: []const u8 }{
+        .{ .in = "%userprofile%\\bin", .want = "C:\\Users\\me\\bin" },
+        .{ .in = "%NOPE%\\x", .want = "%NOPE%\\x" },
+        .{ .in = "%NOPE%USERPROFILE%", .want = "%NOPEC:\\Users\\me" },
+        .{ .in = "100%", .want = "100%" },
+        .{ .in = "a%%b", .want = "a%%b" },
+        .{ .in = "plain", .want = "plain" },
+    };
+    for (cases) |c| {
+        const got = try expandRefs(alloc, c.in, &env);
+        defer alloc.free(got);
+        try testing.expectEqualStrings(c.want, got);
+    }
+}
+
+test "applyAdditive: an expandable PATH entry resolves against the env being built, not the spawner (T1980)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    // The spawner's environment: no USERPROFILE, no LOCALAPPDATA (a service or
+    // installer custom action). The profile variables arrive via putMissing.
+    var env = std.process.EnvMap.init(alloc);
+    defer env.deinit();
+    try env.put("Path", "C:\\Windows\\system32");
+    try putMissing(&env, &.{
+        .{ .key = "USERPROFILE", .value = "C:\\Users\\me" },
+        .{ .key = "LOCALAPPDATA", .value = "C:\\Users\\me\\AppData\\Local" },
+    });
+
+    const user = [_]Var{
+        .{ .key = "Path", .value = "%USERPROFILE%\\AppData\\Local\\Microsoft\\WindowsApps;%ToolHome%\\bin", .expandable = true },
+        // A user variable referenced by the Path entry above, enumerated AFTER
+        // it, and itself expandable against a profile variable.
+        .{ .key = "ToolHome", .value = "%LOCALAPPDATA%\\tool", .expandable = true },
+        .{ .key = "TEMP", .value = "%USERPROFILE%\\AppData\\Local\\Temp", .expandable = true },
+    };
+    try applyAdditive(alloc, &env, &.{}, &user);
+
+    try testing.expectEqualStrings(
+        "C:\\Windows\\system32;C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps;C:\\Users\\me\\AppData\\Local\\tool\\bin",
+        env.get("Path").?,
+    );
+    try testing.expectEqualStrings("C:\\Users\\me\\AppData\\Local\\tool", env.get("ToolHome").?);
+    try testing.expectEqualStrings("C:\\Users\\me\\AppData\\Local\\Temp", env.get("TEMP").?);
+}
+
+test "applyAdditive: a REG_SZ value is never expanded" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var env = std.process.EnvMap.init(alloc);
+    defer env.deinit();
+    try env.put("USERPROFILE", "C:\\Users\\me");
+
+    const user = [_]Var{.{ .key = "LITERAL", .value = "%USERPROFILE%" }};
+    try applyAdditive(alloc, &env, &.{}, &user);
+    try testing.expectEqualStrings("%USERPROFILE%", env.get("LITERAL").?);
+}
+
+test "putMissing: never overwrites what the environment already defines" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var env = std.process.EnvMap.init(alloc);
+    defer env.deinit();
+    try env.put("userprofile", "D:\\redirected");
+
+    try putMissing(&env, &.{
+        .{ .key = "USERPROFILE", .value = "C:\\Users\\me" },
+        .{ .key = "APPDATA", .value = "C:\\Users\\me\\AppData\\Roaming" },
+        .{ .key = "EMPTY", .value = "" },
+    });
+    try testing.expectEqualStrings("D:\\redirected", env.get("userprofile").?);
+    try testing.expectEqualStrings("C:\\Users\\me\\AppData\\Roaming", env.get("APPDATA").?);
+    try testing.expect(env.get("EMPTY") == null);
 }
 
 test "createEnvBlockW: names are sorted case-insensitively, pairs NUL-joined, block double-NUL-terminated" {

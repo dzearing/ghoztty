@@ -1,13 +1,13 @@
 {
     "guard":  "agent-user-env",
     "script":  "test/win32/agent-user-env.ps1",
-    "generated":  "2026-11-21T22:19:36-08:00",
-    "commit":  "f81eb427a",
+    "generated":  "2026-11-23T13:12:54-08:00",
+    "commit":  "9465671aa",
     "uncommitted":  [
-                        "test/win32/agent-user-env.ps1"
+                        "src/os/user_env.zig"
                     ],
     "files":  {
-                  "src/os/user_env.zig":  "627c53a9b88c647cbaa50bfcb01d98833174895ac5914cdc6476b512734de1bd",
+                  "src/os/user_env.zig":  "3872a2f7e6c7447ae783df052eac0c104e7cd225ad8cf89f58c5023a5c0a5d02",
                   "test/win32/agent-user-env.ps1":  "bfeb37fd8f252900b37aafe4fed65466093d23788984077b14c1f50616b9a22a"
               },
     "code":  {
