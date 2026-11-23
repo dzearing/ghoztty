@@ -16,6 +16,8 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
+$script:passes = 0
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 $tmp = Join-Path $env:TEMP "ghoztty-conf-$PID"
 $work = Join-Path $tmp 'work'
 New-Item -ItemType Directory -Force $work | Out-Null
@@ -23,7 +25,7 @@ New-Item -ItemType Directory -Force $work | Out-Null
 $env:PATH = 'C:\Program Files\Git\usr\bin;' + $env:PATH
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
@@ -86,7 +88,15 @@ Assert "window registered [target: ide]" ($list -match '\[target: ide\]')
 $ide = Get-IdeJson
 $idePane = ($ide | ConvertTo-Json -Depth 15 |
     Select-String -Pattern '"name":\s*"([^"]+)"' -AllMatches).Matches[0].Groups[1].Value
-$vimScreen = (Read-Pane $idePane 30) -join "`n"
+# Polled, not read once (T1768): vim's first paint of the netrw listing is late
+# on a loaded box, and one read after a fixed sleep went red beside two other
+# harnesses while the same run alone was green.
+$vimDeadline = (Get-Date).AddSeconds(20)
+do {
+    $vimScreen = (Read-Pane $idePane 30) -join "`n"
+    if ($vimScreen -match 'Netrw') { break }
+    Start-Sleep -Milliseconds 500
+} while ((Get-Date) -lt $vimDeadline)
 Assert "vim (netrw) on screen" ($vimScreen -match 'Netrw')
 "== S8.1b: re-run focuses, does not duplicate"
 $r = Ghoz @('+new-window', '--target=ide')
@@ -205,17 +215,21 @@ Assert "ide gone" (-not ((Get-List) -match '\[target: ide\]'))
 $r = Ghoz @('+close', '--target=does-not-exist')
 Assert "close missing exits 0" ($r.ExitCode -eq 0)
 
+# The body's last statement (body-complete-audit D1): a throw above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
+
 "== teardown"
 Stop-DebugGhoztty
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 Remove-TestDesktop | Out-Null
 
 ""
-if ($script:failures -eq 0) {
-    "T25 CONFORMANCE (spec S8 items 1-7): ALL PASS"
-    exit 0
-} else {
-    "T25 CONFORMANCE: $script:failures FAILURE(S)"
-    exit 1
+if ($script:failures -eq 0 -and (Test-TestBodyComplete)) {
+    # A clean green run stamps the covered files (T783/T1768); a red or
+    # unwound run stays due.
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard conformance -Repo $gdRepo 2>&1 | ForEach-Object { "  $_" }
 }
-
+Write-TestVerdict -Label 'T25 CONFORMANCE (spec S8 items 1-7)' -Pass $script:passes -Fail $script:failures

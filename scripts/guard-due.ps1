@@ -1695,6 +1695,87 @@ $GuardTable = @(
             'src\termio\history_guard.zig'
         )
     },
+    # T1768: the last seven - the conformance run, the soaks, the installer,
+    # the profiler and the harness's own probes. Same rule as above (the module
+    # where the behavior is decided); the three that cannot run unattended are
+    # ADVISORY with the reason on the row, and soak.ps1 is in $UncoveredExempt.
+    # The spec S8 "definition of replica" checklist end to end (T25): the
+    # docs/claude/cli.md three-pane example from a cold auto-launch. Every verb
+    # it drives is answered in IpcHandlers.zig.
+    [pscustomobject]@{
+        Name   = 'conformance'
+        Script = 'test\win32\conformance.ps1'
+        Stamp  = 'test\win32\conformance.stamp.json'
+        Covers = @(
+            'test\win32\conformance.ps1',
+            'src\apprt\win32\IpcHandlers.zig'
+        )
+    },
+    # +send-keys byte integrity under the /reset-context shape (T664): a
+    # --keys-file run a beat after a bare Enter, judged by a receipt file. Only
+    # a full-strength run (-Rounds 40 or more, no -Break) stamps.
+    [pscustomobject]@{
+        Name   = 'send-keys-soak'
+        Script = 'test\win32\send-keys-soak.ps1'
+        Stamp  = 'test\win32\send-keys-soak.stamp.json'
+        Covers = @(
+            'test\win32\send-keys-soak.ps1',
+            'src\cli\send_keys.zig'
+        )
+    },
+    # The harness's topmost ledger (T179): a pin made through
+    # Set-TestWindowTopmost is put back by Remove-TestDesktop and by interpreter
+    # exit, and no script pins outside it. The ledger lives in TestDesktop.ps1.
+    [pscustomobject]@{
+        Name   = 'probe-topmost-restore'
+        Script = 'test\win32\probe-topmost-restore.ps1'
+        Stamp  = 'test\win32\probe-topmost-restore.stamp.json'
+        Covers = @(
+            'test\win32\probe-topmost-restore.ps1',
+            'test\win32\lib\TestDesktop.ps1'
+        )
+    },
+    # MSI install -> major upgrade -> uninstall under a throwaway product
+    # identity (T23). ADVISORY: its two MSIs come from build-msi.sh, which
+    # packages with wixl inside the msitools Docker image, and starting Docker
+    # is the user's call (the release-artifacts-packaging precedent).
+    [pscustomobject]@{
+        Name     = 'msi-upgrade'
+        Script   = 'test\win32\msi-upgrade.ps1'
+        Stamp    = 'test\win32\msi-upgrade.stamp.json'
+        Advisory = $true
+        Covers   = @(
+            'test\win32\msi-upgrade.ps1',
+            'dist\windows-installer\build-msi.sh'
+        )
+    },
+    # Real-keyboard input latency and scrollback seek at 150k lines (T53b).
+    # ADVISORY: an @input-desktop-exception script (injection timing is the
+    # measurement), so an unattended turn cannot run it. The latency it scores
+    # comes from the whole input and render path, so the row holds the harness
+    # alone (the font-inherit precedent).
+    [pscustomobject]@{
+        Name     = 'profile-latency'
+        Script   = 'test\win32\profile-latency.ps1'
+        Stamp    = 'test\win32\profile-latency.stamp.json'
+        Advisory = $true
+        Covers   = @(
+            'test\win32\profile-latency.ps1'
+        )
+    },
+    # The spike that measured what works on a background desktop (T207/T1115):
+    # isolation, input and the three capture paths. ADVISORY: an
+    # @input-desktop-exception script - it has to reach both desktops.
+    [pscustomobject]@{
+        Name     = 'test-desktop-spike'
+        Script   = 'test\win32\test-desktop-spike.ps1'
+        Stamp    = 'test\win32\test-desktop-spike.stamp.json'
+        Advisory = $true
+        Covers   = @(
+            'test\win32\test-desktop-spike.ps1',
+            'test\win32\lib\TestDesktop.ps1'
+        )
+    },
     # The overview action (T708): the only thing that proves a bound
     # `toggle_tab_overview` actually opens hero mode, from a terminal AND from
     # a focused viewer. Covers the harness, the forwarding decision it rides
@@ -9326,6 +9407,11 @@ $UncoveredExempt = @(
     # A helper process with no verdict (its own header, T221): ipc-timeout's
     # row runs it as the wedged peer and names it in its Covers (T1768).
     [pscustomobject]@{ Script = 'test\win32\ipc-fake-server.ps1'; Why = 'helper fake IPC server, no verdict; run and covered by the ipc-timeout row' }
+    # The long-context soak (T53a/T53b): a 30-minute-to-hours drift measurement
+    # whose product is a report under %TEMP%\ghoztty-soak, run on demand when a
+    # tuning question is asked. Its daemon stays parked until T1795 (go.md), so
+    # a row would only ever read due (T1768).
+    [pscustomobject]@{ Script = 'test\win32\soak.ps1'; Why = 'on-demand long-context drift soak (30m+), a report not a gate; parked until T1795' }
 )
 
 # ---------------------------------------------------------------------------

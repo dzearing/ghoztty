@@ -1,0 +1,16 @@
+{
+    "guard":  "send-keys-soak",
+    "script":  "test/win32/send-keys-soak.ps1",
+    "generated":  "2026-11-22T19:19:56-08:00",
+    "commit":  "5e2715a6e",
+    "uncommitted":  [
+                        "test/win32/send-keys-soak.ps1"
+                    ],
+    "files":  {
+                  "src/cli/send_keys.zig":  "eadc5860163f0131418b4826922cb715c8e8ebd7913d83ac4811fdcbd5cba395",
+                  "test/win32/send-keys-soak.ps1":  "c1e52a71d459c9a34b0b89d7a6083a3deddc3003c193fda14d96493fbb1994d9"
+              },
+    "code":  {
+                 "test/win32/send-keys-soak.ps1":  "code1:e5b60d844335e1bc4be084219b0d41dcd2e564ad25ffe7ea53765d7a05acc9ce"
+             }
+}

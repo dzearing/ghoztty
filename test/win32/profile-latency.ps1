@@ -321,6 +321,7 @@ $realLocalAppData = $env:LOCALAPPDATA
 # T1126: all three knobs - the pipe suffix, a private agent lineage, and this
 # run's own LOCALAPPDATA ($fakeLocal, so $profLog is unchanged).
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 [void](Set-GhozttyTestIsolation -Tag 'prof' -ReleaseSandbox -SandboxRoot $fakeLocal)
 $profLog = Get-GhozttyAppLogPath -Exe $exe -LocalAppData $fakeLocal
 try {
@@ -489,9 +490,25 @@ Start-Sleep -Seconds 2
 $proc.Refresh()
 if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
 
+} catch {
+    # A throw is scored, not swallowed (body-complete-audit D1, T1768): a
+    # try with no catch unwinds past the rest of its section to the verdict.
+    Assert $false "the profiling run threw: $($_.Exception.Message)"
 } finally { $env:LOCALAPPDATA = $realLocalAppData }
 
-Rep ''
-if ($script:fail -eq 0) { Rep "ALL PASS ($script:pass assertions$(if ($script:skipped) { ", $script:skipped SKIPPED" })) - report: $report" }
-else { Rep "$script:fail FAILURE(S) / $script:pass passed - report: $report"; exit 1 }
+# The body's last statement (body-complete-audit D1): a throw above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
 
+Rep ''
+# A clean green run stamps the covered files (T783/T1768); red, a skipped arm
+# or an unwound body stays due. The row is ADVISORY (see scripts\guard-due.ps1),
+# so this stamp is the only way it ever reads current. Continue: a stderr line
+# from the native call through 2>&1 must not throw under Stop.
+if ($script:fail -eq 0 -and -not $script:skipped -and (Test-TestBodyComplete)) {
+    $ErrorActionPreference = 'Continue'
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard profile-latency -Repo $gdRepo 2>&1 | ForEach-Object { Rep "  $_" }
+}
+Write-TestVerdict -Label 'T53b PROFILE LATENCY' -Pass $script:pass -Fail $script:fail -Skipped ([int]$script:skipped)

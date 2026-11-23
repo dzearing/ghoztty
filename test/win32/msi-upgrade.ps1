@@ -42,6 +42,7 @@ if (-not $MsiV2) { $MsiV2 = Join-Path $repo 'zig-out\t23-v2.msi' }
 # by design, which is exactly what Assert-GhozttyPrivateEndpoint refuses.)
 $realLocalAppData = $env:LOCALAPPDATA
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 [void](Set-GhozttyTestIsolation -Tag 't23msi')
 # The proof that the user's real install was never reached (T3394/T3405): the
 # package pre-flight that refuses msiexec, and the before/after snapshot.
@@ -257,6 +258,10 @@ Remove-TestProduct
 Assert (-not (Test-Path $installDir)) 'cleanup: install dir removed'
 Assert (@(Get-TestUninstallEntries).Count -eq 0) 'cleanup: no Apps & Features entries left'
 Assert ((Get-UserPathEntryCount) -eq 0) 'cleanup: user PATH entry removed'
+} catch {
+    # A throw is scored, not swallowed (body-complete-audit D1, T1768): a
+    # try with no catch unwinds past the rest of its section to the verdict.
+    Assert $false "the install/upgrade/uninstall run threw: $($_.Exception.Message)"
 } finally {
     # The user's install, measured on every path out (T3405), a run that threw
     # half-way included: $ErrorActionPreference is Stop here.
@@ -268,7 +273,19 @@ Assert ((Get-UserPathEntryCount) -eq 0) 'cleanup: user PATH entry removed'
     Assert (-not $userEvents) 'user install: Windows Installer logged nothing against the user''s product during the run'
 }
 
+# The body's last statement (body-complete-audit D1): a throw above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
+
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red }
-exit ([int]($script:fail -ne 0))
+# A clean green run stamps the covered files (T783/T1768); red, a skipped arm
+# or an unwound body stays due. The row is ADVISORY (see scripts\guard-due.ps1),
+# so this stamp is the only way it ever reads current. Continue: a stderr line
+# from the native call through 2>&1 must not throw under Stop.
+if ($script:fail -eq 0 -and (Test-TestBodyComplete)) {
+    $ErrorActionPreference = 'Continue'
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard msi-upgrade -Repo $gdRepo 2>&1 | ForEach-Object { Write-Host "  $_" }
+}
+Write-TestVerdict -Label 'T23 MSI UPGRADE' -Pass $script:pass -Fail $script:fail

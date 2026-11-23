@@ -119,6 +119,7 @@ param([string]$ExePath)
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
@@ -756,6 +757,19 @@ if ($spikePid -gt 0) {
         "the test-desktop app NEVER became foreground on the interactive desktop"
 }
 
+# The body's last statement (body-complete-audit D1): a throw above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
+
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILED / $script:pass passed" -ForegroundColor Red; exit 1 }
+# A clean green run stamps the covered files (T783/T1768); red, a skipped arm
+# or an unwound body stays due. The row is ADVISORY (see scripts\guard-due.ps1),
+# so this stamp is the only way it ever reads current. Continue: a stderr line
+# from the native call through 2>&1 must not throw under Stop.
+if ($script:fail -eq 0 -and (Test-TestBodyComplete)) {
+    $ErrorActionPreference = 'Continue'
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard test-desktop-spike -Repo $gdRepo 2>&1 | ForEach-Object { Write-Host "  $_" }
+}
+Write-TestVerdict -Label 'T207 TEST-DESKTOP SPIKE' -Pass $script:pass -Fail $script:fail

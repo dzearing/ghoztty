@@ -46,6 +46,7 @@ param(
 $ErrorActionPreference = 'Continue'
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 
 $script:pass = 0
 $script:fail = 0
@@ -150,6 +151,10 @@ try {
     New-TestDesktop -Name $deskName -Interactive:$Interactive | Out-Null
     Assert (-not (Test-Topmost $c.Hwnd)) 'C: teardown un-pinned it, though nobody asked it to'
     Assert ((Get-TestTopmostRestored) -contains [int64]$c.Hwnd) 'C: and recorded it as a leak the run would have left'
+} catch {
+    # A throw is scored, not swallowed (body-complete-audit D1, T1768): a
+    # try with no catch unwinds past the rest of its section to the verdict.
+    Assert $false "sections A-C threw: $($_.Exception.Message)"
 } finally {
     Remove-TestDesktop
     foreach ($v in @($a, $b, $c)) {
@@ -206,6 +211,10 @@ exit 9
             Remove-Item $childPath -Force -ErrorAction SilentlyContinue
         }
     }
+} catch {
+    # A throw is scored, not swallowed (body-complete-audit D1, T1768): a
+    # try with no catch unwinds past the rest of its section to the verdict.
+    Assert $false "section D threw: $($_.Exception.Message)"
 } finally {
     Remove-TestDesktop
     if ($d) { Stop-Process -Id $d.Pid -Force -ErrorAction SilentlyContinue }
@@ -273,6 +282,17 @@ $caught = @(Find-RawTopmost -Lines $synthetic -Name 'synthetic')
 Assert ($caught.Count -eq 1) "E/teeth: the detector catches exactly the live raw pin, not the prose or the comment (caught $($caught.Count))"
 Assert (($caught -join '') -match ':5 ') 'E/teeth: and it is line 5 - the executable one - that it named'
 
+# The body's last statement (body-complete-audit D1): a throw above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
+
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)"; exit 1 }
+# A clean green run stamps the covered files (T783/T1768). The deliberately
+# broken restore (GHOZTTY_TEST_TOPMOST_BREAK, the teeth run) and an
+# -Interactive run never stamp, and neither does a red or unwound one.
+if ($script:fail -eq 0 -and -not $Interactive -and -not $env:GHOZTTY_TEST_TOPMOST_BREAK -and (Test-TestBodyComplete)) {
+    $gdRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gdRepo 'scripts\guard-due.ps1') `
+        update -Guard probe-topmost-restore -Repo $gdRepo 2>&1 | ForEach-Object { Write-Host "  $_" }
+}
+Write-TestVerdict -Label 'T179 TOPMOST RESTORE' -Pass $script:pass -Fail $script:fail

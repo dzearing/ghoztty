@@ -43,6 +43,7 @@ param(
     [switch]$Break
 )
 $ErrorActionPreference = 'Continue'
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')   # T271/T1768: arms the run, so the stamp below is refused for a body that unwound or asserted nothing
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $bash = 'C:\Program Files\Git\bin\bash.exe'
 if (-not (Test-Path $bash)) {
@@ -138,10 +139,12 @@ $lines = @()
 if (Test-Path $receipt) { $lines = @(Get-Content $receipt) }
 $payloads = @($lines | Where-Object { $_ -ne '' })
 $bad = 0
+$passes = 0
 for ($i = 0; $i -lt $sent.Count; $i++) {
     $want = if ($Break) { $sent[$i].Substring(1) } else { $sent[$i] }
     $got = if ($i -lt $payloads.Count) { $payloads[$i] } else { '<missing>' }
-    if ($got -ne $want) {
+    if ($got -eq $want) { $passes++ }
+    else {
         $bad++
         "  send $($i + 1) MISMATCH"
         "     want: $want"
@@ -153,6 +156,10 @@ if ($payloads.Count -ne $sent.Count) {
     "  MISMATCH received $($payloads.Count) payload lines, sent $($sent.Count)"
 }
 
+# The body's last statement (body-complete-audit D1): a throw above skips it,
+# so the verdict reads DID NOT FINISH instead of green.
+Complete-TestBody
+
 "== teardown"
 [void](Ghoz @('+close', "--target=$win"))
 Reset-GhozttyTestState -Exe $Exe -SettleMs 500 | Out-Null
@@ -160,10 +167,10 @@ Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 Remove-TestDesktop | Out-Null
 
 ""
-if ($bad -eq 0) {
-    "SEND-KEYS SOAK: ALL PASS ($($sent.Count) sends byte-exact)"
-    exit 0
-} else {
-    "SEND-KEYS SOAK: $bad FAILURE(S) of $($sent.Count) sends"
-    exit 1
+# A clean green run at full strength stamps the covered files (T783/T1768). The
+# -Break teeth run, a shortened -Rounds run and a red or unwound one stay due.
+if ($bad -eq 0 -and -not $Break -and $Rounds -ge 40 -and (Test-TestBodyComplete)) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard send-keys-soak -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
+Write-TestVerdict -Label "SEND-KEYS SOAK ($($sent.Count) sends, byte-exact)" -Pass $passes -Fail $bad
