@@ -25,9 +25,10 @@
 //! unspawnable agent never stalls every window (the Mac's
 //! `connectFailureCooldown`, win32's same constant).
 //!
-//! Autostart (a `systemd --user` unit) and restore/re-attach on relaunch are
-//! the rest of L8 and live in their own cards; this module is the
-//! find-or-spawn every one of them starts from.
+//! Once an agent has dialed, `ensureAutostart` writes the login entry that
+//! brings it back without the app - a `systemd --user` unit, else an XDG
+//! autostart entry (T3398, `agent_autostart.zig`). Restore/re-attach on
+//! relaunch is `SessionLayout.zig` (T3397).
 //!
 //! GTK main thread only (surfaces are built there), so no locking.
 
@@ -42,6 +43,8 @@ const connection = @import("../../remote/connection.zig");
 const paths = @import("../../remote/local_agent_paths.zig");
 const build_config = @import("../../build_config.zig");
 const internal_os = @import("../../os/main.zig");
+const source_checkout = @import("../../os/source_checkout.zig");
+const autostart = @import("agent_autostart.zig");
 
 const log = std.log.scoped(.gtk_local_agent);
 
@@ -76,6 +79,9 @@ retired: std.ArrayList(tcp_dial.Dialed) = .empty,
 /// When the last resolve failed (ms), for the cooldown.
 last_failure_ms: ?i64 = null,
 
+/// The login entry was refreshed (or deliberately skipped) this run.
+autostart_done: bool = false,
+
 pub fn init(alloc: Allocator) LocalAgent {
     return .{ .alloc = alloc };
 }
@@ -106,7 +112,156 @@ pub fn sharedConnection(self: *LocalAgent) ?*connection.Connection {
     self.shared = resolved.dialed;
     self.shared_pid = resolved.pid;
     log.info("shared local-agent connection ready (agent pid {d})", .{resolved.pid});
+    self.ensureAutostart();
     return self.shared.?.conn;
+}
+
+/// Write (or refresh) the login entry that starts the agent without the app
+/// (T3398): a `systemd --user` unit when the user's systemd is reachable, else
+/// an XDG autostart entry - the LaunchAgent / HKCU Run counterpart. Runs once
+/// per app run, only after persistence ENGAGED (an agent dialed), the way
+/// win32's `ensureAutostart` does. Best-effort: a failure logs and never
+/// touches the session. Gates and formats: `agent_autostart.zig`.
+///
+/// It never runs `systemctl`: the enable link is the file `systemctl --user
+/// enable` would make, read at the next login. Nothing here starts, stops or
+/// reloads the user's systemd.
+fn ensureAutostart(self: *LocalAgent) void {
+    if (self.autostart_done) return;
+    self.autostart_done = true;
+
+    var arena_state = std.heap.ArenaAllocator.init(self.alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const bin = agentBinary(arena) catch |err| {
+        log.warn("agent autostart: agent path unreadable, nothing written err={}", .{err});
+        return;
+    };
+    const mode = autostart.parseMode(posix.getenv("GHOZTTY_AGENT_AUTOSTART"));
+    // Ask about the binary the entry will NAME (url_scheme's T980 rule), and
+    // fail closed: a path we cannot place is one we cannot clear later.
+    const bin_dir = std.fs.path.dirname(bin) orelse "/";
+    const in_checkout = source_checkout.inSourceCheckout(arena, bin_dir);
+    switch (autostart.gateAllows(mode, build_config.is_debug, in_checkout)) {
+        .write => {},
+        .disabled, .debug_build => return,
+        .source_checkout => {
+            log.info("agent autostart: no login entry written from a source checkout ({s})", .{bin_dir});
+            return;
+        },
+    }
+
+    self.writeAutostart(arena, bin) catch |err| {
+        log.warn("agent autostart: login entry write failed err={}", .{err});
+    };
+}
+
+fn writeAutostart(self: *LocalAgent, arena: Allocator, bin: []const u8) !void {
+    _ = self;
+    var home_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const home = (try internal_os.home(&home_buf)) orelse return error.NoHome;
+    const root = try paths.configRoot(arena, true, posix.getenv("XDG_CONFIG_HOME"), home);
+    const dir = try paths.stateDir(arena, build_config.is_debug);
+
+    var lin_buf: [@import("../../remote/agent_lineage.zig").max_len]u8 = undefined;
+    const lineage = @import("../../remote/agent_lineage.zig").fromEnv(&lin_buf);
+    var base_buf: [autostart.max_base_len]u8 = undefined;
+    const base = try autostart.baseName(&base_buf, build_config.is_debug, lineage);
+    const where = try autostart.pathsFor(arena, root, base);
+
+    const a = try spawnArgs(arena, dir);
+    const spec: autostart.Spec = .{
+        .agent = bin,
+        .args = &a.args,
+        .env = &a.env,
+        .log_path = try paths.join(arena, dir, paths.log_file),
+    };
+
+    const sock = try autostart.userSystemdSocket(arena, posix.getenv("XDG_RUNTIME_DIR"), std.os.linux.getuid());
+    const reachable = if (std.fs.accessAbsolute(sock, .{})) |_| true else |_| false;
+    switch (autostart.chooseBackend(reachable)) {
+        .systemd => {
+            const body = try autostart.renderUnit(arena, spec);
+            try writeFileAtomic(arena, where.unit, body);
+            try linkReplace(arena, where.unit, where.wants_link);
+            // One login entry only: a box that just turned systemd on would
+            // otherwise start a second agent from the old autostart file.
+            deleteIfPresent(where.desktop);
+            log.info("agent autostart: systemd user unit refreshed ({s}, enabled by {s})", .{ where.unit, where.wants_link });
+        },
+        .xdg => {
+            const body = try autostart.renderDesktop(arena, spec);
+            try writeFileAtomic(arena, where.desktop, body);
+            deleteIfPresent(where.wants_link);
+            deleteIfPresent(where.unit);
+            log.info("agent autostart: XDG autostart entry refreshed ({s}; no user systemd at {s})", .{ where.desktop, sock });
+        },
+    }
+}
+
+/// `path` holds `body` afterwards, never a torn file: write a sibling, then
+/// rename over. Parents are created.
+fn writeFileAtomic(arena: Allocator, path: []const u8, body: []const u8) !void {
+    const parent = std.fs.path.dirname(path) orelse return error.BadPath;
+    try std.fs.cwd().makePath(parent);
+    const tmp = try std.fmt.allocPrint(arena, "{s}.tmp-{d}", .{ path, std.os.linux.getpid() });
+    {
+        const f = try std.fs.createFileAbsolute(tmp, .{ .truncate = true, .mode = 0o644 });
+        defer f.close();
+        try f.writeAll(body);
+    }
+    std.fs.renameAbsolute(tmp, path) catch |err| {
+        std.fs.deleteFileAbsolute(tmp) catch {};
+        return err;
+    };
+}
+
+/// `link` -> `target`, replacing whatever `link` was.
+fn linkReplace(arena: Allocator, target: []const u8, link: []const u8) !void {
+    const parent = std.fs.path.dirname(link) orelse return error.BadPath;
+    try std.fs.cwd().makePath(parent);
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    if (std.fs.readLinkAbsolute(link, &buf)) |cur| {
+        if (std.mem.eql(u8, cur, target)) return;
+    } else |_| {}
+    const tmp = try std.fmt.allocPrint(arena, "{s}.tmp-{d}", .{ link, std.os.linux.getpid() });
+    std.fs.deleteFileAbsolute(tmp) catch {};
+    try std.fs.symLinkAbsolute(target, tmp, .{});
+    std.fs.renameAbsolute(tmp, link) catch |err| {
+        std.fs.deleteFileAbsolute(tmp) catch {};
+        return err;
+    };
+}
+
+fn deleteIfPresent(path: []const u8) void {
+    std.fs.deleteFileAbsolute(path) catch {};
+}
+
+/// The agent's argv after argv[0] and its environment overrides - ONE
+/// spelling for the on-demand spawn and the login entry, so the agent a login
+/// starts is the agent the app would have spawned.
+const SpawnArgs = struct {
+    args: [3][]const u8,
+    env: [3]autostart.EnvVar,
+};
+
+fn spawnArgs(arena: Allocator, dir: []const u8) !SpawnArgs {
+    return .{
+        .args = .{
+            try std.fmt.allocPrint(arena, "--listen-unix={s}", .{try paths.join(arena, dir, paths.socket_file)}),
+            try std.fmt.allocPrint(arena, "--port-file={s}", .{try paths.join(arena, dir, paths.port_file)}),
+            try std.fmt.allocPrint(arena, "--sessions-file={s}", .{try paths.join(arena, dir, paths.sessions_file)}),
+        },
+        // The per-lineage guard paths (so a debug and a release agent, or two
+        // test lineages, never take each other's lock) and no self-update: the
+        // install owns the binary's lifecycle. The Mac's exact overrides.
+        .env = .{
+            .{ .name = "GHOSTTY_AGENT_LOCK", .value = try paths.join(arena, dir, paths.lock_file) },
+            .{ .name = "GHOSTTY_AGENT_HEARTBEAT", .value = try paths.join(arena, dir, paths.heartbeat_file) },
+            .{ .name = "GHOSTTY_AGENT_NO_SELFUPDATE", .value = "1" },
+        },
+    };
 }
 
 const Resolved = struct { dialed: tcp_dial.Dialed, pid: posix.pid_t };
@@ -207,22 +362,13 @@ fn spawnDetached(self: *LocalAgent, bin: []const u8, dir: []const u8) !void {
     const arena = arena_state.allocator();
 
     const bin_z = try arena.dupeZ(u8, bin);
-    const sock = try paths.join(arena, dir, paths.socket_file);
-    const port = try paths.join(arena, dir, paths.port_file);
-    const sessions = try paths.join(arena, dir, paths.sessions_file);
-    const argv = try arena.allocSentinel(?[*:0]const u8, 4, null);
+    const spawn = try spawnArgs(arena, dir);
+    const argv = try arena.allocSentinel(?[*:0]const u8, 1 + spawn.args.len, null);
     argv[0] = bin_z.ptr;
-    argv[1] = (try std.fmt.allocPrintSentinel(arena, "--listen-unix={s}", .{sock}, 0)).ptr;
-    argv[2] = (try std.fmt.allocPrintSentinel(arena, "--port-file={s}", .{port}, 0)).ptr;
-    argv[3] = (try std.fmt.allocPrintSentinel(arena, "--sessions-file={s}", .{sessions}, 0)).ptr;
+    for (spawn.args, 1..) |a, i| argv[i] = (try arena.dupeZ(u8, a)).ptr;
 
     var env = try std.process.getEnvMap(arena);
-    // The per-lineage guard paths (so a debug and a release agent, or two
-    // test lineages, never take each other's lock) and no self-update: the
-    // install owns the binary's lifecycle. The Mac's exact overrides.
-    try env.put("GHOSTTY_AGENT_LOCK", try paths.join(arena, dir, paths.lock_file));
-    try env.put("GHOSTTY_AGENT_HEARTBEAT", try paths.join(arena, dir, paths.heartbeat_file));
-    try env.put("GHOSTTY_AGENT_NO_SELFUPDATE", "1");
+    for (spawn.env) |e| try env.put(e.name, e.value);
     // This app's own IPC endpoint and pane identity are not the agent's.
     env.remove("GHOZTTY_IPC_SOCKET");
     env.remove("GHOZTTY_PANE_ID");
