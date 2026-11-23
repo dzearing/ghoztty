@@ -227,7 +227,11 @@ for im in imgs:
         want("size %d" % im["number"], (im.get("pixelWidth"), im.get("pixelHeight")) == (w, h))
         if im["number"] == 1:
             want("shot size", "%dx%d" % (w, h) == shot)
-            want("shot is the pane (viewport)", r["source"].get("viewport") == "%dx%d" % (w, h))
+            # The pane's page: as wide as the viewport the report names. It was
+            # taken before the thumbnail strip opened under the composer, so
+            # it is at least as tall as the page is at send time.
+            vw, vh = (int(x) for x in r["source"].get("viewport", "0x0").split("x"))
+            want("shot is the pane (%dx%d vs viewport %dx%d)" % (w, h, vw, vh), w == vw and h >= vh)
             want("shot is not blank (%d colours)" % n, n >= 3)
         else:
             want("pasted 30x20", (w, h) == (30, 20))
@@ -237,7 +241,7 @@ PY
 }
 res=$(check_report 2>&1)
 [ "$res" = ok ]
-hl_check "S19 the folder holds images/image-1.png (the pane, at its viewport size, not blank) and image-3.png (30x20); report.json lists both with size and bytes and the body links them" $? "$res :: $(head -c 700 "$dir/report.json" 2>/dev/null)"
+hl_check "S19 the folder holds images/image-1.png (the pane's page at its viewport width, not blank) and image-3.png (30x20); report.json lists both with size and bytes and the body links them" $? "$res :: $(head -c 700 "$dir/report.json" 2>/dev/null)"
 
 grep -q 'viewer feedback: image=#1 via=screenshot' "$APP_LOG" && grep -q 'viewer feedback: image=#3 via=paste' "$APP_LOG"
 hl_check "S20 the app logged each picture and how it came" $? "$(grep 'viewer feedback: image' "$APP_LOG" | tr '\n' ' ')"

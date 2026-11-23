@@ -799,7 +799,7 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\vi
 ```
 
 Ends `VIEWER SCREENSHOT: ALL PASS` (21 checks). S19 decodes both PNGs with
-python's zlib: the shot is the viewport's size and not blank, the paste is
+python's zlib: the shot is the viewport's width and not blank, the paste is
 30x20, and `bytes`/`pixelWidth`/`pixelHeight` match the files.
 
 ### The viewer foundation's own test (T3410)
