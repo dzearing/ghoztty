@@ -586,13 +586,20 @@ pub fn handleClose(app: Context, request: Request) Allocator.Error!?[]u8 {
 
 /// `+reload` (T3413): the shared body in `apprt/ipc/verbs.zig`, win32's
 /// arguments and sentences. A viewer pane (or a window's focused one) reloads
-/// in place, bypassing caches; `--config` is T3369's.
+/// in place, bypassing caches; `--config` reloads the app's configuration.
 pub fn handleReload(app: Context, request: Request) Allocator.Error!?[]u8 {
     return verbs.reload(@This(), app, request);
 }
 
-pub fn reloadConfig(_: Context, _: Allocator) Allocator.Error!?[]const u8 {
-    return "+reload --config is not served by the Linux app yet (T3369)";
+/// `+reload --config` (T3369): the GTK `reload_config` action, hard (the
+/// config files are read again, as SIGUSR2 and the menu item do), app-wide -
+/// win32's T893 body, so both answer with the same sentence on failure. The
+/// action propagates through `config_change` to every window and terminal.
+pub fn reloadConfig(app: Context, arena: Allocator) Allocator.Error!?[]const u8 {
+    _ = app.performAction(.app, .reload_config, .{ .soft = false }) catch |err| {
+        return try std.fmt.allocPrint(arena, "config reload failed: {}", .{err});
+    };
+    return null;
 }
 
 pub fn reloadViewer(target: Target) verbs.ReloadOutcome {

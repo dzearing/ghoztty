@@ -9,7 +9,8 @@
 #   watched), and `+reload` picks the stylesheet up.
 # - `+reload` reloads a viewer pane; its refusals are win32's sentences (a
 #   terminal pane, a window focused on a terminal, a missing name, --config
-#   with --target); --config itself is T3369's and says so.
+#   with --target); --config itself reloads the app config (T3369, whose
+#   effect cli-reload.sh proves).
 # - Ctrl+R on a website re-fetches it.
 # - A dead web process: a real SIGKILL and WebKit's own termination each
 #   reload the page, at most 3 times a minute (Mac contentProcessRestartLimit);
@@ -281,8 +282,8 @@ o=$(cli +reload --config --target=doc 2>&1); rc=$?
 [ $rc != 0 ] && has "$o" "--config cannot be combined with --target"
 hl_check "R28 +reload --config --target is refused as two different requests" $? "rc=$rc $o"
 o=$(cli +reload --config 2>&1); rc=$?
-[ $rc != 0 ] && has "$o" "(T3369)"
-hl_check "R29 +reload --config names the card that brings it (T3369)" $? "rc=$rc $o"
+[ $rc = 0 ] && ! has "$o" "not served"
+hl_check "R29 +reload --config reloads the app config (T3369; cli-reload.sh proves the effect)" $? "rc=$rc $o"
 
 grep -E 'panic|reached unreachable' "$APP_LOG" > /dev/null 2>&1
 [ $? != 0 ] && kill -0 "$APP" 2>/dev/null

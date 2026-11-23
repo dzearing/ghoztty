@@ -255,11 +255,11 @@ private runtime dir, so a test app can never meet the user's.
   (`openWindow`, `createSplit`) and builds a `+list` leaf. A new verb body
   goes into `verbs.zig` first, not into this file.
   `+list`, `+version`, `+send-keys`, `+read`, `+new-window`, `+split`,
-  `+rename`, `+close`, `+rearrange`, `+reload` (a viewer pane, T3413),
-  `+set-banner`, `+set-state` (T3339) and the
+  `+rename`, `+close`, `+rearrange`, `+reload` (a viewer pane, T3413;
+  `--config`, T3369), `+set-banner`, `+set-state` (T3339) and the
   `focus` action are real; every other verb answers `+<verb> is not served by
-  the Linux app yet (<task>)`, naming the card that brings it (T3369
-  `+reload --config`, T3337 stash/restore/remote).
+  the Linux app yet (<task>)`, naming the card that brings it (T3337
+  stash/restore/remote).
 - **Pane banners and activity state (T3339)**: `+set-banner` / OSC 7778 put
   a card above the terminal (`PaneBanner.zig`): the shared parser
   (`win32/banner_markdown.zig`, with `PathContext.posix` so `./` and `~/`
@@ -465,7 +465,10 @@ Every decision is win32's, mapped onto GTK by the pure
   mount) gets no inotify events for edits made from the Windows side.
 - **`+reload`** is the shared body `verbs.reload` (win32 routes through it
   too): a viewer pane, or a window's focused one, reloads bypassing caches;
-  win32's refusals word for word. `--config` answers that T3369 brings it.
+  win32's refusals word for word. `--config` (T3369) runs the GTK
+  `reload_config` action hard and app-wide - the files are read again and
+  every open pane takes the new values - and answers success like the Mac;
+  a bad config line is a diagnostic, not a failure (`test/linux/cli-reload.sh`).
   Ctrl+R in the pane is the same reload; the bar's button is a plain one.
 - **A dead web process** (`web-process-terminated`, Mac
   `webViewWebContentProcessDidTerminate`): reload the page the pane is on, at
