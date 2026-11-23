@@ -396,6 +396,11 @@ file_path: ?[]u8 = null,
 image_zoom: f64 = 1,
 image_fitting: bool = true,
 image_geometry: viewer_image.Geometry = .{},
+/// The picture a live reload (a save, `+reload`, Ctrl+R) is replacing, until
+/// the new one has decoded (T3532). A same-size answer keeps its zoom and the
+/// page keeps its scroll (`viewer_image.keptZoom`, the Mac's
+/// `reloadFromDisk`); null for a fresh open or a navigation, which fit.
+image_previous: ?viewer_image.Previous = null,
 /// Bumped on every (re)load so the page's `<img>` src changes. An `<img>`
 /// pointed at a `src` it already has does not go back to the network, however
 /// hard the response says not to cache — which would make `+reload` on an
@@ -4310,6 +4315,8 @@ fn onNavigationCompleted(
     // Web mode has nothing to inject — the page IS the content.
     if (!self.mode.usesTemplate()) return com.S_OK;
     self.pushGlassToPage();
+    // A navigation is a fresh picture: it opens at best-fit (T3532).
+    self.image_previous = null;
     self.renderFileContent();
     return com.S_OK;
 }
@@ -4358,7 +4365,19 @@ pub fn reloadContent(self: *ViewerPane, reason: content.ReloadReason) void {
     if (reason == .chrome) self.file_reload_gate.note(self.fileStamp());
     switch (content.reloadPlan(self.mode, self.page_loaded, reason)) {
         .full_load => self.applyNavigation(),
-        .rerender => self.renderFileContent(),
+        .rerender => {
+            // The same picture again: remember its size and zoom, so a
+            // same-size answer keeps both (T3532). A full load is a
+            // navigation and clears this on the way in. A second save landing
+            // before the first one decoded has measured nothing new, so the
+            // picture the first one remembered is still the one to keep.
+            if (self.mode == .image) self.image_previous = viewer_image.Previous.of(
+                self.image_geometry,
+                self.image_zoom,
+                self.image_fitting,
+            ) orelse self.image_previous;
+            self.renderFileContent();
+        },
         .refetch => self.refetchFromOrigin(),
         .reload_in_place => self.reloadInPlace(),
     }
@@ -4543,6 +4562,9 @@ fn loadImage(self: *ViewerPane, alloc: Allocator, path: []const u8) void {
     self.image_fitting = true;
     self.image_geometry = .{};
     self.image_failure = null;
+    log.info("viewer image load pane={s} rev={d} route={s} keep={}", .{
+        self.paneId(), self.image_revision, @tagName(self.image_route), viewer_image.Previous.keepsScroll(self.image_previous),
+    });
 
     // A large picture is staged on the worker and the page pointed at it when
     // it is ready (T3241): `showStaged`. Everything else is asked for now.
@@ -4557,7 +4579,10 @@ fn showImageUrl(self: *ViewerPane, alloc: Allocator, url: []const u8, path: []co
     // The page is told whether this is vector art: it is served from a
     // sentinel url with no extension, so the file's own name never reaches it.
     const vector = std.ascii.eqlIgnoreCase(content.extension(path), "svg");
-    const js = content.setImageCall(alloc, url, std.fs.path.basename(path), vector) catch return;
+    // A reload that may keep the zoom asks the page to hold its scroll too
+    // (T3532); the page drops it again if the answer turns out to be a fit.
+    const keep = viewer_image.Previous.keepsScroll(self.image_previous);
+    const js = content.setImageCall(alloc, url, std.fs.path.basename(path), vector, keep) catch return;
     defer alloc.free(js);
     self.executeScript(alloc, js);
 }
@@ -4688,6 +4713,7 @@ fn applyImageMessage(self: *ViewerPane, alloc: Allocator, msg: bridge.Image) voi
         // Same card every other file mode falls through to, rather than the
         // blank matte an undecodable file would otherwise leave — titled with
         // the codec to install when that is what is missing.
+        self.image_previous = null;
         self.injectError(
             alloc,
             self.image_failure orelse content.error_not_image,
@@ -4712,8 +4738,13 @@ fn applyImageMessage(self: *ViewerPane, alloc: Allocator, msg: bridge.Image) voi
     self.image_geometry = geom;
 
     const zoom = switch (msg.event) {
-        // A fresh picture opens at best-fit.
-        .loaded => geom.fitZoom(),
+        // A fresh picture opens at best-fit; a reload that came back at the
+        // same pixel size keeps the zoom the user had chosen (T3532).
+        .loaded => kept: {
+            const kept = viewer_image.keptZoom(self.image_previous, geom);
+            self.image_previous = null;
+            break :kept kept orelse geom.fitZoom();
+        },
         // A pane resize (or a move to a display at another scale) re-fits only
         // if the user had not chosen a zoom of their own. Otherwise their zoom
         // is re-derived from the new geometry, because `unitScale` changed and

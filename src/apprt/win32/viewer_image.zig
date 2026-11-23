@@ -383,9 +383,74 @@ pub const Geometry = struct {
     }
 };
 
+/// What a reload remembers of the picture it is replacing (T3532, T3416).
+pub const Previous = struct {
+    natural_w: f64,
+    natural_h: f64,
+    zoom: f64,
+    fitting: bool,
+
+    /// The picture on screen now, or null when nothing has been measured yet
+    /// (a reload before the first decode has no zoom to keep).
+    pub fn of(geom: Geometry, zoom: f64, fitting: bool) ?Previous {
+        if (geom.natural_w <= 0 or geom.natural_h <= 0) return null;
+        return .{ .natural_w = geom.natural_w, .natural_h = geom.natural_h, .zoom = zoom, .fitting = fitting };
+    }
+
+    /// Whether the page should hold its scroll for the answer to this load:
+    /// only a chosen zoom can survive it, and a fit answer drops the scroll.
+    pub fn keepsScroll(prev: ?Previous) bool {
+        const p = prev orelse return false;
+        return !p.fitting;
+    }
+};
+
+/// The zoom a freshly decoded picture opens at after a RELOAD, or null for
+/// best-fit (the Mac's `ViewerImageView.reloadFromDisk`).
+///
+/// Zoom - and scroll, which the page holds on to when this answers non-null -
+/// survive a reload of the SAME pixel size: the analogue of the scroll every
+/// other file mode keeps across a save. A re-export at different dimensions
+/// re-fits, because the old magnification describes a picture that no longer
+/// exists. A picture that was fitted stays fitted, which is a re-fit anyway.
+pub fn keptZoom(prev: ?Previous, geom: Geometry) ?f64 {
+    const p = prev orelse return null;
+    if (p.fitting) return null;
+    if (@abs(p.natural_w - geom.natural_w) >= epsilon) return null;
+    if (@abs(p.natural_h - geom.natural_h) >= epsilon) return null;
+    return geom.clamp(p.zoom);
+}
+
 // -------------------------------------------------------------------------
 // Tests
 // -------------------------------------------------------------------------
+
+test "keptZoom: a same-size reload keeps a chosen zoom, anything else re-fits" {
+    const geom: Geometry = .{ .natural_w = 4000, .natural_h = 3000, .viewport_w = 800, .viewport_h = 600 };
+    // The user had stepped to 125%: same pixels, same zoom.
+    try testing.expectEqual(@as(?f64, 1.25), keptZoom(.{ .natural_w = 4000, .natural_h = 3000, .zoom = 1.25, .fitting = false }, geom));
+    // A fitted picture re-fits (null = fit), whatever its size.
+    try testing.expectEqual(@as(?f64, null), keptZoom(.{ .natural_w = 4000, .natural_h = 3000, .zoom = 0.2, .fitting = true }, geom));
+    // A re-export at another size: the old zoom describes a picture that no
+    // longer exists.
+    try testing.expectEqual(@as(?f64, null), keptZoom(.{ .natural_w = 4000, .natural_h = 2000, .zoom = 1.25, .fitting = false }, geom));
+    try testing.expectEqual(@as(?f64, null), keptZoom(.{ .natural_w = 3999, .natural_h = 3000, .zoom = 1.25, .fitting = false }, geom));
+    // No previous picture (a fresh open): fit.
+    try testing.expectEqual(@as(?f64, null), keptZoom(null, geom));
+    // A kept zoom is still clamped to what the pane allows.
+    try testing.expectEqual(@as(?f64, 32), keptZoom(.{ .natural_w = 4000, .natural_h = 3000, .zoom = 500, .fitting = false }, geom));
+}
+
+test "Previous.of: nothing measured means nothing to keep; keepsScroll only for a chosen zoom" {
+    try testing.expectEqual(@as(?Previous, null), Previous.of(.{}, 1.5, false));
+    try testing.expectEqual(@as(?Previous, null), Previous.of(.{ .natural_w = 10 }, 1.5, false));
+    const p = Previous.of(.{ .natural_w = 640, .natural_h = 480 }, 2, false).?;
+    try testing.expectEqual(@as(f64, 640), p.natural_w);
+    try testing.expectEqual(@as(f64, 2), p.zoom);
+    try testing.expect(Previous.keepsScroll(p));
+    try testing.expect(!Previous.keepsScroll(Previous.of(.{ .natural_w = 640, .natural_h = 480 }, 0.5, true)));
+    try testing.expect(!Previous.keepsScroll(null));
+}
 
 test "isImage carries the Mac extension table, case-insensitively" {
     try testing.expect(isImage("png"));

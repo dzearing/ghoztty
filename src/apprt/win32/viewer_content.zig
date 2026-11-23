@@ -778,22 +778,31 @@ pub fn mappedImageUrl(alloc: Allocator, name: []const u8, revision: u64) Allocat
 /// tell: the picture is served from a SENTINEL url with no extension on it, so
 /// the file's own name — the only thing that says whether this is art with a
 /// pixel grid — never reaches the browser. Getting it wrong would make 100%
-/// mean the wrong thing for every SVG on a HiDPI display. Caller owns the
-/// result.
+/// mean the wrong thing for every SVG on a HiDPI display.
+///
+/// `keep` asks the page to hold its scroll offset for the transform that
+/// answers this load (T3532/T3416): a reload of the picture already on screen
+/// that may come back at the same pixel size, and so keep the user's zoom
+/// (`viewer_image.keptZoom`). A fit answer drops it. Caller owns the result.
 pub fn setImageCall(
     alloc: Allocator,
     url: []const u8,
     name: []const u8,
     vector: bool,
+    keep: bool,
 ) Allocator.Error![]u8 {
     const quoted = try call(alloc, "setImage", &.{ url, name });
     defer alloc.free(quoted);
     // The call builder only speaks strings, and a quoted "true" is not a
-    // boolean on the other side; splice the literal in ahead of the paren.
+    // boolean on the other side; splice the literals in ahead of the paren.
     return try std.fmt.allocPrint(
         alloc,
-        "{s}, {s})",
-        .{ quoted[0 .. quoted.len - 1], if (vector) "true" else "false" },
+        "{s}, {s}, {s})",
+        .{
+            quoted[0 .. quoted.len - 1],
+            if (vector) "true" else "false",
+            if (keep) "true" else "false",
+        },
     );
 }
 
@@ -2065,10 +2074,10 @@ test "the image calls: a cache-busting url, and numbers that cross as numbers" {
         try testing.expectEqualStrings(image_resource_path, requestPath(&buf, next).?);
     }
     {
-        const js = try setImageCall(alloc, "https://ghoztty-viewer/__image?v=1", "bug shot.png", false);
+        const js = try setImageCall(alloc, "https://ghoztty-viewer/__image?v=1", "bug shot.png", false, false);
         defer alloc.free(js);
         try testing.expectEqualStrings(
-            "window.__viewer.setImage(\"https://ghoztty-viewer/__image?v=1\", \"bug shot.png\", false)",
+            "window.__viewer.setImage(\"https://ghoztty-viewer/__image?v=1\", \"bug shot.png\", false, false)",
             js,
         );
     }
@@ -2076,10 +2085,20 @@ test "the image calls: a cache-busting url, and numbers that cross as numbers" {
         // The vector flag is a BOOLEAN, not the string "true": the page cannot
         // read the file's extension off a sentinel url, so this is the only
         // thing that tells it what 100% means for an SVG.
-        const js = try setImageCall(alloc, "https://ghoztty-viewer/__image?v=2", "logo.svg", true);
+        const js = try setImageCall(alloc, "https://ghoztty-viewer/__image?v=2", "logo.svg", true, false);
         defer alloc.free(js);
         try testing.expectEqualStrings(
-            "window.__viewer.setImage(\"https://ghoztty-viewer/__image?v=2\", \"logo.svg\", true)",
+            "window.__viewer.setImage(\"https://ghoztty-viewer/__image?v=2\", \"logo.svg\", true, false)",
+            js,
+        );
+    }
+    {
+        // A reload that may keep the zoom asks the page to hold its scroll
+        // (T3532), as a boolean fourth argument.
+        const js = try setImageCall(alloc, "https://ghoztty-viewer/__image?v=3", "shot.png", false, true);
+        defer alloc.free(js);
+        try testing.expectEqualStrings(
+            "window.__viewer.setImage(\"https://ghoztty-viewer/__image?v=3\", \"shot.png\", false, true)",
             js,
         );
     }

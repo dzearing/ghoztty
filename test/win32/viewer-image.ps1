@@ -17,6 +17,8 @@
 #     mode: type `viewer`, `url` the file's own path.
 #   - `+reload` re-fetches the bytes (the revision moves), which is what makes
 #     a re-exported screenshot appear.
+#   - a SAVE at the same pixel size keeps the zoom and the scroll; a save at
+#     another size re-fits (T3532, section N - the Mac's reloadFromDisk).
 #   - a corrupt/undecodable image gets the pane's own error card naming the
 #     file, rather than a blank matte.
 #   - a `.txt` control in the same run produces NONE of it.
@@ -1075,6 +1077,58 @@ try {
             "L7: a third double-click goes to 100% again (zoom=$(if ($r8) { $r8.State.Zoom } else { '-' }))"
         Assert ($r1 -and $r7 -and (Near $r7.State.Fit $g0.Fit)) `
             "L7: ...and best-fit is the same number at load and after a zoom (load $($g0.Fit), after $(if ($r7) { $r7.State.Fit } else { '-' }))"
+
+        # --- N. a SAVE keeps the zoom and the scroll at the same size (T3532) --
+        # The Mac's reloadFromDisk: a screenshot the user zoomed into and then
+        # re-exported at the same pixel size stays where they were looking; a
+        # re-export at another size re-fits. Both are real saves of the viewed
+        # file, so the file watcher's reload is what is exercised.
+        function Save-Gesture([int]$w, [int]$h, [System.Drawing.Color]$color) {
+            $tmp = "$gesturePath.$PID.tmp"
+            $bmp = New-Object System.Drawing.Bitmap $w, $h
+            try {
+                $g = [System.Drawing.Graphics]::FromImage($bmp)
+                $g.Clear($color)
+                $g.Dispose()
+                $bmp.Save($tmp, [System.Drawing.Imaging.ImageFormat]::Png)
+            } finally { $bmp.Dispose() }
+            # Whole-file replace, so the watcher never sees a half-written PNG.
+            Move-Item -LiteralPath $tmp -Destination $gesturePath -Force
+        }
+        # Zoom in one more step and pan, so the kept zoom is not 100% and the
+        # kept scroll is not zero - neither could be mistaken for a default.
+        $geo = Get-GestureGeo
+        $n = Get-EventCount 'zoom_in'
+        Send-Wheel ($geo.sx + $geo.vw / 2) ($geo.sy + $geo.vh / 2) -120 -Ctrl
+        $z = Wait-Gesture 'zoom_in' $n
+        Send-Wheel ($geo.sx + $geo.vw / 2) ($geo.sy + $geo.vh / 2) 240
+        Start-Sleep -Milliseconds 800
+        $pre = Get-GestureGeo
+        Assert ($z -and -not $z.State.Fitting -and $pre.st -gt 0) `
+            "N: set up a chosen zoom and a scroll (zoom=$(if ($z) { $z.State.Zoom } else { '-' }) scrollTop=$($pre.st))"
+
+        $n = Get-EventCount 'loaded'
+        Save-Gesture 4000 3000 ([System.Drawing.Color]::DarkSlateBlue)
+        $s1 = Wait-Gesture 'loaded' $n
+        Assert ($null -ne $s1) 'N1: a save of the viewed picture reloaded it (event=loaded)'
+        if ($s1 -and $z) {
+            Assert ((Near $s1.State.Zoom $z.State.Zoom) -and -not $s1.State.Fitting) `
+                "N1: ...at the same pixel size the zoom is kept (before $($z.State.Zoom), after $($s1.State.Zoom) fitting=$($s1.State.Fitting))"
+            # The page restores the scroll on the next frame after the transform.
+            Start-Sleep -Milliseconds 400
+            $post = Get-GestureGeo
+            Assert ([Math]::Abs($post.st - $pre.st) -le 2 -and [Math]::Abs($post.sl - $pre.sl) -le 2) `
+                "N1: ...and so is the scroll (before $($pre.sl),$($pre.st) after $($post.sl),$($post.st))"
+        }
+
+        $n = Get-EventCount 'loaded'
+        Save-Gesture 3000 2000 ([System.Drawing.Color]::SlateGray)
+        $s2 = Wait-Gesture 'loaded' $n
+        Assert ($null -ne $s2) 'N2: a save at another pixel size reloaded it (event=loaded)'
+        if ($s2) {
+            Assert ($s2.State.NatW -eq 3000 -and $s2.State.Fitting -and (Near $s2.State.Zoom $s2.State.Fit)) `
+                "N2: ...and re-fits, since the old zoom described a picture that no longer exists (natural=$($s2.State.NatW) zoom=$($s2.State.Zoom) fit=$($s2.State.Fit))"
+        }
     } finally {
         Close-Cdp $gc
     }

@@ -28,7 +28,7 @@
 //!   its largest embedded PNG (`icnsBestPng`).
 //! - **The missing-codec card** says what to install on a Linux desktop.
 //! - **A reload keeps the zoom** when the picture's pixel size is unchanged
-//!   (`keptZoom`): the Mac's `reloadFromDisk`, which win32 does not do yet.
+//!   (`keptZoom`, shared with win32 since T3532): the Mac's `reloadFromDisk`.
 //!
 //! No GTK, no WebKit, no filesystem: it runs in the none lane on every seat.
 //! `ViewerImage.zig` is the half that talks to WebKit, GDK and the disk.
@@ -90,29 +90,10 @@ pub fn codecTitle(codec: Codec) []const u8 {
     };
 }
 
-/// What a reload remembers of the picture it is replacing.
-pub const Previous = struct {
-    natural_w: f64,
-    natural_h: f64,
-    zoom: f64,
-    fitting: bool,
-};
-
-/// The zoom a freshly decoded picture opens at after a RELOAD, or null for
-/// best-fit (the Mac's `reloadFromDisk`).
-///
-/// Zoom - and scroll, which the page holds on to when this answers non-null -
-/// survive a reload of the SAME pixel size: the analogue of the scroll every
-/// other file mode keeps across a save. A re-export at different dimensions
-/// re-fits, because the old magnification describes a picture that no longer
-/// exists. A picture that was fitted stays fitted, which is a re-fit anyway.
-pub fn keptZoom(prev: ?Previous, geom: Geometry) ?f64 {
-    const p = prev orelse return null;
-    if (p.fitting) return null;
-    if (@abs(p.natural_w - geom.natural_w) >= shared.epsilon) return null;
-    if (@abs(p.natural_h - geom.natural_h) >= shared.epsilon) return null;
-    return geom.clamp(p.zoom);
-}
+/// What a reload remembers of the picture it is replacing, and the zoom a
+/// same-size reload keeps: win32's rules (T3532), one copy for both ports.
+pub const Previous = shared.Previous;
+pub const keptZoom = shared.keptZoom;
 
 /// `window.__viewer.imageZoom("<action>")`: a keyboard chord routed through
 /// the page, so it re-measures its viewport on the way past (win32's
@@ -127,9 +108,8 @@ pub fn zoomCall(action: Action) [:0]const u8 {
 
 /// `window.__viewer.setImage(url, name, vector, keep)`. `keep` asks the page
 /// to hold its scroll offset for the transform that answers this load (a
-/// reload that may keep the zoom); a fit answer drops it. win32 passes three
-/// arguments and the page reads the missing fourth as false. Caller owns the
-/// result.
+/// reload that may keep the zoom); a fit answer drops it. win32's call, with
+/// the sentinel the web view wants. Caller owns the result.
 pub fn setImageCall(
     alloc: Allocator,
     src: []const u8,
@@ -137,14 +117,9 @@ pub fn setImageCall(
     vector: bool,
     keep: bool,
 ) Allocator.Error![:0]u8 {
-    const three = try content.setImageCall(alloc, src, name, vector);
-    defer alloc.free(three);
-    return std.fmt.allocPrintSentinel(
-        alloc,
-        "{s}, {s})",
-        .{ three[0 .. three.len - 1], if (keep) "true" else "false" },
-        0,
-    );
+    const js = try content.setImageCall(alloc, src, name, vector, keep);
+    defer alloc.free(js);
+    return alloc.dupeZ(u8, js);
 }
 
 // -------------------------------------------------------------------------
@@ -190,22 +165,6 @@ test "codecTitle names the loader package, never a Windows Store package" {
     try testing.expect(std.mem.indexOf(u8, codecTitle(.heif), "heif-gdk-pixbuf") != null);
     try testing.expect(std.mem.indexOf(u8, codecTitle(.av1), "libavif-gdk-pixbuf") != null);
     try testing.expect(std.mem.indexOf(u8, codecTitle(.heif), "Windows") == null);
-}
-
-test "keptZoom: a same-size reload keeps a chosen zoom, anything else re-fits" {
-    const geom: Geometry = .{ .natural_w = 4000, .natural_h = 3000, .viewport_w = 800, .viewport_h = 600 };
-    // The user had stepped to 125%: same pixels, same zoom.
-    try testing.expectEqual(@as(?f64, 1.25), keptZoom(.{ .natural_w = 4000, .natural_h = 3000, .zoom = 1.25, .fitting = false }, geom));
-    // A fitted picture re-fits (null = fit), whatever its size.
-    try testing.expectEqual(@as(?f64, null), keptZoom(.{ .natural_w = 4000, .natural_h = 3000, .zoom = 0.2, .fitting = true }, geom));
-    // A re-export at another size: the old zoom describes a picture that no
-    // longer exists.
-    try testing.expectEqual(@as(?f64, null), keptZoom(.{ .natural_w = 4000, .natural_h = 2000, .zoom = 1.25, .fitting = false }, geom));
-    try testing.expectEqual(@as(?f64, null), keptZoom(.{ .natural_w = 3999, .natural_h = 3000, .zoom = 1.25, .fitting = false }, geom));
-    // No previous picture (a fresh open): fit.
-    try testing.expectEqual(@as(?f64, null), keptZoom(null, geom));
-    // A kept zoom is still clamped to what the pane allows.
-    try testing.expectEqual(@as(?f64, 32), keptZoom(.{ .natural_w = 4000, .natural_h = 3000, .zoom = 500, .fitting = false }, geom));
 }
 
 test "zoomCall: one call per chord, reset is 100%" {

@@ -69,12 +69,9 @@ pub fn start(self: *ViewerImage, v: *Viewer) void {
 /// zoom and the scroll if it comes back at the same pixel size.
 pub fn reload(self: *ViewerImage, v: *Viewer) void {
     const path = v.file_path orelse return v.showError(content.error_unreadable, v.current);
-    self.previous = if (self.geometry.natural_w > 0 and self.geometry.natural_h > 0) .{
-        .natural_w = self.geometry.natural_w,
-        .natural_h = self.geometry.natural_h,
-        .zoom = self.zoom,
-        .fitting = self.fitting,
-    } else null;
+    // A second save landing before the first decoded has measured nothing
+    // new: the picture the first one remembered is still the one to keep.
+    self.previous = rules.Previous.of(self.geometry, self.zoom, self.fitting) orelse self.previous;
     // WebKit first again: an edit may have turned an undecodable file into
     // one it can draw.
     self.route = rules.route(content.extension(path));
