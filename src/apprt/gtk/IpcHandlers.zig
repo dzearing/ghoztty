@@ -10,7 +10,8 @@
 //! `+close` plus the `focus` action (T3367), `+rearrange` (T3368), and
 //! `--view` viewer panes on `+new-window` / `+split` (T3411): a viewer is a
 //! `Surface` showing a web view instead of a terminal, listed as `type:
-//! viewer` with its `url`, and refused by the terminal verbs.
+//! viewer` with its `url`, and refused by the terminal verbs. `handoff-quit`
+//! (T3595) quits for a launch of another build.
 //! Every other verb answers a plain "not served by the Linux app yet" error
 //! naming the task that brings it, so a script learns the gap instead of
 //! hanging or guessing.
@@ -111,10 +112,9 @@ fn notYet(comptime verb: server.Verb, comptime task: []const u8) Allocator.Error
     );
 }
 
-pub fn handleNewRemoteWindow(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.new_remote_window, "T3337"); }
-pub fn handleHandoffQuit(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.handoff_quit, "T3337"); }
-pub fn handleStash(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.stash, "T3337"); }
-pub fn handleRestore(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.restore, "T3337"); }
+pub fn handleNewRemoteWindow(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.new_remote_window, "T3597"); }
+pub fn handleStash(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.stash, "T3596"); }
+pub fn handleRestore(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.restore, "T3596"); }
 
 // ---------------------------------------------------------------------------
 // DEBUG-ONLY test seams: not CLI verbs, compiled out of a release build, where
@@ -781,7 +781,7 @@ pub fn isPane(target: Target) bool {
 
 /// Open the window `+new-window` asked for, once the shared checks passed.
 /// `--from-focused` inherits a REMOTE parent's machine on win32; the Linux
-/// app has no remote windows yet (T3337), so it is always a local window here.
+/// app has no remote windows yet (T3597), so it is always a local window here.
 pub fn openWindow(
     app: Context,
     arena: Allocator,
@@ -1258,7 +1258,31 @@ fn selfExe(buf: []u8) []const u8 {
     return std.fs.selfExePath(buf) catch "";
 }
 
-pub fn handleVersion(_: Context, _: Request) Allocator.Error!?[]u8 {
+/// `handoff-quit` (win32's T1070, shared refusal in `os/ipc_handoff.zig`): a
+/// launch of a DIFFERENT build asks this instance to quit so it can start in
+/// its place. Not a CLI verb - only a launch carries the `handoff` identity -
+/// and refused when the launch is this same build (quitting would close the
+/// user's app for nothing). The quit itself is deferred until the reply is out.
+pub fn handleHandoffQuit(app: Context, request: Request) Allocator.Error!?[]u8 {
+    const own: ipc_handoff.Identity = .{
+        .version = build_identity.version,
+        .commit = build_identity.commit,
+    };
+    if (ipc_handoff.refuseHandoffQuit(request.handoff, own)) |why| {
+        log.warn("handoff-quit refused: {s}", .{why});
+        return try server.errorResponse(c_alloc, "{s}", .{why});
+    }
+    const launcher = request.handoff.?;
+    log.warn("handoff-quit: quitting so the launch of {s} ({s}) can take over (persistence={})", .{
+        launcher.version, launcher.exe, app.getConfig().get().@"session-persistence",
+    });
+    app.scheduleHandoffQuit();
+    return try c_alloc.dupe(u8, "{\"success\":true}");
+}
+
+const ipc_handoff = @import("../../os/ipc_handoff.zig");
+
+pub fn handleVersion(app: Context, _: Request) Allocator.Error!?[]u8 {
     var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
     const exe = selfExe(&exe_buf);
 
@@ -1285,6 +1309,13 @@ pub fn handleVersion(_: Context, _: Request) Allocator.Error!?[]u8 {
         jws.write(exe) catch break :write;
         jws.objectField("pid") catch break :write;
         jws.write(@as(i64, std.c.getpid())) catch break :write;
+        // T3399a: what a launch of another build reads before it offers
+        // "Switch" (win32's T1070 fields): this app serves `handoff-quit`,
+        // and whether quitting keeps the terminals (agent-hosted) or ends them.
+        jws.objectField("handoff_quit") catch break :write;
+        jws.write(true) catch break :write;
+        jws.objectField("session_persistence") catch break :write;
+        jws.write(app.getConfig().get().@"session-persistence") catch break :write;
         jws.endObject() catch break :write;
         jws.endObject() catch break :write;
         return try out.toOwnedSlice();

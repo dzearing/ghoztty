@@ -130,10 +130,10 @@ ctl=$(GHOZTTY_IPC_SOCKET="$decoy" "$app" +list --json 2>/dev/null | python3 -c '
 hl_check "I15c control: a CLI aimed at the decoy does reach it" $? "pid=$ctl hits=$(wc -l < "$decoy_hits")"
 
 # A verb not served yet says so, naming the task, and fails. (+set-banner was
-# the probe until T3339 served it; +stash waits on T3337. When that lands,
+# the probe until T3339 served it; +stash waits on T3596. When that lands,
 # move the probe to whatever verb is still unserved, or retire the check.)
-[ "$(cat "$pane/unserved.rc")" != 0 ] && grep -q 'not served by the Linux app yet (T3337)' "$pane/unserved.out"
-hl_check "I16 +stash answers 'not served by the Linux app yet (T3337)'" $? "$(head -c 200 "$pane/unserved.out")"
+[ "$(cat "$pane/unserved.rc")" != 0 ] && grep -q 'not served by the Linux app yet (T3596)' "$pane/unserved.out"
+hl_check "I16 +stash answers 'not served by the Linux app yet (T3596)'" $? "$(head -c 200 "$pane/unserved.out")"
 
 # Outside any pane, the CLI derives the same path from the same environment.
 out=$(env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID "$app" +version 2>&1)

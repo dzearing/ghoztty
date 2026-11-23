@@ -687,6 +687,27 @@ pub const Application = extern struct {
         dialog.present(parent);
     }
 
+    /// `handoff-quit` (T1070 on win32, T3399a here): a launch of a DIFFERENT
+    /// build asked this instance to quit so it can take its place. The quit
+    /// is deferred so the IPC reply - which tells the launch to wait for this
+    /// process to exit - is written before the app goes. It is the ordinary
+    /// `quitNow` (no confirmation: the user answered the launch's question),
+    /// so the layout is saved and every agent-hosted pane detaches for the
+    /// new build's restore to re-attach.
+    pub fn scheduleHandoffQuit(self: *Self) void {
+        _ = glib.timeoutAdd(handoff_quit_delay_ms, handleHandoffQuitTimer, self);
+    }
+
+    const handoff_quit_delay_ms: c_uint = 150;
+
+    fn handleHandoffQuitTimer(ud: ?*anyopaque) callconv(.c) c_int {
+        const self: *Self = @ptrCast(@alignCast(ud orelse
+            return @intFromBool(glib.SOURCE_REMOVE)));
+        log.info("handoff-quit: quitting so another build can take over", .{});
+        if (self.private().running) self.quitNow();
+        return @intFromBool(glib.SOURCE_REMOVE);
+    }
+
     /// True once the app has begun quitting (T3337). See `Private.quitting`.
     pub fn isQuitting(self: *Self) bool {
         return self.private().quitting;
