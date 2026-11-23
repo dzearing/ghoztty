@@ -64,7 +64,10 @@ param(
     [int]$FramesPerLine = 20,
     [int]$FullscreenFrames = 1000,
     [switch]$KeepTemp,
-    [switch]$Interactive
+    [switch]$Interactive,
+    # T1871 control: tuiA's player dies once before its first line, so the run
+    # must take the relaunch branch (B3a says `started` only if it worked).
+    [switch]$SimulatePlayerDeath
 )
 
 # T351: the shared reset/kill helpers (Stop-RepoGhoztty). Dot-sourced HERE, ahead
@@ -253,9 +256,18 @@ function New-FullscreenStream($tag, $frames, $rows = 24, $cols = 80) {
 # The pane-side player: write the stream to the console (VT is interpreted - the
 # same path session-relaunch.ps1's mode arming takes), then idle like a TUI
 # waiting for input. ASCII-only source; the stream itself is UTF-8.
+#
+# T1871: the launch is OBSERVABLE. The wrapper and the player each leave a line
+# in launch<A|B>.txt - the wrapper on entry and with the player's exit code, the
+# player before it writes a byte - so a pane that never shows its stream says
+# WHICH half never happened, instead of a 180s render wait reading the same for
+# "the app dropped --command" and "powershell died before its first line".
 function Write-Players($dir) {
     $player = @'
-param([string]$In)
+param([string]$In, [string]$Marker)
+$once = [IO.Path]::ChangeExtension($Marker, '.die-once')
+if (Test-Path -LiteralPath $once) { Remove-Item -LiteralPath $once -Force; exit 7 }
+Add-Content -LiteralPath $Marker -Value 'PLAYER-PS-START' -Encoding ascii
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $text = [IO.File]::ReadAllText($In, [Text.Encoding]::UTF8)
 $chunk = 65536
@@ -267,9 +279,53 @@ Start-Sleep -Seconds 999999
 '@
     Set-Content -Path (Join-Path $dir 'player.ps1') -Value $player -Encoding ascii
     foreach ($t in 'A', 'B') {
-        Set-Content -Path (Join-Path $dir "play$t.cmd") -Encoding ascii `
-            -Value "@powershell -NoProfile -ExecutionPolicy Bypass -File `"%~dp0player.ps1`" -In `"%~dp0stream$t.txt`""
+        # The exit line puts a space before `>>` so the exit code's last digit
+        # is never read as a handle number.
+        Set-Content -Path (Join-Path $dir "play$t.cmd") -Encoding ascii -Value @(
+            "@echo PLAYER-CMD-START>`"%~dp0launch$t.txt`"",
+            "@powershell -NoProfile -ExecutionPolicy Bypass -File `"%~dp0player.ps1`" -In `"%~dp0stream$t.txt`" -Marker `"%~dp0launch$t.txt`"",
+            "@echo PLAYER-EXIT %errorlevel% >>`"%~dp0launch$t.txt`""
+        )
     }
+}
+
+# T1871: what became of a pane's stream launch, read off launch<t>.txt:
+# 'started' (the player is running), 'exited <code>' (the wrapper ran - so the
+# pane DID run its --command - and the player died before its first line),
+# 'wrapper-only' (the wrapper ran, the player neither started nor exited), or
+# 'never' (no wrapper: the pane never ran its --command at all).
+function Get-StreamLaunch($t, $timeoutSec = 60) {
+    $marker = Join-Path $streamDir "launch$t.txt"
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $m = [string](Get-Content -LiteralPath $marker -Raw -ErrorAction SilentlyContinue)
+        if ($m -match 'PLAYER-PS-START') { return 'started' }
+        if ($m -match 'PLAYER-EXIT (-?\d+)') { return "exited $($Matches[1])" }
+        Start-Sleep -Milliseconds 500
+    }
+    if (Test-Path -LiteralPath $marker) { return 'wrapper-only' }
+    return 'never'
+}
+# The launch, verified. A player that died before its first line is a box
+# condition (seen 2026-10-11, 8th in a sequential batch: both panes sat at a
+# bare prompt), not the restore under test - the pane ran its command - so it is
+# relaunched ONCE by typing the wrapper into the pane's shell, and the run says
+# so. A pane that never ran its --command is the product's failure and is
+# scored at once, not after a 180s render wait.
+function Confirm-StreamLaunch($t, $id, $label) {
+    $state = Get-StreamLaunch $t
+    if ($state -like 'exited*') {
+        Say "  info: tui$t's player died before its first line ($state) after the pane ran its --command; relaunching it once from the pane's shell"
+        Remove-Item -LiteralPath (Join-Path $streamDir "launch$t.txt") -Force -ErrorAction SilentlyContinue
+        Run-CliArgs @('+send-keys', "--target=$id", (Join-Path $streamDir "play$t.cmd"), 'Enter') "$tmp\relaunch-$t.txt" 12 | Out-Null
+        $state = Get-StreamLaunch $t
+    }
+    Assert "$label tui$t ran its --command and the stream player started ($state)" ($state -eq 'started')
+    if ($state -ne 'started') {
+        Say "== DIAG: tui$t at the failed launch (tail) =="
+        Say (((Read-Pane $id "launch-$t" 40) -split "`r?`n") | Select-Object -Last 12 | Out-String)
+    }
+    return ($state -eq 'started')
 }
 
 # --- in-pane probes ------------------------------------------------------------
@@ -402,6 +458,7 @@ $utf8 = New-Object System.Text.UTF8Encoding($false)
 [IO.File]::WriteAllText((Join-Path $streamDir 'streamA.txt'), (New-InlineStream 'A' $Convo $FramesPerLine), $utf8)
 [IO.File]::WriteAllText((Join-Path $streamDir 'streamB.txt'), (New-FullscreenStream 'B' $FullscreenFrames), $utf8)
 Write-Players $streamDir
+if ($SimulatePlayerDeath) { Set-Content -LiteralPath (Join-Path $streamDir 'launchA.die-once') -Value 'x' -Encoding ascii }
 Write-ProbeScripts $probeDir
 $sizeA = (Get-Item (Join-Path $streamDir 'streamA.txt')).Length
 $sizeB = (Get-Item (Join-Path $streamDir 'streamB.txt')).Length
@@ -423,8 +480,12 @@ Assert "B2 all three named windows came up ($($ids.Keys -join ','))" ($ids.Count
 
 # Live phase: the panes must FINISH their streams - and the app must keep up.
 $t0 = Get-Date
-Assert "B3 tuiA's stream finished rendering live (FINAL-A)" (Wait-PaneTight $ids['tuiA'] 'liveA' 'FINAL-A' 180)
-Assert "B4 tuiB's stream finished rendering live (FINAL-B)" (Wait-PaneTight $ids['tuiB'] 'liveB' 'FINAL-B' 180)
+# T1871: a stream that never launched is scored as that, at once - the render
+# wait below is only for a stream that is actually playing.
+$launchedA = Confirm-StreamLaunch 'A' $ids['tuiA'] 'B3a'
+$launchedB = Confirm-StreamLaunch 'B' $ids['tuiB'] 'B4a'
+Assert "B3 tuiA's stream finished rendering live (FINAL-A)" ($launchedA -and (Wait-PaneTight $ids['tuiA'] 'liveA' 'FINAL-A' 180))
+Assert "B4 tuiB's stream finished rendering live (FINAL-B)" ($launchedB -and (Wait-PaneTight $ids['tuiB'] 'liveB' 'FINAL-B' 180))
 Say "  both streams rendered live in $([math]::Round(((Get-Date) - $t0).TotalSeconds, 1))s"
 
 # LIVE integrity, before any reboot - the positive control for H1: if the live
