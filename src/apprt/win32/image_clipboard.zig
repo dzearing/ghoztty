@@ -220,6 +220,84 @@ pub fn orientInto(
 
 pub const Oriented = struct { bgra: []u8, width: u32, height: u32 };
 
+// ------------------------------------------------------- the file (T1909)
+//
+// Mac's copy writes the file URL beside the picture, so a paste into Finder
+// makes a copy of the file and a paste into a terminal gets its path. The
+// Windows shape of a file on the clipboard is `CF_HDROP` - what Explorer's
+// own ctrl+C writes - plus `"Preferred DropEffect"` saying COPY, so Explorer
+// never treats the paste as a cut and moves the user's file away.
+//
+// It goes on the clipboard AFTER the picture formats: a reader that walks the
+// formats in order and takes the first it knows (Paint, Office, Teams) finds
+// the picture first and pastes it inline, while Explorer, which reads no
+// bitmap at all, finds the file.
+
+/// `sizeof(DROPFILES)`: `pFiles` (u32), `pt` (2 x i32), `fNC` (BOOL),
+/// `fWide` (BOOL).
+pub const dropfiles_header_size: usize = 20;
+
+/// `DROPEFFECT_COPY`, the DWORD the `"Preferred DropEffect"` format carries.
+pub const dropeffect_copy: u32 = 1;
+
+/// A `CF_HDROP` block naming the one file at `path` (UTF-8/WTF-8): the
+/// `DROPFILES` header, then the path in UTF-16 with forward slashes turned
+/// into the backslashes Explorer expects, then the empty string that ends the
+/// list. `InvalidPath` for a path that is not absolute - a drop of a relative name
+/// resolves against whatever folder the PASTING program is in, which is
+/// never the file the user was looking at. Caller frees.
+pub fn dropFiles(alloc: Allocator, path: []const u8) (error{InvalidPath} || Allocator.Error)![]u8 {
+    if (!std.fs.path.isAbsoluteWindows(path)) return error.InvalidPath;
+    const wide = std.unicode.wtf8ToWtf16LeAlloc(alloc, path) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.InvalidPath,
+    };
+    defer alloc.free(wide);
+    if (std.mem.indexOfScalar(u16, wide, 0) != null) return error.InvalidPath;
+
+    // The path, its terminator, and the list's terminator.
+    const chars = wide.len + 2;
+    const out = try alloc.alloc(u8, dropfiles_header_size + chars * 2);
+    @memset(out, 0);
+    std.mem.writeInt(u32, out[0..4], @intCast(dropfiles_header_size), .little); // pFiles
+    std.mem.writeInt(u32, out[16..20], 1, .little); // fWide
+    const list = out[dropfiles_header_size..];
+    for (wide, 0..) |c, i| {
+        const ch: u16 = if (c == '/') '\\' else c;
+        std.mem.writeInt(u16, list[i * 2 ..][0..2], ch, .little);
+    }
+    return out;
+}
+
+/// The paths a `CF_HDROP` block names, UTF-8 - the reader `dropFiles` is
+/// checked against, and what the acceptance script's own reader mirrors.
+/// Caller frees the slice and each path.
+pub fn dropFilesPaths(alloc: Allocator, blob: []const u8) ![][]u8 {
+    if (blob.len < dropfiles_header_size) return error.BadDrop;
+    const off = std.mem.readInt(u32, blob[0..4], .little);
+    const wide = std.mem.readInt(u32, blob[16..20], .little) != 0;
+    if (!wide or off > blob.len) return error.BadDrop;
+    var paths: std.ArrayList([]u8) = .empty;
+    errdefer {
+        for (paths.items) |p| alloc.free(p);
+        paths.deinit(alloc);
+    }
+    var i: usize = off;
+    while (i + 2 <= blob.len) {
+        const start = i;
+        while (i + 2 <= blob.len and std.mem.readInt(u16, blob[i..][0..2], .little) != 0) i += 2;
+        if (i + 2 > blob.len) return error.BadDrop;
+        if (i == start) break; // the empty string ends the list
+        const n = (i - start) / 2;
+        const units = try alloc.alloc(u16, n);
+        defer alloc.free(units);
+        for (0..n) |k| units[k] = std.mem.readInt(u16, blob[start + k * 2 ..][0..2], .little);
+        try paths.append(alloc, try std.unicode.wtf16LeToWtf8Alloc(alloc, units));
+        i += 2;
+    }
+    return paths.toOwnedSlice(alloc);
+}
+
 /// BGRA → RGBA, the channel order `png_encode` takes. Caller frees.
 pub fn bgraToRgba(alloc: Allocator, bgra: []const u8) Allocator.Error![]u8 {
     const out = try alloc.alloc(u8, bgra.len);
@@ -353,6 +431,59 @@ test "orient: a tag outside 1-8 shows the picture as stored" {
 test "orient refuses a buffer that does not match its dimensions" {
     const px = [_]u8{0} ** 8;
     try testing.expectError(error.BadPixels, orient(testing.allocator, &px, 3, 2, .rotate_90));
+}
+
+fn freePaths(paths: [][]u8) void {
+    for (paths) |p| testing.allocator.free(p);
+    testing.allocator.free(paths);
+}
+
+test "dropFiles names the one file, wide, double-terminated (T1909)" {
+    const alloc = testing.allocator;
+    const blob = try dropFiles(alloc, "C:\\pics\\cat.png");
+    defer alloc.free(blob);
+    // Header + 15 chars + two terminators, two bytes each.
+    try testing.expectEqual(dropfiles_header_size + (15 + 2) * 2, blob.len);
+    try testing.expectEqual(@as(u32, 20), std.mem.readInt(u32, blob[0..4], .little));
+    try testing.expectEqual(@as(u32, 1), std.mem.readInt(u32, blob[16..20], .little));
+    // The list ends in two zero characters.
+    try testing.expectEqualSlices(u8, &.{ 0, 0, 0, 0 }, blob[blob.len - 4 ..]);
+    const paths = try dropFilesPaths(alloc, blob);
+    defer freePaths(paths);
+    try testing.expectEqual(@as(usize, 1), paths.len);
+    try testing.expectEqualStrings("C:\\pics\\cat.png", paths[0]);
+}
+
+test "dropFiles turns forward slashes into backslashes and keeps non-ASCII names" {
+    const alloc = testing.allocator;
+    const blob = try dropFiles(alloc, "D:/Users/Zoë/Pictures/日本.jpg");
+    defer alloc.free(blob);
+    const paths = try dropFilesPaths(alloc, blob);
+    defer freePaths(paths);
+    try testing.expectEqualStrings("D:\\Users\\Zoë\\Pictures\\日本.jpg", paths[0]);
+    // A UNC share path is absolute too.
+    const unc = try dropFiles(alloc, "\\\\nas\\share\\a.png");
+    defer alloc.free(unc);
+    const up = try dropFilesPaths(alloc, unc);
+    defer freePaths(up);
+    try testing.expectEqualStrings("\\\\nas\\share\\a.png", up[0]);
+}
+
+test "dropFiles refuses a relative path rather than naming the wrong file" {
+    const alloc = testing.allocator;
+    try testing.expectError(error.InvalidPath, dropFiles(alloc, "cat.png"));
+    try testing.expectError(error.InvalidPath, dropFiles(alloc, "pics\\cat.png"));
+    try testing.expectError(error.InvalidPath, dropFiles(alloc, ""));
+}
+
+test "dropFilesPaths refuses a block with no terminator" {
+    const alloc = testing.allocator;
+    var blob = [_]u8{0} ** (dropfiles_header_size + 4);
+    std.mem.writeInt(u32, blob[0..4], 20, .little);
+    std.mem.writeInt(u32, blob[16..20], 1, .little);
+    blob[20] = 'a'; // 'a' then a lone half of a terminator
+    blob[22] = 'b';
+    try testing.expectError(error.BadDrop, dropFilesPaths(alloc, &blob));
 }
 
 test "orientInto writes what orient returns, into a buffer it does not own" {

@@ -1,15 +1,15 @@
 {
     "guard":  "viewer-nav-pin",
     "script":  "test/win32/viewer-nav-pin.ps1",
-    "generated":  "2026-11-22T23:30:08-08:00",
-    "commit":  "56b3f8068",
+    "generated":  "2026-11-23T05:19:44-08:00",
+    "commit":  "76305eacd",
     "uncommitted":  [
-                        "src/apprt/win32/ViewerNavBar.zig"
+                        "src/apprt/win32/ViewerPane.zig"
                     ],
     "files":  {
                   "src/apprt/win32/viewer_nav_layout.zig":  "169666f4f29e3d7066727112f7ef7459fc401ce38f56ef2dfb6f34892900deea",
                   "src/apprt/win32/ViewerNavBar.zig":  "a407509dd2226edbff97599f5bc8583e5c01a83d74d4126125c4ea0027a5f306",
-                  "src/apprt/win32/ViewerPane.zig":  "6d1509cb6faeabe0aed9a728e45369e1954a5268280f7fa1f0a7dde1ab6b4525",
+                  "src/apprt/win32/ViewerPane.zig":  "2ce66f198e475c9ae4f046f34024b6b8b033d28748a8ab01587699c8fecce523",
                   "test/win32/viewer-nav-pin.ps1":  "aa1bb25207c4638148dab8b6b8f6f9a7de78ae7ab7065d50751a17825ec64261"
               },
     "code":  {

@@ -1344,6 +1344,8 @@ pub const CF_UNICODETEXT: u32 = 13;
 pub const CF_BITMAP: u32 = 2;
 pub const CF_DIB: u32 = 8;
 pub const CF_DIBV5: u32 = 17;
+/// A list of files, as Explorer's own ctrl+C writes it (T1909).
+pub const CF_HDROP: u32 = 15;
 
 pub extern "user32" fn RegisterClipboardFormatW(
     lpszFormat: [*:0]const u16,

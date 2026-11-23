@@ -772,17 +772,32 @@ try {
                     $o = [Windows.Forms.Clipboard]::GetDataObject()
                     $img = [Windows.Forms.Clipboard]::GetImage()
                     $txt = if ([Windows.Forms.Clipboard]::ContainsText()) { [Windows.Forms.Clipboard]::GetText() } else { '' }
+                    # T1909: the file itself, as Explorer's own ctrl+C writes it,
+                    # and the drop effect that keeps a paste from being a move.
+                    $files = @()
+                    if ([Windows.Forms.Clipboard]::ContainsFileDropList()) {
+                        $files = @([Windows.Forms.Clipboard]::GetFileDropList())
+                    }
+                    $effect = -1
+                    if ($o -and $o.GetDataPresent('Preferred DropEffect')) {
+                        $ms = $o.GetData('Preferred DropEffect')
+                        if ($ms -is [IO.MemoryStream] -and $ms.Length -ge 4) {
+                            $effect = [BitConverter]::ToInt32($ms.ToArray(), 0)
+                        }
+                    }
                     $shape = [pscustomobject]@{
                         W       = if ($img) { $img.Width } else { 0 }
                         H       = if ($img) { $img.Height } else { 0 }
                         HasPng  = ($o -and (@($o.GetFormats()) -contains 'PNG'))
                         Text    = $txt
+                        Files   = $files
+                        Effect  = $effect
                     }
                     if ($img) { $img.Dispose() }
                     return $shape
                 } catch { Start-Sleep -Milliseconds 100 }
             }
-            return [pscustomobject]@{ W = 0; H = 0; HasPng = $false; Text = '' }
+            return [pscustomobject]@{ W = 0; H = 0; HasPng = $false; Text = ''; Files = @(); Effect = -1 }
         }
         function Get-CopyLines($paneId) {
             if (-not $paneId -or -not (Test-Path $errlog)) { return @() }
@@ -819,6 +834,13 @@ try {
                 "K1: the clipboard now holds a 4000x3000 picture (read back $($clip.W)x$($clip.H))"
             Assert $clip.HasPng 'K1: ...with a PNG format alongside the bitmap'
             Assert ($clip.Text -ne 't1872-sentinel-1') 'K1: ...and the sentinel text is gone'
+            # K6 (T1909). The FILE goes on beside the picture, so a paste into
+            # Explorer makes a copy - Mac writes the file URL the same way.
+            $bigFull = (Resolve-Path -LiteralPath $bigPath).ProviderPath
+            Assert ($line -match ' file=true') "K6: the PNG copy reports the file was offered (log: '$line')"
+            Assert ($clip.Files.Count -eq 1 -and $clip.Files[0] -ieq $bigFull) `
+                "K6: the clipboard's file drop names the viewed file (read back '$($clip.Files -join ';')', want '$bigFull')"
+            Assert ($clip.Effect -eq 1) "K6: ...with Preferred DropEffect = COPY, so the paste never moves it (read back $($clip.Effect))"
 
             # K2. a JPEG: opaque and not a PNG, so the bitmap alone.
             $kj = Open-ViewerTop 't1872jpg' $jpgPath
@@ -830,6 +852,9 @@ try {
             $clip = Get-ClipShape
             Assert ($clip.W -eq 800 -and $clip.H -eq 400) "K2: the clipboard holds an 800x400 picture (read back $($clip.W)x$($clip.H))"
             Assert (-not $clip.HasPng) 'K2: ...and no PNG re-encode of an opaque photo'
+            $jpgFull = (Resolve-Path -LiteralPath $jpgPath).ProviderPath
+            Assert ($clip.Files.Count -eq 1 -and $clip.Files[0] -ieq $jpgFull) `
+                "K6: the JPEG copy offers its file too (read back '$($clip.Files -join ';')', want '$jpgFull')"
 
             # K3. ctrl+Insert is the same copy.
             Set-Sentinel 't1872-sentinel-3'

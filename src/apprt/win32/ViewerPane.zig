@@ -6414,8 +6414,8 @@ fn copyImage(self: *ViewerPane) void {
         return;
     };
     log.info(
-        "viewer image copy pane={s} ok=true size={d}x{d} png={s} png_bytes={d}",
-        .{ self.paneId(), result.width, result.height, @tagName(result.png), result.png_bytes },
+        "viewer image copy pane={s} ok=true size={d}x{d} png={s} png_bytes={d} file={}",
+        .{ self.paneId(), result.width, result.height, @tagName(result.png), result.png_bytes, result.file },
     );
 }
 

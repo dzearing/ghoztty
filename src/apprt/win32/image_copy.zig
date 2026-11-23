@@ -51,6 +51,9 @@ pub const Result = struct {
     height: u32,
     png: image_clipboard.PngPlan,
     png_bytes: usize,
+    /// Whether the FILE went on too (`CF_HDROP`, T1909), so a paste into
+    /// Explorer copies it. False only when the path could not be named.
+    file: bool,
 };
 
 /// The file is read whole for the verbatim-PNG case; past this it is not a
@@ -97,23 +100,36 @@ pub fn copyFile(alloc: Allocator, path: []const u8) ?Result {
         },
     };
 
-    if (!publish(dib, png)) {
+    // The file itself (T1909). A path that cannot be named still copies the
+    // picture: the file is the extra, never the reason the copy fails.
+    const drop: ?[]u8 = image_clipboard.dropFiles(alloc, path) catch |err| blk: {
+        log.warn("image copy: {s} not offered as a file: {}", .{ path, err });
+        break :blk null;
+    };
+    defer if (drop) |d| alloc.free(d);
+
+    const published = publish(dib, png, drop) orelse {
         log.warn("image copy: the clipboard could not be opened for {s}", .{path});
         return null;
-    }
+    };
     return .{
         .width = decoded.width,
         .height = decoded.height,
         .png = if (png == null) .none else plan,
         .png_bytes = if (png) |p| p.len else 0,
+        .file = published.file,
     };
 }
 
-/// Put the DIB (and the PNG, when there is one) on the clipboard in one
-/// open/empty/set sequence. PNG first: a reader that enumerates formats in
-/// order and knows "PNG" takes the lossless, alpha-carrying one.
-fn publish(dib: []const u8, png: ?[]const u8) bool {
-    const dib_mem = globalCopy(dib) orelse return false;
+const Published = struct { file: bool };
+
+/// Put the DIB (and the PNG, when there is one, and the file, when it can be
+/// named) on the clipboard in one open/empty/set sequence. The order is the
+/// order readers see: PNG first, so a reader that enumerates formats and knows
+/// "PNG" takes the lossless, alpha-carrying one; the file LAST, so only a
+/// reader that wants no picture at all - Explorer - ends up with it.
+fn publish(dib: []const u8, png: ?[]const u8, drop: ?[]const u8) ?Published {
+    const dib_mem = globalCopy(dib) orelse return null;
     var dib_owned = false;
     defer if (!dib_owned) {
         _ = w32.GlobalFree(dib_mem);
@@ -125,7 +141,21 @@ fn publish(dib: []const u8, png: ?[]const u8) bool {
         if (png_mem) |m| _ = w32.GlobalFree(m);
     };
 
-    if (!clipboard_open.open(null)) return false;
+    var drop_mem: ?*anyopaque = null;
+    var drop_owned = false;
+    if (drop) |d| drop_mem = globalCopy(d);
+    defer if (!drop_owned) {
+        if (drop_mem) |m| _ = w32.GlobalFree(m);
+    };
+    const effect = std.mem.toBytes(std.mem.nativeToLittle(u32, image_clipboard.dropeffect_copy));
+    var effect_mem: ?*anyopaque = null;
+    var effect_owned = false;
+    if (drop_mem != null) effect_mem = globalCopy(&effect);
+    defer if (!effect_owned) {
+        if (effect_mem) |m| _ = w32.GlobalFree(m);
+    };
+
+    if (!clipboard_open.open(null)) return null;
     defer _ = w32.CloseClipboard();
     _ = w32.EmptyClipboard();
     // SetClipboardData owns the HGLOBAL on success, and only then.
@@ -133,9 +163,30 @@ fn publish(dib: []const u8, png: ?[]const u8) bool {
         const fmt = clipboard_image.pngFormat();
         if (fmt != 0 and w32.SetClipboardData(fmt, m) != null) png_owned = true;
     }
-    if (w32.SetClipboardData(w32.CF_DIBV5, dib_mem) == null) return false;
+    if (w32.SetClipboardData(w32.CF_DIBV5, dib_mem) == null) return null;
     dib_owned = true;
-    return true;
+    if (drop_mem) |m| {
+        if (w32.SetClipboardData(w32.CF_HDROP, m) != null) drop_owned = true;
+    }
+    // Without COPY, Explorer is free to read the paste as a move.
+    if (drop_owned) {
+        if (effect_mem) |m| {
+            const fmt = dropEffectFormat();
+            if (fmt != 0 and w32.SetClipboardData(fmt, m) != null) effect_owned = true;
+        }
+    }
+    return .{ .file = drop_owned };
+}
+
+/// The registered `"Preferred DropEffect"` format (`CFSTR_PREFERREDDROPEFFECT`).
+fn dropEffectFormat() u32 {
+    const State = struct {
+        var id: u32 = 0;
+    };
+    if (State.id == 0) State.id = w32.RegisterClipboardFormatW(
+        std.unicode.utf8ToUtf16LeStringLiteral("Preferred DropEffect"),
+    );
+    return State.id;
 }
 
 fn globalCopy(bytes: []const u8) ?*anyopaque {
