@@ -39839,3 +39839,6 @@ Reproduce-first: agent-recovery.ps1 is ALL PASS (104 assertions) on HEAD 15640bd
 ## 2026-11-22 16:50 lane b - T3440: a push no longer cancels the Fork CI run already building
 - The cache fix's own runs never finished: every Fork CI run since 23:55Z (12 in a row) was cancelled by the next push. The lanes push every 3-5 minutes, a cold windows-cross takes ~15, and since the cache fix a cancelled run saves nothing, so every run was cold and none could ever reach a verdict.
 - fork-ci.yml: cancel-in-progress is now `github.event_name == 'pull_request'`. A push lets the in-flight run finish and GitHub keeps only the newest pending one, so a verdict lands about every compile-length. release-artifacts.ps1 E15 locks it; ALL PASS.
+## 2026-11-22 17:50 lane b - T1776: App.zig's split is planned as sixteen planes
+- App.zig re-measured at 15,388 lines with six banners, so it cannot move in one context. Like T1775, it is split per plane: T3448-T3463, one new `app_*.zig` file each, every range named by first and last function, all using the T3436 split/proof tooling.
+- T3464 re-measures the owner once all sixteen land (it depends on them). No code change in this turn.
