@@ -58,12 +58,15 @@ test "T3417: a cancel ends the git in flight and refuses the next (POSIX)" {
     var cancel: git_run.Cancel = .{};
     var first: ?git_run.Output = null;
     var second_launched = true;
+    // Started before the spawn so nothing between the spawn and the join can
+    // return early and leave the worker running.
+    var timer = try std.time.Timer.start();
     const t = try std.Thread.spawn(.{}, Worker.run, .{ &cancel, stub, &first, &second_launched });
     std.Thread.sleep(300 * std.time.ns_per_ms);
-    var timer = try std.time.Timer.start();
+    const requested_at = timer.read();
     cancel.request();
     t.join();
-    const elapsed_ms = timer.read() / std.time.ns_per_ms;
+    const elapsed_ms = (timer.read() - requested_at) / std.time.ns_per_ms;
     try testing.expect(elapsed_ms < 3_000);
     // A cancelled run answers nothing, and nothing after it starts.
     if (first) |o| testing.allocator.free(o.bytes);
