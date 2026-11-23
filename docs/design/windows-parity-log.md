@@ -39875,3 +39875,8 @@ Reproduce-first: agent-recovery.ps1 is ALL PASS (104 assertions) on HEAD 15640bd
 - T3531 re-measures the owner once all land (it depends on them). No code change in this turn.## 2026-11-22 19:40 lane b - T1781: the feedback composer's file is split into four planes
 - ViewerFeedbackBar.zig 2,745 -> 1,157 lines: painting, tooltips/focus/screen readers, images/carousel and the web composer moved to `viewer_feedback_{paint,focus,carousel,composer}.zig` with split-plane.py; PROOF OK (97 fns identical), negative control red.
 - The moved cue tests ran in no lane until the planes were listed in src/apprt/win32.zig; teeth-check then red under the new module. Floor green; all five viewer-feedback harnesses green; guard rows cover the planes. Filed T3539 (test-reach D5, GTK exemption) and acked test-reach to it.
+
+## 2026-11-22 20:40 - T1782 done: win32 IpcHandlers.zig split into planes
+
+- 2,171 -> 1,214 lines. Five planes cut on the existing function seams: ipc_list.zig (+list), ipc_remote_window.zig (+new-remote-window and relay token resolution), ipc_rearrange.zig, ipc_stash.zig, ipc_version.zig (version, handoff-quit, the launch-handoff note). An alias block in the owner is its public surface for them, so the shared dispatcher and every apprt caller are unchanged.
+- Evidence: top-level fn signature set identical; the code-line multiset differs only by import/alias declarations. Build clean; floor-lane all PASS; due sweep (42 scripts) green on every harness that drives the moved verbs, and every red is pre-existing. Filed T3542 (test-reach D5 stale gtk exemption, guard acked) and T3543 (thread-join C1 in gtk git_run_posix_test, seat linux), both from T3417.
