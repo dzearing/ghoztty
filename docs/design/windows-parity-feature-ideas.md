@@ -796,3 +796,13 @@ as the digest that showed them.
 - An update proves it can open a pane before it takes over (the new version opens a pane and runs a command first; on failure you stay on the working version)
 - A busy session service never slows your typing (new angle on "typing never waits": keys echo within a frame even when the session service is slow)
 - The same script drives Ghoztty on every platform (a ghoztty CLI script runs unchanged on Windows, Mac and Linux, proven by one shared script per release)
+
+## 2026-11-23
+
+- A diff takes you back to where you were in each file (returning to a file in a diff pane lands on the change you last read, not its top)
+- The focused pane turns solid on a see-through window (new angle on readable glass: the pane you type in goes opaque, the others stay translucent)
+- Press and hold to see a picture's last save (an image pane that reloads on save shows the previous version while a key is held)
+- A ghoztty:// link says which pane it opens (new angle on hover cards: names the pane and window, or says it is gone and offers a fresh one)
+- Updated hook scripts say what changed (when Ghoztty refreshes agent hook scripts on start, a note names them and offers the difference)
+- Carry Ghoztty on a USB stick (a portable copy keeps settings and saved sessions in its own folder and leaves the host PC untouched)
+- Signing in never opens a window twice (relay windows replayed on sign-in focus any that are already open instead of duplicating them)
