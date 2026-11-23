@@ -104,6 +104,9 @@ const quoting = @import("viewer_quote.zig");
 
 const log = std.log.scoped(.gtk_viewer);
 
+/// An adopted popup's window size (T3447).
+pub const PopupSize = links.PopupSize;
+
 /// The `g_object_set_data` key a web view carries its viewer under.
 const data_key = "ghoztty-viewer";
 
@@ -189,6 +192,20 @@ on_focus_link: ?*const fn (*Viewer, url: []const u8) void = null,
 /// A key press the pane does not claim, offered to the app's keybindings
 /// (T3430): true when a binding took it. Set by the hosting pane.
 on_app_chord: ?*const fn (*Viewer, keyval: u32, keycode: u32, state: u32) bool = null,
+/// Host a popup this viewer's page opened as a window of its own (T3447),
+/// at the size the page asked for (null: the ordinary default). Set by the
+/// hosting pane; a viewer with none (the debug test window) adopts nothing.
+on_adopt_popup: ?*const fn (popup: *Viewer, size: ?PopupSize) void = null,
+/// The page called `window.close()` on a window a script opened (T3447).
+/// Set by the hosting pane, which closes itself.
+on_close_requested: ?*const fn (*Viewer) void = null,
+/// An adopted popup waiting for `ready-to-show`: who will host it, and
+/// whether it is already in a pane.
+popup_host: ?*const fn (popup: *Viewer, size: ?PopupSize) void = null,
+popup_state: enum { none, waiting, hosted } = .none,
+/// The idle that carries out a `window.close()`, removed if the viewer goes
+/// first.
+close_idle: c_uint = 0,
 /// The pointer's last position over the page, in the web view's own
 /// coordinates: where the link menu pops up (Mac: at the pointer).
 pointer_x: f64 = 0,
@@ -241,7 +258,47 @@ const Bar = struct {
 /// owned by its web view: it is freed when the widget is destroyed.
 pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
     registerSchemes();
+    const self = try build(alloc, location, wk.webkit_web_view_new());
+    self.navigate(location);
+    return self;
+}
 
+/// A viewer around the web view WebKit will load a popup into (T3447): built
+/// RELATED to `opener`'s view, so the page that asked keeps `window.opener`
+/// and its `window.close()` reaches us, and never navigated by us - WebKit
+/// loads the popup's request itself once `create` returns it. `location` is
+/// what the pane is titled by until that load commits (the popup's URL, or
+/// `about:blank` for a bare `window.open()`). It gets a content manager of
+/// its own: a related view otherwise shares the opener's, and the popup's
+/// find count, link menu and file links would be answered by the opener.
+/// Its read grant is the opener's, so a rendered page's popup into its own
+/// folder resolves.
+pub fn createPopup(alloc: Allocator, opener: *Viewer, location: []const u8) !*Viewer {
+    const ucm = wk.webkit_user_content_manager_new();
+    const obj = wk.g_object_new(
+        wk.webkit_web_view_get_type(),
+        "related-view",
+        opener.view,
+        "user-content-manager",
+        ucm,
+        @as(?[*:0]const u8, null),
+    ) orelse {
+        wk.g_object_unref(ucm);
+        return error.OutOfMemory;
+    };
+    // The view holds its own reference now.
+    wk.g_object_unref(ucm);
+    const w: *wk.GtkWidget = @ptrCast(obj);
+    const self = try build(alloc, location, w);
+    self.setBaseDir(opener.base_dir);
+    if (opener.origin_dir) |d| self.origin_dir = alloc.dupe(u8, d) catch null;
+    if (wk.webkit_web_view_get_user_content_manager(self.view) == wk.webkit_web_view_get_user_content_manager(opener.view))
+        log.warn("viewer: the popup shares its opener's content manager; its page messages reach the opener", .{});
+    self.syncChrome();
+    return self;
+}
+
+fn build(alloc: Allocator, location: []const u8, w: *wk.GtkWidget) !*Viewer {
     const self = try alloc.create(Viewer);
     errdefer alloc.destroy(self);
     const loc = try alloc.dupeZ(u8, location);
@@ -249,7 +306,6 @@ pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
     const cur = try alloc.dupeZ(u8, location);
     errdefer alloc.free(cur);
 
-    const w = wk.webkit_web_view_new();
     const box = wk.gtk_box_new(wk.orientation_vertical, 0);
     self.* = .{
         .alloc = alloc,
@@ -303,6 +359,9 @@ pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
     _ = wk.g_signal_connect_data(w, "load-failed", @ptrCast(&onLoadFailed), self, null, 0);
     _ = wk.g_signal_connect_data(w, "destroy", @ptrCast(&onDestroy), self, null, 0);
     _ = wk.g_signal_connect_data(w, "web-process-terminated", @ptrCast(&onWebProcessTerminated), self, null, 0);
+    // `window.close()` from a script-opened window (T3447; Mac's
+    // `webViewDidClose`, win32's WindowCloseRequested).
+    _ = wk.g_signal_connect_data(w, "close", @ptrCast(&onCloseSignal), self, null, 0);
     // A save that landed while the pane was unmapped renders when it maps.
     _ = wk.g_signal_connect_data(box, "map", @ptrCast(&onMapped), self, null, 0);
 
@@ -322,8 +381,6 @@ pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
     wk.gtk_event_controller_set_propagation_phase(keys, wk.phase_capture);
     _ = wk.g_signal_connect_data(keys, "key-pressed", @ptrCast(&onKeyPressed), self, null, 0);
     wk.gtk_widget_add_controller(box, keys);
-
-    self.navigate(location);
     return self;
 }
 
@@ -376,6 +433,7 @@ fn deinit(self: *Viewer) void {
     if (comptime build_config.is_debug) {
         if (steps.viewer == self) steps.viewer = null;
     }
+    if (self.close_idle != 0) _ = wk.g_source_remove(self.close_idle);
     self.watch.stop();
     self.diff.deinit();
     self.toc.deinit();
@@ -1074,9 +1132,12 @@ fn onFileLinkMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyop
 }
 
 /// `create`: the page asked for a new window (`target="_blank"`,
-/// `window.open()`). Nothing is ever adopted here yet (T3447), so the answer
-/// is always "no web view" - which a script sees as `window.open()`
-/// returning null - and the link goes where the shared popup rule says.
+/// `window.open()`). Where it goes is the shared popup rule's call. A popup
+/// that stays in Ghoztty (a Ctrl-click, a bare `window.open()`, a non-web
+/// scheme) is ADOPTED (T3447): the answer is a web view of ours, related to
+/// this one, which becomes a viewer window of its own on `ready-to-show`.
+/// Every other answer is "no web view" - which a script sees as
+/// `window.open()` returning null - and the link goes where the rule says.
 fn onCreate(view: *wk.WebView, action: *wk.NavigationAction, ud: ?*anyopaque) callconv(.c) ?*wk.GtkWidget {
     const self: *Viewer = @ptrCast(@alignCast(ud orelse return null));
     const uri: ?[]const u8 = blk: {
@@ -1093,19 +1154,75 @@ fn onCreate(view: *wk.WebView, action: *wk.NavigationAction, ud: ?*anyopaque) ca
         .browser => if (uri) |u| self.openExternal(u),
         .command => if (uri) |u| self.focusLink(u),
         .live_link => if (uri) |u| self.routeLivePageLink(u, mods),
-        .ghoztty_window => {
-            // A Ctrl-clicked popup to a real place opens a viewer window
-            // there; without adoption (T3447) the page loses its opener.
-            const u = uri orelse {
-                log.info("viewer: a popup with no URL is not adopted on Linux yet (T3447)", .{});
-                return null;
-            };
-            if (std.ascii.startsWithIgnoreCase(u, "http://") or std.ascii.startsWithIgnoreCase(u, "https://")) {
-                self.openWindow(u);
-            } else log.info("viewer: a popup to {s} is not adopted on Linux yet (T3447)", .{u});
-        },
+        .ghoztty_window => return self.adoptPopup(uri),
     }
     return null;
+}
+
+/// Make the web view a kept popup loads into (T3447; win32's `adoptPopup`).
+/// The window comes up on `ready-to-show`, when WebKit has filled in the
+/// size the page asked for. Null - the popup does not open - when there is
+/// no pane to host it or no view could be made.
+fn adoptPopup(self: *Viewer, uri: ?[]const u8) ?*wk.GtkWidget {
+    const host = self.on_adopt_popup orelse {
+        log.info("viewer: no app to adopt a popup into; it does not open", .{});
+        return null;
+    };
+    // A popup that named no URL is the blank page its script writes into,
+    // which is what `--view=about:blank` opens (win32's spelling of Mac's
+    // nil URL), so the pane has a title and an address before it loads.
+    const location = uri orelse content.blank_page;
+    const popup = createPopup(self.alloc, self, location) catch |err| {
+        log.warn("viewer: could not make a popup view err={}; it does not open", .{err});
+        return null;
+    };
+    popup.popup_host = host;
+    popup.popup_state = .waiting;
+    _ = wk.g_signal_connect_data(popup.view, "ready-to-show", @ptrCast(&onPopupReadyToShow), popup, null, 0);
+    log.info("viewer: popup adopted location={s}", .{location});
+    return wk.asWidget(popup.view);
+}
+
+/// `ready-to-show`: the popup's window properties are final; host it.
+fn onPopupReadyToShow(view: *wk.WebView, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    if (self.popup_state != .waiting) return;
+    const host = self.popup_host orelse return;
+    var geo: wk.GdkRectangle = .{ .x = 0, .y = 0, .width = 0, .height = 0 };
+    wk.webkit_window_properties_get_geometry(wk.webkit_web_view_get_window_properties(view), &geo);
+    const size = links.popupSize(geo.width, geo.height);
+    self.popup_state = .hosted;
+    if (size) |s|
+        log.info("viewer: popup ready to show at {d}x{d} (asked {d}x{d})", .{ s.w, s.h, geo.width, geo.height })
+    else
+        log.info("viewer: popup ready to show at the default size", .{});
+    host(self, size);
+}
+
+/// `close`: the page called `window.close()` on a window a script opened.
+/// Carried out from an idle - the pane's close destroys this very web view,
+/// which WebKit is still emitting on.
+fn onCloseSignal(_: *wk.WebView, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    log.info("viewer: the page asked to close its window ({s})", .{@tagName(self.popup_state)});
+    if (self.close_idle != 0) return;
+    self.close_idle = wk.g_idle_add(&closeFromIdle, self);
+}
+
+fn closeFromIdle(ud: ?*anyopaque) callconv(.c) c_int {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return 0));
+    self.close_idle = 0;
+    if (self.popup_state == .waiting) {
+        // Closed before it was ever shown: nothing holds the box but its
+        // floating reference, so sinking and dropping it destroys the lot.
+        self.popup_state = .none;
+        const box = self.box;
+        _ = wk.g_object_ref_sink(box);
+        wk.g_object_unref(box);
+        return 0;
+    }
+    if (self.on_close_requested) |cb| cb(self) else log.info("viewer: no pane to close for the page", .{});
+    return 0;
 }
 
 /// A click off a live page's site, through the banner's modifier scheme

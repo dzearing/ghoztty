@@ -228,6 +228,31 @@ pub fn decidePopup(
     };
 }
 
+/// An adopted popup's window size, in GTK's logical pixels (T3447).
+pub const PopupSize = popup.Size;
+
+/// The size an adopted popup's page asked for (`window.open(u, n,
+/// "width=W,height=H")`), from WebKit's window-properties geometry, or null
+/// when it asked for none (WebKit leaves a dimension it was not given at 0).
+/// win32's `requestedSize` and its clamp, at scale 1: the geometry is CSS
+/// pixels and a GTK window is sized in logical pixels, which are the same
+/// unit - the compositor does the scaling Windows makes the app do by hand.
+pub fn popupSize(width: c_int, height: c_int) ?PopupSize {
+    if (width <= 0 or height <= 0) return null;
+    return popup.requestedSize(true, @intCast(width), @intCast(height), 1.0);
+}
+
+test "popupSize: what the page asked for, clamped like win32's, or nothing" {
+    try testing.expectEqual(PopupSize{ .w = 500, .h = 400 }, popupSize(500, 400).?);
+    // A dimension the page did not give is 0: no size, the ordinary default.
+    try testing.expect(popupSize(0, 400) == null);
+    try testing.expect(popupSize(500, 0) == null);
+    try testing.expect(popupSize(-1, -1) == null);
+    // Too small to use is raised to the floor; absurd is held to the cap.
+    try testing.expectEqual(PopupSize{ .w = popup.min_dim, .h = popup.min_dim }, popupSize(20, 20).?);
+    try testing.expectEqual(popup.max_dim, popupSize(std.math.maxInt(c_int), 300).?.w);
+}
+
 // -------------------------------------------------------------------------
 // The link menu
 // -------------------------------------------------------------------------

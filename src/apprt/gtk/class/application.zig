@@ -52,6 +52,9 @@ const builtin = @import("builtin");
 
 const log = std.log.scoped(.gtk_ghostty_application);
 
+/// A window size in logical pixels: an adopted popup's requested size (T3447).
+pub const WindowSize = struct { w: i32, h: i32 };
+
 /// Function used to funnel GLib/GObject/GTK log messages into Zig's logging
 /// system rather than just getting dumped directly to stderr.
 fn glibLogWriterFunction(
@@ -1563,6 +1566,23 @@ pub const Application = extern struct {
         });
     }
 
+    /// A viewer window at a page-requested size (T3447: an adopted popup's
+    /// `window.open(u, n, "width=W,height=H")`), in front. Null size: the
+    /// ordinary default.
+    pub fn newViewerWindowSized(
+        self: *Self,
+        view: [:0]const u8,
+        working_directory: ?[:0]const u8,
+        size: ?WindowSize,
+    ) *Window {
+        return Action.newWindowForIpc(self, .{
+            .working_directory = working_directory,
+            .view = view,
+            .activate = true,
+            .size = size,
+        });
+    }
+
     /// Set the configuration for this application. The reference count
     /// is increased on the new configuration and the old one is
     /// unreferenced.
@@ -2698,6 +2718,8 @@ const Action = struct {
             env: []const []const u8 = &.{},
             view: ?[:0]const u8 = null,
             activate: bool = true,
+            /// A size a page asked for (T3447), in place of the estimate.
+            size: ?WindowSize = null,
         },
     ) *Window {
         self.private().requested_window = true;
@@ -2708,6 +2730,7 @@ const Action = struct {
             .env = overrides.env,
             .view = overrides.view,
             .activate = overrides.activate,
+            .size = overrides.size,
         });
         return win;
     }
@@ -2724,6 +2747,8 @@ const Action = struct {
             view: ?[:0]const u8 = null,
             /// False: show the window without asking for focus (T3381).
             activate: bool = true,
+            /// The window's size, in place of the surface's estimate (T3447).
+            size: ?WindowSize = null,
 
             pub const none: @This() = .{};
         },
@@ -2759,6 +2784,8 @@ const Action = struct {
                 );
             }
         }
+        // A page's own request wins over the estimate (T3447).
+        if (overrides.size) |s| win.as(gtk.Window).setDefaultSize(s.w, s.h);
 
         // Show the window. `present` is show + an activation request (on
         // Wayland, xdg-activation). A window a script opened without

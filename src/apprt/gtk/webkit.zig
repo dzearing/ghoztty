@@ -47,6 +47,20 @@ pub const GAsyncReadyCallback = *const fn (?*GObject, *GAsyncResult, ?*anyopaque
 // --- WebKitWebView -------------------------------------------------------
 
 pub extern fn webkit_web_view_new() *GtkWidget;
+
+// An adopted popup (T3447): WebKit's `create` must be answered with a web view
+// built RELATED to the opener (`related-view`, construct-only in 6.0, which
+// dropped `webkit_web_view_new_with_related_view`), so `window.opener` and
+// `window.close()` survive. The size the page asked for is on its window
+// properties by `ready-to-show`.
+pub const WindowProperties = opaque {};
+pub const GdkRectangle = extern struct { x: c_int, y: c_int, width: c_int, height: c_int };
+pub extern fn webkit_web_view_get_type() usize;
+pub extern fn webkit_web_view_get_related_view(view: *WebView) ?*WebView;
+pub extern fn g_object_new(object_type: usize, first_property_name: ?[*:0]const u8, ...) ?*anyopaque;
+pub extern fn g_object_ref_sink(obj: *anyopaque) *anyopaque;
+pub extern fn webkit_web_view_get_window_properties(view: *WebView) *WindowProperties;
+pub extern fn webkit_window_properties_get_geometry(props: *WindowProperties, geometry: *GdkRectangle) void;
 pub extern fn webkit_web_view_get_context(view: *WebView) *WebContext;
 pub extern fn webkit_web_view_load_uri(view: *WebView, uri: [*:0]const u8) void;
 pub extern fn webkit_web_view_get_uri(view: *WebView) ?[*:0]const u8;
@@ -101,6 +115,9 @@ pub extern fn webkit_web_view_load_alternate_html(
 
 pub const UserContentManager = opaque {};
 pub const UserScript = opaque {};
+/// A popup's own content manager (T3447): a related view would otherwise
+/// SHARE the opener's, and its messages would reach the opener's handlers.
+pub extern fn webkit_user_content_manager_new() *UserContentManager;
 
 /// `WebKitUserContentInjectedFrames`.
 pub const inject_all_frames: c_int = 0;

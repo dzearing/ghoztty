@@ -13,7 +13,10 @@
 #     browser, Ctrl a side pane, Ctrl+Shift a window of its own; a file://
 #     link is revealed.
 #   popups (target=_blank, window.open): the default browser; one that must
-#     stay in Ghoztty is not adopted yet (T3447) and says so.
+#     stay in Ghoztty (a bare window.open, a non-web scheme) is adopted as a
+#     viewer window of its own (T3447): its page sees window.opener, the
+#     opener can write into a blank one, width/height size the window, and
+#     window.close() closes it.
 #   the link menu: links.js in every frame decides; it declines a #fragment
 #     and mailto:, the rows are banner_link's, a file link's target is the
 #     FILE, and a row runs its action.
@@ -180,6 +183,22 @@ sink="$HL_RUNTIME/links.out"
     echo "sleep 500"
     echo "mods none"
     echo "probe (function(){window.open('https://example.test/opened');window.open();return 'opened'})()"
+    # Adopted popups (T3447): a page-relative one at a requested size, and a
+    # bare one the opener writes into; then the page closes the first.
+    echo "mark popups"
+    echo "probe (function(){var w=window.open('sub/two.html','','width=500,height=400');window.__pop=w;return w?'adopted':'null'})()"
+    echo "sleep 2500"
+    echo "probe (function(){var w=window.__pop;try{var h=w.document.querySelector('h1');return 'pop '+(h?h.textContent:'NOH1')+'|'+(w.opener===window)+'|'+w.innerWidth}catch(e){return 'pop ERR '+e}})()"
+    echo "probe (function(){var w=window.open();if(!w)return 'blank null';w.document.write('<h1>Written</h1>');w.document.close();window.__blank=w;return 'blank wrote'})()"
+    echo "sleep 1000"
+    echo "probe (function(){try{var w=window.__blank;return 'blankread '+w.document.querySelector('h1').textContent+'|'+(w.opener===window)}catch(e){return 'blankread ERR '+e}})()"
+    echo "mark popups-open"
+    echo "sleep 4000"
+    echo "probe (function(){window.__pop.eval('window.close()');return 'closing'})()"
+    echo "sleep 2000"
+    echo "probe (function(){return 'closed '+window.__pop.closed})()"
+    echo "mark popups-closed"
+    echo "sleep 4000"
     menu '#out'
     echo "probe (function(){document.getElementById('fr').contentWindow.postMessage('rc','*');return 'posted'})()"
     menu '#sib'
@@ -236,6 +255,10 @@ hl_check "K6 the pane renders its file" $? "dump: $(cat "$dump" 2>/dev/null)"
 
 hl_wait_for 60 grep -q '^mark html' "$out"
 md_leaves=$(leaves)
+hl_wait_for 90 grep -q '^mark popups-open' "$out"
+pop_leaves=$(leaves)
+hl_wait_for 30 grep -q '^mark popups-closed' "$out"
+closed_leaves=$(leaves)
 hl_wait_for 90 grep -q '^done' "$out"
 hl_check "K7 every step ran to the end" $? "$(tail -3 "$out" 2>/dev/null | tr '\n' ' ')"
 sleep 1
@@ -285,9 +308,24 @@ sunk "reveal /etc/hostname" && sunk "app /etc/hostname"
 hl_check "K22 a file:// link off a page is revealed, not opened; Ctrl+Shift hands it to its app" $? "$(grep -E '^(reveal|app)' "$sink" | tr '\n' ' ')"
 sunk "browser https://example.test/pop" && sunk "browser https://example.test/opened"
 hl_check "K23 a target=_blank link and window.open(url) go to the default browser" $? "$(grep '^browser' "$sink" | tr '\n' ' ')"
-grep -q 'viewer: a popup with no URL is not adopted on Linux yet (T3447)' "$APP_LOG" &&
-    grep -q "viewer: a popup to ghoztty-page://page/sub/two.html is not adopted on Linux yet (T3447)" "$APP_LOG"
-hl_check "K24 a popup that must stay in Ghoztty (bare window.open, a Ctrl-clicked same-site one) says it is not adopted yet" $? "$(grep 'popup' "$APP_LOG" | tr '\n' ' ')"
+grep -q 'viewer: popup adopted location=about:blank' "$APP_LOG" &&
+    grep -q "viewer: popup adopted location=ghoztty-page://page/sub/two.html" "$APP_LOG" &&
+    ! grep -q 'not adopted' "$APP_LOG"
+hl_check "K24 a popup that must stay in Ghoztty (bare window.open, a Ctrl-clicked same-site one) is adopted" $? "$(grep 'popup' "$APP_LOG" | tr '\n' ' ')"
+# T3447: the adopted popups themselves.
+grep -qx 'probe OK adopted' "$out" && grep -q '^probe OK pop Page Two|true|' "$out"
+hl_check "K24a window.open into the page's folder gets a window whose page sees window.opener" $? "$(grep -E '^probe .*(adopted|pop )' "$out" | tr '\n' ' ')"
+[ "$(echo "$pop_leaves" | grep -cF "|viewer|$fx/sub/two.html|")" -ge 2 ] && echo "$pop_leaves" | grep -qF "|viewer|about:blank|"
+hl_check "K24b the adopted popups are viewer windows of their own (+list)" $? "$(echo "$pop_leaves" | tr '\n' ' ')"
+grep -qx 'probe OK blankread Written|true' "$out"
+hl_check "K24c a bare window.open() hands back a window the opener writes into" $? "$(grep -E '^probe .*blank' "$out" | tr '\n' ' ')"
+w=$(grep '^probe OK pop ' "$out" | head -1 | awk -F'|' '{print $3}')
+[ -n "$w" ] && [ "$w" -ge 440 ] && [ "$w" -le 500 ] && grep -q 'viewer: popup ready to show at 500x400 (asked 500x400)' "$APP_LOG"
+hl_check "K24d width=500,height=400 opens the window at that size (page innerWidth $w)" $? "$(grep 'ready to show' "$APP_LOG" | tr '\n' ' ')"
+before=$(echo "$pop_leaves" | grep -cF "|viewer|$fx/sub/two.html|")
+after=$(echo "$closed_leaves" | grep -cF "|viewer|$fx/sub/two.html|")
+grep -qx 'probe OK closed true' "$out" && [ "$after" = $((before - 1)) ] && grep -q 'viewer popup: the page closed its pane' "$APP_LOG"
+hl_check "K24e window.close() in the popup closes its window (two.html windows $before -> $after)" $? "$(grep -E 'closed|asked to close' "$out" "$APP_LOG" | tr '\n' ' ')"
 grep -qxF "menu web https://example.test/out rows=open_browser|side_pane,new_window|copy" "$sink"
 hl_check "K25 a rendered page's link gets Ghoztty's menu" $? "$(grep '^menu' "$sink" | tr '\n' ' ')"
 grep -qxF "menu web https://example.test/framed rows=open_browser|side_pane,new_window|copy" "$sink"

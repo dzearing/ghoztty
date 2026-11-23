@@ -103,6 +103,12 @@ pub const Surface = extern struct {
     /// `pending_surface_overrides`). GTK main thread only; `new` clears it.
     pub var pending_restore: ?Restore = null;
 
+    /// The adopted popup viewer the NEXT viewer `Surface.new` hosts instead
+    /// of making its own (T3447), set by `viewerAdoptPopup` right before it
+    /// opens the window - the same handoff shape as `pending_restore`. GTK
+    /// main thread only; `new` clears it.
+    pub var pending_popup: ?*Viewer = null;
+
     pub const properties = struct {
         /// This property is set to true when the bell is ringing. Note that
         /// this property will only emit a changed signal when there is a
@@ -829,13 +835,15 @@ pub const Surface = extern struct {
         const priv: *Private = self.private();
         const restore = pending_restore;
         pending_restore = null;
+        const popup = pending_popup;
+        pending_popup = null;
         if (overrides.view) |location| {
             // A restored viewer (T3420) keeps its pane id, its Home and its
             // origin directory; re-opening its location IS its restore.
             const wd: ?[]const u8 = overrides.working_directory orelse
                 if (restore) |r| r.working_directory else null;
             if (restore) |r| self.adoptPaneId(r.pane_id);
-            self.attachViewer(location, wd);
+            self.attachViewer(location, wd, popup);
             if (restore) |r| if (r.viewer_home) |home| {
                 if (priv.viewer) |v| v.setHomeLocation(home);
             };
@@ -923,9 +931,10 @@ pub const Surface = extern struct {
     /// realized and no core surface or pty ever starts. Everything that
     /// speaks to the core already tolerates its absence (it is the state
     /// every surface is in before its first resize).
-    fn attachViewer(self: *Self, location: []const u8, working_directory: ?[]const u8) void {
+    fn attachViewer(self: *Self, location: []const u8, working_directory: ?[]const u8, adopted: ?*Viewer) void {
         const priv = self.private();
-        const viewer = Viewer.create(std.heap.c_allocator, location) catch |err| {
+        // An adopted popup (T3447) arrives already made and loading.
+        const viewer = adopted orelse Viewer.create(std.heap.c_allocator, location) catch |err| {
             // Only OOM: there is nothing to show, so say so where the
             // terminal would have been rather than start a shell nobody
             // asked for.
@@ -956,6 +965,8 @@ pub const Surface = extern struct {
         viewer.on_open_window = &viewerOpenWindow;
         viewer.on_focus_link = &viewerFocusLink;
         viewer.on_app_chord = &viewerAppChord;
+        viewer.on_adopt_popup = &viewerAdoptPopup;
+        viewer.on_close_requested = &viewerCloseRequested;
         self.syncViewerTitle(viewer);
         log.info("viewer pane: opened mode={s} location={s} pane={s}", .{ @tagName(viewer.mode), location, self.paneId() });
     }
@@ -996,6 +1007,31 @@ pub const Surface = extern struct {
     /// window (T3415; banner_link's Ctrl+Shift).
     fn viewerOpenWindow(_: *Viewer, location: []const u8) void {
         openViewerWindow(location);
+    }
+
+    /// A popup this pane's page opened that stays in Ghoztty (T3447; Mac's
+    /// `createWebViewWith`, win32's `adoptPopup`): a one-pane viewer window
+    /// whose pane IS the popup's web view, at the size the page asked for.
+    /// It comes up in front: the page asked for it in answer to the user.
+    fn viewerAdoptPopup(popup: *Viewer, size: ?Viewer.PopupSize) void {
+        const app = Application.default();
+        const alloc = app.allocator();
+        const loc = alloc.dupeZ(u8, popup.currentLocation()) catch return;
+        defer alloc.free(loc);
+        const wd: ?[:0]u8 = if (popup.originDirectory()) |d| alloc.dupeZ(u8, d) catch null else null;
+        defer if (wd) |d| alloc.free(d);
+        pending_popup = popup;
+        defer pending_popup = null;
+        _ = app.newViewerWindowSized(loc, wd, if (size) |s| .{ .w = s.w, .h = s.h } else null);
+        log.info("viewer popup: opened a window for {s}", .{popup.currentLocation()});
+    }
+
+    /// The page in this pane called `window.close()` (T3447): the pane goes,
+    /// and with it the window when it was the only pane.
+    fn viewerCloseRequested(viewer: *Viewer) void {
+        const self: *Self = @ptrCast(@alignCast(viewer.owner orelse return));
+        log.info("viewer popup: the page closed its pane {s}", .{self.paneId()});
+        self.close();
     }
 
     fn openViewerWindow(location: []const u8) void {

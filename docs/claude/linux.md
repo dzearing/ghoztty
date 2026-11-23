@@ -633,12 +633,23 @@ window (a `file://` link: reveal / side pane / its app).
   Ctrl+Shift into launching a local file's app; a debug test run allows them.
 - **Popups**: `create` runs `links.decidePopup` - the browser, unless
   Ctrl-clicked; a Ctrl-click off-site is a link click (the scheme above); a
-  `ghoztty://` popup focuses. Nothing is ADOPTED yet: `create` always returns
-  no web view (a script sees `window.open()` return null), a Ctrl-clicked
-  same-site popup to http(s) opens a fresh viewer window at its URL (its
-  opener is lost), and a bare `window.open()` or a non-web scheme logs
-  `not adopted on Linux yet (T3447)`. Adoption with `window.opener` and the
-  requested size is T3447.
+  `ghoztty://` popup focuses. A popup that stays in Ghoztty (Ctrl-clicked, a
+  bare `window.open()`, a non-web scheme such as a rendered page's own
+  `ghoztty-page:` folder) is ADOPTED (T3447): `create` returns a web view
+  built with `g_object_new(..., "related-view", opener, "user-content-manager",
+  <its own>)` - related, so `window.opener` and `window.close()` work; its own
+  content manager, because a related view otherwise SHARES the opener's and
+  the popup's page messages would reach the opener's handlers. It inherits
+  the opener's read grant. On `ready-to-show` the pane hands it to
+  `Surface.pending_popup` and opens a one-pane viewer window
+  (`Application.newViewerWindowSized`) at the window-properties geometry,
+  clamped by win32's `viewer_popup.requestedSize` at scale 1
+  (`viewer_links.popupSize`); `about:blank` is its location when it named
+  none. WebKit's `close` (the page's `window.close()`) closes the pane from
+  an idle. A popup closed before it was shown is destroyed unhosted. NOT
+  exercised headless: a real Ctrl-click's user gesture on an http(s) popup
+  (a script click carries none, so only the non-web and bare cases adopt in
+  the test).
 - **The link menu**: the shared `links.js` is a user script in EVERY frame
   (an iframe's link gets the menu too); it declines a `#fragment`, a click in
   a selection and schemes with no action, and posts `linkMenu` on
@@ -671,7 +682,7 @@ Acceptance:
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-links.sh
 ```
 
-Ends `VIEWER LINKS: ALL PASS` (36 checks).
+Ends `VIEWER LINKS: ALL PASS` (41 checks).
 
 ### Image panes (T3416)
 
