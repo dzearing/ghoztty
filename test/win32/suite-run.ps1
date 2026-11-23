@@ -27,7 +27,9 @@
        script is named and exits 1. This is what discharges an
        order-independence claim.
     H. -Include / -Exclude survive `powershell -File` argument parsing, where a
-       comma-separated list binds as ONE literal string.
+       comma-separated list binds as ONE literal string. An -Include that
+       matches nothing refuses with "no scripts selected" rather than counting
+       a phantom script, and a bare name matches its .ps1 (T1893).
     I. The between-script leak sweep is repo-scoped: it kills a process running
        out of the given repo's zig-out and leaves everything else alone.
     J. The duration in the report is the duration that was measured.
@@ -478,6 +480,24 @@ exit 0
     $null = Invoke-Runner @('-Exclude', 'g-hang.ps1,f-crash.ps1,e-silent.ps1', '-OutDir', $dirH2, '-TimeoutSec', '30')
     $sH2 = Get-Summary $dirH2
     Check 'H2 all three -Exclude patterns are honored' (@($sH2.results).Count -eq 4) "$(@($sH2.results).Count) rows"
+
+    # T1893: an -Include that matches nothing. PS 5.1 unrolls the empty array
+    # to $null on return and @($null) has Count 1, so the run printed
+    # "1 script(s)" and died on a null hashtable key instead of refusing with
+    # the message that names the selection.
+    $dirH3 = Join-Path $Fixture 'runH3'
+    $rH3 = Invoke-Runner @('-Include', 'zz-no-such-script.ps1', '-OutDir', $dirH3, '-TimeoutSec', '30')
+    Check 'H3 an empty -Include refuses with "no scripts selected"' `
+        (($rH3.Exit -ne 0) -and ($rH3.Text -match 'no scripts selected')) "exit $($rH3.Exit): $($rH3.Text)"
+    Check 'H4 ...and never reaches a null key or counts a phantom script' `
+        (($rH3.Text -notmatch 'Key cannot be null') -and ($rH3.Text -notmatch '\b1 script')) $rH3.Text
+    $rH5 = Invoke-Runner @('list', '-Include', 'zz-no-such-script.ps1')
+    Check 'H5 list over an empty -Include counts 0, not 1' `
+        ($rH5.Text -match '(?m)^0 scripts selected') $rH5.Text
+    # A bare name (no .ps1) selects its script - the T1848 typo that started it.
+    $rH6 = Invoke-Runner @('list', '-Include', 'b-pass,c-fail', '-Exclude', 'c-fail')
+    Check 'H6 bare -Include / -Exclude names match their .ps1' `
+        (($rH6.Text -match '(?m)^1 scripts selected') -and ($rH6.Text -match 'b-pass\.ps1') -and ($rH6.Text -notmatch 'c-fail\.ps1')) $rH6.Text
 
     # --- I. leak sweep scope ----------------------------------------------
     Write-Host ''

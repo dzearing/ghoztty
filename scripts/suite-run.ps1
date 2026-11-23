@@ -198,6 +198,18 @@ function Split-List {
     if (-not $Value) { return @() }
     return @($Value -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 }
+
+# -Include / -Exclude pattern match (T1893). A bare name matches its .ps1 too:
+# `-Include 'rearrange-drag'` used to select nothing, because the names are
+# file names and the pattern carried no suffix.
+function Test-SuiteNameMatch {
+    param([string]$Name, [string[]]$Patterns)
+    foreach ($p in @($Patterns)) {
+        if (-not $p) { continue }
+        if ($Name -like $p -or $Name -like "$p.ps1") { return $true }
+    }
+    return $false
+}
 # Format-Duration lives in scripts\lib so a test can call it: it is the one
 # number in this report nobody can check by eye, and its first version was a
 # minute wrong.
@@ -282,10 +294,7 @@ function Get-SuiteScript {
     if ($SetName -ne 'all') { $rows = @($rows | Where-Object { $_.Class -eq $SetName }) }
 
     if ($Inc) {
-        $rows = @($rows | Where-Object {
-                $n = $_.Name
-                @($Inc | Where-Object { $n -like $_ }).Count -gt 0
-            })
+        $rows = @($rows | Where-Object { Test-SuiteNameMatch -Name $_.Name -Patterns $Inc })
     }
     return @($rows)
 }
@@ -295,12 +304,15 @@ function Get-SuiteScript {
 # kind of PowerShell subtlety that silently filters nothing.
 function Remove-ExcludedScript {
     param([object[]]$Rows, [string[]]$Patterns)
+    # An empty selection arrives here as $null (PS 5.1 unrolls an empty array
+    # on return), and @($null) is a ONE-element array: the run then printed
+    # "1 script(s)" and died on a null hashtable key instead of saying "no
+    # scripts selected" (T1893). Drop nulls before anything counts them.
+    $Rows = @(@($Rows) | Where-Object { $null -ne $_ })
     if (-not $Patterns) { return @($Rows) }
     $keep = @()
     foreach ($r in $Rows) {
-        $hit = $false
-        foreach ($p in $Patterns) { if ($r.Name -like $p) { $hit = $true; break } }
-        if (-not $hit) { $keep += $r }
+        if (-not (Test-SuiteNameMatch -Name $r.Name -Patterns $Patterns)) { $keep += $r }
     }
     return @($keep)
 }
@@ -308,7 +320,7 @@ function Remove-ExcludedScript {
 function Sort-SuiteOrder {
     param([object[]]$Rows, [string]$Spec)
 
-    $Rows = @($Rows)
+    $Rows = @(@($Rows) | Where-Object { $null -ne $_ })
     if ($Spec -eq 'forward') { return @($Rows) }
     if ($Spec -eq 'reverse') {
         $out = @($Rows)
@@ -928,7 +940,7 @@ if ($Action -eq 'confirm') {
     $all = @(Get-SuiteScript -Root $TestRoot -SetName 'all' -Inc @())
     $selected = @($rowsC | Where-Object { $_.Verdict -notin @('pass', 'skip') })
     if ($IncludeList) {
-        $selected = @($selected | Where-Object { $n = $_.Name; @($IncludeList | Where-Object { $n -like $_ }).Count -gt 0 })
+        $selected = @($selected | Where-Object { Test-SuiteNameMatch -Name $_.Name -Patterns $IncludeList })
     }
     $selected = @(Remove-ExcludedScript -Rows $selected -Patterns $ExcludeList)
 
