@@ -385,9 +385,6 @@ fn leafOf(action: input.Binding.Action) input.Binding.Set.GenericLeaf {
 }
 
 test "T3430: typing in a field of ours stays typing" {
-    const ctrl = gdk_control_mask;
-    const shift = gdk_shift_mask;
-    const alt = gdk_alt_mask;
     const addr: FieldFocus = .{ .address = true };
     // Plain and shifted keys never leave the field.
     try testing.expect(!offersToApp('d', 0, addr));
@@ -411,8 +408,6 @@ test "T3430: typing in a field of ours stays typing" {
 }
 
 test "T3430: the page keeps its own editing chords, the rest is offered" {
-    const ctrl = gdk_control_mask;
-    const shift = gdk_shift_mask;
     const none: FieldFocus = .{};
     for ([_]u32{ 'c', 'v', 'x', 'a', 'z', 'y' }) |kv| {
         try testing.expect(!offersToApp(kv, ctrl, none));
