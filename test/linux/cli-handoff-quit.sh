@@ -93,8 +93,11 @@ beat="$HL_RUNTIME/beat"; spid="$HL_RUNTIME/spid"
 cli +new-window --target=wh --name=ph --command="echo \$\$ > $spid; while :; do date +%s%N > $beat; sleep 0.2; done" > /dev/null 2>&1
 hl_wait_for 20 test -s "$spid"
 shell=$(cat "$spid" 2>/dev/null)
-alive "$shell"
-hl_check "Q3 an agent-hosted pane 'ph' runs a heartbeat shell" $? "pid=$shell"
+# The pid +list reports is the session's own process, which the agent spawned
+# (the heartbeat shell descends from it); Q16 compares the relaunch against it.
+listed=$(pane_pid ph)
+alive "$shell" && alive "$listed"
+hl_check "Q3 an agent-hosted pane 'ph' runs a heartbeat shell" $? "pid=$shell listed=$listed"
 
 hq=$(vfield handoff_quit); sp=$(vfield session_persistence)
 [ "$hq" = true ]
@@ -132,7 +135,7 @@ hl_check "Q13 the pane's shell outlived the quit (detached, heartbeat still adva
 python3 -c '
 import json, sys
 m = json.load(open(sys.argv[1]))
-names = [n["leaf"].get("name") for w in m["windows"] for t in w["tabs"] for n in t["nodes"] if "leaf" in n]
+names = [n["leaf"].get("ipc_name") for w in m["windows"] for t in w["tabs"] for n in t["nodes"] if "leaf" in n]
 sys.exit(0 if "ph" in names else 1)' "$manifest" 2>/dev/null
 hl_check "Q14 the quit saved the layout (pane 'ph' is in the manifest)" $?
 
@@ -140,9 +143,9 @@ hl_check "Q14 the quit saved the layout (pane 'ph' is in the manifest)" $?
 hl_launch APP2 "$app" --gtk-single-instance=false
 hl_wait_for 30 serving
 hl_check "Q15 the next launch serves the socket" $?
-attached() { [ "$(pane_pid ph)" = "$shell" ]; }
-hl_wait_for 20 attached
-hl_check "Q16 the relaunch re-attached 'ph' to the same shell (pid $shell)" $? "listed pid=$(pane_pid ph)"
+attached() { [ "$(pane_pid ph)" = "$listed" ]; }
+hl_wait_for 20 attached && alive "$shell"
+hl_check "Q16 the relaunch re-attached 'ph' to the same session (pid $listed, heartbeat shell $shell alive)" $? "listed pid now=$(pane_pid ph)"
 
 # ---- 5. persistence off: the version reply says a quit closes terminals ----
 kill -TERM "$APP2" 2>/dev/null
