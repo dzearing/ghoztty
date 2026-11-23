@@ -80,6 +80,25 @@ pub fn changeEntrypoint(
     return result;
 }
 
+/// The deps for a GUI-free artifact (the `ghoztty-agent` and its test) on a
+/// GTK build (T3358). Under `-Dapp-runtime=gtk`, `add` links GTK, libadwaita
+/// and the system `gtk4-layer-shell-0` into every exe, so a daemon that never
+/// opens a window failed to build on a distro without that library (Ubuntu
+/// 24.04 does not package it). Every other runtime is returned unchanged: the
+/// agent's Windows and macOS graphs keep exactly what they had.
+pub fn guiFree(self: *const SharedDeps, b: *std.Build) !SharedDeps {
+    if (self.config.app_runtime != .gtk) return self.*;
+    const config = try b.allocator.create(Config);
+    config.* = self.config.*;
+    config.app_runtime = .none;
+
+    var result = self.*;
+    result.config = config;
+    result.options = b.addOptions();
+    try config.addOptions(result.options);
+    return result;
+}
+
 fn initTarget(
     self: *SharedDeps,
     b: *std.Build,

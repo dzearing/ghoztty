@@ -150,7 +150,11 @@ pub fn build(b: *std.Build) !void {
     // built via `zig build agent`, and embedded into the macOS app bundle
     // (Contents/MacOS/ghoztty-agent) so the app can spawn its local
     // session-persistence agent.
-    const agent = try buildpkg.GhosttyAgent.init(b, &config, &deps);
+    // GUI-free deps (T3358): under -Dapp-runtime=gtk the shared deps link GTK
+    // and the system gtk4-layer-shell into every exe, which the agent never
+    // uses; other runtimes get `deps` back unchanged.
+    const agent_deps = try deps.guiFree(b);
+    const agent = try buildpkg.GhosttyAgent.init(b, &config, &agent_deps);
     {
         agent_step.dependOn(&agent.install_step.step);
         if (agent.ca_dll_install_step) |ca| agent_step.dependOn(&ca.step);
@@ -171,7 +175,7 @@ pub fn build(b: *std.Build) !void {
         // The agent test roots at `src/agent_main.zig` too, so it reaches
         // main.zig's `@import("agent_build_options")` — reuse the exe's module.
         agent_test.root_module.addImport("agent_build_options", agent.version_module);
-        if (!config.emit_lib_vt) _ = try deps.add(agent_test);
+        if (!config.emit_lib_vt) _ = try agent_deps.add(agent_test);
         // src/terminal (reached both via pty.zig and, for the grid snapshot, via
         // grid_snapshot.zig) has test blocks verifying enums against the
         // libghostty C header (`lib.checkGhosttyHEnum`), so the agent test binary
