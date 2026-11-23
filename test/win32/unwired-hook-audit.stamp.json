@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-22T23:20:39-08:00",
-    "commit":  "5eeceb086",
+    "generated":  "2026-11-22T23:32:49-08:00",
+    "commit":  "0a665bf5c",
     "uncommitted":  [
 
                     ],
@@ -1339,7 +1339,7 @@
                   "test/win32/floor-lane-parallel.ps1":  "e4821c99f31c4708e5402a8f7d0682586f130592268f8d3b5a2a2e11aab3161d",
                   "test/win32/floor-lane-releasesafe.ps1":  "691cb0b20e21706b03a604b3a91d7a5d409e0ce77f8315d29ddd896bccc0fe3e",
                   "test/win32/floor-lane-solo-confirm.ps1":  "a222a0c597b6f6e265690cbebb3e9d621db1ba6a53217ab62148231a5a9dab9c",
-                  "test/win32/floor-lane-stall-sampling.ps1":  "5861c59b1084742a2a4b6277f62aa530f5b0383ad2f92cd33910814d812989f8",
+                  "test/win32/floor-lane-stall-sampling.ps1":  "868938dc6ffbb2f736af9b76991f796d9621145bdee32d05d2aa58958e9092ea",
                   "test/win32/floor-lane-verdict-detail.ps1":  "a4553943b43928fed9dee5abbac068f64d8adef4c5feff05dbf8e761093faaa5",
                   "test/win32/floor-lane-webview-settle.ps1":  "c45d516f0afb72aeaf60e6ff3389619b722763144eebdfa53e1e5fc523787aec",
                   "test/win32/focus-defer.ps1":  "e1c5d8c081a5d73f04bcff5e085af5c5d1c708f6441f26626a0b9d1618170a5b",
@@ -1627,6 +1627,7 @@
                   "test/win32/stale-build-notify.ps1":  "4ab2898604ac45d3a62e7f78232a6e6a02081d7fee27716f1975831fda65d4a1",
                   "test/win32/startup-failure.ps1":  "17e72b90d659b5f98d19e3f18aa7aca5d9ba87004f41a10016ba96f08ca015ea",
                   "test/win32/stash-divider-drag.ps1":  "4134757458d5901fb054ee6b8c547fad766e904db689f03a7cebae7151354a79",
+                  "test/win32/stash-recovery.ps1":  "e545b45f88561d7228eb9b6aff649c12a9eadb9b76989ce6a2014c5eed9a73b1",
                   "test/win32/stash-restore.ps1":  "872e2e0c8b6b8ce06145cc783a37ddffc32b24e7e2bfb5cb9a624f037a2f6809",
                   "test/win32/stderr-capture-audit.ps1":  "928dd559d8e1df45f9fce6baa0071a920d997aca8977790161b1c41c34368efe",
                   "test/win32/stderr-launch-capture.ps1":  "7c95a6330bbc5d8e441a55cd8a63ef764d4a6a6fefad6b91f0726db02985746b",

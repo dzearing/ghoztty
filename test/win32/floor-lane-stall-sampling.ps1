@@ -164,12 +164,22 @@ try {
     $neg = $neg.Replace(
         'if ($cpu -gt $lastCpu -or $logLen -gt $lastLogLen) {',
         'if ($cpu -ne $lastCpu -or $logLen -ne $lastLogLen) {')
+    # The `+ $tree.Count` is what makes this arm deterministic (T1868). The
+    # pre-fix flap needs a seen tree to read NONZERO, so that an empty sample
+    # (0) differs from it. A real lane always burns some CPU, but the wedge
+    # fixture (cmd + conhost + waitfor) is so idle that Windows' per-quantum
+    # accounting can report exactly 0 ticks for the whole tree, and then 0 vs 0
+    # is no change, the pre-fix copy names the wedge correctly, and the teeth
+    # check flaked red (2026-10-11). One synthetic unit per live process models
+    # "a live tree has nonzero CPU" without touching the shipped code, and an
+    # empty sample still reads 0.
     $neg = $neg.Replace(
         '$cpu = Get-TreeCpu -Tree $tree -IgnorePids $selfSpawned -State $cpuState',
-        '$cpu = Get-TreeCpu -Tree $tree -IgnorePids $selfSpawned')
+        '$cpu = (Get-TreeCpu -Tree $tree -IgnorePids $selfSpawned) + [uint64]$tree.Count')
     $neg = $neg.Replace('$blind = ($tree.Count -eq 0)', '$blind = $false')
     Check 'the negative control really is the pre-fix rule' `
-        (($neg -ne $src) -and ($neg -match '\$cpu -ne \$lastCpu') -and ($neg -match '\$blind = \$false')) ''
+        (($neg -ne $src) -and ($neg -match '\$cpu -ne \$lastCpu') -and ($neg -match '\$blind = \$false') -and
+            ($neg -match '\+ \[uint64\]\$tree\.Count')) ''
     Set-Content -LiteralPath $TmpCopy -Value $neg -Encoding ascii
 
     $env:GHOZTTY_FLOOR_LANE_BLIND_EVERY = '2'
