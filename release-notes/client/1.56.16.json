@@ -1,0 +1,23 @@
+{
+  "version": "1.56.16",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "On Linux, a pop-up a viewer page keeps in Ghoztty opens as its own window, still tied to the page that opened it." },
+        { "text": "On Linux, Ctrl+C at a picture in a viewer pane copies the picture and its file." },
+        { "text": "On Linux, a restored window reopens at its size and a renamed tab keeps its name." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "On Linux, Back and Forward in a diff pane step into and out of diffs by name." },
+        { "text": "A --command window no longer closes when its command ends after a low-power switch or a config reload." },
+        { "text": "The nightly publish counts only failed tries toward its daily retry cap." },
+        { "text": "Profile-relative PATH entries resolve even when Ghoztty was started without USERPROFILE." }
+      ] },
+    { "title": "Improvements",
+      "items": [
+        { "text": "A glass viewer pane copies its see-through background from the window's desk instead of recomputing the gradient per pixel." },
+        { "text": "The layout-save cost test is green run alone again; its failures were already fixed by T1516." }
+      ] }
+  ]
+}
