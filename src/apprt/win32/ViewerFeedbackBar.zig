@@ -83,38 +83,132 @@ const viewer_worktree = @import("viewer_worktree.zig");
 const input = @import("../../input.zig");
 const build_config = @import("../../build_config.zig");
 
-const log = std.log.scoped(.viewer_feedback);
+pub const log = std.log.scoped(.viewer_feedback);
+
+// -------------------------------------------------------------------------
+// Split modules (T1775)
+// -------------------------------------------------------------------------
+//
+// This file is the band: its state, construction, theme, layout, quotes and
+// window procedure. The planes below used to live inline here (T1781); each
+// is imported back as method-call aliases so every `self.f(x)` call site
+// reads as it always did. The aliases are the planes' public surface: a
+// function the band calls is a function a plane promised, listed here in one
+// place.
+
+const paint_plane = @import("viewer_feedback_paint.zig");
+pub const buttonGlyph = paint_plane.buttonGlyph;
+pub const buttonEnabled = paint_plane.buttonEnabled;
+pub const paint = paint_plane.paint;
+pub const paintGlass = paint_plane.paintGlass;
+pub const glassBand = paint_plane.glassBand;
+pub const cueAlpha = paint_plane.cueAlpha;
+pub const premultiplied = paint_plane.premultiplied;
+pub const paintCarousel = paint_plane.paintCarousel;
+pub const paintTileFocus = paint_plane.paintTileFocus;
+pub const paintCue = paint_plane.paintCue;
+pub const paintTileFrame = paint_plane.paintTileFrame;
+pub const blitThumb = paint_plane.blitThumb;
+pub const paintPill = paint_plane.paintPill;
+pub const paintButtons = paint_plane.paintButtons;
+pub const paintFooter = paint_plane.paintFooter;
+pub const paintLinkUnderline = paint_plane.paintLinkUnderline;
+pub const hitLink = paint_plane.hitLink;
+pub const drawUtf8 = paint_plane.drawUtf8;
+pub const textHeight = paint_plane.textHeight;
+pub const textWidth = paint_plane.textWidth;
+
+const focus_plane = @import("viewer_feedback_focus.zig");
+pub const tipId = focus_plane.tipId;
+pub const tipEnsure = focus_plane.tipEnsure;
+pub const tipToolInfo = focus_plane.tipToolInfo;
+pub const syncTip = focus_plane.syncTip;
+pub const logTips = focus_plane.logTips;
+pub const tipDelete = focus_plane.tipDelete;
+pub const enabledActions = focus_plane.enabledActions;
+pub const focusStop = focus_plane.focusStop;
+pub const walkFocus = focus_plane.walkFocus;
+pub const activateFocused = focus_plane.activateFocused;
+pub const accTileNumber = focus_plane.accTileNumber;
+pub const AccAction = focus_plane.AccAction;
+pub const postAccAction = focus_plane.postAccAction;
+pub const runAccAction = focus_plane.runAccAction;
+pub const notifyAccFocus = focus_plane.notifyAccFocus;
+
+const carousel_plane = @import("viewer_feedback_carousel.zig");
+pub const composerImage = carousel_plane.composerImage;
+pub const attachImage = carousel_plane.attachImage;
+pub const logCarousel = carousel_plane.logCarousel;
+pub const thumbFor = carousel_plane.thumbFor;
+pub const syncCarouselToCaret = carousel_plane.syncCarouselToCaret;
+pub const showThumb = carousel_plane.showThumb;
+pub const activateThumb = carousel_plane.activateThumb;
+pub const CueState = carousel_plane.CueState;
+pub const cueState = carousel_plane.cueState;
+pub const pageCarousel = carousel_plane.pageCarousel;
+pub const walkTiles = carousel_plane.walkTiles;
+pub const activateFocusedTile = carousel_plane.activateFocusedTile;
+pub const scrollCarousel = carousel_plane.scrollCarousel;
+
+const composer_plane = @import("viewer_feedback_composer.zig");
+pub const openComposer = composer_plane.openComposer;
+pub const closeComposer = composer_plane.closeComposer;
+pub const composerReady = composer_plane.composerReady;
+pub const composerJournal = composer_plane.composerJournal;
+pub const dropJournal = composer_plane.dropJournal;
+pub const seedPage = composer_plane.seedPage;
+pub const imageSeedSpans = composer_plane.imageSeedSpans;
+pub const composerState = composer_plane.composerState;
+pub const publishQuoteSpans = composer_plane.publishQuoteSpans;
+pub const composerSync = composer_plane.composerSync;
+pub const pushComposerVars = composer_plane.pushComposerVars;
+pub const hexRef = composer_plane.hexRef;
+pub const hexRgb = composer_plane.hexRgb;
+pub const keyMods = composer_plane.keyMods;
+pub const claimsComposerKey = composer_plane.claimsComposerKey;
+pub const runComposerChord = composer_plane.runComposerChord;
+pub const runChord = composer_plane.runChord;
+pub const lineCount = composer_plane.lineCount;
+pub const syncLines = composer_plane.syncLines;
+pub const syncImages = composer_plane.syncImages;
+pub const syncMetrics = composer_plane.syncMetrics;
+pub const layoutInput = composer_plane.layoutInput;
+pub const barHeight = composer_plane.barHeight;
+pub const place = composer_plane.place;
+pub const seedControl = composer_plane.seedControl;
+
+// (end of split modules)
 
 const class_name_utf8 = "GhozttyViewerFeedback";
 pub const CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral(class_name_utf8);
 
 /// "The wrapped line count moved while I was being laid out; ask the pane to
 /// lay me out again." Posted, never sent — see `place`.
-const WM_APP_RELAYOUT: u32 = w32.WM_APP + 1;
+pub const WM_APP_RELAYOUT: u32 = w32.WM_APP + 1;
 
 /// "A screen reader asked a painted part to do something" (T1468): wParam is
 /// the `AccAction`, lParam the child id. Posted by `viewer_feedback_acc.zig`
 /// from inside a COM call, so the action runs from the message loop the way a
 /// click's does. `WM_APP + 2` is the web surface's chord post.
-const WM_APP_ACC_ACTION: u32 = w32.WM_APP + 3;
+pub const WM_APP_ACC_ACTION: u32 = w32.WM_APP + 3;
 
 /// The placeholder an empty composer shows, Mac's accessibility label turned
 /// into the cue an empty field needs. The page draws it (a CSS `::before` on
 /// the empty box); this is where its words live.
-const placeholder_utf8 = "What's wrong with what you're looking at?";
+pub const placeholder_utf8 = "What's wrong with what you're looking at?";
 
 /// The key hints in the footer's trailing slot. Spelled in the Windows
 /// chords, which is the whole reason it is not Mac's string.
-const hints = "Ctrl+Enter send  ·  Esc close";
+pub const hints = "Ctrl+Enter send  ·  Esc close";
 
 /// UTF-16 units one action's tooltip may hold. The labels are fixed strings
 /// (`viewer_feedback_layout.label`) and the longest is under 50, so this is
 /// headroom rather than a limit anything is near.
-const tip_text_cap: usize = 128;
+pub const tip_text_cap: usize = 128;
 
 /// Bytes the tooltip log line may hold: two buttons, each a name, two rects
 /// and its label.
-const tip_log_cap: usize = 320;
+pub const tip_log_cap: usize = 320;
 
 hwnd: w32.HWND,
 /// The web composer, while the composer is open. Null when it is closed (D43's
@@ -264,7 +358,7 @@ dark: bool = true,
 /// One decoded carousel tile. `dib` is null for a picture GDI+ could not read —
 /// cached as a FAILURE on purpose, so an unreadable attachment costs one decode
 /// rather than one per repaint.
-const Thumb = struct {
+pub const Thumb = struct {
     number: u32,
     box: i32,
     dib: ?w32.HANDLE,
@@ -472,538 +566,6 @@ pub fn applyTheme(self: *ViewerFeedbackBar) void {
 }
 
 // -------------------------------------------------------------------------
-// The web composer (T934)
-//
-// Everything below is the seam between this band and `ViewerFeedbackWeb`. The
-// band keeps owning its window, its paint, its hit testing and its geometry;
-// the web view owns the text rect's interior and pushes a snapshot up whenever
-// it changes.
-// -------------------------------------------------------------------------
-
-/// Create the web composer, or say plainly that there is none.
-///
-/// Called from `setVisible(true)` rather than from `create`, which is D43's
-/// mitigation for the memory and startup cost: a pane whose composer nobody
-/// opens never pays for a renderer.
-///
-/// No fallback surface (T1704). Both failures below are a pane whose WebView2
-/// is already broken — it has no environment, or the environment that renders
-/// its page refused a second controller — so the band is left open with its
-/// footer saying why, and the report text stays safe on the pane for the next
-/// open. A dead pill with no word of explanation is the one outcome ruled out.
-fn openComposer(self: *ViewerFeedbackBar) void {
-    if (self.web != null) return;
-
-    const surface: []const u8 = surface: {
-        const env = self.pane.env orelse break :surface "none(no-environment)";
-        const wv = ViewerFeedbackWeb.create(self.alloc, self, self.hwnd, env) orelse
-            break :surface "none(controller-refused)";
-        self.web = wv;
-        // The band has already been placed by the pane's bounds sync, so the
-        // text rect is current and the view can be born the right size - a
-        // controller adopted at 0x0 lays its document out twice.
-        const l = self.currentLayout();
-        wv.setScale(self.scale);
-        wv.setBounds(.{
-            .left = l.text.left,
-            .top = l.text.top,
-            .right = l.text.left + @max(l.text.width(), 0),
-            .bottom = l.text.top + @max(l.text.height(), 0),
-        });
-        wv.setVisible(true);
-        break :surface "web";
-    };
-    if (self.web == null) {
-        log.warn("viewer feedback composer surface={s} pane={s}", .{ surface, self.pane.paneId() });
-        self.pane.setFeedbackStatus(self.alloc, "The feedback box could not start");
-        _ = w32.InvalidateRect(self.hwnd, null, 1);
-        return;
-    }
-    // The acceptance scripts' oracle that the composer came up on the surface
-    // users get, rather than on nothing.
-    log.info("viewer feedback composer surface={s} pane={s}", .{ surface, self.pane.paneId() });
-}
-
-/// Give the renderer back. The report text is untouched - it lives on the pane,
-/// which is what makes destroying the controller on every close affordable.
-fn closeComposer(self: *ViewerFeedbackBar) void {
-    const wv = self.web orelse return;
-    self.web = null;
-    self.vars_scale = 0;
-    self.echoed = false;
-    self.page_quotes = 0;
-    wv.destroy();
-}
-
-/// The page loaded (or reloaded itself). Dress it and fill it - in that order,
-/// so the wrapped line count it measures on the way back is measured against
-/// the right line box.
-pub fn composerReady(self: *ViewerFeedbackBar) void {
-    self.pushComposerVars(true);
-    self.seedPage(null, false);
-    // ...and then give it back its history (T1006). After the seed, because a
-    // seed that is not an edit clears the page's journal; the page applies
-    // the two in the order they were posted.
-    if (self.journal) |j| {
-        if (self.web) |wv| wv.restoreJournal(j);
-    }
-}
-
-/// The page's undo journal changed. Kept verbatim so a page created after the
-/// next close can be handed it back (T1006); an empty one is the same as none.
-pub fn composerJournal(self: *ViewerFeedbackBar, j: composer_page.Journal) void {
-    self.dropJournal();
-    if (j.empty) return;
-    self.journal = self.alloc.dupe(u8, j.json) catch null;
-}
-
-fn dropJournal(self: *ViewerFeedbackBar) void {
-    if (self.journal) |j| self.alloc.free(j);
-    self.journal = null;
-}
-
-/// Make the page equal the pane's buffer, with the caret at byte offset
-/// `caret` (null means the end) and every live quote rebuilt as a block.
-///
-/// The one write path down, and the reason it is one: the page cannot be told
-/// "insert this here", so every native edit is a whole-document seed — and a
-/// seed that forgot the quotes would silently flatten every washed block into
-/// plain text, which is precisely the regression T935 exists to end. Building
-/// the span list HERE rather than at each call site is what makes that
-/// impossible to forget.
-///
-/// `undoable` is the other thing only this path can say: a seed that carries
-/// one insertion is an EDIT, and the page journals what it replaced so Ctrl+Z
-/// takes the quote or the chip back out (T983). Every other seed replaces the
-/// document with something unrelated and clears that journal.
-fn seedPage(self: *ViewerFeedbackBar, caret_at: ?usize, undoable: bool) void {
-    const wv = self.web orelse return;
-    const text = self.pane.feedbackText();
-    const units: ?u32 = if (caret_at) |b|
-        @intCast(utf16_offset.unitsBeforeByte(text, b))
-    else
-        null;
-
-    // The live image chips, derived from the buffer exactly as the carousel and
-    // the report's `images` array are (T936) — so the nodes the page builds and
-    // the pictures the report will carry cannot disagree, and the two rules
-    // that derivation enforces (an unknown chip is plain text, an entry is live
-    // at most once) hold for the nodes without being restated.
-    const images = self.imageSeedSpans(text);
-    defer if (images.len > 0) self.alloc.free(images);
-
-    // Byte spans, as the pane knows them — from the page's own last snapshot
-    // when there is one, and derived from the registry when the buffer has
-    // moved behind the page's back (a reopen, a native insertion, a clear).
-    const spans = self.pane.feedbackQuoteSpans(self.alloc) orelse {
-        wv.seed(text, units, &.{}, images, undoable);
-        return;
-    };
-    defer self.alloc.free(spans);
-
-    const out = self.alloc.alloc(composer_page.QuoteSpan, spans.len) catch {
-        // Seeding without the quotes still gets the user's words onto the
-        // page; dropping the seed would lose them.
-        wv.seed(text, units, &.{}, images, undoable);
-        return;
-    };
-    defer self.alloc.free(out);
-    var n: usize = 0;
-    for (spans) |s| {
-        const entries = self.pane.feedback_quotes.entries.items;
-        if (s.index >= entries.len) continue;
-        out[n] = .{
-            .id = entries[s.index].id,
-            .start = @intCast(utf16_offset.unitsBeforeByte(text, s.start)),
-            .end = @intCast(utf16_offset.unitsBeforeByte(text, s.end)),
-        };
-        n += 1;
-    }
-    wv.seed(text, units, out[0..n], images, undoable);
-}
-
-/// Every live chip in `text`, as the page's UTF-16 spans. Empty rather than
-/// null on any failure: a seed without its chips still carries the report's
-/// words, which is the half that cannot be recovered.
-fn imageSeedSpans(self: *ViewerFeedbackBar, text: []const u8) []const composer_page.ImageSpan {
-    const spans = self.pane.feedbackImageSpans(self.alloc) orelse return &.{};
-    defer self.alloc.free(spans);
-    if (spans.len == 0) return &.{};
-    const out = self.alloc.alloc(composer_page.ImageSpan, spans.len) catch return &.{};
-    for (spans, 0..) |s, i| {
-        out[i] = .{
-            .n = self.pane.feedbackImageEntry(s).number,
-            .start = @intCast(utf16_offset.unitsBeforeByte(text, s.start)),
-            .end = @intCast(utf16_offset.unitsBeforeByte(text, s.end)),
-        };
-    }
-    return out;
-}
-
-/// One snapshot from the page: the document as it now stands.
-///
-/// It does three things - mirror into the pane's buffer (the thing that outlives
-/// this window), re-inset the page if the band's height moved, and keep the
-/// carousel's selection with the caret.
-pub fn composerState(
-    self: *ViewerFeedbackBar,
-    text: []const u8,
-    quotes: []const composer_page.QuoteSpan,
-) void {
-    self.suppress_sync = true;
-    defer self.suppress_sync = false;
-    self.pane.feedbackSetText(self.alloc, text);
-    // ...then where its quote BLOCKS are, converted against the buffer that
-    // was just written. Order is load-bearing twice over: the offsets only
-    // mean anything against this text, and `feedbackSetText` drops the
-    // previous snapshot's spans on the way through, so a page that reports no
-    // quotes leaves the pane with none rather than with yesterday's.
-    self.publishQuoteSpans(text, quotes);
-    self.page_quotes = quotes.len;
-    const grew = self.syncMetrics();
-    // The acceptance oracle for a surface nothing outside the process can look
-    // at (T233: no screenshots, no SendInput on the test desktop). Bounded on
-    // purpose - the FIRST echo after an open, then only when the pill's VISIBLE
-    // line count moves - because a line per keystroke would be a log nobody can
-    // read in a terminal somebody is working in.
-    if (!self.echoed or grew) {
-        self.echoed = true;
-        log.info("viewer composer echo pane={s} bytes={d} lines={d}", .{
-            self.pane.paneId(),
-            self.pane.feedbackText().len,
-            self.lineCount(),
-        });
-    }
-    if (grew) self.textChanged() else _ = w32.InvalidateRect(self.hwnd, null, 1);
-    self.syncCarouselToCaret();
-}
-
-/// Turn one snapshot's quote blocks into the spans the report is written from.
-///
-/// UTF-16 code units in, bytes out (the T648 boundary, unchanged), and ids in,
-/// registry indices out — a block whose id this composer session never issued
-/// is dropped rather than matched to a neighbour, because the metadata it would
-/// carry would be some other passage's.
-fn publishQuoteSpans(
-    self: *ViewerFeedbackBar,
-    text: []const u8,
-    quotes: []const composer_page.QuoteSpan,
-) void {
-    if (quotes.len == 0) {
-        self.pane.feedbackSetQuoteSpans(self.alloc, &.{});
-        return;
-    }
-    const out = self.alloc.alloc(doc.Span, quotes.len) catch return;
-    defer self.alloc.free(out);
-    var n: usize = 0;
-    for (quotes) |q| {
-        const index = self.pane.feedback_quotes.indexOfId(q.id) orelse continue;
-        out[n] = .{
-            .start = utf16_offset.byteForUnits(text, q.start),
-            .end = utf16_offset.byteForUnits(text, q.end),
-            .index = index,
-        };
-        n += 1;
-    }
-    self.pane.feedbackSetQuoteSpans(self.alloc, out[0..n]);
-}
-
-/// The pane's buffer changed from the NATIVE side; make the page equal it.
-///
-/// Called from `feedbackSetText` itself, so it covers every writer rather than
-/// the ones anybody remembered — including a test and the post-send clear. Skip
-/// it for a write that came from the page, which would otherwise be an echo
-/// that fights the user's typing.
-pub fn composerSync(self: *ViewerFeedbackBar) void {
-    if (self.suppress_sync) return;
-    // Whatever the history described is not the document any more — and with
-    // the composer closed there is no page to clear its own copy, so this is
-    // the only place the stale one can go (T1006).
-    self.dropJournal();
-    if (self.web == null) return;
-    self.seedPage(null, false);
-}
-
-/// Push the design-system numbers into the page's CSS custom properties.
-///
-/// `force` is for the two moments the numbers themselves moved (a theme change,
-/// a fresh page); otherwise this is a no-op unless the scale or the pill colour
-/// has changed since the last push. The dedupe is load-bearing rather than an
-/// optimisation: every push makes the page re-measure and re-report, and a
-/// report arriving from inside a bounds sync is a bounds sync that runs again.
-fn pushComposerVars(self: *ViewerFeedbackBar, force: bool) void {
-    const wv = self.web orelse return;
-    if (!force and self.vars_scale == self.scale and
-        std.meta.eql(self.vars_pill, self.pill_rgb)) return;
-    const scale = if (self.scale > 0) self.scale else 1.0;
-
-    // Physical metrics divided by the rasterization scale, so one CSS pixel is
-    // exactly one of the physical pixels the layout module reserved. Dividing
-    // here rather than passing DIP constants is what keeps the two in step at
-    // 1.25, where `@round` moves the font and the leading independently.
-    const body = type_ramp.body(scale);
-    const line_h = type_ramp.lineBox(body, scale);
-
-    var fg_buf: [8]u8 = undefined;
-    var bg_buf: [8]u8 = undefined;
-    var ph_buf: [8]u8 = undefined;
-    var sel_buf: [8]u8 = undefined;
-    var qbg_buf: [8]u8 = undefined;
-    var qac_buf: [8]u8 = undefined;
-    var iink_buf: [8]u8 = undefined;
-    var iedge_buf: [8]u8 = undefined;
-
-    self.vars_scale = self.scale;
-    self.vars_pill = self.pill_rgb;
-    wv.pushVars(.{
-        .face = type_ramp.face,
-        .font_px = @as(f32, @floatFromInt(body.height)) / scale,
-        .line_px = @as(f32, @floatFromInt(line_h)) / scale,
-        .fg = hexRef(&fg_buf, self.text_ref),
-        .bg = hexRgb(&bg_buf, self.pill_rgb),
-        .placeholder = hexRef(&ph_buf, self.secondary_ref),
-        .selection = hexRef(&sel_buf, self.accent_ref),
-        .placeholder_text = placeholder_utf8,
-        // A quoted block's wash and bar (T935) - the pill pulled 14% toward
-        // the accent, and the accent itself, both derived in `applyTheme`. Its metrics go over in CSS pixels, which are
-        // DIPs here because the controller rasterizes at the pane's scale.
-        .quote_bg = hexRgb(&qbg_buf, self.quote_rgb),
-        .quote_accent = hexRef(&qac_buf, self.accent_ref),
-        .quote_indent_px = quote_indent_dip,
-        .quote_bar_px = quote_bar_dip,
-        .quote_bar_x_px = quote_bar_x_dip,
-        // The chip's own shape, and the cap the page refuses a picture at —
-        // the store's own number, so a drop the store would reject is rejected
-        // before 40 MB of base64 crosses the channel to be rejected here
-        // (T936).
-        .image_pad_px = chip_pad_dip,
-        .image_radius_px = chip_radius_dip,
-        .image_ink = hexRgb(&iink_buf, self.chip_ink_rgb),
-        .image_edge = hexRgb(&iedge_buf, self.chip_edge_rgb),
-        .image_max_bytes = feedback_images.max_image_bytes,
-    });
-}
-
-/// `#rrggbb` for a `COLORREF`, which is 0x00BBGGRR - the byte order that makes
-/// a hand-written formatter here safer than a `{x}` of the whole word.
-fn hexRef(buf: *[8]u8, ref: u32) []const u8 {
-    return hexRgb(buf, .{
-        .r = @intCast(ref & 0xFF),
-        .g = @intCast((ref >> 8) & 0xFF),
-        .b = @intCast((ref >> 16) & 0xFF),
-    });
-}
-
-fn hexRgb(buf: *[8]u8, rgb: color_math.Rgb) []const u8 {
-    return std.fmt.bufPrint(buf, "#{x:0>2}{x:0>2}{x:0>2}", .{ rgb.r, rgb.g, rgb.b }) catch "#000000";
-}
-
-/// The modifier state right now. Shared with `ViewerFeedbackWeb`'s accelerator
-/// handler, which runs while the browser process is blocked on its answer and
-/// so cannot be handed a stale copy.
-pub fn keyMods() input.Mods {
-    return .{
-        .shift = w32.GetKeyState(@as(i32, w32.VK_SHIFT)) < 0,
-        .ctrl = w32.GetKeyState(@as(i32, w32.VK_CONTROL)) < 0,
-        .alt = w32.GetKeyState(@as(i32, w32.VK_MENU)) < 0,
-        .super = w32.GetKeyState(@as(i32, w32.VK_LWIN)) < 0 or
-            w32.GetKeyState(@as(i32, w32.VK_RWIN)) < 0,
-    };
-}
-
-/// Whether a chord belongs to the composer or the pane rather than to the page.
-///
-/// Keys typed into the page reach a Chromium window, not our message loop, so
-/// the claim has to be made inside `AcceleratorKeyPressed` - and made
-/// there rather than in the page's own `keydown`, because only `put_Handled`
-/// stops the browser ALSO acting on it (an unclaimed Ctrl+R would reload the
-/// composer's page out from under a half-written report).
-pub fn claimsComposerKey(self: *const ViewerFeedbackBar, vk: u16, mods: input.Mods) bool {
-    _ = self;
-    return viewer_accel.composerChord(vk, mods) != null;
-}
-
-/// Run a chord the accelerator handler claimed. Posted to this window rather
-/// than run inside the runtime's `Invoke`, because closing the composer tears
-/// the controller down and it must not happen under its own callback frame.
-fn runComposerChord(self: *ViewerFeedbackBar, vk: u16, mods: input.Mods) void {
-    const chord = viewer_accel.composerChord(vk, mods) orelse return;
-    self.runChord(chord);
-}
-
-/// One place both keyboard surfaces end up: the band's own `WM_KEYDOWN` (via
-/// `handleKey`) and the web composer's accelerator hop (via
-/// `runComposerChord`). A chord added to the table therefore reaches BOTH
-/// without a second switch to keep in step.
-fn runChord(self: *ViewerFeedbackBar, chord: viewer_accel.ComposerChord) void {
-    switch (chord) {
-        .send => self.pane.sendFeedback(self.alloc),
-        .close => self.pane.setFeedbackOpen(false),
-        .snapshot => self.beginSnapshot(),
-        .focus_next => self.walkFocus(false),
-        .focus_prev => self.walkFocus(true),
-    }
-}
-
-/// How many lines the composer currently shows: the page's own WRAPPED line
-/// count, clamped by the layout's cap. Cached in `self.lines` by `syncLines`,
-/// because `place` sizes the view from this and must not wait on the view it
-/// is about to move.
-fn lineCount(self: *const ViewerFeedbackBar) u32 {
-    return layout_mod.visibleLines(self.lines);
-}
-
-/// Re-read the page's wrapped line count from its last snapshot. Returns true
-/// when it changed, i.e. when the pill has to grow or shrink and the pane has
-/// to re-inset the page. No page means one line — an empty pill.
-fn syncLines(self: *ViewerFeedbackBar) bool {
-    const lines: u32 = if (self.web) |wv| @max(wv.lines, 1) else 1;
-    if (layout_mod.visibleLines(lines) == layout_mod.visibleLines(self.lines)) {
-        self.lines = lines;
-        return false;
-    }
-    self.lines = lines;
-    return true;
-}
-
-/// Re-count the live image chips. Returns true when the count changed, i.e.
-/// when the carousel row appeared, disappeared, or grew — all of which move the
-/// page, so the pane has to re-inset.
-fn syncImages(self: *ViewerFeedbackBar) bool {
-    const n: u32 = @intCast(@min(
-        self.pane.feedbackImageCount(self.alloc),
-        std.math.maxInt(u32),
-    ));
-    if (n == self.images) return false;
-    self.images = n;
-    // A strip that just lost tiles can be scrolled past its own end.
-    self.carousel_scroll = self.currentLayout().clampScroll(self.carousel_scroll);
-    if (self.carousel_selected) |i| {
-        if (i >= n) self.carousel_selected = null;
-    }
-    // The keyboard ring cannot outlive the tiles it was on: deleting the last
-    // picture while the strip held focus hands focus back to the text, and
-    // deleting one from under the ring pulls it onto the last survivor.
-    if (n == 0) {
-        if (self.key_focus == .carousel) self.focusStop(.text) else self.carousel_focus = null;
-    } else if (self.carousel_focus) |i| {
-        if (i >= n) self.carousel_focus = n - 1;
-    }
-    self.logCarousel("tiles");
-    // The band's children just changed: a reader re-reads them.
-    Accessible.notify(Accessible.EVENT_OBJECT_REORDER, self.hwnd, 0);
-    return true;
-}
-
-/// Both cached metrics at once. Kept as one call because every text change can
-/// move either — a pasted chip adds a tile AND can wrap a line — and asking for
-/// one while forgetting the other is exactly the bug that leaves the page inset
-/// by a stale band height.
-fn syncMetrics(self: *ViewerFeedbackBar) bool {
-    const grew_lines = self.syncLines();
-    const grew_images = self.syncImages();
-    return grew_lines or grew_images;
-}
-
-fn layoutInput(self: *const ViewerFeedbackBar, width: i32, scale: f32) layout_mod.Input {
-    return .{
-        .scale = scale,
-        .width = width,
-        .lines = self.lineCount(),
-        .line_h = type_ramp.lineBox(type_ramp.body(scale), scale),
-        .footer_h = type_ramp.lineBox(type_ramp.caption(scale), scale),
-        .images = self.images,
-    };
-}
-
-/// The band height this composer needs at `width`/`scale`. The pane asks for
-/// it BEFORE placing anything (it has to inset the page by nav + composer in
-/// one pass), which is why it is derivable without a DC: every input is the
-/// type ramp and the DPI scale, never a measured string.
-pub fn barHeight(self: *const ViewerFeedbackBar, width: i32, scale: f32) i32 {
-    return layout_mod.Layout.init(self.layoutInput(width, scale)).bar_h;
-}
-
-/// Position the composer across the pane, directly under the nav bar.
-/// Idempotent and cheap; the pane calls it from every bounds sync while the
-/// composer is open.
-pub fn place(self: *ViewerFeedbackBar, top: i32, width: i32, scale: f32) void {
-    const l = layout_mod.Layout.init(self.layoutInput(width, scale));
-    // Resize-aware, in-frame reposition (T1392) — see `chrome_reposition`.
-    _ = chrome_reposition.place(self.hwnd, 0, top, width, l.bar_h, 0);
-    // On glass a band that only MOVED (the nav bar grew a row) covers a
-    // different slice of the desk, and a move can carry the old pixels along.
-    if (top != self.top) {
-        self.top = top;
-        if (self.pane.glass != null) _ = w32.InvalidateRect(self.hwnd, null, 0);
-    }
-    if (self.scale != scale) {
-        self.scale = scale;
-        if (self.caption_font) |f| _ = w32.DeleteObject(@ptrCast(f));
-        self.caption_font = makeFont(type_ramp.caption(scale));
-    }
-    // The web surface fills the text rect exactly, which is what makes the
-    // pill's 12 DIP lead and the gap to the buttons the view's OWN margins — no
-    // second inset to keep in step with the layout module. The controller is
-    // parented to this band, so `Layout`'s own client-space numbers are
-    // already what `put_Bounds` wants.
-    if (self.web) |wv| {
-        wv.setScale(scale);
-        wv.setBounds(.{
-            .left = l.text.left,
-            .top = l.text.top,
-            .right = l.text.left + @max(l.text.width(), 0),
-            .bottom = l.text.top + @max(l.text.height(), 0),
-        });
-        // Only when the scale actually moved — see `pushComposerVars`.
-        self.pushComposerVars(false);
-    }
-
-    // A narrower pane re-wraps the text, so the line count this layout was
-    // built from can be wrong the moment the control is moved — which is how
-    // a composer ends up two lines tall around three lines of text after a
-    // split divider is dragged. Corrected on the next message rather than
-    // in-place: `place` is called FROM the pane's bounds sync, and calling
-    // back into it here would re-enter it. The correction converges after one
-    // pass, because the text rect's WIDTH does not depend on the line count.
-    if (self.syncLines()) _ = w32.PostMessageW(self.hwnd, WM_APP_RELAYOUT, 0, 0);
-
-    // Re-synced HERE rather than only at creation: a tool is a RECTANGLE in
-    // this window's client space, so every reposition, DPI change and re-wrap
-    // moves the two buttons out from under their tips.
-    self.syncTip(l);
-
-    // A narrower band is the OTHER way a strip starts overflowing (T668) — the
-    // pictures did not change, the room for them did. The scroll is re-clamped
-    // to the new viewport and the strip re-states itself, so "is there more
-    // this way" is answerable after a resize and not only after a paste.
-    if (self.images > 0) {
-        const clamped = l.clampScroll(self.carousel_scroll);
-        const moved = clamped != self.carousel_scroll;
-        self.carousel_scroll = clamped;
-        if (moved or l.carousel.width() != self.carousel_view) {
-            self.carousel_view = l.carousel.width();
-            self.logCarousel("resize");
-        }
-    }
-}
-
-/// Push the pane's buffer into the page — what opening the composer does, so
-/// contents survive a close/reopen. The page takes the buffer whole, caret at
-/// the end, in one message: it owns the document, so there is no line-ending
-/// conversion and no formatting to re-derive on this side. Before the page
-/// exists (the pane seeds BEFORE it shows the band) this only re-counts, and
-/// the page seeds itself from the buffer once it loads (`composerReady`).
-pub fn seedControl(self: *ViewerFeedbackBar) void {
-    self.seedPage(null, false);
-    // Seeding can change the band's height — most visibly after a report is
-    // filed, where the text and every chip in it went at once. Posted rather
-    // than called: the pane's own `setFeedbackOpen` calls this from inside its
-    // bounds sync, and re-entering that sync from here would nest it.
-    if (self.syncMetrics()) _ = w32.PostMessageW(self.hwnd, WM_APP_RELAYOUT, 0, 0);
-}
-
-// -------------------------------------------------------------------------
 // Quotes (T641)
 // -------------------------------------------------------------------------
 
@@ -1012,15 +574,15 @@ pub fn seedControl(self: *ViewerFeedbackBar) void {
 /// page is dressed with them as CSS custom properties (T935); they are stated
 /// here because the rule is that the design system lives in this file, not in
 /// a stylesheet.
-const quote_indent_dip: f32 = 16;
-const quote_bar_dip: f32 = 3;
-const quote_bar_x_dip: f32 = 5;
+pub const quote_indent_dip: f32 = 16;
+pub const quote_bar_dip: f32 = 3;
+pub const quote_bar_x_dip: f32 = 5;
 
 /// An image chip's two, in DIPs (T936): the design system's 4 DIP step for the
 /// wash either side of the chip's text, and the same 4 for its corner — the
 /// radius the rest of the win32 chrome uses for a small pill.
-const chip_pad_dip: f32 = 4;
-const chip_radius_dip: f32 = 4;
+pub const chip_pad_dip: f32 = 4;
+pub const chip_radius_dip: f32 = 4;
 
 // -------------------------------------------------------------------------
 // Test seam (T673)
@@ -1074,7 +636,7 @@ fn envIsOne(alloc: Allocator, name: []const u8) bool {
 /// is the whole shape change T934 carries. A snapshot with no caret in it means
 /// focus is not in the box — and no page means no caret at all — so the end of
 /// the document is where the next insertion belongs.
-fn caret(self: *const ViewerFeedbackBar) usize {
+pub fn caret(self: *const ViewerFeedbackBar) usize {
     const wv = self.web orelse return self.pane.feedbackText().len;
     const units = wv.caret orelse return self.pane.feedbackText().len;
     return utf16_offset.byteForUnits(self.pane.feedbackText(), units);
@@ -1096,7 +658,7 @@ fn caret(self: *const ViewerFeedbackBar) usize {
 /// identity of any quote the user had EDITED the moment a second quote or a
 /// picture arrived. What happens to a span the insertion lands strictly inside
 /// is `doc.shiftSpans`'s call, and is asserted there.
-fn spliceComposer(
+pub fn spliceComposer(
     self: *ViewerFeedbackBar,
     at: usize,
     insert: []const u8,
@@ -1163,303 +725,7 @@ pub fn insertQuote(self: *ViewerFeedbackBar, passage: []const u8) void {
     self.spliceComposer(ins.at, ins.insert, ins.caret_after, quote);
 }
 
-// -------------------------------------------------------------------------
-// Images (T637)
-// -------------------------------------------------------------------------
-
-/// A picture the composer's PAGE took off a paste or a drop (T936).
-///
-/// The engine decoded it, so there is nothing to intercept and nothing to ask
-/// the clipboard: what arrives here is the same PNG `attachImage` has always
-/// been handed, and it goes the same way. A picture the page could not hand
-/// over says so in the footer rather than vanishing — a paste that appears to
-/// do nothing is the failure this whole path exists to end.
-pub fn composerImage(self: *ViewerFeedbackBar, image: composer_page.Image) void {
-    if (image.png) |png| {
-        _ = self.attachImage(png);
-        return;
-    }
-    log.warn("viewer feedback pane={s} image refused by the page: {s} bytes={d}", .{
-        self.pane.paneId(),
-        @tagName(image.problem),
-        image.bytes,
-    });
-    self.pane.setFeedbackStatus(self.alloc, switch (image.problem) {
-        .too_large => "That image is too large to attach",
-        else => "That is not an image this can attach",
-    });
-    _ = w32.InvalidateRect(self.hwnd, null, 1);
-}
-
-/// Store one PNG and put its chip at the caret. False when the picture could
-/// not be taken, in which case nothing was inserted and the pane has already
-/// said why in the footer.
-pub fn attachImage(self: *ViewerFeedbackBar, png: []const u8) bool {
-    const number = self.pane.feedbackAddImage(self.alloc, png) orelse return false;
-
-    const ins = feedback_images.insertion(
-        self.alloc,
-        self.pane.feedbackText(),
-        self.caret(),
-        number,
-    ) catch return false;
-    defer ins.deinit(self.alloc);
-
-    // Undoable, so Ctrl+Z takes the chip back out the way it takes typing out
-    // — and the picture leaves the report with it, because the report is
-    // derived from the text.
-    self.spliceComposer(ins.at, ins.insert, ins.caret_after, null);
-    // The strip scrolls to the picture that just arrived, which is what makes
-    // a paste visible once the ribbon is longer than the pane.
-    self.showThumb(number);
-    log.info("viewer feedback pane={s} image=#{d} bytes={d} live={d}", .{
-        self.pane.paneId(),
-        number,
-        png.len,
-        self.pane.feedbackImageCount(self.alloc),
-    });
-    return true;
-}
-
-// -------------------------------------------------------------------------
-// The thumbnail carousel (T646)
-//
-// The strip has NO state of its own about what is in it: every tile is derived
-// from the live chips in the composer's text, the same set the report's
-// `images` array comes from. Delete a chip and its thumbnail goes with it,
-// because there was never a second list to update.
-//
-// What IS state here is presentation: how far the ribbon is scrolled, which
-// tile is ringed, and the decoded bitmaps.
-// -------------------------------------------------------------------------
-
-/// Report the strip's whole state on every change: how many tiles, where they
-/// are in the BAND's own coordinates, how far the ribbon is scrolled and which
-/// tile is ringed.
-///
-/// This is the acceptance script's only oracle and the reason it is this
-/// detailed. The suite runs on a background desktop where nothing can look at
-/// painted pixels (T233), so "the thumbnails appeared" has to be a sentence the
-/// app says — and geometry it can point a click at, rather than one the script
-/// re-derives from design-system constants and gets subtly wrong at 1.25.
-fn logCarousel(self: *ViewerFeedbackBar, what: []const u8) void {
-    const l = self.currentLayout();
-    log.info(
-        "viewer feedback pane={s} carousel={s} tiles={d} scroll={d} selected={d} " ++
-            "left={d} top={d} thumb={d} stride={d} view={d} max={d} cue={s} focus={d}",
-        .{
-            self.pane.paneId(),
-            what,
-            self.images,
-            self.carousel_scroll,
-            if (self.carousel_selected) |i| @as(i64, @intCast(i)) else -1,
-            l.carousel.left,
-            l.carousel.top,
-            l.thumb,
-            l.thumb_stride,
-            l.carousel.width(),
-            l.maxScroll(),
-            @tagName(self.cueState(l)),
-            if (self.key_focus == .carousel)
-                (if (self.carousel_focus) |i| @as(i64, @intCast(i)) else -1)
-            else
-                -1,
-        },
-    );
-}
-
-/// The decoded tile for image `number`, at tile side `box`. Decoded on first
-/// paint and cached — a repaint of a six-image strip must not be six PNG
-/// decodes. Null when GDI+ could not read the picture, which is cached too.
-fn thumbFor(self: *ViewerFeedbackBar, number: u32, png: []const u8, box: i32) ?Thumb {
-    for (self.thumbs.items) |t| {
-        if (t.number == number and t.box == box) return t;
-    }
-    const size = feedback_images.pngSize(png) orelse return null;
-    const fit = layout_mod.fitInto(size.width, size.height, box);
-    var entry: Thumb = .{ .number = number, .box = box, .dib = null };
-    if (gdiplus_decode.decodeBytes(png, fit.w, fit.h)) |t| {
-        entry.dib = t.dib;
-        entry.w = t.w;
-        entry.h = t.h;
-        // Reported because a tile the strip COUNTS and a tile it can actually
-        // draw are two different claims, and the acceptance suite runs where
-        // no one can look at the pixels to tell them apart.
-        log.info("viewer feedback pane={s} thumb=#{d} box={d} decoded={d}x{d}", .{
-            self.pane.paneId(),
-            number,
-            box,
-            t.w,
-            t.h,
-        });
-    } else {
-        log.warn("viewer feedback thumbnail #{d} could not be decoded", .{number});
-    }
-    self.thumbs.append(self.alloc, entry) catch {
-        // Not cacheable, so it must not leak either: without the cache entry
-        // nothing would ever delete this bitmap.
-        if (entry.dib) |d| _ = w32.DeleteObject(d);
-        return null;
-    };
-    return entry;
-}
-
-/// Point the strip at whichever chip the caret is in: ring its tile and scroll
-/// it into view. This is the "vice versa" half of the sync — clicking a chip in
-/// the text (or arrowing into one) walks the strip to its picture.
-///
-/// A caret at either END of a chip counts as inside it, because clicking a chip
-/// parks the caret at one of them, and an end that did not count would make the
-/// gesture do nothing at all.
-fn syncCarouselToCaret(self: *ViewerFeedbackBar) void {
-    const spans = self.pane.feedbackImageSpans(self.alloc) orelse return;
-    defer self.alloc.free(spans);
-
-    const at = self.caret();
-    var found: ?usize = null;
-    for (spans, 0..) |s, i| {
-        if (at >= s.start and at <= s.end) {
-            found = i;
-            break;
-        }
-    }
-
-    const before_sel = self.carousel_selected;
-    const before_scroll = self.carousel_scroll;
-    self.carousel_selected = found;
-    if (found) |i| {
-        self.carousel_scroll = self.currentLayout().scrollToShow(i, self.carousel_scroll);
-    }
-    if (before_sel != self.carousel_selected or before_scroll != self.carousel_scroll) {
-        _ = w32.InvalidateRect(self.hwnd, null, 1);
-        self.logCarousel("caret");
-    }
-}
-
-/// Bring image `number`'s tile into view — what a fresh paste does, so the
-/// picture that just arrived is the one you can see even when the strip is
-/// already longer than the pane.
-///
-/// Driven by the NUMBER rather than by the caret, because the caret lands past
-/// the chip's trailing space and is therefore not "in" it: a paste knows
-/// exactly which picture it just added, and guessing from the caret would be a
-/// worse answer to a question nobody has to ask.
-fn showThumb(self: *ViewerFeedbackBar, number: u32) void {
-    const spans = self.pane.feedbackImageSpans(self.alloc) orelse return;
-    defer self.alloc.free(spans);
-    for (spans, 0..) |s, i| {
-        if (self.pane.feedbackImageEntry(s).number != number) continue;
-        const next = self.currentLayout().scrollToShow(i, self.carousel_scroll);
-        if (next != self.carousel_scroll) {
-            self.carousel_scroll = next;
-            _ = w32.InvalidateRect(self.hwnd, null, 1);
-            self.logCarousel("paste");
-        }
-        return;
-    }
-}
-
-/// A tile was clicked: select its chip in the composer and put the caret there.
-/// The forward half of the sync, and the reason it selects the whole chip
-/// rather than just moving the caret — the chip is one unit, so pointing at it
-/// means highlighting all of it.
-fn activateThumb(self: *ViewerFeedbackBar, index: usize) void {
-    const spans = self.pane.feedbackImageSpans(self.alloc) orelse return;
-    defer self.alloc.free(spans);
-    if (index >= spans.len) return;
-    const s = spans[index];
-
-    if (self.web) |wv| {
-        // T936: the chip is a NODE, so pointing at it is selecting the node —
-        // not re-seeding the document to park a caret, which would throw the
-        // page's undo stack away for a click that changed no text.
-        wv.takeFocus();
-        wv.pick(self.pane.feedbackImageEntry(s).number);
-    }
-
-    self.carousel_selected = index;
-    self.carousel_scroll = self.currentLayout().scrollToShow(index, self.carousel_scroll);
-    _ = w32.InvalidateRect(self.hwnd, null, 1);
-    log.info("viewer feedback pane={s} thumbnail=#{d} chip={d}..{d}", .{
-        self.pane.paneId(),
-        self.pane.feedbackImageEntry(s).number,
-        s.start,
-        s.end,
-    });
-    self.logCarousel("click");
-}
-
-/// Which ends of the strip have pictures past them right now (T668) — what the
-/// cue paints, and what the acceptance script reads instead of the fade it
-/// cannot see.
-const CueState = enum { none, start, end, both };
-
-fn cueState(self: *const ViewerFeedbackBar, l: layout_mod.Layout) CueState {
-    const at_start = !l.cueRect(.start, self.carousel_scroll).isEmpty();
-    const at_end = !l.cueRect(.end, self.carousel_scroll).isEmpty();
-    if (at_start and at_end) return .both;
-    if (at_start) return .start;
-    if (at_end) return .end;
-    return .none;
-}
-
-/// A click on an overflow cue pages the strip that way — the mouse's half of
-/// T668. The wheel already scrolled, but nothing on screen said so; a chevron
-/// that does nothing when clicked would be worse than no chevron.
-fn pageCarousel(self: *ViewerFeedbackBar, side: layout_mod.Side) void {
-    const l = self.currentLayout();
-    const next = l.pageScroll(self.carousel_scroll, side);
-    if (next == self.carousel_scroll) return;
-    self.carousel_scroll = next;
-    _ = w32.InvalidateRect(self.hwnd, null, 1);
-    self.logCarousel("page");
-}
-
-/// An arrow key while the strip holds focus (T668): move the ring, scroll the
-/// tile it landed on into view, and change nothing about the report itself.
-fn walkTiles(self: *ViewerFeedbackBar, move: layout_mod.TileMove) void {
-    const next = layout_mod.moveTile(self.carousel_focus, move, self.images) orelse return;
-    const l = self.currentLayout();
-    const scroll = l.scrollToShow(next, self.carousel_scroll);
-    if (next == self.carousel_focus and scroll == self.carousel_scroll) return;
-    self.carousel_focus = next;
-    self.carousel_scroll = scroll;
-    _ = w32.InvalidateRect(self.hwnd, null, 1);
-    self.logCarousel("walk");
-    self.notifyAccFocus();
-}
-
-/// Enter or Space on the focused tile — the same thing a click on it does.
-///
-/// It selects the picture's chip, which puts the Win32 focus back on the text
-/// surface, so the ring goes with it: the strip is a place focus passes
-/// through, and leaving a ring on a tile the keyboard no longer drives would
-/// be a lie about where the next keystroke lands.
-fn activateFocusedTile(self: *ViewerFeedbackBar) void {
-    const i = self.carousel_focus orelse return;
-    if (i >= self.images) return;
-    // Before the activation, not after: `activateThumb` puts the Win32 focus
-    // on the text surface and states the strip on the way past, and a report
-    // still naming a focused tile there would be a lie about where the next
-    // keystroke lands.
-    self.key_focus = .text;
-    self.carousel_focus = null;
-    self.activateThumb(i);
-}
-
-/// Wheel over the band scrolls the strip, when there is anything to scroll.
-fn scrollCarousel(self: *ViewerFeedbackBar, delta: i32) void {
-    const l = self.currentLayout();
-    if (l.maxScroll() == 0) return;
-    // One notch moves one whole tile: a strip of discrete pictures reads
-    // better stepped than smeared.
-    const next = l.clampScroll(self.carousel_scroll - delta * l.thumb_stride);
-    if (next == self.carousel_scroll) return;
-    self.carousel_scroll = next;
-    _ = w32.InvalidateRect(self.hwnd, null, 1);
-}
-
-fn makeFont(f: type_ramp.Font) ?*anyopaque {
+pub fn makeFont(f: type_ramp.Font) ?*anyopaque {
     return w32.CreateFontW(
         -f.height,
         0,
@@ -1514,7 +780,7 @@ pub fn hasFocus(self: *const ViewerFeedbackBar) bool {
 
 /// The text changed: the pill may have grown or shrunk, so the pane has to
 /// re-inset the page. Repaint either way.
-fn textChanged(self: *ViewerFeedbackBar) void {
+pub fn textChanged(self: *ViewerFeedbackBar) void {
     _ = w32.InvalidateRect(self.hwnd, null, 1);
     self.pane.syncBounds();
 }
@@ -1523,842 +789,6 @@ pub fn currentLayout(self: *ViewerFeedbackBar) layout_mod.Layout {
     var r: w32.RECT = undefined;
     const w = if (w32.GetClientRect(self.hwnd, &r) != 0) r.right - r.left else 0;
     return layout_mod.Layout.init(self.layoutInput(w, self.scale));
-}
-
-// -------------------------------------------------------------------------
-// Tooltips (T640)
-// -------------------------------------------------------------------------
-
-/// A tool id in this bar's own tool space. Keyed on the button so a tool never
-/// has to be renumbered, exactly as `ViewerNavBar.tipId` does it.
-fn tipId(b: layout_mod.Button) usize {
-    return 0x200 + @as(usize, @intFromEnum(b));
-}
-
-/// One tooltip control for both actions, created on demand and kept for the
-/// bar's life. A rect tool in `TTF_SUBCLASS` mode — the delay, the placement
-/// and the dismissal are then comctl32's, which is the same trade the nav bar
-/// makes and for the same reason: this band has no hover machinery of its own
-/// worth driving a tip by hand from.
-fn tipEnsure(self: *ViewerFeedbackBar) ?w32.HWND {
-    if (self.tip) |h| return h;
-
-    var icc = w32.INITCOMMONCONTROLSEX{
-        .dwSize = @sizeOf(w32.INITCOMMONCONTROLSEX),
-        .dwICC = w32.ICC_TAB_CLASSES,
-    };
-    _ = w32.InitCommonControlsEx(&icc);
-
-    const tip = w32.CreateWindowExW(
-        w32.WS_EX_TOPMOST | w32.WS_EX_TOOLWINDOW | w32.WS_EX_NOACTIVATE,
-        w32.TOOLTIPS_CLASS,
-        std.unicode.utf8ToUtf16LeStringLiteral(""),
-        w32.WS_POPUP | w32.TTS_ALWAYSTIP | w32.TTS_NOPREFIX,
-        w32.CW_USEDEFAULT,
-        w32.CW_USEDEFAULT,
-        w32.CW_USEDEFAULT,
-        w32.CW_USEDEFAULT,
-        self.hwnd,
-        null,
-        null,
-        null,
-    ) orelse return null;
-
-    // The composer's own theme decides the tip's: this band is already dark or
-    // light for the page it sits over, and a light tip over a dark composer is
-    // the seam the nav bar's tips do not have.
-    system_colors.applyControlThemeDark(tip, self.dark);
-    self.tip = tip;
-    return tip;
-}
-
-fn tipToolInfo(
-    self: *ViewerFeedbackBar,
-    b: layout_mod.Button,
-    rect: w32.RECT,
-) w32.TOOLINFOW {
-    return .{
-        .cbSize = @sizeOf(w32.TOOLINFOW),
-        .uFlags = w32.TTF_SUBCLASS,
-        .hwnd = self.hwnd,
-        .uId = tipId(b),
-        .rect = rect,
-        .hinst = null,
-        .lpszText = @ptrCast(&self.tip_text[@intFromEnum(b)]),
-        .lParam = 0,
-        .lpReserved = null,
-    };
-}
-
-/// Bring both tooltips in line with the composer's current rects. Idempotent,
-/// and safe before the tip control exists.
-///
-/// A button the layout has squeezed to nothing has its tool DELETED rather
-/// than left pointing at a rectangle nothing paints — a violently narrow pane
-/// does exactly that to the actions.
-fn syncTip(self: *ViewerFeedbackBar, l: layout_mod.Layout) void {
-    const m = icon_button.Metrics.init(self.scale);
-    var line: [tip_log_cap]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&line);
-    const w = fbs.writer();
-    for (std.enums.values(layout_mod.Button)) |b| {
-        const i = @intFromEnum(b);
-        const box = l.button(b);
-        if (box.width() <= 0) {
-            self.tipDelete(b);
-            continue;
-        }
-
-        const text = layout_mod.label(b);
-        const n = std.unicode.utf8ToUtf16Le(self.tip_text[i][0 .. tip_text_cap - 1], text) catch 0;
-        self.tip_text[i][n] = 0;
-        if (n == 0) {
-            self.tipDelete(b);
-            continue;
-        }
-
-        const tip = self.tipEnsure() orelse return;
-        // The HIT box, not the paint: a tip should follow the same forgiving
-        // target the click does (design system — a hit box may exceed its
-        // paint), or the two disagree at the edges.
-        const hit = icon_button.hitBox(m, box);
-        var ti = self.tipToolInfo(b, .{
-            .left = hit.left,
-            .top = hit.top,
-            .right = hit.right,
-            .bottom = hit.bottom,
-        });
-        if (!self.tip_added[i]) {
-            if (w32.SendMessageW(tip, w32.TTM_ADDTOOLW, 0, @bitCast(@intFromPtr(&ti))) == 0) continue;
-            self.tip_added[i] = true;
-        } else {
-            _ = w32.SendMessageW(tip, w32.TTM_NEWTOOLRECTW, 0, @bitCast(@intFromPtr(&ti)));
-            _ = w32.SendMessageW(tip, w32.TTM_UPDATETIPTEXTW, 0, @bitCast(@intFromPtr(&ti)));
-        }
-        w.print(" {s}:paint={d},{d},{d},{d}:tool={d},{d},{d},{d}:text=\"{s}\"", .{
-            @tagName(b),
-            box.left, box.top,  box.right,  box.bottom,
-            hit.left, hit.top,  hit.right,  hit.bottom,
-            text,
-        }) catch {};
-    }
-
-    self.logTips(line[0..fbs.pos]);
-}
-
-/// State the composer's tooltips in the GUI's own stderr, once per CHANGE.
-///
-/// The band is owner-painted chrome on a desktop nothing can screenshot, so
-/// this line is the acceptance script's only view of which tools exist and
-/// where they sit — the same oracle, for the same reason, as the nav bar's
-/// (T639). Once per change rather than per sync: `place` runs on every bounds
-/// pass, and a line per pass would bury the one that changed.
-fn logTips(self: *ViewerFeedbackBar, line: []const u8) void {
-    if (line.len > self.tip_log.len) return;
-    if (std.mem.eql(u8, self.tip_log[0..self.tip_log_len], line)) return;
-    @memcpy(self.tip_log[0..line.len], line);
-    self.tip_log_len = line.len;
-    log.info("viewer feedback tips pane={s}{s}", .{ self.pane.paneId(), line });
-}
-
-fn tipDelete(self: *ViewerFeedbackBar, b: layout_mod.Button) void {
-    const i = @intFromEnum(b);
-    if (!self.tip_added[i]) return;
-    var ti = self.tipToolInfo(b, .{ .left = 0, .top = 0, .right = 0, .bottom = 0 });
-    if (self.tip) |t| _ = w32.SendMessageW(t, w32.TTM_DELTOOLW, 0, @bitCast(@intFromPtr(&ti)));
-    self.tip_added[i] = false;
-}
-
-// -------------------------------------------------------------------------
-// Keyboard focus (T640)
-// -------------------------------------------------------------------------
-
-/// Which actions a Tab may land on right now — the send button is dead while
-/// there is nothing to send, and focus does not stop on a dead control.
-fn enabledActions(self: *const ViewerFeedbackBar) [layout_mod.button_count]bool {
-    var out: [layout_mod.button_count]bool = undefined;
-    for (std.enums.values(layout_mod.Button)) |b| {
-        out[@intFromEnum(b)] = self.buttonEnabled(b);
-    }
-    return out;
-}
-
-/// Move keyboard focus to `stop` and show it.
-///
-/// The band itself takes the Win32 focus for a BUTTON stop — there is no child
-/// window to focus, the actions are painted by this window — and hands focus
-/// straight on to the text surface for `.text`, which is what `WM_SETFOCUS`
-/// has always done.
-fn focusStop(self: *ViewerFeedbackBar, stop: layout_mod.Stop) void {
-    const arriving = stop == .carousel and self.key_focus != .carousel;
-    self.key_focus = stop;
-    if (stop == .carousel) {
-        // The ring arrives on the picture the caret is already in when there
-        // is one — walking into the strip from a chip should not throw away
-        // where the user was — and on the first tile otherwise.
-        if (arriving) self.carousel_focus = self.carousel_selected orelse 0;
-        if (self.carousel_focus) |i| {
-            if (i >= self.images) self.carousel_focus = if (self.images > 0) 0 else null;
-        }
-        if (self.carousel_focus) |i| {
-            self.carousel_scroll = self.currentLayout().scrollToShow(i, self.carousel_scroll);
-        }
-    } else self.carousel_focus = null;
-    if (stop == .text) {
-        self.takeFocus();
-    } else if (w32.GetFocus() != self.hwnd) {
-        _ = w32.SetFocus(self.hwnd);
-    }
-    _ = w32.InvalidateRect(self.hwnd, null, 1);
-    // The acceptance oracle for the tab order (T640): the ring is painted
-    // chrome on a desktop nothing can screenshot, so where focus LANDED is
-    // stated rather than looked at.
-    log.info("viewer feedback focus pane={s} stop={s}", .{ self.pane.paneId(), @tagName(stop) });
-    self.notifyAccFocus();
-}
-
-/// Tab / shift+Tab.
-fn walkFocus(self: *ViewerFeedbackBar, back: bool) void {
-    self.focusStop(layout_mod.nextStop(
-        self.key_focus,
-        back,
-        self.currentLayout().reachable(self.enabledActions()),
-        self.images > 0,
-    ));
-    // The strip reports its own focus, so the acceptance oracle can see the
-    // ring land on a tile the same way it sees it land on a button.
-    if (self.key_focus == .carousel) self.logCarousel("focus");
-}
-
-/// Space or Enter on a focused action — the same thing a click does.
-///
-/// Only ever reached while a BUTTON holds focus, which is the guard that keeps
-/// a bare Enter in the text surface a newline (the one behavior this composer
-/// must never lose) and a space a space.
-fn activateFocused(self: *ViewerFeedbackBar) bool {
-    const b = layout_mod.buttonOf(self.key_focus) orelse return false;
-    if (!self.buttonEnabled(b)) return true;
-    self.activate(b);
-    return true;
-}
-
-// -------------------------------------------------------------------------
-// Screen readers (T1468)
-// -------------------------------------------------------------------------
-
-/// The image number tile `index` shows - what its accessible name says, so a
-/// reader names the picture the way the report's chip does.
-pub fn accTileNumber(self: *ViewerFeedbackBar, index: usize) ?u32 {
-    const spans = self.pane.feedbackImageSpans(self.alloc) orelse return null;
-    defer self.alloc.free(spans);
-    if (index >= spans.len) return null;
-    return self.pane.feedbackImageEntry(spans[index]).number;
-}
-
-pub const AccAction = enum(u1) { press, focus };
-
-/// Queue what a screen reader asked of a painted part; see `WM_APP_ACC_ACTION`.
-pub fn postAccAction(self: *ViewerFeedbackBar, action: AccAction, child: i32) void {
-    _ = w32.PostMessageW(
-        self.hwnd,
-        WM_APP_ACC_ACTION,
-        @intFromEnum(action),
-        @as(isize, child),
-    );
-}
-
-/// Run a queued screen-reader request, resolving the child id against the
-/// band as it is NOW - a part that went away in between is simply not there.
-fn runAccAction(self: *ViewerFeedbackBar, action: AccAction, child: i32) void {
-    const it = Accessible.itemFor(self, child) orelse return;
-    log.info("viewer feedback acc pane={s} action={s} child={d}", .{
-        self.pane.paneId(),
-        @tagName(action),
-        child,
-    });
-    switch (action) {
-        .press => switch (it) {
-            .button => |b| if (self.buttonEnabled(b)) self.activate(b),
-            .tile => |i| self.activateThumb(i),
-            else => {},
-        },
-        .focus => switch (it) {
-            .button => |b| if (self.buttonEnabled(b)) self.focusStop(layout_mod.stopOf(b)),
-            .tile => |i| {
-                // Arrive on the strip, then put the ring on the asked-for tile.
-                self.focusStop(.carousel);
-                if (i < self.images and self.carousel_focus != i) {
-                    self.carousel_focus = i;
-                    self.carousel_scroll = self.currentLayout().scrollToShow(i, self.carousel_scroll);
-                    _ = w32.InvalidateRect(self.hwnd, null, 1);
-                    self.logCarousel("focus");
-                    self.notifyAccFocus();
-                }
-            },
-            else => {},
-        },
-    }
-}
-
-/// Tell a listening screen reader which painted part now has focus. Only when
-/// the band itself holds the Win32 focus: on the text stop the web surface
-/// has it, and Chromium announces its own.
-fn notifyAccFocus(self: *ViewerFeedbackBar) void {
-    if (w32.GetFocus() != self.hwnd) return;
-    const it = a11y.focusedItem(true, self.key_focus, self.carousel_focus) orelse return;
-    const id = Accessible.idFor(self, it);
-    Accessible.notify(Accessible.EVENT_OBJECT_FOCUS, self.hwnd, id);
-    log.info("viewer feedback acc focus pane={s} child={d}", .{ self.pane.paneId(), id });
-}
-
-// -------------------------------------------------------------------------
-// Painting
-// -------------------------------------------------------------------------
-
-fn buttonGlyph(b: layout_mod.Button) icon_button.Glyph {
-    return switch (b) {
-        .snapshot => .add,
-        .send => .send,
-    };
-}
-
-/// The send button is dead while there is nothing to send (Mac disables it on
-/// `model.isEmpty`); the snapshot button never is.
-pub fn buttonEnabled(self: *const ViewerFeedbackBar, b: layout_mod.Button) bool {
-    return switch (b) {
-        .snapshot => true,
-        .send => self.pane.feedbackText().len > 0,
-    };
-}
-
-fn paint(self: *ViewerFeedbackBar, hdc: w32.HDC, width: i32, height: i32) void {
-    if (!self.paintGlass(hdc, width, height)) {
-        const bar_ref = w32.RGB(self.bar_rgb.r, self.bar_rgb.g, self.bar_rgb.b);
-        if (w32.CreateSolidBrush(bar_ref)) |brush| {
-            defer _ = w32.DeleteObject(@ptrCast(brush));
-            var r = w32.RECT{ .left = 0, .top = 0, .right = width, .bottom = height };
-            _ = w32.FillRect(hdc, &r, brush);
-        }
-    }
-
-    const l = layout_mod.Layout.init(self.layoutInput(width, self.scale));
-    _ = w32.SetBkMode(hdc, w32.TRANSPARENT);
-
-    self.paintPill(hdc, l);
-    // No text here: the page paints its own, in `l.text`. This window draws
-    // the pill AROUND it, which is why the page has no border and its
-    // background is pushed to match `pill_rgb` (`pushComposerVars`).
-    self.paintButtons(hdc, l);
-    self.paintCarousel(hdc, l);
-    self.paintFooter(hdc, l);
-}
-
-/// On a glass pane the band is the nav bar's material over the sheet rather
-/// than a solid band (T1926): on Mac `ChromeBarBackground` is shared by the nav
-/// bar and this composer, so the two read as one stack of chrome over the
-/// desk. The band sits `top` below the host's top-left, so its slice of the
-/// desk is offset by that much. False off glass or when no buffer could be
-/// made: the caller fills `bar_rgb`.
-fn paintGlass(self: *const ViewerFeedbackBar, hdc: w32.HDC, width: i32, height: i32) bool {
-    const g = self.pane.glass orelse return false;
-    if (width <= 0 or height <= 0) return true;
-    const dib = Dib32.create(hdc, width, height) orelse return false;
-    defer dib.destroy();
-    self.glassBand(dib.pixels, 0, 0, width, height, g);
-    _ = w32.BitBlt(hdc, 0, 0, width, height, dib.dc, 0, 0, w32.SRCCOPY);
-    return true;
-}
-
-/// The band's material at the `w` x `h` block whose top-left is (`x`, `y`) in
-/// this window - the pixels `paintGlass` lays at those coordinates.
-fn glassBand(self: *const ViewerFeedbackBar, out: []u32, x: i32, y: i32, w: i32, h: i32, g: pane_elevation.GlassBackdrop) void {
-    pane_elevation.glassHeadRegion(out, @intCast(w), @intCast(h), g.rect[0] + x, g.rect[1] + self.top + y, g.full_w, g.full_h, g.palette, self.pane.bg, self.bar_rgb, g.sheet);
-}
-
-/// The overflow cue's opacity at column `col` of a `w`-wide cue: opaque at the
-/// strip's outer edge, clear at the inner one (T668).
-fn cueAlpha(side: layout_mod.Side, col: usize, w: usize) u32 {
-    const from_outer: usize = if (side == .start) col else w - 1 - col;
-    return @intCast(255 - @min(255, (from_outer * 255) / w));
-}
-
-/// `rgb` (`0x??RRGGBB`) premultiplied by `a`, with `a` in the alpha byte - the
-/// source `AlphaBlend` wants under `AC_SRC_ALPHA`.
-fn premultiplied(rgb: u32, a: u32) u32 {
-    const r = (((rgb >> 16) & 0xFF) * a) / 255;
-    const g = (((rgb >> 8) & 0xFF) * a) / 255;
-    const b = ((rgb & 0xFF) * a) / 255;
-    return (a << 24) | (r << 16) | (g << 8) | b;
-}
-
-/// The thumbnail strip: one tile per live chip, clipped to the viewport, with
-/// the caret's own chip ringed.
-fn paintCarousel(self: *ViewerFeedbackBar, hdc: w32.HDC, l: layout_mod.Layout) void {
-    if (l.carousel.isEmpty()) return;
-    const spans = self.pane.feedbackImageSpans(self.alloc) orelse return;
-    defer self.alloc.free(spans);
-    if (spans.len == 0) return;
-
-    const saved = w32.SaveDC(hdc);
-    defer _ = w32.RestoreDC(hdc, saved);
-    _ = w32.IntersectClipRect(
-        hdc,
-        l.carousel.left,
-        l.carousel.top,
-        l.carousel.right,
-        l.carousel.bottom,
-    );
-
-    for (spans, 0..) |s, i| {
-        const tile = l.thumbAt(i, self.carousel_scroll);
-        // Wholly off one end: nothing to draw, and no decode to pay for.
-        if (tile.right <= l.carousel.left or tile.left >= l.carousel.right) continue;
-
-        // The tile's own well, one step off the band exactly as the pill is,
-        // so an image with transparent or light edges still reads as a tile.
-        self.paintTileFrame(hdc, l, tile, self.carousel_selected == i);
-
-        const e = self.pane.feedbackImageEntry(s);
-        const box = l.thumb - 2 * l.thumb_inset;
-        const t = self.thumbFor(e.number, e.png, box) orelse continue;
-        const dib = t.dib orelse continue;
-        blitThumb(hdc, tile, t, dib);
-    }
-
-    // The keyboard's ring, on the tile the arrow keys are on (T668) — drawn
-    // after every tile, so the next tile's frame cannot paint over it.
-    self.paintTileFocus(hdc, l);
-
-    // ...and the overflow cues on top of everything, because their whole job
-    // is to say that what is under them continues past the edge.
-    for ([_]layout_mod.Side{ .start, .end }) |side| self.paintCue(hdc, l, side);
-}
-
-/// The accent focus ring on the tile `key_focus == .carousel` is walking. The
-/// same ring the two circular actions get (design system §2.2), on the tile's
-/// rounded rect rather than on a circle.
-fn paintTileFocus(self: *ViewerFeedbackBar, hdc: w32.HDC, l: layout_mod.Layout) void {
-    if (self.key_focus != .carousel) return;
-    const i = self.carousel_focus orelse return;
-    if (i >= self.images) return;
-    const ring = layout_mod.focusRing(self.scale, l.thumbAt(i, self.carousel_scroll));
-    const pen = w32.CreatePen(0, ring.width, self.accent_ref) orelse return;
-    defer _ = w32.DeleteObject(pen);
-    const prev_pen = w32.SelectObject(hdc, pen);
-    defer _ = w32.SelectObject(hdc, prev_pen);
-    const hollow = w32.GetStockObject(w32.NULL_BRUSH);
-    const prev_brush = if (hollow) |b| w32.SelectObject(hdc, b) else null;
-    defer if (prev_brush) |b| {
-        _ = w32.SelectObject(hdc, b);
-    };
-    _ = w32.RoundRect(
-        hdc,
-        ring.path.left,
-        ring.path.top,
-        ring.path.right,
-        ring.path.bottom,
-        l.thumb_r * 2,
-        l.thumb_r * 2,
-    );
-}
-
-/// The overflow cue at one end of the strip (T668): the band fading in over
-/// whatever continues past the edge, with a chevron pointing that way.
-///
-/// A fade rather than a hard rule because the thing being communicated is
-/// CONTINUATION — a line at the edge says "this stops here", which is the
-/// opposite. The chevron carries the meaning on its own for anyone the fade is
-/// too subtle for, and it is drawn in the secondary text color, which the
-/// design system already holds to a contrast floor against this surface.
-fn paintCue(self: *ViewerFeedbackBar, hdc: w32.HDC, l: layout_mod.Layout, side: layout_mod.Side) void {
-    const cue = l.cueRect(side, self.carousel_scroll);
-    if (cue.isEmpty()) return;
-    const w = cue.width();
-    const h = cue.height();
-    if (w <= 0 or h <= 0) return;
-
-    // A premultiplied DIB of the band's own background at full alpha on the
-    // OUTSIDE edge, transparent on the inside, so the tiles dissolve into the
-    // chrome instead of being chopped by it. Solid, that is one row stretched
-    // down the strip; on glass (T1926) the band is a material that varies
-    // with the desk under it, so the cue is the material at its own pixels.
-    const glass = self.pane.glass;
-    const src_h: i32 = if (glass != null) h else 1;
-    if (Dib32.create(hdc, w, src_h)) |dib| {
-        defer dib.destroy();
-        const wu: usize = @intCast(w);
-        if (glass) |spec| {
-            self.glassBand(dib.pixels, cue.left, cue.top, w, h, spec);
-        } else {
-            const solid = (@as(u32, self.bar_rgb.r) << 16) | (@as(u32, self.bar_rgb.g) << 8) | self.bar_rgb.b;
-            @memset(dib.pixels, solid);
-        }
-        for (dib.pixels, 0..) |*p, i| p.* = premultiplied(p.*, cueAlpha(side, i % wu, wu));
-        _ = w32.AlphaBlend(
-            hdc,
-            cue.left,
-            cue.top,
-            w,
-            h,
-            dib.dc,
-            0,
-            0,
-            w,
-            src_h,
-            w32.BLENDFUNCTION{ .SourceConstantAlpha = 255 },
-        );
-    }
-
-    const m = icon_button.Metrics.init(self.scale);
-    const g: icon_button.Glyph = if (side == .start) .back else .forward;
-    const box_side = @min(w, l.thumb);
-    const cx = @divTrunc(cue.left + cue.right, 2);
-    const cy = @divTrunc(cue.top + cue.bottom, 2);
-    const box: layout_mod.Rect = .{
-        .left = cx - @divTrunc(box_side, 2),
-        .top = cy - @divTrunc(box_side, 2),
-        .right = cx - @divTrunc(box_side, 2) + box_side,
-        .bottom = cy - @divTrunc(box_side, 2) + box_side,
-    };
-    icon_paint.glyph(hdc, m, icon_button.glyphTarget(m, box, g), g, self.secondary_ref);
-}
-
-fn paintTileFrame(
-    self: *ViewerFeedbackBar,
-    hdc: w32.HDC,
-    l: layout_mod.Layout,
-    tile: layout_mod.Rect,
-    selected: bool,
-) void {
-    const fill = w32.CreateSolidBrush(w32.RGB(self.pill_rgb.r, self.pill_rgb.g, self.pill_rgb.b));
-    // A selected tile is ringed in the accent at 2 px: the ring is the only
-    // thing saying "this is the picture the caret is in", so it has to survive
-    // sitting next to a bright screenshot.
-    const pen = if (selected)
-        w32.CreatePen(0, 2, self.accent_ref)
-    else
-        w32.CreatePen(0, 1, self.border_ref);
-    if (fill != null and pen != null) {
-        const prev_brush = w32.SelectObject(hdc, @ptrCast(fill.?));
-        const prev_pen = w32.SelectObject(hdc, pen.?);
-        _ = w32.RoundRect(
-            hdc,
-            tile.left,
-            tile.top,
-            tile.right,
-            tile.bottom,
-            l.thumb_r * 2,
-            l.thumb_r * 2,
-        );
-        _ = w32.SelectObject(hdc, prev_pen);
-        _ = w32.SelectObject(hdc, prev_brush);
-    }
-    if (fill) |b| _ = w32.DeleteObject(@ptrCast(b));
-    if (pen) |p| _ = w32.DeleteObject(p);
-}
-
-/// Blit one decoded picture into the middle of its tile. Already scaled to fit
-/// (see `thumbFor`), so there is no stretch here — the aspect ratio was settled
-/// at decode time and cannot be got wrong twice.
-///
-/// `AlphaBlend` rather than `BitBlt` because the decode keeps the picture's
-/// alpha channel (T669): a PNG with a transparent region — a logo, a screenshot
-/// cropped to rounded corners — must show the TILE'S OWN FILL through it, which
-/// `paintTileFrame` has already laid down underneath. A `BitBlt` would paint
-/// whatever the transparent pixels happen to hold, and the decode used to make
-/// that opaque black, which is how a see-through picture came out as a black
-/// slab in a pale strip.
-///
-/// The blend is the whole-source kind: `SourceConstantAlpha` 255 so the picture
-/// is not additionally faded, and `AC_SRC_ALPHA` because the source really does
-/// carry per-pixel alpha, premultiplied, which is what this call reads.
-fn blitThumb(hdc: w32.HDC, tile: layout_mod.Rect, t: Thumb, dib: w32.HANDLE) void {
-    if (t.w <= 0 or t.h <= 0) return;
-    const src = w32.CreateCompatibleDC(hdc) orelse return;
-    defer _ = w32.DeleteDC(src);
-    const old = w32.SelectObject(src, dib);
-    defer _ = w32.SelectObject(src, old);
-    _ = w32.AlphaBlend(
-        hdc,
-        tile.left + @divTrunc(tile.width() - t.w, 2),
-        tile.top + @divTrunc(tile.height() - t.h, 2),
-        t.w,
-        t.h,
-        src,
-        0,
-        0,
-        t.w,
-        t.h,
-        w32.BLENDFUNCTION{
-            .SourceConstantAlpha = 255,
-            .AlphaFormat = w32.AC_SRC_ALPHA,
-        },
-    );
-}
-
-fn paintPill(self: *ViewerFeedbackBar, hdc: w32.HDC, l: layout_mod.Layout) void {
-    const fill = w32.CreateSolidBrush(w32.RGB(self.pill_rgb.r, self.pill_rgb.g, self.pill_rgb.b));
-    const pen = w32.CreatePen(0, 1, self.border_ref); // PS_SOLID
-    if (fill != null and pen != null) {
-        const prev_brush = w32.SelectObject(hdc, @ptrCast(fill.?));
-        const prev_pen = w32.SelectObject(hdc, pen.?);
-        // `RoundRect`'s width/height arguments are the ellipse DIAMETERS, so
-        // a radius of half the collapsed height becomes that whole height —
-        // which is what makes a one-line pill a true capsule.
-        _ = w32.RoundRect(
-            hdc,
-            l.pill.left,
-            l.pill.top,
-            l.pill.right,
-            l.pill.bottom,
-            l.pill_r * 2,
-            l.pill_r * 2,
-        );
-        _ = w32.SelectObject(hdc, prev_pen);
-        _ = w32.SelectObject(hdc, prev_brush);
-    }
-    if (fill) |b| _ = w32.DeleteObject(@ptrCast(b));
-    if (pen) |p| _ = w32.DeleteObject(p);
-}
-
-fn paintButtons(self: *ViewerFeedbackBar, hdc: w32.HDC, l: layout_mod.Layout) void {
-    const m = icon_button.Metrics.init(self.scale);
-    for (std.enums.values(layout_mod.Button)) |b| {
-        const box = l.button(b);
-        if (box.width() <= 0) continue;
-        const enabled = self.buttonEnabled(b);
-        const state: icon_button.State = st: {
-            if (!enabled) break :st .normal;
-            if (self.pressed == b) break :st .pressed;
-            if (self.hover == b and self.pressed == null) break :st .hover;
-            break :st .normal;
-        };
-
-        // The fill is a CIRCLE rather than the shared rounded rect: these two
-        // sit inside a capsule, and a rounded square inside a capsule reads as
-        // a control that did not get the memo. Everything else about them —
-        // the square they occupy, the shade per state, the glyph centering —
-        // is the shared icon-button model, so they stay one set with the
-        // toolbar above.
-        if (icon_button.paintsFill(state)) {
-            const d = icon_button.fillDelta(state, self.dark);
-            const fill = w32.CreateSolidBrush(w32.RGB(
-                icon_button.shadeChannel(self.pill_rgb.r, d),
-                icon_button.shadeChannel(self.pill_rgb.g, d),
-                icon_button.shadeChannel(self.pill_rgb.b, d),
-            ));
-            const pen = w32.CreatePen(5, 1, 0); // PS_NULL — the fill has no ring
-            if (fill != null and pen != null) {
-                const t = icon_button.targetBox(m, box);
-                const prev_brush = w32.SelectObject(hdc, @ptrCast(fill.?));
-                const prev_pen = w32.SelectObject(hdc, pen.?);
-                _ = w32.Ellipse(hdc, t.left + m.inset, t.top + m.inset, t.right - m.inset, t.bottom - m.inset);
-                _ = w32.SelectObject(hdc, prev_pen);
-                _ = w32.SelectObject(hdc, prev_brush);
-            }
-            if (fill) |br| _ = w32.DeleteObject(@ptrCast(br));
-            if (pen) |p| _ = w32.DeleteObject(p);
-        }
-
-        // Design system §2.2: a control that can be tabbed to draws a 2 DIP
-        // accent ring inset 1 DIP inside its painted square whenever it holds
-        // keyboard focus — a CIRCLE here, for the same reason the fill above
-        // is one. Drawn under the glyph so the mark stays legible over it.
-        if (layout_mod.buttonOf(self.key_focus) == b) {
-            const ring = layout_mod.focusRing(self.scale, icon_button.targetBox(m, box));
-            const pen = w32.CreatePen(w32.PS_SOLID, ring.width, self.accent_ref);
-            const hollow = w32.GetStockObject(w32.NULL_BRUSH);
-            if (pen) |p| {
-                const prev_pen = w32.SelectObject(hdc, p);
-                const prev_brush = if (hollow) |h| w32.SelectObject(hdc, h) else null;
-                _ = w32.Ellipse(hdc, ring.path.left, ring.path.top, ring.path.right, ring.path.bottom);
-                if (prev_brush) |pb| _ = w32.SelectObject(hdc, pb);
-                _ = w32.SelectObject(hdc, prev_pen);
-                _ = w32.DeleteObject(p);
-            }
-        }
-
-        const glyph = buttonGlyph(b);
-        const color = if (enabled) self.text_ref else self.secondary_ref;
-        icon_paint.glyph(hdc, m, icon_button.glyphTarget(m, box, glyph), glyph, color);
-    }
-}
-
-/// Where the report lands, plus the key hints. Feedback going quietly to the
-/// wrong repo is the main failure mode, so the destination is on screen the
-/// whole time the composer is open (Mac's footer, same reasoning).
-fn paintFooter(self: *ViewerFeedbackBar, hdc: w32.HDC, l: layout_mod.Layout) void {
-    // Cleared up front so every path below either paints the link and records
-    // where, or leaves no hit box behind. A footer that went away at a narrow
-    // width must not keep answering clicks where it used to be.
-    self.link_rect = .{};
-    if (l.footer.isEmpty()) return;
-    const saved = w32.SaveDC(hdc);
-    defer _ = w32.RestoreDC(hdc, saved);
-    _ = w32.IntersectClipRect(hdc, l.footer.left, l.footer.top, l.footer.right, l.footer.bottom);
-
-    const prev = if (self.caption_font) |f| w32.SelectObject(hdc, f) else null;
-    defer if (prev) |p| {
-        _ = w32.SelectObject(hdc, p);
-    };
-    _ = w32.SetTextColor(hdc, self.secondary_ref);
-
-    // Hints trail; the destination leads and gives up its tail first, because
-    // a truncated repo name is still readable and a truncated chord is not.
-    const hint_w = textWidth(hdc, hints);
-    drawUtf8(hdc, @max(l.footer.right - hint_w, l.footer.left), l.footer.top, hints);
-
-    // A send that has landed replaces the destination with what happened to
-    // it — Mac's "Filed …". The destination is what the report is ABOUT to do;
-    // once it has been done, saying so is the more useful of the two, and the
-    // composer closes itself behind the confirmation anyway.
-    if (self.pane.feedbackStatus()) |status| {
-        const saved2 = w32.SaveDC(hdc);
-        defer _ = w32.RestoreDC(hdc, saved2);
-        _ = w32.IntersectClipRect(
-            hdc,
-            l.footer.left,
-            l.footer.top,
-            @max(l.footer.right - hint_w - 8, l.footer.left),
-            l.footer.bottom,
-        );
-        _ = w32.SetTextColor(hdc, self.text_ref);
-        drawUtf8(hdc, l.footer.left, l.footer.top, status);
-        // A "Filed …" line has taken the footer, so there is nothing to click
-        // where the link was a moment ago — which the reset at the top of this
-        // function has already seen to.
-        return;
-    }
-
-    // The draft's own folder, as a link — the destination the report is about
-    // to take, and a folder the user can open and drop files into so they ride
-    // along with the report (T645, Mac's `stagingLink`).
-    var path_buf: [ViewerPane.staging_path_max]u8 = undefined;
-    var line_buf: [ViewerPane.staging_path_max + 260]u8 = undefined;
-    const line: ?[]const u8 = if (self.pane.feedbackStagingRelative(&path_buf)) |rel| line: {
-        const root = self.pane.feedbackWorktree() orelse break :line null;
-        break :line std.fmt.bufPrint(&line_buf, "{s}/{s}", .{
-            viewer_worktree.worktreeName(root), rel,
-        }) catch null;
-    } else null;
-
-    if (line) |text| {
-        const saved2 = w32.SaveDC(hdc);
-        defer _ = w32.RestoreDC(hdc, saved2);
-        const clip_right = @max(l.footer.right - hint_w - 8, l.footer.left);
-        _ = w32.IntersectClipRect(hdc, l.footer.left, l.footer.top, clip_right, l.footer.bottom);
-        // Hovering brightens it to body text the way every other link in this
-        // chrome does; the underline is what says "link" when it is not hovered.
-        if (self.link_hover) _ = w32.SetTextColor(hdc, self.text_ref);
-        drawUtf8(hdc, l.footer.left, l.footer.top, text);
-
-        const w = @min(textWidth(hdc, text), clip_right - l.footer.left);
-        self.paintLinkUnderline(
-            hdc,
-            l.footer.left,
-            l.footer.top,
-            w,
-            textHeight(hdc, text),
-            self.link_hover,
-        );
-        self.link_rect = .{
-            .left = l.footer.left,
-            .top = l.footer.top,
-            .right = l.footer.left + w,
-            .bottom = l.footer.bottom,
-        };
-        return;
-    }
-
-    // No draft and no worktree name to build one from: fall back to naming the
-    // working tree, which is the thing a misfiled report gets wrong.
-    if (self.pane.feedbackWorktree()) |root| {
-        const saved2 = w32.SaveDC(hdc);
-        defer _ = w32.RestoreDC(hdc, saved2);
-        _ = w32.IntersectClipRect(
-            hdc,
-            l.footer.left,
-            l.footer.top,
-            @max(l.footer.right - hint_w - 8, l.footer.left),
-            l.footer.bottom,
-        );
-        drawUtf8(hdc, l.footer.left, l.footer.top, root);
-    }
-}
-
-/// The rule under a link, in the shape this chrome's other links use (the
-/// banner card's): dotted at rest, solid under the pointer, on the same DPI
-/// geometry so the two never disagree about where a link's underline sits.
-/// Drawn rather than carried on a second underlined font, because the dotted
-/// rest state is not something a font can express.
-fn paintLinkUnderline(
-    self: *ViewerFeedbackBar,
-    hdc: w32.HDC,
-    x: i32,
-    text_y: i32,
-    w: i32,
-    text_h: i32,
-    solid: bool,
-) void {
-    if (w <= 0) return;
-    const u = banner_layout.linkUnderline(text_y, text_h, self.scale);
-    const color = if (solid) self.text_ref else self.secondary_ref;
-    const brush = w32.CreateSolidBrush(color) orelse return;
-    defer _ = w32.DeleteObject(brush);
-
-    if (solid) {
-        var r: w32.RECT = .{ .left = x, .top = u.y, .right = x + w, .bottom = u.y + u.thickness };
-        _ = w32.FillRect(hdc, &r, brush);
-        return;
-    }
-    // Dot phase keyed to the client x, the same absolute phase the banner uses
-    // — here there is only one run, but keeping the rule identical is what
-    // stops the two link treatments drifting apart.
-    const end = x + w;
-    var dx: i32 = x - @mod(x, u.period);
-    while (dx < end) : (dx += u.period) {
-        const left = @max(x, dx);
-        const right = @min(end, dx + u.dot);
-        if (right <= left) continue;
-        var r: w32.RECT = .{ .left = left, .top = u.y, .right = right, .bottom = u.y + u.thickness };
-        _ = w32.FillRect(hdc, &r, brush);
-    }
-}
-
-/// Whether a client point is on the footer's staging link.
-fn hitLink(self: *const ViewerFeedbackBar, x: i32, y: i32) bool {
-    const r = self.link_rect;
-    if (r.right <= r.left) return false;
-    return x >= r.left and x < r.right and y >= r.top and y < r.bottom;
-}
-
-fn drawUtf8(hdc: w32.HDC, x: i32, y: i32, text: []const u8) void {
-    var buf: [512]u16 = undefined;
-    const n = std.unicode.utf8ToUtf16Le(&buf, text) catch return;
-    if (n == 0) return;
-    _ = w32.TextOutW(hdc, x, y, &buf, @intCast(n));
-}
-
-/// The drawn height of a run, which is where a link's underline goes. Measured
-/// rather than assumed: the caption font's line box changes with the DPI, and
-/// an underline placed at a constant offset would cut through the descenders at
-/// one scale and float away from the text at another.
-fn textHeight(hdc: w32.HDC, text: []const u8) i32 {
-    var buf: [512]u16 = undefined;
-    const n = std.unicode.utf8ToUtf16Le(&buf, text) catch return 0;
-    if (n == 0) return 0;
-    var size: w32.SIZE = .{ .cx = 0, .cy = 0 };
-    _ = w32.GetTextExtentPoint32W(hdc, &buf, @intCast(n), &size);
-    return size.cy;
-}
-
-fn textWidth(hdc: w32.HDC, text: []const u8) i32 {
-    var buf: [512]u16 = undefined;
-    const n = std.unicode.utf8ToUtf16Le(&buf, text) catch return 0;
-    if (n == 0) return 0;
-    var size: w32.SIZE = .{ .cx = 0, .cy = 0 };
-    _ = w32.GetTextExtentPoint32W(hdc, &buf, @intCast(n), &size);
-    return size.cx;
 }
 
 // -------------------------------------------------------------------------
@@ -2381,7 +811,7 @@ fn updateHover(self: *ViewerFeedbackBar, x: i32, y: i32) void {
 
 /// A button click, delivered on mouse-up over the same button it went down on.
 /// `↑` files the report (T636); `+` takes a screenshot (T647).
-fn activate(self: *ViewerFeedbackBar, b: layout_mod.Button) void {
+pub fn activate(self: *ViewerFeedbackBar, b: layout_mod.Button) void {
     switch (b) {
         .snapshot => self.beginSnapshot(),
         .send => self.pane.sendFeedback(self.alloc),
@@ -2393,7 +823,7 @@ fn activate(self: *ViewerFeedbackBar, b: layout_mod.Button) void {
 /// Idempotent while one is already up: both entry points can be reached while
 /// the overlay has focus, and a second full-desktop window over the first is
 /// not a second screenshot, it is a stuck screen.
-fn beginSnapshot(self: *ViewerFeedbackBar) void {
+pub fn beginSnapshot(self: *ViewerFeedbackBar) void {
     if (self.selector != null) return;
     // Before the overlay takes the keyboard — see `capture_focus`.
     self.capture_focus = self.key_focus;
@@ -2714,24 +1144,6 @@ fn wndProc(
 
         else => return w32.DefWindowProcW(hwnd, msg, wparam, lparam),
     }
-}
-
-// T1926: the cue's fade is the same ramp whatever it fades to - the solid band
-// or the glass material - opaque on the strip's outer edge and clear inside.
-test "viewer feedback cue: fade runs opaque outside to clear inside" {
-    try std.testing.expectEqual(@as(u32, 255), cueAlpha(.start, 0, 10));
-    try std.testing.expectEqual(@as(u32, 255), cueAlpha(.end, 9, 10));
-    try std.testing.expect(cueAlpha(.start, 9, 10) < 64);
-    try std.testing.expect(cueAlpha(.end, 0, 10) < 64);
-    try std.testing.expect(cueAlpha(.start, 3, 10) > cueAlpha(.start, 4, 10));
-}
-
-test "viewer feedback cue: premultiplied source for AlphaBlend" {
-    try std.testing.expectEqual(@as(u32, 0xFF336699), premultiplied(0x00336699, 255));
-    // The coverage byte a glass region carries is not a colour channel.
-    try std.testing.expectEqual(@as(u32, 0xFF336699), premultiplied(0xAB336699, 255));
-    try std.testing.expectEqual(@as(u32, 0x00000000), premultiplied(0x00FFFFFF, 0));
-    try std.testing.expectEqual(@as(u32, 0x80808080), premultiplied(0x00FFFFFF, 0x80));
 }
 
 // T467: `paint` fills the client and then places the pill, the image carousel

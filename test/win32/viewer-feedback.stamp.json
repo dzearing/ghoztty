@@ -1,19 +1,28 @@
 {
     "guard":  "viewer-feedback",
     "script":  "test/win32/viewer-feedback.ps1",
-    "generated":  "2026-11-10T23:03:43-08:00",
-    "commit":  "f2aac9901",
+    "generated":  "2026-11-22T18:49:03-08:00",
+    "commit":  "d68c974a4",
     "uncommitted":  [
+                        "src/apprt/win32/viewer_feedback_composer.zig",
+                        "src/apprt/win32/viewer_feedback_paint.zig",
                         "src/apprt/win32/ViewerFeedbackBar.zig"
                     ],
     "files":  {
+                  "src/apprt/win32/viewer_feedback_composer.zig":  "ae16d52e85fe63c48ec4566a15afcdd67de216671ba0b1cb42a58005d57dc0a1",
                   "src/apprt/win32/viewer_feedback_doc.zig":  "f5c871e6e68e437dcb170794201619d59664e9e60077ef3453910b65f3e004e9",
                   "src/apprt/win32/viewer_feedback_page.zig":  "75ac79316a2b0ab69868c523656a2040bb58e1cc7f26fb87a757a3ff3b508053",
-                  "src/apprt/win32/ViewerFeedbackBar.zig":  "b965a782a266a2864ee30aff300b241fa57b89421f28da9c8342f63ba60a3569",
+                  "src/apprt/win32/viewer_feedback_paint.zig":  "62a08ad33def5e2a7a6fd3424a5318de0b1766eb9ae89ec356fb10510a634870",
+                  "src/apprt/win32/ViewerFeedbackBar.zig":  "4591b0f25871ccbfb6e0419b54459873c602b7b090c54cac2001bef1a81e2b61",
                   "src/apprt/win32/ViewerFeedbackWeb.zig":  "8848202d5b02faf5ecbb68a9dba13ca53731b3e96d58612046d9b0a49175eed6",
                   "src/viewer/composer.js":  "ba5e2801f2702309b5707497de1ab122b7837da482bf6c15919ed947c8b87eb5",
                   "test/win32/lib/ComposerSurface.ps1":  "7edd6dccc01fa8654f186ad97e64fb13bd9199305aa0424aebfbe7537e39d287",
                   "test/win32/lib/WebViewCdp.ps1":  "694f3e4f7852950d38ca69bcd317b75b1797f364c7f41fa5c23ed3cb56abd5fe",
                   "test/win32/viewer-feedback.ps1":  "a27afcc98a135b5f5e6ae9259d6ee57b11ea3a86d01175b8ebac9edb3e5469cd"
-              }
+              },
+    "code":  {
+                 "test/win32/lib/ComposerSurface.ps1":  "code1:539ade3ffb064c830674c98a36575418ea63d1bddf8d34af1dee7d979940da8a",
+                 "test/win32/lib/WebViewCdp.ps1":  "code1:1acd85df8f4044c4f3bceae308817aed8f6feb05e621912c16c24a0a9cd27d10",
+                 "test/win32/viewer-feedback.ps1":  "code1:36773f680b0cd1c940ae3bca9e16e974a5f1abb155f286918983933cd4bb4366"
+             }
 }

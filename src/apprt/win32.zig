@@ -46,6 +46,14 @@ test {
     // nobody has checked.
     _ = @import("win32/PaneView.zig");
     _ = @import("win32/ViewerPane.zig");
+    // The feedback composer's planes (T1781, split out of
+    // ViewerFeedbackBar.zig). The band imports each one, which compiles it
+    // and - shown by a `-Dtest-filter` that matched nothing - runs none of
+    // the tests that moved with it, so the lane names them here.
+    _ = @import("win32/viewer_feedback_paint.zig");
+    _ = @import("win32/viewer_feedback_focus.zig");
+    _ = @import("win32/viewer_feedback_carousel.zig");
+    _ = @import("win32/viewer_feedback_composer.zig");
     // The one place the viewer runs `git` (T636), and since T818 the one place
     // a wedged git is given up on. Listed in its own right for the reason this
     // list exists: ViewerPane already imported it, so it compiled, and its

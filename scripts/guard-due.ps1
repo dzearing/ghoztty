@@ -2927,6 +2927,8 @@ $GuardTable = @(
         Covers = @(
             'test\win32\viewer-feedback.ps1',
             'src\apprt\win32\ViewerFeedbackBar.zig',
+            'src\apprt\win32\viewer_feedback_composer.zig',
+            'src\apprt\win32\viewer_feedback_paint.zig',
             'src\apprt\win32\ViewerFeedbackWeb.zig',
             'src\apprt\win32\viewer_feedback_page.zig',
             'src\apprt\win32\viewer_feedback_doc.zig',
@@ -2970,7 +2972,8 @@ $GuardTable = @(
             'test\win32\lib\AccProbe.ps1',
             'src\apprt\win32\viewer_feedback_acc.zig',
             'src\apprt\win32\viewer_feedback_a11y.zig',
-            'src\apprt\win32\ViewerFeedbackBar.zig'
+            'src\apprt\win32\ViewerFeedbackBar.zig',
+            'src\apprt\win32\viewer_feedback_focus.zig'
         )
     },
     # The composer's OFFSET suites (T1472). Three harnesses pin where a chip,
@@ -2992,6 +2995,7 @@ $GuardTable = @(
             'src\apprt\win32\utf16_offset.zig',
             'src\apprt\win32\viewer_feedback_images.zig',
             'src\apprt\win32\ViewerFeedbackBar.zig',
+            'src\apprt\win32\viewer_feedback_composer.zig',
             'src\apprt\win32\viewer_feedback_page.zig',
             'src\viewer\composer.js',
             'test\win32\lib\ComposerSurface.ps1',
@@ -3011,6 +3015,7 @@ $GuardTable = @(
             'src\apprt\win32\viewer_feedback_report.zig',
             'src\apprt\win32\ViewerFeedbackSend.zig',
             'src\apprt\win32\ViewerFeedbackBar.zig',
+            'src\apprt\win32\viewer_feedback_carousel.zig',
             'src\viewer\composer.js',
             'test\win32\lib\ComposerSurface.ps1',
             'test\win32\lib\WebViewCdp.ps1'
@@ -3030,6 +3035,8 @@ $GuardTable = @(
             'src\apprt\win32\viewer_feedback_images.zig',
             'src\apprt\win32\utf16_offset.zig',
             'src\apprt\win32\ViewerFeedbackBar.zig',
+            'src\apprt\win32\viewer_feedback_carousel.zig',
+            'src\apprt\win32\viewer_feedback_paint.zig',
             'src\viewer\composer.js',
             'test\win32\lib\ComposerSurface.ps1',
             'test\win32\lib\WebViewCdp.ps1'
