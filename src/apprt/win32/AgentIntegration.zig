@@ -50,6 +50,7 @@ const agent_offer = @import("agent_offer.zig");
 const service = @import("agent_integration_service.zig");
 const runtime_probe = @import("runtime_probe.zig");
 const RuntimeIntegration = @import("RuntimeIntegration.zig");
+const BannerScriptInstaller = @import("BannerScriptInstaller.zig");
 const agent_home = @import("agent_home.zig");
 const migration = @import("claude_plugin_migration.zig");
 const claude_locate = @import("claude_locate.zig");
@@ -182,6 +183,13 @@ fn launchCheck(app: *App, at_launch: bool) void {
 
     if (!setupEnabled(arena)) return;
 
+    // T1904: the shared hook scripts follow the running build on every
+    // launch, whatever else this check goes on to offer or settle — before
+    // it, a release that fixed the hook text reached the user only through
+    // the Claude settle below, and never when an offer was pending, the
+    // plugin was kept, or Claude was not the agent set up.
+    if (at_launch) refreshHookScripts(arena);
+
     const offer = decideOffer(arena);
     if (offer.count() != 0) {
         // Let the first window appear and settle before dialoging over it
@@ -225,6 +233,22 @@ fn launchCheck(app: *App, at_launch: bool) void {
 
     const hwnd = app.msg_hwnd orelse return;
     _ = w32.PostMessageW(hwnd, WM_APP_MIGRATION_PROMPT, 0, 0);
+}
+
+/// T1904: rewrite Ghoztty's own hook scripts when they are stale (see
+/// `BannerScriptInstaller.refreshIfOutdated`). Silent: the files are ours by
+/// their marker, the user already set them up, and the Agent Integrations
+/// dialog simply reads "installed" afterwards instead of "Update available".
+fn refreshHookScripts(arena: std.mem.Allocator) void {
+    const home = openAgentHome(arena) orelse return;
+    var home_dir = home.dir;
+    defer home_dir.close();
+    const installer: BannerScriptInstaller = .{ .home = home_dir };
+    switch (installer.refreshIfOutdated(arena)) {
+        .current, .not_installed => {},
+        .refreshed => log.info("hook scripts: refreshed to this build", .{}),
+        .failed => log.warn("hook scripts: stale, and the refresh was refused or failed; Agent Integrations still offers Update", .{}),
+    }
 }
 
 /// The recorded Switch Over / Keep Plugin answer.

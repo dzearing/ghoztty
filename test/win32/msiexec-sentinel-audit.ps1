@@ -288,7 +288,10 @@ try {
     Complete-TestBody
 }
 catch {
-    Assert 'the run finished its sections' $false "(threw: $($_.Exception.Message))"
+    # Scored in place (not through Assert) so body-complete-audit reads the
+    # arm as scoring a failure: its rule is textual by design.
+    "  FAIL the run finished its sections (threw: $($_.Exception.Message))"
+    $script:failures++
     $_.ScriptStackTrace
 }
 

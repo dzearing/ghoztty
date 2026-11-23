@@ -89,6 +89,37 @@ pub fn install(self: BannerScriptInstaller, alloc: Allocator) InstallError!void 
     }
 }
 
+pub const RefreshOutcome = enum {
+    /// Every script already matches this build: nothing written.
+    current,
+    /// Nothing of ours is there (never set up, removed, or only a user's
+    /// own unmarked file): nothing written, because setting up is the user's
+    /// call, not a launch's.
+    not_installed,
+    /// A stale or half-installed pair was brought up to this build.
+    refreshed,
+    /// The rewrite was refused or failed (a user's own file at one of the
+    /// paths, an unwritable directory). Nothing is left half-installed:
+    /// `install` rolls back what it created.
+    failed,
+};
+
+/// T1904: bring Ghoztty-owned hook scripts up to the running build, with no
+/// dialog and no click. The scripts are shared by every agent's hooks, so
+/// this runs on its own rather than as part of one agent's integration — an
+/// update that fixes the hook text used to strand the fix until somebody
+/// opened Agent Integrations and pressed Update (and the T2806 launch settle
+/// only reaches it through the Claude integration). `.outdated` already means
+/// at least one marked script is ours, so this never creates a pair the user
+/// did not set up and never touches an unmarked file.
+pub fn refreshIfOutdated(self: BannerScriptInstaller, alloc: Allocator) RefreshOutcome {
+    return switch (self.state(alloc)) {
+        .installed => .current,
+        .not_installed => .not_installed,
+        .outdated => if (self.install(alloc)) .refreshed else |_| .failed,
+    };
+}
+
 pub const UninstallError = managed_file.RemoveError;
 
 /// Remove both managed scripts; a user's own file at either path is a typed
@@ -186,6 +217,86 @@ test "rollback keeps a banner script that was installed before the call" {
     const got = try tmp.dir.readFileAlloc(alloc, hook_scripts.banner_sub_path, managed_file.max_managed_bytes);
     defer alloc.free(got);
     try testing.expect(std.mem.indexOf(u8, got, marker) != null);
+}
+
+test "refreshIfOutdated: a stale owned script is rewritten to this build" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const c: BannerScriptInstaller = .{ .home = tmp.dir };
+
+    try c.install(alloc);
+    // What an older release left behind: still marked, different text.
+    try tmp.dir.writeFile(.{
+        .sub_path = hook_scripts.banner_sub_path,
+        .data = "#!/bin/sh\n" ++ marker ++ "\necho old help text\n",
+    });
+    try testing.expectEqual(RefreshOutcome.refreshed, c.refreshIfOutdated(alloc));
+    try testing.expectEqual(InstallState.installed, c.state(alloc));
+    const got = try tmp.dir.readFileAlloc(alloc, hook_scripts.banner_sub_path, managed_file.max_managed_bytes);
+    defer alloc.free(got);
+    try testing.expectEqualStrings(GhosttyAssets.bannerScript(), got);
+
+    // A second launch finds nothing to do.
+    try testing.expectEqual(RefreshOutcome.current, c.refreshIfOutdated(alloc));
+}
+
+test "refreshIfOutdated: never set up means nothing is written" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const c: BannerScriptInstaller = .{ .home = tmp.dir };
+
+    try testing.expectEqual(RefreshOutcome.not_installed, c.refreshIfOutdated(alloc));
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(hook_scripts.banner_sub_path));
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(hook_scripts.activity_state_sub_path));
+}
+
+test "refreshIfOutdated: a user's own unmarked script is left byte-identical" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const c: BannerScriptInstaller = .{ .home = tmp.dir };
+
+    const users_own = "#!/bin/sh\necho mine\n";
+    try tmp.dir.makePath(hook_scripts.install_dir);
+    try tmp.dir.writeFile(.{ .sub_path = hook_scripts.banner_sub_path, .data = users_own });
+
+    try testing.expectEqual(RefreshOutcome.not_installed, c.refreshIfOutdated(alloc));
+    const after = try tmp.dir.readFileAlloc(alloc, hook_scripts.banner_sub_path, managed_file.max_managed_bytes);
+    defer alloc.free(after);
+    try testing.expectEqualStrings(users_own, after);
+    try testing.expectError(error.FileNotFound, tmp.dir.statFile(hook_scripts.activity_state_sub_path));
+}
+
+test "refreshIfOutdated: an update that adds a sibling script writes it" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const c: BannerScriptInstaller = .{ .home = tmp.dir };
+
+    try c.install(alloc);
+    try tmp.dir.deleteFile(hook_scripts.activity_state_sub_path);
+    try testing.expectEqual(RefreshOutcome.refreshed, c.refreshIfOutdated(alloc));
+    try testing.expectEqual(InstallState.installed, c.state(alloc));
+}
+
+test "refreshIfOutdated: a stale owned script beside a user's own file fails without damage" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const c: BannerScriptInstaller = .{ .home = tmp.dir };
+
+    const stale = "#!/bin/sh\n" ++ marker ++ "\necho old\n";
+    const users_own = "# mine\n";
+    try tmp.dir.makePath(hook_scripts.install_dir);
+    try tmp.dir.writeFile(.{ .sub_path = hook_scripts.banner_sub_path, .data = stale });
+    try tmp.dir.writeFile(.{ .sub_path = hook_scripts.activity_state_sub_path, .data = users_own });
+
+    try testing.expectEqual(RefreshOutcome.failed, c.refreshIfOutdated(alloc));
+    const mine = try tmp.dir.readFileAlloc(alloc, hook_scripts.activity_state_sub_path, managed_file.max_managed_bytes);
+    defer alloc.free(mine);
+    try testing.expectEqualStrings(users_own, mine);
 }
 
 test "uninstall removes exactly the marked scripts and tolerates absence" {

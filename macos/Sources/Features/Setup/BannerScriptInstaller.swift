@@ -56,6 +56,40 @@ struct BannerScriptInstaller {
         }
     }
 
+    enum RefreshOutcome: Equatable {
+        /// Every script already matches this build: nothing written.
+        case current
+        /// Nothing of ours is there (never set up, or only a user's own
+        /// unmarked file): setting up is the user's call, not a launch's.
+        case notInstalled
+        /// A stale or half-installed pair was brought up to this build.
+        case refreshed
+        /// The rewrite was refused or failed (a user's own file at one path).
+        case failed
+    }
+
+    /// T1904: bring Ghoztty-owned hook scripts up to the running build, with
+    /// no dialog and no click. The scripts are shared by every agent's hooks,
+    /// so this runs on its own rather than through one agent's integration —
+    /// a release that fixed the hook text used to reach the user only via the
+    /// Claude settle, and never when the plugin was kept or Claude was not the
+    /// agent set up. `.outdated` already means at least one marked script is
+    /// ours, so this never creates a pair nobody set up and never touches an
+    /// unmarked file (`ManagedFile.write` refuses one).
+    func refreshIfOutdated() -> RefreshOutcome {
+        switch state() {
+        case .installed: return .current
+        case .notInstalled: return .notInstalled
+        case .outdated:
+            do {
+                try install()
+                return .refreshed
+            } catch {
+                return .failed
+            }
+        }
+    }
+
     func uninstall() throws {
         for script in scripts {
             try ManagedFile.removeIfManaged(at: script.url, marker: Self.marker, fileManager: fileManager)

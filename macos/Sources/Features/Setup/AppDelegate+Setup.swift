@@ -206,6 +206,17 @@ extension AppDelegate {
         let mayPrompt = defaults.bool(forKey: SetupDefaults.promptAnswered)
 
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3) {
+            // T1904: the shared hook scripts follow the running build on every
+            // launch, whatever the settle below decides — it only reaches them
+            // through the Claude integration, and not at all when the plugin
+            // was kept or Claude is not the agent set up.
+            let scripts = BannerScriptInstaller(
+                homeDirectoryURL: URL(fileURLWithPath: LoginShell.homePath),
+                fileManager: .default)
+            if scripts.refreshIfOutdated() == .failed {
+                AppDelegate.logger.error("hook scripts are stale and could not be refreshed; Agent Integrations still offers Update")
+            }
+
             let migration = ClaudePluginMigration(
                 homeDirectoryURL: URL(fileURLWithPath: LoginShell.homePath),
                 fileManager: .default)

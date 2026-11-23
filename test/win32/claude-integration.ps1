@@ -627,6 +627,33 @@ try {
     Stop-Process -Id $gpid -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 500
 
+    # ------------------------------------------------------------ case 6d:
+    # T1904: the shared hook scripts follow the running build at launch even
+    # when the Claude settle refreshes nothing - here a working plugin the
+    # user KEPT (6c's state), which before T1904 left an outdated script in
+    # place until somebody pressed Update in Agent Integrations. 6b installed
+    # this build's script; replace it with an older release's (still marked,
+    # different text) and expect the launch to put this build's back.
+    $hookScript = Join-Path $home1 '.config\ghoztty\hooks\ghoztty-banner.sh'
+    $current = if (Test-Path $hookScript) { [IO.File]::ReadAllText($hookScript) } else { '' }
+    $markerLine = @($current -split "`n" | Where-Object { $_ -match '^# ghoztty-managed' }) | Select-Object -First 1
+    Assert ($current.Length -gt 0 -and $markerLine) '6d: setup - 6b left this build''s marked hook script installed'
+    if ($current.Length -gt 0 -and $markerLine) {
+        $stale = "#!/bin/bash`n$markerLine`necho stale help from an older release`n"
+        [IO.File]::WriteAllText($hookScript, $stale)
+        $g = Launch-Gui $state6b $home1 'ok'
+        $gpid = $g.Pid
+        $refreshed = $false
+        for ($t = 0; $t -lt 150 -and -not $refreshed; $t++) {
+            $refreshed = ([IO.File]::ReadAllText($hookScript) -ceq $current)
+            Start-Sleep -Milliseconds 100
+        }
+        Assert $refreshed '6d: an outdated owned hook script is rewritten to this build at launch, with the plugin kept'
+        Assert ((Get-TestWindow -ProcessId $gpid -Class 'GhozttyConfirmDialog') -eq [IntPtr]::Zero) '6d: silently - no dialog'
+        Stop-Process -Id $gpid -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 500
+    }
+
     # ------------------------------------------------------------ case 7:
     # no agent CLI in the sandbox: no prompt, nothing burned; palette
     # reports No Coding Agents Found.
