@@ -593,6 +593,11 @@ test {
     // (T3413). No GTK imports, like viewer_chrome.zig.
     _ = @import("gtk/viewer_reload.zig");
 
+    // The GTK viewer's link plane - our scheme origins in win32's spelling,
+    // which navigation is a click, popups, the link menu's rows (T3415). No
+    // GTK imports, like viewer_chrome.zig.
+    _ = @import("gtk/viewer_links.zig");
+
     // Pure win32 image-viewer zoom rules — what 100% means, best-fit's refusal
     // to upscale, the double-click toggle and the step/clamp (T1183), same
     // no-OS-imports deal.

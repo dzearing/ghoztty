@@ -45,6 +45,7 @@ const verbs = apprt.ipc.verbs;
 const verb_args = apprt.ipc.args;
 const target_lookup = @import("../ipc/target_lookup.zig");
 const viewer_scheme = @import("viewer_scheme.zig");
+const url_scheme = @import("../ipc/url_scheme.zig");
 
 const Application = @import("class/application.zig").Application;
 const Window = @import("class/window.zig").Window;
@@ -378,6 +379,35 @@ fn paneEnv(
 fn workingDirectory(arena: Allocator, wd: ?[]const u8) Allocator.Error!?[:0]const u8 {
     const v = server.nonEmpty(wd) orelse return null;
     return try arena.dupeZ(u8, v);
+}
+
+/// A `ghoztty://` link clicked in a viewer pane (T3415; win32's
+/// `handleUrlSchemeLink`): the scheme's one action, `focus`, run in THIS app
+/// through the shared verb body - so the name is looked up from the clicking
+/// pane's window first and an unknown or ambiguous name fails the way the
+/// CLI's does. Never handed to the desktop, which would reach whichever build
+/// registered the scheme. A malformed link is swallowed.
+pub fn focusLink(app: Context, url: []const u8, caller_pane: ?[]const u8) void {
+    var name_buf: [512]u8 = undefined;
+    const cmd = url_scheme.parse(url, &name_buf) orelse {
+        log.info("viewer link: not a ghoztty command, ignored: {s}", .{url});
+        return;
+    };
+    switch (cmd) {
+        .focus => |name| {
+            var arg_buf: [600]u8 = undefined;
+            const arg = std.fmt.bufPrint(&arg_buf, "--target={s}", .{name}) catch return;
+            const argv = [_][]const u8{arg};
+            const reply = verbs.focus(@This(), app, .{
+                .action = "focus",
+                .arguments = &argv,
+                .caller_pane = caller_pane,
+            }) catch return;
+            const r = reply orelse return;
+            defer replyAllocator(app).free(r);
+            log.info("viewer link: focus {s}: {s}", .{ name, r });
+        },
+    }
 }
 
 /// Raise and focus a target: `--focus` on a verb, and the `focus` action. A

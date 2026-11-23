@@ -37,6 +37,10 @@
     "ghoztty:",
     "ghoztty-debug:",
     "ghoztty-viewer:",
+    /* The Linux viewer's rendered-page scheme (WebKitGTK custom scheme; win32
+     * spells the same origin `https://ghoztty-page/`, macOS loads `file:`), so
+     * a link inside a rendered .html page gets the menu there too (T3415). */
+    "ghoztty-page:",
   ];
 
   function handler() {

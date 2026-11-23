@@ -51,6 +51,7 @@ pub extern fn webkit_web_view_get_context(view: *WebView) *WebContext;
 pub extern fn webkit_web_view_load_uri(view: *WebView, uri: [*:0]const u8) void;
 pub extern fn webkit_web_view_get_uri(view: *WebView) ?[*:0]const u8;
 pub extern fn webkit_web_view_get_settings(view: *WebView) *Settings;
+pub extern fn webkit_settings_set_javascript_can_open_windows_automatically(settings: *Settings, enabled: c_int) void;
 pub extern fn webkit_web_view_evaluate_javascript(
     view: *WebView,
     script: [*]const u8,
@@ -284,6 +285,62 @@ pub extern fn gtk_widget_get_mapped(widget: *GtkWidget) c_int;
 
 /// `G_IO_ERROR_NOT_FOUND`.
 pub const io_error_not_found: c_int = 1;
+
+// --- Link routing, popups and the link menu (T3415) -------------------------
+
+pub const PolicyDecision = opaque {};
+pub const NavigationAction = opaque {};
+pub const URIRequest = opaque {};
+pub const GtkUriLauncher = opaque {};
+pub const GdkClipboard = opaque {};
+pub const GMenu = opaque {};
+pub const GSimpleAction = opaque {};
+pub const GSimpleActionGroup = opaque {};
+
+/// `WebKitPolicyDecisionType`.
+pub const policy_navigation_action: c_int = 0;
+pub const policy_new_window_action: c_int = 1;
+
+pub extern fn webkit_policy_decision_ignore(decision: *PolicyDecision) void;
+pub extern fn webkit_policy_decision_use(decision: *PolicyDecision) void;
+pub extern fn webkit_navigation_policy_decision_get_navigation_action(decision: *PolicyDecision) ?*NavigationAction;
+pub extern fn webkit_navigation_action_get_navigation_type(action: *NavigationAction) c_int;
+pub extern fn webkit_navigation_action_get_modifiers(action: *NavigationAction) c_uint;
+pub extern fn webkit_navigation_action_is_user_gesture(action: *NavigationAction) c_int;
+pub extern fn webkit_navigation_action_is_redirect(action: *NavigationAction) c_int;
+pub extern fn webkit_navigation_action_get_request(action: *NavigationAction) ?*URIRequest;
+pub extern fn webkit_uri_request_get_uri(request: *URIRequest) ?[*:0]const u8;
+
+pub extern fn gtk_uri_launcher_new(uri: ?[*:0]const u8) *GtkUriLauncher;
+pub extern fn gtk_uri_launcher_launch(
+    launcher: *GtkUriLauncher,
+    parent: ?*GtkWidget,
+    cancellable: ?*anyopaque,
+    callback: ?GAsyncReadyCallback,
+    data: ?*anyopaque,
+) void;
+pub extern fn gtk_uri_launcher_launch_finish(launcher: *GtkUriLauncher, result: *GAsyncResult, err: *?*GError) c_int;
+
+pub extern fn gtk_widget_get_clipboard(widget: *GtkWidget) *GdkClipboard;
+pub extern fn gdk_clipboard_set_text(clipboard: *GdkClipboard, text: [*:0]const u8) void;
+
+pub extern fn g_menu_new() *GMenu;
+pub extern fn g_menu_append(menu: *GMenu, label: ?[*:0]const u8, detailed_action: ?[*:0]const u8) void;
+pub extern fn g_menu_append_section(menu: *GMenu, label: ?[*:0]const u8, section: *GMenu) void;
+pub extern fn g_simple_action_group_new() *GSimpleActionGroup;
+pub extern fn g_simple_action_new(name: [*:0]const u8, parameter_type: ?*anyopaque) *GSimpleAction;
+pub extern fn g_action_map_add_action(map: *anyopaque, action: *anyopaque) void;
+pub extern fn g_action_get_name(action: *anyopaque) [*:0]const u8;
+pub extern fn gtk_widget_insert_action_group(widget: *GtkWidget, name: [*:0]const u8, group: ?*anyopaque) void;
+pub extern fn gtk_popover_menu_new_from_model(model: ?*anyopaque) *GtkWidget;
+pub extern fn gtk_widget_set_parent(widget: *GtkWidget, parent: *GtkWidget) void;
+pub extern fn gtk_widget_unparent(widget: *GtkWidget) void;
+pub extern fn gtk_popover_set_pointing_to(popover: *GtkWidget, rect: *const GdkRectangle) void;
+pub extern fn gtk_popover_set_has_arrow(popover: *GtkWidget, has_arrow: c_int) void;
+pub extern fn gtk_popover_popup(popover: *GtkWidget) void;
+pub extern fn gtk_event_controller_motion_new() *GtkEventController;
+
+pub const GdkRectangle = extern struct { x: c_int, y: c_int, width: c_int, height: c_int };
 
 /// The web view as the GTK widget it is.
 pub fn asWidget(view: *WebView) *GtkWidget {

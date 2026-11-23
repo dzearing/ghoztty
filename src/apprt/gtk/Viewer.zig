@@ -45,7 +45,18 @@
 //!
 //! A viewer PANE is a `Surface` that hosts one of these in place of its
 //! terminal (T3411), so it splits, resizes, focuses, zooms and closes through
-//! the split tree's own code. Not here yet, by design: link routing (T3415).
+//! the split tree's own code.
+//!
+//! **Links** (T3415): a click in a markdown/code pane sends http(s) to the
+//! default browser, a relative `.md`/`.html` (or image, or diff) link to a
+//! viewer split beside the pane, and any other file to its default app; a
+//! live page (a website, a rendered `.html`) follows its own site in place
+//! and a click off it takes the banner's modifier scheme (plain: the
+//! browser; Ctrl: a side pane; Ctrl+Shift: a window of its own). Popups go to
+//! the browser unless Ctrl-clicked. Right-clicking a link anywhere - the
+//! template, a rendered page, a website, an iframe - gives Ghoztty's link
+//! menu (the shared `links.js` decides whether the click is one of ours).
+//! Every decision is the shared one, through `viewer_links.zig`.
 //!
 //! **Reloads** (T3413): a file pane watches its file (`viewer_watch.zig`) and
 //! re-renders on a save, keeping the scroll; `+reload` and Ctrl+R are the
@@ -76,6 +87,8 @@ const reload_policy = @import("viewer_reload.zig");
 const Watch = @import("viewer_watch.zig");
 const vfind = @import("../win32/viewer_find.zig");
 const bridge = @import("../win32/viewer_bridge.zig");
+const links = @import("viewer_links.zig");
+const banner_link = @import("../win32/banner_link.zig");
 
 const log = std.log.scoped(.gtk_viewer);
 
@@ -148,6 +161,22 @@ find_result: vfind.Result = .none,
 ucm: ?*wk.UserContentManager = null,
 message_handler: c_ulong = 0,
 
+/// Where a routed link opens when it stays in Ghoztty (T3415): the pane that
+/// owns this viewer supplies them, since only it knows its split tree and
+/// app. A viewer with none (the debug test window) logs and opens nothing.
+on_open_split: ?*const fn (*Viewer, location: []const u8) void = null,
+on_open_window: ?*const fn (*Viewer, location: []const u8) void = null,
+on_focus_link: ?*const fn (*Viewer, url: []const u8) void = null,
+/// The pointer's last position over the page, in the web view's own
+/// coordinates: where the link menu pops up (Mac: at the pointer).
+pointer_x: f64 = 0,
+pointer_y: f64 = 0,
+/// What the open (or last) link menu acts on: already resolved to a path
+/// for a file link, so the menu acts on what the link IS (win32's
+/// `armLinkMenu`). Owned.
+menu_target: ?[:0]u8 = null,
+menu_kind: links.Kind = .web,
+
 /// The find card's widgets. All owned by `box` (through the overlay).
 const FindCard = struct {
     /// The card itself: the row, then the honesty note under it.
@@ -213,6 +242,7 @@ pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
     wk.gtk_box_append(box, self.bar.row);
     wk.gtk_box_append(box, overlay);
     self.installFindScript();
+    self.installLinks();
 
     // DEBUG-ONLY test seam: with `GHOZTTY_TEST_VIEWER_DUMP` set, every
     // viewer - a pane's too (T3411) - writes its probe result there once it
@@ -289,6 +319,7 @@ fn deinit(self: *Viewer) void {
     const alloc = self.alloc;
     alloc.free(self.location);
     alloc.free(self.current);
+    if (self.menu_target) |t| alloc.free(t);
     if (self.file_path) |p| alloc.free(p);
     if (self.assets_dir) |p| alloc.free(p);
     if (self.base_dir) |p| alloc.free(p);
@@ -694,7 +725,12 @@ fn onAddressActivate(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
 /// nearest folder that still exists instead of a dead click - the Mac's
 /// answer too.
 pub fn reveal(self: *Viewer) void {
-    const path = self.file_path orelse return;
+    self.revealPath(self.file_path orelse return);
+}
+
+/// Reveal `path` - the bar's button, and the link menu's Open Containing
+/// Folder row (one road for both, as `banner_link.revealTarget` is on win32).
+pub fn revealPath(self: *Viewer, path: []const u8) void {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const target = revealTarget(&buf, path) orelse return;
     var zbuf: [std.fs.max_path_bytes + 1]u8 = undefined;
@@ -759,6 +795,441 @@ fn onRevealFolderDone(source: ?*wk.GObject, result: *wk.GAsyncResult, _: ?*anyop
             log.warn("viewer: reveal failed: {s}", .{std.mem.span(e.message orelse "?")});
         }
     }
+}
+
+// -------------------------------------------------------------------------
+// Links (T3415; Mac `decidePolicyFor` + `handleFileModeLink`, the popup
+// delegate and `BannerLinkOpener`; win32 `viewer_pane_links.zig`)
+// -------------------------------------------------------------------------
+
+/// Hook the link plane onto a new viewer: the navigation policy, the popup
+/// request, the pointer (for the menu), and the shared `links.js` - a user
+/// script in EVERY frame (it needs no coordinates, so an iframe's link gets
+/// the menu too; Mac does the same), added before the first navigation.
+fn installLinks(self: *Viewer) void {
+    const w = wk.asWidget(self.view);
+    _ = wk.g_signal_connect_data(w, "decide-policy", @ptrCast(&onDecidePolicy), self, null, 0);
+    _ = wk.g_signal_connect_data(w, "create", @ptrCast(&onCreate), self, null, 0);
+    const motion = wk.gtk_event_controller_motion_new();
+    _ = wk.g_signal_connect_data(motion, "motion", @ptrCast(&onPointerMotion), self, null, 0);
+    wk.gtk_widget_add_controller(w, motion);
+
+    if (self.ucm) |m| {
+        const script = wk.webkit_user_script_new(bridge.links_js, wk.inject_all_frames, wk.inject_at_document_end, null, null);
+        wk.webkit_user_content_manager_add_script(m, script);
+        wk.webkit_user_script_unref(script);
+    }
+
+    // DEBUG-ONLY: a headless test has no user gesture to give, and WebKit's
+    // popup blocker would swallow a scripted `window.open()` before the
+    // popup rule ever ran. Only WebKit's gate is lifted; the rule under test
+    // is still ours.
+    if (comptime build_config.is_debug) {
+        if (std.posix.getenv("GHOZTTY_TEST_VIEWER_LINKS") != null)
+            wk.webkit_settings_set_javascript_can_open_windows_automatically(wk.webkit_web_view_get_settings(self.view), 1);
+    }
+}
+
+fn onPointerMotion(_: *wk.GtkEventController, x: f64, y: f64, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    self.pointer_x = x;
+    self.pointer_y = y;
+}
+
+/// `decide-policy`: a navigation is about to start. Only a NAVIGATION is ours
+/// to route here; a new-window request goes on to `create`, which decides
+/// popups, and a response is WebKit's.
+fn onDecidePolicy(view: *wk.WebView, decision: *wk.PolicyDecision, kind: c_int, ud: ?*anyopaque) callconv(.c) c_int {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return 0));
+    if (kind != wk.policy_navigation_action) return 0;
+    const action = wk.webkit_navigation_policy_decision_get_navigation_action(decision) orelse return 0;
+    const req = wk.webkit_navigation_action_get_request(action) orelse return 0;
+    const uri = std.mem.span(wk.webkit_uri_request_get_uri(req) orelse return 0);
+    // The document the navigation is LEAVING: the view's URI still names the
+    // committed page until this load starts.
+    const page: ?[]const u8 = if (wk.webkit_web_view_get_uri(view)) |p| std.mem.span(p) else null;
+    const nav_type: links.NavType = @enumFromInt(wk.webkit_navigation_action_get_navigation_type(action));
+    const d = links.decide(self.mode, page, uri, nav_type, wk.webkit_navigation_action_is_redirect(action) != 0);
+    if (d == .allow) return 0;
+
+    wk.webkit_policy_decision_ignore(decision);
+    const mods = links.Mods.fromGdk(wk.webkit_navigation_action_get_modifiers(action));
+    log.info("viewer: link {s} -> {s} ctrl={} shift={}", .{ uri, @tagName(d), mods.ctrl, mods.shift });
+    switch (d) {
+        .allow => unreachable,
+        .command => self.focusLink(uri),
+        .browser => self.openExternal(uri),
+        .relative => self.openRelativeLink(uri),
+        .file_url => {
+            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            if (content.filePath(&buf, uri)) |path| self.dispatchFileLink(path);
+        },
+        // Mac's nil file URL: cancelled, and nothing else happens.
+        .drop => {},
+        .live_link => self.routeLivePageLink(uri, mods),
+    }
+    return 1;
+}
+
+/// `create`: the page asked for a new window (`target="_blank"`,
+/// `window.open()`). Nothing is ever adopted here yet (T3447), so the answer
+/// is always "no web view" - which a script sees as `window.open()`
+/// returning null - and the link goes where the shared popup rule says.
+fn onCreate(view: *wk.WebView, action: *wk.NavigationAction, ud: ?*anyopaque) callconv(.c) ?*wk.GtkWidget {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return null));
+    const uri: ?[]const u8 = blk: {
+        const req = wk.webkit_navigation_action_get_request(action) orelse break :blk null;
+        const u = std.mem.span(wk.webkit_uri_request_get_uri(req) orelse break :blk null);
+        break :blk if (u.len == 0) null else u;
+    };
+    const page: ?[]const u8 = if (wk.webkit_web_view_get_uri(view)) |p| std.mem.span(p) else null;
+    const mods = links.Mods.fromGdk(wk.webkit_navigation_action_get_modifiers(action));
+    const gesture = wk.webkit_navigation_action_is_user_gesture(action) != 0;
+    const route = links.decidePopup(self.mode, page, uri, mods, gesture);
+    log.info("viewer: popup {s} -> {s} ctrl={} gesture={}", .{ uri orelse "(none)", @tagName(route), mods.ctrl, gesture });
+    switch (route) {
+        .browser => if (uri) |u| self.openExternal(u),
+        .command => if (uri) |u| self.focusLink(u),
+        .live_link => if (uri) |u| self.routeLivePageLink(u, mods),
+        .ghoztty_window => {
+            // A Ctrl-clicked popup to a real place opens a viewer window
+            // there; without adoption (T3447) the page loses its opener.
+            const u = uri orelse {
+                log.info("viewer: a popup with no URL is not adopted on Linux yet (T3447)", .{});
+                return null;
+            };
+            if (std.ascii.startsWithIgnoreCase(u, "http://") or std.ascii.startsWithIgnoreCase(u, "https://")) {
+                self.openWindow(u);
+            } else log.info("viewer: a popup to {s} is not adopted on Linux yet (T3447)", .{u});
+        },
+    }
+    return null;
+}
+
+/// A click off a live page's site, through the banner's modifier scheme
+/// (T926). A `file://` link is acted on as its path.
+fn routeLivePageLink(self: *Viewer, uri: []const u8, mods: links.Mods) void {
+    const act = links.livePageAction(uri, mods);
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const target = if (std.ascii.startsWithIgnoreCase(uri, "file://"))
+        content.filePath(&buf, uri) orelse return self.openExternal(uri)
+    else
+        uri;
+    self.performLinkAction(act, target);
+}
+
+/// A clicked RELATIVE link: beside the viewed file first, then rooted - and
+/// only an existing file opens (Mac's `resolveForNavigation`).
+fn openRelativeLink(self: *Viewer, uri: []const u8) void {
+    var rel_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const rel = links.relativePath(&rel_buf, uri) orelse return;
+    const base = self.base_dir orelse return;
+    const path = takeIfFile(self.alloc, content.navCandidate(self.alloc, base, rel) catch null) orelse
+        takeIfFile(self.alloc, content.rootedCandidate(self.alloc, base, rel) catch null) orelse {
+        // Mac returns silently; the log line is so "I clicked and nothing
+        // happened" leaves a trace.
+        log.info("viewer: link names no existing file: {s}", .{rel});
+        return;
+    };
+    defer self.alloc.free(path);
+    self.dispatchFileLink(path);
+}
+
+fn takeIfFile(alloc: Allocator, candidate: ?[]u8) ?[]u8 {
+    const path = candidate orelse return null;
+    const st = std.fs.cwd().statFile(path) catch {
+        alloc.free(path);
+        return null;
+    };
+    if (st.kind != .file) {
+        alloc.free(path);
+        return null;
+    }
+    return path;
+}
+
+/// A routed FILE: a document Ghoztty renders opens as a viewer split beside
+/// this pane, anything else in its default app (`content.fileLinkAction`).
+fn dispatchFileLink(self: *Viewer, path: []const u8) void {
+    switch (content.fileLinkAction(path)) {
+        .viewer_split => self.openSplit(path),
+        .default_app => self.openWithApp(path),
+    }
+}
+
+/// One link action on an already-resolved target - the click scheme's and
+/// the menu's, verb for verb (win32's `performLinkMenuAction`).
+fn performLinkAction(self: *Viewer, act: links.Action, target: []const u8) void {
+    switch (act) {
+        .open_with_system => if (banner_link.kindOf(target) == .file)
+            self.openWithApp(target)
+        else
+            self.openExternal(target),
+        .reveal_in_explorer => {
+            _ = linkSink("reveal", target);
+            self.revealPath(target);
+        },
+        .open_in_side_pane => self.openSplit(target),
+        .open_in_new_window => self.openWindow(target),
+        .copy => self.copyText(target),
+        .focus_target => self.focusLink(target),
+    }
+}
+
+fn openSplit(self: *Viewer, location: []const u8) void {
+    _ = linkSink("split", location);
+    const cb = self.on_open_split orelse return log.info("viewer: no pane to split for {s}", .{location});
+    cb(self, location);
+}
+
+fn openWindow(self: *Viewer, location: []const u8) void {
+    _ = linkSink("window", location);
+    const cb = self.on_open_window orelse return log.info("viewer: no app to open a window for {s}", .{location});
+    cb(self, location);
+}
+
+/// A `ghoztty://` link: raise what it names, in THIS app (T695) - never the
+/// desktop's handler, which is whichever build registered the scheme.
+fn focusLink(self: *Viewer, url: []const u8) void {
+    _ = linkSink("focus", url);
+    const cb = self.on_focus_link orelse return log.info("viewer: no app to focus {s}", .{url});
+    cb(self, url);
+}
+
+fn copyText(self: *Viewer, text: []const u8) void {
+    _ = linkSink("copy", text);
+    const z = self.alloc.dupeZ(u8, text) catch return;
+    defer self.alloc.free(z);
+    wk.gdk_clipboard_set_text(wk.gtk_widget_get_clipboard(self.box), z.ptr);
+}
+
+/// The default browser (GTK's URI launcher: the OpenURI portal, else the
+/// desktop's handler).
+fn openExternal(self: *Viewer, uri: []const u8) void {
+    if (leavesApp("browser", uri)) return;
+    const z = self.alloc.dupeZ(u8, uri) catch return;
+    defer self.alloc.free(z);
+    log.info("viewer: open in browser {s}", .{uri});
+    const launcher = wk.gtk_uri_launcher_new(z.ptr);
+    wk.gtk_uri_launcher_launch(launcher, wk.gtk_widget_get_root(self.box), null, &onUriLaunched, null);
+}
+
+/// The file's default app (GTK's file launcher).
+fn openWithApp(self: *Viewer, path: []const u8) void {
+    if (leavesApp("app", path)) return;
+    const z = self.alloc.dupeZ(u8, path) catch return;
+    defer self.alloc.free(z);
+    log.info("viewer: open with default app {s}", .{path});
+    const file = wk.g_file_new_for_path(z.ptr);
+    defer wk.g_object_unref(file);
+    const launcher = wk.gtk_file_launcher_new(file);
+    wk.gtk_file_launcher_launch(launcher, wk.gtk_widget_get_root(self.box), null, &onRevealFolderDone, null);
+}
+
+fn onUriLaunched(source: ?*wk.GObject, result: *wk.GAsyncResult, _: ?*anyopaque) callconv(.c) void {
+    const launcher: *wk.GtkUriLauncher = @ptrCast(source orelse return);
+    defer wk.g_object_unref(launcher);
+    var err: ?*wk.GError = null;
+    if (wk.gtk_uri_launcher_launch_finish(launcher, result, &err) == 0) {
+        if (err) |e| {
+            defer wk.g_error_free(e);
+            log.warn("viewer: opening the link failed: {s}", .{std.mem.span(e.message orelse "?")});
+        }
+    }
+}
+
+/// DEBUG-ONLY test seam (T3415): with `GHOZTTY_TEST_VIEWER_LINKS=<file>` set,
+/// every routed link is appended there as `<verb> <target>` (`browser`,
+/// `app`, `split`, `window`, `focus`, `copy`, `reveal`, `menu`). True when it
+/// was recorded. Compiled out of a release.
+fn linkSink(verb: []const u8, target: []const u8) bool {
+    if (comptime !build_config.is_debug) return false;
+    const path = std.posix.getenv("GHOZTTY_TEST_VIEWER_LINKS") orelse return false;
+    const f = std.fs.cwd().createFile(path, .{ .truncate = false }) catch return false;
+    defer f.close();
+    f.seekFromEnd(0) catch return false;
+    f.writeAll(verb) catch return false;
+    f.writeAll(" ") catch return false;
+    f.writeAll(target) catch return false;
+    f.writeAll("\n") catch return false;
+    return true;
+}
+
+/// Whether a hand-off that LEAVES the app (the browser, a default app) must
+/// not run: recorded instead under the test seam, and refused outright in a
+/// debug test run with no seam - inside WSL `xdg-open` can reach the
+/// Windows browser, so a headless test that escaped would put a window on
+/// the user's desktop (win32's T594 rule, same shape).
+fn leavesApp(verb: []const u8, target: []const u8) bool {
+    if (comptime !build_config.is_debug) return false;
+    if (linkSink(verb, target)) return true;
+    if (std.posix.getenv("GHOZTTY_TEST_VIEWER_DUMP") != null) {
+        log.err("viewer: a test run refused to hand {s} to the desktop ({s})", .{ target, verb });
+        return true;
+    }
+    return false;
+}
+
+// ---- The link menu ---------------------------------------------------------
+
+/// A right-click landed on a link `links.js` recognised, and it has already
+/// suppressed WebKit's menu - so a menu is owed. The href is resolved to
+/// what the menu acts on FIRST (win32's `armLinkMenu`): a relative doc link
+/// or a link in a rendered page is the FILE it names, since the URL means
+/// nothing outside this process.
+fn armLinkMenu(self: *Viewer, href: []const u8) void {
+    var kind: links.Kind = .web;
+    const target: [:0]u8 = switch (links.menuTarget(href)) {
+        // Filtered by the script before it posts; a page posting to the
+        // bridge by hand gets nothing.
+        .none => return,
+        .command => blk: {
+            kind = .command;
+            break :blk self.alloc.dupeZ(u8, href) catch return;
+        },
+        .web => self.alloc.dupeZ(u8, href) catch return,
+        .file_url => blk: {
+            var buf: [std.fs.max_path_bytes]u8 = undefined;
+            kind = .file;
+            break :blk self.alloc.dupeZ(u8, content.filePath(&buf, href) orelse return) catch return;
+        },
+        .viewer_relative => blk: {
+            kind = .file;
+            break :blk self.resolveViewerRelative(href) orelse return;
+        },
+        .page_relative => blk: {
+            kind = .file;
+            break :blk self.resolvePageRelative(href) orelse return;
+        },
+    };
+    if (self.menu_target) |old| self.alloc.free(old);
+    self.menu_target = target;
+    self.menu_kind = kind;
+    self.showLinkMenu();
+}
+
+/// A relative doc link, resolved the way a CLICK resolves it - except that
+/// with nothing there the unchecked candidate is the answer, so Copy Path
+/// still names the file a broken link meant.
+fn resolveViewerRelative(self: *Viewer, href: []const u8) ?[:0]u8 {
+    var rel_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const rel = links.relativePath(&rel_buf, href) orelse return null;
+    const base = self.base_dir orelse return null;
+    const found = takeIfFile(self.alloc, content.navCandidate(self.alloc, base, rel) catch null) orelse
+        takeIfFile(self.alloc, content.rootedCandidate(self.alloc, base, rel) catch null) orelse
+        (content.navCandidate(self.alloc, base, rel) catch null) orelse return null;
+    defer self.alloc.free(found);
+    return self.alloc.dupeZ(u8, found) catch null;
+}
+
+/// A link inside a rendered `.html` page, under that page's own grant - the
+/// same root and containment refusal that serve its subresources.
+fn resolvePageRelative(self: *Viewer, href: []const u8) ?[:0]u8 {
+    var rel_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const rel = links.pagePath(&rel_buf, href) orelse return null;
+    const root = self.base_dir orelse return null;
+    const p = (content.candidateUnder(self.alloc, root, rel) catch null) orelse return null;
+    defer self.alloc.free(p);
+    return self.alloc.dupeZ(u8, p) catch null;
+}
+
+/// Pop the menu at the pointer. Its rows, order and ids are `banner_link`'s
+/// (the same menu a banner link shows); separators become GMenu sections.
+fn showLinkMenu(self: *Viewer) void {
+    const target = self.menu_target orelse return;
+    var buf: [links.max_items]links.Item = undefined;
+    const items = links.menu(self.menu_kind, &buf);
+
+    // The test seam: a headless Weston has no seat, so a grabbing popup
+    // cannot be shown there. What the menu WOULD offer is recorded, and the
+    // steps runner's `menu-pick` runs a row's action.
+    if (comptime build_config.is_debug) {
+        var line: std.ArrayList(u8) = .empty;
+        defer line.deinit(self.alloc);
+        // `<kind> <target> rows=a|b,c|d`: `|` is a separator, `,` joins a
+        // group.
+        line.print(self.alloc, "{s} {s} rows=", .{ @tagName(self.menu_kind), target }) catch return;
+        var comma = false;
+        for (items) |it| switch (it) {
+            .separator => {
+                line.append(self.alloc, '|') catch return;
+                comma = false;
+            },
+            .cmd => |c| {
+                if (comma) line.append(self.alloc, ',') catch return;
+                line.appendSlice(self.alloc, c.action_name) catch return;
+                comma = true;
+            },
+        };
+        if (linkSink("menu", line.items)) return;
+    }
+
+    const group = wk.g_simple_action_group_new();
+    defer wk.g_object_unref(group);
+    const root_menu = wk.g_menu_new();
+    defer wk.g_object_unref(root_menu);
+    var section = wk.g_menu_new();
+    var section_items: usize = 0;
+    for (items) |it| switch (it) {
+        .separator => {
+            if (section_items > 0) wk.g_menu_append_section(root_menu, null, section);
+            wk.g_object_unref(section);
+            section = wk.g_menu_new();
+            section_items = 0;
+        },
+        .cmd => |c| {
+            const action = wk.g_simple_action_new(c.action_name.ptr, null);
+            _ = wk.g_signal_connect_data(action, "activate", @ptrCast(&onMenuAction), self, null, 0);
+            wk.g_action_map_add_action(group, action);
+            wk.g_object_unref(action);
+            var detailed: [64]u8 = undefined;
+            const d = std.fmt.bufPrintZ(&detailed, "vlink.{s}", .{c.action_name}) catch continue;
+            wk.g_menu_append(section, c.title.ptr, d.ptr);
+            section_items += 1;
+        },
+    };
+    if (section_items > 0) wk.g_menu_append_section(root_menu, null, section);
+    wk.g_object_unref(section);
+
+    const w = wk.asWidget(self.view);
+    wk.gtk_widget_insert_action_group(w, "vlink", group);
+    const pop = wk.gtk_popover_menu_new_from_model(root_menu);
+    wk.gtk_widget_set_parent(pop, w);
+    wk.gtk_popover_set_has_arrow(pop, 0);
+    const rect: wk.GdkRectangle = .{
+        .x = @intFromFloat(@max(0, self.pointer_x)),
+        .y = @intFromFloat(@max(0, self.pointer_y)),
+        .width = 1,
+        .height = 1,
+    };
+    wk.gtk_popover_set_pointing_to(pop, &rect);
+    // One popover per right-click: unparented once it closes, after GTK has
+    // finished with the activation that closed it.
+    _ = wk.g_signal_connect_data(pop, "closed", @ptrCast(&onMenuClosed), null, null, 0);
+    wk.gtk_popover_popup(pop);
+}
+
+fn onMenuAction(action: *wk.GSimpleAction, _: ?*anyopaque, ud: ?*anyopaque) callconv(.c) void {
+    const self: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    const id = links.idFromActionName(std.mem.span(wk.g_action_get_name(action))) orelse return;
+    self.pickLinkMenuRow(id);
+}
+
+/// Run a menu row's action on the armed target.
+fn pickLinkMenuRow(self: *Viewer, id: banner_link.Id) void {
+    const target = self.menu_target orelse return;
+    log.info("viewer: link menu {s} on {s}", .{ links.actionName(id), target });
+    self.performLinkAction(links.actionFor(id), target);
+}
+
+fn onMenuClosed(pop: *wk.GtkWidget, _: ?*anyopaque) callconv(.c) void {
+    _ = wk.g_idle_add(&unparentMenu, pop);
+}
+
+fn unparentMenu(data: ?*anyopaque) callconv(.c) c_int {
+    const pop: *wk.GtkWidget = @ptrCast(data orelse return 0);
+    wk.gtk_widget_unparent(pop);
+    return 0;
 }
 
 // -------------------------------------------------------------------------
@@ -859,6 +1330,8 @@ fn onScriptMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyopaq
     defer parsed.deinit();
     switch (parsed.message) {
         .find => |f| self.applyFindMessage(f),
+        // `links.js` (T3415) suppressed WebKit's menu over a link of ours.
+        .link_menu => |href| self.armLinkMenu(href),
         else => {},
     }
 }
@@ -1425,6 +1898,9 @@ fn writeDump(text: []const u8) void {
 ///   probe <js>      evaluate in the page: `probe OK <value>`
 ///   terminate       kill the page's web process through WebKit's API, as a
 ///                   crash would: `terminate`
+///   menu-pick <row> run a row of the last link menu (`open_browser`,
+///                   `reveal`, `side_pane`, `new_window`, `open_default_app`,
+///                   `copy`, `focus`) on its target: `menu-pick <row>`
 ///   mark <text>     `mark <text>`, a sync point for the driving script
 ///   sleep <ms>
 ///
@@ -1547,6 +2023,13 @@ const steps = if (build_config.is_debug) struct {
         } else if (std.mem.eql(u8, verb, "terminate")) {
             out("terminate", .{});
             wk.webkit_web_view_terminate_web_process(v.view);
+        } else if (std.mem.eql(u8, verb, "menu-pick")) {
+            // Choose a row of the last link menu (T3415), as a click on it
+            // would: the menu itself cannot pop up on a seatless Weston.
+            if (links.idFromActionName(arg)) |id| {
+                v.pickLinkMenuRow(id);
+                out("menu-pick {s}", .{arg});
+            } else out("menu-pick {s} NO-SUCH-ROW", .{arg});
         } else if (std.mem.eql(u8, verb, "mark")) {
             // A sync point for the driving script (it edits a fixture, reads
             // +list, ...) while a following `sleep` holds the steps.

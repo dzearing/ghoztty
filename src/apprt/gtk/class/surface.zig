@@ -40,6 +40,8 @@ const media = @import("../media.zig");
 // both frontends mint the same shape of id (docs/claude/cli.md "Pane identity").
 const pane_id_mod = @import("../../ipc/pane_id.zig");
 const Viewer = @import("../Viewer.zig");
+const IpcHandlers = @import("../IpcHandlers.zig");
+const Tab = @import("tab.zig").Tab;
 
 const log = std.log.scoped(.gtk_ghostty_surface);
 
@@ -799,6 +801,9 @@ pub const Surface = extern struct {
 
         viewer.owner = self;
         viewer.on_location_changed = &viewerLocationChanged;
+        viewer.on_open_split = &viewerOpenSplit;
+        viewer.on_open_window = &viewerOpenWindow;
+        viewer.on_focus_link = &viewerFocusLink;
         self.syncViewerTitle(viewer);
         log.info("viewer pane: opened mode={s} location={s} pane={s}", .{ @tagName(viewer.mode), location, self.paneId() });
     }
@@ -808,6 +813,41 @@ pub const Surface = extern struct {
     fn viewerLocationChanged(viewer: *Viewer) void {
         const self: *Self = @ptrCast(@alignCast(viewer.owner orelse return));
         self.syncViewerTitle(viewer);
+    }
+
+    /// A link in this viewer pane opens another viewer beside it (T3415;
+    /// Mac `openViewerSplit`): a split to the RIGHT, focused, as the
+    /// keyboard's split is.
+    fn viewerOpenSplit(viewer: *Viewer, location: []const u8) void {
+        const self: *Self = @ptrCast(@alignCast(viewer.owner orelse return));
+        const tab = ext.getAncestor(Tab, self.as(gtk.Widget)) orelse {
+            log.warn("viewer link: the pane is in no tab; nothing to split for {s}", .{location});
+            return;
+        };
+        const alloc = Application.default().allocator();
+        const loc = alloc.dupeZ(u8, location) catch return;
+        defer alloc.free(loc);
+        _ = tab.getSplitTree().newSplitAt(.right, self, .{ .view = loc, .at = self }) catch |err| {
+            log.warn("viewer link: split failed err={} location={s}", .{ err, location });
+            return;
+        };
+        log.info("viewer link: opened a viewer split for {s}", .{location});
+    }
+
+    /// A link that asked for a surface of its own: a new one-pane viewer
+    /// window (T3415; banner_link's Ctrl+Shift).
+    fn viewerOpenWindow(_: *Viewer, location: []const u8) void {
+        const app = Application.default();
+        const loc = app.allocator().dupeZ(u8, location) catch return;
+        defer app.allocator().free(loc);
+        _ = app.newWindowForIpc(null, null, &.{}, loc);
+        log.info("viewer link: opened a viewer window for {s}", .{location});
+    }
+
+    /// A `ghoztty://` link in this viewer pane (T3415, T695).
+    fn viewerFocusLink(viewer: *Viewer, url: []const u8) void {
+        const self: *Self = @ptrCast(@alignCast(viewer.owner orelse return));
+        IpcHandlers.focusLink(Application.default(), url, self.paneId());
     }
 
     fn syncViewerTitle(self: *Self, viewer: *Viewer) void {
