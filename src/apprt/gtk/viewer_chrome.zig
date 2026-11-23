@@ -39,17 +39,31 @@ pub const steppedZoom = accel.steppedZoom;
 // -------------------------------------------------------------------------
 
 const file_param = "?file=";
+const diff_param = "?diff=";
 
 /// The template URL a template-mode pane loads to show `file`:
 /// `ghoztty-viewer://page/viewer.html?file=%2Fhome%2Fu%2FREADME.md`.
 /// Every byte outside the unreserved set is escaped, so a path holding `#`,
 /// `&` or `?` survives the round trip. Caller owns the result.
 pub fn templateUrlFor(alloc: Allocator, file: []const u8) Allocator.Error![:0]u8 {
+    return templateUrlWith(alloc, file_param, file);
+}
+
+/// The template URL a diff pane loads to show `spec` (T3536):
+/// `ghoztty-viewer://page/viewer.html?diff=git-diff%3Amain...HEAD`. A diff is
+/// the template too, and without its spec in the URL every diff entry in
+/// WebKit's back/forward list would be the bare template - so Back from a
+/// file the diff linked to could not tell it had to become a diff again.
+pub fn templateUrlForDiff(alloc: Allocator, spec: []const u8) Allocator.Error![:0]u8 {
+    return templateUrlWith(alloc, diff_param, spec);
+}
+
+fn templateUrlWith(alloc: Allocator, param: []const u8, value: []const u8) Allocator.Error![:0]u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(alloc);
     try out.appendSlice(alloc, scheme.template_url);
-    try out.appendSlice(alloc, file_param);
-    for (file) |c| {
+    try out.appendSlice(alloc, param);
+    for (value) |c| {
         if (std.ascii.isAlphanumeric(c) or c == '-' or c == '.' or c == '_' or c == '~') {
             try out.append(alloc, c);
         } else {
@@ -64,11 +78,21 @@ pub fn templateUrlFor(alloc: Allocator, file: []const u8) Allocator.Error![:0]u8
 /// The file a committed template URL shows, decoded into `buf`, or null when
 /// `uri` is not the template page or names no file (the bare template URL).
 pub fn fileFromTemplateUrl(buf: []u8, uri: []const u8) ?[]const u8 {
+    return templateParam(buf, uri, file_param);
+}
+
+/// The diff spec a committed template URL shows, decoded into `buf`, or null
+/// when `uri` is not the template page or names no diff (T3536).
+pub fn diffFromTemplateUrl(buf: []u8, uri: []const u8) ?[]const u8 {
+    return templateParam(buf, uri, diff_param);
+}
+
+fn templateParam(buf: []u8, uri: []const u8, param: []const u8) ?[]const u8 {
     if (uri.len < scheme.template_url.len) return null;
     if (!std.ascii.eqlIgnoreCase(uri[0..scheme.template_url.len], scheme.template_url)) return null;
     const rest = uri[scheme.template_url.len..];
-    if (!std.mem.startsWith(u8, rest, file_param)) return null;
-    var value = rest[file_param.len..];
+    if (!std.mem.startsWith(u8, rest, param)) return null;
+    var value = rest[param.len..];
     if (std.mem.indexOfAny(u8, value, "&#")) |i| value = value[0..i];
     if (value.len == 0) return null;
     return content.percentDecode(buf, value);
@@ -79,7 +103,10 @@ pub const Committed = union(enum) {
     /// The template page showing this file (decoded, borrowed from the buffer
     /// handed to `classifyCommitted`).
     template_file: []const u8,
-    /// Our template with no file: nothing to re-render, keep what we have.
+    /// The template page showing this diff spec (T3536; decoded, borrowed
+    /// from the buffer handed to `classifyCommitted`).
+    template_diff: []const u8,
+    /// Our template with neither: nothing to re-render, keep what we have.
     template_bare,
     /// A rendered `.html` page under the pinned grant; the relative path.
     page: []const u8,
@@ -89,7 +116,11 @@ pub const Committed = union(enum) {
 
 pub fn classifyCommitted(buf: []u8, uri: []const u8) Committed {
     switch (scheme.originOf(uri) orelse return .web) {
-        .template => return if (fileFromTemplateUrl(buf, uri)) |f| .{ .template_file = f } else .template_bare,
+        .template => {
+            if (fileFromTemplateUrl(buf, uri)) |f| return .{ .template_file = f };
+            if (diffFromTemplateUrl(buf, uri)) |d| return .{ .template_diff = d };
+            return .template_bare;
+        },
         .page => return if (scheme.requestPath(buf, .page, uri)) |rel| .{ .page = rel } else .web,
     }
 }
@@ -576,6 +607,36 @@ test "T3412: a committed URI says where the pane is" {
     }
     try testing.expect(classifyCommitted(&buf, "https://example.com/") == .web);
     try testing.expect(classifyCommitted(&buf, "about:blank") == .web);
+}
+
+test "T3536: a diff template URL round-trips its spec" {
+    const alloc = testing.allocator;
+    const specs = [_][]const u8{
+        "git-diff:main...HEAD",
+        "git-status:",
+        "git-diff:HEAD~1 -- src/a b.zig",
+        "git-show:abc123#frag&x=y",
+    };
+    for (specs) |spec| {
+        const url = try templateUrlForDiff(alloc, spec);
+        defer alloc.free(url);
+        try testing.expect(std.mem.startsWith(u8, url, scheme.template_url ++ "?diff="));
+        // The query never leaks into what the scheme handler serves.
+        var rbuf: [256]u8 = undefined;
+        try testing.expectEqualStrings("viewer.html", scheme.requestPath(&rbuf, .template, url).?);
+        var buf: [256]u8 = undefined;
+        try testing.expectEqualStrings(spec, diffFromTemplateUrl(&buf, url).?);
+        // A diff entry is never read as a file entry, nor the reverse.
+        try testing.expect(fileFromTemplateUrl(&buf, url) == null);
+        switch (classifyCommitted(&buf, url)) {
+            .template_diff => |d| try testing.expectEqualStrings(spec, d),
+            else => return error.TestUnexpectedResult,
+        }
+    }
+    var buf: [256]u8 = undefined;
+    try testing.expect(diffFromTemplateUrl(&buf, scheme.template_url ++ "?file=%2Fx.md") == null);
+    try testing.expect(diffFromTemplateUrl(&buf, scheme.template_url ++ "?diff=") == null);
+    try testing.expect(diffFromTemplateUrl(&buf, "https://example.com/viewer.html?diff=git-status%3A") == null);
 }
 
 test "T3412: the reveal button is for local files only" {

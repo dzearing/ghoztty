@@ -170,6 +170,30 @@ wait
 sleep 1500
 diff
 probe $PAGE
+key <Control>l
+type $repo/README.md
+activate
+wait
+sleep 500
+state
+click back
+wait
+sleep 1500
+state
+diff
+click back
+wait
+sleep 1500
+state
+diff
+click forward
+wait
+sleep 1500
+state
+click forward
+wait
+sleep 500
+state
 EOF
 
 dump="$HL_RUNTIME/viewer-dump"
@@ -286,6 +310,21 @@ hl_check "D26 a bare git-diff: compares this branch against main" $? "$(grep 'sp
 p7=$(pr 7)
 grep -q 'viewer diff spec=git-diff:nosuchref .*files=0 .*status=git could not produce this diff' "$APP_LOG" && has "$p7" "git could not produce this diff"
 hl_check "D27 a revspec that names nothing gets an explanatory card" $? "$p7"
+
+# ---- T3536: history crosses into and out of a diff ---------------------------
+# Each diff entry carries its spec in its URL, so Back from a file the diff
+# pane moved to re-renders THAT diff (not the file in diff mode's place), a
+# second Back reaches the diff before it, and Forward walks the same way out.
+st() { nth "state " "$1"; }
+s2=$(st 2); s3=$(st 3); s4=$(st 4); s5=$(st 5); s6=$(st 6)
+has "$s2" "mode=markdown" && has "$s2" "current=$repo/README.md"
+hl_check "D29 a typed file path moves a diff pane to that file" $? "$s2"
+has "$s3" "mode=diff" && has "$s3" "current=git-diff:nosuchref " && has "$s3" "address=git-diff:nosuchref " && has "$(df 17)" "files=0"
+hl_check "D30 Back from the file re-renders the diff it came from, by its own spec" $? "$s3 / $(df 17)"
+has "$s4" "mode=diff" && has "$s4" "current=git-diff: " && [ "$(field "$(df 18)" files)" = 5 ]
+hl_check "D31 a second Back reaches the diff before it (git-diff:, 5 files)" $? "$s4 / $(df 18)"
+has "$s5" "mode=diff" && has "$s5" "current=git-diff:nosuchref " && has "$s6" "mode=markdown" && has "$s6" "current=$repo/README.md"
+hl_check "D32 Forward walks back out: the later diff, then the file" $? "$s5 / $s6"
 
 grep -E 'panic|reached unreachable' "$APP_LOG" > /dev/null 2>&1
 [ $? != 0 ] && kill -0 "$APP" 2>/dev/null

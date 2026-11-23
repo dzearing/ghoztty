@@ -510,7 +510,13 @@ pub fn navigate(self: *Viewer, target: []const u8) void {
             defer self.alloc.free(url);
             wk.webkit_web_view_load_uri(self.view, url.ptr);
         },
-        .diff => wk.webkit_web_view_load_uri(self.view, scheme.template_url),
+        // The spec rides in the URL (T3536), so Back into this entry knows
+        // it was a diff and which one, whatever the pane showed in between.
+        .diff => {
+            const url = chrome.templateUrlForDiff(self.alloc, self.current) catch return self.fail("Cannot run git", self.current);
+            defer self.alloc.free(url);
+            wk.webkit_web_view_load_uri(self.view, url.ptr);
+        },
     }
     self.syncChrome();
     self.syncWatch();
@@ -530,8 +536,16 @@ fn syncCommitted(self: *Viewer) void {
             self.setBaseDir(std.fs.path.dirname(file));
             self.needs_render = true;
         },
-        // The bare template (a diff, or a file that never resolved): keep
-        // what the pane was told, render that.
+        // A diff entry (T3536): whatever the pane showed since - a file it
+        // linked to, a website - this entry is that diff again.
+        .template_diff => |spec| {
+            self.mode = .diff;
+            self.setCurrent(spec);
+            self.setFile(null);
+            self.needs_render = true;
+        },
+        // The bare template (a file that never resolved): keep what the pane
+        // was told, render that.
         .template_bare => self.needs_render = true,
         .page => |rel| {
             self.mode = .html;
