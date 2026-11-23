@@ -495,6 +495,25 @@ function Read-PublishWatermark {
     return $empty
 }
 
+# T1968. Which attempt the publish about to be stamped is. The count bounds
+# RETRIES of a publish that did not land (-MaxAttemptsPerDay), so it only
+# carries forward from a same-day attempt that is still unlanded (`failed`, or
+# `attempting` from a run that died). Anything else before it - a release that
+# landed, or a tag CI has not answered yet - starts a fresh chain at 1. Before
+# this it counted every publish of the day, so four honoured requests read
+# 'attempt 4 of 3' and the day's FIRST failure would have been refused its retry.
+function Get-PublishAttemptNumber {
+    param(
+        [string]$Today,
+        [string]$LastDate = '',
+        [string]$LastResult = '',
+        [int]$LastAttempts = 0
+    )
+    if (-not $LastDate -or $LastDate.Trim() -ne $Today) { return 1 }
+    if (@('failed', 'attempting') -contains $LastResult) { return ([Math]::Max(0, $LastAttempts) + 1) }
+    return 1
+}
+
 # A pending publish request (T1294). Same tolerance as the watermark reader: a
 # file that is unreadable, truncated or not JSON reads as "no request", because
 # the failure mode of believing garbage here is an unwanted release.
@@ -891,9 +910,10 @@ if ($Check) {
 #
 # The count is what bounds that now (T1369) rather than the date alone: a day
 # may attempt up to -MaxAttemptsPerDay times, and only while the head has moved
-# since the attempt that did not land. The number carries across the attempts of
-# one day and restarts with the date.
-$attemptNo = if ($mark.Date -eq $d.Today) { [int]$mark.Attempts + 1 } else { 1 }
+# since the attempt that did not land. The number carries across the unlanded
+# attempts of one day and restarts with the date or with any publish that
+# landed (T1968).
+$attemptNo = Get-PublishAttemptNumber -Today $d.Today -LastDate $mark.Date -LastResult $mark.Result -LastAttempts $mark.Attempts
 function Stamp([string]$result, [string]$tag) {
     try {
         $dir = Split-Path -Parent $WatermarkPath

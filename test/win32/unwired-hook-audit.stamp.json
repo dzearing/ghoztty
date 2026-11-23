@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-23T12:40:17-08:00",
-    "commit":  "c6827b059",
+    "generated":  "2026-11-23T13:13:47-08:00",
+    "commit":  "723bc2478",
     "uncommitted":  [
 
                     ],
@@ -661,7 +661,7 @@
                   "src/cli/crash_report.zig":  "26e7efaaab1276009ff47d6e42a842f2743443ccb6e74390fe0f905f3e3689c5",
                   "src/cli/diagnostics.zig":  "0e3e9e5b6bf77f1269c5425ae3ed068c290c5bd769e92e5ab4eabb6ac9024726",
                   "src/cli/edit_config.zig":  "35cfec1fbb018cdbdf8d47509d6cec226318006cd85306143d572039a8f8129b",
-                  "src/cli/explain_config.zig":  "2970190531a5e3224e45391d2edd8b658b82991aa2a26d95e6206731460203cf",
+                  "src/cli/explain_config.zig":  "6eb0234bb89f76d9cb82998d08da330d4a6113c5f8912fec134ce406119fb35a",
                   "src/cli/ghostty.zig":  "e62f31c7e4e2e2302c4ac01f77401612781e284086c2885ed529f60403862605",
                   "src/cli/help.zig":  "ad8647deba3db716e751701821bdf3d958235b7bb8bea1a3f60642dd0ab4e528",
                   "src/cli/json.zig":  "3e9d5025af34529c2cc57d433306195a1c55b4c582dc385379ce9b6748e0f251",
@@ -1317,7 +1317,7 @@
                   "test/win32/crash-report.ps1":  "5154c6582e5c0f5006fca2d82311624ee46ca38dceaa8db07f4954a04634f5f6",
                   "test/win32/crash-stacks.ps1":  "d5bc3c0802b16f15d9c80804b0aa9dac36f533d542d6cad5c9daa86a42fbc5d0",
                   "test/win32/cursor-blink-redraw.ps1":  "5c7725e905ad660031583cb9a2058be442b6df96c4c7b18f24f4a0be372f4e34",
-                  "test/win32/daily-publish.ps1":  "ddbdce01e93f4535bf643441fea11d78449f324b03633f00fadfc5cbe3c4b864",
+                  "test/win32/daily-publish.ps1":  "ec4ba1160785300cfb8452561edf9306910fa3fc0a677399a33882a4c4275e6c",
                   "test/win32/dark-menus.ps1":  "15c2c0c17b2e5ab161a88c79cb27c0fb18f4f59986ce769b848998b249cd625d",
                   "test/win32/dashboard-dom.ps1":  "5c8bec2cd488707972cd1b71ae0c4e0bdbc61d2f7d7a844d8c24aa50b0cc3b62",
                   "test/win32/dashboard-keepalive.ps1":  "907915acd38d52b16755167f2df7e4383bc5d1cb53a3f8cbd84e419a559c7429",
@@ -1364,7 +1364,7 @@
                   "test/win32/focus-pull-scan.ps1":  "3976c83da8ce1fd4d88288908cffb66d69a003597d1e8759dc62957280023660",
                   "test/win32/font-inherit.ps1":  "3d097c1410bf79100058b8eb9b933f90ce88ea018d1e14faa4b5961f6e72b1e6",
                   "test/win32/foreground-audit.ps1":  "02902ecd3e0a698d1d0e00a5856111d5ae90c38183bcde8e5a8b6ec82a30285b",
-                  "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3",
+                  "test/win32/fork-identity.ps1":  "df30a89bb4f346f495f6c7ab761ed0e43bb6345750252150eb6059cf8b2c6c28",
                   "test/win32/frame-capture.ps1":  "aa0fb1e741810094182f23694c57b55cff8a0b6e39be1e2bb61771fd3e94e65d",
                   "test/win32/frame-clock.ps1":  "7ee5ade07e1dee879d626c33bab070b6fb23e4ae0f23e8f9423cd08a15d4e16e",
                   "test/win32/frame-lab.ps1":  "15e73062ac00e1bac23d4a2c0dfa0377d333e253b931d0d60cddc14e70b80282",

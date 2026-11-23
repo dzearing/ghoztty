@@ -217,6 +217,14 @@ $n9 = Test-DailyPublishDue -Now $fixIn -LastDate '2026-09-05' -LastAt '2026-09-0
     -LastResult 'failed' -Attempts 1 -MaxAttemptsPerDay 1 -HeadCommit 'ef67291' -LastCommit 'd234ae0'
 Assert 'N9 -MaxAttemptsPerDay 1 restores one-attempt-consumes-the-day' (-not $n9.Due)
 
+# T1968: the count is of RETRIES. Only an unlanded same-day attempt carries it.
+AssertEq 'N10 a new day starts at attempt 1' 1 (Get-PublishAttemptNumber -Today '2026-09-06' -LastDate '2026-09-05' -LastResult 'failed' -LastAttempts 2)
+AssertEq 'N11 a retry after a failure is the next attempt' 2 (Get-PublishAttemptNumber -Today '2026-09-05' -LastDate '2026-09-05' -LastResult 'failed' -LastAttempts 1)
+AssertEq 'N12 a retry after a crashed attempt is the next attempt' 3 (Get-PublishAttemptNumber -Today '2026-09-05' -LastDate '2026-09-05' -LastResult 'attempting' -LastAttempts 2)
+AssertEq 'N13 a publish after a LANDED release starts a fresh chain' 1 (Get-PublishAttemptNumber -Today '2026-09-05' -LastDate '2026-09-05' -LastResult 'published' -LastAttempts 4)
+AssertEq 'N14 a publish after a tag still building starts a fresh chain' 1 (Get-PublishAttemptNumber -Today '2026-09-05' -LastDate '2026-09-05' -LastResult 'tagged' -LastAttempts 3)
+AssertEq 'N15 no watermark at all is attempt 1' 1 (Get-PublishAttemptNumber -Today '2026-09-05')
+
 # ---- B. the version scheme ----------------------------------------------
 "== B. version scheme =="
 $b1 = Resolve-DailyPublishVersion -Tags @()
@@ -690,6 +698,31 @@ try {
     AssertEq 'O5 a published day is still one-a-day' 0 $o5.Exit
     AssertMatch 'O5 reading exactly as it always did' 'already published today' $o5.Text
     Assert 'O5 and nothing was published' (-not (Test-Path -LiteralPath $ranMarker))
+
+    # T1968, the 2026-10-15 shape: four requested releases all LANDED that day,
+    # and the count read 'attempt 4 of 3'. A fifth request publishes, and its
+    # stamp must start a fresh chain - so when THAT tag then fails, it still
+    # gets the retry the cap exists to allow.
+    $prevC = (git -C $Repo rev-parse --short HEAD~1).Trim()
+    [IO.File]::WriteAllText($watermark, "{`"date`":`"2026-09-05`",`"at`":`"2026-09-05T15:00:00-07:00`",`"tag`":`"win-v1.36.20`",`"commit`":`"$prevC`",`"result`":`"published`",`"attempts`":4}`n")
+    Set-Content -LiteralPath $requestFile -Encoding ascii -Value '{"at":"2026-09-05T18:00:00-07:00","reason":"T1968 fifth request","commit":"deadbee"}'
+    $o6 = Invoke-Decider -Extra @() -DockerCode 1 -GhCode 0 -At '2026-09-05T18:40:00'
+    AssertEq 'O6 a request after four landed releases publishes' 10 $o6.Exit
+    $o6Mark = Read-PublishWatermark -Text ([IO.File]::ReadAllText($watermark))
+    AssertEq 'O6 and is counted as attempt 1, not 5 - landed releases are not retries' 1 $o6Mark.Attempts
+    Remove-Item -LiteralPath $ranMarker, $requestFile -Force -ErrorAction SilentlyContinue
+
+    # Its build fails and a fix lands (the watermark is pointed one commit back,
+    # since the sandbox HEAD does not move).
+    $o7Wm = [IO.File]::ReadAllText($watermark) -replace '"result":"[^"]*"', '"result":"failed"'
+    $o7Wm = $o7Wm -replace '"commit":"[^"]*"', "`"commit`":`"$prevC`""
+    [IO.File]::WriteAllText($watermark, $o7Wm)
+    $o7 = Invoke-Decider -Extra @() -DockerCode 1 -GhCode 0 -At '2026-09-05T19:10:00'
+    AssertEq 'O7 the day''s FIRST failure still gets its retry' 10 $o7.Exit
+    AssertMatch 'O7 as attempt 2 of the cap' 'attempt 2 of 3' $o7.Text
+    $o7Mark = Read-PublishWatermark -Text ([IO.File]::ReadAllText($watermark))
+    AssertEq 'O7 and the retry chain advanced to 2' 2 $o7Mark.Attempts
+    Remove-Item -LiteralPath $ranMarker -Force -ErrorAction SilentlyContinue
 
     "== Q. the stranded threshold, end to end (T1588) =="
     # Yesterday's release is published; the branch has moved on. The sandbox

@@ -1,18 +1,18 @@
 {
     "guard":  "verify-release-clean",
     "script":  "test/win32/verify-release-clean.ps1",
-    "generated":  "2026-11-21T13:57:36-08:00",
-    "commit":  "a03d8ff6e",
+    "generated":  "2026-11-23T13:15:48-08:00",
+    "commit":  "723bc2478",
     "uncommitted":  [
                         "scripts/daily-publish.ps1"
                     ],
     "files":  {
-                  "scripts/daily-publish.ps1":  "bc0b792e3c0c6f7d99508d87e02811c151365c9c464e43cae2f050bf5b258fd2",
+                  "scripts/daily-publish.ps1":  "08178386e3525122b9715a9bb5f32e0d28175c7440f15f684764251ab7e50c66",
                   "scripts/verify-release-clean.ps1":  "bda3aa7cdea27a60aeaa864d6319aa662e3f68dfdefc707a6205012278a6edab",
                   "test/win32/verify-release-clean.ps1":  "756fee5cbd0b8a1ad8d3d01987658087b62efb6dd8327de4cb9aef10d5107dd3"
               },
     "code":  {
-                 "scripts/daily-publish.ps1":  "code1:3e17430a21586f5b4163f363be516ad12d605df45c3740e84f4fe3a0eae3d41d",
+                 "scripts/daily-publish.ps1":  "code1:c79847df5820acf00a04aff0243182aff6c0fa0014189faa2df8c2676fc3d2c8",
                  "scripts/verify-release-clean.ps1":  "code1:30568fb91e37229b89bec7b9863e4d116d2aa9900fddcaa74db9104552444c79",
                  "test/win32/verify-release-clean.ps1":  "code1:b4ed038105dd75e7240b82fbc7dd5a3f176e353d924caeb2f65be97a037aed32"
              }
