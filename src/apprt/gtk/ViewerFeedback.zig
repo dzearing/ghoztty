@@ -763,7 +763,11 @@ fn fillJob(self: *ViewerFeedback, v: *Viewer, job: *SendJob, root: []const u8, s
     var vbuf: [32]u8 = undefined;
     const vw = wk.asWidget(v.view);
     const viewport = host.viewportText(&vbuf, wk.gtk_widget_get_width(vw), wk.gtk_widget_get_height(vw));
-    const title: ?[]const u8 = if (wk.webkit_web_view_get_title(v.view)) |t| std.mem.span(t) else null;
+    // A web page's own title; for a file, its name - the bundled template's
+    // title is ours, not the document's.
+    const title: ?[]const u8 = if (file) |f|
+        std.fs.path.basename(f)
+    else if (wk.webkit_web_view_get_title(v.view)) |t| std.mem.span(t) else null;
     const root_d = try aa.dupe(u8, root);
     var ctx: report.Context = .{
         .location = try aa.dupe(u8, loc),

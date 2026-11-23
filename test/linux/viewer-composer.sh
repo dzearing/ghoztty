@@ -191,7 +191,7 @@ want("relativePath", s.get("relativePath") == "docs/doc.md")
 want("selection", s.get("selection") == "In Repo")
 want("paneID", isinstance(s.get("paneID"), str) and len(s["paneID"]) >= 8)
 want("viewport", re.fullmatch(r"\d+x\d+", s.get("viewport") or "") is not None)
-want("pageTitle", bool(s.get("pageTitle")))
+want("pageTitle", s.get("pageTitle") == "doc.md")
 want("worktree.path", w.get("path") == repo)
 want("worktree.name", w.get("name") == "repo")
 want("branch", w.get("branch") == "fbranch")
@@ -204,7 +204,7 @@ PY
 }
 res=$(check_json 2>&1)
 [ "$res" = ok ]
-hl_check "C21 report.json carries the body, source (kind/file/relativePath/selection/paneID/viewport), worktree branch+commit and app" $? "$res :: $(head -c 900 "$rj" 2>/dev/null)"
+hl_check "C21 report.json carries the body, source (kind/file/relativePath/title=file name/selection/paneID/viewport), worktree branch+commit and app" $? "$res :: $(head -c 900 "$rj" 2>/dev/null)"
 
 grep -q "viewer feedback: filed $queue/" "$APP_LOG"
 hl_check "C22 the app logged each filed folder" $? "$(grep 'viewer feedback' "$APP_LOG" | tail -5 | tr '\n' ' ')"
