@@ -1128,6 +1128,48 @@ comes back as a fresh shell; after an agent restart the panes come back as
 relaunched shells under the new agent; a second instance neither restores nor
 writes; a closed window stays closed.
 
+### The agent dies under a running app: panes recover in place (T3400)
+
+`src/apprt/gtk/AgentRecovery.zig`, the Mac's link observer (T12e) and win32's
+settle watch + `recoverLocalAgentInPlace` (T145/T399/T723/T1473). Every
+decision is win32's pure `apprt/win32/agent_recovery.zig`, shared.
+
+- **The watch**: a 250 ms GLib timeout reads the shared link's state and the
+  agent pid. A down link settles for 5 s (it may heal); a confirmed-dead agent
+  pid waives the wait. Then `agent_recovery.evaluate` says `agent_restarted`
+  or `transport_down`, and both rebuild.
+- **The rebuild**: `LocalAgent.reconnectForRecovery` finds or spawns an agent
+  and only then retires the old connection (shut down on its own thread, never
+  freed - panes borrow it). Every terminal pane whose core rides a RETIRED
+  connection is swapped in its slot (`SplitTree.replaceSurface` over
+  `replaceLeaf`): same pane id, name, pinned title, tint and focus, re-ATTACHing
+  its session when the new agent lists it alive or relaunchable (a restarted
+  agent relaunches it in its directory with the `Session interrupted` notice),
+  else a fresh shell in the pane's directory. Viewers are never touched. The
+  replaced pane is `spareSession`d, so its teardown DETACHes instead of ending
+  the session its replacement just attached; a user close still ends one.
+- **A failed re-dial** retries on `retry_delays_ms` (2-30 s, six tries), then
+  logs `gave up`.
+- **A new pane first**: `sharedConnection` takes win32's `newSurfaceVerdict` -
+  a wedged link gives an exec pane, a dead agent re-dials, and the stranded
+  panes are rebuilt on the next idle.
+- Log lines: `agent recovery: link down ...`, `... recovering windows in
+  place`, `rebuilt <n> pane(s) ... (<a> re-attached, <f> fresh)`, `link
+  recovered on its own`, `retry`, `gave up`.
+- Not yet: refreshing a STALE agent (an older build) and the protocol-skew
+  notice (T3600).
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\agent-recover.sh
+```
+
+Ends `AGENT RECOVER: ALL PASS` (16 checks): kill the agent tree under a running
+app with two terminal panes and a viewer; the panes come back on a new agent
+with the same tree, ids, names and directory and are drivable, the viewer is
+untouched, a new pane rides the new agent, a second death raced against a new
+pane recovers everything onto a third agent, and a user close still ends a
+shell.
+
 ### Viewer panes restore too (T3420)
 
 A viewer has no session to re-attach: re-opening it IS its restore (win32's

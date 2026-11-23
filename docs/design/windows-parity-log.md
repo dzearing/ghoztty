@@ -40076,3 +40076,7 @@ Reproduce-first: agent-recovery.ps1 is ALL PASS (104 assertions) on HEAD 15640bd
 ## 2026-11-23 10:15 lane l - T3595: the Linux app steps aside for a launch of another build (handoff-quit)
 
 T3399 split into T3595 (handoff-quit), T3596 (+stash/+restore, waits on the GTK sidebar T3557) and T3597 (+new-remote-window); T3563/T3391 now depend on T3597; T3598 filed for the launch half (the Switch prompt). GTK `handoff-quit` refuses via the shared `ipc_handoff` rule, else replies and `quitNow`s 150 ms later (layout saved, panes detached); `+version` carries `handoff_quit` + `session_persistence`. `test/linux/cli-handoff-quit.sh` 17/17, `ipc-server.sh` and the Linux floor green at fd8c3d129.
+
+## 2026-11-23 10:27 lane l - T3400: Linux panes recover in place when the local agent dies
+
+New `src/apprt/gtk/AgentRecovery.zig`: a 250 ms link watch with win32's settle/waive/evaluate/retry policy (`apprt/win32/agent_recovery.zig`, shared), `LocalAgent.reconnectForRecovery` (retire only after a fresh dial; shutdown off-thread), `newSurfaceVerdict` for new panes, `SplitTree.replaceSurface` (a `replaceLeaf` swap keeping focus/tint), `Surface.spareSession` so a replaced pane detaches. `test/linux/agent-recover.sh` 16/16; session-agent, session-restore, cli-undo, cli-close-focus green. Filed T3600 (stale-agent refresh + skew notice).
