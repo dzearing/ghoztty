@@ -39891,3 +39891,7 @@ Reproduce-first: agent-recovery.ps1 is ALL PASS (104 assertions) on HEAD 15640bd
 ## 2026-11-22 21:42 lane b - T1785: the confirm dialog is split into two planes
 - ConfirmDialog.zig 2,424 -> 935 lines: window construction and its MessageBox fallback (`run`, `readEdit`, `fallback`) moved to `confirm_dialog_window.zig`, the pure geometry (`layoutFor`, link row, labelled rows, `buttonWidth`) and its 46 tests to `confirm_dialog_layout.zig`, aliased back under the owner's split banner so no call site changed. PROOF OK (36 fns identical), negative control red, teeth red under the layout plane.
 - Floor all PASS; the 10 guard rows covering the owner now cover both planes, and their 11 harnesses plus 11 audits ran 22/22 green. The due sweep's other reds are acked (T3395/T2921/T3386).
+## 2026-11-22 21:35 - T1784 done: win32 ViewerTOCPanel.zig split into planes
+
+- 2,483 -> 1,165 lines (tests included). Cut on its own section banners: measurement, placement and the show/hide slide went to viewer_toc_place.zig (730), painting to viewer_toc_paint.zig (690). Alias blocks where the code used to sit are the owner's surface, so every `self.f(x)` call site is unchanged.
+- Evidence: the 85 top-level fn signatures are identical; the code-line multiset differs only by import and alias lines. No tests lived in the moved ranges. Build clean; floor-lane all PASS; the four viewer TOC harnesses and nine source audits green, with the guard rows extended to the planes. body-complete-audit stays red on T3425 (another lane's msiexec-sentinel-audit.ps1), acked to it.

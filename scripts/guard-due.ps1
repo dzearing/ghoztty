@@ -2782,6 +2782,8 @@ $GuardTable = @(
             'src\apprt\win32\viewer_toc_layout.zig',
             'src\apprt\win32\viewer_nav_layout.zig',
             'src\apprt\win32\ViewerTOCPanel.zig',
+            'src\apprt\win32\viewer_toc_place.zig',
+            'src\apprt\win32\viewer_toc_paint.zig',
             'src\apprt\win32\ViewerNavBar.zig'
         )
     },
@@ -2799,7 +2801,8 @@ $GuardTable = @(
         Covers = @(
             'test\win32\viewer-diff-tree.ps1',
             'src\apprt\win32\viewer_file_tree.zig',
-            'src\apprt\win32\ViewerTOCPanel.zig'
+            'src\apprt\win32\ViewerTOCPanel.zig',
+            'src\apprt\win32\viewer_toc_paint.zig'
         )
     },
     # Image panes (T1183): the only thing that proves the zoom rules reach a
@@ -2889,6 +2892,7 @@ $GuardTable = @(
         Covers = @(
             'test\win32\viewer-toc-emphasis.ps1',
             'src\apprt\win32\ViewerTOCPanel.zig',
+            'src\apprt\win32\viewer_toc_paint.zig',
             'src\apprt\win32\window_active.zig',
             # T1407: B0/C0 read the card's own WM_PAINT count - the only
             # oracle here a capture cannot satisfy by itself.
@@ -2925,6 +2929,8 @@ $GuardTable = @(
         Covers = @(
             'test\win32\viewer-toc-handle.ps1',
             'src\apprt\win32\ViewerTOCPanel.zig',
+            'src\apprt\win32\viewer_toc_place.zig',
+            'src\apprt\win32\viewer_toc_paint.zig',
             'src\apprt\win32\viewer_toc_layout.zig',
             'src\apprt\win32\gutter_bar_dc.zig'
         )

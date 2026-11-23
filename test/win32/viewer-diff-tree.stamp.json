@@ -1,14 +1,19 @@
 {
     "guard":  "viewer-diff-tree",
     "script":  "test/win32/viewer-diff-tree.ps1",
-    "generated":  "2026-11-17T13:27:00-08:00",
-    "commit":  "4ed857744",
+    "generated":  "2026-11-22T21:10:45-08:00",
+    "commit":  "efd138326",
     "uncommitted":  [
+                        "src/apprt/win32/viewer_toc_paint.zig",
                         "src/apprt/win32/ViewerTOCPanel.zig"
                     ],
     "files":  {
                   "src/apprt/win32/viewer_file_tree.zig":  "cc5e6dcb205c91453a37f851b34030466b3b219baa5118c85a02be01f45d329a",
-                  "src/apprt/win32/ViewerTOCPanel.zig":  "e93b814a495f9b25b8e6819578f5f66d26fe910557a7ac0d246a3dbe53886d91",
+                  "src/apprt/win32/viewer_toc_paint.zig":  "2224e5af2ab63bfbc5dc7d8568f362a8cf1d84f44c79bf1bbb0539685f0fbccc",
+                  "src/apprt/win32/ViewerTOCPanel.zig":  "40cf934ddeaa2b6e4a484b710279d7443698226b1b0f19a96248a4f5f7d6ed31",
                   "test/win32/viewer-diff-tree.ps1":  "88025654dcd8819678596bfcd043f45a0e14dbb3ef2057abb99eed9a09474f82"
-              }
+              },
+    "code":  {
+                 "test/win32/viewer-diff-tree.ps1":  "code1:24b4aafeb2243f7287f6c9d7ee366134581d1b062d8b0b3edb48be8b28d9cee3"
+             }
 }

@@ -26,31 +26,33 @@
 //! replaces that storage, so no borrow outlives its owner. Row TEXT is
 //! converted to UTF-16 once at sync time and owned here — paint runs far more
 //! often than headings change.
+//!
+//! ## Planes (T1784)
+//!
+//! This file keeps the state, the window's lifetime, the state the pane
+//! pushes, scrolling, hit testing and the window procedure. Measurement,
+//! placement and the show/hide slide live in `viewer_toc_place.zig`; painting
+//! lives in `viewer_toc_paint.zig`. The alias blocks where each plane's code
+//! used to sit are this file's surface for it, so `self.f(x)` reads the same
+//! at every call site whichever file `f` lives in.
 const ViewerTOCPanel = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const w32 = @import("win32.zig");
-const FrameClock = @import("FrameClock.zig");
 // Test-only (T467): the class-level resize/redraw probe. Imported at file
 // scope so its own positive and negative controls are queued into the win32
 // test lane along with the class test below.
 const class_redraw = @import("class_redraw.zig");
-const chrome_reposition = @import("chrome_reposition.zig");
 const color_math = @import("color_math.zig");
 const chrome_theme = @import("chrome_theme.zig");
 const system_colors = @import("system_colors.zig");
 const banner_card = @import("banner_card.zig");
-const type_ramp = @import("type_ramp.zig");
 const toc = @import("viewer_toc_layout.zig");
-/// What a selected row looks like on this platform (T828/T1008) — the card's
-/// rows speak the same selection language as the chooser's since T930.
-const list_selection = @import("list_selection.zig");
 const file_tree = @import("viewer_file_tree.zig");
 const diff = @import("viewer_diff.zig");
 const icon_button = @import("icon_button.zig");
-const icon_paint = @import("icon_button_paint.zig");
 const viewer_find = @import("viewer_find.zig");
 const viewer_accel = @import("viewer_accel.zig");
 const input = @import("../../input.zig");
@@ -60,10 +62,7 @@ const ViewerPane = @import("ViewerPane.zig");
 const log = std.log.scoped(.viewer_toc);
 const paint_probe = @import("paint_probe.zig");
 const gutter_bar = @import("gutter_bar.zig");
-const gutter_bar_dc = @import("gutter_bar_dc.zig");
-const builtin = @import("builtin");
 const toc_comp = @import("viewer_toc_comp.zig");
-const gl_comp_present = @import("../../renderer/gl_comp_present.zig");
 
 pub const CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyViewerTOC");
 const class_name_utf8 = "GhozttyViewerTOC";
@@ -77,12 +76,12 @@ const filter_cap_utf16: usize = 256;
 /// hair under a 60Hz frame, so a frame is never skipped waiting for the next
 /// tick; the step is time-based, so a slower tick shortens the animation
 /// rather than stretching it.
-const SLIDE_TIMER_ID: usize = 1;
-const SLIDE_TICK_MS: u32 = 15;
+pub const SLIDE_TIMER_ID: usize = 1;
+pub const SLIDE_TICK_MS: u32 = 15;
 /// The one end-of-slide tick of a slide declared to the compositor (T2764):
 /// a plain timer, because nothing moves on it - it only hands the card back
 /// from the visual to its window.
-const SLIDE_END_TIMER_ID: usize = 2;
+pub const SLIDE_END_TIMER_ID: usize = 2;
 
 /// The document page's own background, kept in step with viewer.css (and with
 /// Mac's `SidePanelCard.documentBackground`) so the card's opaque composite is
@@ -106,7 +105,7 @@ const Kind = enum { heading, section, folder, file };
 /// A diff row carries two more owned labels — the one-letter git status and
 /// the `+12 −3` line counts — because they are drawn on their own baselines
 /// beside the name rather than being part of it.
-const Row = struct {
+pub const Row = struct {
     id: []const u8,
     text16: []u16,
     depth: u8,
@@ -134,7 +133,7 @@ const Row = struct {
     counts_w: i32 = 0,
 
     /// A row a click selects or toggles. A section header is a label.
-    fn interactive(self: Row) bool {
+    pub fn interactive(self: Row) bool {
         return self.kind != .section;
     }
 };
@@ -445,14 +444,14 @@ fn clearRows(self: *ViewerTOCPanel) void {
 /// filter narrowed to one hit — or to none — must not retract the card, and
 /// the field the reader is typing into with it (the same rule
 /// `ViewerPane.updateTOC` applies to shut folders).
-fn itemCount(self: *const ViewerTOCPanel) usize {
+pub fn itemCount(self: *const ViewerTOCPanel) usize {
     if (self.pane.diffTree()) |tree| return tree.total_files;
     return self.rows.items.len;
 }
 
 /// The pinned header's height: the caption band, plus the filter while the
 /// card lists files.
-fn headerH(self: *const ViewerTOCPanel) i32 {
+pub fn headerH(self: *const ViewerTOCPanel) i32 {
     return toc.headerHeightWith(
         self.caption_line_h,
         self.scale,
@@ -493,7 +492,7 @@ fn filterChanged(self: *ViewerTOCPanel) void {
     self.pane.setDiffFilter(buf[0..len]);
 }
 
-fn filterHasText(self: *const ViewerTOCPanel) bool {
+pub fn filterHasText(self: *const ViewerTOCPanel) bool {
     const edit = self.filter_edit orelse return false;
     return w32.GetWindowTextLengthW(edit) > 0;
 }
@@ -554,13 +553,13 @@ pub fn handleEditChord(self: *ViewerTOCPanel, vk: u16) bool {
 /// document's headings. The pane owns the mode; the card simply follows it,
 /// which is what makes one card serve both (Mac's `ViewerSidePanel`, with
 /// `ViewerTOC` or `ViewerDiffPanel` inside it).
-fn showsFiles(self: *const ViewerTOCPanel) bool {
+pub fn showsFiles(self: *const ViewerTOCPanel) bool {
     return self.pane.diffTree() != null;
 }
 
 /// How many FILE rows the card is showing — not how many rows it has, so the
 /// header counts files rather than the folders between them.
-fn fileRowCount(self: *const ViewerTOCPanel) usize {
+pub fn fileRowCount(self: *const ViewerTOCPanel) usize {
     var n: usize = 0;
     for (self.rows.items) |r| {
         if (r.kind == .file) n += 1;
@@ -753,718 +752,51 @@ pub fn applyTheme(self: *ViewerTOCPanel) void {
     _ = w32.InvalidateRect(self.hwnd, null, 0);
 }
 
-// -------------------------------------------------------------------------
-// Measurement & placement
-// -------------------------------------------------------------------------
-
-fn px(self: *const ViewerTOCPanel, dip: f32) i32 {
-    return toc.px(dip, self.scale);
-}
-
-fn ensureFonts(self: *ViewerTOCPanel) void {
-    if (self.row_font != null and self.measured_scale == self.scale) return;
-    // The filter field holds the row font, so the old one is released only
-    // AFTER the field has been handed its replacement.
-    const old_row = self.row_font;
-    const old_header = self.header_font;
-    defer {
-        if (old_row) |f| _ = w32.DeleteObject(@ptrCast(f));
-        if (old_header) |f| _ = w32.DeleteObject(@ptrCast(f));
-    }
-    defer if (self.filter_edit) |edit| {
-        if (self.row_font) |f| _ = w32.SendMessageW(edit, w32.WM_SETFONT, @intFromPtr(f), 1);
-    };
-    const row_ramp = type_ramp.caption(self.scale);
-    self.row_font = w32.CreateFontW(
-        -row_ramp.height,
-        0,
-        0,
-        0,
-        row_ramp.weight,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        std.unicode.utf8ToUtf16LeStringLiteral(type_ramp.face),
-    );
-    self.header_font = w32.CreateFontW(
-        -row_ramp.height,
-        0,
-        0,
-        0,
-        type_ramp.weight_semibold,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        std.unicode.utf8ToUtf16LeStringLiteral(type_ramp.face),
-    );
-}
-
-/// Measure every row's wrapped height against `card_w`, filling `y`/`h` and
-/// `list_h`. Uses a screen DC — measurement is font metrics, not painting.
-fn measureRows(self: *ViewerTOCPanel, card_w: i32) void {
-    self.ensureFonts();
-    const hdc = w32.GetDC(self.hwnd) orelse return;
-    defer _ = w32.ReleaseDC(self.hwnd, hdc);
-
-    const font = self.row_font orelse return;
-    const prev = w32.SelectObject(hdc, @ptrCast(font));
-    defer if (prev) |p| {
-        _ = w32.SelectObject(hdc, p);
-    };
-
-    // One line's height, measured rather than assumed from the em size.
-    var probe = [_]u16{ 'A', 'g' };
-    var pr = w32.RECT{ .left = 0, .top = 0, .right = 1000, .bottom = 0 };
-    _ = w32.DrawTextW(hdc, &probe, 2, &pr, w32.DT_CALCRECT | w32.DT_SINGLELINE | w32.DT_NOPREFIX);
-    self.line_h = @max(pr.bottom - pr.top, 1);
-    self.caption_line_h = self.line_h;
-    // The filter EDIT draws in this same font, so one line of it is exactly
-    // this tall.
-    self.filter_edit_h = self.line_h;
-
-    const gap = self.px(1); // Mac: VStack spacing 1 between rows
-    var y: i32 = 0;
-    for (self.rows.items, 0..) |*row, i| {
-        if (i != 0) y += gap;
-
-        // A tree row is one line by construction: its name is a file or folder
-        // NAME, and wrapping one across two lines would make a list of them
-        // impossible to scan. It is the side labels that decide how much room
-        // the name gets, so they are measured first.
-        if (row.kind != .heading) {
-            row.badge_w = if (row.badge16.len > 0)
-                toc.badgeWidth(measureText(hdc, row.badge16), self.line_h, self.scale)
-            else
-                0;
-            const adds_w = measureText(hdc, row.adds16);
-            const dels_w = measureText(hdc, row.dels16);
-            const both = if (adds_w > 0 and dels_w > 0) self.px(toc.row_gap_dip) else 0;
-            row.counts_w = adds_w + both + dels_w;
-            row.y = y;
-            // A filter hit carries its folder on a second line (T1336).
-            const lines: i32 = if (row.detail16.len > 0) 2 else 1;
-            row.h = toc.rowHeight(lines, self.line_h, self.scale);
-            y += row.h;
-            continue;
-        }
-
-        const text_w = toc.rowTextWidth(card_w, row.depth, self.scale);
-        var r = w32.RECT{ .left = 0, .top = 0, .right = text_w, .bottom = 0 };
-        _ = w32.DrawTextW(
-            hdc,
-            row.text16.ptr,
-            @intCast(row.text16.len),
-            &r,
-            w32.DT_CALCRECT | w32.DT_WORDBREAK | w32.DT_NOPREFIX,
-        );
-        const measured_lines = std.math.divCeil(i32, @max(r.bottom - r.top, 1), self.line_h) catch 1;
-        const lines = std.math.clamp(measured_lines, 1, @as(i32, toc.max_row_lines));
-        row.y = y;
-        row.h = toc.rowHeight(lines, self.line_h, self.scale);
-        y += row.h;
-    }
-    self.list_h = y;
-    self.measured_w = card_w;
-    self.measured_scale = self.scale;
-    self.dirty = false;
-}
-
-/// One run's width in the DC's current font.
-fn measureText(hdc: w32.HDC, text: []const u16) i32 {
-    if (text.len == 0) return 0;
-    var r = w32.RECT{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
-    _ = w32.DrawTextW(
-        hdc,
-        text.ptr,
-        @intCast(text.len),
-        &r,
-        w32.DT_CALCRECT | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
-    );
-    return @max(r.right - r.left, 0);
-}
-
-/// The card content's needed height: header + list inset above and below.
-fn neededHeight(self: *const ViewerTOCPanel) i32 {
-    return self.headerH() +
-        2 * self.px(toc.fill_inset_dip) + self.list_h;
-}
-
-/// The result of a placement, for the pane's gutter push.
-pub const Placement = struct {
-    which: toc.Mode,
-    card_w_dip: f32,
-};
-
-/// Lay the panel out for the pane's current content area and show or hide it.
-///
-/// `content_top` is where the pane's content begins in host-client
-/// coordinates (the nav bar's band when it is visible); `content_w`/`content_h`
-/// are the content area's size. `visible` lets the pane keep a compact card
-/// hidden while it is toggled closed — the layout is still computed so the
-/// nav button knows the card exists.
-pub fn place(
-    self: *ViewerTOCPanel,
-    scale: f32,
-    content_top: i32,
-    content_w: i32,
-    content_h: i32,
-    pref_dip: f32,
-    visible: bool,
-) Placement {
-    self.setScale(scale);
-
-    const pane_w_dip = @as(f32, @floatFromInt(content_w)) / scale;
-    const which = toc.mode(pane_w_dip, self.itemCount());
-    if (which == .hidden) {
-        self.hide();
-        return .{ .which = .hidden, .card_w_dip = 0 };
-    }
-
-    // Measure against the width this mode gives the card; re-measure only
-    // when the width, scale, or items moved.
-    const card_w_dip = switch (which) {
-        .gutter => toc.clampWidth(pref_dip, pane_w_dip),
-        .compact => toc.compactCardWidth(pref_dip, pane_w_dip),
-        .hidden => unreachable,
-    };
-    const card_w = self.px(card_w_dip);
-    if (self.dirty or self.measured_w != card_w or self.measured_scale != scale) {
-        self.measureRows(card_w);
-    }
-
-    self.layout = toc.Layout.init(
-        scale,
-        content_w,
-        content_h,
-        pref_dip,
-        self.neededHeight(),
-        self.itemCount(),
-    );
-    const l = self.layout;
-
-    // Clamp the scroll to the new viewport (a taller card may have absorbed
-    // the overflow the old scroll compensated for).
-    self.clampScroll();
-
-    // Geometry the compact slide moves over (T543): the card's RESTING
-    // origin, which is where it sits at every point of the animation except
-    // while one is in flight.
-    self.slide_x = l.window.left;
-    self.slide_y = content_top + l.window.top;
-    self.slide_w = @max(l.window.width(), 1);
-    self.slide_h = @max(l.window.height(), 1);
-
-    // A compact card that is closed, stays closed, is not mid-slide, and
-    // whose window is already at this rect with this shape (T2946): moving,
-    // re-shaping and re-hiding it on every bounds sync cost a divider drag or
-    // fold glide past a narrow viewer ~0.3 ms a tick at 4K, for a hidden
-    // window that ends up exactly where it was. A sync that DOES move or size
-    // it takes the full path, so even a hidden card's window never sits
-    // outside the pane (viewer-narrow-pane.ps1 measures hidden ones too).
-    const want_rect: [4]i32 = .{ self.slide_x, self.slide_y, self.slide_w, self.slide_h };
-    const key = rgnKey(which, l.window.width(), l.window.height(), self.px(banner_card.RADIUS));
-    if (parkedHidden(which, self.last_mode, visible, self.slide_timer, self.comp_slide, w32.IsWindowVisible(self.hwnd) != 0) and
-        self.placed_rect != null and std.mem.eql(i32, &self.placed_rect.?, &want_rect) and
-        RgnKey.same(self.applied_rgn, key))
-    {
-        self.logCardMetrics();
-        return .{ .which = which, .card_w_dip = l.card_w_dip };
-    }
-    self.placed_rect = null;
-
-    // Resize-aware, in-frame reposition (T1392) — see `chrome_reposition`.
-    // The gutter card is as wide as the pane's reserved column, so a divider
-    // drag resizes it on every mouse-move.
-    _ = chrome_reposition.place(
-        self.hwnd,
-        self.windowX(),
-        self.slide_y,
-        self.slide_w,
-        self.slide_h,
-        0,
-    );
-
-    // The compact card floats over live document text, so the WINDOW is
-    // clipped to the card's rounded shape — its corners show the page, not a
-    // squared-off patch of card fill. The gutter window sits over the page's
-    // reserved padding and needs no region.
-    if (!RgnKey.same(self.applied_rgn, key)) {
-        if (key.round) {
-            const rgn = w32.CreateRoundRectRgn(0, 0, key.w + 1, key.h + 1, 2 * key.r, 2 * key.r);
-            // The system owns the region on success; on failure the window
-            // just keeps square corners (and the next placement tries again).
-            self.applied_rgn = if (w32.SetWindowRgn(self.hwnd, rgn, 1) != 0) key else null;
-            if (self.applied_rgn == null) {
-                if (rgn) |owned| _ = w32.DeleteObject(owned);
-            }
-        } else {
-            self.applied_rgn = if (w32.SetWindowRgn(self.hwnd, null, 1) != 0) key else null;
-        }
-    }
-
-    // The gutter card is part of the layout and the compact card is an
-    // overlay, so only the second one animates — and only when the TOGGLE
-    // moved, not when the pane crossed the threshold between the two.
-    const animate = which == .compact and self.last_mode == .compact;
-    self.last_mode = which;
-    self.placeFilterEdit();
-    self.setVisible(visible, animate);
-    _ = w32.InvalidateRect(self.hwnd, null, 0);
-    self.logCardMetrics();
-    // Where the window now RESTS, for the parked fast path above: only a
-    // placement that left no slide running put it exactly there.
-    if (!self.slide_timer and !self.comp_slide) self.placed_rect = want_rect;
-
-    return .{ .which = which, .card_w_dip = l.card_w_dip };
-}
-
-/// The filter's boxes in THIS window's client coordinates: the layout's card
-/// origin plus `toc.filterBox`'s card-relative geometry.
-fn filterBoxes(self: *const ViewerTOCPanel) toc.FilterBox {
-    const l = self.layout;
-    var b = toc.filterBox(l.card.width(), self.caption_line_h, self.filter_edit_h, self.scale);
-    inline for (.{ &b.well, &b.glyph, &b.edit, &b.clear }) |r| {
-        r.left += l.card.left;
-        r.right += l.card.left;
-        r.top += l.card.top;
-        r.bottom += l.card.top;
-    }
-    return b;
-}
-
-/// Put the filter field in its well, or hide it when the card is listing a
-/// document's headings.
-fn placeFilterEdit(self: *ViewerTOCPanel) void {
-    const edit = self.filter_edit orelse return;
-    if (!self.showsFiles() or self.layout.which == .hidden) {
-        _ = w32.ShowWindow(edit, w32.SW_HIDE);
-        return;
-    }
-    const b = self.filterBoxes();
-    _ = chrome_reposition.place(edit, b.edit.left, b.edit.top, b.edit.width(), b.edit.height(), 0);
-    _ = w32.ShowWindow(edit, w32.SW_SHOWNA);
-}
-
-/// Report the card's measured box, once per CHANGE of it.
-///
-/// The pinned header's height is a font metric resolved at this scale, not a
-/// DIP constant a script could restate — so an acceptance script that wants to
-/// look at the header band (T543's translucency check) has no way to find it
-/// except to be told. `place` runs on every bounds sync, so a line per call
-/// would be noise; a line per change is the same rule `logPanelLayout` follows
-/// one level up.
-fn logCardMetrics(self: *ViewerTOCPanel) void {
-    const header_h = self.headerH();
-    const w = self.layout.card.width();
-    const h = self.layout.card.height();
-    if (header_h == self.logged_header and w == self.logged_card_w and
-        h == self.logged_card_h) return;
-    self.logged_header = header_h;
-    self.logged_card_w = w;
-    self.logged_card_h = h;
-    log.info("viewer toc card pane={s} header={d} card={d}x{d} margin={d}", .{
-        self.pane.paneId(),
-        header_h,
-        w,
-        h,
-        self.px(toc.margin_dip),
-    });
-}
-
-/// Raise the card above the WebView2 sibling and show it: the card floats
-/// over the document.
-fn showAbove(self: *ViewerTOCPanel) void {
-    _ = w32.SetWindowPos(
-        self.hwnd,
-        null, // HWND_TOP
-        0,
-        0,
-        0,
-        0,
-        w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_NOACTIVATE | w32.SWP_SHOWWINDOW,
-    );
-}
-
-/// Drive the card toward `visible`, sliding when `animate` says the change is
-/// a toggle and snapping when it is not.
-fn setVisible(self: *ViewerTOCPanel, visible: bool, animate: bool) void {
-    self.slide_want = if (visible) 1.0 else 0.0;
-    if (!animate) {
-        self.cancelCompSlide();
-        self.slide = self.slide_want;
-        self.stopSlide();
-    } else if (self.compWanted()) {
-        // T2764: the whole slide declared to the compositor, which then owns
-        // where the card is drawn until it ends. False: there was nothing to
-        // slide, or the compositor could not take it, and `slide` holds where
-        // the card is for the stepped path below to carry on from.
-        if (self.slideOnCompositor()) return;
-        if (self.slide != self.slide_want) self.startSlide();
-    } else if (self.slide != self.slide_want) {
-        // The timer is armed BEFORE the first frame is placed: the parked
-        // position is a thing that exists only while one is running.
-        self.startSlide();
-    }
-    self.moveToSlide();
-    // A card sliding OUT is still on screen — that is the animation — and one
-    // sliding IN has to be shown before it can be seen doing it.
-    if (visible or self.slide_timer) {
-        self.showAbove();
-    } else {
-        _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
-    }
-}
-
-/// Whether slides go to the compositor: the composition knob's default
-/// (`GHOZTTY_COMP_PRESENT=0` opts the whole app out, this card included), and
-/// not the oracle's stepped arm. `GHOZTTY_DEBUG_TOC_SLIDE_STEPPED=1` (debug
-/// builds) steps the slide on this thread instead - the A/B control, so the
-/// compositor rows of the pane's oracle can be watched going red.
-fn compWanted(self: *const ViewerTOCPanel) bool {
-    _ = self;
-    if (comptime builtin.os.tag != .windows) return false;
-    if (comptime builtin.mode == .Debug) {
-        if (std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DEBUG_TOC_SLIDE_STEPPED")) return false;
-    }
-    return gl_comp_present.enabled();
-}
-
-/// Where the card is right now, in slide `t`: read off the declared slide by
-/// the clock while one is on the compositor, else the stepped value.
-fn currentT(self: *const ViewerTOCPanel) f32 {
-    if (!self.comp_slide) return self.slide;
-    const el: f32 = @floatFromInt(std.time.milliTimestamp() - self.comp_start_ms);
-    return toc.slideStep(self.comp_t0, self.comp_want, el);
-}
-
-/// Declare the slide from wherever the card is to `slide_want`. True: it is
-/// on the compositor and the card's window is hidden at its resting place
-/// for the length of it.
-fn slideOnCompositor(self: *ViewerTOCPanel) bool {
-    const want = self.slide_want;
-    const geom: [4]i32 = .{ self.slide_x, self.slide_y, self.slide_w, self.slide_h };
-    // A bounds sync that changed nothing while a slide runs: it carries on.
-    if (self.comp_slide and want == self.comp_want and std.mem.eql(i32, &geom, &self.comp_geom)) return true;
-    const t = self.currentT();
-    if (t == want) {
-        // Already there (or nothing to do): hand the card back to its window.
-        if (self.comp_slide) self.finishCompSlide();
-        self.slide = want;
-        return false;
-    }
-    // Never both clocks at once: the stepped timer stops here, and `slide`
-    // keeps the value it reached.
-    self.stopSlide();
-    self.slide = t;
-    if (!self.declareCompSlide(t, want, geom)) {
-        self.comp_failures +|= 1;
-        // The stepped path carries on from `slide`, with the window shown.
-        self.cancelCompSlide();
-        self.slide = t;
-        return false;
-    }
-    return true;
-}
-
-fn declareCompSlide(self: *ViewerTOCPanel, t: f32, want: f32, geom: [4]i32) bool {
-    if (self.comp == null) {
-        const parent = w32.GetParent(self.hwnd) orelse return false;
-        self.comp = toc_comp.Host.init(parent) catch {
-            const f = toc_comp.Host.lastFailure();
-            log.warn("viewer toc slide compositor unavailable at {s} hr=0x{x:0>8}; stepping it", .{ f.stage, f.hr });
-            return false;
-        };
-    }
-    const host = &self.comp.?;
-    const w = self.slide_w;
-    const h = self.slide_h;
-    const pic = self.snapshotCard(w, h) orelse return false;
-    defer self.alloc.free(pic);
-    const plan = toc.slidePlan(t, want, self.slide_x, w);
-    host.setPicture(pic, w, h) catch return self.compFailed();
-    host.play(self.slide_y, plan) catch return self.compFailed();
-    // The visual is the card now (and the commit has reached DWM): the
-    // window waits at its resting place, hidden, for the hand-back.
-    _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
-    self.moveToSlide();
-    const was_running = self.comp_slide;
-    self.comp_slide = true;
-    self.comp_t0 = t;
-    self.comp_want = want;
-    self.comp_start_ms = std.time.milliTimestamp();
-    self.comp_plan = plan;
-    self.comp_geom = geom;
-    self.comp_slides +|= 1;
-    const ms = slideMs(plan);
-    _ = w32.SetTimer(self.hwnd, SLIDE_END_TIMER_ID, ms, null);
-    log.info("viewer toc slide on compositor pane={s} from={d:.3} to={d:.0} ms={d} x={d:.0}->{d:.0} retarget={}", .{
-        self.pane.paneId(), t, want, ms, plan.at(0), plan.end_x, was_running,
-    });
-    debugStall();
-    return true;
-}
-
-fn compFailed(self: *ViewerTOCPanel) bool {
-    const f = toc_comp.Host.lastFailure();
-    log.warn("viewer toc slide could not go on the compositor at {s} hr=0x{x:0>8}; stepping it", .{ f.stage, f.hr });
-    // Built again from nothing on the next slide.
-    self.releaseComp();
-    self.comp_slide = false;
-    return false;
-}
-
-fn slideMs(plan: toc.SlidePlan) u32 {
-    return @intFromFloat(@ceil(plan.span_s * 1000.0));
-}
-
-/// `GHOZTTY_DEBUG_TOC_SLIDE_STALL_MS=<n>` (debug builds, T2764): block this
-/// thread for n ms the moment a slide starts - the oracle's stand-in for a
-/// busy UI thread. A compositor slide moves through it; a stepped one waits.
-fn debugStall() void {
-    if (comptime builtin.mode != .Debug) return;
-    const raw = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_DEBUG_TOC_SLIDE_STALL_MS") catch return;
-    defer std.heap.page_allocator.free(raw);
-    const ms = std.fmt.parseInt(u32, std.mem.trim(u8, raw, " \t\r\n"), 10) catch return;
-    if (ms == 0) return;
-    log.info("viewer toc slide debug stall ms={d}", .{ms});
-    std.Thread.sleep(@as(u64, @min(ms, 5000)) * std.time.ns_per_ms);
-}
-
-/// The end-of-slide tick. A timer that came in early waits out the rest; the
-/// compositor already holds the card's final place.
-fn compSlideTick(self: *ViewerTOCPanel) void {
-    if (!self.comp_slide) {
-        _ = w32.KillTimer(self.hwnd, SLIDE_END_TIMER_ID);
-        return;
-    }
-    const ms = slideMs(self.comp_plan);
-    const el = std.time.milliTimestamp() - self.comp_start_ms;
-    if (el < ms) {
-        _ = w32.SetTimer(self.hwnd, SLIDE_END_TIMER_ID, @intCast(@as(i64, ms) - el), null);
-        return;
-    }
-    self.finishCompSlide();
-}
-
-/// The slide reached its end: a card that came in is shown at its resting
-/// place FIRST (and painted), and the visual over it taken down after, so the
-/// hand-back is the same pixels throughout; a card that left stays hidden.
-fn finishCompSlide(self: *ViewerTOCPanel) void {
-    _ = w32.KillTimer(self.hwnd, SLIDE_END_TIMER_ID);
-    if (!self.comp_slide) return;
-    self.comp_slide = false;
-    self.slide = self.comp_want;
-    if (self.comp_want == 1) {
-        self.moveToSlide();
-        self.showAbove();
-        _ = w32.UpdateWindow(self.hwnd);
-    }
-    // The window is the card again: the host goes with the visual (T3040).
-    self.releaseComp();
-    log.info("viewer toc slide done pane={s} to={d:.0} ms={d} compositor=true ui_steps=0", .{
-        self.pane.paneId(), self.comp_want, std.time.milliTimestamp() - self.comp_start_ms,
-    });
-}
-
-/// Take a compositor slide down where it has got to, leaving `slide` there
-/// and the window hidden - for a snap, a hide, or a fall back to stepping.
-fn cancelCompSlide(self: *ViewerTOCPanel) void {
-    // A host built for a slide that was never declared (no card picture to
-    // put on it) goes too: one exists only while a slide does (T3040).
-    if (!self.comp_slide) return self.releaseComp();
-    self.slide = self.currentT();
-    _ = w32.KillTimer(self.hwnd, SLIDE_END_TIMER_ID);
-    self.comp_slide = false;
-    self.releaseComp();
-}
-
-/// Take the visual down and let go of the DirectComposition device, target
-/// and surface, and this host's reference on the process's D3D11 device
-/// (T3040). The next slide builds a host again; a re-declaration mid-slide
-/// keeps the one it has.
-fn releaseComp(self: *ViewerTOCPanel) void {
-    if (self.comp) |*host| host.deinit();
-    self.comp = null;
-}
-
-/// Whether a compositor host is held right now, and whether its D3D11
-/// device is the process's shared one (the pane's own test, T3040).
-pub fn compHost(self: *const ViewerTOCPanel) ?struct { shared: bool } {
-    const host = self.comp orelse return null;
-    return .{ .shared = host.shared };
-}
-
-/// The card as its window paints it, `w` x `h`, premultiplied, with the
-/// window region's rounded corners clear: the picture the visual carries for
-/// a slide. The filter field is a child window, so it is printed in on top
-/// at its own place. Caller frees.
-fn snapshotCard(self: *ViewerTOCPanel, w: i32, h: i32) ?[]u32 {
-    if (w <= 0 or h <= 0) return null;
-    const n: usize = @as(usize, @intCast(w)) * @as(usize, @intCast(h));
-    const pic = self.alloc.alloc(u32, n) catch return null;
-    errdefer self.alloc.free(pic);
-    const mask = self.alloc.alloc(u32, n) catch {
-        self.alloc.free(pic);
-        return null;
-    };
-    defer self.alloc.free(mask);
-    if (!self.paintToPixels(pic, w, h, false) or !self.paintToPixels(mask, w, h, true)) {
-        self.alloc.free(pic);
-        return null;
-    }
-    toc_comp.premultiplyByMask(pic, mask);
-    return pic;
-}
-
-/// Paint into a top-down 32-bit DIB and copy its rows to `out`: the card
-/// (with its filter field), or with `mask` the window region white on black.
-fn paintToPixels(self: *ViewerTOCPanel, out: []u32, w: i32, h: i32, mask: bool) bool {
-    const mem = w32.CreateCompatibleDC(null) orelse return false;
-    defer _ = w32.DeleteDC(mem);
-    const bmi = w32.BITMAPINFO{ .bmiHeader = .{ .biWidth = w, .biHeight = -h } };
-    var bits: ?*anyopaque = null;
-    const bmp = w32.CreateDIBSection(mem, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse return false;
-    defer _ = w32.DeleteObject(@ptrCast(bmp));
-    const raw = bits orelse return false;
-    const old = w32.SelectObject(mem, @ptrCast(bmp));
-    defer _ = w32.SelectObject(mem, old);
-    const dib: [*]u32 = @ptrCast(@alignCast(raw));
-    @memset(dib[0..out.len], 0);
-    if (mask) {
-        const r = self.px(banner_card.RADIUS);
-        const rgn = w32.CreateRoundRectRgn(0, 0, w + 1, h + 1, 2 * r, 2 * r) orelse return false;
-        defer _ = w32.DeleteObject(rgn);
-        const brush = w32.CreateSolidBrush(0x00FFFFFF) orelse return false;
-        defer _ = w32.DeleteObject(@ptrCast(brush));
-        _ = w32.FillRgn(mem, rgn, @ptrCast(brush));
-    } else {
-        self.paint(mem, w, h);
-        if (self.filter_edit) |edit| {
-            if (self.showsFiles() and w32.IsWindowVisible(edit) != 0) {
-                const b = self.filterBoxes();
-                _ = w32.SetViewportOrgEx(mem, b.edit.left, b.edit.top, null);
-                _ = w32.SendMessageW(edit, w32.WM_PRINT, @intFromPtr(mem), w32.PRF_CLIENT | w32.PRF_NONCLIENT | w32.PRF_ERASEBKGND);
-                _ = w32.SetViewportOrgEx(mem, 0, 0, null);
-            }
-        }
-    }
-    _ = w32.GdiFlush();
-    @memcpy(out, dib[0..out.len]);
-    return true;
-}
-
-/// Where the window sits right now: off the pane's left edge only while a
-/// slide is actually running, and at its resting origin the rest of the time.
-///
-/// A PARKED card is hidden, and a hidden window still has a rect — leaving it
-/// out beyond the pane's left edge would make this the one piece of viewer
-/// chrome whose bounds escape the pane it belongs to, which
-/// `test/win32/viewer-narrow-pane.ps1` checks on every painted window. A
-/// slide on the compositor moves the visual, never the window, so the window
-/// stays at rest through it.
-fn windowX(self: *const ViewerTOCPanel) i32 {
-    if (!self.slide_timer) return self.slide_x;
-    return toc.slideX(self.slide, self.slide_x, self.slide_w);
-}
-
-/// Put the window where `windowX` says, without touching its size, z-order or
-/// visibility.
-fn moveToSlide(self: *ViewerTOCPanel) void {
-    _ = w32.SetWindowPos(
-        self.hwnd,
-        null,
-        self.windowX(),
-        self.slide_y,
-        0,
-        0,
-        w32.SWP_NOSIZE | w32.SWP_NOZORDER | w32.SWP_NOACTIVATE,
-    );
-}
-
-fn startSlide(self: *ViewerTOCPanel) void {
-    self.slide_last_ms = std.time.milliTimestamp();
-    if (self.slide_timer) return;
-    self.slide_steps = 0;
-    if (FrameClock.arm(self.hwnd, SLIDE_TIMER_ID, SLIDE_TICK_MS)) {
-        self.slide_timer = true;
-        return;
-    }
-    // No timer to be had: land on the final state rather than freeze the card
-    // halfway across the pane.
-    log.warn("viewer TOC slide timer unavailable; snapping to final state", .{});
-    self.slide = self.slide_want;
-    self.settleSlide();
-}
-
-fn stopSlide(self: *ViewerTOCPanel) void {
-    if (!self.slide_timer) return;
-    FrameClock.disarm(self.hwnd, SLIDE_TIMER_ID);
-    self.slide_timer = false;
-}
-
-/// One animation frame. Returns having either advanced the card or settled it.
-fn tickSlide(self: *ViewerTOCPanel) void {
-    const now = std.time.milliTimestamp();
-    const dt: f32 = @floatFromInt(now - self.slide_last_ms);
-    self.slide_last_ms = now;
-    self.slide = toc.slideStep(self.slide, self.slide_want, dt);
-    self.slide_steps +|= 1;
-    self.moveToSlide();
-    if (self.slide == self.slide_want) self.settleSlide();
-}
-
-/// The card reached the end of its travel: stop the timer, and hide the
-/// window if that end was the parked one.
-fn settleSlide(self: *ViewerTOCPanel) void {
-    const ran = self.slide_timer;
-    self.stopSlide();
-    // Back to the resting rect, which for a card that just parked means the
-    // hidden window is inside its pane again.
-    self.moveToSlide();
-    if (self.slide_want == 0) _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
-    if (ran) log.info("viewer toc slide done pane={s} to={d:.0} compositor=false ui_steps={d}", .{
-        self.pane.paneId(), self.slide_want, self.slide_steps,
-    });
-}
-
-/// Whether the card is mid-slide — the state the pane's own tests wait out.
-pub fn sliding(self: *const ViewerTOCPanel) bool {
-    return self.slide_timer or self.comp_slide;
-}
-
-/// Whether the slide in flight is the compositor's (T2764).
-pub fn slidingOnCompositor(self: *const ViewerTOCPanel) bool {
-    return self.comp_slide;
-}
-
-pub fn hide(self: *ViewerTOCPanel) void {
-    if (self.filter_edit) |edit| _ = w32.ShowWindow(edit, w32.SW_HIDE);
-    self.layout = .{ .which = .hidden };
-    self.last_mode = .hidden;
-    self.stopSlide();
-    self.cancelCompSlide();
-    self.slide = 0;
-    self.slide_want = 0;
-    _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
-}
-
+// The code in `viewer_toc_place.zig` (T1784). These aliases ARE this file's surface for
+// that code: they keep `self.f(x)` working at every call site.
+const viewer_toc_place = @import("viewer_toc_place.zig");
+pub const px = viewer_toc_place.px;
+pub const ensureFonts = viewer_toc_place.ensureFonts;
+pub const measureRows = viewer_toc_place.measureRows;
+pub const measureText = viewer_toc_place.measureText;
+pub const neededHeight = viewer_toc_place.neededHeight;
+pub const Placement = viewer_toc_place.Placement;
+pub const place = viewer_toc_place.place;
+pub const filterBoxes = viewer_toc_place.filterBoxes;
+pub const placeFilterEdit = viewer_toc_place.placeFilterEdit;
+pub const logCardMetrics = viewer_toc_place.logCardMetrics;
+pub const showAbove = viewer_toc_place.showAbove;
+pub const setVisible = viewer_toc_place.setVisible;
+pub const compWanted = viewer_toc_place.compWanted;
+pub const currentT = viewer_toc_place.currentT;
+pub const slideOnCompositor = viewer_toc_place.slideOnCompositor;
+pub const declareCompSlide = viewer_toc_place.declareCompSlide;
+pub const compFailed = viewer_toc_place.compFailed;
+pub const slideMs = viewer_toc_place.slideMs;
+pub const debugStall = viewer_toc_place.debugStall;
+pub const compSlideTick = viewer_toc_place.compSlideTick;
+pub const finishCompSlide = viewer_toc_place.finishCompSlide;
+pub const cancelCompSlide = viewer_toc_place.cancelCompSlide;
+pub const releaseComp = viewer_toc_place.releaseComp;
+pub const compHost = viewer_toc_place.compHost;
+pub const snapshotCard = viewer_toc_place.snapshotCard;
+pub const paintToPixels = viewer_toc_place.paintToPixels;
+pub const windowX = viewer_toc_place.windowX;
+pub const moveToSlide = viewer_toc_place.moveToSlide;
+pub const startSlide = viewer_toc_place.startSlide;
+pub const stopSlide = viewer_toc_place.stopSlide;
+pub const tickSlide = viewer_toc_place.tickSlide;
+pub const settleSlide = viewer_toc_place.settleSlide;
+pub const sliding = viewer_toc_place.sliding;
+pub const slidingOnCompositor = viewer_toc_place.slidingOnCompositor;
+pub const hide = viewer_toc_place.hide;
 // -------------------------------------------------------------------------
 // Scrolling
 // -------------------------------------------------------------------------
 
 /// The list viewport's height: the card minus its pinned header and the list
 /// insets.
-fn viewportHeight(self: *const ViewerTOCPanel) i32 {
+pub fn viewportHeight(self: *const ViewerTOCPanel) i32 {
     return @max(
         self.layout.card.height() -
             self.headerH() -
@@ -1473,11 +805,11 @@ fn viewportHeight(self: *const ViewerTOCPanel) i32 {
     );
 }
 
-fn maxScroll(self: *const ViewerTOCPanel) i32 {
+pub fn maxScroll(self: *const ViewerTOCPanel) i32 {
     return @max(self.list_h - self.viewportHeight(), 0);
 }
 
-fn clampScroll(self: *ViewerTOCPanel) void {
+pub fn clampScroll(self: *ViewerTOCPanel) void {
     self.scroll = std.math.clamp(self.scroll, 0, self.maxScroll());
 }
 
@@ -1515,678 +847,28 @@ fn hitRow(self: *const ViewerTOCPanel, x: i32, y: i32) i32 {
     return -1;
 }
 
-fn onHandle(self: *const ViewerTOCPanel, x: i32, y: i32) bool {
+pub fn onHandle(self: *const ViewerTOCPanel, x: i32, y: i32) bool {
     return self.layout.which == .gutter and self.layout.handle.containsPoint(x, y);
 }
 
-// -------------------------------------------------------------------------
-// Painting
-// -------------------------------------------------------------------------
-
-/// Build the glass-card backdrop DIB for a band of `w` x `h` (the card plus a
-/// margin on every side), composited over the document background.
-fn ensureCardSurface(self: *ViewerTOCPanel, hdc: w32.HDC, w: i32, h: i32) void {
-    const stale = self.card_dc == null or self.card_w != w or self.card_h != h or
-        !std.meta.eql(self.card_bg, self.doc_bg) or self.card_scale != self.scale;
-    if (!stale) return;
-    self.releaseCardSurface();
-
-    var bmi = std.mem.zeroes(w32.BITMAPINFO);
-    bmi.bmiHeader.biSize = @sizeOf(w32.BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = w;
-    bmi.bmiHeader.biHeight = -h; // top-down
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 32;
-
-    const mem_dc = w32.CreateCompatibleDC(hdc) orelse return;
-    var bits: ?*anyopaque = null;
-    const bmp = w32.CreateDIBSection(mem_dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse {
-        _ = w32.DeleteDC(mem_dc);
-        return;
-    };
-    const raw = bits orelse {
-        _ = w32.DeleteObject(bmp);
-        _ = w32.DeleteDC(mem_dc);
-        return;
-    };
-    _ = w32.SelectObject(mem_dc, bmp);
-
-    const pixels = @as([*]u32, @ptrCast(@alignCast(raw)));
-    const count: usize = @intCast(w * h);
-    banner_card.render(
-        pixels[0..count],
-        banner_card.Metrics.init(w, h, self.scale),
-        self.doc_bg,
-    );
-
-    self.card_dc = mem_dc;
-    self.card_bmp = bmp;
-    self.card_w = w;
-    self.card_h = h;
-    self.card_bg = self.doc_bg;
-    self.card_scale = self.scale;
-}
-
-fn releaseCardSurface(self: *ViewerTOCPanel) void {
-    if (self.card_dc) |dc| _ = w32.DeleteDC(dc);
-    if (self.card_bmp) |b| _ = w32.DeleteObject(b);
-    self.card_dc = null;
-    self.card_bmp = null;
-    self.card_w = 0;
-    self.card_h = 0;
-    self.card_scale = 0;
-}
-
-fn fillRoundRect(hdc: w32.HDC, r: w32.RECT, radius: i32, color: u32) void {
-    const rgn = w32.CreateRoundRectRgn(
-        r.left,
-        r.top,
-        r.right + 1,
-        r.bottom + 1,
-        2 * radius,
-        2 * radius,
-    ) orelse return;
-    defer _ = w32.DeleteObject(rgn);
-    const brush = w32.CreateSolidBrush(color) orelse return;
-    defer _ = w32.DeleteObject(@ptrCast(brush));
-    _ = w32.FillRgn(hdc, rgn, @ptrCast(brush));
-}
-
-fn paint(self: *ViewerTOCPanel, hdc: w32.HDC, width: i32, height: i32) void {
-    self.paintCard(hdc, width, height);
-    self.paintHandleBar(hdc, width, height);
-}
-
-/// The resize handle's accent bar (T2265; Mac 5e4f30144 gave
-/// `SidePanelResizeHandle` the split dividers' `GutterBar`): down the middle
-/// of the handle, which straddles the card's edge in the gutter beside it -
-/// half strength while hovered, full while dragged, never after.
-fn paintHandleBar(self: *ViewerTOCPanel, hdc: w32.HDC, width: i32, height: i32) void {
-    const l = self.layout;
-    const strength = if (l.which == .gutter and l.handle.width() > 0) gutter_bar.single(self.handle_hover, self.drag != null) else null;
-    if (!std.meta.eql(strength, self.handle_bar_logged)) {
-        self.handle_bar_logged = strength;
-        log.debug("viewer tree pane={s} handle bar {s}", .{ self.pane.paneId(), if (strength) |v| @tagName(v) else "none" });
-    }
-    const st = strength orelse return;
-    const h = l.handle;
-    const core = gutter_bar.barIn(.{ .left = h.left, .top = h.top, .right = h.right, .bottom = h.bottom }, .across_x, self.scale);
-    const color = chrome_theme.accentOn(self.doc_bg, system_colors.accentCached());
-    gutter_bar_dc.paintOn(hdc, core, .{ .left = 0, .top = 0, .right = width, .bottom = height }, color, self.scale, st);
-}
-
-/// Set (or clear) the hover on the resize handle, repainting on a change.
-fn setHandleHover(self: *ViewerTOCPanel, hwnd: w32.HWND, on: bool) void {
-    if (self.handle_hover == on) return;
-    self.handle_hover = on;
-    // Debug-build oracle: a posted move's hover is gone within a frame on a
-    // background desktop, often before a paint.
-    log.debug("viewer tree pane={s} handle hover={}", .{ self.pane.paneId(), on });
-    _ = w32.InvalidateRect(hwnd, null, 0);
-}
-
-/// Ask again whether the pointer is on the handle, from where it is: a drag's
-/// end leaves it on the handle or off it, and the bar follows the pointer, not
-/// the drag (Mac 5e4f30144). No readable cursor reads as "off it".
-fn recheckHandleHover(self: *ViewerTOCPanel, hwnd: w32.HWND) void {
-    var pt: w32.POINT = undefined;
-    const on = w32.GetCursorPos_(&pt) != 0 and w32.WindowFromPoint(pt) == hwnd and
-        w32.ScreenToClient(hwnd, &pt) != 0 and self.onHandle(pt.x, pt.y);
-    self.handle_hover = on;
-    _ = w32.InvalidateRect(hwnd, null, 0);
-}
-
-fn paintCard(self: *ViewerTOCPanel, hdc: w32.HDC, width: i32, height: i32) void {
-    const l = self.layout;
-    if (l.which == .hidden) return;
-    self.ensureFonts();
-
-    const margin = self.px(toc.margin_dip);
-    const band_w = l.card.width() + 2 * margin;
-    const band_h = l.card.height() + 2 * margin;
-    self.ensureCardSurface(hdc, band_w, band_h);
-
-    // Backdrop: the glass card over the document background. In gutter mode
-    // the window is the whole strip — the band blits at the card's origin
-    // minus a margin, and everything below is plain page background. In
-    // compact mode the window IS the card, so the band's center crop lands at
-    // the origin.
-    const doc_ref = w32.RGB(self.doc_bg.r, self.doc_bg.g, self.doc_bg.b);
-    if (w32.CreateSolidBrush(doc_ref)) |brush| {
-        defer _ = w32.DeleteObject(@ptrCast(brush));
-        var full = w32.RECT{ .left = 0, .top = 0, .right = width, .bottom = height };
-        _ = w32.FillRect(hdc, &full, brush);
-    }
-    if (self.card_dc) |mem| {
-        switch (l.which) {
-            .gutter => _ = w32.BitBlt(
-                hdc,
-                l.card.left - margin,
-                l.card.top - margin,
-                band_w,
-                band_h,
-                mem,
-                0,
-                0,
-                w32.SRCCOPY,
-            ),
-            .compact => _ = w32.BitBlt(
-                hdc,
-                0,
-                0,
-                l.card.width(),
-                l.card.height(),
-                mem,
-                margin,
-                margin,
-                w32.SRCCOPY,
-            ),
-            .hidden => unreachable,
-        }
-    } else {
-        // No DIB: a flat card fill still yields a readable list.
-        const fill_ref = w32.RGB(self.card_fill.r, self.card_fill.g, self.card_fill.b);
-        if (w32.CreateSolidBrush(fill_ref)) |brush| {
-            defer _ = w32.DeleteObject(@ptrCast(brush));
-            var r = w32.RECT{
-                .left = l.card.left,
-                .top = l.card.top,
-                .right = l.card.right,
-                .bottom = l.card.bottom,
-            };
-            _ = w32.FillRect(hdc, &r, brush);
-        }
-    }
-
-    // Everything from here on stays inside the card's rounded shape.
-    const saved = w32.SaveDC(hdc);
-    defer _ = w32.RestoreDC(hdc, saved);
-    const radius = self.px(banner_card.RADIUS);
-    if (w32.CreateRoundRectRgn(
-        l.card.left,
-        l.card.top,
-        l.card.right + 1,
-        l.card.bottom + 1,
-        2 * radius,
-        2 * radius,
-    )) |rgn| {
-        defer _ = w32.DeleteObject(rgn);
-        _ = w32.SelectClipRgn(hdc, rgn);
-    }
-
-    const header_h = self.headerH();
-    _ = w32.SetBkMode(hdc, w32.TRANSPARENT);
-
-    // Rows, clipped to the list viewport so they scroll UNDER the header.
-    {
-        const inner_saved = w32.SaveDC(hdc);
-        defer _ = w32.RestoreDC(hdc, inner_saved);
-        const list_top = l.card.top + header_h;
-        // Clipped to the CARD, not to the list: a row scrolling up leaves the
-        // viewport by passing under the translucent header rather than by
-        // being cut off at its edge (T543), which is what there is to see
-        // through it.
-        _ = w32.IntersectClipRect(hdc, l.card.left, l.card.top, l.card.right, l.card.bottom);
-
-        const fill_inset = self.px(toc.fill_inset_dip);
-        const origin_y = list_top + fill_inset - self.scroll;
-        // Floored against the card before it is spent, exactly as the
-        // chooser's rows take it (T305); `list_selection` floors it again
-        // against the fill it actually lands on.
-        const accent = chrome_theme.accentOn(self.card_fill, system_colors.accentCached());
-        const row_radius = self.px(toc.row_corner_dip);
-        const emphasized = self.isEmphasized();
-
-        if (self.row_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
-        for (self.rows.items, 0..) |row, i| {
-            const top = origin_y + row.y;
-            if (top + row.h < l.card.top) continue;
-            if (top > l.card.bottom) break;
-
-            // A section header is a label, not a target: it never fills, so
-            // it can never look like something a click would do anything to.
-            const is_active = row.interactive() and self.active == @as(i32, @intCast(i));
-            const is_hover = row.interactive() and self.hover == @as(i32, @intCast(i));
-            const fill_rect = w32.RECT{
-                .left = l.card.left + fill_inset,
-                .top = top,
-                .right = l.card.right - fill_inset,
-                .bottom = top + row.h,
-            };
-
-            // Windows 11's list selection (T930, the T828 vocabulary): a
-            // quiet NEUTRAL fill plus a small accent bar at the leading edge,
-            // never the solid accent pill Mac's sidebar paints. Mac's
-            // key-window rule survives as the two weights: the ACTIVE window
-            // gets the heavier fill and the accent bar, every other window
-            // the lighter fill and a neutral bar — so the selection never
-            // disappears with its emphasis, and is never carried by color
-            // alone. No focus rim: the card takes no keyboard focus, so there
-            // is no caret row to mark.
-            const sel = list_selection.rowPaint(self.card_fill, accent, .{
-                .selected = is_active,
-                .focused = emphasized,
-                .hovered = is_hover,
-                .focus_visible = false,
-            });
-            if (sel.fill) |f| fillRoundRect(hdc, fill_rect, row_radius, w32.RGB(f.r, f.g, f.b));
-            if (sel.indicator) |c| {
-                const bar = toc.selectionIndicator(row.h, self.scale);
-                const bar_rect = w32.RECT{
-                    .left = fill_rect.left + bar.left,
-                    .top = top + bar.top,
-                    .right = fill_rect.left + bar.left + bar.width,
-                    .bottom = top + bar.top + bar.height,
-                };
-                fillRoundRect(hdc, bar_rect, bar.radius, w32.RGB(c.r, c.g, c.b));
-            }
-            // The selected row's label steps up from the secondary ink the
-            // rest of the list reads in.
-            const color = if (is_active) self.text_ref else self.secondary_ref;
-
-            if (row.kind != .heading) {
-                self.paintTreeRow(hdc, row, top, color);
-                continue;
-            }
-
-            const text_left = l.card.left + toc.rowTextLeft(row.depth, self.scale);
-            const text_w = toc.rowTextWidth(l.card.width(), row.depth, self.scale);
-            var tr = w32.RECT{
-                .left = text_left,
-                .top = top + self.px(toc.row_v_pad_dip),
-                .right = text_left + text_w,
-                .bottom = top + row.h - self.px(toc.row_v_pad_dip),
-            };
-            _ = w32.SetTextColor(hdc, color);
-            _ = w32.DrawTextW(
-                hdc,
-                row.text16.ptr,
-                @intCast(row.text16.len),
-                &tr,
-                w32.DT_WORDBREAK | w32.DT_END_ELLIPSIS | w32.DT_NOPREFIX,
-            );
-        }
-
-        // Overflow scroller: a thin overlay thumb, because a list you can
-        // scroll with no scroller is a list that looks complete when it
-        // isn't.
-        const max_s = self.maxScroll();
-        if (max_s > 0) {
-            const view_h = self.viewportHeight();
-            const track_top = list_top + fill_inset;
-            const thumb_h = @max(
-                @divTrunc(view_h * view_h, self.list_h),
-                self.px(24),
-            );
-            const range = view_h - thumb_h;
-            const thumb_top = track_top +
-                @divTrunc(range * self.scroll, max_s);
-            const tw = self.px(3);
-            const tr = w32.RECT{
-                .left = l.card.right - self.px(3) - tw,
-                .top = thumb_top,
-                .right = l.card.right - self.px(3),
-                .bottom = thumb_top + thumb_h,
-            };
-            fillRoundRect(hdc, tr, @divTrunc(tw, 2), self.secondary_ref);
-        }
-    }
-
-    // The pinned header, over the rows, with the "CONTENTS" caption at the
-    // label inset (a sidebar header lines up with the row text, not the fill).
-    //
-    // Translucent (T543): Mac's `SidePanelHeader` sits on `glassBackdrop()`,
-    // so a row scrolling beneath it stays a recognizable shape. GDI has no
-    // live blur, and the approximation is to composite the card's OWN backdrop
-    // back over the band at just under opaque — the rows read through as a
-    // ghost, and the band keeps the card's specular top edge, which the
-    // opaque fill this replaces used to paint out.
-    {
-        var hr = w32.RECT{
-            .left = l.card.left,
-            .top = l.card.top,
-            .right = l.card.right,
-            .bottom = l.card.top + header_h,
-        };
-        var composited = false;
-        if (self.card_dc) |mem| {
-            const blend = w32.BLENDFUNCTION{
-                .SourceConstantAlpha = toc.header_alpha,
-                // The backdrop DIB is 0x00RRGGBB — its alpha byte is not a
-                // channel, so blend with the constant alpha alone.
-                .AlphaFormat = 0,
-            };
-            composited = w32.AlphaBlend(
-                hdc,
-                hr.left,
-                hr.top,
-                hr.right - hr.left,
-                header_h,
-                mem,
-                // The band DIB holds the card inset by one margin, so the
-                // card's own origin sits at (margin, margin) in it — the same
-                // mapping the backdrop blit above uses.
-                margin,
-                margin,
-                hr.right - hr.left,
-                header_h,
-                blend,
-            ) != 0;
-        }
-        if (!composited) {
-            // No DIB (or a blend the driver refused): an opaque band still
-            // reads as a pinned header.
-            const fill_ref = w32.RGB(self.card_fill.r, self.card_fill.g, self.card_fill.b);
-            if (w32.CreateSolidBrush(fill_ref)) |brush| {
-                defer _ = w32.DeleteObject(@ptrCast(brush));
-                _ = w32.FillRect(hdc, &hr, brush);
-            }
-        }
-        if (self.header_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
-        _ = w32.SetTextColor(hdc, self.secondary_ref);
-        // The card names what it is listing. One card, two subjects: a
-        // document's sections, or a diff's changed files.
-        var contents = std.unicode.utf8ToUtf16LeStringLiteral("CONTENTS").*;
-        var files = std.unicode.utf8ToUtf16LeStringLiteral("FILES").*;
-        const caption: []u16 = if (self.showsFiles()) &files else &contents;
-        // The CAPTION band only: with the filter pinned under it, centring on
-        // the whole header would drop the caption into the field.
-        var cr = w32.RECT{
-            .left = l.card.left + self.px(toc.label_inset_dip),
-            .top = l.card.top,
-            .right = l.card.right - self.px(toc.label_inset_dip),
-            .bottom = l.card.top + toc.headerHeight(self.caption_line_h, self.scale),
-        };
-        _ = w32.DrawTextW(
-            hdc,
-            caption.ptr,
-            @intCast(caption.len),
-            &cr,
-            w32.DT_SINGLELINE | w32.DT_VCENTER | w32.DT_NOPREFIX,
-        );
-        // …and, for a diff, how many there are, right-aligned in the same
-        // band. The page's own summary line carries the +/- totals, so the
-        // header does not repeat them.
-        if (self.showsFiles()) {
-            var buf: [48]u8 = undefined;
-            const n = self.fileRowCount();
-            const tree = self.pane.diffTree();
-            // A filtered card says how much of the diff it is showing: "3 of
-            // 120 files" keeps the size of the change in view while the list
-            // is narrowed (Mac's `diffSummaryText`, "3/120").
-            const text = if (tree != null and tree.?.filtered)
-                std.fmt.bufPrint(&buf, "{d} of {d} {s}", .{
-                    n,
-                    tree.?.total_files,
-                    if (tree.?.total_files == 1) "file" else "files",
-                }) catch ""
-            else
-                std.fmt.bufPrint(
-                    &buf,
-                    "{d} {s}",
-                    .{ n, if (n == 1) "file" else "files" },
-                ) catch "";
-            if (text.len > 0) {
-                var text16: [48]u16 = undefined;
-                const len = std.unicode.utf8ToUtf16Le(&text16, text) catch 0;
-                if (len > 0) {
-                    _ = w32.DrawTextW(
-                        hdc,
-                        &text16,
-                        @intCast(len),
-                        &cr,
-                        w32.DT_SINGLELINE | w32.DT_VCENTER | w32.DT_RIGHT | w32.DT_NOPREFIX,
-                    );
-                }
-            }
-            if (self.filter_edit != null) self.paintFilter(hdc);
-        }
-    }
-}
-
-/// The filter's well, its magnifier, and — while there is text to clear — the
-/// clear button (T1336). The EDIT paints its own text over the well; with
-/// WS_CLIPCHILDREN on the card this never draws across it.
-fn paintFilter(self: *ViewerTOCPanel, hdc: w32.HDC) void {
-    const b = self.filterBoxes();
-    fillRoundRect(
-        hdc,
-        .{ .left = b.well.left, .top = b.well.top, .right = b.well.right, .bottom = b.well.bottom },
-        self.px(toc.row_corner_dip),
-        w32.RGB(self.field_rgb.r, self.field_rgb.g, self.field_rgb.b),
-    );
-
-    const m = icon_button.Metrics.init(self.scale);
-    // A label for the field, not a button: no fill, no hover.
-    icon_paint.glyph(hdc, m, iconRect(b.glyph), .search, self.secondary_ref);
-
-    if (!self.filterHasText()) return;
-    const clear = iconRect(b.clear);
-    if (self.clear_hover or self.clear_pressed) {
-        const state: icon_button.State = if (self.clear_pressed) .pressed else .hover;
-        const d = icon_button.fillDelta(state, self.dark);
-        fillRoundRect(
-            hdc,
-            .{ .left = b.clear.left, .top = b.clear.top, .right = b.clear.right, .bottom = b.clear.bottom },
-            self.px(4),
-            w32.RGB(
-                icon_button.shadeChannel(self.field_rgb.r, d),
-                icon_button.shadeChannel(self.field_rgb.g, d),
-                icon_button.shadeChannel(self.field_rgb.b, d),
-            ),
-        );
-    }
-    icon_paint.glyph(
-        hdc,
-        m,
-        icon_button.glyphTarget(m, clear, .close),
-        .close,
-        if (self.clear_hover) self.text_ref else self.secondary_ref,
-    );
-}
-
-fn iconRect(r: toc.Rect) icon_button.Rect {
-    return .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
-}
-
-/// Whether a client point is on the clear button — only while it is showing.
-fn onClear(self: *const ViewerTOCPanel, x: i32, y: i32) bool {
-    if (!self.showsFiles() or self.layout.which == .hidden) return false;
-    if (!self.filterHasText()) return false;
-    return self.filterBoxes().clear.containsPoint(x, y);
-}
-
-/// Whether a client point is in the filter's well (the field and its glyph).
-fn onFilter(self: *const ViewerTOCPanel, x: i32, y: i32) bool {
-    if (self.filter_edit == null or !self.showsFiles() or self.layout.which == .hidden) return false;
-    return self.filterBoxes().well.containsPoint(x, y);
-}
-
-/// One diff-tree row: `[status] name -- +12 -3` for a file, `[chevron] path`
-/// for a folder, and a plain caption for a section header.
-///
-/// `ink` is the label color the row loop already resolved (selection, hover
-/// and unemphasized states are its business, not this function's). The row
-/// always sits on a neutral wash since T930, so the badge and the counts keep
-/// their own tones in every state.
-fn paintTreeRow(
-    self: *ViewerTOCPanel,
-    hdc: w32.HDC,
-    row: Row,
-    top: i32,
-    ink: u32,
-) void {
-    const l = self.layout;
-    const boxes = toc.treeRowBoxes(
-        l.card.width(),
-        row.depth,
-        self.scale,
-        row.badge_w,
-        row.counts_w,
-    );
-    const text_top = top + self.px(toc.row_v_pad_dip);
-    const text_bottom = top + row.h - self.px(toc.row_v_pad_dip);
-
-    // A section header is the card's own caption voice, one indent in.
-    if (row.kind == .section) {
-        var sr = w32.RECT{
-            .left = l.card.left + toc.rowTextLeft(row.depth, self.scale),
-            .top = text_top,
-            .right = l.card.right - self.px(toc.label_inset_dip),
-            .bottom = text_bottom,
-        };
-        _ = w32.SetTextColor(hdc, self.secondary_ref);
-        _ = w32.DrawTextW(
-            hdc,
-            row.text16.ptr,
-            @intCast(row.text16.len),
-            &sr,
-            w32.DT_SINGLELINE | w32.DT_VCENTER | w32.DT_END_ELLIPSIS | w32.DT_NOPREFIX,
-        );
-        return;
-    }
-
-    // The leading box: a status chip for a file, a disclosure chevron for a
-    // folder. The chip is a capsule (the design system's named exception for a
-    // mark that reports a state), tinted with its own ink so the badge beside
-    // a file and the lines inside it agree about what green means.
-    if (row.badge16.len > 0) {
-        const badge_top = top + @divTrunc(row.h - self.line_h, 2);
-        const badge = w32.RECT{
-            .left = l.card.left + boxes.badge_left,
-            .top = badge_top,
-            .right = l.card.left + boxes.badge_right,
-            .bottom = badge_top + self.line_h,
-        };
-        var badge_ink = ink;
-        if (row.kind == .file) {
-            const fill = chrome_theme.toneFill(self.card_fill, row.tone);
-            fillRoundRect(
-                hdc,
-                badge,
-                @divTrunc(self.line_h, 2),
-                w32.RGB(fill.r, fill.g, fill.b),
-            );
-            const tint = chrome_theme.toneInk(self.card_fill, row.tone);
-            badge_ink = w32.RGB(tint.r, tint.g, tint.b);
-        } else {
-            badge_ink = self.secondary_ref;
-        }
-        var br = badge;
-        _ = w32.SetTextColor(hdc, badge_ink);
-        _ = w32.DrawTextW(
-            hdc,
-            row.badge16.ptr,
-            @intCast(row.badge16.len),
-            &br,
-            w32.DT_SINGLELINE | w32.DT_VCENTER | w32.DT_CENTER | w32.DT_NOPREFIX,
-        );
-    }
-
-    // The name. Ellipsized through the MIDDLE rather than at the end, which is
-    // the readable half of Mac's head truncation: a card this narrow truncates
-    // a lot of names, and `Viewer...` identifies nothing while
-    // `Viewer...Leaf.zig` keeps both the distinguishing tail and the
-    // extension. A folder row's title is a joined path, which is exactly what
-    // the flag is for.
-    // A filter hit's folder rides on a second line (T1336), so the name takes
-    // the first line instead of the row's middle.
-    const two_line = row.detail16.len > 0;
-    var nr = w32.RECT{
-        .left = l.card.left + boxes.name_left,
-        .top = text_top,
-        .right = l.card.left + boxes.name_right,
-        .bottom = if (two_line) text_top + self.line_h else text_bottom,
-    };
-    const name_ink = if (row.kind == .folder) self.secondary_ref else ink;
-    _ = w32.SetTextColor(hdc, name_ink);
-    _ = w32.DrawTextW(
-        hdc,
-        row.text16.ptr,
-        @intCast(row.text16.len),
-        &nr,
-        w32.DT_SINGLELINE | w32.DT_VCENTER | w32.DT_PATH_ELLIPSIS | w32.DT_NOPREFIX,
-    );
-    if (two_line) {
-        // Secondary ink, path-ellipsized: the folder that tells two
-        // same-named hits apart is usually its TAIL.
-        var dr = w32.RECT{
-            .left = nr.left,
-            .top = nr.bottom,
-            .right = nr.right,
-            .bottom = text_bottom,
-        };
-        _ = w32.SetTextColor(hdc, self.secondary_ref);
-        _ = w32.DrawTextW(
-            hdc,
-            row.detail16.ptr,
-            @intCast(row.detail16.len),
-            &dr,
-            w32.DT_SINGLELINE | w32.DT_VCENTER | w32.DT_PATH_ELLIPSIS | w32.DT_NOPREFIX,
-        );
-    }
-
-    if (row.counts_w == 0) return;
-
-    // The counts, right-aligned against the card's own text inset.
-    var x = l.card.left + boxes.counts_left;
-    const added = chrome_theme.toneInk(self.card_fill, .good);
-    const removed = chrome_theme.toneInk(self.card_fill, .danger);
-    if (row.adds16.len > 0) {
-        const w = measureText(hdc, row.adds16);
-        var r = w32.RECT{ .left = x, .top = text_top, .right = x + w, .bottom = text_bottom };
-        const c: u32 = if (row.binary)
-            self.secondary_ref
-        else
-            w32.RGB(added.r, added.g, added.b);
-        _ = w32.SetTextColor(hdc, c);
-        _ = w32.DrawTextW(
-            hdc,
-            row.adds16.ptr,
-            @intCast(row.adds16.len),
-            &r,
-            w32.DT_SINGLELINE | w32.DT_VCENTER | w32.DT_NOPREFIX,
-        );
-        x += w + self.px(toc.row_gap_dip);
-    }
-    if (row.dels16.len > 0) {
-        const w = measureText(hdc, row.dels16);
-        var r = w32.RECT{ .left = x, .top = text_top, .right = x + w, .bottom = text_bottom };
-        _ = w32.SetTextColor(hdc, w32.RGB(removed.r, removed.g, removed.b));
-        _ = w32.DrawTextW(
-            hdc,
-            row.dels16.ptr,
-            @intCast(row.dels16.len),
-            &r,
-            w32.DT_SINGLELINE | w32.DT_VCENTER | w32.DT_NOPREFIX,
-        );
-    }
-}
-
-/// True when this card's top-level window is the ACTIVE window — the Windows
-/// reading of Mac's "key window", which decides whether the selected row
-/// carries the heavier fill and the accent indicator or the lighter fill and
-/// a neutral one (T930).
-///
-/// `w32.windowIsActive` rather than a bare `GetForegroundWindow` comparison
-/// (T215): the latter is null for every window on a background desktop, so
-/// the pill painted unemphasized there forever — including under the pixel
-/// probes that are supposed to prove it does not.
-fn isEmphasized(self: *const ViewerTOCPanel) bool {
-    return w32.windowIsActive(w32.GetAncestor(self.hwnd, w32.GA_ROOT));
-}
-
-/// The top-level window gained or lost activation, which flips
-/// `isEmphasized` - but `isEmphasized` is only read at paint time, and a
-/// child HWND never receives `WM_ACTIVATE`, so without this the selected row
-/// kept the old weight until something unrelated repainted the card (T1407).
-/// Measured with the paint probe: activation moved both ways and the card
-/// painted zero times; every pixel test passed anyway because the capture
-/// itself is a paint.
-pub fn onActivationChanged(self: *ViewerTOCPanel) void {
-    _ = w32.InvalidateRect(self.hwnd, null, 0);
-}
-
+// The code in `viewer_toc_paint.zig` (T1784). These aliases ARE this file's surface for
+// that code: they keep `self.f(x)` working at every call site.
+const viewer_toc_paint = @import("viewer_toc_paint.zig");
+pub const ensureCardSurface = viewer_toc_paint.ensureCardSurface;
+pub const releaseCardSurface = viewer_toc_paint.releaseCardSurface;
+pub const fillRoundRect = viewer_toc_paint.fillRoundRect;
+pub const paint = viewer_toc_paint.paint;
+pub const paintHandleBar = viewer_toc_paint.paintHandleBar;
+pub const setHandleHover = viewer_toc_paint.setHandleHover;
+pub const recheckHandleHover = viewer_toc_paint.recheckHandleHover;
+pub const paintCard = viewer_toc_paint.paintCard;
+pub const paintFilter = viewer_toc_paint.paintFilter;
+pub const iconRect = viewer_toc_paint.iconRect;
+pub const onClear = viewer_toc_paint.onClear;
+pub const onFilter = viewer_toc_paint.onFilter;
+pub const paintTreeRow = viewer_toc_paint.paintTreeRow;
+pub const isEmphasized = viewer_toc_paint.isEmphasized;
+pub const onActivationChanged = viewer_toc_paint.onActivationChanged;
 // -------------------------------------------------------------------------
 // Window procedure
 // -------------------------------------------------------------------------
@@ -2417,26 +1099,26 @@ fn wndProc(
 /// The shape `place()` gives the card's window (T2946): a rounded clip of
 /// `w` x `h` with corner radius `r` for the compact overlay, no region for
 /// the gutter card (which ignores the size, since nothing is clipped).
-const RgnKey = struct {
+pub const RgnKey = struct {
     round: bool,
     w: i32 = 0,
     h: i32 = 0,
     r: i32 = 0,
 
-    fn same(applied: ?RgnKey, want: RgnKey) bool {
+    pub fn same(applied: ?RgnKey, want: RgnKey) bool {
         const a = applied orelse return false;
         return std.meta.eql(a, want);
     }
 };
 
-fn rgnKey(which: toc.Mode, w: i32, h: i32, r: i32) RgnKey {
+pub fn rgnKey(which: toc.Mode, w: i32, h: i32, r: i32) RgnKey {
     return if (which == .compact) .{ .round = true, .w = w, .h = h, .r = r } else .{ .round = false };
 }
 
 /// Whether `place()` may leave the card's window alone (T2946): a compact
 /// card that was compact last time too, stays closed, has no slide running
 /// on either path, and whose window is already hidden.
-fn parkedHidden(which: toc.Mode, last: toc.Mode, visible: bool, slide_timer: bool, comp_slide: bool, shown: bool) bool {
+pub fn parkedHidden(which: toc.Mode, last: toc.Mode, visible: bool, slide_timer: bool, comp_slide: bool, shown: bool) bool {
     return which == .compact and last == .compact and !visible and !slide_timer and !comp_slide and !shown;
 }
 
