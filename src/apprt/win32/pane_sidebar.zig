@@ -569,7 +569,15 @@ pub const Item = struct {
     renamable: bool = false,
 };
 
-pub const max_items: usize = 64;
+/// How many panes the roster lists - the rows, the rail's tiles, their tips
+/// and tool ids, and the drop rows all size on it. It was 64 until T1914: the
+/// all-windows outline across a few busy windows passed that, and the extra
+/// panes silently never listed (Mac's list has no cap). 512 is well past any
+/// session a person drives (each pane is a live shell), and every buffer
+/// sized on it is either the sidebar's own heap object or the UI thread's
+/// 16 MiB stack (the drag resolver's per-window drop rows are the biggest,
+/// about 330 KB).
+pub const max_items: usize = 512;
 
 /// One line of the all-windows outline the panel lays out
 /// (`pane_sidebar_outline.buildLines` makes them).
@@ -2142,6 +2150,27 @@ test "T2289: a window too narrow for the panel cannot expand, and its rail stand
     try testing.expect(!canExpand(narrow_window_dip - 1));
     try testing.expectEqual(Mode.mini, mode(true, false, narrow_window_dip - 1));
     try testing.expectEqual(Mode.expanded, mode(true, false, narrow_window_dip));
+}
+
+test "T1914: the roster lays out well past 64 panes - every row placed, in order, none dropped" {
+    // The all-windows outline across several busy windows: more than the old
+    // 64-row cap, grid and stash both.
+    var items: [200]Item = undefined;
+    for (&items, 0..) |*it, i| it.* = .{ .section = if (i < 150) .grid else .stashed, .group = @intCast(i / 20), .own = i < 20 };
+    try testing.expect(items.len <= max_items);
+    for (scales) |s| {
+        const tm: TextMetrics = .{ .title_h = px(19, s), .caption_h = px(16, s) };
+        for ([_]Mode{ .expanded, .mini }) |m| {
+            const l = layout(m, px(240, s), px(600, s), &items, tm, s);
+            try testing.expectEqual(items.len, l.count);
+            // Every row past the old cap is laid out below the one before it,
+            // never collapsed onto it.
+            for (1..items.len) |i| try testing.expect(l.items[i].top >= l.items[i - 1].bottom);
+            try testing.expect(l.items[items.len - 1].height() > 0);
+            try testing.expect(!l.own[64] and l.own[0]);
+            try testing.expectEqual(@as(u16, 9), l.group[199]);
+        }
+    }
 }
 
 test "pane_sidebar: expanded rows stack under the header, with the STASHED caption between sections" {
