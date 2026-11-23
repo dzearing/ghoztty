@@ -2643,7 +2643,9 @@ fn applyDiffPatch(self: *ViewerPane, alloc: Allocator) void {
     defer probe.releasePatchBytes();
     for (probe.files.items) |entry| {
         if (!std.mem.eql(u8, entry.path, path)) continue;
-        self.pushDiffFile(alloc, entry, probe.patch, null);
+        // Where the request asked to land (T3535): `last` when Previous change
+        // rolled back into this file, so it enters at its last hunk like Mac.
+        self.pushDiffFile(alloc, entry, probe.patch, probe.patch_scroll);
         return;
     }
 }
@@ -2655,11 +2657,14 @@ fn pushDiffFile(
     patch: ?[]const u8,
     scroll_to: ?[]const u8,
 ) void {
-    log.info("viewer diff pane={s} file={s} status={s} patch={d}", .{
+    // `scroll=` is where the page was told to land (`-` = top), the oracle
+    // viewer-diff.ps1 reads for Previous change rolling into a file (T3535).
+    log.info("viewer diff pane={s} file={s} status={s} patch={d} scroll={s}", .{
         self.paneId(),
         entry.path,
         entry.status.letter(),
         (patch orelse "").len,
+        scroll_to orelse "-",
     });
     // Straight into UTF-16 with one presized buffer: the patch can be 8 MB,
     // and building UTF-8 then widening held four copies of it (T3039).

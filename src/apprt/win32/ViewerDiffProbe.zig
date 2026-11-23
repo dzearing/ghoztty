@@ -234,6 +234,11 @@ failure: ?Failure = null,
 /// Owned; null when that file is binary or git had nothing to say.
 patch: ?[]u8 = null,
 patch_path: ?[]u8 = null,
+/// Where the page should land in that patch's file (`first` / `last` / null),
+/// as the request that produced it asked (T3535). Published with the patch so
+/// a deferred request's scroll cannot be paired with another job's file.
+/// Borrowed: callers pass static literals.
+patch_scroll: ?[]const u8 = null,
 
 /// The directory `repo` was resolved FROM (T3038). A poll from the same
 /// directory reuses `repo` instead of spawning git to find it again. Owned.
@@ -354,6 +359,7 @@ fn clearPatch(self: *Probe) void {
     if (self.patch_path) |p| self.alloc.free(p);
     self.patch = null;
     self.patch_path = null;
+    self.patch_scroll = null;
 }
 
 /// The spec this probe last resolved a listing for, including the range a bare
@@ -584,6 +590,7 @@ pub fn complete(self: *Probe) Completion {
                 self.patch = job.out_patch;
                 job.out_patch = null;
                 if (job.file) |f| self.patch_path = self.alloc.dupe(u8, f.path) catch null;
+                self.patch_scroll = job.scroll_to;
                 what = .patch;
             },
         }
@@ -1098,6 +1105,37 @@ test "a bad revspec fails loudly instead of rendering as no changes" {
         @as([]const u8, "git could not produce this diff"),
         job.out_failure.?.view().title(),
     );
+}
+
+test "a finished patch publishes where its request asked to land (T3535)" {
+    const alloc = testing.allocator;
+    var probe = Probe.init(alloc);
+    defer probe.deinit();
+
+    // A patch job as Previous change issues it when it rolls back into the
+    // previous file: scroll_to = "last". No thread: `complete` joins nothing.
+    const job = try alloc.create(Job);
+    job.* = .{
+        .alloc = alloc,
+        .kind = .patch,
+        .location = try alloc.dupe(u8, "git-status:"),
+        .scroll_to = "last",
+    };
+    job.file = .{ .path = try alloc.dupe(u8, "a.txt"), .status = .modified, .origin = .unstaged };
+    job.out_patch = try alloc.dupe(u8, "@@ -1 +1 @@\n-a\n+b\n");
+    probe.job = job;
+
+    try testing.expectEqual(Completion.patch, probe.complete());
+    try testing.expectEqualStrings("a.txt", probe.patch_path.?);
+    try testing.expectEqualStrings("last", probe.patch_scroll.?);
+
+    // A later patch with no landing request clears it rather than inheriting.
+    const plain = try alloc.create(Job);
+    plain.* = .{ .alloc = alloc, .kind = .patch, .location = try alloc.dupe(u8, "git-status:") };
+    plain.file = .{ .path = try alloc.dupe(u8, "b.txt"), .status = .modified, .origin = .unstaged };
+    probe.job = plain;
+    try testing.expectEqual(Completion.patch, probe.complete());
+    try testing.expect(probe.patch_scroll == null);
 }
 
 test "a synthesized untracked patch reads as an all-added file" {

@@ -151,7 +151,7 @@ function Count-DiffLines([string]$PaneId) {
 function Wait-DiffFileLine([string]$PaneId, [int]$TimeoutMs = 15000) {
     $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
     while ((Get-Date) -lt $deadline) {
-        $hits = @([regex]::Matches((Get-Log), "viewer diff pane=$PaneId file=(\S+) status=(\S+) patch=(\d+)"))
+        $hits = @([regex]::Matches((Get-Log), "viewer diff pane=$PaneId file=(\S+) status=(\S+) patch=(\d+)(?: scroll=(\S+))?"))
         if ($hits.Count -gt 0) { return $hits[$hits.Count - 1] }
         Start-Sleep -Milliseconds 300
     }
@@ -560,6 +560,30 @@ try {
             }
             Assert $moved ("T817: next-change walks off the end of a file into the next one (from '$firstFile'; " +
                 "$landed of $presses presses landed; files reported: $(if ($seen.Count) { $seen -join ', ' } else { 'none' }))")
+
+            # T3535: walking BACK must enter the earlier file at its LAST
+            # change, as Mac does. The `scroll=` field of the file line is
+            # where the page was told to land; the forward roll above is the
+            # POSITIVE CONTROL that the field is read at all (it says `first`).
+            if ($moved) {
+                $fwd = Wait-DiffFileLine $navLeaf.id -TimeoutMs 1500
+                $fwdLine = if ($fwd) { $fwd.Value } else { '' }
+                Assert ($fwdLine -match 'scroll=first') "T3535: CONTROL the forward roll lands at the next file's first change (got '$fwdLine')"
+                $secondFile = if ($fwd) { $fwd.Groups[1].Value } else { '' }
+                $back = $null
+                $bp = 0; $bl = 0
+                for ($i = 0; $i -lt 8 -and -not $back; $i++) {
+                    $bp++
+                    if (Click-NavButton $navLeaf.id 'prev_change') { $bl++ }
+                    Start-Sleep -Milliseconds 600
+                    $now = Wait-DiffFileLine $navLeaf.id -TimeoutMs 1500
+                    if ($now -and $now.Groups[1].Value -ne $secondFile) { $back = $now }
+                }
+                Assert ($null -ne $back) "T3535: previous-change walks back off the top of '$secondFile' ($bl of $bp presses landed)"
+                if ($back) {
+                    Assert ($back.Value -match 'scroll=last') "T3535: rolling back enters the earlier file at its LAST change (got '$($back.Value)')"
+                }
+            }
 
             # The layout toggle: the pane re-renders side by side, says so, and
             # REMEMBERS it -- the next diff pane opens in the same layout, which
