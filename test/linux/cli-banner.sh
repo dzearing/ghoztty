@@ -47,7 +47,9 @@ hl_launch APP "$app" --gtk-single-instance=false --working-directory="$fixture" 
 cd - > /dev/null
 unset GHOZTTY_TEST_BANNER_DUMP
 hl_wait_for 30 test -S "$sock"
-hl_check "F3 the app serves its socket" $?
+f3=$?
+hl_check "F3 the app serves its socket" $f3
+[ $f3 = 0 ] || { echo "--- app log tail:"; tail -40 "$APP_LOG"; hl_finish "$L"; }
 
 # leaf <field>: that field of the first terminal leaf of the first window, or
 # '<absent>' when the leaf has no such field.
