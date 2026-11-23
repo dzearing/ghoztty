@@ -266,14 +266,23 @@ pub fn refresh(self: *PaneSidebar) void {
         self.dump();
         return;
     };
-    var it = tree.iterator();
-    while (it.next()) |entry| {
-        self.addRow(entry.view, entry.view == active, expanded, home) catch |err| {
-            log.warn("pane sidebar row failed err={}", .{err});
-            break;
-        };
-    }
+    if (tree.nodes.len > 0) self.addTree(tree, .root, active, expanded, home) catch |err| {
+        log.warn("pane sidebar row failed err={}", .{err});
+    };
     self.dump();
+}
+
+/// The rows of a subtree in reading order: a split's left (or top) side
+/// first - the order `+list` walks, and the Mac's tree order. The node array
+/// itself is in no spatial order.
+fn addTree(self: *PaneSidebar, tree: *const Surface.Tree, h: Surface.Tree.Node.Handle, active: ?*Surface, expanded: bool, home: ?[]const u8) Allocator.Error!void {
+    switch (tree.nodes[h.idx()]) {
+        .leaf => |v| try self.addRow(v, v == active, expanded, home),
+        .split => |s| {
+            try self.addTree(tree, s.left, active, expanded, home);
+            try self.addTree(tree, s.right, active, expanded, home);
+        },
+    }
 }
 
 fn addRow(self: *PaneSidebar, surface: *Surface, selected: bool, expanded: bool, home: ?[]const u8) Allocator.Error!void {

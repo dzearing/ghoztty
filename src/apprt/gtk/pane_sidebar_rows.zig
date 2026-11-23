@@ -84,7 +84,10 @@ pub fn text(p: Pane, home: ?[]const u8, label_buf: *[TEXT_BUF_LEN]u8, sub_buf: *
     else if (ps.bannerSubtitle(p.banner, sub_buf)) |b|
         b
     else if (p.pwd) |d|
-        (if (d.len == 0) null else ps.abbreviatePath(d, home, sub_buf))
+        // A pane titled by its own directory (the core reports the
+        // directory as the title until a program sets one) would show the
+        // same place twice - win32's rule.
+        (if (d.len == 0 or ps.samePath(d, label)) null else ps.abbreviatePath(d, home, sub_buf))
     else
         null;
     return .{ .label = label, .subtitle = ps.distinct(sub, label) };
@@ -163,6 +166,11 @@ test "T3557: a row is named by its banner's title, else its title, else its dire
     // subtitle does not repeat it when it is the whole of it.
     t = text(.{ .title = "\u{1F47B}", .pwd = "/srv" }, null, &a, &b);
     try testing.expectEqualStrings("srv", t.label);
+
+    // Titled by its own directory: the path once, no subtitle repeating it.
+    t = text(.{ .title = "/home/ann/src", .pwd = "/home/ann/src/" }, "/home/ann", &a, &b);
+    try testing.expectEqualStrings("/home/ann/src", t.label);
+    try testing.expect(t.subtitle == null);
 
     // A banner with no title (a bold label) leaves the title in place and
     // gives the row its first line as the subtitle.

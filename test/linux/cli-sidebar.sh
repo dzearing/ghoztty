@@ -125,8 +125,10 @@ hl_check "S3 the tile is that pane, selected, with no text on screen" $? "$(sb s
 # script sends the OSC 7 a shell integration would.
 osc() { cli +send-keys --target="$1" "printf '\\\\033]$2\\\\007'" Enter > /dev/null 2>&1; }
 osc "$a" "7;file://localhost$fixture/proj"
-hl_wait_for 10 is sa 'r[0]["tooltip"] is not None and "~/proj" in r[0]["tooltip"]' True
-hl_check "S4 the tile names the pane in a tooltip, its directory as ~/proj" $? "$(sb sa)"
+# The core titles a pane by its directory until a program sets a title, so
+# the tile's name is that path, shown once (no subtitle repeating it).
+hl_wait_for 10 is sa '(r[0]["label"].endswith("/proj"), r[0]["subtitle"], r[0]["tooltip"] == r[0]["label"])' "(True, None, True)"
+hl_check "S4 the tile names the pane in a tooltip; titled by its directory, the path shows once" $? "$(sb sa)"
 
 # ---- 2. rows follow the tree, a banner and a title -------------------------
 cli +split --target=sa --name=b > /dev/null 2>&1
