@@ -337,10 +337,32 @@ private runtime dir, so a test app can never meet the user's.
   name of THAT window; a name held only elsewhere is "not in the target
   window"). Panes move with their shells; ratios are percents clamped 10-90;
   focus stays on a surviving focused pane, else goes to the top-left leaf. A
-  pane the layout omits closes at once with its shell: the Linux app has no
-  close undo or stash yet (T3384), which is win32's `undo-timeout = 0`.
+  pane the layout omits is parked for `undo-timeout` and then closes with its
+  shell (close undo, T3384, below); there is no stash yet.
   Acceptance: `wsl-run.ps1 -CommandFile test\linux\cli-rearrange.sh`, ends
   `CLI REARRANGE: ALL PASS` (28 checks).
+- **Close undo (T3384)** is Mac's ExpiringUndoManager and win32's T1825/T2234,
+  in `src/apprt/gtk/CloseUndo.zig`: a closed pane (keyboard, its own close,
+  `+close`) or a pane a `+rearrange` left out is PARKED - out of the split
+  tree, so out of `+list` and every name lookup, but one GObject reference
+  keeps the Surface, its pty and its shell alive - for `undo-timeout` (5 s;
+  `0` turns undo off). **Ctrl+Shift+Z** puts it back (a pane at win32's
+  `close_undo.Anchor`, a layout from win32's `layout_undo.Shape` by pane id),
+  by name and with the same shell; **Ctrl+Shift+Y** redoes. Windows' chords,
+  added to Linux's defaults in `Config.zig`, not performable (an idle chord
+  must not reach the shell as ^Z). One stack, entries owned by their window:
+  an undo in one window never reaches another, and a window that closes ends
+  its entries. Expiry, a window close and a quit end a parked pane as a CLOSE
+  (its agent session ends, never detaches). `+close --force` is never parked.
+  Not yet: a tab's last pane, a tab, a window (T3590).
+  **Pressing keys headless**: Wayland has no input injection and the harness
+  has no seat, so a debug build serves the `press-key` IPC seam - `hl_ipc
+  press-key --target=<pane> --key=ctrl+shift+z` - which feeds one press and
+  release through the pane's core `keyCallback`, so the configured binding
+  table decides what it does; the reply's `effect` is `consumed`, `ignored`
+  or `closed`. Acceptance: `wsl-run.ps1 -CommandFile test\linux\cli-undo.sh`,
+  ends `CLI UNDO: ALL PASS` (31 checks); `NEGATIVE=1` runs it with undo off
+  and must fail.
 - `+send-keys` and `+read` take a pane id, a pane name or a window name (its
   active pane). `+send-keys` is the Mac's:
   text runs framed as a bracketed paste when the program asked for one, key
