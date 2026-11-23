@@ -592,6 +592,48 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\cl
 
 Ends `CLI VIEWER PANES: ALL PASS` (21 checks).
 
+### Table of contents (T3418)
+
+A markdown pane with two or more headings gets a CONTENTS card
+(`src/apprt/gtk/ViewerTOC.zig`); every layout decision is the pure
+`src/apprt/gtk/viewer_toc.zig` (none lane) over win32's
+`viewer_toc_layout.zig` numbers (720 px threshold, 240 px default width,
+170-460 range, 12 px margin, three indent steps, two lines a row).
+
+- **The page reads; the card follows.** `viewer.js` indexes the headings
+  and posts `headings` and `active` (the scroll spy) on `viewerTOC`. A row
+  click runs `scrollToAnchor`, which pins the spy through the smooth scroll;
+  the reader's next wheel/key/mouse gesture releases it. This side never
+  sets the selection itself, so it cannot fight the pin. A website posting
+  the same messages gets no card (markdown only).
+- **Wide pane (>= 720 px)**: the card floats over the page's top-left and
+  the page reserves `margin + card` as its own padding
+  (`window.__viewer.setGutter`), so the strip behind the card is the
+  document's background. The 7 px band right of the card drags the width
+  (`GtkGestureDrag`); the saved width is the `viewer_prefs` one the diff
+  panel shares.
+- **Narrow pane**: an overlay over the document. The nav bar's first item
+  (`sidebar-show-symbolic`) opens and closes it. Entering the narrow layout
+  closes it, a row click dismisses it, and nothing is reserved.
+- **The pane width is measured live** by a `GtkDrawingArea` overlay
+  (`can-target` off) whose `resize` reports the page area. A split divider
+  drag or a window resize switches the layout either way.
+- The open state is never saved. Only the width is.
+- **Driving it headless**: the steps seam's `toc` prints `mode= open= card=
+  button= handle= rows= active= selected= width= cardw= shownw= gutter=
+  pane=WxH`, `toc-rows` the `id:depth` list, `toc-row <id>` clicks a row,
+  `toc-drag <dx>` drags the edge, `click contents` the button, and
+  `resize WxH` resizes the window (`gtk_window_set_default_size`, which
+  headless Weston honours). The page's padding is read with a `probe`.
+
+Acceptance:
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-toc.sh
+```
+
+Ends `VIEWER TOC: ALL PASS` (25 checks).
+
 ### The viewer foundation's own test (T3410)
 
 Acceptance:
