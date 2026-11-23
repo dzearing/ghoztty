@@ -150,7 +150,7 @@ xdg_agent=$(hl_agent_pid)
 tr '\0' '\n' < "/proc/${xdg_agent:-0}/environ" 2>/dev/null | grep -qx "GHOSTTY_AGENT_LOCK=$state/agent.lock"
 hl_check "A17 ...with the app's lock path in its environment" $?
 run_app ""
-hl_check "A18 a later app launch runs its pane" $?
+hl_check "A18 a later app launch runs its pane" $? "$(grep -v -e '^debug' "$APP_LOG" | tail -25 | tr '\n' '|')"
 [ "$(hl_agent_pid)" = "$xdg_agent" ]
 hl_check "A19 ...on the agent the login entry started (no second spawn)" $? "entry=$xdg_agent now=$(hl_agent_pid)"
 stop_app
