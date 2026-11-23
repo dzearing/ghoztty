@@ -1,10 +1,10 @@
 {
     "guard":  "thread-join",
     "script":  "test/win32/thread-join-audit.ps1",
-    "generated":  "2026-11-23T00:40:07-08:00",
-    "commit":  "770eec720",
+    "generated":  "2026-11-23T03:05:10-08:00",
+    "commit":  "9d4f43d8e",
     "uncommitted":  [
-                        "src/remote/tcp_dial.zig"
+
                     ],
     "files":  {
                   "src/datastruct/array_list_collection.zig":  "f14f6cc26a11eabdd35a36976dce1b3702a2c7f4771b60e339afd1015d4e58dd",
@@ -70,7 +70,7 @@
                   "src/remote/pipe_stream.zig":  "8567c09a0a231520224bd07e2dea247094273ec7a584cdc4cda9c7dbbbc7b1db",
                   "src/remote/protocol.zig":  "6072c547e6cfac7d4c64179218dbadd1eddbc2cda0913544f2fe864b5eac6344",
                   "src/remote/pty_job_name.zig":  "613abf1c9722bb3e78ff7e3221f5995373a5b0c30df36709b75740fcd4c969df",
-                  "src/remote/relay_account.zig":  "0073c9a5f825d624e6976c7847721c8bae7806427199a5065214451fd609a234",
+                  "src/remote/relay_account.zig":  "c678bd4b41c89909a09b36cde331b8fe7cc64d194dda83c8eea988016c52125d",
                   "src/remote/relay_dial.zig":  "4427ea9f8bef837116c73264ed6c76f67ac0f99e624dc393322989ba2328e786",
                   "src/remote/relay_directory.zig":  "69b406e2f41856cf317780028cca84c214d7e8a8a30193f45de94e35c8c514a0",
                   "src/remote/relay_hosting.zig":  "70f338eca8e00d406a397073062f0a1ba3097a43e0dd7cf089e21044df800534",
@@ -81,6 +81,7 @@
                   "src/remote/relay_suspend.zig":  "ad3af135d9be6d95eae237a80eca6d40dce7403840a5b17af9a902fdabc624a5",
                   "src/remote/remote_backend_e2e.zig":  "cbab22948bbd48f6ca83b1b3e1eb93a4f4df1ea77b93204aeb101a4c00ea4981",
                   "src/remote/run_key.zig":  "cb1c9de737316ed4c654e6af17ee61f5a9a65059953ca9a7ac2cb5bad2736620",
+                  "src/remote/secret_service.zig":  "2d760ab554d3fa708c827aacb58460ab97835c9793bdab06b10cf0040f978b7f",
                   "src/remote/socket_rw.zig":  "f60123e19771e6a9f902e3bc5abef5ad126ac14cde267f2571611697472122ef",
                   "src/remote/socket_stream.zig":  "83d8e9457f303c6109e4c03297de57aa700411c9ad69449791cc9baccb5bc01e",
                   "src/remote/ssh_transport.zig":  "9a062dcf5c883d49ec1a3dec1919349b84579a18f349383df04d64a6ea2f8c77",
