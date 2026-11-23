@@ -12,12 +12,13 @@
 # Lanes, the same commands as floor-lane.ps1's lanes of the same name:
 #   lib   zig build -Dapp-runtime=none        compiles libghostty for Linux
 #   none  zig build test -Dapp-runtime=none   the pure-logic unit tests
-#   agentx zig build agent -Dapp-runtime=none       builds ghoztty-agent for Linux (T3332)
-#   agent  zig build test-agent -Dapp-runtime=none  the agent's tests, incl. real-pty (T3332)
+#   agentx zig build agent        builds ghoztty-agent for Linux (T3332)
+#   agent  zig build test-agent   the agent's tests, incl. real-pty (T3332)
 #
-# The agent lanes pass -Dapp-runtime=none because the default runtime on Linux
-# is gtk, whose configure step needs a system gtk4-layer-shell that Ubuntu 24.04
-# does not package, even for the GUI-free agent (T3358).
+# The agent lanes take the DEFAULT runtime (gtk on Linux) on purpose: the agent
+# is GUI-free and gets runtime-none deps on a gtk build (SharedDeps.guiFree,
+# T3358), so it must build without the system gtk4-layer-shell Ubuntu 24.04 does
+# not package. Adding -Dapp-runtime=none here would hide a regression of that.
 #
 # Pick lanes with FLOOR_LANES (default "lib none agentx agent"), e.g. FLOOR_LANES=none.
 # Each lane is bounded by FLOOR_LANE_TIMEOUT seconds (default 1800), so a
@@ -37,8 +38,8 @@ lane_args() {
     case "$1" in
         lib) echo "-Dapp-runtime=none" ;;
         none) echo "test -Dapp-runtime=none" ;;
-        agentx) echo "agent -Dapp-runtime=none" ;;
-        agent) echo "test-agent -Dapp-runtime=none" ;;
+        agentx) echo "agent" ;;
+        agent) echo "test-agent" ;;
         *) return 1 ;;
     esac
 }

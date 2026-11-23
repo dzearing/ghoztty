@@ -911,9 +911,11 @@ the first host where they meet both an LP64 C ABI and a POSIX `std.fs.path`:
 ## The agent on Linux (T3332)
 
 `floor.sh` carries two agent lanes, `agentx` (`zig build agent`) and `agent`
-(`zig build test-agent`), both with `-Dapp-runtime=none`: under the default gtk
-runtime the build's configure step wants a system `gtk4-layer-shell`, even for
-the GUI-free agent (T3358). Measured 2026-11-21: test-agent 2839 passed / 40
+(`zig build test-agent`), both under the DEFAULT runtime (gtk). The agent is
+GUI-free, so on a gtk build `SharedDeps.guiFree` hands it and its test the
+runtime-`none` deps: before T3358 they took the app's GTK deps and the build
+failed for want of the system `gtk4-layer-shell` Ubuntu 24.04 does not package.
+Never add `-Dapp-runtime=none` to those lanes; it would hide that regression. Measured 2026-11-21: test-agent 2839 passed / 40
 skipped (the skips are Windows-only tests) in about a minute.
 
 - **glibc has no `getpeereid`.** The Mac binds it as an `extern "c"`; on Linux
