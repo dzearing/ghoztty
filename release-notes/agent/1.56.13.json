@@ -1,0 +1,9 @@
+{
+  "version": "1.56.13",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "On Linux the relay sign-in is kept in the keyring, or in a private file when no keyring runs." }
+      ] }
+  ]
+}

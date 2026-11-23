@@ -1,0 +1,16 @@
+{
+  "version": "1.56.13",
+  "sections": [
+    { "title": "New",
+      "items": [
+        { "text": "On Linux a pane can carry a sticky banner, and its busy/idle state is listed." },
+        { "text": "test/linux/secret-store.sh is executable, like the other Linux acceptance scripts." },
+        { "text": "A ghoztty:// link from outside the app now focuses its pane on Linux, and the GTK build packages into an installable tarball." }
+      ] },
+    { "title": "Fixes",
+      "items": [
+        { "text": "Ghoztty's own agent hook scripts now update themselves when Ghoztty starts, instead of waiting for someone to click Update." },
+        { "text": "On a see-through window the pane sidebar's backdrop now fades with the grid's, and its card stays solid." }
+      ] }
+  ]
+}
