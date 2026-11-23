@@ -96,6 +96,7 @@ const ViewerImage = @import("ViewerImage.zig");
 const image_rules = @import("viewer_image.zig");
 const ViewerDiff = @import("ViewerDiff.zig");
 const ViewerTOC = @import("ViewerTOC.zig");
+const ViewerFeedback = @import("ViewerFeedback.zig");
 
 const log = std.log.scoped(.gtk_viewer);
 
@@ -194,6 +195,8 @@ image: ViewerImage = .{},
 diff: ViewerDiff = .{},
 /// A markdown pane's table of contents (T3418).
 toc: ViewerTOC = .{},
+/// The feedback button and the worktree it would file to (T3419).
+feedback: ViewerFeedback = .{},
 
 /// The find card's widgets. All owned by `box` (through the overlay).
 const FindCard = struct {
@@ -264,6 +267,10 @@ pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
     // A diff pane's changed-files panel sits beside the page (T3417); it is
     // hidden in every other mode, so the paned is the page alone there.
     wk.gtk_box_append(box, self.diff.buildUi(self, overlay, self.bar.row));
+    // The feedback button takes the bar's trailing slot, after the address
+    // and any diff controls (the Mac's order). Hidden until a worktree is
+    // found (T3419).
+    self.feedback.buildUi(self, self.bar.row);
     self.installFindScript();
     self.installLinks();
 
@@ -334,6 +341,7 @@ fn deinit(self: *Viewer) void {
     self.watch.stop();
     self.diff.deinit();
     self.toc.deinit();
+    self.feedback.deinit();
     if (self.ucm) |m| {
         if (self.message_handler != 0) wk.g_signal_handler_disconnect(m, self.message_handler);
         wk.webkit_user_content_manager_unregister_script_message_handler(m, bridge.handler_name, null);
@@ -444,6 +452,9 @@ fn syncCommitted(self: *Viewer) void {
     }
     self.syncChrome();
     self.syncWatch();
+    // Which worktree the pane's content belongs to now: a link, Back or a
+    // typed address can move it to another repo or out of every repo.
+    self.feedback.refresh(self);
     if (self.on_location_changed) |cb| cb(self);
 }
 
@@ -704,6 +715,11 @@ fn syncChrome(self: *Viewer) void {
 /// loaded, so the first listing already has it.
 pub fn setOriginDirectory(self: *Viewer, dir: ?[]const u8) void {
     self.diff.setOriginDirectory(dir);
+    self.feedback.setOriginDirectory(dir);
+    // The first answer, from the location the pane was opened on: the button
+    // can show before the first load commits (the commit re-asks, and finds
+    // this question in flight or cached).
+    self.feedback.refresh(self);
 }
 
 /// Put the pane's location in the address field - unless someone is typing
@@ -2067,6 +2083,10 @@ fn writeDump(text: []const u8) void {
 ///   filter-focus    put the caret in the filter
 ///   row <id>        click the panel row with that id (a file's path)
 ///   click diff-prev|diff-next|diff-layout   the bar's diff controls
+///   click feedback  the feedback button (T3419)
+///   feedback        after any worktree resolution in flight lands (10 s):
+///                   `feedback button= worktree= tip= pending= resolves=
+///                   clicks=`
 ///   state          `state mode= current= address= back= forward= reveal=
 ///                   zoom= focus=address|find|content|other sel=<start>-<end>
 ///                   reloads=<dead-process reloads> card=none|pending|shown
@@ -2184,6 +2204,7 @@ const steps = if (build_config.is_debug) struct {
                 .{ "diff-next", if (v.diff.ui) |u| u.next else null },
                 .{ "diff-layout", if (v.diff.ui) |u| u.layout else null },
                 .{ "contents", v.toc.buttonWidget() },
+                .{ "feedback", v.feedback.buttonWidget() },
             };
             var b: ?*wk.GtkWidget = null;
             inline for (named) |n| {
@@ -2206,6 +2227,13 @@ const steps = if (build_config.is_debug) struct {
             return 0;
         } else if (std.mem.eql(u8, verb, "state")) {
             writeState(v);
+        } else if (std.mem.eql(u8, verb, "feedback")) {
+            // The feedback button (T3419), once any worktree resolution in
+            // flight has landed (10 s): `feedback button= worktree= tip=
+            // pending= resolves= clicks=`.
+            feedback_polls = 0;
+            _ = wk.g_timeout_add(50, &feedbackPoll, null);
+            return 0;
         } else if (std.mem.eql(u8, verb, "image")) {
             // An image pane's zoom state (T3416): `image rev= loads= route=
             // zoom= fitting= fit= natural=WxH viewport=WxH`.
@@ -2361,6 +2389,18 @@ const steps = if (build_config.is_debug) struct {
     }
 
     fn afterSleep(_: ?*anyopaque) callconv(.c) c_int {
+        schedule();
+        return 0;
+    }
+
+    var feedback_polls: u32 = 0;
+
+    fn feedbackPoll(_: ?*anyopaque) callconv(.c) c_int {
+        const v = viewer orelse return 0;
+        feedback_polls += 1;
+        if (v.feedback.pending and feedback_polls < 200) return 1;
+        var buf: [2 * std.fs.max_path_bytes + 128]u8 = undefined;
+        out("feedback {s}", .{v.feedback.describe(&buf)});
         schedule();
         return 0;
     }

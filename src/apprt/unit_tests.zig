@@ -610,6 +610,10 @@ test {
     // the button and the row click, the drag clamp, heading depths (T3418).
     // No GTK imports.
     _ = @import("gtk/viewer_toc.zig");
+    // The GTK viewer's worktree provenance for the feedback button: POSIX
+    // paths for leg 1 and the /proc listener lookup that is Linux's lsof
+    // (T3419). No GTK imports.
+    _ = @import("gtk/viewer_worktree.zig");
     // ... and the POSIX half of win32's git runner it spawns git through:
     // the deadline and the cancel end the whole process group (T3417).
     // Off Windows only, whose win32 lane covers the job object - importing it
