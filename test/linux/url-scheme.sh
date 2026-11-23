@@ -172,8 +172,7 @@ hl_check "D3 D-Bus Open of a missing name shows the dialog in the app and opens 
 out=$(dbus_open "ghoztty-debug:focus/fa"); rc=$?
 hl_wait_for 10 test -s "$dialogs"
 grep -q "^shown Unsupported Ghoztty link|ghoztty-debug:focus/fa isn't a link" "$dialogs"
-hl_check "D4 a malformed ghoztty link says unsupported" $? "dialogs=$(cat "$dialogs") app=$(grep -E "gtk_url_scheme|seam" "$APP_LOG" | tail -6 | tr "
-" " ")"
+hl_check "D4 a malformed ghoztty link says unsupported" $? "dialogs=$(cat "$dialogs") app=$(grep -E "gtk_url_scheme|seam" "$APP_LOG" | tail -6 | tr '\n' ' ')"
 
 : > "$dialogs"
 out=$(dbus_open "https://example.com/"); rc=$?
