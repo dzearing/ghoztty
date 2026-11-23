@@ -257,9 +257,22 @@ private runtime dir, so a test app can never meet the user's.
   `+list`, `+version`, `+send-keys`, `+read`, `+new-window`, `+split`,
   `+rename`, `+close`, `+rearrange`, `+reload` (a viewer pane, T3413;
   `--config`, T3369), `+set-banner`, `+set-state` (T3339) and the
-  `focus` action are real; every other verb answers `+<verb> is not served by
-  the Linux app yet (<task>)`, naming the card that brings it (T3337
-  stash/restore/remote).
+  `focus` and `handoff-quit` actions are real; every other verb answers
+  `+<verb> is not served by the Linux app yet (<task>)`, naming the card that
+  brings it (T3596 stash/restore, T3597 remote).
+- **`handoff-quit` (T3595)** is win32's T1070 server half: the request a
+  launch of ANOTHER build sends when the user answers "Switch". No CLI verb -
+  only a launch carries the `handoff` identity. Refused (shared
+  `ipc_handoff.refuseHandoffQuit`) without one, and for the same build (same
+  commit, whatever the exe path). Otherwise the reply goes out first and
+  150 ms later the app runs the ordinary `quitNow`: layout saved, every
+  agent-hosted pane detached, so the build taking over re-attaches the same
+  shells. `+version` carries `handoff_quit: true` and `session_persistence`
+  (a quit with persistence off ends the shells - what the launch tells the
+  user before they choose). The launch half - noticing the other build and
+  asking - is T3598. Acceptance: `wsl-run.ps1 -CommandFile
+  test\linux\cli-handoff-quit.sh`, ends `CLI HANDOFF QUIT: ALL PASS` (17
+  checks).
 - **Pane banners and activity state (T3339)**: `+set-banner` / OSC 7778 put
   a card above the terminal (`PaneBanner.zig`): the shared parser
   (`win32/banner_markdown.zig`, with `PathContext.posix` so `./` and `~/`
@@ -1100,7 +1113,7 @@ from it at launch, the Mac's `SessionLayoutManifest` in win32's on-disk schema
   opens its own. Panes are built through the ordinary window/tab/split paths,
   each handed its restore through `Surface.pending_restore`.
 - **Not restored yet:** window size and position (Wayland gives a client no
-  position; size is T3549), tab titles, banners and stash (T3339, T3399).
+  position; size is T3549), tab titles, banners and stash (T3339, T3596).
 
 Acceptance:
 

@@ -104,7 +104,7 @@ first commit on `main`), so `next` takes them in that order within the P2 band:
 | viewer-panes, viewer-image-and-diff, viewer-feedback | L9 T3338 (+ its L9a-L9k cards) |
 | banners, pane-sidebar | L10 T3339 (+ T3557-T3561) |
 | url-scheme | in-app `ghoztty://` links: T3415; OS registration and handing the URL to the app: L14 T3343 |
-| remote-machines | L11a T3563 (chooser, Close vs Disconnect, pill); verbs T3399, relay account store L12 T3341 (done: keyring, else a 0600 file), the account row's sign-in L12b T3575 |
+| remote-machines | L11a T3563 (chooser, Close vs Disconnect, pill); verbs T3597 (+stash/+restore T3596, handoff-quit T3595 done), relay account store L12 T3341 (done: keyring, else a 0600 file), the account row's sign-in L12b T3575 |
 | pane-rearrange | L11b T3564 |
 | copy-reflow | L11c T3565 |
 | pane-style | L11d T3566 |
