@@ -342,6 +342,23 @@ pub extern fn gtk_event_controller_motion_new() *GtkEventController;
 
 pub const GdkRectangle = extern struct { x: c_int, y: c_int, width: c_int, height: c_int };
 
+// --- Image panes (T3416) -----------------------------------------------------
+//
+// A picture WebKit draws is streamed straight off disk (`g_file_read`); one it
+// cannot draw (TIFF, HEIF) is decoded on a worker thread by GDK - its own
+// loaders, then gdk-pixbuf's - and served as PNG. GTK documents
+// `gdk_texture_new_from_filename` as thread-safe for exactly that use.
+
+pub const GdkTexture = opaque {};
+pub const GBytes = opaque {};
+
+pub extern fn g_file_read(file: *GFile, cancellable: ?*anyopaque, err: *?*GError) ?*GInputStream;
+pub extern fn gdk_texture_new_from_filename(path: [*:0]const u8, err: *?*GError) ?*GdkTexture;
+pub extern fn gdk_texture_save_to_png_bytes(texture: *GdkTexture) *GBytes;
+pub extern fn g_bytes_get_size(bytes: *GBytes) usize;
+pub extern fn g_bytes_unref(bytes: *GBytes) void;
+pub extern fn g_memory_input_stream_new_from_bytes(bytes: *GBytes) *GInputStream;
+
 /// The web view as the GTK widget it is.
 pub fn asWidget(view: *WebView) *GtkWidget {
     return @ptrCast(view);

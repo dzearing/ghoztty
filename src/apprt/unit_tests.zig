@@ -598,6 +598,11 @@ test {
     // GTK imports, like viewer_chrome.zig.
     _ = @import("gtk/viewer_links.zig");
 
+    // The GTK image pane's pure half - the picture's sentinel URL, which
+    // decoder a format goes to, the Linux missing-codec card, and the Mac's
+    // keep-the-zoom-on-a-same-size-reload rule (T3416). No GTK imports.
+    _ = @import("gtk/viewer_image.zig");
+
     // Pure win32 image-viewer zoom rules — what 100% means, best-fit's refusal
     // to upscale, the double-click toggle and the step/clamp (T1183), same
     // no-OS-imports deal.

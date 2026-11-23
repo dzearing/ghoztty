@@ -46,6 +46,10 @@ window.__viewerImage = (function () {
     let scale = 1;
     let pending = null;
     let wheelTravel = 0;
+    /* The scroll offset a reload asked to keep (`setImage`'s `keep`, T3416),
+     * applied by the first transform that answers it unless that answer is a
+     * re-fit: a re-export at another size, or a picture that was fitted. */
+    let restore = null;
 
     function build() {
       root.className = "viewer-image-mode";
@@ -172,6 +176,17 @@ window.__viewerImage = (function () {
        * answers no question anyone had. Below that, smooth. */
       img.style.imageRendering = scale * dpr() >= 2 && !isVector() ? "pixelated" : "auto";
 
+      /* A reload the native side kept the zoom across: the same picture at
+       * the same size, so the same place in it stays on screen (the Mac's
+       * `reloadFromDisk`). The browser clamps at the edges. */
+      const held = restore;
+      restore = null;
+      if (held && !fit) {
+        stage.scrollLeft = held.left;
+        stage.scrollTop = held.top;
+        return;
+      }
+
       if (fit || !anchor || previous <= 0) {
         centerScroll();
         return;
@@ -251,7 +266,10 @@ window.__viewerImage = (function () {
 
     /* Show `url`, whose bytes the pane serves off disk. `name` titles the
      * document and is the alt text a screen reader gets. */
-    function setImage(url, name, isVectorArt) {
+    function setImage(url, name, isVectorArt, keep) {
+      /* Read before anything below can move it. A page with no picture yet
+       * has nothing to keep. */
+      restore = keep && stage ? { left: stage.scrollLeft, top: stage.scrollTop } : null;
       if (!stage) build();
       root.className = "viewer-image-mode";
       vector = !!isVectorArt;

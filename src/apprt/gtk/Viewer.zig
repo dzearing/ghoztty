@@ -16,8 +16,11 @@
 //!   grant is the file's own directory (`viewer_scheme.zig`), pinned when the
 //!   pane navigates to the file - a link into `docs/` must not move it.
 //! - **A website** is navigated to directly.
-//! - Images and diffs are their own cards (T3416, T3417); until they land a
-//!   pane in those modes shows the template's error card naming the card.
+//! - **An image** (T3416) is the template too: its `image.js` draws the
+//!   picture from `ghoztty-viewer://page/__image?v=<revision>`, and the zoom
+//!   rules are win32's shared geometry - `ViewerImage.zig` carries them.
+//! - Diffs are their own card (T3417); until it lands a diff pane shows the
+//!   template's error card naming it.
 //!
 //! **The nav bar** (T3412; `docs/reference/viewer-panes.md`, Navigation
 //! chrome): back / forward / reload / home, a reveal-in-file-manager button
@@ -89,6 +92,8 @@ const vfind = @import("../win32/viewer_find.zig");
 const bridge = @import("../win32/viewer_bridge.zig");
 const links = @import("viewer_links.zig");
 const banner_link = @import("../win32/banner_link.zig");
+const ViewerImage = @import("ViewerImage.zig");
+const image_rules = @import("viewer_image.zig");
 
 const log = std.log.scoped(.gtk_viewer);
 
@@ -178,6 +183,10 @@ menu_target: ?[:0]u8 = null,
 menu_kind: links.Kind = .web,
 /// The `file://`-link hook's message handler (`installFileLinkHook`).
 file_link_handler_id: c_ulong = 0,
+
+/// An image pane's state: its zoom, what the page measured, which decoder
+/// serves the picture (T3416, `ViewerImage.zig`).
+image: ViewerImage = .{},
 
 /// The find card's widgets. All owned by `box` (through the overlay).
 const FindCard = struct {
@@ -567,7 +576,8 @@ pub fn reloadContent(self: *Viewer, reason: content.ReloadReason) void {
     const plan = content.reloadPlan(self.mode, live, reason);
     log.debug("viewer: reload reason={s} plan={s}", .{ @tagName(reason), @tagName(plan) });
     switch (plan) {
-        .rerender => self.renderTemplate(),
+        // An image re-decodes, keeping the zoom across a same-size save.
+        .rerender => if (self.mode == .image) self.image.reload(self) else self.renderTemplate(),
         .reload_in_place => wk.webkit_web_view_reload(self.view),
         .refetch => wk.webkit_web_view_reload_bypass_cache(self.view),
         // Behind a crash card, load where the pane IS again (the card's own
@@ -1368,7 +1378,8 @@ pub fn handleKey(self: *Viewer, keyval: u32, state: u32) bool {
             .find_next => if (!self.stepFindFromKeyboard(1)) return false,
             .find_previous => if (!self.stepFindFromKeyboard(-1)) return false,
         },
-        .zoom => |z| self.zoom(z),
+        // An image pane zooms the PICTURE (Ctrl+0 = 100%), not the page.
+        .zoom => |z| if (self.mode == .image) self.image.zoomChord(self, z) else self.zoom(z),
         .field => |f| switch (f) {
             .revert_address => self.cancelAddressEdit(),
             .close_find => self.closeFind(),
@@ -1435,6 +1446,8 @@ fn onScriptMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyopaq
         .find => |f| self.applyFindMessage(f),
         // `links.js` (T3415) suppressed WebKit's menu over a link of ours.
         .link_menu => |href| self.armLinkMenu(href),
+        // `image.js` (T3416): a measurement or a gesture to answer.
+        .image => |m| self.image.onMessage(self, m),
         else => {},
     }
 }
@@ -1630,7 +1643,7 @@ fn setFindNote(self: *Viewer, note: ?[]const u8) void {
 
 /// Evaluate a page call whose result nobody reads: find's calls must never
 /// count as a render the way `evaluate`'s do.
-fn runQuiet(self: *Viewer, js: []const u8) void {
+pub fn runQuiet(self: *Viewer, js: []const u8) void {
     wk.webkit_web_view_evaluate_javascript(self.view, js.ptr, @intCast(js.len), null, null, null, null, null);
 }
 
@@ -1672,13 +1685,13 @@ fn renderTemplate(self: *Viewer) void {
                 .none => self.finishRender(true, ""),
             }
         },
-        .image => self.showError("Image viewer panes are not on Linux yet (T3416)", self.current),
+        .image => self.image.start(self),
         .diff => self.showError("Diff viewer panes are not on Linux yet (T3417)", self.current),
         .web, .html => self.finishRender(true, ""),
     }
 }
 
-fn showError(self: *Viewer, title: []const u8, detail: []const u8) void {
+pub fn showError(self: *Viewer, title: []const u8, detail: []const u8) void {
     const js = content.setErrorCall(self.alloc, title, detail) catch return self.finishRender(false, title);
     defer self.alloc.free(js);
     self.evaluate(js);
@@ -1718,7 +1731,7 @@ fn onRenderEvaluated(source: ?*wk.GObject, result: *wk.GAsyncResult, ud: ?*anyop
     self.finishRender(true, "");
 }
 
-fn finishRender(self: *Viewer, ok: bool, detail: []const u8) void {
+pub fn finishRender(self: *Viewer, ok: bool, detail: []const u8) void {
     self.render_count += 1;
     if (self.on_rendered) |cb| cb(self, ok, detail);
     if (comptime build_config.is_debug) steps.onRendered(self, ok);
@@ -1845,6 +1858,11 @@ fn prepareWebProcessEnv() void {
     log.info("viewer: GALLIUM_DRIVER=d3d12 kept from WebKit's sandboxed web processes (the app's GL already chose its driver)", .{});
 }
 
+/// The viewer a web view carries, or null once it has gone.
+pub fn fromWebView(view: *wk.WebView) ?*Viewer {
+    return @ptrCast(@alignCast(wk.g_object_get_data(view, data_key) orelse return null));
+}
+
 fn onSchemeRequest(req: *wk.URISchemeRequest, _: ?*anyopaque) callconv(.c) void {
     const uri = std.mem.span(wk.webkit_uri_scheme_request_get_uri(req));
     const view = wk.webkit_uri_scheme_request_get_web_view(req);
@@ -1860,6 +1878,13 @@ fn serve(self: *Viewer, req: *wk.URISchemeRequest, uri: []const u8) !void {
     const origin = scheme.originOf(uri) orelse return finishNotFound(req, "not a viewer URI");
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const rel = scheme.requestPath(&buf, origin, uri) orelse return finishNotFound(req, "empty path");
+
+    // An image pane's picture (T3416): the viewed file, by its route - never
+    // a file of that name beside it, and nothing at all for another mode.
+    if (origin == .template and image_rules.isResource(rel)) {
+        if (self.mode == .image) if (self.file_path) |p| return self.image.serve(req, p);
+        return finishNotFound(req, "not an image pane");
+    }
 
     var cands = try scheme.candidates(self.alloc, origin, .{
         .assets_dir = self.assets_dir,
@@ -1886,7 +1911,7 @@ fn serve(self: *Viewer, req: *wk.URISchemeRequest, uri: []const u8) !void {
     finishNotFound(req, "not found");
 }
 
-fn finishNotFound(req: *wk.URISchemeRequest, why: [*:0]const u8) void {
+pub fn finishNotFound(req: *wk.URISchemeRequest, why: [*:0]const u8) void {
     const err = wk.g_error_new_literal(wk.g_io_error_quark(), wk.io_error_not_found, why);
     defer wk.g_error_free(err);
     wk.webkit_uri_scheme_request_finish_error(req, err);
@@ -1993,6 +2018,8 @@ fn writeDump(text: []const u8) void {
 ///                   find-close - emits the button's own `clicked`, as a
 ///                   pointer click does
 ///   wait            until the next render finishes (10 s): `wait ok=<bool>`
+///   image           an image pane's zoom state (T3416): `image rev= loads=
+///                   route= zoom= fitting= fit= natural=WxH viewport=WxH`
 ///   state           `state mode= current= address= back= forward= reveal=
 ///                   zoom= focus=address|find|content|other sel=<start>-<end>
 ///                   reloads=<dead-process reloads> card=none|pending|shown
@@ -2128,6 +2155,11 @@ const steps = if (build_config.is_debug) struct {
             return 0;
         } else if (std.mem.eql(u8, verb, "state")) {
             writeState(v);
+        } else if (std.mem.eql(u8, verb, "image")) {
+            // An image pane's zoom state (T3416): `image rev= loads= route=
+            // zoom= fitting= fit= natural=WxH viewport=WxH`.
+            var buf: [512]u8 = undefined;
+            out("image {s}", .{v.image.describe(&buf)});
         } else if (std.mem.eql(u8, verb, "terminate")) {
             out("terminate", .{});
             wk.webkit_web_view_terminate_web_process(v.view);

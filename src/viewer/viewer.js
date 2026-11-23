@@ -384,10 +384,12 @@
     ? window.__viewerImage.init({ root: content, post: post })
     : null;
 
-  function setImage(url, name, vector) {
+  /* `keep` (optional, T3416): a reload that may keep the zoom asks the page
+   * to hold its scroll offset until the native side answers. */
+  function setImage(url, name, vector, keep) {
     if (!image) return;
     clearHeadingIndex();
-    image.setImage(url, name, vector);
+    image.setImage(url, name, vector, keep);
   }
 
   function setImageTransform(scale, fit) {
