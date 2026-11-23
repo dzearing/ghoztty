@@ -352,8 +352,8 @@ from the first frame. Focusing the pane focuses the PAGE
   (`viewer_accel.paneChord`/`zoomAction`, `viewer_find.fieldKeyAction`) - the
   same chords as Windows, Ctrl as the modifier. Ctrl+R reloads in place,
   Ctrl+L / Alt+D select the address, Ctrl +/-/0 zoom, Escape reverts the
-  address. Find chords are declined until T3414; the app-keybinding fallback
-  for every other chord is T3430.
+  address. Ctrl+F/G and F3 are find's (T3414, below); the app-keybinding
+  fallback for every chord the pane declines is T3430.
 - **Reveal** is `gtk_file_launcher_open_containing_folder` (the desktop's
   FileManager1), or the nearest existing folder for a deleted file. Headless
   Weston has neither, so the test reads the `viewer: reveal ...` log line.
@@ -413,6 +413,50 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\vi
 ```
 
 Ends `VIEWER RELOAD: ALL PASS` (30 checks).
+
+### Find in page (T3414)
+
+The search is the shared `src/viewer/find.js` (index, matching, Custom
+Highlight painting, live re-scan, the 5000 cap, the "frames not searched"
+note), so this side is only the card, the chords and the bridge:
+
+- **The script reaches every document.** It is a `WebKitUserScript` on the
+  view's own content manager - top frame, document end, the Mac's
+  `WKUserScript` - added before the first navigation, so a website gets it as
+  well as the template. Its counts come back through
+  `webkit_user_content_manager_register_script_message_handler("viewerTOC")`
+  (`script-message-received::viewerTOC`, a `JSCValue` turned to JSON and read
+  by win32's pure `viewer_bridge.parse`). The template's `viewer.js` posts on
+  the same handler; only `find` is acted on.
+- **The card floats**: the web view sits in a `GtkOverlay` under the nav bar
+  and the card is an overlay at its top-trailing corner, so opening it never
+  reflows the page. Field, live count (`viewer_find.Result.label`: `3/17`,
+  `12/5000+`, `No results`, nothing for an empty field), previous / next /
+  close, and the honesty note as a second line only while there is one.
+- **Keys** are win32's tables through `viewer_chrome.classify`: Ctrl+F opens
+  (query selected), Enter / Shift+Enter in the field, Ctrl+G / Ctrl+Shift+G
+  and F3 / Shift+F3 step (re-opening a closed card), Escape closes from the
+  field or the page and keeps the query; an address edit's Escape wins. A
+  picture (`viewer_chrome.canFind`) declines every find chord, and navigating
+  to one closes an open card. Ctrl+G with no query yet is declined too.
+- After every load an open search is pushed again, ahead of the template's
+  render; the page's own observer then counts the rendered document, so a
+  navigation, Back, or a live reload keeps the count live.
+- Find's page calls evaluate with no callback (`runQuiet`): they must not
+  count as renders for the test seam's `wait`.
+- **Driving it headless**: the steps seam's `find <text>` sets the field (its
+  `changed` runs the search), `click find-previous|find-next|find-close`, and
+  `state` reports `find= findq= findsel= count= note=`. The highlights are
+  read from `CSS.highlights` with a `probe`; `find.js` keeps the current
+  match in its own highlight, so three matches read `2/1`.
+
+Acceptance:
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-find.sh
+```
+
+Ends `VIEWER FIND: ALL PASS` (27 checks).
 
 Acceptance:
 

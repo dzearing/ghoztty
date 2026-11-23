@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-22T15:40:10-08:00",
-    "commit":  "f69dca8e1",
+    "generated":  "2026-11-22T16:18:35-08:00",
+    "commit":  "f88c9a6b9",
     "uncommitted":  [
 
                     ],
@@ -62,13 +62,13 @@
                   "src/apprt/gtk/post_fork.zig":  "2fbb12016b45d893cccc5949d1eeaf01ff2cd09af1769539a05699a31ea4454c",
                   "src/apprt/gtk/pre_exec.zig":  "1ef8451b7a579afd9cae9c2c4ceb57a0da347780eca52567f65cd93a1fa5fac6",
                   "src/apprt/gtk/Surface.zig":  "06aa46f48a21569b307d1cf1b8db60b78b2f854ed36d369c4b432ea8bf14f5ea",
-                  "src/apprt/gtk/Viewer.zig":  "80e561f50019ddaeb8ffbc4c126b6ec839c605ec05711947c9df245e05364fac",
-                  "src/apprt/gtk/viewer_chrome.zig":  "700c9136c9061e8b68944a9af82cd9239ae5de9494eb5d8a1bae360b0c91a345",
+                  "src/apprt/gtk/Viewer.zig":  "e32b66847df94291f4b7cb61f3e83edde689832198d93831834161dbb11f1d73",
+                  "src/apprt/gtk/viewer_chrome.zig":  "c9459ec686d3f276a68036c509f0ce6d548ad69e0ba302e74bed4db57d888bb2",
                   "src/apprt/gtk/viewer_reload.zig":  "04e29fcc0d341e2b3268a329e9f05a19d6bcddb84176ebdbcc6854fef9996223",
                   "src/apprt/gtk/viewer_scheme.zig":  "9a9f5595dce0575dffa2e68f31ac8760b0a77427ae502e3d2d0894db888fb48a",
                   "src/apprt/gtk/viewer_watch.zig":  "aec5e9cd8277d791c7da6e616c65e70a4155285c148db19981f8415b7bf85eea",
                   "src/apprt/gtk/weak_ref.zig":  "6d8c8990e92f12cc4405bce631ec02580d1fdcda5c4c9443fed988d41544956a",
-                  "src/apprt/gtk/webkit.zig":  "de104529139b86aff7f74af748cbcc92235ca24a2429f9c58125fba2dbc48b7d",
+                  "src/apprt/gtk/webkit.zig":  "11c3c12b030c38a8438a215535e09c5a8a3f97e1be8695c483d917d6a8ba5d3c",
                   "src/apprt/gtk/winproto.zig":  "ff2c803adc700b90fd2442a90f496cbbacfcae9329eab24c301b13de6dbd39ee",
                   "src/apprt/gtk/winproto/BlurRegion.zig":  "74e1ddfe277d109d11020eabb13ea0cbe232a21f9fa82e9e0868daa3cf577e94",
                   "src/apprt/gtk/winproto/noop.zig":  "606bbb8ef0904dda8c60feb9d3e8a99efffade5464d5355adced982441af9c8d",
