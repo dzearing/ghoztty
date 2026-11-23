@@ -700,11 +700,12 @@ half): a pill holding the SHARED `src/viewer/composer.js` page in a second
   `<worktree>/temp/feedback/new/<stem>/report.json`). Success clears the text,
   shows `Filed temp/feedback/new/<stem>`, and closes after 1.5 s. A file pane's
   `pageTitle` is the file name (the template's own title is ours).
-- Not yet: quoting (T3545), pictures (T3546; a pasted one is logged and
-  dropped), dark style (T3552, the vars are fixed Adwaita light), the draft
-  folder + footer link (T3553).
+- Not yet: pictures (T3546; a pasted one is logged and dropped), dark style
+  (T3552, the vars are fixed Adwaita light), the draft folder + footer link
+  (T3553). Quoting is the next section.
 - **Steps seam**: `composer` prints `open= view= ready= lines= sending=
-  sends= filed= status=... text=...` once the page is up and no send is out;
+  sends= quotes= quoted= filed= status=... text=...` once the page is up and
+  no send is out (`quotes` = live blocks, `quoted` = ever registered);
   `composer-type <text>` types through `insertText` (`\n` = newline);
   `composer-key ctrl+Enter|Escape|Enter`; `composer-probe <js>` evaluates in
   the composer page; `click feedback-send`.
@@ -714,6 +715,47 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\vi
 ```
 
 Ends `VIEWER COMPOSER: ALL PASS` (23 checks, about 2 minutes).
+
+### Quoting a page selection (T3545)
+
+Selecting text in any viewer page (the template or a website) shows the
+SHARED `src/viewer/selection.js` Quote/Copy toolbar (shadow root, so page CSS
+cannot touch it), injected by `Viewer.installFindScript` beside `find.js`:
+top frame only, document end - win32's rule, since the bar positions itself in
+viewport coordinates a subframe does not share. It posts on `viewerTOC`.
+
+- **Quote** -> `bridge.parse` `.quote` -> `ViewerFeedback.acceptQuote`:
+  register it (win32's `viewer_feedback_doc.Registry`), splice the passage in
+  at the composer's caret as its own block (`viewer_feedback_doc.insertion`),
+  and open the composer; an already-open page gets an `undo: true` seed so
+  Ctrl+Z takes it back out. A pane in no worktree drops it (logged).
+- **The page's nodes are the truth** (T935): every seed carries the spans
+  down as `{id,start,end}` in UTF-16 units, every snapshot brings them back,
+  so deleting a block drops its metadata and rewording keeps it. All the
+  arithmetic (caret units <-> bytes, ids <-> registry indices) is the pure
+  `src/apprt/gtk/viewer_quote.zig` (none lane).
+- **Send**: `body` renders each live block as a markdown `> ` quote
+  (`report.renderBody`); `quotes` carries text, headingId/Text,
+  blockSelector/Text, offsetInBlock, documentOffset, editedText, and for a
+  file pane `sourceLine`, found by searching the file on the send worker.
+- **Copy**: GTK sets `window.__ghozttyHostCopy`, so the shared script posts
+  `{type:"copy",text}` instead of using the page's async clipboard, and the
+  app writes the GDK clipboard (`Viewer.copyText`, which also feeds the
+  `GHOZTTY_TEST_VIEWER_LINKS` sink as `copy <text>`). Mac and Windows never
+  set the flag.
+- **Driving it headless**: there is no pointer, so the test selects with a
+  `Range` in a `probe`, dispatches the `mouseup` that places the bar, then a
+  `mousedown` on `[data-ghoztty-ui]`'s shadow-root `button[title=Quote]`.
+  Log line: `viewer quote id= bytes= heading= block= offset= live=`.
+- The shared composer page folds one newline under a quote block into the
+  block's boundary when you type below it (`fox\n\n` + typing reads back
+  `fox\nnote`); the report body is still right.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-quote.sh
+```
+
+Ends `VIEWER QUOTE: ALL PASS` (26 checks, about 2 minutes).
 
 ### The viewer foundation's own test (T3410)
 

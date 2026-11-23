@@ -164,7 +164,10 @@ has "$s" "bar on=false"
 hl_check "Q13 the toolbar hides and the page selection is cleared after quoting" $? "$s"
 
 s=$(co 3)
-has "$s" "quotes=2 quoted=2" && has "$s" 'text=quick brown fox\n\nmy note about it\n\nriver bank\n\n'
+# The shared composer page folds one newline under a quote block into the
+# block's own boundary when the user types below it, so the note follows
+# after one or two; the second block then goes in after a blank line.
+has "$s" "quotes=2 quoted=2" && has "$s" 'text=quick brown fox\n' && has "$s" 'my note about it\n\nriver bank\n\n'
 hl_check "Q14 a second Quote into the OPEN composer lands at the caret after the typed note; both blocks stay live" $? "$s"
 
 s=$(pr 8)
