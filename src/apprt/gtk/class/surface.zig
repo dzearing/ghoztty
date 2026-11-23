@@ -1114,6 +1114,8 @@ pub const Surface = extern struct {
         };
         self.syncBannerPaths(banner);
         banner.setText(text);
+        // A banner's title names the pane's row in the sidebar (T3557).
+        if (ext.getAncestor(Window, self.as(gtk.Widget))) |window| window.queueSidebarRefresh();
     }
 
     pub fn getActivityState(self: *Self) terminal.osc.Command.ActivityState {

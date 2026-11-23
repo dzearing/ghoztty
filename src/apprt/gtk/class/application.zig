@@ -31,6 +31,7 @@ const adw_version = @import("../adw_version.zig");
 const gtk_version = @import("../gtk_version.zig");
 const winprotopkg = @import("../winproto.zig");
 const SessionLayout = @import("../SessionLayout.zig");
+const PaneSidebar = @import("../PaneSidebar.zig");
 const AgentRecovery = @import("../AgentRecovery.zig");
 const ApprtApp = @import("../App.zig");
 const Common = @import("../class.zig").Common;
@@ -904,9 +905,10 @@ pub const Application = extern struct {
             // Ghoztty actions the GTK frontend has not been taught yet
             // (T3330 L1 bring-up). Each is a Linux-seat port task; the list
             // and owners are in docs/design/windows-parity-tasks/T3330.md.
+            .toggle_pane_sidebar => return Action.togglePaneSidebar(self),
+
             .toggle_hero_mode,
             .toggle_rearrange_mode,
-            .toggle_pane_sidebar,
             .stash_pane,
             .restore_stashed_pane,
             .prompt_banner,
@@ -1617,6 +1619,11 @@ pub const Application = extern struct {
     ) callconv(.c) void {
         // Sync our accelerators for menu items.
         self.syncActionAccelerators();
+
+        // `macos-pane-sidebar` (T3557): a changed value starts every
+        // window's sidebar over; an unchanged one leaves the user's toggles.
+        if (PaneSidebar.applyStart(self.getConfig().get().@"macos-pane-sidebar"))
+            Window.refreshAllSidebars();
 
         // Load our runtime and custom CSS. If this fails then our window is
         // just stuck with the old CSS but we don't want to fail the entire
@@ -3311,6 +3318,13 @@ const Action = struct {
                 return true;
             },
         }
+    }
+
+    /// `toggle_pane_sidebar` (T3557): hide or show the pane sidebar in every
+    /// window - the flags are shared, so the target does not matter.
+    pub fn togglePaneSidebar(app: *Application) bool {
+        PaneSidebar.toggleHidden(app.allocator(), "toggle_pane_sidebar");
+        return true;
     }
 
     /// OSC 7777 from inside the pane (T3339): its activity state.

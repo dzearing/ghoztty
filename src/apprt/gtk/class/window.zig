@@ -30,6 +30,7 @@ const DebugWarning = @import("debug_warning.zig").DebugWarning;
 const CommandPalette = @import("command_palette.zig").CommandPalette;
 const WeakRef = @import("../weak_ref.zig").WeakRef;
 const CloseUndo = @import("../CloseUndo.zig");
+const PaneSidebar = @import("../PaneSidebar.zig");
 
 const log = std.log.scoped(.gtk_ghostty_window);
 
@@ -238,6 +239,10 @@ pub const Window = extern struct {
         /// `titleOverride` does. Owned.
         title_override: ?[:0]u8 = null,
 
+        /// The pane sidebar (T3557): the column before the tabs that lists
+        /// the active tab's panes. Owned; its widgets belong to the tree.
+        pane_sidebar: ?*PaneSidebar = null,
+
         /// The configuration that this surface is using.
         config: ?*Config = null,
 
@@ -272,6 +277,7 @@ pub const Window = extern struct {
         tab_view: *adw.TabView,
         toolbar: *adw.ToolbarView,
         toast_overlay: *adw.ToastOverlay,
+        sidebar_row: *gtk.Box,
 
         pub var offset: c_int = 0;
     };
@@ -347,6 +353,11 @@ pub const Window = extern struct {
         if (config.title) |title| {
             self.as(gtk.Window).setTitle(title);
         }
+
+        // The pane sidebar (T3557): the shared flags are read once, before
+        // the first window draws one, so a restored window starts as
+        // `macos-pane-sidebar` says too.
+        self.initPaneSidebar(config);
 
         // We always sync our appearance at the end because loading our
         // config and such can affect our bindings which are setup initially
@@ -848,6 +859,10 @@ pub const Window = extern struct {
                 self,
                 .{},
             );
+            // A pane's name and directory are its sidebar row (T3557).
+            inline for (.{ "title", "title-override", "pwd" }) |detail| {
+                _ = gobject.Object.signals.notify.connect(surface, *Self, sidebarSurfaceNotify, self, .{ .detail = detail });
+            }
 
             // If we've never had a surface initialize yet, then we register
             // this signal. Its theoretically possible to launch multiple surfaces
@@ -997,6 +1012,59 @@ pub const Window = extern struct {
         const child = page.getChild();
         assert(gobject.ext.isA(child, Tab));
         return gobject.ext.cast(Tab, child);
+    }
+
+    // ---- The pane sidebar (T3557) ------------------------------------------
+
+    fn initPaneSidebar(self: *Self, config: *const configpkg.Config) void {
+        const priv = self.private();
+        const alloc = Application.default().allocator();
+        PaneSidebar.loadShared(alloc, config.@"macos-pane-sidebar");
+        const sidebar = PaneSidebar.create(alloc, self) catch |err| {
+            log.warn("pane sidebar could not be created err={}", .{err});
+            return;
+        };
+        priv.pane_sidebar = sidebar;
+        priv.sidebar_row.prepend(@ptrCast(@alignCast(sidebar.card)));
+        // Its header names the window, and a narrow window takes the rail.
+        inline for (.{ "title", "default-width", "maximized", "fullscreened" }) |detail| {
+            _ = gobject.Object.signals.notify.connect(self, *Self, sidebarWindowNotify, self, .{ .detail = detail });
+        }
+        sidebar.queueRefresh();
+    }
+
+    fn sidebarWindowNotify(_: *Self, _: *gobject.ParamSpec, self: *Self) callconv(.c) void {
+        self.queueSidebarRefresh();
+    }
+
+    fn sidebarSurfaceNotify(_: *Surface, _: *gobject.ParamSpec, self: *Self) callconv(.c) void {
+        self.queueSidebarRefresh();
+    }
+
+    fn sidebarTabNotify(_: *Tab, _: *gobject.ParamSpec, self: *Self) callconv(.c) void {
+        self.queueSidebarRefresh();
+    }
+
+    /// Redraw this window's pane sidebar on the next idle turn: its panes,
+    /// their names or its focus changed.
+    pub fn queueSidebarRefresh(self: *Self) void {
+        if (self.private().pane_sidebar) |s| s.queueRefresh();
+    }
+
+    /// This window's pane sidebar (the debug seam reads it).
+    pub fn paneSidebar(self: *Self) ?*PaneSidebar {
+        return self.private().pane_sidebar;
+    }
+
+    /// The shared sidebar flags moved: every window redraws its sidebar now.
+    pub fn refreshAllSidebars() void {
+        var node: ?*glib.List = Application.default().as(gtk.Application).getWindows();
+        while (node) |n| {
+            node = n.f_next;
+            const obj: *gobject.Object = @ptrCast(@alignCast(n.f_data orelse continue));
+            const win = gobject.ext.cast(Self, obj) orelse continue;
+            if (win.private().pane_sidebar) |s| s.refresh();
+        }
     }
 
     /// Returns true if this window needs confirmation before quitting.
@@ -1296,6 +1364,12 @@ pub const Window = extern struct {
         }
 
         priv.tab_bindings.setSource(null);
+
+        // Before the template's widgets go: it removes its rows from them.
+        if (priv.pane_sidebar) |s| {
+            s.destroy();
+            priv.pane_sidebar = null;
+        }
 
         gtk.Widget.disposeTemplate(
             self.as(gtk.Widget),
@@ -1603,6 +1677,9 @@ pub const Window = extern struct {
         // If the tab was previously marked as needing attention
         // (e.g. due to a bell character), we now unmark that
         page.setNeedsAttention(@intFromBool(false));
+
+        // The sidebar lists the selected tab's panes (T3557).
+        self.queueSidebarRefresh();
     }
 
     fn tabViewPageAttached(
@@ -1646,6 +1723,11 @@ pub const Window = extern struct {
         if (tab.getSurfaceTree()) |tree| {
             self.connectSurfaceHandlers(tree);
         }
+
+        // The focused pane is the sidebar's selected row (T3557).
+        // Disconnected with the tab's other handlers on detach (by data).
+        _ = gobject.Object.signals.notify.connect(tab, *Self, sidebarTabNotify, self, .{ .detail = "active-surface" });
+        self.queueSidebarRefresh();
     }
 
     fn tabViewPageDetached(
@@ -1871,6 +1953,7 @@ pub const Window = extern struct {
         if (new_tree) |tree| {
             self.connectSurfaceHandlers(tree);
         }
+        self.queueSidebarRefresh();
     }
 
     fn actionAbout(
@@ -2213,6 +2296,7 @@ pub const Window = extern struct {
             class.bindTemplateChildPrivate("tab_view", .{});
             class.bindTemplateChildPrivate("toolbar", .{});
             class.bindTemplateChildPrivate("toast_overlay", .{});
+            class.bindTemplateChildPrivate("sidebar_row", .{});
 
             // Template Callbacks
             class.bindTemplateCallback("realize", &windowRealize);

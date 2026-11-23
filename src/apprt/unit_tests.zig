@@ -615,6 +615,9 @@ test {
     // heading sizes, a cell's alignment, a link's local path (T3339). No GTK
     // imports.
     _ = @import("gtk/banner_markup.zig");
+    // ... and the pane sidebar's: a row's text, the mode, where the shared
+    // flags are kept (T3557). No GTK imports.
+    _ = @import("gtk/pane_sidebar_rows.zig");
 
     // The GTK image pane's pure half - the picture's sentinel URL, which
     // decoder a format goes to, the Linux missing-codec card, and the Mac's

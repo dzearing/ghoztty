@@ -7479,6 +7479,14 @@ pub const Keybinds = struct {
                 .{ .key = .{ .unicode = 'y' }, .mods = .{ .ctrl = true, .shift = true } },
                 .{ .redo = {} },
             );
+            // The pane sidebar toggle (T3557): Windows' carry of the Mac's
+            // Ctrl+Cmd+S "Show Sidebar" (T1828), Ctrl+Shift+S - the
+            // ctrl+shift app-chord namespace, and unbound here before.
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .unicode = 's' }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .toggle_pane_sidebar = {} },
+            );
         }
         {
             // On macOS we default to super but everywhere else

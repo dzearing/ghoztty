@@ -200,3 +200,28 @@ label.resize-overlay {
 .surface .pane-banner label {
   font-size: 0.95em;
 }
+
+/*
+ * The pane sidebar (T3557; docs/reference/pane-sidebar.md): one raised card
+ * before the tabs, the full panel or the narrow rail, a row per pane.
+ */
+.pane-sidebar {
+  padding: 4px 0 4px 0;
+  border-radius: 12px;
+  background-color: alpha(currentColor, 0.05);
+  outline-style: solid;
+  outline-width: 1px;
+  outline-color: alpha(currentColor, 0.10);
+  outline-offset: -1px;
+}
+
+.pane-sidebar .pane-sidebar-row {
+  min-height: 28px;
+  margin: 0 4px 0 4px;
+  padding: 2px 8px 2px 8px;
+  border-radius: 8px;
+}
+
+.pane-sidebar .pane-sidebar-row.pane-sidebar-selected {
+  background-color: alpha(@accent_bg_color, 0.35);
+}

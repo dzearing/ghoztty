@@ -127,8 +127,51 @@ pub fn handleRestore(_: Context, _: Request) Allocator.Error!?[]u8 { return notY
 pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamReply {
     if (comptime !build_config.is_debug) return .unhandled;
     if (std.mem.eql(u8, request.action, "press-key")) return .{ .reply = try pressKey(app, request) };
+    if (std.mem.eql(u8, request.action, "pane-sidebar")) return .{ .reply = try paneSidebar(app, request) };
     if (!std.mem.eql(u8, request.action, "capture-pane")) return .unhandled;
     return .{ .reply = try capturePane(app, request) };
+}
+
+/// `pane-sidebar --target=<pane|window> [--click=toggle|<pane-id>]` (T3557):
+/// what the target window's pane sidebar shows - its mode, the shared flags
+/// and every row as drawn (pane, label, subtitle, tooltip, selected) - after
+/// an optional click on its mode button or on a pane's row, the pointer the
+/// headless harness does not have. The reply is drawn state, so the sidebar
+/// is redrawn first: a click or a change still queued is in it.
+fn paneSidebar(app: Context, request: Request) Allocator.Error![]u8 {
+    var target_arg: ?[]const u8 = null;
+    var click_arg: ?[]const u8 = null;
+    for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
+        if (std.mem.startsWith(u8, arg, "--click=")) click_arg = arg["--click=".len..];
+    }
+    const target_name = target_arg orelse return server.errorResponse(c_alloc, "--target is required for pane-sidebar", .{});
+
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const target = switch (try resolve(arena, app, target_name)) {
+        .found => |t| t,
+        .ambiguous => |windows| return server.errorResponse(c_alloc, "{s}", .{
+            try target_lookup.ambiguityError(arena, target_name, windows),
+        }),
+        .not_found => return server.errorResponse(c_alloc, "pane '{s}' not found in registry", .{target_name}),
+    };
+    const sidebar = target.window_().paneSidebar() orelse
+        return server.errorResponse(c_alloc, "the window has no pane sidebar", .{});
+
+    if (click_arg) |click| {
+        if (std.mem.eql(u8, click, "toggle")) {
+            sidebar.toggleExpanded("pane-sidebar seam");
+        } else if (!sidebar.focusPane(click)) {
+            return server.errorResponse(c_alloc, "no sidebar row for pane '{s}'", .{click});
+        }
+    }
+    sidebar.refresh();
+    const rep = try sidebar.report(arena);
+    var out: std.Io.Writer.Allocating = .init(arena);
+    std.json.Stringify.value(.{ .success = true, .sidebar = rep }, .{}, &out.writer) catch return error.OutOfMemory;
+    return c_alloc.dupe(u8, out.written());
 }
 
 /// `press-key --target=<pane> --key=<trigger>` (T3384): one press and release
