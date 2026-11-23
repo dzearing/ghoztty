@@ -680,6 +680,29 @@ Assert "E12 windows-cross heals a poisoned Zig cache on UnableToWriteArchive" ($
     $compileM.Value -match 'set -o pipefail' -and
     ([regex]::Matches($compileM.Value, 'build-release-artifacts\.sh --semver 0\.0\.0 --build-only')).Count -eq 2)
 
+# E14 (T3440): only a GREEN compile may hand its Zig cache on. setup-zig's own
+# post step saves unconditionally -- after a cancel too -- and on 2026-11-22 a
+# run cancelled mid-compile by the concurrency group saved a glslang.lib that
+# was missing objects; every run after it restored that and died in lld-link
+# (`undefined symbol: glslang_default_resource`). So: setup-zig's cache off,
+# restore by actions/cache/restore BEFORE the compile, save by
+# actions/cache/save AFTER it with no always()/failure()/cancelled() override,
+# both on the same key.
+$szM = [regex]::Match($jobM.Value, '(?ms)- name: Setup Zig.*?(?=\r?\n      - name: )')
+$restoreAt = $jobM.Value.IndexOf('actions/cache/restore@')
+$saveAt = $jobM.Value.IndexOf('actions/cache/save@')
+$compileAt = $jobM.Value.IndexOf('- name: Cross-compile the Windows exe')
+$saveM = [regex]::Match($jobM.Value, '(?ms)- name: Upload the Zig cache.*?(?=\r?\n      - name: )')
+$keyRe = 'key: (zig-cross-v\d+-[^\r\n]+)'
+$restoreKey = [regex]::Match($jobM.Value.Substring([Math]::Max($restoreAt, 0)), $keyRe).Groups[1].Value
+$saveKey = [regex]::Match($saveM.Value, $keyRe).Groups[1].Value
+Assert "E14 windows-cross saves its Zig cache only after a green compile" ($szM.Success -and
+    $szM.Value -match 'use-cache: false' -and
+    $restoreAt -ge 0 -and $compileAt -gt $restoreAt -and $saveAt -gt $compileAt -and
+    $saveM.Success -and
+    $saveM.Value -notmatch 'always\(\)|failure\(\)|cancelled\(\)' -and
+    $restoreKey -ne '' -and $restoreKey -eq $saveKey)
+
 # E7: the runbook expects CI to have proven the build, not the release.
 Assert "E7 release.md points at the windows-cross job" ($releaseMd -match 'windows-cross')
 

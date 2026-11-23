@@ -164,9 +164,38 @@ jobs:
       # the release workflow floats on @v2, which is close enough to one
       # definition until the cutover (this branch -> dzearing/ghoztty main)
       # consolidates them.
+      #
+      # use-cache is OFF, and the cache is restored and saved by the two
+      # actions/cache steps around the compile instead (T3440). setup-zig's
+      # post step saves .zig-cache unconditionally -- after a failure, and
+      # after a CANCEL: this workflow's concurrency group cancels the
+      # in-flight run on every push, and on 2026-11-22 run 45075865980 was
+      # cancelled mid-compile, saved its half-written cache anyway, and every
+      # run after it restored that cache and died in lld-link with
+      # `undefined symbol: glslang_default_resource` and
+      # `spv::Builder::postProcess(bool)` -- a glslang.lib missing objects --
+      # over trees that compile fine cold. Saving only after a green compile
+      # means a cancelled or red run can never hand its cache on. setup-zig
+      # still exports ZIG_GLOBAL_CACHE_DIR / ZIG_LOCAL_CACHE_DIR
+      # (= $GITHUB_WORKSPACE/.zig-cache) whatever use-cache says, so the
+      # build sees the same cache layout as before.
       - name: Setup Zig
         if: steps.detect.outputs.present == 'true'
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          use-cache: false
+
+      # The key prefix is new (zig-cross-v3) so the poisoned setup-zig chain
+      # is abandoned rather than restored once more. restore-keys takes the
+      # newest cache that a GREEN compile saved.
+      - name: Restore the Zig cache
+        if: steps.detect.outputs.present == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.zig-cache
+          key: zig-cross-v3-${{ runner.os }}-${{ hashFiles('build.zig.zon') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            zig-cross-v3-${{ runner.os }}-${{ hashFiles('build.zig.zon') }}-
 
       # COMPILE FIRST, package second -- deliberately, and the order is the
       # fix for T1481. The compile is the signal this loop gates on ("does the
@@ -217,6 +246,30 @@ jobs:
             fi
           done
           dist/windows-installer/build-release-artifacts.sh --semver 0.0.0 --build-only
+
+      # Only a green compile reaches this step (success() is the default
+      # condition, and a cancel fails it), so only a cache that just built
+      # the exe is ever handed on (T3440). Same 2 GiB ceiling setup-zig
+      # applied: past it the cache is emptied and saved empty, so the next
+      # run starts cold and the chain stays bounded.
+      - name: Bound the Zig cache size
+        if: steps.detect.outputs.present == 'true'
+        run: |
+          d="$GITHUB_WORKSPACE/.zig-cache"
+          if [ -d "$d" ]; then
+            size_mib=$(du -sm "$d" | cut -f1)
+            echo "Zig cache is ${size_mib} MiB"
+            if [ "$size_mib" -gt 2048 ]; then
+              echo "::notice::Zig cache over 2048 MiB - saving it empty so the next run starts cold"
+              find "$d" -mindepth 1 -delete
+            fi
+          fi
+      - name: Upload the Zig cache
+        if: steps.detect.outputs.present == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/.zig-cache
+          key: zig-cross-v3-${{ runner.os }}-${{ hashFiles('build.zig.zon') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Build and install msitools 0.106 (wixl, msiinfo, msibuild)
         if: steps.detect.outputs.present == 'true'

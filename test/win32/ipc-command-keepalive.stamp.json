@@ -1,8 +1,8 @@
 {
     "guard":  "ipc-command-keepalive",
     "script":  "test/win32/ipc-command-keepalive.ps1",
-    "generated":  "2026-11-22T15:22:59-08:00",
-    "commit":  "0db3224ca",
+    "generated":  "2026-11-22T15:33:03-08:00",
+    "commit":  "f69dca8e1",
     "uncommitted":  [
 
                     ],
