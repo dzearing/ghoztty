@@ -39842,3 +39842,6 @@ Reproduce-first: agent-recovery.ps1 is ALL PASS (104 assertions) on HEAD 15640bd
 ## 2026-11-22 17:50 lane b - T1776: App.zig's split is planned as sixteen planes
 - App.zig re-measured at 15,388 lines with six banners, so it cannot move in one context. Like T1775, it is split per plane: T3448-T3463, one new `app_*.zig` file each, every range named by first and last function, all using the T3436 split/proof tooling.
 - T3464 re-measures the owner once all sixteen land (it depends on them). No code change in this turn.
+## 2026-11-22 18:05 lane b - T1777: Window.zig's split is planned as twenty-nine planes
+- Window.zig re-measured at 24,512 lines (752 functions, five banners), so it cannot move in one context. Like T1775/T1776 it is split per plane: T3465-T3493, one new `window_*.zig` file each, every range named by first and last function, all using the T3436 split/proof tooling and each told to repoint the guard-due Covers rows (T1962 note).
+- T3494 re-measures the owner once all twenty-nine land (it depends on them). No code change in this turn.
