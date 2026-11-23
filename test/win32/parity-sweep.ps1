@@ -23,6 +23,10 @@
   when the topological guard cannot see it, so the two mechanisms are tested
   apart rather than covering for each other.
 
+  Arms 11-12 are T3342: the Linux seat's own view (-Seat linux), where only
+  seat:linux / seat:any task files and the Linux watermark count as coverage,
+  and -Record, which moves that watermark only over a clean, contiguous range.
+
   Prints a single ALL PASS / N FAILURE(S) line, like every other script here.
 
   ASCII-only by design (PS 5.1 on this box mangles non-ASCII on rewrite).
@@ -102,21 +106,38 @@ function Invoke-Sweep {
         [switch]$ShowMapped,
         [string]$UseRange,
         [string[]]$Paths,
-        [string]$IncomingRef
+        [string]$IncomingRef,
+        [string]$Seat,
+        [switch]$Record,
+        [string]$Note,
+        [switch]$NoRange
     )
 
     $r = if ($UseRange) { $UseRange } else { $Range }
-    $cmd = "& '$Sweep' -Range '$r' -DocsPath '$DocsPath' -Format '$Format' -RepoRoot '$RepoRoot'"
+    $cmd = "& '$Sweep' -DocsPath '$DocsPath' -Format '$Format' -RepoRoot '$RepoRoot'"
+    if (-not $NoRange) { $cmd += " -Range '$r'" }
+    if ($Seat) { $cmd += " -Seat '$Seat'" }
+    if ($Record) { $cmd += ' -Record' }
+    if ($Note) { $cmd += " -Note '$Note'" }
     if ($Paths) {
         $cmd += ' -Paths @(' + (($Paths | ForEach-Object { "'" + $_ + "'" }) -join ',') + ')'
     }
     if ($IncomingRef) { $cmd += " -IncomingRef '$IncomingRef'" }
     if ($ShowMapped) { $cmd += ' -ShowMapped' }
+    # -Command reports a script's "exit 2" as 1, so hand the real code back;
+    # a throw is caught and stays non-zero (T3342: -Record's 1 vs 2 matters).
+    $cmd = "try { $cmd; exit `$LASTEXITCODE } catch { Write-Output ('THROWN: ' + `$_); exit 99 }"
 
     # Capture through a pipe: powershell.exe is a console binary here, so
     # stdout redirects normally, but $LASTEXITCODE is only trustworthy when the
     # whole stream has been drained (never -First; see go.md).
-    $out = & powershell.exe -NoProfile -Command $cmd 2>&1
+    # Continue across the call: a refusal arm's child writes its error to
+    # stderr, and under Stop PS 5.1 turns that line into a throw HERE (T3342).
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { $out = & powershell.exe -NoProfile -Command $cmd 2>&1 }
+    finally { $ErrorActionPreference = $prev }
+    $out = @($out | ForEach-Object { [string]$_ })
     return [pscustomobject]@{ Lines = @($out); Exit = $LASTEXITCODE; Text = (@($out) -join "`n") }
 }
 
@@ -138,6 +159,36 @@ function New-FixtureDocs {
 
     Set-Content -LiteralPath (Join-Path $tasks 'T900.md') -Value ($body -join "`n") -Encoding ASCII
     return $root
+}
+
+# T3342: a fixture tree of task files that carry a seat in their frontmatter,
+# plus optional loose docs. -Tasks maps a task id to @{ Seat; Shas }; a $null
+# seat writes no seat line at all (the tracker's default, win).
+function New-SeatFixture {
+    param([hashtable]$Tasks, [hashtable]$Files = @{})
+
+    $root = Join-Path ([System.IO.Path]::GetTempPath()) ("parity-sweep-seat-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    $dir = Join-Path $root 'windows-parity-tasks'
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    foreach ($id in $Tasks.Keys) {
+        $t = $Tasks[$id]
+        $body = @('---', ('id: ' + $id), ('title: "fixture ' + $id + '"'))
+        if ($t.Seat) { $body += ('seat: "' + $t.Seat + '"') }
+        $body += @('status: "todo"', '---', '', ('# ' + $id + ' - fixture'), '')
+        foreach ($sha in @($t.Shas)) {
+            if ($sha) { $body += ("- ``{0}`` cited by this fixture" -f $sha.Substring(0, 9)) }
+        }
+        Set-Content -LiteralPath (Join-Path $dir ($id + '.md')) -Value ($body -join "`r`n") -Encoding ASCII
+    }
+    foreach ($name in $Files.Keys) {
+        Set-Content -LiteralPath (Join-Path $root $name) -Value $Files[$name] -Encoding ASCII
+    }
+    return $root
+}
+
+function Get-CountLine {
+    param($R)
+    return ("got: " + (($R.Lines | Where-Object { $_ -match 'commits:' }) -join '; '))
 }
 
 $created = New-Object System.Collections.ArrayList
@@ -238,6 +289,12 @@ try {
         $detail = "parse failed: $_"
     }
     Check '7a json parses and its counts match the text report' $ok $detail
+    Check '7b the Windows json carries no seat field (T3342 left it byte-identical)' `
+        ($r.Text -notmatch '"seat"')
+    $r = Invoke-Sweep -DocsPath $partial -Format json -Seat linux
+    $ok = $false
+    try { $ok = (($r.Text | ConvertFrom-Json).seat -eq 'linux') } catch { }
+    Check '7c the Linux json says which seat it answered for' $ok
 
     # --- 8. T685: the shared core is watched --------------------------------
     # eb1876f09 touches src/termio/ and nothing else. It is exactly the shape
@@ -301,6 +358,131 @@ try {
     $r = Invoke-Sweep -DocsPath $sharedFixture -UseRange $Win32Range -IncomingRef $Win32Incoming -Paths @('src/')
     Check '10b without the exclusion the same commit IS enumerated' `
         ($r.Text -match 'commits: 1\s') ("got: " + (($r.Lines | Where-Object { $_ -match 'commits:' }) -join '; '))
+
+    # --- 11. T3342: the Linux seat counts only Linux work as coverage --------
+    $first3 = $Expected[0..2]; $last3 = $Expected[3..5]
+    $winOnly = New-SeatFixture -Tasks @{ T910 = @{ Seat = 'win'; Shas = $Expected } }
+    [void]$created.Add($winOnly)
+
+    $r = Invoke-Sweep -DocsPath $winOnly -Seat linux
+    Check '11a a seat:win task citing all six maps NOTHING for Linux' `
+        (($r.Text -match 'unmapped: 6') -and $r.Exit -eq 1) ((Get-CountLine $r) + " exit=" + $r.Exit)
+    Check '11b the Linux report says which seat it answered for' ($r.Text -match '(?m)^\s*seat:\s+linux')
+
+    $r = Invoke-Sweep -DocsPath $winOnly
+    Check '11c the same tree is clean for the Windows seat (its sweep is unchanged)' `
+        (($r.Text -match 'unmapped: 0') -and $r.Exit -eq 0 -and $r.Text -notmatch '(?m)^\s*seat:') ((Get-CountLine $r) + " exit=" + $r.Exit)
+
+    $noSeat = New-SeatFixture -Tasks @{ T911 = @{ Seat = $null; Shas = $Expected } }
+    [void]$created.Add($noSeat)
+    $r = Invoke-Sweep -DocsPath $noSeat -Seat linux
+    Check '11d a task with no seat line is a Windows task, not Linux coverage' ($r.Text -match 'unmapped: 6') (Get-CountLine $r)
+
+    $split = New-SeatFixture -Tasks @{
+        T912 = @{ Seat = 'linux'; Shas = $first3 }
+        T913 = @{ Seat = 'win'; Shas = $last3 }
+    }
+    [void]$created.Add($split)
+    $r = Invoke-Sweep -DocsPath $split -Seat linux
+    $unmappedSection = ($r.Text -split 'UNMAPPED \(')[-1]
+    $rightOnes = $true
+    foreach ($x in $last3) { if ($unmappedSection -notmatch [regex]::Escape($x.Substring(0, 9))) { $rightOnes = $false } }
+    foreach ($x in $first3) { if ($unmappedSection -match [regex]::Escape($x.Substring(0, 9))) { $rightOnes = $false } }
+    Check '11e seat:linux cites three => exactly the other three are unmapped for Linux' `
+        (($r.Text -match 'mapped: 3\s') -and ($r.Text -match 'unmapped: 3') -and $rightOnes) (Get-CountLine $r)
+
+    $anyFix = New-SeatFixture -Tasks @{
+        T914 = @{ Seat = 'linux'; Shas = $first3 }
+        T915 = @{ Seat = 'any'; Shas = $last3 }
+    }
+    [void]$created.Add($anyFix)
+    $r = Invoke-Sweep -DocsPath $anyFix -Seat linux -Format markdown -ShowMapped
+    Check '11f a seat:any task is Linux coverage too' `
+        (($r.Text -match '- Unmapped: 0') -and $r.Exit -eq 0) ("exit=" + $r.Exit)
+    Check '11g the markdown names Linux work items and the mapping task' `
+        (($r.Text -match 'Mapped to Linux work items: 6') -and ($r.Text -match 'T915'))
+
+    $citeAll = (($Expected | ForEach-Object { '- ' + $_.Substring(0, 9) }) -join "`n")
+    $logOnly = New-SeatFixture -Tasks @{} -Files @{
+        'windows-parity-log.md'    = $citeAll
+        'windows-parity-digest.md' = $citeAll
+    }
+    [void]$created.Add($logOnly)
+    $r = Invoke-Sweep -DocsPath $logOnly -Seat linux
+    Check '11h the log and digests are not Linux coverage' ($r.Text -match 'unmapped: 6') (Get-CountLine $r)
+
+    $noted = ('{ "lastEvaluated": "261de0390", "note": "' + (($last3 | ForEach-Object { $_.Substring(0, 9) + ' AppKit-only' }) -join '; ') + '" }')
+    $markFix = New-SeatFixture -Tasks @{ T916 = @{ Seat = 'linux'; Shas = $first3 } } -Files @{ 'windows-parity-linux-intake.json' = $noted }
+    [void]$created.Add($markFix)
+    $r = Invoke-Sweep -DocsPath $markFix -Seat linux
+    Check '11i a no-parity-owed citation in the Linux watermark maps the commit' `
+        (($r.Text -match 'unmapped: 0') -and $r.Exit -eq 0) ((Get-CountLine $r) + " exit=" + $r.Exit)
+    $winMark = New-SeatFixture -Tasks @{} -Files @{ 'windows-parity-linux-intake.json' = $noted }
+    [void]$created.Add($winMark)
+    $r = Invoke-Sweep -DocsPath $winMark
+    Check '11j ...but it is a Linux judgement: the Windows sweep ignores it' ($r.Text -match 'unmapped: 6') (Get-CountLine $r)
+
+    $bare = New-SeatFixture -Tasks @{}
+    [void]$created.Add($bare)
+    $r = Invoke-Sweep -DocsPath $bare -Seat linux -NoRange
+    Check '11k with no range the Linux seat reads ITS watermark, and says so when absent' `
+        (($r.Exit -ne 0) -and ($r.Text -match 'windows-parity-linux-intake\.json')) ("exit=" + $r.Exit)
+
+    # --- 12. T3342: -Record moves the Linux watermark only over a clean, contiguous range
+    $start = '261de0390'
+    $markJson = '{ "lastEvaluated": "' + $start + '", "note": "baseline" }'
+    $recDirty = New-SeatFixture -Tasks @{ T917 = @{ Seat = 'linux'; Shas = $first3 } } -Files @{ 'windows-parity-linux-intake.json' = $markJson }
+    [void]$created.Add($recDirty)
+    $markPath = Join-Path $recDirty 'windows-parity-linux-intake.json'
+    $before = Get-Content -LiteralPath $markPath -Raw
+    $r = Invoke-Sweep -DocsPath $recDirty -Seat linux -Record
+    Check '12a -Record over unmapped commits refuses and leaves the watermark' `
+        (($r.Exit -eq 1) -and ($r.Text -match 'NOT RECORDED') -and ((Get-Content -LiteralPath $markPath -Raw) -eq $before)) ("exit=" + $r.Exit)
+
+    $gapJson = '{ "lastEvaluated": "' + $Expected[5].Substring(0, 9) + '" }'
+    $recGap = New-SeatFixture -Tasks @{ T918 = @{ Seat = 'linux'; Shas = $Expected } } -Files @{ 'windows-parity-linux-intake.json' = $gapJson }
+    [void]$created.Add($recGap)
+    $gapPath = Join-Path $recGap 'windows-parity-linux-intake.json'
+    $before = Get-Content -LiteralPath $gapPath -Raw
+    $r = Invoke-Sweep -DocsPath $recGap -Seat linux -Record
+    Check '12b -Record over a range that does not start at the watermark refuses' `
+        (($r.Exit -eq 2) -and ($r.Text -match 'NOT RECORDED') -and ((Get-Content -LiteralPath $gapPath -Raw) -eq $before)) ("exit=" + $r.Exit + " " + (@($r.Lines | Select-Object -Last 3) -join ' / '))
+
+    $recOk = New-SeatFixture -Tasks @{ T919 = @{ Seat = 'linux'; Shas = $Expected } } -Files @{ 'windows-parity-linux-intake.json' = $markJson }
+    [void]$created.Add($recOk)
+    $okPath = Join-Path $recOk 'windows-parity-linux-intake.json'
+    $r = Invoke-Sweep -DocsPath $recOk -Seat linux -Record -Note 'fixture intake'
+    $ok = $false; $detail = "exit=" + $r.Exit
+    try {
+        $j = Get-Content -LiteralPath $okPath -Raw | ConvertFrom-Json
+        $run0 = @($j.runs | ForEach-Object { $_ })[0]
+        $ok = ($r.Exit -eq 0 -and $j.lastEvaluated -eq '4a41394b2' -and $run0.from -eq $start -and `
+               $run0.commits -eq 6 -and $j.note -eq 'fixture intake')
+        $detail += (" last={0} from={1} commits={2} note={3}" -f $j.lastEvaluated, $run0.from, $run0.commits, $j.note)
+    }
+    catch { $detail += " parse failed: $_" }
+    Check '12c a clean contiguous sweep records the range end, its size and the note' $ok $detail
+    $bytes = [System.IO.File]::ReadAllBytes($okPath)
+    Check '12d the watermark is written without a BOM' (-not ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB))
+
+    $noteCite = (($last3 | ForEach-Object { $_.Substring(0, 9) + ' AppKit-only' }) -join ', ')
+    $recNote = New-SeatFixture -Tasks @{ T920 = @{ Seat = 'linux'; Shas = $first3 } } -Files @{ 'windows-parity-linux-intake.json' = $markJson }
+    [void]$created.Add($recNote)
+    $notePath = Join-Path $recNote 'windows-parity-linux-intake.json'
+    $r = Invoke-Sweep -DocsPath $recNote -Seat linux -Record -Note $noteCite
+    $ok = $false; $detail = "exit=" + $r.Exit
+    try {
+        $j = Get-Content -LiteralPath $notePath -Raw | ConvertFrom-Json
+        $ok = ($r.Exit -eq 0 -and $j.lastEvaluated -eq '4a41394b2' -and $j.note -eq $noteCite -and $r.Text -match 'RECORDED')
+        $detail += (" last={0}" -f $j.lastEvaluated)
+    }
+    catch { $detail += " parse failed: $_" }
+    Check '12f a no-parity-owed commit cited in -Note is covered in the same run, and the note is kept' $ok $detail
+
+    $r = Invoke-Sweep -DocsPath $recOk -Record
+    Check '12e -Record without -Seat linux is refused (Windows records through main-intake.ps1)' `
+        (($r.Exit -ne 0) -and ($r.Text -match 'main-intake')) ("exit=" + $r.Exit)
+
     Complete-TestBody  # T1039: the run reached the end of its body
 }
 finally {

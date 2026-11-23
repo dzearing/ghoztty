@@ -27,7 +27,7 @@ port - the mac version is first to get features, we port to windows and linux."
 | CLI → app IPC client | Already POSIX. The Mac path is a Unix domain socket, and `apprt.ipc.socketPath()` only special-cases Windows, so a Linux client resolves a socket with no new code. | `src/apprt/ipc.zig`, `src/os/ipc_client.zig` |
 | IPC server + verb handlers | The Windows server is Zig: 2793 lines of handlers with only 7 `w32.` calls, plus shared helpers already in `src/apprt/ipc/` (args, list, read_tail, target_lookup, url_scheme...). Most of the verb logic can move into shared code and serve GTK too. The Mac server is Swift and cannot be shared. | `src/apprt/win32/IpcHandlers.zig`, `IpcServer.zig`, `IpcRegistry.zig` |
 | `ghoztty-agent` | Already has Linux branches: metrics sampling, foreground-process lookup, pid, `xdg-open`. PTYs are the same POSIX code the Mac uses. Probably the closest to working today. | `src/remote/agent/` |
-| Sweep/intake | `parity-sweep.ps1` and the staleness check currently **exclude** `src/apprt/gtk/` as "Linux's, owes Windows nothing". That stays right for the Windows seat; the Linux seat needs its own intake later (task L13). | `go.md` step 5, `docs/claude/testing.md` |
+| Sweep/intake | `parity-sweep.ps1` and the staleness check currently **exclude** `src/apprt/gtk/` as "Linux's, owes Windows nothing". That stays right for the Windows seat. The Linux seat's own intake is `parity-sweep.ps1 -Seat linux` (L13, T3342): Mac commits since the Linux watermark (`windows-parity-linux-intake.json`, baseline `9c0e90622`) that no `seat: linux`/`any` task cites, run every lane-L turn. | `go.md` lane L overrides, `docs/claude/testing.md` |
 
 ## Translation table (Mac → Windows → Linux)
 

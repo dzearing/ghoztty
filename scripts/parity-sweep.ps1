@@ -46,11 +46,30 @@
   no-op; for "-Range <merge-base>..HEAD" it is the difference between a usable
   report and 187 lines of noise.
 
+  THE LINUX SEAT (T3342). Linux follows the Mac the same way Windows does, so
+  it owes the same set of Mac commits, but a Windows task citing a sha says
+  nothing about whether Linux has it. "-Seat linux" therefore asks a separate
+  question over the same paths: which incoming commits since the LINUX
+  watermark (docs/design/windows-parity-linux-intake.json) does no seat:linux
+  (or seat:any) task file cite? Only those task files and the Linux watermark
+  itself count as coverage - the log, digests, decisions and Windows tasks do
+  not. A Mac commit that owes Linux nothing (an AppKit-only fix) is cited in
+  the watermark's note. "-Record" moves that watermark to the end of the range,
+  and refuses unless the sweep is clean AND the range starts at the current
+  watermark, so a range can never be recorded over a hole or a gap. The
+  default seat (windows) is unchanged, output included.
+
   ASCII-only by design (PS 5.1 on this box mangles non-ASCII on rewrite).
 
 .EXAMPLE
   # The default: everything on origin/main since the last recorded intake.
   scripts\parity-sweep.ps1
+
+.EXAMPLE
+  # The Linux seat's intake: Mac commits since the Linux watermark that no
+  # seat:linux task cites; then move the watermark once it is clean.
+  scripts\parity-sweep.ps1 -Seat linux
+  scripts\parity-sweep.ps1 -Seat linux -Record -Note "filed T1, T2; abc1234 is AppKit-only"
 
 .EXAMPLE
   # A specific merge range, as a gate before closing the merge task.
@@ -101,6 +120,18 @@ param(
     # buries it.
     [switch]$ShowMapped,
 
+    # Whose coverage is asked about (T3342). 'windows' is the historical sweep,
+    # unchanged. 'linux' counts only seat:linux / seat:any task files and the
+    # Linux watermark as coverage, and defaults the range to that watermark.
+    [ValidateSet('windows', 'linux')]
+    [string]$Seat = 'windows',
+
+    # Linux seat only: on a clean sweep whose range starts at the current
+    # watermark, move the watermark to the range's end. -Note is stored with it
+    # and is where a no-parity-owed commit is cited by sha.
+    [switch]$Record,
+    [string]$Note = '',
+
     [string]$RepoRoot
 )
 
@@ -116,6 +147,15 @@ if (-not $DocsPath) {
 }
 
 $IntakePath = Join-Path $RepoRoot 'docs\design\windows-parity-main-intake.json'
+
+# The Linux seat keeps its own watermark, beside the docs it is indexed with so
+# a fixture DocsPath carries its own (T3342).
+$LinuxIntakeName = 'windows-parity-linux-intake.json'
+$LinuxIntakePath = Join-Path $DocsPath $LinuxIntakeName
+if ($Seat -eq 'linux') { $IntakePath = $LinuxIntakePath }
+if ($Record -and $Seat -ne 'linux') {
+    throw "-Record is for -Seat linux; the Windows watermark moves through scripts\main-intake.ps1 record"
+}
 
 # ---------------------------------------------------------------------------
 # Range resolution
@@ -214,6 +254,36 @@ function Resolve-IncomingRef {
 # commit it has nothing to do with.
 $ShaToken = [regex]'(?<![#0-9A-Za-z])([0-9a-f]{7,40})(?![0-9A-Za-z])'
 
+# The task file's own seat, from its frontmatter. Absent means 'win', the
+# tracker's default (docs/design/windows-parity-tasks/README.md).
+$SeatField = [regex]'(?m)^seat:\s*"?([A-Za-z]+)"?\s*$'
+
+function Get-TaskSeat {
+    param([string]$Text)
+
+    if ($Text -notmatch '^\s*---') { return 'win' }
+    $front = ($Text -split '(?m)^---\s*$', 3)
+    if ($front.Count -lt 3) { return 'win' }
+    $m = $SeatField.Match($front[1])
+    if ($m.Success) { return $m.Groups[1].Value.ToLowerInvariant() }
+    return 'win'
+}
+
+# Which documents are evidence for the seat being swept (T3342). The Windows
+# sweep counts every parity doc except the Linux watermark, whose no-parity-owed
+# citations are a Linux judgement. The Linux sweep counts only work the Linux
+# loop will actually do - seat:linux and seat:any task files - plus its own
+# watermark.
+function Test-CountsForSeat {
+    param([System.IO.FileInfo]$File, [string]$Text)
+
+    if ($Seat -ne 'linux') { return ($File.Name -ne $LinuxIntakeName) }
+    if ($File.Name -eq $LinuxIntakeName) { return $true }
+    if ($File.Directory.Name -ne 'windows-parity-tasks' -or $File.Extension -ne '.md') { return $false }
+    $s = Get-TaskSeat -Text $Text
+    return ($s -eq 'linux' -or $s -eq 'any')
+}
+
 function Build-ReferenceIndex {
     param([string]$Root)
 
@@ -226,14 +296,35 @@ function Build-ReferenceIndex {
     foreach ($f in $files) {
         $text = Get-Content -LiteralPath $f.FullName -Raw
         if (-not $text) { continue }
+        if (-not (Test-CountsForSeat -File $f -Text $text)) { continue }
         foreach ($m in $ShaToken.Matches($text)) {
             $tok = $m.Groups[1].Value
             $key = $tok.Substring(0, 7)
             if (-not $index.ContainsKey($key)) { $index[$key] = New-Object System.Collections.ArrayList }
-            [void]$index[$key].Add([pscustomobject]@{ Token = $tok; File = $f })
+            [void]$index[$key].Add([pscustomobject]@{ Token = $tok; Label = (Get-SourceLabel $f) })
+        }
+    }
+
+    # Linux seat: the -Note about to be recorded is coverage in this same run,
+    # so a no-parity-owed commit can be cited and recorded in one step (T3342).
+    # A Note is only stored on a clean -Record, so the citation is never lost.
+    if ($Seat -eq 'linux' -and $Note) {
+        foreach ($m in $ShaToken.Matches($Note)) {
+            $tok = $m.Groups[1].Value
+            $key = $tok.Substring(0, 7)
+            if (-not $index.ContainsKey($key)) { $index[$key] = New-Object System.Collections.ArrayList }
+            [void]$index[$key].Add([pscustomobject]@{ Token = $tok; Label = '-Note' })
         }
     }
     return $index
+}
+
+# rev-parse one rev to its full sha. Indexing the call's result directly is a
+# trap: a one-line result unrolls to a scalar string, and [0] is its first char.
+function Resolve-FullSha {
+    param([string]$Rev)
+    $out = @(Invoke-Git @('rev-parse', "$Rev^{commit}"))
+    return ([string]$out[0]).Trim()
 }
 
 # The label a mapped commit is "filed as": the task id when the reference lives
@@ -262,7 +353,7 @@ function Find-Mapping {
         # The indexed token must really be an abbreviation OF this sha, not
         # merely share its first seven characters.
         if ($Sha.StartsWith($entry.Token)) {
-            $label = Get-SourceLabel $entry.File
+            $label = $entry.Label
             if (-not $labels.Contains($label)) { $labels.Add($label, $true) }
         }
     }
@@ -327,7 +418,7 @@ $total = $mapped.Count + $unmapped.Count
 
 switch ($Format) {
     'json' {
-        [pscustomobject]@{
+        $report = [pscustomobject]@{
             range           = $resolvedRange
             paths           = $Paths
             incoming_ref    = $resolvedIncoming
@@ -335,7 +426,10 @@ switch ($Format) {
             total           = $total
             mapped          = @($mapped)
             unmapped        = @($unmapped)
-        } | ConvertTo-Json -Depth 5
+        }
+        # Linux only, so the Windows sweep's JSON stays byte-identical (T3342).
+        if ($Seat -eq 'linux') { $report | Add-Member -NotePropertyName seat -NotePropertyValue $Seat }
+        $report | ConvertTo-Json -Depth 5
     }
 
     'markdown' {
@@ -344,7 +438,7 @@ switch ($Format) {
         ("Range: ``{0}`` (paths: {1})" -f $resolvedRange, (($Paths | ForEach-Object { '`' + $_ + '`' }) -join ', '))
         ''
         ("- Commits evaluated: {0}" -f $total)
-        ("- Mapped to Windows work items: {0}" -f $mapped.Count)
+        ("- Mapped to {0} work items: {1}" -f $(if ($Seat -eq 'linux') { 'Linux' } else { 'Windows' }), $mapped.Count)
         if ($excluded -gt 0) {
             ("- Excluded as branch-local (not reachable from ``{0}``): {1}" -f $resolvedIncoming, $excluded)
         }
@@ -378,6 +472,9 @@ switch ($Format) {
         ("PARITY SWEEP {0}" -f $resolvedRange)
         ("  paths:   {0}" -f ($Paths -join ' '))
         ("  docs:    {0}" -f $DocsPath)
+        if ($Seat -eq 'linux') {
+            ("  seat:    linux (coverage = seat:linux/any task files + {0})" -f $LinuxIntakeName)
+        }
         if ($resolvedIncoming) {
             ("  incoming: {0}   branch-local excluded: {1}" -f $resolvedIncoming, $excluded)
         }
@@ -407,6 +504,58 @@ switch ($Format) {
             "SWEEP CLEAN ($total commit(s) evaluated)"
         }
     }
+}
+
+# ---------------------------------------------------------------------------
+# Record (Linux seat): move the watermark, only over a clean, contiguous range
+# ---------------------------------------------------------------------------
+
+if ($Record) {
+    $ends = $resolvedRange -split '\.\.', 2
+    if ($ends.Count -ne 2 -or -not $ends[0] -or -not $ends[1]) {
+        Write-Host "LINUX INTAKE NOT RECORDED: '$resolvedRange' is not an a..b range"
+        exit 2
+    }
+    if ($unmapped.Count -gt 0) {
+        Write-Host ("LINUX INTAKE NOT RECORDED: {0} unmapped commit(s) - file a seat:linux task for each, or cite it in -Note, and sweep again" -f $unmapped.Count)
+        exit 1
+    }
+    $startSha = Resolve-FullSha $ends[0]
+    $endSha = Resolve-FullSha $ends[1]
+    $existing = $null
+    if (Test-Path -LiteralPath $LinuxIntakePath) {
+        $existing = Get-Content -LiteralPath $LinuxIntakePath -Raw | ConvertFrom-Json
+    }
+    if ($existing -and $existing.lastEvaluated) {
+        $markSha = Resolve-FullSha ([string]$existing.lastEvaluated)
+        if ($markSha.Trim() -ne $startSha.Trim()) {
+            Write-Host ("LINUX INTAKE NOT RECORDED: the range starts at {0}, the watermark is {1} - sweep from the watermark (no -Range) so nothing is skipped" -f $startSha.Trim().Substring(0, 9), $existing.lastEvaluated)
+            exit 2
+        }
+    }
+    $now = Get-Date
+    $runs = New-Object System.Collections.ArrayList
+    [void]$runs.Add([pscustomobject]@{
+        at      = $now.ToString('yyyy-MM-ddTHH:mm:ss')
+        from    = $startSha.Trim().Substring(0, 9)
+        to      = $endSha.Trim().Substring(0, 9)
+        commits = $total
+        note    = $Note
+    })
+    if ($existing -and $existing.runs) {
+        foreach ($r in @($existing.runs | ForEach-Object { $_ })) { [void]$runs.Add($r) }
+    }
+    $out = [pscustomobject]@{
+        lastEvaluated = $endSha.Trim().Substring(0, 9)
+        date          = $now.ToString('yyyy-MM-dd')
+        at            = $now.ToString('yyyy-MM-ddTHH:mm:ss')
+        note          = $Note
+        runs          = @($runs)
+    }
+    # UTF-8 without a BOM: PS 5.1's Set-Content -Encoding utf8 writes one.
+    $json = ($out | ConvertTo-Json -Depth 5) + "`n"
+    [System.IO.File]::WriteAllText($LinuxIntakePath, $json, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host ("LINUX INTAKE RECORDED {0} -> {1} ({2} commit(s)) in {3}" -f $out.runs[0].from, $out.lastEvaluated, $total, $LinuxIntakePath)
 }
 
 if ($unmapped.Count -gt 0) { exit 1 }

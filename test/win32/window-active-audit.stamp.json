@@ -1,11 +1,10 @@
 {
     "guard":  "window-active-audit",
     "script":  "test/win32/window-active-audit.ps1",
-    "generated":  "2026-11-23T03:35:30-08:00",
-    "commit":  "ebfc09b56",
+    "generated":  "2026-11-23T03:53:41-08:00",
+    "commit":  "ac654ca09",
     "uncommitted":  [
-                        "src/apprt/win32/AgentIntegration.zig",
-                        "src/apprt/win32/BannerScriptInstaller.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -35,7 +34,7 @@
                   "src/apprt/win32/agent_offer.zig":  "e9393d79ddb7c9af31b8618ceccb26170df8e5ad6a6753dc5b9059137e4c7d4d",
                   "src/apprt/win32/agent_recovery.zig":  "518b0429ac5125fa4dd90df0a7e1b04297dd314bf2f2e5ef43a47c3512fabcfb",
                   "src/apprt/win32/agent_upgrade.zig":  "49c5c7ceea8da9bbf31619d51bfdede3b0e3d952e59553c4447410fd508895e9",
-                  "src/apprt/win32/AgentIntegration.zig":  "07b2fb5f55a0f4c8909841ed76c57c662fc0022249985a151d1393204d49de86",
+                  "src/apprt/win32/AgentIntegration.zig":  "206d196b9c35bf6826ff6daeafd2a5d1d089f053cfb9037bfd9b640099fc98cc",
                   "src/apprt/win32/AgentIntegrationsDialog.zig":  "246d10bd97a670440044da56b0072d1e41dff7d0c20ac4caae859bc0ab900eee",
                   "src/apprt/win32/App.zig":  "b42370ab327ac8513778939b45c69d34a85e199a0f0186afaabf0c8aff6cd5fc",
                   "src/apprt/win32/app_restart.zig":  "cb29ce354e630b7509f501fdb56a70b34bb21a06fbbc6b232ca40083f952dd25",
@@ -52,7 +51,7 @@
                   "src/apprt/win32/BannerDialog.zig":  "4bd17f175a1edac2f80752b525f38044cdb579755c7f23a296962e966a8ef1c0",
                   "src/apprt/win32/BannerFreeze.zig":  "04ce51c3a27e36fb8ddf4a0bbb0e7a2df64df6c3d2e68686ee7b3fd42fc73dd9",
                   "src/apprt/win32/BannerOverlay.zig":  "d682de170002f0d8d61762966c2c345a0ec6dcbf422c99a2935f389850776199",
-                  "src/apprt/win32/BannerScriptInstaller.zig":  "1f5d96b07db71eebd8320b78c7671d7fd3eaa623d604719387b8b34087a8a522",
+                  "src/apprt/win32/BannerScriptInstaller.zig":  "e349d9a86275fb68b44211120d5859a92e14dc2ce797f9060a8b5cd701cb923d",
                   "src/apprt/win32/bell_audio.zig":  "62fac1f75e392cebde66811ad0f7824931292e5ea76bac307847a6a854f40512",
                   "src/apprt/win32/bell_math.zig":  "035c306b1101152db30370b806871a5f9b7fa88ccfced31ae900c03192f9de0b",
                   "src/apprt/win32/BellBorder.zig":  "09e0d9a15d052d1b986386ac5f8142b68e8606c04e19e17822eac9d6adf3e29c",

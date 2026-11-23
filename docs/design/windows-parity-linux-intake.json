@@ -1,0 +1,15 @@
+{
+    "lastEvaluated":  "9c0e90622",
+    "date":  "2026-11-23",
+    "at":  "2026-11-23T03:44:03",
+    "note":  "Linux baseline (T3342): origin/main 9c0e90622, already merged into this branch; Mac behavior up to here reaches Linux through the docs/reference intake (L9-L12, T3340), not commit by commit.",
+    "runs":  [
+                 {
+                     "at":  "2026-11-23T03:44:03",
+                     "from":  "9c0e90622",
+                     "to":  "9c0e90622",
+                     "commits":  0,
+                     "note":  "Linux baseline (T3342): origin/main 9c0e90622, already merged into this branch; Mac behavior up to here reaches Linux through the docs/reference intake (L9-L12, T3340), not commit by commit."
+                 }
+             ]
+}

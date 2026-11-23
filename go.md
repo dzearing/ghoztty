@@ -165,6 +165,16 @@ Concretely, in order, with no stops in between:
        runs the Windows floor, because both Windows lanes build that same
        code.
      - Follow-up work found in lane L is filed with `-Seat linux`.
+     - **The Linux seat's main intake** (T3342), before step 1, every turn:
+       `powershell -NoProfile -File scripts\parity-sweep.ps1 -Seat linux`.
+       It lists the Mac commits since the Linux watermark
+       (`docs/design/windows-parity-linux-intake.json`, baseline `9c0e90622`)
+       that no `seat: linux`/`any` task cites - a Windows task citing one
+       does not count. Exit 0 with commits evaluated: run it again with
+       `-Record`. Exit 1: file a `-Seat linux` task per coherent change, citing
+       the shas; cite an AppKit-only commit that owes Linux nothing in
+       `-Note`; then `-Record -Note "<filed ids; no-parity-owed shas>"`, which
+       refuses over a hole or a gap. Commit the watermark with the tasks.
 
 0.5. **Daily digest** (user, 2026-08-05) — before picking a task, check
    `docs/design/windows-parity-digests/<today>.md` (local date). If it is
