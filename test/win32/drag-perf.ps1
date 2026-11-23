@@ -269,12 +269,14 @@ function Measure-DragShape([string]$mode, [int[]]$counts, [int]$moves) {
     try {
         $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' -TimeoutMs 20000
         if ($top -eq [IntPtr]::Zero) { throw "no window for the $mode instance" }
-        # The tree shapes (T2769) stack the extra panes in one column of a
-        # window tall enough that none of them goes under the pane minimum and
-        # folds into a strip: at 8 panes the alternating layout below folds,
-        # and the drag then never finds the root divider (T1854's shape).
-        $tall = ($mode -like 'tree*')
-        $height = if ($tall) { [math]::Max(900, 360 * (($counts | Measure-Object -Maximum).Maximum - 1) + 160) } else { 900 }
+        # Every shape stacks the extra panes in one column of a window tall
+        # enough that none of them goes under the pane minimum and folds into
+        # a strip. The alternating right/down layout this used to build folded
+        # at 4 panes and up, and the posted mouse-down then missed the root
+        # divider: no drag started, no summary was printed, and every count
+        # above 2 was scored with the 2-pane sample or NO SAMPLE (T1854). The
+        # tree shapes (T2769) proved the column first.
+        $height = [math]::Max(900, 360 * (($counts | Measure-Object -Maximum).Maximum - 1) + 160)
         [void](Set-TestWindowPos -Window ([IntPtr]$top) -X 40 -Y 40 -Width 1400 -Height $height)
         Start-Sleep -Milliseconds 800
 
@@ -283,7 +285,7 @@ function Measure-DragShape([string]$mode, [int[]]$counts, [int]$moves) {
             while ($have -lt $want) {
                 # First split makes the root boundary; the rest nest inside the
                 # right half, so the root divider keeps resizing everything.
-                $dir = if ($have -eq 1) { 'right' } elseif ($tall -or $have % 2 -eq 0) { 'down' } else { 'right' }
+                $dir = if ($have -eq 1) { 'right' } else { 'down' }
                 & $exe +split --direction=$dir 2>&1 | Out-Null
                 $have++
                 # Wait for the pane to actually exist rather than guessing at a
@@ -378,19 +380,18 @@ try {
     Rep ''
     Rep 'measurements (mean = one mouse move, end to end, on the UI thread):'
 
-    $serial = Measure-DragShape 'serial' $PaneCounts $Moves
-    $fanout = Measure-DragShape 'fanout' $PaneCounts $Moves
-    $batched = Measure-DragShape 'batched' $PaneCounts $Moves
-    # One instance per pane count for the tree shapes: an instance reports
-    # only its first drag (T1854), and section F's 8-pane row has to be an
-    # 8-pane drag, not the 2-pane one read again.
-    $tree = @{}
-    $treeSerial = @{}
-    foreach ($c in ($PaneCounts | Sort-Object)) {
-        $r = Measure-DragShape 'tree' @($c) $Moves
-        if ($r.ContainsKey($c)) { $tree[$c] = $r[$c] }
-        $r = Measure-DragShape 'treeserial' @($c) $Moves
-        if ($r.ContainsKey($c)) { $treeSerial[$c] = $r[$c] }
+    # One fresh instance per shape AND pane count (T1854): each N-pane row is
+    # then a drag over exactly N panes that nothing earlier in the run could
+    # have shaped, and a count whose drag printed nothing stays MISSING from
+    # its table - section A fails on it - instead of borrowing another
+    # count's sample.
+    $serial = @{}; $fanout = @{}; $batched = @{}; $tree = @{}; $treeSerial = @{}
+    $shapes = [ordered]@{ serial = $serial; fanout = $fanout; batched = $batched; tree = $tree; treeserial = $treeSerial }
+    foreach ($mode in $shapes.Keys) {
+        foreach ($c in ($PaneCounts | Sort-Object)) {
+            $r = Measure-DragShape $mode @($c) $Moves
+            if ($r.ContainsKey($c)) { $shapes[$mode][$c] = $r[$c] }
+        }
     }
     Rep ''
 
