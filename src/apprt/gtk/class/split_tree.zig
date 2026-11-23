@@ -573,6 +573,42 @@ pub const SplitTree = extern struct {
         return true;
     }
 
+    /// Put `replacement` in the slot `old` occupies, touching nothing else:
+    /// the tree keeps its shape, ratios and zoom, and every other pane -
+    /// viewers included - stays alive (T3400, win32's T399 surgical rebuild
+    /// over `SplitTree.replaceLeaf`). The new pane inherits `old`'s focus
+    /// standing and tint. `old` leaves the hierarchy and is released by the
+    /// old tree; whether its session survives is the caller's business
+    /// (`Surface.spareSession`). False when `old` is not in this tree.
+    pub fn replaceSurface(self: *Self, old: *Surface, replacement: *Surface) Allocator.Error!bool {
+        const alloc = Application.default().allocator();
+        const tree = self.getTree() orelse return false;
+        var it = tree.iterator();
+        const handle = while (it.next()) |entry| {
+            if (entry.view == old) break entry.handle;
+        } else return false;
+
+        _ = self.as(gobject.Object).bindProperty(
+            "is-split",
+            replacement.as(gobject.Object),
+            "is-split",
+            .{ .sync_create = true },
+        );
+        if (old.backgroundTint()) |tint| replacement.applyBackgroundTint(tint);
+
+        const was_focused = focused: {
+            const lf = self.private().last_focused.get() orelse break :focused false;
+            defer lf.unref();
+            break :focused lf == old;
+        };
+        if (was_focused) self.private().last_focused.set(replacement) else replacement.startUnfocused();
+
+        var new_tree = try tree.replaceLeaf(alloc, handle, replacement);
+        defer new_tree.deinit();
+        self.setTree(&new_tree);
+        return true;
+    }
+
     /// Replace the whole layout with `new_tree` (cloned): the IPC
     /// `+rearrange` (T3368). Every leaf of `new_tree` must already be a
     /// surface of this tree, so this MOVES panes; a surface `new_tree` leaves

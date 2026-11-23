@@ -45,6 +45,7 @@ const build_config = @import("../../build_config.zig");
 const internal_os = @import("../../os/main.zig");
 const source_checkout = @import("../../os/source_checkout.zig");
 const autostart = @import("agent_autostart.zig");
+const agent_recovery = @import("../win32/agent_recovery.zig");
 
 const log = std.log.scoped(.gtk_local_agent);
 
@@ -82,6 +83,89 @@ last_failure_ms: ?i64 = null,
 /// The login entry was refreshed (or deliberately skipped) this run.
 autostart_done: bool = false,
 
+/// Called after a NEW pane's request replaced a dead agent's connection
+/// (T3400), so the panes still riding the old one get rebuilt. Set by
+/// `AgentRecovery.start`; must not rebuild synchronously (it runs while a
+/// pane is being built).
+on_reconnected: ?*const fn () void = null,
+
+/// Retire a connection whose agent died or whose link stayed down: it stops
+/// carrying anything and is shut down OFF the GTK thread (win32's T229 rule -
+/// `shutdown` joins the connection's threads, and a peer thread that does not
+/// exit promptly would wedge the app). Never freed: panes borrow it.
+fn retire(self: *LocalAgent, d: tcp_dial.Dialed) void {
+    self.retired.append(self.alloc, d) catch
+        log.warn("retired local-agent connection could not be tracked; leaking it", .{});
+    const t = std.Thread.spawn(.{}, shutdownRetired, .{d.conn}) catch |err| {
+        log.warn("retired local-agent connection: async teardown unavailable ({}), shutting down inline", .{err});
+        d.conn.shutdown();
+        return;
+    };
+    t.detach();
+}
+
+fn shutdownRetired(conn: *connection.Connection) void {
+    conn.shutdown();
+}
+
+/// Whether `conn` is one this app retired - the connection of an agent that
+/// died or a link that stayed down. A pane still riding one is frozen and is
+/// what in-place recovery rebuilds (T3400).
+pub fn isRetired(self: *const LocalAgent, conn: *const connection.Connection) bool {
+    for (self.retired.items) |d| if (d.conn == conn) return true;
+    return false;
+}
+
+/// The shared link's state, or null when there is no shared connection.
+pub fn sharedState(self: *LocalAgent) ?connection.LinkState.State {
+    const d = self.shared orelse return null;
+    return d.conn.state();
+}
+
+/// The pid of the agent the shared connection talks to (0 when unknown).
+pub fn sharedPid(self: *const LocalAgent) posix.pid_t {
+    return self.shared_pid;
+}
+
+pub fn sharedPidAlive(self: *const LocalAgent) bool {
+    return pidAlive(self.shared_pid);
+}
+
+/// The live agent's pid as its info file records it, or null when no live
+/// agent is there. Only read on a settle window's deciding tick.
+pub fn liveAgentPid(self: *LocalAgent) ?posix.pid_t {
+    const dir = paths.stateDir(self.alloc, build_config.is_debug) catch return null;
+    defer self.alloc.free(dir);
+    const port_path = paths.join(self.alloc, dir, paths.port_file) catch return null;
+    defer self.alloc.free(port_path);
+    const bytes = std.fs.cwd().readFileAlloc(self.alloc, port_path, 64 * 1024) catch return null;
+    defer self.alloc.free(bytes);
+    const parsed = std.json.parseFromSlice(InfoFile, self.alloc, bytes, .{ .ignore_unknown_fields = true }) catch return null;
+    defer parsed.deinit();
+    const pid = std.math.cast(posix.pid_t, parsed.value.pid) orelse return null;
+    return if (pidAlive(pid)) pid else null;
+}
+
+/// Find or spawn an agent for in-place recovery (T3400, win32's
+/// `reconnectForRecovery`): ignores the failure cooldown, since a confirmed
+/// drop already waited out its settle window. Only on success is the old
+/// shared connection retired, so a failed attempt leaves the down link in
+/// place for the retry schedule to re-check.
+pub fn reconnectForRecovery(self: *LocalAgent) ?*connection.Connection {
+    const resolved = self.resolve() catch |err| {
+        log.warn("in-place recovery: no local agent could be reached ({})", .{err});
+        self.last_failure_ms = std.time.milliTimestamp();
+        return null;
+    };
+    if (self.shared) |old| self.retire(old);
+    self.shared = resolved.dialed;
+    self.shared_pid = resolved.pid;
+    self.last_failure_ms = null;
+    log.info("in-place recovery: re-dialed the local agent (pid {d})", .{resolved.pid});
+    self.ensureAutostart();
+    return self.shared.?.conn;
+}
+
 pub fn init(alloc: Allocator) LocalAgent {
     return .{ .alloc = alloc };
 }
@@ -90,12 +174,23 @@ pub fn init(alloc: Allocator) LocalAgent {
 /// plain exec pane. Reuses the warm connection while its agent lives; finds
 /// or spawns one otherwise.
 pub fn sharedConnection(self: *LocalAgent) ?*connection.Connection {
-    if (self.shared) |*d| {
-        if (pidAlive(self.shared_pid)) return d.conn;
-        log.warn("local agent pid {d} is gone; finding or starting a new one", .{self.shared_pid});
-        self.retired.append(self.alloc, d.*) catch {};
-        self.shared = null;
-        self.shared_pid = 0;
+    if (self.shared) |d| {
+        // T3400: win32's T764/T1473 verdict, so a new pane never rides a link
+        // that cannot carry it.
+        switch (agent_recovery.newSurfaceVerdict(d.conn.state(), self.shared_pid, pidAlive(self.shared_pid))) {
+            .hand_over => return d.conn,
+            // Down but the agent may be alive (a wedge): a plain exec pane
+            // now beats a pane frozen on a stalled link.
+            .exec_fallback => return null,
+            .recover_first, .re_resolve => {
+                log.warn("local agent pid {d} is gone; finding or starting a new one", .{self.shared_pid});
+                const fresh = self.reconnectForRecovery() orelse return null;
+                // The panes that rode the old agent are rebuilt onto the
+                // fresh one once this pane is built (never from inside it).
+                if (self.on_reconnected) |hook| hook();
+                return fresh;
+            },
+        }
     }
 
     const now = std.time.milliTimestamp();

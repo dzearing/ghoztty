@@ -777,6 +777,11 @@ pub const Surface = extern struct {
         restore_snapshot: ?[]u8 = null,
         restore_offset: u64 = 0,
 
+        /// Set when in-place agent recovery replaced this pane (T3400): its
+        /// teardown DETACHes rather than ending the session the replacement
+        /// re-attached.
+        spare_session: bool = false,
+
         /// The viewer this pane shows INSTEAD of a terminal (T3411), or null
         /// for a terminal pane. A viewer pane is an ordinary Surface in the
         /// split tree - it splits, resizes, focuses, zooms and closes through
@@ -881,6 +886,22 @@ pub const Surface = extern struct {
     /// tab nobody has shown has no core surface, and recording it as
     /// session-less would throw its session away at the next save. Null for
     /// an exec pane or a viewer. Borrowed: use it now.
+    /// The agent connection this pane's shell rides, or null for an exec
+    /// pane, a viewer, or a pane whose core is not built yet (T3400).
+    pub fn agentConnection(self: *Self) ?*const @import("../../../remote/connection.zig").Connection {
+        const c = self.core() orelse return null;
+        return switch (c.io.backend) {
+            .remote => |*r| r.conn,
+            else => null,
+        };
+    }
+
+    /// Mark this pane as replaced by in-place recovery (T3400); see
+    /// `Private.spare_session`.
+    pub fn spareSession(self: *Self) void {
+        self.private().spare_session = true;
+    }
+
     pub fn agentSessionId(self: *Self) ?[]const u8 {
         if (self.core()) |c| if (c.remoteSessionId()) |id| return id;
         return self.private().restore_session_id;
@@ -2413,7 +2434,10 @@ pub const Surface = extern struct {
             // agent-backed pane ends its session (CLOSE). A quit leaves the
             // default (DETACH): the session survives for the next launch.
             // A no-op for an exec pane.
-            if (!Application.default().isQuitting()) v.setSessionCloseIntent(true);
+            // T3400: a pane in-place recovery REPLACED is not a user close -
+            // its session is the one its replacement just re-ATTACHed
+            // (win32's `agent_recovery.sessionSpared` invariant).
+            if (!Application.default().isQuitting() and !priv.spare_session) v.setSessionCloseIntent(true);
 
             // Deinit the surface
             v.deinit();

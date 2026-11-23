@@ -31,6 +31,7 @@ const adw_version = @import("../adw_version.zig");
 const gtk_version = @import("../gtk_version.zig");
 const winprotopkg = @import("../winproto.zig");
 const SessionLayout = @import("../SessionLayout.zig");
+const AgentRecovery = @import("../AgentRecovery.zig");
 const ApprtApp = @import("../App.zig");
 const Common = @import("../class.zig").Common;
 const WeakRef = @import("../weak_ref.zig").WeakRef;
@@ -574,6 +575,10 @@ pub const Application = extern struct {
 
         // From here on the app keeps the manifest current (T3397).
         if (self.as(gio.Application).getIsRemote() == 0) SessionLayout.startSync(self);
+
+        // T3400: a dead or unreachable local agent is recovered in place -
+        // its panes rebuilt on a fresh agent - instead of left frozen.
+        if (self.as(gio.Application).getIsRemote() == 0) AgentRecovery.start(self);
 
         // Ghoztty (T3410): a debug build's headless viewer test window. A
         // no-op unless GHOZTTY_TEST_VIEWER is set, and compiled out of a
