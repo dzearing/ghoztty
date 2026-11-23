@@ -183,9 +183,34 @@ sleep 1.5
 [ "$(md5sum "$manifest" 2>/dev/null)" = "$m_before" ] || [ "$(manifest_q 'len(leaves)')" = 4 ]
 hl_check "R17 the second instance's quit did not overwrite the manifest" $? "$(manifest_q 'len(leaves)')"
 
+# ---- 5b. the agent died too (a reboot): sessions come back relaunched -------
+# session-relaunch = restore (the default): a plain shell in the session's
+# recorded directory, under the same pane id, in the same place.
+kill -TERM "$APP3" 2>/dev/null; hl_wait_for 15 sh -c "! kill -0 $APP3 2>/dev/null"
+old_agent=$(hl_agent_pid)
+old_tree=$( [ -n "$old_agent" ] && hl_tree "$old_agent" )
+idA=$(manifest_q '[l["pane_id"] for l in leaves if l.get("ipc_name") == "pa"][0]')
+kill -KILL "$old_agent" 2>/dev/null
+for p in $old_tree; do kill -KILL "$p" 2>/dev/null; done
+hl_wait_for 10 sh -c "! kill -0 $old_agent 2>/dev/null"
+hl_launch APP6 "$app" --gtk-single-instance=false
+hl_wait_for 30 serving
+hl_wait_for 20 four_live
+new_agent=$(hl_agent_pid)
+relA=$(leaf_field pa pid)
+[ -n "$new_agent" ] && [ "$new_agent" != "$old_agent" ] && [ -n "$relA" ] && [ "$relA" != 0 ] && [ "$relA" != "$listA" ] \
+    && alive "$relA" && is_ancestor "$new_agent" "$relA" && [ "$(leaf_field pa id)" = "$idA" ]
+hl_check "R17b after an agent restart pa comes back as a relaunched shell under the new agent, same pane id" $? \
+    "agent $old_agent->$new_agent pid $listA->$relA id=$(leaf_field pa id) want=$idA"
+[ "$(shape | grep -c .)" = 2 ] && [ "$(live_leaves)" = 4 ]
+hl_check "R17c every window and pane is back after the agent restart" $? "$(shape | tr '\n' '|')"
+read_pa_any() { cli +read --name=pa --lines=60 2>/dev/null | grep -Eq 'ready-pa'; }
+hl_wait_for 10 read_pa_any
+hl_check "R17d the relaunched pa replays the history it had" $? "$(cli +read --name=pa --lines=10 2>&1 | tr '\n' '|' | head -c 400)"
+
 # ---- 6. what the user closes stays closed ----------------------------------
 cli +close --target=wa > /dev/null 2>&1
-hl_wait_for 10 sh -c "! kill -0 $(cat "$pA") 2>/dev/null"
+hl_wait_for 10 sh -c "! kill -0 $relA 2>/dev/null"
 hl_check "R18 closing window wa ends its panes' processes" $?
 hl_wait_for 5 sh -c "[ \"\$(python3 -c \"
 import json
@@ -195,7 +220,7 @@ hl_check "R19 the manifest drops the closed window within seconds" $? "$(manifes
 for t in $(cli +list --json 2>/dev/null | python3 -c 'import json,sys; [print(w.get("target") or w["id"]) for w in json.load(sys.stdin)["data"]["windows"]]' 2>/dev/null); do
     cli +close --target="$t" > /dev/null 2>&1
 done
-hl_wait_for 15 sh -c "! kill -0 $APP3 2>/dev/null"
+hl_wait_for 15 sh -c "! kill -0 $APP6 2>/dev/null"
 hl_check "R20 closing the last window quits the app" $?
 [ ! -e "$manifest" ] || [ "$(manifest_q 'len(leaves)')" = 0 ]
 hl_check "R21 an app the user emptied leaves nothing to restore" $? "$(manifest_q 'len(leaves)')"
@@ -204,8 +229,8 @@ hl_wait_for 30 serving
 hl_wait_for 10 sh -c "[ \"\$(env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID '$app' +list --json 2>/dev/null | grep -o '\"type\":\"leaf\"' | wc -l)\" = 1 ]"
 hl_check "R22 the next launch opens one fresh window with one pane" $? "$(shape | tr '\n' '|')"
 
-grep -E 'panic|reached unreachable' "$APP_LOG" "$APP2_LOG" "$APP3_LOG" "$APP4_LOG" "$APP5_LOG" > /dev/null 2>&1
+grep -E 'panic|reached unreachable' "$APP_LOG" "$APP2_LOG" "$APP3_LOG" "$APP4_LOG" "$APP5_LOG" "$APP6_LOG" > /dev/null 2>&1
 [ $? != 0 ]
-hl_check "R23 no app log carries a panic" $? "$(grep -h -m2 -E 'panic|unreachable' "$APP_LOG" "$APP2_LOG" "$APP3_LOG" "$APP4_LOG" "$APP5_LOG" 2>/dev/null | tr '\n' ' ')"
+hl_check "R23 no app log carries a panic" $? "$(grep -h -m2 -E 'panic|unreachable' "$APP_LOG" "$APP2_LOG" "$APP3_LOG" "$APP4_LOG" "$APP5_LOG" "$APP6_LOG" 2>/dev/null | tr '\n' ' ')"
 
 hl_finish "$L"
