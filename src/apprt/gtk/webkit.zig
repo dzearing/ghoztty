@@ -303,6 +303,23 @@ pub extern fn g_file_monitor_cancel(monitor: *GFileMonitor) c_int;
 pub extern fn g_signal_handler_disconnect(instance: *anyopaque, handler_id: c_ulong) void;
 pub extern fn gtk_widget_get_mapped(widget: *GtkWidget) c_int;
 
+// --- The style the composer follows (T3552) ---------------------------------
+
+pub const AdwStyleManager = opaque {};
+pub extern fn adw_style_manager_get_default() *AdwStyleManager;
+pub extern fn adw_style_manager_get_dark(manager: *AdwStyleManager) c_int;
+pub extern fn adw_style_manager_set_color_scheme(manager: *AdwStyleManager, scheme: c_int) void;
+/// `AdwColorScheme`.
+pub const adw_color_scheme_default: c_int = 0;
+pub const adw_color_scheme_force_light: c_int = 1;
+pub const adw_color_scheme_force_dark: c_int = 4;
+pub const GdkRGBA = extern struct { red: f32, green: f32, blue: f32, alpha: f32 };
+pub const GtkStyleContext = opaque {};
+/// Deprecated since GTK 4.10 but present for all of GTK 4: the only way to
+/// read a theme's named colour (`@card_bg_color`, `@accent_bg_color`).
+pub extern fn gtk_widget_get_style_context(widget: *GtkWidget) *GtkStyleContext;
+pub extern fn gtk_style_context_lookup_color(ctx: *GtkStyleContext, name: [*:0]const u8, color: *GdkRGBA) c_int;
+
 /// `G_IO_ERROR_NOT_FOUND`.
 pub const io_error_not_found: c_int = 1;
 

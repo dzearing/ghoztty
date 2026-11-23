@@ -18,6 +18,9 @@
 # `composer-type` types through the engine's insertText; `composer-key` fires
 # a keydown in the composer page (the shim's chords run on keydown).
 #
+# T3552: `style dark|light` flips the libadwaita style; C24-C27 read the
+# composer page's computed fill and text colour on both sides of a flip.
+#
 # Output: one PASS/FAIL line per check, then 'VIEWER COMPOSER: ALL PASS' or
 # 'VIEWER COMPOSER: <n> FAILURE(S)'. Exit 0 only on ALL PASS.
 set -u
@@ -54,6 +57,8 @@ H="(function(){var h=document.querySelector('#content h1')||document.querySelect
 # Select the heading in the PAGE: what the report's source.selection carries.
 SEL="(function(){var h=document.querySelector('#content h1')||document.querySelector('h1');var r=document.createRange();r.selectNodeContents(h);var s=getSelection();s.removeAllRanges();s.addRange(r);return s.toString()})()"
 BOX="JSON.stringify(document.getElementById('c').innerText)"
+# The page's painted fill and text colour (T3552): what the user sees.
+PAINT="(function(){return getComputedStyle(document.body).backgroundColor+'|'+getComputedStyle(document.getElementById('c')).color})()"
 
 steps="$HL_RUNTIME/steps"
 out="$HL_RUNTIME/steps.out"
@@ -88,6 +93,20 @@ composer-type by the button
 sleep 400
 click feedback-send
 composer
+sleep 2500
+style light
+click feedback
+composer
+composer-probe $PAINT
+style dark
+sleep 400
+composer
+composer-probe $PAINT
+composer-key Escape
+sleep 300
+click feedback
+composer
+composer-probe $PAINT
 EOF
 
 dump="$HL_RUNTIME/viewer-dump"
@@ -161,6 +180,29 @@ hl_check "C17 Ctrl+Enter on an empty composer files nothing and says so" $? "$s"
 s=$(co 11)
 has "$s" "sends=2"
 hl_check "C18 the send button files too" $? "$s"
+
+# ---- the style it follows (T3552) --------------------------------------------
+# rgb(r, g, b) -> the channel sum, so "light" and "dark" need no exact theme.
+lum() { echo "$1" | sed -n 's/.*rgb(\([0-9]*\), *\([0-9]*\), *\([0-9]*\)).*/\1 \2 \3/p' | awk '{print $1+$2+$3}'; }
+paint() { nth probe "$1" | sed 's/^probe OK //'; }
+p1=$(paint 3); bg1=$(lum "${p1%%|*}"); fg1=$(lum "${p1#*|}")
+s=$(co 13)
+has "$s" "open=true view=true ready=true" && has "$s" "style=light" && [ "${bg1:-0}" -gt 600 ] && [ "${fg1:-999}" -lt 300 ]
+hl_check "C24 under a light style the composer opens as a light pill with dark text" $? "$s / $p1"
+
+p2=$(paint 4); bg2=$(lum "${p2%%|*}"); fg2=$(lum "${p2#*|}")
+s=$(co 14)
+v13=$(co 13 | sed -n 's/.* vars=\([0-9]*\).*/\1/p'); v14=$(echo "$s" | sed -n 's/.* vars=\([0-9]*\).*/\1/p')
+has "$s" "style=dark" && [ "${v14:-0}" -gt "${v13:-0}" ] && [ "${bg2:-999}" -lt 300 ] && [ "${fg2:-0}" -gt 600 ]
+hl_check "C25 a flip to dark while it is open re-dresses the page: dark fill, light text - never the white slab" $? "$s / $p2"
+
+p3=$(paint 5); bg3=$(lum "${p3%%|*}")
+s=$(co 15)
+has "$s" "style=dark" && [ "${bg3:-999}" -lt 300 ] && [ "$p3" = "$p2" ]
+hl_check "C26 a composer opened under the dark style starts dark, with the same colours" $? "$s / $p3"
+
+grep -q 'composer palette style=dark' "$APP_LOG" && grep -q 'composer palette style=light' "$APP_LOG"
+hl_check "C27 the app logged both palettes" $? "$(grep 'composer palette' "$APP_LOG" | tail -4 | tr '\n' ' ')"
 
 # ---- the reports on disk -----------------------------------------------------
 n=$(find "$queue" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)

@@ -632,6 +632,10 @@ test {
     // WebKit's message handlers, the send/close verbs, and the report's
     // kind/viewport/footer strings (T3544). No GTK imports.
     _ = @import("gtk/viewer_feedback_host.zig");
+    // ... and its colours for a light or dark libadwaita style: win32's
+    // chrome_theme derivations over the card and accent (T3552). No GTK
+    // imports.
+    _ = @import("gtk/composer_palette.zig");
     // ... and quoting a page selection into it: the splice at the caret, the
     // quote spans across the page boundary (UTF-16 units, ids), the report's
     // quotes, and the toolbar's Copy message (T3545). No GTK imports.

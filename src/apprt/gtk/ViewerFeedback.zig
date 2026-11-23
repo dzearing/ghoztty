@@ -25,6 +25,9 @@
 //! view, Enter for a newline, Ctrl+Enter to send, Escape to close, and the
 //! report filed into `<worktree>/temp/feedback/new/<stem>/report.json` by
 //! win32's pure `viewer_feedback_report.zig` (staging + one atomic rename).
+//! Its colours follow the libadwaita style (T3552): `composer_palette.zig`
+//! derives them from the style manager's dark flag and the theme's card and
+//! accent, and a style flip while the composer is open re-pushes them.
 const ViewerFeedback = @This();
 
 const std = @import("std");
@@ -45,6 +48,7 @@ const quoting = @import("viewer_quote.zig");
 const shot = @import("viewer_shot.zig");
 const feedback_images = @import("../win32/viewer_feedback_images.zig");
 const pane_snapshot = @import("pane_snapshot.zig");
+const palette = @import("composer_palette.zig");
 
 const log = std.log.scoped(.gtk_viewer);
 
@@ -127,6 +131,13 @@ selected: ?u32 = null,
 /// Screenshots taken (`+` / Ctrl+Shift+S), and the last one's size.
 shots: u32 = 0,
 last_shot: [2]u32 = .{ 0, 0 },
+/// The style manager's `notify::dark` while a composer page exists (T3552).
+style_handler: c_ulong = 0,
+/// The palette last pushed to the page, and how many pushes there have been -
+/// the steps seam's `style=`/`bg=`/`vars=`.
+palette_dark: bool = false,
+palette_bg: [7]u8 = "#000000".*,
+palette_pushes: u32 = 0,
 
 /// What a worker completion needs to find its pane: the viewer pointer, read
 /// and cleared only on the UI thread, behind a count every job holds.
@@ -214,6 +225,7 @@ pub fn deinit(self: *ViewerFeedback) void {
     }
     self.ucm = null;
     self.view = null;
+    self.disconnectStyle();
     self.text.deinit(alloc);
     self.quotes.deinit(alloc);
     self.spans.deinit(alloc);
@@ -616,6 +628,17 @@ fn createView(self: *ViewerFeedback, v: *Viewer) void {
     wk.gtk_box_append(slot, w);
     self.view = w;
     self.ready = false;
+    // The page's colours follow the style while it is up (T3552).
+    if (self.style_handler == 0) {
+        self.style_handler = wk.g_signal_connect_data(
+            wk.adw_style_manager_get_default(),
+            "notify::dark",
+            @ptrCast(&onStyleDark),
+            v,
+            null,
+            0,
+        );
+    }
 
     const html = page.documentAlloc(alloc) catch return;
     defer alloc.free(html);
@@ -633,6 +656,7 @@ fn destroyView(self: *ViewerFeedback) void {
     }
     self.ucm = null;
     self.message_handler = 0;
+    self.disconnectStyle();
     if (self.view) |w| if (self.slot) |s| wk.gtk_box_remove(s, w);
     self.view = null;
     self.ready = false;
@@ -646,29 +670,78 @@ fn post(self: *ViewerFeedback, json: []const u8) void {
     wk.webkit_web_view_evaluate_javascript(wk.asWebView(w), script.ptr, @intCast(script.len), null, null, null, null, null);
 }
 
+fn disconnectStyle(self: *ViewerFeedback) void {
+    if (self.style_handler != 0) wk.g_signal_handler_disconnect(wk.adw_style_manager_get_default(), self.style_handler);
+    self.style_handler = 0;
+}
+
+/// The style flipped (the desktop's preference, or `window-theme`): re-dress
+/// the open page rather than leave a light pill in a dark pane.
+fn onStyleDark(_: *wk.AdwStyleManager, _: ?*anyopaque, ud: ?*anyopaque) callconv(.c) void {
+    const v: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    const self = &v.feedback;
+    if (self.view == null or !self.ready) return;
+    self.pushVars();
+}
+
+/// A theme's named colour, or null when the theme does not define it.
+fn themeColor(widget: *wk.GtkWidget, name: [*:0]const u8) ?wk.GdkRGBA {
+    var c: wk.GdkRGBA = undefined;
+    if (wk.gtk_style_context_lookup_color(wk.gtk_widget_get_style_context(widget), name, &c) == 0) return null;
+    return c;
+}
+
+/// The palette for the style right now: the style manager's dark flag, the
+/// theme's card composited onto its window, and its accent.
+fn currentPalette(self: *const ViewerFeedback) palette.Palette {
+    const dark = wk.adw_style_manager_get_dark(wk.adw_style_manager_get_default()) != 0;
+    var card: ?palette.Rgb = null;
+    var accent: ?palette.Rgb = null;
+    if (self.band) |b| {
+        const under_default = if (dark) palette.Rgb{ .r = 0x24, .g = 0x24, .b = 0x24 } else palette.Rgb{ .r = 0xfa, .g = 0xfa, .b = 0xfa };
+        const under = if (themeColor(b, "window_bg_color")) |w| palette.composite(w.red, w.green, w.blue, 1, under_default) else under_default;
+        if (themeColor(b, "card_bg_color")) |c| card = palette.composite(c.red, c.green, c.blue, c.alpha, under);
+        if (themeColor(b, "accent_bg_color")) |a| accent = palette.composite(a.red, a.green, a.blue, 1, under);
+    }
+    return palette.derive(dark, card, accent);
+}
+
 fn pushVars(self: *ViewerFeedback) void {
+    const p = self.currentPalette();
+    var fg: [7]u8 = undefined;
+    var bg: [7]u8 = undefined;
+    var ph: [7]u8 = undefined;
+    var sel: [7]u8 = undefined;
+    var qbg: [7]u8 = undefined;
+    var qac: [7]u8 = undefined;
+    var ink: [7]u8 = undefined;
+    var edge: [7]u8 = undefined;
     const vars: page.Vars = .{
         .face = "Cantarell, \"Noto Sans\", \"DejaVu Sans\"",
         .font_px = font_px,
         .line_px = line_px,
-        .fg = "#1e1e1e",
-        .bg = "#ffffff",
-        .placeholder = "#8a8a8a",
-        .selection = "#a9c8f0",
+        .fg = palette.hex(&fg, p.fg),
+        .bg = palette.hex(&bg, p.bg),
+        .placeholder = palette.hex(&ph, p.placeholder),
+        .selection = palette.hex(&sel, p.selection),
         .placeholder_text = "Describe what you see. Ctrl+Enter sends.",
-        .quote_bg = "#eef3fb",
-        .quote_accent = "#3584e4",
+        .quote_bg = palette.hex(&qbg, p.quote_bg),
+        .quote_accent = palette.hex(&qac, p.quote_accent),
         .quote_indent_px = 12,
         .quote_bar_px = 3,
         .quote_bar_x_px = 2,
         .image_pad_px = 2,
         .image_radius_px = 4,
-        .image_ink = "#1c71d8",
-        .image_edge = "#3584e4",
+        .image_ink = palette.hex(&ink, p.image_ink),
+        .image_edge = palette.hex(&edge, p.image_edge),
         // A paste over the store's cap is refused at the page, not
         // base64-ed across the channel to be refused here.
         .image_max_bytes = feedback_images.max_image_bytes,
     };
+    self.palette_dark = p.dark;
+    @memcpy(&self.palette_bg, &bg);
+    self.palette_pushes += 1;
+    log.info("viewer feedback: composer palette style={s} bg={s} fg={s}", .{ if (p.dark) "dark" else "light", &bg, &fg });
     const json = vars.json(alloc) catch return;
     defer alloc.free(json);
     self.post(json);
@@ -1250,7 +1323,7 @@ pub fn describeComposer(self: *const ViewerFeedback, buf: []u8) []const u8 {
     }
     var nbuf: [128]u8 = undefined;
     var tbuf2: [128]u8 = undefined;
-    return std.fmt.bufPrint(buf, "open={} view={} ready={} lines={d} sending={} sends={d} quotes={d} quoted={d} images={s} tiles={s} sel={?d} shots={d} shot={d}x{d} filed={s} status={s} text={s}", .{
+    return std.fmt.bufPrint(buf, "open={} view={} ready={} lines={d} sending={} sends={d} quotes={d} quoted={d} images={s} tiles={s} sel={?d} shots={d} shot={d}x{d} style={s} bg={s} vars={d} filed={s} status={s} text={s}", .{
         self.open,
         self.view != null,
         self.ready,
@@ -1265,6 +1338,9 @@ pub fn describeComposer(self: *const ViewerFeedback, buf: []u8) []const u8 {
         self.shots,
         self.last_shot[0],
         self.last_shot[1],
+        if (self.palette_dark) "dark" else "light",
+        &self.palette_bg,
+        self.palette_pushes,
         if (self.filed) |f| f else "-",
         if (self.status_text) |s| s else "-",
         tbuf[0..n],
