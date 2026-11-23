@@ -92,6 +92,7 @@ function Assert($name, $cond) {
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 [void](Set-GhozttyTestIsolation -Tag 't1844')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\ChromeGeometry.ps1')
 Add-Type -AssemblyName System.Drawing
 
 $Cli = [System.IO.Path]::ChangeExtension($Exe, '.com')
@@ -144,7 +145,7 @@ function Wait-Stashed([string]$Id, [bool]$Want, [int]$Ms = 4000) {
 function Get-Panes($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal') }
 function Get-VisiblePanes($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal' | Where-Object Visible) }
 function Get-Sidebar($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyPaneSidebar') | Select-Object -First 1 }
-function Px([double]$Dip) { [int][math]::Round($Dip * $script:scale) }
+function Px([double]$Dip) { Get-TestChromeDip -Dip $Dip -Scale $script:scale }
 function Test-Child($top, [int64]$Hwnd) {
     foreach ($p in (Get-Panes $top)) { if ([int64]$p.Hwnd -eq $Hwnd) { return $true } }
     return $false

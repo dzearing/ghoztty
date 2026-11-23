@@ -75,9 +75,12 @@
 #
 # The layout modules round with Zig's `@round`, which is round-half-AWAY-from-
 # zero. PowerShell's `[math]::Round($x)` is BANKER'S rounding (half to even).
-# They agree at 100%, 125%, 150% and 200% because nothing lands on .5 there -
-# which is exactly why the divergence went unnoticed - and disagree at 112.5%
-# DPI, where `4 * 1.125 = 4.5` becomes 4 in PowerShell and 5 in the app.
+# They agree only where the product lands off .5, which at 100% and 200% is
+# always and at the common steps above that is NOT always: 18 DIP at 125% is
+# 22.5 (22 in PowerShell, 23 in the app), any odd DIP at 150% is an x.5, and
+# 4 DIP at 112.5% is 4.5 (4 vs 5). The 4 DIP step happens to survive 125% and
+# 150%, which is exactly why the divergence went unnoticed. (T1931; section B
+# of dip-rounding-audit.ps1 measures each of these.)
 #
 # menu-bar.ps1 got this right (it passed MidpointRounding::AwayFromZero);
 # tab-strip.ps1 and tab-color.ps1 did not. `Get-TestChromeDip` below is the

@@ -68,6 +68,7 @@ function Assert($name, $cond) {
 # It adds timers, not behavior.
 $env:GHOZTTY_PERF = '1'
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\ChromeGeometry.ps1')
 
 $Cli = [System.IO.Path]::ChangeExtension($Exe, '.com')
 if (-not (Test-Path $Cli)) { $Cli = $Exe }
@@ -79,7 +80,7 @@ function Invoke-Cli([string]$CliArgs) {
 
 function Get-Panes($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal') }
 function Get-Sidebar($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyPaneSidebar') | Select-Object -First 1 }
-function Px([double]$Dip) { [int][math]::Round($Dip * $script:scale) }
+function Px([double]$Dip) { Get-TestChromeDip -Dip $Dip -Scale $script:scale }
 function Near([int]$A, [int]$B) { [math]::Abs($A - $B) -le 2 }
 # The expanded column (T2290, Mac 0a547522d): the rail's card at the panel's
 # width, in the rail's own insets - 12 DIP either side flat, the panes' 10 DIP

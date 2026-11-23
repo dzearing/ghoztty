@@ -68,6 +68,7 @@ function Assert($name, $cond) {
     if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\ChromeGeometry.ps1')
 
 $fakeLocal = Join-Path $env:TEMP ("ghoztty-t1847-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force -Path (Join-Path $fakeLocal 'ghoztty') | Out-Null
@@ -118,7 +119,7 @@ function Write-NoBom([string]$Path, [string]$Text) {
 
 function Get-Sidebar($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyPaneSidebar') | Select-Object -First 1 }
 function Get-Panes($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal') }
-function Px([double]$Dip) { [int][math]::Round($Dip * $script:scale) }
+function Px([double]$Dip) { Get-TestChromeDip -Dip $Dip -Scale $script:scale }
 function Near([int]$A, [int]$B) { [math]::Abs($A - $B) -le 2 }
 function Width-Is($top, [double]$Dip) {
     $sb = Get-Sidebar $top

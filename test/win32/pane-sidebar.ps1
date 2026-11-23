@@ -78,6 +78,7 @@ function Assert($name, $cond) {
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 [void](Set-GhozttyTestIsolation -Tag 't1828')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\ChromeGeometry.ps1')
 Add-Type -AssemblyName System.Drawing
 
 $Cli = [System.IO.Path]::ChangeExtension($Exe, '.com')
@@ -129,7 +130,7 @@ function Wait-Stashed([string]$Id, [bool]$Want, [int]$Ms = 4000) {
 
 function Get-Panes($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal') }
 function Get-Sidebar($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyPaneSidebar') | Select-Object -First 1 }
-function Px([double]$Dip) { [int][math]::Round($Dip * $script:scale) }
+function Px([double]$Dip) { Get-TestChromeDip -Dip $Dip -Scale $script:scale }
 # The expanded column (T2290, Mac 0a547522d): the rail's card at the panel's
 # width, in the rail's own 12 DIP insets (flat style), summed from the rounded
 # parts the way the layout does.

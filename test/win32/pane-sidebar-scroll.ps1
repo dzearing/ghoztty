@@ -50,6 +50,7 @@ function Assert($name, $cond) {
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 [void](Set-GhozttyTestIsolation -Tag 't1878')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\ChromeGeometry.ps1')
 
 $Cli = [System.IO.Path]::ChangeExtension($Exe, '.com')
 if (-not (Test-Path $Cli)) { $Cli = $Exe }
@@ -99,7 +100,7 @@ function Wait-Stashed([string]$Id, [bool]$Want, [int]$Ms = 4000) {
 }
 
 function Get-Sidebar($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyPaneSidebar') | Select-Object -First 1 }
-function Px([double]$Dip) { [int][math]::Round($Dip * $script:scale) }
+function Px([double]$Dip) { Get-TestChromeDip -Dip $Dip -Scale $script:scale }
 
 function Get-LogCount { @(Get-Content $script:errlog -ErrorAction SilentlyContinue).Count }
 # The LAST line matching $Pattern logged after line $Skip, waiting up to
