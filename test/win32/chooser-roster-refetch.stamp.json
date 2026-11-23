@@ -1,13 +1,19 @@
 {
     "guard":  "chooser-roster-refetch",
     "script":  "test/win32/chooser-roster-refetch.ps1",
-    "generated":  "2026-11-22T01:29:05-08:00",
-    "commit":  "53df4cd56",
+    "generated":  "2026-11-22T20:01:31-08:00",
+    "commit":  "6f5de5925",
     "uncommitted":  [
-                        "test/win32/chooser-roster-refetch.ps1"
+                        "src/apprt/win32/session_roster_input.zig",
+                        "src/apprt/win32/session_roster_paint.zig",
+                        "src/apprt/win32/session_roster_rows.zig",
+                        "src/apprt/win32/SessionRoster.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/SessionRoster.zig":  "134eebe4370f11bb7bd804e6523f0a550a02f374c59c5d057507817ae1224761",
+                  "src/apprt/win32/session_roster_input.zig":  "db8f3b93c2cf2a08d644ac6dfe74a5ab5abb9503f0305b391f7dfeccb30e71aa",
+                  "src/apprt/win32/session_roster_paint.zig":  "dff7f62acb9f8d079371247854d2cc5078e6a0cafea0814e8dc243ee9ff36e04",
+                  "src/apprt/win32/session_roster_rows.zig":  "d3a7948e536cd20c83dce0063bada8f8d853416f90cb5d47ede0d33bb0948b18",
+                  "src/apprt/win32/SessionRoster.zig":  "62921cd7d374bf6ad2e21f3ccdca5dd223fa16dba9c710d558c74bdd0b2ff395",
                   "test/win32/chooser-roster-refetch.ps1":  "43e40ca0943d1385ddcbec934ccba6b2a04414687f925b5bcd8fe2a76d098345"
               },
     "code":  {
