@@ -168,6 +168,17 @@ hl_wait_for 10 test -s "$dialogs"
 grep -q "^shown Can't focus \"gone-window\"|" "$dialogs" && [ "$(windows)" = "$n0" ]
 hl_check "D3 D-Bus Open of a missing name shows the dialog in the app and opens nothing" $? "rc=$rc dialogs=$(cat "$dialogs") $(dump)"
 
+# While that dialog is still up (the seam ends it 500 ms after it shows), a
+# second miss is folded into it: logged, not a second dialog.
+out=$(dbus_open "ghoztty-debug://focus/gone-too"); rc=$?
+hl_wait_for 5 grep -q "Can't focus \"gone-too\"" "$APP_LOG"
+lrc=$?
+[ $lrc = 0 ] && [ "$(shown)" = 1 ]
+hl_check "D3b a second miss while the dialog is up is logged, not shown again" $? "shown=$(shown) app=$(grep 'gtk_url_scheme' "$APP_LOG" | tail -3 | tr '\n' ' ')"
+ended() { [ "$(grep -c 'test seam: ending the scheme dialog' "$APP_LOG")" -ge 1 ]; }
+hl_wait_for 10 ended
+sleep 1
+
 : > "$dialogs"
 out=$(dbus_open "ghoztty-debug:focus/fa"); rc=$?
 hl_wait_for 10 test -s "$dialogs"
