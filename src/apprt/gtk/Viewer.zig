@@ -2526,14 +2526,14 @@ const steps = if (build_config.is_debug) struct {
         } else if (std.mem.eql(u8, verb, "style")) {
             // Flip the app's libadwaita style as the desktop preference or
             // `window-theme` would (T3552): `dark`, `light` or `default`.
-            const scheme = if (std.mem.eql(u8, arg, "dark"))
+            const color_scheme = if (std.mem.eql(u8, arg, "dark"))
                 wk.adw_color_scheme_force_dark
             else if (std.mem.eql(u8, arg, "light"))
                 wk.adw_color_scheme_force_light
             else
                 wk.adw_color_scheme_default;
             const m = wk.adw_style_manager_get_default();
-            wk.adw_style_manager_set_color_scheme(m, scheme);
+            wk.adw_style_manager_set_color_scheme(m, color_scheme);
             out("style {s} dark={}", .{ arg, wk.adw_style_manager_get_dark(m) != 0 });
         } else if (std.mem.eql(u8, verb, "thumb")) {
             // Click the composer's thumbnail tile for image `arg` (T3546).
