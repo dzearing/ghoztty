@@ -34,9 +34,11 @@ app=$(hl_ghoztty) || hl_finish "$L"
 cli() { env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID "$app" "$@"; }
 
 # A known configured background and foreground, so "untinted" is checkable.
+# Unfocused-split dimming is off: a split opened without --focus is unfocused,
+# and the dim overlay over it would hide the colour under test.
 cfg_dir="$XDG_CONFIG_HOME/ghostty"
 mkdir -p "$cfg_dir"
-printf 'background = #203040\nforeground = #e0e0e0\nbackground-opacity = 1\nwindow-padding-color = background\n' > "$cfg_dir/config.ghostty"
+printf 'background = #203040\nforeground = #e0e0e0\nbackground-opacity = 1\nwindow-padding-color = background\nunfocused-split-opacity = 1\n' > "$cfg_dir/config.ghostty"
 
 export SHELL=/bin/sh
 hl_launch APP "$app" --gtk-single-instance=false -e /bin/sh -c 'exec sleep 600'
