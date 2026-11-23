@@ -136,8 +136,16 @@ It ends `GTK SMOKE: ALL PASS` or `GTK SMOKE: <n> FAILURE(S)`.
 2026-11-21: `glxinfo -B` and the app both report `llvmpipe` (software) unless
 `GALLIUM_DRIVER=d3d12` is set. With it, both report `D3D12 (NVIDIA GeForce RTX
 4090)` and the app loads OpenGL 4.6. `/dev/dxg` and `/usr/lib/wsl/lib` are
-present. The smoke script sets the variable when `/dev/dxg` exists. The app
-does not set it on its own yet; that is T3350.
+present. **The app picks it itself** (T3350, `src/apprt/gtk/wslg_gpu.zig`):
+before GTK initializes, when `/dev/dxg` exists and none of `GALLIUM_DRIVER`,
+`MESA_LOADER_DRIVER_OVERRIDE` or a true `LIBGL_ALWAYS_SOFTWARE` is set, it
+sets `GALLIUM_DRIVER=d3d12`, brings GDK's GL up, and removes the variable
+again, so shells (and the agent that hosts them) and WebKit's web processes
+never inherit it. A driver the user exported wins and reaches their shell
+untouched. Log lines: `wslg: setting GALLIUM_DRIVER=d3d12 ...` and
+`wslg: GPU driver left to the environment ...`. Nothing in `test/linux`
+exports the variable to the app any more (only Weston gets it), so every GUI
+test exercises this default; `gtk-smoke.sh` S9-S13 prove both paths.
 
 ## GUI tests: the headless harness, `test/linux/lib/headless.sh` (T3333)
 
@@ -163,7 +171,7 @@ hl_finish "MY SCRIPT"                  # stops everything, '<LABEL>: ALL PASS', 
 
 | Piece | What it guarantees |
 |---|---|
-| `hl_start [w] [h]` | `XDG_RUNTIME_DIR` = a fresh `mktemp` dir under `/tmp` (0700); socket `wayland-hl-<pid>`, so concurrent harnesses never share one; `DISPLAY`/`WAYLAND_SOCKET` unset; `GDK_BACKEND=wayland` so GTK cannot fall back to X11; `GALLIUM_DRIVER=d3d12` when `/dev/dxg` exists. EXIT/TERM/INT traps run `hl_stop`. |
+| `hl_start [w] [h]` | `XDG_RUNTIME_DIR` = a fresh `mktemp` dir under `/tmp` (0700); socket `wayland-hl-<pid>`, so concurrent harnesses never share one; `DISPLAY`/`WAYLAND_SOCKET` unset; `GDK_BACKEND=wayland` so GTK cannot fall back to X11; Weston (not the app) renders with `GALLIUM_DRIVER=d3d12` when `/dev/dxg` exists - the app picks its own GPU (T3350). EXIT/TERM/INT traps run `hl_stop`. |
 | `hl_launch <var> <cmd...>` | Re-checks isolation first and **refuses with exit 4** (`HEADLESS REFUSED: <why> - nothing was launched`) if anything points back at WSLg. Records the pid in `<var>`, the log in `<var>_LOG`. |
 | `hl_isolation_problem` | Prints the first reason the environment is not isolated, or nothing. Pure. |
 | `hl_ghoztty [root]` | `<root>/zig-out/bin/ghoztty` by absolute path; refuses a missing or non-ELF file (the interop PATH trap below). |
@@ -319,7 +327,9 @@ in place, and what every later slice builds on:
   display: EGL_NOT_INITIALIZED` and no page ever loads (the app log shows it;
   the viewer just never renders). The viewer brings GDK's GL up first and then
   unsets the d3d12 override before the first web process spawns, so the
-  terminal stays on the GPU and the sandbox stays on. Measured 2026-11-22:
+  terminal stays on the GPU and the sandbox stays on. Since T3350 the app's
+  own default never reaches that point (it is removed at startup); this
+  strips only an override the user exported. Measured 2026-11-22:
   unset override renders, `WEBKIT_DISABLE_DMABUF_RENDERER=1` and
   `LIBGL_ALWAYS_SOFTWARE=1` alone do not, disabling the sandbox does (never
   do that).
