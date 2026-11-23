@@ -41,6 +41,10 @@ const media = @import("../media.zig");
 const pane_id_mod = @import("../../ipc/pane_id.zig");
 const Viewer = @import("../Viewer.zig");
 const IpcHandlers = @import("../IpcHandlers.zig");
+const PaneBanner = @import("../PaneBanner.zig");
+const wk = @import("../webkit.zig");
+const banner_link = @import("../../win32/banner_link.zig");
+const banner_markup = @import("../banner_markup.zig");
 const Tab = @import("tab.zig").Tab;
 
 const log = std.log.scoped(.gtk_ghostty_surface);
@@ -779,6 +783,15 @@ pub const Surface = extern struct {
         /// which is a child of this widget; cleared in dispose.
         viewer: ?*Viewer = null,
 
+        /// The sticky pane banner (T3339), created on the first banner this
+        /// pane is given. Its box lives in the widget tree; the struct is
+        /// freed in finalize.
+        banner: ?*PaneBanner = null,
+
+        /// The activity state `+set-state` / OSC 7777 last gave this pane
+        /// (T3339): `+list` reports it as `state`.
+        activity_state: terminal.osc.Command.ActivityState = .idle,
+
         pub var offset: c_int = 0;
     };
 
@@ -928,6 +941,12 @@ pub const Surface = extern struct {
     /// keyboard's split is.
     fn viewerOpenSplit(viewer: *Viewer, location: []const u8) void {
         const self: *Self = @ptrCast(@alignCast(viewer.owner orelse return));
+        self.openViewerSplit(location);
+    }
+
+    /// A viewer split to the right of this pane, focused (a viewer link, or
+    /// a Ctrl-clicked banner link, T3339).
+    fn openViewerSplit(self: *Self, location: []const u8) void {
         const tab = ext.getAncestor(Tab, self.as(gtk.Widget)) orelse {
             log.warn("viewer link: the pane is in no tab; nothing to split for {s}", .{location});
             return;
@@ -945,6 +964,10 @@ pub const Surface = extern struct {
     /// A link that asked for a surface of its own: a new one-pane viewer
     /// window (T3415; banner_link's Ctrl+Shift).
     fn viewerOpenWindow(_: *Viewer, location: []const u8) void {
+        openViewerWindow(location);
+    }
+
+    fn openViewerWindow(location: []const u8) void {
         const app = Application.default();
         const loc = app.allocator().dupeZ(u8, location) catch return;
         defer app.allocator().free(loc);
@@ -972,6 +995,109 @@ pub const Surface = extern struct {
 
     pub fn isViewer(self: *Self) bool {
         return self.private().viewer != null;
+    }
+
+    // ---- The pane banner (T3339) ------------------------------------------
+
+    /// The pane's banner source, or null when it has none (`+list`'s
+    /// `banner` field).
+    pub fn getPaneBanner(self: *Self) ?[]const u8 {
+        const b = self.private().banner orelse return null;
+        return b.getText();
+    }
+
+    /// Set the pane's sticky banner, or with null / "" clear it (`+set-banner`,
+    /// OSC 7778). A viewer pane has no banner; the IPC verb refuses it before
+    /// this is reached, and an OSC cannot come from a pane with no pty.
+    pub fn setPaneBanner(self: *Self, text: ?[]const u8) void {
+        const priv = self.private();
+        if (priv.viewer != null) return;
+        const banner = priv.banner orelse blk: {
+            if (text == null or text.?.len == 0) return;
+            break :blk self.createBanner() orelse return;
+        };
+        self.syncBannerPaths(banner);
+        banner.setText(text);
+    }
+
+    pub fn getActivityState(self: *Self) terminal.osc.Command.ActivityState {
+        return self.private().activity_state;
+    }
+
+    pub fn setActivityState(self: *Self, state: terminal.osc.Command.ActivityState) void {
+        self.private().activity_state = state;
+    }
+
+    /// Put a banner card above the GL area. The pane's content box is
+    /// horizontal in the template (the GL area is its only laid-out child),
+    /// so it turns vertical here: the card takes its natural height and the
+    /// terminal is laid out - and resized - below it, never under it.
+    fn createBanner(self: *Self) ?*PaneBanner {
+        const priv = self.private();
+        const banner = PaneBanner.create(std.heap.c_allocator) catch return null;
+        const gl = priv.gl_area.as(gtk.Widget);
+        const parent = gl.getParent() orelse {
+            banner.destroy();
+            return null;
+        };
+        const box = gobject.ext.cast(gtk.Box, parent) orelse {
+            banner.destroy();
+            return null;
+        };
+        box.as(gtk.Orientable).setOrientation(.vertical);
+        box.prepend(@ptrCast(@alignCast(banner.box)));
+        banner.owner = self;
+        banner.on_link = &bannerLink;
+        banner.pane_id = self.paneId();
+        priv.banner = banner;
+        return banner;
+    }
+
+    /// What a banner's relative links resolve against: this pane's working
+    /// directory and the user's home, POSIX-joined.
+    fn syncBannerPaths(self: *Self, banner: *PaneBanner) void {
+        const pwd = self.private().pwd;
+        banner.paths = .{
+            .cwd = if (pwd) |p| p else null,
+            .home = std.posix.getenv("HOME"),
+            .posix = true,
+        };
+    }
+
+    /// A banner link was clicked: the click table every platform shares
+    /// (`banner_link.clickAction`, banners.md "Link clicks"). A plain click
+    /// leaves Ghoztty (the browser; a file is revealed in the file manager),
+    /// Ctrl opens a viewer split beside this pane, Ctrl+Shift gives the link
+    /// a surface of its own (a viewer window; a file's default app).
+    fn bannerLink(owner: *anyopaque, target: []const u8, ctrl: bool, shift: bool) void {
+        const self: *Self = @ptrCast(@alignCast(owner));
+        const kind = banner_link.kindOf(target);
+        const act = banner_link.clickAction(kind, ctrl, shift);
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const path = if (kind == .file) banner_markup.localPath(&buf, target) else null;
+        const widget: *wk.GtkWidget = @ptrCast(self);
+        log.info("banner link: action={s} target={s}", .{ @tagName(act), target });
+        switch (act) {
+            .focus_target => IpcHandlers.focusLink(Application.default(), target, self.paneId()),
+            .open_in_side_pane => {
+                _ = Viewer.linkSink("split", path orelse target);
+                self.openViewerSplit(path orelse target);
+            },
+            .open_in_new_window => {
+                _ = Viewer.linkSink("window", target);
+                openViewerWindow(target);
+            },
+            .open_with_system => if (kind == .file)
+                Viewer.openWithAppFrom(std.heap.c_allocator, widget, path orelse return)
+            else
+                Viewer.openExternalFrom(std.heap.c_allocator, widget, target),
+            .reveal_in_explorer => {
+                const p = path orelse return;
+                if (Viewer.linkSink("reveal", p)) return;
+                Viewer.revealPathFrom(widget, p);
+            },
+            .copy => {},
+        }
     }
 
     fn dupeEnv(alloc: Allocator, env: []const []const u8) Allocator.Error![]const []const u8 {
@@ -2191,6 +2317,9 @@ pub const Surface = extern struct {
         }
         priv.viewer = null;
 
+        // Its widgets go with the template; a click can no longer reach us.
+        if (priv.banner) |b| b.owner = null;
+
         gtk.Widget.disposeTemplate(
             self.as(gtk.Widget),
             getGObjectType(),
@@ -2227,6 +2356,10 @@ pub const Surface = extern struct {
             alloc.destroy(v);
 
             priv.core_surface = null;
+        }
+        if (priv.banner) |b| {
+            b.destroy();
+            priv.banner = null;
         }
         if (priv.mouse_hover_url) |v| {
             glib.free(@ptrCast(@constCast(v)));
@@ -2386,6 +2519,11 @@ pub const Surface = extern struct {
         priv.pwd = null;
         if (pwd) |v| priv.pwd = glib.ext.dupeZ(u8, v);
         self.as(gobject.Object).notifyByPspec(properties.pwd.impl.param_spec);
+        // A banner's `./` links resolve against this directory (T3339).
+        if (priv.banner) |b| {
+            self.syncBannerPaths(b);
+            b.cwdChanged();
+        }
     }
 
     /// Returns the focus state of this surface.

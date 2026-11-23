@@ -46,6 +46,7 @@ const verb_args = apprt.ipc.args;
 const target_lookup = @import("../ipc/target_lookup.zig");
 const viewer_scheme = @import("viewer_scheme.zig");
 const url_scheme = @import("../ipc/url_scheme.zig");
+const terminal_osc = @import("../../terminal/osc.zig").Command;
 
 const Application = @import("class/application.zig").Application;
 const Window = @import("class/window.zig").Window;
@@ -104,13 +105,55 @@ fn notYet(comptime verb: server.Verb, comptime task: []const u8) Allocator.Error
     );
 }
 
-pub fn handleSetState(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.set_state, "T3339"); }
-pub fn handleSetBanner(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.set_banner, "T3339"); }
 pub fn handleNewRemoteWindow(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.new_remote_window, "T3337"); }
 pub fn handleHandoffQuit(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.handoff_quit, "T3337"); }
 pub fn handleStash(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.stash, "T3337"); }
 pub fn handleRestore(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.restore, "T3337"); }
 
+
+// ---------------------------------------------------------------------------
+// +set-state and +set-banner (T3339): the shared bodies in
+// `apprt/ipc/verbs.zig` (T3374), over the two model functions below.
+
+pub fn handleSetState(app: Context, request: Request) Allocator.Error!?[]u8 {
+    return verbs.setState(@This(), app, request);
+}
+
+pub fn handleSetBanner(app: Context, request: Request) Allocator.Error!?[]u8 {
+    return verbs.setBanner(@This(), app, request);
+}
+
+/// A pane target sets that pane; a window target every terminal pane in the
+/// window (the Mac's `handleSetState`). A viewer pane has no state to carry.
+pub fn setActivityState(target: Target, state: verbs.ActivityState) bool {
+    const core_state: terminal_osc.ActivityState = switch (state) {
+        .idle => .idle,
+        .busy => .busy,
+        .needs_input => .needs_input,
+    };
+    switch (target) {
+        .pane => |p| {
+            if (p.surface.isViewer()) return false;
+            p.surface.setActivityState(core_state);
+        },
+        .window => |w| {
+            var it = paneIterator(Application.default());
+            while (it.next()) |p| {
+                if (p.window != w or p.surface.isViewer()) continue;
+                p.surface.setActivityState(core_state);
+            }
+        },
+    }
+    return true;
+}
+
+/// The pane's banner, or a window's focused pane's (banners are per pane).
+pub fn setPaneBanner(target: Target, text: ?[]const u8) verbs.BannerSet {
+    const s = target.surface() orelse return .no_pane;
+    if (s.isViewer()) return .viewer;
+    s.setPaneBanner(text);
+    return .set;
+}
 
 // ---------------------------------------------------------------------------
 // Walking the live windows and panes.
@@ -1127,6 +1170,10 @@ const ListLeaves = struct {
             // `type`/`url`; `+list` prints it as `view: <title>  <url>`).
             .pane_type = if (surface.isViewer()) "viewer" else "terminal",
             .url = if (surface.getViewer()) |v| try arena.dupe(u8, v.currentLocation()) else null,
+            // T3339: the banner's source (absent with none) and the activity
+            // state's token - for every terminal pane, never a viewer (Mac).
+            .banner = if (surface.getPaneBanner()) |b| try arena.dupe(u8, b) else null,
+            .state = if (surface.isViewer()) null else surface.getActivityState().token(),
         };
     }
 };

@@ -819,6 +819,9 @@ pub const Application = extern struct {
             .search_total => Action.searchTotal(target, value),
             .search_selected => Action.searchSelected(target, value),
 
+            .pane_banner => return Action.paneBanner(target, value),
+            .activity_state => return Action.activityState(target, value),
+
             // Unimplemented
             .secure_input,
             .close_all_windows,
@@ -847,8 +850,6 @@ pub const Application = extern struct {
             .toggle_pane_sidebar,
             .stash_pane,
             .restore_stashed_pane,
-            .activity_state,
-            .pane_banner,
             .prompt_banner,
             => {
                 log.warn("ghoztty action not ported to gtk yet action={}", .{action});
@@ -2947,6 +2948,29 @@ const Action = struct {
             .app => return false,
             .surface => |surface| {
                 return surface.rt_surface.gobj().setReadonly(value);
+            },
+        }
+    }
+
+    /// OSC 7778 from inside the pane (T3339): set or, with empty text, clear
+    /// its sticky banner.
+    pub fn paneBanner(target: apprt.Target, value: apprt.Action.Value(.pane_banner)) bool {
+        switch (target) {
+            .app => return false,
+            .surface => |surface| {
+                surface.rt_surface.gobj().setPaneBanner(value.text);
+                return true;
+            },
+        }
+    }
+
+    /// OSC 7777 from inside the pane (T3339): its activity state.
+    pub fn activityState(target: apprt.Target, value: apprt.Action.Value(.activity_state)) bool {
+        switch (target) {
+            .app => return false,
+            .surface => |surface| {
+                surface.rt_surface.gobj().setActivityState(value);
+                return true;
             },
         }
     }

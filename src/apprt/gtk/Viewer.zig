@@ -824,6 +824,12 @@ pub fn reveal(self: *Viewer) void {
 /// Reveal `path` - the bar's button, and the link menu's Open Containing
 /// Folder row (one road for both, as `banner_link.revealTarget` is on win32).
 pub fn revealPath(self: *Viewer, path: []const u8) void {
+    revealPathFrom(self.box, path);
+}
+
+/// `revealPath` for any widget's window (T3339: a pane banner's file link,
+/// whose plain click is a reveal).
+pub fn revealPathFrom(widget: *wk.GtkWidget, path: []const u8) void {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const target = revealTarget(&buf, path) orelse return;
     var zbuf: [std.fs.max_path_bytes + 1]u8 = undefined;
@@ -831,7 +837,7 @@ pub fn revealPath(self: *Viewer, path: []const u8) void {
     const file = wk.g_file_new_for_path(z.ptr);
     defer wk.g_object_unref(file);
     const launcher = wk.gtk_file_launcher_new(file);
-    const parent = wk.gtk_widget_get_root(self.box);
+    const parent = wk.gtk_widget_get_root(widget);
     switch (target.kind) {
         .file => {
             log.info("viewer: reveal file={s}", .{target.path});
@@ -1196,24 +1202,35 @@ fn copyText(self: *Viewer, text: []const u8) void {
 /// The default browser (GTK's URI launcher: the OpenURI portal, else the
 /// desktop's handler).
 fn openExternal(self: *Viewer, uri: []const u8) void {
+    openExternalFrom(self.alloc, self.box, uri);
+}
+
+/// `openExternal` for any widget's window - the pane banner's links take the
+/// same road (T3339), test seam and all.
+pub fn openExternalFrom(alloc: std.mem.Allocator, widget: *wk.GtkWidget, uri: []const u8) void {
     if (leavesApp("browser", uri)) return;
-    const z = self.alloc.dupeZ(u8, uri) catch return;
-    defer self.alloc.free(z);
+    const z = alloc.dupeZ(u8, uri) catch return;
+    defer alloc.free(z);
     log.info("viewer: open in browser {s}", .{uri});
     const launcher = wk.gtk_uri_launcher_new(z.ptr);
-    wk.gtk_uri_launcher_launch(launcher, wk.gtk_widget_get_root(self.box), null, &onUriLaunched, null);
+    wk.gtk_uri_launcher_launch(launcher, wk.gtk_widget_get_root(widget), null, &onUriLaunched, null);
 }
 
 /// The file's default app (GTK's file launcher).
 fn openWithApp(self: *Viewer, path: []const u8) void {
+    openWithAppFrom(self.alloc, self.box, path);
+}
+
+/// `openWithApp` for any widget's window (T3339, the pane banner).
+pub fn openWithAppFrom(alloc: std.mem.Allocator, widget: *wk.GtkWidget, path: []const u8) void {
     if (leavesApp("app", path)) return;
-    const z = self.alloc.dupeZ(u8, path) catch return;
-    defer self.alloc.free(z);
+    const z = alloc.dupeZ(u8, path) catch return;
+    defer alloc.free(z);
     log.info("viewer: open with default app {s}", .{path});
     const file = wk.g_file_new_for_path(z.ptr);
     defer wk.g_object_unref(file);
     const launcher = wk.gtk_file_launcher_new(file);
-    wk.gtk_file_launcher_launch(launcher, wk.gtk_widget_get_root(self.box), null, &onRevealFolderDone, null);
+    wk.gtk_file_launcher_launch(launcher, wk.gtk_widget_get_root(widget), null, &onRevealFolderDone, null);
 }
 
 fn onUriLaunched(source: ?*wk.GObject, result: *wk.GAsyncResult, _: ?*anyopaque) callconv(.c) void {
@@ -1232,7 +1249,7 @@ fn onUriLaunched(source: ?*wk.GObject, result: *wk.GAsyncResult, _: ?*anyopaque)
 /// every routed link is appended there as `<verb> <target>` (`browser`,
 /// `app`, `split`, `window`, `focus`, `copy`, `reveal`, `menu`). True when it
 /// was recorded. Compiled out of a release.
-fn linkSink(verb: []const u8, target: []const u8) bool {
+pub fn linkSink(verb: []const u8, target: []const u8) bool {
     if (comptime !build_config.is_debug) return false;
     const path = std.posix.getenv("GHOZTTY_TEST_VIEWER_LINKS") orelse return false;
     const f = std.fs.cwd().createFile(path, .{ .truncate = false }) catch return false;

@@ -58,6 +58,10 @@ pub const max_lines: usize = 10;
 pub const PathContext = struct {
     cwd: ?[]const u8 = null,
     home: ?[]const u8 = null,
+    /// Join resolved paths with `/` (T3339): the GTK frontend's `cwd` and
+    /// `home` are POSIX paths, and `./a.md` in a Linux pane must link
+    /// `/home/u/a.md`, never `\home\u\a.md`.
+    posix: bool = false,
 };
 
 pub const Style = struct {
@@ -819,11 +823,11 @@ fn autolink(
     return switch (prefix.kind) {
         .web, .absolute => .{ .target = try arena.dupe(u8, text), .end = end },
         .home => .{
-            .target = try joinPath(arena, nonEmpty(paths.home) orelse return null, text[prefix.len..]),
+            .target = try joinPath(arena, paths.posix, nonEmpty(paths.home) orelse return null, text[prefix.len..]),
             .end = end,
         },
         .relative => .{
-            .target = try joinPath(arena, nonEmpty(paths.cwd) orelse return null, text),
+            .target = try joinPath(arena, paths.posix, nonEmpty(paths.cwd) orelse return null, text),
             .end = end,
         },
     };
@@ -911,7 +915,8 @@ fn autolinkEnd(s: []const u8, from: usize) usize {
 /// the PROCESS working directory when its first path is not absolute —
 /// this module is pure by contract, and a banner must never silently point
 /// at whatever directory the app happens to have been launched from.
-fn joinPath(arena: Allocator, base: []const u8, rel: []const u8) Allocator.Error![]const u8 {
+fn joinPath(arena: Allocator, posix: bool, base: []const u8, rel: []const u8) Allocator.Error![]const u8 {
+    if (posix) return joinPosix(arena, base, rel);
     var out: std.ArrayList(u8) = .empty;
     for (base) |c| try out.append(arena, if (c == '/') '\\' else c);
     while (out.items.len > 0 and out.items[out.items.len - 1] == '\\')
@@ -931,6 +936,32 @@ fn joinPath(arena: Allocator, base: []const u8, rel: []const u8) Allocator.Error
             continue;
         }
         try out.append(arena, '\\');
+        try out.appendSlice(arena, part);
+    }
+    return out.items;
+}
+
+/// `joinPath` for a POSIX base (T3339, the GTK frontend): `/` separators,
+/// and `/` is the root `..` never climbs past. `std.fs.path.resolvePosix`
+/// is not used for the same reason `resolveWindows` is not above.
+fn joinPosix(arena: Allocator, base: []const u8, rel: []const u8) Allocator.Error![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    try out.appendSlice(arena, base);
+    const root_len: usize = @intFromBool(base.len > 0 and base[0] == '/');
+    while (out.items.len > root_len and out.items[out.items.len - 1] == '/')
+        _ = out.pop();
+
+    var it = std.mem.splitScalar(u8, rel, '/');
+    while (it.next()) |part| {
+        if (part.len == 0 or std.mem.eql(u8, part, ".")) continue;
+        if (std.mem.eql(u8, part, "..")) {
+            while (out.items.len > root_len and out.items[out.items.len - 1] != '/')
+                _ = out.pop();
+            while (out.items.len > root_len and out.items[out.items.len - 1] == '/')
+                _ = out.pop();
+            continue;
+        }
+        if (out.items.len == 0 or out.items[out.items.len - 1] != '/') try out.append(arena, '/');
         try out.appendSlice(arena, part);
     }
     return out.items;
@@ -1464,4 +1495,19 @@ test "hasScheme accepts letter-led schemes only" {
     try testing.expect(!hasScheme("//x"));
     try testing.expect(!hasScheme("1http://x"));
     try testing.expect(!hasScheme(""));
+}
+
+test "autolink: POSIX context joins with / and stops at the root (T3339)" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const paths: PathContext = .{ .cwd = "/home/u/repo/", .home = "/home/u", .posix = true };
+
+    try testing.expectEqualStrings("/home/u/.config/x.toml", (try onlyLink(a, paths, "~/.config/x.toml")).?.link.?);
+    try testing.expectEqualStrings("/home/u/repo/docs/a.md", (try onlyLink(a, paths, "./docs/./a.md")).?.link.?);
+    try testing.expectEqualStrings("/home/u/b.md", (try onlyLink(a, paths, "../b.md")).?.link.?);
+    try testing.expectEqualStrings("/x", (try onlyLink(a, .{ .cwd = "/", .posix = true }, "../../x")).?.link.?);
+    try testing.expectEqualStrings("/etc/hosts", (try onlyLink(a, paths, "/etc/hosts")).?.link.?);
+    // No cwd: a dot-relative path stays text, as on every platform.
+    try testing.expect((try onlyLink(a, .{ .home = "/home/u", .posix = true }, "./a.md")) == null);
 }

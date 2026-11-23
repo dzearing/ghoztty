@@ -483,3 +483,19 @@ pub extern fn gtk_viewport_scroll_to(viewport: *GtkWidget, descendant: *GtkWidge
 /// `GtkContentFit`.
 pub const content_fit_contain: c_int = 1;
 pub extern fn gtk_button_new() *GtkWidget;
+
+// --- The pane banner's widgets (T3339) --------------------------------------
+
+pub extern fn gtk_label_set_markup(label: *GtkWidget, markup: [*:0]const u8) void;
+pub extern fn gtk_grid_new() *GtkWidget;
+pub extern fn gtk_grid_attach(grid: *GtkWidget, child: *GtkWidget, column: c_int, row: c_int, width: c_int, height: c_int) void;
+pub extern fn gtk_grid_set_column_spacing(grid: *GtkWidget, spacing: c_uint) void;
+pub extern fn gtk_grid_set_row_spacing(grid: *GtkWidget, spacing: c_uint) void;
+pub extern fn gtk_separator_new(orientation: c_int) *GtkWidget;
+pub extern fn gtk_check_button_new() *GtkWidget;
+pub extern fn gtk_check_button_set_active(button: *GtkWidget, active: c_int) void;
+pub extern fn gtk_widget_get_first_child(widget: *GtkWidget) ?*GtkWidget;
+pub extern fn gtk_widget_set_focusable(widget: *GtkWidget, focusable: c_int) void;
+pub extern fn gtk_orientable_set_orientation(orientable: *GtkWidget, orientation: c_int) void;
+pub extern fn gtk_gesture_click_new() *GtkEventController;
+pub extern fn gtk_event_controller_get_current_event_state(controller: *GtkEventController) c_uint;
