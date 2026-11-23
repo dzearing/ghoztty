@@ -960,7 +960,7 @@ fn makeTile(self: *ViewerFeedback, n: u32, e: feedback_images.Entry) ?*wk.GtkWid
     const tip = std.fmt.bufPrintZ(&tbuf, "Image #{d}", .{n}) catch "Image";
     wk.gtk_widget_set_tooltip_text(b, tip.ptr);
     wk.g_object_set_data(b, tile_key, @ptrFromInt(@as(usize, n)));
-    const v: *Viewer = @fieldParentPtr("feedback", self);
+    const v: *Viewer = @alignCast(@fieldParentPtr("feedback", self));
     _ = wk.g_signal_connect_data(b, "clicked", @ptrCast(&onTileClicked), v, null, 0);
     return b;
 }
