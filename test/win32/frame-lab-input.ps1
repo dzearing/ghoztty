@@ -58,6 +58,14 @@ function Assert($name, $cond, $detail = '') {
 
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\FrameLabInput.ps1')
+# T3443: the @timing-sensitive marker above is only a promise; this is what
+# keeps it. This script launches no app, so it does not load CleanSlate.ps1
+# (whose hook takes the box-wide timing lock for every other marked script) -
+# take the same lock directly, before section E measures the 1 kHz loop, so a
+# second lane's compile cannot skew that lateness. Section H of
+# test\win32\machine-lock.ps1 is what caught the gap.
+. (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'scripts\lib\MachineLock.ps1')
+Invoke-TimingLockForCaller
 
 try {
     Import-FrameLabInput

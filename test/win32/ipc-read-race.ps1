@@ -126,6 +126,15 @@ try {
     # perfectly live, attached terminal with a real child.
     Invoke-Ghoztty "+new-window --target=silent -e cmd /c `"timeout /t 20 /nobreak > nul`"" "$tmp\new-silent.txt" | Out-Null
     $silent = Get-Leaf 'silent'
+    # T3443: the pane is registered before its shell process exists, so a +list
+    # taken under box load (a parallel sweep) can catch pid 0 for a child that
+    # is seconds from spawning. Give the spawn a bounded wait; a pane whose
+    # child never appears still fails the assertion below.
+    $pidDeadline = (Get-Date).AddSeconds(15)
+    while (($null -eq $silent -or $silent.pid -le 0) -and (Get-Date) -lt $pidDeadline) {
+        Start-Sleep -Milliseconds 250
+        $silent = Get-Leaf 'silent'
+    }
     AssertAlways "A +list reports the silent pane" ($null -ne $silent)
     AssertAlways "A the silent pane has a real child (pid != 0)" ($silent.pid -gt 0)
     if ($silent) {

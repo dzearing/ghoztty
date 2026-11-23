@@ -347,13 +347,15 @@ if ($null -eq $relwin -or $relwin.connection.state -ne 'connected') {
 
 "== 1c: +list names the machine a cross-machine window is on (T1557)"
 # Mac publishes this as AXGhosttyMachine; +list is its Windows home. The value is
-# the pill's own name for the machine (RemoteMachine.displayName). A CLI-opened
-# relay window in this isolated profile has no remembered directory, so it is
-# named by the hostname the far agent reported in its HELLO
-# (Window.resolveRelayName) - and the far agent here is a loopback one on THIS
-# box, so the expected name is this box's DNS hostname, never the device id.
-$expectMachine = [System.Net.Dns]::GetHostName()
-Assert "the relay window reports machine = the far agent's hostname ($expectMachine)" (
+# the pill's own name for the machine (RemoteMachine.displayName). This window
+# was opened with `--name=relwin`, and since T1736 an explicit --name is the
+# caller's label for the machine (Mac IPCServer `namePinned: name != nil`): the
+# pill says it and no directory or HELLO name replaces it. So the expected name
+# is the pinned label, never the device id. (The unpinned HELLO-hostname path
+# is remote-pill-relay-name.ps1's subject.) T3443: this assertion still expected
+# the HELLO hostname after T1736 changed the contract.
+$expectMachine = 'relwin'
+Assert "the relay window reports machine = the --name it was opened with ($expectMachine, T1736)" (
     $null -ne $relwin -and $relwin.PSObject.Properties.Name -contains 'machine' -and
     $relwin.machine -eq $expectMachine)
 Assert "the LOCAL base window has no machine field at all" (

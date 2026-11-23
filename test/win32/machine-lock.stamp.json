@@ -1,17 +1,23 @@
 {
     "guard":  "machine-lock",
     "script":  "test/win32/machine-lock.ps1",
-    "generated":  "2026-10-27T03:30:52-07:00",
-    "commit":  "e9040e01d",
+    "generated":  "2026-11-22T16:30:50-08:00",
+    "commit":  "d101008e0",
     "uncommitted":  [
-                        "scripts/floor-lane.ps1",
-                        "scripts/harness-floor.ps1"
+
                     ],
     "files":  {
-                  "scripts/floor-lane.ps1":  "ef15ae0ab6494dce31fc765870eff93c9619525eb43a5af5134cfb6eb3f32ff3",
-                  "scripts/harness-floor.ps1":  "de94891c5008b329adfa925550a1503dfbf5d6b9c28748a903cf9dda879a206d",
-                  "scripts/lib/MachineLock.ps1":  "f9e8529b949b37f2f85c50dd87f551556454e85a7425de4899594fd07c828cd7",
+                  "scripts/floor-lane.ps1":  "3f13136d4cdb634f08e3a4402d33f80b36d4ccf2014695c139bbf82cf045ca06",
+                  "scripts/harness-floor.ps1":  "e3d359fb624aa2c8abf555bea66b63a798c01ec9dce023416631191e2c943050",
+                  "scripts/lib/MachineLock.ps1":  "0392f179e69ab3c1271a2ba65e49838e3dea02517923d7084c76525d04b0ec1d",
                   "test/win32/lib/CleanSlate.ps1":  "8802aadbd87990b0553c46fdf167ec938e740f110e517eee4d811218b83d1534",
-                  "test/win32/machine-lock.ps1":  "95c57d9daef68bfb8403be792a5e21c87bfad2ee1f5dd0507feb2c51aaca32d5"
-              }
+                  "test/win32/machine-lock.ps1":  "358594b1e23bf925310236d55d4a314c20b3cefb7cf5be1e116e5376c9896cca"
+              },
+    "code":  {
+                 "scripts/floor-lane.ps1":  "code1:a28f55ce1ea24230caf0c302d741d80bd63a03b46c4e58e76c06d34e3d9bc642",
+                 "scripts/harness-floor.ps1":  "code1:ed864d27ef0d14d42b6b63b586c0ebbd70bbd8f58c3a8072d1ba67ba3b54a7ca",
+                 "scripts/lib/MachineLock.ps1":  "code1:75f3fdf79bed2019109dc488325f24667840e063b8323ce7dbfb8519f441956e",
+                 "test/win32/lib/CleanSlate.ps1":  "code1:db36a2f413ca698063f6d2a68a1e8d2213511275826ce27925d50fdb47fb3201",
+                 "test/win32/machine-lock.ps1":  "code1:5212ed4d6ddd31a80a548e08a9805fc4d1c62061ccabf7d559de2d50205c6d2a"
+             }
 }

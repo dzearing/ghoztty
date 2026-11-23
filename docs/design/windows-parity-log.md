@@ -39825,3 +39825,9 @@ Reproduce-first: agent-recovery.ps1 is ALL PASS (104 assertions) on HEAD 15640bd
 - Root cause was not the T3413 code. Run 45075865980 was cancelled mid-compile by the concurrency group, and setup-zig's post step saved its half-written .zig-cache anyway. Every later run restored that chain and linked a glslang.lib missing objects (undefined glslang_default_resource, spv::Builder::postProcess).
 - fork-ci.yml: setup-zig use-cache false; actions/cache/restore before the compile, actions/cache/save only after a green compile, on a new zig-cross-v3 key so the poisoned chain is abandoned; same 2 GiB ceiling. release-artifacts.ps1 E14 locks the shape. Filed T3441 (same exposure in release-windows.yml).
 - Evidence: release-artifacts.ps1 ALL PASS; due sweep 25 pass, 16 red, every red already filed and acked to an open task (T2921, T2884, T3386, T3426, T1854, T3222, T2905, T2021, T3380, T2300, T3395, T2018, T3425). I briefly re-acked them to new cards T3442/T3445/T3446; acks restored and those closed as duplicates. CI green on the fix commit is still to be read.
+
+## 2026-11-22 16:55 - T3443 gives every red harness from the 15:21 sweep an owner; three are fixed outright
+
+- Re-ran the four that first ran beside others (drag-perf, frame-clock, session-persistence, pane-close-memory) alone and serially: all still red with the same signatures, so they are real, not load. Each matched an open card (T1854, T3426, T2021, T2692; T2692 newly guard-acked).
+- Fixed: frame-lab-input.ps1 declared `@timing-sensitive` but never took the box-wide timing lock (machine-lock H2); ipc-relay 1c still expected the HELLO hostname after T1736 made `--name` the pinned machine label; ipc-read-race read pid 0 from a pane whose shell had not spawned yet under load (bounded wait).
+- The rest were already owned and acked (T3386, T2300, T2884, T2921, T3425). No new task needed. Evidence: acceptance 20261122-162902 and -163222 all green; scoped harness floor run.
