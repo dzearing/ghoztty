@@ -1,13 +1,13 @@
 {
     "guard":  "keybinds-t01",
     "script":  "test/win32/keybinds-t01.ps1",
-    "generated":  "2026-11-20T23:15:59-08:00",
-    "commit":  "580556f1c",
+    "generated":  "2026-11-23T08:39:41-08:00",
+    "commit":  "d8eaf10bd",
     "uncommitted":  [
-                        "test/win32/keybinds-t01.ps1"
+
                     ],
     "files":  {
-                  "src/config/Config.zig":  "4e6230b01401867fb8ee29212e674d21c0f990cab78fdd132a23ecb277e09a95",
+                  "src/config/Config.zig":  "9593dd4c373c1fe2f2c648f9790a584a64741ca558d0e2caf3de352ec2dd0859",
                   "src/input/Binding.zig":  "e2efd6d8bedc00085602c57ccd4d60e4b0c930ce4048dfd5699c09a9d3ebcfd2",
                   "test/win32/keybinds-t01.ps1":  "a244a863dc5d381d261b1113c86f1b102ede68cbd9fdfd4bd09bf21736b9a31c"
               },
