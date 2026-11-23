@@ -26,6 +26,8 @@
 #      ghoztty-debug.log, and no other state dir is created.
 #
 #   powershell -NoProfile -File test\win32\agent-log.ps1
+#
+# @lineage-safe - hermetic: its own LOCALAPPDATA and GHOZTTY_AGENT_INSTANCE, and the Remove-Item in finally restores the caller's lineage (T2006)
 param(
     [string]$AgentExe = (Join-Path $PSScriptRoot '..\..\zig-out\bin\ghoztty-agent.exe')
 )

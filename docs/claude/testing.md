@@ -1592,6 +1592,18 @@ legacy name byte for byte. Rules: `src/remote/agent_lineage.zig`; acceptance:
 `test/win32/agent-instance-lineage.ps1` (which carries a `-TeethCheck` self-test
 for its own end-to-end arm). The Swift half is T692.
 
+**In a second checkout every run gets a lineage, runner or not** (T1994,
+T2006). Every debug build on the box derives the SAME default agent, so in
+`D:\git\ghoztty-b` an unscoped run dials LANE A's agent. The runner mints
+`apm-<pid>` / `apw<n>-<pid>` for its phases; a script run BY HAND gets
+`aph-<pid>` from `test\win32\lib\CheckoutGuard.ps1` (loaded by BuildMode and
+TestScore), with its autostart teardown armed. A script that cannot honor a
+lineage — the runner's `ApMainPatterns`: an unscoped `local-agent-debug` /
+`session-layout-debug`, or dropping the lineage — is REFUSED there by both,
+unless it declares `# @lineage-safe - <why>`. The literal checkout is
+untouched. Acceptance: section E of `test\win32\checkout-guard.ps1`, which
+also fails if the guard and the runner ever disagree about a script.
+
 **And a converted suite kills only what it owns** (T691). Three lines convert
 one: `Set-GhozttyTestAgentLineage -Tag '<suite>'` next to the existing
 `Set-GhozttyTestIsolation`, `-ScopeToLineage` on every `Stop-RepoGhoztty`, and

@@ -17,9 +17,20 @@
 #      sibling sharing the prefix (D:\git\ghoztty-b) is not the literal.
 #   D. Wiring: both libraries load the guard; suite-run re-roots in a foreign
 #      checkout; guard-due prints the runner form there.
+#   E. The agent half (T2006), run bare from the same fixture checkout:
+#        E1 a script with no lineage set gets its own (aph-<pid>) and its
+#           autostart teardown armed;
+#        E2 a lineage-hostile script is REFUSED before its body runs;
+#        E3 ...unless it declares `# @lineage-safe - <why>`;
+#        E4 a lineage that is already set (the runner's) is left alone;
+#        E5 GHOZTTY_TEST_FOREIGN_CHECKOUT=1 skips both halves;
+#        E6 the literal checkout mints nothing (lane A unchanged);
+#        E7 the guard's hostile patterns are the runner's, and the two agree
+#           about every real script in test\win32.
 #
 #   -NegativeControl strips the guard's auto-run from the fixture copy, so B1,
-#   B2, the refused half of B4 and B5 MUST fail - proof this harness can go red.
+#   B2, the refused half of B4, B5, E1, E2 and E3 MUST fail - proof this harness
+#   can go red.
 #
 # Non-interactive. Launches nothing but child powershell processes; the fixture
 # scripts print a marker instead of starting an app.
@@ -68,7 +79,7 @@ $null = New-Item -ItemType Directory -Force -Path $lib, (Join-Path $fx 'scripts'
 Copy-Item -Path (Join-Path $PSScriptRoot 'lib\*') -Destination $lib -Recurse -Force
 if ($NegativeControl) {
     $g = Join-Path $lib 'CheckoutGuard.ps1'
-    $t = [IO.File]::ReadAllText($g) -replace '(?m)^Assert-TestCheckout\s*$', '# (negative control: auto-run removed)'
+    $t = [IO.File]::ReadAllText($g) -replace '(?m)^\$script:CgMintedLineage = Assert-TestCheckout\s*$', '$script:CgMintedLineage = $null # (negative control: auto-run removed)'
     [IO.File]::WriteAllText($g, $t)
 }
 $fxExe = Join-Path $fx 'zig-out\bin\ghoztty.exe'
@@ -154,7 +165,68 @@ Assert ($sr -match 'Get-AcceptanceScriptClass' -and $sr -match 'T1996') 'D2 suit
 $gd = [IO.File]::ReadAllText((Join-Path $repo 'scripts\guard-due.ps1'))
 Assert ($gd -match 'acceptance-parallel\.ps1 run -Scripts' -and $gd -match 'T1996') 'D3 guard-due prints the runner form of run: in a foreign checkout'
 
-if ($NegativeControl) { Write-Host '(negative control: B1, B2, B4 and B5 above must FAIL)' }
+Write-Host '--- E. the agent half (T2006) ---'
+$noLineage = @{ GHOZTTY_AGENT_INSTANCE = $null; GHOZTTY_TEST_FOREIGN_CHECKOUT = $null }
+$viaLineage = Join-Path $fx 'test\win32\fx-lineage.ps1'
+[IO.File]::WriteAllText($viaLineage, @'
+. (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
+$armed = if ($env:GHOZTTY_AGENT_INSTANCE) { @($global:GhozttyHarnessRunInstances | Where-Object { $_ -and $_ -eq $env:GHOZTTY_AGENT_INSTANCE }).Count } else { 0 }
+Write-Host "BODY-RAN lineage=[$env:GHOZTTY_AGENT_INSTANCE] armed=$armed"
+'@)
+$viaHostile = Join-Path $fx 'test\win32\fx-hostile.ps1'
+[IO.File]::WriteAllText($viaHostile, @'
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+$state = Join-Path $env:LOCALAPPDATA 'ghoztty\local-agent-debug'
+Write-Host "BODY-RAN state=$state"
+'@)
+$viaSafe = Join-Path $fx 'test\win32\fx-safe.ps1'
+[IO.File]::WriteAllText($viaSafe, @'
+# @lineage-safe - the name below is fixture text; this script starts no agent
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+$text = 'local-agent-debug'
+Write-Host "BODY-RAN safe lineage=[$env:GHOZTTY_AGENT_INSTANCE]"
+'@)
+
+$e1 = Invoke-Fixture $viaLineage @() $noLineage
+$e1Inst = [regex]::Match($e1.Out, 'lineage=\[(aph-\d+)\]').Groups[1].Value
+Assert (($e1.Exit -eq 0) -and $e1Inst) "E1 a bare run with no lineage gets its own (lineage=[$e1Inst])"
+Assert ($e1Inst -and $e1.Out -match 'armed=1') 'E1 ...with its autostart teardown armed'
+Assert ($e1.Out -match "\[checkout-guard\].*GHOZTTY_AGENT_INSTANCE=$([regex]::Escape($e1Inst))") 'E1 ...and says so'
+
+$e2 = Invoke-Fixture $viaHostile @() $noLineage
+Assert (($e2.Out -match 'REFUSED') -and ($e2.Out -notmatch 'BODY-RAN') -and $e2.Exit -ne 0) "E2 a lineage-hostile script is refused before its body runs (exit $($e2.Exit))"
+Assert ($e2.Out -match 'unscoped agent state dir') 'E2 the refusal names the reason'
+
+$e3 = Invoke-Fixture $viaSafe @() $noLineage
+Assert (($e3.Out -match 'BODY-RAN safe lineage=\[aph-\d+\]') -and $e3.Exit -eq 0) 'E3 a declared @lineage-safe script runs, under its own lineage'
+
+$e4 = Invoke-Fixture $viaLineage @() @{ GHOZTTY_AGENT_INSTANCE = 'apm-4242'; GHOZTTY_TEST_FOREIGN_CHECKOUT = $null }
+Assert (($e4.Out -match 'BODY-RAN lineage=\[apm-4242\] armed=0') -and $e4.Exit -eq 0) 'E4 a lineage already set (the runner''s) is left alone'
+
+$e5 = Invoke-Fixture $viaHostile @() @{ GHOZTTY_AGENT_INSTANCE = $null; GHOZTTY_TEST_FOREIGN_CHECKOUT = '1' }
+Assert (($e5.Out -match 'BODY-RAN') -and $e5.Exit -eq 0) 'E5 GHOZTTY_TEST_FOREIGN_CHECKOUT=1 skips the agent half too'
+
+$e6 = Get-CheckoutLineageDecision -ScriptPath $viaHostile -Checkout $lit -Literal $lit
+$e6b = Get-CheckoutLineageDecision -ScriptPath $viaLineage -Checkout $lit -Literal $lit
+Assert ($e6.Action -eq 'none' -and $e6b.Action -eq 'none' -and -not $e6b.Instance) 'E6 in the literal checkout nothing is minted or refused (lane A unchanged)'
+$e6c = Get-CheckoutLineageDecision -ScriptPath $viaLineage -Checkout "$lit-b" -Literal $lit -ProcessId 77
+Assert ($e6c.Action -eq 'mint' -and $e6c.Instance -eq 'aph-77') "E6 from $lit-b the same script mints aph-<pid>"
+
+. (Join-Path $repo 'scripts\lib\AcceptanceParallel.ps1')
+$apKeys = @($script:ApMainPatterns.Keys) -join ' | '
+$cgKeys = @($script:CgLineageHostilePatterns.Keys) -join ' | '
+Assert ($apKeys -eq $cgKeys) 'E7 the guard''s lineage-hostile patterns are the runner''s ApMainPatterns'
+$disagree = @()
+$nHostile = 0
+foreach ($f in @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.ps1' -File)) {
+    $runner = (@((Get-AcceptanceScriptClass -Path $f.FullName).Unscoped).Count -gt 0)
+    $guard = (@(Get-LineageHostileReasons -ScriptPath $f.FullName).Count -gt 0)
+    if ($guard) { $nHostile++ }
+    if ($runner -ne $guard) { $disagree += "$($f.Name) runner=$runner guard=$guard" }
+}
+Assert ($disagree.Count -eq 0) "E7 the guard and the runner agree on every script ($nHostile hostile)$(if ($disagree.Count) { ': ' + ($disagree -join '; ') })"
+
+if ($NegativeControl) { Write-Host '(negative control: B1, B2, B4, B5, E1, E2 and E3 above must FAIL)' }
 
 Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
@@ -168,4 +240,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'CHECKOUT-GUARD' -MinPass 18
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'CHECKOUT-GUARD' -MinPass 30

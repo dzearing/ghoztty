@@ -43,6 +43,30 @@
 # GHOZTTY_TEST_FOREIGN_CHECKOUT=1 is the deliberate hatch - "yes, grade the
 # other checkout from here" - and it prints that it was used.
 #
+# THE AGENT HALF (T2006)
+#
+# Re-rooting the exe is not enough. The local agent's pipe, guard and state dir
+# are keyed by build mode plus GHOZTTY_AGENT_INSTANCE, and every debug build on
+# the box derives the SAME default - so a lane-B script run by hand, with its
+# own exe, still dialed LANE A's debug agent and adopted (or was refused by)
+# its sessions. The runner closed that for its own phases in T1994
+# (`apm-<runnerPid>`); this closes it for a run the runner never saw:
+#
+#   * in a checkout other than the literal one, with no lineage set, the guard
+#     MINTS one - `aph-<pid>` - and arms the teardown of the autostart value
+#     that lineage frees the agent to write (T1168), exactly as
+#     Set-GhozttyTestAgentLineage would. A script that mints its own later is
+#     told "already set" and keeps this one, as it does under the runner.
+#   * a script that CANNOT honor a lineage - the runner's lineage-hostile
+#     patterns (`$script:ApMainPatterns` in scripts\lib\AcceptanceParallel.ps1:
+#     an unscoped agent state dir or layout manifest, or dropping the lineage)
+#     - is REFUSED there, as the runner refuses it, because under any lineage
+#     it reads the wrong files and without one it is lane A's agent. A
+#     `# @lineage-safe - <why>` declaration exempts it, as it does in the runner.
+#
+# The literal checkout is untouched: lane A keeps the box's default lineage
+# byte for byte. GHOZTTY_TEST_FOREIGN_CHECKOUT=1 skips both halves.
+#
 # Acceptance: test\win32\checkout-guard.ps1.
 
 # The repo's path as the acceptance scripts spell it. Fixed, never derived: the
@@ -50,6 +74,19 @@
 # and checkout-guard.ps1 fails if the two ever differ.
 $script:CgRepoLiteral = 'D:\git\ghoztty'
 $script:CgFixtureMarker = '@repo-literal-fixture'
+
+# T2006: the runner's lineage-hostile patterns, regex -> reason. The same table
+# as $script:ApMainPatterns (scripts\lib\AcceptanceParallel.ps1) - this library
+# is copied into fixture checkouts that have no scripts\ - and checkout-guard.ps1
+# fails if the two ever differ, or if the two disagree about any real script.
+$script:CgLineageHostilePatterns = [ordered]@{
+    'local-agent-debug'                                                   = 'hardcodes the unscoped agent state dir'
+    'session-layout-debug'                                                = 'hardcodes the unscoped layout manifest'
+    'Remove-Item\s+Env:\\?GHOZTTY_AGENT_INSTANCE|\$env:GHOZTTY_AGENT_INSTANCE\s*=\s*(\$null|''''|"")' = 'drops the agent lineage'
+}
+# The prefix a hand-run lineage carries: `aph-<pid>`, beside the runner's
+# `apm-<pid>` and `apw<n>-<pid>`. Well inside the agent's 24-char cap.
+$script:CgHandLineagePrefix = 'aph'
 
 function Test-CgUnderPath {
     # True when $Value is $Root or a path below it - not a sibling that merely
@@ -125,11 +162,68 @@ function Get-ForeignCheckoutFindings {
     return @($found | Select-Object -Unique)
 }
 
+function Get-LineageHostileReasons {
+    <#
+    .SYNOPSIS
+    Why script -ScriptPath cannot run under its own agent lineage (T2006):
+    the reasons of every lineage-hostile pattern its CODE (comments blanked)
+    matches. Empty when none does, or when it declares
+    `# @lineage-safe - <why>`. Pure apart from reading the file.
+    #>
+    param([Parameter(Mandatory = $true)][string]$ScriptPath)
+    $raw = [IO.File]::ReadAllText($ScriptPath)
+    if ($raw -match '(?m)^[ \t]*#[ \t]*@lineage-safe[ \t]+-[ \t]*\S') { return @() }
+    $tokens = $null; $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($ScriptPath, [ref]$tokens, [ref]$errors)
+    $chars = $ast.Extent.Text.ToCharArray()
+    $base = $ast.Extent.StartOffset
+    foreach ($t in $tokens) {
+        if ($t.Kind -ne [System.Management.Automation.Language.TokenKind]::Comment) { continue }
+        for ($i = $t.Extent.StartOffset - $base; $i -lt ($t.Extent.EndOffset - $base); $i++) {
+            if ($chars[$i] -ne "`n" -and $chars[$i] -ne "`r") { $chars[$i] = ' ' }
+        }
+    }
+    $code = -join $chars
+    $found = @()
+    foreach ($k in $script:CgLineageHostilePatterns.Keys) {
+        if ($code -match "(?i)$k") { $found += $script:CgLineageHostilePatterns[$k] }
+    }
+    return $found
+}
+
+function Get-CheckoutLineageDecision {
+    <#
+    .SYNOPSIS
+    What a run of -ScriptPath from -Checkout does about its agent lineage
+    (T2006): 'none' (the literal checkout, or a lineage already set),
+    'mint' (with the name to use) or 'refuse' (with the reasons).
+
+    .DESCRIPTION
+    -Current is the GHOZTTY_AGENT_INSTANCE the run already has. Pure apart from
+    reading the script, so the harness can ask it about any checkout.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$ScriptPath,
+        [Parameter(Mandatory = $true)][string]$Checkout,
+        [string]$Current,
+        [string]$Literal = $script:CgRepoLiteral,
+        [int]$ProcessId = $PID
+    )
+    if ([string]::Equals($Checkout.TrimEnd('\'), $Literal.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
+        return [pscustomobject]@{ Action = 'none'; Instance = $null; Reasons = @() }
+    }
+    $hostile = @(Get-LineageHostileReasons -ScriptPath $ScriptPath)
+    if ($hostile.Count -gt 0) { return [pscustomobject]@{ Action = 'refuse'; Instance = $null; Reasons = $hostile } }
+    if ($Current) { return [pscustomobject]@{ Action = 'none'; Instance = $Current; Reasons = @() } }
+    return [pscustomobject]@{ Action = 'mint'; Instance = "$($script:CgHandLineagePrefix)-$ProcessId"; Reasons = @() }
+}
+
 function Assert-TestCheckout {
     <#
     .SYNOPSIS
     Throw REFUSED when the acceptance script that loaded this library would grade
-    another checkout's build. Runs by itself when this file is dot-sourced.
+    another checkout's build, or run against another checkout's agent. Runs by
+    itself when this file is dot-sourced; returns the lineage it minted, if any.
     #>
     $libDir = [IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
     $caller = $null
@@ -151,12 +245,31 @@ function Assert-TestCheckout {
             param($n)
             Get-Variable -Name $n -Scope Script -ValueOnly -ErrorAction SilentlyContinue
         })
-    if ($findings.Count -eq 0) { return }
-
     $leaf = Split-Path -Leaf $caller
     if ($env:GHOZTTY_TEST_FOREIGN_CHECKOUT -eq '1') {
-        Write-Host "  [checkout-guard] GHOZTTY_TEST_FOREIGN_CHECKOUT=1: $leaf runs from $root but grades $($script:CgRepoLiteral) ($($findings.Count) path(s)), as asked"
+        Write-Host "  [checkout-guard] GHOZTTY_TEST_FOREIGN_CHECKOUT=1: $leaf runs from $root but grades $($script:CgRepoLiteral) ($($findings.Count) path(s)) on its default agent lineage, as asked"
         return
+    }
+    if ($findings.Count -eq 0) {
+        # T2006: the build is this checkout's; now make the AGENT this run's too.
+        $d = Get-CheckoutLineageDecision -ScriptPath $caller -Checkout $root -Current $env:GHOZTTY_AGENT_INSTANCE
+        if ($d.Action -eq 'mint') {
+            $env:GHOZTTY_AGENT_INSTANCE = $d.Instance
+            Write-Host "  [checkout-guard] $leaf runs from $root - its own agent lineage GHOZTTY_AGENT_INSTANCE=$($d.Instance) (the default one is $($script:CgRepoLiteral)'s agent, T2006)"
+            return $d.Instance
+        }
+        if ($d.Action -ne 'refuse') { return }
+        $list = ($d.Reasons | ForEach-Object { "    - $_" }) -join "`n"
+        Write-Host @"
+REFUSED: $leaf is in $root, but it cannot run under its own agent lineage, and the default debug lineage is $($script:CgRepoLiteral)'s agent (T2006):
+
+$list
+
+Scope it (Get-GhozttyAgentStateDir / Get-GhozttySessionLayoutPath / Restore-GhozttyAgentLineage in
+test\win32\lib\AgentLineage.ps1), declare `# @lineage-safe - <why>` if the match is fixture text,
+or run it from $($script:CgRepoLiteral). GHOZTTY_TEST_FOREIGN_CHECKOUT=1 runs it against that agent on purpose.
+"@
+        throw "REFUSED: $leaf would run against another checkout's agent (T2006) - see above"
     }
     # The block goes to the host and the throw stays one line: an error record
     # is re-wrapped at the console width, which breaks the paths in half.
@@ -173,4 +286,11 @@ or pass the values above. GHOZTTY_TEST_FOREIGN_CHECKOUT=1 grades the other check
     throw "REFUSED: $leaf would grade another checkout's build (T1996) - see above"
 }
 
-Assert-TestCheckout
+$script:CgMintedLineage = Assert-TestCheckout
+if ($script:CgMintedLineage) {
+    # The autostart value a lineage frees the agent to write is this run's to
+    # remove (T1168) - armed here, at file scope, so the teardown's functions
+    # land where the caller can still reach them on exit.
+    . (Join-Path $PSScriptRoot 'HarnessLeak.ps1')
+    [void](Register-AgentRunKeyTeardown -Instance $script:CgMintedLineage)
+}
