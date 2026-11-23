@@ -344,6 +344,34 @@ pub extern fn gtk_uri_launcher_launch_finish(launcher: *GtkUriLauncher, result: 
 pub extern fn gtk_widget_get_clipboard(widget: *GtkWidget) *GdkClipboard;
 pub extern fn gdk_clipboard_set_text(clipboard: *GdkClipboard, text: [*:0]const u8) void;
 
+// --- An image pane's copy (T3534) --------------------------------------------
+//
+// The picture as a typed GdkTexture provider (GDK's serializers offer it as
+// image/png and the rest), unioned with the file as raw-bytes providers.
+pub const GdkContentProvider = opaque {};
+pub const GdkContentFormats = opaque {};
+pub const GType = usize;
+pub extern fn gdk_texture_get_type() GType;
+pub extern fn gdk_texture_get_width(texture: *GdkTexture) c_int;
+pub extern fn gdk_texture_get_height(texture: *GdkTexture) c_int;
+pub extern fn gdk_content_provider_new_typed(gtype: GType, ...) *GdkContentProvider;
+pub extern fn gdk_content_provider_new_for_bytes(mime_type: [*:0]const u8, bytes: *GBytes) *GdkContentProvider;
+pub extern fn gdk_content_provider_new_union(providers: [*]const *GdkContentProvider, n_providers: usize) *GdkContentProvider;
+pub extern fn gdk_clipboard_set_content(clipboard: *GdkClipboard, provider: ?*GdkContentProvider) c_int;
+pub extern fn gdk_clipboard_get_formats(clipboard: *GdkClipboard) *GdkContentFormats;
+pub extern fn gdk_clipboard_is_local(clipboard: *GdkClipboard) c_int;
+pub extern fn gdk_content_formats_to_string(formats: *GdkContentFormats) [*:0]u8;
+pub extern fn gdk_content_provider_ref_formats(provider: *GdkContentProvider) *GdkContentFormats;
+pub extern fn gdk_content_formats_unref(formats: *GdkContentFormats) void;
+pub extern fn gdk_clipboard_read_texture_async(
+    clipboard: *GdkClipboard,
+    cancellable: ?*anyopaque,
+    callback: ?GAsyncReadyCallback,
+    data: ?*anyopaque,
+) void;
+pub extern fn gdk_clipboard_read_texture_finish(clipboard: *GdkClipboard, result: *GAsyncResult, err: *?*GError) ?*GdkTexture;
+pub extern fn g_filename_to_uri(filename: [*:0]const u8, hostname: ?[*:0]const u8, err: *?*GError) ?[*:0]u8;
+
 pub extern fn g_menu_new() *GMenu;
 pub extern fn g_menu_append(menu: *GMenu, label: ?[*:0]const u8, detailed_action: ?[*:0]const u8) void;
 pub extern fn g_menu_append_section(menu: *GMenu, label: ?[*:0]const u8, section: *GMenu) void;

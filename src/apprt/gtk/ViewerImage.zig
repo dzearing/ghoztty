@@ -55,6 +55,10 @@ previous: ?rules.Previous = null,
 /// How many pictures this pane has had on screen (decoded and fitted); the
 /// steps runner reads it.
 loads: u32 = 0,
+/// How many Ctrl+C copies this pane has made, and what the last one put on
+/// the clipboard (T3534); the steps runner's `clipboard` step reads both.
+copies: u32 = 0,
+last_copy: Copy = .{},
 
 /// A fresh picture: the pane opened on it, navigated to it, or went Back to
 /// it. Opens at best-fit.
@@ -193,6 +197,129 @@ pub fn zoomChord(_: *ViewerImage, v: *Viewer, action: chrome.ZoomAction) void {
         .zoom_out => .zoom_out,
         .reset => .reset,
     }));
+}
+
+/// What the last Ctrl+C put on the clipboard, for the steps runner.
+pub const Copy = struct {
+    ok: bool = false,
+    width: c_int = 0,
+    height: c_int = 0,
+    file: bool = false,
+    /// What the provider offers (GDK's list, truncated), read off the
+    /// provider itself: a clipboard a headless seat would not let us own
+    /// still says what a reader would have been offered.
+    formats_buf: [512]u8 = undefined,
+    formats_len: usize = 0,
+
+    pub fn formats(self: *const Copy) []const u8 {
+        return self.formats_buf[0..self.formats_len];
+    }
+};
+
+/// Ctrl+C at an image pane (T3534): the PICTURE and its file on the
+/// clipboard, decoded from the file rather than read off the page - the
+/// page's `<img>` has no selection and so copies nothing, and the file is
+/// the thing the user is looking at anyway (win32's `copyImage`, Mac's
+/// `ViewerImageSurface.copy`). `viewer_image.zig` names the formats and why.
+///
+/// On the main thread, as the user asked for it: a copy is one decode, and
+/// a clipboard is only ever set from the thread that owns the display.
+pub fn copy(self: *ViewerImage, v: *Viewer) Copy {
+    var result: Copy = .{};
+    defer {
+        self.copies +|= 1;
+        self.last_copy = result;
+    }
+    const path = v.file_path orelse {
+        log.info("viewer image copy ok=false why=no-file", .{});
+        return result;
+    };
+    const alloc = v.alloc;
+    const zpath = alloc.dupeZ(u8, path) catch return result;
+    defer alloc.free(zpath);
+
+    const tex = decodeForCopy(alloc, zpath, self.route) orelse {
+        log.info("viewer image copy ok=false why=decode path={s}", .{path});
+        return result;
+    };
+    defer wk.g_object_unref(tex);
+
+    // The picture first, so a reader that takes the first format it knows
+    // takes the pixels; the file after it, for the reader that wants no
+    // picture at all (a file manager).
+    var providers: [3]*wk.GdkContentProvider = undefined;
+    var n: usize = 0;
+    providers[n] = wk.gdk_content_provider_new_typed(wk.gdk_texture_get_type(), tex);
+    n += 1;
+    // A path GLib cannot make a URI of still copies the picture: the file is
+    // the extra, never the reason the copy fails (win32's T1909 rule).
+    var err: ?*wk.GError = null;
+    if (wk.g_filename_to_uri(zpath.ptr, null, &err)) |uri_z| {
+        defer wk.g_free(uri_z);
+        const uri = std.mem.span(uri_z);
+        if (rules.uriList(alloc, uri)) |list| {
+            defer alloc.free(list);
+            const gb = wk.g_bytes_new(list.ptr, list.len);
+            defer wk.g_bytes_unref(gb);
+            providers[n] = wk.gdk_content_provider_new_for_bytes(rules.mime_uri_list, gb);
+            n += 1;
+        } else |_| {}
+        if (rules.gnomeCopiedFiles(alloc, uri)) |gnome| {
+            defer alloc.free(gnome);
+            const gb = wk.g_bytes_new(gnome.ptr, gnome.len);
+            defer wk.g_bytes_unref(gb);
+            providers[n] = wk.gdk_content_provider_new_for_bytes(rules.mime_gnome_copied, gb);
+            n += 1;
+        } else |_| {}
+    } else if (err) |e| {
+        log.warn("viewer image copy: {s} not offered as a file: {s}", .{ path, std.mem.span(e.message orelse "?") });
+        wk.g_error_free(e);
+    }
+
+    // The union owns the providers; the clipboard takes its own reference.
+    const union_ = wk.gdk_content_provider_new_union(&providers, n);
+    defer wk.g_object_unref(union_);
+    const set = wk.gdk_clipboard_set_content(wk.gtk_widget_get_clipboard(v.box), union_) != 0;
+
+    result = .{
+        .ok = set,
+        .width = wk.gdk_texture_get_width(tex),
+        .height = wk.gdk_texture_get_height(tex),
+        .file = n == 3,
+    };
+    const offered = wk.gdk_content_provider_ref_formats(union_);
+    defer wk.gdk_content_formats_unref(offered);
+    const fs = wk.gdk_content_formats_to_string(offered);
+    defer wk.g_free(fs);
+    const f = std.mem.span(fs);
+    result.formats_len = @min(f.len, result.formats_buf.len);
+    @memcpy(result.formats_buf[0..result.formats_len], f[0..result.formats_len]);
+    log.info("viewer image copy ok={} size={d}x{d} file={} route={s} offered={s} path={s}", .{
+        result.ok, result.width, result.height, result.file, @tagName(self.route), result.formats(), path,
+    });
+    return result;
+}
+
+/// The picture the pane shows, as a texture: an icon set's largest PNG, else
+/// the file through GDK's loaders (GTK's own, then gdk-pixbuf's) - the same
+/// decoders the host route serves the page from.
+fn decodeForCopy(alloc: std.mem.Allocator, path: [:0]const u8, route: rules.Route) ?*wk.GdkTexture {
+    var err: ?*wk.GError = null;
+    defer if (err) |e| {
+        log.info("viewer image copy: GDK cannot decode {s}: {s}", .{ path, std.mem.span(e.message orelse "?") });
+        wk.g_error_free(e);
+    };
+    switch (rules.copyDecodes(route)) {
+        .file => return wk.gdk_texture_new_from_filename(path.ptr, &err),
+        .icns => {
+            const bytes = std.fs.cwd().readFileAlloc(alloc, path, content.max_file_bytes) catch return null;
+            defer alloc.free(bytes);
+            const png = shared.icnsBestPng(bytes) orelse return null;
+            const gb = wk.g_bytes_new(png.ptr, png.len);
+            defer wk.g_bytes_unref(gb);
+            return wk.gdk_texture_new_from_bytes(gb, &err);
+        },
+    }
 }
 
 /// A one-line summary for the debug steps runner's `image` step.

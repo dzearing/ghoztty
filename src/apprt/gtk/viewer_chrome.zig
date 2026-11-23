@@ -169,6 +169,21 @@ pub fn vkForKeyval(kv: u32) ?u16 {
     };
 }
 
+/// Whether a key press is the COPY chord an image pane claims (T3534):
+/// Ctrl+C or Ctrl+Insert with no other modifier - win32's `copyChord`, the
+/// Mac's Cmd+C. The page holds a bare `<img>` and copies nothing with no
+/// selection, so in image mode this is asked before the page sees the key.
+/// Every other mode keeps Ctrl+C for the page's own selection. Ctrl+Shift+C
+/// (the Linux terminal's copy) is not it, exactly as on win32.
+pub fn imageCopyChord(kv: u32, state: u32) bool {
+    const vk: u16 = switch (kv) {
+        'c', 'C' => 0x43,
+        edit_keyval.Insert, keyval.KP_Insert => 0x2D, // VK_INSERT
+        else => return false,
+    };
+    return accel.copyChord(vk, modsFromGdk(state));
+}
+
 /// What a key press in a viewer pane means to the pane itself.
 pub const KeyAction = union(enum) {
     pane: PaneChord,
@@ -423,6 +438,18 @@ test "T3430: the page keeps its own editing chords, the rest is offered" {
     try testing.expect(offersToApp(edit_keyval.Left, ctrl | shift, none));
     // A key the text tables do not name (Page Up) is offered.
     try testing.expect(offersToApp(0xff55, ctrl, none));
+}
+
+test "T3534: an image pane's copy chord is Ctrl+C or Ctrl+Insert, exactly" {
+    try testing.expect(imageCopyChord('c', ctrl));
+    try testing.expect(imageCopyChord('C', ctrl)); // caps lock
+    try testing.expect(imageCopyChord(edit_keyval.Insert, ctrl));
+    try testing.expect(imageCopyChord(keyval.KP_Insert, ctrl));
+    try testing.expect(!imageCopyChord('c', 0));
+    try testing.expect(!imageCopyChord('C', ctrl | shift)); // the terminal's copy
+    try testing.expect(!imageCopyChord('c', ctrl | alt));
+    try testing.expect(!imageCopyChord('v', ctrl));
+    try testing.expect(!imageCopyChord(edit_keyval.Insert, shift)); // paste
 }
 
 test "T3430: the keys the text tables read map onto their virtual keys" {

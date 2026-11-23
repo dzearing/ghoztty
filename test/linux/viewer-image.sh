@@ -15,6 +15,9 @@
 #   PNG; an .icns shows its largest embedded PNG; an SVG draws;
 # - an undecodable file shows the "Cannot display this image" card, and a
 #   real HEIF container nothing here decodes names the loader to install;
+# - Ctrl+C (and Ctrl+Insert) copies the picture and its file (T3534): a
+#   texture, text/uri-list and x-special/gnome-copied-files, read back
+#   through GDK; Ctrl+Shift+C and the address field's Ctrl+C are not it;
 # - +list reports the pane as a viewer at its file.
 #
 # Run it ONLY through the wrapper, from this box:
@@ -177,6 +180,12 @@ image
 probe $DBL
 sleep 400
 image
+key <Control>c
+clipboard
+key <Control><Shift>c
+key <Control>l
+key <Control>c
+clipboard
 key <Control>l
 type $fx/photo.tiff
 activate
@@ -187,6 +196,8 @@ type $fx/icon.icns
 activate
 wait
 image
+key <Control>Insert
+clipboard
 key <Control>l
 type $fx/logo.svg
 activate
@@ -328,6 +339,25 @@ hl_check "I26 an undecodable file gets one host retry, then the 'Cannot display 
 p=$(pr 8)
 has "$p" "heif-gdk-pixbuf"
 hl_check "I27 a real HEIF container nothing here decodes names the loader to install" $? "$p"
+
+# ---- Ctrl+C copies the picture and its file (T3534) ---------------------------
+cb() { grep '^clipboard ' "$out" | sed -n "${1}p"; }
+ct() { grep '^clipboard-texture' "$out" | sed -n "${1}p"; }
+c1=$(cb 1)
+grep -q '^key <Control>c handled=true' "$out" && has "$c1" "copies=1 ok=true size=32x32 file=true"
+hl_check "I29 Ctrl+C at a picture copies it (claimed ahead of the page's empty selection)" $? "$(grep '^key <Control>c' "$out" | head -1) / $c1"
+has "$c1" "GdkTexture" && has "$c1" "text/uri-list" && has "$c1" "x-special/gnome-copied-files"
+hl_check "I30 ...offering the picture, a uri-list and a file manager's copied-files list" $? "$c1"
+has "$c1" "local=true" && has "$c1" "image/png" && [ "$(ct 1)" = "clipboard-texture 32x32" ]
+hl_check "I31 ...on the clipboard: a reader gets the 32x32 picture back as PNG" $? "$c1 / $(ct 1)"
+grep -q "viewer image copy ok=true size=32x32 file=true route=browser offered=.* path=$fx/small.png" "$APP_LOG"
+hl_check "I32 ...and the log names the copy and the file" $? "$(grep -m2 'viewer image copy' "$APP_LOG" | tr '\n' ' ')"
+c2=$(cb 2)
+grep -q '^key <Control><Shift>c handled=false' "$out" && has "$c2" "copies=1 "
+hl_check "I33 Ctrl+Shift+C is not the picture's copy, and the address field keeps its own Ctrl+C" $? "$(grep -E '^key <Control>(<Shift>)?c' "$out" | tr '\n' ' ') / $c2"
+c3=$(cb 3)
+grep -q '^key <Control>Insert handled=true' "$out" && has "$c3" "copies=2 ok=true size=64x64 file=true" && [ "$(ct 3)" = "clipboard-texture 64x64" ]
+hl_check "I34 Ctrl+Insert copies too, and an .icns copies its largest embedded PNG" $? "$c3 / $(ct 3)"
 
 grep -E 'panic|reached unreachable' "$APP_LOG" > /dev/null 2>&1
 [ $? != 0 ] && kill -0 "$APP" 2>/dev/null

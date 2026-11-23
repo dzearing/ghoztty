@@ -1589,6 +1589,15 @@ pub fn handleKey(self: *Viewer, keyval: u32, keycode: u32, state: u32) bool {
         .diff_filter = self.diff.filterHasFocus(self),
         .find_open = self.find_open,
     };
+    // Ctrl+C at a picture copies the PICTURE and its file (T3534), ahead of
+    // the page: its bare `<img>` has no selection and would copy nothing.
+    // Our own fields keep their own copy.
+    if (self.mode == .image and !focus.address and !focus.find and
+        chrome.imageCopyChord(keyval, state))
+    {
+        _ = self.image.copy(self);
+        return true;
+    }
     const action = chrome.classify(keyval, state, focus) orelse {
         // Not the pane's: an app keybinding may answer it, exactly as from
         // a terminal, minus what needs one (T3430). The page and our own
@@ -2304,7 +2313,11 @@ fn writeDump(text: []const u8) void {
 ///   wait            until the next render finishes (10 s): `wait ok=<bool>`
 ///   image           an image pane's zoom state (T3416): `image rev= loads=
 ///                   route= zoom= fitting= fit= natural=WxH viewport=WxH`
-///   diff            a diff pane's state (T3417): `diff files= file= style=
+///   clipboard       what an image pane's last Ctrl+C put on the clipboard
+///                   (T3534): `clipboard copies= ok= size=WxH file= local=
+///                   formats=<the clipboard's> offered=<the copy's>`, then `clipboard-texture WxH`
+///                   (the picture read back through GDK) or `... FAIL <why>`
+///   diff           a diff pane's state (T3417): `diff files= file= style=
 ///                   rows= selected= panel= listings= patches= unchanged=
 ///                   git= width= busy= header= filter=`
 ///   rows            the changed-files panel: `rows <kind>:<title>|...`
@@ -2517,6 +2530,20 @@ const steps = if (build_config.is_debug) struct {
             // zoom= fitting= fit= natural=WxH viewport=WxH`.
             var buf: [512]u8 = undefined;
             out("image {s}", .{v.image.describe(&buf)});
+        } else if (std.mem.eql(u8, verb, "clipboard")) {
+            // What the last Ctrl+C put on the clipboard (T3534), read back
+            // through GDK: the formats offered, then the picture a reader
+            // gets (`clipboard copies= ok= size= file= local= formats=<...>`,
+            // then `clipboard-texture <W>x<H>` or `clipboard-texture FAIL`).
+            const cb = wk.gtk_widget_get_clipboard(v.box);
+            const formats = wk.gdk_content_formats_to_string(wk.gdk_clipboard_get_formats(cb));
+            defer wk.g_free(formats);
+            const c = &v.image.last_copy;
+            out("clipboard copies={d} ok={} size={d}x{d} file={} local={} formats={s} offered={s}", .{
+                v.image.copies, c.ok, c.width, c.height, c.file, wk.gdk_clipboard_is_local(cb) != 0, std.mem.span(formats), c.formats(),
+            });
+            wk.gdk_clipboard_read_texture_async(cb, null, &onClipboardTexture, null);
+            return 0;
         } else if (std.mem.eql(u8, verb, "diff")) {
             // A diff pane's state (T3417), `ViewerDiff.describe`.
             var buf: [2048]u8 = undefined;
@@ -2714,6 +2741,23 @@ const steps = if (build_config.is_debug) struct {
         out("feedback {s}", .{v.feedback.describe(&buf)});
         schedule();
         return 0;
+    }
+
+    fn onClipboardTexture(source: ?*wk.GObject, result: *wk.GAsyncResult, _: ?*anyopaque) callconv(.c) void {
+        var err: ?*wk.GError = null;
+        const cb: *wk.GdkClipboard = @ptrCast(source orelse {
+            out("clipboard-texture FAIL no-clipboard", .{});
+            return schedule();
+        });
+        if (wk.gdk_clipboard_read_texture_finish(cb, result, &err)) |tex| {
+            defer wk.g_object_unref(tex);
+            out("clipboard-texture {d}x{d}", .{ wk.gdk_texture_get_width(tex), wk.gdk_texture_get_height(tex) });
+        } else {
+            const why = if (err) |e| std.mem.span(e.message orelse "?") else "?";
+            out("clipboard-texture FAIL {s}", .{why});
+            if (err) |e| wk.g_error_free(e);
+        }
+        schedule();
     }
 
     fn onProbed(source: ?*wk.GObject, result: *wk.GAsyncResult, _: ?*anyopaque) callconv(.c) void {

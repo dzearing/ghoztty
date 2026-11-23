@@ -123,8 +123,68 @@ pub fn setImageCall(
 }
 
 // -------------------------------------------------------------------------
+// Ctrl+C: the picture and its file on the clipboard (T3534)
+// -------------------------------------------------------------------------
+//
+// The Mac's `ViewerImageSurface.copy` puts the picture and the file's URL on
+// the pasteboard, as Preview does with nothing selected; win32 puts a DIB, a
+// PNG and a CF_HDROP (T1872, T1909). On Linux the picture is a `GdkTexture`
+// (GDK serializes it as image/png and every other format it has a saver for)
+// and the file is offered twice, as the two shapes Linux readers look for:
+// `text/uri-list` (RFC 2483, what a browser, an editor or a terminal drop
+// reads) and `x-special/gnome-copied-files` (what Nautilus, Nemo and Caja
+// read on Paste, so a paste into a file manager copies the file - the
+// Explorer paste T1909 exists for).
+
+/// The two file-list MIME types, in the order they are offered.
+pub const mime_uri_list = "text/uri-list";
+pub const mime_gnome_copied = "x-special/gnome-copied-files";
+
+/// The `text/uri-list` payload for one file: the URI and a CRLF, as RFC 2483
+/// spells every line. `uri` is already a `file://` URI (GLib escapes it).
+/// Caller owns the result.
+pub fn uriList(alloc: Allocator, uri: []const u8) Allocator.Error![]u8 {
+    return std.fmt.allocPrint(alloc, "{s}\r\n", .{uri});
+}
+
+/// The `x-special/gnome-copied-files` payload: the verb, then one URI per
+/// line. `copy` (never `cut`): Ctrl+C at a picture must not move the user's
+/// file when they paste. Caller owns the result.
+pub fn gnomeCopiedFiles(alloc: Allocator, uri: []const u8) Allocator.Error![]u8 {
+    return std.fmt.allocPrint(alloc, "copy\n{s}", .{uri});
+}
+
+/// Whether the host decoder can hand the copy a picture at all. A vector has
+/// no pixel size of its own and GDK has no SVG loader without librsvg's
+/// gdk-pixbuf module, so an SVG is tried and may fail; every raster the pane
+/// shows is decodable by the route that showed it.
+pub fn copyDecodes(r: Route) enum { file, icns } {
+    return switch (r) {
+        .icns => .icns,
+        .browser, .wic => .file,
+    };
+}
+
+// -------------------------------------------------------------------------
 // Tests
 // -------------------------------------------------------------------------
+
+test "T3534: the file goes on as a uri-list line and a gnome copy, never a cut" {
+    const uri = "file:///home/u/My%20Pictures/a.png";
+    const list = try uriList(testing.allocator, uri);
+    defer testing.allocator.free(list);
+    try testing.expectEqualStrings("file:///home/u/My%20Pictures/a.png\r\n", list);
+    const gnome = try gnomeCopiedFiles(testing.allocator, uri);
+    defer testing.allocator.free(gnome);
+    try testing.expectEqualStrings("copy\nfile:///home/u/My%20Pictures/a.png", gnome);
+    try testing.expect(!std.mem.startsWith(u8, gnome, "cut"));
+}
+
+test "T3534: an icon set copies its embedded PNG, everything else its file" {
+    try testing.expectEqual(.icns, copyDecodes(.icns));
+    try testing.expectEqual(.file, copyDecodes(.browser));
+    try testing.expectEqual(.file, copyDecodes(.wic));
+}
 
 test "url: the template origin's sentinel, one revision per load" {
     const alloc = testing.allocator;
