@@ -1,8 +1,8 @@
 {
     "guard":  "viewer-panes",
     "script":  "test/win32/viewer-panes.ps1",
-    "generated":  "2026-11-22T15:34:53-08:00",
-    "commit":  "f69dca8e1",
+    "generated":  "2026-11-22T17:07:29-08:00",
+    "commit":  "a425fd09e",
     "uncommitted":  [
 
                     ],
@@ -10,7 +10,7 @@
                   "src/apprt/win32/IpcHandlers.zig":  "a58aa4cf379d629df8b2b99924cb78342aae0a001f2fe8dc259a73cfb9f8bbb0",
                   "src/apprt/win32/viewer_accel.zig":  "07d6f44e59f931c2c1caa5db167ffb7c099bb0684ae386a15260f6b46c5c1d2e",
                   "src/apprt/win32/viewer_content.zig":  "dfb525d8ee6971cb03d2b6c2dc51ff24c2cc6ab337b9f805dc2ca08bbdc1400a",
-                  "src/apprt/win32/ViewerPane.zig":  "e81f9ccc61307096c0d9613343efdc5157f565e60fde49022321b928e910c661",
+                  "src/apprt/win32/ViewerPane.zig":  "6d1509cb6faeabe0aed9a728e45369e1954a5268280f7fa1f0a7dde1ab6b4525",
                   "src/apprt/win32/Window.zig":  "e88e53ea2c007257bf512ee8815e87eedf6f1e3cc9412bb0a4201d3d87ec2191",
                   "src/cli/list.zig":  "d667393b27b28bcf9d0626f085967507756d1ba13765500e42e47fc447a3ac53",
                   "src/cli/reload.zig":  "5755d8fdc574f26b41cf39486b2e31502bc0ee938346c7bd337f40b985095ced",
