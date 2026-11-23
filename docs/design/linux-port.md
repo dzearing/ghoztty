@@ -93,6 +93,29 @@ Each step is a `seat: linux` task (filed 2026-11-21; `parity-tasks.ps1 next
 | L3 agent on Linux | T3332 | L8 sessions | T3337 | L13 Linux intake sweep | T3342 |
 | L4 linux.md + headless harness | T3333 | L9 viewers (WebKitGTK) | T3338 | L14 packaging + scheme | T3343 |
 
+Every `docs/reference/*.md` topic has a Linux owner (L11, 2026-11-23). The
+cards L11 filed are numbered in the order the Mac shipped each feature (its
+first commit on `main`), so `next` takes them in that order within the P2 band:
+
+| Reference topic | Linux task(s) |
+|---|---|
+| cli-commands, cli-targeting | L7 T3336 (+ T3367-T3370) |
+| session-persistence | L8 T3337 (+ T3397-T3400) |
+| viewer-panes, viewer-image-and-diff, viewer-feedback | L9 T3338 (+ its L9a-L9k cards) |
+| banners, pane-sidebar | L10 T3339 (+ T3557-T3561) |
+| url-scheme | in-app `ghoztty://` links: T3415; OS registration and handing the URL to the app: L14 T3343 |
+| remote-machines | L11a T3563 (chooser, Close vs Disconnect, pill); verbs T3399, relay sign-in L12 T3341 |
+| pane-rearrange | L11b T3564 |
+| copy-reflow | L11c T3565 |
+| pane-style | L11d T3566 |
+| stacked-panes | L11e T3567 |
+| terminal-resize | L11f T3568 |
+| settings | L11g T3569 |
+| keyboard-shortcuts | L11h T3570 |
+| background-windows | L11i T3571 |
+| memory | L11j T3572 |
+| window-modes | L11k T3573 |
+
 ## The Linux lane
 
 The Linux seat is worked by its own go-loop **lane `l`**, in its own worktree
