@@ -20,15 +20,24 @@
 //! so a back/forward walk never re-launches git, while a dev server started
 //! later still makes the button appear.
 //!
-//! The composer the button opens is T3544; until then a click logs that.
+//! The button opens the composer (T3544, the second half of this file): a
+//! pill under the nav bar hosting the shared `composer.js` in a second web
+//! view, Enter for a newline, Ctrl+Enter to send, Escape to close, and the
+//! report filed into `<worktree>/temp/feedback/new/<stem>/report.json` by
+//! win32's pure `viewer_feedback_report.zig` (staging + one atomic rename).
 const ViewerFeedback = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+const build_config = @import("../../build_config.zig");
 const Viewer = @import("Viewer.zig");
 const wk = @import("webkit.zig");
 const rules = @import("viewer_worktree.zig");
+const host = @import("viewer_feedback_host.zig");
+const content = @import("../win32/viewer_content.zig");
+const page = @import("../win32/viewer_feedback_page.zig");
+const report = @import("../win32/viewer_feedback_report.zig");
 const git_run = @import("../win32/git_run.zig");
 
 const log = std.log.scoped(.gtk_viewer);
@@ -57,8 +66,38 @@ pending: bool = false,
 /// How many resolutions actually ran on a worker (cache misses); the tests
 /// read it to prove a back/forward walk is served from the cache.
 resolves: u32 = 0,
-/// How many clicks the button has had (the composer is T3544's).
+/// How many clicks the button has had.
 clicks: u32 = 0,
+
+// The composer (T3544). The band and its widgets are built once and hidden;
+// the web view exists only while the composer is open.
+band: ?*wk.GtkWidget = null,
+slot: ?*wk.GtkWidget = null,
+send_button: ?*wk.GtkWidget = null,
+status: ?*wk.GtkWidget = null,
+status_text: ?[:0]u8 = null,
+view: ?*wk.GtkWidget = null,
+ucm: ?*wk.UserContentManager = null,
+message_handler: c_ulong = 0,
+open: bool = false,
+/// The page has loaded and said `ready`; before that nothing goes down.
+ready: bool = false,
+/// The report text. It lives on the pane, so closing and reopening the
+/// composer keeps it.
+text: std.ArrayListUnmanaged(u8) = .empty,
+/// The caret, in the page's UTF-16 units; -1 = at the end.
+caret: i64 = -1,
+/// The last seed's generation; a snapshot from before it is dropped.
+seed_gen: u32 = 0,
+/// Wrapped lines, as the page last measured them.
+lines: u32 = 1,
+/// Bumped on every open and close, so a "Filed" auto-close timer from an
+/// earlier composer never closes a new one.
+close_gen: u32 = 0,
+sending: bool = false,
+/// Reports filed from this pane, and the folder of the last one.
+sends: u32 = 0,
+filed: ?[]u8 = null,
 
 /// What a worker completion needs to find its pane: the viewer pointer, read
 /// and cleared only on the UI thread, behind a count every job holds.
@@ -138,6 +177,19 @@ pub fn deinit(self: *ViewerFeedback) void {
         l.unref();
     }
     self.link = null;
+    // The composer's view is a child of the pane's box and goes with it;
+    // only our own ref on its content manager is ours to drop.
+    if (self.ucm) |m| {
+        if (self.message_handler != 0) wk.g_signal_handler_disconnect(m, self.message_handler);
+        wk.g_object_unref(m);
+    }
+    self.ucm = null;
+    self.view = null;
+    self.text.deinit(alloc);
+    if (self.status_text) |t| alloc.free(t);
+    self.status_text = null;
+    if (self.filed) |f| alloc.free(f);
+    self.filed = null;
     self.cache.deinit();
     if (self.origin_dir) |d| alloc.free(d);
     self.origin_dir = null;
@@ -324,6 +376,9 @@ fn setRoot(self: *ViewerFeedback, root: ?[]const u8) void {
 
     const b = self.button orelse return;
     const r = root orelse {
+        // Nowhere to file now: a composer left open would be a lie too. Its
+        // text stays on the pane for when a worktree comes back.
+        if (self.open) self.hideComposer();
         wk.gtk_widget_set_visible(b, 0);
         wk.gtk_widget_set_tooltip_text(b, null);
         log.info("viewer feedback: worktree=none", .{});
@@ -337,15 +392,6 @@ fn setRoot(self: *ViewerFeedback, root: ?[]const u8) void {
     log.info("viewer feedback: worktree={s} name={s}", .{ r, rules.worktreeName(r) });
 }
 
-fn onClicked(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
-    const v: *Viewer = @ptrCast(@alignCast(ud orelse return));
-    const self = &v.feedback;
-    self.clicks += 1;
-    log.info("viewer feedback: clicked worktree={s}; the composer is not built on Linux yet (T3544)", .{
-        if (self.root) |r| r else "-",
-    });
-}
-
 /// The steps seam's `feedback` line.
 pub fn describe(self: *const ViewerFeedback, buf: []u8) []const u8 {
     const visible = if (self.button) |b| wk.gtk_widget_get_visible(b) != 0 else false;
@@ -357,4 +403,504 @@ pub fn describe(self: *const ViewerFeedback, buf: []u8) []const u8 {
         self.resolves,
         self.clicks,
     }) catch "feedback OVERFLOW";
+}
+
+// -------------------------------------------------------------------------
+// The composer (T3544)
+// -------------------------------------------------------------------------
+//
+// The button opens a band under the nav bar: a pill holding the shared
+// `composer.js` page in a SECOND web view (win32's D43 shape) and a round
+// send button, with a footer line under it. The view exists only while the
+// composer is open - D43's mitigation: a closed composer costs the pane
+// nothing - and everything a user would miss lives here on the pane instead,
+// so every open re-seeds the page from `text`. The page pushes a snapshot up
+// on every edit; nothing here ever asks it a question.
+
+/// Line box and font, in CSS pixels: Adwaita's body text.
+const line_px: f32 = 20;
+const font_px: f32 = 14;
+/// How long the "Filed" confirmation shows before the composer closes.
+const filed_close_ms: c_uint = 1500;
+/// Reads the page's selection at send time: what the user was pointing at.
+const selection_js = "String(window.getSelection ? window.getSelection() : '')";
+
+/// Build the (hidden) composer band; the caller packs it under the bar.
+pub fn buildComposerUi(self: *ViewerFeedback, v: *Viewer) *wk.GtkWidget {
+    const band = wk.gtk_box_new(wk.orientation_vertical, 2);
+    wk.gtk_widget_set_margin_start(band, 8);
+    wk.gtk_widget_set_margin_end(band, 8);
+    wk.gtk_widget_set_margin_top(band, 4);
+    wk.gtk_widget_set_margin_bottom(band, 4);
+    wk.gtk_widget_set_visible(band, 0);
+
+    const pill = wk.gtk_box_new(wk.orientation_horizontal, 6);
+    wk.gtk_widget_add_css_class(pill, "card");
+    const slot = wk.gtk_box_new(wk.orientation_horizontal, 0);
+    wk.gtk_widget_set_hexpand(slot, 1);
+    wk.gtk_widget_set_margin_start(slot, 10);
+    wk.gtk_widget_set_margin_top(slot, 6);
+    wk.gtk_widget_set_margin_bottom(slot, 6);
+    wk.gtk_box_append(pill, slot);
+
+    const send_b = wk.gtk_button_new_from_icon_name("go-up-symbolic");
+    wk.gtk_widget_add_css_class(send_b, "circular");
+    wk.gtk_widget_add_css_class(send_b, "suggested-action");
+    wk.gtk_widget_set_valign(send_b, wk.align_end);
+    wk.gtk_widget_set_margin_end(send_b, 6);
+    wk.gtk_widget_set_margin_bottom(send_b, 4);
+    wk.gtk_widget_set_tooltip_text(send_b, "Send (Ctrl+Enter)");
+    wk.gtk_widget_set_focus_on_click(send_b, 0);
+    _ = wk.g_signal_connect_data(send_b, "clicked", @ptrCast(&onSendClicked), v, null, 0);
+    wk.gtk_box_append(pill, send_b);
+    wk.gtk_box_append(band, pill);
+
+    const status = wk.gtk_label_new("");
+    wk.gtk_label_set_xalign(status, 0);
+    wk.gtk_widget_add_css_class(status, "dim-label");
+    wk.gtk_widget_add_css_class(status, "caption");
+    wk.gtk_box_append(band, status);
+
+    self.band = band;
+    self.slot = slot;
+    self.send_button = send_b;
+    self.status = status;
+    return band;
+}
+
+pub fn sendButtonWidget(self: *const ViewerFeedback) ?*wk.GtkWidget {
+    return self.send_button;
+}
+
+/// The button: open the composer, or close it when it is open (the Mac's
+/// toggle).
+fn onClicked(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
+    const v: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    const self = &v.feedback;
+    self.clicks += 1;
+    if (self.open) self.closeComposer(v) else self.openComposer(v);
+}
+
+fn onSendClicked(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
+    const v: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    v.feedback.send(v);
+}
+
+pub fn openComposer(self: *ViewerFeedback, v: *Viewer) void {
+    const root = self.root orelse return;
+    const band = self.band orelse return;
+    self.open = true;
+    self.close_gen +%= 1;
+    wk.gtk_widget_set_visible(band, 1);
+    var buf: [std.fs.max_path_bytes + 32]u8 = undefined;
+    self.setStatus(host.destinationText(&buf, rules.worktreeName(root)));
+    if (self.view == null) self.createView(v) else self.focusComposer();
+    log.info("viewer feedback: composer open worktree={s} chars={d}", .{ root, self.text.items.len });
+}
+
+pub fn closeComposer(self: *ViewerFeedback, v: *Viewer) void {
+    if (!self.open) return;
+    self.hideComposer();
+    // The caret goes back to the page the report was about.
+    _ = wk.gtk_widget_grab_focus(wk.asWidget(v.view));
+    log.info("viewer feedback: composer closed chars={d}", .{self.text.items.len});
+}
+
+/// Close without touching focus: the pane walked somewhere with no worktree.
+fn hideComposer(self: *ViewerFeedback) void {
+    self.open = false;
+    self.close_gen +%= 1;
+    if (self.band) |b| wk.gtk_widget_set_visible(b, 0);
+    self.destroyView();
+}
+
+fn createView(self: *ViewerFeedback, v: *Viewer) void {
+    const slot = self.slot orelse return;
+    const w = wk.webkit_web_view_new();
+    const cv = wk.asWebView(w);
+    const m = wk.webkit_web_view_get_user_content_manager(cv);
+    const script = wk.webkit_user_script_new(host.shim_js, wk.inject_top_frame, wk.inject_at_document_start, null, null);
+    wk.webkit_user_content_manager_add_script(m, script);
+    wk.webkit_user_script_unref(script);
+    if (wk.webkit_user_content_manager_register_script_message_handler(m, host.handler_name, null) == 0) {
+        log.warn("viewer feedback: could not register the {s} handler; the composer cannot report", .{host.handler_name});
+    }
+    _ = wk.g_object_ref(m);
+    self.ucm = m;
+    self.message_handler = wk.g_signal_connect_data(
+        m,
+        "script-message-received::" ++ host.handler_name,
+        @ptrCast(&onComposerMessage),
+        v,
+        null,
+        0,
+    );
+    wk.gtk_widget_set_hexpand(w, 1);
+    wk.gtk_widget_set_size_request(w, -1, host.boxHeight(self.lines, line_px, 0));
+    wk.gtk_box_append(slot, w);
+    self.view = w;
+    self.ready = false;
+
+    const html = page.documentAlloc(alloc) catch return;
+    defer alloc.free(html);
+    const z = alloc.dupeZ(u8, html) catch return;
+    defer alloc.free(z);
+    wk.webkit_web_view_load_html(cv, z.ptr, null);
+    _ = wk.gtk_widget_grab_focus(w);
+}
+
+fn destroyView(self: *ViewerFeedback) void {
+    if (self.ucm) |m| {
+        if (self.message_handler != 0) wk.g_signal_handler_disconnect(m, self.message_handler);
+        wk.webkit_user_content_manager_unregister_script_message_handler(m, host.handler_name, null);
+        wk.g_object_unref(m);
+    }
+    self.ucm = null;
+    self.message_handler = 0;
+    if (self.view) |w| if (self.slot) |s| wk.gtk_box_remove(s, w);
+    self.view = null;
+    self.ready = false;
+}
+
+/// Deliver one JSON message down to the page.
+fn post(self: *ViewerFeedback, json: []const u8) void {
+    const w = self.view orelse return;
+    const script = host.deliverScript(alloc, json) catch return;
+    defer alloc.free(script);
+    wk.webkit_web_view_evaluate_javascript(wk.asWebView(w), script.ptr, @intCast(script.len), null, null, null, null, null);
+}
+
+fn pushVars(self: *ViewerFeedback) void {
+    const vars: page.Vars = .{
+        .face = "Cantarell, \"Noto Sans\", \"DejaVu Sans\"",
+        .font_px = font_px,
+        .line_px = line_px,
+        .fg = "#1e1e1e",
+        .bg = "#ffffff",
+        .placeholder = "#8a8a8a",
+        .selection = "#a9c8f0",
+        .placeholder_text = "Describe what you see. Ctrl+Enter sends.",
+        .quote_bg = "#eef3fb",
+        .quote_accent = "#3584e4",
+        .quote_indent_px = 12,
+        .quote_bar_px = 3,
+        .quote_bar_x_px = 2,
+        .image_pad_px = 2,
+        .image_radius_px = 4,
+        .image_ink = "#1c71d8",
+        .image_edge = "#3584e4",
+        .image_max_bytes = 0,
+    };
+    const json = vars.json(alloc) catch return;
+    defer alloc.free(json);
+    self.post(json);
+}
+
+/// Make the page equal the pane's buffer - the only native write there is.
+fn pushSeed(self: *ViewerFeedback) void {
+    self.seed_gen +%= 1;
+    const json = page.seedJson(alloc, self.text.items, self.caret, self.seed_gen, &.{}, &.{}, false) catch return;
+    defer alloc.free(json);
+    self.post(json);
+}
+
+fn focusComposer(self: *ViewerFeedback) void {
+    const w = self.view orelse return;
+    _ = wk.gtk_widget_grab_focus(w);
+    if (self.ready) self.post(page.focus_json);
+}
+
+/// A message from the composer's page: the shim's send/close chords, or the
+/// shared page's own traffic.
+fn onComposerMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyopaque) callconv(.c) void {
+    const v: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    const self = &v.feedback;
+    const json = wk.jsc_value_to_json(value, 0) orelse return;
+    defer wk.g_free(json);
+    const text = std.mem.span(json);
+    if (host.hostVerb(alloc, text)) |verb| {
+        switch (verb) {
+            .send => self.send(v),
+            .close => self.closeComposer(v),
+        }
+        return;
+    }
+    const parsed = page.parse(alloc, text) orelse return;
+    defer parsed.deinit();
+    switch (parsed.message) {
+        .ready => {
+            // A fresh page - or one that reloaded itself - heals from the
+            // pane's buffer.
+            self.ready = true;
+            self.pushVars();
+            self.pushSeed();
+            if (self.open) self.focusComposer();
+        },
+        .state => |st| self.adoptState(st),
+        .image => log.info("viewer feedback: a pasted picture is not filed on Linux yet", .{}),
+        .focus, .journal => {},
+    }
+}
+
+/// Keep the page's snapshot - unless it was measured before the latest seed.
+fn adoptState(self: *ViewerFeedback, st: page.State) void {
+    if (st.gen != self.seed_gen) return;
+    self.text.clearRetainingCapacity();
+    self.text.appendSlice(alloc, st.text) catch {};
+    self.caret = if (st.caret) |c| @intCast(c) else -1;
+    if (st.lines != self.lines) {
+        self.lines = st.lines;
+        if (self.view) |w| wk.gtk_widget_set_size_request(w, -1, host.boxHeight(self.lines, line_px, 0));
+    }
+}
+
+fn setStatus(self: *ViewerFeedback, text: []const u8) void {
+    if (self.status_text) |t| alloc.free(t);
+    self.status_text = alloc.dupeZ(u8, text) catch null;
+    if (self.status) |l| wk.gtk_label_set_text(l, if (self.status_text) |t| t.ptr else "");
+}
+
+// ---- sending ---------------------------------------------------------------
+
+/// Ctrl+Enter or the send button. Reads the page's selection first (what the
+/// user was pointing at), then files off the UI thread.
+pub fn send(self: *ViewerFeedback, v: *Viewer) void {
+    if (self.sending) return;
+    if (self.root == null) return;
+    if (!host.hasContent(self.text.items)) {
+        self.setStatus("Nothing to send yet");
+        return;
+    }
+    const link = self.ensureLink(v) orelse return;
+    link.ref();
+    self.sending = true;
+    wk.webkit_web_view_evaluate_javascript(v.view, selection_js, selection_js.len, null, null, null, &onSelection, link);
+}
+
+fn onSelection(source: ?*wk.GObject, result: *wk.GAsyncResult, ud: ?*anyopaque) callconv(.c) void {
+    const link: *Link = @ptrCast(@alignCast(ud orelse return));
+    defer link.unref();
+    var err: ?*wk.GError = null;
+    const value = if (source) |s| wk.webkit_web_view_evaluate_javascript_finish(@ptrCast(s), result, &err) else null;
+    if (err) |e| wk.g_error_free(e);
+    var raw: ?[*:0]u8 = null;
+    if (value) |val| {
+        raw = wk.jsc_value_to_string(val);
+        wk.g_object_unref(val);
+    }
+    defer if (raw) |r| wk.g_free(r);
+    var selection: ?[]const u8 = null;
+    if (raw) |r| {
+        const s = std.mem.span(r);
+        if (std.mem.trim(u8, s, " \t\r\n").len != 0) selection = s;
+    }
+    const v = link.viewer orelse return;
+    v.feedback.beginSend(v, selection);
+}
+
+/// One filing, owned by the worker until it posts, then by the idle.
+const SendJob = struct {
+    arena: std.heap.ArenaAllocator,
+    link: *Link,
+    ctx: report.Context = undefined,
+    body: []const u8 = "",
+    epoch: u64,
+    suffix: u24,
+    ok: bool = false,
+    folder: []const u8 = "",
+    stem: []const u8 = "",
+    err_name: []const u8 = "",
+
+    fn destroy(self: *SendJob) void {
+        self.link.unref();
+        self.arena.deinit();
+        alloc.destroy(self);
+    }
+};
+
+fn beginSend(self: *ViewerFeedback, v: *Viewer, selection: ?[]const u8) void {
+    const root = self.root orelse {
+        self.sending = false;
+        return;
+    };
+    const link = self.link orelse {
+        self.sending = false;
+        return;
+    };
+    const job = alloc.create(SendJob) catch {
+        self.sending = false;
+        return;
+    };
+    link.ref();
+    job.* = .{
+        .arena = .init(alloc),
+        .link = link,
+        .epoch = @intCast(@max(0, std.time.timestamp())),
+        .suffix = std.crypto.random.int(u24),
+    };
+    self.fillJob(v, job, root, selection) catch {
+        job.destroy();
+        self.sending = false;
+        self.setStatus("Could not file: out of memory");
+        return;
+    };
+    const t = std.Thread.spawn(.{}, sendWork, .{job}) catch |err| {
+        log.warn("viewer feedback: cannot start the send err={}", .{err});
+        job.destroy();
+        self.sending = false;
+        self.setStatus("Could not file: no thread");
+        return;
+    };
+    t.detach();
+    self.setStatus("Sending...");
+}
+
+fn fillJob(self: *ViewerFeedback, v: *Viewer, job: *SendJob, root: []const u8, selection: ?[]const u8) !void {
+    const aa = job.arena.allocator();
+    const loc: []const u8 = v.current;
+    const kind = host.kindFor(loc, content.modeFor(loc) == .image);
+    const file = host.filePath(loc);
+    var vbuf: [32]u8 = undefined;
+    const vw = wk.asWidget(v.view);
+    const viewport = host.viewportText(&vbuf, wk.gtk_widget_get_width(vw), wk.gtk_widget_get_height(vw));
+    const title: ?[]const u8 = if (wk.webkit_web_view_get_title(v.view)) |t| std.mem.span(t) else null;
+    const root_d = try aa.dupe(u8, root);
+    var ctx: report.Context = .{
+        .location = try aa.dupe(u8, loc),
+        .kind = kind.text(),
+        .file_path = if (file) |f| try aa.dupe(u8, f) else null,
+        .page_title = if (title) |t| (if (t.len != 0) try aa.dupe(u8, t) else null) else null,
+        // An image report carries no selection - the kind promises that.
+        .selection = if (kind != .image) (if (selection) |s| try aa.dupe(u8, s) else null) else null,
+        .pane_id = if (v.pane_id) |p| try aa.dupe(u8, p) else null,
+        .viewport = if (viewport) |s| try aa.dupe(u8, s) else null,
+        .worktree_path = root_d,
+        .worktree_name = rules.worktreeName(root_d),
+        .app_version = build_config.version_string,
+    };
+    if (ctx.file_path) |p| {
+        const buf = try aa.alloc(u8, p.len);
+        ctx.relative_path = report.relativePath(buf, p, root_d);
+    }
+    job.ctx = ctx;
+    job.body = try report.renderBody(aa, self.text.items, &.{});
+}
+
+/// ON THE WORKER: the revision as of NOW (a branch switched under an
+/// all-day pane is the one the report must name), then the staged folder and
+/// its one atomic rename into the queue.
+fn sendWork(job: *SendJob) void {
+    const aa = job.arena.allocator();
+    job.ctx.branch = revision(aa, job.ctx.worktree_path, .branch);
+    job.ctx.commit = revision(aa, job.ctx.worktree_path, .commit);
+    if (report.write(aa, job.ctx, job.body, &.{}, &.{}, job.epoch, job.suffix, null)) |w| {
+        job.ok = true;
+        job.folder = w.folder;
+        job.stem = w.stem;
+    } else |err| {
+        job.err_name = @errorName(err);
+    }
+    _ = wk.g_idle_add(&onSent, job);
+}
+
+const Which = enum { branch, commit };
+
+/// One `git rev-parse` against the worktree root. Null for every state that
+/// is not an answer (no git, a detached HEAD, an unborn repo). BLOCKING.
+fn revision(aa: Allocator, root: []const u8, which: Which) ?[]const u8 {
+    for (0..rules.git_paths.len) |i| {
+        var buf: [512]u8 = undefined;
+        const out = switch (which) {
+            .branch => blk: {
+                const argv = rules.branchArgv(i, root);
+                break :blk git_run.capture(alloc, &argv, &buf);
+            },
+            .commit => blk: {
+                const argv = rules.commitArgv(i, root);
+                break :blk git_run.capture(alloc, &argv, &buf);
+            },
+        } orelse continue;
+        const parsed = switch (which) {
+            .branch => rules.parseBranch(out),
+            .commit => rules.parseCommit(out),
+        } orelse return null;
+        return aa.dupe(u8, parsed) catch null;
+    }
+    return null;
+}
+
+/// ON THE UI LOOP: the filing landed, or did not.
+fn onSent(data: ?*anyopaque) callconv(.c) c_int {
+    const job: *SendJob = @ptrCast(@alignCast(data orelse return 0));
+    defer job.destroy();
+    const v = job.link.viewer orelse return 0;
+    const self = &v.feedback;
+    self.sending = false;
+    if (!job.ok) {
+        // The text stays: a failed send is one the next press retries.
+        var buf: [160]u8 = undefined;
+        self.setStatus(std.fmt.bufPrint(&buf, "Could not file: {s}", .{job.err_name}) catch "Could not file");
+        log.warn("viewer feedback: send failed err={s}", .{job.err_name});
+        return 0;
+    }
+    self.sends += 1;
+    if (self.filed) |f| alloc.free(f);
+    self.filed = alloc.dupe(u8, job.folder) catch null;
+    log.info("viewer feedback: filed {s}", .{job.folder});
+    // The composer clears behind a filed report...
+    self.text.clearRetainingCapacity();
+    self.caret = -1;
+    if (self.ready) self.pushSeed();
+    var buf: [256]u8 = undefined;
+    self.setStatus(host.filedText(&buf, job.stem));
+    // ...shows the confirmation, then closes - unless the user has since
+    // closed and reopened it, which is a new composer.
+    if (!self.open) return 0;
+    const t = alloc.create(CloseTimer) catch return 0;
+    job.link.ref();
+    t.* = .{ .link = job.link, .gen = self.close_gen };
+    _ = wk.g_timeout_add(filed_close_ms, &onFiledTimeout, t);
+    return 0;
+}
+
+const CloseTimer = struct { link: *Link, gen: u32 };
+
+fn onFiledTimeout(data: ?*anyopaque) callconv(.c) c_int {
+    const t: *CloseTimer = @ptrCast(@alignCast(data orelse return 0));
+    defer {
+        t.link.unref();
+        alloc.destroy(t);
+    }
+    const v = t.link.viewer orelse return 0;
+    const self = &v.feedback;
+    if (self.open and self.close_gen == t.gen and !self.sending) self.closeComposer(v);
+    return 0;
+}
+
+/// The steps seam's `composer` line; the text is escaped onto one line.
+pub fn describeComposer(self: *const ViewerFeedback, buf: []u8) []const u8 {
+    var tbuf: [1024]u8 = undefined;
+    var n: usize = 0;
+    for (self.text.items) |c| {
+        var one: [1]u8 = .{c};
+        const esc: []const u8 = switch (c) {
+            '\n' => "\\n",
+            '\\' => "\\\\",
+            else => &one,
+        };
+        if (n + esc.len > tbuf.len) break;
+        @memcpy(tbuf[n..][0..esc.len], esc);
+        n += esc.len;
+    }
+    return std.fmt.bufPrint(buf, "open={} view={} ready={} lines={d} sending={} sends={d} filed={s} status={s} text={s}", .{
+        self.open,
+        self.view != null,
+        self.ready,
+        self.lines,
+        self.sending,
+        self.sends,
+        if (self.filed) |f| f else "-",
+        if (self.status_text) |s| s else "-",
+        tbuf[0..n],
+    }) catch "composer OVERFLOW";
 }

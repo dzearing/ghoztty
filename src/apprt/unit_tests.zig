@@ -614,6 +614,10 @@ test {
     // paths for leg 1 and the /proc listener lookup that is Linux's lsof
     // (T3419). No GTK imports.
     _ = @import("gtk/viewer_worktree.zig");
+    // The GTK feedback composer's pure half: the `chrome.webview` shim over
+    // WebKit's message handlers, the send/close verbs, and the report's
+    // kind/viewport/footer strings (T3544). No GTK imports.
+    _ = @import("gtk/viewer_feedback_host.zig");
     // ... and the POSIX half of win32's git runner it spawns git through:
     // the deadline and the cancel end the whole process group (T3417).
     // Off Windows only, whose win32 lane covers the job object - importing it

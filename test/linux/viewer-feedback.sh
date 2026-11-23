@@ -149,8 +149,8 @@ r3=$(field "$(fb 3)" resolves); r5=$(field "$s5" resolves)
 hl_check "F13 the Back walk is served from the 15 s cache (no new git resolution)" $? "resolves after web=$r3, after two Backs=$r5"
 
 s=$(fb 6)
-has "$s" "clicks=1" && grep -q "viewer feedback: clicked worktree=$fx/repo; the composer is not built on Linux yet (T3544)" "$APP_LOG"
-hl_check "F14 clicking the button is received (the composer is T3544's)" $? "$s"
+has "$s" "clicks=1" && grep -q "viewer feedback: composer open worktree=$fx/repo " "$APP_LOG"
+hl_check "F14 clicking the button opens the composer for that worktree (test/linux/viewer-composer.sh covers it)" $? "$s"
 
 grep -q "viewer feedback: worktree=$fx/origrepo name=origrepo" "$APP_LOG"
 hl_check "F15 a website that is not a dev server falls back to the pane's --working-directory" $? "$(grep 'viewer feedback: worktree' "$APP_LOG" | tr '\n' ' ')"

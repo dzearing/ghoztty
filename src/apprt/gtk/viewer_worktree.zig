@@ -43,6 +43,20 @@ pub fn rootArgv(index: usize, dir: []const u8) [5][]const u8 {
     return .{ git_paths[index], "-C", dir, "rev-parse", "--show-toplevel" };
 }
 
+/// The feedback report's branch and commit queries (T3544), asked at SEND
+/// time - a revision cached with the root would be as old as the pane.
+/// Win32's argv, with this platform's binary list; its parsers unchanged.
+pub fn branchArgv(index: usize, root: []const u8) [6][]const u8 {
+    return .{ git_paths[index], "-C", root, "rev-parse", "--abbrev-ref", "HEAD" };
+}
+
+pub fn commitArgv(index: usize, root: []const u8) [5][]const u8 {
+    return .{ git_paths[index], "-C", root, "rev-parse", "HEAD" };
+}
+
+pub const parseBranch = shared.parseBranch;
+pub const parseCommit = shared.parseCommit;
+
 /// Strategy D's plan for a POSIX host: the viewed file's directory, else a
 /// loopback port to look up (with the origin behind it), else the origin.
 /// Win32's `plan` with leg 1 spelled for POSIX paths.
@@ -253,6 +267,18 @@ const tcp_fixture =
 const tcp6_fixture =
     "  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n" ++
     "   0: 00000000000000000000000000000000:1388 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 777 1 0000000000000000 100 0 0 10 0\n";
+
+test "branchArgv and commitArgv use this platform's git" {
+    const b = branchArgv(1, "/r");
+    try std.testing.expectEqualStrings("/usr/bin/git", b[0]);
+    try std.testing.expectEqualStrings("--abbrev-ref", b[4]);
+    const c = commitArgv(0, "/r");
+    try std.testing.expectEqualStrings("git", c[0]);
+    try std.testing.expectEqualStrings("/r", c[2]);
+    try std.testing.expectEqualStrings("HEAD", c[4]);
+    try std.testing.expect(parseBranch("HEAD\n") == null);
+    try std.testing.expectEqualStrings("main", parseBranch("main\n").?);
+}
 
 test "listenInode finds the LISTEN row for a port, any bound address" {
     // :3000 on 127.0.0.1.

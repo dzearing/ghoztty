@@ -121,6 +121,9 @@ file_path: ?[]u8 = null,
 /// repository a diff spec reads, the worktree fallback for a page with no
 /// directory of its own. Kept here so the session layout records it (T3420).
 origin_dir: ?[]u8 = null,
+/// The pane's stable ghoztty id, borrowed from the surface that hosts this
+/// viewer (which outlives it): a feedback report names it (T3544).
+pane_id: ?[]const u8 = null,
 /// The read grant both schemes resolve against.
 assets_dir: ?[]u8 = null,
 base_dir: ?[]u8 = null,
@@ -268,6 +271,9 @@ pub fn create(alloc: Allocator, location: []const u8) !*Viewer {
     self.toc.buildUi(self, overlay, self.bar.row);
     wk.gtk_overlay_add_overlay(overlay, self.find.card);
     wk.gtk_box_append(box, self.bar.row);
+    // The feedback composer's band sits right under the bar, hidden until
+    // the feedback button opens it (T3544).
+    wk.gtk_box_append(box, self.feedback.buildComposerUi(self));
     // A diff pane's changed-files panel sits beside the page (T3417); it is
     // hidden in every other mode, so the paned is the page alone there.
     wk.gtk_box_append(box, self.diff.buildUi(self, overlay, self.bar.row));
@@ -2259,6 +2265,7 @@ const steps = if (build_config.is_debug) struct {
                 .{ "diff-layout", if (v.diff.ui) |u| u.layout else null },
                 .{ "contents", v.toc.buttonWidget() },
                 .{ "feedback", v.feedback.buttonWidget() },
+                .{ "feedback-send", v.feedback.sendButtonWidget() },
             };
             var b: ?*wk.GtkWidget = null;
             inline for (named) |n| {
@@ -2287,6 +2294,39 @@ const steps = if (build_config.is_debug) struct {
             // pending= resolves= clicks=`.
             feedback_polls = 0;
             _ = wk.g_timeout_add(50, &feedbackPoll, null);
+            return 0;
+        } else if (std.mem.eql(u8, verb, "composer")) {
+            // The feedback composer (T3544), once its page is up and no send
+            // is out (10 s): `composer open= view= ready= lines= sending=
+            // sends= filed= status=... text=...`.
+            composer_polls = 0;
+            _ = wk.g_timeout_add(50, &composerPoll, null);
+            return 0;
+        } else if (std.mem.eql(u8, verb, "composer-type")) {
+            // Type into the composer as the keyboard would - the engine's
+            // own insertText, so the page's `input` snapshot carries it up.
+            // `\n` in the argument is a newline (plain Enter's).
+            const ok = composerEval(v, "(function(){{var c=document.getElementById('c');c.focus();" ++
+                "document.execCommand('insertText',false,{s});return 'typed'}})()", arg, true);
+            out("composer-type {s} ok={}", .{ arg, ok });
+        } else if (std.mem.eql(u8, verb, "composer-key")) {
+            // A keydown in the composer page: `ctrl+Enter` or `Escape`. The
+            // shim's chords run on keydown, which is what this fires.
+            const ctrl = std.mem.startsWith(u8, arg, "ctrl+");
+            const key = if (ctrl) arg["ctrl+".len..] else arg;
+            var jbuf: [256]u8 = undefined;
+            const js = std.fmt.bufPrint(&jbuf, "(function(){{document.getElementById('c').dispatchEvent(new KeyboardEvent('keydown'," ++
+                "{{key:'{s}',ctrlKey:{},bubbles:true,cancelable:true}}));return 'k'}})()", .{ key, ctrl }) catch "";
+            const ok = composerEval(v, "{s}", js, false);
+            out("composer-key {s} ok={}", .{ arg, ok });
+        } else if (std.mem.eql(u8, verb, "composer-probe")) {
+            // Evaluate in the COMPOSER's page; prints `probe ...` like probe.
+            const w = v.feedback.view orelse {
+                out("probe FAIL no composer view", .{});
+                schedule();
+                return 0;
+            };
+            wk.webkit_web_view_evaluate_javascript(wk.asWebView(w), arg.ptr, @intCast(arg.len), null, null, null, &onProbed, null);
             return 0;
         } else if (std.mem.eql(u8, verb, "image")) {
             // An image pane's zoom state (T3416): `image rev= loads= route=
@@ -2448,6 +2488,39 @@ const steps = if (build_config.is_debug) struct {
     }
 
     var feedback_polls: u32 = 0;
+    var composer_polls: u32 = 0;
+
+    fn composerPoll(_: ?*anyopaque) callconv(.c) c_int {
+        const v = viewer orelse return 0;
+        composer_polls += 1;
+        const f = &v.feedback;
+        const settling = f.sending or (f.open and !f.ready);
+        if (settling and composer_polls < 200) return 1;
+        var buf: [4096]u8 = undefined;
+        out("composer {s}", .{f.describeComposer(&buf)});
+        schedule();
+        return 0;
+    }
+
+    /// Run `fmt` (one `{s}`) in the composer's page. With `json_arg` the
+    /// argument goes in as a JS string literal, `\n` read as a newline.
+    fn composerEval(v: *Viewer, comptime fmt: []const u8, arg: []const u8, json_arg: bool) bool {
+        const w = v.feedback.view orelse return false;
+        const a = std.heap.c_allocator;
+        var owned: ?[]u8 = null;
+        defer if (owned) |o| a.free(o);
+        var text = arg;
+        if (json_arg) {
+            const unescaped = std.mem.replaceOwned(u8, a, arg, "\\n", "\n") catch return false;
+            defer a.free(unescaped);
+            owned = std.json.Stringify.valueAlloc(a, unescaped, .{}) catch return false;
+            text = owned.?;
+        }
+        const js = std.fmt.allocPrint(a, fmt, .{text}) catch return false;
+        defer a.free(js);
+        wk.webkit_web_view_evaluate_javascript(wk.asWebView(w), js.ptr, @intCast(js.len), null, null, null, null, null);
+        return true;
+    }
 
     fn feedbackPoll(_: ?*anyopaque) callconv(.c) c_int {
         const v = viewer orelse return 0;

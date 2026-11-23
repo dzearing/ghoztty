@@ -894,6 +894,9 @@ pub const Surface = extern struct {
         // Before the template finishes loading, so a diff's first listing
         // already knows its repository.
         viewer.setOriginDirectory(working_directory);
+        // The surface's own id buffer: a restore that adopts a saved id
+        // rewrites it in place, so the borrow stays current (T3544).
+        viewer.pane_id = self.paneId();
 
         const gl = priv.gl_area.as(gtk.Widget);
         gl.setVisible(0);

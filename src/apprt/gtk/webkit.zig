@@ -68,6 +68,11 @@ pub extern fn webkit_web_view_evaluate_javascript_finish(
     err: *?*GError,
 ) ?*JSCValue;
 
+// The feedback composer's page (T3544): a document handed over as a string,
+// and the page's own title for the report.
+pub extern fn webkit_web_view_load_html(view: *WebView, content: [*:0]const u8, base_uri: ?[*:0]const u8) void;
+pub extern fn webkit_web_view_get_title(view: *WebView) ?[*:0]const u8;
+
 // History, reload and zoom (the nav bar and pane keys, T3412).
 pub extern fn webkit_web_view_go_back(view: *WebView) void;
 pub extern fn webkit_web_view_go_forward(view: *WebView) void;
@@ -399,6 +404,8 @@ pub const GtkAdjustment = opaque {};
 pub const GrapheneRect = extern struct { x: f32 = 0, y: f32 = 0, w: f32 = 0, h: f32 = 0 };
 
 pub extern fn gtk_box_prepend(box: *GtkWidget, child: *GtkWidget) void;
+/// The feedback composer's web view comes and goes with the composer (T3544).
+pub extern fn gtk_box_remove(box: *GtkWidget, child: *GtkWidget) void;
 pub extern fn gtk_drawing_area_new() *GtkWidget;
 pub extern fn gtk_widget_set_can_target(widget: *GtkWidget, can_target: c_int) void;
 pub extern fn gtk_widget_get_width(widget: *GtkWidget) c_int;
