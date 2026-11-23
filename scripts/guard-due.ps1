@@ -1031,7 +1031,9 @@ $GuardTable = @(
         Stamp  = 'test\win32\window-modal-block.stamp.json'
         Covers = @(
             'test\win32\window-modal-block.ps1',
-            'src\apprt\win32\ConfirmDialog.zig'
+            'src\apprt\win32\ConfirmDialog.zig',
+            'src\apprt\win32\confirm_dialog_layout.zig',
+            'src\apprt\win32\confirm_dialog_window.zig'
         )
     },
     # Auto window-N names stay unique across a session restore (T121).
@@ -1194,6 +1196,8 @@ $GuardTable = @(
         Covers = @(
             'test\win32\config-errors.ps1',
             'src\apprt\win32\ConfirmDialog.zig',
+            'src\apprt\win32\confirm_dialog_layout.zig',
+            'src\apprt\win32\confirm_dialog_window.zig',
             'src\config\file_load.zig'
         )
     },
@@ -1616,7 +1620,9 @@ $GuardTable = @(
         Stamp  = 'test\win32\confirm-dialogs.stamp.json'
         Covers = @(
             'test\win32\confirm-dialogs.ps1',
-            'src\apprt\win32\ConfirmDialog.zig'
+            'src\apprt\win32\ConfirmDialog.zig',
+            'src\apprt\win32\confirm_dialog_layout.zig',
+            'src\apprt\win32\confirm_dialog_window.zig'
         )
     },
     # The right-click context menu (T102): item list, enable/check flags and
@@ -2751,6 +2757,8 @@ $GuardTable = @(
             'test\win32\remote-disconnect.ps1',
             'src\apprt\win32\session_disconnect.zig',
             'src\apprt\win32\ConfirmDialog.zig',
+            'src\apprt\win32\confirm_dialog_layout.zig',
+            'src\apprt\win32\confirm_dialog_window.zig',
             'src\apprt\win32\Window.zig',
             'src\apprt\win32\Surface.zig'
         )
@@ -3532,6 +3540,8 @@ $GuardTable = @(
             # accessory, or to the dialog band it sits in, is due here.
             'src\apprt\win32\WhatsNewNotesView.zig',
             'src\apprt\win32\ConfirmDialog.zig',
+            'src\apprt\win32\confirm_dialog_layout.zig',
+            'src\apprt\win32\confirm_dialog_window.zig',
             # T626: the OTHER direction's answer - the tray notice arm K raises
             # when the app is the older side. Its uid and click routing live in
             # tray_notify.zig, and a change there is what would silently turn
@@ -4258,6 +4268,8 @@ $GuardTable = @(
             'src\apprt\win32\about_links.zig',
             'src\apprt\win32\open_url_seam.zig',
             'src\apprt\win32\ConfirmDialog.zig',
+            'src\apprt\win32\confirm_dialog_layout.zig',
+            'src\apprt\win32\confirm_dialog_window.zig',
             'test\win32\about-links.ps1'
         )
     },
@@ -4323,6 +4335,8 @@ $GuardTable = @(
         Covers = @(
             'src\apprt\win32\startup_error.zig',
             'src\apprt\win32\ConfirmDialog.zig',
+            'src\apprt\win32\confirm_dialog_layout.zig',
+            'src\apprt\win32\confirm_dialog_window.zig',
             'src\main_ghostty.zig',
             # T1251: which GL implementation is chosen decides WHICH of arms E
             # and F the user gets - an honest refusal or a working terminal on
@@ -4596,6 +4610,8 @@ $GuardTable = @(
             'src\apprt\win32\update_install.zig',
             'src\apprt\win32\tray_notify.zig',
             'src\apprt\win32\ConfirmDialog.zig',
+            'src\apprt\win32\confirm_dialog_layout.zig',
+            'src\apprt\win32\confirm_dialog_window.zig',
             'test\win32\update-consent.ps1',
             'test\win32\lib\ApplierSandbox.ps1'
         )
@@ -4609,6 +4625,8 @@ $GuardTable = @(
             'src\apprt\win32\update_apply.zig',
             'src\apprt\win32\update_badge.zig',
             'src\apprt\win32\ConfirmDialog.zig',
+            'src\apprt\win32\confirm_dialog_layout.zig',
+            'src\apprt\win32\confirm_dialog_window.zig',
             'test\win32\update-arm-failure.ps1',
             'test\win32\lib\ApplierSandbox.ps1'
         )
@@ -8138,6 +8156,8 @@ $GuardTable = @(
         Covers = @(
             'src\apprt\win32\open_dialogs.zig',
             'src\apprt\win32\ConfirmDialog.zig',
+            'src\apprt\win32\confirm_dialog_layout.zig',
+            'src\apprt\win32\confirm_dialog_window.zig',
             'test\win32\close-force.ps1'
         )
     },
