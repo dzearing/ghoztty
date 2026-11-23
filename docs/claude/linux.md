@@ -291,7 +291,22 @@ private runtime dir, so a test app can never meet the user's.
   `<shell> -lic '<cmd>; exec <shell> -li'` (a pane that stays drivable),
   `-e` execs its argv. `+rename` pins the window title over the tabs' until
   `--title=` clears it. Acceptance: `wsl-run.ps1 -CommandFile
-  test\linux\cli-windows.sh`, ends `CLI WINDOWS: ALL PASS` (35 checks).
+  test\linux\cli-windows.sh`, ends `CLI WINDOWS: ALL PASS` (40 checks).
+- **`--focus` (T1797 on GTK, T3381)**: a `+new-window` without it is SHOWN,
+  not presented - no activation request, and on X11 a `_NET_WM_USER_TIME` of
+  0 (`winproto.Window.suppressFocusOnMap`) - so it opens behind whatever the
+  user is typing into; the app logs `window shown in the background (no
+  activation request)`. A `+split` without it leaves the window's focused
+  pane alone. With `--focus` the window is presented, which on Wayland IS an
+  xdg-activation request that the compositor may decline: when no window of
+  this app is active at request time (a command run from another app's
+  terminal), the `+new-window` reply carries the note `--focus: Ghoztty is
+  not the active app, so the compositor may keep the window behind ...`, and
+  a second after any `--focus` raise the app logs `focus: the compositor
+  activated|declined to activate the window`. Weston headless has no seat, so
+  the harness always sees the decline (W20-W21 of `cli-windows.sh`). Not
+  done: forwarding a launcher's `$XDG_ACTIVATION_TOKEN` through the CLI,
+  which would only help a command run from a freshly launched app.
 - **`+close` and `focus` (T3367)** follow win32's too: `+close` closes a pane
   (its window when it was the last pane) or a window with no confirmation,
   succeeds on a name nothing holds, refuses an ambiguous one, and refuses
