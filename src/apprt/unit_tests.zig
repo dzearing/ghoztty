@@ -640,6 +640,9 @@ test {
     // chips seeded down as nodes, the report's images and body links, and the
     // thumbnail/capture sizes (T3546). No GTK imports.
     _ = @import("gtk/viewer_shot.zig");
+    // ... and the headless harness's `capture-pane` seam: win32's argument
+    // parse plus `--window`, the render size, the reply (T3359). No GTK.
+    _ = @import("gtk/capture_seam.zig");
     // ... and the POSIX half of win32's git runner it spawns git through:
     // the deadline and the cancel end the whole process group (T3417).
     // Off Windows only, whose win32 lane covers the job object - importing it

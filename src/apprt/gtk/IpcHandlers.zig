@@ -45,6 +45,9 @@ const verbs = apprt.ipc.verbs;
 const verb_args = apprt.ipc.args;
 const target_lookup = @import("../ipc/target_lookup.zig");
 const viewer_scheme = @import("viewer_scheme.zig");
+const capture_seam = @import("capture_seam.zig");
+const pane_snapshot = @import("pane_snapshot.zig");
+const wk = @import("webkit.zig");
 const url_scheme = @import("../ipc/url_scheme.zig");
 const terminal_osc = @import("../../terminal/osc.zig").Command;
 
@@ -109,6 +112,104 @@ pub fn handleNewRemoteWindow(_: Context, _: Request) Allocator.Error!?[]u8 { ret
 pub fn handleHandoffQuit(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.handoff_quit, "T3337"); }
 pub fn handleStash(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.stash, "T3337"); }
 pub fn handleRestore(_: Context, _: Request) Allocator.Error!?[]u8 { return notYet(.restore, "T3337"); }
+
+// ---------------------------------------------------------------------------
+// DEBUG-ONLY test seams: not CLI verbs, compiled out of a release build, where
+// the action falls through to `unknown action` (the dispatcher's contract).
+
+/// `capture-pane` (T3359): a PNG of a pane, or with `--window` its whole
+/// window, from the app's own render - the headless Weston the Linux tests
+/// run in has no capture a client can ask for. Wire shape and reasons:
+/// `capture_seam.zig`.
+pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamReply {
+    if (comptime !build_config.is_debug) return .unhandled;
+    if (!std.mem.eql(u8, request.action, "capture-pane")) return .unhandled;
+    return .{ .reply = try capturePane(app, request) };
+}
+
+fn capturePane(app: Context, request: Request) Allocator.Error![]u8 {
+    const req = capture_seam.parse(request.arguments) catch |err| return switch (err) {
+        error.MissingTarget => server.errorResponse(c_alloc, "--target is required for capture-pane", .{}),
+        error.MissingPath => server.errorResponse(c_alloc, "--path is required for capture-pane", .{}),
+        error.BadDimension => server.errorResponse(c_alloc, "--width/--height must be 1..{d}", .{capture_seam.max_dimension}),
+    };
+
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const target = switch (try resolve(arena_state.allocator(), app, req.target)) {
+        .found => |t| t,
+        .ambiguous => |windows| return server.errorResponse(c_alloc, "{s}", .{
+            try target_lookup.ambiguityError(arena_state.allocator(), req.target, windows),
+        }),
+        .not_found => return server.errorResponse(c_alloc, "pane '{s}' not found in registry", .{req.target}),
+    };
+
+    // Every failure names a different state, as win32's do: a harness that
+    // cannot tell "no such pane" from "never drew" reports a product bug for
+    // a fixture mistake.
+    const window = target.window_();
+    const widget: *gtk.Widget = if (req.window) window.as(gtk.Widget) else widget: {
+        const surface = target.surface() orelse
+            return server.errorResponse(c_alloc, "pane '{s}' is no longer alive", .{req.target});
+        if (!surface.isViewer() and surface.core() == null)
+            return server.errorResponse(c_alloc, "pane '{s}' is not capturable: its terminal never finished starting up", .{req.target});
+        break :widget surface.as(gtk.Widget);
+    };
+    const w: *wk.GtkWidget = @ptrCast(widget);
+
+    const scale = wk.gtk_widget_get_scale_factor(w);
+    const p = capture_seam.plan(wk.gtk_widget_get_width(w), wk.gtk_widget_get_height(w), scale, .{
+        .target = req.target,
+        .path = req.path,
+        .width = req.width,
+        .height = req.height,
+    }) orelse return server.errorResponse(c_alloc, "pane '{s}' has no content area to capture", .{req.target});
+
+    const bytes = pane_snapshot.render(w, p.w, p.h, p.sx, p.sy) orelse
+        return server.errorResponse(c_alloc, "pane '{s}' produced no frame to capture", .{req.target});
+    defer wk.g_bytes_unref(bytes);
+    var len: usize = 0;
+    const data = wk.g_bytes_get_data(bytes, &len) orelse
+        return server.errorResponse(c_alloc, "pane '{s}' produced no frame to capture", .{req.target});
+    const png = data[0..len];
+
+    writeCapture(req.path, png) catch |err|
+        return server.errorResponse(c_alloc, "could not write '{s}' ({s})", .{ req.path, @errorName(err) });
+
+    // Where the widget sits in its window, device pixels (Wayland has no
+    // screen coordinates; a window capture is at 0,0 by definition).
+    const s: f32 = @floatFromInt(@max(1, scale));
+    var bounds: wk.GrapheneRect = .{};
+    if (!req.window) _ = wk.gtk_widget_compute_bounds(w, @ptrCast(window.as(gtk.Widget)), &bounds);
+    const client_w: u32 = @intCast(@max(1, wk.gtk_widget_get_width(w)) * @max(1, scale));
+    const client_h: u32 = @intCast(@max(1, wk.gtk_widget_get_height(w)) * @max(1, scale));
+
+    log.info("capture-pane target={s} scope={s} {d}x{d} -> {s} ({d} bytes)", .{
+        req.target, if (req.window) "window" else "pane", p.w, p.h, req.path, png.len,
+    });
+    return capture_seam.successJson(c_alloc, .{
+        .path = req.path,
+        .width = p.w,
+        .height = p.h,
+        .bytes = png.len,
+        .x = @intFromFloat(@round(bounds.x * s)),
+        .y = @intFromFloat(@round(bounds.y * s)),
+        .client_width = client_w,
+        .client_height = client_h,
+        .window = req.window,
+    });
+}
+
+/// Create/truncate, not atomic: the reader is the harness that asked for this
+/// exact path a moment ago (win32's `ipc_capture.writeFile`).
+fn writeCapture(path: []const u8, bytes: []const u8) !void {
+    var file = if (std.fs.path.isAbsolute(path))
+        try std.fs.createFileAbsolute(path, .{ .truncate = true })
+    else
+        try std.fs.cwd().createFile(path, .{ .truncate = true });
+    defer file.close();
+    try file.writeAll(bytes);
+}
 
 
 // ---------------------------------------------------------------------------

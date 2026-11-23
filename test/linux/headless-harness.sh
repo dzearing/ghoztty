@@ -64,7 +64,9 @@ hl_check "H8 the environment is isolated (private runtime dir, no DISPLAY, GDK_B
 
 before=$(hl_weston_sockets)
 mark="$HL_RUNTIME/shell-ran"
-hl_launch APP "$app" --gtk-single-instance=false -e /bin/sh -c "tty > $mark; sleep 60"
+# The pane paints itself pure red (24-bit background + erase display), so
+# H16-H21's screenshots have something exact to find.
+hl_launch APP "$app" --gtk-single-instance=false -e /bin/sh -c "tty > $mark; printf '\\033[48;2;255;0;0m\\033[2J\\033[H'; sleep 60"
 hl_wait_for 20 test -s "$mark"
 grep -q '^/dev/pts/' "$mark" 2>/dev/null
 hl_check "H9 the app's shell ran on a pty inside the harness" $? "mark=$(cat "$mark" 2>/dev/null)"
@@ -75,6 +77,46 @@ hl_env_is_private "$APP"
 hl_check "H11 the app's own environment names only the private compositor" $?
 ! grep -qE '^(panic|thread [0-9]+ panic)|reached unreachable' "$APP_LOG"
 hl_check "H12 no panic in the app log" $?
+
+# ---- H16-H21: screenshots from the app's own render (T3359) ---------------------
+# Weston headless offers no capture, so hl_screenshot asks the app (the
+# debug-only capture-pane seam, win32's wire shape).
+hl_wait_for 30 test -S "$(hl_socket)"
+pane=""; for _ in $(seq 1 50); do pane=$(hl_first_pane "$app"); [ -n "$pane" ] && break; sleep 0.2; done
+shot="$HL_RUNTIME/pane.png"
+red_fill() {   # retry: the first frame may predate the shell's paint
+    reply=$(hl_screenshot "$pane" "$shot") || return 1
+    stats=$(hl_png_stats "$shot" 255 0 0) || return 1
+    awk -v m="$(printf '%s' "$stats" | sed -n 's/.*match=\([0-9.]*\).*/\1/p')" 'BEGIN{exit !(m > 0.5)}'
+}
+hl_wait_for 15 red_fill
+rc=$?
+hl_check "H16 capture-pane of a terminal pane writes a PNG of the pane's own render" "$( [ -s "$shot" ] && head -c4 "$shot" | grep -q PNG; echo $?)" "pane=$pane ${reply:-no reply}"
+hl_check "H17 the picture shows what the pane drew (over half its pixels are the shell's red)" $rc "${stats:-}"
+rw=$(printf '%s' "$reply" | sed -n 's/.*"width":\([0-9]*\).*/\1/p'); rh=$(printf '%s' "$reply" | sed -n 's/.*"height":\([0-9]*\).*/\1/p')
+printf '%s' "$stats" | grep -q "^w=$rw h=$rh "
+hl_check "H18 the reply's width/height are the PNG's own" $? "reply=${rw}x${rh} png=${stats%% colors*}"
+
+wshot="$HL_RUNTIME/window.png"
+wreply=$(hl_screenshot "$pane" "$wshot" --window); rc=$?
+wstats=$(hl_png_stats "$wshot" 255 0 0 2>/dev/null)
+ww=$(printf '%s' "$wstats" | sed -n 's/^w=\([0-9]*\).*/\1/p'); wh=$(printf '%s' "$wstats" | sed -n 's/.* h=\([0-9]*\).*/\1/p')
+px=$(printf '%s' "$reply" | sed -n 's/.*"x":\(-\{0,1\}[0-9]*\).*/\1/p'); py=$(printf '%s' "$reply" | sed -n 's/.*"y":\(-\{0,1\}[0-9]*\).*/\1/p')
+[ $rc = 0 ] && printf '%s' "$wreply" | grep -q '"scope":"window"' \
+    && [ "${ww:-0}" -ge "${rw:-1}" ] && [ "${wh:-0}" -gt "${rh:-1}" ] \
+    && [ "${px:--1}" -ge 0 ] && [ "${py:--1}" -ge 0 ] \
+    && [ $(( px + rw )) -le "$ww" ] && [ $(( py + rh )) -le "$wh" ]
+hl_check "H19 --window captures the whole window, and the pane's x/y place it inside" $? "window=${ww}x${wh} pane=${rw}x${rh}@${px},${py} ${wstats}"
+
+sshot="$HL_RUNTIME/sized.png"
+hl_screenshot "$pane" "$sshot" --width=200 --height=100 > /dev/null
+hl_png_stats "$sshot" 2>/dev/null | grep -q '^w=200 h=100 '
+hl_check "H20 --width/--height render the pane at the size asked" $? "$(hl_png_stats "$sshot" 2>&1)"
+
+nf=$(hl_ipc capture-pane --target=no-such-pane "--path=$HL_RUNTIME/x.png")
+np=$(hl_ipc capture-pane "--target=$pane")
+printf '%s' "$nf" | grep -q "not found" && printf '%s' "$np" | grep -q -- "--path is required" && [ ! -e "$HL_RUNTIME/x.png" ]
+hl_check "H21 capture-pane refuses an unknown pane and a missing --path, writing nothing" $? "$nf | $np"
 
 # ---- H13: two harnesses never share a socket ------------------------------------
 other=$(bash -c ". '$lib'; hl_start >/dev/null 2>&1 || exit 9; echo \"\$XDG_RUNTIME_DIR/\$WAYLAND_DISPLAY\"")

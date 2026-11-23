@@ -175,6 +175,111 @@ hl_env_is_private() {
     ! printf '%s\n' "$env" | grep -q '^DISPLAY='
 }
 
+# hl_socket: the debug app's IPC socket inside this harness (the derivation
+# in src/os/ipc_client.zig: $XDG_RUNTIME_DIR/ghostty-debug-<uid>.sock).
+hl_socket() { printf '%s\n' "$XDG_RUNTIME_DIR/ghostty-debug-$(id -u).sock"; }
+
+# hl_ipc <action> [arg...]: send one raw IPC request (4-byte big-endian length
+# + JSON, both ways) to the harness's app and print the reply JSON. For the
+# DEBUG-ONLY seams that have no CLI verb, such as capture-pane. Exit 1 when
+# nothing answered.
+hl_ipc() {
+    python3 -I - "$(hl_socket)" "$@" <<'PY'
+import json, socket, struct, sys
+path, action, args = sys.argv[1], sys.argv[2], sys.argv[3:]
+body = json.dumps({"action": action, "arguments": args}).encode()
+try:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(15)
+    s.connect(path)
+    s.sendall(struct.pack(">I", len(body)) + body)
+    def take(n):
+        out = b""
+        while len(out) < n:
+            c = s.recv(n - len(out))
+            if not c: raise EOFError("short read")
+            out += c
+        return out
+    n = struct.unpack(">I", take(4))[0]
+    sys.stdout.write(take(n).decode())
+    sys.stdout.write("\n")
+except Exception as e:
+    sys.stderr.write("hl_ipc: %s\n" % e)
+    sys.exit(1)
+PY
+}
+
+# hl_first_pane <app>: the id of the first pane the app lists, or nothing.
+hl_first_pane() {
+    env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID "$1" +list --json 2>/dev/null | python3 -I -c '
+import json, sys
+d = json.load(sys.stdin)["data"]
+def walk(n):
+    if n["type"] == "split":
+        yield from walk(n["left"]); yield from walk(n["right"])
+    else:
+        yield n["terminal"].get("id", "")
+for w in d["windows"]:
+    for t in w["tabs"]:
+        for i in walk(t["splits"]):
+            if i: print(i); sys.exit(0)
+' 2>/dev/null
+}
+
+# hl_screenshot <target> <file.png> [--window] [--width=N] [--height=N]:
+# a PNG of a pane (pane id, pane name or window name), or with --window its
+# whole window, from the app's OWN render via the debug-only capture-pane
+# seam (T3359) - the headless Weston offers no capture and Wayland has no
+# global one. Prints the reply JSON; 0 only when the app says success AND the
+# file is a PNG.
+hl_screenshot() {
+    local target=$1 file=$2; shift 2
+    local reply
+    reply=$(hl_ipc capture-pane "--target=$target" "--path=$file" "$@") || return 1
+    printf '%s\n' "$reply"
+    printf '%s' "$reply" | grep -q '"success":true' || return 1
+    [ "$(head -c 8 "$file" 2>/dev/null | od -An -tx1 | tr -d ' \n')" = 89504e470d0a1a0a ]
+}
+
+# hl_png_stats <file.png> [r g b]: decode a PNG (8-bit RGB/RGBA, any filter)
+# and print 'w=<W> h=<H> colors=<distinct> match=<fraction of pixels equal to
+# r,g,b within 8 per channel>'. Pure python3, no PIL.
+hl_png_stats() {
+    python3 -I - "$@" <<'PY'
+import struct, sys, zlib
+path = sys.argv[1]
+want = tuple(int(v) for v in sys.argv[2:5]) if len(sys.argv) >= 5 else None
+d = open(path, "rb").read()
+assert d[:8] == b"\x89PNG\r\n\x1a\n", "not a PNG"
+pos, idat, w = 8, b"", 0
+while pos < len(d):
+    ln, typ = struct.unpack(">I4s", d[pos:pos+8]); chunk = d[pos+8:pos+8+ln]; pos += 12 + ln
+    if typ == b"IHDR": w, h, depth, ctype = struct.unpack(">IIBB", chunk[:10])
+    elif typ == b"IDAT": idat += chunk
+assert depth == 8 and ctype in (2, 6), "unsupported PNG depth=%d type=%d" % (depth, ctype)
+bpp = 3 if ctype == 2 else 4
+raw, stride = zlib.decompress(idat), w * bpp
+prev, rows, i = bytearray(stride), [], 0
+for _ in range(h):
+    f = raw[i]; line = bytearray(raw[i+1:i+1+stride]); i += 1 + stride
+    for x in range(stride):
+        a = line[x-bpp] if x >= bpp else 0; b = prev[x]; c = prev[x-bpp] if x >= bpp else 0
+        if f == 1: line[x] = (line[x] + a) & 255
+        elif f == 2: line[x] = (line[x] + b) & 255
+        elif f == 3: line[x] = (line[x] + (a + b) // 2) & 255
+        elif f == 4:
+            p = a + b - c; pa, pb, pc = abs(p-a), abs(p-b), abs(p-c)
+            line[x] = (line[x] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+    rows.append(line); prev = line
+colors, match = set(), 0
+for line in rows:
+    for x in range(0, stride, bpp):
+        px = tuple(line[x:x+3]); colors.add(px)
+        if want and all(abs(px[k] - want[k]) <= 8 for k in range(3)): match += 1
+print("w=%d h=%d colors=%d match=%.3f" % (w, h, len(colors), match / float(w * h)))
+PY
+}
+
 # hl_tree <pid>: <pid> and every descendant, one per line (parents first).
 hl_tree() {
     local root=$1
