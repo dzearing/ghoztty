@@ -39831,3 +39831,8 @@ Reproduce-first: agent-recovery.ps1 is ALL PASS (104 assertions) on HEAD 15640bd
 - Re-ran the four that first ran beside others (drag-perf, frame-clock, session-persistence, pane-close-memory) alone and serially: all still red with the same signatures, so they are real, not load. Each matched an open card (T1854, T3426, T2021, T2692; T2692 newly guard-acked).
 - Fixed: frame-lab-input.ps1 declared `@timing-sensitive` but never took the box-wide timing lock (machine-lock H2); ipc-relay 1c still expected the HELLO hostname after T1736 made `--name` the pinned machine label; ipc-read-race read pid 0 from a pane whose shell had not spawned yet under load (bounded wait).
 - The rest were already owned and acked (T3386, T2300, T2884, T2921, T3425). No new task needed. Evidence: acceptance 20261122-162902 and -163222 all green; scoped harness floor run.
+
+## 2026-11-22 17:20 - T3444 closed as a duplicate of T3440
+
+- T3444 named the same windows-cross lld-link red (glslang_default_resource, spv::Builder::postProcess) that lane B's T3440 had already root-caused as a poisoned Zig cache restored from a cancelled run. Its fix 66dbaa796 is on the trunk.
+- Evidence: Fork CI windows-cross success on run 45090156745 (a2da9d233) and 45091958206 (a425fd09e). No code change in this turn.
