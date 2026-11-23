@@ -1118,8 +1118,11 @@ from it at launch, the Mac's `SessionLayoutManifest` in win32's on-disk schema
 - **The file** is `<config root>/ghoztty/session-layout[-debug][-<lineage>].json`,
   beside the agent's state dir under the same root, so the harness's private
   `XDG_CONFIG_HOME` holds a test's manifest too.
-- **It records** per window its target name, pinned title, maximized state and
-  selected tab; per tab the split tree with exact directions and ratios; per
+- **It records** per window its target name, pinned title, size (`frame` w/h:
+  GTK's default size, which tracks the user's resizes and stays the normal
+  size while maximized; x/y are 0, T3549), maximized state and selected tab;
+  per tab its pinned title (T3549) and the split tree with exact directions
+  and ratios; per
   terminal pane its session id, pane id, name, pinned title and pwd; per
   viewer pane its pane id, name, location, Home and origin directory (T3420,
   below). The quit's
@@ -1139,9 +1142,13 @@ from it at launch, the Mac's `SessionLayoutManifest` in win32's on-disk schema
   in its recorded pwd - under its recorded pane id either way. A restored
   launch shows only the restored windows unless it was given `-e`, which still
   opens its own. Panes are built through the ordinary window/tab/split paths,
-  each handed its restore through `Surface.pending_restore`.
-- **Not restored yet:** window size and position (Wayland gives a client no
-  position; size is T3549), tab titles, banners and stash (T3339, T3596).
+  each handed its restore through `Surface.pending_restore`. A window opens at
+  its recorded size (`Application.newWindowForRestore`, set before it is
+  presented; a size under 100 or over 16384 px is ignored) and each tab
+  re-pins its recorded title.
+- **Not restored:** window position - Wayland gives a client none, so where a
+  window lands is the compositor's call. **Not yet:** banners and stash
+  (T3339, T3596).
 
 Acceptance:
 
@@ -1150,7 +1157,9 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\se
 ```
 
 Ends `SESSION RESTORE: ALL PASS`: after a SIGKILL the relaunch rebuilds every
-window, split, ratio, name and pane id on the same pids with their screens;
+window, split, ratio, name and pane id on the same pids with their screens; a
+window comes back at its recorded size (measured from the window's own render)
+with its tab's pinned title, and the running app records both again;
 SIGTERM detaches and snapshots; a session that died while the app was down
 comes back as a fresh shell; after an agent restart the panes come back as
 relaunched shells under the new agent; a second instance neither restores nor

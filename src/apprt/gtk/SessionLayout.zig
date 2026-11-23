@@ -6,8 +6,9 @@
 //! models; the on-disk schema is win32's (`apprt/win32/session_layout.zig`,
 //! std-only, so it serves every platform).
 //!
-//! What it records, per window: its target name, pinned title, maximized
-//! state and selected tab; per tab its split tree with exact directions and
+//! What it records, per window: its target name, pinned title, size (T3549;
+//! Wayland gives no position), maximized state and selected tab; per tab its
+//! pinned title (T3549) and its split tree with exact directions and
 //! ratios; per terminal pane its agent session id, pane id, target name,
 //! pinned title and the directory its shell is in; per viewer pane its pane
 //! id and name, where it is, where it was opened (Home) and the directory it
