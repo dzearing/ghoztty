@@ -39852,3 +39852,6 @@ Reproduce-first: agent-recovery.ps1 is ALL PASS (104 assertions) on HEAD 15640bd
 ## 2026-11-22 18:05 lane b - T1778: Surface.zig's split is planned as fifteen planes
 - Surface.zig re-measured at 7,626 lines (213 functions, five banners, four tests), so it cannot move in one context. Like T1775-T1777 it is split per plane: T3495-T3509, one new `surface_*.zig` file each, every range named by first and last function, all using the T3436 split/proof tooling and each told to repoint the guard-due Covers rows.
 - T3510 re-measures the owner once all fifteen land (it depends on them). No code change in this turn.
+## 2026-11-22 18:12 lane b - T1779: MachineChooser.zig's split is planned as eleven planes
+- MachineChooser.zig re-measured at 5,478 lines (six banners, ~300 lines of tests), so like T1775-T1778 it is split per plane: T3511-T3521, one new `machine_chooser_*.zig` file each (named apart from the existing pure-model `chooser_*.zig` files), every range named by first and last function, all using the T3436 split/proof tooling and each told to repoint the guard-due Covers rows.
+- T3522 re-measures the owner (imports, fields, open(), lifecycle) once all eleven land (it depends on them). No code change in this turn.
