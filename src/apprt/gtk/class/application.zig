@@ -45,6 +45,7 @@ const GlobalShortcuts = @import("global_shortcuts.zig").GlobalShortcuts;
 const OpenURI = @import("../portal.zig").OpenURI;
 const url_scheme = @import("../url_scheme.zig");
 const wslg_gpu = @import("../wslg_gpu.zig");
+const CloseUndo = @import("../CloseUndo.zig");
 const builtin = @import("builtin");
 
 const log = std.log.scoped(.gtk_ghostty_application);
@@ -697,6 +698,9 @@ pub const Application = extern struct {
         // can never save an empty app over it.
         SessionLayout.finishForQuit(self);
         self.private().quitting = true;
+        // T3384: a pane parked for undo was closed by the user, so it ends
+        // (its session too) rather than riding out the quit as a detach.
+        CloseUndo.dropAll();
         // Get all our windows and destroy them, forcing them to free.
         const list = gtk.Window.listToplevels();
         defer list.free();
@@ -746,6 +750,20 @@ pub const Application = extern struct {
             .desktop_notification => Action.desktopNotification(self, target, value),
 
             .equalize_splits => return Action.equalizeSplits(target),
+
+            // Undo/redo a pane close or a `+rearrange` (T3384; Mac's
+            // NSUndoManager, win32 T1825/T2234). A surface target scopes it to
+            // that window, as Mac's per-window undo manager does; the app
+            // target takes the most recent one anywhere. Nothing to undo
+            // answers "not performed".
+            .undo => return CloseUndo.undo(switch (target) {
+                .app => null,
+                .surface => |core| core.rt_surface.surface,
+            }),
+            .redo => return CloseUndo.redo(switch (target) {
+                .app => null,
+                .surface => |core| core.rt_surface.surface,
+            }),
 
             .goto_split => return Action.gotoSplit(target, value),
 
@@ -848,8 +866,6 @@ pub const Application = extern struct {
             .reset_window_size,
             .check_for_updates,
             .show_keyboard_shortcuts,
-            .undo,
-            .redo,
             => {
                 log.warn("unimplemented action={}", .{action});
                 return false;

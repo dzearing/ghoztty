@@ -7463,6 +7463,23 @@ pub const Keybinds = struct {
                 .{ .performable = true },
             );
         }
+        if (comptime builtin.target.os.tag == .linux) {
+            // Undo/redo a pane close or a +rearrange (mac: cmd+z /
+            // cmd+shift+z; T3384). Windows' chords (T1825), for the same
+            // reason: plain ctrl+z is the shell's suspend, so undo lives in
+            // the ctrl+shift app-chord namespace. Not performable: with
+            // nothing to undo the chord must not reach the shell as ^Z.
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .unicode = 'z' }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .undo = {} },
+            );
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .unicode = 'y' }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .redo = {} },
+            );
+        }
         {
             // On macOS we default to super but everywhere else
             // is alt.

@@ -15,6 +15,7 @@ const Common = @import("../class.zig").Common;
 const WeakRef = @import("../weak_ref.zig").WeakRef;
 const Application = @import("application.zig").Application;
 const CloseConfirmationDialog = @import("close_confirmation_dialog.zig").CloseConfirmationDialog;
+const CloseUndo = @import("../CloseUndo.zig");
 const Surface = @import("surface.zig").Surface;
 const SurfaceScrolledWindow = @import("surface_scrolled_window.zig").SurfaceScrolledWindow;
 const color_math = @import("../../win32/color_math.zig");
@@ -882,6 +883,11 @@ pub const SplitTree = extern struct {
             // of the handle we're removing.
             break :next_focus old_tree.nodes[next_handle.idx()].leaf;
         };
+
+        // T3384: with undo on, the pane is parked (one reference held) for
+        // Ctrl+Shift+Z rather than ended by the removal below. Its tab's
+        // only pane is not: closing that is closing the tab.
+        _ = CloseUndo.parkClosedPane(self, old_tree, handle);
 
         // Remove it from the tree.
         var new_tree = old_tree.remove(

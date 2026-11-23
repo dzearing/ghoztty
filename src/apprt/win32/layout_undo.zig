@@ -20,8 +20,10 @@
 //! redo is the same `Shape`, captured from the rearranged tree as the undo
 //! replaces it.
 //!
-//! Pure over any `SplitTree(V)` whose `V` has a `stash_seq: u64` field (see
-//! `pane_stash.zig`), so it is unit-tested in every lane.
+//! Pure over any `SplitTree(V)`, so it is unit-tested in every lane. A `V`
+//! with a `stash_seq: u64` field (win32's, see `pane_stash.zig`) has its
+//! stash marks carried too; one without (the Linux app's, T3384, which has
+//! no pane stash yet) records zero and restores nothing.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -53,6 +55,10 @@ pub fn appendMissing(
     }
 }
 
+fn stashOf(comptime V: type, v: *const V) u64 {
+    return if (comptime @hasField(V, "stash_seq")) v.stash_seq else 0;
+}
+
 /// A layout by pane identity: the tree's nodes with every leaf's view
 /// replaced by its `Id` and its stash mark.
 pub fn Shape(comptime V: type, comptime Id: type) type {
@@ -78,7 +84,7 @@ pub fn Shape(comptime V: type, comptime Id: type) type {
         ) Allocator.Error!Self {
             const nodes = try alloc.alloc(Node, tree.nodes.len);
             for (tree.nodes, nodes) |src, *dst| dst.* = switch (src) {
-                .leaf => |v| .{ .leaf = .{ .id = idOf(v), .stash_seq = v.stash_seq } },
+                .leaf => |v| .{ .leaf = .{ .id = idOf(v), .stash_seq = stashOf(V, v) } },
                 .split => |s| .{ .split = s },
             };
             const zoomed: ?Id = if (tree.zoomed) |z| switch (tree.nodes[z.idx()]) {
@@ -159,6 +165,7 @@ pub fn Shape(comptime V: type, comptime Id: type) type {
             ctx: anytype,
             comptime lookup: fn (@TypeOf(ctx), Id) ?*V,
         ) void {
+            if (comptime !@hasField(V, "stash_seq")) return;
             for (self.nodes) |node| switch (node) {
                 .leaf => |leaf| if (lookup(ctx, leaf.id)) |v| {
                     v.stash_seq = leaf.stash_seq;
@@ -389,4 +396,61 @@ test "layout_undo: stash marks come back with the shape" {
     try testing.expectEqual(@as(u64, 0), a.stash_seq);
     try testing.expectEqual(@as(u64, 7), b.stash_seq);
     try testing.expectEqual(@as(u64, 0), c.stash_seq);
+}
+
+/// The Linux app's view (T3384) has no stash mark: a shape still captures and
+/// rebuilds it, recording zero and restoring nothing.
+const PlainView = struct {
+    label: []const u8,
+
+    pub fn ref(self: *PlainView, alloc: Allocator) Allocator.Error!*PlainView {
+        _ = alloc;
+        return self;
+    }
+    pub fn unref(self: *PlainView, alloc: Allocator) void {
+        _ = self;
+        _ = alloc;
+    }
+};
+
+fn plainLabelOf(v: *const PlainView) u8 {
+    return v.label[0];
+}
+
+fn plainFindIn(set: []const *PlainView, id: u8) ?*PlainView {
+    for (set) |v| if (v.label[0] == id) return v;
+    return null;
+}
+
+test "layout_undo: a view with no stash mark round-trips (T3384)" {
+    const alloc = testing.allocator;
+    const PTree = SplitTree(PlainView);
+    var a: PlainView = .{ .label = "A" };
+    var b: PlainView = .{ .label = "B" };
+    const all = [_]*PlainView{ &a, &b };
+    var ta = try PTree.init(alloc, &a);
+    defer ta.deinit();
+    var tb = try PTree.init(alloc, &b);
+    defer tb.deinit();
+    var tree = try ta.split(alloc, .root, .down, 0.4, &tb);
+    defer tree.deinit();
+
+    var shape = try Shape(PlainView, u8).capture(alloc, &tree, plainLabelOf);
+    defer shape.deinit(alloc);
+    for (shape.nodes) |node| switch (node) {
+        .leaf => |leaf| try testing.expectEqual(@as(u64, 0), leaf.stash_seq),
+        .split => {},
+    };
+    shape.restoreStash(@as([]const *PlainView, &all), plainFindIn);
+
+    var again = (try shape.rebuild(alloc, @as([]const *PlainView, &all), plainFindIn)).?;
+    defer again.deinit();
+    try testing.expectEqual(tree.nodes.len, again.nodes.len);
+    switch (again.nodes[0]) {
+        .split => |s| {
+            try testing.expectEqual(PTree.Split.Layout.vertical, s.layout);
+            try testing.expectApproxEqAbs(@as(f16, 0.4), s.ratio, 0.01);
+        },
+        .leaf => return error.TestUnexpectedResult,
+    }
 }

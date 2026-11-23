@@ -38,6 +38,7 @@ const gtk = @import("gtk");
 const apprt = @import("../../apprt.zig");
 const build_config = @import("../../build_config.zig");
 const configpkg = @import("../../config.zig");
+const input = @import("../../input.zig");
 const server = apprt.ipc.server;
 const List = apprt.ipc.List;
 const Request = server.Request;
@@ -56,6 +57,7 @@ const Application = @import("class/application.zig").Application;
 const Window = @import("class/window.zig").Window;
 const Tab = @import("class/tab.zig").Tab;
 const Surface = @import("class/surface.zig").Surface;
+const CloseUndo = @import("CloseUndo.zig");
 
 const log = std.log.scoped(.gtk_ipc);
 
@@ -124,8 +126,59 @@ pub fn handleRestore(_: Context, _: Request) Allocator.Error!?[]u8 { return notY
 /// `capture_seam.zig`.
 pub fn handleSeam(app: Context, request: Request) Allocator.Error!server.SeamReply {
     if (comptime !build_config.is_debug) return .unhandled;
+    if (std.mem.eql(u8, request.action, "press-key")) return .{ .reply = try pressKey(app, request) };
     if (!std.mem.eql(u8, request.action, "capture-pane")) return .unhandled;
     return .{ .reply = try capturePane(app, request) };
+}
+
+/// `press-key --target=<pane> --key=<trigger>` (T3384): one press and release
+/// of a key chord (`ctrl+shift+z`, the keybind syntax) on a terminal pane, fed
+/// through its core `keyCallback` - so the configured binding table decides
+/// what it does, exactly as a real key would. Wayland has no global input
+/// injection and the headless harness has no seat, so this is how a Linux
+/// test reaches a keyboard-only action (undo, redo). Reply: `effect` is the
+/// press's `InputEffect` (`consumed`, `ignored`, `closed`).
+fn pressKey(app: Context, request: Request) Allocator.Error![]u8 {
+    var target_arg: ?[]const u8 = null;
+    var key_arg: ?[]const u8 = null;
+    for (request.arguments orelse &.{}) |arg| {
+        if (std.mem.startsWith(u8, arg, "--target=")) target_arg = arg["--target=".len..];
+        if (std.mem.startsWith(u8, arg, "--key=")) key_arg = arg["--key=".len..];
+    }
+    const target_name = target_arg orelse return server.errorResponse(c_alloc, "--target is required for press-key", .{});
+    const key_name = key_arg orelse return server.errorResponse(c_alloc, "--key is required for press-key", .{});
+    const trigger = input.Binding.Trigger.parse(key_name) catch
+        return server.errorResponse(c_alloc, "--key '{s}' is not a key chord", .{key_name});
+
+    var arena_state = std.heap.ArenaAllocator.init(c_alloc);
+    defer arena_state.deinit();
+    const target = switch (try resolve(arena_state.allocator(), app, target_name)) {
+        .found => |t| t,
+        .ambiguous => |windows| return server.errorResponse(c_alloc, "{s}", .{
+            try target_lookup.ambiguityError(arena_state.allocator(), target_name, windows),
+        }),
+        .not_found => return server.errorResponse(c_alloc, "pane '{s}' not found in registry", .{target_name}),
+    };
+    const surface = target.surface() orelse
+        return server.errorResponse(c_alloc, "pane '{s}' is no longer alive", .{target_name});
+    const core = surface.core() orelse
+        return server.errorResponse(c_alloc, "pane '{s}' has no terminal to type into", .{target_name});
+
+    var event: input.KeyEvent = .{ .action = .press, .mods = trigger.mods };
+    switch (trigger.key) {
+        .physical => |k| event.key = k,
+        .unicode => |cp| event.unshifted_codepoint = cp,
+        .catch_all => return server.errorResponse(c_alloc, "--key '{s}' names no key", .{key_name}),
+    }
+    const effect = core.keyCallback(event) catch |err|
+        return server.errorResponse(c_alloc, "press-key failed ({s})", .{@errorName(err)});
+    // The press may have closed the pane; only a surviving one gets its release.
+    if (effect != .closed) {
+        event.action = .release;
+        _ = core.keyCallback(event) catch {};
+    }
+    log.info("press-key target={s} key={s} effect={s}", .{ target_name, key_name, @tagName(effect) });
+    return std.fmt.allocPrint(c_alloc, "{{\"success\":true,\"effect\":\"{s}\"}}", .{@tagName(effect)});
 }
 
 fn capturePane(app: Context, request: Request) Allocator.Error![]u8 {
@@ -677,12 +730,15 @@ pub fn dismissConfirmations(_: Context, target: Target, name: []const u8) verbs.
 }
 
 /// Close a pane (its window too, when it was the last one) or a window, with
-/// no confirmation.
+/// no confirmation. A pane is parked for undo like a keyboard close (T3384),
+/// unless `--force` (T2938, Mac `forceCloseSurface`): no undo, it ends now.
 pub fn closeTarget(_: Context, target: Target, force: bool) bool {
-    _ = force; // the GTK close has no undo window to skip
     switch (target) {
         .pane => |p| {
             const tab = tabOf(p.window, p.surface) orelse return false;
+            const was = CloseUndo.bypass;
+            CloseUndo.bypass = force;
+            defer CloseUndo.bypass = was;
             return tab.getSplitTree().closeSurfaceNow(p.surface);
         },
         .window => |w| w.as(gtk.Window).destroy(),
@@ -1007,8 +1063,8 @@ fn paneAlive(app: Context, id: []const u8) bool {
 /// shared `validateLayout` / `firstDuplicate` checks first, then the window
 /// (`--target`, else the caller's window, T1079, else the front one), then
 /// every pane against that window's active tab. A pane the layout omits is
-/// closed (T128); the Linux app has no close undo or stash yet, so it closes
-/// at once, as `undo-timeout = 0` does on win32.
+/// closed (T128) - parked for `undo-timeout` first, so Ctrl+Shift+Z puts the
+/// previous layout back with it (T3384, `CloseUndo.rearrange`).
 pub fn handleRearrange(app: Context, request: Request) Allocator.Error!?[]u8 {
     var arena_state = std.heap.ArenaAllocator.init(c_alloc);
     defer arena_state.deinit();
@@ -1072,7 +1128,7 @@ pub fn handleRearrange(app: Context, request: Request) Allocator.Error!?[]u8 {
         .nodes = nodes.items,
         .zoomed = null,
     };
-    split_tree.rearrange(&borrowed);
+    CloseUndo.rearrange(split_tree, &borrowed);
 
     log.info("IPC +rearrange: window={s} panes={d}", .{ window.ipcName() orelse "-", names.items.len });
     return try c_alloc.dupe(u8, "{\"success\":true}");

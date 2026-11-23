@@ -29,6 +29,7 @@ const Tab = @import("tab.zig").Tab;
 const DebugWarning = @import("debug_warning.zig").DebugWarning;
 const CommandPalette = @import("command_palette.zig").CommandPalette;
 const WeakRef = @import("../weak_ref.zig").WeakRef;
+const CloseUndo = @import("../CloseUndo.zig");
 
 const log = std.log.scoped(.gtk_ghostty_window);
 
@@ -1277,6 +1278,9 @@ pub const Window = extern struct {
 
     fn dispose(self: *Self) callconv(.c) void {
         const priv = self.private();
+
+        // T3384: nothing can put this window's closed panes back now.
+        CloseUndo.dropWindow(self);
 
         priv.command_palette.set(null);
 
