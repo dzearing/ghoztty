@@ -971,7 +971,8 @@ pub const Surface = extern struct {
         const app = Application.default();
         const loc = app.allocator().dupeZ(u8, location) catch return;
         defer app.allocator().free(loc);
-        _ = app.newWindowForIpc(null, null, &.{}, loc);
+        // A link the user clicked: it opens in front.
+        _ = app.newWindowForIpc(null, null, &.{}, loc, true);
         log.info("viewer link: opened a viewer window for {s}", .{location});
     }
 

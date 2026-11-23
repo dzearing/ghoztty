@@ -389,7 +389,7 @@ fn restoreWindow(app: *Application, ctx: *Ctx, win: schema.Window) bool {
         const view = ctx.viewLocation(first);
         ctx.setPending(first);
         const t: *Tab = if (window) |w| (w.newTabForRestore(view) orelse continue) else t: {
-            const w = app.newWindowForIpc(null, null, &.{}, view);
+            const w = app.newWindowForIpc(null, null, &.{}, view, true);
             window = w;
             break :t w.getSelectedTab() orelse continue;
         };

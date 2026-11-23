@@ -328,6 +328,13 @@ pub const Window = struct {
         try env.put("WINDOWID", window_id);
     }
 
+    /// A `_NET_WM_USER_TIME` of 0 asks the window manager not to focus the
+    /// window when it maps (EWMH), which is how an X11 window opens in the
+    /// background (T3381). Set between realize and map.
+    pub fn suppressFocusOnMap(self: *Window) void {
+        self.x11_surface.setUserTime(0);
+    }
+
     pub fn setUrgent(self: *Window, urgent: bool) !void {
         self.x11_surface.setUrgencyHint(@intFromBool(urgent));
     }

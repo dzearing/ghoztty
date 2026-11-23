@@ -220,6 +220,57 @@ out=$(cli +split --view=/etc/hostname --command=ls 2>&1); rc=$?
 [ $rc != 0 ] && echo "$out" | grep -q -- '--view cannot be combined with --command/-e'
 hl_check "W18 +split --view with --command is refused" $? "rc=$rc out=$out"
 
+# --focus (T1797, T3381): a script's window or pane opens in the background
+# unless it asks. Weston headless has no seat, so no window is ever ACTIVE
+# here and a raise cannot be seen; what can be: the background window is
+# shown without an activation request (the app logs which path it took), a
+# --focus window asks and its reply says the compositor may decline (this app
+# holds no keyboard), the app logs that the compositor did decline, and pane
+# focus inside a window, which +list reports per pane.
+bg_shown() { grep -c 'window shown in the background (no activation request)' "$APP_LOG"; }
+bg_before=$(bg_shown)
+out=$(cli +new-window --target=bgwin 2>&1); rc=$?
+four_windows() { [ "$(windows)" = 4 ]; }
+hl_wait_for 10 four_windows
+[ $rc = 0 ] && [ "$(bg_shown)" = $((bg_before + 1)) ] && ! echo "$out" | grep -q -- '--focus'
+hl_check "W20 +new-window without --focus is shown in the background, and says nothing about focus" $? "rc=$rc out=$out bg=$bg_before->$(bg_shown) windows=$(windows)"
+out=$(cli +new-window --target=fgwin --focus 2>&1); rc=$?
+five_windows() { [ "$(windows)" = 5 ]; }
+hl_wait_for 10 five_windows
+[ $rc = 0 ] && [ "$(bg_shown)" = $((bg_before + 1)) ] && echo "$out" | grep -q -- '--focus: Ghoztty is not the active app, so the compositor may keep the window behind'
+hl_check "W20b +new-window --focus presents the window, and the reply says the compositor may decline" $? "rc=$rc out=$out bg=$(bg_shown) windows=$(windows)"
+declined() { grep -q 'focus: the compositor declined to activate the window' "$APP_LOG"; }
+hl_wait_for 5 declined
+hl_check "W20c the app logs that the compositor declined (no seat here)" $? "$(grep -m3 'focus: the compositor' "$APP_LOG" | tr '\n' ' ')"
+
+# focused_in <window-target>: the id of that window's focused pane.
+focused_in() {
+    cli +list --json 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)["data"]
+def walk(n):
+    if n["type"] == "split":
+        yield from walk(n["left"]); yield from walk(n["right"])
+    else:
+        yield n["terminal"]
+for w in d["windows"]:
+    if (w.get("target") or "") != sys.argv[1]: continue
+    for t in w["tabs"]:
+        for l in walk(t["splits"]):
+            if l.get("focused"): print(l["id"]); sys.exit(0)
+' "$1" 2>/dev/null
+}
+was=$(focused_in bgwin)
+out=$(cli +split --target=bgwin --name=quiet 2>&1); rc=$?
+quiet_up() { [ -n "$(id_of bgwin quiet)" ]; }
+hl_wait_for 5 quiet_up
+[ $rc = 0 ] && [ -n "$was" ] && [ "$(focused_in bgwin)" = "$was" ]
+hl_check "W21 +split without --focus leaves the window's focused pane where it was" $? "rc=$rc was=$was now=$(focused_in bgwin) quiet=$(id_of bgwin quiet)"
+out=$(cli +split --target=bgwin --name=loud --focus 2>&1); rc=$?
+loud_focused() { l=$(id_of bgwin loud); [ -n "$l" ] && [ "$(focused_in bgwin)" = "$l" ]; }
+hl_wait_for 5 loud_focused
+hl_check "W21b +split --focus moves the window's focus to the new pane" $? "rc=$rc out=$out loud=$(id_of bgwin loud) now=$(focused_in bgwin)"
+
 # Nothing above crashed the app.
 kill -0 "$APP" 2>/dev/null
 hl_check "W19 the app is still running" $?

@@ -1287,18 +1287,22 @@ pub const Application = extern struct {
     }
 
     /// Open a window for an IPC `+new-window` (T3370) and return it.
+    /// `activate` false shows it without asking for focus: a script's window
+    /// opens in the background unless it passed `--focus` (T1797, T3381).
     pub fn newWindowForIpc(
         self: *Self,
         command: ?configpkg.Command,
         working_directory: ?[:0]const u8,
         env: []const []const u8,
         view: ?[:0]const u8,
+        activate: bool,
     ) *Window {
         return Action.newWindowForIpc(self, .{
             .command = command,
             .working_directory = working_directory,
             .env = env,
             .view = view,
+            .activate = activate,
         });
     }
 
@@ -2436,6 +2440,7 @@ const Action = struct {
             working_directory: ?[:0]const u8 = null,
             env: []const []const u8 = &.{},
             view: ?[:0]const u8 = null,
+            activate: bool = true,
         },
     ) *Window {
         self.private().requested_window = true;
@@ -2445,6 +2450,7 @@ const Action = struct {
             .working_directory = overrides.working_directory,
             .env = overrides.env,
             .view = overrides.view,
+            .activate = overrides.activate,
         });
         return win;
     }
@@ -2459,6 +2465,8 @@ const Action = struct {
             title: ?[:0]const u8 = null,
             env: []const []const u8 = &.{},
             view: ?[:0]const u8 = null,
+            /// False: show the window without asking for focus (T3381).
+            activate: bool = true,
 
             pub const none: @This() = .{};
         },
@@ -2495,8 +2503,20 @@ const Action = struct {
             }
         }
 
-        // Show the window
-        gtk.Window.present(win.as(gtk.Window));
+        // Show the window. `present` is show + an activation request (on
+        // Wayland, xdg-activation). A window a script opened without
+        // `--focus` is only shown, so it does not take the keyboard from
+        // whatever the user is typing into (T1797, T3381): realize first so
+        // the window protocol can mark it not-focus-on-map (X11 user time
+        // 0; Wayland has no such hint and simply is not asked).
+        if (overrides.activate) {
+            gtk.Window.present(win.as(gtk.Window));
+            return;
+        }
+        win.as(gtk.Widget).realize();
+        win.winproto().suppressFocusOnMap();
+        win.as(gtk.Widget).setVisible(1);
+        log.info("window shown in the background (no activation request)", .{});
     }
 
     pub fn openConfig(self: *Application) bool {

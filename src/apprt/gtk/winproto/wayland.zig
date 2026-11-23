@@ -230,6 +230,12 @@ pub const Window = struct {
         _ = env;
     }
 
+    /// Wayland has no "do not focus on map" hint: xdg-shell leaves a new
+    /// toplevel's focus to the compositor, and the one lever a client holds
+    /// is NOT asking (no xdg-activation request), which a window shown
+    /// without `present` already does (T3381).
+    pub fn suppressFocusOnMap(_: *Window) void {}
+
     pub fn setUrgent(self: *Window, urgent: bool) !void {
         const activation = self.globals.get(.xdg_activation) orelse return;
 

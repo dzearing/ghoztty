@@ -152,4 +152,12 @@ pub const Window = union(Protocol) {
             inline else => |*v| try v.setUrgent(urgent),
         }
     }
+
+    /// Ask the window manager not to focus this window when it maps: call
+    /// after realize, before the window is shown (T3381).
+    pub fn suppressFocusOnMap(self: *Window) void {
+        switch (self.*) {
+            inline else => |*v| v.suppressFocusOnMap(),
+        }
+    }
 };

@@ -561,13 +561,52 @@ pub fn focusLink(app: Context, url: []const u8, caller_pane: ?[]const u8) void {
 /// notification click takes too. Raising is `gtk_window_present`, which on
 /// Wayland is an xdg-activation request the compositor may decline; inside
 /// the app the pane is focused either way. The default (no `--focus`) never
-/// asks.
+/// asks. Whether the compositor said yes is logged a moment later
+/// (`watchActivation`), since it answers after the reply has gone (T3381).
 pub fn focusTarget(target: Target) void {
+    const window = target.window_();
     if (target.surface()) |s| {
-        if (tabOf(target.window_(), s)) |tab| tab.getSplitTree().focusSurface(s);
-        return s.present();
-    }
-    target.window_().as(gtk.Window).present();
+        if (tabOf(window, s)) |tab| tab.getSplitTree().focusSurface(s);
+        s.present();
+    } else window.as(gtk.Window).present();
+    watchActivation(window);
+}
+
+/// The note a `--focus` reply carries when the request cannot be expected to
+/// raise anything: no window of this app holds the keyboard, so the
+/// activation request goes out with no recent input of ours behind it, and a
+/// Wayland compositor (or an X11 window manager's focus-stealing prevention)
+/// may keep the window behind the active app. Null when one of ours is
+/// active, which is the usual case of a command run from a Ghoztty pane.
+/// Read BEFORE anything is created or raised (T3381).
+pub fn focusNote(app: Context) ?[]const u8 {
+    var windows = windowIterator(app);
+    while (windows.next()) |w| if (w.as(gtk.Window).isActive() != 0) return null;
+    return focus_may_be_declined;
+}
+
+pub const focus_may_be_declined = "--focus: Ghoztty is not the active app, so the compositor may keep the window behind the app that is (it asks through xdg-activation); the pane is focused inside its window either way";
+
+/// How long the compositor gets to answer an activation request before the
+/// app logs what it decided.
+const activation_check_ms = 1000;
+
+/// Log, once the compositor has had time to answer, whether `--focus`
+/// actually activated `window` - the only place a declined request shows,
+/// since `present` returns before the compositor decides (T3381).
+fn watchActivation(window: *Window) void {
+    _ = window.as(gobject.Object).ref();
+    _ = glib.timeoutAdd(activation_check_ms, activationChecked, window);
+}
+
+fn activationChecked(ud: ?*anyopaque) callconv(.c) c_int {
+    const window: *Window = @ptrCast(@alignCast(ud orelse return @intFromBool(glib.SOURCE_REMOVE)));
+    defer window.as(gobject.Object).unref();
+    if (window.as(gtk.Window).isActive() != 0)
+        log.info("focus: the compositor activated the window", .{})
+    else
+        log.info("focus: the compositor declined to activate the window; the pane is focused inside it", .{});
+    return @intFromBool(glib.SOURCE_REMOVE);
 }
 
 // ---------------------------------------------------------------------------
@@ -694,6 +733,11 @@ pub fn openWindow(
     plan: verbs.WindowPlan,
 ) Allocator.Error!verbs.Opened {
     _ = request;
+    // `--focus` (T1797, T3381): only then is the window presented (an
+    // activation request); without it the window is shown in the background.
+    // Whether the request can be expected to work is read before the window
+    // exists, since the new window is not active yet either.
+    const note: ?[]const u8 = if (args.focus) focusNote(app) else null;
     // `--view` (T3411): the first pane is a VIEWER, with no shell to build a
     // command, cwd or environment for. The inline split's pane is still a
     // terminal, as on win32.
@@ -701,14 +745,16 @@ pub fn openWindow(
     // A viewer keeps the cwd, though: it is the repository a `git-diff:` /
     // `git-status:` view diffs (T3417).
     const window = if (view) |location|
-        app.newWindowForIpc(null, try workingDirectory(arena, args.working_directory), &.{}, location)
+        app.newWindowForIpc(null, try workingDirectory(arena, args.working_directory), &.{}, location, args.focus)
     else
         app.newWindowForIpc(
             try paneCommand(arena, app, args.e_args, args.command, args.shell),
             try workingDirectory(arena, args.working_directory),
             try paneEnv(arena, args.env, args.target, plan.first_pane_env_name),
             null,
+            args.focus,
         );
+    if (args.focus) watchActivation(window);
 
     if (args.target) |t| window.setIpcName(t) else _ = windowName(app, window);
     if (plan.first_pane_name) |n| if (window.getActiveSurface()) |s| s.setIpcName(n);
@@ -744,7 +790,7 @@ pub fn openWindow(
         if (args.name) |n| s.setIpcName(n);
     }
 
-    return .{ .created = null };
+    return .{ .created = note };
 }
 
 pub const WindowHandle = *Window;
