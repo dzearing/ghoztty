@@ -1,8 +1,8 @@
 {
     "guard":  "viewer-panes",
     "script":  "test/win32/viewer-panes.ps1",
-    "generated":  "2026-11-23T11:22:22-08:00",
-    "commit":  "02938fe52",
+    "generated":  "2026-11-23T11:41:09-08:00",
+    "commit":  "41d28bf7e",
     "uncommitted":  [
 
                     ],
