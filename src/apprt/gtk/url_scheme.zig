@@ -44,9 +44,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const adw = @import("adw");
-const gio = @import("gio");
 const glib = @import("glib");
-const gobject = @import("gobject");
 const gtk = @import("gtk");
 
 const apprt = @import("../../apprt.zig");
@@ -108,14 +106,21 @@ fn present(failure: grammar.Failure, app: *Application) void {
         null;
     const dialog = makeDialog(failure) orelse return logFailure(failure);
     presenting = true;
-    dialog.choose(parent, null, inAppDone, null);
+    show(dialog, parent, &presenting);
     afterShown(failure, dialog);
 }
 
-fn inAppDone(_: ?*gobject.Object, result: *gio.AsyncResult, ud: ?*anyopaque) callconv(.c) void {
-    _ = ud;
-    _ = result;
-    presenting = false;
+/// Present `dialog` and clear `flag` once it is gone. Keyed on `closed`, not
+/// on `choose`'s callback: a dialog closed any way other than a response (the
+/// window manager, `adw_dialog_close`) never completes `choose`, which left
+/// the activation process running and the in-app flag stuck.
+fn show(dialog: *adw.AlertDialog, parent: ?*gtk.Widget, flag: *bool) void {
+    _ = adw.Dialog.signals.closed.connect(dialog.as(adw.Dialog), *bool, dialogClosed, flag, .{});
+    dialog.as(adw.Dialog).present(parent);
+}
+
+fn dialogClosed(_: *adw.Dialog, flag: *bool) callconv(.c) void {
+    flag.* = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,17 +175,12 @@ fn presentStandalone(failure: grammar.Failure) void {
     if (gtk.initCheck() == 0) return logFailure(failure);
     adw.init();
     const dialog = makeDialog(failure) orelse return logFailure(failure);
-    var done = false;
-    dialog.choose(null, null, standaloneDone, &done);
+    // `up` drops to false once the dialog has closed.
+    var up = true;
+    show(dialog, null, &up);
     afterShown(failure, dialog);
     const ctx = glib.MainContext.default();
-    while (!done) _ = glib.MainContext.iteration(ctx, 1);
-}
-
-fn standaloneDone(_: ?*gobject.Object, result: *gio.AsyncResult, ud: ?*anyopaque) callconv(.c) void {
-    _ = result;
-    const done: *bool = @ptrCast(@alignCast(ud));
-    done.* = true;
+    while (up) _ = glib.MainContext.iteration(ctx, 1);
 }
 
 /// An exclusive `flock` on `<runtime dir>/ghoztty[-debug]-url-warning.lock`,
