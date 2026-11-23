@@ -64,13 +64,18 @@ pub const shim_js =
     \\      e.preventDefault();
     \\      e.stopPropagation();
     \\      h.postMessage({ t: "close" });
+    \\    } else if ((e.key === "S" || e.key === "s") && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey) {
+    \\      e.preventDefault();
+    \\      e.stopPropagation();
+    \\      h.postMessage({ t: "shot" });
     \\    }
     \\  }, true);
     \\})();
 ;
 
-/// The host-only messages the shim posts.
-pub const HostVerb = enum { send, close };
+/// The host-only messages the shim posts. `shot` is Ctrl+Shift+S, the
+/// keyboard's `+` (T3546; the Mac's Shift+Cmd+S).
+pub const HostVerb = enum { send, close, shot };
 
 /// `{t:"send"}` / `{t:"close"}` from the shim, or null for anything else -
 /// which then goes to the shared `viewer_feedback_page.parse`.
@@ -87,6 +92,7 @@ pub fn hostVerb(alloc: Allocator, json_text: []const u8) ?HostVerb {
     };
     if (std.mem.eql(u8, t, "send")) return .send;
     if (std.mem.eql(u8, t, "close")) return .close;
+    if (std.mem.eql(u8, t, "shot")) return .shot;
     return null;
 }
 
@@ -177,6 +183,9 @@ test "the shim posts to the handler it registers, and defines the deliver hook" 
     try testing.expect(std.mem.indexOf(u8, shim_js, "addEventListener: function") != null);
     // Enter alone is the engine's newline; only Ctrl+Enter is taken.
     try testing.expect(std.mem.indexOf(u8, shim_js, "e.key === \"Enter\" && e.ctrlKey") != null);
+    // Ctrl+Shift+S is the screenshot chord (T3546).
+    try testing.expect(std.mem.indexOf(u8, shim_js, "e.ctrlKey && e.shiftKey") != null);
+    try testing.expect(std.mem.indexOf(u8, shim_js, "{ t: \"shot\" }") != null);
 }
 
 test "the shared composer page still reads the object the shim defines" {
@@ -189,6 +198,7 @@ test "the shared composer page still reads the object the shim defines" {
 test "hostVerb: send and close, and nothing else" {
     try testing.expectEqual(HostVerb.send, hostVerb(testing.allocator, "{\"t\":\"send\"}").?);
     try testing.expectEqual(HostVerb.close, hostVerb(testing.allocator, "{\"t\":\"close\"}").?);
+    try testing.expectEqual(HostVerb.shot, hostVerb(testing.allocator, "{\"t\":\"shot\"}").?);
     try testing.expect(hostVerb(testing.allocator, "{\"t\":\"ready\"}") == null);
     try testing.expect(hostVerb(testing.allocator, "{\"t\":5}") == null);
     try testing.expect(hostVerb(testing.allocator, "[\"send\"]") == null);

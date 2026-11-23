@@ -700,9 +700,8 @@ half): a pill holding the SHARED `src/viewer/composer.js` page in a second
   `<worktree>/temp/feedback/new/<stem>/report.json`). Success clears the text,
   shows `Filed temp/feedback/new/<stem>`, and closes after 1.5 s. A file pane's
   `pageTitle` is the file name (the template's own title is ours).
-- Not yet: pictures (T3546; a pasted one is logged and dropped), dark style
-  (T3552, the vars are fixed Adwaita light), the draft folder + footer link
-  (T3553). Quoting is the next section.
+- Not yet: dark style (T3552, the vars are fixed Adwaita light), the draft
+  folder + footer link (T3553). Quoting and pictures are the next sections.
 - **Steps seam**: `composer` prints `open= view= ready= lines= sending=
   sends= quotes= quoted= filed= status=... text=...` once the page is up and
   no send is out (`quotes` = live blocks, `quoted` = ever registered);
@@ -756,6 +755,52 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\vi
 ```
 
 Ends `VIEWER QUOTE: ALL PASS` (26 checks, about 2 minutes).
+
+### Pictures in the composer: screenshots, pastes, the strip (T3546)
+
+The pill has the Mac's two circular buttons: **`+`** takes a screenshot of the
+pane, **`↑`** sends. **Ctrl+Shift+S** in the composer is the `+` (the shim
+posts `{t:"shot"}`, `viewer_feedback_host.HostVerb.shot`).
+
+- **The picture is the app's own render.** Wayland has no global capture and
+  the headless Weston has nothing a client can ask for, so
+  `src/apprt/gtk/pane_snapshot.zig` snapshots the widget's paintable into a
+  render node, renders it with the window's own GSK renderer to a texture,
+  and saves PNG. The widget is the pane's page (`Viewer.view`), so the shot is
+  the page at the viewport's size in device pixels; WebKit's composited layer
+  is part of that node. T3359 (the harness screenshot) reuses the same
+  function.
+- **A paste or a drop** is the shared page's own path: `composer.js` decodes
+  it to PNG and posts `{t:"image",png}`; one it cannot take arrives as
+  `{t:"image",err}` and the footer says why. `image_max_bytes` is the store's
+  32 MB cap, so an oversized paste is refused at the page.
+- **Chips, numbers, report**: win32's pure `viewer_feedback_images.Store`
+  allocates the stable number; `src/apprt/gtk/viewer_shot.zig` (none lane)
+  splices `[Image #N]` at the page's caret (UTF-16 units), moves the quote
+  spans past it, seeds the live chips down as atomic nodes, and builds the
+  report's `images` + body links (`![Image #N](images/image-N.png)`, after the
+  quote rendering - win32's order). What is attached is derived from the
+  text: delete a chip and its picture leaves the strip and the report, and
+  the numbers left keep their gaps. A filed report clears the store.
+- **The strip** under the pill is a horizontal `GtkScrolledWindow` of flat
+  buttons (picture fitted into 56 px over `#N`), one per live chip, rebuilt
+  only when the live list changes, hidden when empty. The tile whose chip holds
+  the caret (or the one last clicked) carries `suggested-action`; a click
+  posts `{t:"pick",n}` so the page selects that chip whole.
+- **Steps seam**: `click feedback-shot`, `composer-key ctrl+shift+S`,
+  `thumb <n>`; the `composer` line adds `images=1,3 tiles=1,3 sel= shots=
+  shot=WxH`. Log lines: `viewer feedback: image=#N via=screenshot|paste
+  bytes= size=WxH live=`, `carousel tiles= images=`, `thumb #N picked`.
+- Headless the paste is a `ClipboardEvent` carrying a canvas-made `File`
+  (falling back to a `drop`), dispatched in a `composer-probe`.
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-screenshot.sh
+```
+
+Ends `VIEWER SCREENSHOT: ALL PASS` (21 checks). S19 decodes both PNGs with
+python's zlib: the shot is the viewport's size and not blank, the paste is
+30x20, and `bytes`/`pixelWidth`/`pixelHeight` match the files.
 
 ### The viewer foundation's own test (T3410)
 

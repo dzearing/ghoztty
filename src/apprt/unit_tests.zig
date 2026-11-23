@@ -622,6 +622,10 @@ test {
     // quote spans across the page boundary (UTF-16 units, ids), the report's
     // quotes, and the toolbar's Copy message (T3545). No GTK imports.
     _ = @import("gtk/viewer_quote.zig");
+    // ... and pictures in it: the `[Image #N]` chip spliced at the caret, the
+    // chips seeded down as nodes, the report's images and body links, and the
+    // thumbnail/capture sizes (T3546). No GTK imports.
+    _ = @import("gtk/viewer_shot.zig");
     // ... and the POSIX half of win32's git runner it spawns git through:
     // the deadline and the cancel end the whole process group (T3417).
     // Off Windows only, whose win32 lane covers the job object - importing it

@@ -2162,7 +2162,9 @@ fn writeDump(text: []const u8) void {
 ///   filter-focus    put the caret in the filter
 ///   row <id>        click the panel row with that id (a file's path)
 ///   click diff-prev|diff-next|diff-layout   the bar's diff controls
-///   click feedback  the feedback button (T3419)
+///   click feedback  the feedback button (T3419); `feedback-send` and
+///                   `feedback-shot` are the composer's send and `+` (T3546)
+///   thumb <n>       click the composer's thumbnail tile for image n (T3546)
 ///   feedback        after any worktree resolution in flight lands (10 s):
 ///                   `feedback button= worktree= tip= pending= resolves=
 ///                   clicks=`
@@ -2285,6 +2287,7 @@ const steps = if (build_config.is_debug) struct {
                 .{ "contents", v.toc.buttonWidget() },
                 .{ "feedback", v.feedback.buttonWidget() },
                 .{ "feedback-send", v.feedback.sendButtonWidget() },
+                .{ "feedback-shot", v.feedback.shotButtonWidget() },
             };
             var b: ?*wk.GtkWidget = null;
             inline for (named) |n| {
@@ -2329,15 +2332,26 @@ const steps = if (build_config.is_debug) struct {
                 "document.execCommand('insertText',false,{s});return 'typed'}})()", arg, true);
             out("composer-type {s} ok={}", .{ arg, ok });
         } else if (std.mem.eql(u8, verb, "composer-key")) {
-            // A keydown in the composer page: `ctrl+Enter` or `Escape`. The
-            // shim's chords run on keydown, which is what this fires.
-            const ctrl = std.mem.startsWith(u8, arg, "ctrl+");
-            const key = if (ctrl) arg["ctrl+".len..] else arg;
-            var jbuf: [256]u8 = undefined;
+            // A keydown in the composer page: `ctrl+Enter`, `Escape` or
+            // `ctrl+shift+S`. The shim's chords run on keydown, which is what
+            // this fires.
+            var key = arg;
+            const ctrl = std.mem.startsWith(u8, key, "ctrl+");
+            if (ctrl) key = key["ctrl+".len..];
+            const shift = std.mem.startsWith(u8, key, "shift+");
+            if (shift) key = key["shift+".len..];
+            var jbuf: [320]u8 = undefined;
             const js = std.fmt.bufPrint(&jbuf, "(function(){{document.getElementById('c').dispatchEvent(new KeyboardEvent('keydown'," ++
-                "{{key:'{s}',ctrlKey:{},bubbles:true,cancelable:true}}));return 'k'}})()", .{ key, ctrl }) catch "";
+                "{{key:'{s}',ctrlKey:{},shiftKey:{},bubbles:true,cancelable:true}}));return 'k'}})()", .{ key, ctrl, shift }) catch "";
             const ok = composerEval(v, "{s}", js, false);
             out("composer-key {s} ok={}", .{ arg, ok });
+        } else if (std.mem.eql(u8, verb, "thumb")) {
+            // Click the composer's thumbnail tile for image `arg` (T3546).
+            const n = std.fmt.parseInt(u32, arg, 10) catch 0;
+            if (v.feedback.tileWidget(n)) |t| {
+                wk.g_signal_emit_by_name(t, "clicked");
+                out("thumb {s} found=true", .{arg});
+            } else out("thumb {s} found=false", .{arg});
         } else if (std.mem.eql(u8, verb, "composer-probe")) {
             // Evaluate in the COMPOSER's page; prints `probe ...` like probe.
             const w = v.feedback.view orelse {

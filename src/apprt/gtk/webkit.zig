@@ -446,3 +446,40 @@ pub fn asWidget(view: *WebView) *GtkWidget {
 pub fn asWebView(widget: *GtkWidget) *WebView {
     return @ptrCast(widget);
 }
+
+// --- Pictures in the feedback composer (T3546) -------------------------------
+//
+// Wayland (and the headless Weston the tests run in) has no global capture, so
+// a screenshot is the app's OWN render: the widget's paintable snapshotted to
+// a render node, rendered to a texture by the window's GSK renderer, saved as
+// PNG. The thumbnail strip decodes the stored PNGs back into textures.
+
+pub const GdkPaintable = opaque {};
+pub const GtkSnapshot = opaque {};
+pub const GskRenderNode = opaque {};
+pub const GskRenderer = opaque {};
+pub const GtkNative = opaque {};
+
+pub extern fn gtk_widget_paintable_new(widget: ?*GtkWidget) *GdkPaintable;
+pub extern fn gtk_snapshot_new() *GtkSnapshot;
+pub extern fn gtk_snapshot_scale(snapshot: *GtkSnapshot, x: f32, y: f32) void;
+pub extern fn gtk_snapshot_free_to_node(snapshot: *GtkSnapshot) ?*GskRenderNode;
+pub extern fn gdk_paintable_snapshot(paintable: *GdkPaintable, snapshot: *GtkSnapshot, width: f64, height: f64) void;
+pub extern fn gsk_render_node_unref(node: *GskRenderNode) void;
+pub extern fn gtk_widget_get_native(widget: *GtkWidget) ?*GtkNative;
+pub extern fn gtk_native_get_renderer(native: *GtkNative) ?*GskRenderer;
+pub extern fn gsk_renderer_render_texture(renderer: *GskRenderer, root: *GskRenderNode, viewport: ?*const GrapheneRect) ?*GdkTexture;
+pub extern fn gtk_widget_get_scale_factor(widget: *GtkWidget) c_int;
+pub extern fn g_bytes_new(data: ?*const anyopaque, size: usize) *GBytes;
+pub extern fn g_bytes_get_data(bytes: *GBytes, size: ?*usize) ?[*]const u8;
+pub extern fn gdk_texture_new_from_bytes(bytes: *GBytes, err: *?*GError) ?*GdkTexture;
+pub extern fn gtk_picture_new_for_paintable(paintable: ?*anyopaque) *GtkWidget;
+pub extern fn gtk_picture_set_content_fit(picture: *GtkWidget, fit: c_int) void;
+pub extern fn gtk_picture_set_can_shrink(picture: *GtkWidget, can_shrink: c_int) void;
+pub extern fn gtk_button_set_child(button: *GtkWidget, child: ?*GtkWidget) void;
+pub extern fn gtk_scrolled_window_get_child(sw: *GtkWidget) ?*GtkWidget;
+pub extern fn gtk_viewport_scroll_to(viewport: *GtkWidget, descendant: *GtkWidget, scroll: ?*anyopaque) void;
+
+/// `GtkContentFit`.
+pub const content_fit_contain: c_int = 1;
+pub extern fn gtk_button_new() *GtkWidget;

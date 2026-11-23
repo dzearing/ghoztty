@@ -42,6 +42,9 @@ const git_run = @import("../win32/git_run.zig");
 const bridge = @import("../win32/viewer_bridge.zig");
 const doc = @import("../win32/viewer_feedback_doc.zig");
 const quoting = @import("viewer_quote.zig");
+const shot = @import("viewer_shot.zig");
+const feedback_images = @import("../win32/viewer_feedback_images.zig");
+const pane_snapshot = @import("pane_snapshot.zig");
 
 const log = std.log.scoped(.gtk_viewer);
 
@@ -106,6 +109,24 @@ filed: ?[]u8 = null,
 /// after every edit, so a deleted block drops out and an edited one stays.
 quotes: doc.Registry = .{},
 spans: std.ArrayListUnmanaged(doc.Span) = .empty,
+/// The pictures attached to this composer (T3546): the PNGs and the stable
+/// chip numbers. What is IN the report is derived from the `[Image #N]` chips
+/// still in `text`, so a deleted chip takes its picture out with it.
+images: feedback_images.Store = .{},
+/// The composer's `+` (screenshot) button.
+shot_button: ?*wk.GtkWidget = null,
+/// The thumbnail strip under the pill: a horizontal scroller and its row of
+/// tiles, one per live chip, in text order; hidden while there are none.
+strip: ?*wk.GtkWidget = null,
+strip_row: ?*wk.GtkWidget = null,
+tiles: std.ArrayListUnmanaged(*wk.GtkWidget) = .empty,
+/// The numbers the tiles show, parallel to `tiles`.
+tile_numbers: std.ArrayListUnmanaged(u32) = .empty,
+/// The ringed tile: the chip the caret is in, or the tile last clicked.
+selected: ?u32 = null,
+/// Screenshots taken (`+` / Ctrl+Shift+S), and the last one's size.
+shots: u32 = 0,
+last_shot: [2]u32 = .{ 0, 0 },
 
 /// What a worker completion needs to find its pane: the viewer pointer, read
 /// and cleared only on the UI thread, behind a count every job holds.
@@ -196,6 +217,10 @@ pub fn deinit(self: *ViewerFeedback) void {
     self.text.deinit(alloc);
     self.quotes.deinit(alloc);
     self.spans.deinit(alloc);
+    self.images.deinit(alloc);
+    // The tiles are children of the pane's box and go with it.
+    self.tiles.deinit(alloc);
+    self.tile_numbers.deinit(alloc);
     if (self.status_text) |t| alloc.free(t);
     self.status_text = null;
     if (self.filed) |f| alloc.free(f);
@@ -453,6 +478,18 @@ pub fn buildComposerUi(self: *ViewerFeedback, v: *Viewer) *wk.GtkWidget {
     wk.gtk_widget_set_margin_bottom(slot, 6);
     wk.gtk_box_append(pill, slot);
 
+    // The Mac's two circular buttons in the pill's trailing edge: `+` takes a
+    // screenshot of the pane (T3546), `↑` sends.
+    const shot_b = wk.gtk_button_new_from_icon_name("list-add-symbolic");
+    wk.gtk_widget_add_css_class(shot_b, "circular");
+    wk.gtk_widget_add_css_class(shot_b, "flat");
+    wk.gtk_widget_set_valign(shot_b, wk.align_end);
+    wk.gtk_widget_set_margin_bottom(shot_b, 4);
+    wk.gtk_widget_set_tooltip_text(shot_b, "Add a screenshot of this pane (Ctrl+Shift+S)");
+    wk.gtk_widget_set_focus_on_click(shot_b, 0);
+    _ = wk.g_signal_connect_data(shot_b, "clicked", @ptrCast(&onShotClicked), v, null, 0);
+    wk.gtk_box_append(pill, shot_b);
+
     const send_b = wk.gtk_button_new_from_icon_name("go-up-symbolic");
     wk.gtk_widget_add_css_class(send_b, "circular");
     wk.gtk_widget_add_css_class(send_b, "suggested-action");
@@ -465,6 +502,15 @@ pub fn buildComposerUi(self: *ViewerFeedback, v: *Viewer) *wk.GtkWidget {
     wk.gtk_box_append(pill, send_b);
     wk.gtk_box_append(band, pill);
 
+    // The thumbnail carousel (T3546; win32 T646): one tile per live chip,
+    // scrolled sideways once it is wider than the pane.
+    const strip = wk.gtk_scrolled_window_new();
+    wk.gtk_scrolled_window_set_policy(strip, wk.policy_automatic, wk.policy_never);
+    wk.gtk_widget_set_visible(strip, 0);
+    const row = wk.gtk_box_new(wk.orientation_horizontal, 4);
+    wk.gtk_scrolled_window_set_child(strip, row);
+    wk.gtk_box_append(band, strip);
+
     const status = wk.gtk_label_new("");
     wk.gtk_label_set_xalign(status, 0);
     wk.gtk_widget_add_css_class(status, "dim-label");
@@ -474,12 +520,27 @@ pub fn buildComposerUi(self: *ViewerFeedback, v: *Viewer) *wk.GtkWidget {
     self.band = band;
     self.slot = slot;
     self.send_button = send_b;
+    self.shot_button = shot_b;
+    self.strip = strip;
+    self.strip_row = row;
     self.status = status;
     return band;
 }
 
 pub fn sendButtonWidget(self: *const ViewerFeedback) ?*wk.GtkWidget {
     return self.send_button;
+}
+
+pub fn shotButtonWidget(self: *const ViewerFeedback) ?*wk.GtkWidget {
+    return self.shot_button;
+}
+
+/// The tile showing image `n`, for the steps seam's `thumb`.
+pub fn tileWidget(self: *const ViewerFeedback, n: u32) ?*wk.GtkWidget {
+    for (self.tile_numbers.items, 0..) |num, i| {
+        if (num == n) return self.tiles.items[i];
+    }
+    return null;
 }
 
 /// The button: open the composer, or close it when it is open (the Mac's
@@ -494,6 +555,11 @@ fn onClicked(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
 fn onSendClicked(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
     const v: *Viewer = @ptrCast(@alignCast(ud orelse return));
     v.feedback.send(v);
+}
+
+fn onShotClicked(_: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
+    const v: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    v.feedback.takeShot(v);
 }
 
 pub fn openComposer(self: *ViewerFeedback, v: *Viewer) void {
@@ -599,7 +665,9 @@ fn pushVars(self: *ViewerFeedback) void {
         .image_radius_px = 4,
         .image_ink = "#1c71d8",
         .image_edge = "#3584e4",
-        .image_max_bytes = 0,
+        // A paste over the store's cap is refused at the page, not
+        // base64-ed across the channel to be refused here.
+        .image_max_bytes = feedback_images.max_image_bytes,
     };
     const json = vars.json(alloc) catch return;
     defer alloc.free(json);
@@ -614,7 +682,11 @@ fn pushSeed(self: *ViewerFeedback, undo: bool) void {
     self.seed_gen +%= 1;
     const quotes = quoting.seedSpans(alloc, self.text.items, self.spans.items, self.quotes.entries.items) catch &.{};
     defer if (quotes.len != 0) alloc.free(quotes);
-    const json = page.seedJson(alloc, self.text.items, self.caret, self.seed_gen, quotes, &.{}, undo) catch return;
+    // ...and the live image chips, so each is rebuilt as one atomic node
+    // (T936) rather than eleven characters a Backspace could split.
+    const chips = shot.seedImageSpans(alloc, self.text.items, &self.images) catch &.{};
+    defer if (chips.len != 0) alloc.free(chips);
+    const json = page.seedJson(alloc, self.text.items, self.caret, self.seed_gen, quotes, chips, undo) catch return;
     defer alloc.free(json);
     self.post(json);
 }
@@ -683,6 +755,7 @@ fn onComposerMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyop
         switch (verb) {
             .send => self.send(v),
             .close => self.closeComposer(v),
+            .shot => self.takeShot(v),
         }
         return;
     }
@@ -698,7 +771,19 @@ fn onComposerMessage(_: *wk.UserContentManager, value: *wk.JSCValue, ud: ?*anyop
             if (self.open) self.focusComposer();
         },
         .state => |st| self.adoptState(st),
-        .image => log.info("viewer feedback: a pasted picture is not filed on Linux yet (T3546)", .{}),
+        .image => |im| {
+            // A paste or a drop the page already decoded to PNG; one it could
+            // not hand over says why rather than vanishing.
+            if (im.png) |png| {
+                _ = self.attachImage(v, png, "paste");
+            } else {
+                log.warn("viewer feedback: image refused by the page: {s} bytes={d}", .{ @tagName(im.problem), im.bytes });
+                self.setStatus(switch (im.problem) {
+                    .too_large => "That image is too large to attach",
+                    else => "That is not an image this can attach",
+                });
+            }
+        },
         .focus, .journal => {},
     }
 }
@@ -722,6 +807,183 @@ fn adoptState(self: *ViewerFeedback, st: page.State) void {
         self.lines = st.lines;
         if (self.view) |w| wk.gtk_widget_set_size_request(w, -1, host.boxHeight(self.lines, line_px, 0));
     }
+    // The strip follows the text: a chip deleted is a tile gone, and the tile
+    // whose chip holds the caret is the ringed one.
+    self.selected = shot.chipAtCaret(alloc, self.text.items, self.caret, &self.images) orelse self.selected;
+    self.refreshStrip(null);
+}
+
+// ---- pictures (T3546) -----------------------------------------------------
+
+/// The `+` button and Ctrl+Shift+S: a picture of the pane's page from the
+/// app's own render (Wayland has no global capture), attached at the caret.
+pub fn takeShot(self: *ViewerFeedback, v: *Viewer) void {
+    if (!self.open) return;
+    const bytes = pane_snapshot.png(wk.asWidget(v.view)) orelse {
+        self.setStatus("Could not take a screenshot");
+        log.warn("viewer feedback: screenshot failed", .{});
+        return;
+    };
+    defer wk.g_bytes_unref(bytes);
+    var len: usize = 0;
+    const data = wk.g_bytes_get_data(bytes, &len) orelse return;
+    const png = data[0..len];
+    if (feedback_images.pngSize(png)) |s| self.last_shot = .{ s.width, s.height };
+    if (self.attachImage(v, png, "screenshot")) self.shots += 1;
+}
+
+/// Store one PNG and put its `[Image #N]` chip at the caret. False when the
+/// picture could not be taken; the footer says why.
+fn attachImage(self: *ViewerFeedback, v: *Viewer, png: []const u8, how: []const u8) bool {
+    const number = self.images.add(alloc, png) catch |err| {
+        log.warn("viewer feedback: image rejected: {s}", .{@errorName(err)});
+        self.setStatus(switch (err) {
+            error.TooLarge, error.Full => "That image is too large to attach",
+            else => "That is not an image this can attach",
+        });
+        return false;
+    };
+    const a = shot.attach(alloc, self.text.items, self.caret, self.spans.items, number) catch return false;
+    defer a.deinit(alloc);
+    self.text.clearRetainingCapacity();
+    self.text.appendSlice(alloc, a.text) catch return false;
+    self.spans.clearRetainingCapacity();
+    self.spans.appendSlice(alloc, a.spans) catch {};
+    self.caret = a.caret_units;
+    self.selected = number;
+
+    // One journalled edit, so Ctrl+Z takes the chip back out - and the
+    // picture leaves the report with it, because the report is derived from
+    // the text. A closed composer seeds it on `ready`.
+    if (!self.open) {
+        self.openComposer(v);
+    } else if (self.ready) {
+        self.pushSeed(true);
+        self.focusComposer();
+    }
+    self.refreshStrip(number);
+    const size = feedback_images.pngSize(png);
+    var nbuf: [128]u8 = undefined;
+    const live = self.liveNumbers(&nbuf);
+    log.info("viewer feedback: image=#{d} via={s} bytes={d} size={d}x{d} live={s}", .{
+        number,
+        how,
+        png.len,
+        if (size) |s| s.width else 0,
+        if (size) |s| s.height else 0,
+        live,
+    });
+    return true;
+}
+
+/// The live chip numbers as `1,3`, or `-`.
+fn liveNumbers(self: *const ViewerFeedback, buf: []u8) []const u8 {
+    const nums = self.images.carousel(alloc, self.text.items) catch return "-";
+    defer alloc.free(nums);
+    return shot.numbersText(buf, nums);
+}
+
+/// Make the strip show the live chips, in text order. The tiles are rebuilt
+/// only when that list changed; `reveal` scrolls a tile into view (the
+/// picture that just arrived).
+fn refreshStrip(self: *ViewerFeedback, reveal: ?u32) void {
+    const row = self.strip_row orelse return;
+    const strip = self.strip orelse return;
+    const nums = self.images.carousel(alloc, self.text.items) catch return;
+    defer alloc.free(nums);
+
+    if (!std.mem.eql(u32, nums, self.tile_numbers.items)) {
+        for (self.tiles.items) |t| wk.gtk_box_remove(row, t);
+        self.tiles.clearRetainingCapacity();
+        self.tile_numbers.clearRetainingCapacity();
+        for (nums) |n| {
+            const idx = self.images.find(n) orelse continue;
+            const tile = self.makeTile(n, self.images.entries.items[idx]) orelse continue;
+            wk.gtk_box_append(row, tile);
+            self.tiles.append(alloc, tile) catch break;
+            self.tile_numbers.append(alloc, n) catch {
+                _ = self.tiles.pop();
+                wk.gtk_box_remove(row, tile);
+                break;
+            };
+        }
+        wk.gtk_widget_set_visible(strip, @intFromBool(self.tiles.items.len != 0));
+        var nbuf: [128]u8 = undefined;
+        log.info("viewer feedback: carousel tiles={d} images={s}", .{
+            self.tiles.items.len,
+            shot.numbersText(&nbuf, self.tile_numbers.items),
+        });
+    }
+    if (self.selected) |s| if (std.mem.indexOfScalar(u32, self.tile_numbers.items, s) == null) {
+        self.selected = null;
+    };
+    for (self.tiles.items, self.tile_numbers.items) |t, n| {
+        if (self.selected != null and self.selected.? == n)
+            wk.gtk_widget_add_css_class(t, "suggested-action")
+        else
+            wk.gtk_widget_remove_css_class(t, "suggested-action");
+    }
+    if (reveal) |n| if (self.tileWidget(n)) |t| {
+        if (wk.gtk_scrolled_window_get_child(strip)) |vp| wk.gtk_viewport_scroll_to(vp, t, null);
+    };
+}
+
+/// One tile: the picture fitted into the thumbnail box over its `#N`.
+fn makeTile(self: *ViewerFeedback, n: u32, e: feedback_images.Entry) ?*wk.GtkWidget {
+    const bytes = wk.g_bytes_new(e.png.ptr, e.png.len);
+    defer wk.g_bytes_unref(bytes);
+    var err: ?*wk.GError = null;
+    const texture = wk.gdk_texture_new_from_bytes(bytes, &err) orelse {
+        if (err) |x| wk.g_error_free(x);
+        log.warn("viewer feedback: image #{d} would not decode for its thumbnail", .{n});
+        return null;
+    };
+    defer wk.g_object_unref(texture);
+    const size = shot.thumbSize(e.pixel_width orelse 0, e.pixel_height orelse 0);
+    const pic = wk.gtk_picture_new_for_paintable(texture);
+    wk.gtk_picture_set_content_fit(pic, wk.content_fit_contain);
+    wk.gtk_picture_set_can_shrink(pic, 1);
+    wk.gtk_widget_set_size_request(pic, size.w, size.h);
+    var lbuf: [24]u8 = undefined;
+    const caption = std.fmt.bufPrintZ(&lbuf, "#{d}", .{n}) catch "#";
+    const label = wk.gtk_label_new(caption.ptr);
+    wk.gtk_widget_add_css_class(label, "caption");
+    const col = wk.gtk_box_new(wk.orientation_vertical, 2);
+    wk.gtk_box_append(col, pic);
+    wk.gtk_box_append(col, label);
+
+    const b = wk.gtk_button_new();
+    wk.gtk_widget_add_css_class(b, "flat");
+    wk.gtk_widget_set_focus_on_click(b, 0);
+    wk.gtk_button_set_child(b, col);
+    var tbuf: [32]u8 = undefined;
+    const tip = std.fmt.bufPrintZ(&tbuf, "Image #{d}", .{n}) catch "Image";
+    wk.gtk_widget_set_tooltip_text(b, tip.ptr);
+    wk.g_object_set_data(b, tile_key, @ptrFromInt(@as(usize, n)));
+    const v: *Viewer = @fieldParentPtr("feedback", self);
+    _ = wk.g_signal_connect_data(b, "clicked", @ptrCast(&onTileClicked), v, null, 0);
+    return b;
+}
+
+/// The object-data key a tile carries its image number under.
+const tile_key = "ghoztty-image";
+
+/// A click on a tile selects its chip in the composer, whole (the page's
+/// `pick`), and rings the tile - Mac's "clicking a thumbnail scrolls to its
+/// chip".
+fn onTileClicked(b: *wk.GtkWidget, ud: ?*anyopaque) callconv(.c) void {
+    const v: *Viewer = @ptrCast(@alignCast(ud orelse return));
+    const self = &v.feedback;
+    const n: u32 = @intCast(@intFromPtr(wk.g_object_get_data(b, tile_key) orelse return));
+    self.selected = n;
+    self.refreshStrip(null);
+    if (self.ready) {
+        const json = page.pickJson(alloc, n) catch return;
+        defer alloc.free(json);
+        self.post(json);
+        self.focusComposer();
+    }
+    log.info("viewer feedback: thumb #{d} picked", .{n});
 }
 
 fn setStatus(self: *ViewerFeedback, text: []const u8) void {
@@ -775,6 +1037,7 @@ const SendJob = struct {
     ctx: report.Context = undefined,
     body: []const u8 = "",
     quotes: []report.Quote = &.{},
+    images: []report.Image = &.{},
     epoch: u64,
     suffix: u24,
     ok: bool = false,
@@ -860,7 +1123,11 @@ fn fillJob(self: *ViewerFeedback, v: *Viewer, job: *SendJob, root: []const u8, s
     job.ctx = ctx;
     // Each live quote renders as a markdown blockquote in the body, and
     // carries its referential context in `quotes` (T3545).
-    job.body = try report.renderBody(aa, self.text.items, self.spans.items);
+    // ...and each live chip as an image link to its file in the folder, the
+    // PNGs copied into the job (T3546).
+    const imgs = try shot.reportImages(aa, self.text.items, &self.images);
+    job.images = imgs.images;
+    job.body = try shot.renderBody(aa, self.text.items, self.spans.items, imgs.numbers);
     job.quotes = try quoting.reportQuotes(aa, self.text.items, self.spans.items, self.quotes.entries.items);
 }
 
@@ -877,7 +1144,7 @@ fn sendWork(job: *SendJob) void {
             quoting.resolveSourceLines(aa, source, job.quotes);
         } else |err| log.debug("viewer feedback: source read failed path={s} err={}", .{ path, err });
     };
-    if (report.write(aa, job.ctx, job.body, job.quotes, &.{}, job.epoch, job.suffix, null)) |w| {
+    if (report.write(aa, job.ctx, job.body, job.quotes, job.images, job.epoch, job.suffix, null)) |w| {
         job.ok = true;
         job.folder = w.folder;
         job.stem = w.stem;
@@ -935,6 +1202,10 @@ fn onSent(data: ?*anyopaque) callconv(.c) c_int {
     self.text.clearRetainingCapacity();
     self.caret = -1;
     self.spans.clearRetainingCapacity();
+    // The pictures went with the report; the next one starts at #1.
+    self.images.deinit(alloc);
+    self.selected = null;
+    self.refreshStrip(null);
     if (self.ready) self.pushSeed(false);
     var buf: [256]u8 = undefined;
     self.setStatus(host.filedText(&buf, job.stem));
@@ -977,7 +1248,9 @@ pub fn describeComposer(self: *const ViewerFeedback, buf: []u8) []const u8 {
         @memcpy(tbuf[n..][0..esc.len], esc);
         n += esc.len;
     }
-    return std.fmt.bufPrint(buf, "open={} view={} ready={} lines={d} sending={} sends={d} quotes={d} quoted={d} filed={s} status={s} text={s}", .{
+    var nbuf: [128]u8 = undefined;
+    var tbuf2: [128]u8 = undefined;
+    return std.fmt.bufPrint(buf, "open={} view={} ready={} lines={d} sending={} sends={d} quotes={d} quoted={d} images={s} tiles={s} sel={?d} shots={d} shot={d}x{d} filed={s} status={s} text={s}", .{
         self.open,
         self.view != null,
         self.ready,
@@ -986,6 +1259,12 @@ pub fn describeComposer(self: *const ViewerFeedback, buf: []u8) []const u8 {
         self.sends,
         quoting.liveCount(self.spans.items, self.quotes.entries.items),
         self.quotes.entries.items.len,
+        self.liveNumbers(&nbuf),
+        shot.numbersText(&tbuf2, self.tile_numbers.items),
+        self.selected,
+        self.shots,
+        self.last_shot[0],
+        self.last_shot[1],
         if (self.filed) |f| f else "-",
         if (self.status_text) |s| s else "-",
         tbuf[0..n],
