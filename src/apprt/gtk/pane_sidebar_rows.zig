@@ -98,9 +98,11 @@ pub fn text(p: Pane, home: ?[]const u8, label_buf: *[TEXT_BUF_LEN]u8, sub_buf: *
 /// gives the app a private config dir gives this file one too. Debug builds
 /// keep their own, so a dev window never changes how the release app opens.
 pub fn prefsPath(alloc: Allocator, debug: bool, xdg_config_home: ?[]const u8, home: []const u8) Allocator.Error![]u8 {
+    // A Linux path, spelled with `/` on every host so the none lane's test
+    // reads the same on the Windows box (`std.fs.path.join` would use `\`).
     const name = if (debug) "pane-sidebar-debug" else "pane-sidebar";
-    if (xdg_config_home) |x| if (x.len > 0) return std.fs.path.join(alloc, &.{ x, "ghoztty", name });
-    return std.fs.path.join(alloc, &.{ home, ".config", "ghoztty", name });
+    if (xdg_config_home) |x| if (x.len > 0) return std.fmt.allocPrint(alloc, "{s}/ghoztty/{s}", .{ x, name });
+    return std.fmt.allocPrint(alloc, "{s}/.config/ghoztty/{s}", .{ home, name });
 }
 
 /// The persisted flags, or null (no file, unreadable, malformed). The file
