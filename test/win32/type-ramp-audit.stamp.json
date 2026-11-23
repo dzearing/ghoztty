@@ -1,8 +1,8 @@
 {
     "guard":  "type-ramp",
     "script":  "test/win32/type-ramp-audit.ps1",
-    "generated":  "2026-11-23T01:49:03-08:00",
-    "commit":  "e9e88e20d",
+    "generated":  "2026-11-23T02:02:29-08:00",
+    "commit":  "d21e031ff",
     "uncommitted":  [
 
                     ],

@@ -1,8 +1,8 @@
 {
     "guard":  "unwired-hook",
     "script":  "test/win32/unwired-hook-audit.ps1",
-    "generated":  "2026-11-23T01:46:05-08:00",
-    "commit":  "e9e88e20d",
+    "generated":  "2026-11-23T02:02:43-08:00",
+    "commit":  "d21e031ff",
     "uncommitted":  [
 
                     ],
@@ -17,7 +17,7 @@
                   "src/apprt/gtk.zig":  "f8c15182a54cc539a782ac6a6ff7d7b3b2e67da917ceef412613b70d356c96e4",
                   "src/apprt/gtk/adw_version.zig":  "0a4ceeda62786bbfb8cf253a2e2b5ddf9ba74899c0550f9fe381303992f8025b",
                   "src/apprt/gtk/App.zig":  "325279bc8a44f2c5021887262818d23e4de776e30506c190e483427737e31861",
-                  "src/apprt/gtk/banner_markup.zig":  "fc7615d9a22c1c20d6c24fd4b85adf48f52abdd8733bfd9f71cf492e0cd58f1a",
+                  "src/apprt/gtk/banner_markup.zig":  "b63efb4671e6925b4e7dfa77fd1976a979b0a37930346327a3b58f33513cb309",
                   "src/apprt/gtk/build/blueprint.zig":  "d9b0b45a108d437e76ffc1f0f2ad36c4db094323b3090a34cef3cfcbce46c674",
                   "src/apprt/gtk/build/gresource.zig":  "f93ac7774fda99cf061980d08c7c4870c3c56c46beff73fa2be45155f54b819c",
                   "src/apprt/gtk/build/info.zig":  "764b6a02ec6604f9d3e06c56caba7aa1d65f0fd42e3f8ae11e07da734f00fad7",
@@ -1592,7 +1592,7 @@
                   "test/win32/session-persistence.ps1":  "28f6ebc84c6dbe31b7d68180986225a65e346adeed2366d93e1c64f92df1db42",
                   "test/win32/session-reattach.ps1":  "309ce4ebb81422fea8fdfcedae50ce2a7c4ac0548ea8c9b0a75cc499b69f85f7",
                   "test/win32/session-reattach-zombie.ps1":  "5c138604f0566d659fe5ce841b372cbf1393c1f1d9dfafcfaf5835f043ef1f7e",
-                  "test/win32/session-reboot-tui.ps1":  "7b44e424cb750a2b4eb01d41046dd4967c477d345507d72bc8ad02cd0a064ef5",
+                  "test/win32/session-reboot-tui.ps1":  "2724a7bca0bb95bc8ef5d86ed8497138c06ea82d2100429f8b9f182f6cb4cf4f",
                   "test/win32/session-relaunch.ps1":  "d70beb312417f04466ee1b86e101048a603d1ab5fac04bb85f3321441926d38e",
                   "test/win32/session-relaunch-notify.ps1":  "09c93e565570c1871cb00bd3efe2f5d62cfb6a796db9fc2ee3d4a3f83b22f3af",
                   "test/win32/session-restore-maximized.ps1":  "9084c0abd218f1ecbf35a0951c95b2695dbb1061deb62d8f88c368a615f352db",
