@@ -207,7 +207,8 @@ fn show(failure: grammar.Failure, parent: ?*gtk.Window, flag: *bool) bool {
     dialog.setDetail(body.ptr);
     dialog.setModal(1);
     const buttons = [_:null]?[*:0]const u8{"OK"};
-    dialog.setButtons(&buttons);
+    // A NULL-terminated array; the binding types it without the sentinel.
+    dialog.setButtons(@ptrCast(&buttons));
 
     const cancellable = gio.Cancellable.new();
     defer cancellable.unref();
