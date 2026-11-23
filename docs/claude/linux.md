@@ -856,20 +856,32 @@ half): a pill holding the SHARED `src/viewer/composer.js` page in a second
   `<worktree>/temp/feedback/new/<stem>/report.json`). Success clears the text,
   shows `Filed temp/feedback/new/<stem>`, and closes after 1.5 s. A file pane's
   `pageTitle` is the file name (the template's own title is ours).
-- Not yet: dark style (T3552, the vars are fixed Adwaita light), the draft
-  folder + footer link (T3553). Quoting and pictures are the next sections.
+- **Colours follow the style (T3552).** `pushVars` reads
+  `AdwStyleManager:dark` and the theme's `@card_bg_color` (composited onto
+  `@window_bg_color`) and `@accent_bg_color`, and `composer_palette.zig`
+  (pure, none lane) derives fg/bg/placeholder/selection/quote/chip with
+  win32's `chrome_theme` (the same contrast floors). A card read that
+  disagrees with the dark flag is a stale stylesheet and falls back to
+  Adwaita's own (#ffffff / #363636). `notify::dark` re-pushes while a
+  composer page exists. Note the app's default `window-theme = auto` picks
+  dark from the default background, so the composer is dark out of the box.
+- Not yet: the draft folder + footer link (T3553). Quoting and pictures are
+  the next sections.
 - **Steps seam**: `composer` prints `open= view= ready= lines= sending=
-  sends= quotes= quoted= filed= status=... text=...` once the page is up and
+  sends= quotes= quoted= style= bg= vars= filed= status=... text=...`
+  (`vars` = palette pushes) once the page is up and
   no send is out (`quotes` = live blocks, `quoted` = ever registered);
   `composer-type <text>` types through `insertText` (`\n` = newline);
   `composer-key ctrl+Enter|Escape|Enter`; `composer-probe <js>` evaluates in
-  the composer page; `click feedback-send`.
+  the composer page; `click feedback-send`; `style dark|light|default` sets
+  the app's libadwaita colour scheme.
 
 ```powershell
 powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\viewer-composer.sh
 ```
 
-Ends `VIEWER COMPOSER: ALL PASS` (23 checks, about 2 minutes).
+Ends `VIEWER COMPOSER: ALL PASS` (27 checks, about 2 minutes; C24-C27 are
+the style).
 
 ### Quoting a page selection (T3545)
 
