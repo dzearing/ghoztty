@@ -245,11 +245,11 @@ hl_check "I6 +list reports the pane as a viewer at its file, titled by its name"
 
 # ---- the driving script's half of the sync points ----------------------------
 hl_wait_for 60 grep -q '^mark narrow$' "$out"
-o=$(cli +split --target=img 2>&1); split1_rc=$?
+o=$(cli +split --pane=img 2>&1); split1_rc=$?
 hl_wait_for 60 grep -q '^mark same-size' "$out"
 fixture png "$fx/big.png" 4000 3000 30 30 200
 hl_wait_for 60 grep -q '^mark narrow-again' "$out"
-o2=$(cli +split --target=img 2>&1); split2_rc=$?
+o2=$(cli +split --pane=img 2>&1); split2_rc=$?
 hl_wait_for 60 grep -q '^mark other-size' "$out"
 fixture png "$fx/big.png" 2000 1000 30 200 200
 hl_wait_for 120 grep -q '^done' "$out"
@@ -270,7 +270,7 @@ hl_check "I8 a large picture opens at best-fit (fit < 100%)" $? "$i1"
 
 i2=$(im 2)
 [ $split1_rc = 0 ] && has "$i2" "fitting=true" && lt "$(field "$i2" fit)" "$f1" && eq "$(field "$i2" zoom)" "$(field "$i2" fit)"
-hl_check "I9 narrowing the pane re-fits a fitted picture" $? "rc=$split1_rc $i2 (before: fit=$f1)"
+hl_check "I9 narrowing the pane re-fits a fitted picture" $? "rc=$split1_rc out=$o $i2 (before: fit=$f1)"
 
 i3=$(im 3)
 eq "$(field "$i3" zoom)" 1 && has "$i3" "fitting=false"
@@ -291,8 +291,9 @@ grep -q 'viewer image served rev=2 .*mime=image/png route=browser' "$APP_LOG"
 hl_check "I16 the re-decode is a new revision WebKit fetched fresh" $? "$(grep 'viewer image served' "$APP_LOG" | head -3 | tr '\n' ' ')"
 
 i7=$(im 7)
-[ $split2_rc = 0 ] && eq "$(field "$i7" zoom)" 1.25 && has "$i7" "fitting=false"
-hl_check "I17 narrowing the pane keeps a zoom the user chose" $? "rc=$split2_rc $i7"
+vw() { field "$1" viewport | cut -dx -f1; }
+[ $split2_rc = 0 ] && lt "$(vw "$i7")" "$(vw "$i6")" && eq "$(field "$i7" zoom)" 1.25 && has "$i7" "fitting=false"
+hl_check "I17 narrowing the pane keeps a zoom the user chose" $? "rc=$split2_rc out=$o2 $i7 (before: $i6)"
 
 i8=$(im 8)
 [ "$(wt 2)" = "wait ok=true" ] && has "$i8" "natural=2000x1000" && has "$i8" "fitting=true"
