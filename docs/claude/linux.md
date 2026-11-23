@@ -1043,6 +1043,48 @@ powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\se
 
 Ends `SESSION RESTORE VIEWERS: ALL PASS` (18 checks).
 
+## The relay account store: keyring, else a private file (T3341)
+
+The Linux row of Keychain -> DPAPI: `src/remote/relay_account.zig` keeps the
+signed-in relay session in the **Secret Service** when a keyring daemon
+answers, and in a **mode-0600 file** at
+`$XDG_DATA_HOME/ghoztty/account[-debug].dat` (default
+`~/.local/share/ghoztty/`) when none does - which is the WSL default, since
+WSL runs no keyring daemon. `relay_account.location(path)` answers
+`.keyring`, `.file` or `.none`, for the account row to say where the sign-in
+is kept.
+
+- **libsecret is loaded, not linked** (`src/remote/secret_service.zig`,
+  `dlopen("libsecret-1.so.0")` on first use). A missing library and a missing
+  daemon are the same answer: use the file. Nothing gains a link dependency.
+- **One item, keyed by the store path** (schema
+  `com.dzearing.ghoztty.relay-account`, the Mac's Keychain service name;
+  attribute `store` = the path). A debug build's item is not the release one
+  (T1859), and a `GHOSTTY_ACCOUNT_STORE` override names its own item.
+- **A save that reaches the keyring deletes the file**, so a keyring that
+  starts later absorbs the credential at the next renewal.
+- `GHOSTTY_ACCOUNT_KEYRING=off` forces the file.
+- **Unit tests never touch a real keyring.** `systemKeyring()` is null in a
+  test binary unless `GHOZTTY_TEST_SECRET_SERVICE` is `1` or `absent`; the
+  routing tests use a fake keyring.
+
+Acceptance, the real libsecret against a real daemon:
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\secret-store.sh
+```
+
+Each phase runs on a **private session bus** (its own `dbus-daemon`), never
+the person's. Phase A has no daemon on it (the account lands in a 0600 file);
+phase B starts `gnome-keyring-daemon --unlock --components=secrets` and checks
+the account goes to the keyring with no file written, reads back and clears.
+The daemon is **extracted** from its `.deb` into
+`/var/tmp/ghoztty-secret-store-tools` (`apt-get download` + `dpkg-deb -x`),
+never installed: an installed gnome-keyring registers
+`org.freedesktop.secrets` on the distro's own session bus and changes how every
+app there stores secrets. Each opt-in test appends a line to a marker file when
+it ran, so a skipped test cannot read as a pass. Ends `SECRET STORE: ALL PASS`.
+
 ## Distro state (2026-11-21)
 
 - Ubuntu 24.04.1 LTS, runs as `root` (`$HOME=/root`), 32 cores, 47 GB visible.

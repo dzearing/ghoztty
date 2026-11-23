@@ -204,7 +204,10 @@ server-side), and the returned opaque **relay session token** + expiry + email
 `%LOCALAPPDATA%\ghoztty\account.dat` (owner-only DACL; a **debug** build uses
 `account-debug.dat` instead, so a dev or test run starts signed out and can never
 read or renew the user's real sign-in - T1859; `GHOSTTY_ACCOUNT_STORE` overrides
-either). No Google token or
+either), Linux in the **Secret Service** (libsecret) when a keyring daemon
+runs and otherwise a mode-0600 file at `$XDG_DATA_HOME/ghoztty/account.dat`
+(WSL has no keyring daemon, so that is its default - T3341, details in
+`docs/claude/linux.md`). No Google token or
 client secret ever touches the machine. The flow runs on a background thread so
 the window never blocks while the browser is open; the app renews the session
 at the stored relay via `/oauth/renew` as it nears expiry (renewal rotates the

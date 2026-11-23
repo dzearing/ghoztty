@@ -1,7 +1,7 @@
 {
     "guard":  "relay-account",
     "script":  "test/win32/relay-account.ps1",
-    "generated":  "2026-11-23T03:08:08-08:00",
+    "generated":  "2026-11-23T03:32:35-08:00",
     "commit":  "9d4f43d8e",
     "uncommitted":  [
 
