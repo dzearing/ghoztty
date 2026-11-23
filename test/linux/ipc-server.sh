@@ -159,6 +159,26 @@ out=$(env -u GHOZTTY_IPC_SOCKET "$app" +list --json 2>/dev/null | python3 -c 'im
 [ "$out" = "$APP3" ]
 hl_check "I22 the CLI now reaches the new app" $? "pid=$out app=$APP3"
 
+# The listener dies while the app lives (T3365): a dead socket file now sits at
+# the path - bound, never listening - so every connect is refused although the
+# app is up. The CLI drops <socket>.reset and retries; the app must rebind.
+rm -f "$sock" "$sock.reset"
+python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.close()' "$sock"
+python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])' "$sock" 2>/dev/null
+[ $? != 0 ] && test -S "$sock"
+hl_check "I24 control: the replaced socket refuses every connect" $?
+out=$(env -u GHOZTTY_IPC_SOCKET -u GHOZTTY_PANE_ID "$app" +set-banner --target=no-such-pane -- x 2>&1)
+echo "$out" | grep -qiE 'no running|could not connect|not running'
+[ $? != 0 ]
+hl_check "I25 a verb through the reset path reaches the app (no 'not running')" $? "$(echo "$out" | head -c 200)"
+grep -q "IPC: socket rebound on $sock" "$APP3_LOG"
+hl_check "I26 the app saw the sentinel and rebound" $? "$(grep 'IPC' "$APP3_LOG" | tail -3 | tr '\n' ' ')"
+[ ! -e "$sock.reset" ]
+hl_check "I27 the sentinel is gone" $?
+out=$(env -u GHOZTTY_IPC_SOCKET "$app" +list --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["build"]["pid"])' 2>/dev/null)
+[ "$out" = "$APP3" ]
+hl_check "I28 a plain connect reaches the same app afterwards" $? "pid=$out app=$APP3"
+
 for l in "$APP_LOG" "$APP3_LOG"; do
     if grep -qE '^(panic|thread [0-9]+ panic)|reached unreachable' "$l"; then
         grep -m5 -E 'panic|unreachable' "$l"; hl_check "I23 no panic in $(basename "$l")" 1

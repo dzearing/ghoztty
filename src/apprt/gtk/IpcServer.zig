@@ -20,8 +20,17 @@
 //! socket file already at the path is replaced only when it is a socket WE
 //! own that nothing answers on: a live instance keeps its socket (this one
 //! then serves nothing and says so), and anything else is left alone.
+//!
+//! Recovery (T3365): a CLI whose connect is refused while the socket file
+//! exists drops `<socket>.reset` and retries (`ipc_client.connectWithReset`,
+//! the Mac server's protocol). The accept thread watches the socket's
+//! directory with inotify (a 500 ms stat poll where inotify is unavailable)
+//! and, on the sentinel, runs the same stale check as startup and rebinds; the
+//! sentinel is removed once the path answers again and kept when it cannot be
+//! made to, exactly as the Mac server does.
 const IpcServer = @This();
 
+const builtin = @import("builtin");
 const std = @import("std");
 const posix = std.posix;
 const Allocator = std.mem.Allocator;
@@ -43,6 +52,11 @@ pub const Handler = *const fn (ctx: *anyopaque, request: []const u8) ?[]u8;
 
 alloc: Allocator,
 path: [:0]u8,
+/// `<path>.reset`: the CLI's rebind request (T3365).
+sentinel: [:0]u8,
+/// Watches the socket's directory for the sentinel; null where inotify is
+/// unavailable, and the accept loop then polls the sentinel on a timeout.
+watch_fd: ?posix.fd_t,
 listen_fd: posix.fd_t,
 wake_r: posix.fd_t,
 wake_w: posix.fd_t,
@@ -69,22 +83,16 @@ pub fn start(
 ) !*IpcServer {
     const path_z = try alloc.dupeZ(u8, path);
     errdefer alloc.free(path_z);
+    const sentinel_z = try std.fmt.allocPrintSentinel(alloc, "{s}.reset", .{path_z}, 0);
+    errdefer alloc.free(sentinel_z);
 
     try clearStale(path_z);
 
-    const fd = try posix.socket(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
-    errdefer posix.close(fd);
-    var addr: posix.sockaddr.un = .{ .path = undefined, .family = posix.AF.UNIX };
-    if (path_z.len >= addr.path.len) return error.NameTooLong;
-    @memset(&addr.path, 0);
-    @memcpy(addr.path[0..path_z.len], path_z);
-    try posix.bind(fd, @ptrCast(&addr), @sizeOf(posix.sockaddr.un));
-    errdefer posix.unlink(path_z) catch {};
-
-    // 0600 before listen: until `listen`, every connect is refused, so there
-    // is no window in which another user could reach the socket.
-    try posix.fchmodat(posix.AT.FDCWD, path_z, 0o600, 0);
-    try posix.listen(fd, 16);
+    const fd = try bindListen(path_z);
+    errdefer {
+        posix.close(fd);
+        posix.unlink(path_z) catch {};
+    }
 
     const pipe = try posix.pipe2(.{ .CLOEXEC = true, .NONBLOCK = true });
     errdefer {
@@ -92,11 +100,16 @@ pub fn start(
         posix.close(pipe[1]);
     }
 
+    const watch_fd = watchDir(path_z);
+    errdefer if (watch_fd) |w| posix.close(w);
+
     const self = try alloc.create(IpcServer);
     errdefer alloc.destroy(self);
     self.* = .{
         .alloc = alloc,
         .path = path_z,
+        .sentinel = sentinel_z,
+        .watch_fd = watch_fd,
         .listen_fd = fd,
         .wake_r = pipe[0],
         .wake_w = pipe[1],
@@ -119,10 +132,107 @@ pub fn stop(self: *IpcServer) void {
     posix.close(self.listen_fd);
     posix.close(self.wake_r);
     posix.close(self.wake_w);
+    if (self.watch_fd) |w| posix.close(w);
     posix.unlink(self.path) catch {};
     const alloc = self.alloc;
+    alloc.free(self.sentinel);
     alloc.free(self.path);
     alloc.destroy(self);
+}
+
+/// A listening socket at `path`, mode 0600. The caller has already cleared
+/// the path; on error nothing is left bound.
+fn bindListen(path: [:0]const u8) !posix.fd_t {
+    const fd = try posix.socket(posix.AF.UNIX, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+    errdefer posix.close(fd);
+    var addr: posix.sockaddr.un = .{ .path = undefined, .family = posix.AF.UNIX };
+    if (path.len >= addr.path.len) return error.NameTooLong;
+    @memset(&addr.path, 0);
+    @memcpy(addr.path[0..path.len], path);
+    try posix.bind(fd, @ptrCast(&addr), @sizeOf(posix.sockaddr.un));
+    errdefer posix.unlink(path) catch {};
+
+    // 0600 before listen: until `listen`, every connect is refused, so there
+    // is no window in which another user could reach the socket.
+    try posix.fchmodat(posix.AT.FDCWD, path, 0o600, 0);
+    try posix.listen(fd, 16);
+    return fd;
+}
+
+/// An inotify fd watching the directory that holds `path`, or null (not
+/// Linux, or inotify refused), in which case the accept loop polls instead.
+fn watchDir(path: [:0]const u8) ?posix.fd_t {
+    if (comptime builtin.os.tag != .linux) return null;
+    const IN = std.os.linux.IN;
+    const dir = std.fs.path.dirname(path) orelse ".";
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    if (dir.len >= dir_buf.len) return null;
+    @memcpy(dir_buf[0..dir.len], dir);
+    dir_buf[dir.len] = 0;
+    const dir_z: [:0]const u8 = dir_buf[0..dir.len :0];
+
+    const fd = posix.inotify_init1(IN.CLOEXEC | IN.NONBLOCK) catch |err| {
+        log.warn("IPC: inotify unavailable err={}; polling for the reset sentinel", .{err});
+        return null;
+    };
+    // CLOSE_WRITE as well as CREATE: the CLI truncates a sentinel that is
+    // already there, which is no create.
+    _ = posix.inotify_add_watchZ(fd, dir_z, IN.CREATE | IN.CLOSE_WRITE | IN.MOVED_TO | IN.ATTRIB) catch |err| {
+        log.warn("IPC: cannot watch {s} err={}; polling for the reset sentinel", .{ dir_z, err });
+        posix.close(fd);
+        return null;
+    };
+    return fd;
+}
+
+/// How often the accept loop looks for the sentinel when it has no watch.
+const sentinel_poll_ms = 500;
+
+/// Throw away queued directory events; the sentinel's presence is checked
+/// directly, so which file an event named does not matter.
+fn drainWatch(fd: posix.fd_t) void {
+    var buf: [4096]u8 align(@alignOf(std.os.linux.inotify_event)) = undefined;
+    while (true) {
+        const n = posix.read(fd, &buf) catch return;
+        if (n == 0) return;
+    }
+}
+
+fn sentinelPresent(self: *const IpcServer) bool {
+    posix.accessZ(self.sentinel, posix.F_OK) catch return false;
+    return true;
+}
+
+/// The CLI asked for a rebind (T3365). Same rules as startup: replace only a
+/// stale socket of ours, never a live instance's or a stranger's file. The
+/// old listener stays in place until a new one is bound, so a failed rebind
+/// loses nothing.
+fn handleSentinel(self: *IpcServer) void {
+    if (!self.sentinelPresent()) return;
+    log.info("IPC: reset sentinel found, rebinding {s}", .{self.path});
+
+    clearStale(self.path) catch |err| switch (err) {
+        // The path answers - ours, or an instance that took it over. Either
+        // way the CLI's retry will connect, which is all it asked for.
+        error.AlreadyServed => {
+            posix.unlinkZ(self.sentinel) catch {};
+            log.info("IPC: {s} already answers; sentinel removed", .{self.path});
+            return;
+        },
+        else => {
+            log.err("IPC: rebind refused err={}; sentinel retained", .{err});
+            return;
+        },
+    };
+
+    const fd = bindListen(self.path) catch |err| {
+        log.err("IPC: rebind failed err={}; sentinel retained", .{err});
+        return;
+    };
+    posix.close(self.listen_fd);
+    self.listen_fd = fd;
+    posix.unlinkZ(self.sentinel) catch {};
+    log.info("IPC: socket rebound on {s}; sentinel removed", .{self.path});
 }
 
 /// Remove a stale socket left at `path` by an instance that died, and refuse
@@ -149,16 +259,31 @@ fn clearStale(path: [:0]const u8) StartError!void {
 }
 
 fn acceptLoop(self: *IpcServer) void {
+    // A sentinel left from before this server bound is answered at once.
+    self.handleSentinel();
     while (!self.stopping.load(.acquire)) {
+        // An fd of -1 is ignored by poll, which is the no-watch case.
         var fds = [_]posix.pollfd{
             .{ .fd = self.listen_fd, .events = posix.POLL.IN, .revents = 0 },
             .{ .fd = self.wake_r, .events = posix.POLL.IN, .revents = 0 },
+            .{ .fd = self.watch_fd orelse -1, .events = posix.POLL.IN, .revents = 0 },
         };
-        _ = posix.poll(&fds, -1) catch |err| {
+        const timeout: i32 = if (self.watch_fd == null) sentinel_poll_ms else -1;
+        const ready = posix.poll(&fds, timeout) catch |err| {
             log.warn("IPC: poll failed err={}", .{err});
             return;
         };
         if (fds[1].revents != 0 or self.stopping.load(.acquire)) return;
+        if (fds[2].revents != 0) {
+            drainWatch(fds[2].fd);
+            self.handleSentinel();
+            // The listener may have been replaced; poll the new one.
+            continue;
+        }
+        if (ready == 0) {
+            self.handleSentinel();
+            continue;
+        }
         if (fds[0].revents & posix.POLL.IN == 0) continue;
 
         const conn = posix.accept(self.listen_fd, null, null, posix.SOCK.CLOEXEC) catch |err| {
