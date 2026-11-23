@@ -799,7 +799,9 @@ shell outlives the app.
 - **Close vs quit.** A pane freed while the app is not quitting was closed by
   the user (pane, tab, window, `+close`), so its session ends (CLOSE). Panes
   freed by `quitNow` detach, and a killed app detaches by dropping the socket:
-  the sessions survive. Re-attaching them on the next launch is T3397.
+  the sessions survive and the next launch re-attaches them (below, T3397).
+  **SIGTERM is a quit**, not a crash: it goes through `quitNow`, so a logout
+  or `kill -TERM` saves the layout and detaches every pane.
 - **`+list`** reads an agent-hosted pane's pid and tty from what the agent
   reported, so `--tty=$(tty)` still finds it.
 - **The harness** exports a private `XDG_CONFIG_HOME` under its runtime dir,
@@ -818,6 +820,52 @@ a 0600 socket, the pane descends from it and not from the app, `+sessions`
 lists it, it keeps running after the app is SIGKILLed, a second app finds the
 same agent, `+close` ends a session, and `session-persistence=false` keeps the
 exec pty.
+
+### Relaunch restores the layout (T3397)
+
+`src/apprt/gtk/SessionLayout.zig` keeps a session-layout manifest and rebuilds
+from it at launch, the Mac's `SessionLayoutManifest` in win32's on-disk schema
+(`apprt/win32/session_layout.zig`, std-only, shared rather than copied).
+
+- **The file** is `<config root>/ghoztty/session-layout[-debug][-<lineage>].json`,
+  beside the agent's state dir under the same root, so the harness's private
+  `XDG_CONFIG_HOME` holds a test's manifest too.
+- **It records** per window its target name, pinned title, maximized state and
+  selected tab; per tab the split tree with exact directions and ratios; per
+  terminal pane its session id, pane id, name, pinned title and pwd; per
+  viewer pane its location (the rest of viewer restore is T3420). The quit's
+  write adds each pane's screen snapshot (base64, the WP-D3 pair).
+- **When:** a change-checked capture every second, writing only when the bytes
+  changed (GTK has no single change hook for tree, title, name and pwd; the Mac
+  debounces each change by 250 ms), and a final one with snapshots at the start
+  of `quitNow`, before any window is torn down. Nothing writes after that, so
+  the teardown can never record an empty app. A window the user closes drops
+  out of the next capture; an app the user empties removes the file.
+- **Who:** only the instance that serves the IPC socket, with
+  `session-persistence` on. A second instance (`--gtk-single-instance=false`)
+  neither restores nor writes.
+- **Restore** (in `Application.run`, before `activate`): ask the agent for its
+  roster; each terminal leaf ATTACHes its session when it is alive and unheld
+  or a relaunchable tombstone (one pane per session), else opens a fresh shell
+  in its recorded pwd - under its recorded pane id either way. A restored
+  launch shows only the restored windows unless it was given `-e`, which still
+  opens its own. Panes are built through the ordinary window/tab/split paths,
+  each handed its restore through `Surface.pending_restore`.
+- **Not restored yet:** window size and position (Wayland gives a client no
+  position; size is T3549), tab titles, banners and stash (T3339, T3399).
+
+Acceptance:
+
+```powershell
+powershell -NoProfile -File scripts\linux\wsl-run.ps1 -CommandFile test\linux\session-restore.sh
+```
+
+Ends `SESSION RESTORE: ALL PASS`: after a SIGKILL the relaunch rebuilds every
+window, split, ratio, name and pane id on the same pids with their screens;
+SIGTERM detaches and snapshots; a session that died while the app was down
+comes back as a fresh shell; after an agent restart the panes come back as
+relaunched shells under the new agent; a second instance neither restores nor
+writes; a closed window stays closed.
 
 ## Distro state (2026-11-21)
 
