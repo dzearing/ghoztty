@@ -649,6 +649,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the real byte <-> UTF-16 conversion, which every composer run including viewer-feedback-utf16.ps1's own default run uses; -BreakUtf16 is its teeth check (T1710)."
         },
+        "GHOZTTY_TEST_WITHHOLD_HOLDER_LOST": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = every dial advertises capability.holder_lost, which arm H of session-relaunch-notify.ps1's default run and every other agent-backed run use; set, the app negotiates the pre-T1793 plain EXIT so -BreakHostLost can show arm H going red (T1870)."
+        },
         "GHOZTTY_TEST_VIEWER_INLINE": {
             "class": "fault",
             "unset": "shipped-elsewhere",

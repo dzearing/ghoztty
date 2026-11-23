@@ -85,6 +85,13 @@ param(
     # the arm is asserting nothing. Arms A-F still run and still pass, so the
     # whole run exits 1 by design and nothing is stamped.
     [switch]$BreakHolders,
+    # T1870 teeth check for arm H. Arm H's app is launched with
+    # GHOZTTY_TEST_WITHHOLD_HOLDER_LOST=1, so it never advertises holder_lost
+    # and the agent answers the killed holder with the pre-T1793 plain EXIT:
+    # the pane is treated as if its program had finished. The arm's claims MUST
+    # go red under it (measured list at arm H); the other arms are untouched, so
+    # the run exits 1 by design and nothing is stamped.
+    [switch]$BreakHostLost,
     # Keep the per-run temp tree (every arm's app stderr log, its CLI captures
     # and its session-layout manifest) instead of deleting it at the end. For
     # diagnosing an arm that `-DumpPanesTo` cannot explain: that flag only
@@ -1249,13 +1256,31 @@ Say "== H: a pane's HOST dies while it is watching - interrupted, not exited (T1
 # ============================================================================
 # The bound half of T1771. Before T1793 the agent answered a holder killed under
 # an attached pane with an ordinary EXIT, and the pane closed exactly as if the
-# program had finished: the user's work vanished and nothing said why. Against
-# such a build H5-H13 go red together, because the pane they read is gone.
+# program had finished: the user's work vanished and nothing said why.
+#
+# Which assertions actually carry the claim, measured under `-BreakHostLost`
+# (T1870: the app withholds holder_lost, so the agent sends that plain EXIT):
+# H8, H9, H10, H12 and H14 go red - no notice in the banner or the scrollback,
+# no fresh shell to type into, and so no `exit` to close it with. H6, H7, H11
+# and H13 stay GREEN there and are controls, not claims: a `--command=` pane
+# whose program ended is HELD on screen (dead, same session id) rather than
+# removed, so "the pane is still listed" cannot by itself tell an interrupted
+# pane from a finished one. Only the notice and a live shell can. H4b is the
+# teeth run's own control: the seam really was active.
 Reset-State 'h'
 $workH = Join-Path $root 'workH'
 New-Item -ItemType Directory -Force $workH | Out-Null
 
-$appPidH = Start-App 'hostlost' @("--working-directory=$workH")
+$savedWithholdH = $env:GHOZTTY_TEST_WITHHOLD_HOLDER_LOST
+if ($BreakHostLost) {
+    Say '  TEETH CHECK (-BreakHostLost): the app withholds holder_lost - arm H MUST go red'
+    $env:GHOZTTY_TEST_WITHHOLD_HOLDER_LOST = '1'
+}
+try {
+    $appPidH = Start-App 'hostlost' @("--working-directory=$workH")
+} finally {
+    $env:GHOZTTY_TEST_WITHHOLD_HOLDER_LOST = $savedWithholdH
+}
 Assert "H1 the GUI came up" ($appPidH -ne 0)
 $leavesH0 = All-Leaves (Wait-Leaves 'h0' 1 45)
 $panePlainH = if ($leavesH0.Count -ge 1) { [string]$leavesH0[0].id } else { '' }
@@ -1295,6 +1320,14 @@ if ($holderH.Count -ne 1) {
         ForEach-Object { Say "    agent pid=$($_.ProcessId) exe=$($_.ExecutablePath) cmd=$($_.CommandLine)" }
 }
 $mgrH = Wait-ManagerPid $tmp 30
+if ($BreakHostLost) {
+    # The teeth are only teeth if the seam actually bit: without this, a seam
+    # that silently stopped working would turn the teeth run green and look
+    # like "arm H asserts nothing".
+    $seamLogH = if (Test-Path $script:AppLog) { Out-Text $script:AppLog } else { '' }
+    Assert "H4b the seam took effect: the app logged that it withheld holder_lost" (
+        $seamLogH -match 'GHOZTTY_TEST_WITHHOLD_HOLDER_LOST=1')
+}
 
 # ---- the kill: ONE holder. Not the app, not the manager. -------------------
 foreach ($h in $holderH) { Stop-Process -Id $h -Force -ErrorAction SilentlyContinue }

@@ -350,12 +350,57 @@ pub const Peer = enum {
     other_machine,
 
     pub fn capabilities(self: Peer) []const []const u8 {
+        return self.capabilitiesFor(withholdHolderLost());
+    }
+
+    /// `capabilities` with the T1870 test seam's answer passed in, so the
+    /// lists are testable without touching the process environment.
+    pub fn capabilitiesFor(self: Peer, withhold_holder_lost: bool) []const []const u8 {
+        if (withhold_holder_lost) return switch (self) {
+            .this_machine => &local_caps_without_holder_lost,
+            .other_machine => &caps_without_holder_lost,
+        };
         return switch (self) {
             .this_machine => &connection.Connection.local_client_capabilities,
             .other_machine => &connection.Connection.client_capabilities,
         };
     }
 };
+
+/// Test seam (T1870): `GHOZTTY_TEST_WITHHOLD_HOLDER_LOST=1` makes every dial
+/// leave `capability.holder_lost` out of its HELLO, so the app negotiates the
+/// pre-T1793 behaviour with a modern agent - a pane whose host dies gets a
+/// plain EXIT and closes, as if its program had finished. It exists so
+/// `test\win32\session-relaunch-notify.ps1 -BreakHostLost` can show arm H
+/// going red against that behaviour; an arm never seen red cannot be trusted
+/// green (T1133). Unset (every real launch), nothing changes.
+pub const withhold_holder_lost_env = "GHOZTTY_TEST_WITHHOLD_HOLDER_LOST";
+
+fn withholdHolderLost() bool {
+    const on = std.process.hasNonEmptyEnvVarConstant(withhold_holder_lost_env);
+    if (on) std.log.scoped(.tcp_dial).warn(
+        "test seam active: {s}=1 (holder_lost not advertised)",
+        .{withhold_holder_lost_env},
+    );
+    return on;
+}
+
+/// `caps` minus `drop`, which must appear in it exactly once.
+fn withoutCap(comptime caps: []const []const u8, comptime drop: []const u8) [caps.len - 1][]const u8 {
+    @setEvalBranchQuota(10_000);
+    var out: [caps.len - 1][]const u8 = undefined;
+    var n: usize = 0;
+    for (caps) |cap| {
+        if (std.mem.eql(u8, cap, drop)) continue;
+        out[n] = cap;
+        n += 1;
+    }
+    if (n != out.len) @compileError("withoutCap: '" ++ drop ++ "' must appear exactly once");
+    return out;
+}
+
+const caps_without_holder_lost = withoutCap(&connection.Connection.client_capabilities, protocol.capability.holder_lost);
+const local_caps_without_holder_lost = withoutCap(&connection.Connection.local_client_capabilities, protocol.capability.holder_lost);
 
 /// Shared post-connect core for every transport (TCP, AF_UNIX, named pipe):
 /// given an already heap-allocated transport wrapper and its connection-side
@@ -781,6 +826,31 @@ test "Peer: this machine's agent is offered everything but session_busy (T3243)"
     try testing.expect(!n_local.session_busy);
     try testing.expect(n_remote.session_busy);
     try testing.expect(n_local.close_session and n_local.holder_lost);
+}
+
+test "Peer: the T1870 seam withholds holder_lost and nothing else" {
+    const agent: protocol.Hello = .{
+        .transfer_encoding = .raw,
+        .capabilities = Peer.other_machine.capabilitiesFor(false),
+    };
+    for ([_]Peer{ .this_machine, .other_machine }) |peer| {
+        const full = peer.capabilitiesFor(false);
+        const held = peer.capabilitiesFor(true);
+        try testing.expectEqual(full.len - 1, held.len);
+        for (full) |cap| {
+            const kept = for (held) |h| {
+                if (std.mem.eql(u8, h, cap)) break true;
+            } else false;
+            try testing.expectEqual(!std.mem.eql(u8, cap, protocol.capability.holder_lost), kept);
+        }
+        // Against an agent that offers it, the withheld side negotiates the
+        // pre-T1793 behaviour (a plain EXIT) and keeps every other flag.
+        const n_full = try protocol.negotiate(.{ .transfer_encoding = .raw, .capabilities = full }, agent);
+        const n_held = try protocol.negotiate(.{ .transfer_encoding = .raw, .capabilities = held }, agent);
+        try testing.expect(n_full.holder_lost);
+        try testing.expect(!n_held.holder_lost);
+        try testing.expect(n_held.close_session);
+    }
 }
 
 fn countingTick(ctx: ?*anyopaque) void {
